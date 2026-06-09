@@ -1,0 +1,93 @@
+/* ============================================================
+   global.css — reset, base, app shell + the background orb glow.
+   Component visuals live in *.module.css (CSS Modules) to keep
+   class names scoped and collision-free (handoff/03 §9).
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+
+html, body, #root { height: 100%; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-1);
+  color: var(--fg-1);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button { font-family: inherit; }
+input, textarea, select { font-family: inherit; }
+img { display: block; max-width: 100%; }
+a { color: inherit; text-decoration: none; }
+
+ul, ol { list-style: none; }
+
+/* ---- App shell: full-height column, scroll in the main region ---- */
+.app-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.app-main {
+  flex: 1 1 auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* ============================================================
+   Background orb glow — the one allowed use of the glow tokens.
+   Soft pastel aurora near the top, white canvas everywhere else.
+   Fixed, behind all content, never interactive.
+   ============================================================ */
+.app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--bg-1);
+}
+.app-bg::before {
+  content: "";
+  position: absolute;
+  top: -28vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 140vw;
+  height: 80vh;
+  filter: blur(70px);
+  opacity: 0.55;
+  background:
+    radial-gradient(38% 60% at 22% 42%, var(--glow-sky)  0%, transparent 70%),
+    radial-gradient(34% 55% at 44% 30%, var(--glow-sage) 0%, transparent 72%),
+    radial-gradient(34% 58% at 64% 38%, var(--glow-sun)  0%, transparent 70%),
+    radial-gradient(40% 60% at 84% 34%, var(--glow-mauve)0%, transparent 72%);
+}
+/* fade the glow into white before content starts */
+.app-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.65) 46%, var(--bg-1) 78%);
+}
+
+/* ---- Scrollbar (subtle) ---- */
+* { scrollbar-width: thin; scrollbar-color: var(--ring-strong) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--ring-strong); border-radius: 9999px; border: 3px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(34,42,53,0.22); background-clip: padding-box; border: 3px solid transparent; }
+
+/* ---- Focus ring (keyboard only) ---- */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-3); }
+
+/* ---- Spin animation for loaders ---- */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.9s linear infinite; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}

@@ -1,0 +1,25 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--ink-overlay);
+  backdrop-filter: blur(2px);
+  animation: fade 0.16s ease;
+}
+.modal {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-1);
+  border-radius: var(--r-6);
+  box-shadow: var(--elev-lift);
+  padding: 24px;
+  animation: pop 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.wide { max-width: 640px; }
+
+@keyframes fade { from { opacity: 0; } }
+@keyframes pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } }

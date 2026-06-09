@@ -1,0 +1,120 @@
+/* ============================================================
+   WEARLESS DESIGN SYSTEM — Foundations
+   (ported from handoff/design/colors_and_type.css)
+   Built on Cal.com's monochrome system. The ONLY addition is a
+   soft background glow (aurora / orb). Everything else: white
+   canvas, near-black text, depth from shadows only.
+   Pretendard is served from /public/fonts (Vite public dir).
+   ============================================================ */
+
+@font-face {
+  font-family: "Pretendard Variable";
+  src: url("/fonts/PretendardVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+/* Alias so `font-family: Pretendard` (without "Variable") also resolves */
+@font-face {
+  font-family: "Pretendard";
+  src: url("/fonts/PretendardVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* ---- Type families ---- */
+  --font-display: "Cal Sans", "Cal Sans UI", system-ui, sans-serif;
+  --font-body: "Pretendard Variable", "Inter", "Inter Placeholder", system-ui, sans-serif;
+  --font-mono: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* ---- Ink & surface ---- */
+  --fg-1: #0e0d14;   /* primary text, headings, CTA fill */
+  --cta-hover: #1b1b1b; /* near-black CTA hover/press (PRD §14.3) */
+  --fg-2: #898989;   /* secondary text, muted labels */
+  --fg-3: #b4b4b4;   /* faint text, disabled, placeholders */
+  --bg-1: #ffffff;   /* primary canvas + card surface */
+  --bg-2: #f5f5f5;   /* barely-there section tint */
+  --ink-overlay: rgba(17, 17, 17, 0.5);  /* scrim / overlay */
+
+  /* ---- Point color (Wearless brand accent) ----
+     #4f88c9 is the saturated sibling of the Sky glow (#c3dcf6).
+     WHITE screens ONLY. Use for small emphasis: links, selected/
+     active states, focus. NEVER a button fill (CTAs stay #0e0d14)
+     or a large surface fill. */
+  --accent: #4f88c9;
+  --accent-hover: #3f74b2;
+  --accent-ring: rgba(79, 136, 201, 0.22);
+  --accent-tint: rgba(79, 136, 201, 0.10);
+  --link: var(--accent);
+
+  /* ---- Semantic — WHITE screens ONLY, sparing text/icon/ring ---- */
+  --accent-error: #d92d20;
+  --accent-error-ring: rgba(217, 45, 32, 0.22);
+  --accent-success: #067647;
+  --accent-success-ring: rgba(6, 118, 71, 0.20);
+
+  /* ---- Hairline (rendered as ring-shadow, NOT css border) ---- */
+  --ring: rgba(34, 42, 53, 0.08);
+  --ring-strong: rgba(34, 42, 53, 0.12);
+  --focus: var(--accent-ring);
+
+  /* ---- Background glow tokens — background assets ONLY ---- */
+  --glow-sky: #c3dcf6;
+  --glow-sage: #d8e8c6;
+  --glow-sun: #f8d978;
+  --glow-mauve: #ead0e3;
+
+  /* ---- White glass plate (text/UI over a glow zone) ---- */
+  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-blur: blur(8px);
+
+  /* ---- ELEVATION — Cal's multi-layer shadows. Ring + diffuse + contact. ---- */
+  --elev-inset:   inset 0 1px 1.9px 0 rgba(0,0,0,0.16);
+  --elev-card:    0 1px 5px -4px rgba(19,19,22,0.7),
+                  0 0 0 1px rgba(34,42,53,0.08),
+                  0 4px 8px 0 rgba(34,42,53,0.05);
+  --elev-card-alt:0 1px 5px -4px rgba(36,36,36,0.7),
+                  0 4px 8px 0 rgba(36,36,36,0.05);
+  --elev-btn-hi:  inset 0 2px 0 rgba(255,255,255,0.15);
+  --elev-soft:    0 4px 8px 0 rgba(34,42,53,0.05);
+  --elev-lift:    0 2px 8px -4px rgba(19,19,22,0.6),
+                  0 0 0 1px rgba(34,42,53,0.10),
+                  0 12px 28px -8px rgba(34,42,53,0.12);
+
+  /* ---- SPACING — 8px base ---- */
+  --sp-1: 1px;   --sp-2: 2px;   --sp-3: 3px;   --sp-4: 4px;
+  --sp-6: 6px;   --sp-8: 8px;   --sp-12: 12px; --sp-16: 16px;
+  --sp-20: 20px; --sp-24: 24px; --sp-28: 28px;
+  --sp-section: 80px;
+  --sp-section-lg: 96px;
+  --sp-section-mobile: 48px;
+
+  /* ---- RADIUS — 2px -> pill ---- */
+  --r-1: 2px;  --r-2: 4px;  --r-3: 6px;  --r-4: 8px;
+  --r-5: 12px; --r-6: 16px; --r-7: 29px; --r-8: 100px;
+  --r-pill: 9999px;
+
+  /* ---- Layout ---- */
+  --container: 1200px;
+}
+
+/* ============================================================
+   SEMANTIC TYPE — Cal Sans speaks, Pretendard explains.
+   ============================================================ */
+.display-hero { font-family: var(--font-display); font-size: 64px; line-height: 1.10; letter-spacing: 0; color: var(--fg-1); font-weight: 600; }
+.h1   { font-family: var(--font-display); font-size: 48px; line-height: 1.10; letter-spacing: 0; color: var(--fg-1); font-weight: 600; }
+.h2   { font-family: var(--font-display); font-size: 24px; line-height: 1.30; letter-spacing: 0; color: var(--fg-1); font-weight: 600; }
+.h3   { font-family: var(--font-display); font-size: 20px; line-height: 1.20; letter-spacing: 0.2px; color: var(--fg-1); font-weight: 600; }
+.card-title { font-family: var(--font-display); font-size: 16px; line-height: 1.10; letter-spacing: 0.2px; color: var(--fg-1); font-weight: 600; }
+.eyebrow { font-family: var(--font-display); font-size: 12px; line-height: 1.50; letter-spacing: 0.2px; color: var(--fg-2); font-weight: 600; }
+
+.lead    { font-family: var(--font-body); font-size: 18px; line-height: 1.50; letter-spacing: -0.2px; color: var(--fg-2); font-weight: 300; }
+.body    { font-family: var(--font-body); font-size: 16px; line-height: 1.50; letter-spacing: -0.1px; color: var(--fg-2); font-weight: 400; }
+.caption { font-family: var(--font-body); font-size: 14px; line-height: 1.45; letter-spacing: -0.1px; color: var(--fg-2); font-weight: 400; }
+.ui-label{ font-family: var(--font-body); font-size: 15px; line-height: 1.0; letter-spacing: 0; color: var(--fg-1); font-weight: 500; }
+.micro   { font-family: var(--font-body); font-size: 12px; line-height: 1.0; letter-spacing: 0; color: var(--fg-2); font-weight: 500; }
+.code    { font-family: var(--font-mono); font-size: 14px; line-height: 1.0; letter-spacing: 0; color: var(--fg-1); font-weight: 500; }
+
+a.link { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }

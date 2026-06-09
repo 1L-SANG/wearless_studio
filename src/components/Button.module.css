@@ -1,0 +1,74 @@
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--r-pill);
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, opacity 0.15s ease, transform 0.05s ease;
+}
+.btn:active { transform: translateY(0.5px); }
+.btn:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.sm { height: 32px; padding: 0 13px; font-size: 13px; gap: 5px; }
+.lg { height: 46px; padding: 0 22px; font-size: 16px; }
+.block { display: flex; width: 100%; }
+
+/* primary — warm near-black pill CTA */
+.primary {
+  background: var(--fg-1);
+  color: var(--bg-1);
+  box-shadow: var(--elev-btn-hi), var(--elev-soft);
+}
+.primary:hover:not(:disabled) { background: var(--cta-hover); }
+
+/* ghost — white surface with hairline ring */
+.ghost {
+  background: var(--bg-1);
+  color: var(--fg-1);
+  box-shadow: 0 0 0 1px var(--ring), var(--elev-soft);
+}
+.ghost:hover:not(:disabled) { box-shadow: 0 0 0 1px var(--ring-strong), var(--elev-soft); }
+
+/* quiet — no chrome until hover */
+.quiet {
+  background: transparent;
+  color: var(--fg-2);
+  box-shadow: none;
+}
+.quiet:hover:not(:disabled) { background: var(--bg-2); color: var(--fg-1); }
+
+/* danger — semantic red text on white */
+.danger {
+  background: var(--bg-1);
+  color: var(--accent-error);
+  box-shadow: 0 0 0 1px var(--accent-error-ring);
+}
+.danger:hover:not(:disabled) { background: rgba(217, 45, 32, 0.06); }
+
+/* ---- IconButton ---- */
+.iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--r-4);
+  background: transparent;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+.iconbtn:hover:not(:disabled) { background: var(--bg-2); color: var(--fg-1); }
+.iconbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.iconSm { width: 30px; height: 30px; border-radius: var(--r-3); }
+.iconActive { color: var(--accent); background: var(--accent-tint); box-shadow: 0 0 0 1px var(--accent-ring); }

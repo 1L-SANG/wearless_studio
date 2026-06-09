@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Wearless — AI 상세페이지 스튜디오</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cal+Sans&family=Inter:wght@300;400;500;600&family=Roboto+Mono:wght@500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles/tokens.css" />
+<link rel="stylesheet" href="styles/app.css" />
+<link rel="stylesheet" href="styles/features.css" />
+<style>
+  /* app scroll container */
+  .app-main { flex: 1; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+</style>
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#0e0d14"/>
+    <text x="50" y="58" font-family="Georgia, serif" font-size="30" fill="#fff" text-anchor="middle">w</text>
+  </svg>
+</template>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<!-- types + mock (plain order matters: placeholders → db → api) -->
+<script src="types/index.js"></script>
+<script src="mock/placeholders.js"></script>
+<script src="mock/db.js"></script>
+<script src="mock/api.js"></script>
+
+<!-- components -->
+<script type="text/babel" src="components/ui.jsx"></script>
+<script type="text/babel" src="components/shell.jsx"></script>
+
+<!-- features -->
+<script type="text/babel" src="features/product-input.jsx"></script>
+<script type="text/babel" src="features/analysis.jsx"></script>
+<script type="text/babel" src="features/mannequin.jsx"></script>
+<script type="text/babel" src="features/storyboard.jsx"></script>
+<script type="text/babel" src="features/generating.jsx"></script>
+<script type="text/babel" src="features/library.jsx"></script>
+<script type="text/babel" src="features/editor-panels.jsx"></script>
+<script type="text/babel" src="features/editor.jsx"></script>
+
+<!-- app root -->
+<script type="text/babel" src="app.jsx"></script>
+</body>
+</html>

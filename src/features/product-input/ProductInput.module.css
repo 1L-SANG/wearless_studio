@@ -1,0 +1,83 @@
+.wrap { width: 100%; max-width: 912px; margin: 0 auto; padding: 0 24px; display: flex; flex-direction: column; gap: 18px; }
+
+/* ---- card surface ---- */
+.card { background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card); padding: 28px; }
+.block { display: flex; flex-direction: column; gap: 12px; }
+.blockTitle { font-family: var(--font-display); font-size: 18px; font-weight: 600; letter-spacing: 0.2px; color: var(--fg-1); }
+.blockHeadRow { display: flex; align-items: center; gap: 10px; }
+.counter { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: var(--r-pill); background: var(--bg-2); font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--fg-2); }
+.blockHint { font-family: var(--font-body); font-size: 13px; color: var(--fg-2); margin-top: -2px; }
+.divider { height: 1px; background: var(--ring); margin: 26px 0; }
+
+.colorHead { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-family: var(--font-body); font-size: 13px; font-weight: 500; color: var(--fg-2); }
+.colorDot { width: 12px; height: 12px; border-radius: 50%; background: var(--bg-2); box-shadow: 0 0 0 1px var(--ring); }
+
+/* ---- upload wells ---- */
+.wellGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.well { display: flex; flex-direction: column; gap: 8px; }
+.wellHead { display: flex; align-items: center; justify-content: space-between; min-height: 20px; }
+.wellLabel { font-family: var(--font-body); font-size: 13px; font-weight: 600; color: var(--fg-1); }
+.req { color: var(--accent-error); margin-left: 3px; }
+.wellRemove { display: inline-flex; padding: 4px; border: 0; background: transparent; color: var(--fg-3); border-radius: var(--r-3); cursor: pointer; }
+.wellRemove:hover { color: var(--accent-error); background: var(--bg-2); }
+
+.wellEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 168px;
+  border: 0;
+  border-radius: var(--r-5);
+  background: var(--bg-1);
+  color: var(--fg-3);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  line-height: 1.4;
+  cursor: pointer;
+  box-shadow: 0 0 0 1.5px var(--ring) inset;
+  transition: box-shadow 0.15s ease, color 0.15s ease;
+}
+.wellEmpty:hover { color: var(--accent); box-shadow: 0 0 0 1.5px var(--accent-ring) inset; }
+
+.wellFilled { display: flex; flex-direction: column; border-radius: var(--r-5); overflow: hidden; background: var(--bg-2); box-shadow: var(--elev-card); }
+.wellFilled img { width: 100%; height: 168px; object-fit: cover; }
+.wellMeta { display: flex; flex-direction: column; gap: 2px; padding: 9px 11px; }
+.wellFile { font-family: var(--font-body); font-size: 12px; font-weight: 500; color: var(--fg-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wellSub { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); }
+
+/* ---- extra colors ---- */
+.extraColor { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--ring); display: flex; flex-direction: column; gap: 12px; }
+.extraHead { display: flex; align-items: center; justify-content: space-between; }
+.swatchPicker { display: flex; align-items: center; gap: 8px; }
+.colorChip { width: 18px; height: 18px; border-radius: 50%; background: var(--sw, var(--bg-2)); box-shadow: 0 0 0 1px var(--ring); }
+.colorChip[data-empty="true"] { background: var(--bg-2); }
+.extraName { font-family: var(--font-body); font-size: 14px; font-weight: 500; color: var(--fg-1); }
+.extraRemove { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--fg-2); font-family: var(--font-body); font-size: 13px; cursor: pointer; }
+.extraRemove:hover { color: var(--accent-error); }
+.swatchRow { display: flex; flex-wrap: wrap; gap: 8px; }
+.swatch { width: 26px; height: 26px; border-radius: 50%; border: 0; background: var(--sw); box-shadow: 0 0 0 1px var(--ring); cursor: pointer; transition: box-shadow 0.15s ease, transform 0.1s ease; }
+.swatch:hover { transform: scale(1.08); }
+.swatchOn { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--accent); }
+.extraWells { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+/* ---- summary card ---- */
+.summary { display: flex; align-items: center; gap: 14px; background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card); padding: 14px 18px; }
+.summaryThumb { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: var(--r-4); overflow: hidden; background: var(--bg-2); color: var(--fg-3); flex: none; }
+.summaryThumb img { width: 100%; height: 100%; object-fit: cover; }
+.summaryInfo { flex: 1; }
+.summaryName { font-family: var(--font-display); font-size: 16px; font-weight: 600; letter-spacing: 0.2px; color: var(--fg-1); }
+.summaryMeta { font-family: var(--font-body); font-size: 13px; color: var(--fg-2); margin-top: 3px; }
+
+/* ---- CTA ---- */
+.cta { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 8px 0 4px; }
+.ctaHint { font-family: var(--font-body); font-size: 13px; color: var(--fg-2); }
+
+/* ---- analyzing ---- */
+.analyzing { display: flex; align-items: center; gap: 9px; font-family: var(--font-body); font-size: 15px; font-weight: 500; color: var(--fg-1); margin-bottom: 20px; }
+.analyzing :global(svg) { color: var(--accent); }
+.skelRows { display: flex; flex-direction: column; gap: 14px; }

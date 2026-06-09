@@ -1,0 +1,51 @@
+.wrap { width: 100%; }
+.labelRow { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; }
+.label { font-family: var(--font-body); font-size: 14px; font-weight: 500; color: var(--fg-1); }
+.pct { font-family: var(--font-mono); font-size: 13px; font-weight: 500; color: var(--fg-2); }
+
+.track {
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+.fill {
+  display: block;
+  height: 100%;
+  width: var(--pct, 0%);
+  border-radius: var(--r-pill);
+  /* current = blue emphasis (PRD §14.5); completes toward near-black */
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  transition: width 0.25s ease;
+}
+.sub { font-family: var(--font-body); font-size: 13px; color: var(--fg-2); margin-top: 9px; }
+
+/* ---- Checklist ---- */
+.checklist { display: flex; flex-direction: column; gap: 12px; }
+.item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--fg-3);
+  transition: color 0.2s ease;
+}
+.ci {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  color: var(--fg-3);
+  flex: none;
+}
+.dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+.item.running { color: var(--fg-1); font-weight: 500; }
+.item.running .ci { color: var(--accent); background: var(--accent-tint); box-shadow: 0 0 0 1px var(--accent-ring); }
+.item.done { color: var(--fg-1); }
+.item.done .ci { color: var(--bg-1); background: var(--fg-1); }
