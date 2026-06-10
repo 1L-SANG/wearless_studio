@@ -1004,7 +1004,9 @@
    (block-clip이 블록 밖을 잘라줌). 핸들은 --inv 역스케일로 줌과 무관하게 일정 크기. */
 .el-cropped { position: absolute; inset: 0; overflow: hidden; }
 .el-cropped img, .crop-frame img { position: absolute; max-width: none; display: block; }
-.crop-layer { position: absolute; inset: 0; z-index: 5; }
+.crop-layer { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+/* 레이어 자체는 히트 통과(딤 클릭 → 밑의 요소/블록이 받아 커밋·선택) — 드래그 표면만 인터랙티브 */
+.crop-ghost, .crop-frame, .crop-h { pointer-events: auto; }
 .crop-ghost { position: absolute; cursor: move; }
 .crop-ghost img { width: 100%; height: 100%; display: block; }
 .crop-frame { position: absolute; overflow: hidden; cursor: move;
