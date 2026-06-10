@@ -1,0 +1,20 @@
+/* ============================================================
+   react-moveable handle override — make moveable's selection box
+   and handles match the prototype's Sky bounding-box look
+   (#8fbfee 1.5px box, small white square handles with a sky ring,
+   matching .el.on / .hdl / .rot in the prototype editor CSS).
+   This is additive (not a prototype-CSS edit) per the engine swap.
+   ============================================================ */
+.moveable-control-box { --moveable-color: #8fbfee; }
+.moveable-line { background: #8fbfee !important; }
+.moveable-line.moveable-direction { height: 1.5px; width: 1.5px; }
+.moveable-control {
+  width: 11px !important; height: 11px !important;
+  margin-top: -6px !important; margin-left: -6px !important;
+  background: #fff !important; border: 1.5px solid #8fbfee !important;
+  border-radius: 2px !important; box-shadow: 0 1px 2px rgba(34,42,53,.18);
+}
+.moveable-rotation .moveable-rotation-line { background: #8fbfee !important; }
+.moveable-rotation .moveable-rotation-control {
+  border-radius: 50% !important; background: #fff !important; border: 1.5px solid #8fbfee !important;
+}

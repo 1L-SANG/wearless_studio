@@ -1,15 +1,27 @@
 /* ============================================================
    WEARLESS DESIGN SYSTEM — Foundations
-   (ported from handoff/design/colors_and_type.css)
    Built on Cal.com's monochrome system. The ONLY addition is a
-   soft background glow (aurora / orb). Everything else: white
-   canvas, near-black text, depth from shadows only.
-   Pretendard is served from /public/fonts (Vite public dir).
+   soft background glow (aurora / orb). Everything else is 100%
+   Cal: white canvas, near-black text, depth from shadows only.
+   When cal.md and design.md conflict, design.md wins.
    ============================================================ */
+
+/* ---- Fonts -------------------------------------------------
+   Display = Cal Sans (Google Fonts). Body/UI = Pretendard
+   (self-hosted variable woff2, full Korean + Latin support),
+   falling back to Inter. Mono = Roboto Mono.
+   Load in HTML <head>:
+   <link rel="preconnect" href="https://fonts.googleapis.com">
+   <link href="https://fonts.googleapis.com/css2?family=Cal+Sans&family=Inter:wght@300;400;500;600&family=Roboto+Mono:wght@500;600&display=swap" rel="stylesheet">
+   Pretendard is bundled at fonts/PretendardVariable.woff2 — no
+   network needed. NOTE: Cal Sans on Google Fonts ships a single
+   weight (built to read as 600); we treat it as the display face
+   at all sizes and never apply other weights to it.
+   ------------------------------------------------------------ */
 
 @font-face {
   font-family: "Pretendard Variable";
-  src: url("/fonts/PretendardVariable.woff2") format("woff2");
+  src: url("../fonts/PretendardVariable.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -17,7 +29,7 @@
 /* Alias so `font-family: Pretendard` (without "Variable") also resolves */
 @font-face {
   font-family: "Pretendard";
-  src: url("/fonts/PretendardVariable.woff2") format("woff2");
+  src: url("../fonts/PretendardVariable.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -29,48 +41,65 @@
   --font-body: "Pretendard Variable", "Inter", "Inter Placeholder", system-ui, sans-serif;
   --font-mono: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
-  /* ---- Ink & surface ---- */
-  --fg-1: #0e0d14;   /* primary text, headings, CTA fill */
-  --cta-hover: #1b1b1b; /* near-black CTA hover/press (PRD §14.3) */
+  /* ---- Ink & surface (design.md overrides Cal's #242424) ---- */
+  --fg-1: #0e0d14;   /* primary text, headings */
   --fg-2: #898989;   /* secondary text, muted labels */
   --fg-3: #b4b4b4;   /* faint text, disabled, placeholders */
   --bg-1: #ffffff;   /* primary canvas + card surface */
   --bg-2: #f5f5f5;   /* barely-there section tint */
   --ink-overlay: rgba(17, 17, 17, 0.5);  /* scrim / overlay */
 
-  /* ---- Point color (Wearless brand accent) ----
-     #4f88c9 is the saturated sibling of the Sky glow (#c3dcf6).
-     WHITE screens ONLY. Use for small emphasis: links, selected/
-     active states, focus. NEVER a button fill (CTAs stay #0e0d14)
-     or a large surface fill. */
-  --accent: #4f88c9;
-  --accent-hover: #3f74b2;
-  --accent-ring: rgba(79, 136, 201, 0.22);
-  --accent-tint: rgba(79, 136, 201, 0.10);
-  --link: var(--accent);
+  /* ---- The single allowed accent: link blue ---- */
+  --link: #0099ff;
 
-  /* ---- Semantic — WHITE screens ONLY, sparing text/icon/ring ---- */
-  --accent-error: #d92d20;
+  /* ============================================================
+     PRIMARY CTA — warm near-black pill.
+     Cal's CTA is black; Wearless warms it slightly (#2C2C2C) and
+     rounds it to a full pill. Hover darkens the fill (no opacity
+     drop) over 150ms; focus is a white-gap double ring.
+     ============================================================ */
+  --cta-bg: #2C2C2C;          /* warm near-black fill */
+  --cta-bg-hover: #1B1B1B;    /* hover — darker, 150ms */
+  --cta-fg: #ffffff;
+  --cta-height: 44px;         /* min touch height */
+  --cta-weight: 540;
+  --cta-radius: var(--r-pill);
+  --cta-transition: 150ms;
+  --cta-focus-ring: 0 0 0 2px #fff, 0 0 0 4px var(--cta-bg);  /* double ring */
+
+  /* ---- Semantic colors — WHITE screens ONLY, never on a glow zone.
+     Use sparingly as text / icon / ring, never as a large fill or pill.
+     Stay achromatic-leaning: these are the rare "controlled accent." ---- */
+  --accent-error: #d92d20;     /* validation errors, destructive */
   --accent-error-ring: rgba(217, 45, 32, 0.22);
-  --accent-success: #067647;
+  --accent-success: #067647;   /* confirmed / success */
   --accent-success-ring: rgba(6, 118, 71, 0.20);
 
   /* ---- Hairline (rendered as ring-shadow, NOT css border) ---- */
   --ring: rgba(34, 42, 53, 0.08);
   --ring-strong: rgba(34, 42, 53, 0.12);
-  --focus: var(--accent-ring);
 
-  /* ---- Background glow tokens — background assets ONLY ---- */
+  /* ---- A11y focus ring ---- */
+  --focus: rgba(59, 130, 246, 0.5);
+
+  /* ============================================================
+     GLOW TOKENS — background glow assets ONLY.
+     NEVER use these on buttons, pills, text, icons, borders,
+     or any UI chrome. They live inside aurora.html / orb.html.
+     ============================================================ */
   --glow-sky: #c3dcf6;
   --glow-sage: #d8e8c6;
   --glow-sun: #f8d978;
   --glow-mauve: #ead0e3;
 
-  /* ---- White glass plate (text/UI over a glow zone) ---- */
+  /* ---- White glass plate (for text/UI over a glow zone) ---- */
   --glass-bg: rgba(255, 255, 255, 0.82);
   --glass-blur: blur(8px);
 
-  /* ---- ELEVATION — Cal's multi-layer shadows. Ring + diffuse + contact. ---- */
+  /* ============================================================
+     ELEVATION — Cal's multi-layer shadow system.
+     Ring border + diffuse + contact. No CSS borders.
+     ============================================================ */
   --elev-inset:   inset 0 1px 1.9px 0 rgba(0,0,0,0.16);
   --elev-card:    0 1px 5px -4px rgba(19,19,22,0.7),
                   0 0 0 1px rgba(34,42,53,0.08),
@@ -83,15 +112,20 @@
                   0 0 0 1px rgba(34,42,53,0.10),
                   0 12px 28px -8px rgba(34,42,53,0.12);
 
-  /* ---- SPACING — 8px base ---- */
+  /* ============================================================
+     SPACING — 8px base. Values from Cal's scale; named by px so
+     the token is self-documenting. Note the deliberate 28 -> 80 jump.
+     ============================================================ */
   --sp-1: 1px;   --sp-2: 2px;   --sp-3: 3px;   --sp-4: 4px;
   --sp-6: 6px;   --sp-8: 8px;   --sp-12: 12px; --sp-16: 16px;
   --sp-20: 20px; --sp-24: 24px; --sp-28: 28px;
-  --sp-section: 80px;
-  --sp-section-lg: 96px;
-  --sp-section-mobile: 48px;
+  --sp-section: 80px;          /* section gap (desktop) */
+  --sp-section-lg: 96px;       /* generous section gap */
+  --sp-section-mobile: 48px;   /* section gap (mobile) */
 
-  /* ---- RADIUS — 2px -> pill ---- */
+  /* ============================================================
+     RADIUS — 2px -> 9999px pill scale.
+     ============================================================ */
   --r-1: 2px;  --r-2: 4px;  --r-3: 6px;  --r-4: 8px;
   --r-5: 12px; --r-6: 16px; --r-7: 29px; --r-8: 100px;
   --r-pill: 9999px;
@@ -102,19 +136,74 @@
 
 /* ============================================================
    SEMANTIC TYPE — Cal Sans speaks, Pretendard explains.
+   Cal Sans only at 24px+; +0.2px tracking below 24px.
+   Pretendard (Inter fallback) for all body, weights 300-600.
    ============================================================ */
-.display-hero { font-family: var(--font-display); font-size: 64px; line-height: 1.10; letter-spacing: 0; color: var(--fg-1); font-weight: 600; }
-.h1   { font-family: var(--font-display); font-size: 48px; line-height: 1.10; letter-spacing: 0; color: var(--fg-1); font-weight: 600; }
-.h2   { font-family: var(--font-display); font-size: 24px; line-height: 1.30; letter-spacing: 0; color: var(--fg-1); font-weight: 600; }
-.h3   { font-family: var(--font-display); font-size: 20px; line-height: 1.20; letter-spacing: 0.2px; color: var(--fg-1); font-weight: 600; }
-.card-title { font-family: var(--font-display); font-size: 16px; line-height: 1.10; letter-spacing: 0.2px; color: var(--fg-1); font-weight: 600; }
-.eyebrow { font-family: var(--font-display); font-size: 12px; line-height: 1.50; letter-spacing: 0.2px; color: var(--fg-2); font-weight: 600; }
 
-.lead    { font-family: var(--font-body); font-size: 18px; line-height: 1.50; letter-spacing: -0.2px; color: var(--fg-2); font-weight: 300; }
-.body    { font-family: var(--font-body); font-size: 16px; line-height: 1.50; letter-spacing: -0.1px; color: var(--fg-2); font-weight: 400; }
-.caption { font-family: var(--font-body); font-size: 14px; line-height: 1.45; letter-spacing: -0.1px; color: var(--fg-2); font-weight: 400; }
-.ui-label{ font-family: var(--font-body); font-size: 15px; line-height: 1.0; letter-spacing: 0; color: var(--fg-1); font-weight: 500; }
-.micro   { font-family: var(--font-body); font-size: 12px; line-height: 1.0; letter-spacing: 0; color: var(--fg-2); font-weight: 500; }
-.code    { font-family: var(--font-mono); font-size: 14px; line-height: 1.0; letter-spacing: 0; color: var(--fg-1); font-weight: 500; }
+.display-hero {
+  font-family: var(--font-display);
+  font-size: 64px; line-height: 1.10; letter-spacing: 0;
+  color: var(--fg-1); font-weight: 600;
+}
+.h1 {
+  font-family: var(--font-display);
+  font-size: 48px; line-height: 1.10; letter-spacing: 0;
+  color: var(--fg-1); font-weight: 600;
+}
+.h2 {
+  font-family: var(--font-display);
+  font-size: 24px; line-height: 1.30; letter-spacing: 0;
+  color: var(--fg-1); font-weight: 600;
+}
+.h3 {  /* Cal Sans below 24px -> +0.2px tracking */
+  font-family: var(--font-display);
+  font-size: 20px; line-height: 1.20; letter-spacing: 0.2px;
+  color: var(--fg-1); font-weight: 600;
+}
+.card-title {
+  font-family: var(--font-display);
+  font-size: 16px; line-height: 1.10; letter-spacing: 0.2px;
+  color: var(--fg-1); font-weight: 600;
+}
+.eyebrow {  /* small Cal Sans label */
+  font-family: var(--font-display);
+  font-size: 12px; line-height: 1.50; letter-spacing: 0.2px;
+  color: var(--fg-2); font-weight: 600;
+}
 
-a.link { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+/* ---- Body: Pretendard (Inter fallback) ---- */
+.lead {  /* light intro body */
+  font-family: var(--font-body);
+  font-size: 18px; line-height: 1.50; letter-spacing: -0.2px;
+  color: var(--fg-2); font-weight: 300;
+}
+.body {
+  font-family: var(--font-body);
+  font-size: 16px; line-height: 1.50; letter-spacing: -0.1px;
+  color: var(--fg-2); font-weight: 400;
+}
+.caption {
+  font-family: var(--font-body);
+  font-size: 14px; line-height: 1.45; letter-spacing: -0.1px;
+  color: var(--fg-2); font-weight: 400;
+}
+.ui-label {  /* buttons / nav */
+  font-family: var(--font-body);
+  font-size: 15px; line-height: 1.0; letter-spacing: 0;
+  color: var(--fg-1); font-weight: 500;
+}
+.micro {
+  font-family: var(--font-body);
+  font-size: 12px; line-height: 1.0; letter-spacing: 0;
+  color: var(--fg-2); font-weight: 500;
+}
+.code {
+  font-family: var(--font-mono);
+  font-size: 14px; line-height: 1.0; letter-spacing: 0;
+  color: var(--fg-1); font-weight: 500;
+}
+
+a.link {
+  color: var(--link); text-decoration: underline;
+  text-underline-offset: 2px;
+}

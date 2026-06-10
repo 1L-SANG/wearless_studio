@@ -1,5 +1,0 @@
-.wrap { width: 100%; max-width: 720px; margin: 0 auto; padding: 0 24px; }
-.card { background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card); padding: 28px; }
-.pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
-.pill { display: inline-flex; align-items: center; height: 28px; padding: 0 12px; border-radius: var(--r-pill); background: var(--bg-2); font-family: var(--font-body); font-size: 13px; font-weight: 500; color: var(--fg-2); }
-.checklist { margin-top: 26px; }

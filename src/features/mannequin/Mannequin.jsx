@@ -1,268 +1,275 @@
 /* =============================================================
-   mannequin/Mannequin.jsx — 마네킹컷 생성·선택·조정 (PRD §7).
-   생성 대기(진행바) → A/B 후보 + 히스토리 선택 → 세부 조정(세션 2회)
-   → 전부 재생성(확인 모달) → 구성 방식 미니 카드 → 콘티보드.
+   features/mannequin — ③ 마네킹컷 생성·선택 (PRD §7)
+   Ported verbatim from reference/prototype/features/mannequin.jsx.
+   Only change: ES imports; onNext → navigate('/create/storyboard').
+   (Regenerate already respects the 2/session adjust cap — kept.)
    ============================================================= */
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
-import { useAppStore } from '@/store/useAppStore.js';
-import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
-import { Button } from '@/components/Button.jsx';
-import { Icon } from '@/components/Icon.jsx';
-import { Modal } from '@/components/Modal.jsx';
-import { ProgressBar } from '@/components/Progress.jsx';
-import { PageHead } from '@/features/shell/PageHead.jsx';
-import { WizardCTA } from '@/features/shell/WizardCTA.jsx';
-import { useToast } from '@/components/Toast.jsx';
-import styles from './Mannequin.module.css';
+import { Icon, Button, Modal, ProgressBar, useToast } from '@/components/ui.jsx';
+import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 
-const LENGTHS = ['더 짧게', '현재', '더 길게'];
-const FITS = ['더 슬림하게', '현재', '더 여유있게'];
-
-function genStepLabel(p) {
-  if (p < 30) return '의류 정보 분석 중';
-  if (p < 60) return '핏·주름 정리하는 중';
-  if (p < 95) return '마네킹컷 생성 중';
-  return '결과를 확인하는 중';
+function MannequinLoading({ progress }) {
+  const stage = progress < 30 ? '의류 정보 분석 중' : progress < 60 ? '핏·주름 정리하는 중'
+    : progress < 80 ? '마네킹컷 생성 중' : '결과를 확인하는 중';
+  return (
+    <div className="wizard">
+      <PageHead title="마네킹컷을 만들고 있어요" sub="AI가 상품의 핏과 실루엣을 기준 마네킹에 입혀보고 있어요." />
+      <div className="surface">
+        <div style={{ maxWidth: 520, margin: '0 auto 26px' }}><ProgressBar value={progress} label={stage} /></div>
+        <div className="candidate-row" style={{ maxWidth: 560, margin: '0 auto' }}>
+          {['마네킹 A', '마네킹 B'].map((n) => (
+            <div className="candidate" key={n}>
+              <div className="big"><div className="busy-tile" style={{ position: 'absolute', inset: 0 }}>
+                <Icon name="loader" size={22} className="spin" />작업 중</div></div>
+              <div className="cap">{n}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
-export function Mannequin() {
-  const navigate = useNavigate();
-  const toast = useToast();
-  const mannequins = useAppStore((s) => s.mannequins);
-  const selectedId = useAppStore((s) => s.selectedMannequinId);
-  const setMannequins = useAppStore((s) => s.setMannequins);
-  const selectMannequin = useAppStore((s) => s.selectMannequin);
-  const adjustCount = useAppStore((s) => s.adjustCount);
-  const incAdjust = useAppStore((s) => s.incAdjust);
-  const composeMode = useAppStore((s) => s.composeMode);
-  const setComposeMode = useAppStore((s) => s.setComposeMode);
-  const spendCredits = useAppStore((s) => s.spendCredits);
-  const catalogs = useAppStore((s) => s.catalogs);
-  const analysis = useAppStore((s) => s.analysis);
-  const product = useAppStore((s) => s.product);
-
-  const [phase, setPhase] = useState(mannequins.length ? 'ready' : 'loading');
-  const [progress, setProgress] = useState(0);
-  const [lengthSel, setLengthSel] = useState('현재');
-  const [fitSel, setFitSel] = useState('현재');
-  const [busy, setBusy] = useState(false);
-  const [matchOpen, setMatchOpen] = useState(false);
-  const [modeOpen, setModeOpen] = useState(false);
-  const [regenOpen, setRegenOpen] = useState(false);
-
-  useEffect(() => {
-    if (mannequins.length) { setPhase('ready'); return; }
-    let alive = true;
-    setPhase('loading');
-    api.generateMannequins({ onProgress: (p) => alive && setProgress(p) })
-      .then((list) => { if (alive) { setMannequins(list); setPhase('ready'); } });
-    return () => { alive = false; };
-  }, [mannequins.length, setMannequins]);
-
-  const composeModes = catalogs?.composeModes || [];
-  const colorCount = product?.colors?.length ?? 1;
-  const mainMatch = (analysis?.matchClothing || []).find((m) => m.selected && m.selOrder === 1);
-  const adjustsLeft = LIMITS.mannequinAdjustMax - adjustCount;
-  const hasChange = lengthSel !== '현재' || fitSel !== '현재';
-  const canAdjust = hasChange && adjustsLeft > 0 && !busy;
-  const currentMode = composeModes.find((m) => m.value === composeMode);
-
-  const byCand = (c) => mannequins.filter((m) => m.candidate === c).sort((a, b) => a.version - b.version);
-  const activeOf = (c) => mannequins.find((m) => m.candidate === c && m.id === selectedId) || byCand(c).slice(-1)[0];
-
-  const doAdjust = async () => {
-    if (!canAdjust) return;
-    setBusy(true); setProgress(0);
-    try {
-      const created = await api.adjustMannequin({
-        baseId: selectedId,
-        fit: fitSel !== '현재' ? fitSel : undefined,
-        length: lengthSel !== '현재' ? lengthSel : undefined,
-        onProgress: setProgress,
-      });
-      setMannequins([...mannequins, created]);
-      selectMannequin(created.id);
-      incAdjust();
-      spendCredits(CREDIT_COSTS.mannequinAdjust);
-      setLengthSel('현재'); setFitSel('현재');
-      toast?.push('조정한 마네킹컷이 추가됐어요.', { icon: 'check' });
-    } finally { setBusy(false); }
+function AdjustPanel({ selected, adjustLeft, onAdjust, onRegenerate, busy, productName, matchClothing, onToggleMatch, onMatchAdjust, creditCosts }) {
+  // 가운데 '현재' = 지금 선택된 마네킹의 기준. 양옆은 그 기준에서의 조정 방향.
+  const [fit, setFit] = useState('current');
+  const [length, setLength] = useState('current');
+  const [matchOpen, setMatchOpen] = useState(false); // 매칭 의류는 처음엔 접혀 있음
+  const [confirmRegen, setConfirmRegen] = useState(false);
+  // 메인 매칭 의류 = 분석 페이지에서 첫 번째로 선택한 매칭 의류
+  const selMatch = (matchClothing || []).filter((m) => m.selected).sort((x, y) => (x.selOrder || 0) - (y.selOrder || 0));
+  const mainMatch = selMatch[0];
+  // 선택된 마네킹이 바뀌면 '현재' 기준도 바뀌므로 가운데로 리셋
+  useEffect(() => { setFit('current'); setLength('current'); }, [selected?.id]);
+  const noChange = fit === 'current' && length === 'current';
+  const applyAdjust = () => {
+    const fitLabel = fit === 'slim' ? '슬림' : fit === 'loose' ? '여유' : '';
+    const lenLabel = length === 'short' ? '숏' : length === 'long' ? '롱' : '';
+    onAdjust({ fit: fitLabel, length: lenLabel });
+    setFit('current'); setLength('current');
   };
+  return (
+    <div className="surface inspector adjust-panel">
+      <div className="sec-title" style={{ fontSize: 15 }}>세부 조정</div>
+      <div className="pill pill-soft" style={{ marginTop: 12 }}>{`조정 가능 횟수 ${adjustLeft}/2`}</div>
 
-  const doRegen = async () => {
-    if (adjustsLeft <= 0) { setRegenOpen(false); return; } // 재생성도 조정 횟수를 소모 (PRD §7.5)
-    setRegenOpen(false); setBusy(true); setProgress(0);
-    try {
-      const list = await api.regenerateMannequins({ onProgress: setProgress });
-      setMannequins(list);
-      incAdjust();
-      spendCredits(CREDIT_COSTS.mannequinGenerate);
-      toast?.push('마네킹컷을 다시 생성했어요.', { icon: 'refresh' });
-    } finally { setBusy(false); }
-  };
-
-  if (phase === 'loading') {
-    return (
-      <div className={styles.wrap}>
-        <PageHead title="마네킹컷을 만들고 있어요" sub="의류의 핏과 실루엣 기준을 잡는 중이에요." />
-        <div className={styles.loadingCard}>
-          <ProgressBar value={progress} label={genStepLabel(progress)} sub="생성 마지막 단계에서 잠시 멈춘 것처럼 보일 수 있어요." />
-          <div className={styles.loadingCands}>
-            <div className={styles.loadingCand}><Icon name="person" size={28} /></div>
-            <div className={styles.loadingCand}><Icon name="person" size={28} /></div>
+      {/* 메인 의류 — 상품명으로 묶은 조정 그룹 */}
+      <div className="ap-group">
+        <div className="ap-group-eyebrow">메인 의류</div>
+        <div className="ap-group-head"><Icon name="shirt" size={14} />{productName || '상품'}</div>
+        <div className="ap-sec">
+          <label className="lbl">총기장</label>
+          <div className="seg-chips">
+            {[['더 짧게', 'short'], ['현재', 'current'], ['더 길게', 'long']].map(([l, v]) => (
+              <button key={v} className={`chip${length === v ? ' on' : ''}${v === 'current' ? ' is-current' : ''}`} onClick={() => setLength(v)}>{l}</button>
+            ))}
+          </div>
+        </div>
+        <div className="ap-sec">
+          <label className="lbl">핏</label>
+          <div className="seg-chips">
+            {[['더 슬림하게', 'slim'], ['현재', 'current'], ['더 여유있게', 'loose']].map(([l, v]) => (
+              <button key={v} className={`chip${fit === v ? ' on' : ''}${v === 'current' ? ' is-current' : ''}`} onClick={() => setFit(v)}>{l}</button>
+            ))}
           </div>
         </div>
       </div>
-    );
-  }
 
+      {/* 매칭 의류 — 토글로 펼쳐서 조정 (기본 닫힘) */}
+      {mainMatch && (
+        <div className={`ap-group ap-collapsible${matchOpen ? ' open' : ''}`}>
+          <button className="ap-group-toggle" onClick={() => setMatchOpen((o) => !o)} aria-expanded={matchOpen}>
+            <span className="ap-tg-text">
+              <span className="ap-group-eyebrow">매칭 의류</span>
+              <span className="ap-group-head"><Icon name="layers" size={14} />{mainMatch.name}</span>
+            </span>
+            <Icon name={matchOpen ? 'chevUp' : 'chevDown'} size={18} />
+          </button>
+          {matchOpen && (
+            <div className="ap-collapse-body">
+              <div className="ap-sec">
+                <label className="lbl">총기장</label>
+                <div className="seg-chips">
+                  {[['더 짧게', 'short'], ['현재', 'origin'], ['더 길게', 'long']].map(([l, v]) => (
+                    <button key={v} className={`chip${(mainMatch.length || 'origin') === v ? ' on' : ''}${v === 'origin' ? ' is-current' : ''}`} onClick={() => onMatchAdjust(mainMatch.id, { length: v })}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="ap-sec">
+                <label className="lbl">핏</label>
+                <div className="seg-chips">
+                  {[['더 슬림하게', 'slim'], ['현재', 'origin'], ['더 여유있게', 'loose']].map(([l, v]) => (
+                    <button key={v} className={`chip${(mainMatch.fit || 'origin') === v ? ' on' : ''}${v === 'origin' ? ' is-current' : ''}`} onClick={() => onMatchAdjust(mainMatch.id, { fit: v })}>{l}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 20 }}>
+        <Button variant="primary" block disabled={adjustLeft <= 0 || busy || noChange}
+          onClick={applyAdjust}>의류 조정하기 · {creditCosts?.mannequinAdjust ?? 1} 크레딧</Button>
+        <Button variant="ghost" block disabled={adjustLeft <= 0 || busy} onClick={() => setConfirmRegen(true)}
+          style={{ color: 'rgba(14,13,20,.8)', minHeight: 'var(--cta-height)', borderRadius: 'var(--cta-radius)' }}>마네킹컷 전부 재생성 · {creditCosts?.mannequinGenerate ?? 2} 크레딧</Button>
+      </div>
+      {adjustLeft <= 0 && <p className="hint" style={{ marginTop: 10 }}>이번 세션의 조정 횟수를 모두 사용했어요.</p>}
+      {confirmRegen && (
+        <Modal onClose={() => setConfirmRegen(false)}>
+          <h3>마네킹컷을 다시 생성할까요?</h3>
+          <p>후보 A/B가 새로운 컷으로 교체되고, 지금까지의 조정 결과는 사라져요. 조정 횟수도 1회 차감됩니다.</p>
+          <div className="modal-actions">
+            <Button variant="ghost" onClick={() => setConfirmRegen(false)}>취소</Button>
+            <Button variant="primary" onClick={() => { setConfirmRegen(false); onRegenerate(); }}>재생성</Button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function Candidate({ letter, cuts, selectedId, onSelect }) {
+  const head = cuts.find((c) => c.id === letter + '-0') || cuts[0];
+  const current = cuts.find((c) => c.id === selectedId && c.candidate === letter);
+  const big = current || head;
   return (
-    <div className={styles.wrap}>
-      <PageHead title="원하는 느낌으로 구현된 이미지를 선택해주세요" sub="핏과 총기장을 조정해 의류 재현도를 높여보세요." />
+    <div className="candidate">
+      <div className={`big${big.id === selectedId ? ' on' : ''}`} onClick={() => onSelect(big.id)}>
+        <img src={big.src} alt={big.id} />
+        {big.id === selectedId && <span className="pill pill-ink selflag">선택됨</span>}
+      </div>
+      <div className="cap">마네킹 {letter} · {big.fitLabel} / {big.lengthLabel}</div>
+      <div className="history-strip">
+        {cuts.map((c) => (
+          <div key={c.id} className={`h${c.id === selectedId ? ' on' : ''}`} onClick={() => onSelect(c.id)}>
+            <img src={c.src} alt={c.id} /><span className="v">{c.id}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
-      <div className={styles.layout}>
-        {/* ---- left: A/B candidates ---- */}
-        <section className={styles.card}>
-          <h2 className={styles.cardTitle}>마네킹컷 선택</h2>
-          <p className={styles.cardSub}>선택한 컷이 실제 착용컷 생성의 기준이 돼요.</p>
-          <div className={styles.cands}>
-            {['A', 'B'].map((c) => {
-              const active = activeOf(c);
-              if (!active) return null;
-              const isSel = selectedId === active.id;
+// 우측 탭의 '상세페이지 구성' 미니 카드 + 좌측으로 펼쳐지는 선택 플라이아웃
+function ComposeModeMini({ modes, mode, colorCount, picking, onToggle, onPick }) {
+  const cur = (modes || []).find((m) => m.value === mode) || (modes || [])[0];
+  if (!cur) return null;
+  return (
+    <div className="surface compose-mini">
+      <div className="sec-title" style={{ fontSize: 15 }}>상세페이지 구성</div>
+      <div className="cm-mini-name">
+        <Icon name="layout" size={15} />{cur.label}
+      </div>
+      <div className="md">{cur.desc}</div>
+      <div className="mode-flow">{cur.flow.map((f, i) => <span className="flow-pill" key={i}>{f}</span>)}</div>
+      {cur.count && <div className="cm-count">예상 {cur.count}컷</div>}
+      <Button variant={picking ? 'primary' : 'ghost'} block icon={picking ? 'check' : 'layout'} onClick={onToggle} style={{ marginTop: 16 }}>
+        {picking ? '구성 방식 선택 완료' : '구성 방식 변경'}
+      </Button>
+      {picking && (
+        <>
+          <div className="mode-pop-backdrop" onClick={onToggle} />
+          <div className="mode-pop">
+            {modes.map((m) => {
+              const disabled = m.value === 'extended' && colorCount < 2;
               return (
-                <div key={c} className={styles.cand}>
-                  <button type="button" className={`${styles.candImg} ${isSel ? styles.candSel : ''}`} onClick={() => selectMannequin(active.id)}>
-                    <img src={active.src} alt={`마네킹 ${c}`} />
-                    {isSel && <span className={styles.selBadge}><Icon name="check" size={13} />선택됨</span>}
-                  </button>
-                  <div className={styles.candLabel}>마네킹 {c} · {active.fitLabel} / {active.lengthLabel}</div>
-                  <div className={styles.history}>
-                    {byCand(c).map((v) => (
-                      <button key={v.id} type="button" className={`${styles.histThumb} ${selectedId === v.id ? styles.histOn : ''}`} title={`v${v.version}`} onClick={() => selectMannequin(v.id)}>
-                        <img src={v.src} alt={`버전 ${v.version}`} />
-                      </button>
-                    ))}
-                  </div>
+                <div key={m.value} className={`mode-card pop${mode === m.value ? ' current' : ''}${disabled ? ' disabled' : ''}`}
+                  onClick={() => !disabled && onPick(m.value)}>
+                  {m.recommended && <span className="pill pill-soft badge-rec">추천</span>}
+                  {mode === m.value && <span className="pop-now">현재</span>}
+                  <h4>{m.label}</h4>
+                  <div className="md">{m.desc}</div>
+                  <div className="mode-flow">{m.flow.map((f, i) => <span className="flow-pill" key={i}>{f}</span>)}</div>
+                  {m.count && <div className="pop-count">예상 {m.count}컷</div>}
+                  {disabled && <div className="hint" style={{ marginTop: 10 }}>색상 2개 이상부터</div>}
                 </div>
               );
             })}
           </div>
-        </section>
+        </>
+      )}
+    </div>
+  );
+}
 
-        {/* ---- right: adjust + compose mode ---- */}
-        <aside className={styles.side}>
-          <section className={styles.card}>
-            <div className={styles.sideHead}>
-              <h2 className={styles.cardTitle}>세부 조정</h2>
-              <span className={styles.adjBadge}>조정 가능 횟수 {adjustsLeft}/{LIMITS.mannequinAdjustMax}</span>
-            </div>
+export function Mannequin() {
+  const navigate = useNavigate();
+  const [phase, setPhase] = useState('loading');
+  const [progress, setProgress] = useState(0);
+  const [cuts, setCuts] = useState([]);
+  const [selectedId, setSelectedId] = useState('A-0');
+  const [adjustLeft, setAdjustLeft] = useState(2);
+  const [busy, setBusy] = useState(false);
+  const [matchClothing, setMatchClothing] = useState(null);
+  const [productName, setProductName] = useState('');
+  const [catalogs, setCatalogs] = useState(null);
+  const [colorCount, setColorCount] = useState(1);
+  const [composeMode, setComposeMode] = useState('basic'); // 기본형 디폴트
+  const [picking, setPicking] = useState(false);
+  const toast = useToast();
 
-            <div className={styles.adjGroup}>
-              <div className={styles.adjMain}><Icon name="shirt" size={15} />메인 의류</div>
-              <span className={styles.adjLabel}>총기장</span>
-              <div className={styles.segRow}>
-                {LENGTHS.map((l) => (
-                  <button key={l} type="button" className={`${styles.seg} ${lengthSel === l ? styles.segOn : ''}`} onClick={() => setLengthSel(l)}>{l}</button>
-                ))}
-              </div>
-              <span className={styles.adjLabel}>핏</span>
-              <div className={styles.segRow}>
-                {FITS.map((f) => (
-                  <button key={f} type="button" className={`${styles.seg} ${fitSel === f ? styles.segOn : ''}`} onClick={() => setFitSel(f)}>{f}</button>
-                ))}
-              </div>
-            </div>
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+    document.querySelector('.app-main')?.scrollTo({ top: 0 });
+    api.generateMannequins({ onProgress: setProgress }).then((m) => { setCuts(m); setPhase('ready'); });
+    api.getMatchClothing().then(setMatchClothing);
+    api.getProduct().then((p) => { setProductName(p?.name || ''); setColorCount((p?.colors || []).length || 1); });
+    api.getCatalogs().then(setCatalogs);
+  }, []);
 
-            {mainMatch && (
-              <div className={styles.matchAdjust}>
-                <button type="button" className={styles.matchToggle} onClick={() => setMatchOpen((v) => !v)}>
-                  <span><Icon name="layers" size={14} />매칭 의류 · {mainMatch.name}</span>
-                  <Icon name={matchOpen ? 'chevUp' : 'chevDown'} size={16} />
-                </button>
-                {matchOpen && (
-                  <div className={styles.matchBody}>
-                    <span className={styles.adjLabel}>총기장 / 핏은 메인 조정과 함께 적용돼요.</span>
-                  </div>
-                )}
-              </div>
-            )}
+  const selected = cuts.find((c) => c.id === selectedId);
+  const cutsA = cuts.filter((c) => c.candidate === 'A');
+  const cutsB = cuts.filter((c) => c.candidate === 'B');
 
-            <Button variant="primary" block disabled={!canAdjust} onClick={doAdjust}>
-              {busy ? `조정 중… ${progress}%` : `의류 조정하기 · ${CREDIT_COSTS.mannequinAdjust} 크레딧`}
-            </Button>
-            <Button variant="ghost" block icon="refresh" disabled={busy || adjustsLeft <= 0} onClick={() => setRegenOpen(true)}>
-              마네킹컷 전부 재생성 · {CREDIT_COSTS.mannequinGenerate} 크레딧
-            </Button>
-            {adjustsLeft <= 0 && <p className={styles.adjNote}>이번 세션의 조정 횟수를 모두 사용했어요.</p>}
-          </section>
+  const adjust = async ({ fit, length }) => {
+    if (adjustLeft <= 0) return; setBusy(true);
+    const base = selected || cuts[0];
+    const next = await api.adjustMannequin({ baseId: base.id, fit, length });
+    setCuts((c) => [...c, next]); setSelectedId(next.id); setAdjustLeft((n) => n - 1); setBusy(false);
+    toast.push('조정 결과를 만들었어요', { icon: 'wand' });
+  };
+  const regenerate = async () => {
+    if (adjustLeft <= 0) return; setBusy(true);
+    const all = await api.regenerateMannequins({}); setCuts(all); setAdjustLeft((n) => n - 1); setBusy(false);
+    toast.push('후보 A/B를 새로 생성했어요', { icon: 'refresh' });
+  };
 
-          {/* compose mode mini card */}
-          <section className={styles.card}>
-            <h2 className={styles.cardTitle}>상세페이지 구성</h2>
-            <div className={styles.modeCard}>
-              <div className={styles.modeTop}>
-                <Icon name="layout" size={16} />
-                <span className={styles.modeName}>{currentMode?.label}</span>
-                {currentMode?.recommended && <span className={styles.modeRec}>추천</span>}
-              </div>
-              <p className={styles.modeDesc}>{currentMode?.desc}</p>
-              <div className={styles.modeFlow}>
-                {(currentMode?.flow || []).map((f, i) => <span key={i} className={styles.flowChip}>{f}</span>)}
-              </div>
-              <Button variant="ghost" size="sm" block onClick={() => setModeOpen(true)}>구성 방식 변경</Button>
-            </div>
-          </section>
-        </aside>
+  if (phase === 'loading') return <MannequinLoading progress={progress} />;
+
+  const candidates = (
+    <div className="surface">
+      <div className="sec-title" style={{ marginBottom: 4 }}>마네킹컷 선택</div>
+      <div className="sec-sub" style={{ marginBottom: 18 }}>선택한 컷이 실제 착용컷 생성의 기준이 돼요.</div>
+      <div className="candidate-row">
+        <Candidate letter="A" cuts={cutsA} selectedId={selectedId} onSelect={setSelectedId} />
+        <Candidate letter="B" cuts={cutsB} selectedId={selectedId} onSelect={setSelectedId} />
       </div>
+    </div>
+  );
+  const toggleMatch = (id) => setMatchClothing((mc) => mc.map((m) => m.id === id ? { ...m, selected: !m.selected } : m));
+  const matchAdjust = (id, patch) => setMatchClothing((mc) => mc.map((m) => m.id === id ? { ...m, ...patch } : m));
+  const panel = <AdjustPanel selected={selected} adjustLeft={adjustLeft} onAdjust={adjust} onRegenerate={regenerate} busy={busy} productName={productName} matchClothing={matchClothing} onToggleMatch={toggleMatch} onMatchAdjust={matchAdjust} creditCosts={catalogs?.creditCosts} />;
+  const modes = catalogs?.composeModes || [];
+  const pickMode = (v) => { setComposeMode(v); setPicking(false); };
+  // 우측 컬럼 = 세부 조정 패널(위) + 상세페이지 구성 미니 카드(아래)
+  const rightCol = (
+    <div className="mq-side">
+      {panel}
+      <ComposeModeMini modes={modes} mode={composeMode} colorCount={colorCount} picking={picking} onToggle={() => setPicking((p) => !p)} onPick={pickMode} />
+    </div>
+  );
 
+  const body = <div className="mannequin-layout">{candidates}{rightCol}</div>;
+
+  return (
+    <div className="wizard wide">
+      <PageHead title="원하는 느낌으로 구현된 이미지를 선택해주세요" sub="핏과 총기장을 조정해 의류 재현도를 높여보세요." />
+      {body}
       <WizardCTA>
-        <Button variant="quiet" icon="arrowLeft" onClick={() => navigate('/create/input')}>이전</Button>
-        <Button variant="primary" size="lg" iconRight="arrowRight" disabled={busy} onClick={() => navigate('/create/storyboard')}>콘티보드로</Button>
+        <Button variant="primary" size="lg" iconRight="arrowRight" onClick={() => navigate('/create/storyboard')}>이 마네킹컷으로 콘티 만들기</Button>
       </WizardCTA>
-
-      {/* ---- compose mode chooser ---- */}
-      {modeOpen && (
-        <Modal onClose={() => setModeOpen(false)}>
-          <h3 className={styles.modalTitle}>구성 방식 선택</h3>
-          <div className={styles.modeList}>
-            {composeModes.map((m) => {
-              const disabled = m.value === 'extended' && colorCount < 2;
-              return (
-                <button
-                  key={m.value}
-                  type="button"
-                  disabled={disabled}
-                  className={`${styles.modeOption} ${composeMode === m.value ? styles.modeOptionOn : ''}`}
-                  onClick={() => { setComposeMode(m.value); setModeOpen(false); }}
-                >
-                  <div className={styles.modeOptTop}>
-                    <span className={styles.modeName}>{m.label}</span>
-                    {m.recommended && <span className={styles.modeRec}>추천</span>}
-                    <span className={styles.modeCount}>{m.count}컷</span>
-                  </div>
-                  <p className={styles.modeDesc}>{m.desc}</p>
-                  {disabled && <p className={styles.modeDisabled}>색상이 2개 이상일 때 선택할 수 있어요.</p>}
-                </button>
-              );
-            })}
-          </div>
-        </Modal>
-      )}
-
-      {/* ---- regenerate confirm ---- */}
-      {regenOpen && (
-        <Modal onClose={() => setRegenOpen(false)}>
-          <h3 className={styles.modalTitle}>마네킹컷을 전부 다시 생성할까요?</h3>
-          <p className={styles.modalBody}>지금까지 선택하고 조정한 결과가 새 컷으로 바뀔 수 있어요. 재생성은 조정 횟수와 크레딧 {CREDIT_COSTS.mannequinGenerate}을 사용해요.</p>
-          <div className={styles.modalActions}>
-            <Button variant="quiet" onClick={() => setRegenOpen(false)}>취소</Button>
-            <Button variant="primary" onClick={doRegen}>재생성</Button>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }

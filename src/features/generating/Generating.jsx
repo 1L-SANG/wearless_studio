@@ -1,51 +1,40 @@
 /* =============================================================
-   generating/Generating.jsx — 생성 대기 페이지 (PRD §9).
-   전체 진행바 + 단계 체크리스트 + 상단 구성요소 pill. 완료 시
-   자동으로 에디터로 진입한다.
+   features/generating — ⑥ 생성 대기 (PRD §9)
+   Ported verbatim from reference/prototype/features/generating.jsx.
+   Only change: ES imports; onDone → navigate('/editor/new').
    ============================================================= */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
-import { useAppStore } from '@/store/useAppStore.js';
-import { ProgressBar, Checklist } from '@/components/Progress.jsx';
-import { PageHead } from '@/features/shell/PageHead.jsx';
-import styles from './Generating.module.css';
+import { ProgressBar, Checklist } from '@/components/ui.jsx';
+import { PageHead } from '@/features/shell/shell.jsx';
 
 export function Generating() {
   const navigate = useNavigate();
-  const storyboard = useAppStore((s) => s.storyboard);
-  const composeMode = useAppStore((s) => s.composeMode);
-  const catalogs = useAppStore((s) => s.catalogs);
   const [progress, setProgress] = useState(0);
   const [steps, setSteps] = useState([]);
-  const started = useRef(false);
+  const composition = ['후킹', '셀링포인트', '스타일링컷', '호리존컷', '제품컷'];
 
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-    api.generateDetailPage({ onProgress: setProgress, onStep: setSteps })
-      .then(() => setTimeout(() => navigate('/editor/new'), 500));
-  }, [navigate]);
+    api.generateDetailPage({ onProgress: setProgress, onStep: setSteps }).then(() => setTimeout(() => navigate('/editor/new'), 600));
+  }, []);
 
-  const pills = storyboard.length
-    ? [...new Set(storyboard.map((b) => b.title))]
-    : (catalogs?.composeModes?.find((m) => m.value === composeMode)?.flow || []);
+  const running = steps.find((s) => s.status === 'running');
+  const current = running ? running.label + '을 만들고 있어요' : progress >= 100 ? '상세페이지를 조립했어요' : '준비하는 중이에요';
 
   return (
-    <div className={styles.wrap}>
-      <PageHead title="상세페이지를 만들고 있어요" sub="콘티에서 확정한 컷과 카피를 바탕으로 생성 중이에요." />
-
-      <section className={styles.card}>
-        {pills.length > 0 && (
-          <div className={styles.pills}>
-            {pills.map((p, i) => <span key={i} className={styles.pill}>{p}</span>)}
-          </div>
-        )}
-        <ProgressBar value={progress} label="상세페이지 생성 중" />
-        <div className={styles.checklist}>
-          <Checklist items={steps} />
+    <div className="wizard">
+      <PageHead title="상세페이지를 생성하고 있어요" sub="콘티에 맞춰 이미지와 카피를 함께 만들고 있습니다." />
+      <div className="surface gen-center">
+        <ProgressBar value={progress} label={current} />
+        <div className="comp-pills">
+          {composition.map((c) => <span className="flow-pill" key={c}>{c}</span>)}
         </div>
-      </section>
+      </div>
+      <div className="surface">
+        <div className="sec-title" style={{ fontSize: 15, marginBottom: 6 }}>생성 진행 상황</div>
+        <Checklist items={steps.map((s) => ({ key: s.key, label: s.label, status: s.status }))} />
+      </div>
     </div>
   );
 }

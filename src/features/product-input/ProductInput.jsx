@@ -1,237 +1,294 @@
 /* =============================================================
-   product-input/ProductInput.jsx — 제품 정보 입력 + 인라인 AI 분석.
-   (PRD §5, §6, §13.1) input + analysis are a single route. On
-   "입력 완료" the input collapses to a summary card and analysis
-   runs inline below, then the AnalysisForm renders in place.
+   features/product-input — ① 제품 정보 입력 (PRD §5)
+   Ported verbatim from reference/prototype/features/product-input.jsx.
+   Only change: ES imports/exports; onNext → React Router navigate.
+   Markup, classNames, inline styles, real file upload unchanged.
    ============================================================= */
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
-import { Placeholder } from '@/mock/placeholders.js';
-import { useAppStore } from '@/store/useAppStore.js';
-import { LIMITS } from '@/lib/limits.js';
-import { Button } from '@/components/Button.jsx';
-import { Icon } from '@/components/Icon.jsx';
-import { Field } from '@/components/Form.jsx';
-import { Skeleton, ErrorState } from '@/components/States.jsx';
-import { PageHead } from '@/features/shell/PageHead.jsx';
-import { useToast } from '@/components/Toast.jsx';
-import { UploadWell } from './UploadWell.jsx';
-import { AnalysisForm } from '@/features/analysis/AnalysisForm.jsx';
-import styles from './ProductInput.module.css';
+import { DB } from '@/mock/db.js';
+import { Icon, Button, IconButton, Skeleton, useToast } from '@/components/ui.jsx';
+import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
+import { AnalysisForm, AnalysisSkeleton } from '@/features/analysis/AnalysisForm.jsx';
 
-const BASE_SLOTS = ['Front', 'Back', 'Detail', 'Fit'];
+// human-readable file size
+const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 
-function mockUpload(slot, label) {
-  const id = Math.random().toString(36).slice(2, 8);
-  const src = slot === 'Detail'
-    ? Placeholder.detail('up' + id, 300, 400)
-    : Placeholder.photo('up' + id, slot === 'Fit' ? 'styling' : 'horizon', 300, 400);
-  return {
-    id: 'img_' + id, slot, label, src,
-    file: { name: `product_${(slot || 'img').toLowerCase()}_${id}.jpg`, size: `${(0.4 + Math.random() * 2.6).toFixed(1)} MB`, type: 'JPG' },
+function ColorSwatchPicker({ swatchColors, value, onChange }) {
+  return (
+    <div className="color-pick">
+      <div className="color-pick-head">
+        <label className="lbl">색상 선택</label>
+        <span className="hint">이 색상의 이름을 골라주세요</span>
+      </div>
+      <div className="swatch-grid">
+        {swatchColors.map((s) => {
+          const on = value === s.id;
+          return (
+            <button key={s.id} className={`swatch${on ? ' on' : ''}`} onClick={() => onChange(s.id)}>
+              <span className="swatch-dot" style={{ background: s.hex }} />
+              {s.label}
+              {on && <Icon name="check" size={13} className="check" />}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// build file metas from a FileList (drag-drop / picker), capping to the room left
+const filesToMetas = (fileList, room) => {
+  const imgs = [...fileList].filter((f) => f.type && f.type.startsWith('image/'));
+  return imgs.slice(0, Math.max(0, room)).map((f) => ({ src: URL.createObjectURL(f), name: f.name, size: f.size, type: f.type || 'image', lastModified: f.lastModified }));
+};
+const fileExt = (im) => (im.type && im.type.split('/')[1] ? im.type.split('/')[1].toUpperCase() : 'IMG');
+
+// small file-meta caption shown over an uploaded image (name · size · type) — requested feature
+function MetaCap({ im }) {
+  return (
+    <span className="img-cap">
+      <span className="img-cap-name" title={im.name}>{im.name || '이미지'}</span>
+      <span className="img-cap-sub">{fmtSize(im.size)} · {fileExt(im)}</span>
+    </span>
+  );
+}
+
+// add target that ALSO accepts drag-drop + click-to-pick (keeps original .tile.add / .up-empty styles)
+function AddDrop({ className, slot, room, onAddFiles, children }) {
+  const [over, setOver] = useState(false);
+  const inputRef = useRef(null);
+  const disabled = room <= 0;
+  const take = (fileList) => { const metas = filesToMetas(fileList, room); if (metas.length) onAddFiles(slot, metas); };
+  return (
+    <button type="button" className={`${className}${over ? ' over' : ''}`} disabled={disabled}
+      onClick={() => inputRef.current && inputRef.current.click()}
+      onDragOver={(e) => { e.preventDefault(); if (!disabled) setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => { e.preventDefault(); setOver(false); if (!disabled) take(e.dataTransfer.files); }}>
+      <input ref={inputRef} type="file" accept="image/*" multiple hidden
+        onChange={(e) => { take(e.target.files); e.target.value = ''; }} />
+      {children}
+    </button>
+  );
+}
+
+function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, onRename, onRemoveGroup, onPickColor }) {
+  const base = group.isBase;
+  const used = group.images.length;
+  const chosen = (swatchColors || []).find((s) => s.id === group.swatchId);
+  // color indicator (dot + label); gray "색상 미정" until a swatch is picked
+  const colorInd = (
+    <span className="color-ind" title={chosen ? chosen.label : '색상 미정'}>
+      <span className={`color-ind-dot${chosen ? '' : ' undecided'}`} style={{ background: chosen ? chosen.hex : '#d4d4d8' }} />
+      <span className={`color-ind-label${chosen ? '' : ' undecided'}`}>{chosen ? chosen.label : '색상 미정'}</span>
+    </span>
+  );
+  const slotLabel = (s) => (catalogs.angleLabels && catalogs.angleLabels[s]) || s;
+  const MAX = 6;
+  const tiles = (s, small) => {
+    const imgs = group.images.filter((im) => im.slot === s);
+    return (
+      <div className="slot-tiles">
+        {imgs.map((im) => (
+          <div className={`tile${small ? ' sm' : ''}`} key={im.id}>
+            <img src={im.src} alt="" onError={(e) => { e.currentTarget.style.opacity = 0; }} />
+            <button className="rm" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>
+            <MetaCap im={im} />
+          </div>
+        ))}
+        <AddDrop className={`tile add${small ? ' sm' : ''}`} slot={s} room={MAX - used} onAddFiles={onAddFiles}>
+          <span className="add-ico"><Icon name="imagePlus" size={small ? 24 : 26} /></span>
+          <span className="add-cap"><span>이미지를</span><span>업로드해주세요</span></span>
+        </AddDrop>
+      </div>
+    );
   };
+  // 2×2 angle "wells" — all four angles at a glance, images stack inside each
+  const wellSlot = (s) => (
+    <div className="slot-well" key={s}>
+      <div className="slot-well-head"><span className="swh-label">{slotLabel(s)}{s === 'Front' && <span className="req-star">*</span>}</span></div>
+      {tiles(s, true)}
+    </div>
+  );
+  return (
+    <div className="color-group">
+      {!base && (
+        <div className="color-group-head">
+          <div className="ttl">
+            <span className="color-swatch" style={{ background: chosen ? chosen.hex : '#e9e7ec' }} />
+            <div className="sec-title" style={{ fontSize: 15 }}>{chosen ? chosen.label : group.name || '색상'}</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <IconButton name="trash" size="sm" onClick={onRemoveGroup} title="색상 삭제" />
+          </div>
+        </div>
+      )}
+
+      {base ? (
+        <>
+          <div className="color-bar">{colorInd}</div>
+          <div className="slot-wells">{catalogs.angleSlots.map(wellSlot)}</div>
+        </>
+      ) : (
+        <div className="slot-tiles">
+          {group.images.map((im) => (
+            <div className="tile" key={im.id}>
+              <img src={im.src} alt="" onError={(e) => { e.currentTarget.style.opacity = 0; }} />
+              <button className="rm" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>
+              <MetaCap im={im} />
+            </div>
+          ))}
+          <AddDrop className="tile add" slot="Front" room={3 - used} onAddFiles={onAddFiles}>
+            <Icon name="plus" size={16} />{used === 0 ? '정면 필수' : '추가'}
+          </AddDrop>
+        </div>
+      )}
+
+      {used > 0 && (
+        <ColorSwatchPicker swatchColors={swatchColors} value={group.swatchId} onChange={onPickColor} />
+      )}
+
+      {!base && <p className="cap-note">정면 사진 필수 · 색상당 최대 3장 · 현재 {used}장</p>}
+    </div>
+  );
 }
 
 export function ProductInput() {
   const navigate = useNavigate();
+  const [product, setProduct] = useState(null);
+  const [catalogs, setCatalogs] = useState(null);
+  const [phase, setPhase] = useState('input');   // input | analyzing | done
+  const [analysis, setAnalysis] = useState(null);
+  const [expanded, setExpanded] = useState(false);
   const toast = useToast();
-  const catalogs = useAppStore((s) => s.catalogs);
-  const loadCatalogs = useAppStore((s) => s.loadCatalogs);
-  const setProduct = useAppStore((s) => s.setProduct);
-  const setAnalysis = useAppStore((s) => s.setAnalysis);
 
-  useEffect(() => { loadCatalogs(); }, [loadCatalogs]);
+  useEffect(() => {
+    Promise.all([api.getProduct(), api.getCatalogs()]).then(([p, c]) => {
+      p = { ...p, name: '', colors: [{ ...p.colors[0], swatchId: undefined, images: [] }] };
+      setProduct(p); setCatalogs(c);
+    });
+  }, []);
 
-  const [name, setName] = useState('');
-  const [base, setBase] = useState({ Front: null, Back: null, Detail: null, Fit: null });
-  const [extras, setExtras] = useState([]); // { id, colorId, images:[] }
-  const [phase, setPhase] = useState('input'); // input | analyzing | error | analysis
-  const [expanded, setExpanded] = useState(true);
-  const [progress, setProgress] = useState(0);
+  if (!product || !catalogs) return <div className="wizard"><div className="surface"><Skeleton h={420} /></div></div>;
 
-  const angleLabels = catalogs?.angleLabels || {};
-  const swatches = catalogs?.swatchColors || [];
+  const set = (patch) => setProduct((p) => ({ ...p, ...patch }));
+  // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
+  const addImageFiles = (colorId, slot, metas) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: [...c.images, ...metas.map((m) => ({ id: DB.uid('img'), slot, label: slot, ...m }))] } : c) }));
+  const removeImage = (colorId, imgId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: c.images.filter((im) => im.id !== imgId) } : c) }));
+  const renameColor = (colorId, name) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, name } : c) }));
+  const setColor = (colorId, swatchId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, swatchId } : c) }));
+  const addColor = () => setProduct((p) => p.colors.length >= 3 ? p : ({ ...p, colors: [...p.colors, { id: DB.uid('col'), name: '', isBase: false, images: [] }] }));
+  const removeColor = (colorId) => setProduct((p) => ({ ...p, colors: p.colors.filter((c) => c.id !== colorId) }));
 
-  const imageCount = useMemo(
-    () => Object.values(base).filter(Boolean).length + extras.reduce((n, c) => n + c.images.length, 0),
-    [base, extras],
-  );
-  const colorCount = 1 + extras.length;
-  const canComplete = !!base.Front;
-  const firstThumb = base.Front?.src || base.Back?.src || null;
+  const hasFront = product.colors.some((c) => c.images.some((im) => im.slot === 'Front'));
+  const hasName = !!(product.name && product.name.trim());
+  const canDone = hasFront && phase === 'input';
+  const locked = phase !== 'input';
 
-  /* ---- base color wells ---- */
-  const addBase = (slot) => setBase((b) => ({ ...b, [slot]: mockUpload(slot, angleLabels[slot] || slot) }));
-  const removeBase = (slot) => setBase((b) => ({ ...b, [slot]: null }));
-
-  /* ---- extra colors ---- */
-  const addExtraColor = () => {
-    if (extras.length >= LIMITS.additionalColorMax) return;
-    setExtras((e) => [...e, { id: 'col_' + Math.random().toString(36).slice(2, 7), colorId: null, images: [] }]);
-  };
-  const removeExtraColor = (id) => setExtras((e) => e.filter((c) => c.id !== id));
-  const pickSwatch = (id, colorId) => setExtras((e) => e.map((c) => (c.id === id ? { ...c, colorId } : c)));
-  const addExtraImage = (id) => setExtras((e) => e.map((c) => (
-    c.id === id && c.images.length < LIMITS.additionalColorMaxImages
-      ? { ...c, images: [...c.images, mockUpload('Front', '정면')] }
-      : c
-  )));
-  const removeExtraImage = (id, imgId) => setExtras((e) => e.map((c) => (
-    c.id === id ? { ...c, images: c.images.filter((im) => im.id !== imgId) } : c
-  )));
-
-  /* ---- complete → analyze inline ---- */
-  const runAnalysis = () => {
+  // 입력 완료 → analyze inline (skeleton below) → fill analysis form below
+  const submit = async () => {
     setPhase('analyzing');
-    setProgress(0);
-    api.analyzeProduct({ onProgress: setProgress })
-      .then((analysis) => { setAnalysis(analysis); setPhase('analysis'); })
-      .catch((err) => { setPhase('error'); toast?.push(err.message || '분석에 실패했어요.', { icon: 'alertCircle' }); });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const [a] = await Promise.all([api.analyzeProduct({})]);
+    setAnalysis(a);
+    // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨
+    const finalName = (product.name && product.name.trim()) ? product.name.trim() : (a.suggestedName || '새 상품');
+    if (!product.name || !product.name.trim()) set({ name: finalName });
+    // persist the user's input (name + 색상/이미지) into the create flow so the
+    // downstream steps (mannequin / storyboard / editor) read what was entered,
+    // not the seed (mock/api.saveProduct → DB.product). [data-flow fix]
+    await api.saveProduct({ ...product, name: finalName, uploadComplete: true });
+    setPhase('done');
+    toast.push('AI 분석을 완료했어요', { icon: 'sparkles' });
   };
 
-  const onComplete = () => {
-    if (!canComplete) return;
-    const baseImages = BASE_SLOTS.map((s) => base[s]).filter(Boolean);
-    const colors = [
-      { id: 'col1', name: '기준 색상', isBase: true, isMain: true, images: baseImages },
-      ...extras.map((c) => ({
-        id: c.id,
-        name: swatches.find((s) => s.id === c.colorId)?.label || '색상 미정',
-        isBase: false,
-        images: c.images,
-      })),
-    ];
-    setProduct({ id: 'prd_' + Date.now(), name: name.trim(), clothingType: 'top', colors, measurements: [], measurementsUnknown: false, uploadComplete: true });
-    setExpanded(false);
-    runAnalysis();
-  };
+  const nameCard = (
+    <div className="surface">
+      <div className="sec-head">
+        <div><div className="sec-title">상품명</div></div>
+      </div>
+      <input className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
+        disabled={locked} onChange={(e) => set({ name: e.target.value })} />
+    </div>
+  );
+
+  const allUploaded = product.colors.flatMap((c) => c.images);
+  const imgCount = product.colors[0] ? product.colors[0].images.length : 0;
+  const images = (
+    <div className="surface pi-images">
+      <div className="sec-head">
+        <div className="ttl" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="sec-title" style={{ whiteSpace: 'nowrap' }}>상품 이미지</div>
+          <span className="pill pill-soft">{imgCount}장</span>
+        </div>
+      </div>
+      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16 }}>각도별로 한 장 이상 올리면 더 정확한 상세페이지가 만들어져요. 앞면은 필수예요.</div>
+      {product.colors.map((c) => (
+        <ColorImageGroup key={c.id} group={c} catalogs={catalogs} swatchColors={catalogs.swatchColors}
+          onAddFiles={(slot, metas) => addImageFiles(c.id, slot, metas)} onRemove={(id) => removeImage(c.id, id)}
+          onRename={(n) => renameColor(c.id, n)} onRemoveGroup={() => removeColor(c.id)} onPickColor={(sid) => setColor(c.id, sid)} />
+      ))}
+      {!locked && (
+        <div style={{ marginTop: 16 }}>
+          <Button variant="quiet" icon="plus" onClick={addColor} disabled={product.colors.length >= 3}>색상 추가</Button>
+          {product.colors.length >= 3 && <p className="hint" style={{ marginTop: 8 }}>색상은 최대 3개까지 추가할 수 있어요.</p>}
+        </div>
+      )}
+    </div>
+  );
+
+  // 입력 섹션: 상품명 + 이미지를 한 카드로
+  const inputSection = <div className="merged-card">{nameCard}{images}</div>;
+
+  const wide = phase !== 'input';
+
+  // after 입력 완료, the input collapses into a compact summary above the analysis
+  const allImages = product.colors.flatMap((c) => c.images);
+  const colorCount = product.colors.filter((c) => c.images.length).length;
+  const summaryCard = (
+    <div className="surface pi-summary">
+      <div className="pi-summary-row">
+        <div className="pi-summary-thumbs">
+          {allImages.slice(0, 5).map((im) => <img key={im.id} src={im.src} alt="" />)}
+          {allImages.length > 5 && <span className="more">+{allImages.length - 5}</span>}
+        </div>
+        <div className="pi-summary-meta">
+          <div className="sec-title" style={{ fontSize: 15 }}>{product.name || '상품 이미지'}</div>
+          <div className="hint" style={{ marginTop: 3 }}>이미지 {allImages.length}장 · 색상 {colorCount || 1}</div>
+        </div>
+        <button className="btn btn-quiet btn-sm" onClick={() => setExpanded((e) => !e)}>
+          {expanded ? '접기' : '펼치기'}<Icon name={expanded ? 'chevUp' : 'chevDown'} size={15} />
+        </button>
+      </div>
+      {expanded && <div className="pi-summary-body">{inputSection}</div>}
+    </div>
+  );
 
   return (
-    <div className={styles.wrap}>
+    <div className={`wizard${wide ? ' wide' : ''}`}>
       <PageHead title="의류 이미지를 올려주세요" />
 
-      {/* ---- summary card (after 입력 완료) ---- */}
-      {phase !== 'input' && (
-        <div className={styles.summary}>
-          <div className={styles.summaryThumb}>{firstThumb ? <img src={firstThumb} alt="" /> : <Icon name="image" size={20} />}</div>
-          <div className={styles.summaryInfo}>
-            <div className={styles.summaryName}>{name.trim() || '상품명 미입력'}</div>
-            <div className={styles.summaryMeta}>이미지 {imageCount}장 · 색상 {colorCount}개</div>
-          </div>
-          <Button variant="quiet" size="sm" icon={expanded ? 'chevUp' : 'chevDown'} onClick={() => setExpanded((v) => !v)}>
-            {expanded ? '접기' : '펼치기'}
-          </Button>
-        </div>
-      )}
+      {phase === 'input' ? inputSection : summaryCard}
 
-      {/* ---- input section ---- */}
-      {(phase === 'input' || expanded) && (
-        <section className={styles.card}>
-          <div className={styles.block}>
-            <h2 className={styles.blockTitle}>상품명</h2>
-            <Field placeholder="예: 소프트 골지 라운드 니트" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-
-          <div className={styles.divider} />
-
-          <div className={styles.block}>
-            <div className={styles.blockHeadRow}>
-              <h2 className={styles.blockTitle}>상품 이미지</h2>
-              <span className={styles.counter}>{imageCount}장</span>
-            </div>
-            <p className={styles.blockHint}>각도별로 한 장 이상 올리면 더 정확한 상세페이지가 만들어져요. 앞면은 필수예요.</p>
-
-            <div className={styles.colorHead}><span className={styles.colorDot} />기준 색상</div>
-            <div className={styles.wellGrid}>
-              {BASE_SLOTS.map((slot) => (
-                <UploadWell
-                  key={slot}
-                  label={angleLabels[slot] || slot}
-                  required={slot === 'Front'}
-                  image={base[slot]}
-                  onAdd={() => addBase(slot)}
-                  onRemove={() => removeBase(slot)}
-                />
-              ))}
-            </div>
-
-            {/* extra colors */}
-            {extras.map((c) => {
-              const sw = swatches.find((s) => s.id === c.colorId);
-              return (
-                <div key={c.id} className={styles.extraColor}>
-                  <div className={styles.extraHead}>
-                    <div className={styles.swatchPicker}>
-                      <span className={styles.colorChip} data-empty={!sw} style={sw ? { '--sw': sw.hex } : undefined} />
-                      <span className={styles.extraName}>{sw?.label || '색상 미정'}</span>
-                    </div>
-                    <button type="button" className={styles.extraRemove} onClick={() => removeExtraColor(c.id)}><Icon name="x" size={14} />색상 삭제</button>
-                  </div>
-                  <div className={styles.swatchRow}>
-                    {swatches.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        className={`${styles.swatch} ${c.colorId === s.id ? styles.swatchOn : ''}`}
-                        style={{ '--sw': s.hex }}
-                        title={s.label}
-                        onClick={() => pickSwatch(c.id, s.id)}
-                      />
-                    ))}
-                  </div>
-                  <div className={styles.extraWells}>
-                    {c.images.map((im) => (
-                      <UploadWell key={im.id} label="정면" image={im} onRemove={() => removeExtraImage(c.id, im.id)} />
-                    ))}
-                    {c.images.length < LIMITS.additionalColorMaxImages && (
-                      <UploadWell label="정면" required={c.images.length === 0} image={null} onAdd={() => addExtraImage(c.id)} />
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-
-            {extras.length < LIMITS.additionalColorMax && (
-              <Button variant="ghost" size="sm" icon="plus" onClick={addExtraColor}>추가 색상</Button>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* ---- complete CTA (input phase only) ---- */}
       {phase === 'input' && (
-        <div className={styles.cta}>
-          <Button variant="primary" size="lg" disabled={!canComplete} onClick={onComplete}>입력 완료</Button>
-          {!canComplete && <p className={styles.ctaHint}>앞면 이미지를 한 장 이상 올리면 분석을 시작할 수 있어요.</p>}
+        <>
+          <WizardCTA>
+            <Button variant="primary" size="lg" icon="check" disabled={!canDone} onClick={submit}>입력 완료</Button>
+          </WizardCTA>
+          {!canDone && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>앞면 이미지를 1장 이상 올리면 입력을 완료할 수 있어요.</p>}
+        </>
+      )}
+
+      <div className="af-anchor" />
+      {phase === 'analyzing' && <AnalysisSkeleton />}
+      {phase === 'done' && (
+        <div className="pi-reveal">
+          <AnalysisForm inline analysis={analysis} catalogs={catalogs}
+            onChange={(patch) => { setAnalysis((a) => ({ ...a, ...patch })); api.saveAnalysis(patch); }}
+            onNext={() => navigate('/create/mannequin')} />
         </div>
-      )}
-
-      {/* ---- analysis loading skeleton (PRD §5.5) ---- */}
-      {phase === 'analyzing' && (
-        <section className={styles.card}>
-          <div className={styles.analyzing}>
-            <Icon name="loader" size={18} className="spin" />
-            <span>AI가 상품을 분석하고 있어요… {progress}%</span>
-          </div>
-          <div className={styles.skelRows}>
-            <Skeleton w="40%" h={22} />
-            <Skeleton h={60} />
-            <Skeleton h={60} />
-            <Skeleton w="60%" h={60} />
-          </div>
-        </section>
-      )}
-
-      {phase === 'error' && (
-        <section className={styles.card}>
-          <ErrorState desc="분석 서버에 일시적인 문제가 발생했어요." onRetry={runAnalysis} />
-        </section>
-      )}
-
-      {/* ---- inline analysis form (PRD §6) ---- */}
-      {phase === 'analysis' && (
-        <AnalysisForm onNext={() => navigate('/create/mannequin')} />
       )}
     </div>
   );

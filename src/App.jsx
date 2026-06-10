@@ -11,7 +11,7 @@ import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
 import { Generating } from '@/features/generating/Generating.jsx';
-import { EditorStub } from '@/features/editor/EditorStub.jsx';
+import { Editor } from '@/features/editor/Editor.jsx';
 
 export default function App() {
   return (
@@ -28,7 +28,7 @@ export default function App() {
         </Route>
       </Route>
       {/* editor lives outside the chrome (full-screen workspace) */}
-      <Route path="editor/:id" element={<EditorStub />} />
+      <Route path="editor/:id" element={<Editor />} />
       <Route path="*" element={<Navigate to="/create/input" replace />} />
     </Routes>
   );
