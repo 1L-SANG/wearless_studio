@@ -65,13 +65,17 @@ export const api = {
     await runJob({ duration: 1800, onProgress });
     const base = DB.mannequins.find((m) => m.id === baseId) || DB.mannequins[0];
     const sameCand = DB.mannequins.filter((m) => m.candidate === base.candidate);
-    // 매칭 의류 변경분도 결과 컷에 반영 (캡션으로 노출) — 변경 없으면 base 유지
-    const matchLabel = match && (match.fit || match.length)
-      ? `${match.name} ${[match.length === 'short' ? '숏기장' : match.length === 'long' ? '롱기장' : '',
-          match.fit === 'slim' ? '슬림' : match.fit === 'loose' ? '여유' : ''].filter(Boolean).join(' ')}`.trim()
-      : (base.matchLabel || '');
+    // 매칭 의류 fit/length 를 각 차원별로 누적 (메인 fitLabel/lengthLabel 과 동일 방식):
+    // 이번에 안 바뀐 차원은 base 값으로 폴백해서, 연속 조정 시 직전 차원이 사라지지 않게.
+    const matchName = (match && match.name) || base.matchName || '';
+    const matchFit = (match && match.fit) || base.matchFit || '';
+    const matchLength = (match && match.length) || base.matchLength || '';
+    const lenTxt = matchLength === 'short' ? '숏기장' : matchLength === 'long' ? '롱기장' : '';
+    const fitTxt = matchFit === 'slim' ? '슬림' : matchFit === 'loose' ? '여유' : '';
+    const matchLabel = (fitTxt || lenTxt) ? `${matchName} ${[lenTxt, fitTxt].filter(Boolean).join(' ')}`.trim() : '';
     const next = { ...clone(base), id: base.candidate + '-' + sameCand.length, version: sameCand.length,
-      fitLabel: fit || base.fitLabel, lengthLabel: length || base.lengthLabel, matchLabel, selected: false,
+      fitLabel: fit || base.fitLabel, lengthLabel: length || base.lengthLabel,
+      matchName, matchFit, matchLength, matchLabel, selected: false,
       src: Placeholder.photo(base.id + Date.now(), 'mannequin') };
     DB.mannequins.push(next);
     return clone(next);
