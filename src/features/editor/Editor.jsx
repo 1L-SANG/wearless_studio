@@ -116,7 +116,7 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   return <div {...common} className={cls()} style={base}>{inner}</div>;
 }
 
-function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onAddImage, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, editEl, onEdit, crop, onCropDrag, onCropStart, idx }) {
+function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onAddImage, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, idx }) {
   const contentBottom = block.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0);
   const blockH = block.h || Math.max(220, contentBottom + 50);
   const blockSelected = selectedBlockId === block.id && (!selEls || selEls.length === 0);
@@ -160,9 +160,10 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
               onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
           )
         ))}
-        {/* 인라인 크롭 오버레이 — 고스트(원본 전체) + 밝은 프레임(8핸들), 밖은 딤 */}
+        {/* 인라인 크롭 오버레이 — 고스트(원본 전체) + 밝은 프레임(8핸들), 밖은 딤.
+            딤 영역(레이어 자신) 클릭 = "빈 곳 클릭" → 크롭 확정 */}
         {crop && (
-          <div className="crop-layer" onClick={(e) => e.stopPropagation()}>
+          <div className="crop-layer" onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) onCropCommit && onCropCommit(); }}>
             <div className="crop-ghost" style={{ left: crop.fx - crop.ox, top: crop.fy - crop.oy, width: crop.iw, height: crop.ih }}
               onPointerDown={(e) => onCropDrag(e, 'img')}>
               <img src={crop.src} alt="" draggable={false} />
@@ -373,6 +374,7 @@ export function Editor() {
   const elById = (id) => blocks.flatMap((b) => b.elements).find((e) => e.id === id);
 
   const selectEl = (blockId, el, additive, keepTab) => {
+    if (cropping) commitCrop();   // 크롭 중 다른 요소 클릭 → 크롭 확정 후 선택 (런타임 호출이라 TDZ 무관)
     setSelBlock(blockId); setSelEl(el.id);
     setSelEls((cur) => additive ? (cur.includes(el.id) ? cur.filter((x) => x !== el.id) : [...cur, el.id]) : [el.id]);
     if (!keepTab) setTab(el.type === 'text' ? 'text' : 'image');
@@ -666,7 +668,7 @@ export function Editor() {
                 <CanvasBlock block={b} scale={scale} idx={i}
                   selectedBlockId={selBlock} selEls={selEls} editEl={editEl} onEdit={setEditEl}
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
-                  onCropDrag={cropDrag} onCropStart={startCrop}
+                  onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop}
                   onSelectBlock={(id) => { setSelBlock(id); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
                   onElPatch={patchElById} onAddImage={requestSlotImage} onOpenLayers={(id) => { setLayerFloat(id); setLayerPos(null); }}
                   onObjectDrop={(bid, type, id, ev) => addShape(type, id, bid, ev)} onReshape={reshapeBlock}
