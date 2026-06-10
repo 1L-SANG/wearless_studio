@@ -10,7 +10,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Moveable from 'react-moveable';
-import Cropper from 'react-easy-crop';
 import { api } from '@/lib/api/index.js';
 import { DB } from '@/mock/db.js';
 import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/components/ui.jsx';
@@ -21,7 +20,7 @@ const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font
 
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
-function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelect, onPatch, onAddImage, onEdit }) {
+function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelect, onPatch, onAddImage, onEdit, onCropStart }) {
   const ref = useRef(null);
   if (el.hidden) return null;
 
@@ -55,8 +54,16 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
       );
     }
     return (
-      <div {...common} className={cls()} style={base}>
-        <img src={el.src} alt="" style={{ borderRadius: el.radius }} draggable={false} />
+      <div {...common} className={cls()} style={base}
+        onDoubleClick={preview ? undefined : (e) => { e.stopPropagation(); onCropStart && onCropStart(el); }}>
+        {el.crop ? (
+          /* 커밋된 인라인 크롭: 프레임(overflow hidden) 안에 원본을 -ox,-oy 오프셋으로 */
+          <div className="el-cropped" style={{ borderRadius: el.radius }}>
+            <img src={el.src} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
+          </div>
+        ) : (
+          <img src={el.src} alt="" style={{ borderRadius: el.radius }} draggable={false} />
+        )}
       </div>
     );
   }
@@ -109,7 +116,7 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   return <div {...common} className={cls()} style={base}>{inner}</div>;
 }
 
-function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onAddImage, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, editEl, onEdit, idx }) {
+function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onAddImage, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, editEl, onEdit, crop, onCropDrag, onCropStart, idx }) {
   const contentBottom = block.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0);
   const blockH = block.h || Math.max(220, contentBottom + 50);
   const blockSelected = selectedBlockId === block.id && (!selEls || selEls.length === 0);
@@ -145,11 +152,30 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
       onDrop={(e) => { const d = e.dataTransfer.getData('text/object'); if (d) { e.preventDefault(); setObjOver(false); const [type, id] = d.split(':'); onObjectDrop(block.id, type, id, e); } }}>
       <div className="block-clip">
         {block.elements.map((el) => (
-          <CanvasElement key={el.id} el={el} blockId={block.id} scale={scale} preview={false}
-            selected={selEls && selEls.includes(el.id)} editing={editEl === el.id}
-            onSelect={(e, additive) => onSelectEl(block.id, e, additive)} onPatch={onElPatch}
-            onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit} />
+          (crop && crop.elId === el.id) ? null : (
+            <CanvasElement key={el.id} el={el} blockId={block.id} scale={scale} preview={false}
+              selected={selEls && selEls.includes(el.id)} editing={editEl === el.id}
+              onSelect={(e, additive) => onSelectEl(block.id, e, additive)} onPatch={onElPatch}
+              onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit}
+              onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
+          )
         ))}
+        {/* 인라인 크롭 오버레이 — 고스트(원본 전체) + 밝은 프레임(8핸들), 밖은 딤 */}
+        {crop && (
+          <div className="crop-layer" onClick={(e) => e.stopPropagation()}>
+            <div className="crop-ghost" style={{ left: crop.fx - crop.ox, top: crop.fy - crop.oy, width: crop.iw, height: crop.ih }}
+              onPointerDown={(e) => onCropDrag(e, 'img')}>
+              <img src={crop.src} alt="" draggable={false} />
+            </div>
+            <div className="crop-frame" style={{ left: crop.fx, top: crop.fy, width: crop.fw, height: crop.fh, borderRadius: crop.radius }}
+              onPointerDown={(e) => onCropDrag(e, 'img')}>
+              <img src={crop.src} alt="" draggable={false} style={{ left: -crop.ox, top: -crop.oy, width: crop.iw, height: crop.ih }} />
+              {['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'].map((d) => (
+                <span key={d} className={`crop-h ch-${d}`} onPointerDown={(e) => onCropDrag(e, 'frame', d)} />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       {blockSelected && (
         <>
@@ -201,15 +227,8 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
 
 const hexForCol = (col) => hexFor(col);
 
-/* crop helper — produce a cropped data-uri from react-easy-crop pixel area */
-async function getCroppedImg(src, area) {
-  const img = await new Promise((res, rej) => { const im = new Image(); im.crossOrigin = 'anonymous'; im.onload = () => res(im); im.onerror = rej; im.src = src; });
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(area.width)); canvas.height = Math.max(1, Math.round(area.height));
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, area.x, area.y, area.width, area.height, 0, 0, area.width, area.height);
-  return canvas.toDataURL('image/png');
-}
+/* rotate 정규화: 무한 누적(-1080° 등) 방지 — 항상 (-180, 180] 로 저장·표시 */
+const normDeg = (d) => { let n = ((d % 360) + 360) % 360; return n > 180 ? n - 360 : n; };
 
 export function Editor() {
   const navigate = useNavigate();
@@ -237,12 +256,14 @@ export function Editor() {
   const [layerFloat, setLayerFloat] = useState(null);
   const [layerPos, setLayerPos] = useState(null);
   const [editEl, setEditEl] = useState(null);     // text element being inline-edited
-  const [cropEl, setCropEl] = useState(null);      // image element being cropped (react-easy-crop)
-  const [crop, setCrop] = useState({ x: 0, y: 0 });
-  const [zoomC, setZoomC] = useState(1);
-  const cropArea = useRef(null);
+  // inline crop mode (Figma식): { blockId, elId, src, radius, fx,fy,fw,fh, ox,oy,iw,ih }
+  // frame = 보이는 창(fx..fh, 블록 좌표), image drawn at frame-relative -ox,-oy size iw×ih
+  const [cropping, setCropping] = useState(null);
+  const [lockRatio, setLockRatio] = useState(true); // 이미지 패널 자물쇠 = moveable keepRatio
   const [mvTargets, setMvTargets] = useState([]);  // DOM nodes for react-moveable
   const dragSnap = useRef(null);                   // start coords during a moveable gesture
+  const gesturing = useRef(false);                 // moveable 제스처 진행 중 — 상태 커밋/updateRect 금지
+  const liveRef = useRef({});                      // elId → 라이브 적용값 (gesture end에 한 번 커밋)
   const toast = useToast();
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);                  // unscaled-layout canvas (transform: scale)
@@ -295,6 +316,11 @@ export function Editor() {
       const t = e.target;
       const typing = /input|textarea/i.test(t.tagName) || t.isContentEditable;
       const mod = e.ctrlKey || e.metaKey;
+      // inline crop mode: Enter = 확정, Esc = 취소 (PRD §10.10 인라인 크롭)
+      if (kb.current.croppingOn) {
+        if (e.key === 'Enter') { e.preventDefault(); kb.current.cropCommit?.(); return; }
+        if (e.key === 'Escape') { e.preventDefault(); kb.current.cropCancel?.(); return; }
+      }
       if (mod && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); e.shiftKey ? kb.current.redo?.() : kb.current.undo?.(); return; }
       if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); kb.current.redo?.(); return; }
       if (mod && (e.key === 's' || e.key === 'S')) { e.preventDefault(); kb.current.save?.(); return; }
@@ -333,8 +359,10 @@ export function Editor() {
     return () => ro.disconnect();
   }, [!!blocks]);
 
-  // selection/zoom/layout changed → recompute the moveable control-box rect
-  useEffect(() => { moveableRef.current?.updateRect(); }, [blocks, scale, selEls, canvasH, rightHidden, mvTargets]);
+  // selection/zoom/layout changed → recompute the moveable control-box rect.
+  // NEVER during a gesture: mid-gesture updateRect/재바인딩이 컨트롤박스 핸들을
+  // 재생성해 리사이즈 제스처를 죽인다(드래그는 타깃 노드에 붙어 살아남는 비대칭).
+  useEffect(() => { if (!gesturing.current) moveableRef.current?.updateRect(); }, [blocks, scale, selEls, canvasH, rightHidden, mvTargets]);
   // dev-only QA hook: drive gestures via moveable.request() (real pointer pipeline)
   useEffect(() => { if (import.meta.env.DEV) window.__mv = moveableRef; }, []);
 
@@ -442,37 +470,107 @@ export function Editor() {
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
   const save = () => toast.push('저장했어요', { icon: 'check' });
-  kb.current = { undo, redo, save, addText, canAddText: selEls.length === 0 && !!selBlock, layer: layerEl, hasSel: !!selEl };
+  /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
 
   /* ---- react-moveable → Element {x,y,w,h,rotate}.
-     The canvas is scaled with CSS transform and <Moveable> gets
-     rootContainer={the untransformed scroll wrapper}, so moveable folds the
-     ancestor scale into its math: beforeTranslate / width / height arrive in
-     the element's LOCAL (unscaled) coordinate space — no manual /scale. ---- */
+     좌표: rootContainer가 캔버스 scale을 행렬로 접어 넣음 → 델타/크기는 LOCAL 도착.
+     적용: 제스처 중에는 e.target.style 에만 라이브로 쓰고(liveRef), End 에서 한 번
+     상태를 커밋한다 — 매 프레임 setState→컨트롤박스 재생성이 리사이즈 제스처를
+     죽이던 되먹임 루프 차단 (드래그는 타깃 노드에 붙어 살아남던 비대칭). ---- */
   const blockIdOf = (elId) => (blocks.find((b) => b.elements.some((e) => e.id === elId)) || {}).id;
   const snapX = (nx, w) => { const W = 1000, s = 10, targets = [40, (W - w) / 2, W - 40 - w]; for (const t of targets) { if (Math.abs(nx - t) < s) return t; } return nx; };
-  const onMvDragStart = () => { const o = {}; selEls.forEach((id) => { const e = elById(id); if (e) o[id] = { x: e.x, y: e.y }; }); dragSnap.current = o; };
-  const applyDrag = (elId, beforeTranslate) => {
+  const snapDeg = (n) => { for (const t of [0, 90, 180, 270]) { const diff = ((n - t + 540) % 360) - 180; if (Math.abs(diff) <= 7) return normDeg(t); } return n; };
+  const commitLive = () => {
+    const lv = liveRef.current; liveRef.current = {};
+    if (!Object.keys(lv).length) return;
+    setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.map((el) => {
+      const v = lv[el.id]; if (!v) return el;
+      const next = { ...el, ...v };
+      // 크롭된 이미지를 리사이즈하면 크롭 창도 비례 스케일 (Figma 동일)
+      if (v.w != null && el.crop && el.w && el.h) {
+        const kx = v.w / el.w, ky = v.h / el.h;
+        next.crop = { ox: Math.round(el.crop.ox * kx), oy: Math.round(el.crop.oy * ky), iw: Math.round(el.crop.iw * kx), ih: Math.round(el.crop.ih * ky) };
+      }
+      return next;
+    }) })));
+  };
+  const onMvDragStart = () => { gesturing.current = true; liveRef.current = {}; const o = {}; selEls.forEach((id) => { const e = elById(id); if (e) o[id] = { x: e.x, y: e.y, w: e.w }; }); dragSnap.current = o; };
+  const onMvGestureEnd = () => { gesturing.current = false; commitLive(); };
+  const liveDrag = (target, beforeTranslate) => {
+    const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    const e = elById(elId); const w = e ? e.w : 0;
     let nx = st.x + beforeTranslate[0]; let ny = st.y + beforeTranslate[1];
-    if (selEls.length === 1) nx = snapX(nx, w);
-    patchElById(blockIdOf(elId), elId, { x: Math.round(nx), y: Math.round(ny) });
+    if (selEls.length === 1) nx = snapX(nx, st.w || 0);
+    target.style.left = nx + 'px'; target.style.top = ny + 'px';
+    liveRef.current[elId] = { x: Math.round(nx), y: Math.round(ny) };
   };
-  const onMvResizeStart = () => { const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
-  const applyResize = (elId, width, height, drag) => {
+  const onMvResizeStart = () => { gesturing.current = true; liveRef.current = {}; const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
+  const liveResize = (target, width, height, drag) => {
+    const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    const w = Math.max(24, Math.round(width)); const h = Math.max(24, Math.round(height));
-    const dx = drag?.beforeTranslate?.[0] || 0; const dy = drag?.beforeTranslate?.[1] || 0;
-    patchElById(blockIdOf(elId), elId, { w, h, x: Math.round(st.x + dx), y: Math.round(st.y + dy) });
+    const w = Math.max(24, width); const h = Math.max(24, height);
+    const nx = st.x + (drag?.beforeTranslate?.[0] || 0); const ny = st.y + (drag?.beforeTranslate?.[1] || 0);
+    target.style.left = nx + 'px'; target.style.top = ny + 'px';
+    target.style.width = w + 'px'; target.style.height = h + 'px';
+    liveRef.current[elId] = { x: Math.round(nx), y: Math.round(ny), w: Math.round(w), h: Math.round(h) };
   };
-  const applyRotate = (elId, rotation) => {
-    let deg = Math.round(rotation);
-    const norm = ((deg % 360) + 360) % 360;
-    const snap = [0, 90, 180, 270, 360].find((t) => Math.abs(norm - t) <= 7);
-    if (snap != null) deg += (snap % 360) - norm;
-    patchElById(blockIdOf(elId), elId, { rotate: deg });
+  const liveRotate = (target, rotation) => {
+    const elId = target.dataset.elid;
+    const deg = Math.round(snapDeg(normDeg(rotation)));   // 무한 누적 방지: 항상 (-180,180]
+    target.style.transform = deg ? `rotate(${deg}deg)` : '';
+    liveRef.current[elId] = { rotate: deg };
   };
+
+  /* ---- inline crop (Figma식, PRD §10.10) — 모달 없이 블록 안에서 ---- */
+  const startCrop = (blockId, el) => {
+    if (!el || el.type !== 'image' || !el.src) return;
+    const c = el.crop || { ox: 0, oy: 0, iw: el.w, ih: el.h };
+    clearSel();                                   // moveable 박스 → 크롭 핸들로 전환
+    setCropping({ blockId, elId: el.id, src: el.src, radius: el.radius || 0,
+      fx: el.x, fy: el.y, fw: el.w, fh: el.h, ...c });
+  };
+  const commitCrop = () => {
+    setCropping((c) => {
+      if (c) patchElById(c.blockId, c.elId, {
+        x: Math.round(c.fx), y: Math.round(c.fy), w: Math.round(c.fw), h: Math.round(c.fh),
+        crop: { ox: Math.round(c.ox), oy: Math.round(c.oy), iw: Math.round(c.iw), ih: Math.round(c.ih) },
+      });
+      return null;
+    });
+  };
+  const cancelCrop = () => setCropping(null);
+  // 크롭 핸들·내부 이미지 드래그 — 자체 포인터 핸들러 (리사이즈와 동일하게 /scale 환산)
+  const cropDrag = (e, mode, dir) => {
+    if (e.button != null && e.button !== 0) return;
+    e.stopPropagation(); e.preventDefault();
+    const sx = e.clientX, sy = e.clientY;
+    const c0 = { ...cropping };
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+    const move = (ev) => {
+      const dx = (ev.clientX - sx) / (scale || 1), dy = (ev.clientY - sy) / (scale || 1);
+      setCropping((c) => {
+        if (!c) return c;
+        let { fx, fy, fw, fh, ox, oy } = c0;
+        const { iw, ih } = c0;
+        if (mode === 'img') {                 // 내부 이미지 위치 조정 (프레임 고정)
+          ox = clamp(c0.ox - dx, 0, Math.max(0, iw - fw)); oy = clamp(c0.oy - dy, 0, Math.max(0, ih - fh));
+        } else {                              // 프레임 8방향 핸들 (이미지는 캔버스에 고정)
+          if (dir.includes('e')) fw = clamp(c0.fw + dx, 24, iw - c0.ox);
+          if (dir.includes('s')) fh = clamp(c0.fh + dy, 24, ih - c0.oy);
+          if (dir.includes('w')) { const d = clamp(dx, -c0.ox, c0.fw - 24); fx = c0.fx + d; fw = c0.fw - d; ox = c0.ox + d; }
+          if (dir.includes('n')) { const d = clamp(dy, -c0.oy, c0.fh - 24); fy = c0.fy + d; fh = c0.fh - d; oy = c0.oy + d; }
+        }
+        return { ...c, fx, fy, fw, fh, ox, oy };
+      });
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.style.userSelect = ''; };
+    document.body.style.userSelect = 'none';
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+
+  // keep latest action handlers for the global keyboard effect (incl. crop keys)
+  kb.current = { undo, redo, save, addText, canAddText: selEls.length === 0 && !!selBlock, layer: layerEl, hasSel: !!selEl,
+    croppingOn: !!cropping, cropCommit: commitCrop, cropCancel: cancelCrop };
 
   const TOOLS = [
     { id: 'ai', icon: 'sparkles', label: 'AI', dot: true },
@@ -495,7 +593,7 @@ export function Editor() {
     switch (tab) {
       case 'ai': return <AIPanel catalogs={catalogs} account={account} colorOpts={colorOpts} selectedEl={selectedElObj} onGenerate={generateImage} onVary={() => toast.push('변형 이미지를 생성했어요', { icon: 'wand' })} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, '기타': [...(w['기타'] || []), { id: DB.uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} />;
-      case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} onCrop={(el) => { setCropEl(el); setCrop({ x: 0, y: 0 }); setZoomC(1); }} />;
+      case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} />;
       case 'frame': return <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />;
       case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onLayer={layerEl} onAddText={() => addText()} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
@@ -541,7 +639,7 @@ export function Editor() {
         </div>
 
         <div className="ed-canvas-wrap" ref={wrapRef}
-          onClick={(e) => { if (e.target.closest && e.target.closest('.moveable-control-box')) return; clearSel(); }}
+          onClick={(e) => { if (e.target.closest && e.target.closest('.moveable-control-box')) return; if (cropping) { commitCrop(); return; } clearSel(); }}
           onScroll={() => moveableRef.current?.updateRect()}
           onMouseMove={(e) => { const g = !e.target.closest('.canvas-block'); setHoverGray((v) => v === g ? v : g); }}
           onMouseLeave={() => setHoverGray(false)}>
@@ -567,6 +665,8 @@ export function Editor() {
                 </div>
                 <CanvasBlock block={b} scale={scale} idx={i}
                   selectedBlockId={selBlock} selEls={selEls} editEl={editEl} onEdit={setEditEl}
+                  crop={cropping && cropping.blockId === b.id ? cropping : null}
+                  onCropDrag={cropDrag} onCropStart={startCrop}
                   onSelectBlock={(id) => { setSelBlock(id); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
                   onElPatch={patchElById} onAddImage={requestSlotImage} onOpenLayers={(id) => { setLayerFloat(id); setLayerPos(null); }}
                   onObjectDrop={(bid, type, id, ev) => addShape(type, id, bid, ev)} onReshape={reshapeBlock}
@@ -594,18 +694,24 @@ export function Editor() {
               draggable
               resizable={single}
               rotatable={single}
+              keepRatio={lockRatio}
+              renderDirections={['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']}
               origin={false}
               throttleDrag={0}
               throttleResize={0}
               throttleRotate={0}
               onDragStart={onMvDragStart}
-              onDrag={(e) => { applyDrag(e.target.dataset.elid, e.beforeTranslate); }}
+              onDrag={(e) => liveDrag(e.target, e.beforeTranslate)}
+              onDragEnd={onMvGestureEnd}
               onDragGroupStart={onMvDragStart}
-              onDragGroup={(e) => { e.events.forEach((ev) => applyDrag(ev.target.dataset.elid, ev.beforeTranslate)); }}
+              onDragGroup={(e) => e.events.forEach((ev) => liveDrag(ev.target, ev.beforeTranslate))}
+              onDragGroupEnd={onMvGestureEnd}
               onResizeStart={onMvResizeStart}
-              onResize={(e) => { applyResize(e.target.dataset.elid, e.width, e.height, e.drag); }}
+              onResize={(e) => liveResize(e.target, e.width, e.height, e.drag)}
+              onResizeEnd={onMvGestureEnd}
               onRotateStart={onMvDragStart}
-              onRotate={(e) => { applyRotate(e.target.dataset.elid, e.rotation); }}
+              onRotate={(e) => liveRotate(e.target, e.rotation)}
+              onRotateEnd={onMvGestureEnd}
             />
           )}
         </div>
@@ -638,24 +744,6 @@ export function Editor() {
             ))}
           </div>
         </div>
-      )}
-
-      {/* crop modal (react-easy-crop) */}
-      {cropEl && (
-        <Modal onClose={() => setCropEl(null)} wide>
-          <h3>이미지 크롭</h3>
-          <div style={{ position: 'relative', width: '100%', height: 360, background: '#000', borderRadius: 'var(--r-5)', overflow: 'hidden', marginTop: 14 }}>
-            <Cropper image={cropEl.src} crop={crop} zoom={zoomC} aspect={cropEl.w / cropEl.h}
-              onCropChange={setCrop} onZoomChange={setZoomC} onCropComplete={(_, px) => { cropArea.current = px; }} />
-          </div>
-          <div className="modal-actions">
-            <Button variant="quiet" onClick={() => setCropEl(null)}>취소</Button>
-            <Button variant="primary" icon="crop" onClick={async () => {
-              try { if (cropArea.current) { const src = await getCroppedImg(cropEl.src, cropArea.current); patchElById(blockIdOf(cropEl.id), cropEl.id, { src }); } } catch { /* mock src may be cross-origin */ }
-              setCropEl(null); toast.push('이미지를 잘랐어요', { icon: 'crop' });
-            }}>적용</Button>
-          </div>
-        </Modal>
       )}
 
       {/* download modal */}

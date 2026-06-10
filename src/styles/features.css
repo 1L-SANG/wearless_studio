@@ -998,3 +998,24 @@
 
 /* ============ TWEAKS PANEL ============ */
 .tw-note { font-size: 12px; color: var(--fg-2); line-height: 1.5; }
+
+/* ===== editor inline crop (Vite 이관에서 추가 — Figma식 인라인 크롭, PRD §10.10)
+   frame = 보이는 창, ghost = 원본 전체. 프레임 밖은 거대 box-shadow로 딤 처리
+   (block-clip이 블록 밖을 잘라줌). 핸들은 --inv 역스케일로 줌과 무관하게 일정 크기. */
+.el-cropped { position: absolute; inset: 0; overflow: hidden; }
+.el-cropped img, .crop-frame img { position: absolute; max-width: none; display: block; }
+.crop-layer { position: absolute; inset: 0; z-index: 5; }
+.crop-ghost { position: absolute; cursor: move; }
+.crop-ghost img { width: 100%; height: 100%; display: block; }
+.crop-frame { position: absolute; overflow: hidden; cursor: move;
+  outline: 1.5px solid #8fbfee; box-shadow: 0 0 0 100000px rgba(14, 13, 20, 0.32); }
+.crop-h { position: absolute; width: 12px; height: 12px; background: #fff; border-radius: 3px;
+  box-shadow: 0 0 0 1.5px #8fbfee, 0 1px 4px rgba(14, 13, 20, 0.25); z-index: 2; }
+.ch-nw { left: 0; top: 0; transform: translate(-50%, -50%) scale(var(--inv, 1)); cursor: nwse-resize; }
+.ch-n  { left: 50%; top: 0; transform: translate(-50%, -50%) scale(var(--inv, 1)); cursor: ns-resize; }
+.ch-ne { right: 0; top: 0; transform: translate(50%, -50%) scale(var(--inv, 1)); cursor: nesw-resize; }
+.ch-w  { left: 0; top: 50%; transform: translate(-50%, -50%) scale(var(--inv, 1)); cursor: ew-resize; }
+.ch-e  { right: 0; top: 50%; transform: translate(50%, -50%) scale(var(--inv, 1)); cursor: ew-resize; }
+.ch-sw { left: 0; bottom: 0; transform: translate(-50%, 50%) scale(var(--inv, 1)); cursor: nesw-resize; }
+.ch-s  { left: 50%; bottom: 0; transform: translate(-50%, 50%) scale(var(--inv, 1)); cursor: ns-resize; }
+.ch-se { right: 0; bottom: 0; transform: translate(50%, 50%) scale(var(--inv, 1)); cursor: nwse-resize; }

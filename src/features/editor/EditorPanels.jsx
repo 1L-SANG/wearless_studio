@@ -282,8 +282,9 @@ const LINE_DASH = [
 function LabeledField({ label, children }) {
   return <div className="ff"><span className="ff-lbl">{label}</span>{children}</div>;
 }
-export function ImagePanel({ el, onChange, onLayer, onCrop }) {
-  const [lock, setLock] = useState(true);
+export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock }) {
+  // 비율 잠금은 에디터가 소유 — moveable keepRatio와 연동 (자물쇠 = keepRatio)
+  const setLock = onLock || (() => {});
   if (!el || !['image', 'shape', 'line'].includes(el.type)) return <EmptyState icon="image" title="요소를 선택하세요" desc="캔버스에서 이미지·오브젝트를 클릭하면 속성이 여기에 나와요." />;
   const isImg = el.type === 'image', isLine = el.type === 'line', isShape = el.type === 'shape';
   const ratio = el.w / el.h || 1;
