@@ -61,12 +61,17 @@ export const api = {
     await runJob({ duration: 3000, stall: true, onProgress });
     return clone(DB.mannequins);
   },
-  async adjustMannequin({ baseId, fit, length, onProgress } = {}) {
+  async adjustMannequin({ baseId, fit, length, match, onProgress } = {}) {
     await runJob({ duration: 1800, onProgress });
     const base = DB.mannequins.find((m) => m.id === baseId) || DB.mannequins[0];
     const sameCand = DB.mannequins.filter((m) => m.candidate === base.candidate);
+    // 매칭 의류 변경분도 결과 컷에 반영 (캡션으로 노출) — 변경 없으면 base 유지
+    const matchLabel = match && (match.fit || match.length)
+      ? `${match.name} ${[match.length === 'short' ? '숏기장' : match.length === 'long' ? '롱기장' : '',
+          match.fit === 'slim' ? '슬림' : match.fit === 'loose' ? '여유' : ''].filter(Boolean).join(' ')}`.trim()
+      : (base.matchLabel || '');
     const next = { ...clone(base), id: base.candidate + '-' + sameCand.length, version: sameCand.length,
-      fitLabel: fit || base.fitLabel, lengthLabel: length || base.lengthLabel, selected: false,
+      fitLabel: fit || base.fitLabel, lengthLabel: length || base.lengthLabel, matchLabel, selected: false,
       src: Placeholder.photo(base.id + Date.now(), 'mannequin') };
     DB.mannequins.push(next);
     return clone(next);

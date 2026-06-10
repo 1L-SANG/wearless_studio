@@ -79,7 +79,14 @@ function AdjustPanel({ selected, adjustLeft, onAdjust, busy, productName, clothi
   const applyAdjust = () => {
     const fitLabel = fit === 'slim' ? '슬림' : fit === 'loose' ? '여유' : '';
     const lenLabel = length === 'short' ? '숏' : length === 'long' ? '롱' : '';
-    onAdjust({ fit: fitLabel, length: lenLabel });
+    // 매칭만 바꿔도 활성화되므로, 매칭 변경분도 함께 넘겨서 실제로 반영되게 한다
+    // (안 넘기면 크레딧만 차감되고 매칭 변경은 사라지는 버그)
+    const match = matchChanged
+      ? { id: mainMatch.id, name: mainMatch.name,
+          fit: mainMatch.fit && mainMatch.fit !== 'origin' ? mainMatch.fit : '',
+          length: mainMatch.length && mainMatch.length !== 'origin' ? mainMatch.length : '' }
+      : null;
+    onAdjust({ fit: fitLabel, length: lenLabel, match });
     setFit('current'); setLength('current');
   };
   return (
@@ -122,7 +129,7 @@ function Candidate({ letter, cuts, selectedId, onSelect }) {
         <img src={big.src} alt={big.id} />
         {big.id === selectedId && <span className="pill pill-ink selflag">선택됨</span>}
       </div>
-      <div className="cap">마네킹 {letter} · {big.fitLabel} / {big.lengthLabel}</div>
+      <div className="cap">마네킹 {letter} · {big.fitLabel} / {big.lengthLabel}{big.matchLabel ? ` · 매칭 ${big.matchLabel}` : ''}</div>
       <div className="history-strip">
         {cuts.map((c) => (
           <div key={c.id} className={`h${c.id === selectedId ? ' on' : ''}`} onClick={() => onSelect(c.id)}>
@@ -207,11 +214,15 @@ export function Mannequin() {
   const cutsA = cuts.filter((c) => c.candidate === 'A');
   const cutsB = cuts.filter((c) => c.candidate === 'B');
 
-  const adjust = async ({ fit, length }) => {
+  const adjust = async ({ fit, length, match }) => {
     if (adjustLeft <= 0) return; setBusy(true);
     const base = selected || cuts[0];
-    const next = await api.adjustMannequin({ baseId: base.id, fit, length });
-    setCuts((c) => [...c, next]); setSelectedId(next.id); setAdjustLeft((n) => n - 1); setBusy(false);
+    const next = await api.adjustMannequin({ baseId: base.id, fit, length, match });
+    setCuts((c) => [...c, next]); setSelectedId(next.id); setAdjustLeft((n) => n - 1);
+    // 매칭 변경분은 새 컷에 반영됐으니 기준값(origin)으로 되돌려 버튼이 계속 켜진 채
+    // 같은 변경으로 재차 차감되는 걸 막는다 (메인 fit/length 가 current 로 리셋되는 것과 동일)
+    if (match) setMatchClothing((mc) => mc.map((m) => m.id === match.id ? { ...m, fit: 'origin', length: 'origin' } : m));
+    setBusy(false);
     toast.push('조정 결과를 만들었어요', { icon: 'wand' });
   };
   const regenerate = async () => {
