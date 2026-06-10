@@ -7,7 +7,7 @@
    model + patchElById. Everything else (blocks, panels, mini-preview,
    layers, undo/redo, frames, download/preview) keeps prototype logic.
    ============================================================= */
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Moveable from 'react-moveable';
 import Cropper from 'react-easy-crop';
@@ -245,6 +245,9 @@ export function Editor() {
   const dragSnap = useRef(null);                   // start coords during a moveable gesture
   const toast = useToast();
   const wrapRef = useRef(null);
+  const canvasRef = useRef(null);                  // unscaled-layout canvas (transform: scale)
+  const moveableRef = useRef(null);                // for updateRect() on selection/layout change
+  const [canvasH, setCanvasH] = useState(0);       // unscaled canvas height → scaled spacer
   const hist = useRef({ past: [], future: [] });
   const prevBlocks = useRef(null);
   const fromHistory = useRef(false);
@@ -318,6 +321,22 @@ export function Editor() {
     const nodes = ids.map((id) => wrap.querySelector(`[data-elid="${id}"]`)).filter(Boolean);
     setMvTargets(nodes);
   }, [selEls, blocks, scale, tab, preview, editEl, layerFloat]);
+
+  // transform: scale doesn't take layout space — measure the unscaled canvas
+  // height so the spacer can reserve the SCALED scroll area (zoom-equivalent)
+  useLayoutEffect(() => {
+    const el = canvasRef.current; if (!el) return;
+    const update = () => setCanvasH(el.offsetHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [!!blocks]);
+
+  // selection/zoom/layout changed → recompute the moveable control-box rect
+  useEffect(() => { moveableRef.current?.updateRect(); }, [blocks, scale, selEls, canvasH, rightHidden, mvTargets]);
+  // dev-only QA hook: drive gestures via moveable.request() (real pointer pipeline)
+  useEffect(() => { if (import.meta.env.DEV) window.__mv = moveableRef; }, []);
 
   if (!blocks || !catalogs) return <div className="editor"><div style={{ margin: 'auto' }}><Icon name="loader" size={26} className="spin" /></div></div>;
 
@@ -425,22 +444,26 @@ export function Editor() {
   const save = () => toast.push('저장했어요', { icon: 'check' });
   kb.current = { undo, redo, save, addText, canAddText: selEls.length === 0 && !!selBlock, layer: layerEl, hasSel: !!selEl };
 
-  /* ---- react-moveable → Element {x,y,w,h,rotate} (delta / scale) ---- */
+  /* ---- react-moveable → Element {x,y,w,h,rotate}.
+     The canvas is scaled with CSS transform and <Moveable> gets
+     rootContainer={the untransformed scroll wrapper}, so moveable folds the
+     ancestor scale into its math: beforeTranslate / width / height arrive in
+     the element's LOCAL (unscaled) coordinate space — no manual /scale. ---- */
   const blockIdOf = (elId) => (blocks.find((b) => b.elements.some((e) => e.id === elId)) || {}).id;
   const snapX = (nx, w) => { const W = 1000, s = 10, targets = [40, (W - w) / 2, W - 40 - w]; for (const t of targets) { if (Math.abs(nx - t) < s) return t; } return nx; };
   const onMvDragStart = () => { const o = {}; selEls.forEach((id) => { const e = elById(id); if (e) o[id] = { x: e.x, y: e.y }; }); dragSnap.current = o; };
   const applyDrag = (elId, beforeTranslate) => {
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
     const e = elById(elId); const w = e ? e.w : 0;
-    let nx = st.x + beforeTranslate[0] / scale; let ny = st.y + beforeTranslate[1] / scale;
+    let nx = st.x + beforeTranslate[0]; let ny = st.y + beforeTranslate[1];
     if (selEls.length === 1) nx = snapX(nx, w);
     patchElById(blockIdOf(elId), elId, { x: Math.round(nx), y: Math.round(ny) });
   };
   const onMvResizeStart = () => { const id = selEls[0]; const e = elById(id); dragSnap.current = e ? { [id]: { x: e.x, y: e.y, w: e.w, h: e.h } } : null; };
   const applyResize = (elId, width, height, drag) => {
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    const w = Math.max(24, Math.round(width / scale)); const h = Math.max(24, Math.round(height / scale));
-    const dx = (drag?.beforeTranslate?.[0] || 0) / scale; const dy = (drag?.beforeTranslate?.[1] || 0) / scale;
+    const w = Math.max(24, Math.round(width)); const h = Math.max(24, Math.round(height));
+    const dx = drag?.beforeTranslate?.[0] || 0; const dy = drag?.beforeTranslate?.[1] || 0;
     patchElById(blockIdOf(elId), elId, { w, h, x: Math.round(st.x + dx), y: Math.round(st.y + dy) });
   };
   const applyRotate = (elId, rotation) => {
@@ -517,7 +540,9 @@ export function Editor() {
           {renderPanel()}
         </div>
 
-        <div className="ed-canvas-wrap" ref={wrapRef} onClick={() => clearSel()}
+        <div className="ed-canvas-wrap" ref={wrapRef}
+          onClick={(e) => { if (e.target.closest && e.target.closest('.moveable-control-box')) return; clearSel(); }}
+          onScroll={() => moveableRef.current?.updateRect()}
           onMouseMove={(e) => { const g = !e.target.closest('.canvas-block'); setHoverGray((v) => v === g ? v : g); }}
           onMouseLeave={() => setHoverGray(false)}>
           <div className={`zoom-float${hoverGray ? ' show' : ''}`}>
@@ -528,7 +553,12 @@ export function Editor() {
             </div>
           </div>
           {rightHidden && <div style={{ position: 'absolute', right: 10, top: 10, zIndex: 3 }}><IconButton name="layout" size="sm" onClick={() => setRightHidden(false)} /></div>}
-          <div className={`ed-canvas${frameDragging ? ' frame-dragging' : ''}`} style={{ zoom: scale }}>
+          {/* CSS `zoom` is invisible to react-moveable (it only reads the transform
+              matrix) — scale via transform instead. transform doesn't take layout
+              space, so a spacer reserves the SCALED dimensions for scrolling. */}
+          <div style={{ position: 'relative', width: 1000 * scale, height: canvasH * scale, margin: '40px auto' }}>
+          <div className={`ed-canvas${frameDragging ? ' frame-dragging' : ''}`} ref={canvasRef}
+            style={{ transform: `scale(${scale})`, transformOrigin: 'top left', position: 'absolute', top: 0, left: 0, margin: 0 }}>
             {blocks.map((b, i) => (
               <div key={b.id} style={{ display: 'contents' }}>
                 <div className="canvas-droprow" onDragOver={(e) => { if (e.dataTransfer.types.includes('text/frame')) { e.preventDefault(); setFrameOver(i); } }}
@@ -549,28 +579,35 @@ export function Editor() {
               <div className={`canvas-dropline${frameOver === blocks.length ? ' on' : ''}`} />
             </div>
 
-            {/* react-moveable — drives drag/resize/rotate of the current selection */}
-            {mvTargets.length > 0 && (
-              <Moveable
-                target={mvTargets}
-                draggable
-                resizable={single}
-                rotatable={single}
-                origin={false}
-                throttleDrag={0}
-                throttleResize={0}
-                throttleRotate={0}
-                onDragStart={onMvDragStart}
-                onDrag={(e) => { applyDrag(e.target.dataset.elid, e.beforeTranslate); }}
-                onDragGroupStart={onMvDragStart}
-                onDragGroup={(e) => { e.events.forEach((ev) => applyDrag(ev.target.dataset.elid, ev.beforeTranslate)); }}
-                onResizeStart={onMvResizeStart}
-                onResize={(e) => { applyResize(e.target.dataset.elid, e.width, e.height, e.drag); }}
-                onRotateStart={onMvDragStart}
-                onRotate={(e) => { applyRotate(e.target.dataset.elid, e.rotation); }}
-              />
-            )}
           </div>
+          </div>
+
+          {/* react-moveable — rendered OUTSIDE the scaled canvas (a scaled ancestor
+              would shrink the control box itself, pinning it to the top-left);
+              rootContainer = the untransformed scroll wrapper so the canvas scale
+              is folded into moveable's coordinate math */}
+          {mvTargets.length > 0 && (
+            <Moveable
+              ref={moveableRef}
+              target={mvTargets}
+              rootContainer={wrapRef.current}
+              draggable
+              resizable={single}
+              rotatable={single}
+              origin={false}
+              throttleDrag={0}
+              throttleResize={0}
+              throttleRotate={0}
+              onDragStart={onMvDragStart}
+              onDrag={(e) => { applyDrag(e.target.dataset.elid, e.beforeTranslate); }}
+              onDragGroupStart={onMvDragStart}
+              onDragGroup={(e) => { e.events.forEach((ev) => applyDrag(ev.target.dataset.elid, ev.beforeTranslate)); }}
+              onResizeStart={onMvResizeStart}
+              onResize={(e) => { applyResize(e.target.dataset.elid, e.width, e.height, e.drag); }}
+              onRotateStart={onMvDragStart}
+              onRotate={(e) => { applyRotate(e.target.dataset.elid, e.rotation); }}
+            />
+          )}
         </div>
 
         {!rightHidden && <MiniPreview blocks={blocks} selectedBlockId={selBlock} onJump={jumpTo} onReorder={reorderBlock} />}
