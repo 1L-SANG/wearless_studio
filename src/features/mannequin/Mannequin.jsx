@@ -32,18 +32,50 @@ function MannequinLoading({ progress }) {
   );
 }
 
-function AdjustPanel({ selected, adjustLeft, onAdjust, onRegenerate, busy, productName, matchClothing, onToggleMatch, onMatchAdjust, creditCosts }) {
+/* 의류 옵션 row — 체크(=펼침) 시 sky 테두리 + glow-sky 제목 fill (첨부 시안 톤) */
+function ClothingCard({ open, onToggle, eyebrow, name, icon, children }) {
+  return (
+    <div className={`adj-card${open ? ' on' : ''}`}>
+      <button type="button" className="adj-card-head" onClick={onToggle} aria-expanded={open}>
+        <span className={`adj-check${open ? ' on' : ''}`}>{open && <Icon name="check" size={13} />}</span>
+        <span className="adj-ico"><Icon name={icon} size={17} /></span>
+        <span className="adj-meta">
+          <span className="adj-eyebrow">{eyebrow}</span>
+          <span className="adj-name">{name}</span>
+        </span>
+        <Icon name={open ? 'chevUp' : 'chevDown'} size={16} className="adj-chev" />
+      </button>
+      {open && <div className="adj-card-body">{children}</div>}
+    </div>
+  );
+}
+
+const TOP_TYPES = ['top', 'outer', 'dress'];
+const SEG = (cur, opts, onPick) => (
+  <div className="seg-chips">
+    {opts.map(([l, v, isCur]) => (
+      <button key={v} className={`chip${cur === v ? ' on' : ''}${isCur ? ' is-current' : ''}`} onClick={() => onPick(v)}>{l}</button>
+    ))}
+  </div>
+);
+
+function AdjustPanel({ selected, adjustLeft, onAdjust, busy, productName, clothingType, matchClothing, onMatchAdjust, creditCosts }) {
   // 가운데 '현재' = 지금 선택된 마네킹의 기준. 양옆은 그 기준에서의 조정 방향.
   const [fit, setFit] = useState('current');
   const [length, setLength] = useState('current');
-  const [matchOpen, setMatchOpen] = useState(false); // 매칭 의류는 처음엔 접혀 있음
-  const [confirmRegen, setConfirmRegen] = useState(false);
+  const [mainOpen, setMainOpen] = useState(false);   // 체크박스 = 펼침 (기본 접힘 = 단순 row)
+  const [matchOpen, setMatchOpen] = useState(false);
   // 메인 매칭 의류 = 분석 페이지에서 첫 번째로 선택한 매칭 의류
   const selMatch = (matchClothing || []).filter((m) => m.selected).sort((x, y) => (x.selOrder || 0) - (y.selOrder || 0));
   const mainMatch = selMatch[0];
   // 선택된 마네킹이 바뀌면 '현재' 기준도 바뀌므로 가운데로 리셋
   useEffect(() => { setFit('current'); setLength('current'); }, [selected?.id]);
-  const noChange = fit === 'current' && length === 'current';
+  const mainChanged = fit !== 'current' || length !== 'current';
+  const matchChanged = !!mainMatch && ((mainMatch.length && mainMatch.length !== 'origin') || (mainMatch.fit && mainMatch.fit !== 'origin'));
+  const noChange = !mainChanged && !matchChanged;   // 매칭만 바꿔도 활성화 (req)
+  // 아이콘은 의류 종류에 맞춰서: 상의쪽 = shirt, 하의쪽 = pants
+  const mainIcon = TOP_TYPES.includes(clothingType) ? 'shirt' : 'pants';
+  const matchIcon = mainIcon === 'shirt' ? 'pants' : 'shirt';
   const applyAdjust = () => {
     const fitLabel = fit === 'slim' ? '슬림' : fit === 'loose' ? '여유' : '';
     const lenLabel = length === 'short' ? '숏' : length === 'long' ? '롱' : '';
@@ -53,79 +85,29 @@ function AdjustPanel({ selected, adjustLeft, onAdjust, onRegenerate, busy, produ
   return (
     <div className="surface inspector adjust-panel">
       <div className="sec-title" style={{ fontSize: 15 }}>세부 조정</div>
-      <div className="pill pill-soft" style={{ marginTop: 12 }}>{`조정 가능 횟수 ${adjustLeft}/2`}</div>
+      <div className="pill pill-soft" style={{ marginTop: 12, marginBottom: 4 }}>{`조정 가능 횟수 ${adjustLeft}/2`}</div>
 
-      {/* 메인 의류 — 상품명으로 묶은 조정 그룹 */}
-      <div className="ap-group">
-        <div className="ap-group-eyebrow">메인 의류</div>
-        <div className="ap-group-head"><Icon name="shirt" size={14} />{productName || '상품'}</div>
-        <div className="ap-sec">
-          <label className="lbl">총기장</label>
-          <div className="seg-chips">
-            {[['더 짧게', 'short'], ['현재', 'current'], ['더 길게', 'long']].map(([l, v]) => (
-              <button key={v} className={`chip${length === v ? ' on' : ''}${v === 'current' ? ' is-current' : ''}`} onClick={() => setLength(v)}>{l}</button>
-            ))}
-          </div>
-        </div>
-        <div className="ap-sec">
-          <label className="lbl">핏</label>
-          <div className="seg-chips">
-            {[['더 슬림하게', 'slim'], ['현재', 'current'], ['더 여유있게', 'loose']].map(([l, v]) => (
-              <button key={v} className={`chip${fit === v ? ' on' : ''}${v === 'current' ? ' is-current' : ''}`} onClick={() => setFit(v)}>{l}</button>
-            ))}
-          </div>
-        </div>
-      </div>
+      {/* 메인 의류 카드 row */}
+      <ClothingCard open={mainOpen} onToggle={() => setMainOpen((o) => !o)} eyebrow="메인 의류" name={productName || '상품'} icon={mainIcon}>
+        <div className="ap-sec"><label className="lbl">총기장</label>
+          {SEG(length, [['더 짧게', 'short'], ['현재', 'current', true], ['더 길게', 'long']], setLength)}</div>
+        <div className="ap-sec"><label className="lbl">핏</label>
+          {SEG(fit, [['더 슬림하게', 'slim'], ['현재', 'current', true], ['더 여유있게', 'loose']], setFit)}</div>
+      </ClothingCard>
 
-      {/* 매칭 의류 — 토글로 펼쳐서 조정 (기본 닫힘) */}
+      {/* 매칭 의류 카드 row (접힘 = 단순 row) */}
       {mainMatch && (
-        <div className={`ap-group ap-collapsible${matchOpen ? ' open' : ''}`}>
-          <button className="ap-group-toggle" onClick={() => setMatchOpen((o) => !o)} aria-expanded={matchOpen}>
-            <span className="ap-tg-text">
-              <span className="ap-group-eyebrow">매칭 의류</span>
-              <span className="ap-group-head"><Icon name="layers" size={14} />{mainMatch.name}</span>
-            </span>
-            <Icon name={matchOpen ? 'chevUp' : 'chevDown'} size={18} />
-          </button>
-          {matchOpen && (
-            <div className="ap-collapse-body">
-              <div className="ap-sec">
-                <label className="lbl">총기장</label>
-                <div className="seg-chips">
-                  {[['더 짧게', 'short'], ['현재', 'origin'], ['더 길게', 'long']].map(([l, v]) => (
-                    <button key={v} className={`chip${(mainMatch.length || 'origin') === v ? ' on' : ''}${v === 'origin' ? ' is-current' : ''}`} onClick={() => onMatchAdjust(mainMatch.id, { length: v })}>{l}</button>
-                  ))}
-                </div>
-              </div>
-              <div className="ap-sec">
-                <label className="lbl">핏</label>
-                <div className="seg-chips">
-                  {[['더 슬림하게', 'slim'], ['현재', 'origin'], ['더 여유있게', 'loose']].map(([l, v]) => (
-                    <button key={v} className={`chip${(mainMatch.fit || 'origin') === v ? ' on' : ''}${v === 'origin' ? ' is-current' : ''}`} onClick={() => onMatchAdjust(mainMatch.id, { fit: v })}>{l}</button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+        <ClothingCard open={matchOpen} onToggle={() => setMatchOpen((o) => !o)} eyebrow="매칭 의류" name={mainMatch.name} icon={matchIcon}>
+          <div className="ap-sec"><label className="lbl">총기장</label>
+            {SEG(mainMatch.length || 'origin', [['더 짧게', 'short'], ['현재', 'origin', true], ['더 길게', 'long']], (v) => onMatchAdjust(mainMatch.id, { length: v }))}</div>
+          <div className="ap-sec"><label className="lbl">핏</label>
+            {SEG(mainMatch.fit || 'origin', [['더 슬림하게', 'slim'], ['현재', 'origin', true], ['더 여유있게', 'loose']], (v) => onMatchAdjust(mainMatch.id, { fit: v }))}</div>
+        </ClothingCard>
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 20 }}>
-        <Button variant="primary" block disabled={adjustLeft <= 0 || busy || noChange}
-          onClick={applyAdjust}>의류 조정하기 · {creditCosts?.mannequinAdjust ?? 1} 크레딧</Button>
-        <Button variant="ghost" block disabled={adjustLeft <= 0 || busy} onClick={() => setConfirmRegen(true)}
-          style={{ color: 'rgba(14,13,20,.8)', minHeight: 'var(--cta-height)', borderRadius: 'var(--cta-radius)' }}>마네킹컷 전부 재생성 · {creditCosts?.mannequinGenerate ?? 2} 크레딧</Button>
-      </div>
+
+      <Button variant="primary" block disabled={adjustLeft <= 0 || busy || noChange} style={{ marginTop: 16 }}
+        onClick={applyAdjust}>의류 조정하기 · {creditCosts?.mannequinAdjust ?? 1} 크레딧</Button>
       {adjustLeft <= 0 && <p className="hint" style={{ marginTop: 10 }}>이번 세션의 조정 횟수를 모두 사용했어요.</p>}
-      {confirmRegen && (
-        <Modal onClose={() => setConfirmRegen(false)}>
-          <h3>마네킹컷을 다시 생성할까요?</h3>
-          <p>후보 A/B가 새로운 컷으로 교체되고, 지금까지의 조정 결과는 사라져요. 조정 횟수도 1회 차감됩니다.</p>
-          <div className="modal-actions">
-            <Button variant="ghost" onClick={() => setConfirmRegen(false)}>취소</Button>
-            <Button variant="primary" onClick={() => { setConfirmRegen(false); onRegenerate(); }}>재생성</Button>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }
@@ -204,10 +186,12 @@ export function Mannequin() {
   const [busy, setBusy] = useState(false);
   const [matchClothing, setMatchClothing] = useState(null);
   const [productName, setProductName] = useState('');
+  const [clothingType, setClothingType] = useState('top');
   const [catalogs, setCatalogs] = useState(null);
   const [colorCount, setColorCount] = useState(1);
   const [composeMode, setComposeMode] = useState('basic'); // 기본형 디폴트
   const [picking, setPicking] = useState(false);
+  const [confirmRegen, setConfirmRegen] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -215,7 +199,7 @@ export function Mannequin() {
     document.querySelector('.app-main')?.scrollTo({ top: 0 });
     api.generateMannequins({ onProgress: setProgress }).then((m) => { setCuts(m); setPhase('ready'); });
     api.getMatchClothing().then(setMatchClothing);
-    api.getProduct().then((p) => { setProductName(p?.name || ''); setColorCount((p?.colors || []).length || 1); });
+    api.getProduct().then((p) => { setProductName(p?.name || ''); setClothingType(p?.clothingType || 'top'); setColorCount((p?.colors || []).length || 1); });
     api.getCatalogs().then(setCatalogs);
   }, []);
 
@@ -240,17 +224,24 @@ export function Mannequin() {
 
   const candidates = (
     <div className="surface">
-      <div className="sec-title" style={{ marginBottom: 4 }}>마네킹컷 선택</div>
-      <div className="sec-sub" style={{ marginBottom: 18 }}>선택한 컷이 실제 착용컷 생성의 기준이 돼요.</div>
+      <div className="cand-head">
+        <div>
+          <div className="sec-title">마네킹컷 선택</div>
+          <div className="sec-sub" style={{ marginTop: 5 }}>선택한 컷이 실제 착용컷 생성의 기준이 돼요.</div>
+        </div>
+        <Button variant="ghost" size="sm" icon="refresh" disabled={adjustLeft <= 0 || busy}
+          style={{ borderRadius: 'var(--r-4)' }} onClick={() => setConfirmRegen(true)}>
+          마네킹컷 전부 재생성 · {catalogs?.creditCosts?.mannequinGenerate ?? 2} 크레딧
+        </Button>
+      </div>
       <div className="candidate-row">
         <Candidate letter="A" cuts={cutsA} selectedId={selectedId} onSelect={setSelectedId} />
         <Candidate letter="B" cuts={cutsB} selectedId={selectedId} onSelect={setSelectedId} />
       </div>
     </div>
   );
-  const toggleMatch = (id) => setMatchClothing((mc) => mc.map((m) => m.id === id ? { ...m, selected: !m.selected } : m));
   const matchAdjust = (id, patch) => setMatchClothing((mc) => mc.map((m) => m.id === id ? { ...m, ...patch } : m));
-  const panel = <AdjustPanel selected={selected} adjustLeft={adjustLeft} onAdjust={adjust} onRegenerate={regenerate} busy={busy} productName={productName} matchClothing={matchClothing} onToggleMatch={toggleMatch} onMatchAdjust={matchAdjust} creditCosts={catalogs?.creditCosts} />;
+  const panel = <AdjustPanel selected={selected} adjustLeft={adjustLeft} onAdjust={adjust} busy={busy} productName={productName} clothingType={clothingType} matchClothing={matchClothing} onMatchAdjust={matchAdjust} creditCosts={catalogs?.creditCosts} />;
   const modes = catalogs?.composeModes || [];
   const pickMode = (v) => { setComposeMode(v); setPicking(false); };
   // 우측 컬럼 = 세부 조정 패널(위) + 상세페이지 구성 미니 카드(아래)
@@ -268,8 +259,19 @@ export function Mannequin() {
       <PageHead title="원하는 느낌으로 구현된 이미지를 선택해주세요" sub="핏과 총기장을 조정해 의류 재현도를 높여보세요." />
       {body}
       <WizardCTA>
-        <Button variant="primary" size="lg" iconRight="arrowRight" onClick={() => navigate('/create/storyboard')}>이 마네킹컷으로 콘티 만들기</Button>
+        <Button variant="primary" size="lg" iconRight="arrowRight" onClick={() => navigate('/create/storyboard')}>초안 생성하기</Button>
       </WizardCTA>
+
+      {confirmRegen && (
+        <Modal onClose={() => setConfirmRegen(false)}>
+          <h3>마네킹컷을 다시 생성할까요?</h3>
+          <p>후보 A/B가 새로운 컷으로 교체되고, 지금까지의 조정 결과는 사라져요. 조정 횟수도 1회 차감됩니다.</p>
+          <div className="modal-actions">
+            <Button variant="ghost" onClick={() => setConfirmRegen(false)}>취소</Button>
+            <Button variant="primary" onClick={() => { setConfirmRegen(false); regenerate(); }}>재생성</Button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

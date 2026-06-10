@@ -290,15 +290,18 @@
 .mannequin-layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
 .mannequin-layout > .surface + .surface { margin-top: 0; }
 @media (max-width: 980px) { .mannequin-layout { grid-template-columns: 1fr; } }
+/* candidates surface header — title left, 전부 재생성 버튼 우측 상단 (살짝 둥근 버튼) */
+.cand-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .candidate-row { display: flex; gap: 16px; }
 .candidate { flex: 1; min-width: 0; }
-.candidate .big { aspect-ratio: 3/4; height: clamp(320px, calc(100vh - 412px), 560px); width: auto; max-width: 100%; margin: 0 auto; border-radius: var(--r-5); overflow: hidden; background: var(--bg-2); position: relative; cursor: pointer; box-shadow: 0 0 0 1px var(--ring); }
+/* 마네킹컷 크기 약간 축소 → 좌측 컴포넌트가 viewport에 안정적으로 들어오게 */
+.candidate .big { aspect-ratio: 3/4; height: clamp(280px, calc(100vh - 448px), 480px); width: auto; max-width: 100%; margin: 0 auto; border-radius: var(--r-5); overflow: hidden; background: var(--bg-2); position: relative; cursor: pointer; box-shadow: 0 0 0 1px var(--ring); }
 .candidate .big img { width: 100%; height: 100%; object-fit: cover; }
 .candidate .big.on { box-shadow: 0 0 0 2px var(--fg-1); }
 .candidate .big .selflag { position: absolute; left: 12px; top: 12px; }
 .candidate .cap { text-align: center; font-size: 13px; color: var(--fg-2); margin-top: 8px; font-weight: 500; }
 .history-strip { display: flex; gap: 8px; overflow-x: auto; padding: 12px 2px 4px; }
-.history-strip .h { width: 56px; height: 74px; border-radius: var(--r-3); overflow: hidden; flex: none; cursor: pointer; box-shadow: 0 0 0 1px var(--ring); background: var(--bg-2); position: relative; }
+.history-strip .h { width: 50px; height: 66px; border-radius: var(--r-3); overflow: hidden; flex: none; cursor: pointer; box-shadow: 0 0 0 1px var(--ring); background: var(--bg-2); position: relative; }
 .history-strip .h img { width: 100%; height: 100%; object-fit: cover; }
 .history-strip .h.on { box-shadow: 0 0 0 2px var(--fg-1); }
 .history-strip .h .v { position: absolute; bottom: 0; left: 0; right: 0; font-size: 9px; text-align: center; background: rgba(14,13,20,.6); color: #fff; padding: 1px; }
@@ -1021,3 +1024,23 @@
 .ch-sw { left: 0; bottom: 0; transform: translate(-50%, 50%) scale(var(--inv, 1)); cursor: nesw-resize; }
 .ch-s  { left: 50%; bottom: 0; transform: translate(-50%, 50%) scale(var(--inv, 1)); cursor: ns-resize; }
 .ch-se { right: 0; bottom: 0; transform: translate(50%, 50%) scale(var(--inv, 1)); cursor: nwse-resize; }
+
+/* ===== 세부 조정 — 의류 옵션 row 카드 (회색 박스 대신 흰 카드 row; 시안 톤) =====
+   체크(=펼침) 시: 테두리 sky(#8fbfee) + 제목 영역 fill = glow-sky (사용자 지정) */
+.adj-card { background: #fff; border-radius: var(--r-5); box-shadow: 0 0 0 1px var(--ring); margin-top: 12px; overflow: hidden; transition: box-shadow .15s; }
+.adj-card.on { box-shadow: 0 0 0 1.5px #8fbfee; }
+.adj-card-head { display: flex; align-items: center; gap: 11px; width: 100%; padding: 12px 14px; background: transparent; border: 0; cursor: pointer; text-align: left; transition: background .15s; }
+.adj-card.on .adj-card-head { background: var(--glow-sky); }
+.adj-check { width: 20px; height: 20px; border-radius: 6px; flex: none; display: grid; place-items: center; background: #fff; color: #fff; box-shadow: inset 0 0 0 1.5px var(--ring-strong); transition: background .15s, box-shadow .15s; }
+.adj-card.on .adj-check { background: #4f88c9; box-shadow: none; }
+.adj-ico { width: 34px; height: 34px; border-radius: var(--r-4); flex: none; display: grid; place-items: center; background: var(--bg-2); color: var(--fg-1); }
+.adj-card.on .adj-ico { background: rgba(255, 255, 255, .65); }
+.adj-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.adj-eyebrow { font-size: 11px; font-weight: 600; color: var(--fg-3); letter-spacing: .3px; }
+.adj-card.on .adj-eyebrow { color: var(--fg-2); }
+.adj-name { font-size: 14px; font-weight: 600; color: var(--fg-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.adj-chev { color: var(--fg-3); flex: none; }
+.adj-card-body { padding: 6px 14px 16px; }
+.adj-card-body .ap-sec { margin-top: 14px; }
+.adj-card-body .ap-sec:first-child { margin-top: 6px; }
+.adj-card-body .ap-sec .lbl { margin-bottom: 9px; }
