@@ -617,7 +617,7 @@ export function Editor() {
         <div className="ed-toolgroup">
           {TOOLS.map((t) => (
             <button key={t.id} className={`ed-tool${tab === t.id ? ' on' : ''}`} onClick={() => setTab(t.id)}>
-              <span className="dotwrap"><Icon name={t.icon} size={19} />
+              <span className="dotwrap"><Icon name={t.icon} size={22} />
                 {t.dot && genDot !== 'none' && <span className="dot" style={{ position: 'absolute', top: -2, right: -3, background: genDot === 'busy' ? '#e6b800' : 'var(--link)', boxShadow: '0 0 0 1.5px #fff' }} />}
               </span>{t.label}
             </button>

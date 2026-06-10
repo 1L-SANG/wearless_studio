@@ -18,6 +18,8 @@ export const WIZARD_STEPS = [
 /* input+analysis collapse into step 0; generating shares the editor step */
 export const STEP_INDEX = { input: 0, analysis: 0, mannequin: 1, storyboard: 2, generating: 3, editor: 3 };
 
+const STEPPER_STEPS = ['input', 'mannequin', 'storyboard'];
+
 export function TopNav() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -25,6 +27,7 @@ export function TopNav() {
   const resetFlow = useAppStore((s) => s.resetFlow);
   const route = pathname.startsWith('/library') ? 'library' : 'create';
   const onNav = (r) => { if (r === 'create') { resetFlow(); navigate('/create/input'); } else navigate('/library'); };
+  const step = pathname.startsWith('/create/') ? pathname.split('/')[2] : null;
 
   return (
     <nav className="topnav">
@@ -33,6 +36,7 @@ export function TopNav() {
         <button className={`nav-link${route === 'create' ? ' active' : ''}`} onClick={() => onNav('create')}>상세페이지 제작</button>
         <button className={`nav-link${route === 'library' ? ' active' : ''}`} onClick={() => onNav('library')}>보관함</button>
       </div>
+      {STEPPER_STEPS.includes(step) && <div className="nav-stepper"><Stepper current={step} /></div>}
       <div className="nav-right">
         <span className="credit-badge"><Icon name="coins" size={15} stroke={1.8} />크레딧 <b>{account.credits}</b></span>
         <span className="plan-badge">{account.plan}</span>

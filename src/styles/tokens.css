@@ -93,7 +93,7 @@
   --glow-mauve: #ead0e3;
 
   /* ---- White glass plate (for text/UI over a glow zone) ---- */
-  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-bg: rgba(255, 255, 255, 0.92);
   --glass-blur: blur(8px);
 
   /* ============================================================

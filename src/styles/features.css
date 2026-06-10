@@ -90,7 +90,7 @@
    glow tints through the margins. (To roll back: set background:#fff; box-shadow:var(--elev-card);
    remove backdrop-filter + inset highlights.) */
 .merged-card {
-  background: linear-gradient(180deg, rgba(255,255,255,.52) 0%, rgba(255,255,255,.64) 100%);
+  background: linear-gradient(180deg, rgba(255,255,255,.62) 0%, rgba(255,255,255,.74) 100%);
   -webkit-backdrop-filter: blur(34px) saturate(150%); backdrop-filter: blur(34px) saturate(150%);
   border-radius: var(--r-6); overflow: hidden;
   box-shadow:
@@ -647,7 +647,7 @@
 
 /* ============ EDITOR (11) ============ */
 .editor { position: fixed; inset: 0; display: flex; flex-direction: column; background: #f0f0f2; z-index: 50; }
-.ed-toolbar { height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 16px; background: #fff; box-shadow: 0 1px 0 0 var(--ring); z-index: 5; position: relative; }
+.ed-toolbar { height: 60px; display: flex; align-items: center; gap: 8px; padding: 0 16px; background: #fff; box-shadow: 0 1px 0 0 var(--ring); z-index: 5; position: relative; }
 /* editing doc name centered in the toolbar (#22) */
 .ed-doc-name { position: absolute; left: 50%; transform: translateX(-50%); max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-size: 14px; font-weight: 600; color: var(--fg-1); pointer-events: none; }
@@ -658,8 +658,8 @@
    (흰 배경 + 소프트 글로우 rgba(143,191,237,.6) + #3F86D3 아이콘·라벨). */
 .ed-toolgroup { display: inline-flex; align-items: center; gap: 4px; padding: 0;
   background: transparent; box-shadow: none; }
-.ed-tool { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 14px; border-radius: 12px;
-  color: #8B93A3; cursor: pointer; background: transparent; border: 0; font-size: 11px; font-weight: 500; transition: box-shadow .16s; }
+.ed-tool { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; padding: 7px 17px; border-radius: 12px;
+  color: #8B93A3; cursor: pointer; background: transparent; border: 0; font-size: 12.5px; font-weight: 500; transition: box-shadow .16s; }
 .ed-tool:hover { color: #5b6270; }
 .ed-toolgroup .ed-tool:hover { background: rgba(255,255,255,.55); }
 .ed-tool.on, .ed-toolgroup .ed-tool.on { background: #FFFFFF; color: #3F86D3;

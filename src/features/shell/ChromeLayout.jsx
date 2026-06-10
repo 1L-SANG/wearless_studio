@@ -4,23 +4,19 @@
    main outlet, with the dots Stepper on create-flow steps.
    ============================================================= */
 import { useEffect } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
-import { TopNav, Stepper } from '@/features/shell/shell.jsx';
+import { Outlet } from 'react-router-dom';
+import { TopNav } from '@/features/shell/shell.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 
-const STEPPER_STEPS = ['input', 'mannequin', 'storyboard'];
-
 export function ChromeLayout() {
-  const { pathname } = useLocation();
   const loadAccount = useAppStore((s) => s.loadAccount);
   const loadCatalogs = useAppStore((s) => s.loadCatalogs);
 
   useEffect(() => { loadAccount(); loadCatalogs(); }, [loadAccount, loadCatalogs]);
 
-  const step = pathname.startsWith('/create/') ? pathname.split('/')[2] : null;
-  const showStepper = STEPPER_STEPS.includes(step);
-
-  // background orb glow fixed at the approved 75% (prototype app.jsx)
+  // background orb glow fixed at the approved 75% (prototype app.jsx).
+  // The wizard stepper now lives centered inside TopNav (see shell.jsx),
+  // so the hero content starts directly under the nav.
   return (
     <div className="app-shell" style={{ '--glow-a': 0.75 }}>
       <div className="app-bg">
@@ -29,7 +25,6 @@ export function ChromeLayout() {
       </div>
       <TopNav />
       <div className="app-main">
-        {showStepper && <Stepper current={step} />}
         <Outlet />
       </div>
     </div>
