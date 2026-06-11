@@ -243,7 +243,17 @@ export function Editor() {
   const { id: projectId } = useParams();             // /editor/:id = projectId (계약 §2 — mock 은 무시)
   const account = useAppStore((s) => s.account);     // 크레딧 단일 표시 소스 (frontend_state_model §6)
   const syncCredits = useAppStore((s) => s.syncCredits);
-  const [blocks, setBlocks] = useState(null);
+  const [blocks, setBlocksState] = useState(null);
+  // 이탈 플러시용 최신 blocks — effect([blocks])가 아니라 setBlocks 와 "동기"로
+  // 갱신한다. 편집 커밋과 라우트 이탈이 같은 배치에 겹치면(텍스트 blur 직후
+  // 보관함 클릭 등) 언마운트가 effect 보다 먼저라 ref 가 한 단계 묵게 되어
+  // 마지막 편집이 유실되던 구멍의 수정.
+  const latestBlocks = useRef(null);
+  const setBlocks = useCallback((u) => setBlocksState((prev) => {
+    const next = typeof u === 'function' ? u(prev) : u;
+    latestBlocks.current = next;
+    return next;
+  }), []);
   const [wardrobe, setWardrobe] = useState(null);
   const [varyTarget, setVaryTarget] = useState(null); // 의류 탭 'AI 편집'으로 지정한 변형 대상 { id } — 캔버스 선택이 바뀌면 해제
   const [catalogs, setCatalogs] = useState(null);
@@ -311,9 +321,7 @@ export function Editor() {
   // 자동 저장 — 변경 1.5s 디바운스 + 이탈 시 플러시 (frontend_state_model §8 P1-6).
   // 첫 로드 직후 1회는 방금 불러온 동일 데이터 재기록이라 무해.
   const saveTimer = useRef(null);
-  const latestBlocks = useRef(null);
   useEffect(() => {
-    latestBlocks.current = blocks;
     if (blocks == null) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => { api.saveEditorBlocks(projectId, latestBlocks.current); }, 1500);
@@ -536,6 +544,22 @@ export function Editor() {
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
   const save = async () => { await api.saveEditorBlocks(projectId, blocks); toast.push('저장했어요', { icon: 'check' }); };
+  // 이탈 직전 플러시 — 인라인 편집 중 텍스트는 blur/언마운트에 기대지 않고
+  // DOM 에서 직접 읽어 합쳐 저장한다. (프로그램적 내비게이션은 blur 가 없고,
+  // blur 가 있어도 언마운트 배치에선 setState 커밋이 보장되지 않는 두 구멍 커버)
+  const flushExit = () => {
+    let bs = latestBlocks.current;
+    if (editEl && wrapRef.current && bs) {
+      const node = wrapRef.current.querySelector(`[data-elid="${editEl}"]`);
+      if (node) {
+        const text = node.textContent;
+        bs = bs.map((b) => ({ ...b, elements: b.elements.map((el) => el.id === editEl ? { ...el, text } : el) }));
+        latestBlocks.current = bs;
+      }
+    }
+    clearTimeout(saveTimer.current);
+    if (bs) api.saveEditorBlocks(projectId, bs);
+  };
   /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
 
   /* ---- react-moveable → Element {x,y,w,h,rotate}.
@@ -674,7 +698,7 @@ export function Editor() {
     <div className="editor">
       {/* toolbar */}
       <div className="ed-toolbar">
-        <button className="ed-tool" onClick={() => navigate('/library')} title="보관함으로" style={{ flexDirection: 'row', gap: 6 }}>
+        <button className="ed-tool" onClick={() => { flushExit(); navigate('/library'); }} title="보관함으로" style={{ flexDirection: 'row', gap: 6 }}>
           <span className="brand" style={{ fontSize: 17 }}>wearless</span>
         </button>
         <div className="ed-divider" />
