@@ -15,6 +15,12 @@
   border-radius: 2px !important; box-shadow: 0 1px 2px rgba(34,42,53,.18);
 }
 .moveable-rotation .moveable-rotation-line { background: #8fbfee !important; }
+/* 회전 노브 — 회전 아이콘을 상시 표시해 역할을 분명히 하고(살짝 키움),
+   호버/드래그 중에는 양끝이 갈라진 곡선 화살표 커서로 회전임을 알린다 */
 .moveable-rotation .moveable-rotation-control {
-  border-radius: 50% !important; background: #fff !important; border: 1.5px solid #8fbfee !important;
+  width: 18px !important; height: 18px !important;
+  margin-top: -9.5px !important; margin-left: -9.5px !important;
+  border-radius: 50% !important; border: 1.5px solid #8fbfee !important;
+  background: #fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f88c9' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8'/><path d='M21 3v5h-5'/></svg>") center / 12px 12px no-repeat !important;
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 22 22'><g fill='none' stroke-linecap='round' stroke-linejoin='round'><g stroke='white' stroke-width='4.2'><path d='M4 13 A 7.3 7.3 0 0 1 18 13'/><path d='M3.2 8.6 L4 13 L8.3 13.9'/><path d='M18.8 8.6 L18 13 L13.7 13.9'/></g><g stroke='%230e0d14' stroke-width='2.2'><path d='M4 13 A 7.3 7.3 0 0 1 18 13'/><path d='M3.2 8.6 L4 13 L8.3 13.9'/><path d='M18.8 8.6 L18 13 L13.7 13.9'/></g></g></svg>") 11 11, grab !important;
 }

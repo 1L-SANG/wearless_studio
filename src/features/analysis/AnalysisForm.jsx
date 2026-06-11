@@ -125,8 +125,9 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   };
   const setMat = (i, patch) => onChange({ materials: a.materials.map((m, j) => j === i ? { ...m, ...patch } : m) });
   const draftWash = async () => { setWashing(true); const t = await api.draftWashCare(); onChange({ washCare: t }); setWashing(false); toast.push('AI 초안을 채웠어요 · 실제 케어라벨과 확인해주세요', { icon: 'sparkles' }); };
-  const changeType = (t) => onChange({ clothingType: t, subCategory: (catalogs.subCategories[t] || [])[0],
-    measurements: (catalogs.measurementSchema[t] || []).map((k) => ({ key: k, label: k, value: null, unit: 'cm' })) });
+  // subCategory 는 영문 토큰, 실측 key 는 MeasurementKey — 라벨은 catalogs 에서 파생 (계약 §4)
+  const changeType = (t) => onChange({ clothingType: t, subCategory: (catalogs.subCategories[t] || [])[0]?.value ?? null,
+    measurements: (catalogs.measurementSchema[t] || []).map((k) => ({ key: k, value: null, unit: 'cm' })) });
   const setMeasure = (key, value) => onChange({ measurements: (a.measurements || []).map((m) => m.key === key ? { ...m, value: value === '' ? null : Number(value) } : m) });
   const typeLabel = catalogs.clothingTypes.find((t) => t.value === a.clothingType)?.label;
 
@@ -193,7 +194,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
           <div className="measure-grid">
             {(a.measurements || []).map((m) => (
               <div className="measure-cell" key={m.key}>
-                <label className="lbl" style={{ fontWeight: 400, color: 'var(--fg-2)', fontSize: 12.5 }}>{m.label}</label>
+                <label className="lbl" style={{ fontWeight: 400, color: 'var(--fg-2)', fontSize: 12.5 }}>{(catalogs.measurementLabels || {})[m.key] || m.key}</label>
                 <div className="mfield"><input type="number" placeholder="0" value={m.value ?? ''} onChange={(e) => setMeasure(m.key, e.target.value)} /><span className="u">cm</span></div>
               </div>
             ))}

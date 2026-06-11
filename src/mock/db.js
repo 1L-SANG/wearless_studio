@@ -1,22 +1,23 @@
 /* =============================================================
-   mock/db.js — single source of fake data (conforms to lib/types.js).
-   (ported from handoff/contracts/db.example.js; window.* → ES module)
+   mock/db.js — single source of fake data (conforms to lib/types.js
+   and documents/common_data_contract.md).
    Screens NEVER hardcode data; they read it through mock/api.js,
    which reads from here. Swap this out for a real backend later.
    creditCosts is sourced from lib/limits.js (single tunable place).
 
-   NOTE: the per-creation "draft" collections (product, analysis,
-   mannequins, storyboard, editorBlocks, wardrobe) are MUTATED by the
-   api (adjust/regenerate push, save* assign). buildDraft() rebuilds
-   them from fresh seeds and reseedDraft() reinstalls a clean copy, so
-   starting a new creation does not leak the prior session's variants.
-   Stable reference data (account, catalogs, models, library …) is not
-   reseeded.
+   NOTE: the per-creation "draft" collections (project, product,
+   analysis, mannequins, storyboard, editorBlocks, wardrobe) are
+   MUTATED by the api (adjust/regenerate push, save* assign).
+   buildDraft() rebuilds them from fresh seeds; api.createProject()
+   reinstalls a clean copy, so starting a new creation does not leak
+   the prior session's variants. Stable reference data (account,
+   catalogs, models, library …) is not reseeded.
    ============================================================= */
 import { Placeholder as P } from '@/mock/placeholders.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 
 const uid = (p) => p + '_' + Math.random().toString(36).slice(2, 8);
+const nowIso = () => new Date().toISOString();
 
 /* ---- Account (stable) ---- */
 const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 24, plan: 'Pro' };
@@ -27,10 +28,20 @@ const catalogs = {
     { value: 'top', label: '상의' }, { value: 'bottom', label: '하의' },
     { value: 'outer', label: '아우터' }, { value: 'dress', label: '원피스' },
   ],
+  // 세부 카테고리 — 저장 값은 영문 토큰, 한국어는 라벨 (계약 §4)
   subCategories: {
-    top: ['티셔츠', '맨투맨', '셔츠', '니트'],
-    bottom: ['면바지', '트레이닝 팬츠', '청바지', '슬랙스', '치마'],
-    outer: ['셔츠', '자켓', '가디건', '패딩', '코트'],
+    top: [
+      { value: 'tshirt', label: '티셔츠' }, { value: 'sweatshirt', label: '맨투맨' },
+      { value: 'shirt', label: '셔츠' }, { value: 'knit', label: '니트' },
+    ],
+    bottom: [
+      { value: 'cotton_pants', label: '면바지' }, { value: 'training_pants', label: '트레이닝 팬츠' },
+      { value: 'jeans', label: '청바지' }, { value: 'slacks', label: '슬랙스' }, { value: 'skirt', label: '치마' },
+    ],
+    outer: [
+      { value: 'shirt', label: '셔츠' }, { value: 'jacket', label: '자켓' },
+      { value: 'cardigan', label: '가디건' }, { value: 'padding', label: '패딩' }, { value: 'coat', label: '코트' },
+    ],
     dress: [],
   },
   genders: [{ value: 'women', label: '여자' }, { value: 'men', label: '남자' }],
@@ -45,14 +56,24 @@ const catalogs = {
     { value: 'full', label: '풀샷' }, { value: 'knee', label: '무릎샷' },
     { value: 'medium', label: '미디움샷' }, { value: 'close', label: '확대샷' },
   ],
+  // 제품컷 전용 옵션 — 화면 하드코딩 금지 (계약 §5)
+  productDirections: [{ value: 'front', label: '앞면' }, { value: 'back', label: '뒷면' }],
+  productShotTypes: [
+    { value: 'ghost', label: '고스트컷' }, { value: 'hanger', label: '행거컷' }, { value: 'flatlay', label: '플랫레이샷' },
+  ],
   angleSlots: ['Front', 'Back', 'Detail', 'Fit'],
   angleLabels: { Front: '앞면 이미지', Back: '뒷면 이미지', Detail: '디테일 이미지', Fit: '착용 이미지' },
-  // measurement schema per clothing type (PRD §6.5)
+  // measurement schema per clothing type (PRD §6.5) — key는 영문 토큰 (계약 §4)
   measurementSchema: {
-    top: ['총장', '어깨너비', '가슴단면', '소매길이'],
-    bottom: ['총장', '허리단면', '엉덩이단면', '허벅지단면', '밑위', '밑단단면'],
-    outer: ['총장', '어깨너비', '가슴단면', '소매길이'],
-    dress: ['총장', '어깨너비', '가슴단면', '허리단면', '암홀', '소매길이'],
+    top: ['totalLength', 'shoulderWidth', 'chestWidth', 'sleeveLength'],
+    bottom: ['totalLength', 'waistWidth', 'hipWidth', 'thighWidth', 'rise', 'hemWidth'],
+    outer: ['totalLength', 'shoulderWidth', 'chestWidth', 'sleeveLength'],
+    dress: ['totalLength', 'shoulderWidth', 'chestWidth', 'waistWidth', 'armhole', 'sleeveLength'],
+  },
+  measurementLabels: {
+    totalLength: '총장', shoulderWidth: '어깨너비', chestWidth: '가슴단면', sleeveLength: '소매길이',
+    waistWidth: '허리단면', hipWidth: '엉덩이단면', thighWidth: '허벅지단면',
+    rise: '밑위', hemWidth: '밑단단면', armhole: '암홀',
   },
   sellingPointSuggestions: ['부드러운 촉감', '여리한 핏', '단독/이너 활용 가능', '비침 없는 도톰함', '데일리하게 활용'],
   swatchColors: [
@@ -74,23 +95,42 @@ const catalogs = {
     { value: 'basic', label: '기본형', desc: '대표 컬러 중심의 균형형', count: '11~15', flow: ['후킹', '셀링포인트', '스타일링컷', '호리존컷', '제품컷'], recommended: true },
     { value: 'extended', label: '확장형', desc: '여러 컬러를 자세히 소개', count: '18~26', flow: ['후킹', '셀링포인트', '컬러별 스타일링컷', '컬러별 호리존컷', '제품컷'] },
   ],
-  extendedColorPriority: [
-    { value: 'main', label: '메인 색상' }, { value: 'mono', label: '모노톤 추천' }, { value: 'ai', label: 'AI 추천' },
-  ],
   poses: [
     { id: 'auto', label: 'AI 자동', auto: true }, { id: 'stand', label: '서기', thumb: P.pose('stand') },
     { id: 'walk', label: '걷기', thumb: P.pose('walk') }, { id: 'sit', label: '앉기', thumb: P.pose('sit') },
     { id: 'lean', label: '기대기', thumb: P.pose('lean') }, { id: 'turn', label: '돌아보기', thumb: P.pose('turn') },
   ],
-  backgrounds: [
-    { id: 'same', label: '동일', thumb: P.scene('same') }, { id: 'cafe', label: '카페', thumb: P.scene('cafe') },
-    { id: 'street', label: '거리', thumb: P.scene('street') }, { id: 'park', label: '공원', thumb: P.scene('park') },
-    { id: 'studio', label: '스튜디오', thumb: P.scene('studio') }, { id: 'home', label: '홈', thumb: P.scene('home') },
-  ],
+  // 에디터 '현재 컷 변형' — 배경/포즈/표정은 예시 카드(탭당 1개).
+  // '컷 변경' 탭은 스타일링컷 기준 directions/shotTypes 를 그대로 재사용한다.
+  varyOptions: {
+    bg: [
+      { id: 'cafe', label: '햇살 카페', thumb: P.scene('v-cafe', 240, 240) },
+      { id: 'street', label: '도심 거리', thumb: P.scene('v-street', 240, 240) },
+      { id: 'park', label: '공원 산책로', thumb: P.scene('v-park', 240, 240) },
+      { id: 'horizon', label: '화이트 호리존', thumb: P.scene('v-horizon', 240, 240) },
+      { id: 'home', label: '집 거실', thumb: P.scene('v-home', 240, 240) },
+      { id: 'night', label: '야경 거리', thumb: P.scene('v-night', 240, 240) },
+    ],
+    pose: [
+      { id: 'stand', label: '정면 스탠딩', thumb: P.pose('v-stand', 240, 240) },
+      { id: 'walk', label: '걷는 모습', thumb: P.pose('v-walk', 240, 240) },
+      { id: 'back', label: '뒷모습', thumb: P.pose('v-back', 240, 240) },
+      { id: 'lean', label: '벽에 기대기', thumb: P.pose('v-lean', 240, 240) },
+      { id: 'sit', label: '앉은 포즈', thumb: P.pose('v-sit', 240, 240) },
+      { id: 'turn', label: '돌아보기', thumb: P.pose('v-turn', 240, 240) },
+    ],
+    face: [
+      { id: 'smile', label: '은은한 미소', thumb: P.portrait('v-smile', 240, 240) },
+      { id: 'laugh', label: '활짝 웃음', thumb: P.portrait('v-laugh', 240, 240) },
+      { id: 'chic', label: '시크한 무표정', thumb: P.portrait('v-chic', 240, 240) },
+      { id: 'gaze', label: '먼 곳 응시', thumb: P.portrait('v-gaze', 240, 240) },
+    ],
+  },
   genExamples: Array.from({ length: 8 }, (_, i) => ({ id: 'ex' + i, thumb: P.photo('ex' + i, i % 2 ? 'styling' : 'horizon', 240, 320) })),
-  cutSources: [
-    { value: 'studio', label: '호리존컷' }, { value: 'daily', label: '일상컷' },
-    { value: 'product', label: '제품컷' }, { value: 'mine', label: '내 이미지' },
+  // 컷 종류 — 공식 용어: 스타일링컷·호리존컷·제품컷 (ADR-0003).
+  // '내 이미지'는 컷 종류가 아니라 source('mine')로 다룬다 — UI 탭은 화면에서 합성.
+  cutTypes: [
+    { value: 'styling', label: '스타일링컷' }, { value: 'horizon', label: '호리존컷' }, { value: 'product', label: '제품컷' },
   ],
   frames: [
     { id: 'split2', label: '2분할', cols: 2 }, { id: 'grid3', label: '3컷 구성', cols: 3 },
@@ -99,6 +139,8 @@ const catalogs = {
   ],
   shapes: [
     { id: 'circle', label: '원' }, { id: 'rect', label: '사각형' }, { id: 'triangle', label: '삼각형' },
+    { id: 'diamond', label: '마름모' }, { id: 'star', label: '별' }, { id: 'heart', label: '하트' },
+    { id: 'hexagon', label: '육각형' }, { id: 'bubble', label: '말풍선' },
   ],
   lines: [{ id: 'arrow-l', label: '←' }, { id: 'line', label: '—' }, { id: 'arrow-r', label: '→' }],
   fonts: ['Pretendard', 'Cal Sans', 'Roboto Mono'],
@@ -139,17 +181,86 @@ const library = [
   { id: uid('lib'), title: '플리츠 미디 원피스', cover: P.photo('lib4', 'horizon', 400, 520), clothingType: 'dress', blocks: 5, status: 'draft', updatedAt: '3일 전' },
 ];
 
+/* ---- editor element builders (seed + 콘티 기반 생성이 공유) ---- */
+const T = (x, y, w, h, text, style) => ({ id: uid('el'), type: 'text', x, y, w, h, text, style: style || {} });
+// cutType: 생성 산출물에 기록되는 컷 종류 메타데이터 — '현재 컷 변형'의 옵션 기준 (디테일 줌은 product 로 분류)
+const IMG = (x, y, w, h, src, radius, cutType) => ({ id: uid('el'), type: 'image', x, y, w, h, src, radius: radius || 8, ...(cutType ? { cutType } : {}) });
+
+/* 자동 안내 블록 (PRD §10.14) — 사이즈 안내는 product.measurements 를 "생성 시점"에 읽는다 */
+function buildAutoBlocks(product) {
+  return [
+    {
+      id: uid('b'), name: '사이즈 안내', kind: 'size', auto: true, bg: '#ffffff', elements: [
+        T(60, 56, 500, 44, '사이즈 안내', { size: 28, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
+        T(60, 104, 760, 24, '단위: cm · 측정 위치에 따라 1~3cm 오차가 있을 수 있어요', { size: 14, color: '#4a4a45' }),
+        ...(product.measurements || []).slice(0, 4).flatMap((m, i) => {
+          const x = 60 + i * 232;
+          return [
+            T(x, 168, 200, 24, catalogs.measurementLabels[m.key] || m.key, { size: 14, color: '#4a4a45' }),
+            T(x, 194, 200, 48, (m.value != null ? m.value + ' cm' : '—'), { size: 32, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
+          ];
+        }),
+      ],
+    },
+    {
+      id: uid('b'), name: '세탁 안내', kind: 'care', auto: true, bg: '#f5f5f5', elements: [
+        T(60, 56, 500, 40, '세탁 안내', { size: 24, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
+        T(60, 104, 880, 64, '세탁 전 실제 상품의 케어라벨을 반드시 확인해주세요. 소재와 상품 특성에 따라 관리 방법이 달라질 수 있습니다.', { size: 16, color: '#0e0d14' }),
+      ],
+    },
+    {
+      id: uid('b'), name: 'AI 생성 안내', kind: 'ai-notice', auto: true, bg: '#ffffff', elements: [
+        T(60, 48, 880, 60, '본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다. 실제 상품의 색상과 핏은 촬영 환경 및 화면 설정에 따라 다르게 보일 수 있습니다.', { size: 13, color: '#4a4a45', align: 'center' }),
+      ],
+    },
+  ];
+}
+
+/* 저장된 콘티 → 에디터 블록 (mock 생성기, 계약 §6 generateDetailPage).
+   실제 파이프라인이 할 일을 placeholder 로 흉내만 낸다 — 블록 수·종류·순서가
+   콘티를 따라가고, 카피라이팅 ON 이면 후킹/셀링포인트에 카피를 넣는다. */
+export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting) {
+  const KIND_NAMES = { hook: '후킹', selling: '셀링포인트', styling: '스타일링컷', horizon: '호리존컷', product: '제품컷', info: '블록' };
+  const cat = (ct) => ct === 'product' ? 'product' : ct === 'horizon' ? 'horizon' : 'styling';
+  const blocks = (storyboard || []).map((b, i) => {
+    const bg = i % 2 ? '#f5f5f5' : '#ffffff';
+    if (b.source === 'mine') {
+      const els = (b.ownImages || []).slice(0, 1).map((src) => IMG(60, 50, 880, 560, src, 12));
+      return { id: uid('b'), name: '내 이미지', kind: 'info', bg, h: 660, elements: els };
+    }
+    const name = b.title || KIND_NAMES[b.kind] || '컷';
+    const els = [IMG(60, 50, 880, 560, P.photo('gen_' + b.id, cat(b.cutType), 880, 560), 12, b.cutType || undefined)];
+    if (copywriting && b.kind === 'hook') {
+      els.push(T(120, 110, 600, 80, `${product.name || '상품'}와 함께하는 하루`, { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }));
+    }
+    if (copywriting && b.kind === 'selling') {
+      els.push(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 18, color: '#4a4a45' }));
+    }
+    return { id: uid('b'), name, kind: b.kind, bg, h: 660, elements: els };
+  });
+  return [...blocks, ...buildAutoBlocks(product)];
+}
+
 /* =============================================================
    buildDraft() — fresh per-creation working data. Called at init
-   and on reseedDraft() so a new creation never inherits the prior
-   session's mutations (mannequin variants, saved storyboard, etc.).
+   and by api.createProject() so a new creation never inherits the
+   prior session's mutations (mannequin variants, saved storyboard…).
    ============================================================= */
 function buildDraft() {
+  /* ---- Project — 플로우 최상위 엔티티 (ADR-0001) ---- */
+  const project = {
+    id: uid('prj'), status: 'draft', title: '',
+    composeMode: 'basic', copywriting: true,
+    selectedMannequinId: null, adjustCount: 0,
+    createdAt: nowIso(), updatedAt: nowIso(),
+  };
+
+  // 실측 — key 는 영문 토큰, 라벨은 catalogs.measurementLabels (계약 §4)
   const measurements = () => [
-    { key: '총장', label: '총장', value: 64, unit: 'cm' },
-    { key: '어깨너비', label: '어깨너비', value: 42, unit: 'cm' },
-    { key: '가슴단면', label: '가슴단면', value: 51, unit: 'cm' },
-    { key: '소매길이', label: '소매길이', value: null, unit: 'cm' },
+    { key: 'totalLength', value: 64, unit: 'cm' },
+    { key: 'shoulderWidth', value: 42, unit: 'cm' },
+    { key: 'chestWidth', value: 51, unit: 'cm' },
+    { key: 'sleeveLength', value: null, unit: 'cm' },
   ];
 
   /* ---- Seed product input (the 골지 니트 example) ---- */
@@ -173,10 +284,14 @@ function buildDraft() {
     ],
     measurements: measurements(),
   };
+  project.title = product.name;
 
-  /* ---- Analysis result (AI-filled, editable) ---- */
+  /* ---- Analysis result (AI-filled, editable) ----
+     clothingType/measurements 는 Product 가 단일 소유 (계약 §3.1).
+     mock 과도기: analysis 에도 사본을 두되, api.saveAnalysis 가
+     Product 소유 필드를 product 로 동기화한다. */
   const analysis = {
-    clothingType: 'top', subCategory: '니트', targetGenders: ['women'],
+    clothingType: 'top', subCategory: 'knit', targetGenders: ['women'],
     fit: 'semi_over', suggestedName: '소프트 골지 라운드 니트',
     materials: [{ name: '코튼', ratio: 60 }, { name: '폴리에스터', ratio: 40 }],
     sellingPoints: ['부드러운 촉감', '여리한 핏', '단독/이너 활용 가능'],
@@ -187,101 +302,77 @@ function buildDraft() {
     measurements: measurements(),
   };
 
-  /* ---- Mannequin candidates (A/B + history, PRD §7.3) ---- */
-  const mannequins = [
-    { id: 'A-0', candidate: 'A', version: 0, src: P.photo('A0', 'mannequin'), fitLabel: '정핏', lengthLabel: '원본 기장', selected: true },
-    { id: 'A-1', candidate: 'A', version: 1, src: P.photo('A1', 'mannequin'), fitLabel: '더 여유롭게', lengthLabel: '원본 기장', selected: false },
-    { id: 'B-0', candidate: 'B', version: 0, src: P.photo('B0', 'mannequin'), fitLabel: '슬림핏', lengthLabel: '조금 길게', selected: false },
-  ];
+  /* ---- Mannequin candidates (PRD §7.3) ----
+     비어 있게 시작 — 마네킹 단계 최초 진입 시 generateMannequins 가
+     A-0/B-0 를 만들고 크레딧을 차감한다. 재진입은 getMannequins 로 무과금. */
+  const mannequins = [];
 
-  /* ---- Storyboard blocks (basic mode default, PRD §8) ---- */
-  const sb = (kind, title, direction, shot, colorId, source, pose, bg) => ({
-    id: uid('blk'), kind, title, direction, shot, colorId, source,
-    thumb: P.photo(kind + title, kind === 'product' ? 'product' : kind === 'horizon' ? 'horizon' : 'styling', 240, 320),
-    poseThumb: P.pose(pose), poseLabel: pose, bgThumb: P.scene(bg), bgLabel: bg,
+  /* ---- Storyboard blocks (basic mode default, PRD §8) ----
+     source: 'ai' | 'mine', cutType: styling|horizon|product (ADR-0003) ---- */
+  const sb = (kind, title, cutType, direction, shot, colorId) => ({
+    id: uid('blk'), kind, title, source: 'ai', cutType, direction, shot, colorId,
+    pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
+    thumb: P.photo(kind + title, cutType === 'product' ? 'product' : cutType === 'horizon' ? 'horizon' : 'styling', 240, 320),
+    poseThumb: P.pose('stand'), poseLabel: 'AI 자동',
   });
   const storyboard = [
-    sb('hook', '후킹', 'front', 'full', 'col1', 'studio', '서기', '스튜디오'),
-    sb('selling', '셀링포인트', 'side', 'close', 'col1', 'product', '서기', '동일'),
-    sb('styling', '스타일링컷', 'side', 'medium', 'col1', 'daily', '걷기', '거리'),
-    sb('styling', '스타일링컷', 'front', 'knee', 'col1', 'daily', '기대기', '카페'),
-    sb('horizon', '호리존컷', 'front', 'knee', 'col1', 'studio', '서기', '스튜디오'),
-    sb('horizon', '호리존컷', 'back', 'full', 'col1', 'studio', '돌아보기', '스튜디오'),
-    sb('product', '제품컷', 'front', 'close', 'col1', 'product', '서기', '동일'),
+    sb('hook', '후킹', 'horizon', 'front', 'full', 'col1'),
+    sb('selling', '셀링포인트', 'product', 'front', 'ghost', 'col1'),
+    sb('styling', '스타일링컷', 'styling', 'side', 'medium', 'col1'),
+    sb('styling', '스타일링컷', 'styling', 'front', 'knee', 'col1'),
+    sb('horizon', '호리존컷', 'horizon', 'front', 'knee', 'col1'),
+    sb('horizon', '호리존컷', 'horizon', 'back', 'full', 'col1'),
+    sb('product', '제품컷', 'product', 'front', 'ghost', 'col1'),
   ];
 
-  /* ---- Editor blocks: 5 prefilled + auto info blocks (PRD §10.14) ---- */
-  const T = (x, y, w, h, text, style) => ({ id: uid('el'), type: 'text', x, y, w, h, text, style: style || {} });
-  const IMG = (x, y, w, h, src, radius) => ({ id: uid('el'), type: 'image', x, y, w, h, src, radius: radius || 8 });
+  /* ---- Editor blocks: 5 prefilled demo + auto info blocks (PRD §10.14) ----
+     (직접 /editor 진입용 데모. 생성 플로우는 generateDetailPage 가
+     buildEditorBlocksFromStoryboard 로 대체한다.) ---- */
   const editorBlocks = [
     {
       id: uid('b'), name: '후킹', kind: 'hook', bg: '#ffffff', elements: [
-        IMG(60, 50, 880, 560, P.photo('ed_hook', 'horizon', 880, 560), 12),
+        IMG(60, 50, 880, 560, P.photo('ed_hook', 'horizon', 880, 560), 12, 'horizon'),
         T(120, 110, 600, 80, '겨울을 부드럽게, 골지 니트', { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
         T(120, 200, 520, 40, '하루 종일 편안한 데일리 니트', { size: 20, color: '#0e0d14' }),
       ],
     },
     {
       id: uid('b'), name: '셀링포인트', kind: 'selling', bg: '#f5f5f5', elements: [
-        IMG(60, 50, 420, 540, P.detail('ed_sell', 420, 540), 12),
+        IMG(60, 50, 420, 540, P.detail('ed_sell', 420, 540), 12, 'product'),
         T(540, 150, 380, 40, '부드러운 촉감', { size: 28, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
         T(540, 210, 380, 80, '코튼 혼방으로 자연스럽게 떨어지는 결, 피부에 닿는 감촉이 부담 없습니다.', { size: 17, color: '#4a4a45' }),
       ],
     },
     {
       id: uid('b'), name: '스타일링컷', kind: 'styling', bg: '#ffffff', elements: [
-        IMG(60, 50, 430, 580, P.photo('ed_st1', 'styling', 430, 580), 12),
-        IMG(510, 50, 430, 580, P.photo('ed_st2', 'styling', 430, 580), 12),
+        IMG(60, 50, 430, 580, P.photo('ed_st1', 'styling', 430, 580), 12, 'styling'),
+        IMG(510, 50, 430, 580, P.photo('ed_st2', 'styling', 430, 580), 12, 'styling'),
       ],
     },
     {
       id: uid('b'), name: '호리존컷', kind: 'horizon', bg: '#ffffff', elements: [
-        IMG(280, 50, 440, 590, P.photo('ed_hz', 'horizon', 440, 590), 12),
+        IMG(280, 50, 440, 590, P.photo('ed_hz', 'horizon', 440, 590), 12, 'horizon'),
       ],
     },
     {
       id: uid('b'), name: '제품컷', kind: 'product', bg: '#f5f5f5', elements: [
-        IMG(90, 60, 380, 500, P.product('ed_p1', 380, 500), 12),
-        IMG(530, 60, 380, 500, P.product('ed_p2', 380, 500), 12),
+        IMG(90, 60, 380, 500, P.product('ed_p1', 380, 500), 12, 'product'),
+        IMG(530, 60, 380, 500, P.product('ed_p2', 380, 500), 12, 'product'),
         T(90, 580, 200, 30, 'FRONT', { size: 15, weight: 600, font: 'Roboto Mono', color: '#0e0d14', tracking: 2 }),
         T(530, 580, 200, 30, 'BACK', { size: 15, weight: 600, font: 'Roboto Mono', color: '#0e0d14', tracking: 2 }),
       ],
     },
-    /* ---- auto-appended info blocks (PRD §10.14) ---- */
-    {
-      id: uid('b'), name: '사이즈 안내', kind: 'size', auto: true, bg: '#ffffff', elements: [
-        T(60, 56, 500, 44, '사이즈 안내', { size: 28, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
-        T(60, 104, 760, 24, '단위: cm · 측정 위치에 따라 1~3cm 오차가 있을 수 있어요', { size: 14, color: '#4a4a45' }),
-        ...product.measurements.slice(0, 4).flatMap((m, i) => {
-          const x = 60 + i * 232;
-          return [
-            T(x, 168, 200, 24, m.label, { size: 14, color: '#4a4a45' }),
-            T(x, 194, 200, 48, (m.value != null ? m.value + ' cm' : '—'), { size: 32, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
-          ];
-        }),
-      ],
-    },
-    {
-      id: uid('b'), name: '세탁 안내', kind: 'care', auto: true, bg: '#f5f5f5', elements: [
-        T(60, 56, 500, 40, '세탁 안내', { size: 24, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
-        T(60, 104, 880, 64, '세탁 전 실제 상품의 케어라벨을 반드시 확인해주세요. 소재와 상품 특성에 따라 관리 방법이 달라질 수 있습니다.', { size: 16, color: '#0e0d14' }),
-      ],
-    },
-    {
-      id: uid('b'), name: 'AI 생성 안내', kind: 'ai-notice', auto: true, bg: '#ffffff', elements: [
-        T(60, 48, 880, 60, '본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다. 실제 상품의 색상과 핏은 촬영 환경 및 화면 설정에 따라 다르게 보일 수 있습니다.', { size: 13, color: '#4a4a45', align: 'center' }),
-      ],
-    },
+    ...buildAutoBlocks(product),
   ];
 
-  /* ---- Editor 의류 탭: color-grouped image library ---- */
+  /* ---- Editor 의류 탭: 그룹 키 = colorId | 'misc' (계약 §3.6) ---- */
   const wardrobe = {
-    '색상 1': Array.from({ length: 5 }, (_, i) => ({ id: uid('w'), src: P.photo('w1' + i, i % 2 ? 'styling' : 'horizon', 200, 260), ai: i > 2 })),
-    '색상 2': Array.from({ length: 3 }, (_, i) => ({ id: uid('w'), src: P.photo('w2' + i, 'horizon', 200, 260), ai: i > 1 })),
-    '기타': Array.from({ length: 2 }, (_, i) => ({ id: uid('w'), src: P.product('w3' + i, 200, 260), ai: false })),
+    col1: Array.from({ length: 5 }, (_, i) => ({ id: uid('w'), src: P.photo('w1' + i, i % 2 ? 'styling' : 'horizon', 200, 260), ai: i > 2, cutType: i % 2 ? 'styling' : 'horizon' })),
+    col2: Array.from({ length: 3 }, (_, i) => ({ id: uid('w'), src: P.photo('w2' + i, 'horizon', 200, 260), ai: i > 1, cutType: 'horizon' })),
+    misc: Array.from({ length: 2 }, (_, i) => ({ id: uid('w'), src: P.product('w3' + i, 200, 260), ai: false, cutType: 'product' })),
   };
 
-  return { product, analysis, mannequins, storyboard, editorBlocks, wardrobe };
+  return { project, product, analysis, mannequins, storyboard, editorBlocks, wardrobe };
 }
 
 export const DB = {

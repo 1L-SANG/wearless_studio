@@ -1,27 +1,28 @@
 /* =============================================================
-   store/useAppStore.js — global UI / flow state (Zustand).
-   Holds only what must survive across routes: account (+credits),
-   catalogs, and the create-flow selections (product, analysis,
-   mannequin choice, compose mode, storyboard, copywriting).
-   Screen-local state (form drafts, hover, loading phase, expanded
-   panels) stays in React local state per the agreed convention.
+   store/useAppStore.js — global CLIENT state only (Zustand).
+   상태 3계층 (documents/frontend_state_model.md §1, ADR-0002):
+   ① 서버 상태(product/analysis/mannequins/storyboard/editorBlocks…)
+      는 여기 두지 않는다 — 화면이 lib/api 로 직접 읽고 쓴다.
+   ② 라우트를 넘어 살아야 하는 것만 이 스토어에 둔다: account/catalogs
+      전역 캐시(Query 도입 전까지), projectId, 플로우 선택값.
+   ③ 화면 안에서만 쓰는 상태(폼 draft, hover, 패널, 에디터 히스토리)는
+      각 컴포넌트의 React 로컬 상태.
+   플로우 선택값은 project 필드의 작업 사본 — 변경 시 patchProject 로
+   서버에 동기화한다 (계약 §2).
    ============================================================= */
 import { create } from 'zustand';
 import { api } from '@/lib/api/index.js';
 
 const initialFlow = {
-  product: null,
-  analysis: null,
-  mannequins: [],
+  projectId: null,
   selectedMannequinId: null,
   composeMode: 'basic',
-  adjustCount: 0,
-  storyboard: [],
   copywriting: true,
+  adjustCount: 0,
 };
 
 export const useAppStore = create((set, get) => ({
-  /* ---- account / catalogs (loaded once) ---- */
+  /* ---- account / catalogs (서버 상태의 전역 캐시 — loaded once) ---- */
   account: null,
   catalogs: null,
   accountLoaded: false,
@@ -40,38 +41,51 @@ export const useAppStore = create((set, get) => ({
     return catalogs;
   },
 
-  /* ---- credits ---- */
-  spendCredits(n = 0) {
-    set((s) => (s.account ? { account: { ...s.account, credits: Math.max(0, s.account.credits - n) } } : {}));
+  /* ---- credits ----
+     단일 표시 소스 (frontend_state_model.md §6). 차감은 서버(mock api)
+     책임 — 크레딧 봉투 응답의 잔액을 그대로 반영한다. 선차감 금지. */
+  syncCredits(credits) {
+    if (typeof credits !== 'number') return;
+    set((s) => (s.account ? { account: { ...s.account, credits } } : {}));
   },
 
-  /* ---- create flow ---- */
+  /* ---- current project + flow selections ---- */
   ...initialFlow,
 
-  setProduct: (product) => set({ product }),
-  patchProduct: (patch) => set((s) => ({ product: { ...(s.product || {}), ...patch } })),
+  /** 새 제작 시작 — 새 project 를 만들고 플로우 선택값을 초기화 (구 resetFlow). */
+  async startProject() {
+    const project = await api.createProject();
+    set({ ...initialFlow, projectId: project.id });
+    return project;
+  },
+  /** 새로고침 등으로 스토어가 비었을 때 서버의 project 에서 선택값 복원. */
+  async loadProject() {
+    if (get().projectId) return get().projectId;
+    const p = await api.getProject();
+    set({
+      projectId: p.id,
+      selectedMannequinId: p.selectedMannequinId,
+      composeMode: p.composeMode,
+      copywriting: p.copywriting,
+      adjustCount: p.adjustCount,
+    });
+    return p.id;
+  },
 
-  setAnalysis: (analysis) => set({ analysis }),
-  patchAnalysis: (patch) => set((s) => ({ analysis: { ...(s.analysis || {}), ...patch } })),
-
-  setMannequins: (mannequins) => set({
-    mannequins,
-    selectedMannequinId: (mannequins.find((m) => m.selected) || mannequins[0])?.id ?? null,
-  }),
-  selectMannequin: (id) => set((s) => ({
-    selectedMannequinId: id,
-    mannequins: s.mannequins.map((m) => ({ ...m, selected: m.id === id })),
-  })),
-  incAdjust: () => set((s) => ({ adjustCount: s.adjustCount + 1 })),
-  setComposeMode: (composeMode) => set({ composeMode }),
-
-  setStoryboard: (storyboard) => set({ storyboard }),
-  setCopywriting: (copywriting) => set({ copywriting }),
-
-  /* ---- start a brand-new creation ---- */
-  // clear client flow state AND re-seed the mock draft so prior-session
-  // mannequin variants / saved storyboard / edited analysis don't leak.
-  resetFlow: () => { api.resetDraft(); set({ ...initialFlow }); },
+  selectMannequin(id) {
+    set({ selectedMannequinId: id });
+    api.patchProject(get().projectId, { selectedMannequinId: id });
+  },
+  setComposeMode(composeMode) {
+    set({ composeMode });
+    api.patchProject(get().projectId, { composeMode });
+  },
+  setCopywriting(copywriting) {
+    set({ copywriting });
+    api.patchProject(get().projectId, { copywriting });
+  },
+  /** 서버 응답(조정/재생성 결과) 반영용 — 화면이 임의 계산해 넣지 않는다. */
+  setAdjustCount(adjustCount) { set({ adjustCount }); },
 }));
 
 export default useAppStore;

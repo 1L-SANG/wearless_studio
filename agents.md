@@ -4,7 +4,7 @@ Behavioral guidelines to reduce common LLM coding mistakes, plus project-specifi
 
 ## Project & Architecture
 
-- **Wearless Studio:** an AI detail-page studio web app for fashion e-commerce sellers. Users input product photos and basic info; the AI generates a detail-page draft, images, and copy; users edit and download the result. Product source of truth: `PRD.md`.
+- **Wearless Studio:** an AI detail-page studio web app for fashion e-commerce sellers. Users input product photos and basic info; the AI generates a detail-page draft, images, and copy; users edit and download the result. Product source of truth: `documents/PRD.md`.
 - **Vite + React SPA, mock-first.** This is a Vite React app, **not** a Next.js app. Do NOT introduce: App Router, `app/`/`pages/` conventions, Next API routes, Server Actions, `next/image`, or Next middleware.
 - **Layer boundary:** the frontend owns UI and state only. Do not call real APIs, Supabase, or AI endpoints directly inside components — go through the service/mock layer.
 
@@ -16,7 +16,7 @@ Behavioral guidelines to reduce common LLM coding mistakes, plus project-specifi
 - **State:** Zustand
 - **Data layer:** mock-first — all data flows through the `mock/` layer (`api.js`, `db.js`, `placeholders.js`) until the backend is wired in.
 - **Planned backend (not built yet):** FastAPI on Railway · Supabase (Postgres/Auth) · Cloudflare R2 (object storage)
-- **AI pipeline:** see `PRD.md`
+- **AI pipeline:** see `documents/PRD.md`
 
 ## Commands & Testing
 
@@ -80,7 +80,32 @@ For multi-step tasks, state a brief plan:
 1. [Step] → verify: [check]
 2. [Step] → verify: [check]
 3. [Step] → verify: [check]
-
+```
 Strong success criteria let you loop independently. Weak criteria (“make it work”) require constant clarification.
 
+
 These guidelines are working if: fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+# Agent skills
+
+## Issue tracker
+
+Issues live as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+## Triage labels
+
+Default five-state vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+## Domain docs
+
+Single-context repo — primary source of truth is `documents/PRD.md`; `CONTEXT.md` and `docs/adr/` are created lazily via `/grill-with-docs`. See `docs/agents/domain.md`.
+
+## grill-with-docs
+
+When a task involves unclear domain language, feature boundaries, data meaning, workflow assumptions, or non-obvious product decisions, ask whether we should run `/grill-with-docs` before implementation.
+
+Use `/grill-with-docs` to clarify terminology, propse updates `CONTEXT.md`, and propose ADRs for important non-obvious decisions.
+When the mode is auto, change to accept mode.  
+
+Do not automatically run it for every task. For small, obvious, or purely mechanical changes, proceed normally.

@@ -11,8 +11,8 @@ import { Button, Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.
 
 export function Library() {
   const navigate = useNavigate();
-  const resetFlow = useAppStore((s) => s.resetFlow);
-  const onNew = () => { resetFlow(); navigate('/create/input'); };
+  const startProject = useAppStore((s) => s.startProject);
+  const onNew = async () => { await startProject(); navigate('/create/input'); };
   const onOpen = (it) => navigate(`/editor/${it.id}`);
 
   const [phase, setPhase] = useState('loading');

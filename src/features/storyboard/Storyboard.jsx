@@ -1,8 +1,9 @@
 /* =============================================================
    features/storyboard — ⑤ 콘티보드 (PRD §8)
-   Ported verbatim from reference/prototype/features/storyboard.jsx.
-   Only change: ES imports/exports; window.Placeholder → import;
-   이전/생성 buttons → React Router navigate. Markup/classNames same.
+   blocks 는 "서버 상태의 working copy" 패턴: 진입 시 fetch → 로컬 편집
+   → 생성 CTA 에서 saveStoryboard 로 한 번에 저장 (frontend_state_model §4).
+   컷 분류: cutType(styling|horizon|product) + source(ai|mine) — ADR-0003.
+   카피라이팅 토글은 store(copywriting) → patchProject 동기화.
    UnderlineTabs/ColorDots/MoodGuide/hexFor are exported for the editor.
    ============================================================= */
 import React, { useState, useEffect, useRef } from 'react';
@@ -10,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { DB } from '@/mock/db.js';
 import { Placeholder } from '@/mock/placeholders.js';
+import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Chips, ThumbGrid, EmptyState, Skeleton, Toggle, useToast } from '@/components/ui.jsx';
 import { PageHead } from '@/features/shell/shell.jsx';
 
@@ -24,13 +26,16 @@ function StoryboardCard({ block, catalogs, colorOpts, matchClothing, selected, l
   const isMine = block.source === 'mine';
   const colorIds = (block.colorIds && block.colorIds.length) ? block.colorIds : (block.colorId ? [block.colorId] : []);
   const cols = colorIds.map((id) => colorOpts.find((c) => c.id === id)).filter(Boolean);
-  const poseEdited = !!block._pose && block._pose !== 'auto';
+  const poseEdited = !!block.pose && block.pose !== 'auto';
   const matchEdited = Array.isArray(block.matchIds) && block.matchIds.length > 0;
   const matchThumb = matchEdited ? ((matchClothing || []).find((m) => m.id === block.matchIds[0])?.thumb) : null;
-  const dirMap = { front: '앞면', back: '뒷면' };
-  const shotMap = { ghost: '고스트컷', hanger: '행거컷', flatlay: '플랫레이샷' };
-  const dirLabel = block.source === 'product' ? (dirMap[block.direction] || '앞면') : (catalogs.directions.find((d) => d.value === block.direction)?.label || '—');
-  const shotLabel = block.source === 'product' ? (shotMap[block.shot] || '고스트컷') : (catalogs.shotTypes.find((s) => s.value === block.shot)?.label || '—');
+  const isProduct = block.cutType === 'product';
+  const dirLabel = isProduct
+    ? (catalogs.productDirections.find((d) => d.value === block.direction)?.label || '앞면')
+    : (catalogs.directions.find((d) => d.value === block.direction)?.label || '—');
+  const shotLabel = isProduct
+    ? (catalogs.productShotTypes.find((s) => s.value === block.shot)?.label || '고스트컷')
+    : (catalogs.shotTypes.find((s) => s.value === block.shot)?.label || '—');
   return (
     <div className={`sb-card${selected ? ' on' : ''}${locked ? ' locked' : ''}`} onClick={onSelect}>
       <div className="sb-cardface">
@@ -42,7 +47,7 @@ function StoryboardCard({ block, catalogs, colorOpts, matchClothing, selected, l
           <div className="bk">{isMine ? '내 이미지' : block.title}</div>
           {!isMine && (
             <div className="sb-reveal sb-detail-rows">
-              {block.source ? (
+              {block.cutType ? (
                 <>
                   <div className="sb-detail">방향: {dirLabel}</div>
                   <div className="sb-detail">샷 종류: {shotLabel}</div>
@@ -50,7 +55,7 @@ function StoryboardCard({ block, catalogs, colorOpts, matchClothing, selected, l
               ) : <div className="sb-detail muted">컷 종류 미설정</div>}
             </div>
           )}
-          {!isMine && block.source && cols.length > 0 && (
+          {!isMine && block.cutType && cols.length > 0 && (
             <div className="sb-reveal sb-cfoot">
               {cols.map((c, i) => <span key={i} className="sb-cdot" style={{ background: c.hex }} title={c.label} />)}
             </div>
@@ -115,7 +120,7 @@ export function ColorDots({ colorOpts, value, onChange }) {
 export function MoodGuide({ catalogs, cut, direction, shot }) {
   const [tab, setTab] = useState('examples');
   const [refs, setRefs] = useState([]);
-  const cat = cut === 'product' ? 'product' : (cut === 'daily' ? 'styling' : 'horizon');
+  const cat = cut === 'product' ? 'product' : (cut === 'styling' ? 'styling' : 'horizon');
   const examples = React.useMemo(() => Array.from({ length: 8 }, (_, i) => {
     const seed = `ex_${cut || 'x'}_${direction || 'x'}_${shot || 'x'}_${i}`;
     return { id: seed, thumb: Placeholder.photo(seed, cat, 240, 320) };
@@ -160,6 +165,11 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
     </div>
   );
 
+  // 컷 종류 탭 = catalogs.cutTypes + '내 이미지'(source 전환) 합성 (계약 §5)
+  const cutTabs = [...catalogs.cutTypes, { value: 'mine', label: '내 이미지' }];
+  const tabValue = block.source === 'mine' ? 'mine' : (block.cutType || '');
+  const onTab = (v) => onChange(v === 'mine' ? { source: 'mine', cutType: null } : { source: 'ai', cutType: v });
+
   // 내 이미지 = 직접 삽입 흐름 (PRD 8.8) — no AI options
   const isMine = block.source === 'mine';
   if (isMine) {
@@ -167,7 +177,7 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
       <div className="surface inspector">
         <div className="sec-title" style={{ fontSize: 15, marginBottom: 6 }}>내 이미지</div>
         <div className="insp-sec"><label className="lbl">컷 종류</label>
-          <UnderlineTabs options={catalogs.cutSources} value={block.source} onChange={(v) => onChange({ source: v })} /></div>
+          <UnderlineTabs options={cutTabs} value={tabValue} onChange={onTab} /></div>
         <div className="insp-note" style={{ marginBottom: 14 }}><Icon name="info" size={14} />내 이미지는 가지고 있는 이미지를 그대로 삽입해요. AI 생성 옵션은 적용되지 않습니다.</div>
         {(block.ownImages || []).length > 0 && (
           <div className="thumb-grid cols3" style={{ marginBottom: 12 }}>
@@ -198,8 +208,8 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
         </div>
         <div className="sec-title" style={{ fontSize: 15, margin: '2px 0 14px' }}>{block.title} · 포즈·매칭 의류 편집</div>
         <div className="insp-sec"><label className="lbl">포즈 변경</label>
-          <ThumbGrid items={poseItems} value={block._pose || 'auto'} onChange={(v) => {
-            const it = poseItems.find((p) => p.id === v); onChange({ _pose: v, poseLabel: it?.label || 'AI 자동', poseThumb: it?.thumb || block.poseThumb });
+          <ThumbGrid items={poseItems} value={block.pose || 'auto'} onChange={(v) => {
+            const it = poseItems.find((p) => p.id === v); onChange({ pose: v, poseLabel: it?.label || 'AI 자동', poseThumb: it?.thumb || block.poseThumb });
           }} labels /></div>
         {matchClothing && (
           <div className="insp-sec">
@@ -221,21 +231,22 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
     );
   }
 
+  const isProduct = block.cutType === 'product';
   return (
     <div className="surface inspector">
       <div className="insp-sec"><label className="lbl">컷 종류</label>
-        <UnderlineTabs options={catalogs.cutSources} value={block.source} onChange={(v) => onChange({ source: v })} /></div>
+        <UnderlineTabs options={cutTabs} value={tabValue} onChange={onTab} /></div>
 
-      {!block.source ? (
+      {!block.cutType ? (
         <div className="insp-empty-hint"><Icon name="arrowUp" size={15} />컷 종류를 먼저 선택하면 세부 설정이 나타나요.</div>
       ) : (
         <>
-      {block.source === 'product' ? (
+      {isProduct ? (
         <>
           <div className="insp-sec"><label className="lbl">방향</label>
-            <Chips options={[{ value: 'front', label: '앞면' }, { value: 'back', label: '뒷면' }]} value={['front','back'].includes(block.direction) ? block.direction : 'front'} onChange={(v) => onChange({ direction: v })} /></div>
+            <Chips options={catalogs.productDirections} value={catalogs.productDirections.some((d) => d.value === block.direction) ? block.direction : 'front'} onChange={(v) => onChange({ direction: v })} /></div>
           <div className="insp-sec"><label className="lbl">샷 종류</label>
-            <Chips options={[{ value: 'ghost', label: '고스트컷' }, { value: 'hanger', label: '행거컷' }, { value: 'flatlay', label: '플랫레이샷' }]} value={['ghost','hanger','flatlay'].includes(block.shot) ? block.shot : 'ghost'} onChange={(v) => onChange({ shot: v })} /></div>
+            <Chips options={catalogs.productShotTypes} value={catalogs.productShotTypes.some((s) => s.value === block.shot) ? block.shot : 'ghost'} onChange={(v) => onChange({ shot: v })} /></div>
         </>
       ) : (
         <>
@@ -247,7 +258,7 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
       )}
 
       {/* 분위기 예시 — 컷 종류·방향·샷에 따라 달라지므로 샷 종류 바로 아래 */}
-      <MoodGuide catalogs={catalogs} cut={block.source} direction={block.direction} shot={block.shot} />
+      <MoodGuide catalogs={catalogs} cut={block.cutType} direction={block.direction} shot={block.shot} />
 
       <div className="insp-divider" />
 
@@ -298,17 +309,23 @@ export function Storyboard() {
   const [dragOver, setDragOver] = useState(null);
   const [dragMine, setDragMine] = useState(null);
   const [warn, setWarn] = useState(false);
-  const [copyOn, setCopyOn] = useState(true);
   const snapRef = useRef(null);
   const newSeq = useRef(0);
   const toast = useToast();
+  // 카피라이팅 토글 = 플로우 선택값 (store → patchProject 동기화, ADR-0002)
+  const projectId = useAppStore((s) => s.projectId);
+  const copyOn = useAppStore((s) => s.copywriting);
+  const setCopyOn = useAppStore((s) => s.setCopywriting);
 
   useEffect(() => {
-    Promise.all([api.getStoryboard(), api.getCatalogs(), api.getMatchClothing(), api.getProduct()]).then(([b, c, m, p]) => {
+    (async () => {
+      await useAppStore.getState().loadProject();
+      const pid = useAppStore.getState().projectId;
+      const [b, c, m, p] = await Promise.all([api.getStoryboard(pid), api.getCatalogs(), api.getMatchClothing(), api.getProduct(pid)]);
       setBlocks(b); setCatalogs(c); setMatchClothing(m);
       const opts = (p.colors || []).filter((col) => col.images.length || col.isBase).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexFor(col) }));
       setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
-    });
+    })();
   }, []);
   if (!blocks || !catalogs) return <div className="wizard wide"><div className="surface"><Skeleton h={400} /></div></div>;
 
@@ -338,19 +355,24 @@ export function Storyboard() {
   };
   const moveBlock = (id, dir) => setBlocks((bs) => { const i = bs.findIndex((b) => b.id === id); const j = i + dir; if (j < 0 || j >= bs.length) return bs; const n = [...bs]; [n[i], n[j]] = [n[j], n[i]]; return n; });
   const addBlock = (idx) => {
-    const n = (newSeq.current += 1);
-    const nb = { id: DB.uid('blk'), kind: 'info', title: '새로운 블록', source: '', colorId: colorOpts[0]?.id || 'col1',
-      thumb: Placeholder.photo('new' + Date.now(), 'styling', 240, 320), poseThumb: Placeholder.pose('stand'), poseLabel: 'AI 자동', bgThumb: Placeholder.scene('studio'), bgLabel: 'AI 자동' };
+    newSeq.current += 1;
+    // 새 블록 — source 'ai', 컷 종류는 미설정(null)에서 시작 (계약 §3.4)
+    const nb = { id: DB.uid('blk'), kind: 'info', title: '새로운 블록', source: 'ai', cutType: null, colorId: colorOpts[0]?.id || 'col1',
+      pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
+      thumb: Placeholder.photo('new' + Date.now(), 'styling', 240, 320), poseThumb: Placeholder.pose('stand'), poseLabel: 'AI 자동' };
     setBlocks((bs) => { const m = [...bs]; m.splice(idx, 0, nb); return m; });
     snapRef.current = { ...nb };
     setSelectedId(nb.id); setMode('props'); setDirty(false); setWarn(false); setSplitOpen(true);   // new block IS selected, but empty (no cut type)
     toast.push('블록을 추가했어요', { icon: 'plus' });
   };
+  const mineBlock = (src, n) => ({
+    id: DB.uid('blk'), kind: 'info', title: `새 블록 (${n})`, source: 'mine', cutType: null, colorId: colorOpts[0]?.id || 'col1',
+    ownImages: [src], thumb: src, pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
+    poseThumb: Placeholder.pose('stand'), poseLabel: '-',
+  });
   const addMineBlock = async (idx) => {
     const src = await api.pickAnyImage();
-    const n = (newSeq.current += 1);
-    const nb = { id: DB.uid('blk'), kind: 'info', title: `새 블록 (${n})`, direction: 'front', shot: 'full', colorId: colorOpts[0]?.id || 'col1', source: 'mine',
-      ownImages: [src], thumb: src, poseThumb: Placeholder.pose('stand'), poseLabel: '-', bgThumb: Placeholder.scene('studio'), bgLabel: '-' };
+    const nb = mineBlock(src, (newSeq.current += 1));
     setBlocks((bs) => { const m = [...bs]; m.splice(idx == null ? m.length : idx, 0, nb); return m; });
     setSelectedId(nb.id); setMode('props'); setDirty(false); setSplitOpen(true);
     toast.push('내 이미지 블록을 추가했어요', { icon: 'plus' });
@@ -367,9 +389,7 @@ export function Storyboard() {
     setBlocks((bs) => { const from = bs.findIndex((b) => b.id === id); if (from < 0) return bs; const m = [...bs]; const [it] = m.splice(from, 1); let to = idx; if (from < idx) to -= 1; m.splice(to, 0, it); return m; });
   };
   const insertMineAt = (idx, src) => {
-    const n = (newSeq.current += 1);
-    const nb = { id: DB.uid('blk'), kind: 'info', title: `새 블록 (${n})`, source: 'mine', colorId: colorOpts[0]?.id || 'col1',
-      ownImages: [src], thumb: src, poseThumb: Placeholder.pose('stand'), poseLabel: '-', bgThumb: Placeholder.scene('studio'), bgLabel: '-' };
+    const nb = mineBlock(src, (newSeq.current += 1));
     setBlocks((bs) => { const m = [...bs]; m.splice(idx, 0, nb); return m; });
     toast.push('내 이미지를 블록으로 넣었어요', { icon: 'plus' });
   };
@@ -423,23 +443,34 @@ export function Storyboard() {
   }
 
   const cutCount = blocks.length;
+  // 크레딧은 AI 생성 컷에만 — 내 이미지 블록은 생성 작업이 없어 제외 (계약 §6)
+  const aiCount = blocks.filter((b) => b.source !== 'mine').length;
+  const mineCount = cutCount - aiCount;
+  const generate = async () => {
+    // 생성 입력은 서버가 저장된 콘티에서 읽는다 — CTA 에서 반드시 저장 (frontend_state_model §5)
+    await api.saveStoryboard(projectId, blocks);
+    navigate('/create/generating');
+  };
   return (
     <div className="wizard wide sb-page">
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
+      <div className={`sb-count-head${splitOpen ? ' is-split' : ''}`}>
+        구성컷: <strong>{cutCount}개</strong>
+      </div>
       {body}
 
       {/* fixed bottom action bar */}
       <div className="sb-actionbar">
         <div className="sb-ab-inner">
           <button className="btn btn-ghost" onClick={() => navigate('/create/mannequin')}><Icon name="arrowLeft" size={17} />이전</button>
-          <div className="sb-ab-count">AI 생성 {cutCount}컷 · 셀러 사진 0컷</div>
+          <div className="sb-ab-count">AI 생성 {aiCount}컷 · 셀러 사진 {mineCount}컷</div>
           <div className="sb-ab-copy">
             <Toggle on={copyOn} onChange={setCopyOn} />
             <div><div className="sec-title" style={{ fontSize: 14 }}>카피라이팅 {copyOn ? 'ON' : 'OFF'}</div>
               <div className="hint" style={{ marginTop: 1 }}>AI가 카피를 자동으로 넣어요</div></div>
           </div>
-          <button className="btn btn-primary btn-lg sb-ab-go" onClick={() => navigate('/create/generating')}>
-            <Icon name="sparkles" size={18} />이대로 생성하기 <Icon name="arrowRight" size={17} /> {cutCount * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧
+          <button className="btn btn-primary btn-lg sb-ab-go btn-glowring" onClick={generate}>
+            <Icon name="sparkles" size={18} />이대로 생성하기 <Icon name="arrowRight" size={17} /> {aiCount * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧
           </button>
         </div>
       </div>

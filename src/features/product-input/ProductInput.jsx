@@ -8,6 +8,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { DB } from '@/mock/db.js';
+import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Button, IconButton, Skeleton, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton } from '@/features/analysis/AnalysisForm.jsx';
@@ -162,13 +163,20 @@ export function ProductInput() {
   const [phase, setPhase] = useState('input');   // input | analyzing | done
   const [analysis, setAnalysis] = useState(null);
   const [expanded, setExpanded] = useState(false);
+  const projectId = useAppStore((s) => s.projectId);
   const toast = useToast();
 
   useEffect(() => {
-    Promise.all([api.getProduct(), api.getCatalogs()]).then(([p, c]) => {
-      p = { ...p, name: '', colors: [{ ...p.colors[0], swatchId: undefined, images: [] }] };
-      setProduct(p); setCatalogs(c);
-    });
+    (async () => {
+      // 직접 URL 진입까지 포함해 projectId 를 보장한다 (frontend_state_model.md §4).
+      // 읽기 전용 loadProject 만 사용 — 새 project 생성(reseed)은 TopNav·보관함의
+      // 명시적 '새 제작' 액션만 담당한다 (StrictMode 이중 실행에도 멱등).
+      await useAppStore.getState().loadProject();
+      const pid = useAppStore.getState().projectId;
+      const [p, c] = await Promise.all([api.getProduct(pid), api.getCatalogs()]);
+      const fresh = { ...p, name: '', colors: [{ ...p.colors[0], swatchId: undefined, images: [] }] };
+      setProduct(fresh); setCatalogs(c);
+    })();
   }, []);
 
   if (!product || !catalogs) return <div className="wizard"><div className="surface"><Skeleton h={420} /></div></div>;
@@ -191,7 +199,7 @@ export function ProductInput() {
   const submit = async () => {
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    const [a] = await Promise.all([api.analyzeProduct({})]);
+    const a = await api.analyzeProduct(projectId, {});
     setAnalysis(a);
     // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨
     const finalName = (product.name && product.name.trim()) ? product.name.trim() : (a.suggestedName || '새 상품');
@@ -199,7 +207,7 @@ export function ProductInput() {
     // persist the user's input (name + 색상/이미지) into the create flow so the
     // downstream steps (mannequin / storyboard / editor) read what was entered,
     // not the seed (mock/api.saveProduct → DB.product). [data-flow fix]
-    await api.saveProduct({ ...product, name: finalName, uploadComplete: true });
+    await api.saveProduct(projectId, { ...product, name: finalName, uploadComplete: true });
     setPhase('done');
     toast.push('AI 분석을 완료했어요', { icon: 'sparkles' });
   };
@@ -268,7 +276,10 @@ export function ProductInput() {
 
   return (
     <div className={`wizard${wide ? ' wide' : ''}`}>
-      <PageHead title="의류 이미지를 올려주세요" />
+      <PageHead
+        title="의류 이미지를 올려주세요"
+        sub={<>사진 몇장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}
+      />
 
       {phase === 'input' ? inputSection : summaryCard}
 
@@ -286,7 +297,7 @@ export function ProductInput() {
       {phase === 'done' && (
         <div className="pi-reveal">
           <AnalysisForm inline analysis={analysis} catalogs={catalogs}
-            onChange={(patch) => { setAnalysis((a) => ({ ...a, ...patch })); api.saveAnalysis(patch); }}
+            onChange={(patch) => { setAnalysis((a) => ({ ...a, ...patch })); api.saveAnalysis(projectId, patch); }}
             onNext={() => navigate('/create/mannequin')} />
         </div>
       )}

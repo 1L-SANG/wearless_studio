@@ -95,10 +95,10 @@ export function Icon({ name, size = 20, stroke = 2, fill = 'none', style, classN
   );
 }
 
-export function Button({ children, variant = 'ghost', size, block, onClick, disabled, icon, iconRight, type, style }) {
+export function Button({ children, variant = 'ghost', size, block, onClick, disabled, icon, iconRight, type, style, className }) {
   return (
     <button type={type || 'button'} disabled={disabled} style={style}
-      className={`btn btn-${variant}${size ? ' btn-' + size : ''}${block ? ' btn-block' : ''}`}
+      className={`btn btn-${variant}${size ? ' btn-' + size : ''}${block ? ' btn-block' : ''}${className ? ' ' + className : ''}`}
       onClick={onClick}>
       {icon && <Icon name={icon} size={size === 'sm' ? 16 : 18} />}
       {children}

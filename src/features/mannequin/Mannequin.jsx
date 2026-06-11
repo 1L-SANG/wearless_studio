@@ -1,14 +1,21 @@
 /* =============================================================
    features/mannequin — ③ 마네킹컷 생성·선택 (PRD §7)
-   Ported verbatim from reference/prototype/features/mannequin.jsx.
-   Only change: ES imports; onNext → navigate('/create/storyboard').
-   (Regenerate already respects the 2/session adjust cap — kept.)
+   상태 모델 (frontend_state_model.md §4): 선택 컷·구성 방식·조정 횟수는
+   store(플로우 선택값) + patchProject 동기화. 컷 목록은 서버 상태.
+   조정 값은 enum 토큰(slimmer/looser, shorter/longer)만 — 계약 §6.
+   크레딧은 봉투 응답 { data, credits } 를 syncCredits 로 반영.
    ============================================================= */
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
+import { useAppStore } from '@/store/useAppStore.js';
+import { LIMITS } from '@/lib/limits.js';
 import { Icon, Button, Modal, ProgressBar, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
+
+/* 조정 상태 → 표시 라벨 (저장 값은 enum, 한국어는 표시 전용 — 계약 §1) */
+const ADJ_LABELS = { slimmer: '더 슬림하게', looser: '더 여유있게', shorter: '더 짧게', longer: '더 길게' };
+const MATCH_ADJ_LABELS = { slimmer: '슬림', looser: '여유', shorter: '숏기장', longer: '롱기장' };
 
 function MannequinLoading({ progress }) {
   const stage = progress < 30 ? '의류 정보 분석 중' : progress < 60 ? '핏·주름 정리하는 중'
@@ -77,59 +84,62 @@ function AdjustPanel({ selected, adjustLeft, onAdjust, busy, productName, clothi
   const mainIcon = TOP_TYPES.includes(clothingType) ? 'shirt' : 'pants';
   const matchIcon = mainIcon === 'shirt' ? 'pants' : 'shirt';
   const applyAdjust = () => {
-    const fitLabel = fit === 'slim' ? '슬림' : fit === 'loose' ? '여유' : '';
-    const lenLabel = length === 'short' ? '숏' : length === 'long' ? '롱' : '';
-    // 매칭만 바꿔도 활성화되므로, 매칭 변경분도 함께 넘겨서 실제로 반영되게 한다
-    // (안 넘기면 크레딧만 차감되고 매칭 변경은 사라지는 버그)
-    const match = matchChanged
-      ? { id: mainMatch.id, name: mainMatch.name,
-          fit: mainMatch.fit && mainMatch.fit !== 'origin' ? mainMatch.fit : '',
-          length: mainMatch.length && mainMatch.length !== 'origin' ? mainMatch.length : '' }
+    // 계약 §6: enum 토큰만 전달, '현재(변경 없음)' = 필드 생략.
+    // 매칭만 바꿔도 활성화되므로, 매칭 변경분도 함께 넘겨서 실제로 반영되게 한다.
+    const matchAdjust = matchChanged
+      ? { clothingId: mainMatch.id,
+          fitAdjust: mainMatch.fit && mainMatch.fit !== 'origin' ? mainMatch.fit : undefined,
+          lengthAdjust: mainMatch.length && mainMatch.length !== 'origin' ? mainMatch.length : undefined }
       : null;
-    onAdjust({ fit: fitLabel, length: lenLabel, match });
+    onAdjust({
+      fitAdjust: fit === 'current' ? undefined : fit,
+      lengthAdjust: length === 'current' ? undefined : length,
+      matchAdjust,
+    });
     setFit('current'); setLength('current');
   };
   return (
     <div className="surface inspector adjust-panel">
       <div className="sec-title" style={{ fontSize: 15 }}>세부 조정</div>
-      <div className="pill pill-soft" style={{ marginTop: 12, marginBottom: 4 }}>{`조정 가능 횟수 ${adjustLeft}/2`}</div>
+      <div className="pill pill-soft" style={{ marginTop: 12, marginBottom: 4 }}>{`조정 가능 횟수 ${adjustLeft}/${LIMITS.mannequinAdjustMax}`}</div>
 
       {/* 메인 의류 카드 row */}
       <ClothingCard open={mainOpen} onToggle={() => setMainOpen((o) => !o)} eyebrow="메인 의류" name={productName || '상품'} icon={mainIcon}>
         <div className="ap-sec"><label className="lbl">총기장</label>
-          {SEG(length, [['더 짧게', 'short'], ['현재', 'current', true], ['더 길게', 'long']], setLength)}</div>
+          {SEG(length, [['더 짧게', 'shorter'], ['현재', 'current', true], ['더 길게', 'longer']], setLength)}</div>
         <div className="ap-sec"><label className="lbl">핏</label>
-          {SEG(fit, [['더 슬림하게', 'slim'], ['현재', 'current', true], ['더 여유있게', 'loose']], setFit)}</div>
+          {SEG(fit, [['더 슬림하게', 'slimmer'], ['현재', 'current', true], ['더 여유있게', 'looser']], setFit)}</div>
       </ClothingCard>
 
       {/* 매칭 의류 카드 row (접힘 = 단순 row) */}
       {mainMatch && (
         <ClothingCard open={matchOpen} onToggle={() => setMatchOpen((o) => !o)} eyebrow="매칭 의류" name={mainMatch.name} icon={matchIcon}>
           <div className="ap-sec"><label className="lbl">총기장</label>
-            {SEG(mainMatch.length || 'origin', [['더 짧게', 'short'], ['현재', 'origin', true], ['더 길게', 'long']], (v) => onMatchAdjust(mainMatch.id, { length: v }))}</div>
+            {SEG(mainMatch.length || 'origin', [['더 짧게', 'shorter'], ['현재', 'origin', true], ['더 길게', 'longer']], (v) => onMatchAdjust(mainMatch.id, { length: v }))}</div>
           <div className="ap-sec"><label className="lbl">핏</label>
-            {SEG(mainMatch.fit || 'origin', [['더 슬림하게', 'slim'], ['현재', 'origin', true], ['더 여유있게', 'loose']], (v) => onMatchAdjust(mainMatch.id, { fit: v }))}</div>
+            {SEG(mainMatch.fit || 'origin', [['더 슬림하게', 'slimmer'], ['현재', 'origin', true], ['더 여유있게', 'looser']], (v) => onMatchAdjust(mainMatch.id, { fit: v }))}</div>
         </ClothingCard>
       )}
 
-      <Button variant="primary" block disabled={adjustLeft <= 0 || busy || noChange} style={{ marginTop: 16 }}
+      <Button variant="primary" block className="btn-glowring" disabled={adjustLeft <= 0 || busy || noChange} style={{ marginTop: 16 }}
         onClick={applyAdjust}>의류 조정하기 · {creditCosts?.mannequinAdjust ?? 1} 크레딧</Button>
-      {adjustLeft <= 0 && <p className="hint" style={{ marginTop: 10 }}>이번 세션의 조정 횟수를 모두 사용했어요.</p>}
+      {adjustLeft <= 0 && <p className="hint" style={{ marginTop: 10 }}>이번 프로젝트의 조정 횟수를 모두 사용했어요.</p>}
     </div>
   );
 }
 
-function Candidate({ letter, cuts, selectedId, onSelect }) {
+function Candidate({ letter, cuts, selectedId, onSelect, labelFor }) {
   const head = cuts.find((c) => c.id === letter + '-0') || cuts[0];
   const current = cuts.find((c) => c.id === selectedId && c.candidate === letter);
   const big = current || head;
+  if (!big) return null;
   return (
     <div className="candidate">
       <div className={`big${big.id === selectedId ? ' on' : ''}`} onClick={() => onSelect(big.id)}>
         <img src={big.src} alt={big.id} />
         {big.id === selectedId && <span className="pill pill-ink selflag">선택됨</span>}
       </div>
-      <div className="cap">마네킹 {letter} · {big.fitLabel} / {big.lengthLabel}{big.matchLabel ? ` · 매칭 ${big.matchLabel}` : ''}</div>
+      <div className="cap">마네킹 {letter} · {labelFor(big)}</div>
       <div className="history-strip">
         {cuts.map((c) => (
           <div key={c.id} className={`h${c.id === selectedId ? ' on' : ''}`} onClick={() => onSelect(c.id)}>
@@ -188,46 +198,95 @@ export function Mannequin() {
   const [phase, setPhase] = useState('loading');
   const [progress, setProgress] = useState(0);
   const [cuts, setCuts] = useState([]);
-  const [selectedId, setSelectedId] = useState('A-0');
-  const [adjustLeft, setAdjustLeft] = useState(2);
   const [busy, setBusy] = useState(false);
   const [matchClothing, setMatchClothing] = useState(null);
   const [productName, setProductName] = useState('');
   const [clothingType, setClothingType] = useState('top');
   const [catalogs, setCatalogs] = useState(null);
   const [colorCount, setColorCount] = useState(1);
-  const [composeMode, setComposeMode] = useState('basic'); // 기본형 디폴트
   const [picking, setPicking] = useState(false);
   const [confirmRegen, setConfirmRegen] = useState(false);
   const toast = useToast();
 
+  // 플로우 선택값 — store 가 보유, patchProject 로 서버 동기화 (ADR-0002)
+  const projectId = useAppStore((s) => s.projectId);
+  const selectedId = useAppStore((s) => s.selectedMannequinId);
+  const selectMannequin = useAppStore((s) => s.selectMannequin);
+  const composeMode = useAppStore((s) => s.composeMode);
+  const setComposeMode = useAppStore((s) => s.setComposeMode);
+  const adjustCount = useAppStore((s) => s.adjustCount);
+  const setAdjustCount = useAppStore((s) => s.setAdjustCount);
+  const syncCredits = useAppStore((s) => s.syncCredits);
+  const adjustLeft = Math.max(0, LIMITS.mannequinAdjustMax - adjustCount);
+
   useEffect(() => {
     window.scrollTo({ top: 0 });
     document.querySelector('.app-main')?.scrollTo({ top: 0 });
-    api.generateMannequins({ onProgress: setProgress }).then((m) => { setCuts(m); setPhase('ready'); });
-    api.getMatchClothing().then(setMatchClothing);
-    api.getProduct().then((p) => { setProductName(p?.name || ''); setClothingType(p?.clothingType || 'top'); setColorCount((p?.colors || []).length || 1); });
+    // StrictMode 이중 실행·빠른 이탈에서 크레딧이 두 번 차감되지 않게,
+    // 소모 호출(generateMannequins) 전에 반드시 취소 여부를 확인한다.
+    let cancelled = false;
+    (async () => {
+      // 새로고침 직진입까지 포함해 projectId·선택값을 복원
+      await useAppStore.getState().loadProject();
+      if (cancelled) return;
+      const pid = useAppStore.getState().projectId;
+      api.getMatchClothing(pid).then(setMatchClothing);
+      api.getProduct(pid).then((p) => { setProductName(p?.name || ''); setClothingType(p?.clothingType || 'top'); setColorCount((p?.colors || []).length || 1); });
+      let list = await api.getMannequins(pid);
+      if (cancelled) return;
+      if (!list.length) {
+        // 최초 진입 — A/B 생성 + 크레딧 차감 (재진입은 무과금 getMannequins)
+        const { data, credits } = await api.generateMannequins(pid, { onProgress: setProgress });
+        list = data; syncCredits(credits);
+      }
+      if (cancelled) return;
+      setCuts(list);
+      if (!useAppStore.getState().selectedMannequinId && list[0]) selectMannequin(list[0].id);
+      setPhase('ready');
+    })();
     api.getCatalogs().then(setCatalogs);
+    return () => { cancelled = true; };
   }, []);
 
   const selected = cuts.find((c) => c.id === selectedId);
   const cutsA = cuts.filter((c) => c.candidate === 'A');
   const cutsB = cuts.filter((c) => c.candidate === 'B');
 
-  const adjust = async ({ fit, length, match }) => {
+  // 컷 표시 라벨 파생 — 저장 값(enum)을 화면에서만 한국어로 (계약 §1)
+  const labelFor = (c) => {
+    const fitTxt = c.fitAdjust ? ADJ_LABELS[c.fitAdjust] : (catalogs?.fits?.find((f) => f.value === c.baseFit)?.label || '정핏');
+    const lenTxt = c.lengthAdjust ? ADJ_LABELS[c.lengthAdjust] : '원본 기장';
+    let matchTxt = '';
+    if (c.matchAdjust) {
+      const m = (matchClothing || []).find((x) => x.id === c.matchAdjust.clothingId);
+      const parts = [c.matchAdjust.lengthAdjust && MATCH_ADJ_LABELS[c.matchAdjust.lengthAdjust], c.matchAdjust.fitAdjust && MATCH_ADJ_LABELS[c.matchAdjust.fitAdjust]].filter(Boolean);
+      if (parts.length) matchTxt = ` · 매칭 ${[m?.name, ...parts].filter(Boolean).join(' ')}`;
+    }
+    return `${fitTxt} / ${lenTxt}${matchTxt}`;
+  };
+
+  const refreshAdjustCount = async () => {
+    // adjustCount 는 서버(project)가 원본 — 응답으로만 갱신 (frontend_state_model.md §3)
+    const p = await api.getProject(projectId);
+    setAdjustCount(p.adjustCount);
+  };
+
+  const adjust = async ({ fitAdjust, lengthAdjust, matchAdjust }) => {
     if (adjustLeft <= 0) return; setBusy(true);
     const base = selected || cuts[0];
-    const next = await api.adjustMannequin({ baseId: base.id, fit, length, match });
-    setCuts((c) => [...c, next]); setSelectedId(next.id); setAdjustLeft((n) => n - 1);
+    const { data: next, credits } = await api.adjustMannequin(projectId, { baseId: base.id, fitAdjust, lengthAdjust, matchAdjust });
+    setCuts((c) => [...c, next]); selectMannequin(next.id);
+    syncCredits(credits); await refreshAdjustCount();
     // 매칭 변경분은 새 컷에 반영됐으니 기준값(origin)으로 되돌려 버튼이 계속 켜진 채
     // 같은 변경으로 재차 차감되는 걸 막는다 (메인 fit/length 가 current 로 리셋되는 것과 동일)
-    if (match) setMatchClothing((mc) => mc.map((m) => m.id === match.id ? { ...m, fit: 'origin', length: 'origin' } : m));
+    if (matchAdjust) setMatchClothing((mc) => mc.map((m) => m.id === matchAdjust.clothingId ? { ...m, fit: 'origin', length: 'origin' } : m));
     setBusy(false);
     toast.push('조정 결과를 만들었어요', { icon: 'wand' });
   };
   const regenerate = async () => {
     if (adjustLeft <= 0) return; setBusy(true);
-    const all = await api.regenerateMannequins({}); setCuts(all); setAdjustLeft((n) => n - 1); setBusy(false);
+    const { data, credits } = await api.regenerateMannequins(projectId, {});
+    setCuts(data); syncCredits(credits); await refreshAdjustCount(); setBusy(false);
     toast.push('후보 A/B를 새로 생성했어요', { icon: 'refresh' });
   };
 
@@ -246,13 +305,13 @@ export function Mannequin() {
         </Button>
       </div>
       <div className="candidate-row">
-        <Candidate letter="A" cuts={cutsA} selectedId={selectedId} onSelect={setSelectedId} />
-        <Candidate letter="B" cuts={cutsB} selectedId={selectedId} onSelect={setSelectedId} />
+        <Candidate letter="A" cuts={cutsA} selectedId={selectedId} onSelect={selectMannequin} labelFor={labelFor} />
+        <Candidate letter="B" cuts={cutsB} selectedId={selectedId} onSelect={selectMannequin} labelFor={labelFor} />
       </div>
     </div>
   );
-  const matchAdjust = (id, patch) => setMatchClothing((mc) => mc.map((m) => m.id === id ? { ...m, ...patch } : m));
-  const panel = <AdjustPanel selected={selected} adjustLeft={adjustLeft} onAdjust={adjust} busy={busy} productName={productName} clothingType={clothingType} matchClothing={matchClothing} onMatchAdjust={matchAdjust} creditCosts={catalogs?.creditCosts} />;
+  const matchAdjustLocal = (id, patch) => setMatchClothing((mc) => mc.map((m) => m.id === id ? { ...m, ...patch } : m));
+  const panel = <AdjustPanel selected={selected} adjustLeft={adjustLeft} onAdjust={adjust} busy={busy} productName={productName} clothingType={clothingType} matchClothing={matchClothing} onMatchAdjust={matchAdjustLocal} creditCosts={catalogs?.creditCosts} />;
   const modes = catalogs?.composeModes || [];
   const pickMode = (v) => { setComposeMode(v); setPicking(false); };
   // 우측 컬럼 = 세부 조정 패널(위) + 상세페이지 구성 미니 카드(아래)

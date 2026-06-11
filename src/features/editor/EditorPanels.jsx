@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState } from '@/components/ui.jsx';
 import { UnderlineTabs, ColorDots, MoodGuide } from '@/features/storyboard/Storyboard.jsx';
+import { SHAPE_D } from '@/features/editor/shapes.js';
 
 function PanelHead({ title, sub }) {
   return <><div className="panel-h">{title}</div>{sub && <div className="panel-sub">{sub}</div>}</>;
@@ -111,18 +112,167 @@ function SwatchField({ value, palette, opacity, allowNone, thumb, onColor, onOpa
   );
 }
 
+/* ---------- AI · 현재 컷 변형 — 예시 카드 선택 + 누적 트레이 ---------- */
+const VARY_CATS = [
+  { id: 'cut', label: '컷 변경' }, { id: 'bg', label: '배경' },
+  { id: 'pose', label: '포즈' }, { id: 'face', label: '표정' },
+];
+function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
+  const opts = catalogs.varyOptions || {};
+  const [cat, setCat] = useState('cut');
+  const [sel, setSel] = useState({});
+  const [refBg, setRefBg] = useState(null); // 레퍼런스 배경 src — bg 프리셋 카드와 상호 배타
+  const [cutDir, setCutDir] = useState('keep'); // 컷 변경 · 방향 — 'keep' = 현재 유지 (일상컷 기준 옵션)
+  const [cutShot, setCutShot] = useState('keep'); // 컷 변경 · 샷 종류
+  const busyRef = useRef(false); // 같은 틱 더블클릭으로 생성이 2번 나가는 것 방지
+  if (!source) {
+    return <EmptyState icon="image" title="변형할 컷을 선택하세요" desc="캔버스나 의류 탭에서 이미지를 먼저 선택해주세요." />;
+  }
+  // 소스 컷 종류 — AI 생성 컷은 생성 시 기록된 cutType 으로 알고, 직접 업로드는 미상(null).
+  // 미상이면 '모델 착용 컷'으로 가정하고(B안), 질문 카드로 제품 사진 전환만 받는다.
+  const srcType = source.cutType || null;
+  const isProduct = srcType === 'product';
+  const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
+  const shotOpts = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
+  const cats = isProduct ? VARY_CATS.filter((c) => c.id === 'cut' || c.id === 'bg') : VARY_CATS;
+  const safeCat = cats.some((c) => c.id === cat) ? cat : 'cut';
+  const optLabel = (c, id) => (opts[c] || []).find((o) => o.id === id)?.label || id;
+  const valLabel = (list, v) => (list || []).find((o) => o.value === v)?.label || v;
+  // 칩/payload 순서 = 적용 우선순위 계약: 구도(방향·샷)가 기준 → 포즈·표정 → 배경(레퍼런스 포함)이 구도에 맞춰 따라온다
+  const chips = [];
+  if (cutDir && cutDir !== 'keep') chips.push({ key: 'dir', cat: '방향', type: 'direction', value: cutDir, label: valLabel(dirOpts, cutDir), clear: () => setCutDir('keep') });
+  if (cutShot && cutShot !== 'keep') chips.push({ key: 'shot', cat: '샷 종류', type: 'shot', value: cutShot, label: valLabel(shotOpts, cutShot), clear: () => setCutShot('keep') });
+  if (sel.pose) chips.push({ key: 'pose', cat: '포즈', type: 'pose', value: sel.pose, label: optLabel('pose', sel.pose), clear: () => setSel((s) => ({ ...s, pose: null })) });
+  if (sel.face) chips.push({ key: 'face', cat: '표정', type: 'face', value: sel.face, label: optLabel('face', sel.face), clear: () => setSel((s) => ({ ...s, face: null })) });
+  if (sel.bg || refBg) chips.push({ key: 'bg', cat: '배경', type: 'bg', value: sel.bg || 'ref',
+    label: sel.bg ? optLabel('bg', sel.bg) : '레퍼런스 이미지', clear: () => { setSel((s) => ({ ...s, bg: null })); setRefBg(null); } });
+  const n = chips.length;
+  const hasChange = { bg: !!(sel.bg || refBg), pose: !!sel.pose, face: !!sel.face, cut: (cutDir && cutDir !== 'keep') || (cutShot && cutShot !== 'keep') };
+  const cost = catalogs.creditCosts?.editorImage ?? 1;
+  const pickCard = (oid) => { if (safeCat === 'bg') setRefBg(null); setSel((s) => ({ ...s, [safeCat]: s[safeCat] === oid ? null : oid })); };
+  const clearAll = () => { setSel({}); setRefBg(null); setCutDir('keep'); setCutShot('keep'); };
+  // 기준 전환 — 요소에 영구 저장(이미지당 1번만 답하면 됨). 옵션 세트가 바뀌므로 선택은 초기화.
+  // '모델 착용 컷' 전환은 사람컷 대표값 styling 으로 기록한다 (ADR-0003).
+  const setKind = (t) => { onSetCutType(t); clearAll(); setCat('cut'); };
+  const pickRef = async () => { const src = await onPickRef(); setRefBg(src); setSel((s) => ({ ...s, bg: null })); };
+  const generate = () => {
+    if (busyRef.current) return;
+    busyRef.current = true; // 곧 의류 탭으로 전환되며 패널이 언마운트 — 같은 틱 더블클릭만 방어
+    onGenerate({
+      // 변형 대상 = 현재 변형 소스(캔버스 요소 또는 의류 이미지). cutType 미상이면 모델 착용 컷(styling)으로 가정.
+      source: { id: source.id, src: source.src, cutType: srcType || 'styling' },
+      // 변경 0개(빈 트레이) = '비슷한 컷 만들기' (PRD §10.8) — 빈 배열이 그 계약
+      changes: chips.map((c) => ({ type: c.type, value: c.value, label: c.label })),
+      refBg,
+    });
+  };
+  const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
+  return (
+    <div>
+      {!srcType ? (
+        <div className="vary-kind">
+          <p className="vk-txt">모델 착용 컷 기준 옵션이에요. 제품만 나온 사진이면 알려주세요.</p>
+          <button type="button" className="vk-btn" onClick={() => setKind('product')}>제품만 나온 사진이에요</button>
+        </div>
+      ) : (
+        <div className="vary-kind compact">
+          <span className="vk-txt">{isProduct ? '제품 사진 기준의 옵션이에요.' : '모델 착용 컷 기준의 옵션이에요.'}</span>
+          <button type="button" className="vk-link" onClick={() => setKind(isProduct ? 'styling' : 'product')}>
+            {isProduct ? '모델 착용 컷으로 전환' : '제품 사진으로 전환'}
+          </button>
+        </div>
+      )}
+      <div className="vary-tabs">
+        <UnderlineTabs value={safeCat} onChange={setCat}
+          options={cats.map((c) => ({ value: c.id, label: <>{c.label}{hasChange[c.id] && <span className="vary-dot" />}</> }))} />
+      </div>
+      {safeCat === 'cut' ? (
+        <>
+          {/* Chips 는 선택된 칩 재클릭 시 null 을 보냄 → '변경 없음'(keep) 으로 복귀시킨다 */}
+          <div className="insp-sec"><label className="lbl">방향</label>
+            <Chips options={[{ value: 'keep', label: '변경 없음' }, ...dirOpts]} value={cutDir} onChange={(v) => setCutDir(v || 'keep')} /></div>
+          <div className="insp-sec"><label className="lbl">샷 종류</label>
+            <Chips options={[{ value: 'keep', label: '변경 없음' }, ...shotOpts]} value={cutShot} onChange={(v) => setCutShot(v || 'keep')} /></div>
+        </>
+      ) : (
+        <div className="insp-sec">
+          <label className="lbl">{catLabel} 카드 선택</label>
+          <div className="vary-grid">
+            {(opts[safeCat] || []).map((o) => {
+              const on = sel[safeCat] === o.id;
+              return (
+                <button type="button" key={o.id} className={`vary-card${on ? ' on' : ''}`} onClick={() => pickCard(o.id)}>
+                  <span className="vc-check">{on && <Icon name="check" size={12} />}</span>
+                  <img src={o.thumb} alt="" />
+                  <span className="vc-label">{o.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {safeCat === 'bg' && (
+        <details className="insp-extra vary-ref">
+          <summary><Icon name="chevRight" size={15} />레퍼런스로 배경 지정{refBg && <span className="vr-badge">사용 중</span>}</summary>
+          <div className="vary-ref-body">
+            {refBg ? (
+              <>
+                {/* 업로드한 레퍼런스는 배경 카드와 같은 크기의 카드로 표시 */}
+                <div className="vary-grid">
+                  <span className="vary-card on vr-cardprev">
+                    <span className="vc-check"><Icon name="check" size={12} /></span>
+                    <img src={refBg} alt="" />
+                    <span className="vc-label">레퍼런스</span>
+                  </span>
+                </div>
+                <Button variant="ghost" size="sm" icon="trash" onClick={() => setRefBg(null)} style={{ marginTop: 10 }}>해제</Button>
+                <p className="hint" style={{ marginTop: 8 }}>배경은 선택한 컷 구도에 맞춰 적용돼요.</p>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" size="sm" block icon="upload" onClick={pickRef}>배경 레퍼런스 업로드</Button>
+                <p className="hint" style={{ marginTop: 8 }}>원하는 배경 사진을 올리면 카드 대신 그 분위기로 배경을 바꿔요. 배경은 선택한 컷 구도에 맞춰 적용돼요.</p>
+              </>
+            )}
+          </div>
+        </details>
+      )}
+      {n > 0 && (
+        <div className="vary-tray">
+          <div className="vt-head">
+            <span className="vt-title">변경 요약 ({n})</span>
+            <button type="button" className="vt-clear" onClick={clearAll}>전체 해제</button>
+          </div>
+          <div className="vt-chips">
+            {chips.map((c) => (
+              <span className="vt-chip" key={c.key}>{c.cat} · {c.label}
+                <button type="button" onClick={c.clear} title="해제"><Icon name="x" size={13} /></button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={generate} style={{ marginTop: 14 }}>
+        {n > 0 ? `${n}개 변경 적용해서 생성 · ${cost} 크레딧` : `비슷한 컷 만들기 · ${cost} 크레딧`}
+      </Button>
+      <p className="hint" style={{ marginTop: 10 }}>
+        {n > 0 ? '모든 변경이 한 장의 새 컷에 함께 반영돼요. 기존 이미지는 유지되고 새 컷은 의류 탭에 추가돼요.'
+          : '변경 없이 생성하면 현재 컷과 비슷한 분위기의 새 컷을 만들어요. 새 컷은 의류 탭에 추가돼요.'}
+      </p>
+    </div>
+  );
+}
+
 /* ---------- AI ---------- */
-export function AIPanel({ catalogs, account, colorOpts = [], selectedEl, onGenerate, onVary }) {
-  const [tab, setTab] = useState('new');
+export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGenerate, onVaryGenerate, onPickRef, onSetCutType }) {
+  const [tab, setTab] = useState('vary');
   const [cut, setCut] = useState('horizon');
   const [dir, setDir] = useState('front');
   const [shot, setShot] = useState('full');
   const [color, setColor] = useState(null);
   const initialModel = (catalogs.models || []).find((m) => m.recommended) || (catalogs.models || [])[0];
   const [model, setModel] = useState(initialModel?.id || 'mA');
-  const colorVal = color || colorOpts[0]?.id || null;
-  const colorIdx = Math.max(0, colorOpts.findIndex((c) => c.id === colorVal));
-  const genGroup = colorIdx === 0 ? '색상 1' : colorIdx === 1 ? '색상 2' : '기타';
+  const colorVal = color || colorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
   const isProduct = cut === 'product';
   const [modelOpen, setModelOpen] = useState(false);
   const modelRef = useRef(null);
@@ -143,8 +293,8 @@ export function AIPanel({ catalogs, account, colorOpts = [], selectedEl, onGener
       }
     }
   };
-  const dirOpts = isProduct ? [{ value: 'front', label: '앞면' }, { value: 'back', label: '뒷면' }] : catalogs.directions;
-  const shotOpts = isProduct ? [{ value: 'ghost', label: '고스트컷' }, { value: 'hanger', label: '행거컷' }, { value: 'flatlay', label: '플랫레이샷' }] : catalogs.shotTypes;
+  const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
+  const shotOpts = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
   const dirVal = dirOpts.some((o) => o.value === dir) ? dir : dirOpts[0].value;
   const shotVal = shotOpts.some((o) => o.value === shot) ? shot : shotOpts[0].value;
   return (
@@ -156,7 +306,7 @@ export function AIPanel({ catalogs, account, colorOpts = [], selectedEl, onGener
       {tab === 'new' ? (
         <div>
           <div className="insp-sec"><label className="lbl">컷 종류</label>
-            <UnderlineTabs options={[{ value: 'horizon', label: '호리존컷' }, { value: 'daily', label: '일상컷' }, { value: 'product', label: '제품컷' }]} value={cut} onChange={(v) => setCut(v)} /></div>
+            <UnderlineTabs options={catalogs.cutTypes} value={cut} onChange={(v) => setCut(v)} /></div>
           <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>
           <div className="insp-sec"><label className="lbl">샷 종류</label><Chips className="oneline" options={shotOpts} value={shotVal} onChange={setShot} /></div>
 
@@ -179,36 +329,23 @@ export function AIPanel({ catalogs, account, colorOpts = [], selectedEl, onGener
             </div>
           </details>
 
-          <Button variant="primary" block icon="sparkles" onClick={() => onGenerate({ group: genGroup })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>
+          <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({ colorId: colorVal, cutType: cut })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>
         </div>
       ) : (
-        <div>
-          {selectedEl && selectedEl.type === 'image' ? (
-            <>
-              <div className="media-wrap" style={{ aspectRatio: '3/4', marginBottom: 14 }}><img src={selectedEl.src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /></div>
-              <Button variant="primary" block icon="sparkles" onClick={() => onVary('비슷한')} style={{ marginBottom: 14 }}>비슷한 컷 만들기 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>
-              <div className="insp-sec"><label className="lbl">변경 옵션</label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {[['배경 변경', 'landscape'], ['포즈 변경', 'person'], ['표정 변경', 'smile']].map(([l, ic]) => (
-                    <button key={l} className="chip" style={{ justifyContent: 'flex-start' }} onClick={() => onVary(l)}><Icon name={ic} size={15} />{l}</button>
-                  ))}
-                </div></div>
-              <p className="hint">기존 이미지는 유지되고, 새 이미지가 의류 탭에 추가돼요.</p>
-            </>
-          ) : (
-            <EmptyState icon="image" title="변형할 컷을 선택하세요" desc="캔버스나 의류 탭에서 이미지를 먼저 선택해주세요." />
-          )}
-        </div>
+        /* key=소스 id — 변형 대상이 바뀌면 패널 상태(선택/트레이/결과)를 통째로 초기화해 이미지 간 누수를 차단 */
+        <VaryPanel key={varySource ? varySource.id : 'none'} catalogs={catalogs} source={varySource} onPickRef={onPickRef} onGenerate={onVaryGenerate} onSetCutType={onSetCutType} />
       )}
     </div>
   );
 }
 
 /* ---------- 의류 (wardrobe library) ---------- */
-export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert, onUpload, onVaryImage, onDeleteSelected }) {
+export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert, onUpload, onVaryImage, onDeleteSelected, onFreshSeen }) {
+  // wardrobe 그룹 키 = colorId | 'misc' — 표시명은 colorOpts 에서 파생 (계약 §3.6)
   const colorFor = (group) => {
-    const m = group.match(/색상\s*(\d+)/);
-    if (m) { const c = colorOpts[+m[1] - 1]; if (c) return { hex: c.hex, name: c.label }; }
+    if (group === 'misc') return { hex: '#d4d4d8', name: '기타', neutral: true };
+    const c = colorOpts.find((x) => x.id === group);
+    if (c) return { hex: c.hex, name: c.label };
     return { hex: '#d4d4d8', name: group, neutral: true };
   };
   const [collapsed, setCollapsed] = useState({});
@@ -237,7 +374,8 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert,
                 {imgs.map((im) => im.loading ? (
                   <div className="ward-cell loading" key={im.id}><Icon name="loader" size={18} className="spin" style={{ color: 'var(--fg-3)' }} /></div>
                 ) : (
-                  <div className={`ward-cell${sel.has(im.id) ? ' checked' : ''}`} key={im.id} onClick={() => onInsert(im)} title="클릭하면 캔버스에 삽입">
+                  <div className={`ward-cell${sel.has(im.id) ? ' checked' : ''}${im.fresh ? ' fresh' : ''}`} key={im.id} onClick={() => onInsert(im)} title="클릭하면 캔버스에 삽입"
+                    onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
                     <img src={im.src} alt="" />
                     <button className="ward-check" onClick={(e) => { e.stopPropagation(); toggleSel(im.id); }} title="선택">
                       {sel.has(im.id) && <Icon name="check" size={13} />}
@@ -282,7 +420,7 @@ const LINE_DASH = [
 function LabeledField({ label, children }) {
   return <div className="ff"><span className="ff-lbl">{label}</span>{children}</div>;
 }
-export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock }) {
+export function ImagePanel({ el, onChange, onLayer, onCrop, onVary, lock = true, onLock }) {
   // 비율 잠금은 에디터가 소유 — moveable keepRatio와 연동 (자물쇠 = keepRatio)
   const setLock = onLock || (() => {});
   if (!el || !['image', 'shape', 'line'].includes(el.type)) return <EmptyState icon="image" title="요소를 선택하세요" desc="캔버스에서 이미지·오브젝트를 클릭하면 속성이 여기에 나와요." />;
@@ -295,6 +433,9 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock 
   const curDash = el.dash || 'solid';
   return (
     <div className="fig-panel">
+      {isImg && onVary && (
+        <Button variant="ghost" block icon="wand" className="vary-jump" onClick={onVary} style={{ marginBottom: 16 }}>AI로 컷 변형하기</Button>
+      )}
       <PanelSection title={isLine ? '선 크기' : '이미지 크기'} first>
         <div className="size-row">
           <NumField iconText="가로" value={Math.round(el.w)} min={20} max={2000} onChange={setW} />
@@ -324,7 +465,7 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, lock = true, onLock 
         </PanelSection>
       )}
 
-      <PanelSection title={isLine ? '선 색상' : '채움'}>
+      <PanelSection title={isLine ? '선 색상' : '채우기'}>
         {isImg ? (
           <SwatchField thumb={el.src} opacity={op} onOpacity={(v) => onChange({ opacity: v / 100 })} />
         ) : (
@@ -447,6 +588,13 @@ export function FramePanel({ catalogs, onAdd, onDragStart, onDragEnd }) {
 }
 
 /* ---------- 오브젝트 (도형/선 추가 + 블록 배경) ---------- */
+// 글리프는 캔버스 렌더와 같은 path(shapes.js)를 currentColor 로 그려 미리보기-실물 일치
+function ShapeGlyph({ id }) {
+  if (id === 'circle') return <span className="obj-prev circle" />;
+  if (id === 'rect') return <span className="obj-prev square" />;
+  const d = id === 'triangle' ? 'M50 8 L96 92 L4 92 Z' : SHAPE_D[id];
+  return <svg className="obj-glyph" viewBox="0 0 100 100"><path d={d} fill="currentColor" /></svg>;
+}
 const BLOCK_BG_OPTS = [
   { c: '#ffffff', label: '흰색' }, { c: '#f5f5f5', label: '연회색' }, { c: '#0e0d14', label: '잉크' },
 ];
@@ -476,13 +624,7 @@ export function ShapePanel({ catalogs, onAdd, block, onBgChange }) {
         {catalogs.shapes.map((s) => (
           <button className="shape-cell" key={s.id} title={s.label} draggable
             onClick={() => onAdd('shape', s.id)} onDragStart={(e) => dragStart(e, 'shape', s.id)}>
-            {s.id === 'circle' && <span className="obj-prev circle" />}
-            {s.id === 'rect' && <span className="obj-prev square" />}
-            {s.id === 'triangle' && (
-              <span className="obj-prev triangle">
-                <svg viewBox="0 0 34 30"><polygon points="17,2 32,28 2,28" fill="#b6b6bd" /></svg>
-              </span>
-            )}
+            <ShapeGlyph id={s.id} />
           </button>
         ))}
       </div>
@@ -493,9 +635,9 @@ export function ShapePanel({ catalogs, onAdd, block, onBgChange }) {
             onClick={() => onAdd('line', l.id)} onDragStart={(e) => dragStart(e, 'line', l.id)}>
             <span className="obj-prev line">
               <svg viewBox="0 0 38 16">
-                <line x1={l.id === 'arrow-l' ? 7 : 1} y1="8" x2={l.id === 'arrow-r' ? 31 : 37} y2="8" stroke="#b6b6bd" strokeWidth="1.6" strokeLinecap="round" />
-                {l.id === 'arrow-l' && <polyline points="8,3 2,8 8,13" fill="none" stroke="#b6b6bd" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />}
-                {l.id === 'arrow-r' && <polyline points="30,3 36,8 30,13" fill="none" stroke="#b6b6bd" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />}
+                <line x1={l.id === 'arrow-l' ? 7 : 1} y1="8" x2={l.id === 'arrow-r' ? 31 : 37} y2="8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                {l.id === 'arrow-l' && <polyline points="8,3 2,8 8,13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
+                {l.id === 'arrow-r' && <polyline points="30,3 36,8 30,13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
               </svg>
             </span>
           </button>
@@ -510,7 +652,7 @@ function layerMeta(el) {
   if (el.type === 'image') return { icon: 'image', label: '이미지', thumb: el.src };
   if (el.type === 'text') return { icon: 'type', label: (el.text || '텍스트').replace(/\n/g, ' ').slice(0, 18) || '텍스트' };
   if (el.type === 'line') return { icon: 'minus', label: '선' };
-  const names = { circle: '원', rect: '사각형', triangle: '삼각형' };
+  const names = { circle: '원', rect: '사각형', triangle: '삼각형', diamond: '마름모', star: '별', heart: '하트', hexagon: '육각형', bubble: '말풍선' };
   return { icon: 'shapes', label: names[el.shape] || '도형' };
 }
 export function LayerPanel({ block, selEls = [], embedded, onSelect, onReorder, onToggle }) {

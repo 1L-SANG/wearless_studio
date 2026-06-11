@@ -24,9 +24,9 @@ export function TopNav() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const account = useAppStore((s) => s.account) || { name: '…', avatar: '', credits: 0, plan: '' };
-  const resetFlow = useAppStore((s) => s.resetFlow);
+  const startProject = useAppStore((s) => s.startProject);
   const route = pathname.startsWith('/library') ? 'library' : 'create';
-  const onNav = (r) => { if (r === 'create') { resetFlow(); navigate('/create/input'); } else navigate('/library'); };
+  const onNav = async (r) => { if (r === 'create') { await startProject(); navigate('/create/input'); } else navigate('/library'); };
   const step = pathname.startsWith('/create/') ? pathname.split('/')[2] : null;
 
   return (

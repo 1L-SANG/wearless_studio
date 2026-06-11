@@ -8,13 +8,15 @@
    layers, undo/redo, frames, download/preview) keeps prototype logic.
    ============================================================= */
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import Moveable from 'react-moveable';
 import { api } from '@/lib/api/index.js';
 import { DB } from '@/mock/db.js';
+import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/components/ui.jsx';
 import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
+import { SHAPE_D } from '@/features/editor/shapes.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)' };
 
@@ -99,6 +101,11 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   else if (el.shape === 'triangle') inner = (
     <svg width="100%" height="100%" viewBox={`0 0 ${el.w} ${el.h}`} preserveAspectRatio="none" style={{ display: 'block', overflow: 'visible' }}>
       <polygon points={`${el.w / 2},${sw / 2 || 0} ${el.w - (sw / 2 || 0)},${el.h - (sw / 2 || 0)} ${sw / 2 || 0},${el.h - (sw / 2 || 0)}`} fill={fill} stroke={sc || 'none'} strokeWidth={sw} strokeLinejoin="round" />
+    </svg>
+  );
+  else if (SHAPE_D[el.shape]) inner = (
+    <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: 'block', overflow: 'visible' }}>
+      <path d={SHAPE_D[el.shape]} fill={fill} stroke={sc || 'none'} strokeWidth={sw} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
   else {
@@ -233,10 +240,13 @@ const normDeg = (d) => { let n = ((d % 360) + 360) % 360; return n > 180 ? n - 3
 
 export function Editor() {
   const navigate = useNavigate();
+  const { id: projectId } = useParams();             // /editor/:id = projectId (계약 §2 — mock 은 무시)
+  const account = useAppStore((s) => s.account);     // 크레딧 단일 표시 소스 (frontend_state_model §6)
+  const syncCredits = useAppStore((s) => s.syncCredits);
   const [blocks, setBlocks] = useState(null);
   const [wardrobe, setWardrobe] = useState(null);
+  const [varyTarget, setVaryTarget] = useState(null); // 의류 탭 'AI 편집'으로 지정한 변형 대상 { id } — 캔버스 선택이 바뀌면 해제
   const [catalogs, setCatalogs] = useState(null);
-  const [account, setAccount] = useState(null);
   const [colorOpts, setColorOpts] = useState([]);
   const [productName, setProductName] = useState('');
   const [tab, setTab] = useState('ai');
@@ -250,6 +260,7 @@ export function Editor() {
   const [dlFormat, setDlFormat] = useState('long');
   const [backWarn, setBackWarn] = useState(false);
   const [genDot, setGenDot] = useState('none');
+  const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
   const [frameOver, setFrameOver] = useState(null);
   const [frameDragging, setFrameDragging] = useState(false);
   const [pendingSlot, setPendingSlot] = useState(null);
@@ -276,10 +287,11 @@ export function Editor() {
   const lastPush = useRef(0);
 
   useEffect(() => {
-    Promise.all([api.getEditorBlocks(), api.getWardrobe(), api.getCatalogs(), api.getAccount(), api.getProduct()])
-      .then(([b, w, c, a, p]) => {
+    // 에디터는 앱 크롬 밖에서 열린다 — account 는 store 캐시를 직접 로드 (단일 소스)
+    Promise.all([api.getEditorBlocks(projectId), api.getWardrobe(projectId), api.getCatalogs(), useAppStore.getState().loadAccount(), api.getProduct(projectId)])
+      .then(([b, w, c, _a, p]) => {
         const withH = b.map((blk) => ({ ...blk, h: blk.h || Math.max(220, blk.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0) + 50) }));
-        setBlocks(withH); setWardrobe(w); setCatalogs(c); setAccount(a); setSelBlock(withH[0]?.id);
+        setBlocks(withH); setWardrobe(w); setCatalogs(c); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         const opts = (p.colors || []).filter((col) => col.images.length || col.isBase).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
         setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
@@ -364,6 +376,8 @@ export function Editor() {
   // NEVER during a gesture: mid-gesture updateRect/재바인딩이 컨트롤박스 핸들을
   // 재생성해 리사이즈 제스처를 죽인다(드래그는 타깃 노드에 붙어 살아남는 비대칭).
   useEffect(() => { if (!gesturing.current) moveableRef.current?.updateRect(); }, [blocks, scale, selEls, canvasH, rightHidden, mvTargets]);
+  // 파란 완료 점 — 의류 탭을 확인하는 순간 사라진다 (주황 busy 점은 생성이 끝날 때까지 유지)
+  useEffect(() => { if (tab === 'wardrobe' && genDot === 'done') setGenDot('none'); }, [tab, genDot]);
   // dev-only QA hook: drive gestures via moveable.request() (real pointer pipeline)
   useEffect(() => { if (import.meta.env.DEV) window.__mv = moveableRef; }, []);
 
@@ -375,11 +389,12 @@ export function Editor() {
 
   const selectEl = (blockId, el, additive, keepTab) => {
     if (cropping) commitCrop();   // 크롭 중 다른 요소 클릭 → 크롭 확정 후 선택 (런타임 호출이라 TDZ 무관)
+    setVaryTarget(null);          // 캔버스 선택이 바뀌면 'AI 편집' 지정 대상은 해제
     setSelBlock(blockId); setSelEl(el.id);
     setSelEls((cur) => additive ? (cur.includes(el.id) ? cur.filter((x) => x !== el.id) : [...cur, el.id]) : [el.id]);
     if (!keepTab) setTab(el.type === 'text' ? 'text' : 'image');
   };
-  const clearSel = () => { setSelEl(null); setSelEls([]); };
+  const clearSel = () => { setSelEl(null); setSelEls([]); setVaryTarget(null); };
   const patchEl = (patch) => setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.map((e) => e.id === selEl ? { ...e, ...patch } : e) })));
   const patchElById = (blockId, elId, patch) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, ...patch } : e) } : b));
   const changeBg = (blockId, color) => setBlocks((bs) => bs.map((b) => b.id === blockId ? { ...b, bg: color } : b));
@@ -435,29 +450,63 @@ export function Editor() {
   };
   const insertImage = (im) => {
     const bId = visibleBlock();
-    const el = { id: DB.uid('el'), type: 'image', x: 250, y: 80, w: 500, h: 560, src: im.src, radius: 12 };
+    const el = { id: DB.uid('el'), type: 'image', x: 250, y: 80, w: 500, h: 560, src: im.src, radius: 12, ...(im.cutType ? { cutType: im.cutType } : {}) };
     setBlocks((bs) => bs.map((b) => b.id === bId ? { ...b, elements: [...b.elements, el] } : b));
     toast.push('이미지를 캔버스에 삽입했어요');
   };
   const requestSlotImage = (blockId, el) => { setPendingSlot({ blockId, elId: el.id }); setTab('wardrobe'); };
   const wardrobeInsert = (im) => {
-    if (pendingSlot) { patchElById(pendingSlot.blockId, pendingSlot.elId, { src: im.src }); setPendingSlot(null); setTab('image'); toast.push('빈 칸에 이미지를 넣었어요'); }
+    if (pendingSlot) { patchElById(pendingSlot.blockId, pendingSlot.elId, { src: im.src, ...(im.cutType ? { cutType: im.cutType } : {}) }); setPendingSlot(null); setTab('image'); toast.push('빈 칸에 이미지를 넣었어요'); }
     else insertImage(im);
   };
+  // fresh = 새로 생성된 컷의 4색 glow 하이라이트 — 사용자가 본 뒤(애니메이션 종료) 해제
+  const freshSeen = (id) => setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === id && x.fresh ? { ...x, fresh: false } : x); return nw; });
   const deleteWardrobeImages = (ids) => {
     setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) { const f = arr.filter((im) => !ids.includes(im.id)); if (f.length) nw[g] = f; } return nw; });
     toast.push(`${ids.length}개 이미지를 의류 목록에서 삭제했어요`, { icon: 'trash' });
   };
-  const generateImage = async ({ group }) => {
+  const generateImage = async ({ colorId, cutType }) => {
+    const group = colorId || 'misc';                 // wardrobe 그룹 키 = colorId | 'misc' (계약 §3.6)
     const loadingId = DB.uid('w');
     setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
-    setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
-    const img = await api.generateImage({ group });
-    setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? img : x) }));
-    setGenDot('done'); toast.push('이미지 생성을 완료했어요', { icon: 'check' });
-    setAccount((a) => ({ ...a, credits: a.credits - 1 }));
+    genCount.current += 1; setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
+    const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', colorId: group, cutType });
+    setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
+    genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done'); toast.push('이미지 생성을 완료했어요', { icon: 'check' });
+    syncCredits(credits);                            // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
   };
-  const varyImage = () => { setTab('ai'); toast.push('현재 컷 변형으로 이동했어요', { icon: 'wand' }); };
+  // 현재 컷 변형 — 누적된 변경(chips)을 적용해 생성. 생성 즉시 의류 탭으로 이동해
+  // '기타' 그룹의 로딩 셀을 보여준다 (PRD §10.8: 새 이미지는 의류 탭에 추가).
+  const varyGenerate = async ({ source, changes, refBg }) => {
+    const loadingId = DB.uid('w');
+    setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: loadingId, loading: true }] }));
+    setTab('wardrobe');
+    genCount.current += 1; setGenDot('busy');
+    toast.push(changes.length ? `${changes.length}개 변경을 적용한 컷을 생성하는 중이에요` : '비슷한 컷을 생성하는 중이에요', { icon: 'sparkles' });
+    const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg });
+    setWardrobe((w) => ({ ...w, misc: w.misc.map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
+    genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done'); toast.push('이미지 생성을 완료했어요', { icon: 'check' });
+    syncCredits(credits);
+    return img;
+  };
+  const varyImage = (im) => {
+    setVaryTarget(im?.id ? { id: im.id } : null); // 클릭한 의류 이미지가 변형 대상 — 이미지별 독립 상태
+    setTab('ai'); toast.push('현재 컷 변형으로 이동했어요', { icon: 'wand' });
+  };
+  // 변형 대상 결정 — 'AI 편집' 지정이 있으면 그 의류 이미지, 없으면 선택된 캔버스 이미지
+  const varySource = (() => {
+    if (varyTarget) {
+      const im = Object.values(wardrobe || {}).flat().find((x) => x.id === varyTarget.id);
+      return im ? { id: im.id, src: im.src, cutType: im.cutType || null } : null;
+    }
+    return selectedElObj && selectedElObj.type === 'image'
+      ? { id: selectedElObj.id, src: selectedElObj.src, cutType: selectedElObj.cutType || null }
+      : null;
+  })();
+  const setVaryCutType = (t) => {
+    if (varyTarget) setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === varyTarget.id ? { ...x, cutType: t } : x); return nw; });
+    else patchEl({ cutType: t });
+  };
   const jumpTo = (id) => { setSelBlock(id); setSelEl(null); setSelEls([]);
     const idx = blocks.findIndex((b) => b.id === id);
     const wrap = wrapRef.current; if (!wrap) return;
@@ -575,8 +624,8 @@ export function Editor() {
     croppingOn: !!cropping, cropCommit: commitCrop, cropCancel: cancelCrop };
 
   const TOOLS = [
-    { id: 'ai', icon: 'sparkles', label: 'AI', dot: true },
-    { id: 'wardrobe', icon: 'shirt', label: '의류' },
+    { id: 'ai', icon: 'sparkles', label: 'AI' },
+    { id: 'wardrobe', icon: 'shirt', label: '의류', dot: true }, // 생성 점 표시는 결과가 쌓이는 의류 탭에
     { id: 'image', icon: 'image', label: '이미지' },
     { id: 'frame', icon: 'layout', label: '프레임' },
     { id: 'text', icon: 'type', label: '텍스트' },
@@ -593,9 +642,9 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel catalogs={catalogs} account={account} colorOpts={colorOpts} selectedEl={selectedElObj} onGenerate={generateImage} onVary={() => toast.push('변형 이미지를 생성했어요', { icon: 'wand' })} />;
-      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, '기타': [...(w['기타'] || []), { id: DB.uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} />;
-      case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} />;
+      case 'ai': return <AIPanel catalogs={catalogs} account={account} colorOpts={colorOpts} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickAnyImage()} onSetCutType={setVaryCutType} />;
+      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: DB.uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} onFreshSeen={freshSeen} />;
+      case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} onVary={varyImage} />;
       case 'frame': return <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />;
       case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onLayer={layerEl} onAddText={() => addText()} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
