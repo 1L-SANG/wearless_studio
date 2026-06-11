@@ -10,3 +10,6 @@ npm-debug.log*
 .env.*
 !.env.example
 .gstack/
+
+# machine-local skill symlinks (absolute paths)
+.claude/skills/
