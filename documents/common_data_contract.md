@@ -330,7 +330,7 @@ dress:  totalLength, shoulderWidth, chestWidth, waistWidth, armhole, sleeveLengt
 | `saveStoryboard(projectId, blocks)` | | `StoryboardBlock[]` | 생성 CTA 시 반드시 호출 |
 | `generateDetailPage(projectId, { onProgress, onStep })` | | `{ data: EditorBlock[], credits }` | `storyboardPerCut × source='ai'인 블록 수` — 내 이미지 블록은 생성 작업이 없어 차감 제외 |
 | `getEditorBlocks(projectId)` | | `EditorBlock[]` | |
-| `saveEditorBlocks(projectId, blocks)` | | `void` | **P1** — mock은 no-op + 토스트 |
+| `saveEditorBlocks(projectId, blocks)` | | `void` | 구현됨 — 저장 버튼 + 1.5s 디바운스 자동 저장 + 이탈 시 플러시 |
 | `getWardrobe(projectId)` | | `Wardrobe` | |
 | `generateImage(projectId, req)` | `NewCutRequest \| VaryRequest` (아래) | `{ data: WardrobeImage, credits }` | `editorImage` |
 | `uploadAsset(file)` | `File` | `ImageAsset` | 실서비스 계약 — mock은 `pickAnyImage()`(mock 전용 헬퍼)로 대행 |
@@ -370,10 +370,10 @@ VaryRequest {                      // AI 탭 '현재 컷 변형' — changes 빈
 6. ✅ **generateDetailPage가 콘티를 무시** — 저장된 storyboard 기반 `buildEditorBlocksFromStoryboard`로 생성, 카피라이팅·자동 블록 반영. (반영됨)
 7. ✅ **크레딧 봉투** — 소모 5종이 `{ data, credits }` 반환 + mock 차감, 화면은 `store.syncCredits`로 단일화(에디터 로컬 account 제거). (반영됨)
 8. ✅ **제품컷 옵션 하드코딩 3곳** — `catalogs.productDirections`/`productShotTypes`로 이동. (반영됨)
-9. **경계 위반 import** — 화면이 `DB.uid`·`Placeholder`를 직접 import(`ProductInput.jsx`, `Storyboard.jsx`, `Editor.jsx`) → id 생성기는 `lib/`로 이동. (남음)
-10. 🔶 **콘티 '내 레퍼런스' 휘발** — `StoryboardBlock.refImages` 필드는 추가됐으나 `MoodGuide`는 아직 로컬 state를 사용 → 블록 저장 연결 남음.
+9. 🔶 **경계 위반 import** — id 생성기는 `lib/ids.js`로 이동 완료(화면·mock 공용, `DB.uid` 제거). `Placeholder` 직접 import(콘티 새 블록 썸네일·분위기 예시)는 분위기 예시의 운영자 시드 전환 시 함께 정리.
+10. ✅ **콘티 '내 레퍼런스' 휘발** — `MoodGuide` 제어형 전환: 콘티는 `block.refImages`에 저장, 에디터 AI 패널은 `NewCutRequest.refImages`로 생성 입력에 포함. (반영됨)
 11. ✅ **typedef 갱신** — `lib/types.js`가 본 계약을 미러링. TS 전환 시 이 문서가 `.ts` 계약의 사양이 된다. (반영됨)
-12. **ProjectSummary** — `updatedAt` ISO화, `blocks` → `blockCount`(`mock/db.js`, `Library.jsx`). (남음)
+12. ✅ **ProjectSummary** — `updatedAt` ISO화('N시간 전'은 화면 파생), `blocks` → `blockCount`. (반영됨)
 13. **죽은 코드 표기만** — `AnalysisForm.jsx`의 미사용 `Analysis` 라우트 컴포넌트(구 시그니처 호출 포함), `colorIds` 잔존 읽기. `catalogs.backgrounds`·`extendedColorPriority`는 소비처가 없어 db 재작성 시 제거됨.
 
 ---

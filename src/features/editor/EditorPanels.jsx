@@ -272,6 +272,7 @@ export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGener
   const [color, setColor] = useState(null);
   const initialModel = (catalogs.models || []).find((m) => m.recommended) || (catalogs.models || [])[0];
   const [model, setModel] = useState(initialModel?.id || 'mA');
+  const [refImages, setRefImages] = useState([]);       // 내 레퍼런스 — NewCutRequest.refImages (계약 §6)
   const colorVal = color || colorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
   const isProduct = cut === 'product';
   const [modelOpen, setModelOpen] = useState(false);
@@ -310,7 +311,7 @@ export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGener
           <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>
           <div className="insp-sec"><label className="lbl">샷 종류</label><Chips className="oneline" options={shotOpts} value={shotVal} onChange={setShot} /></div>
 
-          <MoodGuide catalogs={catalogs} cut={cut} direction={dirVal} shot={shotVal} />
+          <MoodGuide catalogs={catalogs} cut={cut} direction={dirVal} shot={shotVal} refs={refImages} onRefsChange={setRefImages} />
 
           <div className="insp-divider" />
 
@@ -329,7 +330,7 @@ export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGener
             </div>
           </details>
 
-          <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({ colorId: colorVal, cutType: cut })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>
+          <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({ colorId: colorVal, cutType: cut, refImages })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>
         </div>
       ) : (
         /* key=소스 id — 변형 대상이 바뀌면 패널 상태(선택/트레이/결과)를 통째로 초기화해 이미지 간 누수를 차단 */

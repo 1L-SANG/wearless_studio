@@ -30,6 +30,17 @@ export function Library() {
     : s === 'generating' ? <span className="pill pill-soft st"><span className="dot dot-busy" />생성 중</span>
     : <span className="pill pill-soft st">초안</span>;
 
+  // 표시 파생 — 저장값은 ISO updatedAt (계약 ProjectSummary, §7-12 해소)
+  const timeAgo = (it) => {
+    if (it.status === 'generating') return '진행 중';
+    const m = Math.max(1, Math.round((Date.now() - new Date(it.updatedAt).getTime()) / 60000));
+    if (m < 60) return `${m}분 전`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}시간 전`;
+    const d = Math.round(h / 24);
+    return d === 1 ? '어제' : `${d}일 전`;
+  };
+
   return (
     <div className="wizard wide" style={{ paddingTop: 28 }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 22 }}>
@@ -52,7 +63,7 @@ export function Library() {
             <div className="lib-card" key={it.id} onClick={() => onOpen(it)}>
               <div className="lib-cover"><img src={it.cover} alt={it.title} /><div className="st">{statusPill(it.status)}</div></div>
               <div className="lib-info"><div className="t">{it.title}</div>
-                <div className="m"><span>블록 {it.blocks}</span><span>·</span><span>{it.updatedAt}</span></div></div>
+                <div className="m"><span>블록 {it.blockCount}</span><span>·</span><span>{timeAgo(it)}</span></div></div>
             </div>
           ))}
           <div className="lib-new" onClick={onNew}><Icon name="plus" size={22} /><span className="micro">새 상세페이지</span></div>

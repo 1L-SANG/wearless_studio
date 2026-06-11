@@ -15,9 +15,9 @@
    ============================================================= */
 import { Placeholder as P } from '@/mock/placeholders.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
+import { uid } from '@/lib/ids.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 
-const uid = (p) => p + '_' + Math.random().toString(36).slice(2, 8);
 const nowIso = () => new Date().toISOString();
 
 /* ---- Account (stable) ---- */
@@ -173,12 +173,14 @@ const genSteps = [
   { key: 'assemble', label: '상세페이지 조립' },
 ];
 
-/* ---- Library (stable list) ---- */
+/* ---- Library (stable list) — ProjectSummary (계약 §2).
+   updatedAt 은 ISO, '2시간 전' 표시는 화면 파생. blocks→blockCount 개명 ---- */
+const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
 const library = [
-  { id: uid('lib'), title: '소프트 골지 라운드 니트', cover: P.photo('lib1', 'horizon', 400, 520), clothingType: 'top', blocks: 8, status: 'done', updatedAt: '2시간 전' },
-  { id: uid('lib'), title: '와이드 데님 팬츠', cover: P.photo('lib2', 'styling', 400, 520), clothingType: 'bottom', blocks: 6, status: 'done', updatedAt: '어제' },
-  { id: uid('lib'), title: '오버핏 울 코트', cover: P.product('lib3', 400, 520), clothingType: 'outer', blocks: 9, status: 'generating', updatedAt: '진행 중' },
-  { id: uid('lib'), title: '플리츠 미디 원피스', cover: P.photo('lib4', 'horizon', 400, 520), clothingType: 'dress', blocks: 5, status: 'draft', updatedAt: '3일 전' },
+  { id: uid('lib'), title: '소프트 골지 라운드 니트', cover: P.photo('lib1', 'horizon', 400, 520), clothingType: 'top', blockCount: 8, status: 'done', updatedAt: hoursAgo(2) },
+  { id: uid('lib'), title: '와이드 데님 팬츠', cover: P.photo('lib2', 'styling', 400, 520), clothingType: 'bottom', blockCount: 6, status: 'done', updatedAt: hoursAgo(26) },
+  { id: uid('lib'), title: '오버핏 울 코트', cover: P.product('lib3', 400, 520), clothingType: 'outer', blockCount: 9, status: 'generating', updatedAt: hoursAgo(0.2) },
+  { id: uid('lib'), title: '플리츠 미디 원피스', cover: P.photo('lib4', 'horizon', 400, 520), clothingType: 'dress', blockCount: 5, status: 'draft', updatedAt: hoursAgo(72) },
 ];
 
 /* ---- editor element builders (seed + 콘티 기반 생성이 공유) ---- */
@@ -376,7 +378,7 @@ function buildDraft() {
 }
 
 export const DB = {
-  account, catalogs, models, matchClothing, genSteps, library, uid,
+  account, catalogs, models, matchClothing, genSteps, library,
   ...buildDraft(),
 };
 

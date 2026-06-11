@@ -15,6 +15,7 @@
 import { DB, reseedDraft, buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
+import { uid } from '@/lib/ids.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -212,6 +213,8 @@ export const api = {
 
   /* ---- editor (PRD §10) ---- */
   async getEditorBlocks(/* projectId */) { await wait(180); return clone(DB.editorBlocks); },
+  // 에디터 상태 영속화 (계약 §6) — 저장 버튼·자동 저장이 호출. 세션 내 재진입 시 편집 유지.
+  async saveEditorBlocks(_projectId, blocks) { await wait(200); DB.editorBlocks = clone(blocks); touch(); },
   async getWardrobe(/* projectId */) { await wait(160); return clone(DB.wardrobe); },
   // req = NewCutRequest { mode:'new', colorId, cutType, direction?, shot?, modelId? }
   //     | VaryRequest   { mode:'vary', source:{src,cutType}, changes[], refBg? }  (계약 §6)
@@ -221,7 +224,7 @@ export const api = {
     const group = isVary ? 'misc' : (req.colorId || 'misc');
     // cutType 은 생성 시점에 기록되는 메타데이터 — 이후 '현재 컷 변형'이 옵션 세트를 고르는 기준
     const cutType = isVary ? ((req.source && req.source.cutType) || 'styling') : (req.cutType || null);
-    const img = { id: DB.uid('w'), src: Placeholder.any('gen' + Date.now()), ai: true, ...(cutType ? { cutType } : {}) };
+    const img = { id: uid('w'), src: Placeholder.any('gen' + Date.now()), ai: true, ...(cutType ? { cutType } : {}) };
     (DB.wardrobe[group] = DB.wardrobe[group] || []).push(img);
     return { data: clone(img), credits: spend(CREDIT_COSTS.editorImage) };
   },

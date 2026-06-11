@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
-import { DB } from '@/mock/db.js';
+import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Chips, ThumbGrid, EmptyState, Skeleton, Toggle, useToast } from '@/components/ui.jsx';
@@ -116,10 +116,11 @@ export function ColorDots({ colorOpts, value, onChange }) {
 
 /* mood-guide grid: 1-row horizontal scroll.
    examples REGENERATE from 컷 종류 + 방향 + 샷 종류 so they track the current
-   cut setup (PRD §8.5 — 생성예시는 방향·샷에 따라 달라진다). */
-export function MoodGuide({ catalogs, cut, direction, shot }) {
+   cut setup (PRD §8.5 — 생성예시는 방향·샷에 따라 달라진다).
+   refs 는 제어형 — 콘티는 블록(refImages)이, 에디터 AI 패널은 패널 상태가
+   소유해서 휘발되지 않고 생성 입력에 포함된다 (계약 §3.4/§6). */
+export function MoodGuide({ catalogs, cut, direction, shot, refs = [], onRefsChange }) {
   const [tab, setTab] = useState('examples');
-  const [refs, setRefs] = useState([]);
   const cat = cut === 'product' ? 'product' : (cut === 'styling' ? 'styling' : 'horizon');
   const examples = React.useMemo(() => Array.from({ length: 8 }, (_, i) => {
     const seed = `ex_${cut || 'x'}_${direction || 'x'}_${shot || 'x'}_${i}`;
@@ -136,14 +137,14 @@ export function MoodGuide({ catalogs, cut, direction, shot }) {
         <div className="mood-hscroll">{examples.map((e) => <div className="tg-cell" key={e.id}><img src={e.thumb} alt="" /></div>)}</div>
       ) : (
         <div>
-          <button className="ref-upload" onClick={async () => setRefs([...refs, await api.pickAnyImage()])}>
+          <button className="ref-upload" onClick={async () => onRefsChange && onRefsChange([...refs, await api.pickAnyImage()])}>
             <Icon name="upload" size={16} />참고 이미지 올리기
           </button>
           {refs.length > 0 && (
             <div className="mood-hscroll" style={{ marginTop: 10 }}>
               {refs.map((r, i) => (
                 <div className="tg-cell" key={i}><img src={r} alt="" />
-                  <button className="rm" onClick={() => setRefs(refs.filter((_, j) => j !== i))}><Icon name="x" size={11} /></button>
+                  <button className="rm" onClick={() => onRefsChange && onRefsChange(refs.filter((_, j) => j !== i))}><Icon name="x" size={11} /></button>
                 </div>
               ))}
             </div>
@@ -257,8 +258,10 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
         </>
       )}
 
-      {/* 분위기 예시 — 컷 종류·방향·샷에 따라 달라지므로 샷 종류 바로 아래 */}
-      <MoodGuide catalogs={catalogs} cut={block.cutType} direction={block.direction} shot={block.shot} />
+      {/* 분위기 예시 — 컷 종류·방향·샷에 따라 달라지므로 샷 종류 바로 아래.
+          내 레퍼런스는 블록(refImages)에 저장 → 생성 입력에 포함 (계약 §7-10 해소) */}
+      <MoodGuide catalogs={catalogs} cut={block.cutType} direction={block.direction} shot={block.shot}
+        refs={block.refImages || []} onRefsChange={(r) => onChange({ refImages: r })} />
 
       <div className="insp-divider" />
 
@@ -347,7 +350,7 @@ export function Storyboard() {
     if (snapRef.current) { const snap = snapRef.current; setBlocks((bs) => bs.map((b) => b.id === snap.id ? { ...snap } : b)); }
     setSelectedId(null); setMode('props'); setDirty(false); setWarn(false); snapRef.current = null;
   };
-  const duplicate = (id) => setBlocks((bs) => { const i = bs.findIndex((b) => b.id === id); const copy = { ...bs[i], id: DB.uid('blk') }; const n = [...bs]; n.splice(i + 1, 0, copy); return n; });
+  const duplicate = (id) => setBlocks((bs) => { const i = bs.findIndex((b) => b.id === id); const copy = { ...bs[i], id: uid('blk') }; const n = [...bs]; n.splice(i + 1, 0, copy); return n; });
   const remove = (id) => {
     const idx = blocks.findIndex((b) => b.id === id); const removed = blocks[idx];
     setBlocks((bs) => bs.filter((b) => b.id !== id));
@@ -358,7 +361,7 @@ export function Storyboard() {
   const addBlock = (idx) => {
     newSeq.current += 1;
     // 새 블록 — source 'ai', 컷 종류는 미설정(null)에서 시작 (계약 §3.4)
-    const nb = { id: DB.uid('blk'), kind: 'info', title: '새로운 블록', source: 'ai', cutType: null, colorId: colorOpts[0]?.id || 'col1',
+    const nb = { id: uid('blk'), kind: 'info', title: '새로운 블록', source: 'ai', cutType: null, colorId: colorOpts[0]?.id || 'col1',
       pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
       thumb: Placeholder.photo('new' + Date.now(), 'styling', 240, 320), poseThumb: Placeholder.pose('stand'), poseLabel: 'AI 자동' };
     setBlocks((bs) => { const m = [...bs]; m.splice(idx, 0, nb); return m; });
@@ -367,7 +370,7 @@ export function Storyboard() {
     toast.push('블록을 추가했어요', { icon: 'plus' });
   };
   const mineBlock = (src, n) => ({
-    id: DB.uid('blk'), kind: 'info', title: `새 블록 (${n})`, source: 'mine', cutType: null, colorId: colorOpts[0]?.id || 'col1',
+    id: uid('blk'), kind: 'info', title: `새 블록 (${n})`, source: 'mine', cutType: null, colorId: colorOpts[0]?.id || 'col1',
     ownImages: [src], thumb: src, pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
     poseThumb: Placeholder.pose('stand'), poseLabel: '-',
   });

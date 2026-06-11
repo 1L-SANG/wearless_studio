@@ -11,7 +11,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react
 import { useNavigate, useParams } from 'react-router-dom';
 import Moveable from 'react-moveable';
 import { api } from '@/lib/api/index.js';
-import { DB } from '@/mock/db.js';
+import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/components/ui.jsx';
 import { hexFor } from '@/features/storyboard/Storyboard.jsx';
@@ -308,6 +308,21 @@ export function Editor() {
     lastPush.current = now; prevBlocks.current = blocks;
   }, [blocks]);
 
+  // 자동 저장 — 변경 1.5s 디바운스 + 이탈 시 플러시 (frontend_state_model §8 P1-6).
+  // 첫 로드 직후 1회는 방금 불러온 동일 데이터 재기록이라 무해.
+  const saveTimer = useRef(null);
+  const latestBlocks = useRef(null);
+  useEffect(() => {
+    latestBlocks.current = blocks;
+    if (blocks == null) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { api.saveEditorBlocks(projectId, latestBlocks.current); }, 1500);
+  }, [blocks]);
+  useEffect(() => () => {
+    clearTimeout(saveTimer.current);
+    if (latestBlocks.current) api.saveEditorBlocks(projectId, latestBlocks.current);
+  }, []);
+
   // delete key removes selection
   useEffect(() => {
     const h = (e) => {
@@ -422,11 +437,11 @@ export function Editor() {
   const toggleElField = (blockId, elId, field) => setBlocks((bs) => bs.map((b) => b.id === blockId
     ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, [field]: !e[field] } : e) } : b));
   const moveBlock = (idx, dir) => setBlocks((bs) => { const n = [...bs]; const j = idx + dir; if (j < 0 || j >= n.length) return n; [n[idx], n[j]] = [n[j], n[idx]]; return n; });
-  const addEmpty = (idx) => setBlocks((bs) => { const n = [...bs]; const nb = { id: DB.uid('b'), name: '빈 블록', kind: 'info', bg: '#ffffff', h: 300, elements: [] }; n.splice(idx + 1, 0, nb); return n; });
+  const addEmpty = (idx) => setBlocks((bs) => { const n = [...bs]; const nb = { id: uid('b'), name: '빈 블록', kind: 'info', bg: '#ffffff', h: 300, elements: [] }; n.splice(idx + 1, 0, nb); return n; });
   const deleteBlock = (id) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); toast.push('블록을 삭제했어요'); };
   const addFrame = (f, idx) => {
-    const nb = { id: DB.uid('b'), name: f.label, kind: 'info', bg: '#ffffff', h: 580, elements:
-      Array.from({ length: f.cols }).map((_, i) => ({ id: DB.uid('el'), type: 'image', x: 40 + i * (920 / f.cols), y: 60, w: 920 / f.cols - 20, h: 460, radius: 10 })) };
+    const nb = { id: uid('b'), name: f.label, kind: 'info', bg: '#ffffff', h: 580, elements:
+      Array.from({ length: f.cols }).map((_, i) => ({ id: uid('el'), type: 'image', x: 40 + i * (920 / f.cols), y: 60, w: 920 / f.cols - 20, h: 460, radius: 10 })) };
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     toast.push(`${f.label} 프레임을 새 블록으로 추가했어요`);
   };
@@ -443,14 +458,14 @@ export function Editor() {
       if (blockEl) { const r = blockEl.getBoundingClientRect(); x = Math.round((dropEvent.clientX - r.left) / scale - (type === 'line' ? 120 : 70)); y = Math.round((dropEvent.clientY - r.top) / scale - (type === 'line' ? 12 : 70)); }
     }
     const el = type === 'line'
-      ? { id: DB.uid('el'), type: 'line', shape: shapeId, x, y, w: 240, h: 24 }
-      : { id: DB.uid('el'), type: 'shape', shape: shapeId, x, y, w: 140, h: 140 };
+      ? { id: uid('el'), type: 'line', shape: shapeId, x, y, w: 240, h: 24 }
+      : { id: uid('el'), type: 'shape', shape: shapeId, x, y, w: 140, h: 140 };
     setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(target, el); toast.push('오브젝트를 추가했어요');
   };
   const insertImage = (im) => {
     const bId = visibleBlock();
-    const el = { id: DB.uid('el'), type: 'image', x: 250, y: 80, w: 500, h: 560, src: im.src, radius: 12, ...(im.cutType ? { cutType: im.cutType } : {}) };
+    const el = { id: uid('el'), type: 'image', x: 250, y: 80, w: 500, h: 560, src: im.src, radius: 12, ...(im.cutType ? { cutType: im.cutType } : {}) };
     setBlocks((bs) => bs.map((b) => b.id === bId ? { ...b, elements: [...b.elements, el] } : b));
     toast.push('이미지를 캔버스에 삽입했어요');
   };
@@ -465,12 +480,12 @@ export function Editor() {
     setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) { const f = arr.filter((im) => !ids.includes(im.id)); if (f.length) nw[g] = f; } return nw; });
     toast.push(`${ids.length}개 이미지를 의류 목록에서 삭제했어요`, { icon: 'trash' });
   };
-  const generateImage = async ({ colorId, cutType }) => {
+  const generateImage = async ({ colorId, cutType, refImages }) => {
     const group = colorId || 'misc';                 // wardrobe 그룹 키 = colorId | 'misc' (계약 §3.6)
-    const loadingId = DB.uid('w');
+    const loadingId = uid('w');
     setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
     genCount.current += 1; setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
-    const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', colorId: group, cutType });
+    const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', colorId: group, cutType, ...(refImages?.length ? { refImages } : {}) });
     setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
     genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done'); toast.push('이미지 생성을 완료했어요', { icon: 'check' });
     syncCredits(credits);                            // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
@@ -478,7 +493,7 @@ export function Editor() {
   // 현재 컷 변형 — 누적된 변경(chips)을 적용해 생성. 생성 즉시 의류 탭으로 이동해
   // '기타' 그룹의 로딩 셀을 보여준다 (PRD §10.8: 새 이미지는 의류 탭에 추가).
   const varyGenerate = async ({ source, changes, refBg }) => {
-    const loadingId = DB.uid('w');
+    const loadingId = uid('w');
     setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: loadingId, loading: true }] }));
     setTab('wardrobe');
     genCount.current += 1; setGenDot('busy');
@@ -514,13 +529,13 @@ export function Editor() {
     if (target) { const wr = wrap.getBoundingClientRect(); const tr = target.getBoundingClientRect(); wrap.scrollTo({ top: wrap.scrollTop + (tr.top - wr.top) - 40, behavior: 'smooth' }); } };
   const addText = (bId) => {
     const id = bId || visibleBlock();
-    const el = { id: DB.uid('el'), type: 'text', x: 120, y: 80, w: 420, h: 60, text: '텍스트를 입력하세요', style: { font: 'Pretendard', size: 32, weight: 500, color: '#0e0d14' } };
+    const el = { id: uid('el'), type: 'text', x: 120, y: 80, w: 420, h: 60, text: '텍스트를 입력하세요', style: { font: 'Pretendard', size: 32, weight: 500, color: '#0e0d14' } };
     setBlocks((bs) => bs.map((b) => b.id === id ? { ...b, elements: [...b.elements, el] } : b));
     selectEl(id, el); setTab('text'); toast.push('텍스트를 추가했어요');
   };
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
-  const save = () => toast.push('저장했어요', { icon: 'check' });
+  const save = async () => { await api.saveEditorBlocks(projectId, blocks); toast.push('저장했어요', { icon: 'check' }); };
   /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
 
   /* ---- react-moveable → Element {x,y,w,h,rotate}.
@@ -643,7 +658,7 @@ export function Editor() {
   const renderPanel = () => {
     switch (tab) {
       case 'ai': return <AIPanel catalogs={catalogs} account={account} colorOpts={colorOpts} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickAnyImage()} onSetCutType={setVaryCutType} />;
-      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: DB.uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} onFreshSeen={freshSeen} />;
+      case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} onFreshSeen={freshSeen} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} onVary={varyImage} />;
       case 'frame': return <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />;
       case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onLayer={layerEl} onAddText={() => addText()} />;

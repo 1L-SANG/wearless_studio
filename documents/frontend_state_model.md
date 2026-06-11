@@ -137,7 +137,8 @@ useAppStore = {
 5. ✅ mock: `createProject`/`getProject`/`patchProject` 추가, `generateDetailPage`가 저장된 콘티 기반으로 생성(`buildEditorBlocksFromStoryboard`).
    토큰 마이그레이션(계약 §7-2,3)과 typedef 갱신도 함께 반영됨.
 
-**P1 — 영속화·백엔드 준비 (남은 작업)**
-6. `saveEditorBlocks` 디바운스 저장 + 이탈 시 저장.
-7. TanStack Query 도입(백엔드와 함께): 서버 상태를 Query 캐시로, store의 account/catalogs 캐시 제거.
-8. 잔여 갭: 콘티 '내 레퍼런스'의 블록 저장 연결(계약 §7-10), `DB.uid` 경계 위반 정리(§7-9), ProjectSummary 정비(§7-12), Analysis 중복 필드 제거(§7-4).
+**P1 — 영속화·백엔드 준비**
+6. ✅ `saveEditorBlocks` — 저장 버튼 + 변경 1.5s 디바운스 자동 저장 + 이탈 시 플러시 (2026-06-11 반영. 세션 내 에디터 재진입 시 편집 유지).
+7. TanStack Query 도입(백엔드와 함께): 서버 상태를 Query 캐시로, store의 account/catalogs 캐시 제거. (남음)
+8. 잔여 갭: Analysis 중복 필드 제거(계약 §7-4), 화면의 `Placeholder` 직접 import 정리(§7-9 잔여 — 분위기 예시 시드 전환과 함께).
+   해소됨: 내 레퍼런스 저장(§7-10), `uid` 경계(§7-9 핵심), ProjectSummary(§7-12).

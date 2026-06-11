@@ -57,7 +57,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {ClothingType} clothingType
    @property {number} blockCount
    @property {ProjectStatus} status
-   @property {string} updatedAt          ISO (현행 mock은 표시 문자열 — 계약 §7-12 갭)
+   @property {string} updatedAt          ISO — '2시간 전' 표시는 화면 파생
 
    @typedef {Object} ImageAsset
    @property {string} id
@@ -161,7 +161,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string[]} matchIds
    @property {'same'|'show'|'hide'} faceExposure
    @property {'same'|'low'|'high'} angle
-   @property {string[]} refImages        내 레퍼런스 (현행 mock은 미저장 — 계약 §7-10 갭)
+   @property {string[]} refImages        내 레퍼런스 — 생성 입력(NewCutRequest)에 포함
    @property {string[]} [ownImages]      source='mine'
    @property {string} thumb              예시 썸네일 (최종 이미지 아님)
    @property {string} [title]            과도기 표시 필드 — 계약상 파생 (kind 라벨)
