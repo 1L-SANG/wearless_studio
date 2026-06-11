@@ -46,7 +46,7 @@ ProjectSummary {                   // 보관함 카드 (구 LibraryItem)
 ```
 
 - `composeMode` `copywriting` `selectedMannequinId` `adjustCount`는 **서버 동기화 대상 선택값**이다. 프론트는 Zustand에 작업 사본을 두고 변경 시 `patchProject`로 동기화한다 (→ `frontend_state_model.md`).
-- 조정 횟수 2회 제한은 **프로젝트당**이다. 재진입·새로고침에도 유지되고, 재생성도 동일 카운트를 소모한다. PRD §7.4의 "세션"은 "한 프로젝트의 마네킹 단계"로 해석한다.
+- 조정 횟수 2회 제한은 **프로젝트당**이다. 재진입·새로고침에도 유지되고, 재생성도 동일 카운트를 소모한다. PRD §7.4의 "세션"은 "한 프로젝트의 마네킹 단계"로 해석한다. (단, 새로고침 유지는 영속 백엔드 전제 — 현 in-memory mock에서 F5는 "서버 재시작"과 같아서 프로젝트·크레딧·횟수가 함께 일관되게 리셋된다. SPA 재진입 유지는 mock에서도 동작하며 E2E로 검증됨.)
 
 ---
 

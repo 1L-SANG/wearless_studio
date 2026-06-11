@@ -10,7 +10,7 @@ import { api } from '@/lib/api/index.js';
 import { DB } from '@/mock/db.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Button, IconButton, Skeleton, useToast } from '@/components/ui.jsx';
-import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
+import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton } from '@/features/analysis/AnalysisForm.jsx';
 
 // human-readable file size
@@ -164,6 +164,7 @@ export function ProductInput() {
   const [analysis, setAnalysis] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const projectId = useAppStore((s) => s.projectId);
+  const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
 
   useEffect(() => {
@@ -179,7 +180,7 @@ export function ProductInput() {
     })();
   }, []);
 
-  if (!product || !catalogs) return <div className="wizard"><div className="surface"><Skeleton h={420} /></div></div>;
+  if (!product || !catalogs) return <div className="wizard">{doneBlocked && <DoneGuardModal />}<div className="surface"><Skeleton h={420} /></div></div>;
 
   const set = (patch) => setProduct((p) => ({ ...p, ...patch }));
   // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
@@ -276,6 +277,7 @@ export function ProductInput() {
 
   return (
     <div className={`wizard${wide ? ' wide' : ''}`}>
+      {doneBlocked && <DoneGuardModal />}
       <PageHead
         title="의류 이미지를 올려주세요"
         sub={<>사진 몇장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}

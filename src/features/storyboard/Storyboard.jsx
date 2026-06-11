@@ -13,7 +13,7 @@ import { DB } from '@/mock/db.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Chips, ThumbGrid, EmptyState, Skeleton, Toggle, useToast } from '@/components/ui.jsx';
-import { PageHead } from '@/features/shell/shell.jsx';
+import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 
 const COLOR_HEX = {
   white: '#ffffff', ivory: '#f3eee1', beige: '#d8c4a3', brown: '#7a5230', black: '#15141a',
@@ -316,6 +316,7 @@ export function Storyboard() {
   const projectId = useAppStore((s) => s.projectId);
   const copyOn = useAppStore((s) => s.copywriting);
   const setCopyOn = useAppStore((s) => s.setCopywriting);
+  const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
 
   useEffect(() => {
     (async () => {
@@ -327,7 +328,7 @@ export function Storyboard() {
       setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
     })();
   }, []);
-  if (!blocks || !catalogs) return <div className="wizard wide"><div className="surface"><Skeleton h={400} /></div></div>;
+  if (!blocks || !catalogs) return <div className="wizard wide">{doneBlocked && <DoneGuardModal />}<div className="surface"><Skeleton h={400} /></div></div>;
 
   const selected = blocks.find((b) => b.id === selectedId);
   const isMineSel = selected && selected.source === 'mine';
@@ -453,6 +454,7 @@ export function Storyboard() {
   };
   return (
     <div className="wizard wide sb-page">
+      {doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
       <div className={`sb-count-head${splitOpen ? ' is-split' : ''}`}>
         구성컷: <strong>{cutCount}개</strong>

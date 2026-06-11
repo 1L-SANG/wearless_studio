@@ -11,7 +11,7 @@ import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { LIMITS } from '@/lib/limits.js';
 import { Icon, Button, Modal, ProgressBar, useToast } from '@/components/ui.jsx';
-import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
+import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 
 /* 조정 상태 → 표시 라벨 (저장 값은 enum, 한국어는 표시 전용 — 계약 §1) */
 const ADJ_LABELS = { slimmer: '더 슬림하게', looser: '더 여유있게', shorter: '더 짧게', longer: '더 길게' };
@@ -218,6 +218,7 @@ export function Mannequin() {
   const setAdjustCount = useAppStore((s) => s.setAdjustCount);
   const syncCredits = useAppStore((s) => s.syncCredits);
   const adjustLeft = Math.max(0, LIMITS.mannequinAdjustMax - adjustCount);
+  const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
 
   useEffect(() => {
     window.scrollTo({ top: 0 });
@@ -290,7 +291,7 @@ export function Mannequin() {
     toast.push('후보 A/B를 새로 생성했어요', { icon: 'refresh' });
   };
 
-  if (phase === 'loading') return <MannequinLoading progress={progress} />;
+  if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={progress} /></>;
 
   const candidates = (
     <div className="surface">
@@ -326,6 +327,7 @@ export function Mannequin() {
 
   return (
     <div className="wizard wide">
+      {doneBlocked && <DoneGuardModal />}
       <PageHead title="원하는 느낌으로 구현된 이미지를 선택해주세요" sub="핏과 총기장을 조정해 의류 재현도를 높여보세요." />
       {body}
       <WizardCTA>
