@@ -110,10 +110,31 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string} thumb
    @property {boolean} recommended
 
+   @typedef {'women'|'men'|'unisex'} MatchingItemGender
+
+   @typedef {Object} MatchingItem       Supabase-ready 매칭 의류 seed 원본
+   @property {string} id
+   @property {string} name
+   @property {'top'|'bottom'} clothingType
+   @property {MatchingItemGender} gender
+   @property {string} category          catalogs.subCategories 계열 토큰 우선
+   @property {string} colorName
+   @property {string} colorGroup        swatchColors id 계열 토큰 우선
+   @property {string[]} styleTags
+   @property {Fit} fit
+   @property {string} length
+   @property {string} imageUrl          structured asset path, not external stock
+   @property {string} thumbnailUrl      structured asset path, not external stock
+   @property {boolean} isActive
+   @property {number} sortOrder
+
    @typedef {Object} MatchClothing
+   현재 UI가 소비하는 legacy shape. mock 추천 레이어가 MatchingItem에서 변환한다.
    @property {string} id
    @property {string} name
    @property {string} thumb
+   @property {string} [imageUrl]
+   @property {string} [thumbnailUrl]
    @property {boolean} selected
    @property {number} [selOrder]         1=메인, 2=서브
 

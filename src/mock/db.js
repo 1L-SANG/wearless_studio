@@ -15,6 +15,7 @@
    ============================================================= */
 import { Placeholder as P } from '@/mock/placeholders.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
+import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 
 const uid = (p) => p + '_' + Math.random().toString(36).slice(2, 8);
 const nowIso = () => new Date().toISOString();
@@ -158,12 +159,11 @@ const models = [
   { id: 'mB', name: '모델 B', thumb: P.portrait('mB'), recommended: false },
   { id: 'mC', name: '모델 C', thumb: P.portrait('mC'), recommended: false },
 ];
-const matchClothing = [
-  { id: 'c1', name: '데님 팬츠', thumb: P.swatch('c1'), selected: true, selOrder: 1 },
-  { id: 'c2', name: '슬랙스', thumb: P.swatch('c2'), selected: true, selOrder: 2 },
-  { id: 'c3', name: '스커트', thumb: P.swatch('c3'), selected: false },
-  { id: 'c4', name: '와이드 팬츠', thumb: P.swatch('c4'), selected: false },
-];
+const matchClothing = toLegacyMatchClothing(recommendMatchingItems({
+  clothingType: 'top',
+  targetGenders: ['women'],
+  styleTags: ['basic', 'daily', 'clean'],
+}));
 
 /* ---- Generation job steps (stable, PRD §9.2) ---- */
 const genSteps = [

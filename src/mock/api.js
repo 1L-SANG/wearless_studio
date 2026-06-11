@@ -103,7 +103,10 @@ export const api = {
   },
 
   /* ---- mannequin (PRD §7) ---- */
-  async getMatchClothing(/* projectId */) { await wait(120); return clone(DB.matchClothing); },
+  async getMatchClothing(/* projectId */) {
+    await wait(120);
+    return clone((DB.analysis?.matchClothing?.length ? DB.analysis.matchClothing : DB.matchClothing));
+  },
   async getMannequins(/* projectId */) { await wait(140); return clone(DB.mannequins); },
   // 최초 진입 시 A/B 후보를 생성한다. 크레딧: mannequinGenerate (계약 §6).
   // 진행 중에 다시 호출되면(이중 mount·재진입) 기존 job 에 합류한다 — 1회만 차감.
