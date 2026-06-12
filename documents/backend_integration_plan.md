@@ -154,10 +154,26 @@ seed/matching/{matchingItemId}.{ext}
 - **인증**: Supabase Auth(이메일+OAuth) → 모든 요청 `Authorization: Bearer` → FastAPI JWKS 검증 → `user_id` 주입. service-role 키는 서버만. dev 한정 익명 플래그는 Phase 1까지만.
 - **검증**: Pydantic 모델이 계약 §3~§6 mirror — JSONB 포함 전 저장 경로 검증.
 - **카탈로그**: `getCatalogs`는 서버 config 제공, 운영자 편집 대상(matching_items, 분위기 예시 시드)만 DB화.
-- **삭제·보존**: project soft delete → 비동기 cleanup이 R2 private asset·export 삭제. ledger는 보존(감사). 보존 기한은 §10.
+- **삭제·보존**: project soft delete → 비동기 cleanup이 R2 private asset·export 삭제. ledger는 보존(감사). 보존 기한은 §11.
 - **공유 제외**: 공개 상세페이지 URL은 이 계획에 없음 — Next.js 전환 신호와 함께 별도 결정(03 §4). export 다운로드는 인증 사용자 signed URL 한정.
 
-## 10. 오픈 이슈 (정책 확정 대기)
+## 10. 실행 로드맵 (2026-06-12 확정 — Claude·Codex 독립 자문 수렴)
+
+> 사용자 제안 로드맵(상태 정리 → 뼈대 → AI → PG → 크레딧 → 다운로드)을 검토한 결론. 두 자문이 모든 지점에서 수렴했다.
+
+| 순서 | 작업 | 비고 |
+|---|---|---|
+| **0. AI 품질 스파이크 (1~2일)** | 버리는 스크립트로 Gemini 이미지 모델에 실제 상품 사진 투입 — 마네킹 핏 재현·의류 동일성·비용·지연 검증 | **인프라 투자 전 최대 리스크 검증.** Phase 0의 완료 기준(배포·JWT)은 핵심 가치를 검증하지 못한다. 필요 연결: GEMINI_API_KEY만 |
+| 1. Phase 0~1 | FastAPI 골격·Supabase(스키마+Auth)·Railway 배포·어댑터 분기 + 읽기 전환 + **TanStack Query 도입** | Zustand는 이미 구현 완료 — 추가 작업 없음 |
+| 2. Phase 2~3 | R2 presigned 업로드 → 분석·매칭 전환 | |
+| 3. Phase 4 | AI job 실체화 + **크레딧 원장(reserve-confirm) 동시 구축** | ⚠️ 게이트: 크레딧 단가·환불 정책 확정(§11-1) 선행 |
+| 4. Phase 5~6 | 콘티·에디터 영속화 → 다운로드(클라 렌더, §7) | |
+| 5. Phase 7 | mock 제거 (parity 체크리스트) | **mock은 그 전까지 유지** — 실행 가능한 계약(멱등·봉투·소유권 머지)이자 parity 기준. 폐기 시 전환 리스크 증가 |
+| 6. PG (결제) | 크레딧 **충전** 기능으로 원장 위에 마지막에 얹음 | 크레딧 시스템과 분리 — 베타는 수동 지급으로 PG 없이 런칭 가능. PG사 선정은 별도 ADR |
+
+스택 연결 시점: GEMINI/OPENAI 키=스파이크(지금) · Supabase=Phase 0~1 · Railway=Phase 0 끝(healthz라도 조기 배포 — CORS·도메인 문제 조기 발견) · TanStack Query=Phase 1 · R2=Phase 2 · TS 점진(types→.ts)=HTTP 어댑터 작성 시 · PG=맨 끝.
+
+## 11. 오픈 이슈 (정책 확정 대기)
 
 | 항목 | 구조 준비 상태 | 막힌 곳 |
 |---|---|---|
