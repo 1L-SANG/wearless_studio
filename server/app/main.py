@@ -1,0 +1,76 @@
+"""Wearless Studio API 골격 — Phase 0 (backend_integration_plan §8).
+
+범위: healthz + JWT 검증 + 에러 봉투 { error: { code, message, details? } } (§4).
+실제 리소스 endpoint는 Phase 1부터.
+"""
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from .auth import jwks_key_resolver, require_user
+from .config import Settings, load_settings
+
+DEFAULT_ERROR_CODES = {
+    401: "unauthorized",
+    402: "insufficient_credits",
+    403: "forbidden",
+    404: "not_found",
+}
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or load_settings()
+
+    app = FastAPI(title="Wearless Studio API", docs_url=None, redoc_url=None)
+    app.state.settings = settings
+    app.state.jwt_key_resolver = (
+        jwks_key_resolver(settings.jwks_url) if settings.jwks_url else None
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+    )
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        if isinstance(exc.detail, dict) and "code" in exc.detail:
+            body = exc.detail
+        else:
+            body = {
+                "code": DEFAULT_ERROR_CODES.get(exc.status_code, "error"),
+                "message": str(exc.detail),
+            }
+        return JSONResponse(status_code=exc.status_code, content={"error": body})
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "validation_error",
+                    "message": "요청 형식이 올바르지 않습니다.",
+                    "details": exc.errors(),
+                }
+            },
+        )
+
+    @app.get("/healthz")
+    async def healthz():
+        return {"status": "ok"}
+
+    @app.get("/v1/me/ping")
+    async def me_ping(user_id: str = Depends(require_user)):
+        # Phase 0 완료 기준(JWT 검증 통과) 확인용 — Phase 1에서 /v1/me/account로 대체
+        return {"userId": user_id}
+
+    return app
+
+
+app = create_app()

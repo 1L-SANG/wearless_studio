@@ -11,5 +11,10 @@ npm-debug.log*
 !.env.example
 .gstack/
 
+# python (server/)
+.venv/
+__pycache__/
+.pytest_cache/
+
 # machine-local skill symlinks (absolute paths)
 .claude/skills/
