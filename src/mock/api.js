@@ -14,13 +14,15 @@
    ============================================================= */
 import { DB, reseedDraft, buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { Placeholder } from '@/mock/placeholders.js';
-import { CREDIT_COSTS } from '@/lib/limits.js';
+import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
+import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const touch = () => { DB.project.updatedAt = new Date().toISOString(); };
 const spend = (n) => { DB.account.credits = Math.max(0, DB.account.credits - n); return DB.account.credits; };
+const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
 
 /* 진행 중인 유료 job 레지스트리 — 같은 job 의 중복 시작 요청(StrictMode 이중
    실행, 생성 중 이탈 후 재진입)은 새 작업을 만들지 않고 기존 job 에 합류시켜
@@ -90,7 +92,35 @@ export const api = {
   },
   async saveAnalysis(_projectId, patch) {
     await wait(180);
-    Object.assign(DB.analysis, patch);
+    // 매칭 후보 목록은 서버(추천)가 소유 — matchClothing patch 는 통째로 덮지 않고
+    // 아래에서 "선택 상태만" id 단위로 머지한다. 의류 종류 전환 직후 도착하는 묵은
+    // 클라 스냅샷이 갱신된 후보 목록을 되살리는 레이스 차단 (stale save 방어).
+    const { matchClothing: matchPatch, ...rest } = patch;
+    Object.assign(DB.analysis, rest);
+    if (shouldRefreshMatchClothing(patch)) {
+      DB.analysis.matchClothing = recommendLegacyMatchClothing({
+        clothingType: DB.analysis.clothingType,
+        targetGenders: DB.analysis.targetGenders,
+        styleTags: DB.analysis.styleTags,
+        current: DB.analysis.matchClothing,
+      });
+    }
+    if (Array.isArray(matchPatch)) {
+      const patchById = new Map(matchPatch.map((m) => [m.id, m]));
+      const merged = (DB.analysis.matchClothing || []).map((m) => {
+        const p = patchById.get(m.id);
+        if (!p) return m;                                  // 클라가 모르는 새 후보 — 서버 상태 유지
+        return { ...m, selected: !!p.selected, selOrder: p.selected ? p.selOrder : undefined };
+      });
+      // selOrder 정규화 — 머지로 생길 수 있는 중복/초과를 1..matchClothingMax 로 재부여
+      const ranked = merged.filter((m) => m.selected)
+        .sort((a, b) => (a.selOrder || 99) - (b.selOrder || 99))
+        .slice(0, LIMITS.matchClothingMax);
+      const orderById = new Map(ranked.map((m, i) => [m.id, i + 1]));
+      DB.analysis.matchClothing = merged.map((m) => orderById.has(m.id)
+        ? { ...m, selected: true, selOrder: orderById.get(m.id) }
+        : { ...m, selected: false, selOrder: undefined });
+    }
     // Product 소유 필드(계약 §3.1)는 product 에도 반영 — 사이즈 안내 등
     // 하위 단계는 product 를 읽는다. (소유권 일원화 전까지의 동기화 규칙)
     const owned = {};

@@ -9,6 +9,8 @@ import { api } from '@/lib/api/index.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 
+export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
+
 export function AnalysisSkeleton() {
   const chipRow = (ws) => <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{ws.map((w, i) => <Skeleton key={i} w={w} h={34} r={9999} />)}</div>;
   const fieldRow = (ws, i) => (
@@ -306,5 +308,11 @@ export function Analysis({ onNext }) {
   if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState desc="분석 서버에 일시적인 문제가 발생했어요." onRetry={run} /></div></div>;
 
   return <AnalysisForm analysis={analysis} catalogs={catalogs}
-    onChange={(patch) => { setAnalysis((a) => ({ ...a, ...patch })); api.saveAnalysis(patch); }} onNext={onNext} />;
+    onChange={(patch) => {
+      const refreshMatch = isMatchRecommendationPatch(patch);
+      setAnalysis((a) => ({ ...a, ...patch }));
+      api.saveAnalysis(null, patch).then((saved) => {
+        if (refreshMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));
+      });
+    }} onNext={onNext} />;
 }

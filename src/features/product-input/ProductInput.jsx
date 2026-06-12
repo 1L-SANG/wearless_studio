@@ -11,7 +11,7 @@ import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Button, IconButton, Skeleton, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
-import { AnalysisForm, AnalysisSkeleton } from '@/features/analysis/AnalysisForm.jsx';
+import { AnalysisForm, AnalysisSkeleton, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
@@ -299,7 +299,15 @@ export function ProductInput() {
       {phase === 'done' && (
         <div className="pi-reveal">
           <AnalysisForm inline analysis={analysis} catalogs={catalogs}
-            onChange={(patch) => { setAnalysis((a) => ({ ...a, ...patch })); api.saveAnalysis(projectId, patch); }}
+            onChange={(patch) => {
+              // 후보 목록은 서버 소유 — 추천 갱신 패치뿐 아니라 선택 토글 응답도
+              // 서버 머지 결과로 동기화해 묵은 후보가 로컬에 남지 않게 한다.
+              const syncMatch = isMatchRecommendationPatch(patch) || 'matchClothing' in patch;
+              setAnalysis((a) => ({ ...a, ...patch }));
+              api.saveAnalysis(projectId, patch).then((saved) => {
+                if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));
+              });
+            }}
             onNext={() => navigate('/create/mannequin')} />
         </div>
       )}

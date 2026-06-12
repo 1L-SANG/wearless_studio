@@ -135,6 +135,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string} thumb
    @property {string} [imageUrl]
    @property {string} [thumbnailUrl]
+   @property {MatchingItemGender} [gender]
    @property {boolean} selected
    @property {number} [selOrder]         1=메인, 2=서브
 
