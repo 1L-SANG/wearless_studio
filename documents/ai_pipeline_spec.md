@@ -139,7 +139,7 @@ Job {
 # FastAPI 서버 전용 (.env / .env.local — 프론트 번들 금지)
 GEMINI_API_KEY=
 OPENAI_API_KEY=
-MODEL_ROUTING_IMAGE_HIGH=gemini-3.1-pro-image      # 잠정 — 교체는 여기서만
+MODEL_ROUTING_IMAGE_HIGH=gemini-3-pro-image        # 2026-06-12 공식 문서로 실재 확인(Nano Banana Pro, stable) — 교체는 여기서만
 MODEL_ROUTING_IMAGE_LIGHT=gemini-3.1-flash-image
 MODEL_ROUTING_TEXT=gpt-5.4-mini
 PIPELINE_CUT_CONCURRENCY=3                          # PL-4 그룹 내 병렬 상한
