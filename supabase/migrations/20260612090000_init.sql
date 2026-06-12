@@ -193,9 +193,10 @@ create table public.jobs (
   finished_at timestamptz
 );
 create index jobs_project_kind_status_idx on public.jobs (project_id, kind, status);
--- 같은 프로젝트·kind 동시 시작 DB 차단 (§2 인덱스)
+-- 같은 프로젝트·kind 동시 시작 DB 차단 (§2 인덱스).
+-- 단 editor_image는 다중 허용 — Idempotency-Key(uq)로만 중복 방지 (§5)
 create unique index jobs_active_unique_idx on public.jobs (project_id, kind)
-  where status in ('pending', 'running');
+  where status in ('pending', 'running') and kind <> 'editor_image';
 -- dispatcher claim 스캔 (§5 SKIP LOCKED)
 create index jobs_pending_idx on public.jobs (status, created_at) where status = 'pending';
 create trigger jobs_updated_at before update on public.jobs
