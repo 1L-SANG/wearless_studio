@@ -331,7 +331,7 @@ export function Mannequin() {
       <PageHead title="원하는 느낌으로 구현된 이미지를 선택해주세요" sub="핏과 총기장을 조정해 의류 재현도를 높여보세요." />
       {body}
       <WizardCTA>
-        <Button variant="primary" size="lg" iconRight="arrowRight" onClick={() => navigate('/create/storyboard')}>초안 생성하기</Button>
+        <Button variant="primary" size="lg" iconRight="arrowRight" onClick={() => navigate('/create/storyboard')}>상세페이지 초안 만들기</Button>
       </WizardCTA>
 
       {confirmRegen && (

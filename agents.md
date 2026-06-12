@@ -99,7 +99,7 @@ Default five-state vocabulary (needs-triage, needs-info, ready-for-agent, ready-
 
 ## Domain docs
 
-Single-context repo — primary source of truth is `documents/PRD.md`; `CONTEXT.md` and `docs/adr/` are created lazily via `/grill-with-docs`. See `docs/agents/domain.md`.
+Single-context repo. `documents/PRD.md` is the primary source of truth. Use `/grill-with-docs` to clarify terminology, propose updates to `CONTEXT.md`, and propose ADRs for important non-obvious decisions. See `docs/agents/domain.md`.
 
 ## grill-with-docs
 

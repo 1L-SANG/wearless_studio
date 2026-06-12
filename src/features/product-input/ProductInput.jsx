@@ -196,7 +196,7 @@ export function ProductInput() {
   const canDone = hasFront && phase === 'input';
   const locked = phase !== 'input';
 
-  // 입력 완료 → analyze inline (skeleton below) → fill analysis form below
+  // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -253,7 +253,7 @@ export function ProductInput() {
 
   const wide = phase !== 'input';
 
-  // after 입력 완료, the input collapses into a compact summary above the analysis
+  // after AI analysis starts, the input collapses into a compact summary above the analysis
   const allImages = product.colors.flatMap((c) => c.images);
   const colorCount = product.colors.filter((c) => c.images.length).length;
   const summaryCard = (
@@ -288,7 +288,7 @@ export function ProductInput() {
       {phase === 'input' && (
         <>
           <WizardCTA>
-            <Button variant="primary" size="lg" icon="check" disabled={!canDone} onClick={submit}>입력 완료</Button>
+            <Button variant="primary" size="lg" icon="check" disabled={!canDone} onClick={submit}>AI 분석하기</Button>
           </WizardCTA>
           {!canDone && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>앞면 이미지를 1장 이상 올리면 입력을 완료할 수 있어요.</p>}
         </>

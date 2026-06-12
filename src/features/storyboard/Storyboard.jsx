@@ -475,7 +475,7 @@ export function Storyboard() {
               <div className="hint" style={{ marginTop: 1 }}>AI가 카피를 자동으로 넣어요</div></div>
           </div>
           <button className="btn btn-primary btn-lg sb-ab-go btn-glowring" onClick={generate}>
-            <Icon name="sparkles" size={18} />이대로 생성하기 <Icon name="arrowRight" size={17} /> {aiCount * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧
+            <Icon name="sparkles" size={18} />상세페이지 생성하기 <Icon name="arrowRight" size={17} /> {aiCount * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧
           </button>
         </div>
       </div>

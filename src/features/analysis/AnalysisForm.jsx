@@ -270,7 +270,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     </>
   );
 
-  const cta = <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onNext}>마네킹컷 만들기</Button>;
+  const cta = <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onNext}>의류정보 확정 완료</Button>;
 
   if (inline) {
     return (
