@@ -21,7 +21,7 @@ create table public.profiles (
   user_id uuid primary key references auth.users (id) on delete cascade,
   display_name text,
   avatar_asset_id uuid, -- FK는 assets 생성 후 (순환 참조)
-  plan text not null default 'free',
+  plan text not null default 'basic' check (plan in ('basic', 'plus', 'seller')), -- PlanTier (계약 §3.7/§4)
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -172,9 +172,11 @@ create table public.jobs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
   project_id uuid not null references public.projects (id) on delete cascade,
-  kind text not null, -- analysis | mannequin | detail_page | editor_image …
+  kind text not null
+    check (kind in ('analyze', 'mannequin', 'mannequin_adjust', 'detail_page', 'editor_image')), -- 계약 §6 · ai_pipeline_spec §4
+
   status text not null default 'pending'
-    check (status in ('pending', 'running', 'done', 'error', 'cancelled')),
+    check (status in ('pending', 'running', 'done', 'error')),
   progress integer not null default 0 check (progress between 0 and 100),
   steps jsonb not null default '[]'::jsonb,
   payload jsonb not null default '{}'::jsonb,

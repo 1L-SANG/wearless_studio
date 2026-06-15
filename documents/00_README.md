@@ -3,7 +3,7 @@
 > 패션 셀러용 AI 상세페이지 제작 스튜디오. 이 폴더는 Wearless의 **살아있는 제품·기술 문서 묶음**이다.
 > 현행 구현: **Vite + React SPA**(`src/`, mock-first). 백엔드는 **FastAPI + Supabase + R2**로 연동한다(`backend_integration_plan.md`).
 > **Next.js 전환은 지금 하지 않는다** — DAU·SEO·공유 링크 신호가 올 때 별도 결정한다(`03_기술스택_결정서.md` §4).
-> 최종 갱신: 2026-06-12
+> 최종 갱신: 2026-06-14
 
 ---
 
@@ -18,6 +18,7 @@
 | `ai_agent_modules.md` | AI 에이전트 모듈 정의 — tier→모델 라우팅 단일 소스(잠정 배정) |
 | `ai_pipeline_spec.md` | AI 파이프라인 명세 — PL-1~6, job 모델, 크레딧 트랜잭션 |
 | `backend_integration_plan.md` | 백엔드 연동 계획 + **실행 로드맵(§10)** ← 다음 단계의 정본 |
+| `TODO.md` | 구현 현황·할 일 — 코드↔계약 갭(✅/🔶/🆕)·정책 오픈이슈. 설계 문서 대신 **여기만 주기 갱신** |
 | `/CONTEXT.md` · `/docs/adr/` | 용어집 · 아키텍처 결정 기록(ADR 0001~0003) |
 | `/handoff/` (contracts·design·screens) | 과거 프로토타입 인수인계 산출물 — **참조용**. 계약의 현행 정본은 위 문서들과 `src/lib/types.js` |
 

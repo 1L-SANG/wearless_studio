@@ -1,8 +1,8 @@
 # 공통 데이터 계약 (Common Data Contract)
 
-> 상태: 확정 (2026-06-11) · 근거: `documents/PRD.md` §13, mock 구현(`src/lib/types.js`, `src/mock/*`), 2026-06-11 결정 세션
+> 상태: 확정 (2026-06-11, 갱신 2026-06-14) · 근거: `documents/PRD.md`, mock 구현(`src/lib/types.js`, `src/mock/*`), 2026-06-11·06-14 결정 세션
 > 결정 기록: `docs/adr/0001~0003`, 용어는 `/CONTEXT.md`
-> 적용 방식: 이 문서가 계약의 원본이다. `src/lib/types.js`와 mock 레이어를 이 계약에 맞추고, 백엔드(FastAPI·Supabase·R2)와 AI 파이프라인은 같은 shape를 구현한다. 현행 코드와의 차이는 §7에 갭으로 명시한다 — 문서와 코드가 다르면 문서가 맞다.
+> 적용 방식: 이 문서가 계약의 원본이다. `src/lib/types.js`와 mock 레이어를 이 계약에 맞추고, 백엔드(FastAPI·Supabase·R2)와 AI 파이프라인은 같은 shape를 구현한다. 현행 코드와의 차이(마이그레이션 갭)는 `documents/TODO.md`가 추적한다 — 문서와 코드가 다르면 문서가 맞다.
 
 ---
 
@@ -109,13 +109,14 @@ Analysis {
   selectedModelId: string          // catalogs.models 참조
   matchCandidates: MatchClothing[] // AI가 제안한 매칭 의류 후보
   matchSelections: { clothingId: string, role: 'main' | 'sub' }[]   // max 2
-  washCare: string
   locked: boolean
 }
+// fit·clothingType은 필수(null 불가) — 분석 폼에서 해제 불가 칩(PRD §6.3). subCategory(원피스=null)·targetGenders(배열)는 비울 수 있음.
 
 MatchClothing { id: string, name: string, thumb: string }
 // 폐기: Analysis.clothingType / measurements / measurementsUnknown (Product 소유),
-//       Analysis.models (catalogs.models 참조), MatchClothing.selected / selOrder (matchSelections로 분리)
+//       Analysis.models (catalogs.models 참조), MatchClothing.selected / selOrder (matchSelections로 분리),
+//       Analysis.washCare (세탁 안내는 분석이 아니라 에디터 자동 블록 — M-02 규칙 기반 생성, PRD §10.14)
 ```
 
 ### 3.3 MannequinCut — 마네킹 후보와 조정 상태
@@ -242,7 +243,8 @@ GenJob {
 }
 // step key: info | prep | styling | horizon | product | copy | assemble
 
-Account { name: string, avatar: string, credits: number, plan: 'Free' | 'Pro' | 'Team' }
+Account { name: string, avatar: string, credits: number, plan: PlanTier }
+// PlanTier 토큰: 'basic' | 'plus' | 'seller' (소문자 저장, 표시 라벨은 catalogs 파생 — §4). 가격·혜택 구분은 크레딧 정책과 함께 추후 확정.
 ```
 
 ---
@@ -267,7 +269,8 @@ Account { name: string, avatar: string, credits: number, plan: 'Free' | 'Pro' | 
 | ShotType | `full` `knee` `medium` `close` | 풀샷/무릎샷/미디움샷/확대샷 | 모델 컷용 |
 | ProductShotType | `ghost` `hanger` `flatlay` | 고스트컷/행거컷/플랫레이샷 | ★ 카탈로그 승격 |
 | **ProjectStatus** | `draft` `generating` `done` | 초안/생성 중/완료 | ★ 신설 |
-| JobStatus | `idle` `running` `done` `error` | | |
+| **PlanTier** | `basic` `plus` `seller` | Basic/Plus/Seller | ★ 신설 — 라벨 대문자, 토큰 소문자 |
+| JobStatus | `idle` `running` `done` `error` | | 화면용 4값. 서버 job row는 `pending`(화면엔 진행 중) 추가, `cancelled` 없음(error 통일) — backend plan §2·§4 |
 | ElementType | `image` `text` `shape` `line` | | |
 | AngleSlot | `Front` `Back` `Detail` `Fit` | 앞면/뒷면/디테일/착용 이미지 | 기존 토큰 유지 |
 | SwatchId | `white` `gray` `black` `ivory` `beige` `brown` `red` `yellow` `green` `blue` `navy` `pink` | 12색 팔레트 | MONOTONE_SWATCHES = white·gray·black·ivory·beige |
@@ -307,13 +310,13 @@ dress:  totalLength, shoulderWidth, chestWidth, waistWidth, armhole, sleeveLengt
 
 **크레딧 규약**: 크레딧을 소모하는 API는 `{ data, credits }` 봉투로 반환한다. `credits`는 차감 후 잔액이며, 화면은 이 값을 `store.syncCredits()`로 반영한다. 실패(throw) 시 차감 없음 — 환불·재시도 정책은 백엔드 시점에 확정(PRD §12.2).
 
-**유료 job 멱등 규약**: 장시간 유료 작업(`generateMannequins`, `generateDetailPage`)은 ① 같은 프로젝트에서 **진행 중**일 때 다시 호출되면 새 작업을 시작하지 않고 진행 중인 job에 합류시키고(진행 콜백 공유, 차감 1회), ② **이미 완료**된 뒤 다시 호출되면(마네킹 후보 존재 / `project.status='done'`) 재실행·재차감 없이 기존 산출물과 현재 잔액을 반환한다. StrictMode 이중 mount, 생성 중 이탈 후 재진입, 완료 후 라우트 재방문 어느 경우도 재차감으로 이어지지 않기 위한 **서버 책임**이며, 실서버는 project별 job 레코드로 구현한다. `credits`가 델타가 아니라 **잔액**인 것도 합류·재호출 응답의 멱등성을 위해서다. (완료 후 전체 재생성은 의도적으로 플로우에 없다 — PRD §10.17, 필요 컷은 에디터에서 추가한다.)
+**유료 job 멱등 규약**: 장시간 유료 작업(`generateMannequins`, `generateDetailPage`)은 ① 같은 프로젝트에서 **진행 중**일 때 다시 호출되면 새 작업을 시작하지 않고 진행 중인 job에 합류시키고(진행 콜백 공유, 차감 1회), ② **이미 완료**된 뒤 다시 호출되면(마네킹 후보 존재 / `project.status='done'`) 재실행·재차감 없이 기존 산출물과 현재 잔액을 반환한다, ③ **실패(error)로 끝난 뒤** 다시 호출되면 새 job을 시작한다(크레딧 재예약·재차감 대상) — 실패한 job은 합류·재사용하지 않는다. StrictMode 이중 mount, 생성 중 이탈 후 재진입, 완료 후 라우트 재방문 어느 경우도 재차감으로 이어지지 않기 위한 **서버 책임**이며, 실서버는 project별 job 레코드로 구현한다. `credits`가 델타가 아니라 **잔액**인 것도 합류·재호출 응답의 멱등성을 위해서다. (완료 후 전체 재생성은 의도적으로 플로우에 없다 — PRD §10.17, 필요 컷은 에디터에서 추가한다.)
 
 | 함수 | 입력 | 반환 | 크레딧/비고 |
 |---|---|---|---|
 | `createProject()` | — | `Project` | 새 제작 시작. 구 `resetDraft()` 대체 |
 | `getProject(projectId)` | | `Project` | |
-| `patchProject(projectId, patch)` | 선택값 patch | `Project` | composeMode·copywriting·selectedMannequinId·adjustCount·status |
+| `patchProject(projectId, patch)` | 선택값 patch | `Project` | 수용 필드 **화이트리스트**: composeMode·copywriting·selectedMannequinId만. **adjustCount·status는 서버 전용** — 페이로드에 오면 무시/거부(조정 횟수는 adjust/regenerate, status는 생성 job의 부수효과로만 변경). frontend_state_model §6 |
 | `getLibrary()` | | `ProjectSummary[]` | |
 | `getAccount()` | | `Account` | |
 | `getCatalogs()` | | `Catalogs` | |
@@ -321,7 +324,7 @@ dress:  totalLength, shoulderWidth, chestWidth, waistWidth, armhole, sleeveLengt
 | `saveProduct(projectId, patch)` | | `Product` | 실측·의류 종류 포함 (Product 소유) |
 | `analyzeProduct(projectId, { onProgress })` | | `Analysis` | 실측은 항상 null로 반환 |
 | `saveAnalysis(projectId, patch)` | | `Analysis` | |
-| `draftWashCare(projectId)` | | `string` | |
+| `getMatchClothing(projectId)` | | `MatchClothing[]` | **과도기 함수** — 마네킹·콘티 화면이 매칭 후보를 별도로 읽는다. 최종은 `analyzeProduct` 응답(`analysis.matchCandidates`)에 포함되어 제거 예정(TODO.md) |
 | `getMannequins(projectId)` | | `MannequinCut[]` | |
 | `generateMannequins(projectId, { onProgress })` | | `{ data: MannequinCut[], credits }` | `mannequinGenerate` |
 | `adjustMannequin(projectId, { baseId, fitAdjust?, lengthAdjust?, matchAdjust?, onProgress })` | enum 값만 | `{ data: MannequinCut, credits }` | `mannequinAdjust` · 서버가 adjustCount 증가 |
@@ -360,21 +363,7 @@ VaryRequest {                      // AI 탭 '현재 컷 변형' — changes 빈
 
 ## 7. 현행 코드와의 갭 (마이그레이션 TODO)
 
-계약 확정(2026-06-11) 시점의 차이 목록. 같은 날 P0 구현으로 대부분 반영됨 — 상태를 함께 표기한다.
-
-1. ✅ **project 부재** — `createProject`/`getProject`/`patchProject` 신설, `/editor/:id`를 projectId로 사용. (반영됨)
-2. ✅ **컷 토큰** — `cutType: styling|horizon|product` + `source: ai|mine`로 통일, `CutSource`·`daily`·`studio` 제거. UI 라벨 '일상컷' → '스타일링컷'. **PRD §8.4 탭 명칭 갱신은 남음.**
-3. ✅ **한국어 저장값** — 조정값 enum(slimmer/looser·shorter/longer), `MannequinCut` baseFit/fitAdjust/lengthAdjust/matchAdjust, wardrobe 키 colorId/'misc', `MeasurementKey` 영문화 + `measurementLabels`, `subCategories` {value,label}. (반영됨)
-4. 🔶 **Product/Analysis 중복** — mock `saveAnalysis`가 Product 소유 필드(clothingType·measurements·measurementsUnknown)를 product로 동기화하도록 반영. analysis 레코드에서 해당 필드를 **제거**하는 일원화는 남음.
-5. ✅ **saveStoryboard 미호출** — 생성 CTA에서 저장 후 이동. (반영됨)
-6. ✅ **generateDetailPage가 콘티를 무시** — 저장된 storyboard 기반 `buildEditorBlocksFromStoryboard`로 생성, 카피라이팅·자동 블록 반영. (반영됨)
-7. ✅ **크레딧 봉투** — 소모 5종이 `{ data, credits }` 반환 + mock 차감, 화면은 `store.syncCredits`로 단일화(에디터 로컬 account 제거). (반영됨)
-8. ✅ **제품컷 옵션 하드코딩 3곳** — `catalogs.productDirections`/`productShotTypes`로 이동. (반영됨)
-9. 🔶 **경계 위반 import** — id 생성기는 `lib/ids.js`로 이동 완료(화면·mock 공용, `DB.uid` 제거). `Placeholder` 직접 import(콘티 새 블록 썸네일·분위기 예시)는 분위기 예시의 운영자 시드 전환 시 함께 정리.
-10. ✅ **콘티 '내 레퍼런스' 휘발** — `MoodGuide` 제어형 전환: 콘티는 `block.refImages`에 저장, 에디터 AI 패널은 `NewCutRequest.refImages`로 생성 입력에 포함. (반영됨)
-11. ✅ **typedef 갱신** — `lib/types.js`가 본 계약을 미러링. TS 전환 시 이 문서가 `.ts` 계약의 사양이 된다. (반영됨)
-12. ✅ **ProjectSummary** — `updatedAt` ISO화('N시간 전'은 화면 파생), `blocks` → `blockCount`. (반영됨)
-13. **죽은 코드 표기만** — `AnalysisForm.jsx`의 미사용 `Analysis` 라우트 컴포넌트(구 시그니처 호출 포함), `colorIds` 잔존 읽기. `catalogs.backgrounds`·`extendedColorPriority`는 소비처가 없어 db 재작성 시 제거됨.
+→ **`documents/TODO.md` §1로 이관.** 코드가 이 계약을 아직 못 따라간 항목(✅ 완료 기록 + 🔶 남음 + 🆕 신규)은 작업 때마다 각 설계 문서를 고치지 않고 TODO.md 한곳에서 추적한다.
 
 ---
 

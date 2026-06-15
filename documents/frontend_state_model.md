@@ -1,7 +1,7 @@
 # 프론트 상태 모델 (Frontend State Model)
 
-> 상태: 확정 (2026-06-11) · 짝 문서: `documents/common_data_contract.md` · 결정 기록: `docs/adr/0002`
-> 현재 코드는 이 모델과 차이가 있다 — §8 갭 목록이 그 차이고, 문서가 목표 상태다.
+> 상태: 확정 (2026-06-11, 갱신 2026-06-14) · 짝 문서: `documents/common_data_contract.md` · 결정 기록: `docs/adr/0002`
+> 현재 코드와 이 모델의 차이(갭·적용 순서)는 `documents/TODO.md`가 추적한다 — 문서가 목표 상태다.
 
 ---
 
@@ -36,7 +36,7 @@ Q2. (아니라면) 라우트를 넘어 살아야 하나?
 | Analysis | `analyzeProduct` | `saveAnalysis` | 분석 폼 수정 시 (Product 소유 필드 제외) |
 | MannequinCut[] | `getMannequins` | `generateMannequins` `adjustMannequin` `regenerateMannequins` | 마네킹 단계 |
 | StoryboardBlock[] | `getStoryboard` | `saveStoryboard` | **생성 CTA 클릭 시** (편집 중엔 로컬 working copy) |
-| EditorBlock[] | `getEditorBlocks` `generateDetailPage` | `saveEditorBlocks` (P1) | 에디터 로드 / (P1) 저장·디바운스 |
+| EditorBlock[] | `getEditorBlocks` `generateDetailPage` | `saveEditorBlocks` | 에디터 로드 / 저장·디바운스(구현됨) |
 | Wardrobe | `getWardrobe` | `generateImage` `uploadAsset` | 에디터 |
 | Account / Catalogs / Library | `getAccount` `getCatalogs` `getLibrary` | — (credits는 봉투 응답으로 갱신) | 앱 셸 / 보관함 |
 
@@ -76,7 +76,7 @@ useAppStore = {
 | `/create/mannequin` | getMannequins(비면 generateMannequins), getProduct, getProject | 조정/재생성 → api 호출 → `syncCredits` + adjustCount 반영; 컷 선택 → `selectMannequin`; 구성 방식 → `setComposeMode` | selectedMannequinId, composeMode, adjustCount | progress, busy, picking, confirmRegen, 조정 세그 선택값 |
 | `/create/storyboard` | getStoryboard, getProduct(색상), getAnalysis(매칭 후보·선택) | **생성 CTA → `saveStoryboard` → navigate** | copywriting(`setCopywriting`) | blocks working copy, selectedId, splitOpen, dirty, 스냅샷 ref, drag 상태 |
 | `/create/generating` | generateDetailPage(projectId) | 완료 시 서버가 status='done' | projectId, syncCredits | progress, steps |
-| `/editor/:projectId` | getEditorBlocks, getWardrobe, getCatalogs, getAccount, getProduct | 이미지 생성/변형 → `generateImage` + `syncCredits`; 저장 → `saveEditorBlocks`(P1) | account(표시), syncCredits, projectId | blocks + undo 히스토리, selEls/selBlock, cropping, scale, tab, layerFloat, pendingSlot, varyTarget |
+| `/editor/:projectId` | getEditorBlocks, getWardrobe, getCatalogs, getAccount, getProduct | 이미지 생성/변형 → `generateImage` + `syncCredits`; 저장 → `saveEditorBlocks`(저장 버튼+디바운스) | account(표시), syncCredits, projectId | blocks + undo 히스토리, selEls/selBlock, cropping, scale, tab, layerFloat, pendingSlot, varyTarget |
 | `/library` | getLibrary | 새 상세페이지 → `startProject()` | startProject | phase, items |
 
 콘티보드의 blocks는 "서버 상태의 working copy" 패턴이다: 진입 시 fetch → 로컬에서 편집(스냅샷/원래대로 포함) → 생성 CTA에서 한 번에 `saveStoryboard`. 카드 단위 '수정 완료'는 로컬 확정일 뿐 서버 저장이 아니다.
@@ -98,7 +98,7 @@ useAppStore = {
             편집은 로컬 → 생성 CTA → saveStoryboard(blocks) + setCopywriting 동기화 → navigate
 [생성 대기]  generateDetailPage(projectId) — 서버가 저장된 콘티·selectedMannequinId·copywriting을 읽음
             완료 → navigate(/editor/:projectId)
-[에디터]    getEditorBlocks(projectId) → 로컬 편집 + undo. 저장은 P1(saveEditorBlocks)
+[에디터]    getEditorBlocks(projectId) → 로컬 편집 + undo. 저장은 saveEditorBlocks(저장 버튼+1.5s 디바운스+이탈 플러시, 구현됨)
 [보관함]    getLibrary() → 카드 클릭 → /editor/:projectId
 ```
 
@@ -119,7 +119,7 @@ useAppStore = {
 
 에디터는 단일 라우트의 고빈도 편집 화면이므로 아래는 **로컬 유지가 결정 사항**이다. Zustand로 옮기지 않는다.
 
-- `blocks` + undo/redo 히스토리: `useRef` 기반 past/future 스택, 350ms 내 연속 변경 병합, 상한 80. 저장(P1)은 이 로컬 상태의 스냅샷을 `saveEditorBlocks`로 보내는 것.
+- `blocks` + undo/redo 히스토리: `useRef` 기반 past/future 스택, 350ms 내 연속 변경 병합, 상한 80. 저장은 이 로컬 상태의 스냅샷을 `saveEditorBlocks`로 보내는 것(구현됨).
 - react-moveable 제스처: 진행 중에는 DOM style에만 라이브 반영(`liveRef`)하고 gesture end에 한 번 상태 커밋 — 매 프레임 setState가 컨트롤박스를 재생성해 리사이즈를 죽이는 되먹임을 차단하는 검증된 패턴. 유지.
 - selection(selEls/selBlock), cropping, scale, tab, layerFloat, pendingSlot, varyTarget: 전부 ③ 화면 로컬.
 
@@ -127,18 +127,4 @@ useAppStore = {
 
 ## 8. 현행 코드 갭과 적용 순서
 
-`common_data_contract.md` §7과 같은 작업 목록을 상태 관점에서 우선순위로 묶은 것.
-
-**P0 — 플로우가 실제로 이어지게 (선택값 증발 해결)** — ✅ 2026-06-11 반영 완료
-1. ✅ store 개편: 미사용 create-flow 데이터 필드 제거, `projectId`·`syncCredits`·`startProject`·`loadProject` 추가 (§3 형태로).
-2. ✅ Mannequin: `selectedMannequinId`·`composeMode`·`adjustCount`를 store(+patchProject)로 이전. 마네킹은 빈 상태에서 최초 진입 시 생성·차감, 재진입은 무과금 조회.
-3. ✅ Storyboard: 생성 CTA에서 `saveStoryboard` 호출, 카피 토글을 store `copywriting`으로. 크레딧 예고는 AI 컷 수 기준.
-4. ✅ 크레딧 단일화: 에디터 로컬 `account` 제거, 소모 API 봉투 + `syncCredits` 연결, 마네킹·콘티 생성 차감 추가.
-5. ✅ mock: `createProject`/`getProject`/`patchProject` 추가, `generateDetailPage`가 저장된 콘티 기반으로 생성(`buildEditorBlocksFromStoryboard`).
-   토큰 마이그레이션(계약 §7-2,3)과 typedef 갱신도 함께 반영됨.
-
-**P1 — 영속화·백엔드 준비**
-6. ✅ `saveEditorBlocks` — 저장 버튼 + 변경 1.5s 디바운스 자동 저장 + 이탈 시 플러시 (2026-06-11 반영. 세션 내 에디터 재진입 시 편집 유지).
-7. TanStack Query 도입(백엔드와 함께): 서버 상태를 Query 캐시로, store의 account/catalogs 캐시 제거. (남음)
-8. 잔여 갭: Analysis 중복 필드 제거(계약 §7-4), 화면의 `Placeholder` 직접 import 정리(§7-9 잔여 — 분위기 예시 시드 전환과 함께).
-   해소됨: 내 레퍼런스 저장(§7-10), `uid` 경계(§7-9 핵심), ProjectSummary(§7-12).
+→ **`documents/TODO.md` §1로 이관.** 상태 계층 관점의 갭·적용 순서(P0 선택값 증발 해결은 ✅ 반영 완료, TanStack Query·Analysis 중복 필드 제거 등은 남음)는 계약 쪽 마이그레이션 갭과 함께 TODO.md 한곳에서 추적한다.

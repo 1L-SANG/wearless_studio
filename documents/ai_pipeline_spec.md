@@ -1,6 +1,6 @@
 # AI 파이프라인 명세 (ai_pipeline_spec.md)
 
-> 상태: 확정 (2026-06-11) · 짝 문서: `documents/ai_agent_modules.md`(에이전트 정의), `documents/common_data_contract.md`(API 계약·크레딧·멱등 규약)
+> 상태: 확정 (2026-06-11, 갱신 2026-06-14) · 짝 문서: `documents/ai_agent_modules.md`(에이전트 정의), `documents/common_data_contract.md`(API 계약·크레딧·멱등 규약)
 > 실행 주체: **FastAPI(Railway) job orchestration** (`documents/03_기술스택_결정서.md` §7). 프론트는 `lib/api` 함수만 호출하고, 파이프라인의 존재를 모른다.
 
 ---
@@ -10,9 +10,9 @@
 - **호출 경로**: 프론트 → FastAPI → (Gemini/OpenAI). 키는 서버 전용(.env: `GEMINI_API_KEY`, `OPENAI_API_KEY`). 프론트 직접 호출 없음 (확정).
 - **모델 라우팅**: 에이전트는 tier만 알고, tier→모델 매핑은 서버 설정 단일 파일 (모듈 정의서 §1 — 잠정 배정, 교체 용이성이 요구사항).
 - **job 기반**: 장시간 작업은 job으로 실행하고 SSE 또는 폴링으로 진행률을 흘린다. 프론트 어댑터가 이를 기존 `onProgress(0..100)`/`onStep(steps)` 콜백으로 변환 — **화면 계약은 바뀌지 않는다** (계약 §6, 00_README §5).
-- **크레딧 봉투**: 크레딧 소모 파이프라인의 응답은 `{ data, credits(잔액) }`. 차감은 서버 트랜잭션(성공 시 확정·실패 시 미차감, 환불 정책은 PRD §12.2에서 확정 예정).
-- **멱등 3규칙** (계약 §6 '유료 job 멱등 규약' — mock의 `joinable`이 이미 구현한 의미를 서버가 승계):
-  ① 진행 중 재호출 → 기존 job 합류(콜백 공유, 차감 1회) ② 완료 후 재호출 → 기존 산출물 + 현재 잔액 반환 ③ 다른 프로젝트의 job 결과는 폐기.
+- **크레딧 봉투**: 크레딧 소모 파이프라인의 응답은 `{ data, credits(잔액) }`. 차감은 서버 트랜잭션 **reserve-then-confirm**(시작 시 예약, 성공분만 확정, 실패 시 예약 해제=미차감 — backend plan §6). 환불 정책은 PRD §12.2에서 확정 예정.
+- **멱등 4규칙** (계약 §6 '유료 job 멱등 규약' — mock의 `joinable`이 이미 구현한 의미를 서버가 승계):
+  ① 진행 중 재호출 → 기존 job 합류(콜백 공유, 차감 1회) ② 완료 후 재호출 → 기존 산출물 + 현재 잔액 반환 ③ **실패(error)로 끝난 job 재호출 → 새 job 시작(재예약·재차감), 합류·재사용 안 함** ④ 다른 프로젝트의 job 결과는 폐기.
 
 ---
 
@@ -27,7 +27,7 @@
 | PL-5 에디터 새 컷 | AI 탭 '새 이미지 생성' → `generateImage(mode:'new')` | AG-06 | `editorImage` | `WardrobeImage` |
 | PL-6 에디터 컷 변형 | AI 탭 '비슷한 컷/변경 적용' → `generateImage(mode:'vary')` | AG-07 | `editorImage` | `WardrobeImage` |
 
-비-파이프라인 단건 호출: `draftWashCare` → AG-02 1콜 (job 불필요, 크레딧 없음).
+(세탁 안내는 파이프라인·AI 호출이 아니다 — 에디터 자동 블록을 M-02가 규칙 기반 프리셋으로 생성, ai_agent_modules §4.)
 
 ---
 
@@ -40,7 +40,7 @@
   → AG-01 product-analyst (1콜, 구조화 JSON)
   → 서버 후처리: measurements 강제 null · enum 검증
   → M-01 matching-recommender (AG-01의 styleTags 입력)
-  → Analysis 조립(matchClothing 후보+기본 선택 포함) → 응답
+  → Analysis 조립(matchCandidates 후보 + matchSelections 기본 선택 포함) → 응답
 ```
 - 진행률: 단일 job 0→100 (현 mock의 2.8s runJob 자리). 실패: throw, 화면 재시도 버튼.
 - [P1 훅] AG-P1로 M-01 스왑 가능(동일 출력 shape).
@@ -113,9 +113,10 @@ Job {
   createdAt / updatedAt: ISO
 }
 ```
+- **상태값**: 위 `status`(idle/running/done/error)는 **화면용 4값**이다. 서버 DB job row는 `pending`(대기열)·`running`·`done`·`error`를 가지며 `cancelled`는 없다(취소도 error로 — backend plan §2). 어댑터 매핑: `pending`→화면상 진행 중(running, progress 0), `running/done/error`→동일.
 - project당 kind별 동시 1개 — 중복 시작 요청은 합류(멱등 ①). job 레코드가 이 규칙의 구현체다.
 - 전달: SSE 우선, 폴리필로 폴링(GET /jobs/:id). 프론트 어댑터가 `onProgress`/`onStep`으로 변환 — `lib/api` 함수 시그니처 불변.
-- 에러: `status='error'` + 한국어 message. 차감 전 실패 = 미차감, 차감 후 실패 보상(환불)은 PRD §12.2 확정 시 반영 훅.
+- 에러: `status='error'` + 한국어 message. 차감 전 실패 = 미차감, 차감 후 실패 보상(환불)은 PRD §12.2 확정 시 반영 훅. error로 끝난 job 재호출은 새 job 시작(멱등 ③).
 
 ---
 
@@ -128,7 +129,7 @@ Job {
 | PL-4 | `storyboardPerCut × ai컷` | 컷 단위 성공분만 확정 | 실패 컷 미차감 |
 | PL-5 / PL-6 | `editorImage` | job 성공 확정 시 | 미차감 |
 
-- 잔액 선검증(부족 시 시작 거부) → 차감은 서버 트랜잭션 → 응답 `credits`(잔액)로 프론트 `syncCredits` (계약 §6, frontend_state_model §6).
+- **reserve-then-confirm**(backend plan §6): 시작 tx에서 예상 최대 비용을 **예약**(available=balance−reserved 검증, 부족 시 402) → 성공 시 실제 성공분만 **확정**(balance 차감, ledger append) → 실패 시 예약 **해제**(미차감). 응답 `credits`(잔액=balance−reserved)로 프론트 `syncCredits` (계약 §6, frontend_state_model §6). 선검증만으로는 동시 job이 같은 잔액을 통과할 수 있어 예약이 필요.
 - 단가는 임시값 — 정책 확정은 PRD §12.2 (00_README §4 Blocking 항목).
 
 ---

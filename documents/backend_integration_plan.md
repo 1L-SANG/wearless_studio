@@ -1,6 +1,6 @@
 # 백엔드 연동 계획 (backend_integration_plan.md)
 
-> 상태: 확정 (2026-06-12) · 작성 방식: Claude·Codex 독립 초안 → 근거 기반 상호 반박 → 병합 (충돌 2건은 조건부 합의)
+> 상태: 확정 (2026-06-12, 갱신 2026-06-14) · 작성 방식: Claude·Codex 독립 초안 → 근거 기반 상호 반박 → 병합 (충돌 2건은 조건부 합의)
 > 역할: 기존 문서가 "무엇"을 정의했다면(엔티티·API 계약 = `common_data_contract.md`, 파이프라인·job 모델 = `ai_pipeline_spec.md`, 에이전트 = `ai_agent_modules.md`, 스택 = `03_기술스택_결정서.md`), 이 문서는 **물리 저장·HTTP 경계·job/credit/export 실행·전환 순서**만 정한다. 엔티티 필드와 파이프라인 단계는 재서술하지 않는다.
 
 ---
@@ -35,7 +35,7 @@
 | `wardrobe_images` | id, project_id, color_id, asset_id, ai, cut_type, sort_order, deleted_at | 계약 §3.6 |
 | `assets` | id, user_id, project_id null, source(upload/ai/export/seed), visibility, r2_bucket, r2_key uq, mime_type, byte_size, width/height, checksum, original_filename, metadata jsonb, created/deleted_at | R2 키의 단일 레지스트리. ImageAsset.file 메타 보존 |
 | `matching_items` | seed shape 그대로 + image/thumbnail_asset_id, is_active, sort_order | `seedMatchingItems.js` 이관 (M-01 데이터) |
-| `jobs` | id, user_id, project_id, kind, status(pending/running/done/error/cancelled), progress, steps jsonb, payload jsonb, result jsonb, error_message, **dedupe_key uq, idempotency_key uq, credits_reserved, credits_charged, locked_by/locked_at**, created/started/updated/finished_at | 계약 §6 멱등의 구현체 = job row. ai_pipeline_spec §4 |
+| `jobs` | id, user_id, project_id, kind, status(pending/running/done/error), progress, steps jsonb, payload jsonb, result jsonb, error_message, **dedupe_key uq, idempotency_key uq, credits_reserved, credits_charged, locked_by/locked_at**, created/started/updated/finished_at | 계약 §6 멱등의 구현체 = job row. `cancelled` 없음(취소도 error). 화면용 JobStatus 매핑은 ai_pipeline_spec §4 |
 | `job_events` | id bigint identity, job_id, event_type(progress/step/done/error), payload, created_at | SSE `Last-Event-ID` replay·폴링 폴백의 원본 |
 | `exports` | id, project_id, job_id, format(long/zip), asset_id null, status, **snapshot_revision**, created/finished/expires_at | 클라 렌더 채택 후에도 **이력·실패율·옵션 기록**으로 유지 (§7) |
 
@@ -75,7 +75,7 @@ seed/matching/{matchingItemId}.{ext}
 | getProduct / saveProduct | GET/PATCH `/v1/projects/{id}/product` |
 | uploadAsset | §3 업로드 3단계 |
 | analyzeProduct | POST `/v1/projects/{id}/analysis:analyze` (job) |
-| saveAnalysis / draftWashCare | PATCH `/v1/projects/{id}/analysis` · POST `…/analysis/wash-care:draft` |
+| saveAnalysis | PATCH `/v1/projects/{id}/analysis` |
 | getMatchClothing | GET `/v1/projects/{id}/analysis/match-candidates` (과도기 — 최종은 analysis 응답 포함) |
 | getMannequins | GET `/v1/projects/{id}/mannequins` |
 | generate/adjust/regenerateMannequins | POST `…/mannequins:generate` · `:adjust` · `:regenerate` (job) |
@@ -88,7 +88,7 @@ seed/matching/{matchingItemId}.{ext}
 | pickAnyImage | 없음 — mock 전용 헬퍼, HTTP 어댑터에서 제거 |
 
 - **에러 계약**: `{ error: { code, message, details? } }`, message는 그대로 토스트 가능한 한국어 (계약 §6). 401 미인증 · 403 타인 소유 · **402 크레딧 부족** · 404.
-- **멱등을 HTTP로**: 진행 중 중복 시작 = 409가 아니라 **200 + 기존 job 반환**(합류). action endpoint는 `Idempotency-Key` 헤더 허용 — 같은 키는 같은 job.
+- **멱등을 HTTP로**: 진행 중 중복 시작 = 409가 아니라 **200 + 기존 job 반환**(합류). 완료된 job 재호출도 200 + 기존 결과. **실패(error)로 끝난 job 재호출은 새 job 시작**(재예약·재차감 — 계약 §6 멱등 ③). action endpoint는 `Idempotency-Key` 헤더 허용 — 같은 키는 같은 job.
 
 ## 5. job 실행 인프라 (합의안)
 
@@ -134,7 +134,7 @@ seed/matching/{matchingItemId}.{ext}
 
 ## 8. 전환 단계 (mock → 실서버)
 
-원칙: `src/lib/api/index.js` 아래 mockAdapter/httpAdapter 병렬 — `VITE_API_MODE`로 선택, **함수 단위 부분 스왑**(미전환 함수는 mock이 계속 담당). TanStack Query는 Phase 1과 함께 도입(03 §3, frontend_state_model §8-7).
+원칙: `src/lib/api/index.js` 아래 mockAdapter/httpAdapter 병렬 — `VITE_API_MODE`로 선택, **함수 단위 부분 스왑**(미전환 함수는 mock이 계속 담당). TanStack Query는 Phase 1과 함께 도입(03 §3, TODO.md §1).
 
 | Phase | 범위 | 완료 기준 |
 |---|---|---|

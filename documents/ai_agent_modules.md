@@ -1,6 +1,6 @@
 # AI 에이전트 모듈 정의서 (ai_agent_modules.md)
 
-> 상태: 확정 (2026-06-11) · **모델 배정은 잠정** — §1 라우팅 테이블 한 곳만 바꾸면 전체에 반영되도록 설계한다 (사용자 결정).
+> 상태: 확정 (2026-06-11, 갱신 2026-06-14) · **모델 배정은 잠정** — §1 라우팅 테이블 한 곳만 바꾸면 전체에 반영되도록 설계한다 (사용자 결정). 모델·시스템 프롬프트는 이미지 품질 작업 단계에서 바뀔 수 있다.
 > 근거: `documents/PRD.md`, `documents/common_data_contract.md`(엔티티·enum·API 계약), `documents/frontend_state_model.md`, `documents/03_기술스택_결정서.md`(FastAPI job orchestration), mock 프론트(`src/mock/*`, 특히 `matchingRecommendation.js`)
 > 짝 문서: `documents/ai_pipeline_spec.md` (에이전트들이 언제·어떤 순서로 호출되는지)
 
@@ -12,7 +12,7 @@
 
 | tier | 모델 (잠정) | 용도 기준 |
 |---|---|---|
-| `image_high` | **Gemini 3.1 Pro Image** | 최종 산출물에 들어가는 모든 이미지 — 의류 동일성·핏 재현이 핵심인 고작업 |
+| `image_high` | **Gemini 3 Pro Image** (`gemini-3-pro-image`) | 최종 산출물에 들어가는 모든 이미지 — 의류 동일성·핏 재현이 핵심인 고작업 |
 | `image_light` | **Gemini 3.1 Flash Image** | 미리보기·예시성 이미지. **현재 MVP 배정 에이전트 없음** — 분위기 예시는 운영자 시드 데이터로 대체(§5 참고). 저난도 생성 수요가 생기면 이 tier에 배정 |
 | `text` | **GPT-5.4 mini** | 이미지 생성이 아닌 모든 작업 — 분석(비전 입력 포함)·카피·검수 |
 
@@ -32,7 +32,7 @@ OPENAI_API_KEY=   # text
 | ID | 이름 | tier | 호출하는 API(계약 §6) | 크레딧 | MVP |
 |---|---|---|---|---|---|
 | AG-01 | product-analyst (상품 분석) | text | `analyzeProduct` | — | ✅ |
-| AG-02 | copywriter (카피라이팅) | text | `generateDetailPage`(copy 단계), `draftWashCare` | — | ✅ |
+| AG-02 | copywriter (카피라이팅) | text | `generateDetailPage`(copy 단계) | — | ✅ |
 | AG-03 | copy-qc (카피 검수) | text | `generateDetailPage`(copy 단계 직후) | — | ✅ |
 | AG-04 | mannequin-generator (마네킹 생성) | image_high | `generateMannequins`, `regenerateMannequins` | mannequinGenerate | ✅ |
 | AG-05 | mannequin-adjuster (마네킹 조정) | image_high | `adjustMannequin` | mannequinAdjust | ✅ |
@@ -56,8 +56,8 @@ OPENAI_API_KEY=   # text
 | tier | `text` (멀티모달 입력) |
 | 호출 시점 | 입력 페이지 '입력 완료' → `analyzeProduct(projectId)` (PL-1) |
 | 입력 | `{ name: string\|null, images: { colorGroupId, slot, url }[] }` — 기준 색상 전 각도 + 추가 색상 정면. 이미지는 R2 URL |
-| 출력 | Analysis 초안(계약 §3.2): `{ clothingType, subCategory, targetGenders, fit, materials[], aiSuggestedPoints(≤2), suggestedName, swatchSuggestions: { colorGroupId, swatchId }[], styleTags: string[] }` — 구조화 JSON 강제 |
-| 후처리 | `styleTags`는 M-01의 입력으로 전달. `measurements`는 **절대 포함 금지**(서버가 null 강제 — PRD §6.5/§15.4) |
+| 출력 | 분석 raw: `{ clothingType, subCategory, targetGenders, fit, materials[], aiSuggestedPoints(≤2), suggestedName, swatchSuggestions: { colorGroupId, swatchId }[], styleTags: string[] }` — 구조화 JSON 강제. (이 raw는 그대로 저장되는 게 아니라 서버가 분배 — 아래 후처리) |
+| 후처리(서버 분배) | `clothingType`은 **Product에 기록**(Product 단일 소유 — 계약 §3.1, Analysis 아님). `subCategory`·`targetGenders`·`fit`·`materials`·`aiSuggestedPoints`·`suggestedName`은 **Analysis**(계약 §3.2). `swatchSuggestions`(색상 스와치 추천)·`styleTags`(M-01 입력)는 **저장 안 하는 중간 산출물**. `measurements`는 **절대 포함 금지**(서버가 null 강제 — PRD §6.5/§15.4) |
 | 프롬프트 핵심 제약 | 실측 추정 금지 · 확신 없는 소재는 비우기 · subCategory/fit/swatchId는 계약 enum 안에서만 · 단일 에이전트 1콜(속성별 분리하지 않음 — 사용자 결정) |
 | 실패 | throw(한국어 message) → 화면 재시도. 크레딧 없음 |
 
@@ -66,11 +66,11 @@ OPENAI_API_KEY=   # text
 | | |
 |---|---|
 | tier | `text` |
-| 호출 시점 | ① PL-4 copy 단계: `project.copywriting=true`일 때 카피 대상 블록별 ② 분석 화면 'AI 초안' 버튼 → `draftWashCare(projectId)` |
+| 호출 시점 | PL-4 copy 단계: `project.copywriting=true`일 때 카피 대상 블록별. (세탁 안내는 AG-02 대상 아님 — 에디터 자동 블록을 M-02가 규칙 기반으로 생성, §4) |
 | 입력 | `{ blockKind, cutType, product: { name, clothingType, fit, materials, measurementsKnown }, analysis: { sellingPoints, targetGenders, matchSelections }, colorLabel }` |
-| 출력 | `{ texts: { role: 'headline'\|'body', text }[] }` — 블록당 1~3개. washCare는 `{ text }` |
+| 출력 | `{ texts: { role: 'headline'\|'body', text }[] }` — 블록당 1~3개 |
 | 카피 방향 | PRD §11.3의 blockKind별 방향을 시스템 프롬프트로 고정 (후킹=감정·상황, 셀링=강조 특징 1~3개, 스타일링=착용 맥락, 호리존=핏·실루엣, 제품=디테일·소재) |
-| 프롬프트 핵심 제약 | 사용자 확인 정보 우선 · 미확인 소재/세탁법/기능성 단정 금지 · 과장 효능 금지 (PRD §11.2) · 세탁 안내는 케어라벨 확인 권장 문구 필수 |
+| 프롬프트 핵심 제약 | 사용자 확인 정보 우선 · 미확인 소재/세탁법/기능성 단정 금지 · 과장 효능 금지 (PRD §11.2) |
 | 실패 | 해당 블록 카피 생략하고 진행(생성 전체를 실패시키지 않음) — 사용자가 에디터에서 직접 입력 가능 |
 
 ### AG-03 copy-qc — 카피 검수 (MVP 포함, 사용자 결정)
@@ -90,9 +90,10 @@ OPENAI_API_KEY=   # text
 |---|---|
 | tier | `image_high` |
 | 호출 시점 | 마네킹 단계 최초 진입 `generateMannequins` / 전부 재생성 `regenerateMannequins` (PL-2/3) |
-| 입력 | `{ productImages: 기준 색상 전 각도 URL[], clothingType, fit, candidate: 'A'\|'B', baseFit: Fit }` — A/B는 baseFit 등 변주를 다르게 줘 2안 생성 |
+| 생성 방식 | **성별 베이스 + 의류 스왑** (스파이크 결정 2026-06-12). 맨바닥 독립 생성이 아니라, **분석에서 고른 성별(`targetGenders`)이 베이스 마네킹(남/여 각 고정 1장, 운영자 시드)을 결정**하고 그 위에 의류만 교체. A/B 후보는 **같은 성별 베이스** 위의 변주(독립 생성·성별 혼합 아님). |
+| 입력 | `{ baseMannequinUrl: 성별 베이스 URL, productImages: 기준 색상 전 각도 URL[], clothingType, fit, candidate: 'A'\|'B', baseFit: Fit }` — A/B는 baseFit 등 변주를 다르게 줘 2안 |
 | 출력 | `{ imageUrl }` → 서버가 `MannequinCut { id, candidate, version, src, baseFit, *Adjust:null }`로 포장 (계약 §3.3) |
-| 프롬프트 핵심 제약 | 의류 구조·디테일·컬러 보존 최우선 · 무지 배경 마네킹 착용 · 모델 얼굴 없음 |
+| 프롬프트 핵심 제약 | **베이스 마네킹의 인물·포즈·구도·배경 동결, 의류만 교체** · 의류 구조·디테일·컬러 보존 최우선 · 모델 얼굴 없음 |
 | 실패 | 후보 1개만 성공해도 결과 반환(부분 성공), 전체 실패 시 throw + 크레딧 미차감 |
 
 ### AG-05 mannequin-adjuster — 마네킹 조정
@@ -138,13 +139,16 @@ OPENAI_API_KEY=   # text
 - **입력**: `{ clothingType, targetGenders, styleTags }` — **styleTags는 AG-01이 산출**(사용자 결정: 룰베이스 + 분석이 태그 공급).
 - **로직**: 보완 타입 필터(top계열→bottom) → 성별 필터(unisex 포함) → styleTags 겹침 점수 → sortOrder. 결정적·비용 0.
 - **출력**: `MatchingItem[]` → `toLegacyMatchClothing`으로 UI shape 변환(상위 2개 메인/서브 기본 선택).
-- **호출 시점**: PL-1에서 AG-01 직후 → `analysis.matchClothing`(후보+기본 선택)으로 응답에 포함.
+- **호출 시점**: PL-1에서 AG-01 직후 → `analysis.matchCandidates`(후보) + `matchSelections`(상위 2개 메인/서브 기본 선택)으로 응답에 포함 (계약 §3.2).
 
 ### M-02 page-assembler — 상세페이지 조립 (결정적 템플릿 엔진, 사용자 결정)
 
 - **구현 기준**: mock의 `buildEditorBlocksFromStoryboard`(`src/mock/db.js`)가 이 모듈의 자리. 실서버도 같은 결정적 로직.
 - **입력**: `{ storyboard: StoryboardBlock[], cutResults: { blockId, imageUrl }[], copyResults: { blockId, texts }[], product(실측 포함), copywriting }`.
-- **로직**: blockKind별 레이아웃 템플릿으로 `EditorBlock[]` 배치(기준 폭 1000) + 자동 블록 3종(사이즈=product.measurements, 세탁, AI 안내 — PRD §10.14). AI 호출 없음.
+- **로직**: blockKind별 레이아웃 템플릿으로 `EditorBlock[]` 배치(기준 폭 1000) + 자동 블록 3종(PRD §10.14). AI 호출 없음.
+  - **사이즈 안내** = `product.measurements`.
+  - **세탁 안내** = **규칙 기반 프리셋**(AI 아님): `clothingType`별 대표 소재(가장 많이 팔리는 소재)에 맞춘 세탁 문구를 미리 정해두고 선택, 소재가 애매하면 **기본 세탁방침**으로 폴백. 실제 케어라벨 확인 권장 문구 포함. (A1 결정 2026-06-14)
+  - **AI 생성 안내** = AI 이미지 사용·차이 가능 고지.
 - **출력**: `EditorBlock[]` (계약 §3.5).
 
 ---
