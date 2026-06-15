@@ -14,11 +14,11 @@ export function ChromeLayout() {
 
   useEffect(() => { loadAccount(); loadCatalogs(); }, [loadAccount, loadCatalogs]);
 
-  // background orb glow fixed at the approved 75% (prototype app.jsx).
+  // Background glow intensity uses the CSS default. Final orb/edge opacity is defined in app.css.
   // The wizard stepper now lives centered inside TopNav (see shell.jsx),
   // so the hero content starts directly under the nav.
   return (
-    <div className="app-shell" style={{ '--glow-a': 0.75 }}>
+    <div className="app-shell">
       <div className="app-bg">
         <div className="edge" />
         <div className="orb-bg"><div className="l1" /><div className="l2" /><div className="l3" /><div className="hi" /></div>

@@ -32,7 +32,7 @@ input, textarea, select { font-family: inherit; }
    transparent so the orb shows through; only cards carry white. --glow-a is the Tweaks dimmer (default 1). ---- */
 .orb-bg {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  opacity: calc(.82 * var(--glow-a)); transform: translateY(var(--orb-shift, -32%)) scale(var(--orb-scale, 2.7)); transform-origin: center;
+  opacity: calc(.75 * var(--glow-a)); transform: translateY(var(--orb-shift, -32%)) scale(var(--orb-scale, 2.7)); transform-origin: center;
 }
 .orb-bg > div { position: absolute; border-radius: 50%; }
 .orb-bg .l1 { width: 240px; height: 240px; background: conic-gradient(var(--glow-sky), var(--glow-mauve), var(--glow-sage), var(--glow-sky)); filter: blur(27px); opacity: .85; animation: orbA 12s linear infinite; }
@@ -40,16 +40,25 @@ input, textarea, select { font-family: inherit; }
 .orb-bg .l3 { width: 130px; height: 130px; background: #fff; filter: blur(12px); opacity: .85; animation: orbA 14s linear infinite; }
 .orb-bg .hi { width: 74px; height: 74px; background: radial-gradient(#fff 0%, transparent 70%); filter: blur(14px); }
 .edge {
-  position: absolute; inset: 0; pointer-events: none; opacity: calc(.34 * var(--glow-a));
-  background:
-    radial-gradient(34% 58% at -10% 38%, var(--glow-sky) 0%, transparent 62%),
-    radial-gradient(30% 52% at -6% 78%, var(--glow-sage) 0%, transparent 60%),
-    radial-gradient(34% 58% at 110% 46%, var(--glow-mauve) 0%, transparent 62%),
-    radial-gradient(30% 52% at 106% 82%, var(--glow-sun) 0%, transparent 60%);
-  filter: blur(34px);
+  position: absolute; inset: 0; pointer-events: none; opacity: calc(.40 * var(--glow-a));
+  filter: blur(24px);
 }
+.edge::before,
+.edge::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 4px;
+  color: var(--glow-sky); background: currentColor; box-shadow: 0 0 92px 64px currentColor;
+  animation: edgeLineColor 34s ease-in-out infinite;
+}
+.edge::before { left: -4px; }
+.edge::after { right: -4px; animation-delay: -17s; }
 @keyframes orbA { to { transform: rotate(360deg); } }
 @keyframes orbB { to { transform: rotate(-360deg); } }
+@keyframes edgeLineColor {
+  0%, 100% { color: var(--glow-sky); }
+  25% { color: var(--glow-sage); }
+  50% { color: var(--glow-sun); }
+  75% { color: var(--glow-mauve); }
+}
 /* 반응형: 화면이 넓어질수록 orb 를 키워 같은 비중으로 */
 @media (min-width: 1280px) { .orb-bg { --orb-scale: 3.1; } }
 @media (min-width: 1600px) { .orb-bg { --orb-scale: 3.7; } }
