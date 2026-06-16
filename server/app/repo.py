@@ -66,7 +66,10 @@ async def create_project(conn: AsyncConnection, user_id: str) -> dict:
             f"insert into projects (user_id) values (%s) returning {_PROJECT_COLS}",
             (user_id,),
         )
-        return await cur.fetchone()
+        row = await cur.fetchone()
+        # project ↔ product 는 1:1 — 생성 시 함께 만든다(이후 getProduct는 순수 read).
+        await cur.execute("insert into products (project_id) values (%s)", (row["id"],))
+        return row
 
 
 async def get_project(conn: AsyncConnection, user_id: str, project_id: str) -> dict | None:
@@ -121,27 +124,27 @@ _PRODUCT_COLS = (
     "colors, measurements, measurements_unknown, upload_complete"
 )
 _PRODUCT_JSONB = ("colors", "measurements")
+# saveProduct가 DB에 반영 가능한 컬럼 (계약 §3.1). 모델이 1차 가드, 이 집합이 2차.
+PATCHABLE_PRODUCT_COLUMNS = (
+    "name", "clothing_type", "colors", "measurements",
+    "measurements_unknown", "upload_complete",
+)
 
 
-async def get_or_create_product(conn: AsyncConnection, project_id: str) -> dict:
-    """프로젝트당 product 행 보장(없으면 기본 생성) 후 반환. 소유권은 라우트가 선검증."""
+async def get_product(conn: AsyncConnection, project_id: str) -> dict | None:
+    """순수 read. 소유권은 라우트가 get_project로 선검증. 행은 createProject가 생성함."""
     async with conn.cursor() as cur:
         await cur.execute(
-            f"insert into products (project_id) values (%s) "
-            f"on conflict (project_id) do nothing returning {_PRODUCT_COLS}",
-            (project_id,),
+            f"select {_PRODUCT_COLS} from products where project_id = %s", (project_id,)
         )
-        row = await cur.fetchone()
-        if row is None:
-            await cur.execute(
-                f"select {_PRODUCT_COLS} from products where project_id = %s", (project_id,)
-            )
-            row = await cur.fetchone()
-        return row
+        return await cur.fetchone()
 
 
-async def save_product(conn: AsyncConnection, project_id: str, patch: dict) -> dict:
-    """product 행 보장 후 patch 적용. name 변경 시 projects.title 동기화(계약 §3.1)."""
+async def save_product(
+    conn: AsyncConnection, project_id: str, user_id: str, patch: dict
+) -> dict:
+    """patch 적용 + name 변경 시 projects.title 동기화(계약 §3.1). 소유권은 라우트 선검증 +
+    title UPDATE는 user_id 조건 명시(§9). 레거시(행 없음) 대비 행 보장 포함."""
     async with conn.cursor() as cur:
         await cur.execute(
             "insert into products (project_id) values (%s) on conflict (project_id) do nothing",
@@ -150,11 +153,10 @@ async def save_product(conn: AsyncConnection, project_id: str, patch: dict) -> d
     sets = {
         k: (Json(v) if k in _PRODUCT_JSONB else v)
         for k, v in patch.items()
-        if k in ("name", "clothing_type", "colors", "measurements",
-                 "measurements_unknown", "upload_complete")
+        if k in PATCHABLE_PRODUCT_COLUMNS
     }
     if not sets:
-        return await get_or_create_product(conn, project_id)
+        return await get_product(conn, project_id)
 
     assignments = ", ".join(f"{col} = %s" for col in sets)
     async with conn.cursor() as cur:
@@ -165,7 +167,8 @@ async def save_product(conn: AsyncConnection, project_id: str, patch: dict) -> d
         row = await cur.fetchone()
         if "name" in patch:
             await cur.execute(
-                "update projects set title = %s where id = %s", (patch["name"], project_id)
+                "update projects set title = %s where id = %s and user_id = %s",
+                (patch["name"], project_id, user_id),
             )
     return row
 

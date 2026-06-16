@@ -122,8 +122,14 @@ async def get_product(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        row = await repo.get_or_create_product(conn, project_id)
-        await conn.commit()
+        row = await repo.get_product(conn, project_id)  # 순수 read
+    if row is None:
+        # 레거시(product 행 없는 프로젝트) — 기본값 반환(쓰기 없음). saveProduct가 생성.
+        return {
+            "id": "", "projectId": project_id, "name": "", "clothingType": None,
+            "colors": [], "measurements": [], "measurementsUnknown": False,
+            "uploadComplete": False,
+        }
     return row
 
 
@@ -138,7 +144,7 @@ async def save_product(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        row = await repo.save_product(conn, project_id, fields)
+        row = await repo.save_product(conn, project_id, user_id, fields)
         await conn.commit()
     return row
 
