@@ -4,6 +4,7 @@
    "/" opens the input page directly (per product decision). Editor is
    a full-screen surface outside the app chrome (stub in phase 1).
    ============================================================= */
+import { Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
@@ -11,9 +12,17 @@ import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
 import { Generating } from '@/features/generating/Generating.jsx';
-import { Editor } from '@/features/editor/Editor.jsx';
+import { LazyEditor } from '@/features/editor/lazyEditor.js';
+import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { Login } from '@/features/auth/Login.jsx';
 
 export default function App() {
+  const { session, loading } = useAuth();
+
+  // 인증 게이트: 세션 확인 전엔 로딩, 미로그인이면 로그인 화면만 (구글·카카오).
+  if (loading) return <div className="route-loading">불러오는 중이에요</div>;
+  if (!session) return <Login />;
+
   return (
     <Routes>
       <Route element={<ChromeLayout />}>
@@ -28,7 +37,7 @@ export default function App() {
         </Route>
       </Route>
       {/* editor lives outside the chrome (full-screen workspace) */}
-      <Route path="editor/:id" element={<Editor />} />
+      <Route path="editor/:id" element={<Suspense fallback={<div className="route-loading">에디터를 불러오는 중이에요</div>}><LazyEditor /></Suspense>} />
       <Route path="*" element={<Navigate to="/create/input" replace />} />
     </Routes>
   );

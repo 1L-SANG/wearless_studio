@@ -4,16 +4,33 @@
    나머지는 mock 이 계속 담당한다 (부분 스왑).
    시그니처·반환 형태는 mock/api.js(계약 §6)와 동일해야 한다.
    ============================================================= */
+import { supabase } from '@/lib/supabase.js';
+
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
-// 공용 fetch 헬퍼 — Phase 1에서 Authorization: Bearer 주입 (plan §9)
+// 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
+// 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
 export async function http(path, { method = 'GET', body } = {}) {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`API ${res.status} ${path}`);
+
+  if (!res.ok) {
+    let message = `API ${res.status} ${path}`;
+    try {
+      const payload = await res.json();
+      if (payload?.error?.message) message = payload.error.message;
+    } catch { /* 비 JSON 응답은 기본 메시지 유지 */ }
+    throw new Error(message);
+  }
   return res.json();
 }
 

@@ -1,0 +1,83 @@
+/* Login — 소셜 로그인 게이트. 토큰(tokens.css) 기반. 브랜드 버튼색은
+   구글/카카오 공식 가이드 색이라 토큰이 아닌 브랜드 고정값을 의도적으로 사용. */
+
+.wrap {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-24, 24px);
+  background: var(--bg-2);
+}
+
+.card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-16);
+  padding: var(--sp-32, 32px) var(--sp-24, 24px);
+  background: var(--bg-1);
+  border-radius: var(--r-6);
+  box-shadow: var(--elev-card);
+}
+
+.logo {
+  height: 32px;
+  width: auto;
+  object-fit: contain;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  color: var(--fg-1);
+  margin: 0;
+}
+
+.subtitle {
+  font-size: 13px;
+  color: var(--fg-2);
+  margin: 0;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.buttons {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  margin-top: var(--sp-8);
+}
+
+.btn {
+  height: var(--cta-height);
+  border-radius: var(--r-4);
+  border: 1px solid transparent;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s ease, box-shadow 0.15s ease;
+}
+.btn:disabled { opacity: 0.6; cursor: default; }
+.btn:not(:disabled):hover { filter: brightness(0.97); }
+
+.google {
+  background: #ffffff;            /* Google 브랜드: 흰 배경 + 회색 보더 */
+  color: #1f1f1f;
+  border-color: #dadce0;
+}
+
+.kakao {
+  background: #fee500;            /* Kakao 브랜드 옐로 */
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--fg-3);
+  text-align: center;
+  margin: 0;
+}
