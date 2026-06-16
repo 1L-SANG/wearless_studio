@@ -11,6 +11,9 @@ npm-debug.log*
 !.env.example
 .gstack/
 
+# MCP 설정 — 라이브 Supabase 토큰(평문) 보유. 로컬 전용, 절대 커밋 금지.
+.mcp.json
+
 # python (server/)
 .venv/
 __pycache__/
