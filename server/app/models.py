@@ -7,7 +7,7 @@ FastAPI는 기본적으로 response_model을 alias(camelCase)로 직렬화한다
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic.alias_generators import to_camel
 
 ProjectStatus = Literal["draft", "generating", "done"]
@@ -57,3 +57,12 @@ class ProjectPatch(CamelModel):
     compose_mode: ComposeMode | None = None
     copywriting: bool | None = None
     selected_mannequin_id: str | None = None
+
+    @model_validator(mode="after")
+    def _reject_explicit_null_on_non_nullable(self):
+        # composeMode·copywriting은 NOT NULL 컬럼 — 명시적 null로 보내면 422 (500 방지).
+        # 미전송(생략)은 허용, selectedMannequinId만 null 허용.
+        for field in ("compose_mode", "copywriting"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field}는 null일 수 없습니다.")
+        return self

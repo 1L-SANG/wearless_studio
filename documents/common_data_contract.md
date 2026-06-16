@@ -38,7 +38,7 @@ ProjectSummary {                   // 보관함 카드 (구 LibraryItem)
   id: string
   title: string
   cover: string                    // 대표 이미지 (파생: 첫 에디터 블록 이미지)
-  clothingType: ClothingType
+  clothingType: ClothingType | null // 초안은 상품 미입력 → null 가능 (보관함 카드 표시는 라벨 파생)
   blockCount: number               // 구 blocks (배열과 혼동 방지 위해 개명)
   status: ProjectStatus
   updatedAt: string                // ISO — '2시간 전'은 표시 파생

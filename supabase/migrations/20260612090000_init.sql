@@ -21,7 +21,7 @@ create table public.profiles (
   user_id uuid primary key references auth.users (id) on delete cascade,
   display_name text,
   avatar_asset_id uuid, -- FK는 assets 생성 후 (순환 참조)
-  plan text not null default 'basic' check (plan in ('basic', 'plus', 'seller')), -- PlanTier (계약 §3.7/§4)
+  plan text not null default 'free', -- PlanTier 정렬은 20260616105229_profiles_plan_tokens (적용 이력과 일치 — 여기 in-place 추가 금지)
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

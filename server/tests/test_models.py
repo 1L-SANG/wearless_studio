@@ -5,6 +5,9 @@ DB 없이 검증 가능한 순수 로직만 (DB 통합은 배포 DB에 테스트
 
 from datetime import datetime, timezone
 
+import pytest
+from pydantic import ValidationError
+
 from app import repo
 from app.models import Account, Project, ProjectPatch
 
@@ -21,6 +24,20 @@ def test_project_patch_ignores_server_only_fields():
 def test_project_patch_exclude_unset_only_sent_fields():
     patch = ProjectPatch(copywriting=False)
     assert patch.model_dump(exclude_unset=True) == {"copywriting": False}
+
+
+def test_project_patch_rejects_explicit_null_on_non_nullable():
+    # {"composeMode": null} / {"copywriting": null} → 422 (NOT NULL 컬럼 500 방지)
+    with pytest.raises(ValidationError):
+        ProjectPatch(**{"composeMode": None})
+    with pytest.raises(ValidationError):
+        ProjectPatch(**{"copywriting": None})
+
+
+def test_project_patch_allows_null_mannequin_and_omitted_fields():
+    # selectedMannequinId는 null 허용, 나머지는 생략 가능
+    patch = ProjectPatch(**{"selectedMannequinId": None})
+    assert patch.model_dump(exclude_unset=True) == {"selected_mannequin_id": None}
 
 
 def test_patchable_columns_match_model():
