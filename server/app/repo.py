@@ -78,6 +78,43 @@ async def get_project(conn: AsyncConnection, user_id: str, project_id: str) -> d
         return await cur.fetchone()
 
 
+async def create_asset(
+    conn: AsyncConnection,
+    *,
+    asset_id: str,
+    user_id: str,
+    project_id: str,
+    source: str,
+    bucket: str,
+    key: str,
+    mime: str,
+    size: int | None,
+    original_filename: str | None,
+) -> dict:
+    """업로드 검증 후 asset 행 확정. complete 재호출(멱등)이면 기존 행 반환."""
+    cols = "id::text as id, r2_key, mime_type, byte_size"
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""
+            insert into assets
+              (id, user_id, project_id, source, visibility, r2_bucket, r2_key,
+               mime_type, byte_size, original_filename)
+            values (%s, %s, %s, %s, 'private', %s, %s, %s, %s, %s)
+            on conflict (id) do nothing
+            returning {cols}
+            """,
+            (asset_id, user_id, project_id, source, bucket, key, mime, size, original_filename),
+        )
+        row = await cur.fetchone()
+        if row is None:  # 이미 존재 → 소유권 확인하며 재조회
+            await cur.execute(
+                f"select {cols} from assets where id = %s and user_id = %s",
+                (asset_id, user_id),
+            )
+            row = await cur.fetchone()
+        return row
+
+
 async def patch_project(
     conn: AsyncConnection, user_id: str, project_id: str, patch: dict
 ) -> dict | None:

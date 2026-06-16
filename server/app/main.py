@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from .auth import jwks_key_resolver, require_user
 from .config import Settings, load_settings
 from .db import create_pool
+from .r2 import R2Client
 from .routes import router as v1_router
 
 DEFAULT_ERROR_CODES = {
@@ -43,6 +44,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.pool = pool
+    app.state.r2 = (
+        R2Client(settings) if settings.r2_bucket and settings.r2_access_key_id else None
+    )
     app.state.jwt_key_resolver = (
         jwks_key_resolver(settings.jwks_url) if settings.jwks_url else None
     )

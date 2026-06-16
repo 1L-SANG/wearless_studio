@@ -26,6 +26,12 @@ def make_settings(**overrides) -> Settings:
         cors_origins=["http://localhost:5173"],
         dev_user_id=None,
         database_url=None,
+        r2_account_id=None,
+        r2_access_key_id=None,
+        r2_secret_access_key=None,
+        r2_bucket=None,
+        r2_endpoint=None,
+        r2_public_base=None,
     )
     base.update(overrides)
     return Settings(**base)

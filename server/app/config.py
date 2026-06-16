@@ -16,6 +16,13 @@ class Settings:
     cors_origins: list[str]
     dev_user_id: str | None
     database_url: str | None
+    # R2 (Cloudflare, S3 호환) — 자산 저장 (§3). secret 등급, 서버 전용.
+    r2_account_id: str | None
+    r2_access_key_id: str | None
+    r2_secret_access_key: str | None
+    r2_bucket: str | None
+    r2_endpoint: str | None
+    r2_public_base: str | None  # images.wearless.kr 등 공개 서빙 도메인 (없으면 signed GET)
 
 
 def load_settings() -> Settings:
@@ -43,4 +50,10 @@ def load_settings() -> Settings:
         cors_origins=cors_origins,
         dev_user_id=dev_user_id,
         database_url=os.getenv("DATABASE_URL") or None,
+        r2_account_id=os.getenv("R2_ACCOUNT_ID") or None,
+        r2_access_key_id=os.getenv("R2_ACCESS_KEY_ID") or None,
+        r2_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY") or None,
+        r2_bucket=os.getenv("R2_BUCKET") or None,
+        r2_endpoint=(os.getenv("R2_ENDPOINT") or "").rstrip("/") or None,
+        r2_public_base=(os.getenv("R2_PUBLIC_BASE") or "").rstrip("/") or None,
     )

@@ -51,6 +51,39 @@ class ProjectSummary(CamelModel):
     updated_at: datetime
 
 
+class UploadUrlRequest(CamelModel):
+    """POST /v1/assets/upload-url (§3 1단계)."""
+
+    filename: str
+    mime: str
+    size: int
+    project_id: str
+    purpose: str = "upload"
+
+
+class UploadUrlResponse(CamelModel):
+    asset_id: str
+    upload_url: str
+    expires_at: datetime
+
+
+class AssetCompleteRequest(CamelModel):
+    """POST /v1/assets/{id}/complete (§3 3단계). 키 재유도용 컨텍스트."""
+
+    project_id: str
+    mime: str
+    filename: str | None = None
+
+
+class Asset(CamelModel):
+    """업로드 완료 자산 — 프론트 ImageAsset 의 src/메타로 매핑된다 (계약 §3.1)."""
+
+    id: str
+    url: str  # 서빙 URL (= ImageAsset.src)
+    mime_type: str
+    byte_size: int | None
+
+
 class ProjectPatch(CamelModel):
     """patchProject 수용 화이트리스트 (계약 §6): 이 3개만. adjustCount·status는 서버 전용."""
 

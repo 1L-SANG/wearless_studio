@@ -171,6 +171,9 @@ export function ProductInput() {
 
   // 분석 CTA — 마네킹부터는 로그인 필요. 미로그인이면 로그인 모달을 띄우고
   // 로그인 후 마네킹으로 복귀(sessionStorage 플래그 → App RootRedirect).
+  // [의도된 한계] OAuth 풀페이지 리다이렉트로 mock 인메모리(업로드·분석 draft)가 리셋된다.
+  // 재입력은 없지만(마네킹 직행) 시드로 생성됨 — draft 보존은 서버 projectId+R2 단계 몫.
+  // 제품 결정(2026-06-16), TODO.md §1 "로그인 후 입력·분석 상태 보존" 참조.
   const goToMannequin = () =>
     session ? navigate('/create/mannequin') : openLogin('/create/mannequin');
 
