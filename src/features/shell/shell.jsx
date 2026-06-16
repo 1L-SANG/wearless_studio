@@ -40,7 +40,8 @@ export function TopNav() {
         <span>wearless</span>
       </span>
       <div className="nav-links">
-        <button className={`nav-link${route === 'create' ? ' active' : ''}`} onClick={() => onNav('create')}>상세페이지 제작</button>
+        {/* 비로그인 숨김: onNav('create')→startProject→createProject 는 토큰 필요(401 방지) */}
+        {session && <button className={`nav-link${route === 'create' ? ' active' : ''}`} onClick={() => onNav('create')}>상세페이지 제작</button>}
         {session && <button className={`nav-link${route === 'library' ? ' active' : ''}`} onClick={() => onNav('library')}>보관함</button>}
       </div>
       {STEPPER_STEPS.includes(step) && <div className="nav-stepper"><Stepper current={step} /></div>}
