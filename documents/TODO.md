@@ -4,7 +4,7 @@
 > 설계 문서들은 "무엇이 맞는가(정체성·계약)"에 집중하고, "무엇이 아직 안 됐는가"는 여기서 추적한다.
 > 갱신 방식: 작업을 끝낼 때마다 각 설계 문서를 고치지 않고 **이 문서만 주기적으로 갱신**한다.
 > 정책 미확정(크레딧 단가·환불 등)과 단계별 실행 로드맵은 중복하지 않고 `backend_integration_plan.md` §10(로드맵)·§11(오픈 이슈)을 가리킨다.
-> 최종 갱신: 2026-06-14
+> 최종 갱신: 2026-06-16
 
 ---
 
@@ -46,6 +46,14 @@
 - 🆕 **마네킹 성별 베이스 + 의류 스왑 구현** — 스파이크 결과 반영. 성별(`targetGenders`)이 베이스 마네킹(남/여 고정 1장)을 결정, A/B 후보 둘 다 같은 성별 베이스 위 스왑(독립 생성 아님). 베이스 자산은 운영자 시드. (`spike/base/*` 참고, AG-04) **→ Phase 4**
 - 🆕 **마네킹 최초 생성 크레딧 예고** — 마네킹 페이지 진입 시 자동 생성·차감되므로, 분석 CTA 버튼 `의류정보 확정 완료`에 예상 크레딧을 부착(`의류정보 확정 완료 · 2 크레딧`). (`AnalysisForm.jsx:273`) **→ Phase 4**
 - ✅ **스키마: `jobs.status` `cancelled` 제거 + `profiles.plan` basic+CHECK + `jobs.kind` CHECK** — init 마이그레이션(`supabase/migrations/20260612090000_init.sql`)에 in-place 반영(계약 일치). 코드 경로 중 `status='cancelled'` 설정 없음(검증됨). ⚠️ **전제: 이 init 마이그레이션이 아직 어떤 환경에도 적용되지 않음.** 이미 적용된 DB가 있으면 in-place 편집은 그 DB에 반영되지 않으므로 별도 `ALTER` 마이그레이션으로 옮겨야 한다 — **적용 여부는 Phase 0~1 착수 시 확인.**
+
+### 신규 (2026-06-16 — 소셜 로그인 게이트 · 입력/분석 공개)
+
+> 입력·분석을 로그인 없이 공개하고, 분석 CTA `의류정보 확정 완료`에서 소셜 로그인(구글·카카오) 모달 게이트를 띄운다. 마네킹부터 로그인 필요. (`App.jsx` RequireAuth/PostLoginRedirect · `AuthProvider`/`Login.jsx` LoginGate · `ProductInput.jsx` CTA 게이트 · `shell.jsx` TopNav 프로필)
+
+- 🆕 **로그인 후 입력·분석 상태 보존 (현 mock 한계)** — 분석 CTA 로그인 시 OAuth 풀페이지 리다이렉트로 새로고침 → 인메모리 store·mock DB 리셋 → 업로드 사진(blob URL)·분석 작업본 소실, 복귀 후 마네킹이 **시드 상품**으로 생성(사용자 업로드 미반영). 재입력 프롬프트는 없음(마네킹 직행). 해결: product/analysis/이미지를 서버(projectId + R2)에 저장하면 풀페이지 리다이렉트에도 데이터 유지. (codex 점검 근거: 같은 탭 OAuth 왕복 + 인메모리 리셋) **→ Phase 1~ (projects CRUD · 이미지 업로드 서버화)**
+- 🆕 **프로필 메뉴 목적지 페이지** — TopNav 프로필 드롭다운(`shell.jsx` ProfileMenu)은 헤더(아바타·이름·이메일) + `크레딧 관리`(현재 "준비 중" 토스트) + 로그아웃(동작)만. 결제/요금제 백엔드 확정 시 실제 페이지 + 필요 시 `요금제·결제` 항목 추가. 정책 숫자는 §2(크레딧 단가·플랜) 대기. **→ 결제 백엔드 단계**
+- 🆕 **소셜 로그인 OAuth 왕복 라이브 검증 + localhost Redirect URL** — 게이트 흐름(구글/카카오 → 복귀 → `/create/mannequin` 직행; `sessionStorage 'wl_postLogin'` + `App.PostLoginRedirect`)은 빌드/코드 검증만 됨. ⚠️ **`http://localhost:5173` 이 Supabase Auth → URL Configuration → Redirect URLs(+ Site URL)에 없으면 복귀 시 세션이 안 생겨 프로필 미표시·입력 페이지로 복귀**한다(2026-06-16 로컬 테스트에서 재현). 배포 도메인 외 localhost 도 allowlist 필요. 카카오 인앱 브라우저/모바일 포함 1회 수동 QA. **→ 독립 (환경 설정 · 수동 QA)**
 
 ---
 

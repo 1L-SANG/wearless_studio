@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
+import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { Icon, Button, IconButton, Skeleton, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
@@ -164,8 +165,14 @@ export function ProductInput() {
   const [analysis, setAnalysis] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const projectId = useAppStore((s) => s.projectId);
+  const { session, openLogin } = useAuth();
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
+
+  // 분석 CTA — 마네킹부터는 로그인 필요. 미로그인이면 로그인 모달을 띄우고
+  // 로그인 후 마네킹으로 복귀(sessionStorage 플래그 → App RootRedirect).
+  const goToMannequin = () =>
+    session ? navigate('/create/mannequin') : openLogin('/create/mannequin');
 
   useEffect(() => {
     (async () => {
@@ -308,7 +315,7 @@ export function ProductInput() {
                 if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));
               });
             }}
-            onNext={() => navigate('/create/mannequin')} />
+            onNext={goToMannequin} />
         </div>
       )}
     </div>

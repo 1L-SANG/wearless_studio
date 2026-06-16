@@ -4,11 +4,12 @@
    Data seam: TopNav reads account from the store and navigates via
    React Router (prototype used props + a single App state machine).
    ============================================================= */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
-import { Icon, Modal, Button } from '@/components/ui.jsx';
+import { Icon, Modal, Button, useToast } from '@/components/ui.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
+import { useAuth } from '@/features/auth/AuthProvider.jsx';
 
 export const WIZARD_STEPS = [
   { key: 'input', label: '제품 정보·분석' },
@@ -25,6 +26,7 @@ const STEPPER_STEPS = ['input', 'mannequin', 'storyboard'];
 export function TopNav() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const { session, openLogin } = useAuth();
   const account = useAppStore((s) => s.account) || { name: '…', avatar: '', credits: 0, plan: '' };
   const startProject = useAppStore((s) => s.startProject);
   const route = pathname.startsWith('/library') ? 'library' : 'create';
@@ -33,20 +35,82 @@ export function TopNav() {
 
   return (
     <nav className="topnav">
-      <span className="brand">wearless</span>
+      <span className="brand">
+        <img className="brand-logo" src="/assets/brand/temp-nav-logo.png" alt="" />
+        <span>wearless</span>
+      </span>
       <div className="nav-links">
         <button className={`nav-link${route === 'create' ? ' active' : ''}`} onClick={() => onNav('create')}>상세페이지 제작</button>
-        <button className={`nav-link${route === 'library' ? ' active' : ''}`} onClick={() => onNav('library')}>보관함</button>
+        {session && <button className={`nav-link${route === 'library' ? ' active' : ''}`} onClick={() => onNav('library')}>보관함</button>}
       </div>
       {STEPPER_STEPS.includes(step) && <div className="nav-stepper"><Stepper current={step} /></div>}
       <div className="nav-right">
-        <span className="credit-badge"><Icon name="coins" size={15} stroke={1.8} />크레딧 <b>{account.credits}</b></span>
-        <span className="plan-badge">{account.plan}</span>
-        {account.avatar
-          ? <img className="avatar" src={account.avatar} alt={account.name} title={account.name} />
-          : <span className="avatar" style={{ display: 'inline-block', background: 'var(--bg-2)' }} />}
+        {session ? (
+          <>
+            <span className="credit-badge"><Icon name="coins" size={15} stroke={1.8} />크레딧 <b>{account.credits}</b></span>
+            {account.plan && <span className="plan-badge">{account.plan}</span>}
+            <ProfileMenu />
+          </>
+        ) : (
+          <button className="nav-login" onClick={() => openLogin()}>로그인</button>
+        )}
       </div>
     </nav>
+  );
+}
+
+/* 로그인 사용자 프로필 — 구글 계정 메뉴 형태. 아바타(사진/이니셜) 클릭 시
+   헤더(이름·이메일) + 크레딧 관리(미구현 → '준비 중') + 로그아웃. */
+function ProfileMenu() {
+  const { session, signOut } = useAuth();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+
+  const meta = session?.user?.user_metadata || {};
+  const name = meta.full_name || meta.name || meta.user_name || session?.user?.email || '사용자';
+  const email = session?.user?.email || meta.email || '';
+  const photo = meta.avatar_url || meta.picture || '';
+  const initial = (name || email || '?').trim().charAt(0).toUpperCase();
+  const avatar = (cls) => photo
+    ? <img className={cls} src={photo} alt="" referrerPolicy="no-referrer" />
+    : <span className={`${cls} avatar-initial`}>{initial}</span>;
+
+  return (
+    <div className="profile" ref={ref}>
+      <button className="profile-btn" onClick={() => setOpen((o) => !o)} title={name} aria-haspopup="menu" aria-expanded={open}>
+        {avatar('avatar')}
+      </button>
+      {open && (
+        <div className="profile-menu" role="menu">
+          <div className="profile-head">
+            {avatar('avatar lg')}
+            <div className="profile-id">
+              <div className="profile-name">{name}</div>
+              {email && <div className="profile-email">{email}</div>}
+            </div>
+          </div>
+          <div className="profile-sep" />
+          <button className="profile-item" role="menuitem"
+            onClick={() => { setOpen(false); toast.push('크레딧 관리는 준비 중이에요', { icon: 'clock' }); }}>
+            <Icon name="coins" size={16} stroke={1.8} />크레딧 관리
+          </button>
+          <button className="profile-item" role="menuitem"
+            onClick={() => { setOpen(false); signOut(); }}>
+            <Icon name="logOut" size={16} stroke={1.8} />로그아웃
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

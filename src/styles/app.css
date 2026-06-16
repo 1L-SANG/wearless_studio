@@ -46,19 +46,32 @@ input, textarea, select { font-family: inherit; }
 .edge::before,
 .edge::after {
   content: ''; position: absolute; top: 0; bottom: 0; width: 4px;
-  color: var(--glow-sky); background: currentColor; box-shadow: 0 0 92px 64px currentColor;
-  animation: edgeLineColor 34s ease-in-out infinite;
+  color: rgba(14, 13, 20, .26);
+  background: linear-gradient(180deg, transparent 0%, rgba(14, 13, 20, .16) 22%, rgba(14, 13, 20, .32) 50%, rgba(14, 13, 20, .16) 78%, transparent 100%);
+  box-shadow: 0 0 110px 76px currentColor;
 }
-.edge::before { left: -4px; }
-.edge::after { right: -4px; animation-delay: -17s; }
+.edge::before { left: 0; }
+.edge::after { right: 0; }
 @keyframes orbA { to { transform: rotate(360deg); } }
 @keyframes orbB { to { transform: rotate(-360deg); } }
+/* Color edge option, kept for comparison:
 @keyframes edgeLineColor {
   0%, 100% { color: var(--glow-sky); }
   25% { color: var(--glow-sage); }
   50% { color: var(--glow-sun); }
   75% { color: var(--glow-mauve); }
 }
+*/
+@keyframes edgeLineColor {
+  0%, 100% { color: rgba(14, 13, 20, .16); }
+  50% { color: rgba(137, 137, 137, .22); }
+}
+/* Animated mono edge option, kept for comparison:
+@keyframes edgeLineTone {
+  0%, 100% { color: rgba(14, 13, 20, .24); opacity: .9; }
+  50% { color: rgba(14, 13, 20, .34); opacity: 1; }
+}
+*/
 /* 반응형: 화면이 넓어질수록 orb 를 키워 같은 비중으로 */
 @media (min-width: 1280px) { .orb-bg { --orb-scale: 3.1; } }
 @media (min-width: 1600px) { .orb-bg { --orb-scale: 3.7; } }
@@ -86,7 +99,8 @@ input, textarea, select { font-family: inherit; }
 /* progress stepper centered inside the nav (frees a row → hero rides higher) */
 .nav-stepper { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); pointer-events: none; }
 .nav-stepper .stepper { padding: 0; }
-.brand { font-family: var(--font-display); font-size: 21px; letter-spacing: -.5px; color: var(--fg-1); }
+.brand { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-display); font-size: 21px; letter-spacing: -.5px; color: var(--fg-1); }
+.brand-logo { width: 30px; height: 30px; object-fit: contain; flex: 0 0 auto; }
 .nav-links { display: flex; align-items: center; gap: 4px; }
 .nav-link {
   font-size: 14px; font-weight: 500; color: var(--fg-2); padding: 8px 12px; border-radius: var(--r-4);
@@ -101,6 +115,31 @@ input, textarea, select { font-family: inherit; }
 .plan-badge { font-family: var(--font-body); font-size: 12px; font-weight: 600; letter-spacing: .2px;
   padding: 5px 11px; border-radius: var(--r-pill); background: var(--fg-1); color: #fff; }
 .avatar { width: 32px; height: 32px; border-radius: var(--r-pill); object-fit: cover; box-shadow: 0 0 0 1px var(--ring); cursor: pointer; }
+.avatar-initial { display: inline-flex; align-items: center; justify-content: center; background: var(--fg-1);
+  color: #fff; font-family: var(--font-display); font-weight: 600; line-height: 1; }
+.avatar.lg { width: 40px; height: 40px; }
+.avatar.lg.avatar-initial { font-size: 17px; }
+
+/* 비로그인: 우측 로그인 버튼 */
+.nav-login { font-family: var(--font-body); font-size: 13px; font-weight: 600; color: #fff; background: var(--fg-1);
+  border: 0; padding: 8px 16px; border-radius: var(--r-pill); cursor: pointer; transition: filter .14s; }
+.nav-login:hover { filter: brightness(1.12); }
+
+/* 로그인: 구글 계정형 프로필 메뉴 */
+.profile { position: relative; display: inline-flex; }
+.profile-btn { padding: 0; border: 0; background: none; line-height: 0; border-radius: var(--r-pill); cursor: pointer; }
+.profile-menu { position: absolute; right: 0; top: calc(100% + 10px); z-index: 50; min-width: 248px;
+  background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card), 0 0 0 1px var(--ring);
+  padding: 6px; }
+.profile-head { display: flex; align-items: center; gap: 11px; padding: 10px 10px 12px; }
+.profile-id { min-width: 0; }
+.profile-name { font-size: 14px; font-weight: 600; color: var(--fg-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.profile-email { font-size: 12px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.profile-sep { height: 1px; background: var(--ring); margin: 0 6px 6px; }
+.profile-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0;
+  background: transparent; text-align: left; font-family: var(--font-body); font-size: 13.5px; color: var(--fg-1);
+  border-radius: var(--r-4); cursor: pointer; transition: background .14s; }
+.profile-item:hover { background: var(--bg-2); }
 
 /* ====================== STEPPER ====================== */
 .stepper { display: flex; align-items: center; justify-content: center; gap: 0; padding: 20px 16px 4px; flex-wrap: wrap; }
@@ -126,7 +165,7 @@ input, textarea, select { font-family: inherit; }
 .wizard { width: 100%; max-width: 960px; margin: 0 auto; padding: 14px 24px 120px; }
 .wizard.narrow { max-width: 760px; }
 .wizard.wide { max-width: 1180px; }
-.page-head { text-align: center; padding: 16px 0 44px; }
+.page-head { text-align: center; padding: 76px 0 44px; }
 .page-head h1 { font-family: var(--font-display); font-weight: 600; color: var(--fg-1);
   font-size: 34px; line-height: 1.18; letter-spacing: -.2px; }
 .page-head p { margin-top: 12px; font-size: 16px; color: var(--fg-2); font-weight: 300; }
@@ -309,6 +348,7 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .empty h3, .error-state h3 { font-family: var(--font-display); font-size: 19px; color: var(--fg-1); }
 .empty p, .error-state p { font-size: 14.5px; color: var(--fg-2); margin-top: 8px; }
 .error-state .ico { color: var(--accent-error); box-shadow: 0 0 0 1px var(--accent-error-ring); }
+.route-loading { min-height: 100vh; display: grid; place-items: center; background: #fff; color: var(--fg-2); font-size: 14px; }
 
 .skeleton { background: linear-gradient(100deg, var(--bg-2) 30%, #eee 50%, var(--bg-2) 70%); background-size: 200% 100%;
   animation: shimmer 1.3s linear infinite; border-radius: var(--r-4); }

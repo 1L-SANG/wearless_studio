@@ -1,25 +1,13 @@
-/* Login — 소셜 로그인 게이트. 토큰(tokens.css) 기반. 브랜드 버튼색은
-   구글/카카오 공식 가이드 색이라 토큰이 아닌 브랜드 고정값을 의도적으로 사용. */
+/* LoginGate — 소셜 로그인 모달 내부 콘텐츠. 토큰(tokens.css) 기반. 브랜드 버튼색은
+   구글/카카오 공식 가이드 색이라 토큰이 아닌 브랜드 고정값을 의도적으로 사용.
+   카드 외곽(배경·그림자·라운드)은 공용 Modal(.modal)이 제공한다. */
 
-.wrap {
-  min-height: 100dvh;
-  display: grid;
-  place-items: center;
-  padding: var(--sp-24, 24px);
-  background: var(--bg-2);
-}
-
-.card {
-  width: 100%;
-  max-width: 360px;
+.gate {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--sp-16);
-  padding: var(--sp-32, 32px) var(--sp-24, 24px);
-  background: var(--bg-1);
-  border-radius: var(--r-6);
-  box-shadow: var(--elev-card);
+  padding: var(--sp-8) var(--sp-8) var(--sp-4);
 }
 
 .logo {
@@ -52,6 +40,10 @@
 }
 
 .btn {
+  position: relative;             /* 아이콘은 좌측 고정, 라벨은 가운데 정렬 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   height: var(--cta-height);
   border-radius: var(--r-4);
   border: 1px solid transparent;
@@ -63,6 +55,14 @@
 }
 .btn:disabled { opacity: 0.6; cursor: default; }
 .btn:not(:disabled):hover { filter: brightness(0.97); }
+
+.icon {
+  position: absolute;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+}
+.brandIco { width: 18px; height: 18px; display: block; }
 
 .google {
   background: #ffffff;            /* Google 브랜드: 흰 배경 + 회색 보더 */

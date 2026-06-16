@@ -3,7 +3,7 @@
    프론트는 Supabase에 **인증만** 직접 접근하고, 데이터는 FastAPI(api.wearless.kr)가
    담당한다 (backend_integration_plan §1, Data API OFF). 세션의 access_token 은
    httpAdapter 가 Authorization: Bearer 로 주입한다.
-   SPA OAuth 권장 설정: PKCE + detectSessionInUrl(리다이렉트 복귀 시 세션 교환).
+   SPA OAuth 설정: PKCE. 리다이렉트 복귀의 code 교환은 AuthProvider 가 명시적으로 처리한다.
    ============================================================= */
 import { createClient } from '@supabase/supabase-js';
 
@@ -27,7 +27,7 @@ export const supabase = createClient(
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: true,
+      detectSessionInUrl: false,
       flowType: 'pkce',
     },
   },
