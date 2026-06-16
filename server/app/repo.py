@@ -7,6 +7,7 @@ uuid 컬럼은 ::text 캐스트해 Pydantic str 필드와 맞춘다.
 """
 
 from psycopg import AsyncConnection
+from psycopg.types.json import Json
 
 # patchProject가 DB에 반영할 수 있는 컬럼 (계약 §6 화이트리스트). 모델이 1차,
 # 이 집합이 2차 가드 — 둘 중 하나라도 빠지면 임의 컬럼 갱신을 막는다.
@@ -113,6 +114,60 @@ async def create_asset(
             )
             row = await cur.fetchone()
         return row
+
+
+_PRODUCT_COLS = (
+    "id::text as id, project_id::text as project_id, name, clothing_type, "
+    "colors, measurements, measurements_unknown, upload_complete"
+)
+_PRODUCT_JSONB = ("colors", "measurements")
+
+
+async def get_or_create_product(conn: AsyncConnection, project_id: str) -> dict:
+    """프로젝트당 product 행 보장(없으면 기본 생성) 후 반환. 소유권은 라우트가 선검증."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"insert into products (project_id) values (%s) "
+            f"on conflict (project_id) do nothing returning {_PRODUCT_COLS}",
+            (project_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            await cur.execute(
+                f"select {_PRODUCT_COLS} from products where project_id = %s", (project_id,)
+            )
+            row = await cur.fetchone()
+        return row
+
+
+async def save_product(conn: AsyncConnection, project_id: str, patch: dict) -> dict:
+    """product 행 보장 후 patch 적용. name 변경 시 projects.title 동기화(계약 §3.1)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "insert into products (project_id) values (%s) on conflict (project_id) do nothing",
+            (project_id,),
+        )
+    sets = {
+        k: (Json(v) if k in _PRODUCT_JSONB else v)
+        for k, v in patch.items()
+        if k in ("name", "clothing_type", "colors", "measurements",
+                 "measurements_unknown", "upload_complete")
+    }
+    if not sets:
+        return await get_or_create_product(conn, project_id)
+
+    assignments = ", ".join(f"{col} = %s" for col in sets)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"update products set {assignments} where project_id = %s returning {_PRODUCT_COLS}",
+            [*sets.values(), project_id],
+        )
+        row = await cur.fetchone()
+        if "name" in patch:
+            await cur.execute(
+                "update projects set title = %s where id = %s", (patch["name"], project_id)
+            )
+    return row
 
 
 async def patch_project(

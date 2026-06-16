@@ -84,6 +84,39 @@ class Asset(CamelModel):
     byte_size: int | None
 
 
+class Product(CamelModel):
+    """상품의 물리적 사실 (계약 §3.1). colors·measurements는 프론트 소유 shape →
+    JSONB 패스스루(list[dict])로 안전 라운드트립. 상단 스칼라만 엄격 검증."""
+
+    id: str
+    project_id: str
+    name: str
+    clothing_type: str | None = None
+    colors: list[dict] = []
+    measurements: list[dict] = []
+    measurements_unknown: bool = False
+    upload_complete: bool = False
+
+
+class ProductPatch(CamelModel):
+    """saveProduct patch. NOT NULL 컬럼(name·colors·measurements·*_unknown·*_complete)은
+    명시적 null 거부(422). clothingType만 null 허용(초안)."""
+
+    name: str | None = None
+    clothing_type: str | None = None
+    colors: list[dict] | None = None
+    measurements: list[dict] | None = None
+    measurements_unknown: bool | None = None
+    upload_complete: bool | None = None
+
+    @model_validator(mode="after")
+    def _reject_explicit_null(self):
+        for field in ("name", "colors", "measurements", "measurements_unknown", "upload_complete"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field}는 null일 수 없습니다.")
+        return self
+
+
 class ProjectPatch(CamelModel):
     """patchProject 수용 화이트리스트 (계약 §6): 이 3개만. adjustCount·status는 서버 전용."""
 

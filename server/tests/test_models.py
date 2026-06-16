@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from app import repo
-from app.models import Account, Project, ProjectPatch
+from app.models import Account, Product, ProductPatch, Project, ProjectPatch
 
 
 def test_project_patch_ignores_server_only_fields():
@@ -38,6 +38,28 @@ def test_project_patch_allows_null_mannequin_and_omitted_fields():
     # selectedMannequinId는 null 허용, 나머지는 생략 가능
     patch = ProjectPatch(**{"selectedMannequinId": None})
     assert patch.model_dump(exclude_unset=True) == {"selected_mannequin_id": None}
+
+
+def test_product_patch_rejects_null_on_not_null_columns():
+    for field in ("name", "colors", "measurements", "measurementsUnknown", "uploadComplete"):
+        with pytest.raises(ValidationError):
+            ProductPatch(**{field: None})
+
+
+def test_product_patch_allows_null_clothing_type_and_partial():
+    patch = ProductPatch(**{"clothingType": None, "name": "린넨 셔츠"})
+    dumped = patch.model_dump(exclude_unset=True)
+    assert dumped == {"clothing_type": None, "name": "린넨 셔츠"}
+
+
+def test_product_serializes_camel_and_jsonb_passthrough():
+    p = Product(id="pr1", projectId="p1", name="", colors=[{"id": "c1", "isBase": True}],
+                measurements=[{"key": "totalLength", "value": None, "unit": "cm"}])
+    out = p.model_dump(by_alias=True)
+    assert out["projectId"] == "p1"
+    assert out["measurementsUnknown"] is False
+    # JSONB는 패스스루 — 중첩 키 그대로
+    assert out["colors"] == [{"id": "c1", "isBase": True}]
 
 
 def test_patchable_columns_match_model():

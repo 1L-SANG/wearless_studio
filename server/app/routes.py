@@ -17,6 +17,8 @@ from .models import (
     Account,
     Asset,
     AssetCompleteRequest,
+    Product,
+    ProductPatch,
     Project,
     ProjectPatch,
     ProjectSummary,
@@ -107,6 +109,37 @@ async def patch_project(
         await conn.commit()
     if row is None:
         raise _not_found()
+    return row
+
+
+# ---------- product (계약 §3.1) ----------
+
+
+@router.get("/projects/{project_id}/product", response_model=Product)
+async def get_product(
+    request: Request, project_id: str, user_id: str = Depends(require_user)
+):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        row = await repo.get_or_create_product(conn, project_id)
+        await conn.commit()
+    return row
+
+
+@router.patch("/projects/{project_id}/product", response_model=Product)
+async def save_product(
+    request: Request,
+    project_id: str,
+    patch: ProductPatch,
+    user_id: str = Depends(require_user),
+):
+    fields = patch.model_dump(exclude_unset=True)
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        row = await repo.save_product(conn, project_id, fields)
+        await conn.commit()
     return row
 
 
