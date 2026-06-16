@@ -25,6 +25,7 @@ def make_settings(**overrides) -> Settings:
         jwt_audience=AUDIENCE,
         cors_origins=["http://localhost:5173"],
         dev_user_id=None,
+        database_url=None,
     )
     base.update(overrides)
     return Settings(**base)

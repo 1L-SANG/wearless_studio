@@ -15,6 +15,7 @@ class Settings:
     jwt_audience: str
     cors_origins: list[str]
     dev_user_id: str | None
+    database_url: str | None
 
 
 def load_settings() -> Settings:
@@ -41,4 +42,5 @@ def load_settings() -> Settings:
         jwt_audience=os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated"),
         cors_origins=cors_origins,
         dev_user_id=dev_user_id,
+        database_url=os.getenv("DATABASE_URL") or None,
     )

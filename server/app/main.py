@@ -1,8 +1,10 @@
-"""Wearless Studio API 골격 — Phase 0 (backend_integration_plan §8).
+"""Wearless Studio API (backend_integration_plan §4·§8).
 
-범위: healthz + JWT 검증 + 에러 봉투 { error: { code, message, details? } } (§4).
-실제 리소스 endpoint는 Phase 1부터.
+Phase 0: healthz + JWT 검증 + 에러 봉투 { error: { code, message, details? } }.
+Phase 1: /me/account · /projects(library) · projects CRUD (routes.py).
 """
+
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -11,6 +13,8 @@ from fastapi.responses import JSONResponse
 
 from .auth import jwks_key_resolver, require_user
 from .config import Settings, load_settings
+from .db import create_pool
+from .routes import router as v1_router
 
 DEFAULT_ERROR_CODES = {
     401: "unauthorized",
@@ -23,8 +27,21 @@ DEFAULT_ERROR_CODES = {
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
 
-    app = FastAPI(title="Wearless Studio API", docs_url=None, redoc_url=None)
+    pool = create_pool(settings.database_url) if settings.database_url else None
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if pool is not None:
+            await pool.open()
+        yield
+        if pool is not None:
+            await pool.close()
+
+    app = FastAPI(
+        title="Wearless Studio API", docs_url=None, redoc_url=None, lifespan=lifespan
+    )
     app.state.settings = settings
+    app.state.pool = pool
     app.state.jwt_key_resolver = (
         jwks_key_resolver(settings.jwks_url) if settings.jwks_url else None
     )
@@ -69,6 +86,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def me_ping(user_id: str = Depends(require_user)):
         # Phase 0 완료 기준(JWT 검증 통과) 확인용 — Phase 1에서 /v1/me/account로 대체
         return {"userId": user_id}
+
+    app.include_router(v1_router)
 
     return app
 
