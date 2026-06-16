@@ -16,9 +16,13 @@ export function Library() {
   const onOpen = (it) => navigate(`/editor/${it.id}`);
 
   // 서버 상태는 TanStack Query 캐시로 (frontend_state_model §8-7).
+  // staleTime 0 → 보관함 진입(마운트)마다 refetch. 생성/편집/완료가 다른 화면에서
+  // 일어나므로 전역 staleTime(60s) 캐시를 쓰면 생성분 빠진 stale 목록이 보인다.
+  // 캐시는 즉시 렌더하고 백그라운드로 갱신 → 항상 최신 + 깜빡임 없음.
   const { data: items = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['library'],
     queryFn: () => api.getLibrary({}),
+    staleTime: 0,
   });
   const phase = isLoading ? 'loading' : isError ? 'error' : 'ready';
 
