@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# =============================================================
+# pre-commit — supabase/migrations 를 append-only 로 강제한다.
+#
+# 배경: 이미 적용된 마이그레이션 파일을 in-place 로 고치면, 운영 DB(이미 적용)와
+#   파일이 어긋나고(드리프트), fresh DB 재구축이 깨진다. 이 규칙이 세션 간 반복해서
+#   깨져서(예: profiles.plan, jobs.status) 기계적 가드를 둔다.
+#
+# 규칙: 이미 커밋된(HEAD에 존재하는) supabase/migrations/ 하위 파일의
+#   수정(M)·삭제(D)·이름변경(R) 을 차단한다. 새 파일 추가(A)는 허용.
+#
+# 변경이 필요하면 → **새 forward 마이그레이션 파일을 추가**하라.
+# 의도된 예외(예: 무단 in-place 편집 되돌리기)는 `git commit --no-verify` 로 우회.
+# =============================================================
+set -euo pipefail
+
+MIGRATIONS_DIR="supabase/migrations/"
+
+# 스테이징된 변경을 HEAD 와 비교. 새 저장소(HEAD 없음)면 통과.
+if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+  exit 0
+fi
+
+violations="$(git diff --cached --name-status --diff-filter=MDR -- "$MIGRATIONS_DIR" || true)"
+
+if [ -n "$violations" ]; then
+  echo "✋ 커밋 거부 — 이미 커밋된 마이그레이션을 in-place 로 바꾸려 합니다:" >&2
+  echo "$violations" | sed 's/^/   /' >&2
+  echo >&2
+  echo "  마이그레이션은 append-only 입니다. 스키마를 바꾸려면 기존 파일을 고치지 말고" >&2
+  echo "  새 forward 마이그레이션(supabase/migrations/<timestamp>_*.sql)을 추가하세요." >&2
+  echo "  (적용된 파일을 고치면 운영 DB와 어긋나고 fresh DB 재구축이 깨집니다.)" >&2
+  echo >&2
+  echo "  정말 의도한 변경이면: git commit --no-verify" >&2
+  exit 1
+fi
+
+exit 0

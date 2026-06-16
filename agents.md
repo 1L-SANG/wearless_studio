@@ -18,6 +18,10 @@ Behavioral guidelines to reduce common LLM coding mistakes, plus project-specifi
 - **Planned backend (not built yet):** FastAPI on Railway · Supabase (Postgres/Auth) · Cloudflare R2 (object storage)
 - **AI pipeline:** see `documents/PRD.md`
 
+### Database migrations — APPEND-ONLY (hard rule)
+
+`supabase/migrations/*.sql` is an append-only history. **Never edit or delete a migration file that has already been committed/applied** — doing so makes the file disagree with the live DB (drift) and breaks fresh-DB rebuilds (this rule has been broken twice: `profiles.plan`, `jobs.status`). To change schema, **add a new forward migration** (`<timestamp>_*.sql`). A committed `pre-commit` hook (`.githooks/pre-commit`) enforces this; activate once per clone with `git config core.hooksPath .githooks`. Apply with `supabase db push --db-url "$DATABASE_URL"` (dry-run and apply as **separate** commands); prod applies need user approval. Verify physically with psycopg (`pg_get_constraintdef`, table/trigger existence) — don't trust the migration-history "up to date" alone.
+
 ## Commands & Testing
 
 - Use existing `package.json` scripts only. Do not invent commands; if a needed one isn't listed, inspect `package.json` first and explain what you found before running anything.
