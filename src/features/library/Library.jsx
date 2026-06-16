@@ -3,8 +3,8 @@
    Ported verbatim from reference/prototype/features/library.jsx.
    Only change: ES imports; onNew/onOpen wired to router + store.
    ============================================================= */
-import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Button, Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
@@ -15,16 +15,12 @@ export function Library() {
   const onNew = async () => { await startProject(); navigate('/create/input'); };
   const onOpen = (it) => navigate(`/editor/${it.id}`);
 
-  const [phase, setPhase] = useState('loading');
-  const [items, setItems] = useState([]);
-
-  const load = useCallback(() => {
-    setPhase('loading');
-    api.getLibrary({})
-      .then((list) => { setItems(list); setPhase('ready'); })
-      .catch(() => setPhase('error'));
-  }, []);
-  useEffect(() => { load(); }, [load]);
+  // 서버 상태는 TanStack Query 캐시로 (frontend_state_model §8-7).
+  const { data: items = [], isLoading, isError, refetch } = useQuery({
+    queryKey: ['library'],
+    queryFn: () => api.getLibrary({}),
+  });
+  const phase = isLoading ? 'loading' : isError ? 'error' : 'ready';
 
   const statusPill = (s) => s === 'done' ? <span className="pill pill-soft st"><span className="dot dot-done" />완료</span>
     : s === 'generating' ? <span className="pill pill-soft st"><span className="dot dot-busy" />생성 중</span>
@@ -52,7 +48,7 @@ export function Library() {
       {phase === 'loading' && (
         <div className="lib-grid">{Array.from({ length: 8 }).map((_, i) => <div key={i}><Skeleton h={240} r={12} /></div>)}</div>
       )}
-      {phase === 'error' && <div className="surface"><ErrorState desc="보관함을 불러오지 못했어요." onRetry={load} /></div>}
+      {phase === 'error' && <div className="surface"><ErrorState desc="보관함을 불러오지 못했어요." onRetry={refetch} /></div>}
       {phase === 'ready' && items.length === 0 && (
         <div className="surface"><EmptyState icon="library" title="아직 만든 상세페이지가 없어요"
           desc="상품 사진 몇 장이면 첫 상세페이지를 만들 수 있어요." action={<Button variant="primary" icon="plus" onClick={onNew}>첫 상세페이지 만들기</Button>} /></div>
@@ -61,7 +57,7 @@ export function Library() {
         <div className="lib-grid">
           {items.map((it) => (
             <div className="lib-card" key={it.id} onClick={() => onOpen(it)}>
-              <div className="lib-cover"><img src={it.cover} alt={it.title} /><div className="st">{statusPill(it.status)}</div></div>
+              <div className="lib-cover"><img src={it.cover || undefined} alt={it.title} /><div className="st">{statusPill(it.status)}</div></div>
               <div className="lib-info"><div className="t">{it.title}</div>
                 <div className="m"><span>블록 {it.blockCount}</span><span>·</span><span>{timeAgo(it)}</span></div></div>
             </div>

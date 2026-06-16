@@ -37,5 +37,20 @@ export async function http(path, { method = 'GET', body } = {}) {
 }
 
 export const httpAdapter = {
-  // 전환 예시 (Phase 1): async getAccount() { return http('/me'); },
+  // Phase 1-B 읽기·CRUD 스왑 (계약 §6 시그니처 동일). 미구현 함수는 mock 폴백.
+  // getProject 는 store 가 projectId 없이 호출(api.getProject()) → 시그니처 정리 후
+  // 플로우 단계에서 스왑. 지금 스왑하면 깨지므로 mock 유지.
+  async getAccount() {
+    return http('/v1/me/account');
+  },
+  async getLibrary() {
+    // mock 의 { forceEmpty, forceError } 옵션은 실서버에선 무의미 — 무시.
+    return http('/v1/projects?view=library');
+  },
+  async createProject() {
+    return http('/v1/projects', { method: 'POST' });
+  },
+  async patchProject(projectId, patch) {
+    return http(`/v1/projects/${projectId}`, { method: 'PATCH', body: patch });
+  },
 };
