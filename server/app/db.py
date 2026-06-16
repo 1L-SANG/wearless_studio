@@ -12,28 +12,35 @@ from contextlib import asynccontextmanager
 
 from fastapi import HTTPException, Request
 from psycopg.rows import dict_row
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import AsyncConnectionPool, PoolTimeout
+
+_DB_UNAVAILABLE = {"code": "db_unavailable", "message": "데이터베이스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요."}
 
 
 def create_pool(database_url: str) -> AsyncConnectionPool:
-    # open=False → lifespan에서 명시적 open (psycopg_pool 권장)
+    # open=False → lifespan에서 명시적 open (psycopg_pool 권장).
+    # timeout/connect_timeout: DB 불가 시 기본 30s 대기 대신 ~10s 안에 빨리 실패
+    # (정상 연결은 <1s라 false-positive 없음 — 오설정·DB 다운만 잡힌다).
     return AsyncConnectionPool(
         conninfo=database_url,
         min_size=1,
         max_size=10,
-        kwargs={"row_factory": dict_row},
+        timeout=10,  # pool.connection() 연결 획득 최대 대기 (기본 30)
+        kwargs={"row_factory": dict_row, "connect_timeout": 10},  # 각 연결 시도 상한(초)
         open=False,
     )
 
 
 @asynccontextmanager
 async def get_conn(request: Request):
-    """요청 핸들러용 커넥션 컨텍스트. 풀 미구성 시 503."""
+    """요청 핸들러용 커넥션 컨텍스트. 풀 미구성·연결 실패 시 명확한 503."""
     pool: AsyncConnectionPool | None = getattr(request.app.state, "pool", None)
     if pool is None:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "db_unavailable", "message": "데이터베이스 연결이 설정되지 않았습니다."},
-        )
-    async with pool.connection() as conn:
-        yield conn
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE)
+    try:
+        async with pool.connection() as conn:
+            yield conn
+    except PoolTimeout:
+        # 연결 획득 실패(오설정·DB 다운) → 30s hang+raw 500 대신 즉시 503 봉투.
+        # 쿼리 자체 오류는 여기서 안 잡고 일반 핸들러(500)로 보낸다.
+        raise HTTPException(status_code=503, detail=_DB_UNAVAILABLE) from None
