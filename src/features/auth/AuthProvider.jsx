@@ -15,14 +15,19 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let alive = true; // StrictMode 이중 마운트: cleanup 이후 state 갱신 방지
     supabase.auth.getSession().then(({ data }) => {
+      if (!alive) return;
       setSession(data.session);
       setLoading(false);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
     });
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      alive = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   const signIn = (provider) =>

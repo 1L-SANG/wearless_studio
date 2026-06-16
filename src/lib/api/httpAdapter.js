@@ -24,11 +24,13 @@ export async function http(path, { method = 'GET', body } = {}) {
   });
 
   if (!res.ok) {
-    let message = `API ${res.status} ${path}`;
+    // 계약 §6: 사용자에게 그대로 보여줄 한국어 message. envelope 없으면 한국어 기본값.
+    let message = '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.';
     try {
       const payload = await res.json();
       if (payload?.error?.message) message = payload.error.message;
-    } catch { /* 비 JSON 응답은 기본 메시지 유지 */ }
+    } catch { /* 비 JSON 응답 — 기본 메시지 유지 */ }
+    console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
     throw new Error(message);
   }
   return res.json();
