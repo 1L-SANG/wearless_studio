@@ -9,7 +9,7 @@
    Editor 는 app chrome 밖의 전체화면 surface (stub in phase 1).
    ============================================================= */
 import { Suspense, useEffect, useState } from 'react';
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
@@ -18,6 +18,10 @@ import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
 import { Generating } from '@/features/generating/Generating.jsx';
 import { LazyEditor } from '@/features/editor/lazyEditor.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { useAppStore } from '@/store/useAppStore.js';
+import { useToast } from '@/components/ui.jsx';
+import { loadDraft, clearDraft } from '@/lib/draftStore.js';
+import { syncDraftToBackend } from '@/lib/draftSync.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 
 /* 보호 라우트 — 세션 없으면 공개 입력 페이지로. 입력은 공개라 리다이렉트 루프 없음. */
@@ -27,12 +31,61 @@ function RequireAuth() {
   return <Outlet />;
 }
 
-/* '/' 복귀의 단일 리다이렉트 주인 — 로그인 직후 복귀 목표(wl_postLogin)가 있으면 그곳으로,
-   없으면 입력으로. 인덱스 라우트가 유일한 결정권자라 경쟁 navigate(레이스)가 없다.
-   StrictMode 안전: 플래그 읽기는 useState 초기화(순수), 삭제는 effect 에서(렌더/초기화 금지). */
+/* 비로그인 입력의 로그인 후 백엔드 sync — 한 번만 실행(StrictMode 이중 effect 에도
+   sync 가 두 번 안 나가게 모듈 프로미스로 단일화). draft 없으면 hadDraft:false. */
+let draftSyncPromise = null;
+function syncDraftOnce() {
+  // 모듈 스코프 — 같은 페이지 로드에서 단 한 번만 sync(StrictMode 이중 effect 가 공유).
+  // 리셋하지 않는다: 새 로그인은 풀페이지 리다이렉트라 모듈이 다시 평가돼 자연히 초기화됨.
+  if (!draftSyncPromise) {
+    draftSyncPromise = (async () => {
+      const draft = await loadDraft();
+      if (!draft) return { hadDraft: false };
+      const { projectId } = await syncDraftToBackend(draft);
+      await clearDraft();
+      return { hadDraft: true, projectId };
+    })();
+  }
+  return draftSyncPromise;
+}
+
+/* '/' 복귀의 단일 리다이렉트 주인 — 경쟁 navigate(레이스) 없음.
+   - 목표가 /create/mannequin(분석 CTA 로그인): 로딩 표시 → IndexedDB draft 복원 →
+     백엔드 sync → projectId store 반영 → draft 정리 → 마네킹. 실패 시 토스트+입력(draft 유지).
+   - 그 외: 목표(없으면 입력)로 바로 이동.
+   StrictMode 안전: 플래그 읽기는 useState 초기화(순수), 삭제·sync 는 effect 에서. */
 function RootRedirect() {
+  const { session } = useAuth();
+  const navigate = useNavigate();
+  const toast = useToast();
+  const setProjectId = useAppStore((s) => s.setProjectId);
   const [target] = useState(() => sessionStorage.getItem('wl_postLogin') || '/create/input');
-  useEffect(() => { sessionStorage.removeItem('wl_postLogin'); }, []);
+  const needsSync = target === '/create/mannequin';
+
+  useEffect(() => {
+    sessionStorage.removeItem('wl_postLogin');
+    if (!needsSync) return;
+    let alive = true;
+    // 로그인 미완료(취소/실패)면 sync 없이 입력으로 — draft 보존.
+    if (!session) { navigate('/create/input', { replace: true }); return; }
+    syncDraftOnce()
+      .then(({ hadDraft, projectId }) => {
+        if (!alive) return;
+        if (hadDraft && projectId) setProjectId(projectId);
+        navigate('/create/mannequin', { replace: true });
+      })
+      .catch(() => {
+        if (!alive) return;
+        toast.push('입력 동기화에 실패했어요. 다시 시도해주세요.', { icon: 'alertTri' });
+        navigate('/create/input', { replace: true }); // draft 미삭제 → 데이터 유지
+      });
+    return () => { alive = false; };
+    // 마운트 1회만 — 세션은 App 의 loading 게이트로 마운트 시점에 이미 확정되며,
+    // 토큰 갱신 등으로 effect 가 재실행돼 sync 가 다시 도는 것을 막는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (needsSync) return <div className="route-loading">입력과 사진을 동기화하는 중이에요…</div>;
   return <Navigate to={target} replace />;
 }
 

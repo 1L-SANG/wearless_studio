@@ -10,6 +10,7 @@ import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { saveProductDraft, loadDraft, clearDraft } from '@/lib/draftStore.js';
 import { Icon, Button, IconButton, Skeleton, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
@@ -169,15 +170,25 @@ export function ProductInput() {
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
 
-  // 분석 CTA — 마네킹부터는 로그인 필요. 미로그인이면 로그인 모달을 띄우고
-  // 로그인 후 마네킹으로 복귀(sessionStorage 플래그 → App RootRedirect).
-  // [의도된 한계] OAuth 풀페이지 리다이렉트로 mock 인메모리(업로드·분석 draft)가 리셋된다.
-  // 재입력은 없지만(마네킹 직행) 시드로 생성됨 — draft 보존은 서버 projectId+R2 단계 몫.
-  // 제품 결정(2026-06-16), TODO.md §1 "로그인 후 입력·분석 상태 보존" 참조.
-  const goToMannequin = () =>
-    session ? navigate('/create/mannequin') : openLogin('/create/mannequin');
+  // 분석 CTA — 마네킹부터는 로그인 필요. 미로그인이면 풀페이지 OAuth 리다이렉트로 사진
+  // (objectURL)·입력이 소실되므로, 리다이렉트 직전에 입력(상품정보 + 사진 blob)을
+  // IndexedDB 에 보관(페이지 살아있을 때만 blob 추출 가능)한 뒤 로그인 모달을 띄운다.
+  // 로그인 복귀 후 App RootRedirect 가 복원→백엔드 sync(해결책 A). 로그인 상태면 바로 마네킹.
+  const redirectingRef = useRef(false);
+  const goToMannequin = async () => {
+    if (session) { navigate('/create/mannequin'); return; }
+    if (redirectingRef.current) return; // 더블클릭 가드 — blob 추출 await 중 재진입 방지
+    redirectingRef.current = true;
+    try {
+      await saveProductDraft(product);
+      openLogin('/create/mannequin');
+    } finally {
+      redirectingRef.current = false;
+    }
+  };
 
   useEffect(() => {
+    let alive = true;
     (async () => {
       // 직접 URL 진입까지 포함해 projectId 를 보장한다 (frontend_state_model.md §4).
       // 읽기 전용 loadProject 만 사용 — 새 project 생성(reseed)은 TopNav·보관함의
@@ -185,9 +196,36 @@ export function ProductInput() {
       await useAppStore.getState().loadProject();
       const pid = useAppStore.getState().projectId;
       const [p, c] = await Promise.all([api.getProduct(pid), api.getCatalogs()]);
+      if (!alive) return;
+      setCatalogs(c);
+
+      // 로그인 실패/취소(구글·카카오 화면에서 뒤로가기 등)로 복귀하면 페이지가 새로고침돼
+      // 입력이 사라진다 → 리다이렉트 직전 저장해 둔 draft 가 있으면 복원한다(사진 blob→
+      // objectURL 재생성, imageId 매칭). 1회성: 복원 즉시 정리해 묵은/타인 draft 재복원·유실
+      // 을 막는다(재시도 시 CTA 가 다시 저장). 분석 결과는 draft 에 없어 사용자가 재실행한다.
+      const draft = await loadDraft().catch(() => null);
+      if (!alive) return;
+      if (draft?.product) {
+        await clearDraft().catch(() => {});
+        if (!alive) return;
+        const urlById = {};
+        for (const ph of draft.photos || []) {
+          try { urlById[ph.imageId] = URL.createObjectURL(ph.blob); } catch { /* skip */ }
+        }
+        setProduct({
+          ...draft.product,
+          colors: (draft.product.colors || []).map((col) => ({
+            ...col,
+            images: (col.images || []).map((im) => ({ ...im, src: urlById[im.id] || im.src })),
+          })),
+        });
+        return;
+      }
+
       const fresh = { ...p, name: '', colors: [{ ...p.colors[0], swatchId: undefined, images: [] }] };
-      setProduct(fresh); setCatalogs(c);
+      setProduct(fresh);
     })();
+    return () => { alive = false; };
   }, []);
 
   if (!product || !catalogs) return <div className="wizard">{doneBlocked && <DoneGuardModal />}<div className="surface"><Skeleton h={420} /></div></div>;

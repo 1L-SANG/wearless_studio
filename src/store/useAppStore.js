@@ -71,6 +71,8 @@ export const useAppStore = create((set, get) => ({
     });
     return p.id;
   },
+  /** 백엔드 sync(비로그인 draft) 결과의 projectId 반영 — 로그인 복귀 후 RootRedirect 가 호출. */
+  setProjectId(projectId) { set({ projectId }); },
 
   selectMannequin(id) {
     set({ selectedMannequinId: id });
