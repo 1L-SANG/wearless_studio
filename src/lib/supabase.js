@@ -10,16 +10,25 @@ import { createClient } from '@supabase/supabase-js';
 const url = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!url || !anonKey) {
-  // 빌드는 통과시키되 런타임에 원인이 분명하도록.
-  console.error('VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY 가 설정되지 않았습니다 (.env.local).');
+// 미설정 시 createClient 가 모듈 로드에서 throw → SPA 전체 화이트스크린이 된다.
+// 그걸 막기 위해 형식상 유효한 placeholder 로 생성하고, App 이 이 플래그로 설정 안내를 렌더.
+export const isSupabaseConfigured = Boolean(url && anonKey);
+
+if (!isSupabaseConfigured) {
+  console.error(
+    'Supabase 환경변수 미설정: VITE_SUPABASE_URL · VITE_SUPABASE_ANON_KEY (.env.local 또는 Vercel 환경변수).',
+  );
 }
 
-export const supabase = createClient(url, anonKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-    flowType: 'pkce',
+export const supabase = createClient(
+  url || 'https://placeholder.supabase.co',
+  anonKey || 'placeholder-anon-key',
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      flowType: 'pkce',
+    },
   },
-});
+);
