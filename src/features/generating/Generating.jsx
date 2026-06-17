@@ -10,6 +10,7 @@ import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { ProgressBar, Checklist } from '@/components/ui.jsx';
 import { PageHead } from '@/features/shell/shell.jsx';
+import { preloadEditor } from '@/features/editor/lazyEditor.js';
 
 export function Generating() {
   const navigate = useNavigate();
@@ -18,6 +19,7 @@ export function Generating() {
   const composition = ['후킹', '셀링포인트', '스타일링컷', '호리존컷', '제품컷'];
 
   useEffect(() => {
+    preloadEditor();
     // StrictMode 이중 실행 시 생성·차감이 두 번 나가지 않게, 소모 호출 전에 취소 확인
     let cancelled = false;
     (async () => {
