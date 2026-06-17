@@ -173,6 +173,20 @@ async def save_product(
     return row
 
 
+async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
+    """analysis 작업본을 payload jsonb 로 upsert (계약 §3.2). 소유권은 라우트 선검증."""
+    locked = bool(analysis.get("locked", False))
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "insert into analyses (project_id, payload, locked) values (%s, %s, %s) "
+            "on conflict (project_id) do update set payload = excluded.payload, "
+            "locked = excluded.locked "
+            "returning project_id::text as project_id, payload, locked",
+            (project_id, Json(analysis), locked),
+        )
+        return await cur.fetchone()
+
+
 async def patch_project(
     conn: AsyncConnection, user_id: str, project_id: str, patch: dict
 ) -> dict | None:

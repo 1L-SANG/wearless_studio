@@ -8,7 +8,7 @@ import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from . import repo
 from .auth import require_user
@@ -147,6 +147,25 @@ async def save_product(
         row = await repo.save_product(conn, project_id, user_id, fields)
         await conn.commit()
     return row
+
+
+# ---------- analysis (계약 §3.2) ----------
+
+
+@router.patch("/projects/{project_id}/analysis")
+async def save_analysis(
+    request: Request,
+    project_id: str,
+    analysis: dict = Body(...),
+    user_id: str = Depends(require_user),
+):
+    # analysis는 프론트 소유 shape → payload jsonb 패스스루 저장.
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        row = await repo.save_analysis(conn, project_id, analysis)
+        await conn.commit()
+    return {"projectId": row["project_id"], **(row["payload"] or {})}
 
 
 # ---------- 자산 업로드 (§3 presigned + finalize) ----------
