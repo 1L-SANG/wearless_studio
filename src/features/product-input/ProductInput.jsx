@@ -10,8 +10,7 @@ import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
-import { syncDraftToBackend } from '@/lib/draftSync.js';
+import { saveProductDraft, loadDraft, hasPendingDraft } from '@/lib/draftStore.js';
 import { Icon, Button, IconButton, Skeleton, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
@@ -167,37 +166,22 @@ export function ProductInput() {
   const [analysis, setAnalysis] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const projectId = useAppStore((s) => s.projectId);
-  const setProjectId = useAppStore((s) => s.setProjectId);
-  const [restoredDraft, setRestoredDraft] = useState(false); // 로그인 후 sync 실패로 입력만 복원됨 → CTA 에서 재동기화 필요
   const { session, openLogin } = useAuth();
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
 
-  // 분석 CTA — 마네킹부터는 로그인 필요. 미로그인이면 풀페이지 OAuth 리다이렉트로 사진
-  // (objectURL)·입력이 소실되므로, 리다이렉트 직전에 입력(상품정보 + 사진 blob)을
-  // IndexedDB 에 보관(페이지 살아있을 때만 blob 추출 가능)한 뒤 로그인 모달을 띄운다.
-  // 로그인 복귀 후 App RootRedirect 가 복원→백엔드 sync(해결책 A). 로그인 상태면 바로 마네킹.
+  // 분석 CTA — 마네킹부터는 로그인 필요. 로그인 상태면 바로 마네킹. 미로그인이면 풀페이지
+  // OAuth 리다이렉트로 입력(사진 objectURL 포함)이 소실되므로, 리다이렉트 직전에 입력+분석을
+  // IndexedDB 에 보관(페이지 살아있을 때만 blob 추출 가능)한 뒤 로그인 모달을 띄운다 → 복귀 후
+  // 입력 화면에 돌아오면 ProductInput 이 복원한다. (사진의 백엔드 동기화는 보류 — App 주석 참조.)
   const redirectingRef = useRef(false);
   const goToMannequin = async () => {
-    if (redirectingRef.current) return; // 더블클릭/재진입 가드
+    if (session) { navigate('/create/mannequin'); return; }
+    if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
     redirectingRef.current = true;
     try {
-      if (!session) {
-        // 미로그인: 리다이렉트 직전 입력을 IndexedDB 에 보관(페이지 살아있을 때) 후 로그인 모달.
-        await saveProductDraft(product);
-        openLogin('/create/mannequin');
-        return;
-      }
-      if (restoredDraft) {
-        // 로그인 후 sync 실패로 입력만 복원된 상태 — 현재 product 로 백엔드에 재동기화(재시도).
-        await saveProductDraft(product);                        // 편집 반영 + 재시도/새로고침 대비 보존
-        const { projectId: pid } = await syncDraftToBackend(await loadDraft());
-        setProjectId(pid);
-        await clearDraft();
-      }
-      navigate('/create/mannequin');
-    } catch {
-      toast.push('동기화에 실패했어요. 다시 시도해주세요.', { icon: 'alertTri' });
+      await saveProductDraft(product, analysis);
+      openLogin('/create/mannequin');
     } finally {
       redirectingRef.current = false;
     }
@@ -216,16 +200,13 @@ export function ProductInput() {
       setCatalogs(c);
 
       // 로그인 실패/취소/브라우저 뒤로가기(카카오→←뒤로→구글)·새로고침으로 입력 화면에 돌아오면
-      // 페이지가 새로고침돼 입력이 사라진다 → 리다이렉트 직전 저장해 둔 draft 를 복원한다
+      // 페이지가 새로고침돼 입력이 사라진다 → 리다이렉트 직전 저장해 둔 draft(입력+분석)를 복원한다
       // (사진 blob→objectURL 재생성, imageId 매칭). 단 '이 탭 세션'에 저장한 경우만
       // (hasPendingDraft=sessionStorage) — 같은 탭은 복원되고, 공용 브라우저의 다른 사용자
-      // (다른 탭/세션)에겐 복원되지 않아 입력이 누출되지 않는다. draft 는 sync 성공·새 제작·
-      // 로그아웃 때 정리되고, 분석 결과는 draft 에 없어 사용자가 재실행한다.
+      // (다른 탭/세션)에겐 복원되지 않아 입력이 누출되지 않는다. draft 는 새 제작·로그아웃 때 정리.
       const draft = hasPendingDraft() ? await loadDraft().catch(() => null) : null;
       if (!alive) return;
       if (draft?.product) {
-        // draft 는 지우지 않는다 — 백엔드 sync 성공 전까지 '미동기화 입력'의 단일 기록으로 유지.
-        // (sync 성공 시 RootRedirect 또는 아래 CTA 재동기화가 clearDraft 한다.)
         const urlById = {};
         for (const ph of draft.photos || []) {
           try { urlById[ph.imageId] = URL.createObjectURL(ph.blob); } catch { /* skip */ }
@@ -237,7 +218,8 @@ export function ProductInput() {
             images: (col.images || []).map((im) => ({ ...im, src: urlById[im.id] || im.src })),
           })),
         });
-        setRestoredDraft(true);
+        // 분석 결과도 복원 → 재실행 없이 분석 폼(done)으로 바로. 없으면 입력 단계 유지.
+        if (draft.analysis) { setAnalysis(draft.analysis); setPhase('done'); }
         return;
       }
 

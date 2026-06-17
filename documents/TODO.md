@@ -51,7 +51,12 @@
 
 > 입력·분석을 로그인 없이 공개하고, 분석 CTA `의류정보 확정 완료`에서 소셜 로그인(구글·카카오) 모달 게이트를 띄운다. 마네킹부터 로그인 필요. (`App.jsx` RequireAuth/PostLoginRedirect · `AuthProvider`/`Login.jsx` LoginGate · `ProductInput.jsx` CTA 게이트 · `shell.jsx` TopNav 프로필)
 
-- 🆕 **로그인 후 입력·분석 상태 보존 (현 mock 한계)** — 분석 CTA 로그인 시 OAuth 풀페이지 리다이렉트로 새로고침 → 인메모리 store·mock DB 리셋 → 업로드 사진(blob URL)·분석 작업본 소실, 복귀 후 마네킹이 **시드 상품**으로 생성(사용자 업로드 미반영). 재입력 프롬프트는 없음(마네킹 직행). 해결: product/analysis/이미지를 서버(projectId + R2)에 저장하면 풀페이지 리다이렉트에도 데이터 유지. (codex 점검 근거: 같은 탭 OAuth 왕복 + 인메모리 리셋) **→ Phase 1~ (projects CRUD · 이미지 업로드 서버화)**
+- 🔶 **로그인 후 입력·분석 보존 — 로컬 복원 구현됨 / 백엔드 sync 보류(Option B)** — 분석 CTA 직전 입력+분석+사진을 IndexedDB 에 저장(`draftStore.saveProductDraft(product, analysis)`), 로그인 복귀·브라우저 뒤로가기(카카오→←뒤로)·취소·새로고침 시 ProductInput 이 **복원**한다(사진 blob→objectURL 재생성, `hasPendingDraft` **세션-스코프(sessionStorage)** 게이팅으로 공용 브라우저 타 사용자 누출 차단, 새 제작·로그아웃 시 정리). **단 로그인 성공 시 마네킹으로 즉시 이동하고 백엔드 sync 는 안 한다(Option B).** 이유: ① 원격(Railway) **R2 미설정**으로 `/v1/assets/upload-url` 503 실패, ② 업로드가 사진당 3콜 **순차**라 ~10초, ③ 마네킹 등 하위가 아직 **mock** 이라 sync 해도 결과 무변(즉 지금 sync 는 비용만 큼). **→ 실사용(실서버가 사진을 실제로 쓰는) 단계에 아래 Option A 적용:**
+  - **(A-1) Railway 에 R2 env 설정** — `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`·`R2_PUBLIC_BASE`. 없으면 `app.state.r2=None`→503 (`server/app/main.py`·`config.py`·`routes.py` `_r2()`).
+  - **(A-2) `src/lib/draftSync.js` 업로드 병렬화** — `for…await uploadPhoto`(line 56-58) → `Promise.all`. ~10초 → 가장 느린 1장(~2-3초).
+  - **(A-3) 로그인 복귀 sync 재활성** — `src/App.jsx` RootRedirect 가 즉시 이동(현재) 대신 `syncDraftToBackend(draft)`→`setProjectId`(store에 유지됨)→마네킹. 로딩은 마네킹 생성 로딩과 **겹쳐 백그라운드** 처리해 별도 대기창 없게.
+  - **(A-4) sync 에 분석 결과 포함** — 현재 `syncDraftToBackend` 는 product+photos 만 올림. `draft.analysis` 도 백엔드에 저장하도록 추가(`saveAnalysis` 경로).
+  - **(A-5) 재활성 시 재검증** — 부분 실패(프로젝트 생성 후 업로드 실패) 시 빈 프로젝트 중복 생성 방지(`draftSync.js` 주석의 MVP 한계). 멱등/정리 보장.
 - 🆕 **프로필 메뉴 목적지 페이지** — TopNav 프로필 드롭다운(`shell.jsx` ProfileMenu)은 헤더(아바타·이름·이메일) + `크레딧 관리`(현재 "준비 중" 토스트) + 로그아웃(동작)만. 결제/요금제 백엔드 확정 시 실제 페이지 + 필요 시 `요금제·결제` 항목 추가. 정책 숫자는 §2(크레딧 단가·플랜) 대기. **→ 결제 백엔드 단계**
 - 🆕 **소셜 로그인 OAuth 왕복 라이브 검증 + localhost Redirect URL** — 게이트 흐름(구글/카카오 → 복귀 → `/create/mannequin` 직행; `sessionStorage 'wl_postLogin'` + `App.PostLoginRedirect`)은 빌드/코드 검증만 됨. ⚠️ **`http://localhost:5173` 이 Supabase Auth → URL Configuration → Redirect URLs(+ Site URL)에 없으면 복귀 시 세션이 안 생겨 프로필 미표시·입력 페이지로 복귀**한다(2026-06-16 로컬 테스트에서 재현). 배포 도메인 외 localhost 도 allowlist 필요. 카카오 인앱 브라우저/모바일 포함 1회 수동 QA. **→ 독립 (환경 설정 · 수동 QA)**
 

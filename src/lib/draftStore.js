@@ -46,7 +46,7 @@ async function withStore(mode, run) {
 
 /** ProductInput 의 product 에서 사진 blob 을 추출해 draft 를 IndexedDB 에 저장한다.
     blob 추출(fetch(objectURL))은 페이지가 살아있을 때만 가능 → 리다이렉트 직전에 호출. */
-export async function saveProductDraft(product) {
+export async function saveProductDraft(product, analysis = null) {
   const photos = [];
   for (const color of product?.colors || []) {
     for (const img of color.images || []) {
@@ -65,7 +65,7 @@ export async function saveProductDraft(product) {
       }
     }
   }
-  await withStore('readwrite', (s) => s.put({ product, photos }, KEY));
+  await withStore('readwrite', (s) => s.put({ product, analysis, photos }, KEY));
   // 이 탭 세션에 '미동기화 입력 있음' 표시 — 복원은 이 플래그가 있을 때만(=같은 세션) 한다.
   // sessionStorage 라 탭을 닫으면 사라져, 공용 브라우저의 다른 사용자에겐 복원되지 않는다.
   sessionStorage.setItem(PENDING_KEY, '1');
