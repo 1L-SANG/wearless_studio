@@ -54,6 +54,13 @@ function syncDraftOnce() {
      백엔드 sync → projectId store 반영 → draft 정리 → 마네킹. 실패 시 토스트+입력(draft 유지).
    - 그 외: 목표(없으면 입력)로 바로 이동.
    StrictMode 안전: 플래그 읽기는 useState 초기화(순수), 삭제·sync 는 effect 에서. */
+/* '새 제작'(startProject → projectGeneration++)이면 같은 /create/input 라우트라도 ProductInput 을
+   remount 해 폼·복원상태를 초기화한다 — 복구로 복원된 묵은 입력이 새 제작에 남지 않게. */
+function ProductInputRoute() {
+  const generation = useAppStore((s) => s.projectGeneration);
+  return <ProductInput key={generation} />;
+}
+
 function RootRedirect() {
   const { session } = useAuth();
   const navigate = useNavigate();
@@ -66,18 +73,26 @@ function RootRedirect() {
     sessionStorage.removeItem('wl_postLogin');
     if (!needsSync) return;
     let alive = true;
-    // 로그인 미완료(취소/실패)면 sync 없이 입력으로 — draft 보존.
-    if (!session) { navigate('/create/input', { replace: true }); return; }
+    // 로그인 미완료(취소/실패)면 sync 없이 입력으로 — draft 보존 + 복원 마커(아래 참조).
+    // wl_recoverDraft: '로그인 복귀 직후라 입력 복원 대상'임을 ProductInput 에 알리는 1회성 마커.
+    // 이게 있을 때만 복원하므로, '새 제작'·직접 진입이 묵은 draft 로 덮이지 않는다.
+    if (!session) {
+      sessionStorage.setItem('wl_recoverDraft', '1');
+      navigate('/create/input', { replace: true });
+      return;
+    }
     syncDraftOnce()
       .then(({ hadDraft, projectId }) => {
         if (!alive) return;
         if (hadDraft && projectId) setProjectId(projectId);
+        sessionStorage.removeItem('wl_recoverDraft'); // 직전 취소 시도가 남긴 마커 정리
         navigate('/create/mannequin', { replace: true });
       })
       .catch(() => {
         if (!alive) return;
         toast.push('입력 동기화에 실패했어요. 다시 시도해주세요.', { icon: 'alertTri' });
-        navigate('/create/input', { replace: true }); // draft 미삭제 → 데이터 유지
+        sessionStorage.setItem('wl_recoverDraft', '1'); // 입력 복원 마커 (draft 는 유지)
+        navigate('/create/input', { replace: true });
       });
     return () => { alive = false; };
     // 마운트 1회만 — 세션은 App 의 loading 게이트로 마운트 시점에 이미 확정되며,
@@ -116,7 +131,7 @@ export default function App() {
           <Route path="create">
             <Route index element={<Navigate to="/create/input" replace />} />
             {/* 입력·분석은 공개 */}
-            <Route path="input" element={<ProductInput />} />
+            <Route path="input" element={<ProductInputRoute />} />
             {/* 마네킹 이후 단계는 로그인 필요 */}
             <Route element={<RequireAuth />}>
               <Route path="mannequin" element={<Mannequin />} />

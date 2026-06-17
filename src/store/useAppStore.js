@@ -12,6 +12,7 @@
    ============================================================= */
 import { create } from 'zustand';
 import { api } from '@/lib/api/index.js';
+import { clearDraft } from '@/lib/draftStore.js';
 
 const initialFlow = {
   projectId: null,
@@ -51,11 +52,18 @@ export const useAppStore = create((set, get) => ({
 
   /* ---- current project + flow selections ---- */
   ...initialFlow,
+  // 명시적 '새 제작' 횟수 — ProductInput 을 이 값으로 key 해서, 같은 /create/input 라우트에서
+  // 새 제작해도 컴포넌트를 remount(폼·복원상태 초기화)한다. loadProject·retry 의 projectId
+  // 변경에는 바뀌지 않아 일반 흐름엔 영향 없음.
+  projectGeneration: 0,
 
   /** 새 제작 시작 — 새 project 를 만들고 플로우 선택값을 초기화 (구 resetFlow). */
   async startProject() {
     const project = await api.createProject();
-    set({ ...initialFlow, projectId: project.id });
+    // 명시적 새 제작 — 미동기화 입력 draft·복원 마커를 폐기해 묵은 입력이 복원되지 않게 한다.
+    await clearDraft().catch(() => {});
+    sessionStorage.removeItem('wl_recoverDraft');
+    set({ ...initialFlow, projectId: project.id, projectGeneration: get().projectGeneration + 1 });
     return project;
   },
   /** 새로고침 등으로 스토어가 비었을 때 서버의 project 에서 선택값 복원. */

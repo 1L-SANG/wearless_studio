@@ -11,6 +11,7 @@ import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { saveProductDraft, loadDraft, clearDraft } from '@/lib/draftStore.js';
+import { syncDraftToBackend } from '@/lib/draftSync.js';
 import { Icon, Button, IconButton, Skeleton, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
@@ -166,6 +167,8 @@ export function ProductInput() {
   const [analysis, setAnalysis] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const projectId = useAppStore((s) => s.projectId);
+  const setProjectId = useAppStore((s) => s.setProjectId);
+  const [restoredDraft, setRestoredDraft] = useState(false); // 로그인 후 sync 실패로 입력만 복원됨 → CTA 에서 재동기화 필요
   const { session, openLogin } = useAuth();
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
@@ -176,12 +179,26 @@ export function ProductInput() {
   // 로그인 복귀 후 App RootRedirect 가 복원→백엔드 sync(해결책 A). 로그인 상태면 바로 마네킹.
   const redirectingRef = useRef(false);
   const goToMannequin = async () => {
-    if (session) { navigate('/create/mannequin'); return; }
-    if (redirectingRef.current) return; // 더블클릭 가드 — blob 추출 await 중 재진입 방지
+    if (redirectingRef.current) return; // 더블클릭/재진입 가드
     redirectingRef.current = true;
     try {
-      await saveProductDraft(product);
-      openLogin('/create/mannequin');
+      if (!session) {
+        // 미로그인: 리다이렉트 직전 입력을 IndexedDB 에 보관(페이지 살아있을 때) 후 로그인 모달.
+        await saveProductDraft(product);
+        openLogin('/create/mannequin');
+        return;
+      }
+      if (restoredDraft) {
+        // 로그인 후 sync 실패로 입력만 복원된 상태 — 현재 product 로 백엔드에 재동기화(재시도).
+        await saveProductDraft(product);                        // 편집 반영 + 재시도/새로고침 대비 보존
+        const { projectId: pid } = await syncDraftToBackend(await loadDraft());
+        setProjectId(pid);
+        await clearDraft();
+        sessionStorage.removeItem('wl_recoverDraft'); // 복구 완료 — 마커 정리
+      }
+      navigate('/create/mannequin');
+    } catch {
+      toast.push('동기화에 실패했어요. 다시 시도해주세요.', { icon: 'alertTri' });
     } finally {
       redirectingRef.current = false;
     }
@@ -203,11 +220,16 @@ export function ProductInput() {
       // 입력이 사라진다 → 리다이렉트 직전 저장해 둔 draft 가 있으면 복원한다(사진 blob→
       // objectURL 재생성, imageId 매칭). 1회성: 복원 즉시 정리해 묵은/타인 draft 재복원·유실
       // 을 막는다(재시도 시 CTA 가 다시 저장). 분석 결과는 draft 에 없어 사용자가 재실행한다.
-      const draft = await loadDraft().catch(() => null);
+      // 로그인 복귀 실패/취소 직후에만 복원한다(RootRedirect 가 'wl_recoverDraft' 마커를 심음).
+      // 마커가 없으면 — '새 제작'·직접 진입·일반 방문 — 묵은 draft 를 무시하고 fresh 로 시작.
+      // 마커는 여기서 소비하지 않는다 — 복구 중 재마운트(새로고침 등)도 복원되게. 정리는
+      // sync 성공(아래 CTA·RootRedirect) 또는 새 제작(startProject) 때만 한다.
+      const recover = sessionStorage.getItem('wl_recoverDraft');
+      const draft = recover ? await loadDraft().catch(() => null) : null;
       if (!alive) return;
       if (draft?.product) {
-        await clearDraft().catch(() => {});
-        if (!alive) return;
+        // draft 는 지우지 않는다 — 백엔드 sync 성공 전까지 '미동기화 입력'의 단일 기록으로 유지.
+        // (sync 성공 시 RootRedirect 또는 아래 CTA 재동기화가 clearDraft 한다.)
         const urlById = {};
         for (const ph of draft.photos || []) {
           try { urlById[ph.imageId] = URL.createObjectURL(ph.blob); } catch { /* skip */ }
@@ -219,6 +241,7 @@ export function ProductInput() {
             images: (col.images || []).map((im) => ({ ...im, src: urlById[im.id] || im.src })),
           })),
         });
+        setRestoredDraft(true);
         return;
       }
 
