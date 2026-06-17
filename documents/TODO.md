@@ -57,6 +57,7 @@
   - **(A-3) 로그인 복귀 sync 재활성** — `src/App.jsx` RootRedirect 가 즉시 이동(현재) 대신 `syncDraftToBackend(draft)`→`setProjectId`(store에 유지됨)→마네킹. 로딩은 마네킹 생성 로딩과 **겹쳐 백그라운드** 처리해 별도 대기창 없게.
   - **(A-4) sync 에 분석 결과 포함** — 현재 `syncDraftToBackend` 는 product+photos 만 올림. `draft.analysis` 도 백엔드에 저장하도록 추가(`saveAnalysis` 경로).
   - **(A-5) 재활성 시 재검증** — 부분 실패(프로젝트 생성 후 업로드 실패) 시 빈 프로젝트 중복 생성 방지(`draftSync.js` 주석의 MVP 한계). 멱등/정리 보장.
+  - **(A-6) sync/생성 전 필수 입력 검증** — 현재 '정면 사진 필수' 가드는 *입력 복원 경로*(ProductInput)에만 적용되고, **로그인 성공→마네킹 직행 경로는 draft 를 안 쓰므로 우회**된다(지금은 sync off·마네킹 mock 이라 무해). sync 재활성 시 **sync/생성 직전에 정면 등 필수값을 검증**해 frontless draft 가 실 생성에 들어가지 않게. (Codex: "guard bypassed on successful login")
 - 🆕 **프로필 메뉴 목적지 페이지** — TopNav 프로필 드롭다운(`shell.jsx` ProfileMenu)은 헤더(아바타·이름·이메일) + `크레딧 관리`(현재 "준비 중" 토스트) + 로그아웃(동작)만. 결제/요금제 백엔드 확정 시 실제 페이지 + 필요 시 `요금제·결제` 항목 추가. 정책 숫자는 §2(크레딧 단가·플랜) 대기. **→ 결제 백엔드 단계**
 - 🆕 **소셜 로그인 OAuth 왕복 라이브 검증 + localhost Redirect URL** — 게이트 흐름(구글/카카오 → 복귀 → `/create/mannequin` 직행; `sessionStorage 'wl_postLogin'` + `App.PostLoginRedirect`)은 빌드/코드 검증만 됨. ⚠️ **`http://localhost:5173` 이 Supabase Auth → URL Configuration → Redirect URLs(+ Site URL)에 없으면 복귀 시 세션이 안 생겨 프로필 미표시·입력 페이지로 복귀**한다(2026-06-16 로컬 테스트에서 재현). 배포 도메인 외 localhost 도 allowlist 필요. 카카오 인앱 브라우저/모바일 포함 1회 수동 QA. **→ 독립 (환경 설정 · 수동 QA)**
 
