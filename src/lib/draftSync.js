@@ -63,10 +63,22 @@ export async function syncDraftToBackend(draft, { projectId: existing } = {}) {
     const urlByImageId = Object.fromEntries(pairs);
 
     const product = withUploadedSrcs(draft.product ?? {}, urlByImageId);
-    await http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: product });
 
-    if (draft.analysis) {
-      await http(`/v1/projects/${projectId}/analysis`, { method: 'PATCH', body: draft.analysis });
+    // 계약 §3.2/TODO §1: clothingType·measurements·measurementsUnknown 는 Product 단일 소유.
+    // 분석 폼이 이들을 analysis 작업본에 둘 수 있으니(과도기) → product 로 미러(현재값 반영)하고
+    // analysis payload 에선 제거한다(analysis 에 stale product 상태가 박히는 것 방지).
+    let analysis = draft.analysis;
+    if (analysis) {
+      analysis = { ...analysis };
+      for (const k of ['clothingType', 'measurements', 'measurementsUnknown']) {
+        if (analysis[k] != null) product[k] = analysis[k];
+        delete analysis[k];
+      }
+    }
+
+    await http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: product });
+    if (analysis) {
+      await http(`/v1/projects/${projectId}/analysis`, { method: 'PATCH', body: analysis });
     }
 
     return { projectId };
