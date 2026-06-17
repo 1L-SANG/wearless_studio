@@ -12,6 +12,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase.js';
 import { LoginGate } from './Login.jsx';
+import { clearDraft } from '@/lib/draftStore.js';
 
 const AuthCtx = createContext(null);
 let oauthExchangeCode = null;
@@ -76,7 +77,8 @@ export function AuthProvider({ children }) {
       options: { redirectTo: window.location.origin },
     });
 
-  const signOut = () => { sessionStorage.removeItem('wl_postLogin'); return supabase.auth.signOut(); };
+  // 로그아웃 시 미동기화 draft 도 정리 — 공용 브라우저에서 다음 사용자에게 입력이 복원되지 않게.
+  const signOut = () => { sessionStorage.removeItem('wl_postLogin'); clearDraft(); return supabase.auth.signOut(); };
 
   // redirect: 로그인 성공 후 복귀할 앱 내 경로(예: '/create/mannequin'). 없으면 origin 유지.
   // 복귀 플래그는 여기서 단일 관리한다 — 이번 로그인 시도의 의도대로 set/clear 해서,

@@ -10,7 +10,7 @@ import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { saveProductDraft, loadDraft, clearDraft } from '@/lib/draftStore.js';
+import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
 import { syncDraftToBackend } from '@/lib/draftSync.js';
 import { Icon, Button, IconButton, Skeleton, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
@@ -194,7 +194,6 @@ export function ProductInput() {
         const { projectId: pid } = await syncDraftToBackend(await loadDraft());
         setProjectId(pid);
         await clearDraft();
-        sessionStorage.removeItem('wl_recoverDraft'); // 복구 완료 — 마커 정리
       }
       navigate('/create/mannequin');
     } catch {
@@ -216,16 +215,13 @@ export function ProductInput() {
       if (!alive) return;
       setCatalogs(c);
 
-      // 로그인 실패/취소(구글·카카오 화면에서 뒤로가기 등)로 복귀하면 페이지가 새로고침돼
-      // 입력이 사라진다 → 리다이렉트 직전 저장해 둔 draft 가 있으면 복원한다(사진 blob→
-      // objectURL 재생성, imageId 매칭). 1회성: 복원 즉시 정리해 묵은/타인 draft 재복원·유실
-      // 을 막는다(재시도 시 CTA 가 다시 저장). 분석 결과는 draft 에 없어 사용자가 재실행한다.
-      // 로그인 복귀 실패/취소 직후에만 복원한다(RootRedirect 가 'wl_recoverDraft' 마커를 심음).
-      // 마커가 없으면 — '새 제작'·직접 진입·일반 방문 — 묵은 draft 를 무시하고 fresh 로 시작.
-      // 마커는 여기서 소비하지 않는다 — 복구 중 재마운트(새로고침 등)도 복원되게. 정리는
-      // sync 성공(아래 CTA·RootRedirect) 또는 새 제작(startProject) 때만 한다.
-      const recover = sessionStorage.getItem('wl_recoverDraft');
-      const draft = recover ? await loadDraft().catch(() => null) : null;
+      // 로그인 실패/취소/브라우저 뒤로가기(카카오→←뒤로→구글)·새로고침으로 입력 화면에 돌아오면
+      // 페이지가 새로고침돼 입력이 사라진다 → 리다이렉트 직전 저장해 둔 draft 를 복원한다
+      // (사진 blob→objectURL 재생성, imageId 매칭). 단 '이 탭 세션'에 저장한 경우만
+      // (hasPendingDraft=sessionStorage) — 같은 탭은 복원되고, 공용 브라우저의 다른 사용자
+      // (다른 탭/세션)에겐 복원되지 않아 입력이 누출되지 않는다. draft 는 sync 성공·새 제작·
+      // 로그아웃 때 정리되고, 분석 결과는 draft 에 없어 사용자가 재실행한다.
+      const draft = hasPendingDraft() ? await loadDraft().catch(() => null) : null;
       if (!alive) return;
       if (draft?.product) {
         // draft 는 지우지 않는다 — 백엔드 sync 성공 전까지 '미동기화 입력'의 단일 기록으로 유지.

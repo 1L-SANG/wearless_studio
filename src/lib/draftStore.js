@@ -14,6 +14,7 @@ const DB_NAME = 'wearless-draft';
 const DB_VERSION = 1;
 const STORE = 'draft';
 const KEY = 'current';
+const PENDING_KEY = 'wl_draftPending'; // sessionStorage(탭 세션 한정) — 미동기화 draft 존재 표시
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -65,6 +66,9 @@ export async function saveProductDraft(product) {
     }
   }
   await withStore('readwrite', (s) => s.put({ product, photos }, KEY));
+  // 이 탭 세션에 '미동기화 입력 있음' 표시 — 복원은 이 플래그가 있을 때만(=같은 세션) 한다.
+  // sessionStorage 라 탭을 닫으면 사라져, 공용 브라우저의 다른 사용자에겐 복원되지 않는다.
+  sessionStorage.setItem(PENDING_KEY, '1');
 }
 
 /** 저장된 draft 반환(없으면 null). photos[].blob 은 Blob 으로 복원된다. */
@@ -76,4 +80,10 @@ export async function loadDraft() {
 /** draft 삭제 — sync 성공 후 정리. */
 export async function clearDraft() {
   await withStore('readwrite', (s) => s.delete(KEY));
+  sessionStorage.removeItem(PENDING_KEY);
+}
+
+/** 이 탭 세션에 미동기화 draft 가 있는지 — 복원 게이팅용. */
+export function hasPendingDraft() {
+  return sessionStorage.getItem(PENDING_KEY) === '1';
 }

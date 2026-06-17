@@ -60,9 +60,9 @@ export const useAppStore = create((set, get) => ({
   /** 새 제작 시작 — 새 project 를 만들고 플로우 선택값을 초기화 (구 resetFlow). */
   async startProject() {
     const project = await api.createProject();
-    // 명시적 새 제작 — 미동기화 입력 draft·복원 마커를 폐기해 묵은 입력이 복원되지 않게 한다.
+    // 명시적 새 제작 — 미동기화 draft 를 폐기하고(묵은 입력 복원 방지), projectGeneration 을
+    // 올려 ProductInput 을 remount(폼 초기화)한다.
     await clearDraft().catch(() => {});
-    sessionStorage.removeItem('wl_recoverDraft');
     set({ ...initialFlow, projectId: project.id, projectGeneration: get().projectGeneration + 1 });
     return project;
   },

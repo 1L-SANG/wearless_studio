@@ -73,11 +73,9 @@ function RootRedirect() {
     sessionStorage.removeItem('wl_postLogin');
     if (!needsSync) return;
     let alive = true;
-    // 로그인 미완료(취소/실패)면 sync 없이 입력으로 — draft 보존 + 복원 마커(아래 참조).
-    // wl_recoverDraft: '로그인 복귀 직후라 입력 복원 대상'임을 ProductInput 에 알리는 1회성 마커.
-    // 이게 있을 때만 복원하므로, '새 제작'·직접 진입이 묵은 draft 로 덮이지 않는다.
+    // 로그인 미완료(취소/실패)면 sync 없이 입력으로 — draft 는 IndexedDB 에 남아 있고,
+    // ProductInput 이 마운트 시 draft 가 있으면 복원한다(브라우저 뒤로가기·새로고침 포함).
     if (!session) {
-      sessionStorage.setItem('wl_recoverDraft', '1');
       navigate('/create/input', { replace: true });
       return;
     }
@@ -85,14 +83,12 @@ function RootRedirect() {
       .then(({ hadDraft, projectId }) => {
         if (!alive) return;
         if (hadDraft && projectId) setProjectId(projectId);
-        sessionStorage.removeItem('wl_recoverDraft'); // 직전 취소 시도가 남긴 마커 정리
         navigate('/create/mannequin', { replace: true });
       })
       .catch(() => {
         if (!alive) return;
         toast.push('입력 동기화에 실패했어요. 다시 시도해주세요.', { icon: 'alertTri' });
-        sessionStorage.setItem('wl_recoverDraft', '1'); // 입력 복원 마커 (draft 는 유지)
-        navigate('/create/input', { replace: true });
+        navigate('/create/input', { replace: true }); // draft 유지 → 입력 화면에서 복원
       });
     return () => { alive = false; };
     // 마운트 1회만 — 세션은 App 의 loading 게이트로 마운트 시점에 이미 확정되며,
