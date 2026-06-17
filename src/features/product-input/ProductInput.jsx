@@ -212,15 +212,19 @@ export function ProductInput() {
         for (const ph of draft.photos || []) {
           try { urlById[ph.imageId] = URL.createObjectURL(ph.blob); } catch { /* skip */ }
         }
-        setProduct({
+        const restored = {
           ...draft.product,
           colors: (draft.product.colors || []).map((col) => ({
             ...col,
             images: (col.images || []).map((im) => ({ ...im, src: urlById[im.id] || im.src })),
           })),
-        });
-        // 분석 결과도 복원 → 재실행 없이 분석 폼(done)으로 바로. 없으면 입력 단계 유지.
-        if (draft.analysis) { setAnalysis(draft.analysis); setPhase('done'); }
+        };
+        setProduct(restored);
+        // 분석 결과 복원 → 분석 폼(done)으로 바로. 단 정면 사진이 추출 실패로 빠졌으면 입력
+        // 단계로 둬서 '정면 필수' 검증이 재업로드를 강제하게 한다(검증 우회 방지).
+        // 정면 판정은 product 메타데이터가 아니라 실제 저장된 photo blob(photos[]) 기준 — 더 안전.
+        const restoredHasFront = (draft.photos || []).some((p) => p.slot === 'Front');
+        if (draft.analysis && restoredHasFront) { setAnalysis(draft.analysis); setPhase('done'); }
         return;
       }
 
