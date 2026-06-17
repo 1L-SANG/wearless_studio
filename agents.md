@@ -113,3 +113,15 @@ Use `/grill-with-docs` to clarify terminology, propse updates `CONTEXT.md`, and 
 When the mode is auto, change to accept mode.  
 
 Do not automatically run it for every task. For small, obvious, or purely mechanical changes, proceed normally.
+
+---
+# 작업 완료 요약 (비개발자용) · End-of-work summary
+
+작업을 완료하거나 의미 있는 단위가 끝나면, 응답 **맨 마지막에** 비개발자도 한눈에 이해할 수 있는 짧고 명확한 요약을 붙인다. 기술 용어는 풀어 쓰고(필요하면 비유), 핵심만 간략히. 다음을 담는다:
+
+- **무엇을 했나** — 구현/수정한 것 (한두 줄).
+- **무슨 문제를 어떻게 풀었나** — 문제와 해결을 쉬운 말로.
+- **결정할 것** — 사용자가 골라야 할 선택지가 있으면 추천안과 함께. 없으면 생략.
+- **다음** — 이어서 할 일이 있으면 한 줄.
+
+길게 늘어놓지 말 것. 단순·기계적 변경이거나 단순 질문 답변만 한 경우엔 요약을 생략해도 된다.
