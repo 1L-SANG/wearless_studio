@@ -180,7 +180,8 @@ export function ProductInput() {
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
     redirectingRef.current = true;
     try {
-      await saveProductDraft(product, analysis);
+      const { failed } = await saveProductDraft(product, analysis);
+      if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri' });
       openLogin('/create/mannequin');
     } finally {
       redirectingRef.current = false;
