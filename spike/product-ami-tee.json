@@ -1,0 +1,11 @@
+{
+  "name": "AMI 반팔 티셔츠",
+  "color": "파랑",
+  "clothingType": "상의",
+  "subCategory": "티셔츠",
+  "targetGender": "여성",
+  "fit": "세미오버핏",
+  "materials": ["면 100%"],
+  "measurements": "모름 (미입력)",
+  "sellingPoints": ["시원한 색감", "PUMA × AMI 협업 로고"]
+}

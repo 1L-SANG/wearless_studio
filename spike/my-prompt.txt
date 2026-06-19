@@ -1,0 +1,21 @@
+<Input images>
+- 1st attached image: 'base-female-2K.png' -> 베이스 이미지로 쓸 마네킹 이미지
+- 2nd attached image: '1_front.jpeg' -> 정면 상의 이미지
+- 3rd attached image: '2_back.jpeg' -> 뒷면 상의 이미지
+- 4th attached image: '05_무난_릴랙스드_플루이드_와이드_레그_트라우저_(그레이)_cos.png' -> 하의 이미지
+</Input images>
+
+<instruction>
+- '1st attached image' 위에 '2nd attached image','3rd attached image' 를 상의로 입히고 '4th attached image'를 하의로 입힌 이미지를 출력한다.
+- 실제로 마네킹이 자연스럽게 상의,하의를 착장한 느낌으로 연출해야한다.
+- 맨아래에 써있는 분석정보를 기반으로 첨부된 이미지들과 함께 의류를 구현한다.
+- 실제 마네킹에 상의와 하의를 입혔을때와 구분이 안갈정도로 사실적으로 연출해야한다.
+- 
+</instruction>
+
+<output format>
+- '1st attached image'에서 단지 마네킹이 상의와 하의를 입은 모습만이 변화된채 적용된 이미지를 출력한다.
+- '1st attached image'에서 뒷배경, 구도, 마네킹의 shape 등은 그대로 유지되어야한다.
+- '1st attached image'와 같은 비율,같은 크기, 같은 화질의 이미지로 출력한다.
+</output format>
+
