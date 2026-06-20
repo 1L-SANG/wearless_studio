@@ -72,6 +72,8 @@
 - 자산 보존 기한·비용 상한 — 운영 정책.
 - export 해상도·마켓 프리셋 — backend plan §7 P2 트리거.
 - 분위기 예시 시드 입력 — 운영자 데이터(사용자: 직접 입력 예정).
+- 🚧 **회원탈퇴 ↔ 크레딧 원장 충돌 (출시 게이트)** — `credit_ledger`는 append-only + `user_id → auth.users(id)`(on delete cascade 아님)이라, **원장 행이 있는 유저는 `auth.users` 삭제가 FK에 막혀 탈퇴 불가**. 출시 전 정책 결정 필요: 탈퇴 시 원장 `user_id` **익명화**(감사 보존) vs 별도 보존 처리. project soft delete(`deleted_at`)는 이미 있음. (2026-06-20 advisor 점검 시 재확인)
+- 🚧 **출시 전 하드닝 묶음** — 로그 보존·자동삭제(cron) · 회원탈퇴 플로우 · 보안 감사 · FK 커버링 인덱스(2026-06-20 advisor: 전부 INFO·데이터 0이라 규모 시 일괄)는 **PG·크레딧 단가와 함께 출시 직전 단계**에서. (개인정보 암호화는 Supabase at-rest+TLS로 커버 + 민감PII 미저장 → 별도 불필요. 보안 advisor: leaked-password WARN은 소셜 로그인 전용이라 무관, RLS 누수 0.)
 
 ---
 
