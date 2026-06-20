@@ -132,3 +132,35 @@ class ProjectPatch(CamelModel):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field}는 null일 수 없습니다.")
         return self
+
+
+# ---------- Phase 4 — 마네킹 job (계약 §3.3·§6) ----------
+
+
+class MannequinCut(CamelModel):
+    """마네킹컷 (계약 §3.3). id = `${candidate}-${version}` (DB UUID 아님). src는 안정 앱 URL."""
+
+    id: str
+    src: str
+    candidate: str
+    version: int
+    base_fit: str
+    fit_adjust: str | None = None
+    length_adjust: str | None = None
+    match_adjust: dict | None = None
+
+
+class JobView(CamelModel):
+    """GET /v1/jobs/{id} 폴링 스냅샷 (ai_pipeline_spec §4)."""
+
+    id: str
+    project_id: str
+    kind: str
+    status: str
+    progress: int
+    steps: list | None = None
+    result: dict | None = None
+    error_message: str | None = None
+    credits_charged: int | None = None
+    created_at: datetime
+    updated_at: datetime

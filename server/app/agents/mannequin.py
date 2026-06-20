@@ -1,0 +1,87 @@
+"""AG-04 마네킹 생성 — 입력 조립 헬퍼 (순수 함수, DB/IO 없음).
+
+워커(workers/mannequin_job.py)가 이 헬퍼로 "무엇을 로드/생성할지"를 정한다:
+- 성별 베이스 선택 · A/B 후보 spec · 기준 색상 이미지 asset id · 메인 매칭의류(하의) id.
+실제 바이트 로드·R2 저장·DB 쓰기는 워커/repo가 한다 (ai_agent_modules §3 AG-04).
+"""
+
+from .prompts import MannequinPromptContext
+
+# 기준 색상 이미지 정렬 순서 (common_data_contract §4 AngleSlot)
+_SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "Fit": 3}
+
+# A/B는 같은 성별 베이스 위에서 baseFit 변주로 2안 (AG-04). 미지(unknown) fit은 B도 같은 값.
+_FIT_CONTRAST = {
+    "slim": "regular",
+    "regular": "semi_over",
+    "semi_over": "regular",
+    "over": "semi_over",
+    "loose": "regular",
+}
+
+
+def select_base_gender(analysis: dict) -> str:
+    """분석의 targetGenders로 남/여 베이스 결정. 남성 단독일 때만 'men', 그 외(혼합·비어있음·여성)
+    는 'women' (MVP 결정적 규칙)."""
+    genders = {str(g).lower() for g in (analysis.get("targetGenders") or [])}
+    men_tokens = {"men", "male", "남성", "남"}
+    if genders and genders <= men_tokens:  # 전부 남성 토큰
+        return "men"
+    return "women"
+
+
+def candidate_specs(analysis: dict) -> list[tuple[str, str]]:
+    """[(candidate, base_fit)] — A=분석 핏, B=대비 핏 (AG-04 A/B)."""
+    fit = (analysis.get("fit") or "regular")
+    fit_b = _FIT_CONTRAST.get(fit, fit)
+    return [("A", fit), ("B", fit_b)]
+
+
+def base_color_image_ids(product: dict) -> list[str]:
+    """기준 색상(ColorGroup.isBase, 없으면 colors[0])의 이미지 asset id들 (slot 순서).
+    ImageAsset.id == asset row id (업로드 계약). Front 필수는 입력 검증에서 거른다."""
+    colors = product.get("colors") or []
+    base = next((c for c in colors if c.get("isBase")), colors[0] if colors else None)
+    if not base:
+        return []
+    images = base.get("images") or []
+    images = sorted(images, key=lambda im: _SLOT_ORDER.get(im.get("slot") or "", 99))
+    return [im["id"] for im in images if im.get("id")]
+
+
+def has_base_front(product: dict) -> bool:
+    """기준 색상에 정면(Front) 이미지가 있는가 (PRD: 기준 색상 앞면 필수 · TODO A-6 게이트)."""
+    colors = product.get("colors") or []
+    base = next((c for c in colors if c.get("isBase")), colors[0] if colors else None)
+    if not base:
+        return False
+    return any((im.get("slot") == "Front") and im.get("id") for im in (base.get("images") or []))
+
+
+def main_match_item_id(analysis: dict) -> str | None:
+    """메인 매칭의류(하의) id — 있으면 마네킹컷에 함께 착장(상의+하의). 사용자 결정.
+    계약형 matchSelections = [{clothingId, role}] (role='main'). {main} / [id] 폴백도 처리."""
+    sel = analysis.get("matchSelections")
+    if isinstance(sel, list):
+        for e in sel:  # 계약형: role=='main'
+            if isinstance(e, dict) and e.get("role") == "main":
+                return e.get("clothingId") or e.get("id")
+        first = sel[0] if sel else None  # 폴백: 첫 항목
+        if isinstance(first, dict):
+            return first.get("clothingId") or first.get("id")
+        return first
+    if isinstance(sel, dict):
+        return sel.get("main") or None
+    return None
+
+
+def prompt_context(
+    *, clothing_type: str, product_count: int, candidate: str, base_fit: str, base_gender: str
+) -> MannequinPromptContext:
+    return MannequinPromptContext(
+        clothing_type=clothing_type or "상의",
+        product_count=product_count,
+        candidate=candidate,
+        base_fit=base_fit,
+        base_gender=base_gender,
+    )

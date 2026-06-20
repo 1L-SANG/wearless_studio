@@ -115,6 +115,16 @@ When the mode is auto, change to accept mode.
 Do not automatically run it for every task. For small, obvious, or purely mechanical changes, proceed normally.
 
 ---
+# Working with Codex (independent review)
+
+Use Codex as an independent reviewer/designer throughout substantial work — as a sparring partner, not an oracle to obey.
+
+- **Judge Codex's findings neutrally — do not accept them unconditionally.** Evaluate each finding on its merits: apply the valid ones, and push back on wrong or low-value ones with explicit technical reasoning. Hand that reasoning back to Codex and get its response — keep it a two-way exchange, not one-directional obedience.
+- **Re-review your own fixes.** After you fix a Codex (stop-review) finding, send the fix back to Codex for another review pass, and repeat until it is sound. **From the 3rd round onward, stop unless there's substantial disagreement** — if further rounds look like diminishing returns, skip them. Also use judgment on trivial or test-verified changes; don't loop endlessly on one-liners.
+- **Use Codex actively**: independent design drafts, code review, and the fix → re-review loop (the project's "independent drafts → mutual rebuttal → merge" method).
+- **Escalate decisions to the user.** When a choice is genuinely the user's — product scope, cost/quality tradeoffs, anything that writes to their infra/data, or a judgment call you can't resolve from code or docs — stop and ask the user. Don't decide it silently.
+
+---
 # 작업 완료 요약 (비개발자용) · End-of-work summary
 
 작업을 완료하거나 의미 있는 단위가 끝나면, 응답 **맨 마지막에** 비개발자도 한눈에 이해할 수 있는 짧고 명확한 요약을 붙인다. 기술 용어는 풀어 쓰고(필요하면 비유), 핵심만 간략히. 다음을 담는다:

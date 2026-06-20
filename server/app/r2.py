@@ -78,6 +78,14 @@ class R2Client:
         """AI 생성 이미지 등 서버사이드 저장 (Gemini/OpenAI 응답 → R2)."""
         self._s3.put_object(Bucket=self._bucket, Key=key, Body=data, ContentType=mime)
 
+    def get_bytes(self, key: str) -> bytes:
+        """R2 객체 바이트 로드 (베이스 마네킹·상품사진 → Gemini 입력). 동기 → to_thread로 감쌀 것."""
+        return self._s3.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+
+    def delete(self, key: str) -> None:
+        """객체 삭제 (lease 상실로 버려진 생성물 best-effort 정리). 동기 → to_thread."""
+        self._s3.delete_object(Bucket=self._bucket, Key=key)
+
     def public_url(self, key: str) -> str:
         """서빙 URL. 커스텀 도메인 있으면 공개 URL, 없으면 1h signed GET."""
         if self._public_base:
