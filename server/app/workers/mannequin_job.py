@@ -177,7 +177,6 @@ async def run_mannequin_job(app, job: dict) -> None:
             out = await repo.finalize_mannequin_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, candidates=passed, reserved=reserved, charge=charge,
-                settle_key=settle_key,
                 metadata={"creditCostVersion": s.credit_cost_version,
                           "promptVersion": s.mannequin_prompt_version, "gender": gender})
             await conn.commit()

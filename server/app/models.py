@@ -164,3 +164,59 @@ class JobView(CamelModel):
     credits_charged: int | None = None
     created_at: datetime
     updated_at: datetime
+
+
+# ---------- 크레딧 시스템 (credit_system_design.md §6) ----------
+
+
+class PricingPlan(CamelModel):
+    """GET /v1/pricing-plans (요금제/상품 카탈로그)."""
+
+    id: str
+    code: str
+    kind: str  # subscription | topup
+    name: str
+    credits: int
+    price: int
+    billing_period: str  # monthly | once
+    sort_order: int
+
+
+class CreditSource(CamelModel):
+    """GET /v1/credits/sources (구매건별 버킷). 환불 가능 여부는 프론트가 status·미사용으로 판단."""
+
+    id: str
+    source_type: str  # subscription | topup
+    status: str  # active | pending_refund | refunded | expired
+    initial_credits: int
+    remaining_credits: int
+    period_end: datetime | None = None
+    plan_id: str | None = None
+    created_at: datetime
+
+
+class CreditHistoryEntry(CamelModel):
+    """GET /v1/credits/history (원장 행). 프론트가 projectId로 묶고 펼쳐 세부 표시."""
+
+    id: str
+    project_id: str | None = None
+    job_id: str | None = None
+    credit_source_id: str | None = None
+    action_key: str
+    delta: int
+    balance_after: int
+    available_after: int
+    created_at: datetime
+
+
+class TopupPurchaseBody(CamelModel):
+    """POST /v1/credits/topups:purchase (테스트용 구매)."""
+
+    plan_code: str
+
+
+class RefundRequestBody(CamelModel):
+    """POST /v1/credits/refunds (환불 요청)."""
+
+    credit_source_id: str
+    reason: str | None = None

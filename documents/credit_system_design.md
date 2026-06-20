@@ -146,17 +146,18 @@ request_refund(user, source_id):
   assert b.remaining == b.initial                 # 한 푼도 confirmed 차감 안 됨
   assert now() - b.created_at <= 7 days
   assert reserved == 0   # MVP: 진행중 예약 있으면 거부(과보수적·안전). ※정밀화는 §5
-  b.status = 'pending_refund'      # → balance 재계산서 즉시 제외 (가용서 빠짐, 불변식 ①)
-  recompute_balance(account)
+  b.status = 'pending_refund'                      # 가용서 즉시 제외 (불변식 ①)
+  balance -= b.remaining                           # ★ 가용 변화 = 반드시 원장 행 동반(원장-잔액 일관성)
+  ledger(delta=-b.remaining, action='refund_request', source=b)
   refund_requests(credit_source_id=b.id, status='pending')
 
 approve_refund(admin, req):
   lock account
   assert req.status=='pending'        # 종결 요청 비가역 — 재처리 차단 (Codex#4)
   b = req.source
-  assert b.status=='pending_refund'   # 이미 가용서 빠진 상태 → balance 재차감 금지(불변식 ④)
+  assert b.status=='pending_refund'   # 요청 시 이미 가용서 빠짐 → balance 재차감 금지(불변식 ④)
   b.status='refunded'
-  ledger(delta=-b.remaining, action='refund_topup', source=b)   # 회계 기록(가용엔 영향 없음)
+  ledger(delta=0, action='refund_approved', source=b)   # delta=0 마커(가용 영향 없음 — 이중차감 방지)
   payment_history[b.payment_id].status='refunded'
   req.status='approved'; req.resolved_*
   # 실제 환불은 PG 단계(테스트는 기록만)
@@ -167,7 +168,8 @@ reject_refund(admin, req):
   b = req.source
   assert b.status=='pending_refund'   # pending_refund 버킷만 복귀 — refunded 재활성 차단
   b.status='active'                   # 복귀 → 다시 가용
-  recompute_balance(account)
+  balance += b.remaining              # ★ 복원 = 원장 행 동반
+  ledger(delta=+b.remaining, action='refund_rejected', source=b)
   req.status='rejected'; req.resolved_*
 ```
 

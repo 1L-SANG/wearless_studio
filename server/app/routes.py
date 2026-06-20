@@ -21,13 +21,18 @@ from .models import (
     Account,
     Asset,
     AssetCompleteRequest,
+    CreditHistoryEntry,
+    CreditSource,
     JobView,
     MannequinCut,
+    PricingPlan,
     Product,
     ProductPatch,
     Project,
     ProjectPatch,
     ProjectSummary,
+    RefundRequestBody,
+    TopupPurchaseBody,
     UploadUrlRequest,
     UploadUrlResponse,
 )
@@ -60,6 +65,10 @@ def _bad_request(code: str, message: str) -> HTTPException:
     return HTTPException(status_code=400, detail={"code": code, "message": message})
 
 
+def _credit_error(e: "repo.CreditError") -> HTTPException:
+    return HTTPException(status_code=e.status, detail={"code": e.code, "message": e.message})
+
+
 @router.get("/me/account", response_model=Account)
 async def get_account(request: Request, user_id: str = Depends(require_user)):
     async with get_conn(request) as conn:
@@ -70,6 +79,90 @@ async def get_account(request: Request, user_id: str = Depends(require_user)):
             detail={"code": "account_not_found", "message": "계정 정보를 찾을 수 없습니다."},
         )
     return row
+
+
+# ---------- 크레딧 (credit_system_design.md §6) ----------
+
+
+@router.get("/pricing-plans", response_model=list[PricingPlan])
+async def get_pricing_plans(request: Request, user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        return await repo.list_pricing_plans(conn)
+
+
+@router.get("/credits/sources", response_model=list[CreditSource])
+async def get_credit_sources(request: Request, user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        return await repo.list_credit_sources(conn, user_id)
+
+
+@router.get("/credits/history", response_model=list[CreditHistoryEntry])
+async def get_credit_history(request: Request, user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        return await repo.list_credit_history(conn, user_id)
+
+
+@router.post("/credits/topups:purchase")
+async def purchase_topup(
+    request: Request,
+    body: TopupPurchaseBody,
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    async with get_conn(request) as conn:
+        try:
+            result = await repo.purchase_topup(
+                conn, user_id=user_id, plan_code=body.plan_code, idempotency_key=idempotency_key
+            )
+        except repo.CreditError as e:
+            raise _credit_error(e)
+        await conn.commit()
+    return JSONResponse(result)
+
+
+@router.post("/credits/refunds")
+async def request_refund(
+    request: Request, body: RefundRequestBody, user_id: str = Depends(require_user)
+):
+    async with get_conn(request) as conn:
+        try:
+            result = await repo.request_refund(
+                conn, user_id=user_id, credit_source_id=body.credit_source_id, reason=body.reason
+            )
+        except repo.CreditError as e:
+            raise _credit_error(e)
+        await conn.commit()
+    return JSONResponse(result, status_code=201)
+
+
+@router.post("/admin/refunds/{request_id}/approve")
+async def approve_refund(
+    request: Request, request_id: str, user_id: str = Depends(require_user)
+):
+    async with get_conn(request) as conn:
+        if not await repo.is_admin(conn, user_id):
+            raise HTTPException(403, detail={"code": "forbidden", "message": "관리자만 가능해요."})
+        try:
+            result = await repo.approve_refund(conn, request_id=request_id, resolved_by=user_id)
+        except repo.CreditError as e:
+            raise _credit_error(e)
+        await conn.commit()
+    return JSONResponse(result)
+
+
+@router.post("/admin/refunds/{request_id}/reject")
+async def reject_refund(
+    request: Request, request_id: str, user_id: str = Depends(require_user)
+):
+    async with get_conn(request) as conn:
+        if not await repo.is_admin(conn, user_id):
+            raise HTTPException(403, detail={"code": "forbidden", "message": "관리자만 가능해요."})
+        try:
+            result = await repo.reject_refund(conn, request_id=request_id, resolved_by=user_id)
+        except repo.CreditError as e:
+            raise _credit_error(e)
+        await conn.commit()
+    return JSONResponse(result)
 
 
 @router.get("/projects", response_model=list[ProjectSummary])

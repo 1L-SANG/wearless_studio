@@ -11,6 +11,19 @@ import uuid
 from psycopg import AsyncConnection, errors
 from psycopg.types.json import Json
 
+from .credits import allocate_fifo
+
+
+class CreditError(Exception):
+    """크레딧 도메인 에러 — 라우트가 code/status로 HTTP 매핑(토스트 가능한 한국어 message)."""
+
+    def __init__(self, code: str, message: str, status: int = 400):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
+
+
 # patchProject가 DB에 반영할 수 있는 컬럼 (계약 §6 화이트리스트). 모델이 1차,
 # 이 집합이 2차 가드 — 둘 중 하나라도 빠지면 임의 컬럼 갱신을 막는다.
 PATCHABLE_COLUMNS = ("compose_mode", "copywriting", "selected_mannequin_id")
@@ -558,6 +571,65 @@ async def release_credits(
     )
 
 
+async def _consume_buckets(
+    conn: AsyncConnection,
+    *,
+    user_id: str,
+    project_id: str | None,
+    job_id: str | None,
+    reserved: int,
+    charge: int,
+    action_key: str,
+    metadata: dict,
+) -> int:
+    """성공 confirm 차감 (버킷 인지, credit_system_design §3.3). active 버킷서 charge를
+    FIFO(구독먼저→오래된순)로 깎고 **버킷별 ledger 행**(settle:{job}:{bucket} 멱등키) +
+    credit_accounts(balance-=charge, reserved-=reserved)를 갱신한다.
+    커버 실패 시 raise → tx rollback(무음 미달차감 금지, 불변식 5). available_after 반환.
+    멱등 경계 = job.status — 호출측 finalize가 jobs FOR UPDATE + status='running'으로 보장."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select balance, reserved from credit_accounts where user_id = %s for update",
+            (user_id,),
+        )
+        acct = await cur.fetchone()
+        if acct is None:
+            raise ValueError("credit_account missing")
+        await cur.execute(
+            "select id::text as id, remaining_credits from credit_sources "
+            "where user_id = %s and status = 'active' and remaining_credits > 0 "
+            "order by source_type, created_at for update",  # 'subscription' < 'topup' → 구독 먼저
+            (user_id,),
+        )
+        buckets = await cur.fetchall()
+        allocations, uncovered = allocate_fifo(buckets, charge)
+        if uncovered != 0:  # 불변식 5: active 잔액이 charge 미달 → hard error → rollback
+            raise ValueError(f"insufficient active credits to settle charge ({uncovered} uncovered)")
+        new_reserved = max(0, acct["reserved"] - reserved)
+        running = acct["balance"]
+        for a in allocations:
+            await cur.execute(
+                "update credit_sources set remaining_credits = remaining_credits - %s where id = %s",
+                (a["take"], a["id"]),
+            )
+            running -= a["take"]
+            await cur.execute(
+                """
+                insert into credit_ledger (user_id, project_id, job_id, credit_source_id, action_key,
+                  delta, balance_after, available_after, idempotency_key, metadata)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                on conflict (idempotency_key) do nothing
+                """,
+                (user_id, project_id, job_id, a["id"], action_key, -a["take"], running,
+                 running - new_reserved, f"credit:job:{job_id}:settle:{a['id']}", Json(metadata)),
+            )
+        await cur.execute(
+            "update credit_accounts set balance = %s, reserved = %s where user_id = %s",
+            (running, new_reserved, user_id),
+        )
+    return running - new_reserved
+
+
 # ---------- 종결 (원자) ----------
 # 에셋·컷 insert + 크레딧 정산 + job done/error를 **한 함수 = 한 tx = 한 락**으로 처리.
 # 시작에서 jobs 행을 FOR UPDATE로 잠그고(lease 토큰 확인) 커밋까지 유지 → lease 복구의
@@ -574,7 +646,6 @@ async def finalize_mannequin_success(
     candidates: list[dict],  # [{asset_id, bucket, key, mime, size, width, height, candidate, base_fit}]
     reserved: int,
     charge: int,
-    settle_key: str,
     metadata: dict,
 ) -> dict | None:
     """성공 종결(원자·lease 펜스). None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음."""
@@ -611,10 +682,11 @@ async def finalize_mannequin_success(
                 "candidate": c["candidate"], "version": version, "baseFit": c["base_fit"],
                 "fitAdjust": None, "lengthAdjust": None, "matchAdjust": None,
             })
-    # 크레딧 확정 (settle_key 멱등) — 같은 tx, jobs 락 유지
-    available = await _settle_credits(
+    # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
+    # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.
+    available = await _consume_buckets(
         conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
-        charge=charge, action_key="mannequinGenerate", settle_key=settle_key, metadata=metadata,
+        charge=charge, action_key="mannequinGenerate", metadata=metadata,
     )
     # 폴링(jobs.result)과 SSE done이 **같은 봉투**({data, credits, creditsCharged}) — 계약 §6
     envelope = {"data": cuts, "credits": available, "creditsCharged": charge}
@@ -669,3 +741,301 @@ async def finalize_mannequin_failure(
             (job_id, Json({"code": code, "message": message})),
         )
     return True
+
+
+# ---------- 크레딧 충전·환불·조회 (credit_system_design.md §3.1·§3.2·§3.4·§6) ----------
+# 모든 쓰기는 credit_accounts FOR UPDATE로 직렬화. balance = Σ active 버킷 remaining,
+# balance 변화엔 항상 ledger 행(원장-잔액 일관성). 호출측(라우트)이 conn.commit().
+
+
+async def is_admin(conn: AsyncConnection, user_id: str) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute("select role from profiles where user_id = %s", (user_id,))
+        row = await cur.fetchone()
+    return bool(row and row.get("role") == "admin")
+
+
+async def grant_subscription(
+    conn: AsyncConnection, *, user_id: str, plan_code: str, metadata: dict | None = None
+) -> dict:
+    """구독 월 충전(§3.1): 기존 active 구독 버킷 소멸 → 새 버킷(plan.credits, 1달 만료).
+    full plan 지급이라 balance가 reserved를 항상 상회(불변식 5 backstop은 credit_accounts CHECK)."""
+    metadata = metadata or {}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, credits from pricing_plans "
+            "where code = %s and kind = 'subscription' and is_active",
+            (plan_code,),
+        )
+        plan = await cur.fetchone()
+        if plan is None:
+            raise CreditError("unknown_plan", f"요금제를 찾을 수 없어요: {plan_code}", 404)
+        await cur.execute(
+            "select balance, reserved from credit_accounts where user_id = %s for update", (user_id,)
+        )
+        acct = await cur.fetchone()
+        if acct is None:
+            raise CreditError("account_missing", "크레딧 계정이 없어요.", 404)
+        running = acct["balance"]
+        await cur.execute(
+            "select id::text as id, remaining_credits from credit_sources "
+            "where user_id = %s and source_type = 'subscription' and status = 'active' for update",
+            (user_id,),
+        )
+        for old in await cur.fetchall():
+            await cur.execute(
+                "update credit_sources set status = 'expired', remaining_credits = 0 where id = %s",
+                (old["id"],),
+            )
+            running -= old["remaining_credits"]
+            await cur.execute(
+                "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
+                "balance_after, available_after, metadata) values (%s,%s,'expire_subscription',%s,%s,%s,%s)",
+                (user_id, old["id"], -old["remaining_credits"], running,
+                 running - acct["reserved"], Json(metadata)),
+            )
+        await cur.execute(
+            "insert into credit_sources (user_id, source_type, plan_id, initial_credits, "
+            "remaining_credits, status, period_end) "
+            "values (%s, 'subscription', %s, %s, %s, 'active', now() + interval '1 month') "
+            "returning id::text as id",
+            (user_id, plan["id"], plan["credits"], plan["credits"]),
+        )
+        src_id = (await cur.fetchone())["id"]
+        running += plan["credits"]
+        await cur.execute(
+            "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
+            "balance_after, available_after, metadata) values (%s,%s,'grant_subscription',%s,%s,%s,%s)",
+            (user_id, src_id, plan["credits"], running, running - acct["reserved"], Json(metadata)),
+        )
+        await cur.execute(
+            "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
+        )
+    return {"creditSourceId": src_id, "credits": plan["credits"], "available": running - acct["reserved"]}
+
+
+async def purchase_topup(
+    conn: AsyncConnection, *, user_id: str, plan_code: str,
+    idempotency_key: str | None = None, metadata: dict | None = None
+) -> dict:
+    """추가구매(§3.2, 테스트용 provider='test'): payment + topup 버킷 + grant 원장.
+    멱등: Idempotency-Key 주면 중복 지급 방지(더블클릭/재시도) — account FOR UPDATE가 동시
+    호출을 직렬화하고, 같은 키의 grant_topup 원장이 이미 있으면 기존 구매를 반환. (※topup SKU·
+    가격은 §5 TBD — 시드 전이라 unknown_plan(404). 실 결제 멱등은 PG 단계서 provider_ref로 보강.)"""
+    metadata = metadata or {}
+    # 멱등 키는 user 스코프 — credit_ledger.idempotency_key가 전역 unique라 다른 유저의 동일
+    # 키 문자열 충돌(unique 위반→500)을 막는다 (create_job scoped_key 패턴과 동일).
+    scoped_key = f"topup:{user_id}:{idempotency_key}" if idempotency_key else None
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select balance, reserved from credit_accounts where user_id = %s for update", (user_id,)
+        )
+        acct = await cur.fetchone()
+        if acct is None:
+            raise CreditError("account_missing", "크레딧 계정이 없어요.", 404)
+        if scoped_key:  # 재호출 → 원 구매 반환(현재 plan_code 무관). account 락이 동시호출 직렬화
+            await cur.execute(
+                "select cs.id::text as src, cs.initial_credits from credit_ledger cl "
+                "join credit_sources cs on cs.id = cl.credit_source_id "
+                "where cl.idempotency_key = %s",
+                (scoped_key,),
+            )
+            existing = await cur.fetchone()
+            if existing is not None:
+                return {"creditSourceId": existing["src"], "credits": existing["initial_credits"],
+                        "available": acct["balance"] - acct["reserved"], "idempotent": True}
+        await cur.execute(
+            "select id::text as id, credits, price from pricing_plans "
+            "where code = %s and kind = 'topup' and is_active",
+            (plan_code,),
+        )
+        plan = await cur.fetchone()
+        if plan is None:
+            raise CreditError("unknown_plan", f"추가구매 상품을 찾을 수 없어요: {plan_code}", 404)
+        await cur.execute(
+            "insert into payment_history (user_id, plan_id, amount, kind, provider, status) "
+            "values (%s, %s, %s, 'topup', 'test', 'paid') returning id::text as id",
+            (user_id, plan["id"], plan["price"]),
+        )
+        pay_id = (await cur.fetchone())["id"]
+        await cur.execute(
+            "insert into credit_sources (user_id, source_type, plan_id, initial_credits, "
+            "remaining_credits, status, payment_id) "
+            "values (%s, 'topup', %s, %s, %s, 'active', %s) returning id::text as id",
+            (user_id, plan["id"], plan["credits"], plan["credits"], pay_id),
+        )
+        src_id = (await cur.fetchone())["id"]
+        running = acct["balance"] + plan["credits"]
+        await cur.execute(
+            "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
+            "balance_after, available_after, idempotency_key, metadata) "
+            "values (%s,%s,'grant_topup',%s,%s,%s,%s,%s)",
+            (user_id, src_id, plan["credits"], running, running - acct["reserved"],
+             scoped_key, Json(metadata)),
+        )
+        await cur.execute(
+            "update credit_accounts set balance = %s where user_id = %s", (running, user_id)
+        )
+    return {"creditSourceId": src_id, "paymentId": pay_id, "credits": plan["credits"],
+            "available": running - acct["reserved"]}
+
+
+async def request_refund(
+    conn: AsyncConnection, *, user_id: str, credit_source_id: str, reason: str | None = None
+) -> dict:
+    """환불 요청(§3.4): topup·미사용(remaining==initial)·7일내·예약없음(MVP)만. 적격이면
+    버킷 pending_refund + 가용서 즉시 제외(불변식 1) + 원장 행(잔액 일관성) + 요청 행."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select balance, reserved from credit_accounts where user_id = %s for update", (user_id,)
+        )
+        acct = await cur.fetchone()
+        if acct is None:
+            raise CreditError("account_missing", "크레딧 계정이 없어요.", 404)
+        await cur.execute(
+            "select id::text as id, source_type, status, initial_credits, remaining_credits, "
+            "(now() - created_at) <= interval '7 days' as within_window "
+            "from credit_sources where id = %s and user_id = %s for update",
+            (credit_source_id, user_id),
+        )
+        b = await cur.fetchone()
+        if b is None:
+            raise CreditError("refund_not_found", "구매 내역을 찾을 수 없어요.", 404)
+        if b["source_type"] != "topup":
+            raise CreditError("subscription_not_refundable", "구독 크레딧은 환불 대상이 아니에요.", 400)
+        if b["status"] != "active":
+            raise CreditError("not_refundable_status", "환불할 수 없는 상태예요.", 409)
+        if b["remaining_credits"] != b["initial_credits"]:
+            raise CreditError("partially_used", "이미 사용한 구매건은 환불할 수 없어요.", 409)
+        if not b["within_window"]:
+            raise CreditError("refund_window_expired", "환불 가능 기간(7일)이 지났어요.", 409)
+        if acct["reserved"] != 0:  # MVP 과보수적 (불변식 2)
+            raise CreditError("in_flight_job", "진행 중인 생성이 끝난 뒤 다시 시도해 주세요.", 409)
+        new_balance = acct["balance"] - b["remaining_credits"]
+        await cur.execute(
+            "update credit_sources set status = 'pending_refund' where id = %s", (b["id"],)
+        )
+        await cur.execute(
+            "update credit_accounts set balance = %s where user_id = %s", (new_balance, user_id)
+        )
+        await cur.execute(
+            "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
+            "balance_after, available_after, metadata) values (%s,%s,'refund_request',%s,%s,%s,%s)",
+            (user_id, b["id"], -b["remaining_credits"], new_balance,
+             new_balance - acct["reserved"], Json({"reason": reason} if reason else {})),
+        )
+        await cur.execute(
+            "insert into refund_requests (user_id, credit_source_id, status, reason) "
+            "values (%s, %s, 'pending', %s) returning id::text as id",
+            (user_id, b["id"], reason),
+        )
+        req = await cur.fetchone()
+    return {"refundRequestId": req["id"], "creditSourceId": b["id"], "status": "pending",
+            "credits": b["remaining_credits"], "available": new_balance - acct["reserved"]}
+
+
+async def _load_refund_for_resolve(cur, request_id: str) -> tuple[dict, dict, dict]:
+    """승인/거부 공통: 요청·계정·버킷을 FOR UPDATE 로드 + 종결 비가역 가드(불변식 4)."""
+    await cur.execute(
+        "select id::text as id, user_id::text as user_id, credit_source_id::text as credit_source_id, "
+        "status from refund_requests where id = %s for update",
+        (request_id,),
+    )
+    req = await cur.fetchone()
+    if req is None:
+        raise CreditError("refund_not_found", "환불 요청을 찾을 수 없어요.", 404)
+    if req["status"] != "pending":  # 종결 요청 비가역
+        raise CreditError("refund_not_pending", "이미 처리된 요청이에요.", 409)
+    await cur.execute(
+        "select balance, reserved from credit_accounts where user_id = %s for update", (req["user_id"],)
+    )
+    acct = await cur.fetchone()
+    await cur.execute(
+        "select id::text as id, status, remaining_credits, payment_id::text as payment_id "
+        "from credit_sources where id = %s for update",
+        (req["credit_source_id"],),
+    )
+    b = await cur.fetchone()
+    if b is None or b["status"] != "pending_refund":  # pending_refund 버킷만 (refunded 재활성 차단)
+        raise CreditError("bucket_not_pending", "버킷 상태가 올바르지 않아요.", 409)
+    return req, acct, b
+
+
+async def approve_refund(conn: AsyncConnection, *, request_id: str, resolved_by: str) -> dict:
+    """관리자 승인(§3.4): 버킷 refunded(가용 재차감 없음 — 요청 시 이미 제외, 불변식 4) +
+    delta=0 원장 마커 + payment refunded. 실제 환불은 PG 단계."""
+    async with conn.cursor() as cur:
+        req, acct, b = await _load_refund_for_resolve(cur, request_id)
+        await cur.execute("update credit_sources set status = 'refunded' where id = %s", (b["id"],))
+        if b["payment_id"]:
+            await cur.execute(
+                "update payment_history set status = 'refunded' where id = %s", (b["payment_id"],)
+            )
+        await cur.execute(
+            "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
+            "balance_after, available_after, metadata) values (%s,%s,'refund_approved',0,%s,%s,%s)",
+            (req["user_id"], b["id"], acct["balance"], acct["balance"] - acct["reserved"],
+             Json({"requestId": req["id"]})),
+        )
+        await cur.execute(
+            "update refund_requests set status = 'approved', resolved_at = now(), resolved_by = %s "
+            "where id = %s",
+            (resolved_by, req["id"]),
+        )
+    return {"refundRequestId": req["id"], "status": "approved", "creditsRefunded": b["remaining_credits"]}
+
+
+async def reject_refund(conn: AsyncConnection, *, request_id: str, resolved_by: str) -> dict:
+    """관리자 거부(§3.4): 버킷 active 복귀 + 가용 복원(balance += remaining) + 원장 행."""
+    async with conn.cursor() as cur:
+        req, acct, b = await _load_refund_for_resolve(cur, request_id)
+        new_balance = acct["balance"] + b["remaining_credits"]
+        await cur.execute("update credit_sources set status = 'active' where id = %s", (b["id"],))
+        await cur.execute(
+            "update credit_accounts set balance = %s where user_id = %s", (new_balance, req["user_id"])
+        )
+        await cur.execute(
+            "insert into credit_ledger (user_id, credit_source_id, action_key, delta, "
+            "balance_after, available_after, metadata) values (%s,%s,'refund_rejected',%s,%s,%s,%s)",
+            (req["user_id"], b["id"], b["remaining_credits"], new_balance,
+             new_balance - acct["reserved"], Json({"requestId": req["id"]})),
+        )
+        await cur.execute(
+            "update refund_requests set status = 'rejected', resolved_at = now(), resolved_by = %s "
+            "where id = %s",
+            (resolved_by, req["id"]),
+        )
+    return {"refundRequestId": req["id"], "status": "rejected", "creditsRestored": b["remaining_credits"]}
+
+
+async def list_pricing_plans(conn: AsyncConnection) -> list[dict]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, code, kind, name, credits, price, billing_period, sort_order "
+            "from pricing_plans where is_active order by sort_order"
+        )
+        return await cur.fetchall()
+
+
+async def list_credit_sources(conn: AsyncConnection, user_id: str) -> list[dict]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, source_type, status, initial_credits, remaining_credits, "
+            "period_end, created_at, plan_id::text as plan_id "
+            "from credit_sources where user_id = %s order by created_at desc",
+            (user_id,),
+        )
+        return await cur.fetchall()
+
+
+async def list_credit_history(conn: AsyncConnection, user_id: str, limit: int = 500) -> list[dict]:
+    """사용 내역(§6) — 프론트가 project_id로 묶고 펼쳐 세부 표시. 최신순."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, project_id::text as project_id, job_id::text as job_id, "
+            "credit_source_id::text as credit_source_id, action_key, delta, balance_after, "
+            "available_after, created_at from credit_ledger "
+            "where user_id = %s order by created_at desc limit %s",
+            (user_id, limit),
+        )
+        return await cur.fetchall()
