@@ -7,7 +7,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
-import { Icon, Modal, Button, useToast } from '@/components/ui.jsx';
+import { Icon, Modal, Button } from '@/components/ui.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 
@@ -61,10 +61,11 @@ export function TopNav() {
 }
 
 /* 로그인 사용자 프로필 — 구글 계정 메뉴 형태. 아바타(사진/이니셜) 클릭 시
-   헤더(이름·이메일) + 크레딧 관리(미구현 → '준비 중') + 로그아웃. */
+   헤더(이름·이메일) + 요금제 관리(/pricing) + 크레딧 사용 내역(/credits/history) + 로그아웃.
+   두 페이지 본문은 크레딧 에이전트 소유 — 여기선 라우트 이동만 한다. */
 function ProfileMenu() {
   const { session, signOut } = useAuth();
-  const toast = useToast();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -102,8 +103,12 @@ function ProfileMenu() {
           </div>
           <div className="profile-sep" />
           <button className="profile-item" role="menuitem"
-            onClick={() => { setOpen(false); toast.push('크레딧 관리는 준비 중이에요', { icon: 'clock' }); }}>
-            <Icon name="coins" size={16} stroke={1.8} />크레딧 관리
+            onClick={() => { setOpen(false); navigate('/pricing'); }}>
+            <Icon name="star" size={16} stroke={1.8} />요금제 관리
+          </button>
+          <button className="profile-item" role="menuitem"
+            onClick={() => { setOpen(false); navigate('/credits/history'); }}>
+            <Icon name="coins" size={16} stroke={1.8} />크레딧 사용 내역
           </button>
           <button className="profile-item" role="menuitem"
             onClick={() => { setOpen(false); signOut(); }}>

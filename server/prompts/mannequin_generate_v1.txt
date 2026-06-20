@@ -1,0 +1,19 @@
+<Input images>
+- 1st attached image -> the BASE MANNEQUIN to use as the canvas (gender: ${baseGender})
+- the remaining ${productCount} attached image(s) -> the product GARMENT(S) (${clothingType}) shown from multiple angles, and, when present, a complementary BOTTOM garment as the last image
+</Input images>
+
+<instruction>
+- Dress the BASE MANNEQUIN (1st image) in the attached product garment(s): put the garment on the mannequin's body naturally.
+- Render it so the mannequin looks like it is really, physically wearing the garment(s).
+- Use the product analysis info at the very bottom, together with the attached images, to reproduce the garment(s) accurately (color, pattern, seams, and any logo/print).
+- Apply a ${baseFit} fit for candidate ${candidate}.
+</instruction>
+
+<output format>
+- Render a brand-new, FULLY OPAQUE, photorealistic e-commerce studio PHOTOGRAPH of the SAME mannequin from the 1st attached image, now solidly wearing the garment(s).
+- The mannequin and garments must be solid and opaque — NEVER translucent, faded, washed-out, or ghosted, and NOT a see-through overlay of the original photo.
+- Keep the same mannequin body and shape, the same pose, the same camera framing, and the same plain studio background as the 1st attached image.
+- FULL BODY in frame, from the top of the head down to the feet — nothing cropped. Portrait orientation.
+- Output EXACTLY ONE image — no grid, no collage, no multiple views, no panels, no text, no human skin/face/hair.
+</output format>

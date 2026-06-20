@@ -1,0 +1,190 @@
+"""AG-04 마네킹 생성 워커 (요리사). dispatcher가 claim한 job 1건을 실행한다.
+
+흐름: 입력 로드(베이스+상품사진+하의) → 후보 A/B 각각 단일 tier(기본 image_high=Gemini 3 Pro,
+Flash·승격 없음) 생성 → QC(기본 shadow: 판정 로그만, 게이팅 시 같은 모델 재시도) → 통과본 R2 저장
+→ finalize(에셋·컷·크레딧·done/error, 원자·lease 펜스). 생성/네트워크는 to_thread·async로 격리.
+"""
+
+import asyncio
+import logging
+import uuid
+from io import BytesIO
+
+from PIL import Image
+
+log = logging.getLogger("wearless.mannequin_job")
+
+from .. import repo
+from ..agents import mannequin
+from ..agents.gemini_image import GeminiError, InlineImage
+from ..agents.model_routing import resolve_model
+from ..agents.prompts import load_prompt_template, render_mannequin_prompt
+from ..r2 import ai_key, ext_for_mime
+from ..services import qc
+
+_EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+
+
+async def _emit(pool, job_id: str, event_type: str, payload: dict):
+    """진행/단계 이벤트 append (비종결 — 짧은 독립 tx). 종결 done/error는 finalize가 원자로 남긴다."""
+    try:
+        async with pool.connection() as conn:
+            await repo.append_job_event(conn, job_id, event_type, payload)
+            await conn.commit()
+    except Exception:  # 이벤트 실패가 생성 자체를 막지 않게
+        pass
+
+
+def _image_dims(data: bytes) -> tuple[int | None, int | None]:
+    try:
+        im = Image.open(BytesIO(data))
+        return im.width, im.height
+    except Exception:
+        return None, None
+
+
+async def _run_candidate(
+    *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
+    product_count, template, product, analysis, clothing_type,
+) -> dict | None:
+    """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
+    s = app.state.settings
+    pool, r2, gemini = app.state.pool, app.state.r2, app.state.gemini
+    job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
+    images = [base_img, *prod_imgs] + ([match_img] if match_img else [])
+    ctx = mannequin.prompt_context(
+        clothing_type=clothing_type, product_count=product_count,
+        candidate=candidate, base_fit=base_fit, base_gender=base_gender,
+    )
+    base_prompt = render_mannequin_prompt(template, ctx, product, analysis)
+    # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
+    # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
+    model = resolve_model(s, s.mannequin_tier)
+    feedback = ""
+    for attempt in range(1, s.mannequin_max_attempts + 1):
+        prompt = f"{feedback}\n\n{base_prompt}" if feedback else base_prompt
+        try:
+            res = await gemini.generate_content_image(model, prompt, images, s.mannequin_image_size)
+        except GeminiError as e:
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "model": model, "attempt": attempt,
+                "status": "error", "message": str(e)[:200]})
+            continue
+        verdict = qc.evaluate_mannequin_qc(res.image)
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "model": model, "attempt": attempt, "status": "generated",
+            "qc": {"verdict": verdict.verdict, "reasons": verdict.reasons}})
+        # shadow(기본): QC 로그만 하고 무조건 채택 / 게이팅 시: pass만 채택
+        if (not s.mannequin_qc_enabled) or verdict.verdict == "pass":
+            ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
+            asset_id = str(uuid.uuid4())
+            key = ai_key(user_id, project_id, job_id, asset_id, ext)
+            await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime)
+            w, h = _image_dims(res.image)
+            return {
+                "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
+                "size": len(res.image), "width": w, "height": h,
+                "candidate": candidate, "base_fit": base_fit,
+            }
+        feedback = qc.format_qc_feedback(verdict)
+        if not s.mannequin_qc_enabled:
+            break  # shadow면 1회로 충분 (위에서 이미 채택·반환됨)
+    return None
+
+
+async def run_mannequin_job(app, job: dict) -> None:
+    s = app.state.settings
+    pool = app.state.pool
+    job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
+    lease_token = job["lease_token"]
+    reserved = job.get("credits_reserved") or 0
+    settle_key = f"credit:job:{job_id}:settle"
+
+    async def _fail(message: str, meta: dict):
+        async with pool.connection() as conn:
+            await repo.finalize_mannequin_failure(
+                conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
+                project_id=project_id, reserved=reserved, settle_key=settle_key,
+                message=message, metadata=meta)
+            await conn.commit()
+
+    try:
+        # 1) 입력 로드
+        async with pool.connection() as conn:
+            product = await repo.get_product(conn, project_id) or {}
+            analysis = await repo.get_analysis(conn, project_id)
+            gender = mannequin.select_base_gender(analysis)
+            base_asset_id = (s.base_mannequin_men_asset_id if gender == "men"
+                             else s.base_mannequin_women_asset_id)
+            base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)
+                          if base_asset_id else None)
+            prod_assets = []
+            for aid in mannequin.base_color_image_ids(product):
+                a = await repo.get_asset_for_user(conn, user_id, aid)
+                if a:
+                    prod_assets.append(a)
+            match_asset = None
+            match_id = mannequin.main_match_item_id(analysis)
+            if match_id:
+                m_aid = await repo.get_matching_item_asset(conn, match_id)
+                if m_aid:
+                    match_asset = await repo.get_asset_for_user(conn, user_id, m_aid)
+
+        if base_asset is None:
+            await _fail("마네킹 베이스가 설정되지 않았어요. 잠시 후 다시 시도해 주세요.",
+                        {"error": "base_mannequin_missing", "gender": gender})
+            return
+        if not prod_assets:
+            await _fail("상품 사진을 찾을 수 없어요. 정면 사진을 올렸는지 확인해 주세요.",
+                        {"error": "no_product_images"})
+            return
+
+        # 2) 바이트 다운로드 (to_thread)
+        base_img = InlineImage(base_asset["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, base_asset["r2_key"]))
+        prod_imgs = [InlineImage(a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"])) for a in prod_assets]
+        match_img = None
+        if match_asset:
+            match_img = InlineImage(match_asset["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, match_asset["r2_key"]))
+        product_count = len(prod_imgs) + (1 if match_img else 0)
+        template = load_prompt_template(s)
+        await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
+                                               "withBottom": match_img is not None})
+
+        # 3) 후보 A/B 병렬 생성. return_exceptions=True — 한 후보의 예기치 못한 예외가
+        #    형제 후보를 취소시키지 않게(부분 성공 허용). dict=성공, None/Exception=실패.
+        clothing_type = product.get("clothing_type") or "상의"
+        specs = mannequin.candidate_specs(analysis)
+        results = await asyncio.gather(*[
+            _run_candidate(
+                app=app, job=job, candidate=c, base_fit=bf, base_gender=gender,
+                base_img=base_img, prod_imgs=prod_imgs, match_img=match_img,
+                product_count=product_count, template=template, product=product,
+                analysis=analysis, clothing_type=clothing_type)
+            for c, bf in specs
+        ], return_exceptions=True)
+        for r in results:  # 예기치 못한 후보 예외는 드롭하되 로그는 남긴다(디버깅)
+            if isinstance(r, BaseException):
+                log.warning("job %s candidate failed: %r", job_id, r)
+        passed = [r for r in results if isinstance(r, dict)]
+
+        if not passed:
+            await _fail("마네킹컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": "all_candidates_failed"})
+            return
+
+        # 4) 성공 종결 (원자·lease 펜스). charge = 성공 컷 수 (부분 성공 미차감 — codex/계약).
+        charge = len(passed)
+        async with pool.connection() as conn:
+            out = await repo.finalize_mannequin_success(
+                conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
+                project_id=project_id, candidates=passed, reserved=reserved, charge=charge,
+                metadata={"creditCostVersion": s.credit_cost_version,
+                          "promptVersion": s.mannequin_prompt_version, "gender": gender})
+            await conn.commit()
+        if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
+            for c in passed:
+                try:
+                    await asyncio.to_thread(app.state.r2.delete, c["key"])
+                except Exception:
+                    log.warning("orphan R2 cleanup failed: %s", c["key"])
+    except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
+        await _fail("생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})

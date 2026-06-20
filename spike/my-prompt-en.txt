@@ -1,0 +1,19 @@
+<Input images>
+- 1st attached image ('base-female-2K.png') -> the base mannequin to use as the canvas
+- 2nd attached image ('1_front.jpeg') -> the front view of the TOP garment
+- 3rd attached image ('2_back.jpeg') -> the back view of the TOP garment
+- 4th attached image ('05_..._그레이_cos.png') -> the BOTTOM garment
+</Input images>
+
+<instruction>
+- Take the mannequin in the 1st attached image and dress it: put the TOP (from the 2nd and 3rd attached images) on its upper body and the BOTTOM (from the 4th attached image) on its lower body, then output that dressed image.
+- Render it so the mannequin looks like it is naturally wearing the top and the bottom.
+- Use the product analysis info at the very bottom, together with the attached images, to reproduce the garments accurately.
+- The result must look so realistic that it is indistinguishable from a real mannequin actually wearing this top and bottom.
+</instruction>
+
+<output format>
+- Output an image in which, compared to the 1st attached image, ONLY the change is that the mannequin is now wearing the top and the bottom.
+- The background, the composition, and the mannequin's shape from the 1st attached image must stay exactly the same.
+- Output at the same aspect ratio, the same size, and the same image quality as the 1st attached image.
+</output format>

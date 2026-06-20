@@ -12,11 +12,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .agents.gemini_image import GeminiImageClient
 from .auth import jwks_key_resolver, require_user
 from .config import Settings, load_settings
 from .db import create_pool
 from .r2 import R2Client
 from .routes import router as v1_router
+from .workers.dispatcher import JobDispatcher
 
 DEFAULT_ERROR_CODES = {
     401: "unauthorized",
@@ -33,9 +35,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        dispatcher = None
         if pool is not None:
             await pool.open()
+            # job dispatcher (§5) — DB·Gemini·R2 모두 있고 활성화일 때만 기동
+            if (
+                settings.job_dispatcher_enabled
+                and app.state.gemini is not None
+                and app.state.r2 is not None
+            ):
+                dispatcher = JobDispatcher(app)
+                await dispatcher.start()
+                app.state.dispatcher = dispatcher
         yield
+        if dispatcher is not None:
+            await dispatcher.stop()
         if pool is not None:
             await pool.close()
 
@@ -44,9 +58,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.pool = pool
-    app.state.r2 = (
-        R2Client(settings) if settings.r2_bucket and settings.r2_access_key_id else None
+    # R2는 필수 설정이 모두 있을 때만 — 일부만 설정된 채 워커가 도는 것을 막는다
+    _r2_ready = all((
+        settings.r2_bucket, settings.r2_access_key_id, settings.r2_secret_access_key,
+        settings.r2_endpoint or settings.r2_account_id,
+    ))
+    app.state.r2 = R2Client(settings) if _r2_ready else None
+    app.state.gemini = (
+        GeminiImageClient(settings) if settings.gemini_api_key else None
     )
+    app.state.dispatcher = None
     app.state.jwt_key_resolver = (
         jwks_key_resolver(settings.jwks_url) if settings.jwks_url else None
     )

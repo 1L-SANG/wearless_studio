@@ -41,7 +41,7 @@ OPENAI_API_KEY=   # text
 | M-01 | matching-recommender (매칭 추천) | **비-AI** (룰베이스) | `analyzeProduct` 내부 | — | ✅ (구현 존재) |
 | M-02 | page-assembler (상세페이지 조립) | **비-AI** (템플릿 엔진) | `generateDetailPage`(assemble 단계) | — | ✅ (mock 구현 존재) |
 | AG-P1 | matching-ai-recommender | text | M-01 대체/보강 | — | P1 슬롯 |
-| AG-P2 | image-qc (이미지 동일성 검수) | text | 컷 생성 직후 게이트 | — | P1 슬롯 |
+| AG-P2 | image-qc (이미지 동일성 검수) | text | 이미지 생성 직후 게이트(AG-04/05/06/07) | — | P1 슬롯 |
 
 공통 원칙: 입력·출력의 키와 enum 값은 전부 `common_data_contract.md` §4 토큰을 쓴다. 자유 텍스트(상품명·소재명·강조 특징·카피)는 한국어.
 
@@ -118,6 +118,9 @@ OPENAI_API_KEY=   # text
 | 프롬프트 핵심 제약 | 상품 동일성 보존 최우선 · 선택 마네킹컷의 핏·실루엣 기준 준수(PRD §7.1) · product 컷은 모델 없음(고스트/행거/플랫레이) · styling 컷은 matchItems 착장 반영 |
 | 실패 | PL-4: 실패 블록은 빈 슬롯 블록으로 조립하고 결과에 표시(전체 중단 없음, 해당 컷 크레딧 미차감) · PL-5: throw + 미차감 |
 
+> **구현 구조 (2026-06-20 결정)**: cutType별 프롬프트를 **독립 파일/모듈로 분리**(예 `prompts/cuts/product`·`horizon`·`styling`) — 한 컷을 작업할 때 다른 컷 프롬프트를 읽지 않는다. 입출력 계약·R2 입출력·재시도·로깅 등 **배관은 공통 1벌**(컷마다 복붙 금지). tier(모델)는 셋 다 `image_high` 공유 — **컷별 모델 분리는 보류**(저난도 컷에 `image_light`를 쓸 근거가 생기면 그때 §1 테이블에서 분기). 카탈로그를 `AG-06-product/horizon/styling` 3행으로 표기하는 건 선택일 뿐 **계약은 단일**. `styling` = 일상/룩북 컷(별도 '일상' cutType 신설 안 함 — 라벨만).
+> **다양성은 AG-06의 책임이 아니다**: AG-06은 주어진 1개 spec(direction/shot/pose/angle)을 충실히 렌더할 뿐, 같은 cutType 컷들 간 변주는 **콘티(shot-list) 구성 단계**가 정한다 — §5 '컷 다양성' 참조.
+
 ### AG-07 cut-variator — 현재 컷 변형
 
 | | |
@@ -156,7 +159,10 @@ OPENAI_API_KEY=   # text
 ## 5. P1+ 슬롯 (입출력 계약만 예약 — MVP 미구현)
 
 - **AG-P1 matching-ai-recommender** (`text`): M-01 대체/보강. 입력 = M-01과 동일 + 상품 이미지. 출력 = `MatchingItem.id` 랭킹 + 사유. M-01과 같은 출력 shape를 유지해 스왑 가능하게.
-- **AG-P2 image-qc — 이미지 동일성 검수** (`text`, 비전 입력): 생성 컷이 입력 상품과 같은 옷인지(색·패턴·넥라인·디테일 변형 여부) 판정. 입력 = `{ productImages, generatedUrl }`, 출력 = `{ verdict: 'pass'\|'retry', mismatches[] }`. 파이프라인 훅 위치: AG-04/05/06/07 출력 직후 게이트(ai_pipeline_spec §3 표기). 재시도·크레딧 정책은 PRD §12.2와 함께 확정.
+- **AG-P2 image-qc — 이미지 동일성 검수 + 보정 지시** (`text`, 비전 입력): 생성 이미지가 입력 상품과 같은 옷인지(색·패턴·넥라인·디테일 변형 여부) 판정. 입력 = `{ productImages, generatedUrl, sourceAgent, genSpec }` — `genSpec`은 상위 에이전트의 생성 파라미터로 **에이전트별 형태가 다름**(AG-06/07=cutSpec, AG-04/05=마네킹 spec). 출력 = `{ verdict: 'pass'\|'retry', mismatches[], correctionPrompt?: string }`. **retry면 실패원인+보완점을 담은 `correctionPrompt`를 생성**해, 재생성 호출 시 **그 상위 에이전트의 원래 프롬프트에** 우선순위 보정 지시로 주입(주입 메커니즘은 에이전트 무관)(2026-06-20 결정). 훅 위치: AG-04/05/06/07 출력 직후 게이트(ai_pipeline_spec §3) — 마네킹·컷 공통 게이트라 입력을 cut 전용으로 가정하지 않는다. 재시도 상한·크레딧 정책은 PRD §12.2와 함께 확정.
+  - **선례(메커니즘만)**: 스파이크(`spike/codex-phase4-mannequin-job-design.md` §5)에 **비-AI 싼 QC**(Pillow 크롭/프레이밍/고스트 휴리스틱)를 1차 게이트로 두고, `format_qc_feedback()`이 실패 사유를 다음 시도 프롬프트에 붙이는 **피드백 재시도 루프**가 설계돼 있다. AG-P2는 이 루프의 **의미(semantic) 단계**를 채운다(동일한 correctionPrompt 주입 메커니즘을 '같은 옷인가' 판정으로 확장).
+    - ⚠️ **폐기 주의**: 스파이크의 *Flash 기본 → QC 실패 시 Pro 승격(4회 escalation)* tier 설계는 **현행 §1 라우팅에서 폐기**. 최종 이미지(AG-04/05/06/07)는 `image_high`(Pro) 직접 사용이고 `image_light`(Flash)는 MVP 미배정 — 재시도도 동일 tier(`image_high`)에서 correctionPrompt만 강화한다(별도 Flash→Pro 단계 없음). 재시도 상한은 PRD §12.2와 함께 확정.
+- **컷 다양성 (shot-list 구성) — 책임 분리, 구현 방식 미확정**: 상세페이지는 같은 cutType 컷이 여러 장 들어가는데 전부 비슷한 구도/느낌이면 안 된다. **이 변주는 AG-06(렌더러)이 아니라 콘티(storyboard) 구성 단계의 책임** — 같은 cutType 블록들에 서로 다른 `(direction × shot × pose × angle)` spec을 배정해 변주를 만든다. 결정 대기: ⓐ **비-AI 룰 기반 shot-spread**(콘티 시드가 cutType별 옵션 매트릭스에서 충돌 없이 분산 — M-01/M-02 패턴, 결정적·비용0, **추천**) vs ⓑ **AI art-director 에이전트**(컷 묶음에 큐레이션된 다양 shot-list를 제안). ⓐ로 시작하고 기계적으로 느껴지면 ⓑ를 P1로. (ai_pipeline_spec §7.4 '콘티 구성' 오픈이슈와 연결)
 - **분위기 예시는 에이전트가 아니다** — 콘티/에디터의 '생성예시'는 AI 모델·매칭 의류처럼 **운영자가 미리 넣는 시드 데이터**로 확정(사용자 결정). `image_light` tier는 이런 저난도 생성 수요가 실제로 생길 때 배정한다.
 
 ---
