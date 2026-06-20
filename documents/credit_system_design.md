@@ -105,9 +105,9 @@ purchase_topup(user, sku):       # 지금은 테스트, 나중 PG
 ### 3.3 차감 — reserve / confirm / release (버킷 인지)
 ```
 reserve(user, cost):             # job 시작 tx (기존 §6 + 가용 정의만 교체)
-  lock account
-  available = balance - reserved      # balance엔 pending_refund/expired 미포함
-  if available < cost: 402
+  lock account FOR UPDATE                             # ★ 먼저 account 잠그고(다른 버킷 경로와 동일 순서)
+  available = (Σ active 버킷 remaining) − reserved    #   그 락 아래서 버킷 합 읽기 → 동시 confirm의
+  if available < cost: 402                            #   버킷 변경과 직렬화(stale-high 과예약 race 차단)
   reserved += cost
   # 버킷엔 아직 안 댐 — 어느 버킷서 깎일지는 confirm 때 FIFO로 결정
 

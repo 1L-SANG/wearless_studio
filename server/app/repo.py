@@ -493,17 +493,31 @@ async def list_job_events(
 
 
 async def reserve_credits(conn: AsyncConnection, user_id: str, amount: int) -> int | None:
-    """available(=balance-reserved) ≥ amount 면 reserved += amount, available_after 반환.
+    """available(=Σ active 버킷 remaining − reserved) ≥ amount 면 reserved += amount, available_after 반환.
+    **account 행을 먼저 FOR UPDATE로 잠근 뒤** 버킷 합을 읽는다 — 버킷 변경 경로
+    (_consume_buckets·grant·refund)가 전부 account를 먼저 잠그므로, reserve도 같은 순서를 따라야
+    동시 confirm이 버킷을 비우는 사이 stale-high 읽기로 과예약(=settle 불가 doomed job)하는 race를 막는다.
     부족·계정없음이면 None (라우트가 402)."""
     async with conn.cursor() as cur:
         await cur.execute(
-            "update credit_accounts set reserved = reserved + %s "
-            "where user_id = %s and balance - reserved >= %s "
-            "returning balance - reserved as available_after",
-            (amount, user_id, amount),
+            "select reserved from credit_accounts where user_id = %s for update", (user_id,)
         )
-        row = await cur.fetchone()
-    return None if row is None else row["available_after"]
+        acct = await cur.fetchone()
+        if acct is None:
+            return None
+        await cur.execute(
+            "select coalesce(sum(remaining_credits), 0) as s from credit_sources "
+            "where user_id = %s and status = 'active'",
+            (user_id,),
+        )
+        bucket_sum = (await cur.fetchone())["s"]
+        if bucket_sum - acct["reserved"] < amount:
+            return None
+        await cur.execute(
+            "update credit_accounts set reserved = reserved + %s where user_id = %s",
+            (amount, user_id),
+        )
+    return bucket_sum - acct["reserved"] - amount
 
 
 async def _settle_credits(
