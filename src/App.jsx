@@ -12,6 +12,8 @@ import { Suspense, useEffect, useState } from 'react';
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
+import { Pricing } from '@/features/pricing/Pricing.jsx';
+import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
@@ -71,6 +73,9 @@ export default function App() {
           {/* 보관함은 로그인 필요 */}
           <Route element={<RequireAuth />}>
             <Route path="library" element={<Library />} />
+            {/* 크레딧 에이전트 페이지 — auth 는 라우트만 등록, 본문 컴포넌트는 크레딧 에이전트 소유 */}
+            <Route path="pricing" element={<Pricing />} />
+            <Route path="credits/history" element={<CreditsHistory />} />
           </Route>
           <Route path="create">
             <Route index element={<Navigate to="/create/input" replace />} />
