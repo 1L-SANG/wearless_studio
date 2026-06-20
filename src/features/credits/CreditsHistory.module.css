@@ -1,0 +1,26 @@
+/* features/credits — 크레딧 사용 내역 (표시 전용). 토큰만, Pretendard. */
+
+.head { margin-bottom: 22px; }
+.title { font-family: var(--font-body); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg-1); }
+.sub { margin-top: 8px; font-size: 16px; line-height: 1.5; color: var(--fg-2); }
+.sub strong { color: var(--fg-1); font-weight: 700; }
+
+/* 좁은 폭 + 중앙 정렬 (사용자 요청) */
+.list { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+
+.row {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 13px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg-1);
+}
+/* 증가(충전·환불)는 성공 틴트 배경으로 구분 */
+.row.gain { background: var(--accent-success-ring); border-color: transparent; }
+
+.left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.icon { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--bg-2); color: var(--fg-2); }
+.row.gain .icon { background: var(--bg-1); color: var(--accent-success); }
+
+.label { font-family: var(--font-body); font-size: 14px; font-weight: 600; color: var(--fg-1); }
+.meta { font-size: 12px; color: var(--fg-2); margin-top: 2px; }
+
+.amount { flex: none; font-family: var(--font-body); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--fg-1); }
+.amount.gain { color: var(--accent-success); }

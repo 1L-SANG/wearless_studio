@@ -53,4 +53,14 @@ export const httpAdapter = {
   async patchProject(projectId, patch) {
     return http(`/v1/projects/${projectId}`, { method: 'PATCH', body: patch });
   },
+  // 크레딧 표시 페이지 (계약 §6) — 조회 전용. 구매·환불 UI는 PG 단계.
+  async getPricingPlans() {
+    return http('/v1/pricing-plans');
+  },
+  async getCreditHistory() {
+    return http('/v1/credits/history');
+  },
+  async getCreditSources() {
+    return http('/v1/credits/sources');
+  },
 };

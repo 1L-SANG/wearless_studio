@@ -1,14 +1,77 @@
 /* =============================================================
-   features/pricing — 요금제 관리 (/pricing)
-   [경계] auth 에이전트는 라우트만 등록한다. 본문(요금제 카드·환불 버튼/모달 등)은
-   크레딧 백엔드 에이전트가 소유 — 이 stub 을 교체/구현한다.
+   features/pricing — 요금제 (/pricing)
+   표시 전용(계약 §6): 구독 / 추가구매(top-up)를 connected-tabs 로 전환해 카드 표시.
+   현재 이용 중인 구독 플랜을 강조. 실제 구매/결제는 PG 연동 단계 — 버튼은 "준비 중".
+   데이터: api.getPricingPlans() (http → /v1/pricing-plans, mock 폴백).
    ============================================================= */
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api/index.js';
+import { useAppStore } from '@/store/useAppStore.js';
+import { Button, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
+import s from './Pricing.module.css';
+
+const won = (n) => '₩' + Number(n).toLocaleString('ko-KR');
+
 export function Pricing() {
+  const [tab, setTab] = useState('subscription'); // 'subscription' | 'topup'
+  const account = useAppStore((a) => a.account);
+  const currentPlan = (account?.plan || '').toLowerCase();
+
+  const { data: plans = [], isLoading, isError, refetch } = useQuery({
+    queryKey: ['pricingPlans'],
+    queryFn: () => api.getPricingPlans(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const shown = plans.filter((p) => p.kind === tab);
+  const recurring = tab === 'subscription';
+
   return (
-    <div className="wizard">
-      <div className="surface" style={{ textAlign: 'center', padding: 48 }}>
-        요금제 관리 — 준비 중 (크레딧 에이전트 구현 예정)
+    <div className="wizard wide" style={{ paddingTop: 28 }}>
+      <div className={s.head}>
+        <h1 className={s.title}>요금제</h1>
+        <p className={s.sub}>매달 크레딧이 충전되는 구독을 고르고, 부족하면 추가로 구매할 수 있어요.</p>
       </div>
+
+      <div className={s.tabs} role="tablist">
+        <button className={`${s.tab}${tab === 'subscription' ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
+        <button className={`${s.tab}${tab === 'topup' ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
+      </div>
+
+      {isLoading && (
+        <div className={s.grid}>{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} h={190} r={16} />)}</div>
+      )}
+      {isError && <div className="surface"><ErrorState desc="요금제를 불러오지 못했어요." onRetry={refetch} /></div>}
+      {!isLoading && !isError && shown.length === 0 && (
+        <div className="surface"><EmptyState icon="coins" title="요금제를 준비 중이에요" desc="잠시 후 다시 확인해 주세요." /></div>
+      )}
+
+      {!isLoading && !isError && shown.length > 0 && (
+        <div className={s.grid}>
+          {shown.map((p) => {
+            const isCurrent = recurring && p.code === currentPlan;
+            return (
+              <div key={p.id} className={`${s.card}${isCurrent ? ' ' + s.current : ''}`}>
+                {isCurrent && <span className={s.badge}>이용 중</span>}
+                <h3 className={s.name}>{p.name}</h3>
+                <div className={s.priceRow}>
+                  <span className={s.price}>{won(p.price)}</span>
+                  {recurring && <span className={s.unit}>/ 월</span>}
+                </div>
+                <p className={s.credits}>
+                  크레딧 <strong>{p.credits.toLocaleString('ko-KR')}</strong>{recurring ? ' 매달 충전' : ' 1회 지급'}
+                </p>
+                <div className={s.cta}>
+                  <Button variant={isCurrent ? 'ghost' : 'primary'} block disabled title="결제 연동 준비 중">
+                    {isCurrent ? '이용 중' : recurring ? '구독하기' : '구매하기'} {!isCurrent && '(준비 중)'}
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

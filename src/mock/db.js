@@ -21,7 +21,7 @@ import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRe
 const nowIso = () => new Date().toISOString();
 
 /* ---- Account (stable) ---- */
-const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 24, plan: 'Pro' };
+const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 196, plan: 'basic' };
 
 /* ---- Catalogs (stable closed option sets) ---- */
 const catalogs = {

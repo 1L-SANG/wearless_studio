@@ -72,6 +72,35 @@ export const api = {
   async getAccount() { await wait(120); return clone(DB.account); },
   async getCatalogs() { await wait(80); return clone(DB.catalogs); },
 
+  /* ---- credits (표시 전용; 실서버는 httpAdapter. 계약 §6) ---- */
+  async getPricingPlans() {
+    await wait(80);
+    return [
+      { id: 'm-basic', code: 'basic', kind: 'subscription', name: 'Basic', credits: 200, price: 19900, billingPeriod: 'monthly', sortOrder: 1 },
+      { id: 'm-plus', code: 'plus', kind: 'subscription', name: 'Plus', credits: 600, price: 49900, billingPeriod: 'monthly', sortOrder: 2 },
+      { id: 'm-seller', code: 'seller', kind: 'subscription', name: 'Seller', credits: 1400, price: 99900, billingPeriod: 'monthly', sortOrder: 3 },
+      { id: 'm-tb', code: 'topup_basic', kind: 'topup', name: '크레딧 200', credits: 200, price: 19900, billingPeriod: 'once', sortOrder: 11 },
+      { id: 'm-tp', code: 'topup_plus', kind: 'topup', name: '크레딧 600', credits: 600, price: 49900, billingPeriod: 'once', sortOrder: 12 },
+      { id: 'm-ts', code: 'topup_seller', kind: 'topup', name: '크레딧 1400', credits: 1400, price: 99900, billingPeriod: 'once', sortOrder: 13 },
+    ];
+  },
+  async getCreditHistory() {
+    await wait(120);
+    const now = Date.now();
+    // 정합 시나리오: 200 충전 → 4 사용 = 196 (account.credits 와 일치)
+    return [
+      { id: 'l2', projectId: 'p1', jobId: 'j2', actionKey: 'mannequinGenerate', delta: -2, balanceAfter: 196, availableAfter: 196, createdAt: new Date(now - 30e5).toISOString() },
+      { id: 'l1', projectId: 'p1', jobId: 'j1', actionKey: 'mannequinGenerate', delta: -2, balanceAfter: 198, availableAfter: 198, createdAt: new Date(now - 36e5).toISOString() },
+      { id: 'l0', projectId: null, jobId: null, actionKey: 'grant_subscription', delta: 200, balanceAfter: 200, availableAfter: 200, createdAt: new Date(now - 40e5).toISOString() },
+    ];
+  },
+  async getCreditSources() {
+    await wait(100);
+    return [
+      { id: 's1', sourceType: 'subscription', status: 'active', initialCredits: 200, remainingCredits: 196, periodEnd: new Date(Date.now() + 25 * 864e5).toISOString(), planId: 'm-basic', createdAt: new Date(Date.now() - 40e5).toISOString() },
+    ];
+  },
+
   /* ---- product input ---- */
   async getProduct(/* projectId */) { await wait(160); return clone(DB.product); },
   async saveProduct(_projectId, patch) {
