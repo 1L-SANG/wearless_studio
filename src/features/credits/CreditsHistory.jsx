@@ -44,7 +44,7 @@ export function CreditsHistory() {
   );
 
   return (
-    <div className="wizard wide" style={{ paddingTop: 28 }}>
+    <div className="wizard wide">
       <div className={s.head}>
         <h1 className={s.title}>크레딧 사용 내역</h1>
         <p className={s.sub}>
@@ -70,7 +70,7 @@ export function CreditsHistory() {
               <div key={e.id} className={`${s.row}${gain ? ' ' + s.gain : ''}`}>
                 <span className={s.left}>
                   <span className={s.icon}><Icon name={iconFor(e.delta)} size={17} /></span>
-                  <span style={{ minWidth: 0 }}>
+                  <span className={s.text}>
                     <div className={s.label}>{labelFor(e.actionKey)}</div>
                     <div className={s.meta}>{project ? `${project} · ` : ''}{fmtDate(e.createdAt)}</div>
                   </span>

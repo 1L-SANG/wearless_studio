@@ -1,6 +1,7 @@
 /* features/credits — 크레딧 사용 내역 (표시 전용). 토큰만, Pretendard. */
 
 .head { margin-bottom: 22px; }
+.text { min-width: 0; } /* 라벨·메타 영역 — 줄임 대비 */
 .title { font-family: var(--font-body); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg-1); }
 .sub { margin-top: 8px; font-size: 16px; line-height: 1.5; color: var(--fg-2); }
 .sub strong { color: var(--fg-1); font-weight: 700; }

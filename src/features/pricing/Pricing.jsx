@@ -28,7 +28,7 @@ export function Pricing() {
   const recurring = tab === 'subscription';
 
   return (
-    <div className="wizard wide" style={{ paddingTop: 28 }}>
+    <div className="wizard wide">
       <div className={s.head}>
         <h1 className={s.title}>요금제</h1>
         <p className={s.sub}>매달 크레딧이 충전되는 구독을 고르고, 부족하면 추가로 구매할 수 있어요.</p>
