@@ -29,7 +29,9 @@ export function TopNav() {
   const { session, openLogin } = useAuth();
   const account = useAppStore((s) => s.account) || { name: '…', avatar: '', credits: 0, plan: '' };
   const startProject = useAppStore((s) => s.startProject);
-  const route = pathname.startsWith('/library') ? 'library' : 'create';
+  // create 흐름일 때만 'create' 활성 — /pricing·/credits 등은 어느 탭도 활성 아님(폴백 active 버그 수정)
+  const route = pathname.startsWith('/library') ? 'library'
+    : pathname.startsWith('/create') ? 'create' : null;
   const onNav = async (r) => { if (r === 'create') { await startProject(); navigate('/create/input'); } else navigate('/library'); };
   const step = pathname.startsWith('/create/') ? pathname.split('/')[2] : null;
 

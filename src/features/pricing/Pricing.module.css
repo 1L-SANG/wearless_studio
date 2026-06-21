@@ -1,0 +1,48 @@
+/* features/pricing — 요금제 (표시 전용). 토큰만 사용, Pretendard(--font-body). */
+
+.head { margin-top: 14px; margin-bottom: 22px; } /* .wizard 패딩 14 + 14 = 상단 28(원래 간격 보존) */
+.title { font-family: var(--font-body); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg-1); }
+.sub { margin-top: 8px; font-size: 16px; line-height: 1.5; color: var(--fg-2); } /* 부가설명 키움 */
+
+/* connected tabs (세그먼트) */
+.tabs { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 22px; background: var(--bg-2); border-radius: 12px; }
+.tab {
+  padding: 8px 20px; border: none; background: none; border-radius: 9px;
+  font-family: var(--font-body); font-size: 14px; font-weight: 600; color: var(--fg-2); cursor: pointer;
+}
+.tab:hover { color: var(--fg-1); }
+.tab.active { background: var(--bg-1); color: var(--fg-1); box-shadow: 0 1px 2px var(--ring); }
+
+/* 탭별 설명 — 구독/추가구매 차이 안내 */
+.tabDesc { margin: -10px 0 18px; font-size: 14px; color: var(--fg-2); }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+
+/* 카드 종류 라벨 (구독=중립 / 충전=초록) — 두 탭을 한눈에 구분 */
+.kind { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-body); font-size: 12px; font-weight: 700; color: var(--fg-2); }
+.kindTopup { color: var(--accent-success); }
+/* 추가구매 카드: 상단 초록 강조선으로 구독과 시각 차별 */
+.topupCard { border-top: 3px solid var(--accent-success); }
+/* 추가구매는 '받는 크레딧'을 헤드라인으로 (초록) */
+.creditBig { font-family: var(--font-body); font-size: 28px; font-weight: 700; letter-spacing: -0.02em; color: var(--accent-success); font-variant-numeric: tabular-nums; }
+
+.card {
+  position: relative; display: flex; flex-direction: column; gap: 12px;
+  padding: 24px; background: var(--bg-1); border: 1px solid var(--line); border-radius: 16px;
+}
+/* 이용 중인 플랜 강조 */
+.card.current { border-color: var(--accent-success); box-shadow: 0 0 0 3px var(--accent-success-ring); }
+
+.badge {
+  position: absolute; top: 16px; right: 16px;
+  font-size: 12px; font-weight: 700; color: var(--accent-success);
+  background: var(--accent-success-ring); padding: 3px 10px; border-radius: 999px;
+}
+
+.name { font-family: var(--font-body); font-size: 18px; font-weight: 700; color: var(--fg-1); }
+.priceRow { display: flex; align-items: baseline; gap: 6px; }
+.price { font-family: var(--font-body); font-size: 28px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg-1); font-variant-numeric: tabular-nums; }
+.unit { font-size: 14px; font-weight: 500; color: var(--fg-2); }
+.credits { font-family: var(--font-body); font-size: 14px; color: var(--fg-2); }
+.credits strong { color: var(--fg-1); font-weight: 700; }
+.cta { margin-top: auto; }
