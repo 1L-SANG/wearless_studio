@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Button, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
+import { Button, Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 import s from './Pricing.module.css';
 
 const won = (n) => '₩' + Number(n).toLocaleString('ko-KR');
@@ -38,6 +38,11 @@ export function Pricing() {
         <button className={`${s.tab}${tab === 'subscription' ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
         <button className={`${s.tab}${tab === 'topup' ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
       </div>
+      <p className={s.tabDesc}>
+        {recurring
+          ? '매달 자동으로 크레딧이 충전되는 정기 구독이에요.'
+          : '구독 크레딧이 부족할 때, 한 번만 결제해 바로 충전하는 1회 상품이에요.'}
+      </p>
 
       {isLoading && (
         <div className={s.grid}>{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} h={190} r={16} />)}</div>
@@ -51,17 +56,32 @@ export function Pricing() {
         <div className={s.grid}>
           {shown.map((p) => {
             const isCurrent = recurring && p.code === currentPlan;
+            const credits = p.credits.toLocaleString('ko-KR');
             return (
-              <div key={p.id} className={`${s.card}${isCurrent ? ' ' + s.current : ''}`}>
+              <div key={p.id} className={`${s.card}${isCurrent ? ' ' + s.current : ''}${recurring ? '' : ' ' + s.topupCard}`}>
                 {isCurrent && <span className={s.badge}>이용 중</span>}
+                <span className={`${s.kind}${recurring ? '' : ' ' + s.kindTopup}`}>
+                  <Icon name={recurring ? 'refresh' : 'coins'} size={13} />
+                  {recurring ? '정기 구독' : '1회 충전'}
+                </span>
                 <h3 className={s.name}>{p.name}</h3>
-                <div className={s.priceRow}>
-                  <span className={s.price}>{won(p.price)}</span>
-                  {recurring && <span className={s.unit}>/ 월</span>}
-                </div>
-                <p className={s.credits}>
-                  크레딧 <strong>{p.credits.toLocaleString('ko-KR')}</strong>{recurring ? ' 매달 충전' : ' 1회 지급'}
-                </p>
+                {recurring ? (
+                  <>
+                    <div className={s.priceRow}>
+                      <span className={s.price}>{won(p.price)}</span>
+                      <span className={s.unit}>/ 월</span>
+                    </div>
+                    <p className={s.credits}>크레딧 <strong>{credits}</strong> 매달 충전</p>
+                  </>
+                ) : (
+                  <>
+                    <div className={s.priceRow}>
+                      <span className={s.creditBig}>+{credits}</span>
+                      <span className={s.unit}>크레딧</span>
+                    </div>
+                    <p className={s.credits}>{won(p.price)} · 1회 결제</p>
+                  </>
+                )}
                 <div className={s.cta}>
                   <Button variant={isCurrent ? 'ghost' : 'primary'} block disabled title="결제 연동 준비 중">
                     {isCurrent ? '이용 중' : recurring ? '구독하기' : '구매하기'} {!isCurrent && '(준비 중)'}

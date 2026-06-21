@@ -1,6 +1,6 @@
 /* features/credits — 크레딧 사용 내역 (표시 전용). 토큰만, Pretendard. */
 
-.head { margin-bottom: 22px; }
+.head { margin-top: 14px; margin-bottom: 22px; } /* .wizard 패딩 14 + 14 = 상단 28(원래 간격) */
 .text { min-width: 0; } /* 라벨·메타 영역 — 줄임 대비 */
 .title { font-family: var(--font-body); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg-1); }
 .sub { margin-top: 8px; font-size: 16px; line-height: 1.5; color: var(--fg-2); }
@@ -13,8 +13,8 @@
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
   padding: 13px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg-1);
 }
-/* 증가(충전·환불)는 성공 틴트 배경으로 구분 */
-.row.gain { background: var(--accent-success-ring); border-color: transparent; }
+/* 증가(충전·환불)는 옅은 성공 틴트로 구분 (너무 진하지 않게 — 8% 믹스) */
+.row.gain { background: color-mix(in srgb, var(--accent-success) 8%, var(--bg-1)); border-color: transparent; }
 
 .left { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .icon { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--bg-2); color: var(--fg-2); }
@@ -23,5 +23,6 @@
 .label { font-family: var(--font-body); font-size: 14px; font-weight: 600; color: var(--fg-1); }
 .meta { font-size: 12px; color: var(--fg-2); margin-top: 2px; }
 
-.amount { flex: none; font-family: var(--font-body); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--fg-1); }
+/* 사용(차감)은 muted 회색으로 가볍게, 충전은 초록 강조 */
+.amount { flex: none; font-family: var(--font-body); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--fg-2); }
 .amount.gain { color: var(--accent-success); }
