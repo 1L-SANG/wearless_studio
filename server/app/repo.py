@@ -430,7 +430,7 @@ async def recover_stale_leases(conn: AsyncConnection, lease_timeout_seconds: int
             ev as (
               insert into job_events (job_id, event_type, payload)
               select id, 'error',
-                     jsonb_build_object('code', 'lease_recovered', 'message', %s)
+                     jsonb_build_object('code', 'lease_recovered', 'message', %s::text)
               from updated where status = 'error'
               returning 1
             )
