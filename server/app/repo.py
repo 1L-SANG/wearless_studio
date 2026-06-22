@@ -379,13 +379,13 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
         await cur.execute(
             f"""
             with next_job as (
-              select id from jobs
+              select id as nid from jobs
               where status = 'pending' and kind = any(%s)
               order by created_at for update skip locked limit 1
             )
             update jobs j set status = 'running', locked_by = %s, locked_at = now(),
               started_at = coalesce(j.started_at, now()), progress = greatest(j.progress, 5)
-            from next_job where j.id = next_job.id
+            from next_job where j.id = next_job.nid
             returning {_JOB_COLS}, locked_by as lease_token
             """,
             (list(kinds), lease_token),
