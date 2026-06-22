@@ -336,36 +336,44 @@ async def create_job(
                 return existing, False
         # 직접 SAVEPOINT — conn.transaction()은 열린 tx가 없으면 스스로 COMMIT해 라우트의
         # 커밋 제어(예약+생성 원자)를 빼앗을 수 있다. SAVEPOINT/RELEASE는 절대 커밋 안 함.
-        row = None
-        await cur.execute("savepoint create_job_insert")
-        try:
-            await cur.execute(
-                f"""
-                insert into jobs (user_id, project_id, kind, status, payload, idempotency_key,
-                                  credits_reserved, metadata)
-                values (%s, %s, %s, 'pending', %s, %s, %s, %s)
-                on conflict (project_id, kind)
-                  where status in ('pending', 'running') and kind <> 'editor_image'
-                  do nothing
-                returning {_JOB_COLS}
-                """,
-                (user_id, project_id, kind, Json(payload), idempotency_key, credits_reserved,
-                 Json(metadata)),
-            )
-            row = await cur.fetchone()
-        except errors.UniqueViolation:
-            await cur.execute("rollback to savepoint create_job_insert")
-            row = None  # 동시 같은 Idempotency-Key → 아래에서 키로 재조회 합류
-        else:
-            await cur.execute("release savepoint create_job_insert")
-        if row is not None:
-            return row, True
-        # 충돌(동시 같은 키 또는 활성 중복) → 기존 job 합류: 키 우선, 없으면 활성
-        if idempotency_key:
-            existing = await _by_key(cur)
-            if existing is not None:
-                return existing, False
-        return await _active(cur), False
+        # INSERT-or-join을 bounded 재시도(3회): 충돌(활성중복/동시같은키)로 합류해야 하는데
+        # 그 활성 job이 그 사이 완료돼 _by_key·_active가 모두 빈 결과면(레이스), 충돌 원인이
+        # 사라진 것이므로 INSERT를 재시도하면 성공한다. (Codex: race → (None,False) → 라우트 500 방지)
+        for _ in range(3):
+            row = None
+            await cur.execute("savepoint create_job_insert")
+            try:
+                await cur.execute(
+                    f"""
+                    insert into jobs (user_id, project_id, kind, status, payload, idempotency_key,
+                                      credits_reserved, metadata)
+                    values (%s, %s, %s, 'pending', %s, %s, %s, %s)
+                    on conflict (project_id, kind)
+                      where status in ('pending', 'running') and kind <> 'editor_image'
+                      do nothing
+                    returning {_JOB_COLS}
+                    """,
+                    (user_id, project_id, kind, Json(payload), idempotency_key, credits_reserved,
+                     Json(metadata)),
+                )
+                row = await cur.fetchone()
+            except errors.UniqueViolation:
+                await cur.execute("rollback to savepoint create_job_insert")
+                row = None  # 동시 같은 Idempotency-Key → 아래에서 키로 재조회 합류
+            else:
+                await cur.execute("release savepoint create_job_insert")
+            if row is not None:
+                return row, True
+            # 충돌 → 기존 job 합류: 키 우선, 없으면 활성
+            if idempotency_key:
+                existing = await _by_key(cur)
+                if existing is not None:
+                    return existing, False
+            active = await _active(cur)
+            if active is not None:
+                return active, False
+            # 합류 대상이 사라짐(충돌 job 완료) → 루프 재시도(이제 INSERT 성공)
+        raise RuntimeError("create_job: 활성 합류 대상이 반복적으로 사라짐 (드문 레이스)")
 
 
 async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_id: str) -> dict | None:
