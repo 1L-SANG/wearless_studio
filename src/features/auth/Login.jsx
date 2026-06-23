@@ -41,7 +41,7 @@ export function LoginGate() {
   return (
     <Modal onClose={closeLogin}>
       <div className={styles.gate}>
-        <img className={styles.logo} src="/assets/brand/temp-nav-logo.png" alt="Wearless" />
+        <img className={styles.logo} src="/assets/brand/logo.svg" alt="Wearless" />
         <h3 className={styles.title}>Wearless Studio</h3>
         <p className={styles.subtitle}>
           소셜 계정으로 로그인하고<br />

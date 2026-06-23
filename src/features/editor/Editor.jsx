@@ -699,7 +699,10 @@ export function Editor() {
       {/* toolbar */}
       <div className="ed-toolbar">
         <button className="ed-tool" onClick={() => { flushExit(); navigate('/library'); }} title="보관함으로" style={{ flexDirection: 'row', gap: 6 }}>
-          <span className="brand" style={{ fontSize: 17 }}>wearless</span>
+          <span className="brand">
+            <img className="brand-logo" src="/assets/brand/logo.svg" alt="" />
+            <img className="brand-wordmark" src="/assets/brand/wordmark.svg" alt="Wearless" />
+          </span>
         </button>
         <div className="ed-divider" />
         <div className="ed-toolgroup">
