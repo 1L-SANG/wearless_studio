@@ -10,16 +10,40 @@
   padding: var(--sp-8) var(--sp-8) var(--sp-4);
 }
 
+/* 브랜드 락업(세로): 심볼 위, 그 아래 wearless 워드마크 + Studio 디스크립터 */
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-12);
+}
+
 .logo {
-  height: 46px;
+  height: 50px;
   width: auto;
   object-fit: contain;
 }
 
-.title {
+.mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.wordmark {
+  height: 22px;
+  width: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.suffix {
   font-family: var(--font-display);
-  font-size: 20px;
-  color: var(--fg-1);
+  font-size: 11px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--fg-3);
   margin: 0;
 }
 
