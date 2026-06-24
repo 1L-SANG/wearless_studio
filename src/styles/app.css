@@ -102,7 +102,7 @@ input, textarea, select { font-family: inherit; }
 .brand { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-display); font-size: 21px; letter-spacing: -.5px; color: var(--fg-1); }
 /* 브랜드 락업: 그라데이션 심볼 + wearless 워드마크. 심볼이 워드마크보다 살짝 큰 표준 가로 락업. */
 .brand-logo { height: 26px; width: auto; object-fit: contain; flex: 0 0 auto; }
-.brand-wordmark { height: 16px; width: auto; object-fit: contain; flex: 0 0 auto; display: block; }
+.brand-wordmark { height: 22px; width: auto; object-fit: contain; flex: 0 0 auto; display: block; }
 .nav-links { display: flex; align-items: center; gap: 4px; }
 .nav-link {
   font-size: 14px; font-weight: 500; color: var(--fg-2); padding: 8px 12px; border-radius: var(--r-4);
