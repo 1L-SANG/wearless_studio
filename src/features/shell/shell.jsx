@@ -39,7 +39,7 @@ export function TopNav() {
     <nav className="topnav">
       <span className="brand">
         <img className="brand-logo" src="/assets/brand/logo.svg" alt="" />
-        <img className="brand-wordmark" src="/assets/brand/wordmark.svg" alt="Wearless" />
+        <img className="brand-wordmark" src="/assets/brand/wordmark.png" alt="Wearless" />
       </span>
       <div className="nav-links">
         {/* 비로그인 숨김: onNav('create')→startProject→createProject 는 토큰 필요(401 방지) */}

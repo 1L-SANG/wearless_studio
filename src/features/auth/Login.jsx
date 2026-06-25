@@ -44,7 +44,7 @@ export function LoginGate() {
         <div className={styles.brand}>
           <img className={styles.logo} src="/assets/brand/logo.svg" alt="" />
           <div className={styles.mark}>
-            <img className={styles.wordmark} src="/assets/brand/wordmark.svg" alt="Wearless" />
+            <img className={styles.wordmark} src="/assets/brand/wordmark.png" alt="Wearless" />
             <span className={styles.suffix}>Studio</span>
           </div>
         </div>

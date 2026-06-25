@@ -701,7 +701,7 @@ export function Editor() {
         <button className="ed-tool" onClick={() => { flushExit(); navigate('/library'); }} title="보관함으로" style={{ flexDirection: 'row', gap: 6 }}>
           <span className="brand">
             <img className="brand-logo" src="/assets/brand/logo.svg" alt="" />
-            <img className="brand-wordmark" src="/assets/brand/wordmark.svg" alt="Wearless" />
+            <img className="brand-wordmark" src="/assets/brand/wordmark.png" alt="Wearless" />
           </span>
         </button>
         <div className="ed-divider" />
