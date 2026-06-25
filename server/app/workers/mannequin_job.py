@@ -64,7 +64,9 @@ async def _run_candidate(
     for attempt in range(1, s.mannequin_max_attempts + 1):
         prompt = f"{feedback}\n\n{base_prompt}" if feedback else base_prompt
         try:
-            res = await gemini.generate_content_image(model, prompt, images, s.mannequin_image_size)
+            res = await gemini.generate_content_image(
+                model, prompt, images, s.mannequin_image_size,
+                aspect_ratio=s.mannequin_aspect_ratio)
         except GeminiError as e:
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "model": model, "attempt": attempt,
