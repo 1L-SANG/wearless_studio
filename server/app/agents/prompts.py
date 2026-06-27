@@ -27,6 +27,7 @@ class MannequinPromptContext:
     candidate: str
     base_fit: str
     base_gender: str
+    image_manifest: str = ""  # 첨부 이미지 순서·역할 목록 (워커가 실제 슬롯으로 구성)
 
 
 def load_prompt_template(settings: Settings) -> str:
@@ -75,6 +76,7 @@ def render_mannequin_prompt(
         .replace("${candidate}", ctx.candidate)
         .replace("${baseFit}", _sanitize(ctx.base_fit))
         .replace("${baseGender}", ctx.base_gender)
+        .replace("${imageManifest}", ctx.image_manifest)  # 멀티라인 — 마지막에 치환
     )
     leftover = re.findall(r"\$\{[a-zA-Z_]+\}", text)  # 템플릿의 오타·미해결 토큰 검출
     if leftover:

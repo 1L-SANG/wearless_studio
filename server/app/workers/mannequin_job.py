@@ -43,9 +43,30 @@ def _image_dims(data: bytes) -> tuple[int | None, int | None]:
         return None, None
 
 
+# 첨부 이미지 슬롯 → 모델용 라벨. prompt ${imageManifest} 가 이 목록을 받는다.
+_SLOT_LABEL = {
+    "Front": "front view of the garment",
+    "Back": "back view of the garment",
+    "Detail": "detail close-up of the garment (texture, stitching, trims, print)",
+    "Fit": "fit reference — the garment worn on a real person (true length & how it sits)",
+}
+
+
+def _build_manifest(prod_assets: list[dict], clothing_type: str, has_match: bool) -> str:
+    """images=[base, *prod(slot순), match]와 동일 순서의 역할 목록 (모델이 어느 이미지가 무엇인지 알게)."""
+    lines = [f"1. Base mannequin — the canvas to dress (keep it identical). Garment type: {clothing_type}."]
+    i = 2
+    for a in prod_assets:
+        lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'view of the garment')}")
+        i += 1
+    if has_match:
+        lines.append(f"{i}. matching BOTTOM garment — also dress the mannequin in this, coordinated with the top")
+    return "\n".join(lines)
+
+
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
-    product_count, template, product, analysis, clothing_type,
+    product_count, template, product, analysis, clothing_type, image_manifest="",
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
     s = app.state.settings
@@ -55,6 +76,7 @@ async def _run_candidate(
     ctx = mannequin.prompt_context(
         clothing_type=clothing_type, product_count=product_count,
         candidate=candidate, base_fit=base_fit, base_gender=base_gender,
+        image_manifest=image_manifest,
     )
     base_prompt = render_mannequin_prompt(template, ctx, product, analysis)
     # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
@@ -121,9 +143,10 @@ async def run_mannequin_job(app, job: dict) -> None:
             base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)
                           if base_asset_id else None)
             prod_assets = []
-            for aid in mannequin.base_color_image_ids(product):
+            for slot, aid in mannequin.base_color_images(product):
                 a = await repo.get_asset_for_user(conn, user_id, aid)
                 if a:
+                    a["slot"] = slot  # Front/Back/Detail/Fit — 매니페스트 라벨용
                     prod_assets.append(a)
             match_asset = None
             match_id = mannequin.main_match_item_id(analysis)
@@ -155,13 +178,14 @@ async def run_mannequin_job(app, job: dict) -> None:
         # 3) 후보 A/B 병렬 생성. return_exceptions=True — 한 후보의 예기치 못한 예외가
         #    형제 후보를 취소시키지 않게(부분 성공 허용). dict=성공, None/Exception=실패.
         clothing_type = product.get("clothing_type") or "상의"
+        manifest = _build_manifest(prod_assets, clothing_type, match_img is not None)
         specs = mannequin.candidate_specs(analysis)
         results = await asyncio.gather(*[
             _run_candidate(
                 app=app, job=job, candidate=c, base_fit=bf, base_gender=gender,
                 base_img=base_img, prod_imgs=prod_imgs, match_img=match_img,
                 product_count=product_count, template=template, product=product,
-                analysis=analysis, clothing_type=clothing_type)
+                analysis=analysis, clothing_type=clothing_type, image_manifest=manifest)
             for c, bf in specs
         ], return_exceptions=True)
         for r in results:  # 예기치 못한 후보 예외는 드롭하되 로그는 남긴다(디버깅)

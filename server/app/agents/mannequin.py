@@ -37,16 +37,20 @@ def candidate_specs(analysis: dict) -> list[tuple[str, str]]:
     return [("A", fit), ("B", fit_b)]
 
 
-def base_color_image_ids(product: dict) -> list[str]:
-    """기준 색상(ColorGroup.isBase, 없으면 colors[0])의 이미지 asset id들 (slot 순서).
-    ImageAsset.id == asset row id (업로드 계약). Front 필수는 입력 검증에서 거른다."""
+def base_color_images(product: dict) -> list[tuple[str, str]]:
+    """기준 색상(ColorGroup.isBase, 없으면 colors[0]) 이미지의 (slot, asset_id) 목록 (slot 순서).
+    slot ∈ Front/Back/Detail/Fit. Front 필수는 입력 검증에서 거른다(나머지는 선택)."""
     colors = product.get("colors") or []
     base = next((c for c in colors if c.get("isBase")), colors[0] if colors else None)
     if not base:
         return []
-    images = base.get("images") or []
-    images = sorted(images, key=lambda im: _SLOT_ORDER.get(im.get("slot") or "", 99))
-    return [im["id"] for im in images if im.get("id")]
+    images = sorted((base.get("images") or []), key=lambda im: _SLOT_ORDER.get(im.get("slot") or "", 99))
+    return [(im.get("slot") or "Front", im["id"]) for im in images if im.get("id")]
+
+
+def base_color_image_ids(product: dict) -> list[str]:
+    """기준 색상 이미지 asset id들 (slot 순서). ImageAsset.id == asset row id (업로드 계약)."""
+    return [aid for _slot, aid in base_color_images(product)]
 
 
 def has_base_front(product: dict) -> bool:
@@ -76,7 +80,8 @@ def main_match_item_id(analysis: dict) -> str | None:
 
 
 def prompt_context(
-    *, clothing_type: str, product_count: int, candidate: str, base_fit: str, base_gender: str
+    *, clothing_type: str, product_count: int, candidate: str, base_fit: str, base_gender: str,
+    image_manifest: str = "",
 ) -> MannequinPromptContext:
     return MannequinPromptContext(
         clothing_type=clothing_type or "상의",
@@ -84,4 +89,5 @@ def prompt_context(
         candidate=candidate,
         base_fit=base_fit,
         base_gender=base_gender,
+        image_manifest=image_manifest,
     )
