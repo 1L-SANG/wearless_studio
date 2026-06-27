@@ -52,9 +52,11 @@ _SLOT_LABEL = {
 }
 
 
-def _build_manifest(prod_assets: list[dict], clothing_type: str, has_match: bool) -> str:
-    """images=[base, *prod(slot순), match]와 동일 순서의 역할 목록 (모델이 어느 이미지가 무엇인지 알게)."""
-    lines = [f"1. Base mannequin — the canvas to dress (keep it identical). Garment type: {clothing_type}."]
+def _build_manifest(prod_assets: list[dict], has_match: bool) -> str:
+    """images=[base, *prod(slot순), match]와 동일 순서의 역할 목록 (모델이 어느 이미지가 무엇인지 알게).
+    내용은 전부 고정 라벨(_SLOT_LABEL 룩업) — 셀러 데이터를 직접 끼우지 않는다(프롬프트 인젝션 방지).
+    의류 종류는 sanitize된 ${clothingType}·PRODUCT CONTEXT로 따로 전달되므로 여기엔 넣지 않는다."""
+    lines = ["1. Base mannequin — the canvas to dress (keep it identical)"]
     i = 2
     for a in prod_assets:
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'view of the garment')}")
@@ -178,7 +180,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         # 3) 후보 A/B 병렬 생성. return_exceptions=True — 한 후보의 예기치 못한 예외가
         #    형제 후보를 취소시키지 않게(부분 성공 허용). dict=성공, None/Exception=실패.
         clothing_type = product.get("clothing_type") or "상의"
-        manifest = _build_manifest(prod_assets, clothing_type, match_img is not None)
+        manifest = _build_manifest(prod_assets, match_img is not None)
         specs = mannequin.candidate_specs(analysis)
         results = await asyncio.gather(*[
             _run_candidate(
