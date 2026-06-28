@@ -111,15 +111,30 @@ UNKNOWN_BLOCK = ("Render the fabric faithfully to the product reference image (i
                  "weight). Do not invent shine, stretch, or special weave that the reference does not show.")
 
 
+# 부분일치용 안전 alias: 한글 ≥2자 / 라틴 ≥3자 (1자 음절 면·모·마·울·견·청 + 'pe' 오탐 제외), 긴 것 우선
+_SUBSTR_ALIASES = sorted(
+    (a for a in _ALIAS_TO_KEY if (len(a) >= 3 if a.isascii() else len(a) >= 2)),
+    key=len, reverse=True,
+)
+
+
 def _canonical(name: str) -> str | None:
+    """소재명 → canonical 키. 전체/토큰 exact 우선 → 토큰 내 안전-부분일치(긴 alias 먼저).
+    '겉면 폴리에스터'처럼 라벨이 섞여도 토큰 단위라 '면'⊂'겉면' 오분류를 막는다.
+    1자 음절(면·모·울 등) 부분일치는 금지 — exact일 때만 인정."""
     s = (name or "").strip().lower()
     if not s:
         return None
     if s in _ALIAS_TO_KEY:
         return _ALIAS_TO_KEY[s]
-    for alias, key in _ALIAS_TO_KEY.items():  # 부분 포함(예: '면스판' 류 방어)
-        if alias and alias in s:
-            return key
+    tokens = s.split() or [s]
+    for tok in tokens:  # 토큰 exact ('면 혼방'→면=cotton, '겉면 폴리에스터'→폴리에스터)
+        if tok in _ALIAS_TO_KEY:
+            return _ALIAS_TO_KEY[tok]
+    for tok in tokens:  # 토큰 내 안전 부분일치 ('캐시미어울'→cashmere), 긴 alias 우선
+        for alias in _SUBSTR_ALIASES:
+            if alias in tok:
+                return _ALIAS_TO_KEY[alias]
     return None
 
 
