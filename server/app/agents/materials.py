@@ -16,11 +16,11 @@ _ALIASES = {
     "cotton": ["코튼", "면", "순면", "오가닉코튼", "cotton"],
     "polyester": ["폴리에스터", "폴리에스테르", "폴리", "polyester", "pe"],
     "nylon": ["나일론", "nylon", "폴리아미드"],
-    "rayon": ["레이온", "비스코스", "비스코스레이온", "인견", "viscose", "rayon"],
-    "modal": ["모달", "modal"],
-    "lyocell": ["텐셀", "리오셀", "라이오셀", "tencel", "lyocell"],
-    "linen": ["린넨", "리넨", "마", "linen"],
-    "wool": ["울", "양모", "모", "wool", "merino", "메리노"],
+    # 부드러운 셀룰로오스 드레이프는 렌더가 사실상 동일 → rayon 한 키로 통합(모달·텐셀·리오셀). '인견' 제거(니치).
+    "rayon": ["레이온", "비스코스", "비스코스레이온", "viscose", "rayon",
+              "모달", "modal", "텐셀", "리오셀", "라이오셀", "tencel", "lyocell"],
+    "linen": ["린넨", "리넨", "linen"],  # '마' 제거 — 1글자라 '겉면→면' 류 오인식 유발
+    "wool": ["울", "양모", "wool"],  # '모'(1글자 오인식)·'메리노'(울 하위종) 제거
     "cashmere": ["캐시미어", "캐시미어울", "cashmere"],
     "acrylic": ["아크릴", "acrylic"],
     "silk": ["실크", "견", "silk"],
@@ -47,9 +47,7 @@ FIBER_BLOCK = {
     "cotton": "mostly matte cotton: natural slightly-dry surface with fine woven/jersey grain (not exaggerated); medium body; soft irregular wrinkles and small creases at bends. Not glossy, slippery, satin, or plastic.",
     "polyester": "smooth synthetic, cleaner and more uniform than cotton; low-to-moderate sheen only on broad folds where light hits (no mirror gloss unless the reference shows it); resists messy wrinkling, controlled folds. Not satin, not wet gloss.",
     "nylon": "lightweight technical fabric, smooth compact surface with subtle sporty sheen; crisp springy slightly-papery folds; clean tension and shape recovery. Practical sporty sheen, not luxurious satin.",
-    "rayon": "soft fluid fabric with gentle drape; rounded folds, hangs close to the body, soft vertical ripples not stiff creases; where it draws taut over a bent arm/shoulder/knee it smooths along the tension with a narrow soft highlight only where light hits — matte to lightly lustrous, NOT shiny satin or silk, no elastic recovery.",
-    "modal": "very soft smooth fabric, matte or faintly lustrous; drapes more fluidly than cotton, sits close without harsh tension, soft shallow folds, gentle low-contrast wrinkles. Avoid crisp tailoring, rough slubs, heavy stiffness.",
-    "lyocell": "smooth cool-touch fabric, fluid drape with a subtle refined luster; long soft folds, fewer dry cotton wrinkles, even soft surface. Avoid high-gloss satin unless the reference clearly shows a satin weave.",
+    "rayon": "soft cellulosic drape (rayon/viscose/modal/tencel family): fluid gentle drape, rounded folds, hangs close to the body, soft vertical ripples not stiff creases, smooth cool-touch hand; where it draws taut over a bent arm/shoulder/knee it smooths along the tension with a narrow soft highlight only where light hits — matte to lightly lustrous, NOT shiny satin or silk, no elastic recovery.",
     "linen": "dry airy linen with visible natural slub texture and irregular yarn, a dry grainy hand; matte, slightly coarse, breathable; easy relaxed wrinkles and slightly angular creases that stay at sitting points/elbows/waist/hems. Not smooth, stretchy, glossy, or perfectly pressed.",
     "wool": "warm wool, soft matte surface with a subtle fuzzy fiber halo; body and thickness, rounded structured folds rather than sharp papery creases; a thick/heavy wool reads weighty and hangs in deep structured folds. Avoid synthetic shine, wet gloss, or thin cling.",
     "cashmere": "ultra-soft fine knit with a low-density even halo and subtle natural sheen; lightweight, soft fluid drape, relaxed shape retention. Premium matte softness — explicitly NOT acrylic fuzz and NOT visible pilling.",
@@ -83,8 +81,7 @@ COMBO_BLOCK = {
     frozenset(["rayon", "polyester"]): "rayon-polyester: soft smooth fabric, rayon-like fluid drape with polyester-added stability; longer cleaner folds than cotton, mild weight, mostly matte to lightly lustrous. Avoid stiffness, rough slubs, high-gloss satin unless visible.",
     frozenset(["linen", "cotton"]): "linen-cotton: breathable matte fabric, dry linen texture softened by cotton — subtle slubs, relaxed wrinkles but less harsh crunch than pure linen, airy slightly-angular folds. Avoid synthetic sheen, body-hugging stretch, perfectly wrinkle-free surfaces.",
     frozenset(["linen", "rayon"]): "linen-rayon: natural summer fabric, linen slub texture with rayon-softened fluid drape; matte, lightly irregular, breathable, softer-looking wrinkles. Avoid glossy satin, stiff canvas, activewear texture.",
-    frozenset(["modal", "cotton"]): "modal-cotton: soft matte fabric, smoother hand and more fluid fall than pure cotton; lightly follows the body, shallow soft folds, low-contrast relaxed wrinkles. Avoid crisp tailoring, rough linen texture, glossy satin.",
-    frozenset(["lyocell", "cotton"]): "tencel-cotton: soft matte fabric with a smoother, more fluid fall than pure cotton; shallow soft folds, natural non-synthetic surface. Avoid crisp tailoring, rough slubs, glossy satin.",
+    frozenset(["rayon", "cotton"]): "soft cellulosic-cotton blend (rayon/modal/tencel + cotton): soft matte fabric, smoother hand and more fluid fall than pure cotton; lightly follows the body, shallow soft folds, low-contrast relaxed wrinkles. Avoid crisp tailoring, rough linen texture, glossy satin.",
     frozenset(["wool", "nylon"]): "wool-blend: warm soft matte texture with a subtle fiber halo and improved shape retention; moderate thickness, rounded structured folds, cleaner and less fuzzy than pure wool but still warm. Avoid shiny polyester gloss, thin cling.",
     frozenset(["wool", "polyester"]): "wool-blend: warm soft matte texture with a subtle fiber halo and improved shape retention; moderate thickness, rounded structured folds. Avoid shiny polyester gloss, thin cling, rough cotton creases.",
     frozenset(["wool", "cashmere"]): "wool-cashmere knit: fine premium knit, low-density even halo and soft fluid folds; lightweight warmth, refined matte softness, relaxed shape retention. NOT acrylic fuzz, NOT visible pilling; halo only if knit construction is visible.",
@@ -111,7 +108,7 @@ UNKNOWN_BLOCK = ("Render the fabric faithfully to the product reference image (i
                  "weight). Do not invent shine, stretch, or special weave that the reference does not show.")
 
 
-# 부분일치용 안전 alias: 한글 ≥2자 / 라틴 ≥3자 (1자 음절 면·모·마·울·견·청 + 'pe' 오탐 제외), 긴 것 우선
+# 부분일치용 안전 alias: 한글 ≥2자 / 라틴 ≥3자 (1자 음절 면·견·청 + 'pe' 오탐 제외), 긴 것 우선
 _SUBSTR_ALIASES = sorted(
     (a for a in _ALIAS_TO_KEY if (len(a) >= 3 if a.isascii() else len(a) >= 2)),
     key=len, reverse=True,
@@ -121,7 +118,7 @@ _SUBSTR_ALIASES = sorted(
 def _canonical(name: str) -> str | None:
     """소재명 → canonical 키. 전체/토큰 exact 우선 → 토큰 내 안전-부분일치(긴 alias 먼저).
     '겉면 폴리에스터'처럼 라벨이 섞여도 토큰 단위라 '면'⊂'겉면' 오분류를 막는다.
-    1자 음절(면·모·울 등) 부분일치는 금지 — exact일 때만 인정."""
+    1자 음절(면·견·청 등) 부분일치는 금지 — exact일 때만 인정."""
     s = (name or "").strip().lower()
     if not s:
         return None
@@ -231,12 +228,15 @@ def material_guidance(materials: list, clothing_type: str = "", sub_category: st
     if {"polyester", "rayon"} <= {m["key"] for m in solids} and elastane:
         return _wrap(_SUITING, _knit_cue(knit_ctx))
 
-    # 3) 알려진 combo — 섬유 상위 2(elastane 포함 → cotton-spandex 등 매칭). cov≥85% 또는 elastane combo
+    # 3) 알려진 combo — 섬유 상위 2(elastane 포함 → cotton-spandex 등 매칭).
+    #    비-elastane combo는 2번째 섬유 ≥20%일 때만 — 저비율 2섬유(예: 면90/레이온10)가
+    #    dominant를 덮지 않게(그런 건 dominant 블록으로). elastane combo는 저비율도 핏에 의미 → 유지.
     top2 = known[:2]  # known=섬유전용이라 construction이 pair를 오염시키지 않음
     if len(top2) == 2:
         pair = frozenset(m["key"] for m in top2)
         cov = sum(m["ratio"] for m in top2)
-        if pair in COMBO_BLOCK and (cov >= 85 or ("elastane" in pair and elastane)):
+        is_combo = ("elastane" in pair and elastane) or (cov >= 85 and top2[1]["ratio"] >= 20)
+        if pair in COMBO_BLOCK and is_combo:
             extra = el_mod if (elastane and "elastane" not in pair) else ""  # elastane이 3섬유째면 보강
             return _wrap(COMBO_BLOCK[pair], extra, _knit_cue(knit_ctx))
 
