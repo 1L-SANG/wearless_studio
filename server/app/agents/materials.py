@@ -1,4 +1,5 @@
-"""소재 인식 → 렌더링 가이드 블록 (documents/material_prompt_blocks.md 구현). 순수 함수, IO 없음.
+"""소재 인식 → 렌더링 가이드 블록. 로직·구조 정본=documents/material_prompt_blocks.md ·
+블록 본문은 2026-06-29 전수 감사로 개정(근거 documents/material_audit_findings.md)이라 이 파일이 텍스트 정본. 순수 함수, IO 없음.
 
 원칙(정본 §1):
 - Reference-first: 블록은 원본 사진을 거스르지 않고 '섬유 거동 prior'만 보강(모든 블록에 reference 가드).
