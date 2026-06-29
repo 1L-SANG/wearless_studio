@@ -146,7 +146,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               <Chips options={subCats} value={a.subCategory} onChange={(v) => onChange({ subCategory: v })} /></div>
           )}
           <div className="field-row"><label className="lbl">대상 성별</label>
-            <Chips options={catalogs.genders} value={a.targetGenders} multi onChange={(v) => onChange({ targetGenders: v })} /></div>
+            <Chips options={catalogs.genders} value={a.targetGenders?.[0] || null} onChange={(v) => onChange({ targetGenders: v ? [v] : [] })} /></div>
           <div className="field-row"><label className="lbl">핏</label>
             <Chips options={catalogs.fits} value={a.fit} onChange={(v) => onChange({ fit: v })} /></div>
         </div>
