@@ -51,10 +51,14 @@ class GeminiImageClient:
             )
         return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
-    def _body(self, prompt: str, images: list[InlineImage], image_size: str, temperature: float | None) -> dict:
+    def _body(self, prompt: str, images: list[InlineImage], image_size: str,
+              temperature: float | None, aspect_ratio: str | None = None) -> dict:
+        image_cfg: dict = {"imageSize": image_size}
+        if aspect_ratio:
+            image_cfg["aspectRatio"] = aspect_ratio
         gen: dict = {
             "responseModalities": ["TEXT", "IMAGE"],
-            "imageConfig": {"imageSize": image_size},
+            "imageConfig": image_cfg,
         }
         if temperature is not None:
             gen["temperature"] = temperature
@@ -81,11 +85,12 @@ class GeminiImageClient:
         images: list[InlineImage],
         image_size: str,
         temperature: float | None = None,
+        aspect_ratio: str | None = None,
         timeout: float = 180.0,
     ) -> GeminiImageResult:
         if not self._key:
             raise GeminiError("GEMINI_API_KEY 미설정")
-        body = self._body(prompt, images, image_size, temperature)
+        body = self._body(prompt, images, image_size, temperature, aspect_ratio)
         t0 = time.perf_counter()
         async with httpx.AsyncClient(timeout=timeout) as client:
             res = await client.post(

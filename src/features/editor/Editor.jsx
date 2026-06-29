@@ -18,7 +18,7 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 
-const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)' };
+const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
 
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
@@ -699,7 +699,10 @@ export function Editor() {
       {/* toolbar */}
       <div className="ed-toolbar">
         <button className="ed-tool" onClick={() => { flushExit(); navigate('/library'); }} title="보관함으로" style={{ flexDirection: 'row', gap: 6 }}>
-          <span className="brand" style={{ fontSize: 17 }}>wearless</span>
+          <span className="brand">
+            <img className="brand-logo" src="/assets/brand/logo.svg" alt="" />
+            <img className="brand-wordmark" src="/assets/brand/wordmark.png" alt="Wearless" />
+          </span>
         </button>
         <div className="ed-divider" />
         <div className="ed-toolgroup">

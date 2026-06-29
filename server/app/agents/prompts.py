@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass
 
 from ..config import Settings
+from .materials import material_guidance
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_generate_v1.txt")
@@ -27,6 +28,7 @@ class MannequinPromptContext:
     candidate: str
     base_fit: str
     base_gender: str
+    image_manifest: str = ""  # 첨부 이미지 순서·역할 목록 (워커가 실제 슬롯으로 구성)
 
 
 def load_prompt_template(settings: Settings) -> str:
@@ -38,8 +40,26 @@ def load_prompt_template(settings: Settings) -> str:
 
 
 def _product_block(product: dict, analysis: dict) -> str:
-    """분석 정보를 ground-truth 블록으로. 값 없는 항목은 생략, 값은 sanitize."""
-    materials = [_sanitize(m) for m in (analysis.get("materials") or [])]
+    """분석 정보를 ground-truth 블록으로. 값 없는 항목은 생략, 값은 sanitize.
+    materials는 [{name,ratio}] — name sanitize + ratio% 표기, 그 다음 소재 렌더링 가이드(영문) 첨부."""
+    raw_mats = analysis.get("materials") or []
+    mat_strs = []
+    for m in raw_mats:  # [{name,ratio}] (name=자유텍스트 → sanitize). 레거시 문자열도 수용
+        if isinstance(m, dict):
+            name = _sanitize(m.get("name", ""))
+            if not name:
+                continue
+            r = m.get("ratio")
+            mat_strs.append(f"{name} {int(r)}%" if isinstance(r, (int, float)) and r else name)
+        elif m:
+            mat_strs.append(_sanitize(m))
+    material_entry = None
+    if mat_strs:  # Material 줄 + (소재 인식) 렌더링 가이드 블록 (materials.py, §2.6)
+        material_entry = f"- Material: {', '.join(mat_strs)}"
+        clothing_type = product.get("clothing_type") or product.get("clothingType")
+        guidance = material_guidance(raw_mats, clothing_type, analysis.get("subCategory"))
+        if guidance:
+            material_entry += "\n" + guidance
     points = [_sanitize(p) for p in (analysis.get("sellingPoints") or []) + (analysis.get("aiSuggestedPoints") or [])]
     genders = [_sanitize(g) for g in (analysis.get("targetGenders") or [])]
     category = " / ".join(
@@ -52,7 +72,7 @@ def _product_block(product: dict, analysis: dict) -> str:
         category and f"- Category: {category}",
         genders and f"- Target gender: {', '.join(genders)}",
         analysis.get("fit") and f"- Fit: {_sanitize(analysis.get('fit'))}",
-        materials and f"- Material: {', '.join(materials)}",
+        material_entry,
         points and f"- Key features: {'; '.join(points)}",
     ]
     body = "\n".join(x for x in lines if x)
@@ -75,6 +95,7 @@ def render_mannequin_prompt(
         .replace("${candidate}", ctx.candidate)
         .replace("${baseFit}", _sanitize(ctx.base_fit))
         .replace("${baseGender}", ctx.base_gender)
+        .replace("${imageManifest}", ctx.image_manifest)  # 멀티라인 — 마지막에 치환
     )
     leftover = re.findall(r"\$\{[a-zA-Z_]+\}", text)  # 템플릿의 오타·미해결 토큰 검출
     if leftover:

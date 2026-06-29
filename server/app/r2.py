@@ -74,9 +74,11 @@ class R2Client:
             return None
         return {"size": r["ContentLength"], "mime": r.get("ContentType")}
 
-    def put_bytes(self, key: str, data: bytes, mime: str) -> None:
-        """AI 생성 이미지 등 서버사이드 저장 (Gemini/OpenAI 응답 → R2)."""
-        self._s3.put_object(Bucket=self._bucket, Key=key, Body=data, ContentType=mime)
+    def put_bytes(self, key: str, data: bytes, mime: str, cache: str | None = None) -> None:
+        """AI 생성 이미지 등 서버사이드 저장 (Gemini/OpenAI 응답 → R2).
+        seed/public 불변 자산은 cache='public, max-age=31536000, immutable' 권장."""
+        extra = {"CacheControl": cache} if cache else {}
+        self._s3.put_object(Bucket=self._bucket, Key=key, Body=data, ContentType=mime, **extra)
 
     def get_bytes(self, key: str) -> bytes:
         """R2 객체 바이트 로드 (베이스 마네킹·상품사진 → Gemini 입력). 동기 → to_thread로 감쌀 것."""

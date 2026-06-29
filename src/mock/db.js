@@ -144,7 +144,7 @@ const catalogs = {
     { id: 'hexagon', label: '육각형' }, { id: 'bubble', label: '말풍선' },
   ],
   lines: [{ id: 'arrow-l', label: '←' }, { id: 'line', label: '—' }, { id: 'arrow-r', label: '→' }],
-  fonts: ['Pretendard', 'Cal Sans', 'Roboto Mono'],
+  fonts: ['Pretendard', 'Cal Sans', 'Roboto Mono', 'Cormorant'],
   downloadOptions: [
     { id: 'long', title: '전체 상세페이지 긴 PNG 1장', desc: '모든 블록을 세로로 이어 붙여 한 장으로 저장' },
     { id: 'zip', title: '블록별 PNG ZIP', desc: '각 블록을 개별 PNG로 저장해 ZIP으로 다운로드' },
@@ -154,10 +154,11 @@ const catalogs = {
 };
 
 /* ---- Models & match clothing (stable option sets) ---- */
+// 실제 AI 가상모델 썸네일 (mock 모델 교체) — wm=여성, m=남성. 이미지는 public/models/.
 const models = [
-  { id: 'mA', name: '모델 A', thumb: P.portrait('mA'), recommended: true },
-  { id: 'mB', name: '모델 B', thumb: P.portrait('mB'), recommended: false },
-  { id: 'mC', name: '모델 C', thumb: P.portrait('mC'), recommended: false },
+  { id: 'mA', name: '모델 A', gender: 'women', thumb: '/models/w1.webp', recommended: true },
+  { id: 'mB', name: '모델 B', gender: 'men', thumb: '/models/m1.webp', recommended: false },
+  { id: 'mC', name: '모델 C', gender: 'men', thumb: '/models/m2.webp', recommended: false },
 ];
 const matchClothing = toLegacyMatchClothing(recommendMatchingItems({
   clothingType: 'top',

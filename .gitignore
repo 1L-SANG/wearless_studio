@@ -22,6 +22,19 @@ __pycache__/
 # 스크래치/레퍼런스 자산 — 제3자(리테일러) 이미지 포함, git 금지(IP 리스크).
 # 매칭 기능용 자산이 필요하면 라이선스 거친 R2 asset 파이프라인으로 (§3).
 outputs/
+# 매칭의류 실에셋(outputs/coor_matching에서 복사된 실제 브랜드 평면컷) — 동일 IP 리스크.
+# 로컬 dev 전용. 재생성: node .scratch/gen-matching.mjs (운영은 R2 서빙 예정).
+public/assets/matching/
 
 # machine-local skill symlinks (absolute paths)
 .claude/skills/
+
+# 소재/프롬프트 A/B 테스트 — 로컬 전용. 산출물(ab_out)은 브랜드 평면컷 파생이라 IP 리스크,
+# 스크립트(ab_material_test.py)는 튜닝용 일회성 하네스. 둘 다 커밋 금지.
+server/ab_out/
+server/ab_material_test.py
+
+# 스크래치 작업영역 — codex 디베이트 로그(*.log)·드래프트(.md)는 일회성이라 로컬 전용.
+# 단 매칭 시드 생성기는 seedMatchingItems.js가 재생성 경로로 참조하므로 추적한다.
+.scratch/*
+!.scratch/gen-matching.mjs

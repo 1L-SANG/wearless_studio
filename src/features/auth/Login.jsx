@@ -41,8 +41,13 @@ export function LoginGate() {
   return (
     <Modal onClose={closeLogin}>
       <div className={styles.gate}>
-        <img className={styles.logo} src="/assets/brand/temp-nav-logo.png" alt="Wearless" />
-        <h3 className={styles.title}>Wearless Studio</h3>
+        <div className={styles.brand}>
+          <img className={styles.logo} src="/assets/brand/logo.svg" alt="" />
+          <div className={styles.mark}>
+            <img className={styles.wordmark} src="/assets/brand/wordmark.png" alt="Wearless" />
+            <span className={styles.suffix}>Studio</span>
+          </div>
+        </div>
         <p className={styles.subtitle}>
           소셜 계정으로 로그인하고<br />
           마네킹컷 생성으로 이어가세요.

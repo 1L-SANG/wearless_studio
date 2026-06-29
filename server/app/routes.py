@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import repo
 from .agents import mannequin
+from .services import matching
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -265,6 +266,40 @@ async def save_analysis(
         row = await repo.save_analysis(conn, project_id, analysis)
         await conn.commit()
     return {"projectId": row["project_id"], **(row["payload"] or {})}
+
+
+@router.get("/projects/{project_id}/analysis/match-candidates")
+async def match_candidates(
+    request: Request,
+    project_id: str,
+    clothingType: str = Query(...),
+    gender: list[str] = Query(default=[]),
+    limit: int | None = Query(default=None),
+    user_id: str = Depends(require_user),
+):
+    """매칭 후보(보색 의류) — 공개 R2 썸네일 URL 포함 레거시 MatchClothing[].
+    선택값은 클라가 오버레이(서버 저장 없음, 과도기 계약 §4)."""
+    if not request.app.state.settings.r2_public_base:
+        raise HTTPException(status_code=500, detail={
+            "code": "r2_public_base_missing",
+            "message": "이미지 서버 설정이 누락됐어요. 잠시 후 다시 시도해 주세요."})
+    r2 = _r2(request)
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        items = await repo.list_active_matching_items(conn)
+    genders = [g.strip() for part in gender for g in part.split(",") if g.strip()]
+    ranked = matching.recommend(items, clothingType, genders, limit)
+    return JSONResponse([
+        {
+            "id": i["id"], "name": i["name"], "gender": i["gender"],
+            "thumb": r2.public_url(i["thumb_key"]),
+            "imageUrl": r2.public_url(i["image_key"]) if i.get("image_key") else None,
+            "thumbnailUrl": r2.public_url(i["thumb_key"]),
+            "selected": False,
+        }
+        for i in ranked if i.get("thumb_key")
+    ])
 
 
 # ---------- 자산 업로드 (§3 presigned + finalize) ----------

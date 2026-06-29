@@ -257,6 +257,28 @@ async def get_matching_item_asset(conn: AsyncConnection, item_id: str) -> str | 
     return row["asset_id"] if row else None
 
 
+async def list_active_matching_items(conn: AsyncConnection) -> list[dict]:
+    """활성 매칭의류 + 본/썸네일 R2 키 (URL은 라우트가 r2로 변환). 운영자 시드(무소유)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select mi.id, mi.name, mi.clothing_type, mi.gender, mi.category,
+                   mi.color_name, mi.color_group, mi.style_tags, mi.fit, mi.length,
+                   mi.color_brightness, mi.sort_order, mi.is_active,
+                   img.r2_key as image_key, thb.r2_key as thumb_key
+            from matching_items mi
+            -- 썸네일은 표시 필수 → seed/public 자산만 inner join (비-seed·비공개·삭제 키 노출 차단,
+            -- limit 정확도 보장). 본 이미지는 동일 조건 left join(선택).
+            join assets thb on thb.id = mi.thumbnail_asset_id
+              and thb.source = 'seed' and thb.visibility = 'public' and thb.deleted_at is null
+            left join assets img on img.id = mi.image_asset_id
+              and img.source = 'seed' and img.visibility = 'public' and img.deleted_at is null
+            where mi.is_active
+            """,
+        )
+        return await cur.fetchall()
+
+
 async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: str) -> list[dict]:
     """프로젝트 마네킹컷 + 에셋 키 (URL은 라우트가 r2로 변환). 소유권 join."""
     async with conn.cursor() as cur:
@@ -336,36 +358,44 @@ async def create_job(
                 return existing, False
         # 직접 SAVEPOINT — conn.transaction()은 열린 tx가 없으면 스스로 COMMIT해 라우트의
         # 커밋 제어(예약+생성 원자)를 빼앗을 수 있다. SAVEPOINT/RELEASE는 절대 커밋 안 함.
-        row = None
-        await cur.execute("savepoint create_job_insert")
-        try:
-            await cur.execute(
-                f"""
-                insert into jobs (user_id, project_id, kind, status, payload, idempotency_key,
-                                  credits_reserved, metadata)
-                values (%s, %s, %s, 'pending', %s, %s, %s, %s)
-                on conflict (project_id, kind)
-                  where status in ('pending', 'running') and kind <> 'editor_image'
-                  do nothing
-                returning {_JOB_COLS}
-                """,
-                (user_id, project_id, kind, Json(payload), idempotency_key, credits_reserved,
-                 Json(metadata)),
-            )
-            row = await cur.fetchone()
-        except errors.UniqueViolation:
-            await cur.execute("rollback to savepoint create_job_insert")
-            row = None  # 동시 같은 Idempotency-Key → 아래에서 키로 재조회 합류
-        else:
-            await cur.execute("release savepoint create_job_insert")
-        if row is not None:
-            return row, True
-        # 충돌(동시 같은 키 또는 활성 중복) → 기존 job 합류: 키 우선, 없으면 활성
-        if idempotency_key:
-            existing = await _by_key(cur)
-            if existing is not None:
-                return existing, False
-        return await _active(cur), False
+        # INSERT-or-join을 bounded 재시도(3회): 충돌(활성중복/동시같은키)로 합류해야 하는데
+        # 그 활성 job이 그 사이 완료돼 _by_key·_active가 모두 빈 결과면(레이스), 충돌 원인이
+        # 사라진 것이므로 INSERT를 재시도하면 성공한다. (Codex: race → (None,False) → 라우트 500 방지)
+        for _ in range(3):
+            row = None
+            await cur.execute("savepoint create_job_insert")
+            try:
+                await cur.execute(
+                    f"""
+                    insert into jobs (user_id, project_id, kind, status, payload, idempotency_key,
+                                      credits_reserved, metadata)
+                    values (%s, %s, %s, 'pending', %s, %s, %s, %s)
+                    on conflict (project_id, kind)
+                      where status in ('pending', 'running') and kind <> 'editor_image'
+                      do nothing
+                    returning {_JOB_COLS}
+                    """,
+                    (user_id, project_id, kind, Json(payload), idempotency_key, credits_reserved,
+                     Json(metadata)),
+                )
+                row = await cur.fetchone()
+            except errors.UniqueViolation:
+                await cur.execute("rollback to savepoint create_job_insert")
+                row = None  # 동시 같은 Idempotency-Key → 아래에서 키로 재조회 합류
+            else:
+                await cur.execute("release savepoint create_job_insert")
+            if row is not None:
+                return row, True
+            # 충돌 → 기존 job 합류: 키 우선, 없으면 활성
+            if idempotency_key:
+                existing = await _by_key(cur)
+                if existing is not None:
+                    return existing, False
+            active = await _active(cur)
+            if active is not None:
+                return active, False
+            # 합류 대상이 사라짐(충돌 job 완료) → 루프 재시도(이제 INSERT 성공)
+        raise RuntimeError("create_job: 활성 합류 대상이 반복적으로 사라짐 (드문 레이스)")
 
 
 async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_id: str) -> dict | None:
@@ -379,13 +409,13 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
         await cur.execute(
             f"""
             with next_job as (
-              select id from jobs
+              select id as nid from jobs
               where status = 'pending' and kind = any(%s)
               order by created_at for update skip locked limit 1
             )
             update jobs j set status = 'running', locked_by = %s, locked_at = now(),
               started_at = coalesce(j.started_at, now()), progress = greatest(j.progress, 5)
-            from next_job where j.id = next_job.id
+            from next_job where j.id = next_job.nid
             returning {_JOB_COLS}, locked_by as lease_token
             """,
             (list(kinds), lease_token),
@@ -430,7 +460,7 @@ async def recover_stale_leases(conn: AsyncConnection, lease_timeout_seconds: int
             ev as (
               insert into job_events (job_id, event_type, payload)
               select id, 'error',
-                     jsonb_build_object('code', 'lease_recovered', 'message', %s)
+                     jsonb_build_object('code', 'lease_recovered', 'message', %s::text)
               from updated where status = 'error'
               returning 1
             )

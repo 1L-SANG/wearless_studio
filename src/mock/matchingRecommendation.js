@@ -9,10 +9,6 @@ const DEFAULT_STYLE_TAGS = ['basic', 'daily', 'clean'];
 const TOP_SIDE_TYPES = ['top', 'outer', 'dress'];
 
 const unique = (items) => [...new Set((items || []).filter(Boolean))];
-const overlapCount = (left, right) => {
-  const rightSet = new Set(right || []);
-  return (left || []).reduce((count, tag) => count + (rightSet.has(tag) ? 1 : 0), 0);
-};
 
 export function getComplementaryMatchingType(clothingType) {
   return TOP_SIDE_TYPES.includes(clothingType) ? 'bottom' : 'top';
@@ -27,17 +23,16 @@ export function recommendMatchingItems({
 } = {}) {
   const preferredType = getComplementaryMatchingType(clothingType);
   const genders = unique(targetGenders);
-  const tags = unique(styleTags.length ? styleTags : DEFAULT_STYLE_TAGS);
 
-  const scored = items
+  // 색상 밝음→어두움 순으로 나열한다(colorBrightness 100→0). 동률은 sortOrder.
+  const sorted = items
     .filter((item) => item.isActive)
     .filter((item) => item.clothingType === preferredType)
     .filter((item) => !genders.length || item.gender === 'unisex' || genders.includes(item.gender))
-    .map((item) => ({ item, score: overlapCount(item.styleTags, tags) }))
-    .sort((a, b) => (b.score - a.score) || (a.item.sortOrder - b.item.sortOrder))
-    .map(({ item }) => item);
+    .slice()
+    .sort((a, b) => ((b.colorBrightness ?? 50) - (a.colorBrightness ?? 50)) || (a.sortOrder - b.sortOrder));
 
-  return limit ? scored.slice(0, limit) : scored;
+  return limit ? sorted.slice(0, limit) : sorted;
 }
 
 export function toLegacyMatchClothing(items, { selectedCount = 2 } = {}) {

@@ -63,4 +63,7 @@ export const httpAdapter = {
   async getCreditSources() {
     return http('/v1/credits/sources');
   },
+  // 마네킹 등 job형 플로우(generate→adjust→regenerate)는 같은 컷 상태를 공유하므로
+  // 부분 스왑 금지 — 백엔드가 generate+adjust+regenerate를 다 갖추고 draft sync(A-3)가
+  // 돼야 통째로 swap. 그 전까지 마네킹은 mock 유지(혼합 시 http 모드 깨짐).
 };

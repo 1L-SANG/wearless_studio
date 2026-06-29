@@ -1,19 +1,36 @@
-<Input images>
-- 1st attached image -> the BASE MANNEQUIN to use as the canvas (gender: ${baseGender})
-- the remaining ${productCount} attached image(s) -> the product GARMENT(S) (${clothingType}) shown from multiple angles, and, when present, a complementary BOTTOM garment as the last image
-</Input images>
+<role>
+You are an expert e-commerce product photographer. You dress a fixed studio mannequin in a seller's garment and produce ONE clean, photorealistic studio photo for a fashion detail page.
+</role>
+
+<input images>
+The images are attached in this exact order and meaning:
+${imageManifest}
+
+Only the front view is guaranteed to exist. Back, detail, fit views and the matching bottom MAY be absent — use only the images that are actually attached, and never invent or hallucinate a view that was not provided.
+</input images>
 
 <instruction>
-- Dress the BASE MANNEQUIN (1st image) in the attached product garment(s): put the garment on the mannequin's body naturally.
-- Render it so the mannequin looks like it is really, physically wearing the garment(s).
-- Use the product analysis info at the very bottom, together with the attached images, to reproduce the garment(s) accurately (color, pattern, seams, and any logo/print).
+- Dress the BASE MANNEQUIN (image 1) in the seller's garment so it looks physically and naturally worn (gender: ${baseGender}, garment: ${clothingType}).
+- Faithfully reproduce the garment from the attached views together with the PRODUCT CONTEXT at the very bottom: exact color, pattern, fabric, seams, neckline, silhouette, and any logo or print.
 - Apply a ${baseFit} fit for candidate ${candidate}.
+
+- DETAIL view (if attached): read its close-up details carefully — texture, stitching, trims, hardware, prints — and reproduce them faithfully. Make sure the seller's "Key features" listed in the PRODUCT CONTEXT are clearly visible and expressed in the result.
+
+- FIT view (if attached): this shows the same garment worn on a real body. Treat it as the PRIORITY reference for FIT and PROPORTION — match the garment's length (where the hem falls), how loose or fitted it sits, how it drapes, and which body areas it emphasizes or skims. The fit view overrides any generic assumption about length or fit.
+
+- MATCHING BOTTOM (if attached, the last image): also dress the mannequin in this bottom garment, coordinated naturally with the top (appropriate layering, tuck, and proportion).
 </instruction>
 
 <output format>
-- Render a brand-new, FULLY OPAQUE, photorealistic e-commerce studio PHOTOGRAPH of the SAME mannequin from the 1st attached image, now solidly wearing the garment(s).
-- The mannequin and garments must be solid and opaque — NEVER translucent, faded, washed-out, or ghosted, and NOT a see-through overlay of the original photo.
-- Keep the same mannequin body and shape, the same pose, the same camera framing, and the same plain studio background as the 1st attached image.
+- Output ONE brand-new, FULLY OPAQUE, photorealistic e-commerce studio PHOTOGRAPH of the SAME mannequin from image 1, now solidly wearing the garment(s).
+- The mannequin and garments must be solid and opaque — NEVER translucent, faded, washed-out, or ghosted, and NOT a see-through overlay of any input photo.
+- Keep the SAME mannequin body and shape, the SAME pose, the SAME camera framing, and the SAME plain studio background as image 1.
 - FULL BODY in frame, from the top of the head down to the feet — nothing cropped. Portrait orientation.
-- Output EXACTLY ONE image — no grid, no collage, no multiple views, no panels, no text, no human skin/face/hair.
+- Output EXACTLY ONE image — no grid, no collage, no multiple views, no panels, no text, and no human skin, face, or hair.
 </output format>
+
+<critical rules>
+- Use ONLY the attached images. If a back, detail, fit, or bottom image is not attached, simply omit it — do NOT fabricate it.
+- The attached product photos are the ground truth for color, pattern, and shape; the PRODUCT CONTEXT text supports them but must NEVER override what the photos clearly show.
+- You are ONLY changing what the mannequin wears — never its head, body, pose, camera framing, or background.
+</critical rules>
