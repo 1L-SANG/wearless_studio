@@ -1,3 +1,6 @@
+import contextlib
+
+import app.routes as routes
 from app.services import matching
 
 
@@ -51,3 +54,67 @@ def test_recommend_missing_brightness_defaults_50():
     ]
     out = matching.recommend(items, clothing_type="top", genders=["women"])
     assert [i["id"] for i in out] == ["y", "x"]  # 90 > 50(default)
+
+
+# ---------- 엔드포인트 (DB·R2 격리: monkeypatch) ----------
+
+class _FakeR2:
+    def public_url(self, key):
+        return f"https://img.example.com/{key}"
+
+
+def _no_db(monkeypatch):
+    @contextlib.asynccontextmanager
+    async def fake_conn(_request):
+        yield None
+    monkeypatch.setattr(routes, "get_conn", fake_conn)
+
+
+def _auth(make_token):
+    return {"Authorization": f"Bearer {make_token()}"}
+
+
+def test_match_candidates_shape_and_public_url(client, make_token, monkeypatch):
+    # frozen dataclass → object.__setattr__ 로 테스트 주입
+    object.__setattr__(client.app.state.settings, "r2_public_base", "https://img.example.com")
+    monkeypatch.setattr(routes, "_r2", lambda request: _FakeR2())
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_list(conn):
+        return [{"id": "match_women_bottom_01", "name": "블랙 슬랙스",
+                 "clothing_type": "bottom", "gender": "women", "category": "슬랙스",
+                 "color_name": "블랙", "color_group": "black", "style_tags": ["basic"],
+                 "fit": "regular", "length": "full", "color_brightness": 0, "sort_order": 201,
+                 "is_active": True, "image_key": "seed/matching/match_women_bottom_01.png",
+                 "thumb_key": "seed/matching/thumb/match_women_bottom_01.png"}]
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "list_active_matching_items", fake_list)
+    _no_db(monkeypatch)
+
+    res = client.get(
+        "/v1/projects/p1/analysis/match-candidates?clothingType=top&gender=women",
+        headers=_auth(make_token))
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body[0]["thumb"] == "https://img.example.com/seed/matching/thumb/match_women_bottom_01.png"
+    assert body[0]["selected"] is False
+    assert body[0]["id"] == "match_women_bottom_01"
+
+
+def test_match_candidates_failfast_without_public_base(client, make_token, monkeypatch):
+    object.__setattr__(client.app.state.settings, "r2_public_base", None)
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    _no_db(monkeypatch)
+
+    res = client.get(
+        "/v1/projects/p1/analysis/match-candidates?clothingType=top",
+        headers=_auth(make_token))
+    assert res.status_code == 500
+    assert res.json()["error"]["code"] == "r2_public_base_missing"

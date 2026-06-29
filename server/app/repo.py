@@ -257,6 +257,24 @@ async def get_matching_item_asset(conn: AsyncConnection, item_id: str) -> str | 
     return row["asset_id"] if row else None
 
 
+async def list_active_matching_items(conn: AsyncConnection) -> list[dict]:
+    """활성 매칭의류 + 본/썸네일 R2 키 (URL은 라우트가 r2로 변환). 운영자 시드(무소유)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select mi.id, mi.name, mi.clothing_type, mi.gender, mi.category,
+                   mi.color_name, mi.color_group, mi.style_tags, mi.fit, mi.length,
+                   mi.color_brightness, mi.sort_order, mi.is_active,
+                   img.r2_key as image_key, thb.r2_key as thumb_key
+            from matching_items mi
+            left join assets img on img.id = mi.image_asset_id
+            left join assets thb on thb.id = mi.thumbnail_asset_id
+            where mi.is_active
+            """,
+        )
+        return await cur.fetchall()
+
+
 async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: str) -> list[dict]:
     """프로젝트 마네킹컷 + 에셋 키 (URL은 라우트가 r2로 변환). 소유권 join."""
     async with conn.cursor() as cur:
