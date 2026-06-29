@@ -106,21 +106,30 @@ for (const g of GROUPS) {
   });
 }
 
+// R2_PUBLIC_BASE 설정 시 프론트 시드의 imageUrl/thumbnailUrl을 공개 R2 URL로 emit
+// (배포·클론에서 표시). 키 규칙은 server/scripts/seed_matching.py 와 일치.
+const PUBLIC_BASE = process.env.R2_PUBLIC_BASE || '';
+const r2url = (id, kind) => `${PUBLIC_BASE}/seed/matching/${kind === 'thumb' ? 'thumb/' : ''}${id}.png`;
+const jsSeed = PUBLIC_BASE
+  ? seed.map((it) => ({ ...it, imageUrl: r2url(it.id, 'image'), thumbnailUrl: r2url(it.id, 'thumb') }))
+  : seed;
+
+const servingNote = PUBLIC_BASE
+  ? `imageUrl/thumbnailUrl 는 R2 공개 URL(${PUBLIC_BASE}/seed/matching/...). 배포·클론에서 정상 표시.
+   원본 업로드/갱신: cd server && python -m scripts.seed_matching.`
+  : `imageUrl/thumbnailUrl 는 public/assets/matching/ 로컬 경로(배포 404). R2 URL로 재생성:
+   먼저 seed_matching.py 업로드 → R2_PUBLIC_BASE=… node .scratch/gen-matching.mjs.`;
+
 const header = `/* =============================================================
    mock/seedMatchingItems.js — Supabase-ready matching clothing seed.
    AUTO-GENERATED from outputs/coor_matching/generated_v2 by
    .scratch/gen-matching.mjs (women+men × top+bottom = 64 items).
-   imageUrl/thumbnailUrl 는 public/assets/matching/ 의 실제 에셋 경로.
    colorBrightness: 100(밝음)→0(어두움), 색상 정렬용.
-
-   ⚠️ 에셋은 의도적으로 git 제외(.gitignore: public/assets/matching/).
-   실제 브랜드 평면컷이라 IP 리스크 → 레포에 커밋 안 함. 따라서 이 경로들은
-   "로컬 dev 전용"이며, 다른 머신/배포(Vercel)에선 404 가 정상 동작이다.
-   - 로컬 재생성: node .scratch/gen-matching.mjs (원본 outputs/ 필요)
-   - 운영/배포: 라이선스 거친 R2 에셋 서빙으로 대체 예정(backend §3).
+   ${servingNote}
+   에셋 원본(public/assets/matching/)은 IP 리스크로 git 제외(.gitignore).
    ============================================================= */
 
-export const seedMatchingItems = ${JSON.stringify(seed, null, 2)};
+export const seedMatchingItems = ${JSON.stringify(jsSeed, null, 2)};
 
 export default seedMatchingItems;
 `;

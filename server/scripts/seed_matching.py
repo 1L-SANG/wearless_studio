@@ -66,7 +66,11 @@ def main() -> None:
                    is_active, sort_order)
                 values (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,true,%s)
                 on conflict (id) do update set
-                  name = excluded.name, color_brightness = excluded.color_brightness,
+                  name = excluded.name, clothing_type = excluded.clothing_type,
+                  gender = excluded.gender, category = excluded.category,
+                  color_name = excluded.color_name, color_group = excluded.color_group,
+                  style_tags = excluded.style_tags, fit = excluded.fit, length = excluded.length,
+                  color_brightness = excluded.color_brightness,
                   image_asset_id = excluded.image_asset_id,
                   thumbnail_asset_id = excluded.thumbnail_asset_id,
                   is_active = true, sort_order = excluded.sort_order

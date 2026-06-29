@@ -267,8 +267,12 @@ async def list_active_matching_items(conn: AsyncConnection) -> list[dict]:
                    mi.color_brightness, mi.sort_order, mi.is_active,
                    img.r2_key as image_key, thb.r2_key as thumb_key
             from matching_items mi
+            -- 썸네일은 표시 필수 → seed/public 자산만 inner join (비-seed·비공개·삭제 키 노출 차단,
+            -- limit 정확도 보장). 본 이미지는 동일 조건 left join(선택).
+            join assets thb on thb.id = mi.thumbnail_asset_id
+              and thb.source = 'seed' and thb.visibility = 'public' and thb.deleted_at is null
             left join assets img on img.id = mi.image_asset_id
-            left join assets thb on thb.id = mi.thumbnail_asset_id
+              and img.source = 'seed' and img.visibility = 'public' and img.deleted_at is null
             where mi.is_active
             """,
         )
