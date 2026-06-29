@@ -66,7 +66,16 @@ export const useAppStore = create((set, get) => ({
      을 올려 ProductInput 을 remount(폼 초기화)한다. */
   async beginProject() {
     await clearDraft().catch(() => {});
-    set({ ...initialFlow, projectGeneration: get().projectGeneration + 1 });
+    // http: 서버 POST 이연(빈 보관함 행 방지) — projectId 없이 시작, 생성은 ensureProject.
+    // mock: createProject 가 reseedDraft 로 DB.product/analysis 를 깨끗한 시드로 되돌린다.
+    // 안 하면 이전 세션 변형(clothingType/measurements 등)이 새 제작 입력에 유입된다(코드리뷰 반영).
+    const mode = import.meta.env.VITE_API_MODE ?? 'mock';
+    if (mode === 'http') {
+      set({ ...initialFlow, projectGeneration: get().projectGeneration + 1 });
+    } else {
+      const project = await api.createProject();
+      set({ ...initialFlow, projectId: project.id, projectPersisted: true, projectGeneration: get().projectGeneration + 1 });
+    }
   },
   /** 서버 project(보관함 행)를 필요 시 1회 생성하고 projectId 를 반환 — AI 분석 시작 시 호출.
      이미 이 플로우에서 생성했으면(persisted) 재사용해 보관함 행 중복 생성을 막는다. */
