@@ -144,7 +144,7 @@ const catalogs = {
     { id: 'hexagon', label: '육각형' }, { id: 'bubble', label: '말풍선' },
   ],
   lines: [{ id: 'arrow-l', label: '←' }, { id: 'line', label: '—' }, { id: 'arrow-r', label: '→' }],
-  fonts: ['Pretendard', 'Cal Sans', 'Roboto Mono'],
+  fonts: ['Pretendard', 'Cal Sans', 'Roboto Mono', 'Cormorant'],
   downloadOptions: [
     { id: 'long', title: '전체 상세페이지 긴 PNG 1장', desc: '모든 블록을 세로로 이어 붙여 한 장으로 저장' },
     { id: 'zip', title: '블록별 PNG ZIP', desc: '각 블록을 개별 PNG로 저장해 ZIP으로 다운로드' },

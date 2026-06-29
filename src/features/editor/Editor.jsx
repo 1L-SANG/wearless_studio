@@ -18,7 +18,7 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 
-const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)' };
+const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
 
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */

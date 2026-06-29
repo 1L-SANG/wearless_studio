@@ -34,12 +34,21 @@
   font-style: normal;
   font-display: swap;
 }
+/* Cormorant — self-hosted variable serif (Latin only). Editor text-tool option. */
+@font-face {
+  font-family: "Cormorant";
+  src: url("../fonts/Cormorant-VariableFont_wght.ttf") format("truetype");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
 
 :root {
   /* ---- Type families ---- */
   --font-display: "Cal Sans", "Cal Sans UI", system-ui, sans-serif;
   --font-body: "Pretendard Variable", "Inter", "Inter Placeholder", system-ui, sans-serif;
   --font-mono: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-serif: "Cormorant", Georgia, "Times New Roman", serif;
 
   /* ---- Ink & surface (design.md overrides Cal's #242424) ---- */
   --fg-1: #0e0d14;   /* primary text, headings */
