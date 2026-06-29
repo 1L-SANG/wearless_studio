@@ -191,10 +191,10 @@ export function ProductInput() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      // 직접 URL 진입까지 포함해 projectId 를 보장한다 (frontend_state_model.md §4).
-      // 읽기 전용 loadProject 만 사용 — 새 project 생성(reseed)은 TopNav·보관함의
-      // 명시적 '새 제작' 액션만 담당한다 (StrictMode 이중 실행에도 멱등).
-      await useAppStore.getState().loadProject();
+      // projectId(보관함 행) 생성은 입력 진입이 아니라 AI 분석 시작(submit→ensureProject)이
+      // 담당한다 — '상세페이지 제작' 진입만으로 빈 프로젝트가 생기던 버그 방지. 입력 단계에선
+      // 서버 project 를 만들지도 채택하지도 않는다(신규 플로우면 projectId=null 유지). getProduct
+      // 는 시드 템플릿 읽기라 pid 가 없어도 무방하다(http 모드에서도 mock 폴백).
       const pid = useAppStore.getState().projectId;
       const [p, c] = await Promise.all([api.getProduct(pid), api.getCatalogs()]);
       if (!alive) return;
@@ -254,7 +254,11 @@ export function ProductInput() {
   const submit = async () => {
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    const a = await api.analyzeProduct(projectId, {});
+    // 보관함 프로젝트(서버 행)는 바로 이 시점에 생성한다 — '상세페이지 제작' 진입이 아니라
+    // AI 분석을 시작할 때. createProject 는 토큰이 필요하므로 로그인 사용자만 생성하고,
+    // 비로그인 공개 분석은 서버 project 없이 진행(프로젝트 생성은 로그인 후 단계가 담당).
+    const pid = session ? await useAppStore.getState().ensureProject() : projectId;
+    const a = await api.analyzeProduct(pid, {});
     setAnalysis(a);
     // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨
     const finalName = (product.name && product.name.trim()) ? product.name.trim() : (a.suggestedName || '새 상품');
@@ -262,7 +266,7 @@ export function ProductInput() {
     // persist the user's input (name + 색상/이미지) into the create flow so the
     // downstream steps (mannequin / storyboard / editor) read what was entered,
     // not the seed (mock/api.saveProduct → DB.product). [data-flow fix]
-    await api.saveProduct(projectId, { ...product, name: finalName, uploadComplete: true });
+    await api.saveProduct(pid, { ...product, name: finalName, uploadComplete: true });
     setPhase('done');
     toast.push('AI 분석을 완료했어요', { icon: 'sparkles' });
   };
