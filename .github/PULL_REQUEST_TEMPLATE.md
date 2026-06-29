@@ -28,4 +28,3 @@
 ## 🧪 테스트 결과 (Test Results)
 
 - [ ] `curl -X POST /auth/login` -> 200 OK & JWT 발급 확인
-- [ ] `curl -H "Authorization: Bearer ..."` -> `/auth/me` 유저 정보 정상 반환 확인
