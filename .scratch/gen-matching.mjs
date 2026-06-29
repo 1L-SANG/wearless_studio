@@ -126,4 +126,10 @@ export default seedMatchingItems;
 `;
 
 fs.writeFileSync(path.join(ROOT, 'src/mock/seedMatchingItems.js'), header);
+
+// 시더(server/scripts/seed_matching.py) 입력용 정본 데이터 JSON (이미지 없음 · 메타만).
+const seedJsonPath = path.join(ROOT, 'server/seed/matching_items.json');
+fs.mkdirSync(path.dirname(seedJsonPath), { recursive: true });
+fs.writeFileSync(seedJsonPath, JSON.stringify(seed, null, 2));
+
 console.log(`done: ${seed.length} items, thumbs generated.`);
