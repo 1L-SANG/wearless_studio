@@ -33,3 +33,8 @@ public/assets/matching/
 # 스크립트(ab_material_test.py)는 튜닝용 일회성 하네스. 둘 다 커밋 금지.
 server/ab_out/
 server/ab_material_test.py
+
+# 스크래치 작업영역 — codex 디베이트 로그(*.log)·드래프트(.md)는 일회성이라 로컬 전용.
+# 단 매칭 시드 생성기는 seedMatchingItems.js가 재생성 경로로 참조하므로 추적한다.
+.scratch/*
+!.scratch/gen-matching.mjs
