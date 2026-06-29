@@ -13,7 +13,7 @@
 - `VITE_API_MODE=http`에서 매칭 후보 썸네일이 **R2 공개 URL**(`m.thumb`)로 렌더된다.
 - 배포(또는 새 클론)에서 매칭 썸네일이 깨지지 않는다(로컬 파일 의존 제거).
 - 백엔드 추천 결과가 기존 mock 규칙과 **동일**하다(보색 타입·성별 필터·밝기순).
-- 선택 상태(메인/서브)가 분석→마네킹→스토리보드 **라우트 전환에도 유지**된다(서버 저장 없이 클라 상태로).
+- 선택 상태(메인/서브)가 분석→마네킹→스토리보드 **라우트 전환에도 유지**된다(서버 저장 없이 현행 레이어 재사용).
 - 서버 테스트(pytest) 통과, 기존 31개 회귀 없음. mock 모드 회귀 없음.
 
 ## 2. 범위 (Scope)
@@ -21,7 +21,7 @@
 **포함 (1안 — 읽기경로):**
 - `matching_items`/`assets`를 **실데이터로 시드**(R2 업로드 + DB 삽입).
 - 추천 로직 **백엔드 포팅** + 후보 조회 **엔드포인트**.
-- 프론트: 후보 리스트를 **백엔드에서 fetch**(http) + **선택 상태를 클라 스토어로 이전**해 공개 R2 썸네일로 표시.
+- 프론트: 후보 리스트를 **백엔드에서 fetch**(http), **선택값은 현행 레이어 유지**(가벼운 방식 — 사용자 확정) → 공개 R2 썸네일로 표시.
 
 **제외 (의도적 — 별도 단계):**
 - 매칭 **선택(matchSelections) 서버 저장** → 분석 저장(Phase 3)의 일부. 마네킹 워커가 `repo.get_analysis`로 선택을 DB에서 읽으므로([mannequin_job.py:141](../../../server/app/workers/mannequin_job.py#L141)), 마네킹이 매칭을 실제로 입히려면 "분석 저장"이 필요 — 본 spec은 다루지 않는다. (1안에서 선택은 **클라 상태**로만 유지.)
@@ -88,18 +88,17 @@ recommend(items, clothing_type, genders, limit=None) -> list
 - **응답 shape(§Finding1)**: **레거시 MatchClothing[]** — `id, name, thumb(공개 R2 URL), imageUrl, thumbnailUrl, gender, selected:false, selOrder:null` + 정렬·필터 메타. **`toLegacyMatchClothing`을 재사용**해 변환(또는 백엔드가 동일 매핑 수행). `thumb = r2.public_url(thumbnail r2_key)`.
 - 리스트 응답은 기존 `get_library`처럼 배열 직반환(httpAdapter가 `res.json()` 그대로).
 
-### E. 프론트 통합 (읽기경로 — 1안의 주 작업)
-원칙: **후보(이미지)=서버 소유 / 선택=클라 상태**(계약 api.js:124와 일치). 현재 선택이 mock DB로 라우트 유지되던 것을 **클라 스토어로 이전**한다(서버 저장은 제외 범위).
+### E. 프론트 통합 (읽기경로 — **가벼운 방식 확정**)
+원칙: **후보(이미지)=백엔드 소유, 선택=현행 레이어 유지**(계약 api.js:124와 일치). 선택 상태를 새 스토어로 옮기지 않는다 — 그건 Phase 3 분석저장이 서버로 가져갈 부분이라 지금 옮기면 재작업. 후보만 백엔드에서 받아 R2 썸네일로 표시한다.
 
-- **선택 상태 이전(§Finding3)**: `useAppStore`에 클라 전용 `matchSelections: [{id, order}]`(또는 동등) 추가 — 라우트 전환에도 유지. 선택 토글이 여기에 기록.
-- **후보 소스 통일(§Finding2,4)**:
-  - `httpAdapter.getMatchClothing(projectId, ctx)` 구현 → D 호출(`ctx={clothingType,targetGenders}`), 결과를 `toLegacyMatchClothing`으로 변환 후 **스토어 선택 오버레이**.
+- **후보 소스 통일(§Finding1,2,4)**:
+  - `httpAdapter.getMatchClothing(projectId, ctx)` 구현 → D 호출(`ctx={clothingType,targetGenders}`) → 결과를 `toLegacyMatchClothing`으로 변환(`thumb`=R2 URL) → 기존 선택 오버레이.
   - **mock `getMatchClothing(projectId, ctx)`도 ctx 제공 시 재계산**하도록 갱신(인자 무시 금지) → 두 모드 동치, 회귀 방지.
-- **소비자 3곳 정비(§Finding4)**:
-  - [AnalysisForm](../../../src/features/analysis/AnalysisForm.jsx): `clothingType/targetGenders` 변경 시 `getMatchClothing(ctx)` 재호출(기존 `patchProduct` mock 재계산 의존 제거). 토글 → 스토어 선택.
-  - [Mannequin.jsx:234](../../../src/features/mannequin/Mannequin.jsx#L234): `getMatchClothing(pid, ctx)` + 스토어 선택 오버레이.
-  - [Storyboard.jsx:324](../../../src/features/storyboard/Storyboard.jsx#L324): 현재 인자 없는 호출 → `pid + ctx` 전달 + 스토어 선택 오버레이.
-- **대안(더 가벼움)**: 선택을 스토어로 옮기지 않고, http `getMatchClothing`이 후보만 서버에서 받고 **선택 오버레이는 기존 mock 레이어(`DB.analysis.matchClothing`) 유지**(과도기 하이브리드). 정합성은 낮으나 변경 최소. (검토 시 택1)
+- **선택 오버레이(§Finding3 — 가벼운 방식)**: 선택값(선택 id + 순서)은 **현행 위치(`DB.analysis.matchClothing`/분석 상태)** 그대로 둔다. fetch한 후보에 이 선택을 덧입힘 → 라우트 전환에도 선택 유지(현행 메커니즘 재사용, 새 저장소 불필요). 서버 저장은 Phase 3.
+- **소비자 3곳(§Finding4)** — 모두 `getMatchClothing`으로 후보 수신 + 기존 선택 오버레이:
+  - [AnalysisForm](../../../src/features/analysis/AnalysisForm.jsx): 후보를 `patchProduct` mock 재계산 대신 `getMatchClothing(ctx)`로 수신(컨텍스트 변경 시 재호출).
+  - [Mannequin.jsx:234](../../../src/features/mannequin/Mannequin.jsx#L234): `getMatchClothing(pid, ctx)`.
+  - [Storyboard.jsx:324](../../../src/features/storyboard/Storyboard.jsx#L324): 인자 없는 호출 → `pid + ctx` 전달.
 
 ## 5. 데이터 흐름
 1. **시드(운영자, 1회)**: 생성기 → 메타 JSON + 로컬 128파일 → `seed_matching.py` → R2(`seed/matching/...`) + `assets`(seed/public) + `matching_items` 64행.
@@ -125,7 +124,7 @@ recommend(items, clothing_type, genders, limit=None) -> list
 - 프롬프트 인젝션/소유권 규약 불변(매칭=운영자 시드).
 
 ## 9. 리스크 / 오픈 이슈
-1. **프론트(E)가 1안의 핵심 작업/리스크** — 선택상태 클라 스토어 이전 + 소비자 3곳 정비. read-path지만 분석-sync 성격이 일부 들어옴. (가벼운 대안 §4E 하단.)
+1. **프론트(E)** — 후보 소스를 소비자 3곳에서 `getMatchClothing`으로 통일(선택값은 현행 유지 = 가벼운 방식 확정). 선택 상태 이전 없음 → 변경 최소·재작업 회피. 남는 주의: 컨텍스트 변경 시 재호출 트리거와 선택 오버레이의 유효성(후보에서 사라진 선택 id 정리).
 2. **R2 공개 도메인 실제 동작** 미검증(env만 확인) → 시드 후 `curl` 실증 필수. 비공개면 공개 버킷/커스텀 도메인 설정(인프라, 사용자 영역 가능).
 3. **생성기→Python JSON 핸드오프** 신규 산출물 위치(`server/seed/matching_items.json`).
 4. **썸네일 키 규칙** `seed/matching/thumb/{id}.{ext}`(계획은 본 이미지 키만 명시 — 본 spec이 썸네일 규칙 확정).
