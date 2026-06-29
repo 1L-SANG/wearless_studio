@@ -99,6 +99,14 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
 
 async def create_project(conn: AsyncConnection, user_id: str) -> dict:
     async with conn.cursor() as cur:
+        # 동시 요청(더블클릭·재시도·타임아웃 후 재호출)에서 아래 select-then-insert 가
+        # 둘 다 pristine draft 를 못 보고 각각 INSERT → 중복 빈 초안이 생기는 레이스 방지.
+        # user_id 단위 xact advisory lock 으로 생성을 직렬화한다(트랜잭션 커밋 시 자동 해제).
+        # 두 번째 요청은 첫 요청 커밋까지 대기 → READ COMMITTED 로 직전 draft 를 보고 재사용.
+        await cur.execute(
+            "select pg_advisory_xact_lock(hashtext(%s))",
+            (f"create_project:{user_id}",),
+        )
         # '제작' 반복 진입 시 빈 초안이 쌓이지 않도록, 이미 만든 '한 번도 안 쓴' draft 가
         # 있으면 새로 만들지 않고 그걸 재사용한다(없을 때만 INSERT).
         await cur.execute(
