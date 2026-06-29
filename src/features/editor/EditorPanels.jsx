@@ -319,12 +319,11 @@ export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGener
             <ColorDots colorOpts={colorOpts} value={colorVal} onChange={setColor} /></div>
 
           <details ref={modelRef} className="insp-extra ai-model" open={modelOpen}>
-            <summary onClick={toggleModel}><Icon name="chevRight" size={15} />모델<span className="ai-model-cur">{(catalogs.models || []).find((m) => m.id === model)?.name || ''}</span></summary>
+            <summary onClick={toggleModel}><Icon name="chevRight" size={15} />모델</summary>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
               {(catalogs.models || []).map((m) => (
-                <div key={m.id} className={`model-card${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }} onClick={() => setModel(m.id)}>
+                <div key={m.id} className={`model-card img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }} onClick={() => setModel(m.id)}>
                   <img src={m.thumb} alt={m.name} style={{ height: 104 }} />
-                  <div className="nm" style={{ padding: '7px 8px', fontSize: 12 }}>{m.name}{m.recommended && <Icon name="star" size={12} fill="currentColor" className="star" />}</div>
                 </div>
               ))}
             </div>

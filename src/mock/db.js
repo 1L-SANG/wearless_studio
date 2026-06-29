@@ -156,9 +156,9 @@ const catalogs = {
 /* ---- Models & match clothing (stable option sets) ---- */
 // 실제 AI 가상모델 썸네일 (mock 모델 교체) — wm=여성, m=남성. 이미지는 public/models/.
 const models = [
-  { id: 'mA', name: '모델 A', gender: 'women', thumb: '/models/w1.webp', recommended: true },
-  { id: 'mB', name: '모델 B', gender: 'men', thumb: '/models/m1.webp', recommended: false },
-  { id: 'mC', name: '모델 C', gender: 'men', thumb: '/models/m2.webp', recommended: false },
+  { id: 'mA', name: '모델 A', gender: 'women', thumb: '/models/women/w1.webp', recommended: true },
+  { id: 'mB', name: '모델 B', gender: 'men', thumb: '/models/men/m1.webp', recommended: false },
+  { id: 'mC', name: '모델 C', gender: 'men', thumb: '/models/men/m2.webp', recommended: false },
 ];
 const matchClothing = toLegacyMatchClothing(recommendMatchingItems({
   clothingType: 'top',

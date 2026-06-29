@@ -94,6 +94,8 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const [editMatIdx, setEditMatIdx] = useState(null);
   const matTotal = (a.materials || []).reduce((s, m) => s + (Number(m.ratio) || 0), 0);
   const matOver = matTotal > 100;
+  // 대상 성별 — 모델은 이 성별에 해당하는 것만 노출한다.
+  const genderSel = a.targetGenders?.[0] || null;
 
   // AI 추천 특징은 일단 강제로 칩에 채워둔다 (사용자가 지우면 빠짐). 최대 5개.
   useEffect(() => {
@@ -101,6 +103,14 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     const missing = ai.filter((p) => !a.sellingPoints.includes(p));
     if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, 5) });
   }, []);
+
+  // 성별이 바뀌어 선택된 모델이 목록에서 사라지면, 해당 성별의 추천(없으면 첫) 모델로 자동 전환.
+  useEffect(() => {
+    const visible = (a.models || []).filter((m) => !genderSel || m.gender === genderSel);
+    if (visible.length && !visible.some((m) => m.id === a.selectedModelId)) {
+      onChange({ selectedModelId: (visible.find((m) => m.recommended) || visible[0]).id });
+    }
+  }, [genderSel]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
 
   const commitSp = () => {
@@ -242,10 +252,9 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
         <div className="sec-title" style={{ marginBottom: 6 }}>모델 선택</div>
         <div className="sec-sub" style={{ marginBottom: 16 }}>대상 성별·분위기에 맞춰 추천해뒀어요.</div>
         <div className="model-grid">
-          {a.models.map((m) => (
-            <div key={m.id} className={`model-card${a.selectedModelId === m.id ? ' on' : ''}`} onClick={() => onChange({ selectedModelId: m.id })}>
+          {a.models.filter((m) => !genderSel || m.gender === genderSel).map((m) => (
+            <div key={m.id} className={`model-card img-only${a.selectedModelId === m.id ? ' on' : ''}`} onClick={() => onChange({ selectedModelId: m.id })}>
               <img src={m.thumb} alt={m.name} />
-              <div className="nm">{m.name}{m.recommended && <Icon name="star" size={13} fill="currentColor" className="star" />}</div>
             </div>
           ))}
         </div>
