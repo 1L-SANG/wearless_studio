@@ -38,3 +38,7 @@ server/ab_material_test.py
 # 단 매칭 시드 생성기는 seedMatchingItems.js가 재생성 경로로 참조하므로 추적한다.
 .scratch/*
 !.scratch/gen-matching.mjs
+
+.omc
+.omx
+pnpm-workspace.yaml
