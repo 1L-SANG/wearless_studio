@@ -3,6 +3,7 @@
 > 역할: `backend_integration_plan.md §6`(reserve-then-confirm + append-only ledger)을 **구독 월충전·추가구매·환불 정책**으로 확장한다. 단가(op별 cost)·PG 연동은 **상용 출시 직전 단계**(§같은 문서 §10 과금 순서 원칙)로 분리 — 본 문서는 *장치와 회계 규칙*만 확정한다.
 >
 > 결정 출처: 2026-06-20 사용자 확정 + Codex 독립 검증(불변식 4개). 메모리 `credit-system-design`.
+> 최종 갱신: 2026-06-29
 
 ---
 
@@ -21,7 +22,7 @@
 
 ---
 
-## 2. 스키마 (전부 새 포워드 마이그레이션)
+## 2. 스키마 (**마이그레이션 적용 완료** — 9개, 2026-06-29 기준)
 
 기존 재사용: `credit_accounts(user_id, balance, reserved)`, `credit_ledger`(append-only, idempotency_key), `profiles.plan`.
 **만들지 않음(중복)**: `profiles.credits`, `credit_transactions`, `credit_consumption`.
@@ -215,7 +216,7 @@ reject_refund(admin, req):
 
 ## 7. 구현 순서
 
-1. 마이그레이션(pricing_plans·credit_sources·payment_history·refund_requests + credit_ledger.credit_source_id) + 시드.
-2. 백엔드: `recompute_balance`/reserve·confirm·release 버킷화 + 충전·환불 API + 마네킹 job confirm 연결.
+1. ✅ 마이그레이션(pricing_plans·credit_sources·payment_history·refund_requests + credit_ledger.credit_source_id) + 시드. *(2026-06-29 완료)*
+2. ✅ 백엔드: `recompute_balance`/reserve·confirm·release 버킷화 + 마네킹 job confirm 연결. *(크레딧 모델 LIVE, 2026-06-29)* 충전·환불 HTTP 엔드포인트는 결제(PG) 단계로 분리(미구현).
 3. pytest(돈 로직 — 불변식 4개·FIFO·멱등·동시성 시나리오).
 4. 프론트(nav·/pricing·/credits/history·환불 모달)는 **auth 에이전트 조율 후 별도**.

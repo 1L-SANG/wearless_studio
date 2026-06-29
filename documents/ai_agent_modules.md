@@ -1,6 +1,6 @@
 # AI 에이전트 모듈 정의서 (ai_agent_modules.md)
 
-> 상태: 확정 (2026-06-11, 갱신 2026-06-14) · **모델 배정은 잠정** — §1 라우팅 테이블 한 곳만 바꾸면 전체에 반영되도록 설계한다 (사용자 결정). 모델·시스템 프롬프트는 이미지 품질 작업 단계에서 바뀔 수 있다.
+> 상태: 확정 (2026-06-11, 갱신 2026-06-29) · **모델 배정은 잠정** — §1 라우팅 테이블 한 곳만 바꾸면 전체에 반영되도록 설계한다 (사용자 결정). 모델·시스템 프롬프트는 이미지 품질 작업 단계에서 바뀔 수 있다.
 > 근거: `documents/PRD.md`, `documents/common_data_contract.md`(엔티티·enum·API 계약), `documents/frontend_state_model.md`, `documents/03_기술스택_결정서.md`(FastAPI job orchestration), mock 프론트(`src/mock/*`, 특히 `matchingRecommendation.js`)
 > 짝 문서: `documents/ai_pipeline_spec.md` (에이전트들이 언제·어떤 순서로 호출되는지)
 
@@ -13,7 +13,7 @@
 | tier | 모델 (잠정) | 용도 기준 |
 |---|---|---|
 | `image_high` | **Gemini 3 Pro Image** (`gemini-3-pro-image`) | 최종 산출물에 들어가는 모든 이미지 — 의류 동일성·핏 재현이 핵심인 고작업 |
-| `image_light` | **Gemini 3.1 Flash Image** | 미리보기·예시성 이미지. **현재 MVP 배정 에이전트 없음** — 분위기 예시는 운영자 시드 데이터로 대체(§5 참고). 저난도 생성 수요가 생기면 이 tier에 배정 |
+| `image_light` | **Gemini 3.1 Flash Image** (`gemini-3.1-flash-image`) | 미리보기·예시성 이미지. **현재 MVP 배정 에이전트 없음** — 분위기 예시는 운영자 시드 데이터로 대체(§5 참고). 저난도 생성 수요가 생기면 이 tier에 배정 |
 | `text` | **GPT-5.4 mini** | 이미지 생성이 아닌 모든 작업 — 분석(비전 입력 포함)·카피·검수 |
 
 **API 키 (.env — FastAPI 서버 전용, 추후 추가)**
@@ -31,15 +31,15 @@ OPENAI_API_KEY=   # text
 
 | ID | 이름 | tier | 호출하는 API(계약 §6) | 크레딧 | MVP |
 |---|---|---|---|---|---|
-| AG-01 | product-analyst (상품 분석) | text | `analyzeProduct` | — | ✅ |
-| AG-02 | copywriter (카피라이팅) | text | `generateDetailPage`(copy 단계) | — | ✅ |
-| AG-03 | copy-qc (카피 검수) | text | `generateDetailPage`(copy 단계 직후) | — | ✅ |
-| AG-04 | mannequin-generator (마네킹 생성) | image_high | `generateMannequins`, `regenerateMannequins` | mannequinGenerate | ✅ |
-| AG-05 | mannequin-adjuster (마네킹 조정) | image_high | `adjustMannequin` | mannequinAdjust | ✅ |
-| AG-06 | cut-generator (컷 생성) | image_high | `generateDetailPage`(컷 단계), `generateImage(mode:'new')` | storyboardPerCut / editorImage | ✅ |
-| AG-07 | cut-variator (컷 변형) | image_high | `generateImage(mode:'vary')` | editorImage | ✅ |
-| M-01 | matching-recommender (매칭 추천) | **비-AI** (룰베이스) | `analyzeProduct` 내부 | — | ✅ (구현 존재) |
-| M-02 | page-assembler (상세페이지 조립) | **비-AI** (템플릿 엔진) | `generateDetailPage`(assemble 단계) | — | ✅ (mock 구현 존재) |
+| AG-01 | product-analyst (상품 분석) | text | `analyzeProduct` | — | ✅ (설계만) |
+| AG-02 | copywriter (카피라이팅) | text | `generateDetailPage`(copy 단계) | — | ✅ (설계만) |
+| AG-03 | copy-qc (카피 검수) | text | `generateDetailPage`(copy 단계 직후) | — | ✅ (설계만) |
+| AG-04 | mannequin-generator (마네킹 생성) | image_high | `generateMannequins`, `regenerateMannequins` | mannequinGenerate | ✅ (백엔드 라이브) |
+| AG-05 | mannequin-adjuster (마네킹 조정) | image_high | `adjustMannequin` | mannequinAdjust | ✅ (설계만) |
+| AG-06 | cut-generator (컷 생성) | image_high | `generateDetailPage`(컷 단계), `generateImage(mode:'new')` | storyboardPerCut / editorImage | ✅ (설계만) |
+| AG-07 | cut-variator (컷 변형) | image_high | `generateImage(mode:'vary')` | editorImage | ✅ (설계만) |
+| M-01 | matching-recommender (매칭 추천) | **비-AI** (룰베이스) | `analyzeProduct` 내부 | — | ✅ (백엔드 라이브) |
+| M-02 | page-assembler (상세페이지 조립) | **비-AI** (템플릿 엔진) | `generateDetailPage`(assemble 단계) | — | ✅ (mock/템플릿) |
 | AG-P1 | matching-ai-recommender | text | M-01 대체/보강 | — | P1 슬롯 |
 | AG-P2 | image-qc (이미지 동일성 검수) | text | 이미지 생성 직후 게이트(AG-04/05/06/07) | — | P1 슬롯 |
 
@@ -136,12 +136,12 @@ OPENAI_API_KEY=   # text
 
 ## 4. 비-AI 모듈 (파이프라인 구성요소 — AI 호출 없음)
 
-### M-01 matching-recommender — 매칭 의류 추천 (룰베이스, 구현 존재)
+### M-01 matching-recommender — 매칭 의류 추천 (룰베이스, 백엔드 라이브)
 
-- **구현**: `src/mock/matchingRecommendation.js` → 백엔드 이관 시 동일 로직을 FastAPI로. 시드: `seedMatchingItems.js`(Supabase-ready `MatchingItem`).
-- **입력**: `{ clothingType, targetGenders, styleTags }` — **styleTags는 AG-01이 산출**(사용자 결정: 룰베이스 + 분석이 태그 공급).
-- **로직**: 보완 타입 필터(top계열→bottom) → 성별 필터(unisex 포함) → styleTags 겹침 점수 → sortOrder. 결정적·비용 0.
-- **출력**: `MatchingItem[]` → `toLegacyMatchClothing`으로 UI shape 변환(상위 2개 메인/서브 기본 선택).
+- **구현**: FastAPI 라이브 (`server/app/services/matching.py`). 엔드포인트: `GET /projects/{id}/analysis/match-candidates?clothingType=&gender=&limit=`. 시드 64개 (`server/seed/matching_items.json`, `matching_items` 테이블 + R2).
+- **입력**: `clothingType`, `gender`(단수), `limit?` — HTTP 쿼리 파라미터. styleTags 입력 미사용(현행 알고리즘에서 제거됨).
+- **로직**: 보완 타입 필터(top/outer/dress→bottom, 나머지→top) → 성별 필터(is_active + type + gender, unisex 항상 포함) → `-color_brightness` 내림차순 후 sort_order. 결정적·비용 0.
+- **출력**: `MatchingItem[]` → `analysis.matchCandidates`(후보) + `matchSelections`(상위 2개 메인/서브 기본 선택).
 - **호출 시점**: PL-1에서 AG-01 직후 → `analysis.matchCandidates`(후보) + `matchSelections`(상위 2개 메인/서브 기본 선택)으로 응답에 포함 (계약 §3.2).
 
 ### M-02 page-assembler — 상세페이지 조립 (결정적 템플릿 엔진, 사용자 결정)
