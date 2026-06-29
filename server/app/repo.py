@@ -33,6 +33,28 @@ _PROJECT_COLS = (
     "selected_mannequin_id, adjust_count, created_at, updated_at"
 )
 
+# JOIN 쿼리용 — products 와 겹치는 id/created_at/updated_at 모호성 방지로 pr. 한정.
+_PROJECT_COLS_PR = (
+    "pr.id::text as id, pr.status, pr.title, pr.compose_mode, pr.copywriting, "
+    "pr.selected_mannequin_id, pr.adjust_count, pr.created_at, pr.updated_at"
+)
+
+# '한 번도 안 쓴' 빈 초안 판정 (pr=projects, prod=products 별칭 전제).
+# draft + 제목·마네킹·콘티·에디터블록 없음 + product 업로드 전(색상 비고·종류 미정).
+_PRISTINE_DRAFT = """
+    pr.status = 'draft'
+    and coalesce(pr.title, '') = ''
+    and pr.selected_mannequin_id is null
+    and coalesce(jsonb_array_length(
+        case when jsonb_typeof(pr.editor_blocks) = 'array' then pr.editor_blocks else '[]'::jsonb end), 0) = 0
+    and coalesce(jsonb_array_length(
+        case when jsonb_typeof(pr.storyboard) = 'array' then pr.storyboard else '[]'::jsonb end), 0) = 0
+    and prod.upload_complete = false
+    and coalesce(jsonb_array_length(
+        case when jsonb_typeof(prod.colors) = 'array' then prod.colors else '[]'::jsonb end), 0) = 0
+    and prod.clothing_type is null
+"""
+
 
 async def get_account(conn: AsyncConnection, user_id: str) -> dict | None:
     async with conn.cursor() as cur:
@@ -77,6 +99,22 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
 
 async def create_project(conn: AsyncConnection, user_id: str) -> dict:
     async with conn.cursor() as cur:
+        # '제작' 반복 진입 시 빈 초안이 쌓이지 않도록, 이미 만든 '한 번도 안 쓴' draft 가
+        # 있으면 새로 만들지 않고 그걸 재사용한다(없을 때만 INSERT).
+        await cur.execute(
+            f"""
+            select {_PROJECT_COLS_PR}
+            from projects pr
+            join products prod on prod.project_id = pr.id
+            where pr.user_id = %s and pr.deleted_at is null and {_PRISTINE_DRAFT}
+            order by pr.created_at desc
+            limit 1
+            """,
+            (user_id,),
+        )
+        existing = await cur.fetchone()
+        if existing:
+            return existing
         await cur.execute(
             f"insert into projects (user_id) values (%s) returning {_PROJECT_COLS}",
             (user_id,),

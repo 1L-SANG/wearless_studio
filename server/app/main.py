@@ -17,7 +17,7 @@ from .auth import jwks_key_resolver, require_user
 from .config import Settings, load_settings
 from .db import create_pool
 from .r2 import R2Client
-from .routes import router as v1_router
+from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher
 
 DEFAULT_ERROR_CODES = {
@@ -53,8 +53,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if pool is not None:
             await pool.close()
 
+    docs_url = "/docs" if settings.app_env == "dev" else None
+    redoc_url = "/redoc" if settings.app_env == "dev" else None
+
     app = FastAPI(
-        title="Wearless Studio API", docs_url=None, redoc_url=None, lifespan=lifespan
+        title="Wearless Studio API",
+        docs_url=docs_url,
+        redoc_url=redoc_url,
+        lifespan=lifespan,
     )
     app.state.settings = settings
     app.state.pool = pool
@@ -106,12 +112,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    @app.get("/healthz")
+    @app.get("/healthz", tags=["System"], summary="서버 헬스 체크")
     async def healthz():
+        """서버가 정상 기동 중인지 모니터링하기 위한 헬스체크 엔드포인트입니다."""
         return {"status": "ok"}
 
-    @app.get("/v1/me/ping")
+    @app.get(
+        "/v1/me/ping",
+        responses={**COMMON_RESPONSES},
+        tags=["User & Account"],
+        summary="인증 상태 디버그 핑",
+    )
     async def me_ping(user_id: str = Depends(require_user)):
+        """로그인 상태(JWT 서명 검증 성공 여부)를 검증하고 디버깅용으로 사용자 ID를 반환합니다.
+
+        - **Bearer Token**: 필수
+        """
         # Phase 0 완료 기준(JWT 검증 통과) 확인용 — Phase 1에서 /v1/me/account로 대체
         return {"userId": user_id}
 
