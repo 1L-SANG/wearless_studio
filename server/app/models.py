@@ -220,3 +220,14 @@ class RefundRequestBody(CamelModel):
 
     credit_source_id: str
     reason: str | None = None
+
+
+class ErrorDetail(CamelModel):
+    code: str
+    message: str
+    details: list | None = None
+
+
+class ErrorResponse(CamelModel):
+    error: ErrorDetail
+

@@ -8,6 +8,7 @@
 import os
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from ..config import Settings
 from .materials import material_guidance
@@ -16,8 +17,10 @@ _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # ser
 _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_generate_v1.txt")
 
 
-def _sanitize(value: str) -> str:
+def _sanitize(value: Any) -> str:
     """프롬프트 인젝션·블록 이탈 방지 — 개행/제어문자 제거 + 길이 제한."""
+    if value is None:
+        return ""
     return re.sub(r"\s+", " ", str(value)).strip()[:200]
 
 
@@ -57,7 +60,9 @@ def _product_block(product: dict, analysis: dict) -> str:
     if mat_strs:  # Material 줄 + (소재 인식) 렌더링 가이드 블록 (materials.py, §2.6)
         material_entry = f"- Material: {', '.join(mat_strs)}"
         clothing_type = product.get("clothing_type") or product.get("clothingType")
-        guidance = material_guidance(raw_mats, clothing_type, analysis.get("subCategory"))
+        clothing_type_str = str(clothing_type or "")
+        sub_category_str = str(analysis.get("subCategory") or "")
+        guidance = material_guidance(raw_mats, clothing_type_str, sub_category_str)
         if guidance:
             material_entry += "\n" + guidance
     points = [_sanitize(p) for p in (analysis.get("sellingPoints") or []) + (analysis.get("aiSuggestedPoints") or [])]

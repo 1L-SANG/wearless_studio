@@ -1,6 +1,6 @@
 # 공통 데이터 계약 (Common Data Contract)
 
-> 상태: 확정 (2026-06-11, 갱신 2026-06-14) · 근거: `documents/PRD.md`, mock 구현(`src/lib/types.js`, `src/mock/*`), 2026-06-11·06-14 결정 세션
+> 상태: 확정 (2026-06-11, 갱신 2026-06-29) · 근거: `documents/PRD.md`, mock 구현(`src/lib/types.js`, `src/mock/*`), 2026-06-11·06-14 결정 세션
 > 결정 기록: `docs/adr/0001~0003`, 용어는 `/CONTEXT.md`
 > 적용 방식: 이 문서가 계약의 원본이다. `src/lib/types.js`와 mock 레이어를 이 계약에 맞추고, 백엔드(FastAPI·Supabase·R2)와 AI 파이프라인은 같은 shape를 구현한다. 현행 코드와의 차이(마이그레이션 갭)는 `documents/TODO.md`가 추적한다 — 문서와 코드가 다르면 문서가 맞다.
 
@@ -101,7 +101,7 @@ Analysis {
   projectId: string
   suggestedName: string
   subCategory: SubCategory | null  // 영문 토큰화 (§4). dress는 null
-  targetGenders: Gender[]
+  targetGenders: Gender[]          // UI 단일 선택 — 1-element 배열로 저장
   fit: Fit
   materials: Material[]            // Material { name: string(자유 텍스트), ratio: number(%) }
   sellingPoints: string[]          // 자유 텍스트, max LIMITS.sellingPointMax(5)
@@ -212,7 +212,7 @@ Element (type='line') + {
 }
 
 TextStyle {
-  font: 'Pretendard' | 'Cal Sans' | 'Roboto Mono'
+  font: 'Pretendard' | 'Cal Sans' | 'Roboto Mono' | 'Cormorant'
   size: number  weight: number  color: string
   opacity?: number  tracking?: number  lineHeight?: number
   align?: 'left' | 'center' | 'right'
@@ -367,8 +367,8 @@ VaryRequest {                      // AI 탭 '현재 컷 변형' — changes 빈
 
 ---
 
-## 8. 백엔드 확장 노트 (참고용, 설계 아님)
+## 8. 백엔드 구현 현황 (2026-06-29 기준 라이브)
 
-- Supabase 테이블 후보: `projects`, `products`, `analyses`, `mannequin_cuts`, `assets`(R2 키 보유), `credit_ledger`. `storyboard`·`editor_blocks`는 초기에 projects의 jsonb 컬럼으로 시작해도 계약과 충돌하지 않는다.
+- Supabase 스키마 구현 완료 (9개 마이그레이션, 17테이블): `profiles`, `credit_accounts`, `credit_ledger`, `projects`, `products`, `analyses`, `assets`, `mannequin_cuts`, `wardrobe_images`, `matching_items`, `jobs`, `job_events`, `exports`, `pricing_plans`, `payment_history`, `credit_sources`, `refund_requests`. 전체 RLS 활성, 쓰기는 service-role/FastAPI 전용.
 - 생성 작업은 서버에서 job(id·status)으로 관리하고, 프론트 어댑터가 `GenJob` 폴링을 `onProgress`/`onStep` 콜백으로 변환한다 — 화면 계약은 바뀌지 않는다.
 - 크레딧 차감은 서버 트랜잭션이 원본이고 `{ data, credits }`의 `credits`가 그 결과다. 프론트 선차감 금지.

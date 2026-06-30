@@ -42,3 +42,5 @@ server/ab_material_test.py
 .omc
 .omx
 pnpm-workspace.yaml
+claude.md
+agents.md

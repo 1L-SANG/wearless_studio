@@ -28,11 +28,13 @@ export function TopNav() {
   const { pathname } = useLocation();
   const { session, openLogin } = useAuth();
   const account = useAppStore((s) => s.account) || { name: '…', avatar: '', credits: 0, plan: '' };
-  const startProject = useAppStore((s) => s.startProject);
+  const beginProject = useAppStore((s) => s.beginProject);
   // create 흐름일 때만 'create' 활성 — /pricing·/credits 등은 어느 탭도 활성 아님(폴백 active 버그 수정)
   const route = pathname.startsWith('/library') ? 'library'
     : pathname.startsWith('/create') ? 'create' : null;
-  const onNav = async (r) => { if (r === 'create') { await startProject(); navigate('/create/input'); } else navigate('/library'); };
+  // '상세페이지 제작' 은 로컬 플로우만 초기화하고 입력 화면으로 — 서버 project(보관함 행)는
+  // AI 분석 시작 때 생성한다(빈 프로젝트 양산 방지).
+  const onNav = async (r) => { if (r === 'create') { await beginProject(); navigate('/create/input'); } else navigate('/library'); };
   const step = pathname.startsWith('/create/') ? pathname.split('/')[2] : null;
 
   return (
@@ -42,7 +44,7 @@ export function TopNav() {
         <img className="brand-wordmark" src="/assets/brand/wordmark.png" alt="Wearless" />
       </span>
       <div className="nav-links">
-        {/* 비로그인 숨김: onNav('create')→startProject→createProject 는 토큰 필요(401 방지) */}
+        {/* 비로그인 숨김: 보관함/제작 탭은 로그인 사용자용. 비로그인 입력·분석은 '/' 공개 진입. */}
         {session && <button className={`nav-link${route === 'create' ? ' active' : ''}`} onClick={() => onNav('create')}>상세페이지 제작</button>}
         {session && <button className={`nav-link${route === 'library' ? ' active' : ''}`} onClick={() => onNav('library')}>보관함</button>}
       </div>

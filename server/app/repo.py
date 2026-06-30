@@ -33,6 +33,28 @@ _PROJECT_COLS = (
     "selected_mannequin_id, adjust_count, created_at, updated_at"
 )
 
+# JOIN 쿼리용 — products 와 겹치는 id/created_at/updated_at 모호성 방지로 pr. 한정.
+_PROJECT_COLS_PR = (
+    "pr.id::text as id, pr.status, pr.title, pr.compose_mode, pr.copywriting, "
+    "pr.selected_mannequin_id, pr.adjust_count, pr.created_at, pr.updated_at"
+)
+
+# '한 번도 안 쓴' 빈 초안 판정 (pr=projects, prod=products 별칭 전제).
+# draft + 제목·마네킹·콘티·에디터블록 없음 + product 업로드 전(색상 비고·종류 미정).
+_PRISTINE_DRAFT = """
+    pr.status = 'draft'
+    and coalesce(pr.title, '') = ''
+    and pr.selected_mannequin_id is null
+    and coalesce(jsonb_array_length(
+        case when jsonb_typeof(pr.editor_blocks) = 'array' then pr.editor_blocks else '[]'::jsonb end), 0) = 0
+    and coalesce(jsonb_array_length(
+        case when jsonb_typeof(pr.storyboard) = 'array' then pr.storyboard else '[]'::jsonb end), 0) = 0
+    and prod.upload_complete = false
+    and coalesce(jsonb_array_length(
+        case when jsonb_typeof(prod.colors) = 'array' then prod.colors else '[]'::jsonb end), 0) = 0
+    and prod.clothing_type is null
+"""
+
 
 async def get_account(conn: AsyncConnection, user_id: str) -> dict | None:
     async with conn.cursor() as cur:
@@ -77,6 +99,30 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
 
 async def create_project(conn: AsyncConnection, user_id: str) -> dict:
     async with conn.cursor() as cur:
+        # 동시 요청(더블클릭·재시도·타임아웃 후 재호출)에서 아래 select-then-insert 가
+        # 둘 다 pristine draft 를 못 보고 각각 INSERT → 중복 빈 초안이 생기는 레이스 방지.
+        # user_id 단위 xact advisory lock 으로 생성을 직렬화한다(트랜잭션 커밋 시 자동 해제).
+        # 두 번째 요청은 첫 요청 커밋까지 대기 → READ COMMITTED 로 직전 draft 를 보고 재사용.
+        await cur.execute(
+            "select pg_advisory_xact_lock(hashtext(%s))",
+            (f"create_project:{user_id}",),
+        )
+        # '제작' 반복 진입 시 빈 초안이 쌓이지 않도록, 이미 만든 '한 번도 안 쓴' draft 가
+        # 있으면 새로 만들지 않고 그걸 재사용한다(없을 때만 INSERT).
+        await cur.execute(
+            f"""
+            select {_PROJECT_COLS_PR}
+            from projects pr
+            join products prod on prod.project_id = pr.id
+            where pr.user_id = %s and pr.deleted_at is null and {_PRISTINE_DRAFT}
+            order by pr.created_at desc
+            limit 1
+            """,
+            (user_id,),
+        )
+        existing = await cur.fetchone()
+        if existing:
+            return existing
         await cur.execute(
             f"insert into projects (user_id) values (%s) returning {_PROJECT_COLS}",
             (user_id,),

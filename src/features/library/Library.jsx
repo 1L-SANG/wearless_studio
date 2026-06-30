@@ -7,12 +7,13 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Button, Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
+import { Button, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 
 export function Library() {
   const navigate = useNavigate();
-  const startProject = useAppStore((s) => s.startProject);
-  const onNew = async () => { await startProject(); navigate('/create/input'); };
+  const beginProject = useAppStore((s) => s.beginProject);
+  // 서버 project(보관함 행)는 AI 분석 시작 때 생성 — '새 상세페이지' 클릭만으로 빈 행 생성 방지.
+  const onNew = async () => { await beginProject(); navigate('/create/input'); };
   const onOpen = (it) => navigate(`/editor/${it.id}`);
 
   // 서버 상태는 TanStack Query 캐시로 (frontend_state_model §8-7).
@@ -46,7 +47,6 @@ export function Library() {
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 22 }}>
         <div><h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, color: 'var(--fg-1)' }}>보관함</h1>
           <p className="sec-sub" style={{ marginTop: 6 }}>지금까지 만든 상세페이지를 모아봤어요.</p></div>
-        <Button variant="primary" icon="plus" onClick={onNew}>새 상세페이지</Button>
       </div>
 
       {phase === 'loading' && (
@@ -66,7 +66,6 @@ export function Library() {
                 <div className="m"><span>블록 {it.blockCount}</span><span>·</span><span>{timeAgo(it)}</span></div></div>
             </div>
           ))}
-          <div className="lib-new" onClick={onNew}><Icon name="plus" size={22} /><span className="micro">새 상세페이지</span></div>
         </div>
       )}
     </div>

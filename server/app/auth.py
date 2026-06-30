@@ -5,10 +5,13 @@
 """
 
 import jwt
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jwt import PyJWKClient
 
 ALLOWED_ALGORITHMS = ["ES256", "RS256"]
+
+security_scheme = HTTPBearer(auto_error=False)
 
 
 def _unauthorized() -> HTTPException:
@@ -28,17 +31,16 @@ def jwks_key_resolver(jwks_url: str):
     return resolve
 
 
-def require_user(request: Request) -> str:
+def require_user(
+    request: Request,
+    token: HTTPAuthorizationCredentials | None = Depends(security_scheme),
+) -> str:
     """인증된 user_id를 반환한다. 실패 시 401 봉투."""
     settings = request.app.state.settings
 
-    if settings.dev_user_id:
-        return settings.dev_user_id
-
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.lower().startswith("bearer "):
+    if token is None or not token.credentials:
         raise _unauthorized()
-    token = auth_header[7:].strip()
+    token_str = token.credentials.strip()
 
     resolver = request.app.state.jwt_key_resolver
     if resolver is None:
@@ -48,9 +50,9 @@ def require_user(request: Request) -> str:
         )
 
     try:
-        key = resolver(token)
+        key = resolver(token_str)
         claims = jwt.decode(
-            token,
+            token_str,
             key,
             algorithms=ALLOWED_ALGORITHMS,
             audience=settings.jwt_audience,
