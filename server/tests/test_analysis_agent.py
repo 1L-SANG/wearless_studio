@@ -209,6 +209,25 @@ def test_collect_input_images_whitelists_slot():
     assert "SYSTEM" not in manifest
 
 
+def test_non_string_json_values_do_not_crash():
+    # jsonb 패스스루 — slot/id가 리스트·딕셔너리(unhashable)·숫자여도 TypeError 금지
+    weird = _product(colors=[
+        {"id": "c", "isBase": True, "images": [
+            {"id": "a1", "slot": ["Front"]},
+            {"id": "a2", "slot": {"x": 1}},
+            {"id": "a3", "slot": 7},
+        ]},
+        {"id": 99, "isBase": False, "images": [{"id": 42, "slot": None}]},
+    ])
+    specs = analysis.collect_input_images(weird)
+    assert [s["slot"] for s in specs][:3] == ["Front", "Front", "Front"]
+    analysis.build_manifest(specs)                      # 크래시 없음
+    fp = analysis.input_fingerprint(weird)              # 라우트 경로 — 크래시 없음
+    assert isinstance(fp, str) and len(fp) == 64
+    # 정상 데이터의 지문은 str() 강제 전후 동일 (항등 — 기존 기록과 호환)
+    assert analysis.input_fingerprint(_product()) == analysis.input_fingerprint(_product())
+
+
 def test_build_user_text():
     assert "PRODUCT CONTEXT" not in analysis.build_user_text("M", None)
     text = analysis.build_user_text("M", "  줄바꿈\n있는  이름 ")

@@ -93,6 +93,12 @@ _MEASUREMENT_RE = re.compile(r"\d+\s*(cm|센치|센티|mm|inch|인치)", re.IGNO
 
 # 첨부 이미지 순서·라벨 (mannequin 워커와 동일 원칙 — 고정 라벨 룩업만, 셀러 텍스트 미삽입)
 _SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "Fit": 3}
+
+
+def _norm_slot(value) -> str:
+    """클라 제어 jsonb 값 방어 — 문자열 AngleSlot 4종 외(비문자열·리스트 등 unhashable 포함)는
+    Front로 정규화. dict 멤버십 검사 전에 타입부터 확인해야 TypeError가 안 난다."""
+    return value if isinstance(value, str) and value in _SLOT_LABEL else "Front"
 _SLOT_LABEL = {
     "Front": "front view of the garment",
     "Back": "back view of the garment",
@@ -149,20 +155,22 @@ def input_fingerprint(product: dict) -> str:
     (사용자 편집 보존). 의도적 제외 2건:
     - name: 최초 분석 후 suggestedName이 name으로 저장돼 지문이 바뀌는 재분석 루프 방지.
     - swatchId: AG-01 입력이 아님(추천 대상일 뿐) — 스와치만 바꾼 재제출로 편집을 날리지 않는다."""
+    # str() 강제 — colors jsonb는 클라 패스스루라 slot/id가 비문자열(리스트 등)일 수 있고,
+    # 혼합 타입 튜플은 sorted()에서 TypeError(라우트 500)가 난다. 정상 데이터엔 항등.
     base = {
         "colors": sorted(
             [
                 {
-                    "id": c.get("id"),
+                    "id": str(c.get("id") or ""),
                     "isBase": bool(c.get("isBase")),
                     "images": sorted(
-                        (im.get("slot") or "", im.get("id") or "")
+                        (str(im.get("slot") or ""), str(im.get("id") or ""))
                         for im in (c.get("images") or [])
                     ),
                 }
                 for c in (product.get("colors") or [])
             ],
-            key=lambda c: c["id"] or "",
+            key=lambda c: c["id"],
         ),
     }
     return hashlib.sha256(
@@ -184,19 +192,15 @@ def collect_input_images(product: dict) -> list[dict]:
         is_base = c is base
         images = c.get("images") or []
         if is_base:
-            images = sorted(images, key=lambda im: _SLOT_ORDER.get(im.get("slot") or "", 99))
+            images = sorted(images, key=lambda im: _SLOT_ORDER[_norm_slot(im.get("slot"))])
         for im in images:
             if not im.get("id"):
                 continue
-            slot = im.get("slot")
-            if slot not in _SLOT_LABEL:
-                # 클라 제어 jsonb 값 — 화이트리스트(AngleSlot) 밖은 Front로 강제.
-                # slot 토큰은 매니페스트에 원문 삽입되므로 프롬프트 인젝션 벡터가 된다.
-                slot = "Front"
             out.append({
                 "colorGroupId": c.get("id") or "",
                 "isBase": is_base,
-                "slot": slot,
+                # slot 토큰은 매니페스트에 원문 삽입되므로 인젝션 벡터 — 화이트리스트 정규화
+                "slot": _norm_slot(im.get("slot")),
                 "assetId": im["id"],
             })
     return out
