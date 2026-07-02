@@ -14,13 +14,13 @@
 |---|---|---|
 | `image_high` | **Gemini 3 Pro Image** (`gemini-3-pro-image`) | 최종 산출물에 들어가는 모든 이미지 — 의류 동일성·핏 재현이 핵심인 고작업 |
 | `image_light` | **Gemini 3.1 Flash Image** | 미리보기·예시성 이미지. **현재 MVP 배정 에이전트 없음** — 분위기 예시는 운영자 시드 데이터로 대체(§5 참고). 저난도 생성 수요가 생기면 이 tier에 배정 |
-| `text` | **GPT-5.4 mini** | 이미지 생성이 아닌 모든 작업 — 분석(비전 입력 포함)·카피·검수 |
+| `text` | **Gemini 3 Flash** (`gemini-3.5-flash`) | 이미지 생성이 아닌 모든 작업 — 분석(비전 입력 포함)·카피·검수. 2026-07-02 사용자 결정(구 GPT-5.4 mini 잠정 배정 대체) — 생성 파라미터는 `pl1_analysis_agent_spec.md` §2 |
 
 **API 키 (.env — FastAPI 서버 전용, 추후 추가)**
 
 ```
-GEMINI_API_KEY=   # image_high / image_light
-OPENAI_API_KEY=   # text
+GEMINI_API_KEY=   # image_high / image_light / text (전 tier Gemini — 2026-07-02)
+OPENAI_API_KEY=   # 예비 — text tier를 OpenAI 계열로 재배정할 때만 필요
 ```
 
 **호출 경로 (확정)**: 프론트는 AI API를 직접 호출하지 않는다. 모든 에이전트 호출은 **처음부터 FastAPI 프록시 경유** — 키는 서버에만 존재하고, 프론트 번들(.env.local의 `VITE_*`)에 키를 넣지 않는다. 프론트 계약은 기존 `lib/api` 함수 그대로다.
