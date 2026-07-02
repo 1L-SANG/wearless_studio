@@ -113,7 +113,7 @@ ANALYSIS_PROMPT_VERSION=v1
 | 상품명 | `products.name` | 있으면 PRODUCT CONTEXT 블록으로 전달(§4.2). sanitize(개행·제어문자 제거, ≤200자) — 마네킹 `_sanitize` 재사용. |
 | 기준 색상 이미지 | `colors[isBase].images` | **전 슬롯**, slot 순서(Front→Back→Detail→Fit). `ImageAsset.id` = assets row id → R2 bytes 로드. |
 | 추가 색상 이미지 | `colors[!isBase].images` | 그룹당 전부(slot은 'Front' 고정 — 계약 §3.1). swatchSuggestions 판단용. |
-| 이미지 매니페스트 | 워커 생성 | 첨부 순서와 1:1. 라벨은 **고정 문자열 룩업만** 사용(셀러 데이터 미삽입 — 인젝션 방지, 마네킹 `_build_manifest` 원칙). colorGroupId는 서버 발급 불투명 id라 포함 OK. |
+| 이미지 매니페스트 | 워커 생성 | 첨부 순서와 1:1. 라벨은 **고정 문자열 룩업만** 사용(셀러 데이터 미삽입 — 인젝션 방지, 마네킹 `_build_manifest` 원칙). colorGroupId는 sanitize 후 포함. **slot 토큰은 화이트리스트(AngleSlot 4종) 강제 — 밖이면 Front로 정규화**: colors jsonb는 클라 패스스루라 slot도 클라 제어 값이고, 매니페스트에 원문 삽입되므로 인젝션 벡터다 (Codex 지적 2026-07-03). |
 
 매니페스트 포맷 (첨부 이미지 순서와 정확히 일치):
 

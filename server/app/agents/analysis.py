@@ -188,10 +188,15 @@ def collect_input_images(product: dict) -> list[dict]:
         for im in images:
             if not im.get("id"):
                 continue
+            slot = im.get("slot")
+            if slot not in _SLOT_LABEL:
+                # 클라 제어 jsonb 값 — 화이트리스트(AngleSlot) 밖은 Front로 강제.
+                # slot 토큰은 매니페스트에 원문 삽입되므로 프롬프트 인젝션 벡터가 된다.
+                slot = "Front"
             out.append({
                 "colorGroupId": c.get("id") or "",
                 "isBase": is_base,
-                "slot": im.get("slot") or "Front",
+                "slot": slot,
                 "assetId": im["id"],
             })
     return out
