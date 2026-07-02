@@ -101,6 +101,10 @@ export const api = {
     ];
   },
 
+  // store.loadProject 전용 '현재 프로젝트' (pl1 spec §7 — http 어댑터가 최근/생성 의미를
+  // 구현하기 위한 과도기 함수. mock 은 싱글턴이라 getProject 와 동일).
+  async getCurrentProject() { return this.getProject(); },
+
   /* ---- product input ---- */
   async getProduct(/* projectId */) { await wait(160); return clone(DB.product); },
   async saveProduct(_projectId, patch) {
@@ -108,6 +112,13 @@ export const api = {
     Object.assign(DB.product, patch);
     if (patch.name != null) { DB.project.title = patch.name; touch(); }
     return clone(DB.product);
+  },
+
+  // 실서비스 계약 uploadAsset(file, { projectId }) 의 mock 대행 (계약 §6 · pl1 spec §7.1)
+  // — 업로드 없이 objectURL 로 표시만 지원한다. id 는 http 모드에서 asset row id 가 된다.
+  async uploadAsset(file /*, { projectId } */) {
+    await wait(120);
+    return { id: uid('img'), src: URL.createObjectURL(file) };
   },
 
   /* ---- AI analysis (PRD §6) — 30s-feel progress, can fail ---- */

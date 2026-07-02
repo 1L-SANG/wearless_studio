@@ -42,9 +42,10 @@ function ColorSwatchPicker({ swatchColors, value, onChange }) {
 }
 
 // build file metas from a FileList (drag-drop / picker), capping to the room left
+// file 원본을 함께 보존 — 추가 시점 업로드(api.uploadAsset)의 입력 (pl1 spec §7.1)
 const filesToMetas = (fileList, room) => {
   const imgs = [...fileList].filter((f) => f.type && f.type.startsWith('image/'));
-  return imgs.slice(0, Math.max(0, room)).map((f) => ({ src: URL.createObjectURL(f), name: f.name, size: f.size, type: f.type || 'image', lastModified: f.lastModified }));
+  return imgs.slice(0, Math.max(0, room)).map((f) => ({ src: URL.createObjectURL(f), name: f.name, size: f.size, type: f.type || 'image', lastModified: f.lastModified, file: f }));
 };
 const fileExt = (im) => (im.type && im.type.split('/')[1] ? im.type.split('/')[1].toUpperCase() : 'IMG');
 
@@ -175,6 +176,7 @@ export function ProductInput() {
   // IndexedDB 에 보관(페이지 살아있을 때만 blob 추출 가능)한 뒤 로그인 모달을 띄운다 → 복귀 후
   // 입력 화면에 돌아오면 ProductInput 이 복원한다. (사진의 백엔드 동기화는 보류 — App 주석 참조.)
   const redirectingRef = useRef(false);
+  const uploadingRef = useRef(0);   // 진행 중 uploadAsset 배치 수 — submit 게이트
   const goToMannequin = async () => {
     if (session) { navigate('/create/mannequin'); return; }
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
@@ -228,9 +230,14 @@ export function ProductInput() {
         return;
       }
 
-      const fresh = { ...p, name: '', colors: [{ ...p.colors[0], swatchId: undefined, images: [] }] };
+      // http 모드의 새 프로젝트는 colors가 빈 배열 — 기준 그룹의 id·isBase를 보장해야
+      // 각도 슬롯 UI와 AI 스와치 추천(colorGroupId 매칭)이 동작한다 (pl1 spec §7).
+      const fresh = { ...p, name: '', colors: [{ id: uid('col'), name: '', isBase: true, ...(p.colors?.[0] || {}), swatchId: undefined, images: [] }] };
       setProduct(fresh);
-    })();
+    })().catch(() => {
+      // 로드 실패(네트워크·세션 만료 등)가 스켈레톤 무한 대기로 남지 않게 한다
+      if (alive) toast.push('입력 화면을 불러오지 못했어요. 새로고침해 주세요.', { icon: 'alertTri' });
+    });
     return () => { alive = false; };
   }, []);
 
@@ -238,7 +245,27 @@ export function ProductInput() {
 
   const set = (patch) => setProduct((p) => ({ ...p, ...patch }));
   // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
-  const addImageFiles = (colorId, slot, metas) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: [...c.images, ...metas.map((m) => ({ id: uid('img'), slot, label: slot, ...m }))] } : c) }));
+  // 추가 시점에 uploadAsset 경유 (pl1 spec §7.1) — 분석·마네킹이 R2의 사진을 읽으므로
+  // 여기서 올린다. id = asset id(http) / 로컬 id(mock). 실패한 장수는 목록에 안 넣고 토스트.
+  const addImageFiles = async (colorId, slot, metas) => {
+    uploadingRef.current += 1;   // 업로드 중 submit 방지 (분석 대상 ≠ 화면 세트 방지)
+    try {
+      const uploaded = [];
+      let failed = 0;
+      for (const m of metas) {
+        try {
+          const { file, ...meta } = m;
+          const asset = await api.uploadAsset(file, { projectId });
+          if (asset.src && asset.src !== meta.src) URL.revokeObjectURL(meta.src);   // 대체된 미리보기 URL 해제
+          uploaded.push({ ...meta, slot, label: slot, id: asset.id, src: asset.src || meta.src });
+        } catch { failed += 1; }
+      }
+      if (failed) toast.push(`이미지 ${failed}장 업로드에 실패했어요. 다시 시도해 주세요.`, { icon: 'alertTri' });
+      if (uploaded.length) setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: [...c.images, ...uploaded] } : c) }));
+    } finally {
+      uploadingRef.current -= 1;
+    }
+  };
   const removeImage = (colorId, imgId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: c.images.filter((im) => im.id !== imgId) } : c) }));
   const renameColor = (colorId, name) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, name } : c) }));
   const setColor = (colorId, swatchId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, swatchId } : c) }));
@@ -252,19 +279,31 @@ export function ProductInput() {
 
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
+    if (uploadingRef.current > 0) {
+      toast.push('이미지 업로드가 끝난 뒤 다시 시도해 주세요.', { icon: 'alertTri' });
+      return;
+    }
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    const a = await api.analyzeProduct(projectId, {});
-    setAnalysis(a);
-    // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨
-    const finalName = (product.name && product.name.trim()) ? product.name.trim() : (a.suggestedName || '새 상품');
-    if (!product.name || !product.name.trim()) set({ name: finalName });
-    // persist the user's input (name + 색상/이미지) into the create flow so the
-    // downstream steps (mannequin / storyboard / editor) read what was entered,
-    // not the seed (mock/api.saveProduct → DB.product). [data-flow fix]
-    await api.saveProduct(projectId, { ...product, name: finalName, uploadComplete: true });
-    setPhase('done');
-    toast.push('AI 분석을 완료했어요', { icon: 'sparkles' });
+    try {
+      // 저장이 먼저다 — 서버는 저장된 상태(products)를 분석한다
+      // (frontend_state_model §7 · pl1 spec §7.2 순서 교정).
+      await api.saveProduct(projectId, { ...product, uploadComplete: true });
+      const a = await api.analyzeProduct(projectId, {});
+      setAnalysis(a);
+      // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 저장
+      if (!product.name || !product.name.trim()) {
+        const finalName = a.suggestedName || '새 상품';
+        set({ name: finalName });
+        await api.saveProduct(projectId, { name: finalName });
+      }
+      setPhase('done');
+      toast.push('AI 분석을 완료했어요', { icon: 'sparkles' });
+    } catch (e) {
+      // 실패 시 입력 단계로 롤백 — 한국어 message 토스트 + 재시도 가능 (pl1 spec §8)
+      setPhase('input');
+      toast.push(e?.message || '상품 분석에 실패했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
+    }
   };
 
   const nameCard = (
@@ -360,6 +399,9 @@ export function ProductInput() {
               setAnalysis((a) => ({ ...a, ...patch }));
               api.saveAnalysis(projectId, patch).then((saved) => {
                 if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));
+              }).catch((e) => {
+                // http 모드에선 저장이 실패할 수 있다 — 조용히 삼키면 화면·서버가 어긋난다
+                toast.push(e?.message || '변경사항 저장에 실패했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
               });
             }}
             onNext={goToMannequin} />

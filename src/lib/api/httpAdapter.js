@@ -5,6 +5,7 @@
    시그니처·반환 형태는 mock/api.js(계약 §6)와 동일해야 한다.
    ============================================================= */
 import { supabase } from '@/lib/supabase.js';
+import { mockAdapter } from './mockAdapter.js';   // getCatalogs — 카탈로그는 아직 mock 소유
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -36,6 +37,55 @@ export async function http(path, { method = 'GET', body } = {}) {
   return res.json();
 }
 
+/* ---- PL-1 분석 공용 헬퍼 (pl1_analysis_agent_spec §7.3·§7.4) ---- */
+
+// 입력·분석 단계는 미로그인 허용이 제품 결정(로그인은 마네킹부터 — PRD §5·ProductInput 주석).
+// 서버 호출은 Bearer 필수이므로, 세션이 없으면 PL-1 스왑 세트는 mock 으로 위임해
+// 익명 입력 흐름(로컬 objectURL + draft 브리지)을 기존 그대로 보존한다.
+// 비로그인 입력의 백엔드 동기화는 Option B 보류 결정에 따름 (반쪽 스왑 사고 방지).
+async function hasSession() {
+  const { data } = await supabase.auth.getSession();
+  return !!data.session;
+}
+
+const saveAnalysisQueues = new Map();   // projectId → 직렬화 체인 (saveAnalysis 주석 참조)
+
+// job 폴링 → onProgress 콜백 변환. SSE(EventSource)는 Bearer 헤더 불가 → MVP 폴링,
+// fetch-stream SSE 는 P1 훅(spec §12-1). 이후 마네킹 스왑에서도 재사용.
+async function followJob(jobId, { onProgress, intervalMs = 1000, timeoutMs = 300000 } = {}) {
+  const t0 = Date.now();
+  for (;;) {
+    const job = await http(`/v1/jobs/${jobId}`);
+    onProgress?.(Math.max(0, Math.min(100, job.progress ?? 0)));
+    if (job.status === 'done') return job.result;   // { data, credits, creditsCharged }
+    if (job.status === 'error') throw new Error(job.errorMessage || '작업에 실패했어요. 다시 시도해 주세요.');
+    if (Date.now() - t0 > timeoutMs) throw new Error('작업이 너무 오래 걸려요. 잠시 후 다시 시도해 주세요.');
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+// 서버 Analysis(계약 §3.2) → 현행 AnalysisForm 이 읽는 legacy shape 합성.
+// 화면은 그대로, 갭은 어댑터가 흡수 (Phase 7 폼 리팩토링 때 제거 — TODO.md).
+let catalogsPromise = null;   // mock getCatalogs 는 호출마다 지연+클론 — 모듈 캐시로 1회만
+async function adaptAnalysis(data) {
+  catalogsPromise = catalogsPromise || mockAdapter.getCatalogs();
+  const catalogs = await catalogsPromise;
+  const selectedIds = new Map((data.matchSelections || []).map((s, i) => [s.clothingId, i + 1]));
+  return {
+    ...data,                                        // 계약 필드 전부 (spec §3.5)
+    models: catalogs.models,                        // 표시 카탈로그 (mock 소유)
+    matchClothing: (data.matchCandidates || []).map((c) => ({
+      ...c,
+      selected: selectedIds.has(c.id),
+      ...(selectedIds.has(c.id) ? { selOrder: selectedIds.get(c.id) } : {}),
+    })),
+    measurements: (catalogs.measurementSchema[data.clothingType] || [])
+      .map((k) => ({ key: k, value: null, unit: 'cm' })),   // 항상 null — 계약 §3.1
+    measurementsUnknown: false,
+    washCare: '',                                   // 레거시 필드 (폼 참조만)
+  };
+}
+
 export const httpAdapter = {
   // Phase 1-B 읽기·CRUD 스왑 (계약 §6 시그니처 동일). 미구현 함수는 mock 폴백.
   // getProject 는 store 가 projectId 없이 호출(api.getProject()) → 시그니처 정리 후
@@ -63,6 +113,116 @@ export const httpAdapter = {
   async getCreditSources() {
     return http('/v1/credits/sources');
   },
+  // ---- PL-1 분석 스왑 세트 (pl1 spec §7 — 아래는 한 세트, 부분 스왑 금지) ----
+  // 서버가 저장된 product 를 읽어 분석하므로 uploadAsset·get/saveProduct 가 함께 http 여야 한다.
+  // 전 함수 공통: 세션 없으면 mock 위임 (hasSession 주석 참조 — 익명 입력 흐름 보존).
+
+  // store.loadProject 전용 '현재 프로젝트' — 서버엔 싱글턴이 없으므로 최근 프로젝트,
+  // 없으면 생성. mock 출신 로컬 projectId 가 서버 경로로 흘러 404 나는 반쪽 스왑 차단.
+  async getCurrentProject() {
+    if (!(await hasSession())) return mockAdapter.getCurrentProject();
+    const library = await http('/v1/projects?view=library');   // updated_at desc
+    if (library.length) return http(`/v1/projects/${library[0].id}`);
+    return http('/v1/projects', { method: 'POST' });
+  },
+  // presigned PUT 3단계 업로드 (§7.1). 반환 = ImageAsset 핵심 필드 { id, src }.
+  async uploadAsset(file, opts = {}) {
+    if (!(await hasSession())) return mockAdapter.uploadAsset(file, opts);
+    const { projectId } = opts;
+    const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
+      method: 'POST',
+      body: { filename: file.name, mime: file.type, size: file.size, projectId },
+    });
+    const put = await fetch(uploadUrl, {
+      method: 'PUT', headers: { 'Content-Type': file.type }, body: file,
+    });
+    if (!put.ok) throw new Error('이미지 업로드에 실패했어요. 다시 시도해 주세요.');
+    const asset = await http(`/v1/assets/${assetId}/complete`, {
+      method: 'POST', body: { projectId, mime: file.type, filename: file.name },
+    });
+    return { id: asset.id, src: asset.url };
+  },
+  async getProduct(projectId) {
+    if (!(await hasSession())) return mockAdapter.getProduct(projectId);
+    return http(`/v1/projects/${projectId}/product`);
+  },
+  async saveProduct(projectId, patch) {
+    if (!(await hasSession())) return mockAdapter.saveProduct(projectId, patch);
+    // 서버 ProductPatch 화이트리스트 외 키(id 등)는 서버가 무시한다.
+    return http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: patch });
+  },
+  // PL-1 분석 — 202 { jobId } 면 폴링, 200 { data } 면 기존 분석(재분석 없음, spec §5.1).
+  async analyzeProduct(projectId, { onProgress } = {}) {
+    if (!(await hasSession())) return mockAdapter.analyzeProduct(projectId, { onProgress });
+    const res = await http(`/v1/projects/${projectId}/analysis:analyze`, { method: 'POST' });
+    if (!res.jobId) {
+      onProgress?.(100);
+      return adaptAnalysis(res.data);
+    }
+    const envelope = await followJob(res.jobId, { onProgress });
+    return adaptAnalysis(envelope.data);
+  },
+  async getAnalysis(projectId) {
+    if (!(await hasSession())) throw new Error('분석 결과가 아직 없습니다.');
+    return adaptAnalysis(await http(`/v1/projects/${projectId}/analysis`));
+  },
+  // 폼의 legacy patch 를 소유자별로 라우팅·변환 (mock saveAnalysis 의 스마트 머지와 동작 동등).
+  // 프로젝트별 직렬화 — read-modify-write(④)가 연타 편집과 경합해 서로 덮어쓰지 않게 한다
+  // (mock 은 단일 틱 원자라 http 전용 문제).
+  async saveAnalysis(projectId, patch) {
+    if (!(await hasSession())) return mockAdapter.saveAnalysis(projectId, patch);
+    const prev = saveAnalysisQueues.get(projectId) || Promise.resolve();
+    const run = prev.catch(() => {}).then(() => this._saveAnalysisNow(projectId, patch));
+    saveAnalysisQueues.set(projectId, run);
+    return run;
+  },
+  async _saveAnalysisNow(projectId, patch) {
+    const p = { ...patch };
+    // ① Product 소유 필드 → PATCH /product (계약 §3.1)
+    const productFields = {};
+    for (const k of ['clothingType', 'measurements', 'measurementsUnknown']) {
+      if (k in p) { productFields[k] = p[k]; delete p[k]; }
+    }
+    if (Object.keys(productFields).length) {
+      await http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: productFields });
+    }
+    // ② legacy matchClothing 선택 patch → 계약형 matchSelections (선택 유실 방지)
+    if (p.matchClothing) {
+      p.matchSelections = p.matchClothing
+        .filter((c) => c.selected)
+        .sort((a, b) => (a.selOrder || 0) - (b.selOrder || 0))
+        .slice(0, 2)
+        .map((c, i) => ({ clothingId: c.id, role: i === 0 ? 'main' : 'sub' }));
+      delete p.matchClothing;
+    }
+    // ③ 표시 전용 legacy 필드 strip — payload 오염 방지
+    for (const k of ['models', 'washCare']) delete p[k];
+    if (Object.keys(p).length) {
+      await http(`/v1/projects/${projectId}/analysis`, { method: 'PATCH', body: p });
+    }
+    // ④ 의류 종류·성별 변경 → 매칭 후보 재계산 (mock 스마트 머지 동등 — 기존 라우트 재사용).
+    //    기존 선택 중 새 후보군에 살아남은 것은 보존하고, 전부 사라졌을 때만 상위 2개 기본
+    //    선택으로 폴백한다 (mock recommendLegacyMatchClothing의 validSelected 규칙).
+    //    판정은 키 존재 기준(mock shouldRefreshMatchClothing 동일) — null 해제도 갱신 대상.
+    if ('clothingType' in productFields || 'targetGenders' in patch) {
+      const cur = await http(`/v1/projects/${projectId}/analysis`);
+      const q = new URLSearchParams({ clothingType: productFields.clothingType || cur.clothingType || 'top' });
+      (cur.targetGenders || []).forEach((g) => q.append('gender', g));
+      const candidates = await http(`/v1/projects/${projectId}/analysis/match-candidates?${q}`);
+      const candidateIds = new Set(candidates.map((c) => c.id));
+      const kept = (cur.matchSelections || [])
+        .filter((s) => candidateIds.has(s.clothingId))
+        .slice(0, 2);
+      const effective = kept.length ? kept : candidates.slice(0, 2)
+        .map((c) => ({ clothingId: c.id }));
+      const selections = effective
+        .map((s, i) => ({ clothingId: s.clothingId, role: i === 0 ? 'main' : 'sub' }));
+      await http(`/v1/projects/${projectId}/analysis`, {
+        method: 'PATCH', body: { matchCandidates: candidates, matchSelections: selections } });
+    }
+    return this.getAnalysis(projectId);   // 폼이 쓰는 최종 형태 반환 (mock 계약 동일)
+  },
+
   // 마네킹 등 job형 플로우(generate→adjust→regenerate)는 같은 컷 상태를 공유하므로
   // 부분 스왑 금지 — 백엔드가 generate+adjust+regenerate를 다 갖추고 draft sync(A-3)가
   // 돼야 통째로 swap. 그 전까지 마네킹은 mock 유지(혼합 시 http 모드 깨짐).

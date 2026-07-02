@@ -22,6 +22,14 @@ const initialFlow = {
   adjustCount: 0,
 };
 
+// loadProject in-flight 싱글턴 — 같은 라우트의 동시 호출(ProductInput mount + useDoneGuard,
+// StrictMode 이중 실행)이 각자 '현재 프로젝트'를 조회/생성해 http 모드에서 빈 프로젝트가
+// 중복 생성(이중 POST)되는 것을 막는다 (Codex 재리뷰 2026-07-02).
+let loadProjectInflight = null;
+// 명시적 '새 제작'이 진행 중이면 loadProject 결과를 커밋하지 않는다 — startProject가
+// projectId를 아직 못 쓴 창에서 옛 프로젝트가 잠깐 커밋되는 깜빡임 차단 (Codex 3라운드).
+let explicitStartInflight = false;
+
 export const useAppStore = create((set, get) => ({
   /* ---- account / catalogs (서버 상태의 전역 캐시 — loaded once) ---- */
   account: null,
@@ -59,25 +67,39 @@ export const useAppStore = create((set, get) => ({
 
   /** 새 제작 시작 — 새 project 를 만들고 플로우 선택값을 초기화 (구 resetFlow). */
   async startProject() {
-    const project = await api.createProject();
-    // 명시적 새 제작 — 미동기화 draft 를 폐기하고(묵은 입력 복원 방지), projectGeneration 을
-    // 올려 ProductInput 을 remount(폼 초기화)한다.
-    await clearDraft().catch(() => {});
-    set({ ...initialFlow, projectId: project.id, projectGeneration: get().projectGeneration + 1 });
-    return project;
+    explicitStartInflight = true;
+    try {
+      const project = await api.createProject();
+      // 명시적 새 제작 — 미동기화 draft 를 폐기하고(묵은 입력 복원 방지), projectGeneration 을
+      // 올려 ProductInput 을 remount(폼 초기화)한다.
+      await clearDraft().catch(() => {});
+      set({ ...initialFlow, projectId: project.id, projectGeneration: get().projectGeneration + 1 });
+      return project;
+    } finally {
+      explicitStartInflight = false;
+    }
   },
-  /** 새로고침 등으로 스토어가 비었을 때 서버의 project 에서 선택값 복원. */
+  /** 새로고침 등으로 스토어가 비었을 때 '현재 프로젝트'에서 선택값 복원.
+      getCurrentProject: mock=싱글턴, http=최근 프로젝트(없으면 생성) — mock 출신 로컬
+      projectId 가 http 경로로 흘러 404 나는 반쪽 스왑을 차단한다 (pl1 spec §7). */
   async loadProject() {
     if (get().projectId) return get().projectId;
-    const p = await api.getProject();
-    set({
-      projectId: p.id,
-      selectedMannequinId: p.selectedMannequinId,
-      composeMode: p.composeMode,
-      copywriting: p.copywriting,
-      adjustCount: p.adjustCount,
-    });
-    return p.id;
+    if (!loadProjectInflight) {
+      loadProjectInflight = api.getCurrentProject().then((p) => {
+        // startProject(명시적 새 제작)가 끝났거나 진행 중이면 그쪽이 우선 — 덮어쓰지 않는다
+        if (!get().projectId && !explicitStartInflight) {
+          set({
+            projectId: p.id,
+            selectedMannequinId: p.selectedMannequinId,
+            composeMode: p.composeMode,
+            copywriting: p.copywriting,
+            adjustCount: p.adjustCount,
+          });
+        }
+        return get().projectId;
+      }).finally(() => { loadProjectInflight = null; });
+    }
+    return loadProjectInflight;
   },
   /** 백엔드 sync(비로그인 draft) 결과의 projectId 반영 — 로그인 복귀 후 RootRedirect 가 호출. */
   setProjectId(projectId) { set({ projectId }); },
