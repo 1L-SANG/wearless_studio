@@ -11,6 +11,7 @@ import uuid
 from psycopg import AsyncConnection, errors
 from psycopg.types.json import Json
 
+from .agents.analysis import apply_swatch_fill, input_fingerprint
 from .credits import allocate_fifo
 
 
@@ -189,15 +190,20 @@ async def save_product(
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
-    """analysis 작업본을 payload jsonb 로 upsert (계약 §3.2). 소유권은 라우트 선검증."""
+    """analysis patch를 payload jsonb에 **병합** upsert (계약 §3.2 · pl1 spec §7.5).
+
+    전체 교체가 아니라 병합 — 부분 patch(예: {fit}만)가 다른 필드를 지우지 않는다.
+    locked는 patch에 있을 때만 갱신. 전량 저장(폼 전체) 호출은 병합으로도 결과 동일.
+    분석 재실행의 전체 덮어쓰기는 finalize_analyze_success가 별도로 수행한다."""
     locked = bool(analysis.get("locked", False))
     async with conn.cursor() as cur:
         await cur.execute(
             "insert into analyses (project_id, payload, locked) values (%s, %s, %s) "
-            "on conflict (project_id) do update set payload = excluded.payload, "
-            "locked = excluded.locked "
+            "on conflict (project_id) do update set "
+            "payload = coalesce(analyses.payload, '{}'::jsonb) || excluded.payload, "
+            "locked = case when %s::boolean then excluded.locked else analyses.locked end "
             "returning project_id::text as project_id, payload, locked",
-            (project_id, Json(analysis), locked),
+            (project_id, Json(analysis), locked, "locked" in analysis),
         )
         return await cur.fetchone()
 
@@ -780,6 +786,136 @@ async def finalize_mannequin_failure(
             (message, job_id),
         )
         # 종결 이벤트 — 같은 tx (SSE replay 원본). 토스트 가능한 한국어 message (계약 §6).
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
+            (job_id, Json({"code": code, "message": message})),
+        )
+    return True
+
+
+# ---------- 분석 job 종결 (pl1_analysis_agent_spec §3.7·§6.7 — 크레딧 없음) ----------
+
+
+async def get_last_analyze_fingerprint(conn: AsyncConnection, project_id: str) -> str | None:
+    """마지막 done analyze job의 입력 지문 — 재분석 판정(§3.7). finalize가 기록한 실측값.
+    소유권은 라우트가 get_project로 선검증(비스코프 read — get_analysis와 동일 면제)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select metadata->>'fingerprint' as fp from jobs "
+            "where project_id = %s and kind = 'analyze' and status = 'done' "
+            "order by finished_at desc nulls last limit 1",
+            (project_id,),
+        )
+        row = await cur.fetchone()
+    return (row or {}).get("fp")
+
+
+async def finalize_analyze_success(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    clothing_type: str,
+    swatch_suggestions: list[dict],
+    payload: dict,
+    metadata: dict,
+    actual_fingerprint: str,
+) -> dict | None:
+    """성공 종결(원자·lease 펜스·지문 가드). None = 결과 미기록(lease 상실 또는 가드 폐기).
+
+    ⓪ lease 펜스 통과 후 products 행 재조회(FOR UPDATE) — 가드·스와치 병합의 기준.
+    ① 지문 가드(§3.7 쓰기 관문 불변식): 현재 product의 지문 ≠ actual_fingerprint이면
+       결과 폐기 — products·analyses 무변경, job error(superseded_stale) + error 이벤트.
+       분석 중 입력이 바뀌는 어떤 동시성 시나리오에서도 stale 결과가 현재 입력의
+       분석·편집을 덮어쓸 수 없게 하는 유일한 정합성 관문.
+    ② products 갱신 — clothing_type 기록 + 현재 colors에 스와치 null-fill 병합.
+    ③ analyses 전체 교체 upsert(재분석은 덮어씀이 의도) ④ jobs done ⑤ done 이벤트."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return None  # lease 상실 — 부수효과 0 (워커는 폐기)
+
+        await cur.execute(
+            "select colors from products where project_id = %s for update", (project_id,)
+        )
+        row = await cur.fetchone()
+        # 행 없음(극단: 워커 실행 중 삭제) → colors=[] → 아래 가드 불일치 → 보수적 폐기
+        current_colors = (row or {}).get("colors") or []
+
+        if input_fingerprint({"colors": current_colors}) != actual_fingerprint:
+            message = "입력이 변경되어 이전 분석을 중단했어요."
+            await cur.execute(
+                "update jobs set status = 'error', error_message = %s, "
+                "locked_by = null, locked_at = null, finished_at = now(), "
+                "metadata = coalesce(metadata, '{}'::jsonb) || %s::jsonb where id = %s",
+                (message, Json({**metadata, "error": "superseded_stale"}), job_id),
+            )
+            await cur.execute(
+                "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
+                (job_id, Json({"code": "superseded_stale", "message": message})),
+            )
+            return None
+
+        filled = apply_swatch_fill(current_colors, swatch_suggestions)
+        await cur.execute(
+            "update products set clothing_type = %s, colors = %s where project_id = %s",
+            (clothing_type, Json(filled), project_id),
+        )
+        await cur.execute(
+            "insert into analyses (project_id, payload, locked) values (%s, %s, false) "
+            "on conflict (project_id) do update set payload = excluded.payload, "
+            "locked = excluded.locked",
+            (project_id, Json(payload)),
+        )
+
+    account = await get_account(conn, user_id)
+    credits = (account or {}).get("credits", 0)
+    data = {"projectId": project_id, "clothingType": clothing_type, **payload}
+    envelope = {"data": data, "credits": credits, "creditsCharged": 0}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'done', result = %s, credits_charged = 0, progress = 100, "
+            "locked_by = null, locked_at = null, finished_at = now(), "
+            "metadata = coalesce(metadata, '{}'::jsonb) || %s::jsonb where id = %s",
+            (Json(envelope), Json(metadata), job_id),
+        )
+        # 종결 이벤트 — 같은 tx (SSE replay 원본). result와 동일 shape (마네킹과 동일 규약).
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
+            (job_id, Json(envelope)),
+        )
+    return {"data": data, "available": credits}
+
+
+async def finalize_analyze_failure(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    message: str,
+    metadata: dict,
+    code: str = "analysis_failed",
+) -> bool:
+    """실패 종결(원자·lease 펜스). 크레딧 settle 없음(예약 0). False = lease 상실."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return False
+        await cur.execute(
+            "update jobs set status = 'error', error_message = %s, "
+            "locked_by = null, locked_at = null, finished_at = now(), "
+            "metadata = coalesce(metadata, '{}'::jsonb) || %s::jsonb where id = %s",
+            (message, Json(metadata), job_id),
+        )
+        # 종결 이벤트 — 같은 tx. 토스트 가능한 한국어 message (계약 §6).
         await cur.execute(
             "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
             (job_id, Json({"code": code, "message": message})),

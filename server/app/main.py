@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .agents.gemini_image import GeminiImageClient
+from .agents.gemini_text import GeminiTextClient
 from .auth import jwks_key_resolver, require_user
 from .config import Settings, load_settings
 from .db import create_pool
@@ -66,6 +67,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.r2 = R2Client(settings) if _r2_ready else None
     app.state.gemini = (
         GeminiImageClient(settings) if settings.gemini_api_key else None
+    )
+    app.state.gemini_text = (
+        GeminiTextClient(settings) if settings.gemini_api_key else None
     )
     app.state.dispatcher = None
     app.state.jwt_key_resolver = (

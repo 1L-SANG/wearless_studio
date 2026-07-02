@@ -14,6 +14,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import repo
+from .agents import analysis as analysis_agent
 from .agents import mannequin
 from .services import matching
 from .auth import require_user
@@ -290,16 +291,66 @@ async def match_candidates(
         items = await repo.list_active_matching_items(conn)
     genders = [g.strip() for part in gender for g in part.split(",") if g.strip()]
     ranked = matching.recommend(items, clothingType, genders, limit)
-    return JSONResponse([
-        {
-            "id": i["id"], "name": i["name"], "gender": i["gender"],
-            "thumb": r2.public_url(i["thumb_key"]),
-            "imageUrl": r2.public_url(i["image_key"]) if i.get("image_key") else None,
-            "thumbnailUrl": r2.public_url(i["thumb_key"]),
-            "selected": False,
-        }
-        for i in ranked if i.get("thumb_key")
-    ])
+    candidates = [c for c in (matching.to_candidate(i, r2.public_url) for i in ranked) if c]
+    return JSONResponse([{**c, "selected": False} for c in candidates])
+
+
+# ---------- PL-1 분석 (pl1_analysis_agent_spec §5) ----------
+
+
+@router.post("/projects/{project_id}/analysis:analyze")
+async def analyze_product_route(
+    request: Request,
+    project_id: str,
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """PL-1 분석 시작. 지문 동일+분석 존재 → 200(재분석 없음), 그 외 job 생성/합류 → 202.
+    크레딧 없음(분석 무료 — PRD §12.2). 입력은 서버 상태(products)에서 읽는다."""
+    scoped_key = f"{project_id}:analyze:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        if not mannequin.has_base_front(product):  # 기준 색상 정면 필수 (기존 헬퍼 재사용)
+            raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")
+        fp = analysis_agent.input_fingerprint(product)
+        last_fp = await repo.get_last_analyze_fingerprint(conn, project_id)
+        existing = await repo.get_analysis(conn, project_id)
+        if last_fp == fp and existing:
+            account = await repo.get_account(conn, user_id)
+            data = analysis_agent.to_api(project_id, existing, product)
+            return JSONResponse(
+                {"data": data, "credits": (account or {}).get("credits", 0)}
+            )
+        # 활성 job이 있으면 create_job이 합류시킨다. 그 사이 입력이 바뀌는 희귀 케이스(두 탭)의
+        # 정합성은 라우트가 아니라 finalize 지문 가드가 담당한다(spec §3.7 불변식) — 여기서
+        # 활성 job을 조회·폐기하는 기계장치를 두지 않는다(단순성 우선, P1 최적화 훅 §12-7).
+        settings = request.app.state.settings
+        job, _created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="analyze",
+            payload={}, idempotency_key=scoped_key, credits_reserved=0,
+            metadata={"agentId": "AG-01", "tier": "text", "fingerprint": fp,
+                      "promptVersion": settings.analysis_prompt_version})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
+@router.get("/projects/{project_id}/analysis")
+async def get_analysis_route(
+    request: Request, project_id: str, user_id: str = Depends(require_user)
+):
+    """분석 결과 읽기 — 분석 폼 재진입·콘티(getAnalysis)용 (spec §5.2)."""
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        payload = await repo.get_analysis(conn, project_id)
+        product = await repo.get_product(conn, project_id) or {}
+    if not payload:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "analysis_not_found", "message": "분석 결과가 아직 없습니다."})
+    return JSONResponse(analysis_agent.to_api(project_id, payload, product))
 
 
 # ---------- 자산 업로드 (§3 presigned + finalize) ----------

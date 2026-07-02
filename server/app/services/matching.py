@@ -25,3 +25,19 @@ def recommend(items, clothing_type, genders, limit=None):
         i.get("sort_order", 0),
     ))
     return pool[:limit] if limit else pool
+
+
+def to_candidate(item: dict, public_url) -> dict | None:
+    """matching_items row → MatchClothing 후보 shape (계약 §3.2의 과도기 확장 —
+    match-candidates 라우트·PL-1 워커 공용, pl1 spec §3.4). thumb_key 없으면 None."""
+    if not item.get("thumb_key"):
+        return None
+    thumb = public_url(item["thumb_key"])
+    return {
+        "id": item["id"],
+        "name": item["name"],
+        "gender": item["gender"],
+        "thumb": thumb,
+        "imageUrl": public_url(item["image_key"]) if item.get("image_key") else None,
+        "thumbnailUrl": thumb,
+    }

@@ -21,18 +21,9 @@ from ..agents.model_routing import resolve_model
 from ..agents.prompts import load_prompt_template, render_mannequin_prompt
 from ..r2 import ai_key, ext_for_mime
 from ..services import qc
+from ._common import emit as _emit
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
-
-
-async def _emit(pool, job_id: str, event_type: str, payload: dict):
-    """진행/단계 이벤트 append (비종결 — 짧은 독립 tx). 종결 done/error는 finalize가 원자로 남긴다."""
-    try:
-        async with pool.connection() as conn:
-            await repo.append_job_event(conn, job_id, event_type, payload)
-            await conn.commit()
-    except Exception:  # 이벤트 실패가 생성 자체를 막지 않게
-        pass
 
 
 def _image_dims(data: bytes) -> tuple[int | None, int | None]:

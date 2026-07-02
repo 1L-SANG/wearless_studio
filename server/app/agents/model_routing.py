@@ -9,10 +9,11 @@ UNKNOWN_TIER = "_unknown_"
 
 
 def resolve_model(settings: Settings, tier: str) -> str:
-    """tier('image_light'|'image_high')를 실제 모델 id로 해석."""
+    """tier('image_light'|'image_high'|'text')를 실제 모델 id로 해석."""
     mapping = {
         "image_light": settings.model_image_light,
         "image_high": settings.model_image_high,
+        "text": settings.model_text,
     }
     model = mapping.get(tier)
     if not model:
@@ -25,5 +26,6 @@ def model_routing_snapshot(settings: Settings) -> dict:
     return {
         "image_light": settings.model_image_light,
         "image_high": settings.model_image_high,
+        "text": settings.model_text,
         "imageSize": settings.mannequin_image_size,
     }

@@ -1,0 +1,223 @@
+"""AG-01 순수 헬퍼 테스트 (pl1_analysis_agent_spec §10.1).
+
+DB/네트워크 없음 — 지문·검증·후처리 분배·스와치 병합·매니페스트·기본 모델 선택.
+"""
+
+import pytest
+from pydantic import ValidationError
+
+from app.agents import analysis
+from app.agents.gemini_text import to_openapi_schema
+
+
+def _img(id, slot):
+    return {"id": id, "slot": slot, "src": f"/v1/assets/{id}/file"}
+
+
+def _product(name="", colors=None):
+    return {
+        "name": name,
+        "clothing_type": "top",
+        "colors": colors if colors is not None else [
+            {"id": "col_base", "isBase": True, "swatchId": None,
+             "images": [_img("a1", "Front"), _img("a2", "Detail")]},
+            {"id": "col_2", "isBase": False, "swatchId": "black",
+             "images": [_img("b1", "Front")]},
+        ],
+    }
+
+
+def _raw(**overrides):
+    base = {
+        "garmentDetected": True,
+        "clothingType": "top",
+        "subCategory": "knit",
+        "targetGenders": ["women"],
+        "fit": "semi_over",
+        "materials": [{"name": "면", "ratio": 60}, {"name": "폴리에스터", "ratio": 40}],
+        "aiSuggestedPoints": ["넉넉한 라운드 넥", "비침 없는 도톰함"],
+        "suggestedName": "소프트 골지 라운드 니트",
+        "swatchSuggestions": [{"colorGroupId": "col_base", "swatchId": "ivory"}],
+        "styleTags": ["basic", "daily"],
+    }
+    base.update(overrides)
+    return base
+
+
+# ── 입력 지문 (§3.7) ──
+
+
+def test_fingerprint_stable():
+    p = _product()
+    assert analysis.input_fingerprint(p) == analysis.input_fingerprint(_product())
+    # colors 순서를 뒤섞어도 동일 (정렬 규칙)
+    shuffled = _product()
+    shuffled["colors"] = list(reversed(shuffled["colors"]))
+    assert analysis.input_fingerprint(p) == analysis.input_fingerprint(shuffled)
+
+
+def test_fingerprint_changes_on_images():
+    base = analysis.input_fingerprint(_product())
+    added = _product()
+    added["colors"][0]["images"].append(_img("a3", "Back"))  # 이미지 추가
+    assert analysis.input_fingerprint(added) != base
+    slot_changed = _product()
+    slot_changed["colors"][0]["images"][1] = _img("a2", "Fit")  # 슬롯 변경
+    assert analysis.input_fingerprint(slot_changed) != base
+    group_added = _product()
+    group_added["colors"].append({"id": "col_3", "isBase": False, "images": [_img("c1", "Front")]})
+    assert analysis.input_fingerprint(group_added) != base
+
+
+def test_fingerprint_ignores_name_and_swatch():
+    base = analysis.input_fingerprint(_product(name=""))
+    assert analysis.input_fingerprint(_product(name="새 이름")) == base
+    swatched = _product()
+    swatched["colors"][0]["swatchId"] = "red"  # 스와치만 변경
+    assert analysis.input_fingerprint(swatched) == base
+
+
+# ── AnalysisRaw 검증 (§3.2 이중 게이트) ──
+
+
+def test_raw_validation_pass():
+    raw = analysis.AnalysisRaw.model_validate(_raw())
+    assert raw.clothing_type == "top" and raw.fit == "semi_over"
+
+
+def test_raw_validation_rejects_bad_enum():
+    with pytest.raises(ValidationError):
+        analysis.AnalysisRaw.model_validate(_raw(fit="loose"))
+    with pytest.raises(ValidationError):
+        analysis.AnalysisRaw.model_validate(_raw(clothingType="상의"))
+    with pytest.raises(ValidationError):
+        analysis.AnalysisRaw.model_validate(_raw(targetGenders=["female"]))
+
+
+# ── postprocess (§3.3) ──
+
+
+def test_postprocess_subcategory_crosscheck():
+    raw = analysis.AnalysisRaw.model_validate(_raw(clothingType="bottom", subCategory="knit"))
+    assert analysis.postprocess(raw, _product())["payload_base"]["subCategory"] is None
+    raw = analysis.AnalysisRaw.model_validate(_raw(clothingType="dress", subCategory="shirt"))
+    assert analysis.postprocess(raw, _product())["payload_base"]["subCategory"] is None
+    raw = analysis.AnalysisRaw.model_validate(_raw(clothingType="outer", subCategory="shirt"))
+    assert analysis.postprocess(raw, _product())["payload_base"]["subCategory"] == "shirt"
+
+
+def test_postprocess_safety_filter():
+    raw = analysis.AnalysisRaw.model_validate(_raw(
+        aiSuggestedPoints=["총장 70cm 여유핏", "부드러운 촉감"],
+        suggestedName="기장 65cm 오버 니트",
+    ))
+    out = analysis.postprocess(raw, _product())
+    assert out["payload_base"]["aiSuggestedPoints"] == ["부드러운 촉감"]
+    assert out["payload_base"]["suggestedName"] == ""
+
+
+def test_postprocess_trims():
+    raw = analysis.AnalysisRaw.model_validate(_raw(
+        aiSuggestedPoints=["가나다라마바사아자차카타파하가나다라마바사", "둘", "셋"],
+        materials=[{"name": "면", "ratio": 0}, {"name": "울", "ratio": 120},
+                   {"name": " ", "ratio": 50}],
+        styleTags=["basic", "없는태그", "daily"],
+        targetGenders=["women", "women"],
+    ))
+    out = analysis.postprocess(raw, _product())
+    pb = out["payload_base"]
+    assert len(pb["aiSuggestedPoints"]) == 2
+    assert len(pb["aiSuggestedPoints"][0]) == 20  # 21자 → 20자 절단
+    assert pb["materials"] == [{"name": "울", "ratio": 100}]  # 0 드롭·120 클램프·빈이름 드롭
+    assert out["style_tags"] == ["basic", "daily"]  # enum 밖 드롭
+    assert pb["targetGenders"] == ["women"]  # 중복 제거
+    assert pb["sellingPoints"] == [] and pb["locked"] is False
+
+
+def test_postprocess_swatch_validation():
+    raw = analysis.AnalysisRaw.model_validate(_raw(swatchSuggestions=[
+        {"colorGroupId": "col_base", "swatchId": "ivory"},
+        {"colorGroupId": "ghost", "swatchId": "red"},      # 미존재 그룹 → 무시
+        {"colorGroupId": "col_2", "swatchId": "neon"},     # enum 밖 → 무시
+    ]))
+    out = analysis.postprocess(raw, _product())
+    assert out["swatch_suggestions"] == [{"colorGroupId": "col_base", "swatchId": "ivory"}]
+
+
+# ── apply_swatch_fill (§6.4 순수 병합) ──
+
+
+def test_apply_swatch_fill():
+    colors = _product()["colors"]  # col_base: null, col_2: black
+    filled = analysis.apply_swatch_fill(colors, [
+        {"colorGroupId": "col_base", "swatchId": "ivory"},
+        {"colorGroupId": "col_2", "swatchId": "red"},      # 기지정 → 불변
+        {"colorGroupId": "ghost", "swatchId": "blue"},     # 미존재 → 무시
+    ])
+    assert filled[0]["swatchId"] == "ivory"
+    assert filled[1]["swatchId"] == "black"
+    # 제안에 없는 null 그룹은 불변, 원본 비파괴
+    assert colors[0]["swatchId"] is None
+    assert analysis.apply_swatch_fill(colors, [])[0]["swatchId"] is None
+
+
+# ── 기본 모델 선택 (§3.6) ──
+
+
+def test_default_model_id():
+    assert analysis.default_model_id(["women"]) == "mA"
+    assert analysis.default_model_id(["men"]) == "mB"
+    assert analysis.default_model_id([]) == "mA"  # women 폴백
+    assert analysis.default_model_id(["women", "men"]) == "mA"  # 첫 성별 기준
+
+
+# ── 매니페스트·유저 텍스트 (§3.1·§4.2) ──
+
+
+def test_collect_input_images_order():
+    specs = analysis.collect_input_images(_product(colors=[
+        {"id": "col_2", "isBase": False, "images": [_img("b1", "Front")]},
+        {"id": "col_base", "isBase": True,
+         "images": [_img("a2", "Detail"), _img("a1", "Front"), {"slot": "Back"}]},
+    ]))
+    # 기준 그룹 먼저 + slot순(Front→Detail), id 없는 항목 제외, 추가 그룹은 뒤에
+    assert [(s["colorGroupId"], s["slot"]) for s in specs] == [
+        ("col_base", "Front"), ("col_base", "Detail"), ("col_2", "Front")]
+    assert all(s["assetId"] for s in specs)
+
+
+def test_manifest_no_user_data():
+    specs = analysis.collect_input_images(_product(name="무시할 상품명 <주입>"))
+    manifest = analysis.build_manifest(specs)
+    assert "무시할" not in manifest  # 셀러 자유 텍스트 미삽입 (고정 라벨 + id만)
+    assert "BASE color group id=col_base" in manifest
+    assert manifest.count("\n") == len(specs)  # 헤더 1줄 + 이미지당 1줄
+
+
+def test_build_user_text():
+    assert "PRODUCT CONTEXT" not in analysis.build_user_text("M", None)
+    text = analysis.build_user_text("M", "  줄바꿈\n있는  이름 ")
+    assert "Product name: 줄바꿈 있는 이름" in text  # sanitize (개행 제거)
+
+
+# ── to_api (§3.5) ──
+
+
+def test_to_api_merges_clothing_type():
+    data = analysis.to_api("prj1", {"fit": "slim"}, {"clothing_type": "top"})
+    assert data == {"projectId": "prj1", "clothingType": "top", "fit": "slim"}
+
+
+# ── responseSchema 폴백 변환 (§6.3) ──
+
+
+def test_to_openapi_schema():
+    out = to_openapi_schema(analysis.RESPONSE_SCHEMA)
+    sub = out["properties"]["subCategory"]
+    assert sub["type"] == "STRING" and sub["nullable"] is True  # proto enum은 대문자 타입명
+    assert None not in sub["enum"]
+    # 나머지 구조 보존 + 중첩 타입도 대문자화
+    assert out["type"] == "OBJECT"
+    assert out["properties"]["styleTags"]["maxItems"] == 5
+    assert out["properties"]["materials"]["items"]["properties"]["ratio"]["type"] == "INTEGER"
+    assert out["required"] == analysis.RESPONSE_SCHEMA["required"]

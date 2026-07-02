@@ -42,6 +42,13 @@ class Settings:
     mannequin_prompt_version: str = "v1"
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
+    # ---- AG-01 분석 (pl1_analysis_agent_spec §2.4·§6.1) ----
+    model_text: str = "gemini-3.5-flash"  # tier 'text' (ai_agent_modules §1 — 교체는 여기서만)
+    analysis_thinking_level: str = "low"  # low | medium | high (품질 미달 시 승격)
+    analysis_max_attempts: int = 2  # 1회 재시도 (모듈 §6-2)
+    analysis_timeout_seconds: float = 60.0
+    analysis_prompt_file: str | None = None  # 없으면 server/prompts/analysis_v1.txt
+    analysis_prompt_version: str = "v1"
     job_dispatcher_enabled: bool = True  # §5
     job_poll_interval_seconds: float = 3.0
     job_lease_timeout_seconds: int = 900
@@ -58,6 +65,11 @@ def _image_size() -> str:
 def _mannequin_tier() -> str:
     t = os.getenv("MANNEQUIN_TIER", "image_high")
     return t if t in {"image_light", "image_high"} else "image_high"
+
+
+def _analysis_thinking_level() -> str:
+    v = os.getenv("ANALYSIS_THINKING_LEVEL", "low").lower()
+    return v if v in {"low", "medium", "high"} else "low"
 
 
 def load_settings() -> Settings:
@@ -105,6 +117,12 @@ def load_settings() -> Settings:
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
+        model_text=os.getenv("MODEL_ROUTING_TEXT", "gemini-3.5-flash"),
+        analysis_thinking_level=_analysis_thinking_level(),
+        analysis_max_attempts=int(os.getenv("ANALYSIS_MAX_ATTEMPTS", "2")),
+        analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "60")),
+        analysis_prompt_file=os.getenv("ANALYSIS_PROMPT_FILE") or None,
+        analysis_prompt_version=os.getenv("ANALYSIS_PROMPT_VERSION", "v1"),
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
         job_poll_interval_seconds=float(os.getenv("JOB_POLL_INTERVAL_SECONDS", "3")),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),
