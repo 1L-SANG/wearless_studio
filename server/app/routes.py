@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import repo
 from .agents import analysis as analysis_agent
+from .agents import cut as cut_agent
 from .agents import mannequin
 from .services import matching
 from .auth import require_user
@@ -25,6 +26,7 @@ from .models import (
     AssetCompleteRequest,
     CreditHistoryEntry,
     CreditSource,
+    CutGenerateRequest,
     JobView,
     MannequinCut,
     PricingPlan,
@@ -37,6 +39,7 @@ from .models import (
     TopupPurchaseBody,
     UploadUrlRequest,
     UploadUrlResponse,
+    WardrobeImage,
 )
 from .r2 import R2Client, ext_for_mime, upload_key
 
@@ -507,6 +510,54 @@ async def get_mannequins(
             raise _not_found()
         cuts = await repo.list_mannequin_cuts(conn, user_id, project_id)
     return [_cut_to_api(c) for c in cuts]
+
+
+@router.post("/projects/{project_id}/cuts:generate")
+async def generate_cut(
+    request: Request,
+    project_id: str,
+    body: CutGenerateRequest,
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """콘티/에디터 컷 1장 생성 — kind='editor_image' job(병렬 허용, 활성 unique 제외) 생성 후
+    202 {jobId}. 스펙은 서버에서도 정규화(ADR-0004). 예약(즉시 402)은 마네킹과 동일 패턴(§6)."""
+    cost = request.app.state.settings.credit_cost_cut_generate
+    try:
+        spec = cut_agent.normalize_spec(body.model_dump())
+    except ValueError:
+        raise _bad_request("invalid_cut_spec", "지원하지 않는 컷 종류예요.")
+    scoped_key = f"{project_id}:cut:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="editor_image",
+            payload={"spec": spec}, idempotency_key=scoped_key,
+            credits_reserved=cost,
+            metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
+        if created:  # 신규 job만 입력 게이트 + 예약 (Idempotency-Key 합류는 무과금)
+            product = await repo.get_product(conn, project_id)
+            if not cut_agent.color_images(product or {}, spec["colorId"]):
+                raise _bad_request("no_product_images", "상품 사진을 먼저 올려주세요.")
+            if await repo.reserve_credits(conn, user_id, cost) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
+@router.get("/projects/{project_id}/wardrobe", response_model=list[WardrobeImage])
+async def get_wardrobe(
+    request: Request, project_id: str, user_id: str = Depends(require_user)
+):
+    """프로젝트의 생성/업로드 이미지 목록 (계약 §3.6) — 에디터 의류 탭."""
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        rows = await repo.list_wardrobe(conn, user_id, project_id)
+    return rows
 
 
 @router.get("/assets/{asset_id}/file")

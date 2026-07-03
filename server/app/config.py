@@ -42,6 +42,10 @@ class Settings:
     mannequin_prompt_version: str = "v1"
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
+    # ---- 컷 생성 (ADR-0004 — kind='editor_image') ----
+    cut_tier: str = "image_high"  # 마네킹과 동일 tier 기본 (Gemini 3 Pro)
+    cut_prompt_file: str | None = None  # 없으면 server/prompts/cut_generate_v1.txt
+    cut_prompt_version: str = "v1"
     # ---- AG-01 분석 (pl1_analysis_agent_spec §2.4·§6.1) ----
     model_text: str = "gemini-3.5-flash"  # tier 'text' (ai_agent_modules §1 — 교체는 여기서만)
     analysis_thinking_level: str = "low"  # low | medium | high (품질 미달 시 승격)
@@ -58,6 +62,7 @@ class Settings:
     job_worker_id: str = "web"
     credit_cost_version: str = "v1"  # §6 임시 단가
     credit_cost_mannequin_generate: int = 2
+    credit_cost_cut_generate: int = 1  # 콘티/에디터 컷 1장 (프론트 CREDIT_COSTS.editorImage와 동일)
 
 
 def _image_size() -> str:
@@ -120,6 +125,9 @@ def load_settings() -> Settings:
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
+        cut_tier=os.getenv("CUT_TIER", "image_high"),
+        cut_prompt_file=os.getenv("CUT_PROMPT_FILE") or None,
+        cut_prompt_version=os.getenv("CUT_PROMPT_VERSION", "v1"),
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gemini-3.5-flash"),
         analysis_thinking_level=_analysis_thinking_level(),
         analysis_max_attempts=int(os.getenv("ANALYSIS_MAX_ATTEMPTS", "2")),
@@ -133,4 +141,5 @@ def load_settings() -> Settings:
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
         credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v1"),
         credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "2")),
+        credit_cost_cut_generate=int(os.getenv("CREDIT_COST_CUT_GENERATE", "1")),
     )

@@ -1,0 +1,87 @@
+[[BASE]]
+You are a professional Korean fashion e-commerce photographer creating one detail-page cut.
+
+TASK: Create ONE ${cutLabel} photo of the garment shown in the PRODUCT reference images.
+
+GARMENT FIDELITY (highest priority — never violate):
+- The garment must be EXACTLY the one in the PRODUCT reference images: same color values,
+  pattern placement, logos/text, stitching, hardware, length and silhouette.
+- If any instruction below conflicts with what the PRODUCT references show, the references win.
+
+${cutSection}
+
+FRAMING: ${shotLine}
+${directionLine}
+${faceLine}
+${poseLine}
+${spaceLine}
+
+MOOD REFERENCES (images labeled MOOD in the manifest, if any):
+- Use them ONLY for lighting, color grading, and overall ambience.
+- NEVER copy their garment, their model's identity/face/body, or their camera framing.
+- If a mood reference conflicts with the cut rules above, ignore the conflicting part.
+
+KOREAN COMMERCE AESTHETIC:
+- Natural, believable posture; realistic skin texture (no over-smoothing, no plastic look).
+- One consistent light direction across the frame; garment drape must look physically correct.
+- Clean composition in the tone of Korean fashion platforms (Musinsa / Ably) — slightly cool,
+  airy, uncluttered.
+
+OUTPUT: exactly one photorealistic image, portrait 2:3. No text, no watermark, no collage.
+
+ATTACHED IMAGES (in order):
+${imageManifest}
+
+[[CUT:styling]]
+CUT TYPE — STYLING CUT (lifestyle):
+- A model wears the garment in a natural lifestyle setting (street, cafe, cozy interior).
+- The background gives context and depth but must never overpower the garment.
+- If a MATCH garment image is attached, style it together naturally as one outfit.
+
+[[CUT:horizon]]
+CUT TYPE — HORIZON CUT (studio):
+- A model wears the garment against a clean seamless studio backdrop in a soft neutral tone.
+- Even, soft studio lighting; the silhouette and fit must read clearly; no props, no busy background.
+
+[[CUT:product]]
+CUT TYPE — PRODUCT CUT (garment only):
+- No model and no visible human body parts. The garment is presented alone.
+- Neutral background, true-to-color rendering; keep fabric texture crisp and detailed.
+
+[[CUT:mirror]]
+CUT TYPE — MIRROR SELFIE (거울샷):
+- A casual mirror selfie: the model holds a smartphone toward a large mirror.
+- The phone, the holding hand and part of the mirror frame are visible.
+- Everyday believable place (fitting room, bedroom full-length mirror, elevator) with natural
+  indoor light — a slightly candid, real-review feel, NOT a polished studio look.
+- Composition follows typical Korean OOTD mirror selfies.
+
+[[SHOT:full]]full body from head to feet, the whole outfit visible
+[[SHOT:knee_top]]from the head to around the knees — the top garment fully visible
+[[SHOT:knee_bottom]]from the waist to below the knees — the bottom garment is the subject
+[[SHOT:medium_top]]upper body from the head to the waist — the top garment fills the frame
+[[SHOT:medium_bottom]]from the thighs up to the waist — the bottom garment fills the frame
+[[SHOT:close_top]]close-up of the chest and shoulder area showing fabric texture and details
+[[SHOT:close_bottom]]close-up of the hip and thigh area showing fabric texture and details
+[[SHOT:ghost]]ghost-mannequin style — the garment keeps a worn, three-dimensional shape with no visible person
+[[SHOT:hanger]]the garment on a simple hanger against a clean wall
+[[SHOT:flatlay]]the garment laid flat on a subtly textured surface, photographed from directly above
+
+[[DIR:front]]Camera angle: front-facing. A slight natural turn of the body (up to about 30 degrees) is acceptable and welcome.
+[[DIR:side]]Camera angle: a clear side profile of the model.
+[[DIR:back]]Camera angle: from behind — the back of the garment is the subject.
+[[DIR:front_product]]Show the front side of the garment.
+[[DIR:back_product]]Show the back side of the garment.
+
+[[FACE:hide_mirror]]Face handling: the smartphone naturally covers the model's face.
+[[FACE:hide]]Face handling: frame or turn the head so the face is not identifiable (crop above the lips, or face turned away).
+[[FACE:show]]Face handling: the model's face may be visible with a calm, natural expression.
+[[FACE:same]]Face handling: neutral and natural; keep the face unobtrusive.
+
+[[POSE:auto]]Pose: natural and unforced, chosen to flatter how the garment sits.
+[[POSE:named]]Pose: ${poseName} — keep it relaxed and natural.
+
+[[SPACE]]SPACE CONTINUITY: this cut belongs to a set shot in ONE location. Keep the lighting,
+background elements and color temperature consistent with a single coherent space
+(variation level: ${spaceVariation} — "subtle" means nearly the same camera setup, "varied"
+allows a different pose and framing within the same space).

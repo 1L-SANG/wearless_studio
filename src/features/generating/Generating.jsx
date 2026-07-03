@@ -8,12 +8,13 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { ProgressBar, Checklist } from '@/components/ui.jsx';
+import { ProgressBar, Checklist, useToast } from '@/components/ui.jsx';
 import { PageHead } from '@/features/shell/shell.jsx';
 import { preloadEditor } from '@/features/editor/lazyEditor.js';
 
 export function Generating() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [progress, setProgress] = useState(0);
   const [steps, setSteps] = useState([]);
   const composition = ['후킹', '셀링포인트', '스타일링컷', '호리존컷', '제품컷'];
@@ -30,8 +31,14 @@ export function Generating() {
       const project = await api.getProject(pid);
       if (cancelled) return;
       if (project.status === 'done') { navigate(`/editor/${pid}`, { replace: true }); return; }
-      const { credits } = await api.generateDetailPage(pid, { onProgress: setProgress, onStep: setSteps });
-      useAppStore.getState().syncCredits(credits);
+      try {
+        const { credits } = await api.generateDetailPage(pid, { onProgress: setProgress, onStep: setSteps });
+        useAppStore.getState().syncCredits(credits);
+      } catch (e) {
+        // 전체 실패(실서버) — done 오염 없이 콘티로 되돌린다. 실패 컷은 미차감 (계약 §6)
+        if (!cancelled) { toast.push(e?.message || '상세페이지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' }); navigate('/create/storyboard', { replace: true }); }
+        return;
+      }
       if (cancelled) return;
       setTimeout(() => navigate(`/editor/${pid}`), 600);
     })();

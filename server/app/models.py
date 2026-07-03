@@ -150,6 +150,33 @@ class MannequinCut(CamelModel):
     match_adjust: dict | None = None
 
 
+class CutGenerateRequest(CamelModel):
+    """POST /v1/projects/{id}/cuts:generate 입력 — 콘티 블록/에디터 새 컷 스펙 (ADR-0004).
+    서버가 agents.cut.normalize_spec으로 다시 정규화한다 — 여기선 형태만 받는다."""
+
+    cut_type: str
+    direction: str | None = None
+    shot: str | None = None
+    color_id: str | None = None
+    pose: str | None = None
+    face_exposure: str | None = None
+    match_ids: list[str] = []
+    ref_asset_ids: list[str] = []      # 업로드 무드 레퍼런스 (assets id — 분위기만 참고)
+    example_id: str | None = None      # 분위기 예시 — "예시 그대로, 옷·모델만 교체"
+    space_group_id: str | None = None
+    space_variation: str | None = None
+
+
+class WardrobeImage(CamelModel):
+    """생성/업로드 이미지 (계약 §3.6). src는 안정 앱 URL."""
+
+    id: str
+    src: str
+    ai: bool = True
+    cut_type: str | None = None
+    color_id: str | None = None
+
+
 class JobView(CamelModel):
     """GET /v1/jobs/{id} 폴링 스냅샷 (ai_pipeline_spec §4)."""
 

@@ -11,12 +11,13 @@ import time
 
 from .. import repo
 from .analyze_job import run_analyze_job
+from .cut_job import run_cut_job
 from .mannequin_job import run_mannequin_job
 
 log = logging.getLogger("wearless.dispatcher")
 
-_KINDS = ("mannequin", "analyze")  # 이후 mannequin_adjust/detail_page/editor_image 추가
-_RUNNERS = {"mannequin": run_mannequin_job, "analyze": run_analyze_job}
+_KINDS = ("mannequin", "analyze", "editor_image")  # 이후 mannequin_adjust/detail_page 추가
+_RUNNERS = {"mannequin": run_mannequin_job, "analyze": run_analyze_job, "editor_image": run_cut_job}
 _SWEEP_INTERVAL = 60.0  # lease 복구 점검 주기(초)
 
 

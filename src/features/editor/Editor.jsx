@@ -496,10 +496,18 @@ export function Editor() {
     const loadingId = uid('w');
     setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
     genCount.current += 1; setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
-    const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', ...req, colorId: group });
-    setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
-    genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done'); toast.push('이미지 생성을 완료했어요', { icon: 'check' });
-    syncCredits(credits);                            // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
+    try {
+      const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', ...req, colorId: group });
+      setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
+      toast.push('이미지 생성을 완료했어요', { icon: 'check' });
+      syncCredits(credits);                          // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
+    } catch (e) {
+      // 실서버 생성 실패 = 재생성 루프의 정상 경로 — 로딩 타일 제거 + 재시도 안내 (ADR-0004)
+      setWardrobe((w) => ({ ...w, [group]: (w[group] || []).filter((x) => x.id !== loadingId) }));
+      toast.push(e?.message || '이미지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
+    } finally {
+      genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
+    }
   };
   // 현재 컷 변형 — 누적된 변경(chips)을 적용해 생성. 생성 즉시 의류 탭으로 이동해
   // '기타' 그룹의 로딩 셀을 보여준다 (PRD §10.8: 새 이미지는 의류 탭에 추가).

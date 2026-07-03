@@ -6,12 +6,13 @@
    ============================================================= */
 import { supabase } from '@/lib/supabase.js';
 import { mockAdapter } from './mockAdapter.js';   // getCatalogs — 카탈로그는 아직 mock 소유
+import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';  // §7 과도기 — 조립기는 아직 프론트 소유
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
-export async function http(path, { method = 'GET', body } = {}) {
+export async function http(path, { method = 'GET', body, headers } = {}) {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
 
@@ -20,6 +21,7 @@ export async function http(path, { method = 'GET', body } = {}) {
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(headers || {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -228,7 +230,112 @@ export const httpAdapter = {
     return this.getAnalysis(projectId);   // 폼이 쓰는 최종 형태 반환 (mock 계약 동일)
   },
 
+  /* ---- 컷 생성 실배선 (ADR-0004 — kind='editor_image' job) ----
+     · generateImage(new): 에디터 '새 컷 추가' = 컷 단위 실생성·재생성 루프의 실체.
+     · generateDetailPage: 콘티의 AI 블록을 순차 실생성 후 로컬 조립 — 콘티·에디터 상태는
+       아직 프론트(mock 소유, §7 과도기)라 조립 결과를 mock 브리지에 주입한다.
+     · vary(현재 컷 변형)는 서버 미구현 — mock 폴백 유지 (부분 스왑 원칙). */
+  async generateImage(projectId, req = {}) {
+    if (req.mode === 'vary') return mockAdapter.generateImage(projectId, req);
+    const { jobId } = await http(`/v1/projects/${projectId}/cuts:generate`, {
+      method: 'POST', body: _cutSpec(req),
+      headers: { 'Idempotency-Key': _idem() },        // 네트워크 재시도의 이중 잡·이중 차감 방지
+    });
+    const envelope = await followJob(jobId);          // 실패 시 throw — 화면이 잡아 재시도 안내
+    return { data: envelope.data, credits: envelope.credits };
+  },
+
+  async getWardrobe(projectId) {
+    const rows = await http(`/v1/projects/${projectId}/wardrobe`);
+    const grouped = {};                                // 화면 계약(§3.6) = colorId(없으면 'misc') 그룹 맵
+    for (const im of rows) (grouped[im.colorId || 'misc'] ||= []).push(im);
+    return grouped;
+  },
+
+  async generateDetailPage(projectId, { onProgress, onStep } = {}) {
+    const [blocks, product, project] = await Promise.all([
+      mockAdapter.getStoryboard(projectId), mockAdapter.getProduct(projectId), mockAdapter.getProject(projectId),
+    ]);
+    const steps = GEN_STEPS.map((s) => ({ ...s, status: 'idle' }));
+    const setStep = (key, status) => {
+      const st = steps.find((s) => s.key === key); if (st) st.status = status;
+      onStep && onStep(steps.map((s) => ({ ...s })));
+    };
+    const stepFor = (ct) => ct === 'product' ? 'product' : ct === 'horizon' ? 'horizon' : 'styling'; // mirror→styling (ADR-0004)
+    setStep('info', 'done'); setStep('prep', 'done'); onProgress && onProgress(5);
+
+    const aiBlocks = blocks.filter((b) => b.source !== 'mine' && b.cutType);
+    const srcByBlock = {}; const generated = []; let credits = null;
+    for (let i = 0; i < aiBlocks.length; i++) {
+      const b = aiBlocks[i];
+      setStep(stepFor(b.cutType), 'running');
+      onProgress && onProgress(Math.round(5 + (i / Math.max(1, aiBlocks.length)) * 85));
+      try {
+        const { jobId } = await http(`/v1/projects/${projectId}/cuts:generate`, {
+          method: 'POST', body: _cutSpec(b),
+          headers: { 'Idempotency-Key': _idem() },
+        });
+        const envelope = await followJob(jobId);
+        const img = envelope && envelope.data;
+        if (img) { srcByBlock[b.id] = img.src; generated.push(img); }
+        if (envelope && envelope.credits != null) credits = envelope.credits;
+      } catch {
+        // 실패 컷은 건너뛴다 — 에디터의 컷 단위 재생성 루프가 안전망 (ADR-0004).
+        // 실패 잡은 서버가 예약을 해제하므로 미차감.
+      }
+    }
+    // 전부 실패 = 빈 상세페이지 — done으로 오염시키지 않고 중단 (화면이 잡아 콘티로 되돌림)
+    if (aiBlocks.length && generated.length === 0) {
+      throw new Error('컷 생성에 모두 실패했어요. 잠시 후 다시 시도해 주세요.');
+    }
+    ['styling', 'horizon', 'product'].forEach((k) => setStep(k, 'done'));
+    setStep('copy', 'done'); setStep('assemble', 'running'); onProgress && onProgress(95);
+
+    // 조립은 mock 조립기 재사용 — 대표 이미지(첫 image 요소)만 실 생성 결과로 교체 (블록 index = 콘티 순서)
+    const editorBlocks = buildEditorBlocksFromStoryboard(blocks, product, project.copywriting);
+    blocks.forEach((b, idx) => {
+      const src = srcByBlock[b.id]; if (!src) return;
+      const imgEl = ((editorBlocks[idx] || {}).elements || []).find((e) => e.type === 'image');
+      if (imgEl) imgEl.src = src;
+    });
+    await mockAdapter.commitGeneratedDetailPage(projectId, { editorBlocks, wardrobe: generated });
+    setStep('assemble', 'done'); onProgress && onProgress(100);
+    if (credits == null) credits = (await http('/v1/me/account')).credits;
+    return { data: editorBlocks, credits };
+  },
+
   // 마네킹 등 job형 플로우(generate→adjust→regenerate)는 같은 컷 상태를 공유하므로
   // 부분 스왑 금지 — 백엔드가 generate+adjust+regenerate를 다 갖추고 draft sync(A-3)가
   // 돼야 통째로 swap. 그 전까지 마네킹은 mock 유지(혼합 시 http 모드 깨짐).
 };
+
+// 콘티 블록/NewCutRequest → 서버 CutGenerateRequest. refImages는 아직 로컬 objectURL이라
+// 미전송(refAssetIds 빈 배열) — 무드 레퍼런스 실배선은 assets 업로드 경로를 붙일 때 (TODO).
+function _cutSpec(b) {
+  return {
+    cutType: b.cutType,
+    direction: b.direction ?? null,
+    shot: b.shot ?? null,
+    colorId: b.colorId ?? null,
+    pose: b.pose || 'auto',
+    faceExposure: b.faceExposure ?? null,
+    matchIds: b.matchIds || [],
+    refAssetIds: [],
+    exampleId: b.exampleId ?? null,
+    spaceGroupId: b.spaceGroupId ?? null,
+    spaceVariation: b.spaceVariation ?? null,
+  };
+}
+
+// 요청 1건당 고유 멱등 키 — 같은 논리적 시도의 네트워크 중복만 합류시킨다 (서버 §6 ①)
+function _idem() {
+  return (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : `idem-${Date.now()}-${Math.random()}`;
+}
+
+// 생성 진행 표시용 단계 목록 — mock DB.genSteps와 동일 라벨 (표시 전용)
+const GEN_STEPS = [
+  { key: 'info', label: '상품 정보 정리' }, { key: 'prep', label: '이미지 생성 준비' },
+  { key: 'styling', label: '스타일링컷 생성' }, { key: 'horizon', label: '호리존컷 생성' },
+  { key: 'product', label: '제품컷 생성' }, { key: 'copy', label: '카피라이팅 적용' },
+  { key: 'assemble', label: '상세페이지 조립' },
+];

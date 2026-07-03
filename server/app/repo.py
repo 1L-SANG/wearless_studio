@@ -1249,3 +1249,126 @@ async def list_credit_history(conn: AsyncConnection, user_id: str, limit: int = 
             (user_id, limit),
         )
         return await cur.fetchall()
+
+
+# ---------- 컷 생성 job 종결 + wardrobe (ADR-0004 — kind='editor_image') ----------
+
+
+async def finalize_cut_success(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    image: dict,  # {asset_id, bucket, key, mime, size, width, height}
+    color_id: str | None,
+    cut_type: str,
+    reserved: int,
+    charge: int,
+    metadata: dict,
+) -> dict | None:
+    """컷 생성 성공 종결(원자·lease 펜스) — asset + wardrobe_images 기록 + 크레딧 확정.
+    None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음. envelope shape은 마네킹과 동일(§6)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return None
+        await cur.execute(
+            "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
+            "r2_key, mime_type, byte_size, width, height) "
+            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s)",
+            (image["asset_id"], user_id, project_id, image["bucket"], image["key"],
+             image["mime"], image.get("size"), image.get("width"), image.get("height")),
+        )
+        await cur.execute(
+            "select coalesce(max(sort_order), 0) + 1 as so from wardrobe_images where project_id = %s",
+            (project_id,),
+        )
+        sort_order = (await cur.fetchone())["so"]
+        await cur.execute(
+            "insert into wardrobe_images (project_id, color_id, asset_id, ai, cut_type, sort_order) "
+            "values (%s, %s, %s, true, %s, %s) returning id::text as id",
+            (project_id, color_id, image["asset_id"], cut_type, sort_order),
+        )
+        wardrobe_id = (await cur.fetchone())["id"]
+    wardrobe = {  # WardrobeImage shape (계약 §3.6) — src는 안정 앱 URL
+        "id": wardrobe_id,
+        "src": f"/v1/assets/{image['asset_id']}/file",
+        "ai": True, "cutType": cut_type, "colorId": color_id,
+    }
+    available = await _consume_buckets(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+        charge=charge, action_key="editorImage", metadata=metadata,
+    )
+    envelope = {"data": wardrobe, "credits": available, "creditsCharged": charge}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (Json(envelope), charge, job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
+            (job_id, Json(envelope)),
+        )
+    return {"wardrobe": wardrobe, "available": available}
+
+
+async def finalize_cut_failure(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    reserved: int,
+    settle_key: str,
+    message: str,
+    metadata: dict,
+    code: str = "generation_failed",
+) -> bool:
+    """컷 생성 실패 종결 — 예약 해제 + job error + error 이벤트 (마네킹 실패와 동형)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return False
+    await _settle_credits(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+        charge=0, action_key="editorImage.release", settle_key=settle_key, metadata=metadata,
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'error', error_message = %s, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (message, job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
+            (job_id, Json({"code": code, "message": message})),
+        )
+    return True
+
+
+async def list_wardrobe(conn: AsyncConnection, user_id: str, project_id: str) -> list[dict]:
+    """프로젝트의 생성/업로드 이미지 목록 (계약 §3.6) — 소유 프로젝트만, sort_order 순."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select w.id::text as id, w.color_id, w.cut_type, w.ai, w.asset_id::text as asset_id "
+            "from wardrobe_images w join projects p on p.id = w.project_id "
+            "where w.project_id = %s and p.user_id = %s and w.deleted_at is null "
+            "order by w.sort_order, w.created_at",
+            (project_id, user_id),
+        )
+        rows = await cur.fetchall()
+    return [
+        {"id": r["id"], "src": f"/v1/assets/{r['asset_id']}/file",
+         "ai": bool(r["ai"]), "cutType": r["cut_type"], "colorId": r["color_id"]}
+        for r in rows
+    ]
