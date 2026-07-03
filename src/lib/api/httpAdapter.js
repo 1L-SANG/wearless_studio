@@ -45,6 +45,11 @@ export async function http(path, { method = 'GET', body } = {}) {
 // 비로그인 입력의 백엔드 동기화는 Option B 보류 결정에 따름 (반쪽 스왑 사고 방지).
 async function hasSession() {
   const { data } = await supabase.auth.getSession();
+  if (!data.session && import.meta.env.DEV) {
+    // 개발 중 "구현 안 된 느낌" 오인 방지 — 비로그인 mock 위임은 제품 규칙상 정상이지만
+    // 테스트 중엔 알아채기 어렵다 (2026-07-03 로컬 검증에서 실제 혼동 발생)
+    console.warn('[api] http 모드지만 로그인 전 — 입력·분석은 로컬(mock) 데이터로 동작 중입니다.');
+  }
   return !!data.session;
 }
 
