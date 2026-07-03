@@ -117,15 +117,28 @@ def test_postprocess_safety_filter():
 
 
 def test_postprocess_drops_color_filler_points():
-    # "깔끔한 흰색" 류 색상 언급 특징은 정보 0 — 드롭 (사용자 결정 2026-07-03).
+    # "깔끔한 흰색" 류(색 그 자체뿐인 문구)만 드롭 — 색상어가 디자인 요소 설명의 일부인
+    # "네이비 배색 카라"는 유지 (사용자 결정 + Codex 정밀화 2026-07-03).
     # 상품명의 색상 표기는 정당 — suggestedName에는 미적용.
     raw = analysis.AnalysisRaw.model_validate(_raw(
-        aiSuggestedPoints=["깔끔한 흰색", "왼쪽 가슴 로고 자수"],
+        aiSuggestedPoints=["깔끔한 흰색", "네이비 배색 카라"],
         suggestedName="블랙 와이드 슬랙스",
     ))
     out = analysis.postprocess(raw, _product())
-    assert out["payload_base"]["aiSuggestedPoints"] == ["왼쪽 가슴 로고 자수"]
+    assert out["payload_base"]["aiSuggestedPoints"] == ["네이비 배색 카라"]
     assert out["payload_base"]["suggestedName"] == "블랙 와이드 슬랙스"
+
+
+def test_is_color_filler_boundaries():
+    # 필러 (드롭): 색+수식어+범용명사뿐
+    for filler in ["깔끔한 흰색", "화사한 핑크 컬러", "밝은 블루", "세련된 그레이 톤"]:
+        assert analysis._is_color_filler(filler), filler
+    # 실질 있음 (유지): 색상어가 디자인 요소를 수식
+    for real in ["네이비 배색 카라", "화이트 파이핑 디테일", "블루 포인트 스티치",
+                 "블랙 앤 화이트 배색"]:
+        assert not analysis._is_color_filler(real), real
+    # 색상어 없음 → 필터 비대상
+    assert not analysis._is_color_filler("왼쪽 가슴 로고 자수")
 
 
 def test_postprocess_trims():

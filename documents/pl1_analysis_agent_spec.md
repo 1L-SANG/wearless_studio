@@ -203,7 +203,7 @@ IMAGE MANIFEST (the attached images follow in this exact order):
 | `subCategory` | `SUB_BY_TYPE[clothingType]` 소속 검사. `dress`는 무조건 `null` | 불일치 → **null 강제** (진행) |
 | `targetGenders` | 중복 제거, 최대 2 | 초과분 절단 |
 | `materials` | name sanitize·빈 name 드롭, ratio int 클램프(1..100), 최대 4개 | 위반 항목 드롭 |
-| `aiSuggestedPoints` | 각 항목 sanitize·trim ≤20자, 최대 2개. **실측성 표현 필터**: `\d+\s*(cm|센치|센티|mm|inch|인치)` 매칭 항목 드롭 (PRD §15.4 방어선). **색상 언급 필터**: 색상명(흰색·블랙 등) 포함 항목 드롭 — "깔끔한 흰색" 류는 정보 0, 색은 스와치가 담당 (사용자 결정 2026-07-03 · 프롬프트 §7의 generic-phrase test가 1차, 이 필터가 2차. suggestedName에는 미적용 — 상품명의 색상 표기는 정당) | 위반 항목 드롭 |
+| `aiSuggestedPoints` | 각 항목 sanitize·trim ≤20자, 최대 2개. **실측성 표현 필터**: `\d+\s*(cm|센치|센티|mm|inch|인치)` 매칭 항목 드롭 (PRD §15.4 방어선). **색상 필러 필터**: 색상어 포함 문구 중 **색 그 자체가 내용의 전부인 것만** 드롭 — 색상어·수식어·범용명사(컬러·톤·느낌 등)를 걷어낸 실질이 2자 미만이면 필러("깔끔한 흰색"·"화사한 핑크 컬러" 드롭). 색상어가 디자인 요소 설명의 일부면 유지("네이비 배색 카라"·"화이트 파이핑") — 블랭킷 드롭은 유효 특징을 지운다(Codex 정밀화 2026-07-03). 색은 스와치가 담당, 프롬프트 §7 generic-phrase test가 1차·이 필터가 2차. suggestedName 미적용(상품명 색상 표기는 정당) | 위반 항목 드롭 |
 | `suggestedName` | sanitize·trim ≤40자. 실측성 표현 필터 동일 적용(매칭 시 빈 문자열) | 보정 |
 | `swatchSuggestions` | `colorGroupId`가 실제 `product.colors`에 존재하는지 검사 | 미존재 항목 무시 |
 | `styleTags` | enum 멤버십(스키마가 강제), 최대 5 | 위반 항목 드롭 |
