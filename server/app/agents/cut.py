@@ -74,7 +74,7 @@ def load_cut_template(settings: Settings) -> str:
         return f.read()
 
 
-_SECTION_RE = re.compile(r"^\[\[([A-Z_]+(?::[a-z_]+)?)\]\]", re.M)
+_SECTION_RE = re.compile(r"^\[\[([A-Z_]+(?::[a-z0-9_]+)?)\]\]", re.M)
 
 
 def _sections(template: str) -> dict[str, str]:
@@ -115,6 +115,12 @@ def render_cut_prompt(
         pose_line = need("POSE:auto") if cut != "product" else ""
     else:
         pose_line = need("POSE:named").replace("${poseName}", _sanitize(spec["pose"]))
+    # 생성예시 선택 반영 v0 — 예시 자산·꼬리표 시딩 전 과도기: id 해시로 구도 뉘앙스를
+    # 결정적으로 고정(같은 예시 = 같은 뉘앙스). 실제 꼬리표 메타데이터가 오면 이 매핑을 대체한다(ADR-0004).
+    example_line = ""
+    if spec.get("exampleId") and cut != "product":
+        idx = sum(ord(ch) for ch in spec["exampleId"]) % 3
+        example_line = need(f"EXNUANCE:{idx}")
     space_line = ""
     if spec.get("spaceGroupId"):
         space_line = need("SPACE").replace("${spaceVariation}", spec["spaceVariation"])
@@ -127,6 +133,7 @@ def render_cut_prompt(
         .replace("${directionLine}", direction_line)
         .replace("${faceLine}", face_line)
         .replace("${poseLine}", pose_line)
+        .replace("${exampleLine}", example_line)
         .replace("${spaceLine}", space_line)
         .replace("${imageManifest}", image_manifest)  # 멀티라인 — 마지막에 치환
     )
@@ -134,7 +141,7 @@ def render_cut_prompt(
     leftover = re.findall(r"\$\{[a-zA-Z_]+\}", text)
     if leftover:
         raise ValueError(f"프롬프트 템플릿에 해결되지 않은 토큰: {sorted(set(leftover))}")
-    stray = re.findall(r"\[\[[A-Za-z_:]+\]\]", text)  # 섹션 마커가 본문에 남으면 모델에 그대로 전달됨
+    stray = re.findall(r"\[\[[A-Za-z0-9_:]+\]\]", text)  # 섹션 마커가 본문에 남으면 모델에 그대로 전달됨
     if stray:
         raise ValueError(f"프롬프트에 남은 섹션 마커: {sorted(set(stray))}")
     block = _product_block(product, analysis)

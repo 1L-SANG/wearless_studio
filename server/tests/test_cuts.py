@@ -111,6 +111,21 @@ def test_render_leaves_no_section_markers():
         assert "[[" not in p                  # 섹션 마커가 모델 프롬프트에 새지 않는다
 
 
+def test_render_example_selection_changes_prompt_deterministically():
+    # 예시 선택은 무음 드롭되지 않는다 — v0: id 해시로 구도 뉘앙스를 결정적으로 반영 (ADR-0004 과도기)
+    base = _render({"cutType": "styling", "shot": "full"})
+    picked = _render({"cutType": "styling", "shot": "full", "exampleId": "ex_styling_top_full_2"})
+    again = _render({"cutType": "styling", "shot": "full", "exampleId": "ex_styling_top_full_2"})
+    assert "Composition nuance" not in base       # 미선택 → 뉘앙스 없음
+    assert "Composition nuance" in picked         # 선택 → 반영
+    assert picked == again                        # 같은 예시 = 같은 프롬프트 (결정적)
+
+
+def test_render_example_ignored_for_product():
+    p = _render({"cutType": "product", "shot": "ghost", "exampleId": "ex_product_top_ghost_1"})
+    assert "Composition nuance" not in p          # 제품컷엔 사람 구도 뉘앙스 미적용
+
+
 def test_render_raises_on_stray_section_marker():
     # 섹션 본문에 마커가 남은 오염 템플릿 — 가드가 잡아 잡 실패(예약 해제)로 이어져야 한다
     tpl = (

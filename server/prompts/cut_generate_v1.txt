@@ -14,6 +14,7 @@ FRAMING: ${shotLine}
 ${directionLine}
 ${faceLine}
 ${poseLine}
+${exampleLine}
 ${spaceLine}
 
 MOOD REFERENCES (images labeled MOOD in the manifest, if any):
@@ -80,6 +81,10 @@ CUT TYPE — MIRROR SELFIE (거울샷):
 
 [[POSE:auto]]Pose: natural and unforced, chosen to flatter how the garment sits.
 [[POSE:named]]Pose: ${poseName} — keep it relaxed and natural.
+
+[[EXNUANCE:0]]Composition nuance (from the seller's chosen style example): straight-on, centered and calm — minimal body angle, balanced negative space.
+[[EXNUANCE:1]]Composition nuance (from the seller's chosen style example): the body turned slightly (about 15–30°) with a relaxed stance — still reads as a front-family cut.
+[[EXNUANCE:2]]Composition nuance (from the seller's chosen style example): weight shifted onto one leg, one hand relaxed (in a pocket or at the side) — candid, unposed energy.
 
 [[SPACE]]SPACE CONTINUITY: this cut belongs to a set shot in ONE location. Keep the lighting,
 background elements and color temperature consistent with a single coherent space
