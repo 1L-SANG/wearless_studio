@@ -12,7 +12,7 @@
    를 반환한다. credits = 차감 후 잔액 — 화면은 store.syncCredits 로
    반영한다. 차감은 여기(서버 역할)가 책임지고, 프론트 선차감 금지.
    ============================================================= */
-import { DB, reseedDraft, buildEditorBlocksFromStoryboard } from '@/mock/db.js';
+import { DB, reseedDraft, buildEditorBlocksFromStoryboard, buildStoryboard } from '@/mock/db.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
@@ -64,7 +64,10 @@ export const api = {
   async getProject(/* projectId */) { await wait(60); return clone(DB.project); },
   async patchProject(_projectId, patch) {
     await wait(60);
+    const modeChanged = patch.composeMode && patch.composeMode !== DB.project.composeMode;
     Object.assign(DB.project, patch); touch();
+    // 구성 방식 변경 시, 사용자가 콘티를 손대기 전이면 기본 콘티를 새 모드로 재구성 (PRD §7.7)
+    if (modeChanged && !DB.storyboardDirty) DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors);
     return clone(DB.project);
   },
 
@@ -245,7 +248,7 @@ export const api = {
 
   /* ---- storyboard (PRD §8) ---- */
   async getStoryboard(/* projectId */) { await wait(160); return clone(DB.storyboard); },
-  async saveStoryboard(_projectId, blocks) { await wait(150); DB.storyboard = clone(blocks); touch(); return clone(DB.storyboard); },
+  async saveStoryboard(_projectId, blocks) { await wait(150); DB.storyboard = clone(blocks); DB.storyboardDirty = true; touch(); return clone(DB.storyboard); },
 
   /* ---- generation waiting (PRD §9) ----
      입력은 전부 서버 상태(저장된 콘티 + project 선택값)에서 읽는다 (계약 §6).

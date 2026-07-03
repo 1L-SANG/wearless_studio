@@ -49,7 +49,8 @@ function StoryboardCard({ block, catalogs, colorOpts, matchClothing, selected, l
             <div className="sb-reveal sb-detail-rows">
               {block.cutType ? (
                 <>
-                  <div className="sb-detail">방향: {dirLabel}</div>
+                  {/* 거울샷은 방향 개념이 없다 (ADR-0004) — 행 자체를 숨김 */}
+                  {block.cutType !== 'mirror' && <div className="sb-detail">방향: {dirLabel}</div>}
                   <div className="sb-detail">샷 종류: {shotLabel}</div>
                 </>
               ) : <div className="sb-detail muted">컷 종류 미설정</div>}

@@ -91,10 +91,11 @@ const catalogs = {
     { id: 'navy', label: '네이비', hex: '#1f2a44' },
     { id: 'pink', label: '핑크', hex: '#e3a7b8' },
   ],
+  // 구성 방식 — count·flow는 buildStoryboard()의 실제 산출과 일치시킨다 (PRD §7.7, ADR-0004)
   composeModes: [
-    { value: 'simple', label: '간단형', desc: '단일 컬러 중심으로 빠르게', count: '6~9', flow: ['호리존컷', '셀링포인트', '제품컷'] },
-    { value: 'basic', label: '기본형', desc: '대표 컬러 중심의 균형형', count: '11~15', flow: ['후킹', '셀링포인트', '스타일링컷', '호리존컷', '제품컷'], recommended: true },
-    { value: 'extended', label: '확장형', desc: '여러 컬러를 자세히 소개', count: '18~26', flow: ['후킹', '셀링포인트', '컬러별 스타일링컷', '컬러별 호리존컷', '제품컷'] },
+    { value: 'simple', label: '간단형', desc: '단일 컬러 중심으로 빠르게', count: '8', flow: ['후킹', '셀링포인트', '스타일링컷', '호리존컷', '거울샷', '제품컷'] },
+    { value: 'basic', label: '기본형', desc: '대표 컬러 중심의 균형형', count: '12', flow: ['후킹', '셀링포인트', '스타일링컷', '호리존컷', '거울샷', '제품컷'], recommended: true },
+    { value: 'extended', label: '확장형', desc: '여러 컬러를 자세히 소개', count: '14~24', flow: ['후킹', '셀링포인트', '컬러별 스타일링·호리존컷', '거울샷', '제품컷'] },
   ],
   poses: [
     { id: 'auto', label: 'AI 자동', auto: true }, { id: 'stand', label: '서기', thumb: P.pose('stand') },
@@ -246,6 +247,73 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
 }
 
 /* =============================================================
+   buildStoryboard(mode, colors) — 모드별 기본 콘티 (PRD §7.7·§8, ADR-0004).
+   트렌드 규칙 내장: 첫 컷 = 베스트 전신(썸네일), 필수 3종(정면·측면/후면·
+   상반신 클로즈업), 거울샷 1컷 포함, 평면(플랫레이)은 마감 1~2장,
+   연속 스타일링컷은 같은 공간(spaceGroupId, 기본 subtle).
+   ============================================================= */
+const sb = (kind, title, cutType, direction, shot, colorId, extra) => ({
+  id: uid('blk'), kind, title, source: 'ai', cutType, direction, shot, colorId,
+  pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
+  thumb: P.photo(kind + title + (colorId || '') + (shot || ''), cutType === 'product' ? 'product' : cutType === 'horizon' ? 'horizon' : 'styling', 240, 320),
+  poseThumb: P.pose('stand'), poseLabel: 'AI 자동',
+  ...(extra || {}),
+});
+// 거울샷 블록 — kind는 styling(섹션 역할), 방향 없음·얼굴 '폰으로 가림' (ADR-0004)
+const mirrorSb = (colorId) => sb('styling', '거울샷', 'mirror', null, 'full', colorId, { faceExposure: 'hide' });
+
+export function buildStoryboard(mode, colors) {
+  const list = Array.isArray(colors) && colors.length ? colors : [{ id: 'col1', isBase: true }];
+  // 확장형은 색상 2개 이상 전제 (PRD §7.7 — UI가 게이트). 방어: 1색이면 기본형 레이아웃으로.
+  if (mode === 'extended' && list.length < 2) mode = 'basic';
+  const base = (list.find((c) => c.isBase) || list[0]).id;
+  // 같은 공간에서 포즈·프레이밍만 달리하는 스타일링 2컷 묶음
+  const spacePair = (colorId) => {
+    const sg = uid('sg');
+    return [
+      sb('styling', '스타일링컷', 'styling', 'front', 'full', colorId, { spaceGroupId: sg, spaceVariation: 'subtle' }),
+      sb('styling', '스타일링컷', 'styling', 'side', 'knee', colorId, { spaceGroupId: sg, spaceVariation: 'subtle' }),
+    ];
+  };
+  const out = [
+    sb('hook', '후킹', 'horizon', 'front', 'full', base),
+    sb('selling', '셀링포인트', 'product', 'front', 'ghost', base),
+  ];
+  if (mode === 'simple') {
+    out.push(
+      ...spacePair(base),
+      sb('horizon', '호리존컷', 'horizon', 'side', 'full', base),
+      sb('horizon', '호리존컷', 'horizon', 'front', 'close', base),
+      mirrorSb(base),
+      sb('product', '제품컷', 'product', 'front', 'flatlay', base),
+    );
+  } else if (mode === 'extended') {
+    list.slice(0, 4).forEach((c) => {
+      out.push(
+        ...spacePair(c.id),
+        sb('horizon', '호리존컷', 'horizon', 'front', 'knee', c.id),
+        sb('horizon', '호리존컷', 'horizon', 'back', 'full', c.id),
+        sb('horizon', '호리존컷', 'horizon', 'front', 'close', c.id),
+      );
+    });
+    out.push(mirrorSb(base), sb('product', '제품컷', 'product', 'front', 'flatlay', base));
+  } else { // basic
+    out.push(
+      ...spacePair(base),
+      sb('styling', '스타일링컷', 'styling', 'front', 'medium', base),
+      sb('horizon', '호리존컷', 'horizon', 'front', 'knee', base),
+      sb('horizon', '호리존컷', 'horizon', 'side', 'full', base),
+      sb('horizon', '호리존컷', 'horizon', 'back', 'full', base),
+      sb('horizon', '호리존컷', 'horizon', 'front', 'close', base),
+      mirrorSb(base),
+      sb('product', '제품컷', 'product', 'back', 'ghost', base),
+      sb('product', '제품컷', 'product', 'front', 'flatlay', base),
+    );
+  }
+  return out;
+}
+
+/* =============================================================
    buildDraft() — fresh per-creation working data. Called at init
    and by api.createProject() so a new creation never inherits the
    prior session's mutations (mannequin variants, saved storyboard…).
@@ -311,23 +379,8 @@ function buildDraft() {
      A-0/B-0 를 만들고 크레딧을 차감한다. 재진입은 getMannequins 로 무과금. */
   const mannequins = [];
 
-  /* ---- Storyboard blocks (basic mode default, PRD §8) ----
-     source: 'ai' | 'mine', cutType: styling|horizon|product|mirror (ADR-0003·0004) ---- */
-  const sb = (kind, title, cutType, direction, shot, colorId) => ({
-    id: uid('blk'), kind, title, source: 'ai', cutType, direction, shot, colorId,
-    pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
-    thumb: P.photo(kind + title, cutType === 'product' ? 'product' : cutType === 'horizon' ? 'horizon' : 'styling', 240, 320),
-    poseThumb: P.pose('stand'), poseLabel: 'AI 자동',
-  });
-  const storyboard = [
-    sb('hook', '후킹', 'horizon', 'front', 'full', 'col1'),
-    sb('selling', '셀링포인트', 'product', 'front', 'ghost', 'col1'),
-    sb('styling', '스타일링컷', 'styling', 'side', 'medium', 'col1'),
-    sb('styling', '스타일링컷', 'styling', 'front', 'knee', 'col1'),
-    sb('horizon', '호리존컷', 'horizon', 'front', 'knee', 'col1'),
-    sb('horizon', '호리존컷', 'horizon', 'back', 'full', 'col1'),
-    sb('product', '제품컷', 'product', 'front', 'ghost', 'col1'),
-  ];
+  /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004) ---- */
+  const storyboard = buildStoryboard(project.composeMode, product.colors);
 
   /* ---- Editor blocks: 5 prefilled demo + auto info blocks (PRD §10.14) ----
      (직접 /editor 진입용 데모. 생성 플로우는 generateDetailPage 가
@@ -376,7 +429,8 @@ function buildDraft() {
     misc: Array.from({ length: 2 }, (_, i) => ({ id: uid('w'), src: P.product('w3' + i, 200, 260), ai: false, cutType: 'product' })),
   };
 
-  return { project, product, analysis, mannequins, storyboard, editorBlocks, wardrobe };
+  // storyboardDirty: 사용자가 콘티를 저장(수정)했는지 — false면 구성 방식 변경 시 기본 콘티를 재구성한다
+  return { project, product, analysis, mannequins, storyboard, storyboardDirty: false, editorBlocks, wardrobe };
 }
 
 export const DB = {

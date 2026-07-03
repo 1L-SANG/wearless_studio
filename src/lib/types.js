@@ -158,7 +158,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {BlockKind} kind            섹션 역할 (사용자 추가 블록 기본 'info')
    @property {BlockSource} source        'ai' | 'mine'
    @property {string|null} cutType       CutType. source='mine'이면 null
-   @property {Direction|ProductDirection} [direction]
+   @property {Direction|ProductDirection|null} [direction]  mirror는 null — 방향 개념 없음 (ADR-0004)
    @property {ShotType|ProductShotType} [shot]
    @property {string} [colorId]
    @property {string} pose               PoseId, 기본 'auto' (구 _pose)

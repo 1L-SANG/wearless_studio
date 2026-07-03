@@ -150,7 +150,7 @@ StoryboardBlock {
   kind: BlockKind                  // 섹션 역할. 사용자 추가 블록 기본 'info'
   source: BlockSource              // 'ai' | 'mine'
   cutType: CutType | null          // source='mine'이면 null (ADR-0003)
-  direction?: Direction | ProductDirection      // cutType에 따라 옵션 셋이 다름
+  direction?: Direction | ProductDirection | null   // cutType에 따라 옵션 셋이 다름. mirror는 null (ADR-0004)
   shot?: ShotType | ProductShotType
   colorId?: string                 // ColorGroup.id (단수 — 컬러별 컷은 블록을 색상마다 분리)
   pose: PoseId                     // 기본 'auto' (구 _pose)
