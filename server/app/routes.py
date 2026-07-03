@@ -324,10 +324,12 @@ async def analyze_product_route(
                 {"data": data, "credits": (account or {}).get("credits", 0)}
             )
         settings = request.app.state.settings
-        # 비용 남용 방지 — 새 job(=Gemini 호출) 직전에만 검사한다. 위 fingerprint 재사용(무비용)
-        # 경로는 세지 않으므로, 같은 사진 재제출은 상한과 무관하다 (spec §5.1).
+        # 비용 남용 방지 — 새 job(=Gemini 호출)이 실제로 생길 때만 검사. 면제 2가지:
+        #  · 위 fingerprint 재사용(200·무비용) — 이미 return 됨
+        #  · 진행 중 job에 합류(멱등 §6 ① — 새 Gemini 작업 없음): 재호출·StrictMode·재진입이
+        #    자기 진행 중 분석을 429로 못 잇는 회귀 방지 (Codex 지적 2026-07-03).
         limit = settings.analysis_rate_limit_per_hour
-        if limit > 0:
+        if limit > 0 and not await repo.has_active_analyze_job(conn, user_id, project_id):
             recent = await repo.count_recent_analyze_jobs(conn, user_id, 3600)
             if recent >= limit:
                 raise HTTPException(

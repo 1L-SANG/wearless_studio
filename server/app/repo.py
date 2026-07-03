@@ -796,6 +796,20 @@ async def finalize_mannequin_failure(
 # ---------- 분석 job 종결 (pl1_analysis_agent_spec §3.7·§6.7 — 크레딧 없음) ----------
 
 
+async def has_active_analyze_job(
+    conn: AsyncConnection, user_id: str, project_id: str
+) -> bool:
+    """이 프로젝트에 진행 중(pending|running) analyze job이 있는가 — rate limit 면제 판정.
+    있으면 재호출은 create_job이 합류시켜 새 Gemini 작업이 없다(멱등 §6 ①)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select 1 from jobs where user_id = %s and project_id = %s "
+            "and kind = 'analyze' and status in ('pending', 'running') limit 1",
+            (user_id, project_id),
+        )
+        return await cur.fetchone() is not None
+
+
 async def count_recent_analyze_jobs(
     conn: AsyncConnection, user_id: str, window_seconds: int
 ) -> int:

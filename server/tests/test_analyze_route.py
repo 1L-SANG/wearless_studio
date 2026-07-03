@@ -82,12 +82,16 @@ def rig(keypair, monkeypatch):
     async def count_recent_analyze_jobs(conn, user_id, window_seconds):
         return 0  # 기본: 상한 미도달 (테스트가 개별 override)
 
+    async def has_active_analyze_job(conn, user_id, project_id):
+        return False  # 기본: 진행 중 job 없음 (테스트가 개별 override)
+
     for name, fn in [
         ("get_project", get_project), ("get_product", get_product),
         ("get_analysis", get_analysis),
         ("get_last_analyze_fingerprint", get_last_analyze_fingerprint),
         ("get_account", get_account), ("create_job", create_job),
         ("count_recent_analyze_jobs", count_recent_analyze_jobs),
+        ("has_active_analyze_job", has_active_analyze_job),
     ]:
         monkeypatch.setattr(repo, name, fn)
 
@@ -162,6 +166,19 @@ def test_analyze_rate_limited_429(rig, make_token, monkeypatch):
     assert res.status_code == 429
     assert res.json()["error"]["code"] == "rate_limited"
     assert rig.calls["create_job"] == []  # job 미생성
+
+
+def test_analyze_rate_limit_exempts_active_job_join(rig, make_token, monkeypatch):
+    # 상한 초과여도 진행 중 job이 있으면 재호출은 합류(새 Gemini 작업 없음) — 429 아님 (멱등 ①)
+    async def over_limit(conn, user_id, window_seconds):
+        return 999
+    async def has_active(conn, user_id, project_id):
+        return True
+    monkeypatch.setattr(repo, "count_recent_analyze_jobs", over_limit)
+    monkeypatch.setattr(repo, "has_active_analyze_job", has_active)
+    res = rig.client.post("/v1/projects/prj1/analysis:analyze", headers=_auth(make_token))
+    assert res.status_code == 202
+    assert len(rig.calls["create_job"]) == 1  # 합류 경로 진입 (create_job이 처리)
 
 
 def test_analyze_rate_limit_skips_fingerprint_reuse(rig, make_token, monkeypatch):
