@@ -79,11 +79,15 @@ def rig(keypair, monkeypatch):
         calls["create_job"].append(kwargs)
         return {"id": "job-1", "status": "pending"}, True
 
+    async def count_recent_analyze_jobs(conn, user_id, window_seconds):
+        return 0  # 기본: 상한 미도달 (테스트가 개별 override)
+
     for name, fn in [
         ("get_project", get_project), ("get_product", get_product),
         ("get_analysis", get_analysis),
         ("get_last_analyze_fingerprint", get_last_analyze_fingerprint),
         ("get_account", get_account), ("create_job", create_job),
+        ("count_recent_analyze_jobs", count_recent_analyze_jobs),
     ]:
         monkeypatch.setattr(repo, name, fn)
 
@@ -148,6 +152,32 @@ def test_analyze_changed_fingerprint_new_job(rig, make_token, monkeypatch):
     res = rig.client.post("/v1/projects/prj1/analysis:analyze", headers=_auth(make_token))
     assert res.status_code == 202
     assert len(rig.calls["create_job"]) == 1
+
+
+def test_analyze_rate_limited_429(rig, make_token, monkeypatch):
+    async def over_limit(conn, user_id, window_seconds):
+        return 30  # 기본 상한 == 30 → 도달
+    monkeypatch.setattr(repo, "count_recent_analyze_jobs", over_limit)
+    res = rig.client.post("/v1/projects/prj1/analysis:analyze", headers=_auth(make_token))
+    assert res.status_code == 429
+    assert res.json()["error"]["code"] == "rate_limited"
+    assert rig.calls["create_job"] == []  # job 미생성
+
+
+def test_analyze_rate_limit_skips_fingerprint_reuse(rig, make_token, monkeypatch):
+    # 상한 초과여도 같은 사진 재제출(fingerprint 재사용·무비용)은 200 반환 — 제한 대상 아님
+    async def over_limit(conn, user_id, window_seconds):
+        return 999
+    async def existing_payload(conn, project_id):
+        return {"fit": "slim"}
+    async def last_fp(conn, project_id):
+        return analysis.input_fingerprint(PRODUCT)
+    monkeypatch.setattr(repo, "count_recent_analyze_jobs", over_limit)
+    monkeypatch.setattr(repo, "get_analysis", existing_payload)
+    monkeypatch.setattr(repo, "get_last_analyze_fingerprint", last_fp)
+    res = rig.client.post("/v1/projects/prj1/analysis:analyze", headers=_auth(make_token))
+    assert res.status_code == 200
+    assert res.json()["data"]["fit"] == "slim"
 
 
 def test_get_analysis_route(rig, make_token, monkeypatch):

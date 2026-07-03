@@ -49,6 +49,9 @@ class Settings:
     analysis_timeout_seconds: float = 60.0
     analysis_prompt_file: str | None = None  # 없으면 server/prompts/analysis_v1.txt
     analysis_prompt_version: str = "v1"
+    # 비용 남용 방지 — 사용자당 1시간 내 새 analyze job 상한(무료라 반복 유발 가능).
+    # fingerprint 재사용(200·무비용) 경로는 세지 않는다 (pl1 spec §5.1). 0 이하면 제한 없음.
+    analysis_rate_limit_per_hour: int = 30
     job_dispatcher_enabled: bool = True  # §5
     job_poll_interval_seconds: float = 3.0
     job_lease_timeout_seconds: int = 900
@@ -123,6 +126,7 @@ def load_settings() -> Settings:
         analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "60")),
         analysis_prompt_file=os.getenv("ANALYSIS_PROMPT_FILE") or None,
         analysis_prompt_version=os.getenv("ANALYSIS_PROMPT_VERSION", "v1"),
+        analysis_rate_limit_per_hour=int(os.getenv("ANALYSIS_RATE_LIMIT_PER_HOUR", "30")),
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
         job_poll_interval_seconds=float(os.getenv("JOB_POLL_INTERVAL_SECONDS", "3")),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),

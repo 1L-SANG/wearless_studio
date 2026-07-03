@@ -796,6 +796,22 @@ async def finalize_mannequin_failure(
 # ---------- 분석 job 종결 (pl1_analysis_agent_spec §3.7·§6.7 — 크레딧 없음) ----------
 
 
+async def count_recent_analyze_jobs(
+    conn: AsyncConnection, user_id: str, window_seconds: int
+) -> int:
+    """window 내 이 사용자가 만든 analyze job 수 — 비용 남용 rate limit용 (pl1 spec §5.1).
+    job row가 곧 Gemini 호출 1건이라 프로젝트 무관·전 status 합산(보수적)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select count(*) as n from jobs "
+            "where user_id = %s and kind = 'analyze' "
+            "and created_at > now() - make_interval(secs => %s)",
+            (user_id, window_seconds),
+        )
+        row = await cur.fetchone()
+    return (row or {}).get("n", 0)
+
+
 async def get_last_analyze_fingerprint(conn: AsyncConnection, project_id: str) -> str | None:
     """마지막 done analyze job의 입력 지문 — 재분석 판정(§3.7). finalize가 기록한 실측값.
     소유권은 라우트가 get_project로 선검증(비스코프 read — get_analysis와 동일 면제)."""

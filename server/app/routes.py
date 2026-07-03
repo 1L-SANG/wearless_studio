@@ -323,10 +323,20 @@ async def analyze_product_route(
             return JSONResponse(
                 {"data": data, "credits": (account or {}).get("credits", 0)}
             )
+        settings = request.app.state.settings
+        # 비용 남용 방지 — 새 job(=Gemini 호출) 직전에만 검사한다. 위 fingerprint 재사용(무비용)
+        # 경로는 세지 않으므로, 같은 사진 재제출은 상한과 무관하다 (spec §5.1).
+        limit = settings.analysis_rate_limit_per_hour
+        if limit > 0:
+            recent = await repo.count_recent_analyze_jobs(conn, user_id, 3600)
+            if recent >= limit:
+                raise HTTPException(
+                    status_code=429,
+                    detail={"code": "rate_limited",
+                            "message": "분석 요청이 너무 많아요. 잠시 후 다시 시도해 주세요."})
         # 활성 job이 있으면 create_job이 합류시킨다. 그 사이 입력이 바뀌는 희귀 케이스(두 탭)의
         # 정합성은 라우트가 아니라 finalize 지문 가드가 담당한다(spec §3.7 불변식) — 여기서
         # 활성 job을 조회·폐기하는 기계장치를 두지 않는다(단순성 우선, P1 최적화 훅 §12-7).
-        settings = request.app.state.settings
         job, _created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="analyze",
             payload={}, idempotency_key=scoped_key, credits_reserved=0,
