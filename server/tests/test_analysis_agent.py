@@ -130,16 +130,31 @@ def test_postprocess_drops_color_filler_points():
 
 
 def test_is_color_filler_boundaries():
-    # 필러 (드롭): 디자인 요소 없는 색 예찬 — 미등재 형용사("청량한" 등)도 새지 않아야 함
+    # 필러 (드롭): 디자인 요소 없는 색 예찬 — 미등재 형용사("청량한" 등)도 새지 않아야 함.
+    # "퍼플"은 '퍼'(fur)의 부분 문자열 오매치로 새지 않아야 함 (Codex 지적).
     for filler in ["깔끔한 흰색", "화사한 핑크 컬러", "밝은 블루", "세련된 그레이 톤",
-                   "청량한 블루 컬러감", "포근한 베이지", "흰색이라 시원한"]:
+                   "청량한 블루 컬러감", "포근한 베이지", "흰색이라 시원한",
+                   "고급스러운 퍼플 컬러", "퍼플 톤"]:
         assert analysis._is_color_filler(filler), filler
-    # 실질 있음 (유지): 색상어가 구체적 디자인 요소를 수식
+    # 실질 있음 (유지): 색상어가 구체적 디자인 요소를 수식 — '퍼'는 색상어와 함께일 때만 판정 대상
     for real in ["네이비 배색 카라", "화이트 파이핑 디테일", "블루 포인트 스티치",
-                 "블랙 앤 화이트 배색", "레드 로고 자수"]:
+                 "블랙 앤 화이트 배색", "레드 로고 자수", "퍼플 배색 니트",
+                 "브라운 퍼 트리밍"]:
         assert not analysis._is_color_filler(real), real
     # 색상어 없음 → 필터 비대상
     assert not analysis._is_color_filler("왼쪽 가슴 로고 자수")
+
+
+def test_design_allowlist_no_color_substring_collision():
+    # 구조 가드: allowlist 토큰이 색상어 '내부'에서 매치되면 색 단독 문구가 디자인 요소로
+    # 오인돼 필러가 통과한다(퍼⊂퍼플 회귀). 색상어 단독으로는 절대 매치되면 안 된다 —
+    # 앞으로 allowlist에 토큰을 추가할 때 이 테스트가 충돌을 자동 검출한다.
+    colors = ["흰색", "하얀", "화이트", "검정", "검은", "블랙", "회색", "그레이", "아이보리",
+              "베이지", "브라운", "갈색", "빨간", "빨강", "레드", "노란", "노랑", "옐로",
+              "초록", "그린", "파란", "파랑", "블루", "네이비", "남색", "핑크", "분홍",
+              "보라", "퍼플"]
+    for c in colors:
+        assert not analysis._DESIGN_ELEMENT_RE.search(c), f"색상어와 충돌: {c}"
 
 
 def test_postprocess_trims():
