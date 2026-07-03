@@ -29,7 +29,7 @@ def _product(name="", colors=None):
 
 def _raw(**overrides):
     base = {
-        "garmentDetected": True,
+        "inputVerdict": "ok",
         "clothingType": "top",
         "subCategory": "knit",
         "targetGenders": ["women"],

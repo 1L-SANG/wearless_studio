@@ -219,7 +219,7 @@ def test_get_analysis_route(rig, make_token, monkeypatch):
 
 
 RAW_OK = {
-    "garmentDetected": True, "clothingType": "top", "subCategory": "knit",
+    "inputVerdict": "ok", "clothingType": "top", "subCategory": "knit",
     "targetGenders": ["women"], "fit": "semi_over",
     "materials": [{"name": "면", "ratio": 100}],
     "aiSuggestedPoints": ["넉넉한 라운드 넥"],
@@ -319,14 +319,25 @@ def test_worker_success_finalize(monkeypatch):
     assert "Product name: 골지 니트" in gemini.calls[0]["user_text"]
 
 
-def test_worker_garment_not_detected(monkeypatch):
-    gemini = FakeGemini([_ok_result({**RAW_OK, "garmentDetected": False})])
+def test_worker_rejects_not_clothing(monkeypatch):
+    gemini = FakeGemini([_ok_result({**RAW_OK, "inputVerdict": "not_clothing"})])
     app, job, finals = _worker_rig(monkeypatch, gemini)
     asyncio.run(run_analyze_job(app, job))
     assert finals["success"] == []
     (call,) = finals["failure"]
     assert "의류를 인식하지 못했어요" in call["message"]
-    assert call["metadata"]["error"] == "garment_not_detected"
+    assert call["metadata"]["error"] == "input_rejected:not_clothing"
+
+
+def test_worker_rejects_unusable_photo(monkeypatch):
+    # 의류지만 사진 상태가 AI 입력 불가 수준 → 범용 촬영 가이드 문구 (사용자 결정 2026-07-03)
+    gemini = FakeGemini([_ok_result({**RAW_OK, "inputVerdict": "unusable_photo"})])
+    app, job, finals = _worker_rig(monkeypatch, gemini)
+    asyncio.run(run_analyze_job(app, job))
+    assert finals["success"] == []
+    (call,) = finals["failure"]
+    assert "밝은 곳에서" in call["message"] and "배경" in call["message"]
+    assert call["metadata"]["error"] == "input_rejected:unusable_photo"
 
 
 def test_worker_retry_then_success(monkeypatch):

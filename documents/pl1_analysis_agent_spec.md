@@ -134,7 +134,7 @@ IMAGE MANIFEST (the attached images follow in this exact order):
 {
   "type": "object",
   "properties": {
-    "garmentDetected": { "type": "boolean" },
+    "inputVerdict": { "type": "string", "enum": ["ok", "not_clothing", "unusable_photo"] },
     "clothingType": { "type": "string", "enum": ["top", "bottom", "outer", "dress"] },
     "subCategory": {
       "type": ["string", "null"],
@@ -180,7 +180,7 @@ IMAGE MANIFEST (the attached images follow in this exact order):
                  "sporty", "formal", "feminine", "vintage", "lovely", "modern"] }
     }
   },
-  "required": ["garmentDetected", "clothingType", "subCategory", "targetGenders", "fit",
+  "required": ["inputVerdict", "clothingType", "subCategory", "targetGenders", "fit",
                "materials", "aiSuggestedPoints", "suggestedName", "swatchSuggestions", "styleTags"]
 }
 ```
@@ -191,9 +191,10 @@ IMAGE MANIFEST (the attached images follow in this exact order):
 
 모듈 정의서 §3 AG-01 '후처리(서버 분배)'의 구현 규칙. 순서대로:
 
-**1) 안전 게이트**
-- `garmentDetected=false` → job error `"사진에서 의류를 인식하지 못했어요. 상품이 잘 보이는 사진으로 다시 시도해 주세요."` (이후 단계 진행 안 함)
-- **게이트 방향 (사용자 피드백 2026-07-03)**: "확실히 의류일 때만 통과"가 아니라 **"확실히 의류가 아닐 때만 차단"** — 진짜 옷이 거부되는 오탐(사용자 분노)이 비의류 통과(무료 분석 1회 + 폼에서 사용자가 알아챔)보다 훨씬 비싸다. 애매한 사진(잘림·어두움·클로즈업·플랫레이)은 통과시켜 best-effort 분석. 신발·가방·모자 등 4종 밖 패션잡화는 정당 차단.
+**1) 안전 게이트 — `inputVerdict` 3단계 (사용자 결정 2026-07-03, 반려 사유별 촬영 가이드)**
+- `not_clothing` → job error `"사진에서 의류를 인식하지 못했어요. 옷이 잘 보이는 상품 사진으로 다시 올려주세요."`
+- `unusable_photo` (의류지만 AI 입력 불가 수준 — 너무 어두움·심한 블러·화면 구석 점유·심한 가림) → job error `"사진 상태로는 AI 분석이 어려워요. 밝은 곳에서 흰색처럼 깔끔한 배경에 옷 전체가 잘 나오게 찍어 다시 올려주세요."` (범용 촬영 가이드)
+- **게이트 방향**: "확실히 의류일 때만 통과"가 아니라 **"확실히 문제일 때만 차단"** — 진짜 옷이 거부되는 오탐(사용자 분노)이 비의류 통과(무료 분석 1회 + 폼에서 사용자가 알아챔)보다 훨씬 비싸다. ok/unusable 사이 애매하면 ok(잘림·주름·플랫레이·약간 어두움은 통과). 신발·가방·모자 등 4종 밖 패션잡화는 not_clothing.
 
 **2) 정규화·교차검증** (실패해도 job을 죽이지 않고 보정하는 항목 / 죽이는 항목 구분)
 
@@ -216,7 +217,7 @@ IMAGE MANIFEST (the attached images follow in this exact order):
 | `swatchSuggestions` | **`products.colors[].swatchId`** | **`swatchId`가 null인 그룹만** 채운다 — 사용자가 고른 스와치는 절대 덮지 않는다. 추천 리스트 자체는 저장하지 않는다(중간 산출물). **적용 시점·대상**: 워커가 로드해 둔 colors 사본이 아니라 **finalize tx 안에서 재조회(FOR UPDATE)한 현재 colors**에 colorGroupId 매칭으로 병합한다 — 분석이 도는 동안 사용자가 저장한 스와치·색상 그룹 변경을 절대 덮어쓰지 않기 위함(§6.7). 사라진 그룹은 skip, 새 그룹은 불변. |
 | `subCategory` `targetGenders` `fit` `materials` `aiSuggestedPoints` `suggestedName` | **`analyses.payload`** | §3.5의 payload로 조립. |
 | `styleTags` | 저장 안 함 | 현행 M-01은 미사용(§3.4). `jobs.metadata.styleTags`로 **로그만** 남긴다(AG-P1 대비 관측). |
-| `garmentDetected` | 저장 안 함 | 게이트 판정 후 폐기. |
+| `inputVerdict` | 저장 안 함 | 게이트 판정 후 폐기 (사유는 jobs.metadata.error에 `input_rejected:<verdict>`로 관측). |
 | `measurements` | — | **존재 자체가 없음**(스키마 배제). Analysis 응답의 실측은 어댑터가 null로 합성(§7.4). |
 
 ### 3.4 M-01 매칭 추천 + 기본 선택
@@ -342,14 +343,21 @@ Return ONLY a JSON object matching the response schema — no markdown, no comme
 
 FIELD RULES
 
-1. garmentDetected — set false ONLY when the images clearly do NOT show apparel that
-   fits the four clothingType categories below: unrelated objects, screenshots or
-   documents, food, interiors, shoes/bags/hats/jewelry-only shots, or unreadable images.
-   If the item is plausibly a garment but the photos are imperfect — cropped, dim,
-   wrinkled, flat-lay, close-up only — set true and analyze it best-effort: the seller
-   reviews and edits every field afterwards, so a cautious guess is far better than
-   rejecting a real product. When false, fill every other field with its fallback:
-   clothingType "top", subCategory null, targetGenders [], fit "regular", materials [],
+1. inputVerdict — judge whether the photos can serve as AI input:
+   - "ok": apparel in the four clothingType categories below is visible and readable —
+     including imperfect photos (cropped, wrinkled, flat-lay, worn, slightly dim). When
+     torn between "ok" and "unusable_photo", choose "ok": the seller reviews and edits
+     every field afterwards, so a cautious guess is far better than rejecting a real
+     product.
+   - "not_clothing": the images clearly do NOT show such apparel — unrelated objects,
+     screenshots or documents, food, interiors, or shoes/bags/hats/jewelry-only shots.
+   - "unusable_photo": it is (probably) apparel, but the photos are too degraded to read
+     the garment reliably — so dark its shape or color cannot be judged, extremely
+     blurry, the garment occupying only a tiny corner of the frame, or mostly hidden by
+     clutter. Reserve this for photos that would clearly fail as generation input, not
+     merely imperfect ones.
+   When the verdict is not "ok", fill every other field with its fallback: clothingType
+   "top", subCategory null, targetGenders [], fit "regular", materials [],
    aiSuggestedPoints [], suggestedName "", swatchSuggestions [], styleTags [].
 
 2. clothingType — exactly one of "top" | "bottom" | "outer" | "dress".
@@ -370,7 +378,7 @@ FIELD RULES
 
 4. targetGenders — who this product is primarily merchandised to on Korean e-commerce:
    ["women"], ["men"], or ["women","men"] for clearly unisex basics. Judge from silhouette,
-   cut, styling and colorway. Never [] when garmentDetected is true.
+   cut, styling and colorway. Never [] when inputVerdict is "ok".
 
 5. fit — "slim" | "regular" | "semi_over" | "over". Judge from the garment's proportions
    (shoulder line, body width relative to length, taper) and the worn-fit reference image
@@ -677,7 +685,7 @@ class RawMaterial(BaseModel):
 
 class AnalysisRaw(BaseModel):
     """AG-01 구조화 출력. 검증 실패 = 재시도 대상 (ValidationError 메시지를 피드백으로)."""
-    garment_detected: bool = Field(alias="garmentDetected")
+    input_verdict: Literal["ok", "not_clothing", "unusable_photo"] = Field(alias="inputVerdict")
     clothing_type: Literal["top", "bottom", "outer", "dress"] = Field(alias="clothingType")
     sub_category: str | None = Field(alias="subCategory")
     target_genders: list[Literal["women", "men"]] = Field(alias="targetGenders")
@@ -801,9 +809,9 @@ async def run_analyze_job(app, job: dict) -> None:
         await _emit(pool, job_id, "progress", {"progress": 70, "phase": "agent_done"})
 
         # 4) 안전 게이트 + 후처리·분배
-        if not raw.garment_detected:
-            await _fail("사진에서 의류를 인식하지 못했어요. 상품이 잘 보이는 사진으로 다시 시도해 주세요.",
-                        {"error": "garment_not_detected", "model": model})
+        if raw.input_verdict != "ok":   # 사유별 촬영 가이드 문구 — §3.3 게이트
+            await _fail(REJECT_MESSAGES[raw.input_verdict],
+                        {"error": f"input_rejected:{raw.input_verdict}", "model": model})
             return
         post = analysis.postprocess(raw, product)
 
@@ -1068,7 +1076,8 @@ async saveAnalysis(projectId, patch) {
 | 2 | 이미지 asset 소실/R2 miss | 워커 1) | job error | "상품 사진을 찾을 수 없어요. 정면 사진을 올렸는지 확인해 주세요." |
 | 3 | Gemini 네트워크/5xx/타임아웃 | 워커 3) | 재시도 1회 → error | "상품 분석에 실패했어요. 다시 시도해 주세요." |
 | 4 | JSON 파싱/pydantic 검증 실패 | 워커 3) | 피드백 재시도 1회 → error | 〃 |
-| 5 | `garmentDetected=false` (의류 아닌 이미지·시각적 인젝션) | 워커 4) | job error (재시도 없음 — 입력 문제). **분석 폼으로 진입 안 함** — 프론트가 입력 단계로 롤백. 실측: 이미지 속 지시문("SYSTEM OVERRIDE…")도 무시 | "사진에서 의류를 인식하지 못했어요. …" |
+| 5 | `inputVerdict=not_clothing` (의류 아닌 이미지·시각적 인젝션) | 워커 4) | job error (재시도 없음 — 입력 문제). **분석 폼으로 진입 안 함** — 프론트가 입력 단계로 롤백. 실측: 이미지 속 지시문("SYSTEM OVERRIDE…")도 무시 | "사진에서 의류를 인식하지 못했어요. 옷이 잘 보이는 상품 사진으로 다시 올려주세요." |
+| 5a | `inputVerdict=unusable_photo` (의류지만 사진 상태 불량 — 너무 어두움·블러 등) | 워커 4) | 〃 (반려 + 범용 촬영 가이드) | "사진 상태로는 AI 분석이 어려워요. 밝은 곳에서 흰색처럼 깔끔한 배경에 옷 전체가 잘 나오게 찍어 다시 올려주세요." |
 | 5b | 사용자당 시간당 분석 상한 초과 | 라우트 rate limit | 429, job 미생성 | "분석 요청이 너무 많아요. 잠시 후 다시 시도해 주세요." |
 | 6 | subCategory 교차 불일치 | postprocess | null 강제, **진행** | 없음 (폼에서 비어 보임 — 정상) |
 | 7 | 실측성 표현 검출 | postprocess | 해당 항목 드롭, 진행 | 없음 |
@@ -1133,7 +1142,7 @@ async saveAnalysis(projectId, patch) {
 | `test_analyze_changed_fingerprint_new_job` | 지문 다름 → 202 새 job. |
 | `test_get_analysis_route` | payload 없음 → 404 analysis_not_found / 있음 → 200 clothingType 병합 shape. |
 | `test_worker_success_finalize` | fake Gemini 정상 응답 → finalize 인자 전수 검증: clothing_type·actual_fingerprint(=입력 지문)·swatch_suggestions·payload(§3.5: sellingPoints [], selectedModelId, matchCandidates 밝기순·thumb 없는 항목 제외, matchSelections main/sub)·metadata(fingerprint·attempts·model). 유저 텍스트에 PRODUCT CONTEXT, 이미지 3장 첨부. |
-| `test_worker_garment_not_detected` | garmentDetected=false → failure + "의류를 인식하지 못했어요" + metadata.error. |
+| `test_worker_rejects_not_clothing` / `test_worker_rejects_unusable_photo` | inputVerdict 반려 2종 → 사유별 문구(의류 인식 실패 / 촬영 가이드) + metadata.error=`input_rejected:<verdict>`. |
 | `test_worker_retry_then_success` | 1회차 GeminiTextError → 2회차 성공 → attempts=2, 2차 유저 텍스트에만 "PREVIOUS ATTEMPT WAS REJECTED" 피드백 주입. |
 | `test_worker_validation_error_retries` | 스키마 위반(fit='loose') → 재시도 → 성공, attempts=2. |
 | `test_worker_all_attempts_fail` | 2회 모두 실패 → failure "상품 분석에 실패했어요. 다시 시도해 주세요." |

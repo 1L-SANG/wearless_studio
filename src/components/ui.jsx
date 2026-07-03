@@ -263,7 +263,9 @@ export function ToastProvider({ children }) {
     const id = Math.random().toString(36).slice(2);
     setList((l) => [...l, { id, msg, ...opts }]);
     if (!opts.sticky) {
-      const dur = opts.duration || 2600;
+      // 긴 메시지(업로드·분석 실패 사유 등)가 읽기 전에 사라지지 않게 길이 비례 지속.
+      // 20자까지는 기존(2.6s)과 동일, 초과분 글자당 +70ms, 최대 9s.
+      const dur = opts.duration || Math.min(2600 + Math.max(0, String(msg).length - 20) * 70, 9000);
       setTimeout(() => setList((l) => l.map((t) => t.id === id ? { ...t, exiting: true } : t)), dur);
       setTimeout(() => setList((l) => l.filter((t) => t.id !== id)), dur + 420);
     }

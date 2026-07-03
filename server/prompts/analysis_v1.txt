@@ -24,14 +24,21 @@ Return ONLY a JSON object matching the response schema — no markdown, no comme
 
 FIELD RULES
 
-1. garmentDetected — set false ONLY when the images clearly do NOT show apparel that
-   fits the four clothingType categories below: unrelated objects, screenshots or
-   documents, food, interiors, shoes/bags/hats/jewelry-only shots, or unreadable images.
-   If the item is plausibly a garment but the photos are imperfect — cropped, dim,
-   wrinkled, flat-lay, close-up only — set true and analyze it best-effort: the seller
-   reviews and edits every field afterwards, so a cautious guess is far better than
-   rejecting a real product. When false, fill every other field with its fallback:
-   clothingType "top", subCategory null, targetGenders [], fit "regular", materials [],
+1. inputVerdict — judge whether the photos can serve as AI input:
+   - "ok": apparel in the four clothingType categories below is visible and readable —
+     including imperfect photos (cropped, wrinkled, flat-lay, worn, slightly dim). When
+     torn between "ok" and "unusable_photo", choose "ok": the seller reviews and edits
+     every field afterwards, so a cautious guess is far better than rejecting a real
+     product.
+   - "not_clothing": the images clearly do NOT show such apparel — unrelated objects,
+     screenshots or documents, food, interiors, or shoes/bags/hats/jewelry-only shots.
+   - "unusable_photo": it is (probably) apparel, but the photos are too degraded to read
+     the garment reliably — so dark its shape or color cannot be judged, extremely
+     blurry, the garment occupying only a tiny corner of the frame, or mostly hidden by
+     clutter. Reserve this for photos that would clearly fail as generation input, not
+     merely imperfect ones.
+   When the verdict is not "ok", fill every other field with its fallback: clothingType
+   "top", subCategory null, targetGenders [], fit "regular", materials [],
    aiSuggestedPoints [], suggestedName "", swatchSuggestions [], styleTags [].
 
 2. clothingType — exactly one of "top" | "bottom" | "outer" | "dress".
@@ -52,7 +59,7 @@ FIELD RULES
 
 4. targetGenders — who this product is primarily merchandised to on Korean e-commerce:
    ["women"], ["men"], or ["women","men"] for clearly unisex basics. Judge from silhouette,
-   cut, styling and colorway. Never [] when garmentDetected is true.
+   cut, styling and colorway. Never [] when inputVerdict is "ok".
 
 5. fit — "slim" | "regular" | "semi_over" | "over". Judge from the garment's proportions
    (shoulder line, body width relative to length, taper) and the worn-fit reference image

@@ -100,10 +100,17 @@ async def run_analyze_job(app, job: dict) -> None:
             return
         await _emit(pool, job_id, "progress", {"progress": 70, "phase": "agent_done"})
 
-        # 4) 안전 게이트 + 후처리·분배 (§3.3)
-        if not raw.garment_detected:
-            await _fail("사진에서 의류를 인식하지 못했어요. 상품이 잘 보이는 사진으로 다시 시도해 주세요.",
-                        {"error": "garment_not_detected", "model": model})
+        # 4) 안전 게이트 + 후처리·분배 (§3.3) — 반려 사유별 촬영 가이드 (사용자 결정 2026-07-03)
+        if raw.input_verdict != "ok":
+            reject_messages = {
+                "not_clothing":
+                    "사진에서 의류를 인식하지 못했어요. 옷이 잘 보이는 상품 사진으로 다시 올려주세요.",
+                "unusable_photo":
+                    "사진 상태로는 AI 분석이 어려워요. 밝은 곳에서 흰색처럼 깔끔한 배경에 "
+                    "옷 전체가 잘 나오게 찍어 다시 올려주세요.",
+            }
+            await _fail(reject_messages[raw.input_verdict],
+                        {"error": f"input_rejected:{raw.input_verdict}", "model": model})
             return
         post = analysis.postprocess(raw, product)
 

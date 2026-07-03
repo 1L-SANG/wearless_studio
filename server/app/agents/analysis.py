@@ -41,7 +41,10 @@ STYLE_TAGS = (
 RESPONSE_SCHEMA: dict = {
     "type": "object",
     "properties": {
-        "garmentDetected": {"type": "boolean"},
+        # 입력 판정 3단계 (사용자 결정 2026-07-03): ok=분석 진행 / not_clothing=의류 아님 /
+        # unusable_photo=의류지만 사진 상태가 AI 입력으로 못 쓸 수준(너무 어두움·심한 블러 등)
+        # — 반려 사유별로 다른 촬영 가이드 문구를 주기 위해 boolean에서 enum으로 확장.
+        "inputVerdict": {"type": "string", "enum": ["ok", "not_clothing", "unusable_photo"]},
         "clothingType": {"type": "string", "enum": list(CLOTHING_TYPES)},
         "subCategory": {
             "type": ["string", "null"],
@@ -83,7 +86,7 @@ RESPONSE_SCHEMA: dict = {
             "items": {"type": "string", "enum": list(STYLE_TAGS)},
         },
     },
-    "required": ["garmentDetected", "clothingType", "subCategory", "targetGenders", "fit",
+    "required": ["inputVerdict", "clothingType", "subCategory", "targetGenders", "fit",
                  "materials", "aiSuggestedPoints", "suggestedName", "swatchSuggestions",
                  "styleTags"],
 }
@@ -162,7 +165,7 @@ class AnalysisRaw(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    garment_detected: bool = Field(alias="garmentDetected")
+    input_verdict: Literal["ok", "not_clothing", "unusable_photo"] = Field(alias="inputVerdict")
     clothing_type: Literal["top", "bottom", "outer", "dress"] = Field(alias="clothingType")
     sub_category: str | None = Field(alias="subCategory")
     target_genders: list[Literal["women", "men"]] = Field(alias="targetGenders")
