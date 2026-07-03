@@ -126,6 +126,16 @@ def test_render_example_ignored_for_product():
     assert "Composition nuance" not in p          # 제품컷엔 사람 구도 뉘앙스 미적용
 
 
+def test_render_example_mood_only_for_side_and_back():
+    # band 규칙(ADR-0004): 사이드/뒷면 + 정면 계열 예시 = 분위기만 — 정면 구도 뉘앙스가 방향과 충돌하면 안 됨
+    for direction in ("side", "back"):
+        p = _render({"cutType": "horizon", "shot": "full", "direction": direction,
+                     "exampleId": "ex_horizon_top_full_1"})
+        assert "Composition nuance" not in p
+    mirror = _render({"cutType": "mirror", "shot": "full", "exampleId": "ex_mirror_top_full_1"})
+    assert "Composition nuance" in mirror         # 거울샷은 정면 대역 — 뉘앙스 적용
+
+
 def test_render_raises_on_stray_section_marker():
     # 섹션 본문에 마커가 남은 오염 템플릿 — 가드가 잡아 잡 실패(예약 해제)로 이어져야 한다
     tpl = (

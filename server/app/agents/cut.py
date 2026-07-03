@@ -117,8 +117,10 @@ def render_cut_prompt(
         pose_line = need("POSE:named").replace("${poseName}", _sanitize(spec["pose"]))
     # 생성예시 선택 반영 v0 — 예시 자산·꼬리표 시딩 전 과도기: id 해시로 구도 뉘앙스를
     # 결정적으로 고정(같은 예시 = 같은 뉘앙스). 실제 꼬리표 메타데이터가 오면 이 매핑을 대체한다(ADR-0004).
+    # band 규칙: 뉘앙스는 정면 대역(front·거울샷)에서만 — 사이드/뒷면이면 예시는 분위기만(T1)이라
+    # 정면 계열 구도 문구가 방향 지시와 충돌하지 않게 미적용.
     example_line = ""
-    if spec.get("exampleId") and cut != "product":
+    if spec.get("exampleId") and cut != "product" and spec.get("direction") in (None, "front"):
         idx = sum(ord(ch) for ch in spec["exampleId"]) % 3
         example_line = need(f"EXNUANCE:{idx}")
     space_line = ""
