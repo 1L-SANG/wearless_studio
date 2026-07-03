@@ -130,12 +130,13 @@ def test_postprocess_drops_color_filler_points():
 
 
 def test_is_color_filler_boundaries():
-    # 필러 (드롭): 색+수식어+범용명사뿐
-    for filler in ["깔끔한 흰색", "화사한 핑크 컬러", "밝은 블루", "세련된 그레이 톤"]:
+    # 필러 (드롭): 디자인 요소 없는 색 예찬 — 미등재 형용사("청량한" 등)도 새지 않아야 함
+    for filler in ["깔끔한 흰색", "화사한 핑크 컬러", "밝은 블루", "세련된 그레이 톤",
+                   "청량한 블루 컬러감", "포근한 베이지", "흰색이라 시원한"]:
         assert analysis._is_color_filler(filler), filler
-    # 실질 있음 (유지): 색상어가 디자인 요소를 수식
+    # 실질 있음 (유지): 색상어가 구체적 디자인 요소를 수식
     for real in ["네이비 배색 카라", "화이트 파이핑 디테일", "블루 포인트 스티치",
-                 "블랙 앤 화이트 배색"]:
+                 "블랙 앤 화이트 배색", "레드 로고 자수"]:
         assert not analysis._is_color_filler(real), real
     # 색상어 없음 → 필터 비대상
     assert not analysis._is_color_filler("왼쪽 가슴 로고 자수")
