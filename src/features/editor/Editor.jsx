@@ -258,6 +258,7 @@ export function Editor() {
   const [varyTarget, setVaryTarget] = useState(null); // 의류 탭 'AI 편집'으로 지정한 변형 대상 { id } — 캔버스 선택이 바뀌면 해제
   const [catalogs, setCatalogs] = useState(null);
   const [colorOpts, setColorOpts] = useState([]);
+  const [clothingType, setClothingType] = useState('top'); // 샷 필터 아이콘·예시 크롭용 (계약 §3.1)
   const [productName, setProductName] = useState('');
   const [tab, setTab] = useState('ai');
   const [selBlock, setSelBlock] = useState(null);
@@ -303,6 +304,7 @@ export function Editor() {
         const withH = b.map((blk) => ({ ...blk, h: blk.h || Math.max(220, blk.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0) + 50) }));
         setBlocks(withH); setWardrobe(w); setCatalogs(c); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
+        setClothingType(p.clothingType || 'top');
         const opts = (p.colors || []).filter((col) => col.images.length || col.isBase).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
         setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
       });
@@ -488,12 +490,13 @@ export function Editor() {
     setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) { const f = arr.filter((im) => !ids.includes(im.id)); if (f.length) nw[g] = f; } return nw; });
     toast.push(`${ids.length}개 이미지를 의류 목록에서 삭제했어요`, { icon: 'trash' });
   };
-  const generateImage = async ({ colorId, cutType, refImages }) => {
-    const group = colorId || 'misc';                 // wardrobe 그룹 키 = colorId | 'misc' (계약 §3.6)
+  // req = NewCutRequest 필드 전체 (계약 §6) — 방향·샷·모델·예시 선택이 생성에 그대로 반영되어야 한다
+  const generateImage = async (req) => {
+    const group = req.colorId || 'misc';             // wardrobe 그룹 키 = colorId | 'misc' (계약 §3.6)
     const loadingId = uid('w');
     setWardrobe((w) => ({ ...w, [group]: [...(w[group] || []), { id: loadingId, loading: true }] }));
     genCount.current += 1; setGenDot('busy'); toast.push('이미지를 생성하는 중이에요', { icon: 'sparkles' });
-    const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', colorId: group, cutType, ...(refImages?.length ? { refImages } : {}) });
+    const { data: img, credits } = await api.generateImage(projectId, { mode: 'new', ...req, colorId: group });
     setWardrobe((w) => ({ ...w, [group]: w[group].map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
     genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done'); toast.push('이미지 생성을 완료했어요', { icon: 'check' });
     syncCredits(credits);                            // 차감은 서버 책임 — 봉투 잔액만 반영 (계약 §6)
@@ -681,7 +684,7 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel catalogs={catalogs} account={account} colorOpts={colorOpts} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickAnyImage()} onSetCutType={setVaryCutType} />;
+      case 'ai': return <AIPanel catalogs={catalogs} account={account} colorOpts={colorOpts} clothingType={clothingType} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickAnyImage()} onSetCutType={setVaryCutType} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} onFreshSeen={freshSeen} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} onVary={varyImage} />;
       case 'frame': return <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />;

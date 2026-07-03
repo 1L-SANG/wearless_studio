@@ -1122,3 +1122,63 @@
 @keyframes wardFreshSpin { to { --gen-ang: 360deg; } }
 @keyframes wardFreshFade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .ward-cell.fresh::after { animation: wardFreshFade 2s linear forwards; } }
+
+/* ============================================================
+   콘티 인스펙터 개편 — 분위기 예시 갤러리 승격 + 샷 아이콘 필터 +
+   내 사진 타일 통합 + 공간 그룹 태그 (B+C안, ADR-0004)
+   ============================================================ */
+.sb-exhead { display: flex; align-items: baseline; justify-content: space-between; }
+.sb-exhint { font-size: 11px; color: var(--fg-3); }
+
+.shot-tiles { display: flex; gap: 7px; flex-wrap: wrap; margin: 9px 0 10px; }
+.shot-tile {
+  appearance: none; cursor: pointer; font: inherit;
+  border: 1px solid var(--ring-strong); background: #fff; border-radius: 10px;
+  width: 62px; padding: 6px 0 5px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  color: var(--fg-2); font-size: 10.5px; font-weight: 600;
+  transition: border-color .12s, background .12s, color .12s;
+}
+.shot-tile svg { width: 24px; height: 28px; display: block; }
+.shot-tile .si { fill: var(--fg-2); }
+.shot-tile.on { border-color: var(--cta-bg, #2c2c2c); background: var(--cta-bg, #2c2c2c); color: #fff; }
+.shot-tile.on .si { fill: #fff; }
+.shot-tile:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+
+.sb-exgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; transition: opacity .15s; }
+.sb-exgrid.moodonly { opacity: .55; }
+.sb-excell {
+  position: relative; aspect-ratio: 3 / 4; border-radius: 8px; overflow: hidden; padding: 0;
+  border: 2px solid transparent; background: var(--bg-2); cursor: pointer; appearance: none; display: block;
+}
+.sb-excell img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.sb-excell.sel { border-color: var(--link); }
+.sb-excell .ck {
+  position: absolute; top: 5px; right: 5px; width: 18px; height: 18px; border-radius: 99px;
+  background: var(--link); color: #fff; display: flex; align-items: center; justify-content: center;
+}
+.sb-excell.up { border: 2px dashed var(--link); cursor: default; }
+.sb-excell .upb {
+  position: absolute; left: 5px; bottom: 5px; font-size: 10px; font-weight: 700;
+  background: var(--link); color: #fff; padding: 2px 7px; border-radius: 99px;
+}
+.sb-excell .rm {
+  position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; border-radius: 99px; border: none;
+  background: var(--ink-overlay); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.sb-excell.uptile {
+  border: 1.5px dashed var(--fg-3); background: #fff; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 4px; color: var(--fg-2); font-size: 11.5px; font-weight: 600;
+}
+.sb-excell.uptile .plus { font-size: 20px; color: var(--fg-3); line-height: 1; }
+.sb-excell.uptile:hover { border-color: var(--fg-2); }
+.sb-excell:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+
+.sb-exnote { margin-top: 9px; font-size: 12px; color: var(--fg-2); background: var(--bg-2); border-radius: 8px; padding: 8px 11px; }
+.sb-exnote b { color: var(--fg-1); }
+.sb-exnote.pick { background: #eaf6ff; color: var(--fg-1); }
+
+.sb-space {
+  display: inline-flex; align-items: center; font-size: 10.5px; font-weight: 650; color: var(--fg-2);
+  background: var(--bg-2); border: 1px solid var(--ring-strong); border-radius: 99px;
+  padding: 1px 8px; margin-left: 6px; vertical-align: 1px;
+}

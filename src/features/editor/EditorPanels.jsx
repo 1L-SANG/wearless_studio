@@ -270,7 +270,7 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
 }
 
 /* ---------- AI ---------- */
-export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGenerate, onVaryGenerate, onPickRef, onSetCutType }) {
+export function AIPanel({ catalogs, account, colorOpts = [], clothingType = 'top', varySource, onGenerate, onVaryGenerate, onPickRef, onSetCutType }) {
   const [tab, setTab] = useState('vary');
   const [cut, setCut] = useState('horizon');
   const [dir, setDir] = useState('front');
@@ -279,6 +279,7 @@ export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGener
   const initialModel = (catalogs.models || []).find((m) => m.recommended) || (catalogs.models || [])[0];
   const [model, setModel] = useState(initialModel?.id || 'mA');
   const [refImages, setRefImages] = useState([]);       // 내 레퍼런스 — NewCutRequest.refImages (계약 §6)
+  const [exampleId, setExampleId] = useState(null);     // 분위기 예시 선택 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
   const colorVal = color || colorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
   const isProduct = cut === 'product';
   const isMirror = cut === 'mirror'; // 거울샷(ADR-0004): 방향 없음, 샷 full/knee만
@@ -316,11 +317,14 @@ export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGener
       {tab === 'new' ? (
         <div>
           <div className="insp-sec"><label className="lbl">컷 종류</label>
-            <UnderlineTabs options={catalogs.cutTypes} value={cut} onChange={(v) => setCut(v)} /></div>
-          {!isMirror && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
-          <div className="insp-sec"><label className="lbl">샷 종류</label><Chips className="oneline" options={shotOpts} value={shotVal} onChange={setShot} /></div>
+            <UnderlineTabs options={catalogs.cutTypes} value={cut} onChange={(v) => { setCut(v); setExampleId(null); }} /></div>
 
-          <MoodGuide catalogs={catalogs} cut={cut} direction={isMirror ? null : dirVal} shot={shotVal} refs={refImages} onRefsChange={setRefImages} />
+          {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
+          <MoodGuide catalogs={catalogs} cut={cut} direction={isMirror ? null : dirVal} shot={shotVal}
+            onShotChange={(v) => { setShot(v); setExampleId(null); }} clothingType={clothingType}
+            exampleId={exampleId} onExampleChange={setExampleId}
+            refs={refImages} onRefsChange={setRefImages} />
+          {!isMirror && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
 
           <div className="insp-divider" />
 
@@ -338,7 +342,7 @@ export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGener
             </div>
           </details>
 
-          <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({ colorId: colorVal, cutType: cut, refImages })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>
+          <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({ colorId: colorVal, cutType: cut, direction: isMirror ? null : dirVal, shot: shotVal, modelId: model, exampleId, refImages })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>
         </div>
       ) : (
         /* key=소스 id — 변형 대상이 바뀌면 패널 상태(선택/트레이/결과)를 통째로 초기화해 이미지 간 누수를 차단 */

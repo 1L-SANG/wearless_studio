@@ -158,6 +158,7 @@ StoryboardBlock {
   faceExposure: FaceExposure       // 기본 'same'
   angle: CameraAngle               // 기본 'same'
   refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함) — 프로젝트 한정, 전역 저장 없음 (ADR-0004)
+  exampleId?: string | null        // 분위기 예시 선택 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
   spaceGroupId?: string | null     // 공간 무드 유지 그룹 — 같은 id = 같은 공간에서 생성 (ADR-0004)
   spaceVariation?: 'subtle' | 'varied'  // 그룹 내 변화 강도. 기본 'subtle' (ADR-0004)
   ownImages: string[]              // source='mine'의 직접 업로드 이미지
@@ -346,9 +347,10 @@ NewCutRequest {                    // AI 탭 '새 컷 추가'
   mode: 'new'
   colorId: string                  // 구 group('색상 1') 대체
   cutType: CutType
-  direction: Direction | ProductDirection
+  direction: Direction | ProductDirection | null   // mirror는 null — 방향 없음 (ADR-0004)
   shot: ShotType | ProductShotType
   modelId: string
+  exampleId?: string | null        // 분위기 예시 선택 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
   refImages?: string[]
 }
 VaryRequest {                      // AI 탭 '현재 컷 변형' — changes 빈 배열 = '비슷한 컷 만들기'

@@ -166,6 +166,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {'same'|'show'|'hide'} faceExposure
    @property {'same'|'low'|'high'} angle
    @property {string[]} refImages        내 레퍼런스 — 생성 입력(NewCutRequest)에 포함. 프로젝트(블록) 한정, 전역 저장 없음
+   @property {string|null} [exampleId]   분위기 예시 선택 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
    @property {string|null} [spaceGroupId] 공간 무드 유지 그룹 — 같은 id = 같은 공간에서 생성 (ADR-0004)
    @property {SpaceVariation} [spaceVariation] 그룹 내 변화 강도 — 기본 'subtle'
    @property {string[]} [ownImages]      source='mine'
@@ -201,6 +202,16 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {number} [h]                고정 높이 (px, 기준 폭 1000)
    @property {Element[]} elements        배열 순서 = z-order
    @property {boolean} [auto]
+
+   @typedef {Object} NewCutRequest    AI 탭 '새 컷 추가' 생성 입력 (계약 §6)
+   @property {'new'} mode
+   @property {string} colorId
+   @property {CutType} cutType
+   @property {Direction|ProductDirection|null} direction  mirror는 null — 방향 없음 (ADR-0004)
+   @property {ShotType|ProductShotType} shot
+   @property {string} modelId
+   @property {string|null} [exampleId]   분위기 예시 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
+   @property {string[]} [refImages]
 
    @typedef {Object} GenStep
    @property {string} key                info|prep|styling|horizon|product|copy|assemble
