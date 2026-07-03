@@ -128,10 +128,11 @@ const catalogs = {
     ],
   },
   genExamples: Array.from({ length: 8 }, (_, i) => ({ id: 'ex' + i, thumb: P.photo('ex' + i, i % 2 ? 'styling' : 'horizon', 240, 320) })),
-  // 컷 종류 — 공식 용어: 스타일링컷·호리존컷·제품컷 (ADR-0003).
+  // 컷 종류 — 공식 용어: 스타일링컷·호리존컷·제품컷 (ADR-0003) + 거울샷 (ADR-0004).
   // '내 이미지'는 컷 종류가 아니라 source('mine')로 다룬다 — UI 탭은 화면에서 합성.
   cutTypes: [
     { value: 'styling', label: '스타일링컷' }, { value: 'horizon', label: '호리존컷' }, { value: 'product', label: '제품컷' },
+    { value: 'mirror', label: '거울샷' },
   ],
   frames: [
     { id: 'split2', label: '2분할', cols: 2 }, { id: 'grid3', label: '3컷 구성', cols: 3 },
@@ -311,7 +312,7 @@ function buildDraft() {
   const mannequins = [];
 
   /* ---- Storyboard blocks (basic mode default, PRD §8) ----
-     source: 'ai' | 'mine', cutType: styling|horizon|product (ADR-0003) ---- */
+     source: 'ai' | 'mine', cutType: styling|horizon|product|mirror (ADR-0003·0004) ---- */
   const sb = (kind, title, cutType, direction, shot, colorId) => ({
     id: uid('blk'), kind, title, source: 'ai', cutType, direction, shot, colorId,
     pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],

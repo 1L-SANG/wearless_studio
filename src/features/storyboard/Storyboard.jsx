@@ -121,7 +121,7 @@ export function ColorDots({ colorOpts, value, onChange }) {
    소유해서 휘발되지 않고 생성 입력에 포함된다 (계약 §3.4/§6). */
 export function MoodGuide({ catalogs, cut, direction, shot, refs = [], onRefsChange }) {
   const [tab, setTab] = useState('examples');
-  const cat = cut === 'product' ? 'product' : (cut === 'styling' ? 'styling' : 'horizon');
+  const cat = cut === 'product' ? 'product' : (cut === 'horizon' ? 'horizon' : 'styling'); // mirror는 styling 계열 플레이스홀더 (ADR-0004)
   const examples = React.useMemo(() => Array.from({ length: 8 }, (_, i) => {
     const seed = `ex_${cut || 'x'}_${direction || 'x'}_${shot || 'x'}_${i}`;
     return { id: seed, thumb: Placeholder.photo(seed, cat, 240, 320) };
@@ -169,7 +169,32 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
   // 컷 종류 탭 = catalogs.cutTypes + '내 이미지'(source 전환) 합성 (계약 §5)
   const cutTabs = [...catalogs.cutTypes, { value: 'mine', label: '내 이미지' }];
   const tabValue = block.source === 'mine' ? 'mine' : (block.cutType || '');
-  const onTab = (v) => onChange(v === 'mine' ? { source: 'mine', cutType: null } : { source: 'ai', cutType: v });
+  // 컷 종류 전환 시 방향·샷을 대상 컷의 유효 옵션으로 정규화 — 어느 방향의 전환이든 계약 위반 값이 남지 않는다 (ADR-0004)
+  const onTab = (v) => {
+    if (v === 'mine') return onChange({ source: 'mine', cutType: null });
+    if (v === 'mirror') {
+      // 거울샷: 방향 없음, 샷 full/knee, 얼굴 기본 '폰으로 가림', 포즈 자동
+      return onChange({
+        source: 'ai', cutType: 'mirror', direction: null,
+        shot: block.shot === 'knee' ? 'knee' : 'full',
+        faceExposure: block.faceExposure === 'show' ? 'show' : 'hide',
+        angle: 'same', pose: 'auto', poseLabel: 'AI 자동',
+      });
+    }
+    if (v === 'product') {
+      return onChange({
+        source: 'ai', cutType: 'product',
+        direction: block.direction === 'back' ? 'back' : 'front',
+        shot: ['ghost', 'hanger', 'flatlay'].includes(block.shot) ? block.shot : 'ghost',
+      });
+    }
+    // styling · horizon
+    return onChange({
+      source: 'ai', cutType: v,
+      direction: ['front', 'back', 'side'].includes(block.direction) ? block.direction : 'front',
+      shot: ['full', 'knee', 'medium', 'close'].includes(block.shot) ? block.shot : 'full',
+    });
+  };
 
   // 내 이미지 = 직접 삽입 흐름 (PRD 8.8) — no AI options
   const isMine = block.source === 'mine';
@@ -208,10 +233,15 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
           <Button variant="quiet" size="sm" icon="arrowLeft" onClick={() => onMode('props')}>뒤로 가기</Button>
         </div>
         <div className="sec-title" style={{ fontSize: 15, margin: '2px 0 14px' }}>{block.title} · 포즈·매칭 의류 편집</div>
-        <div className="insp-sec"><label className="lbl">포즈 변경</label>
-          <ThumbGrid items={poseItems} value={block.pose || 'auto'} onChange={(v) => {
-            const it = poseItems.find((p) => p.id === v); onChange({ pose: v, poseLabel: it?.label || 'AI 자동', poseThumb: it?.thumb || block.poseThumb });
-          }} labels /></div>
+        {block.cutType === 'mirror' ? (
+          /* 거울샷 포즈는 거울 셀피 구도로 자동 고정 (ADR-0004) */
+          <div className="insp-note" style={{ marginBottom: 14 }}><Icon name="info" size={14} />거울샷 포즈는 거울 셀피 구도로 자동 연출돼요.</div>
+        ) : (
+          <div className="insp-sec"><label className="lbl">포즈 변경</label>
+            <ThumbGrid items={poseItems} value={block.pose || 'auto'} onChange={(v) => {
+              const it = poseItems.find((p) => p.id === v); onChange({ pose: v, poseLabel: it?.label || 'AI 자동', poseThumb: it?.thumb || block.poseThumb });
+            }} labels /></div>
+        )}
         {matchClothing && (
           <div className="insp-sec">
             <label className="lbl">매칭 의류<span className="opt" style={{ fontWeight: 400, color: 'var(--fg-3)', marginLeft: 6 }}>스타일링에 함께</span></label>
@@ -233,6 +263,7 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
   }
 
   const isProduct = block.cutType === 'product';
+  const isMirror = block.cutType === 'mirror';
   return (
     <div className="surface inspector">
       <div className="insp-sec"><label className="lbl">컷 종류</label>
@@ -242,7 +273,12 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
         <div className="insp-empty-hint"><Icon name="arrowUp" size={15} />컷 종류를 먼저 선택하면 세부 설정이 나타나요.</div>
       ) : (
         <>
-      {isProduct ? (
+      {isMirror ? (
+        /* 거울샷(ADR-0004): 방향 없음, 샷은 전신/무릎만 */
+        <div className="insp-sec"><label className="lbl">샷 종류</label>
+          <Chips options={catalogs.shotTypes.filter((s) => s.value === 'full' || s.value === 'knee')}
+            value={block.shot === 'knee' ? 'knee' : 'full'} onChange={(v) => onChange({ shot: v })} /></div>
+      ) : isProduct ? (
         <>
           <div className="insp-sec"><label className="lbl">방향</label>
             <Chips options={catalogs.productDirections} value={catalogs.productDirections.some((d) => d.value === block.direction) ? block.direction : 'front'} onChange={(v) => onChange({ direction: v })} /></div>
@@ -272,15 +308,18 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
         <Icon name="settings" size={17} />포즈·매칭 의류 편집
       </button>
 
-      {/* 추가 옵션 — 컷별 얼굴 노출 / 앵글 (PRD 6.8, 9.x) */}
+      {/* 추가 옵션 — 컷별 얼굴 노출 / 앵글 (PRD 6.8, 9.x). 거울샷은 얼굴 기본 '폰으로 가림', 앵글 없음 (ADR-0004) */}
       <details className="insp-extra">
         <summary><Icon name="chevDown" size={15} />추가 옵션</summary>
         <div className="insp-sec" style={{ marginTop: 12 }}><label className="lbl">모델 얼굴</label>
-          <Chips options={[{ value: 'same', label: '동일' }, { value: 'show', label: '노출' }, { value: 'hide', label: '비노출' }]}
-            value={block.faceExposure || 'same'} onChange={(v) => onChange({ faceExposure: v })} /></div>
-        <div className="insp-sec"><label className="lbl">앵글</label>
+          <Chips options={isMirror
+            ? [{ value: 'hide', label: '폰으로 가림' }, { value: 'show', label: '노출' }]
+            : [{ value: 'same', label: '동일' }, { value: 'show', label: '노출' }, { value: 'hide', label: '비노출' }]}
+            value={isMirror ? (block.faceExposure === 'show' ? 'show' : 'hide') : (block.faceExposure || 'same')}
+            onChange={(v) => onChange({ faceExposure: v })} /></div>
+        {!isMirror && <div className="insp-sec"><label className="lbl">앵글</label>
           <Chips options={[{ value: 'same', label: '동일' }, { value: 'low', label: '로우' }, { value: 'high', label: '하이' }]}
-            value={block.angle || 'same'} onChange={(v) => onChange({ angle: v })} /></div>
+            value={block.angle || 'same'} onChange={(v) => onChange({ angle: v })} /></div>}
       </details>
         </>
       )}

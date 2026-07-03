@@ -20,10 +20,13 @@ export const Gender = Object.freeze({ WOMEN: 'women', MEN: 'men' });
 export const Fit = Object.freeze({ SLIM: 'slim', REGULAR: 'regular', SEMI_OVER: 'semi_over', OVER: 'over' });
 export const ComposeMode = Object.freeze({ SIMPLE: 'simple', BASIC: 'basic', EXTENDED: 'extended' });
 export const BlockKind = Object.freeze({ HOOK: 'hook', SELLING: 'selling', STYLING: 'styling', HORIZON: 'horizon', PRODUCT: 'product', INFO: 'info' });
-/** 컷 종류 — 공식 용어: 스타일링컷·호리존컷·제품컷 (ADR-0003. 'daily'·'studio' 토큰 폐기) */
-export const CutType = Object.freeze({ STYLING: 'styling', HORIZON: 'horizon', PRODUCT: 'product' });
+/** 컷 종류 — 공식 용어: 스타일링컷·호리존컷·제품컷 (ADR-0003. 'daily'·'studio' 토큰 폐기)
+    + 거울샷 'mirror' (ADR-0004. 방향 없음, 샷은 full/knee만, 얼굴 기본 'hide'=폰으로 가림) */
+export const CutType = Object.freeze({ STYLING: 'styling', HORIZON: 'horizon', PRODUCT: 'product', MIRROR: 'mirror' });
 /** 블록 출처 — '내 이미지'는 컷 종류가 아니라 source다 (ADR-0003) */
 export const BlockSource = Object.freeze({ AI: 'ai', MINE: 'mine' });
+/** 공간 무드 유지 그룹의 변화 강도 — 'subtle'=같은 구도 미세 이동(기본), 'varied'=포즈·프레이밍 변주 (ADR-0004) */
+export const SpaceVariation = Object.freeze({ SUBTLE: 'subtle', VARIED: 'varied' });
 export const Direction = Object.freeze({ FRONT: 'front', BACK: 'back', SIDE: 'side' });
 export const ProductDirection = Object.freeze({ FRONT: 'front', BACK: 'back' });
 export const ShotType = Object.freeze({ FULL: 'full', KNEE: 'knee', MEDIUM: 'medium', CLOSE: 'close' });
@@ -162,7 +165,9 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string[]} matchIds
    @property {'same'|'show'|'hide'} faceExposure
    @property {'same'|'low'|'high'} angle
-   @property {string[]} refImages        내 레퍼런스 — 생성 입력(NewCutRequest)에 포함
+   @property {string[]} refImages        내 레퍼런스 — 생성 입력(NewCutRequest)에 포함. 프로젝트(블록) 한정, 전역 저장 없음
+   @property {string|null} [spaceGroupId] 공간 무드 유지 그룹 — 같은 id = 같은 공간에서 생성 (ADR-0004)
+   @property {SpaceVariation} [spaceVariation] 그룹 내 변화 강도 — 기본 'subtle'
    @property {string[]} [ownImages]      source='mine'
    @property {string} thumb              예시 썸네일 (최종 이미지 아님)
    @property {string} [title]            과도기 표시 필드 — 계약상 파생 (kind 라벨)
@@ -220,7 +225,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
 
 /** Convenience namespace mirroring the prototype's window.WT */
 export const WT = Object.freeze({
-  ClothingType, Gender, Fit, ComposeMode, BlockKind, CutType, BlockSource,
+  ClothingType, Gender, Fit, ComposeMode, BlockKind, CutType, BlockSource, SpaceVariation,
   Direction, ProductDirection, ShotType, ProductShotType, ProjectStatus,
   JobStatus, ElementType, AngleSlot, AdjustFit, AdjustLength,
 });

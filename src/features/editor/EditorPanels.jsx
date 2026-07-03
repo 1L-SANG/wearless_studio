@@ -132,9 +132,15 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
   // 미상이면 '모델 착용 컷'으로 가정하고(B안), 질문 카드로 제품 사진 전환만 받는다.
   const srcType = source.cutType || null;
   const isProduct = srcType === 'product';
+  // 거울샷 소스(ADR-0004): 방향 변경 없음, 샷 full/knee만, 포즈는 셀피 구도 자동이라 변형 대상 아님
+  const isMirror = srcType === 'mirror';
   const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
-  const shotOpts = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
-  const cats = isProduct ? VARY_CATS.filter((c) => c.id === 'cut' || c.id === 'bg') : VARY_CATS;
+  const shotOpts = isProduct ? catalogs.productShotTypes
+    : isMirror ? catalogs.shotTypes.filter((s) => s.value === 'full' || s.value === 'knee')
+    : catalogs.shotTypes;
+  const cats = isProduct ? VARY_CATS.filter((c) => c.id === 'cut' || c.id === 'bg')
+    : isMirror ? VARY_CATS.filter((c) => c.id !== 'pose')
+    : VARY_CATS;
   const safeCat = cats.some((c) => c.id === cat) ? cat : 'cut';
   const optLabel = (c, id) => (opts[c] || []).find((o) => o.id === id)?.label || id;
   const valLabel = (list, v) => (list || []).find((o) => o.value === v)?.label || v;
@@ -189,8 +195,8 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
       {safeCat === 'cut' ? (
         <>
           {/* Chips 는 선택된 칩 재클릭 시 null 을 보냄 → '변경 없음'(keep) 으로 복귀시킨다 */}
-          <div className="insp-sec"><label className="lbl">방향</label>
-            <Chips options={[{ value: 'keep', label: '변경 없음' }, ...dirOpts]} value={cutDir} onChange={(v) => setCutDir(v || 'keep')} /></div>
+          {!isMirror && <div className="insp-sec"><label className="lbl">방향</label>
+            <Chips options={[{ value: 'keep', label: '변경 없음' }, ...dirOpts]} value={cutDir} onChange={(v) => setCutDir(v || 'keep')} /></div>}
           <div className="insp-sec"><label className="lbl">샷 종류</label>
             <Chips options={[{ value: 'keep', label: '변경 없음' }, ...shotOpts]} value={cutShot} onChange={(v) => setCutShot(v || 'keep')} /></div>
         </>
@@ -275,6 +281,7 @@ export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGener
   const [refImages, setRefImages] = useState([]);       // 내 레퍼런스 — NewCutRequest.refImages (계약 §6)
   const colorVal = color || colorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
   const isProduct = cut === 'product';
+  const isMirror = cut === 'mirror'; // 거울샷(ADR-0004): 방향 없음, 샷 full/knee만
   const [modelOpen, setModelOpen] = useState(false);
   const modelRef = useRef(null);
   const smoothScroll = (p, to, dur = 300) => {
@@ -295,7 +302,9 @@ export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGener
     }
   };
   const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
-  const shotOpts = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
+  const shotOpts = isProduct ? catalogs.productShotTypes
+    : isMirror ? catalogs.shotTypes.filter((s) => s.value === 'full' || s.value === 'knee')
+    : catalogs.shotTypes;
   const dirVal = dirOpts.some((o) => o.value === dir) ? dir : dirOpts[0].value;
   const shotVal = shotOpts.some((o) => o.value === shot) ? shot : shotOpts[0].value;
   return (
@@ -308,10 +317,10 @@ export function AIPanel({ catalogs, account, colorOpts = [], varySource, onGener
         <div>
           <div className="insp-sec"><label className="lbl">컷 종류</label>
             <UnderlineTabs options={catalogs.cutTypes} value={cut} onChange={(v) => setCut(v)} /></div>
-          <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>
+          {!isMirror && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
           <div className="insp-sec"><label className="lbl">샷 종류</label><Chips className="oneline" options={shotOpts} value={shotVal} onChange={setShot} /></div>
 
-          <MoodGuide catalogs={catalogs} cut={cut} direction={dirVal} shot={shotVal} refs={refImages} onRefsChange={setRefImages} />
+          <MoodGuide catalogs={catalogs} cut={cut} direction={isMirror ? null : dirVal} shot={shotVal} refs={refImages} onRefsChange={setRefImages} />
 
           <div className="insp-divider" />
 
