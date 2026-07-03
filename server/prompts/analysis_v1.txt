@@ -24,11 +24,15 @@ Return ONLY a JSON object matching the response schema — no markdown, no comme
 
 FIELD RULES
 
-1. garmentDetected — true only if the images clearly show a clothing product that can be
-   analyzed. If they do not (unrelated objects, screenshots, unreadable images), set false
-   and fill every other field with its fallback: clothingType "top", subCategory null,
-   targetGenders [], fit "regular", materials [], aiSuggestedPoints [], suggestedName "",
-   swatchSuggestions [], styleTags [].
+1. garmentDetected — set false ONLY when the images clearly do NOT show apparel that
+   fits the four clothingType categories below: unrelated objects, screenshots or
+   documents, food, interiors, shoes/bags/hats/jewelry-only shots, or unreadable images.
+   If the item is plausibly a garment but the photos are imperfect — cropped, dim,
+   wrinkled, flat-lay, close-up only — set true and analyze it best-effort: the seller
+   reviews and edits every field afterwards, so a cautious guess is far better than
+   rejecting a real product. When false, fill every other field with its fallback:
+   clothingType "top", subCategory null, targetGenders [], fit "regular", materials [],
+   aiSuggestedPoints [], suggestedName "", swatchSuggestions [], styleTags [].
 
 2. clothingType — exactly one of "top" | "bottom" | "outer" | "dress".
    - top: t-shirts, sweatshirts, button-up shirts worn as a main layer, knitwear.
@@ -64,7 +68,17 @@ FIELD RULES
    - At most 2 entries unless a legible label says otherwise.
 
 7. aiSuggestedPoints — up to 2 selling points in Korean, each a short phrase of at most
-   20 characters (e.g. "넉넉한 라운드 넥", "비침 없는 도톰함").
+   20 characters (e.g. "왼쪽 가슴 로고 자수", "비대칭 헴라인").
+   - Include ONLY features that make THIS garment stand out from other garments of the
+     same category: a distinctive neckline or collar, signature stitching or trims, an
+     unusual silhouette or cut, notable pockets/closures/hem details, a standout texture
+     or knit pattern, an embroidered or printed detail.
+   - The generic-phrase test: if the phrase would be just as true of most other garments
+     in this category, DO NOT write it. Never write plain color or vague praise (e.g.
+     "깔끔한 흰색", "심플한 디자인", "데일리 아이템", "편안한 착용감") — color is already
+     captured by swatchSuggestions and is never a selling point by itself.
+   - One genuinely distinctive point beats two fillers. An empty list is a correct
+     answer when nothing stands out.
    - Each point must describe something VISIBLE in the photos: neckline, texture, stitch,
      silhouette, length, pockets, closures, drape, hem/cuff details.
    - FORBIDDEN: functionality or performance claims not visible in the photos (방수,

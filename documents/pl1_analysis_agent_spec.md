@@ -193,6 +193,7 @@ IMAGE MANIFEST (the attached images follow in this exact order):
 
 **1) 안전 게이트**
 - `garmentDetected=false` → job error `"사진에서 의류를 인식하지 못했어요. 상품이 잘 보이는 사진으로 다시 시도해 주세요."` (이후 단계 진행 안 함)
+- **게이트 방향 (사용자 피드백 2026-07-03)**: "확실히 의류일 때만 통과"가 아니라 **"확실히 의류가 아닐 때만 차단"** — 진짜 옷이 거부되는 오탐(사용자 분노)이 비의류 통과(무료 분석 1회 + 폼에서 사용자가 알아챔)보다 훨씬 비싸다. 애매한 사진(잘림·어두움·클로즈업·플랫레이)은 통과시켜 best-effort 분석. 신발·가방·모자 등 4종 밖 패션잡화는 정당 차단.
 
 **2) 정규화·교차검증** (실패해도 job을 죽이지 않고 보정하는 항목 / 죽이는 항목 구분)
 
@@ -202,7 +203,7 @@ IMAGE MANIFEST (the attached images follow in this exact order):
 | `subCategory` | `SUB_BY_TYPE[clothingType]` 소속 검사. `dress`는 무조건 `null` | 불일치 → **null 강제** (진행) |
 | `targetGenders` | 중복 제거, 최대 2 | 초과분 절단 |
 | `materials` | name sanitize·빈 name 드롭, ratio int 클램프(1..100), 최대 4개 | 위반 항목 드롭 |
-| `aiSuggestedPoints` | 각 항목 sanitize·trim ≤20자, 최대 2개. **실측성 표현 필터**: `\d+\s*(cm|센치|센티|mm|inch|인치)` 매칭 항목 드롭 (PRD §15.4 방어선) | 위반 항목 드롭 |
+| `aiSuggestedPoints` | 각 항목 sanitize·trim ≤20자, 최대 2개. **실측성 표현 필터**: `\d+\s*(cm|센치|센티|mm|inch|인치)` 매칭 항목 드롭 (PRD §15.4 방어선). **색상 언급 필터**: 색상명(흰색·블랙 등) 포함 항목 드롭 — "깔끔한 흰색" 류는 정보 0, 색은 스와치가 담당 (사용자 결정 2026-07-03 · 프롬프트 §7의 generic-phrase test가 1차, 이 필터가 2차. suggestedName에는 미적용 — 상품명의 색상 표기는 정당) | 위반 항목 드롭 |
 | `suggestedName` | sanitize·trim ≤40자. 실측성 표현 필터 동일 적용(매칭 시 빈 문자열) | 보정 |
 | `swatchSuggestions` | `colorGroupId`가 실제 `product.colors`에 존재하는지 검사 | 미존재 항목 무시 |
 | `styleTags` | enum 멤버십(스키마가 강제), 최대 5 | 위반 항목 드롭 |
@@ -341,11 +342,15 @@ Return ONLY a JSON object matching the response schema — no markdown, no comme
 
 FIELD RULES
 
-1. garmentDetected — true only if the images clearly show a clothing product that can be
-   analyzed. If they do not (unrelated objects, screenshots, unreadable images), set false
-   and fill every other field with its fallback: clothingType "top", subCategory null,
-   targetGenders [], fit "regular", materials [], aiSuggestedPoints [], suggestedName "",
-   swatchSuggestions [], styleTags [].
+1. garmentDetected — set false ONLY when the images clearly do NOT show apparel that
+   fits the four clothingType categories below: unrelated objects, screenshots or
+   documents, food, interiors, shoes/bags/hats/jewelry-only shots, or unreadable images.
+   If the item is plausibly a garment but the photos are imperfect — cropped, dim,
+   wrinkled, flat-lay, close-up only — set true and analyze it best-effort: the seller
+   reviews and edits every field afterwards, so a cautious guess is far better than
+   rejecting a real product. When false, fill every other field with its fallback:
+   clothingType "top", subCategory null, targetGenders [], fit "regular", materials [],
+   aiSuggestedPoints [], suggestedName "", swatchSuggestions [], styleTags [].
 
 2. clothingType — exactly one of "top" | "bottom" | "outer" | "dress".
    - top: t-shirts, sweatshirts, button-up shirts worn as a main layer, knitwear.
@@ -381,7 +386,17 @@ FIELD RULES
    - At most 2 entries unless a legible label says otherwise.
 
 7. aiSuggestedPoints — up to 2 selling points in Korean, each a short phrase of at most
-   20 characters (e.g. "넉넉한 라운드 넥", "비침 없는 도톰함").
+   20 characters (e.g. "왼쪽 가슴 로고 자수", "비대칭 헴라인").
+   - Include ONLY features that make THIS garment stand out from other garments of the
+     same category: a distinctive neckline or collar, signature stitching or trims, an
+     unusual silhouette or cut, notable pockets/closures/hem details, a standout texture
+     or knit pattern, an embroidered or printed detail.
+   - The generic-phrase test: if the phrase would be just as true of most other garments
+     in this category, DO NOT write it. Never write plain color or vague praise (e.g.
+     "깔끔한 흰색", "심플한 디자인", "데일리 아이템", "편안한 착용감") — color is already
+     captured by swatchSuggestions and is never a selling point by itself.
+   - One genuinely distinctive point beats two fillers. An empty list is a correct
+     answer when nothing stands out.
    - Each point must describe something VISIBLE in the photos: neckline, texture, stitch,
      silhouette, length, pockets, closures, drape, hem/cuff details.
    - FORBIDDEN: functionality or performance claims not visible in the photos (방수,

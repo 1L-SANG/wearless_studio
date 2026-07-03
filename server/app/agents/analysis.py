@@ -91,6 +91,14 @@ RESPONSE_SCHEMA: dict = {
 # 실측성 표현 필터 (PRD §15.4 방어선) — 자유 텍스트에 수치+단위가 섞이면 드롭
 _MEASUREMENT_RE = re.compile(r"\d+\s*(cm|센치|센티|mm|inch|인치)", re.IGNORECASE)
 
+# 색상 언급 특징 드롭 (사용자 결정 2026-07-03) — "깔끔한 흰색" 류는 정보 0 (색은 스와치가 담당).
+# 프롬프트가 1차로 금지하고, 이 필터가 2차 방어. suggestedName에는 적용하지 않는다(상품명의
+# 색상 표기는 정당 — "블랙 와이드 슬랙스").
+_COLOR_WORD_RE = re.compile(
+    r"흰색|하얀|화이트|검정|검은|블랙|회색|그레이|아이보리|베이지|브라운|갈색"
+    r"|빨간|빨강|레드|노란|노랑|옐로|초록|그린|파란|파랑|블루|네이비|남색|핑크|분홍|보라|퍼플"
+)
+
 # 첨부 이미지 순서·라벨 (mannequin 워커와 동일 원칙 — 고정 라벨 룩업만, 셀러 텍스트 미삽입)
 _SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "Fit": 3}
 
@@ -260,6 +268,8 @@ def postprocess(raw: AnalysisRaw, product: dict) -> dict:
     for p in raw.ai_suggested_points:
         t = _sanitize(p)[:20]
         if not t or _MEASUREMENT_RE.search(t):  # 실측성 표현 → 드롭 (PRD §15.4)
+            continue
+        if _COLOR_WORD_RE.search(t):  # 색상 언급 특징 → 드롭 (무의미 필러 — 사용자 결정)
             continue
         points.append(t)
         if len(points) == 2:

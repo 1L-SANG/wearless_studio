@@ -116,6 +116,18 @@ def test_postprocess_safety_filter():
     assert out["payload_base"]["suggestedName"] == ""
 
 
+def test_postprocess_drops_color_filler_points():
+    # "깔끔한 흰색" 류 색상 언급 특징은 정보 0 — 드롭 (사용자 결정 2026-07-03).
+    # 상품명의 색상 표기는 정당 — suggestedName에는 미적용.
+    raw = analysis.AnalysisRaw.model_validate(_raw(
+        aiSuggestedPoints=["깔끔한 흰색", "왼쪽 가슴 로고 자수"],
+        suggestedName="블랙 와이드 슬랙스",
+    ))
+    out = analysis.postprocess(raw, _product())
+    assert out["payload_base"]["aiSuggestedPoints"] == ["왼쪽 가슴 로고 자수"]
+    assert out["payload_base"]["suggestedName"] == "블랙 와이드 슬랙스"
+
+
 def test_postprocess_trims():
     raw = analysis.AnalysisRaw.model_validate(_raw(
         aiSuggestedPoints=["가나다라마바사아자차카타파하가나다라마바사", "둘", "셋"],
