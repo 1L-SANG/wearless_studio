@@ -176,7 +176,6 @@ export function ProductInput() {
   // IndexedDB 에 보관(페이지 살아있을 때만 blob 추출 가능)한 뒤 로그인 모달을 띄운다 → 복귀 후
   // 입력 화면에 돌아오면 ProductInput 이 복원한다. (사진의 백엔드 동기화는 보류 — App 주석 참조.)
   const redirectingRef = useRef(false);
-  const uploadingRef = useRef(0);   // 진행 중 uploadAsset 배치 수 — submit 게이트
   const goToMannequin = async () => {
     if (session) { navigate('/create/mannequin'); return; }
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
@@ -245,26 +244,33 @@ export function ProductInput() {
 
   const set = (patch) => setProduct((p) => ({ ...p, ...patch }));
   // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
-  // 추가 시점에 uploadAsset 경유 (pl1 spec §7.1) — 분석·마네킹이 R2의 사진을 읽으므로
-  // 여기서 올린다. id = asset id(http) / 로컬 id(mock). 실패한 장수는 목록에 안 넣고 토스트.
-  const addImageFiles = async (colorId, slot, metas) => {
-    uploadingRef.current += 1;   // 업로드 중 submit 방지 (분석 대상 ≠ 화면 세트 방지)
-    try {
-      const uploaded = [];
-      let failed = 0;
-      for (const m of metas) {
+  // 추가는 로컬 즉시(원래 mock 동작) — 서버 업로드·실패는 'AI 분석하기'(submit) 시점으로
+  // 미룬다 (사용자 결정 2026-07-03: 추가 단계에서 검사하지 않기). file 원본은 submit의
+  // uploadPendingImages 입력으로 이미지 객체에 보존한다.
+  const addImageFiles = (colorId, slot, metas) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: [...c.images, ...metas.map((m) => ({ id: uid('img'), slot, label: slot, ...m }))] } : c) }));
+
+  // 아직 서버에 안 올라간 사진(file 보유)을 업로드하고 asset id/URL로 치환한 product를 돌려준다.
+  // 부분 성공 보존: 중간에 실패해도 성공분은 반영된 product를 반환 — 재시도 시 중복 업로드 방지.
+  // 실패 사유는 서버의 구체 메시지(형식·크기 등)를 그대로 살려 던진다 (pl1 spec §7.1).
+  const uploadPendingImages = async (prod) => {
+    const colors = prod.colors.map((c) => ({ ...c, images: [...c.images] }));
+    let error = null;
+    outer: for (const c of colors) {
+      for (let i = 0; i < c.images.length; i++) {
+        const im = c.images[i];
+        if (!im.file) continue;   // 이미 서버 자산(재시도) 또는 draft 복원분
         try {
-          const { file, ...meta } = m;
+          const { file, ...meta } = im;
           const asset = await api.uploadAsset(file, { projectId });
-          if (asset.src && asset.src !== meta.src) URL.revokeObjectURL(meta.src);   // 대체된 미리보기 URL 해제
-          uploaded.push({ ...meta, slot, label: slot, id: asset.id, src: asset.src || meta.src });
-        } catch { failed += 1; }
+          if (asset.src && asset.src !== meta.src) URL.revokeObjectURL(meta.src);
+          c.images[i] = { ...meta, id: asset.id, src: asset.src || meta.src };
+        } catch (e) {
+          error = new Error(`'${im.name || '사진'}' 업로드에 실패했어요 — ${e?.message || '네트워크 상태를 확인해 주세요.'}`);
+          break outer;   // 하나 막히면 중단 (형식·네트워크 문제는 이어서도 실패)
+        }
       }
-      if (failed) toast.push(`이미지 ${failed}장 업로드에 실패했어요. 다시 시도해 주세요.`, { icon: 'alertTri' });
-      if (uploaded.length) setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: [...c.images, ...uploaded] } : c) }));
-    } finally {
-      uploadingRef.current -= 1;
     }
+    return { product: { ...prod, colors }, error };
   };
   const removeImage = (colorId, imgId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: c.images.filter((im) => im.id !== imgId) } : c) }));
   const renameColor = (colorId, name) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, name } : c) }));
@@ -279,16 +285,16 @@ export function ProductInput() {
 
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
-    if (uploadingRef.current > 0) {
-      toast.push('이미지 업로드가 끝난 뒤 다시 시도해 주세요.', { icon: 'alertTri' });
-      return;
-    }
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
     try {
-      // 저장이 먼저다 — 서버는 저장된 상태(products)를 분석한다
+      // ① 사진 업로드 — 추가 시점이 아니라 여기서 (사용자 결정). 실패 시 구체 사유로 중단.
+      const { product: uploaded, error } = await uploadPendingImages(product);
+      if (uploaded !== product) setProduct(uploaded);   // 부분 성공 보존 (재시도 시 중복 방지)
+      if (error) throw error;
+      // ② 저장이 먼저다 — 서버는 저장된 상태(products)를 분석한다
       // (frontend_state_model §7 · pl1 spec §7.2 순서 교정).
-      await api.saveProduct(projectId, { ...product, uploadComplete: true });
+      await api.saveProduct(projectId, { ...uploaded, uploadComplete: true });
       const a = await api.analyzeProduct(projectId, {});
       setAnalysis(a);
       // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 저장

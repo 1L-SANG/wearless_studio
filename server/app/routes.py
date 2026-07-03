@@ -374,9 +374,9 @@ async def create_upload_url(
 ):
     ext = ext_for_mime(body.mime)
     if ext is None:
-        raise _bad_request("unsupported_type", "지원하지 않는 이미지 형식입니다.")
+        raise _bad_request("unsupported_type", "지원하지 않는 사진 형식이에요. JPG·PNG·WebP로 올려주세요. (아이폰 HEIC 사진은 JPG로 변환 필요)")
     if body.size <= 0 or body.size > MAX_UPLOAD_BYTES:
-        raise _bad_request("file_too_large", "파일 크기가 허용 범위를 벗어났습니다.")
+        raise _bad_request("file_too_large", "사진이 너무 커요. 15MB 이하 사진으로 올려주세요.")
 
     # 프로젝트 소유권 확인 — 타인 프로젝트 경로로 업로드 URL 발급 차단
     async with get_conn(request) as conn:
@@ -402,7 +402,7 @@ async def complete_upload(
 ):
     ext = ext_for_mime(body.mime)
     if ext is None:
-        raise _bad_request("unsupported_type", "지원하지 않는 이미지 형식입니다.")
+        raise _bad_request("unsupported_type", "지원하지 않는 사진 형식이에요. JPG·PNG·WebP로 올려주세요. (아이폰 HEIC 사진은 JPG로 변환 필요)")
 
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, body.project_id) is None:
