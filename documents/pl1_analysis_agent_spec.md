@@ -1163,7 +1163,7 @@ async saveAnalysis(projectId, patch) {
 3. 프론트 어댑터(§7) + 수동 체크(§10.4).
 4. **SQL 물리 검증** (dev DB, psycopg 1회 — §10.2 비고 ⓐ~ⓓ): 실제 analyze job을 흘려 지문 가드·병합 upsert·합류가 SQL 레벨에서 동작하는지 확인 (agents.md 관례 — 마이그레이션 히스토리 신뢰 금지와 같은 원칙).
 5. 기존 문서 정합 갱신(§13) + TODO.md에 마이그레이션 갭 기록.
-6. Railway 배포 env 반영 → prod smoke 1회. **+ R2 버킷 CORS에 prod 웹 도메인 추가 (PUT·GET)** — ⓐ presigned PUT 업로드(브라우저 직접)와 ⓑ draft 저장의 R2 공개 URL fetch(blob 재추출)가 전부 브라우저 CORS를 탄다. **2026-07-03 preflight 실측: 현재 화이트리스트는 `http://localhost:5173`만 허용(로컬 dev OK), prod 도메인은 거부** — Cloudflare 대시보드에서 배포 도메인 추가 전엔 prod 업로드 전멸. 추가 후 브라우저 http 모드 스모크 1회.
+6. Railway 배포 env 반영 → prod smoke 1회. **R2 버킷 CORS 확인 완료** — ⓐ presigned PUT 업로드(브라우저 직접)와 ⓑ draft 저장의 R2 공개 URL fetch(blob 재추출)가 전부 브라우저 CORS를 탄다. **2026-07-03 preflight 실측: `https://ai.wearless.kr`·`http://localhost:5173` 둘 다 GET·PUT 허용됨(이미 설정돼 있던 상태). 미등록 오리진은 거부 확인.** (주의: 서버 런타임 R2 토큰은 object-only라 CORS 조회/변경 불가 — get/put_bucket_cors AccessDenied. CORS 변경은 Cloudflare 대시보드에서만.) 남은 건 배포 후 브라우저 http 모드 스모크 1회 — 단, localhost도 CORS 허용이라 로컬에서도 동일 검증 가능(§10.4).
 
 ---
 
