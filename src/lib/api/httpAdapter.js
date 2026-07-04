@@ -253,6 +253,28 @@ export const httpAdapter = {
   },
 
   async generateDetailPage(projectId, { onProgress, onStep } = {}) {
+    // 진행 중 재진입 = 같은 실행에 합류 (mock inflight.detailPage와 동일 계약).
+    // 이 가드가 없으면 동시 호출(재마운트·중복 내비게이션)이 각자 유료 컷 잡 루프를 돌려 이중 과금된다.
+    if (_detailRun) { _detailRun.listeners.push({ onProgress, onStep }); return _detailRun.promise; }
+    const run = { listeners: [{ onProgress, onStep }] };
+    const emitProgress = (p) => run.listeners.forEach((l) => l.onProgress && l.onProgress(p));
+    const emitStep = (s) => run.listeners.forEach((l) => l.onStep && l.onStep(s));
+    run.promise = _runDetailPage(projectId, emitProgress, emitStep)
+      .finally(() => { if (_detailRun === run) _detailRun = null; });
+    _detailRun = run;
+    return run.promise;
+  },
+
+  // 마네킹 등 job형 플로우(generate→adjust→regenerate)는 같은 컷 상태를 공유하므로
+  // 부분 스왑 금지 — 백엔드가 generate+adjust+regenerate를 다 갖추고 draft sync(A-3)가
+  // 돼야 통째로 swap. 그 전까지 마네킹은 mock 유지(혼합 시 http 모드 깨짐).
+};
+
+// 진행 중인 상세페이지 생성 실행 (module 단일) — 동시 재진입 합류용
+let _detailRun = null;
+
+async function _runDetailPage(projectId, onProgress, onStep) {
+  {
     const [blocks, product, project] = await Promise.all([
       mockAdapter.getStoryboard(projectId), mockAdapter.getProduct(projectId), mockAdapter.getProject(projectId),
     ]);
@@ -302,12 +324,8 @@ export const httpAdapter = {
     setStep('assemble', 'done'); onProgress && onProgress(100);
     if (credits == null) credits = (await http('/v1/me/account')).credits;
     return { data: editorBlocks, credits };
-  },
-
-  // 마네킹 등 job형 플로우(generate→adjust→regenerate)는 같은 컷 상태를 공유하므로
-  // 부분 스왑 금지 — 백엔드가 generate+adjust+regenerate를 다 갖추고 draft sync(A-3)가
-  // 돼야 통째로 swap. 그 전까지 마네킹은 mock 유지(혼합 시 http 모드 깨짐).
-};
+  }
+}
 
 // 콘티 블록/NewCutRequest → 서버 CutGenerateRequest. refImages는 아직 로컬 objectURL이라
 // 미전송(refAssetIds 빈 배열) — 무드 레퍼런스 실배선은 assets 업로드 경로를 붙일 때 (TODO).
