@@ -44,6 +44,16 @@ class Settings:
     job_worker_id: str = "web"
     credit_cost_version: str = "v1"  # §6 임시 단가
     credit_cost_mannequin_generate: int = 2
+    # ---- 검색 증강 (retrieval_upgrade_prd) ----
+    # 임베딩 모델 단일소스 (model_routing 패턴 — 교체는 여기/env 한 곳).
+    openai_api_key: str | None = None  # text 임베딩 (서버 전용, secret)
+    embed_text_model: str = "text-embedding-3-small"  # OpenAI, 1536d
+    embed_image_model: str = "multimodalembedding@001"  # Vertex 멀티모달, 1408d
+    # 역량별 flag (기본 off — 게이트 통과 후 활성). PRD §5.5.
+    retrieval_matching: str = "off"  # off | tags | vector
+    retrieval_knowledge: str = "off"  # off | static | vector
+    retrieval_refimages: str = "off"  # off | on
+    seller_text_canonicalize: str = "off"  # off | shadow | enforce (FR-D1 안전 게이트)
 
 
 def _image_size() -> str:
@@ -54,6 +64,12 @@ def _image_size() -> str:
 def _mannequin_tier() -> str:
     t = os.getenv("MANNEQUIN_TIER", "image_high")
     return t if t in {"image_light", "image_high"} else "image_high"
+
+
+def _flag(env: str, default: str, allowed: set[str]) -> str:
+    """검색 증강 flag — 허용값 밖이면 안전하게 default(대개 'off')로 폴백."""
+    v = (os.getenv(env, default) or default).strip().lower()
+    return v if v in allowed else default
 
 
 def load_settings() -> Settings:
@@ -102,4 +118,13 @@ def load_settings() -> Settings:
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
         credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v1"),
         credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "2")),
+        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        embed_text_model=os.getenv("EMBED_TEXT_MODEL", "text-embedding-3-small"),
+        embed_image_model=os.getenv("EMBED_IMAGE_MODEL", "multimodalembedding@001"),
+        retrieval_matching=_flag("RETRIEVAL_MATCHING", "off", {"off", "tags", "vector"}),
+        retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static", "vector"}),
+        retrieval_refimages=_flag("RETRIEVAL_REFIMAGES", "off", {"off", "on"}),
+        seller_text_canonicalize=_flag(
+            "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
+        ),
     )
