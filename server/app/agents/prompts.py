@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..config import Settings
+from . import knowledge as knowledge_kb
 from .materials import material_guidance
 from .selling_points import canonicalize
 
@@ -46,11 +47,14 @@ def load_prompt_template(settings: Settings) -> str:
         return f.read()
 
 
-def _product_block(product: dict, analysis: dict, seller_canon: str = "off") -> str:
+def _product_block(product: dict, analysis: dict, seller_canon: str = "off", knowledge: str = "off") -> str:
     """분석 정보를 ground-truth 블록으로. 값 없는 항목은 생략, 값은 sanitize.
     materials는 [{name,ratio}] — name sanitize + ratio% 표기, 그 다음 소재 렌더링 가이드(영문) 첨부."""
     raw_mats = analysis.get("materials") or []
     mat_strs = []
+    clothing_type = product.get("clothing_type") or product.get("clothingType")
+    clothing_type_str = str(clothing_type or "")
+    sub_category_str = str(analysis.get("subCategory") or "")
     for m in raw_mats:  # [{name,ratio}] (name=자유텍스트 → sanitize). 레거시 문자열도 수용
         if isinstance(m, dict):
             name = _sanitize(m.get("name", ""))
@@ -63,9 +67,6 @@ def _product_block(product: dict, analysis: dict, seller_canon: str = "off") -> 
     material_entry = None
     if mat_strs:  # Material 줄 + (소재 인식) 렌더링 가이드 블록 (materials.py, §2.6)
         material_entry = f"- Material: {', '.join(mat_strs)}"
-        clothing_type = product.get("clothing_type") or product.get("clothingType")
-        clothing_type_str = str(clothing_type or "")
-        sub_category_str = str(analysis.get("subCategory") or "")
         guidance = material_guidance(raw_mats, clothing_type_str, sub_category_str)
         if guidance:
             material_entry += "\n" + guidance
@@ -92,6 +93,18 @@ def _product_block(product: dict, analysis: dict, seller_canon: str = "off") -> 
                 extra={"mode": "shadow", "matched": len(matched), "unmatched": len(unmatched)},
             )
         key_features_line = points and f"- Key features: {'; '.join(points)}"
+    # 정적 지식블록 (feature 2a): off=미적용 / static=category+styleTags 결정적 선택.
+    # category는 clothing_type 우선, 없으면 subCategory로 보강(위 material_guidance 호출과 동일 관례).
+    knowledge_block = None
+    if knowledge == "static":
+        kb_category = clothing_type_str or sub_category_str or None
+        style_tags = [_sanitize(t) for t in (analysis.get("styleTags") or []) if t]
+        kb_blocks = knowledge_kb.select(kb_category, style_tags)
+        if kb_blocks:  # PRODUCT CONTEXT 밖 별도 섹션 (D1의 NORMALIZED STYLING CUES와 동일 구조)
+            knowledge_block = (
+                "COMPOSITION GUIDANCE (curated styling reference — not product facts):\n"
+                + "\n".join(f"- {b}" for b in kb_blocks)
+            )
     genders = [_sanitize(g) for g in (analysis.get("targetGenders") or [])]
     category = " / ".join(
         _sanitize(x)
@@ -116,6 +129,8 @@ def _product_block(product: dict, analysis: dict, seller_canon: str = "off") -> 
         )
     if normalized_block:  # PRODUCT CONTEXT 밖 별도 섹션 (FR-D1a)
         context = f"{context}\n\n{normalized_block}" if context else normalized_block
+    if knowledge_block:  # PRODUCT CONTEXT 밖 별도 섹션 (feature 2a — D1과 동일 구조, 공존 가능)
+        context = f"{context}\n\n{knowledge_block}" if context else knowledge_block
     return context
 
 
@@ -125,6 +140,7 @@ def render_mannequin_prompt(
     product: dict,
     analysis: dict,
     seller_canon: str = "off",
+    knowledge: str = "off",
 ) -> str:
     """템플릿 ${토큰} 치환 + 분석 정보 자동 주입."""
     text = (
@@ -138,7 +154,7 @@ def render_mannequin_prompt(
     leftover = re.findall(r"\$\{[a-zA-Z_]+\}", text)  # 템플릿의 오타·미해결 토큰 검출
     if leftover:
         raise ValueError(f"프롬프트 템플릿에 해결되지 않은 토큰: {sorted(set(leftover))}")
-    block = _product_block(product, analysis, seller_canon)
+    block = _product_block(product, analysis, seller_canon, knowledge)
     return f"{text}\n\n{block}" if block else text
 
 

@@ -14,8 +14,8 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import repo
-from .agents import mannequin
-from .services import matching
+from .agents import mannequin, style_affinity
+from .services import matching, retrieval
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -461,6 +461,7 @@ async def match_candidates(
     project_id: str,
     clothingType: str = Query(...),
     gender: list[str] = Query(default=[]),
+    styleTags: list[str] = Query(default=[]),
     limit: int | None = Query(default=None),
     user_id: str = Depends(require_user),
 ):
@@ -481,7 +482,12 @@ async def match_candidates(
             raise _not_found()
         items = await repo.list_active_matching_items(conn)
     genders = [g.strip() for part in gender for g in part.split(",") if g.strip()]
-    ranked = matching.recommend(items, clothingType, genders, limit)
+    product_tags = [t.strip() for part in styleTags for t in part.split(",") if t.strip()]
+    if request.app.state.settings.retrieval_matching == "tags" and product_tags:
+        ranked = retrieval.recommend_v1(
+            items, clothingType, genders, product_tags, style_affinity.affinity_map(), limit)
+    else:
+        ranked = matching.recommend(items, clothingType, genders, limit)
     return JSONResponse([
         {
             "id": i["id"], "name": i["name"], "gender": i["gender"],
