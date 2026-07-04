@@ -80,7 +80,9 @@ async def _run_candidate(
         candidate=candidate, base_fit=base_fit, base_gender=base_gender,
         image_manifest=image_manifest,
     )
-    base_prompt = render_mannequin_prompt(template, ctx, product, analysis)
+    base_prompt = render_mannequin_prompt(
+        template, ctx, product, analysis, seller_canon=s.seller_text_canonicalize
+    )
     # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
     # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
     model = resolve_model(s, s.mannequin_tier)

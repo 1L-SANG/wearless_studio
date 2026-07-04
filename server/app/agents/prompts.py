@@ -5,6 +5,7 @@
 자동 주입한다 (ai_agent_modules §3 AG-04 입력 · spike productBlock()).
 """
 
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -12,6 +13,9 @@ from typing import Any
 
 from ..config import Settings
 from .materials import material_guidance
+from .selling_points import canonicalize
+
+logger = logging.getLogger(__name__)
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_generate_v1.txt")
@@ -42,7 +46,7 @@ def load_prompt_template(settings: Settings) -> str:
         return f.read()
 
 
-def _product_block(product: dict, analysis: dict) -> str:
+def _product_block(product: dict, analysis: dict, seller_canon: str = "off") -> str:
     """분석 정보를 ground-truth 블록으로. 값 없는 항목은 생략, 값은 sanitize.
     materials는 [{name,ratio}] — name sanitize + ratio% 표기, 그 다음 소재 렌더링 가이드(영문) 첨부."""
     raw_mats = analysis.get("materials") or []
@@ -65,7 +69,29 @@ def _product_block(product: dict, analysis: dict) -> str:
         guidance = material_guidance(raw_mats, clothing_type_str, sub_category_str)
         if guidance:
             material_entry += "\n" + guidance
-    points = [_sanitize(p) for p in (analysis.get("sellingPoints") or []) + (analysis.get("aiSuggestedPoints") or [])]
+    # 강조특징 정규화 (FR-D1): off=원문 그대로 / shadow=원문+매핑 로그 / enforce=canonical 큐만
+    raw_points = list(analysis.get("sellingPoints") or []) + list(analysis.get("aiSuggestedPoints") or [])
+    points = [_sanitize(p) for p in raw_points]
+    key_features_line = None
+    normalized_block = None
+    if seller_canon == "enforce":
+        matched, unmatched = canonicalize(raw_points)
+        if unmatched:
+            logger.info("seller_text_canonicalize", extra={"mode": "enforce", "dropped": len(unmatched)})
+        if matched:  # PRODUCT CONTEXT 밖 별도 파생 블록 (FR-D1a — ground-truth 라벨 보존)
+            normalized_block = (
+                "NORMALIZED STYLING CUES (derived from seller input — styling direction only, "
+                "not literal product claims):\n" + "\n".join(f"- {c}" for c in matched)
+            )
+        # key_features_line=None → PRODUCT CONTEXT에서 'Key features' 줄 제외
+    else:
+        if seller_canon == "shadow":
+            matched, unmatched = canonicalize(raw_points)
+            logger.info(
+                "seller_text_canonicalize",
+                extra={"mode": "shadow", "matched": len(matched), "unmatched": len(unmatched)},
+            )
+        key_features_line = points and f"- Key features: {'; '.join(points)}"
     genders = [_sanitize(g) for g in (analysis.get("targetGenders") or [])]
     category = " / ".join(
         _sanitize(x)
@@ -78,20 +104,27 @@ def _product_block(product: dict, analysis: dict) -> str:
         genders and f"- Target gender: {', '.join(genders)}",
         analysis.get("fit") and f"- Fit: {_sanitize(analysis.get('fit'))}",
         material_entry,
-        points and f"- Key features: {'; '.join(points)}",
+        key_features_line,
     ]
     body = "\n".join(x for x in lines if x)
-    if not body:
-        return ""
-    return (
-        "PRODUCT CONTEXT (seller-confirmed analysis — treat as ground truth, never "
-        "contradict it; use it to keep the garment's color, fit, and any logo faithful):\n"
-        + body
-    )
+    context = ""
+    if body:
+        context = (
+            "PRODUCT CONTEXT (seller-confirmed analysis — treat as ground truth, never "
+            "contradict it; use it to keep the garment's color, fit, and any logo faithful):\n"
+            + body
+        )
+    if normalized_block:  # PRODUCT CONTEXT 밖 별도 섹션 (FR-D1a)
+        context = f"{context}\n\n{normalized_block}" if context else normalized_block
+    return context
 
 
 def render_mannequin_prompt(
-    template: str, ctx: MannequinPromptContext, product: dict, analysis: dict
+    template: str,
+    ctx: MannequinPromptContext,
+    product: dict,
+    analysis: dict,
+    seller_canon: str = "off",
 ) -> str:
     """템플릿 ${토큰} 치환 + 분석 정보 자동 주입."""
     text = (
@@ -105,7 +138,7 @@ def render_mannequin_prompt(
     leftover = re.findall(r"\$\{[a-zA-Z_]+\}", text)  # 템플릿의 오타·미해결 토큰 검출
     if leftover:
         raise ValueError(f"프롬프트 템플릿에 해결되지 않은 토큰: {sorted(set(leftover))}")
-    block = _product_block(product, analysis)
+    block = _product_block(product, analysis, seller_canon)
     return f"{text}\n\n{block}" if block else text
 
 
