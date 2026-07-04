@@ -255,13 +255,15 @@ export const httpAdapter = {
   async generateDetailPage(projectId, { onProgress, onStep } = {}) {
     // 진행 중 재진입 = 같은 실행에 합류 (mock inflight.detailPage와 동일 계약).
     // 이 가드가 없으면 동시 호출(재마운트·중복 내비게이션)이 각자 유료 컷 잡 루프를 돌려 이중 과금된다.
-    if (_detailRun) { _detailRun.listeners.push({ onProgress, onStep }); return _detailRun.promise; }
+    // 합류는 프로젝트별 — 다른 프로젝트의 실행에 잘못 합류하지 않는다.
+    const existing = _detailRuns.get(projectId);
+    if (existing) { existing.listeners.push({ onProgress, onStep }); return existing.promise; }
     const run = { listeners: [{ onProgress, onStep }] };
     const emitProgress = (p) => run.listeners.forEach((l) => l.onProgress && l.onProgress(p));
     const emitStep = (s) => run.listeners.forEach((l) => l.onStep && l.onStep(s));
     run.promise = _runDetailPage(projectId, emitProgress, emitStep)
-      .finally(() => { if (_detailRun === run) _detailRun = null; });
-    _detailRun = run;
+      .finally(() => { if (_detailRuns.get(projectId) === run) _detailRuns.delete(projectId); });
+    _detailRuns.set(projectId, run);
     return run.promise;
   },
 
@@ -270,8 +272,8 @@ export const httpAdapter = {
   // 돼야 통째로 swap. 그 전까지 마네킹은 mock 유지(혼합 시 http 모드 깨짐).
 };
 
-// 진행 중인 상세페이지 생성 실행 (module 단일) — 동시 재진입 합류용
-let _detailRun = null;
+// 진행 중인 상세페이지 생성 실행 — projectId별 합류 (교차 프로젝트 합류 방지)
+const _detailRuns = new Map();
 
 async function _runDetailPage(projectId, onProgress, onStep) {
   {
