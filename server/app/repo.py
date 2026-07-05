@@ -869,10 +869,12 @@ async def finalize_analyze_success(
             "on conflict (project_id) do update set payload = excluded.payload",
             (project_id, Json(analysis_payload)),
         )
+        # metadata 병합 저장(provider·promptVersion) — provider 품질/폴백 추적·spike 데이터 근거.
         await cur.execute(
             "update jobs set status = 'done', result = %s, progress = 100, "
+            "metadata = metadata || %s::jsonb, "
             "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (Json(result), job_id),
+            (Json(result), Json(metadata), job_id),
         )
         await cur.execute(
             "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",

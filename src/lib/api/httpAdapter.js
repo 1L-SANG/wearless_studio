@@ -63,7 +63,9 @@ export const httpAdapter = {
   // washCare 등은 아직 mock 소유 → mock 분석 shape 를 베이스로 AI 산출 필드만 덮어써 shape 를 보존한다.
   async analyzeProduct(projectId, { onProgress } = {}) {
     const { jobId } = await http(`/v1/projects/${projectId}/analyze`, { method: 'POST' });
-    const result = await pollJob(jobId, { onProgress });
+    // 폴링 상한은 provider 순차 폴백 최악경로(2 × analysis_timeout_seconds=60s = 120s)보다 넉넉히
+    // 잡는다 — 짧으면 정상 폴백(gpt→gemini)이 완료 전에 실패 토스트가 뜨는데 job은 뒤늦게 성공한다.
+    const result = await pollJob(jobId, { onProgress, timeoutMs: 180000 });
     const ai = (result && result.data) || {};
     const base = JSON.parse(JSON.stringify(DB.analysis));  // 전체 shape(models·matchClothing·… 포함)
     const merged = {
