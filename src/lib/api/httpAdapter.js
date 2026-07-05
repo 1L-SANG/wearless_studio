@@ -95,7 +95,13 @@ export const httpAdapter = {
     return { ...product, colors };
   },
   async saveProduct(projectId, patch) {
-    return http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: patch });
+    const row = await http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: patch });
+    // 부분 스왑 브릿지(codex 리뷰 P2): getProduct·마네킹·콘티·에디터는 아직 mock 폴백이라
+    // DB.product 를 읽는다. 실 saveProduct 가 mock 미러를 안 건드리면 하위 단계가 seed 를 읽으므로,
+    // 그 단계들이 http 로 함께 스왑되기 전까지 mock 미러도 같은 patch 로 갱신한다.
+    Object.assign(DB.product, patch);
+    if (patch.name != null) DB.project.title = patch.name;
+    return row;
   },
   // AG-01 상품 분석 — POST /analyze(job) → 폴링 → analysis payload.
   // 반환 shape 은 mock(계약 §6)과 **동일해야 한다** — AnalysisForm 이 a.models/.matchClothing/
