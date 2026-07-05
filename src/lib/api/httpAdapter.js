@@ -56,7 +56,47 @@ async function pollJob(jobId, { onProgress, intervalMs = 1200, timeoutMs = 90000
   }
 }
 
+// 사진 1장 업로드 — presigned URL 3콜(발급→R2 PUT→complete). {assetId, url} 반환.
+// 로그인 후 draft 동기화(draftSync)도 이 함수를 재사용 (단일 업로드 계약, 서버 §3).
+// 서명 PUT은 Bearer 안 씀(서명 자체가 인증).
+export async function uploadPhoto(projectId, { filename, mime, blob }) {
+  const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
+    method: 'POST', body: { filename, mime, size: blob.size, projectId },
+  });
+  const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mime }, body: blob });
+  if (!put.ok) throw new Error('사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+  const asset = await http(`/v1/assets/${assetId}/complete`, {
+    method: 'POST', body: { projectId, mime, filename },
+  });
+  return { assetId, url: asset.url };
+}
+
 export const httpAdapter = {
+  // 상품 사진(blob)을 R2에 업로드하고 images[].id 를 **서버 asset id 로 치환**한다.
+  // 서버(mannequin.base_color_images·분석 워커)는 colors[].images[].id 를 asset id 로 링크하므로,
+  // 로컬 uid('img') 를 그대로 두면 서버가 사진을 못 찾는다(no_product_images). src 도 R2 URL 로 갱신.
+  // 이미 업로드된(blob: 아님) 이미지는 건너뛴다. projectId 없으면(비로그인 공개) 업로드 불가 → 그대로 반환.
+  async uploadProductPhotos(projectId, product) {
+    if (!projectId) return product;
+    const colors = await Promise.all((product.colors ?? []).map(async (c) => {
+      const images = await Promise.all((c.images ?? []).map(async (im) => {
+        if (!im.src || !im.src.startsWith('blob:')) return im;
+        const blob = await fetch(im.src).then((r) => r.blob());
+        // im.type 은 파일 감지 실패 시 'image'(잘못된 MIME)일 수 있다(filesToMetas 폴백) —
+        // '/' 가 있는 진짜 MIME 일 때만 쓰고, 아니면 blob.type / jpeg 로. (upload-url 400 방지)
+        const mime = (im.type && im.type.includes('/')) ? im.type : (blob.type || 'image/jpeg');
+        const { assetId, url } = await uploadPhoto(projectId, {
+          filename: im.name || 'photo', mime, blob,
+        });
+        return { ...im, id: assetId, src: url };
+      }));
+      return { ...c, images };
+    }));
+    return { ...product, colors };
+  },
+  async saveProduct(projectId, patch) {
+    return http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: patch });
+  },
   // AG-01 상품 분석 — POST /analyze(job) → 폴링 → analysis payload.
   // 반환 shape 은 mock(계약 §6)과 **동일해야 한다** — AnalysisForm 이 a.models/.matchClothing/
   // .sellingPoints 등을 무가드로 읽으므로. 부분 스왑 단계라 models·matchClothing·selectedModelId·
