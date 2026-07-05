@@ -11,12 +11,15 @@ RAW = {"clothingType": "top", "fit": "regular", "styleTags": ["basic"]}
 
 
 class FakeResp:
-    def __init__(self, status_code=200, payload=None, text=""):
+    def __init__(self, status_code=200, payload=None, text="", bad_json=False):
         self.status_code = status_code
         self._payload = payload or {}
+        self._bad_json = bad_json
         self.text = text or json.dumps(self._payload)
 
     def json(self):
+        if self._bad_json:  # 200+비JSON(프록시 HTML 등) 시뮬레이션
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
         return self._payload
 
 
@@ -138,6 +141,20 @@ def test_order_respected(monkeypatch):
     _, provider = run(_run(s, None))
     assert provider == "gemini"
     assert seen[0] == "gemini"  # 순서대로 gemini 먼저
+
+
+def test_malformed_200_body_falls_back(monkeypatch):
+    # GPT 가 200 을 주지만 본문이 비JSON(프록시 HTML 등) → 폴백이 우회되면 안 됨(F1 회귀)
+    s = make_settings(openai_api_key="sk-x", gemini_api_key="AIza-x", analysis_model_order="gpt,gemini")
+
+    def handler(url):
+        if "openai" in url:
+            return FakeResp(200, {}, "<html>gateway</html>", bad_json=True)
+        return _gemini_ok()
+
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient", fake_client_factory(handler))
+    _, provider = run(_run(s, None))
+    assert provider == "gemini"
 
 
 def test_gemini_schema_conversion():

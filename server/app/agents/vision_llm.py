@@ -33,6 +33,15 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
 
 
+def _envelope_json(res, provider: str) -> dict:
+    """응답 엔벨로프 파싱 → VisionError 로 변환. 200+비JSON(프록시 HTML 등)도 폴백 대상이 되게
+    (analyze_with_fallback 이 VisionError 를 잡는다 — raw JSONDecodeError 는 폴백을 우회한다)."""
+    try:
+        return res.json()
+    except ValueError as e:  # json.JSONDecodeError ⊂ ValueError
+        raise VisionError(f"{provider} 응답 파싱 실패: {e}") from e
+
+
 def _parse_json(text: str, provider: str) -> dict:
     if not text or not text.strip():
         raise VisionError(f"{provider} 응답이 비어 있어요.")
@@ -68,7 +77,7 @@ async def _call_gpt(settings: Settings, model: str, prompt: str,
             headers={"Authorization": f"Bearer {settings.openai_api_key}"})
     if res.status_code != 200:
         raise VisionError(f"OpenAI {res.status_code}: {res.text[:300]}")
-    data = res.json()
+    data = _envelope_json(res, "OpenAI")
     msg = ((data.get("choices") or [{}])[0].get("message") or {})
     return _parse_json(msg.get("content") or "", "OpenAI")
 
@@ -124,7 +133,7 @@ async def _call_gemini(settings: Settings, model: str, prompt: str,
             headers={"x-goog-api-key": settings.gemini_api_key})
     if res.status_code != 200:
         raise VisionError(f"Gemini {res.status_code}: {res.text[:300]}")
-    data = res.json()
+    data = _envelope_json(res, "Gemini")
     parts_out = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
     text = "".join(p.get("text", "") for p in parts_out)
     return _parse_json(text, "Gemini")
