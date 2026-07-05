@@ -15,7 +15,9 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import repo
-from .agents import mannequin, style_affinity
+from .agents import mannequin, product_analyst, style_affinity
+from .agents.gemini_image import InlineImage
+from .agents.vision_llm import VisionError
 from .services import input_qc, matching, retrieval
 from .auth import require_user
 from .db import get_conn
@@ -450,6 +452,84 @@ async def save_analysis(
         row = await repo.save_analysis(conn, project_id, analysis)
         await conn.commit()
     return {"projectId": row["project_id"], **(row["payload"] or {})}
+
+
+@router.post(
+    "/projects/{project_id}/analyze",
+    responses={
+        **COMMON_RESPONSES,
+        202: {"description": "상품 분석 작업이 대기열에 진입했습니다."},
+    },
+    tags=["Analysis"],
+    summary="AI 상품 분석 작업 시작 (AG-01)",
+)
+async def analyze_product(
+    request: Request,
+    project_id: str,
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """업로드된 상품 사진으로 AI 분석(색·핏·소재·스타일 등)을 수행하는 비동기 작업을 요청합니다.
+
+    - **Bearer Token**: 필수
+    - **무과금**: 분석은 크레딧을 차감하지 않습니다 (ai_agent_modules §3).
+    - **멱등성**: 진행 중 동일 작업이 있으면 새로 띄우지 않고 기존 `jobId`로 합류합니다
+      (더블클릭 시 LLM 2회 호출 방지). 완료된 분석은 재호출 시 재분석(무과금)됩니다.
+    """
+    scoped_key = f"{project_id}:analyze:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        # 무과금 → 예약/게이트 없이 job 생성(멱등/활성 합류는 create_job 이 원자 처리).
+        job, _created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="analyze",
+            payload={"mode": "analyze"}, idempotency_key=scoped_key,
+            credits_reserved=0, metadata={})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
+@router.post(
+    "/projects/{project_id}/analyze:spike",
+    responses={**COMMON_RESPONSES},
+    tags=["Analysis"],
+    summary="[임시] 분석 provider 관측 spike (flag 게이트)",
+)
+async def analyze_spike(
+    request: Request, project_id: str, user_id: str = Depends(require_user)
+):
+    """provider(Gemini/GPT) 순응률·폴백·지연을 실측하는 **임시** 동기 harness. `ANALYSIS_SPIKE=on`
+    일 때만 동작(기본 off → 403). production 경로는 `POST /analyze`(job). plan §7."""
+    s = request.app.state.settings
+    if s.analysis_spike != "on":
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "spike_disabled", "message": "분석 spike 가 비활성화되어 있어요."})
+    r2 = _r2(request)
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        assets = []
+        for _slot, aid in mannequin.base_color_images(product):
+            a = await repo.get_asset_for_user(conn, user_id, aid)
+            if a:
+                assets.append(a)
+    if not assets:
+        raise _bad_request("no_product_images", "상품 사진을 먼저 올려주세요.")
+    images = [
+        InlineImage(a["mime_type"], await asyncio.to_thread(r2.get_bytes, a["r2_key"]))
+        for a in assets
+    ]
+    order = [p.strip() for p in (s.analysis_model_order or "").split(",") if p.strip()]
+    t0 = time.perf_counter()
+    try:
+        distributed, provider = await product_analyst.analyze(s, product, images)
+    except VisionError as e:
+        raise HTTPException(status_code=502, detail={"code": "analysis_failed", "message": str(e)})
+    obs = product_analyst.observation(provider, order, int((time.perf_counter() - t0) * 1000), distributed)
+    logger.info("analysis_spike", extra=obs)  # provider 결정 회의용 관측 로그
+    return JSONResponse({"observation": obs, "data": distributed})
 
 
 @router.get(

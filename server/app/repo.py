@@ -833,6 +833,84 @@ async def finalize_mannequin_failure(
     return True
 
 
+# ---------- 분석(AG-01) 종결 (무과금·원자·lease 펜스) ----------
+# 마네킹과 동일한 lease 펜스 패턴이되 크레딧 경로 없음(분석은 무과금 — ai_agent_modules §3).
+# clothingType 은 Product 단일 소유(계약 §3.1)라 products 에, 나머지 분석은 analyses.payload 에 쓴다.
+
+
+async def finalize_analyze_success(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    clothing_type: str | None,
+    analysis_payload: dict,
+    result: dict,  # job.result / done 이벤트 봉투 {"data": <프론트 분석 객체>}
+    metadata: dict,
+) -> dict | None:
+    """분석 성공 종결(원자·lease 펜스). None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return None  # lease 빼앗김 — 부수효과 0
+        if clothing_type is not None:  # Product 단일 소유 (계약 §3.1)
+            await cur.execute(
+                "update products set clothing_type = %s where project_id = %s",
+                (clothing_type, project_id),
+            )
+        # analyses.payload 는 AG-01 분석분을 덮어쓴다(재분석 시 최신 결과 반영). locked 는 건드리지 않음.
+        await cur.execute(
+            "insert into analyses (project_id, payload) values (%s, %s) "
+            "on conflict (project_id) do update set payload = excluded.payload",
+            (project_id, Json(analysis_payload)),
+        )
+        await cur.execute(
+            "update jobs set status = 'done', result = %s, progress = 100, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (Json(result), job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
+            (job_id, Json(result)),
+        )
+    return {"result": result, "metadata": metadata}
+
+
+async def finalize_analyze_failure(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    project_id: str,
+    message: str,
+    metadata: dict,
+    code: str = "analysis_failed",
+) -> bool:
+    """분석 실패 종결(원자·lease 펜스): job error + error 이벤트. 크레딧 경로 없음. False = lease 상실."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return False
+        await cur.execute(
+            "update jobs set status = 'error', error_message = %s, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (message, job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
+            (job_id, Json({"code": code, "message": message})),
+        )
+    return True
+
+
 # ---------- 크레딧 충전·환불·조회 (credit_system_design.md §3.1·§3.2·§3.4·§6) ----------
 # 모든 쓰기는 credit_accounts FOR UPDATE로 직렬화. balance = Σ active 버킷 remaining,
 # balance 변화엔 항상 ledger 행(원장-잔액 일관성). 호출측(라우트)이 conn.commit().

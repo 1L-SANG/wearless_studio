@@ -274,6 +274,7 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | ElementType | `image` `text` `shape` `line` | | |
 | AngleSlot | `Front` `Back` `Detail` `Fit` | 앞면/뒷면/디테일/착용 이미지 | 기존 토큰 유지 |
 | SwatchId | `white` `gray` `black` `ivory` `beige` `brown` `red` `yellow` `green` `blue` `navy` `pink` | 12색 팔레트 | MONOTONE_SWATCHES = white·gray·black·ivory·beige |
+| **StyleTag** | `basic` `daily` `minimal` `casual` `formal` `classic` `sporty` `trendy` | 베이식/데일리/미니멀/캐주얼/포멀/클래식/스포티/트렌디 | ★ 닫힌 enum — AG-01 `styleTags` 출력·M-01 매칭 친화도(`style_affinity`) 공통 정본. 단일 소스 = `server/app/agents/style_tags.py`. 저장 안 함(중간 산출물), 운영자 확장 |
 | **MeasurementKey** | `totalLength` `shoulderWidth` `chestWidth` `sleeveLength` `waistWidth` `hipWidth` `thighWidth` `rise` `hemWidth` `armhole` | 총장/어깨너비/가슴단면/소매길이/허리단면/엉덩이단면/허벅지단면/밑위/밑단단면/암홀 | ★ 한국어 키 → 토큰화 |
 | **AdjustFit** | `slimmer` `looser` | 더 슬림하게/더 여유있게 | '현재' = 파라미터 생략 |
 | **AdjustLength** | `shorter` `longer` | 더 짧게/더 길게 | |

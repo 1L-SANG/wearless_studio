@@ -28,6 +28,13 @@ class Settings:
     # tier→모델 매핑 (ai_agent_modules §1 — 교체는 여기/env 한 곳)
     model_image_light: str = "gemini-3.1-flash-image"
     model_image_high: str = "gemini-3-pro-image"
+    # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
+    openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
+    model_text: str = "gpt-5.4-mini"  # text tier 정본 모델(계약 §1 MODEL_ROUTING_TEXT) = GPT 경로
+    model_text_gemini: str = "gemini-3-pro"  # Gemini 폴백 provider 의 text/vision 모델(생성용 -image 아님)
+    analysis_model_order: str = "gpt,gemini"  # 폴백 순서(기본=계약 GPT-first). 'gemini,gpt' 등
+    analysis_spike: str = "off"  # off | on — 동기 관측 하니스(임시). production 은 job
+    analysis_timeout_seconds: float = 60.0  # provider 1콜 상한(폴백 트리거)
     mannequin_tier: str = "image_high"  # AG-04 = Gemini 3 Pro (사용자 결정 — Flash 미사용)
     mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
@@ -99,6 +106,12 @@ def load_settings() -> Settings:
         vertex_location=os.getenv("VERTEX_LOCATION", "global"),
         model_image_light=os.getenv("MODEL_ROUTING_IMAGE_LIGHT", "gemini-3.1-flash-image"),
         model_image_high=os.getenv("MODEL_ROUTING_IMAGE_HIGH", "gemini-3-pro-image"),
+        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
+        model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3-pro"),
+        analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gpt,gemini"),
+        analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
+        analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "60")),
         mannequin_tier=_mannequin_tier(),
         mannequin_image_size=_image_size(),
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
