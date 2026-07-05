@@ -54,6 +54,7 @@ class Settings:
     retrieval_knowledge: str = "off"  # off | static | vector
     retrieval_refimages: str = "off"  # off | on
     seller_text_canonicalize: str = "off"  # off | shadow | enforce (FR-D1 안전 게이트)
+    input_qc: str = "off"  # off | shadow | enforce — 업로드 입력 QC (FR-D4, decode·해상도)
 
 
 def _image_size() -> str:
@@ -127,4 +128,5 @@ def load_settings() -> Settings:
         seller_text_canonicalize=_flag(
             "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
         ),
+        input_qc=_flag("INPUT_QC", "off", {"off", "shadow", "enforce"}),
     )
