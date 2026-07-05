@@ -5,8 +5,8 @@
 """
 
 import asyncio
-import logging
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -17,8 +17,6 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from . import repo
 from .agents import mannequin, style_affinity
 from .services import input_qc, matching, retrieval
-
-logger = logging.getLogger(__name__)
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -43,6 +41,7 @@ from .models import (
 )
 from .r2 import R2Client, ext_for_mime, upload_key
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1")
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15MB — 상품 사진 상한 (업로드 실패 사유 표면화 §)

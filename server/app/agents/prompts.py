@@ -92,7 +92,7 @@ def _product_block(product: dict, analysis: dict, seller_canon: str = "off", kno
                 "seller_text_canonicalize",
                 extra={"mode": "shadow", "matched": len(matched), "unmatched": len(unmatched)},
             )
-        key_features_line = points and f"- Key features: {'; '.join(points)}"
+        key_features_line = f"- Key features: {'; '.join(points)}" if points else None
     # 정적 지식블록 (feature 2a): off=미적용 / static=category+styleTags 결정적 선택.
     # category는 clothing_type 우선, 없으면 subCategory로 보강(위 material_guidance 호출과 동일 관례).
     knowledge_block = None
