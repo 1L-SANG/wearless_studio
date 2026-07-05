@@ -44,15 +44,10 @@ class Settings:
     job_worker_id: str = "web"
     credit_cost_version: str = "v1"  # §6 임시 단가
     credit_cost_mannequin_generate: int = 2
-    # ---- 검색 증강 (retrieval_upgrade_prd) ----
-    # 임베딩 모델 단일소스 (model_routing 패턴 — 교체는 여기/env 한 곳).
-    openai_api_key: str | None = None  # text 임베딩 (서버 전용, secret)
-    embed_text_model: str = "text-embedding-3-small"  # OpenAI, 1536d
-    embed_image_model: str = "multimodalembedding@001"  # Vertex 멀티모달, 1408d
-    # 역량별 flag (기본 off — 게이트 통과 후 활성). PRD §5.5.
-    retrieval_matching: str = "off"  # off | tags | vector
-    retrieval_knowledge: str = "off"  # off | static | vector
-    retrieval_refimages: str = "off"  # off | on
+    # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택. flag 기본 off ----
+    # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
+    retrieval_matching: str = "off"  # off | tags (styleTags 친화도 v1)
+    retrieval_knowledge: str = "off"  # off | static (정적 지식 블록)
     seller_text_canonicalize: str = "off"  # off | shadow | enforce (FR-D1 안전 게이트)
     input_qc: str = "off"  # off | shadow | enforce — 업로드 입력 QC (FR-D4, decode·해상도)
 
@@ -119,12 +114,8 @@ def load_settings() -> Settings:
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
         credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v1"),
         credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "2")),
-        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
-        embed_text_model=os.getenv("EMBED_TEXT_MODEL", "text-embedding-3-small"),
-        embed_image_model=os.getenv("EMBED_IMAGE_MODEL", "multimodalembedding@001"),
-        retrieval_matching=_flag("RETRIEVAL_MATCHING", "off", {"off", "tags", "vector"}),
-        retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static", "vector"}),
-        retrieval_refimages=_flag("RETRIEVAL_REFIMAGES", "off", {"off", "on"}),
+        retrieval_matching=_flag("RETRIEVAL_MATCHING", "off", {"off", "tags"}),
+        retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static"}),
         seller_text_canonicalize=_flag(
             "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
         ),

@@ -73,7 +73,7 @@ def recommend_v1(
     """
     pool = prefilter(items, clothing_type, genders)
     ranked = rank_by_style_affinity(pool, product_tags, affinity_map)
-    return ranked[:limit] if limit else ranked
+    return ranked[:limit] if limit is not None else ranked  # limit=0 → 빈 결과(0은 falsy 방지)
 
 
 def select_kb_static(chunks: list[dict], keys: dict) -> list[dict]:

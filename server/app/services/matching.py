@@ -34,4 +34,4 @@ def recommend(items, clothing_type, genders, limit=None):
         -(i["color_brightness"] if i.get("color_brightness") is not None else 50),
         i.get("sort_order", 0),
     ))
-    return pool[:limit] if limit else pool
+    return pool[:limit] if limit is not None else pool  # limit=0 → 빈 결과(0은 falsy 방지)

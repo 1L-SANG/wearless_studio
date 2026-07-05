@@ -213,3 +213,11 @@ def test_build_retrieval_log_shape():
         "latency_ms": 12,
         "flag_state": "tags",
     }
+
+
+def test_recommend_v1_limit_zero_returns_empty():
+    # limit=0 은 '빈 결과' (0은 falsy — 전체 반환 아님, 리뷰 반영)
+    items = [_it("b1", "bottom", "women", ["wide"]), _it("b2", "bottom", "women", ["slim"])]
+    out = retrieval.recommend_v1(items, clothing_type="top", genders=["women"],
+                                 product_tags=["wide"], affinity_map={}, limit=0)
+    assert out == []
