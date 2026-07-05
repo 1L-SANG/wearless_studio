@@ -38,11 +38,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dispatcher = None
         if pool is not None:
             await pool.open()
-            # job dispatcher (§5) — DB·Gemini·R2 모두 있고 활성화일 때만 기동
+            # job dispatcher (§5) — DB·R2 + 최소 1개 AI provider(마네킹=Gemini, 분석=Gemini/OpenAI)
+            # 가 있고 활성화일 때만 기동. provider 없는 job 은 워커가 실패 봉투로 종결.
             if (
                 settings.job_dispatcher_enabled
-                and app.state.gemini is not None
                 and app.state.r2 is not None
+                and (app.state.gemini is not None or settings.openai_api_key)
             ):
                 dispatcher = JobDispatcher(app)
                 await dispatcher.start()

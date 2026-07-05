@@ -6,6 +6,7 @@
    ============================================================= */
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api/index.js';
+import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 
@@ -298,7 +299,8 @@ export function Analysis({ onNext }) {
 
   const run = useCallback(() => {
     setPhase('loading');
-    Promise.all([api.analyzeProduct({}), api.getCatalogs()])
+    // 시그니처 통일 — analyzeProduct 는 projectId 를 받는다(http 모드 job 시작 대상). mock 은 무시.
+    Promise.all([api.analyzeProduct(useAppStore.getState().projectId, {}), api.getCatalogs()])
       .then(([a, c]) => { setAnalysis(a); setCatalogs(c); setPhase('ready'); })
       .catch(() => setPhase('error'));
   }, []);

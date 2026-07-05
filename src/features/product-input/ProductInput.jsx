@@ -254,21 +254,27 @@ export function ProductInput() {
   const submit = async () => {
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    // 보관함 프로젝트(서버 행)는 바로 이 시점에 생성한다 — '상세페이지 제작' 진입이 아니라
-    // AI 분석을 시작할 때. createProject 는 토큰이 필요하므로 로그인 사용자만 생성하고,
-    // 비로그인 공개 분석은 서버 project 없이 진행(프로젝트 생성은 로그인 후 단계가 담당).
-    const pid = session ? await useAppStore.getState().ensureProject() : projectId;
-    const a = await api.analyzeProduct(pid, {});
-    setAnalysis(a);
-    // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨
-    const finalName = (product.name && product.name.trim()) ? product.name.trim() : (a.suggestedName || '새 상품');
-    if (!product.name || !product.name.trim()) set({ name: finalName });
-    // persist the user's input (name + 색상/이미지) into the create flow so the
-    // downstream steps (mannequin / storyboard / editor) read what was entered,
-    // not the seed (mock/api.saveProduct → DB.product). [data-flow fix]
-    await api.saveProduct(pid, { ...product, name: finalName, uploadComplete: true });
-    setPhase('done');
-    toast.push('AI 분석을 완료했어요', { icon: 'sparkles' });
+    try {
+      // 보관함 프로젝트(서버 행)는 바로 이 시점에 생성한다 — '상세페이지 제작' 진입이 아니라
+      // AI 분석을 시작할 때. createProject 는 토큰이 필요하므로 로그인 사용자만 생성하고,
+      // 비로그인 공개 분석은 서버 project 없이 진행(프로젝트 생성은 로그인 후 단계가 담당).
+      const pid = session ? await useAppStore.getState().ensureProject() : projectId;
+      const a = await api.analyzeProduct(pid, {});
+      setAnalysis(a);
+      // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨
+      const finalName = (product.name && product.name.trim()) ? product.name.trim() : (a.suggestedName || '새 상품');
+      if (!product.name || !product.name.trim()) set({ name: finalName });
+      // persist the user's input (name + 색상/이미지) into the create flow so the
+      // downstream steps (mannequin / storyboard / editor) read what was entered,
+      // not the seed (mock/api.saveProduct → DB.product). [data-flow fix]
+      await api.saveProduct(pid, { ...product, name: finalName, uploadComplete: true });
+      setPhase('done');
+      toast.push('AI 분석을 완료했어요', { icon: 'sparkles' });
+    } catch (e) {
+      // http 모드에서 분석 실패(네트워크·서버 에러)해도 스피너에 고착되지 않게 — 입력으로 복귀 + 안내.
+      setPhase('input');
+      toast.push(e?.message || '분석에 실패했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+    }
   };
 
   const nameCard = (

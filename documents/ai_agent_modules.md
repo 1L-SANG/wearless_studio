@@ -31,7 +31,7 @@ OPENAI_API_KEY=   # text
 
 | ID | 이름 | tier | 호출하는 API(계약 §6) | 크레딧 | MVP |
 |---|---|---|---|---|---|
-| AG-01 | product-analyst (상품 분석) | text | `analyzeProduct` | — | ✅ (설계만) |
+| AG-01 | product-analyst (상품 분석) | text | `analyzeProduct` | — | ✅ (구현 — `kind='analyze'` job + GPT↔Gemini 폴백 + 프론트 연결) |
 | AG-02 | copywriter (카피라이팅) | text | `generateDetailPage`(copy 단계) | — | ✅ (설계만) |
 | AG-03 | copy-qc (카피 검수) | text | `generateDetailPage`(copy 단계 직후) | — | ✅ (설계만) |
 | AG-04 | mannequin-generator (마네킹 생성) | image_high | `generateMannequins`, `regenerateMannequins` | mannequinGenerate | ✅ (백엔드 라이브) |
@@ -55,7 +55,8 @@ OPENAI_API_KEY=   # text
 |---|---|
 | tier | `text` (멀티모달 입력) |
 | 호출 시점 | 입력 페이지 '입력 완료' → `analyzeProduct(projectId)` (PL-1) |
-| 입력 | `{ name: string\|null, images: { colorGroupId, slot, url }[] }` — 기준 색상 전 각도 + 추가 색상 정면. 이미지는 R2 URL |
+| 입력 | `{ name: string\|null, images }` — 기준 색상 전 각도(+추가 색상 정면). **이미지는 bytes(InlineImage)로 전달** — R2 서명 URL 만료·provider 발산 회피(구현: `analyze_job.py`가 `r2.get_bytes`→base64 inline, `mannequin_job.py:173`과 동일 경로). 프롬프트는 `prompts/product_analyst_v1.txt` 외부화 |
+| 구현 | 코어 `product_analyst.analyze`(순수: 프롬프트→검증→분배) + `vision_llm.analyze_with_fallback`(httpx 직접, GPT=Structured Outputs strict / Gemini=responseSchema, 순차 폴백). production=`kind='analyze'` job(무과금·멱등, `dispatcher`+`run_analyze_job`). 라우트 `POST /projects/{id}/analyze`(202 jobId). spike=`POST /analyze:spike`(flag `ANALYSIS_SPIKE` 게이트, 임시 관측). 프론트=`httpAdapter.analyzeProduct`(job 폴링→onProgress). **모델 순서 기본=계약(GPT-first, `ANALYSIS_MODEL_ORDER`); Gemini-primary 전환은 spike 후 계약 개정으로 명시.** styleTags 산출로 **M-01 매칭의 producer 선결조건만 해소**(1a 실작동엔 flag·시드정리·enum정합 별도 필요) |
 | 출력 | 분석 raw: `{ clothingType, subCategory, targetGenders, fit, materials[], aiSuggestedPoints(≤2), suggestedName, swatchSuggestions: { colorGroupId, swatchId }[], styleTags: string[] }` — 구조화 JSON 강제. (이 raw는 그대로 저장되는 게 아니라 서버가 분배 — 아래 후처리) |
 | 후처리(서버 분배) | `clothingType`은 **Product에 기록**(Product 단일 소유 — 계약 §3.1, Analysis 아님). `subCategory`·`targetGenders`·`fit`·`materials`·`aiSuggestedPoints`·`suggestedName`은 **Analysis**(계약 §3.2). `swatchSuggestions`(색상 스와치 추천)·`styleTags`(M-01 입력)는 **저장 안 하는 중간 산출물**. `measurements`는 **절대 포함 금지**(서버가 null 강제 — PRD §6.5/§15.4) |
 | 프롬프트 핵심 제약 | 실측 추정 금지 · 확신 없는 소재는 비우기 · subCategory/fit/swatchId는 계약 enum 안에서만 · 단일 에이전트 1콜(속성별 분리하지 않음 — 사용자 결정) |

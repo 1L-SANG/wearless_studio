@@ -10,11 +10,17 @@ import logging
 import time
 
 from .. import repo
+from .analyze_job import run_analyze_job
 from .mannequin_job import run_mannequin_job
 
 log = logging.getLogger("wearless.dispatcher")
 
-_KINDS = ("mannequin",)  # 이후 mannequin_adjust/detail_page/editor_image 추가
+# kind → 워커. claim 대상(_KINDS)과 라우팅을 한 곳에서 관리 — 새 job 종류는 여기에 추가.
+_WORKERS = {
+    "mannequin": run_mannequin_job,
+    "analyze": run_analyze_job,  # AG-01 상품 분석 (무과금)
+}
+_KINDS = tuple(_WORKERS)  # 이후 mannequin_adjust/detail_page/editor_image 추가
 _SWEEP_INTERVAL = 60.0  # lease 복구 점검 주기(초)
 
 
@@ -52,7 +58,11 @@ class JobDispatcher:
                 if job is None:
                     await asyncio.sleep(s.job_poll_interval_seconds)
                     continue
-                await run_mannequin_job(self.app, job)
+                worker = _WORKERS.get(job["kind"])
+                if worker is None:  # _KINDS 로 claim 을 걸러도 방어(설정 오류 대비)
+                    log.error("no worker for job kind=%s (job %s)", job["kind"], job["id"])
+                    continue
+                await worker(self.app, job)
             except asyncio.CancelledError:
                 raise
             except Exception:
