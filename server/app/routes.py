@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -14,8 +15,8 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import repo
-from .agents import mannequin
-from .services import matching
+from .agents import mannequin, style_affinity
+from .services import input_qc, matching, retrieval
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -40,6 +41,7 @@ from .models import (
 )
 from .r2 import R2Client, ext_for_mime, upload_key
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1")
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15MB — 상품 사진 상한 (업로드 실패 사유 표면화 §)
@@ -461,6 +463,7 @@ async def match_candidates(
     project_id: str,
     clothingType: str = Query(...),
     gender: list[str] = Query(default=[]),
+    styleTags: list[str] = Query(default=[]),
     limit: int | None = Query(default=None),
     user_id: str = Depends(require_user),
 ):
@@ -481,7 +484,12 @@ async def match_candidates(
             raise _not_found()
         items = await repo.list_active_matching_items(conn)
     genders = [g.strip() for part in gender for g in part.split(",") if g.strip()]
-    ranked = matching.recommend(items, clothingType, genders, limit)
+    product_tags = [t.strip() for part in styleTags for t in part.split(",") if t.strip()]
+    if request.app.state.settings.retrieval_matching == "tags" and product_tags:
+        ranked = retrieval.recommend_v1(
+            items, clothingType, genders, product_tags, style_affinity.affinity_map(), limit)
+    else:
+        ranked = matching.recommend(items, clothingType, genders, limit)
     return JSONResponse([
         {
             "id": i["id"], "name": i["name"], "gender": i["gender"],
@@ -571,6 +579,29 @@ async def complete_upload(
     meta = await asyncio.to_thread(r2.head, key)  # 네트워크 → 스레드 격리 (§5)
     if meta is None:
         raise _bad_request("upload_incomplete", "업로드가 완료되지 않았어요. 다시 시도해 주세요.")
+
+    # 입력측 QC (FR-D4) — off면 완전 skip. shadow=로그만, enforce=불합격 시 400.
+    settings = request.app.state.settings
+    if settings.input_qc != "off":
+        # fail-open: QC용 R2 fetch 실패가 '이미 성공한 업로드'를 잃게 하면 안 됨(회귀 방지).
+        # 인프라 에러면 iqc=None으로 두고 정상 등록 — enforce 거부는 '실제 품질 불합격'에만.
+        try:
+            raw = await asyncio.to_thread(r2.get_bytes, key)  # 네트워크 → 스레드 격리
+            iqc = input_qc.evaluate_input_qc(raw)
+        except Exception:
+            logger.warning(
+                "input_qc_fetch_failed",
+                extra={"asset_id": asset_id, "mode": settings.input_qc}, exc_info=True)
+            iqc = None
+        if iqc is not None:
+            logger.info(
+                "input_qc",
+                extra={"mode": settings.input_qc, "asset_id": asset_id,
+                       "verdict": iqc.verdict, "reasons": iqc.reasons},
+            )
+            if settings.input_qc == "enforce" and iqc.verdict == "reject":
+                # 미등록으로 종료 — R2 객체는 남지만 asset row 없음(참조 없는 고아, 무해).
+                raise _bad_request("input_quality", input_qc.input_qc_message(iqc))
 
     async with get_conn(request) as conn:
         row = await repo.create_asset(
