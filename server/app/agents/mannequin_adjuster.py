@@ -59,9 +59,7 @@ def build_prompt(adjust_spec: dict) -> str:
     if match_line:
         lines.append(match_line)
     instructions = "\n".join(lines) if lines else "- (no dimension change requested — reproduce the image as-is)"
-    template = _load_template()
-    text = template.replace("${adjustInstructions}", instructions)
-    return text
+    return _load_template().replace("${adjustInstructions}", instructions)
 
 
 async def generate(

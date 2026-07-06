@@ -10,13 +10,13 @@ from io import BytesIO
 
 from PIL import Image
 
-log = logging.getLogger("wearless.mannequin_adjust_job")
-
 from .. import repo
 from ..agents import mannequin_adjuster
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..r2 import ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
+
+log = logging.getLogger("wearless.mannequin_adjust_job")
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 
@@ -54,10 +54,7 @@ async def run_mannequin_adjust_job(app, job: dict) -> None:
         # 1) 베이스 컷 로드
         async with pool.connection() as conn:
             base_cut = await repo.get_mannequin_cut_asset(conn, user_id, project_id, base_id)
-            if base_cut is None:
-                cuts = []
-            else:
-                cuts = await repo.list_mannequin_cuts(conn, user_id, project_id)
+            cuts = await repo.list_mannequin_cuts(conn, user_id, project_id) if base_cut else []
 
         if base_cut is None:
             await _fail("조정할 마네킹컷을 찾을 수 없어요. 다시 시도해 주세요.",
