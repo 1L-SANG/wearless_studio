@@ -386,13 +386,10 @@ function buildDraft() {
   project.fitProfile = copyFitProfile(fitProfile);
   analysis.fitProfile = copyFitProfile(fitProfile);
 
-  /* ---- Mannequin history (PRD §7.3, fit-profile P2) ----
-     단일컷 버전 히스토리. 기본 draft 는 v0 선택 컷을 가진다. */
-  const mannequins = [{
-    id: uid('mq'), version: 0, imageUrl: P.photo('mq0', 'mannequin'),
-    isSelected: true, createdAt: nowIso(),
-  }];
-  project.selectedMannequinId = mannequins[0].id;
+  /* ---- Mannequin history (PRD §7.3·§7.7, fit-profile P2) ----
+     단일컷 버전 히스토리. 시드는 빈 배열 — 최초 생성(진행 UX + 1크레딧 차감)은
+     마네킹 페이지 진입 시 api.generateMannequins 가 수행한다 (미리 채우면 우회됨). */
+  const mannequins = [];
 
   /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004) ---- */
   const storyboard = buildStoryboard(project.composeMode, product.colors);
