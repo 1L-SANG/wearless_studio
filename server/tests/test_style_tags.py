@@ -2,10 +2,11 @@ from app.agents.style_affinity import affinity_map
 from app.agents.style_tags import STYLE_TAG_SET, STYLE_TAGS, is_style_tag
 
 
-def test_style_tags_are_the_eight_clean_keys():
-    assert STYLE_TAGS == (
-        "basic", "daily", "minimal", "casual", "formal", "classic", "sporty", "trendy",
-    )
+def test_style_tags_include_clean_base_and_are_lowercase():
+    base = {"basic", "daily", "minimal", "casual", "formal", "classic", "sporty", "trendy"}
+    assert base <= STYLE_TAG_SET            # 부트스트랩 8 포함
+    assert len(STYLE_TAGS) == len(STYLE_TAG_SET) == 24  # 중복 없이 확장 24개
+    assert all(t == t.lower() and t.isascii() and "/" not in t for t in STYLE_TAGS)
     assert STYLE_TAG_SET == set(STYLE_TAGS)
 
 

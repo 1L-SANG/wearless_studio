@@ -24,7 +24,7 @@ def test_validate_drops_out_of_enum():
         "subCategory": "beanie",         # 밖 → None
         "targetGenders": ["women", "kids"],  # kids 드롭
         "fit": "baggy",                  # 밖 → None
-        "styleTags": ["basic", "스트라이프", "y2k"],  # 오염/밖 드롭
+        "styleTags": ["basic", "스트라이프", "spacecore"],  # 오염/밖 드롭
         "swatchSuggestions": [{"colorGroupId": "c", "swatchId": "cyan"}],  # 밖 → 드롭
     }
     v = pa.validate(raw)
