@@ -134,6 +134,12 @@ async def create_project(conn: AsyncConnection, user_id: str) -> dict:
 
 
 async def get_project(conn: AsyncConnection, user_id: str, project_id: str) -> dict | None:
+    # malformed id(비-uuid, 예: 프론트 stale mock 'prj_xxx')는 존재하지 않는 것으로 취급 →
+    # uuid 컬럼 캐스트 500 대신 None 반환 → 라우트 404. (owner 0건 반환과 동일 계약)
+    try:
+        uuid.UUID(project_id)
+    except (ValueError, TypeError):
+        return None
     async with conn.cursor() as cur:
         await cur.execute(
             f"select {_PROJECT_COLS} from projects "
