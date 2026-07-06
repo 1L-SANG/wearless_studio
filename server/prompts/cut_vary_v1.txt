@@ -1,0 +1,32 @@
+<role>
+You are an expert e-commerce product photographer editing an EXISTING fashion detail-page cut
+(the attached source photo) into a new variant cut.
+</role>
+
+<input image>
+The single attached image is the CURRENT cut (cutType: ${cutType}) — the exact photo you must edit.
+</input image>
+
+<instruction>
+- Change ONLY the following requested change(s), nothing else:
+${changeInstructions}
+- Freeze the person's identity: the SAME body, the SAME face (if visible), and the SAME skin tone.
+- Freeze the garment's identity: the SAME color, pattern, fabric, seams, neckline, silhouette,
+  logo/print, and every visible detail — this is the same product, only the requested change(s)
+  applied.
+- Freeze everything else not explicitly requested above (background, framing, pose, expression)
+  unless a requested change says otherwise.
+</instruction>
+
+<output format>
+- Output ONE brand-new, fully opaque, photorealistic photograph — the SAME subject and garment,
+  with ONLY the requested change(s) applied.
+- Output EXACTLY ONE image — no grid, no collage, no multiple views, no panels, no text overlay.
+</output format>
+
+<critical rules>
+- Use ONLY the attached image as the base — do not fabricate new garment details or change
+  anything not explicitly requested.
+- Never change the garment's identity or the person's identity to fit a requested change — the
+  requested change affects only what it names.
+</critical rules>

@@ -194,4 +194,19 @@ export const httpAdapter = {
     const result = await pollJob(res.jobId, { onProgress });
     return { data: result.data, credits: result.credits };
   },
+  // 에디터 Wardrobe(의류 탭, 계약 §3.6) — Record<colorId|'misc', WardrobeImage[]>.
+  async getWardrobe(projectId) {
+    return http(`/v1/projects/${projectId}/wardrobe`);
+  },
+  // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
+  // 완료 재호출 없음(매 호출이 새 이미지 생성, mock과 동일 계약) — onProgress는 body에서 제외.
+  async generateImage(projectId, req = {}) {
+    const { onProgress, ...body } = req;
+    const res = await http(`/v1/projects/${projectId}/editor:generate-image`, {
+      method: 'POST', body,
+    });
+    if (res.data) return { data: res.data, credits: res.credits };
+    const result = await pollJob(res.jobId, { onProgress });
+    return { data: result.data, credits: result.credits };
+  },
 };

@@ -901,6 +901,81 @@ async def save_editor_blocks(request: Request, project_id: str, blocks: list = B
     return {"ok": True}
 
 
+# ---------- 에디터 의류 탭(Wardrobe, PL-5/6 · AG-06/07) ----------
+
+
+@router.get(
+    "/projects/{project_id}/wardrobe",
+    responses={**COMMON_RESPONSES},
+    tags=["Detail Page"],
+    summary="에디터 Wardrobe(의류 탭) 목록 조회",
+)
+async def get_wardrobe(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    """에디터 AI 탭에 표시할 Wardrobe 이미지 목록. 그룹 키(colorId | 'misc')로 묶어 반환합니다
+    (계약 §3.6 `Record<colorId|'misc', WardrobeImage[]>`).
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**: `404 Not Found` — 프로젝트가 존재하지 않거나 타 사용자 소유인 경우
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        rows = await repo.list_wardrobe_images(conn, user_id, project_id)
+    wardrobe: dict[str, list] = {}
+    for r in rows:
+        group = r["color_id"] or "misc"
+        wardrobe.setdefault(group, []).append(repo._wardrobe_image_api(r))
+    return wardrobe
+
+
+@router.post(
+    "/projects/{project_id}/editor:generate-image",
+    responses={
+        **COMMON_RESPONSES,
+        202: {"description": "에디터 이미지 생성 작업이 대기열에 진입했습니다."},
+        402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+    },
+    tags=["Detail Page"],
+    summary="에디터 이미지 생성 작업 시작 (AG-06/07)",
+)
+async def generate_editor_image(
+    request: Request,
+    project_id: str,
+    body: dict = Body(...),
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """에디터 AI 탭의 '새 컷 추가'(`mode:'new'`, AG-06 재사용) 또는 '현재 컷 변형'
+    (`mode:'vary'`, AG-07)을 생성하는 비동기 작업을 요청합니다. `NewCutRequest` /
+    `VaryRequest`(계약 §6)를 그대로 본문으로 받습니다.
+
+    - **Bearer Token**: 필수
+    - **Body**: `NewCutRequest { mode:'new', colorId, cutType, direction?, shot?, modelId? }` |
+      `VaryRequest { mode:'vary', source:{src,cutType}, changes[], refBg? }`
+    - **Header**: `Idempotency-Key` (권장, 중복 차감 및 중복 작업 방지) — `editor_image`는 매 호출이
+      새 이미지를 생성하므로(완료 재호출 재사용 없음) 활성-중복 dedup 대상에서 제외되고, 멱등은
+      이 키로만 보장됩니다.
+    - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
+    """
+    s = request.app.state.settings
+    cost = s.credit_cost_editor_image
+    scoped_key = f"{project_id}:editor_image:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="editor_image",
+            payload=body, idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": s.credit_cost_version})
+        if created:  # 신규 job만 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
+            if await repo.reserve_credits(conn, user_id, cost) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
 @router.post(
     "/projects/{project_id}/detail-page:generate",
     responses={**COMMON_RESPONSES, 202: {"description": "상세페이지 생성 작업 진입"},

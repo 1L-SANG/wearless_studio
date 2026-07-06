@@ -1,0 +1,161 @@
+"""AG-06/AG-07 에디터 이미지 워커 (PL-5/6). 에디터 AI 탭 '새 컷 추가'(mode:'new')는
+cut_generator(AG-06)를, '현재 컷 변형'(mode:'vary')은 cut_variator(AG-07)를 재사용한다.
+mannequin_adjust_job.py의 reserve→generate→finalize 패턴을 단일 이미지(부분 성공 없음)에
+맞춰 미러한다. lease 펜스·크레딧 정산은 repo.finalize_editor_image_success/failure.
+"""
+
+import asyncio
+import logging
+import re
+import uuid
+from io import BytesIO
+
+from PIL import Image
+
+from .. import repo
+from ..agents import cut_generator, cut_variator, mannequin
+from ..agents.gemini_image import GeminiError, InlineImage
+from ..r2 import ai_key, ext_for_mime
+from ._common import emit_job_event as _emit
+
+log = logging.getLogger("wearless.editor_image_job")
+
+_EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+_ASSET_FILE_RE = re.compile(r"/v1/assets/([^/]+)/file")
+
+
+def _image_dims(data: bytes) -> tuple[int | None, int | None]:
+    try:
+        im = Image.open(BytesIO(data))
+        return im.width, im.height
+    except Exception:
+        return None, None
+
+
+def _parse_source_asset_id(src: str | None) -> str | None:
+    """VaryRequest.source.src(`/v1/assets/{id}/file` 안정 앱 URL)에서 asset id 추출.
+    다른 형태(외부 URL 등)는 미상 → None(호출자가 실패 처리)."""
+    if not src:
+        return None
+    m = _ASSET_FILE_RE.search(src)
+    return m.group(1) if m else None
+
+
+async def run_editor_image_job(app, job: dict) -> None:
+    s = app.state.settings
+    pool = app.state.pool
+    job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
+    lease_token = job["lease_token"]
+    reserved = job.get("credits_reserved") or 0
+    settle_key = f"credit:job:{job_id}:settle"
+    payload = job.get("payload") or {}
+    mode = payload.get("mode")
+
+    async def _fail(message: str, meta: dict):
+        try:
+            async with pool.connection() as conn:
+                await repo.finalize_editor_image_failure(
+                    conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
+                    project_id=project_id, reserved=reserved, settle_key=settle_key,
+                    message=message, metadata=meta)
+                await conn.commit()
+        except Exception:
+            log.exception("editor_image finalize_failure error for job %s", job_id)
+
+    try:
+        image: bytes
+        mime: str
+        group: str | None
+        cut_type: str | None
+
+        if mode == "vary":
+            source = payload.get("source") or {}
+            asset_id = _parse_source_asset_id(source.get("src"))
+            src_asset = None
+            if asset_id:
+                async with pool.connection() as conn:
+                    src_asset = await repo.get_asset_for_user(conn, user_id, asset_id)
+            if src_asset is None:
+                await _fail("변형할 컷을 찾을 수 없어요. 다시 시도해 주세요.",
+                            {"error": "source_asset_missing", "src": source.get("src")})
+                return
+            src_img = InlineImage(
+                src_asset["mime_type"],
+                await asyncio.to_thread(app.state.r2.get_bytes, src_asset["r2_key"]))
+            await _emit(pool, job_id, "progress", {"progress": 20, "phase": "inputs_loaded"})
+
+            cut_type = source.get("cutType")
+            changes = payload.get("changes") or []
+            try:
+                image, mime = await cut_variator.generate(
+                    s, app.state.gemini, src_img, changes, cut_type)
+            except GeminiError as e:
+                await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
+                return
+            group = None  # AG-07 결과는 misc 그룹 (계약 §6)
+            cut_type = cut_type or "styling"  # cutType 미상 소스 → styling 가정(계약 §6)
+
+        elif mode == "new":
+            async with pool.connection() as conn:
+                product = await repo.get_product(conn, project_id) or {}
+                assets = []
+                for _slot, aid in mannequin.base_color_images(product):
+                    a = await repo.get_asset_for_user(conn, user_id, aid)
+                    if a:
+                        assets.append(a)
+            if not assets:
+                await _fail("기준 색상 이미지를 찾을 수 없어요. 다시 시도해 주세요.",
+                            {"error": "no_base_color_images"})
+                return
+            images = [
+                InlineImage(a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"]))
+                for a in assets
+            ]
+            await _emit(pool, job_id, "progress", {"progress": 20, "phase": "inputs_loaded"})
+
+            cut_spec = {
+                "cutType": payload.get("cutType"),
+                "direction": payload.get("direction"),
+                "shot": payload.get("shot"),
+            }
+            try:
+                image, mime = await cut_generator.generate(s, app.state.gemini, cut_spec, product, images)
+            except GeminiError as e:
+                await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
+                return
+            group = payload.get("colorId") or None
+            cut_type = payload.get("cutType")
+
+        else:
+            await _fail("알 수 없는 요청이에요. 다시 시도해 주세요.", {"error": "unknown_mode", "mode": mode})
+            return
+
+        await _emit(pool, job_id, "progress", {"progress": 70, "phase": "generated"})
+
+        # R2 저장
+        ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
+        asset_id = str(uuid.uuid4())
+        key = ai_key(user_id, project_id, job_id, asset_id, ext)
+        await asyncio.to_thread(app.state.r2.put_bytes, key, image, mime)
+        w, h = _image_dims(image)
+        image_row = {
+            "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
+            "size": len(image), "width": w, "height": h,
+        }
+
+        # 성공 종결 (원자·lease 펜스). charge = credit_cost_editor_image(고정, 부분 성공 없음).
+        charge = s.credit_cost_editor_image
+        async with pool.connection() as conn:
+            out = await repo.finalize_editor_image_success(
+                conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
+                project_id=project_id, image=image_row, group=group, cut_type=cut_type,
+                reserved=reserved, charge=charge,
+                metadata={"creditCostVersion": s.credit_cost_version})
+            await conn.commit()
+        if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
+            try:
+                await asyncio.to_thread(app.state.r2.delete, key)
+            except Exception:
+                log.warning("orphan R2 cleanup failed: %s", key)
+    except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
+        await _fail("이미지 생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})

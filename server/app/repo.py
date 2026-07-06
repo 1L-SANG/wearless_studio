@@ -1196,6 +1196,149 @@ async def finalize_detail_page_failure(
     return True
 
 
+# ---------- 에디터 의류 탭(Wardrobe, PL-5/6) 종결 (원자·lease 펜스) — 마네킹 패턴 미러 ----------
+# AG-06(mode:'new')/AG-07(mode:'vary') 공용 종결. group 키는 colorId(있으면) | 'misc'(계약 §3.6).
+
+
+async def list_wardrobe_images(conn: AsyncConnection, user_id: str, project_id: str) -> list[dict]:
+    """프로젝트 Wardrobe 이미지 목록 (owner join, sort_order순). 그룹핑은 라우트가 group by
+    color_id ?? 'misc' 로 수행(계약 §3.6 Record<colorId|'misc', WardrobeImage[]>)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select wi.id::text as id, wi.color_id, wi.asset_id::text as asset_id,
+                   wi.ai, wi.cut_type, wi.sort_order
+            from wardrobe_images wi
+            join projects pr on pr.id = wi.project_id
+            where wi.project_id = %s and pr.user_id = %s and pr.deleted_at is null
+              and wi.deleted_at is null
+            order by wi.sort_order, wi.created_at
+            """,
+            (project_id, user_id),
+        )
+        return await cur.fetchall()
+
+
+def _wardrobe_image_api(row: dict) -> dict:
+    """wardrobe_images row → WardrobeImage (계약 §3.6). src=안정 앱 URL(만료 없음, §3)."""
+    return {
+        "id": row["id"],
+        "src": f"/v1/assets/{row['asset_id']}/file",
+        "ai": bool(row["ai"]),
+        "cutType": row["cut_type"],
+    }
+
+
+async def finalize_editor_image_success(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    image: dict,  # {asset_id, bucket, key, mime, size, width, height}
+    group: str | None,  # colorId | None(=misc, wardrobe_images.color_id 는 nullable)
+    cut_type: str | None,
+    reserved: int,
+    charge: int,
+    metadata: dict,
+) -> dict | None:
+    """성공 종결(원자·lease 펜스): 에셋 insert + wardrobe_images insert + 크레딧 confirm + job
+    done. None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음. finalize_mannequin_adjust_success
+    와 동일 구조(AG-06/07 공용 종결, mannequin/detail_page finalize 미러)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return None  # lease 빼앗김 — 부수효과 0 (워커는 폐기)
+        await cur.execute(
+            "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
+            "r2_key, mime_type, byte_size, width, height) "
+            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s)",
+            (image["asset_id"], user_id, project_id, image["bucket"], image["key"], image["mime"],
+             image.get("size"), image.get("width"), image.get("height")),
+        )
+        await cur.execute(
+            "select coalesce(max(sort_order), -1) + 1 as v from wardrobe_images "
+            "where project_id = %s and coalesce(color_id, 'misc') = %s",
+            (project_id, group or "misc"),
+        )
+        sort_order = (await cur.fetchone())["v"]
+        await cur.execute(
+            "insert into wardrobe_images (project_id, color_id, asset_id, ai, cut_type, sort_order) "
+            "values (%s, %s, %s, true, %s, %s) returning id::text as id",
+            (project_id, group, image["asset_id"], cut_type, sort_order),
+        )
+        wardrobe_id = (await cur.fetchone())["id"]
+        image_api = {  # WardrobeImage shape (계약 §3.6) — _wardrobe_image_api와 동일
+            "id": wardrobe_id,
+            "src": f"/v1/assets/{image['asset_id']}/file",
+            "ai": True,
+            "cutType": cut_type,
+        }
+    # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
+    # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.
+    available = await _consume_buckets(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+        charge=charge, action_key="editorImage", metadata=metadata,
+    )
+    # 폴링(jobs.result)과 SSE done이 **같은 봉투**({data, credits, creditsCharged}) — 계약 §6
+    envelope = {"data": image_api, "credits": available, "creditsCharged": charge}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (Json(envelope), charge, job_id),
+        )
+        # 종결 이벤트 — 같은 tx (SSE replay 원본). 상태 변경과 원자적. result와 동일 shape.
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
+            (job_id, Json(envelope)),
+        )
+    return image_api
+
+
+async def finalize_editor_image_failure(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    reserved: int,
+    settle_key: str,
+    message: str,
+    metadata: dict,
+    code: str = "generation_failed",
+) -> bool:
+    """실패 종결(원자·lease 펜스): 예약 해제 + job error + error 이벤트. False = lease 상실.
+    finalize_mannequin_adjust_failure와 동일 구조(AG-06/07 공용 종결 미러)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return False
+    await _settle_credits(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+        charge=0, action_key="editorImage.release", settle_key=settle_key, metadata=metadata,
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'error', error_message = %s, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (message, job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
+            (job_id, Json({"code": code, "message": message})),
+        )
+    return True
+
+
 # ---------- 크레딧 충전·환불·조회 (credit_system_design.md §3.1·§3.2·§3.4·§6) ----------
 # 모든 쓰기는 credit_accounts FOR UPDATE로 직렬화. balance = Σ active 버킷 remaining,
 # balance 변화엔 항상 ledger 행(원장-잔액 일관성). 호출측(라우트)이 conn.commit().
