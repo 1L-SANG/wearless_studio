@@ -142,6 +142,9 @@ def test_run_analyze_job_success(monkeypatch):
     assert data["styleTags"] == ["basic"]
     assert data["measurements"] == []          # 실측 미산출
     assert "measurements" not in captured["analysis_payload"]  # analyses 저장분엔 measurements 없음
+    # #6: worker 가 provider metadata 를 finalize 로 넘겨야 jobs.metadata 에 저장됨
+    assert captured["metadata"]["provider"] == "gpt"
+    assert captured["metadata"]["promptVersion"] == "v1"
 
 
 def test_run_analyze_job_no_images_fails(monkeypatch):

@@ -35,6 +35,15 @@ SWATCH_IDS = (
 )
 MAX_SELLING_POINTS = 2
 
+# clothingType별 허용 subCategory (계약 §4 그룹). cross-field 검증용 — 종류와 안 맞는
+# 세부카테고리(예: top+slacks)를 드롭한다. dress 는 subCategory 없음(null).
+SUBCATEGORY_BY_TYPE: dict[str, frozenset[str]] = {
+    "top": frozenset({"tshirt", "sweatshirt", "shirt", "knit"}),
+    "bottom": frozenset({"cotton_pants", "training_pants", "jeans", "slacks", "skirt"}),
+    "outer": frozenset({"shirt", "jacket", "cardigan", "padding", "coat"}),
+    "dress": frozenset(),
+}
+
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "product_analyst_v1.txt")
 
@@ -150,10 +159,15 @@ def validate(raw: dict) -> dict:
     points = [p for p in (_sanitize(x) for x in (raw.get("aiSuggestedPoints") or [])) if p]
     style_tags = [t for t in (raw.get("styleTags") or []) if is_style_tag(t)]
     name = _sanitize(raw.get("suggestedName"))
+    clothing_type = raw.get("clothingType") if _in(raw.get("clothingType"), CLOTHING_TYPES) else None
+    # cross-field: subCategory 는 clothingType 그룹 안에서만 유효 (top+slacks 환각 조합 차단).
+    # 종류 미상(None)이면 어떤 subCategory 도 검증 불가 → 드롭.
+    allowed_subs = SUBCATEGORY_BY_TYPE.get(clothing_type, frozenset()) if clothing_type else frozenset()
+    sub_category = raw.get("subCategory") if _in(raw.get("subCategory"), allowed_subs) else None
     # measurements 키는 어떤 경로로도 포함하지 않는다(서버 강제 부재 — PRD §6.5/§15.4).
     return {
-        "clothingType": raw.get("clothingType") if _in(raw.get("clothingType"), CLOTHING_TYPES) else None,
-        "subCategory": raw.get("subCategory") if _in(raw.get("subCategory"), SUBCATEGORIES) else None,
+        "clothingType": clothing_type,
+        "subCategory": sub_category,
         "targetGenders": genders,
         "fit": raw.get("fit") if _in(raw.get("fit"), FITS) else None,
         "materials": _materials(raw.get("materials")),

@@ -259,15 +259,24 @@ export function ProductInput() {
       // AI 분석을 시작할 때. createProject 는 토큰이 필요하므로 로그인 사용자만 생성하고,
       // 비로그인 공개 분석은 서버 project 없이 진행(프로젝트 생성은 로그인 후 단계가 담당).
       const pid = session ? await useAppStore.getState().ensureProject() : projectId;
+      // 사진을 서버에 먼저 올리고(images[].id=asset id) 상품을 저장한다 — http 분석 워커는
+      // 저장된 products.colors 를 읽으므로, 분석보다 반드시 앞서야 한다(순서 뒤집히면 no_product_images).
+      // mock 모드에선 uploadProductPhotos·saveProduct 가 인메모리 no-op 이라 동작 동일.
+      const uploaded = await api.uploadProductPhotos(pid, product);
+      const enteredName = (product.name && product.name.trim()) ? product.name.trim() : null;
+      // 저장은 이 단계가 실제로 만든 것만 — colors(asset id)·업로드 완료·입력한 이름. measurements 등은
+      // getProduct 가 아직 mock seed 라 통째로 보내면 가짜 실측이 실서버로 샌다(seed 누출 차단).
+      await api.saveProduct(pid, {
+        colors: uploaded.colors, uploadComplete: true, ...(enteredName ? { name: enteredName } : {}),
+      });
       const a = await api.analyzeProduct(pid, {});
       setAnalysis(a);
-      // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨
-      const finalName = (product.name && product.name.trim()) ? product.name.trim() : (a.suggestedName || '새 상품');
-      if (!product.name || !product.name.trim()) set({ name: finalName });
-      // persist the user's input (name + 색상/이미지) into the create flow so the
-      // downstream steps (mannequin / storyboard / editor) read what was entered,
-      // not the seed (mock/api.saveProduct → DB.product). [data-flow fix]
-      await api.saveProduct(pid, { ...product, name: finalName, uploadComplete: true });
+      // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 서버에도 반영
+      const finalName = enteredName || a.suggestedName || '새 상품';
+      if (!enteredName) {
+        set({ name: finalName });
+        await api.saveProduct(pid, { name: finalName });
+      }
       setPhase('done');
       toast.push('AI 분석을 완료했어요', { icon: 'sparkles' });
     } catch (e) {

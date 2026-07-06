@@ -47,6 +47,18 @@ def test_validate_truncates_points_and_drops_bad_materials():
     assert v["materials"] == [{"name": "코튼", "ratio": None}]
 
 
+def test_validate_cross_field_subcategory_group():
+    # clothingType 그룹과 안 맞는 subCategory 는 드롭 (top+slacks 같은 환각 조합 차단, #4)
+    assert pa.validate({"clothingType": "top", "subCategory": "slacks"})["subCategory"] is None
+    assert pa.validate({"clothingType": "bottom", "subCategory": "slacks"})["subCategory"] == "slacks"
+    assert pa.validate({"clothingType": "top", "subCategory": "knit"})["subCategory"] == "knit"
+    assert pa.validate({"clothingType": "outer", "subCategory": "shirt"})["subCategory"] == "shirt"
+    # dress 는 subCategory 없음(그룹 비어있음) → 항상 None
+    assert pa.validate({"clothingType": "dress", "subCategory": "knit"})["subCategory"] is None
+    # clothingType 미상이면 subCategory 검증 불가 → 드롭
+    assert pa.validate({"clothingType": "hat", "subCategory": "knit"})["subCategory"] is None
+
+
 def test_validate_never_includes_measurements():
     raw = {"clothingType": "top", "measurements": [{"key": "totalLength", "value": 70}]}
     v = pa.validate(raw)

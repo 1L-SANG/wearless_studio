@@ -103,6 +103,9 @@ export const api = {
 
   /* ---- product input ---- */
   async getProduct(/* projectId */) { await wait(160); return clone(DB.product); },
+  // mock 은 실제 업로드가 없다 — 상품을 그대로 돌려준다(계약: http 는 사진을 R2에 올리고
+  // images[].id 를 asset id 로 치환). 화면 submit 은 mock/http 동일 호출로 동작.
+  async uploadProductPhotos(_projectId, product) { await wait(40); return clone(product); },
   async saveProduct(_projectId, patch) {
     await wait(200);
     Object.assign(DB.product, patch);

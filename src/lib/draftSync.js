@@ -17,36 +17,20 @@
    `syncDraftToBackend(draft, { projectId: err.projectId })`로 호출하면 프로젝트가 중복
    생성되지 않는다(이미 올라간 사진은 재업로드되어 일부 orphan asset이 생길 수 있음 — 허용).
    ============================================================= */
-import { http } from '@/lib/api/httpAdapter.js';
+import { http, uploadPhoto } from '@/lib/api/httpAdapter.js';
 
-async function uploadPhoto(projectId, photo) {
-  const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
-    method: 'POST',
-    body: { filename: photo.filename, mime: photo.mime, size: photo.blob.size, projectId },
-  });
-  // presigned URL로 R2에 직접 PUT — 서명 자체가 인증이라 http 헬퍼(Bearer) 안 씀.
-  // ContentType은 upload-url 발급 때 서명된 값과 동일해야 한다.
-  const put = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': photo.mime },
-    body: photo.blob,
-  });
-  if (!put.ok) throw new Error('사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
-
-  const asset = await http(`/v1/assets/${assetId}/complete`, {
-    method: 'POST',
-    body: { projectId, mime: photo.mime, filename: photo.filename },
-  });
-  return asset.url; // R2 서빙 URL (images.wearless.kr/...)
-}
-
-// product.colors[].images[].src 를 업로드된 R2 URL로 치환 (id 매칭).
-function withUploadedSrcs(product, urlByImageId) {
+// product.colors[].images[] 의 id·src 를 업로드 결과로 치환 (원본 imageId 매칭).
+// **id 를 서버 asset id 로 바꾼다** — 서버(mannequin.base_color_images·분석 워커)가 이미지를
+// asset id 로 링크하므로, 로컬 uid 를 남기면 사진을 못 찾는다. src 는 R2 서빙 URL.
+function withUploadedSrcs(product, uploadByImageId) {
   return {
     ...product,
     colors: (product.colors ?? []).map((c) => ({
       ...c,
-      images: (c.images ?? []).map((im) => ({ ...im, src: urlByImageId[im.id] ?? im.src })),
+      images: (c.images ?? []).map((im) => {
+        const up = uploadByImageId[im.id];
+        return up ? { ...im, id: up.assetId, src: up.url } : im;
+      }),
     })),
   };
 }
@@ -60,9 +44,9 @@ export async function syncDraftToBackend(draft, { projectId: existing } = {}) {
     const pairs = await Promise.all(
       (draft.photos ?? []).map(async (p) => [p.imageId, await uploadPhoto(projectId, p)]),
     );
-    const urlByImageId = Object.fromEntries(pairs);
+    const uploadByImageId = Object.fromEntries(pairs);  // imageId -> {assetId, url}
 
-    const product = withUploadedSrcs(draft.product ?? {}, urlByImageId);
+    const product = withUploadedSrcs(draft.product ?? {}, uploadByImageId);
 
     // 계약 §3.2/TODO §1: clothingType·measurements·measurementsUnknown 는 Product 단일 소유.
     // 분석 폼이 이들을 analysis 작업본에 둘 수 있으니(과도기) → product 로 미러(현재값 반영)하고
