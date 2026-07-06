@@ -913,6 +913,151 @@ async def finalize_analyze_failure(
     return True
 
 
+# ---------- 콘티/에디터 (projects.storyboard·editor_blocks jsonb) ----------
+
+
+async def get_storyboard(conn: AsyncConnection, project_id: str) -> list:
+    """projects.storyboard (없으면 []). 소유권은 라우트가 get_project로 선검증."""
+    async with conn.cursor() as cur:
+        await cur.execute("select storyboard from projects where id = %s", (project_id,))
+        row = await cur.fetchone()
+    sb = (row or {}).get("storyboard")
+    return sb if isinstance(sb, list) else []
+
+
+async def save_storyboard(conn: AsyncConnection, user_id: str, project_id: str, blocks: list) -> list:
+    """콘티 저장 (owner 스코프). 반환 = 저장된 블록."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update projects set storyboard = %s where id = %s and user_id = %s "
+            "and deleted_at is null returning storyboard",
+            (Json(blocks), project_id, user_id),
+        )
+        row = await cur.fetchone()
+    return (row or {}).get("storyboard") or []
+
+
+async def get_editor_blocks(conn: AsyncConnection, project_id: str) -> list:
+    """projects.editor_blocks (없으면 []). 소유권은 라우트 선검증."""
+    async with conn.cursor() as cur:
+        await cur.execute("select editor_blocks from projects where id = %s", (project_id,))
+        row = await cur.fetchone()
+    eb = (row or {}).get("editor_blocks")
+    return eb if isinstance(eb, list) else []
+
+
+async def save_editor_blocks(conn: AsyncConnection, user_id: str, project_id: str, blocks: list) -> list:
+    """에디터 블록 저장 (owner 스코프)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update projects set editor_blocks = %s where id = %s and user_id = %s "
+            "and deleted_at is null returning editor_blocks",
+            (Json(blocks), project_id, user_id),
+        )
+        row = await cur.fetchone()
+    return (row or {}).get("editor_blocks") or []
+
+
+# ---------- 상세페이지(PL-4) 종결 (원자·lease 펜스) — 마네킹 패턴 미러 ----------
+
+
+async def finalize_detail_page_success(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    editor_blocks: list,
+    cut_assets: list[dict],  # [{asset_id, bucket, key, mime, size, width, height}] — 컷 이미지 asset 행
+    reserved: int,
+    charge: int,  # 성공 컷 수 × storyboardPerCut (부분 성공 미차감)
+    metadata: dict,
+) -> dict | None:
+    """성공 종결(원자·lease 펜스): 컷 asset 행 + editor_blocks 저장 + status='done' + 크레딧
+    confirm + job done. None = lease 상실. 마네킹 finalize와 동일 구조."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return None
+        for c in cut_assets:  # 컷 이미지 asset 행 (editor_blocks 가 /v1/assets/{id}/file 로 참조)
+            await cur.execute(
+                "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
+                "r2_key, mime_type, byte_size, width, height) "
+                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s) on conflict (id) do nothing",
+                (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
+                 c.get("size"), c.get("width"), c.get("height")),
+            )
+        await cur.execute(
+            "update projects set editor_blocks = %s, status = 'done' where id = %s",
+            (Json(editor_blocks), project_id),
+        )
+    # 크레딧 확정 — 버킷 FIFO 차감. 멱등 = job.status(위 running FOR UPDATE). charge=0이면 정산 skip.
+    if charge > 0:
+        available = await _consume_buckets(
+            conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+            charge=charge, action_key="detailPageGenerate", metadata=metadata,
+        )
+    else:  # 전 컷 실패(charge 0) — 예약만 해제
+        available = await release_credits(
+            conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+            settle_key=f"credit:job:{job_id}:settle", metadata={"reason": "no_charge"})
+    envelope = {"data": editor_blocks, "credits": available, "creditsCharged": charge}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "
+            "metadata = metadata || %s::jsonb, locked_by = null, locked_at = null, "
+            "finished_at = now() where id = %s",
+            (Json(envelope), charge, Json(metadata), job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
+            (job_id, Json(envelope)),
+        )
+    return {"editor_blocks": editor_blocks, "available": available}
+
+
+async def finalize_detail_page_failure(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    reserved: int,
+    settle_key: str,
+    message: str,
+    metadata: dict,
+    code: str = "generation_failed",
+) -> bool:
+    """실패 종결(원자·lease 펜스): 예약 해제 + job error + 이벤트. False = lease 상실."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return False
+    await _settle_credits(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+        charge=0, action_key="detailPageGenerate.release", settle_key=settle_key, metadata=metadata,
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'error', error_message = %s, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (message, job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
+            (job_id, Json({"code": code, "message": message})),
+        )
+    return True
+
+
 # ---------- 크레딧 충전·환불·조회 (credit_system_design.md §3.1·§3.2·§3.4·§6) ----------
 # 모든 쓰기는 credit_accounts FOR UPDATE로 직렬화. balance = Σ active 버킷 remaining,
 # balance 변화엔 항상 ledger 행(원장-잔액 일관성). 호출측(라우트)이 conn.commit().

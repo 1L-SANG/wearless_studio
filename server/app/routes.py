@@ -807,6 +807,90 @@ async def get_mannequins(
     return [_cut_to_api(c) for c in cuts]
 
 
+# ---------- 콘티/에디터/상세페이지 (PL-4) ----------
+
+
+@router.get("/projects/{project_id}/storyboard", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="콘티 조회")
+async def get_storyboard(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        return await repo.get_storyboard(conn, project_id)
+
+
+@router.put("/projects/{project_id}/storyboard", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="콘티 저장")
+async def save_storyboard(request: Request, project_id: str, blocks: list = Body(...),
+                          user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        out = await repo.save_storyboard(conn, user_id, project_id, blocks)
+        await conn.commit()
+    return out
+
+
+@router.get("/projects/{project_id}/editor-blocks", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="에디터 블록 조회")
+async def get_editor_blocks(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        return await repo.get_editor_blocks(conn, project_id)
+
+
+@router.put("/projects/{project_id}/editor-blocks", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="에디터 블록 저장")
+async def save_editor_blocks(request: Request, project_id: str, blocks: list = Body(...),
+                             user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        await repo.save_editor_blocks(conn, user_id, project_id, blocks)
+        await conn.commit()
+    return {"ok": True}
+
+
+@router.post(
+    "/projects/{project_id}/detail-page:generate",
+    responses={**COMMON_RESPONSES, 202: {"description": "상세페이지 생성 작업 진입"},
+               400: {"model": ErrorResponse}, 402: {"model": ErrorResponse}},
+    tags=["Detail Page"], summary="상세페이지 생성 작업 시작 (PL-4)",
+)
+async def generate_detail_page(
+    request: Request, project_id: str, user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """저장된 콘티로 AI 컷(AG-06) + 카피(AG-02/03) 생성 → M-02 조립 → EditorBlock[]. 크레딧:
+    storyboardPerCut × source='ai' 블록 수(성공 컷만 차감). 완료 재호출은 기존 결과 반환(무차감)."""
+    s = request.app.state.settings
+    scoped_key = f"{project_id}:detail_page:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        existing = await repo.get_editor_blocks(conn, project_id)
+        if existing:  # 완료 재호출 → 기존 결과 반환(재생성·재차감 없음)
+            account = await repo.get_account(conn, user_id)
+            return JSONResponse({"data": existing, "credits": (account or {}).get("credits", 0)})
+        storyboard = await repo.get_storyboard(conn, project_id)
+        ai_count = sum(1 for b in storyboard if isinstance(b, dict) and b.get("source") == "ai")
+        cost = ai_count * s.credit_cost_storyboard_per_cut
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="detail_page",
+            payload={"mode": "generate"}, idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": s.credit_cost_version})
+        if created:
+            if not storyboard:
+                raise _bad_request("empty_storyboard", "콘티가 비어 있어요. 먼저 콘티를 저장해 주세요.")
+            if cost > 0 and await repo.reserve_credits(conn, user_id, cost) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
 @router.get(
     "/assets/{asset_id}/file",
     responses={**COMMON_RESPONSES, 302: {"description": "R2 presigned GET URL로 302 리다이렉트"}},

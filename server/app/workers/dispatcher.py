@@ -11,6 +11,7 @@ import time
 
 from .. import repo
 from .analyze_job import run_analyze_job
+from .detail_page_job import run_detail_page_job
 from .mannequin_job import run_mannequin_job
 
 log = logging.getLogger("wearless.dispatcher")
@@ -19,6 +20,7 @@ log = logging.getLogger("wearless.dispatcher")
 _WORKERS = {
     "mannequin": run_mannequin_job,
     "analyze": run_analyze_job,  # AG-01 상품 분석 (무과금)
+    "detail_page": run_detail_page_job,  # PL-4 상세페이지 생성 (AG-06→02→03→M-02)
 }
 _KINDS = tuple(_WORKERS)  # 이후 mannequin_adjust/detail_page/editor_image 추가
 _SWEEP_INTERVAL = 60.0  # lease 복구 점검 주기(초)

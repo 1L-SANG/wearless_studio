@@ -131,6 +131,30 @@ export const httpAdapter = {
     merged.measurements = (base.measurements || []).map((m) => ({ ...m, value: null }));
     return merged;
   },
+  // ---- 상세페이지 (PL-4) — 콘티·에디터는 서버 소유. detail_page job 이 저장 콘티를 읽는다 ----
+  async getStoryboard(projectId) {
+    return http(`/v1/projects/${projectId}/storyboard`);
+  },
+  async saveStoryboard(projectId, blocks) {
+    const out = await http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
+    DB.storyboard = blocks;  // mock 미러(부분 스왑 브릿지 — mock 폴백 읽기 정합)
+    return out;
+  },
+  async getEditorBlocks(projectId) {
+    return http(`/v1/projects/${projectId}/editor-blocks`);
+  },
+  async saveEditorBlocks(projectId, blocks) {
+    await http(`/v1/projects/${projectId}/editor-blocks`, { method: 'PUT', body: blocks });
+    DB.editorBlocks = blocks;
+  },
+  // AG-06 컷 + AG-02/03 카피 → M-02 조립. 완료 재호출은 서버가 기존 결과 반환(무차감).
+  async generateDetailPage(projectId, { onProgress } = {}) {
+    const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
+    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(202 아님)
+    const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
+    DB.editorBlocks = result.data; DB.project.status = 'done';  // mock 미러
+    return { data: result.data, credits: result.credits };
+  },
   // Phase 1-B 읽기·CRUD 스왑 (계약 §6 시그니처 동일). 미구현 함수는 mock 폴백.
   // getProject 는 store 가 projectId 없이 호출(api.getProject()) → 시그니처 정리 후
   // 플로우 단계에서 스왑. 지금 스왑하면 깨지므로 mock 유지.

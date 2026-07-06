@@ -55,6 +55,8 @@ class Settings:
     job_worker_id: str = "web"
     credit_cost_version: str = "v1"  # §6 임시 단가
     credit_cost_mannequin_generate: int = 2
+    credit_cost_storyboard_per_cut: int = 1  # PL-4 상세페이지: AI 컷 1개당 (프론트 CREDIT_COSTS 미러)
+    credit_cost_editor_image: int = 1  # PL-5 에디터 이미지 1장
     # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택. flag 기본 off ----
     # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
     retrieval_matching: str = "off"  # off | tags (styleTags 친화도 v1)
@@ -131,6 +133,8 @@ def load_settings() -> Settings:
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
         credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v1"),
         credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "2")),
+        credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "1")),
+        credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "1")),
         retrieval_matching=_flag("RETRIEVAL_MATCHING", "off", {"off", "tags"}),
         retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static"}),
         seller_text_canonicalize=_flag(
