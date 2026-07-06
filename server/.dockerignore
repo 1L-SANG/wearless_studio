@@ -1,0 +1,11 @@
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+tests
+scripts
+.omc
+.env
+.env.example
+.python-version
+railway.json
