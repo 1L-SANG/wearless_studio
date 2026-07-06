@@ -12,9 +12,10 @@ type: Environment
 #     id:
 
 # Configure the load balancers in your environment, once created.
-# http:
-#   public:
-#   private:
+http:
+  public:
+    certificates:
+      - arn:aws:acm:ap-northeast-2:439328746001:certificate/c878a5bb-1139-432a-9b7d-d6210a1b6b12
 
 # Configure observability for your environment resources.
 observability:

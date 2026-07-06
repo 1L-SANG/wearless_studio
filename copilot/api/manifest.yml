@@ -10,9 +10,7 @@ type: Load Balanced Web Service
 http:
   path: '/'
   healthcheck: '/healthz'        # FastAPI 헬스체크 (app/main.py)
-  # 커스텀 도메인 — ACM 인증서 발급 + env manifest 에 certificates import 후 주석 해제.
-  # 그 전까진 ALB DNS 이름으로 접근/검증.
-  # alias: api.wearless.kr
+  alias: api.wearless.kr         # ACM cert(c878a5bb) — env manifest certificates 로 ALB 리스너에 import
 
 # Configuration for your containers and service.
 image:
