@@ -12,11 +12,11 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 <instruction>
 - Dress the BASE MANNEQUIN (image 1) in the seller's garment so it looks physically and naturally worn (gender: ${baseGender}, garment: ${clothingType}).
 - Faithfully reproduce the garment from the attached views together with the PRODUCT CONTEXT at the very bottom: exact color, pattern, fabric, seams, neckline, silhouette, and any logo or print.
-- Apply a ${baseFit} fit for candidate ${candidate}.
+- Fit and proportion precedence: declared FIT PROFILE (if present) > FIT view reference photo (if attached) > default impression from the product photos.
 
 - DETAIL view (if attached): read its close-up details carefully — texture, stitching, trims, hardware, prints — and reproduce them faithfully. Make sure the seller's "Key features" listed in the PRODUCT CONTEXT are clearly visible and expressed in the result.
 
-- FIT view (if attached): this shows the same garment worn on a real body. Treat it as the PRIORITY reference for FIT and PROPORTION — match the garment's length (where the hem falls), how loose or fitted it sits, how it drapes, and which body areas it emphasizes or skims. The fit view overrides any generic assumption about length or fit.
+- FIT view (if attached): this shows the same garment worn on a real body. For any FIT PROFILE axis not declared, treat it as the priority reference for fit and proportion — match the garment's length (where the hem falls), cut or silhouette, how loose or fitted it sits, how it drapes, and which body areas it emphasizes or skims.
 
 - MATCHING BOTTOM (if attached, the last image): also dress the mannequin in this bottom garment, coordinated naturally with the top (appropriate layering, tuck, and proportion).
 </instruction>

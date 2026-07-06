@@ -142,12 +142,12 @@ class MannequinCut(CamelModel):
 
     id: str
     src: str
-    candidate: str
+    candidate: str  # deprecated: 단일컷 전환 후 legacy id/API 호환용
     version: int
     base_fit: str
-    fit_adjust: str | None = None
-    length_adjust: str | None = None
-    match_adjust: dict | None = None
+    fit_adjust: str | None = None  # deprecated: FitProfile로 대체
+    length_adjust: str | None = None  # deprecated: FitProfile로 대체
+    match_adjust: dict | None = None  # deprecated: 매칭 의류 자동 시드 메타 사용
 
 
 class CutGenerateRequest(CamelModel):

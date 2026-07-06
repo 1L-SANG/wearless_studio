@@ -35,8 +35,9 @@ export const ProjectStatus = Object.freeze({ DRAFT: 'draft', GENERATING: 'genera
 export const JobStatus = Object.freeze({ IDLE: 'idle', RUNNING: 'running', DONE: 'done', ERROR: 'error' });
 export const ElementType = Object.freeze({ IMAGE: 'image', TEXT: 'text', SHAPE: 'shape', LINE: 'line' });
 export const AngleSlot = Object.freeze({ FRONT: 'Front', BACK: 'Back', DETAIL: 'Detail', FIT: 'Fit' });
-/** 마네킹 조정 — '현재(변경 없음)'는 파라미터 생략으로 표현 */
+/** @deprecated 핏 프로필(FitProfile)로 대체. P2에서 UI/API 소비 제거 전까지 유지. */
 export const AdjustFit = Object.freeze({ SLIMMER: 'slimmer', LOOSER: 'looser' });
+/** @deprecated 핏 프로필(FitProfile)로 대체. P2에서 UI/API 소비 제거 전까지 유지. */
 export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer' });
 
 /* =============================================================
@@ -98,7 +99,8 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string} [suggestedName]
    @property {string|null} subCategory   영문 토큰 (catalogs.subCategories)
    @property {Gender[]} targetGenders
-   @property {Fit} fit
+   @property {Fit} fit                   legacy 초기 자동 추정값 — fitProfile.axes.fit 공급원
+   @property {FitProfile} fitProfile     마네킹·하위 컷이 상속하는 핏 프로필
    @property {Material[]} materials
    @property {string[]} sellingPoints    자유 텍스트 (max 5)
    @property {string[]} aiSuggestedPoints (max 2)
@@ -106,6 +108,13 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {MatchClothing[]} matchClothing  후보 목록 (선택 상태 포함 — 계약은 matchSelections 분리, §7 갭)
    @property {string} washCare
    @property {boolean} locked
+
+   @typedef {Object} FitProfile
+   @property {'top'|'pants'|'skirt'|'dress'|'outer'} category  clothingType+subCategory 유도 카테고리
+   @property {'women'|'men'} gender       select_base_gender와 동일 규칙
+   @property {{fit?:string|null,length?:string|null,cut?:string|null,silhouette?:string|null}} axes  카테고리별 유효 축만. null='사진 그대로'
+   @property {'auto'|'seller'} source     auto=분석 추정 그대로, seller=셀러가 하나라도 수정
+   @property {1} version
 
    @typedef {Object} Model
    @property {string} id
@@ -144,13 +153,13 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
 
    @typedef {Object} MannequinCut
    @property {string} id                 `${candidate}-${version}`
-   @property {'A'|'B'} candidate
+   @property {'A'|'B'} candidate          @deprecated 단일컷 전환 후 legacy id/API 호환용
    @property {number} version
    @property {string} src
    @property {Fit} baseFit               후보 생성 시 핏 (구 fitLabel)
-   @property {string|null} fitAdjust     AdjustFit — 원본 대비 누적 조정 상태
-   @property {string|null} lengthAdjust  AdjustLength
-   @property {{clothingId:string,fitAdjust:string|null,lengthAdjust:string|null}|null} matchAdjust
+   @property {string|null} fitAdjust     @deprecated AdjustFit — FitProfile로 대체
+   @property {string|null} lengthAdjust  @deprecated AdjustLength — FitProfile로 대체
+   @property {{clothingId:string,fitAdjust:string|null,lengthAdjust:string|null}|null} matchAdjust @deprecated 매칭 의류 자동 시드 메타 사용
    (선택 여부는 project.selectedMannequinId가 소유 — cut.selected 폐기)
 
    @typedef {Object} StoryboardBlock
