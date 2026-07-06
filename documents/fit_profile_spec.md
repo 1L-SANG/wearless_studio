@@ -78,6 +78,6 @@ FIT PROFILE (seller-declared; overrides any impression from the photos):
 1. **P1 계약+카탈로그+프롬프트**: types.js(FitProfile, 폐기 표기) · fitAxes.js · fit_axes.py · prompts.py(FIT PROFILE 블록) · mannequin.py(단일 spec) · mannequin_generate_v1.txt(우선순위 재작성) · 백엔드 테스트.
 2. **P2 mock+프론트 개편**: mock api(generate 1장·regenerate(profile)·크레딧) · Mannequin.jsx(FitProfilePanel·단일컷·히스토리) · limits.js.
 3. **P3 분석 통합**: AnalysisForm 핏 pill→fitProfile 배선 · 카테고리 유도 · CTA 크레딧 라벨.
-4. **P4 백엔드 regenerate 엔드포인트 + 스모크**: 상하의 동시 착장 프로필 간섭 검증(게이트) 포함.
+4. **P4 백엔드 + 스모크 — 완료(2026-07-07)**: ①백엔드 신규 엔드포인트 **불필요 확인** — analysis 저장이 payload JSONB 병합 패스스루라 fitProfile이 그대로 흐르고, 재생성 = analysis PATCH(fitProfile) → 기존 마네킹 job POST(새 멱등키). httpAdapter 스왑 시 이 조합 사용. ②**상하의 동시 착장 스모크 통과**: production 프롬프트 경로(render_mannequin_prompt+fit_profile)로 상의 프로필(오버·크롭 vs 슬림·기본)+매칭 데님 동시 착장 — 프로필이 상의에만 적용되고 하의 다리라인은 사진 그대로(간섭 없음).
 
 미검증 게이트(구현과 별개): 아우터·원피스 실물 이미지 확보 후 생성 검증 → 그때까지 해당 카테고리 축은 카탈로그에 있되 노출 여부 결정.
