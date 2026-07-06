@@ -29,6 +29,14 @@ def _sanitize(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value)).strip()[:200]
 
 
+def clean_text(value: Any, limit: int = 300) -> str:
+    """모델 출력 텍스트 정리 — 개행/제어문자 접기 + 길이 상한. 입력 sanitize(_sanitize, 200자·인젝션
+    방지)보다 관대(표시용). AG-02 카피·AG-03 검수·AG-P2 mismatch 등 출력 정리 공용."""
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip()[:limit]
+
+
 @dataclass(frozen=True)
 class MannequinPromptContext:
     clothing_type: str

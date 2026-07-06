@@ -10,7 +10,7 @@ LLM 호출은 `vision_llm.complete_json`(텍스트 전용) 재사용. 출력 {te
 import os
 
 from ..config import Settings
-from .prompts import _sanitize
+from .prompts import _sanitize, clean_text
 from .vision_llm import complete_json
 
 ROLES = ("headline", "body")
@@ -19,14 +19,6 @@ MAX_TEXTS = 3  # 블록당 카피 상한 (계약 §3.5 blockKind별 1~3)
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "copywriter_v1.txt")
-
-
-def _clean_out(text, limit: int = 300) -> str:
-    """모델 출력 카피 정리 — 개행/제어문자 접기 + 길이 상한(표시용, 입력 sanitize보다 관대)."""
-    import re
-    if text is None:
-        return ""
-    return re.sub(r"\s+", " ", str(text)).strip()[:limit]
 
 
 def copy_schema() -> dict:
@@ -94,7 +86,7 @@ def validate(raw: dict) -> list[dict]:
     for t in (raw or {}).get("texts") or []:
         if not isinstance(t, dict) or t.get("role") not in ROLES:
             continue
-        txt = _clean_out(t.get("text"))
+        txt = clean_text(t.get("text"))
         if txt:
             out.append({"role": t["role"], "text": txt})
     return out[:MAX_TEXTS]
