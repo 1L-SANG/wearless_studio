@@ -41,8 +41,9 @@ class Settings:
     mannequin_aspect_ratio: str = "2:3"
     mannequin_max_attempts: int = 2  # QC 게이팅 시 재시도 상한 (shadow면 실질 1회)
     mannequin_qc_enabled: bool = False  # False=shadow(판정 로그만) — 캘리브레이션 후 True
-    # AG-P2 이미지 동일성 검수(vision LLM "같은 옷인가"). off | shadow(판정 로그만, 게이팅/재시도 없음).
-    # enforce(재시도 게이트)·크레딧/상한 정책은 별도 결정 — 지금은 shadow 까지(ai_agent_modules §5·AG-P2).
+    # AG-P2 이미지 동일성 검수(vision LLM "같은 옷인가"). off | shadow(판정 로그만) |
+    # enforce(불일치 시 correctionPrompt로 재생성 — 마네킹 재시도 루프 재사용, max_attempts 내).
+    # 키 미설정/판정 실패는 게이트 미적용(graceful). 기본 off.
     image_qc: str = "off"
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
     mannequin_prompt_version: str = "v1"
@@ -136,5 +137,5 @@ def load_settings() -> Settings:
             "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
         ),
         input_qc=_flag("INPUT_QC", "off", {"off", "shadow", "enforce"}),
-        image_qc=_flag("IMAGE_QC", "off", {"off", "shadow"}),
+        image_qc=_flag("IMAGE_QC", "off", {"off", "shadow", "enforce"}),
     )
