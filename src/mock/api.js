@@ -23,6 +23,20 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const touch = () => { DB.project.updatedAt = new Date().toISOString(); };
 const spend = (n) => { DB.account.credits = Math.max(0, DB.account.credits - n); return DB.account.credits; };
 const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
+const cutsEnvelope = () => ({ cuts: clone(DB.mannequins) });
+const syncSelectedCut = (cutId) => {
+  const selected = DB.mannequins.find((m) => m.id === cutId) || DB.mannequins[0] || null;
+  DB.project.selectedMannequinId = selected?.id || null;
+  DB.mannequins = DB.mannequins.map((m) => ({ ...m, isSelected: !!selected && m.id === selected.id }));
+  return selected;
+};
+const makeMannequinCut = (version) => ({
+  id: uid('mq'),
+  version,
+  imageUrl: Placeholder.photo(`mq${version}_${Date.now()}`, 'mannequin'),
+  isSelected: true,
+  createdAt: new Date().toISOString(),
+});
 
 /* 진행 중인 유료 job 레지스트리 — 같은 job 의 중복 시작 요청(StrictMode 이중
    실행, 생성 중 이탈 후 재진입)은 새 작업을 만들지 않고 기존 job 에 합류시켜
@@ -66,6 +80,8 @@ export const api = {
     await wait(60);
     const modeChanged = patch.composeMode && patch.composeMode !== DB.project.composeMode;
     Object.assign(DB.project, patch); touch();
+    if ('selectedMannequinId' in patch) syncSelectedCut(patch.selectedMannequinId);
+    if ('fitProfile' in patch) DB.analysis.fitProfile = clone(patch.fitProfile);
     // 구성 방식 변경 시, 사용자가 콘티를 손대기 전이면 기본 콘티를 새 모드로 재구성 (PRD §7.7)
     if (modeChanged && !DB.storyboardDirty) DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors);
     return clone(DB.project);
@@ -92,8 +108,10 @@ export const api = {
     const now = Date.now();
     // 정합 시나리오: 200 충전 → 4 사용 = 196 (account.credits 와 일치)
     return [
-      { id: 'l2', projectId: 'p1', jobId: 'j2', actionKey: 'mannequinGenerate', delta: -2, balanceAfter: 196, availableAfter: 196, createdAt: new Date(now - 30e5).toISOString() },
-      { id: 'l1', projectId: 'p1', jobId: 'j1', actionKey: 'mannequinGenerate', delta: -2, balanceAfter: 198, availableAfter: 198, createdAt: new Date(now - 36e5).toISOString() },
+      { id: 'l4', projectId: 'p1', jobId: 'j4', actionKey: 'mannequinGenerate', delta: -1, balanceAfter: 196, availableAfter: 196, createdAt: new Date(now - 30e5).toISOString() },
+      { id: 'l3', projectId: 'p1', jobId: 'j3', actionKey: 'mannequinGenerate', delta: -1, balanceAfter: 197, availableAfter: 197, createdAt: new Date(now - 32e5).toISOString() },
+      { id: 'l2', projectId: 'p1', jobId: 'j2', actionKey: 'mannequinGenerate', delta: -1, balanceAfter: 198, availableAfter: 198, createdAt: new Date(now - 34e5).toISOString() },
+      { id: 'l1', projectId: 'p1', jobId: 'j1', actionKey: 'mannequinGenerate', delta: -1, balanceAfter: 199, availableAfter: 199, createdAt: new Date(now - 36e5).toISOString() },
       { id: 'l0', projectId: null, jobId: null, actionKey: 'grant_subscription', delta: 200, balanceAfter: 200, availableAfter: 200, createdAt: new Date(now - 40e5).toISOString() },
     ];
   },
@@ -133,6 +151,7 @@ export const api = {
     a.measurements = (a.measurements || []).map((m) => ({ ...m, value: null }));
     return a;
   },
+  async getAnalysis(/* projectId */) { await wait(120); return clone(DB.analysis); },
   async saveAnalysis(_projectId, patch) {
     await wait(180);
     // 매칭 후보 목록은 서버(추천)가 소유 — matchClothing patch 는 통째로 덮지 않고
@@ -140,6 +159,7 @@ export const api = {
     // 클라 스냅샷이 갱신된 후보 목록을 되살리는 레이스 차단 (stale save 방어).
     const { matchClothing: matchPatch, ...rest } = patch;
     Object.assign(DB.analysis, rest);
+    if ('fitProfile' in rest) DB.project.fitProfile = clone(rest.fitProfile);
     if (shouldRefreshMatchClothing(patch)) {
       DB.analysis.matchClothing = recommendLegacyMatchClothing({
         clothingType: DB.analysis.clothingType,
@@ -181,69 +201,54 @@ export const api = {
     await wait(120);
     return clone((DB.analysis?.matchClothing?.length ? DB.analysis.matchClothing : DB.matchClothing));
   },
-  async getMannequins(/* projectId */) { await wait(140); return clone(DB.mannequins); },
-  // 최초 진입 시 A/B 후보를 생성한다. 크레딧: mannequinGenerate (계약 §6).
+  async getMannequins(/* projectId */) {
+    await wait(140);
+    syncSelectedCut(DB.project.selectedMannequinId);
+    return clone(DB.mannequins);
+  },
+  async selectMannequin(_projectId, cutId) {
+    await wait(80);
+    const selected = syncSelectedCut(cutId);
+    touch();
+    return clone(selected);
+  },
+  // 최초 진입 시 단일 v0 컷을 생성한다. 크레딧: mannequinGenerate (계약 §6).
   // 진행 중에 다시 호출되면(이중 mount·재진입) 기존 job 에 합류한다 — 1회만 차감.
-  // 이미 후보가 있으면(완료 후 재호출) 재실행·재차감 없이 기존 결과를 반환한다.
+  // 이미 컷이 있으면(완료 후 재호출) 재실행·재차감 없이 기존 결과를 반환한다.
   async generateMannequins(_projectId, { onProgress } = {}) {
     if (DB.mannequins.length) {
       await wait(140);
       onProgress && onProgress(100);
-      return { data: clone(DB.mannequins), credits: DB.account.credits };
+      syncSelectedCut(DB.project.selectedMannequinId);
+      return { data: cutsEnvelope(), credits: DB.account.credits };
     }
     const job = joinable('mannequins', (listeners) => (async () => {
       const ownerId = DB.project.id;   // job 도중 새 프로젝트로 리시드되면 결과를 버린다
       await runJob({ duration: 3000, stall: true, onProgress: (p) => listeners.forEach((f) => f(p)) });
-      if (DB.project.id !== ownerId) return { data: [], credits: DB.account.credits };
+      if (DB.project.id !== ownerId) return { data: { cuts: [] }, credits: DB.account.credits };
       if (!DB.mannequins.length) {
-        DB.mannequins.push(
-          { id: 'A-0', candidate: 'A', version: 0, src: Placeholder.photo('A0', 'mannequin'), baseFit: 'regular', fitAdjust: null, lengthAdjust: null, matchAdjust: null },
-          { id: 'B-0', candidate: 'B', version: 0, src: Placeholder.photo('B0', 'mannequin'), baseFit: 'slim', fitAdjust: null, lengthAdjust: null, matchAdjust: null },
-        );
+        DB.mannequins.push(makeMannequinCut(0));
+        syncSelectedCut(DB.mannequins[0].id);
       }
       touch();
-      return { data: clone(DB.mannequins), credits: spend(CREDIT_COSTS.mannequinGenerate) };
+      return { data: cutsEnvelope(), credits: spend(CREDIT_COSTS.mannequinGenerate) };
     })());
     if (onProgress) job.listeners.push(onProgress);
     return job.promise;
   },
-  // 조정 값은 enum 토큰만 받는다: fitAdjust slimmer|looser, lengthAdjust shorter|longer.
-  // '현재(변경 없음)' = 필드 생략. 라벨('슬림' 등)은 화면 표시에서만 파생한다.
-  async adjustMannequin(_projectId, { baseId, fitAdjust, lengthAdjust, matchAdjust, onProgress } = {}) {
-    await runJob({ duration: 1800, onProgress });
-    const base = DB.mannequins.find((m) => m.id === baseId) || DB.mannequins[0];
-    const sameCand = DB.mannequins.filter((m) => m.candidate === base.candidate);
-    // 매칭 의류 조정을 차원별로 누적: 이번에 안 바뀐 차원은 base 값으로 폴백해서
-    // 연속 조정 시 직전 차원이 사라지지 않게 (기존 동작 보존).
-    const prev = base.matchAdjust;
-    const nextMatch = matchAdjust
-      ? {
-          clothingId: matchAdjust.clothingId,
-          fitAdjust: matchAdjust.fitAdjust || (prev && prev.clothingId === matchAdjust.clothingId ? prev.fitAdjust : null),
-          lengthAdjust: matchAdjust.lengthAdjust || (prev && prev.clothingId === matchAdjust.clothingId ? prev.lengthAdjust : null),
-        }
-      : (prev ? { ...prev } : null);
-    const next = {
-      ...clone(base), id: base.candidate + '-' + sameCand.length, version: sameCand.length,
-      fitAdjust: fitAdjust || base.fitAdjust || null,
-      lengthAdjust: lengthAdjust || base.lengthAdjust || null,
-      matchAdjust: nextMatch,
-      src: Placeholder.photo(base.id + Date.now(), 'mannequin'),
-    };
-    DB.mannequins.push(next);
-    DB.project.adjustCount += 1; touch();
-    return { data: clone(next), credits: spend(CREDIT_COSTS.mannequinAdjust) };
-  },
-  async regenerateMannequins(_projectId, { onProgress } = {}) {
+  async regenerateMannequin(_projectId, { fitProfile, onProgress } = {}) {
     await runJob({ duration: 2200, onProgress });
-    ['A', 'B'].forEach((c) => {
-      const n = DB.mannequins.filter((m) => m.candidate === c).length;
-      DB.mannequins.push({ id: c + '-' + n, candidate: c, version: n,
-        src: Placeholder.photo(c + n + Date.now(), 'mannequin'),
-        baseFit: 'regular', fitAdjust: null, lengthAdjust: null, matchAdjust: null });
-    });
-    DB.project.adjustCount += 1; touch();
-    return { data: clone(DB.mannequins), credits: spend(CREDIT_COSTS.mannequinGenerate) };
+    if (fitProfile) {
+      DB.project.fitProfile = clone(fitProfile);
+      DB.analysis.fitProfile = clone(fitProfile);
+    }
+    const prevMax = DB.mannequins.reduce((max, cut) => Math.max(max, cut.version ?? -1), -1);
+    const next = makeMannequinCut(prevMax + 1);
+    DB.mannequins = DB.mannequins.map((m) => ({ ...m, isSelected: false }));
+    DB.mannequins.push(next);
+    syncSelectedCut(next.id);
+    touch();
+    return { data: cutsEnvelope(), credits: spend(CREDIT_COSTS.mannequinGenerate) };
   },
 
   /* ---- storyboard (PRD §8) ---- */

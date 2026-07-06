@@ -16,9 +16,18 @@
 import { Placeholder as P } from '@/mock/placeholders.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
+import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 
 const nowIso = () => new Date().toISOString();
+const copyFitProfile = (profile) => ({ ...profile, axes: { ...(profile?.axes || {}) } });
+const isMenOnly = (genders) => Array.isArray(genders) && genders.length > 0 && genders.every((g) => g === 'men');
+const defaultFitProfile = (product, analysis) => {
+  const category = fitProfileCategory(product?.clothingType, analysis?.subCategory) || 'top';
+  const gender = isMenOnly(analysis?.targetGenders || product?.targetGenders) ? 'men' : 'women';
+  const axes = Object.fromEntries(Object.keys(axesFor(category, gender)).map((axis) => [axis, null]));
+  return { category, gender, axes, source: 'auto', version: 1 };
+};
 
 /* ---- Account (stable) ---- */
 const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 196, plan: 'basic' };
@@ -323,7 +332,7 @@ function buildDraft() {
   const project = {
     id: uid('prj'), status: 'draft', title: '',
     composeMode: 'basic', copywriting: true,
-    selectedMannequinId: null, adjustCount: 0,
+    selectedMannequinId: null, adjustCount: 0, fitProfile: null,
     createdAt: nowIso(), updatedAt: nowIso(),
   };
 
@@ -373,11 +382,17 @@ function buildDraft() {
     measurementsUnknown: false,
     measurements: measurements(),
   };
+  const fitProfile = defaultFitProfile(product, analysis);
+  project.fitProfile = copyFitProfile(fitProfile);
+  analysis.fitProfile = copyFitProfile(fitProfile);
 
-  /* ---- Mannequin candidates (PRD §7.3) ----
-     비어 있게 시작 — 마네킹 단계 최초 진입 시 generateMannequins 가
-     A-0/B-0 를 만들고 크레딧을 차감한다. 재진입은 getMannequins 로 무과금. */
-  const mannequins = [];
+  /* ---- Mannequin history (PRD §7.3, fit-profile P2) ----
+     단일컷 버전 히스토리. 기본 draft 는 v0 선택 컷을 가진다. */
+  const mannequins = [{
+    id: uid('mq'), version: 0, imageUrl: P.photo('mq0', 'mannequin'),
+    isSelected: true, createdAt: nowIso(),
+  }];
+  project.selectedMannequinId = mannequins[0].id;
 
   /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004) ---- */
   const storyboard = buildStoryboard(project.composeMode, product.colors);
