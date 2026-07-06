@@ -1,7 +1,7 @@
 # 마네킹컷 페이지 UI 방향서 (구현 인수인계용)
 
 > 목적: 사용자 확정 목업(순차 질문 + 캐러셀 예시)을 실제 `Mannequin.jsx`에 이식.
-> 확정 목업(인터랙션 정답지): scratchpad `mannequin-ui-b2.html` / 빌드소스 `build_ui_b2.py` — **동작·상태는 이 목업이 정답.**
+> 확정 목업(인터랙션 정답지): **`documents/mockups/mannequin-ui-b2.html`** (저장소 내 보존 — 브라우저로 열어 동작 확인 가능). 목업이 없어도 아래 §0(절대 규칙)+§2(상태머신)만으로 구현 가능하도록 서술함.
 > 관련: `documents/fit_profile_spec.md`(데이터·API 계약) · 에셋 `public/assets/fit-examples/` · 매핑 `src/lib/fitExampleImages.js`(폴백 포함, 완성).
 
 ## 0. 사용자 확정 요구 (절대 규칙)
