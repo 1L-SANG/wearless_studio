@@ -81,7 +81,7 @@ async def _gen_copy(app, job, ai_blocks, product, analysis):
                      "measurementsKnown": not analysis.get("measurementsUnknown")}
         results = await copy_qc.review(s, items, confirmed)
         rev = {r["blockId"]: r for r in results if r.get("verdict") == "revise" and r.get("revisedText")}
-    except (VisionError, Exception) as e:
+    except Exception as e:  # VisionError 포함 — 검수 실패 시 원문 유지(게이트 아님)
         log.warning("AG-03 copy-qc failed for job %s: %r", job["id"], e)
         rev = {}
     copy_results = []

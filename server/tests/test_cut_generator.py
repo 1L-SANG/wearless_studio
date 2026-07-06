@@ -13,6 +13,21 @@ def test_cut_types_constant():
     assert cg.CUT_TYPES == ("styling", "horizon", "product")
 
 
+def test_build_prompt_substitutes_image_manifest():
+    # ${imageManifest} 리터럴 토큰이 모델로 유출되면 안 됨 (architect DEFECT 1 회귀 방지)
+    product = {"name": "니트", "colors": [{"isBase": True, "images": [
+        {"slot": "Front", "id": "a1"}, {"slot": "Back", "id": "a2"}]}]}
+    p = cg.build_prompt({"cutType": "styling", "direction": "front", "shot": "full"}, product)
+    assert "${imageManifest}" not in p
+    assert "front view of the product" in p and "back view of the product" in p
+
+
+def test_build_prompt_manifest_fallback_no_images():
+    p = cg.build_prompt({"cutType": "product"}, {"name": "니트", "colors": []})
+    assert "${imageManifest}" not in p
+    assert "product photos" in p.lower()
+
+
 def test_build_prompt_styling_distinct():
     p = cg.build_prompt(
         {"cutType": "styling", "direction": "front", "shot": "full"},

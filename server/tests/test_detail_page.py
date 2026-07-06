@@ -176,3 +176,59 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     assert captured["charge"] == 1              # 성공 컷 1개 × per_cut(1) — 실패 컷 미차감
     assert len(captured["cut_assets"]) == 1
     assert len(captured["cut_results"]) == 1     # b1만
+
+
+def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
+    # copywriting 경로(_gen_copy) 커버 + AG-03 검수 실패 시 원문 유지(except 커버 — NameError 회귀 방지)
+    captured = {}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": True}
+
+    async def fake_sb(conn, pid):
+        return [{"id": "b1", "source": "ai", "kind": "hook", "cutType": "horizon"}]
+
+    async def fake_prod(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_analysis(conn, pid):
+        return {"sellingPoints": ["촉감"], "materials": []}
+
+    async def fake_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": "k/a1"}
+
+    async def fake_gen(settings, gemini, cut_spec, product, images):
+        return b"IMG", "image/png"
+
+    async def fake_copy(settings, **kw):
+        return [{"role": "headline", "text": "원본 카피"}]
+
+    async def fake_review(settings, items, confirmed):
+        raise RuntimeError("qc down")  # 검수 실패 → 원문 유지 (except 커버)
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
+        captured["copy_results"] = copy_results
+        return [{"id": "b0", "elements": []}]
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.copywriter, "generate", fake_copy)
+    monkeypatch.setattr(dpj.copy_qc, "review", fake_review)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job()))
+    assert captured["charge"] == 1
+    assert captured["copy_results"] == [{"blockId": "b1", "texts": [{"role": "headline", "text": "원본 카피"}]}]
