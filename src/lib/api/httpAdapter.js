@@ -131,6 +131,30 @@ export const httpAdapter = {
     merged.measurements = (base.measurements || []).map((m) => ({ ...m, value: null }));
     return merged;
   },
+  // ---- 상세페이지 (PL-4) — 콘티·에디터는 서버 소유. detail_page job 이 저장 콘티를 읽는다 ----
+  async getStoryboard(projectId) {
+    return http(`/v1/projects/${projectId}/storyboard`);
+  },
+  async saveStoryboard(projectId, blocks) {
+    const out = await http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
+    DB.storyboard = blocks;  // mock 미러(부분 스왑 브릿지 — mock 폴백 읽기 정합)
+    return out;
+  },
+  async getEditorBlocks(projectId) {
+    return http(`/v1/projects/${projectId}/editor-blocks`);
+  },
+  async saveEditorBlocks(projectId, blocks) {
+    await http(`/v1/projects/${projectId}/editor-blocks`, { method: 'PUT', body: blocks });
+    DB.editorBlocks = blocks;
+  },
+  // AG-06 컷 + AG-02/03 카피 → M-02 조립. 완료 재호출은 서버가 기존 결과 반환(무차감).
+  async generateDetailPage(projectId, { onProgress } = {}) {
+    const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
+    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(202 아님)
+    const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
+    DB.editorBlocks = result.data; DB.project.status = 'done';  // mock 미러
+    return { data: result.data, credits: result.credits };
+  },
   // Phase 1-B 읽기·CRUD 스왑 (계약 §6 시그니처 동일). 미구현 함수는 mock 폴백.
   // getProject 는 store 가 projectId 없이 호출(api.getProject()) → 시그니처 정리 후
   // 플로우 단계에서 스왑. 지금 스왑하면 깨지므로 mock 유지.
@@ -160,4 +184,29 @@ export const httpAdapter = {
   // 마네킹 등 job형 플로우(generate→adjust→regenerate)는 같은 컷 상태를 공유하므로
   // 부분 스왑 금지 — 백엔드가 generate+adjust+regenerate를 다 갖추고 draft sync(A-3)가
   // 돼야 통째로 swap. 그 전까지 마네킹은 mock 유지(혼합 시 http 모드 깨짐).
+  // AG-05 — 조정 값은 enum 토큰만 전달: fitAdjust slimmer|looser, lengthAdjust shorter|longer.
+  // '현재(변경 없음)' = 필드 생략. 완료 재호출 없음(매 호출이 새 버전 생성, mock과 동일 계약).
+  async adjustMannequin(projectId, { baseId, fitAdjust, lengthAdjust, matchAdjust, onProgress } = {}) {
+    const res = await http(`/v1/projects/${projectId}/mannequins:adjust`, {
+      method: 'POST', body: { baseId, fitAdjust, lengthAdjust, matchAdjust },
+    });
+    if (res.data) return { data: res.data, credits: res.credits };
+    const result = await pollJob(res.jobId, { onProgress });
+    return { data: result.data, credits: result.credits };
+  },
+  // 에디터 Wardrobe(의류 탭, 계약 §3.6) — Record<colorId|'misc', WardrobeImage[]>.
+  async getWardrobe(projectId) {
+    return http(`/v1/projects/${projectId}/wardrobe`);
+  },
+  // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
+  // 완료 재호출 없음(매 호출이 새 이미지 생성, mock과 동일 계약) — onProgress는 body에서 제외.
+  async generateImage(projectId, req = {}) {
+    const { onProgress, ...body } = req;
+    const res = await http(`/v1/projects/${projectId}/editor:generate-image`, {
+      method: 'POST', body,
+    });
+    if (res.data) return { data: res.data, credits: res.credits };
+    const result = await pollJob(res.jobId, { onProgress });
+    return { data: result.data, credits: result.credits };
+  },
 };

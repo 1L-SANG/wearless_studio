@@ -1,0 +1,46 @@
+# The manifest for the "api" service.
+# Read the full specification for the "Load Balanced Web Service" type at:
+#  https://aws.github.io/copilot-cli/docs/manifest/lb-web-service/
+
+# Your service name will be used in naming your resources like log groups, ECS services, etc.
+name: api
+type: Load Balanced Web Service
+
+# Distribute traffic to your service.
+http:
+  path: '/'
+  healthcheck: '/healthz'        # FastAPI 헬스체크 (app/main.py)
+  alias: api.wearless.kr         # ACM cert(c878a5bb) — env manifest certificates 로 ALB 리스너에 import
+
+# Configuration for your containers and service.
+image:
+  build: server/Dockerfile       # 빌드 컨텍스트 = server/ (server/.dockerignore 적용)
+  port: 8080
+
+cpu: 512        # Pillow 이미지 처리 여유
+memory: 1024    # image_high job 대비 1GB
+platform: linux/x86_64
+count: 1        # 항상 1개 상주 → in-process JobDispatcher 계속 살아있음
+exec: true
+network:
+  connect: true
+
+variables:                       # 평문 (민감하지 않음). 시크릿은 아래 secrets 블록.
+  APP_ENV: production
+  SUPABASE_URL: https://pedonlvyhoyedzdmmwco.supabase.co
+  CORS_ORIGINS: https://ai.wearless.kr
+  SUPABASE_ANON_KEY: sb_publishable_iY1-8oAlYRJitM09dPGJnw_fs44eUzs
+  R2_ACCOUNT_ID: 2b7c948b56f129faaa10e5076b9e9a66
+  R2_BUCKET: wearless
+  R2_ENDPOINT: https://2b7c948b56f129faaa10e5076b9e9a66.r2.cloudflarestorage.com
+  R2_PUBLIC_BASE: https://images.wearless.kr
+  MANNEQUIN_BASE_WOMEN_ASSET_ID: 486937ac-7cb3-4597-b563-d185d378a10d
+  MANNEQUIN_BASE_MEN_ASSET_ID: 736ff2ab-0f15-4f9a-b2ee-c40cd0ed7ee0
+  MANNEQUIN_QC_ENABLED: "true"
+
+secrets:                         # SSM Parameter Store (SecureString). copilot secret init 로 값 저장.
+  DATABASE_URL: /copilot/wearless/prod/secrets/DATABASE_URL
+  SUPABASE_SERVICE_ROLE_KEY: /copilot/wearless/prod/secrets/SUPABASE_SERVICE_ROLE_KEY
+  R2_ACCESS_KEY_ID: /copilot/wearless/prod/secrets/R2_ACCESS_KEY_ID
+  R2_SECRET_ACCESS_KEY: /copilot/wearless/prod/secrets/R2_SECRET_ACCESS_KEY
+  GEMINI_API_KEY: /copilot/wearless/prod/secrets/GEMINI_API_KEY

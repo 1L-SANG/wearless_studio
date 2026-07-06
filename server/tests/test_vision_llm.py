@@ -157,6 +157,27 @@ def test_malformed_200_body_falls_back(monkeypatch):
     assert provider == "gemini"
 
 
+def test_complete_json_text_only_gpt(monkeypatch):
+    # 이미지 없이(images=[]) 텍스트 전용 구조화 호출 — AG-02/03 재사용 기반
+    s = make_settings(openai_api_key="sk-x", gemini_api_key=None, analysis_model_order="gpt,gemini")
+    payload = {"texts": [{"role": "headline", "text": "포근한 니트"}]}
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient",
+                        fake_client_factory(lambda url: _gpt_ok(payload)))
+    raw, provider = run(vision_llm.complete_json(s, "write copy", {"type": "object"}))
+    assert provider == "gpt"
+    assert raw["texts"][0]["role"] == "headline"
+
+
+def test_complete_json_text_only_gemini_fallback(monkeypatch):
+    s = make_settings(openai_api_key=None, gemini_api_key="AIza-x", analysis_model_order="gpt,gemini")
+    payload = {"results": [{"blockId": "b1", "verdict": "pass"}]}
+    monkeypatch.setattr(vision_llm.httpx, "AsyncClient",
+                        fake_client_factory(lambda url: _gemini_ok(payload)))
+    raw, provider = run(vision_llm.complete_json(s, "review copy", {"type": "object"}))
+    assert provider == "gemini"
+    assert raw["results"][0]["verdict"] == "pass"
+
+
 def test_gemini_schema_conversion():
     schema = {
         "type": "object",

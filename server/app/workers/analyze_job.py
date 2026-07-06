@@ -12,18 +12,9 @@ from .. import repo
 from ..agents import mannequin, product_analyst
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
+from ._common import emit_job_event as _emit  # 공용 헬퍼(mannequin_job과 공유). 테스트가 이 이름을 monkeypatch
 
 log = logging.getLogger("wearless.analyze_job")
-
-
-async def _emit(pool, job_id: str, event_type: str, payload: dict):
-    """진행 이벤트 append (비종결 — 짧은 독립 tx). 종결 done/error는 finalize가 원자로 남긴다."""
-    try:
-        async with pool.connection() as conn:
-            await repo.append_job_event(conn, job_id, event_type, payload)
-            await conn.commit()
-    except Exception:  # 이벤트 실패가 분석 자체를 막지 않게
-        pass
 
 
 async def run_analyze_job(app, job: dict) -> None:
@@ -33,11 +24,16 @@ async def run_analyze_job(app, job: dict) -> None:
     lease_token = job["lease_token"]
 
     async def _fail(message: str, meta: dict, code: str = "analysis_failed"):
-        async with pool.connection() as conn:
-            await repo.finalize_analyze_failure(
-                conn, job_id=job_id, lease_token=lease_token, project_id=project_id,
-                message=message, metadata=meta, code=code)
-            await conn.commit()
+        # 자체 예외를 삼킨다 — 내부 실패 브랜치의 _fail 이 DB 오류로 raise 하면 outer except 가
+        # _fail 을 재호출해 이중 종결되던 문제(F2). 종결 실패는 lease 복구가 backstop.
+        try:
+            async with pool.connection() as conn:
+                await repo.finalize_analyze_failure(
+                    conn, job_id=job_id, lease_token=lease_token, project_id=project_id,
+                    message=message, metadata=meta, code=code)
+                await conn.commit()
+        except Exception:
+            log.exception("analyze finalize_failure error for job %s", job_id)
 
     try:
         # 1) 입력 로드 — 기준 색상 이미지 asset (마네킹과 동일 소스)

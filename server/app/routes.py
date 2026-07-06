@@ -807,6 +807,214 @@ async def get_mannequins(
     return [_cut_to_api(c) for c in cuts]
 
 
+@router.post(
+    "/projects/{project_id}/mannequins:adjust",
+    responses={
+        **COMMON_RESPONSES,
+        202: {"description": "마네킹 조정 작업이 대기열에 진입했습니다."},
+        400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: baseId 누락)"},
+        402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+    },
+    tags=["Mannequins (AI)"],
+    summary="마네킹 조정 작업 시작 (AG-05)",
+)
+async def adjust_mannequin(
+    request: Request,
+    project_id: str,
+    body: dict = Body(...),
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """기존 마네킹컷 1장(`baseId`)을 기준으로 지시된 차원(fit/length/match)만 바꾼 새 버전
+    컷을 생성하는 비동기 작업을 요청합니다.
+
+    - **Bearer Token**: 필수
+    - **Body**: `{ baseId, fitAdjust?, lengthAdjust?, matchAdjust? }` — 변경하지 않을 필드는 생략
+    - **Header**: `Idempotency-Key` (필수 권장, 중복 차감 및 중복 작업 방지)
+    - **에지 케이스**:
+      - `400 Bad Request` (`missing_base_id`): `baseId`가 없는 경우 발생
+      - `402 Payment Required`: 마네킹 조정에 필요한 크레딧(설정값, 기본 1)이 없으면 발생
+    """
+    s = request.app.state.settings
+    cost = s.credit_cost_mannequin_adjust
+    scoped_key = f"{project_id}:mannequin_adjust:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="mannequin_adjust",
+            payload=body, idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": s.credit_cost_version})
+        if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
+            if not body.get("baseId"):
+                raise _bad_request("missing_base_id", "조정할 마네킹컷을 먼저 선택해 주세요.")
+            if await repo.reserve_credits(conn, user_id, cost) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
+# ---------- 콘티/에디터/상세페이지 (PL-4) ----------
+
+
+@router.get("/projects/{project_id}/storyboard", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="콘티 조회")
+async def get_storyboard(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        return await repo.get_storyboard(conn, project_id)
+
+
+@router.put("/projects/{project_id}/storyboard", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="콘티 저장")
+async def save_storyboard(request: Request, project_id: str, blocks: list = Body(...),
+                          user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        out = await repo.save_storyboard(conn, user_id, project_id, blocks)
+        await conn.commit()
+    return out
+
+
+@router.get("/projects/{project_id}/editor-blocks", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="에디터 블록 조회")
+async def get_editor_blocks(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        return await repo.get_editor_blocks(conn, project_id)
+
+
+@router.put("/projects/{project_id}/editor-blocks", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="에디터 블록 저장")
+async def save_editor_blocks(request: Request, project_id: str, blocks: list = Body(...),
+                             user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        await repo.save_editor_blocks(conn, user_id, project_id, blocks)
+        await conn.commit()
+    return {"ok": True}
+
+
+# ---------- 에디터 의류 탭(Wardrobe, PL-5/6 · AG-06/07) ----------
+
+
+@router.get(
+    "/projects/{project_id}/wardrobe",
+    responses={**COMMON_RESPONSES},
+    tags=["Detail Page"],
+    summary="에디터 Wardrobe(의류 탭) 목록 조회",
+)
+async def get_wardrobe(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    """에디터 AI 탭에 표시할 Wardrobe 이미지 목록. 그룹 키(colorId | 'misc')로 묶어 반환합니다
+    (계약 §3.6 `Record<colorId|'misc', WardrobeImage[]>`).
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**: `404 Not Found` — 프로젝트가 존재하지 않거나 타 사용자 소유인 경우
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        rows = await repo.list_wardrobe_images(conn, user_id, project_id)
+    wardrobe: dict[str, list] = {}
+    for r in rows:
+        group = r["color_id"] or "misc"
+        wardrobe.setdefault(group, []).append(repo._wardrobe_image_api(r))
+    return wardrobe
+
+
+@router.post(
+    "/projects/{project_id}/editor:generate-image",
+    responses={
+        **COMMON_RESPONSES,
+        202: {"description": "에디터 이미지 생성 작업이 대기열에 진입했습니다."},
+        402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+    },
+    tags=["Detail Page"],
+    summary="에디터 이미지 생성 작업 시작 (AG-06/07)",
+)
+async def generate_editor_image(
+    request: Request,
+    project_id: str,
+    body: dict = Body(...),
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """에디터 AI 탭의 '새 컷 추가'(`mode:'new'`, AG-06 재사용) 또는 '현재 컷 변형'
+    (`mode:'vary'`, AG-07)을 생성하는 비동기 작업을 요청합니다. `NewCutRequest` /
+    `VaryRequest`(계약 §6)를 그대로 본문으로 받습니다.
+
+    - **Bearer Token**: 필수
+    - **Body**: `NewCutRequest { mode:'new', colorId, cutType, direction?, shot?, modelId? }` |
+      `VaryRequest { mode:'vary', source:{src,cutType}, changes[], refBg? }`
+    - **Header**: `Idempotency-Key` (권장, 중복 차감 및 중복 작업 방지) — `editor_image`는 매 호출이
+      새 이미지를 생성하므로(완료 재호출 재사용 없음) 활성-중복 dedup 대상에서 제외되고, 멱등은
+      이 키로만 보장됩니다.
+    - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
+    """
+    s = request.app.state.settings
+    cost = s.credit_cost_editor_image
+    scoped_key = f"{project_id}:editor_image:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="editor_image",
+            payload=body, idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": s.credit_cost_version})
+        if created:  # 신규 job만 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
+            if await repo.reserve_credits(conn, user_id, cost) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
+@router.post(
+    "/projects/{project_id}/detail-page:generate",
+    responses={**COMMON_RESPONSES, 202: {"description": "상세페이지 생성 작업 진입"},
+               400: {"model": ErrorResponse}, 402: {"model": ErrorResponse}},
+    tags=["Detail Page"], summary="상세페이지 생성 작업 시작 (PL-4)",
+)
+async def generate_detail_page(
+    request: Request, project_id: str, user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """저장된 콘티로 AI 컷(AG-06) + 카피(AG-02/03) 생성 → M-02 조립 → EditorBlock[]. 크레딧:
+    storyboardPerCut × source='ai' 블록 수(성공 컷만 차감). 완료 재호출은 기존 결과 반환(무차감)."""
+    s = request.app.state.settings
+    scoped_key = f"{project_id}:detail_page:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        existing = await repo.get_editor_blocks(conn, project_id)
+        if existing:  # 완료 재호출 → 기존 결과 반환(재생성·재차감 없음)
+            account = await repo.get_account(conn, user_id)
+            return JSONResponse({"data": existing, "credits": (account or {}).get("credits", 0)})
+        storyboard = await repo.get_storyboard(conn, project_id)
+        ai_count = sum(1 for b in storyboard if isinstance(b, dict) and b.get("source") == "ai")
+        cost = ai_count * s.credit_cost_storyboard_per_cut
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="detail_page",
+            payload={"mode": "generate"}, idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": s.credit_cost_version})
+        if created:
+            if not storyboard:
+                raise _bad_request("empty_storyboard", "콘티가 비어 있어요. 먼저 콘티를 저장해 주세요.")
+            if cost > 0 and await repo.reserve_credits(conn, user_id, cost) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
 @router.get(
     "/assets/{asset_id}/file",
     responses={**COMMON_RESPONSES, 302: {"description": "R2 presigned GET URL로 302 리다이렉트"}},

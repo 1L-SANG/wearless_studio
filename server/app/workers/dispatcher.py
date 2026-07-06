@@ -11,6 +11,9 @@ import time
 
 from .. import repo
 from .analyze_job import run_analyze_job
+from .detail_page_job import run_detail_page_job
+from .editor_image_job import run_editor_image_job
+from .mannequin_adjust_job import run_mannequin_adjust_job
 from .mannequin_job import run_mannequin_job
 
 log = logging.getLogger("wearless.dispatcher")
@@ -19,8 +22,11 @@ log = logging.getLogger("wearless.dispatcher")
 _WORKERS = {
     "mannequin": run_mannequin_job,
     "analyze": run_analyze_job,  # AG-01 상품 분석 (무과금)
+    "detail_page": run_detail_page_job,  # PL-4 상세페이지 생성 (AG-06→02→03→M-02)
+    "mannequin_adjust": run_mannequin_adjust_job,  # AG-05 마네킹 조정
+    "editor_image": run_editor_image_job,  # AG-06/07 에디터 이미지 (PL-5/6, mode:'new'|'vary')
 }
-_KINDS = tuple(_WORKERS)  # 이후 mannequin_adjust/detail_page/editor_image 추가
+_KINDS = tuple(_WORKERS)
 _SWEEP_INTERVAL = 60.0  # lease 복구 점검 주기(초)
 
 
