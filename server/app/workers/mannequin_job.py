@@ -15,7 +15,7 @@ from PIL import Image
 log = logging.getLogger("wearless.mannequin_job")
 
 from .. import repo
-from ..agents import mannequin
+from ..agents import image_qc, mannequin
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
 from ..agents.prompts import load_prompt_template, render_mannequin_prompt
@@ -94,6 +94,15 @@ async def _run_candidate(
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "model": model, "attempt": attempt, "status": "generated",
             "qc": {"verdict": verdict.verdict, "reasons": verdict.reasons}})
+        # AG-P2 이미지 동일성 검수 — shadow(판정 로그만, 게이팅/재시도 없음). flag off면 skip.
+        # 실패해도 생성 자체를 막지 않는다(shadow). enforce·재시도는 별도 결정.
+        if s.image_qc == "shadow" and prod_imgs:
+            try:
+                p2 = await image_qc.verdict(s, prod_imgs, InlineImage(res.mime, res.image))
+                await _emit(pool, job_id, "step", {
+                    "candidate": candidate, "attempt": attempt, "status": "image_qc", "imageQc": p2})
+            except Exception as e:
+                log.warning("AG-P2 image_qc shadow failed for job %s: %r", job_id, e)
         # shadow(기본): QC 로그만 하고 무조건 채택 / 게이팅 시: pass만 채택
         if (not s.mannequin_qc_enabled) or verdict.verdict == "pass":
             ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")

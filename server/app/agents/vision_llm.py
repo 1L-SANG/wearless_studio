@@ -179,3 +179,9 @@ async def analyze_with_fallback(
     if last_error is None:  # 시도할 provider 자체가 없었음(키 전무)
         raise VisionError("분석 AI 키가 설정되지 않았어요. 관리자에게 문의해 주세요.")
     raise VisionError("상품 분석에 실패했어요. 잠시 후 다시 시도해 주세요.")
+
+
+async def complete_json(settings: Settings, prompt: str, schema: dict) -> tuple[dict, str]:
+    """텍스트 전용 구조화 호출(이미지 없음) — AG-02 카피·AG-03 카피검수 등 text tier 재사용.
+    `analyze_with_fallback` 을 images=[] 로 호출한다(프로바이더 content/parts 에 이미지 파트만 빠짐)."""
+    return await analyze_with_fallback(settings, prompt, [], schema)
