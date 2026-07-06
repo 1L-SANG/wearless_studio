@@ -184,4 +184,14 @@ export const httpAdapter = {
   // 마네킹 등 job형 플로우(generate→adjust→regenerate)는 같은 컷 상태를 공유하므로
   // 부분 스왑 금지 — 백엔드가 generate+adjust+regenerate를 다 갖추고 draft sync(A-3)가
   // 돼야 통째로 swap. 그 전까지 마네킹은 mock 유지(혼합 시 http 모드 깨짐).
+  // AG-05 — 조정 값은 enum 토큰만 전달: fitAdjust slimmer|looser, lengthAdjust shorter|longer.
+  // '현재(변경 없음)' = 필드 생략. 완료 재호출 없음(매 호출이 새 버전 생성, mock과 동일 계약).
+  async adjustMannequin(projectId, { baseId, fitAdjust, lengthAdjust, matchAdjust, onProgress } = {}) {
+    const res = await http(`/v1/projects/${projectId}/mannequins:adjust`, {
+      method: 'POST', body: { baseId, fitAdjust, lengthAdjust, matchAdjust },
+    });
+    if (res.data) return { data: res.data, credits: res.credits };
+    const result = await pollJob(res.jobId, { onProgress });
+    return { data: result.data, credits: result.credits };
+  },
 };

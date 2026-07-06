@@ -807,6 +807,55 @@ async def get_mannequins(
     return [_cut_to_api(c) for c in cuts]
 
 
+@router.post(
+    "/projects/{project_id}/mannequins:adjust",
+    responses={
+        **COMMON_RESPONSES,
+        202: {"description": "마네킹 조정 작업이 대기열에 진입했습니다."},
+        400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: baseId 누락)"},
+        402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+    },
+    tags=["Mannequins (AI)"],
+    summary="마네킹 조정 작업 시작 (AG-05)",
+)
+async def adjust_mannequin(
+    request: Request,
+    project_id: str,
+    body: dict = Body(...),
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """기존 마네킹컷 1장(`baseId`)을 기준으로 지시된 차원(fit/length/match)만 바꾼 새 버전
+    컷을 생성하는 비동기 작업을 요청합니다.
+
+    - **Bearer Token**: 필수
+    - **Body**: `{ baseId, fitAdjust?, lengthAdjust?, matchAdjust? }` — 변경하지 않을 필드는 생략
+    - **Header**: `Idempotency-Key` (필수 권장, 중복 차감 및 중복 작업 방지)
+    - **에지 케이스**:
+      - `400 Bad Request` (`missing_base_id`): `baseId`가 없는 경우 발생
+      - `402 Payment Required`: 마네킹 조정에 필요한 크레딧(설정값, 기본 1)이 없으면 발생
+    """
+    s = request.app.state.settings
+    cost = s.credit_cost_mannequin_adjust
+    scoped_key = f"{project_id}:mannequin_adjust:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="mannequin_adjust",
+            payload=body, idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": s.credit_cost_version})
+        if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
+            if not body.get("baseId"):
+                raise _bad_request("missing_base_id", "조정할 마네킹컷을 먼저 선택해 주세요.")
+            if await repo.reserve_credits(conn, user_id, cost) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
 # ---------- 콘티/에디터/상세페이지 (PL-4) ----------
 
 
