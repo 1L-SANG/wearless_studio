@@ -7,7 +7,9 @@
       "Action": ["cloudformation:*"],
       "Resource": [
         "arn:aws:cloudformation:ap-northeast-2:439328746001:stack/wearless-*",
-        "arn:aws:cloudformation:ap-northeast-2:439328746001:stack/StackSet-wearless-*"
+        "arn:aws:cloudformation:ap-northeast-2:439328746001:stack/StackSet-wearless-*",
+        "arn:aws:cloudformation:ap-northeast-2:439328746001:stackset/wearless-*",
+        "arn:aws:cloudformation:ap-northeast-2:439328746001:stackset-target/wearless-*"
       ]
     },
     {
@@ -15,6 +17,12 @@
       "Effect": "Allow",
       "Action": ["sts:AssumeRole"],
       "Resource": ["arn:aws:iam::439328746001:role/wearless-*"]
+    },
+    {
+      "Sid": "CopilotSSMConfig",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"],
+      "Resource": "arn:aws:ssm:ap-northeast-2:439328746001:parameter/copilot/*"
     },
     {
       "Sid": "EcrAuthToken",
