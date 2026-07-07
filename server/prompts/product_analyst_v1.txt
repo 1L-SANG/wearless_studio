@@ -10,7 +10,11 @@ HARD RULES (a violation makes the output invalid):
   measurement field. The seller enters those by hand.
 - If you are not confident about the material, leave materials empty. Do not guess fiber
   content. Free-text values (material name, suggestedName, aiSuggestedPoints) are Korean.
-- aiSuggestedPoints: at most 2 short selling points, grounded in what the photos show.
+- aiSuggestedPoints: at most 2 short Korean keyword phrases (noun phrases, ~4-9 characters
+  each), grounded in what the photos show. NOT sentences or descriptive clauses — no verbs,
+  locations, or explanations, just the key feature as a compact phrase.
+  Good: "넉넉한 라운드 넥", "비침 없는 도톰함", "부드러운 촉감".
+  Bad (too long / sentence-like): "가슴 중앙의 심플한 브랜드 로고 프린팅".
 - subCategory must match clothingType's group; for a dress, subCategory is null.
 - swatchSuggestions: one entry per visible color group, choosing the closest swatchId.
 - styleTags: 0-4 tokens from the StyleTag enum that best describe the styling direction.

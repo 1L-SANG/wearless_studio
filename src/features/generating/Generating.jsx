@@ -27,6 +27,7 @@ export function Generating() {
       await useAppStore.getState().loadProject();
       if (cancelled) return;
       const pid = useAppStore.getState().projectId;
+      if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
       // 이미 생성 완료된 프로젝트 — 재생성 없이 에디터로 (PRD §10.17, 서버도 동일 규칙으로 멱등)
       const project = await api.getProject(pid);
       if (cancelled) return;

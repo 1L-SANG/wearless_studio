@@ -8,14 +8,14 @@
    컷 목록은 서버 상태, 선택 컷·구성은 store + patchProject 동기화.
    설계·규칙: documents/mannequin_ui_direction.md · 목업 documents/mockups/mannequin-ui-matching.html
    ============================================================= */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { fitExampleImage } from '@/lib/fitExampleImages.js';
-import { Icon, Button, ProgressBar, useToast } from '@/components/ui.jsx';
+import { Icon, Button, ErrorState, ProgressBar, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import './Mannequin.css';
 
@@ -88,22 +88,83 @@ function extractCuts(envelope) {
   return [];
 }
 
+let mannequinGenerationInflight = null;
+let mannequinGenerationProjectId = null;
+
+function updateMannequinJob(pid, patch) {
+  const { projectId, setMannequinJob } = useAppStore.getState();
+  if (projectId !== pid) return;
+  setMannequinJob({ projectId: pid, ...patch });
+}
+
+function generationProgressFor(pid) {
+  const job = useAppStore.getState().mannequinJob;
+  return job?.projectId === pid ? Number(job.progress) || 0 : 0;
+}
+
+function requestMannequinGeneration(pid) {
+  if (mannequinGenerationInflight && mannequinGenerationProjectId === pid) {
+    return mannequinGenerationInflight;
+  }
+
+  updateMannequinJob(pid, {
+    status: 'running',
+    progress: generationProgressFor(pid),
+    errorMessage: '',
+  });
+
+  mannequinGenerationProjectId = pid;
+  mannequinGenerationInflight = api.generateMannequins(pid, {
+    onProgress: (next) => updateMannequinJob(pid, {
+      status: 'running',
+      progress: next,
+      errorMessage: '',
+    }),
+  }).finally(() => {
+    if (mannequinGenerationProjectId === pid) {
+      mannequinGenerationInflight = null;
+      mannequinGenerationProjectId = null;
+    }
+  });
+
+  return mannequinGenerationInflight;
+}
+
 function MannequinLoading({ progress }) {
   const stage = progress < 30 ? '의류 정보 분석 중' : progress < 60 ? '핏과 실루엣 정리 중'
     : progress < 80 ? '마네킹 생성 중' : '결과를 확인하는 중';
   return (
     <div className="wizard">
-      <PageHead title="의류를 재현하고 있어요" sub="AI가 상품의 핏과 실루엣을 기준 마네킹에 입혀보고 있어요." />
+      <PageHead title="마네킹컷을 만들고 있어요" sub="AI가 상품의 핏과 실루엣을 기준 마네킹에 입혀보고 있어요." />
       <div className="surface mq-loading">
         <div className="mq-loading-progress"><ProgressBar value={progress} label={stage} /></div>
-        <div className="mq-loading-preview">
-          <div className="mq-loading-frame">
-            <div className="busy-tile">
-              <Icon name="loader" size={22} className="spin" />작업 중
+        <div className="candidate-row mq-loading-candidates">
+          {['마네킹 A', '마네킹 B'].map((name) => (
+            <div className="candidate" key={name}>
+              <div className="big">
+                <div className="busy-tile">
+                  <Icon name="loader" size={22} className="spin" />작업 중
+                </div>
+              </div>
+              <div className="cap">{name}</div>
             </div>
-          </div>
-          <div className="mq-loading-caption">마네킹 생성 중</div>
+          ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function MannequinError({ message, onRetry }) {
+  return (
+    <div className="wizard">
+      <PageHead title="마네킹컷 생성" sub="입력한 상품 사진을 기준으로 다시 시도할 수 있어요." />
+      <div className="surface">
+        <ErrorState
+          title="마네킹컷을 만들지 못했어요"
+          desc={message || '생성 서버에 일시적인 문제가 발생했어요.'}
+          onRetry={onRetry}
+        />
       </div>
     </div>
   );
@@ -170,6 +231,7 @@ function ExampleTiles({ axisKey, category, gender, values, onPick }) {
 export function Mannequin() {
   const navigate = useNavigate();
   const [phase, setPhase] = useState('loading');
+  const [errorMsg, setErrorMsg] = useState('');
   const [progress, setProgress] = useState(0);
   const [cuts, setCuts] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -179,7 +241,7 @@ export function Mannequin() {
   const [catalogs, setCatalogs] = useState(null);
   const [colorCount, setColorCount] = useState(1);
   const submittingRef = useRef(false);   // 결제(재생성) 이중 제출 방지 — busy 반영 전 연타 차단
-  const toast = useToast();
+  const { push: pushToast } = useToast();
 
   // 플로우 선택값 — store 가 보유, patchProject 로 서버 동기화 (ADR-0002)
   const projectId = useAppStore((s) => s.projectId);
@@ -188,7 +250,9 @@ export function Mannequin() {
   const composeMode = useAppStore((s) => s.composeMode);
   const setComposeMode = useAppStore((s) => s.setComposeMode);
   const syncCredits = useAppStore((s) => s.syncCredits);
+  const mannequinJob = useAppStore((s) => s.mannequinJob);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
+  const loadRunRef = useRef(0);
 
   const category = fitProfileDraft?.category;
   const gender = fitProfileDraft?.gender;
@@ -202,20 +266,27 @@ export function Mannequin() {
     return hasMatching ? [...a, { key: MATCH_KEY, values: matchValues, kind: 'match' }] : a;
   }, [axisEntries, hasMatching, matchValues]);
 
-  useEffect(() => {
+  const loadMannequins = useCallback(async () => {
+    const runId = ++loadRunRef.current;
+    setPhase('loading');
+    setErrorMsg('');
+    setProgress(0);
     window.scrollTo({ top: 0 });
     document.querySelector('.app-main')?.scrollTo({ top: 0 });
-    let cancelled = false;
-    (async () => {
+    let pid = null;
+
+    try {
       await useAppStore.getState().loadProject();
-      if (cancelled) return;
-      const pid = useAppStore.getState().projectId;
+      if (loadRunRef.current !== runId) return;
+      pid = useAppStore.getState().projectId;
+      if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
       const [nextProduct, nextAnalysis, nextCatalogs] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
         api.getCatalogs(),
       ]);
-      if (cancelled) return;
+      if (loadRunRef.current !== runId) return;
+      setProgress(generationProgressFor(pid));
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
       setColorCount((nextProduct?.colors || []).length || 1);
@@ -224,27 +295,65 @@ export function Mannequin() {
       setStepState(initStepState(axesFor(draft.category, draft.gender), hasMatchFor(draft.category)));
 
       let list = await api.getMannequins(pid);
-      if (cancelled) return;
+      if (list.length) {
+        updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
+      }
+      if (loadRunRef.current !== runId) return;
       if (!list.length) {
-        const { data, credits } = await api.generateMannequins(pid, { onProgress: setProgress });
+        const { data, credits } = await requestMannequinGeneration(pid);
         list = extractCuts(data);
         syncCredits(credits);
       }
-      if (cancelled) return;
+      if (!list.length) throw new Error('생성된 마네킹컷을 찾지 못했어요. 다시 시도해 주세요.');
+      updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
+      if (loadRunRef.current !== runId) return;
       setCuts(list);
       const selectedCut = list.find((cut) => cut.isSelected) || list[0];
       if (selectedCut && useAppStore.getState().selectedMannequinId !== selectedCut.id) {
         selectMannequin(selectedCut.id);
       }
       setPhase('ready');
-    })().catch((err) => {
-      if (!cancelled) toast.push(err?.message || '마네킹 정보를 불러오지 못했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
-    });
-    return () => { cancelled = true; };
-  }, []);
+    } catch (err) {
+      const message = err?.message || '마네킹 정보를 불러오지 못했어요. 다시 시도해 주세요.';
+      if (pid) {
+        try {
+          const fallback = await api.getMannequins(pid);
+          if (fallback.length) {
+            updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
+            if (loadRunRef.current !== runId) return;
+            setCuts(fallback);
+            const selectedCut = fallback.find((cut) => cut.isSelected) || fallback[0];
+            if (selectedCut && useAppStore.getState().selectedMannequinId !== selectedCut.id) {
+              selectMannequin(selectedCut.id);
+            }
+            setPhase('ready');
+            return;
+          }
+        } catch { /* 원래 생성 실패 메시지를 보여준다. */ }
+        updateMannequinJob(pid, {
+          status: 'error',
+          progress: generationProgressFor(pid),
+          errorMessage: message,
+        });
+      }
+      if (loadRunRef.current !== runId) return;
+      setErrorMsg(message);
+      setPhase('error');
+      pushToast(message, { icon: 'alertTri' });
+    }
+  }, [navigate, selectMannequin, syncCredits, pushToast]);
+
+  useEffect(() => {
+    loadMannequins();
+    return () => { loadRunRef.current += 1; };
+  }, [loadMannequins]);
 
   const selected = cuts.find((c) => c.id === selectedId) || cuts.find((c) => c.isSelected) || cuts[0];
   const selectedCutId = selected?.id || selectedId;
+  const loadingProgress = mannequinJob?.status === 'running'
+    && (!projectId || mannequinJob.projectId === projectId)
+    ? Math.max(0, Math.min(100, Number(mannequinJob.progress) || 0))
+    : progress;
 
   // 스텝 표시 헬퍼
   const stepName = (step) => (step.kind === 'match' ? MATCH_NAME : (AXIS_LABELS[step.key] || step.key));
@@ -310,9 +419,9 @@ export function Mannequin() {
       setAnalysis((prev) => ({ ...(prev || {}), fitProfile: profile }));
       syncCredits(credits);
       setStepState(initStepState(axisDefs, hasMatching));   // 새 컷을 다시 확인하는 루프
-      toast.push('새 마네킹 버전을 추가했어요. 다시 확인해 주세요.', { icon: 'refresh' });
+      pushToast('새 마네킹 버전을 추가했어요. 다시 확인해 주세요.', { icon: 'refresh' });
     } catch (err) {
-      toast.push(err?.message || '마네킹 재생성에 실패했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
+      pushToast(err?.message || '마네킹 재생성에 실패했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
     } finally {
       setBusy(false);
       submittingRef.current = false;
@@ -325,7 +434,8 @@ export function Mannequin() {
     navigate('/create/storyboard');   // 구성(composeMode)은 store 로 이미 반영됨
   };
 
-  if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={progress} /></>;
+  if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={loadingProgress} /></>;
+  if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} onRetry={loadMannequins} /></>;
 
   const modes = catalogs?.composeModes || [];
 

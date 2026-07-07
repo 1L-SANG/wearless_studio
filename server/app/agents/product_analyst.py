@@ -18,7 +18,7 @@ from ..config import Settings
 from .gemini_image import InlineImage
 from .prompts import _sanitize
 from .style_tags import STYLE_TAGS, is_style_tag
-from .vision_llm import analyze_with_fallback
+from .vision_llm import analyze_with_fallback, complete_json
 
 # ── 계약 §4 enum 토큰 (검증·스키마 단일 참조) ────────────────────────────────
 CLOTHING_TYPES = ("top", "bottom", "outer", "dress")
@@ -211,6 +211,42 @@ async def analyze(settings: Settings, product: dict, images: list[InlineImage]) 
     prompt = build_prompt(product or {})
     raw, provider = await analyze_with_fallback(settings, prompt, images, analysis_schema())
     return distribute(validate(raw)), provider
+
+
+# ── 세탁 관리법 초안 (washCare) — 동기 텍스트 생성 (이미지 없음) ─────────────────
+_WASH_CARE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {"text": {"type": "string"}},
+    "required": ["text"],
+}
+
+
+def build_wash_care_prompt(product: dict, analysis: dict) -> str:
+    """상품 종류(product)·소재(analysis.materials) 로 짧은 한국어 세탁 문구 프롬프트를 만든다.
+    clothing_type 은 products 컬럼, materials 는 analyses.payload 소유(계약 §3.1/§3.2)."""
+    ctype = _sanitize(product.get("clothing_type") or product.get("clothingType")) or "(unknown)"
+    mats = analysis.get("materials") or []
+    mat_str = ", ".join(
+        f"{_sanitize(m.get('name'))} {m.get('ratio')}%"
+        for m in mats if isinstance(m, dict) and m.get("name")
+    ) or "(unknown)"
+    return (
+        "You write concise Korean garment wash-care guidance for a fashion detail page.\n"
+        f"Clothing type: {ctype}\n"
+        f"Materials: {mat_str}\n"
+        'Write ONE short Korean line, 2-4 clauses separated by " · " (middle dot). Each clause is a\n'
+        "short phrase, NOT a full sentence. Base advice on the material when known (니트/코튼 → 찬물\n"
+        "손세탁·뉘어 건조; 폴리 → 세탁기 약하게). Do not invent fiber content beyond what is given.\n"
+        'Example: "찬물 단독 손세탁 권장 · 표백제 사용 금지 · 그늘에 뉘어 건조".\n'
+        'Return JSON {"text": "..."}.'
+    )
+
+
+async def draft_wash_care(settings: Settings, product: dict, analysis: dict) -> tuple[dict, str]:
+    """세탁 관리법 초안 생성 — 텍스트 전용 LLM(complete_json, 이미지 없음). ({text}, provider) 반환."""
+    prompt = build_wash_care_prompt(product or {}, analysis or {})
+    return await complete_json(settings, prompt, _WASH_CARE_SCHEMA)
 
 
 def observation(provider: str, order: list[str], latency_ms: int, distributed: dict) -> dict:

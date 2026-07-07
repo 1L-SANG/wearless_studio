@@ -12,6 +12,7 @@
    ============================================================= */
 import { create } from 'zustand';
 import { api } from '@/lib/api/index.js';
+import { resetAnalysisCache } from '@/lib/api/httpAdapter.js';
 import { clearDraft } from '@/lib/draftStore.js';
 
 const initialFlow = {
@@ -24,6 +25,13 @@ const initialFlow = {
   copywriting: true,
   adjustCount: 0,
 };
+
+const initialMannequinJob = () => ({
+  status: 'idle', // idle | running | error
+  projectId: null,
+  progress: 0,
+  errorMessage: '',
+});
 
 // ensureProject 동시 호출 합류용 — in-flight Promise 를 모듈 스코프에 보관해 더블클릭/재시도가
 // createProject 를 중복 호출(보관함 행 중복 생성)하지 않게 한다(코드리뷰 반영).
@@ -59,6 +67,7 @@ export const useAppStore = create((set, get) => ({
 
   /* ---- current project + flow selections ---- */
   ...initialFlow,
+  mannequinJob: initialMannequinJob(),
   // 명시적 '새 제작' 횟수 — ProductInput 을 이 값으로 key 해서, 같은 /create/input 라우트에서
   // 새 제작해도 컴포넌트를 remount(폼·복원상태 초기화)한다. loadProject·retry 의 projectId
   // 변경에는 바뀌지 않아 일반 흐름엔 영향 없음.
@@ -70,16 +79,23 @@ export const useAppStore = create((set, get) => ({
      을 올려 ProductInput 을 remount(폼 초기화)한다. */
   async beginProject() {
     ensureProjectInflight = null;   // 새 제작 시작 — 이전 플로우의 in-flight 생성과 분리
+    resetAnalysisCache();           // 이전 프로젝트의 analysis/매칭 캐시 해제 (F1)
     await clearDraft().catch(() => {});
     // http: 서버 POST 이연(빈 보관함 행 방지) — projectId 없이 시작, 생성은 ensureProject.
     // mock: createProject 가 reseedDraft 로 DB.product/analysis 를 깨끗한 시드로 되돌린다.
     // 안 하면 이전 세션 변형(clothingType/measurements 등)이 새 제작 입력에 유입된다(코드리뷰 반영).
     const mode = import.meta.env.VITE_API_MODE ?? 'mock';
     if (mode === 'http') {
-      set({ ...initialFlow, projectGeneration: get().projectGeneration + 1 });
+      set({ ...initialFlow, mannequinJob: initialMannequinJob(), projectGeneration: get().projectGeneration + 1 });
     } else {
       const project = await api.createProject();
-      set({ ...initialFlow, projectId: project.id, projectPersisted: true, projectGeneration: get().projectGeneration + 1 });
+      set({
+        ...initialFlow,
+        mannequinJob: initialMannequinJob(),
+        projectId: project.id,
+        projectPersisted: true,
+        projectGeneration: get().projectGeneration + 1,
+      });
     }
   },
   /** 서버 project(보관함 행)를 필요 시 1회 생성하고 projectId 를 반환 — AI 분석 시작 시 호출.
@@ -101,9 +117,15 @@ export const useAppStore = create((set, get) => ({
     })();
     return ensureProjectInflight;
   },
-  /** 새로고침 등으로 스토어가 비었을 때 서버의 project 에서 선택값 복원. */
+  /** 스토어가 비었을 때 projectId·선택값 복원 시도. 복원 불가면 null 반환(화면이 입력으로 리다이렉트).
+     http: 서버엔 '현재 프로젝트' 개념이 없다(projectId 원천은 스토어뿐, 플로우 라우트에 URL 파라미터 없음).
+       콜드 새로고침/직접 URL 진입이면 복원할 게 없으므로 null — getProject 를 argless 로 호출하지 않는다
+       (과거 mock getProject 가 가짜 단일 project 를 스토어에 심어 upload-url 이 404 나던 poison 근원).
+     mock: 단일 시드 프로젝트를 복원해 dev 새로고침 흐름을 유지. */
   async loadProject() {
     if (get().projectId) return get().projectId;
+    const mode = import.meta.env.VITE_API_MODE ?? 'mock';
+    if (mode !== 'mock') return null;
     const p = await api.getProject();
     set({
       projectId: p.id,
@@ -132,6 +154,9 @@ export const useAppStore = create((set, get) => ({
   },
   /** 서버 응답(조정/재생성 결과) 반영용 — 화면이 임의 계산해 넣지 않는다. */
   setAdjustCount(adjustCount) { set({ adjustCount }); },
+  setMannequinJob(patch) {
+    set((s) => ({ mannequinJob: { ...s.mannequinJob, ...patch } }));
+  },
 }));
 
 export default useAppStore;
