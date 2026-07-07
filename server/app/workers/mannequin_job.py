@@ -104,7 +104,9 @@ async def _run_candidate(
         verdict = qc.evaluate_mannequin_qc(res.image)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "model": model, "attempt": attempt, "status": "generated",
-            "qc": {"verdict": verdict.verdict, "reasons": verdict.reasons}})
+            # metrics 도 남긴다 — shadow 재캘리브(임계 튜닝)의 실측 근거. verdict/reasons 만으론
+            # 왜 걸렸는지(bboxBottom·aspect·하단비율) 모른다.
+            "qc": {"verdict": verdict.verdict, "reasons": verdict.reasons, "metrics": verdict.metrics}})
         # AG-P2 이미지 동일성 검수 — shadow(로그만)·enforce(게이트) 시 판정. off면 skip.
         # vision 실패(키미설정 등)는 삼켜 p2=None → 게이트 미적용(생성 자체 안 막음).
         p2 = None
@@ -204,6 +206,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         manifest = _build_manifest(prod_assets, match_img is not None)
         fit_profile = mannequin.generation_spec(analysis)
         legacy_base_fit = analysis.get("fit") or "regular"
+        await _emit(pool, job_id, "progress", {"progress": 35, "phase": "generating"})
         try:
             result = await _run_candidate(
                 app=app, job=job, candidate="A", base_fit=legacy_base_fit, base_gender=gender,
@@ -219,6 +222,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         if not passed:
             await _fail("마네킹컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": "all_candidates_failed"})
             return
+        await _emit(pool, job_id, "progress", {"progress": 85, "phase": "finalizing"})
 
         # 4) 성공 종결 (원자·lease 펜스). charge = 성공 컷 수 (부분 성공 미차감 — codex/계약).
         charge = len(passed)

@@ -131,13 +131,27 @@ function requestMannequinGeneration(pid) {
 }
 
 function MannequinLoading({ progress }) {
-  const stage = progress < 30 ? '의류 정보 분석 중' : progress < 60 ? '핏과 실루엣 정리 중'
-    : progress < 80 ? '마네킹 생성 중' : '결과를 확인하는 중';
+  // 서버 progress 는 체크포인트(5→15→35→85→100)로 띄엄띄엄 온다. 그 사이를 완만히 채워
+  // 바가 멈춘 것처럼 보이지 않게 한다(서버값이 바닥, 다음 체크포인트 직전까지만 크리프).
+  const [shown, setShown] = useState(progress);
+  useEffect(() => {
+    setShown((s) => Math.max(s, progress));
+    const id = setInterval(() => {
+      setShown((s) => {
+        const ceil = progress >= 85 ? 99 : progress >= 35 ? 82 : progress >= 15 ? 33 : 13;
+        return s < ceil ? Math.min(ceil, s + 1) : s;
+      });
+    }, 700);
+    return () => clearInterval(id);
+  }, [progress]);
+  const p = Math.max(progress, shown);
+  const stage = p < 30 ? '의류 정보 분석 중' : p < 60 ? '핏과 실루엣 정리 중'
+    : p < 80 ? '마네킹 생성 중' : '결과를 확인하는 중';
   return (
     <div className="wizard">
       <PageHead title="마네킹컷을 만들고 있어요" sub="AI가 상품의 핏과 실루엣을 기준 마네킹에 입혀보고 있어요." />
       <div className="surface mq-loading">
-        <div className="mq-loading-progress"><ProgressBar value={progress} label={stage} /></div>
+        <div className="mq-loading-progress"><ProgressBar value={p} label={stage} /></div>
         <div className="candidate-row mq-loading-candidates">
           {['마네킹 A', '마네킹 B'].map((name) => (
             <div className="candidate" key={name}>

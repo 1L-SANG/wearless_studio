@@ -38,7 +38,12 @@ function ResumeTracker() {
   const { pathname } = useLocation();
   const setResumePath = useAppStore((s) => s.setResumePath);
   useEffect(() => {
-    if (pathname.startsWith('/create/') || pathname.startsWith('/editor/')) setResumePath(pathname);
+    // 재개 대상은 서버 상태가 있는(projectPersisted) 단계만. /create/input 은 분석 전이라 복원할
+    // 서버 상태가 없어, 여기로 '이어서' 하면 첫 페이지로 튕기는 것처럼 보인다 → 기록 제외.
+    if (pathname.startsWith('/editor/')
+        || (pathname.startsWith('/create/') && !pathname.startsWith('/create/input'))) {
+      setResumePath(pathname);
+    }
   }, [pathname, setResumePath]);
   return null;
 }
