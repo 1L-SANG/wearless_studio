@@ -9,7 +9,7 @@
    Editor 는 app chrome 밖의 전체화면 surface (stub in phase 1).
    ============================================================= */
 import { Suspense, useEffect, useState } from 'react';
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
@@ -30,6 +30,17 @@ function RequireAuth() {
   const { session } = useAuth();
   if (!session) return <Navigate to="/create/input" replace />;
   return <Outlet />;
+}
+
+/* 상세페이지 제작 플로우에서 현재 머문 경로를 store 에 기록 → '이어서 작업' 재개 목표(resumePath).
+   editor 는 chrome 밖 라우트라 여기(App 레벨 location 감시)서 함께 잡는다. */
+function ResumeTracker() {
+  const { pathname } = useLocation();
+  const setResumePath = useAppStore((s) => s.setResumePath);
+  useEffect(() => {
+    if (pathname.startsWith('/create/') || pathname.startsWith('/editor/')) setResumePath(pathname);
+  }, [pathname, setResumePath]);
+  return null;
 }
 
 /* '새 제작'(startProject → projectGeneration++)이면 같은 /create/input 라우트라도 ProductInput 을
@@ -69,7 +80,7 @@ function RootRedirect() {
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('sync_timeout')), DRAFT_SYNC_TIMEOUT_MS));
         const { projectId } = await Promise.race([syncDraftToBackend(draft), timeout]);
         if (!alive) return;
-        useAppStore.setState({ projectId, projectPersisted: true });   // 마네킹이 이 project 로 진행
+        useAppStore.getState().adoptProject(projectId);   // 마네킹이 이 project 로 진행(+영속)
         await clearDraft().catch(() => {});
         setDest('/create/mannequin'); setPhase('done');
       } catch {
@@ -102,6 +113,7 @@ export default function App() {
 
   return (
     <>
+      <ResumeTracker />
       <Routes>
         <Route element={<ChromeLayout />}>
           <Route index element={<RootRedirect />} />

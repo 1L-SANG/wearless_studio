@@ -15,6 +15,35 @@ import { api } from '@/lib/api/index.js';
 import { resetAnalysisCache } from '@/lib/api/httpAdapter.js';
 import { clearDraft } from '@/lib/draftStore.js';
 
+const mode = import.meta.env.VITE_API_MODE ?? 'mock';
+
+// http 모드에서만 flow(projectId·resumePath·선택값)를 localStorage 에 영속한다.
+// 목적: 상세페이지 제작 중 다른 페이지로 이탈했다 돌아오거나 cold reload 해도 진행 중 프로젝트를
+// '이어서' 재개할 수 있게 한다(과거 http loadProject 가 null 을 반환해 재개 자체가 불가였음).
+// mock 은 자체 시드 복원(api.getProject)이 있어 영속하지 않는다(모드 간 stale id 교차 오염 방지).
+const FLOW_KEY = 'wl_flow';
+function loadPersistedFlow() {
+  if (mode !== 'http') return {};
+  try {
+    const raw = localStorage.getItem(FLOW_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+function persistFlow(s) {
+  if (mode !== 'http') return;
+  try {
+    localStorage.setItem(FLOW_KEY, JSON.stringify({
+      projectId: s.projectId,
+      projectPersisted: s.projectPersisted,
+      resumePath: s.resumePath,
+      selectedMannequinId: s.selectedMannequinId,
+      composeMode: s.composeMode,
+      copywriting: s.copywriting,
+      adjustCount: s.adjustCount,
+    }));
+  } catch { /* localStorage 불가(사생활 모드 등) — 영속 생략, 세션 내 동작은 유지 */ }
+}
+
 const initialFlow = {
   projectId: null,
   // 서버 project(보관함 행) 생성 완료 여부. '상세페이지 제작' 진입만으로 빈 프로젝트가
@@ -24,6 +53,8 @@ const initialFlow = {
   composeMode: 'basic',
   copywriting: true,
   adjustCount: 0,
+  // 진행 중 상세페이지 제작에서 마지막으로 머문 create/editor 경로 — '이어서 작업' 재개 목표.
+  resumePath: null,
 };
 
 const initialMannequinJob = () => ({
@@ -36,6 +67,10 @@ const initialMannequinJob = () => ({
 // ensureProject 동시 호출 합류용 — in-flight Promise 를 모듈 스코프에 보관해 더블클릭/재시도가
 // createProject 를 중복 호출(보관함 행 중복 생성)하지 않게 한다(코드리뷰 반영).
 let ensureProjectInflight = null;
+
+// http 모드에서 loadPersistedFlow() 가 복원한 projectId 를 세션당 1회만 서버 유효성 확인하기 위한 플래그.
+// (삭제/무효 프로젝트 id 가 복원돼 화면이 무한 스켈레톤에 빠지는 것을 막는다.)
+let flowValidated = false;
 
 export const useAppStore = create((set, get) => ({
   /* ---- account / catalogs (서버 상태의 전역 캐시 — loaded once) ---- */
@@ -67,6 +102,7 @@ export const useAppStore = create((set, get) => ({
 
   /* ---- current project + flow selections ---- */
   ...initialFlow,
+  ...loadPersistedFlow(),   // http: 이탈/새로고침 전 진행 프로젝트 복원 → '이어서' 재개
   mannequinJob: initialMannequinJob(),
   // 명시적 '새 제작' 횟수 — ProductInput 을 이 값으로 key 해서, 같은 /create/input 라우트에서
   // 새 제작해도 컴포넌트를 remount(폼·복원상태 초기화)한다. loadProject·retry 의 projectId
@@ -84,7 +120,6 @@ export const useAppStore = create((set, get) => ({
     // http: 서버 POST 이연(빈 보관함 행 방지) — projectId 없이 시작, 생성은 ensureProject.
     // mock: createProject 가 reseedDraft 로 DB.product/analysis 를 깨끗한 시드로 되돌린다.
     // 안 하면 이전 세션 변형(clothingType/measurements 등)이 새 제작 입력에 유입된다(코드리뷰 반영).
-    const mode = import.meta.env.VITE_API_MODE ?? 'mock';
     if (mode === 'http') {
       set({ ...initialFlow, mannequinJob: initialMannequinJob(), projectGeneration: get().projectGeneration + 1 });
     } else {
@@ -97,6 +132,7 @@ export const useAppStore = create((set, get) => ({
         projectGeneration: get().projectGeneration + 1,
       });
     }
+    persistFlow(get());   // 새 제작 시작 — 영속 flow 초기화(stale projectId 미복원)
   },
   /** 서버 project(보관함 행)를 필요 시 1회 생성하고 projectId 를 반환 — AI 분석 시작 시 호출.
      이미 이 플로우에서 생성했으면(persisted) 재사용해 보관함 행 중복 생성을 막는다. */
@@ -110,6 +146,7 @@ export const useAppStore = create((set, get) => ({
       try {
         const project = await api.createProject();
         set({ projectId: project.id, projectPersisted: true });
+        persistFlow(get());   // 서버 project 생성 — 재개 대상으로 영속
         return project.id;
       } finally {
         ensureProjectInflight = null;
@@ -123,8 +160,21 @@ export const useAppStore = create((set, get) => ({
        (과거 mock getProject 가 가짜 단일 project 를 스토어에 심어 upload-url 이 404 나던 poison 근원).
      mock: 단일 시드 프로젝트를 복원해 dev 새로고침 흐름을 유지. */
   async loadProject() {
-    if (get().projectId) return get().projectId;
-    const mode = import.meta.env.VITE_API_MODE ?? 'mock';
+    const pid = get().projectId;
+    if (pid) {
+      // http: loadPersistedFlow() 가 복원한 projectId 를 세션당 1회 서버 유효성 확인한다 — 삭제/무효
+      // 프로젝트면 flow 를 초기화하고 null 반환해 화면이 입력으로 리다이렉트하게 한다(무한 스켈레톤 방지).
+      if (mode !== 'http' || flowValidated) return pid;
+      flowValidated = true;
+      try {
+        const p = await api.getProject(pid);
+        if (p && p.id) return pid;
+      } catch { /* 404 등 무효 — 아래에서 flow 초기화 */ }
+      set({ ...initialFlow });
+      persistFlow(get());
+      return null;
+    }
+    flowValidated = true;   // 복원할 id 없음 — 이후 재검증 불필요(새 id 는 생성 시점에 신뢰)
     if (mode !== 'mock') return null;
     const p = await api.getProject();
     set({
@@ -138,22 +188,33 @@ export const useAppStore = create((set, get) => ({
     return p.id;
   },
   /** 백엔드 sync(비로그인 draft) 결과의 projectId 반영 — 로그인 복귀 후 RootRedirect 가 호출. */
-  setProjectId(projectId) { set({ projectId }); },
+  setProjectId(projectId) { set({ projectId }); persistFlow(get()); },
+  /** 로그인 복귀 draft sync 등에서 서버 project 를 현재 진행 프로젝트로 채택(영속 포함). */
+  adoptProject(projectId) { set({ projectId, projectPersisted: true }); persistFlow(get()); },
+  /** 상세페이지 제작 플로우에서 현재 머문 경로 기록 — '이어서 작업' 재개 목표(ResumeTracker 가 호출). */
+  setResumePath(resumePath) {
+    if (get().resumePath === resumePath) return;
+    set({ resumePath });
+    persistFlow(get());
+  },
 
   selectMannequin(id) {
     set({ selectedMannequinId: id });
+    persistFlow(get());
     api.patchProject(get().projectId, { selectedMannequinId: id });
   },
   setComposeMode(composeMode) {
     set({ composeMode });
+    persistFlow(get());
     api.patchProject(get().projectId, { composeMode });
   },
   setCopywriting(copywriting) {
     set({ copywriting });
+    persistFlow(get());
     api.patchProject(get().projectId, { copywriting });
   },
   /** 서버 응답(조정/재생성 결과) 반영용 — 화면이 임의 계산해 넣지 않는다. */
-  setAdjustCount(adjustCount) { set({ adjustCount }); },
+  setAdjustCount(adjustCount) { set({ adjustCount }); persistFlow(get()); },
   setMannequinJob(patch) {
     set((s) => ({ mannequinJob: { ...s.mannequinJob, ...patch } }));
   },

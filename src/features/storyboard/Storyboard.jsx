@@ -409,6 +409,18 @@ export function Storyboard() {
       setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
     })();
   }, []);
+  // 콘티 편집 자동저장 — Editor 와 동일 패턴(1.5s debounce). generate 클릭 전 이탈해도 콘티 유실 없음.
+  const saveTimer = useRef(null);
+  const latestBlocks = useRef(null);
+  useEffect(() => { latestBlocks.current = blocks; }, [blocks]);
+  const sbSkipFirstSave = useRef(true);
+  useEffect(() => {
+    if (blocks == null || !projectId) return;
+    if (sbSkipFirstSave.current) { sbSkipFirstSave.current = false; return; }  // 최초 로드분은 저장 생략(불필요 dirty 방지)
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { api.saveStoryboard(projectId, latestBlocks.current).catch(() => {}); }, 1500);
+    return () => clearTimeout(saveTimer.current);
+  }, [blocks, projectId]);
   if (!blocks || !catalogs) return <div className="wizard wide">{doneBlocked && <DoneGuardModal />}<div className="surface"><Skeleton h={400} /></div></div>;
 
   const selected = blocks.find((b) => b.id === selectedId);

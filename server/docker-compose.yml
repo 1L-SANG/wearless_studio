@@ -1,0 +1,17 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wearless-studio-api
+    ports:
+      - "8081:8080"
+    env_file:
+      - .env
+    restart: always
+
+    # 로컬 개발 시 소스 코드 실시간 반영(Hot reload)이 필요하다면 아래 설정을 활성화하세요:
+    # volumes:
+    #   - .:/app
+    #   - /app/.venv  # 호스트의 .venv가 컨테이너 내부의 .venv를 덮어쓰지 않도록 방지
+    # command: uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload

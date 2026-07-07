@@ -13,10 +13,8 @@ const mode = import.meta.env.VITE_API_MODE ?? 'mock';
 
 // 서버 대응이 없는 순수 클라 함수 — http 모드에서도 mock 로 유지한다.
 // getCatalogs: 정적 UI 옵션 데이터. pickAnyImage/download: 클라 헬퍼.
-// (draftWashCare 는 서버 wash-care:draft 로 실배선됨 → httpAdapter 담당.)
-// regenerateMannequin(단수, fit-profile 재생성): main 개편분 — 아직 http-wire 안 됨(mock 폴백 유지).
-//   fitProfile→백엔드 계약 확정 후 httpAdapter 로 실배선 예정(TODO). 지금 mock 이라야 http 모드서 안 터짐.
-const CLIENT_ONLY = ['getCatalogs', 'pickAnyImage', 'download', 'regenerateMannequin'];
+// (draftWashCare 는 서버 wash-care:draft, regenerateMannequin 은 서버 mannequins:regenerate 로 실배선됨 → httpAdapter 담당.)
+const CLIENT_ONLY = ['getCatalogs', 'pickAnyImage', 'download'];
 
 function buildHttpApi() {
   const api = { ...httpAdapter };

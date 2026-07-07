@@ -1,0 +1,75 @@
+# Ralph progress — 코어 갭 + 상세페이지 제작 진행저장 (해커톤 최후방 제외)
+
+## 목표 (원 요청)
+"일단 싹 다 고치고" = 코어 Wearless 갭 정리 + "상세페이지 제작에서 AI 제작 눌렀다 다른 페이지
+갔다 다시 오면 처음 페이지로 가고 작업 저장 안됨" 버그 수정. "일단 최후방 빼고 모두".
+
+## 스코프 결정
+- 딜리버리: US-001(진행저장/재개), US-002(regenerate 서버배선), US-003(analyzeProduct mock 뼈대 제거).
+- Descope US-004(모델선택 서버 seam): 의미있는 버전 = FaceMarket VC검증 모델 마켓 = 최후방(유저 제외).
+  비-해커톤 잔여 = 서버가 모델 카탈로그/에셋 없어 소비 못하는 장식 id 전달(no-op) + 배포불가. → 아래 hinge 설계만 기록.
+- Descope US-005(크레딧 이중원장 시드): repo 시드 스크립트 없음 → 데이터/운영 사안(코드 아님).
+
+## 배포 제약
+로컬 프론트 → PROD 백엔드, 이 세션 서버 배포 불가. US-002 서버 라우트는 repo 반영 + py_compile 통과.
+실효는 서버 배포 후. 배포 전 http regenerate 는 404→토스트(과거 조용한 가짜데이터보다 정직).
+US-001/US-003 은 프론트 전용 → 즉시 유효.
+
+## 구현 (스토리별)
+
+### US-001 상세페이지 제작 진행저장 & 재개 (프론트 전용)
+근본원인 3가지:
+1. TopNav '상세페이지 제작'(shell.jsx onNav) 매번 beginProject → projectId=null 리셋 → /create/input(첫 페이지). 진행 프로젝트 버려짐.
+2. Storyboard 콘티는 generate() 클릭 때만 saveStoryboard → 편집 후 이탈 시 유실(Editor 는 1.5s 자동저장 O).
+3. http loadProject cold reload 시 null → 재개 자체 불가.
+수정:
+- src/store/useAppStore.js: FLOW_KEY='wl_flow' localStorage 영속(http 전용). initialFlow 에 resumePath 추가.
+  초기 상태 `...loadPersistedFlow()` 로 복원. persistFlow 호출: beginProject/ensureProject/setProjectId/
+  adoptProject/setResumePath/selectMannequin/setComposeMode/setCopywriting/setAdjustCount. loadProject 는
+  하이드레이트된 get().projectId 재사용(더 이상 무조건 null 아님). beginProject 는 영속 초기화(stale 미복원).
+  신규 액션: adoptProject(id), setResumePath(path).
+- src/App.jsx: <ResumeTracker/> (useLocation → /create/*·/editor/* 경로를 setResumePath 로 기록). RootRedirect
+  의 setState({projectId,persisted}) → adoptProject(id) 로 교체.
+- src/features/shell/shell.jsx: TopNav onNav('create') — mannequinJob running 이면 마네킹, 아니면 projectPersisted+
+  projectId 있으면 ResumeChoiceModal(이어서=resumePath 복귀 / 새로=beginProject+input), 없으면 startNew. 신규
+  컴포넌트 ResumeChoiceModal(Modal+Button).
+- src/features/storyboard/Storyboard.jsx: 콘티 1.5s debounce 자동저장(saveTimer/latestBlocks/sbSkipFirstSave —
+  최초 로드분 skip). generate()의 명시 저장은 유지.
+검증: pnpm build OK. 런타임(dev 5174, http 모드) — 앱 정상 로드, 콘솔 에러 0, localStorage wl_flow 기록 확인
+  (resumePath 트래킹→persistFlow 실동작 입증). 모달(이어서/새로)은 로그인 세션+projectPersisted 필요라 E2E 는 유저 수동.
+
+### US-002 regenerateMannequin 서버 배선
+- server/app/routes.py: POST /projects/{id}/mannequins:regenerate 추가. generate 핸들러 미러에서 **완료 캐시
+  게이트만 제거** → 항상 새 job. finalize_mannequin_success 가 candidate별 `coalesce(max(version),0)+1` 로 새
+  버전 append(repo.py:789) → 재생성 안전. has_base_front + reserve(credit_cost_mannequin_generate) 동일.
+  payload={mode:'regenerate', fitProfile}. 워커(mannequin_job)는 kind='mannequin' 공유(payload mode 무시하고 생성).
+- src/lib/api/httpAdapter.js: regenerateMannequin(projectId,{fitProfile,onProgress}) → POST :regenerate(202→pollJob 300s) → {data,credits}.
+- src/lib/api/index.js: CLIENT_ONLY 에서 regenerateMannequin 제거(http 모드 mock 미실행).
+- fitProfile 정배선(아키텍트 REJECT 반영): regenerate route 가 body.fitProfile 을 analysis 에 영속
+  (get_analysis→머지→save_analysis, REPLACE 안전: 저장된 analysis 있을 때만). 워커
+  generation_spec(analysis)=analysis["fitProfile"](agents/mannequin.py) → prompt_context → 프롬프트 →
+  재생성 컷에 반영. 즉 클라 fit 조정이 실제 생성에 반영된다.
+검증: py_compile routes.py OK, pnpm build OK. 런타임은 서버 배포 후(위 배포 제약).
+
+### US-003 analyzeProduct mock 뼈대 제거
+- src/lib/api/shapes.js 신설: DEFAULT_MODELS + defaultAnalysisShape()(models·selectedModelId·측정 구조 등 AI
+  미산출 필드 기본값).
+- httpAdapter.analyzeProduct: base = DB.analysis(mock) → defaultAnalysisShape(). AI 산출 필드만 덮어씀.
+- getProduct 비로그인 seed(DB.product)는 의도된 클라 앵글슬롯 템플릿이라 유지(DB import 존치).
+검증: pnpm build OK. 런타임 입력페이지 앵글 슬롯 정상 렌더.
+
+## US-004 hinge 설계 (미구현 — 후속 해커톤용 메모)
+모델선택을 서버 컷 생성에 실배선하려면(비-블록체인 코어):
+- 서버: 모델 카탈로그/에셋 개념 부재가 블로커. select_base_gender(analysis)로 women/men 베이스만 선택.
+  최소 seam = generate/generateImage 요청에 selectedModelId 수신 → job payload 저장 → 프롬프트에 모델
+  name/gender 힌트 주입(_build_prompt, mannequin_job.py:74). 실제 얼굴 교체는 모델 face-asset 인프라 필요(=FaceMarket).
+- 프론트: selectedModelId 를 generateMannequins/regenerateMannequin/generateImage body 에 추가(현재 미전송).
+- 이 인터페이스(모델 id → 얼굴 asset)만 끊어두면 최후방(OmniOne CX 인증 → Open DID 얼굴 VC → Wearless 선택
+  → OmniOne Chain 정산)을 뒤에 붙이기 쉬움. FaceMarket step03(거래)=이 모델선택 화면.
+
+## 확정 코드베이스 사실 (재사용 참고)
+- 상세페이지 제작 플로우 라우트: /create/storyboard → /create/generating → /editor/:id (App.jsx).
+- 재진입: TopNav '상세페이지 제작' = beginProject(새 제작). 보관함(Library)=onOpen→/editor/:id 로 기존 재개.
+- Editor 자동저장: 1.5s debounce(getEditorBlocks/saveEditorBlocks). Storyboard 는 이번에 동일 패턴 추가.
+- 마네킹: generate(캐시게이트 200) / adjust(kind=mannequin_adjust, 새 버전) / regenerate(신규, kind=mannequin, 캐시게이트 없음).
+- 크레딧 정산 = repo.py finalize_* (settle_key 멱등, 버킷 FIFO). 블록체인 아님.

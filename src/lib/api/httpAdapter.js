@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase.js';
 import { DB } from '@/mock/db.js';
 import { LIMITS } from '@/lib/limits.js';
 import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
+import { defaultAnalysisShape } from '@/lib/api/shapes.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -168,16 +169,17 @@ export const httpAdapter = {
     return http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: patch });
   },
   // AG-01 상품 분석 — POST /analyze(job) → 폴링 → analysis payload.
-  // 반환 shape 은 mock(계약 §6)과 **동일해야 한다** — AnalysisForm 이 a.models/.matchClothing/
-  // .sellingPoints 등을 무가드로 읽으므로. 부분 스왑 단계라 models·matchClothing·selectedModelId·
-  // washCare 등은 아직 mock 소유 → mock 분석 shape 를 베이스로 AI 산출 필드만 덮어써 shape 를 보존한다.
+  // 반환 shape 은 계약 §6 와 동일해야 한다 — AnalysisForm 이 a.models/.matchClothing/.sellingPoints 등을
+  // 무가드로 읽으므로. AI 가 산출하지 못하는 필드(models·selectedModelId·측정 구조 등)는 클라 소유
+  // 기본 shape(shapes.defaultAnalysisShape)를 베이스로 두고 AI 산출 필드만 덮어써 shape 를 보존한다.
+  // (과거엔 mock db.js 의 DB.analysis 를 베이스로 썼으나 mock 결합을 끊고 클라 상수로 대체.)
   async analyzeProduct(projectId, { onProgress } = {}) {
     const { jobId } = await http(`/v1/projects/${projectId}/analyze`, { method: 'POST' });
     // 폴링 상한은 provider 순차 폴백 최악경로(2 × analysis_timeout_seconds=60s = 120s)보다 넉넉히
     // 잡는다 — 짧으면 정상 폴백(gpt→gemini)이 완료 전에 실패 토스트가 뜨는데 job은 뒤늦게 성공한다.
     const result = await pollJob(jobId, { onProgress, timeoutMs: 180000 });
     const ai = (result && result.data) || {};
-    const base = JSON.parse(JSON.stringify(DB.analysis));  // 전체 shape(models·matchClothing·… 포함)
+    const base = defaultAnalysisShape();  // 클라 소유 기본 shape(models·selectedModelId·측정 구조 등)
     const merged = {
       ...base,
       clothingType: ai.clothingType ?? null,
@@ -195,8 +197,7 @@ export const httpAdapter = {
       swatchSuggestions: ai.swatchSuggestions ?? [],
       sellingPoints: [],  // 셀러는 빈 상태로 시작 — AI 제안(aiSuggestedPoints)은 폼이 자동으로 채운다
     };
-    // 실측은 AI 미산출 → 값 비움(사용자 직접 입력, PRD §6.5). mock analyzeProduct 와 동일 처리.
-    merged.measurements = (base.measurements || []).map((m) => ({ ...m, value: null }));
+    // 실측은 AI 미산출 → 기본 shape(defaultAnalysisShape)이 이미 value:null (사용자 직접 입력, PRD §6.5).
     analysisCache = { projectId, analysis: merged };   // US-4: full-payload 머지 + 매칭 선택 이월 seed(프로젝트 스코프)
     return merged;
   },
@@ -338,6 +339,16 @@ export const httpAdapter = {
     });
     if (res.data) return { data: res.data, credits: res.credits };
     const result = await pollJob(res.jobId, { onProgress });
+    return { data: result.data, credits: result.credits };
+  },
+  // fit-profile 재생성 — 완료 캐시 없이 매 호출이 새 A/B 버전을 만든다(서버 :regenerate, finalize 가 max(version)+1).
+  // 크레딧: mannequinGenerate. generate 미러(202 job → 폴링). 재생성은 캐시 200 경로가 없어 항상 job.
+  async regenerateMannequin(projectId, { fitProfile, onProgress } = {}) {
+    const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {
+      method: 'POST', body: { fitProfile },
+    });
+    if (res.data) return { data: res.data, credits: res.credits };
+    const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
     return { data: result.data, credits: result.credits };
   },
   // 에디터 Wardrobe(의류 탭, 계약 §3.6) — Record<colorId|'misc', WardrobeImage[]>.

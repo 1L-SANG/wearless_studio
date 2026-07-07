@@ -30,24 +30,29 @@ export function TopNav() {
   const account = useAppStore((s) => s.account) || { name: '…', avatar: '', credits: 0, plan: '' };
   const beginProject = useAppStore((s) => s.beginProject);
   const mannequinJob = useAppStore((s) => s.mannequinJob);
+  const [resumeAsk, setResumeAsk] = useState(false);
   // create 흐름일 때만 'create' 활성 — /pricing·/credits 등은 어느 탭도 활성 아님(폴백 active 버그 수정)
   const route = pathname.startsWith('/library') ? 'library'
     : pathname.startsWith('/create') ? 'create' : null;
-  // '상세페이지 제작' 은 로컬 플로우만 초기화하고 입력 화면으로 — 서버 project(보관함 행)는
-  // AI 분석 시작 때 생성한다(빈 프로젝트 양산 방지).
+  // '새로 만들기' = 로컬 플로우 초기화 후 입력 화면. 서버 project(보관함 행)는 AI 분석 시작 때 생성(빈 프로젝트 양산 방지).
+  const startNew = async () => { setResumeAsk(false); await beginProject(); navigate('/create/input'); };
+  // '이어서 작업' = 마지막으로 머문 create/editor 경로로 복귀(없으면 마네킹 단계).
+  const resumeWork = () => { setResumeAsk(false); navigate(useAppStore.getState().resumePath || '/create/mannequin'); };
   const onNav = async (r) => {
     if (r === 'create') {
-      if (mannequinJob?.status === 'running') {
-        navigate('/create/mannequin');
-        return;
-      }
-      await beginProject();
-      navigate('/create/input');
-    } else navigate('/library');
+      if (mannequinJob?.status === 'running') { navigate('/create/mannequin'); return; }
+      // 진행 중 프로젝트가 있으면 '이어서/새로' 를 물어 매번 새로 초기화돼 작업이 버려지던 문제를 막는다.
+      const { projectId, projectPersisted } = useAppStore.getState();
+      if (projectPersisted && projectId) { setResumeAsk(true); return; }
+      await startNew();
+      return;
+    }
+    navigate('/library');
   };
   const step = pathname.startsWith('/create/') ? pathname.split('/')[2] : null;
 
   return (
+    <>
     <nav className="topnav">
       <span className="brand">
         <img className="brand-logo" src="/assets/brand/logo.svg" alt="" />
@@ -71,6 +76,23 @@ export function TopNav() {
         )}
       </div>
     </nav>
+    {resumeAsk && <ResumeChoiceModal onResume={resumeWork} onNew={startNew} onClose={() => setResumeAsk(false)} />}
+    </>
+  );
+}
+
+/* 진행 중 상세페이지 제작이 있을 때 '상세페이지 제작' 재진입 시 — 이어서 작업 / 새로 만들기 선택.
+   과거엔 무조건 새로 초기화돼 진행 중 작업이 버려졌다(이어서 재개 경로 없음). */
+function ResumeChoiceModal({ onResume, onNew, onClose }) {
+  return (
+    <Modal onClose={onClose}>
+      <h3>이어서 작업할까요?</h3>
+      <p>진행 중인 상세페이지 제작이 있어요. 이어서 작업하거나 새로 만들 수 있어요.</p>
+      <div className="modal-actions">
+        <Button variant="ghost" onClick={onNew}>새로 만들기</Button>
+        <Button variant="primary" onClick={onResume}>이어서 작업하기</Button>
+      </div>
+    </Modal>
   );
 }
 

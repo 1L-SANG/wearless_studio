@@ -910,6 +910,65 @@ async def adjust_mannequin(
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
+@router.post(
+    "/projects/{project_id}/mannequins:regenerate",
+    responses={
+        **COMMON_RESPONSES,
+        202: {"description": "마네킹 재생성 작업이 대기열에 진입했습니다."},
+        400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: 정면 이미지 누락)"},
+        402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+    },
+    tags=["Mannequins (AI)"],
+    summary="마네킹 재생성 작업 시작 (fit-profile 반영)",
+)
+async def regenerate_mannequins(
+    request: Request,
+    project_id: str,
+    body: dict = Body(default={}),
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """조정된 fit-profile 을 반영해 마네킹 후보를 **새 버전으로 재생성**합니다.
+
+    - **Bearer Token**: 필수
+    - **Body**: `{ fitProfile? }` — 조정된 fit-profile(axes·matchCut). 없으면 저장된 analysis 기준.
+    - generate 와 동일한 워커·크레딧 경로지만 **완료 캐시 게이트를 건너뛴다** — 매 호출이 새 버전을
+      만든다(finalize 가 candidate 별 `max(version)+1` 로 append). 크레딧은 generate 와 동일.
+    - **에지 케이스**: `400 missing_front_photo`(정면 사진 없음), `402 insufficient_credits`(크레딧 부족).
+    """
+    cost = request.app.state.settings.credit_cost_mannequin_generate
+    scoped_key = f"{project_id}:mannequin_regenerate:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        # generate 와 달리 완료 캐시 게이트 없음 — 항상 새 job 을 만들어 새 버전을 append 한다.
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="mannequin",
+            payload={"mode": "regenerate", "fitProfile": body.get("fitProfile")},
+            idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
+        if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
+            product = await repo.get_product(conn, project_id)
+            if not mannequin.has_base_front(product or {}):  # 정면 사진 필수(generate 동일)
+                raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")
+            if await repo.reserve_credits(conn, user_id, cost) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+            # fit-profile 반영: 클라가 조정한 fitProfile 을 analysis 에 영속 → 워커의
+            # generation_spec(analysis) 이 이를 읽어 재생성 컷에 반영한다(mannequin_job.py:205,
+            # agents/mannequin.generation_spec = analysis["fitProfile"]). save_analysis 는 REPLACE 라
+            # 저장된 analysis 가 있을 때만 full payload 에 머지한다(빈 {}에 넣어 다른 필드 유실 방지).
+            fit_profile = body.get("fitProfile")
+            if fit_profile:
+                analysis = await repo.get_analysis(conn, project_id)
+                if analysis:
+                    analysis["fitProfile"] = fit_profile
+                    await repo.save_analysis(conn, project_id, analysis)
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
 # ---------- 콘티/에디터/상세페이지 (PL-4) ----------
 
 
