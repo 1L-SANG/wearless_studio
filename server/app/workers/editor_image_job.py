@@ -72,9 +72,14 @@ async def run_editor_image_job(app, job: dict) -> None:
             source = payload.get("source") or {}
             asset_id = _parse_source_asset_id(source.get("src"))
             src_asset = None
-            if asset_id:
-                async with pool.connection() as conn:
+            ref_bg_asset = None
+            async with pool.connection() as conn:
+                if asset_id:
                     src_asset = await repo.get_asset_for_user(conn, user_id, asset_id)
+                # 배경 레퍼런스(refBgAssetId) — 배경·조명·무드만 반영 (소유 검증 겸함, ADR-0004)
+                rb = payload.get("refBgAssetId")
+                if rb:
+                    ref_bg_asset = await repo.get_asset_for_user(conn, user_id, str(rb))
             if src_asset is None:
                 await _fail("변형할 컷을 찾을 수 없어요. 다시 시도해 주세요.",
                             {"error": "source_asset_missing", "src": source.get("src")})
@@ -82,13 +87,18 @@ async def run_editor_image_job(app, job: dict) -> None:
             src_img = InlineImage(
                 src_asset["mime_type"],
                 await asyncio.to_thread(app.state.r2.get_bytes, src_asset["r2_key"]))
+            ref_bg_img = None
+            if ref_bg_asset is not None:
+                ref_bg_img = InlineImage(
+                    ref_bg_asset["mime_type"],
+                    await asyncio.to_thread(app.state.r2.get_bytes, ref_bg_asset["r2_key"]))
             await _emit(pool, job_id, "progress", {"progress": 20, "phase": "inputs_loaded"})
 
             cut_type = source.get("cutType")
             changes = payload.get("changes") or []
             try:
                 image, mime = await cut_variator.generate(
-                    s, app.state.gemini, src_img, changes, cut_type)
+                    s, app.state.gemini, src_img, changes, cut_type, ref_bg=ref_bg_img)
             except GeminiError as e:
                 await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return
@@ -99,27 +109,43 @@ async def run_editor_image_job(app, job: dict) -> None:
             async with pool.connection() as conn:
                 product = await repo.get_product(conn, project_id) or {}
                 assets = []
-                for _slot, aid in mannequin.base_color_images(product):
+                for slot, aid in mannequin.base_color_images(product):
                     a = await repo.get_asset_for_user(conn, user_id, aid)
                     if a:
+                        a["slot"] = slot  # 매니페스트 역할 라벨용
                         assets.append(a)
+                # 무드 레퍼런스(refAssetIds) — 분위기(조명·색감)만 참고, 최대 3장 (ADR-0004)
+                mood_rows = []
+                for rid in [str(r) for r in (payload.get("refAssetIds") or [])][:3]:
+                    ma = await repo.get_asset_for_user(conn, user_id, rid)  # 소유 검증 겸함
+                    if ma:
+                        mood_rows.append(ma)
             if not assets:
                 await _fail("기준 색상 이미지를 찾을 수 없어요. 다시 시도해 주세요.",
                             {"error": "no_base_color_images"})
                 return
             images = [
                 InlineImage(a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"]))
-                for a in assets
+                for a in (*assets, *mood_rows)  # 순서 = 매니페스트: 상품 슬롯들 → 무드
             ]
             await _emit(pool, job_id, "progress", {"progress": 20, "phase": "inputs_loaded"})
 
+            # 컷 계약 필드 통과(ADR-0004) — mirror·얼굴·포즈·생성예시·공간그룹까지 서버 정규화에 맡긴다.
+            # colorId/matchIds 는 이 경로에서 제외: 색상별 첨부·매칭 첨부는 아직 없어서
+            # 매니페스트와 첨부 순서가 어긋나지 않게 한다(첨부 확장 시 함께 통과시킬 것).
             cut_spec = {
-                "cutType": payload.get("cutType"),
-                "direction": payload.get("direction"),
-                "shot": payload.get("shot"),
+                k: payload.get(k)
+                for k in ("cutType", "direction", "shot", "faceExposure", "pose",
+                          "exampleId", "spaceGroupId", "spaceVariation")
             }
+            manifest = cut_generator.build_manifest(
+                assets, has_mannequin=False, has_match=False, mood_count=len(mood_rows))
             try:
-                image, mime = await cut_generator.generate(s, app.state.gemini, cut_spec, product, images)
+                image, mime = await cut_generator.generate(
+                    s, app.state.gemini, cut_spec, product, images, manifest=manifest)
+            except ValueError:
+                await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
+                return
             except GeminiError as e:
                 await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return

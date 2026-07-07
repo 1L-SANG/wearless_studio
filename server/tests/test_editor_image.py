@@ -158,7 +158,7 @@ def test_run_editor_image_job_vary_charges_cost_and_group_misc(monkeypatch):
         assert aid == "a1"
         return {"id": "a1", "r2_key": "k/a1", "mime_type": "image/png"}
 
-    async def fake_gen(settings, gemini, source_image, changes, cut_type):
+    async def fake_gen(settings, gemini, source_image, changes, cut_type, *, ref_bg=None):
         assert cut_type == "styling"
         assert changes == [{"type": "pose", "value": "standing"}]
         return b"NEWIMG", "image/png"
@@ -212,7 +212,7 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
     async def fake_get_asset(conn, uid, aid):
         return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
 
-    async def fake_gen(settings, gemini, cut_spec, product, images):
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
         assert cut_spec["cutType"] == "horizon"
         assert len(images) == 1
         return b"NEWIMG2", "image/png"
@@ -238,6 +238,70 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
     assert captured["cut_type"] == "horizon"
 
 
+def test_run_editor_image_job_vary_attaches_ref_bg(monkeypatch):
+    # 배경 레퍼런스(refBgAssetId)가 변형 생성에 실제 첨부된다 — UI만 받고 서버가 무시하던 회귀 방지
+    captured = {}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def fake_gen(settings, gemini, source_image, changes, cut_type, *, ref_bg=None):
+        captured["has_ref_bg"] = ref_bg is not None
+        return b"VARYIMG", "image/png"
+
+    async def fake_finalize(conn, **kw):
+        return {"id": "w-vary-bg"}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_variator, "generate", fake_gen)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+    payload = {"mode": "vary", "source": {"src": "/v1/assets/a-src/file", "cutType": "styling"},
+               "changes": [{"type": "bg", "value": "ref"}], "refBgAssetId": "a-bg"}
+    asyncio.run(eij.run_editor_image_job(_app(_settings()), _job(payload)))
+
+    assert captured["has_ref_bg"] is True
+
+
+def test_run_editor_image_job_new_attaches_mood_refs(monkeypatch):
+    # refAssetIds(무드 레퍼런스)가 생성 전에 유실되지 않는다 — 이미지 첨부 + 매니페스트 MOOD 라벨
+    captured = {}
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+        captured["n_images"] = len(images)
+        captured["manifest"] = manifest
+        return b"NEWIMG3", "image/png"
+
+    async def fake_finalize(conn, **kw):
+        return {"id": "w-new3"}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+    payload = {"mode": "new", "cutType": "styling", "shot": "full", "refAssetIds": ["ref1", "ref2"]}
+    asyncio.run(eij.run_editor_image_job(_app(_settings()), _job(payload)))
+
+    assert captured["n_images"] == 3                       # 상품 1 + 무드 2
+    assert captured["manifest"].count("MOOD") == 2         # 역할 라벨 동봉
+    assert "front view of the garment" in captured["manifest"]
+
+
 def test_run_editor_image_job_gemini_error_fails_job(monkeypatch):
     from app.agents.gemini_image import GeminiError
     captured = {}
@@ -245,7 +309,7 @@ def test_run_editor_image_job_gemini_error_fails_job(monkeypatch):
     async def fake_get_asset(conn, uid, aid):
         return {"id": aid, "r2_key": "k/a1", "mime_type": "image/png"}
 
-    async def fake_gen(settings, gemini, source_image, changes, cut_type):
+    async def fake_gen(settings, gemini, source_image, changes, cut_type, *, ref_bg=None):
         raise GeminiError("boom")
 
     async def fake_finalize_failure(conn, **kw):

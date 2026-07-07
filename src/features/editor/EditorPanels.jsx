@@ -160,7 +160,7 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
   // 기준 전환 — 요소에 영구 저장(이미지당 1번만 답하면 됨). 옵션 세트가 바뀌므로 선택은 초기화.
   // '모델 착용 컷' 전환은 사람컷 대표값 styling 으로 기록한다 (ADR-0003).
   const setKind = (t) => { onSetCutType(t); clearAll(); setCat('cut'); };
-  const pickRef = async () => { const src = await onPickRef(); setRefBg(src); setSel((s) => ({ ...s, bg: null })); };
+  const pickRef = async () => { const picked = await onPickRef(); if (picked) { setRefBg(picked); setSel((s) => ({ ...s, bg: null })); } };
   const generate = () => {
     if (busyRef.current) return;
     busyRef.current = true; // 곧 의류 탭으로 전환되며 패널이 언마운트 — 같은 틱 더블클릭만 방어
@@ -169,7 +169,8 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
       source: { id: source.id, src: source.src, cutType: srcType || 'styling' },
       // 변경 0개(빈 트레이) = '비슷한 컷 만들기' (PRD §10.8) — 빈 배열이 그 계약
       changes: chips.map((c) => ({ type: c.type, value: c.value, label: c.label })),
-      refBg,
+      refBg: refBg ? (refBg.url || refBg) : null,             // 표시용 URL (mock 계약 유지)
+      refBgAssetId: refBg?.assetId || null,                   // 서버 첨부용 asset id (계약 §6)
     });
   };
   const catLabel = VARY_CATS.find((c) => c.id === safeCat).label;
@@ -227,7 +228,7 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
                 <div className="vary-grid">
                   <span className="vary-card on vr-cardprev">
                     <span className="vc-check"><Icon name="check" size={12} /></span>
-                    <img src={refBg} alt="" />
+                    <img src={refBg?.url || refBg} alt="" />
                     <span className="vc-label">레퍼런스</span>
                   </span>
                 </div>
@@ -270,7 +271,7 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
 }
 
 /* ---------- AI ---------- */
-export function AIPanel({ catalogs, account, colorOpts = [], clothingType = 'top', varySource, onGenerate, onVaryGenerate, onPickRef, onSetCutType }) {
+export function AIPanel({ catalogs, account, colorOpts = [], clothingType = 'top', varySource, onGenerate, onVaryGenerate, onPickRef, onPickMoodRef, onSetCutType }) {
   const [tab, setTab] = useState('vary');
   const [cut, setCut] = useState('horizon');
   const [dir, setDir] = useState('front');
@@ -323,7 +324,7 @@ export function AIPanel({ catalogs, account, colorOpts = [], clothingType = 'top
           <MoodGuide catalogs={catalogs} cut={cut} direction={isMirror ? null : dirVal} shot={shotVal}
             onShotChange={(v) => { setShot(v); setExampleId(null); }} clothingType={clothingType}
             exampleId={exampleId} onExampleChange={setExampleId}
-            refs={refImages} onRefsChange={setRefImages} />
+            refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
           {!isMirror && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
 
           <div className="insp-divider" />
@@ -342,7 +343,11 @@ export function AIPanel({ catalogs, account, colorOpts = [], clothingType = 'top
             </div>
           </details>
 
-          <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({ colorId: colorVal, cutType: cut, direction: isMirror ? null : dirVal, shot: shotVal, modelId: model, exampleId, refImages })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>
+          <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({
+            colorId: colorVal, cutType: cut, direction: isMirror ? null : dirVal, shot: shotVal, modelId: model, exampleId,
+            refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)
+            refAssetIds: refImages.map((r) => r?.assetId).filter(Boolean), // 서버 첨부용 asset id (계약 §6)
+          })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>
         </div>
       ) : (
         /* key=소스 id — 변형 대상이 바뀌면 패널 상태(선택/트레이/결과)를 통째로 초기화해 이미지 간 누수를 차단 */

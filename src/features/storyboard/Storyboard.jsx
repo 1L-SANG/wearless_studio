@@ -153,7 +153,7 @@ function ShotIcon({ cut, shot, clothingType }) {
    · 내 사진(refImages) = '+ 타일'로 갤러리에 통합 — 점선 테두리·배지, 분위기(조명·색감)만 참고
    · 예시는 전부 정면 대역(band)이라 방향과 무관 — 사이드/뒷면이면 분위기만 반영 안내
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, clothingType = 'top', exampleId, onExampleChange, refs = [], onRefsChange }) {
+export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, clothingType = 'top', exampleId, onExampleChange, refs = [], onRefsChange, onPickRef }) {
   const cat = cut === 'product' ? 'product' : (cut === 'horizon' ? 'horizon' : 'styling'); // mirror는 styling 계열 플레이스홀더 (ADR-0004)
   const shotOpts = cut === 'product' ? catalogs.productShotTypes
     : cut === 'mirror' ? catalogs.shotTypes.filter((s) => s.value === 'full' || s.value === 'knee')
@@ -188,12 +188,16 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, clothi
         })}
         {refs.map((r, i) => (
           <span className="sb-excell up" key={'u' + i} title="분위기(조명·색감)만 참고해요. 옷과 모델은 바뀌지 않아요.">
-            <img src={r} alt="" /><span className="upb">내 사진</span>
+            <img src={r?.url || r} alt="" /><span className="upb">내 사진</span>
             <button type="button" className="rm" onClick={() => onRefsChange && onRefsChange(refs.filter((_, j) => j !== i))}><Icon name="x" size={11} /></button>
           </span>
         ))}
         {onRefsChange && (
-          <button type="button" className="sb-excell uptile" onClick={async () => onRefsChange([...refs, await api.pickAnyImage()])}>
+          <button type="button" className="sb-excell uptile" onClick={async () => {
+            // 업로드({assetId,url}) — objectURL 이 아니라 서버 asset 이어야 생성에 실제 첨부된다(refAssetIds).
+            const picked = await (onPickRef ? onPickRef() : api.pickRefImage(useAppStore.getState().projectId));
+            if (picked) onRefsChange([...refs, picked]); // 취소(null)면 무시
+          }}>
             <span className="plus">+</span>내 사진
           </button>
         )}
@@ -326,7 +330,11 @@ function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onC
       <MoodGuide catalogs={catalogs} cut={block.cutType} direction={block.direction} shot={block.shot}
         onShotChange={(v) => onChange({ shot: v, exampleId: null })} clothingType={clothingType}
         exampleId={block.exampleId || null} onExampleChange={(v) => onChange({ exampleId: v })}
-        refs={block.refImages || []} onRefsChange={(r) => onChange({ refImages: r })} />
+        refs={(block.refImages || []).map((u, i) => ({ url: u?.url || u, assetId: u?.assetId || (block.refAssetIds || [])[i] }))}
+        onRefsChange={(r) => onChange({
+          refImages: r.map((x) => x?.url || x),                        // 표시용 URL
+          refAssetIds: r.map((x) => x?.assetId).filter(Boolean),       // 서버 첨부용 asset id (계약 §6)
+        })} />
 
       {/* 방향 — 거울샷은 방향 개념 없음 (ADR-0004) */}
       {!isMirror && (
@@ -452,7 +460,7 @@ export function Storyboard() {
     newSeq.current += 1;
     // 새 블록 — source 'ai', 컷 종류는 미설정(null)에서 시작 (계약 §3.4)
     const nb = { id: uid('blk'), kind: 'info', title: '새로운 블록', source: 'ai', cutType: null, colorId: colorOpts[0]?.id || 'col1',
-      pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
+      pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
       thumb: Placeholder.photo('new' + Date.now(), 'styling', 240, 320), poseThumb: Placeholder.pose('stand'), poseLabel: 'AI 자동' };
     setBlocks((bs) => { const m = [...bs]; m.splice(idx, 0, nb); return m; });
     snapRef.current = { ...nb };
@@ -461,7 +469,7 @@ export function Storyboard() {
   };
   const mineBlock = (src, n) => ({
     id: uid('blk'), kind: 'info', title: `새 블록 (${n})`, source: 'mine', cutType: null, colorId: colorOpts[0]?.id || 'col1',
-    ownImages: [src], thumb: src, pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
+    ownImages: [src], thumb: src, pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
     poseThumb: Placeholder.pose('stand'), poseLabel: '-',
   });
   const addMineBlock = async (idx) => {

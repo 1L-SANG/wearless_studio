@@ -355,6 +355,23 @@ export const httpAdapter = {
   async getWardrobe(projectId) {
     return http(`/v1/projects/${projectId}/wardrobe`);
   },
+  // '내 사진' 무드 레퍼런스 — 파일 선택 → R2 업로드 → {assetId, url}. 취소 시 null.
+  // 서버 컷 생성이 assetId 로 이미지를 첨부하므로(refAssetIds), objectURL 이 아니라 업로드가 필수.
+  async pickRefImage(projectId) {
+    const file = await new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = () => resolve(input.files && input.files[0] ? input.files[0] : null);
+      input.oncancel = () => resolve(null);
+      input.click();
+    });
+    if (!file) return null;
+    const { assetId, url } = await uploadPhoto(projectId, {
+      filename: file.name, mime: file.type || 'image/jpeg', blob: file,
+    });
+    return { assetId, url };
+  },
   // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
   // 완료 재호출 없음(매 호출이 새 이미지 생성, mock과 동일 계약) — onProgress는 body에서 제외.
   async generateImage(projectId, req = {}) {

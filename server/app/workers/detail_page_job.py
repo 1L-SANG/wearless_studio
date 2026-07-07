@@ -13,7 +13,7 @@ from io import BytesIO
 from PIL import Image
 
 from .. import repo
-from ..agents import copy_qc, copywriter, cut_generator, mannequin, page_assembler
+from ..agents import copy_qc, copywriter, cut_generator, page_assembler
 from ..agents.gemini_image import InlineImage
 from ..r2 import ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
@@ -31,16 +31,23 @@ def _dims(data: bytes):
         return None, None
 
 
-async def _gen_cuts(app, job, ai_blocks, product, images):
-    """AI 블록별 AG-06 컷 생성 → (cut_results[{blockId,imageUrl}], cut_assets[asset메타]).
-    실패 컷은 건너뛴다(빈 슬롯은 assemble 이 처리) — 부분 성공."""
+async def _gen_cuts(app, job, prepared, product, analysis):
+    """준비된 블록별 (block, images, manifest)로 AG-06 컷 생성 → (cut_results, cut_assets).
+    실패 컷은 건너뛴다(빈 슬롯은 assemble 이 처리) — 부분 성공. 스펙 위반(unknown cutType)도
+    같은 경로(빈 슬롯) — 조용한 styling 대체 렌더는 하지 않는다(ADR-0004)."""
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
     cut_results, cut_assets = [], []
-    for b in ai_blocks:
+    for b, images, manifest in prepared:
+        if not images:  # 옷 근거(상품/마네킹) 없음 — 무드만으로는 동일성 보장 불가, 생성하지 않는다
+            log.warning("AG-06 cut skipped (no garment-truth references) job %s block %s", job_id, b.get("id"))
+            await _emit(app.state.pool, job_id, "step",
+                        {"blockId": b.get("id"), "status": "cut_failed"})
+            continue
         try:
-            img, mime = await cut_generator.generate(s, gemini, b, product, images)
-        except Exception as e:  # GeminiError 포함 — 실패 컷 = 빈 슬롯, 미차감(부분 성공)
+            img, mime = await cut_generator.generate(
+                s, gemini, b, product, images, analysis=analysis, manifest=manifest)
+        except Exception as e:  # GeminiError·ValueError 포함 — 실패 컷 = 빈 슬롯, 미차감(부분 성공)
             log.warning("AG-06 cut failed for job %s block %s: %r", job_id, b.get("id"), e)
             await _emit(app.state.pool, job_id, "step",
                         {"blockId": b.get("id"), "status": "cut_failed"})
@@ -111,28 +118,85 @@ async def run_detail_page_job(app, job: dict) -> None:
             log.exception("detail_page finalize_failure error for job %s", job_id)
 
     try:
-        # 1) 입력 로드
+        # 1) 입력 로드 — 옷 레퍼런스 = (있으면) 선택 마네킹컷(핏·기장 기준, ADR-0004)
+        #    + 블록 색상별 상품 슬롯 이미지 + (styling·mirror) 매칭 의류 + 무드 레퍼런스
         async with pool.connection() as conn:
             project = await repo.get_project(conn, user_id, project_id) or {}
             storyboard = await repo.get_storyboard(conn, project_id)
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id)
-            assets = []
-            for _slot, aid in mannequin.base_color_images(product):
-                a = await repo.get_asset_for_user(conn, user_id, aid)
-                if a:
-                    assets.append(a)
-        images = [
-            InlineImage(a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"]))
-            for a in assets
-        ]
+            ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
+
+            mannequin_asset = None
+            sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
+            if sel:
+                for c in await repo.list_mannequin_cuts(conn, user_id, project_id):
+                    if f"{c.get('candidate')}-{c.get('version')}" == sel and c.get("asset_id"):
+                        mannequin_asset = await repo.get_asset_for_user(conn, user_id, str(c["asset_id"]))
+                        break
+            color_assets: dict = {}   # colorId → [asset(slot 포함)] — 블록 간 재사용
+            match_assets: dict = {}   # matchingItemId → asset|None
+            mood_assets: dict = {}    # refAssetId → asset|None (소유 검증 겸함)
+            for b in ai_blocks:
+                ckey = b.get("colorId") or None
+                if ckey not in color_assets:
+                    rows = []
+                    for slot, aid in cut_generator.color_images(product, ckey):
+                        a = await repo.get_asset_for_user(conn, user_id, aid)
+                        if a:
+                            a["slot"] = slot
+                            rows.append(a)
+                    color_assets[ckey] = rows
+                mids = b.get("matchIds") or []
+                if mids and b.get("cutType") in ("styling", "mirror") and str(mids[0]) not in match_assets:
+                    m_aid = await repo.get_matching_item_asset(conn, str(mids[0]))
+                    match_assets[str(mids[0])] = (
+                        await repo.get_asset_for_user(conn, user_id, m_aid) if m_aid else None)
+                for rid in (b.get("refAssetIds") or [])[:3]:
+                    if str(rid) not in mood_assets:
+                        mood_assets[str(rid)] = await repo.get_asset_for_user(conn, user_id, str(rid))
+
+        # R2 바이트는 r2_key 캐시로 1회만 — 같은 색상 이미지가 블록마다 재다운로드되지 않게
+        _img_cache: dict = {}
+
+        async def _img(a: dict) -> InlineImage:
+            k = a["r2_key"]
+            if k not in _img_cache:
+                _img_cache[k] = InlineImage(
+                    a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, k))
+            return _img_cache[k]
+
+        prepared = []  # (block, images[마네킹?, *상품, 매칭?, *무드], manifest) — 순서=매니페스트
+        for b in ai_blocks:
+            prods = color_assets.get(b.get("colorId") or None, [])
+            # 옷 근거(상품 사진 또는 마네킹컷)가 없으면 생성 불가 — 무드/매칭만으로 진행하면
+            # 모델이 레퍼런스 속 옷을 지어내거나 베낀다(ADR-0004 정확성 최우선). 스킵 표식.
+            if mannequin_asset is None and not prods:
+                prepared.append((b, [], ""))
+                continue
+            mids = b.get("matchIds") or []
+            match_a = match_assets.get(str(mids[0])) if mids and b.get("cutType") in ("styling", "mirror") else None
+            moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
+            imgs = []
+            if mannequin_asset is not None:
+                imgs.append(await _img(mannequin_asset))
+            for a in prods:
+                imgs.append(await _img(a))
+            if match_a is not None:
+                imgs.append(await _img(match_a))
+            for a in moods:
+                imgs.append(await _img(a))
+            manifest = cut_generator.build_manifest(
+                prods, has_mannequin=mannequin_asset is not None,
+                has_match=match_a is not None, mood_count=len(moods))
+            prepared.append((b, imgs, manifest))
+
         copywriting = bool(project.get("copywriting"))
-        ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
                                                "aiCuts": len(ai_blocks)})
 
         # 2) 컷 생성 (부분 성공)
-        cut_results, cut_assets = await _gen_cuts(app, job, ai_blocks, product, images)
+        cut_results, cut_assets = await _gen_cuts(app, job, prepared, product, analysis)
         await _emit(pool, job_id, "progress", {"progress": 65, "phase": "cuts",
                                                "generated": len(cut_assets)})
 
