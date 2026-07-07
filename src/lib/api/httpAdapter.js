@@ -5,14 +5,13 @@
    시그니처·반환 형태는 mock/api.js(계약 §6)와 동일해야 한다.
    ============================================================= */
 import { supabase } from '@/lib/supabase.js';
-import { mockAdapter } from './mockAdapter.js';   // getCatalogs — 카탈로그는 아직 mock 소유
-import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';  // §7 과도기 — 조립기는 아직 프론트 소유
+import { DB } from '@/mock/db.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
-export async function http(path, { method = 'GET', body, headers } = {}) {
+export async function http(path, { method = 'GET', body } = {}) {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
 
@@ -21,7 +20,6 @@ export async function http(path, { method = 'GET', body, headers } = {}) {
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(headers || {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -39,61 +37,124 @@ export async function http(path, { method = 'GET', body, headers } = {}) {
   return res.json();
 }
 
-/* ---- PL-1 분석 공용 헬퍼 (pl1_analysis_agent_spec §7.3·§7.4) ---- */
-
-// 입력·분석 단계는 미로그인 허용이 제품 결정(로그인은 마네킹부터 — PRD §5·ProductInput 주석).
-// 서버 호출은 Bearer 필수이므로, 세션이 없으면 PL-1 스왑 세트는 mock 으로 위임해
-// 익명 입력 흐름(로컬 objectURL + draft 브리지)을 기존 그대로 보존한다.
-// 비로그인 입력의 백엔드 동기화는 Option B 보류 결정에 따름 (반쪽 스왑 사고 방지).
-async function hasSession() {
-  const { data } = await supabase.auth.getSession();
-  if (!data.session && import.meta.env.DEV) {
-    // 개발 중 "구현 안 된 느낌" 오인 방지 — 비로그인 mock 위임은 제품 규칙상 정상이지만
-    // 테스트 중엔 알아채기 어렵다 (2026-07-03 로컬 검증에서 실제 혼동 발생)
-    console.warn('[api] http 모드지만 로그인 전 — 입력·분석은 로컬(mock) 데이터로 동작 중입니다.');
-  }
-  return !!data.session;
-}
-
-const saveAnalysisQueues = new Map();   // projectId → 직렬화 체인 (saveAnalysis 주석 참조)
-
-// job 폴링 → onProgress 콜백 변환. SSE(EventSource)는 Bearer 헤더 불가 → MVP 폴링,
-// fetch-stream SSE 는 P1 훅(spec §12-1). 이후 마네킹 스왑에서도 재사용.
-async function followJob(jobId, { onProgress, intervalMs = 1000, timeoutMs = 300000 } = {}) {
-  const t0 = Date.now();
+// job 폴링 어댑터 — job형 API(202 {jobId})를 mock 의 onProgress 콜백 계약으로 변환.
+// GET /v1/jobs/{id} 를 폴링해 progress 를 전달하고, done 이면 result, error 면 한국어 message throw.
+// SSE 대신 폴링(마네킹 경로와 동일 GET 재사용, plan §7). 무과금 분석엔 stall 로직 불필요.
+async function pollJob(jobId, { onProgress, intervalMs = 1200, timeoutMs = 90000 } = {}) {
+  const start = Date.now();
+  let last = -1;
   for (;;) {
     const job = await http(`/v1/jobs/${jobId}`);
-    onProgress?.(Math.max(0, Math.min(100, job.progress ?? 0)));
-    if (job.status === 'done') return job.result;   // { data, credits, creditsCharged }
-    if (job.status === 'error') throw new Error(job.errorMessage || '작업에 실패했어요. 다시 시도해 주세요.');
-    if (Date.now() - t0 > timeoutMs) throw new Error('작업이 너무 오래 걸려요. 잠시 후 다시 시도해 주세요.');
+    if (typeof job.progress === 'number' && job.progress !== last) {
+      last = job.progress;
+      onProgress && onProgress(job.progress);
+    }
+    if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
+    if (job.status === 'error') throw new Error(job.errorMessage || '작업에 실패했어요.');
+    if (Date.now() - start > timeoutMs) throw new Error('분석이 지연되고 있어요. 잠시 후 다시 시도해 주세요.');
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 }
 
-// 서버 Analysis(계약 §3.2) → 현행 AnalysisForm 이 읽는 legacy shape 합성.
-// 화면은 그대로, 갭은 어댑터가 흡수 (Phase 7 폼 리팩토링 때 제거 — TODO.md).
-let catalogsPromise = null;   // mock getCatalogs 는 호출마다 지연+클론 — 모듈 캐시로 1회만
-async function adaptAnalysis(data) {
-  catalogsPromise = catalogsPromise || mockAdapter.getCatalogs();
-  const catalogs = await catalogsPromise;
-  const selectedIds = new Map((data.matchSelections || []).map((s, i) => [s.clothingId, i + 1]));
-  return {
-    ...data,                                        // 계약 필드 전부 (spec §3.5)
-    models: catalogs.models,                        // 표시 카탈로그 (mock 소유)
-    matchClothing: (data.matchCandidates || []).map((c) => ({
-      ...c,
-      selected: selectedIds.has(c.id),
-      ...(selectedIds.has(c.id) ? { selOrder: selectedIds.get(c.id) } : {}),
-    })),
-    measurements: (catalogs.measurementSchema[data.clothingType] || [])
-      .map((k) => ({ key: k, value: null, unit: 'cm' })),   // 항상 null — 계약 §3.1
-    measurementsUnknown: false,
-    washCare: '',                                   // 레거시 필드 (폼 참조만)
-  };
+// 사진 1장 업로드 — presigned URL 3콜(발급→R2 PUT→complete). {assetId, url} 반환.
+// 로그인 후 draft 동기화(draftSync)도 이 함수를 재사용 (단일 업로드 계약, 서버 §3).
+// 서명 PUT은 Bearer 안 씀(서명 자체가 인증).
+export async function uploadPhoto(projectId, { filename, mime, blob }) {
+  const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
+    method: 'POST', body: { filename, mime, size: blob.size, projectId },
+  });
+  const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mime }, body: blob });
+  if (!put.ok) throw new Error('사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+  const asset = await http(`/v1/assets/${assetId}/complete`, {
+    method: 'POST', body: { projectId, mime, filename },
+  });
+  return { assetId, url: asset.url };
 }
 
 export const httpAdapter = {
+  // 상품 사진(blob)을 R2에 업로드하고 images[].id 를 **서버 asset id 로 치환**한다.
+  // 서버(mannequin.base_color_images·분석 워커)는 colors[].images[].id 를 asset id 로 링크하므로,
+  // 로컬 uid('img') 를 그대로 두면 서버가 사진을 못 찾는다(no_product_images). src 도 R2 URL 로 갱신.
+  // 이미 업로드된(blob: 아님) 이미지는 건너뛴다. projectId 없으면(비로그인 공개) 업로드 불가 → 그대로 반환.
+  async uploadProductPhotos(projectId, product) {
+    if (!projectId) return product;
+    const colors = await Promise.all((product.colors ?? []).map(async (c) => {
+      const images = await Promise.all((c.images ?? []).map(async (im) => {
+        if (!im.src || !im.src.startsWith('blob:')) return im;
+        const blob = await fetch(im.src).then((r) => r.blob());
+        // im.type 은 파일 감지 실패 시 'image'(잘못된 MIME)일 수 있다(filesToMetas 폴백) —
+        // '/' 가 있는 진짜 MIME 일 때만 쓰고, 아니면 blob.type / jpeg 로. (upload-url 400 방지)
+        const mime = (im.type && im.type.includes('/')) ? im.type : (blob.type || 'image/jpeg');
+        const { assetId, url } = await uploadPhoto(projectId, {
+          filename: im.name || 'photo', mime, blob,
+        });
+        return { ...im, id: assetId, src: url };
+      }));
+      return { ...c, images };
+    }));
+    return { ...product, colors };
+  },
+  async saveProduct(projectId, patch) {
+    const row = await http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: patch });
+    // 부분 스왑 브릿지(codex 리뷰 P2): getProduct·마네킹·콘티·에디터는 아직 mock 폴백이라
+    // DB.product 를 읽는다. 실 saveProduct 가 mock 미러를 안 건드리면 하위 단계가 seed 를 읽으므로,
+    // 그 단계들이 http 로 함께 스왑되기 전까지 mock 미러도 같은 patch 로 갱신한다.
+    Object.assign(DB.product, patch);
+    if (patch.name != null) DB.project.title = patch.name;
+    return row;
+  },
+  // AG-01 상품 분석 — POST /analyze(job) → 폴링 → analysis payload.
+  // 반환 shape 은 mock(계약 §6)과 **동일해야 한다** — AnalysisForm 이 a.models/.matchClothing/
+  // .sellingPoints 등을 무가드로 읽으므로. 부분 스왑 단계라 models·matchClothing·selectedModelId·
+  // washCare 등은 아직 mock 소유 → mock 분석 shape 를 베이스로 AI 산출 필드만 덮어써 shape 를 보존한다.
+  async analyzeProduct(projectId, { onProgress } = {}) {
+    const { jobId } = await http(`/v1/projects/${projectId}/analyze`, { method: 'POST' });
+    // 폴링 상한은 provider 순차 폴백 최악경로(2 × analysis_timeout_seconds=60s = 120s)보다 넉넉히
+    // 잡는다 — 짧으면 정상 폴백(gpt→gemini)이 완료 전에 실패 토스트가 뜨는데 job은 뒤늦게 성공한다.
+    const result = await pollJob(jobId, { onProgress, timeoutMs: 180000 });
+    const ai = (result && result.data) || {};
+    const base = JSON.parse(JSON.stringify(DB.analysis));  // 전체 shape(models·matchClothing·… 포함)
+    const merged = {
+      ...base,
+      clothingType: ai.clothingType ?? null,
+      subCategory: ai.subCategory ?? null,
+      targetGenders: ai.targetGenders ?? [],
+      fit: ai.fit ?? null,
+      materials: ai.materials ?? [],
+      aiSuggestedPoints: ai.aiSuggestedPoints ?? [],
+      suggestedName: ai.suggestedName ?? base.suggestedName,
+      styleTags: ai.styleTags ?? [],
+      swatchSuggestions: ai.swatchSuggestions ?? [],
+      sellingPoints: [],  // 셀러는 빈 상태로 시작 — AI 제안(aiSuggestedPoints)은 폼이 자동으로 채운다
+    };
+    // 실측은 AI 미산출 → 값 비움(사용자 직접 입력, PRD §6.5). mock analyzeProduct 와 동일 처리.
+    merged.measurements = (base.measurements || []).map((m) => ({ ...m, value: null }));
+    return merged;
+  },
+  // ---- 상세페이지 (PL-4) — 콘티·에디터는 서버 소유. detail_page job 이 저장 콘티를 읽는다 ----
+  async getStoryboard(projectId) {
+    return http(`/v1/projects/${projectId}/storyboard`);
+  },
+  async saveStoryboard(projectId, blocks) {
+    const out = await http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
+    DB.storyboard = blocks;  // mock 미러(부분 스왑 브릿지 — mock 폴백 읽기 정합)
+    return out;
+  },
+  async getEditorBlocks(projectId) {
+    return http(`/v1/projects/${projectId}/editor-blocks`);
+  },
+  async saveEditorBlocks(projectId, blocks) {
+    await http(`/v1/projects/${projectId}/editor-blocks`, { method: 'PUT', body: blocks });
+    DB.editorBlocks = blocks;
+  },
+  // AG-06 컷 + AG-02/03 카피 → M-02 조립. 완료 재호출은 서버가 기존 결과 반환(무차감).
+  async generateDetailPage(projectId, { onProgress } = {}) {
+    const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
+    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(202 아님)
+    const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
+    DB.editorBlocks = result.data; DB.project.status = 'done';  // mock 미러
+    return { data: result.data, credits: result.credits };
+  },
   // Phase 1-B 읽기·CRUD 스왑 (계약 §6 시그니처 동일). 미구현 함수는 mock 폴백.
   // getProject 는 store 가 projectId 없이 호출(api.getProject()) → 시그니처 정리 후
   // 플로우 단계에서 스왑. 지금 스왑하면 깨지므로 mock 유지.
@@ -120,242 +181,32 @@ export const httpAdapter = {
   async getCreditSources() {
     return http('/v1/credits/sources');
   },
-  // ---- PL-1 분석 스왑 세트 (pl1 spec §7 — 아래는 한 세트, 부분 스왑 금지) ----
-  // 서버가 저장된 product 를 읽어 분석하므로 uploadAsset·get/saveProduct 가 함께 http 여야 한다.
-  // 전 함수 공통: 세션 없으면 mock 위임 (hasSession 주석 참조 — 익명 입력 흐름 보존).
-
-  // store.loadProject 전용 '현재 프로젝트' — 서버엔 싱글턴이 없으므로 최근 프로젝트,
-  // 없으면 생성. mock 출신 로컬 projectId 가 서버 경로로 흘러 404 나는 반쪽 스왑 차단.
-  async getCurrentProject() {
-    if (!(await hasSession())) return mockAdapter.getCurrentProject();
-    const library = await http('/v1/projects?view=library');   // updated_at desc
-    if (library.length) return http(`/v1/projects/${library[0].id}`);
-    return http('/v1/projects', { method: 'POST' });
-  },
-  // presigned PUT 3단계 업로드 (§7.1). 반환 = ImageAsset 핵심 필드 { id, src }.
-  async uploadAsset(file, opts = {}) {
-    if (!(await hasSession())) return mockAdapter.uploadAsset(file, opts);
-    const { projectId } = opts;
-    const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
-      method: 'POST',
-      body: { filename: file.name, mime: file.type, size: file.size, projectId },
-    });
-    const put = await fetch(uploadUrl, {
-      method: 'PUT', headers: { 'Content-Type': file.type }, body: file,
-    });
-    if (!put.ok) throw new Error('이미지 업로드에 실패했어요. 다시 시도해 주세요.');
-    const asset = await http(`/v1/assets/${assetId}/complete`, {
-      method: 'POST', body: { projectId, mime: file.type, filename: file.name },
-    });
-    return { id: asset.id, src: asset.url };
-  },
-  async getProduct(projectId) {
-    if (!(await hasSession())) return mockAdapter.getProduct(projectId);
-    return http(`/v1/projects/${projectId}/product`);
-  },
-  async saveProduct(projectId, patch) {
-    if (!(await hasSession())) return mockAdapter.saveProduct(projectId, patch);
-    // 서버 ProductPatch 화이트리스트 외 키(id 등)는 서버가 무시한다.
-    return http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: patch });
-  },
-  // PL-1 분석 — 202 { jobId } 면 폴링, 200 { data } 면 기존 분석(재분석 없음, spec §5.1).
-  async analyzeProduct(projectId, { onProgress } = {}) {
-    if (!(await hasSession())) return mockAdapter.analyzeProduct(projectId, { onProgress });
-    const res = await http(`/v1/projects/${projectId}/analysis:analyze`, { method: 'POST' });
-    if (!res.jobId) {
-      onProgress?.(100);
-      return adaptAnalysis(res.data);
-    }
-    const envelope = await followJob(res.jobId, { onProgress });
-    return adaptAnalysis(envelope.data);
-  },
-  async getAnalysis(projectId) {
-    if (!(await hasSession())) throw new Error('분석 결과가 아직 없습니다.');
-    return adaptAnalysis(await http(`/v1/projects/${projectId}/analysis`));
-  },
-  // 폼의 legacy patch 를 소유자별로 라우팅·변환 (mock saveAnalysis 의 스마트 머지와 동작 동등).
-  // 프로젝트별 직렬화 — read-modify-write(④)가 연타 편집과 경합해 서로 덮어쓰지 않게 한다
-  // (mock 은 단일 틱 원자라 http 전용 문제).
-  async saveAnalysis(projectId, patch) {
-    if (!(await hasSession())) return mockAdapter.saveAnalysis(projectId, patch);
-    const prev = saveAnalysisQueues.get(projectId) || Promise.resolve();
-    const run = prev.catch(() => {}).then(() => this._saveAnalysisNow(projectId, patch));
-    saveAnalysisQueues.set(projectId, run);
-    return run;
-  },
-  async _saveAnalysisNow(projectId, patch) {
-    const p = { ...patch };
-    // ① Product 소유 필드 → PATCH /product (계약 §3.1)
-    const productFields = {};
-    for (const k of ['clothingType', 'measurements', 'measurementsUnknown']) {
-      if (k in p) { productFields[k] = p[k]; delete p[k]; }
-    }
-    if (Object.keys(productFields).length) {
-      await http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: productFields });
-    }
-    // ② legacy matchClothing 선택 patch → 계약형 matchSelections (선택 유실 방지)
-    if (p.matchClothing) {
-      p.matchSelections = p.matchClothing
-        .filter((c) => c.selected)
-        .sort((a, b) => (a.selOrder || 0) - (b.selOrder || 0))
-        .slice(0, 2)
-        .map((c, i) => ({ clothingId: c.id, role: i === 0 ? 'main' : 'sub' }));
-      delete p.matchClothing;
-    }
-    // ③ 표시 전용 legacy 필드 strip — payload 오염 방지
-    for (const k of ['models', 'washCare']) delete p[k];
-    if (Object.keys(p).length) {
-      await http(`/v1/projects/${projectId}/analysis`, { method: 'PATCH', body: p });
-    }
-    // ④ 의류 종류·성별 변경 → 매칭 후보 재계산 (mock 스마트 머지 동등 — 기존 라우트 재사용).
-    //    기존 선택 중 새 후보군에 살아남은 것은 보존하고, 전부 사라졌을 때만 상위 2개 기본
-    //    선택으로 폴백한다 (mock recommendLegacyMatchClothing의 validSelected 규칙).
-    //    판정은 키 존재 기준(mock shouldRefreshMatchClothing 동일) — null 해제도 갱신 대상.
-    if ('clothingType' in productFields || 'targetGenders' in patch) {
-      const cur = await http(`/v1/projects/${projectId}/analysis`);
-      const q = new URLSearchParams({ clothingType: productFields.clothingType || cur.clothingType || 'top' });
-      (cur.targetGenders || []).forEach((g) => q.append('gender', g));
-      const candidates = await http(`/v1/projects/${projectId}/analysis/match-candidates?${q}`);
-      const candidateIds = new Set(candidates.map((c) => c.id));
-      const kept = (cur.matchSelections || [])
-        .filter((s) => candidateIds.has(s.clothingId))
-        .slice(0, 2);
-      const effective = kept.length ? kept : candidates.slice(0, 2)
-        .map((c) => ({ clothingId: c.id }));
-      const selections = effective
-        .map((s, i) => ({ clothingId: s.clothingId, role: i === 0 ? 'main' : 'sub' }));
-      await http(`/v1/projects/${projectId}/analysis`, {
-        method: 'PATCH', body: { matchCandidates: candidates, matchSelections: selections } });
-    }
-    return this.getAnalysis(projectId);   // 폼이 쓰는 최종 형태 반환 (mock 계약 동일)
-  },
-
-  /* ---- 컷 생성 실배선 (ADR-0004 — kind='editor_image' job) ----
-     · generateImage(new): 에디터 '새 컷 추가' = 컷 단위 실생성·재생성 루프의 실체.
-     · generateDetailPage: 콘티의 AI 블록을 순차 실생성 후 로컬 조립 — 콘티·에디터 상태는
-       아직 프론트(mock 소유, §7 과도기)라 조립 결과를 mock 브리지에 주입한다.
-     · vary(현재 컷 변형)는 서버 미구현 — mock 폴백 유지 (부분 스왑 원칙). */
-  async generateImage(projectId, req = {}) {
-    if (req.mode === 'vary') return mockAdapter.generateImage(projectId, req);
-    const { jobId } = await http(`/v1/projects/${projectId}/cuts:generate`, {
-      method: 'POST', body: _cutSpec(req),
-      headers: { 'Idempotency-Key': _idem() },        // 네트워크 재시도의 이중 잡·이중 차감 방지
-    });
-    const envelope = await followJob(jobId);          // 실패 시 throw — 화면이 잡아 재시도 안내
-    return { data: envelope.data, credits: envelope.credits };
-  },
-
-  async getWardrobe(projectId) {
-    const rows = await http(`/v1/projects/${projectId}/wardrobe`);
-    const grouped = {};                                // 화면 계약(§3.6) = colorId(없으면 'misc') 그룹 맵
-    for (const im of rows) (grouped[im.colorId || 'misc'] ||= []).push(im);
-    return grouped;
-  },
-
-  async generateDetailPage(projectId, { onProgress, onStep } = {}) {
-    // 진행 중 재진입 = 같은 실행에 합류 (mock inflight.detailPage와 동일 계약).
-    // 이 가드가 없으면 동시 호출(재마운트·중복 내비게이션)이 각자 유료 컷 잡 루프를 돌려 이중 과금된다.
-    // 합류는 프로젝트별 — 다른 프로젝트의 실행에 잘못 합류하지 않는다.
-    const existing = _detailRuns.get(projectId);
-    if (existing) { existing.listeners.push({ onProgress, onStep }); return existing.promise; }
-    const run = { listeners: [{ onProgress, onStep }] };
-    const emitProgress = (p) => run.listeners.forEach((l) => l.onProgress && l.onProgress(p));
-    const emitStep = (s) => run.listeners.forEach((l) => l.onStep && l.onStep(s));
-    run.promise = _runDetailPage(projectId, emitProgress, emitStep)
-      .finally(() => { if (_detailRuns.get(projectId) === run) _detailRuns.delete(projectId); });
-    _detailRuns.set(projectId, run);
-    return run.promise;
-  },
-
   // 마네킹 등 job형 플로우(generate→adjust→regenerate)는 같은 컷 상태를 공유하므로
   // 부분 스왑 금지 — 백엔드가 generate+adjust+regenerate를 다 갖추고 draft sync(A-3)가
   // 돼야 통째로 swap. 그 전까지 마네킹은 mock 유지(혼합 시 http 모드 깨짐).
-};
-
-// 진행 중인 상세페이지 생성 실행 — projectId별 합류 (교차 프로젝트 합류 방지)
-const _detailRuns = new Map();
-
-async function _runDetailPage(projectId, onProgress, onStep) {
-  {
-    const [blocks, product, project] = await Promise.all([
-      mockAdapter.getStoryboard(projectId), mockAdapter.getProduct(projectId), mockAdapter.getProject(projectId),
-    ]);
-    const steps = GEN_STEPS.map((s) => ({ ...s, status: 'idle' }));
-    const setStep = (key, status) => {
-      const st = steps.find((s) => s.key === key); if (st) st.status = status;
-      onStep && onStep(steps.map((s) => ({ ...s })));
-    };
-    const stepFor = (ct) => ct === 'product' ? 'product' : ct === 'horizon' ? 'horizon' : 'styling'; // mirror→styling (ADR-0004)
-    setStep('info', 'done'); setStep('prep', 'done'); onProgress && onProgress(5);
-
-    const aiBlocks = blocks.filter((b) => b.source !== 'mine' && b.cutType);
-    const srcByBlock = {}; const generated = []; let credits = null;
-    for (let i = 0; i < aiBlocks.length; i++) {
-      const b = aiBlocks[i];
-      setStep(stepFor(b.cutType), 'running');
-      onProgress && onProgress(Math.round(5 + (i / Math.max(1, aiBlocks.length)) * 85));
-      try {
-        const { jobId } = await http(`/v1/projects/${projectId}/cuts:generate`, {
-          method: 'POST', body: _cutSpec(b),
-          headers: { 'Idempotency-Key': _idem() },
-        });
-        const envelope = await followJob(jobId);
-        const img = envelope && envelope.data;
-        if (img) { srcByBlock[b.id] = img.src; generated.push(img); }
-        if (envelope && envelope.credits != null) credits = envelope.credits;
-      } catch {
-        // 실패 컷은 건너뛴다 — 에디터의 컷 단위 재생성 루프가 안전망 (ADR-0004).
-        // 실패 잡은 서버가 예약을 해제하므로 미차감.
-      }
-    }
-    // 전부 실패 = 빈 상세페이지 — done으로 오염시키지 않고 중단 (화면이 잡아 콘티로 되돌림)
-    if (aiBlocks.length && generated.length === 0) {
-      throw new Error('컷 생성에 모두 실패했어요. 잠시 후 다시 시도해 주세요.');
-    }
-    ['styling', 'horizon', 'product'].forEach((k) => setStep(k, 'done'));
-    setStep('copy', 'done'); setStep('assemble', 'running'); onProgress && onProgress(95);
-
-    // 조립은 mock 조립기 재사용 — 대표 이미지(첫 image 요소)만 실 생성 결과로 교체 (블록 index = 콘티 순서)
-    const editorBlocks = buildEditorBlocksFromStoryboard(blocks, product, project.copywriting);
-    blocks.forEach((b, idx) => {
-      const src = srcByBlock[b.id]; if (!src) return;
-      const imgEl = ((editorBlocks[idx] || {}).elements || []).find((e) => e.type === 'image');
-      if (imgEl) imgEl.src = src;
+  // AG-05 — 조정 값은 enum 토큰만 전달: fitAdjust slimmer|looser, lengthAdjust shorter|longer.
+  // '현재(변경 없음)' = 필드 생략. 완료 재호출 없음(매 호출이 새 버전 생성, mock과 동일 계약).
+  async adjustMannequin(projectId, { baseId, fitAdjust, lengthAdjust, matchAdjust, onProgress } = {}) {
+    const res = await http(`/v1/projects/${projectId}/mannequins:adjust`, {
+      method: 'POST', body: { baseId, fitAdjust, lengthAdjust, matchAdjust },
     });
-    await mockAdapter.commitGeneratedDetailPage(projectId, { editorBlocks, wardrobe: generated });
-    setStep('assemble', 'done'); onProgress && onProgress(100);
-    if (credits == null) credits = (await http('/v1/me/account')).credits;
-    return { data: editorBlocks, credits };
-  }
-}
-
-// 콘티 블록/NewCutRequest → 서버 CutGenerateRequest. refImages는 아직 로컬 objectURL이라
-// 미전송(refAssetIds 빈 배열) — 무드 레퍼런스 실배선은 assets 업로드 경로를 붙일 때 (TODO).
-function _cutSpec(b) {
-  return {
-    cutType: b.cutType,
-    direction: b.direction ?? null,
-    shot: b.shot ?? null,
-    colorId: b.colorId ?? null,
-    pose: b.pose || 'auto',
-    faceExposure: b.faceExposure ?? null,
-    matchIds: b.matchIds || [],
-    refAssetIds: [],
-    exampleId: b.exampleId ?? null,
-    spaceGroupId: b.spaceGroupId ?? null,
-    spaceVariation: b.spaceVariation ?? null,
-  };
-}
-
-// 요청 1건당 고유 멱등 키 — 같은 논리적 시도의 네트워크 중복만 합류시킨다 (서버 §6 ①)
-function _idem() {
-  return (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : `idem-${Date.now()}-${Math.random()}`;
-}
-
-// 생성 진행 표시용 단계 목록 — mock DB.genSteps와 동일 라벨 (표시 전용)
-const GEN_STEPS = [
-  { key: 'info', label: '상품 정보 정리' }, { key: 'prep', label: '이미지 생성 준비' },
-  { key: 'styling', label: '스타일링컷 생성' }, { key: 'horizon', label: '호리존컷 생성' },
-  { key: 'product', label: '제품컷 생성' }, { key: 'copy', label: '카피라이팅 적용' },
-  { key: 'assemble', label: '상세페이지 조립' },
-];
+    if (res.data) return { data: res.data, credits: res.credits };
+    const result = await pollJob(res.jobId, { onProgress });
+    return { data: result.data, credits: result.credits };
+  },
+  // 에디터 Wardrobe(의류 탭, 계약 §3.6) — Record<colorId|'misc', WardrobeImage[]>.
+  async getWardrobe(projectId) {
+    return http(`/v1/projects/${projectId}/wardrobe`);
+  },
+  // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
+  // 완료 재호출 없음(매 호출이 새 이미지 생성, mock과 동일 계약) — onProgress는 body에서 제외.
+  async generateImage(projectId, req = {}) {
+    const { onProgress, ...body } = req;
+    const res = await http(`/v1/projects/${projectId}/editor:generate-image`, {
+      method: 'POST', body,
+    });
+    if (res.data) return { data: res.data, credits: res.credits };
+    const result = await pollJob(res.jobId, { onProgress });
+    return { data: result.data, credits: result.credits };
+  },
+};

@@ -1,0 +1,42 @@
+<role>
+You are an expert e-commerce product photographer producing ONE "product" cut for a detail-page
+storyboard. This is a pure product shot — there is NO model and NO mannequin body. Present the
+garment alone as a ghost/invisible-mannequin render, on a hanger, or laid flat (flatlay).
+</role>
+
+<input images>
+The images are attached in this exact order and meaning:
+${imageManifest}
+
+Only the product's front view is guaranteed to exist. Other product views MAY be absent — use
+only the images that are actually attached, and never invent or hallucinate a view that was not
+provided. A base mannequin/model reference image may also be attached for fit/proportion reference
+only — never render a visible body, mannequin form, face, or skin in the output.
+</input images>
+
+<instruction>
+- Generate the SAME garment shown in the product photos: preserve its exact color, pattern,
+  fabric, neckline, silhouette, seams, and any logo or print. This is the single most important
+  constraint — the garment must be instantly recognizable as the same item.
+- Render the garment with NO model: choose ghost/invisible-mannequin (garment appears filled out
+  with natural volume and drape but no visible body, face, or skin), on a hanger, or flatlay —
+  whichever best matches the requested shot type.
+- Use the selected mannequin/model reference only to inform natural proportion and drape (how the
+  garment would fill out), never to render a visible body, mannequin form, or person.
+- Respect the requested composition: ${direction} direction, ${shot} framing.
+</instruction>
+
+<output format>
+- Output ONE brand-new, fully opaque, photorealistic product photograph on a clean neutral
+  background, with NO visible model, mannequin body, face, skin, or hands.
+- Output EXACTLY ONE image — no grid, no collage, no multiple views, no panels, no text overlay.
+</output format>
+
+<critical rules>
+- Use ONLY the attached images as ground truth for the garment; never fabricate a view that was
+  not provided.
+- The attached product photos are the ground truth for color, pattern, and shape; any product
+  context text supports them but must NEVER override what the photos clearly show.
+- NEVER render a model, mannequin body, face, skin, or hair — this cut is product-only
+  (ghost/hanger/flatlay), by definition and constraint.
+</critical rules>

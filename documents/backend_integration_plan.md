@@ -1,6 +1,6 @@
 # 백엔드 연동 계획 (backend_integration_plan.md)
 
-> 상태: 확정 (2026-06-12, 갱신 2026-06-14) · 작성 방식: Claude·Codex 독립 초안 → 근거 기반 상호 반박 → 병합 (충돌 2건은 조건부 합의)
+> 상태: 확정 (2026-06-12, 갱신 2026-06-29) · 작성 방식: Claude·Codex 독립 초안 → 근거 기반 상호 반박 → 병합 (충돌 2건은 조건부 합의)
 > 역할: 기존 문서가 "무엇"을 정의했다면(엔티티·API 계약 = `common_data_contract.md`, 파이프라인·job 모델 = `ai_pipeline_spec.md`, 에이전트 = `ai_agent_modules.md`, 스택 = `03_기술스택_결정서.md`), 이 문서는 **물리 저장·HTTP 경계·job/credit/export 실행·전환 순서**만 정한다. 엔티티 필드와 파이프라인 단계는 재서술하지 않는다.
 
 ---
@@ -138,11 +138,11 @@ seed/matching/{matchingItemId}.{ext}
 
 | Phase | 범위 | 완료 기준 |
 |---|---|---|
-| 0 | 어댑터 구조 + FastAPI 골격(healthz, JWT 미들웨어) + 스키마 마이그레이션 | 배포·JWT 검증 통과 |
-| 1 | Auth + `/me`·`/catalogs`·projects CRUD·보관함 + TanStack Query | 보관함이 실데이터 |
-| 2 | Product + R2 presigned 업로드 (objectURL → asset URL) | 입력 플로우 실서버, 업로드 실패 사유 표면화 |
-| 3 | Analysis + matching (M-01 룰베이스 서버 이관, 실측 null·소유권 분리 서버 검증) | 분석 플로우 실서버 |
-| 4 | jobs·SSE·dispatcher·크레딧 reserve/confirm — `generateMannequins`부터, 이후 adjust/detail-page/editor-image | 유료 job 멱등·차감 시나리오 통과 |
+| ✅ 0 | 어댑터 구조 + FastAPI 골격(healthz, JWT 미들웨어) + 스키마 마이그레이션 | 배포·JWT 검증 통과 |
+| ✅ 1 | Auth + `/me`·`/catalogs`·projects CRUD·보관함 + TanStack Query | 보관함이 실데이터 |
+| ✅ 2 | Product + R2 presigned 업로드 (objectURL → asset URL) | 입력 플로우 실서버, 업로드 실패 사유 표면화 |
+| ✅ 3 | Analysis + matching (M-01 룰베이스 서버 이관, 실측 null·소유권 분리 서버 검증) | 분석 플로우 실서버 |
+| ✅ 4 | jobs·SSE·dispatcher·크레딧 reserve/confirm — `generateMannequins`부터, 이후 adjust/detail-page/editor-image | 유료 job 멱등·차감 시나리오 통과 |
 | 5 | storyboard/editor-blocks/wardrobe 영속화 (editor_revision 충돌 방지) | 에디터 재진입 유지 |
 | 6 | export 기록 + 클라 렌더 다운로드 완성 | 긴 PNG/ZIP 실동작 |
 | 7 | mock 제거: parity 체크리스트 + `rg "@/mock"` 0건 + 멱등/미차감 수동 시나리오 | mock 의존 0 |
@@ -163,10 +163,10 @@ seed/matching/{matchingItemId}.{ext}
 
 | 순서 | 작업 | 비고 |
 |---|---|---|
-| **0. AI 품질 스파이크 (1~2일)** | 버리는 스크립트로 Gemini 이미지 모델에 실제 상품 사진 투입 — 마네킹 핏 재현·의류 동일성·비용·지연 검증 | **인프라 투자 전 최대 리스크 검증.** Phase 0의 완료 기준(배포·JWT)은 핵심 가치를 검증하지 못한다. 필요 연결: GEMINI_API_KEY만 |
-| 1. Phase 0~1 | FastAPI 골격·Supabase(스키마+Auth)·Railway 배포·어댑터 분기 + 읽기 전환 + **TanStack Query 도입** | Zustand는 이미 구현 완료 — 추가 작업 없음 |
-| 2. Phase 2~3 | R2 presigned 업로드 → 분석·매칭 전환 | |
-| 3. Phase 4 | AI job 실체화 + **크레딧 원장(reserve-confirm) 동시 구축** | 차감 **장치**는 임시 단가(현 2/1/1/1)로 구축·검증한다 — AI 품질 검증엔 정책이 불필요(차감을 끄거나 무제한으로 둬도 됨). ⚠️ 게이트는 "Phase 4 구축"이 아니라 **실제 과금(상용 출시)** — 그 전에 크레딧 단가·환불 정책 확정 필요(§11-1) |
+| ✅ **0. AI 품질 스파이크** | 버리는 스크립트로 Gemini 이미지 모델에 실제 상품 사진 투입 — 마네킹 핏 재현·의류 동일성·비용·지연 검증 | **완료 (2026-06-19, 10/10 통과).** `spike/spike.js`, Gemini 3 Pro Image |
+| ✅ 1. Phase 0~1 | FastAPI 골격·Supabase(스키마+Auth)·Railway 배포·어댑터 분기 + 읽기 전환 + **TanStack Query 도입** | **완료.** Zustand는 이미 구현 완료 |
+| ✅ 2. Phase 2~3 | R2 presigned 업로드 → 분석·매칭 전환 | **완료.** M-01 매칭 백엔드·64종 시드 live |
+| ✅ 3. Phase 4 | AI job 실체화 + **크레딧 원장(reserve-confirm) 동시 구축** | **완료.** AG-04 마네킹 생성·조정 live. ⚠️ 크레딧 단가·환불 정책은 상용 출시 직전 확정 필요(§11-1) |
 | 4. Phase 5~6 | 콘티·에디터 영속화 → 다운로드(클라 렌더, §7) | |
 | 5. Phase 7 | mock 제거 (parity 체크리스트) | **mock은 그 전까지 유지** — 실행 가능한 계약(멱등·봉투·소유권 머지)이자 parity 기준. 폐기 시 전환 리스크 증가 |
 | 6. PG (결제) | 크레딧 **충전** 기능으로 원장 위에 마지막에 얹음 | 크레딧 시스템과 분리 — 베타는 수동 지급(원장 `grant`)으로 PG 없이 런칭 가능. PG사 선정은 별도 ADR |

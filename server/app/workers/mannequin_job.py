@@ -15,13 +15,13 @@ from PIL import Image
 log = logging.getLogger("wearless.mannequin_job")
 
 from .. import repo
-from ..agents import mannequin
+from ..agents import image_qc, mannequin
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
 from ..agents.prompts import load_prompt_template, render_mannequin_prompt
 from ..r2 import ai_key, ext_for_mime
 from ..services import qc
-from ._common import emit as _emit
+from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 
@@ -57,6 +57,18 @@ def _build_manifest(prod_assets: list[dict], has_match: bool) -> str:
     return "\n".join(lines)
 
 
+def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
+    """생성 컷 게이팅 결정 (순수) → (pillow_reject, p2_reject).
+
+    - Pillow QC(휴리스틱): mannequin_qc_enabled 且 판정!='pass' → reject.
+    - AG-P2(vision 동일성): image_qc=='enforce' 且 p2.verdict=='retry' → reject.
+      off/shadow 는 게이트 안 함(항상 통과 — 기존 동작 불변). p2 없음(키미설정·판정실패)도 통과.
+    """
+    pillow_reject = s.mannequin_qc_enabled and pillow_verdict_str != "pass"
+    p2_reject = s.image_qc == "enforce" and isinstance(p2, dict) and p2.get("verdict") == "retry"
+    return pillow_reject, p2_reject
+
+
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
@@ -70,7 +82,10 @@ async def _run_candidate(
         clothing_type=clothing_type, product_count=product_count,
         base_gender=base_gender, image_manifest=image_manifest, fit_profile=fit_profile,
     )
-    base_prompt = render_mannequin_prompt(template, ctx, product, analysis)
+    base_prompt = render_mannequin_prompt(
+        template, ctx, product, analysis,
+        seller_canon=s.seller_text_canonicalize, knowledge=s.retrieval_knowledge,
+    )
     # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
     # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
     model = resolve_model(s, s.mannequin_tier)
@@ -90,8 +105,19 @@ async def _run_candidate(
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "model": model, "attempt": attempt, "status": "generated",
             "qc": {"verdict": verdict.verdict, "reasons": verdict.reasons}})
-        # shadow(기본): QC 로그만 하고 무조건 채택 / 게이팅 시: pass만 채택
-        if (not s.mannequin_qc_enabled) or verdict.verdict == "pass":
+        # AG-P2 이미지 동일성 검수 — shadow(로그만)·enforce(게이트) 시 판정. off면 skip.
+        # vision 실패(키미설정 등)는 삼켜 p2=None → 게이트 미적용(생성 자체 안 막음).
+        p2 = None
+        if s.image_qc in ("shadow", "enforce") and prod_imgs:
+            try:
+                p2 = await image_qc.verdict(s, prod_imgs, InlineImage(res.mime, res.image))
+                await _emit(pool, job_id, "step", {
+                    "candidate": candidate, "attempt": attempt, "status": "image_qc", "imageQc": p2})
+            except Exception as e:
+                log.warning("AG-P2 image_qc failed for job %s: %r", job_id, e)
+        # 게이팅: Pillow QC + AG-P2. 둘 다 통과면 채택(off/shadow 는 항상 통과 — 기존 동작 불변).
+        pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
+        if not pillow_reject and not p2_reject:
             ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -102,10 +128,15 @@ async def _run_candidate(
                 "size": len(res.image), "width": w, "height": h,
                 "candidate": candidate, "base_fit": base_fit,
             }
-        feedback = qc.format_qc_feedback(verdict)
-        if not s.mannequin_qc_enabled:
-            break  # shadow면 1회로 충분 (위에서 이미 채택·반환됨)
-    return None
+        # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
+        parts = []
+        if pillow_reject:
+            parts.append(qc.format_qc_feedback(verdict))
+        if p2_reject and isinstance(p2, dict) and p2.get("correctionPrompt"):
+            parts.append("CORRECTION (generate the SAME garment as the product photos): "
+                         + p2["correctionPrompt"])
+        feedback = "\n\n".join(parts)
+    return None  # max_attempts 내 통과본 없음 → 이 후보 드롭(부분 성공 허용)
 
 
 async def run_mannequin_job(app, job: dict) -> None:

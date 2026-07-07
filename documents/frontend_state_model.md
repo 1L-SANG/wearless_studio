@@ -1,6 +1,6 @@
 # 프론트 상태 모델 (Frontend State Model)
 
-> 상태: 확정 (2026-06-11, 갱신 2026-06-14) · 짝 문서: `documents/common_data_contract.md` · 결정 기록: `docs/adr/0002`
+> 상태: 확정 (2026-06-11, 갱신 2026-06-29) · 짝 문서: `documents/common_data_contract.md` · 결정 기록: `docs/adr/0002`
 > 현재 코드와 이 모델의 차이(갭·적용 순서)는 `documents/TODO.md`가 추적한다 — 문서가 목표 상태다.
 
 ---
@@ -19,7 +19,7 @@ Q2. (아니라면) 라우트를 넘어 살아야 하나?
 
 | 계층 | 보관 위치 | 예 | 백엔드 도입 후 |
 |---|---|---|---|
-| ① 서버 상태 | api 경계(현재 mock DB) + 화면 fetch | product, analysis, mannequins, storyboard, editorBlocks, wardrobe, account, catalogs, library, project | TanStack Query 캐시로 승격, store의 account/catalogs 캐시는 제거 |
+| ① 서버 상태 | api 경계(mock 또는 http; VITE_API_MODE) + 화면 fetch | product, analysis, mannequins, storyboard, editorBlocks, wardrobe, account, catalogs, library, project | TanStack Query 캐시로 전면 승격(Pricing·Library·CreditsHistory는 완료), store의 account/catalogs 캐시는 제거 |
 | ② 전역 클라이언트 | `useAppStore` | projectId, 플로우 선택값(아래 §3) | 유지 (선택값은 patchProject로 서버 동기화) |
 | ③ 화면 로컬 | 컴포넌트 useState/useRef | 폼 draft, hover, 패널 펼침, 로딩 phase, 편집 중 selection, 에디터 undo 히스토리 | 유지 |
 
@@ -46,7 +46,7 @@ Q2. (아니라면) 라우트를 넘어 살아야 하나?
 
 ```js
 useAppStore = {
-  /* ① 서버 상태의 전역 캐시 — Query 도입 전까지만 store가 보관 */
+  /* ① 서버 상태의 전역 캐시 — TanStack Query 전면 전환 전까지 store가 보관 (Pricing·Library·CreditsHistory는 이미 useQuery로 전환) */
   account: Account | null,
   catalogs: Catalogs | null,
   loadAccount(), loadCatalogs(),          // 1회 로드 (현행 유지)

@@ -1,0 +1,2966 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Wearless Studio API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "\uc11c\ubc84 \ud5ec\uc2a4 \uccb4\ud06c",
+        "description": "\uc11c\ubc84\uac00 \uc815\uc0c1 \uae30\ub3d9 \uc911\uc778\uc9c0 \ubaa8\ub2c8\ud130\ub9c1\ud558\uae30 \uc704\ud55c \ud5ec\uc2a4\uccb4\ud06c \uc5d4\ub4dc\ud3ec\uc778\ud2b8\uc785\ub2c8\ub2e4.",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/ping": {
+      "get": {
+        "tags": [
+          "User & Account"
+        ],
+        "summary": "\uc778\uc99d \uc0c1\ud0dc \ub514\ubc84\uadf8 \ud551",
+        "description": "\ub85c\uadf8\uc778 \uc0c1\ud0dc(JWT \uc11c\uba85 \uac80\uc99d \uc131\uacf5 \uc5ec\ubd80)\ub97c \uac80\uc99d\ud558\uace0 \ub514\ubc84\uae45\uc6a9\uc73c\ub85c \uc0ac\uc6a9\uc790 ID\ub97c \ubc18\ud658\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218",
+        "operationId": "me_ping_v1_me_ping_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/me/account": {
+      "get": {
+        "tags": [
+          "User & Account"
+        ],
+        "summary": "\uc0ac\uc6a9\uc790 \uacc4\uc815 \uc815\ubcf4 \uc870\ud68c",
+        "description": "\uc778\uc99d\ub41c \uc0ac\uc6a9\uc790\uc758 \uacc4\uc815 \uc815\ubcf4(\uc774\ub984, \uc544\ubc14\ud0c0, \uc0ac\uc6a9 \uac00\ub2a5\ud55c \ud06c\ub808\ub527 \uc794\uc561, \uc694\uae08\uc81c \ud2f0\uc5b4)\ub97c \uc870\ud68c\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `401 Unauthorized`: \ud1a0\ud070\uc774 \ub204\ub77d\ub418\uc5c8\uac70\ub098 \uc720\ud6a8\ud558\uc9c0 \uc54a\uc740 \uacbd\uc6b0\n  - `404 Not Found` (`account_not_found`): DB\uc5d0 \uc0ac\uc6a9\uc790 \uc815\ubcf4\uac00 \uc874\uc7ac\ud558\uc9c0 \uc54a\ub294 \uacbd\uc6b0",
+        "operationId": "get_account_v1_me_account_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/pricing-plans": {
+      "get": {
+        "tags": [
+          "Credits"
+        ],
+        "summary": "\uc694\uae08\uc81c \ubaa9\ub85d \uc870\ud68c",
+        "description": "\uc0ac\uc6a9 \uac00\ub2a5\ud55c \uad6c\ub3c5/\ud06c\ub808\ub527 \ucda9\uc804 \uc694\uae08\uc81c \ubaa9\ub85d\uc744 \uc870\ud68c\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218",
+        "operationId": "get_pricing_plans_v1_pricing_plans_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PricingPlan"
+                  },
+                  "type": "array",
+                  "title": "Response Get Pricing Plans V1 Pricing Plans Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/credits/sources": {
+      "get": {
+        "tags": [
+          "Credits"
+        ],
+        "summary": "\uc0ac\uc6a9\uc790 \ud65c\uc131 \ud06c\ub808\ub527 \uc6d0\ucc9c \ubaa9\ub85d \uc870\ud68c",
+        "description": "\uc0ac\uc6a9\uc790\uac00 \ubcf4\uc720\ud55c \ucda9\uc804/\uc9c0\uae09 \ud06c\ub808\ub527 \ud56d\ubaa9(\uc6d0\ucc9c)\ub4e4\uc744 \uc870\ud68c\ud569\ub2c8\ub2e4. (\ud658\ubd88 \uc694\uccad \uc2dc \uc0ac\uc6a9)\n\n- **Bearer Token**: \ud544\uc218",
+        "operationId": "get_credit_sources_v1_credits_sources_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CreditSource"
+                  },
+                  "type": "array",
+                  "title": "Response Get Credit Sources V1 Credits Sources Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/credits/history": {
+      "get": {
+        "tags": [
+          "Credits"
+        ],
+        "summary": "\ud06c\ub808\ub527 \ud2b8\ub79c\uc7ad\uc158 \ub0b4\uc5ed \uc870\ud68c",
+        "description": "\uc0ac\uc6a9\uc790\uc758 \ud06c\ub808\ub527 \ucda9\uc804, \uc0ac\uc6a9, \ud658\ubd88 \ub4f1 \uc6d0\uc7a5 \uac70\ub798 \uae30\ub85d\uc744 \uc804\uccb4 \uc870\ud68c\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218",
+        "operationId": "get_credit_history_v1_credits_history_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CreditHistoryEntry"
+                  },
+                  "type": "array",
+                  "title": "Response Get Credit History V1 Credits History Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/credits/topups:purchase": {
+      "post": {
+        "tags": [
+          "Credits"
+        ],
+        "summary": "\uc694\uae08\uc81c \uad6c\ub9e4 (\ud06c\ub808\ub527 \ucda9\uc804)",
+        "description": "\uc9c0\uc815\ub41c \uc694\uae08\uc81c \ucf54\ub4dc\ub85c \ud06c\ub808\ub527\uc744 \uc218\ub3d9 \ucda9\uc804\ud569\ub2c8\ub2e4. (PG \uc5f0\ub3d9 \uc804 \uc784\uc2dc \ud14c\uc2a4\ud2b8\uc6a9)\n\n- **Bearer Token**: \ud544\uc218\n- **Header**: `Idempotency-Key` (\uc120\ud0dd, \ub3d9\uc77c \uc694\uccad \uc911\ubcf5 \ubc29\uc9c0)\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `400 Bad Request`: \uc874\uc7ac\ud558\uc9c0 \uc54a\ub294 \uc694\uae08\uc81c \ucf54\ub4dc\uc774\uac70\ub098 \uc911\ubcf5 \ucda9\uc804 \uc2dc\ub3c4 \uc2dc \ubc1c\uc0dd",
+        "operationId": "purchase_topup_v1_credits_topups_purchase_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopupPurchaseBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/credits/refunds": {
+      "post": {
+        "tags": [
+          "Refunds"
+        ],
+        "summary": "\ud06c\ub808\ub527 \ud658\ubd88 \uc694\uccad",
+        "description": "\uad6c\ub9e4\ud55c \ud06c\ub808\ub527 \ud328\ud0a4\uc9c0\uc5d0 \ub300\ud55c \ud658\ubd88 \uc2e0\uccad\uc744 \ub4f1\ub85d\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `400 Bad Request`: \uc774\ubbf8 \uc18c\ubaa8\ud588\uac70\ub098 \ud658\ubd88 \uc9c4\ud589 \uc911\uc778 \ud06c\ub808\ub527 \uc18c\uc2a4\uc5d0 \ub300\ud574 \uc694\uccad \uc2dc \ubc1c\uc0dd",
+        "operationId": "request_refund_v1_credits_refunds_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefundRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/refunds/{request_id}/approve": {
+      "post": {
+        "tags": [
+          "Admin & Refunds"
+        ],
+        "summary": "\uad00\ub9ac\uc790: \ud658\ubd88 \uc694\uccad \uc2b9\uc778",
+        "description": "(\uad00\ub9ac\uc790 \uc804\uc6a9) \ub4f1\ub85d\ub41c \ud658\ubd88 \uc694\uccad\uc744 \ucd5c\uc885 \uc2b9\uc778 \ucc98\ub9ac\ud558\uace0 \uc794\uc561\uc5d0\uc11c \ud06c\ub808\ub527\uc744 \ud68c\uc218\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `403 Forbidden`: \uc694\uccad\uc790\uac00 \uad00\ub9ac\uc790\uac00 \uc544\ub2cc \uacbd\uc6b0\n  - `400 Bad Request`: \uc774\ubbf8 \ucc98\ub9ac\ub418\uc5c8\uac70\ub098 \uc720\ud6a8\ud558\uc9c0 \uc54a\uc740 \ud658\ubd88 \uc694\uccad\uc778 \uacbd\uc6b0",
+        "operationId": "approve_refund_v1_admin_refunds__request_id__approve_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/refunds/{request_id}/reject": {
+      "post": {
+        "tags": [
+          "Admin & Refunds"
+        ],
+        "summary": "\uad00\ub9ac\uc790: \ud658\ubd88 \uc694\uccad \ubc18\ub824",
+        "description": "(\uad00\ub9ac\uc790 \uc804\uc6a9) \ub4f1\ub85d\ub41c \ud658\ubd88 \uc694\uccad\uc744 \ubc18\ub824 \ucc98\ub9ac\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `403 Forbidden`: \uc694\uccad\uc790\uac00 \uad00\ub9ac\uc790\uac00 \uc544\ub2cc \uacbd\uc6b0\n  - `400 Bad Request`: \uc774\ubbf8 \ucc98\ub9ac\ub41c \ud658\ubd88 \uc694\uccad\uc778 \uacbd\uc6b0",
+        "operationId": "reject_refund_v1_admin_refunds__request_id__reject_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects": {
+      "get": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "\ud504\ub85c\uc81d\ud2b8 \ubaa9\ub85d (\ubcf4\uad00\ud568) \uc870\ud68c",
+        "description": "\ud604\uc7ac \ub85c\uadf8\uc778\ud55c \uc0ac\uc6a9\uc790\uc758 \ubaa8\ub4e0 \ud504\ub85c\uc81d\ud2b8 \uc694\uc57d \ubaa9\ub85d(\ubcf4\uad00\ud568 \uce74\ub4dc \ubaa9\ub85d)\uc744 \uc870\ud68c\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218",
+        "operationId": "get_library_v1_projects_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "library",
+              "title": "View"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectSummary"
+                  },
+                  "title": "Response Get Library V1 Projects Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "\uc0c8 \ud504\ub85c\uc81d\ud2b8 \uc0dd\uc131",
+        "description": "\uc0c8\ub85c\uc6b4 \ud504\ub85c\uc81d\ud2b8 \ucd08\uc548(Draft)\uc744 \uc0dd\uc131\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218",
+        "operationId": "create_project_v1_projects_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{project_id}": {
+      "get": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "\ud504\ub85c\uc81d\ud2b8 \uc0c1\uc138 \uc870\ud68c",
+        "description": "\uc9c0\uc815\ub41c ID\uc758 \ud504\ub85c\uc81d\ud2b8 \ub2e8\uac74 \uc0c1\uc138 \uc815\ubcf4\ub97c \uc870\ud68c\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `404 Not Found`: \ud504\ub85c\uc81d\ud2b8\uac00 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ub2e4\ub978 \uc0ac\uc6a9\uc790\uc758 \uc18c\uc720\uc778 \uacbd\uc6b0 \ubc1c\uc0dd",
+        "operationId": "get_project_v1_projects__project_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "\ud504\ub85c\uc81d\ud2b8 \uc124\uc815 \uc218\uc815",
+        "description": "\ud504\ub85c\uc81d\ud2b8\uc758 \uc124\uc815(\uc608: composeMode, copywriting, selectedMannequinId \ub4f1)\uc744 \uc5c5\ub370\uc774\ud2b8\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc81c\ud55c \uc0ac\ud56d**:\n  - `adjustCount` \ubc0f `status` \ub4f1 \uc11c\ubc84 \uc81c\uc5b4 \ud544\ub4dc\ub294 \uc694\uccad \ubcf8\ubb38\uc5d0 \uc2e4\uc5b4 \ubcf4\ub0b4\ub354\ub77c\ub3c4 \uc548\uc804\ud558\uac8c \ubb34\uc2dc\ub429\ub2c8\ub2e4.\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `404 Not Found`: \ud504\ub85c\uc81d\ud2b8\uac00 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ud0c0 \uc0ac\uc6a9\uc790\uc758 \uc18c\uc720\uc778 \uacbd\uc6b0 \ubc1c\uc0dd",
+        "operationId": "patch_project_v1_projects__project_id__patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{project_id}/product": {
+      "get": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "\uc0c1\ud488 \uc815\ubcf4 \uc870\ud68c",
+        "description": "\ud504\ub85c\uc81d\ud2b8\uc5d0 \ub4f1\ub85d\ub41c \uc0c1\ud488\uc758 \uc815\ubcf4(\uc774\ub984, \ubd84\ub958, \uceec\ub7ec \uadf8\ub8f9, \uce21\uc815 \uc2e4\uce21 \uce58\uc218 \ub4f1)\ub97c \uc870\ud68c\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `404 Not Found`: \ud504\ub85c\uc81d\ud2b8\uac00 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ud0c0 \uc0ac\uc6a9\uc790\uc758 \uc18c\uc720\uc778 \uacbd\uc6b0 \ubc1c\uc0dd\n  - \ub9cc\uc57d DB\uc0c1\uc5d0 product \ud589\uc774 \uc544\uc9c1 \uc5c6\ub294 \uc2e0\uaddc \ud504\ub85c\uc81d\ud2b8\ub77c\uba74, \uc5d0\ub7ec \ub300\uc2e0 \ube48 \uae30\ubcf8 \uc2a4\ud0a4\ub9c8\ub97c \ubc18\ud658\ud569\ub2c8\ub2e4.",
+        "operationId": "get_product_v1_projects__project_id__product_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Product"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Products"
+        ],
+        "summary": "\uc0c1\ud488 \uc815\ubcf4 \uc800\uc7a5/\uc218\uc815",
+        "description": "\ud504\ub85c\uc81d\ud2b8 \ub0b4 \uc0c1\ud488\uc758 \ubb3c\ub9ac\uc801 \uc0ac\uc2e4(\uc774\ub984, \ubd84\ub958, \uceec\ub7ec \uadf8\ub8f9, \uce21\uc815 \uc2e4\uce21 \uce58\uc218 \ub4f1)\uc744 \uc218\uc815\ud558\uac70\ub098 \uc2e0\uaddc \ub4f1\ub85d\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `404 Not Found`: \ud504\ub85c\uc81d\ud2b8\uac00 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ud0c0 \uc0ac\uc6a9\uc790\uc758 \uc18c\uc720\uc778 \uacbd\uc6b0 \ubc1c\uc0dd",
+        "operationId": "save_product_v1_projects__project_id__product_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Product"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{project_id}/analysis": {
+      "patch": {
+        "tags": [
+          "Analysis"
+        ],
+        "summary": "AI \uc0c1\ud488 \ubd84\uc11d \uacb0\uacfc \uc800\uc7a5/\uc218\uc815",
+        "description": "AI \uc81c\uc548(\ucd94\ucc9c \uc81c\ud488\uba85, \ud54f, \uc18c\uc7ac \ub4f1) \ubc0f \uc0ac\uc6a9\uc790 \uc870\uc815\uc744 \uac70\uce5c \uc0c1\ud488 \ubd84\uc11d \uc815\ubcf4\ub97c JSONB \ud398\uc774\ub85c\ub4dc\ub85c \ud1b5\uc9f8\ub85c \uac31\uc2e0\ud558\uc5ec \uc800\uc7a5\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `404 Not Found`: \ud504\ub85c\uc81d\ud2b8\uac00 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ud0c0 \uc0ac\uc6a9\uc790\uc758 \uc18c\uc720\uc778 \uacbd\uc6b0 \ubc1c\uc0dd",
+        "operationId": "save_analysis_v1_projects__project_id__analysis_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Analysis"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{project_id}/analysis/match-candidates": {
+      "get": {
+        "tags": [
+          "Analysis"
+        ],
+        "summary": "\ub9e4\uce6d \uc758\ub958 \ud6c4\ubcf4\uad70 \uc870\ud68c",
+        "description": "AI \ucd94\ucc9c \ub9e4\uce6d \uc758\ub958 \ud6c4\ubcf4\uad70(\uc608: \uc0c1\uc758\uc5d0 \uc5b4\uc6b8\ub9ac\ub294 \ubc14\uc9c0/\uce58\ub9c8 \ubaa9\ub85d)\uc744 \uc870\ud68c\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `404 Not Found`: \ud504\ub85c\uc81d\ud2b8\uac00 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ud0c0 \uc0ac\uc6a9\uc790\uc758 \uc18c\uc720\uc778 \uacbd\uc6b0 \ubc1c\uc0dd\n  - `500 Internal Server Error` (`r2_public_base_missing`): CDN \uc774\ubbf8\uc9c0 \uc11c\ubc84 \ub3c4\uba54\uc778 \uc124\uc815\uc774 \ub204\ub77d\ub41c \uacbd\uc6b0 \ubc1c\uc0dd",
+        "operationId": "match_candidates_v1_projects__project_id__analysis_match_candidates_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "clothingType",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Clothingtype"
+            }
+          },
+          {
+            "name": "gender",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": [],
+              "title": "Gender"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/assets/upload-url": {
+      "post": {
+        "tags": [
+          "Assets & Uploads"
+        ],
+        "summary": "\uc5c5\ub85c\ub4dc presigned URL \ubc1c\uae09",
+        "description": "R2 \ud074\ub77c\uc6b0\ub4dc \uc2a4\ud1a0\ub9ac\uc9c0\uc5d0 \ud074\ub77c\uc774\uc5b8\ud2b8\uac00 \ud30c\uc77c\uc744 \uc9c1\uc811 PUT \uc5c5\ub85c\ub4dc\ud560 \uc218 \uc788\ub294 presigned URL\uc744 \ubc1c\uae09\ubc1b\uc2b5\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `400 Bad Request` (`unsupported_type`): \uc9c0\uc6d0\ub418\uc9c0 \uc54a\ub294 MIME \ud0c0\uc785(\ud3ec\ub9f7)\uc778 \uacbd\uc6b0 \ubc1c\uc0dd\n  - `400 Bad Request` (`file_too_large`): \ud30c\uc77c \ud06c\uae30\uac00 0\uc774\ud558 \ub610\ub294 15MB\ub97c \ucd08\uacfc\ud558\ub294 \uacbd\uc6b0 \ubc1c\uc0dd\n  - `404 Not Found`: \ud504\ub85c\uc81d\ud2b8\uac00 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ud0c0 \uc0ac\uc6a9\uc790\uc758 \uc18c\uc720\uc778 \uacbd\uc6b0 \ubc1c\uc0dd",
+        "operationId": "create_upload_url_v1_assets_upload_url_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadUrlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadUrlResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/assets/{asset_id}/complete": {
+      "post": {
+        "tags": [
+          "Assets & Uploads"
+        ],
+        "summary": "\uc5d0\uc14b \uc5c5\ub85c\ub4dc \uc644\ub8cc \uc54c\ub9bc \ubc0f \ub4f1\ub85d",
+        "description": "\ud074\ub77c\uc774\uc5b8\ud2b8\uac00 R2 \uc2a4\ud1a0\ub9ac\uc9c0\ub85c \uc9c1\uc811 \uc5c5\ub85c\ub4dc\ub97c \ub9c8\uce5c \ud6c4 \ud638\ucd9c\ud569\ub2c8\ub2e4. \uc11c\ubc84\uac00 \ud30c\uc77c\uc758 R2 \uc801\uc7ac\ub97c \ucd5c\uc885 \uac80\uc99d\ud558\uace0 \ub370\uc774\ud130\ubca0\uc774\uc2a4\uc5d0 \ub4f1\ub85d\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `400 Bad Request` (`unsupported_type`): \uc9c0\uc6d0\ud558\uc9c0 \uc54a\ub294 \uc774\ubbf8\uc9c0 \ud30c\uc77c \ud655\uc7a5\uc790/\ud3ec\ub9f7\uc778 \uacbd\uc6b0 \ubc1c\uc0dd\n  - `400 Bad Request` (`upload_incomplete`): R2 \uc2a4\ud1a0\ub9ac\uc9c0\uc5d0 \uc2e4\uc81c \ud30c\uc77c \uc5c5\ub85c\ub4dc\uac00 \uc644\ub8cc\ub418\uc9c0 \uc54a\uc740(\ucc3e\uc744 \uc218 \uc5c6\ub294) \uacbd\uc6b0 \ubc1c\uc0dd\n  - `404 Not Found`: \ud504\ub85c\uc81d\ud2b8\uac00 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ud0c0 \uc0ac\uc6a9\uc790\uc758 \uc18c\uc720\uc778 \uacbd\uc6b0 \ubc1c\uc0dd",
+        "operationId": "complete_upload_v1_assets__asset_id__complete_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetCompleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Asset"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{project_id}/mannequins:generate": {
+      "post": {
+        "tags": [
+          "Mannequins (AI)"
+        ],
+        "summary": "\ub9c8\ub124\ud0b9 \ud6c4\ubcf4 \uc0dd\uc131 \uc791\uc5c5 \uc2dc\uc791",
+        "description": "\uc9c0\uc815\ub41c \ud504\ub85c\uc81d\ud2b8\uc758 \uc0c1\ud488 \uc774\ubbf8\uc9c0\ub97c \uae30\ubc18\uc73c\ub85c AI \ub9c8\ub124\ud0b9 \ud569\uc131 \ucef7(\ud6c4\ubcf4\uad70 A, B)\uc744 \uc0dd\uc131\ud558\ub294 \ube44\ub3d9\uae30 \uc791\uc5c5\uc744 \uc694\uccad\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **Header**: `Idempotency-Key` (\ud544\uc218 \uad8c\uc7a5, \uc911\ubcf5 \ucc28\uac10 \ubc0f \uc911\ubcf5 \uc791\uc5c5 \ubc29\uc9c0)\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4 & \uba71\ub4f1\uc131**:\n  1. **\uc644\ub8cc\ub41c \uacb0\uacfc\uac00 \uc774\ubbf8 \uc874\uc7ac**: `200 OK`\uc640 \ud568\uaed8 \uae30\uc874 \uc0dd\uc131 \uacb0\uacfc\ub97c \uadf8\ub300\ub85c \ubc18\ud658\ud558\uc5ec \ucd94\uac00 \ud06c\ub808\ub527 \ucc28\uac10\uc774 \ubc1c\uc0dd\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4.\n  2. **\uc774\ubbf8 \ub3d9\uc77c \uc791\uc5c5\uc774 \uc9c4\ud589 \uc911**: \uc0c8\ub85c \uc791\uc5c5\uc744 \ub744\uc6b0\uc9c0 \uc54a\uace0 `202 Accepted`\uc640 \ud568\uaed8 \uae30\uc874 \uc2e4\ud589 \uc911\uc778 `jobId`\ub97c \uadf8\ub300\ub85c \ubc18\ud658(\uc791\uc5c5 \ud569\ub958)\ud569\ub2c8\ub2e4.\n  3. **\ud06c\ub808\ub527 \ucc28\uac10 (402)**: \ub9c8\ub124\ud0b9 \uc0dd\uc131\uc5d0 \ud544\uc694\ud55c \ud06c\ub808\ub527(\uc124\uc815\uac12, \uae30\ubcf8 2)\uc774 \uc5c6\uc73c\uba74 `402 Payment Required` \uc608\uc678\uac00 \ubc1c\uc0dd\ud569\ub2c8\ub2e4.\n  4. **\uc785\ub825 \uc870\uac74 (400)**: \uae30\uc900 \uc0c9\uc0c1\uc758 \uc815\uba74(Front) \uc0ac\uc9c4 \uc5d0\uc14b\uc774 \uc544\uc9c1 \ub4f1\ub85d\ub418\uc9c0 \uc54a\uc740 \uacbd\uc6b0 `missing_front_photo` \uc5d0\ub7ec\uac00 \ubc1c\uc0dd\ud569\ub2c8\ub2e4.",
+        "operationId": "generate_mannequins_v1_projects__project_id__mannequins_generate_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "\uc0c8\ub85c\uc6b4 \ub9c8\ub124\ud0b9 \uc0dd\uc131 \uc791\uc5c5\uc774 \ub300\uae30\uc5f4\uc5d0 \uc9c4\uc785\ud588\uc2b5\ub2c8\ub2e4."
+          },
+          "400": {
+            "description": "\ud544\uc218 \uc804\uc870\uac74 \ubbf8\ube44 (\uc608: \uc815\uba74 \uc774\ubbf8\uc9c0 \ub204\ub77d)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "\ud06c\ub808\ub527 \uc794\uc561 \ubd80\uc871",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{project_id}/mannequins": {
+      "get": {
+        "tags": [
+          "Mannequins (AI)"
+        ],
+        "summary": "\uc0dd\uc131\ub41c \ub9c8\ub124\ud0b9 \ud6c4\ubcf4 \ubaa9\ub85d \uc870\ud68c",
+        "description": "\ud504\ub85c\uc81d\ud2b8 \ub0b4\uc5d0 \uc0dd\uc131 \uc644\ub8cc\ub41c AI \ub9c8\ub124\ud0b9 \ud6c4\ubcf4 \ucef7 \ubaa9\ub85d\uc744 \uc870\ud68c\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `404 Not Found`: \ud504\ub85c\uc81d\ud2b8\uac00 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ud0c0 \uc0ac\uc6a9\uc790\uc758 \uc18c\uc720\uc778 \uacbd\uc6b0 \ubc1c\uc0dd",
+        "operationId": "get_mannequins_v1_projects__project_id__mannequins_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MannequinCut"
+                  },
+                  "title": "Response Get Mannequins V1 Projects  Project Id  Mannequins Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/assets/{asset_id}/file": {
+      "get": {
+        "tags": [
+          "Assets & Uploads"
+        ],
+        "summary": "\uc548\uc815 \uc5d0\uc14b \ud30c\uc77c \uc11c\ube59 (302 Redirect)",
+        "description": "\ud504\ub860\ud2b8\uc5d4\ub4dc \uc5d0\ub514\ud130/\ud654\uba74\uc5d0\uc11c \uc0c1\uc2dc \uc0ac\uc6a9 \uac00\ub2a5\ud55c \ubd88\ubcc0 \uc5d0\uc14b \uc774\ubbf8\uc9c0 \uacbd\ub85c\uc785\ub2c8\ub2e4. \uc811\uadfc \uad8c\ud55c(user_id) \ud655\uc778 \ud6c4 \uc2e4\uc81c \uc2a4\ud1a0\ub9ac\uc9c0\uc758 \ub2e8\uae30 \ub9cc\ub8cc \uc11c\uba85 URL\ub85c 302 \ub9ac\ub2e4\uc774\ub809\ud2b8\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `404 Not Found`: \uc790\uc0b0\uc774 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ub2e4\ub978 \uc0ac\uc6a9\uc790\uac00 \uc18c\uc720\ud55c \uacbd\uc6b0 \ubc1c\uc0dd",
+        "operationId": "get_asset_file_v1_assets__asset_id__file_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "R2 presigned GET URL\ub85c 302 \ub9ac\ub2e4\uc774\ub809\ud2b8"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "Jobs & SSE"
+        ],
+        "summary": "\uc791\uc5c5(Job) \uc0c1\ud0dc \uc870\ud68c",
+        "description": "\ube44\ub3d9\uae30\ub85c \uc2dc\uc791\ub41c \ubc31\uadf8\ub77c\uc6b4\ub4dc \uc791\uc5c5(AI \uc0dd\uc131 \ub4f1)\uc758 \ud604\uc7ac \uc0c1\ud0dc(pending, running, done, error) \ubc0f \uc9c4\ud589\ub3c4(0~100%)\ub97c \uc870\ud68c\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `404 Not Found`: \ud574\ub2f9 \uc791\uc5c5\uc774 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ub2e4\ub978 \uc0ac\uc6a9\uc790\uac00 \uc18c\uc720\ud55c \uacbd\uc6b0 \ubc1c\uc0dd",
+        "operationId": "get_job_v1_jobs__job_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{job_id}/events": {
+      "get": {
+        "tags": [
+          "Jobs & SSE"
+        ],
+        "summary": "\uc791\uc5c5 \uc2e4\uc2dc\uac04 \uc774\ubca4\ud2b8 \uc2a4\ud2b8\ub9bc (SSE)",
+        "description": "\uc9c0\uc815\ub41c \ubc31\uadf8\ub77c\uc6b4\ub4dc \uc791\uc5c5\uc758 \uc0c1\ud0dc \ubcc0\uacbd\uc774\ub098 \uc9c4\ud589 \uc774\ubca4\ud2b8 \ub85c\uadf8\ub97c \uc2e4\uc2dc\uac04 Server-Sent Events (SSE) \ud615\uc2dd\uc73c\ub85c \uc2a4\ud2b8\ub9ac\ubc0d\ud569\ub2c8\ub2e4.\n\n- **Bearer Token**: \ud544\uc218\n- **Header**: `Last-Event-ID` (\ud074\ub77c\uc774\uc5b8\ud2b8 \uc5f0\uacb0 \uc7ac\uc2dc\ub3c4 \uc2dc, \ub9c8\uc9c0\ub9c9\uc73c\ub85c \ubc1b\uc740 \uc774\ubca4\ud2b8 ID \uc774\ud6c4\ubd80\ud130 \uc2a4\ud2b8\ub9bc \uc7ac\uac1c)\n- **\uc5d0\uc9c0 \ucf00\uc774\uc2a4**:\n  - `404 Not Found`: \ud574\ub2f9 \uc791\uc5c5\uc774 \uc874\uc7ac\ud558\uc9c0 \uc54a\uac70\ub098, \ub2e4\ub978 \uc0ac\uc6a9\uc790\uac00 \uc18c\uc720\ud55c \uacbd\uc6b0 \ubc1c\uc0dd\n  - \uc644\ub8cc(`done`) \ud639\uc740 \uc2e4\ud328(`error`) \uc774\ubca4\ud2b8\uac00 \uc804\ub2ec\ub418\uac70\ub098, \ucd5c\ub300 5\ubd84(300\ucd08)\uc774 \uacbd\uacfc\ud558\uba74 \uc5f0\uacb0\uc774 \uc548\uc804\ud558\uac8c \uc815\ub9ac \uc885\ub8cc\ub429\ub2c8\ub2e4.",
+        "operationId": "job_events_v1_jobs__job_id__events_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "After"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "\uc778\uc99d \uc2e4\ud328 (\ud1a0\ud070 \ub204\ub77d, \ub9cc\ub8cc \ub610\ub294 \uc704\ubcc0\uc870)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "\uad8c\ud55c \uc5c6\uc74c (\ud0c0 \uc0ac\uc6a9\uc790\uc758 \ub9ac\uc18c\uc2a4 \uc811\uadfc \uc2dc\ub3c4 \ub4f1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\ub9ac\uc18c\uc2a4\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc74c",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Account": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "avatar": {
+            "type": "string",
+            "title": "Avatar"
+          },
+          "credits": {
+            "type": "integer",
+            "title": "Credits"
+          },
+          "plan": {
+            "type": "string",
+            "enum": [
+              "basic",
+              "plus",
+              "seller"
+            ],
+            "title": "Plan"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "avatar",
+          "credits",
+          "plan"
+        ],
+        "title": "Account"
+      },
+      "Asset": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "mimeType": {
+            "type": "string",
+            "title": "Mimetype"
+          },
+          "byteSize": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytesize"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "url",
+          "mimeType",
+          "byteSize"
+        ],
+        "title": "Asset",
+        "description": "\uc5c5\ub85c\ub4dc \uc644\ub8cc \uc790\uc0b0 \u2014 \ud504\ub860\ud2b8 ImageAsset \uc758 src/\uba54\ud0c0\ub85c \ub9e4\ud551\ub41c\ub2e4 (\uacc4\uc57d \u00a73.1)."
+      },
+      "AssetCompleteRequest": {
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "title": "Projectid"
+          },
+          "mime": {
+            "type": "string",
+            "title": "Mime"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          }
+        },
+        "type": "object",
+        "required": [
+          "projectId",
+          "mime"
+        ],
+        "title": "AssetCompleteRequest",
+        "description": "POST /v1/assets/{id}/complete (\u00a73 3\ub2e8\uacc4). \ud0a4 \uc7ac\uc720\ub3c4\uc6a9 \ucee8\ud14d\uc2a4\ud2b8."
+      },
+      "CreditHistoryEntry": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid"
+          },
+          "jobId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jobid"
+          },
+          "creditSourceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creditsourceid"
+          },
+          "actionKey": {
+            "type": "string",
+            "title": "Actionkey"
+          },
+          "delta": {
+            "type": "integer",
+            "title": "Delta"
+          },
+          "balanceAfter": {
+            "type": "integer",
+            "title": "Balanceafter"
+          },
+          "availableAfter": {
+            "type": "integer",
+            "title": "Availableafter"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "actionKey",
+          "delta",
+          "balanceAfter",
+          "availableAfter",
+          "createdAt"
+        ],
+        "title": "CreditHistoryEntry",
+        "description": "GET /v1/credits/history (\uc6d0\uc7a5 \ud589). \ud504\ub860\ud2b8\uac00 projectId\ub85c \ubb36\uace0 \ud3bc\uccd0 \uc138\ubd80 \ud45c\uc2dc."
+      },
+      "CreditSource": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "sourceType": {
+            "type": "string",
+            "title": "Sourcetype"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "initialCredits": {
+            "type": "integer",
+            "title": "Initialcredits"
+          },
+          "remainingCredits": {
+            "type": "integer",
+            "title": "Remainingcredits"
+          },
+          "periodEnd": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Periodend"
+          },
+          "planId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "sourceType",
+          "status",
+          "initialCredits",
+          "remainingCredits",
+          "createdAt"
+        ],
+        "title": "CreditSource",
+        "description": "GET /v1/credits/sources (\uad6c\ub9e4\uac74\ubcc4 \ubc84\ud0b7). \ud658\ubd88 \uac00\ub2a5 \uc5ec\ubd80\ub294 \ud504\ub860\ud2b8\uac00 status\u00b7\ubbf8\uc0ac\uc6a9\uc73c\ub85c \ud310\ub2e8."
+      },
+      "ErrorDetail": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorDetail"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "title": "ErrorResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "JobView": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "projectId": {
+            "type": "string",
+            "title": "Projectid"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "progress": {
+            "type": "integer",
+            "title": "Progress"
+          },
+          "steps": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errormessage"
+          },
+          "creditsCharged": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creditscharged"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updatedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "projectId",
+          "kind",
+          "status",
+          "progress",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "JobView",
+        "description": "GET /v1/jobs/{id} \ud3f4\ub9c1 \uc2a4\ub0c5\uc0f7 (ai_pipeline_spec \u00a74)."
+      },
+      "MannequinCut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "src": {
+            "type": "string",
+            "title": "Src"
+          },
+          "candidate": {
+            "type": "string",
+            "title": "Candidate"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "baseFit": {
+            "type": "string",
+            "title": "Basefit"
+          },
+          "fitAdjust": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fitadjust"
+          },
+          "lengthAdjust": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lengthadjust"
+          },
+          "matchAdjust": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matchadjust"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "src",
+          "candidate",
+          "version",
+          "baseFit"
+        ],
+        "title": "MannequinCut",
+        "description": "\ub9c8\ub124\ud0b9\ucef7 (\uacc4\uc57d \u00a73.3). id = `${candidate}-${version}` (DB UUID \uc544\ub2d8). src\ub294 \uc548\uc815 \uc571 URL."
+      },
+      "PricingPlan": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "credits": {
+            "type": "integer",
+            "title": "Credits"
+          },
+          "price": {
+            "type": "integer",
+            "title": "Price"
+          },
+          "billingPeriod": {
+            "type": "string",
+            "title": "Billingperiod"
+          },
+          "sortOrder": {
+            "type": "integer",
+            "title": "Sortorder"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "kind",
+          "name",
+          "credits",
+          "price",
+          "billingPeriod",
+          "sortOrder"
+        ],
+        "title": "PricingPlan",
+        "description": "GET /v1/pricing-plans (\uc694\uae08\uc81c/\uc0c1\ud488 \uce74\ud0c8\ub85c\uadf8)."
+      },
+      "Product": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "projectId": {
+            "type": "string",
+            "title": "Projectid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "clothingType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clothingtype"
+          },
+          "colors": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Colors",
+            "default": []
+          },
+          "measurements": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Measurements",
+            "default": []
+          },
+          "measurementsUnknown": {
+            "type": "boolean",
+            "title": "Measurementsunknown",
+            "default": false
+          },
+          "uploadComplete": {
+            "type": "boolean",
+            "title": "Uploadcomplete",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "projectId",
+          "name"
+        ],
+        "title": "Product",
+        "description": "\uc0c1\ud488\uc758 \ubb3c\ub9ac\uc801 \uc0ac\uc2e4 (\uacc4\uc57d \u00a73.1). colors\u00b7measurements\ub294 \ud504\ub860\ud2b8 \uc18c\uc720 shape \u2192\nJSONB \ud328\uc2a4\uc2a4\ub8e8(list[dict])\ub85c \uc548\uc804 \ub77c\uc6b4\ub4dc\ud2b8\ub9bd. \uc0c1\ub2e8 \uc2a4\uce7c\ub77c\ub9cc \uc5c4\uaca9 \uac80\uc99d."
+      },
+      "ProductPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "clothingType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clothingtype"
+          },
+          "colors": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Colors"
+          },
+          "measurements": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measurements"
+          },
+          "measurementsUnknown": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measurementsunknown"
+          },
+          "uploadComplete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uploadcomplete"
+          }
+        },
+        "type": "object",
+        "title": "ProductPatch",
+        "description": "saveProduct patch. NOT NULL \uceec\ub7fc(name\u00b7colors\u00b7measurements\u00b7*_unknown\u00b7*_complete)\uc740\n\uba85\uc2dc\uc801 null \uac70\ubd80(422). clothingType\ub9cc null \ud5c8\uc6a9(\ucd08\uc548)."
+      },
+      "Project": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "generating",
+              "done"
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "composeMode": {
+            "type": "string",
+            "enum": [
+              "simple",
+              "basic",
+              "extended"
+            ],
+            "title": "Composemode"
+          },
+          "copywriting": {
+            "type": "boolean",
+            "title": "Copywriting"
+          },
+          "selectedMannequinId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selectedmannequinid"
+          },
+          "adjustCount": {
+            "type": "integer",
+            "title": "Adjustcount"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updatedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "title",
+          "composeMode",
+          "copywriting",
+          "selectedMannequinId",
+          "adjustCount",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "Project"
+      },
+      "ProjectPatch": {
+        "properties": {
+          "composeMode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "simple",
+                  "basic",
+                  "extended"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Composemode"
+          },
+          "copywriting": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Copywriting"
+          },
+          "selectedMannequinId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selectedmannequinid"
+          }
+        },
+        "type": "object",
+        "title": "ProjectPatch",
+        "description": "patchProject \uc218\uc6a9 \ud654\uc774\ud2b8\ub9ac\uc2a4\ud2b8 (\uacc4\uc57d \u00a76): \uc774 3\uac1c\ub9cc. adjustCount\u00b7status\ub294 \uc11c\ubc84 \uc804\uc6a9."
+      },
+      "ProjectSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "cover": {
+            "type": "string",
+            "title": "Cover"
+          },
+          "clothingType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clothingtype"
+          },
+          "blockCount": {
+            "type": "integer",
+            "title": "Blockcount"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "generating",
+              "done"
+            ],
+            "title": "Status"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updatedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "cover",
+          "clothingType",
+          "blockCount",
+          "status",
+          "updatedAt"
+        ],
+        "title": "ProjectSummary"
+      },
+      "RefundRequestBody": {
+        "properties": {
+          "creditSourceId": {
+            "type": "string",
+            "title": "Creditsourceid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "creditSourceId"
+        ],
+        "title": "RefundRequestBody",
+        "description": "POST /v1/credits/refunds (\ud658\ubd88 \uc694\uccad)."
+      },
+      "TopupPurchaseBody": {
+        "properties": {
+          "planCode": {
+            "type": "string",
+            "title": "Plancode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "planCode"
+        ],
+        "title": "TopupPurchaseBody",
+        "description": "POST /v1/credits/topups:purchase (\ud14c\uc2a4\ud2b8\uc6a9 \uad6c\ub9e4)."
+      },
+      "UploadUrlRequest": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "mime": {
+            "type": "string",
+            "title": "Mime"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "projectId": {
+            "type": "string",
+            "title": "Projectid"
+          },
+          "purpose": {
+            "type": "string",
+            "title": "Purpose",
+            "default": "upload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "mime",
+          "size",
+          "projectId"
+        ],
+        "title": "UploadUrlRequest",
+        "description": "POST /v1/assets/upload-url (\u00a73 1\ub2e8\uacc4)."
+      },
+      "UploadUrlResponse": {
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "title": "Assetid"
+          },
+          "uploadUrl": {
+            "type": "string",
+            "title": "Uploadurl"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expiresat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assetId",
+          "uploadUrl",
+          "expiresAt"
+        ],
+        "title": "UploadUrlResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

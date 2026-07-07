@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -14,10 +15,10 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import repo
-from .agents import analysis as analysis_agent
-from .agents import cut as cut_agent
-from .agents import mannequin
-from .services import matching
+from .agents import mannequin, product_analyst, style_affinity
+from .agents.gemini_image import InlineImage
+from .agents.vision_llm import VisionError
+from .services import input_qc, matching, retrieval
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -26,7 +27,7 @@ from .models import (
     AssetCompleteRequest,
     CreditHistoryEntry,
     CreditSource,
-    CutGenerateRequest,
+    ErrorResponse,
     JobView,
     MannequinCut,
     PricingPlan,
@@ -39,14 +40,21 @@ from .models import (
     TopupPurchaseBody,
     UploadUrlRequest,
     UploadUrlResponse,
-    WardrobeImage,
 )
 from .r2 import R2Client, ext_for_mime, upload_key
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1")
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15MB — 상품 사진 상한 (업로드 실패 사유 표면화 §)
 UPLOAD_URL_TTL = 300  # presigned PUT 만료(초)
+
+COMMON_RESPONSES = {
+    401: {"model": ErrorResponse, "description": "인증 실패 (토큰 누락, 만료 또는 위변조)"},
+    403: {"model": ErrorResponse, "description": "권한 없음 (타 사용자의 리소스 접근 시도 등)"},
+    404: {"model": ErrorResponse, "description": "리소스를 찾을 수 없음"},
+}
+
 
 
 def _not_found() -> HTTPException:
@@ -74,8 +82,21 @@ def _credit_error(e: "repo.CreditError") -> HTTPException:
     return HTTPException(status_code=e.status, detail={"code": e.code, "message": e.message})
 
 
-@router.get("/me/account", response_model=Account)
+@router.get(
+    "/me/account",
+    response_model=Account,
+    responses={**COMMON_RESPONSES},
+    tags=["User & Account"],
+    summary="사용자 계정 정보 조회",
+)
 async def get_account(request: Request, user_id: str = Depends(require_user)):
+    """인증된 사용자의 계정 정보(이름, 아바타, 사용 가능한 크레딧 잔액, 요금제 티어)를 조회합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `401 Unauthorized`: 토큰이 누락되었거나 유효하지 않은 경우
+      - `404 Not Found` (`account_not_found`): DB에 사용자 정보가 존재하지 않는 경우
+    """
     async with get_conn(request) as conn:
         row = await repo.get_account(conn, user_id)
     if row is None:
@@ -89,31 +110,73 @@ async def get_account(request: Request, user_id: str = Depends(require_user)):
 # ---------- 크레딧 (credit_system_design.md §6) ----------
 
 
-@router.get("/pricing-plans", response_model=list[PricingPlan])
+@router.get(
+    "/pricing-plans",
+    response_model=list[PricingPlan],
+    responses={**COMMON_RESPONSES},
+    tags=["Credits"],
+    summary="요금제 목록 조회",
+)
 async def get_pricing_plans(request: Request, user_id: str = Depends(require_user)):
+    """사용 가능한 구독/크레딧 충전 요금제 목록을 조회합니다.
+
+    - **Bearer Token**: 필수
+    """
     async with get_conn(request) as conn:
         return await repo.list_pricing_plans(conn)
 
 
-@router.get("/credits/sources", response_model=list[CreditSource])
+@router.get(
+    "/credits/sources",
+    response_model=list[CreditSource],
+    responses={**COMMON_RESPONSES},
+    tags=["Credits"],
+    summary="사용자 활성 크레딧 원천 목록 조회",
+)
 async def get_credit_sources(request: Request, user_id: str = Depends(require_user)):
+    """사용자가 보유한 충전/지급 크레딧 항목(원천)들을 조회합니다. (환불 요청 시 사용)
+
+    - **Bearer Token**: 필수
+    """
     async with get_conn(request) as conn:
         return await repo.list_credit_sources(conn, user_id)
 
 
-@router.get("/credits/history", response_model=list[CreditHistoryEntry])
+@router.get(
+    "/credits/history",
+    response_model=list[CreditHistoryEntry],
+    responses={**COMMON_RESPONSES},
+    tags=["Credits"],
+    summary="크레딧 트랜잭션 내역 조회",
+)
 async def get_credit_history(request: Request, user_id: str = Depends(require_user)):
+    """사용자의 크레딧 충전, 사용, 환불 등 원장 거래 기록을 전체 조회합니다.
+
+    - **Bearer Token**: 필수
+    """
     async with get_conn(request) as conn:
         return await repo.list_credit_history(conn, user_id)
 
 
-@router.post("/credits/topups:purchase")
+@router.post(
+    "/credits/topups:purchase",
+    responses={**COMMON_RESPONSES, 400: {"model": ErrorResponse}},
+    tags=["Credits"],
+    summary="요금제 구매 (크레딧 충전)",
+)
 async def purchase_topup(
     request: Request,
     body: TopupPurchaseBody,
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
+    """지정된 요금제 코드로 크레딧을 수동 충전합니다. (PG 연동 전 임시 테스트용)
+
+    - **Bearer Token**: 필수
+    - **Header**: `Idempotency-Key` (선택, 동일 요청 중복 방지)
+    - **에지 케이스**:
+      - `400 Bad Request`: 존재하지 않는 요금제 코드이거나 중복 충전 시도 시 발생
+    """
     async with get_conn(request) as conn:
         try:
             result = await repo.purchase_topup(
@@ -125,10 +188,22 @@ async def purchase_topup(
     return JSONResponse(result)
 
 
-@router.post("/credits/refunds")
+@router.post(
+    "/credits/refunds",
+    status_code=201,
+    responses={**COMMON_RESPONSES, 400: {"model": ErrorResponse}},
+    tags=["Refunds"],
+    summary="크레딧 환불 요청",
+)
 async def request_refund(
     request: Request, body: RefundRequestBody, user_id: str = Depends(require_user)
 ):
+    """구매한 크레딧 패키지에 대한 환불 신청을 등록합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `400 Bad Request`: 이미 소모했거나 환불 진행 중인 크레딧 소스에 대해 요청 시 발생
+    """
     async with get_conn(request) as conn:
         try:
             result = await repo.request_refund(
@@ -140,10 +215,22 @@ async def request_refund(
     return JSONResponse(result, status_code=201)
 
 
-@router.post("/admin/refunds/{request_id}/approve")
+@router.post(
+    "/admin/refunds/{request_id}/approve",
+    responses={**COMMON_RESPONSES, 400: {"model": ErrorResponse}},
+    tags=["Admin & Refunds"],
+    summary="관리자: 환불 요청 승인",
+)
 async def approve_refund(
     request: Request, request_id: str, user_id: str = Depends(require_user)
 ):
+    """(관리자 전용) 등록된 환불 요청을 최종 승인 처리하고 잔액에서 크레딧을 회수합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `403 Forbidden`: 요청자가 관리자가 아닌 경우
+      - `400 Bad Request`: 이미 처리되었거나 유효하지 않은 환불 요청인 경우
+    """
     async with get_conn(request) as conn:
         if not await repo.is_admin(conn, user_id):
             raise HTTPException(403, detail={"code": "forbidden", "message": "관리자만 가능해요."})
@@ -155,10 +242,22 @@ async def approve_refund(
     return JSONResponse(result)
 
 
-@router.post("/admin/refunds/{request_id}/reject")
+@router.post(
+    "/admin/refunds/{request_id}/reject",
+    responses={**COMMON_RESPONSES, 400: {"model": ErrorResponse}},
+    tags=["Admin & Refunds"],
+    summary="관리자: 환불 요청 반려",
+)
 async def reject_refund(
     request: Request, request_id: str, user_id: str = Depends(require_user)
 ):
+    """(관리자 전용) 등록된 환불 요청을 반려 처리합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `403 Forbidden`: 요청자가 관리자가 아닌 경우
+      - `400 Bad Request`: 이미 처리된 환불 요청인 경우
+    """
     async with get_conn(request) as conn:
         if not await repo.is_admin(conn, user_id):
             raise HTTPException(403, detail={"code": "forbidden", "message": "관리자만 가능해요."})
@@ -170,28 +269,61 @@ async def reject_refund(
     return JSONResponse(result)
 
 
-@router.get("/projects", response_model=list[ProjectSummary])
+@router.get(
+    "/projects",
+    response_model=list[ProjectSummary],
+    responses={**COMMON_RESPONSES},
+    tags=["Projects"],
+    summary="프로젝트 목록 (보관함) 조회",
+)
 async def get_library(
     request: Request,
     view: str = Query("library"),
     user_id: str = Depends(require_user),
 ):
+    """현재 로그인한 사용자의 모든 프로젝트 요약 목록(보관함 카드 목록)을 조회합니다.
+
+    - **Bearer Token**: 필수
+    """
     async with get_conn(request) as conn:
         return await repo.list_library(conn, user_id)
 
 
-@router.post("/projects", response_model=Project, status_code=201)
+@router.post(
+    "/projects",
+    response_model=Project,
+    status_code=201,
+    responses={**COMMON_RESPONSES},
+    tags=["Projects"],
+    summary="새 프로젝트 생성",
+)
 async def create_project(request: Request, user_id: str = Depends(require_user)):
+    """새로운 프로젝트 초안(Draft)을 생성합니다.
+
+    - **Bearer Token**: 필수
+    """
     async with get_conn(request) as conn:
         row = await repo.create_project(conn, user_id)
         await conn.commit()
     return row
 
 
-@router.get("/projects/{project_id}", response_model=Project)
+@router.get(
+    "/projects/{project_id}",
+    response_model=Project,
+    responses={**COMMON_RESPONSES},
+    tags=["Projects"],
+    summary="프로젝트 상세 조회",
+)
 async def get_project(
     request: Request, project_id: str, user_id: str = Depends(require_user)
 ):
+    """지정된 ID의 프로젝트 단건 상세 정보를 조회합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `404 Not Found`: 프로젝트가 존재하지 않거나, 다른 사용자의 소유인 경우 발생
+    """
     async with get_conn(request) as conn:
         row = await repo.get_project(conn, user_id, project_id)
     if row is None:
@@ -199,13 +331,27 @@ async def get_project(
     return row
 
 
-@router.patch("/projects/{project_id}", response_model=Project)
+@router.patch(
+    "/projects/{project_id}",
+    response_model=Project,
+    responses={**COMMON_RESPONSES},
+    tags=["Projects"],
+    summary="프로젝트 설정 수정",
+)
 async def patch_project(
     request: Request,
     project_id: str,
     patch: ProjectPatch,
     user_id: str = Depends(require_user),
 ):
+    """프로젝트의 설정(예: composeMode, copywriting, selectedMannequinId 등)을 업데이트합니다.
+
+    - **Bearer Token**: 필수
+    - **제한 사항**:
+      - `adjustCount` 및 `status` 등 서버 제어 필드는 요청 본문에 실어 보내더라도 안전하게 무시됩니다.
+    - **에지 케이스**:
+      - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
+    """
     # adjustCount·status 등은 모델에 없어 자동 무시 (계약 §6). exclude_unset = 보낸 필드만.
     fields = patch.model_dump(exclude_unset=True)
     async with get_conn(request) as conn:
@@ -219,10 +365,23 @@ async def patch_project(
 # ---------- product (계약 §3.1) ----------
 
 
-@router.get("/projects/{project_id}/product", response_model=Product)
+@router.get(
+    "/projects/{project_id}/product",
+    response_model=Product,
+    responses={**COMMON_RESPONSES},
+    tags=["Products"],
+    summary="상품 정보 조회",
+)
 async def get_product(
     request: Request, project_id: str, user_id: str = Depends(require_user)
 ):
+    """프로젝트에 등록된 상품의 정보(이름, 분류, 컬러 그룹, 측정 실측 치수 등)를 조회합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
+      - 만약 DB상에 product 행이 아직 없는 신규 프로젝트라면, 에러 대신 빈 기본 스키마를 반환합니다.
+    """
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -237,13 +396,25 @@ async def get_product(
     return row
 
 
-@router.patch("/projects/{project_id}/product", response_model=Product)
+@router.patch(
+    "/projects/{project_id}/product",
+    response_model=Product,
+    responses={**COMMON_RESPONSES},
+    tags=["Products"],
+    summary="상품 정보 저장/수정",
+)
 async def save_product(
     request: Request,
     project_id: str,
     patch: ProductPatch,
     user_id: str = Depends(require_user),
 ):
+    """프로젝트 내 상품의 물리적 사실(이름, 분류, 컬러 그룹, 측정 실측 치수 등)을 수정하거나 신규 등록합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
+    """
     fields = patch.model_dump(exclude_unset=True)
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
@@ -256,13 +427,24 @@ async def save_product(
 # ---------- analysis (계약 §3.2) ----------
 
 
-@router.patch("/projects/{project_id}/analysis")
+@router.patch(
+    "/projects/{project_id}/analysis",
+    responses={**COMMON_RESPONSES},
+    tags=["Analysis"],
+    summary="AI 상품 분석 결과 저장/수정",
+)
 async def save_analysis(
     request: Request,
     project_id: str,
     analysis: dict = Body(...),
     user_id: str = Depends(require_user),
 ):
+    """AI 제안(추천 제품명, 핏, 소재 등) 및 사용자 조정을 거친 상품 분석 정보를 JSONB 페이로드로 통째로 갱신하여 저장합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
+    """
     # analysis는 프론트 소유 shape → payload jsonb 패스스루 저장.
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
@@ -272,17 +454,106 @@ async def save_analysis(
     return {"projectId": row["project_id"], **(row["payload"] or {})}
 
 
-@router.get("/projects/{project_id}/analysis/match-candidates")
+@router.post(
+    "/projects/{project_id}/analyze",
+    responses={
+        **COMMON_RESPONSES,
+        202: {"description": "상품 분석 작업이 대기열에 진입했습니다."},
+    },
+    tags=["Analysis"],
+    summary="AI 상품 분석 작업 시작 (AG-01)",
+)
+async def analyze_product(
+    request: Request,
+    project_id: str,
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """업로드된 상품 사진으로 AI 분석(색·핏·소재·스타일 등)을 수행하는 비동기 작업을 요청합니다.
+
+    - **Bearer Token**: 필수
+    - **무과금**: 분석은 크레딧을 차감하지 않습니다 (ai_agent_modules §3).
+    - **멱등성**: 진행 중 동일 작업이 있으면 새로 띄우지 않고 기존 `jobId`로 합류합니다
+      (더블클릭 시 LLM 2회 호출 방지). 완료된 분석은 재호출 시 재분석(무과금)됩니다.
+    """
+    scoped_key = f"{project_id}:analyze:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        # 무과금 → 예약/게이트 없이 job 생성(멱등/활성 합류는 create_job 이 원자 처리).
+        job, _created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="analyze",
+            payload={"mode": "analyze"}, idempotency_key=scoped_key,
+            credits_reserved=0, metadata={})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
+@router.post(
+    "/projects/{project_id}/analyze:spike",
+    responses={**COMMON_RESPONSES},
+    tags=["Analysis"],
+    summary="[임시] 분석 provider 관측 spike (flag 게이트)",
+)
+async def analyze_spike(
+    request: Request, project_id: str, user_id: str = Depends(require_user)
+):
+    """provider(Gemini/GPT) 순응률·폴백·지연을 실측하는 **임시** 동기 harness. `ANALYSIS_SPIKE=on`
+    일 때만 동작(기본 off → 403). production 경로는 `POST /analyze`(job). plan §7."""
+    s = request.app.state.settings
+    if s.analysis_spike != "on":
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "spike_disabled", "message": "분석 spike 가 비활성화되어 있어요."})
+    r2 = _r2(request)
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        assets = []
+        for _slot, aid in mannequin.base_color_images(product):
+            a = await repo.get_asset_for_user(conn, user_id, aid)
+            if a:
+                assets.append(a)
+    if not assets:
+        raise _bad_request("no_product_images", "상품 사진을 먼저 올려주세요.")
+    images = [
+        InlineImage(a["mime_type"], await asyncio.to_thread(r2.get_bytes, a["r2_key"]))
+        for a in assets
+    ]
+    order = [p.strip() for p in (s.analysis_model_order or "").split(",") if p.strip()]
+    t0 = time.perf_counter()
+    try:
+        distributed, provider = await product_analyst.analyze(s, product, images)
+    except VisionError as e:
+        raise HTTPException(status_code=502, detail={"code": "analysis_failed", "message": str(e)})
+    obs = product_analyst.observation(provider, order, int((time.perf_counter() - t0) * 1000), distributed)
+    logger.info("analysis_spike", extra=obs)  # provider 결정 회의용 관측 로그
+    return JSONResponse({"observation": obs, "data": distributed})
+
+
+@router.get(
+    "/projects/{project_id}/analysis/match-candidates",
+    responses={**COMMON_RESPONSES, 500: {"model": ErrorResponse}},
+    tags=["Analysis"],
+    summary="매칭 의류 후보군 조회",
+)
 async def match_candidates(
     request: Request,
     project_id: str,
     clothingType: str = Query(...),
     gender: list[str] = Query(default=[]),
+    styleTags: list[str] = Query(default=[]),
     limit: int | None = Query(default=None),
     user_id: str = Depends(require_user),
 ):
-    """매칭 후보(보색 의류) — 공개 R2 썸네일 URL 포함 레거시 MatchClothing[].
-    선택값은 클라가 오버레이(서버 저장 없음, 과도기 계약 §4)."""
+    """AI 추천 매칭 의류 후보군(예: 상의에 어울리는 바지/치마 목록)을 조회합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
+      - `500 Internal Server Error` (`r2_public_base_missing`): CDN 이미지 서버 도메인 설정이 누락된 경우 발생
+    """
     if not request.app.state.settings.r2_public_base:
         raise HTTPException(status_code=500, detail={
             "code": "r2_public_base_missing",
@@ -293,93 +564,50 @@ async def match_candidates(
             raise _not_found()
         items = await repo.list_active_matching_items(conn)
     genders = [g.strip() for part in gender for g in part.split(",") if g.strip()]
-    ranked = matching.recommend(items, clothingType, genders, limit)
-    candidates = [c for c in (matching.to_candidate(i, r2.public_url) for i in ranked) if c]
-    return JSONResponse([{**c, "selected": False} for c in candidates])
-
-
-# ---------- PL-1 분석 (pl1_analysis_agent_spec §5) ----------
-
-
-@router.post("/projects/{project_id}/analysis:analyze")
-async def analyze_product_route(
-    request: Request,
-    project_id: str,
-    user_id: str = Depends(require_user),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-):
-    """PL-1 분석 시작. 지문 동일+분석 존재 → 200(재분석 없음), 그 외 job 생성/합류 → 202.
-    크레딧 없음(분석 무료 — PRD §12.2). 입력은 서버 상태(products)에서 읽는다."""
-    scoped_key = f"{project_id}:analyze:{idempotency_key}" if idempotency_key else None
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        product = await repo.get_product(conn, project_id) or {}
-        if not mannequin.has_base_front(product):  # 기준 색상 정면 필수 (기존 헬퍼 재사용)
-            raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")
-        fp = analysis_agent.input_fingerprint(product)
-        last_fp = await repo.get_last_analyze_fingerprint(conn, project_id)
-        existing = await repo.get_analysis(conn, project_id)
-        if last_fp == fp and existing:
-            account = await repo.get_account(conn, user_id)
-            data = analysis_agent.to_api(project_id, existing, product)
-            return JSONResponse(
-                {"data": data, "credits": (account or {}).get("credits", 0)}
-            )
-        settings = request.app.state.settings
-        # 비용 남용 방지 — 새 job(=Gemini 호출)이 실제로 생길 때만 검사. 면제 2가지:
-        #  · 위 fingerprint 재사용(200·무비용) — 이미 return 됨
-        #  · 진행 중 job에 합류(멱등 §6 ① — 새 Gemini 작업 없음): 재호출·StrictMode·재진입이
-        #    자기 진행 중 분석을 429로 못 잇는 회귀 방지 (Codex 지적 2026-07-03).
-        limit = settings.analysis_rate_limit_per_hour
-        if limit > 0 and not await repo.has_active_analyze_job(conn, user_id, project_id):
-            recent = await repo.count_recent_analyze_jobs(conn, user_id, 3600)
-            if recent >= limit:
-                raise HTTPException(
-                    status_code=429,
-                    detail={"code": "rate_limited",
-                            "message": "분석 요청이 너무 많아요. 잠시 후 다시 시도해 주세요."})
-        # 활성 job이 있으면 create_job이 합류시킨다. 그 사이 입력이 바뀌는 희귀 케이스(두 탭)의
-        # 정합성은 라우트가 아니라 finalize 지문 가드가 담당한다(spec §3.7 불변식) — 여기서
-        # 활성 job을 조회·폐기하는 기계장치를 두지 않는다(단순성 우선, P1 최적화 훅 §12-7).
-        job, _created = await repo.create_job(
-            conn, user_id=user_id, project_id=project_id, kind="analyze",
-            payload={}, idempotency_key=scoped_key, credits_reserved=0,
-            metadata={"agentId": "AG-01", "tier": "text", "fingerprint": fp,
-                      "promptVersion": settings.analysis_prompt_version})
-        await conn.commit()
-    return JSONResponse(status_code=202, content={"jobId": job["id"]})
-
-
-@router.get("/projects/{project_id}/analysis")
-async def get_analysis_route(
-    request: Request, project_id: str, user_id: str = Depends(require_user)
-):
-    """분석 결과 읽기 — 분석 폼 재진입·콘티(getAnalysis)용 (spec §5.2)."""
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        payload = await repo.get_analysis(conn, project_id)
-        product = await repo.get_product(conn, project_id) or {}
-    if not payload:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "analysis_not_found", "message": "분석 결과가 아직 없습니다."})
-    return JSONResponse(analysis_agent.to_api(project_id, payload, product))
+    product_tags = [t.strip() for part in styleTags for t in part.split(",") if t.strip()]
+    if request.app.state.settings.retrieval_matching == "tags" and product_tags:
+        ranked = retrieval.recommend_v1(
+            items, clothingType, genders, product_tags, style_affinity.affinity_map(), limit)
+    else:
+        ranked = matching.recommend(items, clothingType, genders, limit)
+    return JSONResponse([
+        {
+            "id": i["id"], "name": i["name"], "gender": i["gender"],
+            "thumb": r2.public_url(i["thumb_key"]),
+            "imageUrl": r2.public_url(i["image_key"]) if i.get("image_key") else None,
+            "thumbnailUrl": r2.public_url(i["thumb_key"]),
+            "selected": False,
+        }
+        for i in ranked if i.get("thumb_key")
+    ])
 
 
 # ---------- 자산 업로드 (§3 presigned + finalize) ----------
 
 
-@router.post("/assets/upload-url", response_model=UploadUrlResponse)
+@router.post(
+    "/assets/upload-url",
+    response_model=UploadUrlResponse,
+    responses={**COMMON_RESPONSES, 400: {"model": ErrorResponse}},
+    tags=["Assets & Uploads"],
+    summary="업로드 presigned URL 발급",
+)
 async def create_upload_url(
     request: Request, body: UploadUrlRequest, user_id: str = Depends(require_user)
 ):
+    """R2 클라우드 스토리지에 클라이언트가 파일을 직접 PUT 업로드할 수 있는 presigned URL을 발급받습니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `400 Bad Request` (`unsupported_type`): 지원되지 않는 MIME 타입(포맷)인 경우 발생
+      - `400 Bad Request` (`file_too_large`): 파일 크기가 0이하 또는 15MB를 초과하는 경우 발생
+      - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
+    """
     ext = ext_for_mime(body.mime)
     if ext is None:
-        raise _bad_request("unsupported_type", "지원하지 않는 사진 형식이에요. JPG·PNG·WebP로 올려주세요. (아이폰 HEIC 사진은 JPG로 변환 필요)")
+        raise _bad_request("unsupported_type", "지원하지 않는 이미지 형식입니다.")
     if body.size <= 0 or body.size > MAX_UPLOAD_BYTES:
-        raise _bad_request("file_too_large", "사진이 너무 커요. 15MB 이하 사진으로 올려주세요.")
+        raise _bad_request("file_too_large", "파일 크기가 허용 범위를 벗어났습니다.")
 
     # 프로젝트 소유권 확인 — 타인 프로젝트 경로로 업로드 URL 발급 차단
     async with get_conn(request) as conn:
@@ -396,16 +624,30 @@ async def create_upload_url(
     }
 
 
-@router.post("/assets/{asset_id}/complete", response_model=Asset)
+@router.post(
+    "/assets/{asset_id}/complete",
+    response_model=Asset,
+    responses={**COMMON_RESPONSES, 400: {"model": ErrorResponse}},
+    tags=["Assets & Uploads"],
+    summary="에셋 업로드 완료 알림 및 등록",
+)
 async def complete_upload(
     request: Request,
     asset_id: str,
     body: AssetCompleteRequest,
     user_id: str = Depends(require_user),
 ):
+    """클라이언트가 R2 스토리지로 직접 업로드를 마친 후 호출합니다. 서버가 파일의 R2 적재를 최종 검증하고 데이터베이스에 등록합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `400 Bad Request` (`unsupported_type`): 지원하지 않는 이미지 파일 확장자/포맷인 경우 발생
+      - `400 Bad Request` (`upload_incomplete`): R2 스토리지에 실제 파일 업로드가 완료되지 않은(찾을 수 없는) 경우 발생
+      - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
+    """
     ext = ext_for_mime(body.mime)
     if ext is None:
-        raise _bad_request("unsupported_type", "지원하지 않는 사진 형식이에요. JPG·PNG·WebP로 올려주세요. (아이폰 HEIC 사진은 JPG로 변환 필요)")
+        raise _bad_request("unsupported_type", "지원하지 않는 이미지 형식입니다.")
 
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, body.project_id) is None:
@@ -417,6 +659,29 @@ async def complete_upload(
     meta = await asyncio.to_thread(r2.head, key)  # 네트워크 → 스레드 격리 (§5)
     if meta is None:
         raise _bad_request("upload_incomplete", "업로드가 완료되지 않았어요. 다시 시도해 주세요.")
+
+    # 입력측 QC (FR-D4) — off면 완전 skip. shadow=로그만, enforce=불합격 시 400.
+    settings = request.app.state.settings
+    if settings.input_qc != "off":
+        # fail-open: QC용 R2 fetch 실패가 '이미 성공한 업로드'를 잃게 하면 안 됨(회귀 방지).
+        # 인프라 에러면 iqc=None으로 두고 정상 등록 — enforce 거부는 '실제 품질 불합격'에만.
+        try:
+            raw = await asyncio.to_thread(r2.get_bytes, key)  # 네트워크 → 스레드 격리
+            iqc = input_qc.evaluate_input_qc(raw)
+        except Exception:
+            logger.warning(
+                "input_qc_fetch_failed",
+                extra={"asset_id": asset_id, "mode": settings.input_qc}, exc_info=True)
+            iqc = None
+        if iqc is not None:
+            logger.info(
+                "input_qc",
+                extra={"mode": settings.input_qc, "asset_id": asset_id,
+                       "verdict": iqc.verdict, "reasons": iqc.reasons},
+            )
+            if settings.input_qc == "enforce" and iqc.verdict == "reject":
+                # 미등록으로 종료 — R2 객체는 남지만 asset row 없음(참조 없는 고아, 무해).
+                raise _bad_request("input_quality", input_qc.input_qc_message(iqc))
 
     async with get_conn(request) as conn:
         row = await repo.create_asset(
@@ -458,15 +723,33 @@ def _cut_to_api(c: dict) -> dict:
     }
 
 
-@router.post("/projects/{project_id}/mannequins:generate")
+@router.post(
+    "/projects/{project_id}/mannequins:generate",
+    responses={
+        **COMMON_RESPONSES,
+        202: {"description": "새로운 마네킹 생성 작업이 대기열에 진입했습니다."},
+        400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: 정면 이미지 누락)"},
+        402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+    },
+    tags=["Mannequins (AI)"],
+    summary="마네킹 후보 생성 작업 시작",
+)
 async def generate_mannequins(
     request: Request,
     project_id: str,
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
-    """완료 컷 있으면 그 결과(200·무차감), 없으면 예약(at route·즉시 402)+job 생성→202 {jobId}.
-    멱등: Idempotency-Key/활성 중복은 create_job이 합류 (계약 §6)."""
+    """지정된 프로젝트의 상품 이미지를 기반으로 AI 마네킹 합성 컷(후보군 A, B)을 생성하는 비동기 작업을 요청합니다.
+
+    - **Bearer Token**: 필수
+    - **Header**: `Idempotency-Key` (필수 권장, 중복 차감 및 중복 작업 방지)
+    - **에지 케이스 & 멱등성**:
+      1. **완료된 결과가 이미 존재**: `200 OK`와 함께 기존 생성 결과를 그대로 반환하여 추가 크레딧 차감이 발생하지 않습니다.
+      2. **이미 동일 작업이 진행 중**: 새로 작업을 띄우지 않고 `202 Accepted`와 함께 기존 실행 중인 `jobId`를 그대로 반환(작업 합류)합니다.
+      3. **크레딧 차감 (402)**: 마네킹 생성에 필요한 크레딧(설정값, 기본 2)이 없으면 `402 Payment Required` 예외가 발생합니다.
+      4. **입력 조건 (400)**: 기준 색상의 정면(Front) 사진 에셋이 아직 등록되지 않은 경우 `missing_front_photo` 에러가 발생합니다.
+    """
     cost = request.app.state.settings.credit_cost_mannequin_generate
     # Idempotency-Key는 project:kind로 스코프 — 다른 프로젝트/종류에서 키 재사용 시 오인 방지
     scoped_key = f"{project_id}:mannequin:{idempotency_key}" if idempotency_key else None
@@ -501,10 +784,22 @@ async def generate_mannequins(
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
-@router.get("/projects/{project_id}/mannequins", response_model=list[MannequinCut])
+@router.get(
+    "/projects/{project_id}/mannequins",
+    response_model=list[MannequinCut],
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins (AI)"],
+    summary="생성된 마네킹 후보 목록 조회",
+)
 async def get_mannequins(
     request: Request, project_id: str, user_id: str = Depends(require_user)
 ):
+    """프로젝트 내에 생성 완료된 AI 마네킹 후보 컷 목록을 조회합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
+    """
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -512,34 +807,47 @@ async def get_mannequins(
     return [_cut_to_api(c) for c in cuts]
 
 
-@router.post("/projects/{project_id}/cuts:generate")
-async def generate_cut(
+@router.post(
+    "/projects/{project_id}/mannequins:adjust",
+    responses={
+        **COMMON_RESPONSES,
+        202: {"description": "마네킹 조정 작업이 대기열에 진입했습니다."},
+        400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: baseId 누락)"},
+        402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+    },
+    tags=["Mannequins (AI)"],
+    summary="마네킹 조정 작업 시작 (AG-05)",
+)
+async def adjust_mannequin(
     request: Request,
     project_id: str,
-    body: CutGenerateRequest,
+    body: dict = Body(...),
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
-    """콘티/에디터 컷 1장 생성 — kind='editor_image' job(병렬 허용, 활성 unique 제외) 생성 후
-    202 {jobId}. 스펙은 서버에서도 정규화(ADR-0004). 예약(즉시 402)은 마네킹과 동일 패턴(§6)."""
-    cost = request.app.state.settings.credit_cost_cut_generate
-    try:
-        spec = cut_agent.normalize_spec(body.model_dump())
-    except ValueError:
-        raise _bad_request("invalid_cut_spec", "지원하지 않는 컷 종류예요.")
-    scoped_key = f"{project_id}:cut:{idempotency_key}" if idempotency_key else None
+    """기존 마네킹컷 1장(`baseId`)을 기준으로 지시된 차원(fit/length/match)만 바꾼 새 버전
+    컷을 생성하는 비동기 작업을 요청합니다.
+
+    - **Bearer Token**: 필수
+    - **Body**: `{ baseId, fitAdjust?, lengthAdjust?, matchAdjust? }` — 변경하지 않을 필드는 생략
+    - **Header**: `Idempotency-Key` (필수 권장, 중복 차감 및 중복 작업 방지)
+    - **에지 케이스**:
+      - `400 Bad Request` (`missing_base_id`): `baseId`가 없는 경우 발생
+      - `402 Payment Required`: 마네킹 조정에 필요한 크레딧(설정값, 기본 1)이 없으면 발생
+    """
+    s = request.app.state.settings
+    cost = s.credit_cost_mannequin_adjust
+    scoped_key = f"{project_id}:mannequin_adjust:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         job, created = await repo.create_job(
-            conn, user_id=user_id, project_id=project_id, kind="editor_image",
-            payload={"spec": spec}, idempotency_key=scoped_key,
-            credits_reserved=cost,
-            metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
-        if created:  # 신규 job만 입력 게이트 + 예약 (Idempotency-Key 합류는 무과금)
-            product = await repo.get_product(conn, project_id)
-            if not cut_agent.color_images(product or {}, spec["colorId"]):
-                raise _bad_request("no_product_images", "상품 사진을 먼저 올려주세요.")
+            conn, user_id=user_id, project_id=project_id, kind="mannequin_adjust",
+            payload=body, idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": s.credit_cost_version})
+        if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
+            if not body.get("baseId"):
+                raise _bad_request("missing_base_id", "조정할 마네킹컷을 먼저 선택해 주세요.")
             if await repo.reserve_credits(conn, user_id, cost) is None:
                 raise HTTPException(
                     status_code=402,
@@ -548,23 +856,180 @@ async def generate_cut(
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
-@router.get("/projects/{project_id}/wardrobe", response_model=list[WardrobeImage])
-async def get_wardrobe(
-    request: Request, project_id: str, user_id: str = Depends(require_user)
-):
-    """프로젝트의 생성/업로드 이미지 목록 (계약 §3.6) — 에디터 의류 탭."""
+# ---------- 콘티/에디터/상세페이지 (PL-4) ----------
+
+
+@router.get("/projects/{project_id}/storyboard", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="콘티 조회")
+async def get_storyboard(request: Request, project_id: str, user_id: str = Depends(require_user)):
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        rows = await repo.list_wardrobe(conn, user_id, project_id)
-    return rows
+        return await repo.get_storyboard(conn, project_id)
 
 
-@router.get("/assets/{asset_id}/file")
+@router.put("/projects/{project_id}/storyboard", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="콘티 저장")
+async def save_storyboard(request: Request, project_id: str, blocks: list = Body(...),
+                          user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        out = await repo.save_storyboard(conn, user_id, project_id, blocks)
+        await conn.commit()
+    return out
+
+
+@router.get("/projects/{project_id}/editor-blocks", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="에디터 블록 조회")
+async def get_editor_blocks(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        return await repo.get_editor_blocks(conn, project_id)
+
+
+@router.put("/projects/{project_id}/editor-blocks", responses={**COMMON_RESPONSES},
+            tags=["Detail Page"], summary="에디터 블록 저장")
+async def save_editor_blocks(request: Request, project_id: str, blocks: list = Body(...),
+                             user_id: str = Depends(require_user)):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        await repo.save_editor_blocks(conn, user_id, project_id, blocks)
+        await conn.commit()
+    return {"ok": True}
+
+
+# ---------- 에디터 의류 탭(Wardrobe, PL-5/6 · AG-06/07) ----------
+
+
+@router.get(
+    "/projects/{project_id}/wardrobe",
+    responses={**COMMON_RESPONSES},
+    tags=["Detail Page"],
+    summary="에디터 Wardrobe(의류 탭) 목록 조회",
+)
+async def get_wardrobe(request: Request, project_id: str, user_id: str = Depends(require_user)):
+    """에디터 AI 탭에 표시할 Wardrobe 이미지 목록. 그룹 키(colorId | 'misc')로 묶어 반환합니다
+    (계약 §3.6 `Record<colorId|'misc', WardrobeImage[]>`).
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**: `404 Not Found` — 프로젝트가 존재하지 않거나 타 사용자 소유인 경우
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        rows = await repo.list_wardrobe_images(conn, user_id, project_id)
+    wardrobe: dict[str, list] = {}
+    for r in rows:
+        group = r["color_id"] or "misc"
+        wardrobe.setdefault(group, []).append(repo._wardrobe_image_api(r))
+    return wardrobe
+
+
+@router.post(
+    "/projects/{project_id}/editor:generate-image",
+    responses={
+        **COMMON_RESPONSES,
+        202: {"description": "에디터 이미지 생성 작업이 대기열에 진입했습니다."},
+        402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+    },
+    tags=["Detail Page"],
+    summary="에디터 이미지 생성 작업 시작 (AG-06/07)",
+)
+async def generate_editor_image(
+    request: Request,
+    project_id: str,
+    body: dict = Body(...),
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """에디터 AI 탭의 '새 컷 추가'(`mode:'new'`, AG-06 재사용) 또는 '현재 컷 변형'
+    (`mode:'vary'`, AG-07)을 생성하는 비동기 작업을 요청합니다. `NewCutRequest` /
+    `VaryRequest`(계약 §6)를 그대로 본문으로 받습니다.
+
+    - **Bearer Token**: 필수
+    - **Body**: `NewCutRequest { mode:'new', colorId, cutType, direction?, shot?, modelId? }` |
+      `VaryRequest { mode:'vary', source:{src,cutType}, changes[], refBg? }`
+    - **Header**: `Idempotency-Key` (권장, 중복 차감 및 중복 작업 방지) — `editor_image`는 매 호출이
+      새 이미지를 생성하므로(완료 재호출 재사용 없음) 활성-중복 dedup 대상에서 제외되고, 멱등은
+      이 키로만 보장됩니다.
+    - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
+    """
+    s = request.app.state.settings
+    cost = s.credit_cost_editor_image
+    scoped_key = f"{project_id}:editor_image:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="editor_image",
+            payload=body, idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": s.credit_cost_version})
+        if created:  # 신규 job만 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
+            if await repo.reserve_credits(conn, user_id, cost) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
+@router.post(
+    "/projects/{project_id}/detail-page:generate",
+    responses={**COMMON_RESPONSES, 202: {"description": "상세페이지 생성 작업 진입"},
+               400: {"model": ErrorResponse}, 402: {"model": ErrorResponse}},
+    tags=["Detail Page"], summary="상세페이지 생성 작업 시작 (PL-4)",
+)
+async def generate_detail_page(
+    request: Request, project_id: str, user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """저장된 콘티로 AI 컷(AG-06) + 카피(AG-02/03) 생성 → M-02 조립 → EditorBlock[]. 크레딧:
+    storyboardPerCut × source='ai' 블록 수(성공 컷만 차감). 완료 재호출은 기존 결과 반환(무차감)."""
+    s = request.app.state.settings
+    scoped_key = f"{project_id}:detail_page:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        existing = await repo.get_editor_blocks(conn, project_id)
+        if existing:  # 완료 재호출 → 기존 결과 반환(재생성·재차감 없음)
+            account = await repo.get_account(conn, user_id)
+            return JSONResponse({"data": existing, "credits": (account or {}).get("credits", 0)})
+        storyboard = await repo.get_storyboard(conn, project_id)
+        ai_count = sum(1 for b in storyboard if isinstance(b, dict) and b.get("source") == "ai")
+        cost = ai_count * s.credit_cost_storyboard_per_cut
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="detail_page",
+            payload={"mode": "generate"}, idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": s.credit_cost_version})
+        if created:
+            if not storyboard:
+                raise _bad_request("empty_storyboard", "콘티가 비어 있어요. 먼저 콘티를 저장해 주세요.")
+            if cost > 0 and await repo.reserve_credits(conn, user_id, cost) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        await conn.commit()
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
+@router.get(
+    "/assets/{asset_id}/file",
+    responses={**COMMON_RESPONSES, 302: {"description": "R2 presigned GET URL로 302 리다이렉트"}},
+    tags=["Assets & Uploads"],
+    summary="안정 에셋 파일 서빙 (302 Redirect)",
+)
 async def get_asset_file(
     request: Request, asset_id: str, user_id: str = Depends(require_user)
 ):
-    """안정 앱 URL → 권한 확인 후 R2 서빙 URL로 302 (계약 §3). src가 만료돼도 이 URL은 불변."""
+    """프론트엔드 에디터/화면에서 상시 사용 가능한 불변 에셋 이미지 경로입니다. 접근 권한(user_id) 확인 후 실제 스토리지의 단기 만료 서명 URL로 302 리다이렉트합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `404 Not Found`: 자산이 존재하지 않거나, 다른 사용자가 소유한 경우 발생
+    """
     async with get_conn(request) as conn:
         asset = await repo.get_asset_for_user(conn, user_id, asset_id)
     if asset is None:
@@ -573,8 +1038,20 @@ async def get_asset_file(
     return RedirectResponse(_r2(request).public_url(asset["r2_key"]), status_code=302)
 
 
-@router.get("/jobs/{job_id}", response_model=JobView)
+@router.get(
+    "/jobs/{job_id}",
+    response_model=JobView,
+    responses={**COMMON_RESPONSES},
+    tags=["Jobs & SSE"],
+    summary="작업(Job) 상태 조회",
+)
 async def get_job(request: Request, job_id: str, user_id: str = Depends(require_user)):
+    """비동기로 시작된 백그라운드 작업(AI 생성 등)의 현재 상태(pending, running, done, error) 및 진행도(0~100%)를 조회합니다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**:
+      - `404 Not Found`: 해당 작업이 존재하지 않거나, 다른 사용자가 소유한 경우 발생
+    """
     async with get_conn(request) as conn:
         row = await repo.get_job(conn, user_id, job_id)
     if row is None:
@@ -583,7 +1060,12 @@ async def get_job(request: Request, job_id: str, user_id: str = Depends(require_
     return row
 
 
-@router.get("/jobs/{job_id}/events")
+@router.get(
+    "/jobs/{job_id}/events",
+    responses={**COMMON_RESPONSES},
+    tags=["Jobs & SSE"],
+    summary="작업 실시간 이벤트 스트림 (SSE)",
+)
 async def job_events(
     request: Request,
     job_id: str,
@@ -591,12 +1073,19 @@ async def job_events(
     last_event_id: str | None = Header(None, alias="Last-Event-ID"),
     after: int = Query(0),
 ):
-    """SSE — job_events를 replay·스트림. Last-Event-ID/?after 이후부터 (§5)."""
+    """지정된 백그라운드 작업의 상태 변경이나 진행 이벤트 로그를 실시간 Server-Sent Events (SSE) 형식으로 스트리밍합니다.
+
+    - **Bearer Token**: 필수
+    - **Header**: `Last-Event-ID` (클라이언트 연결 재시도 시, 마지막으로 받은 이벤트 ID 이후부터 스트림 재개)
+    - **에지 케이스**:
+      - `404 Not Found`: 해당 작업이 존재하지 않거나, 다른 사용자가 소유한 경우 발생
+      - 완료(`done`) 혹은 실패(`error`) 이벤트가 전달되거나, 최대 5분(300초)이 경과하면 연결이 안전하게 정리 종료됩니다.
+    """
     async with get_conn(request) as conn:  # 소유권 확인
         if await repo.get_job(conn, user_id, job_id) is None:
             raise HTTPException(
                 status_code=404, detail={"code": "not_found", "message": "작업을 찾을 수 없습니다."})
-    start = int(last_event_id) if (last_event_id or "").isdigit() else after
+    start = int(last_event_id) if (last_event_id is not None and last_event_id.isdigit()) else after
     pool = request.app.state.pool
 
     async def gen():

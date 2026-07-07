@@ -1,6 +1,6 @@
 # AI 파이프라인 명세 (ai_pipeline_spec.md)
 
-> 상태: 확정 (2026-06-11, 갱신 2026-06-14) · 짝 문서: `documents/ai_agent_modules.md`(에이전트 정의), `documents/common_data_contract.md`(API 계약·크레딧·멱등 규약)
+> 상태: 확정 (2026-06-11, 갱신 2026-06-29) · 짝 문서: `documents/ai_agent_modules.md`(에이전트 정의), `documents/common_data_contract.md`(API 계약·크레딧·멱등 규약)
 > 실행 주체: **FastAPI(Railway) job orchestration** (`documents/03_기술스택_결정서.md` §7). 프론트는 `lib/api` 함수만 호출하고, 파이프라인의 존재를 모른다.
 
 ---
@@ -20,12 +20,12 @@
 
 | ID | 트리거(화면 → API) | 에이전트/모듈 | 크레딧 | 출력 |
 |---|---|---|---|---|
-| PL-1 분석 | 입력 '입력 완료' → `analyzeProduct` | AG-01 → M-01 | — | `Analysis` (실측 null) |
-| PL-2 마네킹 생성 | 마네킹 최초 진입 → `generateMannequins` | AG-04 ×2 (병렬) | `mannequinGenerate` | `MannequinCut[]` |
-| PL-3 마네킹 조정/재생성 | '의류 조정하기' → `adjustMannequin` / 재생성 모달 → `regenerateMannequins` | AG-05 / AG-04 ×2 | `mannequinAdjust` / `mannequinGenerate` · adjustCount+1 | `MannequinCut` / `MannequinCut[]` |
-| PL-4 상세페이지 생성 | 콘티 '이대로 생성하기' → `saveStoryboard` 후 `generateDetailPage` | AG-06 ×N → AG-02 → AG-03 → M-02 | `storyboardPerCut × source='ai' 블록 수` | `EditorBlock[]` |
-| PL-5 에디터 새 컷 | AI 탭 '새 이미지 생성' → `generateImage(mode:'new')` | AG-06 | `editorImage` | `WardrobeImage` |
-| PL-6 에디터 컷 변형 | AI 탭 '비슷한 컷/변경 적용' → `generateImage(mode:'vary')` | AG-07 | `editorImage` | `WardrobeImage` |
+| PL-1 분석 | 입력 '입력 완료' → `analyzeProduct` | AG-01(설계) → M-01(라이브) | — | `Analysis` (실측 null) |
+| PL-2 마네킹 생성 | 마네킹 최초 진입 → `generateMannequins` | AG-04 ×2 병렬 **(라이브)** | `mannequinGenerate` | `MannequinCut[]` |
+| PL-3 마네킹 조정/재생성 | '의류 조정하기' → `adjustMannequin` / 재생성 모달 → `regenerateMannequins` | AG-05(설계) / AG-04(라이브) ×2 | `mannequinAdjust` / `mannequinGenerate` · adjustCount+1 | `MannequinCut` / `MannequinCut[]` |
+| PL-4 상세페이지 생성 | 콘티 '이대로 생성하기' → `saveStoryboard` 후 `generateDetailPage` | AG-06(설계) ×N → AG-02(설계) → AG-03(설계) → M-02(mock) | `storyboardPerCut × source='ai' 블록 수` | `EditorBlock[]` |
+| PL-5 에디터 새 컷 | AI 탭 '새 이미지 생성' → `generateImage(mode:'new')` | AG-06(설계) | `editorImage` | `WardrobeImage` |
+| PL-6 에디터 컷 변형 | AI 탭 '비슷한 컷/변경 적용' → `generateImage(mode:'vary')` | AG-07(설계) | `editorImage` | `WardrobeImage` |
 
 (세탁 안내는 파이프라인·AI 호출이 아니다 — 에디터 자동 블록을 M-02가 규칙 기반 프리셋으로 생성, ai_agent_modules §4.)
 
@@ -155,6 +155,6 @@ PIPELINE_CUT_CONCURRENCY=3                          # PL-4 그룹 내 병렬 상
 
 1. **모델 배정은 잠정** — tier별 비용·품질 로그(모듈 정의서 §6-5)를 근거로 재배정. 특히 제품컷·변형의 Pro 유지 여부.
 2. **환불·재시도 정책 미정** (PRD §12.2) — 차감 후 실패 보상, 품질 불만 재생성 정책.
-3. **이미지 동일성 검수(AG-P2)** — 모든 이미지 생성 에이전트(AG-04/05/06/07) 출력 직후 게이트, retry 시 correctionPrompt(실패원인+보완점) 주입 루프(ai_agent_modules §5). 판정 기준·재시도 상한·크레딧 정책 설계 후 P1 투입.
+3. **이미지 동일성 검수** — QC Phase 1(Pillow 픽셀·고스트/크롭 휴리스틱)은 **라이브이나 SHADOW 모드**(게이트 미적용 — 실패해도 차단하지 않음). AG-P2 의미적 동일성 검수(이미지가 입력 상품과 같은 옷인지 판정)는 **설계만, 미구현** — 훅 위치(AG-04/05/06/07 출력 직후), retry 시 correctionPrompt 주입 루프(ai_agent_modules §5). 판정 기준·재시도 상한·크레딧 정책 설계 후 P1 투입.
 4. **확장형(컬러별 컷) 콘티 구성** — getStoryboard의 composeMode별 블록 생성 규칙은 콘티 시드 단계 구현 필요(계약 §6 비고).
 5. **분위기 예시 시드** — 운영자 데이터 입력 예정(에이전트 아님). 시드 스키마는 `MatchingItem` 패턴(구조적 에셋 경로)을 따른다.

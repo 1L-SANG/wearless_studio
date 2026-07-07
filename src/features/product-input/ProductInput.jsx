@@ -42,10 +42,9 @@ function ColorSwatchPicker({ swatchColors, value, onChange }) {
 }
 
 // build file metas from a FileList (drag-drop / picker), capping to the room left
-// file 원본을 함께 보존 — 추가 시점 업로드(api.uploadAsset)의 입력 (pl1 spec §7.1)
 const filesToMetas = (fileList, room) => {
   const imgs = [...fileList].filter((f) => f.type && f.type.startsWith('image/'));
-  return imgs.slice(0, Math.max(0, room)).map((f) => ({ src: URL.createObjectURL(f), name: f.name, size: f.size, type: f.type || 'image', lastModified: f.lastModified, file: f }));
+  return imgs.slice(0, Math.max(0, room)).map((f) => ({ src: URL.createObjectURL(f), name: f.name, size: f.size, type: f.type || 'image', lastModified: f.lastModified }));
 };
 const fileExt = (im) => (im.type && im.type.split('/')[1] ? im.type.split('/')[1].toUpperCase() : 'IMG');
 
@@ -192,10 +191,10 @@ export function ProductInput() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      // 직접 URL 진입까지 포함해 projectId 를 보장한다 (frontend_state_model.md §4).
-      // 읽기 전용 loadProject 만 사용 — 새 project 생성(reseed)은 TopNav·보관함의
-      // 명시적 '새 제작' 액션만 담당한다 (StrictMode 이중 실행에도 멱등).
-      await useAppStore.getState().loadProject();
+      // projectId(보관함 행) 생성은 입력 진입이 아니라 AI 분석 시작(submit→ensureProject)이
+      // 담당한다 — '상세페이지 제작' 진입만으로 빈 프로젝트가 생기던 버그 방지. 입력 단계에선
+      // 서버 project 를 만들지도 채택하지도 않는다(신규 플로우면 projectId=null 유지). getProduct
+      // 는 시드 템플릿 읽기라 pid 가 없어도 무방하다(http 모드에서도 mock 폴백).
       const pid = useAppStore.getState().projectId;
       const [p, c] = await Promise.all([api.getProduct(pid), api.getCatalogs()]);
       if (!alive) return;
@@ -229,14 +228,9 @@ export function ProductInput() {
         return;
       }
 
-      // http 모드의 새 프로젝트는 colors가 빈 배열 — 기준 그룹의 id·isBase를 보장해야
-      // 각도 슬롯 UI와 AI 스와치 추천(colorGroupId 매칭)이 동작한다 (pl1 spec §7).
-      const fresh = { ...p, name: '', colors: [{ id: uid('col'), name: '', isBase: true, ...(p.colors?.[0] || {}), swatchId: undefined, images: [] }] };
+      const fresh = { ...p, name: '', colors: [{ ...p.colors[0], swatchId: undefined, images: [] }] };
       setProduct(fresh);
-    })().catch(() => {
-      // 로드 실패(네트워크·세션 만료 등)가 스켈레톤 무한 대기로 남지 않게 한다
-      if (alive) toast.push('입력 화면을 불러오지 못했어요. 새로고침해 주세요.', { icon: 'alertTri' });
-    });
+    })();
     return () => { alive = false; };
   }, []);
 
@@ -244,34 +238,7 @@ export function ProductInput() {
 
   const set = (patch) => setProduct((p) => ({ ...p, ...patch }));
   // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
-  // 추가는 로컬 즉시(원래 mock 동작) — 서버 업로드·실패는 'AI 분석하기'(submit) 시점으로
-  // 미룬다 (사용자 결정 2026-07-03: 추가 단계에서 검사하지 않기). file 원본은 submit의
-  // uploadPendingImages 입력으로 이미지 객체에 보존한다.
   const addImageFiles = (colorId, slot, metas) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: [...c.images, ...metas.map((m) => ({ id: uid('img'), slot, label: slot, ...m }))] } : c) }));
-
-  // 아직 서버에 안 올라간 사진(file 보유)을 업로드하고 asset id/URL로 치환한 product를 돌려준다.
-  // 부분 성공 보존: 중간에 실패해도 성공분은 반영된 product를 반환 — 재시도 시 중복 업로드 방지.
-  // 실패 사유는 서버의 구체 메시지(형식·크기 등)를 그대로 살려 던진다 (pl1 spec §7.1).
-  const uploadPendingImages = async (prod) => {
-    const colors = prod.colors.map((c) => ({ ...c, images: [...c.images] }));
-    let error = null;
-    outer: for (const c of colors) {
-      for (let i = 0; i < c.images.length; i++) {
-        const im = c.images[i];
-        if (!im.file) continue;   // 이미 서버 자산(재시도) 또는 draft 복원분
-        try {
-          const { file, ...meta } = im;
-          const asset = await api.uploadAsset(file, { projectId });
-          if (asset.src && asset.src !== meta.src) URL.revokeObjectURL(meta.src);
-          c.images[i] = { ...meta, id: asset.id, src: asset.src || meta.src };
-        } catch (e) {
-          error = new Error(`'${im.name || '사진'}' 업로드에 실패했어요 — ${e?.message || '네트워크 상태를 확인해 주세요.'}`);
-          break outer;   // 하나 막히면 중단 (형식·네트워크 문제는 이어서도 실패)
-        }
-      }
-    }
-    return { product: { ...prod, colors }, error };
-  };
   const removeImage = (colorId, imgId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: c.images.filter((im) => im.id !== imgId) } : c) }));
   const renameColor = (colorId, name) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, name } : c) }));
   const setColor = (colorId, swatchId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, swatchId } : c) }));
@@ -288,27 +255,34 @@ export function ProductInput() {
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
     try {
-      // ① 사진 업로드 — 추가 시점이 아니라 여기서 (사용자 결정). 실패 시 구체 사유로 중단.
-      const { product: uploaded, error } = await uploadPendingImages(product);
-      if (uploaded !== product) setProduct(uploaded);   // 부분 성공 보존 (재시도 시 중복 방지)
-      if (error) throw error;
-      // ② 저장이 먼저다 — 서버는 저장된 상태(products)를 분석한다
-      // (frontend_state_model §7 · pl1 spec §7.2 순서 교정).
-      await api.saveProduct(projectId, { ...uploaded, uploadComplete: true });
-      const a = await api.analyzeProduct(projectId, {});
+      // 보관함 프로젝트(서버 행)는 바로 이 시점에 생성한다 — '상세페이지 제작' 진입이 아니라
+      // AI 분석을 시작할 때. createProject 는 토큰이 필요하므로 로그인 사용자만 생성하고,
+      // 비로그인 공개 분석은 서버 project 없이 진행(프로젝트 생성은 로그인 후 단계가 담당).
+      const pid = session ? await useAppStore.getState().ensureProject() : projectId;
+      // 사진을 서버에 먼저 올리고(images[].id=asset id) 상품을 저장한다 — http 분석 워커는
+      // 저장된 products.colors 를 읽으므로, 분석보다 반드시 앞서야 한다(순서 뒤집히면 no_product_images).
+      // mock 모드에선 uploadProductPhotos·saveProduct 가 인메모리 no-op 이라 동작 동일.
+      const uploaded = await api.uploadProductPhotos(pid, product);
+      const enteredName = (product.name && product.name.trim()) ? product.name.trim() : null;
+      // 저장은 이 단계가 실제로 만든 것만 — colors(asset id)·업로드 완료·입력한 이름. measurements 등은
+      // getProduct 가 아직 mock seed 라 통째로 보내면 가짜 실측이 실서버로 샌다(seed 누출 차단).
+      await api.saveProduct(pid, {
+        colors: uploaded.colors, uploadComplete: true, ...(enteredName ? { name: enteredName } : {}),
+      });
+      const a = await api.analyzeProduct(pid, {});
       setAnalysis(a);
-      // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 저장
-      if (!product.name || !product.name.trim()) {
-        const finalName = a.suggestedName || '새 상품';
+      // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 서버에도 반영
+      const finalName = enteredName || a.suggestedName || '새 상품';
+      if (!enteredName) {
         set({ name: finalName });
-        await api.saveProduct(projectId, { name: finalName });
+        await api.saveProduct(pid, { name: finalName });
       }
       setPhase('done');
       toast.push('AI 분석을 완료했어요', { icon: 'sparkles' });
     } catch (e) {
-      // 실패 시 입력 단계로 롤백 — 한국어 message 토스트 + 재시도 가능 (pl1 spec §8)
+      // http 모드에서 분석 실패(네트워크·서버 에러)해도 스피너에 고착되지 않게 — 입력으로 복귀 + 안내.
       setPhase('input');
-      toast.push(e?.message || '상품 분석에 실패했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
+      toast.push(e?.message || '분석에 실패했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
 
@@ -405,9 +379,6 @@ export function ProductInput() {
               setAnalysis((a) => ({ ...a, ...patch }));
               api.saveAnalysis(projectId, patch).then((saved) => {
                 if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));
-              }).catch((e) => {
-                // http 모드에선 저장이 실패할 수 있다 — 조용히 삼키면 화면·서버가 어긋난다
-                toast.push(e?.message || '변경사항 저장에 실패했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
               });
             }}
             onNext={goToMannequin} />

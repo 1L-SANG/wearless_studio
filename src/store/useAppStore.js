@@ -16,19 +16,18 @@ import { clearDraft } from '@/lib/draftStore.js';
 
 const initialFlow = {
   projectId: null,
+  // 서버 project(보관함 행) 생성 완료 여부. '상세페이지 제작' 진입만으로 빈 프로젝트가
+  // 생기지 않도록, createProject 는 입력 진입이 아니라 AI 분석 시작(ensureProject) 때 1회 호출한다.
+  projectPersisted: false,
   selectedMannequinId: null,
   composeMode: 'basic',
   copywriting: true,
   adjustCount: 0,
 };
 
-// loadProject in-flight 싱글턴 — 같은 라우트의 동시 호출(ProductInput mount + useDoneGuard,
-// StrictMode 이중 실행)이 각자 '현재 프로젝트'를 조회/생성해 http 모드에서 빈 프로젝트가
-// 중복 생성(이중 POST)되는 것을 막는다 (Codex 재리뷰 2026-07-02).
-let loadProjectInflight = null;
-// 명시적 '새 제작'이 진행 중이면 loadProject 결과를 커밋하지 않는다 — startProject가
-// projectId를 아직 못 쓴 창에서 옛 프로젝트가 잠깐 커밋되는 깜빡임 차단 (Codex 3라운드).
-let explicitStartInflight = false;
+// ensureProject 동시 호출 합류용 — in-flight Promise 를 모듈 스코프에 보관해 더블클릭/재시도가
+// createProject 를 중복 호출(보관함 행 중복 생성)하지 않게 한다(코드리뷰 반영).
+let ensureProjectInflight = null;
 
 export const useAppStore = create((set, get) => ({
   /* ---- account / catalogs (서버 상태의 전역 캐시 — loaded once) ---- */
@@ -65,41 +64,56 @@ export const useAppStore = create((set, get) => ({
   // 변경에는 바뀌지 않아 일반 흐름엔 영향 없음.
   projectGeneration: 0,
 
-  /** 새 제작 시작 — 새 project 를 만들고 플로우 선택값을 초기화 (구 resetFlow). */
-  async startProject() {
-    explicitStartInflight = true;
-    try {
+  /** 새 제작 진입 — 서버 project 생성은 보류한다(AI 분석 시 ensureProject 가 생성).
+     '상세페이지 제작'/'새 상세페이지' 클릭만으로 보관함에 빈 프로젝트가 생기던 버그 방지.
+     여기선 로컬 플로우만 초기화: 미동기화 draft 폐기(묵은 입력 복원 방지) + projectGeneration
+     을 올려 ProductInput 을 remount(폼 초기화)한다. */
+  async beginProject() {
+    ensureProjectInflight = null;   // 새 제작 시작 — 이전 플로우의 in-flight 생성과 분리
+    await clearDraft().catch(() => {});
+    // http: 서버 POST 이연(빈 보관함 행 방지) — projectId 없이 시작, 생성은 ensureProject.
+    // mock: createProject 가 reseedDraft 로 DB.product/analysis 를 깨끗한 시드로 되돌린다.
+    // 안 하면 이전 세션 변형(clothingType/measurements 등)이 새 제작 입력에 유입된다(코드리뷰 반영).
+    const mode = import.meta.env.VITE_API_MODE ?? 'mock';
+    if (mode === 'http') {
+      set({ ...initialFlow, projectGeneration: get().projectGeneration + 1 });
+    } else {
       const project = await api.createProject();
-      // 명시적 새 제작 — 미동기화 draft 를 폐기하고(묵은 입력 복원 방지), projectGeneration 을
-      // 올려 ProductInput 을 remount(폼 초기화)한다.
-      await clearDraft().catch(() => {});
-      set({ ...initialFlow, projectId: project.id, projectGeneration: get().projectGeneration + 1 });
-      return project;
-    } finally {
-      explicitStartInflight = false;
+      set({ ...initialFlow, projectId: project.id, projectPersisted: true, projectGeneration: get().projectGeneration + 1 });
     }
   },
-  /** 새로고침 등으로 스토어가 비었을 때 '현재 프로젝트'에서 선택값 복원.
-      getCurrentProject: mock=싱글턴, http=최근 프로젝트(없으면 생성) — mock 출신 로컬
-      projectId 가 http 경로로 흘러 404 나는 반쪽 스왑을 차단한다 (pl1 spec §7). */
+  /** 서버 project(보관함 행)를 필요 시 1회 생성하고 projectId 를 반환 — AI 분석 시작 시 호출.
+     이미 이 플로우에서 생성했으면(persisted) 재사용해 보관함 행 중복 생성을 막는다. */
+  async ensureProject() {
+    if (get().projectPersisted && get().projectId) return get().projectId;
+    // 동시 호출(버튼 더블클릭·중복 submit·네트워크 지연 중 재시도)을 한 번의 createProject 로
+    // 합류시킨다. projectPersisted 가 true 로 세팅되기 전 두 번째 호출이 들어와도 같은 promise 를
+    // 공유하므로 서버 행이 중복 생성되지 않는다(성공·실패 모두 finally 에서 in-flight 해제).
+    if (ensureProjectInflight) return ensureProjectInflight;
+    ensureProjectInflight = (async () => {
+      try {
+        const project = await api.createProject();
+        set({ projectId: project.id, projectPersisted: true });
+        return project.id;
+      } finally {
+        ensureProjectInflight = null;
+      }
+    })();
+    return ensureProjectInflight;
+  },
+  /** 새로고침 등으로 스토어가 비었을 때 서버의 project 에서 선택값 복원. */
   async loadProject() {
     if (get().projectId) return get().projectId;
-    if (!loadProjectInflight) {
-      loadProjectInflight = api.getCurrentProject().then((p) => {
-        // startProject(명시적 새 제작)가 끝났거나 진행 중이면 그쪽이 우선 — 덮어쓰지 않는다
-        if (!get().projectId && !explicitStartInflight) {
-          set({
-            projectId: p.id,
-            selectedMannequinId: p.selectedMannequinId,
-            composeMode: p.composeMode,
-            copywriting: p.copywriting,
-            adjustCount: p.adjustCount,
-          });
-        }
-        return get().projectId;
-      }).finally(() => { loadProjectInflight = null; });
-    }
-    return loadProjectInflight;
+    const p = await api.getProject();
+    set({
+      projectId: p.id,
+      projectPersisted: true,   // 기존 project 복원 — 이미 보관함에 존재
+      selectedMannequinId: p.selectedMannequinId,
+      composeMode: p.composeMode,
+      copywriting: p.copywriting,
+      adjustCount: p.adjustCount,
+    });
+    return p.id;
   },
   /** 백엔드 sync(비로그인 draft) 결과의 projectId 반영 — 로그인 복귀 후 RootRedirect 가 호출. */
   setProjectId(projectId) { set({ projectId }); },

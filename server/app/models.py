@@ -142,39 +142,12 @@ class MannequinCut(CamelModel):
 
     id: str
     src: str
-    candidate: str  # deprecated: 단일컷 전환 후 legacy id/API 호환용
+    candidate: str
     version: int
     base_fit: str
-    fit_adjust: str | None = None  # deprecated: FitProfile로 대체
-    length_adjust: str | None = None  # deprecated: FitProfile로 대체
-    match_adjust: dict | None = None  # deprecated: 매칭 의류 자동 시드 메타 사용
-
-
-class CutGenerateRequest(CamelModel):
-    """POST /v1/projects/{id}/cuts:generate 입력 — 콘티 블록/에디터 새 컷 스펙 (ADR-0004).
-    서버가 agents.cut.normalize_spec으로 다시 정규화한다 — 여기선 형태만 받는다."""
-
-    cut_type: str
-    direction: str | None = None
-    shot: str | None = None
-    color_id: str | None = None
-    pose: str | None = None
-    face_exposure: str | None = None
-    match_ids: list[str] = []
-    ref_asset_ids: list[str] = []      # 업로드 무드 레퍼런스 (assets id — 분위기만 참고)
-    example_id: str | None = None      # 분위기 예시 — "예시 그대로, 옷·모델만 교체"
-    space_group_id: str | None = None
-    space_variation: str | None = None
-
-
-class WardrobeImage(CamelModel):
-    """생성/업로드 이미지 (계약 §3.6). src는 안정 앱 URL."""
-
-    id: str
-    src: str
-    ai: bool = True
-    cut_type: str | None = None
-    color_id: str | None = None
+    fit_adjust: str | None = None
+    length_adjust: str | None = None
+    match_adjust: dict | None = None
 
 
 class JobView(CamelModel):
@@ -247,3 +220,14 @@ class RefundRequestBody(CamelModel):
 
     credit_source_id: str
     reason: str | None = None
+
+
+class ErrorDetail(CamelModel):
+    code: str
+    message: str
+    details: list | None = None
+
+
+class ErrorResponse(CamelModel):
+    error: ErrorDetail
+

@@ -13,7 +13,7 @@ def resolve_model(settings: Settings, tier: str) -> str:
     mapping = {
         "image_light": settings.model_image_light,
         "image_high": settings.model_image_high,
-        "text": settings.model_text,
+        "text": settings.model_text,  # AG-01 등 text tier (계약 §1 MODEL_ROUTING_TEXT)
     }
     model = mapping.get(tier)
     if not model:

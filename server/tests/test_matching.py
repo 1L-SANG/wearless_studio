@@ -118,3 +118,9 @@ def test_match_candidates_failfast_without_public_base(client, make_token, monke
         headers=_auth(make_token))
     assert res.status_code == 500
     assert res.json()["error"]["code"] == "r2_public_base_missing"
+
+
+def test_recommend_limit_zero_returns_empty():
+    # limit=0 은 '빈 결과' (0은 falsy — 전체 반환 아님, 리뷰 반영)
+    items = [_it("b1", "bottom", "women", 80, 1), _it("b2", "bottom", "women", 70, 2)]
+    assert matching.recommend(items, "top", ["women"], limit=0) == []

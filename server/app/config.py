@@ -1,7 +1,4 @@
-"""환경 변수 → Settings. backend_integration_plan §9 (인증·CORS) 기준.
-
-dev 익명 플래그(AUTH_DEV_USER_ID)는 APP_ENV=dev에서만 동작 — Phase 1까지만 유지 (§9).
-"""
+"""환경 변수 → Settings. backend_integration_plan §9 (인증·CORS) 기준."""
 
 import os
 from dataclasses import dataclass
@@ -14,7 +11,6 @@ class Settings:
     jwks_url: str
     jwt_audience: str
     cors_origins: list[str]
-    dev_user_id: str | None
     database_url: str | None
     # R2 (Cloudflare, S3 호환) — 자산 저장 (§3). secret 등급, 서버 전용.
     r2_account_id: str | None
@@ -32,37 +28,42 @@ class Settings:
     # tier→모델 매핑 (ai_agent_modules §1 — 교체는 여기/env 한 곳)
     model_image_light: str = "gemini-3.1-flash-image"
     model_image_high: str = "gemini-3-pro-image"
+    # AG-01 상품 분석 (text tier, 멀티모달 입력) — ai_agent_modules §1·§3
+    openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
+    model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
+    model_text_gemini: str = "gemini-3.5-flash"  # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1)
+    analysis_model_order: str = "gemini,gpt"  # 폴백 순서(기본=Gemini-first, 2026-07-02 결정). 'gpt,gemini' 등
+    analysis_spike: str = "off"  # off | on — 동기 관측 하니스(임시). production 은 job
+    analysis_timeout_seconds: float = 60.0  # provider 1콜 상한(폴백 트리거)
     mannequin_tier: str = "image_high"  # AG-04 = Gemini 3 Pro (사용자 결정 — Flash 미사용)
     mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
     mannequin_aspect_ratio: str = "2:3"
     mannequin_max_attempts: int = 2  # QC 게이팅 시 재시도 상한 (shadow면 실질 1회)
     mannequin_qc_enabled: bool = False  # False=shadow(판정 로그만) — 캘리브레이션 후 True
+    # AG-P2 이미지 동일성 검수(vision LLM "같은 옷인가"). off | shadow(판정 로그만) |
+    # enforce(불일치 시 correctionPrompt로 재생성 — 마네킹 재시도 루프 재사용, max_attempts 내).
+    # 키 미설정/판정 실패는 게이트 미적용(graceful). 기본 off.
+    image_qc: str = "off"
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
     mannequin_prompt_version: str = "v1"
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
-    # ---- 컷 생성 (ADR-0004 — kind='editor_image') ----
-    cut_tier: str = "image_high"  # 마네킹과 동일 tier 기본 (Gemini 3 Pro)
-    cut_prompt_file: str | None = None  # 없으면 server/prompts/cut_generate_v1.txt
-    cut_prompt_version: str = "v1"
-    # ---- AG-01 분석 (pl1_analysis_agent_spec §2.4·§6.1) ----
-    model_text: str = "gemini-3.5-flash"  # tier 'text' (ai_agent_modules §1 — 교체는 여기서만)
-    analysis_thinking_level: str = "low"  # low | medium | high (품질 미달 시 승격)
-    analysis_max_attempts: int = 2  # 1회 재시도 (모듈 §6-2)
-    analysis_timeout_seconds: float = 60.0
-    analysis_prompt_file: str | None = None  # 없으면 server/prompts/analysis_v1.txt
-    analysis_prompt_version: str = "v1"
-    # 비용 남용 방지 — 사용자당 1시간 내 새 analyze job 상한(무료라 반복 유발 가능).
-    # fingerprint 재사용(200·무비용) 경로는 세지 않는다 (pl1 spec §5.1). 0 이하면 제한 없음.
-    analysis_rate_limit_per_hour: int = 30
     job_dispatcher_enabled: bool = True  # §5
     job_poll_interval_seconds: float = 3.0
     job_lease_timeout_seconds: int = 900
     job_worker_id: str = "web"
     credit_cost_version: str = "v1"  # §6 임시 단가
     credit_cost_mannequin_generate: int = 2
-    credit_cost_cut_generate: int = 1  # 콘티/에디터 컷 1장 (프론트 CREDIT_COSTS.editorImage와 동일)
+    credit_cost_mannequin_adjust: int = 1  # AG-05 마네킹 조정 (프론트 CREDIT_COSTS.mannequinAdjust 미러)
+    credit_cost_storyboard_per_cut: int = 1  # PL-4 상세페이지: AI 컷 1개당 (프론트 CREDIT_COSTS 미러)
+    credit_cost_editor_image: int = 1  # PL-5 에디터 이미지 1장
+    # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택. flag 기본 off ----
+    # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
+    retrieval_matching: str = "off"  # off | tags (styleTags 친화도 v1)
+    retrieval_knowledge: str = "off"  # off | static (정적 지식 블록)
+    seller_text_canonicalize: str = "off"  # off | shadow | enforce (FR-D1 안전 게이트)
+    input_qc: str = "off"  # off | shadow | enforce — 업로드 입력 QC (FR-D4, decode·해상도)
 
 
 def _image_size() -> str:
@@ -75,9 +76,10 @@ def _mannequin_tier() -> str:
     return t if t in {"image_light", "image_high"} else "image_high"
 
 
-def _analysis_thinking_level() -> str:
-    v = os.getenv("ANALYSIS_THINKING_LEVEL", "low").lower()
-    return v if v in {"low", "medium", "high"} else "low"
+def _flag(env: str, default: str, allowed: set[str]) -> str:
+    """검색 증강 flag — 허용값 밖이면 안전하게 default(대개 'off')로 폴백."""
+    v = (os.getenv(env, default) or default).strip().lower()
+    return v if v in allowed else default
 
 
 def load_settings() -> Settings:
@@ -93,17 +95,12 @@ def load_settings() -> Settings:
         if o.strip()
     ]
 
-    dev_user_id = os.getenv("AUTH_DEV_USER_ID") or None
-    if app_env != "dev":
-        dev_user_id = None
-
     return Settings(
         app_env=app_env,
         supabase_url=supabase_url,
         jwks_url=jwks_url,
         jwt_audience=os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated"),
         cors_origins=cors_origins,
-        dev_user_id=dev_user_id,
         database_url=os.getenv("DATABASE_URL") or None,
         r2_account_id=os.getenv("R2_ACCOUNT_ID") or None,
         r2_access_key_id=os.getenv("R2_ACCESS_KEY_ID") or None,
@@ -116,6 +113,12 @@ def load_settings() -> Settings:
         vertex_location=os.getenv("VERTEX_LOCATION", "global"),
         model_image_light=os.getenv("MODEL_ROUTING_IMAGE_LIGHT", "gemini-3.1-flash-image"),
         model_image_high=os.getenv("MODEL_ROUTING_IMAGE_HIGH", "gemini-3-pro-image"),
+        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
+        model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.5-flash"),
+        analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),
+        analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
+        analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "60")),
         mannequin_tier=_mannequin_tier(),
         mannequin_image_size=_image_size(),
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
@@ -125,21 +128,20 @@ def load_settings() -> Settings:
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
-        cut_tier=os.getenv("CUT_TIER", "image_high"),
-        cut_prompt_file=os.getenv("CUT_PROMPT_FILE") or None,
-        cut_prompt_version=os.getenv("CUT_PROMPT_VERSION", "v1"),
-        model_text=os.getenv("MODEL_ROUTING_TEXT", "gemini-3.5-flash"),
-        analysis_thinking_level=_analysis_thinking_level(),
-        analysis_max_attempts=int(os.getenv("ANALYSIS_MAX_ATTEMPTS", "2")),
-        analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "60")),
-        analysis_prompt_file=os.getenv("ANALYSIS_PROMPT_FILE") or None,
-        analysis_prompt_version=os.getenv("ANALYSIS_PROMPT_VERSION", "v1"),
-        analysis_rate_limit_per_hour=int(os.getenv("ANALYSIS_RATE_LIMIT_PER_HOUR", "30")),
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
         job_poll_interval_seconds=float(os.getenv("JOB_POLL_INTERVAL_SECONDS", "3")),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
         credit_cost_version=os.getenv("CREDIT_COST_VERSION", "v1"),
         credit_cost_mannequin_generate=int(os.getenv("CREDIT_COST_MANNEQUIN_GENERATE", "2")),
-        credit_cost_cut_generate=int(os.getenv("CREDIT_COST_CUT_GENERATE", "1")),
+        credit_cost_mannequin_adjust=int(os.getenv("CREDIT_COST_MANNEQUIN_ADJUST", "1")),
+        credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "1")),
+        credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "1")),
+        retrieval_matching=_flag("RETRIEVAL_MATCHING", "off", {"off", "tags"}),
+        retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static"}),
+        seller_text_canonicalize=_flag(
+            "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
+        ),
+        input_qc=_flag("INPUT_QC", "off", {"off", "shadow", "enforce"}),
+        image_qc=_flag("IMAGE_QC", "off", {"off", "shadow", "enforce"}),
     )

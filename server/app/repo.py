@@ -11,7 +11,6 @@ import uuid
 from psycopg import AsyncConnection, errors
 from psycopg.types.json import Json
 
-from .agents.analysis import apply_swatch_fill, input_fingerprint
 from .credits import allocate_fifo
 
 
@@ -33,6 +32,28 @@ _PROJECT_COLS = (
     "id::text as id, status, title, compose_mode, copywriting, "
     "selected_mannequin_id, adjust_count, created_at, updated_at"
 )
+
+# JOIN 쿼리용 — products 와 겹치는 id/created_at/updated_at 모호성 방지로 pr. 한정.
+_PROJECT_COLS_PR = (
+    "pr.id::text as id, pr.status, pr.title, pr.compose_mode, pr.copywriting, "
+    "pr.selected_mannequin_id, pr.adjust_count, pr.created_at, pr.updated_at"
+)
+
+# '한 번도 안 쓴' 빈 초안 판정 (pr=projects, prod=products 별칭 전제).
+# draft + 제목·마네킹·콘티·에디터블록 없음 + product 업로드 전(색상 비고·종류 미정).
+_PRISTINE_DRAFT = """
+    pr.status = 'draft'
+    and coalesce(pr.title, '') = ''
+    and pr.selected_mannequin_id is null
+    and coalesce(jsonb_array_length(
+        case when jsonb_typeof(pr.editor_blocks) = 'array' then pr.editor_blocks else '[]'::jsonb end), 0) = 0
+    and coalesce(jsonb_array_length(
+        case when jsonb_typeof(pr.storyboard) = 'array' then pr.storyboard else '[]'::jsonb end), 0) = 0
+    and prod.upload_complete = false
+    and coalesce(jsonb_array_length(
+        case when jsonb_typeof(prod.colors) = 'array' then prod.colors else '[]'::jsonb end), 0) = 0
+    and prod.clothing_type is null
+"""
 
 
 async def get_account(conn: AsyncConnection, user_id: str) -> dict | None:
@@ -78,6 +99,30 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
 
 async def create_project(conn: AsyncConnection, user_id: str) -> dict:
     async with conn.cursor() as cur:
+        # 동시 요청(더블클릭·재시도·타임아웃 후 재호출)에서 아래 select-then-insert 가
+        # 둘 다 pristine draft 를 못 보고 각각 INSERT → 중복 빈 초안이 생기는 레이스 방지.
+        # user_id 단위 xact advisory lock 으로 생성을 직렬화한다(트랜잭션 커밋 시 자동 해제).
+        # 두 번째 요청은 첫 요청 커밋까지 대기 → READ COMMITTED 로 직전 draft 를 보고 재사용.
+        await cur.execute(
+            "select pg_advisory_xact_lock(hashtext(%s))",
+            (f"create_project:{user_id}",),
+        )
+        # '제작' 반복 진입 시 빈 초안이 쌓이지 않도록, 이미 만든 '한 번도 안 쓴' draft 가
+        # 있으면 새로 만들지 않고 그걸 재사용한다(없을 때만 INSERT).
+        await cur.execute(
+            f"""
+            select {_PROJECT_COLS_PR}
+            from projects pr
+            join products prod on prod.project_id = pr.id
+            where pr.user_id = %s and pr.deleted_at is null and {_PRISTINE_DRAFT}
+            order by pr.created_at desc
+            limit 1
+            """,
+            (user_id,),
+        )
+        existing = await cur.fetchone()
+        if existing:
+            return existing
         await cur.execute(
             f"insert into projects (user_id) values (%s) returning {_PROJECT_COLS}",
             (user_id,),
@@ -89,6 +134,12 @@ async def create_project(conn: AsyncConnection, user_id: str) -> dict:
 
 
 async def get_project(conn: AsyncConnection, user_id: str, project_id: str) -> dict | None:
+    # malformed id(비-uuid, 예: 프론트 stale mock 'prj_xxx')는 존재하지 않는 것으로 취급 →
+    # uuid 컬럼 캐스트 500 대신 None 반환 → 라우트 404. (owner 0건 반환과 동일 계약)
+    try:
+        uuid.UUID(project_id)
+    except (ValueError, TypeError):
+        return None
     async with conn.cursor() as cur:
         await cur.execute(
             f"select {_PROJECT_COLS} from projects "
@@ -190,20 +241,15 @@ async def save_product(
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
-    """analysis patch를 payload jsonb에 **병합** upsert (계약 §3.2 · pl1 spec §7.5).
-
-    전체 교체가 아니라 병합 — 부분 patch(예: {fit}만)가 다른 필드를 지우지 않는다.
-    locked는 patch에 있을 때만 갱신. 전량 저장(폼 전체) 호출은 병합으로도 결과 동일.
-    분석 재실행의 전체 덮어쓰기는 finalize_analyze_success가 별도로 수행한다."""
+    """analysis 작업본을 payload jsonb 로 upsert (계약 §3.2). 소유권은 라우트 선검증."""
     locked = bool(analysis.get("locked", False))
     async with conn.cursor() as cur:
         await cur.execute(
             "insert into analyses (project_id, payload, locked) values (%s, %s, %s) "
-            "on conflict (project_id) do update set "
-            "payload = coalesce(analyses.payload, '{}'::jsonb) || excluded.payload, "
-            "locked = case when %s::boolean then excluded.locked else analyses.locked end "
+            "on conflict (project_id) do update set payload = excluded.payload, "
+            "locked = excluded.locked "
             "returning project_id::text as project_id, payload, locked",
-            (project_id, Json(analysis), locked, "locked" in analysis),
+            (project_id, Json(analysis), locked),
         )
         return await cur.fetchone()
 
@@ -301,6 +347,30 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
             (project_id, user_id),
         )
         return await cur.fetchall()
+
+
+async def get_mannequin_cut_asset(
+    conn: AsyncConnection, user_id: str, project_id: str, client_id: str
+) -> dict | None:
+    """client_id `${candidate}-${version}` 로 특정 마네킹컷의 에셋을 owner-scoped 조회
+    (AG-05 baseId 로드용). 파싱 실패·소유권 불일치는 None (라우트/워커가 실패 처리)."""
+    parts = (client_id or "").rsplit("-", 1)
+    if len(parts) != 2 or not parts[1].isdigit():
+        return None
+    candidate, version = parts[0], int(parts[1])
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select a.id::text as id, a.r2_key, a.mime_type
+            from mannequin_cuts mc
+            join projects pr on pr.id = mc.project_id
+            join assets a on a.id = mc.asset_id
+            where mc.project_id = %s and pr.user_id = %s and pr.deleted_at is null
+              and mc.candidate = %s and mc.version = %s
+            """,
+            (project_id, user_id, candidate, version),
+        )
+        return await cur.fetchone()
 
 
 # ---------- jobs ----------
@@ -793,51 +863,123 @@ async def finalize_mannequin_failure(
     return True
 
 
-# ---------- 분석 job 종결 (pl1_analysis_agent_spec §3.7·§6.7 — 크레딧 없음) ----------
+# ---------- AG-05 마네킹 조정 종결 (원자·lease 펜스) — 마네킹 finalize 미러 ----------
 
 
-async def has_active_analyze_job(
-    conn: AsyncConnection, user_id: str, project_id: str
+async def finalize_mannequin_adjust_success(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    base_candidate: str,
+    cut: dict,  # {asset_id, bucket, key, mime, size, width, height, fit_adjust, length_adjust, match_adjust}
+    reserved: int,
+    charge: int,
+    metadata: dict,
+) -> dict | None:
+    """성공 종결(원자·lease 펜스): 에셋 insert + 새 버전 컷 insert(base_candidate 계승) + 크레딧
+    confirm + adjust_count 증가 + job done. None = lease 상실 → 아무것도 쓰지 않음."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return None  # lease 빼앗김 — 부수효과 0 (워커는 폐기)
+        await cur.execute(
+            "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
+            "r2_key, mime_type, byte_size, width, height) "
+            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s)",
+            (cut["asset_id"], user_id, project_id, cut["bucket"], cut["key"], cut["mime"],
+             cut.get("size"), cut.get("width"), cut.get("height")),
+        )
+        await cur.execute(
+            "select coalesce(max(version), 0) + 1 as v from mannequin_cuts "
+            "where project_id = %s and candidate = %s",
+            (project_id, base_candidate),
+        )
+        version = (await cur.fetchone())["v"]
+        await cur.execute(
+            "insert into mannequin_cuts (project_id, candidate, version, asset_id, base_fit, "
+            "fit_adjust, length_adjust, match_adjust) "
+            "values (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (project_id, base_candidate, version, cut["asset_id"], cut["base_fit"],
+             cut.get("fit_adjust"), cut.get("length_adjust"),
+             Json(cut["match_adjust"]) if cut.get("match_adjust") is not None else None),
+        )
+        cut_api = {  # MannequinCut shape (계약 §3.3) — _cut_to_api와 동일
+            "id": f"{base_candidate}-{version}",
+            "src": f"/v1/assets/{cut['asset_id']}/file",
+            "candidate": base_candidate, "version": version, "baseFit": cut["base_fit"],
+            "fitAdjust": cut.get("fit_adjust"), "lengthAdjust": cut.get("length_adjust"),
+            "matchAdjust": cut.get("match_adjust"),
+        }
+        await cur.execute(
+            "update projects set adjust_count = adjust_count + 1 where id = %s", (project_id,)
+        )
+    # 크레딧 확정 — 버킷 FIFO 차감, 같은 tx·jobs 락 유지. 멱등 = job.status(위 running FOR UPDATE).
+    available = await _consume_buckets(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+        charge=charge, action_key="mannequinAdjust", metadata=metadata,
+    )
+    envelope = {"data": cut_api, "credits": available, "creditsCharged": charge}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (Json(envelope), charge, job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
+            (job_id, Json(envelope)),
+        )
+    return cut_api
+
+
+async def finalize_mannequin_adjust_failure(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    reserved: int,
+    settle_key: str,
+    message: str,
+    metadata: dict,
+    code: str = "generation_failed",
 ) -> bool:
-    """이 프로젝트에 진행 중(pending|running) analyze job이 있는가 — rate limit 면제 판정.
-    있으면 재호출은 create_job이 합류시켜 새 Gemini 작업이 없다(멱등 §6 ①)."""
+    """실패 종결(원자·lease 펜스): 예약 해제 + job error + error 이벤트. False = lease 상실.
+    finalize_mannequin_failure와 동일 구조(마네킹 생성 실패 종결 미러)."""
     async with conn.cursor() as cur:
         await cur.execute(
-            "select 1 from jobs where user_id = %s and project_id = %s "
-            "and kind = 'analyze' and status in ('pending', 'running') limit 1",
-            (user_id, project_id),
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
         )
-        return await cur.fetchone() is not None
-
-
-async def count_recent_analyze_jobs(
-    conn: AsyncConnection, user_id: str, window_seconds: int
-) -> int:
-    """window 내 이 사용자가 만든 analyze job 수 — 비용 남용 rate limit용 (pl1 spec §5.1).
-    job row가 곧 Gemini 호출 1건이라 프로젝트 무관·전 status 합산(보수적)."""
+        if await cur.fetchone() is None:
+            return False
+    await _settle_credits(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+        charge=0, action_key="mannequinAdjust.release", settle_key=settle_key, metadata=metadata,
+    )
     async with conn.cursor() as cur:
         await cur.execute(
-            "select count(*) as n from jobs "
-            "where user_id = %s and kind = 'analyze' "
-            "and created_at > now() - make_interval(secs => %s)",
-            (user_id, window_seconds),
+            "update jobs set status = 'error', error_message = %s, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (message, job_id),
         )
-        row = await cur.fetchone()
-    return (row or {}).get("n", 0)
-
-
-async def get_last_analyze_fingerprint(conn: AsyncConnection, project_id: str) -> str | None:
-    """마지막 done analyze job의 입력 지문 — 재분석 판정(§3.7). finalize가 기록한 실측값.
-    소유권은 라우트가 get_project로 선검증(비스코프 read — get_analysis와 동일 면제)."""
-    async with conn.cursor() as cur:
         await cur.execute(
-            "select metadata->>'fingerprint' as fp from jobs "
-            "where project_id = %s and kind = 'analyze' and status = 'done' "
-            "order by finished_at desc nulls last limit 1",
-            (project_id,),
+            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
+            (job_id, Json({"code": code, "message": message})),
         )
-        row = await cur.fetchone()
-    return (row or {}).get("fp")
+    return True
+
+
+# ---------- 분석(AG-01) 종결 (무과금·원자·lease 펜스) ----------
+# 마네킹과 동일한 lease 펜스 패턴이되 크레딧 경로 없음(분석은 무과금 — ai_agent_modules §3).
+# clothingType 은 Product 단일 소유(계약 §3.1)라 products 에, 나머지 분석은 analyses.payload 에 쓴다.
 
 
 async def finalize_analyze_success(
@@ -847,79 +989,42 @@ async def finalize_analyze_success(
     lease_token: str,
     user_id: str,
     project_id: str,
-    clothing_type: str,
-    swatch_suggestions: list[dict],
-    payload: dict,
+    clothing_type: str | None,
+    analysis_payload: dict,
+    result: dict,  # job.result / done 이벤트 봉투 {"data": <프론트 분석 객체>}
     metadata: dict,
-    actual_fingerprint: str,
 ) -> dict | None:
-    """성공 종결(원자·lease 펜스·지문 가드). None = 결과 미기록(lease 상실 또는 가드 폐기).
-
-    ⓪ lease 펜스 통과 후 products 행 재조회(FOR UPDATE) — 가드·스와치 병합의 기준.
-    ① 지문 가드(§3.7 쓰기 관문 불변식): 현재 product의 지문 ≠ actual_fingerprint이면
-       결과 폐기 — products·analyses 무변경, job error(superseded_stale) + error 이벤트.
-       분석 중 입력이 바뀌는 어떤 동시성 시나리오에서도 stale 결과가 현재 입력의
-       분석·편집을 덮어쓸 수 없게 하는 유일한 정합성 관문.
-    ② products 갱신 — clothing_type 기록 + 현재 colors에 스와치 null-fill 병합.
-    ③ analyses 전체 교체 upsert(재분석은 덮어씀이 의도) ④ jobs done ⑤ done 이벤트."""
+    """분석 성공 종결(원자·lease 펜스). None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음."""
     async with conn.cursor() as cur:
         await cur.execute(
             "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
             (job_id, lease_token),
         )
         if await cur.fetchone() is None:
-            return None  # lease 상실 — 부수효과 0 (워커는 폐기)
-
-        await cur.execute(
-            "select colors from products where project_id = %s for update", (project_id,)
-        )
-        row = await cur.fetchone()
-        # 행 없음(극단: 워커 실행 중 삭제) → colors=[] → 아래 가드 불일치 → 보수적 폐기
-        current_colors = (row or {}).get("colors") or []
-
-        if input_fingerprint({"colors": current_colors}) != actual_fingerprint:
-            message = "입력이 변경되어 이전 분석을 중단했어요."
+            return None  # lease 빼앗김 — 부수효과 0
+        if clothing_type is not None:  # Product 단일 소유 (계약 §3.1)
             await cur.execute(
-                "update jobs set status = 'error', error_message = %s, "
-                "locked_by = null, locked_at = null, finished_at = now(), "
-                "metadata = coalesce(metadata, '{}'::jsonb) || %s::jsonb where id = %s",
-                (message, Json({**metadata, "error": "superseded_stale"}), job_id),
+                "update products set clothing_type = %s where project_id = %s",
+                (clothing_type, project_id),
             )
-            await cur.execute(
-                "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
-                (job_id, Json({"code": "superseded_stale", "message": message})),
-            )
-            return None
-
-        filled = apply_swatch_fill(current_colors, swatch_suggestions)
+        # analyses.payload 는 AG-01 분석분을 덮어쓴다(재분석 시 최신 결과 반영). locked 는 건드리지 않음.
         await cur.execute(
-            "update products set clothing_type = %s, colors = %s where project_id = %s",
-            (clothing_type, Json(filled), project_id),
+            "insert into analyses (project_id, payload) values (%s, %s) "
+            "on conflict (project_id) do update set payload = excluded.payload",
+            (project_id, Json(analysis_payload)),
         )
+        # metadata 병합 저장(provider·promptVersion) — provider 품질/폴백 추적·spike 데이터 근거.
         await cur.execute(
-            "insert into analyses (project_id, payload, locked) values (%s, %s, false) "
-            "on conflict (project_id) do update set payload = excluded.payload, "
-            "locked = excluded.locked",
-            (project_id, Json(payload)),
+            "update jobs set status = 'done', result = %s, progress = 100, "
+            "metadata = metadata || %s::jsonb, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (Json(result), Json(metadata), job_id),
         )
-
-    account = await get_account(conn, user_id)
-    credits = (account or {}).get("credits", 0)
-    data = {"projectId": project_id, "clothingType": clothing_type, **payload}
-    envelope = {"data": data, "credits": credits, "creditsCharged": 0}
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "update jobs set status = 'done', result = %s, credits_charged = 0, progress = 100, "
-            "locked_by = null, locked_at = null, finished_at = now(), "
-            "metadata = coalesce(metadata, '{}'::jsonb) || %s::jsonb where id = %s",
-            (Json(envelope), Json(metadata), job_id),
-        )
-        # 종결 이벤트 — 같은 tx (SSE replay 원본). result와 동일 shape (마네킹과 동일 규약).
         await cur.execute(
             "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
-            (job_id, Json(envelope)),
+            (job_id, Json(result)),
         )
-    return {"data": data, "available": credits}
+    return {"result": result, "metadata": metadata}
 
 
 async def finalize_analyze_failure(
@@ -927,11 +1032,12 @@ async def finalize_analyze_failure(
     *,
     job_id: str,
     lease_token: str,
+    project_id: str,
     message: str,
     metadata: dict,
     code: str = "analysis_failed",
 ) -> bool:
-    """실패 종결(원자·lease 펜스). 크레딧 settle 없음(예약 0). False = lease 상실."""
+    """분석 실패 종결(원자·lease 펜스): job error + error 이벤트. 크레딧 경로 없음. False = lease 상실."""
     async with conn.cursor() as cur:
         await cur.execute(
             "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
@@ -941,11 +1047,297 @@ async def finalize_analyze_failure(
             return False
         await cur.execute(
             "update jobs set status = 'error', error_message = %s, "
-            "locked_by = null, locked_at = null, finished_at = now(), "
-            "metadata = coalesce(metadata, '{}'::jsonb) || %s::jsonb where id = %s",
-            (message, Json(metadata), job_id),
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (message, job_id),
         )
-        # 종결 이벤트 — 같은 tx. 토스트 가능한 한국어 message (계약 §6).
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
+            (job_id, Json({"code": code, "message": message})),
+        )
+    return True
+
+
+# ---------- 콘티/에디터 (projects.storyboard·editor_blocks jsonb) ----------
+
+
+async def get_storyboard(conn: AsyncConnection, project_id: str) -> list:
+    """projects.storyboard (없으면 []). 소유권은 라우트가 get_project로 선검증."""
+    async with conn.cursor() as cur:
+        await cur.execute("select storyboard from projects where id = %s", (project_id,))
+        row = await cur.fetchone()
+    sb = (row or {}).get("storyboard")
+    return sb if isinstance(sb, list) else []
+
+
+async def save_storyboard(conn: AsyncConnection, user_id: str, project_id: str, blocks: list) -> list:
+    """콘티 저장 (owner 스코프). 반환 = 저장된 블록."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update projects set storyboard = %s where id = %s and user_id = %s "
+            "and deleted_at is null returning storyboard",
+            (Json(blocks), project_id, user_id),
+        )
+        row = await cur.fetchone()
+    return (row or {}).get("storyboard") or []
+
+
+async def get_editor_blocks(conn: AsyncConnection, project_id: str) -> list:
+    """projects.editor_blocks (없으면 []). 소유권은 라우트 선검증."""
+    async with conn.cursor() as cur:
+        await cur.execute("select editor_blocks from projects where id = %s", (project_id,))
+        row = await cur.fetchone()
+    eb = (row or {}).get("editor_blocks")
+    return eb if isinstance(eb, list) else []
+
+
+async def save_editor_blocks(conn: AsyncConnection, user_id: str, project_id: str, blocks: list) -> list:
+    """에디터 블록 저장 (owner 스코프)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update projects set editor_blocks = %s where id = %s and user_id = %s "
+            "and deleted_at is null returning editor_blocks",
+            (Json(blocks), project_id, user_id),
+        )
+        row = await cur.fetchone()
+    return (row or {}).get("editor_blocks") or []
+
+
+# ---------- 상세페이지(PL-4) 종결 (원자·lease 펜스) — 마네킹 패턴 미러 ----------
+
+
+async def finalize_detail_page_success(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    editor_blocks: list,
+    cut_assets: list[dict],  # [{asset_id, bucket, key, mime, size, width, height}] — 컷 이미지 asset 행
+    reserved: int,
+    charge: int,  # 성공 컷 수 × storyboardPerCut (부분 성공 미차감)
+    metadata: dict,
+) -> dict | None:
+    """성공 종결(원자·lease 펜스): 컷 asset 행 + editor_blocks 저장 + status='done' + 크레딧
+    confirm + job done. None = lease 상실. 마네킹 finalize와 동일 구조."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return None
+        for c in cut_assets:  # 컷 이미지 asset 행 (editor_blocks 가 /v1/assets/{id}/file 로 참조)
+            await cur.execute(
+                "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
+                "r2_key, mime_type, byte_size, width, height) "
+                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s) on conflict (id) do nothing",
+                (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
+                 c.get("size"), c.get("width"), c.get("height")),
+            )
+        await cur.execute(
+            "update projects set editor_blocks = %s, status = 'done' where id = %s",
+            (Json(editor_blocks), project_id),
+        )
+    # 크레딧 확정 — 버킷 FIFO 차감. 멱등 = job.status(위 running FOR UPDATE). charge=0이면 정산 skip.
+    if charge > 0:
+        available = await _consume_buckets(
+            conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+            charge=charge, action_key="detailPageGenerate", metadata=metadata,
+        )
+    else:  # 전 컷 실패(charge 0) — 예약만 해제
+        available = await release_credits(
+            conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+            settle_key=f"credit:job:{job_id}:settle", metadata={"reason": "no_charge"})
+    envelope = {"data": editor_blocks, "credits": available, "creditsCharged": charge}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "
+            "metadata = metadata || %s::jsonb, locked_by = null, locked_at = null, "
+            "finished_at = now() where id = %s",
+            (Json(envelope), charge, Json(metadata), job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
+            (job_id, Json(envelope)),
+        )
+    return {"editor_blocks": editor_blocks, "available": available}
+
+
+async def finalize_detail_page_failure(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    reserved: int,
+    settle_key: str,
+    message: str,
+    metadata: dict,
+    code: str = "generation_failed",
+) -> bool:
+    """실패 종결(원자·lease 펜스): 예약 해제 + job error + 이벤트. False = lease 상실."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return False
+    await _settle_credits(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+        charge=0, action_key="detailPageGenerate.release", settle_key=settle_key, metadata=metadata,
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'error', error_message = %s, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (message, job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
+            (job_id, Json({"code": code, "message": message})),
+        )
+    return True
+
+
+# ---------- 에디터 의류 탭(Wardrobe, PL-5/6) 종결 (원자·lease 펜스) — 마네킹 패턴 미러 ----------
+# AG-06(mode:'new')/AG-07(mode:'vary') 공용 종결. group 키는 colorId(있으면) | 'misc'(계약 §3.6).
+
+
+async def list_wardrobe_images(conn: AsyncConnection, user_id: str, project_id: str) -> list[dict]:
+    """프로젝트 Wardrobe 이미지 목록 (owner join, sort_order순). 그룹핑은 라우트가 group by
+    color_id ?? 'misc' 로 수행(계약 §3.6 Record<colorId|'misc', WardrobeImage[]>)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select wi.id::text as id, wi.color_id, wi.asset_id::text as asset_id,
+                   wi.ai, wi.cut_type, wi.sort_order
+            from wardrobe_images wi
+            join projects pr on pr.id = wi.project_id
+            where wi.project_id = %s and pr.user_id = %s and pr.deleted_at is null
+              and wi.deleted_at is null
+            order by wi.sort_order, wi.created_at
+            """,
+            (project_id, user_id),
+        )
+        return await cur.fetchall()
+
+
+def _wardrobe_image_api(row: dict) -> dict:
+    """wardrobe_images row → WardrobeImage (계약 §3.6). src=안정 앱 URL(만료 없음, §3)."""
+    return {
+        "id": row["id"],
+        "src": f"/v1/assets/{row['asset_id']}/file",
+        "ai": bool(row["ai"]),
+        "cutType": row["cut_type"],
+    }
+
+
+async def finalize_editor_image_success(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    image: dict,  # {asset_id, bucket, key, mime, size, width, height}
+    group: str | None,  # colorId | None(=misc, wardrobe_images.color_id 는 nullable)
+    cut_type: str | None,
+    reserved: int,
+    charge: int,
+    metadata: dict,
+) -> dict | None:
+    """성공 종결(원자·lease 펜스): 에셋 insert + wardrobe_images insert + 크레딧 confirm + job
+    done. None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음. finalize_mannequin_adjust_success
+    와 동일 구조(AG-06/07 공용 종결, mannequin/detail_page finalize 미러)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return None  # lease 빼앗김 — 부수효과 0 (워커는 폐기)
+        await cur.execute(
+            "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
+            "r2_key, mime_type, byte_size, width, height) "
+            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s)",
+            (image["asset_id"], user_id, project_id, image["bucket"], image["key"], image["mime"],
+             image.get("size"), image.get("width"), image.get("height")),
+        )
+        await cur.execute(
+            "select coalesce(max(sort_order), -1) + 1 as v from wardrobe_images "
+            "where project_id = %s and coalesce(color_id, 'misc') = %s",
+            (project_id, group or "misc"),
+        )
+        sort_order = (await cur.fetchone())["v"]
+        await cur.execute(
+            "insert into wardrobe_images (project_id, color_id, asset_id, ai, cut_type, sort_order) "
+            "values (%s, %s, %s, true, %s, %s) returning id::text as id",
+            (project_id, group, image["asset_id"], cut_type, sort_order),
+        )
+        wardrobe_id = (await cur.fetchone())["id"]
+        image_api = {  # WardrobeImage shape (계약 §3.6) — _wardrobe_image_api와 동일
+            "id": wardrobe_id,
+            "src": f"/v1/assets/{image['asset_id']}/file",
+            "ai": True,
+            "cutType": cut_type,
+        }
+    # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
+    # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.
+    available = await _consume_buckets(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+        charge=charge, action_key="editorImage", metadata=metadata,
+    )
+    # 폴링(jobs.result)과 SSE done이 **같은 봉투**({data, credits, creditsCharged}) — 계약 §6
+    envelope = {"data": image_api, "credits": available, "creditsCharged": charge}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (Json(envelope), charge, job_id),
+        )
+        # 종결 이벤트 — 같은 tx (SSE replay 원본). 상태 변경과 원자적. result와 동일 shape.
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
+            (job_id, Json(envelope)),
+        )
+    return image_api
+
+
+async def finalize_editor_image_failure(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    user_id: str,
+    project_id: str,
+    reserved: int,
+    settle_key: str,
+    message: str,
+    metadata: dict,
+    code: str = "generation_failed",
+) -> bool:
+    """실패 종결(원자·lease 펜스): 예약 해제 + job error + error 이벤트. False = lease 상실.
+    finalize_mannequin_adjust_failure와 동일 구조(AG-06/07 공용 종결 미러)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return False
+    await _settle_credits(
+        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
+        charge=0, action_key="editorImage.release", settle_key=settle_key, metadata=metadata,
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'error', error_message = %s, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (message, job_id),
+        )
         await cur.execute(
             "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
             (job_id, Json({"code": code, "message": message})),
@@ -1249,126 +1641,3 @@ async def list_credit_history(conn: AsyncConnection, user_id: str, limit: int = 
             (user_id, limit),
         )
         return await cur.fetchall()
-
-
-# ---------- 컷 생성 job 종결 + wardrobe (ADR-0004 — kind='editor_image') ----------
-
-
-async def finalize_cut_success(
-    conn: AsyncConnection,
-    *,
-    job_id: str,
-    lease_token: str,
-    user_id: str,
-    project_id: str,
-    image: dict,  # {asset_id, bucket, key, mime, size, width, height}
-    color_id: str | None,
-    cut_type: str,
-    reserved: int,
-    charge: int,
-    metadata: dict,
-) -> dict | None:
-    """컷 생성 성공 종결(원자·lease 펜스) — asset + wardrobe_images 기록 + 크레딧 확정.
-    None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음. envelope shape은 마네킹과 동일(§6)."""
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
-            (job_id, lease_token),
-        )
-        if await cur.fetchone() is None:
-            return None
-        await cur.execute(
-            "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
-            "r2_key, mime_type, byte_size, width, height) "
-            "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s)",
-            (image["asset_id"], user_id, project_id, image["bucket"], image["key"],
-             image["mime"], image.get("size"), image.get("width"), image.get("height")),
-        )
-        await cur.execute(
-            "select coalesce(max(sort_order), 0) + 1 as so from wardrobe_images where project_id = %s",
-            (project_id,),
-        )
-        sort_order = (await cur.fetchone())["so"]
-        await cur.execute(
-            "insert into wardrobe_images (project_id, color_id, asset_id, ai, cut_type, sort_order) "
-            "values (%s, %s, %s, true, %s, %s) returning id::text as id",
-            (project_id, color_id, image["asset_id"], cut_type, sort_order),
-        )
-        wardrobe_id = (await cur.fetchone())["id"]
-    wardrobe = {  # WardrobeImage shape (계약 §3.6) — src는 안정 앱 URL
-        "id": wardrobe_id,
-        "src": f"/v1/assets/{image['asset_id']}/file",
-        "ai": True, "cutType": cut_type, "colorId": color_id,
-    }
-    available = await _consume_buckets(
-        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
-        charge=charge, action_key="editorImage", metadata=metadata,
-    )
-    envelope = {"data": wardrobe, "credits": available, "creditsCharged": charge}
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "
-            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (Json(envelope), charge, job_id),
-        )
-        await cur.execute(
-            "insert into job_events (job_id, event_type, payload) values (%s, 'done', %s)",
-            (job_id, Json(envelope)),
-        )
-    return {"wardrobe": wardrobe, "available": available}
-
-
-async def finalize_cut_failure(
-    conn: AsyncConnection,
-    *,
-    job_id: str,
-    lease_token: str,
-    user_id: str,
-    project_id: str,
-    reserved: int,
-    settle_key: str,
-    message: str,
-    metadata: dict,
-    code: str = "generation_failed",
-) -> bool:
-    """컷 생성 실패 종결 — 예약 해제 + job error + error 이벤트 (마네킹 실패와 동형)."""
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
-            (job_id, lease_token),
-        )
-        if await cur.fetchone() is None:
-            return False
-    await _settle_credits(
-        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
-        charge=0, action_key="editorImage.release", settle_key=settle_key, metadata=metadata,
-    )
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "update jobs set status = 'error', error_message = %s, "
-            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (message, job_id),
-        )
-        await cur.execute(
-            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
-            (job_id, Json({"code": code, "message": message})),
-        )
-    return True
-
-
-async def list_wardrobe(conn: AsyncConnection, user_id: str, project_id: str) -> list[dict]:
-    """프로젝트의 생성/업로드 이미지 목록 (계약 §3.6) — 소유 프로젝트만, sort_order 순."""
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "select w.id::text as id, w.color_id, w.cut_type, w.ai, w.asset_id::text as asset_id "
-            "from wardrobe_images w join projects p on p.id = w.project_id "
-            "where w.project_id = %s and p.user_id = %s and w.deleted_at is null "
-            "order by w.sort_order, w.created_at",
-            (project_id, user_id),
-        )
-        rows = await cur.fetchall()
-    return [
-        {"id": r["id"], "src": f"/v1/assets/{r['asset_id']}/file",
-         "ai": bool(r["ai"]), "cutType": r["cut_type"], "colorId": r["color_id"]}
-        for r in rows
-    ]

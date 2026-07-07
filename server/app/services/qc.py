@@ -9,7 +9,7 @@ from io import BytesIO
 
 from PIL import Image, ImageChops, ImageFilter, ImageStat
 
-# --- 임계값 (실측 1K 정상/유령 표본으로 캘리브레이션 대상) ---
+# --- 임계값 (2026-07-04 캘리브레이션: scripts/qc_calibrate.py — 베이스 마네킹·모델 프리셋 + 합성 실패모드) ---
 FG_THRESHOLD = 28  # 배경과의 거리 > 이 값 = 전경
 STRONG_THRESHOLD = 80  # 이만큼 진하면 '확실한 전경'(유령은 거의 없음)
 MIN_SIDE = 640
@@ -17,8 +17,15 @@ ASPECT_MIN, ASPECT_MAX = 0.62, 0.85  # 세로 비율
 BBOX_TOP_MAX = 0.16  # 전경 상단이 이보다 위
 BBOX_BOTTOM_MIN = 0.86  # 전경 하단이 이보다 아래
 BBOX_HEIGHT_MIN = 0.72  # 전경 높이 비율
-LOWER_BODY_MIN_RATIO = 0.012  # 하단 12% 영역의 전경 비율
-STRONG_FG_MIN_RATIO = 0.05  # 확실한 전경 비율 (유령이면 낮음)
+LOWER_BODY_MIN_RATIO = 0.012  # 하단 12% 영역의 전경 비율 (일반 레짐)
+LOWER_BODY_MIN_RATIO_LOW = 0.0001  # 〃 저대비 레짐 — 흰 발/흰 바닥 정상(≈0.0002~0.0004)과 소실(=0) 사이
+# 유령 판정 2-레짐 (실측: 흰옷 정상 fg≈0.010/strong≈0.0002 · 흰 유령 fg≈0.0001 · 유색 유령 fg≈0.06/strong≈0.000):
+#  - 저대비 레짐(fg < NORMAL_CONTRAST_FG_RATIO — 화이트·아이보리 의류/호리존): strong 검사를 건너뛰고
+#    FG_SOLID_MIN_RATIO 미달만 유령으로 본다. 흰옷 정상을 차단하지 않기 위함(모노톤 스와치 실존).
+#  - 일반 레짐(fg ≥ NORMAL_CONTRAST_FG_RATIO): strong < STRONG_FG_MIN_RATIO 면 유령(유색 유령 검출 유지).
+FG_SOLID_MIN_RATIO = 0.004  # 전경 최소 질량 — 흰 유령(≈0.0001)과 흰옷 정상(≈0.010) 사이
+NORMAL_CONTRAST_FG_RATIO = 0.03  # 레짐 경계 — 흰옷 정상(≈0.013)과 유색 유령(≈0.06) 사이
+STRONG_FG_MIN_RATIO = 0.05  # 확실한 전경 비율 (유령이면 낮음) — 일반 레짐에서만 적용
 
 
 @dataclass
@@ -72,7 +79,7 @@ def evaluate_mannequin_qc(generated_bytes: bytes) -> QcResult:
     metrics["strongFgRatio"] = round(strong_count / total, 4)
 
     bbox = fg.getbbox()  # (l, t, r, b) or None
-    if not bbox or fg_count < total * 0.02:
+    if not bbox or fg_count < total * FG_SOLID_MIN_RATIO:
         reasons.append("ghost_or_artifact")
         return QcResult("retry", reasons, metrics)
 
@@ -85,13 +92,16 @@ def evaluate_mannequin_qc(generated_bytes: bytes) -> QcResult:
     if t > h * BBOX_TOP_MAX or b < h * BBOX_BOTTOM_MIN or (b - t) < h * BBOX_HEIGHT_MIN:
         reasons.append("full_body_crop")
 
-    # 하단 12% 전경 존재(발/다리) — 크롭·유령 양쪽 탐지
+    # 하단 12% 전경 존재(발/다리) — 크롭·유령 양쪽 탐지. 임계는 레짐 연동(흰 발·흰 바닥 대응)
+    normal_contrast = fg_count >= total * NORMAL_CONTRAST_FG_RATIO
+    lower_min = LOWER_BODY_MIN_RATIO if normal_contrast else LOWER_BODY_MIN_RATIO_LOW
     lower = fg.crop((0, int(h * 0.88), w, h))
-    if lower.histogram()[-1] < total * LOWER_BODY_MIN_RATIO:
+    if lower.histogram()[-1] < total * lower_min:
         reasons.append("missing_lower_body")
 
-    # 유령: 확실한 전경 비율이 낮으면 옅게 번진 것
-    if strong_count < total * STRONG_FG_MIN_RATIO:
+    # 유령(일반 레짐만): 전경 질량은 있는데 확실한 전경이 없으면 옅게 번진 것.
+    # 저대비 레짐(흰옷·호리존)은 strong이 원래 0에 수렴 — 위 FG_SOLID_MIN_RATIO 체크만으로 판정.
+    if normal_contrast and strong_count < total * STRONG_FG_MIN_RATIO:
         reasons.append("ghost_or_artifact")
 
     return QcResult("pass" if not reasons else "retry", reasons, metrics)

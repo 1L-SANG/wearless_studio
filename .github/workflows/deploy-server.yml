@@ -1,0 +1,62 @@
+name: deploy-server
+
+# server/ 변경 시에만 배포. 프론트는 Vercel 담당(별개).
+on:
+    push:
+        branches: [main]
+        paths:
+            - "server/**"
+            - "copilot/**"
+            - ".github/workflows/deploy-server.yml"
+    workflow_dispatch: {} # 수동 배포 버튼
+
+concurrency:
+    group: deploy-server
+    cancel-in-progress: false # 배포 중첩 방지 (롤링 중 새 배포 대기)
+
+permissions:
+    id-token: write # AWS OIDC assume-role
+    contents: read
+
+env:
+    AWS_REGION: ap-northeast-2
+    COPILOT_APP: wearless
+    COPILOT_ENV: prod
+    COPILOT_SVC: api
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: server
+        steps:
+            - uses: actions/checkout@v5
+            - uses: astral-sh/setup-uv@v5
+            - run: uv sync --frozen
+            - run: uv run pytest -q
+
+    deploy:
+        needs: test
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+
+            - name: AWS 자격증명 (OIDC)
+              uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+                  aws-region: ${{ env.AWS_REGION }}
+
+            - name: Copilot CLI 설치
+              run: |
+                  curl -Lo /usr/local/bin/copilot \
+                    https://github.com/aws/copilot-cli/releases/latest/download/copilot-linux
+                  chmod +x /usr/local/bin/copilot
+
+            - name: 배포 (이미지 빌드→ECR→ECS 롤링)
+              run: |
+                  copilot svc deploy \
+                    --app "$COPILOT_APP" \
+                    --name "$COPILOT_SVC" \
+                    --env "$COPILOT_ENV"
