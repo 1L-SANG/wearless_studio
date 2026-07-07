@@ -402,7 +402,8 @@ export function Storyboard() {
     (async () => {
       await useAppStore.getState().loadProject();
       const pid = useAppStore.getState().projectId;
-      const [b, c, m, p] = await Promise.all([api.getStoryboard(pid), api.getCatalogs(), api.getMatchClothing(), api.getProduct(pid)]);
+      if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
+      const [b, c, m, p] = await Promise.all([api.getStoryboard(pid), api.getCatalogs(), api.getMatchClothing(pid), api.getProduct(pid)]);
       setBlocks(b); setCatalogs(c); setMatchClothing(m); setClothingType(p.clothingType || 'top');
       const opts = (p.colors || []).filter((col) => col.images.length || col.isBase).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexFor(col) }));
       setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);

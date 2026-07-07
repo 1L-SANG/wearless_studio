@@ -162,8 +162,10 @@ export function useDoneGuard() {
     let cancelled = false;
     (async () => {
       await useAppStore.getState().loadProject();
-      const p = await api.getProject(useAppStore.getState().projectId);
-      if (!cancelled && p.status === 'done') setBlocked(true);
+      const pid = useAppStore.getState().projectId;
+      if (!pid) return;   // 콜드 진입(복원 불가) — 가드 대상 아님, 화면 자체가 입력으로 리다이렉트
+      const p = await api.getProject(pid);
+      if (!cancelled && p?.status === 'done') setBlocked(true);
     })();
     return () => { cancelled = true; };
   }, []);

@@ -454,6 +454,60 @@ async def save_analysis(
     return {"projectId": row["project_id"], **(row["payload"] or {})}
 
 
+@router.get(
+    "/projects/{project_id}/analysis",
+    responses={**COMMON_RESPONSES},
+    tags=["Analysis"],
+    summary="AI 상품 분석 결과 조회",
+)
+async def get_analysis(
+    request: Request, project_id: str, user_id: str = Depends(require_user)
+):
+    """저장된 분석 payload(프론트 소유 JSONB)를 조회합니다. 하드 새로고침 후 매칭 선택 등 복원용.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**: `404` 프로젝트 없음/타인 소유. 분석 미저장이면 `{projectId}` 만 반환.
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        payload = await repo.get_analysis(conn, project_id)
+    return {"projectId": project_id, **(payload or {})}
+
+
+@router.post(
+    "/projects/{project_id}/wash-care:draft",
+    responses={**COMMON_RESPONSES, 502: {"model": ErrorResponse}},
+    tags=["Analysis"],
+    summary="AI 세탁 관리법 초안 생성",
+)
+async def draft_wash_care(
+    request: Request, project_id: str, user_id: str = Depends(require_user)
+):
+    """상품 종류·소재를 근거로 짧은 세탁 관리 문구를 생성합니다(무과금·동기). 반환: `{text}`.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**: `404` 프로젝트 없음/타인 소유. `502` LLM 생성 실패.
+    """
+    s = request.app.state.settings
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        analysis = await repo.get_analysis(conn, project_id) or {}
+    try:
+        raw, _provider = await product_analyst.draft_wash_care(s, product, analysis)
+    except VisionError as e:
+        raise HTTPException(status_code=502, detail={"code": "wash_care_failed", "message": str(e)})
+    text = (raw.get("text") or "").strip()
+    if not text:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "wash_care_failed",
+                    "message": "세탁 정보 생성에 실패했어요. 잠시 후 다시 시도해 주세요."})
+    return JSONResponse({"text": text})
+
+
 @router.post(
     "/projects/{project_id}/analyze",
     responses={

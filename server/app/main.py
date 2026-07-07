@@ -4,6 +4,8 @@ Phase 0: healthz + JWT 검증 + 에러 봉투 { error: { code, message, details?
 Phase 1: /me/account · /projects(library) · projects CRUD (routes.py).
 """
 
+import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -27,8 +29,54 @@ DEFAULT_ERROR_CODES = {
     404: "not_found",
 }
 
+# LogRecord 표준 속성 집합 — 이 밖의 키만 extra로 간주.
+_RESERVED_LOG_ATTRS = frozenset(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
+
+
+class _ExtraFormatter(logging.Formatter):
+    """기본 메시지 뒤에 extra={...} 필드를 key=value로 덧붙인다.
+
+    analysis_spike·retrieval_call·seller_text_canonicalize 등 관측 로그는
+    값이 전부 extra에 있어서, 이게 없으면 메시지만 찍히고 데이터가 사라진다.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        base = super().format(record)
+        extras = {
+            k: v
+            for k, v in record.__dict__.items()
+            if k not in _RESERVED_LOG_ATTRS and not k.startswith("_")
+        }
+        if extras:
+            kv = " ".join(f"{k}={v!r}" for k, v in extras.items())
+            return f"{base} | {kv}"
+        return base
+
+
+def _configure_logging() -> None:
+    """앱 로깅 정본 설정 — 중앙 설정이 없어 wearless.* / app.* INFO 로그가
+    prod에서 묻히던 문제(관측 로그 유실)를 막는다. LOG_LEVEL env로 조절(기본 INFO).
+
+    uvicorn은 자기 named 로거(propagate=False)만 설정하므로 root 핸들러 교체가
+    access/error 로그를 이중 출력하거나 죽이지 않는다.
+    """
+    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(_ExtraFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+
+    root = logging.getLogger()
+    root.handlers[:] = [handler]  # 재호출(테스트·import)에도 핸들러 중복 안 되게 교체
+    root.setLevel(level)
+
+    # INFO root에서 서드파티 소음 억제 — 우리 로그만 보이게.
+    for noisy in ("httpx", "httpcore", "botocore", "boto3", "urllib3", "asyncio"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    _configure_logging()
     settings = settings or load_settings()
 
     pool = create_pool(settings.database_url) if settings.database_url else None

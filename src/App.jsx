@@ -22,6 +22,8 @@ import { LazyEditor } from '@/features/editor/lazyEditor.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
+import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
+import { syncDraftToBackend } from '@/lib/draftSync.js';
 
 /* 보호 라우트 — 세션 없으면 공개 입력 페이지로. 입력은 공개라 리다이렉트 루프 없음. */
 function RequireAuth() {
@@ -37,17 +39,50 @@ function ProductInputRoute() {
   return <ProductInput key={generation} />;
 }
 
-/* '/' 복귀의 리다이렉트 — 즉시 이동. (Option B) 사진의 백엔드 동기화는 보류한다: 현재 마네킹
-   등 하위 단계가 mock 이라 sync 가 결과에 영향이 없는데, 원격(Railway+R2)이 느리고 불안정해
-   로그인→마네킹을 10초 지연·실패시켰다. 익명 입력+분석은 IndexedDB 에 남아 ProductInput 이
-   복원하고, 실서버 사진 동기화는 R2 설정 + 업로드 병렬화 후 재활성한다(Option A).
+/* '/' 복귀의 리다이렉트. (Option B 재활성) 익명 입력+분석 draft(사진 blob 포함)를 로그인 후
+   실서버로 동기화한다 — 프로젝트 생성 + 사진 R2 업로드 + 상품/분석 저장(draftSync). 마네킹 진입
+   목표 + pending draft + http 모드일 때만. 동기화 중엔 로딩 UX 를 보여주고, 지연/실패가 진입을
+   무한 블록하지 않게 타임아웃 시 입력으로 폴백한다(draft 는 IndexedDB 에 남아 ProductInput 이 복원).
    목표가 마네킹인데 세션이 없으면(로그인 취소) 입력으로. */
+const DRAFT_SYNC_TIMEOUT_MS = 20000;
+
 function RootRedirect() {
   const { session } = useAuth();
   const [target] = useState(() => sessionStorage.getItem('wl_postLogin') || '/create/input');
-  useEffect(() => { sessionStorage.removeItem('wl_postLogin'); }, []);
-  const dest = target === '/create/mannequin' && !session ? '/create/input' : target;
-  return <Navigate to={dest} replace />;
+  const [phase, setPhase] = useState('init');   // init | syncing | done
+  const [dest, setDest] = useState(null);
+
+  useEffect(() => {
+    sessionStorage.removeItem('wl_postLogin');
+    let alive = true;
+    (async () => {
+      const wantsMannequin = target === '/create/mannequin';
+      if (!session) { setDest(wantsMannequin ? '/create/input' : target); setPhase('done'); return; }
+      const mode = import.meta.env.VITE_API_MODE ?? 'mock';
+      if (!(wantsMannequin && mode === 'http' && hasPendingDraft())) {
+        setDest(target); setPhase('done'); return;
+      }
+      setPhase('syncing');
+      try {
+        const draft = await loadDraft();
+        if (!draft?.product) { setDest(target); setPhase('done'); return; }
+        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('sync_timeout')), DRAFT_SYNC_TIMEOUT_MS));
+        const { projectId } = await Promise.race([syncDraftToBackend(draft), timeout]);
+        if (!alive) return;
+        useAppStore.setState({ projectId, projectPersisted: true });   // 마네킹이 이 project 로 진행
+        await clearDraft().catch(() => {});
+        setDest('/create/mannequin'); setPhase('done');
+      } catch {
+        if (!alive) return;
+        setDest('/create/input'); setPhase('done');   // 실패/지연 — draft 복원 + 재시도(입력에서)
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  if (phase === 'syncing') return <div className="route-loading">입력 내용을 안전하게 저장하고 있어요…</div>;
+  if (phase === 'done' && dest) return <Navigate to={dest} replace />;
+  return <div className="route-loading">불러오는 중이에요</div>;
 }
 
 export default function App() {

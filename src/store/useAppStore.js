@@ -12,6 +12,7 @@
    ============================================================= */
 import { create } from 'zustand';
 import { api } from '@/lib/api/index.js';
+import { resetAnalysisCache } from '@/lib/api/httpAdapter.js';
 import { clearDraft } from '@/lib/draftStore.js';
 
 const initialFlow = {
@@ -70,6 +71,7 @@ export const useAppStore = create((set, get) => ({
      을 올려 ProductInput 을 remount(폼 초기화)한다. */
   async beginProject() {
     ensureProjectInflight = null;   // 새 제작 시작 — 이전 플로우의 in-flight 생성과 분리
+    resetAnalysisCache();           // 이전 프로젝트의 analysis/매칭 캐시 해제 (F1)
     await clearDraft().catch(() => {});
     // http: 서버 POST 이연(빈 보관함 행 방지) — projectId 없이 시작, 생성은 ensureProject.
     // mock: createProject 가 reseedDraft 로 DB.product/analysis 를 깨끗한 시드로 되돌린다.
@@ -101,9 +103,15 @@ export const useAppStore = create((set, get) => ({
     })();
     return ensureProjectInflight;
   },
-  /** 새로고침 등으로 스토어가 비었을 때 서버의 project 에서 선택값 복원. */
+  /** 스토어가 비었을 때 projectId·선택값 복원 시도. 복원 불가면 null 반환(화면이 입력으로 리다이렉트).
+     http: 서버엔 '현재 프로젝트' 개념이 없다(projectId 원천은 스토어뿐, 플로우 라우트에 URL 파라미터 없음).
+       콜드 새로고침/직접 URL 진입이면 복원할 게 없으므로 null — getProject 를 argless 로 호출하지 않는다
+       (과거 mock getProject 가 가짜 단일 project 를 스토어에 심어 upload-url 이 404 나던 poison 근원).
+     mock: 단일 시드 프로젝트를 복원해 dev 새로고침 흐름을 유지. */
   async loadProject() {
     if (get().projectId) return get().projectId;
+    const mode = import.meta.env.VITE_API_MODE ?? 'mock';
+    if (mode !== 'mock') return null;
     const p = await api.getProject();
     set({
       projectId: p.id,

@@ -210,6 +210,7 @@ export function Mannequin() {
       await useAppStore.getState().loadProject();
       if (cancelled) return;
       const pid = useAppStore.getState().projectId;
+      if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
       const [nextProduct, nextAnalysis, nextCatalogs] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
@@ -323,7 +324,6 @@ export function Mannequin() {
     if (!allDone || busy) return;
     if (needsRegen) { regenerate(); return; }
     navigate('/create/storyboard');   // 구성(composeMode)은 store 로 이미 반영됨
-  };
 
   if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={progress} /></>;
 

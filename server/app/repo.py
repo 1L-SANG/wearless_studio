@@ -89,7 +89,7 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
                 pr.updated_at
             from projects pr
             left join products prod on prod.project_id = pr.id
-            where pr.user_id = %s and pr.deleted_at is null
+            where pr.user_id = %s and pr.deleted_at is null and pr.status = 'done'
             order by pr.updated_at desc
             """,
             (user_id,),

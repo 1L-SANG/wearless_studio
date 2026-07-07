@@ -6,6 +6,8 @@
    ============================================================= */
 import { supabase } from '@/lib/supabase.js';
 import { DB } from '@/mock/db.js';
+import { LIMITS } from '@/lib/limits.js';
+import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -71,6 +73,73 @@ export async function uploadPhoto(projectId, { filename, mime, blob }) {
   return { assetId, url: asset.url };
 }
 
+// ---- 매칭 의류 / analysis (US-4) --------------------------------------------
+// 서버는 GET /analysis 라우트가 없고 PATCH 가 REPLACE(payload=excluded.payload) 라, 전체 analysis 를
+// 이 모듈에 캐시해 delta 를 머지한 full payload 로 저장한다(delta 만 보내면 다른 필드가 유실됨).
+// analyzeProduct 가 seed, saveAnalysis 가 갱신. 페이지 세션 동안 유지(하드 새로고침 시 리셋 → 재분석).
+// getMatchClothing 도 이 캐시를 읽어 화면 전환(분석→마네킹) 간 매칭 선택을 이월한다.
+// projectId 로 스코프 — 보관함에서 다른 프로젝트를 열어도 이전 프로젝트의 매칭이 새지 않게 한다.
+let analysisCache = { projectId: null, analysis: null };  // { projectId, analysis }
+const cachedAnalysisFor = (projectId) =>
+  (analysisCache.projectId === projectId ? analysisCache.analysis : null);
+
+// '새 제작' 진입 시 이전 프로젝트의 analysis 캐시를 비운다(beginProject 가 호출). 프로젝트 스코프가
+// 이미 교차 유출을 막지만, 명시적 리셋으로 stale 참조 해제 + defense-in-depth (F1).
+export function resetAnalysisCache() {
+  analysisCache = { projectId: null, analysis: null };
+}
+
+const isMatchRefresh = (patch) =>
+  ['clothingType', 'targetGenders', 'styleTags'].some((k) => k in patch);
+
+// match-candidates(실 매칭 아이템) 조회 → [{id,name,gender,thumb,imageUrl,thumbnailUrl,selected:false}].
+// clothingType 은 필수 쿼리 — analysis 우선, 없으면 서버 product 에서. gender/styleTags 는 반복 파라미터.
+async function fetchMatchCandidates(projectId, analysis) {
+  const clothingType = analysis?.clothingType
+    || (await http(`/v1/projects/${projectId}/product`))?.clothingType || 'top';
+  const qs = new URLSearchParams();
+  qs.set('clothingType', clothingType);
+  (analysis?.targetGenders || []).forEach((g) => qs.append('gender', g));
+  (analysis?.styleTags || []).forEach((t) => qs.append('styleTags', t));
+  return http(`/v1/projects/${projectId}/analysis/match-candidates?${qs.toString()}`);
+}
+
+// match-candidate → 레거시 matchClothing 아이템. selOrder 있으면 selected(계약 §6 shape 단일 소스).
+const toMatchItem = (it, selOrder) => ({
+  id: it.id, name: it.name, gender: it.gender,
+  thumb: it.thumb, imageUrl: it.imageUrl, thumbnailUrl: it.thumbnailUrl,
+  selected: selOrder != null, ...(selOrder != null ? { selOrder } : {}),
+});
+
+// 추천 재계산(로그인·서버 project): 이전 선택을 유효 범위에서 유지, 없으면 상위 N 기본 선택(mock 계약 동일).
+async function recommendMatchHttp(projectId, analysis, current) {
+  const items = await fetchMatchCandidates(projectId, analysis);
+  const prev = (current || []).filter((m) => m.selected)
+    .sort((a, b) => (a.selOrder || 0) - (b.selOrder || 0)).map((m) => m.id);
+  const valid = prev.filter((id) => items.some((it) => it.id === id)).slice(0, LIMITS.matchClothingMax);
+  const chosen = valid.length ? valid : items.slice(0, LIMITS.matchClothingMax).map((it) => it.id);
+  return items.map((it) => {
+    const idx = chosen.indexOf(it.id);
+    return toMatchItem(it, idx >= 0 ? idx + 1 : null);
+  });
+}
+
+// 선택 토글 머지 — id 단위 selected/selOrder 반영 후 1..max 재부여(mock 정규화와 동일 규칙).
+function mergeMatchSelection(currentMatch, matchPatch) {
+  const patchById = new Map(matchPatch.map((m) => [m.id, m]));
+  const merged = (currentMatch || []).map((m) => {
+    const p = patchById.get(m.id);
+    if (!p) return m;
+    return { ...m, selected: !!p.selected, selOrder: p.selected ? p.selOrder : undefined };
+  });
+  const ranked = merged.filter((m) => m.selected)
+    .sort((a, b) => (a.selOrder || 99) - (b.selOrder || 99)).slice(0, LIMITS.matchClothingMax);
+  const orderById = new Map(ranked.map((m, i) => [m.id, i + 1]));
+  return merged.map((m) => orderById.has(m.id)
+    ? { ...m, selected: true, selOrder: orderById.get(m.id) }
+    : { ...m, selected: false, selOrder: undefined });
+}
+
 export const httpAdapter = {
   // 상품 사진(blob)을 R2에 업로드하고 images[].id 를 **서버 asset id 로 치환**한다.
   // 서버(mannequin.base_color_images·분석 워커)는 colors[].images[].id 를 asset id 로 링크하므로,
@@ -95,13 +164,8 @@ export const httpAdapter = {
     return { ...product, colors };
   },
   async saveProduct(projectId, patch) {
-    const row = await http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: patch });
-    // 부분 스왑 브릿지(codex 리뷰 P2): getProduct·마네킹·콘티·에디터는 아직 mock 폴백이라
-    // DB.product 를 읽는다. 실 saveProduct 가 mock 미러를 안 건드리면 하위 단계가 seed 를 읽으므로,
-    // 그 단계들이 http 로 함께 스왑되기 전까지 mock 미러도 같은 patch 로 갱신한다.
-    Object.assign(DB.product, patch);
-    if (patch.name != null) DB.project.title = patch.name;
-    return row;
+    // getProduct·마네킹·콘티·에디터가 모두 http 로 스왑됨(US-2~4) → mock 미러 불필요, 서버가 단일 소스.
+    return http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: patch });
   },
   // AG-01 상품 분석 — POST /analyze(job) → 폴링 → analysis payload.
   // 반환 shape 은 mock(계약 §6)과 **동일해야 한다** — AnalysisForm 이 a.models/.matchClothing/
@@ -120,7 +184,11 @@ export const httpAdapter = {
       subCategory: ai.subCategory ?? null,
       targetGenders: ai.targetGenders ?? [],
       fit: ai.fit ?? null,
-      materials: ai.materials ?? [],
+      // AI 는 확신 없으면 materials 를 비운다(피복 오탐 방지). 빈값이면 자주 쓰는 소재 2개를 편집용
+      // 기본값으로 미리 채워 셀러가 바로 수정·확정하게 한다(최종 상세페이지 copywriter 가 이 값을 사용).
+      materials: (ai.materials && ai.materials.length)
+        ? ai.materials
+        : [{ name: '면', ratio: 60 }, { name: '폴리에스터', ratio: 40 }],
       aiSuggestedPoints: ai.aiSuggestedPoints ?? [],
       suggestedName: ai.suggestedName ?? base.suggestedName,
       styleTags: ai.styleTags ?? [],
@@ -129,6 +197,7 @@ export const httpAdapter = {
     };
     // 실측은 AI 미산출 → 값 비움(사용자 직접 입력, PRD §6.5). mock analyzeProduct 와 동일 처리.
     merged.measurements = (base.measurements || []).map((m) => ({ ...m, value: null }));
+    analysisCache = { projectId, analysis: merged };   // US-4: full-payload 머지 + 매칭 선택 이월 seed(프로젝트 스코프)
     return merged;
   },
   // ---- 상세페이지 (PL-4) — 콘티·에디터는 서버 소유. detail_page job 이 저장 콘티를 읽는다 ----
@@ -136,28 +205,93 @@ export const httpAdapter = {
     return http(`/v1/projects/${projectId}/storyboard`);
   },
   async saveStoryboard(projectId, blocks) {
-    const out = await http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
-    DB.storyboard = blocks;  // mock 미러(부분 스왑 브릿지 — mock 폴백 읽기 정합)
-    return out;
+    return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
   },
   async getEditorBlocks(projectId) {
     return http(`/v1/projects/${projectId}/editor-blocks`);
   },
   async saveEditorBlocks(projectId, blocks) {
     await http(`/v1/projects/${projectId}/editor-blocks`, { method: 'PUT', body: blocks });
-    DB.editorBlocks = blocks;
   },
   // AG-06 컷 + AG-02/03 카피 → M-02 조립. 완료 재호출은 서버가 기존 결과 반환(무차감).
   async generateDetailPage(projectId, { onProgress } = {}) {
     const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
     if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(202 아님)
     const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
-    DB.editorBlocks = result.data; DB.project.status = 'done';  // mock 미러
     return { data: result.data, credits: result.credits };
   },
-  // Phase 1-B 읽기·CRUD 스왑 (계약 §6 시그니처 동일). 미구현 함수는 mock 폴백.
-  // getProject 는 store 가 projectId 없이 호출(api.getProject()) → 시그니처 정리 후
-  // 플로우 단계에서 스왑. 지금 스왑하면 깨지므로 mock 유지.
+  // 프로젝트 단건 조회 (계약 §6) — {id,status,title,composeMode,copywriting,
+  // selectedMannequinId,adjustCount,createdAt,updatedAt}. projectId 필수:
+  // store.loadProject 가 argless 로 부르던 과거 경로(mock 가짜 project 오염 → 404)는
+  // useAppStore 에서 제거됐다. 방어적으로 pid 없으면 서버 호출 없이 null.
+  async getProject(projectId) {
+    if (!projectId) return null;
+    return http(`/v1/projects/${projectId}`);
+  },
+  // 상품 조회 (계약 §3.1) — {id,projectId,name,clothingType,colors[],measurements[],
+  // measurementsUnknown,uploadComplete}. colors 는 프론트-소유 JSONB(saveProduct 가 저장한 isBase·images shape).
+  // projectId 없으면(비로그인, 또는 입력단계 — 서버 project 생성은 submit 로 이연) 서버 product 가 없으므로
+  // 클라 seed 템플릿(DB.product)을 반환한다. ProductInput 이 colors[0](isBase 포함)을 새 색상 템플릿으로 쓰므로
+  // 빈 colors 를 주면 앵글 슬롯(앞/뒤/디테일/착용)이 사라진다 — mock 과 동일 계약 유지.
+  async getProduct(projectId) {
+    if (!projectId) return JSON.parse(JSON.stringify(DB.product));
+    return http(`/v1/projects/${projectId}/product`);
+  },
+  // 분석 저장 (계약 §3.2) — 서버 PATCH 는 REPLACE 라 캐시에 delta 를 머지한 full payload 를 보낸다
+  // (delta 만 보내면 다른 analysis 필드가 유실). 매칭 추천 갱신·선택 토글을 반영해 반환 matchClothing 을
+  // 콜러(AnalysisForm)가 읽는다. projectId 없으면(비로그인 공개 분석) 서버 쓰기 없이 추천만 계산.
+  async saveAnalysis(projectId, patch) {
+    const { matchClothing: matchPatch, ...rest } = patch;
+    const cached = cachedAnalysisFor(projectId);
+    const base = cached ? { ...cached } : {};
+    Object.assign(base, rest);
+    if (isMatchRefresh(patch)) {
+      base.matchClothing = projectId
+        ? await recommendMatchHttp(projectId, base, base.matchClothing)
+        : recommendLegacyMatchClothing({
+          clothingType: base.clothingType, targetGenders: base.targetGenders,
+          styleTags: base.styleTags, current: base.matchClothing,
+        });
+    }
+    if (Array.isArray(matchPatch)) {
+      base.matchClothing = mergeMatchSelection(base.matchClothing || [], matchPatch);
+    }
+    analysisCache = { projectId, analysis: base };
+    // 서버 PATCH 는 REPLACE — full base(analyze 가 seed 한 캐시)일 때만 지속한다. 캐시가 없는(비정상)
+    // 상태에서 delta 만으로 덮어쓰면 서버의 더 완전한 analysis 를 유실하므로 그 경우 persist 를 건너뛴다(F3).
+    if (projectId && cached) {
+      await http(`/v1/projects/${projectId}/analysis`, { method: 'PATCH', body: base });
+    }
+    return base;
+  },
+  // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.
+  async getAnalysis(projectId) {
+    if (!projectId) return {};
+    return http(`/v1/projects/${projectId}/analysis`);
+  },
+  // 세탁 관리법 AI 초안 (동기·무과금) — 서버가 상품 종류·소재로 짧은 문구 생성. bare string 반환(mock 동일).
+  // projectId 없으면(비로그인) 서버 project 가 없으니 클라 기본 문구로 폴백.
+  async draftWashCare(projectId) {
+    if (!projectId) return '찬물 단독 손세탁 권장 · 표백제 사용 금지 · 그늘에 뉘어 건조';
+    const res = await http(`/v1/projects/${projectId}/wash-care:draft`, { method: 'POST' });
+    return res.text;
+  },
+  // 매칭 후보 (계약 §6) — 같은 프로젝트의 이월 선택(analysisCache)을 우선. 캐시 미스(하드 새로고침)면
+  // GET /analysis 로 저장분을 1회 하이드레이션해 선택 복원. 그래도 없으면 서버 후보 + 상위 N 기본선택.
+  async getMatchClothing(projectId) {
+    let cached = cachedAnalysisFor(projectId);
+    if (!cached && projectId) {
+      const saved = await http(`/v1/projects/${projectId}/analysis`);
+      if (saved && Object.keys(saved).length > 1) {   // {projectId} 만 있으면 미저장 — 스킵
+        analysisCache = { projectId, analysis: saved };
+        cached = saved;
+      }
+    }
+    if (cached?.matchClothing?.length) return cached.matchClothing;
+    if (!projectId) return [];
+    const items = await fetchMatchCandidates(projectId, cached);
+    return items.map((it, i) => toMatchItem(it, i < LIMITS.matchClothingMax ? i + 1 : null));
+  },
   async getAccount() {
     return http('/v1/me/account');
   },
@@ -181,9 +315,21 @@ export const httpAdapter = {
   async getCreditSources() {
     return http('/v1/credits/sources');
   },
-  // 마네킹 등 job형 플로우(generate→adjust→regenerate)는 같은 컷 상태를 공유하므로
-  // 부분 스왑 금지 — 백엔드가 generate+adjust+regenerate를 다 갖추고 draft sync(A-3)가
-  // 돼야 통째로 swap. 그 전까지 마네킹은 mock 유지(혼합 시 http 모드 깨짐).
+  // ---- 마네킹 (PRD §7) — generate/getMannequins/adjust 는 배포된 라우트로 실배선 ----
+  // 마네킹 컷 목록 (계약 §6) — [{id,src,candidate,version,baseFit,fitAdjust,lengthAdjust,matchAdjust}].
+  async getMannequins(projectId) {
+    if (!projectId) return [];
+    return http(`/v1/projects/${projectId}/mannequins`);
+  },
+  // 최초 A/B 후보 생성 — 202{jobId}→폴링, 또는 완료 존재 시 200{data,credits}(무차감 재호출).
+  // 크레딧: mannequinGenerate. 진행 중 재호출은 서버가 활성 job 에 합류(1회만 차감).
+  async generateMannequins(projectId, { onProgress } = {}) {
+    const res = await http(`/v1/projects/${projectId}/mannequins:generate`, { method: 'POST' });
+    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시)
+    // 마네킹 A/B 합성은 무거운 image job — 폴링 상한을 넉넉히(짧으면 정상 job 완료 전 실패 토스트).
+    const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
+    return { data: result.data, credits: result.credits };
+  },
   // AG-05 — 조정 값은 enum 토큰만 전달: fitAdjust slimmer|looser, lengthAdjust shorter|longer.
   // '현재(변경 없음)' = 필드 생략. 완료 재호출 없음(매 호출이 새 버전 생성, mock과 동일 계약).
   async adjustMannequin(projectId, { baseId, fitAdjust, lengthAdjust, matchAdjust, onProgress } = {}) {

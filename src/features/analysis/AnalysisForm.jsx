@@ -145,7 +145,16 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     }
   };
   const setMat = (i, patch) => onChange({ materials: a.materials.map((m, j) => j === i ? { ...m, ...patch } : m) });
-  const draftWash = async () => { setWashing(true); const t = await api.draftWashCare(); onChange({ washCare: t }); setWashing(false); toast.push('AI 초안을 채웠어요 · 실제 케어라벨과 확인해주세요', { icon: 'sparkles' }); };
+  const draftWash = async () => {
+    setWashing(true);
+    try {
+      const t = await api.draftWashCare(useAppStore.getState().projectId);
+      onChange({ washCare: t });
+      toast.push('AI 초안을 채웠어요 · 실제 케어라벨과 확인해주세요', { icon: 'sparkles' });
+    } catch (e) {
+      toast.push(e.message || '세탁 초안 생성에 실패했어요', { icon: 'alert' });
+    } finally { setWashing(false); }
+  };
   // ── 핏 = fitProfile.axes.fit 의 셀러 편집기 (spec §1 — '핏' 개념이 두 번 보이지 않게 단일화) ──
   // 값 세트는 카테고리×성별로 fitAxes 에서 파생 (여성 상의 = 타이트~오버 5단 등). 원피스는 핏 축 없음 → 행 숨김.
   const fitOptsOf = (draft) => {
