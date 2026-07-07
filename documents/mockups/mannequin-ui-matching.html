@@ -1,0 +1,172 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>매칭 하의 배치안 — A안 기반</title>
+<style>
+:root{
+  --bg:#F1F4F8; --surface:#fff; --ink:#0e0d14; --muted:#6f7681; --faint:#aeb4bd;
+  --line:rgba(34,42,53,.12); --line-soft:rgba(34,42,53,.08);
+  --accent:#0b84dc; --accent-deep:#0a6db6; --accent-soft:#eaf5fd;
+  --ok:#067647; --ok-soft:#e9f4ee; --ok-line:#c9e6d5;
+  --cta:#2c2c2c; --cta-hover:#1b1b1b;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Apple SD Gothic Neo',Pretendard,'Noto Sans KR',system-ui,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 70px}
+h1{font-size:20px;font-weight:800;margin:0 0 4px}
+.intro{color:var(--muted);font-size:13px;margin:0 0 20px}
+.slab{background:var(--surface);border:1px solid var(--line-soft);border-radius:18px;padding:20px;margin-bottom:22px;box-shadow:0 8px 26px rgba(24,60,90,.06)}
+.slab-h{font-size:15px;font-weight:800;margin:0 0 3px}
+.slab-h .tag{font-size:11px;font-weight:800;color:#fff;background:var(--ink);border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:2px}
+.slab-d{font-size:12.5px;color:var(--muted);margin:0 0 16px}
+.slab-d b{color:var(--accent-deep)}
+
+.stage{display:flex;justify-content:center;align-items:flex-start;gap:20px}
+.mine{width:260px;flex:none}
+.mine-img{width:100%;aspect-ratio:3/4;border-radius:14px;overflow:hidden;border:2px solid var(--accent);box-shadow:0 8px 22px rgba(24,60,90,.1)}
+.mine-img img{width:100%;height:100%;object-fit:cover;display:block}
+.strip{display:flex;gap:7px;margin-top:10px;justify-content:center}
+.ver{position:relative;width:44px;aspect-ratio:3/4;border-radius:6px;overflow:hidden;border:0;padding:0;cursor:pointer;box-shadow:0 0 0 1px var(--line)}
+.ver.on{box-shadow:0 0 0 2px var(--accent)}
+.ver img{width:100%;height:100%;object-fit:cover;display:block}
+
+.excol{width:190px;flex:none}
+.exhead{font-size:12px;font-weight:800;margin:2px 0 2px}
+.exsub{font-size:10.5px;color:var(--muted);margin:0 0 9px}
+.extrack{display:flex;flex-direction:column;gap:9px;max-height:360px;overflow-y:auto;padding-right:3px}
+.extile{position:relative;border:2px solid var(--line);border-radius:10px;overflow:hidden;background:#fff;cursor:pointer;padding:0;width:100%;text-align:center}
+.extile img{width:100%;aspect-ratio:3/4;object-fit:cover;display:block}
+.extile .lb{display:block;font-size:11.5px;font-weight:700;color:var(--muted);padding:4px 2px}
+.extile .tg{position:absolute;left:4px;top:4px;font-size:8px;font-weight:800;color:var(--faint);background:rgba(255,255,255,.9);border:1px dashed var(--faint);border-radius:4px;padding:0 4px}
+.extile:hover{border-color:var(--accent)}
+
+.ask{width:420px;flex:none;background:var(--surface);border:1px solid var(--line-soft);border-radius:15px;box-shadow:0 4px 16px rgba(24,60,90,.05);padding:16px}
+.stage .ask{align-self:stretch}
+.doner{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-line);border-radius:999px;padding:4px 6px 4px 10px}
+.chip .ed{border:0;background:rgba(6,118,71,.13);color:var(--ok);font-size:10px;font-weight:800;border-radius:999px;padding:2px 7px;cursor:pointer}
+.prog{font-size:11px;font-weight:700;color:var(--faint);text-align:center;margin-bottom:7px}
+.q{font-size:14.5px;font-weight:800;text-align:center;margin:0 0 12px}
+.choice{display:flex;gap:8px}
+.choice button{flex:1;border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:11px 6px;font-size:12.5px;font-weight:800;cursor:pointer;color:var(--ink)}
+.choice .keep{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.choice .change.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-deep)}
+.changing{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1.5px solid var(--accent);background:var(--accent-soft);border-radius:11px;padding:11px 13px}
+.changing span{font-size:12.5px;font-weight:800}
+.changing b{color:var(--accent-deep)}
+.changing .cancel{border:1.5px solid var(--line);background:#fff;border-radius:9px;padding:7px 13px;font-size:12px;font-weight:800;color:var(--muted);cursor:pointer;white-space:nowrap}
+
+/* 최종: 매칭 조정 행 + 구성 선택 */
+.sect-l{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:.02em;margin:2px 0 8px;text-transform:none}
+.matchrow{display:flex;align-items:center;gap:11px;border:1.5px solid var(--line);border-radius:12px;padding:9px 11px 9px 9px}
+.matchrow img{width:42px;height:52px;object-fit:cover;border-radius:7px;flex:none}
+.matchrow .mtxt{flex:1;font-size:12.5px}
+.matchrow .mtxt b{font-weight:800}
+.matchrow .mtxt span{display:block;color:var(--muted);font-size:11px}
+.matchrow .adj{border:1.5px solid var(--accent);background:#fff;color:var(--accent-deep);border-radius:9px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap}
+.matchrow .adj:hover{background:var(--accent-soft)}
+.divider{height:1px;background:var(--line-soft);margin:15px 0}
+.cmp2{display:flex;gap:9px}
+.cmp{flex:1;border:2px solid var(--line);background:#fff;border-radius:12px;padding:12px 9px;cursor:pointer;text-align:center}
+.cmp b{display:block;font-size:13px;font-weight:800}
+.cmp span{display:block;font-size:10.5px;color:var(--muted);margin-top:2px}
+.cmp em{display:block;font-style:normal;font-size:10.5px;font-weight:800;color:var(--accent-deep);margin-top:5px}
+.cmp.on{border-color:var(--accent);background:var(--accent-soft)}
+.cta{width:100%;border:0;border-radius:12px;background:var(--cta);color:#fff;font-size:14px;font-weight:800;padding:13px;cursor:pointer;margin-top:13px}
+.cta:hover{background:var(--cta-hover)}
+.hintline{font-size:11px;color:var(--muted);text-align:center;margin-top:9px}
+
+@media(max-width:900px){.stage{flex-direction:column;align-items:center}.ask,.mine,.excol{width:320px}}
+</style></head><body>
+<div class="wrap">
+  <h1>매칭 하의를 섞는 2가지 방식 (A안 = 구성은 마지막 단계)</h1>
+  <p class="intro">마네킹컷엔 매칭 하의까지 보이니, 하의도 <b style="color:var(--accent-deep)">숨은 링크가 아니라 first-class로</b> 확인/조정하게. 문구는 "매칭 의류 핏 조정하기".</p>
+
+  <!-- 방식 1 -->
+  <div class="slab">
+    <div class="slab-h"><span class="tag">방식 1</span>매칭도 '순차 확인 스텝'으로 (핏 · 기장 · 매칭 의류 핏)</div>
+    <p class="slab-d">핏·기장을 확인하듯, <b>매칭 의류 핏</b>도 같은 방식으로 한 스텝. 옆에 하의 예시가 뜨고 비교해서 조정. 다 끝나면 → 구성 선택. (일관적 · 안 숨음)</p>
+    <div class="stage">
+      <div class="mine">
+        <div class="mine-img"><img src="../../public/assets/fit-examples/top-women-fit-regular.jpg" alt="내 컷(하의 포함)"></div>
+        <div class="strip"><button class="ver on"><img src="../../public/assets/fit-examples/top-women-fit-regular.jpg"></button><button class="ver"><img src="../../public/assets/fit-examples/top-women-length-crop.jpg"></button></div>
+      </div>
+      <div class="excol">
+        <div class="exhead">매칭 하의 예시</div>
+        <div class="exsub">내 컷과 비슷한 걸 고르세요 · 참고용</div>
+        <div class="extrack">
+          <button class="extile"><span class="tg">예시</span><img src="../../public/assets/fit-examples/pants-women-cut-slim.jpg"><span class="lb">슬림</span></button>
+          <button class="extile"><span class="tg">예시</span><img src="../../public/assets/fit-examples/pants-women-cut-wide.jpg"><span class="lb">와이드</span></button>
+          <button class="extile"><span class="tg">예시</span><img src="../../public/assets/fit-examples/pants-women-cut-bootcut.jpg"><span class="lb">부츠컷</span></button>
+        </div>
+      </div>
+      <div class="ask">
+        <div class="doner"><span class="chip">✓ 핏 그대로<button class="ed">수정</button></span><span class="chip">✓ 기장 → 크롭<button class="ed">수정</button></span></div>
+        <div class="prog">3 / 3 확인 · 매칭 의류 핏</div>
+        <div class="q">매칭 의류 핏, 이대로 괜찮으세요?</div>
+        <div class="choice"><button class="keep">괜찮아요, 그대로</button><button class="change on">매칭 의류 핏 조정할래요</button></div>
+        <p class="hintline">바꾸면 새로 생성돼요 · 1 크레딧</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 방식 2 -->
+  <div class="slab">
+    <div class="slab-h"><span class="tag">방식 2</span>최종 단계에 '매칭 조정 + 구성 선택' 나란히</div>
+    <p class="slab-d">핏·기장만 순차로 확인하고, 마지막 카드에서 <b>매칭 의류 핏 조정</b>(썸네일+버튼, 안 숨음)과 <b>구성 선택</b>을 한 화면에서. 만들기 직전에 둘 다 정리.</p>
+    <div class="stage">
+      <div class="mine">
+        <div class="mine-img"><img src="../../public/assets/fit-examples/top-women-fit-regular.jpg" alt="내 컷(하의 포함)"></div>
+        <div class="strip"><button class="ver on"><img src="../../public/assets/fit-examples/top-women-fit-regular.jpg"></button><button class="ver"><img src="../../public/assets/fit-examples/top-women-length-crop.jpg"></button></div>
+      </div>
+      <div class="ask">
+        <div class="doner"><span class="chip">✓ 핏 그대로<button class="ed">수정</button></span><span class="chip">✓ 기장 → 크롭<button class="ed">수정</button></span></div>
+        <div class="sect-l">매칭 의류 핏</div>
+        <div class="matchrow">
+          <img src="../../public/assets/fit-examples/pants-women-cut-wide.jpg" alt="현재 매칭 하의">
+          <div class="mtxt"><b>와이드</b><span>지금 컷에 입혀진 하의</span></div>
+          <button class="adj">매칭 의류 핏 조정하기</button>
+        </div>
+        <div class="divider"></div>
+        <div class="sect-l">상세페이지 구성</div>
+        <div class="cmp2">
+          <button class="cmp on"><b>기본형</b><span>핵심 컷만</span><em>예상 6컷</em></button>
+          <button class="cmp"><b>확장형</b><span>색상별·상세까지</span><em>예상 12컷</em></button>
+        </div>
+        <button class="cta">이 구성으로 만들기 →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 방식 2 — 조정 중 상태 (핵심 인터랙션) -->
+  <div class="slab">
+    <div class="slab-h"><span class="tag">방식 2</span>— 위에서 '매칭 의류 핏 조정하기'를 누르면</div>
+    <p class="slab-d">핏 조정 때와 <b>똑같이</b> 옆에 하의 예시가 세로로 뜨고, 비교해서 고름. 고르면 재생성(유료) 후 새 컷으로 돌아와 다시 확인.</p>
+    <div class="stage">
+      <div class="mine">
+        <div class="mine-img"><img src="../../public/assets/fit-examples/top-women-fit-regular.jpg" alt="내 컷(하의 포함)"></div>
+        <div class="strip"><button class="ver on"><img src="../../public/assets/fit-examples/top-women-fit-regular.jpg"></button><button class="ver"><img src="../../public/assets/fit-examples/top-women-length-crop.jpg"></button></div>
+      </div>
+      <div class="excol">
+        <div class="exhead">매칭 하의 예시</div>
+        <div class="exsub">내 컷과 비슷한 걸 고르세요 · 참고용</div>
+        <div class="extrack">
+          <button class="extile"><span class="tg">예시</span><img src="../../public/assets/fit-examples/pants-women-cut-slim.jpg"><span class="lb">슬림</span></button>
+          <button class="extile"><span class="tg">예시</span><img src="../../public/assets/fit-examples/pants-women-cut-wide.jpg"><span class="lb">와이드</span></button>
+          <button class="extile"><span class="tg">예시</span><img src="../../public/assets/fit-examples/pants-women-cut-bootcut.jpg"><span class="lb">부츠컷</span></button>
+        </div>
+      </div>
+      <div class="ask">
+        <div class="doner"><span class="chip">✓ 핏 그대로<button class="ed">수정</button></span><span class="chip">✓ 기장 → 크롭<button class="ed">수정</button></span></div>
+        <div class="sect-l">매칭 의류 핏</div>
+        <div class="changing"><span><b>매칭 의류 핏</b> 조정 중… 옆 예시를 골라주세요</span><button class="cancel">취소</button></div>
+        <p class="hintline">고르면 새로 생성돼요 · 1 크레딧</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+<script>
+document.body.addEventListener('click',e=>{
+  const c=e.target.closest('.cmp'); const ch=e.target.closest('.choice button');
+  if(c){c.parentElement.querySelectorAll('.cmp').forEach(x=>x.classList.remove('on'));c.classList.add('on');}
+});
+</script>
+</body></html>

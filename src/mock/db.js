@@ -102,9 +102,9 @@ const catalogs = {
   ],
   // 구성 방식 — count·flow는 buildStoryboard()의 실제 산출과 일치시킨다 (PRD §7.7, ADR-0004)
   composeModes: [
-    { value: 'simple', label: '간단형', desc: '단일 컬러 중심으로 빠르게', count: '8', flow: ['후킹', '셀링포인트', '스타일링컷', '호리존컷', '거울샷', '제품컷'] },
-    { value: 'basic', label: '기본형', desc: '대표 컬러 중심의 균형형', count: '12', flow: ['후킹', '셀링포인트', '스타일링컷', '호리존컷', '거울샷', '제품컷'], recommended: true },
-    { value: 'extended', label: '확장형', desc: '여러 컬러를 자세히 소개', count: '14~24', flow: ['후킹', '셀링포인트', '컬러별 스타일링·호리존컷', '거울샷', '제품컷'] },
+    { value: 'simple', label: '간단형', desc: '한 컬러만 간단히', count: '8', flow: ['후킹', '셀링포인트', '스타일링컷', '호리존컷', '거울샷', '제품컷'] },
+    { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로', count: '12', flow: ['후킹', '셀링포인트', '스타일링컷', '호리존컷', '거울샷', '제품컷'], recommended: true },
+    { value: 'extended', label: '확장형', desc: '여러 컬러 자세히', count: '14~24', flow: ['후킹', '셀링포인트', '컬러별 스타일링·호리존컷', '거울샷', '제품컷'] },
   ],
   poses: [
     { id: 'auto', label: 'AI 자동', auto: true }, { id: 'stand', label: '서기', thumb: P.pose('stand') },

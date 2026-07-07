@@ -1,0 +1,141 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>마네킹 UI — 구성 선택 = 마지막 단계 (3버전)</title>
+<style>
+:root{
+  --bg:#F1F4F8; --surface:#fff; --ink:#0e0d14; --muted:#6f7681; --faint:#aeb4bd;
+  --line:rgba(34,42,53,.12); --line-soft:rgba(34,42,53,.08);
+  --accent:#0b84dc; --accent-deep:#0a6db6; --accent-soft:#eaf5fd;
+  --ok:#067647; --ok-soft:#e9f4ee; --ok-line:#c9e6d5;
+  --cta:#2c2c2c; --cta-hover:#1b1b1b;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Apple SD Gothic Neo',Pretendard,'Noto Sans KR',system-ui,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1160px;margin:0 auto;padding:30px 20px 70px}
+header h1{font-size:20px;font-weight:800;margin:0 0 4px}
+header p{margin:0 0 6px;color:var(--muted);font-size:13px}
+header .note{font-size:12px;color:var(--accent-deep);background:var(--accent-soft);border-radius:8px;padding:8px 11px;display:inline-block;margin-top:6px}
+
+/* 공유 상단: 핏 확인 끝난 컷 */
+.shared{display:flex;align-items:center;gap:16px;margin:22px 0 8px;padding:14px;background:var(--surface);border:1px solid var(--line-soft);border-radius:14px;max-width:520px}
+.shared .mini{width:74px;aspect-ratio:3/4;border-radius:10px;overflow:hidden;border:2px solid var(--accent);flex:none}
+.shared .mini img{width:100%;height:100%;object-fit:cover;display:block}
+.shared .st b{font-weight:800}
+.shared .st span{color:var(--muted);font-size:12.5px}
+.shared .chips{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-line);border-radius:999px;padding:3px 10px}
+
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:14px}
+@media(max-width:900px){.cols{grid-template-columns:1fr}}
+.vcol .vtag{display:inline-block;font-size:11px;font-weight:800;color:#fff;background:var(--ink);border-radius:6px;padding:3px 9px;margin-bottom:3px}
+.vcol .vdesc{font-size:12px;color:var(--muted);margin:0 0 9px;min-height:32px}
+
+.ask{background:var(--surface);border:1px solid var(--line-soft);border-radius:15px;box-shadow:0 6px 20px rgba(24,60,90,.06);padding:16px}
+.doner{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.lead-q{font-size:14px;font-weight:800;text-align:center;margin:2px 0 13px}
+.cta{width:100%;border:0;border-radius:12px;background:var(--cta);color:#fff;font-size:14px;font-weight:800;padding:13px;cursor:pointer;margin-top:12px}
+.cta:hover{background:var(--cta-hover)}
+.sub{text-align:center;margin-top:10px}
+.sub button{border:0;background:none;font-size:11.5px;font-weight:700;color:var(--muted);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+
+/* A) 인라인 2카드 */
+.cmp2{display:flex;gap:9px}
+.cmp{flex:1;border:2px solid var(--line);background:#fff;border-radius:12px;padding:13px 10px;cursor:pointer;text-align:center;transition:.12s}
+.cmp b{display:block;font-size:13.5px;font-weight:800}
+.cmp span{display:block;font-size:11px;color:var(--muted);margin-top:2px}
+.cmp em{display:block;font-style:normal;font-size:11px;font-weight:800;color:var(--accent-deep);margin-top:6px}
+.cmp:hover{border-color:#a9c6dc}
+.cmp.on{border-color:var(--accent);background:var(--accent-soft)}
+.cmp.rec::after{content:'추천';display:inline-block;font-size:9px;font-weight:800;color:var(--accent-deep);background:#fff;border:1px solid var(--accent);border-radius:999px;padding:0 6px;margin-top:6px}
+
+/* B) 세그먼트 토글 */
+.seg{display:flex;background:#eef2f6;border-radius:11px;padding:4px;gap:4px}
+.seg button{flex:1;border:0;background:none;border-radius:8px;padding:9px;font-size:13px;font-weight:800;color:var(--muted);cursor:pointer}
+.seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.1)}
+.seg-desc{text-align:center;font-size:12px;color:var(--muted);margin:10px 0 0}
+.seg-desc b{color:var(--ink);font-weight:800}
+
+/* C) 선택 = 진행 버튼 */
+.cta-choice{display:flex;flex-direction:column;align-items:flex-start;width:100%;border:0;border-radius:12px;padding:12px 15px;cursor:pointer;margin-top:9px;text-align:left}
+.cta-choice.primary{background:var(--cta);color:#fff}
+.cta-choice.primary:hover{background:var(--cta-hover)}
+.cta-choice.ghost{background:#fff;border:1.5px solid var(--line);color:var(--ink)}
+.cta-choice.ghost:hover{border-color:var(--accent);color:var(--accent-deep)}
+.cta-choice b{font-size:14px;font-weight:800}
+.cta-choice span{font-size:11.5px;opacity:.85;margin-top:1px}
+.cta-choice.primary .rc{font-size:9px;font-weight:800;background:rgba(255,255,255,.22);border-radius:999px;padding:1px 7px;margin-left:auto}
+.crow{display:flex;align-items:center;width:100%;gap:8px}
+</style></head><body>
+<div class="wrap">
+  <header>
+    <h1>구성 선택 = 흐름의 마지막 단계 (디테일 3버전)</h1>
+    <p>핏(+매칭)을 다 확인한 뒤, '확인 카드'가 "무엇을 만들까?"로 전환되는 부분입니다. 셋 다 같은 아이디어, 디테일만 다름.</p>
+    <span class="note">✔ 정정 반영: 마네킹컷은 매칭 하의까지 입은 모습 → 매칭 바꾸면 재생성(유료). 구성 선택은 무료(다음 단계 설정).</span>
+  </header>
+
+  <div class="shared">
+    <div class="mini"><img src="../../public/assets/fit-examples/top-women-fit-regular.jpg" alt="확정된 마네킹컷"></div>
+    <div class="st">
+      <b>핏 확인 완료 ✓</b> <span>— 이제 상세페이지 구성을 고를 차례</span>
+      <div class="chips"><span class="chip">✓ 핏 그대로</span><span class="chip">✓ 기장 → 크롭</span><span class="chip">✓ 매칭 하의 → 와이드</span></div>
+    </div>
+  </div>
+
+  <div class="cols">
+    <!-- A -->
+    <div class="vcol">
+      <span class="vtag">버전 A</span>
+      <p class="vdesc">두 구성을 <b>나란한 카드</b>로 눈으로 비교해 고르고, 아래 버튼으로 진행.</p>
+      <div class="ask">
+        <p class="lead-q">이제 어떤 상세페이지를 만들까요?</p>
+        <div class="cmp2">
+          <button class="cmp on rec" data-g="a"><b>기본형</b><span>핵심 컷만</span><em>예상 6컷</em></button>
+          <button class="cmp" data-g="a"><b>확장형</b><span>색상별·상세까지</span><em>예상 12컷</em></button>
+        </div>
+        <button class="cta">이 구성으로 만들기 →</button>
+        <div class="sub"><button>매칭 하의 다시 바꾸기 · 재생성</button></div>
+      </div>
+    </div>
+
+    <!-- B -->
+    <div class="vcol">
+      <span class="vtag">버전 B</span>
+      <p class="vdesc"><b>세그먼트 토글</b> 하나로 컴팩트하게. 선택한 구성 설명이 아래 한 줄.</p>
+      <div class="ask">
+        <p class="lead-q">상세페이지 구성을 골라주세요</p>
+        <div class="seg">
+          <button class="on" data-g="b" data-d="핵심 컷만 · 예상 <b>6컷</b>">기본형</button>
+          <button data-g="b" data-d="색상별·상세 컷까지 · 예상 <b>12컷</b>">확장형</button>
+        </div>
+        <p class="seg-desc">핵심 컷만 · 예상 <b>6컷</b></p>
+        <button class="cta">이 구성으로 만들기 →</button>
+        <div class="sub"><button>매칭 하의 다시 바꾸기 · 재생성</button></div>
+      </div>
+    </div>
+
+    <!-- C -->
+    <div class="vcol">
+      <span class="vtag">버전 C</span>
+      <p class="vdesc"><b>선택이 곧 진행 버튼</b>. 구성을 고르는 순간 바로 다음 단계로.</p>
+      <div class="ask">
+        <p class="lead-q">어떻게 만들까요?</p>
+        <button class="cta-choice primary">
+          <div class="crow"><b>기본형으로 만들기</b><span class="rc">추천</span></div>
+          <span>핵심 컷만 · 예상 6컷</span>
+        </button>
+        <button class="cta-choice ghost">
+          <b>확장형으로 만들기</b>
+          <span>색상별·상세 컷까지 · 예상 12컷</span>
+        </button>
+        <div class="sub"><button>매칭 하의 다시 바꾸기 · 재생성</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+document.body.addEventListener('click',e=>{
+  const c=e.target.closest('.cmp'); const s=e.target.closest('.seg button');
+  if(c){c.parentElement.querySelectorAll('.cmp').forEach(x=>x.classList.remove('on'));c.classList.add('on');}
+  if(s){s.parentElement.querySelectorAll('button').forEach(x=>x.classList.remove('on'));s.classList.add('on');
+    const d=s.closest('.ask').querySelector('.seg-desc'); if(d&&s.dataset.d) d.innerHTML=s.dataset.d;}
+});
+</script>
+</body></html>

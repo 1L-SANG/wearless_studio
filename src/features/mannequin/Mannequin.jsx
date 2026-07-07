@@ -1,37 +1,41 @@
 /* =============================================================
-   features/mannequin — ③ 마네킹컷 생성·선택 (PRD §7, fit-profile P2)
-   컷 목록은 서버 상태, 선택 컷은 store + patchProject 동기화.
-   핏 프로필 편집은 로컬 draft 로 유지하고, 재생성 확정 때만 저장한다.
-   크레딧은 봉투 응답 { data, credits } 를 syncCredits 로 반영.
+   features/mannequin — ③ 의류 재현성 높이기 (PRD §7, fit-profile 이미지 중심 UI)
+   가운데 큰 컷(내 옷 = 매칭 하의까지 입은 모습) → 아래 '확인 카드'.
+   축(핏·기장·… + 매칭 의류 핏)을 하나씩 순차 확인 — '조정하기' 하면 이미지 옆에
+   예시가 세로로 떠서 비교하며 고른다(방식 1). 매칭 하의도 컷에 보이므로 조정 시 재생성(유료).
+   전부 확인되면 카드가 '상세페이지 구성'(기본형/확장형) 선택으로 전환 → 이 구성으로 만들기.
+   - 변경 0건 → 구성 선택 후 다음 단계 / 변경 ≥1건 → 수정 반영 재생성(새 버전 히스토리).
+   컷 목록은 서버 상태, 선택 컷·구성은 store + patchProject 동기화.
+   설계·규칙: documents/mannequin_ui_direction.md · 목업 documents/mockups/mannequin-ui-matching.html
    ============================================================= */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
-import { Icon, Button, Modal, ProgressBar, useToast } from '@/components/ui.jsx';
-import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import { fitExampleImage } from '@/lib/fitExampleImages.js';
+import { Icon, Button, ProgressBar, useToast } from '@/components/ui.jsx';
+import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import './Mannequin.css';
 
-const AXIS_LABELS = {
-  fit: '핏',
-  length: '기장',
-  cut: '실루엣',
-  silhouette: '실루엣',
+const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
+// 질문 톤: "~ 조정할까요?" (참고: length 는 사용자 요청 '기장 길이 조정 여부'를 일관 톤 유지 위해 질문형으로)
+const AXIS_QUESTIONS = {
+  fit: '의류 핏을 조정할까요?',
+  length: '기장 길이를 조정할까요?',
+  cut: '핏을 조정할까요?',
+  silhouette: '실루엣을 조정할까요?',
 };
-const CATEGORY_LABELS = {
-  top: '상의',
-  pants: '팬츠',
-  skirt: '스커트',
-  dress: '원피스',
-  outer: '아우터',
-};
-const GENDER_LABELS = { women: '여성', men: '남성' };
+const MATCH_KEY = '__match';
+const MATCH_NAME = '매칭 의류 핏';
+const MATCH_QUESTION = '매칭 의류의 핏도 조정할까요?';
 
 const cutImage = (cut) => cut?.imageUrl || cut?.src || '';
 const isMenOnly = (genders) => Array.isArray(genders) && genders.length > 0 && genders.every((g) => g === 'men');
 const validAxisValue = (values, value) => values.some((v) => v.value === value);
+const axisIsDone = (s) => s?.mode === 'keep' || s?.mode === 'picked';
+const hasMatchFor = (category) => category === 'top' || category === 'outer';
 
 function derivedGender(analysis, product) {
   const genders = analysis?.targetGenders?.length ? analysis.targetGenders : product?.targetGenders;
@@ -66,7 +70,15 @@ function createFitProfileDraft(product, analysis) {
       if (axes[axis] == null) axes[axis] = value;
     });
   }
-  return { category, gender, axes, source, version: 1 };
+  const draft = { category, gender, axes, source, version: 1 };
+  if (existing?.matchCut != null) draft.matchCut = existing.matchCut;   // 매칭 하의 선택 유지(garment_ref)
+  return draft;
+}
+
+// 스텝 상태머신 초깃값: pending → (keep | changing → picked). 축 + (해당되면) 매칭 스텝.
+function initStepState(axisDefs, withMatch) {
+  const keys = [...Object.keys(axisDefs), ...(withMatch ? [MATCH_KEY] : [])];
+  return Object.fromEntries(keys.map((k) => [k, { mode: 'pending', pick: null, pickLb: null }]));
 }
 
 function extractCuts(envelope) {
@@ -81,7 +93,7 @@ function MannequinLoading({ progress }) {
     : progress < 80 ? '마네킹 생성 중' : '결과를 확인하는 중';
   return (
     <div className="wizard">
-      <PageHead title="마네킹컷을 만들고 있어요" sub="AI가 상품의 핏과 실루엣을 기준 마네킹에 입혀보고 있어요." />
+      <PageHead title="의류를 재현하고 있어요" sub="AI가 상품의 핏과 실루엣을 기준 마네킹에 입혀보고 있어요." />
       <div className="surface mq-loading">
         <div className="mq-loading-progress"><ProgressBar value={progress} label={stage} /></div>
         <div className="mq-loading-preview">
@@ -97,197 +109,61 @@ function MannequinLoading({ progress }) {
   );
 }
 
-function AxisPills({ axis, values, selectedValue, autoValue, showAutoBadge, onChange }) {
-  const options = [{ value: null, label: '사진 그대로' }, ...values];
+// 가운데 "내 옷" 컬럼: 큰 컷(태그 없음) + 버전 썸네일 스트립.
+function MineColumn({ selected, cuts, selectedCutId, onSelect }) {
   return (
-    <div className="fit-axis">
-      <div className="fit-axis-head">
-        <label className="lbl">{AXIS_LABELS[axis] || axis}</label>
+    <div className="fit-mine-col">
+      <div className="fit-mine-img">
+        {selected
+          ? <img src={cutImage(selected)} alt={`내 마네킹컷 버전 ${selected.version}`} />
+          : <div className="busy-tile">마네킹컷이 아직 없어요</div>}
       </div>
-      <div className="fit-pill-row">
-        {options.map((option) => {
-          const selected = selectedValue === option.value;
-          const auto = showAutoBadge && option.value != null && option.value === autoValue;
-          return (
+      {cuts.length > 1 && (
+        <div className="fit-strip" role="group" aria-label="버전 목록">
+          {cuts.map((cut) => (
             <button
               type="button"
-              key={option.value ?? 'origin'}
-              className={`chip fit-pill${selected ? ' on' : ''}${auto ? ' has-ai' : ''}`}
-              onClick={() => onChange(axis, option.value)}
+              key={cut.id}
+              className={`fit-ver${cut.id === selectedCutId ? ' on' : ''}`}
+              onClick={() => onSelect(cut.id)}
+              aria-label={`버전 ${cut.version} 선택`}
+              aria-pressed={cut.id === selectedCutId}
             >
-              <span>{option.label}</span>
-              {auto && <span className="fit-ai-badge">✦ AI 추정</span>}
+              <img src={cutImage(cut)} alt="" />
+              <span className="fit-ver-chip">v{cut.version}</span>
             </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function FitProfilePanel({ product, analysis, draft, onDraftChange, busy, progress, onRegenerate }) {
-  const axisDefs = useMemo(() => axesFor(draft?.category, draft?.gender), [draft?.category, draft?.gender]);
-  const autoValues = useMemo(() => autoAxisValues(axisDefs, analysis), [axisDefs, analysis]);
-  const entries = Object.entries(axisDefs);
-
-  if (!draft) {
-    return (
-      <div className="surface inspector fit-profile-panel">
-        <div className="sec-title">핏 프로필</div>
-        <p className="hint fit-empty">분석 정보를 불러오고 있어요.</p>
-      </div>
-    );
-  }
-
-  const changeAxis = (axis, value) => {
-    onDraftChange({
-      ...draft,
-      axes: { ...draft.axes, [axis]: value },
-      source: 'seller',
-    });
-  };
-  const visibleEntries = entries.filter(([axis]) => !(draft.category === 'pants' && axis === 'length'));
-  const pantsLength = entries.find(([axis]) => axis === 'length');
-  const showAutoBadge = draft.source === 'auto';
-
-  return (
-    <div className="surface inspector fit-profile-panel">
-      <div className="sec-title">핏 프로필</div>
-      <div className="fit-profile-meta">
-        <span>{CATEGORY_LABELS[draft.category] || product?.clothingType || '상품'}</span>
-        <span>{GENDER_LABELS[draft.gender]}</span>
-      </div>
-
-      <div className="fit-axis-list">
-        {visibleEntries.map(([axis, values]) => (
-          <AxisPills
-            key={axis}
-            axis={axis}
-            values={values}
-            selectedValue={draft.axes?.[axis] ?? null}
-            autoValue={autoValues[axis]}
-            showAutoBadge={showAutoBadge}
-            onChange={changeAxis}
-          />
-        ))}
-        {pantsLength && (
-          <details className="insp-extra fit-length-details">
-            <summary><Icon name="chevDown" size={15} />기장</summary>
-            <AxisPills
-              axis="length"
-              values={pantsLength[1]}
-              selectedValue={draft.axes?.length ?? null}
-              autoValue={autoValues.length}
-              showAutoBadge={showAutoBadge}
-              onChange={changeAxis}
-            />
-          </details>
-        )}
-      </div>
-
-      {busy && (
-        <div className="fit-regenerate-progress">
-          <ProgressBar value={progress} label="마네킹 생성 중" />
+          ))}
         </div>
       )}
-      <Button
-        variant="primary"
-        block
-        className="btn-glowring fit-regenerate-btn"
-        disabled={busy || !entries.length}
-        onClick={onRegenerate}
-      >
-        다시 생성 · {CREDIT_COSTS.mannequinGenerate} 크레딧
-      </Button>
     </div>
   );
 }
 
-function SelectedCutCard({ selected }) {
+// 예시 타일 버튼들(참고용). 이미지 없으면 텍스트 타일로 폴백.
+function ExampleTiles({ axisKey, category, gender, values, onPick }) {
   return (
-    <div className="mq-selected-card">
-      <div className="mq-selected-image">
-        {selected ? (
-          <>
-            <img src={cutImage(selected)} alt={`마네킹 버전 ${selected.version}`} />
-            <span className="pill pill-ink mq-selected-flag">선택됨</span>
-          </>
-        ) : (
-          <div className="busy-tile">마네킹컷이 아직 없어요</div>
-        )}
-      </div>
-      <div className="mq-selected-meta">
-        <div className="sec-title">마네킹컷 선택</div>
-        <div className="sec-sub">선택한 컷이 실제 착용컷 생성의 기준이 돼요.</div>
-        {selected && <div className="mq-version-label">버전 {selected.version}</div>}
-      </div>
-    </div>
-  );
-}
-
-function VersionHistory({ cuts, selectedId, onSelect }) {
-  return (
-    <div className="mq-history-block">
-      <div className="mq-history-head">
-        <div className="sec-title">버전 히스토리</div>
-        <div className="sec-sub">새로 생성한 컷은 여기에 추가돼요.</div>
-      </div>
-      <div className="mq-version-strip">
-        {cuts.map((cut) => (
+    <>
+      {values.map((v) => {
+        const img = fitExampleImage(category, gender, axisKey, v.value);
+        return (
           <button
             type="button"
-            key={cut.id}
-            className={`mq-version-card${cut.id === selectedId ? ' on' : ''}`}
-            onClick={() => onSelect(cut.id)}
+            key={v.value}
+            role="option"
+            aria-selected="false"
+            className={`fit-tile${img ? '' : ' text'}`}
+            aria-label={`${v.label}(으)로 조정`}
+            onClick={() => onPick(v.value, v.label)}
           >
-            <img src={cutImage(cut)} alt={`버전 ${cut.version}`} />
-            <span className="mq-version-chip">v{cut.version}</span>
+            <span className="fit-tile-tag" aria-hidden="true">예시</span>
+            {img
+              ? <img src={img} alt="" loading="lazy" />
+              : <span className="fit-tile-ph">{v.label}</span>}
+            <span className="fit-tile-lb">{v.label}</span>
           </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// 우측 탭의 '상세페이지 구성' 미니 카드 + 좌측으로 펼쳐지는 선택 플라이아웃
-function ComposeModeMini({ modes, mode, colorCount, picking, onToggle, onPick }) {
-  const cur = (modes || []).find((m) => m.value === mode) || (modes || [])[0];
-  if (!cur) return null;
-  return (
-    <div className="surface compose-mini">
-      <div className="sec-title">상세페이지 구성</div>
-      <div className="cm-mini-name">
-        <Icon name="layout" size={15} />{cur.label}
-      </div>
-      <div className="md">{cur.desc}</div>
-      <div className="mode-flow">{cur.flow.map((f, i) => <span className="flow-pill" key={i}>{f}</span>)}</div>
-      {cur.count && <div className="cm-count">예상 {cur.count}컷</div>}
-      <Button variant={picking ? 'primary' : 'ghost'} block icon={picking ? 'check' : 'layout'} onClick={onToggle} className="compose-mini-btn">
-        {picking ? '구성 방식 선택 완료' : '구성 방식 변경'}
-      </Button>
-      {picking && (
-        <>
-          <div className="mode-pop-backdrop" onClick={onToggle} />
-          <div className="mode-pop">
-            {modes.map((m) => {
-              const disabled = m.value === 'extended' && colorCount < 2;
-              return (
-                <div key={m.value} className={`mode-card pop${mode === m.value ? ' current' : ''}${disabled ? ' disabled' : ''}`}
-                  onClick={() => !disabled && onPick(m.value)}>
-                  {m.recommended && <span className="pill pill-soft badge-rec">추천</span>}
-                  {mode === m.value && <span className="pop-now">현재</span>}
-                  <h4>{m.label}</h4>
-                  <div className="md">{m.desc}</div>
-                  <div className="mode-flow">{m.flow.map((f, i) => <span className="flow-pill" key={i}>{f}</span>)}</div>
-                  {m.count && <div className="pop-count">예상 {m.count}컷</div>}
-                  {disabled && <div className="hint mode-disabled-hint">색상 2개 이상부터</div>}
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -297,13 +173,12 @@ export function Mannequin() {
   const [progress, setProgress] = useState(0);
   const [cuts, setCuts] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [product, setProduct] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
+  const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
   const [colorCount, setColorCount] = useState(1);
-  const [picking, setPicking] = useState(false);
-  const [confirmRegen, setConfirmRegen] = useState(false);
+  const submittingRef = useRef(false);   // 결제(재생성) 이중 제출 방지 — busy 반영 전 연타 차단
   const toast = useToast();
 
   // 플로우 선택값 — store 가 보유, patchProject 로 서버 동기화 (ADR-0002)
@@ -314,6 +189,18 @@ export function Mannequin() {
   const setComposeMode = useAppStore((s) => s.setComposeMode);
   const syncCredits = useAppStore((s) => s.syncCredits);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
+
+  const category = fitProfileDraft?.category;
+  const gender = fitProfileDraft?.gender;
+  const axisDefs = useMemo(() => axesFor(category, gender), [category, gender]);
+  const axisEntries = useMemo(() => Object.entries(axisDefs), [axisDefs]);
+  const matchValues = useMemo(() => axesFor('pants', gender)?.cut || [], [gender]);
+  const hasMatching = hasMatchFor(category);
+  // 순차 확인 스텝 = 축들 + (상의/아우터면) 매칭 의류 핏
+  const steps = useMemo(() => {
+    const a = axisEntries.map(([key, values]) => ({ key, values, kind: 'axis' }));
+    return hasMatching ? [...a, { key: MATCH_KEY, values: matchValues, kind: 'match' }] : a;
+  }, [axisEntries, hasMatching, matchValues]);
 
   useEffect(() => {
     window.scrollTo({ top: 0 });
@@ -329,11 +216,12 @@ export function Mannequin() {
         api.getCatalogs(),
       ]);
       if (cancelled) return;
-      setProduct(nextProduct);
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
       setColorCount((nextProduct?.colors || []).length || 1);
-      setFitProfileDraft(createFitProfileDraft(nextProduct, nextAnalysis));
+      const draft = createFitProfileDraft(nextProduct, nextAnalysis);
+      setFitProfileDraft(draft);
+      setStepState(initStepState(axesFor(draft.category, draft.gender), hasMatchFor(draft.category)));
 
       let list = await api.getMannequins(pid);
       if (cancelled) return;
@@ -358,80 +246,185 @@ export function Mannequin() {
   const selected = cuts.find((c) => c.id === selectedId) || cuts.find((c) => c.isSelected) || cuts[0];
   const selectedCutId = selected?.id || selectedId;
 
+  // 스텝 표시 헬퍼
+  const stepName = (step) => (step.kind === 'match' ? MATCH_NAME : (AXIS_LABELS[step.key] || step.key));
+  const stepQuestion = (step) => (step.kind === 'match'
+    ? MATCH_QUESTION
+    : (AXIS_QUESTIONS[step.key] || `${stepName(step)}을(를) 조정할까요?`));
+  const stepExCategory = (step) => (step.kind === 'match' ? 'pants' : category);
+  const stepExAxis = (step) => (step.kind === 'match' ? 'cut' : step.key);
+
+  // 파생값 — 순차: 첫 미완료 스텝이 '현재'
+  const doneCount = steps.filter((s) => axisIsDone(stepState[s.key])).length;
+  const allDone = steps.length === 0 || doneCount === steps.length;
+  const changedSteps = steps.filter((s) => stepState[s.key]?.mode === 'picked');
+  const changedNames = changedSteps.map(stepName);
+  const activeIdx = steps.findIndex((s) => !axisIsDone(stepState[s.key]));
+  const cur = activeIdx >= 0 ? steps[activeIdx] : null;
+  const changingStep = cur && stepState[cur.key]?.mode === 'changing' ? cur : null;
+  const needsRegen = changedSteps.length > 0;
+
+  const setStep = (key, patch) => setStepState((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+  const keepStep = (key) => setStep(key, { mode: 'keep', pick: null, pickLb: null });
+  const changeStep = (key) => setStep(key, { mode: 'changing' });
+  const cancelStep = (key) => setStep(key, { mode: 'pending' });
+  const pickStep = (key, value, label) => setStep(key, { mode: 'picked', pick: value, pickLb: label });
+  const editStep = (key) => setStep(key, { mode: 'changing', pick: null, pickLb: null });
+
   const chooseCut = (cutId) => {
     setCuts((prev) => prev.map((cut) => ({ ...cut, isSelected: cut.id === cutId })));
     selectMannequin(cutId);
   };
 
+  // draft + 사용자가 고른 값으로 재생성용 fitProfile 구성. keep=현재값 유지, picked=덮어씀.
+  // 매칭 하의(matchCut)도 profile 안에 포함 → 재생성 시 garment_ref 로 함께 저장.
+  const buildFitProfile = () => {
+    const axes = { ...(fitProfileDraft.axes || {}) };
+    let anyPicked = false;
+    axisEntries.forEach(([key]) => {
+      const s = stepState[key];
+      if (s?.mode === 'picked' && s.pick != null) { axes[key] = s.pick; anyPicked = true; }
+    });
+    const profile = { ...fitProfileDraft, axes, source: anyPicked ? 'seller' : fitProfileDraft.source };
+    const m = stepState[MATCH_KEY];
+    if (m?.mode === 'picked' && m.pick != null) profile.matchCut = m.pick;
+    return profile;
+  };
+
   const regenerate = async () => {
-    if (!fitProfileDraft || busy) return;
+    if (submittingRef.current) return;   // 연타로 인한 이중 재생성·이중 차감 방지
+    submittingRef.current = true;
+    const profile = buildFitProfile();
     setBusy(true);
     setProgress(0);
     try {
       const { data, credits } = await api.regenerateMannequin(projectId, {
-        fitProfile: fitProfileDraft,
+        fitProfile: profile,   // 매칭(matchCut) 포함 — garment_ref 로 저장, 재생성에 반영
         onProgress: setProgress,
       });
       const nextCuts = extractCuts(data);
       setCuts(nextCuts);
       const nextSelected = nextCuts.find((cut) => cut.isSelected) || nextCuts.at(-1);
       if (nextSelected) selectMannequin(nextSelected.id);
-      setAnalysis((prev) => ({ ...(prev || {}), fitProfile: fitProfileDraft }));
+      setFitProfileDraft(profile);
+      setAnalysis((prev) => ({ ...(prev || {}), fitProfile: profile }));
       syncCredits(credits);
-      toast.push('새 마네킹 버전을 추가했어요', { icon: 'refresh' });
+      setStepState(initStepState(axisDefs, hasMatching));   // 새 컷을 다시 확인하는 루프
+      toast.push('새 마네킹 버전을 추가했어요. 다시 확인해 주세요.', { icon: 'refresh' });
     } catch (err) {
       toast.push(err?.message || '마네킹 재생성에 실패했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
     } finally {
       setBusy(false);
+      submittingRef.current = false;
     }
+  };
+
+  const onCta = () => {
+    if (!allDone || busy) return;
+    if (needsRegen) { regenerate(); return; }
+    navigate('/create/storyboard');   // 구성(composeMode)은 store 로 이미 반영됨
   };
 
   if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={progress} /></>;
 
   const modes = catalogs?.composeModes || [];
-  const pickMode = (v) => { setComposeMode(v); setPicking(false); };
-  const mainPanel = (
-    <div className="surface mq-main-surface">
-      <SelectedCutCard selected={selected} />
-      <VersionHistory cuts={cuts} selectedId={selectedCutId} onSelect={chooseCut} />
-    </div>
-  );
-  const rightCol = (
-    <div className="mq-side">
-      <FitProfilePanel
-        product={product}
-        analysis={analysis}
-        draft={fitProfileDraft}
-        onDraftChange={setFitProfileDraft}
-        busy={busy}
-        progress={progress}
-        onRegenerate={() => setConfirmRegen(true)}
-      />
-      <ComposeModeMini modes={modes} mode={composeMode} colorCount={colorCount} picking={picking} onToggle={() => setPicking((p) => !p)} onPick={pickMode} />
-    </div>
-  );
 
   return (
-    <div className="wizard wide">
+    <div className="wizard wide fit-page">
       {doneBlocked && <DoneGuardModal />}
-      <PageHead title="마네킹컷을 확인하고 핏 프로필을 조정해주세요" sub="프로필 수정은 무료이며, 다시 생성하면 새 버전이 히스토리에 추가돼요." />
-      <div className="mannequin-layout">{mainPanel}{rightCol}</div>
-      <WizardCTA>
-        <Button variant="primary" size="lg" iconRight="arrowRight" onClick={() => navigate('/create/storyboard')}>상세페이지 초안 만들기</Button>
-      </WizardCTA>
+      <PageHead title="의류 재현성 높이기" sub="실제 의류와 비슷해지게끔 조정해보세요." />
 
-      {confirmRegen && (
-        <Modal onClose={() => setConfirmRegen(false)}>
-          <h3>새 마네킹 버전을 생성할까요?</h3>
-          <p>현재 핏 프로필로 새 버전을 히스토리에 추가해요. 기존 버전은 그대로 보관됩니다.</p>
-          <div className="modal-actions">
-            <Button variant="ghost" onClick={() => setConfirmRegen(false)}>취소</Button>
-            <Button variant="primary" disabled={busy} onClick={() => { setConfirmRegen(false); regenerate(); }}>
-              생성하기 · {CREDIT_COSTS.mannequinGenerate} 크레딧
+      <div className={`fit-stage${changingStep ? ' comparing' : ''}`}>
+        <MineColumn selected={selected} cuts={cuts} selectedCutId={selectedCutId} onSelect={chooseCut} />
+        {changingStep && (
+          <div className="fit-ex-col">
+            <div className="fit-ex-head">원하는 {stepName(changingStep)}의 예시를 선택해주세요.</div>
+            <div className="fit-ex-track" role="listbox" aria-label={`${stepName(changingStep)} 예시`}>
+              <ExampleTiles
+                axisKey={stepExAxis(changingStep)}
+                category={stepExCategory(changingStep)}
+                gender={gender}
+                values={changingStep.values}
+                onPick={(value, label) => pickStep(changingStep.key, value, label)}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="fit-ask">
+        {/* 확인 항목 칩 — 완료 전에도 모든 스텝을 고스트로 표시해 공간을 미리 확보(버튼 밀림 방지) */}
+        {steps.length > 0 && (
+          <div className="fit-doner" style={{ minHeight: steps.length >= 3 ? 62 : 31 }}>
+            {steps.map((step) => {
+              const s = stepState[step.key];
+              const name = stepName(step);
+              if (!axisIsDone(s)) return <span className="fit-chip ghost" key={step.key}>{name}</span>;
+              return (
+                <span className="fit-chip" key={step.key}>
+                  <span className="fit-chip-t">✓ {s.mode === 'keep' ? `${name} 유지` : <>{name} → <b>{s.pickLb}</b></>}</span>
+                  <button type="button" className="fit-edit" onClick={() => editStep(step.key)}>수정</button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {changingStep ? (
+          <div className="fit-changing">
+            <span className="fit-changing-t"><b>{stepName(changingStep)}</b> 조정 중… 옆 예시를 골라주세요</span>
+            <button type="button" className="fit-cancel" onClick={() => cancelStep(changingStep.key)}>취소</button>
+          </div>
+        ) : cur ? (
+          <>
+            <div className="fit-q">{stepQuestion(cur)}</div>
+            <div className="fit-choice">
+              <button type="button" className="keep" onClick={() => keepStep(cur.key)}>유지하기</button>
+              <button type="button" className="change" onClick={() => changeStep(cur.key)}>조정하기</button>
+            </div>
+            {cur.kind === 'match' && <p className="fit-note">조정하면 새로 생성돼요 · {CREDIT_COSTS.mannequinGenerate} 크레딧</p>}
+          </>
+        ) : needsRegen ? (
+          <div className="fit-final">
+            {busy ? (
+              <div className="fit-cta-progress"><ProgressBar value={progress} label="마네킹 생성 중" /></div>
+            ) : (
+              <p className="fit-fmsg"><b>{changedNames.join('·')}</b> 조정했어요 — 다시 생성해서 확인해요</p>
+            )}
+            <Button variant="primary" size="lg" block disabled={busy} onClick={onCta}>
+              수정사항 반영하여 재생성 · {CREDIT_COSTS.mannequinGenerate} 크레딧
             </Button>
           </div>
-        </Modal>
-      )}
+        ) : (
+          <div className="fit-final">
+            <div className="fit-q">상세페이지 구성방식을 선택해주세요.</div>
+            <div className="fit-cmp2">
+              {modes.map((m) => {
+                const disabled = m.value === 'extended' && colorCount < 2;
+                const on = composeMode === m.value;
+                return (
+                  <button
+                    type="button"
+                    key={m.value}
+                    className={`fit-cmp${on ? ' on' : ''}${disabled ? ' off' : ''}`}
+                    disabled={disabled}
+                    aria-pressed={on}
+                    onClick={() => setComposeMode(m.value)}
+                  >
+                    <b>{m.label}</b>
+                    <span>{m.desc}</span>
+                    {m.count && <em>예상 {m.count}컷</em>}
+                    {disabled && <span className="fit-cmp-off">색상 2개 이상부터</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <Button variant="primary" size="lg" block iconRight="arrowRight" onClick={onCta}>
+              이 구성으로 만들기
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
