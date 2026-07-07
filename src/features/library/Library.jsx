@@ -12,8 +12,16 @@ import { Button, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 export function Library() {
   const navigate = useNavigate();
   const beginProject = useAppStore((s) => s.beginProject);
+  const mannequinJob = useAppStore((s) => s.mannequinJob);
   // 서버 project(보관함 행)는 AI 분석 시작 때 생성 — '새 상세페이지' 클릭만으로 빈 행 생성 방지.
-  const onNew = async () => { await beginProject(); navigate('/create/input'); };
+  const onNew = async () => {
+    if (mannequinJob?.status === 'running') {
+      navigate('/create/mannequin');
+      return;
+    }
+    await beginProject();
+    navigate('/create/input');
+  };
   const onOpen = (it) => navigate(`/editor/${it.id}`);
 
   // 서버 상태는 TanStack Query 캐시로 (frontend_state_model §8-7).

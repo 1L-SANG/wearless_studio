@@ -1,9 +1,9 @@
 /* ===== ③ 마네킹컷 — 생성 로딩 ===== */
 .mq-loading { max-width: 640px; margin-inline: auto; }
 .mq-loading-progress { max-width: 520px; margin-inline: auto; margin-bottom: 26px; }
-.mq-loading-preview { max-width: 300px; margin-inline: auto; }
-.mq-loading-frame { aspect-ratio: 3 / 4; border-radius: var(--r-5); background: var(--bg-2); position: relative; overflow: hidden; box-shadow: 0 0 0 1px var(--ring); }
-.mq-loading-caption { text-align: center; font-size: 13px; color: var(--fg-2); margin-top: 9px; font-weight: 500; }
+.mq-loading-candidates { max-width: 560px; margin-inline: auto; }
+.mq-loading .candidate .big { cursor: default; height: clamp(280px, calc(100vh - 430px), 480px); }
+.mq-loading .busy-tile { position: absolute; inset: 0; }
 
 /* ===== 의류 재현성 — 이미지 중심 + 옆 예시 비교 ===== */
 /* 무대: 기본은 이미지만 가운데 / 조정 중이면 [이미지 | 예시 컴포넌트] 한 쌍이 가운데 */

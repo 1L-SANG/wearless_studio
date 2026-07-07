@@ -26,6 +26,13 @@ const initialFlow = {
   adjustCount: 0,
 };
 
+const initialMannequinJob = () => ({
+  status: 'idle', // idle | running | error
+  projectId: null,
+  progress: 0,
+  errorMessage: '',
+});
+
 // ensureProject 동시 호출 합류용 — in-flight Promise 를 모듈 스코프에 보관해 더블클릭/재시도가
 // createProject 를 중복 호출(보관함 행 중복 생성)하지 않게 한다(코드리뷰 반영).
 let ensureProjectInflight = null;
@@ -60,6 +67,7 @@ export const useAppStore = create((set, get) => ({
 
   /* ---- current project + flow selections ---- */
   ...initialFlow,
+  mannequinJob: initialMannequinJob(),
   // 명시적 '새 제작' 횟수 — ProductInput 을 이 값으로 key 해서, 같은 /create/input 라우트에서
   // 새 제작해도 컴포넌트를 remount(폼·복원상태 초기화)한다. loadProject·retry 의 projectId
   // 변경에는 바뀌지 않아 일반 흐름엔 영향 없음.
@@ -78,10 +86,16 @@ export const useAppStore = create((set, get) => ({
     // 안 하면 이전 세션 변형(clothingType/measurements 등)이 새 제작 입력에 유입된다(코드리뷰 반영).
     const mode = import.meta.env.VITE_API_MODE ?? 'mock';
     if (mode === 'http') {
-      set({ ...initialFlow, projectGeneration: get().projectGeneration + 1 });
+      set({ ...initialFlow, mannequinJob: initialMannequinJob(), projectGeneration: get().projectGeneration + 1 });
     } else {
       const project = await api.createProject();
-      set({ ...initialFlow, projectId: project.id, projectPersisted: true, projectGeneration: get().projectGeneration + 1 });
+      set({
+        ...initialFlow,
+        mannequinJob: initialMannequinJob(),
+        projectId: project.id,
+        projectPersisted: true,
+        projectGeneration: get().projectGeneration + 1,
+      });
     }
   },
   /** 서버 project(보관함 행)를 필요 시 1회 생성하고 projectId 를 반환 — AI 분석 시작 시 호출.
@@ -140,6 +154,9 @@ export const useAppStore = create((set, get) => ({
   },
   /** 서버 응답(조정/재생성 결과) 반영용 — 화면이 임의 계산해 넣지 않는다. */
   setAdjustCount(adjustCount) { set({ adjustCount }); },
+  setMannequinJob(patch) {
+    set((s) => ({ mannequinJob: { ...s.mannequinJob, ...patch } }));
+  },
 }));
 
 export default useAppStore;
