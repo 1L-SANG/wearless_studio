@@ -1,0 +1,197 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>마네킹 UI — 이미지 중심 + 옆 예시</title>
+<style>
+:root{
+  --bg:#F1F4F8; --surface:#fff; --ink:#0e0d14; --muted:#6f7681; --faint:#aeb4bd;
+  --line:rgba(34,42,53,.12); --line-soft:rgba(34,42,53,.08);
+  --accent:#0b84dc; --accent-deep:#0a6db6; --accent-soft:#eaf5fd;
+  --ok:#067647; --ok-soft:#e9f4ee; --ok-line:#c9e6d5;
+  --cta:#2c2c2c; --cta-hover:#1b1b1b;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Apple SD Gothic Neo',Pretendard,'Noto Sans KR',system-ui,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:30px 20px 70px}
+header{text-align:center;margin-bottom:20px}
+header h1{font-size:21px;font-weight:800;letter-spacing:-.02em;margin:0 0 5px}
+header p{margin:0;color:var(--muted);font-size:13px}
+
+/* ---- 무대: 기본은 이미지 가운데. 바꾸는 중이면 [이미지 | 예시열] 한 쌍이 가운데 ---- */
+.stage{display:flex;justify-content:center;align-items:flex-start;gap:0;transition:gap .2s}
+.mine-col{display:flex;flex-direction:column;align-items:center;width:340px;max-width:100%;transition:width .2s}
+.tag{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:800;color:var(--accent-deep);background:var(--accent-soft);border-radius:999px;padding:4px 11px;margin-bottom:10px}
+.mine-img{width:100%;aspect-ratio:3/4;border-radius:14px;overflow:hidden;border:2px solid var(--accent);background:#eef2f6;box-shadow:0 10px 30px rgba(24,60,90,.10)}
+.mine-img img{display:block;width:100%;height:100%;object-fit:cover}
+.strip{display:flex;gap:8px;margin-top:12px}
+.ver{position:relative;width:52px;aspect-ratio:3/4;border-radius:7px;overflow:hidden;border:0;padding:0;cursor:pointer;background:#eef2f6;box-shadow:0 0 0 1px var(--line)}
+.ver.on{box-shadow:0 0 0 2px var(--accent)}
+.ver img{width:100%;height:100%;object-fit:cover;display:block}
+.ver .vc{position:absolute;left:4px;bottom:4px;font-size:9px;font-weight:800;color:#fff;background:rgba(0,0,0,.5);border-radius:999px;padding:1px 5px}
+.refrow{display:flex;gap:7px;align-items:center;margin-top:11px;font-size:11px;color:var(--muted)}
+.refrow img{width:26px;height:26px;object-fit:cover;border-radius:5px;border:1px solid var(--line)}
+
+/* ---- 옆 예시 열 (세로) — 바꾸는 중에만 ---- */
+.ex-col{width:0;overflow:hidden;opacity:0;transform:translateX(-8px);transition:width .22s,opacity .18s,transform .22s;pointer-events:none}
+.stage.comparing{gap:22px}
+.stage.comparing .ex-col{width:210px;opacity:1;transform:none;pointer-events:auto}
+.stage.comparing .mine-col{width:300px}
+.ex-head{font-size:12.5px;font-weight:800;color:var(--ink);margin:34px 0 3px}
+.ex-sub{font-size:11px;color:var(--muted);margin:0 0 10px}
+.ex-track{display:flex;flex-direction:column;gap:10px;max-height:430px;overflow-y:auto;padding:2px 4px 6px 2px;scroll-snap-type:y proximity}
+.extile{position:relative;display:block;width:100%;padding:0;font:inherit;color:inherit;border:2px solid var(--line);border-radius:11px;overflow:hidden;background:#fff;cursor:pointer;text-align:center;scroll-snap-align:start;transition:.12s;flex:none}
+.extile img{display:block;width:100%;aspect-ratio:3/4;object-fit:cover}
+.extile .lb{display:block;font-size:12px;font-weight:700;color:var(--muted);padding:5px 2px}
+.extile .extag{position:absolute;left:5px;top:5px;font-size:8.5px;font-weight:800;color:var(--faint);background:rgba(255,255,255,.92);border:1px dashed var(--faint);border-radius:4px;padding:0 4px}
+.extile:hover{transform:translateY(-2px);border-color:var(--accent);box-shadow:0 6px 16px rgba(11,132,220,.14)}
+.ver:focus-visible,.extile:focus-visible,button:focus-visible{outline:2px solid var(--accent-deep);outline-offset:2px}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* ---- 확인 카드: 이미지 바로 아래 ---- */
+.ask{max-width:440px;margin:22px auto 0;background:var(--surface);border:1px solid var(--line-soft);border-radius:15px;box-shadow:0 6px 20px rgba(24,60,90,.06);padding:16px 17px}
+.doner{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:13px}
+.doner:empty{display:none}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-line);border-radius:999px;padding:5px 6px 5px 11px}
+.chip b{font-weight:800}
+.chip .edit{border:0;background:rgba(6,118,71,.13);color:var(--ok);font-size:10.5px;font-weight:800;border-radius:999px;padding:3px 8px;cursor:pointer}
+.chip .edit:hover{background:rgba(6,118,71,.22)}
+.prog{font-size:11px;font-weight:700;color:var(--faint);text-align:center;margin:0 0 8px;letter-spacing:.02em}
+.q{font-size:15px;font-weight:800;text-align:center;margin:0 0 13px}
+.q .qs{color:var(--muted);font-weight:600;font-size:12.5px;display:block;margin-top:3px}
+.choice{display:flex;gap:9px}
+.choice button{flex:1;border:1.5px solid var(--line);background:#fff;border-radius:11px;padding:12px 8px;font-size:13.5px;font-weight:800;cursor:pointer;color:var(--ink);transition:.12s}
+.choice .keep{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.choice .keep:hover{background:#dff0e6}
+.choice .change:hover{border-color:var(--accent);color:var(--accent-deep);background:var(--accent-soft)}
+
+/* 바꾸는 중 상태 바 */
+.changing-bar{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.changing-bar .ct{font-size:13.5px;font-weight:800}
+.changing-bar .ct b{color:var(--accent-deep)}
+.changing-bar .cancel{border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:8px 14px;font-size:12px;font-weight:800;color:var(--muted);cursor:pointer}
+.changing-bar .cancel:hover{border-color:var(--faint);color:var(--ink)}
+
+/* 최종 CTA */
+.final .fmsg{font-size:13px;color:var(--muted);text-align:center;margin:0 0 12px}
+.final .fmsg b{color:var(--ink)}
+.cta{width:100%;border:0;border-radius:12px;background:var(--cta);color:#fff;font-size:14.5px;font-weight:800;padding:14px;cursor:pointer}
+.cta:hover{background:var(--cta-hover)}
+.sub{display:flex;justify-content:center;margin-top:11px}
+.sub button{border:0;background:none;font-size:12px;font-weight:700;color:var(--muted);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.sub button:hover{color:var(--accent-deep)}
+
+@media(max-width:720px){
+  .stage.comparing{flex-direction:column;align-items:center}
+  .stage.comparing .mine-col{width:300px}
+  .stage.comparing .ex-col{width:300px}
+  .ex-head{margin-top:16px}
+  .ex-track{flex-direction:row;max-height:none;overflow-x:auto}
+  .extile{width:120px}
+}
+</style></head><body>
+<div class="wrap">
+  <header>
+    <h1>마네킹컷 확인</h1>
+    <p>가운데가 AI가 만든 내 옷 컷이에요 · 괜찮으면 그대로, 다르면 옆 예시와 비교해 바꿔주세요 (수정 무료)</p>
+  </header>
+  <div class="stage" id="stage">
+    <div class="mine-col">
+      <div class="mine-img"><img id="mine" alt="내 마네킹컷 (AI 생성)"></div>
+      <div class="strip" id="strip" role="group" aria-label="버전 목록"></div>
+      <div class="refrow"><img id="ref" alt="내가 올린 원본 사진"> 내가 올린 사진 · <b style="color:var(--ink)">&nbsp;차콜 반팔 티셔츠</b></div>
+    </div>
+    <div class="ex-col" id="excol"></div>
+  </div>
+  <div class="ask" id="ask"></div>
+</div>
+<script>
+
+const F = (n)=>'../../public/assets/fit-examples/'+n+'.jpg';
+const FIT = [
+  {id:'tight',lb:'타이트',img:'top-women-fit-tight'},
+  {id:'slim',lb:'슬림',img:'top-women-fit-slim'},
+  {id:'reg',lb:'레귤러',img:'top-women-fit-regular'},
+  {id:'semi',lb:'세미오버',img:'top-women-fit-semi_over'},
+  {id:'over',lb:'오버',img:'top-women-fit-over'},
+];
+const LEN = [
+  {id:'ucrop',lb:'울트라크롭',img:'top-women-length-ultra_crop'},
+  {id:'crop',lb:'크롭',img:'top-women-length-crop'},
+  {id:'basic',lb:'기본',img:'top-women-length-basic'},
+  {id:'long',lb:'롱',img:'top-women-length-long'},
+];
+const AXES=[
+  {key:'fit',name:'핏',qs:'여유감',items:FIT},
+  {key:'len',name:'기장',qs:'밑단 위치',items:LEN},
+];
+const st={}; AXES.forEach(a=>st[a.key]={mode:'pending',pick:null,pickLb:null});
+const VERS=[{v:0,img:'top-women-fit-regular'},{v:1,img:'top-women-fit-slim'}];
+let curVer=0;
+
+document.getElementById('mine').src=F(VERS[curVer].img);
+document.getElementById('ref').src=F('top-women-fit-tight');
+document.getElementById('strip').innerHTML=VERS.map(x=>
+  `<button class="ver ${x.v===curVer?'on':''}" data-ver="${x.v}" aria-label="버전 ${x.v} 선택" aria-pressed="${x.v===curVer}"><img src="${F(x.img)}" alt=""><span class="vc">v${x.v}</span></button>`).join('');
+
+const done=a=>st[a.key].mode==='keep'||st[a.key].mode==='picked';
+function render(){
+  const cur=AXES.find(a=>!done(a));
+  const changed=AXES.filter(a=>st[a.key].mode==='picked');
+  // 예시 열 (바꾸는 중일 때만)
+  const changingAxis = cur && st[cur.key].mode==='changing' ? cur : null;
+  const stage=document.getElementById('stage'), excol=document.getElementById('excol');
+  if(changingAxis){
+    stage.classList.add('comparing');
+    excol.innerHTML=`<div class="ex-head">${changingAxis.name} 예시에서 골라주세요</div>
+      <p class="ex-sub">내 옷과 가장 비슷한 걸 고르세요 · 참고용 이미지예요</p>
+      <div class="ex-track" role="listbox" aria-label="${changingAxis.name} 예시">${changingAxis.items.map(it=>`
+        <button type="button" class="extile" role="option" aria-label="${it.lb} 예시로 변경" data-ax="${changingAxis.key}" data-id="${it.id}" data-lb="${it.lb}">
+          <span class="extag" aria-hidden="true">예시</span><img src="${F(it.img)}" alt=""><span class="lb">${it.lb}</span>
+        </button>`).join('')}</div>`;
+  }else{
+    stage.classList.remove('comparing'); excol.innerHTML='';
+  }
+  // 확인 카드
+  const doneChips = AXES.filter(a=>done(a)).map(a=>{
+    const s=st[a.key];
+    const txt = s.mode==='keep'?`${a.name} 그대로` : `${a.name} → <b>${s.pickLb}</b>`;
+    return `<span class="chip">✓ ${txt}<button class="edit" data-edit="${a.key}">수정</button></span>`;
+  }).join('');
+  let bodyHtml;
+  if(changingAxis){
+    bodyHtml=`<div class="changing-bar"><span class="ct"><b>${changingAxis.name}</b> 바꾸는 중… 오른쪽 예시를 골라주세요</span>
+      <button class="cancel" data-cancel="${changingAxis.key}">취소</button></div>`;
+  }else if(cur){
+    const idx=AXES.indexOf(cur)+1;
+    bodyHtml=`<div class="prog">${idx} / ${AXES.length} 확인</div>
+      <div class="q">${cur.name}(${cur.qs}), 이대로 괜찮으세요?</div>
+      <div class="choice">
+        <button class="keep" data-keep="${cur.key}">괜찮아요, 그대로</button>
+        <button class="change" data-change="${cur.key}">${cur.name} 바꿀래요</button>
+      </div>`;
+  }else{
+    // 전부 확인
+    const msg = changed.length
+      ? `<b>${changed.map(a=>a.name).join('·')}</b>을(를) 바꿨어요 — 다시 생성해서 확인해요`
+      : `핏이 모두 괜찮대요! 다음 단계로 넘어가요`;
+    bodyHtml=`<div class="final"><p class="fmsg">${msg}</p>
+      <button class="cta">${changed.length?'수정사항 반영하여 재생성 · 1 크레딧':'좋아요, 다음 단계로 →'}</button>
+      <div class="sub"><button>매칭 의류(하의)도 수정하기</button></div></div>`;
+  }
+  document.getElementById('ask').innerHTML=(doneChips?`<div class="doner">${doneChips}</div>`:'')+bodyHtml;
+}
+document.body.addEventListener('click',e=>{
+  const t=e.target.closest('[data-ver],[data-keep],[data-change],[data-cancel],[data-edit],.extile,.cta');
+  if(!t)return;
+  if(t.dataset.ver!==undefined){curVer=+t.dataset.ver;document.getElementById('mine').src=F(VERS[curVer].img);
+    document.querySelectorAll('.ver').forEach(v=>v.classList.toggle('on',+v.dataset.ver===curVer));return;}
+  if(t.classList.contains('extile')){const k=t.dataset.ax;st[k].mode='picked';st[k].pick=t.dataset.id;st[k].pickLb=t.dataset.lb;render();return;}
+  if(t.dataset.keep!==undefined){st[t.dataset.keep].mode='keep';render();return;}
+  if(t.dataset.change!==undefined){st[t.dataset.change].mode='changing';render();return;}
+  if(t.dataset.cancel!==undefined){st[t.dataset.cancel].mode='pending';render();return;}
+  if(t.dataset.edit!==undefined){st[t.dataset.edit].mode='changing';st[t.dataset.edit].pick=null;render();return;}
+  if(t.classList.contains('cta')){alert('(목업) 변경 있으면 재생성→새 버전 확인 루프 / 없으면 다음 단계로 이동');return;}
+});
+// 스크린샷용 프리셋
+if(location.hash==='#change'){st.fit.mode='changing';}
+if(location.hash==='#done'){st.fit.mode='keep';st.len.mode='picked';st.len.pick='crop';st.len.pickLb='크롭';}
+render();
+</script>
+</body></html>

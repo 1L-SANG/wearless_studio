@@ -1,6 +1,6 @@
 """AG-04 마네킹 생성 워커 (요리사). dispatcher가 claim한 job 1건을 실행한다.
 
-흐름: 입력 로드(베이스+상품사진+하의) → 후보 A/B 각각 단일 tier(기본 image_high=Gemini 3 Pro,
+흐름: 입력 로드(베이스+상품사진+하의) → 단일 tier(기본 image_high=Gemini 3 Pro,
 Flash·승격 없음) 생성 → QC(기본 shadow: 판정 로그만, 게이팅 시 같은 모델 재시도) → 통과본 R2 저장
 → finalize(에셋·컷·크레딧·done/error, 원자·lease 펜스). 생성/네트워크는 to_thread·async로 격리.
 """
@@ -71,7 +71,7 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
 
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
-    product_count, template, product, analysis, clothing_type, image_manifest="",
+    product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
     s = app.state.settings
@@ -80,8 +80,7 @@ async def _run_candidate(
     images = [base_img, *prod_imgs] + ([match_img] if match_img else [])
     ctx = mannequin.prompt_context(
         clothing_type=clothing_type, product_count=product_count,
-        candidate=candidate, base_fit=base_fit, base_gender=base_gender,
-        image_manifest=image_manifest,
+        base_gender=base_gender, image_manifest=image_manifest, fit_profile=fit_profile,
     )
     base_prompt = render_mannequin_prompt(
         template, ctx, product, analysis,
@@ -160,7 +159,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         # 1) 입력 로드
         async with pool.connection() as conn:
             product = await repo.get_product(conn, project_id) or {}
-            analysis = await repo.get_analysis(conn, project_id)
+            analysis = await repo.get_analysis(conn, project_id) or {}
             gender = mannequin.select_base_gender(analysis)
             base_asset_id = (s.base_mannequin_men_asset_id if gender == "men"
                              else s.base_mannequin_women_asset_id)
@@ -199,23 +198,23 @@ async def run_mannequin_job(app, job: dict) -> None:
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
                                                "withBottom": match_img is not None})
 
-        # 3) 후보 A/B 병렬 생성. return_exceptions=True — 한 후보의 예기치 못한 예외가
-        #    형제 후보를 취소시키지 않게(부분 성공 허용). dict=성공, None/Exception=실패.
+        # 3) 단일 후보 생성. DB/API 호환을 위해 legacy candidate='A'와 candidates=[one_result]
+        #    리스트 shape은 유지한다(P1 계약 전환, UI/API 제거는 후속 단계).
         clothing_type = product.get("clothing_type") or "상의"
         manifest = _build_manifest(prod_assets, match_img is not None)
-        specs = mannequin.candidate_specs(analysis)
-        results = await asyncio.gather(*[
-            _run_candidate(
-                app=app, job=job, candidate=c, base_fit=bf, base_gender=gender,
+        fit_profile = mannequin.generation_spec(analysis)
+        legacy_base_fit = analysis.get("fit") or "regular"
+        try:
+            result = await _run_candidate(
+                app=app, job=job, candidate="A", base_fit=legacy_base_fit, base_gender=gender,
                 base_img=base_img, prod_imgs=prod_imgs, match_img=match_img,
                 product_count=product_count, template=template, product=product,
-                analysis=analysis, clothing_type=clothing_type, image_manifest=manifest)
-            for c, bf in specs
-        ], return_exceptions=True)
-        for r in results:  # 예기치 못한 후보 예외는 드롭하되 로그는 남긴다(디버깅)
-            if isinstance(r, BaseException):
-                log.warning("job %s candidate failed: %r", job_id, r)
-        passed = [r for r in results if isinstance(r, dict)]
+                analysis=analysis, clothing_type=clothing_type, image_manifest=manifest,
+                fit_profile=fit_profile)
+        except Exception as e:
+            log.warning("job %s candidate failed: %r", job_id, e)
+            result = None
+        passed = [result] if isinstance(result, dict) else []
 
         if not passed:
             await _fail("마네킹컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": "all_candidates_failed"})

@@ -150,14 +150,17 @@ StoryboardBlock {
   kind: BlockKind                  // 섹션 역할. 사용자 추가 블록 기본 'info'
   source: BlockSource              // 'ai' | 'mine'
   cutType: CutType | null          // source='mine'이면 null (ADR-0003)
-  direction?: Direction | ProductDirection      // cutType에 따라 옵션 셋이 다름
+  direction?: Direction | ProductDirection | null   // cutType에 따라 옵션 셋이 다름. mirror는 null (ADR-0004)
   shot?: ShotType | ProductShotType
   colorId?: string                 // ColorGroup.id (단수 — 컬러별 컷은 블록을 색상마다 분리)
   pose: PoseId                     // 기본 'auto' (구 _pose)
   matchIds: string[]               // 매칭 의류 후보 id
   faceExposure: FaceExposure       // 기본 'same'
   angle: CameraAngle               // 기본 'same'
-  refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함)
+  refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함) — 프로젝트 한정, 전역 저장 없음 (ADR-0004)
+  exampleId?: string | null        // 분위기 예시 선택 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
+  spaceGroupId?: string | null     // 공간 무드 유지 그룹 — 같은 id = 같은 공간에서 생성 (ADR-0004)
+  spaceVariation?: 'subtle' | 'varied'  // 그룹 내 변화 강도. 기본 'subtle' (ADR-0004)
   ownImages: string[]              // source='mine'의 직접 업로드 이미지
   thumb: string                    // 예시 썸네일 (서버/목 생성, 최종 이미지 아님)
 }
@@ -260,7 +263,7 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | Gender | `women` `men` | 여자/남자 | |
 | Fit | `slim` `regular` `semi_over` `over` | 슬림핏/정핏/세미오버/오버핏 | |
 | ComposeMode | `simple` `basic` `extended` | 간단형/기본형/확장형 | |
-| **CutType** | `styling` `horizon` `product` | 스타일링컷/호리존컷/제품컷 | ★ 신설 — `daily`·`studio` 폐기 (ADR-0003) |
+| **CutType** | `styling` `horizon` `product` `mirror` | 스타일링컷/호리존컷/제품컷/거울샷 | ★ 신설 — `daily`·`studio` 폐기 (ADR-0003) · `mirror` 추가 (ADR-0004) |
 | **BlockSource** | `ai` `mine` | AI 생성/내 이미지 | ★ 신설 — '내 이미지'는 컷 종류가 아님 |
 | BlockKind | `hook` `selling` `styling` `horizon` `product` `info` | 후킹/셀링포인트/스타일링/호리존/제품/정보 | CutType과 직교 (섹션 역할) |
 | AutoBlockKind | `size` `care` `ai-notice` | 사이즈/세탁/AI 생성 안내 | 2026-06-09 결정 유지 |
@@ -345,9 +348,10 @@ NewCutRequest {                    // AI 탭 '새 컷 추가'
   mode: 'new'
   colorId: string                  // 구 group('색상 1') 대체
   cutType: CutType
-  direction: Direction | ProductDirection
+  direction: Direction | ProductDirection | null   // mirror는 null — 방향 없음 (ADR-0004)
   shot: ShotType | ProductShotType
   modelId: string
+  exampleId?: string | null        // 분위기 예시 선택 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
   refImages?: string[]
 }
 VaryRequest {                      // AI 탭 '현재 컷 변형' — changes 빈 배열 = '비슷한 컷 만들기'

@@ -20,10 +20,13 @@ export const Gender = Object.freeze({ WOMEN: 'women', MEN: 'men' });
 export const Fit = Object.freeze({ SLIM: 'slim', REGULAR: 'regular', SEMI_OVER: 'semi_over', OVER: 'over' });
 export const ComposeMode = Object.freeze({ SIMPLE: 'simple', BASIC: 'basic', EXTENDED: 'extended' });
 export const BlockKind = Object.freeze({ HOOK: 'hook', SELLING: 'selling', STYLING: 'styling', HORIZON: 'horizon', PRODUCT: 'product', INFO: 'info' });
-/** 컷 종류 — 공식 용어: 스타일링컷·호리존컷·제품컷 (ADR-0003. 'daily'·'studio' 토큰 폐기) */
-export const CutType = Object.freeze({ STYLING: 'styling', HORIZON: 'horizon', PRODUCT: 'product' });
+/** 컷 종류 — 공식 용어: 스타일링컷·호리존컷·제품컷 (ADR-0003. 'daily'·'studio' 토큰 폐기)
+    + 거울샷 'mirror' (ADR-0004. 방향 없음, 샷은 full/knee만, 얼굴 기본 'hide'=폰으로 가림) */
+export const CutType = Object.freeze({ STYLING: 'styling', HORIZON: 'horizon', PRODUCT: 'product', MIRROR: 'mirror' });
 /** 블록 출처 — '내 이미지'는 컷 종류가 아니라 source다 (ADR-0003) */
 export const BlockSource = Object.freeze({ AI: 'ai', MINE: 'mine' });
+/** 공간 무드 유지 그룹의 변화 강도 — 'subtle'=같은 구도 미세 이동(기본), 'varied'=포즈·프레이밍 변주 (ADR-0004) */
+export const SpaceVariation = Object.freeze({ SUBTLE: 'subtle', VARIED: 'varied' });
 export const Direction = Object.freeze({ FRONT: 'front', BACK: 'back', SIDE: 'side' });
 export const ProductDirection = Object.freeze({ FRONT: 'front', BACK: 'back' });
 export const ShotType = Object.freeze({ FULL: 'full', KNEE: 'knee', MEDIUM: 'medium', CLOSE: 'close' });
@@ -32,8 +35,9 @@ export const ProjectStatus = Object.freeze({ DRAFT: 'draft', GENERATING: 'genera
 export const JobStatus = Object.freeze({ IDLE: 'idle', RUNNING: 'running', DONE: 'done', ERROR: 'error' });
 export const ElementType = Object.freeze({ IMAGE: 'image', TEXT: 'text', SHAPE: 'shape', LINE: 'line' });
 export const AngleSlot = Object.freeze({ FRONT: 'Front', BACK: 'Back', DETAIL: 'Detail', FIT: 'Fit' });
-/** 마네킹 조정 — '현재(변경 없음)'는 파라미터 생략으로 표현 */
+/** @deprecated 핏 프로필(FitProfile)로 대체. P2에서 UI/API 소비 제거 전까지 유지. */
 export const AdjustFit = Object.freeze({ SLIMMER: 'slimmer', LOOSER: 'looser' });
+/** @deprecated 핏 프로필(FitProfile)로 대체. P2에서 UI/API 소비 제거 전까지 유지. */
 export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer' });
 
 /* =============================================================
@@ -95,7 +99,8 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string} [suggestedName]
    @property {string|null} subCategory   영문 토큰 (catalogs.subCategories)
    @property {Gender[]} targetGenders
-   @property {Fit} fit
+   @property {Fit} fit                   legacy 초기 자동 추정값 — fitProfile.axes.fit 공급원
+   @property {FitProfile} fitProfile     마네킹·하위 컷이 상속하는 핏 프로필
    @property {Material[]} materials
    @property {string[]} sellingPoints    자유 텍스트 (max 5)
    @property {string[]} aiSuggestedPoints (max 2)
@@ -103,6 +108,13 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {MatchClothing[]} matchClothing  후보 목록 (선택 상태 포함 — 계약은 matchSelections 분리, §7 갭)
    @property {string} washCare
    @property {boolean} locked
+
+   @typedef {Object} FitProfile
+   @property {'top'|'pants'|'skirt'|'dress'|'outer'} category  clothingType+subCategory 유도 카테고리
+   @property {'women'|'men'} gender       select_base_gender와 동일 규칙
+   @property {{fit?:string|null,length?:string|null,cut?:string|null,silhouette?:string|null}} axes  카테고리별 유효 축만. null='사진 그대로'
+   @property {'auto'|'seller'} source     auto=분석 추정 그대로, seller=셀러가 하나라도 수정
+   @property {1} version
 
    @typedef {Object} Model
    @property {string} id
@@ -141,13 +153,13 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
 
    @typedef {Object} MannequinCut
    @property {string} id                 `${candidate}-${version}`
-   @property {'A'|'B'} candidate
+   @property {'A'|'B'} candidate          @deprecated 단일컷 전환 후 legacy id/API 호환용
    @property {number} version
    @property {string} src
    @property {Fit} baseFit               후보 생성 시 핏 (구 fitLabel)
-   @property {string|null} fitAdjust     AdjustFit — 원본 대비 누적 조정 상태
-   @property {string|null} lengthAdjust  AdjustLength
-   @property {{clothingId:string,fitAdjust:string|null,lengthAdjust:string|null}|null} matchAdjust
+   @property {string|null} fitAdjust     @deprecated AdjustFit — FitProfile로 대체
+   @property {string|null} lengthAdjust  @deprecated AdjustLength — FitProfile로 대체
+   @property {{clothingId:string,fitAdjust:string|null,lengthAdjust:string|null}|null} matchAdjust @deprecated 매칭 의류 자동 시드 메타 사용
    (선택 여부는 project.selectedMannequinId가 소유 — cut.selected 폐기)
 
    @typedef {Object} StoryboardBlock
@@ -155,14 +167,17 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {BlockKind} kind            섹션 역할 (사용자 추가 블록 기본 'info')
    @property {BlockSource} source        'ai' | 'mine'
    @property {string|null} cutType       CutType. source='mine'이면 null
-   @property {Direction|ProductDirection} [direction]
+   @property {Direction|ProductDirection|null} [direction]  mirror는 null — 방향 개념 없음 (ADR-0004)
    @property {ShotType|ProductShotType} [shot]
    @property {string} [colorId]
    @property {string} pose               PoseId, 기본 'auto' (구 _pose)
    @property {string[]} matchIds
    @property {'same'|'show'|'hide'} faceExposure
    @property {'same'|'low'|'high'} angle
-   @property {string[]} refImages        내 레퍼런스 — 생성 입력(NewCutRequest)에 포함
+   @property {string[]} refImages        내 레퍼런스 — 생성 입력(NewCutRequest)에 포함. 프로젝트(블록) 한정, 전역 저장 없음
+   @property {string|null} [exampleId]   분위기 예시 선택 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
+   @property {string|null} [spaceGroupId] 공간 무드 유지 그룹 — 같은 id = 같은 공간에서 생성 (ADR-0004)
+   @property {SpaceVariation} [spaceVariation] 그룹 내 변화 강도 — 기본 'subtle'
    @property {string[]} [ownImages]      source='mine'
    @property {string} thumb              예시 썸네일 (최종 이미지 아님)
    @property {string} [title]            과도기 표시 필드 — 계약상 파생 (kind 라벨)
@@ -197,6 +212,16 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {Element[]} elements        배열 순서 = z-order
    @property {boolean} [auto]
 
+   @typedef {Object} NewCutRequest    AI 탭 '새 컷 추가' 생성 입력 (계약 §6)
+   @property {'new'} mode
+   @property {string} colorId
+   @property {CutType} cutType
+   @property {Direction|ProductDirection|null} direction  mirror는 null — 방향 없음 (ADR-0004)
+   @property {ShotType|ProductShotType} shot
+   @property {string} modelId
+   @property {string|null} [exampleId]   분위기 예시 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
+   @property {string[]} [refImages]
+
    @typedef {Object} GenStep
    @property {string} key                info|prep|styling|horizon|product|copy|assemble
    @property {string} label
@@ -220,7 +245,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
 
 /** Convenience namespace mirroring the prototype's window.WT */
 export const WT = Object.freeze({
-  ClothingType, Gender, Fit, ComposeMode, BlockKind, CutType, BlockSource,
+  ClothingType, Gender, Fit, ComposeMode, BlockKind, CutType, BlockSource, SpaceVariation,
   Direction, ProductDirection, ShotType, ProductShotType, ProjectStatus,
   JobStatus, ElementType, AngleSlot, AdjustFit, AdjustLength,
 });

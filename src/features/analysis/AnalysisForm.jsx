@@ -9,8 +9,16 @@ import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
+import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
+import { CREDIT_COSTS } from '@/lib/limits.js';
 
 export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
+
+// 남성 단독일 때만 'men' — mannequin.py select_base_gender 와 동일 규칙 (핏 프로필 성별 키)
+const genderOf = (genders) => {
+  const g = (genders || []).map((x) => String(x).toLowerCase());
+  return g.length && g.every((x) => ['men', 'male', '남성', '남'].includes(x)) ? 'men' : 'women';
+};
 
 export function AnalysisSkeleton() {
   const chipRow = (ws) => <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{ws.map((w, i) => <Skeleton key={i} w={w} h={34} r={9999} />)}</div>;
@@ -138,11 +146,35 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   };
   const setMat = (i, patch) => onChange({ materials: a.materials.map((m, j) => j === i ? { ...m, ...patch } : m) });
   const draftWash = async () => { setWashing(true); const t = await api.draftWashCare(); onChange({ washCare: t }); setWashing(false); toast.push('AI 초안을 채웠어요 · 실제 케어라벨과 확인해주세요', { icon: 'sparkles' }); };
+  // ── 핏 = fitProfile.axes.fit 의 셀러 편집기 (spec §1 — '핏' 개념이 두 번 보이지 않게 단일화) ──
+  // 값 세트는 카테고리×성별로 fitAxes 에서 파생 (여성 상의 = 타이트~오버 5단 등). 원피스는 핏 축 없음 → 행 숨김.
+  const fitOptsOf = (draft) => {
+    const cat = fitProfileCategory(draft.clothingType, draft.subCategory) || 'top';
+    const values = axesFor(cat, genderOf(draft.targetGenders)).fit || [];
+    return { cat, opts: values.map(({ value, label }) => ({ value, label })) };
+  };
+  // patch 적용 후의 핏·fitProfile 을 함께 산출. 카테고리·성별 변경으로 기존 값이 무효면 regular(없으면 첫 값)로 방어 리셋.
+  const withFitProfile = (patch, source) => {
+    const next = { ...a, ...patch };
+    const { cat, opts } = fitOptsOf(next);
+    let fit = 'fit' in patch ? patch.fit : next.fit;
+    let src = source;
+    if (!opts.length) fit = null; // 원피스 등 핏 축 없는 카테고리
+    else if (!opts.some((o) => o.value === fit)) { fit = opts.some((o) => o.value === 'regular') ? 'regular' : opts[0].value; src = 'auto'; }
+    const prev = next.fitProfile;
+    const axes = prev?.category === cat ? { ...(prev.axes || {}) } : {}; // 카테고리 바뀌면 타 축(컷·기장 등) 무효 → 리셋
+    if (fit === null) delete axes.fit; else axes.fit = fit;
+    return { ...patch, fit, fitProfile: {
+      category: cat, gender: genderOf(next.targetGenders), axes,
+      source: src ?? prev?.source ?? 'auto', version: 1,
+    } };
+  };
   // subCategory 는 영문 토큰, 실측 key 는 MeasurementKey — 라벨은 catalogs 에서 파생 (계약 §4)
-  const changeType = (t) => onChange({ clothingType: t, subCategory: (catalogs.subCategories[t] || [])[0]?.value ?? null,
-    measurements: (catalogs.measurementSchema[t] || []).map((k) => ({ key: k, value: null, unit: 'cm' })) });
+  const changeType = (t) => onChange(withFitProfile({ clothingType: t, subCategory: (catalogs.subCategories[t] || [])[0]?.value ?? null,
+    measurements: (catalogs.measurementSchema[t] || []).map((k) => ({ key: k, value: null, unit: 'cm' })) }));
   const setMeasure = (key, value) => onChange({ measurements: (a.measurements || []).map((m) => m.key === key ? { ...m, value: value === '' ? null : Number(value) } : m) });
   const typeLabel = catalogs.clothingTypes.find((t) => t.value === a.clothingType)?.label;
+  const fitOpts = fitOptsOf(a).opts;
 
   const sections = (
     <>
@@ -154,12 +186,14 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
             <Chips options={catalogs.clothingTypes} value={a.clothingType} onChange={changeType} /></div>
           {(subCats.length > 0) && (
             <div className="field-row"><label className="lbl">세부 카테고리</label>
-              <Chips options={subCats} value={a.subCategory} onChange={(v) => onChange({ subCategory: v })} /></div>
+              <Chips options={subCats} value={a.subCategory} onChange={(v) => onChange(withFitProfile({ subCategory: v }))} /></div>
           )}
           <div className="field-row"><label className="lbl">대상 성별</label>
-            <Chips options={catalogs.genders} value={a.targetGenders?.[0] || null} onChange={(v) => onChange({ targetGenders: v ? [v] : [] })} /></div>
-          <div className="field-row"><label className="lbl">핏</label>
-            <Chips options={catalogs.fits} value={a.fit} onChange={(v) => onChange({ fit: v })} /></div>
+            <Chips options={catalogs.genders} value={a.targetGenders?.[0] || null} onChange={(v) => onChange(withFitProfile({ targetGenders: v ? [v] : [] }))} /></div>
+          {fitOpts.length > 0 && (
+            <div className="field-row"><label className="lbl">핏</label>
+              <Chips options={fitOpts} value={a.fit} onChange={(v) => onChange(withFitProfile({ fit: v }, 'seller'))} /></div>
+          )}
         </div>
       </div>
 
@@ -280,7 +314,8 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     </>
   );
 
-  const cta = <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onNext}>의류정보 확정 완료</Button>;
+  // 마네킹 최초 생성은 다음 페이지 진입 시 자동 차감 — 차감 직전 마지막 행동인 이 버튼에 예고 (PRD §7.7)
+  const cta = <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onNext}>의류정보 확정 완료 · {CREDIT_COSTS.mannequinGenerate} 크레딧</Button>;
 
   if (inline) {
     return (

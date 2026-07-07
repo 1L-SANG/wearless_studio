@@ -13,6 +13,7 @@ from typing import Any
 
 from ..config import Settings
 from . import knowledge as knowledge_kb
+from .fit_axes import build_fit_profile_block
 from .materials import material_guidance
 from .selling_points import canonicalize
 
@@ -41,10 +42,9 @@ def clean_text(value: Any, limit: int = 300) -> str:
 class MannequinPromptContext:
     clothing_type: str
     product_count: int
-    candidate: str
-    base_fit: str
     base_gender: str
     image_manifest: str = ""  # 첨부 이미지 순서·역할 목록 (워커가 실제 슬롯으로 구성)
+    fit_profile: dict | None = None
 
 
 def load_prompt_template(settings: Settings) -> str:
@@ -55,7 +55,14 @@ def load_prompt_template(settings: Settings) -> str:
         return f.read()
 
 
-def _product_block(product: dict, analysis: dict, seller_canon: str = "off", knowledge: str = "off") -> str:
+def _product_block(
+    product: dict,
+    analysis: dict,
+    seller_canon: str = "off",
+    knowledge: str = "off",
+    *,
+    include_legacy_fit: bool = True,
+) -> str:
     """분석 정보를 ground-truth 블록으로. 값 없는 항목은 생략, 값은 sanitize.
     materials는 [{name,ratio}] — name sanitize + ratio% 표기, 그 다음 소재 렌더링 가이드(영문) 첨부."""
     raw_mats = analysis.get("materials") or []
@@ -123,7 +130,7 @@ def _product_block(product: dict, analysis: dict, seller_canon: str = "off", kno
         product.get("name") and f"- Product name: {_sanitize(product.get('name'))}",
         category and f"- Category: {category}",
         genders and f"- Target gender: {', '.join(genders)}",
-        analysis.get("fit") and f"- Fit: {_sanitize(analysis.get('fit'))}",
+        include_legacy_fit and analysis.get("fit") and f"- Fit: {_sanitize(analysis.get('fit'))}",
         material_entry,
         key_features_line,
     ]
@@ -154,16 +161,19 @@ def render_mannequin_prompt(
     text = (
         template.replace("${clothingType}", _sanitize(ctx.clothing_type))
         .replace("${productCount}", str(ctx.product_count))
-        .replace("${candidate}", ctx.candidate)
-        .replace("${baseFit}", _sanitize(ctx.base_fit))
         .replace("${baseGender}", ctx.base_gender)
         .replace("${imageManifest}", ctx.image_manifest)  # 멀티라인 — 마지막에 치환
     )
     leftover = re.findall(r"\$\{[a-zA-Z_]+\}", text)  # 템플릿의 오타·미해결 토큰 검출
     if leftover:
         raise ValueError(f"프롬프트 템플릿에 해결되지 않은 토큰: {sorted(set(leftover))}")
-    block = _product_block(product, analysis, seller_canon, knowledge)
-    return f"{text}\n\n{block}" if block else text
+    fit_profile = ctx.fit_profile if ctx.fit_profile is not None else analysis.get("fitProfile")
+    fit_block = build_fit_profile_block(fit_profile)
+    product_block = _product_block(
+        product, analysis, seller_canon, knowledge, include_legacy_fit=fit_profile is None
+    )
+    blocks = [text, fit_block, product_block]
+    return "\n\n".join(block for block in blocks if block)
 
 
 def prompt_version(settings: Settings) -> str:

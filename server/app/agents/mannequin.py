@@ -1,7 +1,7 @@
 """AG-04 마네킹 생성 — 입력 조립 헬퍼 (순수 함수, DB/IO 없음).
 
 워커(workers/mannequin_job.py)가 이 헬퍼로 "무엇을 로드/생성할지"를 정한다:
-- 성별 베이스 선택 · A/B 후보 spec · 기준 색상 이미지 asset id · 메인 매칭의류(하의) id.
+- 성별 베이스 선택 · 핏 프로필 spec · 기준 색상 이미지 asset id · 메인 매칭의류(하의) id.
 실제 바이트 로드·R2 저장·DB 쓰기는 워커/repo가 한다 (ai_agent_modules §3 AG-04).
 """
 
@@ -9,15 +9,6 @@ from .prompts import MannequinPromptContext
 
 # 기준 색상 이미지 정렬 순서 (common_data_contract §4 AngleSlot)
 _SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "Fit": 3}
-
-# A/B는 같은 성별 베이스 위에서 baseFit 변주로 2안 (AG-04). 미지(unknown) fit은 B도 같은 값.
-_FIT_CONTRAST = {
-    "slim": "regular",
-    "regular": "semi_over",
-    "semi_over": "regular",
-    "over": "semi_over",
-    "loose": "regular",
-}
 
 
 def select_base_gender(analysis: dict) -> str:
@@ -30,11 +21,10 @@ def select_base_gender(analysis: dict) -> str:
     return "women"
 
 
-def candidate_specs(analysis: dict) -> list[tuple[str, str]]:
-    """[(candidate, base_fit)] — A=분석 핏, B=대비 핏 (AG-04 A/B)."""
-    fit = (analysis.get("fit") or "regular")
-    fit_b = _FIT_CONTRAST.get(fit, fit)
-    return [("A", fit), ("B", fit_b)]
+def generation_spec(analysis: dict) -> dict | None:
+    """단일 마네킹 생성 spec. fitProfile이 없거나 형태가 아니면 프로필 블록 없이 생성한다."""
+    profile = (analysis or {}).get("fitProfile")
+    return profile if isinstance(profile, dict) else None
 
 
 def base_color_images(product: dict) -> list[tuple[str, str]]:
@@ -80,14 +70,13 @@ def main_match_item_id(analysis: dict) -> str | None:
 
 
 def prompt_context(
-    *, clothing_type: str, product_count: int, candidate: str, base_fit: str, base_gender: str,
-    image_manifest: str = "",
+    *, clothing_type: str, product_count: int, base_gender: str,
+    image_manifest: str = "", fit_profile: dict | None = None,
 ) -> MannequinPromptContext:
     return MannequinPromptContext(
         clothing_type=clothing_type or "상의",
         product_count=product_count,
-        candidate=candidate,
-        base_fit=base_fit,
         base_gender=base_gender,
         image_manifest=image_manifest,
+        fit_profile=fit_profile,
     )
