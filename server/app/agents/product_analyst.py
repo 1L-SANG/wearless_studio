@@ -13,6 +13,7 @@
 """
 
 import os
+import re
 
 from ..config import Settings
 from .gemini_image import InlineImage
@@ -134,6 +135,24 @@ def _in(value, allowed) -> bool:
     return isinstance(value, str) and value in allowed
 
 
+# 강조특징은 칩 UI 에 들어가는 짧은 명사구여야 한다(계약). 프롬프트가 "4-9자 명사구, 문장 금지"를
+# 지시하지만 gemini 가 산발적으로 문장을 뱉으므로, 서버가 문장형을 드롭한다(방어). 기준:
+# 문장부호 포함 / 공백 제외 15자 이상 / 5어절 이상 → 문장으로 보고 버린다.
+_POINT_PUNCT = re.compile(r"[.!?,;:·…。！？，、；]")
+_POINT_MAX_CHARS = 14
+_POINT_MAX_WORDS = 4
+
+
+def _is_keyword_phrase(p: str) -> bool:
+    if _POINT_PUNCT.search(p):
+        return False
+    if len(p.replace(" ", "")) > _POINT_MAX_CHARS:
+        return False
+    if len(p.split()) > _POINT_MAX_WORDS:
+        return False
+    return True
+
+
 def _materials(raw) -> list[dict]:
     out = []
     for m in raw or []:
@@ -156,7 +175,7 @@ def validate(raw: dict) -> dict:
         if isinstance(s, dict) and _in(s.get("swatchId"), SWATCH_IDS):
             cg = _sanitize(s.get("colorGroupId"))
             swatches.append({"colorGroupId": cg, "swatchId": s["swatchId"]})
-    points = [p for p in (_sanitize(x) for x in (raw.get("aiSuggestedPoints") or [])) if p]
+    points = [p for p in (_sanitize(x) for x in (raw.get("aiSuggestedPoints") or [])) if p and _is_keyword_phrase(p)]
     style_tags = [t for t in (raw.get("styleTags") or []) if is_style_tag(t)]
     name = _sanitize(raw.get("suggestedName"))
     clothing_type = raw.get("clothingType") if _in(raw.get("clothingType"), CLOTHING_TYPES) else None

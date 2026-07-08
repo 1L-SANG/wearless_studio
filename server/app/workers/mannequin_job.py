@@ -209,9 +209,15 @@ async def run_mannequin_job(app, job: dict) -> None:
         slim_profile = mannequin.slim_variant_profile(fit_profile, clothing_type, gender)
         await _emit(pool, job_id, "progress", {"progress": 35, "phase": "generating"})
 
+        # A/B gemini 생성은 이 job 에서 가장 긴 구간(20~60s)이라, 후보가 하나씩 끝날 때마다
+        # 중간 progress 를 쏜다(35→60→85). 이게 없으면 폴링 progress 가 35 에 고정돼 바가 멈춰 보인다.
+        _done = 0
+        _progress_lock = asyncio.Lock()
+
         async def _cand(letter, base_fit, profile):
+            nonlocal _done
             try:
-                return await _run_candidate(
+                r = await _run_candidate(
                     app=app, job=job, candidate=letter, base_fit=base_fit, base_gender=gender,
                     base_img=base_img, prod_imgs=prod_imgs, match_img=match_img,
                     product_count=product_count, template=template, product=product,
@@ -219,7 +225,13 @@ async def run_mannequin_job(app, job: dict) -> None:
                     fit_profile=profile)
             except Exception as e:
                 log.warning("job %s candidate %s failed: %r", job_id, letter, e)
-                return None
+                r = None
+            async with _progress_lock:
+                _done += 1
+                # 2개 완료 기준 35→60→(85 은 아래 finalizing 이 덮음). 마지막은 85 로 클램프.
+                await _emit(pool, job_id, "progress",
+                            {"progress": min(85, 35 + _done * 25), "phase": "generating"})
+            return r
 
         results = await asyncio.gather(
             _cand("A", legacy_base_fit, fit_profile),
