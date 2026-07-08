@@ -1,26 +1,9 @@
 import asyncio
-import contextlib
-import types
 
 import app.routes as routes
 from app.agents import mannequin_adjuster
 from app.workers import mannequin_adjust_job as maj
-
-
-def _auth(make_token):
-    return {"Authorization": f"Bearer {make_token()}"}
-
-
-class _Conn:
-    async def commit(self):
-        return None
-
-
-def _no_db(monkeypatch):
-    @contextlib.asynccontextmanager
-    async def fake_conn(_request):
-        yield _Conn()
-    monkeypatch.setattr(routes, "get_conn", fake_conn)
+from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
 
 
 # ---------- 라우트 ----------
@@ -30,10 +13,10 @@ def test_adjust_404_unknown_project(client, make_token, monkeypatch):
     async def fake_gp(conn, uid, pid):
         return None
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
-    _no_db(monkeypatch)
+    patch_route_db(monkeypatch, routes)
     res = client.post(
         "/v1/projects/nope/mannequins:adjust", json={"baseId": "A-0"},
-        headers=_auth(make_token))
+        headers=auth_headers(make_token))
     assert res.status_code == 404
 
 
@@ -54,11 +37,11 @@ def test_adjust_creates_job_and_reserves(client, make_token, monkeypatch):
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
-    _no_db(monkeypatch)
+    patch_route_db(monkeypatch, routes)
     res = client.post(
         "/v1/projects/p1/mannequins:adjust",
         json={"baseId": "A-0", "fitAdjust": "slimmer"},
-        headers=_auth(make_token))
+        headers=auth_headers(make_token))
     assert res.status_code == 202, res.text
     assert res.json()["jobId"] == "job-adj-1"
     assert seen["kind"] == "mannequin_adjust"
@@ -80,10 +63,10 @@ def test_adjust_402_insufficient_credits(client, make_token, monkeypatch):
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
-    _no_db(monkeypatch)
+    patch_route_db(monkeypatch, routes)
     res = client.post(
         "/v1/projects/p1/mannequins:adjust", json={"baseId": "A-0"},
-        headers=_auth(make_token))
+        headers=auth_headers(make_token))
     assert res.status_code == 402
     assert res.json()["error"]["code"] == "insufficient_credits"
 
@@ -97,53 +80,14 @@ def test_adjust_400_missing_base_id(client, make_token, monkeypatch):
 
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
-    _no_db(monkeypatch)
+    patch_route_db(monkeypatch, routes)
     res = client.post(
-        "/v1/projects/p1/mannequins:adjust", json={}, headers=_auth(make_token))
+        "/v1/projects/p1/mannequins:adjust", json={}, headers=auth_headers(make_token))
     assert res.status_code == 400
     assert res.json()["error"]["code"] == "missing_base_id"
 
 
 # ---------- 워커 ----------
-
-class _FakePool:
-    def connection(self):
-        @contextlib.asynccontextmanager
-        async def _cm():
-            yield _Conn()
-        return _cm()
-
-
-class _FakeR2:
-    def get_bytes(self, key):
-        return b"\x89PNG-bytes"
-
-    def put_bytes(self, key, data, mime):
-        return None
-
-    def delete(self, key):
-        return None
-
-
-class _FakeGemini:
-    pass
-
-
-def _app(settings):
-    st = types.SimpleNamespace(settings=settings, pool=_FakePool(), r2=_FakeR2(), gemini=_FakeGemini())
-    return types.SimpleNamespace(state=st)
-
-
-def _job(payload=None):
-    return {
-        "id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:tok",
-        "credits_reserved": 1, "payload": payload or {"baseId": "A-0", "fitAdjust": "slimmer"},
-    }
-
-
-def _settings():
-    from conftest import make_settings
-    return make_settings(gemini_api_key="x", r2_bucket="b")
 
 
 def test_run_mannequin_adjust_job_success_charges_cost_and_new_version(monkeypatch):
@@ -173,7 +117,9 @@ def test_run_mannequin_adjust_job_success_charges_cost_and_new_version(monkeypat
     monkeypatch.setattr(maj.repo, "finalize_mannequin_adjust_success", fake_finalize)
     monkeypatch.setattr(maj, "_emit", fake_emit)
 
-    asyncio.run(maj.run_mannequin_adjust_job(_app(_settings()), _job()))
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    job = worker_job({"baseId": "A-0", "fitAdjust": "slimmer"})
+    asyncio.run(maj.run_mannequin_adjust_job(app, job))
 
     assert captured["charge"] == 1  # credit_cost_mannequin_adjust 기본값
     assert captured["base_candidate"] == "A"
@@ -198,7 +144,9 @@ def test_run_mannequin_adjust_job_missing_base_cut_fails(monkeypatch):
     monkeypatch.setattr(maj.repo, "list_mannequin_cuts", fake_list_cuts)
     monkeypatch.setattr(maj.repo, "finalize_mannequin_adjust_failure", fake_finalize_failure)
 
-    asyncio.run(maj.run_mannequin_adjust_job(_app(_settings()), _job()))
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    job = worker_job({"baseId": "A-0", "fitAdjust": "slimmer"})
+    asyncio.run(maj.run_mannequin_adjust_job(app, job))
 
     assert captured["metadata"]["error"] == "base_cut_missing"
 
@@ -229,7 +177,9 @@ def test_run_mannequin_adjust_job_gemini_error_fails_job(monkeypatch):
     monkeypatch.setattr(maj.repo, "finalize_mannequin_adjust_failure", fake_finalize_failure)
     monkeypatch.setattr(maj, "_emit", fake_emit)
 
-    asyncio.run(maj.run_mannequin_adjust_job(_app(_settings()), _job()))
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    job = worker_job({"baseId": "A-0", "fitAdjust": "slimmer"})
+    asyncio.run(maj.run_mannequin_adjust_job(app, job))
 
     assert "error" in captured["metadata"]
 

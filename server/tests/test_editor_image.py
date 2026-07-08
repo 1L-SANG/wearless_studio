@@ -1,26 +1,9 @@
 import asyncio
-import contextlib
-import types
 
 import app.routes as routes
 from app.agents import cut_variator
 from app.workers import editor_image_job as eij
-
-
-def _auth(make_token):
-    return {"Authorization": f"Bearer {make_token()}"}
-
-
-class _Conn:
-    async def commit(self):
-        return None
-
-
-def _no_db(monkeypatch):
-    @contextlib.asynccontextmanager
-    async def fake_conn(_request):
-        yield _Conn()
-    monkeypatch.setattr(routes, "get_conn", fake_conn)
+from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
 
 
 # ---------- 라우트 ----------
@@ -30,10 +13,10 @@ def test_generate_image_404_unknown_project(client, make_token, monkeypatch):
     async def fake_gp(conn, uid, pid):
         return None
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
-    _no_db(monkeypatch)
+    patch_route_db(monkeypatch, routes)
     res = client.post(
         "/v1/projects/nope/editor:generate-image", json={"mode": "new"},
-        headers=_auth(make_token))
+        headers=auth_headers(make_token))
     assert res.status_code == 404
 
 
@@ -54,10 +37,10 @@ def test_generate_image_creates_job_and_reserves(client, make_token, monkeypatch
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
-    _no_db(monkeypatch)
+    patch_route_db(monkeypatch, routes)
     body = {"mode": "vary", "source": {"src": "/v1/assets/a1/file", "cutType": "styling"}, "changes": []}
     res = client.post(
-        "/v1/projects/p1/editor:generate-image", json=body, headers=_auth(make_token))
+        "/v1/projects/p1/editor:generate-image", json=body, headers=auth_headers(make_token))
     assert res.status_code == 202, res.text
     assert res.json()["jobId"] == "job-ei-1"
     assert seen["kind"] == "editor_image"
@@ -79,10 +62,10 @@ def test_generate_image_402_insufficient_credits(client, make_token, monkeypatch
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
-    _no_db(monkeypatch)
+    patch_route_db(monkeypatch, routes)
     res = client.post(
         "/v1/projects/p1/editor:generate-image", json={"mode": "new"},
-        headers=_auth(make_token))
+        headers=auth_headers(make_token))
     assert res.status_code == 402
     assert res.json()["error"]["code"] == "insufficient_credits"
 
@@ -101,8 +84,8 @@ def test_get_wardrobe_groups_by_color_id_or_misc(client, make_token, monkeypatch
 
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "list_wardrobe_images", fake_list)
-    _no_db(monkeypatch)
-    res = client.get("/v1/projects/p1/wardrobe", headers=_auth(make_token))
+    patch_route_db(monkeypatch, routes)
+    res = client.get("/v1/projects/p1/wardrobe", headers=auth_headers(make_token))
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["col1"] == [{"id": "w1", "src": "/v1/assets/a1/file", "ai": True, "cutType": "styling"}]
@@ -110,45 +93,6 @@ def test_get_wardrobe_groups_by_color_id_or_misc(client, make_token, monkeypatch
 
 
 # ---------- 워커 ----------
-
-class _FakePool:
-    def connection(self):
-        @contextlib.asynccontextmanager
-        async def _cm():
-            yield _Conn()
-        return _cm()
-
-
-class _FakeR2:
-    def get_bytes(self, key):
-        return b"\x89PNG-bytes"
-
-    def put_bytes(self, key, data, mime):
-        return None
-
-    def delete(self, key):
-        return None
-
-
-class _FakeGemini:
-    pass
-
-
-def _app(settings):
-    st = types.SimpleNamespace(settings=settings, pool=_FakePool(), r2=_FakeR2(), gemini=_FakeGemini())
-    return types.SimpleNamespace(state=st)
-
-
-def _job(payload=None):
-    return {
-        "id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:tok",
-        "credits_reserved": 1, "payload": payload or {"mode": "vary"},
-    }
-
-
-def _settings():
-    from conftest import make_settings
-    return make_settings(gemini_api_key="x", r2_bucket="b")
 
 
 def test_run_editor_image_job_vary_charges_cost_and_group_misc(monkeypatch):
@@ -180,7 +124,8 @@ def test_run_editor_image_job_vary_charges_cost_and_group_misc(monkeypatch):
         "source": {"src": "/v1/assets/a1/file", "cutType": "styling"},
         "changes": [{"type": "pose", "value": "standing"}],
     }
-    asyncio.run(eij.run_editor_image_job(_app(_settings()), _job(payload)))
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["charge"] == 1  # credit_cost_editor_image 기본값
     assert captured["group"] is None  # AG-07 결과는 misc 그룹(color_id=None)
@@ -198,7 +143,8 @@ def test_run_editor_image_job_vary_missing_source_fails(monkeypatch):
     monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_finalize_failure)
 
     payload = {"mode": "vary", "source": {"src": "https://external.example/x.png"}, "changes": []}
-    asyncio.run(eij.run_editor_image_job(_app(_settings()), _job(payload)))
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["metadata"]["error"] == "source_asset_missing"
 
@@ -231,7 +177,8 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
     monkeypatch.setattr(eij, "_emit", fake_emit)
 
     payload = {"mode": "new", "colorId": "col1", "cutType": "horizon", "direction": "front", "shot": "full"}
-    asyncio.run(eij.run_editor_image_job(_app(_settings()), _job(payload)))
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["charge"] == 1
     assert captured["group"] == "col1"
@@ -262,7 +209,8 @@ def test_run_editor_image_job_vary_attaches_ref_bg(monkeypatch):
 
     payload = {"mode": "vary", "source": {"src": "/v1/assets/a-src/file", "cutType": "styling"},
                "changes": [{"type": "bg", "value": "ref"}], "refBgAssetId": "a-bg"}
-    asyncio.run(eij.run_editor_image_job(_app(_settings()), _job(payload)))
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["has_ref_bg"] is True
 
@@ -295,7 +243,8 @@ def test_run_editor_image_job_new_attaches_mood_refs(monkeypatch):
     monkeypatch.setattr(eij, "_emit", fake_emit)
 
     payload = {"mode": "new", "cutType": "styling", "shot": "full", "refAssetIds": ["ref1", "ref2"]}
-    asyncio.run(eij.run_editor_image_job(_app(_settings()), _job(payload)))
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["n_images"] == 3                       # 상품 1 + 무드 2
     assert captured["manifest"].count("MOOD") == 2         # 역할 라벨 동봉
@@ -325,7 +274,8 @@ def test_run_editor_image_job_gemini_error_fails_job(monkeypatch):
     monkeypatch.setattr(eij, "_emit", fake_emit)
 
     payload = {"mode": "vary", "source": {"src": "/v1/assets/a1/file", "cutType": "styling"}, "changes": []}
-    asyncio.run(eij.run_editor_image_job(_app(_settings()), _job(payload)))
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert "error" in captured["metadata"]
 

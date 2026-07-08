@@ -789,6 +789,49 @@ async def _consume_buckets(
     return running - new_reserved
 
 
+async def _finalize_job_failure(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    message: str,
+    metadata: dict,
+    code: str,
+    release: dict | None = None,
+) -> bool:
+    """공통 실패 종결. False = lease 상실."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return False
+    if release is not None:
+        await _settle_credits(
+            conn,
+            user_id=release["user_id"],
+            project_id=release["project_id"],
+            job_id=job_id,
+            reserved=release["reserved"],
+            charge=0,
+            action_key=release["action_key"],
+            settle_key=release["settle_key"],
+            metadata=metadata,
+        )
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'error', error_message = %s, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (message, job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
+            (job_id, Json({"code": code, "message": message})),
+        )
+    return True
+
+
 # ---------- 종결 (원자) ----------
 # 에셋·컷 insert + 크레딧 정산 + job done/error를 **한 함수 = 한 tx = 한 락**으로 처리.
 # 시작에서 jobs 행을 FOR UPDATE로 잠그고(lease 토큰 확인) 커밋까지 유지 → lease 복구의
@@ -877,29 +920,17 @@ async def finalize_mannequin_failure(
     code: str = "generation_failed",
 ) -> bool:
     """실패 종결(원자·lease 펜스): 예약 해제 + job error + error 이벤트. False = lease 상실."""
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
-            (job_id, lease_token),
-        )
-        if await cur.fetchone() is None:
-            return False
-    await _settle_credits(
-        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
-        charge=0, action_key="mannequinGenerate.release", settle_key=settle_key, metadata=metadata,
+    return await _finalize_job_failure(
+        conn, job_id=job_id, lease_token=lease_token, message=message,
+        metadata=metadata, code=code,
+        release={
+            "user_id": user_id,
+            "project_id": project_id,
+            "reserved": reserved,
+            "settle_key": settle_key,
+            "action_key": "mannequinGenerate.release",
+        },
     )
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "update jobs set status = 'error', error_message = %s, "
-            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (message, job_id),
-        )
-        # 종결 이벤트 — 같은 tx (SSE replay 원본). 토스트 가능한 한국어 message (계약 §6).
-        await cur.execute(
-            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
-            (job_id, Json({"code": code, "message": message})),
-        )
-    return True
 
 
 # ---------- AG-05 마네킹 조정 종결 (원자·lease 펜스) — 마네킹 finalize 미러 ----------
@@ -992,28 +1023,17 @@ async def finalize_mannequin_adjust_failure(
 ) -> bool:
     """실패 종결(원자·lease 펜스): 예약 해제 + job error + error 이벤트. False = lease 상실.
     finalize_mannequin_failure와 동일 구조(마네킹 생성 실패 종결 미러)."""
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
-            (job_id, lease_token),
-        )
-        if await cur.fetchone() is None:
-            return False
-    await _settle_credits(
-        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
-        charge=0, action_key="mannequinAdjust.release", settle_key=settle_key, metadata=metadata,
+    return await _finalize_job_failure(
+        conn, job_id=job_id, lease_token=lease_token, message=message,
+        metadata=metadata, code=code,
+        release={
+            "user_id": user_id,
+            "project_id": project_id,
+            "reserved": reserved,
+            "settle_key": settle_key,
+            "action_key": "mannequinAdjust.release",
+        },
     )
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "update jobs set status = 'error', error_message = %s, "
-            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (message, job_id),
-        )
-        await cur.execute(
-            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
-            (job_id, Json({"code": code, "message": message})),
-        )
-    return True
 
 
 # ---------- 분석(AG-01) 종결 (무과금·원자·lease 펜스) ----------
@@ -1077,23 +1097,10 @@ async def finalize_analyze_failure(
     code: str = "analysis_failed",
 ) -> bool:
     """분석 실패 종결(원자·lease 펜스): job error + error 이벤트. 크레딧 경로 없음. False = lease 상실."""
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
-            (job_id, lease_token),
-        )
-        if await cur.fetchone() is None:
-            return False
-        await cur.execute(
-            "update jobs set status = 'error', error_message = %s, "
-            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (message, job_id),
-        )
-        await cur.execute(
-            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
-            (job_id, Json({"code": code, "message": message})),
-        )
-    return True
+    return await _finalize_job_failure(
+        conn, job_id=job_id, lease_token=lease_token, message=message,
+        metadata=metadata, code=code,
+    )
 
 
 # ---------- 콘티/에디터 (projects.storyboard·editor_blocks jsonb) ----------
@@ -1217,28 +1224,17 @@ async def finalize_detail_page_failure(
     code: str = "generation_failed",
 ) -> bool:
     """실패 종결(원자·lease 펜스): 예약 해제 + job error + 이벤트. False = lease 상실."""
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
-            (job_id, lease_token),
-        )
-        if await cur.fetchone() is None:
-            return False
-    await _settle_credits(
-        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
-        charge=0, action_key="detailPageGenerate.release", settle_key=settle_key, metadata=metadata,
+    return await _finalize_job_failure(
+        conn, job_id=job_id, lease_token=lease_token, message=message,
+        metadata=metadata, code=code,
+        release={
+            "user_id": user_id,
+            "project_id": project_id,
+            "reserved": reserved,
+            "settle_key": settle_key,
+            "action_key": "detailPageGenerate.release",
+        },
     )
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "update jobs set status = 'error', error_message = %s, "
-            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (message, job_id),
-        )
-        await cur.execute(
-            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
-            (job_id, Json({"code": code, "message": message})),
-        )
-    return True
 
 
 # ---------- 에디터 의류 탭(Wardrobe, PL-5/6) 종결 (원자·lease 펜스) — 마네킹 패턴 미러 ----------
@@ -1360,28 +1356,17 @@ async def finalize_editor_image_failure(
 ) -> bool:
     """실패 종결(원자·lease 펜스): 예약 해제 + job error + error 이벤트. False = lease 상실.
     finalize_mannequin_adjust_failure와 동일 구조(AG-06/07 공용 종결 미러)."""
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
-            (job_id, lease_token),
-        )
-        if await cur.fetchone() is None:
-            return False
-    await _settle_credits(
-        conn, user_id=user_id, project_id=project_id, job_id=job_id, reserved=reserved,
-        charge=0, action_key="editorImage.release", settle_key=settle_key, metadata=metadata,
+    return await _finalize_job_failure(
+        conn, job_id=job_id, lease_token=lease_token, message=message,
+        metadata=metadata, code=code,
+        release={
+            "user_id": user_id,
+            "project_id": project_id,
+            "reserved": reserved,
+            "settle_key": settle_key,
+            "action_key": "editorImage.release",
+        },
     )
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "update jobs set status = 'error', error_message = %s, "
-            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (message, job_id),
-        )
-        await cur.execute(
-            "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
-            (job_id, Json({"code": code, "message": message})),
-        )
-    return True
 
 
 # ---------- 크레딧 충전·환불·조회 (credit_system_design.md §3.1·§3.2·§3.4·§6) ----------
