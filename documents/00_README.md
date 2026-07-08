@@ -32,7 +32,7 @@
 ## 3. 진행 현황 및 남은 단계 (정본은 `backend_integration_plan.md` §10)
 
 1. ✅ **AI 품질 스파이크** — 완료 (2026-06-19, 마네킹 핏 10/10 통과)
-2. ✅ **Phase 0~4** — FastAPI 골격 · Supabase(스키마+Auth) · Railway 배포 · 듀얼 어댑터 · R2 업로드 · 분석·매칭(M-01) · AI job + 크레딧 원장(reserve-confirm) · AG-04 마네킹 생성·조정 — 완료
+2. ✅ **Phase 0~4** — FastAPI 골격 · Supabase(스키마+Auth) · 백엔드 배포(현재 **AWS ECS Fargate** `api.wearless.kr` — Railway에서 이전 완료) · 듀얼 어댑터 · R2 업로드 · 분석·매칭(M-01) · AI job + 크레딧 원장(reserve-confirm) · AG-04 마네킹 생성(핏 확인·fitProfile 재생성 흐름) — 완료
 3. **Phase 5~7** — 콘티·에디터 영속화 → 다운로드(클라 렌더) → mock 제거 — **진행 예정**
 4. **PG(결제)** — 크레딧 원장 위의 '충전' 기능으로 맨 마지막. 베타는 수동 지급으로 PG 없이 런칭 가능
 
@@ -40,9 +40,9 @@
 
 | 항목 | 현재(임시) | 위치 |
 |---|---|---|
-| 크레딧 단가 (마네킹 생성/조정, 콘티 컷당, 에디터 이미지) | 2 / 1 / 1 / 1 | `src/lib/limits.js` — **상용 과금(출시) 게이트**. Phase 4 차감 장치는 임시값으로 구축 가능, 진짜 단가는 출시 직전 확정 (backend plan §10) |
+| 크레딧 단가 (마네킹 생성·재생성, 콘티 컷당, 에디터 이미지) | 2 / 1 / 1 (구 '마네킹 조정' 항목은 폐기 — 단가 0, fitProfile 재생성으로 통합) | `src/lib/limits.js` — **상용 과금(출시) 게이트**. Phase 4 차감 장치는 임시값으로 구축 가능, 진짜 단가는 출시 직전 확정 (backend plan §10) |
 | 크레딧 실패 환불·재시도 정책 | 미정 | PRD §12.2 · backend plan §11 |
-| 각종 상한 (강조 특징/색상/매칭/조정) | 5 / 3 / 2 / 2 | `src/lib/limits.js` |
+| 각종 상한 (강조 특징/색상/매칭) | 5 / 3 / 2 (구 '조정 2회' 상한 폐기) | `src/lib/limits.js` |
 | 인증·소유권 | ✅ 구현 완료 (Supabase Auth+RLS) | backend plan §2~§3·§9 |
 
 ## 5. 알아둘 점

@@ -34,7 +34,7 @@ Q2. (아니라면) 라우트를 넘어 살아야 하나?
 | Project | `getProject` | `createProject` `patchProject` | 새 제작 시작 / 선택값 변경 / 단계 전환 |
 | Product | `getProduct` | `saveProduct` | 입력 완료 시, 분석 폼에서 실측·의류 종류 수정 시 |
 | Analysis | `analyzeProduct` | `saveAnalysis` | 분석 폼 수정 시 (Product 소유 필드 제외) |
-| MannequinCut[] | `getMannequins` | `generateMannequins` `adjustMannequin` `regenerateMannequins` | 마네킹 단계 |
+| MannequinCut[] | `getMannequins` | `generateMannequins` `regenerateMannequin({fitProfile})` | 마네킹 단계 (구 `adjustMannequin` 폐기) |
 | StoryboardBlock[] | `getStoryboard` | `saveStoryboard` | **생성 CTA 클릭 시** (편집 중엔 로컬 working copy) |
 | EditorBlock[] | `getEditorBlocks` `generateDetailPage` | `saveEditorBlocks` | 에디터 로드 / 저장·디바운스(구현됨) |
 | Wardrobe | `getWardrobe` | `generateImage` `uploadAsset` | 에디터 |
@@ -90,8 +90,8 @@ useAppStore = {
 [입력]      입력 완료 → saveProduct({name, colors, uploadComplete:true}) → analyzeProduct()
 [분석 확인]  폼 수정 → saveAnalysis(patch) / 실측·의류 종류는 saveProduct(patch)
             "마네킹컷 만들기" → navigate (분석은 이미 저장돼 있음)
-[마네킹]    generateMannequins → syncCredits
-            조정·재생성 → adjustMannequin/regenerateMannequins → syncCredits, adjustCount 갱신
+[마네킹]    진입 시 자동 generateMannequins → syncCredits
+            핏 확인 스텝(유지/조정) → 변경 시 regenerateMannequin({fitProfile}) → syncCredits, 새 버전 자동 선택
             컷 선택 → selectMannequin(id) → patchProject({selectedMannequinId})
             구성 방식 → setComposeMode(v) → patchProject({composeMode})
 [콘티]      getStoryboard(projectId)  ← project.composeMode 기반 구성

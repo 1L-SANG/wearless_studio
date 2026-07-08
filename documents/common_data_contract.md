@@ -29,7 +29,7 @@ Project {
   composeMode: ComposeMode         // 기본 'basic'
   copywriting: boolean             // 기본 true
   selectedMannequinId: string | null
-  adjustCount: number              // 마네킹 조정 사용 횟수, 프로젝트에 영속 (max LIMITS.mannequinAdjustMax)
+  adjustCount: number              // @deprecated legacy — 조정 횟수 제한 폐기(fitProfile 재생성 흐름, mannequinAdjustMax=undefined)
   createdAt: string                // ISO
   updatedAt: string                // ISO
 }
@@ -45,8 +45,8 @@ ProjectSummary {                   // 보관함 카드 (구 LibraryItem)
 }
 ```
 
-- `composeMode` `copywriting` `selectedMannequinId` `adjustCount`는 **서버 동기화 대상 선택값**이다. 프론트는 Zustand에 작업 사본을 두고 변경 시 `patchProject`로 동기화한다 (→ `frontend_state_model.md`).
-- 조정 횟수 2회 제한은 **프로젝트당**이다. 재진입·새로고침에도 유지되고, 재생성도 동일 카운트를 소모한다. PRD §7.4의 "세션"은 "한 프로젝트의 마네킹 단계"로 해석한다. (단, 새로고침 유지는 영속 백엔드 전제 — 현 in-memory mock에서 F5는 "서버 재시작"과 같아서 프로젝트·크레딧·횟수가 함께 일관되게 리셋된다. SPA 재진입 유지는 mock에서도 동작하며 E2E로 검증됨.)
+- `composeMode` `copywriting` `selectedMannequinId`는 **서버 동기화 대상 선택값**이다. 프론트는 Zustand에 작업 사본을 두고 변경 시 `patchProject`로 동기화한다 (→ `frontend_state_model.md`).
+- **조정 횟수 제한(구 2회/프로젝트)은 폐기됐다** (2026-07, fitProfile 재생성 흐름 — PRD §7.4). 조정 반영은 재생성(`mannequinGenerate` 크레딧)으로만 이뤄지므로 크레딧이 자연 제한이다. `adjustCount`는 legacy 서버 필드로 남아 있을 뿐 어떤 제한에도 쓰이지 않는다(`LIMITS.mannequinAdjustMax` deprecated).
 
 ---
 
@@ -119,24 +119,24 @@ MatchClothing { id: string, name: string, thumb: string }
 //       Analysis.washCare (세탁 안내는 분석이 아니라 에디터 자동 블록 — M-02 규칙 기반 생성, PRD §10.14)
 ```
 
-### 3.3 MannequinCut — 마네킹 후보와 조정 상태
+### 3.3 MannequinCut — 마네킹 컷 버전 (단일컷 전환)
 
-라벨 문자열('정핏', '더 여유롭게')을 상태로 저장하지 않는다. 조정 상태는 enum, 표시 라벨은 파생.
+마네킹컷은 **단일 컷 + 버전 스트립**이다(구 A/B 2후보안 폐기, 2026-07). 핏 상태는 `analysis.fitProfile`(→ `fit_profile_spec.md`)이 소유하고, 컷 엔티티는 버전 이미지만 담는다.
 
 ```ts
 MannequinCut {
   id: string                       // `${candidate}-${version}`
-  candidate: 'A' | 'B'
+  candidate: 'A' | 'B'             // @deprecated 단일컷 전환 후 legacy id/API 호환용 — 항상 'A'
   version: number
   src: string
-  baseFit: Fit                     // 후보가 생성될 때의 핏 (구 fitLabel '정핏'/'슬림핏')
-  fitAdjust: AdjustFit | null      // 원본 대비 누적 조정 상태. null = 원본
-  lengthAdjust: AdjustLength | null
+  baseFit: Fit                     // 생성 시 핏 (구 fitLabel '정핏'/'슬림핏')
+  fitAdjust: AdjustFit | null      // @deprecated — FitProfile로 대체
+  lengthAdjust: AdjustLength | null // @deprecated — FitProfile로 대체
   matchAdjust: {
     clothingId: string
     fitAdjust: AdjustFit | null
     lengthAdjust: AdjustLength | null
-  } | null
+  } | null                         // @deprecated — 매칭 핏은 fitProfile.matchCut이 소유
 }
 // 폐기: selected (선택은 project.selectedMannequinId가 소유),
 //       fitLabel / lengthLabel / matchName / matchFit / matchLength / matchLabel (전부 파생)
@@ -244,7 +244,7 @@ GenJob {
   steps: GenStep[]                 // GenStep { key: string, label: string, status: JobStatus }
   composition: BlockKind[]
 }
-// step key: info | prep | styling | horizon | product | copy | assemble
+// step key: info | prep | styling | horizon | product | mirror | copy | assemble
 
 Account { name: string, avatar: string, credits: number, plan: PlanTier }
 // PlanTier 토큰: 'basic' | 'plus' | 'seller' (소문자 저장, 표시 라벨은 catalogs 파생 — §4). 가격·혜택 구분은 크레딧 정책과 함께 추후 확정.
@@ -320,7 +320,7 @@ dress:  totalLength, shoulderWidth, chestWidth, waistWidth, armhole, sleeveLengt
 |---|---|---|---|
 | `createProject()` | — | `Project` | 새 제작 시작. 구 `resetDraft()` 대체 |
 | `getProject(projectId)` | | `Project` | |
-| `patchProject(projectId, patch)` | 선택값 patch | `Project` | 수용 필드 **화이트리스트**: composeMode·copywriting·selectedMannequinId만. **adjustCount·status는 서버 전용** — 페이로드에 오면 무시/거부(조정 횟수는 adjust/regenerate, status는 생성 job의 부수효과로만 변경). frontend_state_model §6 |
+| `patchProject(projectId, patch)` | 선택값 patch | `Project` | 수용 필드 **화이트리스트**: composeMode·copywriting·selectedMannequinId만. **adjustCount·status는 서버 전용** — 페이로드에 오면 무시/거부(adjustCount는 legacy 필드, status는 생성 job의 부수효과로만 변경). frontend_state_model §6 |
 | `getLibrary()` | | `ProjectSummary[]` | |
 | `getAccount()` | | `Account` | |
 | `getCatalogs()` | | `Catalogs` | |
@@ -330,9 +330,9 @@ dress:  totalLength, shoulderWidth, chestWidth, waistWidth, armhole, sleeveLengt
 | `saveAnalysis(projectId, patch)` | | `Analysis` | |
 | `getMatchClothing(projectId)` | | `MatchClothing[]` | **과도기 함수** — 마네킹·콘티 화면이 매칭 후보를 별도로 읽는다. 최종은 `analyzeProduct` 응답(`analysis.matchCandidates`)에 포함되어 제거 예정(TODO.md) |
 | `getMannequins(projectId)` | | `MannequinCut[]` | |
-| `generateMannequins(projectId, { onProgress })` | | `{ data: MannequinCut[], credits }` | `mannequinGenerate` |
-| `adjustMannequin(projectId, { baseId, fitAdjust?, lengthAdjust?, matchAdjust?, onProgress })` | enum 값만 | `{ data: MannequinCut, credits }` | `mannequinAdjust` · 서버가 adjustCount 증가 |
-| `regenerateMannequins(projectId, { onProgress })` | | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · adjustCount 증가 |
+| `generateMannequins(projectId, { onProgress })` | | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · 페이지 최초 진입 시 자동 호출 |
+| `adjustMannequin(projectId, { baseId, fitAdjust?, lengthAdjust?, matchAdjust?, onProgress })` | enum 값만 | ~~`{ data: MannequinCut, credits }`~~ | **@deprecated (2026-07)** — fitProfile 재생성으로 통합, 페이지에서 미호출 (`mannequinAdjust`=0). 서버 `:adjust`는 항상 **410 Gone**(잡 미생성) |
+| `regenerateMannequin(projectId, { fitProfile, onProgress })` | 확인 스텝에서 확정한 FitProfile(축+matchCut) | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · fitProfile을 analysis에 영속 후 새 버전 생성·자동 선택 (구 `regenerateMannequins` 대체) |
 | `getStoryboard(projectId)` | | `StoryboardBlock[]` | project.composeMode 기반으로 구성 |
 | `saveStoryboard(projectId, blocks)` | | `StoryboardBlock[]` | 생성 CTA 시 반드시 호출 |
 | `generateDetailPage(projectId, { onProgress, onStep })` | | `{ data: EditorBlock[], credits }` | `storyboardPerCut × source='ai'인 블록 수` — 내 이미지 블록은 생성 작업이 없어 차감 제외 |

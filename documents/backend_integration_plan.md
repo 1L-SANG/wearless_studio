@@ -9,7 +9,7 @@
 
 | 항목 | 결정 | 근거 |
 |---|---|---|
-| 토폴로지 | SPA → FastAPI(Railway) → Supabase/R2/AI. 프론트는 Supabase에 **인증만** 직접 접근 | 크레딧·멱등·job 규칙이 전부 서버 트랜잭션 — 프론트 직접 DB 접근은 우회로가 됨 |
+| 토폴로지 | SPA(Vercel) → FastAPI(AWS ECS Fargate, `api.wearless.kr`) → Supabase/R2/AI. 프론트는 Supabase에 **인증만** 직접 접근 | 크레딧·멱등·job 규칙이 전부 서버 트랜잭션 — 프론트 직접 DB 접근은 우회로가 됨. (백엔드는 Railway → AWS 이전 완료, 2026-07) |
 | DB 형태 | 소유권·job·credit·asset은 relational, 콘티/에디터 문서는 JSONB | 문서형 shape는 변동이 잦고, 차감·권한·진행 상태는 트랜잭션·인덱스가 필요 |
 | RLS | 전 사용자 테이블 활성화 + FastAPI도 모든 쿼리에 owner 조건 명시 | RLS는 운영 실수·미래 직접 조회에 대한 2차 방어선 |
 | R2 | private 기본 + presigned 업로드(finalize 검증) + 앱 URL → signed redirect 서빙 | 사용자 상품 사진은 공개 자산이 아니고, `src`는 URL이면 계약 충족 — 만료 관리 없는 안정 URL |
@@ -47,7 +47,7 @@
 
 **업로드 (presigned + finalize)**
 1. `POST /v1/assets/upload-url` { filename, mime, size, projectId, purpose } → { assetId, uploadUrl, headers, expiresAt }
-2. 브라우저 → R2 직접 PUT (서버 바이트 프록시 금지 — Railway 메모리/타임아웃)
+2. 브라우저 → R2 직접 PUT (서버 바이트 프록시 금지 — 컨테이너 메모리/타임아웃)
 3. `POST /v1/assets/{assetId}/complete` — 서버가 R2 object 존재·크기·mime 검증 후 row 확정
 4. 계약의 `uploadAsset(file)`은 프론트 어댑터가 이 3단계를 감싼다(화면 계약 불변)
 
@@ -78,7 +78,7 @@ seed/matching/{matchingItemId}.{ext}
 | saveAnalysis | PATCH `/v1/projects/{id}/analysis` |
 | getMatchClothing | GET `/v1/projects/{id}/analysis/match-candidates` (과도기 — 최종은 analysis 응답 포함) |
 | getMannequins | GET `/v1/projects/{id}/mannequins` |
-| generate/adjust/regenerateMannequins | POST `…/mannequins:generate` · `:adjust` · `:regenerate` (job) |
+| generateMannequins / regenerateMannequin | POST `…/mannequins:generate` · `:regenerate` (job — regenerate는 `{fitProfile}` 바디). `:adjust`는 폐기 — 항상 **410 Gone**(잡 미생성·미차감, 무과금 생성 경로 차단) |
 | getStoryboard / saveStoryboard | GET/PUT `/v1/projects/{id}/storyboard` |
 | generateDetailPage | POST `/v1/projects/{id}/detail-page:generate` (job) |
 | getEditorBlocks / saveEditorBlocks | GET/PUT `/v1/projects/{id}/editor-blocks` (PUT은 editor_revision 증가) |
@@ -92,7 +92,7 @@ seed/matching/{matchingItemId}.{ext}
 
 ## 5. job 실행 인프라 (합의안)
 
-**결정**: MVP 초기 job 실행은 별도 Railway worker 없이 **FastAPI web 프로세스의 lifespan dispatcher**로 시작한다. 단 ① `jobs` 테이블이 큐의 원본이고 dispatcher는 `FOR UPDATE SKIP LOCKED` claim + lease(locked_by/locked_at) 후 실행 — **요청 핸들러 안에서 실행 금지**(HTTP 취소·이탈이 job 취소로 이어지지 않게), ② provider 호출은 async client 또는 `to_thread` 격리(이벤트 루프 블로킹 방지), ③ web replica 2개+ 또는 CPU 작업(서버 렌더 등) 도입 시 같은 claim 코드를 별도 worker 프로세스로 분리(엔트리포인트 동일, env 플래그).
+**결정**: MVP 초기 job 실행은 별도 worker 컨테이너 없이 **FastAPI web 프로세스의 lifespan dispatcher**로 시작한다(그래서 AWS Copilot 매니페스트도 `count: 1` 단일 상시 태스크 — in-process dispatcher 유지). 단 ① `jobs` 테이블이 큐의 원본이고 dispatcher는 `FOR UPDATE SKIP LOCKED` claim + lease(locked_by/locked_at) 후 실행 — **요청 핸들러 안에서 실행 금지**(HTTP 취소·이탈이 job 취소로 이어지지 않게), ② provider 호출은 async client 또는 `to_thread` 격리(이벤트 루프 블로킹 방지), ③ web replica 2개+ 또는 CPU 작업(서버 렌더 등) 도입 시 같은 claim 코드를 별도 worker 프로세스로 분리(엔트리포인트 동일, env 플래그).
 
 근거: 운영 단위 1개의 단순성(Claude) + job/요청 수명 분리·복구 가능성(Codex) — 양쪽 조건부 합의. replica를 늘리는 순간 in-process dispatcher도 자연히 다중 worker가 되므로 claim/lease는 day-1 필수.
 
@@ -164,16 +164,17 @@ seed/matching/{matchingItemId}.{ext}
 | 순서 | 작업 | 비고 |
 |---|---|---|
 | ✅ **0. AI 품질 스파이크** | 버리는 스크립트로 Gemini 이미지 모델에 실제 상품 사진 투입 — 마네킹 핏 재현·의류 동일성·비용·지연 검증 | **완료 (2026-06-19, 10/10 통과).** `spike/spike.js`, Gemini 3 Pro Image |
-| ✅ 1. Phase 0~1 | FastAPI 골격·Supabase(스키마+Auth)·Railway 배포·어댑터 분기 + 읽기 전환 + **TanStack Query 도입** | **완료.** Zustand는 이미 구현 완료 |
+| ✅ 1. Phase 0~1 | FastAPI 골격·Supabase(스키마+Auth)·백엔드 배포(당시 Railway)·어댑터 분기 + 읽기 전환 + **TanStack Query 도입** | **완료.** Zustand는 이미 구현 완료 |
 | ✅ 2. Phase 2~3 | R2 presigned 업로드 → 분석·매칭 전환 | **완료.** M-01 매칭 백엔드·64종 시드 live |
-| ✅ 3. Phase 4 | AI job 실체화 + **크레딧 원장(reserve-confirm) 동시 구축** | **완료.** AG-04 마네킹 생성·조정 live. ⚠️ 크레딧 단가·환불 정책은 상용 출시 직전 확정 필요(§11-1) |
+| ✅ 3. Phase 4 | AI job 실체화 + **크레딧 원장(reserve-confirm) 동시 구축** | **완료.** AG-04 마네킹 생성(fitProfile 재생성 흐름) live. ⚠️ 크레딧 단가·환불 정책은 상용 출시 직전 확정 필요(§11-1) |
+| ✅ 3-1. Railway → AWS 이전 | 백엔드 호스팅을 **AWS ECS Fargate**(Copilot, `api.wearless.kr`)로 마이그레이션 — ECR 이미지, GitHub Actions(OIDC) 자동 배포, secrets=SSM Parameter Store | **완료 (2026-07).** `copilot/` 매니페스트·`.github/workflows/deploy-server.yml`·`deploy/aws/` 참조. 프론트는 Vercel(별개) |
 | 4. Phase 5~6 | 콘티·에디터 영속화 → 다운로드(클라 렌더, §7) | |
 | 5. Phase 7 | mock 제거 (parity 체크리스트) | **mock은 그 전까지 유지** — 실행 가능한 계약(멱등·봉투·소유권 머지)이자 parity 기준. 폐기 시 전환 리스크 증가 |
 | 6. PG (결제) | 크레딧 **충전** 기능으로 원장 위에 마지막에 얹음 | 크레딧 시스템과 분리 — 베타는 수동 지급(원장 `grant`)으로 PG 없이 런칭 가능. PG사 선정은 별도 ADR |
 
 > **과금 순서 원칙**: AI 백엔드(Phase 1~6)를 상용 품질로 먼저 완성한다. 그 과정의 크레딧 차감은 임시값으로 돌리거나 꺼둔다. **크레딧 단가·환불 정책 확정과 PG 연결은 상용 출시 직전에 얹는 별도 단계**다 — AI 완성을 막지 않는다.
 
-스택 연결 시점: GEMINI/OPENAI 키=스파이크(지금) · Supabase=Phase 0~1 · Railway=Phase 0 끝(healthz라도 조기 배포 — CORS·도메인 문제 조기 발견) · TanStack Query=Phase 1 · R2=Phase 2 · TS 점진(types→.ts)=HTTP 어댑터 작성 시 · PG=맨 끝.
+스택 연결 시점: GEMINI/OPENAI 키=스파이크(지금) · Supabase=Phase 0~1 · 백엔드 배포=Phase 0 끝(healthz라도 조기 배포 — CORS·도메인 문제 조기 발견. 당시 Railway, 현재 AWS ECS Fargate) · TanStack Query=Phase 1 · R2=Phase 2 · TS 점진(types→.ts)=HTTP 어댑터 작성 시 · PG=맨 끝.
 
 ## 11. 오픈 이슈 (정책 확정 대기)
 

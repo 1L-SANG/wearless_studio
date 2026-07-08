@@ -34,10 +34,10 @@ OPENAI_API_KEY=   # 예비 — text tier를 OpenAI 계열로 재배정할 때만
 | AG-01 | product-analyst (상품 분석) | text | `analyzeProduct` | — | ✅ (구현 — `kind='analyze'` job + GPT↔Gemini 폴백 + 프론트 연결) |
 | AG-02 | copywriter (카피라이팅) | text | `generateDetailPage`(copy 단계) | — | ✅ (설계만) |
 | AG-03 | copy-qc (카피 검수) | text | `generateDetailPage`(copy 단계 직후) | — | ✅ (설계만) |
-| AG-04 | mannequin-generator (마네킹 생성) | image_high | `generateMannequins`, `regenerateMannequins` | mannequinGenerate | ✅ (백엔드 라이브) |
-| AG-05 | mannequin-adjuster (마네킹 조정) | image_high | `adjustMannequin` | mannequinAdjust | ✅ (설계만) |
-| AG-06 | cut-generator (컷 생성) | image_high | `generateDetailPage`(컷 단계), `generateImage(mode:'new')` | storyboardPerCut / editorImage | ✅ (설계만) |
-| AG-07 | cut-variator (컷 변형) | image_high | `generateImage(mode:'vary')` | editorImage | ✅ (설계만) |
+| AG-04 | mannequin-generator (마네킹 생성) | image_high | `generateMannequins`, `regenerateMannequin({fitProfile})` | mannequinGenerate | ✅ (백엔드 라이브) |
+| AG-05 | mannequin-adjuster (마네킹 조정) | image_high | ~~`adjustMannequin`~~ | ~~mannequinAdjust~~(0) | ⛔ 폐기 — fitProfile 재생성으로 통합 |
+| AG-06 | cut-generator (컷 생성 — 거울샷 포함) | image_high | `generateDetailPage`(컷 단계), `generateImage(mode:'new')` | storyboardPerCut / editorImage | ✅ (백엔드 라이브 — detail_page_job·editor_image_job) |
+| AG-07 | cut-variator (컷 변형) | image_high | `generateImage(mode:'vary')` | editorImage | ✅ (백엔드 라이브 — editor_image_job) |
 | M-01 | matching-recommender (매칭 추천) | **비-AI** (룰베이스) | `analyzeProduct` 내부 | — | ✅ (백엔드 라이브) |
 | M-02 | page-assembler (상세페이지 조립) | **비-AI** (템플릿 엔진) | `generateDetailPage`(assemble 단계) | — | ✅ (mock/템플릿) |
 | AG-P1 | matching-ai-recommender | text | M-01 대체/보강 | — | P1 슬롯 |
@@ -89,37 +89,40 @@ OPENAI_API_KEY=   # 예비 — text tier를 OpenAI 계열로 재배정할 때만
 
 | | |
 |---|---|
-| tier | `image_high` |
-| 호출 시점 | 마네킹 단계 최초 진입 `generateMannequins` / 전부 재생성 `regenerateMannequins` (PL-2/3) |
-| 생성 방식 | **성별 베이스 + 의류 스왑** (스파이크 결정 2026-06-12). 맨바닥 독립 생성이 아니라, **분석에서 고른 성별(`targetGenders`)이 베이스 마네킹(남/여 각 고정 1장, 운영자 시드)을 결정**하고 그 위에 의류만 교체. A/B 후보는 **같은 성별 베이스** 위의 변주(독립 생성·성별 혼합 아님). |
-| 입력 | `{ baseMannequinUrl: 성별 베이스 URL, productImages: 기준 색상 전 각도 URL[], clothingType, fit, candidate: 'A'\|'B', baseFit: Fit }` — A/B는 baseFit 등 변주를 다르게 줘 2안 |
-| 출력 | `{ imageUrl }` → 서버가 `MannequinCut { id, candidate, version, src, baseFit, *Adjust:null }`로 포장 (계약 §3.3) |
+| tier | `image_high` (Gemini 3 Pro 단일 티어 — Flash 프로모션 없음) |
+| 호출 시점 | 마네킹 페이지 최초 진입 시 **자동** `generateMannequins` / 핏 확인 후 `regenerateMannequin(projectId, { fitProfile })` (PL-2/3) |
+| 생성 방식 | **성별 베이스 + 의류 스왑** (스파이크 결정 2026-06-12). 맨바닥 독립 생성이 아니라, **분석에서 고른 성별(`targetGenders`)이 베이스 마네킹(남/여 각 고정 1장, 운영자 시드)을 결정**하고 그 위에 의류만 교체. **단일 후보 생성**(DB/API 호환을 위해 legacy `candidate='A'` 유지 — 구 A/B 2후보안 폐기). 핏은 `fitProfile`(축 선언 + `matchCut`)이 프롬프트 블록으로 주입되고, 선택된 매칭 하의 이미지가 있으면 함께 착장. |
+| 입력 | `{ baseMannequinUrl: 성별 베이스 URL, productImages: 기준 색상 전 각도 URL[], matchImage?: 매칭 하의 URL, fitProfile }` — 매칭 하의 이미지가 없는 잡에선 `effective_fit_profile`이 `matchCut`을 제거(없는 옷 지시 방지, `server/app/agents/mannequin.py`) |
+| 출력 | `{ imageUrl }` → 서버가 `MannequinCut { id, candidate:'A'(legacy), version, src }`로 포장 — 재생성 시 새 버전으로 스트립에 추가·자동 선택 |
+| QC | Pillow 휴리스틱 QC + AG-P2 비전 QC 2중 — **현재 둘 다 shadow/off**(로그만, 게이팅 안 함 — `MANNEQUIN_QC_ENABLED=false`, `image_qc='off'`). 게이팅 활성 시 최대 2회 교정 재시도(`mannequin_max_attempts=2`) |
 | 프롬프트 핵심 제약 | **베이스 마네킹의 인물·포즈·구도·배경 동결, 의류만 교체** · 의류 구조·디테일·컬러 보존 최우선 · 모델 얼굴 없음 |
-| 실패 | 후보 1개만 성공해도 결과 반환(부분 성공), 전체 실패 시 throw + 크레딧 미차감 |
+| 실패 | 성공 시 잡당 `mannequinGenerate`(=2) 차감(예약량과 동일 — 구 "성공 후보 수 × 1" 폐기), 실패 시 미차감(예약 release). finalize는 lease-fenced 원자 처리 |
 
-### AG-05 mannequin-adjuster — 마네킹 조정
+### AG-05 mannequin-adjuster — 마네킹 조정 ~~(폐기)~~
+
+> **폐기 (2026-07)**: 마네킹 페이지의 slimmer/looser 조정 흐름이 **fitProfile 기반 재생성**(AG-04 `regenerateMannequin`)으로 통합되면서 페이지에서 더 이상 호출하지 않는다. 크레딧 항목 `mannequinAdjust`도 deprecated(비용 0). 서버 `:adjust` 라우트는 항상 **410 Gone** — 잡을 생성하지 않는다(단가 0 상태에서 잡 생성을 허용하면 무과금 AI 생성 경로가 되므로 차단). 워커(`mannequin_adjust_job`)는 **툼스톤** — 큐에 남은 legacy 잡을 **AI 호출 없이** 실패 종결(예약 크레딧 release)만 한다(생성 코드 제거, 같은 무과금 경로 차단). 프롬프트 헬퍼(`mannequin_adjuster.py`)는 AG-07이 재사용해 파일만 잔존 — 아래 표는 레거시 기록.
 
 | | |
 |---|---|
 | tier | `image_high` |
-| 호출 시점 | '의류 조정하기' → `adjustMannequin` (PL-3) |
+| 호출 시점 | (구) '의류 조정하기' → `adjustMannequin` (PL-3) |
 | 입력 | `{ baseImageUrl, fitAdjust?: 'slimmer'\|'looser', lengthAdjust?: 'shorter'\|'longer', matchAdjust?: { item: MatchingItem, fitAdjust?, lengthAdjust? } }` — '현재'는 필드 생략 (계약 §6) |
 | 출력 | `{ imageUrl }` → 새 버전 MannequinCut. 조정 상태는 서버가 누적 기록 |
 | 프롬프트 핵심 제약 | 지시된 차원만 변경, 나머지(의류 디테일·구도) 동결 — 연속 조정의 시각적 일관성(PRD §17 R&D 인지) |
 
-### AG-06 cut-generator — 컷 생성 (스타일링·호리존·제품)
+### AG-06 cut-generator — 컷 생성 (스타일링·호리존·제품·거울샷)
 
 | | |
 |---|---|
 | tier | `image_high` |
 | 호출 시점 | ① PL-4: 저장된 콘티의 `source='ai'` 블록별 1콜 ② 에디터 '새 컷 추가' → `generateImage(mode:'new')` (PL-5) |
-| 입력 | `{ cutType: 'styling'\|'horizon'\|'product', direction, shot, colorGroup: { swatchId, images: URL[] }, baseMannequinUrl(project.selectedMannequinId의 컷), modelId?, pose?, matchItems?: MatchingItem[], faceExposure, angle, refImages?: URL[] }` — cutType별 유효 옵션 셋은 계약 §4 (product는 ProductDirection/ProductShotType) |
+| 입력 | `{ cutType: 'styling'\|'horizon'\|'product'\|'mirror', direction, shot, colorGroup: { swatchId, images: URL[] }, baseMannequinUrl(project.selectedMannequinId의 컷), modelId?, pose?, matchItems?: MatchingItem[], faceExposure, angle, refImages?: URL[] }` — cutType별 유효 옵션 셋은 계약 §4 (product는 ProductDirection/ProductShotType). **mirror(거울샷) 계약(ADR-0004)**: `direction=null`(방향 개념 없음) · `shot`은 full/knee만 · `faceExposure`는 hide(기본, 폰이 얼굴 가림)/show만 · `pose='auto'` 고정(거울 셀피 구도 자동 연출). 서버가 계약을 강제 정규화하고, 미지의 cutType은 **에러**(`unknown_cut_type`) — 다른 컷으로 조용히 렌더하는 폴백 금지 |
 | 출력 | `{ imageUrl, cutType }` → PL-4에선 블록 이미지, PL-5에선 `WardrobeImage { ai:true, cutType }` |
 | 색상 변형 | 별도 에이전트 아님 — `colorGroup`이 추가 색상이면 같은 의류를 해당 스와치로 재현 (PRD §17 '색상별 동일 의류 재현' R&D 인지) |
-| 프롬프트 핵심 제약 | 상품 동일성 보존 최우선 · 선택 마네킹컷의 핏·실루엣 기준 준수(PRD §7.1) · product 컷은 모델 없음(고스트/행거/플랫레이) · styling 컷은 matchItems 착장 반영 |
+| 프롬프트 핵심 제약 | 상품 동일성 보존 최우선 · 선택 마네킹컷의 핏·실루엣 기준 준수(PRD §7.1) · product 컷은 모델 없음(고스트/행거/플랫레이) · styling·mirror 컷은 matchItems 착장 반영 · mirror 컷은 캐주얼 OOTD 거울 셀피 구도(스튜디오 연출 아님) |
 | 실패 | PL-4: 실패 블록은 빈 슬롯 블록으로 조립하고 결과에 표시(전체 중단 없음, 해당 컷 크레딧 미차감) · PL-5: throw + 미차감 |
 
-> **구현 구조 (2026-06-20 결정)**: cutType별 프롬프트를 **독립 파일/모듈로 분리**(예 `prompts/cuts/product`·`horizon`·`styling`) — 한 컷을 작업할 때 다른 컷 프롬프트를 읽지 않는다. 입출력 계약·R2 입출력·재시도·로깅 등 **배관은 공통 1벌**(컷마다 복붙 금지). tier(모델)는 셋 다 `image_high` 공유 — **컷별 모델 분리는 보류**(저난도 컷에 `image_light`를 쓸 근거가 생기면 그때 §1 테이블에서 분기). 카탈로그를 `AG-06-product/horizon/styling` 3행으로 표기하는 건 선택일 뿐 **계약은 단일**. `styling` = 일상/룩북 컷(별도 '일상' cutType 신설 안 함 — 라벨만).
+> **구현 구조 (2026-06-20 결정 → 2026-07 개정)**: 프롬프트는 **단일 섹션 템플릿** `server/prompts/cut_generate_v1.txt`(`[[CUT:styling|horizon|product|mirror]]` 섹션)로 통합 — 구 `prompts/cuts/*` 컷별 파일은 삭제됐다. 컷별 계약 정규화·옵션 검증은 `server/app/agents/cut_generator.py`가 담당. 입출력 계약·R2 입출력·재시도·로깅 등 **배관은 공통 1벌**(컷마다 복붙 금지). tier(모델)는 전 컷 `image_high` 공유 — **컷별 모델 분리는 보류**(저난도 컷에 `image_light`를 쓸 근거가 생기면 그때 §1 테이블에서 분기). `styling` = 일상/룩북 컷(별도 '일상' cutType 신설 안 함 — 라벨만). 무드/공간 예시 뉘앙스(EXNUANCE)는 정면 계열(front·mirror)에만 적용, 측면/후면은 무드만(밴드 규칙).
 > **다양성은 AG-06의 책임이 아니다**: AG-06은 주어진 1개 spec(direction/shot/pose/angle)을 충실히 렌더할 뿐, 같은 cutType 컷들 간 변주는 **콘티(shot-list) 구성 단계**가 정한다 — §5 '컷 다양성' 참조.
 
 ### AG-07 cut-variator — 현재 컷 변형

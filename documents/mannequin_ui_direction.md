@@ -9,9 +9,9 @@
 1. **AI 추정값을 "선택된 것처럼" 노출 금지.** `fitProfile.axes` 초깃값이 있어도 UI엔 안 보인다. 질문은 "OO을(를) 조정할까요?"뿐.
 2. **이미지 중심.** 가운데 큰 컷(내 옷 = **매칭 하의까지 입은 모습**). "내 옷" 태그·원본 사진 행·테두리 **없음**(은은한 그림자만). 아래 버전 썸네일 스트립(클릭 = `selectMannequin`).
 3. **순차 확인 스텝 = 핏 · 기장 · … + (상의/아우터면) 매칭 의류 핏.** 스텝마다 **[유지하기] / [조정하기]**(둘 다 중립색). '조정하기'를 누르면 이미지 **오른쪽에 예시가 세로로**(테두리 박스 + 우측 스크롤바, 참고용). 현재 스텝만 질문을 노출.
-4. **매칭 의류 핏은 first-class 순차 스텝(방식 1).** 마네킹컷에 하의가 함께 보이므로 조정 시 **재생성(유료)** 이며 `fitProfile.matchCut`(garment_ref)에 저장된다. 상의/아우터에서만 스텝을 추가(mock 휴리스틱). — *구 b2안의 "매칭은 중심 질문 금지·밑줄 링크로만"·"매칭 단독 변경은 무료·saveAnalysis 즉시 저장"은 **폐기**.*
+4. **매칭 의류 핏은 first-class 순차 스텝(방식 1).** 마네킹컷에 하의가 함께 보이므로 조정 시 **재생성(유료)** 이며 `fitProfile.matchCut`(garment_ref)에 저장된다. 스텝 노출 조건 = **상의/아우터 카테고리 + 매칭 의류를 실제 선택한 프로젝트**(`analysis.matchClothing`에 selected 존재 — 컷에 하의가 없는데 하의 핏을 묻지 않기 위함). — *구 b2안의 "매칭은 중심 질문 금지·밑줄 링크로만"·"매칭 단독 변경은 무료·saveAnalysis 즉시 저장"은 **폐기**.*
 5. **확인 항목 칩(카드 상단).** 모든 스텝을 칩으로 표시 — 완료 = **파랑 채움 칩**(✓ · "OO 유지" / "OO → 값" · [수정]), 예정 = **고스트 칩**(min-height로 공간 미리 확보 → 버튼 밀림 방지). [수정]을 누르면 그 스텝을 다시 조정(changing).
-6. **전부 확인 → 최종 카드.** 변경 ≥1건 → `수정사항 반영하여 재생성 · 1 크레딧`(재생성 후 스텝 리셋·재확인 루프). 변경 0건 → `상세페이지 구성방식을 선택해주세요` + **[간단형 / 기본형 / 확장형]** 카드 → `이 구성으로 만들기`(`composeMode` store 반영 후 `/create/storyboard` 이동).
+6. **전부 확인 → 최종 카드.** 변경 ≥1건 → `수정사항 반영하여 재생성 · N 크레딧`(N = `CREDIT_COSTS.mannequinGenerate` = 2, 백엔드 `credit_cost_mannequin_generate` 미러. 재생성 후 스텝 리셋·재확인 루프). 변경 0건 → `상세페이지 구성방식을 선택해주세요` + **[간단형 / 기본형 / 확장형]** 카드 → `이 구성으로 만들기`(`composeMode` store 반영 후 `/create/storyboard` 이동).
 7. 예시 타일엔 **"선택됨" 상태 금지**(참고용) — 좌상단 "예시" 점선 태그. 예시 컬럼 헤더는 단일 문구 **"원하는 OO의 예시를 선택해주세요."**(medium).
 
 ## 1. 문구·스타일
@@ -41,10 +41,11 @@ Mannequin
 
 ### 데이터 연결
 - `buildFitProfile()`: 축 picked → `axes[key]`, 매칭 picked → `profile.matchCut`. keep은 draft 값 유지. `source`=picked 있으면 'seller'.
-- 재생성 = `regenerateMannequin(projectId,{fitProfile})` — 프로필이 `matchCut`까지 포함해 garment_ref로 저장(mock: `DB.analysis.fitProfile`). 성공 시 새 버전 자동선택 + 스텝 리셋(pending) 재확인 루프.
-- `createFitProfileDraft`가 재진입 시 `existing.matchCut` 복원.
+- 재생성 = `regenerateMannequin(projectId,{fitProfile})` — 프로필이 `matchCut`까지 포함해 garment_ref로 저장(mock: `DB.analysis.fitProfile` / http: 서버 `mannequins:regenerate`가 analysis에 영속 → 워커 `generation_spec(analysis)`이 읽음). 성공 시 새 버전 자동선택 + 스텝 리셋(pending) 재확인 루프.
+- `createFitProfileDraft`가 재진입 시 `existing.matchCut` 복원. 매칭 미선택 프로젝트에선 `buildFitProfile`이 stale `matchCut`을 제거.
 - 재생성 **이중 제출 방지**: `submittingRef`(동기 가드) + 버튼 `disabled={busy}`.
-- **남은 것(계약 후속)**: 콘티/생성 단계가 `matchCut`을 실제로 소비해 매칭 하의를 결과 이미지에 반영하는 배선. 현재는 garment_ref에 기록만.
+- **matchCut 백엔드 소비(완료)**: `server/app/agents/fit_axes.py build_fit_profile_block`이 `matchCut`을 pants.cut 카탈로그 고정 문구("matching bottom (the separate bottom garment …)")로 렌더. 매칭 하의 이미지가 없는 잡에선 `mannequin.effective_fit_profile`이 `matchCut`을 제거(없는 옷 지시 방지). 워커의 매칭 하의 탐색(`main_match_item_id`)은 계약형 `matchSelections` → **레거시 `matchClothing`(selected+selOrder, 실 프론트 저장 형식) 폴백** — 이 폴백이 없으면 UI가 받은 matchCut이 생성에서 조용히 무시된다. 회귀 = `tests/test_mannequin_fit_profile.py`.
+- **컷 생성(AG-06)도 fitProfile 소비(완료)**: `cut_generator.render_cut_prompt`가 `analysis.fitProfile`을 동일 카탈로그 블록으로 렌더(FIT PROFILE → PRODUCT CONTEXT 순, 프로필 있으면 레거시 `- Fit:` 생략). 소비처 2곳 모두 배선 — 상세페이지(`detail_page_job`, 기존)와 **에디터 새 컷(`editor_image_job` mode:'new' — analysis 미로드로 fitProfile이 유실되던 것 수정)** — 선택 마네킹컷 **이미지(1번 참조) + 텍스트 제약 이중 전달**로 순종률 확보(컷 파이프라인 계약). matchCut은 매니페스트에 마네킹 참조나 MATCH 첨부가 있을 때만(없는 하의 지어냄 방지). 확정(무변경) CTA는 이동 전 `saveAnalysis({fitProfile})` **await**(저장→생성 순서 보장). 회귀 = `tests/test_cut_generator.py`.
 
 ## 3. 접근성
 - 예시·버전 썸네일·구성 카드 = `<button>`(키보드 조작) · 이미지 `alt` · 예시 컬럼 `role=listbox` / 타일 `role=option`.

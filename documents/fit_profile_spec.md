@@ -61,8 +61,8 @@ FIT PROFILE (seller-declared; overrides any impression from the photos):
 
 ## 4. 생성 플로우 (단일컷 + 재생성 루프)
 
-- 최초 진입: 자동 생성 **1장** (프로필=분석 자동 추정). 크레딧 placeholder: 장당 1 (기존 A/B 2장=2 → 1장=1, `CREDIT_COSTS.mannequinGenerate=1`로 조정·분석 CTA 라벨 갱신).
-- 패널에서 프로필 수정 = **무료**. `다시 생성 · 1 크레딧` 버튼으로 재생성 → 새 버전이 히스토리에 추가·자동 선택. **횟수 제한 없음**(크레딧이 자연 제한, `ADJUST_LIMIT` 폐기).
+- 최초 진입: 자동 생성 **1장** (프로필=분석 자동 추정). 크레딧: 장당 **2** (`CREDIT_COSTS.mannequinGenerate=2`, 백엔드 `credit_cost_mannequin_generate` 미러 — 구 placeholder 1에서 갱신).
+- 순차 확인 스텝에서 프로필 수정 = **무료**. `수정사항 반영하여 재생성 · 2 크레딧` 버튼으로 재생성 → 새 버전이 히스토리에 추가·자동 선택. **횟수 제한 없음**(크레딧이 자연 제한, `ADJUST_LIMIT` 폐기).
 - 히스토리 스트립 유지(버전별). 재생성 확인 모달 간소화(전부 교체 아님 — 버전 추가).
 - 진행률·SSE·멱등 등 기존 generate 파이프라인 재사용. 백엔드 regenerate = 새 job(같은 파이프라인, 프로필만 갱신) — Phase 4.
 

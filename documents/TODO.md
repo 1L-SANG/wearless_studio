@@ -16,7 +16,7 @@
 ### 완료 (기록용)
 
 - ✅ `project` 신설(`createProject`/`getProject`/`patchProject`), `/editor/:id`를 projectId로 사용.
-- ✅ 컷 토큰 통일(`cutType: styling|horizon|product` + `source: ai|mine`), `daily`·`studio` 제거.
+- ✅ 컷 토큰 통일(`cutType: styling|horizon|product` + `source: ai|mine`), `daily`·`studio` 제거. *(이후 ADR-0004로 `mirror`(거울샷) 추가 — 현재 4종)*
 - ✅ 한국어 저장값 영문화(조정 enum, `MeasurementKey`, `subCategories {value,label}` 등) + 라벨 파생.
 - ✅ `saveStoryboard` 생성 CTA에서 호출 후 이동.
 - ✅ `generateDetailPage`가 저장된 콘티 기반 생성(`buildEditorBlocksFromStoryboard`).
@@ -43,7 +43,7 @@
 - 🆕 **`getMatchClothing` 최종 제거(과도기 함수)** — 현재 마네킹·콘티 화면이 실제 호출(`Mannequin.jsx:234`, `Storyboard.jsx:328`)하므로 지금 제거 불가. 매칭 후보가 `analyzeProduct` 응답(`analysis.matchCandidates`)에 완전히 포함되어 두 화면이 거기서 읽게 되면 제거. **→ Phase 3**
 - 🆕 **`patchProject` 서버 화이트리스트** — 실서버 구현 시 `patchProject`는 `composeMode`·`copywriting`·`selectedMannequinId`만 수용. `adjustCount`·`status`는 서버 전용(요청 페이로드에 오면 무시/거부). mock의 무검증 `Object.assign`(`src/mock/api.js:65`)을 서버는 베끼지 않는다. **→ Phase 1** (projects CRUD)
 - 🆕 **필수 칩 해제 불가 + `*` 표시** — 분석 기본 정보에서 `의류 종류`·`핏`은 해제 불가(데이터상 null 불가). 라벨에 포인트 색(`--ring`/Sky) `*` 표기. 해제 가능 칩(세부 카테고리·성별)과 구분. (`AnalysisForm.jsx`) **→ 독립 (순수 UI)**
-- 🆕 **마네킹 성별 베이스 + 의류 스왑 구현** — 스파이크 결과 반영. 성별(`targetGenders`)이 베이스 마네킹(남/여 고정 1장)을 결정, A/B 후보 둘 다 같은 성별 베이스 위 스왑(독립 생성 아님). 베이스 자산은 운영자 시드. (`spike/base/*` 참고, AG-04) **→ Phase 4** ✅ **AG-04 백엔드 LIVE** (`server/app/workers/mannequin_job.py` — 동일 성별 베이스·대비 핏 A/B 구현 완료, 2026-06-29). 프론트 실서버 연동은 별도.
+- 🆕 **마네킹 성별 베이스 + 의류 스왑 구현** — 스파이크 결과 반영. 성별(`targetGenders`)이 베이스 마네킹(남/여 고정 1장)을 결정, A/B 후보 둘 다 같은 성별 베이스 위 스왑(독립 생성 아님). 베이스 자산은 운영자 시드. (`spike/base/*` 참고, AG-04) **→ Phase 4** ✅ **AG-04 백엔드 LIVE** (`server/app/workers/mannequin_job.py` — 동일 성별 베이스·대비 핏 A/B 구현 완료, 2026-06-29 → **이후 단일컷 + fitProfile 재생성으로 전환**, `fit_profile_spec.md`). 프론트 실서버 연동은 별도.
 - 🆕 **마네킹 최초 생성 크레딧 예고** — 마네킹 페이지 진입 시 자동 생성·차감되므로, 분석 CTA 버튼 `의류정보 확정 완료`에 예상 크레딧을 부착(`의류정보 확정 완료 · 2 크레딧`). (`AnalysisForm.jsx:273`) **→ Phase 4**
 - ✅ **스키마: `jobs.status` `cancelled` 제거 + `profiles.plan` basic+CHECK + `jobs.kind` CHECK** — init 마이그레이션(`supabase/migrations/20260612090000_init.sql`)에 in-place 반영(계약 일치). 코드 경로 중 `status='cancelled'` 설정 없음(검증됨). ✅ **2026-06-29 기준 9개 마이그레이션 적용 완료 — 해당 전제 해소됨.**
 
@@ -51,8 +51,8 @@
 
 > 입력·분석을 로그인 없이 공개하고, 분석 CTA `의류정보 확정 완료`에서 소셜 로그인(구글·카카오) 모달 게이트를 띄운다. 마네킹부터 로그인 필요. (`App.jsx` RequireAuth/PostLoginRedirect · `AuthProvider`/`Login.jsx` LoginGate · `ProductInput.jsx` CTA 게이트 · `shell.jsx` TopNav 프로필)
 
-- 🔶 **로그인 후 입력·분석 보존 — 로컬 복원 구현됨 / 백엔드 sync 보류(Option B)** — 분석 CTA 직전 입력+분석+사진을 IndexedDB 에 저장(`draftStore.saveProductDraft(product, analysis)`), 로그인 복귀·브라우저 뒤로가기(카카오→←뒤로)·취소·새로고침 시 ProductInput 이 **복원**한다(사진 blob→objectURL 재생성, `hasPendingDraft` **세션-스코프(sessionStorage)** 게이팅으로 공용 브라우저 타 사용자 누출 차단, 새 제작·로그아웃 시 정리). **단 로그인 성공 시 마네킹으로 즉시 이동하고 백엔드 sync 는 안 한다(Option B).** 이유: ① 원격(Railway) **R2 미설정**으로 `/v1/assets/upload-url` 503 실패, ② 업로드가 사진당 3콜 **순차**라 ~10초, ③ 마네킹 등 하위가 아직 **mock** 이라 sync 해도 결과 무변(즉 지금 sync 는 비용만 큼). **→ 실사용(실서버가 사진을 실제로 쓰는) 단계에 아래 Option A 적용:**
-  - **(A-1) Railway 에 R2 env 설정** — `R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`·`R2_PUBLIC_BASE`. 없으면 `app.state.r2=None`→503 (`server/app/main.py`·`config.py`·`routes.py` `_r2()`).
+- 🔶 **로그인 후 입력·분석 보존 — 로컬 복원 구현됨 / 백엔드 sync 보류(Option B)** — 분석 CTA 직전 입력+분석+사진을 IndexedDB 에 저장(`draftStore.saveProductDraft(product, analysis)`), 로그인 복귀·브라우저 뒤로가기(카카오→←뒤로)·취소·새로고침 시 ProductInput 이 **복원**한다(사진 blob→objectURL 재생성, `hasPendingDraft` **세션-스코프(sessionStorage)** 게이팅으로 공용 브라우저 타 사용자 누출 차단, 새 제작·로그아웃 시 정리). **단 로그인 성공 시 마네킹으로 즉시 이동하고 백엔드 sync 는 안 한다(Option B).** 이유(당시 기준): ① 원격(당시 Railway) **R2 미설정**으로 `/v1/assets/upload-url` 503 실패, ② 업로드가 사진당 3콜 **순차**라 ~10초, ③ 마네킹 등 하위가 아직 **mock** 이라 sync 해도 결과 무변(즉 지금 sync 는 비용만 큼). **→ 실사용(실서버가 사진을 실제로 쓰는) 단계에 아래 Option A 적용:**
+  - ✅ **(A-1) 원격에 R2 env 설정 — 해소됨 (AWS 이전과 함께)** — 현 프로덕션(AWS Copilot)은 `copilot/api/manifest.yml` `variables`(R2_ACCOUNT_ID·R2_BUCKET·R2_ENDPOINT·R2_PUBLIC_BASE) + SSM secrets(R2_ACCESS_KEY_ID·R2_SECRET_ACCESS_KEY)로 설정 완료. (미설정 시 `app.state.r2=None`→503 — `server/app/main.py`·`config.py`·`routes.py` `_r2()`)
   - **(A-2) `src/lib/draftSync.js` 업로드 병렬화** — `for…await uploadPhoto`(line 56-58) → `Promise.all`. ~10초 → 가장 느린 1장(~2-3초).
   - **(A-3) 로그인 복귀 sync 재활성** — `src/App.jsx` RootRedirect 가 즉시 이동(현재) 대신 `syncDraftToBackend(draft)`→`setProjectId`(store에 유지됨)→마네킹. 로딩은 마네킹 생성 로딩과 **겹쳐 백그라운드** 처리해 별도 대기창 없게.
   - **(A-4) sync 에 분석 결과 포함** — 현재 `syncDraftToBackend` 는 product+photos 만 올림. `draft.analysis` 도 백엔드에 저장하도록 추가(`saveAnalysis` 경로).

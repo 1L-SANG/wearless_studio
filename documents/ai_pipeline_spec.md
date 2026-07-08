@@ -1,7 +1,7 @@
 # AI 파이프라인 명세 (ai_pipeline_spec.md)
 
 > 상태: 확정 (2026-06-11, 갱신 2026-06-29) · 짝 문서: `documents/ai_agent_modules.md`(에이전트 정의), `documents/common_data_contract.md`(API 계약·크레딧·멱등 규약)
-> 실행 주체: **FastAPI(Railway) job orchestration** (`documents/03_기술스택_결정서.md` §7). 프론트는 `lib/api` 함수만 호출하고, 파이프라인의 존재를 모른다.
+> 실행 주체: **FastAPI(AWS ECS Fargate) job orchestration** (`documents/03_기술스택_결정서.md` §7 — Railway에서 이전 완료, 2026-07). 프론트는 `lib/api` 함수만 호출하고, 파이프라인의 존재를 모른다.
 
 ---
 
@@ -21,8 +21,8 @@
 | ID | 트리거(화면 → API) | 에이전트/모듈 | 크레딧 | 출력 |
 |---|---|---|---|---|
 | PL-1 분석 | 입력 '입력 완료' → `analyzeProduct` | AG-01(설계) → M-01(라이브) | — | `Analysis` (실측 null) |
-| PL-2 마네킹 생성 | 마네킹 최초 진입 → `generateMannequins` | AG-04 ×2 병렬 **(라이브)** | `mannequinGenerate` | `MannequinCut[]` |
-| PL-3 마네킹 조정/재생성 | '의류 조정하기' → `adjustMannequin` / 재생성 모달 → `regenerateMannequins` | AG-05(설계) / AG-04(라이브) ×2 | `mannequinAdjust` / `mannequinGenerate` · adjustCount+1 | `MannequinCut` / `MannequinCut[]` |
+| PL-2 마네킹 생성 | 마네킹 최초 진입 시 **자동** → `generateMannequins` | AG-04 ×1 단일컷 **(라이브)** | `mannequinGenerate` | `MannequinCut[]` |
+| PL-3 마네킹 재생성 | 핏 확인 스텝 후 '수정사항 반영하여 재생성' → `regenerateMannequin(projectId, { fitProfile })` | AG-04(라이브) ×1 — fitProfile을 analysis에 영속 후 같은 파이프라인 재실행 | `mannequinGenerate` | `MannequinCut[]` (새 버전 추가·자동 선택) — *구 `adjustMannequin`(AG-05)·adjustCount 흐름 폐기* |
 | PL-4 상세페이지 생성 | 콘티 '이대로 생성하기' → `saveStoryboard` 후 `generateDetailPage` | AG-06(설계) ×N → AG-02(설계) → AG-03(설계) → M-02(mock) | `storyboardPerCut × source='ai' 블록 수` | `EditorBlock[]` |
 | PL-5 에디터 새 컷 | AI 탭 '새 이미지 생성' → `generateImage(mode:'new')` | AG-06(설계) | `editorImage` | `WardrobeImage` |
 | PL-6 에디터 컷 변형 | AI 탭 '비슷한 컷/변경 적용' → `generateImage(mode:'vary')` | AG-07(설계) | `editorImage` | `WardrobeImage` |
@@ -45,28 +45,27 @@
 - 진행률: 단일 job 0→100 (현 mock의 2.8s runJob 자리). 실패: throw, 화면 재시도 버튼.
 - [P1 훅] AG-P1로 M-01 스왑 가능(동일 출력 shape).
 
-### PL-2 마네킹 생성 — `generateMannequins(projectId)`
+### PL-2 마네킹 생성 — `generateMannequins(projectId)` (페이지 진입 시 자동)
 
 ```
-prep(기준 색상 이미지·분석 속성)
-  → AG-04 ×2 병렬 (candidate A: baseFit=분석 fit 기준, candidate B: 대비 변주)
-  → MannequinCut[] 저장 → { data, credits }
+prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile = effective_fit_profile(analysis))
+  → AG-04 ×1 단일컷 (legacy candidate='A' — 구 A/B 병렬안 폐기)
+  → Pillow QC + AG-P2(현재 둘 다 shadow/off — 로그만) → MannequinCut[] 저장 → { data, credits }
 ```
-- 진행률 연출: PRD §7.2 단계 텍스트 + 95% 스톨 — 마지막 검수/조립 시간 표현.
-- 부분 성공: 1개 후보만 성공 시 그대로 반환(실패 후보는 재생성 유도). 전체 실패: 미차감.
-- 멱등: 후보가 이미 존재하면 재실행·재차감 없이 기존 반환 (계약 §6 ②).
-- [P1 훅] AG-P2 image-qc 게이트 (후보별 출력 직후) — retry 시 correctionPrompt(실패원인+보완점)를 다음 시도 프롬프트에 주입 (ai_agent_modules §5).
+- 진행률: 서버 체크포인트(15 inputs_loaded → 35 generating → 85 finalizing)를 `jobs.progress`에 영속, 클라이언트가 체크포인트 사이를 크리핑으로 연출(마지막 99% 부근 스톨 — PRD §7.2).
+- 크레딧: 성공 시 잡당 `mannequinGenerate`(=2) 차감 — 예약량과 동일(구 "성공 후보 수 × 1" 계산 폐기). 실패: 미차감(예약 release). finalize는 lease-fenced 원자 처리.
+- 멱등: 컷이 이미 존재하면 재실행·재차감 없이 기존 반환 (계약 §6 ②).
+- QC 게이팅 활성 시(현재 비활성): 거부 판정이면 correctionPrompt(실패원인+보완점)를 다음 시도 프롬프트에 주입해 최대 2회 재시도 (ai_agent_modules §5).
 
-### PL-3 마네킹 조정 — `adjustMannequin(projectId, req)`
+### PL-3 마네킹 재생성 — `regenerateMannequin(projectId, { fitProfile })`
 
 ```
-req 검증(adjustCount < LIMITS.mannequinAdjustMax, enum만 허용)
-  → AG-05 (base 컷 + fitAdjust/lengthAdjust/matchAdjust)
-  → 새 버전 MannequinCut 저장(누적 조정 상태 기록) · adjustCount+1 → { data, credits }
+핏 확인 스텝에서 확정한 fitProfile(축 + matchCut)을 analysis에 영속(garment_ref)
+  → AG-04 재실행(같은 파이프라인, 프로필만 갱신)
+  → 새 버전 MannequinCut 저장 → 자동 선택·스텝 리셋 → { data, credits }
 ```
-- matchAdjust의 안 바뀐 차원은 base에서 누적 유지(mock과 동일 의미).
-- `regenerateMannequins` = AG-04 재실행 + adjustCount+1 (PRD §7.5).
-- [P1 훅] AG-P2 image-qc 게이트 (AG-05 조정 컷 · `regenerateMannequins`의 AG-04 재생성 후보 출력 직후, correctionPrompt 주입 재시도).
+- 크레딧: `mannequinGenerate`(=2). **횟수 제한 없음** — 크레딧이 자연 제한.
+- *구 `adjustMannequin`(AG-05, slimmer/looser enum + adjustCount 제한) 흐름은 폐기(2026-07) — fitProfile 재생성으로 통합.*
 
 ### PL-4 상세페이지 생성 — `generateDetailPage(projectId)` ★핵심
 
@@ -76,18 +75,19 @@ req 검증(adjustCount < LIMITS.mannequinAdjustMax, enum만 허용)
 info     상품·분석·콘티 데이터 수집/검증 (비AI)
 prep     블록별 프롬프트·에셋 준비, selectedMannequinId 컷 로드 (비AI)
 styling  ┐
-horizon  ├ AG-06 cut-generator — source='ai' 블록별 1콜.
-product  ┘ cutType별 그룹으로 진행률 보고, 그룹 내 병렬(동시성 상한 서버 설정).
+horizon  │ AG-06 cut-generator — source='ai' 블록별 1콜.
+product  │ cutType별 그룹으로 진행률 보고, 그룹 내 병렬(동시성 상한 서버 설정).
+mirror   ┘ mirror(거울샷)는 styling과 같이 매칭 의류 착장 그룹.
          source='mine' 블록은 ownImages 그대로(에이전트 호출 없음).
 copy     copywriting=true면: 카피 대상 블록별 AG-02 → 묶음 AG-03 검수(revise 채택)
 assemble M-02 page-assembler — 컷+카피+실측 → EditorBlock[] + 자동 블록 3종 (비AI)
 done     project.status='done' · { data: EditorBlock[], credits }
 ```
-- **진행률 매핑**: 위 7단계가 `genSteps` key(info/prep/styling/horizon/product/copy/assemble)와 1:1 — `onStep`은 단계 상태(idle/running/done), `onProgress`는 가중 합산.
+- **진행률 매핑**: 위 단계가 `genSteps` key(info/prep/styling/horizon/product/mirror/copy/assemble)와 1:1 — `onStep`은 단계 상태(idle/running/done), `onProgress`는 가중 합산.
 - **크레딧**: `storyboardPerCut × ai 블록 수` (내 이미지 제외 — 계약 §6). 컷 단위 실패는 해당 컷 미차감.
 - **부분 실패 정책**: 실패 컷은 빈 슬롯 블록으로 조립하고 응답에 표시 — 전체 job을 죽이지 않는다. 사용자는 에디터 의류 탭에서 재생성(PL-5).
 - **멱등**: status='generating' 재호출 → 합류, status='done' 재호출 → 기존 결과 반환 (계약 §6).
-- [P1 훅] AG-P2 image-qc 게이트 (styling/horizon/product 각 AG-06 컷 출력 직후, correctionPrompt 주입 재시도; 상한 초과 실패 컷은 부분 실패 정책으로 빈 슬롯).
+- [P1 훅] AG-P2 image-qc 게이트 (styling/horizon/product/mirror 각 AG-06 컷 출력 직후, correctionPrompt 주입 재시도; 상한 초과 실패 컷은 부분 실패 정책으로 빈 슬롯).
 
 ### PL-5 / PL-6 에디터 단건 생성·변형 — `generateImage(projectId, req)`
 
@@ -128,7 +128,7 @@ Job {
 | 파이프라인 | 단가 키(`lib/limits.js`) | 차감 시점 | 실패 시 |
 |---|---|---|---|
 | PL-2 / PL-3 재생성 | `mannequinGenerate` | job 성공 확정 시 | 미차감 |
-| PL-3 조정 | `mannequinAdjust` | 〃 | 미차감 |
+| ~~PL-3 조정~~ | ~~`mannequinAdjust`~~ | **폐기** — fitProfile 재생성으로 통합(단가 0, deprecated) | — |
 | PL-4 | `storyboardPerCut × ai컷` | 컷 단위 성공분만 확정 | 실패 컷 미차감 |
 | PL-5 / PL-6 | `editorImage` | job 성공 확정 시 | 미차감 |
 
