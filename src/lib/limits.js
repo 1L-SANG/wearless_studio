@@ -9,7 +9,7 @@
 
 /** 단계별 크레딧 단가 — 이 값만 바꾸면 전 화면 예고가 함께 갱신됨 */
 export const CREDIT_COSTS = Object.freeze({
-  mannequinGenerate: 1, // 마네킹 단일컷 생성·재생성
+  mannequinGenerate: 2, // 마네킹 단일컷 생성·재생성 — 백엔드 credit_cost_mannequin_generate 미러
   mannequinAdjust: 0, // @deprecated P2: 핏 프로필 재생성으로 대체
   storyboardPerCut: 1, // 콘티 → 상세페이지 생성: 컷 1개당
   editorImage: 1, // 에디터에서 이미지 1장 생성/변형

@@ -243,7 +243,14 @@ export const httpAdapter = {
   // 콜러(AnalysisForm)가 읽는다. projectId 없으면(비로그인 공개 분석) 서버 쓰기 없이 추천만 계산.
   async saveAnalysis(projectId, patch) {
     const { matchClothing: matchPatch, ...rest } = patch;
-    const cached = cachedAnalysisFor(projectId);
+    let cached = cachedAnalysisFor(projectId);
+    if (!cached && projectId) {   // 하드 새로고침 후에도 persist 되도록 저장분 1회 하이드레이션(getMatchClothing 동일)
+      const saved = await http(`/v1/projects/${projectId}/analysis`);
+      if (saved && Object.keys(saved).length > 1) {   // {projectId} 만 있으면 미저장 — 스킵
+        analysisCache = { projectId, analysis: saved };
+        cached = saved;
+      }
+    }
     const base = cached ? { ...cached } : {};
     Object.assign(base, rest);
     if (isMatchRefresh(patch)) {
@@ -331,8 +338,8 @@ export const httpAdapter = {
     const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
     return { data: result.data, credits: result.credits };
   },
-  // AG-05 — 조정 값은 enum 토큰만 전달: fitAdjust slimmer|looser, lengthAdjust shorter|longer.
-  // '현재(변경 없음)' = 필드 생략. 완료 재호출 없음(매 호출이 새 버전 생성, mock과 동일 계약).
+  // @deprecated (2026-07) AG-05 폐기 — fitProfile 재생성(regenerateMannequin)으로 통합.
+  // 서버 :adjust 는 항상 410 Gone(잡 미생성). 화면 어디서도 호출하지 않으며 계약 §6 잔재로만 남김.
   async adjustMannequin(projectId, { baseId, fitAdjust, lengthAdjust, matchAdjust, onProgress } = {}) {
     const res = await http(`/v1/projects/${projectId}/mannequins:adjust`, {
       method: 'POST', body: { baseId, fitAdjust, lengthAdjust, matchAdjust },
@@ -349,7 +356,10 @@ export const httpAdapter = {
     });
     if (res.data) return { data: res.data, credits: res.credits };
     const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
-    return { data: result.data, credits: result.credits };
+    // 잡 결과 data 는 "이번에 새로 만든 컷"만(finalize candidates) — 계약(mock cutsEnvelope)은
+    // 전체 버전 목록이므로 재조회로 정합한다(버전 스트립이 이전 버전 히스토리를 유지).
+    const cuts = await http(`/v1/projects/${projectId}/mannequins`);
+    return { data: { cuts }, credits: result.credits };
   },
   // 에디터 Wardrobe(의류 탭, 계약 §3.6) — Record<colorId|'misc', WardrobeImage[]>.
   async getWardrobe(projectId) {

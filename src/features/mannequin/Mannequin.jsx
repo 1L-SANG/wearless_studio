@@ -36,6 +36,9 @@ const isMenOnly = (genders) => Array.isArray(genders) && genders.length > 0 && g
 const validAxisValue = (values, value) => values.some((v) => v.value === value);
 const axisIsDone = (s) => s?.mode === 'keep' || s?.mode === 'picked';
 const hasMatchFor = (category) => category === 'top' || category === 'outer';
+// 매칭 스텝은 컷에 하의가 실제로 착장됐을 때만 — 카테고리 + 매칭 의류를 선택한 프로젝트.
+// (백엔드 워커도 matchSelections 가 있어야 매칭 하의를 함께 생성한다.)
+const hasSelectedMatch = (analysis) => (analysis?.matchClothing || []).some((c) => c.selected);
 
 function derivedGender(analysis, product) {
   const genders = analysis?.targetGenders?.length ? analysis.targetGenders : product?.targetGenders;
@@ -273,7 +276,7 @@ export function Mannequin() {
   const axisDefs = useMemo(() => axesFor(category, gender), [category, gender]);
   const axisEntries = useMemo(() => Object.entries(axisDefs), [axisDefs]);
   const matchValues = useMemo(() => axesFor('pants', gender)?.cut || [], [gender]);
-  const hasMatching = hasMatchFor(category);
+  const hasMatching = hasMatchFor(category) && hasSelectedMatch(analysis);
   // 순차 확인 스텝 = 축들 + (상의/아우터면) 매칭 의류 핏
   const steps = useMemo(() => {
     const a = axisEntries.map(([key, values]) => ({ key, values, kind: 'axis' }));
@@ -306,7 +309,10 @@ export function Mannequin() {
       setColorCount((nextProduct?.colors || []).length || 1);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis);
       setFitProfileDraft(draft);
-      setStepState(initStepState(axesFor(draft.category, draft.gender), hasMatchFor(draft.category)));
+      setStepState(initStepState(
+        axesFor(draft.category, draft.gender),
+        hasMatchFor(draft.category) && hasSelectedMatch(nextAnalysis),
+      ));
 
       let list = await api.getMannequins(pid);
       if (list.length) {
@@ -322,7 +328,12 @@ export function Mannequin() {
       updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
       if (loadRunRef.current !== runId) return;
       setCuts(list);
-      const selectedCut = list.find((cut) => cut.isSelected) || list[0];
+      // 선택 복원 우선순위: 프로젝트에 저장된 selectedMannequinId → isSelected(mock) → 최신 버전.
+      // http 컷엔 isSelected 가 없다 — list[0](최구 버전) 폴백이면 저장된 선택을 되돌려 쓴다.
+      const storedSel = useAppStore.getState().selectedMannequinId;
+      const selectedCut = list.find((cut) => cut.id === storedSel)
+        || list.find((cut) => cut.isSelected)
+        || list.at(-1);
       if (selectedCut && useAppStore.getState().selectedMannequinId !== selectedCut.id) {
         selectMannequin(selectedCut.id);
       }
@@ -336,7 +347,10 @@ export function Mannequin() {
             updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
             if (loadRunRef.current !== runId) return;
             setCuts(fallback);
-            const selectedCut = fallback.find((cut) => cut.isSelected) || fallback[0];
+            const storedFb = useAppStore.getState().selectedMannequinId;
+            const selectedCut = fallback.find((cut) => cut.id === storedFb)
+              || fallback.find((cut) => cut.isSelected)
+              || fallback.at(-1);
             if (selectedCut && useAppStore.getState().selectedMannequinId !== selectedCut.id) {
               selectMannequin(selectedCut.id);
             }
@@ -409,6 +423,7 @@ export function Mannequin() {
       if (s?.mode === 'picked' && s.pick != null) { axes[key] = s.pick; anyPicked = true; }
     });
     const profile = { ...fitProfileDraft, axes, source: anyPicked ? 'seller' : fitProfileDraft.source };
+    if (!hasMatching) delete profile.matchCut;   // 매칭 미선택 프로젝트 — 이전 draft 에 남은 값 제거
     const m = stepState[MATCH_KEY];
     if (m?.mode === 'picked' && m.pick != null) profile.matchCut = m.pick;
     return profile;
@@ -442,9 +457,24 @@ export function Mannequin() {
     }
   };
 
-  const onCta = () => {
+  const onCta = async () => {
     if (!allDone || busy) return;
     if (needsRegen) { regenerate(); return; }
+    // 확정(무변경)도 프로필을 영속 — 다음 단계(컷 생성)가 analysis.fitProfile 을 텍스트 제약으로
+    // 재사용하므로, 이동(=생성 가능 시점) 전에 저장 완료를 보장한다(순서 계약). 저장 실패 시엔
+    // 안내 후 이동을 허용 — 선택 마네킹컷 이미지가 1번 참조(진실)로 여전히 전달된다.
+    const profile = buildFitProfile();
+    if (JSON.stringify(profile) !== JSON.stringify(analysis?.fitProfile)) {
+      setBusy(true);
+      try {
+        await api.saveAnalysis(projectId, { fitProfile: profile });
+        setAnalysis((prev) => ({ ...(prev || {}), fitProfile: profile }));
+      } catch {
+        pushToast('핏 정보 저장에 실패했어요. 컷 생성은 마네킹컷 이미지를 기준으로 진행돼요.', { icon: 'alertTri' });
+      } finally {
+        setBusy(false);
+      }
+    }
     navigate('/create/storyboard');   // 구성(composeMode)은 store 로 이미 반영됨
   };
 
@@ -543,7 +573,7 @@ export function Mannequin() {
                 );
               })}
             </div>
-            <Button variant="primary" size="lg" block iconRight="arrowRight" onClick={onCta}>
+            <Button variant="primary" size="lg" block iconRight="arrowRight" disabled={busy} onClick={onCta}>
               이 구성으로 만들기
             </Button>
           </div>
