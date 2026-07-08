@@ -5,10 +5,10 @@
    시그니처·반환 형태는 mock/api.js(계약 §6)와 동일해야 한다.
    ============================================================= */
 import { supabase } from '@/lib/supabase.js';
-import { DB, buildStoryboard } from '@/mock/db.js';
+import { DB } from '@/mock/db.js';
 import { LIMITS } from '@/lib/limits.js';
 import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
-import { defaultAnalysisShape } from '@/lib/api/shapes.js';
+import { defaultAnalysisShape, defaultStoryboard } from '@/lib/api/shapes.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -228,16 +228,11 @@ export const httpAdapter = {
   async getStoryboard(projectId) {
     const saved = await http(`/v1/projects/${projectId}/storyboard`);
     if (Array.isArray(saved) && saved.length) return saved;
-    // 첫 진입 — 서버에 저장 콘티 없음(GET 은 빈 []). mock 과 동일한 구성방식별 기본 콘티
-    // (후킹/셀링/스타일링/호리존/거울샷/제품컷, PRD §7.7·§8)를 빌드해 서버에 시드한다.
+    // 첫 진입 — 서버에 저장 콘티 없음(GET 은 빈 []). 원 기본 콘티(7컷, d2fb3ee:
+    // 후킹/셀링포인트/스타일링×2/호리존×2/제품컷)를 빌드해 서버에 시드한다.
     // detail_page job 이 '저장된 콘티'를 읽으므로 저장까지 해야 생성에 반영된다.
-    // (mock 의 '구성 변경 시 미편집이면 재구성' 동작은 서버에 dirty 개념이 없어 v1 미지원 —
-    //  시드는 첫 GET 시점의 composeMode 기준.)
-    const [project, product] = await Promise.all([
-      http(`/v1/projects/${projectId}`),
-      http(`/v1/projects/${projectId}/product`),
-    ]);
-    const blocks = buildStoryboard(project?.composeMode || 'basic', product?.colors || []);
+    const product = await http(`/v1/projects/${projectId}/product`);
+    const blocks = defaultStoryboard(product?.colors || []);
     try {
       await http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
     } catch { /* 시드 저장 실패 — 보드는 뜨게 두고, 편집/생성 시 자동저장이 다시 시도 */ }
