@@ -215,6 +215,12 @@ export const httpAdapter = {
       sellingPoints: [],  // 셀러는 빈 상태로 시작 — AI 제안(aiSuggestedPoints)은 폼이 자동으로 채운다
     };
     // 실측은 AI 미산출 → 기본 shape(defaultAnalysisShape)이 이미 value:null (사용자 직접 입력, PRD §6.5).
+    // 매칭 의류 후보 시드 — 서버 matching_items 실 후보(top-N 기본 선택, mock 계약 §6 동일 shape).
+    // defaultAnalysisShape 는 matchClothing:[] 라 여기서 채우지 않으면 분석 페이지 매칭 그리드가
+    // 비어 보인다(과거 mock base 시절엔 가짜 목이 채워줬음). 실패는 비치명 — 빈 목록 유지.
+    try {
+      merged.matchClothing = await recommendMatchHttp(projectId, merged, []);
+    } catch { /* 후보 조회 실패 — 분석 자체는 진행 */ }
     analysisCache = { projectId, analysis: merged };   // US-4: full-payload 머지 + 매칭 선택 이월 seed(프로젝트 스코프)
     return merged;
   },

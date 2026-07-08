@@ -157,7 +157,7 @@ def test_default_mannequin_template_uses_profile_axis_fallback():
     assert "For any fit or length axis" not in template
 
 
-def test_mannequin_worker_runs_single_legacy_candidate(monkeypatch):
+def test_mannequin_worker_runs_dual_candidates(monkeypatch):
     profile = {
         "category": "pants",
         "gender": "men",
@@ -242,21 +242,16 @@ def test_mannequin_worker_runs_single_legacy_candidate(monkeypatch):
     asyncio.run(mannequin_job.run_mannequin_job(app, job))
 
     assert calls["failure"] == []
-    assert len(calls["run"]) == 1
-    assert calls["run"][0]["candidate"] == "A"
-    assert calls["run"][0]["base_fit"] == "regular"
-    assert calls["run"][0]["fit_profile"] == profile
-    assert calls["run"][0]["base_gender"] == "men"
+    # A/B 이원 생성(원 UI 계약): A=현재 핏(프로필 그대로), B=슬림 변형(핏 축만 slim 덮어씀)
+    assert len(calls["run"]) == 2
+    by_cand = {c["candidate"]: c for c in calls["run"]}
+    assert set(by_cand) == {"A", "B"}
+    assert by_cand["A"]["base_fit"] == "regular"
+    assert by_cand["A"]["fit_profile"] == profile
+    assert by_cand["A"]["base_gender"] == "men"
+    assert by_cand["B"]["base_fit"] == "slim"
+    assert by_cand["B"]["fit_profile"] == {
+        "category": "pants", "gender": "men", "axes": {"cut": "slim", "length": None}}
     assert len(calls["success"]) == 1
-    assert calls["success"][0]["charge"] == 1
-    assert calls["success"][0]["candidates"] == [{
-        "asset_id": "asset-1",
-        "bucket": "bucket",
-        "key": "ai/asset-1.png",
-        "mime": "image/png",
-        "size": 3,
-        "width": 1,
-        "height": 1,
-        "candidate": "A",
-        "base_fit": "regular",
-    }]
+    assert calls["success"][0]["charge"] == 2
+    assert [c["candidate"] for c in calls["success"][0]["candidates"]] == ["A", "B"]
