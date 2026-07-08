@@ -47,6 +47,20 @@ def test_validate_truncates_points_and_drops_bad_materials():
     assert v["materials"] == [{"name": "코튼", "ratio": None}]
 
 
+def test_validate_drops_sentence_selling_points():
+    # 강조특징은 짧은 명사구만 — gemini 가 프롬프트를 어기고 문장을 뱉으면 드롭한다(칩 UI 계약).
+    raw = {
+        "aiSuggestedPoints": [
+            "부드러운 촉감으로 데일리하게 입기 좋은 니트입니다.",  # 문장(부호+어절과다) → 드롭
+            "넉넉한 라운드 넥",   # 명사구 → 유지
+            "톡톡한 소재가 은은한 광택을 더해 고급스러운 무드",       # 어절 과다(부호 없음) → 드롭
+            "비침 없는 도톰함",   # 명사구 → 유지
+        ],
+    }
+    v = pa.validate(raw)
+    assert v["aiSuggestedPoints"] == ["넉넉한 라운드 넥", "비침 없는 도톰함"]
+
+
 def test_validate_cross_field_subcategory_group():
     # clothingType 그룹과 안 맞는 subCategory 는 드롭 (top+slacks 같은 환각 조합 차단, #4)
     assert pa.validate({"clothingType": "top", "subCategory": "slacks"})["subCategory"] is None
