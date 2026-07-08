@@ -46,14 +46,27 @@ export function Generating() {
     return () => { cancelled = true; };
   }, []);
 
+  // 서버 progress 는 체크포인트(15→65→85→100)로 띄엄띄엄 온다. 그 사이(특히 컷 생성 15→65)를
+  // 완만히 채워 바가 멈춘 것처럼 보이지 않게 한다(서버값이 바닥, 다음 체크포인트 직전까지만 크리프).
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    setShown((s) => Math.max(s, progress));
+    const id = setInterval(() => setShown((s) => {
+      const ceil = progress >= 85 ? 99 : progress >= 65 ? 82 : progress >= 15 ? 60 : 13;
+      return s < ceil ? Math.min(ceil, s + 1) : s;
+    }), 700);
+    return () => clearInterval(id);
+  }, [progress]);
+  const p = Math.max(progress, shown);
+
   const running = steps.find((s) => s.status === 'running');
-  const current = running ? running.label + '을 만들고 있어요' : progress >= 100 ? '상세페이지를 조립했어요' : '준비하는 중이에요';
+  const current = running ? running.label + '을 만들고 있어요' : p >= 100 ? '상세페이지를 조립했어요' : '준비하는 중이에요';
 
   return (
     <div className="wizard">
       <PageHead title="상세페이지를 생성하고 있어요" sub="콘티에 맞춰 이미지와 카피를 함께 만들고 있습니다." />
       <div className="surface gen-center">
-        <ProgressBar value={progress} label={current} />
+        <ProgressBar value={p} label={current} />
         <div className="comp-pills">
           {composition.map((c) => <span className="flow-pill" key={c}>{c}</span>)}
         </div>
