@@ -207,8 +207,15 @@ async def run_detail_page_job(app, job: dict) -> None:
         # 4) 조립(M-02) — 실패 컷은 빈 슬롯으로
         editor_blocks = page_assembler.assemble(storyboard, cut_results, copy_results, product, copywriting)
 
-        # 5) 성공 종결 (원자·lease 펜스). charge = 성공 컷 수 × storyboardPerCut.
-        charge = len(cut_assets) * s.credit_cost_storyboard_per_cut
+        # 5) 성공 종결 (원자·lease 펜스). charge = 성공 컷 수 × **예약 시점 단가 스냅샷**
+        # (job.metadata.perCutCost — routes.py가 예약과 같은 tx에서 기록). 실행 시점 설정을 쓰면
+        # 배포 사이 단가 변경이 낀 잡이 견적과 다르게 정산되고, 예약액÷현재 블록 수 역산은 예약 후
+        # 콘티 재저장으로 블록이 늘면 단가가 0으로 떨어져 무과금 생성이 된다 — 둘 다 금지.
+        # 스냅샷 없는 legacy 잡만 실행 시점 단가로 폴백. min 캡 = 예약 초과 차감 최종 가드.
+        per_cut = (job.get("metadata") or {}).get("perCutCost")
+        if per_cut is None:  # legacy 잡(스냅샷 도입 전 큐 잔여분)
+            per_cut = s.credit_cost_storyboard_per_cut
+        charge = min(len(cut_assets) * per_cut, reserved)
         async with pool.connection() as conn:
             out = await repo.finalize_detail_page_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id, project_id=project_id,

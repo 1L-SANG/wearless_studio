@@ -23,7 +23,7 @@ _WORKERS = {
     "mannequin": run_mannequin_job,
     "analyze": run_analyze_job,  # AG-01 상품 분석 (무과금)
     "detail_page": run_detail_page_job,  # PL-4 상세페이지 생성 (AG-06→02→03→M-02)
-    "mannequin_adjust": run_mannequin_adjust_job,  # AG-05 마네킹 조정
+    "mannequin_adjust": run_mannequin_adjust_job,  # @deprecated AG-05 — 툼스톤(legacy 잡 드레인 전용, AI 미호출)
     "editor_image": run_editor_image_job,  # AG-06/07 에디터 이미지 (PL-5/6, mode:'new'|'vary')
 }
 _KINDS = tuple(_WORKERS)

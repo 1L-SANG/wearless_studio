@@ -204,7 +204,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         #    리스트 shape은 유지한다(P1 계약 전환, UI/API 제거는 후속 단계).
         clothing_type = product.get("clothing_type") or "상의"
         manifest = _build_manifest(prod_assets, match_img is not None)
-        fit_profile = mannequin.generation_spec(analysis)
+        fit_profile = mannequin.effective_fit_profile(analysis, match_img is not None)
         legacy_base_fit = analysis.get("fit") or "regular"
         await _emit(pool, job_id, "progress", {"progress": 35, "phase": "generating"})
         try:
@@ -224,8 +224,10 @@ async def run_mannequin_job(app, job: dict) -> None:
             return
         await _emit(pool, job_id, "progress", {"progress": 85, "phase": "finalizing"})
 
-        # 4) 성공 종결 (원자·lease 펜스). charge = 성공 컷 수 (부분 성공 미차감 — codex/계약).
-        charge = len(passed)
+        # 4) 성공 종결 (원자·lease 펜스). charge = reserved — 예약 시점 견적을 그대로 확정한다
+        # (단일컷 전환으로 구 "성공 후보 수 × 1" 폐기. 실행 시점 설정값을 다시 읽으면 배포/env 변경
+        # 사이에 낀 잡이 예약액과 다른 금액을 차감하거나 settle 실패할 수 있음). 실패는 _fail(release).
+        charge = reserved
         async with pool.connection() as conn:
             out = await repo.finalize_mannequin_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,

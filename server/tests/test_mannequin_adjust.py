@@ -26,32 +26,19 @@ def _no_db(monkeypatch):
 # ---------- 라우트 ----------
 
 
-def test_adjust_404_unknown_project(client, make_token, monkeypatch):
-    async def fake_gp(conn, uid, pid):
-        return None
-    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
-    _no_db(monkeypatch)
-    res = client.post(
-        "/v1/projects/nope/mannequins:adjust", json={"baseId": "A-0"},
-        headers=_auth(make_token))
-    assert res.status_code == 404
-
-
-def test_adjust_creates_job_and_reserves(client, make_token, monkeypatch):
-    seen = {}
-
-    async def fake_gp(conn, uid, pid):
-        return {"id": pid}
+def test_adjust_deprecated_410_no_job_no_reserve(client, make_token, monkeypatch):
+    """@deprecated (2026-07): :adjust는 항상 410 — 잡 생성·크레딧 예약이 절대 일어나지 않는다.
+    (단가 0 전환 후 잡 생성을 허용하면 무과금 AI 생성 경로가 되므로 라우트 차단.)"""
+    called = {"create_job": 0, "reserve": 0}
 
     async def fake_create_job(conn, **kw):
-        seen.update(kw)
+        called["create_job"] += 1
         return {"id": "job-adj-1"}, True
 
     async def fake_reserve(conn, uid, amount):
-        seen["reserved"] = amount
+        called["reserve"] += 1
         return 99
 
-    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     _no_db(monkeypatch)
@@ -59,49 +46,19 @@ def test_adjust_creates_job_and_reserves(client, make_token, monkeypatch):
         "/v1/projects/p1/mannequins:adjust",
         json={"baseId": "A-0", "fitAdjust": "slimmer"},
         headers=_auth(make_token))
-    assert res.status_code == 202, res.text
-    assert res.json()["jobId"] == "job-adj-1"
-    assert seen["kind"] == "mannequin_adjust"
-    assert seen["credits_reserved"] == 1  # credit_cost_mannequin_adjust 기본값
-    assert seen["reserved"] == 1
-    assert seen["payload"] == {"baseId": "A-0", "fitAdjust": "slimmer"}
+    assert res.status_code == 410
+    assert res.json()["error"]["code"] == "deprecated_endpoint"
+    # 바디 없이 호출해도 410 — Body 필수 검증(422)이 410 계약을 가리면 안 된다
+    res_nobody = client.post(
+        "/v1/projects/p1/mannequins:adjust", headers=_auth(make_token))
+    assert res_nobody.status_code == 410
+    assert called == {"create_job": 0, "reserve": 0}
 
 
-def test_adjust_402_insufficient_credits(client, make_token, monkeypatch):
-    async def fake_gp(conn, uid, pid):
-        return {"id": pid}
-
-    async def fake_create_job(conn, **kw):
-        return {"id": "job-adj-2"}, True
-
-    async def fake_reserve(conn, uid, amount):
-        return None  # 부족
-
-    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
-    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
-    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
-    _no_db(monkeypatch)
-    res = client.post(
-        "/v1/projects/p1/mannequins:adjust", json={"baseId": "A-0"},
-        headers=_auth(make_token))
-    assert res.status_code == 402
-    assert res.json()["error"]["code"] == "insufficient_credits"
-
-
-def test_adjust_400_missing_base_id(client, make_token, monkeypatch):
-    async def fake_gp(conn, uid, pid):
-        return {"id": pid}
-
-    async def fake_create_job(conn, **kw):
-        return {"id": "job-adj-3"}, True
-
-    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
-    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
-    _no_db(monkeypatch)
-    res = client.post(
-        "/v1/projects/p1/mannequins:adjust", json={}, headers=_auth(make_token))
-    assert res.status_code == 400
-    assert res.json()["error"]["code"] == "missing_base_id"
+def test_adjust_410_requires_auth(client):
+    # 인증 없이도 라우트 계약(401)이 먼저 — 폐기 여부와 무관하게 인증 게이트 유지
+    res = client.post("/v1/projects/p1/mannequins:adjust", json={"baseId": "A-0"})
+    assert res.status_code == 401
 
 
 # ---------- 워커 ----------
@@ -146,92 +103,29 @@ def _settings():
     return make_settings(gemini_api_key="x", r2_bucket="b")
 
 
-def test_run_mannequin_adjust_job_success_charges_cost_and_new_version(monkeypatch):
+def test_run_mannequin_adjust_job_drains_without_ai_and_releases_reserved(monkeypatch):
+    """@deprecated 툼스톤: legacy 잡은 AI 호출·R2 접근·성공 종결 없이 즉시 실패 종결(예약 release).
+    단가 0 상태에서 legacy 잡이 실행되면 무과금 생성 경로가 되므로 생성 코드 자체가 없어야 한다."""
     captured = {}
-
-    async def fake_get_cut_asset(conn, uid, pid, client_id):
-        assert client_id == "A-0"
-        return {"id": "asset-a0", "r2_key": "k/a0", "mime_type": "image/png"}
-
-    async def fake_list_cuts(conn, uid, pid):
-        return [{"candidate": "A", "version": 0, "base_fit": "regular", "asset_id": "asset-a0"}]
-
-    async def fake_gen(settings, gemini, base_image, adjust_spec):
-        assert adjust_spec["fitAdjust"] == "slimmer"
-        return b"NEWIMG", "image/png"
-
-    async def fake_finalize(conn, **kw):
-        captured.update(kw)
-        return {"id": "A-1"}
-
-    async def fake_emit(pool, job_id, et, payload):
-        return None
-
-    monkeypatch.setattr(maj.repo, "get_mannequin_cut_asset", fake_get_cut_asset)
-    monkeypatch.setattr(maj.repo, "list_mannequin_cuts", fake_list_cuts)
-    monkeypatch.setattr(maj.mannequin_adjuster, "generate", fake_gen)
-    monkeypatch.setattr(maj.repo, "finalize_mannequin_adjust_success", fake_finalize)
-    monkeypatch.setattr(maj, "_emit", fake_emit)
-
-    asyncio.run(maj.run_mannequin_adjust_job(_app(_settings()), _job()))
-
-    assert captured["charge"] == 1  # credit_cost_mannequin_adjust 기본값
-    assert captured["base_candidate"] == "A"
-    assert captured["cut"]["fit_adjust"] == "slimmer"
-    assert captured["cut"]["base_fit"] == "regular"
-
-
-def test_run_mannequin_adjust_job_missing_base_cut_fails(monkeypatch):
-    captured = {}
-
-    async def fake_get_cut_asset(conn, uid, pid, client_id):
-        return None
-
-    async def fake_list_cuts(conn, uid, pid):
-        return []
 
     async def fake_finalize_failure(conn, **kw):
         captured.update(kw)
         return True
 
-    monkeypatch.setattr(maj.repo, "get_mannequin_cut_asset", fake_get_cut_asset)
-    monkeypatch.setattr(maj.repo, "list_mannequin_cuts", fake_list_cuts)
+    async def fail_if_called(*a, **kw):  # 생성·성공 경로가 호출되면 즉시 실패
+        raise AssertionError("deprecated drain must not call AI/finalize_success")
+
     monkeypatch.setattr(maj.repo, "finalize_mannequin_adjust_failure", fake_finalize_failure)
+    monkeypatch.setattr(maj.repo, "finalize_mannequin_adjust_success", fail_if_called, raising=False)
+    monkeypatch.setattr(mannequin_adjuster, "generate", fail_if_called)
 
     asyncio.run(maj.run_mannequin_adjust_job(_app(_settings()), _job()))
 
-    assert captured["metadata"]["error"] == "base_cut_missing"
-
-
-def test_run_mannequin_adjust_job_gemini_error_fails_job(monkeypatch):
-    from app.agents.gemini_image import GeminiError
-    captured = {}
-
-    async def fake_get_cut_asset(conn, uid, pid, client_id):
-        return {"id": "asset-a0", "r2_key": "k/a0", "mime_type": "image/png"}
-
-    async def fake_list_cuts(conn, uid, pid):
-        return [{"candidate": "A", "version": 0, "base_fit": "regular", "asset_id": "asset-a0"}]
-
-    async def fake_gen(settings, gemini, base_image, adjust_spec):
-        raise GeminiError("boom")
-
-    async def fake_finalize_failure(conn, **kw):
-        captured.update(kw)
-        return True
-
-    async def fake_emit(pool, job_id, et, payload):
-        return None
-
-    monkeypatch.setattr(maj.repo, "get_mannequin_cut_asset", fake_get_cut_asset)
-    monkeypatch.setattr(maj.repo, "list_mannequin_cuts", fake_list_cuts)
-    monkeypatch.setattr(maj.mannequin_adjuster, "generate", fake_gen)
-    monkeypatch.setattr(maj.repo, "finalize_mannequin_adjust_failure", fake_finalize_failure)
-    monkeypatch.setattr(maj, "_emit", fake_emit)
-
-    asyncio.run(maj.run_mannequin_adjust_job(_app(_settings()), _job()))
-
-    assert "error" in captured["metadata"]
+    assert captured["metadata"]["error"] == "deprecated_job_kind"
+    assert captured["reserved"] == 1  # legacy 예약분 그대로 release 대상
+    assert captured["job_id"] == "j1"
+    # 생성 코드가 모듈에서 제거됐는지(무과금 생성 경로 원천 차단) 방어적으로 확인
+    assert not hasattr(maj, "mannequin_adjuster")
 
 
 # ---------- 에이전트: build_prompt ----------

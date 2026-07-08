@@ -212,9 +212,14 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
     async def fake_get_asset(conn, uid, aid):
         return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
 
+    async def fake_get_analysis(conn, pid):
+        return {"fitProfile": {"category": "top", "gender": "women", "axes": {"fit": "over"}}}
+
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
         assert cut_spec["cutType"] == "horizon"
         assert len(images) == 1
+        # 확정 fitProfile 텍스트 제약이 에디터 새 컷 경로에도 전달돼야 한다(컷 파이프라인 계약)
+        assert analysis and analysis["fitProfile"]["axes"]["fit"] == "over"
         return b"NEWIMG2", "image/png"
 
     async def fake_finalize(conn, **kw):
@@ -225,6 +230,7 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
         return None
 
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
@@ -277,6 +283,9 @@ def test_run_editor_image_job_new_attaches_mood_refs(monkeypatch):
     async def fake_get_asset(conn, uid, aid):
         return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
 
+    async def fake_get_analysis(conn, pid):
+        return {}
+
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
         captured["n_images"] = len(images)
         captured["manifest"] = manifest
@@ -289,6 +298,7 @@ def test_run_editor_image_job_new_attaches_mood_refs(monkeypatch):
         return None
 
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)

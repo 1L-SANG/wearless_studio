@@ -865,49 +865,29 @@ async def get_mannequins(
     "/projects/{project_id}/mannequins:adjust",
     responses={
         **COMMON_RESPONSES,
-        202: {"description": "마네킹 조정 작업이 대기열에 진입했습니다."},
-        400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: baseId 누락)"},
-        402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+        410: {"model": ErrorResponse, "description": "폐기된 엔드포인트 — mannequins:regenerate 사용"},
     },
     tags=["Mannequins (AI)"],
-    summary="마네킹 조정 작업 시작 (AG-05)",
+    summary="마네킹 조정 (AG-05) — @deprecated, 410 Gone",
+    deprecated=True,
 )
 async def adjust_mannequin(
     request: Request,
     project_id: str,
-    body: dict = Body(...),
     user_id: str = Depends(require_user),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
-    """기존 마네킹컷 1장(`baseId`)을 기준으로 지시된 차원(fit/length/match)만 바꾼 새 버전
-    컷을 생성하는 비동기 작업을 요청합니다.
-
-    - **Bearer Token**: 필수
-    - **Body**: `{ baseId, fitAdjust?, lengthAdjust?, matchAdjust? }` — 변경하지 않을 필드는 생략
-    - **Header**: `Idempotency-Key` (필수 권장, 중복 차감 및 중복 작업 방지)
-    - **에지 케이스**:
-      - `400 Bad Request` (`missing_base_id`): `baseId`가 없는 경우 발생
-      - `402 Payment Required`: 마네킹 조정에 필요한 크레딧(설정값, 기본 1)이 없으면 발생
+    """**@deprecated (2026-07)** — 마네킹 조정 흐름이 fitProfile 재생성(`:regenerate`)으로 통합돼
+    이 엔드포인트는 인증만 통과하면 바디·헤더와 무관하게 **항상 `410 Gone`** 을 반환합니다
+    (바디를 파싱하지 않음 — Body 필수 검증이 있으면 빈/비JSON 요청이 422로 새서 계약이 흐려짐).
+    잡을 생성하지 않으며 크레딧도 차감하지 않습니다.
+    (단가가 0으로 내려간 상태에서 잡 생성을 허용하면 무과금 AI 생성 경로가 되므로 차단.)
+    큐에 남은 legacy `mannequin_adjust` 잡은 툼스톤 워커(`mannequin_adjust_job`)가 **AI 호출 없이**
+    실패 종결(예약 release)합니다.
     """
-    s = request.app.state.settings
-    cost = s.credit_cost_mannequin_adjust
-    scoped_key = f"{project_id}:mannequin_adjust:{idempotency_key}" if idempotency_key else None
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        job, created = await repo.create_job(
-            conn, user_id=user_id, project_id=project_id, kind="mannequin_adjust",
-            payload=body, idempotency_key=scoped_key, credits_reserved=cost,
-            metadata={"creditCostVersion": s.credit_cost_version})
-        if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
-            if not body.get("baseId"):
-                raise _bad_request("missing_base_id", "조정할 마네킹컷을 먼저 선택해 주세요.")
-            if await repo.reserve_credits(conn, user_id, cost) is None:
-                raise HTTPException(
-                    status_code=402,
-                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
-        await conn.commit()
-    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+    raise HTTPException(
+        status_code=410,
+        detail={"code": "deprecated_endpoint",
+                "message": "마네킹 조정은 종료된 기능이에요. 핏 수정 후 재생성을 이용해 주세요."})
 
 
 @router.post(
@@ -1116,7 +1096,10 @@ async def generate_detail_page(
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="detail_page",
             payload={"mode": "generate"}, idempotency_key=scoped_key, credits_reserved=cost,
-            metadata={"creditCostVersion": s.credit_cost_version})
+            # perCutCost = 예약 시점 컷당 단가 스냅샷 — 워커 정산의 단일 기준(실행 시점 설정
+            # 변경·콘티 재저장으로 인한 블록 수 변동과 무관하게 견적 가격을 고정).
+            metadata={"creditCostVersion": s.credit_cost_version,
+                      "perCutCost": s.credit_cost_storyboard_per_cut, "aiCount": ai_count})
         if created:
             if not storyboard:
                 raise _bad_request("empty_storyboard", "콘티가 비어 있어요. 먼저 콘티를 저장해 주세요.")

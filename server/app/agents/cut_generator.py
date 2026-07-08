@@ -15,6 +15,7 @@ import re
 from ..config import Settings
 from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
+from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
@@ -149,8 +150,20 @@ def render_cut_prompt(
     stray = re.findall(r"\[\[[A-Za-z0-9_:]+\]\]", text)  # 섹션 마커가 본문에 남으면 모델에 그대로 전달됨
     if stray:
         raise ValueError(f"프롬프트에 남은 섹션 마커: {sorted(set(stray))}")
-    block = _product_block(product, analysis or {})
-    return f"{text}\n\n{block}" if block else text
+    # 확정 fitProfile(마네킹 단계 산출물)을 텍스트 제약으로도 이중 전달 — 마네킹 참조 이미지와
+    # 원본 상품 사진의 인상이 충돌할 때 순종률을 확보한다(컷 파이프라인 계약). 렌더는 카탈로그
+    # 고정 문구만(fit_axes — 셀러 입력 미보간). 프로필이 있으면 레거시 '- Fit:' 줄은 뺀다(마네킹 동일).
+    fit_profile = analysis.get("fitProfile") if isinstance(analysis, dict) else None
+    if not isinstance(fit_profile, dict):
+        fit_profile = None
+    # 매칭 하의가 화면에 없으면(마네킹 참조도 MATCH 첨부도 없음) matchCut 지시 제거 —
+    # 없는 옷의 핏을 지시하면 모델이 하의를 지어내는 원인이 된다(마네킹 워커와 동일 가드).
+    if fit_profile and "matchCut" in fit_profile \
+            and _MANNEQUIN_LABEL not in image_manifest and _MATCH_LABEL not in image_manifest:
+        fit_profile = {k: v for k, v in fit_profile.items() if k != "matchCut"}
+    fit_block = build_fit_profile_block(fit_profile)
+    block = _product_block(product, analysis or {}, include_legacy_fit=fit_profile is None)
+    return "\n\n".join(part for part in (text, fit_block, block) if part)
 
 
 def color_images(product: dict, color_id: str | None) -> list[tuple[str, str]]:
@@ -173,6 +186,10 @@ _SLOT_LABEL = {
     "Detail": "PRODUCT — detail close-up of the garment (texture, stitching, print)",
     "Fit": "PRODUCT — fit reference, the garment worn on a person (true length & drape)",
 }
+# 마네킹/매칭 첨부 라벨 — render_cut_prompt 의 matchCut 가드가 매니페스트에서 이 문구로
+# "하의가 화면에 있는가"를 판별하므로 상수로 공유(문구 드리프트 방지).
+_MANNEQUIN_LABEL = "PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)"
+_MATCH_LABEL = "MATCH — a coordinating garment to style together in the same outfit"
 
 
 def build_manifest(prod_assets: list[dict], *, has_mannequin: bool, has_match: bool, mood_count: int) -> str:
@@ -180,13 +197,13 @@ def build_manifest(prod_assets: list[dict], *, has_mannequin: bool, has_match: b
     lines: list[str] = []
     i = 1
     if has_mannequin:
-        lines.append(f"{i}. PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)")
+        lines.append(f"{i}. {_MANNEQUIN_LABEL}")
         i += 1
     for a in prod_assets:
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'PRODUCT — view of the garment')}")
         i += 1
     if has_match:
-        lines.append(f"{i}. MATCH — a coordinating garment to style together in the same outfit")
+        lines.append(f"{i}. {_MATCH_LABEL}")
         i += 1
     for _ in range(mood_count):
         lines.append(f"{i}. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)")

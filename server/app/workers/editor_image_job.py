@@ -108,6 +108,9 @@ async def run_editor_image_job(app, job: dict) -> None:
         elif mode == "new":
             async with pool.connection() as conn:
                 product = await repo.get_product(conn, project_id) or {}
+                # analysis 도 로드 — 프롬프트 ground truth(소재·강조특징)와 확정 fitProfile
+                # 텍스트 제약이 detail_page 경로와 동일하게 반영되도록(컷 파이프라인 계약 정합).
+                analysis = await repo.get_analysis(conn, project_id) or {}
                 assets = []
                 for slot, aid in mannequin.base_color_images(product):
                     a = await repo.get_asset_for_user(conn, user_id, aid)
@@ -142,7 +145,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                 assets, has_mannequin=False, has_match=False, mood_count=len(mood_rows))
             try:
                 image, mime = await cut_generator.generate(
-                    s, app.state.gemini, cut_spec, product, images, manifest=manifest)
+                    s, app.state.gemini, cut_spec, product, images,
+                    analysis=analysis, manifest=manifest)
             except ValueError:
                 await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
                 return
@@ -169,8 +173,9 @@ async def run_editor_image_job(app, job: dict) -> None:
             "size": len(image), "width": w, "height": h,
         }
 
-        # 성공 종결 (원자·lease 펜스). charge = credit_cost_editor_image(고정, 부분 성공 없음).
-        charge = s.credit_cost_editor_image
+        # 성공 종결 (원자·lease 펜스). charge = reserved — 예약 시점 견적 확정(부분 성공 없음.
+        # 실행 시점 설정 재조회 금지 — 단가 변경이 배포 사이에 끼면 예약액과 다른 차감 발생).
+        charge = reserved
         async with pool.connection() as conn:
             out = await repo.finalize_editor_image_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,

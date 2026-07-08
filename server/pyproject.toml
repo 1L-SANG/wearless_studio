@@ -1,7 +1,7 @@
 [project]
 name = "wearless-studio-api"
 version = "0.1.0"
-description = "Wearless Studio API — FastAPI (Railway)"
+description = "Wearless Studio API — FastAPI (AWS ECS Fargate)"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

@@ -151,6 +151,17 @@ def build_fit_profile_block(profile: dict | None) -> str:
         entry = next((e for e in entries if e["value"] == value), None)
         if entry:
             lines.append(f"- {axis}: {entry['promptEn']}")
+    # 매칭 하의 핏(matchCut) — UI(Mannequin.jsx matchValues)가 pants.cut 어휘를 그대로 쓴다.
+    # 상품이 아닌 "함께 착장된 별도 하의"임을 명시해 상품 핏 지시와 섞이지 않게 한다.
+    match_cut = profile.get("matchCut")
+    if match_cut is not None:
+        entries = FIT_AXES["pants"]["cut"].get(gender) or []
+        entry = next((e for e in entries if e["value"] == match_cut), None)
+        if entry:
+            lines.append(
+                "- matching bottom (the separate bottom garment styled with the product, "
+                f"NOT the product itself): {entry['promptEn']}"
+            )
     if not lines:
         return ""
     return "FIT PROFILE (seller-declared; overrides any impression from the photos):\n" + "\n".join(lines)

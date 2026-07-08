@@ -50,3 +50,48 @@ def test_build_prompt_respects_given_manifest():
     manifest = cg.build_manifest([{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1)
     p = cg.build_prompt({"cutType": "styling"}, product, manifest=manifest)
     assert "worn on a mannequin" in p and "MATCH" in p and "MOOD" in p
+
+
+def test_build_prompt_injects_fit_profile_and_drops_legacy_fit():
+    # 확정 fitProfile(마네킹 단계 산출물)을 텍스트 제약으로 이중 전달 — 마네킹 참조와 원본
+    # 사진 인상이 충돌할 때 순종률 확보(컷 파이프라인 계약). 프로필 있으면 레거시 '- Fit:' 생략.
+    product = {"name": "니트", "clothing_type": "top",
+               "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+    analysis = {"fit": "regular", "fitProfile": {
+        "category": "top", "gender": "women",
+        "axes": {"fit": "over", "length": None},
+    }}
+    p = cg.build_prompt({"cutType": "styling", "direction": "front", "shot": "full"},
+                        product, analysis=analysis)
+    assert "FIT PROFILE (seller-declared" in p
+    assert "- fit: oversized volume" in p
+    assert p.index("FIT PROFILE") < p.index("PRODUCT CONTEXT")
+    assert "- Fit: regular" not in p
+
+
+def test_build_prompt_match_cut_requires_bottom_on_screen():
+    # matchCut 은 매칭 하의가 화면에 있을 때만(마네킹 참조 or MATCH 첨부) — 없는 옷 지시로
+    # 하의를 지어내지 않게 제거(마네킹 워커 effective_fit_profile 과 동일 가드).
+    product = {"name": "니트", "clothing_type": "top",
+               "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+    analysis = {"fitProfile": {
+        "category": "top", "gender": "women",
+        "axes": {"fit": "regular", "length": None}, "matchCut": "wide",
+    }}
+    spec = {"cutType": "styling", "direction": "front", "shot": "full"}
+
+    with_mannequin = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=True, has_match=False, mood_count=0)
+    p1 = cg.build_prompt(spec, product, analysis=analysis, manifest=with_mannequin)
+    assert "- matching bottom" in p1
+
+    with_match = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=True, mood_count=0)
+    p2 = cg.build_prompt(spec, product, analysis=analysis, manifest=with_match)
+    assert "- matching bottom" in p2
+
+    neither = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0)
+    p3 = cg.build_prompt(spec, product, analysis=analysis, manifest=neither)
+    assert "- matching bottom" not in p3
+    assert "- fit:" in p3   # 나머지 축은 유지

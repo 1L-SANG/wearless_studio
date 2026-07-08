@@ -65,6 +65,9 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     assert seen["kind"] == "detail_page"
     assert seen["credits_reserved"] == 2  # ai 블록 2개 × storyboardPerCut(1)
     assert seen["reserved"] == 2
+    # 예약 시점 단가 스냅샷 — 워커 정산의 단일 기준(정산 불변식)
+    assert seen["metadata"]["perCutCost"] == 1
+    assert seen["metadata"]["aiCount"] == 2
 
 
 def test_detail_completed_recall(client, make_token, monkeypatch):
@@ -114,8 +117,11 @@ def _app(settings):
     return types.SimpleNamespace(state=st)
 
 
-def _job():
-    return {"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:tok", "credits_reserved": 2}
+def _job(reserved=2, per_cut=1):
+    # 라우트 예약 규칙 미러: reserved = ai 블록 수 × per_cut, metadata.perCutCost = 예약 시점
+    # 단가 스냅샷(워커 정산의 단일 기준 — 실행 시점 설정·콘티 변동과 무관).
+    return {"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:tok",
+            "credits_reserved": reserved, "metadata": {"perCutCost": per_cut}}
 
 
 def _settings():
@@ -176,6 +182,113 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     assert captured["charge"] == 1              # 성공 컷 1개 × per_cut(1) — 실패 컷 미차감
     assert len(captured["cut_assets"]) == 1
     assert len(captured["cut_results"]) == 1     # b1만
+
+
+def test_run_detail_page_job_partial_charge_uses_reservation_time_price(monkeypatch):
+    """정산 불변식 회귀: 부분 성공 단가는 실행 시점 설정이 아니라 예약액에서 역산한다.
+    예약(단가 1 × 2블록 = 2) 후 배포로 단가가 5로 올라도, 1컷 성공 = 1 차감(5도 2도 아님)."""
+    captured = {}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [{"id": "b1", "source": "ai", "cutType": "styling"},
+                {"id": "b2", "source": "ai", "cutType": "product"}]
+
+    async def fake_prod(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": "k/a1"}
+
+    call = {"n": 0}
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+        call["n"] += 1
+        if call["n"] == 1:
+            return b"IMG", "image/png"
+        raise RuntimeError("gen fail")
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
+        return [{"id": "b0", "kind": "hook", "elements": []}]
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    from conftest import make_settings
+    inflated = make_settings(gemini_api_key="x", r2_bucket="b", credit_cost_storyboard_per_cut=5)
+    asyncio.run(dpj.run_detail_page_job(_app(inflated), _job(reserved=2)))
+
+    assert captured["charge"] == 1  # 스냅샷 단가(perCutCost=1) × 성공 1컷 — 실행 시점 5는 무시
+
+
+def test_run_detail_page_job_storyboard_growth_never_settles_zero(monkeypatch):
+    """정산 불변식 회귀: 예약(2블록×1) 후 콘티 재저장으로 ai 블록이 3개로 늘어도
+    정산은 스냅샷 단가 × 성공 컷(예약액 캡)이다 — 예약액÷현재 블록 수 역산이었다면
+    블록 수가 예약액을 넘는 순간 단가 0 → 무과금 생성이 된다."""
+    captured = {}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):  # 예약 시점(2블록)보다 커진 콘티
+        return [{"id": "b1", "source": "ai", "cutType": "styling"},
+                {"id": "b2", "source": "ai", "cutType": "product"},
+                {"id": "b3", "source": "ai", "cutType": "horizon"}]
+
+    async def fake_prod(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": "k/a1"}
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+        return b"IMG", "image/png"  # 3컷 전부 성공
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
+        return [{"id": "b0", "kind": "hook", "elements": []}]
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=2)))
+
+    assert captured["charge"] == 2  # min(3컷 × 스냅샷 1, 예약 2) — 0이 아니고 예약 초과도 아님
 
 
 def test_run_detail_page_job_skips_block_without_garment_truth(monkeypatch):
@@ -282,6 +395,6 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
-    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job()))
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=1)))  # ai 블록 1개 × 단가 1
     assert captured["charge"] == 1
     assert captured["copy_results"] == [{"blockId": "b1", "texts": [{"role": "headline", "text": "원본 카피"}]}]
