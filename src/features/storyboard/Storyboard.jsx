@@ -137,13 +137,18 @@ export function MoodGuide({ catalogs, cut, direction, shot, refs = [], onRefsCha
         <div className="mood-hscroll">{examples.map((e) => <div className="tg-cell" key={e.id}><img src={e.thumb} alt="" /></div>)}</div>
       ) : (
         <div>
-          <button className="ref-upload" onClick={async () => onRefsChange && onRefsChange([...refs, await api.pickAnyImage()])}>
+          <button className="ref-upload" onClick={async () => {
+            if (!onRefsChange) return;
+            // 업로드({assetId,url}) — objectURL 이 아니라 서버 asset 이어야 생성에 실제 첨부된다(refAssetIds).
+            const picked = await api.pickRefImage(useAppStore.getState().projectId);
+            if (picked) onRefsChange([...refs, picked]); // 취소(null)면 무시
+          }}>
             <Icon name="upload" size={16} />참고 이미지 올리기
           </button>
           {refs.length > 0 && (
             <div className="mood-hscroll" style={{ marginTop: 10 }}>
               {refs.map((r, i) => (
-                <div className="tg-cell" key={i}><img src={r} alt="" />
+                <div className="tg-cell" key={i}><img src={r?.url || r} alt="" />
                   <button className="rm" onClick={() => onRefsChange && onRefsChange(refs.filter((_, j) => j !== i))}><Icon name="x" size={11} /></button>
                 </div>
               ))}
@@ -261,7 +266,11 @@ function Inspector({ block, catalogs, colorOpts, mode, onMode, onChange, matchCl
       {/* 분위기 예시 — 컷 종류·방향·샷에 따라 달라지므로 샷 종류 바로 아래.
           내 레퍼런스는 블록(refImages)에 저장 → 생성 입력에 포함 (계약 §7-10 해소) */}
       <MoodGuide catalogs={catalogs} cut={block.cutType} direction={block.direction} shot={block.shot}
-        refs={block.refImages || []} onRefsChange={(r) => onChange({ refImages: r })} />
+        refs={(block.refImages || []).map((u, i) => ({ url: u?.url || u, assetId: u?.assetId || (block.refAssetIds || [])[i] }))}
+        onRefsChange={(r) => onChange({
+          refImages: r.map((x) => x?.url || x),                        // 표시용 URL
+          refAssetIds: r.map((x) => x?.assetId).filter(Boolean),       // 서버 첨부용 asset id (계약 §6)
+        })} />
 
       <div className="insp-divider" />
 
@@ -377,7 +386,7 @@ export function Storyboard() {
     newSeq.current += 1;
     // 새 블록 — source 'ai', 컷 종류는 미설정(null)에서 시작 (계약 §3.4)
     const nb = { id: uid('blk'), kind: 'info', title: '새로운 블록', source: 'ai', cutType: null, colorId: colorOpts[0]?.id || 'col1',
-      pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
+      pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
       thumb: Placeholder.photo('new' + Date.now(), 'styling', 240, 320), poseThumb: Placeholder.pose('stand'), poseLabel: 'AI 자동' };
     setBlocks((bs) => { const m = [...bs]; m.splice(idx, 0, nb); return m; });
     snapRef.current = { ...nb };
@@ -386,7 +395,7 @@ export function Storyboard() {
   };
   const mineBlock = (src, n) => ({
     id: uid('blk'), kind: 'info', title: `새 블록 (${n})`, source: 'mine', cutType: null, colorId: colorOpts[0]?.id || 'col1',
-    ownImages: [src], thumb: src, pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
+    ownImages: [src], thumb: src, pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
     poseThumb: Placeholder.pose('stand'), poseLabel: '-',
   });
   const addMineBlock = async (idx) => {

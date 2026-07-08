@@ -106,12 +106,10 @@ export const api = {
   async getCreditHistory() {
     await wait(120);
     const now = Date.now();
-    // 정합 시나리오: 200 충전 → 4 사용 = 196 (account.credits 와 일치)
+    // 정합 시나리오: 200 충전 → 마네킹 생성 2회(각 -2) = 196 (account.credits 와 일치)
     return [
-      { id: 'l4', projectId: 'p1', jobId: 'j4', actionKey: 'mannequinGenerate', delta: -1, balanceAfter: 196, availableAfter: 196, createdAt: new Date(now - 30e5).toISOString() },
-      { id: 'l3', projectId: 'p1', jobId: 'j3', actionKey: 'mannequinGenerate', delta: -1, balanceAfter: 197, availableAfter: 197, createdAt: new Date(now - 32e5).toISOString() },
-      { id: 'l2', projectId: 'p1', jobId: 'j2', actionKey: 'mannequinGenerate', delta: -1, balanceAfter: 198, availableAfter: 198, createdAt: new Date(now - 34e5).toISOString() },
-      { id: 'l1', projectId: 'p1', jobId: 'j1', actionKey: 'mannequinGenerate', delta: -1, balanceAfter: 199, availableAfter: 199, createdAt: new Date(now - 36e5).toISOString() },
+      { id: 'l2', projectId: 'p1', jobId: 'j2', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 196, availableAfter: 196, createdAt: new Date(now - 32e5).toISOString() },
+      { id: 'l1', projectId: 'p1', jobId: 'j1', actionKey: 'mannequinGenerate', delta: -CREDIT_COSTS.mannequinGenerate, balanceAfter: 198, availableAfter: 198, createdAt: new Date(now - 36e5).toISOString() },
       { id: 'l0', projectId: null, jobId: null, actionKey: 'grant_subscription', delta: 200, balanceAfter: 200, availableAfter: 200, createdAt: new Date(now - 40e5).toISOString() },
     ];
   },
@@ -322,6 +320,8 @@ export const api = {
   },
   // a fresh "any image" — mock 전용 헬퍼 (실서비스 계약은 uploadAsset(file))
   async pickAnyImage() { await wait(120); return Placeholder.any('pick' + Date.now()); },
+  // '내 사진' 무드 레퍼런스 1장 — 실서비스는 파일 선택→업로드→{assetId, url}. mock 은 플레이스홀더+가짜 id.
+  async pickRefImage(/* projectId */) { await wait(120); return { assetId: uid('ref'), url: Placeholder.any('pick' + Date.now()) }; },
   async download(/* projectId, format */) { await wait(800); return { ok: true }; },
 
   /* ---- library (PRD §4) ---- */

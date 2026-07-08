@@ -144,7 +144,7 @@ def test_run_detail_page_job_partial_success(monkeypatch):
 
     call = {"n": 0}
 
-    async def fake_gen(settings, gemini, cut_spec, product, images):
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
         call["n"] += 1
         if call["n"] == 1:
             return b"IMG", "image/png"     # b1 성공
@@ -178,6 +178,59 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     assert len(captured["cut_results"]) == 1     # b1만
 
 
+def test_run_detail_page_job_skips_block_without_garment_truth(monkeypatch):
+    # 옷 근거(상품 사진/마네킹) 없이 무드 레퍼런스만 있는 블록은 생성하지 않는다 — 빈 슬롯·미차감.
+    # (무드만 첨부하면 모델이 레퍼런스 속 옷을 베끼거나 지어낸다 — ADR-0004 정확성 최우선)
+    captured = {}
+    calls = {"n": 0}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [{"id": "b1", "source": "ai", "cutType": "styling", "refAssetIds": ["ref1"]}]
+
+    async def fake_prod(conn, pid):
+        return {"colors": []}   # 상품 사진 없음 + 마네킹 미선택
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+        calls["n"] += 1
+        return b"IMG", "image/png"
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
+        captured["cut_results"] = cut_results
+        return []
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job()))
+
+    assert calls["n"] == 0                       # 생성 호출 자체가 없다
+    assert captured["charge"] == 0               # 미차감
+    assert captured["cut_results"] == []         # 빈 슬롯
+
+
 def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     # copywriting 경로(_gen_copy) 커버 + AG-03 검수 실패 시 원문 유지(except 커버 — NameError 회귀 방지)
     captured = {}
@@ -197,7 +250,7 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
 
-    async def fake_gen(settings, gemini, cut_spec, product, images):
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
         return b"IMG", "image/png"
 
     async def fake_copy(settings, **kw):

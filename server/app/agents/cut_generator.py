@@ -1,93 +1,211 @@
-"""AG-06 cut-generator — 컷 생성 (스타일링·호리존·제품). ai_agent_modules §3 AG-06.
+"""AG-06 cut-generator — 컷 생성 (스타일링·호리존·제품·거울샷). ai_agent_modules §3 AG-06.
 
-cutType별 프롬프트는 독립 파일(prompts/cuts/{cutType}_v1.txt)로 분리하고, 입출력 계약·
-생성 호출 등 배관은 이 모듈 1벌로 공유한다(§3 AG-06 구현 구조 결정, 2026-06-20). tier는
-셋 다 image_high 공유(컷별 모델 분리는 보류).
+콘티 개편(ADR-0004)의 컷 계약을 이 모듈이 서버에서 강제한다 — 병렬 백엔드 머지(94cdd50)에서
+탈락했던 구(舊) agents/cut.py 의 계약을 이식(2026-07-07). 프롬프트 문장은 전부
+server/prompts/cut_generate_v1.txt 의 [[섹션]]에 있다 — 코드에 규칙 문장을 하드코딩하지
+않는다(프롬프트 외부화 원칙). 코드는 섹션 선택과 값 치환만 한다.
 
-이 모듈은 코어(프롬프트 조립 + 생성 호출)만 제공한다. PL-4 상세페이지 생성(detail_page_job)이
-source='ai' 블록별로 이 generate()를 호출한다.
+레퍼런스 계약(ADR-0004): 옷 레퍼런스(정확성 최우선) > 컷 구조(노브) > 무드 레퍼런스(조명·색감만).
+배관(생성 호출·R2·재시도)은 워커가 공유하고, 이 모듈은 계약 정규화 + 프롬프트 조립 + 1콜만 담당.
 """
 
 import os
+import re
 
 from ..config import Settings
 from .gemini_image import GeminiImageClient, InlineImage
-from .mannequin import base_color_images
 from .model_routing import resolve_model
-from .prompts import _sanitize
-
-CUT_TYPES = ("styling", "horizon", "product")
-
-# 첨부 이미지 슬롯 → 모델용 설명. base_color_images 순서와 동일하게 매니페스트를 만든다
-# (detail_page_job이 그 순서로 이미지를 attach하므로 순서·의미가 일치한다).
-_SLOT_DESC = {
-    "Front": "front view of the product",
-    "Back": "back view of the product",
-    "Detail": "detail close-up of the product (texture/stitching/print)",
-    "Fit": "fit reference — the product worn on a person",
-}
-
-_DEFAULT_CUT_TYPE = "styling"  # unknown cutType 은 styling 으로 안전 폴백 (AG-07과 동일 관례)
+from .prompts import _product_block, _sanitize
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
-_TEMPLATE_FILE = {
-    "styling": os.path.join(_SERVER_DIR, "prompts", "cuts", "styling_v1.txt"),
-    "horizon": os.path.join(_SERVER_DIR, "prompts", "cuts", "horizon_v1.txt"),
-    "product": os.path.join(_SERVER_DIR, "prompts", "cuts", "product_v1.txt"),
+_DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "cut_generate_v1.txt")
+
+CUT_TYPES = ("styling", "horizon", "product", "mirror")
+_PERSON_SHOTS = ("full", "knee", "medium", "close")
+_PRODUCT_SHOTS = ("ghost", "hanger", "flatlay")
+_DIRECTIONS = ("front", "side", "back")
+_CUT_LABELS = {  # ${cutLabel} — 프롬프트 첫 줄의 짧은 명사구 (값이지 규칙 문장이 아님)
+    "styling": "lifestyle styling cut",
+    "horizon": "clean studio horizon cut",
+    "product": "product-only cut",
+    "mirror": "casual mirror-selfie cut",
 }
 
 
-def _template_path(cut_type: str) -> str:
-    return _TEMPLATE_FILE.get(cut_type, _TEMPLATE_FILE[_DEFAULT_CUT_TYPE])
+def normalize_spec(raw: dict) -> dict:
+    """프론트를 믿지 않는다 — 컷 계약(ADR-0004)을 서버에서도 강제.
+    UI(onTab 정규화)와 같은 규칙: mirror=방향 없음·샷 full/knee·얼굴 기본 hide,
+    product=방향 front/back·샷 ghost/hanger/flatlay, 사람컷=front/side/back·full~close."""
+    cut = raw.get("cutType") or raw.get("cut_type")
+    if cut not in CUT_TYPES:
+        raise ValueError("unknown_cut_type")
+    direction = raw.get("direction")
+    shot = raw.get("shot")
+    face = raw.get("faceExposure") or raw.get("face_exposure")
+    pose = raw.get("pose") or "auto"
+    if cut == "mirror":
+        direction = None
+        shot = shot if shot in ("full", "knee") else "full"
+        face = "show" if face == "show" else "hide"
+        pose = "auto"  # 거울 셀피 구도 자동 (ADR-0004)
+    elif cut == "product":
+        direction = direction if direction in ("front", "back") else "front"
+        shot = shot if shot in _PRODUCT_SHOTS else "ghost"
+        face = None
+    else:  # styling · horizon
+        direction = direction if direction in _DIRECTIONS else "front"
+        shot = shot if shot in _PERSON_SHOTS else "full"
+        face = face if face in ("same", "show", "hide") else "same"
+    variation = raw.get("spaceVariation") or raw.get("space_variation")
+    return {
+        "cutType": cut,
+        "direction": direction,
+        "shot": shot,
+        "colorId": _sanitize(raw.get("colorId") or raw.get("color_id") or "") or None,
+        "pose": _sanitize(pose)[:40] or "auto",
+        "faceExposure": face,
+        "matchIds": [str(m) for m in (raw.get("matchIds") or raw.get("match_ids") or [])][:2],
+        "refAssetIds": [str(a) for a in (raw.get("refAssetIds") or raw.get("ref_asset_ids") or [])][:3],
+        "exampleId": _sanitize(raw.get("exampleId") or raw.get("example_id") or "") or None,
+        "spaceGroupId": _sanitize(raw.get("spaceGroupId") or raw.get("space_group_id") or "") or None,
+        "spaceVariation": variation if variation in ("subtle", "varied") else "subtle",
+    }
 
 
-def _load_template(cut_type: str) -> str:
-    with open(_template_path(cut_type), encoding="utf-8") as f:
+def load_cut_template() -> str:
+    with open(_DEFAULT_PROMPT, encoding="utf-8") as f:
         return f.read()
 
 
-def _product_block(product: dict) -> str:
-    """상품 ground-truth 블록 (name/clothingType, sanitize) — 셀러 원문을 지시문으로 절대 주입 안 함."""
-    name = _sanitize(product.get("name"))
-    clothing_type = _sanitize(product.get("clothing_type") or product.get("clothingType"))
-    lines = [
-        name and f"- Product name: {name}",
-        clothing_type and f"- Garment type: {clothing_type}",
-    ]
-    body = "\n".join(x for x in lines if x)
-    if not body:
-        return ""
-    return (
-        "PRODUCT CONTEXT (ground truth — never contradict it; use it to keep the garment's "
-        "identity faithful, generate the SAME garment as the product photos):\n" + body
-    )
+_SECTION_RE = re.compile(r"^\[\[([A-Z_]+(?::[a-z0-9_]+)?)\]\]", re.M)
 
 
-def build_prompt(cut_spec: dict, product: dict) -> str:
-    """cutType 템플릿 로드 + sanitized product/direction/shot 주입. 미상 cutType→styling 폴백.
-    셀러 원문(product 자유 텍스트)은 절대 지시문으로 직접 주입하지 않고 _sanitize를 거친다."""
-    cut_type = cut_spec.get("cutType")
-    template = _load_template(cut_type)
-    direction = _sanitize(cut_spec.get("direction") or "front")
-    shot = _sanitize(cut_spec.get("shot") or "full")
+def _sections(template: str) -> dict[str, str]:
+    """[[NAME]] / [[NAME:key]] 섹션 파싱 — 다음 섹션 헤더 전까지가 본문."""
+    out: dict[str, str] = {}
+    matches = list(_SECTION_RE.finditer(template))
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(template)
+        out[m.group(1)] = template[m.end():end].strip()
+    return out
+
+
+def render_cut_prompt(
+    template: str, spec: dict, product: dict, analysis: dict,
+    clothing_type: str, image_manifest: str,
+) -> str:
+    """섹션 선택 + ${토큰} 치환 + PRODUCT CONTEXT(ground truth) 자동 주입."""
+    sec = _sections(template)
+    cut, shot = spec["cutType"], spec["shot"]
+    is_bottom = str(clothing_type).lower() in ("bottom", "하의")
+
+    def need(key: str) -> str:
+        if key not in sec:
+            raise ValueError(f"프롬프트 템플릿에 섹션이 없습니다: [[{key}]]")
+        return sec[key]
+
+    shot_key = shot if shot in _PRODUCT_SHOTS or shot == "full" else f"{shot}_{'bottom' if is_bottom else 'top'}"
+    if cut == "mirror":
+        face_line = need("FACE:hide_mirror") if spec["faceExposure"] != "show" else need("FACE:show")
+        direction_line = ""
+    elif cut == "product":
+        face_line = ""
+        direction_line = need(f"DIR:{spec['direction']}_product")
+    else:
+        face_line = need(f"FACE:{spec['faceExposure']}")
+        direction_line = need(f"DIR:{spec['direction']}")
+    if spec["pose"] == "auto" or cut in ("product", "mirror"):
+        pose_line = need("POSE:auto") if cut != "product" else ""
+    else:
+        pose_line = need("POSE:named").replace("${poseName}", _sanitize(spec["pose"]))
+    # 생성예시 선택 반영 v0 — 예시 자산·꼬리표 시딩 전 과도기: id 해시로 구도 뉘앙스를
+    # 결정적으로 고정(같은 예시 = 같은 뉘앙스). 실제 꼬리표 메타데이터가 오면 이 매핑을 대체한다(ADR-0004).
+    # band 규칙: 뉘앙스는 정면 대역(front·거울샷)에서만 — 사이드/뒷면이면 예시는 분위기만(T1)이라
+    # 정면 계열 구도 문구가 방향 지시와 충돌하지 않게 미적용.
+    example_line = ""
+    if spec.get("exampleId") and cut != "product" and spec.get("direction") in (None, "front"):
+        idx = sum(ord(ch) for ch in spec["exampleId"]) % 3
+        example_line = need(f"EXNUANCE:{idx}")
+    space_line = ""
+    if spec.get("spaceGroupId"):
+        space_line = need("SPACE").replace("${spaceVariation}", spec["spaceVariation"])
+
     text = (
-        template
-        .replace("${direction}", direction)
-        .replace("${shot}", shot)
-        .replace("${imageManifest}", _manifest(product))
+        need("BASE")
+        .replace("${cutLabel}", _CUT_LABELS[cut])
+        .replace("${cutSection}", need(f"CUT:{cut}"))
+        .replace("${shotLine}", need(f"SHOT:{shot_key}"))
+        .replace("${directionLine}", direction_line)
+        .replace("${faceLine}", face_line)
+        .replace("${poseLine}", pose_line)
+        .replace("${exampleLine}", example_line)
+        .replace("${spaceLine}", space_line)
+        .replace("${imageManifest}", image_manifest)  # 멀티라인 — 마지막에 치환
     )
-    block = _product_block(product)
+    text = re.sub(r"\n{3,}", "\n\n", text)  # 빈 라인 정리 (생략된 줄 자리)
+    leftover = re.findall(r"\$\{[a-zA-Z_]+\}", text)
+    if leftover:
+        raise ValueError(f"프롬프트 템플릿에 해결되지 않은 토큰: {sorted(set(leftover))}")
+    stray = re.findall(r"\[\[[A-Za-z0-9_:]+\]\]", text)  # 섹션 마커가 본문에 남으면 모델에 그대로 전달됨
+    if stray:
+        raise ValueError(f"프롬프트에 남은 섹션 마커: {sorted(set(stray))}")
+    block = _product_block(product, analysis or {})
     return f"{text}\n\n{block}" if block else text
 
 
-def _manifest(product: dict) -> str:
-    """첨부 이미지 순서·의미 목록 — base_color_images 순서와 일치(detail_page_job이 그 순서로 attach).
-    비면 일반 문구. (템플릿 ${imageManifest} 치환 — 미치환 리터럴 토큰 유출 방지)"""
-    lines = [
-        f"{i}. {_SLOT_DESC.get(slot, 'view of the product')}"
-        for i, (slot, _id) in enumerate(base_color_images(product), 1)
-    ]
+def color_images(product: dict, color_id: str | None) -> list[tuple[str, str]]:
+    """지정 색상(없으면 기준 색상) 이미지의 (slot, asset_id) 목록 — mannequin.base_color_images와 동형."""
+    from .mannequin import _SLOT_ORDER  # 슬롯 정렬 기준 공유
+    colors = product.get("colors") or []
+    chosen = next((c for c in colors if color_id and c.get("id") == color_id), None)
+    if chosen is None or not (chosen.get("images") or []):
+        chosen = next((c for c in colors if c.get("isBase")), colors[0] if colors else None)
+    if not chosen:
+        return []
+    images = sorted((chosen.get("images") or []), key=lambda im: _SLOT_ORDER.get(im.get("slot") or "", 99))
+    return [(im.get("slot") or "Front", im["id"]) for im in images if im.get("id")]
+
+
+# 첨부 이미지 역할 라벨 — 전부 고정 문구(셀러 데이터 미포함, 프롬프트 인젝션 방지)
+_SLOT_LABEL = {
+    "Front": "PRODUCT — front view of the garment",
+    "Back": "PRODUCT — back view of the garment",
+    "Detail": "PRODUCT — detail close-up of the garment (texture, stitching, print)",
+    "Fit": "PRODUCT — fit reference, the garment worn on a person (true length & drape)",
+}
+
+
+def build_manifest(prod_assets: list[dict], *, has_mannequin: bool, has_match: bool, mood_count: int) -> str:
+    """images=[mannequin?, *prod(slot순), match?, *mood]와 동일 순서의 역할 목록."""
+    lines: list[str] = []
+    i = 1
+    if has_mannequin:
+        lines.append(f"{i}. PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)")
+        i += 1
+    for a in prod_assets:
+        lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'PRODUCT — view of the garment')}")
+        i += 1
+    if has_match:
+        lines.append(f"{i}. MATCH — a coordinating garment to style together in the same outfit")
+        i += 1
+    for _ in range(mood_count):
+        lines.append(f"{i}. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)")
+        i += 1
     return "\n".join(lines) or "(the seller's product photos — treat as ground truth)"
+
+
+def build_prompt(
+    cut_spec: dict, product: dict, *,
+    analysis: dict | None = None, manifest: str | None = None,
+) -> str:
+    """스펙 정규화(ValueError=unknown_cut_type) + 템플릿 렌더. manifest 미지정 시
+    첨부가 '해당 색상 상품 슬롯 이미지뿐'이라고 가정하고 동일 순서 목록을 만든다."""
+    spec = normalize_spec(cut_spec)
+    if manifest is None:
+        prod_assets = [{"slot": slot} for slot, _id in color_images(product, spec["colorId"])]
+        manifest = build_manifest(prod_assets, has_mannequin=False, has_match=False, mood_count=0)
+    clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+    return render_cut_prompt(load_cut_template(), spec, product, analysis or {}, clothing_type, manifest)
 
 
 async def generate(
@@ -96,10 +214,15 @@ async def generate(
     cut_spec: dict,
     product: dict,
     images: list[InlineImage],
+    *,
+    analysis: dict | None = None,
+    manifest: str | None = None,
 ) -> tuple[bytes, str]:
-    """컷 1개 생성. 실패 시 GeminiError 를 그대로 전파(호출자가 빈 슬롯 등으로 처리)."""
+    """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
+    스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
+    (거울샷 등 신규 컷이 엉뚱한 컷으로 대체 렌더되는 회귀 방지)."""
     model = resolve_model(settings, "image_high")
-    prompt = build_prompt(cut_spec, product)
+    prompt = build_prompt(cut_spec, product, analysis=analysis, manifest=manifest)
     res = await gemini.generate_content_image(
         model, prompt, images, settings.mannequin_image_size,
         aspect_ratio=settings.mannequin_aspect_ratio,

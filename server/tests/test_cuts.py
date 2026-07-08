@@ -1,13 +1,14 @@
-"""컷 생성 (ADR-0004) — 스펙 정규화·프롬프트 렌더 단위 + 라우트 검증 레벨 테스트.
+"""컷 생성 (ADR-0004) — 스펙 정규화·프롬프트 렌더 단위 테스트.
 
-라우트 테스트는 검증이 get_conn(DB) 이전에 실행되는 성질을 이용 — 풀 없이 TestClient로
-400(스펙 위반)과 503(검증 통과 후 DB 없음)을 구분한다 (test_routes.py와 동일 관례).
+구 agents/cut.py 의 계약이 cut_generator 로 이식됨(2026-07-07) — alias import 로 원 테스트를
+유지한다. 구 /cuts:generate 라우트는 detail_page 파이프라인(main)으로 대체되어 라우트 검증
+테스트는 제거: 스펙 위반은 이제 라우트 400 이 아니라 워커 정규화(ValueError→빈 슬롯/실패)로
+드러난다 — 그 계약은 아래 normalize 단위 테스트가 지킨다.
 """
 
 import pytest
 
-from app.agents import cut
-from conftest import make_settings
+from app.agents import cut_generator as cut
 
 
 def _auth(make_token):
@@ -63,7 +64,7 @@ def test_normalize_space_variation_default_subtle():
 
 
 def _render(spec_raw, clothing_type="top", product=None, analysis=None, manifest="1. PRODUCT — front view"):
-    tpl = cut.load_cut_template(make_settings())
+    tpl = cut.load_cut_template()
     spec = cut.normalize_spec(spec_raw)
     return cut.render_cut_prompt(tpl, spec, product or {}, analysis or {}, clothing_type, manifest)
 
@@ -149,29 +150,7 @@ def test_render_raises_on_stray_section_marker():
 
 
 # ---------- 라우트 검증 레벨 ----------
-
-
-def test_generate_cut_unknown_type_is_400(client, make_token):
-    res = client.post(
-        "/v1/projects/any-id/cuts:generate", headers=_auth(make_token), json={"cutType": "daily"},
-    )
-    assert res.status_code == 400
-    assert "invalid_cut_spec" in res.text
-
-
-def test_generate_cut_valid_body_passes_validation(client, make_token):
-    res = client.post(
-        "/v1/projects/any-id/cuts:generate", headers=_auth(make_token),
-        json={"cutType": "mirror", "shot": "knee"},
-    )
-    assert res.status_code == 503             # 검증 통과 후 get_conn(풀 없음) — 400/422 아님
-
-
-def test_generate_cut_missing_cut_type_is_422(client, make_token):
-    res = client.post(
-        "/v1/projects/any-id/cuts:generate", headers=_auth(make_token), json={},
-    )
-    assert res.status_code == 422
+# (구 /cuts:generate 라우트 테스트는 라우트 폐기로 제거 — 헤더 주석 참고)
 
 
 def test_wardrobe_route_requires_db(client, make_token):

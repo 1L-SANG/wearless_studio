@@ -45,11 +45,20 @@ def _change_line(change: dict) -> str | None:
 
 
 def build_prompt(vary_spec: dict) -> str:
-    """vary_spec = {changes: [{type,value}], cutType?} → 지시 문단 조립 + 템플릿 치환.
+    """vary_spec = {changes: [{type,value}], cutType?, hasRefBg?} → 지시 문단 조립 + 템플릿 치환.
     changes 빈 배열(또는 전부 무효)이면 '비슷한 컷 만들기'로 폴백(계약 §6). 자유 텍스트
-    (change.value)는 _sanitize를 거친 뒤에만 프롬프트에 들어간다."""
+    (change.value)는 _sanitize를 거친 뒤에만 프롬프트에 들어간다.
+    hasRefBg=True 면 배경은 첨부 2번(레퍼런스) 이미지를 따른다 — bg 칩의 placeholder 값('ref')
+    대신 실제 지시문을 넣는다(레퍼런스 기여 계약: 배경·조명·무드만, ADR-0004)."""
     changes = vary_spec.get("changes") or []
+    if vary_spec.get("hasRefBg"):
+        changes = [c for c in changes if c.get("type") != "bg"]
     lines = [ln for ln in (_change_line(c) for c in changes) if ln]
+    if vary_spec.get("hasRefBg"):
+        lines.append(
+            "- Change the background to match the attached background reference (the second image): "
+            "copy its background, lighting and ambience ONLY — never its garment, person or framing."
+        )
     instructions = "\n".join(lines) if lines else (
         "- (no specific change requested — make a similar cut: reproduce the same subject and "
         "garment with natural, minor variation)"
@@ -69,12 +78,16 @@ async def generate(
     source_image: InlineImage,
     changes: list,
     cut_type: str | None,
+    *,
+    ref_bg: InlineImage | None = None,
 ) -> tuple[bytes, str]:
-    """변형 컷 1장 생성. 실패 시 GeminiError를 그대로 전파(호출자가 job 실패 처리)."""
+    """변형 컷 1장 생성. 실패 시 GeminiError를 그대로 전파(호출자가 job 실패 처리).
+    ref_bg 는 배경 레퍼런스(첨부 2번) — 배경·조명·무드만 반영(ADR-0004)."""
     model = resolve_model(settings, "image_high")
-    prompt = build_prompt({"changes": changes, "cutType": cut_type})
+    prompt = build_prompt({"changes": changes, "cutType": cut_type, "hasRefBg": ref_bg is not None})
+    images = [source_image] if ref_bg is None else [source_image, ref_bg]
     res = await gemini.generate_content_image(
-        model, prompt, [source_image], settings.mannequin_image_size,
+        model, prompt, images, settings.mannequin_image_size,
         aspect_ratio=settings.mannequin_aspect_ratio,
     )
     return res.image, res.mime
