@@ -9,8 +9,8 @@
 
 /** 단계별 크레딧 단가 — 이 값만 바꾸면 전 화면 예고가 함께 갱신됨 */
 export const CREDIT_COSTS = Object.freeze({
-  mannequinGenerate: 1, // 마네킹 단일컷 생성·재생성
-  mannequinAdjust: 0, // @deprecated P2: 핏 프로필 재생성으로 대체
+  mannequinGenerate: 2, // 마네킹 A/B 생성 (전부 재생성 동일)
+  mannequinAdjust: 1, // 핏·총기장 1회 조정
   storyboardPerCut: 1, // 콘티 → 상세페이지 생성: 컷 1개당
   editorImage: 1, // 에디터에서 이미지 1장 생성/변형
 });
@@ -23,8 +23,5 @@ export const LIMITS = Object.freeze({
   sellingPointMax: 5, // 강조 특징 상한 (PRD §6.6)
   aiSuggestedPointMax: 2, // AI 추천 특징 상한 (types.js)
   matchClothingMax: 2, // 매칭 의류 선택 상한 (PRD §6.8)
-  mannequinAdjustMax: undefined, // @deprecated P2: 횟수 제한 없음
+  mannequinAdjustMax: 2, // 마네킹 조정 횟수 / 세션 (PRD §7.4)
 });
-
-/** @deprecated P2: 마네킹 조정 횟수 제한 폐기. */
-export const ADJUST_LIMIT = undefined;

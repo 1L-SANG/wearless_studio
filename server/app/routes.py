@@ -1134,17 +1134,16 @@ async def generate_detail_page(
     tags=["Assets & Uploads"],
     summary="안정 에셋 파일 서빙 (302 Redirect)",
 )
-async def get_asset_file(
-    request: Request, asset_id: str, user_id: str = Depends(require_user)
-):
-    """프론트엔드 에디터/화면에서 상시 사용 가능한 불변 에셋 이미지 경로입니다. 접근 권한(user_id) 확인 후 실제 스토리지의 단기 만료 서명 URL로 302 리다이렉트합니다.
+async def get_asset_file(request: Request, asset_id: str):
+    """프론트엔드 에디터/화면에서 상시 사용 가능한 불변 에셋 이미지 경로입니다. 실제 스토리지의 공개(또는 단기 서명) URL로 302 리다이렉트합니다.
 
-    - **Bearer Token**: 필수
+    - **인증 없음**: `<img src>` 가 직접 호출하는 경로라 Bearer 를 보낼 수 없다. 302 대상이
+      이미 공개 URL(R2_PUBLIC_BASE)이고 asset id 가 UUID(추측 불가)라 소유 검사의 실효가 없음.
     - **에지 케이스**:
-      - `404 Not Found`: 자산이 존재하지 않거나, 다른 사용자가 소유한 경우 발생
+      - `404 Not Found`: 자산이 존재하지 않거나 삭제된 경우 발생
     """
     async with get_conn(request) as conn:
-        asset = await repo.get_asset_for_user(conn, user_id, asset_id)
+        asset = await repo.get_asset(conn, asset_id)
     if asset is None:
         raise HTTPException(
             status_code=404, detail={"code": "not_found", "message": "자산을 찾을 수 없습니다."})

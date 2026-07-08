@@ -27,6 +27,22 @@ def generation_spec(analysis: dict) -> dict | None:
     return profile if isinstance(profile, dict) else None
 
 
+_TOP_TYPES = {"top", "outer", "dress", "상의", "아우터", "원피스"}
+
+
+def slim_variant_profile(profile: dict | None, clothing_type: str, gender: str) -> dict:
+    """후보 B(슬림 변형)용 fit profile — A/B 이원 생성(정핏/슬림핏, 원 UI 계약).
+    기존 프로필이 있으면 핏 축만 slim 으로 덮고, 없으면 의류 종류에 맞는 최소 프로필을 만든다.
+    카탈로그(fit_axes)에 없는 category/값은 렌더에서 조용히 스킵되므로 안전하다."""
+    if isinstance(profile, dict):
+        axes = dict(profile.get("axes") or {})
+        axes["cut" if profile.get("category") == "pants" else "fit"] = "slim"
+        return {**profile, "axes": axes}
+    if (clothing_type or "").lower() in _TOP_TYPES:
+        return {"category": "top", "gender": gender, "axes": {"fit": "slim"}}
+    return {"category": "pants", "gender": gender, "axes": {"cut": "slim"}}
+
+
 def base_color_images(product: dict) -> list[tuple[str, str]]:
     """기준 색상(ColorGroup.isBase, 없으면 colors[0]) 이미지의 (slot, asset_id) 목록 (slot 순서).
     slot ∈ Front/Back/Detail/Fit. Front 필수는 입력 검증에서 거른다(나머지는 선택)."""
@@ -66,6 +82,14 @@ def main_match_item_id(analysis: dict) -> str | None:
         return first
     if isinstance(sel, dict):
         return sel.get("main") or None
+    # 폴백 3: matchSelections 미생산(계약 §7 갭) — 분석 matchClothing 의 selected 항목에서
+    # selOrder 최소(=메인)를 뽑는다. id 는 match-candidates(matching_items) row id 라 asset 조회 호환.
+    mc = analysis.get("matchClothing")
+    if isinstance(mc, list):
+        sel_items = [m for m in mc if isinstance(m, dict) and m.get("selected") and m.get("id")]
+        if sel_items:
+            sel_items.sort(key=lambda m: m.get("selOrder") or 99)
+            return sel_items[0]["id"]
     return None
 
 
