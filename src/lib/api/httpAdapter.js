@@ -12,6 +12,23 @@ import { defaultAnalysisShape } from '@/lib/api/shapes.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
+// 서버는 에셋 이미지를 안정 앱 URL `/v1/assets/{id}/file`(상대경로)로 반환한다. 프론트는 다른
+// 도메인(Vercel)에서 서빙되므로 <img src> 가 그대로 쓰면 프론트 도메인에 붙어 404 가 난다.
+// 모든 응답이 지나는 http() 초크포인트에서 재귀로 절대화한다(API 도메인 프리픽스).
+// vary 요청이 src 를 서버로 되돌려보내도 워커의 _ASSET_FILE_RE 는 search(비앵커)라 절대 URL 도 파싱된다.
+function absolutizeAssetUrls(v) {
+  if (typeof v === 'string') {
+    return v.startsWith('/v1/assets/') ? `${BASE_URL}${v}` : v;
+  }
+  if (Array.isArray(v)) return v.map(absolutizeAssetUrls);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const k of Object.keys(v)) out[k] = absolutizeAssetUrls(v[k]);
+    return out;
+  }
+  return v;
+}
+
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
 export async function http(path, { method = 'GET', body } = {}) {
@@ -37,7 +54,7 @@ export async function http(path, { method = 'GET', body } = {}) {
     console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
     throw new Error(message);
   }
-  return res.json();
+  return absolutizeAssetUrls(await res.json());
 }
 
 // job 폴링 어댑터 — job형 API(202 {jobId})를 mock 의 onProgress 콜백 계약으로 변환.

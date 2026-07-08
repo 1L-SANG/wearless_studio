@@ -297,6 +297,19 @@ async def get_asset_for_user(conn: AsyncConnection, user_id: str, asset_id: str)
         return await cur.fetchone()
 
 
+async def get_asset(conn: AsyncConnection, asset_id: str) -> dict | None:
+    """asset 메타 — 소유 무관(파일 서빙 전용). GET /assets/{id}/file 은 <img> 태그가 호출해
+    Bearer 를 못 보내므로 무인증 서빙한다. 302 대상(public_url)이 이미 공개 URL 이고 id 는
+    UUID(추측 불가 capability)라 소유 검사의 실효 보안이 없다 — 메타 노출도 없음(302 만)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, r2_bucket, r2_key, mime_type, source "
+            "from assets where id = %s and deleted_at is null",
+            (asset_id,),
+        )
+        return await cur.fetchone()
+
+
 async def get_matching_item_asset(conn: AsyncConnection, item_id: str) -> str | None:
     """매칭의류(하의) 이미지 asset id — 활성 항목만. 운영자 시드 데이터(matching_items)."""
     async with conn.cursor() as cur:
