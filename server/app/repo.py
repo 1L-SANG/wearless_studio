@@ -81,7 +81,13 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
             select
                 pr.id::text as id,
                 pr.title,
-                ''::text as cover,
+                -- 커버 = 최신 마네킹컷, 없으면 기준색(Front 우선) 상품사진. 안정 앱 URL 로
+                -- 반환하면 프론트 http() 초크포인트가 API 도메인으로 절대화한다.
+                case
+                    when cutc.aid is not null then '/v1/assets/' || cutc.aid || '/file'
+                    when prodimg.aid is not null then '/v1/assets/' || prodimg.aid || '/file'
+                    else ''
+                end as cover,
                 prod.clothing_type,
                 case when jsonb_typeof(pr.editor_blocks) = 'array'
                      then jsonb_array_length(pr.editor_blocks) else 0 end as block_count,
@@ -89,6 +95,26 @@ async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
                 pr.updated_at
             from projects pr
             left join products prod on prod.project_id = pr.id
+            left join lateral (
+                select mc.asset_id::text as aid
+                from mannequin_cuts mc
+                where mc.project_id = pr.id
+                order by mc.version desc, mc.candidate
+                limit 1
+            ) cutc on true
+            left join lateral (
+                select im->>'id' as aid
+                from jsonb_array_elements(
+                    case when jsonb_typeof(prod.colors) = 'array' then prod.colors else '[]'::jsonb end
+                ) col
+                cross join lateral jsonb_array_elements(
+                    case when jsonb_typeof(col->'images') = 'array' then col->'images' else '[]'::jsonb end
+                ) im
+                where im->>'id' is not null
+                order by (col->>'isBase')::boolean desc nulls last,
+                         ((im->>'slot') = 'Front') desc
+                limit 1
+            ) prodimg on true
             where pr.user_id = %s and pr.deleted_at is null and pr.status = 'done'
             order by pr.updated_at desc
             """,
