@@ -1,0 +1,13 @@
+server:
+  port: 8100
+
+spring:
+  application:
+    name: fm-holder
+
+# OpenDID 엔티티 주소 (로컬 orchestrator). 홀더가 호출할 발급/블록체인 엔드포인트.
+opendid:
+  tas-url: http://localhost:8090
+  issuer-url: http://localhost:8091
+  verifier-url: http://localhost:8092
+  api-server-url: http://localhost:8093
