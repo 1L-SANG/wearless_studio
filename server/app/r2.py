@@ -10,6 +10,9 @@ asyncio.to_thread 로 감싸 이벤트 루프를 막지 않는다(§5). presigne
 서명만 하는 로컬 연산이라 블로킹이 아니다.
 """
 
+import base64
+import hashlib
+
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -40,12 +43,30 @@ def ai_key(user_id: str, project_id: str, job_id: str, asset_id: str, ext: str) 
     return f"users/{user_id}/projects/{project_id}/ai/{job_id}/{asset_id}.{ext}"
 
 
+def face_key(model_id: str, license_id: str, ext: str) -> str:
+    """FaceMarket 얼굴 라이선스 이미지의 비공개 R2 키. 서버에서만 유도(클라 신뢰 금지).
+    게이트 라우트만 스트림 → 공개 URL 미노출. license_id(uuid) = 추측 불가."""
+    return f"facemarket/models/{model_id}/licenses/{license_id}/face.{ext}"
+
+
+def sha256_sri(data: bytes) -> str:
+    """SRI 무결성 digest 'sha256-<base64>'. fm_licenses.face_image_digest 포맷."""
+    return "sha256-" + base64.b64encode(hashlib.sha256(data).digest()).decode()
+
+
 class R2Client:
     """앱 1개당 1개. app.state.r2 에 둔다. settings.r2_* 미설정이면 생성하지 않는다."""
 
-    def __init__(self, settings: Settings):
-        self._bucket = settings.r2_bucket
-        self._public_base = settings.r2_public_base
+    def __init__(
+        self,
+        settings: Settings,
+        bucket: str | None = None,
+        public_base: str | None = "",
+    ):
+        # bucket/public_base 오버라이드: FaceMarket 얼굴 = 전용 비공개 버킷 + 공개도메인 차단.
+        # public_base 기본 "" = 센티널(미지정 → settings 값 사용). None 명시 = 공개도메인 강제 차단.
+        self._bucket = bucket or settings.r2_bucket
+        self._public_base = settings.r2_public_base if public_base == "" else public_base
         endpoint = settings.r2_endpoint or (
             f"https://{settings.r2_account_id}.r2.cloudflarestorage.com"
         )

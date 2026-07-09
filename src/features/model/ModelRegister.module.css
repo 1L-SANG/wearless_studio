@@ -141,14 +141,19 @@
 
 .nextCard {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 13px;
   text-align: left;
   margin-top: 30px;
   padding: 18px;
   border-radius: var(--r-5);
   background: var(--bg-2);
+  color: inherit;
+  text-decoration: none;
+  transition: background .15s;
 }
+.nextCard:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
+.nextCard > :last-child { margin-left: auto; color: var(--fg-3); flex: none; }
 .nextIcon {
   flex: none;
   width: 38px;

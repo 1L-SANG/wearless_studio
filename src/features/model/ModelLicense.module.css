@@ -1,0 +1,141 @@
+/* 얼굴 라이선스 페이지 — 업로드 타일 + 조건 폼 + 라이선스 카드 그리드 */
+
+.sectionLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-2);
+  margin: 18px 0 8px;
+}
+
+/* 얼굴 업로드 타일 */
+.upload {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  max-height: 320px;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--r-6);
+  background: var(--bg-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color .15s, background .15s;
+}
+.upload:hover { border-color: var(--fg-3); background: var(--bg-1); }
+.uploadHas { border-style: solid; padding: 0; }
+.uploadImg { width: 100%; height: 100%; object-fit: cover; }
+.uploadEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-3);
+}
+.uploadEmpty span { font-size: 14px; font-weight: 600; color: var(--fg-2); }
+.uploadEmpty small { font-size: 12px; color: var(--fg-3); }
+
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 560px) { .row2 { grid-template-columns: 1fr; } }
+
+.privacy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: var(--r-4);
+  background: var(--bg-2);
+  color: var(--fg-3);
+  font-size: 12.5px;
+}
+
+/* 목록 */
+.listHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 30px 0 14px;
+}
+.listHead h2 { font-size: 17px; font-weight: 700; color: var(--fg-1); }
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--fg-3);
+  text-decoration: none;
+}
+.backLink:hover { color: var(--fg-1); }
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 36px 0;
+  color: var(--fg-3);
+  font-size: 14px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  border-radius: var(--r-6);
+  background: var(--bg-1);
+  box-shadow: var(--elev-card);
+  overflow: hidden;
+}
+.thumb {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  background: var(--bg-2);
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; }
+.thumbEmpty { width: 100%; height: 100%; display: grid; place-items: center; color: var(--fg-3); }
+.status {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  color: #fff;
+}
+.stActive { background: var(--accent-success); }
+.stOff { background: var(--fg-3); }
+
+.cardBody { padding: 12px 13px 14px; }
+.price { font-size: 17px; font-weight: 700; color: var(--fg-1); }
+.price span { font-size: 12px; font-weight: 500; color: var(--fg-3); margin-left: 2px; }
+
+.badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+}
+.bAllow { background: var(--accent-success-ring); color: var(--accent-success); }
+.bDeny { background: var(--accent-error-ring); color: var(--accent-error); }
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 11px;
+  font-size: 12px;
+  color: var(--fg-3);
+}

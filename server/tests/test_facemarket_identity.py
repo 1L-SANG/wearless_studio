@@ -65,7 +65,7 @@ class FakeCursor:
                 raise UniqueViolation("duplicate cx_tx_id")
             self.store["tx"].add(cx_tx_id)
             self._result = None
-        elif s.startswith("select id, display_name, status, cover_image_url, created_at from fm_models"):
+        elif s.startswith("select id::text as id, display_name, status, cover_image_url, created_at from fm_models"):
             if "where user_id" in s:
                 rows = [r for r in models if r["user_id"] == params[0]]
             else:  # 카탈로그 = verified 만

@@ -5,6 +5,7 @@
    실 신원을 받아 검증·모델 등록한다. 원문 신원은 브라우저→서버로 보내지 않는다.
    ============================================================= */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button, Icon } from '@/components/ui.jsx';
 import { verifyIdentity } from '@/lib/api/facemarket.js';
 import s from './ModelRegister.module.css';
@@ -127,13 +128,14 @@ export function ModelRegister() {
             <Icon name="sparkles" size={14} />
             <span>모델 ID · {result?.modelId}</span>
           </div>
-          <div className={s.nextCard}>
+          <Link to="/model/license" className={s.nextCard}>
             <div className={s.nextIcon}><Icon name="shirt" size={18} /></div>
             <div>
               <div className={s.nextTitle}>다음 단계 — 얼굴 라이선스 발급</div>
-              <div className={s.nextDesc}>얼굴과 사용 조건을 라이선스로 등록하면 셀러가 사용할 수 있어요. (곧 제공)</div>
+              <div className={s.nextDesc}>얼굴과 사용 조건을 라이선스로 등록하면 셀러가 사용할 수 있어요.</div>
             </div>
-          </div>
+            <Icon name="chevRight" size={18} />
+          </Link>
         </div>
       </div>
     );
