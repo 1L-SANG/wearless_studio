@@ -81,6 +81,25 @@ public class HolderWalletService {
         return doc.getId();
     }
 
+    /** 저장된 DID Document JSON 원문(register-user 자기서명 입력). */
+    public String didDocJson(String modelId) throws Exception {
+        return Files.readString(didDocPath(modelId));
+    }
+
+    /** 모델 월렛에 접속(결정적 비밀번호 재유도). 커스터디얼 — 발급/등록 시 재접속용. */
+    public WalletManagerInterface connect(String modelId) throws Exception {
+        Path p = walletPath(modelId);
+        if (!Files.exists(p)) throw new IllegalStateException("no wallet for model " + modelId);
+        WalletManagerInterface wm = WalletManagerFactory.getWalletManager(WalletManagerType.FILE);
+        wm.connect(p.toString(), derivePassword(modelId));
+        return wm;
+    }
+
+    /** 모델별 결정적 월렛 식별자(WID). SignedWalletInfo/SignedDidDoc.wallet.id 용. */
+    public String walletId(String modelId) {
+        return "WID" + hmacHex(modelId).substring(0, 16);
+    }
+
     /**
      * 모델별 월렛 + DID Document 생성.
      *
