@@ -89,13 +89,16 @@ create table if not exists public.fm_settlements (
 );
 create index if not exists fm_settlements_license_id_idx on public.fm_settlements(license_id);
 
--- ── updated_at 트리거(레포 관례 set_updated_at) ──────────────
+-- ── updated_at 트리거(레포 관례 set_updated_at) — 멱등(재실행 안전) ──
+drop trigger if exists fm_models_set_updated_at on public.fm_models;
 create trigger fm_models_set_updated_at
   before update on public.fm_models
   for each row execute function public.set_updated_at();
+drop trigger if exists fm_licenses_set_updated_at on public.fm_licenses;
 create trigger fm_licenses_set_updated_at
   before update on public.fm_licenses
   for each row execute function public.set_updated_at();
+drop trigger if exists fm_settlements_set_updated_at on public.fm_settlements;
 create trigger fm_settlements_set_updated_at
   before update on public.fm_settlements
   for each row execute function public.set_updated_at();
