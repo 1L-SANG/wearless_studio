@@ -5,6 +5,11 @@ spring:
   application:
     name: fm-holder
 
+# 커스터디얼 홀더 저장소 + 월렛 비밀번호 pepper.
+holder:
+  data-dir: ./data                    # 월렛/DID 파일 저장 루트 (gitignore)
+  wallet-pepper: ${FM_HOLDER_PEPPER:fm-holder-dev-pepper}
+
 # OpenDID 엔티티 주소 (로컬 orchestrator). 홀더가 호출할 발급/블록체인 엔드포인트.
 opendid:
   tas-url: http://localhost:8090
