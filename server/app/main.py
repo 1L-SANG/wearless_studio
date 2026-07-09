@@ -182,6 +182,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(v1_router)
 
+    # FaceMarket(해커톤) — 플래그 on일 때만 등록. off(프로드 기본)면 라우트 미존재 →
+    # 기존 셀러 플로우/배포 무영향. verify·settle 훅이 OpenDID env 없는 프로드를 파손하지 않게.
+    if settings.facemarket_enabled:
+        from .facemarket import router as facemarket_router
+
+        app.include_router(facemarket_router)
+
     return app
 
 

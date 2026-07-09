@@ -64,6 +64,12 @@ class Settings:
     retrieval_knowledge: str = "off"  # off | static (정적 지식 블록)
     seller_text_canonicalize: str = "off"  # off | shadow | enforce (FR-D1 안전 게이트)
     input_qc: str = "off"  # off | shadow | enforce — 업로드 입력 QC (FR-D4, decode·해상도)
+    # ---- FaceMarket (해커톤, 검증 실명 모델 마켓) — 기본 off 로 프로드 보호(FACEMARKET_ENABLED) ----
+    # off면 라우터 자체가 미등록 → 기존 셀러 플로우 무영향(main.py 조건부 include).
+    facemarket_enabled: bool = False
+    fm_ci_pepper: str | None = None  # HMAC-SHA256(CI, pepper) dedup용 secret. 없으면 verify 503
+    # CX 표준인증창 ENT_MID trans 검증 엔드포인트(서버발). FM-03 실측: index.html 경로.
+    cx_trans_base_url: str = "https://cx.raonsecure.co.kr:18543"
 
 
 def _image_size() -> str:
@@ -144,4 +150,9 @@ def load_settings() -> Settings:
         ),
         input_qc=_flag("INPUT_QC", "off", {"off", "shadow", "enforce"}),
         image_qc=_flag("IMAGE_QC", "off", {"off", "shadow", "enforce"}),
+        facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
+        fm_ci_pepper=os.getenv("FM_CI_PEPPER") or None,
+        cx_trans_base_url=(
+            os.getenv("CX_TRANS_BASE_URL") or "https://cx.raonsecure.co.kr:18543"
+        ).rstrip("/"),
     )
