@@ -44,3 +44,5 @@ server/ab_material_test.py
 pnpm-workspace.yaml
 claude.md
 agents.md
+# 로컬 dev 런타임(로그·pid)
+.dev/
