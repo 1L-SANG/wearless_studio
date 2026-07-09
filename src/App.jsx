@@ -14,6 +14,7 @@ import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
+import { ModelRegister } from '@/features/model/ModelRegister.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
@@ -128,6 +129,8 @@ export default function App() {
             {/* 크레딧 에이전트 페이지 — auth 는 라우트만 등록, 본문 컴포넌트는 크레딧 에이전트 소유 */}
             <Route path="pricing" element={<Pricing />} />
             <Route path="credits/history" element={<CreditsHistory />} />
+            {/* FaceMarket 모델 온보딩 — 로그인 모델이 신분증 본인확인 (FM-10) */}
+            <Route path="model/register" element={<ModelRegister />} />
           </Route>
           <Route path="create">
             <Route index element={<Navigate to="/create/input" replace />} />
