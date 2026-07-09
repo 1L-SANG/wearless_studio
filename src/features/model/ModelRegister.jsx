@@ -3,11 +3,9 @@
    CX 표준인증창(ENT_MID) 위젯을 임베드해 모바일 신분증 본인확인을 수행한다.
    성공 콜백의 token 만 백엔드(verifyIdentity)로 넘기고, 서버가 CX trans 로
    실 신원을 받아 검증·모델 등록한다. 원문 신원은 브라우저→서버로 보내지 않는다.
-   FM-03 실측(2026-07-09): index.html(ENT_MID) 경로가 facemarket.wearless.kr
-   에서 E2E 동작 + 응답에 ci 존재 확인.
    ============================================================= */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui.jsx';
+import { Button, Icon } from '@/components/ui.jsx';
 import { verifyIdentity } from '@/lib/api/facemarket.js';
 import s from './ModelRegister.module.css';
 
@@ -16,8 +14,13 @@ const CX_ORIGIN = 'https://cx.raonsecure.co.kr:17543';
 const CX_CONFIG_URL =
   import.meta.env.VITE_CX_CONFIG_URL || `${CX_ORIGIN}/ent/esign/config/config.mid.json`;
 
+const STEPS = [
+  { icon: 'person', label: '신분증 인증', desc: '모바일 신분증으로 실명 확인' },
+  { icon: 'lock', label: '안전한 처리', desc: '원본은 저장 없이 암호화 지문만' },
+  { icon: 'sparkles', label: '검증 배지', desc: '검증 모델로 등록 완료' },
+];
+
 // 위젯 리소스(vendor→ux js + css)를 1회 주입하고 window.OACX 준비를 기다린다.
-// 모듈 스코프 캐시로 재마운트 시 중복 주입을 막는다.
 let _cxLoader;
 function loadCxWidget() {
   if (window.OACX) return Promise.resolve();
@@ -40,11 +43,9 @@ function loadCxWidget() {
       link.href = `${CX_ORIGIN}/ent/esign/oacx-ux.css`;
       document.head.appendChild(link);
     }
-    // ux 는 vendor 에 의존 → 순서 보장.
     addScript('oacx-vendor', `${CX_ORIGIN}/ent/esign/oacx-vendor.js`)
       .then(() => addScript('oacx-ux', `${CX_ORIGIN}/ent/esign/oacx-ux.js`))
       .then(() => {
-        // 스크립트 onload 후 전역 초기화까지 약간의 여유 — OACX 준비를 폴링.
         let tries = 0;
         const t = setInterval(() => {
           if (window.OACX) {
@@ -88,7 +89,6 @@ export function ModelRegister() {
     }
     setError('');
     const json = { contentInfo: { signType: 'ENT_MID' }, compareCI: false, isBirth: true };
-    // 성공 콜백: res(문자열)→token→백엔드 검증. 원문 신원은 서버가 CX 에서 받는다.
     window.OACX.LOAD_MODULE(CX_CONFIG_URL, json, async (res) => {
       try {
         const parsed = typeof res === 'string' ? JSON.parse(res) : res;
@@ -110,46 +110,80 @@ export function ModelRegister() {
     });
   }, []);
 
-  return (
-    <div className="wizard">
-      <div className={s.head}>
-        <h1 className={s.title}>모델 본인확인</h1>
-        <p className={s.sub}>
-          모바일 신분증으로 본인확인을 완료하면 검증 모델로 등록돼요. 실명·얼굴이 검증된 모델만
-          FaceMarket 에서 활동할 수 있어요.
-        </p>
-      </div>
+  const busy = phase === 'loading' || phase === 'verifying';
 
-      {phase === 'done' ? (
-        <div className={s.doneCard}>
-          <div className={s.badge}>✓ 검증 완료</div>
-          <p className={s.doneName}>
+  if (phase === 'done') {
+    return (
+      <div className="wizard narrow">
+        <div className={s.successWrap}>
+          <div className={s.successIcon}>
+            <Icon name="check" size={30} stroke={2.4} />
+          </div>
+          <h1 className={s.successTitle}>검증 완료</h1>
+          <p className={s.successLead}>
             <b>{result?.nameMasked}</b> 님, 검증 모델로 등록됐어요.
           </p>
-          <p className={s.dim}>모델 ID · {result?.modelId}</p>
+          <div className={s.idPill}>
+            <Icon name="sparkles" size={14} />
+            <span>모델 ID · {result?.modelId}</span>
+          </div>
+          <div className={s.nextCard}>
+            <div className={s.nextIcon}><Icon name="shirt" size={18} /></div>
+            <div>
+              <div className={s.nextTitle}>다음 단계 — 얼굴 라이선스 발급</div>
+              <div className={s.nextDesc}>얼굴과 사용 조건을 라이선스로 등록하면 셀러가 사용할 수 있어요. (곧 제공)</div>
+            </div>
+          </div>
         </div>
-      ) : (
-        <div className={s.panel}>
-          {/* 표준인증창이 렌더되는 컨테이너 */}
-          <div id="oacxDiv" className={s.widget} />
-          <Button
-            variant="primary"
-            block
-            onClick={onAuth}
-            disabled={phase === 'loading' || phase === 'verifying'}
-          >
-            {phase === 'loading'
-              ? '인증 모듈 준비 중…'
-              : phase === 'verifying'
-                ? '본인확인 중…'
-                : '모바일 신분증으로 인증하기'}
-          </Button>
-          {error && <p className={s.error}>{error}</p>}
-          {phase === 'error' && (
-            <p className={s.dim}>새로고침 후 다시 시도해 주세요. 문제가 계속되면 관리자에게 문의해 주세요.</p>
-          )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="wizard narrow">
+      <div className="page-head">
+        <h1>모델 본인확인</h1>
+        <p>모바일 신분증으로 실명을 확인하면 검증 모델로 등록돼요.</p>
+      </div>
+
+      <div className="surface">
+        <div className={s.eyebrow}>검증 모델 온보딩</div>
+
+        <div className={s.steps}>
+          {STEPS.map((st, i) => (
+            <div className={s.step} key={st.label}>
+              <div className={s.stepIcon}><Icon name={st.icon} size={20} /></div>
+              <div className={s.stepText}>
+                <div className={s.stepLabel}>{st.label}</div>
+                <div className={s.stepDesc}>{st.desc}</div>
+              </div>
+              {i < STEPS.length - 1 && <div className={s.stepArrow}><Icon name="chevRight" size={16} /></div>}
+            </div>
+          ))}
         </div>
-      )}
+
+        {/* 표준인증창이 렌더되는 컨테이너 */}
+        <div id="oacxDiv" className={s.widget} />
+
+        <Button variant="primary" block onClick={onAuth} disabled={busy} iconRight="arrowRight">
+          {phase === 'loading'
+            ? '인증 모듈 준비 중…'
+            : phase === 'verifying'
+              ? '본인확인 중…'
+              : '모바일 신분증으로 인증하기'}
+        </Button>
+
+        {error && (
+          <p className={s.error}>
+            <Icon name="alertCircle" size={15} /> {error}
+          </p>
+        )}
+
+        <div className={s.privacy}>
+          <Icon name="lock" size={15} />
+          <span>실명·주민번호는 저장하지 않아요. 암호화된 지문(HMAC)만 보관해 중복만 방지해요.</span>
+        </div>
+      </div>
     </div>
   );
 }
