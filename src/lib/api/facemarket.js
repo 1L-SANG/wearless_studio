@@ -11,3 +11,14 @@ import { http } from '@/lib/api/httpAdapter.js';
 export function verifyIdentity(token) {
   return http('/v1/facemarket/identity/verify', { method: 'POST', body: { token } });
 }
+
+// GET /v1/facemarket/models — 검증 모델 카탈로그(셀러용). [FM-13 팀원 계약]
+// → [{ id, displayName, status, coverImageUrl, createdAt }] (PII·ci_hash 없음).
+export function listModels() {
+  return http('/v1/facemarket/models');
+}
+
+// GET /v1/facemarket/models/me — 로그인 사용자 본인 소유 모델(마이페이지). 동일 shape.
+export function listMyModels() {
+  return http('/v1/facemarket/models/me');
+}
