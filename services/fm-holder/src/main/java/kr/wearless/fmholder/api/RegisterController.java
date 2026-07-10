@@ -1,5 +1,6 @@
 package kr.wearless.fmholder.api;
 
+import kr.wearless.fmholder.protocol.DidAnchorService;
 import kr.wearless.fmholder.protocol.RegisterUserDtos;
 import kr.wearless.fmholder.protocol.RegisterUserService;
 import kr.wearless.fmholder.protocol.TasClient;
@@ -20,10 +21,18 @@ public class RegisterController {
 
     private final TasClient tas;
     private final RegisterUserService registerUser;
+    private final DidAnchorService didAnchor;
 
-    public RegisterController(TasClient tas, RegisterUserService registerUser) {
+    public RegisterController(TasClient tas, RegisterUserService registerUser, DidAnchorService didAnchor) {
         this.tas = tas;
         this.registerUser = registerUser;
+        this.didAnchor = didAnchor;
+    }
+
+    /** 홀더 DID 를 TAS 관리자 부트스트랩으로 온체인 앵커(register-did/public → approve-did). */
+    @PostMapping("/models/{modelId}/anchor-did")
+    public DidAnchorService.AnchorResult anchorDid(@PathVariable String modelId) throws Exception {
+        return didAnchor.anchor(modelId);
     }
 
     /** propose-register-user 단독 라이브 확인 — TAS 연결 + txId 발급. */
