@@ -29,11 +29,23 @@ else
   listening 9001 && echo "✓ orchestrator :9001 up" || { echo "✗ 기동 실패 — $LOGDIR/orchestrator.log 확인"; exit 1; }
 fi
 
+# 리포지토리(Besu+PostgreSQL) → 엔티티 자동 기동 (대시보드 Start All 대체).
+# orchestrator API: /startup/besu(besu+pg) → /startup/all(엔티티). Generate 상태는 volume 보존.
+green_entities() { local n=0 p; for p in 8090 8091 8092 8093 8094 8095; do
+  [ "$(curl -sS -m2 -o /dev/null -w '%{http_code}' http://localhost:$p/actuator/health 2>/dev/null)" = "200" ] && n=$((n+1)); done; echo "$n"; }
+
+if [ "$(green_entities)" = "6" ]; then
+  echo "✓ 엔티티 6/6 이미 green"
+else
+  echo "리포지토리(Besu+PG) 기동…"; curl -sS -m120 "http://localhost:9001/startup/besu" >/dev/null 2>&1; sleep 4
+  echo "엔티티 기동(Start All)…"; curl -sS -m200 "http://localhost:9001/startup/all" >/dev/null 2>&1
+  for _ in $(seq 1 45); do g=$(green_entities); echo "  green: $g/6"; [ "$g" = "6" ] && break; sleep 4; done
+  [ "$(green_entities)" = "6" ] || echo "  ⚠️ 6/6 아님 — 첫 실행이면 http://localhost:9001 에서 Generate All 먼저(1회)"
+fi
+
 cat <<'EOF'
 
-→ 브라우저: http://localhost:9001
-   · 첫 실행: Generate All → (Repository=Hyperledger Besu) → Start All
-   · 이후:   Start All 만 (Generate 상태는 postgre-opendid 볼륨에 보존)
+   대시보드 http://localhost:9001
    포트: TA 8090 · Issuer 8091(발급) · Verifier 8092(검증) · API 8093 · CA 8094 · Wallet 8095 + Besu(docker)
    중지: scripts/orchestrator-down.sh
 EOF
