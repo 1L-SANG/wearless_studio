@@ -15,6 +15,7 @@ import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { ModelRegister } from '@/features/model/ModelRegister.jsx';
+import { ModelLicense } from '@/features/model/ModelLicense.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
@@ -131,6 +132,7 @@ export default function App() {
             <Route path="credits/history" element={<CreditsHistory />} />
             {/* FaceMarket 모델 온보딩 — 로그인 모델이 신분증 본인확인 (FM-10) */}
             <Route path="model/register" element={<ModelRegister />} />
+            <Route path="model/license" element={<ModelLicense />} />
           </Route>
           <Route path="create">
             <Route index element={<Navigate to="/create/input" replace />} />

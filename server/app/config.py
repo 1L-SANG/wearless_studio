@@ -19,6 +19,9 @@ class Settings:
     r2_bucket: str | None
     r2_endpoint: str | None
     r2_public_base: str | None  # images.wearless.kr 등 공개 서빙 도메인 (없으면 signed GET)
+    # FaceMarket 얼굴 라이선스 = 생체 PII → 공개 도메인 미연결 전용 비공개 버킷.
+    # 미설정이면 메인 버킷 폴백(개발). 게이트 라우트가 바이트 스트림 → public_url 미사용.
+    r2_face_bucket: str | None = None
     # ---- AI 에이전트 (Phase 4) ----
     # 마지막 블록 + 기본값 — 직접 생성(테스트)·미래 필드 추가에도 안 깨지게.
     # load_settings()는 아래 기본값을 env 값으로 항상 덮어쓴다.
@@ -114,6 +117,7 @@ def load_settings() -> Settings:
         r2_bucket=os.getenv("R2_BUCKET") or None,
         r2_endpoint=(os.getenv("R2_ENDPOINT") or "").rstrip("/") or None,
         r2_public_base=(os.getenv("R2_PUBLIC_BASE") or "").rstrip("/") or None,
+        r2_face_bucket=os.getenv("R2_FACE_BUCKET") or None,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         vertex_project=os.getenv("VERTEX_PROJECT") or None,
         vertex_location=os.getenv("VERTEX_LOCATION", "global"),
