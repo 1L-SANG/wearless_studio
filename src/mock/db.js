@@ -18,6 +18,7 @@ import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
+import { ensureSections, rowSizeFor } from '@/lib/sections.js';
 
 const nowIso = () => new Date().toISOString();
 const copyFitProfile = (profile) => ({ ...profile, axes: { ...(profile?.axes || {}) } });
@@ -235,12 +236,24 @@ function buildAutoBlocks(product) {
    콘티를 따라가고, 카피라이팅 ON 이면 후킹/셀링포인트에 카피를 넣는다. */
 export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting) {
   const KIND_NAMES = { hook: '후킹', selling: '셀링포인트', styling: '스타일링컷', horizon: '호리존컷', product: '제품컷', info: '블록' };
+  const ROW_LAYOUTS = {
+    twoColumn: { name: '2단 구성', kind: 'twocol' },
+    threeColumn: { name: '3단 구성', kind: 'threecol' },
+    grid2x2: { name: '2×2단 구성', kind: 'grid2x2' },
+    colorCompare: { name: '컬러 비교', kind: 'colorcmp' },
+  };
   const cat = (ct) => ct === 'product' ? 'product' : ct === 'horizon' ? 'horizon' : 'styling';
-  const blocks = (storyboard || []).map((b, i) => {
-    const bg = i % 2 ? '#f5f5f5' : '#ffffff';
+  const arr = storyboard || [];
+  const blocks = [];
+  const persistentRowSections = new Set(arr
+    .filter((b) => b.source !== 'mine' && (b.layoutRowId || b.layoutRowVersion))
+    .map((b) => b.sectionId));
+  const pushSingle = (b) => {
+    const bg = blocks.length % 2 ? '#f5f5f5' : '#ffffff';
     if (b.source === 'mine') {
       const els = (b.ownImages || []).slice(0, 1).map((src) => IMG(60, 50, 880, 560, src, 12));
-      return { id: uid('b'), name: '내 이미지', kind: 'info', bg, h: 660, elements: els };
+      blocks.push({ id: uid('b'), name: '내 이미지', kind: 'info', bg, h: 660, elements: els });
+      return;
     }
     const name = b.title || KIND_NAMES[b.kind] || '컷';
     const els = [IMG(60, 50, 880, 560, P.photo('gen_' + b.id, cat(b.cutType), 880, 560), 12, b.cutType || undefined)];
@@ -250,8 +263,59 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     if (copywriting && b.kind === 'selling') {
       els.push(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 18, color: '#4a4a45' }));
     }
-    return { id: uid('b'), name, kind: b.kind, bg, h: 660, elements: els };
-  });
+    blocks.push({ id: uid('b'), name, kind: b.kind, bg, h: 660, elements: els });
+  };
+  const pushRow = (chunk, layout) => {
+    const rowLayout = ROW_LAYOUTS[layout];
+    const n = chunk.length;
+    const w = Math.floor((880 - (n - 1) * 20) / n);
+    const els = chunk.map((rb, c) => IMG(60 + c * (w + 20), 50, w, 500, P.photo('gen_' + rb.id, cat(rb.cutType), w, 500), 12, rb.cutType || undefined));
+    blocks.push({
+      id: uid('b'), name: rowLayout.name, kind: rowLayout.kind,
+      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', h: 600, elements: els,
+    });
+  };
+
+  for (let i = 0; i < arr.length; i++) {
+    const b = arr[i];
+    if (b.source === 'mine') { pushSingle(b); continue; }
+
+    // 가로 배치 섹션 — '내 이미지'가
+    // 끊는 같은 섹션의 연속 AI run을 하나의 배치 단위로 조립한다.
+    if (ROW_LAYOUTS[b.sectionLayout] && b.sectionId) {
+      const layout = b.sectionLayout;
+      const run = [];
+      let j = i;
+      while (j < arr.length && arr[j].sectionId === b.sectionId && arr[j].source !== 'mine') { run.push(arr[j]); j++; }
+      i = j - 1;
+
+      // 행 id나 모델 버전이 섹션에 있으면 신규 모델이다. 그래야 내 이미지 건너편 run과
+      // 완성 행이 없는 미완성 꼬리를 레거시 청킹으로 잘못 합치지 않는다.
+      if (persistentRowSections.has(b.sectionId)) {
+        // 신규 보드: 영속 row id가 배치의 단일 소스. 버전만 있고 id 없는 미완성 꼬리는 싱글로 남긴다.
+        for (let k = 0; k < run.length;) {
+          const rowId = run[k].layoutRowId;
+          if (!rowId) { pushSingle(run[k]); k += 1; continue; }
+          let end = k + 1;
+          while (end < run.length && run[end].layoutRowId === rowId) end += 1;
+          const members = run.slice(k, end);
+          if (members.length > 1) pushRow(members, layout);
+          else pushSingle(members[0]); // 손상된/구버전 단독 id는 안전하게 싱글로 폴백.
+          k = end;
+        }
+      } else {
+        // 레거시 보드: row id/모델 버전이 전혀 없으면 기존 rowSizeFor 순차 청킹(미완성 마지막 행 포함)을 유지한다.
+        const size = rowSizeFor(layout);
+        for (let k = 0; k < run.length; k += size) {
+          const chunk = run.slice(k, k + size);
+          if (chunk.length > 1) pushRow(chunk, layout);
+          else pushSingle(chunk[0]);
+        }
+      }
+      continue;
+    }
+    pushSingle(b);
+  }
   return [...blocks, ...buildAutoBlocks(product)];
 }
 
@@ -319,7 +383,8 @@ export function buildStoryboard(mode, colors) {
       sb('product', '제품컷', 'product', 'front', 'flatlay', base),
     );
   }
-  return out;
+  // 섹션 개편(2026-07): 시드부터 섹션 부여 — depth=1, 같은 장소 시리즈(spacePair)도 하나의 섹션
+  return ensureSections(out);
 }
 
 /* =============================================================

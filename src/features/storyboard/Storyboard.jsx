@@ -12,8 +12,9 @@ import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, IconButton, Button, Chips, ThumbGrid, EmptyState, Skeleton, Toggle, useToast } from '@/components/ui.jsx';
+import { Icon, IconButton, Button, Chips, EmptyState, Skeleton, Toggle, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import { ensureSections, deriveSections, adoptSection, patchSection, normalizeRows, normalizeBoard } from '@/lib/sections.js';
 
 const COLOR_HEX = {
   white: '#ffffff', ivory: '#f3eee1', beige: '#d8c4a3', brown: '#7a5230', black: '#15141a',
@@ -22,6 +23,63 @@ const COLOR_HEX = {
 };
 export const hexFor = (c) => COLOR_HEX[c.swatchId] || COLOR_HEX[c.name] || '#d8d6dc';
 
+/* 콘티 저장 직렬 체인 — 모듈 스코프: 컴포넌트 수명(빠른 이탈→재진입의 구·신 인스턴스)과
+   프로젝트 경계를 넘어 전 저장의 순서를 보장한다. 늦게 도착한 옛 PUT이 최신을 덮어쓸 수 없다.
+   lastSaved 는 프로젝트별 — 다른 프로젝트의 참조와 비교되는 오판 방지. */
+let sbSaveChain = Promise.resolve();
+const sbLastSaved = new Map();   // projectId → 마지막 "성공" 저장 blocks 참조
+const sbPending = new Map();     // projectId → "실패"한 저장 스냅샷 — 다음 진입이 서버 대신 이걸 복원해 유실 방지
+const sbSaveIdle = () => sbSaveChain.catch(() => {});   // 대기 중 저장이 모두 끝날 때까지 (로드 전 호출)
+// 키 순서 무관 안정 직렬화 — 서버 왕복(JSONB 등)이 키 순서를 바꿔도 내용 동등성이 유지되게.
+// 순진한 JSON.stringify 비교는 같은 내용을 다르다고 판정해 복구 가능한 편집분을 잘못 폐기한다.
+const sbStable = (v) => JSON.stringify(v, (k, val) =>
+  (val && typeof val === 'object' && !Array.isArray(val))
+    ? Object.keys(val).sort().reduce((o, key) => { o[key] = val[key]; return o; }, {})
+    : val);
+function sbSaveNow(pid, getSnap) {
+  const run = sbSaveChain.catch(() => {}).then(() => {
+    const snap = getSnap();
+    if (!pid || !snap) return;
+    if (sbLastSaved.get(pid) === snap) {
+      // 마지막 '성공' 저장본과 동일 참조 = 사용자가 그 상태로 되돌린 것(예: 블록 취소의 통짜 복원).
+      // 이때 남아 있는 실패 보류분(sbPending)은 낡은 스냅샷 — 지우지 않으면 재진입 시 취소한 블록이 부활한다.
+      sbPending.delete(pid);
+      return;
+    }
+    return api.saveStoryboard(pid, snap).then(
+      () => { sbLastSaved.set(pid, snap); sbPending.delete(pid); },
+      (err) => { sbPending.set(pid, snap); throw err; },   // 실패 = 완료 아님 — 스냅샷 보관 후 전파
+    );
+  });
+  sbSaveChain = run.catch(() => {});   // 체인은 실패해도 살아있게, 실패는 호출자에 전파
+  return run;
+}
+
+const withoutLayoutRow = (block) => {
+  const { layoutRowId: _layoutRowId, ...single } = block;
+  return single;
+};
+
+const exampleCategoryFor = (cut) => cut === 'product' ? 'product' : (cut === 'horizon' ? 'horizon' : 'styling');
+const exampleThumbFor = (exampleId, cut) => Placeholder.photo(exampleId, exampleCategoryFor(cut), 240, 320);
+
+function referenceFeedbackPatch(block, changes) {
+  if (!block) return changes;
+  const exampleId = Object.prototype.hasOwnProperty.call(changes, 'exampleId') ? changes.exampleId : block.exampleId;
+  const refScope = Object.prototype.hasOwnProperty.call(changes, 'refScope') ? changes.refScope : (block.refScope || 'all');
+  // 같은 장소 시리즈 컷은 서버 계약(normalize_spec)이 범위를 'pose' 로 강제 — 프론트 표시도 동일 규칙
+  const spaceGroupId = Object.prototype.hasOwnProperty.call(changes, 'spaceGroupId') ? changes.spaceGroupId : block.spaceGroupId;
+  const effScope = spaceGroupId ? 'pose' : refScope;
+  const next = { ...changes };
+  if (exampleId && effScope === 'all') {
+    if (block.baseThumb == null) next.baseThumb = block.thumb;
+    next.thumb = exampleThumbFor(exampleId, changes.cutType ?? block.cutType);
+  } else if (block.baseThumb != null) {
+    next.thumb = block.baseThumb;
+  }
+  return next;
+}
+
 function StoryboardCard({ block, catalogs, colorOpts, matchClothing, spaceTag, selected, locked, gripDrag, onSelect, onDuplicate, onDelete, onUp, onDown }) {
   const isMine = block.source === 'mine';
   const colorIds = (block.colorIds && block.colorIds.length) ? block.colorIds : (block.colorId ? [block.colorId] : []);
@@ -29,6 +87,7 @@ function StoryboardCard({ block, catalogs, colorOpts, matchClothing, spaceTag, s
   const poseEdited = !!block.pose && block.pose !== 'auto';
   const matchEdited = Array.isArray(block.matchIds) && block.matchIds.length > 0;
   const matchThumb = matchEdited ? ((matchClothing || []).find((m) => m.id === block.matchIds[0])?.thumb) : null;
+  const poseReferenceThumb = block.exampleId && (block.refScope === 'pose' || block.spaceGroupId) ? exampleThumbFor(block.exampleId, block.cutType) : null;
   const isProduct = block.cutType === 'product';
   const dirLabel = isProduct
     ? (catalogs.productDirections.find((d) => d.value === block.direction)?.label || '앞면')
@@ -65,9 +124,10 @@ function StoryboardCard({ block, catalogs, colorOpts, matchClothing, spaceTag, s
             </div>
           )}
         </div>
-        {(poseEdited || matchEdited) && (
+        {(poseEdited || matchEdited || poseReferenceThumb) && (
           <div className="sb-eimgs">
             {poseEdited && <figure className="sb-eimg"><img src={block.poseThumb} alt="" /><figcaption>포즈</figcaption></figure>}
+            {poseReferenceThumb && <figure className="sb-eimg"><img src={poseReferenceThumb} alt="" /><figcaption>포즈</figcaption></figure>}
             {matchEdited && matchThumb && <figure className="sb-eimg"><img src={matchThumb} alt="" /><figcaption>매칭 의류</figcaption></figure>}
           </div>
         )}
@@ -80,6 +140,75 @@ function StoryboardCard({ block, catalogs, colorOpts, matchClothing, spaceTag, s
       </div>
     </div>
   );
+}
+
+function previewRowsForSection(items) {
+  const rows = [];
+  for (let pos = 0; pos < items.length;) {
+    const first = items[pos];
+    const rowId = first.b.layoutRowId;
+    if (rowId && first.b.source !== 'mine') {
+      let end = pos + 1;
+      while (end < items.length && items[end].b.source !== 'mine' && items[end].b.layoutRowId === rowId) end += 1;
+      if (end - pos > 1) {
+        rows.push(items.slice(pos, end).map(({ b }) => b));
+        pos = end;
+        continue;
+      }
+    }
+    rows.push([first.b]);
+    pos += 1;
+  }
+  return rows;
+}
+
+function PagePreviewRail({ sections, selectedId, onHover, onSelect }) {
+  return (
+    <aside className="sb-preview-rail" aria-label="페이지 미리보기">
+      <div className="sb-preview-head">
+        <div className="sb-preview-title">페이지 미리보기</div>
+        <div className="sb-preview-sub">이미지 구성</div>
+      </div>
+      <div className="sb-preview-page">
+        {sections.map((section) => (
+          <div key={`${section.id}:${section.start}`} className="sb-preview-section" role="group" aria-label={`${section.title} 이미지 구성`}>
+            {previewRowsForSection(section.items).map((row, rowIndex) => (
+              <div key={row[0]?.layoutRowId || row[0]?.id || rowIndex} className="sb-preview-row"
+                style={{ '--sb-preview-cols': row.length }}>
+                {row.map((block) => {
+                  const thumb = block.thumb || (block.source === 'mine' ? block.ownImages?.[0] : null);
+                  return (
+                    <button key={block.id} type="button" data-preview-id={block.id}
+                      className={`sb-preview-mini${block.id === selectedId ? ' is-selected' : ''}`}
+                      aria-label={block.title || (block.source === 'mine' ? '내 이미지' : '컷')}
+                      onMouseEnter={() => onHover(block.id)} onMouseLeave={() => onHover(null)}
+                      onFocus={() => onHover(block.id)} onBlur={() => onHover(null)}
+                      onClick={() => onSelect(block.id)}>
+                      {thumb && <img src={thumb} alt="" />}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+function dragGroupFor(blocks, id) {
+  const index = blocks.findIndex((b) => b.id === id);
+  if (index < 0) return null;
+  const block = blocks[index];
+  if (!block.layoutRowId) return { indexes: [index], ids: [id], items: [block] };
+  const indexes = [];
+  blocks.forEach((candidate, i) => {
+    if (candidate.layoutRowId === block.layoutRowId && candidate.sectionId === block.sectionId) indexes.push(i);
+  });
+  const contiguous = indexes.length > 1 && indexes.every((value, i) => i === 0 || value === indexes[i - 1] + 1);
+  if (!contiguous) return { indexes: [index], ids: [id], items: [block] };
+  return { indexes, ids: indexes.map((i) => blocks[i].id), items: indexes.map((i) => blocks[i]) };
 }
 
 /* underline tab navigation for 컷 종류 — sliding indicator */
@@ -153,20 +282,21 @@ function ShotIcon({ cut, shot, clothingType }) {
    · 내 사진(refImages) = '+ 타일'로 갤러리에 통합 — 점선 테두리·배지, 분위기(조명·색감)만 참고
    · 예시는 전부 정면 대역(band)이라 방향과 무관 — 사이드/뒷면이면 분위기만 반영 안내
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, clothingType = 'top', exampleId, onExampleChange, refs = [], onRefsChange, onPickRef }) {
-  const cat = cut === 'product' ? 'product' : (cut === 'horizon' ? 'horizon' : 'styling'); // mirror는 styling 계열 플레이스홀더 (ADR-0004)
+export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, clothingType = 'top', exampleId, onExampleChange, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false }) {
+  const cat = exampleCategoryFor(cut); // mirror는 styling 계열 플레이스홀더 (ADR-0004)
   const shotOpts = cut === 'product' ? catalogs.productShotTypes
     : cut === 'mirror' ? catalogs.shotTypes.filter((s) => s.value === 'full' || s.value === 'knee')
       : catalogs.shotTypes;
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
   const examples = React.useMemo(() => Array.from({ length: 6 }, (_, i) => {
     const seed = `ex_${cut || 'x'}_${clothingType}_${shotVal || 'x'}_${i}`;
-    return { id: seed, thumb: Placeholder.photo(seed, cat, 240, 320) };
+    return { id: seed, thumb: exampleThumbFor(seed, cut) };
   }), [cut, clothingType, shotVal, cat]);
   const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
   return (
     <div className="insp-sec">
-      <div className="sb-exhead"><label className="lbl">분위기 예시</label><span className="sb-exhint">내 사진은 이 프로젝트에서만</span></div>
+      {/* 같은 장소 시리즈 안에서는 배경 기준이 시리즈에 있으므로 예시는 '포즈 예시'로 강등 (P5 확정) */}
+      <div className="sb-exhead"><label className="lbl">{inSpace ? '포즈 예시' : '분위기 예시'}</label><span className="sb-exhint">내 사진은 이 프로젝트에서만</span></div>
       {onShotChange && (
         <div className="shot-tiles">
           {shotOpts.map((s) => (
@@ -179,10 +309,38 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, clothi
       <div className={`sb-exgrid${moodOnly ? ' moodonly' : ''}`}>
         {examples.map((e) => {
           const on = exampleId === e.id;
+          // 레퍼런스 범위 — 호버 오버레이에서 선택. 시리즈 안은 '포즈만' 고정, 제품·비정면(moodOnly)은 범위 개념 없음.
+          // 범위 핸들러가 없는 소비처(에디터 AIPanel)는 선택해도 저장·전송이 안 되므로 UI 자체를 숨긴다(빈 클릭 방지).
+          const scopeChoices = !onRefScopeChange || moodOnly || cut === 'product' ? null
+            : inSpace ? [{ v: 'pose', l: '포즈만' }]
+              : [{ v: 'all', l: '전부' }, { v: 'pose', l: '포즈만' }];
+          const pick = (scope) => {
+            if (!onExampleChange) return;
+            if (on && (refScope || 'all') === scope) { onExampleChange(null); return; }   // 같은 선택 재클릭 = 해제
+            onExampleChange(e.id);
+            if (onRefScopeChange) onRefScopeChange(scope);
+          };
           return (
             <button key={e.id} type="button" className={`sb-excell${on ? ' sel' : ''}`}
               onClick={() => onExampleChange && onExampleChange(on ? null : e.id)}>
               <img src={e.thumb} alt="" />{on && <span className="ck"><Icon name="check" size={11} /></span>}
+              {on && scopeChoices && <span className="sb-exscope">{(refScope || 'all') === 'pose' ? '포즈만' : '전부'}</span>}
+              {scopeChoices && (
+                /* 오버레이 배경 클릭은 셀 기본 선택으로 통과(기존 클릭 선택 유지) — 버튼 클릭만 범위 지정 */
+                <span className="sb-exov">
+                  <span className="sb-exov-t">레퍼런스 범위</span>
+                  <span className="sb-exov-b">
+                    {scopeChoices.map((c) => (
+                      <span key={c.v} role="button" tabIndex={0}
+                        className={`sb-exov-btn${on && (refScope || 'all') === c.v ? ' on' : ''}`}
+                        onClick={(ev) => { ev.stopPropagation(); pick(c.v); }}
+                        onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); ev.stopPropagation(); pick(c.v); } }}>
+                        {c.l}
+                      </span>
+                    ))}
+                  </span>
+                </span>
+              )}
             </button>
           );
         })}
@@ -203,12 +361,23 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, clothi
         )}
       </div>
       {moodOnly && <div className="sb-exnote">방향이 {direction === 'side' ? '사이드' : '뒷면'}라 예시의 <b>분위기(조명·톤)만</b> 적용돼요.</div>}
-      {!moodOnly && exampleId && <div className="sb-exnote pick"><b>이 예시처럼 생성돼요</b> — 옷과 모델만 우리 걸로 교체</div>}
+      {/* 레퍼런스 범위 (P5 확정, v1=전부|포즈만) — 같은 장소 시리즈는 포즈 고정, 제품컷은 범위 개념 없음 */}
+      {!moodOnly && exampleId && inSpace && (
+        <div className="sb-exnote pick"><b>포즈만 참고해요</b> — 배경은 같은 장소 시리즈의 기준을 따라요.</div>
+      )}
+      {!moodOnly && exampleId && !inSpace && cut === 'product' && (
+        <div className="sb-exnote pick"><b>이 예시처럼 생성돼요</b> — 옷만 우리 걸로 교체</div>
+      )}
+      {!moodOnly && exampleId && !inSpace && cut !== 'product' && (
+        refScope === 'pose'
+          ? <div className="sb-exnote">포즈만 참고해요. 배경에 맞지 않으면 자세와 구도가 자연스럽게 조정될 수 있어요.</div>
+          : <div className="sb-exnote pick"><b>이 예시처럼 생성돼요</b> — 옷과 모델만 우리 걸로 교체</div>
+      )}
     </div>
   );
 }
 
-function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onChange, matchClothing, dirty, warn, onDone, onRevert, onAddMine, onImgDrag }) {
+function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onChange, matchClothing, dirty, warn, onDone, onRevert, onAddMine, onImgDrag, onCancelNew }) {
   const doneRef = useRef(null);
   useEffect(() => { if (warn && doneRef.current) doneRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, [warn]);
 
@@ -224,29 +393,29 @@ function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onC
   const tabValue = block.source === 'mine' ? 'mine' : (block.cutType || '');
   // 컷 종류 전환 시 방향·샷을 대상 컷의 유효 옵션으로 정규화 — 어느 방향의 전환이든 계약 위반 값이 남지 않는다 (ADR-0004)
   const onTab = (v) => {
-    if (v === 'mine') return onChange({ source: 'mine', cutType: null, exampleId: null });
+    if (v === 'mine') return onChange((current) => referenceFeedbackPatch(current, { source: 'mine', cutType: null, exampleId: null }));
     if (v === 'mirror') {
       // 거울샷: 방향 없음, 샷 full/knee, 얼굴 기본 '폰으로 가림', 포즈 자동
-      return onChange({
+      return onChange((current) => referenceFeedbackPatch(current, {
         source: 'ai', cutType: 'mirror', direction: null, exampleId: null,
         shot: block.shot === 'knee' ? 'knee' : 'full',
         faceExposure: block.faceExposure === 'show' ? 'show' : 'hide',
         angle: 'same', pose: 'auto', poseLabel: 'AI 자동',
-      });
+      }));
     }
     if (v === 'product') {
-      return onChange({
+      return onChange((current) => referenceFeedbackPatch(current, {
         source: 'ai', cutType: 'product', exampleId: null,
         direction: block.direction === 'back' ? 'back' : 'front',
         shot: ['ghost', 'hanger', 'flatlay'].includes(block.shot) ? block.shot : 'ghost',
-      });
+      }));
     }
     // styling · horizon
-    return onChange({
+    return onChange((current) => referenceFeedbackPatch(current, {
       source: 'ai', cutType: v, exampleId: null,
       direction: ['front', 'back', 'side'].includes(block.direction) ? block.direction : 'front',
       shot: ['full', 'knee', 'medium', 'close'].includes(block.shot) ? block.shot : 'full',
-    });
+    }));
   };
 
   // 내 이미지 = 직접 삽입 흐름 (PRD 8.8) — no AI options
@@ -277,24 +446,14 @@ function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onC
     );
   }
 
-  // pose + 매칭 의류 detail editor (AI cuts only)
+  // 매칭 의류 detail editor (AI cuts only) — 포즈 편집은 폐기(2026-07-10): 포즈는 생성예시(레퍼런스 범위)가 담당
   if (mode === 'edit') {
-    const poseItems = catalogs.poses;
     return (
       <div className="surface inspector insp-edit-panel">
         <div className="insp-edit-head">
           <Button variant="quiet" size="sm" icon="arrowLeft" onClick={() => onMode('props')}>뒤로 가기</Button>
         </div>
-        <div className="sec-title" style={{ fontSize: 15, margin: '2px 0 14px' }}>{block.title} · 포즈·매칭 의류 편집</div>
-        {block.cutType === 'mirror' ? (
-          /* 거울샷 포즈는 거울 셀피 구도로 자동 고정 (ADR-0004) */
-          <div className="insp-note" style={{ marginBottom: 14 }}><Icon name="info" size={14} />거울샷 포즈는 거울 셀피 구도로 자동 연출돼요.</div>
-        ) : (
-          <div className="insp-sec"><label className="lbl">포즈 변경</label>
-            <ThumbGrid items={poseItems} value={block.pose || 'auto'} onChange={(v) => {
-              const it = poseItems.find((p) => p.id === v); onChange({ pose: v, poseLabel: it?.label || 'AI 자동', poseThumb: it?.thumb || block.poseThumb });
-            }} labels /></div>
-        )}
+        <div className="sec-title" style={{ fontSize: 15, margin: '2px 0 14px' }}>{block.title} · 매칭 의류 편집</div>
         {matchClothing && (
           <div className="insp-sec">
             <label className="lbl">매칭 의류<span className="opt" style={{ fontWeight: 400, color: 'var(--fg-3)', marginLeft: 6 }}>스타일링에 함께</span></label>
@@ -323,13 +482,24 @@ function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onC
         <UnderlineTabs options={cutTabs} value={tabValue} onChange={onTab} /></div>
 
       {!block.cutType ? (
-        <div className="insp-empty-hint"><Icon name="arrowUp" size={15} />컷 종류를 먼저 선택하면 세부 설정이 나타나요.</div>
+        <>
+          <div className="insp-empty-hint"><Icon name="arrowUp" size={15} />컷 종류를 먼저 선택하면 세부 설정이 나타나요.</div>
+          {/* 새 컷 컨텍스트 — 어디에 추가되는지·비용, 그리고 흔적 없는 취소 (P6) */}
+          <div className="insp-newmeta">
+            <span>{block.sectionTitle ? `추가 위치: ${block.sectionTitle}` : '새 컷'} · 생성 시 크레딧 {catalogs.creditCosts?.storyboardPerCut ?? 1}</span>
+            {onCancelNew && <button className="insp-cancel-new" onClick={onCancelNew}><Icon name="trash" size={13} />이 블록 취소</button>}
+          </div>
+        </>
       ) : (
         <>
       {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터, 방향은 아래로 강등 (B+C안, ADR-0004) */}
       <MoodGuide catalogs={catalogs} cut={block.cutType} direction={block.direction} shot={block.shot}
-        onShotChange={(v) => onChange({ shot: v, exampleId: null })} clothingType={clothingType}
-        exampleId={block.exampleId || null} onExampleChange={(v) => onChange({ exampleId: v })}
+        onShotChange={(v) => onChange((current) => referenceFeedbackPatch(current, { shot: v, exampleId: null }))} clothingType={clothingType}
+        exampleId={block.exampleId || null}
+        onExampleChange={(v) => onChange((current) => referenceFeedbackPatch(current, {
+          exampleId: v, refScope: !v ? 'all' : (current.spaceGroupId ? 'pose' : (current.refScope || 'all')),
+        }))}
+        refScope={block.refScope || 'all'} onRefScopeChange={(v) => onChange((current) => referenceFeedbackPatch(current, { refScope: v }))} inSpace={!!block.spaceGroupId}
         refs={(block.refImages || []).map((u, i) => ({ url: u?.url || u, assetId: u?.assetId || (block.refAssetIds || [])[i] }))}
         onRefsChange={(r) => onChange({
           refImages: r.map((x) => x?.url || x),                        // 표시용 URL
@@ -349,9 +519,12 @@ function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onC
       <div className="insp-sec"><label className="lbl">대상 색상</label>
         <ColorDots colorOpts={colorOpts} value={block.colorId} onChange={(v) => onChange({ colorId: v })} /></div>
 
-      <button className="insp-detail-btn" onClick={() => onMode('edit')}>
-        <Icon name="settings" size={17} />포즈·매칭 의류 편집
-      </button>
+      {/* 매칭 의류가 없으면 편집 패널이 빈 화면이 되므로 진입 자체를 막는다 */}
+      {Array.isArray(matchClothing) && matchClothing.length > 0 && (
+        <button className="insp-detail-btn" onClick={() => onMode('edit')}>
+          <Icon name="settings" size={17} />매칭 의류 편집
+        </button>
+      )}
 
       {/* 추가 옵션 — 컷별 얼굴 노출 / 앵글 (PRD 6.8, 9.x). 거울샷은 얼굴 기본 '폰으로 가림', 앵글 없음 (ADR-0004) */}
       <details className="insp-extra">
@@ -395,10 +568,48 @@ export function Storyboard() {
   const [dirty, setDirty] = useState(false);
   const [dragId, setDragId] = useState(null);
   const [dragOver, setDragOver] = useState(null);
+  const [dragOverSec, setDragOverSec] = useState(null); // 호버 중인 드롭 대상 섹션 — 하이라이트와 드롭이 같은 신호를 쓴다
   const [dragMine, setDragMine] = useState(null);
+  const [collapsed, setCollapsed] = useState(() => new Set()); // 접힌 섹션 id (UI 전용, 저장 안 함)
   const [warn, setWarn] = useState(false);
+  const [previewHoverId, setPreviewHoverId] = useState(null);
   const snapRef = useRef(null);
   const newSeq = useRef(0);
+  const cardRefs = useRef(new Map());
+  // 보드 스크롤 ↔ 프리뷰 중심 동기화 — 뷰포트 중앙에 가장 가까운 카드의 미니가 레일 중앙 근처에 오도록
+  const scrollRaf = useRef(null);
+  useEffect(() => {
+    const onScroll = (e) => {
+      // 허용 목록: 보드가 실제로 움직이는 스크롤만 동기화 트리거로 —
+      // 솔로 모드 = window(document) 스크롤, 분할 모드 = 카드 칼럼(.sb-scroll-l).
+      // 인스펙터(.insp-col)·프리뷰 레일 등 다른 스크롤 컨테이너는 무시(스냅백·헛동기화 방지).
+      const t = e.target;
+      const fromBoard = t === document || (t instanceof Element && !!t.closest('.sb-scroll-l'));
+      if (!fromBoard) return;
+      if (scrollRaf.current) return;
+      scrollRaf.current = requestAnimationFrame(() => {
+        scrollRaf.current = null;
+        const rail = document.querySelector('.sb-preview-rail'); if (!rail || rail.scrollHeight <= rail.clientHeight) return;
+        const center = window.innerHeight / 2;
+        let bestId = null, bestD = Infinity;
+        cardRefs.current.forEach((el, id) => {
+          if (!el || !el.isConnected) return;
+          const r = el.getBoundingClientRect();
+          const d = Math.abs((r.top + r.bottom) / 2 - center);
+          if (d < bestD) { bestD = d; bestId = id; }
+        });
+        if (bestId == null) return;
+        const mini = rail.querySelector(`[data-preview-id="${bestId}"]`);
+        if (!mini) return;
+        const mr = mini.getBoundingClientRect(); const rr = rail.getBoundingClientRect();
+        rail.scrollTop = rail.scrollTop + (mr.top - rr.top) - rail.clientHeight / 2 + mr.height / 2;
+      });
+    };
+    // capture: true — 스크롤은 버블링되지 않으므로, 분할 화면의 카드 칼럼(.sb-scroll-l 자체 스크롤)과
+    // 솔로 화면의 window 스크롤을 모두 캡처 단계에서 받는다. (창 리스너만으로는 내부 컨테이너를 놓침)
+    window.addEventListener('scroll', onScroll, { passive: true, capture: true });
+    return () => { window.removeEventListener('scroll', onScroll, { capture: true }); if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current); };
+  }, []);
   const toast = useToast();
   // 카피라이팅 토글 = 플로우 선택값 (store → patchProject 동기화, ADR-0002)
   const projectId = useAppStore((s) => s.projectId);
@@ -411,8 +622,30 @@ export function Storyboard() {
       await useAppStore.getState().loadProject();
       const pid = useAppStore.getState().projectId;
       if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
+      pidRef.current = pid;   // 이 인스턴스의 저장 대상 고정 (프로젝트 경계)
+      await sbSaveIdle();     // 직전 인스턴스의 비행 중 저장(이탈 플러시)이 착지한 뒤에 읽는다 — 스테일 로드 방지
       const [b, c, m, p] = await Promise.all([api.getStoryboard(pid), api.getCatalogs(), api.getMatchClothing(pid), api.getProduct(pid)]);
-      setBlocks(b); setCatalogs(c); setMatchClothing(m); setClothingType(p.clothingType || 'top');
+      // 직전 이탈 저장 실패분 복원 — 단, "서버가 우리가 마지막으로 알던 상태 그대로"일 때만.
+      // 서버가 변했다면 다른 탭/기기의 더 새로운 저장이므로 보관분을 폐기하고 서버본을 따른다(침묵 덮어쓰기 금지).
+      let pending = sbPending.get(pid);
+      const baseline = sbLastSaved.get(pid);
+      // 1순위: 보관분이 서버와 내용 동일 = '실패'로 기록됐지만 실제로 착지했던 저장(응답 유실).
+      //        기준선 일치 여부와 무관하게 최우선 정리 — 안 하면 불필요한 복원·재저장 루프에 빠진다.
+      if (pending && sbStable(b) === sbStable(pending)) { sbPending.delete(pid); pending = null; }
+      const serverUnchanged = baseline != null && sbStable(b) === sbStable(baseline);
+      const usePending = !!pending && serverUnchanged;
+      if (pending && !usePending) {
+        // 진짜 충돌(서버가 보관분·기준선과 다른 제3의 내용) — 폐기하되 침묵하지 않는다
+        sbPending.delete(pid);
+        toast.push('다른 곳에서 저장된 최신 콘티를 불러왔어요 — 이전에 저장 못 한 변경은 반영되지 않았어요');
+      }
+      if (usePending) sbSkipFirstSave.current = false;   // 복원분은 미저장 상태 — 첫 자동저장 생략 없이 즉시 재시도
+      else sbLastSaved.set(pid, b);   // 이번 로드의 서버 상태를 기준선으로 기록 — 다음 복원 판별의 비교 대상
+      const initBlocks = ensureSections(usePending ? pending : b).map((block) => ({
+        ...block, ...referenceFeedbackPatch(block, {}),
+      }));
+      setCollapsed(new Set(deriveSections(initBlocks).map((s) => s.id)));   // 진입 기본 상태 = 모든 섹션 접힘 (사용자 확정)
+      setBlocks(initBlocks); setCatalogs(c); setMatchClothing(m); setClothingType(p.clothingType || 'top');
       const opts = (p.colors || []).filter((col) => col.images.length || col.isBase).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexFor(col) }));
       setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
     })();
@@ -420,20 +653,69 @@ export function Storyboard() {
   // 콘티 편집 자동저장 — Editor 와 동일 패턴(1.5s debounce). generate 클릭 전 이탈해도 콘티 유실 없음.
   const saveTimer = useRef(null);
   const latestBlocks = useRef(null);
+  const pidRef = useRef(null);   // 이 인스턴스가 로드한 프로젝트 — 플러시가 스토어의 "현재" id(새 프로젝트로 바뀌었을 수 있음)를 쓰지 않게 고정
+  const pendingRowRestore = useRef(null);   // 새 블록 삽입이 가른 행 { blockId, rowId, memberIds } — 취소 시 복원용
+  const saveNow = (pid) => sbSaveNow(pid, () => latestBlocks.current);
   useEffect(() => { latestBlocks.current = blocks; }, [blocks]);
   const sbSkipFirstSave = useRef(true);
   useEffect(() => {
     if (blocks == null || !projectId) return;
     if (sbSkipFirstSave.current) { sbSkipFirstSave.current = false; return; }  // 최초 로드분은 저장 생략(불필요 dirty 방지)
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { api.saveStoryboard(projectId, latestBlocks.current).catch(() => {}); }, 1500);
+    saveTimer.current = setTimeout(() => { saveNow(projectId).catch(() => {}); }, 1500);
     return () => clearTimeout(saveTimer.current);
   }, [blocks, projectId]);
+  // 언마운트 시 보류 자동저장 플러시 — '이전' 등 이탈 직전 1.5s 안의 변경 유실 방지.
+  // saveNow 체인을 타므로: 비행 중 저장 뒤에 줄서고(순서 보장), 변경 없으면 안 쏘고, 실패분은 재시도된다.
+  useEffect(() => () => {
+    clearTimeout(saveTimer.current);
+    saveNow(pidRef.current).catch(() => {});   // 이 인스턴스가 로드했던 프로젝트로만 저장 (경계 고정)
+  }, []);
+  // 컬러 비교 자격 상실(색 통일·시리즈 편입 등) 시 즉시 세로로 강등 — 무효 레이아웃이 저장·조립에 남지 않게.
+  // 주의: 훅은 아래 로딩 early-return 위에 있어야 한다 (훅 개수 불변 규칙).
+  // autoDemoteTrail: 이 effect 가 만든 배열 → 원본 계보. 삭제-undo 의 "변경 없음" 판정이
+  // 자동 강등(계보 위)과 사용자 레이아웃 변경(계보 밖)을 필드가 아니라 **행위자**로 구분하게 한다.
+  const autoDemoteTrail = useRef(new WeakMap());
+  useEffect(() => {
+    if (!blocks) return;
+    for (const s of deriveSections(blocks)) {
+      if (s.layout !== 'colorCompare') continue;
+      const cset = new Set(s.items.filter(({ b }) => b.source !== 'mine' && b.colorId).map(({ b }) => b.colorId));
+      if (s.samePlace || cset.size < 2) {
+        setBlocks((bs) => {
+          const next = patchSection(bs, s.id, { sectionLayout: 'stack' });
+          autoDemoteTrail.current.set(next, bs);
+          return next;
+        });
+        return;
+      }
+    }
+  }, [blocks]);
   if (!blocks || !catalogs) return <div className="wizard wide">{doneBlocked && <DoneGuardModal />}<div className="surface"><Skeleton h={400} /></div></div>;
 
   const selected = blocks.find((b) => b.id === selectedId);
   const isMineSel = selected && selected.source === 'mine';
-  const patch = (id, p) => { setBlocks((bs) => bs.map((b) => b.id === id ? { ...b, ...p } : b)); const b = blocks.find((x) => x.id === id); if (!b || b.source !== 'mine' || ('source' in p)) setDirty(true); };
+  const patch = (id, changes) => {
+    setBlocks((bs) => {
+      const current = bs.find((b) => b.id === id);
+      const p = typeof changes === 'function' ? changes(current) : changes;
+      const oldRowId = current?.layoutRowId;
+      return bs.map((b) => {
+        if (b.id === id) {
+          const updated = { ...b, ...p };
+          return p.source === 'mine' ? withoutLayoutRow(updated) : updated;
+        }
+        // 내 이미지로 전환한 컷은 행에 남을 수 없으므로 기존 행도 함께 해제한다.
+        return p.source === 'mine' && oldRowId && b.layoutRowId === oldRowId ? withoutLayoutRow(b) : b;
+      });
+    });
+    // 컷 종류가 정해지는 순간 placeholder 가 실컷이 되어 섹션 컷 수가 실질 변경 — 레이아웃 배타 규칙 재적용
+    const cur0 = blocks.find((x) => x.id === id);
+    const applied = typeof changes === 'function' ? changes(cur0) : changes;
+    if (applied && 'cutType' in applied && applied.cutType && cur0 && !cur0.cutType) setBlocks((bs) => normalizeBoard(bs));
+    const b = cur0;
+    if (!b || b.source !== 'mine' || typeof changes === 'function' || ('source' in changes)) setDirty(true);
+  };
   const selectCard = (id) => {
     if (selectedId === id) { finishEdit(); return; }      // click again → deselect
     const cur = blocks.find((b) => b.id === selectedId);
@@ -445,25 +727,104 @@ export function Storyboard() {
   };
   const finishEdit = () => { setSelectedId(null); setMode('props'); setDirty(false); setWarn(false); snapRef.current = null; };
   const revertEdit = () => {
-    if (snapRef.current) { const snap = snapRef.current; setBlocks((bs) => bs.map((b) => b.id === snap.id ? { ...snap } : b)); }
+    if (snapRef.current) {
+      const snap = snapRef.current;
+      // 구조 필드(섹션·공간)는 현재값 유지 — 편집 중 이동 후 '원래대로'가 옛 소속을 되살려
+      // 같은 섹션 id가 비연속으로 쪼개지는 것 방지. 되돌림은 인스펙터 소유 필드만.
+      setBlocks((bs) => bs.map((b) => b.id === snap.id ? {
+        ...snap,
+        sectionId: b.sectionId, sectionTitle: b.sectionTitle, sectionLayout: b.sectionLayout,
+        sectionCustom: b.sectionCustom, spaceGroupId: b.spaceGroupId, spaceVariation: b.spaceVariation,
+        layoutRowId: b.layoutRowId, layoutRowVersion: b.layoutRowVersion,
+      } : b));
+    }
     setSelectedId(null); setMode('props'); setDirty(false); setWarn(false); snapRef.current = null;
   };
-  const duplicate = (id) => setBlocks((bs) => { const i = bs.findIndex((b) => b.id === id); const copy = { ...bs[i], id: uid('blk') }; const n = [...bs]; n.splice(i + 1, 0, copy); return n; });
+  const duplicate = (id) => setBlocks((bs) => {
+    const i = bs.findIndex((b) => b.id === id); if (i < 0) return bs;
+    const group = dragGroupFor(bs, id);
+    const copy = { ...withoutLayoutRow(bs[i]), id: uid('blk') };
+    const n = [...bs];
+    // 행 안에 복제본을 끼워 넣어 기존 행의 연속성을 깨지 않도록 행 바로 뒤에 단일 컷으로 둔다.
+    n.splice((group?.indexes[group.indexes.length - 1] ?? i) + 1, 0, copy);
+    // 컷 수가 변한 섹션의 레이아웃 위생 — 삽입·이동 경로와 동일 규칙 (예: 2컷 twoColumn 에 복제 → 강등/재배치)
+    return normalizeBoard(n);
+  });
   const remove = (id) => {
     const idx = blocks.findIndex((b) => b.id === id); const removed = blocks[idx];
-    setBlocks((bs) => bs.filter((b) => b.id !== id));
+    const rowId = removed?.layoutRowId;
+    const undoBlock = removed ? withoutLayoutRow(removed) : removed;
+    // undo 정본 = 삭제 전 보드 통짜 스냅샷 — normalizeBoard 가 삭제 시 레이아웃을 강등하므로
+    // 재삽입+재정규화만으론 원래 레이아웃·행 구성이 복원되지 않는다(addBlock 취소와 동일 패턴).
+    const preDelete = blocks;
+    let postDelete = null;   // 삭제 직후 상태 — identity 가 그대로일 때만 통짜 복원 유효
+    setBlocks((bs) => {
+      postDelete = normalizeBoard(bs.filter((b) => b.id !== id).map((b) => {
+        // 삭제 규칙: 한 멤버가 사라지면 남은 파트너 전원의 행 id를 내려 모두 일반 단일 카드로 돌린다.
+        // normalizeBoard: 컷 수가 줄어든 섹션의 레이아웃 위생(예: 3컷 threeColumn 에서 1개 삭제 → 스테일 레이아웃 해소)
+        return rowId && b.layoutRowId === rowId ? withoutLayoutRow(b) : b;
+      }));
+      return postDelete;
+    });
     if (selectedId === id) finishEdit();
-    toast.push('블록을 삭제했어요', { undo: () => setBlocks((bs) => { const n = [...bs]; n.splice(idx, 0, removed); return n; }) });
+    toast.push('블록을 삭제했어요', { undo: () => setBlocks((bs) => {
+      if (!undoBlock) return bs;
+      // "삭제 직후 그대로" 판정 = 현재 보드가 postDelete 이거나 자동 강등 effect 가 postDelete
+      // 로부터 만들어 온 계보(autoDemoteTrail) 위에 있을 때만 — 사용자 조작(레이아웃 칩 포함)은
+      // 계보에 없으므로 자동으로 폴백. 판정되면 스냅샷 통짜 복원(레이아웃·행·소속까지 원복,
+      // 복원 후 effect 가 preDelete 기준으로 재평가).
+      let cur = bs, unchanged = false;
+      for (let hop = 0; cur && hop < 8; hop += 1) {
+        if (cur === postDelete) { unchanged = true; break; }
+        cur = autoDemoteTrail.current.get(cur);
+      }
+      if (unchanged) return preDelete;
+      // 그 사이 실제 조작이 있었으면 폴백: 재삽입 후 이웃 섹션 재채택 + 공통 위생
+      const n = [...bs]; n.splice(Math.min(idx, n.length), 0, undoBlock);
+      return normalizeBoard(adoptSection(n, undoBlock.id));
+    }) });
   };
-  const moveBlock = (id, dir) => setBlocks((bs) => { const i = bs.findIndex((b) => b.id === id); const j = i + dir; if (j < 0 || j >= bs.length) return bs; const n = [...bs]; [n[i], n[j]] = [n[j], n[i]]; return n; });
-  const addBlock = (idx) => {
+  // 이동 후 adoptSection — 섹션 경계를 넘으면 이웃 섹션을 채택하고 대상 섹션을 '직접 구성' 처리
+  const moveBlock = (id, dir) => setBlocks((bs) => {
+    const i = bs.findIndex((b) => b.id === id); const j = i + dir;
+    if (i < 0 || j < 0 || j >= bs.length) return bs;
+    const rowId = bs[i].layoutRowId;
+    // 행 내부 화살표 이동은 멤버 순서만 바꾸고, 행 밖으로 빼는 이동은 행 전체를 단일 컷으로 해제한다.
+    const base = rowId && bs[j].layoutRowId !== rowId
+      ? bs.map((b) => b.layoutRowId === rowId ? withoutLayoutRow(b) : b)
+      : [...bs];
+    const n = [...base]; [n[i], n[j]] = [n[j], n[i]];
+    return normalizeBoard(adoptSection(n, id));
+  });
+  const addBlock = (idx, targetSid) => {
     newSeq.current += 1;
     // 새 블록 — source 'ai', 컷 종류는 미설정(null)에서 시작 (계약 §3.4)
     const nb = { id: uid('blk'), kind: 'info', title: '새로운 블록', source: 'ai', cutType: null, colorId: colorOpts[0]?.id || 'col1',
       pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
       thumb: Placeholder.photo('new' + Date.now(), 'styling', 240, 320), poseThumb: Placeholder.pose('stand'), poseLabel: 'AI 자동' };
-    setBlocks((bs) => { const m = [...bs]; m.splice(idx, 0, nb); return m; });
-    snapRef.current = { ...nb };
+    setBlocks((bs) => {
+      const m = [...bs]; m.splice(idx, 0, nb);
+      let out = adoptSection(m, nb.id, targetSid);                          // 이웃/명시된 섹션 소속으로 삽입
+      // 빈 보드 등 이웃이 없으면 기본 섹션 부여 — 무소속(unsupported state) 블록 방지
+      out = out.map((b) => b.id === nb.id && !b.sectionId
+        ? { ...b, sectionId: uid('sec'), sectionTitle: '구성', sectionLayout: 'stack' } : b);
+      // 같은 공간 시리즈 섹션에의 '추가'는 명시 액션 = 시리즈 가입 — adoptSection 의 자동가입 금지 규칙은
+      // '이동'용이다. 미가입 상태로 두면 deriveSections 가 시리즈를 해제해 SPACE 연속성·포즈 범위 계약이 깨진다.
+      {
+        const sid = out.find((b) => b.id === nb.id)?.sectionId;
+        const peers = out.filter((b) => b.id !== nb.id && b.sectionId === sid);
+        const g = peers.length && peers.every((b) => b.spaceGroupId && b.spaceGroupId === peers[0].spaceGroupId)
+          ? peers[0] : null;
+        if (g) out = out.map((b) => (b.id === nb.id
+          ? { ...b, spaceGroupId: g.spaceGroupId, spaceVariation: g.spaceVariation ?? null } : b));
+      }
+      out = normalizeBoard(out);   // 행 한가운데 삽입·컷 수 변경에 따른 강등 등 공통 위생 (삽입 경로 공통 규칙)
+      // 취소-복원 = 삽입 전 배열 통짜 보관 — 행 id 뿐 아니라 레이아웃 강등·소속까지 원상 복구.
+      // "삽입 직후 상태 그대로"일 때만 유효(이후 어떤 조작이든 snapshot identity 가 바뀌어 자동 무효화).
+      pendingRowRestore.current = { blockId: nb.id, preInsert: bs, snapshot: out };
+      snapRef.current = { ...out.find((b) => b.id === nb.id) };             // '원래대로' 스냅샷은 소속 부여 후 기준 (섹션 유실 방지)
+      return out;
+    });
     setSelectedId(nb.id); setMode('props'); setDirty(false); setWarn(false); setSplitOpen(true);   // new block IS selected, but empty (no cut type)
     toast.push('블록을 추가했어요', { icon: 'plus' });
   };
@@ -475,79 +836,282 @@ export function Storyboard() {
   const addMineBlock = async (idx) => {
     const src = await api.pickAnyImage();
     const nb = mineBlock(src, (newSeq.current += 1));
-    setBlocks((bs) => { const m = [...bs]; m.splice(idx == null ? m.length : idx, 0, nb); return m; });
+    // adoptSection — 화면(즉시)과 재진입(ensureSections 상속)이 같은 소속이 되도록 삽입 시점에 확정
+    setBlocks((bs) => { const m = [...bs]; m.splice(idx == null ? m.length : idx, 0, nb); return adoptSection(m, nb.id); });
     setSelectedId(nb.id); setMode('props'); setDirty(false); setSplitOpen(true);
     toast.push('내 이미지 블록을 추가했어요', { icon: 'plus' });
   };
   // drag-to-reorder blocks (with drop indicator)
-  const onDragStart = (id) => (e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/blk', id); setDragId(id); };
-  const onDragEnd = () => { setDragId(null); setDragOver(null); };
-  const onDropAt = (idx) => (e) => {
-    e.preventDefault();
-    const img = e.dataTransfer.getData('text/mineimg') || dragMine;
-    setDragOver(null);
-    if (img) { setDragMine(null); insertMineAt(idx, img); return; }   // 내 이미지를 새 블록으로 삽입
-    const id = e.dataTransfer.getData('text/blk') || dragId; setDragId(null); if (!id) return;
-    setBlocks((bs) => { const from = bs.findIndex((b) => b.id === id); if (from < 0) return bs; const m = [...bs]; const [it] = m.splice(from, 1); let to = idx; if (from < idx) to -= 1; m.splice(to, 0, it); return m; });
+  const onDragStart = (id) => (e) => {
+    e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/blk', id);
+    // 고스트 = 그립 점이 아니라 블록 카드 전체 — 잡은 지점 기준 오프셋 유지
+    const node = cardRefs.current.get(id);
+    if (node && e.dataTransfer.setDragImage) {
+      const r = node.getBoundingClientRect();
+      e.dataTransfer.setDragImage(node, Math.max(0, e.clientX - r.left), Math.max(0, e.clientY - r.top));
+    }
+    setDragId(id);
   };
-  const insertMineAt = (idx, src) => {
+  const onDragEnd = () => { setDragId(null); setDragOver(null); setDragOverSec(null); };
+  const onDropAt = (idx, targetSid) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const img = e.dataTransfer.getData('text/mineimg') || dragMine;
+    setDragOver(null); setDragOverSec(null);
+    if (img) { setDragMine(null); insertMineAt(idx, img, targetSid); return; }   // 내 이미지를 새 블록으로 삽입
+    const id = e.dataTransfer.getData('text/blk') || dragId; setDragId(null); if (!id) return;
+    setBlocks((bs) => {
+      const from = bs.findIndex((b) => b.id === id); if (from < 0) return bs;
+      let to = idx; if (from < idx) to -= 1;
+      // 드래그는 잡은 카드 "한 장"만 옮긴다 — 카드가 개별로 보이므로 행 전체 이동은 예상 밖 동작.
+      // 행 멤버를 끌어내면 그 행은 해제하고, 남의 행 사이에 끼어들며 깨진 행 계약은 normalizeRows 가 일괄 정리한다.
+      const movedRowId = bs[from].layoutRowId;
+      const dissolve = (arr) => (movedRowId ? arr.map((b) => (b.layoutRowId === movedRowId ? withoutLayoutRow(b) : b)) : arr);
+      if (to === from) {
+        // 위치 불변 — 단, 다른 섹션 몸통(경계 드롭라인)에 놓였다면 소속만 바꾼다.
+        if (!targetSid || bs[from].sectionId === targetSid) return bs;  // 진짜 제자리 드롭만 무시
+        return normalizeBoard(dissolve(adoptSection(bs, id, targetSid)));
+      }
+      const m = [...bs]; const [it] = m.splice(from, 1); m.splice(to, 0, it);
+      return normalizeBoard(dissolve(adoptSection(m, id, targetSid)));
+    });
+  };
+  const insertMineAt = (idx, src, targetSid) => {
     const nb = mineBlock(src, (newSeq.current += 1));
-    setBlocks((bs) => { const m = [...bs]; m.splice(idx, 0, nb); return m; });
+    // normalizeRows — 행 한가운데 끼어들면 그 행 계약을 해제 (드래그 이동과 동일 규칙)
+    setBlocks((bs) => { const m = [...bs]; m.splice(idx, 0, nb); return normalizeBoard(adoptSection(m, nb.id, targetSid)); });
     toast.push('내 이미지를 블록으로 넣었어요', { icon: 'plus' });
   };
-
+  /* 섹션 접기/펼치기 (UI 전용) */
+  const toggleSec = (id) => setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  /* 섹션 레이아웃 변경 — 멤버 전체 patch + 직접 구성 표시 */
+  const setSecLayout = (sec, v) => {
+    // 활성 칩도 다시 적용할 수 있어야 layoutRowId 없는 레거시 보드를 명시적으로 마이그레이션할 수 있다.
+    setBlocks((bs) => patchSection(bs, sec.id, { sectionLayout: v, sectionCustom: true }));
+  };
   const locked = !!selectedId && dirty && !isMineSel;
+  const draggedBlock = dragId ? blocks.find((b) => b.id === dragId) : null;
   // 공간 그룹 라벨 — 보드 등장 순서대로 A, B, … (spaceGroupId → 표시용)
   const spaceLabels = {};
   blocks.forEach((b) => {
     if (b.spaceGroupId && !(b.spaceGroupId in spaceLabels)) spaceLabels[b.spaceGroupId] = String.fromCharCode(65 + Object.keys(spaceLabels).length);
   });
-  const cardEl = (b, i) => (
-    <React.Fragment key={b.id}>
-      <div className={`sb-dropline${dragOver === i ? ' on' : ''}${dragMine ? ' armed' : ''}`} onDragOver={(e) => { if (dragId || dragMine) { e.preventDefault(); setDragOver(i); } }} onDrop={onDropAt(i)} />
-      <div className={`sb-drag${dragId === b.id ? ' dragging' : ''}`}
-        onDragOver={(e) => { if (dragId || dragMine) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setDragOver(e.clientY < r.top + r.height / 2 ? i : i + 1); } }}
-        onDrop={(e) => { if (dragId || dragMine) onDropAt(dragOver == null ? i + 1 : dragOver)(e); }}>
-        <StoryboardCard block={b} catalogs={catalogs} colorOpts={colorOpts} matchClothing={matchClothing}
-          spaceTag={b.spaceGroupId ? spaceLabels[b.spaceGroupId] : null}
-          selected={b.id === selectedId} locked={locked && b.id !== selectedId}
-          gripDrag={{ draggable: true, onDragStart: onDragStart(b.id), onDragEnd }}
-          onSelect={() => selectCard(b.id)} onUp={() => moveBlock(b.id, -1)} onDown={() => moveBlock(b.id, 1)}
-          onDuplicate={() => duplicate(b.id)} onDelete={() => remove(b.id)} />
-      </div>
-    </React.Fragment>
-  );
+  const cardEl = ({ b: block, i }, sec) => {
+    const isDragging = block.id === dragId;
+    const crossSectionCardDrag = !!draggedBlock && draggedBlock.sectionId !== sec.id;
+    return (
+      <React.Fragment key={block.id}>
+        <div className={`sb-dropline${dragOver === i && dragOverSec === sec.id ? ' on' : ''}${dragMine ? ' armed' : ''}`}
+          onDragOver={(e) => { if (dragId || dragMine) { e.preventDefault(); e.stopPropagation(); setDragOver(i); setDragOverSec(sec.id); } }}
+          onDrop={onDropAt(i, sec.id)} />
+        <div ref={(node) => { if (node) cardRefs.current.set(block.id, node); else cardRefs.current.delete(block.id); }}
+          className={`sb-drag${isDragging ? ' dragging' : ''}${previewHoverId === block.id ? ' preview-hover' : ''}`}
+          onDragOver={(e) => {
+            if (dragId || dragMine) {
+              e.preventDefault(); e.stopPropagation();
+              // 다른 섹션의 카드 몸통 = 섹션 끝 fallback 드롭 — 표시선도 실제 위치(섹션 끝)와 일치시킨다
+              if (crossSectionCardDrag) { setDragOver(sec.start + sec.items.length); setDragOverSec(sec.id); return; }
+              const r = e.currentTarget.getBoundingClientRect();
+              setDragOver(e.clientY < r.top + r.height / 2 ? i : i + 1); setDragOverSec(sec.id);
+            }
+          }}
+          onDrop={(e) => {
+            if (crossSectionCardDrag) return; // 다른 섹션 카드 몸통은 섹션 끝 fallback 으로 버블링
+            if (dragId || dragMine) onDropAt(dragOver == null ? i + 1 : dragOver, sec.id)(e);
+          }}>
+          <StoryboardCard block={block} catalogs={catalogs} colorOpts={colorOpts} matchClothing={matchClothing}
+            spaceTag={block.spaceGroupId && !sec.samePlace ? spaceLabels[block.spaceGroupId] : null}
+            selected={block.id === selectedId} locked={locked && block.id !== selectedId}
+            gripDrag={{ draggable: true, onDragStart: onDragStart(block.id), onDragEnd }}
+            onSelect={() => selectCard(block.id)} onUp={() => moveBlock(block.id, -1)} onDown={() => moveBlock(block.id, 1)}
+            onDuplicate={() => duplicate(block.id)} onDelete={() => remove(block.id)} />
+        </div>
+        <button className="sb-insert" onClick={() => addBlock(i + 1, sec.id)} title="여기에 블록 추가">
+          <span className="sb-insert-line" /><span className="sb-insert-pill"><Icon name="plus" size={15} />블록 추가</span><span className="sb-insert-line" />
+        </button>
+      </React.Fragment>
+    );
+  };
+  /* 섹션 밴드 — depth=1. 헤더(접기·제목·컷수·레이아웃) + 기존 카드/드롭라인(전역 인덱스 유지) */
+  const sections = deriveSections(blocks);
+  // 하이라이트 = 드롭과 동일한 단일 출처(dragOverSec) — 모든 드롭 지점이 자기 대상 섹션 id를 명시하므로 추론 없음.
+  const hotSecId = dragOverSec;
   const list = (
     <div className="sb-cards">
       <div className="sb-list">
-        {blocks.map((b, i) => (
-          <React.Fragment key={b.id}>
-            {cardEl(b, i)}
-            <button className="sb-insert" onClick={() => addBlock(i + 1)} title="여기에 블록 추가">
+        {blocks.length === 0 && (
+          /* 빈 보드 — 인서트 버튼이 섹션 안에만 있어 막다른 상태가 되지 않게 하는 유일한 AI 컷 진입점 */
+          <button className="sb-add-btn" onClick={() => addBlock(0)}><Icon name="plus" size={16} />첫 컷 추가</button>
+        )}
+        {sections.map((sec) => {
+          const isCol = collapsed.has(sec.id);
+          const previewRevealsSection = isCol && sec.items.some(({ b }) => b.id === previewHoverId);
+          const sectionOpen = !isCol || previewRevealsSection;
+          const sectionEnd = sec.start + sec.items.length;
+          // 레이아웃 칩 — 연속 AI 컷 수에 따라 제공. 컬러 비교만 별도 자격제(색상 2+, 시리즈 제외).
+          // http 모드는 서버 조립(M-02)이 아직 소비하지 않아 전체 숨김("배선된 칩만" 규칙) — 설계문서 §4-7.
+          const layoutUiOn = (import.meta.env.VITE_API_MODE ?? 'mock') !== 'http';
+          const aiItems = sec.items.filter(({ b }) => b.source !== 'mine'); // 컷 수 정의는 normalizeSectionLayouts·patchSection 과 동일 (placeholder 포함)
+          const colorSet = new Set(aiItems.filter(({ b }) => b.colorId).map(({ b }) => b.colorId));
+          const cmpOk = !sec.samePlace && colorSet.size >= 2;
+          const offeredGridLayout = aiItems.length === 2 ? 'twoColumn'
+            : aiItems.length === 3 ? 'threeColumn'
+              : aiItems.length === 4 ? 'grid2x2'
+                : aiItems.length >= 5 ? 'twoColumn' : null;
+          // 제공 옵션은 현재 컷 수로 매번 계산하되, 활성 상태는 저장된 layout 그대로 비교해 미제공 값을 강제로 바꾸지 않는다.
+          const chipsOn = layoutUiOn && aiItems.length >= 2;   // 1컷 섹션은 '세로 1열' 표기 자체가 무의미 — 숨김
+          const isCmp = sec.layout === 'colorCompare';
+          const layoutCtl = chipsOn ? (
+
+                  <span className="sb-layctl" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} title="이 섹션이 상세페이지에 놓이는 방식">
+                    <span className="sb-lay-l">레이아웃 설정</span>
+                    <span className="sb-laychips">
+                    <button className={`sb-lay${sec.layout === 'stack' ? ' on' : ''}`} onClick={() => setSecLayout(sec, 'stack')}>
+                      <span className="pg pgs"><i /><i /></span>세로 1열
+                    </button>
+                    {offeredGridLayout === 'twoColumn' && (
+                      <button className={`sb-lay${sec.layout === 'twoColumn' ? ' on' : ''}`} onClick={() => setSecLayout(sec, 'twoColumn')}>
+                        <span className="pg pg2"><i /><i /></span>2단
+                      </button>
+                    )}
+                    {offeredGridLayout === 'threeColumn' && (
+                      <button className={`sb-lay${sec.layout === 'threeColumn' ? ' on' : ''}`} onClick={() => setSecLayout(sec, 'threeColumn')}>
+                        <span className="pg pg3"><i /><i /><i /></span>3단
+                      </button>
+                    )}
+                    {offeredGridLayout === 'grid2x2' && (
+                      <button className={`sb-lay${sec.layout === 'grid2x2' ? ' on' : ''}`} onClick={() => setSecLayout(sec, 'grid2x2')}>
+                        <span className="pg pg4"><i /><i /><i /><i /></span>2×2단
+                      </button>
+                    )}
+                    {(cmpOk || isCmp) && (
+                      <button className={`sb-lay${isCmp ? ' on' : ''}`} onClick={() => setSecLayout(sec, 'colorCompare')}>
+                        <span className="pg pgc">{[...colorSet].slice(0, 2).map((cid) => { const c = colorOpts.find((x) => x.id === cid); return <i key={cid} style={c ? { background: c.hex } : undefined} />; })}</span>컬러 비교
+                      </button>
+                    )}
+                  </span>
+                  </span>
+          ) : null;
+          return (
+            <React.Fragment key={sec.id + ':' + sec.start}>
+            <section className={`sb-sec${sectionOpen ? ' open' : ''}${hotSecId === sec.id ? ' hot' : ''}${sec.custom ? ' edited' : ''}`}
+              onDragOver={(e) => {
+                if (!draggedBlock) return;
+                if (draggedBlock.sectionId === sec.id) { setDragOver(null); setDragOverSec(null); return; }
+                e.preventDefault(); setDragOver(sectionEnd); setDragOverSec(sec.id);
+              }}
+              onDrop={(e) => {
+                if (draggedBlock && draggedBlock.sectionId !== sec.id) onDropAt(sectionEnd, sec.id)(e);
+              }}>
+              {sectionOpen && (
+              <div className="sb-sec-h" onClick={() => toggleSec(sec.id)} role="button" tabIndex={0} aria-expanded={sectionOpen}
+                onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleSec(sec.id); } }}
+                title={sectionOpen ? '접기' : '펼치기'}>
+                <Icon name={sectionOpen ? 'chevDown' : 'chevRight'} size={15} />
+                <span className="sb-sec-t">{sec.title}</span>
+                <span className="sb-sec-n">{sec.items.length}컷</span>
+                {layoutCtl}
+              </div>
+              )}
+              {isCmp && layoutUiOn && sectionOpen && (
+                <div className="sb-swrail" title="색상별 컷을 나란히 비교하는 레이아웃으로 생성돼요">
+                  {[...colorSet].map((cid) => { const c = colorOpts.find((x) => x.id === cid); return c ? <span key={cid} className="sb-cdot" style={{ background: c.hex }} title={c.label} /> : null; })}
+                  <span className="sb-swrail-t">색상별로 나란히 비교돼요</span>
+                </div>
+              )}
+              {!sectionOpen ? (
+                /* 히어로 덱(2026-07-11) — 접힌 섹션은 이미지가 밴드 전체를 차지, 이름·컷수·레이아웃은 이미지 우측 상단.
+                   칩(button)을 품으므로 button 중첩 금지 → div role="button" */
+                <div className="sb-deck-hero" role="button" tabIndex={0} aria-expanded={false} title="펼치기"
+                  onClick={() => toggleSec(sec.id)}
+                  onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleSec(sec.id); } }}
+                  onDragOver={(e) => { if (dragId || dragMine) { e.preventDefault(); e.stopPropagation(); setDragOver(sectionEnd); setDragOverSec(sec.id); } }}
+                  onDrop={(e) => { if (dragId || dragMine) onDropAt(sectionEnd, sec.id)(e); }}>
+                  <span className="sb-deck-fan">
+                    {sec.items.slice(0, 3).map(({ b }, k) => (
+                      <img key={k} src={b.thumb || (b.ownImages || [])[0]} alt="" style={{ zIndex: 3 - k }} />
+                    ))}
+                  </span>
+                  <span className="sb-deck-meta">
+                    <span className="sb-deck-top">
+                      <span className="sb-deck-name">{sec.title}</span>
+                      <span className="sb-deck-count">{sec.items.length}컷</span>
+                      {layoutCtl}
+                    </span>
+                    <span className="sb-deck-hint">눌러서 펼쳐보기</span>
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <button className="sb-insert" onClick={() => addBlock(sec.start, sec.id)} title="여기에 블록 추가">
+                    <span className="sb-insert-line" /><span className="sb-insert-pill"><Icon name="plus" size={15} />블록 추가</span><span className="sb-insert-line" />
+                  </button>
+                  {sec.items.map((item) => cardEl(item, sec))}
+                  {/* 섹션 꼬리 표시선 — 교차 드래그의 "섹션 끝" 드롭 위치를 섹션 안에서 점등.
+                      경계 인덱스(sectionEnd)가 다음 섹션 첫 드롭라인과 겹치는 문제의 시각적 해소. */}
+                  <div className={`sb-dropline${dragOver === sectionEnd && dragOverSec === sec.id ? ' on' : ''}${dragMine ? ' armed' : ''}`}
+                    onDragOver={(e) => { if (dragId || dragMine) { e.preventDefault(); e.stopPropagation(); setDragOver(sectionEnd); setDragOverSec(sec.id); } }}
+                    onDrop={onDropAt(sectionEnd, sec.id)} />
+                </>
+              )}
+            </section>
+            {/* 섹션 사이 hover 인서트 — 위 섹션 끝에 블록 추가 */}
+            <button className="sb-insert sb-insert-gap" onClick={() => addBlock(sectionEnd, sec.id)} title="여기에 블록 추가">
               <span className="sb-insert-line" /><span className="sb-insert-pill"><Icon name="plus" size={15} />블록 추가</span><span className="sb-insert-line" />
             </button>
-          </React.Fragment>
-        ))}
-        <div className={`sb-dropline${dragOver === blocks.length ? ' on' : ''}${dragMine ? ' armed' : ''}`} onDragOver={(e) => { if (dragId || dragMine) { e.preventDefault(); setDragOver(blocks.length); } }} onDrop={onDropAt(blocks.length)} />
+            </React.Fragment>
+          );
+        })}
+        {/* 맨 아래 전역 드롭라인 — 마지막 섹션 id를 명시해 하이라이트·드롭이 같은 대상을 가리키게 (스테일 잔상·암묵 추론 제거) */}
+        <div className={`sb-dropline${dragOver === blocks.length && sections.length === 0 ? ' on' : ''}${dragMine ? ' armed' : ''}`}
+          onDragOver={(e) => { if (dragId || dragMine) { e.preventDefault(); e.stopPropagation(); setDragOver(blocks.length); setDragOverSec(sections.length ? sections[sections.length - 1].id : null); } }}
+          onDrop={onDropAt(blocks.length, sections.length ? sections[sections.length - 1].id : undefined)} />
       </div>
     </div>
   );
 
   const inspector = <Inspector block={selected} catalogs={catalogs} colorOpts={colorOpts} clothingType={clothingType} mode={mode} onMode={setMode}
-    onChange={(p) => patch(selectedId, p)} matchClothing={matchClothing} dirty={dirty && !isMineSel} warn={warn} onDone={finishEdit} onRevert={revertEdit} onAddMine={addMineBlock} onImgDrag={setDragMine} />;
+    onChange={(p) => patch(selectedId, p)} matchClothing={matchClothing} dirty={dirty && !isMineSel} warn={warn} onDone={finishEdit} onRevert={revertEdit} onAddMine={addMineBlock}
+    onImgDrag={(v) => { setDragMine(v); if (v == null) { setDragOver(null); setDragOverSec(null); } }}
+    onCancelNew={() => {
+      // 취소 = 삽입 전 상태로: 블록 제거 + 이 삽입이 갈랐던 행 복원 (normalizeRows 가 인접성 재검증)
+      const id = selectedId;
+      const restore = pendingRowRestore.current; pendingRowRestore.current = null;
+      // 스테일 방지: 삽입 이후 보드가 조금이라도 바뀌었으면(배치 재적용·드래그 등) 낡은 행 구성을 복원하지 않는다
+      const valid = restore && restore.blockId === id && latestBlocks.current === restore.snapshot;
+      setBlocks((bs) => valid ? restore.preInsert : normalizeBoard(bs.filter((b) => b.id !== id)));
+      finishEdit();
+      toast.push('블록을 취소했어요');
+    }} />;
+
+  const previewRail = <PagePreviewRail sections={sections} selectedId={selectedId} onHover={setPreviewHoverId}
+    onSelect={(id) => {
+      const sectionId = blocks.find((b) => b.id === id)?.sectionId;
+      setCollapsed((current) => {
+        if (!sectionId || !current.has(sectionId)) return current;
+        const next = new Set(current); next.delete(sectionId); return next;
+      });
+      selectCard(id);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        cardRefs.current.get(id)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }));
+    }} />;
 
   let body;
   if (!splitOpen) {
     // 처음 진입 — 카드들만 가운데 정렬, 우측 패널 없음
     body = (
-      <div className="sb-solo">
-        {list}
-        <button className="mine-add-solo" onClick={() => addMineBlock()}><Icon name="upload" size={17} />내 이미지 업로드</button>
+      <div className="storyboard-solo-layout">
+        {previewRail}
+        <div className="sb-solo">
+          {list}
+          <button className="mine-add-solo" onClick={() => addMineBlock()}><Icon name="upload" size={17} />내 이미지 업로드</button>
+        </div>
       </div>
     );
   } else {
     // 카드를 한 번이라도 열었으면 — 좌/우 분할(간격 좁게) 유지, 선택 없으면 우측에 빈 상태(내 이미지 업로드)
-    body = <div className="storyboard-layout tight"><div className="sb-scroll-l">{list}</div><div className="insp-col">{inspector}</div></div>;
+    body = <div className="storyboard-layout tight">{previewRail}<div className="sb-scroll-l">{list}</div><div className="insp-col">{inspector}</div></div>;
   }
 
   const cutCount = blocks.length;
@@ -555,8 +1119,13 @@ export function Storyboard() {
   const aiCount = blocks.filter((b) => b.source !== 'mine').length;
   const mineCount = cutCount - aiCount;
   const generate = async () => {
-    // 생성 입력은 서버가 저장된 콘티에서 읽는다 — CTA 에서 반드시 저장 (frontend_state_model §5)
-    await api.saveStoryboard(projectId, blocks);
+    // 방어: UI disabled 와 별개로 함수 자체도 게이트 — 다른 호출 경로가 생겨도 미설정 블록 생성 불가
+    if (blocks.length === 0) return;
+    if (blocks.some((b) => b.source !== 'mine' && !b.cutType)) { toast.push('컷 종류가 정해지지 않은 블록이 있어요'); return; }
+    // 생성 입력은 서버가 저장된 콘티에서 읽는다 — CTA 에서 반드시 저장 (frontend_state_model §5).
+    // 같은 직렬 체인 경유: 비행 중 자동저장 뒤에 줄서서 최신 스냅샷이 마지막에 반영됨을 보장.
+    // 실패는 throw 로 전파돼 기존처럼 네비게이션이 중단된다.
+    await saveNow(projectId);
     navigate('/create/generating');
   };
   return (
@@ -568,7 +1137,7 @@ export function Storyboard() {
       </div>
       {body}
 
-      {/* fixed bottom action bar */}
+      {/* document-flow bottom action bar */}
       <div className="sb-actionbar">
         <div className="sb-ab-inner">
           <button className="btn btn-ghost" onClick={() => navigate('/create/mannequin')}><Icon name="arrowLeft" size={17} />이전</button>
@@ -578,7 +1147,10 @@ export function Storyboard() {
             <div><div className="sec-title" style={{ fontSize: 14 }}>카피라이팅 {copyOn ? 'ON' : 'OFF'}</div>
               <div className="hint" style={{ marginTop: 1 }}>AI가 카피를 자동으로 넣어요</div></div>
           </div>
-          <button className="btn btn-primary btn-lg sb-ab-go btn-glowring" onClick={generate}>
+          <button className="btn btn-primary btn-lg sb-ab-go btn-glowring" onClick={generate}
+            disabled={blocks.length === 0 || blocks.some((b) => b.source !== 'mine' && !b.cutType)}
+            title={blocks.length === 0 ? '컷을 1개 이상 구성해주세요'
+              : blocks.some((b) => b.source !== 'mine' && !b.cutType) ? '컷 종류가 정해지지 않은 블록이 있어요' : undefined}>
             <Icon name="sparkles" size={18} />상세페이지 생성하기 <Icon name="arrowRight" size={17} /> {aiCount * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧
           </button>
         </div>
