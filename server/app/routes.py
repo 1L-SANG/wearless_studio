@@ -74,6 +74,15 @@ def _r2(request: Request) -> R2Client:
     return r2
 
 
+def _wake_dispatcher(request: Request) -> None:
+    """job 생성 직후 디스패처 즉시 기상 — 유휴 폴링 대기(최대 3초)를 건너뛰어 시작 지연을 없애고,
+    같은 DB를 폴링하는 외부(구버전/타 env) dispatcher 와의 클레임 레이스를 사실상 제거한다
+    (2026-07-12 사고: QC=true env 외부 프로세스가 사용자 잡을 가로채 생성 전멸)."""
+    dispatcher = getattr(request.app.state, "dispatcher", None)
+    if dispatcher is not None:
+        dispatcher.wake()
+
+
 def _bad_request(code: str, message: str) -> HTTPException:
     return HTTPException(status_code=400, detail={"code": code, "message": message})
 
@@ -540,10 +549,7 @@ async def analyze_product(
             payload={"mode": "analyze"}, idempotency_key=scoped_key,
             credits_reserved=0, metadata={})
         await conn.commit()
-    # 디스패처 즉시 기상 — 유휴 폴링 대기(최대 3초)를 건너뛰어 분석 시작 지연 제거.
-    dispatcher = getattr(request.app.state, "dispatcher", None)
-    if dispatcher is not None:
-        dispatcher.wake()
+    _wake_dispatcher(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
@@ -839,6 +845,7 @@ async def generate_mannequins(
                     status_code=402,
                     detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
         await conn.commit()
+    _wake_dispatcher(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
@@ -950,6 +957,7 @@ async def regenerate_mannequins(
                     analysis["fitProfile"] = fit_profile
                     await repo.save_analysis(conn, project_id, analysis)
         await conn.commit()
+    _wake_dispatcher(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
@@ -1070,6 +1078,7 @@ async def generate_editor_image(
                     status_code=402,
                     detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
         await conn.commit()
+    _wake_dispatcher(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
@@ -1112,6 +1121,7 @@ async def generate_detail_page(
                     status_code=402,
                     detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
         await conn.commit()
+    _wake_dispatcher(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
