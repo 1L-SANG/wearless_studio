@@ -44,3 +44,6 @@ server/ab_material_test.py
 reference/genexamples/images/
 reference/genexamples/grids/
 reference/genexamples/grids_index.html
+
+# local HTML mockups (embed gitignored mall images)
+mockups/
