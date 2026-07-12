@@ -193,16 +193,25 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
         <div className="basic-fields">
           <div className="field-row"><label className="lbl">의류 종류</label>
             <Chips options={catalogs.clothingTypes} value={a.clothingType} onChange={changeType} /></div>
-          {(subCats.length > 0) && (
-            <div className="field-row"><label className="lbl">세부 카테고리</label>
-              <Chips options={subCats} value={a.subCategory} onChange={(v) => onChange(withFitProfile({ subCategory: v }))} /></div>
-          )}
-          {/* 목록(enum)에 없는 의류의 자유 명칭 — AI가 추측을 채워주고 사용자가 주관식 수정
-              (2026-07-13 사용자 결정). key로 분석 갱신 시 리셋, 저장은 blur 커밋(소재 편집 관례). */}
-          <div className="field-row"><label className="lbl">직접 입력</label>
-            <input className="field" key={a.customCategory || ''} defaultValue={a.customCategory || ''}
-              maxLength={20} placeholder="목록에 없으면 직접 입력 (예: 후드 집업, 니트 베스트)"
-              onBlur={(e) => { const v = e.target.value.trim(); if (v !== (a.customCategory || '')) onChange({ customCategory: v || null }); }} /></div>
+          {/* 세부 카테고리 — enum 칩 + 같은 줄 끝의 '직접 입력' pill (2026-07-13 사용자 결정:
+              별도 줄이 아니라 칩처럼). enum 선택 ↔ 직접 입력은 배타: 칩을 고르면 custom을
+              비우고, custom을 쓰면 칩 해제. AI 추측(customCategory)이 있으면 pill에 채워짐.
+              저장은 blur/Enter 커밋, key로 분석 갱신 시 리셋(소재 인라인 편집 관례). */}
+          <div className="field-row"><label className="lbl">세부 카테고리</label>
+            <Chips options={subCats} value={a.subCategory}
+              onChange={(v) => onChange(withFitProfile({ subCategory: v, customCategory: null }))}
+              trailing={
+                <input
+                  className={`chip chip-input${a.customCategory && !a.subCategory ? ' on' : ''}`}
+                  key={a.customCategory || ''} defaultValue={a.customCategory || ''}
+                  maxLength={20} placeholder="직접 입력" size={10}
+                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v === (a.customCategory || '')) return;
+                    onChange(withFitProfile(v ? { customCategory: v, subCategory: null } : { customCategory: null }));
+                  }} />
+              } /></div>
           <div className="field-row"><label className="lbl">대상 성별</label>
             <Chips options={catalogs.genders} value={a.targetGenders?.[0] || null} onChange={(v) => onChange(withFitProfile({ targetGenders: v ? [v] : [] }))} /></div>
           {fitOpts.length > 0 && (

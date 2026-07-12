@@ -126,7 +126,7 @@ export function Field({ label, opt, hint, ...props }) {
 }
 
 /* segmented chips — single or multi select. value = string | string[] */
-export function Chips({ options, value, onChange, multi, star, className }) {
+export function Chips({ options, value, onChange, multi, star, className, trailing }) {
   const arr = multi ? (value || []) : [value];
   const toggle = (v) => {
     if (multi) {
@@ -148,6 +148,7 @@ export function Chips({ options, value, onChange, multi, star, className }) {
           </button>
         );
       })}
+      {trailing /* 칩 줄 끝 추가 요소 (예: 직접 입력 pill) — 같은 flex 줄에 이어붙는다 */}
     </div>
   );
 }

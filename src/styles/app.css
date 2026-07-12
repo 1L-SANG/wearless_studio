@@ -276,6 +276,10 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .chip.on:hover { box-shadow: var(--elev-lift), 0 0 0 1.5px #6ba8e6; }
 .chip.on .chip-x { opacity: .6; }
 .chip-x { display: inline-flex; cursor: pointer; }
+/* 칩 줄 안의 '직접 입력' pill — 버튼 칩과 같은 외형의 input (분석 폼 세부 카테고리) */
+.chip-input { cursor: text; min-width: 88px; max-width: 170px; outline: none; }
+.chip-input::placeholder { color: var(--fg-3); font-weight: 500; }
+.chip-input:focus { color: var(--fg-1); background: #fff; box-shadow: var(--elev-card), 0 0 0 1.5px #8fbfee; }
 .chip-star { color: var(--fg-1); }
 
 /* ---- tag input ---- */
