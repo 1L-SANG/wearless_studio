@@ -36,6 +36,22 @@ def effective_fit_profile(analysis: dict, has_match_image: bool) -> dict | None:
     return profile
 
 
+_TOP_TYPES = {"top", "outer", "dress", "상의", "아우터", "원피스"}
+
+
+def slim_variant_profile(profile: dict | None, clothing_type: str, gender: str) -> dict:
+    """후보 B(슬림 변형)용 fit profile — A/B 이원 생성(정핏/슬림핏, 원 UI 계약).
+    기존 프로필이 있으면 핏 축만 slim 으로 덮고, 없으면 의류 종류에 맞는 최소 프로필을 만든다.
+    카탈로그(fit_axes)에 없는 category/값은 렌더에서 조용히 스킵되므로 안전하다."""
+    if isinstance(profile, dict):
+        axes = dict(profile.get("axes") or {})
+        axes["cut" if profile.get("category") == "pants" else "fit"] = "slim"
+        return {**profile, "axes": axes}
+    if (clothing_type or "").lower() in _TOP_TYPES:
+        return {"category": "top", "gender": gender, "axes": {"fit": "slim"}}
+    return {"category": "pants", "gender": gender, "axes": {"cut": "slim"}}
+
+
 def base_color_images(product: dict) -> list[tuple[str, str]]:
     """기준 색상(ColorGroup.isBase, 없으면 colors[0]) 이미지의 (slot, asset_id) 목록 (slot 순서).
     slot ∈ Front/Back/Detail/Fit. Front 필수는 입력 검증에서 거른다(나머지는 선택)."""

@@ -21,6 +21,9 @@ from ._common import emit_job_event as _emit
 log = logging.getLogger("wearless.detail_page_job")
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+# 컷·카피 동시 생성 상한. 순차(블록 수 × ~40s)면 4컷에 2~3분 → 병렬로 단축. gemini 버스트
+# 제한을 감안해 무제한이 아닌 소폭 동시성(429 시 이 값을 낮춘다).
+_GEN_CONCURRENCY = 3
 
 
 def _dims(data: bytes):
@@ -37,48 +40,70 @@ async def _gen_cuts(app, job, prepared, product, analysis):
     같은 경로(빈 슬롯) — 조용한 styling 대체 렌더는 하지 않는다(ADR-0004)."""
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
+    sem = asyncio.Semaphore(_GEN_CONCURRENCY)
+
+    async def _one(item):
+        """컷 1개 생성+저장. 실패(빈 슬롯)면 None. 각 블록 독립이라 동시 실행 가능."""
+        b, images, manifest = item
+        async with sem:
+            if not images:  # 옷 근거(상품/마네킹) 없음 — 무드만으로는 동일성 보장 불가, 생성하지 않는다
+                log.warning("AG-06 cut skipped (no garment-truth references) job %s block %s", job_id, b.get("id"))
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": b.get("id"), "status": "cut_failed"})
+                return None
+            try:
+                img, mime = await cut_generator.generate(
+                    s, gemini, b, product, images, analysis=analysis, manifest=manifest)
+            except Exception as e:  # GeminiError·ValueError 포함 — 실패 컷 = 빈 슬롯, 미차감(부분 성공)
+                log.warning("AG-06 cut failed for job %s block %s: %r", job_id, b.get("id"), e)
+                await _emit(app.state.pool, job_id, "step",
+                            {"blockId": b.get("id"), "status": "cut_failed"})
+                return None
+            ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
+            asset_id = str(uuid.uuid4())
+            key = ai_key(user_id, project_id, job_id, asset_id, ext)
+            await asyncio.to_thread(r2.put_bytes, key, img, mime)
+            w, h = _dims(img)
+            return (
+                {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file"},
+                {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
+                 "size": len(img), "width": w, "height": h},
+            )
+
+    # gather 는 입력 순서를 보존 — 콘티 블록 순서대로 컷을 배열한다.
     cut_results, cut_assets = [], []
-    for b, images, manifest in prepared:
-        if not images:  # 옷 근거(상품/마네킹) 없음 — 무드만으로는 동일성 보장 불가, 생성하지 않는다
-            log.warning("AG-06 cut skipped (no garment-truth references) job %s block %s", job_id, b.get("id"))
-            await _emit(app.state.pool, job_id, "step",
-                        {"blockId": b.get("id"), "status": "cut_failed"})
-            continue
-        try:
-            img, mime = await cut_generator.generate(
-                s, gemini, b, product, images, analysis=analysis, manifest=manifest)
-        except Exception as e:  # GeminiError·ValueError 포함 — 실패 컷 = 빈 슬롯, 미차감(부분 성공)
-            log.warning("AG-06 cut failed for job %s block %s: %r", job_id, b.get("id"), e)
-            await _emit(app.state.pool, job_id, "step",
-                        {"blockId": b.get("id"), "status": "cut_failed"})
-            continue
-        ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
-        asset_id = str(uuid.uuid4())
-        key = ai_key(user_id, project_id, job_id, asset_id, ext)
-        await asyncio.to_thread(r2.put_bytes, key, img, mime)
-        w, h = _dims(img)
-        cut_results.append({"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file"})
-        cut_assets.append({"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
-                           "size": len(img), "width": w, "height": h})
+    for r in await asyncio.gather(*[_one(item) for item in prepared]):
+        if r:
+            cut_results.append(r[0])
+            cut_assets.append(r[1])
     return cut_results, cut_assets
 
 
 async def _gen_copy(app, job, ai_blocks, product, analysis):
     """copywriting 시 블록별 AG-02 카피 → 묶음 AG-03 검수(revise 채택). 실패 블록은 카피 생략."""
     s = app.state.settings
+    sem = asyncio.Semaphore(_GEN_CONCURRENCY)
+
+    async def _one(b):
+        """블록 1개 카피 생성. 실패면 None(카피는 게이트 아님, 블록 생략)."""
+        async with sem:
+            try:
+                texts = await copywriter.generate(
+                    s, block_kind=b.get("kind"), cut_type=b.get("cutType"),
+                    product=product, analysis=analysis, color_label=b.get("colorId"))
+            except Exception as e:  # VisionError 포함 — 카피는 게이트 아님, 실패 블록 생략
+                log.warning("AG-02 copy failed for job %s block %s: %r", job["id"], b.get("id"), e)
+                return None
+            return (b.get("id"), texts) if texts else None
+
+    # gather 는 순서 보존 — drafts 삽입 순서(=콘티 순서)를 유지한다.
     items, drafts = [], {}
-    for b in ai_blocks:
-        try:
-            texts = await copywriter.generate(
-                s, block_kind=b.get("kind"), cut_type=b.get("cutType"),
-                product=product, analysis=analysis, color_label=b.get("colorId"))
-        except Exception as e:  # VisionError 포함 — 카피는 게이트 아님, 실패 블록 생략
-            log.warning("AG-02 copy failed for job %s block %s: %r", job["id"], b.get("id"), e)
-            continue
-        if texts:
-            drafts[b.get("id")] = texts
+    for r in await asyncio.gather(*[_one(b) for b in ai_blocks]):
+        if r:
+            bid, texts = r
+            drafts[bid] = texts
             for t in texts:
-                items.append({"blockId": b.get("id"), "text": t.get("text", "")})
+                items.append({"blockId": bid, "text": t.get("text", "")})
     if not items:
         return []
     # AG-03 검수 — revise면 수정 텍스트로 교체(첫 항목 role 유지). 실패 시 원문 유지.

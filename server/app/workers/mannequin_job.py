@@ -200,24 +200,31 @@ async def run_mannequin_job(app, job: dict) -> None:
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
                                                "withBottom": match_img is not None})
 
-        # 3) 단일 후보 생성. DB/API 호환을 위해 legacy candidate='A'와 candidates=[one_result]
-        #    리스트 shape은 유지한다(P1 계약 전환, UI/API 제거는 후속 단계).
+        # 3) A/B 이원 후보 생성(원 UI 계약: A=현재 핏, B=슬림 변형) — 병렬. 부분 성공 허용
+        #    (한쪽 실패 시 성공분만 저장·차감). 크레딧 예약(2)도 2컷 기준.
         clothing_type = product.get("clothing_type") or "상의"
         manifest = _build_manifest(prod_assets, match_img is not None)
         fit_profile = mannequin.effective_fit_profile(analysis, match_img is not None)
         legacy_base_fit = analysis.get("fit") or "regular"
+        slim_profile = mannequin.slim_variant_profile(fit_profile, clothing_type, gender)
         await _emit(pool, job_id, "progress", {"progress": 35, "phase": "generating"})
-        try:
-            result = await _run_candidate(
-                app=app, job=job, candidate="A", base_fit=legacy_base_fit, base_gender=gender,
-                base_img=base_img, prod_imgs=prod_imgs, match_img=match_img,
-                product_count=product_count, template=template, product=product,
-                analysis=analysis, clothing_type=clothing_type, image_manifest=manifest,
-                fit_profile=fit_profile)
-        except Exception as e:
-            log.warning("job %s candidate failed: %r", job_id, e)
-            result = None
-        passed = [result] if isinstance(result, dict) else []
+
+        async def _cand(letter, base_fit, profile):
+            try:
+                return await _run_candidate(
+                    app=app, job=job, candidate=letter, base_fit=base_fit, base_gender=gender,
+                    base_img=base_img, prod_imgs=prod_imgs, match_img=match_img,
+                    product_count=product_count, template=template, product=product,
+                    analysis=analysis, clothing_type=clothing_type, image_manifest=manifest,
+                    fit_profile=profile)
+            except Exception as e:
+                log.warning("job %s candidate %s failed: %r", job_id, letter, e)
+                return None
+
+        results = await asyncio.gather(
+            _cand("A", legacy_base_fit, fit_profile),
+            _cand("B", "slim", slim_profile))
+        passed = [r for r in results if isinstance(r, dict)]
 
         if not passed:
             await _fail("마네킹컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": "all_candidates_failed"})

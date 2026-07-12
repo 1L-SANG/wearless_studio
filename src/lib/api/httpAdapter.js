@@ -8,14 +8,26 @@ import { supabase } from '@/lib/supabase.js';
 import { DB } from '@/mock/db.js';
 import { LIMITS } from '@/lib/limits.js';
 import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
-import { defaultAnalysisShape } from '@/lib/api/shapes.js';
+import { defaultAnalysisShape, defaultStoryboard } from '@/lib/api/shapes.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
-// 서버가 주는 앱 상대 URL(`/v1/assets/{id}/file`)을 브라우저가 로드 가능한 절대 URL로.
-// 프론트(5173)와 API(8000/api.wearless.kr)는 오리진이 달라 상대 src 는 <img> 에서 404 — 어댑터 경계에서 절대화한다.
-const absolutize = (src) => (typeof src === 'string' && src.startsWith('/v1/') ? `${BASE_URL}${src}` : src);
-const absolutizeCut = (cut) => (cut && cut.src ? { ...cut, src: absolutize(cut.src) } : cut);
+// 서버는 에셋 이미지를 안정 앱 URL `/v1/assets/{id}/file`(상대경로)로 반환한다. 프론트는 다른
+// 도메인(Vercel)에서 서빙되므로 <img src> 가 그대로 쓰면 프론트 도메인에 붙어 404 가 난다.
+// 모든 응답이 지나는 http() 초크포인트에서 재귀로 절대화한다(API 도메인 프리픽스).
+// vary 요청이 src 를 서버로 되돌려보내도 워커의 _ASSET_FILE_RE 는 search(비앵커)라 절대 URL 도 파싱된다.
+function absolutizeAssetUrls(v) {
+  if (typeof v === 'string') {
+    return v.startsWith('/v1/assets/') ? `${BASE_URL}${v}` : v;
+  }
+  if (Array.isArray(v)) return v.map(absolutizeAssetUrls);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const k of Object.keys(v)) out[k] = absolutizeAssetUrls(v[k]);
+    return out;
+  }
+  return v;
+}
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
@@ -47,7 +59,7 @@ export async function http(path, { method = 'GET', body } = {}) {
     console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
     throw new Error(message);
   }
-  return res.json();
+  return absolutizeAssetUrls(await res.json());
 }
 
 // job 폴링 어댑터 — job형 API(202 {jobId})를 mock 의 onProgress 콜백 계약으로 변환.
@@ -208,12 +220,28 @@ export const httpAdapter = {
       sellingPoints: [],  // 셀러는 빈 상태로 시작 — AI 제안(aiSuggestedPoints)은 폼이 자동으로 채운다
     };
     // 실측은 AI 미산출 → 기본 shape(defaultAnalysisShape)이 이미 value:null (사용자 직접 입력, PRD §6.5).
+    // 매칭 의류 후보 시드 — 서버 matching_items 실 후보(top-N 기본 선택, mock 계약 §6 동일 shape).
+    // defaultAnalysisShape 는 matchClothing:[] 라 여기서 채우지 않으면 분석 페이지 매칭 그리드가
+    // 비어 보인다(과거 mock base 시절엔 가짜 목이 채워줬음). 실패는 비치명 — 빈 목록 유지.
+    try {
+      merged.matchClothing = await recommendMatchHttp(projectId, merged, []);
+    } catch { /* 후보 조회 실패 — 분석 자체는 진행 */ }
     analysisCache = { projectId, analysis: merged };   // US-4: full-payload 머지 + 매칭 선택 이월 seed(프로젝트 스코프)
     return merged;
   },
   // ---- 상세페이지 (PL-4) — 콘티·에디터는 서버 소유. detail_page job 이 저장 콘티를 읽는다 ----
   async getStoryboard(projectId) {
-    return http(`/v1/projects/${projectId}/storyboard`);
+    const saved = await http(`/v1/projects/${projectId}/storyboard`);
+    if (Array.isArray(saved) && saved.length) return saved;
+    // 첫 진입 — 서버에 저장 콘티 없음(GET 은 빈 []). 원 기본 콘티(7컷, d2fb3ee:
+    // 후킹/셀링포인트/스타일링×2/호리존×2/제품컷)를 빌드해 서버에 시드한다.
+    // detail_page job 이 '저장된 콘티'를 읽으므로 저장까지 해야 생성에 반영된다.
+    const product = await http(`/v1/projects/${projectId}/product`);
+    const blocks = defaultStoryboard(product?.colors || []);
+    try {
+      await http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
+    } catch { /* 시드 저장 실패 — 보드는 뜨게 두고, 편집/생성 시 자동저장이 다시 시도 */ }
+    return blocks;
   },
   async saveStoryboard(projectId, blocks) {
     return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
@@ -337,17 +365,16 @@ export const httpAdapter = {
   // 마네킹 컷 목록 (계약 §6) — [{id,src,candidate,version,baseFit,fitAdjust,lengthAdjust,matchAdjust}].
   async getMannequins(projectId) {
     if (!projectId) return [];
-    const cuts = await http(`/v1/projects/${projectId}/mannequins`);
-    return (cuts || []).map(absolutizeCut);
+    return http(`/v1/projects/${projectId}/mannequins`);
   },
   // 최초 A/B 후보 생성 — 202{jobId}→폴링, 또는 완료 존재 시 200{data,credits}(무차감 재호출).
   // 크레딧: mannequinGenerate. 진행 중 재호출은 서버가 활성 job 에 합류(1회만 차감).
   async generateMannequins(projectId, { onProgress } = {}) {
     const res = await http(`/v1/projects/${projectId}/mannequins:generate`, { method: 'POST' });
-    if (res.data) return { data: res.data.map(absolutizeCut), credits: res.credits };  // 완료 재호출(200 캐시)
+    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시)
     // 마네킹 A/B 합성은 무거운 image job — 폴링 상한을 넉넉히(짧으면 정상 job 완료 전 실패 토스트).
     const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
-    return { data: (result.data || []).map(absolutizeCut), credits: result.credits };
+    return { data: result.data, credits: result.credits };
   },
   // @deprecated (2026-07) AG-05 폐기 — fitProfile 재생성(regenerateMannequin)으로 통합.
   // 서버 :adjust 는 항상 410 Gone(잡 미생성). 화면 어디서도 호출하지 않으며 계약 §6 잔재로만 남김.
@@ -365,12 +392,12 @@ export const httpAdapter = {
     const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {
       method: 'POST', body: { fitProfile },
     });
-    if (res.data) return { data: res.data.map(absolutizeCut), credits: res.credits };
+    if (res.data) return { data: res.data, credits: res.credits };
     const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
     // 잡 결과 data 는 "이번에 새로 만든 컷"만(finalize candidates) — 계약(mock cutsEnvelope)은
     // 전체 버전 목록이므로 재조회로 정합한다(버전 스트립이 이전 버전 히스토리를 유지).
     const cuts = await http(`/v1/projects/${projectId}/mannequins`);
-    return { data: { cuts: (cuts || []).map(absolutizeCut) }, credits: result.credits };
+    return { data: { cuts }, credits: result.credits };
   },
   // 에디터 Wardrobe(의류 탭, 계약 §3.6) — Record<colorId|'misc', WardrobeImage[]>.
   async getWardrobe(projectId) {
