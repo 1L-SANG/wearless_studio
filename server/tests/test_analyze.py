@@ -150,3 +150,28 @@ def test_run_analyze_job_vision_error_fails(monkeypatch):
     app = fake_worker_app(make_settings(openai_api_key="sk-x"))
     asyncio.run(analyze_job.run_analyze_job(app, worker_job()))
     assert "실패" in captured["message"]
+
+
+# ── 분석 비전 입력 축소 (2026-07-07 속도 개선) ─────────────────────────────────
+
+
+def test_shrink_for_vision_downscales_large_image():
+    import os as _os
+    from io import BytesIO
+    from PIL import Image
+    # 압축 안 되는 노이즈로 400KB 초과 원본을 만든다 (단색은 PNG가 너무 작아 skip 분기로 빠짐)
+    noise = Image.frombytes("RGB", (2400, 1800), _os.urandom(2400 * 1800 * 3))
+    buf = BytesIO()
+    noise.save(buf, format="PNG")
+    data = buf.getvalue()
+    assert len(data) > 400_000
+    out, mime = analyze_job.shrink_for_vision(data, "image/png")
+    assert mime == "image/jpeg" and len(out) < len(data)
+    assert max(Image.open(BytesIO(out)).size) <= 1024
+
+
+def test_shrink_for_vision_passthrough_small_and_broken():
+    small = b"x" * 1000  # 작음 → 원본 유지
+    assert analyze_job.shrink_for_vision(small, "image/png") == (small, "image/png")
+    broken = b"y" * 500_000  # 크지만 이미지 아님 → 안전 폴백(원본 유지)
+    assert analyze_job.shrink_for_vision(broken, "image/png") == (broken, "image/png")

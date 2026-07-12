@@ -540,6 +540,10 @@ async def analyze_product(
             payload={"mode": "analyze"}, idempotency_key=scoped_key,
             credits_reserved=0, metadata={})
         await conn.commit()
+    # 디스패처 즉시 기상 — 유휴 폴링 대기(최대 3초)를 건너뛰어 분석 시작 지연 제거.
+    dispatcher = getattr(request.app.state, "dispatcher", None)
+    if dispatcher is not None:
+        dispatcher.wake()
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 

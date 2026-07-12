@@ -102,6 +102,38 @@ def test_distribute_maps_targets():
     assert "styleTags" not in d["analysis"]
 
 
+def test_distribute_fills_default_materials_when_empty():
+    # 모델이 소재를 비워 보내면(확신 없음) 카테고리 보편 소재로 채운다 (사용자 결정 2026-07-07)
+    v = pa.validate({"clothingType": "top", "subCategory": "knit", "fit": "regular",
+                     "targetGenders": ["women"], "materials": []})
+    d = pa.distribute(v)
+    assert d["analysis"]["materials"] == [
+        {"name": "아크릴", "ratio": 60}, {"name": "면", "ratio": 40}]
+
+
+def test_distribute_keeps_detected_materials():
+    # 모델이 실제로 판독한 소재(라벨 등)는 기본값으로 덮지 않는다
+    v = pa.validate({"clothingType": "top", "subCategory": "tshirt", "fit": "regular",
+                     "targetGenders": [], "materials": [{"name": "린넨", "ratio": 100}]})
+    assert pa.distribute(v)["analysis"]["materials"] == [{"name": "린넨", "ratio": 100}]
+
+
+def test_distribute_default_materials_fallbacks():
+    # subCategory 없음(dress) → 종류 폴백 / 종류 미상 → 빈 배열(지어내지 않음)
+    v = pa.validate({"clothingType": "dress", "subCategory": None, "fit": "regular",
+                     "targetGenders": []})
+    assert pa.distribute(v)["analysis"]["materials"] == [{"name": "폴리에스터", "ratio": 100}]
+    v2 = pa.validate({"clothingType": "모자", "fit": "regular", "targetGenders": []})
+    assert pa.distribute(v2)["analysis"]["materials"] == []
+
+
+def test_default_materials_returns_copies():
+    # 정책 테이블 원본이 호출측 변조로 오염되지 않아야 한다
+    a = pa.default_materials("top", "tshirt")
+    a[0]["name"] = "변조"
+    assert pa.default_materials("top", "tshirt")[0]["name"] == "면"
+
+
 def test_build_prompt_injects_enums_and_context():
     p = pa.build_prompt({"name": "소프트 니트", "clothing_type": "top"})
     assert "basic daily minimal casual formal classic sporty trendy" in p

@@ -120,12 +120,17 @@ async def _call_gemini(settings: Settings, model: str, prompt: str,
     parts: list = [{"text": prompt}]
     for im in images:
         parts.append({"inline_data": {"mime_type": im.mime, "data": _b64(im.data)}})
+    gen: dict = {
+        "responseMimeType": "application/json",
+        "responseSchema": _to_gemini_schema(schema),
+    }
+    # 분류·추출 작업엔 low 로 충분 — 미지정 시 모델 기본(깊은 추론)이 수 초를 낭비한다
+    # (2026-07-07 속도 개선, 실측: gemini-3.5-flash v1beta 가 thinkingLevel 수용 확인).
+    if settings.analysis_thinking_level != "off":
+        gen["thinkingConfig"] = {"thinkingLevel": settings.analysis_thinking_level}
     body = {
         "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": _to_gemini_schema(schema),
-        },
+        "generationConfig": gen,
     }
     async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(

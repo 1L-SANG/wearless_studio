@@ -9,12 +9,19 @@ HARD RULES (a violation makes the output invalid):
 - NEVER estimate physical measurements (length, width, etc.). Do not output any
   measurement field. The seller enters those by hand.
 - If you are not confident about the material, leave materials empty. Do not guess fiber
-  content. Free-text values (material name, suggestedName, aiSuggestedPoints) are Korean.
-- aiSuggestedPoints: at most 2 short Korean keyword phrases (noun phrases, ~4-9 characters
-  each), grounded in what the photos show. NOT sentences or descriptive clauses — no verbs,
-  locations, or explanations, just the key feature as a compact phrase.
-  Good: "넉넉한 라운드 넥", "비침 없는 도톰함", "부드러운 촉감".
-  Bad (too long / sentence-like): "가슴 중앙의 심플한 브랜드 로고 프린팅".
+  content. (The server fills a category-typical default when empty, so empty is safe and
+  correct.) Free-text values (material name, suggestedName, aiSuggestedPoints) are Korean.
+- aiSuggestedPoints: at most 2 Korean keyword phrases in 개조식 — clipped noun phrases
+  ending in a noun (~4-9 characters), never sentences or polite endings (no "-요",
+  "-습니다", no verbs/locations/explanations).
+  Only features that make THIS garment stand out from others of the same category
+  (distinctive neckline/stitching/silhouette/pocket/hem/texture/print). The generic test:
+  if the phrase is equally true of most garments in this category, do NOT write it.
+  Never plain color or vague praise — color is captured by swatchSuggestions.
+  Good: "넉넉한 라운드 넥", "비침 없는 도톰함", "왼쪽 가슴 로고 자수".
+  Bad: "깔끔한 흰색", "심플한 디자인", "데일리 아이템",
+  "가슴 중앙의 심플한 브랜드 로고 프린팅" (sentence-like/too long).
+  Zero or one strong point beats two fillers; an empty list is a valid answer.
 - subCategory must match clothingType's group; for a dress, subCategory is null.
 - swatchSuggestions: one entry per visible color group, choosing the closest swatchId.
 - styleTags: 0-4 tokens from the StyleTag enum that best describe the styling direction.

@@ -45,6 +45,49 @@ SUBCATEGORY_BY_TYPE: dict[str, frozenset[str]] = {
     "dress": frozenset(),
 }
 
+# ── 카테고리 보편 소재 기본값 (사용자 결정 2026-07-07) ────────────────────────────
+# 모델은 라벨이 보이는 등 확신할 때만 소재를 내고, 아니면 비운다(프롬프트 규칙 유지 —
+# 환각 방지). 비어 오면 서버가 이 표의 "해당 카테고리에서 보편적으로 쓰이는 조성"으로
+# 채운다: 폼이 빈칸으로 시작하지 않고, 셀러는 확인·수정만 한다. M-02 세탁 프리셋과 같은
+# 정책 테이블 패턴 — 값 조정은 여기 한 곳 (근거는 국내 커머스 통상 조성, 정밀 통계 아님).
+DEFAULT_MATERIALS: dict[tuple[str, str | None], list[dict]] = {
+    ("top", "tshirt"): [{"name": "면", "ratio": 100}],
+    ("top", "sweatshirt"): [{"name": "면", "ratio": 80}, {"name": "폴리에스터", "ratio": 20}],
+    ("top", "shirt"): [{"name": "면", "ratio": 100}],
+    ("top", "knit"): [{"name": "아크릴", "ratio": 60}, {"name": "면", "ratio": 40}],
+    ("bottom", "cotton_pants"): [{"name": "면", "ratio": 98}, {"name": "스판덱스", "ratio": 2}],
+    ("bottom", "training_pants"): [{"name": "폴리에스터", "ratio": 65}, {"name": "면", "ratio": 35}],
+    ("bottom", "jeans"): [{"name": "면", "ratio": 98}, {"name": "스판덱스", "ratio": 2}],
+    ("bottom", "slacks"): [
+        {"name": "폴리에스터", "ratio": 70}, {"name": "레이온", "ratio": 25},
+        {"name": "스판덱스", "ratio": 5},
+    ],
+    ("bottom", "skirt"): [{"name": "폴리에스터", "ratio": 100}],
+    ("outer", "shirt"): [{"name": "면", "ratio": 100}],
+    ("outer", "jacket"): [{"name": "폴리에스터", "ratio": 100}],
+    ("outer", "cardigan"): [{"name": "아크릴", "ratio": 60}, {"name": "면", "ratio": 40}],
+    ("outer", "padding"): [{"name": "폴리에스터", "ratio": 100}],
+    ("outer", "coat"): [{"name": "폴리에스터", "ratio": 60}, {"name": "울", "ratio": 40}],
+}
+# subCategory 미상(null)일 때의 종류별 폴백
+_DEFAULT_MATERIALS_BY_TYPE: dict[str, list[dict]] = {
+    "top": [{"name": "면", "ratio": 100}],
+    "bottom": [
+        {"name": "폴리에스터", "ratio": 70}, {"name": "레이온", "ratio": 25},
+        {"name": "스판덱스", "ratio": 5},
+    ],
+    "outer": [{"name": "폴리에스터", "ratio": 100}],
+    "dress": [{"name": "폴리에스터", "ratio": 100}],
+}
+
+
+def default_materials(clothing_type: str | None, sub_category: str | None) -> list[dict]:
+    """(종류, 세부) 보편 소재의 복사본. 종류 미상이면 빈 배열(지어내지 않음)."""
+    hit = DEFAULT_MATERIALS.get((clothing_type, sub_category)) if clothing_type else None
+    if hit is None:
+        hit = _DEFAULT_MATERIALS_BY_TYPE.get(clothing_type or "", [])
+    return [dict(m) for m in hit]
+
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "product_analyst_v1.txt")
 
@@ -204,15 +247,18 @@ def distribute(validated: dict) -> dict:
 
     - product: clothingType (Product 단일 소유 — 계약 §3.1)
     - analysis: subCategory·targetGenders·fit·materials·aiSuggestedPoints·suggestedName (계약 §3.2)
+      · materials 가 비면 카테고리 보편 소재로 채운다 (사용자 결정 2026-07-07 — DEFAULT_MATERIALS)
     - intermediate: swatchSuggestions·styleTags (저장 안 하는 중간 산출물 — M-01 입력·스와치 추천)
     """
+    materials = validated.get("materials") or default_materials(
+        validated.get("clothingType"), validated.get("subCategory"))
     return {
         "product": {"clothingType": validated.get("clothingType")},
         "analysis": {
             "subCategory": validated.get("subCategory"),
             "targetGenders": validated.get("targetGenders", []),
             "fit": validated.get("fit"),
-            "materials": validated.get("materials", []),
+            "materials": materials,
             "aiSuggestedPoints": validated.get("aiSuggestedPoints", []),
             "suggestedName": validated.get("suggestedName"),
         },

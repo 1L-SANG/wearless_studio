@@ -7,6 +7,9 @@
 
 import asyncio
 import logging
+from io import BytesIO
+
+from PIL import Image
 
 from .. import repo
 from ..agents import mannequin, product_analyst
@@ -15,6 +18,32 @@ from ..agents.vision_llm import VisionError
 from ._common import emit_job_event as _emit  # 공용 헬퍼(mannequin_job과 공유). 테스트가 이 이름을 monkeypatch
 
 log = logging.getLogger("wearless.analyze_job")
+
+# 분석 비전 입력 축소 (2026-07-07 속도 개선) — 판정(종류·핏·색·특징)엔 원본 해상도가
+# 불필요한데 셀러 원본은 수 MB라 base64 전송·인코딩이 지연의 큰 몫을 차지한다.
+# 마네킹/컷 '생성' 입력은 디테일 재현이 필요해 축소하지 않는다(이 함수는 분석 전용).
+_VISION_MAX_DIM = 1024
+_VISION_SKIP_BYTES = 400_000  # 이보다 작으면 그대로 (재인코딩 이득 없음)
+
+
+def shrink_for_vision(data: bytes, mime: str) -> tuple[bytes, str]:
+    """최장변 1024px JPEG(q82)로 축소. 작거나 실패하면 원본 그대로 (안전 폴백)."""
+    if len(data) <= _VISION_SKIP_BYTES:
+        return data, mime
+    try:
+        im = Image.open(BytesIO(data))
+        if max(im.size) > _VISION_MAX_DIM:
+            im.thumbnail((_VISION_MAX_DIM, _VISION_MAX_DIM))
+        if im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")
+        buf = BytesIO()
+        im.save(buf, format="JPEG", quality=82)
+        out = buf.getvalue()
+        if len(out) < len(data):
+            return out, "image/jpeg"
+        return data, mime
+    except Exception:  # 손상 파일 등 — 축소 실패가 분석을 막지 않게
+        return data, mime
 
 
 async def run_analyze_job(app, job: dict) -> None:
@@ -49,12 +78,16 @@ async def run_analyze_job(app, job: dict) -> None:
                         {"error": "no_product_images"})
             return
 
-        # 2) 바이트 다운로드 (to_thread) → InlineImage
-        images = [
-            InlineImage(a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"]))
-            for a in assets
-        ]
-        await _emit(pool, job_id, "progress", {"progress": 30, "phase": "inputs_loaded"})
+        # 2) 바이트 다운로드 → 분석용 축소 (둘 다 to_thread — 이벤트 루프 비차단)
+        images, bytes_in, bytes_out = [], 0, 0
+        for a in assets:
+            raw = await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"])
+            data, mime = await asyncio.to_thread(shrink_for_vision, raw, a["mime_type"])
+            bytes_in += len(raw)
+            bytes_out += len(data)
+            images.append(InlineImage(mime, data))
+        await _emit(pool, job_id, "progress", {"progress": 30, "phase": "inputs_loaded",
+                                               "bytesIn": bytes_in, "bytesOut": bytes_out})
 
         # 3) 분석 (프롬프트→vision_llm 폴백→검증→분배)
         try:

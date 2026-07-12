@@ -35,6 +35,13 @@ class JobDispatcher:
         self.app = app
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
+        self._wake = asyncio.Event()
+
+    def wake(self):
+        """job 생성 직후 라우트가 호출 — 유휴 폴링 대기(최대 poll_interval초)를 건너뛰고
+        즉시 claim 하게 한다 (2026-07-07 속도 개선: 분석 시작 전 0~3초 공회전 제거).
+        같은 이벤트 루프(웹 프로세스 lifespan) 안이라 스레드 안전 문제 없음."""
+        self._wake.set()
 
     async def start(self):
         self._stop.clear()
@@ -62,7 +69,14 @@ class JobDispatcher:
                     job = await repo.claim_next_job(conn, _KINDS, s.job_worker_id)
                     await conn.commit()
                 if job is None:
-                    await asyncio.sleep(s.job_poll_interval_seconds)
+                    # 고정 sleep 대신 wake 이벤트 대기(상한 = poll_interval) — 라우트가
+                    # wake()를 쏘면 즉시 다음 claim, 아니면 기존 주기 폴링과 동일.
+                    try:
+                        await asyncio.wait_for(
+                            self._wake.wait(), timeout=s.job_poll_interval_seconds)
+                    except asyncio.TimeoutError:
+                        pass
+                    self._wake.clear()
                     continue
                 worker = _WORKERS.get(job["kind"])
                 if worker is None:  # _KINDS 로 claim 을 걸러도 방어(설정 오류 대비)

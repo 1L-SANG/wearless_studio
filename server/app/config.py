@@ -22,6 +22,8 @@ class Settings:
     # FaceMarket 얼굴 라이선스 = 생체 PII → 공개 도메인 미연결 전용 비공개 버킷.
     # 미설정이면 메인 버킷 폴백(개발). 게이트 라우트가 바이트 스트림 → public_url 미사용.
     r2_face_bucket: str | None = None
+    # 생성예시 레지스트리의 상대 URL 기준. prod 상대경로는 명시 필수, dev만 dummy 기본값 허용.
+    example_asset_base_url: str | None = None
     # ---- AI 에이전트 (Phase 4) ----
     # 마지막 블록 + 기본값 — 직접 생성(테스트)·미래 필드 추가에도 안 깨지게.
     # load_settings()는 아래 기본값을 env 값으로 항상 덮어쓴다.
@@ -38,6 +40,9 @@ class Settings:
     analysis_model_order: str = "gemini,gpt"  # 폴백 순서(기본=Gemini-first, 2026-07-02 결정). 'gpt,gemini' 등
     analysis_spike: str = "off"  # off | on — 동기 관측 하니스(임시). production 은 job
     analysis_timeout_seconds: float = 60.0  # provider 1콜 상한(폴백 트리거)
+    # Gemini thinking 수준 — 분석은 분류·추출 작업이라 low로 충분(미지정 시 모델 기본이
+    # 깊은 추론을 돌려 수 초 낭비). off=미전송(모델 기본). 2026-07-07 속도 개선.
+    analysis_thinking_level: str = "low"  # low | medium | high | off
     mannequin_tier: str = "image_high"  # AG-04 = Gemini 3 Pro (사용자 결정 — Flash 미사용)
     mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
@@ -125,6 +130,7 @@ def load_settings() -> Settings:
         r2_endpoint=(os.getenv("R2_ENDPOINT") or "").rstrip("/") or None,
         r2_public_base=(os.getenv("R2_PUBLIC_BASE") or "").rstrip("/") or None,
         r2_face_bucket=os.getenv("R2_FACE_BUCKET") or None,
+        example_asset_base_url=(os.getenv("EXAMPLE_ASSET_BASE_URL") or "").rstrip("/") or None,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         vertex_project=os.getenv("VERTEX_PROJECT") or None,
         vertex_location=os.getenv("VERTEX_LOCATION", "global"),
@@ -136,6 +142,8 @@ def load_settings() -> Settings:
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),
         analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
         analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "60")),
+        analysis_thinking_level=_flag(
+            "ANALYSIS_THINKING_LEVEL", "low", {"low", "medium", "high", "off"}),
         mannequin_tier=_mannequin_tier(),
         mannequin_image_size=_image_size(),
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
