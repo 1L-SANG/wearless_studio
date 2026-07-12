@@ -124,6 +124,9 @@ OPENAI_API_KEY=   # 예비 — text tier를 OpenAI 계열로 재배정할 때만
 
 > **구현 구조 (2026-06-20 결정 → 2026-07 개정)**: 프롬프트는 **단일 섹션 템플릿** `server/prompts/cut_generate_v1.txt`(`[[CUT:styling|horizon|product|mirror]]` 섹션)로 통합 — 구 `prompts/cuts/*` 컷별 파일은 삭제됐다. 컷별 계약 정규화·옵션 검증은 `server/app/agents/cut_generator.py`가 담당. 입출력 계약·R2 입출력·재시도·로깅 등 **배관은 공통 1벌**(컷마다 복붙 금지). tier(모델)는 전 컷 `image_high` 공유 — **컷별 모델 분리는 보류**(저난도 컷에 `image_light`를 쓸 근거가 생기면 그때 §1 테이블에서 분기). `styling` = 일상/룩북 컷(별도 '일상' cutType 신설 안 함 — 라벨만). 무드/공간 예시 뉘앙스(EXNUANCE)는 정면 계열(front·mirror)에만 적용, 측면/후면은 무드만(밴드 규칙).
 > **다양성은 AG-06의 책임이 아니다**: AG-06은 주어진 1개 spec(direction/shot/pose/angle)을 충실히 렌더할 뿐, 같은 cutType 컷들 간 변주는 **콘티(shot-list) 구성 단계**가 정한다 — §5 '컷 다양성' 참조.
+> **가상모델 아이덴티티 레퍼런스 계약 (2026-07-10 확정 — 스파이크 회신)**: 사람컷(styling·horizon·mirror)에서 `modelId`가 지정되면 해당 가상모델의 **face_front 원본 베이스컷 1장만** 첨부한다 — shot 무관(upper/full 동일 규칙), product 컷은 첨부 없음. **시트(멀티뷰 팩)는 기본값이 아니다.** 근거 = 아이덴티티 A/B 스파이크 3모델(w1·m1·m2, m2는 포즈·의류 통제 v2 재실험): ① 정면 1장으로 얼굴 골격 일치 실패 0 ② 시트를 더 주면 오히려 **고유 마커(주근깨·피부질감) 희석** — 시트 크롭은 2차 생성물이라 팩 생성 시점의 열화가 앵커로 전파됨 ③ 레퍼런스 장수가 늘면 의류 렌더에도 노이즈(로고 색 글리치 빈도 증가). 따라서 **앵커는 항상 원본 베이스컷** — 생성물을 아이덴티티 앵커로 재주입하지 않는다(세대 열화 전파 금지).
+> - **첨부 순서·매니페스트**: `images = [mannequin?, model?, *prod(slot순), match?, *mood]` — MODEL은 마네킹 다음. 고정 라벨(셀러 데이터 미포함) `MODEL — the virtual model's face and body identity (use ONLY for identity; do NOT copy this image's pose, framing, or clothing)`. 이 '포즈·프레이밍·의류 복사 금지' 문구는 v2 실험에서 시트 템플릿 통째 복사 교란을 실제로 차단한 검증 문구 — 라벨에서 빼지 말 것.
+> - **조건부 폴백(P1, QC 게이트 전제)**: 어려운 아이덴티티(긴머리 등)의 full 컷이 QC(AG-P2/ArcFace 유사도) 실패 시에만 시트의 `body_front` 1장을 추가해 재시도(저비용 보험 — w1 전신 실패 1건 구제가 유일한 시트 이득 사례). 시트 5장(face_front/three_quarter/profile/body_front/body_back)은 모델 자산으로 R2에 보관하되 기본 경로에선 쓰지 않는다.
 
 ### AG-07 cut-variator — 현재 컷 변형
 

@@ -73,7 +73,7 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
 
 ```
 info     상품·분석·콘티 데이터 수집/검증 (비AI)
-prep     블록별 프롬프트·에셋 준비, selectedMannequinId 컷 로드 (비AI)
+prep     블록별 프롬프트·에셋 준비, selectedMannequinId 컷 + 가상모델 face_front 앵커 로드 (비AI, 모델 레퍼런스 계약은 ai_agent_modules §3 AG-06)
 styling  ┐
 horizon  │ AG-06 cut-generator — source='ai' 블록별 1콜.
 product  │ cutType별 그룹으로 진행률 보고, 그룹 내 병렬(동시성 상한 서버 설정).
