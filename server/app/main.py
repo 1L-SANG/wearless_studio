@@ -200,8 +200,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 기존 셀러 플로우/배포 무영향. verify·settle 훅이 OpenDID env 없는 프로드를 파손하지 않게.
     if settings.facemarket_enabled:
         from .facemarket import router as facemarket_router
+        from .facemarket_chain import FaceMarketChain
 
         app.include_router(facemarket_router)
+        # 온체인 정산 recorder(선택과제2). 체인 env 미설정이면 None → 정산 훅 no-op.
+        app.state.fm_chain = FaceMarketChain.from_settings(settings)
+    else:
+        app.state.fm_chain = None
 
     return app
 

@@ -466,3 +466,217 @@ async def get_license_face(
         raise _err("not_found", "찾을 수 없습니다.", status=404)
     # 비공개 — 캐시·색인 금지
     return Response(content=data, media_type=mime, headers={"Cache-Control": "no-store, private"})
+
+
+# ============================================================================
+# 온체인 정산 (선택과제2 — OmniOne Chain record-only). 훅=record_license_settlement.
+# canonical 산식=컨트랙트, DB는 반환값 미러(이중장부). 체인 미설정이면 조용히 no-op.
+# ============================================================================
+
+_SETTLEMENT_COLS = (
+    "id::text, payment_id, license_id::text, job_id::text, model_ref, "
+    "total_amount, model_amount, platform_amount, ops_amount, "
+    "chain_status, tx_hash, chain_id, recorded_block, created_at"
+)
+
+
+class SettlementCard(CamelModel):
+    """정산 미러 레코드 — 영수증 UI/이중장부. canonical 값은 컨트랙트에서 온다."""
+
+    id: str
+    payment_id: str
+    license_id: str | None = None
+    job_id: str | None = None
+    model_ref: str
+    total_amount: int
+    model_amount: int
+    platform_amount: int
+    ops_amount: int
+    chain_status: str
+    tx_hash: str | None = None
+    chain_id: str | None = None
+    recorded_block: int | None = None
+    created_at: datetime
+
+
+class SimulateRequest(CamelModel):
+    """데모/부하 정산(장면④, KPI '시뮬' 집계). 실 상세페이지 잡 없이 라이선스 1건 정산."""
+
+    license_id: str
+
+
+async def record_license_settlement(
+    app,
+    *,
+    payment_key: str,
+    license_id: str,
+    model_id: str,
+    total: int,
+    job_id: str | None = None,
+    credit_ledger_id: str | None = None,
+) -> dict | None:
+    """라이선스 사용 1건을 온체인 기록 + fm_settlements 미러. best-effort(생성 흐름 비파손).
+
+    payment_key = 결정적(멱등) 문자열. 컨트랙트 중복 revert + DB payment_id UNIQUE 가 쌍.
+    체인 미설정(app.state.fm_chain None)이면 None 반환(no-op). 온체인 성공 시에만 미러 기록.
+    """
+    chain = getattr(app.state, "fm_chain", None)
+    if chain is None:
+        logger.info("settlement_skipped_no_chain", extra={"payment_key": payment_key})
+        return None
+
+    pool = app.state.pool
+    # DB 선확인 — 이미 미러된 payment 면 재기록 없이 반환(재시도 멱등).
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"select {_SETTLEMENT_COLS} from fm_settlements where payment_id = %s",
+                (payment_key,),
+            )
+            existing = await cur.fetchone()
+    if existing:
+        return existing
+
+    try:
+        result = await asyncio.to_thread(
+            chain.record_settlement, payment_key=payment_key, model_uuid=model_id, total=int(total)
+        )
+    except Exception:
+        # 중복 paymentId revert 등 — 이미 온체인에 있는지 getSettlement 로 대조 후 미러 복구.
+        try:
+            stored = await asyncio.to_thread(chain.get_settlement, payment_key)
+        except Exception:
+            logger.exception("settlement_record_failed", extra={"payment_key": payment_key})
+            return None
+        if not stored.get("exists"):
+            logger.exception("settlement_record_failed", extra={"payment_key": payment_key})
+            return None
+        result = {
+            "tx_hash": None, "block": stored["block"], "chain_id": chain.chain_id,
+            "model_ref": stored["model_ref"], "model_amount": stored["model_amount"],
+            "platform_amount": stored["platform_amount"], "ops_amount": stored["ops_amount"],
+            "total": stored["total"],
+        }
+
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""insert into fm_settlements
+                    (payment_id, job_id, license_id, credit_ledger_id, model_ref,
+                     total_amount, model_amount, platform_amount, ops_amount,
+                     chain_status, tx_hash, chain_id, recorded_block)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'confirmed', %s, %s, %s)
+                    on conflict (payment_id) do nothing
+                    returning {_SETTLEMENT_COLS}""",
+                (
+                    payment_key, job_id, license_id, credit_ledger_id, result["model_ref"],
+                    int(result["total"]), result["model_amount"], result["platform_amount"],
+                    result["ops_amount"], result["tx_hash"], str(result["chain_id"]),
+                    result["block"],
+                ),
+            )
+            row = await cur.fetchone()
+        await conn.commit()
+    logger.info(
+        "settlement_recorded",
+        extra={"payment_key": payment_key, "tx_hash": result["tx_hash"], "total": total},
+    )
+    return row
+
+
+@router.get(
+    "/settlements",
+    response_model=list[SettlementCard],
+    responses={401: {"model": ErrorResponse, "description": "인증 실패"}},
+    tags=["FaceMarket"],
+    summary="내 정산 내역 (온체인 미러)",
+)
+async def list_settlements(request: Request, user_id: str = Depends(require_user)):
+    """본인 소유 모델의 라이선스 정산 내역. 이중장부의 DB측(canonical=컨트랙트)."""
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""select {_SETTLEMENT_COLS} from fm_settlements st
+                    join fm_licenses l on l.id = st.license_id
+                    join fm_models m on m.id = l.model_id
+                    where m.user_id = %s
+                    order by st.created_at desc limit 200""",
+                (user_id,),
+            )
+            return await cur.fetchall()
+
+
+@router.get(
+    "/settlements/{payment_id}/confirm",
+    responses={
+        401: {"model": ErrorResponse, "description": "인증 실패"},
+        404: {"model": ErrorResponse, "description": "온체인 미기록/체인 미설정"},
+    },
+    tags=["FaceMarket"],
+    summary="정산 온체인 확인 (eth_call 프록시)",
+)
+async def confirm_settlement(
+    request: Request, payment_id: str, user_id: str = Depends(require_user)
+):
+    """getSettlement eth_call 백엔드 프록시(콘솔 키·RPC 브라우저 비노출). 영수증 confirmed 표시용."""
+    chain = getattr(request.app.state, "fm_chain", None)
+    if chain is None:
+        raise _err("chain_unavailable", "체인이 설정되지 않았습니다.", status=404)
+    stored = await asyncio.to_thread(chain.get_settlement, payment_id)
+    if not stored.get("exists"):
+        raise _err("not_found", "온체인 기록을 찾을 수 없습니다.", status=404)
+    # 나머지 FM API 와 동일하게 camelCase 로 — 영수증 UI 가 그대로 소비.
+    return {
+        "exists": stored["exists"], "modelRef": stored["model_ref"], "total": stored["total"],
+        "modelAmount": stored["model_amount"], "platformAmount": stored["platform_amount"],
+        "opsAmount": stored["ops_amount"], "block": stored["block"],
+    }
+
+
+@router.post(
+    "/settlements/simulate",
+    response_model=SettlementCard,
+    status_code=201,
+    responses={
+        **_FM_RESPONSES,
+        404: {"model": ErrorResponse, "description": "라이선스 없음/비소유/체인 미설정"},
+    },
+    tags=["FaceMarket"],
+    summary="정산 시뮬레이션 (데모/부하 — 실 TX)",
+)
+async def simulate_settlement(
+    request: Request, body: SimulateRequest, user_id: str = Depends(require_user)
+):
+    """라이선스 1건 사용을 온체인에 실제 기록(장면④·KPI '시뮬' 집계용). 실 상세페이지 잡과 분리.
+
+    소유 라이선스만·active 만. payment_id 는 매 호출 고유(실 TX 다건 생성). 실거래(워커 훅)와
+    구분되는 '정산 검증용' 경로 — 제안서 KPI 는 실/시뮬 분리 집계.
+    """
+    chain = getattr(request.app.state, "fm_chain", None)
+    if chain is None:
+        raise _err("chain_unavailable", "체인이 설정되지 않았습니다.", status=404)
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select l.id::text as id, l.model_id::text as model_id, l.unit_price, l.status
+                   from fm_licenses l join fm_models m on m.id = l.model_id
+                   where l.id = %s and m.user_id = %s""",
+                (body.license_id, user_id),
+            )
+            lic = await cur.fetchone()
+    if not lic:
+        raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+    if lic["status"] != "active":
+        raise _err("license_inactive", "활성 라이선스만 정산할 수 있습니다.", status=400)
+
+    payment_key = f"sim:{body.license_id}:{uuid.uuid4().hex}"
+    row = await record_license_settlement(
+        request.app,
+        payment_key=payment_key,
+        license_id=lic["id"],
+        model_id=lic["model_id"],
+        total=int(lic["unit_price"]),
+    )
+    if row is None:
+        raise _err("settlement_failed", "온체인 정산 기록에 실패했습니다.", status=502)
+    return row

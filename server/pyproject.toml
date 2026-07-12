@@ -13,6 +13,7 @@ dependencies = [
     "httpx>=0.28",
     "pillow>=10",
     "python-multipart>=0.0.9",
+    "web3>=7.16.0",
 ]
 
 [dependency-groups]

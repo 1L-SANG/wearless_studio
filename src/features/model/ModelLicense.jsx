@@ -10,8 +10,9 @@ import { Button, Chips, Field, Icon, useToast } from '@/components/ui.jsx';
 import { createLicense, fetchLicenseFaceUrl, listLicenses } from '@/lib/api/facemarket.js';
 import s from './ModelLicense.module.css';
 
-const ALLOWED_PRESETS = ['상세페이지', '광고 배너', 'SNS 홍보', '썸네일'];
-const FORBIDDEN_PRESETS = ['성인물', '정치·종교', '2차 배포', '합성·딥페이크'];
+// 브랜드 유형(카테고리) 기준 — 모델이 자기 얼굴이 쓰일 브랜드 종류를 허용/금지로 통제.
+const ALLOWED_PRESETS = ['일반 여성 의류', '남성 의류', '캐주얼·스트릿', '스포츠·애슬레저', '뷰티·화장품', '액세서리·잡화'];
+const FORBIDDEN_PRESETS = ['속옷·란제리', '수영복·비키니', '성인용품', '주류·담배', '의료·성형', '정치·종교'];
 const VALIDITY = [
   { value: 90, label: '90일' },
   { value: 365, label: '1년' },
@@ -149,10 +150,10 @@ export function ModelLicense() {
         </button>
         <input ref={fileInput} type="file" accept="image/*" hidden onChange={onPick} />
 
-        <div className={s.sectionLabel}>허용 용도</div>
+        <div className={s.sectionLabel}>허용 브랜드 유형</div>
         <Chips options={ALLOWED_PRESETS} value={allowed} onChange={setAllowed} multi />
 
-        <div className={s.sectionLabel}>금지 용도</div>
+        <div className={s.sectionLabel}>금지 브랜드 유형</div>
         <Chips options={FORBIDDEN_PRESETS} value={forbidden} onChange={setForbidden} multi />
 
         <div className={s.row2}>

@@ -73,6 +73,13 @@ class Settings:
     fm_ci_pepper: str | None = None  # HMAC-SHA256(CI, pepper) dedup용 secret. 없으면 verify 503
     # CX 표준인증창 ENT_MID trans 검증 엔드포인트(서버발). FM-03 실측: index.html 경로.
     cx_trans_base_url: str = "https://cx.raonsecure.co.kr:18543"
+    # ---- FaceMarket Chain (선택과제2, OmniOne Chain Free-Gas BESU) — record-only 정산 ----
+    # 넷 다 있어야 온체인 recorder 활성(app.state.fm_chain). 하나라도 없으면 disabled(정산 no-op).
+    # private_key = 컨트랙트 owner(배포자) 키 = recordSettlement 서명 주체. secret 등급, env only.
+    fm_chain_rpc_url: str | None = None
+    fm_chain_id: int | None = None  # 없으면 eth_chainId 로 조회
+    fm_settlement_address: str | None = None  # 배포된 FaceMarketSettlement 주소(0x…)
+    fm_chain_private_key: str | None = None  # owner 개인키(0x…). 절대 커밋 금지
 
 
 def _image_size() -> str:
@@ -159,4 +166,8 @@ def load_settings() -> Settings:
         cx_trans_base_url=(
             os.getenv("CX_TRANS_BASE_URL") or "https://cx.raonsecure.co.kr:18543"
         ).rstrip("/"),
+        fm_chain_rpc_url=(os.getenv("FM_CHAIN_RPC_URL") or "").rstrip("/") or None,
+        fm_chain_id=(int(os.getenv("FM_CHAIN_ID")) if os.getenv("FM_CHAIN_ID") else None),
+        fm_settlement_address=os.getenv("FM_SETTLEMENT_ADDRESS") or None,
+        fm_chain_private_key=os.getenv("FM_CHAIN_PRIVATE_KEY") or None,
     )
