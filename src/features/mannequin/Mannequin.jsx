@@ -134,14 +134,15 @@ function requestMannequinGeneration(pid) {
 }
 
 function MannequinLoading({ progress }) {
-  // 서버 progress 는 체크포인트(5→15→35→85→100)로 띄엄띄엄 온다. 그 사이를 완만히 채워
-  // 바가 멈춘 것처럼 보이지 않게 한다(서버값이 바닥, 다음 체크포인트 직전까지만 크리프).
+  // 서버 progress 는 체크포인트(5→15→35→60→85→100)로 띄엄띄엄 온다. 그 사이를 완만히 채워
+  // 바가 멈춘 것처럼 보이지 않게 한다(서버값이 바닥). 상한을 서버값 추종식(+12)으로 둬야
+  // 35→60 처럼 중간 체크포인트가 늘어도 크리프가 상한에 갇히지 않고 실제 진행을 따라간다.
   const [shown, setShown] = useState(progress);
   useEffect(() => {
     setShown((s) => Math.max(s, progress));
     const id = setInterval(() => {
       setShown((s) => {
-        const ceil = progress >= 85 ? 99 : progress >= 35 ? 82 : progress >= 15 ? 33 : 13;
+        const ceil = progress >= 85 ? 99 : Math.min(84, progress + 12);
         return s < ceil ? Math.min(ceil, s + 1) : s;
       });
     }, 700);

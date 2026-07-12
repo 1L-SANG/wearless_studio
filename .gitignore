@@ -47,3 +47,14 @@ reference/genexamples/grids_index.html
 
 # local HTML mockups (embed gitignored mall images)
 mockups/
+
+.omc
+.omx
+pnpm-workspace.yaml
+claude.md
+agents.md
+# 로컬 dev 런타임(로그·pid)
+.dev/
+
+# solc 컴파일 아티팩트(재생성 가능)
+build/

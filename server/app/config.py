@@ -19,6 +19,9 @@ class Settings:
     r2_bucket: str | None
     r2_endpoint: str | None
     r2_public_base: str | None  # images.wearless.kr 등 공개 서빙 도메인 (없으면 signed GET)
+    # FaceMarket 얼굴 라이선스 = 생체 PII → 공개 도메인 미연결 전용 비공개 버킷.
+    # 미설정이면 메인 버킷 폴백(개발). 게이트 라우트가 바이트 스트림 → public_url 미사용.
+    r2_face_bucket: str | None = None
     # ---- AI 에이전트 (Phase 4) ----
     # 마지막 블록 + 기본값 — 직접 생성(테스트)·미래 필드 추가에도 안 깨지게.
     # load_settings()는 아래 기본값을 env 값으로 항상 덮어쓴다.
@@ -64,6 +67,19 @@ class Settings:
     retrieval_knowledge: str = "off"  # off | static (정적 지식 블록)
     seller_text_canonicalize: str = "off"  # off | shadow | enforce (FR-D1 안전 게이트)
     input_qc: str = "off"  # off | shadow | enforce — 업로드 입력 QC (FR-D4, decode·해상도)
+    # ---- FaceMarket (해커톤, 검증 실명 모델 마켓) — 기본 off 로 프로드 보호(FACEMARKET_ENABLED) ----
+    # off면 라우터 자체가 미등록 → 기존 셀러 플로우 무영향(main.py 조건부 include).
+    facemarket_enabled: bool = False
+    fm_ci_pepper: str | None = None  # HMAC-SHA256(CI, pepper) dedup용 secret. 없으면 verify 503
+    # CX 표준인증창 ENT_MID trans 검증 엔드포인트(서버발). FM-03 실측: index.html 경로.
+    cx_trans_base_url: str = "https://cx.raonsecure.co.kr:18543"
+    # ---- FaceMarket Chain (선택과제2, OmniOne Chain Free-Gas BESU) — record-only 정산 ----
+    # 넷 다 있어야 온체인 recorder 활성(app.state.fm_chain). 하나라도 없으면 disabled(정산 no-op).
+    # private_key = 컨트랙트 owner(배포자) 키 = recordSettlement 서명 주체. secret 등급, env only.
+    fm_chain_rpc_url: str | None = None
+    fm_chain_id: int | None = None  # 없으면 eth_chainId 로 조회
+    fm_settlement_address: str | None = None  # 배포된 FaceMarketSettlement 주소(0x…)
+    fm_chain_private_key: str | None = None  # owner 개인키(0x…). 절대 커밋 금지
 
 
 def _image_size() -> str:
@@ -108,6 +124,7 @@ def load_settings() -> Settings:
         r2_bucket=os.getenv("R2_BUCKET") or None,
         r2_endpoint=(os.getenv("R2_ENDPOINT") or "").rstrip("/") or None,
         r2_public_base=(os.getenv("R2_PUBLIC_BASE") or "").rstrip("/") or None,
+        r2_face_bucket=os.getenv("R2_FACE_BUCKET") or None,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         vertex_project=os.getenv("VERTEX_PROJECT") or None,
         vertex_location=os.getenv("VERTEX_LOCATION", "global"),
@@ -144,4 +161,13 @@ def load_settings() -> Settings:
         ),
         input_qc=_flag("INPUT_QC", "off", {"off", "shadow", "enforce"}),
         image_qc=_flag("IMAGE_QC", "off", {"off", "shadow", "enforce"}),
+        facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
+        fm_ci_pepper=os.getenv("FM_CI_PEPPER") or None,
+        cx_trans_base_url=(
+            os.getenv("CX_TRANS_BASE_URL") or "https://cx.raonsecure.co.kr:18543"
+        ).rstrip("/"),
+        fm_chain_rpc_url=(os.getenv("FM_CHAIN_RPC_URL") or "").rstrip("/") or None,
+        fm_chain_id=(int(os.getenv("FM_CHAIN_ID")) if os.getenv("FM_CHAIN_ID") else None),
+        fm_settlement_address=os.getenv("FM_SETTLEMENT_ADDRESS") or None,
+        fm_chain_private_key=os.getenv("FM_CHAIN_PRIVATE_KEY") or None,
     )

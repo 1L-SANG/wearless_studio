@@ -119,6 +119,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.r2_endpoint or settings.r2_account_id,
     ))
     app.state.r2 = R2Client(settings) if _r2_ready else None
+    # FaceMarket 얼굴 = 생체 PII → 공개 도메인 미연결 비공개 버킷 필수.
+    if _r2_ready and settings.r2_face_bucket:
+        app.state.r2_face = R2Client(settings, bucket=settings.r2_face_bucket, public_base=None)
+    elif _r2_ready and settings.facemarket_enabled and settings.app_env != "dev":
+        # 메인 R2(공개 도메인)가 붙은 프로드에서 전용 버킷 없이 켜지면 얼굴이 공개-도메인
+        # 메인 버킷으로 새므로 기동 실패(fail-fast). (R2 미설정이면 누출 대상 자체가 없음 → 아래 None.)
+        raise RuntimeError(
+            "R2_FACE_BUCKET is required when FACEMARKET_ENABLED in non-dev "
+            "(biometric face must use a private bucket, never the public-served main bucket)."
+        )
+    else:
+        # dev 전용 폴백 — 우리 코드가 얼굴에 public_url 을 만들지 않도록 public_base 차단.
+        # (로컬 R2 는 공개 도메인이 없으니 물리적 노출도 없음. r2 미설정이면 None → 라우트 503.)
+        app.state.r2_face = R2Client(settings, public_base=None) if _r2_ready else None
     app.state.gemini = (
         GeminiImageClient(settings) if settings.gemini_api_key else None
     )
@@ -181,6 +195,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"userId": user_id}
 
     app.include_router(v1_router)
+
+    # FaceMarket(해커톤) — 플래그 on일 때만 등록. off(프로드 기본)면 라우트 미존재 →
+    # 기존 셀러 플로우/배포 무영향. verify·settle 훅이 OpenDID env 없는 프로드를 파손하지 않게.
+    if settings.facemarket_enabled:
+        from .facemarket import router as facemarket_router
+        from .facemarket_chain import FaceMarketChain
+
+        app.include_router(facemarket_router)
+        # 온체인 정산 recorder(선택과제2). 체인 env 미설정이면 None → 정산 훅 no-op.
+        app.state.fm_chain = FaceMarketChain.from_settings(settings)
+    else:
+        app.state.fm_chain = None
 
     return app
 

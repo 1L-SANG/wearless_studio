@@ -1,4 +1,6 @@
 import time
+import contextlib
+import types
 
 import jwt
 import pytest
@@ -9,6 +11,68 @@ from app.config import Settings
 from app.main import create_app
 
 AUDIENCE = "authenticated"
+
+
+def auth_headers(make_token):
+    return {"Authorization": f"Bearer {make_token()}"}
+
+
+class FakeConn:
+    async def commit(self):
+        return None
+
+
+def patch_route_db(monkeypatch, routes_module):
+    @contextlib.asynccontextmanager
+    async def fake_conn(_request):
+        yield FakeConn()
+
+    monkeypatch.setattr(routes_module, "get_conn", fake_conn)
+
+
+class FakePool:
+    def connection(self):
+        @contextlib.asynccontextmanager
+        async def _cm():
+            yield FakeConn()
+
+        return _cm()
+
+
+class FakeR2:
+    def get_bytes(self, key):
+        return b"\x89PNG-bytes"
+
+    def put_bytes(self, key, data, mime):
+        return None
+
+    def delete(self, key):
+        return None
+
+
+class FakeGemini:
+    pass
+
+
+def fake_worker_app(settings, *, r2=None, gemini=None):
+    state = types.SimpleNamespace(
+        settings=settings,
+        pool=FakePool(),
+        r2=r2 or FakeR2(),
+        gemini=gemini or FakeGemini(),
+    )
+    return types.SimpleNamespace(state=state)
+
+
+def worker_job(payload=None, *, credits_reserved=1):
+    return {
+        "id": "j1",
+        "user_id": "u1",
+        "project_id": "p1",
+        "lease_token": "u1:tok",
+        "credits_reserved": credits_reserved,
+        "payload": payload or {},
+    }
 
 
 @pytest.fixture(scope="session")

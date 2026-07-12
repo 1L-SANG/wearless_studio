@@ -253,5 +253,30 @@ async def run_detail_page_job(app, job: dict) -> None:
                     await asyncio.to_thread(app.state.r2.delete, c["key"])
                 except Exception:
                     log.warning("orphan R2 cleanup failed: %s", c["key"])
+        else:
+            # FaceMarket 온체인 정산 훅(선택과제2). 이 잡이 얼굴 라이선스를 소비했으면
+            # 성공 종결 지점에서 70/20/10 을 온체인 기록. FM-30(verify-before-use)이
+            # project 에 facemarket_license_id 를 실으면 활성 — 그전엔 lic_id None → no-op.
+            # best-effort: 정산 실패가 이미 완료된 상세페이지 생성을 되돌리지 않는다.
+            if s.facemarket_enabled and getattr(app.state, "fm_chain", None) is not None:
+                lic_id = project.get("facemarket_license_id") or project.get("facemarketLicenseId")
+                if lic_id:
+                    try:
+                        async with pool.connection() as conn:
+                            async with conn.cursor() as cur:
+                                await cur.execute(
+                                    "select model_id::text as model_id, unit_price "
+                                    "from fm_licenses where id = %s and status = 'active'",
+                                    (lic_id,),
+                                )
+                                lic = await cur.fetchone()
+                        if lic:
+                            from ..facemarket import record_license_settlement
+                            await record_license_settlement(
+                                app, payment_key=f"job:{job_id}", license_id=str(lic_id),
+                                model_id=lic["model_id"], total=int(lic["unit_price"]),
+                                job_id=str(job_id))
+                    except Exception:
+                        log.warning("facemarket settlement hook failed for job %s", job_id)
     except Exception as e:
         await _fail("상세페이지 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})

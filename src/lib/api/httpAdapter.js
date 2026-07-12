@@ -11,6 +11,10 @@ import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { defaultAnalysisShape, defaultStoryboard } from '@/lib/api/shapes.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const LONG_IMAGE_JOB_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_JOB_TIMEOUT_MESSAGE = '작업이 지연되고 있어요. 잠시 후 다시 시도해 주세요.';
+const MANNEQUIN_JOB_TIMEOUT_MESSAGE = '마네킹컷 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.';
+const MANNEQUIN_ADJUST_JOB_TIMEOUT_MESSAGE = '마네킹컷 조정이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.';
 
 // 서버는 에셋 이미지를 안정 앱 URL `/v1/assets/{id}/file`(상대경로)로 반환한다. 프론트는 다른
 // 도메인(Vercel)에서 서빙되므로 <img src> 가 그대로 쓰면 프론트 도메인에 붙어 404 가 난다.
@@ -65,7 +69,10 @@ export async function http(path, { method = 'GET', body } = {}) {
 // job 폴링 어댑터 — job형 API(202 {jobId})를 mock 의 onProgress 콜백 계약으로 변환.
 // GET /v1/jobs/{id} 를 폴링해 progress 를 전달하고, done 이면 result, error 면 한국어 message throw.
 // SSE 대신 폴링(마네킹 경로와 동일 GET 재사용, plan §7). 무과금 분석엔 stall 로직 불필요.
-async function pollJob(jobId, { onProgress, intervalMs = 1200, timeoutMs = 90000 } = {}) {
+async function pollJob(
+  jobId,
+  { onProgress, intervalMs = 1200, timeoutMs = 90000, timeoutMessage = DEFAULT_JOB_TIMEOUT_MESSAGE } = {},
+) {
   const start = Date.now();
   let last = -1;
   for (;;) {
@@ -76,7 +83,7 @@ async function pollJob(jobId, { onProgress, intervalMs = 1200, timeoutMs = 90000
     }
     if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
     if (job.status === 'error') throw new Error(job.errorMessage || '작업에 실패했어요.');
-    if (Date.now() - start > timeoutMs) throw new Error('분석이 지연되고 있어요. 잠시 후 다시 시도해 주세요.');
+    if (Date.now() - start > timeoutMs) throw new Error(timeoutMessage);
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 }
@@ -199,7 +206,11 @@ export const httpAdapter = {
     const { jobId } = await http(`/v1/projects/${projectId}/analyze`, { method: 'POST' });
     // 폴링 상한은 provider 순차 폴백 최악경로(2 × analysis_timeout_seconds=60s = 120s)보다 넉넉히
     // 잡는다 — 짧으면 정상 폴백(gpt→gemini)이 완료 전에 실패 토스트가 뜨는데 job은 뒤늦게 성공한다.
-    const result = await pollJob(jobId, { onProgress, timeoutMs: 180000 });
+    const result = await pollJob(jobId, {
+      onProgress,
+      timeoutMs: 180000,
+      timeoutMessage: '분석이 지연되고 있어요. 잠시 후 다시 시도해 주세요.',
+    });
     const ai = (result && result.data) || {};
     const base = defaultAnalysisShape();  // 클라 소유 기본 shape(models·selectedModelId·측정 구조 등)
     const merged = {
@@ -256,7 +267,11 @@ export const httpAdapter = {
   async generateDetailPage(projectId, { onProgress } = {}) {
     const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
     if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(202 아님)
-    const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
+    const result = await pollJob(res.jobId, {
+      onProgress,
+      timeoutMs: 300000,
+      timeoutMessage: '상세페이지 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.',
+    });
     return { data: result.data, credits: result.credits };
   },
   // 프로젝트 단건 조회 (계약 §6) — {id,status,title,composeMode,copywriting,
@@ -373,7 +388,11 @@ export const httpAdapter = {
     const res = await http(`/v1/projects/${projectId}/mannequins:generate`, { method: 'POST' });
     if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시)
     // 마네킹 A/B 합성은 무거운 image job — 폴링 상한을 넉넉히(짧으면 정상 job 완료 전 실패 토스트).
-    const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
+    const result = await pollJob(res.jobId, {
+      onProgress,
+      timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
+      timeoutMessage: MANNEQUIN_JOB_TIMEOUT_MESSAGE,
+    });
     return { data: result.data, credits: result.credits };
   },
   // @deprecated (2026-07) AG-05 폐기 — fitProfile 재생성(regenerateMannequin)으로 통합.
@@ -383,7 +402,11 @@ export const httpAdapter = {
       method: 'POST', body: { baseId, fitAdjust, lengthAdjust, matchAdjust },
     });
     if (res.data) return { data: res.data, credits: res.credits };
-    const result = await pollJob(res.jobId, { onProgress });
+    const result = await pollJob(res.jobId, {
+      onProgress,
+      timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
+      timeoutMessage: MANNEQUIN_ADJUST_JOB_TIMEOUT_MESSAGE,
+    });
     return { data: result.data, credits: result.credits };
   },
   // fit-profile 재생성 — 완료 캐시 없이 매 호출이 새 A/B 버전을 만든다(서버 :regenerate, finalize 가 max(version)+1).
@@ -393,7 +416,11 @@ export const httpAdapter = {
       method: 'POST', body: { fitProfile },
     });
     if (res.data) return { data: res.data, credits: res.credits };
-    const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
+    const result = await pollJob(res.jobId, {
+      onProgress,
+      timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
+      timeoutMessage: MANNEQUIN_JOB_TIMEOUT_MESSAGE,
+    });
     // 잡 결과 data 는 "이번에 새로 만든 컷"만(finalize candidates) — 계약(mock cutsEnvelope)은
     // 전체 버전 목록이므로 재조회로 정합한다(버전 스트립이 이전 버전 히스토리를 유지).
     const cuts = await http(`/v1/projects/${projectId}/mannequins`);

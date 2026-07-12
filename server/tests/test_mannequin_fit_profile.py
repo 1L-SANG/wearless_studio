@@ -255,3 +255,107 @@ def test_mannequin_worker_runs_dual_candidates(monkeypatch):
     assert len(calls["success"]) == 1
     assert calls["success"][0]["charge"] == 2
     assert [c["candidate"] for c in calls["success"][0]["candidates"]] == ["A", "B"]
+
+
+def test_mannequin_worker_reports_progress_while_candidates_are_running(monkeypatch):
+    product = {
+        "name": "와이드 슬랙스",
+        "clothing_type": "bottom",
+        "colors": [{"isBase": True, "images": [{"id": "front-1", "slot": "Front"}]}],
+    }
+    analysis = {"targetGenders": ["men"], "fit": "regular"}
+    calls = {"started": 0, "success": [], "failure": [], "emits": []}
+    events = {}
+
+    async def get_product(conn, project_id):
+        return dict(product)
+
+    async def get_analysis(conn, project_id):
+        return dict(analysis)
+
+    async def get_asset_for_user(conn, user_id, asset_id):
+        return {"id": asset_id, "mime_type": "image/png", "r2_key": f"{asset_id}.png"}
+
+    async def finalize_success(conn, **kwargs):
+        calls["success"].append(kwargs)
+        return {"data": kwargs["candidates"], "credits": 7}
+
+    async def finalize_failure(conn, **kwargs):
+        calls["failure"].append(kwargs)
+        return True
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        calls["emits"].append((event_type, dict(payload)))
+
+    async def fake_run_candidate(**kwargs):
+        calls["started"] += 1
+        if calls["started"] == 2:
+            events["both_started"].set()
+        await events["release"].wait()
+        return {
+            "asset_id": f"asset-{kwargs['candidate']}",
+            "bucket": "bucket",
+            "key": f"ai/asset-{kwargs['candidate']}.png",
+            "mime": "image/png",
+            "size": 3,
+            "width": 1,
+            "height": 1,
+            "candidate": kwargs["candidate"],
+            "base_fit": kwargs["base_fit"],
+        }
+
+    for name, fn in [
+        ("get_product", get_product),
+        ("get_analysis", get_analysis),
+        ("get_asset_for_user", get_asset_for_user),
+        ("finalize_mannequin_success", finalize_success),
+        ("finalize_mannequin_failure", finalize_failure),
+    ]:
+        monkeypatch.setattr(repo, name, fn)
+    monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
+    monkeypatch.setattr(mannequin_job, "_run_candidate", fake_run_candidate)
+    monkeypatch.setattr(mannequin_job, "_GENERATION_PROGRESS_INTERVAL_SECONDS", 0.01, raising=False)
+
+    settings = make_settings(
+        base_mannequin_women_asset_id="base-women",
+        base_mannequin_men_asset_id="base-men",
+        r2_bucket="bucket",
+    )
+    app = SimpleNamespace(state=SimpleNamespace(
+        settings=settings,
+        pool=FakePool(),
+        r2=SimpleNamespace(get_bytes=lambda key: b"img"),
+        gemini=None,
+    ))
+    job = {
+        "id": "job-1",
+        "user_id": "user-1",
+        "project_id": "project-1",
+        "lease_token": "lease-1",
+        "credits_reserved": 2,
+    }
+
+    async def scenario():
+        events["both_started"] = asyncio.Event()
+        events["release"] = asyncio.Event()
+        task = asyncio.create_task(mannequin_job.run_mannequin_job(app, job))
+        await asyncio.wait_for(events["both_started"].wait(), timeout=1)
+        progressed_while_blocked = False
+        for _ in range(20):
+            if any(e == "progress" and p.get("progress", 0) > 35 for e, p in calls["emits"]):
+                progressed_while_blocked = True
+                break
+            await asyncio.sleep(0.01)
+        assert progressed_while_blocked
+        events["release"].set()
+        await task
+
+    asyncio.run(scenario())
+
+    generating_progress = [
+        p for e, p in calls["emits"]
+        if e == "progress" and p.get("phase") == "generating"
+    ]
+    assert any(p.get("progress", 0) > 35 for p in generating_progress)
+    assert calls["failure"] == []
+    assert len(calls["success"]) == 1

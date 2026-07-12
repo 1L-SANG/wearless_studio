@@ -1,25 +1,8 @@
 import asyncio
-import contextlib
-import types
 
 import app.routes as routes
 from app.workers import detail_page_job as dpj
-
-
-def _auth(make_token):
-    return {"Authorization": f"Bearer {make_token()}"}
-
-
-class _Conn:
-    async def commit(self):
-        return None
-
-
-def _no_db(monkeypatch):
-    @contextlib.asynccontextmanager
-    async def fake_conn(_request):
-        yield _Conn()
-    monkeypatch.setattr(routes, "get_conn", fake_conn)
+from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
 
 
 # ---------- 라우트 ----------
@@ -28,8 +11,8 @@ def test_detail_404(client, make_token, monkeypatch):
     async def fake_gp(conn, uid, pid):
         return None
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
-    _no_db(monkeypatch)
-    res = client.post("/v1/projects/nope/detail-page:generate", headers=_auth(make_token))
+    patch_route_db(monkeypatch, routes)
+    res = client.post("/v1/projects/nope/detail-page:generate", headers=auth_headers(make_token))
     assert res.status_code == 404
 
 
@@ -58,8 +41,8 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_sb)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
-    _no_db(monkeypatch)
-    res = client.post("/v1/projects/p1/detail-page:generate", headers=_auth(make_token))
+    patch_route_db(monkeypatch, routes)
+    res = client.post("/v1/projects/p1/detail-page:generate", headers=auth_headers(make_token))
     assert res.status_code == 202, res.text
     assert res.json()["jobId"] == "job-dp-1"
     assert seen["kind"] == "detail_page"
@@ -83,8 +66,8 @@ def test_detail_completed_recall(client, make_token, monkeypatch):
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
     monkeypatch.setattr(routes.repo, "get_account", fake_acct)
-    _no_db(monkeypatch)
-    res = client.post("/v1/projects/p1/detail-page:generate", headers=_auth(make_token))
+    patch_route_db(monkeypatch, routes)
+    res = client.post("/v1/projects/p1/detail-page:generate", headers=auth_headers(make_token))
     assert res.status_code == 200
     body = res.json()
     assert body["data"][0]["id"] == "b0" and body["credits"] == 42
@@ -177,7 +160,8 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
-    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job()))
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
 
     assert captured["charge"] == 1              # 성공 컷 1개 × per_cut(1) — 실패 컷 미차감
     assert len(captured["cut_assets"]) == 1
@@ -337,7 +321,8 @@ def test_run_detail_page_job_skips_block_without_garment_truth(monkeypatch):
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
-    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job()))
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
 
     assert calls["n"] == 0                       # 생성 호출 자체가 없다
     assert captured["charge"] == 0               # 미차감

@@ -1,0 +1,190 @@
+/* 모델 온보딩 — Wearless 디자인 시스템(모노크롬 + 그림자, 보더 없음) 준수 */
+
+.eyebrow {
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  color: var(--fg-2);
+  font-weight: 600;
+  margin-bottom: 18px;
+}
+
+/* ---- 3-step 미니 플로우 ---- */
+.steps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 26px;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex: 1;
+  min-width: 0;
+}
+.stepIcon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  display: grid;
+  place-items: center;
+}
+.stepText {
+  min-width: 0;
+}
+.stepLabel {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg-1);
+  line-height: 1.25;
+}
+.stepDesc {
+  font-size: 12px;
+  color: var(--fg-2);
+  line-height: 1.3;
+  margin-top: 2px;
+}
+.stepArrow {
+  flex: none;
+  color: var(--fg-3);
+  margin: 0 2px;
+}
+
+/* ---- 표준인증창 컨테이너 ---- */
+.widget:not(:empty) {
+  margin-bottom: 16px;
+  padding: 8px;
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+}
+
+/* ---- 상태 메시지 ---- */
+.error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-error);
+  font-size: 14px;
+  margin: 14px 0 0;
+}
+
+.privacy {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 18px;
+  padding: 13px 15px;
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.privacy svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* ---- 성공 상태 ---- */
+.successWrap {
+  background: #fff;
+  border-radius: var(--r-6);
+  box-shadow: var(--elev-lift);
+  padding: 48px 40px 40px;
+  text-align: center;
+  margin-top: 12px;
+}
+.successIcon {
+  width: 68px;
+  height: 68px;
+  margin: 0 auto 20px;
+  border-radius: var(--r-pill);
+  background: var(--accent-success-ring);
+  color: var(--accent-success);
+  display: grid;
+  place-items: center;
+}
+.successTitle {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--fg-1);
+  letter-spacing: -0.2px;
+  margin: 0;
+}
+.successLead {
+  font-size: 16px;
+  color: var(--fg-2);
+  font-weight: 300;
+  margin: 10px 0 0;
+}
+.successLead b {
+  color: var(--fg-1);
+  font-weight: 500;
+}
+.idPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 18px;
+  padding: 7px 14px;
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.nextCard {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  text-align: left;
+  margin-top: 30px;
+  padding: 18px;
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+  color: inherit;
+  text-decoration: none;
+  transition: background .15s;
+}
+.nextCard:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
+.nextCard > :last-child { margin-left: auto; color: var(--fg-3); flex: none; }
+.nextIcon {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-4);
+  background: #fff;
+  color: var(--fg-1);
+  display: grid;
+  place-items: center;
+  box-shadow: var(--elev-card);
+}
+.nextTitle {
+  font-size: 14.5px;
+  font-weight: 500;
+  color: var(--fg-1);
+}
+.nextDesc {
+  font-size: 13px;
+  color: var(--fg-2);
+  line-height: 1.5;
+  margin-top: 3px;
+}
+
+/* ---- 모바일 ---- */
+@media (max-width: 560px) {
+  .steps {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+  .stepArrow {
+    display: none;
+  }
+}

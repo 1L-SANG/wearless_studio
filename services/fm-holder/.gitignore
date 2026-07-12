@@ -1,0 +1,4 @@
+build/
+.gradle/
+data/
+!gradle/wrapper/gradle-wrapper.jar
