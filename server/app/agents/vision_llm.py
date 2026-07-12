@@ -55,7 +55,8 @@ def _parse_json(text: str, provider: str) -> dict:
 
 
 async def _call_gpt(settings: Settings, model: str, prompt: str,
-                    images: list[InlineImage], schema: dict, timeout: float) -> dict:
+                    images: list[InlineImage], schema: dict, timeout: float,
+                    thinking_level: str | None = None) -> dict:  # thinking_level: Gemini 전용(GPT 미사용)
     """OpenAI chat/completions — Structured Outputs(strict json_schema). content 는 문자열 JSON."""
     if not settings.openai_api_key:
         raise VisionError("OPENAI_API_KEY 미설정")
@@ -113,7 +114,8 @@ def _to_gemini_schema(node: dict) -> dict:
 
 
 async def _call_gemini(settings: Settings, model: str, prompt: str,
-                       images: list[InlineImage], schema: dict, timeout: float) -> dict:
+                       images: list[InlineImage], schema: dict, timeout: float,
+                       thinking_level: str | None = None) -> dict:
     """Gemini generateContent — responseSchema + responseMimeType json. 텍스트 파트 합쳐 파싱."""
     if not settings.gemini_api_key:
         raise VisionError("GEMINI_API_KEY 미설정")
@@ -126,8 +128,10 @@ async def _call_gemini(settings: Settings, model: str, prompt: str,
     }
     # 분류·추출 작업엔 low 로 충분 — 미지정 시 모델 기본(깊은 추론)이 수 초를 낭비한다
     # (2026-07-07 속도 개선, 실측: gemini-3.5-flash v1beta 가 thinkingLevel 수용 확인).
-    if settings.analysis_thinking_level != "off":
-        gen["thinkingConfig"] = {"thinkingLevel": settings.analysis_thinking_level}
+    # 콜별 오버라이드(thinking_level 인자) > 전역 설정 — AG-08 특징 발굴은 medium (후보 선별).
+    level = thinking_level or settings.analysis_thinking_level
+    if level != "off":
+        gen["thinkingConfig"] = {"thinkingLevel": level}
     body = {
         "contents": [{"role": "user", "parts": parts}],
         "generationConfig": gen,
@@ -158,11 +162,13 @@ def _order(settings: Settings) -> list[str]:
 
 async def analyze_with_fallback(
     settings: Settings, prompt: str, images: list[InlineImage], schema: dict,
+    thinking_level: str | None = None,
 ) -> tuple[dict, str]:
     """순서대로 provider 시도 → (파싱된 raw dict, 사용한 provider). 전부 실패 시 VisionError.
 
     키 미설정 provider 는 skip. 각 provider 는 timeout(analysis_timeout_seconds) 상한;
-    실패/비순응/타임아웃이면 다음으로 폴백. `images` 는 bytes(InlineImage)."""
+    실패/비순응/타임아웃이면 다음으로 폴백. `images` 는 bytes(InlineImage).
+    thinking_level 은 콜별 오버라이드(미지정 시 settings.analysis_thinking_level)."""
     timeout = settings.analysis_timeout_seconds
     attempts: list[str] = []
     last_error: Exception | None = None
@@ -172,7 +178,8 @@ async def analyze_with_fallback(
             attempts.append(f"{name}:no_key")
             continue
         try:
-            raw = await call(settings, model_of(settings), prompt, images, schema, timeout)
+            raw = await call(settings, model_of(settings), prompt, images, schema, timeout,
+                             thinking_level=thinking_level)
             if attempts:
                 logger.info("vision_llm fallback used", extra={"provider": name, "prior": attempts})
             return raw, name

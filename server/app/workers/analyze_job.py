@@ -12,7 +12,7 @@ from io import BytesIO
 from PIL import Image
 
 from .. import repo
-from ..agents import mannequin, product_analyst
+from ..agents import feature_extractor, mannequin, product_analyst
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
 from ._common import emit_job_event as _emit  # 공용 헬퍼(mannequin_job과 공유). 테스트가 이 이름을 monkeypatch
@@ -89,14 +89,29 @@ async def run_analyze_job(app, job: dict) -> None:
         await _emit(pool, job_id, "progress", {"progress": 30, "phase": "inputs_loaded",
                                                "bytesIn": bytes_in, "bytesOut": bytes_out})
 
-        # 3) 분석 (프롬프트→vision_llm 폴백→검증→분배)
-        try:
-            distributed, provider = await product_analyst.analyze(s, product, images)
-        except VisionError as e:
-            await _fail(str(e), {"error": "vision_failed"}, code="analysis_failed")
-            return
+        # 3) 분석(AG-01)과 특징 발굴(AG-08)을 병렬 실행 — 전체 지연 = 둘 중 느린 쪽.
+        #    특징 에이전트는 실패해도 분석을 막지 않는다(AG-01의 points로 폴백 — 2026-07-13).
+        analyze_res, feature_res = await asyncio.gather(
+            product_analyst.analyze(s, product, images),
+            feature_extractor.extract(s, product, images),
+            return_exceptions=True,
+        )
+        if isinstance(analyze_res, BaseException):
+            if isinstance(analyze_res, VisionError):
+                await _fail(str(analyze_res), {"error": "vision_failed"}, code="analysis_failed")
+                return
+            raise analyze_res  # 예기치 못한 오류 → outer except (lease 펜스 종결)
+        distributed, provider = analyze_res
+        feature_provider = None
+        if isinstance(feature_res, BaseException):
+            log.warning("AG-08 feature extract failed for job %s: %r", job_id, feature_res)
+        else:
+            points, feature_provider = feature_res
+            if points:  # 전용 에이전트 결과가 있으면 교체, 비면 AG-01 것 유지
+                distributed["analysis"]["aiSuggestedPoints"] = points
         await _emit(pool, job_id, "progress", {"progress": 80, "phase": "analyzed",
-                                               "provider": provider})
+                                               "provider": provider,
+                                               "featureProvider": feature_provider})
 
         analysis_payload = distributed["analysis"]
         clothing_type = distributed["product"]["clothingType"]
@@ -116,7 +131,8 @@ async def run_analyze_job(app, job: dict) -> None:
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, clothing_type=clothing_type,
                 analysis_payload=analysis_payload, result={"data": result_data},
-                metadata={"provider": provider, "promptVersion": "v1"})
+                metadata={"provider": provider, "featureProvider": feature_provider,
+                          "promptVersion": "v1"})
             await conn.commit()
         if out is None:  # lease 상실(복구·재클레임) → 결과 폐기
             log.warning("analyze job %s lost lease", job_id)

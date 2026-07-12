@@ -162,6 +162,9 @@ def analysis_schema() -> dict:
             # subCategory 는 nullable — enum-with-null 은 provider(OpenAI strict·Gemini)가 거부할 수
             # 있어 스키마엔 enum 을 걸지 않고 프롬프트(토큰 나열)+validate()로 강제한다.
             "subCategory": {"type": _nullable("string")},
+            # enum으로 정의 안 되는 의류의 자유 명칭(한국어) — 사용자가 폼에서 주관식 수정
+            # 가능 (2026-07-13 사용자 결정). 예: "후드 집업", "니트 베스트", "점프수트".
+            "customCategory": {"type": _nullable("string")},
             "targetGenders": {"type": "array", "items": {"type": "string", "enum": list(GENDERS)}},
             "fit": {"type": "string", "enum": list(FITS)},
             "materials": {"type": "array", "items": material},
@@ -171,7 +174,7 @@ def analysis_schema() -> dict:
             "styleTags": {"type": "array", "items": {"type": "string", "enum": list(STYLE_TAGS)}},
         },
         "required": [
-            "clothingType", "subCategory", "targetGenders", "fit", "materials",
+            "clothingType", "subCategory", "customCategory", "targetGenders", "fit", "materials",
             "aiSuggestedPoints", "suggestedName", "swatchSuggestions", "styleTags",
         ],
     }
@@ -231,10 +234,15 @@ def validate(raw: dict) -> dict:
     # 종류 미상(None)이면 어떤 subCategory 도 검증 불가 → 드롭.
     allowed_subs = SUBCATEGORY_BY_TYPE.get(clothing_type, frozenset()) if clothing_type else frozenset()
     sub_category = raw.get("subCategory") if _in(raw.get("subCategory"), allowed_subs) else None
+    # 자유 명칭 — sanitize + 20자 컷 (칩/입력칸 UI 폭). enum 토큰을 그대로 되뱉으면 무의미 → 드롭.
+    custom = _sanitize(raw.get("customCategory"))[:20]
+    if custom and custom.lower() in SUBCATEGORIES:
+        custom = ""
     # measurements 키는 어떤 경로로도 포함하지 않는다(서버 강제 부재 — PRD §6.5/§15.4).
     return {
         "clothingType": clothing_type,
         "subCategory": sub_category,
+        "customCategory": custom or None,
         "targetGenders": genders,
         "fit": raw.get("fit") if _in(raw.get("fit"), FITS) else None,
         "materials": _materials(raw.get("materials")),
@@ -261,6 +269,7 @@ def distribute(validated: dict) -> dict:
         "product": {"clothingType": validated.get("clothingType")},
         "analysis": {
             "subCategory": validated.get("subCategory"),
+            "customCategory": validated.get("customCategory"),  # 자유 명칭 — 폼 주관식 수정 대상
             "targetGenders": validated.get("targetGenders", []),
             "fit": validated.get("fit"),
             "materials": materials,

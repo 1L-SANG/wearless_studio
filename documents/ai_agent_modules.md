@@ -38,6 +38,7 @@ OPENAI_API_KEY=   # 예비 — text tier를 OpenAI 계열로 재배정할 때만
 | AG-05 | mannequin-adjuster (마네킹 조정) | image_high | ~~`adjustMannequin`~~ | ~~mannequinAdjust~~(0) | ⛔ 폐기 — fitProfile 재생성으로 통합 |
 | AG-06 | cut-generator (컷 생성 — 거울샷 포함) | image_high | `generateDetailPage`(컷 단계), `generateImage(mode:'new')` | storyboardPerCut / editorImage | ✅ (백엔드 라이브 — detail_page_job·editor_image_job) |
 | AG-07 | cut-variator (컷 변형) | image_high | `generateImage(mode:'vary')` | editorImage | ✅ (백엔드 라이브 — editor_image_job) |
+| AG-08 | selling-point-extractor (강조 특징 발굴) | text | `analyzeProduct` 내부 — AG-01과 **병렬**(같은 job), 실패 시 AG-01 points 폴백 | — | ✅ (2026-07-13) |
 | M-01 | matching-recommender (매칭 추천) | **비-AI** (룰베이스) | `analyzeProduct` 내부 | — | ✅ (백엔드 라이브) |
 | M-02 | page-assembler (상세페이지 조립) | **비-AI** (템플릿 엔진) | `generateDetailPage`(assemble 단계) | — | ✅ (mock/템플릿) |
 | AG-P1 | matching-ai-recommender | text | M-01 대체/보강 | — | P1 슬롯 |
@@ -57,8 +58,8 @@ OPENAI_API_KEY=   # 예비 — text tier를 OpenAI 계열로 재배정할 때만
 | 호출 시점 | 입력 페이지 '입력 완료' → `analyzeProduct(projectId)` (PL-1) |
 | 입력 | `{ name: string\|null, images }` — 기준 색상 전 각도(+추가 색상 정면). **이미지는 bytes(InlineImage)로 전달** — R2 서명 URL 만료·provider 발산 회피(구현: `analyze_job.py`가 `r2.get_bytes`→base64 inline, `mannequin_job.py:173`과 동일 경로). 프롬프트는 `prompts/product_analyst_v1.txt` 외부화 |
 | 구현 | 코어 `product_analyst.analyze`(순수: 프롬프트→검증→분배) + `vision_llm.analyze_with_fallback`(httpx 직접, GPT=Structured Outputs strict / Gemini=responseSchema, 순차 폴백). production=`kind='analyze'` job(무과금·멱등, `dispatcher`+`run_analyze_job`). 라우트 `POST /projects/{id}/analyze`(202 jobId). spike=`POST /analyze:spike`(flag `ANALYSIS_SPIKE` 게이트, 임시 관측). 프론트=`httpAdapter.analyzeProduct`(job 폴링→onProgress). **모델 순서 기본=계약(GPT-first, `ANALYSIS_MODEL_ORDER`); Gemini-primary 전환은 spike 후 계약 개정으로 명시.** styleTags 산출로 **M-01 매칭의 producer 선결조건만 해소**(1a 실작동엔 flag·시드정리·enum정합 별도 필요) |
-| 출력 | 분석 raw: `{ clothingType, subCategory, targetGenders, fit, materials[], aiSuggestedPoints(≤2), suggestedName, swatchSuggestions: { colorGroupId, swatchId }[], styleTags: string[] }` — 구조화 JSON 강제. (이 raw는 그대로 저장되는 게 아니라 서버가 분배 — 아래 후처리) |
-| 후처리(서버 분배) | `clothingType`은 **Product에 기록**(Product 단일 소유 — 계약 §3.1, Analysis 아님). `subCategory`·`targetGenders`·`fit`·`materials`·`aiSuggestedPoints`·`suggestedName`은 **Analysis**(계약 §3.2). `swatchSuggestions`(색상 스와치 추천)·`styleTags`(M-01 입력)는 **저장 안 하는 중간 산출물**. `measurements`는 **절대 포함 금지**(서버가 null 강제 — PRD §6.5/§15.4) |
+| 출력 | 분석 raw: `{ clothingType, subCategory, customCategory(자유 한국어 — enum 밖 의류 명칭, 2026-07-13), targetGenders, fit, materials[], aiSuggestedPoints(≤2), suggestedName, swatchSuggestions: { colorGroupId, swatchId }[], styleTags: string[] }` — 구조화 JSON 강제. (이 raw는 그대로 저장되는 게 아니라 서버가 분배 — 아래 후처리). `aiSuggestedPoints`는 **AG-08(전용 특징 에이전트, 병렬)** 결과가 있으면 그것으로 교체 — AG-01 값은 폴백. `materials`가 비면 서버가 카테고리 보편 조성(DEFAULT_MATERIALS, 팩트체크 2026-07-13)으로 채움. |
+| 후처리(서버 분배) | `clothingType`은 **Product에 기록**(Product 단일 소유 — 계약 §3.1, Analysis 아님). `subCategory`·`customCategory`·`targetGenders`·`fit`·`materials`·`aiSuggestedPoints`·`suggestedName`은 **Analysis**(계약 §3.2). `swatchSuggestions`(색상 스와치 추천)·`styleTags`(M-01 입력)는 **저장 안 하는 중간 산출물**. `measurements`는 **절대 포함 금지**(서버가 null 강제 — PRD §6.5/§15.4) |
 | 프롬프트 핵심 제약 | 실측 추정 금지 · 확신 없는 소재는 비우기 · subCategory/fit/swatchId는 계약 enum 안에서만 · 단일 에이전트 1콜(속성별 분리하지 않음 — 사용자 결정) |
 | 실패 | throw(한국어 message) → 화면 재시도. 크레딧 없음 |
 

@@ -82,9 +82,13 @@ def test_run_analyze_job_success(monkeypatch):
     async def fake_emit(pool, job_id, event_type, payload):
         return None
 
+    async def fake_extract(settings, product, images):
+        return ["왼쪽 가슴 로고 자수"], "gemini"  # AG-08 성공 → AG-01 points 교체
+
     monkeypatch.setattr(analyze_job.repo, "get_product", fake_get_product)
     monkeypatch.setattr(analyze_job.repo, "get_asset_for_user", fake_get_asset)
     monkeypatch.setattr(analyze_job.product_analyst, "analyze", fake_analyze)
+    monkeypatch.setattr(analyze_job.feature_extractor, "extract", fake_extract)
     monkeypatch.setattr(analyze_job.repo, "finalize_analyze_success", fake_finalize)
     monkeypatch.setattr(analyze_job, "_emit", fake_emit)
 
@@ -97,9 +101,92 @@ def test_run_analyze_job_success(monkeypatch):
     assert data["styleTags"] == ["basic"]
     assert data["measurements"] == []          # 실측 미산출
     assert "measurements" not in captured["analysis_payload"]  # analyses 저장분엔 measurements 없음
+    # AG-08 병렬 결과가 특징을 교체 (2026-07-13)
+    assert captured["analysis_payload"]["aiSuggestedPoints"] == ["왼쪽 가슴 로고 자수"]
     # #6: worker 가 provider metadata 를 finalize 로 넘겨야 jobs.metadata 에 저장됨
     assert captured["metadata"]["provider"] == "gpt"
+    assert captured["metadata"]["featureProvider"] == "gemini"
     assert captured["metadata"]["promptVersion"] == "v1"
+
+
+def test_run_analyze_job_feature_agent_failure_falls_back(monkeypatch):
+    """AG-08 실패는 분석을 막지 않는다 — AG-01의 aiSuggestedPoints 유지 (2026-07-13)."""
+    from app.agents.vision_llm import VisionError
+    captured = {}
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
+
+    async def fake_analyze(settings, product, images):
+        return ({"product": {"clothingType": "top"},
+                 "analysis": {"subCategory": "knit", "fit": "regular", "targetGenders": [],
+                              "materials": [], "aiSuggestedPoints": ["골지 짜임"],
+                              "suggestedName": None},
+                 "intermediate": {"styleTags": [], "swatchSuggestions": []}}, "gemini")
+
+    async def fake_extract(settings, product, images):
+        raise VisionError("특징 발굴 실패")
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"result": kw["result"]}
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        return None
+
+    monkeypatch.setattr(analyze_job.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(analyze_job.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(analyze_job.product_analyst, "analyze", fake_analyze)
+    monkeypatch.setattr(analyze_job.feature_extractor, "extract", fake_extract)
+    monkeypatch.setattr(analyze_job.repo, "finalize_analyze_success", fake_finalize)
+    monkeypatch.setattr(analyze_job, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(openai_api_key="sk-x"))
+    asyncio.run(analyze_job.run_analyze_job(app, worker_job()))
+    assert captured["analysis_payload"]["aiSuggestedPoints"] == ["골지 짜임"]  # 폴백
+    assert captured["metadata"]["featureProvider"] is None
+
+
+def test_run_analyze_job_feature_empty_keeps_ag01_points(monkeypatch):
+    """AG-08이 '차별 특징 없음'(빈 배열)을 내면 AG-01 것 유지 — 빈 값으로 덮지 않는다."""
+    captured = {}
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
+
+    async def fake_analyze(settings, product, images):
+        return ({"product": {"clothingType": "top"},
+                 "analysis": {"subCategory": None, "fit": "regular", "targetGenders": [],
+                              "materials": [], "aiSuggestedPoints": ["골지 짜임"],
+                              "suggestedName": None},
+                 "intermediate": {"styleTags": [], "swatchSuggestions": []}}, "gemini")
+
+    async def fake_extract(settings, product, images):
+        return [], "gemini"
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"result": kw["result"]}
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        return None
+
+    monkeypatch.setattr(analyze_job.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(analyze_job.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(analyze_job.product_analyst, "analyze", fake_analyze)
+    monkeypatch.setattr(analyze_job.feature_extractor, "extract", fake_extract)
+    monkeypatch.setattr(analyze_job.repo, "finalize_analyze_success", fake_finalize)
+    monkeypatch.setattr(analyze_job, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(openai_api_key="sk-x"))
+    asyncio.run(analyze_job.run_analyze_job(app, worker_job()))
+    assert captured["analysis_payload"]["aiSuggestedPoints"] == ["골지 짜임"]
 
 
 def test_run_analyze_job_no_images_fails(monkeypatch):
@@ -141,9 +228,13 @@ def test_run_analyze_job_vision_error_fails(monkeypatch):
     async def fake_emit(pool, job_id, event_type, payload):
         return None
 
+    async def fake_extract(settings, product, images):
+        return [], "gemini"  # AG-08은 성공해도 AG-01 실패면 job 실패여야 한다
+
     monkeypatch.setattr(analyze_job.repo, "get_product", fake_get_product)
     monkeypatch.setattr(analyze_job.repo, "get_asset_for_user", fake_get_asset)
     monkeypatch.setattr(analyze_job.product_analyst, "analyze", fake_analyze)
+    monkeypatch.setattr(analyze_job.feature_extractor, "extract", fake_extract)
     monkeypatch.setattr(analyze_job.repo, "finalize_analyze_failure", fake_fail)
     monkeypatch.setattr(analyze_job, "_emit", fake_emit)
 

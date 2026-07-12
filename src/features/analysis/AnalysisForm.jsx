@@ -197,6 +197,12 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
             <div className="field-row"><label className="lbl">세부 카테고리</label>
               <Chips options={subCats} value={a.subCategory} onChange={(v) => onChange(withFitProfile({ subCategory: v }))} /></div>
           )}
+          {/* 목록(enum)에 없는 의류의 자유 명칭 — AI가 추측을 채워주고 사용자가 주관식 수정
+              (2026-07-13 사용자 결정). key로 분석 갱신 시 리셋, 저장은 blur 커밋(소재 편집 관례). */}
+          <div className="field-row"><label className="lbl">직접 입력</label>
+            <input className="field" key={a.customCategory || ''} defaultValue={a.customCategory || ''}
+              maxLength={20} placeholder="목록에 없으면 직접 입력 (예: 후드 집업, 니트 베스트)"
+              onBlur={(e) => { const v = e.target.value.trim(); if (v !== (a.customCategory || '')) onChange({ customCategory: v || null }); }} /></div>
           <div className="field-row"><label className="lbl">대상 성별</label>
             <Chips options={catalogs.genders} value={a.targetGenders?.[0] || null} onChange={(v) => onChange(withFitProfile({ targetGenders: v ? [v] : [] }))} /></div>
           {fitOpts.length > 0 && (

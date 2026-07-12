@@ -101,6 +101,7 @@ Analysis {
   projectId: string
   suggestedName: string
   subCategory: SubCategory | null  // 영문 토큰화 (§4). dress는 null
+  customCategory: string | null    // enum 밖 의류의 자유 명칭(한국어, ≤20자) — AI 추측 + 사용자 주관식 수정 (2026-07-13)
   targetGenders: Gender[]          // UI 단일 선택 — 1-element 배열로 저장
   fit: Fit
   materials: Material[]            // Material { name: string(자유 텍스트), ratio: number(%) }

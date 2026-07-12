@@ -34,7 +34,7 @@ def _load_env(path: Path):
 
 _load_env(SERVER / ".env")
 
-from app.agents import product_analyst  # noqa: E402 (env 로드 후 import)
+from app.agents import feature_extractor, product_analyst  # noqa: E402 (env 로드 후 import)
 from app.agents.gemini_image import InlineImage  # noqa: E402
 from app.config import load_settings  # noqa: E402
 from app.workers.analyze_job import shrink_for_vision  # noqa: E402
@@ -76,10 +76,26 @@ async def main():
 
     product = {"name": args.name}
     t0 = time.perf_counter()
-    distributed, provider = await product_analyst.analyze(s, product, images)
+    # 워커(analyze_job)와 동일한 병렬 구성 — AG-01 분류 + AG-08 특징 발굴
+    analyze_res, feature_res = await asyncio.gather(
+        product_analyst.analyze(s, product, images),
+        feature_extractor.extract(s, product, images),
+        return_exceptions=True,
+    )
     wall = int((time.perf_counter() - t0) * 1000)
+    if isinstance(analyze_res, BaseException):
+        raise analyze_res
+    distributed, provider = analyze_res
+    if isinstance(feature_res, BaseException):
+        print(f"⚠️ AG-08 특징 발굴 실패(폴백): {feature_res}")
+    else:
+        points, fp_provider = feature_res
+        print(f"AG-08 특징(provider={fp_provider}): {points} — AG-01 원안: "
+              f"{distributed['analysis']['aiSuggestedPoints']}")
+        if points:
+            distributed["analysis"]["aiSuggestedPoints"] = points
 
-    print(f"\n== RESULT (provider={provider}, {wall}ms wall) ==")
+    print(f"\n== RESULT (provider={provider}, {wall}ms wall — AG-01∥AG-08 병렬) ==")
     print(json.dumps(distributed, ensure_ascii=False, indent=2))
     a = distributed["analysis"]
     checks = [

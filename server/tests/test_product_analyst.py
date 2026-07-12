@@ -102,6 +102,22 @@ def test_distribute_maps_targets():
     assert "styleTags" not in d["analysis"]
 
 
+def test_validate_custom_category():
+    # 자유 명칭: sanitize + 20자 컷, enum 토큰 되뱉기는 드롭 (2026-07-13)
+    v = pa.validate({"customCategory": "  후드 집업\n주입시도  "})
+    assert v["customCategory"] == "후드 집업 주입시도"
+    assert pa.validate({"customCategory": "knit"})["customCategory"] is None  # enum 되뱉기
+    assert pa.validate({"customCategory": None})["customCategory"] is None
+    assert len(pa.validate({"customCategory": "가" * 40})["customCategory"]) == 20
+
+
+def test_distribute_carries_custom_category():
+    v = pa.validate({"clothingType": "top", "subCategory": None, "fit": "regular",
+                     "targetGenders": [], "customCategory": "니트 베스트"})
+    d = pa.distribute(v)
+    assert d["analysis"]["customCategory"] == "니트 베스트"
+
+
 def test_distribute_fills_default_materials_when_empty():
     # 모델이 소재를 비워 보내면(확신 없음) 카테고리 보편 소재로 채운다 (사용자 결정 2026-07-07)
     # 니트=아크릴 100 — 국내 최빈 표기 팩트체크로 확정 (2026-07-13)
