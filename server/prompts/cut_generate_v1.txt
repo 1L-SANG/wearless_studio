@@ -86,6 +86,11 @@ CUT TYPE — MIRROR SELFIE (거울샷):
 [[EXNUANCE:1]]Composition nuance (from the seller's chosen style example): the body turned slightly (about 15–30°) with a relaxed stance — still reads as a front-family cut.
 [[EXNUANCE:2]]Composition nuance (from the seller's chosen style example): weight shifted onto one leg, one hand relaxed (in a pocket or at the side) — candid, unposed energy.
 
+[[REFSCOPE:pose]]REFERENCE SCOPE: from the seller's chosen example, follow ONLY the pose and
+framing nuance. Do NOT carry over the example's background, location or props — the scene
+must follow this prompt's own background direction. If the pose does not suit the scene,
+adjust it naturally instead of forcing it.
+
 [[SPACE]]SPACE CONTINUITY: this cut belongs to a set shot in ONE location. Keep the lighting,
 background elements and color temperature consistent with a single coherent space
 (variation level: ${spaceVariation} — "subtle" means nearly the same camera setup, "varied"

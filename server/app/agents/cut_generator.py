@@ -58,7 +58,7 @@ def normalize_spec(raw: dict) -> dict:
         shot = shot if shot in _PERSON_SHOTS else "full"
         face = face if face in ("same", "show", "hide") else "same"
     variation = raw.get("spaceVariation") or raw.get("space_variation")
-    return {
+    spec = {
         "cutType": cut,
         "direction": direction,
         "shot": shot,
@@ -70,7 +70,15 @@ def normalize_spec(raw: dict) -> dict:
         "exampleId": _sanitize(raw.get("exampleId") or raw.get("example_id") or "") or None,
         "spaceGroupId": _sanitize(raw.get("spaceGroupId") or raw.get("space_group_id") or "") or None,
         "spaceVariation": variation if variation in ("subtle", "varied") else "subtle",
+        # 레퍼런스 범위 (콘티 refScope, 2026-07 섹션 개편) — 'pose'면 예시에서 포즈·구도만 따르고
+        # 배경은 프롬프트 자체 배경 지시를 따른다. 미지·구버전 값은 'all'로 정규화.
+        "refScope": (raw.get("refScope") or raw.get("ref_scope")) if (raw.get("refScope") or raw.get("ref_scope")) in ("all", "pose") else "all",
     }
+    # 같은 장소 세트 안의 예시는 '포즈 예시' 강등이 계약(2026-07) — 배경은 세트 연속성([[SPACE]])이
+    # 담당하므로, refScope 없는 레거시 저장분·우회 클라이언트도 서버에서 'pose'로 강제한다.
+    if spec["spaceGroupId"] and spec["exampleId"]:
+        spec["refScope"] = "pose"
+    return spec
 
 
 def load_cut_template() -> str:
@@ -124,9 +132,14 @@ def render_cut_prompt(
     # band 규칙: 뉘앙스는 정면 대역(front·거울샷)에서만 — 사이드/뒷면이면 예시는 분위기만(T1)이라
     # 정면 계열 구도 문구가 방향 지시와 충돌하지 않게 미적용.
     example_line = ""
-    if spec.get("exampleId") and cut != "product" and spec.get("direction") in (None, "front"):
+    # 포즈를 직접 지정했고 예시가 '포즈만' 범위면 예시는 효력 상실 — 지시 충돌(POSE:named vs 예시 구도) 방지
+    pose_overrides_example = spec["pose"] != "auto" and spec["refScope"] == "pose"
+    if spec.get("exampleId") and cut != "product" and spec.get("direction") in (None, "front") and not pose_overrides_example:
         idx = sum(ord(ch) for ch in spec["exampleId"]) % 3
         example_line = need(f"EXNUANCE:{idx}")
+        # refScope='pose' — 예시의 배경·장소를 옮기지 않도록 범위 가드를 덧붙인다 (콘티 '포즈만')
+        if spec.get("refScope") == "pose":
+            example_line = example_line + "\n" + need("REFSCOPE:pose")
     space_line = ""
     if spec.get("spaceGroupId"):
         space_line = need("SPACE").replace("${spaceVariation}", spec["spaceVariation"])

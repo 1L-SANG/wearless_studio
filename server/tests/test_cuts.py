@@ -60,6 +60,46 @@ def test_normalize_space_variation_default_subtle():
     assert spec["spaceVariation"] == "subtle"
 
 
+def test_normalize_ref_scope_defaults_and_clamps():
+    # 미지정·구버전 저장분 → 'all' (콘티 refScope, 2026-07 섹션 개편)
+    assert cut.normalize_spec({"cutType": "styling"})["refScope"] == "all"
+    assert cut.normalize_spec({"cutType": "styling", "refScope": "bg"})["refScope"] == "all"  # v1 미출시 값
+    assert cut.normalize_spec({"cutType": "styling", "refScope": "pose"})["refScope"] == "pose"
+
+
+def test_normalize_ref_scope_in_space_forces_pose():
+    # 같은 장소 세트 + 예시 = '포즈 예시' 계약 — 레거시(refScope 부재)·'all' 저장분도 서버가 강제
+    legacy = cut.normalize_spec({"cutType": "styling", "spaceGroupId": "sg1", "exampleId": "ex_1"})
+    assert legacy["refScope"] == "pose"
+    explicit = cut.normalize_spec({"cutType": "styling", "spaceGroupId": "sg1", "exampleId": "ex_1", "refScope": "all"})
+    assert explicit["refScope"] == "pose"
+    # 예시가 없으면 강제 없음 — 배경 연속성([[SPACE]])만 작동
+    no_example = cut.normalize_spec({"cutType": "styling", "spaceGroupId": "sg1"})
+    assert no_example["refScope"] == "all"
+
+
+def test_render_named_pose_overrides_pose_scope_example():
+    # 포즈 직접 지정 + '포즈만' 예시 = 지시 충돌 → 예시 라인 전체 미적용 (레거시 in-space 포함)
+    template = cut.load_cut_template()
+    spec = cut.normalize_spec({
+        "cutType": "styling", "direction": "front", "exampleId": "ex_1",
+        "spaceGroupId": "sg1", "pose": "walk",   # in-space라 refScope는 'pose'로 강제됨
+    })
+    p = cut.render_cut_prompt(template, spec, product={}, analysis={}, clothing_type="top", image_manifest="x")
+    assert "Composition nuance" not in p and "REFERENCE SCOPE" not in p
+
+
+def test_render_ref_scope_pose_appends_guard():
+    template = cut.load_cut_template()
+    base = {"cutType": "styling", "direction": "front", "exampleId": "ex_1"}
+    kw = dict(product={}, analysis={}, clothing_type="top", image_manifest="(no images)")
+    pose_prompt = cut.render_cut_prompt(template, cut.normalize_spec({**base, "refScope": "pose"}), **kw)
+    all_prompt = cut.render_cut_prompt(template, cut.normalize_spec(base), **kw)
+    assert "REFERENCE SCOPE" in pose_prompt          # 포즈만 — 배경 미전이 가드 포함
+    assert "REFERENCE SCOPE" not in all_prompt       # 전부 — 가드 없음(기존 동작 불변)
+    assert "Composition nuance" in pose_prompt       # 예시 뉘앙스는 그대로 유지
+
+
 # ---------- render_cut_prompt — 섹션 조립 ----------
 
 
