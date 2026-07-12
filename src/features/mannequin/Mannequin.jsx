@@ -133,41 +133,177 @@ function requestMannequinGeneration(pid) {
   return mannequinGenerationInflight;
 }
 
-function MannequinLoading({ progress }) {
-  // 서버 progress 는 체크포인트(5→15→35→60→85→100)로 띄엄띄엄 온다. 그 사이를 완만히 채워
-  // 바가 멈춘 것처럼 보이지 않게 한다(서버값이 바닥). 상한을 서버값 추종식(+12)으로 둬야
-  // 35→60 처럼 중간 체크포인트가 늘어도 크리프가 상한에 갇히지 않고 실제 진행을 따라간다.
-  const [shown, setShown] = useState(progress);
+/* 대기 인포그래픽 — 의류가 주인공인 롱 시퀀스 (마네킹·퍼센트 없음, 방향서 §로딩 v2.2).
+   인트로(1회): 재단 그리드 → 밑선/본선 제도 드로잉 → 원단 채움.
+   루프(12s): 봉제(사이드→밑단→넥) → 핏 화살표 성장 → 기장 자 하강 → 마감 광택. 파랑은 측정에만.
+   목업 정본: documents/mockups/mannequin-loading-v2.html */
+function LoadingGarmentSvg({ kind }) {
+  if (kind === 'pants') {
+    return (
+      <svg className="mq2-garment" viewBox="0 0 220 250" aria-hidden="true">
+        <defs>
+          <linearGradient id="mq2fab" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#ffffff" /><stop offset="1" stopColor="#f1f1f3" />
+          </linearGradient>
+          <linearGradient id="mq2sh" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#fff" stopOpacity="0" />
+            <stop offset=".5" stopColor="#fff" stopOpacity=".75" />
+            <stop offset="1" stopColor="#fff" stopOpacity="0" />
+          </linearGradient>
+          <clipPath id="mq2clip"><path d="M74 34 L146 34 L152 76 L156 216 L122 216 L112 100 L108 100 L98 216 L64 216 L68 76 Z" /></clipPath>
+        </defs>
+        <g className="mq2-grid"><path d="M40 76 H180 M40 146 H180 M74 24 V226 M146 24 V226" /></g>
+        <path className="mq2-fabric" fill="url(#mq2fab)" d="M74 34 L146 34 L152 76 L156 216 L122 216 L112 100 L108 100 L98 216 L64 216 L68 76 Z" />
+        <path className="mq2-under" d="M74 34 L146 34 L152 76 L156 216 L122 216 L112 100 L108 100 L98 216 L64 216 L68 76 Z" />
+        <path className="mq2-outline" d="M74 34 L146 34 L152 76 L156 216 L122 216 L112 100 L108 100 L98 216 L64 216 L68 76 Z" />
+        <path className="mq2-st mq2-st1" d="M70 82 L66 212 M150 82 L154 212" />
+        <path className="mq2-st mq2-st2" d="M74 46 L146 46" />
+        <path className="mq2-st mq2-st3" d="M110 54 L110 94" />
+        <g className="mq2-gfit">
+          <g className="mq2-bar">
+            <path className="mq2-guide" d="M72 66 L148 66" />
+            <path d="M80 66 l-7 -4.5 v9 Z M140 66 l7 -4.5 v9 Z" fill="var(--link)" />
+          </g>
+          <path className="mq2-guide" d="M72 59 L72 73 M148 59 L148 73" />
+          <text className="mq2-glabel" x="110" y="56" textAnchor="middle">허리</text>
+        </g>
+        <g className="mq2-glen">
+          <path className="mq2-guide mq2-bar" d="M186 38 L186 214" />
+          <path className="mq2-guide" d="M180 38 L192 38 M180 214 L192 214" />
+          <text className="mq2-glabel" x="197" y="126" textAnchor="middle" transform="rotate(90 197 126)">기장</text>
+        </g>
+      <circle className="mq2-needle mq2-n1" r="2.6" style={{ offsetPath: "path('M70 82 L66 212')" }} />
+      <circle className="mq2-needle mq2-n2" r="2.6" style={{ offsetPath: "path('M74 46 L146 46')" }} />
+      <circle className="mq2-needle mq2-n3" r="2.6" style={{ offsetPath: "path('M110 54 L110 94')" }} />
+      <g transform="translate(66 212)"><path className="mq2-spark mq2-sp1" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(146 46)"><path className="mq2-spark mq2-sp2" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(110 94)"><path className="mq2-spark mq2-sp3" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(88 120)"><path className="mq2-spark mq2-sp4" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(132 170)"><path className="mq2-spark mq2-sp5" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+        <g clipPath="url(#mq2clip)"><rect className="mq2-shine" x="60" y="14" width="46" height="230" fill="url(#mq2sh)" transform="skewX(-14)" /></g>
+      </svg>
+    );
+  }
+  if (kind === 'dress') {
+    return (
+      <svg className="mq2-garment" viewBox="0 0 220 250" aria-hidden="true">
+        <defs>
+          <linearGradient id="mq2fab" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#ffffff" /><stop offset="1" stopColor="#f1f1f3" />
+          </linearGradient>
+          <linearGradient id="mq2sh" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#fff" stopOpacity="0" />
+            <stop offset=".5" stopColor="#fff" stopOpacity=".75" />
+            <stop offset="1" stopColor="#fff" stopOpacity="0" />
+          </linearGradient>
+          <clipPath id="mq2clip"><path d="M90 34 Q110 46 130 34 L148 46 L138 82 L134 108 L160 204 Q110 222 60 204 L86 108 L82 82 L72 46 Z" /></clipPath>
+        </defs>
+        <g className="mq2-grid"><path d="M40 82 H180 M40 152 H180 M86 24 V226 M134 24 V226" /></g>
+        <path className="mq2-fabric" fill="url(#mq2fab)" d="M90 34 Q110 46 130 34 L148 46 L138 82 L134 108 L160 204 Q110 222 60 204 L86 108 L82 82 L72 46 Z" />
+        <path className="mq2-under" d="M90 34 Q110 46 130 34 L148 46 L138 82 L134 108 L160 204 Q110 222 60 204 L86 108 L82 82 L72 46 Z" />
+        <path className="mq2-outline" d="M90 34 Q110 46 130 34 L148 46 L138 82 L134 108 L160 204 Q110 222 60 204 L86 108 L82 82 L72 46 Z" />
+        <path className="mq2-st mq2-st1" d="M86 112 L62 200 M134 112 L158 200" />
+        <path className="mq2-st mq2-st2" d="M88 112 Q110 120 132 112" />
+        <path className="mq2-st mq2-st3" d="M96 39 Q110 49 124 39" />
+        <g className="mq2-gfit">
+          <g className="mq2-bar">
+            <path className="mq2-guide" d="M88 96 L132 96" />
+            <path d="M96 96 l-7 -4.5 v9 Z M124 96 l7 -4.5 v9 Z" fill="var(--link)" />
+          </g>
+          <path className="mq2-guide" d="M88 89 L88 103 M132 89 L132 103" />
+          <text className="mq2-glabel" x="110" y="86" textAnchor="middle">핏</text>
+        </g>
+        <g className="mq2-glen">
+          <path className="mq2-guide mq2-bar" d="M186 40 L186 208" />
+          <path className="mq2-guide" d="M180 40 L192 40 M180 208 L192 208" />
+          <text className="mq2-glabel" x="197" y="124" textAnchor="middle" transform="rotate(90 197 124)">기장</text>
+        </g>
+      <circle className="mq2-needle mq2-n1" r="2.6" style={{ offsetPath: "path('M86 112 L62 200')" }} />
+      <circle className="mq2-needle mq2-n2" r="2.6" style={{ offsetPath: "path('M88 112 Q110 120 132 112')" }} />
+      <circle className="mq2-needle mq2-n3" r="2.6" style={{ offsetPath: "path('M96 39 Q110 49 124 39')" }} />
+      <g transform="translate(62 200)"><path className="mq2-spark mq2-sp1" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(132 112)"><path className="mq2-spark mq2-sp2" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(124 39)"><path className="mq2-spark mq2-sp3" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(92 150)"><path className="mq2-spark mq2-sp4" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(128 88)"><path className="mq2-spark mq2-sp5" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+        <g clipPath="url(#mq2clip)"><rect className="mq2-shine" x="60" y="16" width="46" height="226" fill="url(#mq2sh)" transform="skewX(-14)" /></g>
+      </svg>
+    );
+  }
+  // top / outer 공용 실루엣
+  return (
+    <svg className="mq2-garment" viewBox="0 0 220 250" aria-hidden="true">
+      <defs>
+        <linearGradient id="mq2fab" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffffff" /><stop offset="1" stopColor="#f1f1f3" />
+        </linearGradient>
+        <linearGradient id="mq2sh" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor="#fff" stopOpacity="0" />
+          <stop offset=".5" stopColor="#fff" stopOpacity=".75" />
+          <stop offset="1" stopColor="#fff" stopOpacity="0" />
+        </linearGradient>
+        <clipPath id="mq2clip"><path d="M88 42 Q110 54 132 42 L152 52 L170 92 L148 102 L145 82 L145 196 Q110 207 75 196 L75 82 L72 102 L50 92 L68 52 Z" /></clipPath>
+      </defs>
+      <g className="mq2-grid"><path d="M40 62 H180 M40 122 H180 M40 182 H180 M75 32 V218 M145 32 V218" /></g>
+      <path className="mq2-fabric" fill="url(#mq2fab)" d="M88 42 Q110 54 132 42 L152 52 L170 92 L148 102 L145 82 L145 196 Q110 207 75 196 L75 82 L72 102 L50 92 L68 52 Z" />
+      <path className="mq2-under" d="M88 42 Q110 54 132 42 L152 52 L170 92 L148 102 L145 82 L145 196 Q110 207 75 196 L75 82 L72 102 L50 92 L68 52 Z" />
+      <path className="mq2-outline" d="M88 42 Q110 54 132 42 L152 52 L170 92 L148 102 L145 82 L145 196 Q110 207 75 196 L75 82 L72 102 L50 92 L68 52 Z" />
+      <path className="mq2-st mq2-st1" d="M75 88 L75 192 M145 88 L145 192" />
+      <path className="mq2-st mq2-st2" d="M83 198 Q110 206 137 198" />
+      <path className="mq2-st mq2-st3" d="M94 47 Q110 57 126 47" />
+      <g className="mq2-gfit">
+        <g className="mq2-bar">
+          <path className="mq2-guide" d="M79 130 L141 130" />
+          <path d="M87 130 l-7 -4.5 v9 Z M133 130 l7 -4.5 v9 Z" fill="var(--link)" />
+        </g>
+        <path className="mq2-guide" d="M79 123 L79 137 M141 123 L141 137" />
+        <text className="mq2-glabel" x="110" y="120" textAnchor="middle">핏</text>
+      </g>
+      <g className="mq2-glen">
+        <path className="mq2-guide mq2-bar" d="M186 52 L186 200" />
+        <path className="mq2-guide" d="M180 52 L192 52 M180 200 L192 200" />
+        <text className="mq2-glabel" x="197" y="130" textAnchor="middle" transform="rotate(90 197 130)">기장</text>
+      </g>
+      <circle className="mq2-needle mq2-n1" r="2.6" style={{ offsetPath: "path('M75 88 L75 192')" }} />
+      <circle className="mq2-needle mq2-n2" r="2.6" style={{ offsetPath: "path('M83 198 Q110 206 137 198')" }} />
+      <circle className="mq2-needle mq2-n3" r="2.6" style={{ offsetPath: "path('M94 47 Q110 57 126 47')" }} />
+      <g transform="translate(75 192)"><path className="mq2-spark mq2-sp1" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(137 198)"><path className="mq2-spark mq2-sp2" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(126 47)"><path className="mq2-spark mq2-sp3" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(90 110)"><path className="mq2-spark mq2-sp4" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g transform="translate(132 158)"><path className="mq2-spark mq2-sp5" d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z" /></g>
+      <g clipPath="url(#mq2clip)"><rect className="mq2-shine" x="60" y="20" width="46" height="220" fill="url(#mq2sh)" transform="skewX(-14)" /></g>
+    </svg>
+  );
+}
+
+function MannequinLoading({ progress, category }) {
+  // 퍼센트·진행바 없음(체크포인트 정체가 실패처럼 읽히던 문제 제거) — 상태 문장 2개만.
+  // 문장1은 최소 4초 체류 후 progress≥35 에서 문장2로. 40초 경과 시 장기 대기 안내 추가.
+  const [minDwellDone, setMinDwellDone] = useState(false);
+  const [longWait, setLongWait] = useState(false);
   useEffect(() => {
-    setShown((s) => Math.max(s, progress));
-    const id = setInterval(() => {
-      setShown((s) => {
-        const ceil = progress >= 85 ? 99 : Math.min(84, progress + 12);
-        return s < ceil ? Math.min(ceil, s + 1) : s;
-      });
-    }, 700);
-    return () => clearInterval(id);
-  }, [progress]);
-  const p = Math.max(progress, shown);
-  const stage = p < 30 ? '의류 정보 분석 중' : p < 60 ? '핏과 실루엣 정리 중'
-    : p < 80 ? '마네킹 생성 중' : '결과를 확인하는 중';
+    const t1 = setTimeout(() => setMinDwellDone(true), 4000);
+    const t2 = setTimeout(() => setLongWait(true), 40000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []);
+  const second = minDwellDone && progress >= 35;
+  const kind = category === 'pants' ? 'pants' : (category === 'dress' || category === 'skirt') ? 'dress' : 'top';
   return (
     <div className="wizard">
-      <PageHead title="마네킹컷을 만들고 있어요" sub="AI가 상품의 핏과 실루엣을 기준 마네킹에 입혀보고 있어요." />
-      <div className="surface mq-loading">
-        <div className="mq-loading-progress"><ProgressBar value={p} label={stage} /></div>
-        <div className="candidate-row mq-loading-candidates">
-          {['마네킹 A', '마네킹 B'].map((name) => (
-            <div className="candidate" key={name}>
-              <div className="big">
-                <div className="busy-tile">
-                  <Icon name="loader" size={22} className="spin" />작업 중
-                </div>
-              </div>
-              <div className="cap">{name}</div>
-            </div>
-          ))}
+      <PageHead title="마네킹컷을 만들고 있어요" sub="실제 의류와 똑같이 보이도록 기준 마네킹에 입혀보는 중이에요." />
+      <div className="mq2-stage">
+        <div className={`mq2-frame${progress >= 100 ? ' finishing' : ''}`}>
+          <div className="mq2-shadow" aria-hidden="true" />
+          <div className="mq2-float"><LoadingGarmentSvg kind={kind} /></div>
         </div>
+        <div className="mq2-status" role="status">
+          <b>{second ? '마네킹컷을 정교하게 다듬고 있어요' : '상품의 형태를 살펴보고 있어요'}</b>
+          <span className="mq2-dots" aria-hidden="true"><i /><i /><i /></span>
+        </div>
+        <div className="mq2-sub">옷의 핏과 기장이 자연스럽게 보이도록 비교하고 있어요.</div>
+        <div className={`mq2-long${longWait ? ' on' : ''}`}>이미지 품질을 확인하고 있어요. 조금 더 걸릴 수 있어요.</div>
+        <div className="mq2-tip"><span className="mq2-chip">다음 단계</span> 완성되면 핏과 기장을 직접 확인하고 조정할 수 있어요.</div>
       </div>
     </div>
   );
@@ -482,7 +618,7 @@ export function Mannequin() {
     navigate('/create/storyboard');   // 구성(composeMode)은 store 로 이미 반영됨
   };
 
-  if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={loadingProgress} /></>;
+  if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={loadingProgress} category={fitProfileDraft?.category} /></>;
   if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} onRetry={loadMannequins} /></>;
 
   const modes = catalogs?.composeModes || [];

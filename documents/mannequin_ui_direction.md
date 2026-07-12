@@ -56,3 +56,11 @@ Mannequin
 
 있음 36장: top(여 fit5·len4 / 남 fit3) · pants(여 cut5 / 남 cut4 / 공용 len3) · skirt sil3 · dress sil3·len2 · outer fit2·len2.
 **갭(텍스트 폴백으로 동작, 추가 생성 백로그)**: top-men semi_over · pants-men slim/straight · skirt length 전부 · dress a_line/midi · outer regular/semi_over/basic.
+
+## 5. 생성 대기 화면 (2026-07-13 확정 — 의류 인포그래픽 롱 시퀀스)
+
+- **퍼센트·진행바·A/B 스켈레톤 폐기** — 체크포인트 정체가 "17% 멈춤" 실패 오인을 만들던 구조 제거. 상태 문장 2개만: "상품의 형태를 살펴보고 있어요"(최소 4s) → progress≥35 "마네킹컷을 정교하게 다듬고 있어요". 40s 경과 시 "이미지 품질을 확인하고 있어요…" 추가. 실패는 기존 ErrorState.
+- **무대 = 다음 화면과 동일한 3:4 중앙 프레임** (연속성). 의류 2D 인포그래픽이 주인공(카테고리 연동: top/outer=티, pants, dress/skirt=원피스) — 마네킹·사진·체크배지는 검토 후 폐기.
+- **시퀀스**: 인트로 1회(재단 그리드 스케치 → 밑선/본선 제도 드로잉 → 원단 웨이브 리빌) → 12s 루프(재봉 바늘 도트가 봉제선 주행: 사이드→밑단→넥, 완료마다 스파클 팝 → 핏 화살표 성장 → 기장 자 하강 → 마감 광택+글로우 바운스+피날레 스파클). 상시: 부유(바닥 그림자 역위상)·배경 블루 글로우 펄스.
+- **색 규율**: 무채색 + `--link` 블루는 측정 가이드·바늘·스파클·글로우(생성 하이라이트)에만.
+- 접근성: `role=status`, `prefers-reduced-motion`이면 완성 정지 화면. mock 생성 9s(실서버 체감 근사). 초기 시안: `documents/mockups/mannequin-loading-v2.html`(로컬 전용, 정본은 컴포넌트).

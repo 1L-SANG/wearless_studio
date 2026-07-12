@@ -1,9 +1,121 @@
-/* ===== ③ 마네킹컷 — 생성 로딩 ===== */
-.mq-loading { max-width: 640px; margin-inline: auto; }
-.mq-loading-progress { max-width: 520px; margin-inline: auto; margin-bottom: 26px; }
-.mq-loading-candidates { max-width: 560px; margin-inline: auto; }
-.mq-loading .candidate .big { cursor: default; height: clamp(280px, calc(100vh - 430px), 480px); }
-.mq-loading .busy-tile { position: absolute; inset: 0; }
+/* ===== ③ 마네킹컷 — 생성 로딩 (의류 인포그래픽 롱 시퀀스, 목업 정본 mockups/mannequin-loading-v2.html) =====
+   인트로(1회): 재단 그리드 스케치 → 밑선/본선 제도 드로잉 → 원단 채움
+   루프(12s): 봉제(사이드→밑단→넥) → 핏 화살표 성장 → 기장 자 하강 → 마감 광택. 파랑(--link)은 측정에만. */
+.mq2-stage { display: flex; flex-direction: column; align-items: center; }
+.mq2-frame { position: relative; width: 340px; aspect-ratio: 3 / 4; border-radius: var(--r-6);
+             background: var(--bg-2); box-shadow: var(--elev-lift); overflow: hidden;
+             display: flex; align-items: center; justify-content: center; }
+/* 배경 글로우 펄스 — 중심에서 아주 옅은 블루 숨결(프레임이 살아있는 에너지) */
+.mq2-frame::before { content: ''; position: absolute; inset: -20%;
+  background: radial-gradient(closest-side at 50% 46%, color-mix(in srgb, var(--link) 7%, transparent), transparent 70%);
+  animation: mq2-glow 6s ease-in-out infinite; }
+@keyframes mq2-glow { 0%, 100% { opacity: .5; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.04); } }
+.mq2-frame.finishing { box-shadow: 0 0 0 2px var(--link), var(--elev-lift); transition: box-shadow .35s; }
+.mq2-frame.finishing .mq2-st, .mq2-frame.finishing .mq2-gfit, .mq2-frame.finishing .mq2-glen,
+.mq2-frame.finishing .mq2-shine, .mq2-frame.finishing .mq2-spark, .mq2-frame.finishing .mq2-needle
+  { animation-play-state: paused; opacity: 0; transition: opacity .3s; }
+
+/* 부유 레이어 — 옷이 공중에 떠서 천천히 오르내림 (프리미엄 상품 렌더 감성).
+   폭을 확정(66%)하고 내부 flex 센터링 — 자동폭 래퍼에서 svg %폭이 순환 참조로 좌편향되던 버그 방지. */
+.mq2-float { position: relative; z-index: 1; width: 66%; display: flex; justify-content: center; align-items: center;
+             animation: mq2-float 4.6s ease-in-out infinite; }
+@keyframes mq2-float { 0%, 100% { transform: translateY(3px); } 50% { transform: translateY(-4px); } }
+/* 바닥 그림자 — 부유와 반대 위상으로 커졌다 작아지며 공중감을 만든다 */
+.mq2-shadow { position: absolute; left: 50%; bottom: 9%; width: 150px; height: 14px; transform: translateX(-50%);
+  background: radial-gradient(closest-side, rgba(24,24,27,.16), transparent 70%);
+  filter: blur(2px); animation: mq2-shadow 4.6s ease-in-out infinite; }
+@keyframes mq2-shadow { 0%, 100% { transform: translateX(-50%) scaleX(1.05); opacity: .9; }
+                        50% { transform: translateX(-50%) scaleX(.86); opacity: .55; } }
+
+/* 옷 본체 — 공정 완료 순간마다 미세 바운스(봉제 완료 30% · 마감 글로우 88%) */
+.mq2-garment { width: 100%; height: auto; overflow: visible; transform-origin: 50% 55%;
+               animation: mq2-life 12s cubic-bezier(.3,1.5,.4,1) 3.4s infinite; }
+@keyframes mq2-life { 0%, 28% { transform: scale(1); } 31% { transform: scale(1.018); } 34% { transform: scale(1); }
+                      86% { transform: scale(1); filter: brightness(1); } 90% { transform: scale(1.02); filter: brightness(1.07); }
+                      95%, 100% { transform: scale(1); filter: brightness(1); } }
+
+.mq2-grid { stroke: var(--ring-strong); stroke-width: 1; opacity: 0; animation: mq2-grid 2.6s ease-in-out forwards; }
+@keyframes mq2-grid { 12% { opacity: .7; } 55% { opacity: .7; } 100% { opacity: 0; } }
+
+.mq2-under { fill: none; stroke: var(--fg-3); stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; opacity: .55;
+             stroke-dasharray: 1200; stroke-dashoffset: 1200; animation: mq2-draw 1.9s ease-in-out .2s forwards; }
+.mq2-outline { fill: none; stroke: var(--fg-2); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round;
+               stroke-dasharray: 1200; stroke-dashoffset: 1200; animation: mq2-draw 2s ease-in-out .55s forwards; }
+@keyframes mq2-draw { to { stroke-dashoffset: 0; } }
+
+/* 원단 채움 — 위→아래 웨이브 리빌(커튼이 내려오듯) */
+.mq2-fabric { clip-path: inset(0 0 100% 0); animation: mq2-reveal 1.1s cubic-bezier(.4,.1,.3,1) 2.4s forwards; }
+@keyframes mq2-reveal { to { clip-path: inset(0 0 0% 0); } }
+
+.mq2-st { fill: none; stroke: var(--fg-3); stroke-width: 1.5; stroke-linecap: round; opacity: 0; }
+.mq2-st1 { stroke-dasharray: 260; stroke-dashoffset: 260; animation: mq2-sew1 12s linear 3.4s infinite; }
+.mq2-st2 { stroke-dasharray: 120; stroke-dashoffset: 120; animation: mq2-sew2 12s linear 3.4s infinite; }
+.mq2-st3 { stroke-dasharray: 90; stroke-dashoffset: 90; animation: mq2-sew3 12s linear 3.4s infinite; }
+@keyframes mq2-sew1 { 0% { opacity: 0; stroke-dashoffset: 260; } 2% { opacity: .9; } 12% { stroke-dashoffset: 0; }
+                      88% { opacity: .9; stroke-dashoffset: 0; } 96%, 100% { opacity: 0; stroke-dashoffset: 0; } }
+@keyframes mq2-sew2 { 0%, 12% { opacity: 0; stroke-dashoffset: 120; } 14% { opacity: .9; } 22% { stroke-dashoffset: 0; }
+                      88% { opacity: .9; stroke-dashoffset: 0; } 96%, 100% { opacity: 0; stroke-dashoffset: 0; } }
+@keyframes mq2-sew3 { 0%, 22% { opacity: 0; stroke-dashoffset: 90; } 24% { opacity: .9; } 30% { stroke-dashoffset: 0; }
+                      88% { opacity: .9; stroke-dashoffset: 0; } 96%, 100% { opacity: 0; stroke-dashoffset: 0; } }
+
+.mq2-guide { stroke: var(--link); stroke-width: 1.8; fill: none; stroke-linecap: round; }
+.mq2-glabel { fill: var(--link); font-size: 11px; font-weight: 700; stroke: none; }
+.mq2-gfit { opacity: 0; animation: mq2-gfit-show 12s ease-in-out 3.4s infinite; }
+.mq2-gfit .mq2-bar { transform-origin: center; transform: scaleX(0); animation: mq2-gfit-grow 12s cubic-bezier(.25,1,.35,1) 3.4s infinite; }
+@keyframes mq2-gfit-show { 34% { opacity: 0; } 37%, 56% { opacity: 1; } 60%, 100% { opacity: 0; } }
+@keyframes mq2-gfit-grow { 0%, 35% { transform: scaleX(0); } 44%, 58% { transform: scaleX(1); } 62%, 100% { transform: scaleX(0); } }
+.mq2-glen { opacity: 0; animation: mq2-glen-show 12s ease-in-out 3.4s infinite; }
+.mq2-glen .mq2-bar { transform-origin: top center; transform: scaleY(0); animation: mq2-glen-grow 12s cubic-bezier(.25,1,.35,1) 3.4s infinite; }
+@keyframes mq2-glen-show { 60% { opacity: 0; } 63%, 80% { opacity: 1; } 84%, 100% { opacity: 0; } }
+@keyframes mq2-glen-grow { 0%, 61% { transform: scaleY(0); } 70%, 82% { transform: scaleY(1); } 86%, 100% { transform: scaleY(0); } }
+
+.mq2-shine { opacity: 0; animation: mq2-shine 12s ease-in-out 3.4s infinite; }
+@keyframes mq2-shine { 84% { opacity: 0; transform: translateX(-90px); } 88% { opacity: 1; }
+                       97% { opacity: 0; transform: translateX(90px); } 100% { opacity: 0; } }
+
+/* 재봉 바늘 점 — 각 봉제선을 실제로 '달리는' 블루 도트 (offset-path 미지원 브라우저에선 투명) */
+.mq2-needle { fill: var(--link); opacity: 0; offset-rotate: 0deg; }
+.mq2-n1 { animation: mq2-n1 12s linear 3.4s infinite; }
+.mq2-n2 { animation: mq2-n2 12s linear 3.4s infinite; }
+.mq2-n3 { animation: mq2-n3 12s linear 3.4s infinite; }
+@keyframes mq2-n1 { 0% { offset-distance: 0%; opacity: 0; } 1% { opacity: 1; } 11% { opacity: 1; }
+                    12% { offset-distance: 100%; opacity: 0; } 100% { offset-distance: 100%; opacity: 0; } }
+@keyframes mq2-n2 { 0%, 12% { offset-distance: 0%; opacity: 0; } 13% { opacity: 1; } 21% { opacity: 1; }
+                    22% { offset-distance: 100%; opacity: 0; } 100% { offset-distance: 100%; opacity: 0; } }
+@keyframes mq2-n3 { 0%, 22% { offset-distance: 0%; opacity: 0; } 23% { opacity: 1; } 29% { opacity: 1; }
+                    30% { offset-distance: 100%; opacity: 0; } 100% { offset-distance: 100%; opacity: 0; } }
+
+/* 스파클 — 공정이 하나 끝날 때마다 톡(봉제 3회) + 마감 글로우에서 두 번(피날레).
+   위치는 부모 <g translate>가 잡고, 여기선 자기 중심 기준 팝만(transform-box: fill-box). */
+.mq2-spark { fill: var(--link); opacity: 0; transform-box: fill-box; transform-origin: center; transform: scale(.2); }
+.mq2-sp1 { animation: mq2-sp 12s cubic-bezier(.2,1.6,.4,1) 3.4s infinite; animation-composition: replace; }
+.mq2-sp2 { animation: mq2-sp2 12s cubic-bezier(.2,1.6,.4,1) 3.4s infinite; }
+.mq2-sp3 { animation: mq2-sp3 12s cubic-bezier(.2,1.6,.4,1) 3.4s infinite; }
+.mq2-sp4 { animation: mq2-sp4 12s cubic-bezier(.2,1.6,.4,1) 3.4s infinite; }
+.mq2-sp5 { animation: mq2-sp5 12s cubic-bezier(.2,1.6,.4,1) 3.4s infinite; }
+@keyframes mq2-sp  { 11% { opacity: 0; transform: scale(.2) rotate(0deg); } 13% { opacity: 1; transform: scale(1.15) rotate(24deg); }
+                     17% { opacity: 0; transform: scale(.4) rotate(45deg); } 100% { opacity: 0; } }
+@keyframes mq2-sp2 { 21% { opacity: 0; transform: scale(.2) rotate(0deg); } 23% { opacity: 1; transform: scale(1.1) rotate(-20deg); }
+                     27% { opacity: 0; transform: scale(.4) rotate(-40deg); } 100% { opacity: 0; } }
+@keyframes mq2-sp3 { 29% { opacity: 0; transform: scale(.2) rotate(0deg); } 31% { opacity: 1; transform: scale(1.2) rotate(18deg); }
+                     35% { opacity: 0; transform: scale(.4) rotate(36deg); } 100% { opacity: 0; } }
+@keyframes mq2-sp4 { 86% { opacity: 0; transform: scale(.2) rotate(0deg); } 89% { opacity: 1; transform: scale(1.25) rotate(30deg); }
+                     94% { opacity: 0; transform: scale(.5) rotate(60deg); } 100% { opacity: 0; } }
+@keyframes mq2-sp5 { 88% { opacity: 0; transform: scale(.2) rotate(0deg); } 91% { opacity: 1; transform: scale(1) rotate(-24deg); }
+                     96% { opacity: 0; transform: scale(.4) rotate(-48deg); } 100% { opacity: 0; } }
+
+.mq2-status { margin-top: 22px; display: flex; align-items: center; gap: 10px; min-height: 24px; }
+.mq2-status b { font-size: 15.5px; font-weight: 600; color: var(--fg-1); letter-spacing: -.01em; }
+.mq2-dots { display: inline-flex; gap: 4px; }
+.mq2-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--fg-3); animation: mq2-dot 1.4s ease-in-out infinite; }
+.mq2-dots i:nth-child(2) { animation-delay: .2s; }
+.mq2-dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes mq2-dot { 0%, 100% { opacity: .25; transform: scale(.9); } 50% { opacity: 1; transform: scale(1.15); } }
+.mq2-sub { margin-top: 8px; font-size: 13px; color: var(--fg-2); }
+.mq2-long { margin-top: 6px; font-size: 12.5px; color: var(--fg-3); opacity: 0; transition: opacity .6s; }
+.mq2-long.on { opacity: 1; }
+.mq2-tip { margin-top: 34px; font-size: 12.5px; color: var(--fg-3); display: flex; gap: 7px; align-items: center; }
+.mq2-chip { border: 1px dashed var(--ring-strong); border-radius: var(--r-pill); padding: 2px 9px; font-weight: 600; color: var(--fg-2); }
 
 /* ===== 의류 재현성 — 이미지 중심 + 옆 예시 비교 ===== */
 /* 페이지가 예시 패널의 앵커이자 컨테이너 쿼리 기준(사이드바 등으로 뷰포트≠실폭이어도 안전) */
@@ -112,4 +224,10 @@
 @media (prefers-reduced-motion: reduce) {
   .fit-stage, .fit-mine-col, .fit-ver, .fit-tile { transition: none; }
   .fit-ex-col { animation: none; }
+  /* 로딩 인포그래픽 — 모션 최소화: 드로잉·채움은 즉시 완료 상태로, 루프 모션은 정지 */
+  .mq2-garment, .mq2-grid, .mq2-st, .mq2-gfit, .mq2-gfit .mq2-bar, .mq2-glen, .mq2-glen .mq2-bar,
+  .mq2-shine, .mq2-dots i, .mq2-frame::before, .mq2-float, .mq2-shadow, .mq2-needle, .mq2-spark { animation: none; }
+  .mq2-under, .mq2-outline { animation: none; stroke-dashoffset: 0; }
+  .mq2-fabric { animation: none; clip-path: inset(0 0 0% 0); }
+  .mq2-st { opacity: .9; stroke-dashoffset: 0; }
 }

@@ -225,7 +225,8 @@ export const api = {
     }
     const job = joinable('mannequins', (listeners) => (async () => {
       const ownerId = DB.project.id;   // job 도중 새 프로젝트로 리시드되면 결과를 버린다
-      await runJob({ duration: 3000, stall: true, onProgress: (p) => listeners.forEach((f) => f(p)) });
+      // 실서버 체감(25~60s)에 근접시켜 로딩 시퀀스(인트로 3.5s+루프)가 보이게 한다
+      await runJob({ duration: 9000, stall: true, onProgress: (p) => listeners.forEach((f) => f(p)) });
       if (DB.project.id !== ownerId) return { data: { cuts: [] }, credits: DB.account.credits };
       if (!DB.mannequins.length) {
         DB.mannequins.push(makeMannequinCut(0));
