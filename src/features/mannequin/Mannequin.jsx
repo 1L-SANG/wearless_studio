@@ -233,7 +233,6 @@ function ExampleTiles({ axisKey, category, gender, values, onPick }) {
             aria-label={`${v.label}(으)로 조정`}
             onClick={() => onPick(v.value, v.label)}
           >
-            <span className="fit-tile-tag" aria-hidden="true">예시</span>
             {img
               ? <img src={img} alt="" loading="lazy" />
               : <span className="fit-tile-ph">{v.label}</span>}
@@ -390,6 +389,10 @@ export function Mannequin() {
     : (AXIS_QUESTIONS[step.key] || `${stepName(step)}을(를) 조정할까요?`));
   const stepExCategory = (step) => (step.kind === 'match' ? 'pants' : category);
   const stepExAxis = (step) => (step.kind === 'match' ? 'cut' : step.key);
+  // 예시 참고 안내 — 옵션별로 "무엇만 참고할지" 명시(예시 속 다른 요소를 따라 그리지 않게)
+  const stepExNote = (step) => (step.kind === 'match'
+    ? '예시에 보여지는 하의의 핏만 참고해주세요.'
+    : `예시에 보여지는 의류의 ${stepName(step)}만 참고해주세요.`);
 
   // 파생값 — 순차: 첫 미완료 스텝이 '현재'
   const doneCount = steps.filter((s) => axisIsDone(stepState[s.key])).length;
@@ -493,6 +496,7 @@ export function Mannequin() {
         {changingStep && (
           <div className="fit-ex-col">
             <div className="fit-ex-head">원하는 {stepName(changingStep)}의 예시를 선택해주세요.</div>
+            <p className="fit-ex-sub">{stepExNote(changingStep)}</p>
             <div className="fit-ex-track" role="listbox" aria-label={`${stepName(changingStep)} 예시`}>
               <ExampleTiles
                 axisKey={stepExAxis(changingStep)}

@@ -6,7 +6,10 @@
 .mq-loading .busy-tile { position: absolute; inset: 0; }
 
 /* ===== 의류 재현성 — 이미지 중심 + 옆 예시 비교 ===== */
-/* 무대: 기본은 이미지만 가운데 / 조정 중이면 [이미지 | 예시 컴포넌트] 한 쌍이 가운데 */
+/* 페이지가 예시 패널의 앵커이자 컨테이너 쿼리 기준(사이드바 등으로 뷰포트≠실폭이어도 안전) */
+.fit-page { position: relative; container: fit-page / inline-size; }
+
+/* 무대: 기본은 이미지만 가운데 / 좁은 화면에서 조정 중이면 [이미지 | 예시 컴포넌트] 한 쌍이 가운데 */
 .fit-stage { display: flex; justify-content: center; align-items: flex-start; gap: 0; transition: gap .2s; }
 .fit-stage.comparing { gap: 22px; }
 
@@ -24,8 +27,10 @@
 .fit-ver-chip { position: absolute; left: 3px; bottom: 3px; border-radius: var(--r-pill); padding: 1px 5px; background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); color: var(--fg-1); font-size: 9px; font-weight: 600; }
 
 /* --- 옆 예시: 하나의 컴포넌트(테두리 박스) + 우측 스크롤바로 더 있음을 알림 --- */
-.fit-ex-col { width: 224px; flex: none; max-height: 470px; display: flex; flex-direction: column; border-radius: var(--r-5); background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--ring-strong); padding: 12px 8px 12px 12px; }
-.fit-ex-head { flex: none; font-size: 13.5px; font-weight: 500; color: var(--fg-1); margin-bottom: 11px; letter-spacing: -.01em; }
+.fit-ex-col { width: 224px; flex: none; max-height: 470px; display: flex; flex-direction: column; border-radius: var(--r-5); background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--ring-strong); padding: 12px 8px 12px 12px; animation: fit-ex-in .16s ease-out; }
+@keyframes fit-ex-in { from { opacity: 0; transform: translateX(10px); } }
+.fit-ex-head { flex: none; font-size: 13.5px; font-weight: 500; color: var(--fg-1); margin-bottom: 3px; letter-spacing: -.01em; }
+.fit-ex-sub { flex: none; margin: 0 0 11px; font-size: 11.5px; font-weight: 400; color: var(--fg-3); letter-spacing: -.01em; }
 .fit-ex-track { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; padding-right: 4px; scroll-snap-type: y proximity; scrollbar-width: thin; scrollbar-color: var(--ring-strong) transparent; }
 .fit-ex-track::-webkit-scrollbar { width: 8px; }
 .fit-ex-track::-webkit-scrollbar-thumb { background: var(--ring-strong); border-radius: var(--r-pill); }
@@ -38,7 +43,23 @@
 .fit-tile img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; }
 .fit-tile.text .fit-tile-ph { display: flex; align-items: center; justify-content: center; aspect-ratio: 3 / 4; background: var(--bg-2); color: var(--fg-2); font-size: 14px; font-weight: 600; padding: 8px; }
 .fit-tile-lb { display: block; font-size: 12px; font-weight: 600; color: var(--fg-2); padding: 5px 2px; }
-.fit-tile-tag { position: absolute; left: 5px; top: 5px; z-index: 2; font-size: 8.5px; font-weight: 700; color: var(--fg-3); background: var(--glass-bg); border: 1px dashed var(--fg-3); border-radius: var(--r-2); padding: 0 4px; }
+/* 넓은 화면: 예시를 페이지 오른쪽 고정 패널로 승격 — 제목 높이부터 아래로 길게, 2열 그리드.
+   absolute 라 플로우에서 빠져 가운데 마네킹·아래 확인 카드는 1px 도 안 움직인다.
+   top 90 = .wizard 상단 패딩 14 + .page-head 상단 패딩 76 (제목 시작 높이와 정렬).
+   쿼리는 content-box 기준(.wizard 좌우 패딩 48 제외, 최대 1132) — 1100 이상에서
+   폭 332 패널이 중앙 확인 카드(460)·마네킹(340)과 겹치지 않는다(각 12px·72px 여유).
+   주의: 동일 특이도 override 라 반드시 base 예시 규칙들 '뒤'에 위치해야 한다. */
+@container fit-page (min-width: 1100px) {
+  .fit-stage.comparing { gap: 0; }
+  .fit-stage.comparing .fit-mine-col { width: 340px; }
+  .fit-ex-col {
+    position: absolute; top: 90px; right: 0; z-index: 2;
+    width: 332px; max-height: calc(100% - 114px);
+    padding: 14px 10px 14px 14px;
+  }
+  .fit-ex-head { font-size: 14px; }
+  .fit-ex-track { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; }
+}
 
 /* --- 확인 카드 (이미지 바로 아래) · 이 컴포넌트 글씨 굵기는 한 단계 낮춤 --- */
 .fit-ask { max-width: 460px; margin: 22px auto 0; background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card); padding: 16px 17px; }
@@ -90,4 +111,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .fit-stage, .fit-mine-col, .fit-ver, .fit-tile { transition: none; }
+  .fit-ex-col { animation: none; }
 }
