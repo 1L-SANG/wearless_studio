@@ -1,4 +1,6 @@
 import asyncio
+import contextlib
+import types
 
 import app.routes as routes
 from app.workers import detail_page_job as dpj
@@ -74,6 +76,11 @@ def test_detail_completed_recall(client, make_token, monkeypatch):
 
 
 # ---------- 워커 (부분 성공 정산) ----------
+
+class _Conn:
+    async def commit(self):  # main 워커가 명시 commit 하므로 스텁에도 필요
+        return None
+
 
 class _FakePool:
     def connection(self):
