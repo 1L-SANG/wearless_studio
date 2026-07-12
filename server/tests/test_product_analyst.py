@@ -104,11 +104,11 @@ def test_distribute_maps_targets():
 
 def test_distribute_fills_default_materials_when_empty():
     # 모델이 소재를 비워 보내면(확신 없음) 카테고리 보편 소재로 채운다 (사용자 결정 2026-07-07)
+    # 니트=아크릴 100 — 국내 최빈 표기 팩트체크로 확정 (2026-07-13)
     v = pa.validate({"clothingType": "top", "subCategory": "knit", "fit": "regular",
                      "targetGenders": ["women"], "materials": []})
     d = pa.distribute(v)
-    assert d["analysis"]["materials"] == [
-        {"name": "아크릴", "ratio": 60}, {"name": "면", "ratio": 40}]
+    assert d["analysis"]["materials"] == [{"name": "아크릴", "ratio": 100}]
 
 
 def test_distribute_keeps_detected_materials():
