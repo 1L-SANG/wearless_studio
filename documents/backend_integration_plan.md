@@ -59,7 +59,7 @@ users/{userId}/projects/{projectId}/exports/{exportId}.{ext}
 seed/matching/{matchingItemId}.{ext}
 ```
 
-**서빙**: `src`는 안정적인 앱 URL `/v1/assets/{assetId}/file` — FastAPI가 권한 확인 후 짧은 만료 R2 signed URL로 302 redirect(+Cache-Control). 근거: raw signed URL을 DB에 저장하면 만료 관리가 계약을 침식(장시간 열린 에디터에서 이미지 깨짐). seed/public은 CDN 직접. AI provider 입력은 job 실행 시 발급한 signed GET. 생성 이미지·export 결과도 전부 assets 등록.
+**서빙**: `src`는 안정적인 앱 URL `/v1/assets/{assetId}/file` — FastAPI가 R2 public URL로 302 redirect. **무인증 capability URL** (2026-07-11 전환): 브라우저 `<img>`는 Bearer를 못 붙여 인증 라우트로는 렌더가 아예 불가(실버그) — asset id(UUIDv4)가 능력 토큰이고 R2 객체 자체가 public base로 이미 공개라 새 노출 없음. 프론트는 어댑터 경계에서 상대 src를 `VITE_API_BASE_URL` 기준 절대화(`httpAdapter.absolutize` — 오리진이 달라 상대 URL은 404). 근거: raw signed URL을 DB에 저장하면 만료 관리가 계약을 침식(장시간 열린 에디터에서 이미지 깨짐). seed/public은 CDN 직접. AI provider 입력은 job 실행 시 발급한 signed GET. 생성 이미지·export 결과도 전부 assets 등록.
 
 **파생본**: MVP는 원본 보존, 썸네일/리사이즈는 `assets.metadata.variants`로 추후.
 

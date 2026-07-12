@@ -1117,17 +1117,22 @@ async def generate_detail_page(
     tags=["Assets & Uploads"],
     summary="안정 에셋 파일 서빙 (302 Redirect)",
 )
-async def get_asset_file(
-    request: Request, asset_id: str, user_id: str = Depends(require_user)
-):
-    """프론트엔드 에디터/화면에서 상시 사용 가능한 불변 에셋 이미지 경로입니다. 접근 권한(user_id) 확인 후 실제 스토리지의 단기 만료 서명 URL로 302 리다이렉트합니다.
+async def get_asset_file(request: Request, asset_id: str):
+    """프론트엔드 에디터/화면에서 상시 사용 가능한 불변 에셋 이미지 경로입니다. 실제 스토리지 URL로 302 리다이렉트합니다.
 
-    - **Bearer Token**: 필수
+    - **인증 없음 (capability URL)**: 브라우저 `<img src>`가 Bearer를 붙일 수 없어 무인증이 필수.
+      asset id(UUIDv4)가 능력 토큰이며, R2 객체 자체가 public base로 이미 공개라 새 노출 없음.
+      (구 계약의 "Bearer 필수·타인 소유 404"는 <img> 렌더 불가 실버그라 2026-07-11 폐기.)
     - **에지 케이스**:
-      - `404 Not Found`: 자산이 존재하지 않거나, 다른 사용자가 소유한 경우 발생
+      - `404 Not Found`: 자산이 존재하지 않거나 id 형식이 잘못된 경우
     """
+    try:
+        uuid.UUID(asset_id)  # 공개 라우트 — 쓰레기 입력은 DB 전에 404로 컷
+    except ValueError:
+        raise HTTPException(
+            status_code=404, detail={"code": "not_found", "message": "자산을 찾을 수 없습니다."})
     async with get_conn(request) as conn:
-        asset = await repo.get_asset_for_user(conn, user_id, asset_id)
+        asset = await repo.get_asset_public(conn, asset_id)
     if asset is None:
         raise HTTPException(
             status_code=404, detail={"code": "not_found", "message": "자산을 찾을 수 없습니다."})

@@ -12,11 +12,21 @@ import { defaultAnalysisShape } from '@/lib/api/shapes.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
+// 서버가 주는 앱 상대 URL(`/v1/assets/{id}/file`)을 브라우저가 로드 가능한 절대 URL로.
+// 프론트(5173)와 API(8000/api.wearless.kr)는 오리진이 달라 상대 src 는 <img> 에서 404 — 어댑터 경계에서 절대화한다.
+const absolutize = (src) => (typeof src === 'string' && src.startsWith('/v1/') ? `${BASE_URL}${src}` : src);
+const absolutizeCut = (cut) => (cut && cut.src ? { ...cut, src: absolutize(cut.src) } : cut);
+
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
 export async function http(path, { method = 'GET', body } = {}) {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
+  if (!token) {
+    // http 모드에 mock 폴백은 없다 — 무세션이면 전 호출이 401 폭탄이 되므로 요청 전에 명확히 실패시킨다.
+    console.error(`API no-session ${path}`);
+    throw new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
+  }
 
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
@@ -327,16 +337,17 @@ export const httpAdapter = {
   // 마네킹 컷 목록 (계약 §6) — [{id,src,candidate,version,baseFit,fitAdjust,lengthAdjust,matchAdjust}].
   async getMannequins(projectId) {
     if (!projectId) return [];
-    return http(`/v1/projects/${projectId}/mannequins`);
+    const cuts = await http(`/v1/projects/${projectId}/mannequins`);
+    return (cuts || []).map(absolutizeCut);
   },
   // 최초 A/B 후보 생성 — 202{jobId}→폴링, 또는 완료 존재 시 200{data,credits}(무차감 재호출).
   // 크레딧: mannequinGenerate. 진행 중 재호출은 서버가 활성 job 에 합류(1회만 차감).
   async generateMannequins(projectId, { onProgress } = {}) {
     const res = await http(`/v1/projects/${projectId}/mannequins:generate`, { method: 'POST' });
-    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시)
+    if (res.data) return { data: res.data.map(absolutizeCut), credits: res.credits };  // 완료 재호출(200 캐시)
     // 마네킹 A/B 합성은 무거운 image job — 폴링 상한을 넉넉히(짧으면 정상 job 완료 전 실패 토스트).
     const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
-    return { data: result.data, credits: result.credits };
+    return { data: (result.data || []).map(absolutizeCut), credits: result.credits };
   },
   // @deprecated (2026-07) AG-05 폐기 — fitProfile 재생성(regenerateMannequin)으로 통합.
   // 서버 :adjust 는 항상 410 Gone(잡 미생성). 화면 어디서도 호출하지 않으며 계약 §6 잔재로만 남김.
@@ -354,12 +365,12 @@ export const httpAdapter = {
     const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {
       method: 'POST', body: { fitProfile },
     });
-    if (res.data) return { data: res.data, credits: res.credits };
+    if (res.data) return { data: res.data.map(absolutizeCut), credits: res.credits };
     const result = await pollJob(res.jobId, { onProgress, timeoutMs: 300000 });
     // 잡 결과 data 는 "이번에 새로 만든 컷"만(finalize candidates) — 계약(mock cutsEnvelope)은
     // 전체 버전 목록이므로 재조회로 정합한다(버전 스트립이 이전 버전 히스토리를 유지).
     const cuts = await http(`/v1/projects/${projectId}/mannequins`);
-    return { data: { cuts }, credits: result.credits };
+    return { data: { cuts: (cuts || []).map(absolutizeCut) }, credits: result.credits };
   },
   // 에디터 Wardrobe(의류 탭, 계약 §3.6) — Record<colorId|'misc', WardrobeImage[]>.
   async getWardrobe(projectId) {
