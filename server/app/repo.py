@@ -30,7 +30,10 @@ PATCHABLE_COLUMNS = ("compose_mode", "copywriting", "selected_mannequin_id")
 
 _PROJECT_COLS = (
     "id::text as id, status, title, compose_mode, copywriting, "
-    "selected_mannequin_id, adjust_count, created_at, updated_at"
+    "selected_mannequin_id, adjust_count, created_at, updated_at, "
+    # FaceMarket verify-before-use 포인터(FM-30). 워커 정산 훅이 이 값을 읽어
+    # 70/20/10 온체인 정산을 기록한다. 비-FaceMarket 프로젝트는 NULL.
+    "facemarket_license_id::text as facemarket_license_id"
 )
 
 # JOIN 쿼리용 — products 와 겹치는 id/created_at/updated_at 모호성 방지로 pr. 한정.

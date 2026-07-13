@@ -85,6 +85,9 @@ class Settings:
     fm_chain_id: int | None = None  # 없으면 eth_chainId 로 조회
     fm_settlement_address: str | None = None  # 배포된 FaceMarketSettlement 주소(0x…)
     fm_chain_private_key: str | None = None  # owner 개인키(0x…). 절대 커밋 금지
+    # ---- OpenDID 홀더(선택과제1) — 커스터디얼 홀더 MSA(로컬 :8100). 라이선스 발급 시 FaceLicense VC 발급 ----
+    # 미설정이면(프로드) VC 발급 훅 no-op — 기존 라이선스 흐름 무영향. 로컬 dev 에서만 홀더 도달가능.
+    opendid_holder_url: str | None = None
 
 
 def _image_size() -> str:
@@ -178,4 +181,5 @@ def load_settings() -> Settings:
         fm_chain_id=(int(os.getenv("FM_CHAIN_ID")) if os.getenv("FM_CHAIN_ID") else None),
         fm_settlement_address=os.getenv("FM_SETTLEMENT_ADDRESS") or None,
         fm_chain_private_key=os.getenv("FM_CHAIN_PRIVATE_KEY") or None,
+        opendid_holder_url=(os.getenv("OPENDID_HOLDER_URL") or "").rstrip("/") or None,
     )

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
-from . import repo
+from . import facemarket, repo
 from .agents import mannequin, product_analyst, style_affinity
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
@@ -1097,8 +1097,19 @@ async def generate_detail_page(
     s = request.app.state.settings
     scoped_key = f"{project_id}:detail_page:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
+        project = await repo.get_project(conn, user_id, project_id)
+        if project is None:
             raise _not_found()
+        # FaceMarket verify-before-use 게이트(FM-30). **캐시 반환보다 먼저** — 해지·만료된
+        # 라이선스가 이미 생성된 페이지의 재생성까지 막아야 하므로(장면⑤). facemarket off면
+        # 미진입 → 기존 셀러 플로우 무영향. 선택 모델에 라이선스 없으면 no-op(비-FaceMarket 셀러).
+        if s.facemarket_enabled:
+            analysis = await repo.get_analysis(conn, project_id)
+            license_row = await facemarket.resolve_project_license(conn, project, analysis)
+            if license_row is not None:
+                await facemarket.verify_license(request.app, license_row)  # 실패=409
+                await facemarket.set_project_license(conn, project_id, license_row["id"])
+                await conn.commit()  # 잠금 확정 — 캐시 반환 경로도 워커 정산 포인터 보존
         existing = await repo.get_editor_blocks(conn, project_id)
         if existing:  # 완료 재호출 → 기존 결과 반환(재생성·재차감 없음)
             account = await repo.get_account(conn, user_id)

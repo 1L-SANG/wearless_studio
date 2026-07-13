@@ -27,6 +27,10 @@ SAMPLE_TRANS = {
 }
 
 _CARD_KEYS = ("id", "display_name", "status", "cover_image_url", "created_at")
+# 카탈로그(enriched) 추가 라이선스 필드 — store 에 라이선스 없으면 None/False.
+_LICENSE_ENRICH = {
+    "license_id": None, "unit_price": None, "vc_id": None, "has_active_license": False,
+}
 
 
 class FakeCursor:
@@ -66,11 +70,15 @@ class FakeCursor:
             self.store["tx"].add(cx_tx_id)
             self._result = None
         elif s.startswith("select id::text as id, display_name, status, cover_image_url, created_at from fm_models"):
-            if "where user_id" in s:
-                rows = [r for r in models if r["user_id"] == params[0]]
-            else:  # 카탈로그 = verified 만
-                rows = [r for r in models if r["status"] == "verified"]
+            # /models/me — 본인 소유(모든 상태). 기본 카드 컬럼만.
+            rows = [r for r in models if r["user_id"] == params[0]]
             self._many = [{k: r[k] for k in _CARD_KEYS} for r in rows]
+        elif s.startswith("select m.id::text as id"):
+            # 카탈로그(enriched) = verified 만 + 최근 active 라이선스 LEFT JOIN LATERAL.
+            rows = [r for r in models if r["status"] == "verified"]
+            self._many = [
+                {**{k: r[k] for k in _CARD_KEYS}, **_LICENSE_ENRICH} for r in rows
+            ]
         else:  # pragma: no cover
             raise AssertionError(f"unexpected SQL: {s}")
 
@@ -190,8 +198,14 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
     cards = r.json()
     assert len(cards) == 1
     card = cards[0]
-    assert set(card) == {"id", "displayName", "status", "coverImageUrl", "createdAt"}
+    # T2 enriched — 기본 카드 + 라이선스 필드(store 무라이선스 → None/False).
+    assert set(card) == {
+        "id", "displayName", "status", "coverImageUrl", "createdAt",
+        "licenseId", "unitPrice", "hasActiveLicense", "vcId",
+    }
     assert card["status"] == "verified"
+    assert card["hasActiveLicense"] is False
+    assert card["licenseId"] is None and card["unitPrice"] is None and card["vcId"] is None
     # PII/식별자 미노출
     assert "ciHash" not in card and "userId" not in card and "ci_hash" not in r.text
 
