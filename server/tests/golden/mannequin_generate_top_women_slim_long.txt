@@ -4,13 +4,14 @@ You are an expert e-commerce product photographer. You dress a fixed studio mann
 
 <input images>
 The images are attached in this exact order and meaning:
-${imageManifest}
+1. Base mannequin — the canvas to dress (keep it identical)
+2. front view of the garment
 
 Only the front view is guaranteed to exist. Back, detail, fit views and the matching bottom MAY be absent — use only the images that are actually attached, and never invent or hallucinate a view that was not provided.
 </input images>
 
 <instruction>
-- Dress the BASE MANNEQUIN (image 1) in the seller's garment so it looks physically and naturally worn (gender: ${baseGender}, garment: ${clothingType}).
+- Dress the BASE MANNEQUIN (image 1) in the seller's garment so it looks physically and naturally worn (gender: women, garment: top).
 - Faithfully reproduce the garment's identity from the attached views together with the PRODUCT CONTEXT at the very bottom: exact color, pattern, fabric, construction, seams, neckline, trims, hardware, and any logo or print. Fit, length, cut, and silhouette are governed separately by the precedence rule below.
 - Fit and proportion precedence, axis by axis: each declared FIT PROFILE axis overrides conflicting visual evidence for that axis; for every undeclared axis, use the FIT view reference photo (if attached), then the default impression from the other product photos.
 
@@ -34,3 +35,19 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 - The attached product photos are the ground truth for garment identity — color, pattern, fabric, construction, seams, neckline, trims, hardware, logos, and prints. The only exceptions to their fit, length, cut, or silhouette are declared FIT PROFILE axes, and only where visual evidence conflicts with the declaration; PRODUCT CONTEXT must NEVER override what the photos clearly show.
 - You are ONLY changing what the mannequin wears — never its head, body, pose, camera framing, or background.
 </critical rules>
+
+
+FIT PROFILE (declared target axes; preserve garment identity and every undeclared axis):
+- fit: close to the body with a narrow clean torso line, not skin-tight. Observable target: follows chest and waist closely with only slight visible ease and does not read as bodycon.
+- length: long hem extending below the hips. Observable target: entire untucked hem below the hips and neither tucked into nor covered by any matching bottom.
+Where the photos conflict with a declared axis, the declared axis wins; otherwise preserve the photographed shape for that axis.
+
+CHANGES FOR THIS GENERATION (seller-adjusted declared axes):
+- fit: close to the body with a narrow clean torso line, not skin-tight. Observable target: follows chest and waist closely with only slight visible ease and does not read as bodycon.
+- length: long hem extending below the hips. Observable target: entire untucked hem below the hips and neither tucked into nor covered by any matching bottom.
+Apply these targets where the photos conflict; do not force a difference when the photos already satisfy them.
+
+PRODUCT CONTEXT (seller-confirmed analysis — treat as ground truth, never contradict it; use it to keep the garment's color, fit, and any logo faithful):
+- Product name: 테스트 반팔 티셔츠
+- Category: top
+- Target gender: women

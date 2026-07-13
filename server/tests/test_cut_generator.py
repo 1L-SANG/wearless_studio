@@ -63,7 +63,7 @@ def test_build_prompt_injects_fit_profile_and_drops_legacy_fit():
     }}
     p = cg.build_prompt({"cutType": "styling", "direction": "front", "shot": "full"},
                         product, analysis=analysis)
-    assert "FIT PROFILE (seller-declared" in p
+    assert "FIT PROFILE (declared target axes" in p
     assert "- fit: oversized volume" in p
     assert p.index("FIT PROFILE") < p.index("PRODUCT CONTEXT")
     assert "- Fit: regular" not in p

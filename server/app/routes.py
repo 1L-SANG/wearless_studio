@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import repo
-from .agents import mannequin, product_analyst, style_affinity
+from .agents import fit_axes, mannequin, product_analyst, style_affinity
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import input_qc, matching, retrieval
@@ -81,6 +81,29 @@ def _wake_dispatcher(request: Request) -> None:
     dispatcher = getattr(request.app.state, "dispatcher", None)
     if dispatcher is not None:
         dispatcher.wake()
+
+
+async def _fit_profile_snapshot(conn, project_id: str, requested: dict | None) -> dict:
+    """잡 생성 시점 effective fitProfile 스냅샷 — 워커의 불변 입력 (fidelity 설계 D3).
+
+    - profile: 카탈로그 정규화(fit_axes.normalize_fit_profile). 프로필이 없으면 명시적 None
+      (auto 값 발명 금지). 실제 매칭 이미지가 없으면 matchCut 제거(없는 옷 지시 방지).
+    - adjustedAxes: **서버 diff 로만 산출**(§E-2) — 직전 정규화 프로필 vs 요청 정규화 프로필.
+      클라이언트가 보낸 조정 목록은 신뢰하지 않는다. generate/바디 없는 regenerate 는 [].
+    """
+    analysis = await repo.get_analysis(conn, project_id) or {}
+    prev = fit_axes.normalize_fit_profile(analysis.get("fitProfile"))
+    if requested is not None:
+        profile = fit_axes.normalize_fit_profile(requested)
+        adjusted = fit_axes.adjusted_axes_between(prev, profile)
+    else:
+        profile, adjusted = prev, []
+    if profile and profile.get("matchCut") is not None:
+        match_id = mannequin.main_match_item_id(analysis)
+        has_match = bool(match_id and await repo.get_matching_item_asset(conn, match_id))
+        if not has_match:
+            profile = {k: v for k, v in profile.items() if k != "matchCut"}
+    return {"version": 1, "profile": profile, "adjustedAxes": adjusted}
 
 
 def _bad_request(code: str, message: str) -> HTTPException:
@@ -831,9 +854,11 @@ async def generate_mannequins(
         # create_job이 멱등/활성 합류를 원자 처리: 부분 unique INSERT라 동시 요청도
         # blocking으로 직렬화되어 프로젝트당 active job 1개만 생성되고 나머지는 합류한다(§6).
         # 합류(created=False)는 게이트·예약 없이 기존 job 반환 → 동시 재시도/입력검증으로 막지 않음.
+        # 합류 시 기존 job payload 가 정본 — 아래 스냅샷은 신규 job 에만 실린다.
+        snapshot = await _fit_profile_snapshot(conn, project_id, None)
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
-            payload={"mode": "generate"}, idempotency_key=scoped_key,
+            payload={"mode": "generate", "fitProfileSnapshot": snapshot}, idempotency_key=scoped_key,
             credits_reserved=cost,
             metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
@@ -933,9 +958,12 @@ async def regenerate_mannequins(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         # generate 와 달리 완료 캐시 게이트 없음 — 항상 새 job 을 만들어 새 버전을 append 한다.
+        # 스냅샷 = 잡 시점 effective profile + 서버 산출 adjustedAxes (fidelity 설계 D3·§E-2).
+        snapshot = await _fit_profile_snapshot(conn, project_id, body.get("fitProfile"))
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
-            payload={"mode": "regenerate", "fitProfile": body.get("fitProfile")},
+            payload={"mode": "regenerate", "fitProfile": body.get("fitProfile"),
+                     "fitProfileSnapshot": snapshot},
             idempotency_key=scoped_key, credits_reserved=cost,
             metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
