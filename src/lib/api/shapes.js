@@ -5,12 +5,10 @@
    AI 산출 필드는 analyzeProduct 콜러가 덮어쓴다.
    ============================================================= */
 
-// 인물모델 썸네일(public/models/). women/men 베이스. (인물모델 서버 배선은 별도 — 현재 편집용 기본값.)
-const DEFAULT_MODELS = [
-  { id: 'mA', name: '모델 A', gender: 'women', thumb: '/models/women/w1.webp', recommended: true },
-  { id: 'mB', name: '모델 B', gender: 'men', thumb: '/models/men/m1.webp', recommended: false },
-  { id: 'mC', name: '모델 C', gender: 'men', thumb: '/models/men/m2.webp', recommended: false },
-];
+// 인물모델은 더 이상 정적 시드가 아니다 — FaceMarket 검증 모델 카탈로그(GET /v1/facemarket/models,
+// listModels())를 AnalysisForm 이 런타임에 불러온다. 기본 shape 은 빈 목록 + 미선택으로 둔다.
+// selectedModelId 는 셀러가 라이선스 활성 모델을 고르면 실 fm_models.id(UUID)로 채워지고,
+// saveAnalysis 가 서버에 지속해 생성 게이트가 서버측에서 라이선스를 해석한다.
 
 // 실측 템플릿 — key 는 영문 토큰(계약 §4). value 는 AI 미산출 → null(사용자 직접 입력, PRD §6.5).
 const MEASUREMENT_TEMPLATE = [
@@ -54,7 +52,7 @@ export function defaultAnalysisShape() {
     fit: null, suggestedName: '',
     materials: [], sellingPoints: [], aiSuggestedPoints: [],
     styleTags: [], swatchSuggestions: [],
-    selectedModelId: 'mA', models: DEFAULT_MODELS.map((m) => ({ ...m })),
+    selectedModelId: null, models: [],
     matchClothing: [],
     washCare: '', locked: false, measurementsUnknown: false,
     measurements: MEASUREMENT_TEMPLATE.map((m) => ({ ...m })),

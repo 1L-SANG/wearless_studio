@@ -6,6 +6,7 @@
    ============================================================= */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
+import { listModels } from '@/lib/api/facemarket.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
@@ -152,8 +153,18 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const [editMatIdx, setEditMatIdx] = useState(null);
   const matTotal = (a.materials || []).reduce((s, m) => s + (Number(m.ratio) || 0), 0);
   const matOver = matTotal > 100;
-  // 대상 성별 — 모델은 이 성별에 해당하는 것만 노출한다.
-  const genderSel = a.targetGenders?.[0] || null;
+  // 인물 모델 카탈로그 — FaceMarket 검증 모델(GET /v1/facemarket/models, listModels()).
+  // 정적 시드를 버리고 런타임 로드한다. 라이선스가 활성인(hasActiveLicense) 모델만 선택 가능.
+  const [models, setModels] = useState([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    listModels()
+      .then((list) => { if (alive) setModels(Array.isArray(list) ? list : []); })
+      .catch(() => { if (alive) setModels([]); })   // 카탈로그 실패는 비치명 — 빈 그리드로 안내만
+      .finally(() => { if (alive) setModelsLoading(false); });
+    return () => { alive = false; };
+  }, []);
 
   // AI 추천 특징은 일단 강제로 칩에 채워둔다 (사용자가 지우면 빠짐). 최대 5개.
   useEffect(() => {
@@ -162,13 +173,14 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, 5) });
   }, []);
 
-  // 성별이 바뀌어 선택된 모델이 목록에서 사라지면, 해당 성별의 추천(없으면 첫) 모델로 자동 전환.
+  // 카탈로그 로드 후 선택값이 없거나 더 이상 라이선스 활성 모델이 아니면 첫 라이선스 활성 모델로 자동 선택.
+  // (구 정적 selectedModelId 'mA' 등도 여기서 실 fm_models.id(UUID)로 교체 → 생성 게이트가 해석 가능.)
   useEffect(() => {
-    const visible = (a.models || []).filter((m) => !genderSel || m.gender === genderSel);
-    if (visible.length && !visible.some((m) => m.id === a.selectedModelId)) {
-      onChange({ selectedModelId: (visible.find((m) => m.recommended) || visible[0]).id });
+    const licensable = models.filter((m) => m.hasActiveLicense);
+    if (licensable.length && !licensable.some((m) => m.id === a.selectedModelId)) {
+      onChange({ selectedModelId: licensable[0].id });
     }
-  }, [genderSel]);
+  }, [models]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
 
   const commitSp = () => {
@@ -356,17 +368,41 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
         </div>
       </div>
 
-      {/* 5. model select — full width */}
+      {/* 5. model select — FaceMarket 검증 모델 카탈로그(라이선스 활성 모델만 선택 가능) */}
       <div className="surface">
         <div className="sec-title" style={{ marginBottom: 6 }}>모델 선택</div>
-        <div className="sec-sub" style={{ marginBottom: 16 }}>대상 성별·분위기에 맞춰 추천해뒀어요.</div>
-        <div className="model-grid">
-          {a.models.filter((m) => !genderSel || m.gender === genderSel).map((m) => (
-            <div key={m.id} className={`model-card img-only${a.selectedModelId === m.id ? ' on' : ''}`} onClick={() => onChange({ selectedModelId: m.id })}>
-              <img src={m.thumb} alt={m.name} />
-            </div>
-          ))}
-        </div>
+        <div className="sec-sub" style={{ marginBottom: 16 }}>검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.</div>
+        {modelsLoading ? (
+          <div className="hint">검증 모델을 불러오는 중이에요…</div>
+        ) : models.length === 0 ? (
+          <div className="hint">아직 등록된 검증 모델이 없어요.</div>
+        ) : (
+          <div className="model-grid">
+            {models.map((m) => {
+              const selectable = !!m.hasActiveLicense;
+              const on = a.selectedModelId === m.id;
+              return (
+                <div key={m.id}
+                  className={`model-card fm-model${on ? ' on' : ''}${selectable ? '' : ' disabled'}`}
+                  onClick={() => selectable && onChange({ selectedModelId: m.id })}
+                  title={selectable ? m.displayName : '활성 라이선스가 없어 선택할 수 없어요'}>
+                  {m.coverImageUrl
+                    ? <img src={m.coverImageUrl} alt={m.displayName} />
+                    : <div className="fm-empty"><Icon name="person" size={24} /></div>}
+                  {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
+                  <div className="fm-meta">
+                    <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
+                    <div className="fm-price">
+                      {selectable && m.unitPrice != null
+                        ? `₩${Number(m.unitPrice).toLocaleString('ko-KR')}/건`
+                        : '라이선스 없음'}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 6. match clothing — full width */}

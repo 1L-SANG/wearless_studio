@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Chips, Field, Icon, useToast } from '@/components/ui.jsx';
-import { createLicense, fetchLicenseFaceUrl, listLicenses } from '@/lib/api/facemarket.js';
+import { createLicense, fetchLicenseFaceUrl, listLicenses, revokeLicense } from '@/lib/api/facemarket.js';
 import s from './ModelLicense.module.css';
 
 // 브랜드 유형(카테고리) 기준 — 모델이 자기 얼굴이 쓰일 브랜드 종류를 허용/금지로 통제.
@@ -23,8 +23,10 @@ const won = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
 const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString('ko-KR'); } catch { return iso; } };
 
 // 라이선스 카드 — 자기 얼굴을 게이트로 인증해 objectURL 로 표시(언마운트 시 해제).
-function LicenseCard({ license }) {
+// 활성 라이선스는 '라이선스 해지'로 폐기 가능 — 해지 즉시 셀러의 생성 게이트가 차단된다(장면⑤).
+function LicenseCard({ license, onRevoked, push }) {
   const [faceUrl, setFaceUrl] = useState(null);
+  const [revoking, setRevoking] = useState(false);
   useEffect(() => {
     let url;
     let alive = true;
@@ -41,8 +43,24 @@ function LicenseCard({ license }) {
 
   const expired = license.status === 'expired'
     || (license.licenseValidUntil && new Date(license.licenseValidUntil) <= new Date());
-  const statusLabel = license.status === 'revoked' ? '폐기됨' : expired ? '만료' : '활성';
+  const statusLabel = license.status === 'revoked' ? '해지됨' : expired ? '만료' : '활성';
   const statusCls = license.status === 'active' && !expired ? s.stActive : s.stOff;
+  const isActive = license.status === 'active' && !expired;
+
+  const onRevoke = async () => {
+    // 해지는 되돌릴 수 없는 표준 조치 — 셀러가 더는 이 얼굴을 쓸 수 없게 된다. 오조작 방지로 확인받는다.
+    if (!window.confirm('이 라이선스를 해지하면 셀러가 더 이상 사용할 수 없어요. 해지할까요?')) return;
+    setRevoking(true);
+    try {
+      await revokeLicense(license.id);
+      push?.('라이선스를 해지했어요.', { icon: 'check' });
+      onRevoked?.();
+    } catch (e) {
+      push?.(e.message || '라이선스 해지에 실패했어요.', { icon: 'alertCircle' });
+    } finally {
+      setRevoking(false);
+    }
+  };
 
   return (
     <div className={s.card}>
@@ -67,6 +85,11 @@ function LicenseCard({ license }) {
         <div className={s.meta}>
           <Icon name="lock" size={12} /> 유효기간 {fmtDate(license.licenseValidUntil)}까지
         </div>
+        {isActive && (
+          <button type="button" className={s.revoke} onClick={onRevoke} disabled={revoking}>
+            {revoking ? '해지 중…' : '라이선스 해지'}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -189,7 +212,7 @@ export function ModelLicense() {
           ? <div className={s.empty}><Icon name="image" size={22} /><span>아직 등록한 라이선스가 없어요.</span></div>
           : (
             <div className={s.grid}>
-              {licenses.map((lic) => <LicenseCard key={lic.id} license={lic} />)}
+              {licenses.map((lic) => <LicenseCard key={lic.id} license={lic} onRevoked={reload} push={push} />)}
             </div>
           )}
     </div>

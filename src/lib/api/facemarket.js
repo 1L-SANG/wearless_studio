@@ -68,6 +68,20 @@ export function listLicenses() {
   return http('/v1/facemarket/licenses');
 }
 
+// POST /v1/facemarket/licenses/{id}/revoke (소유자 스코프) — 라이선스를 해지한다.
+// 갱신된 LicenseCard(status:'revoked') 반환. 해지 즉시 얼굴 게이트와 생성 verify 게이트가
+// 이 모델을 차단한다(재생성 시 409 license_revoked). 멱등 — 이미 해지된 라이선스도 안전.
+export function revokeLicense(id) {
+  return http(`/v1/facemarket/licenses/${id}/revoke`, { method: 'POST' });
+}
+
+// GET /v1/facemarket/jobs/{jobId}/settlement — 생성 잡의 온체인 정산 영수증(payment_id=job:{jobId}).
+// → { paymentId, txHash, chainId, totalAmount, modelAmount, platformAmount, opsAmount, vcId, chainStatus }
+// (70/20/10 = 모델/플랫폼/운영). 정산 미기록(비 FaceMarket 잡·체인 지연 등)이면 404 → http() 가 throw.
+export function getJobSettlement(jobId) {
+  return http(`/v1/facemarket/jobs/${jobId}/settlement`);
+}
+
 // 게이트 얼굴 이미지 → objectURL. <img> 는 Bearer 를 못 보내므로 fetch+blob 로 인증해 받는다.
 // 호출부는 표시 후 URL.revokeObjectURL 로 해제할 것.
 export async function fetchLicenseFaceUrl(faceImageUri) {

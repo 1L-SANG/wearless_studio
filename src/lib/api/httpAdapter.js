@@ -56,12 +56,19 @@ export async function http(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     // 계약 §6: 사용자에게 그대로 보여줄 한국어 message. envelope 없으면 한국어 기본값.
     let message = '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.';
+    let code;
     try {
       const payload = await res.json();
       if (payload?.error?.message) message = payload.error.message;
+      if (payload?.error?.code) code = payload.error.code;
     } catch { /* 비 JSON 응답 — 기본 메시지 유지 */ }
     console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
-    throw new Error(message);
+    // status·code 를 에러에 실어 호출부가 분기할 수 있게 한다(예: 409 라이선스 차단 → 블로킹 패널).
+    // message 는 그대로라 기존 catch(e.message) 는 영향 없음(하위호환).
+    const err = new Error(message);
+    err.status = res.status;
+    if (code) err.code = code;
+    throw err;
   }
   return absolutizeAssetUrls(await res.json());
 }
@@ -266,13 +273,14 @@ export const httpAdapter = {
   // AG-06 컷 + AG-02/03 카피 → M-02 조립. 완료 재호출은 서버가 기존 결과 반환(무차감).
   async generateDetailPage(projectId, { onProgress } = {}) {
     const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
-    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(202 아님)
+    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(202 아님) — 새 잡 없음
     const result = await pollJob(res.jobId, {
       onProgress,
       timeoutMs: 300000,
       timeoutMessage: '상세페이지 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.',
     });
-    return { data: result.data, credits: result.credits };
+    // jobId 를 함께 반환 — 완료 후 정산 영수증(GET /jobs/{jobId}/settlement, payment_id=job:{jobId})을 조회한다.
+    return { data: result.data, credits: result.credits, jobId: res.jobId };
   },
   // 프로젝트 단건 조회 (계약 §6) — {id,status,title,composeMode,copywriting,
   // selectedMannequinId,adjustCount,createdAt,updatedAt}. projectId 필수:
