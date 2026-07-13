@@ -13,7 +13,7 @@ import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { saveProductDraft, loadDraft, hasPendingDraft } from '@/lib/draftStore.js';
 import { Icon, Button, IconButton, Skeleton, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
-import { AnalysisForm, AnalysisSkeleton, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
+import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
@@ -163,6 +163,9 @@ export function ProductInput() {
   const [product, setProduct] = useState(null);
   const [catalogs, setCatalogs] = useState(null);
   const [phase, setPhase] = useState('input');   // input | analyzing | done
+  // 분석 결과 도착 신호 — 화면 전환은 대기 연출(AnalysisProgress)이 잔여 단계를 완주한 뒤
+  // onFinished 로 수행한다 (애니메이션 끝 ≈ 전환, 2026-07-13 A안 결정).
+  const [analysisReady, setAnalysisReady] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const projectId = useAppStore((s) => s.projectId);
@@ -252,6 +255,7 @@ export function ProductInput() {
 
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
+    setAnalysisReady(false);
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
     try {
@@ -277,8 +281,8 @@ export function ProductInput() {
         set({ name: finalName });
         await api.saveProduct(pid, { name: finalName });
       }
-      setPhase('done');
-      toast.push('AI 분석을 완료했어요', { icon: 'sparkles' });
+      // 즉시 전환하지 않는다 — 대기 연출이 잔여 단계를 빠르게 완주한 뒤 onFinished 에서 전환.
+      setAnalysisReady(true);
     } catch (e) {
       // http 모드에서 분석 실패(네트워크·서버 에러)해도 스피너에 고착되지 않게 — 입력으로 복귀 + 안내.
       setPhase('input');
@@ -368,7 +372,15 @@ export function ProductInput() {
       )}
 
       <div className="af-anchor" />
-      {phase === 'analyzing' && <AnalysisSkeleton />}
+      {phase === 'analyzing' && (
+        <>
+          <AnalysisProgress
+            photoSrc={product.colors?.[0]?.images?.[0]?.src}
+            done={analysisReady}
+            onFinished={() => { setPhase('done'); toast.push('AI 분석을 완료했어요', { icon: 'sparkles' }); }} />
+          <AnalysisSkeleton />
+        </>
+      )}
       {phase === 'done' && (
         <div className="pi-reveal">
           <AnalysisForm inline analysis={analysis} catalogs={catalogs}
