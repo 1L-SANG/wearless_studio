@@ -180,6 +180,29 @@
 .af-anchor { scroll-margin-top: 70px; }
 .af-skeleton > .surface { margin-top: 18px; }
 .af-skel-head { display: flex; align-items: center; gap: 10px; margin-top: 26px; font-size: 14.5px; font-weight: 600; color: var(--fg-1); }
+
+/* ── 분석 대기 연출 A안: 단계 체크리스트 (mockups/analysis-waiting-concepts.html) ── */
+.ap-stage { display: flex; gap: 22px; align-items: center; margin-top: 26px; }
+.ap-photo { flex: 0 0 132px; height: 164px; object-fit: cover; border-radius: 10px;
+  box-shadow: 0 0 0 1px var(--ring); animation: apBreath 2.4s ease-in-out infinite; }
+@keyframes apBreath { 50% { opacity: .6; } }
+.ap-body { flex: 1; min-width: 0; }
+.ap-title { font-size: 15px; font-weight: 700; margin-bottom: 14px; }
+.ap-step { display: flex; align-items: center; gap: 11px; font-size: 14px; color: #b6b6bc;
+  padding: 4.5px 0; transition: color .3s; }
+.ap-step.run { color: var(--fg-1); font-weight: 600; }
+.ap-step.done { color: var(--fg-1); }
+.ap-dot { width: 20px; height: 20px; border-radius: 50%; flex: 0 0 auto; display: flex;
+  align-items: center; justify-content: center; box-shadow: inset 0 0 0 1.6px #d9d9de;
+  transition: all .3s; font-size: 10.5px; }
+.ap-step.run .ap-dot { box-shadow: inset 0 0 0 1.6px #8fbfee; }
+.ap-step.run .ap-dot::after { content: ""; width: 8px; height: 8px; border-radius: 50%;
+  border: 2px solid #6ba8e6; border-top-color: transparent; animation: apSpin .7s linear infinite; }
+@keyframes apSpin { to { transform: rotate(360deg); } }
+.ap-step.done .ap-dot { background: var(--fg-1); box-shadow: none; }
+.ap-step.done .ap-dot::after { content: "✓"; color: #fff; font-weight: 800; }
+.ap-bar { height: 4px; border-radius: 99px; background: #ececef; margin-top: 14px; overflow: hidden; }
+.ap-bar i { display: block; height: 100%; border-radius: 99px; background: var(--fg-1); transition: width .5s ease; }
 .af-inline-head { display: flex; align-items: center; gap: 11px; margin: 30px 0 10px; padding-top: 22px; box-shadow: 0 -1px 0 0 var(--ring); }
 .af-inline-head > svg { color: var(--fg-1); flex: none; margin-top: 2px; }
 .af-head-badge { width: 30px; height: 30px; border-radius: var(--r-4); background: var(--glass-bg);

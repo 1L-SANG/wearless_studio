@@ -4,7 +4,7 @@
    Only change: ES imports + exports (was window globals). Markup,
    classNames, inline styles unchanged.
    ============================================================= */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
@@ -19,6 +19,49 @@ const genderOf = (genders) => {
   const g = (genders || []).map((x) => String(x).toLowerCase());
   return g.length && g.every((x) => ['men', 'male', '남성', '남'].includes(x)) ? 'men' : 'women';
 };
+
+// ── 분석 대기 연출 (A안 · 단계 체크리스트 — 2026-07-13 확정, mockups/analysis-waiting-concepts.html) ──
+// 자연 페이스 합 ~9초 = prod 실측 분석(8~12초)의 앞쪽에 맞춤. 결과(done)가 먼저 오면 잔여 단계를
+// 고속(180ms) 완주한 뒤 onFinished — 애니메이션 끝과 화면 전환이 맞물린다. 늦으면 마지막 단계
+// 스피너로 은은히 대기(멈춘 느낌 방지). 퍼센트 숫자 금지(마네킹 대기화면과 동일 결정).
+const ANALYZE_STEPS = ['사진 확인', '종류·핏 판별', '소재 추정', '특징 발굴', '매칭 의류 선정'];
+const STEP_DUR = [1200, 2200, 1600, 2200, 1800];
+const FAST_DUR = 180;
+
+export function AnalysisProgress({ photoSrc, done, onFinished }) {
+  const [doneCount, setDoneCount] = useState(0);   // 완료된 단계 수 (0..5)
+  const finishedRef = useRef(false);
+  const onFinishedRef = useRef(onFinished);
+  onFinishedRef.current = onFinished;
+
+  useEffect(() => {
+    if (doneCount >= ANALYZE_STEPS.length) {       // 전 단계 완료 → 살짝 여운 후 전환
+      if (finishedRef.current) return;
+      finishedRef.current = true;
+      const t = setTimeout(() => onFinishedRef.current?.(), 400);
+      return () => clearTimeout(t);
+    }
+    // 마지막 단계는 결과가 도착해야만 완료 — 그 전엔 스피너 유지 (분석 최대시간 커버)
+    if (!done && doneCount === ANALYZE_STEPS.length - 1) return;
+    const t = setTimeout(() => setDoneCount((n) => n + 1), done ? FAST_DUR : STEP_DUR[doneCount]);
+    return () => clearTimeout(t);
+  }, [doneCount, done]);
+
+  return (
+    <div className="ap-stage surface">
+      {photoSrc && <img className="ap-photo" src={photoSrc} alt="" />}
+      <div className="ap-body">
+        <div className="ap-title">AI가 상품을 분석하고 있어요</div>
+        {ANALYZE_STEPS.map((s, i) => (
+          <div key={s} className={`ap-step${i < doneCount ? ' done' : i === doneCount ? ' run' : ''}`}>
+            <span className="ap-dot" />{s}
+          </div>
+        ))}
+        <div className="ap-bar"><i style={{ width: `${(doneCount / ANALYZE_STEPS.length) * 100}%` }} /></div>
+      </div>
+    </div>
+  );
+}
 
 export function AnalysisSkeleton() {
   const chipRow = (ws) => <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{ws.map((w, i) => <Skeleton key={i} w={w} h={34} r={9999} />)}</div>;
@@ -46,7 +89,7 @@ export function AnalysisSkeleton() {
   );
   return (
     <div className="af-skeleton" aria-busy="true">
-      <div className="af-skel-head"><Icon name="loader" size={16} className="spin" /><span>AI가 상품 정보를 분석하고 있어요…</span></div>
+      {/* 진행 헤더는 AnalysisProgress(단계 체크리스트)가 담당 — 여기는 폼 뼈대만 */}
       <div className="merged-card" style={{ marginTop: 16 }}>
         {/* 기본 정보 */}
         <div className="surface">
