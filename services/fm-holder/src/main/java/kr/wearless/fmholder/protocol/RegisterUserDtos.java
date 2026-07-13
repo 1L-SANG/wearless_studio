@@ -29,6 +29,11 @@ public final class RegisterUserDtos {
     public record CreateTokenRes(String id, String txId, String iv, String encStd) {}
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record RetrieveKycReq(String id, String txId, String serverToken, String kycTxId) {}
+
+    public record RetrieveKycRes(String txId) {}
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record RegisterUserReq(String id, String txId, String serverToken, SignedDidDoc signedDidDoc) {}
 
     public record RegisterUserRes(String txId) {}

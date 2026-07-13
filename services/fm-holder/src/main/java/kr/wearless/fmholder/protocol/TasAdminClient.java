@@ -29,6 +29,12 @@ public class TasAdminClient {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record RegisterDidReq(String didDoc, String name, String role, String serverUrl, String certificateUrl) {}
 
+    /** KYC 서버 등록 요청(RegisterKycReqDto). 서버는 단일행 upsert + enabled=true 강제. */
+    public record RegisterKycReq(String name, String serverUrl) {}
+
+    /** KYC 서버 조회 응답(KycInfoDto). 미등록이면 필드가 null. */
+    public record KycInfo(Long id, String name, String serverUrl, Boolean enabled) {}
+
     public record ApproveDidReq(Long entityId) {}
 
     public record EntityInfo(Long id, String did, String name, String role, String status) {}
@@ -52,5 +58,15 @@ public class TasAdminClient {
     /** 엔티티 DID 승인 → 온체인 앵커(storageService.registerDidDoc). */
     public void approveDid(Long entityId) {
         http.post().uri("/entities/approve-did").body(new ApproveDidReq(entityId)).retrieve().toBodilessEntity();
+    }
+
+    /** 현재 등록된 KYC 서버 조회(GET /kycs). 미등록이면 필드가 전부 null 인 KycInfo. */
+    public KycInfo getKyc() {
+        return http.get().uri("/kycs").retrieve().body(KycInfo.class);
+    }
+
+    /** KYC 서버 등록/갱신(POST /kycs) — retrieve-kyc 의 PII 조회 대상 서버. */
+    public KycInfo registerKyc(RegisterKycReq req) {
+        return http.post().uri("/kycs").body(req).retrieve().body(KycInfo.class);
     }
 }

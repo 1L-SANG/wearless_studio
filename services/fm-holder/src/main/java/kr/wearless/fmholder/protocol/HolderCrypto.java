@@ -5,10 +5,12 @@ import org.omnione.did.base.datamodel.enums.EccCurveType;
 import org.omnione.did.base.datamodel.enums.SymmetricCipherType;
 import org.omnione.did.base.datamodel.enums.SymmetricPaddingType;
 import org.omnione.did.base.util.BaseCryptoUtil;
+import org.omnione.did.base.util.BaseDigestUtil;
 import org.omnione.did.base.util.BaseMultibaseUtil;
 import org.omnione.did.common.util.JsonUtil;
 import org.omnione.did.crypto.enums.DigestType;
 import org.omnione.did.crypto.enums.MultiBaseType;
+import org.omnione.did.crypto.keypair.KeyPairInterface;
 import org.omnione.did.crypto.util.DigestUtils;
 import org.omnione.did.wallet.key.WalletManagerInterface;
 
@@ -114,6 +116,22 @@ public final class HolderCrypto {
         return new String(plain, StandardCharsets.UTF_8);
     }
 
+    /**
+     * create-token 응답에서 <b>serverToken</b>(retrieve-kyc/register-user/confirm 요청 필드)을 유도한다.
+     *
+     * <p>서버(TokenServiceImpl)는 {@code token = multibase(SHA-256(serializeAndSort(ServerTokenData)))} 를
+     * DB 에 저장하고, {@code encStd} 는 <b>동일한</b> {@code serializeAndSort(ServerTokenData)} 를 세션키로
+     * 암호화한 것이다. 따라서 복호화한 평문 바이트 = 해시 입력이므로 {@code multibase(SHA-256(평문))} 이
+     * 저장 토큰과 바이트 동일하다({@code TokenValidator.validateServerToken} 는 multibase decode 후 바이트 비교).
+     * multibase 알파벳은 자기기술 prefix 라 base64/base58btc 무관하게 decode 되어 일치한다.
+     */
+    public static String serverTokenFromEncStd(String encStdMultibase, String ivMultibase, byte[] sessionKey,
+                                               SymmetricCipherType cipher, SymmetricPaddingType padding) {
+        String stdJson = decryptServerToken(encStdMultibase, ivMultibase, sessionKey, cipher, padding);
+        byte[] hash = BaseDigestUtil.generateHash(stdJson.getBytes(StandardCharsets.UTF_8));
+        return BaseMultibaseUtil.encode(hash, MultiBaseType.base64);
+    }
+
     public static byte[] decode(String multibase) {
         return BaseMultibaseUtil.decode(multibase);
     }
@@ -125,5 +143,45 @@ public final class HolderCrypto {
     /** 16바이트 nonce (clientNonce 등, 서버 요구 = 정확히 16바이트). */
     public static byte[] nonce16() {
         return BaseCryptoUtil.generateNonce(16);
+    }
+
+    /** 16바이트 초기화 벡터(E2E accE2e.iv). */
+    public static byte[] initialVector() {
+        return BaseCryptoUtil.generateInitialVector();
+    }
+
+    // ── Flow B(issue-vc) E2E 발급자 채널 크립토 ────────────────────────────
+
+    /**
+     * 발급 요청(B6)용 1회성 E2E 키쌍 — 지갑 키가 아닌 raw EcKeyPair.
+     * privateKeyPkcs8(=PrivateKey.getEncoded, PKCS8 DER)를 메모리에 보관해 encReqVc 암호화 +
+     * 응답 encVc 복호화에 재사용한다(IssueVCTests.decode 미러).
+     */
+    public record E2eEphemeral(byte[] privateKeyPkcs8, byte[] compressedPublicKey) {}
+
+    /**
+     * 1회성 E2E 키쌍 생성. {@code BaseCryptoUtil.generateKeyPair} 로 raw EC 키쌍을 만들고
+     * 공개키를 압축(발급자 accE2e.publicKey 포맷)한다. (IssueServiceBase.setPublicKeyAndNonce 미러)
+     */
+    public static E2eEphemeral generateE2eEphemeral(EccCurveType curve) {
+        KeyPairInterface kp = BaseCryptoUtil.generateKeyPair(curve);
+        byte[] priv = kp.getPrivateKey().getEncoded();                                       // PKCS8 DER
+        byte[] pub = BaseCryptoUtil.compressPublicKey(kp.getPublicKey().getEncoded(), curve); // 압축 공개키
+        return new E2eEphemeral(priv, pub);
+    }
+
+    /**
+     * 발급자 E2E 세션키 = mergeSharedSecretAndNonce( ECDH(issuerCompressedPub, holderEphemeralPriv), nonce, cipher ).
+     * 발급자 {@code IssueServiceBase.issueVc}(generateSharedSecretKey→mergeSharedSecretAndNonce) 및
+     * {@code IssueVCTests.decode()} 와 바이트 동일. encReqVc 암호화·응답 encVc 복호화에 공용으로 쓴다.
+     *
+     * @param issuerCompressedPub 발급자 profile.process.reqE2e.publicKey 를 multibase decode 한 압축 공개키
+     * @param holderPrivPkcs8     {@link #generateE2eEphemeral} 의 홀더 1회성 개인키(PKCS8)
+     * @param nonce               profile.process.reqE2e.nonce 를 multibase decode 한 raw nonce
+     */
+    public static byte[] e2eSessionKey(byte[] issuerCompressedPub, byte[] holderPrivPkcs8, byte[] nonce,
+                                       EccCurveType curve, SymmetricCipherType cipher) {
+        byte[] sharedSecret = BaseCryptoUtil.generateSharedSecret(issuerCompressedPub, holderPrivPkcs8, curve);
+        return BaseCryptoUtil.mergeSharedSecretAndNonce(sharedSecret, nonce, cipher);
     }
 }

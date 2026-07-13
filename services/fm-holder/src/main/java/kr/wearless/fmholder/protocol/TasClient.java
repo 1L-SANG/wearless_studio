@@ -55,11 +55,43 @@ public class TasClient {
         return post("/request-create-token", req, RegisterUserDtos.CreateTokenRes.class);
     }
 
+    public RegisterUserDtos.RetrieveKycRes retrieveKyc(RegisterUserDtos.RetrieveKycReq req) {
+        return post("/retrieve-kyc", req, RegisterUserDtos.RetrieveKycRes.class);
+    }
+
     public RegisterUserDtos.RegisterUserRes requestRegisterUser(RegisterUserDtos.RegisterUserReq req) {
         return post("/request-register-user", req, RegisterUserDtos.RegisterUserRes.class);
     }
 
     public RegisterUserDtos.ConfirmRes confirmRegisterUser(RegisterUserDtos.ConfirmReq req) {
         return post("/confirm-register-user", req, RegisterUserDtos.ConfirmRes.class);
+    }
+
+    // ── Wallet enroll (once per holder) ──────────────────────────
+    public WalletDtos.RegisterWalletRes requestRegisterWallet(WalletDtos.RegisterWalletReq req) {
+        return post("/request-register-wallet", req, WalletDtos.RegisterWalletRes.class);
+    }
+
+    // ── Flow B: issue-vc ─────────────────────────────────────────
+    // request-ecdh / request-create-token 은 Flow A 와 동일 엔드포인트라 위 메서드를 재사용한다.
+    public IssueVcDtos.OfferRes offerIssueVcQr(IssueVcDtos.OfferReq req) {
+        return post("/offer-issue-vc/qr", req, IssueVcDtos.OfferRes.class);
+    }
+
+    public IssueVcDtos.ProposeRes proposeIssueVc(IssueVcDtos.ProposeReq req) {
+        return post("/propose-issue-vc", req, IssueVcDtos.ProposeRes.class);
+    }
+
+    /** request-issue-profile 은 TAS 가 Gson 원문 JSON 문자열로 응답(VcController toJson) → 원문 반환. */
+    public String requestIssueProfile(IssueVcDtos.ProfileReq req) {
+        return post("/request-issue-profile", req, String.class);
+    }
+
+    public IssueVcDtos.IssueVcRes requestIssueVc(IssueVcDtos.IssueVcReq req) {
+        return post("/request-issue-vc", req, IssueVcDtos.IssueVcRes.class);
+    }
+
+    public IssueVcDtos.ConfirmRes confirmIssueVc(IssueVcDtos.ConfirmReq req) {
+        return post("/confirm-issue-vc", req, IssueVcDtos.ConfirmRes.class);
     }
 }

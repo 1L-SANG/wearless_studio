@@ -59,7 +59,7 @@ public class HolderWalletService {
         this.pepper = pepper;
     }
 
-    /** 모델의 월렛 파일 경로(있으면 이미 생성된 것). */
+    /** 모델의 월렛 파일 경로(있으면 이미 생성된 것). = WALLET DID (did:omn:fm...) 키 보관. */
     public Path walletPath(String modelId) {
         return dataDir.resolve("wallets").resolve(modelId + ".wallet");
     }
@@ -68,30 +68,86 @@ public class HolderWalletService {
         return dataDir.resolve("dids").resolve(modelId + ".did.json");
     }
 
+    /** 모델의 USER DID(did:omn:fmu...) 월렛 파일 — register-user(A5) ownerDidDoc 서명 키. */
+    public Path userWalletPath(String modelId) {
+        return dataDir.resolve("wallets").resolve(modelId + ".user.wallet");
+    }
+
+    public Path userDidDocPath(String modelId) {
+        return dataDir.resolve("dids").resolve(modelId + ".user.did.json");
+    }
+
     public boolean exists(String modelId) {
         return Files.exists(walletPath(modelId));
     }
 
-    /** 저장된 DID Document JSON을 읽어 DID를 반환(없으면 null). */
+    /** Flow A(register-user) 완주 마커 경로. 존재 = 이 모델은 이미 TAS User 등록 + wallet ASSIGNED. */
+    private Path registeredMarkerPath(String modelId) {
+        return dataDir.resolve("registered").resolve(modelId);
+    }
+
+    public boolean isFlowAComplete(String modelId) {
+        return Files.exists(registeredMarkerPath(modelId));
+    }
+
+    /** Flow A 완주 마커 기록(멱등 재실행 short-circuit용). */
+    public void markFlowAComplete(String modelId) throws Exception {
+        Path p = registeredMarkerPath(modelId);
+        Files.createDirectories(p.getParent());
+        Files.writeString(p, "flowA-complete");
+    }
+
+    /**
+     * Flow A 완주 마커 삭제(강제 재검증용). dev-DB 리셋 후 마커가 stale 하게 남아 register-did/issue-vc 를
+     * 잘못 short-circuit 하는 것을 막는다(아키텍트 Rec 3). register-did?force=true 가 호출한다.
+     * @return 마커가 실제로 존재해 삭제됐으면 true.
+     */
+    public boolean clearFlowAComplete(String modelId) throws Exception {
+        return Files.deleteIfExists(registeredMarkerPath(modelId));
+    }
+
+    /** 저장된 WALLET DID Document JSON을 읽어 DID를 반환(없으면 null). */
     public String readDid(String modelId) throws Exception {
-        Path p = didDocPath(modelId);
+        return readDidFrom(didDocPath(modelId));
+    }
+
+    /** 저장된 USER DID Document JSON을 읽어 DID를 반환(없으면 null). VC subject DID. */
+    public String readUserDid(String modelId) throws Exception {
+        return readDidFrom(userDidDocPath(modelId));
+    }
+
+    private String readDidFrom(Path p) throws Exception {
         if (!Files.exists(p)) return null;
         DidDocument doc = new DidDocument();
         doc.fromJson(Files.readString(p));
         return doc.getId();
     }
 
-    /** 저장된 DID Document JSON 원문(register-user 자기서명 입력). */
+    /** 저장된 WALLET DID Document JSON 원문(register-wallet 자기서명 입력). */
     public String didDocJson(String modelId) throws Exception {
         return Files.readString(didDocPath(modelId));
     }
 
-    /** 모델 월렛에 접속(결정적 비밀번호 재유도). 커스터디얼 — 발급/등록 시 재접속용. */
+    /** 저장된 USER DID Document JSON 원문(register-user 자기서명 입력). */
+    public String userDidDocJson(String modelId) throws Exception {
+        return Files.readString(userDidDocPath(modelId));
+    }
+
+    /** WALLET 월렛에 접속(결정적 비밀번호 재유도). 커스터디얼 — 발급/등록 시 재접속용. */
     public WalletManagerInterface connect(String modelId) throws Exception {
         Path p = walletPath(modelId);
         if (!Files.exists(p)) throw new IllegalStateException("no wallet for model " + modelId);
         WalletManagerInterface wm = WalletManagerFactory.getWalletManager(WalletManagerType.FILE);
         wm.connect(p.toString(), derivePassword(modelId));
+        return wm;
+    }
+
+    /** USER DID 월렛에 접속(별도 결정적 비밀번호). register-user ownerDidDoc 서명용. */
+    public WalletManagerInterface connectUser(String modelId) throws Exception {
+        Path p = userWalletPath(modelId);
+        if (!Files.exists(p)) throw new IllegalStateException("no user wallet for model " + modelId);
+        WalletManagerInterface wm = WalletManagerFactory.getWalletManager(WalletManagerType.FILE);
+        wm.connect(p.toString(), deriveUserPassword(modelId));
         return wm;
     }
 
@@ -103,23 +159,54 @@ public class HolderWalletService {
     /**
      * 모델별 월렛 + DID Document 생성.
      *
+     * <p>OpenDID 표준 모델 = wallet DID ≠ user DID. 두 개의 파일 월렛과 DID doc 을 생성한다:
+     * <ul>
+     *   <li><b>WALLET DID</b> (did:omn:fm...): register-wallet 로 RoleType.WALLET 앵커. ecdh·create-token·
+     *       SignedDidDoc.wallet.did 에 사용.</li>
+     *   <li><b>USER DID</b> (did:omn:fmu...): register-user(A5) ownerDidDoc = VC subject. RoleType.ETC 앵커.
+     *       WALLET DID 를 ETC 로 재앵커하면 온체인 중복 등록으로 revert 하므로 반드시 별도 DID 여야 한다.</li>
+     * </ul>
+     *
      * @throws IllegalStateException 이미 존재하는 모델(중복 생성 방지)
      */
     public WalletResult createWallet(String modelId) throws Exception {
         Files.createDirectories(dataDir.resolve("wallets"));
         Files.createDirectories(dataDir.resolve("dids"));
 
-        Path walletPath = walletPath(modelId);
-        if (Files.exists(walletPath)) {
+        if (Files.exists(walletPath(modelId))) {
             throw new IllegalStateException("wallet already exists for model " + modelId);
         }
 
-        char[] pwd = derivePassword(modelId);
+        List<String> keyIds = createDidWallet(
+                generateDid(modelId), walletPath(modelId), didDocPath(modelId), derivePassword(modelId));
+
+        // USER DID (VC subject) 월렛도 함께 생성 — register-user(A5) 용.
+        ensureUserWallet(modelId);
+
+        return new WalletResult(modelId, generateDid(modelId), keyIds);
+    }
+
+    /**
+     * USER DID 월렛 + DID doc 이 없으면 생성(멱등). WALLET 만 있던 기존 모델도 A5 전에 보강할 수 있다.
+     * @return USER DID.
+     */
+    public String ensureUserWallet(String modelId) throws Exception {
+        Files.createDirectories(dataDir.resolve("wallets"));
+        Files.createDirectories(dataDir.resolve("dids"));
+        String userDid = generateUserDid(modelId);
+        if (!Files.exists(userWalletPath(modelId))) {
+            createDidWallet(userDid, userWalletPath(modelId), userDidDocPath(modelId), deriveUserPassword(modelId));
+        }
+        return userDid;
+    }
+
+    /** 파일 월렛 생성 + 4키(keyagree/auth/assert/invoke) 생성 + 자기소유 DID doc 작성·저장. */
+    private List<String> createDidWallet(String did, Path walletPath, Path didDocPath, char[] pwd)
+            throws Exception {
         WalletManagerInterface wm = WalletManagerFactory.getWalletManager(WalletManagerType.FILE);
         wm.create(walletPath.toString(), pwd, ENC);
         wm.connect(walletPath.toString(), pwd);
         try {
-            String did = generateDid(modelId);
             List<DidKeyInfo> keyInfos = new ArrayList<>();
             for (KeySpec ks : KEYS) {
                 wm.generateRandomKey(ks.keyId(), KeyAlgorithmType.SECP256r1);
@@ -137,25 +224,34 @@ public class HolderWalletService {
 
             DidManager dm = new DidManager();
             dm.createDocument(did, did, keyInfos); // 자기소유 홀더 DID: controller = did
-            String didDocJson = dm.getDocument().toJson();
-            Files.writeString(didDocPath(modelId), didDocJson);
+            Files.writeString(didDocPath, dm.getDocument().toJson());
 
-            List<String> keyIds = keyInfos.stream().map(DidKeyInfo::getKeyId).toList();
-            return new WalletResult(modelId, did, keyIds);
+            return keyInfos.stream().map(DidKeyInfo::getKeyId).toList();
         } finally {
             wm.disConnect();
         }
     }
 
-    /** did:omn:fm<16 hex> — 모델ID 기반 결정적 method-specific id. */
+    /** did:omn:fm<16 hex> — 모델ID 기반 결정적 WALLET DID. */
     private String generateDid(String modelId) {
         String hex = hmacHex(modelId).substring(0, 16);
         return "did:omn:fm" + hex;
     }
 
-    /** 월렛 비밀번호 = HMAC-SHA256(pepper, modelId) hex → char[]. 결정적 재유도(커스터디얼). */
+    /** did:omn:fmu<16 hex> — 모델ID 기반 결정적 USER DID(WALLET DID 와 반드시 다름). */
+    private String generateUserDid(String modelId) {
+        String hex = hmacHex(modelId + "|user").substring(0, 16);
+        return "did:omn:fmu" + hex;
+    }
+
+    /** WALLET 월렛 비밀번호 = HMAC-SHA256(pepper, modelId) hex → char[]. 결정적 재유도(커스터디얼). */
     private char[] derivePassword(String modelId) {
         return hmacHex(modelId).toCharArray();
+    }
+
+    /** USER 월렛 비밀번호 = HMAC-SHA256(pepper, modelId+"|user") hex — WALLET 월렛과 분리. */
+    private char[] deriveUserPassword(String modelId) {
+        return hmacHex(modelId + "|user").toCharArray();
     }
 
     private String hmacHex(String msg) {

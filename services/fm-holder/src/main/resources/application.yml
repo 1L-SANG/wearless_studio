@@ -11,8 +11,31 @@ holder:
   wallet-pepper: ${FM_HOLDER_PEPPER:fm-holder-dev-pepper}
 
 # OpenDID 엔티티 주소 (로컬 orchestrator). 홀더가 호출할 발급/블록체인 엔드포인트.
+#
+# ⚠️ PROD 하드닝 (해커톤 단일운영 스택 전용 설정 — 그대로 배포 금지):
+#  · wallet-provider/cas-provider 비밀번호 fallback 은 OpenDID orchestrator create_all 의
+#    dev 부트스트랩 기본값이다. 실서비스에선 env/KMS 주입만 쓰고 아래 fallback 을 제거할 것.
+#  · 신뢰 경계: 커스터디얼 홀더가 did:omn:wallet + did:omn:cas 개인키를 직접 보유·서명한다.
+#    이는 자체호스팅 단일운영 데모라 성립한다 — 실서비스에선 WALLET_PROVIDER/CAS 가 별도
+#    신뢰 도메인이어야 하며, 홀더가 이 키들을 쥐면 CA 앱 어테스테이션 위조가 가능하다(분리 필수).
 opendid:
   tas-url: http://localhost:8090
   issuer-url: http://localhost:8091
   verifier-url: http://localhost:8092
   api-server-url: http://localhost:8093
+  cas-url: http://localhost:8094
+  # Flow A retrieve-kyc(A4) 용 KYC 인프라. TAS 는 kyc.serverUrl + "/api/v1/retrieve-pii" 로 PII 를 조회하므로
+  # cas-server-url = http://localhost:8094/cas → http://localhost:8094/cas/api/v1/retrieve-pii (CAS 실엔드포인트).
+  kyc:
+    name: fm-holder-cas
+    cas-server-url: http://localhost:8094/cas
+  # did:omn:wallet WALLET_PROVIDER 파일 월렛 — request-register-wallet 의 AttestedDidDoc 을
+  # #assert 개인키로 실서명하기 위해 로드. (orchestrator create_all 산출물, dev 프로파일)
+  wallet-provider:
+    file-path: ${FM_WALLET_PROVIDER_PATH:/Users/nojeong-un/devs/did-orchestrator-server/source/did-orchestrator-server/jars/Wallet/wallet.wallet}
+    password: ${FM_WALLET_PROVIDER_PW:omnioneopendid12!@}
+  # did:omn:cas CAS 파일 월렛 — request-create-token 의 caAppInfo(AttestedAppInfo)를
+  # #assert 개인키로 실서명하기 위해 로드(US-2). TAS 가 체인의 did:omn:cas assert 공개키로 검증.
+  cas-provider:
+    file-path: ${FM_CAS_PROVIDER_PATH:/Users/nojeong-un/devs/did-orchestrator-server/source/did-orchestrator-server/jars/CA/cas.wallet}
+    password: ${FM_CAS_PROVIDER_PW:omnioneopendid12!@}
