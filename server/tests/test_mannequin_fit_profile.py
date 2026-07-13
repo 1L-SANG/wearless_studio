@@ -242,19 +242,16 @@ def test_mannequin_worker_runs_dual_candidates(monkeypatch):
     asyncio.run(mannequin_job.run_mannequin_job(app, job))
 
     assert calls["failure"] == []
-    # A/B 이원 생성(원 UI 계약): A=현재 핏(프로필 그대로), B=슬림 변형(핏 축만 slim 덮어씀)
-    assert len(calls["run"]) == 2
-    by_cand = {c["candidate"]: c for c in calls["run"]}
-    assert set(by_cand) == {"A", "B"}
-    assert by_cand["A"]["base_fit"] == "regular"
-    assert by_cand["A"]["fit_profile"] == profile
-    assert by_cand["A"]["base_gender"] == "men"
-    assert by_cand["B"]["base_fit"] == "slim"
-    assert by_cand["B"]["fit_profile"] == {
-        "category": "pants", "gender": "men", "axes": {"cut": "slim", "length": None}}
+    # 단일 후보 생성(2026-07-13): 확정 fit profile 그대로 1컷 — A/B 슬림 변형 폐기
+    assert len(calls["run"]) == 1
+    only = calls["run"][0]
+    assert only["candidate"] == "A"
+    assert only["base_fit"] == "regular"
+    assert only["fit_profile"] == profile
+    assert only["base_gender"] == "men"
     assert len(calls["success"]) == 1
     assert calls["success"][0]["charge"] == 2
-    assert [c["candidate"] for c in calls["success"][0]["candidates"]] == ["A", "B"]
+    assert [c["candidate"] for c in calls["success"][0]["candidates"]] == ["A"]
 
 
 def test_mannequin_worker_reports_progress_while_candidates_are_running(monkeypatch):
@@ -289,8 +286,8 @@ def test_mannequin_worker_reports_progress_while_candidates_are_running(monkeypa
 
     async def fake_run_candidate(**kwargs):
         calls["started"] += 1
-        if calls["started"] == 2:
-            events["both_started"].set()
+        # 단일 후보(2026-07-13) — 생성이 '시작'되면 ticker 의 estimated progress 를 검증한다
+        events["both_started"].set()
         await events["release"].wait()
         return {
             "asset_id": f"asset-{kwargs['candidate']}",
