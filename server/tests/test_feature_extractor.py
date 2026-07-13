@@ -40,6 +40,17 @@ def test_build_prompt_sanitizes_context():
     assert "reference only" in p
 
 
+def test_build_prompt_injects_guide_and_manifest():
+    # 관찰 가이드(수집 어휘 기반)·이미지 매니페스트 주입 + 토큰 잔재 없음 (2026-07-13)
+    p = fx.build_prompt({"clothing_type": "top"}, slots=["Front", "Detail"])
+    assert "${observationGuide}" not in p and "${imageManifest}" not in p
+    assert "핀턱(pintuck)" in p                      # 가이드 주입
+    assert "2. DETAIL close-up" in p                 # 매니페스트 순서·역할
+    assert "focus that guide row): top" in p         # 셀러 종류 힌트
+    # slot 없으면 매니페스트 생략 (스모크 등 직접 호출 호환)
+    assert "IMAGE MANIFEST" not in fx.build_prompt({})
+
+
 def test_schema_is_strict_compatible():
     s = fx._schema()
     assert s["additionalProperties"] is False

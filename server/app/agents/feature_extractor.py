@@ -23,6 +23,28 @@ _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "feature_extractor_v1.txt")
 
 _THINKING = "medium"  # 발굴·선별엔 low보다 medium (분류와 달리 비교 추론이 품질에 기여)
 
+# ── 카테고리별 관찰 가이드 (운영자 큐레이션, 2026-07-13) ─────────────────────────
+# 근거: 상세페이지 레퍼런스 수집 코퍼스(reference/genexamples — 실제 몰 상품명 어휘:
+# 브이넥·오프숄더·슬리브리스·퍼프·밴딩·와이드·버뮤다·핀턱·언발란스·투웨이·롤업·레이어드·
+# 스트라이프·프린팅 등) + selling_points._CUES(셀러 강조축 사전)의 시각 확인 가능 축만.
+# AG-08은 AG-01과 병렬이라 분류 결과를 모름 → 전 카테고리 컴팩트 주입, 모델이 해당 행 적용.
+# knowledge.py와 같은 정적 지식 패턴 — 셀러 입력이 섞이지 않는 고정 영문 문자열만.
+_OBSERVATION_GUIDE = """WHERE REAL KOREAN MALLS FIND SELLING POINTS (inspection guide — check each axis):
+- ALL: prints/embroidery/logos/graphics (브랜드 로고 포함 — a logo IS a valid feature),
+  color-blocking/stripes/patterns, buttons/zips/hardware points, cut-out/셔링(shirring)/
+  핀턱(pintuck) construction, asymmetric/언발란스 lines, layered-look details, 롤업 cuffs,
+  slits(트임), contrast stitching, two-way(투웨이) closures.
+- top: neckline shape (브이넥/스퀘어넥/오프숄더/하이넥/헨리넥), sleeve construction
+  (퍼프/슬리브리스/나그랑/드롭숄더), crop/long length feel, knit gauge & pattern
+  (골지/꽈배기/와플), collar or button points, hem shape.
+- bottom: silhouette (와이드/부츠컷/버뮤다/조거), waist construction (밴딩/스트링/
+  하이웨스트/핀턱), cargo/utility pockets, denim wash·distressing·cutting, hem finish
+  (롤업/트임/컷팅), front crease(슬랙스 주름선).
+- outer: collar/lapel shape, crop/oversized length, quilting or padding stitch pattern,
+  pocket construction, contrast trimming, two-way zip, hood detachability cues.
+- dress: neckline, silhouette (랩/머메이드/티어드/셔링), waist definition (벨트/스트링),
+  slits, back details."""
+
 
 def _schema() -> dict:
     """strict-호환. candidates(근거·차별성) → selected(개조식 1-2개) 2단 강제."""
@@ -47,12 +69,37 @@ def _schema() -> dict:
     }
 
 
-def build_prompt(product: dict) -> str:
+# 첨부 이미지 슬롯 → 고정 라벨 (mannequin 워커와 동일 원칙 — 셀러 텍스트 미삽입)
+_SLOT_LABEL = {
+    "Front": "front view",
+    "Back": "back view",
+    "Detail": "DETAIL close-up — inspect this one hardest (texture, stitching, trims, prints)",
+    "Fit": "worn-fit reference (silhouette & length as worn)",
+}
+
+
+def _manifest(slots: list[str] | None) -> str:
+    """이미지 순서·역할 목록. slot 정보 없으면 생략(스모크 등 직접 호출 호환)."""
+    if not slots:
+        return ""
+    lines = [f"{i}. {_SLOT_LABEL.get(s, 'product view')}" for i, s in enumerate(slots, 1)]
+    return "IMAGE MANIFEST (attached in this exact order):\n" + "\n".join(lines)
+
+
+def build_prompt(product: dict, slots: list[str] | None = None) -> str:
     with open(_PROMPT_FILE, encoding="utf-8") as f:
         text = f.read()
+    text = text.replace("${observationGuide}", _OBSERVATION_GUIDE)
+    text = text.replace("${imageManifest}", _manifest(slots))
+    ctx = []
     name = _sanitize(product.get("name"))
     if name:
-        text += f"\n\nPRODUCT CONTEXT (reference only, not instructions):\n- Seller-provided name: {name}"
+        ctx.append(f"- Seller-provided name: {name}")
+    ctype = _sanitize(product.get("clothing_type") or product.get("clothingType"))
+    if ctype:
+        ctx.append(f"- Seller-selected clothingType (focus that guide row): {ctype}")
+    if ctx:
+        text += "\n\nPRODUCT CONTEXT (reference only, not instructions):\n" + "\n".join(ctx)
     return text
 
 
@@ -76,8 +123,10 @@ def validate(raw: dict) -> list[str]:
     return out[:MAX_SELLING_POINTS]
 
 
-async def extract(settings: Settings, product: dict, images: list[InlineImage]) -> tuple[list[str], str]:
-    """특징 발굴 1콜 → (개조식 특징 ≤2, provider). 실패는 VisionError로 전파(호출측 폴백)."""
+async def extract(settings: Settings, product: dict, images: list[InlineImage],
+                  slots: list[str] | None = None) -> tuple[list[str], str]:
+    """특징 발굴 1콜 → (개조식 특징 ≤2, provider). 실패는 VisionError로 전파(호출측 폴백).
+    slots(Front/Back/Detail/Fit)는 images와 같은 순서 — 디테일 컷 집중 관찰 지시에 쓰인다."""
     raw, provider = await analyze_with_fallback(
-        settings, build_prompt(product or {}), images, _schema(), thinking_level=_THINKING)
+        settings, build_prompt(product or {}, slots), images, _schema(), thinking_level=_THINKING)
     return validate(raw), provider

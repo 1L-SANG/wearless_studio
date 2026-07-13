@@ -65,14 +65,16 @@ async def run_analyze_job(app, job: dict) -> None:
             log.exception("analyze finalize_failure error for job %s", job_id)
 
     try:
-        # 1) 입력 로드 — 기준 색상 이미지 asset (마네킹과 동일 소스)
+        # 1) 입력 로드 — 기준 색상 이미지 asset (마네킹과 동일 소스). slot(Front/Back/Detail/Fit)은
+        #    AG-08 관찰 가이드용으로 보존한다(디테일 컷 집중 지시 — 2026-07-13).
         async with pool.connection() as conn:
             product = await repo.get_product(conn, project_id) or {}
-            assets = []
-            for _slot, aid in mannequin.base_color_images(product):
+            assets, slots = [], []
+            for slot, aid in mannequin.base_color_images(product):
                 a = await repo.get_asset_for_user(conn, user_id, aid)
                 if a:
                     assets.append(a)
+                    slots.append(slot)
         if not assets:
             await _fail("상품 사진을 찾을 수 없어요. 정면 사진을 올렸는지 확인해 주세요.",
                         {"error": "no_product_images"})
@@ -93,7 +95,7 @@ async def run_analyze_job(app, job: dict) -> None:
         #    특징 에이전트는 실패해도 분석을 막지 않는다(AG-01의 points로 폴백 — 2026-07-13).
         analyze_res, feature_res = await asyncio.gather(
             product_analyst.analyze(s, product, images),
-            feature_extractor.extract(s, product, images),
+            feature_extractor.extract(s, product, images, slots=slots),
             return_exceptions=True,
         )
         if isinstance(analyze_res, BaseException):

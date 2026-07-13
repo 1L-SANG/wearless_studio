@@ -82,7 +82,7 @@ def test_run_analyze_job_success(monkeypatch):
     async def fake_emit(pool, job_id, event_type, payload):
         return None
 
-    async def fake_extract(settings, product, images):
+    async def fake_extract(settings, product, images, slots=None):
         return ["왼쪽 가슴 로고 자수"], "gemini"  # AG-08 성공 → AG-01 points 교체
 
     monkeypatch.setattr(analyze_job.repo, "get_product", fake_get_product)
@@ -127,7 +127,7 @@ def test_run_analyze_job_feature_agent_failure_falls_back(monkeypatch):
                               "suggestedName": None},
                  "intermediate": {"styleTags": [], "swatchSuggestions": []}}, "gemini")
 
-    async def fake_extract(settings, product, images):
+    async def fake_extract(settings, product, images, slots=None):
         raise VisionError("특징 발굴 실패")
 
     async def fake_finalize(conn, **kw):
@@ -167,7 +167,7 @@ def test_run_analyze_job_feature_empty_keeps_ag01_points(monkeypatch):
                               "suggestedName": None},
                  "intermediate": {"styleTags": [], "swatchSuggestions": []}}, "gemini")
 
-    async def fake_extract(settings, product, images):
+    async def fake_extract(settings, product, images, slots=None):
         return [], "gemini"
 
     async def fake_finalize(conn, **kw):
@@ -228,7 +228,7 @@ def test_run_analyze_job_vision_error_fails(monkeypatch):
     async def fake_emit(pool, job_id, event_type, payload):
         return None
 
-    async def fake_extract(settings, product, images):
+    async def fake_extract(settings, product, images, slots=None):
         return [], "gemini"  # AG-08은 성공해도 AG-01 실패면 job 실패여야 한다
 
     monkeypatch.setattr(analyze_job.repo, "get_product", fake_get_product)
