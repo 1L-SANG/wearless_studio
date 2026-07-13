@@ -10,6 +10,10 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
+
+// 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
+// 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
+const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
 import { CREDIT_COSTS } from '@/lib/limits.js';
 
 export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
@@ -99,6 +103,8 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const toast = useToast();
   const [washing, setWashing] = useState(false);
   const [spDraft, setSpDraft] = useState('');
+  const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
+  useEffect(() => { setCcDraft(a.customCategory || ''); }, [a.customCategory]);
   const [spAdding, setSpAdding] = useState(false);
   const [editMatIdx, setEditMatIdx] = useState(null);
   const matTotal = (a.materials || []).reduce((s, m) => s + (Number(m.ratio) || 0), 0);
@@ -203,11 +209,12 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               trailing={
                 <input
                   className={`chip chip-input${a.customCategory && !a.subCategory ? ' on' : ''}`}
-                  key={a.customCategory || ''} defaultValue={a.customCategory || ''}
-                  maxLength={20} placeholder="직접 입력" size={10}
+                  value={ccDraft} maxLength={20} placeholder="직접 입력"
+                  style={{ width: `calc(${chWidth(ccDraft || '직접 입력')}em + 32px)` }}
+                  onChange={(e) => setCcDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
+                  onBlur={() => {
+                    const v = ccDraft.trim();
                     if (v === (a.customCategory || '')) return;
                     onChange(withFitProfile(v ? { customCategory: v, subCategory: null } : { customCategory: null }));
                   }} />
