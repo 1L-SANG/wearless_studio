@@ -207,18 +207,18 @@ async def run_mannequin_job(app, job: dict) -> None:
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
                                                "withBottom": match_img is not None})
 
-        # 3) A/B 이원 후보 생성(원 UI 계약: A=현재 핏, B=슬림 변형) — 병렬. 부분 성공 허용
-        #    (한쪽 실패 시 성공분만 저장·차감). 크레딧 예약(2)도 2컷 기준.
+        # 3) 단일 후보 생성(2026-07-13 사용자 결정: 한 번에 1컷) — 확정 fit profile 기준.
+        #    구 A/B 이원(정핏/슬림 동시 2컷)은 폐기: 셀러가 고른 핏과 무관한 슬림 변형이
+        #    함께 떠서 혼란(버전 스트립에 2개) + 재생성마다 2컷씩 쌓이던 문제.
+        #    크레딧 단가(2/잡)는 잡 기준이라 불변. 다양화는 핏 조정→재생성 루프가 담당.
         clothing_type = product.get("clothing_type") or "상의"
         manifest = _build_manifest(prod_assets, match_img is not None)
         fit_profile = mannequin.effective_fit_profile(analysis, match_img is not None)
         legacy_base_fit = analysis.get("fit") or "regular"
-        slim_profile = mannequin.slim_variant_profile(fit_profile, clothing_type, gender)
         await _emit(pool, job_id, "progress", {"progress": 35, "phase": "generating"})
 
-        # A/B gemini 생성은 이 job 에서 가장 긴 구간(20~60s)이라, 후보가 하나씩 끝날 때마다
-        # 중간 progress 를 쏜다(35→60→85). 실제 Gemini 호출이 더 길어질 때는 ticker 가 84까지
-        # 천천히 올려 폴링 UI 가 "멈춤/실패"처럼 보이지 않게 한다.
+        # gemini 생성은 이 job 에서 가장 긴 구간(20~60s) — 완료 시 중간 progress(35→60)를 쏘고,
+        # 호출이 길어지면 ticker 가 84까지 천천히 올려 폴링 UI 가 "멈춤/실패"처럼 보이지 않게 한다.
         _done = 0
         _reported_generation_progress = 35
         _progress_lock = asyncio.Lock()
@@ -261,16 +261,14 @@ async def run_mannequin_job(app, job: dict) -> None:
                 r = None
             async with _progress_lock:
                 _done += 1
-                # 2개 완료 기준 35→60→(85 은 아래 finalizing 이 덮음). 마지막은 85 로 클램프.
+                # 후보 완료 시 35→60 (85 는 아래 finalizing 이 덮음).
                 next_progress = min(85, 35 + _done * 25)
             await _emit_generation_progress(next_progress)
             return r
 
         progress_task = asyncio.create_task(_tick_generation_progress())
         try:
-            results = await asyncio.gather(
-                _cand("A", legacy_base_fit, fit_profile),
-                _cand("B", "slim", slim_profile))
+            results = [await _cand("A", legacy_base_fit, fit_profile)]
         finally:
             _generation_done.set()
             progress_task.cancel()
