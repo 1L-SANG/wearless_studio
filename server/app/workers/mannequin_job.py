@@ -18,7 +18,7 @@ from PIL import Image
 log = logging.getLogger("wearless.mannequin_job")
 
 from .. import repo
-from ..agents import image_qc, mannequin
+from ..agents import image_qc, mannequin, mannequin_fit_qc
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
 from ..agents.prompts import load_prompt_template, render_mannequin_prompt
@@ -66,6 +66,122 @@ def _build_manifest(prod_assets: list[dict], has_match: bool) -> str:
     if has_match:
         lines.append(f"{i}. matching BOTTOM garment — also dress the mannequin in this, coordinated with the top")
     return "\n".join(lines)
+
+
+# P1 축 QC enforce 승격 가드 — 정식 게이트(픽스처·골드셋·prod shadow 50건, fidelity 부록) 통과 후
+# 리뷰된 코드 변경으로만 True. env·요청·payload·CLI 어떤 경로로도 우회 불가(G9 규율: 설정 실수
+# 하나가 prod 생성을 죽이는 사고 방지). enforce 설정 + 가드 False = 실질 shadow.
+_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY = False
+
+
+def _effective_axis_qc_mode(s) -> str:
+    mode = getattr(s, "mannequin_axis_qc", "off")
+    if mode == "enforce" and not _MANNEQUIN_AXIS_QC_ENFORCEMENT_READY:
+        return "shadow"
+    return mode
+
+
+async def _apply_axis_qc(
+    *, pool, gemini, s, job_id, candidate, attempt, model, res,
+    prod_imgs, match_img, fit_profile, profile_hash,
+):
+    """생성 채택본에 축 QC 판정 + (enforce 시) 편집 교정 1회. → (선택 결과, 편집콜 소비 여부).
+
+    모든 인프라 실패는 fail-open(원본 유지·이벤트만) — 축 QC가 생성을 죽이는 일은 없다.
+    이벤트에는 해시·판정 결과만(프롬프트/프로필/편집지시 원문 미포함).
+    """
+    configured = getattr(s, "mannequin_axis_qc", "off")
+    if configured == "off":
+        return res, False
+    axis_spec = mannequin_fit_qc.declared_axis_spec(fit_profile)
+    if not axis_spec:
+        return res, False
+    effective = _effective_axis_qc_mode(s)
+    original_hash = hashlib.sha256(res.image).hexdigest()
+    base_event = {
+        "candidate": candidate, "attempt": attempt,
+        "configured_mode": configured, "effective_mode": effective,
+        "enforcement_ready": _MANNEQUIN_AXIS_QC_ENFORCEMENT_READY,
+        "profile_hash": profile_hash,
+    }
+
+    async def _judge(image):
+        return await mannequin_fit_qc.verdict(
+            s, prod_imgs, InlineImage(image.mime, image.image), fit_profile, match_img)
+
+    async def _emit_qc(subject, image_hash, v, outcome, err=None):
+        payload = {**base_event, "status": "axis_qc", "subject": subject,
+                   "image_hash": image_hash,
+                   "identity_pass": None if v is None else v["identityPass"],
+                   "axis_pass": [] if v is None else [
+                       {"axis": x["axis"], "target": x["target"], "pass": x["pass"],
+                        "visible": x["visible"],
+                        "observed_landmark": x["observedLandmark"][:160]}
+                       for x in v["axisPass"]],
+                   "mismatches": [] if v is None else v["mismatches"],
+                   "outcome": outcome,
+                   "error_type": type(err).__name__ if err else None,
+                   "error_message": str(err)[:200] if err else None}
+        await _emit(pool, job_id, "step", payload)
+
+    async def _emit_retry(outcome, *, fired=False, failed=(), edit_hash=None,
+                          edited_hash=None, edit_attempt=None):
+        await _emit(pool, job_id, "step", {
+            **base_event, "status": "axis_retry", "fired": fired,
+            "edit_attempt": edit_attempt,
+            "failed_axes": [{"axis": e["axis"], "target": e["value"]} for e in failed],
+            "edit_hash": edit_hash, "original_image_hash": original_hash,
+            "edited_image_hash": edited_hash, "outcome": outcome})
+
+    try:
+        v1 = await _judge(res)
+    except Exception as e:
+        log.warning("axis_qc initial judge failed for job %s: %r", job_id, e)
+        await _emit_qc("generated", original_hash, None, "error", e)
+        await _emit_retry("original_judge_error")
+        return res, False
+    failed = mannequin_fit_qc.failed_axis_specs(axis_spec, v1)
+    await _emit_qc("generated", original_hash, v1, "fail" if failed else "pass")
+    if not failed:
+        await _emit_retry("not_needed")
+        return res, False
+    instruction = mannequin_fit_qc.build_edit_instruction(failed)
+    edit_hash = hashlib.sha256(instruction.encode("utf-8")).hexdigest()
+    if effective != "enforce":
+        await _emit_retry("enforce_guarded" if configured == "enforce" else "shadow_observed",
+                          failed=failed, edit_hash=edit_hash)
+        return res, False
+    if attempt >= s.mannequin_max_attempts:  # 공유 예산: 생성+편집 <= max_attempts
+        await _emit_retry("budget_exhausted", failed=failed, edit_hash=edit_hash)
+        return res, False
+    edit_attempt = attempt + 1
+    try:
+        edited = await gemini.generate_content_image(
+            model, instruction, [InlineImage(res.mime, res.image)],
+            s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
+    except GeminiError as e:
+        log.warning("axis_qc edit call failed for job %s: %r", job_id, e)
+        await _emit_retry("edit_error", fired=True, failed=failed, edit_hash=edit_hash,
+                          edit_attempt=edit_attempt)
+        return res, True
+    edited_hash = hashlib.sha256(edited.image).hexdigest()
+    try:
+        v2 = await _judge(edited)
+    except Exception as e:
+        log.warning("axis_qc edited judge failed for job %s: %r", job_id, e)
+        await _emit_qc("edited", edited_hash, None, "error", e)
+        await _emit_retry("edit_judge_error", fired=True, failed=failed, edit_hash=edit_hash,
+                          edited_hash=edited_hash, edit_attempt=edit_attempt)
+        return res, True
+    failed2 = mannequin_fit_qc.failed_axis_specs(axis_spec, v2)
+    await _emit_qc("edited", edited_hash, v2, "fail" if failed2 else "pass")
+    if mannequin_fit_qc.edit_improves(v1, v2):
+        await _emit_retry("edited_selected", fired=True, failed=failed, edit_hash=edit_hash,
+                          edited_hash=edited_hash, edit_attempt=edit_attempt)
+        return edited, True
+    await _emit_retry("original_kept", fired=True, failed=failed, edit_hash=edit_hash,
+                      edited_hash=edited_hash, edit_attempt=edit_attempt)
+    return res, True
 
 
 def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
@@ -146,6 +262,12 @@ async def _run_candidate(
         # 게이팅: Pillow QC + AG-P2. 둘 다 통과면 채택(off/shadow 는 항상 통과 — 기존 동작 불변).
         pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
         if not pillow_reject and not p2_reject:
+            # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
+            # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
+            res, _ = await _apply_axis_qc(
+                pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+                attempt=attempt, model=model, res=res, prod_imgs=prod_imgs,
+                match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash)
             ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -157,6 +279,19 @@ async def _run_candidate(
                 "candidate": candidate, "base_fit": base_fit,
             }
         # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
+        # 정체성 게이트가 선점하면 축 QC/편집은 이 attempt에서 미실행 — 잘못된 옷을 편집하면
+        # 그 정체성이 보존되므로 신규 생성(re-roll)이 우선한다(설계 결정 3).
+        if (getattr(s, "mannequin_axis_qc", "off") != "off"
+                and mannequin_fit_qc.declared_axis_spec(fit_profile)):
+            await _emit(pool, job_id, "step", {
+                "status": "axis_retry", "candidate": candidate, "attempt": attempt,
+                "configured_mode": s.mannequin_axis_qc,
+                "effective_mode": _effective_axis_qc_mode(s),
+                "enforcement_ready": _MANNEQUIN_AXIS_QC_ENFORCEMENT_READY,
+                "profile_hash": profile_hash, "fired": False, "edit_attempt": None,
+                "failed_axes": [], "edit_hash": None,
+                "original_image_hash": hashlib.sha256(res.image).hexdigest(),
+                "edited_image_hash": None, "outcome": "identity_gate_preempted"})
         parts = []
         if pillow_reject:
             parts.append(qc.format_qc_feedback(verdict))
