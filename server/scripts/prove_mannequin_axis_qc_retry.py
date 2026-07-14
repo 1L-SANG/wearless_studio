@@ -273,7 +273,7 @@ async def main():
             print(f"  {arm['id']}: retry={r['outcome']}")
     finally:
         mannequin_job._MANNEQUIN_AXIS_QC_ENFORCEMENT_READY = orig_guard
-    assert mannequin_job._MANNEQUIN_AXIS_QC_ENFORCEMENT_READY is False, "가드 복원 실패"
+    assert mannequin_job._MANNEQUIN_AXIS_QC_ENFORCEMENT_READY is orig_guard, "가드 복원 실패"
 
     # ---------- 산출물 ----------
     (run_dir / "events.jsonl").write_text(
@@ -284,7 +284,7 @@ async def main():
         "arms": PROOF_ARMS,
         "external_image_calls": 4 + edits_fired,
         "edits_fired": edits_fired,
-        "guard_restored": mannequin_job._MANNEQUIN_AXIS_QC_ENFORCEMENT_READY is False,
+        "guard_restored": mannequin_job._MANNEQUIN_AXIS_QC_ENFORCEMENT_READY is orig_guard,
         "issues": issues,
         "automated_verdict": "PASS" if not issues else "SEE issues",
     }

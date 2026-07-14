@@ -68,10 +68,12 @@ def _build_manifest(prod_assets: list[dict], has_match: bool) -> str:
     return "\n".join(lines)
 
 
-# P1 축 QC enforce 승격 가드 — 정식 게이트(픽스처·골드셋·prod shadow 50건, fidelity 부록) 통과 후
-# 리뷰된 코드 변경으로만 True. env·요청·payload·CLI 어떤 경로로도 우회 불가(G9 규율: 설정 실수
-# 하나가 prod 생성을 죽이는 사고 방지). enforce 설정 + 가드 False = 실질 shadow.
-_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY = False
+# P1 축 QC enforce 승격 가드 — env·요청·payload·CLI 어떤 경로로도 우회 불가한 코드 레벨 스위치
+# (G9 규율: 설정 실수 하나가 prod 생성을 죽이는 사고 방지). enforce 설정 + 가드 False = 실질 shadow.
+# 2026-07-14 True 승격(사용자 결정): 미달 컷 출고 방지 > 오발화 비용(내부 +1콜·지연 수십초).
+# 근거 = §I 실증(실패→편집→채택 완주, 통과 시 무개입, 개선 실패 시 원본 유지 — 하방 없음).
+# 오발화·판정 정확도는 axis_qc/axis_retry 이벤트로 관측, 골드셋 캘리브레이션은 켠 상태로 병행.
+_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY = True
 
 
 def _effective_axis_qc_mode(s) -> str:

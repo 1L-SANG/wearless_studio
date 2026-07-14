@@ -118,14 +118,17 @@ def _events(emits, status):
 
 # ---------- 모드·가드 ----------
 
-def test_axis_qc_defaults_off_and_effective_mode_resolution():
+def test_axis_qc_defaults_off_and_effective_mode_resolution(monkeypatch):
     assert make_settings().mannequin_axis_qc == "off"
     s_off = make_settings(mannequin_axis_qc="off")
     s_sh = make_settings(mannequin_axis_qc="shadow")
     s_en = make_settings(mannequin_axis_qc="enforce")
     assert mannequin_job._effective_axis_qc_mode(s_off) == "off"
     assert mannequin_job._effective_axis_qc_mode(s_sh) == "shadow"
-    assert mannequin_job._effective_axis_qc_mode(s_en) == "shadow"  # 가드 False → 강등
+    # 가드 메커니즘: True(현행, 2026-07-14 승격)면 enforce 유효, False로 내리면 shadow 강등
+    assert mannequin_job._effective_axis_qc_mode(s_en) == "enforce"
+    monkeypatch.setattr(mannequin_job, "_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY", False)
+    assert mannequin_job._effective_axis_qc_mode(s_en) == "shadow"
 
 
 def test_axis_qc_off_skips_judge_and_retry(monkeypatch):
@@ -159,7 +162,9 @@ def test_axis_qc_shadow_logs_failure_keeps_original_no_edit(monkeypatch):
     assert len(retry["edit_hash"]) == 64  # 지시는 해시만 — 발송 안 됨
 
 
-def test_axis_qc_configured_enforce_is_hard_shadowed_until_ready(monkeypatch):
+def test_axis_qc_guard_false_demotes_enforce_to_shadow(monkeypatch):
+    # 가드를 내리면(사고 대응 롤백 경로) enforce 설정이어도 편집 미발화 — 강등 메커니즘 상시 검증.
+    monkeypatch.setattr(mannequin_job, "_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY", False)
     result, g, _, emits = _run(monkeypatch, mode="enforce", verdicts=[_verdict(fit_ok=False)])
     assert result is not None and len(g.calls) == 1
     retry = _events(emits, "axis_retry")[0]
