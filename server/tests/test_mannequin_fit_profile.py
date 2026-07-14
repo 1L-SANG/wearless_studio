@@ -34,11 +34,11 @@ def test_build_fit_profile_block_full_profile():
     assert block == (
         "FIT PROFILE (declared target axes; preserve garment identity and every undeclared axis):\n"
         "- cut: a full, voluminous wide-leg silhouette; the legs drape as broad swinging "
-        "columns from hip to hem, hem covering most of the shoes. Observable target: "
-        "leg outlines clear of thighs and calves from hip to hem, with hems covering most of the shoes.\n"
+        "columns from hip to hem, each hem opening visibly wider than the foot beneath it. Observable target: "
+        "leg outlines clear of thighs and calves from hip to hem, with each hem opening visibly wider than the foot beneath it.\n"
         "- length: hem falls just past the ankle, lightly resting on the top of the foot "
-        "with one soft break. Observable target: both hems past the ankle bones with one "
-        "soft break on the shoe tops and visible.\n"
+        "with one soft break. Observable target: both hems extend past and fully cover "
+        "the ankle bones, forming one visible soft fold over each instep.\n"
         "Where the photos conflict with a declared axis, the declared axis wins; "
         "otherwise preserve the photographed shape for that axis."
     )

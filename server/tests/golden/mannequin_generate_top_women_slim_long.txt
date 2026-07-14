@@ -26,6 +26,7 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 - Output ONE brand-new, FULLY OPAQUE, photorealistic e-commerce studio PHOTOGRAPH of the SAME mannequin from image 1, now solidly wearing the garment(s).
 - The mannequin and garments must be solid and opaque — NEVER translucent, faded, washed-out, or ghosted, and NOT a see-through overlay of any input photo.
 - Keep the SAME mannequin body and shape, the SAME pose, the SAME camera framing, and the SAME plain studio background as image 1.
+- The BASE MANNEQUIN is barefoot; keep both feet barefoot and do not add footwear.
 - FULL BODY in frame, from the top of the head down to the feet — nothing cropped. Portrait orientation.
 - Output EXACTLY ONE image — no grid, no collage, no multiple views, no panels, no text, and no human skin, face, or hair.
 </output format>
