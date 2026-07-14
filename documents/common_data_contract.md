@@ -153,6 +153,7 @@ StoryboardBlock {
   cutType: CutType | null          // source='mine'이면 null (ADR-0003)
   direction?: Direction | ProductDirection | null   // cutType에 따라 옵션 셋이 다름. mirror는 null (ADR-0004)
   shot?: ShotType | ProductShotType
+  outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon·mirror) 전용. 누락 기본 open
   colorId?: string                 // ColorGroup.id (단수 — 컬러별 컷은 블록을 색상마다 분리)
   pose: PoseId                     // 기본 'auto' (구 _pose)
   matchIds: string[]               // 매칭 의류 후보 id
@@ -272,6 +273,7 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | ProductDirection | `front` `back` | 앞면/뒷면 | 제품컷용 ★ 카탈로그 승격 |
 | ShotType | `full` `knee` `medium` `close` | 풀샷/무릎샷/미디움샷/확대샷 | 모델 컷용 |
 | ProductShotType | `ghost` `hanger` `flatlay` | 고스트컷/행거컷/플랫레이샷 | ★ 카탈로그 승격 |
+| **OuterClosureState** | `open` `partial` `closed` | 전체 열림/부분 열림/전체 닫힘 | 아우터 착용컷 전용. 누락 기본 `open`, 그 외 컷·카테고리에서는 무시 |
 | **ProjectStatus** | `draft` `generating` `done` | 초안/생성 중/완료 | ★ 신설 |
 | **PlanTier** | `basic` `plus` `seller` | Basic/Plus/Seller | ★ 신설 — 라벨 대문자, 토큰 소문자 |
 | JobStatus | `idle` `running` `done` `error` | | 화면용 4값. 서버 job row는 `pending`(화면엔 진행 중) 추가, `cancelled` 없음(error 통일) — backend plan §2·§4 |
@@ -302,7 +304,7 @@ dress:  totalLength, shoulderWidth, chestWidth, waistWidth, armhole, sleeveLengt
 
 화면은 옵션 셋을 하드코딩하지 않고 `getCatalogs()`로 받는다. 변경 사항:
 
-- **추가**: `productDirections`, `productShotTypes`(현재 콘티 인스펙터·AI 패널·변형 패널 3곳에 하드코딩), `measurementLabels`(key → 한국어), `cutTypes`(구 `cutSources` 대체 — `mine` 제외 3종, '내 이미지'는 UI에서 source 토글로 합성)
+- **추가**: `productDirections`, `productShotTypes`(현재 콘티 인스펙터·AI 패널·변형 패널 3곳에 하드코딩), `outerClosureStates`(아우터 열림 정도 3종), `measurementLabels`(key → 한국어), `cutTypes`(구 `cutSources` 대체 — `mine` 제외 4종, '내 이미지'는 UI에서 source 토글로 합성)
 - **변경**: `subCategories`를 `{ value, label }[]`로 (현재 한국어 문자열 배열)
 - **유지**: `clothingTypes` `genders` `fits` `directions` `shotTypes` `angleSlots` `angleLabels` `swatchColors` `composeModes` `poses` `varyOptions` `genExamples` `frames` `shapes` `lines` `fonts` `downloadOptions` `models` `creditCosts`(원본은 `lib/limits.js`)
 - **폐기 예정**: `backgrounds`(콘티 배경 제거 — `varyOptions.bg`가 에디터 변형용으로 대체), `extendedColorPriority`(미사용), `cutSources`

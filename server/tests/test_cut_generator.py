@@ -52,6 +52,20 @@ def test_build_prompt_respects_given_manifest():
     assert "worn on a mannequin" in p and "MATCH" in p and "MOOD" in p
 
 
+def test_build_manifest_places_exact_model_labels_after_mannequin():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1,
+        has_model_face=True, has_model_sheet=True)
+    assert manifest.splitlines() == [
+        "1. PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)",
+        "2. MODEL — frontal close-up of the model (identity ground truth; do NOT copy this image's pose, framing, or clothing)",
+        "3. MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single person (identity reference only). Do NOT copy the grid layout, framing, poses, or clothing; the output must be one single normal photograph, never a grid",
+        "4. PRODUCT — front view of the garment",
+        "5. MATCH — a coordinating garment to style together in the same outfit",
+        "6. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)",
+    ]
+
+
 def test_build_prompt_injects_fit_profile_and_drops_legacy_fit():
     # 확정 fitProfile(마네킹 단계 산출물)을 텍스트 제약으로 이중 전달 — 마네킹 참조와 원본
     # 사진 인상이 충돌할 때 순종률 확보(컷 파이프라인 계약). 프로필 있으면 레거시 '- Fit:' 생략.

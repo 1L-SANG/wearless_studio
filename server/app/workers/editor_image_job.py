@@ -127,22 +127,52 @@ async def run_editor_image_job(app, job: dict) -> None:
                 await _fail("기준 색상 이미지를 찾을 수 없어요. 다시 시도해 주세요.",
                             {"error": "no_base_color_images"})
                 return
-            images = [
-                InlineImage(a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"]))
-                for a in (*assets, *mood_rows)  # 순서 = 매니페스트: 상품 슬롯들 → 무드
-            ]
-            await _emit(pool, job_id, "progress", {"progress": 20, "phase": "inputs_loaded"})
-
             # 컷 계약 필드 통과(ADR-0004) — mirror·얼굴·포즈·생성예시·공간그룹까지 서버 정규화에 맡긴다.
             # colorId/matchIds 는 이 경로에서 제외: 색상별 첨부·매칭 첨부는 아직 없어서
             # 매니페스트와 첨부 순서가 어긋나지 않게 한다(첨부 확장 시 함께 통과시킬 것).
             cut_spec = {
                 k: payload.get(k)
                 for k in ("cutType", "direction", "shot", "faceExposure", "pose",
-                          "exampleId", "spaceGroupId", "spaceVariation")
+                          "exampleId", "spaceGroupId", "spaceVariation", "modelId", "model_id")
             }
+            clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+            try:
+                normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
+            except ValueError:
+                await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
+                return
+
+            # NewCutRequest.modelId가 이 경로의 정본. C방식 두 장을 원자적으로 로드하며,
+            # 모르는 modelId/manifest/R2 실패는 모델 참조만 빼고 기존 상품 참조로 계속한다.
+            model_images: list[InlineImage] = []
+            try:
+                model_refs = cut_generator.resolve_virtual_model_assets(normalized)
+                if model_refs is not None:
+                    model_images = [
+                        InlineImage(
+                            ref["mime"],
+                            await asyncio.to_thread(app.state.r2.get_bytes, ref["key"]),
+                        )
+                        for ref in model_refs
+                    ]
+            except Exception as e:
+                log.warning(
+                    "AG-06 virtual model assets unavailable for job %s model %s; "
+                    "continuing without model references: %r",
+                    job_id, normalized.get("modelId"), e)
+                model_images = []
+            images = [
+                *model_images,
+                *[
+                    InlineImage(a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"]))
+                    for a in (*assets, *mood_rows)
+                ],
+            ]  # 순서 = 매니페스트: MODEL 2장? → 상품 슬롯들 → 무드
+            await _emit(pool, job_id, "progress", {"progress": 20, "phase": "inputs_loaded"})
+
             manifest = cut_generator.build_manifest(
-                assets, has_mannequin=False, has_match=False, mood_count=len(mood_rows))
+                assets, has_mannequin=False, has_match=False, mood_count=len(mood_rows),
+                has_model_face=len(model_images) == 2, has_model_sheet=len(model_images) == 2)
             try:
                 image, mime = await cut_generator.generate(
                     s, app.state.gemini, cut_spec, product, images,

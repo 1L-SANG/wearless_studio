@@ -1,0 +1,119 @@
+{
+  "_meta": {
+    "description": "Virtual model identity assets. Contract: ai_agent_modules §3 AG-06 — face_front(원본 앵커) + grid_sedcard(v2 2x2 통짜) 기본 첨부, 시트 4뷰는 QC 실패 폴백 전용(body_front).",
+    "source": "spike facepack v2 + public/models 원본 앵커"
+  },
+  "models": {
+    "mA": {
+      "gender": "women",
+      "name": "모델 A",
+      "thumb": "/models/women/w1.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mA/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mA/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mA/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mA/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mA/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mA/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mA/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mA/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mA/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mA/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mA/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mA/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
+    },
+    "mB": {
+      "gender": "men",
+      "name": "모델 B",
+      "thumb": "/models/men/m1.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mB/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mB/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mB/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mB/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mB/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mB/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mB/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mB/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mB/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mB/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mB/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mB/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
+    },
+    "mC": {
+      "gender": "men",
+      "name": "모델 C",
+      "thumb": "/models/men/m2.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mC/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mC/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mC/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mC/grid_sedcard.png",
+          "mime": "image/jpeg"
+        },
+        "three_quarter": {
+          "key": "seed/models/mC/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mC/three_quarter.png",
+          "mime": "image/jpeg"
+        },
+        "profile": {
+          "key": "seed/models/mC/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mC/profile.png",
+          "mime": "image/jpeg"
+        },
+        "body_front": {
+          "key": "seed/models/mC/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mC/body_front.png",
+          "mime": "image/jpeg"
+        },
+        "body_back": {
+          "key": "seed/models/mC/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mC/body_back.png",
+          "mime": "image/jpeg"
+        }
+      }
+    }
+  }
+}
