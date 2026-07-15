@@ -25,6 +25,7 @@ from fastapi.responses import Response
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
+from . import cx_identity
 from .auth import require_user
 from .db import get_conn
 from .models import CamelModel, ErrorResponse
@@ -120,6 +121,37 @@ def _ci_hmac(ci: str, pepper: str) -> str:
     return hmac.new(pepper.encode(), ci.encode(), hashlib.sha256).hexdigest()
 
 
+async def _record_personalization_adult(conn, user_id: str, token: str, birth) -> None:
+    """CX 인증 1회로 **개인화 성인 인증도 성립**시킨다(Level 1 통합).
+
+    사용자가 같은 CX 표준인증창을 FaceMarket·개인화에서 두 번 겪지 않게 한다. 호출 시점은
+    FaceMarket 모델 등록이 **이미 commit 된 뒤**이고, 이 함수는 **비치명적**이다 — 실패해도
+    (테이블 부재·중복·개인화 미배포 등) FaceMarket 등록·응답은 그대로 유효하다.
+
+    개인화 최소수집 규칙 준수(api-spec §3.0): **is_adult 불리언만** 저장한다. 생년월일·CI·이름은
+    개인화 테이블에 넣지 않고, 원본 토큰 대신 sha256 해시를 쓴다(원본 토큰은 CX 에서 CI·생년월일을
+    재조회할 수 있는 라이브 capability 라 보관 금지).
+    """
+    try:
+        is_adult = cx_identity.is_adult_from_birth(birth)
+    except cx_identity.CxIdentityError:
+        return  # 연령 파싱 불가 → 미기록. 개인화 게이트가 자체 인증을 요구하게 둔다.
+    cx_tx_hash = hashlib.sha256(token.encode()).hexdigest()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "insert into personalization_identity_verifications "
+                "(user_id, cx_tx_hash, is_adult) values (%s, %s, %s) "
+                "on conflict (cx_tx_hash) do nothing",
+                (user_id, cx_tx_hash, is_adult),
+            )
+        await conn.commit()
+    except Exception:
+        # 개인화 기록 실패가 FaceMarket 을 깨선 안 된다(무회귀 원칙). 사유코드도 PII 없음.
+        await conn.rollback()
+        logger.warning("personalization_adult_record_failed")
+
+
 @router.post(
     "/identity/verify",
     response_model=IdentityVerifyResult,
@@ -147,6 +179,11 @@ async def identity_verify(
     if not token:
         raise _err("token_required", "인증 토큰이 없습니다.")
 
+    # ⚠️ 원문 신원 조기 폐기 미적용 지점(api-spec §3.0). trans·ci·birth 가 함수 끝까지 프레임
+    # 로컬로 남아, 예외 전파 시 traceback 이 이 프레임을 잡으면 CX 원문(CI·이름·생년월일)이
+    # 프레임-로컬 캡처형 에러 트래커로 나갈 수 있다. 현재 에러 트래커 미배선이라 실위험은 0이나,
+    # **Sentry 등을 붙이기 전에 personalization.identity_verify 처럼 try/finally 로
+    # `del trans, ci, birth` 를 적용할 것.**
     trans = await _fetch_trans(settings.cx_trans_base_url, token)
 
     ci = _dig(trans, "ci")
@@ -195,6 +232,11 @@ async def identity_verify(
             except UniqueViolation:
                 raise _err("identity_replay", "이미 처리된 인증입니다.", status=409)
         await conn.commit()
+
+        # Level 1 통합 — 같은 CX 인증을 개인화에서 또 요구하지 않도록 성인 여부를 함께 기록한다.
+        # FaceMarket commit **이후** 비치명적 실행 → 실패해도 위 모델 등록은 확정된 채로 유지.
+        if settings.personalization_enabled:
+            await _record_personalization_adult(conn, user_id, token, birth)
 
     return {
         "verified": True,

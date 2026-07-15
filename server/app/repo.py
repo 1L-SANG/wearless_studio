@@ -489,7 +489,9 @@ async def create_job(
                                       credits_reserved, metadata)
                     values (%s, %s, %s, 'pending', %s, %s, %s, %s)
                     on conflict (project_id, kind)
-                      where status in ('pending', 'running') and kind <> 'editor_image'
+                      where status in ('pending', 'running')
+                        and kind not in ('editor_image', 'personalization_generation',
+                                         'personalization_purge')
                       do nothing
                     returning {_JOB_COLS}
                     """,

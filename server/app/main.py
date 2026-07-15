@@ -122,12 +122,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # FaceMarket 얼굴 = 생체 PII → 공개 도메인 미연결 비공개 버킷 필수.
     if _r2_ready and settings.r2_face_bucket:
         app.state.r2_face = R2Client(settings, bucket=settings.r2_face_bucket, public_base=None)
-    elif _r2_ready and settings.facemarket_enabled and settings.app_env != "dev":
+    elif (
+        _r2_ready
+        and (settings.facemarket_enabled or settings.personalization_enabled)
+        and settings.app_env != "dev"
+    ):
         # 메인 R2(공개 도메인)가 붙은 프로드에서 전용 버킷 없이 켜지면 얼굴이 공개-도메인
-        # 메인 버킷으로 새므로 기동 실패(fail-fast). (R2 미설정이면 누출 대상 자체가 없음 → 아래 None.)
+        # 메인 버킷으로 새므로 기동 실패(fail-fast). FaceMarket·개인화 둘 다 얼굴=생체 PII.
+        # (R2 미설정이면 누출 대상 자체가 없음 → 아래 None.)
         raise RuntimeError(
-            "R2_FACE_BUCKET is required when FACEMARKET_ENABLED in non-dev "
-            "(biometric face must use a private bucket, never the public-served main bucket)."
+            "R2_FACE_BUCKET is required when FACEMARKET_ENABLED or PERSONALIZATION_ENABLED "
+            "in non-dev (biometric face must use a private bucket, never the public-served main bucket)."
         )
     else:
         # dev 전용 폴백 — 우리 코드가 얼굴에 public_url 을 만들지 않도록 public_base 차단.
@@ -207,6 +212,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.fm_chain = FaceMarketChain.from_settings(settings)
     else:
         app.state.fm_chain = None
+
+    # 개인화(사용자 본인 얼굴·신체) — 플래그 on일 때만 등록. off(프로드 기본)면 라우트 미존재
+    # → 생체정보 처리 코드가 프로드에 배포되지 않는다(api-spec §1.1).
+    if settings.personalization_enabled:
+        from .personalization import router as personalization_router
+
+        app.include_router(personalization_router)
 
     return app
 
