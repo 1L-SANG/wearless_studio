@@ -16,6 +16,12 @@ import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { ModelRegister } from '@/features/model/ModelRegister.jsx';
 import { ModelLicense } from '@/features/model/ModelLicense.jsx';
+import { Onboarding as PersonalizationOnboarding } from '@/features/personalization/Onboarding.jsx';
+import { Consent as PersonalizationConsent } from '@/features/personalization/Consent.jsx';
+import { FaceUpload as PersonalizationFaceUpload } from '@/features/personalization/FaceUpload.jsx';
+import { BodyProfile as PersonalizationBodyProfile } from '@/features/personalization/BodyProfile.jsx';
+import { Generate as PersonalizationGenerate } from '@/features/personalization/Generate.jsx';
+import { Withdraw as PersonalizationWithdraw } from '@/features/personalization/Withdraw.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
@@ -133,6 +139,17 @@ export default function App() {
             {/* FaceMarket 모델 온보딩 — 로그인 모델이 신분증 본인확인 (FM-10) */}
             <Route path="model/register" element={<ModelRegister />} />
             <Route path="model/license" element={<ModelLicense />} />
+            {/* 개인화(사용자 얼굴·신체) 온보딩 — docs/personalization/phase0-ux-flow.md 화면 순서.
+                본인확인(성인 인증, T2-1)은 /model/register 로 흡수됐다 — FaceMarket 실명 인증 1회가
+                개인화 성인 확인도 함께 기록하므로 여기엔 별도 identity 라우트가 없다. */}
+            <Route path="personalization">
+              <Route index element={<PersonalizationOnboarding />} />
+              <Route path="consent" element={<PersonalizationConsent />} />
+              <Route path="face" element={<PersonalizationFaceUpload />} />
+              <Route path="body" element={<PersonalizationBodyProfile />} />
+              <Route path="generate" element={<PersonalizationGenerate />} />
+              <Route path="withdraw" element={<PersonalizationWithdraw />} />
+            </Route>
           </Route>
           <Route path="create">
             <Route index element={<Navigate to="/create/input" replace />} />

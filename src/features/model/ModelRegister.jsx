@@ -3,6 +3,12 @@
    CX 표준인증창(ENT_MID) 위젯을 임베드해 모바일 신분증 본인확인을 수행한다.
    성공 콜백의 token 만 백엔드(verifyIdentity)로 넘기고, 서버가 CX trans 로
    실 신원을 받아 검증·모델 등록한다. 원문 신원은 브라우저→서버로 보내지 않는다.
+
+   이 화면의 인증 1회가 두 목적에 함께 쓰인다 — ① FaceMarket 실명 모델 등록
+   ② 개인화(내 얼굴 모델) 서비스의 성인 확인. 서버(POST /v1/facemarket/identity/verify)가
+   CX 성공 시 개인화 성인 인증도 함께 기록하므로, 프론트는 개인화용 별도 인증 화면
+   (구 /personalization/identity, 제거됨)을 다시 태우지 않는다 — 성공 화면에서 바로
+   개인화 온보딩(/personalization)으로 이어준다.
    ============================================================= */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -136,6 +142,17 @@ export function ModelRegister() {
             </div>
             <Icon name="chevRight" size={18} />
           </Link>
+
+          {/* 개인화 온보딩 연속 진입 — 위 본인확인이 성인 확인도 함께 기록했으므로
+              별도 인증 없이 바로 다음 단계(동의 등)로 이어진다. */}
+          <Link to="/personalization" className={s.nextCard}>
+            <div className={s.nextIcon}><Icon name="sparkles" size={18} /></div>
+            <div>
+              <div className={s.nextTitle}>이제 내 얼굴로 상세컷을 만들 수 있어요</div>
+              <div className={s.nextDesc}>개인화 시작 — 동의·얼굴 사진만 더하면 내 모델로 생성할 수 있어요.</div>
+            </div>
+            <Icon name="chevRight" size={18} />
+          </Link>
         </div>
       </div>
     );
@@ -146,6 +163,17 @@ export function ModelRegister() {
       <div className="page-head">
         <h1>모델 본인확인</h1>
         <p>모바일 신분증으로 실명을 확인하면 검증 모델로 등록돼요.</p>
+      </div>
+
+      <div className={s.purposeNotice}>
+        <div className={s.purposeNoticeHead}>
+          <Icon name="info" size={15} />
+          <span>이 본인확인은 다음 두 목적에 함께 쓰여요</span>
+        </div>
+        <ul className={s.purposeList}>
+          <li>FaceMarket 실명 모델 등록·검증</li>
+          <li>개인화 서비스 성인 확인(만 19세 이상) — 이후 별도 인증 없이 바로 이용할 수 있어요</li>
+        </ul>
       </div>
 
       <div className="surface">

@@ -54,6 +54,31 @@
   margin: 0 2px;
 }
 
+/* ---- 목적별 고지(FaceMarket + 개인화 겸용 안내) ---- */
+.purposeNotice {
+  margin: 4px 0 20px;
+  padding: 15px 16px;
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+}
+.purposeNoticeHead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--fg-1);
+  font-size: 13px;
+  font-weight: 600;
+}
+.purposeNoticeHead svg { flex: none; color: var(--fg-2); }
+.purposeList {
+  margin: 8px 0 0;
+  padding-left: 19px;
+  color: var(--fg-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.purposeList li { margin: 2px 0; }
+
 /* ---- 표준인증창 컨테이너 ---- */
 .widget:not(:empty) {
   margin-bottom: 16px;
