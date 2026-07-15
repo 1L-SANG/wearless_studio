@@ -439,7 +439,9 @@ function buildDraft() {
   const analysis = {
     clothingType: 'top', subCategory: 'knit', targetGenders: ['women'],
     fit: 'semi_over', suggestedName: '소프트 골지 라운드 니트',
-    materials: [{ name: '코튼', ratio: 60 }, { name: '폴리에스터', ratio: 40 }],
+    // 니트 시드 → 서버 DEFAULT_MATERIALS(팩트체크 2026-07-13)와 동일한 아크릴 100. 구 '코튼 60/폴리 40'은
+    // 실제 분석이 절대 내지 않는 값이라, mock 화면을 실분석으로 오인하게 만들던 흔적을 제거(2026-07-15).
+    materials: [{ name: '아크릴', ratio: 100 }],
     sellingPoints: [],
     aiSuggestedPoints: ['골지 짜임', '라운드넥'],
     styleTags: ['basic', 'daily', 'clean'],
