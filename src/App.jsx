@@ -22,6 +22,7 @@ import { ModelFaceUpload } from '@/features/model/ModelFaceUpload.jsx';
 import { ModelBodyProfile } from '@/features/model/ModelBodyProfile.jsx';
 import { ModelGenerate } from '@/features/model/ModelGenerate.jsx';
 import { ModelWithdraw } from '@/features/model/ModelWithdraw.jsx';
+import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
@@ -168,6 +169,11 @@ export default function App() {
         <Route element={<RequireAuth />}>
           <Route path="editor/:id" element={<Suspense fallback={<div className="route-loading">에디터를 불러오는 중이에요</div>}><LazyEditor /></Suspense>} />
         </Route>
+        {/* 얼굴 라이선스 공개 검증(step02 QR 대상) — **RequireAuth 밖**. 심사위원·구매자가
+            VC 카드의 QR 을 자기 폰으로 찍어 로그인 없이 유효성을 확인한다(로그인 게이트를
+            두면 QR 이 무의미해진다). 크롬(TopNav) 밖에도 둔다 — 스캔으로 진입한 사람에게
+            앱 내비게이션은 잡음이다. 얼굴은 이 페이지에 렌더되지 않는다(PublicVerify 주석). */}
+        <Route path="verify/:licenseId" element={<PublicVerify />} />
         <Route path="*" element={<Navigate to="/create/input" replace />} />
       </Routes>
     </>

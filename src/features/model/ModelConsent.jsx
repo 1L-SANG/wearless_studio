@@ -2,6 +2,11 @@
    features/model — ① 개인화 동의 (/model/consent)
    서비스이용·국외이전(필수, 개별) · 학습활용(선택) 동의를 사전체크 없이
    받는다(api-spec §3.1). 필수 2항목 제출 시 프로필이 none → draft 로 전이.
+
+   embedded 모드 — step02 라이선스 여정(/model/license)의 1단계로 이 화면을
+   그대로 박아 쓴다. 로직(동의 제출·minor_blocked 처리)을 복제하면 두 경로가
+   갈라지므로 컴포넌트를 재사용한다. embedded 면 page-head·wizard 래퍼를 빼고
+   (스테퍼가 이미 제목을 갖는다) 완료 시 navigate 대신 onDone() 으로 넘긴다.
    ============================================================= */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -31,7 +36,7 @@ const ITEMS = [
   },
 ];
 
-export function ModelConsent() {
+export function ModelConsent({ embedded = false, onDone }) {
   const navigate = useNavigate();
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|ready|error
@@ -77,7 +82,7 @@ export function ModelConsent() {
       const items = ITEMS.filter((it) => checked[it.type]).map((it) => ({ type: it.type, docVersion: DOC_VERSION }));
       await submitConsents(items);
       push?.('동의가 완료됐어요.', { icon: 'check' });
-      navigate('/model/face');
+      if (onDone) onDone(); else navigate('/model/face');
     } catch (e) {
       if (e?.code === 'minor_blocked') { setMinorBlocked(true); return; }
       push?.(e.message || '동의 제출에 실패했어요.', { icon: 'alertCircle' });
@@ -86,15 +91,20 @@ export function ModelConsent() {
     }
   };
 
-  if (phase === 'loading') return <div className="wizard narrow"><div className="surface">불러오는 중…</div></div>;
-  if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState desc="동의 상태를 불러오지 못했어요." onRetry={load} /></div></div>;
+  // embedded 면 래퍼(wizard)를 스테퍼가 이미 갖고 있다 — 이중 래핑 방지로 조각만 반환.
+  const Wrap = ({ children }) => (embedded ? <>{children}</> : <div className="wizard narrow">{children}</div>);
+
+  if (phase === 'loading') return <Wrap><div className="surface">불러오는 중…</div></Wrap>;
+  if (phase === 'error') return <Wrap><div className="surface"><ErrorState desc="동의 상태를 불러오지 못했어요." onRetry={load} /></div></Wrap>;
 
   return (
-    <div className="wizard narrow">
-      <div className="page-head">
-        <h1>얼굴로 내 모델을 만들기 전에 확인해주세요</h1>
-        <p>얼굴은 개인정보보호법상 민감정보라, 명확한 동의를 먼저 받아요.</p>
-      </div>
+    <Wrap>
+      {!embedded && (
+        <div className="page-head">
+          <h1>얼굴로 내 모델을 만들기 전에 확인해주세요</h1>
+          <p>얼굴은 개인정보보호법상 민감정보라, 명확한 동의를 먼저 받아요.</p>
+        </div>
+      )}
 
       {minorBlocked && (
         <div className={`${s.banner} ${s.bannerWarn}`}>
@@ -140,12 +150,12 @@ export function ModelConsent() {
         )}
 
         <Button variant="primary" block onClick={onSubmit} disabled={submitting || !requiredOk} iconRight="arrowRight" style={{ marginTop: 20 }}>
-          {submitting ? '제출 중…' : '동의하고 시작하기'}
+          {submitting ? '제출 중…' : embedded ? '동의하고 다음' : '동의하고 시작하기'}
         </Button>
 
         <p className="hint" style={{ marginTop: 12 }}>만 14세 미만 등 미성년자는 이용할 수 없어요.</p>
       </div>
-    </div>
+    </Wrap>
   );
 }
 

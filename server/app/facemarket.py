@@ -18,6 +18,7 @@ import hmac
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -119,6 +120,31 @@ def _mask_name(name: str) -> str:
 
 def _ci_hmac(ci: str, pepper: str) -> str:
     return hmac.new(pepper.encode(), ci.encode(), hashlib.sha256).hexdigest()
+
+
+# 만 나이 기준 시각 = KST(한국 법 기준). 컨테이너 TZ(UTC) 의존 시 하루 밀린다(cx_identity 미러).
+_KST = ZoneInfo("Asia/Seoul")
+
+
+def _age_from_birth_year(birth_year) -> int | None:
+    """`fields.birthYear`(연도만) → 만 나이. 파생 불가면 None(공개 검증에서 age: null).
+
+    fm_identity_verifications 는 최소수집으로 **연도만** 남긴다(`str(birth)[:4]`) → 생일 미상이라
+    만 나이는 [연도차-1, 연도차] 구간으로만 특정된다. **하한(연도차-1)** 을 택한다:
+      · cx_identity.is_adult_from_birth 의 4자리 경로가 성인 판정에 `연도차 >= min_age+1` 을
+        요구한다 = 그 판정이 가정하는 나이가 곧 연도차-1 이다. 상한을 쓰면 연령 게이트가
+        미성년으로 막은 사람이 공개 검증에서 만 19세로 보이는 모순이 생긴다.
+      · 과대 표기(실나이보다 많게)는 이 라우트가 무인증 공개라 되돌릴 수 없다 → 안전측 하한.
+    연도 범위 검증은 필수 — 'MMDD' 같은 4자리가 들어오면 연도차가 1900+ 로 튄다(cx_identity 선례).
+    """
+    digits = "".join(ch for ch in str(birth_year or "") if ch.isdigit())
+    if len(digits) != 4:
+        return None
+    year = int(digits)
+    today = datetime.now(_KST).date()
+    if not (1900 <= year <= today.year):
+        return None
+    return max(today.year - year - 1, 0)
 
 
 async def _record_personalization_adult(conn, user_id: str, token: str, birth) -> None:
@@ -379,6 +405,53 @@ async def _my_verified_model_id(request: Request, user_id: str) -> str | None:
     return row["id"] if row else None
 
 
+async def _resolve_profile_face(conn, user_id: str, profile_id: str) -> tuple[str, str]:
+    """개인화 프로필(ready)의 **front 슬롯** → `(r2_key, image_digest)`. 부적격이면 400.
+
+    step02 "1.얼굴 업로드(다각도 3장 권장)" = 개인화 온보딩의 3각도 QC 통과 얼굴 재사용.
+    ready 상태가 그 자체로 [3각도 QC 통과 + 필수동의 + 신체 + 성인 인증]의 합의어다
+    (personalization._readiness) → 여기서 조건을 재구현하지 않고 상태만 신뢰한다. 재구현하면
+    두 판정이 갈려 개인화가 막은 얼굴이 라이선스로 새어나갈 수 있다.
+
+    **복사가 아니라 참조** — 프로필 R2 키를 그대로 라이선스 얼굴로 삼는다. FaceMarket 키스페이스로
+    사본을 뜨면 개인화 파기(§3.5)가 원본만 지우고 사본은 남겨 파기 캐스케이드가 무력화된다.
+    참조라서 파기 시 얼굴 게이트가 함께 404 로 닫힌다(라이선스 행은 보존 — 정산 이력 때문).
+    """
+    try:  # uuid 컬럼 직접 비교 전 형식 가드 — 쓰레기 입력은 500 아닌 400
+        uuid.UUID(str(profile_id))
+    except (ValueError, TypeError):
+        raise _err("invalid_profile", "개인화 프로필을 찾을 수 없습니다.")
+
+    async with conn.cursor() as cur:
+        # 소유자 스코프를 SQL 에 포함 — 타인 프로필은 '없는 프로필'과 같은 코드로 떨어져
+        # 존재 여부가 새지 않는다(얼굴 게이트 404 선례와 동일 원칙).
+        await cur.execute(
+            "select id::text as id, status from personalization_profiles "
+            "where id = %s and user_id = %s and status <> 'purged'",
+            (str(profile_id), user_id),
+        )
+        prof = await cur.fetchone()
+    if prof is None:
+        raise _err("invalid_profile", "개인화 프로필을 찾을 수 없습니다.")
+    if prof["status"] != "ready":
+        raise _err(
+            "profile_not_ready",
+            "개인화 준비가 완료되지 않았어요. 얼굴 3장·필수 동의·신체 정보를 먼저 완료해 주세요.",
+        )
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select r2_key, image_digest from personalization_face_photos "
+            "where profile_id = %s and angle = 'front'",
+            (prof["id"],),
+        )
+        photo = await cur.fetchone()
+    if photo is None or not photo["r2_key"]:
+        # ready 인데 front 가 없으면 데이터 불일치 — 사유코드만(키·digest 로그 금지, §1.4).
+        raise _err("profile_not_ready", "개인화 정면 얼굴 사진을 찾을 수 없어요.")
+    return photo["r2_key"], photo["image_digest"]
+
+
 @router.post(
     "/licenses",
     response_model=LicenseCard,
@@ -389,33 +462,62 @@ async def _my_verified_model_id(request: Request, user_id: str) -> str | None:
 )
 async def create_license(
     request: Request,
-    face: UploadFile = File(..., description="라이선스 얼굴 이미지(비공개 저장)"),
+    face: UploadFile | None = File(
+        None, description="라이선스 얼굴 이미지(비공개 저장). profile_id 사용 시 생략"
+    ),
+    profile_id: str | None = Form(
+        None, description="개인화 프로필 id — 프로필 front 얼굴을 라이선스 대상으로(face 대신)"
+    ),
     allowed_use: list[str] = Form(default=[], description="허용 용도 태그"),
     forbidden_use: list[str] = Form(default=[], description="금지 용도 태그"),
     unit_price: int = Form(default=10000, ge=0, le=100_000_000, description="건당 단가(KRW)"),
     valid_days: int = Form(default=365, ge=1, le=3650, description="사용권 유효기간(일)"),
     user_id: str = Depends(require_user),
 ):
-    """검증(verified) 모델 본인이 얼굴 + 라이선스 조건을 등록한다.
+    """검증(verified) 모델 본인이 얼굴 + 라이선스 조건을 등록한다(제안서 step02).
+
+    얼굴 지정 방식 **택1**:
+      · `face` — 얼굴 1장 직접 업로드(레거시 경로, 그대로 유지).
+      · `profile_id` — 개인화 프로필(ready = 3각도 QC 통과+필수동의+신체)의 **front 슬롯**을
+        라이선스 얼굴로 참조. 사본을 뜨지 않으므로 개인화 파기 시 얼굴 게이트도 함께 닫힌다.
 
     - **Bearer Token**: 필수 (검증 모델 본인)
-    - **멀티파트**: `face`(이미지) + 조건 필드. 얼굴은 비공개 버킷에 저장되고
+    - **멀티파트**: `face` 또는 `profile_id` + 조건 필드. 얼굴은 비공개 버킷에만 있고
       응답/카탈로그에는 게이트 URL만 실린다(원본 바이트·내부 키 비노출).
-    - **에지 케이스**: `400 no_verified_model`(본인확인 선행 필요) ·
-      `400 bad_image`(허용 밖 형식) · `413 file_too_large`
+    - **에지 케이스**: `400 face_or_profile_required`(둘 다 없음) ·
+      `400 face_and_profile_conflict`(둘 다 있음 — 어느 얼굴을 라이선스했는지 모호해지므로
+      우선순위 대신 명시적 거절. 생체정보는 조용히 무시·폐기하지 않는다) ·
+      `400 invalid_profile`(없음/타인 프로필) · `400 profile_not_ready`(온보딩 미완) ·
+      `400 no_verified_model`(본인확인 선행 필요) · `400 bad_image` · `413 file_too_large`
     """
     r2 = _r2_face(request)
 
-    mime = (face.content_type or "").lower()
-    ext = ext_for_mime(mime)
-    if not ext:
-        raise _err("bad_image", "허용되지 않는 이미지 형식입니다. (png/jpg/webp)")
+    # 빈 파트(filename='')를 '얼굴 있음'으로 오인하면 profile_id 단독 요청이 conflict 로 튄다.
+    has_face = face is not None and bool(face.filename)
+    linked_profile_id = (profile_id or "").strip() or None
+    if has_face and linked_profile_id:
+        raise _err(
+            "face_and_profile_conflict",
+            "얼굴 사진과 개인화 프로필 중 하나만 선택해 주세요.",
+        )
+    if not has_face and not linked_profile_id:
+        raise _err(
+            "face_or_profile_required",
+            "라이선스할 얼굴이 없어요. 얼굴 사진을 올리거나 개인화 프로필을 선택해 주세요.",
+        )
 
-    data = await face.read()
-    if not data:
-        raise _err("bad_image", "빈 파일입니다.")
-    if len(data) > MAX_FACE_BYTES:
-        raise _err("file_too_large", "이미지는 15MB 이하만 가능합니다.", status=413)
+    data = mime = ext = None
+    if has_face:  # 레거시 경로 — 검증 순서(형식→바이트→모델) 보존
+        mime = (face.content_type or "").lower()
+        ext = ext_for_mime(mime)
+        if not ext:
+            raise _err("bad_image", "허용되지 않는 이미지 형식입니다. (png/jpg/webp)")
+
+        data = await face.read()
+        if not data:
+            raise _err("bad_image", "빈 파일입니다.")
+        if len(data) > MAX_FACE_BYTES:
+            raise _err("file_too_large", "이미지는 15MB 이하만 가능합니다.", status=413)
 
     model_id = await _my_verified_model_id(request, user_id)
     if not model_id:
@@ -426,15 +528,23 @@ async def create_license(
         )
 
     license_id = str(uuid.uuid4())
-    key = face_key(str(model_id), license_id, ext)
-    digest = sha256_sri(data)
-    # boto3 동기 → to_thread (이벤트 루프 보호)
-    await asyncio.to_thread(r2.put_bytes, key, data, mime)
-
     gate_uri = f"/v1/facemarket/licenses/{license_id}/face"
     valid_until = datetime.now(timezone.utc) + timedelta(days=valid_days)
     allowed = _clean_uses(allowed_use)
     forbidden = _clean_uses(forbidden_use)
+
+    # uploaded_key = **이 요청이 새로 올린** 객체만. 프로필 참조 모드의 key 는 개인화 소유라
+    # 롤백 대상이 아니다 — 여기서 지우면 DB 실패가 사용자의 개인화 정면 사진을 파괴한다.
+    uploaded_key: str | None = None
+    if has_face:
+        key = face_key(str(model_id), license_id, ext)
+        digest = sha256_sri(data)
+        # boto3 동기 → to_thread (이벤트 루프 보호)
+        await asyncio.to_thread(r2.put_bytes, key, data, mime)
+        uploaded_key = key
+    else:
+        async with get_conn(request) as conn:
+            key, digest = await _resolve_profile_face(conn, user_id, linked_profile_id)
 
     try:
         async with get_conn(request) as conn:
@@ -442,22 +552,23 @@ async def create_license(
                 await cur.execute(
                     f"""insert into fm_licenses
                         (id, model_id, face_image_uri, face_image_key, face_image_digest,
-                         allowed_use, forbidden_use, unit_price, license_valid_until)
-                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         allowed_use, forbidden_use, unit_price, license_valid_until, profile_id)
+                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         returning {_LICENSE_CARD_COLS}""",
                     (
                         license_id, model_id, gate_uri, key, digest,
-                        allowed, forbidden, unit_price, valid_until,
+                        allowed, forbidden, unit_price, valid_until, linked_profile_id,
                     ),
                 )
                 row = await cur.fetchone()
             await conn.commit()
     except Exception:
-        # DB 실패 시 방금 올린 얼굴 객체 best-effort 정리(고아 방지)
-        try:
-            await asyncio.to_thread(r2.delete, key)
-        except Exception:
-            logger.warning("face_orphan_cleanup_failed", extra={"key": key})
+        # DB 실패 시 방금 올린 얼굴 객체 best-effort 정리(고아 방지). 프로필 참조 모드는 no-op.
+        if uploaded_key:
+            try:
+                await asyncio.to_thread(r2.delete, uploaded_key)
+            except Exception:
+                logger.warning("face_orphan_cleanup_failed", extra={"key": uploaded_key})
         raise
 
     # FaceLicense VC 발급(선택과제1) — 홀더 설정 시 백그라운드 best-effort.
@@ -538,6 +649,111 @@ async def get_license_face(
         raise _err("not_found", "찾을 수 없습니다.", status=404)
     # 비공개 — 캐시·색인 금지
     return Response(content=data, media_type=mime, headers={"Cache-Control": "no-store, private"})
+
+
+# ============================================================================
+# step02 공개 검증 (QR) — **무인증**. 심사위원·구매자가 QR(`{origin}/verify/{licenseId}`)을 찍어
+# "이 얼굴 라이선스가 진짜 유효한가"를 로그인 없이 확인한다. 선례 = routes.get_asset_file
+# (무인증 공개 라우트 — capability URL). license_id(UUIDv4)가 능력 토큰.
+#
+# 🔴 하드룰(위반 = 영구 유출):
+#   이 라우트에 실리는 값은 무인증이라 한 번 나가면 회수 불가다. 절대 미노출 —
+#   얼굴 이미지·face_image_key·face_image_uri·face_image_digest·CI·ci_hash·생년월일(원문)·
+#   user_id·model_id·내부 R2 키.
+#   3중 방어로 못 새게 막는다:
+#     ① SELECT 자체를 화이트리스트로 좁힌다 — 안 읽으면 못 샌다(얼굴·식별자 컬럼 미조회).
+#     ② response_model=PublicVerifyResult — FastAPI 가 선언 밖 필드를 직렬화에서 **탈락**시킨다.
+#     ③ 신원은 파생값만 — 이름은 마스킹(_mask_name), 생년월일은 연도조차 안 싣고 만 나이 int 로만.
+#   필드 추가 요청이 오면 이 주석을 먼저 읽을 것. 확장은 계약 변경이다.
+# ============================================================================
+
+
+class PublicVerifyModel(CamelModel):
+    """공개 검증의 모델 신원 — **파생·마스킹 값만**. 실명·생년월일·식별자 금지."""
+
+    name_masked: str
+    age: int | None = None  # 만 나이(birthYear 파생). 연도 미보관·파싱 불가면 null
+
+
+class PublicVerifyResult(CamelModel):
+    """QR 공개 검증 응답 화이트리스트. **이 필드가 전부** — 확장 금지(위 하드룰)."""
+
+    valid: bool
+    status: str  # 'active' | 'revoked' | 'expired'
+    allowed_use: list[str]
+    forbidden_use: list[str]
+    unit_price: int
+    valid_until: datetime
+    vc_id: str | None = None
+    model: PublicVerifyModel
+
+
+@router.get(
+    "/verify/{license_id}",
+    response_model=PublicVerifyResult,
+    responses={404: {"model": ErrorResponse, "description": "라이선스 없음/잘못된 id"}},
+    tags=["FaceMarket"],
+    summary="얼굴 라이선스 공개 검증 (QR — 무인증)",
+)
+async def verify_license_public(request: Request, license_id: str, response: Response):
+    """QR 스캔 대상 공개 검증 페이지의 데이터 소스. **인증 없음**(심사위원이 즉석에서 스캔).
+
+    - **인증 없음 (capability URL)**: license_id(UUIDv4)가 능력 토큰. 얼굴·신원 원문은 한 톨도
+      싣지 않으므로 무인증 노출이 성립한다(노출 목록은 위 하드룰 참조).
+    - **valid**: 실시간 판정 = `status=='active' AND license_valid_until > now`. DB status 가
+      active 라도 기간이 지났으면 `status='expired'` + `valid=false` 로 내린다 — 두 필드가
+      어긋나면(`status:'active', valid:false`) 스캔한 사람이 이유를 알 수 없다.
+    - **에지 케이스**: `404 not_found`(비존재·잘못된 uuid — 존재 여부 노출 방지)
+    """
+    try:  # 공개 라우트 — 쓰레기 입력은 DB 전에 404로 컷(get_asset_file 선례)
+        lic_uuid = uuid.UUID(str(license_id))
+    except (ValueError, TypeError):
+        raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+    # 파싱 결과를 써야 한다 — 원문을 그대로 쿼리에 넣으면 uuid.UUID() 가 받아주는 별칭 표기
+    # (`urn:uuid:…`·중괄호 형태)가 가드를 통과한 뒤 PG 캐스팅에서 터져 404 대신 500 이 된다.
+    lic_id = str(lic_uuid)
+
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            # 방어 ① — 화이트리스트 SELECT. 얼굴(face_image_*)·식별자(user_id·model_id·ci_hash)는
+            # 조회조차 하지 않는다. birthYear 는 만 나이 파생에만 쓰고 응답에 싣지 않는다.
+            await cur.execute(
+                """select l.status, l.allowed_use, l.forbidden_use, l.unit_price,
+                          l.license_valid_until, l.vc_id, m.display_name,
+                          (select v.fields->>'birthYear' from fm_identity_verifications v
+                           where v.model_id = m.id
+                           order by v.verified_at desc limit 1) as birth_year
+                   from fm_licenses l
+                   join fm_models m on m.id = l.model_id
+                   where l.id = %s""",
+                (lic_id,),
+            )
+            row = await cur.fetchone()
+    if row is None:
+        raise _err("not_found", "라이선스를 찾을 수 없습니다.", status=404)
+
+    # 실시간 상태 — 만료 판정은 게이트(verify_license)와 같은 _is_expired 를 쓴다(단일 소스).
+    status = row["status"]
+    if status == "active" and _is_expired(row):
+        status = "expired"
+
+    # 공개 캐시·CDN·브라우저 저장 금지 — 해지가 즉시 반영돼야 한다(캐시된 valid=true = 사고).
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "valid": status == "active",
+        "status": status,
+        "allowedUse": row["allowed_use"] or [],
+        "forbiddenUse": row["forbidden_use"] or [],
+        "unitPrice": row["unit_price"],
+        "validUntil": row["license_valid_until"],
+        "vcId": row["vc_id"],
+        # display_name 은 등록 시 이미 마스킹돼 저장되지만(_mask_name), 무인증 노출 지점이라
+        # 한 번 더 통과시킨다 — 상류가 언젠가 실명을 넣어도 여기서 새지 않게(멱등: 홍*동→홍*동).
+        "model": {
+            "nameMasked": _mask_name(row["display_name"]),
+            "age": _age_from_birth_year(row["birth_year"]),
+        },
+    }
 
 
 # ============================================================================
@@ -894,6 +1110,21 @@ async def resolve_project_license(conn, project: dict, analysis: dict) -> dict |
         return await cur.fetchone()
 
 
+def _is_expired(license_row: dict) -> bool:
+    """`license_valid_until` 이 이미 지났는가. naive 값은 UTC 로 간주(DB timestamptz 관례).
+
+    `verify_license`(게이트, 예외)와 `verify_license_public`(QR, bool)이 만료를 **같은 코드로**
+    판정하게 하는 단일 소스 — 갈리면 QR 이 유효하다는 라이선스를 게이트가 막는 모순이 난다.
+    """
+    valid_until = license_row.get("license_valid_until")
+    if valid_until is None:
+        return False
+    vu = valid_until
+    if getattr(vu, "tzinfo", None) is None:
+        vu = vu.replace(tzinfo=timezone.utc)
+    return vu <= datetime.now(timezone.utc)
+
+
 async def verify_license(app, license_row: dict) -> None:
     """얼굴 라이선스 사용 자격 검증. 실패 시 409 {code, message}(KR) 발생.
 
@@ -914,17 +1145,12 @@ async def verify_license(app, license_row: dict) -> None:
     if status != "active":
         raise _err("license_inactive", "활성화된 얼굴 라이선스가 아닙니다.", status=409)
 
-    valid_until = license_row.get("license_valid_until")
-    if valid_until is not None:
-        vu = valid_until
-        if getattr(vu, "tzinfo", None) is None:
-            vu = vu.replace(tzinfo=timezone.utc)
-        if vu <= datetime.now(timezone.utc):
-            raise _err(
-                "license_expired",
-                "얼굴 라이선스 사용 기간이 만료되었습니다.",
-                status=409,
-            )
+    if _is_expired(license_row):
+        raise _err(
+            "license_expired",
+            "얼굴 라이선스 사용 기간이 만료되었습니다.",
+            status=409,
+        )
 
     # [FULL] 온체인 VC 라이브 검증(선택과제). 홀더가 응답하고 status != valid 일 때만 차단.
     # 홀더 미설정/vc_id 미발급/불통 → 판정 skip(로컬 status·만료 검사로 충분).

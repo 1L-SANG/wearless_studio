@@ -2,6 +2,11 @@
    features/model — ④ 신체 입력 (/model/body)
    키·몸무게(필수) + 체형 pill(필수, 직접입력 배타) + 성별(선택, MVP 범위 —
    ux-flow §2). PUT 은 전체 교체(REPLACE, api-spec §3.3).
+
+   embedded 모드 — step02 라이선스 여정(/model/license)의 3단계로 재사용
+   (ModelConsent 와 동일 패턴). PDF 는 이 단계를 "선택 섹션"으로 그리지만,
+   서버는 신체 정보까지 있어야 프로필을 ready 로 올리고(personalization._readiness)
+   ready 가 아니면 라이선스 발급을 400 으로 막는다 → 실제로는 필수 단계다.
    ============================================================= */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -24,7 +29,7 @@ const GENDERS = [
   { value: 'other', label: '기타' },
 ];
 
-export function ModelBodyProfile() {
+export function ModelBodyProfile({ embedded = false, onDone }) {
   const navigate = useNavigate();
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|ready|error
@@ -72,7 +77,7 @@ export function ModelBodyProfile() {
         gender: gender || null,
       });
       push?.('신체 정보를 저장했어요.', { icon: 'check' });
-      navigate('/model');
+      if (onDone) onDone(); else navigate('/model');
     } catch (e) {
       push?.(e.message || '저장에 실패했어요.', { icon: 'alertCircle' });
     } finally {
@@ -80,15 +85,19 @@ export function ModelBodyProfile() {
     }
   };
 
-  if (phase === 'loading') return <div className="wizard narrow"><div className="surface">불러오는 중…</div></div>;
-  if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState desc="신체 정보를 불러오지 못했어요." onRetry={load} /></div></div>;
+  const Wrap = ({ children }) => (embedded ? <>{children}</> : <div className="wizard narrow">{children}</div>);
+
+  if (phase === 'loading') return <Wrap><div className="surface">불러오는 중…</div></Wrap>;
+  if (phase === 'error') return <Wrap><div className="surface"><ErrorState desc="신체 정보를 불러오지 못했어요." onRetry={load} /></div></Wrap>;
 
   return (
-    <div className="wizard narrow">
-      <div className="page-head">
-        <h1>신체 정보를 입력해주세요</h1>
-        <p>키와 몸무게는 착장 컷의 체형을 실제와 가깝게 맞추는 데만 쓰여요. 다른 목적으로 사용되지 않고, 언제든 삭제할 수 있어요.</p>
-      </div>
+    <Wrap>
+      {!embedded && (
+        <div className="page-head">
+          <h1>신체 정보를 입력해주세요</h1>
+          <p>키와 몸무게는 착장 컷의 체형을 실제와 가깝게 맞추는 데만 쓰여요. 다른 목적으로 사용되지 않고, 언제든 삭제할 수 있어요.</p>
+        </div>
+      )}
 
       <div className="surface">
         <div className="basic-fields">
@@ -116,10 +125,10 @@ export function ModelBodyProfile() {
         <Chips options={GENDERS} value={gender} onChange={setGender} />
 
         <Button variant="primary" block onClick={onSubmit} disabled={saving || !valid} iconRight="arrowRight" style={{ marginTop: 22 }}>
-          {saving ? '저장 중…' : '저장하고 상태 확인하기'}
+          {saving ? '저장 중…' : embedded ? '저장하고 다음' : '저장하고 상태 확인하기'}
         </Button>
       </div>
-    </div>
+    </Wrap>
   );
 }
 

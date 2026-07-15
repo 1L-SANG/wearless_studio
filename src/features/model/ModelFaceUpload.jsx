@@ -4,6 +4,11 @@
    슬롯(front/side/angle45)당 1장, 업로드는 동기 QC 응답을 그대로 반영한다
    (api-spec §3.2). 통과 슬롯은 게이트(fetchFacePhotoUrl)로만 표시 — 공개
    URL 금지(§1.4). 불합격은 사유코드별 재업로드 안내를 보여준다.
+
+   embedded 모드 — step02 라이선스 여정(/model/license)의 2단계로 재사용
+   (ModelConsent 와 동일 패턴). 라이선스 얼굴은 여기 통과한 **front 슬롯**을
+   그대로 참조하므로(서버 _resolve_profile_face), 이 화면이 곧 라이선스 얼굴
+   등록이다 — 3장이 다 통과해야(프로필 ready) 발급이 열린다.
    ============================================================= */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -83,7 +88,7 @@ function SlotCard({ angle, label, guide, slot, onPicked, onDelete, checking, loc
   );
 }
 
-export function ModelFaceUpload() {
+export function ModelFaceUpload({ embedded = false, onDone }) {
   const navigate = useNavigate();
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|ready|error
@@ -144,17 +149,21 @@ export function ModelFaceUpload() {
     }
   };
 
-  if (phase === 'loading') return <div className="wizard narrow"><div className="surface">불러오는 중…</div></div>;
-  if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState desc="얼굴 사진 정보를 불러오지 못했어요." onRetry={load} /></div></div>;
+  const Wrap = ({ children }) => (embedded ? <>{children}</> : <div className="wizard">{children}</div>);
+
+  if (phase === 'loading') return <Wrap><div className="surface">불러오는 중…</div></Wrap>;
+  if (phase === 'error') return <Wrap><div className="surface"><ErrorState desc="얼굴 사진 정보를 불러오지 못했어요." onRetry={load} /></div></Wrap>;
 
   const completeCount = ANGLES.filter((a) => slots[a.value]?.qcStatus === 'passed').length;
 
   return (
-    <div className="wizard">
-      <div className="page-head">
-        <h1>얼굴 3장을 올려주세요</h1>
-        <p>조명이 밝고 배경이 단순한 곳에서, 가리는 것 없이 본인 1인만 나오게 찍어주세요.</p>
-      </div>
+    <Wrap>
+      {!embedded && (
+        <div className="page-head">
+          <h1>얼굴 3장을 올려주세요</h1>
+          <p>조명이 밝고 배경이 단순한 곳에서, 가리는 것 없이 본인 1인만 나오게 찍어주세요.</p>
+        </div>
+      )}
 
       {blocked && (
         <div className={`${s.banner} ${s.bannerWarn}`}>
@@ -175,12 +184,18 @@ export function ModelFaceUpload() {
           <Icon name="lock" size={15} />
           <span>얼굴 사진은 비공개로 저장되고, 본인 확인 후 내 모델 생성에만 사용돼요.</span>
         </div>
+        {/* 라이선스 여정에선 3장 전부 QC 통과해야 프로필이 ready 가 되고 발급이 열린다 —
+            덜 채운 채 다음으로 보내면 마지막에 400 으로 되돌아오므로 여기서 막는다.
+            단독 라우트는 종전대로 언제든 다음 단계로 진행 가능(회귀 0). */}
         <Button variant="primary" block iconRight="arrowRight" style={{ marginTop: 18 }}
-          onClick={() => navigate('/model/body')}>
-          다음 · 신체 정보 입력
+          disabled={embedded && completeCount < 3}
+          onClick={() => { if (onDone) onDone(); else navigate('/model/body'); }}>
+          {embedded
+            ? (completeCount < 3 ? `${3 - completeCount}장 더 올려주세요` : '다음 · 신체 정보')
+            : '다음 · 신체 정보 입력'}
         </Button>
       </div>
-    </div>
+    </Wrap>
   );
 }
 

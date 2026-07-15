@@ -13,6 +13,7 @@
     "@supabase/supabase-js": "^2.108.2",
     "@tanstack/react-query": "^5.101.0",
     "lucide-react": "^0.460.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-moveable": "^0.56.0",

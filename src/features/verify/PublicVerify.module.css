@@ -1,0 +1,141 @@
+/* 공개 검증 페이지 — QR 로 들어오므로 **모바일 우선**. 앱 크롬 밖 독립 화면이라
+   자체 배경·폭·여백을 갖는다. 데스크톱에선 가운데 정렬된 폰 폭 카드. */
+
+.page {
+  min-height: 100vh;
+  min-height: 100dvh;          /* 모바일 주소창 높이 변화 대응 */
+  background: var(--bg-2);
+  padding: 20px 16px calc(28px + env(safe-area-inset-bottom));
+  display: flex;
+  justify-content: center;
+}
+.shell {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.plain { color: var(--fg-2); font-size: 14px; text-align: center; padding: 60px 0; }
+
+/* 판정 히어로 — 스캔한 사람이 0.5초 안에 유효/무효를 읽을 수 있어야 한다. */
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 30px 20px 26px;
+  border-radius: 18px;
+  background: var(--bg-1);
+  box-shadow: var(--elev-card);
+}
+.hero h1 { font-size: 20px; font-weight: 700; color: var(--fg-1); letter-spacing: -.01em; }
+.hero p { font-size: 13.5px; color: var(--fg-2); line-height: 1.55; max-width: 280px; }
+
+.heroIcon {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  margin-bottom: 2px;
+  color: #fff;
+}
+.heroOk .heroIcon { background: var(--accent-success); }
+.heroBad .heroIcon { background: var(--accent-error); }
+.heroUnknown .heroIcon { background: var(--fg-3); }
+
+.retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 44px;
+  border: none;
+  border-radius: var(--r-4);
+  background: var(--bg-1);
+  box-shadow: var(--elev-card);
+  color: var(--fg-1);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* 상세 카드 */
+.card {
+  padding: 18px 16px;
+  border-radius: 18px;
+  background: var(--bg-1);
+  box-shadow: var(--elev-card);
+}
+
+.who {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--bg-2);
+}
+.whoName { font-size: 20px; font-weight: 700; color: var(--fg-1); letter-spacing: -.01em; }
+.whoAge { font-size: 16px; font-weight: 600; color: var(--fg-2); }
+.whoTag {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  color: var(--fg-2);
+}
+
+.rows { display: flex; flex-direction: column; gap: 12px; margin: 14px 0 0; }
+.row {
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+.row dt { font-size: 12px; font-weight: 600; color: var(--fg-2); }
+.row dd { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--fg-1); min-width: 0; }
+
+.price { font-size: 16px; font-weight: 700; }
+.price em { font-style: normal; font-size: 11.5px; font-weight: 500; color: var(--fg-3); margin-left: 1px; }
+
+.tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.tagAllow, .tagDeny {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+}
+.tagAllow { background: var(--accent-success-ring); color: var(--accent-success); }
+.tagDeny { background: var(--accent-error-ring); color: var(--accent-error); }
+
+.vcid {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-2);
+  word-break: break-all;
+}
+
+/* 아이콘이 2줄 텍스트 옆에 고아처럼 뜨지 않게 폭을 조여 한 덩어리로 읽히게 한다. */
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin: 0 auto;
+  max-width: 300px;
+  padding: 2px 8px;
+  font-size: 11.5px;
+  color: var(--fg-3);
+  text-align: left;
+  line-height: 1.5;
+}
+.foot svg { flex: none; }
