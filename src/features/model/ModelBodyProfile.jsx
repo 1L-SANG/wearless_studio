@@ -1,5 +1,5 @@
 /* =============================================================
-   features/personalization — ④ 신체 입력 (/personalization/body)
+   features/model — ④ 신체 입력 (/model/body)
    키·몸무게(필수) + 체형 pill(필수, 직접입력 배타) + 성별(선택, MVP 범위 —
    ux-flow §2). PUT 은 전체 교체(REPLACE, api-spec §3.3).
    ============================================================= */
@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Chips, ErrorState, Field, useToast } from '@/components/ui.jsx';
 import { getProfile, putBodyProfile } from '@/lib/api/personalization.js';
-import s from './Personalization.module.css';
+import s from './ModelPersonalization.module.css';
 
 // 글자 폭 추정(em) — AnalysisForm.jsx 의 customCategory 트레일링 입력과 동일 패턴.
 const chWidth = (str) => [...str].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
@@ -24,7 +24,7 @@ const GENDERS = [
   { value: 'other', label: '기타' },
 ];
 
-export function BodyProfile() {
+export function ModelBodyProfile() {
   const navigate = useNavigate();
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|ready|error
@@ -72,7 +72,7 @@ export function BodyProfile() {
         gender: gender || null,
       });
       push?.('신체 정보를 저장했어요.', { icon: 'check' });
-      navigate('/personalization');
+      navigate('/model');
     } catch (e) {
       push?.(e.message || '저장에 실패했어요.', { icon: 'alertCircle' });
     } finally {
@@ -123,4 +123,4 @@ export function BodyProfile() {
   );
 }
 
-export default BodyProfile;
+export default ModelBodyProfile;

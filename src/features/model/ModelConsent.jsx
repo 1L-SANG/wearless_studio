@@ -1,5 +1,5 @@
 /* =============================================================
-   features/personalization — ① 동의 (/personalization/consent)
+   features/model — ① 개인화 동의 (/model/consent)
    서비스이용·국외이전(필수, 개별) · 학습활용(선택) 동의를 사전체크 없이
    받는다(api-spec §3.1). 필수 2항목 제출 시 프로필이 none → draft 로 전이.
    ============================================================= */
@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
 import { getConsents, submitConsents } from '@/lib/api/personalization.js';
-import s from './Personalization.module.css';
+import s from './ModelPersonalization.module.css';
 
 // 현재 사용자가 보고 있는 동의 문서 버전 — 서버 현행 버전과 대조된다(불일치 시 400 stale_consent_doc).
 // 법무 확정 전 잠정값(ux-flow §3.4 예시와 동일 소스).
@@ -31,7 +31,7 @@ const ITEMS = [
   },
 ];
 
-export function Consent() {
+export function ModelConsent() {
   const navigate = useNavigate();
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|ready|error
@@ -77,7 +77,7 @@ export function Consent() {
       const items = ITEMS.filter((it) => checked[it.type]).map((it) => ({ type: it.type, docVersion: DOC_VERSION }));
       await submitConsents(items);
       push?.('동의가 완료됐어요.', { icon: 'check' });
-      navigate('/personalization/face');
+      navigate('/model/face');
     } catch (e) {
       if (e?.code === 'minor_blocked') { setMinorBlocked(true); return; }
       push?.(e.message || '동의 제출에 실패했어요.', { icon: 'alertCircle' });
@@ -149,4 +149,4 @@ export function Consent() {
   );
 }
 
-export default Consent;
+export default ModelConsent;

@@ -14,14 +14,14 @@ import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
+import { ModelHub } from '@/features/model/ModelHub.jsx';
 import { ModelRegister } from '@/features/model/ModelRegister.jsx';
 import { ModelLicense } from '@/features/model/ModelLicense.jsx';
-import { Onboarding as PersonalizationOnboarding } from '@/features/personalization/Onboarding.jsx';
-import { Consent as PersonalizationConsent } from '@/features/personalization/Consent.jsx';
-import { FaceUpload as PersonalizationFaceUpload } from '@/features/personalization/FaceUpload.jsx';
-import { BodyProfile as PersonalizationBodyProfile } from '@/features/personalization/BodyProfile.jsx';
-import { Generate as PersonalizationGenerate } from '@/features/personalization/Generate.jsx';
-import { Withdraw as PersonalizationWithdraw } from '@/features/personalization/Withdraw.jsx';
+import { ModelConsent } from '@/features/model/ModelConsent.jsx';
+import { ModelFaceUpload } from '@/features/model/ModelFaceUpload.jsx';
+import { ModelBodyProfile } from '@/features/model/ModelBodyProfile.jsx';
+import { ModelGenerate } from '@/features/model/ModelGenerate.jsx';
+import { ModelWithdraw } from '@/features/model/ModelWithdraw.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
@@ -136,19 +136,20 @@ export default function App() {
             {/* 크레딧 에이전트 페이지 — auth 는 라우트만 등록, 본문 컴포넌트는 크레딧 에이전트 소유 */}
             <Route path="pricing" element={<Pricing />} />
             <Route path="credits/history" element={<CreditsHistory />} />
-            {/* FaceMarket 모델 온보딩 — 로그인 모델이 신분증 본인확인 (FM-10) */}
-            <Route path="model/register" element={<ModelRegister />} />
-            <Route path="model/license" element={<ModelLicense />} />
-            {/* 개인화(사용자 얼굴·신체) 온보딩 — docs/personalization/phase0-ux-flow.md 화면 순서.
-                본인확인(성인 인증, T2-1)은 /model/register 로 흡수됐다 — FaceMarket 실명 인증 1회가
-                개인화 성인 확인도 함께 기록하므로 여기엔 별도 identity 라우트가 없다. */}
-            <Route path="personalization">
-              <Route index element={<PersonalizationOnboarding />} />
-              <Route path="consent" element={<PersonalizationConsent />} />
-              <Route path="face" element={<PersonalizationFaceUpload />} />
-              <Route path="body" element={<PersonalizationBodyProfile />} />
-              <Route path="generate" element={<PersonalizationGenerate />} />
-              <Route path="withdraw" element={<PersonalizationWithdraw />} />
+            {/* FaceMarket 모델 섹션 — 본인확인·라이선스(FM-10)와 개인화(사용자 얼굴·신체)가
+                한 섹션이다. 개인화 화면 순서는 docs/personalization/phase0-ux-flow.md.
+                본인확인(성인 인증, T2-1)은 register 하나로 흡수됐다 — FaceMarket 실명 인증
+                1회가 개인화 성인 확인도 함께 기록하므로 별도 identity 라우트가 없다.
+                /model 은 섹션 허브(체크리스트) — register·license 의 URL 은 종전 그대로. */}
+            <Route path="model">
+              <Route index element={<ModelHub />} />
+              <Route path="register" element={<ModelRegister />} />
+              <Route path="license" element={<ModelLicense />} />
+              <Route path="consent" element={<ModelConsent />} />
+              <Route path="face" element={<ModelFaceUpload />} />
+              <Route path="body" element={<ModelBodyProfile />} />
+              <Route path="generate" element={<ModelGenerate />} />
+              <Route path="withdraw" element={<ModelWithdraw />} />
             </Route>
           </Route>
           <Route path="create">

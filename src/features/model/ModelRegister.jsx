@@ -7,8 +7,8 @@
    이 화면의 인증 1회가 두 목적에 함께 쓰인다 — ① FaceMarket 실명 모델 등록
    ② 개인화(내 얼굴 모델) 서비스의 성인 확인. 서버(POST /v1/facemarket/identity/verify)가
    CX 성공 시 개인화 성인 인증도 함께 기록하므로, 프론트는 개인화용 별도 인증 화면
-   (구 /personalization/identity, 제거됨)을 다시 태우지 않는다 — 성공 화면에서 바로
-   개인화 온보딩(/personalization)으로 이어준다.
+   (구 개인화 identity 화면, 제거됨)을 다시 태우지 않는다 — 성공 화면에서 바로
+   모델 섹션 허브(/model)로 이어준다.
    ============================================================= */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -145,7 +145,7 @@ export function ModelRegister() {
 
           {/* 개인화 온보딩 연속 진입 — 위 본인확인이 성인 확인도 함께 기록했으므로
               별도 인증 없이 바로 다음 단계(동의 등)로 이어진다. */}
-          <Link to="/personalization" className={s.nextCard}>
+          <Link to="/model" className={s.nextCard}>
             <div className={s.nextIcon}><Icon name="sparkles" size={18} /></div>
             <div>
               <div className={s.nextTitle}>이제 내 얼굴로 상세컷을 만들 수 있어요</div>

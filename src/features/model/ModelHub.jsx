@@ -1,14 +1,16 @@
 /* =============================================================
-   features/personalization — ⑤ 온보딩 허브 (/personalization)
-   GET /v1/personalization/status 의 canGenerate·blockers 를 체크리스트로
-   보여준다(api-spec §3.4). 완료(canGenerate:true)면 "내 모델로 생성하기"
-   진입, 아니면 부족한 단계로 바로 이동할 수 있는 링크를 보여준다.
+   features/model — 모델 섹션 허브 (/model)
+   FaceMarket 모델 온보딩(본인확인·라이선스)과 개인화(내 얼굴·신체) 단계를
+   한 섹션에서 이어 보여주는 진입점. GET /v1/personalization/status 의
+   canGenerate·blockers 를 체크리스트로 보여준다(api-spec §3.4). 완료
+   (canGenerate:true)면 "내 모델로 생성하기" 진입, 아니면 부족한 단계로
+   바로 이동할 수 있는 링크를 보여준다.
    ============================================================= */
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
 import { getStatus } from '@/lib/api/personalization.js';
-import s from './Personalization.module.css';
+import s from './ModelPersonalization.module.css';
 
 const BLOCKER = {
   identity_verification_required: 'identity_verification_required',
@@ -51,7 +53,7 @@ function StepLink({ to, icon, title, desc, done, locked }) {
   );
 }
 
-export function Onboarding() {
+export function ModelHub() {
   const navigate = useNavigate();
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|ready|error
@@ -124,7 +126,7 @@ export function Onboarding() {
           </p>
           <Button
             variant="primary" iconRight="arrowRight"
-            onClick={() => navigate(identityRequired ? '/model/register' : '/personalization/consent')}
+            onClick={() => navigate(identityRequired ? '/model/register' : '/model/consent')}
           >
             {identityRequired ? '본인확인 시작하기' : '동의하고 시작하기'}
           </Button>
@@ -137,16 +139,16 @@ export function Onboarding() {
             <div className={s.sectionLabel}>진행 체크리스트</div>
             <StepLink to="/model/register" icon="user" title="본인확인(성인 인증)"
               desc="모바일 신분증으로 성인 여부 확인" done={!identityRequired} />
-            <StepLink to="/personalization/consent" icon="lock" title="필수 동의"
+            <StepLink to="/model/consent" icon="lock" title="필수 동의"
               desc="서비스이용·국외이전 동의" done={!has(BLOCKER.consent_missing)} locked={identityRequired} />
-            <StepLink to="/personalization/face" icon="person" title="얼굴 3장 업로드"
+            <StepLink to="/model/face" icon="person" title="얼굴 3장 업로드"
               desc="정면·측면·45도 각도별 사진" done={!has(BLOCKER.photos_incomplete)} locked={identityRequired} />
-            <StepLink to="/personalization/body" icon="shapes" title="신체 정보 입력"
+            <StepLink to="/model/body" icon="shapes" title="신체 정보 입력"
               desc="키·몸무게·체형" done={!has(BLOCKER.body_profile_missing)} locked={identityRequired} />
 
             {status.canGenerate ? (
               <div className={s.hubCta}>
-                <Button variant="primary" block iconRight="arrowRight" onClick={() => navigate('/personalization/generate')}>
+                <Button variant="primary" block iconRight="arrowRight" onClick={() => navigate('/model/generate')}>
                   내 모델로 생성하기
                 </Button>
               </div>
@@ -155,14 +157,14 @@ export function Onboarding() {
             )}
           </div>
 
-          <Link to="/personalization/withdraw" className={s.footerLink}>
+          <Link to="/model/withdraw" className={s.footerLink}>
             <Icon name="trash" size={13} />얼굴·신체 데이터 삭제
           </Link>
         </>
       )}
 
       {purging && (
-        <Link to="/personalization/withdraw" className={s.footerLink}>
+        <Link to="/model/withdraw" className={s.footerLink}>
           <Icon name="chevRight" size={13} />삭제 진행 상태 확인
         </Link>
       )}
@@ -170,4 +172,4 @@ export function Onboarding() {
   );
 }
 
-export default Onboarding;
+export default ModelHub;

@@ -1,9 +1,11 @@
 /* =============================================================
-   features/personalization — 개인화(사용자 얼굴·신체) 온보딩 화면군
-   공용 스타일. ModelLicense.module.css 톤(모노크롬 + 그림자, 보더 없음)을
-   그대로 따른다. 화면 6개(Onboarding/Consent/FaceUpload/BodyProfile/
-   Generate/Withdraw)가 이 한 모듈을 공유한다 — 본인확인 화면은 /model/register
-   로 흡수되어 이 목록에서 빠졌다.
+   features/model — 개인화(사용자 얼굴·신체) 화면군 공용 스타일.
+   ModelLicense.module.css 톤(모노크롬 + 그림자, 보더 없음)을 그대로 따른다.
+   화면 6개(ModelHub/ModelConsent/ModelFaceUpload/ModelBodyProfile/
+   ModelGenerate/ModelWithdraw)가 이 한 모듈을 공유한다 — 본인확인 화면은
+   /model/register 로 흡수되어 이 목록에서 빠졌다.
+   ModelRegister/ModelLicense 와는 별도 모듈로 유지한다 — .stepIcon/.stepArrow/
+   .stepDesc/.widget/.sectionLabel 이 이름만 같고 정의가 달라, 합치면 충돌한다.
    ============================================================= */
 
 .sectionLabel {

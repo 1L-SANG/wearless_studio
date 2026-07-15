@@ -1,5 +1,5 @@
 /* =============================================================
-   features/personalization — ⑧ 삭제·철회 (/personalization/withdraw)
+   features/model — ⑧ 삭제·철회 (/model/withdraw)
    학습 동의만 철회(얕은 경로) · 필수 동의(서비스이용·국외이전) 개별 철회 ·
    전체 삭제(깊은 경로) — 백엔드 캐스케이드는 하나(FR-7)로 통일되지만 UI
    진입점은 분리해 오조작을 막는다(ux-flow §5). 전체 삭제·필수 동의 철회는
@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
 import { getConsents, getStatus, withdrawAll, withdrawConsent } from '@/lib/api/personalization.js';
-import s from './Personalization.module.css';
+import s from './ModelPersonalization.module.css';
 
 const LABELS = {
   service_use: '서비스이용(얼굴·신체 수집·이용)',
@@ -19,7 +19,7 @@ const LABELS = {
 const CASCADE_TYPES = new Set(['service_use', 'cross_border_transfer']);
 const CASCADE_WARNING = '이 작업은 되돌릴 수 없어요. 얼굴 원본 사진, 얼굴 임베딩, 생성된 산출물이 전부 파기되고 백업도 보존기간 경과 후 소멸돼요. 정말 삭제할까요?';
 
-export function Withdraw() {
+export function ModelWithdraw() {
   const navigate = useNavigate();
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|ready|error
@@ -134,7 +134,7 @@ export function Withdraw() {
         </div>
       </div>
 
-      <button type="button" className={s.footerLink} onClick={() => navigate('/personalization')}
+      <button type="button" className={s.footerLink} onClick={() => navigate('/model')}
         style={{ background: 'none', border: 0, cursor: 'pointer' }}>
         <Icon name="chevLeft" size={13} />온보딩으로 돌아가기
       </button>
@@ -142,4 +142,4 @@ export function Withdraw() {
   );
 }
 
-export default Withdraw;
+export default ModelWithdraw;

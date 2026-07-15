@@ -1,6 +1,6 @@
 /* =============================================================
-   features/personalization — ②③ 얼굴 3장 업로드 + 동기 품질검사
-   (/personalization/face)
+   features/model — ②③ 얼굴 3장 업로드 + 동기 품질검사
+   (/model/face)
    슬롯(front/side/angle45)당 1장, 업로드는 동기 QC 응답을 그대로 반영한다
    (api-spec §3.2). 통과 슬롯은 게이트(fetchFacePhotoUrl)로만 표시 — 공개
    URL 금지(§1.4). 불합격은 사유코드별 재업로드 안내를 보여준다.
@@ -11,7 +11,7 @@ import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
 import {
   deleteFacePhoto, fetchFacePhotoUrl, getStatus, listFacePhotos, uploadFacePhoto,
 } from '@/lib/api/personalization.js';
-import s from './Personalization.module.css';
+import s from './ModelPersonalization.module.css';
 
 const ANGLES = [
   { value: 'front', label: '정면', guide: '정면을 바라보고 얼굴 전체가 나오게 찍어주세요.' },
@@ -83,7 +83,7 @@ function SlotCard({ angle, label, guide, slot, onPicked, onDelete, checking, loc
   );
 }
 
-export function FaceUpload() {
+export function ModelFaceUpload() {
   const navigate = useNavigate();
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|ready|error
@@ -176,7 +176,7 @@ export function FaceUpload() {
           <span>얼굴 사진은 비공개로 저장되고, 본인 확인 후 내 모델 생성에만 사용돼요.</span>
         </div>
         <Button variant="primary" block iconRight="arrowRight" style={{ marginTop: 18 }}
-          onClick={() => navigate('/personalization/body')}>
+          onClick={() => navigate('/model/body')}>
           다음 · 신체 정보 입력
         </Button>
       </div>
@@ -184,4 +184,4 @@ export function FaceUpload() {
   );
 }
 
-export default FaceUpload;
+export default ModelFaceUpload;

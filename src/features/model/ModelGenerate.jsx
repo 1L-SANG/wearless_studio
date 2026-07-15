@@ -1,6 +1,6 @@
 /* =============================================================
-   features/personalization — ⑤⑥⑦ 생성 가능 상태·생성·결과 확인
-   (/personalization/generate)
+   features/model — ⑤⑥⑦ 생성 가능 상태·생성·결과 확인
+   (/model/generate)
    READY(canGenerate) 가 아니면 진입을 막고 부족한 항목을 보여준다. 상품
    이미지는 보관함 프로젝트에서 고른다(기존 assets, api-spec §4 골격 —
    productImageAssetIds). 결과는 게이트 URL 로만 표시한다(§1.4).
@@ -10,7 +10,7 @@ import { Link } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { Button, ErrorState, Icon, ProgressBar, useToast } from '@/components/ui.jsx';
 import { fetchGenerationResultUrl, getStatus, startGeneration } from '@/lib/api/personalization.js';
-import s from './Personalization.module.css';
+import s from './ModelPersonalization.module.css';
 
 function blockerLabel(code) {
   switch (code) {
@@ -40,7 +40,7 @@ function ResultImage({ uri }) {
   );
 }
 
-export function Generate() {
+export function ModelGenerate() {
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|blocked|ready|error
   const [blockers, setBlockers] = useState([]);
@@ -110,7 +110,7 @@ export function Generate() {
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {blockers.map((b) => <li key={b.code} className="hint" style={{ marginBottom: 6 }}>{blockerLabel(b.code)}</li>)}
           </ul>
-          <Link to="/personalization" className={s.footerLink}><Icon name="chevRight" size={13} />온보딩으로 돌아가기</Link>
+          <Link to="/model" className={s.footerLink}><Icon name="chevRight" size={13} />온보딩으로 돌아가기</Link>
         </div>
       </div>
     );
@@ -171,4 +171,4 @@ export function Generate() {
   );
 }
 
-export default Generate;
+export default ModelGenerate;
