@@ -14,7 +14,7 @@ HARD RULES (a violation makes the output invalid):
   MATERIAL PRESETS row matching your chosen category — the composition that best fits the
   visual cues (sheen/technical weave → polyester, slub & wrinkles → linen, ribbed knit →
   acrylic/wool, fleece back → poly blend, rigid dry denim → cotton 100). If you cannot
-  tell, output null (the server applies that category's most common composition).
+  tell, output null (the server applies that category's default composition).
   Free-text values (material name, suggestedName, aiSuggestedPoints) are Korean.
 - aiSuggestedPoints: at most 2 Korean keyword phrases in 개조식 — clipped noun phrases
   ending in a noun (~4-9 characters), never sentences or polite endings (no "-요",
