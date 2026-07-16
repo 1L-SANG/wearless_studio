@@ -88,6 +88,8 @@ OPENAI_API_KEY=   # 예비 — text tier를 OpenAI 계열로 재배정할 때만
 
 ### AG-04 mannequin-generator — 마네킹컷 생성
 
+> **핏 반영(fidelity) P0 (2026-07-13)**: 입력 fitProfile은 **잡 생성 시점 payload 스냅샷**이 정본(워커의 analysis 재독 금지 — 경합·무음 유실 차단, legacy 잡만 폴백). 프롬프트는 정체성(색·패턴·소재·디테일)과 조형(핏·기장·실루엣)을 분리 — 선언 축은 "사진과 충돌할 때만" 우선하고, top/outer 기장 선언 시 untucked·밑단 완전 노출을 강제(매칭 하의 tuck 가림 방지). 셀러 조정 축은 CHANGES 섹션으로 재강조. 관측 = 호출 직전 `prompt_rendered` 이벤트(profile/prompt SHA-256, 원문 미포함). 정본: documents/mannequin_fit_fidelity_plan.md (P1=축 인지 QC는 부록 스키마).
+
 | | |
 |---|---|
 | tier | `image_high` (Gemini 3 Pro 단일 티어 — Flash 프로모션 없음) |

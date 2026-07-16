@@ -43,7 +43,7 @@ Mannequin
 
 ### 데이터 연결
 - `buildFitProfile()`: 축 picked → `axes[key]`, 매칭 picked → `profile.matchCut`. keep은 draft 값 유지. `source`=picked 있으면 'seller'.
-- 재생성 = `regenerateMannequin(projectId,{fitProfile})` — 프로필이 `matchCut`까지 포함해 garment_ref로 저장(mock: `DB.analysis.fitProfile` / http: 서버 `mannequins:regenerate`가 analysis에 영속 → 워커 `generation_spec(analysis)`이 읽음). 성공 시 새 버전 자동선택 + 스텝 리셋(pending) 재확인 루프.
+- 재생성 = `regenerateMannequin(projectId,{fitProfile})` — 프로필이 `matchCut`까지 포함해 garment_ref로 저장(mock: `DB.analysis.fitProfile` / http: 서버 `mannequins:regenerate`가 analysis에 영속(UI 연속성) + **잡 payload에 `fitProfileSnapshot`으로 고정** → 워커는 스냅샷만 소비(잡 생성↔실행 경합 차단, fidelity 설계 D3)). 성공 시 새 버전 자동선택 + 스텝 리셋(pending) 재확인 루프.
 - `createFitProfileDraft`가 재진입 시 `existing.matchCut` 복원. 매칭 미선택 프로젝트에선 `buildFitProfile`이 stale `matchCut`을 제거.
 - 재생성 **이중 제출 방지**: `submittingRef`(동기 가드) + 버튼 `disabled={busy}`.
 - **matchCut 백엔드 소비(완료)**: `server/app/agents/fit_axes.py build_fit_profile_block`이 `matchCut`을 pants.cut 카탈로그 고정 문구("matching bottom (the separate bottom garment …)")로 렌더. 매칭 하의 이미지가 없는 잡에선 `mannequin.effective_fit_profile`이 `matchCut`을 제거(없는 옷 지시 방지). 워커의 매칭 하의 탐색(`main_match_item_id`)은 계약형 `matchSelections` → **레거시 `matchClothing`(selected+selOrder, 실 프론트 저장 형식) 폴백** — 이 폴백이 없으면 UI가 받은 matchCut이 생성에서 조용히 무시된다. 회귀 = `tests/test_mannequin_fit_profile.py`.

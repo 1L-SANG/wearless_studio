@@ -32,11 +32,15 @@ def test_build_fit_profile_block_full_profile():
     })
 
     assert block == (
-        "FIT PROFILE (seller-declared; overrides any impression from the photos):\n"
+        "FIT PROFILE (declared target axes; preserve garment identity and every undeclared axis):\n"
         "- cut: a full, voluminous wide-leg silhouette; the legs drape as broad swinging "
-        "columns from hip to hem, hem covering most of the shoes\n"
+        "columns from hip to hem, each hem opening visibly wider than the foot beneath it. Observable target: "
+        "leg outlines clear of thighs and calves from hip to hem, with each hem opening visibly wider than the foot beneath it.\n"
         "- length: hem falls just past the ankle, lightly resting on the top of the foot "
-        "with one soft break"
+        "with one soft break. Observable target: both hems extend past and fully cover "
+        "the ankle bones, forming one visible soft fold over each instep.\n"
+        "Where the photos conflict with a declared axis, the declared axis wins; "
+        "otherwise preserve the photographed shape for that axis."
     )
 
 
@@ -48,8 +52,12 @@ def test_build_fit_profile_block_partial_profile():
     })
 
     assert block == (
-        "FIT PROFILE (seller-declared; overrides any impression from the photos):\n"
-        "- fit: oversized volume, dropped shoulders, roomy chest and wide sleeves"
+        "FIT PROFILE (declared target axes; preserve garment identity and every undeclared axis):\n"
+        "- fit: oversized volume, dropped shoulders, roomy chest and wide sleeves. "
+        "Observable target: shoulder seam below the shoulder point and clear air around "
+        "chest, waist, and sleeves.\n"
+        "Where the photos conflict with a declared axis, the declared axis wins; "
+        "otherwise preserve the photographed shape for that axis."
     )
 
 
@@ -70,8 +78,11 @@ def test_build_fit_profile_block_skips_unknown_values():
     })
 
     assert block == (
-        "FIT PROFILE (seller-declared; overrides any impression from the photos):\n"
-        "- length: hem ends just above the ankle bone, ankle visible"
+        "FIT PROFILE (declared target axes; preserve garment identity and every undeclared axis):\n"
+        "- length: hem ends just above the ankle bone, ankle visible. Observable target: "
+        "both hems just above the ankle bones with a visible ankle gap and unobscured.\n"
+        "Where the photos conflict with a declared axis, the declared axis wins; "
+        "otherwise preserve the photographed shape for that axis."
     )
 
 
@@ -115,7 +126,7 @@ def test_render_mannequin_prompt_injects_fit_profile_before_product_context():
     prompt = render_mannequin_prompt(template, _ctx(analysis["fitProfile"]), product, analysis)
 
     assert "${" not in prompt
-    assert "FIT PROFILE (seller-declared" in prompt
+    assert "FIT PROFILE (declared target axes" in prompt
     assert "- cut: a moderately wide, clean straight column from the knee down" in prompt
     assert prompt.index("FIT PROFILE") < prompt.index("PRODUCT CONTEXT")
     assert "- Fit: regular" not in prompt
@@ -153,7 +164,7 @@ def test_default_mannequin_template_uses_profile_axis_fallback():
 
     assert "${baseFit}" not in template
     assert "${candidate}" not in template
-    assert "For any FIT PROFILE axis not declared" in template
+    assert "only for FIT PROFILE axes that are not declared" in template
     assert "For any fit or length axis" not in template
 
 
@@ -242,19 +253,16 @@ def test_mannequin_worker_runs_dual_candidates(monkeypatch):
     asyncio.run(mannequin_job.run_mannequin_job(app, job))
 
     assert calls["failure"] == []
-    # A/B 이원 생성(원 UI 계약): A=현재 핏(프로필 그대로), B=슬림 변형(핏 축만 slim 덮어씀)
-    assert len(calls["run"]) == 2
-    by_cand = {c["candidate"]: c for c in calls["run"]}
-    assert set(by_cand) == {"A", "B"}
-    assert by_cand["A"]["base_fit"] == "regular"
-    assert by_cand["A"]["fit_profile"] == profile
-    assert by_cand["A"]["base_gender"] == "men"
-    assert by_cand["B"]["base_fit"] == "slim"
-    assert by_cand["B"]["fit_profile"] == {
-        "category": "pants", "gender": "men", "axes": {"cut": "slim", "length": None}}
+    # 단일 후보 생성(2026-07-13): 확정 fit profile 그대로 1컷 — A/B 슬림 변형 폐기
+    assert len(calls["run"]) == 1
+    only = calls["run"][0]
+    assert only["candidate"] == "A"
+    assert only["base_fit"] == "regular"
+    assert only["fit_profile"] == profile
+    assert only["base_gender"] == "men"
     assert len(calls["success"]) == 1
     assert calls["success"][0]["charge"] == 2
-    assert [c["candidate"] for c in calls["success"][0]["candidates"]] == ["A", "B"]
+    assert [c["candidate"] for c in calls["success"][0]["candidates"]] == ["A"]
 
 
 def test_mannequin_worker_reports_progress_while_candidates_are_running(monkeypatch):
@@ -289,8 +297,8 @@ def test_mannequin_worker_reports_progress_while_candidates_are_running(monkeypa
 
     async def fake_run_candidate(**kwargs):
         calls["started"] += 1
-        if calls["started"] == 2:
-            events["both_started"].set()
+        # 단일 후보(2026-07-13) — 생성이 '시작'되면 ticker 의 estimated progress 를 검증한다
+        events["both_started"].set()
         await events["release"].wait()
         return {
             "asset_id": f"asset-{kwargs['candidate']}",
@@ -359,3 +367,107 @@ def test_mannequin_worker_reports_progress_while_candidates_are_running(monkeypa
     assert any(p.get("progress", 0) > 35 for p in generating_progress)
     assert calls["failure"] == []
     assert len(calls["success"]) == 1
+
+
+# ---------- fidelity P0 (2026-07-13 설계 D2·D5) ----------
+
+def test_renderer_has_observable_phrase_for_every_catalog_entry():
+    # 카탈로그의 모든 (category, axis, value)에 관측 목표 문구가 존재 — 새 enum 추가 시 누락 방지
+    from app.agents.fit_axes import FIT_AXES, AXIS_OBSERVABLES
+    missing = []
+    for category, by_axis in FIT_AXES.items():
+        for axis, by_gender in by_axis.items():
+            for entries in by_gender.values():
+                for e in entries:
+                    if (category, axis, e["value"]) not in AXIS_OBSERVABLES:
+                        missing.append((category, axis, e["value"]))
+    assert missing == []
+
+
+def test_changes_only_renders_different_seller_axes():
+    block = build_fit_profile_block(
+        {"category": "top", "gender": "women", "source": "seller",
+         "axes": {"fit": "slim", "length": "long"}},
+        adjusted_axes=("length",))
+    assert "CHANGES FOR THIS GENERATION" in block
+    changes = block.split("CHANGES FOR THIS GENERATION")[1]
+    assert "- length:" in changes and "- fit:" not in changes
+    assert "do not force a difference when the photos already satisfy them" in changes
+
+
+def test_changes_omitted_for_auto_source_and_empty_adjusted():
+    seller_no_adjust = build_fit_profile_block(
+        {"category": "top", "gender": "women", "source": "seller", "axes": {"fit": "slim"}})
+    auto_adjust = build_fit_profile_block(
+        {"category": "top", "gender": "women", "source": "auto", "axes": {"fit": "slim"}},
+        adjusted_axes=("fit",))
+    assert "CHANGES" not in seller_no_adjust
+    assert "CHANGES" not in auto_adjust
+
+
+def test_malicious_adjusted_axes_are_not_interpolated():
+    evil = "length<script>alert(1)</script>"
+    block = build_fit_profile_block(
+        {"category": "top", "gender": "women", "source": "seller",
+         "axes": {"fit": "slim", "length": "long"}},
+        adjusted_axes=(evil, "length"))
+    assert evil not in block and "<script>" not in block  # 미지 축은 조용히 무시, 문자열 미보간
+
+
+def test_top_outer_length_observables_enforce_visibility():
+    # tuck 가림 사고(§C-3) 회귀: top/outer length 는 전부 untucked·가림 금지 문구 포함
+    from app.agents.fit_axes import FIT_AXES, AXIS_OBSERVABLES
+    for category in ("top", "outer"):
+        for entries in FIT_AXES[category]["length"].values():
+            for e in entries:
+                obs = AXIS_OBSERVABLES[(category, "length", e["value"])]
+                assert "untucked" in obs and ("visible" in obs or "unobscured" in obs or "covered" in obs)
+    # pants/skirt/dress length 엔 untucked 개념이 없어야 함(음성 단언)
+    for category in ("pants", "skirt", "dress"):
+        for entries in FIT_AXES[category]["length"].values():
+            for e in entries:
+                assert "untucked" not in AXIS_OBSERVABLES[(category, "length", e["value"])]
+
+
+def test_normalize_fit_profile_allowlists_and_orders():
+    from app.agents.fit_axes import normalize_fit_profile
+    out = normalize_fit_profile({
+        "category": "top", "gender": "women", "source": "hacker",
+        "axes": {"length": "long", "fit": "slim", "bogus": "x", "silhouette": "h_line"},
+        "matchCut": "wide", "version": "nope",
+    })
+    assert list(out["axes"].keys()) == ["fit", "length"]  # 카탈로그 순서 + 미지 축 제거
+    assert out["source"] == "auto" and out["version"] == 1 and out["matchCut"] == "wide"
+    assert normalize_fit_profile({"category": "hat", "gender": "women", "axes": {}}) is None
+
+
+def test_adjusted_axes_between_diff_and_category_change():
+    from app.agents.fit_axes import adjusted_axes_between
+    prev = {"category": "top", "gender": "women", "axes": {"fit": "regular", "length": "basic"}}
+    new = {"category": "top", "gender": "women", "axes": {"fit": "regular", "length": "long"}}
+    assert adjusted_axes_between(prev, new) == ["length"]
+    other = {"category": "pants", "gender": "women", "axes": {"cut": "wide"}}
+    assert adjusted_axes_between(prev, other) == ["cut"]  # category 변경 → 새 선언 축 전체
+    assert adjusted_axes_between(None, new) == ["fit", "length"]
+    assert adjusted_axes_between(prev, None) == []
+
+
+def test_prompt_golden_top_women_slim_long():
+    # 골든 스냅샷(fidelity D5): 템플릿 5줄 수술 + 블록 순서 + CHANGES + 매칭 비가림까지 전문 고정.
+    # 의도적 프롬프트 개정 시 골든을 함께 갱신한다(부트스트랩: 이 파일과 동일 렌더 경로).
+    from app.agents.prompts import load_prompt_template, render_mannequin_prompt
+    from app.agents import mannequin as m
+    from conftest import make_settings
+    template = load_prompt_template(make_settings())
+    profile = {"category": "top", "gender": "women", "source": "seller",
+               "axes": {"fit": "slim", "length": "long"}, "version": 1}
+    ctx = m.prompt_context(
+        clothing_type="top", product_count=1, base_gender="women",
+        image_manifest="1. Base mannequin — the canvas to dress (keep it identical)\n2. front view of the garment",
+        fit_profile=profile, adjusted_axes=("fit", "length"))
+    prompt = render_mannequin_prompt(
+        template, ctx,
+        product={"name": "테스트 반팔 티셔츠", "clothing_type": "top"},
+        analysis={"clothingType": "top", "targetGenders": ["women"]})
+    golden = Path("tests/golden/mannequin_generate_top_women_slim_long.txt").read_text(encoding="utf-8")
+    assert prompt == golden

@@ -81,3 +81,12 @@ FIT PROFILE (seller-declared; overrides any impression from the photos):
 4. **P4 백엔드 + 스모크 — 완료(2026-07-07)**: ①백엔드 신규 엔드포인트 **불필요 확인** — analysis 저장이 payload JSONB 병합 패스스루라 fitProfile이 그대로 흐르고, 재생성 = analysis PATCH(fitProfile) → 기존 마네킹 job POST(새 멱등키). httpAdapter 스왑 시 이 조합 사용. ②**상하의 동시 착장 스모크 통과**: production 프롬프트 경로(render_mannequin_prompt+fit_profile)로 상의 프로필(오버·크롭 vs 슬림·기본)+매칭 데님 동시 착장 — 프로필이 상의에만 적용되고 하의 다리라인은 사진 그대로(간섭 없음).
 
 미검증 게이트(구현과 별개): 아우터·원피스 실물 이미지 확보 후 생성 검증 → 그때까지 해당 카테고리 축은 카탈로그에 있되 노출 여부 결정.
+
+
+## 스냅샷·렌더 계약 (2026-07-13 fidelity P0 — 정본 documents/mannequin_fit_fidelity_plan.md)
+
+- **잡 payload 스냅샷**: 마네킹 generate/regenerate 라우트가 잡 생성 시점에 `fitProfileSnapshot = {version:1, profile, adjustedAxes}` 를 payload에 고정한다. `profile`은 `fit_axes.normalize_fit_profile`(카탈로그 allowlist) 정규화 결과이며, 저장 프로필이 없으면 **명시적 null**(auto 발명 금지). 실제 매칭 이미지가 없으면 `matchCut` 제거.
+- **adjustedAxes는 서버 산출 전용(job-local)** — 직전 정규화 프로필 vs 요청 정규화 프로필의 diff. 클라이언트 전달값은 무시한다. `source=seller`만으로는 "이번에 조정된 축"을 복원할 수 없다(스냅샷이 유일 기록).
+- **워커 소비**: 스냅샷 키가 있으면 `profile:null`도 권위 입력(최신 analysis 재독 금지). 키 없는 legacy 잡만 analysis 폴백. version/shape 불량은 `invalid_fit_profile_snapshot`으로 명시 실패.
+- **블록 렌더**: 선언 축 = `- {axis}: {promptEn}. Observable target: {신체 랜드마크·가시성 문구}.` + "충돌 시에만 선언 축 우선" 문구. 셀러 조정 축은 `CHANGES FOR THIS GENERATION` 섹션으로 재강조(무조건 differ 금지). top/outer length 선언 시 untucked·밑단 완전 노출 강제(매칭 하의 tuck 가림 사고 대응).
+- **관측**: 각 Gemini 호출 직전 `step{status:prompt_rendered, profile_hash, prompt_hash, input_source}` 이벤트(원문 미포함, best-effort).
