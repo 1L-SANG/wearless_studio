@@ -8,6 +8,12 @@ on:
             - "server/**"
             - "copilot/**"
             - ".github/workflows/deploy-server.yml"
+    pull_request:
+        branches: [main]
+        paths:
+            - "server/**"
+            - "copilot/**"
+            - ".github/workflows/deploy-server.yml"
     workflow_dispatch: {} # 수동 배포 버튼
 
 concurrency:
@@ -33,11 +39,19 @@ jobs:
         steps:
             - uses: actions/checkout@v5
             - uses: astral-sh/setup-uv@v5
+            - uses: supabase/setup-cli@v2
+              with:
+                  version: 2.109.1
+                  github-token: ${{ github.token }}
+            - name: 개인화 통합 테스트용 Supabase DB 시작
+              working-directory: ${{ github.workspace }}
+              run: supabase db start
             - run: uv sync --frozen
             - run: uv run pytest -q
 
     deploy:
         needs: test
+        if: github.event_name != 'pull_request'
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v5
