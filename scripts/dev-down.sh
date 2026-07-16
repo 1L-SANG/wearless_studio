@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================
 # FaceMarket 로컬 dev 스택 중지.
-#   기본: 터널 + 프론트 + 백엔드 중지. 로컬 Supabase는 유지(데이터 보존).
+#   기본: 터널 + 프론트 + 백엔드 + OpenDID Holder 중지. 로컬 Supabase는 유지(데이터 보존).
 #   --all: 로컬 Supabase(supabase stop)까지 중지.
 # =============================================================
 set -uo pipefail
@@ -13,6 +13,7 @@ echo "중지:"
 stop "cloudflared tunnel run wearless-fm" "터널"
 stop "vite/bin/vite" "프론트"
 stop "uvicorn app.main:app" "백엔드"
+stop "kr.wearless.fmholder.FmHolderApplication" "OpenDID Holder"
 
 if [ "${1:-}" = "--all" ]; then
   echo "  로컬 Supabase 중지…"; supabase stop >/dev/null 2>&1 && echo "  ✓ Supabase" || echo "  - Supabase"
