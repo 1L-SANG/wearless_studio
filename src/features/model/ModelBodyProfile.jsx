@@ -29,6 +29,10 @@ const GENDERS = [
   { value: 'other', label: '기타' },
 ];
 
+function BodyPageWrap({ embedded, children }) {
+  return embedded ? <>{children}</> : <div className="wizard narrow">{children}</div>;
+}
+
 export function ModelBodyProfile({ embedded = false, onDone }) {
   const navigate = useNavigate();
   const { push } = useToast();
@@ -85,13 +89,11 @@ export function ModelBodyProfile({ embedded = false, onDone }) {
     }
   };
 
-  const Wrap = ({ children }) => (embedded ? <>{children}</> : <div className="wizard narrow">{children}</div>);
-
-  if (phase === 'loading') return <Wrap><div className="surface">불러오는 중…</div></Wrap>;
-  if (phase === 'error') return <Wrap><div className="surface"><ErrorState desc="신체 정보를 불러오지 못했어요." onRetry={load} /></div></Wrap>;
+  if (phase === 'loading') return <BodyPageWrap embedded={embedded}><div className="surface">불러오는 중…</div></BodyPageWrap>;
+  if (phase === 'error') return <BodyPageWrap embedded={embedded}><div className="surface"><ErrorState desc="신체 정보를 불러오지 못했어요." onRetry={load} /></div></BodyPageWrap>;
 
   return (
-    <Wrap>
+    <BodyPageWrap embedded={embedded}>
       {!embedded && (
         <div className="page-head">
           <h1>신체 정보를 입력해주세요</h1>
@@ -128,7 +130,7 @@ export function ModelBodyProfile({ embedded = false, onDone }) {
           {saving ? '저장 중…' : embedded ? '저장하고 다음' : '저장하고 상태 확인하기'}
         </Button>
       </div>
-    </Wrap>
+    </BodyPageWrap>
   );
 }
 

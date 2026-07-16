@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================
 # FaceMarket 로컬 dev 스택 기동 (멱등·재현 가능).
-#   로컬 Supabase(:54321) + 백엔드(:8000) + 프론트(:5173) + cloudflared 터널.
+#   로컬 Supabase(:54321) + OpenDID Holder(:8100) + 백엔드(:8000) +
+#   프론트(:5173) + cloudflared 터널.
 # 이미 떠있는 컴포넌트는 건너뛴다. 로그=.dev/logs/, 중지=scripts/dev-down.sh.
 #
 # 전제:
@@ -28,7 +29,21 @@ wait_http() { # url name tries
 echo "1) 로컬 Supabase"
 if listening 54321; then echo "  ✓ 이미 실행 중"; else supabase start >/dev/null && echo "  ✓ started"; fi
 
-echo "2) 백엔드 :8000"
+echo "2) OpenDID Holder :8100"
+HOLDER_ENABLED=$( ( set -a; . server/.env.local; set +a
+  [ -n "${OPENDID_HOLDER_URL:-}" ] && echo true || echo false ) )
+if [ "$HOLDER_ENABLED" != "true" ]; then echo "  - OPENDID_HOLDER_URL 미설정, 건너뜀"
+elif listening 8100; then echo "  ✓ 이미 실행 중"
+else
+  export JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
+  export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"
+  ( cd services/fm-holder
+    nohup ./gradlew bootRun >"$LOGDIR/fm-holder.log" 2>&1 &
+    echo $! >"$PIDDIR/fm-holder.pid" )
+  wait_http http://localhost:8100/holder/health "OpenDID Holder" 80
+fi
+
+echo "3) 백엔드 :8000"
 if listening 8000; then echo "  ✓ 이미 실행 중"; else
   ( cd server; set -a; . ./.env.local; set +a
     nohup .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 >"$LOGDIR/backend.log" 2>&1 &
@@ -36,13 +51,13 @@ if listening 8000; then echo "  ✓ 이미 실행 중"; else
   wait_http http://localhost:8000/healthz "백엔드"
 fi
 
-echo "3) 프론트 :5173"
+echo "4) 프론트 :5173"
 if listening 5173; then echo "  ✓ 이미 실행 중"; else
   nohup pnpm dev >"$LOGDIR/vite.log" 2>&1 & echo $! >"$PIDDIR/vite.pid"
   wait_http http://localhost:5173/ "프론트"
 fi
 
-echo "4) cloudflared 터널"
+echo "5) cloudflared 터널"
 if pgrep -f "cloudflared tunnel run wearless-fm" >/dev/null; then echo "  ✓ 이미 실행 중"; else
   nohup cloudflared tunnel run wearless-fm >"$LOGDIR/cloudflared.log" 2>&1 & echo $! >"$PIDDIR/cloudflared.pid"
   sleep 5; echo "  ✓ started"
@@ -53,5 +68,6 @@ cat <<EOF
 ✅ dev 스택 up
    프론트   http://localhost:5173      터널  https://facemarket.wearless.kr
    백엔드   http://localhost:8000      Studio http://localhost:54323
+   Holder   http://localhost:8100/holder/health
    로그     .dev/logs/                 중지  scripts/dev-down.sh
 EOF

@@ -103,7 +103,7 @@ export async function deleteFacePhoto(angle) {
 export function putBodyProfile(body) {
   return http('/v1/personalization/profile/body', { method: 'PUT', body });
 }
-// { status, body:{…|null}, photos:[…], consents:[…], createdAt, updatedAt }.
+// { id, status, body:{…|null}, photos:[…], consents:[…], createdAt, updatedAt }.
 export function getProfile() {
   return http('/v1/personalization/profile');
 }

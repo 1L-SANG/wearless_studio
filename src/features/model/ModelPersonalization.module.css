@@ -132,52 +132,133 @@
 .slotGrid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
+  gap: 16px;
 }
 @media (max-width: 640px) { .slotGrid { grid-template-columns: 1fr; } }
 
 .slotCard {
-  border-radius: var(--r-5);
-  overflow: hidden;
+  min-width: 0;
+  padding: 14px;
+  border-radius: var(--r-6);
+  background: var(--bg-1);
+  box-shadow: var(--elev-card);
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.slotCard:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--elev-lift);
+}
+.slotCardDone {
+  box-shadow: var(--elev-card), 0 0 0 1px var(--accent-success-ring);
+}
+.slotCardDone:hover {
+  box-shadow: var(--elev-lift), 0 0 0 1px var(--accent-success-ring);
+}
+.slotHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.slotTitleGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.slotIndex {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: .04em;
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}
+.slotLabel {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg-1);
+}
+.slotState {
+  flex: none;
+  padding: 4px 8px;
+  border-radius: var(--r-pill);
   background: var(--bg-2);
+  color: var(--fg-3);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.slotStateDone {
+  background: var(--accent-success-ring);
+  color: var(--accent-success);
+}
+.slotMedia {
+  position: relative;
 }
 .slotUpload {
   width: 100%;
-  aspect-ratio: 3 / 4;
-  border: 1.5px dashed var(--line);
+  aspect-ratio: 4 / 5;
+  border: 0;
   border-radius: var(--r-5);
   background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--line);
   display: grid;
   place-items: center;
   cursor: pointer;
   overflow: hidden;
   position: relative;
-  transition: border-color .15s, background .15s;
+  transition: background .15s ease, box-shadow .15s ease;
 }
-.slotUpload:hover { border-color: var(--fg-3); background: var(--bg-1); }
-.slotUpload:disabled { cursor: default; opacity: .6; }
-.slotHas { border-style: solid; }
+.slotUpload:hover:not(:disabled) {
+  background: var(--bg-1);
+  box-shadow: inset 0 0 0 1px var(--fg-3);
+}
+.slotUpload:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--fg-1), 0 0 0 3px var(--bg-1);
+}
+.slotUpload:disabled { cursor: default; opacity: .72; }
+.slotHas { background: var(--bg-2); }
 .slotHas img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.slotEmpty { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--fg-3); padding: 12px; text-align: center; }
-.slotEmpty span { font-size: 13px; font-weight: 600; color: var(--fg-2); }
-.slotBusy { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(255,255,255,.82); color: var(--fg-2); font-size: 12.5px; font-weight: 600; }
-.slotBadge {
-  position: absolute;
-  top: 7px;
-  left: 7px;
-  font-size: 10.5px;
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: var(--r-pill);
-  color: #fff;
-  background: var(--accent-success);
+.slotEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 16px;
+  color: var(--fg-3);
+  text-align: center;
 }
+.slotUploadIcon {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 3px;
+  border-radius: var(--r-4);
+  background: var(--bg-1);
+  color: var(--fg-2);
+  box-shadow: var(--elev-card);
+  display: grid;
+  place-items: center;
+}
+.slotUploadTitle {
+  color: var(--fg-1);
+  font-size: 13px;
+  font-weight: 700;
+}
+.slotUploadHint {
+  color: var(--fg-3);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.slotBusy { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(255,255,255,.82); color: var(--fg-2); font-size: 12.5px; font-weight: 600; }
 .slotDel {
   position: absolute;
-  top: 7px;
-  right: 7px;
-  width: 24px;
-  height: 24px;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   border: 0;
   background: rgba(14,13,20,.72);
@@ -185,9 +266,19 @@
   display: grid;
   place-items: center;
   cursor: pointer;
+  transition: background .15s ease, transform .15s ease;
 }
-.slotLabel { font-size: 13px; font-weight: 700; color: var(--fg-1); margin-top: 10px; }
-.slotGuide { font-size: 12px; color: var(--fg-3); margin-top: 3px; line-height: 1.45; }
+.slotDel:hover:not(:disabled) { background: rgba(14,13,20,.9); transform: scale(1.04); }
+.slotDel:disabled { cursor: default; opacity: .6; }
+.slotDel:focus-visible { outline: 2px solid var(--bg-1); outline-offset: 2px; }
+.slotGuide {
+  min-height: 54px;
+  margin: 12px 2px 0;
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
 .slotFail {
   margin-top: 8px;
   padding: 9px 10px;
@@ -198,6 +289,11 @@
   line-height: 1.5;
 }
 .slotFail ul { margin: 4px 0 0; padding-left: 16px; }
+
+@media (max-width: 640px) {
+  .slotCard { padding: 16px; }
+  .slotGuide { min-height: 0; }
+}
 
 /* ---- 신체 프로필 ---- */
 .customInputWrap { margin-top: 10px; max-width: 260px; }

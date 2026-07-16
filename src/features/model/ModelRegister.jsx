@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button, Icon } from "@/components/ui.jsx";
-import { verifyIdentity } from "@/lib/api/facemarket.js";
+import { listMyModels, verifyIdentity } from "@/lib/api/facemarket.js";
 import s from "./ModelRegister.module.css";
 
 const CX_ORIGIN = "https://cx.raonsecure.co.kr:17543";
@@ -88,13 +88,38 @@ export function ModelRegister() {
 
     useEffect(() => {
         mounted.current = true;
-        loadCxWidget()
-            .then(() => mounted.current && setPhase("ready"))
-            .catch((e) => {
+
+        // 인증 결과는 서버가 정본이다. 다른 화면으로 이동했다가 뒤로 돌아오면 컴포넌트의
+        // 로컬 done 상태는 사라지므로, 내 verified 모델을 조회해 완료 화면을 복원한다.
+        // 검증 모델이 없을 때만 무거운 CX 위젯을 불러온다.
+        const restoreOrPrepare = async () => {
+            try {
+                const models = await listMyModels();
+                const verified = models.find((model) => model.status === "verified");
+                if (verified) {
+                    if (!mounted.current) return;
+                    setResult({
+                        modelId: verified.id,
+                        nameMasked: verified.displayName,
+                    });
+                    setPhase("done");
+                    return;
+                }
+            } catch {
+                // 기존 검증 조회 실패가 신규 인증 자체를 막지는 않게 위젯 준비로 폴백한다.
+            }
+
+            try {
+                await loadCxWidget();
+                if (mounted.current) setPhase("ready");
+            } catch (e) {
                 if (!mounted.current) return;
                 setError(e.message);
                 setPhase("error");
-            });
+            }
+        };
+
+        restoreOrPrepare();
         return () => {
             mounted.current = false;
         };

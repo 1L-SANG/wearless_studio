@@ -17,9 +17,6 @@ import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
 import { ModelHub } from '@/features/model/ModelHub.jsx';
 import { ModelRegister } from '@/features/model/ModelRegister.jsx';
 import { ModelLicense } from '@/features/model/ModelLicense.jsx';
-import { ModelConsent } from '@/features/model/ModelConsent.jsx';
-import { ModelFaceUpload } from '@/features/model/ModelFaceUpload.jsx';
-import { ModelBodyProfile } from '@/features/model/ModelBodyProfile.jsx';
 import { ModelGenerate } from '@/features/model/ModelGenerate.jsx';
 import { ModelWithdraw } from '@/features/model/ModelWithdraw.jsx';
 import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
@@ -33,12 +30,48 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
 import { syncDraftToBackend } from '@/lib/draftSync.js';
+import { listMyModels } from '@/lib/api/facemarket.js';
+import { ErrorState } from '@/components/ui.jsx';
 
 /* 보호 라우트 — 세션 없으면 공개 입력 페이지로. 입력은 공개라 리다이렉트 루프 없음. */
 function RequireAuth() {
   const { session, loading } = useAuth();
   if (loading) return <div className="route-loading">불러오는 중이에요</div>;
   if (!session) return <Navigate to="/create/input" replace />;
+  return <Outlet />;
+}
+
+/* 모델 섹션 보호 — 로그인만으로는 얼굴·라이선스·생성 경로에 들어갈 수 없다.
+   서버에 본인 소유 verified 모델이 있을 때만 /model/register 이외의 모든 하위 경로를 연다. */
+function RequireVerifiedModel() {
+  const [phase, setPhase] = useState('loading'); // loading | verified | unverified | error
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    setPhase('loading');
+    listMyModels()
+      .then((models) => {
+        if (!alive) return;
+        setPhase(models.some((model) => model.status === 'verified') ? 'verified' : 'unverified');
+      })
+      .catch(() => {
+        if (alive) setPhase('error');
+      });
+    return () => { alive = false; };
+  }, [attempt]);
+
+  if (phase === 'loading') return <div className="route-loading">본인확인 상태를 확인하고 있어요…</div>;
+  if (phase === 'unverified') return <Navigate to="/model/register" replace />;
+  if (phase === 'error') {
+    return (
+      <div className="wizard narrow">
+        <div className="surface">
+          <ErrorState desc="본인확인 상태를 불러오지 못했어요." onRetry={() => setAttempt((value) => value + 1)} />
+        </div>
+      </div>
+    );
+  }
   return <Outlet />;
 }
 
@@ -143,14 +176,21 @@ export default function App() {
                 1회가 개인화 성인 확인도 함께 기록하므로 별도 identity 라우트가 없다.
                 /model 은 섹션 허브(체크리스트) — register·license 의 URL 은 종전 그대로. */}
             <Route path="model">
-              <Route index element={<ModelHub />} />
+              {/* 본인확인 화면만 공개하고, 나머지 모든 모델 경로는 verified 모델을 요구한다. */}
               <Route path="register" element={<ModelRegister />} />
-              <Route path="license" element={<ModelLicense />} />
-              <Route path="consent" element={<ModelConsent />} />
-              <Route path="face" element={<ModelFaceUpload />} />
-              <Route path="body" element={<ModelBodyProfile />} />
-              <Route path="generate" element={<ModelGenerate />} />
-              <Route path="withdraw" element={<ModelWithdraw />} />
+              <Route element={<RequireVerifiedModel />}>
+                <Route index element={<ModelHub />} />
+                <Route path="license" element={<ModelLicense />} />
+                {/* 개인화 세부 단계는 라이선스 발급 여정 하나로 통합한다.
+                    기존 북마크·외부 링크는 대응 단계로 안전하게 이어준다. */}
+                <Route path="consent" element={<Navigate to="/model/license?step=consent" replace />} />
+                <Route path="face" element={<Navigate to="/model/license?step=face" replace />} />
+                <Route path="body" element={<Navigate to="/model/license?step=body" replace />} />
+                <Route path="generate" element={<ModelGenerate />} />
+                <Route path="withdraw" element={<ModelWithdraw />} />
+                {/* 알 수 없는 /model/* 경로도 가드를 거친 뒤 허브로만 복귀한다. */}
+                <Route path="*" element={<Navigate to="/model" replace />} />
+              </Route>
             </Route>
           </Route>
           <Route path="create">
