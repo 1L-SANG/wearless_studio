@@ -175,6 +175,169 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     assert len(captured["cut_results"]) == 1     # b1만
 
 
+def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(monkeypatch):
+    captured = {}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [
+            {"id": "all", "source": "ai", "cutType": "styling",
+             "exampleId": "ex_styling_top_full_1", "refScope": "all"},
+            {"id": "pose", "source": "ai", "cutType": "horizon",
+             "exampleId": "ex_horizon_top_full_1", "refScope": "pose"},
+            {"id": "named", "source": "ai", "cutType": "styling", "pose": "walk",
+             "exampleId": "ex_styling_top_full_1", "refScope": "pose"},
+        ]
+
+    async def fake_prod(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": "k/a1"}
+
+    async def fake_example(settings, example_id, scope="all"):
+        # scope 전달 검증(2026-07-12 누끼 variant): pose 블록은 pose로, 그 외 all
+        return dpj.InlineImage("image/jpeg", f"EXAMPLE:{example_id}:{scope}".encode())
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+        captured[cut_spec["id"]] = {
+            "images": images,
+            "manifest": manifest,
+            "prompt": dpj.cut_generator.build_prompt(
+                cut_spec, product, analysis=analysis, manifest=manifest),
+        }
+        return b"IMG", "image/png"
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
+        return []
+
+    async def fake_finalize(conn, **kw):
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "load_example_image", fake_example)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=3)))
+
+    for block_id, scope in (("all", "all"), ("pose", "pose")):
+        item = captured[block_id]
+        assert len(item["images"]) == 2  # PRODUCT 다음에 resolved EXAMPLE 실제 첨부
+        assert item["images"][-1].data.startswith(b"EXAMPLE:")
+        assert item["images"][-1].data.endswith(f":{scope}".encode())  # scope별 자산(누끼 variant) 선택 검증
+        assert f"EXAMPLE REFERENCE (scope: {scope})" in item["manifest"]
+    assert "follow the attached EXAMPLE REFERENCE's background/location" in captured["all"]["prompt"]
+    assert "Do NOT carry over the example's background" in captured["pose"]["prompt"]
+    assert "follow the attached EXAMPLE REFERENCE's background/location" not in captured["pose"]["prompt"]
+    assert len(captured["named"]["images"]) == 1
+    assert "EXAMPLE REFERENCE" not in captured["named"]["manifest"]
+    assert "REFERENCE SCOPE" not in captured["named"]["prompt"]
+
+
+def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(monkeypatch):
+    captured = {}
+    storyboard = [
+        {"id": "person", "source": "ai", "cutType": "horizon", "shot": "full"},
+        {"id": "product", "source": "ai", "cutType": "product", "shot": "ghost"},
+    ]
+
+    class TrackingR2:
+        def get_bytes(self, key):
+            return key.encode()
+
+        def put_bytes(self, key, data, mime):
+            return None
+
+        def delete(self, key):
+            return None
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False, "selected_mannequin_id": "A-1"}
+
+    async def fake_sb(conn, pid):
+        return storyboard
+
+    async def fake_prod(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_analysis(conn, pid):
+        return {"selectedModelId": "mB"}
+
+    async def fake_cuts(conn, uid, pid):
+        return [{"candidate": "A", "version": 1, "asset_id": "man"}]
+
+    async def fake_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
+
+    def fake_model_refs(spec):
+        if spec["cutType"] == "product":
+            return None
+        return (
+            {"key": "seed/models/mB/face_front.webp", "mime": "image/webp"},
+            {"key": "seed/models/mB/grid_sedcard.png", "mime": "image/jpeg"},
+        )
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+        captured[cut_spec["id"]] = {
+            "spec": cut_spec, "data": [image.data.decode() for image in images],
+            "manifest": manifest,
+        }
+        return b"IMG", "image/png"
+
+    def fake_assemble(saved_storyboard, cut_results, copy_results, product, copywriting):
+        captured["assembled_storyboard"] = saved_storyboard
+        return []
+
+    async def fake_finalize(conn, **kw):
+        return {"editor_blocks": [], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "list_mannequin_cuts", fake_cuts)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "resolve_virtual_model_assets", fake_model_refs)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=TrackingR2())
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
+
+    assert captured["person"]["spec"]["modelId"] == "mB"
+    assert captured["person"]["data"] == [
+        "k/man", "seed/models/mB/face_front.webp", "seed/models/mB/grid_sedcard.png", "k/a1",
+    ]
+    assert captured["person"]["manifest"].splitlines()[0].startswith("1. PRODUCT — the garment worn")
+    assert captured["person"]["manifest"].splitlines()[1].startswith("2. MODEL — frontal close-up")
+    assert captured["person"]["manifest"].splitlines()[2].startswith("3. MODEL SHEET — a 2x2 grid")
+    assert captured["person"]["manifest"].splitlines()[3] == "4. PRODUCT — front view of the garment"
+    assert captured["product"]["data"] == ["k/man", "k/a1"]
+    assert "MODEL" not in captured["product"]["manifest"]
+    assert captured["assembled_storyboard"] is storyboard
+    assert all("modelId" not in block and "model_id" not in block for block in storyboard)
+
+
 def test_run_detail_page_job_partial_charge_uses_reservation_time_price(monkeypatch):
     """정산 불변식 회귀: 부분 성공 단가는 실행 시점 설정이 아니라 예약액에서 역산한다.
     예약(단가 1 × 2블록 = 2) 후 배포로 단가가 5로 올라도, 1컷 성공 = 1 차감(5도 2도 아님)."""

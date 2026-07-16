@@ -109,9 +109,11 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                             {"blockId": b.get("id"), "status": "cut_failed"})
                 return None
             try:
+                generate_kwargs = {"analysis": analysis, "manifest": manifest}
+                if has_face:
+                    generate_kwargs["has_face"] = True
                 img, mime = await cut_generator.generate(
-                    s, gemini, b, product, images, analysis=analysis, manifest=manifest,
-                    has_face=has_face)
+                    s, gemini, b, product, images, **generate_kwargs)
             except Exception as e:  # GeminiError·ValueError 포함 — 실패 컷 = 빈 슬롯, 미차감(부분 성공)
                 log.warning("AG-06 cut failed for job %s block %s: %r", job_id, b.get("id"), e)
                 await _emit(app.state.pool, job_id, "step",
@@ -209,8 +211,11 @@ async def run_detail_page_job(app, job: dict) -> None:
             project = await repo.get_project(conn, user_id, project_id) or {}
             storyboard = await repo.get_storyboard(conn, project_id)
             product = await repo.get_product(conn, project_id) or {}
-            analysis = await repo.get_analysis(conn, project_id)
+            analysis = await repo.get_analysis(conn, project_id) or {}
             ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
+            # StoryboardBlock에는 modelId가 없다(계약 §3.4). 상세페이지의 프로젝트 단위 선택값은
+            # Analysis.selectedModelId가 정본이며, 아래 prep에서 저장 블록을 바꾸지 않고 런타임 주입한다.
+            selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
 
             # FaceMarket 라이선스 얼굴(FM-31) — 프로젝트에 잠긴 라이선스가 있을 때만.
             # 잠금 없음 = 기존 마네킹 경로 → None, 아래 첨부·고지 분기 전부 미진입.
@@ -248,34 +253,77 @@ async def run_detail_page_job(app, job: dict) -> None:
         # R2 바이트는 r2_key 캐시로 1회만 — 같은 색상 이미지가 블록마다 재다운로드되지 않게
         _img_cache: dict = {}
 
-        async def _img(a: dict) -> InlineImage:
-            k = a["r2_key"]
+        async def _r2_img(k: str, mime: str) -> InlineImage:
             if k not in _img_cache:
                 _img_cache[k] = InlineImage(
-                    a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, k))
+                    mime, await asyncio.to_thread(app.state.r2.get_bytes, k))
             return _img_cache[k]
 
-        # (block, images[마네킹?, *상품, 매칭?, 얼굴?, *무드], manifest, has_face) — 순서=매니페스트
+        async def _img(a: dict) -> InlineImage:
+            return await _r2_img(a["r2_key"], a["mime_type"])
+
+        # C방식 두 장은 원자적인 한 쌍이다. 하나라도 manifest/R2 로드에 실패하면 둘 다 빼고
+        # 기존 옷 레퍼런스만으로 계속 생성한다(상세페이지 부분 실패 정책과 같은 fail-open).
+        _model_cache: dict[str, list[InlineImage] | None] = {}
+
+        async def _model_images(spec: dict | None) -> list[InlineImage]:
+            if not spec or spec.get("cutType") not in ("styling", "horizon", "mirror"):
+                return []
+            model_id = spec.get("modelId")
+            if not model_id:
+                return []
+            if model_id not in _model_cache:
+                try:
+                    refs = cut_generator.resolve_virtual_model_assets(spec)
+                    if refs is not None:
+                        _model_cache[model_id] = [
+                            await _r2_img(ref["key"], ref["mime"]) for ref in refs
+                        ]
+                    else:
+                        _model_cache[model_id] = None
+                except Exception as e:
+                    log.warning(
+                        "AG-06 virtual model assets unavailable for job %s model %s; "
+                        "continuing without model references: %r", job_id, model_id, e)
+                    _model_cache[model_id] = None
+            return _model_cache[model_id] or []
+
+        # (runtime block, images, manifest, has_face) — images 순서는 build_manifest 계약과 동일.
         prepared = []
-        clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+        _example_cache: dict[str, InlineImage | None] = {}
         for b in ai_blocks:
+            cut_spec = dict(b)
+            # 저장 콘티에 우연히 남은 비계약 필드가 프로젝트 선택 모델을 덮지 못하게 제거 후 주입한다.
+            cut_spec.pop("modelId", None)
+            cut_spec.pop("model_id", None)
+            if selected_model_id:
+                cut_spec["modelId"] = selected_model_id
+            clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+            try:
+                normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
+            except ValueError:
+                normalized = None  # generate()가 블록 단위 실패로 처리하는 기존 경로 유지
             prods = color_assets.get(b.get("colorId") or None, [])
             # 옷 근거(상품 사진 또는 마네킹컷)가 없으면 생성 불가 — 무드/매칭만으로 진행하면
             # 모델이 레퍼런스 속 옷을 지어내거나 베낀다(ADR-0004 정확성 최우선). 스킵 표식.
             # 얼굴은 이 가드 **뒤에서만** 붙는다 — 여기 얼굴을 넣으면 images 가 비지 않아
             # _gen_cuts 의 `if not images` 스킵이 무력화되고 옷 근거 0으로 생성이 돌아간다.
             if mannequin_asset is None and not prods:
-                prepared.append((b, [], "", False))
+                prepared.append((cut_spec, [], "", False))
                 continue
             mids = b.get("matchIds") or []
             match_a = match_assets.get(str(mids[0])) if mids and b.get("cutType") in ("styling", "mirror") else None
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
             # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·거울샷 기본(폰이 가림)·
             # 뒷모습·머리가 프레임 밖인 샷은 제외(cut_generator.wants_face 가 단일 규칙).
-            has_face = face_ref is not None and cut_generator.wants_face(b, clothing_type)
+            has_face = face_ref is not None and cut_generator.wants_face(cut_spec, clothing_type)
             imgs = []
             if mannequin_asset is not None:
                 imgs.append(await _img(mannequin_asset))
+            # 라이선스 얼굴과 가상 모델은 서로 다른 정체성 근거다. 같은 요청에 둘을 넣으면
+            # 생성 모델이 인물을 혼합하므로 라이선스 얼굴이 실제 쓰이는 컷에서는 가상 모델을 뺀다.
+            model_images = [] if has_face else await _model_images(normalized)
+            imgs.extend(model_images)
             for a in prods:
                 imgs.append(await _img(a))
             if match_a is not None:
@@ -285,10 +333,31 @@ async def run_detail_page_job(app, job: dict) -> None:
                 imgs.append(face_ref["image"])
             for a in moods:
                 imgs.append(await _img(a))
+            example_scope = None
+            example_id = b.get("exampleId") or b.get("example_id")
+            if example_id:
+                # 직접 포즈가 pose-scope 예시보다 우선한다는 기존 계약: 이미지 자체도 첨부하지 않아
+                # 픽셀 조건이 텍스트 가드를 우회해 포즈를 되살리지 못하게 한다.
+                pose_overrides_example = normalized is not None \
+                    and normalized["pose"] != "auto" and normalized["refScope"] == "pose"
+                if normalized is not None and not pose_overrides_example:
+                    # 캐시 키에 scope 포함 — pose는 누끼 variant, all은 원본이라 자산이 다르다
+                    cache_key = f"{example_id}:{normalized['refScope']}"
+                    if cache_key not in _example_cache:
+                        _example_cache[cache_key] = await cut_generator.load_example_image(
+                            s, example_id, scope=normalized["refScope"])
+                    example_img = _example_cache[cache_key]
+                    if example_img is not None:
+                        imgs.append(example_img)
+                        example_scope = normalized["refScope"]
             manifest = cut_generator.build_manifest(
                 prods, has_mannequin=mannequin_asset is not None,
-                has_match=match_a is not None, mood_count=len(moods), has_face=has_face)
-            prepared.append((b, imgs, manifest, has_face))
+                has_match=match_a is not None, mood_count=len(moods),
+                has_model_face=len(model_images) == 2, has_model_sheet=len(model_images) == 2,
+                has_face=has_face,
+                example_scope=example_scope,
+                example_is_product=normalized is not None and normalized["cutType"] == "product")
+            prepared.append((cut_spec, imgs, manifest, has_face))
 
         copywriting = bool(project.get("copywriting"))
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
@@ -316,8 +385,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                               "licenseId": face_ref["license_id"],
                               "faceCuts": face_cuts,
                               "totalCuts": len(cut_assets)}
-        editor_blocks = page_assembler.assemble(storyboard, cut_results, copy_results, product,
-                                                copywriting, license_notice=license_notice)
+        assemble_kwargs = {"license_notice": license_notice} if license_notice is not None else {}
+        editor_blocks = page_assembler.assemble(
+            storyboard, cut_results, copy_results, product, copywriting, **assemble_kwargs)
 
         # 5) 성공 종결 (원자·lease 펜스). charge = 성공 컷 수 × **예약 시점 단가 스냅샷**
         # (job.metadata.perCutCost — routes.py가 예약과 같은 tx에서 기록). 실행 시점 설정을 쓰면

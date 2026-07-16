@@ -31,6 +31,8 @@ export const Direction = Object.freeze({ FRONT: 'front', BACK: 'back', SIDE: 'si
 export const ProductDirection = Object.freeze({ FRONT: 'front', BACK: 'back' });
 export const ShotType = Object.freeze({ FULL: 'full', KNEE: 'knee', MEDIUM: 'medium', CLOSE: 'close' });
 export const ProductShotType = Object.freeze({ GHOST: 'ghost', HANGER: 'hanger', FLATLAY: 'flatlay' });
+/** 아우터 착용컷의 앞부분 열림 정도 — 누락 기본 open, 제품컷·타 카테고리에서는 무시 */
+export const OuterClosureState = Object.freeze({ OPEN: 'open', PARTIAL: 'partial', CLOSED: 'closed' });
 export const ProjectStatus = Object.freeze({ DRAFT: 'draft', GENERATING: 'generating', DONE: 'done' });
 export const JobStatus = Object.freeze({ IDLE: 'idle', RUNNING: 'running', DONE: 'done', ERROR: 'error' });
 export const ElementType = Object.freeze({ IMAGE: 'image', TEXT: 'text', SHAPE: 'shape', LINE: 'line' });
@@ -169,6 +171,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string|null} cutType       CutType. source='mine'이면 null
    @property {Direction|ProductDirection|null} [direction]  mirror는 null — 방향 개념 없음 (ADR-0004)
    @property {ShotType|ProductShotType} [shot]
+   @property {OuterClosureState|null} [outerClosureState] 아우터 착용컷 전용, 누락 기본 open
    @property {string} [colorId]
    @property {string} pose               PoseId, 기본 'auto' (구 _pose)
    @property {string[]} matchIds

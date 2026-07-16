@@ -42,15 +42,15 @@ FIT_AXES = {
                 {"value": "slim", "label": "슬림", "promptEn": "narrow fitted leg from hip to ankle without clinging"},
                 {"value": "straight", "label": "일자", "promptEn": "straight leg line with consistent width from thigh to hem"},
                 {"value": "bootcut", "label": "부츠컷", "promptEn": "fitted through hip and thigh, then flares out gently from the knee over the foot"},
-                {"value": "wide", "label": "와이드", "promptEn": "a full, voluminous wide-leg silhouette; the legs drape as broad swinging columns from hip to hem, hem covering most of the shoes"},
+                {"value": "wide", "label": "와이드", "promptEn": "a full, voluminous wide-leg silhouette; the legs drape as broad swinging columns from hip to hem, each hem opening visibly wider than the foot beneath it"},
             ],
             "men": [
                 {"value": "slim", "label": "슬림", "promptEn": "narrow fitted leg from hip to ankle without clinging"},
                 {"value": "straight", "label": "일자", "promptEn": "straight leg line with consistent width from thigh to hem"},
                 {"value": "tapered", "label": "테이퍼드", "promptEn": "roomy thigh tapering gradually to a narrower hem"},
-                {"value": "relaxed", "label": "릴렉스", "promptEn": "roomy and easy through hip and thigh, falling in a gently straight, slightly tapered leg; hem rests on the shoe top"},
-                {"value": "semi_wide", "label": "세미와이드", "promptEn": "a moderately wide, clean straight column from the knee down; noticeably wider than a regular straight leg, shoe mostly visible"},
-                {"value": "wide", "label": "와이드", "promptEn": "a full, voluminous wide-leg silhouette; the legs drape as broad swinging columns from hip to hem, hem covering most of the shoes"},
+                {"value": "relaxed", "label": "릴렉스", "promptEn": "roomy and easy through hip and thigh, falling in a gently straight, slightly tapered leg with loose, non-fitted hem openings"},
+                {"value": "semi_wide", "label": "세미와이드", "promptEn": "a moderately wide, clean straight column from the knee down; noticeably wider than a regular straight leg with moderately broad, non-flared hem openings"},
+                {"value": "wide", "label": "와이드", "promptEn": "a full, voluminous wide-leg silhouette; the legs drape as broad swinging columns from hip to hem, each hem opening visibly wider than the foot beneath it"},
             ],
         },
         "length": {
@@ -106,13 +106,13 @@ FIT_AXES = {
     "outer": {
         "fit": {
             "women": [
-                {"value": "slim", "label": "슬림", "promptEn": "close outerwear fit with narrow sleeves and minimal ease"},
+                {"value": "slim", "label": "슬림", "promptEn": "a slim version of the same outerwear; if the photographed garment is looser or drop-shouldered than this target, visibly re-tailor only its fit proportions by placing the shoulder seams at the natural shoulder points and reducing excess ease through the body and sleeves; if it already satisfies this target, preserve those proportions"},
                 {"value": "regular", "label": "레귤러", "promptEn": "regular outerwear fit with natural room for layering"},
                 {"value": "semi_over", "label": "세미오버", "promptEn": "semi-oversized outerwear with relaxed shoulders and extra body room"},
                 {"value": "over", "label": "오버", "promptEn": "oversized outerwear with dropped shoulders, broad body volume and roomy sleeves"},
             ],
             "men": [
-                {"value": "slim", "label": "슬림", "promptEn": "close outerwear fit with narrow sleeves and minimal ease"},
+                {"value": "slim", "label": "슬림", "promptEn": "a slim version of the same outerwear; if the photographed garment is looser or drop-shouldered than this target, visibly re-tailor only its fit proportions by placing the shoulder seams at the natural shoulder points and reducing excess ease through the body and sleeves; if it already satisfies this target, preserve those proportions"},
                 {"value": "regular", "label": "레귤러", "promptEn": "regular outerwear fit with natural room for layering"},
                 {"value": "semi_over", "label": "세미오버", "promptEn": "semi-oversized outerwear with relaxed shoulders and extra body room"},
                 {"value": "over", "label": "오버", "promptEn": "oversized outerwear with dropped shoulders, broad body volume and roomy sleeves"},
@@ -120,12 +120,12 @@ FIT_AXES = {
         },
         "length": {
             "women": [
-                {"value": "crop_short", "label": "크롭·숏", "promptEn": "short outerwear hem ending around the waist or high hip"},
+                {"value": "crop_short", "label": "크롭·숏", "promptEn": "a cropped version of the same outerwear ending at the waist or high hip; if the photographed garment is longer than this target, visibly re-tailor only its length proportions by proportionally shortening the front and back body panels; if it already satisfies this target, preserve those proportions"},
                 {"value": "basic", "label": "기본", "promptEn": "standard outerwear hem ending around the hip"},
                 {"value": "long", "label": "롱", "promptEn": "long outerwear hem extending to mid-thigh or lower"},
             ],
             "men": [
-                {"value": "crop_short", "label": "크롭·숏", "promptEn": "short outerwear hem ending around the waist or high hip"},
+                {"value": "crop_short", "label": "크롭·숏", "promptEn": "a cropped version of the same outerwear ending at the waist or high hip; if the photographed garment is longer than this target, visibly re-tailor only its length proportions by proportionally shortening the front and back body panels; if it already satisfies this target, preserve those proportions"},
                 {"value": "basic", "label": "기본", "promptEn": "standard outerwear hem ending around the hip"},
                 {"value": "long", "label": "롱", "promptEn": "long outerwear hem extending to mid-thigh or lower"},
             ],
@@ -134,8 +134,125 @@ FIT_AXES = {
 }
 
 
-def build_fit_profile_block(profile: dict | None) -> str:
-    """선언된 축만 영어 생성 문구로 렌더링. 알 수 없는 값은 조용히 스킵한다."""
+# 백엔드 전용 관측 목표(Observable target) — 판정 가능한 신체 랜드마크·가시성 고정 문구.
+# (category, axis, value) 키의 상수 맵: 셀러 문자열은 절대 여기 보간되지 않는다(인젝션 방어).
+# 특히 top/outer length 는 tuck 가림 사고(2026-07-13, fidelity 기획 §C-3) 대응으로
+# 'untucked·hem visible·하의로 가리지 말 것'을 명문화한다. dress 에는 fit 축이 없다(카탈로그 실사).
+AXIS_OBSERVABLES = {
+    ("top", "fit", "tight"): "continuous contact at chest, waist, and upper arms, with no visible ease",
+    ("top", "fit", "slim"): "follows chest and waist closely with only slight visible ease and does not read as bodycon",
+    ("top", "fit", "regular"): "light, even ease at chest and waist, without clinging or oversized volume",
+    ("top", "fit", "semi_over"): "extra room at shoulder, chest, and sleeves, with a mildly dropped shoulder point",
+    ("top", "fit", "over"): "shoulder seam below the shoulder point and clear air around chest, waist, and sleeves",
+    ("top", "length", "ultra_crop"): "entire untucked hem well above the navel and visible above any matching bottom",
+    ("top", "length", "crop"): "entire untucked hem at the high waist and visible above any matching bottom",
+    ("top", "length", "basic"): "entire untucked hem at the hip line and not covered by any matching bottom",
+    ("top", "length", "long"): "entire untucked hem below the hips and neither tucked into nor covered by any matching bottom",
+    ("outer", "fit", "slim"): "visible shoulder-seam placement at or near the natural shoulder point, no dropped shoulder or boxy body, and minimal layering ease through body and sleeves",
+    ("outer", "fit", "regular"): "natural shoulder line with moderate layering room",
+    ("outer", "fit", "semi_over"): "mildly dropped shoulder with extra room through body and sleeves",
+    ("outer", "fit", "over"): "shoulder seam visibly below the shoulder point with broad air volume around body and sleeves",
+    ("outer", "length", "crop_short"): "the garment body itself is cropped so the entire untucked hem ends at the waist or high hip and is unobscured rather than tucked or hidden",
+    ("outer", "length", "basic"): "entire untucked hem at the hip and unobscured",
+    ("outer", "length", "long"): "entire untucked hem at mid-thigh or lower and fully visible",
+    ("pants", "cut", "skinny"): "outline hugs hip, thigh, knee, calf, and ankle continuously",
+    ("pants", "cut", "slim"): "narrow at thigh, knee, and ankle with slight ease rather than continuous skin contact",
+    ("pants", "cut", "straight"): "inner and outer leg lines nearly parallel from thigh to hem",
+    ("pants", "cut", "bootcut"): "close through hip and knee, then visibly wider from knee to hem",
+    ("pants", "cut", "wide"): "leg outlines clear of thighs and calves from hip to hem, with each hem opening visibly wider than the foot beneath it",
+    ("pants", "cut", "tapered"): "ample thigh width narrowing visibly from knee to hem",
+    ("pants", "cut", "relaxed"): "clear room at seat and thigh, then a soft near-straight fall with slight taper and loose, non-fitted hem openings",
+    ("pants", "cut", "semi_wide"): "moderate straight column below the knee, wider than straight but narrower than wide, with moderately broad, non-flared hem openings",
+    ("pants", "length", "above_ankle"): "both hems just above the ankle bones with a visible ankle gap and unobscured",
+    ("pants", "length", "ankle"): "both hems at the ankle bones with no break and unobscured",
+    ("pants", "length", "below_ankle"): "both hems extend past and fully cover the ankle bones, forming one visible soft fold over each instep",
+    ("skirt", "length", "mini"): "entire hem above mid-thigh and fully visible",
+    ("skirt", "length", "midi"): "entire hem between knee and mid-calf and fully visible",
+    ("skirt", "length", "long"): "entire hem from lower calf to ankle and fully visible",
+    ("skirt", "silhouette", "h_line"): "side seams nearly parallel from hip to hem with no flare and full outline visible",
+    ("skirt", "silhouette", "a_line"): "fitted waist with both side seams widening continuously to the hem and full outline visible",
+    ("skirt", "silhouette", "mermaid"): "outline hugs hip and thigh, then flares sharply near the lower leg with full flare visible",
+    ("dress", "length", "mini"): "entire hem above mid-thigh and fully visible",
+    ("dress", "length", "midi"): "entire hem between knee and mid-calf and fully visible",
+    ("dress", "length", "long"): "entire hem from lower calf to ankle and fully visible",
+    ("dress", "silhouette", "h_line"): "outer lines nearly parallel from shoulder to hem with no flare and full outline visible",
+    ("dress", "silhouette", "a_line"): "fitted upper body with outer lines widening steadily to the hem and full outline visible",
+    ("dress", "silhouette", "fit_and_flare"): "bodice fitted through the natural waist, skirt volume beginning clearly at the waist, full flare visible",
+    ("dress", "silhouette", "mermaid"): "outline hugs hip and thigh, then flares sharply near the lower leg with full flare visible",
+}
+
+
+def _axis_entry(category: str, axis: str, gender: str, value):
+    by_axis = FIT_AXES.get(category) or {}
+    entries = (by_axis.get(axis) or {}).get(gender) or []
+    return next((e for e in entries if e["value"] == value), None)
+
+
+def normalize_fit_profile(profile: dict | None) -> dict | None:
+    """카탈로그 allowlist 로 프로필을 정규화 — 스냅샷·diff·렌더러가 공유하는 단일 검증 경로.
+
+    category/gender 가 카탈로그에 없으면 None. axes 는 해당 category×gender 에서 유효한
+    (axis, value) 만 남긴다(null·미지값 제거). matchCut 은 pants.cut 어휘로 검증.
+    source 는 seller/auto 만 허용(그 외 auto), 셀러 자유 문자열은 어떤 필드에도 남지 않는다.
+    """
+    if not isinstance(profile, dict):
+        return None
+    category = profile.get("category")
+    gender = profile.get("gender")
+    by_axis = FIT_AXES.get(category)
+    if not by_axis or gender not in ("women", "men"):
+        return None
+    raw_axes = profile.get("axes") if isinstance(profile.get("axes"), dict) else {}
+    axes = {}
+    for axis in by_axis:  # 카탈로그 순서 유지 (diff·렌더 순서의 단일 소스)
+        value = raw_axes.get(axis)
+        if value is not None and _axis_entry(category, axis, gender, value):
+            axes[axis] = value
+    out = {
+        "category": category,
+        "gender": gender,
+        "axes": axes,
+        "source": profile.get("source") if profile.get("source") in ("seller", "auto") else "auto",
+        "version": profile.get("version") if isinstance(profile.get("version"), int) else 1,
+    }
+    match_cut = profile.get("matchCut")
+    if match_cut is not None and _axis_entry("pants", "cut", gender, match_cut):
+        out["matchCut"] = match_cut
+    return out
+
+
+def adjusted_axes_between(prev: dict | None, new: dict | None) -> list[str]:
+    """셀러 조정 축 계산(서버 산출 전용 — 클라이언트 값 신뢰 금지, fidelity 설계 §E-2).
+
+    새 프로필의 선언 축 중 직전 정규화 프로필과 값이 다른 것만, 카탈로그 순서로.
+    category/gender 가 바뀌면 새 선언 축 전체가 조정으로 간주된다. matchCut 은 제외(P0 계약).
+    """
+    if not isinstance(new, dict):
+        return []
+    new_axes = new.get("axes") or {}
+    if not isinstance(prev, dict) or prev.get("category") != new.get("category") \
+            or prev.get("gender") != new.get("gender"):
+        return list(new_axes.keys())
+    prev_axes = prev.get("axes") or {}
+    return [axis for axis, value in new_axes.items() if prev_axes.get(axis) != value]
+
+
+def _render_axis_line(category: str, axis: str, gender: str, value) -> str | None:
+    entry = _axis_entry(category, axis, gender, value)
+    if not entry:
+        return None
+    observable = AXIS_OBSERVABLES.get((category, axis, value))
+    if observable:
+        return f"- {axis}: {entry['promptEn']}. Observable target: {observable}."
+    return f"- {axis}: {entry['promptEn']}."
+
+
+def build_fit_profile_block(profile: dict | None, adjusted_axes: tuple | list = ()) -> str:
+    """선언 축을 '관측 가능한 목표'로 렌더 + 셀러 조정 축은 CHANGES 섹션으로 분리 강조.
+
+    문구 계약(fidelity 설계 D2): 충돌 시에만 선언 축이 이긴다 — 무조건 differ 금지.
+    알 수 없는 값·축은 조용히 스킵(기존 계약 유지). 셀러 문자열은 절대 보간되지 않는다.
+    """
     if not isinstance(profile, dict):
         return ""
     category = profile.get("category")
@@ -143,25 +260,50 @@ def build_fit_profile_block(profile: dict | None) -> str:
     axes = profile.get("axes") if isinstance(profile.get("axes"), dict) else {}
     by_axis = FIT_AXES.get(category) or {}
     lines = []
-    for axis, by_gender in by_axis.items():
+    for axis in by_axis:
         value = axes.get(axis)
         if value is None:
             continue
-        entries = by_gender.get(gender) or []
-        entry = next((e for e in entries if e["value"] == value), None)
-        if entry:
-            lines.append(f"- {axis}: {entry['promptEn']}")
+        line = _render_axis_line(category, axis, gender, value)
+        if line:
+            lines.append(line)
     # 매칭 하의 핏(matchCut) — UI(Mannequin.jsx matchValues)가 pants.cut 어휘를 그대로 쓴다.
     # 상품이 아닌 "함께 착장된 별도 하의"임을 명시해 상품 핏 지시와 섞이지 않게 한다.
     match_cut = profile.get("matchCut")
     if match_cut is not None:
-        entries = FIT_AXES["pants"]["cut"].get(gender) or []
-        entry = next((e for e in entries if e["value"] == match_cut), None)
+        entry = _axis_entry("pants", "cut", gender, match_cut)
         if entry:
+            observable = AXIS_OBSERVABLES.get(("pants", "cut", match_cut))
+            tail = f" Observable target: {observable}." if observable else ""
             lines.append(
                 "- matching bottom (the separate bottom garment styled with the product, "
-                f"NOT the product itself): {entry['promptEn']}"
+                f"NOT the product itself): {entry['promptEn']}.{tail}"
             )
     if not lines:
         return ""
-    return "FIT PROFILE (seller-declared; overrides any impression from the photos):\n" + "\n".join(lines)
+    block = (
+        "FIT PROFILE (declared target axes; preserve garment identity and every undeclared axis):\n"
+        + "\n".join(lines)
+        + "\nWhere the photos conflict with a declared axis, the declared axis wins; "
+          "otherwise preserve the photographed shape for that axis."
+    )
+    # CHANGES — 셀러가 이번에 조정한 주상품 축만 재강조(matchCut 제외, P0 계약 §D2).
+    if profile.get("source") == "seller" and adjusted_axes:
+        change_lines = []
+        for axis in by_axis:  # 카탈로그 순서
+            if axis not in adjusted_axes:
+                continue
+            value = axes.get(axis)
+            if value is None:
+                continue
+            line = _render_axis_line(category, axis, gender, value)
+            if line:
+                change_lines.append(line)
+        if change_lines:
+            block += (
+                "\n\nCHANGES FOR THIS GENERATION (seller-adjusted declared axes):\n"
+                + "\n".join(change_lines)
+                + "\nApply these targets where the photos conflict; "
+                  "do not force a difference when the photos already satisfy them."
+            )
+    return block

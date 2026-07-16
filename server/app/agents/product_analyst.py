@@ -45,53 +45,131 @@ SUBCATEGORY_BY_TYPE: dict[str, frozenset[str]] = {
     "dress": frozenset(),
 }
 
-# ── 카테고리 보편 소재 기본값 (사용자 결정 2026-07-07 · 팩트체크 2026-07-13) ──────
-# 모델은 라벨이 보이는 등 확신할 때만 소재를 내고, 아니면 비운다(프롬프트 규칙 유지 —
-# 환각 방지). 비어 오면 서버가 이 표의 "해당 카테고리에서 보편적으로 쓰이는 조성"으로
-# 채운다: 폼이 빈칸으로 시작하지 않고, 셀러는 확인·수정만 한다. M-02 세탁 프리셋과 같은
-# 정책 테이블 패턴 — 값 조정은 여기 한 곳.
-# 근거: 국내 커머스(무신사·보세몰 등) 최빈 혼용률 표기를 카테고리별 웹 실태조사 +
-# 독립 반박검증으로 확정(2026-07-13, 조사 에이전트 9종). 유의: ① 패딩·코트 등 다층
-# 품목은 '겉감 기준'(상품정보제공고시 관행) ② 실무 표기는 스판덱스↔폴리우레탄 혼용.
-DEFAULT_MATERIALS: dict[tuple[str, str | None], list[dict]] = {
-    ("top", "tshirt"): [{"name": "면", "ratio": 100}],
-    ("top", "sweatshirt"): [{"name": "면", "ratio": 80}, {"name": "폴리에스터", "ratio": 20}],
-    ("top", "shirt"): [{"name": "면", "ratio": 100}],
-    # 니트·가디건: 국내 최빈 표기는 '아크릴 100'(구 60/40 혼방은 실상품 표기 미확인 — 팩트체크로 교정)
-    ("top", "knit"): [{"name": "아크릴", "ratio": 100}],
-    ("bottom", "cotton_pants"): [{"name": "면", "ratio": 98}, {"name": "스판덱스", "ratio": 2}],
+# ── 카테고리 소재 프리셋 (사용자 결정 2026-07-15, 기본값 팩트체크 2026-07-13 계승) ──
+# 소재 결정 우선순위: ① 케어라벨이 사진에 또렷이 보이면 라벨 그대로(materials 필드)
+# ② 아니면 모델이 아래 프리셋 중 시각 단서로 가장 맞는 것을 선택(materialPresetIndex)
+# ③ 그마저 확신 없으면 0번(해당 카테고리 최빈 조성)으로 서버가 채움.
+# 자유 조성 창작("면 73/폴리 27" 류 가짜 정밀함)을 막고, 항상 시장 실존 조성만 나온다.
+# 각 항목 hint 는 프롬프트에 주입되는 짧은 시각 단서. 0번은 기존 DEFAULT_MATERIALS 값
+# 그대로(팩트체크 2026-07-13). 전 조성 실존 재검증: 2026-07-15 Codex 웹서칭 3팀 —
+# 35개 전 항목 실상품 URL 확인, 단 '0번=시장 최빈'은 어느 카테고리도 통계 입증 불가라
+# 0번은 '대표 조성(폴백)'로 취급한다. 유의: ① 패딩·코트 등 다층 품목은 '겉감 기준'
+# (상품정보제공고시 관행) ② 실무 표기는 스판덱스↔폴리우레탄↔엘라스테인, 레이온↔비스코스 혼용.
+def _p(hint: str, *mix: tuple[str, int]) -> dict:
+    return {"hint": hint, "mix": [{"name": n, "ratio": r} for n, r in mix]}
+
+
+MATERIAL_PRESETS: dict[tuple[str, str | None], list[dict]] = {
+    ("top", "tshirt"): [
+        _p("무지 코튼(기본)", ("면", 100)),
+        _p("기능성·광택 원단", ("폴리에스터", 100)),
+        _p("혼방 무지", ("면", 50), ("폴리에스터", 50)),
+        _p("스판 슬림", ("면", 95), ("스판덱스", 5)),
+    ],
+    ("top", "sweatshirt"): [
+        _p("일반 맨투맨(기본)", ("면", 80), ("폴리에스터", 20)),
+        _p("헤비 코튼", ("면", 100)),
+        _p("혼방", ("면", 50), ("폴리에스터", 50)),
+        _p("기모·플리스 계열", ("폴리에스터", 65), ("면", 35)),
+    ],
+    ("top", "shirt"): [
+        _p("코튼 셔츠(기본)", ("면", 100)),
+        _p("구김 적은 혼방", ("면", 60), ("폴리에스터", 40)),
+        _p("여름 린넨 혼방", ("면", 55), ("린넨", 45)),
+        _p("드레이프 오버셔츠", ("폴리에스터", 100)),
+    ],
+    # 니트: '아크릴 100'이 국내 최빈 표기(구 60/40 혼방은 실상품 미확인 — 팩트체크로 교정)
+    ("top", "knit"): [
+        _p("일반 니트(기본)", ("아크릴", 100)),
+        _p("울 혼방", ("아크릴", 70), ("울", 30)),
+        _p("프리미엄 울", ("울", 100)),
+        _p("봄여름 코튼 니트", ("면", 50), ("아크릴", 50)),
+        _p("복합 혼방(보세 인기 니트)", ("아크릴", 50), ("폴리에스터", 30), ("나일론", 20)),
+    ],
+    ("bottom", "cotton_pants"): [
+        _p("스판 치노(기본)", ("면", 98), ("스판덱스", 2)),
+        _p("리지드 코튼", ("면", 100)),
+        _p("워싱 혼방 팬츠", ("면", 65), ("폴리에스터", 33), ("스판덱스", 2)),
+    ],
     # 트레이닝: 국내 커머스 주류는 면 우위 스웻팬츠(조거·트랙팬츠 포함 카테고리라 면 70 대표)
-    ("bottom", "training_pants"): [{"name": "면", "ratio": 70}, {"name": "폴리에스터", "ratio": 30}],
-    ("bottom", "jeans"): [{"name": "면", "ratio": 98}, {"name": "스판덱스", "ratio": 2}],
+    ("bottom", "training_pants"): [
+        _p("스웻·조거(기본)", ("면", 70), ("폴리에스터", 30)),
+        _p("트랙팬츠·광택", ("폴리에스터", 100)),
+        _p("헤비 스웻", ("면", 100)),
+        _p("기능성 우위 혼방", ("폴리에스터", 65), ("면", 35)),
+    ],
+    ("bottom", "jeans"): [
+        _p("스판 데님(기본)", ("면", 98), ("스판덱스", 2)),
+        _p("리지드·논스판", ("면", 100)),
+        _p("하이스트레치", ("면", 92), ("폴리에스터", 6), ("스판덱스", 2)),
+        _p("기모·워싱 혼방 데님", ("면", 65), ("폴리에스터", 33), ("스판덱스", 2)),
+    ],
     ("bottom", "slacks"): [
-        {"name": "폴리에스터", "ratio": 70}, {"name": "레이온", "ratio": 25},
-        {"name": "스판덱스", "ratio": 5},
+        _p("TR 슬랙스(기본)", ("폴리에스터", 70), ("레이온", 25), ("스판덱스", 5)),
+        _p("폴리 정장 팬츠", ("폴리에스터", 100)),
+        _p("스판 슬랙스", ("폴리에스터", 95), ("스판덱스", 5)),
     ],
-    ("bottom", "skirt"): [{"name": "폴리에스터", "ratio": 100}],
-    ("outer", "shirt"): [{"name": "면", "ratio": 100}],
-    ("outer", "jacket"): [{"name": "폴리에스터", "ratio": 100}],
-    ("outer", "cardigan"): [{"name": "아크릴", "ratio": 100}],
-    ("outer", "padding"): [{"name": "폴리에스터", "ratio": 100}],  # 겉감 기준
-    ("outer", "coat"): [{"name": "폴리에스터", "ratio": 60}, {"name": "울", "ratio": 40}],
-}
-# subCategory 미상(null)일 때의 종류별 폴백
-_DEFAULT_MATERIALS_BY_TYPE: dict[str, list[dict]] = {
-    "top": [{"name": "면", "ratio": 100}],
-    "bottom": [
-        {"name": "폴리에스터", "ratio": 70}, {"name": "레이온", "ratio": 25},
-        {"name": "스판덱스", "ratio": 5},
+    ("bottom", "skirt"): [
+        _p("일반 스커트(기본)", ("폴리에스터", 100)),
+        _p("TR 혼방", ("폴리에스터", 65), ("레이온", 35)),
+        _p("코튼 스커트", ("면", 100)),
+        _p("나일론 카고·셔링", ("나일론", 100)),
     ],
-    "outer": [{"name": "폴리에스터", "ratio": 100}],
-    "dress": [{"name": "폴리에스터", "ratio": 100}],
+    ("outer", "shirt"): [
+        _p("코튼 셔켓(기본)", ("면", 100)),
+        _p("폴리 오버셔츠", ("폴리에스터", 100)),
+        _p("드레이프 혼방", ("폴리에스터", 65), ("레이온", 35)),
+    ],
+    ("outer", "jacket"): [
+        _p("일반 재킷(기본)", ("폴리에스터", 100)),
+        _p("TR 블레이저", ("폴리에스터", 70), ("레이온", 25), ("스판덱스", 5)),
+        _p("코튼 워크재킷", ("면", 100)),
+        _p("나일론 바람막이", ("나일론", 100)),
+    ],
+    ("outer", "cardigan"): [
+        _p("일반 가디건(기본)", ("아크릴", 100)),
+        _p("울 혼방", ("아크릴", 70), ("울", 30)),
+        _p("봄 코튼 가디건", ("면", 100)),
+        _p("드레이프 레이온 혼방", ("레이온", 50), ("폴리에스터", 30), ("나일론", 20)),
+    ],
+    ("outer", "padding"): [  # 겉감 기준
+        _p("폴리 겉감(기본)", ("폴리에스터", 100)),
+        _p("나일론 겉감", ("나일론", 100)),
+    ],
+    ("outer", "coat"): [
+        _p("울 혼방 코트(기본)", ("폴리에스터", 60), ("울", 40)),
+        _p("핸드메이드·울 우위", ("울", 80), ("나일론", 20)),
+        _p("경량 폴리 코트", ("폴리에스터", 100)),
+        _p("고울 함량 프리미엄", ("울", 90), ("나일론", 10)),
+    ],
 }
+# subCategory 미상(null)일 때의 종류별 폴백 — dress 는 sub 가 없어 이 표가 실질 프리셋
+_MATERIAL_PRESETS_BY_TYPE: dict[str, list[dict]] = {
+    "top": [_p("보편 상의", ("면", 100))],
+    "bottom": [_p("보편 하의(TR)", ("폴리에스터", 70), ("레이온", 25), ("스판덱스", 5))],
+    "outer": [_p("보편 아우터", ("폴리에스터", 100))],
+    "dress": [
+        _p("일반 원피스(기본)", ("폴리에스터", 100)),
+        _p("스판 원피스", ("폴리에스터", 95), ("스판덱스", 5)),
+        _p("레이온 원피스", ("레이온", 100)),
+        _p("코튼 원피스", ("면", 100)),
+        _p("오피스 TR 원피스", ("폴리에스터", 70), ("레이온", 25), ("스판덱스", 5)),
+    ],
+}
+
+
+def material_presets(clothing_type: str | None, sub_category: str | None) -> list[dict]:
+    """(종류, 세부)의 프리셋 목록(원본 — 호출측은 mix 를 복사해서 쓸 것). 종류 미상이면 빈 리스트."""
+    hit = MATERIAL_PRESETS.get((clothing_type, sub_category)) if clothing_type else None
+    if hit is None:
+        hit = _MATERIAL_PRESETS_BY_TYPE.get(clothing_type or "", [])
+    return hit
 
 
 def default_materials(clothing_type: str | None, sub_category: str | None) -> list[dict]:
-    """(종류, 세부) 보편 소재의 복사본. 종류 미상이면 빈 배열(지어내지 않음)."""
-    hit = DEFAULT_MATERIALS.get((clothing_type, sub_category)) if clothing_type else None
-    if hit is None:
-        hit = _DEFAULT_MATERIALS_BY_TYPE.get(clothing_type or "", [])
-    return [dict(m) for m in hit]
+    """(종류, 세부) 최빈 조성(프리셋 0번)의 복사본. 종류 미상이면 빈 배열(지어내지 않음)."""
+    presets = material_presets(clothing_type, sub_category)
+    return [dict(m) for m in presets[0]["mix"]] if presets else []
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "product_analyst_v1.txt")
@@ -104,10 +182,24 @@ def _load_template() -> str:
         return f.read()
 
 
+def _render_material_presets() -> str:
+    """프롬프트용 카테고리별 프리셋 표. 모델은 자기가 고른 카테고리 행에서 index 를 고른다."""
+    rows = list(MATERIAL_PRESETS.items()) + [(("dress", None), _MATERIAL_PRESETS_BY_TYPE["dress"])]
+    lines = []
+    for (ct, sub), presets in rows:
+        opts = "  ".join(
+            f"{i}) " + "+".join(f"{m['name']} {m['ratio']}" for m in p["mix"]) + f" — {p['hint']}"
+            for i, p in enumerate(presets)
+        )
+        lines.append(f"- {ct}/{sub or '-'}: {opts}")
+    return "\n".join(lines)
+
+
 def build_prompt(product: dict) -> str:
     """외부 템플릿 + enum 주입 + sanitize 된 상품 컨텍스트. product 자유텍스트는 인젝션 안전."""
     text = (
         _load_template()
+        .replace("${materialPresets}", _render_material_presets())
         .replace("${clothingTypes}", " ".join(CLOTHING_TYPES))
         .replace("${subCategories}", " ".join(SUBCATEGORIES))
         .replace("${fits}", " ".join(FITS))
@@ -168,6 +260,8 @@ def analysis_schema() -> dict:
             "targetGenders": {"type": "array", "items": {"type": "string", "enum": list(GENDERS)}},
             "fit": {"type": "string", "enum": list(FITS)},
             "materials": {"type": "array", "items": material},
+            # 라벨 판독이 없을 때 고르는 카테고리 프리셋 번호 (MATERIAL_PRESETS — 2026-07-15)
+            "materialPresetIndex": {"type": _nullable("number")},
             "aiSuggestedPoints": {"type": "array", "items": {"type": "string"}},
             "suggestedName": {"type": _nullable("string")},
             "swatchSuggestions": {"type": "array", "items": swatch},
@@ -175,7 +269,8 @@ def analysis_schema() -> dict:
         },
         "required": [
             "clothingType", "subCategory", "customCategory", "targetGenders", "fit", "materials",
-            "aiSuggestedPoints", "suggestedName", "swatchSuggestions", "styleTags",
+            "materialPresetIndex", "aiSuggestedPoints", "suggestedName", "swatchSuggestions",
+            "styleTags",
         ],
     }
 
@@ -246,6 +341,14 @@ def validate(raw: dict) -> dict:
         "targetGenders": genders,
         "fit": raw.get("fit") if _in(raw.get("fit"), FITS) else None,
         "materials": _materials(raw.get("materials")),
+        # 프리셋 번호는 정수만 통과 — 실제 범위 검증은 카테고리가 확정된 distribute 에서
+        "materialPresetIndex": (
+            int(raw["materialPresetIndex"])
+            if isinstance(raw.get("materialPresetIndex"), (int, float))
+            and not isinstance(raw.get("materialPresetIndex"), bool)
+            and 0 <= raw["materialPresetIndex"] < 10
+            else None
+        ),
         "aiSuggestedPoints": points[:MAX_SELLING_POINTS],
         "suggestedName": name or None,
         "swatchSuggestions": swatches,
@@ -260,11 +363,19 @@ def distribute(validated: dict) -> dict:
 
     - product: clothingType (Product 단일 소유 — 계약 §3.1)
     - analysis: subCategory·targetGenders·fit·materials·aiSuggestedPoints·suggestedName (계약 §3.2)
-      · materials 가 비면 카테고리 보편 소재로 채운다 (사용자 결정 2026-07-07 — DEFAULT_MATERIALS)
+      · materials 우선순위(사용자 결정 2026-07-15): 라벨 판독(materials) > 모델이 고른
+        프리셋(materialPresetIndex) > 최빈 프리셋 0번 (MATERIAL_PRESETS)
     - intermediate: swatchSuggestions·styleTags (저장 안 하는 중간 산출물 — M-01 입력·스와치 추천)
     """
-    materials = validated.get("materials") or default_materials(
-        validated.get("clothingType"), validated.get("subCategory"))
+    materials = validated.get("materials") or []
+    if not materials:
+        presets = material_presets(validated.get("clothingType"), validated.get("subCategory"))
+        idx = validated.get("materialPresetIndex")
+        if isinstance(idx, int) and 0 <= idx < len(presets):
+            materials = [dict(m) for m in presets[idx]["mix"]]
+        else:
+            materials = default_materials(
+                validated.get("clothingType"), validated.get("subCategory"))
     return {
         "product": {"clothingType": validated.get("clothingType")},
         "analysis": {

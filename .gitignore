@@ -58,3 +58,19 @@ agents.md
 
 # solc 컴파일 아티팩트(재생성 가능)
 build/
+spike/posescope/out/
+
+# AI 에이전트 개인 도구 설정 — 각자 로컬 세팅이라 공유 대상 아님
+.agents/
+.claude/hooks/
+.claude/workflows/
+.codex/
+.superpowers/
+skills-lock.json
+ccswitch.sh
+
+# 로컬 실험/리서치 산출물 — 코드 아님, 저장소에 싣지 않음
+spike/face*.js
+spike/posescope/
+reference/genexamples/
+reference/competitive-analysis/

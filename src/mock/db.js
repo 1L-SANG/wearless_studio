@@ -72,6 +72,9 @@ const catalogs = {
   productShotTypes: [
     { value: 'ghost', label: '고스트컷' }, { value: 'hanger', label: '행거컷' }, { value: 'flatlay', label: '플랫레이샷' },
   ],
+  outerClosureStates: [
+    { value: 'open', label: '전체 열림' }, { value: 'partial', label: '부분 열림' }, { value: 'closed', label: '전체 닫힘' },
+  ],
   angleSlots: ['Front', 'Back', 'Detail', 'Fit'],
   angleLabels: { Front: '앞면 이미지', Back: '뒷면 이미지', Detail: '디테일 이미지', Fit: '착용 이미지' },
   // measurement schema per clothing type (PRD §6.5) — key는 영문 토큰 (계약 §4)
@@ -243,6 +246,10 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     colorCompare: { name: '컬러 비교', kind: 'colorcmp' },
   };
   const cat = (ct) => ct === 'product' ? 'product' : ct === 'horizon' ? 'horizon' : 'styling';
+  const generatedImageFor = (b, w, h) => {
+    const usesWholeExample = b.exampleId && (b.refScope || 'all') === 'all' && !b.spaceGroupId;
+    return P.photo(usesWholeExample ? b.exampleId : 'gen_' + b.id, cat(b.cutType), w, h);
+  };
   const arr = storyboard || [];
   const blocks = [];
   const persistentRowSections = new Set(arr
@@ -256,7 +263,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
       return;
     }
     const name = b.title || KIND_NAMES[b.kind] || '컷';
-    const els = [IMG(60, 50, 880, 560, P.photo('gen_' + b.id, cat(b.cutType), 880, 560), 12, b.cutType || undefined)];
+    const els = [IMG(60, 50, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined)];
     if (copywriting && b.kind === 'hook') {
       els.push(T(120, 110, 600, 80, `${product.name || '상품'}와 함께하는 하루`, { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }));
     }
@@ -269,7 +276,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const rowLayout = ROW_LAYOUTS[layout];
     const n = chunk.length;
     const w = Math.floor((880 - (n - 1) * 20) / n);
-    const els = chunk.map((rb, c) => IMG(60 + c * (w + 20), 50, w, 500, P.photo('gen_' + rb.id, cat(rb.cutType), w, 500), 12, rb.cutType || undefined));
+    const els = chunk.map((rb, c) => IMG(60 + c * (w + 20), 50, w, 500, generatedImageFor(rb, w, 500), 12, rb.cutType || undefined));
     blocks.push({
       id: uid('b'), name: rowLayout.name, kind: rowLayout.kind,
       bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', h: 600, elements: els,
@@ -438,8 +445,11 @@ function buildDraft() {
      Product 소유 필드를 product 로 동기화한다. */
   const analysis = {
     clothingType: 'top', subCategory: 'knit', targetGenders: ['women'],
+    customCategory: null, // enum 밖 의류의 자유 명칭 — AI 추측 + 사용자 주관식 수정 (계약 §3.2)
     fit: 'semi_over', suggestedName: '소프트 골지 라운드 니트',
-    materials: [{ name: '코튼', ratio: 60 }, { name: '폴리에스터', ratio: 40 }],
+    // 니트 시드 → 서버 DEFAULT_MATERIALS(팩트체크 2026-07-13)와 동일한 아크릴 100. 구 '코튼 60/폴리 40'은
+    // 실제 분석이 절대 내지 않는 값이라, mock 화면을 실분석으로 오인하게 만들던 흔적을 제거(2026-07-15).
+    materials: [{ name: '아크릴', ratio: 100 }],
     sellingPoints: [],
     aiSuggestedPoints: ['골지 짜임', '라운드넥'],
     styleTags: ['basic', 'daily', 'clean'],

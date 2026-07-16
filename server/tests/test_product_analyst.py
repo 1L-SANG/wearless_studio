@@ -150,6 +150,50 @@ def test_default_materials_returns_copies():
     assert pa.default_materials("top", "tshirt")[0]["name"] == "면"
 
 
+def test_distribute_uses_model_chosen_preset():
+    # 라벨 판독이 없으면 모델이 고른 프리셋 번호의 조성을 쓴다 (사용자 결정 2026-07-15)
+    v = pa.validate({"clothingType": "top", "subCategory": "tshirt", "fit": "regular",
+                     "targetGenders": [], "materials": [], "materialPresetIndex": 1})
+    assert pa.distribute(v)["analysis"]["materials"] == [{"name": "폴리에스터", "ratio": 100}]
+
+
+def test_distribute_label_beats_preset_index():
+    # 라벨 판독(materials)이 있으면 프리셋 번호는 무시 — 실제 정보가 항상 이긴다
+    v = pa.validate({"clothingType": "top", "subCategory": "tshirt", "fit": "regular",
+                     "targetGenders": [], "materials": [{"name": "린넨", "ratio": 100}],
+                     "materialPresetIndex": 1})
+    assert pa.distribute(v)["analysis"]["materials"] == [{"name": "린넨", "ratio": 100}]
+
+
+def test_distribute_invalid_preset_index_falls_back_to_default():
+    # 범위 밖 번호·비정수(true 포함)는 버리고 최빈 프리셋(0번)으로
+    for bad in (99, -1, True, "1", None):
+        v = pa.validate({"clothingType": "top", "subCategory": "knit", "fit": "regular",
+                         "targetGenders": [], "materials": [], "materialPresetIndex": bad})
+        assert pa.distribute(v)["analysis"]["materials"] == [{"name": "아크릴", "ratio": 100}], bad
+
+
+def test_distribute_dress_preset_via_type_fallback():
+    # dress 는 subCategory 가 없어 종류 폴백 표가 실질 프리셋 — 번호 선택도 동작해야 한다
+    v = pa.validate({"clothingType": "dress", "subCategory": None, "fit": "regular",
+                     "targetGenders": [], "materials": [], "materialPresetIndex": 2})
+    assert pa.distribute(v)["analysis"]["materials"] == [{"name": "레이온", "ratio": 100}]
+
+
+def test_material_presets_ratios_sum_to_100():
+    # 프리셋은 시장 실존 조성 — 혼용률 합이 100 이어야 한다 (정책 테이블 오타 방지)
+    tables = list(pa.MATERIAL_PRESETS.values()) + list(pa._MATERIAL_PRESETS_BY_TYPE.values())
+    for presets in tables:
+        for p in presets:
+            assert sum(m["ratio"] for m in p["mix"]) == 100, p
+
+
+def test_build_prompt_injects_material_presets():
+    p = pa.build_prompt({"name": "테스트", "clothing_type": "top"})
+    assert "${materialPresets}" not in p
+    assert "top/tshirt" in p and "아크릴 100" in p and "dress/-" in p
+
+
 def test_build_prompt_injects_enums_and_context():
     p = pa.build_prompt({"name": "소프트 니트", "clothing_type": "top"})
     assert "basic daily minimal casual formal classic sporty trendy" in p

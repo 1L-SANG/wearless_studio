@@ -6,6 +6,8 @@ Flash·승격 없음) 생성 → QC(기본 shadow: 판정 로그만, 게이팅 �
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import uuid
 from contextlib import suppress
@@ -16,7 +18,7 @@ from PIL import Image
 log = logging.getLogger("wearless.mannequin_job")
 
 from .. import repo
-from ..agents import image_qc, mannequin
+from ..agents import image_qc, mannequin, mannequin_fit_qc
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
 from ..agents.prompts import load_prompt_template, render_mannequin_prompt
@@ -25,6 +27,12 @@ from ..services import qc
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+
+
+def _canonical_profile_hash(profile) -> str:
+    """렌더러 입력 프로필의 canonical JSON(sort_keys·compact·null 포함) SHA-256 (fidelity D3)."""
+    payload = json.dumps(profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 _GENERATION_PROGRESS_INTERVAL_SECONDS = 7.0
 _GENERATION_PROGRESS_MAX = 84
 
@@ -60,6 +68,124 @@ def _build_manifest(prod_assets: list[dict], has_match: bool) -> str:
     return "\n".join(lines)
 
 
+# P1 축 QC enforce 승격 가드 — env·요청·payload·CLI 어떤 경로로도 우회 불가한 코드 레벨 스위치
+# (G9 규율: 설정 실수 하나가 prod 생성을 죽이는 사고 방지). enforce 설정 + 가드 False = 실질 shadow.
+# 2026-07-14 True 승격(사용자 결정): 미달 컷 출고 방지 > 오발화 비용(내부 +1콜·지연 수십초).
+# 근거 = §I 실증(실패→편집→채택 완주, 통과 시 무개입, 개선 실패 시 원본 유지 — 하방 없음).
+# 오발화·판정 정확도는 axis_qc/axis_retry 이벤트로 관측, 골드셋 캘리브레이션은 켠 상태로 병행.
+_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY = True
+
+
+def _effective_axis_qc_mode(s) -> str:
+    mode = getattr(s, "mannequin_axis_qc", "off")
+    if mode == "enforce" and not _MANNEQUIN_AXIS_QC_ENFORCEMENT_READY:
+        return "shadow"
+    return mode
+
+
+async def _apply_axis_qc(
+    *, pool, gemini, s, job_id, candidate, attempt, model, res,
+    prod_imgs, match_img, fit_profile, profile_hash,
+):
+    """생성 채택본에 축 QC 판정 + (enforce 시) 편집 교정 1회. → (선택 결과, 편집콜 소비 여부).
+
+    모든 인프라 실패는 fail-open(원본 유지·이벤트만) — 축 QC가 생성을 죽이는 일은 없다.
+    이벤트에는 해시·판정 결과만(프롬프트/프로필/편집지시 원문 미포함).
+    """
+    configured = getattr(s, "mannequin_axis_qc", "off")
+    if configured == "off":
+        return res, False
+    axis_spec = mannequin_fit_qc.declared_axis_spec(fit_profile)
+    if not axis_spec:
+        return res, False
+    effective = _effective_axis_qc_mode(s)
+    original_hash = hashlib.sha256(res.image).hexdigest()
+    base_event = {
+        "candidate": candidate, "attempt": attempt,
+        "configured_mode": configured, "effective_mode": effective,
+        "enforcement_ready": _MANNEQUIN_AXIS_QC_ENFORCEMENT_READY,
+        "profile_hash": profile_hash,
+    }
+
+    async def _judge(image):
+        return await mannequin_fit_qc.verdict(
+            s, prod_imgs, InlineImage(image.mime, image.image), fit_profile, match_img)
+
+    async def _emit_qc(subject, image_hash, v, outcome, err=None):
+        payload = {**base_event, "status": "axis_qc", "subject": subject,
+                   "image_hash": image_hash,
+                   "identity_pass": None if v is None else v["identityPass"],
+                   "axis_pass": [] if v is None else [
+                       {"axis": x["axis"], "target": x["target"], "pass": x["pass"],
+                        "visible": x["visible"],
+                        "observed_landmark": x["observedLandmark"][:160]}
+                       for x in v["axisPass"]],
+                   "mismatches": [] if v is None else v["mismatches"],
+                   "outcome": outcome,
+                   "error_type": type(err).__name__ if err else None,
+                   "error_message": str(err)[:200] if err else None}
+        await _emit(pool, job_id, "step", payload)
+
+    async def _emit_retry(outcome, *, fired=False, failed=(), edit_hash=None,
+                          edited_hash=None, edit_attempt=None):
+        await _emit(pool, job_id, "step", {
+            **base_event, "status": "axis_retry", "fired": fired,
+            "edit_attempt": edit_attempt,
+            "failed_axes": [{"axis": e["axis"], "target": e["value"]} for e in failed],
+            "edit_hash": edit_hash, "original_image_hash": original_hash,
+            "edited_image_hash": edited_hash, "outcome": outcome})
+
+    try:
+        v1 = await _judge(res)
+    except Exception as e:
+        log.warning("axis_qc initial judge failed for job %s: %r", job_id, e)
+        await _emit_qc("generated", original_hash, None, "error", e)
+        await _emit_retry("original_judge_error")
+        return res, False
+    failed = mannequin_fit_qc.failed_axis_specs(axis_spec, v1)
+    await _emit_qc("generated", original_hash, v1, "fail" if failed else "pass")
+    if not failed:
+        await _emit_retry("not_needed")
+        return res, False
+    instruction = mannequin_fit_qc.build_edit_instruction(failed)
+    edit_hash = hashlib.sha256(instruction.encode("utf-8")).hexdigest()
+    if effective != "enforce":
+        await _emit_retry("enforce_guarded" if configured == "enforce" else "shadow_observed",
+                          failed=failed, edit_hash=edit_hash)
+        return res, False
+    if attempt >= s.mannequin_max_attempts:  # 공유 예산: 생성+편집 <= max_attempts
+        await _emit_retry("budget_exhausted", failed=failed, edit_hash=edit_hash)
+        return res, False
+    edit_attempt = attempt + 1
+    try:
+        edited = await gemini.generate_content_image(
+            model, instruction, [InlineImage(res.mime, res.image)],
+            s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
+    except GeminiError as e:
+        log.warning("axis_qc edit call failed for job %s: %r", job_id, e)
+        await _emit_retry("edit_error", fired=True, failed=failed, edit_hash=edit_hash,
+                          edit_attempt=edit_attempt)
+        return res, True
+    edited_hash = hashlib.sha256(edited.image).hexdigest()
+    try:
+        v2 = await _judge(edited)
+    except Exception as e:
+        log.warning("axis_qc edited judge failed for job %s: %r", job_id, e)
+        await _emit_qc("edited", edited_hash, None, "error", e)
+        await _emit_retry("edit_judge_error", fired=True, failed=failed, edit_hash=edit_hash,
+                          edited_hash=edited_hash, edit_attempt=edit_attempt)
+        return res, True
+    failed2 = mannequin_fit_qc.failed_axis_specs(axis_spec, v2)
+    await _emit_qc("edited", edited_hash, v2, "fail" if failed2 else "pass")
+    if mannequin_fit_qc.edit_improves(v1, v2):
+        await _emit_retry("edited_selected", fired=True, failed=failed, edit_hash=edit_hash,
+                          edited_hash=edited_hash, edit_attempt=edit_attempt)
+        return edited, True
+    await _emit_retry("original_kept", fired=True, failed=failed, edit_hash=edit_hash,
+                      edited_hash=edited_hash, edit_attempt=edit_attempt)
+    return res, True
+
+
 def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
     """생성 컷 게이팅 결정 (순수) → (pillow_reject, p2_reject).
 
@@ -79,6 +205,7 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
+    adjusted_axes=(), fit_profile_source="legacy_analysis_fallback",
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
     s = app.state.settings
@@ -88,6 +215,7 @@ async def _run_candidate(
     ctx = mannequin.prompt_context(
         clothing_type=clothing_type, product_count=product_count,
         base_gender=base_gender, image_manifest=image_manifest, fit_profile=fit_profile,
+        adjusted_axes=adjusted_axes,
     )
     base_prompt = render_mannequin_prompt(
         template, ctx, product, analysis,
@@ -97,8 +225,17 @@ async def _run_candidate(
     # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
     model = resolve_model(s, s.mannequin_tier)
     feedback = ""
+    profile_hash = _canonical_profile_hash(fit_profile)
     for attempt in range(1, s.mannequin_max_attempts + 1):
         prompt = f"{feedback}\n\n{base_prompt}" if feedback else base_prompt
+        # 관측성(fidelity 설계 D3): 이 attempt 가 실제 쓰는 프로필·프롬프트의 다이제스트만 남긴다
+        # (원문 미포함 — 이벤트 ~250B). 실패 원인이 되지 않게 기존 step 과 동일 best-effort.
+        await _emit(pool, job_id, "step", {
+            "status": "prompt_rendered", "candidate": candidate, "attempt": attempt,
+            "profile_hash": profile_hash,
+            "prompt_hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "prompt_version": s.mannequin_prompt_version,
+            "input_source": fit_profile_source})
         try:
             res = await gemini.generate_content_image(
                 model, prompt, images, s.mannequin_image_size,
@@ -127,6 +264,12 @@ async def _run_candidate(
         # 게이팅: Pillow QC + AG-P2. 둘 다 통과면 채택(off/shadow 는 항상 통과 — 기존 동작 불변).
         pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
         if not pillow_reject and not p2_reject:
+            # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
+            # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
+            res, _ = await _apply_axis_qc(
+                pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+                attempt=attempt, model=model, res=res, prod_imgs=prod_imgs,
+                match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash)
             ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -138,6 +281,19 @@ async def _run_candidate(
                 "candidate": candidate, "base_fit": base_fit,
             }
         # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
+        # 정체성 게이트가 선점하면 축 QC/편집은 이 attempt에서 미실행 — 잘못된 옷을 편집하면
+        # 그 정체성이 보존되므로 신규 생성(re-roll)이 우선한다(설계 결정 3).
+        if (getattr(s, "mannequin_axis_qc", "off") != "off"
+                and mannequin_fit_qc.declared_axis_spec(fit_profile)):
+            await _emit(pool, job_id, "step", {
+                "status": "axis_retry", "candidate": candidate, "attempt": attempt,
+                "configured_mode": s.mannequin_axis_qc,
+                "effective_mode": _effective_axis_qc_mode(s),
+                "enforcement_ready": _MANNEQUIN_AXIS_QC_ENFORCEMENT_READY,
+                "profile_hash": profile_hash, "fired": False, "edit_attempt": None,
+                "failed_axes": [], "edit_hash": None,
+                "original_image_hash": hashlib.sha256(res.image).hexdigest(),
+                "edited_image_hash": None, "outcome": "identity_gate_preempted"})
         parts = []
         if pillow_reject:
             parts.append(qc.format_qc_feedback(verdict))
@@ -207,18 +363,39 @@ async def run_mannequin_job(app, job: dict) -> None:
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
                                                "withBottom": match_img is not None})
 
-        # 3) A/B 이원 후보 생성(원 UI 계약: A=현재 핏, B=슬림 변형) — 병렬. 부분 성공 허용
-        #    (한쪽 실패 시 성공분만 저장·차감). 크레딧 예약(2)도 2컷 기준.
+        # 3) 단일 후보 생성(2026-07-13 사용자 결정: 한 번에 1컷) — 확정 fit profile 기준.
+        #    구 A/B 이원(정핏/슬림 동시 2컷)은 폐기: 셀러가 고른 핏과 무관한 슬림 변형이
+        #    함께 떠서 혼란(버전 스트립에 2개) + 재생성마다 2컷씩 쌓이던 문제.
+        #    크레딧 단가(2/잡)는 잡 기준이라 불변. 다양화는 핏 조정→재생성 루프가 담당.
         clothing_type = product.get("clothing_type") or "상의"
         manifest = _build_manifest(prod_assets, match_img is not None)
-        fit_profile = mannequin.effective_fit_profile(analysis, match_img is not None)
+        # fit profile 은 잡 생성 시점 스냅샷이 정본(payload.fitProfileSnapshot — fidelity 설계 D3).
+        # 워커가 최신 analysis 를 재독하면 잡 생성↔실행 사이의 저장 경합으로 다른 프로필이
+        # 조용히 쓰일 수 있다(무음 유실). 키가 없는 legacy 잡만 analysis 폴백.
+        snap = (job.get("payload") or {}).get("fitProfileSnapshot")
+        if snap is not None:
+            valid = (isinstance(snap, dict) and snap.get("version") == 1
+                     and (snap.get("profile") is None or isinstance(snap.get("profile"), dict))
+                     and isinstance(snap.get("adjustedAxes"), list))
+            if not valid:
+                await _fail("마네킹컷 생성에 실패했어요. 다시 시도해 주세요.",
+                            {"error": "invalid_fit_profile_snapshot"})
+                return
+            fit_profile = snap.get("profile")
+            adjusted_axes = tuple(a for a in snap.get("adjustedAxes") if isinstance(a, str))
+            fit_profile_source = "payload_snapshot"
+            # 방어: 스냅샷 이후 매칭 자산이 사라졌으면 없는 옷 지시가 남지 않게 matchCut 제거
+            if fit_profile and match_img is None and "matchCut" in fit_profile:
+                fit_profile = {k: v for k, v in fit_profile.items() if k != "matchCut"}
+        else:
+            fit_profile = mannequin.effective_fit_profile(analysis, match_img is not None)
+            adjusted_axes = ()
+            fit_profile_source = "legacy_analysis_fallback"
         legacy_base_fit = analysis.get("fit") or "regular"
-        slim_profile = mannequin.slim_variant_profile(fit_profile, clothing_type, gender)
         await _emit(pool, job_id, "progress", {"progress": 35, "phase": "generating"})
 
-        # A/B gemini 생성은 이 job 에서 가장 긴 구간(20~60s)이라, 후보가 하나씩 끝날 때마다
-        # 중간 progress 를 쏜다(35→60→85). 실제 Gemini 호출이 더 길어질 때는 ticker 가 84까지
-        # 천천히 올려 폴링 UI 가 "멈춤/실패"처럼 보이지 않게 한다.
+        # gemini 생성은 이 job 에서 가장 긴 구간(20~60s) — 완료 시 중간 progress(35→60)를 쏘고,
+        # 호출이 길어지면 ticker 가 84까지 천천히 올려 폴링 UI 가 "멈춤/실패"처럼 보이지 않게 한다.
         _done = 0
         _reported_generation_progress = 35
         _progress_lock = asyncio.Lock()
@@ -255,22 +432,21 @@ async def run_mannequin_job(app, job: dict) -> None:
                     base_img=base_img, prod_imgs=prod_imgs, match_img=match_img,
                     product_count=product_count, template=template, product=product,
                     analysis=analysis, clothing_type=clothing_type, image_manifest=manifest,
-                    fit_profile=profile)
+                    fit_profile=profile, adjusted_axes=adjusted_axes,
+                    fit_profile_source=fit_profile_source)
             except Exception as e:
                 log.warning("job %s candidate %s failed: %r", job_id, letter, e)
                 r = None
             async with _progress_lock:
                 _done += 1
-                # 2개 완료 기준 35→60→(85 은 아래 finalizing 이 덮음). 마지막은 85 로 클램프.
+                # 후보 완료 시 35→60 (85 는 아래 finalizing 이 덮음).
                 next_progress = min(85, 35 + _done * 25)
             await _emit_generation_progress(next_progress)
             return r
 
         progress_task = asyncio.create_task(_tick_generation_progress())
         try:
-            results = await asyncio.gather(
-                _cand("A", legacy_base_fit, fit_profile),
-                _cand("B", "slim", slim_profile))
+            results = [await _cand("A", legacy_base_fit, fit_profile)]
         finally:
             _generation_done.set()
             progress_task.cancel()

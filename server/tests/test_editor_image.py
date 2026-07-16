@@ -261,6 +261,146 @@ def test_run_editor_image_job_new_attaches_mood_refs(monkeypatch):
     assert "front view of the garment" in captured["manifest"]
 
 
+def test_run_editor_image_job_new_attaches_c_model_pair_and_excludes_product(monkeypatch):
+    captured = []
+
+    class TrackingR2:
+        def __init__(self):
+            self.reads = []
+
+        def get_bytes(self, key):
+            self.reads.append(key)
+            return key.encode()
+
+        def put_bytes(self, key, data, mime):
+            return None
+
+        def delete(self, key):
+            return None
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    def fake_model_refs(spec):
+        if spec["cutType"] == "product":
+            return None
+        return (
+            {"key": "seed/models/mA/face_front.webp", "mime": "image/webp"},
+            {"key": "seed/models/mA/grid_sedcard.png", "mime": "image/jpeg"},
+        )
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+        captured.append({
+            "spec": cut_spec, "data": [image.data.decode() for image in images],
+            "manifest": manifest,
+        })
+        return b"NEWIMG", "image/png"
+
+    async def fake_finalize(conn, **kw):
+        return {"id": "w-model"}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "resolve_virtual_model_assets", fake_model_refs)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+    r2 = TrackingR2()
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=r2)
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new", "cutType": "styling", "shot": "full", "modelId": "mA",
+    })))
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new", "cutType": "product", "shot": "ghost", "modelId": "mA",
+    })))
+
+    assert captured[0]["spec"]["modelId"] == "mA"
+    assert captured[0]["data"] == [
+        "seed/models/mA/face_front.webp", "seed/models/mA/grid_sedcard.png", "k/a1",
+    ]
+    assert captured[0]["manifest"].splitlines()[0].startswith("1. MODEL — frontal close-up")
+    assert captured[0]["manifest"].splitlines()[1].startswith("2. MODEL SHEET — a 2x2 grid")
+    assert captured[0]["manifest"].splitlines()[2] == "3. PRODUCT — front view of the garment"
+    assert captured[1]["data"] == ["k/a1"]
+    assert "MODEL" not in captured[1]["manifest"]
+    assert r2.reads == [
+        "seed/models/mA/face_front.webp", "seed/models/mA/grid_sedcard.png", "k/a1", "k/a1",
+    ]
+
+
+def test_run_editor_image_job_model_r2_failure_falls_back_to_product(monkeypatch, caplog):
+    captured = {}
+
+    class FailingModelR2:
+        def get_bytes(self, key):
+            if key == "seed/models/mA/grid_sedcard.png":
+                raise RuntimeError("sheet unavailable")
+            return key.encode()
+
+        def put_bytes(self, key, data, mime):
+            return None
+
+        def delete(self, key):
+            return None
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    def fake_model_refs(spec):
+        return (
+            {"key": "seed/models/mA/face_front.webp", "mime": "image/webp"},
+            {"key": "seed/models/mA/grid_sedcard.png", "mime": "image/jpeg"},
+        )
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+        captured["data"] = [image.data.decode() for image in images]
+        captured["manifest"] = manifest
+        return b"NEWIMG", "image/png"
+
+    async def fake_finalize(conn, **kw):
+        captured["finalized"] = True
+        return {"id": "w-fallback"}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "resolve_virtual_model_assets", fake_model_refs)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b"), r2=FailingModelR2())
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new", "cutType": "mirror", "shot": "full", "modelId": "mA",
+    })))
+
+    assert captured["finalized"] is True
+    assert captured["data"] == ["k/a1"]
+    assert "MODEL" not in captured["manifest"]
+    assert "continuing without model references" in caplog.text
+
+
 def test_run_editor_image_job_gemini_error_fails_job(monkeypatch):
     from app.agents.gemini_image import GeminiError
     captured = {}

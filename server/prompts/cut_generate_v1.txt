@@ -15,6 +15,7 @@ ${directionLine}
 ${faceLine}
 ${poseLine}
 ${exampleLine}
+${outerClosureLine}
 ${spaceLine}
 ${faceRefLine}
 
@@ -93,14 +94,50 @@ CUT TYPE — MIRROR SELFIE (거울샷):
 [[POSE:auto]]Pose: natural and unforced, chosen to flatter how the garment sits.
 [[POSE:named]]Pose: ${poseName} — keep it relaxed and natural.
 
+[[OUTER_CLOSURE:guard]]OUTER FRONT OPENING — USER-SELECTED REQUIREMENT:
+- This opening state overrides any different open/closed styling shown in EXAMPLE or MOOD images.
+- Use ONLY closure hardware visibly supported by PRODUCT references. Preserve the exact type, count
+  and placement of buttons, zipper teeth/pull, snaps, hooks and belt loops.
+- NEVER invent, remove, relocate or redesign closure hardware, a belt or lining. If the requested
+  state is not physically possible for this garment, garment fidelity wins over forcing the state.
+
+[[OUTER_CLOSURE:open]]Opening state: FULLY OPEN. Leave every real front closure unfastened and let
+the two front panels hang naturally. Keep all hardware unchanged; preserve only what is naturally
+visible from the requested camera angle, and never change direction or framing to expose it.
+
+[[OUTER_CLOSURE:partial]]Opening state: PARTIALLY OPEN. Fasten only some of the garment's real front
+closure at a natural position for its actual construction; leave the rest open. Do not invent a
+button count or zipper behavior that PRODUCT references do not support.
+
+[[OUTER_CLOSURE:closed]]Opening state: FULLY CLOSED. Fasten every real front closure that this exact
+garment supports. Do not turn an open-front garment into a closable garment.
+
 [[EXNUANCE:0]]Composition nuance (from the seller's chosen style example): straight-on, centered and calm — minimal body angle, balanced negative space.
 [[EXNUANCE:1]]Composition nuance (from the seller's chosen style example): the body turned slightly (about 15–30°) with a relaxed stance — still reads as a front-family cut.
 [[EXNUANCE:2]]Composition nuance (from the seller's chosen style example): weight shifted onto one leg, one hand relaxed (in a pocket or at the side) — candid, unposed energy.
+
+[[REFSCOPE:all]]REFERENCE SCOPE: follow the attached EXAMPLE REFERENCE's background/location,
+lighting, mood, pose, framing and composition. Swap in the exact garment from PRODUCT references
+and the model established by the PRODUCT/MANNEQUIN references; do NOT copy the example's garment
+or model identity. CUT TYPE, FRAMING, camera direction, face handling and SPACE CONTINUITY remain
+fixed requirements; adapt the example's pose/composition as needed without changing them.
+
+[[REFSCOPE:all_product]]REFERENCE SCOPE: follow the attached EXAMPLE REFERENCE's background/location,
+lighting, mood, framing and composition. Swap in the exact garment from PRODUCT references. This
+is still a PRODUCT CUT: do NOT copy the example's garment, model or pose, and do not add a person
+or visible body parts.
 
 [[REFSCOPE:pose]]REFERENCE SCOPE: from the seller's chosen example, follow ONLY the pose and
 framing nuance. Do NOT carry over the example's background, location or props — the scene
 must follow this prompt's own background direction. If the pose does not suit the scene,
 adjust it naturally instead of forcing it.
+
+[[REFSCOPE:bg]]REFERENCE SCOPE: from the attached EXAMPLE REFERENCE follow ONLY the background,
+location, lighting and overall mood. Do NOT copy the example's pose, body angle, framing, garments,
+shoes or accessories — the model wears ONLY the PRODUCT garment (plus neutral basics) in a natural
+pose that suits this scene. FRAMING OVERRIDE: the CUT TYPE and FRAMING requested above win over the
+reference's crop — the model must be fully visible for the requested shot, with headroom, correct
+perspective, believable ground contact and shadows consistent with the scene's light.
 
 [[SPACE]]SPACE CONTINUITY: this cut belongs to a set shot in ONE location. Keep the lighting,
 background elements and color temperature consistent with a single coherent space

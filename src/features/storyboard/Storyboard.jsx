@@ -60,8 +60,25 @@ const withoutLayoutRow = (block) => {
   return single;
 };
 
+const SCOPE_LABELS = { all: '전부', bg: '배경만', pose: '포즈만' };
+const WORN_CUT_TYPES = new Set(['styling', 'horizon', 'mirror']);
 const exampleCategoryFor = (cut) => cut === 'product' ? 'product' : (cut === 'horizon' ? 'horizon' : 'styling');
 const exampleThumbFor = (exampleId, cut) => Placeholder.photo(exampleId, exampleCategoryFor(cut), 240, 320);
+
+function OuterClosureIcon({ state }) {
+  const edge = state === 'closed'
+    ? <path d="M24 18v32" />
+    : state === 'partial'
+      ? <path d="M18 18l6 10 6-10M24 28v22" />
+      : <path d="M18 18l6 16 6-16M18 34l-3 16M30 34l3 16" />;
+  return (
+    <svg className="outer-closure-icon" viewBox="0 0 48 56" aria-hidden="true">
+      <path d="M17 8l-9 7 5 12 4-4-2 27h18l-2-27 4 4 5-12-9-7-7 7z" />
+      {edge}
+      {state !== 'open' && <><circle cx="24" cy="32" r="1" /><circle cx="24" cy="39" r="1" /><circle cx="24" cy="46" r="1" /></>}
+    </svg>
+  );
+}
 
 function referenceFeedbackPatch(block, changes) {
   if (!block) return changes;
@@ -80,14 +97,19 @@ function referenceFeedbackPatch(block, changes) {
   return next;
 }
 
-function StoryboardCard({ block, catalogs, colorOpts, matchClothing, spaceTag, selected, locked, gripDrag, onSelect, onDuplicate, onDelete, onUp, onDown }) {
+function StoryboardCard({ block, catalogs, colorOpts, matchClothing, clothingType, spaceTag, selected, locked, gripDrag, onSelect, onDuplicate, onDelete, onUp, onDown }) {
   const isMine = block.source === 'mine';
   const colorIds = (block.colorIds && block.colorIds.length) ? block.colorIds : (block.colorId ? [block.colorId] : []);
   const cols = colorIds.map((id) => colorOpts.find((c) => c.id === id)).filter(Boolean);
   const poseEdited = !!block.pose && block.pose !== 'auto';
   const matchEdited = Array.isArray(block.matchIds) && block.matchIds.length > 0;
   const matchThumb = matchEdited ? ((matchClothing || []).find((m) => m.id === block.matchIds[0])?.thumb) : null;
-  const poseReferenceThumb = block.exampleId && (block.refScope === 'pose' || block.spaceGroupId) ? exampleThumbFor(block.exampleId, block.cutType) : null;
+  // 레퍼런스 범위 표시 — 전부=썸네일 교체(referenceFeedbackPatch), 포즈만/배경만=미니 이미지 (매칭 의류와 같은 패턴)
+  const refMiniScope = block.exampleId
+    ? (block.spaceGroupId ? 'pose' : (block.refScope === 'pose' || block.refScope === 'bg' ? block.refScope : null))
+    : null;
+  const refMiniThumb = refMiniScope ? exampleThumbFor(block.exampleId, block.cutType) : null;
+  const refMiniLabel = refMiniScope === 'bg' ? '배경' : '포즈';
   const isProduct = block.cutType === 'product';
   const dirLabel = isProduct
     ? (catalogs.productDirections.find((d) => d.value === block.direction)?.label || '앞면')
@@ -95,6 +117,10 @@ function StoryboardCard({ block, catalogs, colorOpts, matchClothing, spaceTag, s
   const shotLabel = isProduct
     ? (catalogs.productShotTypes.find((s) => s.value === block.shot)?.label || '고스트컷')
     : (catalogs.shotTypes.find((s) => s.value === block.shot)?.label || '—');
+  const closureOptions = catalogs.outerClosureStates || [];
+  const closureValue = closureOptions.some((option) => option.value === block.outerClosureState) ? block.outerClosureState : 'open';
+  const closureLabel = closureOptions.find((option) => option.value === closureValue)?.label || '전체 열림';
+  const showOuterClosure = clothingType === 'outer' && block.source === 'ai' && WORN_CUT_TYPES.has(block.cutType);
   return (
     <div className={`sb-card${selected ? ' on' : ''}${locked ? ' locked' : ''}`} onClick={onSelect}>
       <div className="sb-cardface">
@@ -114,6 +140,7 @@ function StoryboardCard({ block, catalogs, colorOpts, matchClothing, spaceTag, s
                   {/* 거울샷은 방향 개념이 없다 (ADR-0004) — 행 자체를 숨김 */}
                   {block.cutType !== 'mirror' && <div className="sb-detail">방향: {dirLabel}</div>}
                   <div className="sb-detail">샷 종류: {shotLabel}</div>
+                  {showOuterClosure && <div className="sb-detail">아우터 열림 정도: {closureLabel}</div>}
                 </>
               ) : <div className="sb-detail muted">컷 종류 미설정</div>}
             </div>
@@ -124,10 +151,10 @@ function StoryboardCard({ block, catalogs, colorOpts, matchClothing, spaceTag, s
             </div>
           )}
         </div>
-        {(poseEdited || matchEdited || poseReferenceThumb) && (
+        {(poseEdited || matchEdited || refMiniThumb) && (
           <div className="sb-eimgs">
             {poseEdited && <figure className="sb-eimg"><img src={block.poseThumb} alt="" /><figcaption>포즈</figcaption></figure>}
-            {poseReferenceThumb && <figure className="sb-eimg"><img src={poseReferenceThumb} alt="" /><figcaption>포즈</figcaption></figure>}
+            {refMiniThumb && <figure className="sb-eimg"><img src={refMiniThumb} alt="" /><figcaption>{refMiniLabel}</figcaption></figure>}
             {matchEdited && matchThumb && <figure className="sb-eimg"><img src={matchThumb} alt="" /><figcaption>매칭 의류</figcaption></figure>}
           </div>
         )}
@@ -312,8 +339,8 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, clothi
           // 레퍼런스 범위 — 호버 오버레이에서 선택. 시리즈 안은 '포즈만' 고정, 제품·비정면(moodOnly)은 범위 개념 없음.
           // 범위 핸들러가 없는 소비처(에디터 AIPanel)는 선택해도 저장·전송이 안 되므로 UI 자체를 숨긴다(빈 클릭 방지).
           const scopeChoices = !onRefScopeChange || moodOnly || cut === 'product' ? null
-            : inSpace ? [{ v: 'pose', l: '포즈만' }]
-              : [{ v: 'all', l: '전부' }, { v: 'pose', l: '포즈만' }];
+            : inSpace ? [{ v: 'pose', l: '포즈만' }]   // 시리즈는 배경이 세트 기준 — 서버도 pose 강제
+              : [{ v: 'all', l: '전부' }, { v: 'bg', l: '배경만' }, { v: 'pose', l: '포즈만' }];
           const pick = (scope) => {
             if (!onExampleChange) return;
             if (on && (refScope || 'all') === scope) { onExampleChange(null); return; }   // 같은 선택 재클릭 = 해제
@@ -324,7 +351,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, clothi
             <button key={e.id} type="button" className={`sb-excell${on ? ' sel' : ''}`}
               onClick={() => onExampleChange && onExampleChange(on ? null : e.id)}>
               <img src={e.thumb} alt="" />{on && <span className="ck"><Icon name="check" size={11} /></span>}
-              {on && scopeChoices && <span className="sb-exscope">{(refScope || 'all') === 'pose' ? '포즈만' : '전부'}</span>}
+              {on && scopeChoices && <span className="sb-exscope">{SCOPE_LABELS[refScope || 'all'] || '전부'}</span>}
               {scopeChoices && (
                 /* 오버레이 배경 클릭은 셀 기본 선택으로 통과(기존 클릭 선택 유지) — 버튼 클릭만 범위 지정 */
                 <span className="sb-exov">
@@ -371,7 +398,9 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, clothi
       {!moodOnly && exampleId && !inSpace && cut !== 'product' && (
         refScope === 'pose'
           ? <div className="sb-exnote">포즈만 참고해요. 배경에 맞지 않으면 자세와 구도가 자연스럽게 조정될 수 있어요.</div>
-          : <div className="sb-exnote pick"><b>이 예시처럼 생성돼요</b> — 옷과 모델만 우리 걸로 교체</div>
+          : refScope === 'bg'
+            ? <div className="sb-exnote">배경·분위기만 참고해요. 포즈는 이 옷과 장소에 어울리게 새로 잡혀요.</div>
+            : <div className="sb-exnote pick"><b>이 예시처럼 생성돼요</b> — 옷과 모델만 우리 걸로 교체</div>
       )}
     </div>
   );
@@ -391,16 +420,21 @@ function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onC
   // 컷 종류 탭 = catalogs.cutTypes + '내 이미지'(source 전환) 합성 (계약 §5)
   const cutTabs = [...catalogs.cutTypes, { value: 'mine', label: '내 이미지' }];
   const tabValue = block.source === 'mine' ? 'mine' : (block.cutType || '');
+  const closureOptions = catalogs.outerClosureStates || [];
+  const closureForCut = (cutType, currentValue) => {
+    if (clothingType !== 'outer' || !WORN_CUT_TYPES.has(cutType)) return null;
+    return closureOptions.some((option) => option.value === currentValue) ? currentValue : 'open';
+  };
   // 컷 종류 전환 시 방향·샷을 대상 컷의 유효 옵션으로 정규화 — 어느 방향의 전환이든 계약 위반 값이 남지 않는다 (ADR-0004)
   const onTab = (v) => {
-    if (v === 'mine') return onChange((current) => referenceFeedbackPatch(current, { source: 'mine', cutType: null, exampleId: null }));
+    if (v === 'mine') return onChange((current) => referenceFeedbackPatch(current, { source: 'mine', cutType: null, exampleId: null, outerClosureState: null }));
     if (v === 'mirror') {
       // 거울샷: 방향 없음, 샷 full/knee, 얼굴 기본 '폰으로 가림', 포즈 자동
       return onChange((current) => referenceFeedbackPatch(current, {
         source: 'ai', cutType: 'mirror', direction: null, exampleId: null,
         shot: block.shot === 'knee' ? 'knee' : 'full',
         faceExposure: block.faceExposure === 'show' ? 'show' : 'hide',
-        angle: 'same', pose: 'auto', poseLabel: 'AI 자동',
+        angle: 'same', pose: 'auto', poseLabel: 'AI 자동', outerClosureState: closureForCut('mirror', current.outerClosureState),
       }));
     }
     if (v === 'product') {
@@ -408,6 +442,7 @@ function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onC
         source: 'ai', cutType: 'product', exampleId: null,
         direction: block.direction === 'back' ? 'back' : 'front',
         shot: ['ghost', 'hanger', 'flatlay'].includes(block.shot) ? block.shot : 'ghost',
+        outerClosureState: null,
       }));
     }
     // styling · horizon
@@ -415,6 +450,7 @@ function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onC
       source: 'ai', cutType: v, exampleId: null,
       direction: ['front', 'back', 'side'].includes(block.direction) ? block.direction : 'front',
       shot: ['full', 'knee', 'medium', 'close'].includes(block.shot) ? block.shot : 'full',
+      outerClosureState: closureForCut(v, current.outerClosureState),
     }));
   };
 
@@ -476,6 +512,8 @@ function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onC
 
   const isProduct = block.cutType === 'product';
   const isMirror = block.cutType === 'mirror';
+  const showOuterClosure = clothingType === 'outer' && block.source === 'ai' && WORN_CUT_TYPES.has(block.cutType);
+  const outerClosureState = closureOptions.some((option) => option.value === block.outerClosureState) ? block.outerClosureState : 'open';
   return (
     <div className="surface inspector">
       <div className="insp-sec"><label className="lbl">컷 종류</label>
@@ -512,6 +550,26 @@ function Inspector({ block, catalogs, colorOpts, clothingType, mode, onMode, onC
           <Chips options={isProduct ? catalogs.productDirections : catalogs.directions}
             value={(isProduct ? catalogs.productDirections : catalogs.directions).some((d) => d.value === block.direction) ? block.direction : 'front'}
             onChange={(v) => onChange({ direction: v })} /></div>
+      )}
+
+      {showOuterClosure && (
+        <div className="insp-sec outer-closure-field">
+          <div className="lbl" id={`outer-closure-label-${block.id}`}>아우터 열림 정도</div>
+          <div className="outer-closure-options" role="radiogroup" aria-labelledby={`outer-closure-label-${block.id}`}>
+            {closureOptions.map((option) => {
+              const on = outerClosureState === option.value;
+              return (
+                <label key={option.value} className={`outer-closure-option${on ? ' on' : ''}`}>
+                  <input type="radio" name={`outer-closure-${block.id}`} value={option.value}
+                    checked={on} onChange={() => onChange({ outerClosureState: option.value })} />
+                  <OuterClosureIcon state={option.value} />
+                  <span>{option.label}</span>
+                </label>
+              );
+            })}
+          </div>
+          <p className="outer-closure-hint">이 컷에서 아우터의 앞부분을 얼마나 열지 정해요.</p>
+        </div>
       )}
 
       <div className="insp-divider" />
@@ -919,7 +977,7 @@ export function Storyboard() {
             if (crossSectionCardDrag) return; // 다른 섹션 카드 몸통은 섹션 끝 fallback 으로 버블링
             if (dragId || dragMine) onDropAt(dragOver == null ? i + 1 : dragOver, sec.id)(e);
           }}>
-          <StoryboardCard block={block} catalogs={catalogs} colorOpts={colorOpts} matchClothing={matchClothing}
+          <StoryboardCard block={block} catalogs={catalogs} colorOpts={colorOpts} matchClothing={matchClothing} clothingType={clothingType}
             spaceTag={block.spaceGroupId && !sec.samePlace ? spaceLabels[block.spaceGroupId] : null}
             selected={block.id === selectedId} locked={locked && block.id !== selectedId}
             gripDrag={{ draggable: true, onDragStart: onDragStart(block.id), onDragEnd }}

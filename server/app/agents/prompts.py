@@ -45,6 +45,7 @@ class MannequinPromptContext:
     base_gender: str
     image_manifest: str = ""  # 첨부 이미지 순서·역할 목록 (워커가 실제 슬롯으로 구성)
     fit_profile: dict | None = None
+    adjusted_axes: tuple = ()  # 이번 잡에서 셀러가 조정한 축(서버 diff 산출) — CHANGES 섹션 강조용
 
 
 def load_prompt_template(settings: Settings) -> str:
@@ -168,7 +169,7 @@ def render_mannequin_prompt(
     if leftover:
         raise ValueError(f"프롬프트 템플릿에 해결되지 않은 토큰: {sorted(set(leftover))}")
     fit_profile = ctx.fit_profile if ctx.fit_profile is not None else analysis.get("fitProfile")
-    fit_block = build_fit_profile_block(fit_profile)
+    fit_block = build_fit_profile_block(fit_profile, ctx.adjusted_axes)
     product_block = _product_block(
         product, analysis, seller_canon, knowledge, include_legacy_fit=fit_profile is None
     )

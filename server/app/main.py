@@ -146,6 +146,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         jwks_key_resolver(settings.jwks_url) if settings.jwks_url else None
     )
 
+    @app.middleware("http")
+    async def unhandled_exception_envelope(request: Request, call_next):
+        """500을 JSON 봉투로 고정해 브라우저에서 CORS 네트워크 실패로 위장되지 않게 한다."""
+        try:
+            return await call_next(request)
+        except Exception:
+            logging.getLogger("wearless.api").exception(
+                "unhandled request error method=%s path=%s",
+                request.method,
+                request.url.path,
+            )
+            return JSONResponse(
+                status_code=500,
+                content={"error": {
+                    "code": "internal_error",
+                    "message": "서버 오류가 발생했어요. 잠시 후 다시 시도해 주세요.",
+                }},
+            )
+
+    # CORS를 예외 봉투 밖쪽에 두어 정상 응답뿐 아니라 500에도 ACAO를 붙인다.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
