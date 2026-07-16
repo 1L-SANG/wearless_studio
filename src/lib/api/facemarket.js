@@ -44,11 +44,20 @@ export function listMyModels() {
 // POST /v1/facemarket/licenses (멀티파트) — 얼굴 + 라이선스 조건 → LicenseCard.
 // 얼굴 바이트는 비공개 R2 로만 가고, 응답엔 게이트 URL(faceImageUri)만 실린다.
 // Content-Type 은 브라우저가 multipart boundary 로 자동 설정(수동 지정 금지).
+//
+// 얼굴 출처는 **둘 중 하나**(서버가 동시 지정을 400 `face_and_profile_conflict` 로 거절 —
+// facemarket.create_license. 우선순위로 조용히 무시하지 않는 이유 = 어느 얼굴을 라이선스했는지
+// 모호해지면 안 되고, 무시된 생체 업로드를 남기지 않기 위함):
+//   · `profileId` — 개인화 프로필(ready = 3각도 QC 통과+필수동의+신체)의 front 슬롯을 참조(step02 정식 경로).
+//   · `faceBlob`  — 얼굴 1장 직접 업로드(레거시 경로. profileId 없을 때만).
+// profileId 가 있으면 그것만 보낸다 — 둘 다 실으면 400.
 export async function createLicense({
-  faceBlob, filename, allowedUse = [], forbiddenUse = [], unitPrice = 10000, validDays = 365,
+  faceBlob, filename, profileId,
+  allowedUse = [], forbiddenUse = [], unitPrice = 10000, validDays = 365,
 }) {
   const fd = new FormData();
-  fd.append('face', faceBlob, filename || 'face');
+  if (profileId) fd.append('profile_id', profileId);
+  else fd.append('face', faceBlob, filename || 'face');
   allowedUse.forEach((v) => fd.append('allowed_use', v));
   forbiddenUse.forEach((v) => fd.append('forbidden_use', v));
   fd.append('unit_price', String(unitPrice));
@@ -80,6 +89,29 @@ export function revokeLicense(id) {
 // (70/20/10 = 모델/플랫폼/운영). 정산 미기록(비 FaceMarket 잡·체인 지연 등)이면 404 → http() 가 throw.
 export function getJobSettlement(jobId) {
   return http(`/v1/facemarket/jobs/${jobId}/settlement`);
+}
+
+// GET /v1/facemarket/verify/{id} — QR 공개 검증. **무인증**(심사위원·구매자가 스캔).
+// http() 는 세션이 없으면 요청 전에 throw 하므로(httpAdapter) 여기선 쓸 수 없다 — 생 fetch.
+// 응답은 서버 화이트리스트(PublicVerifyResult) 그대로:
+//   { valid, status, allowedUse, forbiddenUse, unitPrice, validUntil, vcId, model:{ nameMasked, age } }
+// 얼굴·digest·CI·생년월일·user_id·model_id 는 서버가 애초에 싣지 않는다(무인증 = 노출 시 영구 유출).
+// 해지가 즉시 반영돼야 하므로 캐시 금지(서버 Cache-Control: no-store + 요청 측 cache:'no-store').
+export async function verifyLicensePublic(licenseId) {
+  const res = await fetch(`${BASE_URL}/v1/facemarket/verify/${encodeURIComponent(licenseId)}`, {
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    let message = res.status === 404
+      ? '찾을 수 없는 라이선스예요.'
+      : '라이선스를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.';
+    try { const p = await res.json(); if (p?.error?.message) message = p.error.message; } catch { /* 비 JSON */ }
+    const err = new Error(message);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
 }
 
 // 게이트 얼굴 이미지 → objectURL. <img> 는 Bearer 를 못 보내므로 fetch+blob 로 인증해 받는다.

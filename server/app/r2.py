@@ -109,6 +109,19 @@ class R2Client:
         """객체 삭제 (lease 상실로 버려진 생성물 best-effort 정리). 동기 → to_thread."""
         self._s3.delete_object(Bucket=self._bucket, Key=key)
 
+    def list_prefix(self, prefix: str) -> list[str]:
+        """prefix 하위 객체 키 전량(1000건 초과 시 자동 페이지네이션). 동기 → to_thread.
+
+        용도: 파기 캐스케이드의 고아 객체 스캔 — DB가 참조하지 않는(= put 후 finalize 전
+        크래시로 남은) 객체는 키를 알 수 없어 list 없이는 회수 불가(api-spec §3.5 파기 완전성).
+        반환 키는 호출자가 삭제 대상으로만 쓰고 로그·감사로그엔 카운트만 남긴다(§1.4).
+        """
+        keys: list[str] = []
+        paginator = self._s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+            keys.extend(o["Key"] for o in page.get("Contents", []))
+        return keys
+
     def public_url(self, key: str) -> str:
         """서빙 URL. 커스텀 도메인 있으면 공개 URL, 없으면 1h signed GET."""
         if self._public_base:

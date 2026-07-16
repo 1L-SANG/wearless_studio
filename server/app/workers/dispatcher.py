@@ -15,6 +15,8 @@ from .detail_page_job import run_detail_page_job
 from .editor_image_job import run_editor_image_job
 from .mannequin_adjust_job import run_mannequin_adjust_job
 from .mannequin_job import run_mannequin_job
+from .personalization_generation_job import run_personalization_generation_job
+from .personalization_purge_job import run_personalization_purge_job
 
 log = logging.getLogger("wearless.dispatcher")
 
@@ -25,6 +27,8 @@ _WORKERS = {
     "detail_page": run_detail_page_job,  # PL-4 상세페이지 생성 (AG-06→02→03→M-02)
     "mannequin_adjust": run_mannequin_adjust_job,  # @deprecated AG-05 — 툼스톤(legacy 잡 드레인 전용, AI 미호출)
     "editor_image": run_editor_image_job,  # AG-06/07 에디터 이미지 (PL-5/6, mode:'new'|'vary')
+    "personalization_generation": run_personalization_generation_job,  # 개인화 생성 경로 α (api-spec §4)
+    "personalization_purge": run_personalization_purge_job,  # 개인화 파기 캐스케이드 (api-spec §3.5)
 }
 _KINDS = tuple(_WORKERS)
 _SWEEP_INTERVAL = 60.0  # lease 복구 점검 주기(초)

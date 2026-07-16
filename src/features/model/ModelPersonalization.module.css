@@ -1,0 +1,281 @@
+/* =============================================================
+   features/model — 개인화(사용자 얼굴·신체) 화면군 공용 스타일.
+   ModelLicense.module.css 톤(모노크롬 + 그림자, 보더 없음)을 그대로 따른다.
+   화면 6개(ModelHub/ModelConsent/ModelFaceUpload/ModelBodyProfile/
+   ModelGenerate/ModelWithdraw)가 이 한 모듈을 공유한다 — 본인확인 화면은
+   /model/register 로 흡수되어 이 목록에서 빠졌다.
+   ModelRegister/ModelLicense 와는 별도 모듈로 유지한다 — .stepIcon/.stepArrow/
+   .stepDesc/.widget/.sectionLabel 이 이름만 같고 정의가 달라, 합치면 충돌한다.
+   ============================================================= */
+
+.sectionLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-2);
+  margin: 18px 0 8px;
+}
+.sectionLabel:first-child { margin-top: 0; }
+
+/* ---- 상태 배너(진행중/삭제중 등) ---- */
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 15px;
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.banner svg { flex: none; margin-top: 1px; }
+.bannerWarn { background: var(--accent-error-ring); color: var(--accent-error); }
+.bannerWarn svg { color: var(--accent-error); }
+
+/* ---- 온보딩 체크리스트 허브 ---- */
+.stepLink {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  text-align: left;
+  width: 100%;
+  padding: 15px 16px;
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+  color: inherit;
+  text-decoration: none;
+  border: 0;
+  cursor: pointer;
+  transition: background .15s;
+}
+.stepLink:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
+.stepLink + .stepLink { margin-top: 8px; }
+/* 본인확인 미완 시 잠긴 단계(동의·사진·신체) — 순서 강제, 클릭 불가 */
+.stepLinkLocked { cursor: default; opacity: .55; }
+.stepLinkLocked:hover { background: var(--bg-2); box-shadow: none; }
+.stepIcon {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--fg-3);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 1px var(--ring);
+}
+.stepIconDone { color: #fff; background: var(--accent-success); box-shadow: none; }
+.stepBody { flex: 1; min-width: 0; }
+.stepTitle { font-size: 14px; font-weight: 600; color: var(--fg-1); }
+.stepDesc { font-size: 12.5px; color: var(--fg-3); margin-top: 2px; }
+.stepArrow { flex: none; color: var(--fg-3); }
+
+.hubCta { margin-top: 20px; }
+
+.footerLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 22px;
+  font-size: 13px;
+  color: var(--fg-3);
+  text-decoration: none;
+}
+.footerLink:hover { color: var(--fg-1); }
+
+/* ---- 본인확인(성인 인증) 표준인증창 컨테이너 ---- */
+.widget:not(:empty) {
+  margin-bottom: 16px;
+  padding: 8px;
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+}
+
+/* ---- 동의 화면 ---- */
+.consentItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 15px 4px;
+}
+.consentItem + .consentItem { box-shadow: 0 -1px 0 0 var(--ring); }
+.consentCheck {
+  flex: none;
+  margin-top: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-2);
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--ring-strong);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.consentCheck svg { opacity: 0; transition: opacity .12s; color: #fff; }
+.consentCheck.on { background: #0e0d14; box-shadow: none; }
+.consentCheck.on svg { opacity: 1; }
+.consentCheck.disabled { cursor: default; opacity: .55; }
+.consentBody { flex: 1; min-width: 0; cursor: pointer; }
+.consentTitleRow { display: flex; align-items: center; gap: 7px; }
+.consentTitle { font-size: 14.5px; font-weight: 600; color: var(--fg-1); }
+.consentTag { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: var(--r-pill); }
+.tagRequired { background: var(--accent-error-ring); color: var(--accent-error); }
+.tagOptional { background: var(--bg-2); color: var(--fg-3); }
+.tagDone { background: var(--accent-success-ring); color: var(--accent-success); }
+.consentDesc { font-size: 12.5px; color: var(--fg-3); margin-top: 3px; line-height: 1.5; }
+
+.noticeLinks { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 16px; }
+.noticeLinks a { font-size: 12px; color: var(--fg-3); text-decoration: underline; }
+.noticeLinks a:hover { color: var(--fg-1); }
+
+/* ---- 얼굴 업로드 슬롯 ---- */
+.slotGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+@media (max-width: 640px) { .slotGrid { grid-template-columns: 1fr; } }
+
+.slotCard {
+  border-radius: var(--r-5);
+  overflow: hidden;
+  background: var(--bg-2);
+}
+.slotUpload {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--r-5);
+  background: var(--bg-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  overflow: hidden;
+  position: relative;
+  transition: border-color .15s, background .15s;
+}
+.slotUpload:hover { border-color: var(--fg-3); background: var(--bg-1); }
+.slotUpload:disabled { cursor: default; opacity: .6; }
+.slotHas { border-style: solid; }
+.slotHas img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.slotEmpty { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--fg-3); padding: 12px; text-align: center; }
+.slotEmpty span { font-size: 13px; font-weight: 600; color: var(--fg-2); }
+.slotBusy { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(255,255,255,.82); color: var(--fg-2); font-size: 12.5px; font-weight: 600; }
+.slotBadge {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  color: #fff;
+  background: var(--accent-success);
+}
+.slotDel {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(14,13,20,.72);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.slotLabel { font-size: 13px; font-weight: 700; color: var(--fg-1); margin-top: 10px; }
+.slotGuide { font-size: 12px; color: var(--fg-3); margin-top: 3px; line-height: 1.45; }
+.slotFail {
+  margin-top: 8px;
+  padding: 9px 10px;
+  border-radius: var(--r-4);
+  background: var(--accent-error-ring);
+  color: var(--accent-error);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.slotFail ul { margin: 4px 0 0; padding-left: 16px; }
+
+/* ---- 신체 프로필 ---- */
+.customInputWrap { margin-top: 10px; max-width: 260px; }
+
+/* ---- 생성 화면 ---- */
+.projectList { display: flex; flex-direction: column; gap: 8px; }
+.projectRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-4);
+  background: var(--bg-2);
+  cursor: pointer;
+  text-align: left;
+  border: 0;
+  width: 100%;
+}
+.projectRow.on { box-shadow: 0 0 0 2px var(--fg-1); }
+.projectRow img { width: 40px; height: 52px; object-fit: cover; border-radius: var(--r-3); background: var(--bg-1); flex: none; }
+.projectRowTitle { font-size: 13.5px; font-weight: 600; color: var(--fg-1); }
+
+.assetGrid { display: flex; flex-wrap: wrap; gap: 10px; }
+.assetTile {
+  position: relative;
+  width: 96px;
+  height: 120px;
+  border-radius: var(--r-4);
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px var(--ring);
+}
+.assetTile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.assetTile.on { box-shadow: 0 0 0 2px var(--fg-1); }
+.assetTileCheck {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(14,13,20,.72);
+  color: #fff;
+  display: grid;
+  place-items: center;
+}
+
+.resultGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; }
+.resultTile { border-radius: var(--r-5); overflow: hidden; background: var(--bg-2); aspect-ratio: 3/4; }
+.resultTile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* ---- 삭제·철회 ---- */
+.dangerCard { padding: 15px 16px; border-radius: var(--r-5); background: var(--accent-error-ring); }
+.dangerTitle { font-size: 14px; font-weight: 700; color: var(--accent-error); }
+.dangerDesc { font-size: 12.5px; color: var(--fg-2); margin: 5px 0 12px; line-height: 1.55; }
+.dangerBtn {
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent-error);
+  border: none;
+  border-radius: var(--r-4);
+  cursor: pointer;
+  transition: filter .14s;
+}
+.dangerBtn:hover { filter: brightness(1.06); }
+.dangerBtn:disabled { opacity: .6; cursor: default; }
+
+.mildBtn {
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-2);
+  background: var(--bg-2);
+  border: none;
+  border-radius: var(--r-4);
+  cursor: pointer;
+}
+.mildBtn:hover { background: var(--bg-1); box-shadow: var(--elev-card); }
+.mildBtn:disabled { opacity: .6; cursor: default; }

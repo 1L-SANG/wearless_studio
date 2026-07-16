@@ -14,8 +14,15 @@ import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
+import { ModelHub } from '@/features/model/ModelHub.jsx';
 import { ModelRegister } from '@/features/model/ModelRegister.jsx';
 import { ModelLicense } from '@/features/model/ModelLicense.jsx';
+import { ModelConsent } from '@/features/model/ModelConsent.jsx';
+import { ModelFaceUpload } from '@/features/model/ModelFaceUpload.jsx';
+import { ModelBodyProfile } from '@/features/model/ModelBodyProfile.jsx';
+import { ModelGenerate } from '@/features/model/ModelGenerate.jsx';
+import { ModelWithdraw } from '@/features/model/ModelWithdraw.jsx';
+import { PublicVerify } from '@/features/verify/PublicVerify.jsx';
 import { ProductInput } from '@/features/product-input/ProductInput.jsx';
 import { Mannequin } from '@/features/mannequin/Mannequin.jsx';
 import { Storyboard } from '@/features/storyboard/Storyboard.jsx';
@@ -130,9 +137,21 @@ export default function App() {
             {/* 크레딧 에이전트 페이지 — auth 는 라우트만 등록, 본문 컴포넌트는 크레딧 에이전트 소유 */}
             <Route path="pricing" element={<Pricing />} />
             <Route path="credits/history" element={<CreditsHistory />} />
-            {/* FaceMarket 모델 온보딩 — 로그인 모델이 신분증 본인확인 (FM-10) */}
-            <Route path="model/register" element={<ModelRegister />} />
-            <Route path="model/license" element={<ModelLicense />} />
+            {/* FaceMarket 모델 섹션 — 본인확인·라이선스(FM-10)와 개인화(사용자 얼굴·신체)가
+                한 섹션이다. 개인화 화면 순서는 docs/personalization/phase0-ux-flow.md.
+                본인확인(성인 인증, T2-1)은 register 하나로 흡수됐다 — FaceMarket 실명 인증
+                1회가 개인화 성인 확인도 함께 기록하므로 별도 identity 라우트가 없다.
+                /model 은 섹션 허브(체크리스트) — register·license 의 URL 은 종전 그대로. */}
+            <Route path="model">
+              <Route index element={<ModelHub />} />
+              <Route path="register" element={<ModelRegister />} />
+              <Route path="license" element={<ModelLicense />} />
+              <Route path="consent" element={<ModelConsent />} />
+              <Route path="face" element={<ModelFaceUpload />} />
+              <Route path="body" element={<ModelBodyProfile />} />
+              <Route path="generate" element={<ModelGenerate />} />
+              <Route path="withdraw" element={<ModelWithdraw />} />
+            </Route>
           </Route>
           <Route path="create">
             <Route index element={<Navigate to="/create/input" replace />} />
@@ -150,6 +169,11 @@ export default function App() {
         <Route element={<RequireAuth />}>
           <Route path="editor/:id" element={<Suspense fallback={<div className="route-loading">에디터를 불러오는 중이에요</div>}><LazyEditor /></Suspense>} />
         </Route>
+        {/* 얼굴 라이선스 공개 검증(step02 QR 대상) — **RequireAuth 밖**. 심사위원·구매자가
+            VC 카드의 QR 을 자기 폰으로 찍어 로그인 없이 유효성을 확인한다(로그인 게이트를
+            두면 QR 이 무의미해진다). 크롬(TopNav) 밖에도 둔다 — 스캔으로 진입한 사람에게
+            앱 내비게이션은 잡음이다. 얼굴은 이 페이지에 렌더되지 않는다(PublicVerify 주석). */}
+        <Route path="verify/:licenseId" element={<PublicVerify />} />
         <Route path="*" element={<Navigate to="/create/input" replace />} />
       </Routes>
     </>

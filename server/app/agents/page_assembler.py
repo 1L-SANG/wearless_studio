@@ -79,9 +79,54 @@ def _text_for_role(texts: list[dict], role: str) -> str | None:
     return None
 
 
-def build_auto_blocks(product: dict, start_index: int = 0) -> list[dict]:
+# AI 생성 안내 문구(PRD §10.14). 기본 = AI 생성 사실 고지.
+_AI_NOTICE_DEFAULT = (
+    "본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다. "
+    "실제 상품의 색상과 핏은 촬영 환경 및 화면 설정에 따라 다르게 보일 수 있습니다."
+)
+# 라이선스 실제 모델 사용 시 — 26.06 가상인물 표기 의무는 **가상인물에만** 적용된다.
+# 이 컷의 얼굴은 본인확인(CX)을 거친 실제 모델이 라이선스 계약으로 제공한 얼굴이라
+# '가상인물' 표기가 오히려 사실과 다르다. AI 로 생성한 이미지라는 사실 고지는 유지한다.
+# 모델명은 **마스킹된 display_name**만 — 상세페이지는 무인증 공개면이라 공개 검증(QR)의
+# 하드룰(facemarket.py §공개 검증 ③ 신원은 파생·마스킹 값만)과 같은 기준을 적용한다.
+#
+# ⚠️ 문구가 **범위를 넘어 주장하면 안 된다**. 얼굴 레퍼런스는 얼굴이 식별되는 컷에만 붙는다
+# (cut_generator._face_fits — 거울샷·뒷모습·하반신 컷은 제외). 그 제외 컷에도 인물은 렌더되지만
+# 그 인물은 **AI 가 지어낸 가상인물**이라 26.06 표기 의무 대상이다. 따라서:
+#   · 일부 컷만 라이선스 얼굴 → "일부 컷"으로 한정하고 나머지가 가상인물임을 함께 고지
+#   · 전 컷이 라이선스 얼굴 → 그때만 "가상인물 아님" 을 붙일 수 있다
+# 페이지 전체를 '가상인물 아님' 으로 뒤집으면 표기 의무 대상 컷에 반대 표기가 붙는다(허위표시).
+_AI_NOTICE_LICENSED_ALL = (
+    "본 상세페이지의 인물 이미지는 검증된 실제 모델 {model_name} 님의 얼굴을 "
+    "라이선스 계약에 따라 사용해 AI로 생성했습니다(가상인물 아님). "
+    "라이선스 진위는 /verify/{license_id} 에서 확인할 수 있습니다. "
+    "실제 상품의 색상과 핏은 촬영 환경 및 화면 설정에 따라 다르게 보일 수 있습니다."
+)
+_AI_NOTICE_LICENSED_PARTIAL = (
+    "본 상세페이지의 이미지는 AI로 생성했습니다. 얼굴이 드러나는 컷은 검증된 실제 모델 "
+    "{model_name} 님의 얼굴을 라이선스 계약에 따라 사용했으며(가상인물 아님), "
+    "얼굴이 드러나지 않는 컷의 인물은 AI가 생성했습니다. "
+    "라이선스 진위는 /verify/{license_id} 에서 확인할 수 있습니다. "
+    "실제 상품의 색상과 핏은 촬영 환경 및 화면 설정에 따라 다르게 보일 수 있습니다."
+)
+
+
+def build_auto_blocks(product: dict, start_index: int = 0, *,
+                      license_notice: dict | None = None) -> list[dict]:
     """mock buildAutoBlocks(product) 포팅 (PRD §10.14) — 사이즈/세탁/AI 생성 안내.
-    사이즈 안내는 product.measurements 를 조립 시점에 읽는다."""
+    사이즈 안내는 product.measurements 를 조립 시점에 읽는다.
+
+    license_notice={'modelName','licenseId','faceCuts','totalCuts'} 면 AI 생성 안내를
+    '검증된 실제 모델 라이선스' 문구로 바꾼다. **얼굴이 실제로 담긴 컷이 하나라도 성공했을 때만**
+    워커가 채운다 — 라이선스만 잠기고 주입이 실패했는데 이 문구를 쓰면 허위 고지가 된다.
+
+    faceCuts < totalCuts 면 '일부 컷' 문구(나머지는 가상인물임을 함께 고지). 전 컷이 라이선스
+    얼굴일 때만 '가상인물 아님' 을 페이지 전체 주장으로 붙인다 — 얼굴 레퍼런스는 얼굴이
+    식별되는 컷에만 붙으므로(거울샷·뒷모습·하반신 제외), 그 제외 컷의 인물은 AI 가 지어낸
+    가상인물이고 26.06 표기 의무 대상이다.
+
+    keyword-only + 기본 None = 기존 호출자(위치인자) 무변경.
+    """
     product = product or {}
     measurement_labels = {
         "totalLength": "총장", "shoulderWidth": "어깨너비", "chestWidth": "가슴단면",
@@ -126,12 +171,25 @@ def build_auto_blocks(product: dict, start_index: int = 0) -> list[dict]:
     }
 
     i += 1
+    notice_text, notice_h = _AI_NOTICE_DEFAULT, 60
+    if license_notice:
+        face_cuts = license_notice.get("faceCuts") or 0
+        total_cuts = license_notice.get("totalCuts") or 0
+        # 전 컷이 라이선스 얼굴일 때만 페이지 전체를 '가상인물 아님' 으로 주장할 수 있다.
+        # 하나라도 얼굴 미첨부 컷이 있으면 그 인물은 AI 가 지어낸 가상인물 → '일부 컷' 문구.
+        # total 을 모르면(0) 안전측으로 '일부' 를 쓴다 — 과대 주장이 허위표시 방향이다.
+        all_licensed = total_cuts > 0 and face_cuts >= total_cuts
+        template = _AI_NOTICE_LICENSED_ALL if all_licensed else _AI_NOTICE_LICENSED_PARTIAL
+        notice_text = template.format(
+            model_name=license_notice.get("modelName") or "익명",
+            license_id=license_notice.get("licenseId") or "",
+        )
+        notice_h = 80 if all_licensed else 100  # 기본 문구 경로의 높이(60)는 그대로
     ai_notice_block = {
         "id": _block_id(i), "name": "AI 생성 안내", "kind": "ai-notice", "auto": True,
         "bg": "#ffffff",
         "elements": [
-            _text_el(i, 0, 60, 48, 880, 60,
-                     "본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다. 실제 상품의 색상과 핏은 촬영 환경 및 화면 설정에 따라 다르게 보일 수 있습니다.",
+            _text_el(i, 0, 60, 48, 880, notice_h, notice_text,
                      {"size": 13, "color": "#4a4a45", "align": "center"}),
         ],
     }
@@ -145,6 +203,8 @@ def assemble(
     copy_results: list[dict],
     product: dict,
     copywriting: bool,
+    *,
+    license_notice: dict | None = None,
 ) -> list[dict]:
     """mock buildEditorBlocksFromStoryboard(storyboard, product, copywriting) 포팅.
 
@@ -153,6 +213,7 @@ def assemble(
     (생성 실패) 빈 슬롯(src=None) 이미지 엘리먼트로 렌더 — 크래시하지 않는다.
     copywriting=True 면 hook/selling 블록에 copy_results 텍스트를 배치한다
     (mock 하드코딩 문자열 대신 실제 카피 사용).
+    license_notice 는 AI 생성 안내 문구 분기용으로 그대로 통과시킨다(build_auto_blocks 참고).
     """
     cut_url_by_block = _cut_url_by_block(cut_results)
     copy_by_block = _copy_texts_by_block(copy_results)
@@ -199,4 +260,5 @@ def assemble(
             "bg": bg, "h": 660, "elements": els,
         })
 
-    return blocks + build_auto_blocks(product, start_index=len(blocks))
+    return blocks + build_auto_blocks(product, start_index=len(blocks),
+                                      license_notice=license_notice)

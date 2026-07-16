@@ -34,8 +34,65 @@ def _dims(data: bytes):
         return None, None
 
 
+async def _load_license_face(app, conn, project: dict) -> dict | None:
+    """프로젝트에 잠긴 얼굴 라이선스의 얼굴 이미지 → {image, license_id, model_name}. 없으면 None.
+
+    FM-31 "라이선스 얼굴이 실제 상세컷에 나오게" 의 입력 로더. **잠금이 없으면 쿼리조차 돌지
+    않는다** — 라이선스 없는 기존 셀러 경로는 이 함수가 즉시 None 이라 완전 무변경.
+
+    verify-before-use 재확인: 게이트(routes.generate_detail_page)는 **요청 시점**에만 검증하므로
+    그 뒤 해지·만료된 라이선스가 큐에 남을 수 있다. 얼굴은 한 번 생성되면 공개 URL 로 나가
+    회수가 불가능하므로 워커에서 status/만료를 한 번 더 본다(게이트와 같은 판정 함수 _is_expired).
+
+    실패(r2_face 미설정·해지·만료·dangling 키)는 잡을 죽이지 않고 **얼굴 없이 생성**으로 강등한다:
+    상세페이지는 부분 성공 계약이고, 얼굴 게이트(get_license_face)도 같은 상황을 404 로
+    우아하게 강등한다. 강등 시 AI 고지도 기본 문구로 돌아가므로 허위 고지가 생기지 않는다.
+    로그에 얼굴 바이트·R2 키·digest 를 남기지 않는다(PII 룰).
+    """
+    s = app.state.settings
+    lic_id = project.get("facemarket_license_id") or project.get("facemarketLicenseId")
+    if not s.facemarket_enabled or not lic_id:
+        return None
+    r2_face = getattr(app.state, "r2_face", None)
+    if r2_face is None:  # 얼굴=생체 PII → 공개 버킷 폴백 금지(개인화 워커 선례)
+        log.warning("facemarket face skipped (no face storage) license %s", lic_id)
+        return None
+    # 지연 import — facemarket 모듈과의 순환 참조 회피(정산 훅 선례와 동일).
+    from ..facemarket import _EXT_TO_MIME, _is_expired, _mask_name
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select l.face_image_key, l.status, l.license_valid_until, m.display_name
+               from fm_licenses l join fm_models m on m.id = l.model_id
+               where l.id = %s""",
+            (str(lic_id),),
+        )
+        lic = await cur.fetchone()
+    if not lic or not lic["face_image_key"]:
+        return None
+    if lic["status"] != "active" or _is_expired(lic):
+        log.warning("facemarket face skipped (license %s status=%s)", lic_id, lic["status"])
+        return None
+    key = lic["face_image_key"]
+    mime = _EXT_TO_MIME.get(key.rsplit(".", 1)[-1].lower())
+    if not mime:  # 키 확장자 역매핑 실패(fm_licenses 에 mime 컬럼 부재) — 얼굴 없이 생성
+        return None
+    try:
+        data = await asyncio.to_thread(r2_face.get_bytes, key)
+    except Exception:  # 개인화 파기로 얼굴 객체만 지워진 dangling 키 등
+        log.warning("facemarket face skipped (object unavailable) license %s", lic_id)
+        return None
+    return {
+        "image": InlineImage(mime, data),
+        "license_id": str(lic_id),
+        "model_name": _mask_name(lic["display_name"] or ""),
+    }
+
+
 async def _gen_cuts(app, job, prepared, product, analysis):
-    """준비된 블록별 (block, images, manifest)로 AG-06 컷 생성 → (cut_results, cut_assets).
+    """준비된 블록별 (block, images, manifest, has_face)로 AG-06 컷 생성
+    → (cut_results, cut_assets, face_cuts). face_cuts = 라이선스 얼굴이 실제로 들어가고
+    **성공까지 한** 컷 수 — AI 고지 문구 분기의 사실 근거(주입 0건이면 기본 문구).
     실패 컷은 건너뛴다(빈 슬롯은 assemble 이 처리) — 부분 성공. 스펙 위반(unknown cutType)도
     같은 경로(빈 슬롯) — 조용한 styling 대체 렌더는 하지 않는다(ADR-0004)."""
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
@@ -44,7 +101,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
 
     async def _one(item):
         """컷 1개 생성+저장. 실패(빈 슬롯)면 None. 각 블록 독립이라 동시 실행 가능."""
-        b, images, manifest = item
+        b, images, manifest, has_face = item
         async with sem:
             if not images:  # 옷 근거(상품/마네킹) 없음 — 무드만으로는 동일성 보장 불가, 생성하지 않는다
                 log.warning("AG-06 cut skipped (no garment-truth references) job %s block %s", job_id, b.get("id"))
@@ -52,8 +109,11 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                             {"blockId": b.get("id"), "status": "cut_failed"})
                 return None
             try:
+                generate_kwargs = {"analysis": analysis, "manifest": manifest}
+                if has_face:
+                    generate_kwargs["has_face"] = True
                 img, mime = await cut_generator.generate(
-                    s, gemini, b, product, images, analysis=analysis, manifest=manifest)
+                    s, gemini, b, product, images, **generate_kwargs)
             except Exception as e:  # GeminiError·ValueError 포함 — 실패 컷 = 빈 슬롯, 미차감(부분 성공)
                 log.warning("AG-06 cut failed for job %s block %s: %r", job_id, b.get("id"), e)
                 await _emit(app.state.pool, job_id, "step",
@@ -68,15 +128,17 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file"},
                 {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
                  "size": len(img), "width": w, "height": h},
+                has_face,
             )
 
     # gather 는 입력 순서를 보존 — 콘티 블록 순서대로 컷을 배열한다.
-    cut_results, cut_assets = [], []
+    cut_results, cut_assets, face_cuts = [], [], 0
     for r in await asyncio.gather(*[_one(item) for item in prepared]):
         if r:
             cut_results.append(r[0])
             cut_assets.append(r[1])
-    return cut_results, cut_assets
+            face_cuts += 1 if r[2] else 0
+    return cut_results, cut_assets, face_cuts
 
 
 async def _gen_copy(app, job, ai_blocks, product, analysis):
@@ -155,6 +217,10 @@ async def run_detail_page_job(app, job: dict) -> None:
             # Analysis.selectedModelId가 정본이며, 아래 prep에서 저장 블록을 바꾸지 않고 런타임 주입한다.
             selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
 
+            # FaceMarket 라이선스 얼굴(FM-31) — 프로젝트에 잠긴 라이선스가 있을 때만.
+            # 잠금 없음 = 기존 마네킹 경로 → None, 아래 첨부·고지 분기 전부 미진입.
+            face_ref = await _load_license_face(app, conn, project)
+
             mannequin_asset = None
             sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
             if sel:
@@ -222,7 +288,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                     _model_cache[model_id] = None
             return _model_cache[model_id] or []
 
-        prepared = []  # (runtime block, images[마네킹?, 모델2?, *상품, 매칭?, *무드, 예시?], manifest)
+        # (runtime block, images, manifest, has_face) — images 순서는 build_manifest 계약과 동일.
+        prepared = []
         _example_cache: dict[str, InlineImage | None] = {}
         for b in ai_blocks:
             cut_spec = dict(b)
@@ -239,21 +306,31 @@ async def run_detail_page_job(app, job: dict) -> None:
             prods = color_assets.get(b.get("colorId") or None, [])
             # 옷 근거(상품 사진 또는 마네킹컷)가 없으면 생성 불가 — 무드/매칭만으로 진행하면
             # 모델이 레퍼런스 속 옷을 지어내거나 베낀다(ADR-0004 정확성 최우선). 스킵 표식.
+            # 얼굴은 이 가드 **뒤에서만** 붙는다 — 여기 얼굴을 넣으면 images 가 비지 않아
+            # _gen_cuts 의 `if not images` 스킵이 무력화되고 옷 근거 0으로 생성이 돌아간다.
             if mannequin_asset is None and not prods:
-                prepared.append((cut_spec, [], ""))
+                prepared.append((cut_spec, [], "", False))
                 continue
             mids = b.get("matchIds") or []
             match_a = match_assets.get(str(mids[0])) if mids and b.get("cutType") in ("styling", "mirror") else None
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
+            # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·거울샷 기본(폰이 가림)·
+            # 뒷모습·머리가 프레임 밖인 샷은 제외(cut_generator.wants_face 가 단일 규칙).
+            has_face = face_ref is not None and cut_generator.wants_face(cut_spec, clothing_type)
             imgs = []
             if mannequin_asset is not None:
                 imgs.append(await _img(mannequin_asset))
-            model_images = await _model_images(normalized)
+            # 라이선스 얼굴과 가상 모델은 서로 다른 정체성 근거다. 같은 요청에 둘을 넣으면
+            # 생성 모델이 인물을 혼합하므로 라이선스 얼굴이 실제 쓰이는 컷에서는 가상 모델을 뺀다.
+            model_images = [] if has_face else await _model_images(normalized)
             imgs.extend(model_images)
             for a in prods:
                 imgs.append(await _img(a))
             if match_a is not None:
                 imgs.append(await _img(match_a))
+            if has_face:
+                # 비공개 r2_face 바이트 — _img()(공개 메인 버킷 하드코딩) 를 태우지 않는다.
+                imgs.append(face_ref["image"])
             for a in moods:
                 imgs.append(await _img(a))
             example_scope = None
@@ -277,16 +354,17 @@ async def run_detail_page_job(app, job: dict) -> None:
                 prods, has_mannequin=mannequin_asset is not None,
                 has_match=match_a is not None, mood_count=len(moods),
                 has_model_face=len(model_images) == 2, has_model_sheet=len(model_images) == 2,
+                has_face=has_face,
                 example_scope=example_scope,
                 example_is_product=normalized is not None and normalized["cutType"] == "product")
-            prepared.append((cut_spec, imgs, manifest))
+            prepared.append((cut_spec, imgs, manifest, has_face))
 
         copywriting = bool(project.get("copywriting"))
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
                                                "aiCuts": len(ai_blocks)})
 
         # 2) 컷 생성 (부분 성공)
-        cut_results, cut_assets = await _gen_cuts(app, job, prepared, product, analysis)
+        cut_results, cut_assets, face_cuts = await _gen_cuts(app, job, prepared, product, analysis)
         await _emit(pool, job_id, "progress", {"progress": 65, "phase": "cuts",
                                                "generated": len(cut_assets)})
 
@@ -294,8 +372,22 @@ async def run_detail_page_job(app, job: dict) -> None:
         copy_results = await _gen_copy(app, job, ai_blocks, product, analysis) if copywriting else []
         await _emit(pool, job_id, "progress", {"progress": 85, "phase": "copy"})
 
-        # 4) 조립(M-02) — 실패 컷은 빈 슬롯으로
-        editor_blocks = page_assembler.assemble(storyboard, cut_results, copy_results, product, copywriting)
+        # 4) 조립(M-02) — 실패 컷은 빈 슬롯으로.
+        # AI 고지 분기는 **얼굴이 실제로 들어간 컷이 성공했을 때만**(face_cuts > 0) —
+        # 라이선스만 잠기고 주입이 실패(전 컷 실패·얼굴 로드 강등)했는데 '실제 모델' 이라
+        # 쓰면 허위 고지가 된다. 라이선스 없는 경로는 face_ref=None → 항상 기본 문구.
+        # 범위 주장 근거: totalCuts = **성공한 컷 수**(실패 컷은 빈 슬롯이라 인물이 없다).
+        # face_cuts < totalCuts 면 얼굴 미첨부 컷(거울샷·뒷모습·하반신·상품컷)이 섞였다는 뜻이라
+        # 페이지 전체를 '가상인물 아님' 으로 주장할 수 없다 → assembler 가 '일부 컷' 문구로 내린다.
+        license_notice = None
+        if face_ref is not None and face_cuts > 0:
+            license_notice = {"modelName": face_ref["model_name"],
+                              "licenseId": face_ref["license_id"],
+                              "faceCuts": face_cuts,
+                              "totalCuts": len(cut_assets)}
+        assemble_kwargs = {"license_notice": license_notice} if license_notice is not None else {}
+        editor_blocks = page_assembler.assemble(
+            storyboard, cut_results, copy_results, product, copywriting, **assemble_kwargs)
 
         # 5) 성공 종결 (원자·lease 펜스). charge = 성공 컷 수 × **예약 시점 단가 스냅샷**
         # (job.metadata.perCutCost — routes.py가 예약과 같은 tx에서 기록). 실행 시점 설정을 쓰면

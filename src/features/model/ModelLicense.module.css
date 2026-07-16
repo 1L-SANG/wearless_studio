@@ -1,4 +1,9 @@
-/* 얼굴 라이선스 페이지 — 업로드 타일 + 조건 폼 + 라이선스 카드 그리드 */
+/* 얼굴 라이선스 (step02) — 4단계 여정 폼 + 얼굴 VC 카드(모바일 폭 기준).
+
+   VC 카드의 파랑에 대하여: tokens.css 는 accent 를 "large fill 금지"로 못박고 있다.
+   그 규칙은 앱 크롬(버튼·필·텍스트)을 위한 것이고, VC 카드는 크롬이 아니라 **신분증 객체**다
+   (결제카드·멤버십카드처럼 그 자체가 사물). PDF step02 도 파란 카드로 그린다. 전역 토큰을
+   덮지 않고 카드 스코프 안에서만 로컬 변수로 정의해 시스템을 오염시키지 않는다. */
 
 .sectionLabel {
   font-size: 13px;
@@ -6,39 +11,6 @@
   color: var(--fg-2);
   margin: 18px 0 8px;
 }
-
-/* 얼굴 업로드 타일 — 반응형. 빈 상태만 min-height, 이미지 있으면 자연 비율로 흐른다. */
-.upload {
-  width: 100%;
-  min-height: 220px;             /* 빈 상태 드롭 프롬프트 높이 */
-  border: 1.5px dashed var(--line);
-  border-radius: var(--r-6);
-  background: var(--bg-2);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  overflow: hidden;
-  transition: border-color .15s, background .15s;
-}
-.upload:hover { border-color: var(--fg-3); background: var(--bg-1); }
-.uploadHas { border-style: solid; padding: 0; min-height: 0; }
-/* 이미지 자연 비율 유지 + 컨테이너/뷰포트에 맞춰 축소만(확대 X). 잘림 없음, 반응형. */
-.uploadImg {
-  display: block;
-  max-width: 100%;
-  max-height: 70vh;
-  width: auto;
-  height: auto;
-}
-.uploadEmpty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  color: var(--fg-3);
-}
-.uploadEmpty span { font-size: 14px; font-weight: 600; color: var(--fg-2); }
-.uploadEmpty small { font-size: 12px; color: var(--fg-3); }
 
 .row2 {
   display: grid;
@@ -60,105 +32,310 @@
   font-size: 12.5px;
 }
 
-/* 목록 */
-.listHead {
+.termsIntro {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin: 30px 0 14px;
-}
-.listHead h2 { font-size: 17px; font-weight: 700; color: var(--fg-1); }
-.backLink {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 13px;
-  color: var(--fg-3);
-  text-decoration: none;
-}
-.backLink:hover { color: var(--fg-1); }
-
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  padding: 36px 0;
-  color: var(--fg-3);
-  font-size: 14px;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 16px;
-}
-
-.card {
-  border-radius: var(--r-6);
-  background: var(--bg-1);
-  box-shadow: var(--elev-card);
-  overflow: hidden;
-}
-.thumb {
-  position: relative;
-  aspect-ratio: 1 / 1;
+  padding: 11px 12px;
+  border-radius: var(--r-4);
   background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: 12.5px;
+  line-height: 1.5;
 }
-.thumb img { width: 100%; height: 100%; object-fit: contain; }
-.thumbEmpty { width: 100%; height: 100%; display: grid; place-items: center; color: var(--fg-3); }
-.status {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: var(--r-pill);
-  color: #fff;
-}
-.stActive { background: var(--accent-success); }
-.stOff { background: var(--fg-3); }
+.termsIntro svg { flex: none; margin-top: 1px; }
 
-.cardBody { padding: 12px 13px 14px; }
-.price { font-size: 17px; font-weight: 700; color: var(--fg-1); }
-.price span { font-size: 12px; font-weight: 500; color: var(--fg-3); margin-left: 2px; }
-
-.badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 11.5px;
-  font-weight: 600;
-  padding: 3px 8px;
-  border-radius: var(--r-pill);
-}
-.bAllow { background: var(--accent-success-ring); color: var(--accent-success); }
-.bDeny { background: var(--accent-error-ring); color: var(--accent-error); }
-
-.meta {
+/* ── 스테퍼 ─────────────────────────────────────────────── */
+.stepper {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 11px;
-  font-size: 12px;
+  margin-bottom: 16px;
+  padding: 0;
+  list-style: none;
+}
+.stepDot {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  position: relative;
+}
+/* 단계 사이 연결선 — 첫 항목 제외 */
+.stepDot::before {
+  content: '';
+  position: absolute;
+  top: 11px;
+  right: 50%;
+  left: -50%;
+  height: 1.5px;
+  background: var(--bg-2);
+}
+.stepDot:first-child::before { display: none; }
+.stepDot.stDone::before, .stepDot.stNow::before { background: var(--fg-1); }
+
+.stepNum {
+  position: relative;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bg-2);
   color: var(--fg-3);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.stepText { font-size: 11.5px; font-weight: 600; color: var(--fg-3); }
+.stDone .stepNum { background: var(--fg-1); color: #fff; }
+.stDone .stepText { color: var(--fg-2); }
+.stNow .stepNum { background: var(--fg-1); color: #fff; }
+.stNow .stepText { color: var(--fg-1); }
+
+.stepBack {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 14px auto 0;
+  padding: 6px 4px;
+  background: none;
+  border: none;
+  color: var(--fg-3);
+  font-size: 13px;
+  cursor: pointer;
+}
+.stepBack:hover { color: var(--fg-1); }
+
+.switchLink {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 0;
+  background: none;
+  border: none;
+  color: var(--fg-2);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.switchLink:hover { color: var(--fg-1); }
+
+/* ── VC 카드 목록 — 모바일 폭 기준. 데스크톱에선 가운데 정렬 카드. ── */
+.cards {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+.cards > * { width: 100%; max-width: 380px; }
+
+/* 방금 발급된 카드 — 잠깐 띄워 눈에 들어오게 */
+.cardNew { animation: pop .5s ease-out; }
+@keyframes pop {
+  from { transform: scale(.96); opacity: .4; }
+  to { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .cardNew { animation: none; } }
+
+/* ── 얼굴 VC 카드 ─────────────────────────────────────────── */
+.vc {
+  --vc-ink: #eaf2ff;          /* 카드 위 본문 */
+  --vc-dim: rgba(234, 242, 255, .62);
+  --vc-line: rgba(255, 255, 255, .16);
+
+  display: flex;
+  flex-direction: column;
+  padding: 16px 16px 12px;
+  border-radius: 18px;
+  background: linear-gradient(155deg, #1d4ed8 0%, #1e3a8a 58%, #172554 100%);
+  box-shadow: 0 10px 30px rgba(23, 37, 84, .28), 0 1px 2px rgba(23, 37, 84, .3);
+  color: var(--vc-ink);
+}
+/* 해지·만료 — 채도를 죽여 "살아있지 않은 카드"로 읽히게 */
+.vcOff {
+  background: linear-gradient(155deg, #64748b 0%, #475569 58%, #334155 100%);
+  box-shadow: 0 6px 18px rgba(51, 65, 85, .2);
 }
 
-/* 라이선스 해지 — 활성 카드에만 노출. 되돌릴 수 없는 조치라 에러 톤으로 표시. */
-.revoke {
-  margin-top: 12px;
-  width: 100%;
-  padding: 8px 0;
-  font-size: 12.5px;
+.vcTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+.vcBrand {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--vc-dim);
+}
+.vcStatus {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, .16);
+  color: #fff;
+}
+.vcStatusOff { background: rgba(0, 0, 0, .22); }
+
+/* 신원 행 — 얼굴 + 이름·나이 + VC ID */
+.vcId {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding-bottom: 14px;
+}
+.vcFace {
+  flex: none;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(255, 255, 255, .12);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, .28);
+}
+.vcFace img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vcFaceEmpty { width: 100%; height: 100%; display: grid; place-items: center; color: var(--vc-dim); }
+
+.vcWho { min-width: 0; }
+.vcName {
+  font-size: 19px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -.01em;
+}
+.vcAge { font-weight: 600; color: var(--vc-dim); font-size: 15px; }
+.vcVcid {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--vc-dim);
+  min-width: 0;
+}
+.vcVcid span { font-weight: 700; letter-spacing: .03em; flex: none; }
+.vcVcid code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--vc-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 조건 행 */
+.vcRows {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 13px 0;
+  border-top: 1px solid var(--vc-line);
+  margin: 0;
+}
+.vcRow {
+  display: grid;
+  grid-template-columns: 62px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+.vcRow dt {
+  font-size: 11.5px;
   font-weight: 600;
-  color: var(--accent-error);
-  background: var(--accent-error-ring);
+  color: var(--vc-dim);
+}
+.vcRow dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vc-ink);
+  min-width: 0;
+}
+.vcDim { color: var(--vc-dim); font-weight: 500; font-size: 11.5px; }
+.vcPrice { font-size: 16px; font-weight: 700; color: #fff; }
+.vcPrice em { font-style: normal; font-size: 11.5px; font-weight: 500; color: var(--vc-dim); margin-left: 1px; }
+
+.vcTags { display: flex; flex-wrap: wrap; gap: 4px; }
+.tagAllow, .tagDeny {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 7px;
+  border-radius: var(--r-pill);
+}
+.tagAllow { background: rgba(255, 255, 255, .18); color: #fff; }
+.tagDeny { background: rgba(0, 0, 0, .26); color: rgba(255, 255, 255, .82); }
+
+/* QR 면 */
+.vcQr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0 14px;
+}
+.vcQrImg, .vcQrSkel {
+  width: 190px;
+  height: 190px;
+  border-radius: 12px;
+  background: #fff;
+  padding: 8px;
+  display: block;
+}
+.vcQrSkel { opacity: .3; }
+.vcQrHint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--vc-dim);
+  text-align: center;
+  line-height: 1.5;
+  max-width: 250px;
+}
+.vcQrUrl {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--vc-dim);
+  word-break: break-all;
+  text-align: center;
+  padding: 0 4px;
+}
+
+/* 액션 — 최소 44px 터치 타깃(모바일 우선) */
+.vcActions {
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--vc-line);
+}
+.vcBtn {
+  flex: 1;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   border: none;
   border-radius: var(--r-4);
+  background: rgba(255, 255, 255, .14);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
   cursor: pointer;
-  transition: filter .14s;
+  transition: background .14s;
 }
-.revoke:hover { filter: brightness(0.97); }
-.revoke:disabled { opacity: .6; cursor: default; }
+.vcBtn:hover { background: rgba(255, 255, 255, .24); }
+.vcBtn:disabled { opacity: .55; cursor: default; }
+.vcBtnDanger { background: rgba(0, 0, 0, .28); }
+.vcBtnDanger:hover { background: rgba(0, 0, 0, .4); }
