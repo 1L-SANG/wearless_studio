@@ -36,11 +36,20 @@ const ANALYZE_STEPS = ['사진 확인', '종류·핏 판별', '소재 추정', '
 const STEP_DUR = [2400, 2800, 2600, 2200, 1000];   // 앞 4개 합 10000ms (실측 p50 기반)
 const FAST_DUR = 320;                               // 결과 선착 시 잔여 단계 순차 훑기(스냅 방지)
 
+const SLOW_NOTICE_MS = 20000; // 이 시간까지 결과가 없으면 안내 문구 전환(R2 지연 등 꼬리 케이스 방어)
+
 export function AnalysisProgress({ photoSrc, done, onFinished }) {
   const [doneCount, setDoneCount] = useState(0);   // 완료된 단계 수 (0..5)
+  const [slow, setSlow] = useState(false);         // 20초+ 지연 — 멈춤으로 오해받지 않게 문구만 교체
   const finishedRef = useRef(false);
   const onFinishedRef = useRef(onFinished);
   onFinishedRef.current = onFinished;
+
+  useEffect(() => {
+    if (done) { setSlow(false); return undefined; }
+    const t = setTimeout(() => setSlow(true), SLOW_NOTICE_MS);
+    return () => clearTimeout(t);
+  }, [done]);
 
   useEffect(() => {
     if (doneCount >= ANALYZE_STEPS.length) {       // 전 단계 완료 → 살짝 여운 후 전환
@@ -59,7 +68,9 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
     <div className="ap-stage surface">
       {photoSrc && <img className="ap-photo" src={photoSrc} alt="" />}
       <div className="ap-body">
-        <div className="ap-title">AI가 상품을 분석하고 있어요</div>
+        <div className="ap-title">
+          {slow ? '조금 더 꼼꼼히 확인하고 있어요…' : 'AI가 상품을 분석하고 있어요'}
+        </div>
         {ANALYZE_STEPS.map((s, i) => (
           <div key={s} className={`ap-step${i < doneCount ? ' done' : i === doneCount ? ' run' : ''}`}>
             <span className="ap-dot" />{s}
