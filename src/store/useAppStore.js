@@ -68,9 +68,10 @@ const initialMannequinJob = () => ({
 // createProject 를 중복 호출(보관함 행 중복 생성)하지 않게 한다(코드리뷰 반영).
 let ensureProjectInflight = null;
 
-// http 모드에서 loadPersistedFlow() 가 복원한 projectId 를 세션당 1회만 서버 유효성 확인하기 위한 플래그.
-// (삭제/무효 프로젝트 id 가 복원돼 화면이 무한 스켈레톤에 빠지는 것을 막는다.)
+// http 모드에서 loadPersistedFlow() 가 복원한 projectId 를 세션당 1회만 서버 유효성 확인한다.
+// StrictMode·여러 화면 가드의 동시 호출은 같은 Promise 에 합류시켜 검증 중인 id를 정상으로 오인하지 않는다.
 let flowValidated = false;
+let flowValidationInflight = null;
 
 export const useAppStore = create((set, get) => ({
   /* ---- account / catalogs (서버 상태의 전역 캐시 — loaded once) ---- */
@@ -162,17 +163,29 @@ export const useAppStore = create((set, get) => ({
   async loadProject() {
     const pid = get().projectId;
     if (pid) {
-      // http: loadPersistedFlow() 가 복원한 projectId 를 세션당 1회 서버 유효성 확인한다 — 삭제/무효
-      // 프로젝트면 flow 를 초기화하고 null 반환해 화면이 입력으로 리다이렉트하게 한다(무한 스켈레톤 방지).
+      // http: loadPersistedFlow() 가 복원한 projectId 를 세션당 1회 서버 유효성 확인한다. 확정 404만
+      // 초기화하고, 인증·네트워크·서버 일시 장애에는 진행 정보를 보존한다.
       if (mode !== 'http' || flowValidated) return pid;
-      flowValidated = true;
-      try {
-        const p = await api.getProject(pid);
-        if (p && p.id) return pid;
-      } catch { /* 404 등 무효 — 아래에서 flow 초기화 */ }
-      set({ ...initialFlow });
-      persistFlow(get());
-      return null;
+      if (flowValidationInflight?.projectId === pid) return flowValidationInflight.promise;
+      let validationPromise;
+      validationPromise = (async () => {
+        try {
+          const p = await api.getProject(pid);
+          if (get().projectId !== pid) return get().projectId;
+          if (p && p.id) { flowValidated = true; return pid; }
+        } catch (error) {
+          if (get().projectId !== pid) return get().projectId;
+          if (error?.status !== 404) return pid;
+        }
+        flowValidated = true;
+        set({ ...initialFlow });
+        persistFlow(get());
+        return null;
+      })().finally(() => {
+        if (flowValidationInflight?.promise === validationPromise) flowValidationInflight = null;
+      });
+      flowValidationInflight = { projectId: pid, promise: validationPromise };
+      return validationPromise;
     }
     flowValidated = true;   // 복원할 id 없음 — 이후 재검증 불필요(새 id 는 생성 시점에 신뢰)
     if (mode !== 'mock') return null;

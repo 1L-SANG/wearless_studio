@@ -10,8 +10,9 @@ import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { saveProductDraft, loadDraft, hasPendingDraft } from '@/lib/draftStore.js';
-import { Icon, Button, IconButton, Skeleton, useToast } from '@/components/ui.jsx';
+import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
+import { syncDraftToBackend } from '@/lib/draftSync.js';
+import { Icon, Button, IconButton, ErrorState, Skeleton, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 
@@ -162,30 +163,44 @@ export function ProductInput() {
   const navigate = useNavigate();
   const [product, setProduct] = useState(null);
   const [catalogs, setCatalogs] = useState(null);
+  const [loadError, setLoadError] = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [phase, setPhase] = useState('input');   // input | analyzing | done
   // 분석 결과 도착 신호 — 화면 전환은 대기 연출(AnalysisProgress)이 잔여 단계를 완주한 뒤
   // onFinished 로 수행한다 (애니메이션 끝 ≈ 전환, 2026-07-13 A안 결정).
   const [analysisReady, setAnalysisReady] = useState(false);
   const [analysis, setAnalysis] = useState(null);
+  const [analysisProjectId, setAnalysisProjectId] = useState(null);
   const [expanded, setExpanded] = useState(false);
-  const projectId = useAppStore((s) => s.projectId);
-  const { session, openLogin } = useAuth();
+  const { session, loading: authLoading, openLogin } = useAuth();
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
 
-  // 분석 CTA — 마네킹부터는 로그인 필요. 로그인 상태면 바로 마네킹. 미로그인이면 풀페이지
-  // OAuth 리다이렉트로 입력(사진 objectURL 포함)이 소실되므로, 리다이렉트 직전에 입력+분석을
-  // IndexedDB 에 보관(페이지 살아있을 때만 blob 추출 가능)한 뒤 로그인 모달을 띄운다 → 복귀 후
-  // 입력 화면에 돌아오면 ProductInput 이 복원한다. (사진의 백엔드 동기화는 보류 — App 주석 참조.)
+  // 분석 CTA — 마네킹부터는 로그인 필요. 서버 분석을 마친 로그인 사용자는 바로 이동한다.
+  // 로컬 분석 결과는 먼저 IndexedDB 에 보관한다. 미로그인이면 로그인 모달을 띄우고, 이미
+  // 로그인한 상태(로그인 복귀 후 동기화 실패·다른 탭 로그인 포함)면 여기서 백엔드 동기화를
+  // 재시도한 뒤 이동한다. analysisProjectId 를 로그인 여부의 대용값으로 쓰지 않는다.
   const redirectingRef = useRef(false);
   const goToMannequin = async () => {
-    if (session) { navigate('/create/mannequin'); return; }
+    if (session && analysisProjectId) { navigate('/create/mannequin'); return; }
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
     redirectingRef.current = true;
     try {
       const { failed } = await saveProductDraft(product, analysis);
       if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri' });
+      if (session) {
+        const draft = await loadDraft();
+        if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
+        const { projectId } = await syncDraftToBackend(draft);
+        useAppStore.getState().adoptProject(projectId);
+        setAnalysisProjectId(projectId);
+        await clearDraft().catch(() => {});
+        navigate('/create/mannequin');
+        return;
+      }
       openLogin('/create/mannequin');
+    } catch (error) {
+      toast.push(error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     } finally {
       redirectingRef.current = false;
     }
@@ -194,12 +209,10 @@ export function ProductInput() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      // projectId(보관함 행) 생성은 입력 진입이 아니라 AI 분석 시작(submit→ensureProject)이
-      // 담당한다 — '상세페이지 제작' 진입만으로 빈 프로젝트가 생기던 버그 방지. 입력 단계에선
-      // 서버 project 를 만들지도 채택하지도 않는다(신규 플로우면 projectId=null 유지). getProduct
-      // 는 시드 템플릿 읽기라 pid 가 없어도 무방하다(http 모드에서도 mock 폴백).
-      const pid = useAppStore.getState().projectId;
-      const [p, c] = await Promise.all([api.getProduct(pid), api.getCatalogs()]);
+      setLoadError('');
+      // 입력은 새 상품 폼이므로 복원된 이전 projectId나 서버 준비 상태에 의존하지 않는다.
+      // null 계약은 http 모드에서도 클라이언트 시드 템플릿을 반환한다.
+      const [p, c] = await Promise.all([api.getProduct(null), api.getCatalogs()]);
       if (!alive) return;
       setCatalogs(c);
 
@@ -233,10 +246,20 @@ export function ProductInput() {
 
       const fresh = { ...p, name: '', colors: [{ ...p.colors[0], swatchId: undefined, images: [] }] };
       setProduct(fresh);
-    })();
+    })().catch((error) => {
+      if (alive) setLoadError(error?.message || '입력 화면을 불러오지 못했어요. 다시 시도해 주세요.');
+    });
     return () => { alive = false; };
-  }, []);
+  }, [loadAttempt]);
 
+  if (loadError) return (
+    <div className="wizard">
+      {doneBlocked && <DoneGuardModal />}
+      <div className="surface">
+        <ErrorState desc={loadError} onRetry={() => setLoadAttempt((n) => n + 1)} />
+      </div>
+    </div>
+  );
   if (!product || !catalogs) return <div className="wizard">{doneBlocked && <DoneGuardModal />}<div className="surface"><Skeleton h={420} /></div></div>;
 
   const set = (patch) => setProduct((p) => ({ ...p, ...patch }));
@@ -250,11 +273,12 @@ export function ProductInput() {
 
   const hasFront = product.colors.some((c) => c.images.some((im) => im.slot === 'Front'));
   const hasName = !!(product.name && product.name.trim());
-  const canDone = hasFront && phase === 'input';
+  const canDone = hasFront && phase === 'input' && !authLoading;
   const locked = phase !== 'input';
 
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
+    if (authLoading) return;
     setAnalysisReady(false);
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -262,7 +286,9 @@ export function ProductInput() {
       // 보관함 프로젝트(서버 행)는 바로 이 시점에 생성한다 — '상세페이지 제작' 진입이 아니라
       // AI 분석을 시작할 때. createProject 는 토큰이 필요하므로 로그인 사용자만 생성하고,
       // 비로그인 공개 분석은 서버 project 없이 진행(프로젝트 생성은 로그인 후 단계가 담당).
-      const pid = session ? await useAppStore.getState().ensureProject() : projectId;
+      const pid = session ? await useAppStore.getState().ensureProject() : null;
+      // 인증 상태가 이후 바뀌어도 이 분석·편집은 시작할 때 선택한 backend/project에 고정한다.
+      setAnalysisProjectId(pid);
       // 사진을 서버에 먼저 올리고(images[].id=asset id) 상품을 저장한다 — http 분석 워커는
       // 저장된 products.colors 를 읽으므로, 분석보다 반드시 앞서야 한다(순서 뒤집히면 no_product_images).
       // mock 모드에선 uploadProductPhotos·saveProduct 가 인메모리 no-op 이라 동작 동일.
@@ -367,7 +393,8 @@ export function ProductInput() {
           <WizardCTA>
             <Button variant="primary" size="lg" icon="check" disabled={!canDone} onClick={submit}>AI 분석하기</Button>
           </WizardCTA>
-          {!canDone && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>앞면 이미지를 1장 이상 올리면 입력을 완료할 수 있어요.</p>}
+          {!hasFront && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>앞면 이미지를 1장 이상 올리면 입력을 완료할 수 있어요.</p>}
+          {hasFront && authLoading && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>로그인 상태를 확인하고 있어요.</p>}
         </>
       )}
 
@@ -389,7 +416,7 @@ export function ProductInput() {
               // 서버 머지 결과로 동기화해 묵은 후보가 로컬에 남지 않게 한다.
               const syncMatch = isMatchRecommendationPatch(patch) || 'matchClothing' in patch;
               setAnalysis((a) => ({ ...a, ...patch }));
-              api.saveAnalysis(projectId, patch).then((saved) => {
+              api.saveAnalysis(analysisProjectId, patch).then((saved) => {
                 if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));
               });
             }}

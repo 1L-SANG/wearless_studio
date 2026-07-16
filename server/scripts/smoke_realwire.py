@@ -15,6 +15,7 @@ import secrets
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -191,16 +192,64 @@ def fetch_image_ok(url: str, follow: bool = True) -> tuple[bool, str]:
         return False, f"not-image head={head!r}"
 
 
+def cors_preflight(url: str, origin: str, method: str, request_headers: str) -> tuple[bool, str]:
+    """브라우저가 보낼 CORS preflight를 읽기 전용으로 검증한다."""
+    with httpx.Client(timeout=20) as c:
+        r = c.options(url, headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": method,
+            "Access-Control-Request-Headers": request_headers,
+        })
+    allowed_origin = r.headers.get("access-control-allow-origin")
+    allowed_methods = {
+        part.strip().upper()
+        for part in r.headers.get("access-control-allow-methods", "").split(",")
+    }
+    allowed_headers = {
+        part.strip().lower()
+        for part in r.headers.get("access-control-allow-headers", "").split(",")
+    }
+    requested_headers = {
+        part.strip().lower()
+        for part in request_headers.split(",")
+    }
+    ok = (
+        r.status_code in (200, 204)
+        and allowed_origin == origin
+        and method.upper() in allowed_methods
+        and requested_headers <= allowed_headers
+    )
+    return ok, (
+        f"status={r.status_code} allow-origin={allowed_origin!r} "
+        f"methods={sorted(allowed_methods)} headers={sorted(allowed_headers)}"
+    )
+
+
 # ---------- 메인 ----------
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--api", default="http://127.0.0.1:8000")
+    ap.add_argument("--browser-origin", default="http://localhost:5173",
+                    help="브라우저가 앱을 연 origin (API·R2 CORS 실측용)")
     ap.add_argument("--paid", action="store_true", help="P1 유료 구간(생성·재생성) 실행")
     ap.add_argument("--front", default=str(DEFAULT_FRONT))
     ap.add_argument("--reuse-project", default=None,
                     help="기존 프로젝트 재사용 — P0 업로드·분석과 S5 최초생성 건너뛰고 재생성부터(2크레딧 절약)")
     args = ap.parse_args()
+
+    api_parts = urlsplit(args.api)
+    api_origin = f"{api_parts.scheme}://{api_parts.netloc}"
+    if api_origin == args.browser_origin:
+        gate("S0 API browser CORS", True, "same-origin")
+    else:
+        ok, note = cors_preflight(
+            f"{args.api.rstrip('/')}/v1/projects",
+            args.browser_origin,
+            "POST",
+            "authorization,content-type",
+        )
+        gate("S0 API browser CORS", ok, note)
 
     print("== S0·S1 스모크 세션 ==")
     token = ensure_smoke_session()
@@ -239,6 +288,8 @@ def main():
     blob = front.read_bytes()
     up = api.call("POST", "/v1/assets/upload-url",
                   json={"filename": front.name, "mime": "image/jpeg", "size": len(blob), "projectId": pid})
+    ok, note = cors_preflight(up["uploadUrl"], args.browser_origin, "PUT", "content-type")
+    gate("S4c R2 browser CORS", ok, note)
     with httpx.Client(timeout=60) as c:
         putr = c.put(up["uploadUrl"], content=blob, headers={"Content-Type": "image/jpeg"})
     gate("S4c R2 presigned PUT", putr.status_code in (200, 204), f"status={putr.status_code}")

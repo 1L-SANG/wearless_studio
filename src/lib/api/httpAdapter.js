@@ -5,9 +5,7 @@
    시그니처·반환 형태는 mock/api.js(계약 §6)와 동일해야 한다.
    ============================================================= */
 import { supabase } from '@/lib/supabase.js';
-import { DB } from '@/mock/db.js';
 import { LIMITS } from '@/lib/limits.js';
-import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { defaultAnalysisShape, defaultStoryboard } from '@/lib/api/shapes.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -15,6 +13,24 @@ const LONG_IMAGE_JOB_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_JOB_TIMEOUT_MESSAGE = '작업이 지연되고 있어요. 잠시 후 다시 시도해 주세요.';
 const MANNEQUIN_JOB_TIMEOUT_MESSAGE = '마네킹컷 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.';
 const MANNEQUIN_ADJUST_JOB_TIMEOUT_MESSAGE = '마네킹컷 조정이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.';
+const BROWSER_OFFLINE_MESSAGE = '인터넷 연결이 끊겼어요. 연결을 확인해 주세요. 개발자 도구 Network 설정이 Offline이면 No throttling으로 바꿔 주세요.';
+
+const isBrowserOffline = () => globalThis.navigator?.onLine === false;
+
+function networkError(code, message, context, cause) {
+  const offline = isBrowserOffline();
+  const finalCode = offline ? 'browser_offline' : code;
+  const finalMessage = offline ? BROWSER_OFFLINE_MESSAGE : message;
+  // presigned URL·Bearer token은 로그에 남기지 않고, 단계·path·origin만 남겨
+  // 브라우저가 모든 CORS/연결 실패를 같은 `Failed to fetch`로 숨겨도 구분한다.
+  console.error(`[network:${finalCode}]`, { ...context, online: !offline }, cause);
+  const error = new Error(finalMessage);
+  error.code = finalCode;
+  error.cause = cause;
+  return error;
+}
+
+const browserOrigin = () => globalThis.location?.origin || 'unknown';
 
 // 서버는 에셋 이미지를 안정 앱 URL `/v1/assets/{id}/file`(상대경로)로 반환한다. 프론트는 다른
 // 도메인(Vercel)에서 서빙되므로 <img src> 가 그대로 쓰면 프론트 도메인에 붙어 404 가 난다.
@@ -36,22 +52,52 @@ function absolutizeAssetUrls(v) {
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
 export async function http(path, { method = 'GET', body } = {}) {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  let data;
+  try {
+    ({ data } = await supabase.auth.getSession());
+  } catch (cause) {
+    throw networkError(
+      'auth_session_network',
+      '로그인 상태를 확인하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+      { stage: 'auth_session', path, origin: browserOrigin() },
+      cause,
+    );
+  }
+  const token = data?.session?.access_token;
   if (!token) {
     // http 모드에 mock 폴백은 없다 — 무세션이면 전 호출이 401 폭탄이 되므로 요청 전에 명확히 실패시킨다.
     console.error(`API no-session ${path}`);
     throw new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  // Chrome DevTools의 Offline 에뮬레이션을 포함해 브라우저가 오프라인이면 요청 자체를 보내지
+  // 않는다. 응답이 아예 없을 때 뒤따르는 가짜 CORS 메시지를 서버 장애로 오진하지 않게 한다.
+  if (isBrowserOffline()) {
+    throw networkError(
+      'api_network',
+      '서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+      { stage: 'api', method, path, origin: browserOrigin() },
+    );
+  }
+
+  let res;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (cause) {
+    throw networkError(
+      'api_network',
+      '서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+      { stage: 'api', method, path, origin: browserOrigin() },
+      cause,
+    );
+  }
 
   if (!res.ok) {
     // 계약 §6: 사용자에게 그대로 보여줄 한국어 message. envelope 없으면 한국어 기본값.
@@ -63,8 +109,8 @@ export async function http(path, { method = 'GET', body } = {}) {
       if (payload?.error?.code) code = payload.error.code;
     } catch { /* 비 JSON 응답 — 기본 메시지 유지 */ }
     console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
-    // status·code 를 에러에 실어 호출부가 분기할 수 있게 한다(예: 409 라이선스 차단 → 블로킹 패널).
-    // message 는 그대로라 기존 catch(e.message) 는 영향 없음(하위호환).
+    // status·code 를 에러에 실어 호출부가 분기할 수 있게 한다(예: 409 라이선스 차단 → 블로킹 패널,
+    // 404 무효 상태 vs 일시 장애 구분). message 는 그대로라 기존 catch(e.message) 는 영향 없음(하위호환).
     const err = new Error(message);
     err.status = res.status;
     if (code) err.code = code;
@@ -102,8 +148,30 @@ export async function uploadPhoto(projectId, { filename, mime, blob }) {
   const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
     method: 'POST', body: { filename, mime, size: blob.size, projectId },
   });
-  const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mime }, body: blob });
-  if (!put.ok) throw new Error('사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+  if (isBrowserOffline()) {
+    throw networkError(
+      'photo_upload_network',
+      '사진 업로드 서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+      { stage: 'r2_put', origin: browserOrigin() },
+    );
+  }
+  let put;
+  try {
+    put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mime }, body: blob });
+  } catch (cause) {
+    throw networkError(
+      'photo_upload_network',
+      '사진 업로드 서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+      { stage: 'r2_put', origin: browserOrigin() },
+      cause,
+    );
+  }
+  if (!put.ok) {
+    const error = new Error('사진 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.');
+    error.code = 'photo_upload_failed';
+    error.status = put.status;
+    throw error;
+  }
   const asset = await http(`/v1/assets/${assetId}/complete`, {
     method: 'POST', body: { projectId, mime, filename },
   });
@@ -181,9 +249,8 @@ export const httpAdapter = {
   // 상품 사진(blob)을 R2에 업로드하고 images[].id 를 **서버 asset id 로 치환**한다.
   // 서버(mannequin.base_color_images·분석 워커)는 colors[].images[].id 를 asset id 로 링크하므로,
   // 로컬 uid('img') 를 그대로 두면 서버가 사진을 못 찾는다(no_product_images). src 도 R2 URL 로 갱신.
-  // 이미 업로드된(blob: 아님) 이미지는 건너뛴다. projectId 없으면(비로그인 공개) 업로드 불가 → 그대로 반환.
+  // 이미 업로드된(blob: 아님) 이미지는 건너뛴다. projectId 없는 공개 흐름은 api/index가 mock에 위임한다.
   async uploadProductPhotos(projectId, product) {
-    if (!projectId) return product;
     const colors = await Promise.all((product.colors ?? []).map(async (c) => {
       const images = await Promise.all((c.images ?? []).map(async (im) => {
         if (!im.src || !im.src.startsWith('blob:')) return im;
@@ -292,16 +359,13 @@ export const httpAdapter = {
   },
   // 상품 조회 (계약 §3.1) — {id,projectId,name,clothingType,colors[],measurements[],
   // measurementsUnknown,uploadComplete}. colors 는 프론트-소유 JSONB(saveProduct 가 저장한 isBase·images shape).
-  // projectId 없으면(비로그인, 또는 입력단계 — 서버 project 생성은 submit 로 이연) 서버 product 가 없으므로
-  // 클라 seed 템플릿(DB.product)을 반환한다. ProductInput 이 colors[0](isBase 포함)을 새 색상 템플릿으로 쓰므로
-  // 빈 colors 를 주면 앵글 슬롯(앞/뒤/디테일/착용)이 사라진다 — mock 과 동일 계약 유지.
+  // projectId 없는 입력단계는 api/index가 mock seed 템플릿에 위임한다.
   async getProduct(projectId) {
-    if (!projectId) return JSON.parse(JSON.stringify(DB.product));
     return http(`/v1/projects/${projectId}/product`);
   },
   // 분석 저장 (계약 §3.2) — 서버 PATCH 는 REPLACE 라 캐시에 delta 를 머지한 full payload 를 보낸다
   // (delta 만 보내면 다른 analysis 필드가 유실). 매칭 추천 갱신·선택 토글을 반영해 반환 matchClothing 을
-  // 콜러(AnalysisForm)가 읽는다. projectId 없으면(비로그인 공개 분석) 서버 쓰기 없이 추천만 계산.
+  // 콜러(AnalysisForm)가 읽는다. projectId 없는 공개 분석은 api/index가 mock에 위임한다.
   async saveAnalysis(projectId, patch) {
     const { matchClothing: matchPatch, ...rest } = patch;
     let cached = cachedAnalysisFor(projectId);
@@ -315,12 +379,7 @@ export const httpAdapter = {
     const base = cached ? { ...cached } : {};
     Object.assign(base, rest);
     if (isMatchRefresh(patch)) {
-      base.matchClothing = projectId
-        ? await recommendMatchHttp(projectId, base, base.matchClothing)
-        : recommendLegacyMatchClothing({
-          clothingType: base.clothingType, targetGenders: base.targetGenders,
-          styleTags: base.styleTags, current: base.matchClothing,
-        });
+      base.matchClothing = await recommendMatchHttp(projectId, base, base.matchClothing);
     }
     if (Array.isArray(matchPatch)) {
       base.matchClothing = mergeMatchSelection(base.matchClothing || [], matchPatch);
@@ -335,7 +394,6 @@ export const httpAdapter = {
   },
   // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.
   async getAnalysis(projectId) {
-    if (!projectId) return {};
     return http(`/v1/projects/${projectId}/analysis`);
   },
   // 세탁 관리법 AI 초안 (동기·무과금) — 서버가 상품 종류·소재로 짧은 문구 생성. bare string 반환(mock 동일).

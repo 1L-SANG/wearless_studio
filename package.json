@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "VITE_API_MODE=mock vite",
+    "dev:mock": "VITE_API_MODE=mock vite",
     "dev:http": "vite --mode http",
     "build": "vite build",
     "preview": "vite preview"

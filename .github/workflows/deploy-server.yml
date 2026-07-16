@@ -60,3 +60,72 @@ jobs:
                     --app "$COPILOT_APP" \
                     --name "$COPILOT_SVC" \
                     --env "$COPILOT_ENV"
+
+            - name: 브라우저 API·R2 CORS 회귀 게이트
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  check_origin() {
+                    local origin="$1"
+                    local api_headers
+                    local r2_headers
+                    local allowed_origin
+                    local allowed_methods
+                    local allowed_headers
+
+                    header_value() {
+                      local name="$1"
+                      awk -v wanted="$name" '
+                        BEGIN { IGNORECASE = 1 }
+                        {
+                          sub(/\r$/, "")
+                          separator = index($0, ":")
+                          if (separator == 0) next
+                          key = substr($0, 1, separator - 1)
+                          if (tolower(key) != tolower(wanted)) next
+                          value = substr($0, separator + 1)
+                          sub(/^[[:space:]]+/, "", value)
+                          print value
+                          exit
+                        }
+                      '
+                    }
+
+                    has_token() {
+                      local values="$1"
+                      local wanted="$2"
+                      tr ',' '\n' <<<"$values" \
+                        | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' \
+                        | grep -Fxi -- "$wanted" >/dev/null
+                    }
+
+                    api_headers="$(curl --fail-with-body --silent --show-error \
+                      -X OPTIONS 'https://api.wearless.kr/v1/projects' \
+                      -H "Origin: $origin" \
+                      -H 'Access-Control-Request-Method: POST' \
+                      -H 'Access-Control-Request-Headers: authorization,content-type' \
+                      -D - -o /dev/null)"
+                    allowed_origin="$(header_value 'access-control-allow-origin' <<<"$api_headers")"
+                    allowed_methods="$(header_value 'access-control-allow-methods' <<<"$api_headers")"
+                    allowed_headers="$(header_value 'access-control-allow-headers' <<<"$api_headers")"
+                    [[ "$allowed_origin" == "$origin" ]]
+                    has_token "$allowed_methods" 'POST'
+                    has_token "$allowed_headers" 'authorization'
+                    has_token "$allowed_headers" 'content-type'
+
+                    r2_headers="$(curl --fail-with-body --silent --show-error \
+                      -X OPTIONS 'https://2b7c948b56f129faaa10e5076b9e9a66.r2.cloudflarestorage.com/wearless/diagnostics/cors-readonly.jpg' \
+                      -H "Origin: $origin" \
+                      -H 'Access-Control-Request-Method: PUT' \
+                      -H 'Access-Control-Request-Headers: content-type' \
+                      -D - -o /dev/null)"
+                    allowed_origin="$(header_value 'access-control-allow-origin' <<<"$r2_headers")"
+                    allowed_methods="$(header_value 'access-control-allow-methods' <<<"$r2_headers")"
+                    allowed_headers="$(header_value 'access-control-allow-headers' <<<"$r2_headers")"
+                    [[ "$allowed_origin" == "$origin" ]]
+                    has_token "$allowed_methods" 'PUT'
+                    has_token "$allowed_headers" 'content-type'
+                  }
+
+                  check_origin 'https://ai.wearless.kr'
+                  check_origin 'http://localhost:5173'
