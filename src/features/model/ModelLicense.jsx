@@ -373,18 +373,20 @@ function TermsStep({ profileId, onIssued, push }) {
     const [submitting, setSubmitting] = useState(false);
 
     const onSubmit = async () => {
-        // profileId 는 발급의 전제다 — 없으면 서버가 400 으로 떨구므로 그 전에 원인을 알려준다.
-        if (!profileId) {
-            push(
-                "개인화 프로필을 찾지 못했어요. 앞 단계를 먼저 완료해 주세요.",
-                { icon: "alertCircle" },
-            );
-            return;
-        }
         setSubmitting(true);
         try {
+            // 오래 열린 탭이나 백엔드 재시작 직후에는 페이지 진입 때의 profileId=null 이
+            // 남을 수 있다. 발급 시점에 한 번 더 조회해 완료된 프로필을 놓치지 않는다.
+            const resolvedProfileId = profileId || (await getProfile()).id;
+            if (!resolvedProfileId) {
+                push(
+                    "개인화 프로필을 찾지 못했어요. 앞 단계를 먼저 완료해 주세요.",
+                    { icon: "alertCircle" },
+                );
+                return;
+            }
             const lic = await createLicense({
-                profileId,
+                profileId: resolvedProfileId,
                 allowedUse: allowed,
                 forbiddenUse: forbidden,
                 unitPrice: Number(unitPrice) || 0,
