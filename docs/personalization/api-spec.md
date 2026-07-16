@@ -339,7 +339,7 @@ stateDiagram-v2
 
 #### GET `/v1/personalization/profile` — 프로필 종합 조회
 
-- 200: `{ status, body: {…|null}, photos: [슬롯 요약], consents: [요약], createdAt, updatedAt }` — §3.2/§3.1 shape 재사용.
+- 200: `{ id, status, body: {…|null}, photos: [슬롯 요약], consents: [요약], createdAt, updatedAt }` — `id`는 라이선스 발급처럼 인증된 사용자 본인의 프로필을 참조하는 후속 요청에 사용하며, 나머지는 §3.2/§3.1 shape 재사용.
 - 에러: 401 · 404(없음/`purged`).
 
 ### 3.4 상태 조회 (생성 가능 여부 체크리스트)

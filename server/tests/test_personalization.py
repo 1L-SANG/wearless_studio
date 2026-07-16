@@ -418,7 +418,7 @@ def test_get_consents_initial_all_none(client, headers):
         assert item["required"] == (item["type"] in personalization.REQUIRED_CONSENTS)
 
 
-def test_submit_required_consents_grants_and_creates_draft_profile(client, headers):
+def test_submit_required_consents_grants_and_creates_draft_profile(client, headers, uid):
     c, _r2 = client
     r = _grant_required_consents(c, headers)
     by_type = {item["type"]: item for item in r.json()["consents"]}
@@ -430,6 +430,7 @@ def test_submit_required_consents_grants_and_creates_draft_profile(client, heade
     # 프로필 draft 가 생성됐는지 GET /profile 로 확인(없으면 404였을 것)
     prof = c.get("/v1/personalization/profile", headers=headers)
     assert prof.status_code == 200, prof.text
+    assert prof.json()["id"] == _fetch_profile_id(uid)
     assert prof.json()["status"] == "draft"
 
 

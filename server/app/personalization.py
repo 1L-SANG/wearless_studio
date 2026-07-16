@@ -1011,6 +1011,7 @@ async def get_profile(request: Request, user_id: str = Depends(require_user)):
         cmap = await _consent_status_map(conn, user_id)
     photos, _complete = _photos_view(slots)
     return {
+        "id": profile["id"],
         "status": profile["status"],
         "body": _body_view(profile),
         "photos": photos,
