@@ -126,7 +126,7 @@ export function ModelHub() {
           </p>
           <Button
             variant="primary" iconRight="arrowRight"
-            onClick={() => navigate(identityRequired ? '/model/register' : '/model/license')}
+            onClick={() => navigate(identityRequired ? '/model/register' : '/model/license?step=consent')}
           >
             {identityRequired ? '본인확인 시작하기' : '동의하고 시작하기'}
           </Button>
@@ -137,20 +137,15 @@ export function ModelHub() {
         <>
           <div className="surface">
             <div className={s.sectionLabel}>진행 체크리스트</div>
-            {/* 동의·얼굴·신체는 /model/license 의 한 여정으로 이어진다(step02) — 링크를 전부
-                거기로 보낸다. ModelLicense 가 blockers 를 읽어 **덜 끝난 단계에서 이어받으므로**
-                어느 줄을 눌러도 사용자는 자기 자리로 간다. 단독 라우트(/model/consent 등)는
-                살아있지만(직접 URL·기존 링크 호환) 허브는 여정을 정면에 세운다. */}
-            <StepLink to="/model/register" icon="user" title="본인확인(성인 인증)"
-              desc="모바일 신분증으로 성인 여부 확인" done={!identityRequired} />
-            <StepLink to="/model/license" icon="lock" title="필수 동의"
+            {/* 본인확인 이후 단계는 /model/license 의 단일 단계형 여정에서 진행한다. */}
+            <StepLink to="/model/license?step=consent" icon="lock" title="필수 동의"
               desc="서비스이용·국외이전 동의" done={!has(BLOCKER.consent_missing)} locked={identityRequired} />
-            <StepLink to="/model/license" icon="person" title="얼굴 3장 업로드"
+            <StepLink to="/model/license?step=face" icon="person" title="얼굴 3장 업로드"
               desc="정면·측면·45도 각도별 사진" done={!has(BLOCKER.photos_incomplete)} locked={identityRequired} />
-            <StepLink to="/model/license" icon="shapes" title="신체 정보 입력"
+            <StepLink to="/model/license?step=body" icon="shapes" title="신체 정보 입력"
               desc="키·몸무게·체형" done={!has(BLOCKER.body_profile_missing)} locked={identityRequired} />
             {/* 발급은 위 3단계가 끝나야(프로필 ready) 열린다 — 서버가 400 으로 막는 조건과 동일. */}
-            <StepLink to="/model/license" icon="checkSquare" title="얼굴 라이선스 발급"
+            <StepLink to="/model/license?step=terms" icon="checkSquare" title="얼굴 라이선스 발급"
               desc="사용 조건을 정하고 VC 로 발행" done={false}
               locked={identityRequired || !status.canGenerate} />
 

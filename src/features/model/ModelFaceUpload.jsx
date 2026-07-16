@@ -32,7 +32,7 @@ const QC_COPY = {
   angle_mismatch: '선택한 각도와 달라요. 안내에 맞춰 정면/측면/45도로 찍어주세요.',
 };
 
-function SlotCard({ angle, label, guide, slot, onPicked, onDelete, checking, locked }) {
+function SlotCard({ index, angle, label, guide, slot, onPicked, onDelete, checking, locked }) {
   const fileRef = useRef(null);
   const [url, setUrl] = useState(null);
   const passed = slot?.qcStatus === 'passed';
@@ -51,31 +51,45 @@ function SlotCard({ angle, label, guide, slot, onPicked, onDelete, checking, loc
   }, [passed, slot?.imageUri]);
 
   const disabled = checking || locked;
+  const stateLabel = checking ? '검사 중' : passed ? '확인 완료' : '사진 필요';
 
   return (
-    <div className={s.slotCard}>
-      <button type="button" className={`${s.slotUpload}${passed ? ' ' + s.slotHas : ''}`}
-        onClick={() => !disabled && fileRef.current?.click()} disabled={disabled}>
-        {passed && url ? (
-          <>
+    <div className={`${s.slotCard}${passed ? ` ${s.slotCardDone}` : ''}`}>
+      <div className={s.slotHeader}>
+        <div className={s.slotTitleGroup}>
+          <span className={s.slotIndex}>{String(index + 1).padStart(2, '0')}</span>
+          <span className={s.slotLabel}>{label}</span>
+        </div>
+        <span className={`${s.slotState}${passed ? ` ${s.slotStateDone}` : ''}`} aria-live="polite">
+          {stateLabel}
+        </span>
+      </div>
+
+      <div className={s.slotMedia}>
+        <button type="button" className={`${s.slotUpload}${passed ? ' ' + s.slotHas : ''}`}
+          onClick={() => !disabled && fileRef.current?.click()} disabled={disabled}
+          aria-label={passed ? `${label} 사진 바꾸기` : `${label} 사진 올리기`}>
+          {passed && url ? (
             <img src={url} alt={`${label} 얼굴`} />
-            <span className={s.slotBadge}>등록됨</span>
-            <button type="button" className={s.slotDel} onClick={(e) => { e.stopPropagation(); onDelete(angle); }} title="삭제">
-              <Icon name="x" size={13} />
-            </button>
-          </>
-        ) : (
-          <div className={s.slotEmpty}>
-            <Icon name="upload" size={20} />
-            <span>{label} 사진 올리기</span>
-          </div>
+          ) : (
+            <div className={s.slotEmpty}>
+              <span className={s.slotUploadIcon}><Icon name="upload" size={19} /></span>
+              <span className={s.slotUploadTitle}>{label} 사진 선택</span>
+              <span className={s.slotUploadHint}>클릭해서 업로드</span>
+            </div>
+          )}
+          {checking && <div className={s.slotBusy}>품질 확인 중…</div>}
+        </button>
+        {passed && url && (
+          <button type="button" className={s.slotDel} onClick={() => onDelete(angle)}
+            title={`${label} 사진 삭제`} aria-label={`${label} 사진 삭제`} disabled={disabled}>
+            <Icon name="x" size={14} />
+          </button>
         )}
-        {checking && <div className={s.slotBusy}>검사 중…</div>}
-      </button>
+      </div>
       <input ref={fileRef} type="file" accept="image/*" hidden
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPicked(angle, f); e.target.value = ''; }} />
-      <div className={s.slotLabel}>{label}</div>
-      <div className={s.slotGuide}>{guide}</div>
+      <p className={s.slotGuide}>{guide}</p>
       {slot?.lastFail && (
         <div className={s.slotFail}>
           <div>{slot.lastFail.message}</div>
@@ -155,6 +169,7 @@ export function ModelFaceUpload({ embedded = false, onDone }) {
   if (phase === 'error') return <Wrap><div className="surface"><ErrorState desc="얼굴 사진 정보를 불러오지 못했어요." onRetry={load} /></div></Wrap>;
 
   const completeCount = ANGLES.filter((a) => slots[a.value]?.qcStatus === 'passed').length;
+  const canContinue = completeCount === ANGLES.length && !busyAngle && !blocked;
 
   return (
     <Wrap>
@@ -173,26 +188,23 @@ export function ModelFaceUpload({ embedded = false, onDone }) {
 
       <div className="surface">
         <div className={s.slotGrid}>
-          {ANGLES.map((a) => (
-            <SlotCard key={a.value} angle={a.value} label={a.label} guide={a.guide}
+          {ANGLES.map((a, index) => (
+            <SlotCard key={a.value} index={index} angle={a.value} label={a.label} guide={a.guide}
               slot={slots[a.value]} onPicked={onPicked} onDelete={onDelete}
               checking={busyAngle === a.value} locked={!!blocked || (busyAngle && busyAngle !== a.value)} />
           ))}
         </div>
-        <p className="hint" style={{ marginTop: 16 }}>{completeCount}/3장 완료</p>
+        <p className="hint" style={{ marginTop: 16 }}>{completeCount}/3장 품질 확인 완료</p>
         <div className={s.banner} style={{ marginTop: 14 }}>
           <Icon name="lock" size={15} />
           <span>얼굴 사진은 비공개로 저장되고, 본인 확인 후 내 모델 생성에만 사용돼요.</span>
         </div>
-        {/* 라이선스 여정에선 3장 전부 QC 통과해야 프로필이 ready 가 되고 발급이 열린다 —
-            덜 채운 채 다음으로 보내면 마지막에 400 으로 되돌아오므로 여기서 막는다.
-            단독 라우트는 종전대로 언제든 다음 단계로 진행 가능(회귀 0). */}
+        {/* 단독 화면과 라이선스 여정 모두 세 슬롯의 동기 QC 통과가 전제다.
+            버튼은 항상 보여주되 검사 완료 전에는 비활성화해 다음 조건을 분명히 알린다. */}
         <Button variant="primary" block iconRight="arrowRight" style={{ marginTop: 18 }}
-          disabled={embedded && completeCount < 3}
+          disabled={!canContinue}
           onClick={() => { if (onDone) onDone(); else navigate('/model/body'); }}>
-          {embedded
-            ? (completeCount < 3 ? `${3 - completeCount}장 더 올려주세요` : '다음 · 신체 정보')
-            : '다음 · 신체 정보 입력'}
+          {embedded ? '다음 · 신체 정보' : '다음 · 신체 정보 입력'}
         </Button>
       </div>
     </Wrap>
