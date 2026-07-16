@@ -95,3 +95,111 @@ def test_build_prompt_match_cut_requires_bottom_on_screen():
     p3 = cg.build_prompt(spec, product, analysis=analysis, manifest=neither)
     assert "- matching bottom" not in p3
     assert "- fit:" in p3   # 나머지 축은 유지
+
+
+# ── FaceMarket 라이선스 얼굴 주입 (FM-31) ────────────────────────────────────
+PRODUCT_TOP = {"name": "니트", "clothing_type": "top",
+               "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
+
+
+def test_wants_face_only_for_cuts_that_actually_show_a_face():
+    # 첨부 판정 = 얼굴이 실제로 프레임에 담기는 컷만. 라이선스료를 내고도 가려지는 컷에
+    # 얼굴을 붙이면 토큰 낭비 + 지시 충돌(FACE:hide vs 얼굴 첨부)이 된다.
+    assert cg.wants_face({"cutType": "styling", "shot": "full"}, "top") is True
+    assert cg.wants_face({"cutType": "horizon", "shot": "medium"}, "top") is True
+    assert cg.wants_face({"cutType": "styling", "shot": "full", "faceExposure": "show"}, "top") is True
+
+    # product = 사람·신체 노출 금지([[CUT:product]]) → faceExposure=None
+    assert cg.wants_face({"cutType": "product", "shot": "ghost"}, "top") is False
+    # 거울샷 기본 = 폰이 얼굴을 가림(hide). 명시적 show 일 때만 첨부.
+    assert cg.wants_face({"cutType": "mirror", "shot": "full"}, "top") is False
+    assert cg.wants_face({"cutType": "mirror", "shot": "full", "faceExposure": "show"}, "top") is True
+    # 셀러가 명시적으로 비식별을 골랐으면 존중
+    assert cg.wants_face({"cutType": "styling", "shot": "full", "faceExposure": "hide"}, "top") is False
+    # 뒷모습 = 얼굴이 프레임 밖
+    assert cg.wants_face({"cutType": "styling", "shot": "full", "direction": "back"}, "top") is False
+    # 머리가 프레임에 없는 샷 — 하의의 knee/medium, 그리고 close_*
+    assert cg.wants_face({"cutType": "styling", "shot": "knee"}, "bottom") is False
+    assert cg.wants_face({"cutType": "styling", "shot": "knee"}, "top") is True
+    assert cg.wants_face({"cutType": "styling", "shot": "close"}, "top") is False
+
+
+def test_wants_face_unknown_cut_type_is_false_not_raise():
+    # 회귀 방지: 여기서 ValueError 가 새면 워커의 준비 루프가 통째로 죽어 **잡 전체**가
+    # 실패한다. 현행 계약은 '미상 컷 = 그 컷만 빈 슬롯'.
+    assert cg.wants_face({"cutType": "daily"}, "top") is False
+
+
+def test_build_manifest_places_face_after_garment_truth_before_mood():
+    # images 는 역할 메타가 없는 위치 리스트 — 워커 첨부 순서와 이 목록이 lockstep 이어야 한다.
+    # 얼굴은 옷 근거(마네킹·상품·매칭) 뒤, 무드 앞.
+    m = cg.build_manifest([{"slot": "Front"}], has_mannequin=True, has_match=True,
+                          mood_count=1, has_face=True)
+    lines = m.split("\n")
+    assert len(lines) == 5
+    assert "mannequin" in lines[0] and lines[0].startswith("1.")
+    assert "front view of the garment" in lines[1]
+    assert lines[2].startswith("3. MATCH")
+    assert lines[3].startswith("4. MODEL FACE")
+    assert lines[4].startswith("5. MOOD")
+
+
+def test_face_label_does_not_trip_match_cut_guard():
+    # _FACE_LABEL 이 마네킹/매칭 라벨의 부분문자열이 되면 matchCut 가드가 오발해
+    # 화면에 없는 하의의 핏을 지시 → 모델이 하의를 지어낸다.
+    assert cg._MANNEQUIN_LABEL not in cg._FACE_LABEL
+    assert cg._MATCH_LABEL not in cg._FACE_LABEL
+
+    analysis = {"fitProfile": {"category": "top", "gender": "women",
+                               "axes": {"fit": "regular", "length": None}, "matchCut": "wide"}}
+    face_only = cg.build_manifest([{"slot": "Front"}], has_mannequin=False, has_match=False,
+                                  mood_count=0, has_face=True)
+    p = cg.build_prompt({"cutType": "styling", "shot": "full"}, PRODUCT_TOP,
+                        analysis=analysis, manifest=face_only, has_face=True)
+    assert "- matching bottom" not in p
+
+
+def test_build_prompt_with_face_injects_identity_and_overrides_face_line():
+    # 얼굴을 첨부하면서 기본 FACE:same('keep the face unobtrusive')을 그대로 두면
+    # 라이선스료를 내고 "얼굴을 가려라"를 지시받는 자기모순이 된다.
+    manifest = cg.build_manifest([{"slot": "Front"}], has_mannequin=False, has_match=False,
+                                 mood_count=0, has_face=True)
+    p = cg.build_prompt({"cutType": "styling", "shot": "full"}, PRODUCT_TOP,
+                        manifest=manifest, has_face=True)
+    assert "MODEL IDENTITY" in p                       # [[FACE_REF]] 정체성 지시
+    assert "recognizably that same individual" in p
+    assert "the real person in the MODEL FACE reference" in p   # [[FACE:licensed]]
+    assert "keep the face unobtrusive" not in p        # FACE:same 오버라이드됨
+    assert "${" not in p and "[[" not in p             # 토큰·마커 유출 없음
+    # 옷 근거가 여전히 최우선 — 얼굴이 옷 지시를 밀어내지 않는다
+    assert "GARMENT FIDELITY" in p and "the references win" in p
+
+
+def test_build_prompt_face_ignored_on_cuts_that_hide_the_face():
+    # 방어선 이중화: 호출자가 has_face=True 를 잘못 넘겨도 얼굴이 안 담기는 컷이면
+    # 정체성 지시를 렌더하지 않는다(첨부 판정과 동일 규칙 _face_fits).
+    for spec in ({"cutType": "product", "shot": "ghost"},
+                 {"cutType": "mirror", "shot": "full"},
+                 {"cutType": "styling", "shot": "full", "direction": "back"}):
+        p = cg.build_prompt(spec, PRODUCT_TOP, has_face=True)
+        assert "MODEL IDENTITY" not in p
+        assert "MODEL FACE" not in p
+        assert "${" not in p and "[[" not in p
+
+
+def test_build_prompt_without_face_is_unchanged_from_legacy():
+    # 라이선스 없는 기존 경로 무변경 — 얼굴 관련 문구가 한 글자도 새지 않는다.
+    p = cg.build_prompt({"cutType": "styling", "shot": "full"}, PRODUCT_TOP)
+    assert "MODEL FACE" not in p and "MODEL IDENTITY" not in p
+    assert "licensed" not in p
+    assert "Face handling: neutral and natural; keep the face unobtrusive." in p  # FACE:same 유지
+    assert "${" not in p and "[[" not in p
+
+
+def test_face_ref_token_always_substituted_on_every_path():
+    # ${faceRefLine} 미치환은 render 의 leftover 가드 → ValueError → _gen_cuts 가 삼켜
+    # **전 컷 빈 슬롯 + 전액 미차감**으로 조용히 죽는다. 모든 컷 조합에서 치환을 확인.
+    for cut in cg.CUT_TYPES:
+        for has_face in (False, True):
+            p = cg.build_prompt({"cutType": cut}, PRODUCT_TOP, has_face=has_face)
+            assert "${faceRefLine}" not in p and "${" not in p

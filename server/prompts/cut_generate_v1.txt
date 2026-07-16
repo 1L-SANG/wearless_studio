@@ -16,6 +16,7 @@ ${faceLine}
 ${poseLine}
 ${exampleLine}
 ${spaceLine}
+${faceRefLine}
 
 MOOD REFERENCES (images labeled MOOD in the manifest, if any):
 - Use them ONLY for lighting, color grading, and overall ambience.
@@ -78,6 +79,16 @@ CUT TYPE — MIRROR SELFIE (거울샷):
 [[FACE:hide]]Face handling: frame or turn the head so the face is not identifiable (crop above the lips, or face turned away).
 [[FACE:show]]Face handling: the model's face may be visible with a calm, natural expression.
 [[FACE:same]]Face handling: neutral and natural; keep the face unobtrusive.
+[[FACE:licensed]]Face handling: the model is the real person in the MODEL FACE reference — keep their face in frame, visible and recognizable, with a calm, natural expression. Do not crop the face out, cover it, or substitute a different face.
+
+[[FACE_REF]]MODEL IDENTITY (the image labeled MODEL FACE in the manifest — highest priority after garment fidelity):
+- That image is a real, identity-verified person whose face is licensed for this shoot.
+- The person in the output MUST be recognizably that same individual: reproduce their facial
+  structure, eyes, nose, mouth, skin tone and hair faithfully. Do not beautify, de-age,
+  restyle or "average" the face into a generic model, and never invent a different person.
+- Use the MODEL FACE image for facial identity ONLY. Never copy its clothing, background,
+  lighting, crop or pose — the garment always comes from the PRODUCT references.
+- Never blend this face with a face appearing in any MOOD reference.
 
 [[POSE:auto]]Pose: natural and unforced, chosen to flatter how the garment sits.
 [[POSE:named]]Pose: ${poseName} — keep it relaxed and natural.

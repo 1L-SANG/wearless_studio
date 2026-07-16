@@ -568,7 +568,10 @@ async def create_license(
             try:
                 await asyncio.to_thread(r2.delete, uploaded_key)
             except Exception:
-                logger.warning("face_orphan_cleanup_failed", extra={"key": uploaded_key})
+                # 비공개 얼굴 R2 키는 로그에 남기지 않는다 — 이 파일의 공개 검증 하드룰과
+                # api-spec §1.4("키는 어떤 응답·이벤트·로그에도 미노출")를 따른다. 개인화 워커도
+                # 동일 상황에서 job_id 만 남긴다. 고아 정리 실패는 model_id 로 추적 가능.
+                logger.warning("face_orphan_cleanup_failed", extra={"model_id": str(model_id)})
         raise
 
     # FaceLicense VC 발급(선택과제1) — 홀더 설정 시 백그라운드 best-effort.

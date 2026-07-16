@@ -81,6 +81,45 @@ def normalize_spec(raw: dict) -> dict:
     return spec
 
 
+def _is_bottom(clothing_type) -> bool:
+    return str(clothing_type).lower() in ("bottom", "하의")
+
+
+def _face_fits(spec: dict, is_bottom: bool) -> bool:
+    """정규화된 스펙 기준 — 이 컷에 라이선스 얼굴이 **실제로 담기는가**(FM-31).
+
+    첨부(워커)와 프롬프트 지시(render_cut_prompt)가 같은 답을 쓰도록 규칙을 여기 하나만 둔다.
+    갈리면 얼굴을 첨부해놓고 가리라고 지시하거나(라이선스료 낭비), 반대로 첨부 없이
+    "MODEL FACE 를 보라"고 지시해 모델이 얼굴을 지어낸다.
+
+    제외 대상:
+      · faceExposure=None — product 컷(사람·신체 노출 자체가 금지, [[CUT:product]])
+      · faceExposure='hide' — 셀러가 명시적으로 비식별을 골랐거나 거울샷 기본값(폰이 얼굴을 가림)
+      · direction='back' — 뒷모습이라 얼굴이 프레임 밖
+      · 머리가 프레임에 없는 샷 — knee/medium 의 하의 변형, close_*(가슴·허벅지 클로즈업)
+    """
+    if spec["faceExposure"] not in ("same", "show"):
+        return False
+    if spec["direction"] == "back":
+        return False
+    shot = spec["shot"]
+    return shot == "full" or (shot in ("knee", "medium") and not is_bottom)
+
+
+def wants_face(cut_spec: dict, clothing_type: str | None = None) -> bool:
+    """워커용 공개 판정 — 이 블록에 라이선스 얼굴을 첨부할지(첨부 전 호출).
+
+    미상 cutType 은 **False**(예외 아님). 여기서 ValueError 를 던지면 워커의 준비 루프가
+    통째로 죽어 잡 전체가 실패한다 — 현행 계약은 '미상 컷 = 그 컷만 빈 슬롯'이고,
+    스펙 위반 판정은 지금처럼 generate() 경로가 담당한다.
+    """
+    try:
+        spec = normalize_spec(cut_spec)
+    except ValueError:
+        return False
+    return _face_fits(spec, _is_bottom(clothing_type))
+
+
 def load_cut_template() -> str:
     with open(_DEFAULT_PROMPT, encoding="utf-8") as f:
         return f.read()
@@ -101,12 +140,19 @@ def _sections(template: str) -> dict[str, str]:
 
 def render_cut_prompt(
     template: str, spec: dict, product: dict, analysis: dict,
-    clothing_type: str, image_manifest: str,
+    clothing_type: str, image_manifest: str, has_face: bool = False,
 ) -> str:
-    """섹션 선택 + ${토큰} 치환 + PRODUCT CONTEXT(ground truth) 자동 주입."""
+    """섹션 선택 + ${토큰} 치환 + PRODUCT CONTEXT(ground truth) 자동 주입.
+
+    has_face=True(라이선스 얼굴 첨부)면 [[FACE_REF]] 정체성 지시가 켜지고 얼굴 지시가
+    [[FACE:licensed]] 로 오버라이드된다 — 기본 'same'/거울샷 'hide' 를 그대로 두면
+    셀러가 라이선스료를 내고 "얼굴을 가려라"를 지시받는 자기모순이 된다.
+    """
     sec = _sections(template)
     cut, shot = spec["cutType"], spec["shot"]
-    is_bottom = str(clothing_type).lower() in ("bottom", "하의")
+    is_bottom = _is_bottom(clothing_type)
+    # 첨부 여부(has_face)와 별개로 이 컷이 얼굴을 담는 컷인지 다시 판정 — 첨부 판정과 동일 규칙.
+    use_face = has_face and _face_fits(spec, is_bottom)
 
     def need(key: str) -> str:
         if key not in sec:
@@ -123,6 +169,8 @@ def render_cut_prompt(
     else:
         face_line = need(f"FACE:{spec['faceExposure']}")
         direction_line = need(f"DIR:{spec['direction']}")
+    if use_face:
+        face_line = need("FACE:licensed")
     if spec["pose"] == "auto" or cut in ("product", "mirror"):
         pose_line = need("POSE:auto") if cut != "product" else ""
     else:
@@ -154,6 +202,9 @@ def render_cut_prompt(
         .replace("${poseLine}", pose_line)
         .replace("${exampleLine}", example_line)
         .replace("${spaceLine}", space_line)
+        # 얼굴 미첨부면 빈 문자열 — 모든 경로에서 반드시 치환한다(미치환 시 아래 leftover
+        # 가드가 ValueError → 워커가 전 컷을 빈 슬롯으로 삼켜 조용히 죽는다).
+        .replace("${faceRefLine}", need("FACE_REF") if use_face else "")
         .replace("${imageManifest}", image_manifest)  # 멀티라인 — 마지막에 치환
     )
     text = re.sub(r"\n{3,}", "\n\n", text)  # 빈 라인 정리 (생략된 줄 자리)
@@ -203,10 +254,19 @@ _SLOT_LABEL = {
 # "하의가 화면에 있는가"를 판별하므로 상수로 공유(문구 드리프트 방지).
 _MANNEQUIN_LABEL = "PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)"
 _MATCH_LABEL = "MATCH — a coordinating garment to style together in the same outfit"
+# FaceMarket 라이선스 얼굴 첨부 라벨(FM-31). 위 두 라벨의 부분문자열이 되면 matchCut 가드가
+# 오발해 없는 하의를 지시하므로 'mannequin'·_MATCH_LABEL 문구를 섞지 않는다.
+_FACE_LABEL = ("MODEL FACE — the licensed model's face reference: reproduce THIS person's "
+               "facial identity (never copy their clothing, background or framing)")
 
 
-def build_manifest(prod_assets: list[dict], *, has_mannequin: bool, has_match: bool, mood_count: int) -> str:
-    """images=[mannequin?, *prod(slot순), match?, *mood]와 동일 순서의 역할 목록."""
+def build_manifest(prod_assets: list[dict], *, has_mannequin: bool, has_match: bool,
+                   mood_count: int, has_face: bool = False) -> str:
+    """images=[mannequin?, *prod(slot순), match?, face?, *mood]와 동일 순서의 역할 목록.
+
+    얼굴은 옷 근거(마네킹·상품·매칭) **뒤**에 온다 — 옷이 최우선 근거라는 계약(ADR-0004)을
+    첨부 순서로도 유지한다. has_face 기본 False = 얼굴 없는 기존 호출자 무변경.
+    """
     lines: list[str] = []
     i = 1
     if has_mannequin:
@@ -218,6 +278,9 @@ def build_manifest(prod_assets: list[dict], *, has_mannequin: bool, has_match: b
     if has_match:
         lines.append(f"{i}. {_MATCH_LABEL}")
         i += 1
+    if has_face:
+        lines.append(f"{i}. {_FACE_LABEL}")
+        i += 1
     for _ in range(mood_count):
         lines.append(f"{i}. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)")
         i += 1
@@ -226,16 +289,18 @@ def build_manifest(prod_assets: list[dict], *, has_mannequin: bool, has_match: b
 
 def build_prompt(
     cut_spec: dict, product: dict, *,
-    analysis: dict | None = None, manifest: str | None = None,
+    analysis: dict | None = None, manifest: str | None = None, has_face: bool = False,
 ) -> str:
     """스펙 정규화(ValueError=unknown_cut_type) + 템플릿 렌더. manifest 미지정 시
-    첨부가 '해당 색상 상품 슬롯 이미지뿐'이라고 가정하고 동일 순서 목록을 만든다."""
+    첨부가 '해당 색상 상품 슬롯 이미지뿐'(+ has_face 면 얼굴)이라고 가정하고 동일 순서 목록을 만든다."""
     spec = normalize_spec(cut_spec)
+    clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     if manifest is None:
         prod_assets = [{"slot": slot} for slot, _id in color_images(product, spec["colorId"])]
-        manifest = build_manifest(prod_assets, has_mannequin=False, has_match=False, mood_count=0)
-    clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
-    return render_cut_prompt(load_cut_template(), spec, product, analysis or {}, clothing_type, manifest)
+        manifest = build_manifest(prod_assets, has_mannequin=False, has_match=False,
+                                  mood_count=0, has_face=has_face and _face_fits(spec, _is_bottom(clothing_type)))
+    return render_cut_prompt(load_cut_template(), spec, product, analysis or {}, clothing_type,
+                             manifest, has_face)
 
 
 async def generate(
@@ -247,12 +312,16 @@ async def generate(
     *,
     analysis: dict | None = None,
     manifest: str | None = None,
+    has_face: bool = False,
 ) -> tuple[bytes, str]:
     """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
     스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
-    (거울샷 등 신규 컷이 엉뚱한 컷으로 대체 렌더되는 회귀 방지)."""
+    (거울샷 등 신규 컷이 엉뚱한 컷으로 대체 렌더되는 회귀 방지).
+
+    has_face=True 는 '호출자가 images 에 라이선스 얼굴을 매니페스트와 같은 자리
+    (옷 근거 뒤·무드 앞)로 넣었다'는 뜻이다 — 첨부와 어긋나면 라벨이 밀린다."""
     model = resolve_model(settings, "image_high")
-    prompt = build_prompt(cut_spec, product, analysis=analysis, manifest=manifest)
+    prompt = build_prompt(cut_spec, product, analysis=analysis, manifest=manifest, has_face=has_face)
     res = await gemini.generate_content_image(
         model, prompt, images, settings.mannequin_image_size,
         aspect_ratio=settings.mannequin_aspect_ratio,

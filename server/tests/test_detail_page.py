@@ -140,13 +140,13 @@ def test_run_detail_page_job_partial_success(monkeypatch):
 
     call = {"n": 0}
 
-    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
         call["n"] += 1
         if call["n"] == 1:
             return b"IMG", "image/png"     # b1 성공
         raise RuntimeError("gen fail")      # b2 실패 → 빈 슬롯, 미차감
 
-    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         captured["cut_results"] = cut_results
         return [{"id": "b0", "kind": "hook", "elements": []}]
 
@@ -198,13 +198,13 @@ def test_run_detail_page_job_partial_charge_uses_reservation_time_price(monkeypa
 
     call = {"n": 0}
 
-    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
         call["n"] += 1
         if call["n"] == 1:
             return b"IMG", "image/png"
         raise RuntimeError("gen fail")
 
-    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         return [{"id": "b0", "kind": "hook", "elements": []}]
 
     async def fake_finalize(conn, **kw):
@@ -254,10 +254,10 @@ def test_run_detail_page_job_storyboard_growth_never_settles_zero(monkeypatch):
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
 
-    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
         return b"IMG", "image/png"  # 3컷 전부 성공
 
-    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         return [{"id": "b0", "kind": "hook", "elements": []}]
 
     async def fake_finalize(conn, **kw):
@@ -303,11 +303,11 @@ def test_run_detail_page_job_skips_block_without_garment_truth(monkeypatch):
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
 
-    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
         calls["n"] += 1
         return b"IMG", "image/png"
 
-    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         captured["cut_results"] = cut_results
         return []
 
@@ -355,7 +355,7 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
 
-    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
         return b"IMG", "image/png"
 
     async def fake_copy(settings, **kw):
@@ -364,7 +364,7 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     async def fake_review(settings, items, confirmed):
         raise RuntimeError("qc down")  # 검수 실패 → 원문 유지 (except 커버)
 
-    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         captured["copy_results"] = copy_results
         return [{"id": "b0", "elements": []}]
 
