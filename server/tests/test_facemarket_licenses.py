@@ -530,3 +530,17 @@ def test_storage_unavailable_503(keypair, monkeypatch, make_token):
                     data={"unit_price": "1000"}, headers={"Authorization": f"Bearer {make_token(sub='user-1')}"})
     assert r.status_code == 503
     assert r.json()["error"]["code"] == "storage_unavailable"
+
+
+def test_enabled_face_features_reject_main_bucket_fallback_in_dev():
+    """개발 환경도 생체 얼굴을 공개 가능 메인 버킷에 저장하는 폴백을 허용하지 않는다."""
+    settings = make_settings(
+        app_env="dev",
+        facemarket_enabled=True,
+        r2_account_id="account",
+        r2_access_key_id="access",
+        r2_secret_access_key="secret",
+        r2_bucket="main-bucket",
+    )
+    with pytest.raises(RuntimeError, match="R2_FACE_BUCKET"):
+        create_app(settings)

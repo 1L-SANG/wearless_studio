@@ -122,22 +122,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # FaceMarket 얼굴 = 생체 PII → 공개 도메인 미연결 비공개 버킷 필수.
     if _r2_ready and settings.r2_face_bucket:
         app.state.r2_face = R2Client(settings, bucket=settings.r2_face_bucket, public_base=None)
-    elif (
-        _r2_ready
-        and (settings.facemarket_enabled or settings.personalization_enabled)
-        and settings.app_env != "dev"
-    ):
-        # 메인 R2(공개 도메인)가 붙은 프로드에서 전용 버킷 없이 켜지면 얼굴이 공개-도메인
-        # 메인 버킷으로 새므로 기동 실패(fail-fast). FaceMarket·개인화 둘 다 얼굴=생체 PII.
-        # (R2 미설정이면 누출 대상 자체가 없음 → 아래 None.)
+    elif _r2_ready and (settings.facemarket_enabled or settings.personalization_enabled):
+        # 얼굴은 생체 PII라 환경과 무관하게 메인 버킷 폴백을 허용하지 않는다. dev에서도
+        # 전용 버킷 없이 기능을 켜면 기존 공개 도메인 연결 버킷에 얼굴이 저장될 수 있다.
         raise RuntimeError(
             "R2_FACE_BUCKET is required when FACEMARKET_ENABLED or PERSONALIZATION_ENABLED "
-            "in non-dev (biometric face must use a private bucket, never the public-served main bucket)."
+            "(biometric face must use a private bucket, never the public-served main bucket)."
         )
     else:
-        # dev 전용 폴백 — 우리 코드가 얼굴에 public_url 을 만들지 않도록 public_base 차단.
-        # (로컬 R2 는 공개 도메인이 없으니 물리적 노출도 없음. r2 미설정이면 None → 라우트 503.)
-        app.state.r2_face = R2Client(settings, public_base=None) if _r2_ready else None
+        app.state.r2_face = None
     app.state.gemini = (
         GeminiImageClient(settings) if settings.gemini_api_key else None
     )
