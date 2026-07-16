@@ -193,11 +193,13 @@ export function useDoneGuard() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      await useAppStore.getState().loadProject();
-      const pid = useAppStore.getState().projectId;
-      if (!pid) return;   // 콜드 진입(복원 불가) — 가드 대상 아님, 화면 자체가 입력으로 리다이렉트
-      const p = await api.getProject(pid);
-      if (!cancelled && p?.status === 'done') setBlocked(true);
+      try {
+        await useAppStore.getState().loadProject();
+        const pid = useAppStore.getState().projectId;
+        if (!pid) return;   // 콜드 진입(복원 불가) — 가드 대상 아님, 화면 자체가 입력으로 리다이렉트
+        const p = await api.getProject(pid);
+        if (!cancelled && p?.status === 'done') setBlocked(true);
+      } catch { /* 보호 가드 조회 실패는 공개 입력 화면을 막지 않는다. */ }
     })();
     return () => { cancelled = true; };
   }, []);

@@ -17,6 +17,7 @@ export default defineConfig({
   // (터널 경유는 cloudflared가 /v1→:8000 라우팅하므로 이 프록시는 localhost 직접용.)
   server: {
     port: 5173,
+    strictPort: true,
     open: false,
     allowedHosts: ['facemarket.wearless.kr'],
     proxy: { '/v1': 'http://localhost:8000' },

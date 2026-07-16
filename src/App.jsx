@@ -29,7 +29,8 @@ import { syncDraftToBackend } from '@/lib/draftSync.js';
 
 /* 보호 라우트 — 세션 없으면 공개 입력 페이지로. 입력은 공개라 리다이렉트 루프 없음. */
 function RequireAuth() {
-  const { session } = useAuth();
+  const { session, loading } = useAuth();
+  if (loading) return <div className="route-loading">불러오는 중이에요</div>;
   if (!session) return <Navigate to="/create/input" replace />;
   return <Outlet />;
 }
@@ -65,12 +66,16 @@ function ProductInputRoute() {
 const DRAFT_SYNC_TIMEOUT_MS = 20000;
 
 function RootRedirect() {
-  const { session } = useAuth();
+  const { session, loading } = useAuth();
   const [target] = useState(() => sessionStorage.getItem('wl_postLogin') || '/create/input');
   const [phase, setPhase] = useState('init');   // init | syncing | done
   const [dest, setDest] = useState(null);
 
   useEffect(() => {
+    // 일반 첫 진입(/create/input)은 인증 확인과 무관하게 연다. 로그인 복귀처럼 세션이
+    // 실제로 필요한 목표만 bootstrap 완료를 기다린다. AuthProvider는 session을 확정한 뒤
+    // loading=false로 내리므로 그 전환에서 한 번만 실행한다(토큰 갱신 때 sync 재시작 금지).
+    if (loading && target !== '/create/input') return;
     sessionStorage.removeItem('wl_postLogin');
     let alive = true;
     (async () => {
@@ -96,7 +101,7 @@ function RootRedirect() {
       }
     })();
     return () => { alive = false; };
-  }, []);
+  }, [loading, target]);
 
   if (phase === 'syncing') return <div className="route-loading">입력 내용을 안전하게 저장하고 있어요…</div>;
   if (phase === 'done' && dest) return <Navigate to={dest} replace />;
@@ -104,8 +109,6 @@ function RootRedirect() {
 }
 
 export default function App() {
-  const { loading } = useAuth();
-
   // 환경변수 미설정(예: Vercel env 누락)이면 화이트스크린 대신 원인을 보여준다.
   if (!isSupabaseConfigured) {
     return (
@@ -114,9 +117,6 @@ export default function App() {
       </div>
     );
   }
-
-  // 세션 확인 전엔 로딩만 (미로그인이어도 입력 페이지는 공개로 진입).
-  if (loading) return <div className="route-loading">불러오는 중이에요</div>;
 
   return (
     <>
