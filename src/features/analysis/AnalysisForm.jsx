@@ -11,6 +11,11 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
+import {
+  matchingFitDefinition,
+  matchingFitFromProfile,
+  resolveMainMatchingItem,
+} from '@/lib/matchingFit.js';
 
 // 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
@@ -208,15 +213,49 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const selMatch = (a.matchClothing || []).filter((c) => c.selected).sort((x, y) => (x.selOrder || 0) - (y.selOrder || 0));
   const mainMatchId = selMatch[0]?.id;
   const subMatchId = selMatch[1]?.id;
+  const withMatchSelection = (matchClothing) => {
+    const category = fitProfileCategory(a.clothingType, a.subCategory) || 'top';
+    const gender = genderOf(a.targetGenders);
+    const previousProfile = a.fitProfile;
+    const sameProfileScope = previousProfile?.category === category && previousProfile?.gender === gender;
+    const previousMain = resolveMainMatchingItem(a);
+    const nextAnalysis = { ...a, matchClothing };
+    const nextMain = resolveMainMatchingItem(nextAnalysis);
+    // A legacy matchCut has no clothingId, so it is safe to migrate only when
+    // the authoritative main garment did not change. v2 matchingFit validates
+    // its own binding in matchingFitFromProfile.
+    const profileForMatching = previousMain?.id === nextMain?.id
+      ? previousProfile
+      : { ...(previousProfile || {}), matchCut: undefined };
+    const matchingFit = sameProfileScope
+      ? matchingFitFromProfile(
+        profileForMatching,
+        matchingFitDefinition(nextMain, gender),
+      )
+      : null;
+    return {
+      matchClothing,
+      fitProfile: {
+        category,
+        gender,
+        axes: sameProfileScope ? { ...(previousProfile.axes || {}) } : {},
+        source: previousProfile?.source || 'auto',
+        version: 2,
+        ...(matchingFit ? { matchingFit } : {}),
+      },
+    };
+  };
   const toggleMatch = (id) => {
     const cur = a.matchClothing;
     const item = cur.find((c) => c.id === id);
     if (item.selected) {
-      onChange({ matchClothing: cur.map((c) => c.id === id ? { ...c, selected: false, selOrder: undefined } : c) });
+      const next = cur.map((c) => c.id === id ? { ...c, selected: false, selOrder: undefined } : c);
+      onChange(withMatchSelection(next));
     } else {
       if (selMatch.length >= 2) { toast.push('매칭 의류는 최대 2개까지 선택할 수 있어요'); return; }
       const maxOrder = Math.max(0, ...cur.map((c) => c.selOrder || 0));
-      onChange({ matchClothing: cur.map((c) => c.id === id ? { ...c, selected: true, selOrder: maxOrder + 1 } : c) });
+      const next = cur.map((c) => c.id === id ? { ...c, selected: true, selOrder: maxOrder + 1 } : c);
+      onChange(withMatchSelection(next));
     }
   };
   const setMat = (i, patch) => onChange({ materials: a.materials.map((m, j) => j === i ? { ...m, ...patch } : m) });
@@ -246,11 +285,20 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     if (!opts.length) fit = null; // 원피스 등 핏 축 없는 카테고리
     else if (!opts.some((o) => o.value === fit)) { fit = opts.some((o) => o.value === 'regular') ? 'regular' : opts[0].value; src = 'auto'; }
     const prev = next.fitProfile;
-    const axes = prev?.category === cat ? { ...(prev.axes || {}) } : {}; // 카테고리 바뀌면 타 축(컷·기장 등) 무효 → 리셋
+    const gender = genderOf(next.targetGenders);
+    const sameProfileScope = prev?.category === cat && prev?.gender === gender;
+    const axes = sameProfileScope ? { ...(prev.axes || {}) } : {}; // 카테고리·성별이 바뀌면 타 축 무효 → 리셋
     if (fit === null) delete axes.fit; else axes.fit = fit;
+    const matchingFit = sameProfileScope
+      ? matchingFitFromProfile(
+        prev,
+        matchingFitDefinition(resolveMainMatchingItem(next), gender),
+      )
+      : null;
     return { ...patch, fit, fitProfile: {
-      category: cat, gender: genderOf(next.targetGenders), axes,
-      source: src ?? prev?.source ?? 'auto', version: 1,
+      category: cat, gender, axes,
+      source: src ?? prev?.source ?? 'auto', version: 2,
+      ...(matchingFit ? { matchingFit } : {}),
     } };
   };
   // subCategory 는 영문 토큰, 실측 key 는 MeasurementKey — 라벨은 catalogs 에서 파생 (계약 §4)

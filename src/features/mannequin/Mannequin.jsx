@@ -15,6 +15,11 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { fitExampleImage } from '@/lib/fitExampleImages.js';
+import {
+  matchingFitDefinition,
+  matchingFitFromProfile,
+  resolveMainMatchingItem,
+} from '@/lib/matchingFit.js';
 import { Icon, Button, ErrorState, ProgressBar, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import './Mannequin.css';
@@ -30,15 +35,13 @@ const AXIS_QUESTIONS = {
 const MATCH_KEY = '__match';
 const MATCH_NAME = '매칭 의류 핏';
 const MATCH_QUESTION = '매칭 의류의 핏도 조정할까요?';
+const MATCH_SKIRT_NAME = '매칭 스커트 실루엣';
+const MATCH_SKIRT_QUESTION = '매칭 스커트의 실루엣도 조정할까요?';
 
 const cutImage = (cut) => cut?.imageUrl || cut?.src || '';
 const isMenOnly = (genders) => Array.isArray(genders) && genders.length > 0 && genders.every((g) => g === 'men');
 const validAxisValue = (values, value) => values.some((v) => v.value === value);
 const axisIsDone = (s) => s?.mode === 'keep' || s?.mode === 'picked';
-const hasMatchFor = (category) => category === 'top' || category === 'outer';
-// 매칭 스텝은 컷에 하의가 실제로 착장됐을 때만 — 카테고리 + 매칭 의류를 선택한 프로젝트.
-// (백엔드 워커도 matchSelections 가 있어야 매칭 하의를 함께 생성한다.)
-const hasSelectedMatch = (analysis) => (analysis?.matchClothing || []).some((c) => c.selected);
 
 function derivedGender(analysis, product) {
   const genders = analysis?.targetGenders?.length ? analysis.targetGenders : product?.targetGenders;
@@ -53,7 +56,7 @@ function autoAxisValues(axisDefs, analysis) {
   return values;
 }
 
-function createFitProfileDraft(product, analysis) {
+function createFitProfileDraft(product, analysis, mainMatchingItem) {
   const category = fitProfileCategory(product?.clothingType, analysis?.subCategory) || 'top';
   const gender = derivedGender(analysis, product);
   const axisDefs = axesFor(category, gender);
@@ -73,8 +76,12 @@ function createFitProfileDraft(product, analysis) {
       if (axes[axis] == null) axes[axis] = value;
     });
   }
-  const draft = { category, gender, axes, source, version: 1 };
-  if (existing?.matchCut != null) draft.matchCut = existing.matchCut;   // 매칭 하의 선택 유지(garment_ref)
+  const draft = { category, gender, axes, source, version: 2 };
+  const matchingFit = matchingFitFromProfile(
+    analysis?.fitProfile,
+    matchingFitDefinition(mainMatchingItem, gender),
+  );
+  if (matchingFit) draft.matchingFit = matchingFit;
   return draft;
 }
 
@@ -411,13 +418,25 @@ export function Mannequin() {
   const gender = fitProfileDraft?.gender;
   const axisDefs = useMemo(() => axesFor(category, gender), [category, gender]);
   const axisEntries = useMemo(() => Object.entries(axisDefs), [axisDefs]);
-  const matchValues = useMemo(() => axesFor('pants', gender)?.cut || [], [gender]);
-  const hasMatching = hasMatchFor(category) && hasSelectedMatch(analysis);
-  // 순차 확인 스텝 = 축들 + (상의/아우터면) 매칭 의류 핏
+  const mainMatchingItem = useMemo(() => resolveMainMatchingItem(analysis), [analysis]);
+  const matchingDefinition = useMemo(
+    () => matchingFitDefinition(mainMatchingItem, gender),
+    [mainMatchingItem, gender],
+  );
+  const hasMatching = matchingDefinition != null;
+  // 순차 확인 스텝 = 제품 축들 + 메인 매칭 의류의 메타데이터 기반 핏 축.
   const steps = useMemo(() => {
     const a = axisEntries.map(([key, values]) => ({ key, values, kind: 'axis' }));
-    return hasMatching ? [...a, { key: MATCH_KEY, values: matchValues, kind: 'match' }] : a;
-  }, [axisEntries, hasMatching, matchValues]);
+    return matchingDefinition
+      ? [...a, {
+        key: MATCH_KEY,
+        values: matchingDefinition.values,
+        kind: 'match',
+        fitCategory: matchingDefinition.fitCategory,
+        axisKey: matchingDefinition.axisKey,
+      }]
+      : a;
+  }, [axisEntries, matchingDefinition]);
 
   const loadMannequins = useCallback(async () => {
     const runId = ++loadRunRef.current;
@@ -443,11 +462,12 @@ export function Mannequin() {
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
       setColorCount((nextProduct?.colors || []).length || 1);
-      const draft = createFitProfileDraft(nextProduct, nextAnalysis);
+      const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
+      const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
       setFitProfileDraft(draft);
       setStepState(initStepState(
         axesFor(draft.category, draft.gender),
-        hasMatchFor(draft.category) && hasSelectedMatch(nextAnalysis),
+        matchingFitDefinition(nextMainMatchingItem, draft.gender) != null,
       ));
 
       let list = await api.getMannequins(pid);
@@ -520,15 +540,19 @@ export function Mannequin() {
     : progress;
 
   // 스텝 표시 헬퍼
-  const stepName = (step) => (step.kind === 'match' ? MATCH_NAME : (AXIS_LABELS[step.key] || step.key));
+  const stepName = (step) => (step.kind === 'match'
+    ? (step.fitCategory === 'skirt' ? MATCH_SKIRT_NAME : MATCH_NAME)
+    : (AXIS_LABELS[step.key] || step.key));
   const stepQuestion = (step) => (step.kind === 'match'
-    ? MATCH_QUESTION
+    ? (step.fitCategory === 'skirt' ? MATCH_SKIRT_QUESTION : MATCH_QUESTION)
     : (AXIS_QUESTIONS[step.key] || `${stepName(step)}을(를) 조정할까요?`));
-  const stepExCategory = (step) => (step.kind === 'match' ? 'pants' : category);
-  const stepExAxis = (step) => (step.kind === 'match' ? 'cut' : step.key);
+  const stepExCategory = (step) => (step.kind === 'match' ? step.fitCategory : category);
+  const stepExAxis = (step) => (step.kind === 'match' ? step.axisKey : step.key);
   // 예시 참고 안내 — 옵션별로 "무엇만 참고할지" 명시(예시 속 다른 요소를 따라 그리지 않게)
   const stepExNote = (step) => (step.kind === 'match'
-    ? '예시에 보여지는 하의의 핏만 참고해주세요.'
+    ? (step.fitCategory === 'skirt'
+      ? '예시에 보여지는 스커트의 실루엣만 참고해주세요.'
+      : '예시에 보여지는 하의의 핏만 참고해주세요.')
     : `예시에 보여지는 의류의 ${stepName(step)}만 참고해주세요.`);
 
   // 파생값 — 순차: 첫 미완료 스텝이 '현재'
@@ -553,8 +577,8 @@ export function Mannequin() {
     selectMannequin(cutId);
   };
 
-  // draft + 사용자가 고른 값으로 재생성용 fitProfile 구성. keep=현재값 유지, picked=덮어씀.
-  // 매칭 하의(matchCut)도 profile 안에 포함 → 재생성 시 garment_ref 로 함께 저장.
+  // draft + 사용자가 고른 값으로 재생성용 FitProfile v2 구성.
+  // 매칭 축은 현재 메인 의류 id에 바인딩하고 legacy matchCut은 반환하지 않는다.
   const buildFitProfile = () => {
     const axes = { ...(fitProfileDraft.axes || {}) };
     let anyPicked = false;
@@ -562,10 +586,24 @@ export function Mannequin() {
       const s = stepState[key];
       if (s?.mode === 'picked' && s.pick != null) { axes[key] = s.pick; anyPicked = true; }
     });
-    const profile = { ...fitProfileDraft, axes, source: anyPicked ? 'seller' : fitProfileDraft.source };
-    if (!hasMatching) delete profile.matchCut;   // 매칭 미선택 프로젝트 — 이전 draft 에 남은 값 제거
+    const profile = { ...fitProfileDraft, axes, version: 2 };
+    delete profile.matchCut;
     const m = stepState[MATCH_KEY];
-    if (m?.mode === 'picked' && m.pick != null) profile.matchCut = m.pick;
+    if (!matchingDefinition) {
+      delete profile.matchingFit;
+    } else if (m?.mode === 'picked' && m.pick != null) {
+      profile.matchingFit = {
+        clothingId: matchingDefinition.clothingId,
+        fitCategory: matchingDefinition.fitCategory,
+        axes: { [matchingDefinition.axisKey]: m.pick },
+      };
+      anyPicked = true;
+    } else {
+      const matchingFit = matchingFitFromProfile(profile, matchingDefinition);
+      if (matchingFit) profile.matchingFit = matchingFit;
+      else delete profile.matchingFit;
+    }
+    profile.source = anyPicked ? 'seller' : fitProfileDraft.source;
     return profile;
   };
 
@@ -577,7 +615,7 @@ export function Mannequin() {
     setProgress(0);
     try {
       const { data, credits } = await api.regenerateMannequin(projectId, {
-        fitProfile: profile,   // 매칭(matchCut) 포함 — garment_ref 로 저장, 재생성에 반영
+        fitProfile: profile,   // matchingFit 포함 — garment_ref 로 저장, 재생성에 반영
         onProgress: setProgress,
       });
       const nextCuts = extractCuts(data);

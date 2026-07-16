@@ -351,6 +351,17 @@ async def get_matching_item_asset(conn: AsyncConnection, item_id: str) -> str | 
     return row["asset_id"] if row else None
 
 
+async def get_matching_item_metadata(conn: AsyncConnection, item_id: str) -> dict | None:
+    """활성 매칭의류의 핏 카테고리 판정용 구조화 메타데이터."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select clothing_type, category, length from matching_items "
+            "where id = %s and is_active",
+            (item_id,),
+        )
+        return await cur.fetchone()
+
+
 async def list_active_matching_items(conn: AsyncConnection) -> list[dict]:
     """활성 매칭의류 + 본/썸네일 R2 키 (URL은 라우트가 r2로 변환). 운영자 시드(무소유)."""
     async with conn.cursor() as cur:

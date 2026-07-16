@@ -83,31 +83,44 @@ def test_build_prompt_injects_fit_profile_and_drops_legacy_fit():
     assert "- Fit: regular" not in p
 
 
-def test_build_prompt_match_cut_requires_bottom_on_screen():
-    # matchCut 은 매칭 하의가 화면에 있을 때만(마네킹 참조 or MATCH 첨부) — 없는 옷 지시로
-    # 하의를 지어내지 않게 제거(마네킹 워커 effective_fit_profile 과 동일 가드).
+@pytest.mark.parametrize(
+    ("matching_profile", "matching_line"),
+    [
+        ({"matchCut": "wide"}, "- matching bottom"),
+        ({
+            "version": 2,
+            "matchingFit": {
+                "clothingId": "skirt-1",
+                "fitCategory": "skirt",
+                "axes": {"silhouette": "a_line"},
+            },
+        }, "- matching skirt silhouette"),
+    ],
+)
+def test_build_prompt_matching_fit_requires_bottom_on_screen(matching_profile, matching_line):
+    # v1/v2 매칭 축은 별도 의류가 화면에 있을 때만(마네킹 참조 or MATCH 첨부) 렌더한다.
     product = {"name": "니트", "clothing_type": "top",
                "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
     analysis = {"fitProfile": {
         "category": "top", "gender": "women",
-        "axes": {"fit": "regular", "length": None}, "matchCut": "wide",
+        "axes": {"fit": "regular", "length": None}, **matching_profile,
     }}
     spec = {"cutType": "styling", "direction": "front", "shot": "full"}
 
     with_mannequin = cg.build_manifest(
         [{"slot": "Front"}], has_mannequin=True, has_match=False, mood_count=0)
     p1 = cg.build_prompt(spec, product, analysis=analysis, manifest=with_mannequin)
-    assert "- matching bottom" in p1
+    assert matching_line in p1
 
     with_match = cg.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=True, mood_count=0)
     p2 = cg.build_prompt(spec, product, analysis=analysis, manifest=with_match)
-    assert "- matching bottom" in p2
+    assert matching_line in p2
 
     neither = cg.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0)
     p3 = cg.build_prompt(spec, product, analysis=analysis, manifest=neither)
-    assert "- matching bottom" not in p3
+    assert matching_line not in p3
     assert "- fit:" in p3   # 나머지 축은 유지
 
 

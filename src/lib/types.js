@@ -116,7 +116,13 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {'women'|'men'} gender       select_base_gender와 동일 규칙
    @property {{fit?:string|null,length?:string|null,cut?:string|null,silhouette?:string|null}} axes  카테고리별 유효 축만. null='사진 그대로'
    @property {'auto'|'seller'} source     auto=분석 추정 그대로, seller=셀러가 하나라도 수정
-   @property {1} version
+   @property {2} version
+   @property {MatchingFit} [matchingFit]  선택한 메인 매칭 의류에 바인딩된 핏 축
+
+   @typedef {Object} MatchingFit
+   @property {string} clothingId
+   @property {'pants'|'skirt'} fitCategory
+   @property {{cut:string}|{silhouette:string}} axes
 
    @typedef {Object} Model
    @property {string} id
@@ -150,6 +156,11 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string} [imageUrl]
    @property {string} [thumbnailUrl]
    @property {MatchingItemGender} [gender]
+   @property {'top'|'bottom'} [clothingType]
+   @property {string} [category]
+   @property {Fit} [fit]
+   @property {string} [length]
+   @property {'pants'|'skirt'|null} [fitCategory]  서버(목업은 구조화 메타데이터)가 유도
    @property {boolean} selected
    @property {number} [selOrder]         1=메인, 2=서브
 
