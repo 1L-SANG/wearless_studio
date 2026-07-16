@@ -149,8 +149,11 @@ async def run_detail_page_job(app, job: dict) -> None:
             project = await repo.get_project(conn, user_id, project_id) or {}
             storyboard = await repo.get_storyboard(conn, project_id)
             product = await repo.get_product(conn, project_id) or {}
-            analysis = await repo.get_analysis(conn, project_id)
+            analysis = await repo.get_analysis(conn, project_id) or {}
             ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
+            # StoryboardBlock에는 modelId가 없다(계약 §3.4). 상세페이지의 프로젝트 단위 선택값은
+            # Analysis.selectedModelId가 정본이며, 아래 prep에서 저장 블록을 바꾸지 않고 런타임 주입한다.
+            selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
 
             mannequin_asset = None
             sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
@@ -184,20 +187,60 @@ async def run_detail_page_job(app, job: dict) -> None:
         # R2 바이트는 r2_key 캐시로 1회만 — 같은 색상 이미지가 블록마다 재다운로드되지 않게
         _img_cache: dict = {}
 
-        async def _img(a: dict) -> InlineImage:
-            k = a["r2_key"]
+        async def _r2_img(k: str, mime: str) -> InlineImage:
             if k not in _img_cache:
                 _img_cache[k] = InlineImage(
-                    a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, k))
+                    mime, await asyncio.to_thread(app.state.r2.get_bytes, k))
             return _img_cache[k]
 
-        prepared = []  # (block, images[마네킹?, *상품, 매칭?, *무드], manifest) — 순서=매니페스트
+        async def _img(a: dict) -> InlineImage:
+            return await _r2_img(a["r2_key"], a["mime_type"])
+
+        # C방식 두 장은 원자적인 한 쌍이다. 하나라도 manifest/R2 로드에 실패하면 둘 다 빼고
+        # 기존 옷 레퍼런스만으로 계속 생성한다(상세페이지 부분 실패 정책과 같은 fail-open).
+        _model_cache: dict[str, list[InlineImage] | None] = {}
+
+        async def _model_images(spec: dict | None) -> list[InlineImage]:
+            if not spec or spec.get("cutType") not in ("styling", "horizon", "mirror"):
+                return []
+            model_id = spec.get("modelId")
+            if not model_id:
+                return []
+            if model_id not in _model_cache:
+                try:
+                    refs = cut_generator.resolve_virtual_model_assets(spec)
+                    if refs is not None:
+                        _model_cache[model_id] = [
+                            await _r2_img(ref["key"], ref["mime"]) for ref in refs
+                        ]
+                    else:
+                        _model_cache[model_id] = None
+                except Exception as e:
+                    log.warning(
+                        "AG-06 virtual model assets unavailable for job %s model %s; "
+                        "continuing without model references: %r", job_id, model_id, e)
+                    _model_cache[model_id] = None
+            return _model_cache[model_id] or []
+
+        prepared = []  # (runtime block, images[마네킹?, 모델2?, *상품, 매칭?, *무드, 예시?], manifest)
+        _example_cache: dict[str, InlineImage | None] = {}
         for b in ai_blocks:
+            cut_spec = dict(b)
+            # 저장 콘티에 우연히 남은 비계약 필드가 프로젝트 선택 모델을 덮지 못하게 제거 후 주입한다.
+            cut_spec.pop("modelId", None)
+            cut_spec.pop("model_id", None)
+            if selected_model_id:
+                cut_spec["modelId"] = selected_model_id
+            clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+            try:
+                normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
+            except ValueError:
+                normalized = None  # generate()가 블록 단위 실패로 처리하는 기존 경로 유지
             prods = color_assets.get(b.get("colorId") or None, [])
             # 옷 근거(상품 사진 또는 마네킹컷)가 없으면 생성 불가 — 무드/매칭만으로 진행하면
             # 모델이 레퍼런스 속 옷을 지어내거나 베낀다(ADR-0004 정확성 최우선). 스킵 표식.
             if mannequin_asset is None and not prods:
-                prepared.append((b, [], ""))
+                prepared.append((cut_spec, [], ""))
                 continue
             mids = b.get("matchIds") or []
             match_a = match_assets.get(str(mids[0])) if mids and b.get("cutType") in ("styling", "mirror") else None
@@ -205,16 +248,38 @@ async def run_detail_page_job(app, job: dict) -> None:
             imgs = []
             if mannequin_asset is not None:
                 imgs.append(await _img(mannequin_asset))
+            model_images = await _model_images(normalized)
+            imgs.extend(model_images)
             for a in prods:
                 imgs.append(await _img(a))
             if match_a is not None:
                 imgs.append(await _img(match_a))
             for a in moods:
                 imgs.append(await _img(a))
+            example_scope = None
+            example_id = b.get("exampleId") or b.get("example_id")
+            if example_id:
+                # 직접 포즈가 pose-scope 예시보다 우선한다는 기존 계약: 이미지 자체도 첨부하지 않아
+                # 픽셀 조건이 텍스트 가드를 우회해 포즈를 되살리지 못하게 한다.
+                pose_overrides_example = normalized is not None \
+                    and normalized["pose"] != "auto" and normalized["refScope"] == "pose"
+                if normalized is not None and not pose_overrides_example:
+                    # 캐시 키에 scope 포함 — pose는 누끼 variant, all은 원본이라 자산이 다르다
+                    cache_key = f"{example_id}:{normalized['refScope']}"
+                    if cache_key not in _example_cache:
+                        _example_cache[cache_key] = await cut_generator.load_example_image(
+                            s, example_id, scope=normalized["refScope"])
+                    example_img = _example_cache[cache_key]
+                    if example_img is not None:
+                        imgs.append(example_img)
+                        example_scope = normalized["refScope"]
             manifest = cut_generator.build_manifest(
                 prods, has_mannequin=mannequin_asset is not None,
-                has_match=match_a is not None, mood_count=len(moods))
-            prepared.append((b, imgs, manifest))
+                has_match=match_a is not None, mood_count=len(moods),
+                has_model_face=len(model_images) == 2, has_model_sheet=len(model_images) == 2,
+                example_scope=example_scope,
+                example_is_product=normalized is not None and normalized["cutType"] == "product")
+            prepared.append((cut_spec, imgs, manifest))
 
         copywriting = bool(project.get("copywriting"))
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",

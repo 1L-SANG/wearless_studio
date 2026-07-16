@@ -1,0 +1,16 @@
+{
+  "_meta": {
+    "status": "DEV_DUMMY_ONLY_REPLACE_VIA_ANCHOR_REGEN",
+    "description": "Temporary generated-example assets. Replace via anchor-regeneration outputs. Value = string (all scopes) OR {\"all\": url, \"pose\": cutout_url, \"bg\": plate_url}. pose = background-removed cutout; bg = person-removed EMPTY SET plate widened for full-body framing (spike 2026-07-12: raw example leaks props/pose/garments — scope-specific assets are structural fix).",
+    "defaultBaseUrl": "https://placehold.co"
+  },
+  "assets": {
+    "ex_styling_top_full_1": {
+      "all": "600x800/png?text=DEV+styling+example+1",
+      "pose": "600x800/png?text=DEV+styling+cutout+1",
+      "bg": "600x800/png?text=DEV+styling+plate+1"
+    },
+    "ex_horizon_top_full_1": "600x800/png?text=DEV+horizon+example+1",
+    "ex_mirror_top_full_1": "600x800/png?text=DEV+mirror+example+1"
+  }
+}

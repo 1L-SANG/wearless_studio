@@ -690,6 +690,20 @@
 .color-dot:hover { box-shadow: 0 0 0 1px var(--ring-strong); }
 .color-dot.on { box-shadow: 0 0 0 2px var(--fg-1); }
 
+/* 아우터 열림 정도 — 선택 해제가 없는 3지선다 */
+.outer-closure-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.outer-closure-option { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 5px; padding: 9px 5px 8px;
+  position: relative; border-radius: var(--r-4); background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong);
+  color: var(--fg-2); font-size: 11.5px; font-weight: 600; cursor: pointer; transition: color .14s, box-shadow .14s, background .14s; }
+.outer-closure-option > input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.outer-closure-option:hover { color: var(--fg-1); background: var(--bg-2); }
+.outer-closure-option.on { color: var(--fg-1); background: var(--bg-1); box-shadow: 0 0 0 1.5px var(--fg-1); }
+.outer-closure-option:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.outer-closure-icon { width: 34px; height: 40px; overflow: visible; }
+.outer-closure-icon path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.outer-closure-icon circle { fill: currentColor; }
+.outer-closure-hint { margin: 7px 0 0; color: var(--fg-3); font-size: 11.5px; line-height: 1.45; }
+
 /* mood guide — single-row horizontal scroll */
 .mood-hscroll { display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; }
 .mood-hscroll .tg-cell { flex: none; width: 84px; }
