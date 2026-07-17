@@ -8,7 +8,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
-import { useAppStore } from '@/store/useAppStore.js';
+import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
 import { syncDraftToBackend } from '@/lib/draftSync.js';
@@ -181,11 +181,22 @@ export function ProductInput() {
   // 로그인한 상태(로그인 복귀 후 동기화 실패·다른 탭 로그인 포함)면 여기서 백엔드 동기화를
   // 재시도한 뒤 이동한다. analysisProjectId 를 로그인 여부의 대용값으로 쓰지 않는다.
   const redirectingRef = useRef(false);
+  const analysisSaveChainRef = useRef(Promise.resolve());
   const goToMannequin = async () => {
-    if (session && analysisProjectId) { navigate('/create/mannequin'); return; }
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
     redirectingRef.current = true;
     try {
+      // 직전 입력 이벤트의 PATCH가 getAnalysis보다 늦게 도착하는 레이스를 막는다. 모든 분석 저장을
+      // 입력 순서대로 직렬화하고, 확정은 현재 큐까지만 기다린 뒤 이동/재생성을 시작한다.
+      await analysisSaveChainRef.current;
+      // 이벤트 시점에만 읽어 분석 편집마다 ProductInput 전체가 다시 렌더되지 않게 한다.
+      const routeState = useAppStore.getState().generationRelevantEditsDirty
+        ? { refreshForEdits: true }
+        : undefined;
+      if (session && analysisProjectId) {
+        navigate('/create/mannequin', { state: routeState });
+        return;
+      }
       const { failed } = await saveProductDraft(product, analysis);
       if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri' });
       if (session) {
@@ -195,7 +206,7 @@ export function ProductInput() {
         useAppStore.getState().adoptProject(projectId);
         setAnalysisProjectId(projectId);
         await clearDraft().catch(() => {});
-        navigate('/create/mannequin');
+        navigate('/create/mannequin', { state: routeState });
         return;
       }
       openLogin('/create/mannequin');
@@ -210,11 +221,27 @@ export function ProductInput() {
     let alive = true;
     (async () => {
       setLoadError('');
-      // 입력은 새 상품 폼이므로 복원된 이전 projectId나 서버 준비 상태에 의존하지 않는다.
-      // null 계약은 http 모드에서도 클라이언트 시드 템플릿을 반환한다.
-      const [p, c] = await Promise.all([api.getProduct(null), api.getCatalogs()]);
+      // cold input 은 라우트 계층이 stale flow 를 먼저 비운다. 같은 탭에서 돌아온 input 만
+      // 현재 project 를 읽고, project 가 없으면 null 계약의 클라이언트 시드 템플릿을 쓴다.
+      const { projectId: currentProjectId, projectPersisted } = useAppStore.getState();
+      const editingProjectId = projectPersisted && currentProjectId ? currentProjectId : null;
+      const [p, c, existingAnalysis] = await Promise.all([
+        api.getProduct(editingProjectId),
+        api.getCatalogs(),
+        editingProjectId ? api.getAnalysis(editingProjectId) : Promise.resolve(null),
+      ]);
       if (!alive) return;
       setCatalogs(c);
+
+      // 같은 탭에서 마네킹/후속 단계로 갔다가 input 으로 돌아온 경우에는 현재 프로젝트를
+      // 편집한다. cold input 은 라우트 계층이 먼저 beginProject 해서 여기까지 stale id가 오지 않는다.
+      if (editingProjectId && existingAnalysis) {
+        setProduct(p);
+        setAnalysis(existingAnalysis);
+        setAnalysisProjectId(editingProjectId);
+        setPhase('done');
+        return;
+      }
 
       // 로그인 실패/취소/브라우저 뒤로가기(카카오→←뒤로→구글)·새로고침으로 입력 화면에 돌아오면
       // 페이지가 새로고침돼 입력이 사라진다 → 리다이렉트 직전 저장해 둔 draft(입력+분석)를 복원한다
@@ -415,10 +442,18 @@ export function ProductInput() {
               // 후보 목록은 서버 소유 — 추천 갱신 패치뿐 아니라 선택 토글 응답도
               // 서버 머지 결과로 동기화해 묵은 후보가 로컬에 남지 않게 한다.
               const syncMatch = isMatchRecommendationPatch(patch) || 'matchClothing' in patch;
+              if (isGenerationRelevantAnalysisPatch(patch)) {
+                useAppStore.getState().markGenerationRelevantEdits();
+              }
               setAnalysis((a) => ({ ...a, ...patch }));
-              api.saveAnalysis(analysisProjectId, patch).then((saved) => {
-                if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));
-              });
+              analysisSaveChainRef.current = analysisSaveChainRef.current
+                .then(() => api.saveAnalysis(analysisProjectId, patch))
+                .then((saved) => {
+                  if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));
+                })
+                .catch((error) => {
+                  toast.push(error?.message || '분석 수정 내용을 저장하지 못했어요.', { icon: 'alertTri' });
+                });
             }}
             onNext={goToMannequin} />
         </div>

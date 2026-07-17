@@ -57,6 +57,23 @@ const initialFlow = {
   resumePath: null,
 };
 
+// 분석 확정 후 이미 생성된 마네킹을 다시 만들지 판단하는 탭 세션 전용 신호.
+// flow 영속 대상에 넣지 않는다: 새 브라우저 세션의 복원은 명시적 이어서일 뿐, 과거 탭의
+// 미확정 편집 의도까지 재생성 트리거로 복원하면 안 된다.
+const generationRelevantAnalysisKeys = new Set([
+  'matchClothing',
+  'clothingType',
+  'subCategory',
+  'customCategory',
+  'targetGenders',
+  'fit',
+  'fitProfile',
+]);
+
+export function isGenerationRelevantAnalysisPatch(patch) {
+  return !!patch && Object.keys(patch).some((key) => generationRelevantAnalysisKeys.has(key));
+}
+
 const initialMannequinJob = () => ({
   status: 'idle', // idle | running | error
   projectId: null,
@@ -109,6 +126,7 @@ export const useAppStore = create((set, get) => ({
   // 새 제작해도 컴포넌트를 remount(폼·복원상태 초기화)한다. loadProject·retry 의 projectId
   // 변경에는 바뀌지 않아 일반 흐름엔 영향 없음.
   projectGeneration: 0,
+  generationRelevantEditsDirty: false,
 
   /** 새 제작 진입 — 서버 project 생성은 보류한다(AI 분석 시 ensureProject 가 생성).
      '상세페이지 제작'/'새 상세페이지' 클릭만으로 보관함에 빈 프로젝트가 생기던 버그 방지.
@@ -122,7 +140,12 @@ export const useAppStore = create((set, get) => ({
     // mock: createProject 가 reseedDraft 로 DB.product/analysis 를 깨끗한 시드로 되돌린다.
     // 안 하면 이전 세션 변형(clothingType/measurements 등)이 새 제작 입력에 유입된다(코드리뷰 반영).
     if (mode === 'http') {
-      set({ ...initialFlow, mannequinJob: initialMannequinJob(), projectGeneration: get().projectGeneration + 1 });
+      set({
+        ...initialFlow,
+        mannequinJob: initialMannequinJob(),
+        projectGeneration: get().projectGeneration + 1,
+        generationRelevantEditsDirty: false,
+      });
     } else {
       const project = await api.createProject();
       set({
@@ -131,6 +154,7 @@ export const useAppStore = create((set, get) => ({
         projectId: project.id,
         projectPersisted: true,
         projectGeneration: get().projectGeneration + 1,
+        generationRelevantEditsDirty: false,
       });
     }
     persistFlow(get());   // 새 제작 시작 — 영속 flow 초기화(stale projectId 미복원)
@@ -178,7 +202,7 @@ export const useAppStore = create((set, get) => ({
           if (error?.status !== 404) return pid;
         }
         flowValidated = true;
-        set({ ...initialFlow });
+        set({ ...initialFlow, generationRelevantEditsDirty: false });
         persistFlow(get());
         return null;
       })().finally(() => {
@@ -203,13 +227,27 @@ export const useAppStore = create((set, get) => ({
   /** 백엔드 sync(비로그인 draft) 결과의 projectId 반영 — 로그인 복귀 후 RootRedirect 가 호출. */
   setProjectId(projectId) { set({ projectId }); persistFlow(get()); },
   /** 로그인 복귀 draft sync 등에서 서버 project 를 현재 진행 프로젝트로 채택(영속 포함). */
-  adoptProject(projectId) { set({ projectId, projectPersisted: true }); persistFlow(get()); },
+  adoptProject(projectId) {
+    set((s) => (s.projectId === projectId
+      ? { projectPersisted: true }
+      : {
+        ...initialFlow,
+        projectId,
+        projectPersisted: true,
+        mannequinJob: initialMannequinJob(),
+        generationRelevantEditsDirty: false,
+      }));
+    persistFlow(get());
+  },
   /** 상세페이지 제작 플로우에서 현재 머문 경로 기록 — '이어서 작업' 재개 목표(ResumeTracker 가 호출). */
   setResumePath(resumePath) {
     if (get().resumePath === resumePath) return;
     set({ resumePath });
     persistFlow(get());
   },
+
+  markGenerationRelevantEdits() { set({ generationRelevantEditsDirty: true }); },
+  clearGenerationRelevantEdits() { set({ generationRelevantEditsDirty: false }); },
 
   selectMannequin(id) {
     set({ selectedMannequinId: id });

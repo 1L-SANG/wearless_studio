@@ -9,7 +9,7 @@
    설계·규칙: documents/mannequin_ui_direction.md · 목업 documents/mockups/mannequin-ui-matching.html
    ============================================================= */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
@@ -608,6 +608,7 @@ function ExampleTiles({ axisKey, category, gender, values, onPick }) {
 
 export function Mannequin() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [phase, setPhase] = useState('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [progress, setProgress] = useState(0);
@@ -648,6 +649,8 @@ export function Mannequin() {
   const mannequinJob = useAppStore((s) => s.mannequinJob);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const loadRunRef = useRef(0);
+  const initialCutsExistedRef = useRef(false);
+  const refreshForEditsHandledRef = useRef(false);
 
   const clearWaitCopyTimers = () => {
     waitCopyTimersRef.current.forEach(clearTimeout);
@@ -723,6 +726,7 @@ export function Mannequin() {
       ));
 
       let list = await api.getMannequins(pid);
+      initialCutsExistedRef.current = list.length > 0;
       if (list.length) {
         updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
       }
@@ -752,6 +756,7 @@ export function Mannequin() {
         try {
           const fallback = await api.getMannequins(pid);
           if (fallback.length) {
+            initialCutsExistedRef.current = true;
             updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
             if (loadRunRef.current !== runId) return;
             setCuts(fallback);
@@ -1101,6 +1106,19 @@ export function Mannequin() {
       failGeneration(runId);
     }
   };
+
+  useEffect(() => {
+    if (phase !== 'ready' || location.state?.refreshForEdits !== true
+        || refreshForEditsHandledRef.current) return;
+    refreshForEditsHandledRef.current = true;
+    // 먼저 history state 를 소비해 back/refresh/StrictMode 에서 유료 요청이 재발화하지 않게 한다.
+    navigate(location.pathname, { replace: true, state: null });
+    if (initialCutsExistedRef.current) {
+      regenerate();
+    }
+    // 기존 컷이면 regenerate 호출 직후, 최초 생성이면 그 생성이 편집값을 이미 반영한 뒤 clear.
+    useAppStore.getState().clearGenerationRelevantEdits();
+  }, [location.pathname, location.state, navigate, phase]);
 
   const retryGeneration = () => regenerate(regenerateProfileRef.current || buildFitProfile());
 

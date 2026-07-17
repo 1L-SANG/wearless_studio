@@ -8,7 +8,7 @@
    OAuth 복귀('/')의 리다이렉트는 RootRedirect 단일 주인이 담당(복귀 목표 있으면 그곳, 없으면 입력).
    Editor 는 app chrome 밖의 전체화면 surface (stub in phase 1).
    ============================================================= */
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
@@ -38,6 +38,22 @@ function RequireAuth() {
   const { session, loading } = useAuth();
   if (loading) return <div className="route-loading">불러오는 중이에요</div>;
   if (!session) return <Navigate to="/create/input" replace />;
+  return <Outlet />;
+}
+
+// 탭 수명 동안 create/editor 흐름이 한 번이라도 실제 렌더됐는지만 기억한다. localStorage 에
+// 넣지 않아 새 탭/새로고침은 cold entry 로 판별되고, 라우트 간 뒤로가기는 같은 세션으로 남는다.
+let flowRouteSeenThisSession = false;
+
+/* 마네킹 이후 단계는 현재 프로젝트가 있어야 한다. 복원된 프로젝트도 유효하므로 동기 pair 만
+   확인하고, 서버 유효성 검증/404 정리는 각 화면의 기존 loadProject 경로가 계속 담당한다. */
+function RequireProject() {
+  const projectId = useAppStore((s) => s.projectId);
+  const projectPersisted = useAppStore((s) => s.projectPersisted);
+
+  useEffect(() => { flowRouteSeenThisSession = true; }, []);
+
+  if (!projectPersisted || !projectId) return <Navigate to="/create/input" replace />;
   return <Outlet />;
 }
 
@@ -95,6 +111,24 @@ function ResumeTracker() {
    remount 해 폼·복원상태를 초기화한다 — 복구로 복원된 묵은 입력이 새 제작에 남지 않게. */
 function ProductInputRoute() {
   const generation = useAppStore((s) => s.projectGeneration);
+  const beginProject = useAppStore((s) => s.beginProject);
+  const [isolating, setIsolating] = useState(() => {
+    const { projectId, projectPersisted } = useAppStore.getState();
+    return !flowRouteSeenThisSession && !!(projectPersisted && projectId);
+  });
+  const isolationPromiseRef = useRef(null);
+
+  useEffect(() => {
+    flowRouteSeenThisSession = true;
+    if (!isolating) return undefined;
+    // StrictMode effect 재실행도 같은 reset promise 에 합류한다.
+    isolationPromiseRef.current ||= beginProject().catch(() => {});
+    let alive = true;
+    isolationPromiseRef.current.finally(() => { if (alive) setIsolating(false); });
+    return () => { alive = false; };
+  }, [beginProject, isolating]);
+
+  if (isolating) return <div className="route-loading">새 작업을 준비하고 있어요…</div>;
   return <ProductInput key={generation} />;
 }
 
@@ -199,15 +233,19 @@ export default function App() {
             <Route path="input" element={<ProductInputRoute />} />
             {/* 마네킹 이후 단계는 로그인 필요 */}
             <Route element={<RequireAuth />}>
-              <Route path="mannequin" element={<Mannequin />} />
-              <Route path="storyboard" element={<Storyboard />} />
-              <Route path="generating" element={<Generating />} />
+              <Route element={<RequireProject />}>
+                <Route path="mannequin" element={<Mannequin />} />
+                <Route path="storyboard" element={<Storyboard />} />
+                <Route path="generating" element={<Generating />} />
+              </Route>
             </Route>
           </Route>
         </Route>
         {/* editor lives outside the chrome (full-screen workspace) — 로그인 필요 */}
         <Route element={<RequireAuth />}>
-          <Route path="editor/:id" element={<Suspense fallback={<div className="route-loading">에디터를 불러오는 중이에요</div>}><LazyEditor /></Suspense>} />
+          <Route element={<RequireProject />}>
+            <Route path="editor/:id" element={<Suspense fallback={<div className="route-loading">에디터를 불러오는 중이에요</div>}><LazyEditor /></Suspense>} />
+          </Route>
         </Route>
         {/* 얼굴 라이선스 공개 검증(step02 QR 대상) — **RequireAuth 밖**. 심사위원·구매자가
             VC 카드의 QR 을 자기 폰으로 찍어 로그인 없이 유효성을 확인한다(로그인 게이트를
