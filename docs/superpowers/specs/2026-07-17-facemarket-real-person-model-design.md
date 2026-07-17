@@ -1,9 +1,10 @@
-# 실존 인물 디지털화 — 가상모델 fork (설계)
+# 실존 인물 디지털화 — 가상모델 fork (설계 v2)
 
 - 날짜: 2026-07-17
 - 출처: `대표님 handoff (facemarket-handoff.html)` — "실존 인물 디지털화는 가상모델의 fork다"
 - 계약 정본: `documents/ai_agent_modules.md §3 AG-06`, 기존 FaceMarket `facemarket.py`/`facemarket_chain.py`
 - 참조 구현(완성·병합됨): 가상모델 파이프라인 (`dd30c69`, cut_generator `resolve_virtual_model_assets`)
+- **v2**: codex 독립 리뷰(2026-07-17, GATE FAIL) 블로커 반영 — 아이덴티티-소스 상태머신, 워커 런타임 컨텍스트, 상업가능 weights, R2/DB staging, 라이선스 in-flight 정책.
 
 ## 1. 목표 (Definition of Done)
 
@@ -11,79 +12,85 @@
 
 ```
 본인확인 통과 → 실제 사진 업로드 → 그리드 자산 생성
-  → 비공개 버킷 + manifest → ArcFace QC 통과
+  → 비공개 버킷 + manifest → 얼굴 대조 QC 통과
   → 셀러가 모델 선택 → 본인 얼굴로 옷 컷 생성
 ```
 
-이 중 **그리드 자산 생성 / 비공개 버킷+manifest / ArcFace QC** 3구간이 미배선 = 이번 작업.
-앞뒤(본인확인·얼굴 업로드·컷 생성 슬롯)는 이미 존재하며 재사용한다.
+미배선 = **그리드 자산 생성 / 비공개 버킷+manifest / 얼굴 대조 QC / 컷 resolve+게이트**.
+앞뒤(본인확인·얼굴 업로드·라이선스·컷 슬롯·배지·정산)는 존재하며 재사용.
 
 ## 2. 확정된 설계 결정
 
 | 결정 | 선택 | 근거 |
 |---|---|---|
-| 방향 | 실존인물을 가상모델의 fork로 = 1급 MODEL | handoff 제목·thesis |
-| 그리드 소스 | **업로드 3장 합성(생성 X)** | handoff §03 "얼굴 새로 생성 금지". PIL 크롭·배치. 100% 본인, 크레딧 0 |
-| QC 방식 | **실제 ArcFace (insightface/onnxruntime)** | 법적 스토리 강함. 3장 pairwise 동일인 게이트 |
-| 빌드 트리거 | **명시적 엔드포인트/버튼** | 제어 명확, 재시도/멱등 단순 |
-| 자산 저장 | **새 테이블 `fm_model_assets`** | 정규화·다중뷰·쿼리 깔끔 |
-| 스코프 | 로컬 완주 + **배포 반영(manifest 의존성/mem/weights)** | |
+| 방향 | 실존인물을 가상모델의 fork = 1급 MODEL | handoff |
+| 그리드 소스 | **업로드 3장 합성(생성 X)** | handoff §03 "얼굴 새로 생성 금지" |
+| QC 엔진 | **OpenCV SFace ONNX (Apache-2.0)** + YuNet 검출기(Apache-2.0) | codex [P1]: insightface buffalo_l = 비상업 weights. SFace는 상업가능·경량(~37MB)·opencv-contrib 내장 |
+| QC 규칙 | 3장 pairwise 코사인 동일인 게이트, 미달 시 등록 차단 | 합성 소스라 핵심=스푸핑 방지(남의 얼굴 섞기) |
+| 빌드 트리거 | **명시적 엔드포인트/버튼** | 제어·멱등 단순 |
+| 자산 저장 | **새 테이블 `fm_model_assets`** (+ RLS 서비스 전용) | 정규화·다중뷰 |
+| 아이덴티티 주입 | **워커 런타임 컨텍스트**(비직렬화) — spec 주입 금지 | codex [P1]: private key가 payload/log/event로 누출 |
+| 스코프 | 로컬 완주 + 배포(Dockerfile·**mem 2048**·weights pin) | codex [P1]: 1GB 비현실 |
 
-## 3. 현재 코드 지형 (조사 결과)
+## 3. 현재 코드 지형
 
-- **가상모델 그리드 resolve**: `cut_generator.resolve_virtual_model_assets(spec)` → `server/app/data/virtual_models.json` → `(face_front, grid_sedcard)` `{key, mime}` 반환. 키는 **공개 seed 버킷**. modelId는 `analysis.selectedModelId`로 주입.
-- **바이트 로드**: `detail_page_job._r2_img` / `editor_image_job` 모두 `app.state.r2`(공개 메인 버킷) **하드코딩**. ← 버킷 인지로 바꿔야 하는 지점.
-- **라이선스 얼굴(기존 step03)**: `project.facemarket_license_id` → `r2_face`(비공개) 단일 얼굴 → worn 컷 주입. `detail_page_job` L47~98.
-- **실존 얼굴 업로드**: `personalization.upload_face_photo` → `personalization_face_photos(profile_id, angle∈{front,side,angle45}, r2_key, mime_type)` 비공개 버킷. 이미 존재.
-- **모델 카탈로그**: `fm_models(id, user_id, display_name, status, ci_hash, did, chain_ref, cover_image_url)`. `facemarket.list_models`가 피드. **그리드 자산 컬럼 없음**.
-- **링크**: `fm_models` ↔ `personalization_profiles`는 **`user_id`**로 연결(둘 다 `auth.users` 참조). `fm_identity_verifications.model_id → fm_models.id`.
+- **가상모델 resolve**: `cut_generator.resolve_virtual_model_assets(spec)` (SYNC+`@lru_cache`) → `virtual_models.json`(공개 seed 키) → `(face_front, grid_sedcard)` `{key,mime}`. modelId=`analysis.selectedModelId`.
+- **바이트 로드**: `detail_page_job._r2_img`/`editor_image_job` 모두 `app.state.r2`(공개) 하드코딩.
+- **라이선스 얼굴(step03·있음)**: `project.facemarket_license_id` → `r2_face`(비공개) 단일 얼굴 → worn 컷. `wants_face()` true인 컷에만.
+- **불변식(codex 확인)**: 컷마다 아이덴티티 소스를 **정확히 하나**만 선택(라이선스 face_ref OR 가상 (face_front,grid)). **절대 결합 안 함.**
+- **실존 얼굴 업로드**: `personalization.upload_face_photo` → `personalization_face_photos(profile_id, angle∈{front,side,angle45}, r2_key, mime_type)` 비공개.
+- **카탈로그**: `fm_models(id,user_id,display_name,status,ci_hash,did,chain_ref,cover_image_url)`. 자산 컬럼 없음.
+- **링크**: `fm_models` ↔ `personalization_profiles`는 **`user_id`**로만. `fm_identity_verifications.model_id→fm_models.id`. (현재 1 user=1 profile이나 스키마상 복수 가능 → §7 가드.)
 
-## 4. 아키텍처 — 3 컴포넌트
+## 4. 아키텍처 — 컴포넌트
 
-### C1. 실존 모델 자산 빌드 (그리드 합성 + 비공개 저장 + 등록)
+### C1. 실존 모델 자산 빌드 (합성 + 비공개 저장 + 등록)
 
 - **API**: `POST /v1/facemarket/models/me/build-assets` (Bearer, 모델 본인).
-  - 게이트: 호출자 user_id의 `fm_models(status='verified')` 존재 + `personalization_face_photos` 3각도 완비. 미충족 시 4xx(명확 메시지).
-  - 멱등: 진행 중 빌드 잡 있으면 그 jobId 반환(중복 큐잉 금지). 성공 자산 있으면 재빌드는 명시적 재요청으로만.
-  - 잡 큐잉: `kind='fm_model_asset_build'`, `payload={modelId, profileId, faceKeys?}` (얼굴 R2 키는 payload 미포함 원칙 — 워커가 DB 재조회). `202 {jobId}`.
+  - 게이트: user_id의 `fm_models(status='verified')` + `personalization_face_photos` 3각도 완비. 미충족 4xx.
+  - **멱등/동시성**(codex [P1]): `jobs`에 `kind='fm_model_asset_build'` + model_id 부분 유니크 인덱스(status in running/queued) → 동시 빌드 1개. 진행 중이면 그 jobId 반환.
+  - **payload에 얼굴 R2 키·바이트 미포함**(codex [P1]) — `{modelId}`만. 워커가 DB 재조회.
 - **워커**: `server/app/workers/fm_model_asset_job.py`
-  1. user_id로 `fm_models` + `personalization_face_photos`(front/side/angle45) 로드. `r2_face`에서 3장 bytes 로드(로그·이벤트 미포함).
-  2. **ArcFace QC (C2)** — 실패 시 잡 error, 자산 미등록.
-  3. **그리드 합성** (PIL): 3장을 정사각 크롭 → 2×2 그리드(4번째 칸=front 반복 또는 side 변형)로 배치, `grid_sedcard.png`. `face_front` = front 원본(webp).
-  4. **비공개 저장**: `r2_face.put_bytes` → `facemarket/models/{model_id}/grid_sedcard.png`, `.../face_front.webp`. 공개 버킷 폴백 금지.
-  5. **등록**: `fm_model_assets`에 view별 upsert + `fm_models.assets_status='ready'`, `qc_score` 기록. 원자 tx.
-  - 진행/종결 이벤트는 상태 enum·카운트만(PII 하드룰 §1.4).
+  1. user_id로 `fm_models` + `personalization_face_photos` 로드. `r2_face`에서 3장 bytes 로드(로그·이벤트 미포함).
+  2. **얼굴 대조 QC (C2)** — 실패 시 잡 error, 자산 미등록.
+  3. **그리드 합성**(PIL): 3장 **타이트 얼굴 크롭·중립 배경·라벨 없음** → 2×2. **4번째 칸=중립**(front/side/angle45 + 여백 or 축소 전신, 포즈 복제 유발 회피). `grid_sedcard.png`. `face_front`=front 원본(webp).
+  4. **R2/DB staging**(codex [P1] — 오브젝트 스토리지는 tx 밖):
+     - (a) staged 키(`.../staging/`)로 `r2_face.put_bytes` → (b) DB tx로 최종 등록(`fm_model_assets` upsert + `fm_models.assets_status='ready'`, `qc_score`) → (c) commit 성공 후 staged→final 확정 or 실패 시 staged 오브젝트 cleanup. lease 펜스·재시도 시 orphan 정리(개인화 워커 선례).
+  - 진행/종결 이벤트=상태 enum·카운트만.
 
-### C2. ArcFace QC 게이트
+### C2. 얼굴 대조 QC 게이트 (OpenCV SFace)
 
 - **모듈**: `server/app/agents/face_qc.py`
-  - insightface(`FaceAnalysis`, onnxruntime CPUExecutionProvider). 3장 각각 임베딩 추출 → **pairwise 코사인 유사도**. 모든 쌍 ≥ 임계면 통과(동일인). 하나라도 미달 → `QcFailed(score)`.
-  - 얼굴 미검출/다중검출 처리: 검출 실패 시 QC 실패(등록 차단), 다중이면 최대 얼굴 선택.
-  - 반환: `qc_score`(최소 pairwise) — `fm_models.qc_score` 기록.
-- **config** (`config.py`): `fm_face_qc_enabled`(bool, dev off 허용), `fm_face_qc_threshold`(float, 기본 0.35), `fm_face_qc_model`(pack 이름, 기본 `buffalo_l`).
-  - `enabled=false`면 QC 스킵(shadow/dev), 단 로그에 score 남김.
-- **모델 weights**: Docker 이미지 빌드 시 번들(런타임 다운로드 금지 — 네트워크 의존 제거). §6 배포 참조.
+  - `cv2.FaceDetectorYN`(YuNet)로 각 사진 얼굴 검출(다중=최대 얼굴, 0개=QC 실패), `cv2.FaceRecognizerSF`(SFace)로 정렬+임베딩 → 3장 **pairwise 코사인**. 모든 쌍 ≥ 임계면 통과. 미달→`QcFailed(score)`.
+  - 반환 `qc_score`(최소 pairwise) — 민감 생체 파생 → `fm_models.qc_score`에만, 응답·로그 집계 외 노출 금지.
+  - storage/cv2 예외 sanitize(키·경로 누출 차단).
+- **config**: `fm_face_qc_enabled`(dev off 허용, off면 score만 로그), `fm_face_qc_threshold`(SFace 코사인 기준, 캘리브 전 잠정 0.363=opencv 권장선), `fm_face_qc_model_path`.
+- **weights**: OpenCV Zoo `face_recognition_sface`(Apache-2.0) + `face_detection_yunet`(Apache-2.0). Docker 빌드 시 **pin+checksum**으로 번들(런타임 다운로드 금지). 상업 재배포 가능.
 
-### C3. 컷 생성 resolve + 버킷 인지 로드 + 라이선스 게이트
+### C3. 컷 생성 — 단일 아이덴티티-소스 상태머신 + 버킷 인지 + 라이선스 게이트
 
-- **resolve 확장**: `cut_generator.resolve_virtual_model_assets(spec, conn=None)` (또는 신규 `resolve_model_assets`):
-  - modelId가 자산 등록된 `fm_models.id`(= `fm_model_assets` 존재)면 → refs에 `{key, mime, bucket:"face"}` 반환.
-  - 아니면 virtual_models.json 폴백 → `{key, mime, bucket:"public"}`.
-  - **반환 스키마에 `bucket` 필드 추가** (기존 호출부 3곳 갱신).
-  - DB 접근이 필요하므로 async화 또는 워커에서 미리 조회 후 주입. → 워커가 fm_model_assets를 미리 로드해 spec에 실어주는 방식으로 cut_generator 순수성 유지 검토(계획 단계 확정).
-- **바이트 로더 버킷 인지**: `detail_page_job._r2_img` / `editor_image_job` 모델 ref 로드가 `ref["bucket"]`에 따라 `app.state.r2_face` vs `app.state.r2` 선택.
-- **라이선스 활성 게이트**: 실존 모델(`fm_models`) 주입 전 `fm_licenses` 활성 라이선스 확인 → 없으면 **미주입**(무라이선스 실얼굴 컷 차단). 가상모델은 게이트 없음(기존 유지).
-- **카탈로그**: `list_models`가 `fm_models.assets_status='ready'` + verified만 셀러 선택 가능으로 노출(has_assets 플래그). 자산 없는 verified 모델은 "준비 중".
+**핵심(codex [P1]): 컷당 아이덴티티 소스 1개 불변식 유지.** 잡 시작 시 **한 번** 선택:
 
-### 통합: 얼굴 이중주입 방지
+```
+선택 우선순위(잡 레벨, 컷 루프 전 1회):
+  REAL_ASSETS        ← selectedModelId == license.model_id ∧ fm_model_assets ready ∧ 라이선스 활성(§게이트)
+  VIRTUAL_ASSETS     ← selectedModelId가 virtual_models.json 항목 (라이선스 불요)
+  LEGACY_LICENSED_FACE ← 실자산 선택 없음 ∧ facemarket_license_id 단일 얼굴만 존재(기존 step03 폴백)
+  NONE               ← 위 다 아님 (얼굴 없이 생성)
+  REJECTED           ← 실자산 대상인데 라이선스 실패 → 조용한 폴백 금지, 컷 생성 거부
+```
 
-기존 `facemarket_license_id → 단일 얼굴` 경로와 C3 그리드 경로가 같은 컷에 얼굴을 두 번 넣을 위험.
-**해소 원칙**: 셀러 선택(`selectedModelId=fm_models.id`)이 아이덴티티를 몰고 → **그리드+face_front 주입 + 라이선스 게이트**로 통일. 기존 단일주입은 그리드 자산 없는 모델용 폴백으로 강등. 정밀 배선은 계획 단계에서 확정(회귀 테스트로 이중주입 0 검증).
+- **버킷 인지**: resolve refs에 `bucket`(`face`|`public`) 추가. 로더(`detail_page_job`/`editor_image_job` 모델 ref)가 `bucket` 따라 `r2_face` vs `r2`.
+- **resolve seam**(codex [P1]): `@lru_cache` sync resolve는 **불변 가상 JSON 전용 유지**. 실자산은 **워커가 preload**: 잡 시작 시 `fm_model_assets`+라이선스 상태를 **비직렬화 런타임 컨텍스트**(dict, spec 아님)로 1회 로드 → resolved refs를 generator에 전달. private 키는 spec·payload·event 미진입.
+- **라이선스 게이트 2회**(codex [P1]): (1) private 자산 로드 전, (2) 외부 추론/저장 직전. in-flight 해지: 추론 전 해지→나머지 컷 중단, publish 전 해지→저장·게시 차단+임시 산출물 정리. 라이선스 id/version·확인 시각을 비-PII 감사기록.
+
+### 공유 계약
+
+detail-page·editor 두 워커가 **같은 아이덴티티-소스 상태머신·resolve 컨텍스트**를 쓰도록 단일 헬퍼로 추출(중복 배선 방지).
 
 ## 5. 데이터 모델 (마이그레이션 1개)
 
 ```sql
--- fm_model_assets: 실존 모델의 아이덴티티 자산(비공개 버킷). 얼굴=생체 PII.
 create table if not exists public.fm_model_assets (
   model_id   uuid not null references public.fm_models(id) on delete cascade,
   view       text not null check (view in ('face_front','grid_sedcard')),
@@ -93,43 +100,49 @@ create table if not exists public.fm_model_assets (
   created_at timestamptz not null default now(),
   primary key (model_id, view)
 );
+-- RLS: 서비스 롤 전용(생체 파생). 익명/authenticated read 금지.
+alter table public.fm_model_assets enable row level security;
 
 alter table public.fm_models
   add column if not exists assets_status text not null default 'none'
     check (assets_status in ('none','building','ready','failed')),
-  add column if not exists qc_score numeric(4,3);  -- 최소 pairwise 코사인 유사도
+  add column if not exists qc_score numeric(4,3),           -- 민감: 집계만 노출
+  add column if not exists assets_source_hash text;         -- 소스 3장 지문 → 각도 변경 시 재빌드 감지
+
+-- 동시 빌드 1개: 진행 중 잡 유니크
+create unique index if not exists fm_model_asset_build_singleflight
+  on public.jobs (( (payload->>'modelId') ))
+  where kind = 'fm_model_asset_build' and status in ('queued','running');
 ```
 
-## 6. 배포 반영 (스코프에 포함)
+## 6. 배포 반영
 
-- `server/Dockerfile`: `insightface`, `onnxruntime`(CPU) 설치 + 모델팩(`buffalo_l`) **빌드타임 다운로드**로 이미지 번들. 런타임 네트워크 의존 제거.
-- `copilot/api/manifest.yml`:
-  - `memory` 상향 검토(현 1024 → onnx+모델팩 상주 시 부족 가능. 2048 권장, 계획 단계에서 실측).
-  - `variables`: `FM_FACE_QC_ENABLED: "true"`, `FM_FACE_QC_THRESHOLD: "0.35"`, `FM_FACE_QC_MODEL: buffalo_l`.
-- **로컬 우선**: 로컬에서 3 컴포넌트 완주 검증 후 배포. push/merge는 사용자 명시 요청 시에만(local-verify-then-deploy).
+- `server/Dockerfile`: `opencv-contrib-python-headless`(SFace/YuNet 포함) 설치 + weights(sface·yunet onnx) **pin+checksum 번들**. insightface/onnxruntime 불필요.
+- `copilot/api/manifest.yml`: `memory: 2048`(codex [P1] — 1024 비현실). `variables`: `FM_FACE_QC_ENABLED:"true"`, `FM_FACE_QC_THRESHOLD:"0.363"`.
+- **로컬 우선**: 3~4 컴포넌트 로컬 완주 검증 후 배포. push/merge는 명시 요청 시만.
 
-## 7. PII 하드룰 (기존 준수)
+## 7. PII 하드룰 (기존 + codex 보강)
 
-- 얼굴 바이트·임베딩·비공개 R2 키·공개/서명 URL: payload·이벤트·로그·API 응답 **미포함**.
-- 그리드/face_front는 **`r2_face` 비공개 전용**, 인증 게이트 서빙만. 공개 도메인 미연결.
-- 잡 이벤트엔 상태 enum·지연·카운트·qc_score만.
+- 얼굴 바이트·임베딩·비공개 R2 키·서명 URL: payload·이벤트·로그·API 응답·job result·trace·dead-letter·debug repr **전부 미포함**.
+- `fm_model_assets` **RLS 서비스 전용**. `cover_image_url`에 서명URL·private key 금지.
+- `qc_score` = 민감 생체 파생 → 집계 지표만.
+- storage/cv2 예외 메시지 sanitize(키·로컬 경로 제거).
+- 그리드/face_front = `r2_face` 전용, 인증 게이트 서빙만.
+- **동의 철회/파기 캐스케이드**: profile purge 시 `fm_model_assets` + 파생 산출물도 삭제(개인화 purge 잡 확장).
 
 ## 8. 테스트
 
-- 단위: 그리드 합성(PIL 입출력 크기·칸 배치), ArcFace QC(임베딩 mock → 임계 게이트 통과/차단), resolve 버킷 태깅, 라이선스 게이트, list_models has_assets 필터.
-- 통합: 얼굴 3장 → build-assets → QC 통과 → fm_model_assets 등록 → 셀러 컷 생성에서 그리드 주입 + 이중주입 0.
-- 회귀: 가상모델 경로 무영향(공개 버킷 로드·게이트 없음 유지).
+- 단위: 그리드 합성(크기·칸·4번째 중립), SFace QC(임베딩 게이트 통과/차단·다중얼굴·0얼굴), resolve 버킷 태깅, **상태머신 선택**(REAL/VIRTUAL/LEGACY/NONE/REJECTED 각각), 라이선스 게이트, staging cleanup.
+- 통합: 3장→build-assets→QC→등록→셀러 컷에서 REAL_ASSETS 주입 + **이중주입 0**(회귀), 라이선스 실패→REJECTED(폴백 안 함), 가상모델 경로 무영향.
+- in-flight: 추론 전 라이선스 해지→중단 검증.
 
 ## 9. 아웃 오브 스코프
 
-- Gemini 그리드 재생성(합성으로 대체).
-- Apple/Samsung 월렛 카드(인증·파트너 게이트).
-- 온체인 정산 변경(기존 `facemarket_chain` 유지).
-- 신체 프로필 기반 전신 생성 고도화(경로 α는 별개 유지).
+Gemini 그리드 재생성 / Apple·Samsung 월렛 / 온체인 정산 변경 / 경로 α 전신생성 고도화.
 
-## 10. 리스크
+## 10. 리스크 & codex 미해결 유보(해커톤: 데모 OK, 상용 전 처리)
 
-- **insightface/onnx 무게**: 이미지 크기·mem. → 번들 + mem 상향, 실측.
-- **얼굴 이중주입**: §4 통합 원칙 + 회귀 테스트로 차단.
-- **resolve async화**: cut_generator 순수성. → 워커 선조회 주입으로 회피 검토.
-- **로컬 insightface 설치**: onnxruntime 휠·모델팩 캐시(`~/.insightface`). 로컬 검증 시 1회 셋업.
+- SFace 임계 캘리브·오매칭율·인구편향·다중얼굴 정책: 데모 후 골드셋 캘리브.
+- EXIF 회전·손상/초대형 이미지·decompression bomb 가드: 업로드단 강화(후속).
+- user_id당 복수 profile: 현재 1:1이나 build-assets에서 **명시 profile 선택 or 최신 1개** 규칙 고정(모호 조인 제거).
+- 워커 cold-start/타임아웃·데모 결정적 픽스처.
