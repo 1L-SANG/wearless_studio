@@ -213,6 +213,11 @@ async function fetchMatchCandidates(projectId, analysis) {
 const toMatchItem = (it, selOrder) => ({
   id: it.id, name: it.name, gender: it.gender,
   thumb: it.thumb, imageUrl: it.imageUrl, thumbnailUrl: it.thumbnailUrl,
+  clothingType: it.clothingType ?? null,
+  category: it.category ?? null,
+  fit: it.fit ?? null,
+  length: it.length ?? null,
+  fitCategory: it.fitCategory ?? null,
   selected: selOrder != null, ...(selOrder != null ? { selOrder } : {}),
 });
 

@@ -21,13 +21,19 @@ import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRe
 import { ensureSections, rowSizeFor } from '@/lib/sections.js';
 
 const nowIso = () => new Date().toISOString();
-const copyFitProfile = (profile) => ({ ...profile, axes: { ...(profile?.axes || {}) } });
+const copyFitProfile = (profile) => ({
+  ...profile,
+  axes: { ...(profile?.axes || {}) },
+  ...(profile?.matchingFit ? {
+    matchingFit: { ...profile.matchingFit, axes: { ...(profile.matchingFit.axes || {}) } },
+  } : {}),
+});
 const isMenOnly = (genders) => Array.isArray(genders) && genders.length > 0 && genders.every((g) => g === 'men');
 const defaultFitProfile = (product, analysis) => {
   const category = fitProfileCategory(product?.clothingType, analysis?.subCategory) || 'top';
   const gender = isMenOnly(analysis?.targetGenders || product?.targetGenders) ? 'men' : 'women';
   const axes = Object.fromEntries(Object.keys(axesFor(category, gender)).map((axis) => [axis, null]));
-  return { category, gender, axes, source: 'auto', version: 1 };
+  return { category, gender, axes, source: 'auto', version: 2 };
 };
 
 /* ---- Account (stable) ---- */

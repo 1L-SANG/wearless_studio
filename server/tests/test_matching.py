@@ -16,6 +16,21 @@ def test_complementary_type():
     assert matching.complementary_type("bottom") == "top"
 
 
+def test_fit_category_uses_curated_metadata_only():
+    assert matching.fit_category(
+        {"clothing_type": "bottom", "category": "데님팬츠", "length": "full"}) == "pants"
+    assert matching.fit_category(
+        {"clothing_type": "bottom", "category": "스커트", "length": "midi"}) == "skirt"
+    assert matching.fit_category(
+        {"clothing_type": "bottom", "category": "쇼츠", "length": "short"}) is None
+    assert matching.fit_category(
+        {"clothing_type": "bottom", "category": "버뮤다쇼츠", "length": "short"}) is None
+    assert matching.fit_category({
+        "name": "이름에는 스커트가 있음", "clothing_type": "bottom",
+        "category": "미등록", "length": "full",
+    }) is None
+
+
 def test_recommend_filters_type_and_sorts_by_brightness_then_sortorder():
     items = [
         _it("b1", "bottom", "women", 20, 2),
@@ -84,7 +99,7 @@ def test_match_candidates_shape_and_public_url(client, make_token, monkeypatch):
 
     async def fake_list(conn):
         return [{"id": "match_women_bottom_01", "name": "블랙 슬랙스",
-                 "clothing_type": "bottom", "gender": "women", "category": "슬랙스",
+                 "clothing_type": "bottom", "gender": "women", "category": "트라우저",
                  "color_name": "블랙", "color_group": "black", "style_tags": ["basic"],
                  "fit": "regular", "length": "full", "color_brightness": 0, "sort_order": 201,
                  "is_active": True, "image_key": "seed/matching/match_women_bottom_01.png",
@@ -102,6 +117,11 @@ def test_match_candidates_shape_and_public_url(client, make_token, monkeypatch):
     assert body[0]["thumb"] == "https://img.example.com/seed/matching/thumb/match_women_bottom_01.png"
     assert body[0]["selected"] is False
     assert body[0]["id"] == "match_women_bottom_01"
+    assert body[0]["clothingType"] == "bottom"
+    assert body[0]["category"] == "트라우저"
+    assert body[0]["fit"] == "regular"
+    assert body[0]["length"] == "full"
+    assert body[0]["fitCategory"] == "pants"
 
 
 def test_match_candidates_failfast_without_public_base(client, make_token, monkeypatch):
