@@ -6,9 +6,9 @@
    ============================================================= */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
-import { listModels, fetchLicenseFaceUrl } from '@/lib/api/facemarket.js';
+import { listModels, fetchLicenseFaceUrl, verifyLicensePublic } from '@/lib/api/facemarket.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, Chips, Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
+import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 
@@ -24,6 +24,66 @@ function ModelThumb({ uri, alt }) {
   }, [uri]);
   if (url) return <img src={url} alt={alt} />;
   return <div className="fm-empty"><Icon name="person" size={24} /></div>;
+}
+
+const _won = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
+const _fmtDate = (iso) => { if (!iso) return null; try { return new Date(iso).toLocaleDateString('ko-KR'); } catch { return iso; } };
+
+// 모델 상세 모달 — 공개 검증 화이트리스트(verifyLicensePublic)만 표시. 얼굴은 게이트 썸네일.
+// PII(원본 얼굴·CI·생년월일·user_id)는 서버가 애초에 안 싣는다. selectable 이면 여기서 선택 확정.
+function ModelDetailModal({ model, onClose, onSelect, selectable }) {
+  const [data, setData] = useState(null);
+  const [phase, setPhase] = useState('loading'); // loading|ready|nolicense|error
+  useEffect(() => {
+    if (!model?.licenseId) { setPhase('nolicense'); return undefined; }
+    let alive = true;
+    verifyLicensePublic(model.licenseId)
+      .then((d) => { if (alive) { setData(d); setPhase('ready'); } })
+      .catch(() => { if (alive) setPhase('error'); });
+    return () => { alive = false; };
+  }, [model]);
+  return (
+    <Modal onClose={onClose}>
+      <div className="fm-detail">
+        <div className="fm-detail-head">
+          <div className="fm-detail-face"><ModelThumb uri={model.faceThumbUri} alt={model.displayName} /></div>
+          <div>
+            <div className="fm-detail-name">{model.displayName}
+              {model.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
+            </div>
+            {data?.model?.age != null && <div className="hint">{data.model.age}세</div>}
+            {model.vcId && <div className="hint" style={{ marginTop: 4 }}><Icon name="check" size={11} /> 온체인 VC 발급됨</div>}
+          </div>
+        </div>
+
+        {phase === 'loading' && <div className="hint" style={{ padding: '16px 0' }}>불러오는 중…</div>}
+        {phase === 'nolicense' && <div className="hint" style={{ padding: '16px 0' }}>활성 라이선스가 없어 상세 조건을 볼 수 없어요.</div>}
+        {phase === 'error' && <div className="hint" style={{ padding: '16px 0' }}>상세 정보를 불러오지 못했어요.</div>}
+        {phase === 'ready' && data && (
+          <dl className="fm-detail-list">
+            <div><dt>단가</dt><dd>{_won(data.unitPrice)}<em> /건</em></dd></div>
+            {data.allowedUse?.length > 0 && (
+              <div><dt>허용 용도</dt><dd className="fm-tags">{data.allowedUse.map((u) => <span key={u} className="tag-allow">{u}</span>)}</dd></div>
+            )}
+            {data.forbiddenUse?.length > 0 && (
+              <div><dt>금지 용도</dt><dd className="fm-tags">{data.forbiddenUse.map((u) => <span key={u} className="tag-forbid">{u}</span>)}</dd></div>
+            )}
+            {_fmtDate(data.validUntil) && <div><dt>유효기간</dt><dd>{_fmtDate(data.validUntil)}까지</dd></div>}
+            {data.vcId && <div><dt>VC</dt><dd><code style={{ fontSize: 11, wordBreak: 'break-all' }}>{data.vcId}</code></dd></div>}
+          </dl>
+        )}
+
+        <div className="fm-detail-actions">
+          <Button variant="ghost" onClick={onClose}>닫기</Button>
+          {selectable && (
+            <Button variant="primary" iconRight="check" onClick={() => { onSelect(model.id); onClose(); }}>
+              이 모델로 선택
+            </Button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
 }
 
 // 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
@@ -173,6 +233,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   // 정적 시드를 버리고 런타임 로드한다. 라이선스가 활성인(hasActiveLicense) 모델만 선택 가능.
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(true);
+  const [detailFor, setDetailFor] = useState(null); // 상세 모달 대상 모델 카드
   useEffect(() => {
     let alive = true;
     listModels()
@@ -400,8 +461,8 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               return (
                 <div key={m.id}
                   className={`model-card fm-model${on ? ' on' : ''}${selectable ? '' : ' disabled'}`}
-                  onClick={() => selectable && onChange({ selectedModelId: m.id })}
-                  title={selectable ? m.displayName : '활성 라이선스가 없어 선택할 수 없어요'}>
+                  onClick={() => setDetailFor(m)}
+                  title="눌러서 상세 정보 보기">
                   {m.coverImageUrl
                     ? <img src={m.coverImageUrl} alt={m.displayName} />
                     : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
@@ -418,6 +479,14 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               );
             })}
           </div>
+        )}
+        {detailFor && (
+          <ModelDetailModal
+            model={detailFor}
+            selectable={!!detailFor.hasActiveLicense}
+            onSelect={(id) => onChange({ selectedModelId: id })}
+            onClose={() => setDetailFor(null)}
+          />
         )}
       </div>
 
