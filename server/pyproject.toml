@@ -14,6 +14,9 @@ dependencies = [
     "pillow>=10",
     "python-multipart>=0.0.9",
     "web3>=7.16.0",
+    # 실존 모델 얼굴 대조 QC — SFace(임베딩)+YuNet(검출), Apache-2.0. headless=libGL 불필요.
+    "opencv-contrib-python-headless>=4.9,<5",
+    "numpy>=1.26",
 ]
 
 [dependency-groups]

@@ -95,6 +95,11 @@ class Settings:
     # ---- OpenDID 홀더(선택과제1) — 커스터디얼 홀더 MSA(로컬 :8100). 라이선스 발급 시 FaceLicense VC 발급 ----
     # 미설정이면(프로드) VC 발급 훅 no-op — 기존 라이선스 흐름 무영향. 로컬 dev 에서만 홀더 도달가능.
     opendid_holder_url: str | None = None
+    # ---- 실존 모델 얼굴 대조 QC (handoff §03 필수 게이트) — OpenCV SFace/YuNet(Apache-2.0) ----
+    # enabled=false면 QC 스킵(dev·shadow). 3장 pairwise 코사인 최소값 < threshold 면 자산 등록 차단.
+    fm_face_qc_enabled: bool = False
+    fm_face_qc_threshold: float = 0.363  # OpenCV SFace 권장 코사인 동일인 기준선(캘리브 전 잠정)
+    fm_face_qc_dir: str | None = None    # SFace/YuNet onnx 디렉터리. None이면 app/data/face_models
 
 
 def _image_size() -> str:
@@ -193,4 +198,7 @@ def load_settings() -> Settings:
         fm_settlement_address=os.getenv("FM_SETTLEMENT_ADDRESS") or None,
         fm_chain_private_key=os.getenv("FM_CHAIN_PRIVATE_KEY") or None,
         opendid_holder_url=(os.getenv("OPENDID_HOLDER_URL") or "").rstrip("/") or None,
+        fm_face_qc_enabled=(os.getenv("FM_FACE_QC_ENABLED", "false").lower() == "true"),
+        fm_face_qc_threshold=float(os.getenv("FM_FACE_QC_THRESHOLD") or "0.363"),
+        fm_face_qc_dir=os.getenv("FM_FACE_QC_DIR") or None,
     )
