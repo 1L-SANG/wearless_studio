@@ -27,6 +27,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
 from . import cx_identity
+from . import repo
 from .auth import require_user
 from .db import get_conn
 from .models import CamelModel, ErrorResponse
@@ -74,10 +75,20 @@ class ModelCard(CamelModel):
     unit_price: int | None = None
     has_active_license: bool = False
     vc_id: str | None = None
+    assets_ready: bool = False  # 실존 모델 그리드 자산 빌드 완료 → 셀러 선택 가능(assetsReady)
+    # 활성 라이선스 얼굴의 게이트 URL(공개 URL 아님 — 인증 fetch 로만 로드). 카탈로그 썸네일용.
+    face_thumb_uri: str | None = None
 
 
 def _err(code: str, message: str, status: int = 400) -> HTTPException:
     return HTTPException(status_code=status, detail={"code": code, "message": message})
+
+
+def _wake_dispatcher(request: Request) -> None:
+    """잡 생성 직후 디스패처 즉시 기상(personalization._wake_dispatcher 미러)."""
+    dispatcher = getattr(request.app.state, "dispatcher", None)
+    if dispatcher is not None:
+        dispatcher.wake()
 
 
 async def _fetch_trans(base_url: str, token: str) -> dict:
@@ -274,13 +285,18 @@ async def identity_verify(
 
 # uuid 컬럼은 ::text 캐스트해 반환(repo.py 관례). psycopg 는 uuid 를 uuid.UUID 로 로드하는데
 # CamelModel(id: str) 이 UUID 를 거부 → ResponseValidationError 500. 캐스트로 문자열화.
-_MODEL_CARD_COLS = "id::text as id, display_name, status, cover_image_url, created_at"
+_MODEL_CARD_COLS = ("id::text as id, display_name, status, cover_image_url, created_at, "
+                    "(assets_status = 'ready') as assets_ready")
 
 # 카탈로그 전용 — 모델(m) + 가장 최근 active 라이선스(l) LEFT JOIN LATERAL.
 # 라이선스 없는 모델은 l.* NULL → has_active_license False, unit_price/license_id/vc_id None.
 _MODEL_CARD_COLS_ENRICHED = (
     "m.id::text as id, m.display_name, m.status, m.cover_image_url, m.created_at, "
-    "l.id::text as license_id, l.unit_price, l.vc_id, (l.id is not null) as has_active_license"
+    "l.id::text as license_id, l.unit_price, l.vc_id, (l.id is not null) as has_active_license, "
+    "(m.assets_status = 'ready') as assets_ready, "
+    # 마켓 썸네일 = 빌드된 face_front 게이트(인증 셀러 누구나). 자산 없으면 null → 프론트 placeholder.
+    "(case when m.assets_status = 'ready' "
+    " then '/v1/facemarket/models/' || m.id::text || '/thumbnail' end) as face_thumb_uri"
 )
 
 
@@ -331,6 +347,60 @@ async def my_models(request: Request, user_id: str = Depends(require_user)):
                 (user_id,),
             )
             return await cur.fetchall()
+
+
+@router.post(
+    "/models/me/build-assets",
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+    tags=["FaceMarket"],
+    summary="내 모델 아이덴티티 자산 빌드(그리드+QC)",
+    status_code=202,
+)
+async def build_my_model_assets(request: Request, user_id: str = Depends(require_user)):
+    """검증된 내 모델의 얼굴 3장 → 2×2 그리드 자산 생성 잡을 큐잉한다(멱등).
+
+    전제: 본인확인(fm_models verified) + 개인화 얼굴 3장 완비. 진행 중 빌드가 있으면 그 jobId 반환.
+    얼굴 대조 QC 통과 시에만 자산이 등록된다(handoff §03 필수 게이트). payload=modelId 만(PII 금지 —
+    워커가 modelId 로 서버측 재조회). 모델 행 FOR UPDATE 로 동시 요청 직렬화(_start_purge 선례).
+    """
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id::text as id from fm_models "
+                "where user_id = %s and status = 'verified' "
+                "order by created_at desc limit 1 for update",
+                (user_id,),
+            )
+            m = await cur.fetchone()
+            if m is None:
+                raise _err("model_not_verified", "먼저 본인확인을 완료해 주세요.", 400)
+            model_id = m["id"]
+            await cur.execute(
+                "select count(distinct pf.angle) as n from personalization_profiles p "
+                "join personalization_face_photos pf on pf.profile_id = p.id "
+                "where p.user_id = %s",
+                (user_id,),
+            )
+            row = await cur.fetchone()
+            if (row["n"] if row else 0) < 3:
+                raise _err("face_photos_incomplete", "얼굴 사진 3장을 먼저 업로드해 주세요.", 400)
+            await cur.execute(
+                "select id::text as id from jobs where kind = 'fm_model_asset_build' "
+                "and payload->>'modelId' = %s and status in ('pending', 'running') limit 1",
+                (model_id,),
+            )
+            existing = await cur.fetchone()
+            if existing:
+                await conn.commit()
+                return {"jobId": existing["id"], "modelId": model_id}
+        job, _created = await repo.create_job(
+            conn, user_id=user_id, project_id=None, kind="fm_model_asset_build",
+            payload={"modelId": model_id}, idempotency_key=None,
+            credits_reserved=0, metadata={},
+        )
+        await conn.commit()
+    _wake_dispatcher(request)
+    return {"jobId": str(job["id"]), "modelId": model_id}
 
 
 # ── 얼굴 라이선스 (FM: 얼굴 업로드 + 조건) ─────────────────────────
@@ -652,6 +722,46 @@ async def get_license_face(
         raise _err("not_found", "찾을 수 없습니다.", status=404)
     # 비공개 — 캐시·색인 금지
     return Response(content=data, media_type=mime, headers={"Cache-Control": "no-store, private"})
+
+
+@router.get(
+    "/models/{model_id}/thumbnail",
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    tags=["FaceMarket"],
+    summary="모델 카탈로그 썸네일 (게이트)",
+)
+async def get_model_thumbnail(
+    request: Request,
+    model_id: str,
+    user_id: str = Depends(require_user),
+):
+    """마켓 카탈로그 썸네일 — 검증 모델의 face_front(비공개 버킷)를 **인증 셀러 누구나** 볼 수 있게
+    서빙한다. 모델이 자산 빌드로 마켓 등록에 동의한 제품이므로 소유자 스코프가 아니다(라이선스 얼굴
+    게이트와 다름). 공개 URL은 만들지 않고 이 인증 라우트로만 바이트를 흘린다(no-store).
+    비존재/미검증/자산없음 = 404(존재 노출 방지). 얼굴 키는 응답·로그 미노출.
+    """
+    r2 = _r2_face(request)
+    try:  # uuid 형식 가드 — 쓰레기 입력은 500 아닌 404
+        uuid.UUID(str(model_id))
+    except ValueError:
+        raise _err("not_found", "찾을 수 없습니다.", status=404)
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select a.r2_key, a.mime from fm_model_assets a
+                   join fm_models m on m.id = a.model_id
+                   where a.model_id = %s and a.view = 'face_front' and m.status = 'verified'""",
+                (model_id,),
+            )
+            row = await cur.fetchone()
+    if not row or not row["r2_key"]:
+        raise _err("not_found", "찾을 수 없습니다.", status=404)
+    try:
+        data = await asyncio.to_thread(r2.get_bytes, row["r2_key"])
+    except Exception:
+        raise _err("not_found", "찾을 수 없습니다.", status=404)
+    return Response(content=data, media_type=row["mime"] or "image/png",
+                    headers={"Cache-Control": "no-store, private"})
 
 
 # ============================================================================

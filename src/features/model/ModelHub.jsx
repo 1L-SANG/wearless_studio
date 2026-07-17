@@ -6,10 +6,11 @@
    (canGenerate:true)면 "내 모델로 생성하기" 진입, 아니면 부족한 단계로
    바로 이동할 수 있는 링크를 보여준다.
    ============================================================= */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
 import { getStatus } from '@/lib/api/personalization.js';
+import { buildMyModelAssets, listMyModels } from '@/lib/api/facemarket.js';
 import s from './ModelPersonalization.module.css';
 
 const BLOCKER = {
@@ -58,11 +59,19 @@ export function ModelHub() {
   const { push } = useToast();
   const [phase, setPhase] = useState('loading'); // loading|ready|error
   const [status, setStatus] = useState(null);
+  const [assetsReady, setAssetsReady] = useState(false); // 실존 모델 그리드 자산 빌드 완료
+  const [building, setBuilding] = useState(false);
+  const pollRef = useRef(null);
 
   const load = useCallback(async () => {
     setPhase('loading');
     try {
       setStatus(await getStatus());
+      // 자산 빌드 상태는 fm_models 카드의 assetsReady 로 확인(개인화 status 와 별개).
+      try {
+        const mine = await listMyModels();
+        setAssetsReady(Boolean(mine?.[0]?.assetsReady));
+      } catch { /* facemarket off·미검증 등 — 자산 섹션 비활성 */ }
       setPhase('ready');
     } catch (e) {
       push?.(e.message, { icon: 'alertCircle' });
@@ -71,6 +80,37 @@ export function ModelHub() {
   }, [push]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current); }, []);
+
+  // 얼굴 3장 → 2×2 그리드 자산 빌드. 얼굴 대조 QC 통과 시에만 등록되며, 완료는 assetsReady 폴링으로 판단.
+  const onBuildAssets = useCallback(async () => {
+    setBuilding(true);
+    try {
+      await buildMyModelAssets();
+      const started = Date.now();
+      const poll = async () => {
+        try {
+          const mine = await listMyModels();
+          if (mine?.[0]?.assetsReady) {
+            setAssetsReady(true);
+            setBuilding(false);
+            push?.('모델 자산이 준비됐어요. 이제 셀러가 선택할 수 있어요.', { icon: 'check' });
+            return;
+          }
+        } catch { /* 일시 오류 — 계속 폴링 */ }
+        if (Date.now() - started > 120000) { // 2분 타임아웃(QC 실패 등)
+          setBuilding(false);
+          push?.('자산 생성이 지연되고 있어요. 얼굴 사진이 동일인인지 확인 후 다시 시도해 주세요.', { icon: 'alertCircle' });
+          return;
+        }
+        pollRef.current = setTimeout(poll, 2500);
+      };
+      pollRef.current = setTimeout(poll, 2500);
+    } catch (e) {
+      setBuilding(false);
+      push?.(e.message, { icon: 'alertCircle' });
+    }
+  }, [push]);
 
   if (phase === 'loading') return <div className="wizard narrow"><div className="surface">불러오는 중…</div></div>;
   if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState desc="상태를 불러오지 못했어요." onRetry={load} /></div></div>;
@@ -148,6 +188,27 @@ export function ModelHub() {
             <StepLink to="/model/license?step=terms" icon="checkSquare" title="얼굴 라이선스 발급"
               desc="사용 조건을 정하고 VC 로 발행" done={false}
               locked={identityRequired || !status.canGenerate} />
+
+            {/* 셀러 마켓 노출용 그리드 자산(얼굴 3장 → 2×2 세드카드). 얼굴 대조 QC 통과 시 등록되고,
+                셀러 카탈로그에서 선택 가능해진다(assetsReady). 프로필 완료(canGenerate) 후 열린다. */}
+            {status.canGenerate && (
+              assetsReady ? (
+                <div className={s.banner}>
+                  <Icon name="check" size={16} />
+                  <span>모델 자산 준비 완료 — 셀러가 카탈로그에서 선택할 수 있어요.</span>
+                </div>
+              ) : (
+                <div className={s.hubCta}>
+                  <Button variant="secondary" block iconRight={building ? undefined : 'sparkles'}
+                    onClick={onBuildAssets} disabled={building}>
+                    {building ? '자산 생성 중… (얼굴 대조 확인)' : '셀러 마켓용 모델 자산 생성'}
+                  </Button>
+                  <p className="hint" style={{ marginTop: 8 }}>
+                    내 얼굴 3장을 아이덴티티 시트로 만들어요. 본인 얼굴이 맞는지 자동 대조 후 등록돼요.
+                  </p>
+                </div>
+              )
+            )}
 
             {status.canGenerate ? (
               <div className={s.hubCta}>

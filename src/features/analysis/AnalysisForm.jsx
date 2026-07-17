@@ -6,9 +6,10 @@
    ============================================================= */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
-import { listModels } from '@/lib/api/facemarket.js';
+import { listModels, fetchLicenseFaceUrl, verifyLicensePublic } from '@/lib/api/facemarket.js';
+import QRCode from 'qrcode';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, Chips, Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
+import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import {
@@ -16,6 +17,106 @@ import {
   matchingFitFromProfile,
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
+
+// 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
+// Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
+function ModelThumb({ uri, alt }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    if (!uri) return undefined;
+    let objUrl = null, alive = true;
+    fetchLicenseFaceUrl(uri).then((u) => { if (alive) { objUrl = u; setUrl(u); } }).catch(() => {});
+    return () => { alive = false; if (objUrl) URL.revokeObjectURL(objUrl); };
+  }, [uri]);
+  if (url) return <img src={url} alt={alt} />;
+  return <div className="fm-empty"><Icon name="person" size={24} /></div>;
+}
+
+const _won = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
+const _fmtDate = (iso) => { if (!iso) return null; try { return new Date(iso).toLocaleDateString('ko-KR'); } catch { return iso; } };
+
+// 모델 상세 = 얼굴 라이선스 카드. 공개 검증 화이트리스트(verifyLicensePublic)만 표시하고
+// 얼굴은 게이트 썸네일, QR 은 무인증 검증 페이지({origin}/verify/{id}) 주소만 싣는다(생체정보 X).
+// PII(원본 얼굴·CI·생년월일·user_id)는 서버가 애초에 안 싣는다. selectable 이면 여기서 선택 확정.
+function ModelDetailModal({ model, onClose, onSelect, selectable }) {
+  const [data, setData] = useState(null);
+  const [phase, setPhase] = useState('loading'); // loading|ready|nolicense|error
+  const [qr, setQr] = useState(null);
+
+  useEffect(() => {
+    if (!model?.licenseId) { setPhase('nolicense'); return undefined; }
+    let alive = true;
+    verifyLicensePublic(model.licenseId)
+      .then((d) => { if (alive) { setData(d); setPhase('ready'); } })
+      .catch(() => { if (alive) setPhase('error'); });
+    const verifyUrl = `${window.location.origin}/verify/${model.licenseId}`;
+    QRCode.toDataURL(verifyUrl, { width: 160, margin: 0, errorCorrectionLevel: 'M' })
+      .then((u) => { if (alive) setQr(u); }).catch(() => {});
+    return () => { alive = false; };
+  }, [model]);
+
+  const age = data?.model?.age;
+  return (
+    <Modal onClose={onClose}>
+      <div className="lic-card-wrap">
+        <div className="lic-card">
+          {/* 얼굴 밴드 */}
+          <div className="lic-card-face">
+            <ModelThumb uri={model.faceThumbUri} alt={model.displayName} />
+            <span className="lic-card-brand">FACE&nbsp;LICENSE</span>
+            {model.status === 'verified' && (
+              <span className="lic-card-badge"><Icon name="check" size={11} />검증</span>
+            )}
+            <div className="lic-card-who">
+              <div className="lic-card-name">{model.displayName}{age != null && <em> · {age}세</em>}</div>
+              {model.vcId
+                ? <div className="lic-card-vc"><Icon name="check" size={10} />온체인 VC 발급됨</div>
+                : <div className="lic-card-vc off">VC 미발급</div>}
+            </div>
+          </div>
+
+          {/* 본문 */}
+          <div className="lic-card-body">
+            {phase === 'loading' && <div className="hint" style={{ padding: '8px 0' }}>불러오는 중…</div>}
+            {phase === 'nolicense' && <div className="hint" style={{ padding: '8px 0' }}>활성 라이선스가 없어 조건을 볼 수 없어요.</div>}
+            {phase === 'error' && <div className="hint" style={{ padding: '8px 0' }}>상세 정보를 불러오지 못했어요.</div>}
+            {phase === 'ready' && data && (
+              <>
+                {data.allowedUse?.length > 0 && (
+                  <div className="lic-row"><span className="lic-k">허용 용도</span>
+                    <span className="lic-tags">{data.allowedUse.map((u) => <span key={u} className="tag-allow">{u}</span>)}</span>
+                  </div>
+                )}
+                {data.forbiddenUse?.length > 0 && (
+                  <div className="lic-row"><span className="lic-k">금지 용도</span>
+                    <span className="lic-tags">{data.forbiddenUse.map((u) => <span key={u} className="tag-forbid"><Icon name="ban" size={9} />{u}</span>)}</span>
+                  </div>
+                )}
+                <div className="lic-foot">
+                  <div className="lic-foot-info">
+                    <div className="lic-price">{_won(data.unitPrice)}<em> /건</em></div>
+                    {_fmtDate(data.validUntil) && <div className="lic-valid">{_fmtDate(data.validUntil)}까지</div>}
+                    {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
+                  </div>
+                  {qr && <img className="lic-qr" src={qr} alt="검증 QR" />}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="lic-actions">
+          <Button variant="ghost" onClick={onClose}>닫기</Button>
+          {selectable && (
+            <Button variant="primary" iconRight="check" onClick={() => { onSelect(model.id); onClose(); }}>
+              이 모델로 선택
+            </Button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 // 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
@@ -176,6 +277,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   // 정적 시드를 버리고 런타임 로드한다. 라이선스가 활성인(hasActiveLicense) 모델만 선택 가능.
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(true);
+  const [detailFor, setDetailFor] = useState(null); // 상세 모달 대상 모델 카드
   useEffect(() => {
     let alive = true;
     listModels()
@@ -446,11 +548,11 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               return (
                 <div key={m.id}
                   className={`model-card fm-model${on ? ' on' : ''}${selectable ? '' : ' disabled'}`}
-                  onClick={() => selectable && onChange({ selectedModelId: m.id })}
-                  title={selectable ? m.displayName : '활성 라이선스가 없어 선택할 수 없어요'}>
+                  onClick={() => setDetailFor(m)}
+                  title="눌러서 상세 정보 보기">
                   {m.coverImageUrl
                     ? <img src={m.coverImageUrl} alt={m.displayName} />
-                    : <div className="fm-empty"><Icon name="person" size={24} /></div>}
+                    : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
                   {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
                   <div className="fm-meta">
                     <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
@@ -464,6 +566,14 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               );
             })}
           </div>
+        )}
+        {detailFor && (
+          <ModelDetailModal
+            model={detailFor}
+            selectable={!!detailFor.hasActiveLicense}
+            onSelect={(id) => onChange({ selectedModelId: id })}
+            onClose={() => setDetailFor(null)}
+          />
         )}
       </div>
 

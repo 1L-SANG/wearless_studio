@@ -225,7 +225,7 @@ def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, 
                 "AG-06 virtual model %s missing valid %s; continuing without model references",
                 model_id, view_name)
             return None
-        resolved.append({"key": key, "mime": mime})
+        resolved.append({"key": key, "mime": mime, "bucket": "public"})
     return resolved[0], resolved[1]
 
 

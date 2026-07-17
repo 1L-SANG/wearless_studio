@@ -172,9 +172,11 @@ def build_auto_blocks(product: dict, start_index: int = 0, *,
 
     i += 1
     notice_text, notice_h = _AI_NOTICE_DEFAULT, 60
+    license_id = ""
     if license_notice:
         face_cuts = license_notice.get("faceCuts") or 0
         total_cuts = license_notice.get("totalCuts") or 0
+        license_id = license_notice.get("licenseId") or ""
         # 전 컷이 라이선스 얼굴일 때만 페이지 전체를 '가상인물 아님' 으로 주장할 수 있다.
         # 하나라도 얼굴 미첨부 컷이 있으면 그 인물은 AI 가 지어낸 가상인물 → '일부 컷' 문구.
         # total 을 모르면(0) 안전측으로 '일부' 를 쓴다 — 과대 주장이 허위표시 방향이다.
@@ -182,7 +184,7 @@ def build_auto_blocks(product: dict, start_index: int = 0, *,
         template = _AI_NOTICE_LICENSED_ALL if all_licensed else _AI_NOTICE_LICENSED_PARTIAL
         notice_text = template.format(
             model_name=license_notice.get("modelName") or "익명",
-            license_id=license_notice.get("licenseId") or "",
+            license_id=license_id,
         )
         notice_h = 80 if all_licensed else 100  # 기본 문구 경로의 높이(60)는 그대로
     ai_notice_block = {
@@ -193,6 +195,29 @@ def build_auto_blocks(product: dict, start_index: int = 0, *,
                      {"size": 13, "color": "#4a4a45", "align": "center"}),
         ],
     }
+
+    # 제안서 step03 "& DID 서명 첨부" — 라이선스가 잠긴 상세페이지에만 '검증된 실제 모델'
+    # 배지 + 공개 검증 QR 을 붙인다. QR 은 실제 실행 시점(프론트)에서 {origin}/verify/{id}
+    # 절대 URL 로 구워진다(외부 폰 스캔). 파이썬 qrcode 미설치 — 여기선 licenseId 만 실어
+    # 프론트 렌더러(license-verify)가 읽게 노출한다. QR·배지에는 licenseId(공개 검증용
+    # 능력토큰)만 — 얼굴·digest·CI·생년월일은 애초에 전달 경로가 없다.
+    #
+    # 회귀 0: license_id 없는 경로(라이선스 미사용 일반 상세페이지)는 아래 블록을 절대
+    # 만지지 않는다 → ai-notice 블록·elements·block 키가 기존과 바이트 동일.
+    if license_id:
+        badge_y = 48 + notice_h + 28
+        qr_y = badge_y + 30 + 18
+        ai_notice_block["elements"].append(
+            _text_el(i, 1, 60, badge_y, 880, 30, "✅ 검증된 실제 모델",
+                     {"size": 18, "weight": 700, "color": "#1a7f37", "align": "center"}))
+        ai_notice_block["elements"].append({
+            "id": _el_id(i, 2),
+            "type": "license-verify",
+            "x": 380, "y": qr_y, "w": 240, "h": 200,
+            "licenseId": license_id,
+        })
+        # 블록 메타로도 노출 — 프론트가 QR 생성용 licenseId 를 요소 밖에서도 읽을 수 있게.
+        ai_notice_block["licenseId"] = license_id
 
     return [size_block, care_block, ai_notice_block]
 
