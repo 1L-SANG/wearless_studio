@@ -37,8 +37,16 @@ export function listModels() {
 }
 
 // GET /v1/facemarket/models/me — 로그인 사용자 본인 소유 모델(마이페이지). 동일 shape.
+// 카드에 assetsReady(그리드 자산 빌드 완료 → 셀러 선택 가능) 포함.
 export function listMyModels() {
   return http('/v1/facemarket/models/me');
+}
+
+// POST /v1/facemarket/models/me/build-assets — 내 얼굴 3장 → 2×2 그리드 자산 빌드 잡 큐잉.
+// → 202 { jobId, modelId }. 진행 중이면 기존 jobId 재사용(멱등). 얼굴 대조 QC 통과 시에만 등록.
+// 완료 여부는 listMyModels()의 assetsReady 폴링으로 판단(잡 결과에 얼굴 키 미노출).
+export function buildMyModelAssets() {
+  return http('/v1/facemarket/models/me/build-assets', { method: 'POST' });
 }
 
 // POST /v1/facemarket/licenses (멀티파트) — 얼굴 + 라이선스 조건 → LicenseCard.
