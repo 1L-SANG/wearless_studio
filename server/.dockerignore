@@ -8,3 +8,5 @@ scripts
 .env
 .env.example
 .python-version
+# 얼굴 QC weights는 이미지 빌드시 pin+checksum으로 받는다(로컬 stale 방지)
+app/data/face_models/
