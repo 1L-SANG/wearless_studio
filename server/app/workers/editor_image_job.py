@@ -148,13 +148,17 @@ async def run_editor_image_job(app, job: dict) -> None:
             try:
                 model_refs = cut_generator.resolve_virtual_model_assets(normalized)
                 if model_refs is not None:
-                    model_images = [
-                        InlineImage(
-                            ref["mime"],
-                            await asyncio.to_thread(app.state.r2.get_bytes, ref["key"]),
-                        )
-                        for ref in model_refs
-                    ]
+                    # 버킷 인지 — 실존 모델 그리드(bucket='face')는 비공개 r2_face 에서 로드해
+                    # 공개 버킷으로 얼굴 키가 새지 않게 한다(가상 모델은 bucket='public').
+                    model_images = []
+                    for ref in model_refs:
+                        client = (app.state.r2_face if ref.get("bucket") == "face"
+                                  else app.state.r2)
+                        if client is None:
+                            raise RuntimeError("bucket client unavailable")
+                        model_images.append(
+                            InlineImage(ref["mime"],
+                                        await asyncio.to_thread(client.get_bytes, ref["key"])))
             except Exception as e:
                 log.warning(
                     "AG-06 virtual model assets unavailable for job %s model %s; "
