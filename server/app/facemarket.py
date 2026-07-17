@@ -75,6 +75,7 @@ class ModelCard(CamelModel):
     unit_price: int | None = None
     has_active_license: bool = False
     vc_id: str | None = None
+    assets_ready: bool = False  # 실존 모델 그리드 자산 빌드 완료 → 셀러 선택 가능(assetsReady)
 
 
 def _err(code: str, message: str, status: int = 400) -> HTTPException:
@@ -282,13 +283,15 @@ async def identity_verify(
 
 # uuid 컬럼은 ::text 캐스트해 반환(repo.py 관례). psycopg 는 uuid 를 uuid.UUID 로 로드하는데
 # CamelModel(id: str) 이 UUID 를 거부 → ResponseValidationError 500. 캐스트로 문자열화.
-_MODEL_CARD_COLS = "id::text as id, display_name, status, cover_image_url, created_at"
+_MODEL_CARD_COLS = ("id::text as id, display_name, status, cover_image_url, created_at, "
+                    "(assets_status = 'ready') as assets_ready")
 
 # 카탈로그 전용 — 모델(m) + 가장 최근 active 라이선스(l) LEFT JOIN LATERAL.
 # 라이선스 없는 모델은 l.* NULL → has_active_license False, unit_price/license_id/vc_id None.
 _MODEL_CARD_COLS_ENRICHED = (
     "m.id::text as id, m.display_name, m.status, m.cover_image_url, m.created_at, "
-    "l.id::text as license_id, l.unit_price, l.vc_id, (l.id is not null) as has_active_license"
+    "l.id::text as license_id, l.unit_price, l.vc_id, (l.id is not null) as has_active_license, "
+    "(m.assets_status = 'ready') as assets_ready"
 )
 
 

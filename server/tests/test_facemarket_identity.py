@@ -69,8 +69,8 @@ class FakeCursor:
                 raise UniqueViolation("duplicate cx_tx_id")
             self.store["tx"].add(cx_tx_id)
             self._result = None
-        elif s.startswith("select id::text as id, display_name, status, cover_image_url, created_at from fm_models"):
-            # /models/me — 본인 소유(모든 상태). 기본 카드 컬럼만.
+        elif s.startswith("select id::text as id, display_name, status, cover_image_url, created_at"):
+            # /models/me — 본인 소유(모든 상태). 기본 카드 컬럼(+assets_ready 파생).
             rows = [r for r in models if r["user_id"] == params[0]]
             self._many = [{k: r[k] for k in _CARD_KEYS} for r in rows]
         elif s.startswith("select m.id::text as id"):
@@ -201,9 +201,10 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
     # T2 enriched — 기본 카드 + 라이선스 필드(store 무라이선스 → None/False).
     assert set(card) == {
         "id", "displayName", "status", "coverImageUrl", "createdAt",
-        "licenseId", "unitPrice", "hasActiveLicense", "vcId",
+        "licenseId", "unitPrice", "hasActiveLicense", "vcId", "assetsReady",
     }
     assert card["status"] == "verified"
+    assert card["assetsReady"] is False  # 자산 미빌드 → 셀러 선택 불가 표식
     assert card["hasActiveLicense"] is False
     assert card["licenseId"] is None and card["unitPrice"] is None and card["vcId"] is None
     # PII/식별자 미노출
