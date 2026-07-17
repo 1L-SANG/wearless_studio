@@ -6,11 +6,25 @@
    ============================================================= */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
-import { listModels } from '@/lib/api/facemarket.js';
+import { listModels, fetchLicenseFaceUrl } from '@/lib/api/facemarket.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
+
+// 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
+// Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
+function ModelThumb({ uri, alt }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    if (!uri) return undefined;
+    let objUrl = null, alive = true;
+    fetchLicenseFaceUrl(uri).then((u) => { if (alive) { objUrl = u; setUrl(u); } }).catch(() => {});
+    return () => { alive = false; if (objUrl) URL.revokeObjectURL(objUrl); };
+  }, [uri]);
+  if (url) return <img src={url} alt={alt} />;
+  return <div className="fm-empty"><Icon name="person" size={24} /></div>;
+}
 
 // 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
@@ -390,7 +404,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
                   title={selectable ? m.displayName : '활성 라이선스가 없어 선택할 수 없어요'}>
                   {m.coverImageUrl
                     ? <img src={m.coverImageUrl} alt={m.displayName} />
-                    : <div className="fm-empty"><Icon name="person" size={24} /></div>}
+                    : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
                   {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
                   <div className="fm-meta">
                     <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>

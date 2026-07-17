@@ -76,6 +76,8 @@ class ModelCard(CamelModel):
     has_active_license: bool = False
     vc_id: str | None = None
     assets_ready: bool = False  # 실존 모델 그리드 자산 빌드 완료 → 셀러 선택 가능(assetsReady)
+    # 활성 라이선스 얼굴의 게이트 URL(공개 URL 아님 — 인증 fetch 로만 로드). 카탈로그 썸네일용.
+    face_thumb_uri: str | None = None
 
 
 def _err(code: str, message: str, status: int = 400) -> HTTPException:
@@ -291,7 +293,10 @@ _MODEL_CARD_COLS = ("id::text as id, display_name, status, cover_image_url, crea
 _MODEL_CARD_COLS_ENRICHED = (
     "m.id::text as id, m.display_name, m.status, m.cover_image_url, m.created_at, "
     "l.id::text as license_id, l.unit_price, l.vc_id, (l.id is not null) as has_active_license, "
-    "(m.assets_status = 'ready') as assets_ready"
+    "(m.assets_status = 'ready') as assets_ready, "
+    # 마켓 썸네일 = 빌드된 face_front 게이트(인증 셀러 누구나). 자산 없으면 null → 프론트 placeholder.
+    "(case when m.assets_status = 'ready' "
+    " then '/v1/facemarket/models/' || m.id::text || '/thumbnail' end) as face_thumb_uri"
 )
 
 
@@ -717,6 +722,46 @@ async def get_license_face(
         raise _err("not_found", "찾을 수 없습니다.", status=404)
     # 비공개 — 캐시·색인 금지
     return Response(content=data, media_type=mime, headers={"Cache-Control": "no-store, private"})
+
+
+@router.get(
+    "/models/{model_id}/thumbnail",
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    tags=["FaceMarket"],
+    summary="모델 카탈로그 썸네일 (게이트)",
+)
+async def get_model_thumbnail(
+    request: Request,
+    model_id: str,
+    user_id: str = Depends(require_user),
+):
+    """마켓 카탈로그 썸네일 — 검증 모델의 face_front(비공개 버킷)를 **인증 셀러 누구나** 볼 수 있게
+    서빙한다. 모델이 자산 빌드로 마켓 등록에 동의한 제품이므로 소유자 스코프가 아니다(라이선스 얼굴
+    게이트와 다름). 공개 URL은 만들지 않고 이 인증 라우트로만 바이트를 흘린다(no-store).
+    비존재/미검증/자산없음 = 404(존재 노출 방지). 얼굴 키는 응답·로그 미노출.
+    """
+    r2 = _r2_face(request)
+    try:  # uuid 형식 가드 — 쓰레기 입력은 500 아닌 404
+        uuid.UUID(str(model_id))
+    except ValueError:
+        raise _err("not_found", "찾을 수 없습니다.", status=404)
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select a.r2_key, a.mime from fm_model_assets a
+                   join fm_models m on m.id = a.model_id
+                   where a.model_id = %s and a.view = 'face_front' and m.status = 'verified'""",
+                (model_id,),
+            )
+            row = await cur.fetchone()
+    if not row or not row["r2_key"]:
+        raise _err("not_found", "찾을 수 없습니다.", status=404)
+    try:
+        data = await asyncio.to_thread(r2.get_bytes, row["r2_key"])
+    except Exception:
+        raise _err("not_found", "찾을 수 없습니다.", status=404)
+    return Response(content=data, media_type=row["mime"] or "image/png",
+                    headers={"Cache-Control": "no-store, private"})
 
 
 # ============================================================================

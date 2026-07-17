@@ -201,7 +201,7 @@ def test_catalog_lists_verified_without_pii(fm, make_token):
     # T2 enriched — 기본 카드 + 라이선스 필드(store 무라이선스 → None/False).
     assert set(card) == {
         "id", "displayName", "status", "coverImageUrl", "createdAt",
-        "licenseId", "unitPrice", "hasActiveLicense", "vcId", "assetsReady",
+        "licenseId", "unitPrice", "hasActiveLicense", "vcId", "assetsReady", "faceThumbUri",
     }
     assert card["status"] == "verified"
     assert card["assetsReady"] is False  # 자산 미빌드 → 셀러 선택 불가 표식
