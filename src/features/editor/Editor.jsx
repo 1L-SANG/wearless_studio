@@ -10,6 +10,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Moveable from 'react-moveable';
+import QRCode from 'qrcode';
 import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
@@ -19,6 +20,36 @@ import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, 
 import { SHAPE_D } from '@/features/editor/shapes.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
+
+/* 라이선스 검증 배지 QR (제안서 step03 "& DID 서명 첨부") — 라이선스가 잠긴 상세페이지의
+   ai-notice 블록에만 백엔드가 넣는 'license-verify' 요소를 렌더한다. QR 내용은 스캔 대상이
+   외부 폰이라 반드시 절대 URL: `{현재 origin}/verify/{licenseId}`. 심사위원이 찍으면 무인증
+   공개 검증 페이지로 이동해 "이 얼굴이 검증된 실제 모델이고 라이선스가 유효함"을 즉석 확인한다.
+   QR 이 싣는 건 licenseId(공개 검증용 능력토큰)뿐 — 얼굴·digest·CI·생년월일은 담기지 않는다.
+   이 요소는 컴플라이언스 산출물이라 선택/이동 대상이 아니다(데이터 요소 아님, 표시 전용). */
+function LicenseVerifyEl({ el, base }) {
+  const [qr, setQr] = useState(null);
+  const licenseId = el.licenseId;
+  const verifyUrl = licenseId ? `${window.location.origin}/verify/${licenseId}` : '';
+  useEffect(() => {
+    if (!verifyUrl) return;
+    let alive = true;
+    QRCode.toDataURL(verifyUrl, { width: 320, margin: 1, errorCorrectionLevel: 'M' })
+      .then((u) => { if (alive) setQr(u); })
+      .catch(() => { /* QR 생성 실패 — 배지 텍스트는 별도 요소라 그대로 남는다 */ });
+    return () => { alive = false; };
+  }, [verifyUrl]);
+  return (
+    <div className="el el-verify" style={{ ...base, cursor: 'default', pointerEvents: 'none' }}>
+      <div className="ev-card">
+        {qr
+          ? <img className="ev-qr" src={qr} alt="라이선스 검증 QR 코드" draggable={false} />
+          : <div className="ev-qr-skel" />}
+        <div className="ev-hint">스캔하면 라이선스 검증 페이지로 이동해요</div>
+      </div>
+    </div>
+  );
+}
 
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
@@ -90,6 +121,9 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
         onBlur={(e) => { onEdit(null); onPatch(blockId, el.id, { text: e.currentTarget.textContent }); }}>
         {editing ? el.text : display}</div>
     );
+  }
+  if (el.type === 'license-verify') {
+    return <LicenseVerifyEl el={el} base={base} />;
   }
   // shape / line
   let inner = null;
