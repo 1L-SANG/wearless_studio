@@ -322,7 +322,7 @@
 .fm-model.disabled .fm-price { color: var(--fg-3); }
 
 /* 얼굴 라이선스 카드 (모델 카드 클릭 → 상세) — 무채색+단일 액센트, 신분증/VC 카드 톤 */
-.lic-card-wrap { display: flex; flex-direction: column; gap: 16px; width: 320px; }
+.lic-card-wrap { display: flex; flex-direction: column; gap: 16px; width: 320px; max-width: 100%; margin: 0 auto; }
 .lic-card { border-radius: var(--r-6); overflow: hidden; background: var(--bg-1);
   box-shadow: var(--elev-card), 0 12px 30px -18px rgba(19,19,22,.5); border: 1px solid var(--ring); }
 .lic-card-face { position: relative; aspect-ratio: 4 / 3; background: var(--bg-2); }
