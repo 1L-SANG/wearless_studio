@@ -254,6 +254,9 @@ async def run_detail_page_job(app, job: dict) -> None:
             source = identity_source.select_source(
                 selected_model_id=selected_model_id, license_row=license_row,
                 has_real_assets=real_refs is not None, has_license_face=face_ref is not None)
+            # 관측 로그(PII 없음 — 소스 enum·플래그만). 데모·검증에서 REAL 주입 확인용.
+            log.info("AG-06 identity source=%s job=%s hasReal=%s hasLicenseFace=%s",
+                     source, job_id, real_refs is not None, face_ref is not None)
             if source == "REJECTED":
                 log.warning("AG-06 real model selected without active license; skipping face (job %s)", job_id)
                 face_ref = None
