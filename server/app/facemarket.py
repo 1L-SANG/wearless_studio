@@ -27,6 +27,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.types.json import Json
 
 from . import cx_identity
+from . import repo
 from .auth import require_user
 from .db import get_conn
 from .models import CamelModel, ErrorResponse
@@ -78,6 +79,13 @@ class ModelCard(CamelModel):
 
 def _err(code: str, message: str, status: int = 400) -> HTTPException:
     return HTTPException(status_code=status, detail={"code": code, "message": message})
+
+
+def _wake_dispatcher(request: Request) -> None:
+    """잡 생성 직후 디스패처 즉시 기상(personalization._wake_dispatcher 미러)."""
+    dispatcher = getattr(request.app.state, "dispatcher", None)
+    if dispatcher is not None:
+        dispatcher.wake()
 
 
 async def _fetch_trans(base_url: str, token: str) -> dict:
@@ -331,6 +339,60 @@ async def my_models(request: Request, user_id: str = Depends(require_user)):
                 (user_id,),
             )
             return await cur.fetchall()
+
+
+@router.post(
+    "/models/me/build-assets",
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+    tags=["FaceMarket"],
+    summary="내 모델 아이덴티티 자산 빌드(그리드+QC)",
+    status_code=202,
+)
+async def build_my_model_assets(request: Request, user_id: str = Depends(require_user)):
+    """검증된 내 모델의 얼굴 3장 → 2×2 그리드 자산 생성 잡을 큐잉한다(멱등).
+
+    전제: 본인확인(fm_models verified) + 개인화 얼굴 3장 완비. 진행 중 빌드가 있으면 그 jobId 반환.
+    얼굴 대조 QC 통과 시에만 자산이 등록된다(handoff §03 필수 게이트). payload=modelId 만(PII 금지 —
+    워커가 modelId 로 서버측 재조회). 모델 행 FOR UPDATE 로 동시 요청 직렬화(_start_purge 선례).
+    """
+    async with get_conn(request) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id::text as id from fm_models "
+                "where user_id = %s and status = 'verified' "
+                "order by created_at desc limit 1 for update",
+                (user_id,),
+            )
+            m = await cur.fetchone()
+            if m is None:
+                raise _err("model_not_verified", "먼저 본인확인을 완료해 주세요.", 400)
+            model_id = m["id"]
+            await cur.execute(
+                "select count(distinct pf.angle) as n from personalization_profiles p "
+                "join personalization_face_photos pf on pf.profile_id = p.id "
+                "where p.user_id = %s",
+                (user_id,),
+            )
+            row = await cur.fetchone()
+            if (row["n"] if row else 0) < 3:
+                raise _err("face_photos_incomplete", "얼굴 사진 3장을 먼저 업로드해 주세요.", 400)
+            await cur.execute(
+                "select id::text as id from jobs where kind = 'fm_model_asset_build' "
+                "and payload->>'modelId' = %s and status in ('pending', 'running') limit 1",
+                (model_id,),
+            )
+            existing = await cur.fetchone()
+            if existing:
+                await conn.commit()
+                return {"jobId": existing["id"], "modelId": model_id}
+        job, _created = await repo.create_job(
+            conn, user_id=user_id, project_id=None, kind="fm_model_asset_build",
+            payload={"modelId": model_id}, idempotency_key=None,
+            credits_reserved=0, metadata={},
+        )
+        await conn.commit()
+    _wake_dispatcher(request)
+    return {"jobId": str(job["id"]), "modelId": model_id}
 
 
 # ── 얼굴 라이선스 (FM: 얼굴 업로드 + 조건) ─────────────────────────
