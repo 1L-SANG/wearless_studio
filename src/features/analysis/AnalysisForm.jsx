@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
 import { listModels, fetchLicenseFaceUrl, verifyLicensePublic } from '@/lib/api/facemarket.js';
+import QRCode from 'qrcode';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
@@ -29,51 +30,77 @@ function ModelThumb({ uri, alt }) {
 const _won = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
 const _fmtDate = (iso) => { if (!iso) return null; try { return new Date(iso).toLocaleDateString('ko-KR'); } catch { return iso; } };
 
-// 모델 상세 모달 — 공개 검증 화이트리스트(verifyLicensePublic)만 표시. 얼굴은 게이트 썸네일.
+// 모델 상세 = 얼굴 라이선스 카드. 공개 검증 화이트리스트(verifyLicensePublic)만 표시하고
+// 얼굴은 게이트 썸네일, QR 은 무인증 검증 페이지({origin}/verify/{id}) 주소만 싣는다(생체정보 X).
 // PII(원본 얼굴·CI·생년월일·user_id)는 서버가 애초에 안 싣는다. selectable 이면 여기서 선택 확정.
 function ModelDetailModal({ model, onClose, onSelect, selectable }) {
   const [data, setData] = useState(null);
   const [phase, setPhase] = useState('loading'); // loading|ready|nolicense|error
+  const [qr, setQr] = useState(null);
+
   useEffect(() => {
     if (!model?.licenseId) { setPhase('nolicense'); return undefined; }
     let alive = true;
     verifyLicensePublic(model.licenseId)
       .then((d) => { if (alive) { setData(d); setPhase('ready'); } })
       .catch(() => { if (alive) setPhase('error'); });
+    const verifyUrl = `${window.location.origin}/verify/${model.licenseId}`;
+    QRCode.toDataURL(verifyUrl, { width: 160, margin: 0, errorCorrectionLevel: 'M' })
+      .then((u) => { if (alive) setQr(u); }).catch(() => {});
     return () => { alive = false; };
   }, [model]);
+
+  const age = data?.model?.age;
   return (
     <Modal onClose={onClose}>
-      <div className="fm-detail">
-        <div className="fm-detail-head">
-          <div className="fm-detail-face"><ModelThumb uri={model.faceThumbUri} alt={model.displayName} /></div>
-          <div>
-            <div className="fm-detail-name">{model.displayName}
-              {model.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
+      <div className="lic-card-wrap">
+        <div className="lic-card">
+          {/* 얼굴 밴드 */}
+          <div className="lic-card-face">
+            <ModelThumb uri={model.faceThumbUri} alt={model.displayName} />
+            <span className="lic-card-brand">FACE&nbsp;LICENSE</span>
+            {model.status === 'verified' && (
+              <span className="lic-card-badge"><Icon name="check" size={11} />검증</span>
+            )}
+            <div className="lic-card-who">
+              <div className="lic-card-name">{model.displayName}{age != null && <em> · {age}세</em>}</div>
+              {model.vcId
+                ? <div className="lic-card-vc"><Icon name="check" size={10} />온체인 VC 발급됨</div>
+                : <div className="lic-card-vc off">VC 미발급</div>}
             </div>
-            {data?.model?.age != null && <div className="hint">{data.model.age}세</div>}
-            {model.vcId && <div className="hint" style={{ marginTop: 4 }}><Icon name="check" size={11} /> 온체인 VC 발급됨</div>}
+          </div>
+
+          {/* 본문 */}
+          <div className="lic-card-body">
+            {phase === 'loading' && <div className="hint" style={{ padding: '8px 0' }}>불러오는 중…</div>}
+            {phase === 'nolicense' && <div className="hint" style={{ padding: '8px 0' }}>활성 라이선스가 없어 조건을 볼 수 없어요.</div>}
+            {phase === 'error' && <div className="hint" style={{ padding: '8px 0' }}>상세 정보를 불러오지 못했어요.</div>}
+            {phase === 'ready' && data && (
+              <>
+                {data.allowedUse?.length > 0 && (
+                  <div className="lic-row"><span className="lic-k">허용 용도</span>
+                    <span className="lic-tags">{data.allowedUse.map((u) => <span key={u} className="tag-allow">{u}</span>)}</span>
+                  </div>
+                )}
+                {data.forbiddenUse?.length > 0 && (
+                  <div className="lic-row"><span className="lic-k">금지 용도</span>
+                    <span className="lic-tags">{data.forbiddenUse.map((u) => <span key={u} className="tag-forbid"><Icon name="ban" size={9} />{u}</span>)}</span>
+                  </div>
+                )}
+                <div className="lic-foot">
+                  <div className="lic-foot-info">
+                    <div className="lic-price">{_won(data.unitPrice)}<em> /건</em></div>
+                    {_fmtDate(data.validUntil) && <div className="lic-valid">{_fmtDate(data.validUntil)}까지</div>}
+                    {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
+                  </div>
+                  {qr && <img className="lic-qr" src={qr} alt="검증 QR" />}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
-        {phase === 'loading' && <div className="hint" style={{ padding: '16px 0' }}>불러오는 중…</div>}
-        {phase === 'nolicense' && <div className="hint" style={{ padding: '16px 0' }}>활성 라이선스가 없어 상세 조건을 볼 수 없어요.</div>}
-        {phase === 'error' && <div className="hint" style={{ padding: '16px 0' }}>상세 정보를 불러오지 못했어요.</div>}
-        {phase === 'ready' && data && (
-          <dl className="fm-detail-list">
-            <div><dt>단가</dt><dd>{_won(data.unitPrice)}<em> /건</em></dd></div>
-            {data.allowedUse?.length > 0 && (
-              <div><dt>허용 용도</dt><dd className="fm-tags">{data.allowedUse.map((u) => <span key={u} className="tag-allow">{u}</span>)}</dd></div>
-            )}
-            {data.forbiddenUse?.length > 0 && (
-              <div><dt>금지 용도</dt><dd className="fm-tags">{data.forbiddenUse.map((u) => <span key={u} className="tag-forbid">{u}</span>)}</dd></div>
-            )}
-            {_fmtDate(data.validUntil) && <div><dt>유효기간</dt><dd>{_fmtDate(data.validUntil)}까지</dd></div>}
-            {data.vcId && <div><dt>VC</dt><dd><code style={{ fontSize: 11, wordBreak: 'break-all' }}>{data.vcId}</code></dd></div>}
-          </dl>
-        )}
-
-        <div className="fm-detail-actions">
+        <div className="lic-actions">
           <Button variant="ghost" onClick={onClose}>닫기</Button>
           {selectable && (
             <Button variant="primary" iconRight="check" onClick={() => { onSelect(model.id); onClose(); }}>

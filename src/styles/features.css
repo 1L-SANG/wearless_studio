@@ -321,25 +321,44 @@
 .fm-price { font-size: 12px; font-weight: 500; color: var(--fg-2); margin-top: 3px; }
 .fm-model.disabled .fm-price { color: var(--fg-3); }
 
-/* 모델 상세 모달 (카드 클릭 → 공개 검증 화이트리스트 표시) */
-.fm-detail { display: flex; flex-direction: column; gap: 16px; min-width: 320px; max-width: 420px; }
-.fm-detail-head { display: flex; gap: 14px; align-items: center; }
-.fm-detail-face { width: 96px; height: 120px; border-radius: var(--r-4); overflow: hidden; flex-shrink: 0;
-  box-shadow: 0 0 0 1px var(--ring); background: var(--bg-2); }
-.fm-detail-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.fm-detail-face .fm-empty { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--fg-3); }
-.fm-detail-name { font-size: 17px; font-weight: 700; color: var(--fg-1); display: flex; align-items: center; gap: 8px; }
-.fm-detail-name .fm-verified { position: static; }
-.fm-detail-list { display: flex; flex-direction: column; gap: 10px; margin: 0; }
-.fm-detail-list > div { display: flex; gap: 12px; align-items: baseline; }
-.fm-detail-list dt { flex-shrink: 0; width: 68px; font-size: 12.5px; color: var(--fg-3); margin: 0; }
-.fm-detail-list dd { margin: 0; font-size: 13.5px; color: var(--fg-1); font-weight: 500; }
-.fm-detail-list dd em { color: var(--fg-3); font-style: normal; font-weight: 400; }
-.fm-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.tag-allow, .tag-forbid { font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: var(--r-pill); }
-.tag-allow { background: color-mix(in srgb, var(--accent-success) 14%, transparent); color: var(--accent-success); }
-.tag-forbid { background: rgba(200, 60, 60, .12); color: #c33; }
-.fm-detail-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
+/* 얼굴 라이선스 카드 (모델 카드 클릭 → 상세) — 무채색+단일 액센트, 신분증/VC 카드 톤 */
+.lic-card-wrap { display: flex; flex-direction: column; gap: 16px; width: 320px; }
+.lic-card { border-radius: var(--r-6); overflow: hidden; background: var(--bg-1);
+  box-shadow: var(--elev-card), 0 12px 30px -18px rgba(19,19,22,.5); border: 1px solid var(--ring); }
+.lic-card-face { position: relative; aspect-ratio: 4 / 3; background: var(--bg-2); }
+.lic-card-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lic-card-face .fm-empty { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--fg-3); }
+.lic-card-brand { position: absolute; top: 11px; left: 12px; font-size: 10px; font-weight: 800; letter-spacing: .14em;
+  color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.55); }
+.lic-card-badge { position: absolute; top: 9px; right: 10px; display: inline-flex; align-items: center; gap: 2px;
+  font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: var(--r-pill);
+  background: var(--accent-success); color: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+.lic-card-who { position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 14px 12px;
+  background: linear-gradient(to top, rgba(0,0,0,.72), rgba(0,0,0,0)); }
+.lic-card-name { font-size: 19px; font-weight: 800; color: #fff; letter-spacing: -.01em; }
+.lic-card-name em { font-style: normal; font-weight: 500; opacity: .82; font-size: 14px; }
+.lic-card-vc { margin-top: 3px; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600;
+  color: #7ee2b8; }
+.lic-card-vc.off { color: rgba(255,255,255,.6); }
+.lic-card-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.lic-row { display: flex; flex-direction: column; gap: 6px; }
+.lic-k { font-size: 11px; font-weight: 600; color: var(--fg-3); text-transform: uppercase; letter-spacing: .04em; }
+.lic-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-allow, .tag-forbid { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 600;
+  padding: 3px 10px; border-radius: var(--r-pill); }
+.tag-allow { background: var(--accent-success-ring); color: var(--accent-success); }
+.tag-forbid { background: var(--accent-error-ring); color: var(--accent-error); }
+.lic-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
+  border-top: 1px solid var(--ring); padding-top: 12px; }
+.lic-foot-info { min-width: 0; }
+.lic-price { font-size: 22px; font-weight: 800; color: var(--fg-1); letter-spacing: -.02em; }
+.lic-price em { font-style: normal; font-size: 12px; font-weight: 500; color: var(--fg-3); }
+.lic-valid { font-size: 12px; color: var(--fg-2); margin-top: 2px; }
+.lic-vcid { display: block; margin-top: 6px; font-size: 10px; color: var(--fg-3);
+  max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lic-qr { width: 68px; height: 68px; flex-shrink: 0; border-radius: var(--r-2); background: #fff;
+  box-shadow: 0 0 0 1px var(--ring); }
+.lic-actions { display: flex; gap: 10px; justify-content: flex-end; }
 
 /* FaceMarket 온체인 정산 영수증 (Generating 완료 · 장면③) */
 .fm-receipt-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
