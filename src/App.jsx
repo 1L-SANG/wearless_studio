@@ -9,7 +9,7 @@
    Editor 는 app chrome 밖의 전체화면 surface (stub in phase 1).
    ============================================================= */
 import { Suspense, useEffect, useRef, useState } from 'react';
-import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet, useLocation, useParams } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
@@ -30,8 +30,10 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
 import { syncDraftToBackend } from '@/lib/draftSync.js';
+import { api } from '@/lib/api/index.js';
 import { listMyModels } from '@/lib/api/facemarket.js';
 import { ErrorState } from '@/components/ui.jsx';
+import { shouldAdoptRouteProject } from '@/lib/projectRoute.js';
 
 /* 보호 라우트 — 세션 없으면 공개 입력 페이지로. 입력은 공개라 리다이렉트 루프 없음. */
 function RequireAuth() {
@@ -54,6 +56,53 @@ function RequireProject() {
   useEffect(() => { flowRouteSeenThisSession = true; }, []);
 
   if (!projectPersisted || !projectId) return <Navigate to="/create/input" replace />;
+  return <Outlet />;
+}
+
+/* editor 는 URL 의 :id 가 공유/북마크 계약이다. store 에 남은 A가 있더라도 /editor/B 로
+   들어오면 B를 서버 소유권 검증한 뒤 현재 프로젝트로 채택하고, 검증 전에는 Editor를 렌더하지 않는다. */
+function RequireEditorProject() {
+  const { id: routeProjectId } = useParams();
+  const projectId = useAppStore((s) => s.projectId);
+  const adoptProject = useAppStore((s) => s.adoptProject);
+  const [phase, setPhase] = useState('loading'); // loading | ready | not-found | error
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => { flowRouteSeenThisSession = true; }, []);
+
+  useEffect(() => {
+    let alive = true;
+    setPhase('loading');
+    (async () => {
+      try {
+        const project = await api.getProject(routeProjectId);
+        if (!alive) return;
+        if (!project?.id || project.id !== routeProjectId) { setPhase('not-found'); return; }
+        if (shouldAdoptRouteProject(useAppStore.getState().projectId, project.id)) {
+          adoptProject(project.id);
+        }
+        setPhase('ready');
+      } catch (error) {
+        if (!alive) return;
+        setPhase(error?.status === 404 ? 'not-found' : 'error');
+      }
+    })();
+    return () => { alive = false; };
+  }, [adoptProject, routeProjectId, attempt]);
+
+  if (!routeProjectId || phase === 'not-found') return <Navigate to="/create/input" replace />;
+  if (phase === 'error') {
+    return (
+      <div className="wizard narrow">
+        <div className="surface">
+          <ErrorState desc="에디터 프로젝트를 확인하지 못했어요." onRetry={() => setAttempt((value) => value + 1)} />
+        </div>
+      </div>
+    );
+  }
+  if (phase === 'loading' || shouldAdoptRouteProject(projectId, routeProjectId)) {
+    return <div className="route-loading">에디터 프로젝트를 확인하고 있어요…</div>;
+  }
   return <Outlet />;
 }
 
@@ -243,7 +292,7 @@ export default function App() {
         </Route>
         {/* editor lives outside the chrome (full-screen workspace) — 로그인 필요 */}
         <Route element={<RequireAuth />}>
-          <Route element={<RequireProject />}>
+          <Route element={<RequireEditorProject />}>
             <Route path="editor/:id" element={<Suspense fallback={<div className="route-loading">에디터를 불러오는 중이에요</div>}><LazyEditor /></Suspense>} />
           </Route>
         </Route>

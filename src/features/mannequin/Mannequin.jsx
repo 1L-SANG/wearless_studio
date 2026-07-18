@@ -22,6 +22,11 @@ import {
 } from '@/lib/matchingFit.js';
 import { Icon, Button, ErrorState, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import {
+  clearInitialGenerationRequested,
+  cutsExistedBeforeInitialGeneration,
+  markInitialGenerationRequested,
+} from './initialGenerationSession.js';
 import './Mannequin.css';
 
 const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
@@ -201,6 +206,7 @@ function requestMannequinGeneration(pid) {
   });
 
   mannequinGenerationProjectId = pid;
+  markInitialGenerationRequested(pid);
   mannequinGenerationInflight = api.generateMannequins(pid, {
     onProgress: (next) => updateMannequinJob(pid, {
       status: 'running',
@@ -726,9 +732,10 @@ export function Mannequin() {
       ));
 
       let list = await api.getMannequins(pid);
-      initialCutsExistedRef.current = list.length > 0;
+      initialCutsExistedRef.current = cutsExistedBeforeInitialGeneration(pid, list);
       if (list.length) {
         updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
+        clearInitialGenerationRequested(pid);
       }
       if (loadRunRef.current !== runId) return;
       if (!list.length) {
@@ -737,6 +744,7 @@ export function Mannequin() {
         syncCredits(credits);
       }
       if (!list.length) throw new Error('생성된 마네킹컷을 찾지 못했어요. 다시 시도해 주세요.');
+      clearInitialGenerationRequested(pid);
       updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
       if (loadRunRef.current !== runId) return;
       setCuts(list);
@@ -756,7 +764,8 @@ export function Mannequin() {
         try {
           const fallback = await api.getMannequins(pid);
           if (fallback.length) {
-            initialCutsExistedRef.current = true;
+            initialCutsExistedRef.current = cutsExistedBeforeInitialGeneration(pid, fallback);
+            clearInitialGenerationRequested(pid);
             updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
             if (loadRunRef.current !== runId) return;
             setCuts(fallback);

@@ -15,6 +15,13 @@ import { syncDraftToBackend } from '@/lib/draftSync.js';
 import { Icon, Button, IconButton, ErrorState, Skeleton, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
+import {
+  hasPatchFields,
+  mergeLatestFailedAnalysisPatch,
+  mergeProductOwnedAnalysisFields,
+  persistAnalysisEdit,
+  splitAnalysisEditPatch,
+} from './saveRouting.js';
 
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
@@ -182,6 +189,9 @@ export function ProductInput() {
   // 재시도한 뒤 이동한다. analysisProjectId 를 로그인 여부의 대용값으로 쓰지 않는다.
   const redirectingRef = useRef(false);
   const analysisSaveChainRef = useRef(Promise.resolve());
+  const analysisSaveErrorRef = useRef(null);
+  const failedAnalysisPatchRef = useRef(null);
+  const latestAnalysisPatchRef = useRef({});
   const goToMannequin = async () => {
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
     redirectingRef.current = true;
@@ -189,6 +199,16 @@ export function ProductInput() {
       // 직전 입력 이벤트의 PATCH가 getAnalysis보다 늦게 도착하는 레이스를 막는다. 모든 분석 저장을
       // 입력 순서대로 직렬화하고, 확정은 현재 큐까지만 기다린 뒤 이동/재생성을 시작한다.
       await analysisSaveChainRef.current;
+      if (failedAnalysisPatchRef.current) {
+        const retryPatch = failedAnalysisPatchRef.current;
+        const { analysis: savedAnalysis } = await persistAnalysisEdit(api, analysisProjectId, retryPatch);
+        failedAnalysisPatchRef.current = null;
+        analysisSaveErrorRef.current = null;
+        if ((isMatchRecommendationPatch(retryPatch) || 'matchClothing' in retryPatch) && savedAnalysis) {
+          setAnalysis((current) => ({ ...current, matchClothing: savedAnalysis.matchClothing }));
+        }
+      }
+      if (analysisSaveErrorRef.current) throw analysisSaveErrorRef.current;
       // 이벤트 시점에만 읽어 분석 편집마다 ProductInput 전체가 다시 렌더되지 않게 한다.
       const routeState = useAppStore.getState().generationRelevantEditsDirty
         ? { refreshForEdits: true }
@@ -237,7 +257,7 @@ export function ProductInput() {
       // 편집한다. cold input 은 라우트 계층이 먼저 beginProject 해서 여기까지 stale id가 오지 않는다.
       if (editingProjectId && existingAnalysis) {
         setProduct(p);
-        setAnalysis(existingAnalysis);
+        setAnalysis(mergeProductOwnedAnalysisFields(existingAnalysis, p));
         setAnalysisProjectId(editingProjectId);
         setPhase('done');
         return;
@@ -327,11 +347,20 @@ export function ProductInput() {
         colors: uploaded.colors, uploadComplete: true, ...(enteredName ? { name: enteredName } : {}),
       });
       const a = await api.analyzeProduct(pid, {});
-      setAnalysis(a);
+      const analyzedProductPatch = splitAnalysisEditPatch(a).productPatch;
       // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 서버에도 반영
       const finalName = enteredName || a.suggestedName || '새 상품';
+      const nextProduct = {
+        ...uploaded,
+        name: finalName,
+        ...analyzedProductPatch,
+      };
+      setProduct(nextProduct);
+      if (hasPatchFields(analyzedProductPatch)) {
+        await api.saveProduct(pid, analyzedProductPatch);
+      }
+      setAnalysis(mergeProductOwnedAnalysisFields(a, nextProduct));
       if (!enteredName) {
-        set({ name: finalName });
         await api.saveProduct(pid, { name: finalName });
       }
       // 즉시 전환하지 않는다 — 대기 연출이 잔여 단계를 빠르게 완주한 뒤 onFinished 에서 전환.
@@ -445,13 +474,31 @@ export function ProductInput() {
               if (isGenerationRelevantAnalysisPatch(patch)) {
                 useAppStore.getState().markGenerationRelevantEdits();
               }
+              const { productPatch } = splitAnalysisEditPatch(patch);
+              setProduct((p) => (hasPatchFields(productPatch) ? { ...p, ...productPatch } : p));
               setAnalysis((a) => ({ ...a, ...patch }));
+              latestAnalysisPatchRef.current = { ...latestAnalysisPatchRef.current, ...patch };
+              if (failedAnalysisPatchRef.current) {
+                failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
+                  failedAnalysisPatchRef.current,
+                  patch,
+                  latestAnalysisPatchRef.current,
+                );
+              }
               analysisSaveChainRef.current = analysisSaveChainRef.current
-                .then(() => api.saveAnalysis(analysisProjectId, patch))
-                .then((saved) => {
-                  if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));
+                .then(() => persistAnalysisEdit(api, analysisProjectId, patch))
+                .then(({ analysis: savedAnalysis }) => {
+                  if (!failedAnalysisPatchRef.current) analysisSaveErrorRef.current = null;
+                  if (!savedAnalysis) return;
+                  if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: savedAnalysis.matchClothing }));
                 })
                 .catch((error) => {
+                  failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
+                    failedAnalysisPatchRef.current,
+                    patch,
+                    latestAnalysisPatchRef.current,
+                  );
+                  analysisSaveErrorRef.current = error;
                   toast.push(error?.message || '분석 수정 내용을 저장하지 못했어요.', { icon: 'alertTri' });
                 });
             }}
