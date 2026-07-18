@@ -12,6 +12,7 @@ import { Button, Skeleton, EmptyState, ErrorState } from '@/components/ui.jsx';
 export function Library() {
   const navigate = useNavigate();
   const beginProject = useAppStore((s) => s.beginProject);
+  const adoptProject = useAppStore((s) => s.adoptProject);
   const mannequinJob = useAppStore((s) => s.mannequinJob);
   // 서버 project(보관함 행)는 AI 분석 시작 때 생성 — '새 상세페이지' 클릭만으로 빈 행 생성 방지.
   const onNew = async () => {
@@ -22,7 +23,10 @@ export function Library() {
     await beginProject();
     navigate('/create/input');
   };
-  const onOpen = (it) => navigate(`/editor/${it.id}`);
+  const onOpen = (it) => {
+    adoptProject(it.id);   // 보관함 선택은 해당 project 를 명시적으로 이어서 여는 경로다.
+    navigate(`/editor/${it.id}`);
+  };
 
   // 서버 상태는 TanStack Query 캐시로 (frontend_state_model §8-7).
   // staleTime 0 → 보관함 진입(마운트)마다 refetch. 생성/편집/완료가 다른 화면에서

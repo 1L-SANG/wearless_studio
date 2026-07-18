@@ -8,7 +8,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
 import { listModels, fetchLicenseFaceUrl, verifyLicensePublic } from '@/lib/api/facemarket.js';
 import QRCode from 'qrcode';
-import { useAppStore } from '@/store/useAppStore.js';
+import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
@@ -638,6 +638,9 @@ export function Analysis({ onNext }) {
   return <AnalysisForm analysis={analysis} catalogs={catalogs}
     onChange={(patch) => {
       const refreshMatch = isMatchRecommendationPatch(patch);
+      if (isGenerationRelevantAnalysisPatch(patch)) {
+        useAppStore.getState().markGenerationRelevantEdits();
+      }
       setAnalysis((a) => ({ ...a, ...patch }));
       api.saveAnalysis(null, patch).then((saved) => {
         if (refreshMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));

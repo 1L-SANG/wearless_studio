@@ -9,7 +9,7 @@
    설계·규칙: documents/mannequin_ui_direction.md · 목업 documents/mockups/mannequin-ui-matching.html
    ============================================================= */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
@@ -20,8 +20,13 @@ import {
   matchingFitFromProfile,
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
-import { Icon, Button, ErrorState, ProgressBar, useToast } from '@/components/ui.jsx';
+import { Icon, Button, ErrorState, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import {
+  clearInitialGenerationRequested,
+  cutsExistedBeforeInitialGeneration,
+  markInitialGenerationRequested,
+} from './initialGenerationSession.js';
 import './Mannequin.css';
 
 const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
@@ -98,6 +103,83 @@ function extractCuts(envelope) {
   return [];
 }
 
+const REGENERATE_ATTEMPTS = 3;
+const LOAD_ATTEMPTS = 3;
+const GENERATION_RETRY_DELAYS = [0, 700, 1400];
+const LOAD_RETRY_DELAYS = [0, 800, 1800];
+const RECONCILE_DELAYS = [0, 700, 1400];
+const REGENERATE_ACTIVE_STATES = new Set([
+  'generating',
+  'generation-retry',
+  'loading',
+  'load-retry',
+  'arriving',
+]);
+const WAIT_COPY = {
+  t0: '새 버전은 보통 1~2분 걸릴 수 있어요. 현재 버전은 그대로 유지돼요.',
+  t45: '조정 결과와 의류 디테일을 정교하게 확인하고 있어요.',
+  t90: '평소보다 오래 걸리고 있지만 작업은 계속 진행 중이에요. 현재 버전은 그대로 유지돼요.',
+  generationRetry: '생성이 순조롭지 않아 자동으로 다시 시도하고 있어요. 조정 내용은 그대로예요.',
+  loadRetry: '연결이 잠시 불안정해 이미지를 다시 불러오고 있어요.',
+};
+
+const delay = (ms) => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
+
+function prefersReducedMotion() {
+  return globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+}
+
+function cutBaseline(list) {
+  return {
+    ids: new Set(list.map((cut) => cut.id)),
+    maxVersion: list.reduce((max, cut) => Math.max(max, Number(cut.version) || 0), -1),
+  };
+}
+
+function newestCutSince(list, baseline) {
+  const landed = list.filter((cut) => (
+    !baseline.ids.has(cut.id) || (Number(cut.version) || 0) > baseline.maxVersion
+  ));
+  return landed.find((cut) => cut.isSelected)
+    || landed.reduce((latest, cut) => (
+      !latest || (Number(cut.version) || 0) >= (Number(latest.version) || 0) ? cut : latest
+    ), null);
+}
+
+function isNonRetryableRegenerateError(error) {
+  const status = Number(error?.status) || 0;
+  const message = String(error?.message || '');
+  return status === 402
+    || message.includes('크레딧')
+    || (status >= 400 && status < 500);
+}
+
+function decodeCutImage(src) {
+  if (!src) return Promise.reject(new Error('새 마네킹컷 이미지 주소를 찾지 못했어요.'));
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      image.onload = null;
+      image.onerror = null;
+      fn(value);
+    };
+    image.onerror = () => finish(reject, new Error('새 마네킹컷 이미지를 불러오지 못했어요.'));
+    image.onload = () => {
+      if (typeof image.decode !== 'function') finish(resolve);
+    };
+    image.src = src;
+    if (typeof image.decode === 'function') {
+      image.decode().then(
+        () => finish(resolve),
+        () => finish(reject, new Error('새 마네킹컷 이미지를 해석하지 못했어요.')),
+      );
+    }
+  });
+}
+
 let mannequinGenerationInflight = null;
 let mannequinGenerationProjectId = null;
 
@@ -124,6 +206,7 @@ function requestMannequinGeneration(pid) {
   });
 
   mannequinGenerationProjectId = pid;
+  markInitialGenerationRequested(pid);
   mannequinGenerationInflight = api.generateMannequins(pid, {
     onProgress: (next) => updateMannequinJob(pid, {
       status: 'running',
@@ -331,16 +414,129 @@ function MannequinError({ message, onRetry }) {
   );
 }
 
-// 가운데 "내 옷" 컬럼: 큰 컷(태그 없음) + 버전 썸네일 스트립.
-function MineColumn({ selected, cuts, selectedCutId, onSelect }) {
+function WaitGarmentOutline() {
+  return (
+    <svg className="fit-wait-garment" viewBox="0 0 60 80" aria-hidden="true">
+      <path
+        d="M18 8 L42 8 L48 46 L36 46 L34 24 L26 24 L24 46 L12 46 Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function WaitStepIcon({ mode }) {
+  return (
+    <span className="fit-wait-icon" aria-hidden="true">
+      {mode === 'run'
+        ? <span className="fit-wait-spinner" />
+        : mode === 'done'
+          ? <span className="fit-wait-check" />
+          : <span className="fit-wait-dot" />}
+    </span>
+  );
+}
+
+function RegenerateChecklist({
+  steps,
+  copy,
+  warn,
+  failure,
+  collapsed,
+  onRetryGeneration,
+  onRetryLoad,
+}) {
+  const labels = [
+    '조정 내용 준비',
+    '새 버전 생성 · 품질 확인',
+    '새 버전 저장 · 불러오기',
+  ];
+  return (
+    <div className={`fit-wait-panel${collapsed ? ' is-collapsed' : ''}`} aria-hidden={collapsed || undefined}>
+      {labels.map((label, index) => (
+        <div
+          className={`fit-wait-row${steps[index] === 'run' ? ' is-active' : ''}${steps[index] === 'done' ? ' is-done' : ''}`}
+          key={label}
+        >
+          <WaitStepIcon mode={steps[index]} />
+          <span>{label}</span>
+        </div>
+      ))}
+      <p className={`fit-wait-copy${warn ? ' is-warn' : ''}`}>{copy}</p>
+      {failure === 'generation' && (
+        <div className="fit-wait-failure" role="alert">
+          <p>지금 생성 서버가 원활하지 않아요. 조정 내용은 그대로 남아 있고, <strong>크레딧은 차감되지 않았어요.</strong></p>
+          <p>잠시 뒤 다시 시도해 주세요.</p>
+          <button type="button" className="fit-wait-retry" onClick={onRetryGeneration}>다시 시도</button>
+        </div>
+      )}
+      {failure === 'load' && (
+        <div className="fit-wait-failure" role="alert">
+          <p><strong>새 버전은 생성되어 있어요.</strong> 연결 문제로 이미지만 불러오지 못했어요.</p>
+          <p>재생성 없이 새 버전을 다시 불러올게요.</p>
+          <button type="button" className="fit-wait-retry" onClick={onRetryLoad}>다시 불러오기</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 가운데 "내 옷" 컬럼: 큰 컷(태그 없음) + 버전 썸네일 스트립 + 조정 대기 체크리스트.
+function MineColumn({
+  selected,
+  cuts,
+  selectedCutId,
+  onSelect,
+  arrival,
+  waitTile,
+  showWaitPanel,
+  waitSteps,
+  waitCopy,
+  waitCopyWarn,
+  waitFailure,
+  waitCollapsed,
+  onRetryGeneration,
+  onRetryLoad,
+}) {
+  const waitSlotRef = useRef(null);
+
+  useEffect(() => {
+    if (waitTile !== 'pending') return;
+    const tile = waitSlotRef.current;
+    if (!tile) return;
+    const options = {
+      block: 'nearest',
+      inline: 'end',
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+    };
+    try { tile.scrollIntoView(options); } catch { tile.scrollIntoView(); }
+  }, [waitTile]);
+
   return (
     <div className="fit-mine-col">
       <div className="fit-mine-img">
-        {selected
-          ? <img src={cutImage(selected)} alt={`내 마네킹컷 버전 ${selected.version}`} />
-          : <div className="busy-tile">마네킹컷이 아직 없어요</div>}
+        {arrival ? (
+          <>
+            {arrival.from && (
+              <img className="fit-cut-layer fit-cut-layer-old" src={cutImage(arrival.from)} alt="" />
+            )}
+            <img
+              className={`fit-cut-layer fit-cut-layer-next${arrival.visible ? ' is-visible' : ''}`}
+              src={cutImage(arrival.to)}
+              alt={`내 마네킹컷 버전 ${arrival.to.version}`}
+            />
+            <span className={`fit-arrival-shine${arrival.shine ? ' run' : ''}`} aria-hidden="true" />
+          </>
+        ) : selected ? (
+          <img src={cutImage(selected)} alt={`내 마네킹컷 버전 ${selected.version}`} />
+        ) : (
+          <div className="busy-tile">마네킹컷이 아직 없어요</div>
+        )}
       </div>
-      {cuts.length > 1 && (
+      {(cuts.length > 1 || waitTile) && (
         <div className="fit-strip" role="group" aria-label="버전 목록">
           {cuts.map((cut) => (
             <button
@@ -355,7 +551,35 @@ function MineColumn({ selected, cuts, selectedCutId, onSelect }) {
               <span className="fit-ver-chip">v{cut.version}</span>
             </button>
           ))}
+          {waitTile === 'pending' && (
+            <div
+              ref={waitSlotRef}
+              className="fit-ver fit-wait-slot"
+              role="img"
+              aria-label="예약석, 새 버전 준비 중"
+              title="새 버전 준비 중"
+            >
+              <WaitGarmentOutline />
+            </div>
+          )}
+          {waitTile === 'error' && (
+            <div className="fit-ver fit-wait-slot is-error" role="img" aria-label="새 버전 오류">
+              <span className="fit-wait-error-mark" aria-hidden="true">!</span>
+              <span className="fit-wait-slot-label">실패</span>
+            </div>
+          )}
         </div>
+      )}
+      {showWaitPanel && (
+        <RegenerateChecklist
+          steps={waitSteps}
+          copy={waitCopy}
+          warn={waitCopyWarn}
+          failure={waitFailure}
+          collapsed={waitCollapsed}
+          onRetryGeneration={onRetryGeneration}
+          onRetryLoad={onRetryLoad}
+        />
       )}
     </div>
   );
@@ -390,18 +614,36 @@ function ExampleTiles({ axisKey, category, gender, values, onPick }) {
 
 export function Mannequin() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [phase, setPhase] = useState('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [progress, setProgress] = useState(0);
   const [cuts, setCuts] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [regenerateState, setRegenerateState] = useState('idle');
+  const [regenerateListReady, setRegenerateListReady] = useState(false);
+  const [regenerateImageReady, setRegenerateImageReady] = useState(false);
+  const [waitCopyBand, setWaitCopyBand] = useState(0);
+  const [arrival, setArrival] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
   const [colorCount, setColorCount] = useState(1);
   const submittingRef = useRef(false);   // 결제(재생성) 이중 제출 방지 — busy 반영 전 연타 차단
+  const cutsRef = useRef(cuts);
+  const selectedRef = useRef(null);
+  const regenerateRunRef = useRef(0);
+  const regenerateProgressRef = useRef(0);
+  const regenerateBaselineRef = useRef(null);
+  const regenerateProfileRef = useRef(null);
+  const knownLandedListRef = useRef(null);
+  const waitCopyTimersRef = useRef([]);
+  const arrivalTimersRef = useRef([]);
+  const arrivalFrameRef = useRef(null);
   const { push: pushToast } = useToast();
+
+  cutsRef.current = cuts;
 
   // 플로우 선택값 — store 가 보유, patchProject 로 서버 동기화 (ADR-0002)
   const projectId = useAppStore((s) => s.projectId);
@@ -413,6 +655,25 @@ export function Mannequin() {
   const mannequinJob = useAppStore((s) => s.mannequinJob);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const loadRunRef = useRef(0);
+  const initialCutsExistedRef = useRef(false);
+  const refreshForEditsHandledRef = useRef(false);
+
+  const clearWaitCopyTimers = () => {
+    waitCopyTimersRef.current.forEach(clearTimeout);
+    waitCopyTimersRef.current = [];
+  };
+  const clearArrivalTimers = () => {
+    arrivalTimersRef.current.forEach(clearTimeout);
+    arrivalTimersRef.current = [];
+    if (arrivalFrameRef.current != null) cancelAnimationFrame(arrivalFrameRef.current);
+    arrivalFrameRef.current = null;
+  };
+
+  useEffect(() => () => {
+    regenerateRunRef.current += 1;
+    clearWaitCopyTimers();
+    clearArrivalTimers();
+  }, []);
 
   const category = fitProfileDraft?.category;
   const gender = fitProfileDraft?.gender;
@@ -471,8 +732,10 @@ export function Mannequin() {
       ));
 
       let list = await api.getMannequins(pid);
+      initialCutsExistedRef.current = cutsExistedBeforeInitialGeneration(pid, list);
       if (list.length) {
         updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
+        clearInitialGenerationRequested(pid);
       }
       if (loadRunRef.current !== runId) return;
       if (!list.length) {
@@ -481,6 +744,7 @@ export function Mannequin() {
         syncCredits(credits);
       }
       if (!list.length) throw new Error('생성된 마네킹컷을 찾지 못했어요. 다시 시도해 주세요.');
+      clearInitialGenerationRequested(pid);
       updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
       if (loadRunRef.current !== runId) return;
       setCuts(list);
@@ -500,6 +764,8 @@ export function Mannequin() {
         try {
           const fallback = await api.getMannequins(pid);
           if (fallback.length) {
+            initialCutsExistedRef.current = cutsExistedBeforeInitialGeneration(pid, fallback);
+            clearInitialGenerationRequested(pid);
             updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
             if (loadRunRef.current !== runId) return;
             setCuts(fallback);
@@ -534,6 +800,7 @@ export function Mannequin() {
 
   const selected = cuts.find((c) => c.id === selectedId) || cuts.find((c) => c.isSelected) || cuts[0];
   const selectedCutId = selected?.id || selectedId;
+  selectedRef.current = selected;
   const loadingProgress = mannequinJob?.status === 'running'
     && (!projectId || mannequinJob.projectId === projectId)
     ? Math.max(0, Math.min(100, Number(mannequinJob.progress) || 0))
@@ -607,36 +874,285 @@ export function Mannequin() {
     return profile;
   };
 
-  const regenerate = async () => {
-    if (submittingRef.current) return;   // 연타로 인한 이중 재생성·이중 차감 방지
+  const runIsCurrent = (runId) => regenerateRunRef.current === runId;
+
+  const startWaitCopyClock = (runId) => {
+    clearWaitCopyTimers();
+    setWaitCopyBand(0);
+    waitCopyTimersRef.current = [
+      setTimeout(() => { if (runIsCurrent(runId)) setWaitCopyBand(45); }, 45_000),
+      setTimeout(() => { if (runIsCurrent(runId)) setWaitCopyBand(90); }, 90_000),
+    ];
+  };
+
+  const failGeneration = (runId) => {
+    if (!runIsCurrent(runId)) return;
+    clearWaitCopyTimers();
+    setRegenerateState('generation-exhausted');
+    setRegenerateListReady(false);
+    setRegenerateImageReady(false);
+    setBusy(false);
+    submittingRef.current = false;
+  };
+
+  const failLoad = (runId) => {
+    if (!runIsCurrent(runId)) return;
+    clearWaitCopyTimers();
+    setRegenerateState('load-exhausted');
+    setRegenerateImageReady(false);
+    setBusy(false);
+    submittingRef.current = false;
+  };
+
+  const finishNonRetryable = (runId, error) => {
+    if (!runIsCurrent(runId)) return;
+    clearWaitCopyTimers();
+    setRegenerateState('idle');
+    setRegenerateListReady(false);
+    setRegenerateImageReady(false);
+    setProgress(0);
+    setBusy(false);
+    submittingRef.current = false;
+    pushToast(error?.message || '마네킹 재생성에 실패했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
+  };
+
+  const reconcileLandedVersion = async (runId) => {
+    const baseline = regenerateBaselineRef.current;
+    if (!baseline) return null;
+    for (let attempt = 0; attempt < RECONCILE_DELAYS.length; attempt += 1) {
+      await delay(RECONCILE_DELAYS[attempt]);
+      if (!runIsCurrent(runId)) return null;
+      try {
+        const list = extractCuts(await api.getMannequins(projectId));
+        if (!runIsCurrent(runId)) return null;
+        if (newestCutSince(list, baseline)) {
+          knownLandedListRef.current = list;
+          return list;
+        }
+      } catch { /* 모호한 응답은 다음 정합 확인에서 다시 본다. */ }
+    }
+    return null;
+  };
+
+  const completeRegeneration = (runId, list, newCut, profile) => {
+    if (!runIsCurrent(runId)) return;
+    clearWaitCopyTimers();
+    clearArrivalTimers();
+
+    const previousCut = selectedRef.current;
+    const selectedCuts = list.map((cut) => ({ ...cut, isSelected: cut.id === newCut.id }));
+    const reducedMotion = prefersReducedMotion();
+    setRegenerateListReady(true);
+    setRegenerateImageReady(true);
+    setCuts(selectedCuts);
+    selectMannequin(newCut.id);
+    setFitProfileDraft(profile);
+    setAnalysis((prev) => ({ ...(prev || {}), fitProfile: profile }));
+    setRegenerateState('arriving');
+
+    if (!reducedMotion) {
+      setArrival({ from: previousCut, to: newCut, visible: false, shine: false });
+      arrivalFrameRef.current = requestAnimationFrame(() => {
+        arrivalFrameRef.current = requestAnimationFrame(() => {
+          if (!runIsCurrent(runId)) return;
+          setArrival((current) => (current ? { ...current, visible: true, shine: true } : current));
+          arrivalFrameRef.current = null;
+        });
+      });
+    } else {
+      setArrival(null);
+    }
+
+    pushToast('새 마네킹 버전을 추가했어요. 다시 확인해 주세요.', { icon: 'refresh' });
+
+    const collapseTimer = setTimeout(() => {
+      if (!runIsCurrent(runId)) return;
+      setRegenerateState('collapsing');
+      setBusy(false);
+      setStepState(initStepState(axisDefs, hasMatching));   // 새 컷을 다시 확인하는 루프
+      setArrival(null);
+      submittingRef.current = false;
+
+      const hideTimer = setTimeout(() => {
+        if (!runIsCurrent(runId)) return;
+        setRegenerateState('idle');
+        setRegenerateListReady(false);
+        setRegenerateImageReady(false);
+        setProgress(0);
+        knownLandedListRef.current = null;
+      }, reducedMotion ? 0 : 420);
+      arrivalTimersRef.current.push(hideTimer);
+    }, reducedMotion ? 0 : 800);
+    arrivalTimersRef.current.push(collapseTimer);
+  };
+
+  const loadCreatedVersion = async (runId, profile, initialList = null) => {
+    const baseline = regenerateBaselineRef.current;
+    if (!baseline) { failLoad(runId); return; }
+
+    for (let attempt = 0; attempt < LOAD_ATTEMPTS; attempt += 1) {
+      await delay(LOAD_RETRY_DELAYS[attempt]);
+      if (!runIsCurrent(runId)) return;
+      if (attempt > 0) setRegenerateState('load-retry');
+      setRegenerateListReady(false);
+      setRegenerateImageReady(false);
+
+      try {
+        // 정합 확인에서 이미 받은 첫 목록만 재사용하고, 이후 시도는 항상 목록부터 다시 가져온다.
+        const list = attempt === 0 && initialList
+          ? initialList
+          : extractCuts(await api.getMannequins(projectId));
+        if (!runIsCurrent(runId)) return;
+        const newCut = newestCutSince(list, baseline);
+        if (!newCut) throw new Error('새로 생성된 마네킹컷을 아직 찾지 못했어요.');
+        knownLandedListRef.current = list;
+        setRegenerateListReady(true);
+        await decodeCutImage(cutImage(newCut));
+        if (!runIsCurrent(runId)) return;
+        setRegenerateImageReady(true);
+        completeRegeneration(runId, list, newCut, profile);
+        return;
+      } catch {
+        if (!runIsCurrent(runId)) return;
+        if (attempt < LOAD_ATTEMPTS - 1) {
+          setRegenerateState('load-retry');
+          continue;
+        }
+        failLoad(runId);
+        return;
+      }
+    }
+  };
+
+  const runGenerationAttempts = async (runId, profile) => {
+    for (let attempt = 0; attempt < REGENERATE_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) {
+        setRegenerateState('generation-retry');
+        await delay(GENERATION_RETRY_DELAYS[attempt]);
+      }
+      if (!runIsCurrent(runId)) return;
+      regenerateProgressRef.current = 0;
+      setProgress(0);
+      setRegenerateListReady(false);
+      setRegenerateImageReady(false);
+      setRegenerateState(attempt === 0 ? 'generating' : 'generation-retry');
+
+      let response;
+      try {
+        response = await api.regenerateMannequin(projectId, {
+          fitProfile: profile,   // matchingFit 포함 — garment_ref 로 저장, 재생성에 반영
+          onProgress: (next) => {
+            if (!runIsCurrent(runId)) return;
+            const realProgress = Math.max(0, Math.min(100, Number(next) || 0));
+            regenerateProgressRef.current = realProgress;
+            setProgress(realProgress);
+          },
+        });
+      } catch (error) {
+        if (!runIsCurrent(runId)) return;
+
+        // pollJob 의 100은 생성 완료 뒤 내부 목록 refetch 직전에 온다. 이 뒤의 실패는 절대 재생성하지 않는다.
+        if (regenerateProgressRef.current >= 100) {
+          setRegenerateState('load-retry');
+          await loadCreatedVersion(runId, profile);
+          return;
+        }
+        if (isNonRetryableRegenerateError(error)) {
+          finishNonRetryable(runId, error);
+          return;
+        }
+
+        setRegenerateState('generation-retry');
+        const reconciled = await reconcileLandedVersion(runId);
+        if (!runIsCurrent(runId)) return;
+        if (reconciled) {
+          setRegenerateState('load-retry');
+          await loadCreatedVersion(runId, profile, reconciled);
+          return;
+        }
+        if (attempt >= REGENERATE_ATTEMPTS - 1) {
+          failGeneration(runId);
+          return;
+        }
+
+        // 실패한 생성은 서버가 크레딧 예약을 해제하므로, 동일 조정의 자동 재시도는 크레딧에 안전하다.
+        continue;
+      }
+
+      if (!runIsCurrent(runId)) return;
+      syncCredits(response.credits);
+      const responseCuts = extractCuts(response.data);
+      if (newestCutSince(responseCuts, regenerateBaselineRef.current)) {
+        knownLandedListRef.current = responseCuts;
+      }
+      setRegenerateState('loading');
+      // API 응답만 믿지 않고 실제 목록 refetch + 브라우저 decode 가 끝나야 완료한다.
+      await loadCreatedVersion(runId, profile);
+      return;
+    }
+  };
+
+  const regenerate = async (profileOverride = null) => {
+    if (submittingRef.current) return;   // 연타 + 모든 자동 재시도 구간의 이중 재생성·이중 차감 방지
     submittingRef.current = true;
-    const profile = buildFitProfile();
+    const runId = regenerateRunRef.current + 1;
+    regenerateRunRef.current = runId;
+    const profile = profileOverride || buildFitProfile();
+    regenerateProfileRef.current = profile;
+    regenerateBaselineRef.current = cutBaseline(cutsRef.current);
+    knownLandedListRef.current = null;
+    clearArrivalTimers();
+    setArrival(null);
     setBusy(true);
     setProgress(0);
+    setRegenerateListReady(false);
+    setRegenerateImageReady(false);
+    setRegenerateState('generating');
+    startWaitCopyClock(runId);
     try {
-      const { data, credits } = await api.regenerateMannequin(projectId, {
-        fitProfile: profile,   // matchingFit 포함 — garment_ref 로 저장, 재생성에 반영
-        onProgress: setProgress,
-      });
-      const nextCuts = extractCuts(data);
-      setCuts(nextCuts);
-      const nextSelected = nextCuts.find((cut) => cut.isSelected) || nextCuts.at(-1);
-      if (nextSelected) selectMannequin(nextSelected.id);
-      setFitProfileDraft(profile);
-      setAnalysis((prev) => ({ ...(prev || {}), fitProfile: profile }));
-      syncCredits(credits);
-      setStepState(initStepState(axisDefs, hasMatching));   // 새 컷을 다시 확인하는 루프
-      pushToast('새 마네킹 버전을 추가했어요. 다시 확인해 주세요.', { icon: 'refresh' });
-    } catch (err) {
-      pushToast(err?.message || '마네킹 재생성에 실패했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
-    } finally {
-      setBusy(false);
-      submittingRef.current = false;
+      await runGenerationAttempts(runId, profile);
+    } catch {
+      failGeneration(runId);
+    }
+  };
+
+  useEffect(() => {
+    if (phase !== 'ready' || location.state?.refreshForEdits !== true
+        || refreshForEditsHandledRef.current) return;
+    refreshForEditsHandledRef.current = true;
+    // 먼저 history state 를 소비해 back/refresh/StrictMode 에서 유료 요청이 재발화하지 않게 한다.
+    navigate(location.pathname, { replace: true, state: null });
+    if (initialCutsExistedRef.current) {
+      regenerate();
+    }
+    // 기존 컷이면 regenerate 호출 직후, 최초 생성이면 그 생성이 편집값을 이미 반영한 뒤 clear.
+    useAppStore.getState().clearGenerationRelevantEdits();
+  }, [location.pathname, location.state, navigate, phase]);
+
+  const retryGeneration = () => regenerate(regenerateProfileRef.current || buildFitProfile());
+
+  const retryLoad = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    const runId = regenerateRunRef.current + 1;
+    regenerateRunRef.current = runId;
+    clearWaitCopyTimers();
+    clearArrivalTimers();
+    setBusy(true);
+    setRegenerateState('load-retry');
+    setRegenerateListReady(false);
+    setRegenerateImageReady(false);
+    try {
+      // 유료 regenerate 를 다시 호출하지 않는다 — 생성된 버전의 목록/이미지만 복구한다.
+      await loadCreatedVersion(runId, regenerateProfileRef.current || fitProfileDraft);
+    } catch {
+      failLoad(runId);
     }
   };
 
   const onCta = async () => {
     if (!allDone || busy) return;
+    if (regenerateState === 'load-exhausted') { retryLoad(); return; }
     if (needsRegen) { regenerate(); return; }
     // 확정(무변경)도 프로필을 영속 — 다음 단계(컷 생성)가 analysis.fitProfile 을 텍스트 제약으로
     // 재사용하므로, 이동(=생성 가능 시점) 전에 저장 완료를 보장한다(순서 계약). 저장 실패 시엔
@@ -656,6 +1172,48 @@ export function Mannequin() {
     navigate('/create/storyboard');   // 구성(composeMode)은 store 로 이미 반영됨
   };
 
+  const regenerateActive = REGENERATE_ACTIVE_STATES.has(regenerateState);
+  const showWaitPanel = regenerateState !== 'idle';
+  const waitFailure = regenerateState === 'generation-exhausted'
+    ? 'generation'
+    : regenerateState === 'load-exhausted' ? 'load' : null;
+  const waitTile = ['generating', 'generation-retry', 'loading', 'load-retry'].includes(regenerateState)
+    ? 'pending'
+    : waitFailure ? 'error' : null;
+
+  let waitSteps;
+  if (regenerateState === 'generation-exhausted') {
+    waitSteps = [progress >= 35 ? 'done' : 'wait', 'wait', 'wait'];
+  } else if (regenerateState === 'load-exhausted') {
+    waitSteps = ['done', 'done', 'wait'];
+  } else {
+    waitSteps = [
+      progress < 35 ? 'run' : 'done',
+      progress < 35 ? 'wait' : progress < 85 ? 'run' : 'done',
+      progress < 85
+        ? 'wait'
+        : regenerateListReady && regenerateImageReady ? 'done' : 'run',
+    ];
+  }
+
+  const waitCopy = regenerateState === 'generation-retry' || regenerateState === 'generation-exhausted'
+    ? WAIT_COPY.generationRetry
+    : regenerateState === 'load-retry' || regenerateState === 'load-exhausted'
+      ? WAIT_COPY.loadRetry
+      : waitCopyBand >= 90 ? WAIT_COPY.t90 : waitCopyBand >= 45 ? WAIT_COPY.t45 : WAIT_COPY.t0;
+  const waitCopyWarn = regenerateState === 'generation-retry'
+    || regenerateState === 'generation-exhausted'
+    || (waitCopyBand >= 90 && regenerateState !== 'load-retry');
+  const waitLabels = ['조정 내용 준비', '새 버전 생성 · 품질 확인', '새 버전 저장 · 불러오기'];
+  const runningWaitStep = waitSteps.findIndex((mode) => mode === 'run');
+  const checklistLiveText = waitFailure === 'generation'
+    ? '새 버전 생성을 완료하지 못했어요.'
+    : waitFailure === 'load'
+      ? '새 버전은 생성됐지만 불러오기를 완료하지 못했어요.'
+      : waitSteps.every((mode) => mode === 'done')
+        ? '새 버전 저장 · 불러오기 완료'
+        : runningWaitStep >= 0 ? `${waitLabels[runningWaitStep]} 중` : '';
+
   if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={loadingProgress} category={fitProfileDraft?.category} /></>;
   if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} onRetry={loadMannequins} /></>;
 
@@ -665,9 +1223,27 @@ export function Mannequin() {
     <div className="wizard wide fit-page">
       {doneBlocked && <DoneGuardModal />}
       <PageHead title="의류 재현성 높이기" sub="실제 의류와 비슷해지게끔 조정해보세요." />
+      <span className="fit-wait-live" aria-live="polite" aria-atomic="true">
+        {showWaitPanel ? checklistLiveText : ''}
+      </span>
 
-      <div className={`fit-stage${changingStep ? ' comparing' : ''}`}>
-        <MineColumn selected={selected} cuts={cuts} selectedCutId={selectedCutId} onSelect={chooseCut} />
+      <div className={`fit-stage${changingStep ? ' comparing' : ''}`} aria-busy={regenerateActive}>
+        <MineColumn
+          selected={selected}
+          cuts={cuts}
+          selectedCutId={selectedCutId}
+          onSelect={chooseCut}
+          arrival={arrival}
+          waitTile={waitTile}
+          showWaitPanel={showWaitPanel}
+          waitSteps={waitSteps}
+          waitCopy={waitCopy}
+          waitCopyWarn={waitCopyWarn}
+          waitFailure={waitFailure}
+          waitCollapsed={regenerateState === 'collapsing'}
+          onRetryGeneration={retryGeneration}
+          onRetryLoad={retryLoad}
+        />
         {changingStep && (
           <div className="fit-ex-col">
             <div className="fit-ex-head">원하는 {stepName(changingStep)}의 예시를 선택해주세요.</div>
@@ -719,13 +1295,13 @@ export function Mannequin() {
           </>
         ) : needsRegen ? (
           <div className="fit-final">
-            {busy ? (
-              <div className="fit-cta-progress"><ProgressBar value={progress} label="마네킹 생성 중" /></div>
-            ) : (
-              <p className="fit-fmsg"><b>{changedNames.join('·')}</b> 조정했어요 — 다시 생성해서 확인해요</p>
-            )}
+            <p className="fit-fmsg"><b>{changedNames.join('·')}</b> 조정했어요 — 다시 생성해서 확인해요</p>
             <Button variant="primary" size="lg" block disabled={busy} onClick={onCta}>
-              수정사항 반영하여 재생성 · {CREDIT_COSTS.mannequinGenerate} 크레딧
+              {busy
+                ? '새 버전 생성 중…'
+                : regenerateState === 'load-exhausted'
+                  ? '새 버전 다시 불러오기'
+                  : `수정사항 반영하여 재생성 · ${CREDIT_COSTS.mannequinGenerate} 크레딧`}
             </Button>
           </div>
         ) : (
