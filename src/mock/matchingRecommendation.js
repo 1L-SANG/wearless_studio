@@ -7,11 +7,43 @@ import { seedMatchingItems } from './seedMatchingItems.js';
 
 const DEFAULT_STYLE_TAGS = ['basic', 'daily', 'clean'];
 const TOP_SIDE_TYPES = ['top', 'outer', 'dress'];
+const FULL_LENGTH_PANTS_CATEGORIES = new Set([
+  '데님팬츠', '트라우저', '팬츠', '스웨트팬츠', '치노팬츠',
+  'denim_pants', 'trousers', 'pants', 'sweatpants', 'chino_pants',
+]);
+const SKIRT_CATEGORIES = new Set(['스커트', 'skirt']);
 
 const unique = (items) => [...new Set((items || []).filter(Boolean))];
 
 export function getComplementaryMatchingType(clothingType) {
   return TOP_SIDE_TYPES.includes(clothingType) ? 'bottom' : 'top';
+}
+
+// Mock-only mirror of the server-derived field. It uses closed structured
+// category/length metadata, never the seller-facing garment name.
+export function fitCategoryFromMatchingMetadata(item) {
+  if (item?.clothingType !== 'bottom') return null;
+  if (SKIRT_CATEGORIES.has(item.category)) return 'skirt';
+  if (item.length === 'full' && FULL_LENGTH_PANTS_CATEGORIES.has(item.category)) return 'pants';
+  return null;
+}
+
+function toLegacyMatchItem(item, selected, selOrder) {
+  return {
+    id: item.id,
+    name: item.name,
+    thumb: item.thumbnailUrl,
+    imageUrl: item.imageUrl,
+    thumbnailUrl: item.thumbnailUrl,
+    gender: item.gender,
+    clothingType: item.clothingType ?? null,
+    category: item.category ?? null,
+    fit: item.fit ?? null,
+    length: item.length ?? null,
+    fitCategory: item.fitCategory ?? fitCategoryFromMatchingMetadata(item),
+    selected,
+    ...(selected ? { selOrder } : {}),
+  };
 }
 
 export function recommendMatchingItems({
@@ -38,16 +70,7 @@ export function recommendMatchingItems({
 export function toLegacyMatchClothing(items, { selectedCount = 2 } = {}) {
   return (items || []).map((item, index) => {
     const selected = index < selectedCount;
-    return {
-      id: item.id,
-      name: item.name,
-      thumb: item.thumbnailUrl,
-      imageUrl: item.imageUrl,
-      thumbnailUrl: item.thumbnailUrl,
-      gender: item.gender,
-      selected,
-      ...(selected ? { selOrder: index + 1 } : {}),
-    };
+    return toLegacyMatchItem(item, selected, index + 1);
   });
 }
 
@@ -70,15 +93,6 @@ export function recommendLegacyMatchClothing({
   return candidates.map((item) => {
     const selIndex = effectiveSelected.indexOf(item.id);
     const selected = selIndex >= 0;
-    return {
-      id: item.id,
-      name: item.name,
-      thumb: item.thumbnailUrl,
-      imageUrl: item.imageUrl,
-      thumbnailUrl: item.thumbnailUrl,
-      gender: item.gender,
-      selected,
-      ...(selected ? { selOrder: selIndex + 1 } : {}),
-    };
+    return toLegacyMatchItem(item, selected, selIndex + 1);
   });
 }

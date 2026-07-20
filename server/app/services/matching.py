@@ -6,9 +6,34 @@
 
 _TOP_SIDE = {"top", "outer", "dress"}
 
+# matching_items.category is curated seed metadata (not seller text).  Keep this
+# mapping explicit so a new/unknown category cannot accidentally acquire a fit
+# vocabulary just because its display name happens to contain "pants"/"skirt".
+_PANTS_CATEGORIES = frozenset({"팬츠", "데님팬츠", "트라우저", "스웨트팬츠", "치노팬츠"})
+_SKIRT_CATEGORIES = frozenset({"스커트"})
+_SHORT_CATEGORIES = frozenset({"쇼츠", "버뮤다쇼츠"})
+
 
 def complementary_type(clothing_type: str) -> str:
     return "bottom" if clothing_type in _TOP_SIDE else "top"
+
+
+def fit_category(item: dict) -> str | None:
+    """Return the matching-fit catalog category from curated item metadata.
+
+    Only known full-length pants and skirts expose an adjustable vocabulary.
+    Shorts/Bermudas, tops, and unknown metadata deliberately return ``None``.
+    """
+    if item.get("clothing_type") != "bottom":
+        return None
+    category = item.get("category")
+    if category in _SHORT_CATEGORIES:
+        return None
+    if category in _SKIRT_CATEGORIES:
+        return "skirt"
+    if category in _PANTS_CATEGORIES and item.get("length") == "full":
+        return "pants"
+    return None
 
 
 def prefilter(items, clothing_type, genders):

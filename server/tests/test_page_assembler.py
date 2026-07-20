@@ -186,6 +186,49 @@ def test_ai_notice_licensed_copy_never_carries_unmasked_pii():
         assert leaked not in text
 
 
+# ── step03 검증 배지 + QR (제안서 "& DID 서명 첨부") ─────────────────────────
+def test_ai_notice_licensed_appends_verified_badge_and_verify_element():
+    # 라이선스 잠긴 페이지에만 '검증된 실제 모델' 배지 + license-verify(QR) 요소가 붙는다.
+    notice = {"modelName": "김*연", "licenseId": "lic-123", "faceCuts": 3, "totalCuts": 3}
+    ai_block = build_auto_blocks(PRODUCT, license_notice=notice)[2]
+    types = [e["type"] for e in ai_block["elements"]]
+    assert types == ["text", "text", "license-verify"]  # 고지문 + 배지 + QR
+
+    badge = ai_block["elements"][1]
+    assert "검증된 실제 모델" in badge["text"]
+
+    verify = ai_block["elements"][2]
+    assert verify["type"] == "license-verify"
+    assert verify["licenseId"] == "lic-123"        # 프론트 QR = {origin}/verify/{licenseId}
+    assert verify["id"] == "b2e2"                  # 결정적 id 유지
+
+
+def test_ai_notice_block_exposes_license_id_as_meta():
+    # 프론트가 QR 생성용 licenseId 를 요소 밖에서도 읽을 수 있게 블록 메타로 노출.
+    notice = {"modelName": "김*연", "licenseId": "lic-9"}
+    ai_block = build_auto_blocks(PRODUCT, license_notice=notice)[2]
+    assert ai_block["licenseId"] == "lic-9"
+
+
+def test_verify_element_carries_only_license_id_no_face_or_pii():
+    # QR·배지에는 licenseId(공개 검증용 능력토큰)만 — 얼굴·digest·CI·생년월일 전달 경로 없음.
+    notice = {"modelName": "홍*동", "licenseId": "lic-1", "faceCuts": 1, "totalCuts": 2}
+    verify = build_auto_blocks(PRODUCT, license_notice=notice)[2]["elements"][2]
+    assert set(verify.keys()) == {"id", "type", "x", "y", "w", "h", "licenseId"}
+    assert "홍*동" not in repr(verify)              # 마스킹 이름조차 QR 요소엔 없다
+
+
+def test_ai_notice_without_license_has_no_badge_qr_or_license_meta():
+    # 회귀 0: 라이선스 없는 일반 상세페이지는 배지·QR·licenseId 메타가 전혀 없다.
+    for blocks in (build_auto_blocks(PRODUCT),
+                   assemble(_storyboard(), [], [], PRODUCT, False)[-3:]):
+        ai_block = blocks[-1]
+        assert len(ai_block["elements"]) == 1               # 고지문 하나뿐 (기존 그대로)
+        assert ai_block["elements"][0]["type"] == "text"
+        assert "licenseId" not in ai_block                  # 블록 메타 미노출
+        assert all(e["type"] != "license-verify" for e in ai_block["elements"])
+
+
 # ── copywriting on/off ───────────────────────────────────────────────────────
 def test_copywriting_on_places_headline_and_selling_text():
     storyboard = _storyboard()

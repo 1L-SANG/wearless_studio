@@ -33,6 +33,15 @@ def _canonical_profile_hash(profile) -> str:
     """렌더러 입력 프로필의 canonical JSON(sort_keys·compact·null 포함) SHA-256 (fidelity D3)."""
     payload = json.dumps(profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _fit_profile_for_match_image(profile: dict | None, has_match_image: bool) -> dict | None:
+    """화면에 매칭 의류가 없으면 v1/v2 매칭 축 지시를 모두 제거한다."""
+    if not profile or has_match_image:
+        return profile
+    return {k: v for k, v in profile.items() if k not in ("matchCut", "matchingFit")}
+
+
 _GENERATION_PROGRESS_INTERVAL_SECONDS = 7.0
 _GENERATION_PROGRESS_MAX = 84
 
@@ -384,13 +393,13 @@ async def run_mannequin_job(app, job: dict) -> None:
             fit_profile = snap.get("profile")
             adjusted_axes = tuple(a for a in snap.get("adjustedAxes") if isinstance(a, str))
             fit_profile_source = "payload_snapshot"
-            # 방어: 스냅샷 이후 매칭 자산이 사라졌으면 없는 옷 지시가 남지 않게 matchCut 제거
-            if fit_profile and match_img is None and "matchCut" in fit_profile:
-                fit_profile = {k: v for k, v in fit_profile.items() if k != "matchCut"}
         else:
             fit_profile = mannequin.effective_fit_profile(analysis, match_img is not None)
             adjusted_axes = ()
             fit_profile_source = "legacy_analysis_fallback"
+        # 방어: 스냅샷 이후 매칭 자산이 사라졌거나 legacy analysis 에 v2 프로필이 남아 있어도
+        # 화면에 없는 별도 의류의 지시가 프롬프트로 전달되지 않게 두 버전 키를 함께 제거한다.
+        fit_profile = _fit_profile_for_match_image(fit_profile, match_img is not None)
         legacy_base_fit = analysis.get("fit") or "regular"
         await _emit(pool, job_id, "progress", {"progress": 35, "phase": "generating"})
 

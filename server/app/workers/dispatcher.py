@@ -15,6 +15,7 @@ from .detail_page_job import run_detail_page_job
 from .editor_image_job import run_editor_image_job
 from .mannequin_adjust_job import run_mannequin_adjust_job
 from .mannequin_job import run_mannequin_job
+from .fm_model_asset_job import run_fm_model_asset_job
 from .personalization_generation_job import run_personalization_generation_job
 from .personalization_purge_job import run_personalization_purge_job
 
@@ -29,6 +30,7 @@ _WORKERS = {
     "editor_image": run_editor_image_job,  # AG-06/07 에디터 이미지 (PL-5/6, mode:'new'|'vary')
     "personalization_generation": run_personalization_generation_job,  # 개인화 생성 경로 α (api-spec §4)
     "personalization_purge": run_personalization_purge_job,  # 개인화 파기 캐스케이드 (api-spec §3.5)
+    "fm_model_asset_build": run_fm_model_asset_job,  # 실존 모델 자산 빌드(합성+QC, handoff fork)
 }
 _KINDS = tuple(_WORKERS)
 _SWEEP_INTERVAL = 60.0  # lease 복구 점검 주기(초)

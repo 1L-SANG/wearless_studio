@@ -53,7 +53,7 @@ _EDIT_TEMPLATES = {
 def declared_axis_spec(profile: dict | None) -> list[dict]:
     """정규화 프로필의 선언 축만 카탈로그 순서로 → [{category,axis,value,observableTarget}].
 
-    matchCut(최상위 키)·미선언 축은 제외. 관측 문구가 없는 (category,axis,value)는
+    matchCut/matchingFit(최상위 키)·미선언 축은 제외. 관측 문구가 없는 (category,axis,value)는
     허용목록 밖이므로 버린다 — 판정 프롬프트에는 여기서 나온 고정 문구만 들어간다.
     """
     if not isinstance(profile, dict):

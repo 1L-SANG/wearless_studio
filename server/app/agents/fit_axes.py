@@ -188,12 +188,47 @@ def _axis_entry(category: str, axis: str, gender: str, value):
     return next((e for e in entries if e["value"] == value), None)
 
 
+_MATCHING_FIT_AXIS = {"pants": "cut", "skirt": "silhouette"}
+
+
+def _profile_version(profile: dict) -> int:
+    version = profile.get("version")
+    return version if type(version) is int and version in (1, 2) else 1
+
+
+def _normalize_matching_fit(raw, gender: str) -> dict | None:
+    """v2 매칭 의류 축을 카탈로그 값으로만 정규화한다.
+
+    clothingId 는 DB 정본 대조용일 뿐 프롬프트에는 절대 쓰지 않는다. axes 는 계약의
+    단일 키만 허용해 pants.cut 과 skirt.silhouette 어휘가 서로 섞이지 않게 한다.
+    """
+    if not isinstance(raw, dict):
+        return None
+    clothing_id = raw.get("clothingId")
+    fit_category = raw.get("fitCategory")
+    axis = _MATCHING_FIT_AXIS.get(fit_category) if isinstance(fit_category, str) else None
+    raw_axes = raw.get("axes")
+    if not isinstance(clothing_id, str) or not clothing_id or axis is None \
+            or not isinstance(raw_axes, dict) or set(raw_axes) != {axis}:
+        return None
+    value = raw_axes.get(axis)
+    if not _axis_entry(fit_category, axis, gender, value):
+        return None
+    return {
+        "clothingId": clothing_id,
+        "fitCategory": fit_category,
+        "axes": {axis: value},
+    }
+
+
 def normalize_fit_profile(profile: dict | None) -> dict | None:
     """카탈로그 allowlist 로 프로필을 정규화 — 스냅샷·diff·렌더러가 공유하는 단일 검증 경로.
 
     category/gender 가 카탈로그에 없으면 None. axes 는 해당 category×gender 에서 유효한
-    (axis, value) 만 남긴다(null·미지값 제거). matchCut 은 pants.cut 어휘로 검증.
-    source 는 seller/auto 만 허용(그 외 auto), 셀러 자유 문자열은 어떤 필드에도 남지 않는다.
+    (axis, value) 만 남긴다(null·미지값 제거). v1 matchCut 은 pants.cut 어휘로,
+    v2 matchingFit 은 clothingId·fitCategory·단일 axes 키와 해당 카탈로그 어휘로 검증한다.
+    matchingFit 하나라도 유효하지 않으면 그 객체 전체를 버린다. source 는 seller/auto 만
+    허용(그 외 auto), 셀러 자유 문자열은 프롬프트에 쓰이는 어떤 필드에도 남지 않는다.
     """
     if not isinstance(profile, dict):
         return None
@@ -208,16 +243,22 @@ def normalize_fit_profile(profile: dict | None) -> dict | None:
         value = raw_axes.get(axis)
         if value is not None and _axis_entry(category, axis, gender, value):
             axes[axis] = value
+    version = _profile_version(profile)
     out = {
         "category": category,
         "gender": gender,
         "axes": axes,
         "source": profile.get("source") if profile.get("source") in ("seller", "auto") else "auto",
-        "version": profile.get("version") if isinstance(profile.get("version"), int) else 1,
+        "version": version,
     }
-    match_cut = profile.get("matchCut")
-    if match_cut is not None and _axis_entry("pants", "cut", gender, match_cut):
-        out["matchCut"] = match_cut
+    if version == 2:
+        matching_fit = _normalize_matching_fit(profile.get("matchingFit"), gender)
+        if matching_fit:
+            out["matchingFit"] = matching_fit
+    elif version == 1:
+        match_cut = profile.get("matchCut")
+        if match_cut is not None and _axis_entry("pants", "cut", gender, match_cut):
+            out["matchCut"] = match_cut
     return out
 
 
@@ -225,7 +266,8 @@ def adjusted_axes_between(prev: dict | None, new: dict | None) -> list[str]:
     """셀러 조정 축 계산(서버 산출 전용 — 클라이언트 값 신뢰 금지, fidelity 설계 §E-2).
 
     새 프로필의 선언 축 중 직전 정규화 프로필과 값이 다른 것만, 카탈로그 순서로.
-    category/gender 가 바뀌면 새 선언 축 전체가 조정으로 간주된다. matchCut 은 제외(P0 계약).
+    category/gender 가 바뀌면 새 선언 축 전체가 조정으로 간주된다. matchCut·matchingFit 은
+    둘 다 제외한다(주상품 axes 전용 계약).
     """
     if not isinstance(new, dict):
         return []
@@ -245,6 +287,18 @@ def _render_axis_line(category: str, axis: str, gender: str, value) -> str | Non
     if observable:
         return f"- {axis}: {entry['promptEn']}. Observable target: {observable}."
     return f"- {axis}: {entry['promptEn']}."
+
+
+def _render_matching_axis_line(category: str, axis: str, gender: str, value) -> str | None:
+    entry = _axis_entry(category, axis, gender, value)
+    observable = AXIS_OBSERVABLES.get((category, axis, value))
+    if not entry or not observable:
+        return None
+    label = "matching bottom" if category == "pants" else "matching skirt silhouette"
+    return (
+        f"- {label} (the separate bottom garment styled with the product, "
+        f"NOT the product itself): {entry['promptEn']}. Observable target: {observable}."
+    )
 
 
 def build_fit_profile_block(profile: dict | None, adjusted_axes: tuple | list = ()) -> str:
@@ -267,18 +321,23 @@ def build_fit_profile_block(profile: dict | None, adjusted_axes: tuple | list = 
         line = _render_axis_line(category, axis, gender, value)
         if line:
             lines.append(line)
-    # 매칭 하의 핏(matchCut) — UI(Mannequin.jsx matchValues)가 pants.cut 어휘를 그대로 쓴다.
-    # 상품이 아닌 "함께 착장된 별도 하의"임을 명시해 상품 핏 지시와 섞이지 않게 한다.
-    match_cut = profile.get("matchCut")
-    if match_cut is not None:
-        entry = _axis_entry("pants", "cut", gender, match_cut)
-        if entry:
-            observable = AXIS_OBSERVABLES.get(("pants", "cut", match_cut))
-            tail = f" Observable target: {observable}." if observable else ""
-            lines.append(
-                "- matching bottom (the separate bottom garment styled with the product, "
-                f"NOT the product itself): {entry['promptEn']}.{tail}"
-            )
+    # 별도 매칭 의류는 버전별 계약으로만 렌더한다. clothingId·원문 카테고리·상품명은 보간하지
+    # 않고, 고정 카탈로그 promptEn·observable 문구만 사용한다.
+    version = _profile_version(profile)
+    if version == 2:
+        matching_fit = _normalize_matching_fit(profile.get("matchingFit"), gender)
+        if matching_fit:
+            match_category = matching_fit["fitCategory"]
+            match_axis = _MATCHING_FIT_AXIS[match_category]
+            line = _render_matching_axis_line(
+                match_category, match_axis, gender, matching_fit["axes"][match_axis])
+            if line:
+                lines.append(line)
+    elif version == 1:
+        match_cut = profile.get("matchCut")
+        line = _render_matching_axis_line("pants", "cut", gender, match_cut)
+        if line:
+            lines.append(line)
     if not lines:
         return ""
     block = (
@@ -287,7 +346,7 @@ def build_fit_profile_block(profile: dict | None, adjusted_axes: tuple | list = 
         + "\nWhere the photos conflict with a declared axis, the declared axis wins; "
           "otherwise preserve the photographed shape for that axis."
     )
-    # CHANGES — 셀러가 이번에 조정한 주상품 축만 재강조(matchCut 제외, P0 계약 §D2).
+    # CHANGES — 셀러가 이번에 조정한 주상품 축만 재강조(matchCut·matchingFit 제외).
     if profile.get("source") == "seller" and adjusted_axes:
         change_lines = []
         for axis in by_axis:  # 카탈로그 순서

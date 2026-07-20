@@ -81,13 +81,17 @@ async def run_analyze_job(app, job: dict) -> None:
             return
 
         # 2) 바이트 다운로드 → 분석용 축소 (둘 다 to_thread — 이벤트 루프 비차단)
-        images, bytes_in, bytes_out = [], 0, 0
-        for a in assets:
+        #    다운로드는 장수만큼 병렬 — 순차일 땐 한 장의 R2 지연이 통째로 prep 을 세웠다
+        #    (2026-07-16 실측: 7회 중 1회 32s 스톨). gather 는 입력 순서를 보존한다.
+        async def _load_one(a: dict) -> tuple[int, bytes, str]:
             raw = await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"])
             data, mime = await asyncio.to_thread(shrink_for_vision, raw, a["mime_type"])
-            bytes_in += len(raw)
-            bytes_out += len(data)
-            images.append(InlineImage(mime, data))
+            return len(raw), data, mime
+
+        loaded = await asyncio.gather(*(_load_one(a) for a in assets))
+        bytes_in = sum(n for n, _, _ in loaded)
+        bytes_out = sum(len(d) for _, d, _ in loaded)
+        images = [InlineImage(mime, data) for _, data, mime in loaded]
         await _emit(pool, job_id, "progress", {"progress": 30, "phase": "inputs_loaded",
                                                "bytesIn": bytes_in, "bytesOut": bytes_out})
 

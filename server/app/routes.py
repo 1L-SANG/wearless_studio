@@ -83,11 +83,18 @@ def _wake_dispatcher(request: Request) -> None:
         dispatcher.wake()
 
 
-async def _fit_profile_snapshot(conn, project_id: str, requested: dict | None) -> dict:
+async def _fit_profile_snapshot(
+    conn,
+    project_id: str,
+    requested: dict | None,
+    *,
+    validate_matching_fit: bool = False,
+) -> dict:
     """잡 생성 시점 effective fitProfile 스냅샷 — 워커의 불변 입력 (fidelity 설계 D3).
 
     - profile: 카탈로그 정규화(fit_axes.normalize_fit_profile). 프로필이 없으면 명시적 None
-      (auto 값 발명 금지). 실제 매칭 이미지가 없으면 matchCut 제거(없는 옷 지시 방지).
+      (auto 값 발명 금지). 실제 매칭 이미지가 없으면 matchCut/matchingFit 제거
+      (없는 옷 지시 방지).
     - adjustedAxes: **서버 diff 로만 산출**(§E-2) — 직전 정규화 프로필 vs 요청 정규화 프로필.
       클라이언트가 보낸 조정 목록은 신뢰하지 않는다. generate/바디 없는 regenerate 는 [].
     """
@@ -98,11 +105,42 @@ async def _fit_profile_snapshot(conn, project_id: str, requested: dict | None) -
         adjusted = fit_axes.adjusted_axes_between(prev, profile)
     else:
         profile, adjusted = prev, []
-    if profile and profile.get("matchCut") is not None:
-        match_id = mannequin.main_match_item_id(analysis)
-        has_match = bool(match_id and await repo.get_matching_item_asset(conn, match_id))
+    main_match_id = mannequin.main_match_item_id(analysis)
+    matching_fit = profile.get("matchingFit") if profile else None
+    match_cut = profile.get("matchCut") if profile else None
+    matching_id_valid = bool(
+        isinstance(matching_fit, dict)
+        and matching_fit.get("clothingId") == main_match_id
+    )
+    if validate_matching_fit and matching_fit and not matching_id_valid:
+        raise _bad_request(
+            "invalid_matching_fit",
+            "매칭 핏이 현재 선택된 메인 매칭 의류와 일치하지 않습니다.",
+        )
+    item_metadata = None
+    if main_match_id and (match_cut is not None or matching_id_valid):
+        item_metadata = await repo.get_matching_item_metadata(conn, main_match_id)
+    authoritative_fit_category = matching.fit_category(item_metadata or {})
+    if matching_fit:
+        matching_category_valid = (
+            matching_id_valid
+            and authoritative_fit_category == matching_fit.get("fitCategory")
+        )
+        if validate_matching_fit and not matching_category_valid:
+            raise _bad_request(
+                "invalid_matching_fit",
+                "매칭 핏 카테고리가 현재 선택된 매칭 의류와 일치하지 않습니다.",
+            )
+        if not matching_category_valid:
+            profile = {k: v for k, v in profile.items() if k != "matchingFit"}
+    if match_cut is not None and authoritative_fit_category != "pants":
+        profile = {k: v for k, v in profile.items() if k != "matchCut"}
+    if profile and (profile.get("matchCut") is not None or profile.get("matchingFit") is not None):
+        has_match = bool(
+            main_match_id and await repo.get_matching_item_asset(conn, main_match_id)
+        )
         if not has_match:
-            profile = {k: v for k, v in profile.items() if k != "matchCut"}
+            profile = {k: v for k, v in profile.items() if k not in ("matchCut", "matchingFit")}
     return {"version": 1, "profile": profile, "adjustedAxes": adjusted}
 
 
@@ -663,6 +701,11 @@ async def match_candidates(
             "thumb": r2.public_url(i["thumb_key"]),
             "imageUrl": r2.public_url(i["image_key"]) if i.get("image_key") else None,
             "thumbnailUrl": r2.public_url(i["thumb_key"]),
+            "clothingType": i.get("clothing_type"),
+            "category": i.get("category"),
+            "fit": i.get("fit"),
+            "length": i.get("length"),
+            "fitCategory": matching.fit_category(i),
             "selected": False,
         }
         for i in ranked if i.get("thumb_key")
@@ -947,7 +990,8 @@ async def regenerate_mannequins(
     """조정된 fit-profile 을 반영해 마네킹 후보를 **새 버전으로 재생성**합니다.
 
     - **Bearer Token**: 필수
-    - **Body**: `{ fitProfile? }` — 조정된 fit-profile(axes·matchCut). 없으면 저장된 analysis 기준.
+    - **Body**: `{ fitProfile? }` — 조정된 fit-profile(axes·matchingFit, legacy matchCut 호환).
+      없으면 저장된 analysis 기준.
     - generate 와 동일한 워커·크레딧 경로지만 **완료 캐시 게이트를 건너뛴다** — 매 호출이 새 버전을
       만든다(finalize 가 candidate 별 `max(version)+1` 로 append). 크레딧은 generate 와 동일.
     - **에지 케이스**: `400 missing_front_photo`(정면 사진 없음), `402 insufficient_credits`(크레딧 부족).
@@ -959,7 +1003,12 @@ async def regenerate_mannequins(
             raise _not_found()
         # generate 와 달리 완료 캐시 게이트 없음 — 항상 새 job 을 만들어 새 버전을 append 한다.
         # 스냅샷 = 잡 시점 effective profile + 서버 산출 adjustedAxes (fidelity 설계 D3·§E-2).
-        snapshot = await _fit_profile_snapshot(conn, project_id, body.get("fitProfile"))
+        snapshot = await _fit_profile_snapshot(
+            conn,
+            project_id,
+            body.get("fitProfile"),
+            validate_matching_fit=True,
+        )
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload={"mode": "regenerate", "fitProfile": body.get("fitProfile"),

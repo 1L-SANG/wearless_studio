@@ -28,11 +28,11 @@ def generation_spec(analysis: dict) -> dict | None:
 
 
 def effective_fit_profile(analysis: dict, has_match_image: bool) -> dict | None:
-    """워커가 프롬프트에 쓸 최종 fit profile. 매칭 하의 이미지가 없는 잡에선 matchCut 을
-    제거한다 — 화면에 없는 옷의 핏을 지시하면 모델이 하의를 지어내는 원인이 된다."""
+    """워커가 프롬프트에 쓸 최종 fit profile. 매칭 의류 이미지가 없는 잡에선 v1/v2
+    매칭 축을 제거한다 — 화면에 없는 옷의 핏을 지시하면 모델이 하의를 지어내는 원인이 된다."""
     profile = generation_spec(analysis)
-    if profile and not has_match_image and "matchCut" in profile:
-        profile = {k: v for k, v in profile.items() if k != "matchCut"}
+    if profile and not has_match_image:
+        profile = {k: v for k, v in profile.items() if k not in ("matchCut", "matchingFit")}
     return profile
 
 
@@ -63,28 +63,28 @@ def has_base_front(product: dict) -> bool:
 
 def main_match_item_id(analysis: dict) -> str | None:
     """메인 매칭의류(하의) id — 있으면 마네킹컷에 함께 착장(상의+하의). 사용자 결정.
-    계약형 matchSelections = [{clothingId, role}] (role='main'). {main} / [id] 폴백도 처리.
+    계약형 matchSelections = [{clothingId, role}] (role='main'). {main} 폴백도 처리.
     실 프론트(httpAdapter·계약 §6)는 레거시 matchClothing(후보 전체 + selected/selOrder)으로
     analysis 에 저장하므로, matchSelections 가 비어 있으면 그쪽에서 읽는다 — 아니면 UI 가
-    받은 매칭 핏 조정(matchCut)이 생성에서 조용히 무시된다."""
+    받은 매칭 핏 조정(matchCut/matchingFit)이 생성에서 조용히 무시된다."""
     sel = analysis.get("matchSelections")
     if isinstance(sel, list):
         for e in sel:  # 계약형: role=='main'
             if isinstance(e, dict) and e.get("role") == "main" and (e.get("clothingId") or e.get("id")):
                 return e.get("clothingId") or e.get("id")
-        first = sel[0] if sel else None  # 폴백: 첫 항목
-        if isinstance(first, dict):
-            first = first.get("clothingId") or first.get("id")
-        if first:
-            return first
     elif isinstance(sel, dict) and sel.get("main"):
-        return sel["main"]
+        main = sel["main"]
+        if isinstance(main, dict):
+            return main.get("clothingId") or main.get("id")
+        return main
     # 레거시 폴백: selected 항목 중 selOrder 최솟값 = 메인 (UI 선택 순서 1번).
     mc = analysis.get("matchClothing")
     if isinstance(mc, list):
         chosen = sorted(
             (e for e in mc if isinstance(e, dict) and e.get("selected") and e.get("id")),
-            key=lambda e: e.get("selOrder") or 99,
+            key=lambda e: (
+                e.get("selOrder") if isinstance(e.get("selOrder"), (int, float)) else float("inf")
+            ),
         )
         if chosen:
             return chosen[0]["id"]

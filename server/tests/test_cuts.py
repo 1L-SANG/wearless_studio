@@ -341,8 +341,8 @@ def test_virtual_model_loader_resolves_c_pair_and_excludes_product(tmp_path, mon
         assert set(cut.load_virtual_model_registry()) == {"mA"}
         person = cut.normalize_spec({"cutType": "styling", "modelId": "mA"})
         assert cut.resolve_virtual_model_assets(person) == (
-            {"key": "seed/mA/face.webp", "mime": "image/webp"},
-            {"key": "seed/mA/grid.png", "mime": "image/jpeg"},
+            {"key": "seed/mA/face.webp", "mime": "image/webp", "bucket": "public"},
+            {"key": "seed/mA/grid.png", "mime": "image/jpeg", "bucket": "public"},
         )
         product = cut.normalize_spec({"cutType": "product", "modelId": "mA"})
         assert cut.resolve_virtual_model_assets(product) is None

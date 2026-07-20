@@ -6,11 +6,117 @@
    ============================================================= */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/index.js';
-import { listModels } from '@/lib/api/facemarket.js';
-import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, Chips, Button, Skeleton, ErrorState, useToast } from '@/components/ui.jsx';
+import { listModels, fetchLicenseFaceUrl, verifyLicensePublic } from '@/lib/api/facemarket.js';
+import QRCode from 'qrcode';
+import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
+import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
+import {
+  matchingFitDefinition,
+  matchingFitFromProfile,
+  resolveMainMatchingItem,
+} from '@/lib/matchingFit.js';
+
+// 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
+// Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
+function ModelThumb({ uri, alt }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    if (!uri) return undefined;
+    let objUrl = null, alive = true;
+    fetchLicenseFaceUrl(uri).then((u) => { if (alive) { objUrl = u; setUrl(u); } }).catch(() => {});
+    return () => { alive = false; if (objUrl) URL.revokeObjectURL(objUrl); };
+  }, [uri]);
+  if (url) return <img src={url} alt={alt} />;
+  return <div className="fm-empty"><Icon name="person" size={24} /></div>;
+}
+
+const _won = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
+const _fmtDate = (iso) => { if (!iso) return null; try { return new Date(iso).toLocaleDateString('ko-KR'); } catch { return iso; } };
+
+// 모델 상세 = 얼굴 라이선스 카드. 공개 검증 화이트리스트(verifyLicensePublic)만 표시하고
+// 얼굴은 게이트 썸네일, QR 은 무인증 검증 페이지({origin}/verify/{id}) 주소만 싣는다(생체정보 X).
+// PII(원본 얼굴·CI·생년월일·user_id)는 서버가 애초에 안 싣는다. selectable 이면 여기서 선택 확정.
+function ModelDetailModal({ model, onClose, onSelect, selectable }) {
+  const [data, setData] = useState(null);
+  const [phase, setPhase] = useState('loading'); // loading|ready|nolicense|error
+  const [qr, setQr] = useState(null);
+
+  useEffect(() => {
+    if (!model?.licenseId) { setPhase('nolicense'); return undefined; }
+    let alive = true;
+    verifyLicensePublic(model.licenseId)
+      .then((d) => { if (alive) { setData(d); setPhase('ready'); } })
+      .catch(() => { if (alive) setPhase('error'); });
+    const verifyUrl = `${window.location.origin}/verify/${model.licenseId}`;
+    QRCode.toDataURL(verifyUrl, { width: 160, margin: 0, errorCorrectionLevel: 'M' })
+      .then((u) => { if (alive) setQr(u); }).catch(() => {});
+    return () => { alive = false; };
+  }, [model]);
+
+  const age = data?.model?.age;
+  return (
+    <Modal onClose={onClose}>
+      <div className="lic-card-wrap">
+        <div className="lic-card">
+          {/* 얼굴 밴드 */}
+          <div className="lic-card-face">
+            <ModelThumb uri={model.faceThumbUri} alt={model.displayName} />
+            <span className="lic-card-brand">FACE&nbsp;LICENSE</span>
+            {model.status === 'verified' && (
+              <span className="lic-card-badge"><Icon name="check" size={11} />검증</span>
+            )}
+            <div className="lic-card-who">
+              <div className="lic-card-name">{model.displayName}{age != null && <em> · {age}세</em>}</div>
+              {model.vcId
+                ? <div className="lic-card-vc"><Icon name="check" size={10} />온체인 VC 발급됨</div>
+                : <div className="lic-card-vc off">VC 미발급</div>}
+            </div>
+          </div>
+
+          {/* 본문 */}
+          <div className="lic-card-body">
+            {phase === 'loading' && <div className="hint" style={{ padding: '8px 0' }}>불러오는 중…</div>}
+            {phase === 'nolicense' && <div className="hint" style={{ padding: '8px 0' }}>활성 라이선스가 없어 조건을 볼 수 없어요.</div>}
+            {phase === 'error' && <div className="hint" style={{ padding: '8px 0' }}>상세 정보를 불러오지 못했어요.</div>}
+            {phase === 'ready' && data && (
+              <>
+                {data.allowedUse?.length > 0 && (
+                  <div className="lic-row"><span className="lic-k">허용 용도</span>
+                    <span className="lic-tags">{data.allowedUse.map((u) => <span key={u} className="tag-allow">{u}</span>)}</span>
+                  </div>
+                )}
+                {data.forbiddenUse?.length > 0 && (
+                  <div className="lic-row"><span className="lic-k">금지 용도</span>
+                    <span className="lic-tags">{data.forbiddenUse.map((u) => <span key={u} className="tag-forbid"><Icon name="ban" size={9} />{u}</span>)}</span>
+                  </div>
+                )}
+                <div className="lic-foot">
+                  <div className="lic-foot-info">
+                    <div className="lic-price">{_won(data.unitPrice)}<em> /건</em></div>
+                    {_fmtDate(data.validUntil) && <div className="lic-valid">{_fmtDate(data.validUntil)}까지</div>}
+                    {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
+                  </div>
+                  {qr && <img className="lic-qr" src={qr} alt="검증 QR" />}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="lic-actions">
+          <Button variant="ghost" onClick={onClose}>닫기</Button>
+          {selectable && (
+            <Button variant="primary" iconRight="check" onClick={() => { onSelect(model.id); onClose(); }}>
+              이 모델로 선택
+            </Button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 // 글자 폭 추정(em) — 한글 ≈1em, 그 외 ≈0.55em. '직접 입력' pill이 다른 칩과 같은 크기로
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
@@ -26,20 +132,30 @@ const genderOf = (genders) => {
 };
 
 // ── 분석 대기 연출 (A안 · 단계 체크리스트 — 2026-07-13 확정, mockups/analysis-waiting-concepts.html) ──
-// 앞 4단계 자연 페이스 합 ~3.2초 = 실측 분석 시간(~4초)에 맞춰 재보정(2026-07-15). 이보다 느리면
-// 앞 2개만 돌다가 결과 도착 → 뒤 3개가 한꺼번에 체크돼 어색했다(사용자 피드백). 이제 결과 도착 전에
-// 보통 마지막 단계(스피너)까지 도달하고, 결과가 오면 잔여 단계를 순차(320ms)로 훑어 완주한 뒤
+// 앞 4단계 자연 페이스는 실측 체감 시간에 맞춘다. 2026-07-16 prod 실측(의류 5종·사진 1~3장
+// 7회 벤치): 클릭→완료 = 업로드 3.5~11s + 서버 준비 1~4s + AI 4~8s + 폴링 ~1s ≈ 12~22s.
+// 이 애니메이션은 클릭 직후(업로드 포함) 시작하므로 앞 4단계 합 10초로 — p50(~13s)에서
+// 마지막 단계 대기가 짧게 남는다. 결과 선착 시 잔여 단계를 순차(320ms)로 훑어 완주한 뒤
 // onFinished — 애니메이션 끝과 화면 전환이 맞물린다. 분석이 늦으면 마지막 단계 스피너로 은은히
 // 대기(멈춘 느낌 방지). 퍼센트 숫자 금지(마네킹 대기화면과 동일 결정).
 const ANALYZE_STEPS = ['사진 확인', '종류·핏 판별', '소재 추정', '특징 발굴', '매칭 의류 선정'];
-const STEP_DUR = [600, 1000, 800, 800, 700];   // 앞 4개 합 3200ms
-const FAST_DUR = 320;                           // 결과 선착 시 잔여 단계 순차 훑기(스냅 방지)
+const STEP_DUR = [2400, 2800, 2600, 2200, 1000];   // 앞 4개 합 10000ms (실측 p50 기반)
+const FAST_DUR = 320;                               // 결과 선착 시 잔여 단계 순차 훑기(스냅 방지)
+
+const SLOW_NOTICE_MS = 20000; // 이 시간까지 결과가 없으면 안내 문구 전환(R2 지연 등 꼬리 케이스 방어)
 
 export function AnalysisProgress({ photoSrc, done, onFinished }) {
   const [doneCount, setDoneCount] = useState(0);   // 완료된 단계 수 (0..5)
+  const [slow, setSlow] = useState(false);         // 20초+ 지연 — 멈춤으로 오해받지 않게 문구만 교체
   const finishedRef = useRef(false);
   const onFinishedRef = useRef(onFinished);
   onFinishedRef.current = onFinished;
+
+  useEffect(() => {
+    if (done) { setSlow(false); return undefined; }
+    const t = setTimeout(() => setSlow(true), SLOW_NOTICE_MS);
+    return () => clearTimeout(t);
+  }, [done]);
 
   useEffect(() => {
     if (doneCount >= ANALYZE_STEPS.length) {       // 전 단계 완료 → 살짝 여운 후 전환
@@ -58,7 +174,9 @@ export function AnalysisProgress({ photoSrc, done, onFinished }) {
     <div className="ap-stage surface">
       {photoSrc && <img className="ap-photo" src={photoSrc} alt="" />}
       <div className="ap-body">
-        <div className="ap-title">AI가 상품을 분석하고 있어요</div>
+        <div className="ap-title">
+          {slow ? '조금 더 꼼꼼히 확인하고 있어요…' : 'AI가 상품을 분석하고 있어요'}
+        </div>
         {ANALYZE_STEPS.map((s, i) => (
           <div key={s} className={`ap-step${i < doneCount ? ' done' : i === doneCount ? ' run' : ''}`}>
             <span className="ap-dot" />{s}
@@ -159,6 +277,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   // 정적 시드를 버리고 런타임 로드한다. 라이선스가 활성인(hasActiveLicense) 모델만 선택 가능.
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(true);
+  const [detailFor, setDetailFor] = useState(null); // 상세 모달 대상 모델 카드
   useEffect(() => {
     let alive = true;
     listModels()
@@ -196,15 +315,49 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const selMatch = (a.matchClothing || []).filter((c) => c.selected).sort((x, y) => (x.selOrder || 0) - (y.selOrder || 0));
   const mainMatchId = selMatch[0]?.id;
   const subMatchId = selMatch[1]?.id;
+  const withMatchSelection = (matchClothing) => {
+    const category = fitProfileCategory(a.clothingType, a.subCategory) || 'top';
+    const gender = genderOf(a.targetGenders);
+    const previousProfile = a.fitProfile;
+    const sameProfileScope = previousProfile?.category === category && previousProfile?.gender === gender;
+    const previousMain = resolveMainMatchingItem(a);
+    const nextAnalysis = { ...a, matchClothing };
+    const nextMain = resolveMainMatchingItem(nextAnalysis);
+    // A legacy matchCut has no clothingId, so it is safe to migrate only when
+    // the authoritative main garment did not change. v2 matchingFit validates
+    // its own binding in matchingFitFromProfile.
+    const profileForMatching = previousMain?.id === nextMain?.id
+      ? previousProfile
+      : { ...(previousProfile || {}), matchCut: undefined };
+    const matchingFit = sameProfileScope
+      ? matchingFitFromProfile(
+        profileForMatching,
+        matchingFitDefinition(nextMain, gender),
+      )
+      : null;
+    return {
+      matchClothing,
+      fitProfile: {
+        category,
+        gender,
+        axes: sameProfileScope ? { ...(previousProfile.axes || {}) } : {},
+        source: previousProfile?.source || 'auto',
+        version: 2,
+        ...(matchingFit ? { matchingFit } : {}),
+      },
+    };
+  };
   const toggleMatch = (id) => {
     const cur = a.matchClothing;
     const item = cur.find((c) => c.id === id);
     if (item.selected) {
-      onChange({ matchClothing: cur.map((c) => c.id === id ? { ...c, selected: false, selOrder: undefined } : c) });
+      const next = cur.map((c) => c.id === id ? { ...c, selected: false, selOrder: undefined } : c);
+      onChange(withMatchSelection(next));
     } else {
       if (selMatch.length >= 2) { toast.push('매칭 의류는 최대 2개까지 선택할 수 있어요'); return; }
       const maxOrder = Math.max(0, ...cur.map((c) => c.selOrder || 0));
-      onChange({ matchClothing: cur.map((c) => c.id === id ? { ...c, selected: true, selOrder: maxOrder + 1 } : c) });
+      const next = cur.map((c) => c.id === id ? { ...c, selected: true, selOrder: maxOrder + 1 } : c);
+      onChange(withMatchSelection(next));
     }
   };
   const setMat = (i, patch) => onChange({ materials: a.materials.map((m, j) => j === i ? { ...m, ...patch } : m) });
@@ -234,11 +387,20 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     if (!opts.length) fit = null; // 원피스 등 핏 축 없는 카테고리
     else if (!opts.some((o) => o.value === fit)) { fit = opts.some((o) => o.value === 'regular') ? 'regular' : opts[0].value; src = 'auto'; }
     const prev = next.fitProfile;
-    const axes = prev?.category === cat ? { ...(prev.axes || {}) } : {}; // 카테고리 바뀌면 타 축(컷·기장 등) 무효 → 리셋
+    const gender = genderOf(next.targetGenders);
+    const sameProfileScope = prev?.category === cat && prev?.gender === gender;
+    const axes = sameProfileScope ? { ...(prev.axes || {}) } : {}; // 카테고리·성별이 바뀌면 타 축 무효 → 리셋
     if (fit === null) delete axes.fit; else axes.fit = fit;
+    const matchingFit = sameProfileScope
+      ? matchingFitFromProfile(
+        prev,
+        matchingFitDefinition(resolveMainMatchingItem(next), gender),
+      )
+      : null;
     return { ...patch, fit, fitProfile: {
-      category: cat, gender: genderOf(next.targetGenders), axes,
-      source: src ?? prev?.source ?? 'auto', version: 1,
+      category: cat, gender, axes,
+      source: src ?? prev?.source ?? 'auto', version: 2,
+      ...(matchingFit ? { matchingFit } : {}),
     } };
   };
   // subCategory 는 영문 토큰, 실측 key 는 MeasurementKey — 라벨은 catalogs 에서 파생 (계약 §4)
@@ -386,11 +548,11 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               return (
                 <div key={m.id}
                   className={`model-card fm-model${on ? ' on' : ''}${selectable ? '' : ' disabled'}`}
-                  onClick={() => selectable && onChange({ selectedModelId: m.id })}
-                  title={selectable ? m.displayName : '활성 라이선스가 없어 선택할 수 없어요'}>
+                  onClick={() => setDetailFor(m)}
+                  title="눌러서 상세 정보 보기">
                   {m.coverImageUrl
                     ? <img src={m.coverImageUrl} alt={m.displayName} />
-                    : <div className="fm-empty"><Icon name="person" size={24} /></div>}
+                    : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
                   {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
                   <div className="fm-meta">
                     <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
@@ -404,6 +566,14 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               );
             })}
           </div>
+        )}
+        {detailFor && (
+          <ModelDetailModal
+            model={detailFor}
+            selectable={!!detailFor.hasActiveLicense}
+            onSelect={(id) => onChange({ selectedModelId: id })}
+            onClose={() => setDetailFor(null)}
+          />
         )}
       </div>
 
@@ -468,6 +638,9 @@ export function Analysis({ onNext }) {
   return <AnalysisForm analysis={analysis} catalogs={catalogs}
     onChange={(patch) => {
       const refreshMatch = isMatchRecommendationPatch(patch);
+      if (isGenerationRelevantAnalysisPatch(patch)) {
+        useAppStore.getState().markGenerationRelevantEdits();
+      }
       setAnalysis((a) => ({ ...a, ...patch }));
       api.saveAnalysis(null, patch).then((saved) => {
         if (refreshMatch) setAnalysis((a) => ({ ...a, matchClothing: saved.matchClothing }));

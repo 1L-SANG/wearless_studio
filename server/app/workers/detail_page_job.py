@@ -90,6 +90,28 @@ async def _load_license_face(app, conn, project: dict) -> dict | None:
     }
 
 
+async def _load_license_row(app, conn, project) -> dict | None:
+    """프로젝트에 잠긴 라이선스의 게이트용 메타(id·model_id·상태·마스킹 이름). 얼굴 바이트는 로드하지
+    않는다 — 실존 모델(REAL) 소스 선택·검증 배지 근거로만 쓴다. 활성·미만료가 아니면 None."""
+    s = app.state.settings
+    lic_id = project.get("facemarket_license_id") or project.get("facemarketLicenseId")
+    if not s.facemarket_enabled or not lic_id:
+        return None
+    from ..facemarket import _is_expired, _mask_name
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select l.id::text as id, l.model_id::text as model_id, l.status,
+                      l.license_valid_until, m.display_name
+               from fm_licenses l join fm_models m on m.id = l.model_id
+               where l.id = %s""",
+            (str(lic_id),))
+        lic = await cur.fetchone()
+    if not lic or lic["status"] != "active" or _is_expired(lic):
+        return None
+    return {"id": lic["id"], "model_id": lic["model_id"], "status": lic["status"],
+            "model_name": _mask_name(lic["display_name"] or "")}
+
+
 async def _gen_cuts(app, job, prepared, product, analysis):
     """준비된 블록별 (block, images, manifest, has_face)로 AG-06 컷 생성
     → (cut_results, cut_assets, face_cuts). face_cuts = 라이선스 얼굴이 실제로 들어가고
@@ -226,6 +248,31 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 잠금 없음 = 기존 마네킹 경로 → None, 아래 첨부·고지 분기 전부 미진입.
             face_ref = await _load_license_face(app, conn, project)
 
+            # 컷당 단일 아이덴티티-소스 선택(codex [P1]) — 실존 모델 그리드/라이선스 얼굴/가상모델 중 1개.
+            # 실존 모델(REAL)은 라이선스 활성일 때만. 실자산 있는데 라이선스 실패면 REJECTED → 얼굴 미주입.
+            from ..agents import identity_source
+            license_row = await _load_license_row(app, conn, project)
+            # 실존 자산 조회는 facemarket 켜졌고 선택 모델이 있을 때만 — off(기존/가상 경로)면
+            # 쿼리조차 돌지 않아 완전 무영향.
+            real_refs = (await identity_source.resolve_real_model_assets(conn, selected_model_id)
+                         if selected_model_id and s.facemarket_enabled else None)
+            source = identity_source.select_source(
+                selected_model_id=selected_model_id, license_row=license_row,
+                has_real_assets=real_refs is not None, has_license_face=face_ref is not None)
+            # 관측 로그(PII 없음 — 소스 enum·플래그만). 데모·검증에서 REAL 주입 확인용.
+            log.info("AG-06 identity source=%s job=%s hasReal=%s hasLicenseFace=%s",
+                     source, job_id, real_refs is not None, face_ref is not None)
+            if source == "REJECTED":
+                log.warning("AG-06 real model selected without active license; skipping face (job %s)", job_id)
+                face_ref = None
+                real_refs = None
+            if source == "REAL" and license_row is not None:
+                notice_ctx = {"model_name": license_row["model_name"], "license_id": license_row["id"]}
+            elif source == "LEGACY" and face_ref is not None:
+                notice_ctx = {"model_name": face_ref["model_name"], "license_id": face_ref["license_id"]}
+            else:
+                notice_ctx = None
+
             mannequin_asset = None
             sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
             if sel:
@@ -272,11 +319,16 @@ async def run_detail_page_job(app, job: dict) -> None:
         # R2 바이트는 r2_key 캐시로 1회만 — 같은 색상 이미지가 블록마다 재다운로드되지 않게
         _img_cache: dict = {}
 
-        async def _r2_img(k: str, mime: str) -> InlineImage:
-            if k not in _img_cache:
-                _img_cache[k] = InlineImage(
-                    mime, await asyncio.to_thread(app.state.r2.get_bytes, k))
-            return _img_cache[k]
+        async def _r2_img(k: str, mime: str, bucket: str = "public") -> InlineImage:
+            # 실존 모델 그리드는 bucket='face' → 비공개 r2_face 에서 로드(공개 버킷 하드코딩 금지).
+            cache_key = (bucket, k)
+            if cache_key not in _img_cache:
+                client = app.state.r2_face if bucket == "face" else app.state.r2
+                if client is None:
+                    raise RuntimeError("bucket client unavailable")
+                _img_cache[cache_key] = InlineImage(
+                    mime, await asyncio.to_thread(client.get_bytes, k))
+            return _img_cache[cache_key]
 
         async def _img(a: dict) -> InlineImage:
             return await _r2_img(a["r2_key"], a["mime_type"])
@@ -306,6 +358,24 @@ async def run_detail_page_job(app, job: dict) -> None:
                         "continuing without model references: %r", job_id, model_id, e)
                     _model_cache[model_id] = None
             return _model_cache[model_id] or []
+
+        # 실존 모델(REAL) 그리드 — 비공개 r2_face 에서 로드(bucket 인지). 잡당 1회 캐시.
+        # 로드 실패는 얼굴 없이 생성으로 강등(가상 모델 경로와 같은 fail-open).
+        _real_cache: dict[str, list[InlineImage] | None] = {}
+
+        async def _real_model_images() -> list[InlineImage]:
+            if not real_refs:
+                return []
+            if "refs" not in _real_cache:
+                try:
+                    _real_cache["refs"] = [
+                        await _r2_img(r["key"], r["mime"], r.get("bucket", "face"))
+                        for r in real_refs
+                    ]
+                except Exception as e:
+                    log.warning("AG-06 real model assets unavailable job %s: %r", job_id, e)
+                    _real_cache["refs"] = None
+            return _real_cache["refs"] or []
 
         # (runtime block, images, manifest, has_face) — images 순서는 build_manifest 계약과 동일.
         prepared = []
@@ -341,20 +411,39 @@ async def run_detail_page_job(app, job: dict) -> None:
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
             # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·거울샷 기본(폰이 가림)·
             # 뒷모습·머리가 프레임 밖인 샷은 제외(cut_generator.wants_face 가 단일 규칙).
-            has_face = face_ref is not None and cut_generator.wants_face(cut_spec, clothing_type)
+            wants = cut_generator.wants_face(cut_spec, clothing_type)
+            # 컷당 아이덴티티 소스 1개(codex [P1]) — 셋 중 하나만 컷에 들어간다:
+            #  REAL    실존 모델 그리드(비공개 face 버킷) — 단일 라이선스 얼굴 미첨부
+            #  LEGACY  라이선스 단일 얼굴(비공개) — 어떤 그리드도 미첨부
+            #  VIRTUAL 가상모델 그리드(공개 버킷) — 라이선스 불요
+            # face_slot=단일 얼굴 슬롯(LEGACY만). has_identity=검증 얼굴이 실제 담기는 컷(REAL·LEGACY)
+            # → face_cuts·검증 배지 근거. 세 소스가 한 컷에 겹치지 않아 인물 혼합·이중주입이 없다.
+            if source == "REAL":
+                model_images = await _real_model_images() if wants else []
+                has_identity = wants and len(model_images) == 2
+                face_slot = False
+            elif source == "LEGACY":
+                model_images = []
+                has_identity = wants
+                face_slot = wants
+            elif source == "VIRTUAL":
+                model_images = await _model_images(normalized)
+                has_identity = False
+                face_slot = False
+            else:  # NONE / REJECTED — 얼굴 없이 생성
+                model_images = []
+                has_identity = False
+                face_slot = False
             imgs = []
             if mannequin_asset is not None:
                 imgs.append(await _img(mannequin_asset))
-            # 라이선스 얼굴과 가상 모델은 서로 다른 정체성 근거다. 같은 요청에 둘을 넣으면
-            # 생성 모델이 인물을 혼합하므로 라이선스 얼굴이 실제 쓰이는 컷에서는 가상 모델을 뺀다.
-            model_images = [] if has_face else await _model_images(normalized)
             imgs.extend(model_images)
             for a in prods:
                 imgs.append(await _img(a))
             if match_a is not None:
                 imgs.append(await _img(match_a))
-            if has_face:
-                # 비공개 r2_face 바이트 — _img()(공개 메인 버킷 하드코딩) 를 태우지 않는다.
+            if face_slot:
+                # 비공개 r2_face 바이트(LEGACY 단일 얼굴) — _img()(공개 버킷 하드코딩) 를 태우지 않는다.
                 imgs.append(face_ref["image"])
             for a in moods:
                 imgs.append(await _img(a))
@@ -400,10 +489,12 @@ async def run_detail_page_job(app, job: dict) -> None:
                 prods, has_mannequin=mannequin_asset is not None,
                 has_match=match_a is not None, mood_count=len(moods),
                 has_model_face=len(model_images) == 2, has_model_sheet=len(model_images) == 2,
-                has_face=has_face,
+                has_face=face_slot,
                 example_scope=example_scope,
                 example_is_product=normalized is not None and normalized["cutType"] == "product")
-            prepared.append((cut_spec, imgs, manifest, has_face))
+            # 4번째 = has_identity: 검증 얼굴(REAL 그리드·LEGACY 단일)이 실제 담긴 컷 → face_cuts 계수·
+            # generate has_face·검증 배지 근거. VIRTUAL 그리드는 검증 얼굴이 아니므로 False.
+            prepared.append((cut_spec, imgs, manifest, has_identity))
 
         copywriting = bool(project.get("copywriting"))
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
@@ -435,9 +526,9 @@ async def run_detail_page_job(app, job: dict) -> None:
         # face_cuts < totalCuts 면 얼굴 미첨부 컷(거울샷·뒷모습·하반신·상품컷)이 섞였다는 뜻이라
         # 페이지 전체를 '가상인물 아님' 으로 주장할 수 없다 → assembler 가 '일부 컷' 문구로 내린다.
         license_notice = None
-        if face_ref is not None and face_cuts > 0:
-            license_notice = {"modelName": face_ref["model_name"],
-                              "licenseId": face_ref["license_id"],
+        if notice_ctx is not None and face_cuts > 0:
+            license_notice = {"modelName": notice_ctx["model_name"],
+                              "licenseId": notice_ctx["license_id"],
                               "faceCuts": face_cuts,
                               "totalCuts": len(cut_assets)}
         assemble_kwargs = {"license_notice": license_notice} if license_notice is not None else {}

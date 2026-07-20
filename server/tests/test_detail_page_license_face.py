@@ -26,12 +26,22 @@ def _license_row(status="active", days_left=30, key=FACE_KEY, name="김하늘"):
 class _Cur:
     def __init__(self, row):
         self._row = row
+        self._sql = ""
 
     async def execute(self, sql, params=None):
+        self._sql = " ".join(sql.split())
         return None
 
     async def fetchone(self):
+        # _load_license_row(실존 소스 게이트용) 쿼리 → None: 이 테스트들은 실존 자산이 없어
+        # LEGACY(단일 라이선스 얼굴) 경로를 유지한다. 그 외(=_load_license_face) → 라이선스 row.
+        if "l.id::text as id" in self._sql and "l.model_id::text as model_id" in self._sql:
+            return None
         return self._row
+
+    async def fetchall(self):
+        # resolve_real_model_assets(fm_model_assets 조인) → 빈 결과 = 실존 자산 없음 → None → LEGACY.
+        return []
 
     async def __aenter__(self):
         return self

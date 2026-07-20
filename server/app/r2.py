@@ -76,7 +76,16 @@ class R2Client:
             aws_access_key_id=settings.r2_access_key_id,
             aws_secret_access_key=settings.r2_secret_access_key,
             region_name="auto",
-            config=Config(signature_version="s3v4"),
+            # 타임아웃·재시도 명시 — 기본값(read 60s·legacy retry)은 커넥션이 한 번 버벅이면
+            # 그대로 수십 초를 기다렸다(2026-07-16 분석 prep 32s 스톨). 10초 무응답이면 끊고
+            # 재시도(총 3회)가 대체로 1~2초에 회복시킨다. read_timeout 은 소켓 무활동 기준이라
+            # 정상적인 대용량 PUT/GET 스트리밍은 영향 없다.
+            config=Config(
+                signature_version="s3v4",
+                connect_timeout=5,
+                read_timeout=10,
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
         )
 
     def presigned_put(self, key: str, mime: str, expires: int = 300) -> str:
