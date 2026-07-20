@@ -13,8 +13,9 @@ from io import BytesIO
 from PIL import Image
 
 from .. import repo
-from ..agents import content_roles, copy_qc, copywriter, cut_generator, page_assembler
+from ..agents import content_roles, copy_qc, copywriter, cut_generator, page_assembler, image_qc
 from ..agents.gemini_image import InlineImage
+from ..agents.vision_llm import VisionError
 from ..r2 import ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
 
@@ -120,6 +121,36 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 await _emit(app.state.pool, job_id, "step",
                             {"blockId": b.get("id"), "status": "cut_failed"})
                 return None
+            # bg 편집 컷 — 장소일치 QC 게이트(에디터 경로와 동일 정책, 2026-07-20).
+            # 불일치면 재생성, 상한 초과면 이 컷만 빈 슬롯(부분 성공 계약 유지). 판정 불능은 fail-open.
+            if b.get("refScope") == "bg" and manifest.startswith("1. EXAMPLE REFERENCE (scope: bg)"):
+                plate, attempt = images[0], 1
+                while True:
+                    try:
+                        scene_qc = await image_qc.scene_verdict(
+                            s, plate, InlineImage(mime, img))
+                    except VisionError as e:
+                        log.warning("AG-06 scene QC unavailable job %s block %s: %r — fail-open",
+                                    job_id, b.get("id"), e)
+                        break
+                    if scene_qc["verdict"] == "pass":
+                        break
+                    if attempt >= max(1, s.bg_scene_qc_attempts):
+                        log.warning("AG-06 bg scene mismatch after %d attempts job %s block %s: %s",
+                                    attempt, job_id, b.get("id"), scene_qc["mismatches"][:3])
+                        await _emit(app.state.pool, job_id, "step",
+                                    {"blockId": b.get("id"), "status": "cut_failed"})
+                        return None
+                    attempt += 1
+                    try:
+                        img, mime = await cut_generator.generate(
+                            s, gemini, b, product, images, **generate_kwargs)
+                    except Exception as e:
+                        log.warning("AG-06 bg retry generate failed job %s block %s: %r",
+                                    job_id, b.get("id"), e)
+                        await _emit(app.state.pool, job_id, "step",
+                                    {"blockId": b.get("id"), "status": "cut_failed"})
+                        return None
             ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -388,6 +419,13 @@ async def run_detail_page_job(app, job: dict) -> None:
                             _example_cache[cache_key] = await cut_generator.load_example_image(
                                 s, example_id, scope=scope, clothing_type=clothing_type)
                         example_img = _example_cache[cache_key]
+                        if example_img is None and scope in ("pose", "bg"):
+                            # 전용 자산 로드 실패 — 무음 강등 대신 이 컷만 빈 슬롯(ADR-0009 §2,
+                            # 2026-07-20 실측: 강등이 '참고 안 된 bg 컷'을 조용히 만들었다)
+                            log.warning("AG-06 %s example unavailable — cut fail-closed job %s block %s",
+                                        scope, job_id, b.get("id"))
+                            prepared.append((cut_spec, [], "", False))
+                            continue
                         if example_img is not None:
                             # bg 플레이트는 첫 첨부(에디터 경로와 동일) — 마지막 첨부는 컷 섹션의
                             # 배경 나열에 밀려 무시된다(2026-07-20 파일럿 실측).

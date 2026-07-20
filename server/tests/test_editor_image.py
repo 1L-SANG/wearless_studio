@@ -840,3 +840,121 @@ def test_build_prompt_sanitizes_free_text_injection():
 def test_build_prompt_unknown_cut_type_defaults_styling():
     prompt = cut_variator.build_prompt({"changes": []})
     assert "styling" in prompt
+
+
+# ---------- bg 장소일치 QC 게이트 (2026-07-20) ----------
+
+def _bg_qc_setup(monkeypatch, *, verdicts, gen_calls, finalize_ok, finalize_fail):
+    """bg 편집 컷 QC 루프 공통 페이크. verdicts 는 scene_verdict 가 순서대로 낼 결과
+    (dict 또는 예외 인스턴스), gen_calls 는 generate 호출 기록 리스트."""
+
+    async def fake_get_product(conn, pid):
+        return {"clothingType": "top", "colors": [{"id": "col1", "isBase": True,
+                                                   "images": [{"slot": "Front", "id": "a1"}]}]}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_example(settings, example_id, scope="all", clothing_type=None):
+        assert scope == "bg"
+        return eij.InlineImage("image/png", b"PLATE")
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
+        # bg 플레이트는 첫 첨부 + 매니페스트도 1번 라벨(프라이머시 계약)
+        assert images[0].data == b"PLATE"
+        assert manifest.splitlines()[0].startswith("1. EXAMPLE REFERENCE (scope: bg)")
+        gen_calls.append(1)
+        return f"IMG{len(gen_calls)}".encode(), "image/png"
+
+    async def fake_scene_verdict(settings, plate, generated):
+        assert plate.data == b"PLATE"
+        out = verdicts.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return out
+
+    async def fake_finalize_ok(conn, **kw):
+        finalize_ok.update(kw)
+        return {"id": "w-bg"}
+
+    async def fake_finalize_fail(conn, **kw):
+        finalize_fail.update(kw)
+        return None
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_a: "available")
+    monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.image_qc, "scene_verdict", fake_scene_verdict)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize_ok)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_finalize_fail)
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+
+def _bg_payload():
+    return {"mode": "new", "colorId": "col1", "contentRole": "coordination",
+            "cutType": "styling", "direction": "front", "shot": "full",
+            "exampleId": "ex_bg", "refScope": "bg"}
+
+
+def test_bg_scene_qc_retries_then_passes(monkeypatch):
+    gen_calls, ok, fail = [], {}, {}
+    _bg_qc_setup(monkeypatch, gen_calls=gen_calls, finalize_ok=ok, finalize_fail=fail,
+                 verdicts=[{"verdict": "retry", "mismatches": ["cafe"], "correctionPrompt": None},
+                           {"verdict": "pass", "mismatches": [], "correctionPrompt": None}])
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(_bg_payload())))
+    assert len(gen_calls) == 2                      # 불일치 1회 → 재생성 1회
+    assert ok["metadata"]["sceneQc"] == {"attempts": 2}
+    assert not fail
+
+
+def test_bg_scene_qc_fails_closed_after_max_attempts(monkeypatch):
+    gen_calls, ok, fail = [], {}, {}
+    retry = {"verdict": "retry", "mismatches": ["different place"], "correctionPrompt": None}
+    _bg_qc_setup(monkeypatch, gen_calls=gen_calls, finalize_ok=ok, finalize_fail=fail,
+                 verdicts=[dict(retry), dict(retry), dict(retry)])
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(_bg_payload())))
+    assert len(gen_calls) == 3                      # 기본 상한 3회 시도
+    assert not ok
+    assert fail["metadata"]["error"] == "bg_scene_mismatch"
+    assert fail["metadata"]["attempts"] == 3
+
+
+def test_bg_scene_qc_unavailable_fails_open_with_warning(monkeypatch):
+    from app.agents.vision_llm import VisionError
+    gen_calls, ok, fail = [], {}, {}
+    _bg_qc_setup(monkeypatch, gen_calls=gen_calls, finalize_ok=ok, finalize_fail=fail,
+                 verdicts=[VisionError("judge down")])
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(_bg_payload())))
+    assert len(gen_calls) == 1                      # 판정 불능 = 통과(가용성 우선) + 경고
+    assert {"code": "scene_qc_unavailable"} in ok["metadata"]["warnings"]
+    assert not fail
+
+
+def test_bg_example_load_failure_fails_closed(monkeypatch):
+    """플레이트 로드 실패는 무음 강등이 아니라 명확한 실패다(2026-07-20 실측 — 강등이
+    '참고 안 된 bg 컷'을 조용히 만들었다)."""
+    gen_calls, ok, fail = [], {}, {}
+    _bg_qc_setup(monkeypatch, gen_calls=gen_calls, finalize_ok=ok, finalize_fail=fail, verdicts=[])
+
+    async def fake_example_none(settings, example_id, scope="all", clothing_type=None):
+        return None
+
+    monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example_none)
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(_bg_payload())))
+    assert not gen_calls                              # 생성 호출 자체가 없어야 한다
+    assert not ok
+    assert fail["metadata"]["error"] == "example_asset_unavailable"
+    assert fail["metadata"]["refScope"] == "bg"

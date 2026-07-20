@@ -384,23 +384,21 @@ def test_render_ref_scope_bg_uses_plate_and_blocks_pose_garment_transfer(dev_exa
         [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0, example_scope="bg")
     p = cut.render_cut_prompt(template, spec, product={}, analysis={}, clothing_type="top",
                               image_manifest=manifest)
-    assert "EXAMPLE REFERENCE (scope: bg)" in manifest and "THE location plate" in manifest
+    assert "EXAMPLE REFERENCE (scope: bg)" in manifest and "THE scene canvas" in manifest
     # bg 플레이트는 첫 첨부·첫 라벨(프라이머시) — 워커의 insert(0)와 매니페스트 재번호가 짝
     assert manifest.splitlines()[0].startswith("1. EXAMPLE REFERENCE (scope: bg)")
     assert manifest.splitlines()[1].startswith("2. PRODUCT")
-    # 2026-07-20 파일럿: 서술형 지시가 컷 섹션의 배경 나열(카페 등)에 밀려 플레이트가 무시됨 →
-    # 상단 LOCATION LOCK + "이 장소를 재구성" 명령형으로 교체. 테스트는 새 의미를 고정한다.
-    assert "LOCATION LOCK" in p                              # 상단 장소 잠금 블록(배경 나열 무효화)
-    assert "Reconstruct THIS exact place" in p               # 플레이트 = 유일한 장소
-    # LOCK 활성 시 경쟁하던 배경 나열은 제거되고 플레이트 참조로 치환된다(2차 재검증서 확률성 잡은 조치).
-    # 컷 섹션 원문 문구가 바뀌어 치환이 빗나가면 여기서 잡는다.
-    assert "street, cafe, cozy interior" not in p
-    assert "location shown by the attached location plate" in p
-    assert "no cafe, no street, no studio" in p              # 대체 장소 발명 금지(실측 실패 모드)
-    assert "choose a natural pose" in p                       # 포즈 유출 차단(플레이트는 포즈 미제어)
-    assert "shoes or accessories" in p                        # 의류·신발 유출 차단(실험서 관찰된 실패)
-    assert "FRAMING OVERRIDE" in p                            # 예시 크롭보다 요청 샷이 우선
-    assert "Pose: natural and unforced" in p                  # 빈 배경은 포즈를 제어하지 않음
+    # 2026-07-20 야간 실측: '생성하며 플레이트 참고'는 텍스트·순서 개선을 다 해도 ~40%에서 정체
+    # (10회 판정) → '플레이트 편집' 과업으로 전환. 테스트는 편집 모드 의미를 고정한다.
+    assert "EDIT TASK" in p                                   # 편집 과업 프레이밍
+    assert "Insert ONE model wearing the PRODUCT garment" in p
+    assert "the scene must stay the SAME" in p                # 인물 밖 장면 불변
+    assert "street, cafe, cozy interior" not in p             # 경쟁 배경 나열이 아예 없음(섹션 교체)
+    assert "lifestyle setting" not in p
+    assert "choose a natural pose" in p                        # 포즈 유출 차단(플레이트는 포즈 미제어)
+    assert "shoes or accessories" in p                         # 의류·신발 유출 차단(실험서 관찰된 실패)
+    assert "FRAMING OVERRIDE" in p                             # 캔버스 크롭보다 요청 샷이 우선
+    assert "Pose: natural and unforced" in p                   # 빈 배경은 포즈를 제어하지 않음
     # bg 자산 = 빈 무대 플레이트(전용 variant) 우선
     base = "https://assets.example.test/generated-examples"
     assert cut.resolve_example_asset("ex_styling_top_full_1", base, scope="bg").endswith("plate+1")

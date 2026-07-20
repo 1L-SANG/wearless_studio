@@ -13,8 +13,9 @@ from io import BytesIO
 from PIL import Image
 
 from .. import repo
-from ..agents import content_roles, cut_generator, cut_variator
+from ..agents import content_roles, cut_generator, cut_variator, image_qc
 from ..agents.gemini_image import GeminiError, InlineImage
+from ..agents.vision_llm import VisionError
 from ..r2 import ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
 
@@ -51,6 +52,7 @@ async def run_editor_image_job(app, job: dict) -> None:
     payload = job.get("payload") or {}
     mode = payload.get("mode")
     example_warnings: list[dict] = []
+    scene_qc_attempts: int | None = None  # bg 장소일치 QC 통과까지의 시도 수(관찰용, new 모드 bg만)
 
     async def _fail(message: str, meta: dict):
         try:
@@ -236,6 +238,13 @@ async def run_editor_image_job(app, job: dict) -> None:
                 else:
                     example_image = await cut_generator.load_example_image(
                         s, example_id, scope=scope, clothing_type=clothing_type)
+                    if example_image is None and scope in ("pose", "bg"):
+                        # 전용 자산 없이 pose/bg를 생성하면 "참고한 척"이 된다 — 무음 강등 금지
+                        # (2026-07-20 실측: 이 강등이 bg 실패의 실제 원인 일부였다. ADR-0009 §2)
+                        await _fail("예시 자산을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+                                    {"error": "example_asset_unavailable",
+                                     "exampleId": example_id, "refScope": scope})
+                        return
                     if example_image is not None:
                         # bg 플레이트는 시각 앵커가 약해 마지막 첨부로는 무시된다(2026-07-20
                         # 파일럿 실측: 텍스트 강화만으로 2/7) — 첫 첨부로 올려 프라이머시를 준다.
@@ -268,6 +277,38 @@ async def run_editor_image_job(app, job: dict) -> None:
             except GeminiError as e:
                 await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return
+
+            # bg 편집 컷 — 장소일치 QC 게이트(2026-07-20): 생성은 샘플링이라 편집 프레이밍을
+            # 줘도 확률적으로 다른 장소가 나온다. 플레이트(첫 첨부)와 대조해 불일치면 재생성,
+            # 상한 초과면 실패 종결(부분 성공 아님 — 에디터는 단건). QC 판정 불능은 fail-open.
+            if example_scope == "bg" and example_image is not None:
+                attempts_max = max(1, s.bg_scene_qc_attempts)
+                attempt = 1
+                while True:
+                    try:
+                        scene_qc = await image_qc.scene_verdict(
+                            s, example_image, InlineImage(mime, image))
+                    except VisionError as e:
+                        log.warning("AG-06 scene QC unavailable job %s: %r — fail-open", job_id, e)
+                        example_warnings.append({"code": "scene_qc_unavailable"})
+                        break
+                    if scene_qc["verdict"] == "pass":
+                        break
+                    if attempt >= attempts_max:
+                        await _fail("배경 예시의 장소를 재현하지 못했어요. 다시 시도해 주세요.",
+                                    {"error": "bg_scene_mismatch",
+                                     "attempts": attempt,
+                                     "mismatches": scene_qc["mismatches"][:5]})
+                        return
+                    attempt += 1
+                    try:
+                        image, mime = await cut_generator.generate(
+                            s, app.state.gemini, cut_spec, product, images,
+                            analysis=analysis, manifest=manifest)
+                    except (GeminiError, ValueError) as e:
+                        await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
+                        return
+                scene_qc_attempts = attempt
             group = normalized["colorId"] or None
             cut_type = normalized["cutType"]
 
@@ -292,6 +333,8 @@ async def run_editor_image_job(app, job: dict) -> None:
         # 실행 시점 설정 재조회 금지 — 단가 변경이 배포 사이에 끼면 예약액과 다른 차감 발생).
         charge = reserved
         success_metadata = {"creditCostVersion": s.credit_cost_version}
+        if scene_qc_attempts is not None:
+            success_metadata["sceneQc"] = {"attempts": scene_qc_attempts}
         if example_warnings:
             success_metadata["warnings"] = example_warnings
         async with pool.connection() as conn:

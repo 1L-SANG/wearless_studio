@@ -13,8 +13,6 @@ GARMENT FIDELITY (highest priority — never violate):
 
 ${detailColorTransferLine}
 
-${refScopeLockLine}
-
 ${cutSection}
 
 FRAMING: ${shotLine}
@@ -153,22 +151,20 @@ this prompt's own background direction. If a removed prop or pocket explained a 
 broad arm direction and hand height without recreating that prop or inventing a pocket. Garment fidelity and
 the requested outer opening state still win if the exact posture is physically impossible.
 
-[[REFSCOPE:bg]]REFERENCE SCOPE: the attached EXAMPLE REFERENCE is an empty plate of the REQUIRED
-location. Reconstruct THIS exact place around the model: the same architecture, wall and floor
-materials, furniture and fixtures, spatial depth, light direction and color temperature the plate
-shows. Do NOT invent or substitute a different venue — no cafe, no street, no studio, no generic
-interior — unless the plate itself shows one. The plate contains no person, so choose a natural pose
-yourself and do NOT copy the example's framing; never place garments, shoes or props from anywhere
-but PRODUCT/MATCHING onto the model. FRAMING OVERRIDE: the CUT TYPE and FRAMING requested above win
-over the plate's crop — the model must be fully visible for the requested shot, with headroom,
-correct perspective, believable ground contact and shadows consistent with the plate's light.
-
-[[REFSCOPE_LOCK:bg]]LOCATION LOCK (top priority for the scene — overrides every background or
-location phrase anywhere below in this prompt): the attached image labeled "EXAMPLE REFERENCE
-(scope: bg)" IS the location of this photo. Put the model INTO this exact place. Ignore any generic
-setting suggestion elsewhere in this prompt — the plate image is the only source of location,
-background, lighting and mood. Before composing, look at the plate and name its location to
-yourself; the final image must clearly be that same place.
+[[CUT:bg_edit]]EDIT TASK — INSERT A MODEL INTO THE ATTACHED SCENE:
+- The FIRST attached image is the finished, real location of this photo. Treat it as the base
+  canvas being edited — it is not a loose reference.
+- Insert ONE model wearing the PRODUCT garment (and MATCHING garment if attached) into this exact
+  scene, then re-frame the camera as requested under FRAMING below.
+- Outside the inserted person and their contact shadow/reflection, the scene must stay the SAME
+  place: same architecture, wall and floor materials, furniture and fixtures, plants, weather,
+  light direction and color temperature as the first image.
+- Match the person's perspective, scale, ground contact and shadow softness to the scene's camera
+  and light so the insertion looks like a single real photograph, not a paste.
+- The scene contains no person, so choose a natural pose that suits the place; never place
+  garments, shoes or props from anywhere but PRODUCT/MATCHING onto the model.
+- FRAMING OVERRIDE: the FRAMING and DIRECTION requested below win over the first image's crop —
+  extend or re-crop the scene consistently if needed, keeping the same location.
 
 [[SPACE]]SPACE CONTINUITY: this cut belongs to a set shot in ONE location. Keep the lighting,
 background elements and color temperature consistent with a single coherent space
