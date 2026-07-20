@@ -9,6 +9,7 @@ server/prompts/cut_generate_v1.txt 의 [[섹션]]에 있다 — 코드에 규칙
 배관(생성 호출·R2·재시도)은 워커가 공유하고, 이 모듈은 계약 정규화 + 프롬프트 조립 + 1콜만 담당.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -354,18 +355,22 @@ async def load_example_image(
         allow_default_base=getattr(settings, "app_env", "dev") == "dev")
     if not url:
         return None
-    try:
-        async with httpx.AsyncClient(timeout=_EXAMPLE_FETCH_TIMEOUT, follow_redirects=True) as client:
-            res = await client.get(url)
-        res.raise_for_status()
-        mime = (res.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
-        if not mime.startswith("image/") or not res.content:
-            raise ValueError("example asset response is not an image")
-        return InlineImage(mime, res.content)
-    except (httpx.HTTPError, ValueError) as e:
-        log.warning("AG-06 example asset unavailable for %s; using v0 nuance fallback: %r",
-                    example_id, e)
-        return None
+    last_err: Exception | None = None
+    for fetch_try in range(3):  # 일시 네트워크 플레이크 흡수 — pose/bg는 이 자산 없인 범위 계약이 무의미
+        try:
+            async with httpx.AsyncClient(timeout=_EXAMPLE_FETCH_TIMEOUT, follow_redirects=True) as client:
+                res = await client.get(url)
+            res.raise_for_status()
+            mime = (res.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+            if not mime.startswith("image/") or not res.content:
+                raise ValueError("example asset response is not an image")
+            return InlineImage(mime, res.content)
+        except (httpx.HTTPError, ValueError) as e:
+            last_err = e
+            if fetch_try < 2:
+                await asyncio.sleep(0.5 * (fetch_try + 1))
+    log.warning("AG-06 example asset unavailable for %s after retries: %r", example_id, last_err)
+    return None
 
 
 _SECTION_RE = re.compile(r"^\[\[([A-Z_]+(?::[a-z0-9_]+)?)\]\]", re.M)
@@ -452,17 +457,15 @@ def render_cut_prompt(
             pose_line = ""
     # 매니페스트 문구는 첨부 여부만 증명한다. 범위는 반드시 정규화된 spec에서 다시 가져와
     # in-space 강제(pose)를 우회하는 불가능한 all 조합을 만들지 않는다.
-    ref_scope_lock_line = ""
-    if has_resolved_example and not pose_overrides_example:
+    # bg는 '생성하며 참고'가 아니라 '플레이트 편집' 과업으로 전환(2026-07-20 야간 실측:
+    # 참고 방식은 텍스트·순서 개선을 다 해도 성공률 ~40%에서 정체 — 10회 판정).
+    bg_edit_mode = has_resolved_example and spec["refScope"] == "bg"
+    if has_resolved_example and not pose_overrides_example and not bg_edit_mode:
         scope_key = "REFSCOPE:all_product" if spec["refScope"] == "all" and cut == "product" \
             else f"REFSCOPE:{spec['refScope']}"
         scope_line = need(scope_key)
         if scope_line not in example_line:
             example_line = "\n".join(part for part in (example_line, scope_line) if part)
-        # bg 플레이트는 시각 앵커가 약해 컷 종류 섹션의 배경 나열(카페·거리 등)에 진다
-        # (2026-07-20 파일럿 실측 — 카페 2연속 생성). 상단 LOCK으로 장소 우선순위를 못박는다.
-        if spec["refScope"] == "bg":
-            ref_scope_lock_line = need("REFSCOPE_LOCK:bg")
     space_line = ""
     if spec.get("spaceGroupId"):
         space_line = need("SPACE").replace("${spaceVariation}", spec["spaceVariation"])
@@ -485,8 +488,11 @@ def render_cut_prompt(
 
     text = (
         need("BASE")
-        .replace("${cutLabel}", _CUT_LABELS[cut])
-        .replace("${cutSection}", need(f"CUT:{cut}"))
+        # bg 편집 모드는 라벨의 'lifestyle' 뉘앙스도 제거 — 장소 단서는 첨부 캔버스뿐이어야 한다
+        .replace("${cutLabel}",
+                 "worn cut composed into the attached scene" if bg_edit_mode else _CUT_LABELS[cut])
+        # bg 편집 모드는 컷 종류 섹션을 통째로 교체 — 경쟁할 배경 서술이 존재하지 않게 한다
+        .replace("${cutSection}", need("CUT:bg_edit") if bg_edit_mode else need(f"CUT:{cut}"))
         .replace("${shotLine}", need(f"SHOT:{shot_key}"))
         .replace("${directionLine}", direction_line)
         .replace("${faceLine}", face_line)
@@ -495,17 +501,6 @@ def render_cut_prompt(
         .replace("${outerClosureLine}", outer_closure_line)
         .replace("${spaceLine}", space_line)
         .replace("${detailColorTransferLine}", detail_color_transfer_line)
-        .replace("${refScopeLockLine}", ref_scope_lock_line)
-    )
-    if ref_scope_lock_line:
-        # LOCK 선언만으로는 확률적으로 짐(1차 재검증 1/2) — 경쟁하는 배경 나열 자체를 제거해
-        # 텍스트에는 플레이트 참조만 남긴다. 컷 섹션 원문이 바뀌면 아래 가드 테스트가 잡는다.
-        text = text.replace(
-            "in a natural lifestyle setting (street, cafe, cozy interior)",
-            "in the exact location shown by the attached location plate",
-        )
-    text = (
-        text
         # 얼굴 미첨부면 빈 문자열 — 모든 경로에서 반드시 치환한다(미치환 시 아래 leftover
         # 가드가 ValueError → 워커가 전 컷을 빈 슬롯으로 삼켜 조용히 죽는다).
         .replace("${faceRefLine}", need("FACE_REF") if use_face else "")
@@ -700,9 +695,10 @@ def build_manifest(
         # 라벨은 명령형 + 첫 첨부(2026-07-20 파일럿): 서술형 라벨·마지막 첨부는 컷 섹션의 배경
         # 나열에 밀렸다. 워커가 bg 플레이트를 첫 이미지로 붙이므로 라벨도 맨 앞으로 재번호한다.
         bg_label = (
-            f"{_EXAMPLE_BG_LABEL} — THE location plate: the scene MUST be this exact place "
-            "(same architecture, materials, light); it has no person, so choose the pose yourself "
-            "and never copy garments, shoes or props onto the model"
+            f"{_EXAMPLE_BG_LABEL} — THE scene canvas (the base image being edited): insert the "
+            "model into this exact scene; outside the person everything stays as in this image; "
+            "it has no person, so choose the pose yourself and never copy garments, shoes or "
+            "props onto the model"
         )
         renumbered = [bg_label] + [line.split(". ", 1)[1] for line in lines]
         lines = [f"{n}. {label}" for n, label in enumerate(renumbered, start=1)]
