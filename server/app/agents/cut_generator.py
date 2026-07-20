@@ -452,12 +452,17 @@ def render_cut_prompt(
             pose_line = ""
     # 매니페스트 문구는 첨부 여부만 증명한다. 범위는 반드시 정규화된 spec에서 다시 가져와
     # in-space 강제(pose)를 우회하는 불가능한 all 조합을 만들지 않는다.
+    ref_scope_lock_line = ""
     if has_resolved_example and not pose_overrides_example:
         scope_key = "REFSCOPE:all_product" if spec["refScope"] == "all" and cut == "product" \
             else f"REFSCOPE:{spec['refScope']}"
         scope_line = need(scope_key)
         if scope_line not in example_line:
             example_line = "\n".join(part for part in (example_line, scope_line) if part)
+        # bg 플레이트는 시각 앵커가 약해 컷 종류 섹션의 배경 나열(카페·거리 등)에 진다
+        # (2026-07-20 파일럿 실측 — 카페 2연속 생성). 상단 LOCK으로 장소 우선순위를 못박는다.
+        if spec["refScope"] == "bg":
+            ref_scope_lock_line = need("REFSCOPE_LOCK:bg")
     space_line = ""
     if spec.get("spaceGroupId"):
         space_line = need("SPACE").replace("${spaceVariation}", spec["spaceVariation"])
@@ -490,6 +495,17 @@ def render_cut_prompt(
         .replace("${outerClosureLine}", outer_closure_line)
         .replace("${spaceLine}", space_line)
         .replace("${detailColorTransferLine}", detail_color_transfer_line)
+        .replace("${refScopeLockLine}", ref_scope_lock_line)
+    )
+    if ref_scope_lock_line:
+        # LOCK 선언만으로는 확률적으로 짐(1차 재검증 1/2) — 경쟁하는 배경 나열 자체를 제거해
+        # 텍스트에는 플레이트 참조만 남긴다. 컷 섹션 원문이 바뀌면 아래 가드 테스트가 잡는다.
+        text = text.replace(
+            "in a natural lifestyle setting (street, cafe, cozy interior)",
+            "in the exact location shown by the attached location plate",
+        )
+    text = (
+        text
         # 얼굴 미첨부면 빈 문자열 — 모든 경로에서 반드시 치환한다(미치환 시 아래 leftover
         # 가드가 ValueError → 워커가 전 컷을 빈 슬롯으로 삼켜 조용히 죽는다).
         .replace("${faceRefLine}", need("FACE_REF") if use_face else "")
@@ -676,11 +692,15 @@ def build_manifest(
         )
     elif example_scope == "bg":
         # 스파이크(2026-07-12): 자산은 인물을 지운 '빈 무대 플레이트' — 포즈·의류 유출을 구조적으로 차단
-        lines.append(
-            f"{i}. {_EXAMPLE_BG_LABEL} — an EMPTY SET plate: source of background, location, "
-            "lighting and mood ONLY; it has no person, so choose the pose yourself and never "
-            "copy garments, shoes or props onto the model"
+        # 라벨은 명령형 + 첫 첨부(2026-07-20 파일럿): 서술형 라벨·마지막 첨부는 컷 섹션의 배경
+        # 나열에 밀렸다. 워커가 bg 플레이트를 첫 이미지로 붙이므로 라벨도 맨 앞으로 재번호한다.
+        bg_label = (
+            f"{_EXAMPLE_BG_LABEL} — THE location plate: the scene MUST be this exact place "
+            "(same architecture, materials, light); it has no person, so choose the pose yourself "
+            "and never copy garments, shoes or props onto the model"
         )
+        renumbered = [bg_label] + [line.split(". ", 1)[1] for line in lines]
+        lines = [f"{n}. {label}" for n, label in enumerate(renumbered, start=1)]
     return "\n".join(lines) or "(the seller's product photos — treat as ground truth)"
 
 

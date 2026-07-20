@@ -389,7 +389,12 @@ async def run_detail_page_job(app, job: dict) -> None:
                                 s, example_id, scope=scope, clothing_type=clothing_type)
                         example_img = _example_cache[cache_key]
                         if example_img is not None:
-                            imgs.append(example_img)
+                            # bg 플레이트는 첫 첨부(에디터 경로와 동일) — 마지막 첨부는 컷 섹션의
+                            # 배경 나열에 밀려 무시된다(2026-07-20 파일럿 실측).
+                            if scope == "bg":
+                                imgs.insert(0, example_img)
+                            else:
+                                imgs.append(example_img)
                             example_scope = scope
             manifest = cut_generator.build_manifest(
                 prods, has_mannequin=mannequin_asset is not None,

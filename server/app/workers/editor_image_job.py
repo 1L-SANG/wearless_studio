@@ -237,7 +237,12 @@ async def run_editor_image_job(app, job: dict) -> None:
                     example_image = await cut_generator.load_example_image(
                         s, example_id, scope=scope, clothing_type=clothing_type)
                     if example_image is not None:
-                        images.append(example_image)
+                        # bg 플레이트는 시각 앵커가 약해 마지막 첨부로는 무시된다(2026-07-20
+                        # 파일럿 실측: 텍스트 강화만으로 2/7) — 첫 첨부로 올려 프라이머시를 준다.
+                        if scope == "bg":
+                            images.insert(0, example_image)
+                        else:
+                            images.append(example_image)
                         example_scope = scope
             await _emit(pool, job_id, "progress", {"progress": 20, "phase": "inputs_loaded"})
 

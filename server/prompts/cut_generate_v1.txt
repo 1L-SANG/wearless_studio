@@ -13,6 +13,8 @@ GARMENT FIDELITY (highest priority — never violate):
 
 ${detailColorTransferLine}
 
+${refScopeLockLine}
+
 ${cutSection}
 
 FRAMING: ${shotLine}
@@ -141,19 +143,32 @@ do not add a person or visible body parts.
 [[REFSCOPE:pose]]REFERENCE SCOPE: from the attached EXAMPLE REFERENCE follow ONLY the pose.
 Preserve its torso orientation, weight distribution, screen-left versus screen-right limb placement,
 shoulder and hip levels, elbow and knee bends, hand heights and leg stance. Do not mirror it or replace
-an asymmetric/interacting pose with a generic resting pose. CUT TYPE and FRAMING requested above control
-the camera distance, body scale and crop; do not copy the pose asset's canvas padding. Do NOT carry over
+an asymmetric/interacting pose with a generic resting pose. If the requested camera DIRECTION differs
+from the angle the pose asset is seen from, keep the SAME body pose and render it from the requested
+camera direction — never straighten, relax or swap the pose just to face the camera.
+CUT TYPE and FRAMING requested above control the camera distance, body scale and crop; do not copy
+the pose asset's canvas padding. Do NOT carry over
 the example's background, location, lighting, mood, garments, shoes or accessories — the scene must follow
 this prompt's own background direction. If a removed prop or pocket explained a hand position, keep the same
 broad arm direction and hand height without recreating that prop or inventing a pocket. Garment fidelity and
 the requested outer opening state still win if the exact posture is physically impossible.
 
-[[REFSCOPE:bg]]REFERENCE SCOPE: from the attached EXAMPLE REFERENCE follow ONLY the background,
-location, lighting and overall mood. Do NOT copy the example's pose, body angle, framing, garments,
-shoes or accessories — the model wears ONLY the PRODUCT garment and any attached MATCHING garment
-in a natural pose that suits this scene. FRAMING OVERRIDE: the CUT TYPE and FRAMING requested above win over the
-reference's crop — the model must be fully visible for the requested shot, with headroom, correct
-perspective, believable ground contact and shadows consistent with the scene's light.
+[[REFSCOPE:bg]]REFERENCE SCOPE: the attached EXAMPLE REFERENCE is an empty plate of the REQUIRED
+location. Reconstruct THIS exact place around the model: the same architecture, wall and floor
+materials, furniture and fixtures, spatial depth, light direction and color temperature the plate
+shows. Do NOT invent or substitute a different venue — no cafe, no street, no studio, no generic
+interior — unless the plate itself shows one. The plate contains no person, so choose a natural pose
+yourself and do NOT copy the example's framing; never place garments, shoes or props from anywhere
+but PRODUCT/MATCHING onto the model. FRAMING OVERRIDE: the CUT TYPE and FRAMING requested above win
+over the plate's crop — the model must be fully visible for the requested shot, with headroom,
+correct perspective, believable ground contact and shadows consistent with the plate's light.
+
+[[REFSCOPE_LOCK:bg]]LOCATION LOCK (top priority for the scene — overrides every background or
+location phrase anywhere below in this prompt): the attached image labeled "EXAMPLE REFERENCE
+(scope: bg)" IS the location of this photo. Put the model INTO this exact place. Ignore any generic
+setting suggestion elsewhere in this prompt — the plate image is the only source of location,
+background, lighting and mood. Before composing, look at the plate and name its location to
+yourself; the final image must clearly be that same place.
 
 [[SPACE]]SPACE CONTINUITY: this cut belongs to a set shot in ONE location. Keep the lighting,
 background elements and color temperature consistent with a single coherent space
