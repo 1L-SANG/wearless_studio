@@ -1,6 +1,6 @@
 # 프론트 상태 모델 (Frontend State Model)
 
-> 상태: 확정 (2026-06-11, 갱신 2026-06-29) · 짝 문서: `documents/common_data_contract.md` · 결정 기록: `docs/adr/0002`
+> 상태: 확정 (2026-06-11, 갱신 2026-07-17) · 짝 문서: `documents/common_data_contract.md` · 결정 기록: `docs/adr/0002`, `docs/adr/0005`
 > 현재 코드와 이 모델의 차이(갭·적용 순서)는 `documents/TODO.md`가 추적한다 — 문서가 목표 상태다.
 
 ---
@@ -23,7 +23,7 @@ Q2. (아니라면) 라우트를 넘어 살아야 하나?
 | ② 전역 클라이언트 | `useAppStore` | projectId, 플로우 선택값(아래 §3) | 유지 (선택값은 patchProject로 서버 동기화) |
 | ③ 화면 로컬 | 컴포넌트 useState/useRef | 폼 draft, hover, 패널 펼침, 로딩 phase, 편집 중 selection, 에디터 undo 히스토리 | 유지 |
 
-주의: `composeMode`·`copywriting`·`selectedMannequinId`·`adjustCount`는 **②이면서 서버 동기화 대상**이다. Zustand가 작업 사본을 들고, 변경 시 `api.patchProject`로 동기화한다. "Zustand에 있으니 클라 전용"이 아니다.
+주의: `composeMode`·`copywriting`·`selectedMannequinId`는 **②이면서 서버 동기화 대상**이다. Zustand가 작업 사본을 들고, 변경 시 `api.patchProject`로 동기화한다. `adjustCount`는 이전 프로젝트를 읽기 위해 store와 응답에 남아 있는 legacy 값일 뿐, 현재 조정 흐름의 상태나 `patchProject` 동기화 대상이 아니다.
 
 ---
 
@@ -35,7 +35,7 @@ Q2. (아니라면) 라우트를 넘어 살아야 하나?
 | Product | `getProduct` | `saveProduct` | 입력 완료 시, 분석 폼에서 실측·의류 종류 수정 시 |
 | Analysis | `analyzeProduct` | `saveAnalysis` | 분석 폼 수정 시 (Product 소유 필드 제외) |
 | MannequinCut[] | `getMannequins` | `generateMannequins` `regenerateMannequin({fitProfile})` | 마네킹 단계 (구 `adjustMannequin` 폐기) |
-| StoryboardBlock[] | `getStoryboard` | `saveStoryboard` | **생성 CTA 클릭 시** (편집 중엔 로컬 working copy) |
+| StoryboardBlock[] | `getStoryboard` | `saveStoryboard` | **생성 CTA 클릭 시** (편집 중엔 로컬 working copy). 로드할 때 v2 역할 검증·누락값 방어 정규화 |
 | EditorBlock[] | `getEditorBlocks` `generateDetailPage` | `saveEditorBlocks` | 에디터 로드 / 저장·디바운스(구현됨) |
 | Wardrobe | `getWardrobe` | `generateImage` `uploadAsset` | 에디터 |
 | Account / Catalogs / Library | `getAccount` `getCatalogs` `getLibrary` | — (credits는 봉투 응답으로 갱신) | 앱 셸 / 보관함 |
@@ -58,11 +58,13 @@ useAppStore = {
 
   /* ② 플로우 선택값 — project 필드의 작업 사본. setter는 store 갱신 + api.patchProject 동기화 */
   selectedMannequinId: string | null,  selectMannequin(id),
-  composeMode: 'basic',                setComposeMode(v),
+  composeMode: 'basic' | 'extended',   setComposeMode(v),
   copywriting: true,                   setCopywriting(v),
-  adjustCount: 0,                      // 서버 응답으로만 갱신 (adjust/regenerate 결과 반영)
+  adjustCount: 0,                      // @deprecated 이전 프로젝트 읽기용. 새 조정 흐름에서는 사용·동기화하지 않음
 }
 ```
+
+`composeMode`는 `basic | extended`만 허용한다. 서버는 읽기와 쓰기 모두 다른 값을 거부하며, 프론트도 두 값만 생성·동기화한다.
 
 **store에서 제거하는 것** (현재 선언만 있고 사용처 0): `product` `analysis` `mannequins` `storyboard`와 그 setter들(`setProduct` `patchProduct` `setAnalysis` `patchAnalysis` `setMannequins` `setStoryboard`). 이 데이터는 ① 서버 상태다 — 화면이 api로 fetch한다 (ADR-0002).
 
@@ -73,13 +75,13 @@ useAppStore = {
 | 라우트 | 읽는 서버 상태 | 저장(쓰기) 트리거 | store 사용 | 대표 로컬 상태(③) |
 |---|---|---|---|---|
 | `/create/input` | getProduct, getCatalogs → analyzeProduct | 입력 완료 → `saveProduct`(+uploadComplete) 후 분석; 분석 폼 변경 → 필드 소유자 따라 `saveAnalysis` 또는 `saveProduct` | projectId 없으면 `startProject()` | phase(input/analyzing/done), expanded, 칩 draft, 소재 편집 인덱스 |
-| `/create/mannequin` | getMannequins(비면 generateMannequins), getProduct, getProject | 조정/재생성 → api 호출 → `syncCredits` + adjustCount 반영; 컷 선택 → `selectMannequin`; 구성 방식 → `setComposeMode` | selectedMannequinId, composeMode, adjustCount | progress, busy, picking, confirmRegen, 조정 세그 선택값 |
+| `/create/mannequin` | getMannequins(비면 generateMannequins), getProduct, getProject | 조정/재생성 → api 호출 → `syncCredits`; 컷 선택 → `selectMannequin`; 사진 양 → `setComposeMode` | selectedMannequinId, composeMode (`adjustCount`는 legacy 읽기값) | progress, busy, picking, confirmRegen, 조정 세그 선택값 |
 | `/create/storyboard` | getStoryboard, getProduct(색상), getAnalysis(매칭 후보·선택) | **생성 CTA → `saveStoryboard` → navigate** | copywriting(`setCopywriting`) | blocks working copy, selectedId, splitOpen, dirty, 스냅샷 ref, drag 상태 |
 | `/create/generating` | generateDetailPage(projectId) | 완료 시 서버가 status='done' | projectId, syncCredits | progress, steps |
 | `/editor/:projectId` | getEditorBlocks, getWardrobe, getCatalogs, getAccount, getProduct | 이미지 생성/변형 → `generateImage` + `syncCredits`; 저장 → `saveEditorBlocks`(저장 버튼+디바운스) | account(표시), syncCredits, projectId | blocks + undo 히스토리, selEls/selBlock, cropping, scale, tab, layerFloat, pendingSlot, varyTarget |
 | `/library` | getLibrary | 새 상세페이지 → `startProject()` | startProject | phase, items |
 
-콘티보드의 blocks는 "서버 상태의 working copy" 패턴이다: 진입 시 fetch → 로컬에서 편집(스냅샷/원래대로 포함) → 생성 CTA에서 한 번에 `saveStoryboard`. 카드 단위 '수정 완료'는 로컬 확정일 뿐 서버 저장이 아니다.
+콘티보드의 blocks는 "서버 상태의 working copy" 패턴이다: 진입 시 fetch → `taxonomyVersion:2`, `sectionRole`, `contentRole`을 검증하고 v2 누락값만 방어적으로 정규화 → 로컬에서 편집(스냅샷/원래대로 포함) → 생성 CTA에서 한 번에 `saveStoryboard`. 카드 단위 '수정 완료'는 로컬 확정일 뿐 서버 저장이 아니다. UI는 `contentRole`을 보여주고 `cutType`은 생성 요청을 위한 내부 값으로만 유지한다.
 
 ---
 
@@ -93,8 +95,9 @@ useAppStore = {
 [마네킹]    진입 시 자동 generateMannequins → syncCredits
             핏 확인 스텝(유지/조정) → 변경 시 regenerateMannequin({fitProfile}) → syncCredits, 새 버전 자동 선택
             컷 선택 → selectMannequin(id) → patchProject({selectedMannequinId})
-            구성 방식 → setComposeMode(v) → patchProject({composeMode})
+            사진 양(기본형/확장형) → setComposeMode(v) → patchProject({composeMode})
 [콘티]      getStoryboard(projectId)  ← project.composeMode 기반 구성
+            taxonomyVersion=2 검증(핵심 장점→핏·코디→제품 확인, v2 누락 contentRole 방어 정규화)
             편집은 로컬 → 생성 CTA → saveStoryboard(blocks) + setCopywriting 동기화 → navigate
 [생성 대기]  generateDetailPage(projectId) — 서버가 저장된 콘티·selectedMannequinId·copywriting을 읽음
             완료 → navigate(/editor/:projectId)

@@ -2667,7 +2667,6 @@
           "composeMode": {
             "type": "string",
             "enum": [
-              "simple",
               "basic",
               "extended"
             ],
@@ -2724,7 +2723,6 @@
               {
                 "type": "string",
                 "enum": [
-                  "simple",
                   "basic",
                   "extended"
                 ]
