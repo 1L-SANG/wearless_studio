@@ -7,6 +7,11 @@ GARMENT FIDELITY (highest priority — never violate):
 - The garment must be EXACTLY the one in the PRODUCT reference images: same color values,
   pattern placement, logos/text, stitching, hardware, length and silhouette.
 - If any instruction below conflicts with what the PRODUCT references show, the references win.
+- In worn cuts, MATCHING is the seller's chosen coordinating garment and must also be reproduced
+  faithfully when attached. PRODUCT and MATCHING are the ONLY clothing sources.
+- Never transfer garments, shoes or accessories from EXAMPLE REFERENCE or MOOD images.
+
+${detailColorTransferLine}
 
 ${cutSection}
 
@@ -39,7 +44,7 @@ ${imageManifest}
 CUT TYPE — STYLING CUT (lifestyle):
 - A model wears the garment in a natural lifestyle setting (street, cafe, cozy interior).
 - The background gives context and depth but must never overpower the garment.
-- If a MATCH garment image is attached, style it together naturally as one outfit.
+- If a MATCHING garment image is attached, style it together naturally as one outfit.
 
 [[CUT:horizon]]
 CUT TYPE — HORIZON CUT (studio):
@@ -60,15 +65,21 @@ CUT TYPE — MIRROR SELFIE (거울샷):
 - Composition follows typical Korean OOTD mirror selfies.
 
 [[SHOT:full]]full body from head to feet, the whole outfit visible
-[[SHOT:knee_top]]from the head to around the knees — the top garment fully visible
-[[SHOT:knee_bottom]]from the waist to below the knees — the bottom garment is the subject
-[[SHOT:medium_top]]upper body from the head to the waist — the top garment fills the frame
-[[SHOT:medium_bottom]]from the thighs up to the waist — the bottom garment fills the frame
-[[SHOT:close_top]]close-up of the chest and shoulder area showing fabric texture and details
-[[SHOT:close_bottom]]close-up of the hip and thigh area showing fabric texture and details
-[[SHOT:ghost]]ghost-mannequin style — the garment keeps a worn, three-dimensional shape with no visible person
-[[SHOT:hanger]]the garment on a simple hanger against a clean wall
-[[SHOT:flatlay]]the garment laid flat on a subtly textured surface, photographed from directly above
+[[SHOT:medium]]medium framing: for tops, outerwear and dresses, frame from the head to the waist;
+for bottoms, frame from the legs up to the waist — keep the target garment clearly visible
+[[SHOT:ghost]]no visible person; show the complete garment. Default presentation: ghost-mannequin volume, preserving a worn three-dimensional shape. If an EXAMPLE REFERENCE is attached and shows a laid-flat, top-down presentation, follow that example's presentation and framing instead. Garment truth still comes only from PRODUCT references; never copy clothing, shoes, accessories, logos, or branding from the example
+[[SHOT:detail]]a tight product-only close-up of ONE clearly visible detail from the attached PRODUCT
+image labeled "detail close-up" (fabric surface, stitching, pocket, or real closure). Reproduce only
+what that reference visibly proves; never invent lining, hardware, seams, texture, or hidden construction
+
+[[DETAIL_COLOR_TRANSFER]]DETAIL COLORWAY TRANSFER — REQUIRED EXCEPTION TO GARMENT COLOR FIDELITY:
+- The attached PRODUCT detail close-up is from a different colorway (${referenceColor}); use it only as
+  the structural and material reference for this detail.
+- Target color: ${targetColor}. Preserve the reference's hardware (including buttons and zippers),
+  stitching, fabric structure, shape, and material exactly; change ONLY their color into the target
+  color family. Color-matched hardware must transition too (for example, red buttons on a red cardigan
+  become green-family buttons for a green target color).
+- Do not invent any detail that is not visibly proven by the attached detail reference.
 
 [[DIR:front]]Camera angle: front-facing. A slight natural turn of the body (up to about 30 degrees) is acceptable and welcome.
 [[DIR:side]]Camera angle: a clear side profile of the model.
@@ -118,24 +129,29 @@ garment supports. Do not turn an open-front garment into a closable garment.
 
 [[REFSCOPE:all]]REFERENCE SCOPE: follow the attached EXAMPLE REFERENCE's background/location,
 lighting, mood, pose, framing and composition. Swap in the exact garment from PRODUCT references
-and the model established by the PRODUCT/MANNEQUIN references; do NOT copy the example's garment
-or model identity. CUT TYPE, FRAMING, camera direction, face handling and SPACE CONTINUITY remain
+and any attached MATCHING garment; do NOT copy the example's garments, shoes, accessories or model
+identity. CUT TYPE, FRAMING, camera direction, face handling and SPACE CONTINUITY remain
 fixed requirements; adapt the example's pose/composition as needed without changing them.
 
 [[REFSCOPE:all_product]]REFERENCE SCOPE: follow the attached EXAMPLE REFERENCE's background/location,
 lighting, mood, framing and composition. Swap in the exact garment from PRODUCT references. This
-is still a PRODUCT CUT: do NOT copy the example's garment, model or pose, and do not add a person
-or visible body parts.
+is still a PRODUCT CUT: do NOT copy the example's garments, shoes, accessories, model or pose, and
+do not add a person or visible body parts.
 
-[[REFSCOPE:pose]]REFERENCE SCOPE: from the seller's chosen example, follow ONLY the pose and
-framing nuance. Do NOT carry over the example's background, location or props — the scene
-must follow this prompt's own background direction. If the pose does not suit the scene,
-adjust it naturally instead of forcing it.
+[[REFSCOPE:pose]]REFERENCE SCOPE: from the attached EXAMPLE REFERENCE follow ONLY the pose.
+Preserve its torso orientation, weight distribution, screen-left versus screen-right limb placement,
+shoulder and hip levels, elbow and knee bends, hand heights and leg stance. Do not mirror it or replace
+an asymmetric/interacting pose with a generic resting pose. CUT TYPE and FRAMING requested above control
+the camera distance, body scale and crop; do not copy the pose asset's canvas padding. Do NOT carry over
+the example's background, location, lighting, mood, garments, shoes or accessories — the scene must follow
+this prompt's own background direction. If a removed prop or pocket explained a hand position, keep the same
+broad arm direction and hand height without recreating that prop or inventing a pocket. Garment fidelity and
+the requested outer opening state still win if the exact posture is physically impossible.
 
 [[REFSCOPE:bg]]REFERENCE SCOPE: from the attached EXAMPLE REFERENCE follow ONLY the background,
 location, lighting and overall mood. Do NOT copy the example's pose, body angle, framing, garments,
-shoes or accessories — the model wears ONLY the PRODUCT garment (plus neutral basics) in a natural
-pose that suits this scene. FRAMING OVERRIDE: the CUT TYPE and FRAMING requested above win over the
+shoes or accessories — the model wears ONLY the PRODUCT garment and any attached MATCHING garment
+in a natural pose that suits this scene. FRAMING OVERRIDE: the CUT TYPE and FRAMING requested above win over the
 reference's crop — the model must be fully visible for the requested shot, with headroom, correct
 perspective, believable ground contact and shadows consistent with the scene's light.
 

@@ -78,11 +78,14 @@ export const api = {
   async getProject(/* projectId */) { await wait(60); return clone(DB.project); },
   async patchProject(_projectId, patch) {
     await wait(60);
+    if ('composeMode' in patch && !['basic', 'extended'].includes(patch.composeMode)) {
+      throw new Error("composeMode는 basic 또는 extended여야 합니다.");
+    }
     const modeChanged = patch.composeMode && patch.composeMode !== DB.project.composeMode;
     Object.assign(DB.project, patch); touch();
     if ('selectedMannequinId' in patch) syncSelectedCut(patch.selectedMannequinId);
     if ('fitProfile' in patch) DB.analysis.fitProfile = clone(patch.fitProfile);
-    // 구성 방식 변경 시, 사용자가 콘티를 손대기 전이면 기본 콘티를 새 모드로 재구성 (PRD §7.7)
+    // 사진 양 변경 시, 사용자가 콘티를 손대기 전이면 기본 콘티를 새 모드로 재구성 (PRD §7.7)
     if (modeChanged && !DB.storyboardDirty) DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors);
     return clone(DB.project);
   },
@@ -313,7 +316,7 @@ export const api = {
     await runJob({ duration: 2400, onProgress: req.onProgress });
     const isVary = req.mode === 'vary';
     const group = isVary ? 'misc' : (req.colorId || 'misc');
-    // cutType 은 생성 시점에 기록되는 메타데이터 — 이후 '현재 컷 변형'이 옵션 세트를 고르는 기준
+    // cutType 은 생성 시점에 기록되는 메타데이터 — 이후 '현재 이미지 수정'이 옵션 세트를 고르는 기준
     const cutType = isVary ? ((req.source && req.source.cutType) || 'styling') : (req.cutType || null);
     const img = { id: uid('w'), src: Placeholder.any('gen' + Date.now()), ai: true, ...(cutType ? { cutType } : {}) };
     (DB.wardrobe[group] = DB.wardrobe[group] || []).push(img);

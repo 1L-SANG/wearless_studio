@@ -125,11 +125,15 @@ def _patch_inputs(monkeypatch, captured, *, project, storyboard=None, product=No
                       license_notice=None):
         captured["license_notice"] = license_notice
         captured["cut_results"] = cut_results
-        return [{"id": "b0", "kind": "hook", "elements": []}]
+        return [{"id": "b0", "kind": "benefit", "contentRole": "hero", "elements": []}]
 
     async def fake_finalize(conn, **kw):
         captured.update(kw)
         return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_finalize_failure(conn, **kw):
+        captured["failure"] = kw
+        return {"status": "failed"}
 
     async def fake_emit(pool, job_id, et, payload):
         captured.setdefault("events", []).append((et, payload))
@@ -142,6 +146,7 @@ def _patch_inputs(monkeypatch, captured, *, project, storyboard=None, product=No
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_finalize_failure)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
 
@@ -295,8 +300,8 @@ def test_missing_face_storage_degrades_without_public_bucket_fallback(monkeypatc
     assert captured["license_notice"] is None
 
 
-def test_all_face_cuts_failing_falls_back_to_default_notice(monkeypatch):
-    """얼굴 컷이 전부 실패(빈 슬롯)하면 '실제 모델' 고지는 허위가 된다 → 기본 문구."""
+def test_all_face_cuts_failing_fails_the_job_without_false_notice(monkeypatch):
+    """얼굴 컷이 전부 실패하면 빈 페이지를 완료하지 않고 실패·환불한다."""
     captured = {}
     _patch_inputs(monkeypatch, captured,
                   project={"copywriting": False, "facemarket_license_id": LIC_ID})
@@ -310,8 +315,9 @@ def test_all_face_cuts_failing_falls_back_to_default_notice(monkeypatch):
 
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
 
-    assert captured["license_notice"] is None
-    assert captured["charge"] == 0                      # 성공 컷 0 = 미차감
+    assert "license_notice" not in captured             # 조립 전에 중단 → 허위 고지 없음
+    assert captured["failure"]["code"] == "all_cuts_failed"
+    assert captured["failure"]["reserved"] == 1        # 실패 종결에서 예약액 전부 환불
 
 
 # ── 옷 근거 가드가 얼굴로 우회되지 않는다 (ADR-0004) ─────────────────────────
@@ -327,8 +333,8 @@ def test_face_never_bypasses_garment_truth_guard(monkeypatch):
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
 
     assert captured.get("calls") is None                # 생성 호출 자체가 없어야 한다
-    assert captured["charge"] == 0
-    assert captured["license_notice"] is None
+    assert "license_notice" not in captured
+    assert captured["failure"]["code"] == "all_cuts_failed"
 
 
 # ── PII: 얼굴 바이트·키가 이벤트에 새지 않는다 ───────────────────────────────

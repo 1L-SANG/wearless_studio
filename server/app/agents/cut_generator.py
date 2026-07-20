@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..config import Settings
+from .content_roles import canonicalize_storyboard_block
 from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
@@ -33,8 +34,8 @@ _EXAMPLE_FETCH_TIMEOUT = 15.0
 log = logging.getLogger("wearless.cut_generator")
 
 CUT_TYPES = ("styling", "horizon", "product", "mirror")
-_PERSON_SHOTS = ("full", "knee", "medium", "close")
-_PRODUCT_SHOTS = ("ghost", "hanger", "flatlay")
+_PERSON_SHOTS = ("full", "medium")
+_PRODUCT_SHOTS = ("ghost", "detail")
 _DIRECTIONS = ("front", "side", "back")
 _WORN_CUTS = ("styling", "horizon", "mirror")
 _OUTER_CLOSURE_STATES = ("open", "partial", "closed")
@@ -44,16 +45,47 @@ _CUT_LABELS = {  # ${cutLabel} — 프롬프트 첫 줄의 짧은 명사구 (값
     "product": "product-only cut",
     "mirror": "casual mirror-selfie cut",
 }
+_SWATCH_META = {
+    "white": ("화이트", "#ffffff"),
+    "gray": ("그레이", "#9a9aa1"),
+    "black": ("블랙", "#15141a"),
+    "ivory": ("아이보리", "#f3eee1"),
+    "beige": ("베이지", "#d8c4a3"),
+    "brown": ("브라운", "#7a5230"),
+    "red": ("레드", "#c0392b"),
+    "yellow": ("옐로우", "#e7c75c"),
+    "green": ("그린", "#3f7a4f"),
+    "blue": ("블루", "#2a5db0"),
+    "navy": ("네이비", "#1f2a44"),
+    "pink": ("핑크", "#e3a7b8"),
+}
 
 
 def _is_outer(clothing_type: str | None) -> bool:
     return str(clothing_type or "").strip().lower() in ("outer", "아우터")
 
 
+def _normalize_detail_color_transfer(value) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    target_name = _sanitize(value.get("targetName") or "")[:80]
+    reference_name = _sanitize(value.get("referenceName") or "")[:80]
+    raw_hex = str(value.get("targetHex") or "").strip()
+    target_hex = raw_hex.lower() if re.fullmatch(r"#[0-9a-fA-F]{6}", raw_hex) else None
+    if not target_name:
+        return None
+    return {
+        "targetName": target_name,
+        "targetHex": target_hex,
+        "referenceName": reference_name or None,
+    }
+
+
 def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
     """프론트를 믿지 않는다 — 컷 계약(ADR-0004)을 서버에서도 강제.
-    UI(onTab 정규화)와 같은 규칙: mirror=방향 없음·샷 full/knee·얼굴 기본 hide,
-    product=방향 front/back·샷 ghost/hanger/flatlay, 사람컷=front/side/back·full~close."""
+    UI 정규화와 같은 규칙: mirror=방향 없음·샷 full/medium·얼굴 기본 hide,
+    product=방향 front/back·샷 ghost/detail, 착용컷=front/side/back·full/medium."""
+    raw = canonicalize_storyboard_block(raw)
     cut = raw.get("cutType") or raw.get("cut_type")
     if cut not in CUT_TYPES:
         raise ValueError("unknown_cut_type")
@@ -63,7 +95,7 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
     pose = raw.get("pose") or "auto"
     if cut == "mirror":
         direction = None
-        shot = shot if shot in ("full", "knee") else "full"
+        shot = shot if shot in _PERSON_SHOTS else "full"
         face = "show" if face == "show" else "hide"
         pose = "auto"  # 거울 셀피 구도 자동 (ADR-0004)
     elif cut == "product":
@@ -76,6 +108,9 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         face = face if face in ("same", "show", "hide") else "same"
     variation = raw.get("spaceVariation") or raw.get("space_variation")
     closure = raw.get("outerClosureState") or raw.get("outer_closure_state")
+    raw_color_id = raw.get("colorId")
+    if raw_color_id is None:
+        raw_color_id = raw.get("color_id")
     if _is_outer(clothing_type) and cut in _WORN_CUTS:
         closure = closure if closure in _OUTER_CLOSURE_STATES else "open"
     else:
@@ -84,7 +119,7 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         "cutType": cut,
         "direction": direction,
         "shot": shot,
-        "colorId": _sanitize(raw.get("colorId") or raw.get("color_id") or "") or None,
+        "colorId": _sanitize(raw_color_id) or None,
         "pose": _sanitize(pose)[:40] or "auto",
         "faceExposure": face,
         "matchIds": [str(m) for m in (raw.get("matchIds") or raw.get("match_ids") or [])][:2],
@@ -94,9 +129,11 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         "spaceVariation": variation if variation in ("subtle", "varied") else "subtle",
         "outerClosureState": closure,
         "modelId": _sanitize(raw.get("modelId") or raw.get("model_id") or "") or None,
-        # 레퍼런스 범위 (콘티 refScope, 2026-07 섹션 개편) — 'pose'면 예시에서 포즈·구도만 따르고
-        # 배경은 프롬프트 자체 배경 지시를 따른다. 미지·구버전 값은 'all'로 정규화.
+        # 레퍼런스 범위 (ADR-0009) — 'pose'면 예시에서 자세만 따르고, 프레이밍은 현재
+        # cutType/shot이 정한다. 배경은 프롬프트 자체 배경 지시를 따른다. 미지·구버전 값은 'all'로 정규화.
         "refScope": (raw.get("refScope") or raw.get("ref_scope")) if (raw.get("refScope") or raw.get("ref_scope")) in ("all", "pose", "bg") else "all",
+        # 워커가 실제 첨부 자산을 고른 뒤 붙이는 런타임 전용 정보. 저장 계약에는 포함하지 않는다.
+        "_detailColorTransfer": _normalize_detail_color_transfer(raw.get("_detailColorTransfer")),
     }
     # 제품컷은 '배경만/포즈만'이 성립하지 않는다(사람·포즈 없음) — 예시는 통째 참조만 허용.
     if cut == "product" and spec["refScope"] != "all":
@@ -124,14 +161,14 @@ def _face_fits(spec: dict, is_bottom: bool) -> bool:
       · faceExposure=None — product 컷(사람·신체 노출 자체가 금지, [[CUT:product]])
       · faceExposure='hide' — 셀러가 명시적으로 비식별을 골랐거나 거울샷 기본값(폰이 얼굴을 가림)
       · direction='back' — 뒷모습이라 얼굴이 프레임 밖
-      · 머리가 프레임에 없는 샷 — knee/medium 의 하의 변형, close_*(가슴·허벅지 클로즈업)
+      · 머리가 프레임에 없는 샷 — 하의의 medium 프레이밍
     """
     if spec["faceExposure"] not in ("same", "show"):
         return False
     if spec["direction"] == "back":
         return False
     shot = spec["shot"]
-    return shot == "full" or (shot in ("knee", "medium") and not is_bottom)
+    return shot == "full" or (shot == "medium" and not is_bottom)
 
 
 def wants_face(cut_spec: dict, clothing_type: str | None = None) -> bool:
@@ -154,8 +191,13 @@ def load_cut_template() -> str:
 
 
 @lru_cache(maxsize=1)
-def load_example_asset_registry() -> tuple[str | None, dict[str, str]]:
-    """서버 소유 exampleId→URL 레지스트리. 프로세스당 1회만 읽는다."""
+def load_example_asset_registry() -> tuple[str | None, dict[str, dict]]:
+    """서버 소유 exampleId→자산/적용성 레지스트리. 프로세스당 1회만 읽는다.
+
+    v2는 variant URL과 ``applicableClothingTypes`` 등 생성 조건을 함께 둔다.
+    구 문자열 및 variant-only dict도 v2 entry로 정규화하되 적용성 메타가 없는
+    레거시 항목은 기존처럼 허용한다.
+    """
     with open(_DEFAULT_EXAMPLE_ASSETS, encoding="utf-8") as f:
         raw = json.load(f)
     meta = raw.get("_meta") if isinstance(raw, dict) else {}
@@ -165,21 +207,62 @@ def load_example_asset_registry() -> tuple[str | None, dict[str, str]]:
     base_url = meta.get("defaultBaseUrl")
     if not isinstance(base_url, str) or not base_url.strip():
         base_url = None
-    clean: dict[str, dict[str, str]] = {}
+    clean: dict[str, dict] = {}
     for example_id, value in assets.items():
-        # 값 형태 2가지: 문자열(모든 scope 공용) 또는 {"all": url, "pose": cutout_url, "bg": plate_url}.
+        # 값 형태 3가지: 문자열(all), 구 variant dict, v2 variant+메타 dict.
         # pose variant = 배경제거(누끼) 자산 — 스파이크(2026-07-12) 결과 원본 첨부는 소품·무드가
         # 새므로(의자·가방 전이), 포즈 전용은 누끼가 정답. 앵커 확정 시 사전 1회 생성해 등록한다.
         if isinstance(value, str) and value.strip():
             clean[str(example_id)] = {"all": value.strip()}
         elif isinstance(value, dict):
-            variants = {
+            entry: dict = {
                 k: v.strip() for k, v in value.items()
-                if k in ("all", "pose", "bg") and isinstance(v, str) and v.strip()
+                if k in ("all", "pose", "bg", "thumb") and isinstance(v, str) and v.strip()
             }
-            if variants:
-                clean[str(example_id)] = variants
+            if "applicableClothingTypes" in value:
+                applicable = value.get("applicableClothingTypes")
+                entry["applicableClothingTypes"] = (
+                    [str(item) for item in applicable if isinstance(item, str) and item]
+                    if isinstance(applicable, list) else []
+                )
+            for field in ("cutType", "shot"):
+                if isinstance(value.get(field), str) and value[field]:
+                    entry[field] = value[field]
+            # 제품 생성예시는 성별 공용이라 v2 레지스트리에 명시된 null도 메타데이터다.
+            # 키 자체가 없는 구 레지스트리와 구분해 그대로 보존한다.
+            if "gender" in value and (
+                value.get("gender") is None
+                or value.get("gender") in ("women", "men")
+            ):
+                entry["gender"] = value.get("gender")
+            if any(variant in entry for variant in ("all", "pose", "bg", "thumb")):
+                clean[str(example_id)] = entry
     return base_url, clean
+
+
+def example_asset_status(
+    example_id: str | None,
+    clothing_type: str | None,
+    scope: str = "all",
+) -> str:
+    """예시 첨부 가능 상태를 워커가 경고 사유와 함께 구분할 수 있게 반환한다.
+
+    반환값은 ``available | unknown | not_applicable | variant_unpublished``.
+    메타가 없는 구 레지스트리는 적용성 검증만 생략해 상위 호환을 유지한다.
+    """
+    if not example_id:
+        return "unknown"
+    _default_base, assets = load_example_asset_registry()
+    entry = assets.get(str(example_id))
+    if not entry:
+        return "unknown"
+    applicable = entry.get("applicableClothingTypes")
+    if applicable is not None and str(clothing_type or "") not in applicable:
+        return "not_applicable"
+    variant = scope if scope in ("pose", "bg") else "all"
+    if not entry.get(variant):
+        return "variant_unpublished"
+    return "available"
 
 
 @lru_cache(maxsize=1)
@@ -231,16 +314,20 @@ def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, 
 
 def resolve_example_asset(
     example_id: str | None, base_url: str | None = None, *, allow_default_base: bool = True,
-    scope: str = "all",
+    scope: str = "all", clothing_type: str | None = None,
 ) -> str | None:
     """레지스트리 항목을 절대 http(s) URL로 해석. 미등록/잘못된 URL은 v0 폴백(None).
-    scope별 전용 자산 우선, 없으면 공용(all) 폴백 (스파이크 2026-07-12):
+    pose/bg는 전용 자산이 있을 때만 해석한다. 일반 사진(all)을 대신 붙이면 범위 계약이
+    깨지므로, 전용 자산이 없을 때는 미첨부(None)로 닫힌다:
       pose → 누끼(인물만, 배경 제거)   bg → 빈 무대 플레이트(인물 제거, 여백 확보)"""
     if not example_id:
         return None
     default_base, assets = load_example_asset_registry()
-    variants = assets.get(str(example_id)) or {}
-    value = (variants.get(scope) if scope in ("pose", "bg") else None) or variants.get("all")
+    entry = assets.get(str(example_id)) or {}
+    if clothing_type is not None \
+            and example_asset_status(example_id, clothing_type, scope) != "available":
+        return None
+    value = entry.get(scope) if scope in ("pose", "bg") else entry.get("all")
     if not value:
         return None
     if urlsplit(value).scheme in ("http", "https"):
@@ -255,6 +342,7 @@ def resolve_example_asset(
 
 async def load_example_image(
     settings: Settings, example_id: str | None, scope: str = "all",
+    clothing_type: str | None = None,
 ) -> InlineImage | None:
     """등록 예시를 Gemini용 bytes로 로드. 실패는 오류가 아니라 기존 v0 경로로 폴백한다."""
     base_url = getattr(settings, "example_asset_base_url", None)
@@ -262,6 +350,7 @@ async def load_example_image(
     # 레지스트리에 절대 URL을 넣은 실제 자산은 환경과 무관하게 그대로 허용한다.
     url = resolve_example_asset(
         example_id, base_url, scope=scope,
+        clothing_type=clothing_type,
         allow_default_base=getattr(settings, "app_env", "dev") == "dev")
     if not url:
         return None
@@ -304,6 +393,10 @@ def render_cut_prompt(
     """
     sec = _sections(template)
     cut, shot = spec["cutType"], spec["shot"]
+    if cut == "product" and shot == "detail" and _SLOT_LABEL["Detail"] not in image_manifest:
+        # 메타데이터에 Detail 슬롯이 있어도 실제 자산 로드가 실패하면 manifest에
+        # 이 라벨이 없다. 멀리 찍은 사진만으로 세부를 지어내지 않고 해당 컷만 실패시킨다.
+        raise ValueError("detail_reference_required")
     is_bottom = _is_bottom(clothing_type)
     # 첨부 여부(has_face)와 별개로 이 컷이 얼굴을 담는 컷인지 다시 판정 — 첨부 판정과 동일 규칙.
     use_face = has_face and _face_fits(spec, is_bottom)
@@ -313,7 +406,7 @@ def render_cut_prompt(
             raise ValueError(f"프롬프트 템플릿에 섹션이 없습니다: [[{key}]]")
         return sec[key]
 
-    shot_key = shot if shot in _PRODUCT_SHOTS or shot == "full" else f"{shot}_{'bottom' if is_bottom else 'top'}"
+    shot_key = shot
     if cut == "mirror":
         face_line = need("FACE:hide_mirror") if spec["faceExposure"] != "show" else need("FACE:show")
         direction_line = ""
@@ -336,18 +429,27 @@ def render_cut_prompt(
     example_line = ""
     # 포즈를 직접 지정했고 예시가 '포즈만' 범위면 예시는 효력 상실 — 지시 충돌(POSE:named vs 예시 구도) 방지
     pose_overrides_example = spec["pose"] != "auto" and spec["refScope"] == "pose"
-    if spec.get("exampleId") and cut != "product" and spec.get("direction") in (None, "front") and not pose_overrides_example:
+    # v0 해시 뉘앙스는 공용(all) 예시에만 남긴다. pose/bg는 전용 이미지가 없으면
+    # 아무 예시도 적용하지 않는 fail-closed 계약이며, 존재하지 않는 첨부물을 언급하지 않는다.
+    if spec.get("exampleId") and spec.get("refScope") == "all" \
+            and cut != "product" and spec.get("direction") in (None, "front") \
+            and not pose_overrides_example:
         idx = sum(ord(ch) for ch in spec["exampleId"]) % 3
         example_line = need(f"EXNUANCE:{idx}")
-        # refScope='pose' — 예시의 배경·장소를 옮기지 않도록 범위 가드를 덧붙인다 (콘티 '포즈만')
-        if spec.get("refScope") == "pose":
-            example_line = example_line + "\n" + need("REFSCOPE:pose")
     # 실제 EXAMPLE 이미지가 매니페스트에 있을 때만 범위 계약을 승격한다. 이미지 로드 실패·미등록 id는
     # 위 v0 결정적 뉘앙스 경로와 완전히 동일하게 남는다.
     has_resolved_example = (
         _EXAMPLE_ALL_LABEL in image_manifest
         or _EXAMPLE_POSE_LABEL in image_manifest
         or _EXAMPLE_BG_LABEL in image_manifest)
+    # 실제 이미지가 첨부되면 그 이미지가 구도/포즈의 유일한 예시다. exampleId 해시로 만든
+    # 레거시 EXNUANCE까지 함께 두면 서로 다른 팔·다리 자세를 동시에 지시하게 된다.
+    if has_resolved_example:
+        example_line = ""
+        # 실제 all/pose 이미지가 포즈를 제어할 때 POSE:auto까지 남기면 "자연스럽게
+        # 고르기"와 "예시 포즈 유지"가 충돌한다. 명시 포즈와 bg-only는 별도 계약이다.
+        if spec["pose"] == "auto" and spec["refScope"] in ("all", "pose"):
+            pose_line = ""
     # 매니페스트 문구는 첨부 여부만 증명한다. 범위는 반드시 정규화된 spec에서 다시 가져와
     # in-space 강제(pose)를 우회하는 불가능한 all 조합을 만들지 않는다.
     if has_resolved_example and not pose_overrides_example:
@@ -364,6 +466,17 @@ def render_cut_prompt(
         closure = spec.get("outerClosureState")
         closure = closure if closure in _OUTER_CLOSURE_STATES else "open"
         outer_closure_line = "\n".join((need("OUTER_CLOSURE:guard"), need(f"OUTER_CLOSURE:{closure}")))
+    detail_color_transfer_line = ""
+    transfer = spec.get("_detailColorTransfer")
+    if cut == "product" and shot == "detail" and transfer:
+        target = transfer["targetName"]
+        if transfer.get("targetHex"):
+            target += f" ({transfer['targetHex']})"
+        detail_color_transfer_line = (
+            need("DETAIL_COLOR_TRANSFER")
+            .replace("${targetColor}", target)
+            .replace("${referenceColor}", transfer.get("referenceName") or "another colorway")
+        )
 
     text = (
         need("BASE")
@@ -376,6 +489,7 @@ def render_cut_prompt(
         .replace("${exampleLine}", example_line)
         .replace("${outerClosureLine}", outer_closure_line)
         .replace("${spaceLine}", space_line)
+        .replace("${detailColorTransferLine}", detail_color_transfer_line)
         # 얼굴 미첨부면 빈 문자열 — 모든 경로에서 반드시 치환한다(미치환 시 아래 leftover
         # 가드가 ValueError → 워커가 전 컷을 빈 슬롯으로 삼켜 조용히 죽는다).
         .replace("${faceRefLine}", need("FACE_REF") if use_face else "")
@@ -404,17 +518,87 @@ def render_cut_prompt(
     return "\n\n".join(part for part in (text, fit_block, block) if part)
 
 
-def color_images(product: dict, color_id: str | None) -> list[tuple[str, str]]:
-    """지정 색상(없으면 기준 색상) 이미지의 (slot, asset_id) 목록 — mannequin.base_color_images와 동형."""
+def _base_color(colors: list[dict]) -> dict | None:
+    return next((color for color in colors if color.get("isBase")), colors[0] if colors else None)
+
+
+def _color_by_id(colors: list[dict], color_id) -> dict | None:
+    if color_id is None:
+        return _base_color(colors)
+    return next(
+        (color for color in colors
+         if color.get("id") is not None and str(color.get("id")) == str(color_id)),
+        None,
+    )
+
+
+def _color_image_pairs(color: dict | None) -> list[tuple[str, str]]:
     from .mannequin import _SLOT_ORDER  # 슬롯 정렬 기준 공유
-    colors = product.get("colors") or []
-    chosen = next((c for c in colors if color_id and c.get("id") == color_id), None)
-    if chosen is None or not (chosen.get("images") or []):
-        chosen = next((c for c in colors if c.get("isBase")), colors[0] if colors else None)
-    if not chosen:
+    if not color or not (color.get("images") or []):
         return []
-    images = sorted((chosen.get("images") or []), key=lambda im: _SLOT_ORDER.get(im.get("slot") or "", 99))
-    return [(im.get("slot") or "Front", im["id"]) for im in images if im.get("id")]
+    images = sorted(
+        (color.get("images") or []),
+        key=lambda image: _SLOT_ORDER.get(image.get("slot") or "", 99),
+    )
+    return [(image.get("slot") or "Front", image["id"]) for image in images if image.get("id")]
+
+
+def color_images(product: dict, color_id: str | None) -> list[tuple[str, str]]:
+    """지정 색상 이미지 목록. color_id가 None일 때만 기준 색상을 사용한다."""
+    colors = product.get("colors") or []
+    return _color_image_pairs(_color_by_id(colors, color_id))
+
+
+def _color_prompt_meta(color: dict | None, fallback_name: str | None) -> tuple[str, str | None]:
+    color = color or {}
+    swatch_id = color.get("swatchId") or color.get("swatch_id")
+    swatch_name, swatch_hex = _SWATCH_META.get(str(swatch_id), (None, None))
+    name = color.get("name") or color.get("label") or swatch_name or fallback_name or "target color"
+    raw_hex = color.get("hex") or color.get("swatchHex") or swatch_hex
+    target_hex = str(raw_hex).lower() if raw_hex and re.fullmatch(r"#[0-9a-fA-F]{6}", str(raw_hex)) else None
+    return _sanitize(name)[:80] or "target color", target_hex
+
+
+def detail_reference_images(
+    product: dict, color_id: str | None,
+) -> tuple[list[tuple[str, str]], dict | None]:
+    """디테일 컷의 상품 근거와 필요 시 타색→목표색 전환 정보를 고른다.
+
+    목표 색상에 Detail이 있으면 그 색상의 기존 이미지 목록을 그대로 쓴다. 없으면
+    목표 색상 일반 이미지는 유지하면서 기준색, 그 다음 전체 색상 순서로 첫 Detail을
+    덧붙인다. 일반 컷의 :func:`color_images` 엄격 선택 규칙은 바꾸지 않는다.
+    """
+    colors = product.get("colors") or []
+    target_color = _color_by_id(colors, color_id)
+    target_images = _color_image_pairs(target_color)
+    if any(slot == "Detail" for slot, _asset_id in target_images):
+        return target_images, None
+
+    base = _base_color(colors)
+    candidates = ([base] if base is not None else []) + [color for color in colors if color is not base]
+    reference_color = next(
+        (color for color in candidates
+         if any(slot == "Detail" for slot, _asset_id in _color_image_pairs(color))),
+        None,
+    )
+    if reference_color is None:
+        return target_images, None
+
+    reference_details = [
+        pair for pair in _color_image_pairs(reference_color) if pair[0] == "Detail"
+    ]
+    target_name, target_hex = _color_prompt_meta(
+        target_color, None if color_id is None else str(color_id),
+    )
+    reference_name, _reference_hex = _color_prompt_meta(
+        reference_color,
+        str(reference_color.get("id")) if reference_color.get("id") is not None else None,
+    )
+    return [*target_images, *reference_details], {
+        "targetName": target_name,
+        "targetHex": target_hex,
+        "referenceName": reference_name,
+    }
 
 
 # 첨부 이미지 역할 라벨 — 전부 고정 문구(셀러 데이터 미포함, 프롬프트 인젝션 방지)
@@ -429,7 +613,7 @@ _SLOT_LABEL = {
 _MANNEQUIN_LABEL = "PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)"
 _MODEL_LABEL = "MODEL — frontal close-up of the model (identity ground truth; do NOT copy this image's pose, framing, or clothing)"
 _MODEL_SHEET_LABEL = "MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single person (identity reference only). Do NOT copy the grid layout, framing, poses, or clothing; the output must be one single normal photograph, never a grid"
-_MATCH_LABEL = "MATCH — a coordinating garment to style together in the same outfit"
+_MATCH_LABEL = "MATCHING — the user-selected coordinating garment worn in the same outfit"
 # FaceMarket 라이선스 얼굴 첨부 라벨(FM-31). 위 두 라벨의 부분문자열이 되면 matchCut 가드가
 # 오발해 없는 하의를 지시하므로 'mannequin'·_MATCH_LABEL 문구를 섞지 않는다.
 _FACE_LABEL = ("MODEL FACE — the licensed model's face reference: reproduce THIS person's "
@@ -477,17 +661,18 @@ def build_manifest(
     if example_scope == "all" and example_is_product:
         lines.append(
             f"{i}. {_EXAMPLE_ALL_LABEL} — source of background, lighting, mood, framing and "
-            "composition; never copy its garment, person, model identity or pose"
+            "composition; never copy its garments, shoes, accessories, person, model identity or pose"
         )
     elif example_scope == "all":
         lines.append(
             f"{i}. {_EXAMPLE_ALL_LABEL} — source of background, lighting, mood, pose and "
-            "composition; never copy its garment or model identity"
+            "framing/composition; never copy its garments, shoes, accessories or model identity"
         )
     elif example_scope == "pose":
         lines.append(
-            f"{i}. {_EXAMPLE_POSE_LABEL} — source of pose and framing ONLY; never copy its "
-            "background, location, props, garment or model identity"
+            f"{i}. {_EXAMPLE_POSE_LABEL} — source of pose ONLY; CUT TYPE and FRAMING control "
+            "camera distance, body scale and crop; never copy its background, location, lighting, "
+            "mood, garments, shoes, accessories or model identity"
         )
     elif example_scope == "bg":
         # 스파이크(2026-07-12): 자산은 인물을 지운 '빈 무대 플레이트' — 포즈·의류 유출을 구조적으로 차단
@@ -504,11 +689,17 @@ def build_prompt(
     analysis: dict | None = None, manifest: str | None = None, has_face: bool = False,
 ) -> str:
     """스펙 정규화(ValueError=unknown_cut_type) + 템플릿 렌더. manifest 미지정 시
-    첨부가 '해당 색상 상품 슬롯 이미지뿐'(+ has_face 면 얼굴)이라고 가정하고 동일 순서 목록을 만든다."""
+    일반 컷은 해당 색상 상품 슬롯을, 디테일 컷은 detail_reference_images 정책의 상품 슬롯을
+    첨부한다고 가정하고 동일 순서 목록을 만든다(+ has_face 면 얼굴)."""
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
     if manifest is None:
-        prod_assets = [{"slot": slot} for slot, _id in color_images(product, spec["colorId"])]
+        if spec["cutType"] == "product" and spec["shot"] == "detail":
+            selected_images, transfer = detail_reference_images(product, spec["colorId"])
+            spec["_detailColorTransfer"] = transfer
+        else:
+            selected_images = color_images(product, spec["colorId"])
+        prod_assets = [{"slot": slot} for slot, _id in selected_images]
         manifest = build_manifest(
             prod_assets, has_mannequin=False, has_match=False, mood_count=0,
             has_face=has_face and _face_fits(spec, _is_bottom(clothing_type)))

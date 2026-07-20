@@ -10,8 +10,35 @@ import json
 
 import pytest
 
+from app.agents import content_roles
 from app.agents import cut_generator as cut
 from conftest import make_settings
+
+
+@pytest.fixture
+def dev_example_registry(tmp_path, monkeypatch):
+    """릴리스된 운영 카탈로그와 무관한 레지스트리 해석 테스트 픽스처."""
+    registry = {
+        "_meta": {"defaultBaseUrl": "https://placehold.co"},
+        "assets": {
+            "ex_styling_top_full_1": {
+                "all": "600x800/png?text=DEV+styling+example+1",
+                "pose": "600x800/png?text=DEV+styling+cutout+1",
+                "bg": "600x800/png?text=DEV+styling+plate+1",
+            },
+            "ex_horizon_top_full_1": {
+                "all": "600x800/png?text=DEV+horizon+example+1",
+            },
+        },
+    }
+    path = tmp_path / "example_assets.json"
+    path.write_text(json.dumps(registry), encoding="utf-8")
+    monkeypatch.setattr(cut, "_DEFAULT_EXAMPLE_ASSETS", str(path))
+    cut.load_example_asset_registry.cache_clear()
+    try:
+        yield
+    finally:
+        cut.load_example_asset_registry.cache_clear()
 
 
 def _auth(make_token):
@@ -21,20 +48,185 @@ def _auth(make_token):
 # ---------- normalize_spec — 서버측 컷 계약 강제 ----------
 
 
+def test_canonical_content_role_wins_conflicting_recipe():
+    block = content_roles.canonicalize_storyboard_block({
+        "id": "hero-1",
+        "source": "ai",
+        "contentRole": "hero",
+        "sectionRole": "product",
+        "cutType": "product",
+        "direction": "back",
+        "shot": "detail",
+    })
+
+    assert block["contentRole"] == "hero"
+    assert block["sectionRole"] == "benefit"
+    assert block["cutType"] == "styling"
+    assert block["direction"] == "back"
+    assert block["shot"] == "full"
+
+
+def test_canonical_benefit_template_uses_medium_shot():
+    block = content_roles.canonicalize_storyboard_block({
+        "source": "ai", "contentRole": "benefit",
+    })
+
+    assert (block["cutType"], block["direction"], block["shot"]) == (
+        "horizon", "front", "medium",
+    )
+
+
+def test_canonical_ignores_retired_kind_and_infers_from_cut_type():
+    retired = content_roles.canonicalize_storyboard_block({
+        "kind": "hook", "cutType": "product", "shot": "detail",
+    })
+    fit = content_roles.canonicalize_storyboard_block({
+        "cutType": "horizon", "direction": "side", "shot": "medium",
+    })
+
+    assert (retired["contentRole"], retired["sectionRole"], retired["cutType"], retired["shot"]) == (
+        "detail", "product", "product", "detail",
+    )
+    assert (fit["contentRole"], fit["sectionRole"], fit["cutType"]) == (
+        "fit", "fit", "horizon",
+    )
+    assert (fit["direction"], fit["shot"]) == ("side", "medium")
+    assert retired["taxonomyVersion"] == 2
+    assert "kind" not in retired
+
+    stored = content_roles.canonicalize_storyboard_block({
+        "kind": "hook", "cutType": "product", "shot": "detail",
+    }, for_storage=True)
+    assert stored["taxonomyVersion"] == 2
+    assert "kind" not in stored
+
+
+def test_canonical_mine_and_custom_blocks_do_not_invent_ai_recipe():
+    mine = content_roles.canonicalize_storyboard_block({
+        "id": "mine-1",
+        "source": "mine",
+        "cutType": "styling",
+        "ownImages": ["asset-1"],
+    })
+    custom = content_roles.canonicalize_storyboard_block({
+        "id": "custom-1",
+        "source": "ai",
+        "contentRole": "custom",
+        "sectionRole": "benefit",
+        "cutType": "styling",
+        "direction": "side",
+        "shot": "close",
+    })
+
+    assert mine["contentRole"] == "custom"
+    assert mine["cutType"] is None
+    assert mine["taxonomyVersion"] == 2
+    assert mine["ownImages"] == ["asset-1"]
+    assert custom["contentRole"] == "custom"
+    assert custom["sectionRole"] == "benefit"
+    assert (custom["cutType"], custom["direction"], custom["shot"]) == (
+        "styling", "side", "full",
+    )
+
+
+def test_canonical_detail_forces_product_detail_and_overview_rejects_detail():
+    detail = content_roles.canonicalize_storyboard_block({
+        "contentRole": "detail", "cutType": "horizon", "shot": "full",
+    })
+    overview = content_roles.canonicalize_storyboard_block({
+        "contentRole": "productOverview", "cutType": "product", "shot": "detail",
+    })
+
+    assert (detail["sectionRole"], detail["cutType"], detail["shot"]) == (
+        "product", "product", "detail",
+    )
+    assert (overview["sectionRole"], overview["cutType"], overview["shot"]) == (
+        "product", "product", "ghost",
+    )
+
+
+def test_canonical_storyboard_list_returns_normalized_copies():
+    raw = [
+        {"id": "b1", "kind": "selling", "cutType": "styling", "shot": "full"},
+        {"id": "b2", "source": "mine", "ownImages": ["asset-2"]},
+    ]
+
+    normalized = content_roles.canonicalize_storyboard(raw)
+
+    assert normalized is not raw
+    assert normalized[0] is not raw[0]
+    assert normalized[0]["contentRole"] == "coordination"
+    assert normalized[0]["cutType"] == "styling"
+    assert "kind" not in normalized[0]
+    assert normalized[1]["contentRole"] == "custom"
+    assert normalized[1]["cutType"] is None
+    assert "contentRole" not in raw[0]  # 호출자의 원본 저장본을 제자리에서 바꾸지 않는다.
+
+
+def test_canonical_storyboard_stably_orders_the_three_sections():
+    normalized = content_roles.canonicalize_storyboard([
+        {"id": "product-1", "source": "ai", "contentRole": "productOverview"},
+        {"id": "fit-1", "source": "ai", "contentRole": "fit"},
+        {"id": "benefit-1", "source": "ai", "contentRole": "hero"},
+        {"id": "fit-2", "source": "ai", "contentRole": "coordination"},
+        {"id": "custom", "source": "mine"},
+        {"id": "benefit-2", "source": "ai", "contentRole": "benefit"},
+    ])
+
+    assert [block["id"] for block in normalized] == [
+        "benefit-1", "benefit-2", "fit-1", "fit-2", "custom", "product-1",
+    ]
+    assert normalized[4]["sectionRole"] == "fit"  # 앞 이웃 섹션을 상속해 원래 위치를 지킨다.
+
+
+def test_normalize_cut_type_only_request_uses_defensive_inference():
+    spec = cut.normalize_spec({
+        "cutType": "horizon", "direction": "side", "shot": "medium",
+    })
+
+    assert (spec["cutType"], spec["direction"], spec["shot"]) == (
+        "horizon", "side", "medium",
+    )
+
+
+def test_normalize_spec_uses_content_role_before_conflicting_cut_fields():
+    spec = cut.normalize_spec({
+        "contentRole": "realWear",
+        "cutType": "product",
+        "direction": "front",
+        "shot": "ghost",
+    })
+
+    assert (spec["cutType"], spec["direction"], spec["shot"]) == (
+        "mirror", None, "full",
+    )
+
+
 def test_normalize_mirror_strips_direction_and_clamps():
     spec = cut.normalize_spec({
-        "cutType": "mirror", "direction": "side", "shot": "medium",
+        "cutType": "mirror", "direction": "side", "shot": "close",
         "faceExposure": "same", "pose": "walk",
     })
     assert spec["direction"] is None          # 거울샷은 방향 개념 없음
-    assert spec["shot"] == "full"             # medium은 거울샷에 없음 → full
+    assert spec["shot"] == "full"             # 폐기 샷은 역할 기본값으로 복귀
     assert spec["faceExposure"] == "hide"     # 기본 '폰으로 가림'
     assert spec["pose"] == "auto"             # 셀피 구도 자동 고정
 
 
-def test_normalize_mirror_keeps_knee_and_show():
-    spec = cut.normalize_spec({"cutType": "mirror", "shot": "knee", "faceExposure": "show"})
-    assert spec["shot"] == "knee" and spec["faceExposure"] == "show"
+def test_normalize_mirror_keeps_medium_and_show():
+    spec = cut.normalize_spec({"cutType": "mirror", "shot": "medium", "faceExposure": "show"})
+    assert spec["shot"] == "medium" and spec["faceExposure"] == "show"
+
+
+@pytest.mark.parametrize(("content_role", "retired_shot", "expected"), [
+    ("benefit", "close", "medium"),
+    ("fit", "knee", "full"),
+    ("coordination", "close", "full"),
+    ("realWear", "knee", "full"),
+])
+def test_normalize_retired_worn_shots_to_role_default(content_role, retired_shot, expected):
+    spec = cut.normalize_spec({"contentRole": content_role, "shot": retired_shot})
+    assert spec["shot"] == expected
 
 
 def test_normalize_product_fallbacks():
@@ -42,6 +234,48 @@ def test_normalize_product_fallbacks():
     assert spec["direction"] == "front"       # product는 front/back만
     assert spec["shot"] == "ghost"            # 사람컷 샷은 product에 없음 → ghost
     assert spec["faceExposure"] is None
+
+
+def test_normalize_product_keeps_detail_and_normalizes_retired_shots():
+    detail = cut.normalize_spec({"cutType": "product", "shot": "detail"})
+    retired = cut.normalize_spec({"cutType": "product", "shot": "hanger"})
+    merged = cut.normalize_spec({"cutType": "product", "shot": "flatlay"})
+    assert detail["shot"] == "detail"
+    assert retired["shot"] == "ghost"
+    assert merged["shot"] == "ghost"
+
+
+def test_color_images_matches_numeric_and_string_color_ids():
+    product = {"colors": [{
+        "id": 7,
+        "images": [{"slot": "Back", "id": "back-7"}, {"slot": "Front", "id": "front-7"}],
+    }]}
+
+    assert cut.color_images(product, "7") == [("Front", "front-7"), ("Back", "back-7")]
+
+
+def test_color_images_selected_missing_or_empty_color_never_uses_base():
+    product = {"colors": [
+        {"id": "base", "isBase": True, "images": [{"slot": "Detail", "id": "base-detail"}]},
+        {"id": "empty", "images": []},
+    ]}
+
+    assert cut.color_images(product, "missing") == []
+    assert cut.color_images(product, "empty") == []
+
+
+def test_color_images_without_color_id_uses_base_color():
+    product = {"colors": [
+        {"id": "other", "images": [{"slot": "Front", "id": "other-front"}]},
+        {"id": "base", "isBase": True, "images": [{"slot": "Detail", "id": "base-detail"}]},
+    ]}
+
+    assert cut.color_images(product, None) == [("Detail", "base-detail")]
+
+
+def test_detail_is_product_only():
+    spec = cut.normalize_spec({"cutType": "styling", "shot": "detail"})
+    assert spec["shot"] == "full"
 
 
 def test_normalize_person_defaults_and_limits():
@@ -140,7 +374,7 @@ def test_normalize_ref_scope_product_downgrades_to_all():
         assert spec["refScope"] == "all"
 
 
-def test_render_ref_scope_bg_uses_plate_and_blocks_pose_garment_transfer():
+def test_render_ref_scope_bg_uses_plate_and_blocks_pose_garment_transfer(dev_example_registry):
     template = cut.load_cut_template()
     spec = cut.normalize_spec({
         "cutType": "styling", "direction": "front", "shot": "full",
@@ -155,6 +389,7 @@ def test_render_ref_scope_bg_uses_plate_and_blocks_pose_garment_transfer():
     assert "Do NOT copy the example's pose" in p            # 포즈 유출 차단
     assert "shoes or accessories" in p                       # 의류·신발 유출 차단(실험서 관찰된 실패)
     assert "FRAMING OVERRIDE" in p                           # 예시 크롭보다 요청 샷이 우선
+    assert "Pose: natural and unforced" in p                 # 빈 배경은 포즈를 제어하지 않음
     # bg 자산 = 빈 무대 플레이트(전용 variant) 우선
     base = "https://assets.example.test/generated-examples"
     assert cut.resolve_example_asset("ex_styling_top_full_1", base, scope="bg").endswith("plate+1")
@@ -189,30 +424,76 @@ def test_render_named_pose_overrides_pose_scope_example():
     assert "Composition nuance" not in resolved and "REFERENCE SCOPE" not in resolved
 
 
-def test_render_ref_scope_pose_appends_guard():
+def test_unresolved_pose_and_bg_examples_fail_closed_without_fake_reference():
     template = cut.load_cut_template()
     base = {"cutType": "styling", "direction": "front", "exampleId": "ex_1"}
     kw = dict(product={}, analysis={}, clothing_type="top", image_manifest="(no images)")
     pose_prompt = cut.render_cut_prompt(template, cut.normalize_spec({**base, "refScope": "pose"}), **kw)
+    bg_prompt = cut.render_cut_prompt(template, cut.normalize_spec({**base, "refScope": "bg"}), **kw)
     all_prompt = cut.render_cut_prompt(template, cut.normalize_spec(base), **kw)
-    assert "REFERENCE SCOPE" in pose_prompt          # 포즈만 — 배경 미전이 가드 포함
-    assert "REFERENCE SCOPE" not in all_prompt       # 전부 — 가드 없음(기존 동작 불변)
-    assert "Composition nuance" in pose_prompt       # 예시 뉘앙스는 그대로 유지
+    assert "REFERENCE SCOPE" not in pose_prompt
+    assert "REFERENCE SCOPE" not in bg_prompt
+    assert "Composition nuance" not in pose_prompt
+    assert "Composition nuance" not in bg_prompt
+    assert "Composition nuance" in all_prompt        # v0 공용 예시만 결정적 뉘앙스 유지
 
 
-def test_example_asset_pose_scope_prefers_cutout_variant():
-    # 스파이크(2026-07-12) 확정: pose 스코프는 누끼(pose variant) 우선, 없으면 all 폴백
+def test_example_asset_pose_scope_prefers_cutout_variant(dev_example_registry):
+    # pose 스코프는 전용 누끼만 허용한다. 일반 사진으로 폴백하면 배경·옷이 유출된다.
     base = "https://assets.example.test/generated-examples"
     all_url = cut.resolve_example_asset("ex_styling_top_full_1", base, scope="all")
     pose_url = cut.resolve_example_asset("ex_styling_top_full_1", base, scope="pose")
     assert all_url and all_url.endswith("DEV+styling+example+1")
     assert pose_url and pose_url.endswith("DEV+styling+cutout+1")
-    # pose variant 미등록 예시는 all 로 폴백 (문자열 등록 형태)
-    fallback = cut.resolve_example_asset("ex_horizon_top_full_1", base, scope="pose")
-    assert fallback and fallback.endswith("DEV+horizon+example+1")
+    assert cut.resolve_example_asset("ex_horizon_top_full_1", base, scope="pose") is None
 
 
-def test_example_asset_resolution_uses_registry_and_base_override():
+def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path, monkeypatch):
+    registry = {
+        "_meta": {"defaultBaseUrl": "https://images.example.test"},
+        "assets": {
+            "v2": {
+                "all": "releases/r1/all/v2.png",
+                "thumb": "releases/r1/thumb/v2.webp",
+                "applicableClothingTypes": ["top", "outer"],
+                "cutType": "styling", "shot": "full", "gender": "women",
+            },
+            "product": {
+                "all": "releases/r1/all/product.png",
+                "thumb": "releases/r1/thumb/product.webp",
+                "applicableClothingTypes": ["top"],
+                "cutType": "product", "shot": "ghost", "gender": None,
+            },
+            "legacy-string": "legacy/all.png",
+            "legacy-dict": {"all": "legacy/dict.png", "pose": "legacy/pose.png"},
+        },
+    }
+    path = tmp_path / "example_assets.json"
+    path.write_text(json.dumps(registry), encoding="utf-8")
+    monkeypatch.setattr(cut, "_DEFAULT_EXAMPLE_ASSETS", str(path))
+    cut.load_example_asset_registry.cache_clear()
+    try:
+        base, assets = cut.load_example_asset_registry()
+        assert base == "https://images.example.test"
+        assert assets["v2"]["applicableClothingTypes"] == ["top", "outer"]
+        assert assets["v2"]["thumb"].endswith("v2.webp")
+        assert "gender" in assets["product"] and assets["product"]["gender"] is None
+        assert assets["legacy-string"] == {"all": "legacy/all.png"}
+        assert assets["legacy-dict"] == {
+            "all": "legacy/dict.png", "pose": "legacy/pose.png",
+        }
+        assert cut.example_asset_status("v2", "bottom", "all") == "not_applicable"
+        assert cut.example_asset_status("v2", "top", "pose") == "variant_unpublished"
+        assert cut.resolve_example_asset("v2", clothing_type="bottom") is None
+        assert cut.resolve_example_asset("v2", clothing_type="top") == (
+            "https://images.example.test/releases/r1/all/v2.png"
+        )
+        assert cut.example_asset_status("legacy-string", "dress", "all") == "available"
+    finally:
+        cut.load_example_asset_registry.cache_clear()
+
+
+def test_example_asset_resolution_uses_registry_and_base_override(dev_example_registry):
     resolved = cut.resolve_example_asset(
         "ex_styling_top_full_1", "https://assets.example.test/generated-examples")
     assert resolved == (
@@ -232,10 +513,13 @@ def test_resolved_example_manifest_and_prompt_apply_all_scope():
         manifest=manifest,
     )
     assert "EXAMPLE REFERENCE (scope: all)" in manifest
-    assert "source of background, lighting, mood, pose and composition" in manifest
+    assert "source of background, lighting, mood, pose and framing/composition" in manifest
     assert "follow the attached EXAMPLE REFERENCE's background/location" in p
     assert "Swap in the exact garment from PRODUCT references" in p
+    assert "garments, shoes, accessories" in p
+    assert "PRODUCT and MATCHING are the ONLY clothing sources" in p
     assert "camera direction" in p and "remain\nfixed requirements" in p
+    assert "Pose: natural and unforced" not in p
 
 
 def test_resolved_example_manifest_and_prompt_apply_pose_only_scope():
@@ -248,10 +532,19 @@ def test_resolved_example_manifest_and_prompt_apply_pose_only_scope():
         manifest=manifest,
     )
     assert "EXAMPLE REFERENCE (scope: pose)" in manifest
-    assert "source of pose and framing ONLY" in manifest
-    assert "follow ONLY the pose and\nframing nuance" in p
-    assert "Do NOT carry over the example's background, location or props" in p
+    assert "source of pose ONLY" in manifest
+    assert "CUT TYPE and FRAMING control" in manifest
+    assert "follow ONLY the pose" in p
+    assert "screen-left versus screen-right limb placement" in p
+    assert "Do not mirror it" in p
+    assert "CUT TYPE and FRAMING requested above control" in p
+    assert "adjust it naturally" not in p
+    assert "Do NOT carry over" in p
+    assert "the example's background, location, lighting, mood, garments" in p
+    assert "shoes or accessories" in p
     assert "follow the attached EXAMPLE REFERENCE's background/location" not in p
+    assert "Composition nuance" not in p
+    assert "Pose: natural and unforced" not in p
 
 
 def test_unresolved_example_keeps_v0_nuance_only_fallback():
@@ -279,7 +572,7 @@ def test_in_space_resolved_example_forces_pose_scope_prompt():
     assert spec["refScope"] == "pose"
     assert "EXAMPLE REFERENCE (scope: pose)" in manifest
     assert "SPACE CONTINUITY" in p
-    assert "Do NOT carry over the example's background" in p
+    assert "Do NOT carry over" in p and "the example's background" in p
     assert "follow the attached EXAMPLE REFERENCE's background/location" not in p
 
 
@@ -292,7 +585,7 @@ def test_resolved_product_example_keeps_product_cut_invariants():
     p = _render(spec, manifest=manifest)
     assert "source of background, lighting, mood, framing and composition" in manifest
     assert "mood, pose and composition" not in manifest
-    assert "never copy its garment, person, model identity or pose" in manifest
+    assert "never copy its garments, shoes, accessories, person, model identity or pose" in manifest
     assert "still a PRODUCT CUT" in p
     assert "do not add a person" in p
     assert "follow the attached EXAMPLE REFERENCE's background/location" in p
@@ -310,7 +603,7 @@ def test_resolved_all_side_keeps_camera_direction_invariant():
     assert "camera direction" in p and "remain\nfixed requirements" in p
 
 
-def test_dummy_example_base_is_dev_only_without_override():
+def test_dummy_example_base_is_dev_only_without_override(dev_example_registry):
     prod = make_settings(app_env="prod", example_asset_base_url=None)
     dev = make_settings(app_env="dev", example_asset_base_url=None)
     assert cut.resolve_example_asset("ex_styling_top_full_1")
@@ -333,7 +626,7 @@ def _render(spec_raw, clothing_type="top", product=None, analysis=None, manifest
 
 
 def test_render_mirror_prompt_sections():
-    p = _render({"cutType": "mirror", "shot": "knee"},
+    p = _render({"cutType": "mirror", "shot": "medium"},
                 product={"name": "골지 니트", "clothing_type": "top"},
                 analysis={"materials": [{"name": "코튼", "ratio": 60}]})
     assert "MIRROR SELFIE" in p               # 거울샷 섹션
@@ -341,19 +634,35 @@ def test_render_mirror_prompt_sections():
     assert "Camera angle" not in p            # 방향 지시 없음
     assert "${" not in p                      # 미해결 토큰 없음
     assert "PRODUCT CONTEXT" in p             # ground-truth 블록 주입
-    assert "head to around the knees" in p    # knee × top 크롭
+    assert "head to the waist" in p           # medium × top 크롭
 
 
-def test_render_bottom_close_uses_lower_crop():
-    p = _render({"cutType": "horizon", "shot": "close", "direction": "front"}, clothing_type="bottom")
-    assert "hip and thigh" in p               # close × bottom = 하체 클로즈업
+def test_render_bottom_medium_uses_lower_crop():
+    p = _render({"cutType": "horizon", "shot": "medium", "direction": "front"}, clothing_type="bottom")
+    assert "legs up to the waist" in p        # medium × bottom = 하체 중간샷
     assert "seamless studio backdrop" in p    # 호리존 섹션
 
 
-def test_render_product_flatlay_has_no_person_lines():
+def test_render_retired_product_flatlay_uses_ghost_presentation_contract():
     p = _render({"cutType": "product", "shot": "flatlay", "direction": "back"})
-    assert "laid flat" in p and "Show the back side" in p
+    assert "ghost-mannequin volume" in p
+    assert "laid-flat, top-down presentation" in p
+    assert "Show the back side" in p
     assert "Face handling" not in p           # 제품컷엔 얼굴 지시 없음
+
+
+def test_render_product_detail_requires_loaded_detail_reference():
+    with pytest.raises(ValueError, match="detail_reference_required"):
+        _render({"cutType": "product", "shot": "detail"})
+
+
+def test_render_product_detail_is_grounded_and_has_no_person_lines():
+    manifest = f"1. {cut._SLOT_LABEL['Detail']}"
+    p = _render({"cutType": "product", "shot": "detail"}, manifest=manifest)
+    assert "tight product-only close-up" in p
+    assert "never invent lining, hardware" in p
+    assert "No model and no visible human body parts" in p
+    assert "Face handling" not in p
 
 
 @pytest.mark.parametrize("state, phrase", [
@@ -418,7 +727,7 @@ def test_render_front_direction_declares_band():
 
 
 def test_render_leaves_no_section_markers():
-    for spec in ({"cutType": "mirror"}, {"cutType": "product", "shot": "hanger"},
+    for spec in ({"cutType": "mirror"}, {"cutType": "product", "shot": "ghost"},
                  {"cutType": "horizon", "shot": "medium"}):
         p = _render(spec)
         assert "[[" not in p                  # 섹션 마커가 모델 프롬프트에 새지 않는다

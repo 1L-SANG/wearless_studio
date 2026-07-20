@@ -18,30 +18,129 @@ const MEASUREMENT_TEMPLATE = [
   { key: 'sleeveLength', value: null, unit: 'cm' },
 ];
 
-// 기본 콘티(7컷, d2fb3ee 원 구성) — http getStoryboard 가 저장 콘티 없을 때 시드한다.
-// 블록 shape 은 d2fb3ee mock sb() 와 동일(콘티 인스펙터가 무가드로 읽는 필드 전부).
+// 기본/확장 콘티 — http getStoryboard 가 저장 콘티 없을 때 시드한다.
+// mock buildStoryboard와 같은 역할 중심 블록 shape을 만든다.
 import { uid } from '@/lib/ids.js';
 import { Placeholder as P } from '@/mock/placeholders.js';
+import { ensureSections } from '@/lib/sections.js';
+import {
+  CONTENT_ROLES,
+  SECTION_ROLES,
+  STORYBOARD_TAXONOMY_VERSION,
+  contentTitle,
+  hasDetailSource,
+} from '@/lib/storyboardTaxonomy.js';
 
-const sb = (kind, title, cutType, direction, shot, colorId) => ({
-  id: uid('blk'), kind, title, source: 'ai', cutType, direction, shot, colorId,
+const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) => ({
+  id: uid('blk'), sectionRole, contentRole, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
+  title: contentTitle(contentRole), source: 'ai', cutType, direction, shot, colorId,
   pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
-  thumb: P.photo(kind + title, cutType === 'product' ? 'product' : cutType === 'horizon' ? 'horizon' : 'styling', 240, 320),
+  thumb: P.photo(contentRole + shot, cutType === 'product' ? 'product' : cutType === 'horizon' ? 'horizon' : 'styling', 240, 320),
   poseThumb: P.pose('stand'), poseLabel: 'AI 자동',
+  ...(extra || {}),
 });
 
-export function defaultStoryboard(colors) {
+export function defaultStoryboard(colors, mode = 'basic') {
+  if (mode !== 'basic' && mode !== 'extended') throw new Error('invalid_compose_mode');
   const list = Array.isArray(colors) && colors.length ? colors : [{ id: 'col1', isBase: true }];
   const base = (list.find((c) => c.isBase) || list[0]).id;
-  return [
-    sb('hook', '후킹', 'horizon', 'front', 'full', base),
-    sb('selling', '셀링포인트', 'product', 'front', 'ghost', base),
-    sb('styling', '스타일링컷', 'styling', 'side', 'medium', base),
-    sb('styling', '스타일링컷', 'styling', 'front', 'knee', base),
-    sb('horizon', '호리존컷', 'horizon', 'front', 'knee', base),
-    sb('horizon', '호리존컷', 'horizon', 'back', 'full', base),
-    sb('product', '제품컷', 'product', 'front', 'ghost', base),
+  const hasDetail = hasDetailSource({ colors: list });
+  const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
+  const spacePair = (colorId) => {
+    const spaceGroupId = uid('sg');
+    return [
+      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'full', colorId, { spaceGroupId, spaceVariation: 'subtle' }),
+      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'side', 'medium', colorId, { spaceGroupId, spaceVariation: 'subtle' }),
+    ];
+  };
+  const blocks = [
+    sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.HERO, 'styling', 'front', 'full', base),
+    sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.BENEFIT, 'horizon', 'front', 'medium', base),
   ];
+  if (mode === 'extended') {
+    list.slice(0, 4).forEach((color, colorIndex) => {
+      blocks.push(
+        ...spacePair(color.id),
+        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
+        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', color.id),
+        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
+      );
+      if (colorIndex === 0) blocks.push(
+        sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', color.id),
+        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'side', 'full', color.id),
+        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'full', color.id),
+      );
+    });
+    blocks.push(
+      sb(SECTION_ROLES.FIT, CONTENT_ROLES.REAL_WEAR, 'mirror', null, 'full', base, { faceExposure: 'hide' }),
+      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
+      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base),
+    );
+    if (hasDetail) blocks.push(sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor));
+  } else {
+    blocks.push(
+      ...spacePair(base),
+      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', base),
+      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', base),
+      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'side', 'full', base),
+      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', base),
+      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', base),
+      sb(SECTION_ROLES.FIT, CONTENT_ROLES.REAL_WEAR, 'mirror', null, 'full', base, { faceExposure: 'hide' }),
+      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
+      hasDetail
+        ? sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor)
+        : sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base),
+    );
+  }
+  return ensureSections(blocks);
+}
+
+/* id·썸네일처럼 시드할 때마다 바뀌는 표시 필드를 빼고, 사용자가
+   바꿀 수 있는 의미/생성/배치 필드만 비교한다. HTTP에서 사진 양을
+   바꾸었을 때 '손대지 않은 기본 콘티'만 새 모드로 교체하기 위한 지문이다. */
+function storyboardTemplateFingerprint(blocks) {
+  const spaceIds = new Map();
+  const rowIds = new Map();
+  const ordinal = (map, value) => {
+    if (!value) return null;
+    if (!map.has(value)) map.set(value, map.size + 1);
+    return map.get(value);
+  };
+  return JSON.stringify((blocks || []).map((block) => ({
+    taxonomyVersion: block.taxonomyVersion,
+    sectionRole: block.sectionRole,
+    contentRole: block.contentRole,
+    source: block.source,
+    cutType: block.cutType ?? null,
+    direction: block.direction ?? null,
+    shot: block.shot ?? null,
+    colorId: block.colorId ?? null,
+    colorIds: block.colorIds || [],
+    pose: block.pose ?? null,
+    matchIds: block.matchIds || [],
+    faceExposure: block.faceExposure ?? null,
+    angle: block.angle ?? null,
+    outerClosureState: block.outerClosureState ?? null,
+    exampleId: block.exampleId ?? null,
+    refScope: block.refScope ?? null,
+    refImages: block.refImages || [],
+    refAssetIds: block.refAssetIds || [],
+    ownImages: block.ownImages || [],
+    spaceGroup: ordinal(spaceIds, block.spaceGroupId),
+    spaceVariation: block.spaceVariation ?? null,
+    sectionLayout: block.sectionLayout || 'stack',
+    sectionCustom: !!block.sectionCustom,
+    layoutRow: ordinal(rowIds, block.layoutRowId),
+    layoutRowVersion: block.layoutRowVersion ?? null,
+  })));
+}
+
+export function isDefaultStoryboardForMode(blocks, colors, mode) {
+  if (!Array.isArray(blocks) || !blocks.length) return false;
+  // v2 계약을 충족하지 않는 보드는 기본 시드로 간주해 교체하지 않는다.
+  if (blocks.some((block) => block.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION)) return false;
+  return storyboardTemplateFingerprint(blocks)
+    === storyboardTemplateFingerprint(defaultStoryboard(colors, mode));
 }
 
 // analyzeProduct 의 shape 뼈대 — AnalysisForm 이 무가드로 읽는 필드 전부 포함(계약 §6).

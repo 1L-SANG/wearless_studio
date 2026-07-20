@@ -1335,8 +1335,9 @@ async def finalize_editor_image_success(
     async with conn.cursor() as cur:
         await cur.execute(
             "update jobs set status = 'done', result = %s, credits_charged = %s, progress = 100, "
-            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (Json(envelope), charge, job_id),
+            "metadata = metadata || %s::jsonb, locked_by = null, locked_at = null, "
+            "finished_at = now() where id = %s",
+            (Json(envelope), charge, Json(metadata), job_id),
         )
         # 종결 이벤트 — 같은 tx (SSE replay 원본). 상태 변경과 원자적. result와 동일 shape.
         await cur.execute(

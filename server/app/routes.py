@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import facemarket, repo
-from .agents import fit_axes, mannequin, product_analyst, style_affinity
+from .agents import content_roles, fit_axes, mannequin, product_analyst, style_affinity
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import input_qc, matching, retrieval
@@ -1008,7 +1008,9 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        out = await repo.save_storyboard(conn, user_id, project_id, blocks)
+        out = await repo.save_storyboard(
+            conn, user_id, project_id,
+            content_roles.canonicalize_storyboard(blocks, for_storage=True))
         await conn.commit()
     return out
 
@@ -1078,12 +1080,12 @@ async def generate_editor_image(
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
-    """에디터 AI 탭의 '새 컷 추가'(`mode:'new'`, AG-06 재사용) 또는 '현재 컷 변형'
+    """에디터 AI 탭의 '새 이미지 추가'(`mode:'new'`, AG-06 재사용) 또는 '현재 이미지 수정'
     (`mode:'vary'`, AG-07)을 생성하는 비동기 작업을 요청합니다. `NewCutRequest` /
     `VaryRequest`(계약 §6)를 그대로 본문으로 받습니다.
 
     - **Bearer Token**: 필수
-    - **Body**: `NewCutRequest { mode:'new', colorId, cutType, direction?, shot?, modelId? }` |
+    - **Body**: `NewCutRequest { mode:'new', colorId, contentRole, cutType, direction?, shot?, modelId? }` |
       `VaryRequest { mode:'vary', source:{src,cutType}, changes[], refBg? }`
     - **Header**: `Idempotency-Key` (권장, 중복 차감 및 중복 작업 방지) — `editor_image`는 매 호출이
       새 이미지를 생성하므로(완료 재호출 재사용 없음) 활성-중복 dedup 대상에서 제외되고, 멱등은

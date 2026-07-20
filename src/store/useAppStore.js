@@ -16,6 +16,7 @@ import { resetAnalysisCache } from '@/lib/api/httpAdapter.js';
 import { clearDraft } from '@/lib/draftStore.js';
 
 const mode = import.meta.env.VITE_API_MODE ?? 'mock';
+const normalizeComposeMode = (value) => value === 'extended' ? 'extended' : 'basic';
 
 // http 모드에서만 flow(projectId·resumePath·선택값)를 localStorage 에 영속한다.
 // 목적: 상세페이지 제작 중 다른 페이지로 이탈했다 돌아오거나 cold reload 해도 진행 중 프로젝트를
@@ -26,7 +27,10 @@ function loadPersistedFlow() {
   if (mode !== 'http') return {};
   try {
     const raw = localStorage.getItem(FLOW_KEY);
-    return raw ? JSON.parse(raw) : {};
+    if (!raw) return {};
+    const saved = JSON.parse(raw);
+    if ('composeMode' in saved) saved.composeMode = normalizeComposeMode(saved.composeMode);
+    return saved;
   } catch { return {}; }
 }
 function persistFlow(s) {
@@ -72,6 +76,9 @@ let ensureProjectInflight = null;
 // StrictMode·여러 화면 가드의 동시 호출은 같은 Promise 에 합류시켜 검증 중인 id를 정상으로 오인하지 않는다.
 let flowValidated = false;
 let flowValidationInflight = null;
+// 사진 양 선택 PATCH를 직렬화한다. 사용자가 빠르게 바꾸고 다음으로 가도
+// 오래 걸린 이전 요청이 나중에 도착해 최신 선택을 덮지 않게 한다.
+let composeModePatchChain = Promise.resolve();
 
 export const useAppStore = create((set, get) => ({
   /* ---- account / catalogs (서버 상태의 전역 캐시 — loaded once) ---- */
@@ -194,7 +201,7 @@ export const useAppStore = create((set, get) => ({
       projectId: p.id,
       projectPersisted: true,   // 기존 project 복원 — 이미 보관함에 존재
       selectedMannequinId: p.selectedMannequinId,
-      composeMode: p.composeMode,
+      composeMode: normalizeComposeMode(p.composeMode),
       copywriting: p.copywriting,
       adjustCount: p.adjustCount,
     });
@@ -217,9 +224,14 @@ export const useAppStore = create((set, get) => ({
     api.patchProject(get().projectId, { selectedMannequinId: id });
   },
   setComposeMode(composeMode) {
+    composeMode = normalizeComposeMode(composeMode);
     set({ composeMode });
     persistFlow(get());
-    api.patchProject(get().projectId, { composeMode });
+    const projectId = get().projectId;
+    composeModePatchChain = composeModePatchChain
+      .catch(() => {})
+      .then(() => api.patchProject(projectId, { composeMode }));
+    return composeModePatchChain;
   },
   setCopywriting(copywriting) {
     set({ copywriting });
