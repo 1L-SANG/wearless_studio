@@ -13,7 +13,7 @@ from io import BytesIO
 from PIL import Image
 
 from .. import repo
-from ..agents import copy_qc, copywriter, cut_generator, page_assembler
+from ..agents import content_roles, copy_qc, copywriter, cut_generator, page_assembler
 from ..agents.gemini_image import InlineImage
 from ..r2 import ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
@@ -24,6 +24,7 @@ _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 # 컷·카피 동시 생성 상한. 순차(블록 수 × ~40s)면 4컷에 2~3분 → 병렬로 단축. gemini 버스트
 # 제한을 감안해 무제한이 아닌 소폭 동시성(429 시 이 값을 낮춘다).
 _GEN_CONCURRENCY = 3
+_WORN_CUT_TYPES = ("styling", "horizon", "mirror")
 
 
 def _dims(data: bytes):
@@ -173,8 +174,9 @@ async def _gen_copy(app, job, ai_blocks, product, analysis):
         async with sem:
             try:
                 texts = await copywriter.generate(
-                    s, block_kind=b.get("kind"), cut_type=b.get("cutType"),
-                    product=product, analysis=analysis, color_label=b.get("colorId"))
+                    s, content_role=b.get("contentRole"), section_role=b.get("sectionRole"),
+                    cut_type=b.get("cutType"), product=product, analysis=analysis,
+                    color_label=b.get("colorId"))
             except Exception as e:  # VisionError 포함 — 카피는 게이트 아님, 실패 블록 생략
                 log.warning("AG-02 copy failed for job %s block %s: %r", job["id"], b.get("id"), e)
                 return None
@@ -228,12 +230,22 @@ async def run_detail_page_job(app, job: dict) -> None:
 
     try:
         # 1) 입력 로드 — 옷 레퍼런스 = (있으면) 선택 마네킹컷(핏·기장 기준, ADR-0004)
-        #    + 블록 색상별 상품 슬롯 이미지 + (styling·mirror) 매칭 의류 + 무드 레퍼런스
+        #    + 블록 색상별 상품 슬롯 이미지 + 모든 착용컷의 매칭 의류 + 무드 레퍼런스
         async with pool.connection() as conn:
             project = await repo.get_project(conn, user_id, project_id) or {}
             storyboard = await repo.get_storyboard(conn, project_id)
+            if not getattr(s, "genexample_bg_enabled", False) and any(
+                isinstance(block, dict)
+                and (block.get("refScope") or block.get("ref_scope")) == "bg"
+                and bool(block.get("exampleId") or block.get("example_id"))
+                for block in storyboard
+            ):
+                raise ValueError("genexample_bg_disabled")
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
+            # contentRole가 사용자 선택의 정본이다. 저장 입력을 여기서도 방어적으로
+            # 정규화해 매칭 첨부·컷·카피·조립이 모두 같은 역할/레시피를 읽게 한다.
+            storyboard = content_roles.canonicalize_storyboard(storyboard)
             ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
             # StoryboardBlock에는 modelId가 없다(계약 §3.4). 상세페이지의 프로젝트 단위 선택값은
             # Analysis.selectedModelId가 정본이며, 아래 prep에서 저장 블록을 바꾸지 않고 런타임 주입한다.
@@ -275,21 +287,35 @@ async def run_detail_page_job(app, job: dict) -> None:
                     if f"{c.get('candidate')}-{c.get('version')}" == sel and c.get("asset_id"):
                         mannequin_asset = await repo.get_asset_for_user(conn, user_id, str(c["asset_id"]))
                         break
-            color_assets: dict = {}   # colorId → [asset(slot 포함)] — 블록 간 재사용
+            color_assets: dict = {}   # (colorId, detail 여부) → [asset(slot 포함)] — 블록 간 재사용
+            detail_color_transfers: dict = {}  # 위 키 → 타색 Detail의 목표색 전환 정보|None
             match_assets: dict = {}   # matchingItemId → asset|None
             mood_assets: dict = {}    # refAssetId → asset|None (소유 검증 겸함)
+            def _color_key(block: dict) -> str | None:
+                value = block.get("colorId")
+                return None if value is None else str(value)
+
+            def _is_detail(block: dict) -> bool:
+                return block.get("cutType") == "product" and block.get("shot") == "detail"
+
             for b in ai_blocks:
-                ckey = b.get("colorId") or None
-                if ckey not in color_assets:
+                ckey = _color_key(b)
+                asset_key = (ckey, _is_detail(b))
+                if asset_key not in color_assets:
                     rows = []
-                    for slot, aid in cut_generator.color_images(product, ckey):
+                    if asset_key[1]:
+                        image_refs, transfer = cut_generator.detail_reference_images(product, ckey)
+                    else:
+                        image_refs, transfer = cut_generator.color_images(product, ckey), None
+                    for slot, aid in image_refs:
                         a = await repo.get_asset_for_user(conn, user_id, aid)
                         if a:
                             a["slot"] = slot
                             rows.append(a)
-                    color_assets[ckey] = rows
+                    color_assets[asset_key] = rows
+                    detail_color_transfers[asset_key] = transfer
                 mids = b.get("matchIds") or []
-                if mids and b.get("cutType") in ("styling", "mirror") and str(mids[0]) not in match_assets:
+                if mids and b.get("cutType") in _WORN_CUT_TYPES and str(mids[0]) not in match_assets:
                     m_aid = await repo.get_matching_item_asset(conn, str(mids[0]))
                     match_assets[str(mids[0])] = (
                         await repo.get_asset_for_user(conn, user_id, m_aid) if m_aid else None)
@@ -361,8 +387,11 @@ async def run_detail_page_job(app, job: dict) -> None:
         # (runtime block, images, manifest, has_face) — images 순서는 build_manifest 계약과 동일.
         prepared = []
         _example_cache: dict[str, InlineImage | None] = {}
+        example_warnings: list[dict] = []
         for b in ai_blocks:
             cut_spec = dict(b)
+            # 저장/클라이언트가 런타임 전용 지시를 주입하지 못하게 매번 실제 선택 결과로 재구성한다.
+            cut_spec.pop("_detailColorTransfer", None)
             # 저장 콘티에 우연히 남은 비계약 필드가 프로젝트 선택 모델을 덮지 못하게 제거 후 주입한다.
             cut_spec.pop("modelId", None)
             cut_spec.pop("model_id", None)
@@ -373,7 +402,10 @@ async def run_detail_page_job(app, job: dict) -> None:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             except ValueError:
                 normalized = None  # generate()가 블록 단위 실패로 처리하는 기존 경로 유지
-            prods = color_assets.get(b.get("colorId") or None, [])
+            asset_key = (_color_key(b), _is_detail(b))
+            prods = color_assets.get(asset_key, [])
+            if detail_color_transfers.get(asset_key):
+                cut_spec["_detailColorTransfer"] = detail_color_transfers[asset_key]
             # 옷 근거(상품 사진 또는 마네킹컷)가 없으면 생성 불가 — 무드/매칭만으로 진행하면
             # 모델이 레퍼런스 속 옷을 지어내거나 베낀다(ADR-0004 정확성 최우선). 스킵 표식.
             # 얼굴은 이 가드 **뒤에서만** 붙는다 — 여기 얼굴을 넣으면 images 가 비지 않아
@@ -382,7 +414,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 prepared.append((cut_spec, [], "", False))
                 continue
             mids = b.get("matchIds") or []
-            match_a = match_assets.get(str(mids[0])) if mids and b.get("cutType") in ("styling", "mirror") else None
+            match_a = match_assets.get(str(mids[0])) if mids and b.get("cutType") in _WORN_CUT_TYPES else None
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
             # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·거울샷 기본(폰이 가림)·
             # 뒷모습·머리가 프레임 밖인 샷은 제외(cut_generator.wants_face 가 단일 규칙).
@@ -430,15 +462,36 @@ async def run_detail_page_job(app, job: dict) -> None:
                 pose_overrides_example = normalized is not None \
                     and normalized["pose"] != "auto" and normalized["refScope"] == "pose"
                 if normalized is not None and not pose_overrides_example:
-                    # 캐시 키에 scope 포함 — pose는 누끼 variant, all은 원본이라 자산이 다르다
-                    cache_key = f"{example_id}:{normalized['refScope']}"
-                    if cache_key not in _example_cache:
-                        _example_cache[cache_key] = await cut_generator.load_example_image(
-                            s, example_id, scope=normalized["refScope"])
-                    example_img = _example_cache[cache_key]
-                    if example_img is not None:
-                        imgs.append(example_img)
-                        example_scope = normalized["refScope"]
+                    scope = normalized["refScope"]
+                    status = cut_generator.example_asset_status(
+                        example_id, clothing_type, scope)
+                    if status in ("not_applicable", "variant_unpublished"):
+                        example_warnings.append({
+                            "code": "example_not_applicable"
+                            if status == "not_applicable" else "example_variant_unpublished",
+                            "blockId": b.get("id"),
+                            "exampleId": example_id,
+                            "clothingType": clothing_type,
+                            "refScope": scope,
+                        })
+                        # 이미지 미첨부만으로는 all 범위의 레거시 EXNUANCE 해시가 남는다.
+                        # 부적합/미발행 예시가 텍스트로도 영향을 주지 않게 런타임 사본에서 해제한다.
+                        cut_spec["exampleId"] = None
+                    else:
+                        # 캐시 키에 scope 포함 — pose는 누끼 variant, all은 원본이라 자산이 다르다
+                        cache_key = f"{example_id}:{scope}"
+                        if cache_key not in _example_cache:
+                            _example_cache[cache_key] = await cut_generator.load_example_image(
+                                s, example_id, scope=scope, clothing_type=clothing_type)
+                        example_img = _example_cache[cache_key]
+                        if example_img is not None:
+                            # bg 플레이트는 첫 첨부(에디터 경로와 동일) — 마지막 첨부는 컷 섹션의
+                            # 배경 나열에 밀려 무시된다(2026-07-20 파일럿 실측).
+                            if scope == "bg":
+                                imgs.insert(0, example_img)
+                            else:
+                                imgs.append(example_img)
+                            example_scope = scope
             manifest = cut_generator.build_manifest(
                 prods, has_mannequin=mannequin_asset is not None,
                 has_match=match_a is not None, mood_count=len(moods),
@@ -458,6 +511,15 @@ async def run_detail_page_job(app, job: dict) -> None:
         cut_results, cut_assets, face_cuts = await _gen_cuts(app, job, prepared, product, analysis)
         await _emit(pool, job_id, "progress", {"progress": 65, "phase": "cuts",
                                                "generated": len(cut_assets)})
+        if ai_blocks and not cut_assets:
+            # AI 컷이 하나도 없는데 done으로 종결하면 빈 상세페이지가 완성본처럼 보이고
+            # 완료 화면 가드와도 충돌한다. 예약 크레딧을 환불하는 실패 종결로 보낸다.
+            await _fail(
+                "이미지를 만들지 못했어요. 상품 사진과 컷 설정을 확인한 뒤 다시 시도해 주세요.",
+                {"error": "all_cuts_failed", "requestedCuts": len(ai_blocks)},
+                code="all_cuts_failed",
+            )
+            return
 
         # 3) 카피(선택) + 검수
         copy_results = await _gen_copy(app, job, ai_blocks, product, analysis) if copywriting else []
@@ -489,11 +551,17 @@ async def run_detail_page_job(app, job: dict) -> None:
         if per_cut is None:  # legacy 잡(스냅샷 도입 전 큐 잔여분)
             per_cut = s.credit_cost_storyboard_per_cut
         charge = min(len(cut_assets) * per_cut, reserved)
+        success_metadata = {
+            "creditCostVersion": s.credit_cost_version,
+            "generatedCuts": len(cut_assets),
+        }
+        if example_warnings:
+            success_metadata["warnings"] = example_warnings
         async with pool.connection() as conn:
             out = await repo.finalize_detail_page_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id, project_id=project_id,
                 editor_blocks=editor_blocks, cut_assets=cut_assets, reserved=reserved, charge=charge,
-                metadata={"creditCostVersion": s.credit_cost_version, "generatedCuts": len(cut_assets)})
+                metadata=success_metadata)
             await conn.commit()
         if out is None:  # lease 상실 → 방금 올린 R2 객체 best-effort 정리
             for c in cut_assets:
@@ -527,4 +595,13 @@ async def run_detail_page_job(app, job: dict) -> None:
                     except Exception:
                         log.warning("facemarket settlement hook failed for job %s", job_id)
     except Exception as e:
-        await _fail("상세페이지 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
+        error = str(e)[:300]
+        await _fail(
+            "배경만 생성예시는 현재 사용할 수 없어요. 콘티에서 해당 예시를 제거해 주세요."
+            if error == "genexample_bg_disabled"
+            else "상세페이지 생성에 실패했어요. 다시 시도해 주세요.",
+            {"error": error},
+            code="genexample_bg_disabled"
+            if error == "genexample_bg_disabled"
+            else "generation_failed",
+        )

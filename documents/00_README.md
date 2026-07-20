@@ -3,7 +3,7 @@
 > 패션 셀러용 AI 상세페이지 제작 스튜디오. 이 폴더는 Wearless의 **살아있는 제품·기술 문서 묶음**이다.
 > 현행 구현: **Vite + React SPA**(`src/`, 듀얼 어댑터 mock|http). **FastAPI + Supabase + R2 백엔드 구축·배포 완료** — 연동 진행 현황은 `backend_integration_plan.md`.
 > **Next.js 전환은 지금 하지 않는다** — DAU·SEO·공유 링크 신호가 올 때 별도 결정한다(`03_기술스택_결정서.md` §4).
-> 최종 갱신: 2026-06-29
+> 최종 갱신: 2026-07-19
 
 ---
 
@@ -12,6 +12,7 @@
 | 문서 | 내용 |
 |---|---|
 | `PRD.md` | 정본 PRD — 17개 섹션 (화면·정책·데이터·MVP 우선순위) |
+| `storyboard_sections_design.md` | 콘티보드 분류 결정 기록 — **현행 규칙은 §8**(핵심 장점 → 핏·코디 → 제품 확인) |
 | `03_기술스택_결정서.md` | 스택 결정 — Vite 유지·점진 도입 로드맵·Next 전환 신호 |
 | `common_data_contract.md` | 공통 데이터 계약 — 엔티티·enum·API·멱등/크레딧 규약 (`src/lib/types.js`와 동기) |
 | `frontend_state_model.md` | 프론트 상태 3계층 모델 (서버/전역 클라이언트/화면 로컬) |
@@ -19,7 +20,7 @@
 | `ai_pipeline_spec.md` | AI 파이프라인 명세 — PL-1~6, job 모델, 크레딧 트랜잭션 |
 | `backend_integration_plan.md` | 백엔드 연동 계획 + **실행 로드맵(§10)** ← 진행 현황·남은 단계의 정본 |
 | `TODO.md` | 구현 현황·할 일 — 코드↔계약 갭(✅/🔶/🆕)·정책 오픈이슈. 설계 문서 대신 **여기만 주기 갱신** |
-| `/CONTEXT.md` · `/docs/adr/` | 용어집 · 아키텍처 결정 기록(ADR 0001~0003) |
+| `/CONTEXT.md` · `/docs/adr/` | 용어집 · 아키텍처 결정 기록(ADR 0001~0009) |
 | `/handoff/` (contracts·design·screens) | 과거 프로토타입 인수인계 산출물 — **참조용**. 계약의 현행 정본은 위 문서들과 `src/lib/types.js` |
 
 ## 2. 읽는 순서 (역할별)
@@ -28,6 +29,7 @@
 - **프론트엔드** → `frontend_state_model.md` → `common_data_contract.md` → `PRD.md §10`(에디터)
 - **백엔드** → `common_data_contract.md`(계약) → `backend_integration_plan.md`(스키마·HTTP·job) → `ai_pipeline_spec.md`
 - **디자이너** → `src/styles/tokens.css` + `handoff/design`·`handoff/screens` + `PRD.md §14`
+- **콘티·생성예시** → `PRD.md` §8 → `storyboard_sections_design.md` §8 → ADR-0004~0009 → `TODO.md`의 실제 생성예시 카탈로그 배선 체크포인트
 
 ## 3. 진행 현황 및 남은 단계 (정본은 `backend_integration_plan.md` §10)
 
@@ -48,7 +50,9 @@
 ## 5. 알아둘 점
 
 - 현행 앱은 **듀얼 어댑터**로 동작한다(`VITE_API_MODE=mock|http`). 기본값은 mock(`src/mock/`)이며, 이 mock은 단순 더미가 아니라 **실행 가능한 계약**(유료 job 멱등 합류, 크레딧 봉투, 매칭 소유권 머지)이자 parity 기준이므로 Phase 7 전까지 제거하지 않는다.
-- 모든 API 함수는 **async Promise**이고, 장시간 작업은 `onProgress`/`onStep` 콜백을 받는다 → 실서버는 SSE/폴링을 어댑터가 콜백으로 변환한다(backend plan §5).
+- 모든 API 함수는 **async Promise**이고, 장시간 작업의 실서버 경로는 job 폴링을 `onProgress` 콜백으로 바꾼다. `onStep` 체크리스트는 현재 mock에만 있으며 HTTP 배선은 TODO다(backend plan §5).
 - **실측은 AI가 추정하지 않는다** — 분석 응답에서 measurement value는 null, 사용자가 직접 입력한다.
 - **세탁 안내는 분석이 아니라 에디터 자동 블록**에서 생성된다.
+- **콘티보드의 사용자 분류는 세 섹션**이다 — 핵심 장점 → 핏·코디 → 제품 확인. 카드에서는 첫 장면·핏 확인·제품 전체처럼 더 구체적인 **사진 목적**을 고른다. 스타일링·호리존·제품·거울은 화면 분류가 아니라 내부 생성 방식이다(ADR-0005).
+- **사진 양은 기본형·확장형 두 가지**다. 페이지 순서는 같고 확장형이 사진만 더 많이 만든다.
 - 디자인 토큰은 `src/styles/tokens.css`의 `var(--*)`만 사용한다. 임의 색·토큰 금지.

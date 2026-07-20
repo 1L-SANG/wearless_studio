@@ -202,7 +202,7 @@
 .fit-fmsg b { color: var(--fg-1); font-weight: 700; }
 .fit-cta-progress { margin-bottom: 12px; }
 
-/* 상세페이지 구성 선택 (간단형 / 기본형 / 확장형) — 라벨 한 단계 크게·한 단계 얇게 */
+/* 상세페이지 사진 양 선택 (기본형 / 확장형) — 라벨 한 단계 크게·한 단계 얇게 */
 .fit-cmp2 { display: flex; gap: 8px; margin-bottom: 13px; }
 .fit-cmp { position: relative; flex: 1; border: 2px solid var(--ring-strong); background: var(--bg-1); border-radius: var(--r-5); padding: 13px 8px; cursor: pointer; text-align: center; color: var(--fg-1); font: inherit; transition: border-color .12s, background .12s; }
 .fit-cmp:hover { border-color: var(--link); }

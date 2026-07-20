@@ -580,7 +580,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
       {/* 6. match clothing — full width */}
       <div className="surface">
         <div className="sec-title" style={{ marginBottom: 6 }}>매칭 의류</div>
-        <div className="sec-sub" style={{ marginBottom: 16 }}>스타일링컷 생성에 쓰여요 · 메인 최대 2개</div>
+        <div className="sec-sub" style={{ marginBottom: 16 }}>핏·코디 이미지 생성에 쓰여요 · 메인 최대 2개</div>
         <div className="model-grid">
           {a.matchClothing.map((m) => (
             <div key={m.id} className={`model-card${m.selected ? ' on' : ''}`} style={{ width: 110 }}

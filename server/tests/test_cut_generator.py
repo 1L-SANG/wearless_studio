@@ -30,6 +30,108 @@ def test_build_prompt_manifest_fallback_no_images():
     assert "product photos" in p.lower()
 
 
+def test_build_prompt_product_detail_requires_detail_slot_across_all_colors():
+    product = {"name": "니트", "colors": [
+        {"id": "base", "isBase": True, "images": [{"slot": "Front", "id": "a1"}]},
+        {"id": "other", "images": [{"slot": "Back", "id": "a2"}]},
+    ]}
+    with pytest.raises(ValueError, match="detail_reference_required"):
+        cg.build_prompt({"cutType": "product", "shot": "detail"}, product)
+
+
+def test_build_prompt_product_detail_uses_detail_slot():
+    product = {"name": "니트", "colors": [{"isBase": True, "images": [
+        {"slot": "Front", "id": "a1"}, {"slot": "Detail", "id": "a2"},
+    ]}]}
+    prompt = cg.build_prompt({"cutType": "product", "shot": "detail"}, product)
+    assert "detail close-up of the garment" in prompt
+    assert "tight product-only close-up" in prompt
+
+
+def test_build_prompt_product_detail_uses_other_color_detail_with_color_transfer():
+    product = {"name": "가디건", "colors": [
+        {"id": "red", "name": "레드", "swatchId": "red", "isBase": True, "images": [
+            {"slot": "Front", "id": "red-front"},
+            {"slot": "Detail", "id": "red-detail"},
+        ]},
+        {"id": "green", "name": "그린", "swatchId": "green", "images": [
+            {"slot": "Front", "id": "green-front"},
+        ]},
+    ]}
+
+    images, transfer = cg.detail_reference_images(product, "green")
+    prompt = cg.build_prompt(
+        {"cutType": "product", "shot": "detail", "colorId": "green"}, product)
+
+    assert images == [("Front", "green-front"), ("Detail", "red-detail")]
+    assert transfer == {
+        "targetName": "그린", "targetHex": "#3f7a4f", "referenceName": "레드",
+    }
+    assert "PRODUCT — detail close-up" in prompt
+    assert "DETAIL COLORWAY TRANSFER" in prompt
+    assert "Target color: 그린 (#3f7a4f)" in prompt
+    assert "fabric structure, shape, and material exactly" in prompt
+    assert "change ONLY their color" in prompt
+    assert "Do not invent any detail" in prompt
+
+
+def test_build_prompt_product_detail_same_color_has_no_color_transfer():
+    product = {"name": "가디건", "colors": [{
+        "id": 7, "name": "그린", "swatchId": "green", "isBase": True,
+        "images": [
+            {"slot": "Front", "id": "green-front"},
+            {"slot": "Detail", "id": "green-detail"},
+        ],
+    }]}
+
+    images, transfer = cg.detail_reference_images(product, "7")
+    prompt = cg.build_prompt(
+        {"cutType": "product", "shot": "detail", "colorId": "7"}, product)
+
+    assert images == [("Front", "green-front"), ("Detail", "green-detail")]
+    assert transfer is None
+    assert "PRODUCT — detail close-up" in prompt
+    assert "DETAIL COLORWAY TRANSFER" not in prompt
+
+
+def test_product_detail_unknown_color_does_not_transfer_from_other_color():
+    product = {"name": "가디건", "colors": [
+        {"id": "red", "name": "레드", "isBase": True, "images": [
+            {"slot": "Front", "id": "red-front"},
+            {"slot": "Detail", "id": "red-detail"},
+        ]},
+    ]}
+
+    with pytest.raises(ValueError, match="invalid_color"):
+        cg.detail_reference_images(product, "missing")
+    with pytest.raises(ValueError, match="invalid_color"):
+        cg.build_prompt(
+            {"cutType": "product", "shot": "detail", "colorId": "missing"},
+            product,
+        )
+
+
+def test_detail_reference_images_prefers_base_then_first_detail_color():
+    product = {"colors": [
+        {"id": "first", "name": "블루", "images": [
+            {"slot": "Detail", "id": "first-detail"},
+        ]},
+        {"id": "base", "name": "레드", "isBase": True, "images": [
+            {"slot": "Detail", "id": "base-detail"},
+        ]},
+        {"id": "target", "name": "그린", "images": [
+            {"slot": "Front", "id": "target-front"},
+        ]},
+    ]}
+
+    images, _transfer = cg.detail_reference_images(product, "target")
+    assert images == [("Front", "target-front"), ("Detail", "base-detail")]
+
+    product["colors"][1]["images"] = []
+    images, _transfer = cg.detail_reference_images(product, "target")
+    assert images == [("Front", "target-front"), ("Detail", "first-detail")]
+
+
 def test_build_prompt_unknown_cut_type_raises():
     # 회귀 방지: 미상 cutType(예: 폐기 토큰 'daily')을 styling 으로 조용히 대체 렌더하지 않는다 —
     # 병렬 백엔드 머지에서 mirror 가 styling 으로 무음 폴백되던 사고의 재발 금지.
@@ -38,7 +140,7 @@ def test_build_prompt_unknown_cut_type_raises():
 
 
 def test_build_prompt_mirror_is_first_class():
-    p = cg.build_prompt({"cutType": "mirror", "shot": "knee"}, {"name": "골지 니트", "clothing_type": "top"})
+    p = cg.build_prompt({"cutType": "mirror", "shot": "medium"}, {"name": "골지 니트", "clothing_type": "top"})
     assert "MIRROR SELFIE" in p               # 거울샷 전용 섹션으로 렌더
     assert "${" not in p and "[[" not in p    # 토큰·섹션 마커 유출 없음
     assert "PRODUCT CONTEXT" in p and "골지 니트" in p
@@ -61,7 +163,7 @@ def test_build_manifest_places_exact_model_labels_after_mannequin():
         "2. MODEL — frontal close-up of the model (identity ground truth; do NOT copy this image's pose, framing, or clothing)",
         "3. MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single person (identity reference only). Do NOT copy the grid layout, framing, poses, or clothing; the output must be one single normal photograph, never a grid",
         "4. PRODUCT — front view of the garment",
-        "5. MATCH — a coordinating garment to style together in the same outfit",
+        "5. MATCHING — the user-selected coordinating garment worn in the same outfit",
         "6. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)",
     ]
 
@@ -145,10 +247,9 @@ def test_wants_face_only_for_cuts_that_actually_show_a_face():
     assert cg.wants_face({"cutType": "styling", "shot": "full", "faceExposure": "hide"}, "top") is False
     # 뒷모습 = 얼굴이 프레임 밖
     assert cg.wants_face({"cutType": "styling", "shot": "full", "direction": "back"}, "top") is False
-    # 머리가 프레임에 없는 샷 — 하의의 knee/medium, 그리고 close_*
-    assert cg.wants_face({"cutType": "styling", "shot": "knee"}, "bottom") is False
-    assert cg.wants_face({"cutType": "styling", "shot": "knee"}, "top") is True
-    assert cg.wants_face({"cutType": "styling", "shot": "close"}, "top") is False
+    # 중간샷은 상의 프레이밍에 머리가 있고, 하의 프레이밍에는 없다.
+    assert cg.wants_face({"cutType": "styling", "shot": "medium"}, "bottom") is False
+    assert cg.wants_face({"cutType": "styling", "shot": "medium"}, "top") is True
 
 
 def test_wants_face_unknown_cut_type_is_false_not_raise():

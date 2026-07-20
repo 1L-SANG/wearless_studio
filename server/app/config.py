@@ -24,6 +24,8 @@ class Settings:
     r2_face_bucket: str | None = None
     # 생성예시 레지스트리의 상대 URL 기준. prod 상대경로는 명시 필수, dev만 dummy 기본값 허용.
     example_asset_base_url: str | None = None
+    # 배경-only 생성예시는 파일럿 실측 성공률이 안정화될 때까지 명시적 opt-in에서만 허용.
+    genexample_bg_enabled: bool = False
     # ---- AI 에이전트 (Phase 4) ----
     # 마지막 블록 + 기본값 — 직접 생성(테스트)·미래 필드 추가에도 안 깨지게.
     # load_settings()는 아래 기본값을 env 값으로 항상 덮어쓴다.
@@ -146,6 +148,9 @@ def load_settings() -> Settings:
         r2_public_base=(os.getenv("R2_PUBLIC_BASE") or "").rstrip("/") or None,
         r2_face_bucket=os.getenv("R2_FACE_BUCKET") or None,
         example_asset_base_url=(os.getenv("EXAMPLE_ASSET_BASE_URL") or "").rstrip("/") or None,
+        genexample_bg_enabled=(
+            os.getenv("GENEXAMPLE_BG_ENABLED", "false").lower() == "true"
+        ),
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         vertex_project=os.getenv("VERTEX_PROJECT") or None,
         vertex_location=os.getenv("VERTEX_LOCATION", "global"),

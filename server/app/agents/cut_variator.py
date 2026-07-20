@@ -1,6 +1,6 @@
-"""AG-07 cut-variator — 현재 컷 변형. ai_agent_modules §3 AG-07.
+"""AG-07 cut-variator — 현재 이미지 수정. ai_agent_modules §3 AG-07.
 
-기존 컷(에디터 '현재 컷 변형') 1장을 입력으로 받아 changes[]에 지시된 항목만 바꾸고 나머지
+기존 컷(에디터 '현재 이미지 수정') 1장을 입력으로 받아 changes[]에 지시된 항목만 바꾸고 나머지
 (인물·의류 동일성)는 동결한다. cut_generator.py/mannequin_adjuster.py와 동일한 배관 패턴
 (외부 템플릿 + resolve_model image_high + generate_content_image) — 워커(editor_image_job)가
 이 generate()를 호출한다. changes=[] 는 '비슷한 컷 만들기'(계약 §6 VaryRequest).

@@ -423,7 +423,7 @@
 .ap-tg-text .ap-group-head { margin-top: 0; }
 .ap-collapse-body .ap-sec:first-child { margin-top: 0; }
 
-/* right column: 세부 조정 패널 + 상세페이지 구성 미니 카드 */
+/* right column: 세부 조정 패널 + 사진 양 미니 카드 */
 .mq-side { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 76px; align-self: start; }
 .mq-side .inspector { position: static; top: auto; }
 .compose-mini { padding: 18px; position: relative; }
@@ -434,7 +434,7 @@
 .cm-count { font-size: 12px; font-weight: 600; color: var(--fg-2); margin-top: 12px; }
 .pop-count { font-size: 12px; font-weight: 600; color: var(--fg-2); margin-top: 12px; }
 
-/* 구성 방식 변경 → 좌측으로 펼쳐지는 플라이아웃 (위로 오버레이) */
+/* 사진 양 변경 → 좌측으로 펼쳐지는 플라이아웃 (위로 오버레이) */
 .mode-pop-backdrop { position: fixed; inset: 0; z-index: 30; }
 .mode-pop { position: absolute; top: 0; right: calc(100% + 14px); z-index: 31; display: flex; gap: 12px;
   animation: popLeft .22s cubic-bezier(.22,.61,.36,1); }
@@ -638,7 +638,7 @@
 .sb-insert:hover .sb-insert-line { opacity: 1; }
 .sb-insert:hover .sb-insert-pill { transform: scale(1); opacity: 1; color: var(--fg-1); }
 .sb-insert-gap { margin: -6px 0 4px; }   /* 섹션 사이 hover 인서트 — 밴드 간격을 파고들어 자리 차지 없이 */
-/* ---- 섹션 밴드 (2026-07 개편, depth=1 — 같은 장소 시리즈도 하나의 섹션) ---- */
+/* ---- 섹션 밴드 (2026-07 개편, depth=1 — 고정 3섹션: 핵심 장점·핏·코디·제품 확인) ---- */
 .sb-sec { border: 1px solid var(--ring); border-radius: var(--r-5); margin: 4px 2px 10px; background: #fff; overflow: hidden; }
 .sb-sec-h { display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; gap: 8px; padding: 9px 12px 9px 10px; background: #fff;
   cursor: pointer; user-select: none; color: var(--fg-2); transition: background .15s; box-shadow: inset 0 -1px 0 0 var(--ring); }
@@ -778,7 +778,7 @@
 .insp-sec > .lbl { margin-bottom: 9px; }
 .insp-tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
 
-/* underline tab navigation (컷 종류) — sliding indicator */
+/* underline tab navigation — sliding indicator */
 .utabs { display: flex; gap: 4px; box-shadow: inset 0 -1px 0 0 var(--ring); position: relative; }
 .utabs::after { content: ''; position: absolute; bottom: -1px; left: var(--ul-left, 0px); width: var(--ul-width, 0px);
   height: 2px; background: #8fbfee; border-radius: 2px;
@@ -1027,7 +1027,7 @@
   width: calc(50% - 5px); border-radius: var(--r-3); background: #fff; box-shadow: var(--elev-soft);
   transition: left .28s cubic-bezier(.4, 0, .2, 1); z-index: 0; pointer-events: none; }
 .seg[data-idx="1"]::after { left: calc(50% + 2px); }
-/* 3-button seg (e.g. 컷 종류: 호리존컷/일상컷/제품컷) */
+/* 3-button seg — 범용 3택 세그먼트 */
 .seg[data-n="3"]::after { width: calc((100% - 14px) / 3); }
 .seg[data-n="3"][data-idx="1"]::after { left: calc(33.333% + 2.333px); }
 .seg[data-n="3"][data-idx="2"]::after { left: calc(66.667% + 1.667px); }
@@ -1323,7 +1323,7 @@
 .adj-card-body .ap-sec:first-child { margin-top: 6px; }
 .adj-card-body .ap-sec .lbl { margin-bottom: 9px; }
 
-/* ===== 에디터 · 현재 컷 변형 — 예시 카드 + 누적 트레이 ===== */
+/* ===== 에디터 · 현재 이미지 수정 — 예시 카드 + 누적 트레이 ===== */
 .vary-tabs { margin-bottom: 16px; }
 .vary-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: #4f88c9; margin-left: 4px; vertical-align: 7px; }
 .vary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -1417,12 +1417,17 @@
 
 .sb-exgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; transition: opacity .15s; }
 .sb-exgrid.moodonly { opacity: .55; }
+.sb-exempty {
+  grid-column: 1 / -1; min-height: 76px; display: flex; align-items: center; justify-content: center;
+  padding: 14px; border-radius: 8px; background: var(--bg-2); color: var(--fg-2); font-size: 12px; text-align: center;
+}
 .sb-excell {
   position: relative; aspect-ratio: 3 / 4; border-radius: 8px; overflow: hidden; padding: 0;
   border: 2px solid transparent; background: var(--bg-2); cursor: pointer; appearance: none; display: block;
 }
 .sb-excell img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .sb-excell.sel { border-color: var(--link); }
+.sb-excell.unavailable { opacity: .42; cursor: not-allowed; }
 .sb-excell .ck {
   position: absolute; top: 5px; right: 5px; width: 18px; height: 18px; border-radius: 99px;
   background: var(--link); color: #fff; display: flex; align-items: center; justify-content: center;
@@ -1454,18 +1459,23 @@
   padding: 1px 8px; margin-left: 6px; vertical-align: 1px;
 }
 
-/* 레퍼런스 범위 — 생성예시 셀 호버 오버레이에서 선택 (2026-07-10, 칩 row 대체) */
+/* 레퍼런스 범위 — 생성예시 셀 호버 오버레이에서 선택 (2026-07-10, 칩 row 대체)
+   셀 폭(~100px)보다 가로 3버튼이 넓어 잘리던 문제 → 세로 스택으로 (셀은 3:4라 세로 여유) */
 .sb-exov { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 4px; background: rgba(14, 13, 20, .55); opacity: 0; transition: opacity .15s; pointer-events: none; }
+  gap: 5px; padding: 8px; background: rgba(14, 13, 20, .55); opacity: 0; transition: opacity .15s; pointer-events: none; }
 .sb-excell:hover .sb-exov, .sb-excell:focus-within .sb-exov { opacity: 1; pointer-events: auto; }
 .sb-exov-t { font-size: 9.5px; font-weight: 650; color: rgba(255, 255, 255, .85); letter-spacing: .02em; white-space: nowrap; }
-.sb-exov-b { display: flex; justify-content: center; gap: 4px; flex-wrap: nowrap; white-space: nowrap; }
-.sb-exov-btn { flex: none; font-size: 10px; font-weight: 700; color: #fff; border: 1px solid rgba(255, 255, 255, .65);
-  border-radius: var(--r-pill); padding: 3px 8px; white-space: nowrap; cursor: pointer; transition: all .13s; }
+.sb-exov-b { display: flex; flex-direction: column; align-items: stretch; gap: 5px; width: 100%; max-width: 92px; }
+.sb-exov-btn { font-size: 10.5px; font-weight: 700; color: #fff; border: 1px solid rgba(255, 255, 255, .65);
+  border-radius: var(--r-pill); padding: 4px 8px; text-align: center; white-space: nowrap; cursor: pointer; transition: all .13s; }
 .sb-exov-btn:hover { background: rgba(255, 255, 255, .18); }
 .sb-exov-btn.on { background: #fff; color: var(--fg-1); border-color: #fff; }
+.sb-exov-btn.unavailable { opacity: .45; cursor: not-allowed; }
 .sb-exscope { position: absolute; left: 5px; bottom: 5px; font-size: 9.5px; font-weight: 700; color: #fff;
-  background: rgba(14, 13, 20, .72); border-radius: 99px; padding: 2px 7px; }
+  background: rgba(14, 13, 20, .72); border-radius: 99px; padding: 2px 7px; transition: opacity .15s; }
+/* 오버레이가 떠 있는 동안 배지·체크는 숨김 — 버튼과 겹치지 않게 (오버레이 있는 셀 한정) */
+.sb-excell:hover:has(.sb-exov) .sb-exscope, .sb-excell:focus-within:has(.sb-exov) .sb-exscope,
+.sb-excell:hover:has(.sb-exov) .ck, .sb-excell:focus-within:has(.sb-exov) .ck { opacity: 0; }
 
 /* 새 컷 컨텍스트 — 추가 위치·크레딧·취소 (P6) */
 .insp-newmeta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px;

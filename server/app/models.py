@@ -12,7 +12,7 @@ from pydantic.alias_generators import to_camel
 
 ProjectStatus = Literal["draft", "generating", "done"]
 PlanTier = Literal["basic", "plus", "seller"]
-ComposeMode = Literal["simple", "basic", "extended"]
+ComposeMode = Literal["basic", "extended"]
 
 
 class CamelModel(BaseModel):
@@ -39,7 +39,6 @@ class Project(CamelModel):
     adjust_count: int
     created_at: datetime
     updated_at: datetime
-
 
 class ProjectSummary(CamelModel):
     id: str
@@ -230,4 +229,3 @@ class ErrorDetail(CamelModel):
 
 class ErrorResponse(CamelModel):
     error: ErrorDetail
-
