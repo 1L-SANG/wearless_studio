@@ -73,6 +73,9 @@ const withoutLayoutRow = (block) => {
 };
 
 const SCOPE_LABELS = { all: '전부', bg: '배경만', pose: '포즈만' };
+// 배경-only는 파일럿 실측 성공률이 안정화될 때까지 로컬 dev 또는 명시적 Vite opt-in에서만 노출한다.
+const BG_EXAMPLES_ENABLED = Boolean(import.meta.env?.DEV)
+  || import.meta.env?.VITE_GENEXAMPLE_BG_ENABLED === 'true';
 const WORN_CUT_TYPES = new Set(['styling', 'horizon', 'mirror']);
 const exampleCategoryFor = (cut) => cut === 'product' ? 'product' : (cut === 'horizon' ? 'horizon' : 'styling');
 const exampleThumbFor = (catalogs, exampleId, cut) => (
@@ -412,7 +415,9 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
   useEffect(() => {
     if (!exampleId || !onExampleChange) return;
-    const published = selectedExample?.variants || [];
+    const published = (selectedExample?.variants || []).filter((variant) => (
+      variant !== 'bg' || BG_EXAMPLES_ENABLED
+    ));
     if (!selectedExample || (inSpace && !published.includes('pose'))) {
       onExampleChange(null);
       return;
@@ -458,7 +463,9 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
             : inSpace ? [{ v: 'pose', l: '포즈만', disabled: !variants.includes('pose') }]
               : [
                 { v: 'all', l: '전부', disabled: !variants.includes('all') },
-                { v: 'bg', l: '배경만', disabled: !variants.includes('bg') },
+                ...(BG_EXAMPLES_ENABLED
+                  ? [{ v: 'bg', l: '배경만', disabled: !variants.includes('bg') }]
+                  : []),
                 { v: 'pose', l: '포즈만', disabled: !variants.includes('pose') },
               ];
           const pick = (scope) => {

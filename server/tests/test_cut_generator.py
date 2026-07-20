@@ -94,6 +94,23 @@ def test_build_prompt_product_detail_same_color_has_no_color_transfer():
     assert "DETAIL COLORWAY TRANSFER" not in prompt
 
 
+def test_product_detail_unknown_color_does_not_transfer_from_other_color():
+    product = {"name": "가디건", "colors": [
+        {"id": "red", "name": "레드", "isBase": True, "images": [
+            {"slot": "Front", "id": "red-front"},
+            {"slot": "Detail", "id": "red-detail"},
+        ]},
+    ]}
+
+    with pytest.raises(ValueError, match="invalid_color"):
+        cg.detail_reference_images(product, "missing")
+    with pytest.raises(ValueError, match="invalid_color"):
+        cg.build_prompt(
+            {"cutType": "product", "shot": "detail", "colorId": "missing"},
+            product,
+        )
+
+
 def test_detail_reference_images_prefers_base_then_first_detail_color():
     product = {"colors": [
         {"id": "first", "name": "블루", "images": [

@@ -433,8 +433,8 @@ def test_run_editor_image_job_new_detail_without_color_id_uses_base_detail(monke
     assert captured["charge"] == 1
 
 
-def test_run_editor_image_job_new_unknown_detail_color_uses_available_detail(monkeypatch):
-    captured = {"asset_ids": []}
+def test_run_editor_image_job_new_unknown_detail_color_fails_closed(monkeypatch):
+    captured = {"asset_ids": [], "generated": False}
 
     async def fake_get_product(conn, pid):
         return {"colors": [{"id": "col1", "isBase": True, "images": [
@@ -449,20 +449,18 @@ def test_run_editor_image_job_new_unknown_detail_color_uses_available_detail(mon
         return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
-        captured["cut_spec"] = cut_spec
-        captured["prompt"] = eij.cut_generator.build_prompt(
-            cut_spec, product, analysis=analysis, manifest=manifest)
-        return b"DETAIL", "image/png"
+        captured["generated"] = True
+        return b"SHOULD-NOT-GENERATE", "image/png"
 
-    async def fake_finalize(conn, **kw):
+    async def fake_finalize_failure(conn, **kw):
         captured.update(kw)
-        return {"id": "w-unknown-color-detail"}
+        return True
 
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
-    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_finalize_failure)
 
     payload = {
         "mode": "new", "colorId": "missing", "cutType": "product", "shot": "detail",
@@ -470,11 +468,10 @@ def test_run_editor_image_job_new_unknown_detail_color_uses_available_detail(mon
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
-    assert captured["asset_ids"] == ["d1"]
-    assert captured["cut_spec"]["_detailColorTransfer"]["targetName"] == "missing"
-    assert "Target color: missing" in captured["prompt"]
-    assert captured["group"] == "missing"
-    assert captured["charge"] == 1
+    assert captured["asset_ids"] == []
+    assert captured["generated"] is False
+    assert captured["metadata"] == {"error": "invalid_color"}
+    assert captured["reserved"] == 1
 
 
 def test_run_editor_image_job_new_detail_requires_resolved_detail_asset(monkeypatch):

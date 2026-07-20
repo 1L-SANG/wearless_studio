@@ -581,12 +581,16 @@ def detail_reference_images(
 ) -> tuple[list[tuple[str, str]], dict | None]:
     """디테일 컷의 상품 근거와 필요 시 타색→목표색 전환 정보를 고른다.
 
-    목표 색상에 Detail이 있으면 그 색상의 기존 이미지 목록을 그대로 쓴다. 없으면
-    목표 색상 일반 이미지는 유지하면서 기준색, 그 다음 전체 색상 순서로 첫 Detail을
-    덧붙인다. 일반 컷의 :func:`color_images` 엄격 선택 규칙은 바꾸지 않는다.
+    목표 색상에 Detail이 있으면 그 색상의 기존 이미지 목록을 그대로 쓴다. color_id가
+    None일 때만 기준색으로 폴백한다. 명시된 색상이 실존하지 않으면 타색 Detail로
+    생성하지 않도록 invalid_color로 실패한다. 목표 색상은 있으나 Detail만 없으면 목표 색상
+    일반 이미지는 유지하면서 기준색, 그 다음 전체 색상 순서로 첫 Detail을 덧붙인다.
+    일반 컷의 :func:`color_images` 엄격 선택 규칙은 바꾸지 않는다.
     """
     colors = product.get("colors") or []
     target_color = _color_by_id(colors, color_id)
+    if color_id is not None and target_color is None:
+        raise ValueError("invalid_color")
     target_images = _color_image_pairs(target_color)
     if any(slot == "Detail" for slot, _asset_id in target_images):
         return target_images, None

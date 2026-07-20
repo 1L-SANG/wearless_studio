@@ -55,6 +55,50 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     assert seen["metadata"]["aiCount"] == 2
 
 
+def test_detail_rejects_saved_bg_example_before_job_or_credit(
+    client, make_token, monkeypatch,
+):
+    calls = {"create_job": 0, "reserve": 0}
+
+    async def fake_gp(conn, uid, pid):
+        return {"id": pid}
+
+    async def fake_eb(conn, pid):
+        return []
+
+    async def fake_sb(conn, pid):
+        return [{
+            "id": "b1",
+            "source": "ai",
+            "exampleId": "ex-bg-1",
+            "refScope": "bg",
+        }]
+
+    async def fake_create_job(conn, **kw):
+        calls["create_job"] += 1
+        return {"id": "job-dp-bg"}, True
+
+    async def fake_reserve(conn, uid, amount):
+        calls["reserve"] += 1
+        return 100
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.post(
+        "/v1/projects/p1/detail-page:generate",
+        headers=auth_headers(make_token),
+    )
+
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "genexample_bg_disabled"
+    assert calls == {"create_job": 0, "reserve": 0}
+
+
 def test_detail_completed_recall(client, make_token, monkeypatch):
     async def fake_gp(conn, uid, pid):
         return {"id": pid}
@@ -123,9 +167,38 @@ def _job(reserved=2, per_cut=1):
             "credits_reserved": reserved, "metadata": {"perCutCost": per_cut}}
 
 
-def _settings():
+def _settings(**overrides):
     from conftest import make_settings
-    return make_settings(gemini_api_key="x", r2_bucket="b")
+    return make_settings(gemini_api_key="x", r2_bucket="b", **overrides)
+
+
+def test_run_detail_page_job_rejects_bg_example_when_pilot_disabled(monkeypatch):
+    captured = {}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [{
+            "id": "bg",
+            "source": "ai",
+            "exampleId": "ex-bg-1",
+            "refScope": "bg",
+        }]
+
+    async def fake_failure(conn, **kw):
+        captured.update(kw)
+        return {"ok": True}
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
+
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=1)))
+
+    assert captured["metadata"] == {"error": "genexample_bg_disabled"}
+    assert captured["code"] == "genexample_bg_disabled"
+    assert captured["reserved"] == 1
 
 
 def test_gen_cuts_detail_requires_loaded_detail_manifest(monkeypatch):
@@ -484,7 +557,8 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
-    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=5)))
+    asyncio.run(dpj.run_detail_page_job(
+        _app(_settings(genexample_bg_enabled=True)), _job(reserved=5)))
 
     for block_id, scope in (("all", "all"), ("pose", "pose")):
         item = captured[block_id]

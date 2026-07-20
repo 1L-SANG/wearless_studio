@@ -148,6 +148,24 @@ def _bad_request(code: str, message: str) -> HTTPException:
     return HTTPException(status_code=400, detail={"code": code, "message": message})
 
 
+def _require_bg_examples_enabled(request: Request, value) -> None:
+    """Fail before persistence/reservation while the bg-reference pilot is opt-in only."""
+    if getattr(request.app.state.settings, "genexample_bg_enabled", False):
+        return
+    items = value if isinstance(value, list) else [value]
+    requested = any(
+        isinstance(item, dict)
+        and (item.get("refScope") or item.get("ref_scope")) == "bg"
+        and bool(item.get("exampleId") or item.get("example_id"))
+        for item in items
+    )
+    if requested:
+        raise _bad_request(
+            "genexample_bg_disabled",
+            "배경만 생성예시는 파일럿 검증 중이라 현재 사용할 수 없어요.",
+        )
+
+
 def _credit_error(e: "repo.CreditError") -> HTTPException:
     return HTTPException(status_code=e.status, detail={"code": e.code, "message": e.message})
 
@@ -1054,6 +1072,7 @@ async def get_storyboard(request: Request, project_id: str, user_id: str = Depen
             tags=["Detail Page"], summary="콘티 저장")
 async def save_storyboard(request: Request, project_id: str, blocks: list = Body(...),
                           user_id: str = Depends(require_user)):
+    _require_bg_examples_enabled(request, blocks)
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -1141,6 +1160,7 @@ async def generate_editor_image(
       이 키로만 보장됩니다.
     - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
     """
+    _require_bg_examples_enabled(request, body)
     s = request.app.state.settings
     cost = s.credit_cost_editor_image
     scoped_key = f"{project_id}:editor_image:{idempotency_key}" if idempotency_key else None
@@ -1194,6 +1214,7 @@ async def generate_detail_page(
             account = await repo.get_account(conn, user_id)
             return JSONResponse({"data": existing, "credits": (account or {}).get("credits", 0)})
         storyboard = await repo.get_storyboard(conn, project_id)
+        _require_bg_examples_enabled(request, storyboard)
         ai_count = sum(1 for b in storyboard if isinstance(b, dict) and b.get("source") == "ai")
         cost = ai_count * s.credit_cost_storyboard_per_cut
         job, created = await repo.create_job(

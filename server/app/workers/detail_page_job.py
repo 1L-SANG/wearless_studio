@@ -234,6 +234,13 @@ async def run_detail_page_job(app, job: dict) -> None:
         async with pool.connection() as conn:
             project = await repo.get_project(conn, user_id, project_id) or {}
             storyboard = await repo.get_storyboard(conn, project_id)
+            if not getattr(s, "genexample_bg_enabled", False) and any(
+                isinstance(block, dict)
+                and (block.get("refScope") or block.get("ref_scope")) == "bg"
+                and bool(block.get("exampleId") or block.get("example_id"))
+                for block in storyboard
+            ):
+                raise ValueError("genexample_bg_disabled")
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
             # contentRole가 사용자 선택의 정본이다. 저장 입력을 여기서도 방어적으로
@@ -588,4 +595,13 @@ async def run_detail_page_job(app, job: dict) -> None:
                     except Exception:
                         log.warning("facemarket settlement hook failed for job %s", job_id)
     except Exception as e:
-        await _fail("상세페이지 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
+        error = str(e)[:300]
+        await _fail(
+            "배경만 생성예시는 현재 사용할 수 없어요. 콘티에서 해당 예시를 제거해 주세요."
+            if error == "genexample_bg_disabled"
+            else "상세페이지 생성에 실패했어요. 다시 시도해 주세요.",
+            {"error": error},
+            code="genexample_bg_disabled"
+            if error == "genexample_bg_disabled"
+            else "generation_failed",
+        )

@@ -102,6 +102,41 @@ def test_save_storyboard_persists_canonical_blocks(client, make_token, monkeypat
     assert mine["ownImages"] == ["asset-1"]
 
 
+def test_save_storyboard_rejects_bg_example_when_pilot_disabled(client, make_token):
+    res = client.put(
+        "/v1/projects/p1/storyboard",
+        headers=_auth(make_token),
+        json=[{
+            "id": "b1",
+            "source": "ai",
+            "contentRole": "hero",
+            "exampleId": "ex-bg-1",
+            "refScope": "bg",
+        }],
+    )
+
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "genexample_bg_disabled"
+
+
+def test_generate_editor_image_rejects_bg_example_before_credit_reservation(
+    client, make_token,
+):
+    res = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={
+            "mode": "new",
+            "contentRole": "hero",
+            "exampleId": "ex-bg-1",
+            "refScope": "bg",
+        },
+    )
+
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "genexample_bg_disabled"
+
+
 def test_patch_unknown_status_field_ignored_not_500(client, make_token):
     # status·adjustCount는 모델에 없어 무시 → 검증 통과 후 get_conn(풀 없음) → 503, 500 아님
     res = client.patch(
