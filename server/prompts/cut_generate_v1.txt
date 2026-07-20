@@ -163,6 +163,9 @@ the requested outer opening state still win if the exact posture is physically i
   and light so the insertion looks like a single real photograph, not a paste.
 - The scene contains no person, so choose a natural pose that suits the place; never place
   garments, shoes or props from anywhere but PRODUCT/MATCHING onto the model.
+- Dress a COMPLETE outfit: PRODUCT (and MATCHING when attached) plus simple neutral basics for
+  the rest (plain bottoms and footwear that suit the scene). Never leave the model without
+  bottoms or shoes; basics stay visually plain so the PRODUCT garment remains the hero.
 - FRAMING OVERRIDE: the FRAMING and DIRECTION requested below win over the first image's crop —
   extend or re-crop the scene consistently if needed, keeping the same location.
 
