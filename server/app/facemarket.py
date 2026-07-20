@@ -1210,11 +1210,19 @@ async def resolve_project_license(conn, project: dict, analysis: dict) -> dict |
         if row:
             return row
 
-    selected = (analysis or {}).get("selectedModelId")
-    if not selected:
+    return await resolve_model_license(conn, (analysis or {}).get("selectedModelId"))
+
+
+async def resolve_model_license(conn, model_id) -> dict | None:
+    """모델 id 하나의 검증 대상 라이선스를 해석 — active 우선, 없으면 최신.
+
+    에디터 새 컷(NewCutRequest.modelId) 경로가 상세페이지와 같은 게이트를 타도록 분리.
+    비-UUID(구 'mA'/'mB' 가상모델)·미선택·무라이선스 → None(게이트 no-op).
+    """
+    if not model_id:
         return None
     try:
-        uuid.UUID(str(selected))
+        uuid.UUID(str(model_id))
     except (ValueError, TypeError):
         return None  # 구 정적 mock id('mA'/'mB' 등) → 비-FaceMarket → no-op
 
@@ -1223,7 +1231,7 @@ async def resolve_project_license(conn, project: dict, analysis: dict) -> dict |
             f"""select {_LICENSE_VERIFY_COLS} from fm_licenses
                 where model_id = %s
                 order by (status = 'active') desc, created_at desc limit 1""",
-            (str(selected),),
+            (str(model_id),),
         )
         return await cur.fetchone()
 

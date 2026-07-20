@@ -20,7 +20,8 @@ import {
 
 // 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
 // Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
-function ModelThumb({ uri, alt }) {
+// export: 에디터 AI 탭 실존 모델 피커(EditorPanels.AIPanel)도 같은 게이트 썸네일을 쓴다.
+export function ModelThumb({ uri, alt }) {
   const [url, setUrl] = useState(null);
   useEffect(() => {
     if (!uri) return undefined;

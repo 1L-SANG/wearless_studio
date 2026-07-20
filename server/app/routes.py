@@ -1145,6 +1145,14 @@ async def generate_editor_image(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
+        # FaceMarket verify-before-use 게이트(FM-30) — 에디터 새 컷도 상세페이지와 동일하게,
+        # 실존 모델(UUID modelId) 선택 시 라이선스 자격을 잡 생성 전에 검증한다(실패=409, 예약 없음).
+        # 가상모델('mA' 등 비-UUID)·무라이선스 모델은 no-op → 기존 플로우 무영향.
+        if s.facemarket_enabled and (body or {}).get("mode") == "new":
+            license_row = await facemarket.resolve_model_license(
+                conn, (body or {}).get("modelId") or (body or {}).get("model_id"))
+            if license_row is not None:
+                await facemarket.verify_license(request.app, license_row)  # 실패=409
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="editor_image",
             payload=body, idempotency_key=scoped_key, credits_reserved=cost,

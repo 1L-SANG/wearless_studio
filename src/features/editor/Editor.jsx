@@ -11,7 +11,8 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react
 import { useNavigate, useParams } from 'react-router-dom';
 import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
-import { api } from '@/lib/api/index.js';
+import { api, isMockMode } from '@/lib/api/index.js';
+import { listModels } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/components/ui.jsx';
@@ -291,6 +292,7 @@ export function Editor() {
   const [wardrobe, setWardrobe] = useState(null);
   const [varyTarget, setVaryTarget] = useState(null); // 의류 탭 'AI 편집'으로 지정한 변형 대상 { id } — 캔버스 선택이 바뀌면 해제
   const [catalogs, setCatalogs] = useState(null);
+  const [fmModels, setFmModels] = useState(null); // FaceMarket 검증 모델(실존) — http 모드에서만 로드, 실패=null(가상 폴백)
   const [colorOpts, setColorOpts] = useState([]);
   const [clothingType, setClothingType] = useState('top'); // 샷 필터 아이콘·예시 크롭용 (계약 §3.1)
   const [productName, setProductName] = useState('');
@@ -333,10 +335,12 @@ export function Editor() {
 
   useEffect(() => {
     // 에디터는 앱 크롬 밖에서 열린다 — account 는 store 캐시를 직접 로드 (단일 소스)
-    Promise.all([api.getEditorBlocks(projectId), api.getWardrobe(projectId), api.getCatalogs(), useAppStore.getState().loadAccount(), api.getProduct(projectId)])
-      .then(([b, w, c, _a, p]) => {
+    Promise.all([api.getEditorBlocks(projectId), api.getWardrobe(projectId), api.getCatalogs(), useAppStore.getState().loadAccount(), api.getProduct(projectId),
+      // 실존 모델 카탈로그 — mock 모드는 서버가 없으니 스킵, 실패는 null(AIPanel 이 가상모델 폴백)
+      isMockMode ? Promise.resolve(null) : listModels().catch(() => null)])
+      .then(([b, w, c, _a, p, fm]) => {
         const withH = b.map((blk) => ({ ...blk, h: blk.h || Math.max(220, blk.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0) + 50) }));
-        setBlocks(withH); setWardrobe(w); setCatalogs(c); setSelBlock(withH[0]?.id);
+        setBlocks(withH); setWardrobe(w); setCatalogs(c); setFmModels(fm); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         setClothingType(p.clothingType || 'top');
         const opts = (p.colors || []).filter((col) => col.images.length || col.isBase).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
@@ -726,7 +730,7 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel catalogs={catalogs} account={account} colorOpts={colorOpts} clothingType={clothingType} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickRefImage(projectId)} onPickMoodRef={() => api.pickRefImage(projectId)} onSetCutType={setVaryCutType} />;
+      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} clothingType={clothingType} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickRefImage(projectId)} onPickMoodRef={() => api.pickRefImage(projectId)} onSetCutType={setVaryCutType} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} onFreshSeen={freshSeen} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} onVary={varyImage} />;
       case 'frame': return <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />;
