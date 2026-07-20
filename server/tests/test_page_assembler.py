@@ -16,9 +16,9 @@ PRODUCT = {
 
 def _storyboard():
     return [
-        {"id": "blk1", "kind": "hook", "title": "후킹", "source": "ai", "cutType": "horizon", "colorId": "col1"},
-        {"id": "blk2", "kind": "selling", "title": "셀링포인트", "source": "ai", "cutType": "product", "colorId": "col1"},
-        {"id": "blk3", "kind": "styling", "title": "스타일링컷", "source": "ai", "cutType": "styling", "colorId": "col1"},
+        {"id": "blk1", "sectionRole": "benefit", "contentRole": "hero", "source": "ai", "cutType": "styling", "colorId": "col1"},
+        {"id": "blk2", "sectionRole": "benefit", "contentRole": "benefit", "source": "ai", "cutType": "horizon", "colorId": "col1"},
+        {"id": "blk3", "sectionRole": "fit", "contentRole": "coordination", "source": "ai", "cutType": "styling", "colorId": "col1"},
     ]
 
 
@@ -29,8 +29,9 @@ def test_ai_block_maps_to_image_element_with_cut_result_url():
     blocks = assemble(storyboard, cut_results, [], PRODUCT, False)
 
     block = blocks[0]
-    assert block["kind"] == "styling"
-    assert block["name"] == "스타일링컷"
+    assert block["kind"] == "fit"
+    assert block["contentRole"] == "coordination"
+    assert block["name"] == "코디 활용"
     assert block["h"] == 660
     img = block["elements"][0]
     assert img["type"] == "image"
@@ -42,20 +43,50 @@ def test_ai_block_maps_to_image_element_with_cut_result_url():
 
 # ── source='mine' 블록 ───────────────────────────────────────────────────────
 def test_mine_block_uses_own_images_not_cut_results():
-    storyboard = [{"id": "blk9", "kind": "info", "source": "mine", "ownImages": ["https://cdn.example.com/own.png"]}]
+    storyboard = [{"id": "blk9", "sectionRole": "fit", "source": "mine", "ownImages": ["https://cdn.example.com/own.png"]}]
     blocks = assemble(storyboard, [], [], PRODUCT, False)
 
     block = blocks[0]
     assert block["name"] == "내 이미지"
-    assert block["kind"] == "info"
+    assert block["kind"] == "fit"
+    assert block["contentRole"] == "custom"
     assert len(block["elements"]) == 1
     assert block["elements"][0]["src"] == "https://cdn.example.com/own.png"
 
 
 def test_mine_block_with_no_own_images_has_no_elements():
-    storyboard = [{"id": "blk9", "kind": "info", "source": "mine", "ownImages": []}]
+    storyboard = [{"id": "blk9", "sectionRole": "fit", "source": "mine", "ownImages": []}]
     blocks = assemble(storyboard, [], [], PRODUCT, False)
     assert blocks[0]["elements"] == []
+
+
+def test_explicit_detail_role_sets_editor_identity():
+    storyboard = [{
+        "id": "blk-new", "sectionRole": "product", "contentRole": "detail",
+        "source": "ai", "cutType": "product",
+    }]
+    block = assemble(storyboard, [], [], PRODUCT, False)[0]
+    assert block["kind"] == "product"
+    assert block["contentRole"] == "detail"
+    assert block["name"] == "디테일"
+
+
+def test_cut_type_inference_maps_mirror_to_real_wear():
+    storyboard = [{"id": "mirror", "source": "ai", "cutType": "mirror"}]
+    block = assemble(storyboard, [], [], PRODUCT, False)[0]
+    assert block["kind"] == "fit"
+    assert block["contentRole"] == "realWear"
+    assert block["name"] == "실제 착용 느낌"
+
+
+def test_mine_block_preserves_explicit_section_role():
+    storyboard = [{
+        "id": "mine-product", "source": "mine", "sectionRole": "product",
+        "ownImages": ["https://cdn.example.com/detail.png"],
+    }]
+    block = assemble(storyboard, [], [], PRODUCT, False)[0]
+    assert block["kind"] == "product"
+    assert block["contentRole"] == "custom"
 
 
 # ── 자동 블록 (size/care/ai-notice) ──────────────────────────────────────────
@@ -208,16 +239,28 @@ def test_copywriting_on_places_headline_and_selling_text():
     ]
     blocks = assemble(storyboard, cut_results, copy_results, PRODUCT, True)
 
-    hook_block, selling_block, styling_block = blocks[0], blocks[1], blocks[2]
-    assert len(hook_block["elements"]) == 2
-    assert hook_block["elements"][1]["type"] == "text"
-    assert hook_block["elements"][1]["text"] == "겨울을 부드럽게"
+    hero_block, benefit_block, coordination_block = blocks[0], blocks[1], blocks[2]
+    assert len(hero_block["elements"]) == 2
+    assert hero_block["elements"][1]["type"] == "text"
+    assert hero_block["elements"][1]["text"] == "겨울을 부드럽게"
 
-    assert len(selling_block["elements"]) == 2
-    assert selling_block["elements"][1]["text"] == "강조 포인트를 살린 카피"
+    assert len(benefit_block["elements"]) == 2
+    assert benefit_block["elements"][1]["text"] == "강조 포인트를 살린 카피"
 
-    # styling 블록은 hook/selling 이 아니므로 카피 미배치 (이미지 엘리먼트만)
-    assert len(styling_block["elements"]) == 1
+    # 카피 결과가 없으면 coordination 블록은 이미지만 남는다.
+    assert len(coordination_block["elements"]) == 1
+
+
+def test_copywriting_places_body_for_non_hero_content_roles():
+    storyboard = [{
+        "id": "fit-1", "sectionRole": "fit", "contentRole": "fit",
+        "source": "ai", "cutType": "horizon",
+    }]
+    copy_results = [{"blockId": "fit-1", "texts": [{"role": "body", "text": "실루엣을 확인해보세요"}]}]
+    block = assemble(storyboard, [], copy_results, PRODUCT, True)[0]
+    assert block["kind"] == "fit"
+    assert block["contentRole"] == "fit"
+    assert block["elements"][1]["text"] == "실루엣을 확인해보세요"
 
 
 def test_copywriting_off_has_no_text_elements():
@@ -234,7 +277,7 @@ def test_copywriting_off_has_no_text_elements():
 
 
 def test_copywriting_on_but_no_matching_copy_result_omits_text():
-    storyboard = [_storyboard()[0]]  # hook block, no copy_results entry
+    storyboard = [_storyboard()[0]]  # hero block, no copy_results entry
     blocks = assemble(storyboard, [], [], PRODUCT, True)
     assert len(blocks[0]["elements"]) == 1  # image only, no headline injected
 

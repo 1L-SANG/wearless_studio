@@ -1,7 +1,7 @@
 # 공통 데이터 계약 (Common Data Contract)
 
-> 상태: 확정 (2026-06-11, 갱신 2026-06-29) · 근거: `documents/PRD.md`, mock 구현(`src/lib/types.js`, `src/mock/*`), 2026-06-11·06-14 결정 세션
-> 결정 기록: `docs/adr/0001~0003`, 용어는 `/CONTEXT.md`
+> 상태: 확정 (2026-06-11, 갱신 2026-07-18) · 근거: `documents/PRD.md`, mock 구현(`src/lib/types.js`, `src/mock/*`), 2026-06-11·06-14·07-17·07-18 결정 세션
+> 결정 기록: `docs/adr/0001~0007`, 용어는 `/CONTEXT.md`
 > 적용 방식: 이 문서가 계약의 원본이다. `src/lib/types.js`와 mock 레이어를 이 계약에 맞추고, 백엔드(FastAPI·Supabase·R2)와 AI 파이프라인은 같은 shape를 구현한다. 현행 코드와의 차이(마이그레이션 갭)는 `documents/TODO.md`가 추적한다 — 문서와 코드가 다르면 문서가 맞다.
 
 ---
@@ -148,9 +148,16 @@ MannequinCut {
 ```ts
 StoryboardBlock {
   id: string
-  kind: BlockKind                  // 섹션 역할. 사용자 추가 블록 기본 'info'
+  taxonomyVersion: 2               // 사용자 분류 버전. 다른 버전의 읽기 호환은 제공하지 않음
+  sectionId: string                // 연속된 같은 섹션 블록이 공유하는 id
+  sectionRole: StoryboardSectionRole
+  sectionTitle?: string            // @deprecated 전환기 표시 캐시. sectionRole에서 다시 계산
+  sectionLayout: SectionLayout     // 기본 'stack'
+  sectionCustom?: boolean          // 사용자가 순서·구성을 직접 바꿨는지
+  contentRole: ContentRole         // 카드가 사진으로 설명할 목적
+  title?: string                   // @deprecated 전환기 표시 캐시. contentRole에서 다시 계산
   source: BlockSource              // 'ai' | 'mine'
-  cutType: CutType | null          // source='mine'이면 null (ADR-0003)
+  cutType: CutType | null          // 내부 생성 레시피. UI 분류가 아님. source='mine'이면 null
   direction?: Direction | ProductDirection | null   // cutType에 따라 옵션 셋이 다름. mirror는 null (ADR-0004)
   shot?: ShotType | ProductShotType
   outerClosureState?: OuterClosureState | null       // 아우터 착용컷(styling·horizon·mirror) 전용. 누락 기본 open
@@ -160,28 +167,68 @@ StoryboardBlock {
   faceExposure: FaceExposure       // 기본 'same'
   angle: CameraAngle               // 기본 'same'
   refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함) — 프로젝트 한정, 전역 저장 없음 (ADR-0004)
-  exampleId?: string | null        // 분위기 예시 선택 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
+  exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   spaceGroupId?: string | null     // 공간 무드 유지 그룹 — 같은 id = 같은 공간에서 생성 (ADR-0004)
   spaceVariation?: 'subtle' | 'varied'  // 그룹 내 변화 강도. 기본 'subtle' (ADR-0004)
+  refScope?: 'all' | 'bg' | 'pose' // 예시에서 참고할 범위
+  layoutRowId?: string             // 2단·3단 배치에서 같은 행을 공유하는 id
+  layoutRowVersion?: 1
   ownImages: string[]              // source='mine'의 직접 업로드 이미지
   thumb: string                    // 예시 썸네일 (서버/목 생성, 최종 이미지 아님)
 }
-// 폐기: title(kind·cutType 라벨에서 파생), poseThumb / poseLabel(카탈로그 파생),
-//       bgThumb / bgLabel(PRD §8.5에서 배경 제거 — 보존 불필요), colorIds(미사용 잔재)
+// 폐기: poseThumb / poseLabel(카탈로그 파생), bgThumb / bgLabel(PRD §8.5에서 배경 제거),
+//       colorIds(미사용 잔재), kind(sectionRole/contentRole과 중복)
 ```
+
+불변식:
+
+- 자동 콘티의 섹션 순서는 `benefit → fit → product`다. `구매 정보`와 `같은 장소`는 섹션을 만들지 않는다.
+- `hero|benefit`은 `benefit`, `coordination|fit|realWear`는 `fit`, `productOverview|detail`은 `product` 섹션에 속한다. `custom`은 사용자가 놓은 섹션을 따른다.
+- `source='mine'`은 `cutType=null`, `contentRole='custom'`이다. 현재 UI에서 내 이미지는 AI 사진 목적을 다시 고르지 않으며, 어느 큰 섹션에 놓였는지는 `sectionRole`로 따로 저장한다. 내 이미지는 컷 종류가 아니다.
+- `cutType`은 기본 `contentRole`이 정하는 내부 값이다. 생성예시는 해당 레시피에서 가능한 구도·분위기를 고르며, 화면은 cutType을 섹션이나 탭으로 노출하지 않는다. `custom`만 기존 레시피를 유지하거나 선택한 예시의 유효 레시피를 쓴다.
+- `contentRole='detail'`은 상품 전체 색상 중 `ImageAsset.slot='Detail'` 입력이 하나 이상 있으면 유효하다. 목표 `colorId`에 Detail이 없으면 기준색, 그다음 Detail 보유 첫 색상의 사진을 구조·재질 근거로 쓰고 색만 목표 색상군으로 전환한다.
+- `taxonomyVersion: 2`만 저장한다. 레거시 블록 매핑은 제공하지 않으며, v2 입력의 역할 누락은 `source='mine'`과 `cutType` 규칙으로만 방어적으로 정규화한다.
+- `sectionTitle`과 `title`은 현재 구현의 전환기 캐시일 뿐 기준 데이터가 아니다. 읽을 때 enum 라벨로 덮어쓰며, 후속 정리에서 저장 shape에서 제거한다.
+
+사진 목적과 내부 생성값의 조합:
+
+| contentRole | sectionRole | cutType | 허용 shot·direction |
+|---|---|---|---|
+| `hero` | `benefit` | `styling` | 사람용 ShotType · front/back/side |
+| `benefit` | `benefit` | `horizon` | 사람용 ShotType · front/back/side |
+| `coordination` | `fit` | `styling` | 사람용 ShotType · front/back/side |
+| `fit` | `fit` | `horizon` | 사람용 ShotType · front/back/side |
+| `realWear` | `fit` | `mirror` | full/medium · direction=null |
+| `productOverview` | `product` | `product` | ghost · front/back |
+| `detail` | `product` | `product` | detail · front/back · 상품 전체 중 Detail 입력 필수 |
+| `custom` | 현재 놓인 섹션 | 기존 레시피 또는 선택한 생성예시에서 정한 레시피 | 해당 cutType의 유효 옵션을 그대로 적용. source=mine이면 cutType=null |
+
+어댑터와 서버는 이 표에 맞지 않는 조합을 그대로 저장하거나 생성기에 보내지 않는다. 목적을 바꾸면 기본 레시피와 옵션을 함께 다시 맞춘다.
 
 ### 3.5 EditorBlock / Element — 에디터 캔버스
 
 ```ts
-EditorBlock {
+EditorBlockBase {
   id: string
   name: string                     // 표시명
-  kind: BlockKind | AutoBlockKind  // auto 블록은 'size' | 'care' | 'ai-notice'
-  auto?: true                      // 자동 안내 블록 여부
   bg: string                       // hex
   h: number                        // 고정 높이(px, 기준 폭 1000)
   elements: Element[]              // 배열 순서 = z-order (뒤가 위)
 }
+
+type EditorBlock =
+  | EditorBlockBase & {
+      kind: StoryboardSectionRole
+      contentRole: ContentRole
+    }
+  | EditorBlockBase & {
+      kind: 'info'
+      infoType: EditorInfoType      // 일반 구매 정보·문구 블록은 종류 필수
+    }
+  | EditorBlockBase & {
+      kind: AutoBlockKind
+      auto: true
+    }
 
 Element (공통) {
   id: string
@@ -243,10 +290,12 @@ GenJob {
   id?: string                      // 백엔드 도입 시 job 추적용
   status: JobStatus
   progress: number                 // 0~100
-  steps: GenStep[]                 // GenStep { key: string, label: string, status: JobStatus }
-  composition: BlockKind[]
+  steps?: GenStep[]                // HTTP 어댑터는 현재 단계 목록을 주지 않으며, mock/legacy에서만 제공
+  composition: StoryboardSectionRole[]
 }
-// step key: info | prep | styling | horizon | product | mirror | copy | assemble
+// mock/legacy step key: info | prep | styling | horizon | product | copy | assemble
+// 화면 라벨은 styling='핵심 장점', horizon='핏·코디', product='제품 확인'으로 보여준다.
+// HTTP 어댑터는 현재 onProgress만 전달한다. onStep 체크리스트 실배선은 TODO다.
 
 Account { name: string, avatar: string, credits: number, plan: PlanTier }
 // PlanTier 토큰: 'basic' | 'plus' | 'seller' (소문자 저장, 표시 라벨은 catalogs 파생 — §4). 가격·혜택 구분은 크레딧 정책과 함께 추후 확정.
@@ -264,15 +313,18 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | SubCategory (outer) | `shirt` `jacket` `cardigan` `padding` `coat` | 셔츠/자켓/가디건/패딩/코트 | |
 | Gender | `women` `men` | 여자/남자 | |
 | Fit | `slim` `regular` `semi_over` `over` | 슬림핏/정핏/세미오버/오버핏 | |
-| ComposeMode | `simple` `basic` `extended` | 간단형/기본형/확장형 | |
-| **CutType** | `styling` `horizon` `product` `mirror` | 스타일링컷/호리존컷/제품컷/거울샷 | ★ 신설 — `daily`·`studio` 폐기 (ADR-0003) · `mirror` 추가 (ADR-0004) |
+| ComposeMode | `basic` `extended` | 기본형/확장형 | 같은 섹션 구조에서 사진 수만 다름. 이 두 값 외에는 읽기·쓰기 모두 거부 |
+| **StoryboardSectionRole** | `benefit` `fit` `product` | 핵심 장점/핏·코디/제품 확인 | 사용자에게 보이는 섹션, 순서 고정 (ADR-0005) |
+| **ContentRole** | `hero` `benefit` `coordination` `fit` `realWear` `productOverview` `detail` `custom` | 첫 장면/핵심 장점/코디 활용/핏 확인/실제 착용 느낌/제품 전체/디테일/직접 구성 | 콘티 카드의 사진 목적 (ADR-0005) |
+| **CutType** | `styling` `horizon` `product` `mirror` | 내부 styling/horizon/product/mirror 레시피 | 생성용 기술값. 사용자 섹션·탭으로 노출하지 않음 (ADR-0003~0005) |
 | **BlockSource** | `ai` `mine` | AI 생성/내 이미지 | ★ 신설 — '내 이미지'는 컷 종류가 아님 |
-| BlockKind | `hook` `selling` `styling` `horizon` `product` `info` | 후킹/셀링포인트/스타일링/호리존/제품/정보 | CutType과 직교 (섹션 역할) |
 | AutoBlockKind | `size` `care` `ai-notice` | 사이즈/세탁/AI 생성 안내 | 2026-06-09 결정 유지 |
+| EditorInfoType | `materials` `options` `shipping_returns` `required_notice` `benefit_copy` `fit_copy` `model_info` `fabric_properties` `color_description` `brand_story` `faq` `reviews` `related_products` `promotion` `social` | 에디터의 구매 정보·문구·선택 콘텐츠 | `kind='info'`일 때 사용. AutoBlockKind 3종과 겹치지 않음 |
+| SectionLayout | `stack` `twoColumn` `threeColumn` `grid2x2` `colorCompare` | 세로 1열/2단/3단/2×2/컬러 비교 | 섹션 안 사진 배치 |
 | Direction | `front` `back` `side` | 정면/뒷면/사이드 | 모델 컷용 |
-| ProductDirection | `front` `back` | 앞면/뒷면 | 제품컷용 ★ 카탈로그 승격 |
-| ShotType | `full` `knee` `medium` `close` | 풀샷/무릎샷/미디움샷/확대샷 | 모델 컷용 |
-| ProductShotType | `ghost` `hanger` `flatlay` | 고스트컷/행거컷/플랫레이샷 | ★ 카탈로그 승격 |
+| ProductDirection | `front` `back` | 앞면/뒷면 | 내부 product 레시피용 ★ 카탈로그 승격 |
+| ShotType | `full` `medium` | 풀샷/중간샷 | 서비스 착용컷은 두 값만 쓴다. 생성예시 선별 도구의 `medium_knee`는 수집 원본 `knee`·`medium`을 합치는 선별 전용 토큰이며 서비스 저장값이 아니다(ADR-0007) |
+| ProductShotType | `ghost` `detail` | 고스트샷/디테일샷 | 고스트샷은 옷 전체이며 기본은 입은 듯한 부피, 플랫레이 생성예시를 고르면 펼친 표현·구도를 따른다. 기존 `flatlay` 입력은 `ghost`로 정규화. `detail`은 상품 전체 중 Detail 입력 사진 필요. 목표 색상에 없으면 타색 Detail의 구조·재질을 유지하고 색만 전환 |
 | **OuterClosureState** | `open` `partial` `closed` | 전체 열림/부분 열림/전체 닫힘 | 아우터 착용컷 전용. 누락 기본 `open`, 그 외 컷·카테고리에서는 무시 |
 | **ProjectStatus** | `draft` `generating` `done` | 초안/생성 중/완료 | ★ 신설 |
 | **PlanTier** | `basic` `plus` `seller` | Basic/Plus/Seller | ★ 신설 — 라벨 대문자, 토큰 소문자 |
@@ -302,18 +354,51 @@ dress:  totalLength, shoulderWidth, chestWidth, waistWidth, armhole, sleeveLengt
 
 ## 5. 카탈로그 (catalogs)
 
-화면은 옵션 셋을 하드코딩하지 않고 `getCatalogs()`로 받는다. 변경 사항:
+공용 옵션 셋은 `getCatalogs()`로 받는다. 콘티의 의미 분류는 프론트 단일 소스 `src/lib/storyboardTaxonomy.js`에서 관리한다.
 
-- **추가**: `productDirections`, `productShotTypes`(현재 콘티 인스펙터·AI 패널·변형 패널 3곳에 하드코딩), `outerClosureStates`(아우터 열림 정도 3종), `measurementLabels`(key → 한국어), `cutTypes`(구 `cutSources` 대체 — `mine` 제외 4종, '내 이미지'는 UI에서 source 토글로 합성)
+실제 생성예시는 상품 종류와 별도로 적용 범위를 가진다(ADR-0006).
+
+```ts
+GenerationExample {
+  id: string
+  thumb: string
+  cutType: CutType
+  gender: Gender | null                    // 착용컷은 women|men, 성별 공용 제품컷은 null
+  clothingType: ClothingType              // release manifest의 sourceClothingType
+  applicableClothingTypes: ClothingType[]
+  shot: ShotType | ProductShotType
+  mood: string | null                  // styling만
+  detailSubject: '원단·봉제' | '단추·지퍼' | '포켓' | null // product detail만
+  presentationMethod: 'ghost' | 'flatlay' | null          // product ghost만
+  rank: number
+  variants: ('all' | 'pose' | 'bg')[] // 실제 발행된 원본 variant만. thumb는 별도 필드
+}
+```
+
+- `applicableClothingTypes`는 비어 있지 않고 중복이 없으며 `clothingType`을 포함한다.
+- 제품 생성예시는 성별 공용이므로 `gender=null`이고, UI 성별 필터의 영향을 받지 않는다. 착용 생성예시는 `women|men`을 유지한다.
+- `upper`는 `ClothingType`이 아니다. `[top, outer]`을 화면에서 `상의·아우터 공용`으로 표시할 뿐이다.
+- 둘 이상의 종류에 공용인 예시는 사람 검토를 거친 스타일링·호리존 풀샷에만 허용한다. 샷을 중간샷(선택판 `medium_knee`)·제품·디테일로 다시 분류하면 적용 목록을 `[sourceClothingType]`으로 좁힌다.
+- UI와 서버는 현재 `Product.clothingType`이 적용 목록에 있는지 검증한다. 목록은 `StoryboardBlock`에 복제하지 않고 `exampleId`가 가리키는 생성예시 정본에서 읽는다.
+- `refScope`는 예시에서 전부·배경·포즈 중 무엇을 참고할지 나타내는 별도 축이며 의류 종류 적용 범위로 재사용하지 않는다.
+- `refScope='all'`은 장소·조명·분위기·포즈·프레이밍·구성, `pose`는 자세만, `bg`는 장소·조명·분위기만 참고한다. `pose` 자산의 캔버스나 원본 크롭은 프레이밍 근거가 아니며 현재 카드의 `shot`과 `cutType`이 카메라 거리·몸 크기·크롭을 정한다. 어느 범위에서도 예시 속 의류·신발·액세서리를 가져오지 않는다(ADR-0009).
+- `pose`·`bg`는 선택적 전용 variant다. 전용 자산이 없으면 `all`로 대체하지 않으며, UI와 서버는 실제 발행된 variant만 사용 가능하다고 판단한다. 제품 `ghost | detail` 예시는 `all`만 사용한다.
+- 사용자가 고른 매칭 의류는 `styling | horizon | mirror` 모든 착용컷의 의류 기준이다. 판매 상품과 매칭 의류가 착용컷 의류의 유일한 근거이며, 제품 단독컷에는 매칭 의류를 적용하지 않는다.
+
+- **현행 추가**: `productDirections`, `productShotTypes`, `outerClosureStates`(아우터 열림 정도 3종), `measurementLabels`(key → 한국어)
+- **로컬 의미 계약**: `storyboardSections`, `contentRoles`에 해당하는 값과 라벨은 `storyboardTaxonomy.js`가 제공한다. 카탈로그 응답과 중복 저장하지 않는다.
+- **후속**: `editorInfoTypes`는 구매 정보 UI 구현 때 카탈로그에 추가한다(`TODO.md`).
+- **내부 전용**: `CutType` enum은 생성 레시피에만 쓴다. 별도 사용자용 `cutTypes` 카탈로그나 탭을 만들지 않는다.
+- **생성예시 릴리스(2단계 운영 적용 완료, 2026-07-20)**: `server/tools/release_genexamples.py`가 확정 manifest를 검증해 서버 레지스트리 v2와 위 프론트 카탈로그를 같은 릴리스에서 만든다. QC 승인 예시 192개(`all` 192·`pose` 12·`bg` 14)와 파생 thumb 192개를 R2 불변 경로 `2026-07-19-pilot-qc-01`로 발행했고, 저장소 JSON도 이 릴리스로 함께 교체했다. 레지스트리 v2는 원본 variant URL·thumb·적용 의류 종류·컷·샷·성별을 함께 가진다. 프론트 `MoodGuide`는 실제 v2 JSON을 소비해 컷·샷·상품 종류·성별로 필터링하고 최대 6장을 노출한다.
 - **변경**: `subCategories`를 `{ value, label }[]`로 (현재 한국어 문자열 배열)
-- **유지**: `clothingTypes` `genders` `fits` `directions` `shotTypes` `angleSlots` `angleLabels` `swatchColors` `composeModes` `poses` `varyOptions` `genExamples` `frames` `shapes` `lines` `fonts` `downloadOptions` `models` `creditCosts`(원본은 `lib/limits.js`)
+- **유지**: `clothingTypes` `genders` `fits` `directions` `shotTypes` `angleSlots` `angleLabels` `swatchColors` `composeModes` `poses` `varyOptions` `genExamples` `frames` `shapes` `lines` `fonts` `downloadOptions` `models` `creditCosts`(원본은 `lib/limits.js`). `genExamples`는 `cutType`·`shot`과 `applicableClothingTypes`의 현재 상품 `clothingType` 포함 여부로 필터링하고, 착용컷은 `gender`를 정확히 맞추되 제품컷의 `gender=null`은 성별 공용으로 취급한다. styling의 `mood`, product detail의 `detailSubject`처럼 카드 조건보다 세밀한 축은 rank 순 라운드로빈으로 섞어 최대 6장을 노출한다.
 - **폐기 예정**: `backgrounds`(콘티 배경 제거 — `varyOptions.bg`가 에디터 변형용으로 대체), `extendedColorPriority`(미사용), `cutSources`
 
 ---
 
 ## 6. API 계약
 
-경계는 `src/lib/api/index.js` 하나다. 모든 함수는 Promise를 반환하고, 장시간 작업은 `onProgress(0..100)` / `onStep(steps)` 콜백을 받는다(실서버 어댑터가 job 폴링을 콜백으로 변환). 화면은 mock/db·placeholder를 직접 import하지 않는다.
+경계는 `src/lib/api/index.js` 하나다. 모든 함수는 Promise를 반환하고, 장시간 작업은 `onProgress(0..100)` 콜백을 받는다. `onStep(steps)`는 현재 mock 상세페이지 생성에만 있으며 HTTP 배선은 TODO다. 화면은 mock/db·placeholder를 직접 import하지 않는다.
 
 **크레딧 규약**: 크레딧을 소모하는 API는 `{ data, credits }` 봉투로 반환한다. `credits`는 차감 후 잔액이며, 화면은 이 값을 `store.syncCredits()`로 반영한다. 실패(throw) 시 차감 없음 — 환불·재시도 정책은 백엔드 시점에 확정(PRD §12.2).
 
@@ -336,8 +421,8 @@ dress:  totalLength, shoulderWidth, chestWidth, waistWidth, armhole, sleeveLengt
 | `generateMannequins(projectId, { onProgress })` | | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · 페이지 최초 진입 시 자동 호출 |
 | `adjustMannequin(projectId, { baseId, fitAdjust?, lengthAdjust?, matchAdjust?, onProgress })` | enum 값만 | ~~`{ data: MannequinCut, credits }`~~ | **@deprecated (2026-07)** — fitProfile 재생성으로 통합, 페이지에서 미호출 (`mannequinAdjust`=0). 서버 `:adjust`는 항상 **410 Gone**(잡 미생성) |
 | `regenerateMannequin(projectId, { fitProfile, onProgress })` | 확인 스텝에서 확정한 FitProfile(축+matchCut) | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · fitProfile을 analysis에 영속 후 새 버전 생성·자동 선택 (구 `regenerateMannequins` 대체) |
-| `getStoryboard(projectId)` | | `StoryboardBlock[]` | project.composeMode 기반으로 구성 |
-| `saveStoryboard(projectId, blocks)` | | `StoryboardBlock[]` | 생성 CTA 시 반드시 호출 |
+| `getStoryboard(projectId)` | | `StoryboardBlock[]` | 저장된 v2 배열을 반환. 화면은 working copy를 만들기 전에 역할을 검증하고 v2 누락값만 방어적으로 정규화 |
+| `saveStoryboard(projectId, blocks)` | | `StoryboardBlock[]` | 생성 CTA 시 반드시 호출. taxonomyVersion=2만 저장 |
 | `generateDetailPage(projectId, { onProgress, onStep })` | | `{ data: EditorBlock[], credits }` | `storyboardPerCut × source='ai'인 블록 수` — 내 이미지 블록은 생성 작업이 없어 차감 제외 |
 | `getEditorBlocks(projectId)` | | `EditorBlock[]` | |
 | `saveEditorBlocks(projectId, blocks)` | | `void` | 구현됨 — 저장 버튼 + 1.5s 디바운스 자동 저장 + 이탈 시 플러시 |
@@ -347,23 +432,28 @@ dress:  totalLength, shoulderWidth, chestWidth, waistWidth, armhole, sleeveLengt
 | `download(projectId, format)` | `'long' \| 'zip'` | `{ ok }` | 실제 렌더링은 P1 |
 
 ```ts
-NewCutRequest {                    // AI 탭 '새 컷 추가'
+NewCutRequest {                    // AI 탭 '새 이미지 추가'
   mode: 'new'
   colorId: string                  // 구 group('색상 1') 대체
-  cutType: CutType
+  sectionRole?: StoryboardSectionRole  // 향후 섹션에 바로 삽입하는 경로용. 현재 UI는 의류 탭에 먼저 추가하므로 생략
+  contentRole: ContentRole          // API는 custom도 허용하되, 현재 UI는 custom AI 프리셋을 따로 노출하지 않음
+  cutType: CutType                 // contentRole에서 파생한 내부 레시피. UI에서 직접 선택하지 않음
   direction: Direction | ProductDirection | null   // mirror는 null — 방향 없음 (ADR-0004)
   shot: ShotType | ProductShotType
   modelId: string
-  exampleId?: string | null        // 분위기 예시 선택 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
+  outerClosureState?: OuterClosureState | null  // 아우터 착용 이미지 전용. 현재 에디터 UI 미노출 시 open 기본값
+  exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   refImages?: string[]
 }
-VaryRequest {                      // AI 탭 '현재 컷 변형' — changes 빈 배열 = '비슷한 컷 만들기'
+VaryRequest {                      // AI 탭 '현재 이미지 수정' — changes 빈 배열 = '비슷한 컷 만들기'
   mode: 'vary'
   source: { src: string, cutType: CutType }    // 미상이면 styling으로 가정해 보냄
   changes: { type: 'direction' | 'shot' | 'pose' | 'face' | 'bg', value: string }[]
   refBg?: string
 }
 ```
+
+`현재 이미지 수정`은 디테일샷 전환을 제공하지 않는다. 디테일은 상품 전체 중 실제 `Detail` 입력을 연결하는 `새 이미지 추가`에서만 만들며, 목표 색상에 Detail이 없으면 타색 근거의 색만 전환한다. 서버는 수정 경로 우회 요청을 `detail_variation_unsupported`로 실패시킨다.
 
 **에러 규약**: 실패는 `Error`를 throw하고 `message`는 사용자에게 그대로 보여줄 한국어 문장이다.
 
@@ -378,5 +468,5 @@ VaryRequest {                      // AI 탭 '현재 컷 변형' — changes 빈
 ## 8. 백엔드 구현 현황 (2026-06-29 기준 라이브)
 
 - Supabase 스키마 구현 완료 (9개 마이그레이션, 17테이블): `profiles`, `credit_accounts`, `credit_ledger`, `projects`, `products`, `analyses`, `assets`, `mannequin_cuts`, `wardrobe_images`, `matching_items`, `jobs`, `job_events`, `exports`, `pricing_plans`, `payment_history`, `credit_sources`, `refund_requests`. 전체 RLS 활성, 쓰기는 service-role/FastAPI 전용.
-- 생성 작업은 서버에서 job(id·status)으로 관리하고, 프론트 어댑터가 `GenJob` 폴링을 `onProgress`/`onStep` 콜백으로 변환한다 — 화면 계약은 바뀌지 않는다.
+- 생성 작업은 서버에서 job(id·status)으로 관리한다. 현재 프론트 어댑터는 `GenJob`을 폴링해 `onProgress`만 전달한다. 서버 SSE 경로는 구현돼 있으나 프론트 구독과 `onStep` 배선은 TODO다.
 - 크레딧 차감은 서버 트랜잭션이 원본이고 `{ data, credits }`의 `credits`가 그 결과다. 프론트 선차감 금지.

@@ -3,9 +3,9 @@
    가운데 큰 컷(내 옷 = 매칭 하의까지 입은 모습) → 아래 '확인 카드'.
    축(핏·기장·… + 매칭 의류 핏)을 하나씩 순차 확인 — '조정하기' 하면 이미지 옆에
    예시가 세로로 떠서 비교하며 고른다(방식 1). 매칭 하의도 컷에 보이므로 조정 시 재생성(유료).
-   전부 확인되면 카드가 '상세페이지 구성'(기본형/확장형) 선택으로 전환 → 이 구성으로 만들기.
-   - 변경 0건 → 구성 선택 후 다음 단계 / 변경 ≥1건 → 수정 반영 재생성(새 버전 히스토리).
-   컷 목록은 서버 상태, 선택 컷·구성은 store + patchProject 동기화.
+   전부 확인되면 카드가 '사진 양'(기본형/확장형) 선택으로 전환 → 이 사진 양으로 만들기.
+   - 변경 0건 → 사진 양 선택 후 다음 단계 / 변경 ≥1건 → 수정 반영 재생성(새 버전 히스토리).
+   컷 목록은 서버 상태, 선택 컷·사진 양은 store + patchProject 동기화.
    설계·규칙: documents/mannequin_ui_direction.md · 목업 documents/mockups/mannequin-ui-matching.html
    ============================================================= */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -629,7 +629,6 @@ export function Mannequin() {
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
-  const [colorCount, setColorCount] = useState(1);
   const submittingRef = useRef(false);   // 결제(재생성) 이중 제출 방지 — busy 반영 전 연타 차단
   const cutsRef = useRef(cuts);
   const selectedRef = useRef(null);
@@ -722,7 +721,6 @@ export function Mannequin() {
       setProgress(generationProgressFor(pid));
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
-      setColorCount((nextProduct?.colors || []).length || 1);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
       setFitProfileDraft(draft);
@@ -1169,7 +1167,16 @@ export function Mannequin() {
         setBusy(false);
       }
     }
-    navigate('/create/storyboard');   // 구성(composeMode)은 store 로 이미 반영됨
+    // 최신 사진 양이 서버에 저장된 뒤 콘티를 읽어야 첫 시드도 올바른 모드로 만들어진다.
+    setBusy(true);
+    try {
+      await setComposeMode(composeMode);
+      navigate('/create/storyboard');
+    } catch {
+      pushToast('사진 양을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertTri' });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const regenerateActive = REGENERATE_ACTIVE_STATES.has(regenerateState);
@@ -1306,30 +1313,31 @@ export function Mannequin() {
           </div>
         ) : (
           <div className="fit-final">
-            <div className="fit-q">상세페이지 구성방식을 선택해주세요.</div>
+            <div className="fit-q">사진 양을 선택해주세요.</div>
             <div className="fit-cmp2">
               {modes.map((m) => {
-                const disabled = m.value === 'extended' && colorCount < 2;
                 const on = composeMode === m.value;
                 return (
                   <button
                     type="button"
                     key={m.value}
-                    className={`fit-cmp${on ? ' on' : ''}${disabled ? ' off' : ''}`}
-                    disabled={disabled}
+                    className={`fit-cmp${on ? ' on' : ''}`}
                     aria-pressed={on}
-                    onClick={() => setComposeMode(m.value)}
+                    onClick={() => {
+                      setComposeMode(m.value).catch(() => {
+                        pushToast('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.', { icon: 'alertTri' });
+                      });
+                    }}
                   >
                     <b>{m.label}</b>
                     <span>{m.desc}</span>
                     {m.count && <em>예상 {m.count}컷</em>}
-                    {disabled && <span className="fit-cmp-off">색상 2개 이상부터</span>}
                   </button>
                 );
               })}
             </div>
             <Button variant="primary" size="lg" block iconRight="arrowRight" disabled={busy} onClick={onCta}>
-              이 구성으로 만들기
+              이 사진 양으로 만들기
             </Button>
           </div>
         )}

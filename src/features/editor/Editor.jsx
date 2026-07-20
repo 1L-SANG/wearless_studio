@@ -19,6 +19,7 @@ import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/compone
 import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { SHAPE_D } from '@/features/editor/shapes.js';
+import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
 
@@ -294,7 +295,9 @@ export function Editor() {
   const [catalogs, setCatalogs] = useState(null);
   const [fmModels, setFmModels] = useState(null); // FaceMarket 검증 모델(실존) — http 모드에서만 로드, 실패=null(가상 폴백)
   const [colorOpts, setColorOpts] = useState([]);
+  const [detailColorOpts, setDetailColorOpts] = useState([]);
   const [clothingType, setClothingType] = useState('top'); // 샷 필터 아이콘·예시 크롭용 (계약 §3.1)
+  const [hasDetailImage, setHasDetailImage] = useState(false);
   const [productName, setProductName] = useState('');
   const [tab, setTab] = useState('ai');
   const [selBlock, setSelBlock] = useState(null);
@@ -339,11 +342,14 @@ export function Editor() {
       // 실존 모델 카탈로그 — mock 모드는 서버가 없으니 스킵, 실패는 null(AIPanel 이 가상모델 폴백)
       isMockMode ? Promise.resolve(null) : listModels().catch(() => null)])
       .then(([b, w, c, _a, p, fm]) => {
-        const withH = b.map((blk) => ({ ...blk, h: blk.h || Math.max(220, blk.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0) + 50) }));
+        const withH = b.map((blk) => normalizeEditorBlockRole({ ...blk, h: blk.h || Math.max(220, blk.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0) + 50) }));
         setBlocks(withH); setWardrobe(w); setCatalogs(c); setFmModels(fm); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         setClothingType(p.clothingType || 'top');
-        const opts = (p.colors || []).filter((col) => col.images.length || col.isBase).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
+        setHasDetailImage(hasDetailSource(p));
+        const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
+        const opts = allColorOpts.filter((_option, index) => (p.colors[index].images || []).length || p.colors[index].isBase);
+        setDetailColorOpts(allColorOpts.length ? allColorOpts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
         setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
       });
   }, []);
@@ -485,10 +491,10 @@ export function Editor() {
   const toggleElField = (blockId, elId, field) => setBlocks((bs) => bs.map((b) => b.id === blockId
     ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, [field]: !e[field] } : e) } : b));
   const moveBlock = (idx, dir) => setBlocks((bs) => { const n = [...bs]; const j = idx + dir; if (j < 0 || j >= n.length) return n; [n[idx], n[j]] = [n[j], n[idx]]; return n; });
-  const addEmpty = (idx) => setBlocks((bs) => { const n = [...bs]; const nb = { id: uid('b'), name: '빈 블록', kind: 'info', bg: '#ffffff', h: 300, elements: [] }; n.splice(idx + 1, 0, nb); return n; });
+  const addEmpty = (idx) => setBlocks((bs) => { const n = [...bs]; const nb = { id: uid('b'), name: '직접 구성', kind: SECTION_ROLES.FIT, contentRole: CONTENT_ROLES.CUSTOM, bg: '#ffffff', h: 300, elements: [] }; n.splice(idx + 1, 0, nb); return n; });
   const deleteBlock = (id) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); toast.push('블록을 삭제했어요'); };
   const addFrame = (f, idx) => {
-    const nb = { id: uid('b'), name: f.label, kind: 'info', bg: '#ffffff', h: 580, elements:
+    const nb = { id: uid('b'), name: f.label, kind: SECTION_ROLES.FIT, contentRole: CONTENT_ROLES.CUSTOM, bg: '#ffffff', h: 580, elements:
       Array.from({ length: f.cols }).map((_, i) => ({ id: uid('el'), type: 'image', x: 40 + i * (920 / f.cols), y: 60, w: 920 / f.cols - 20, h: 460, radius: 10 })) };
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     toast.push(`${f.label} 프레임을 새 블록으로 추가했어요`);
@@ -547,7 +553,7 @@ export function Editor() {
       genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
     }
   };
-  // 현재 컷 변형 — 누적된 변경(chips)을 적용해 생성. 생성 즉시 의류 탭으로 이동해
+  // 현재 이미지 수정 — 누적된 변경(chips)을 적용해 생성. 생성 즉시 의류 탭으로 이동해
   // '기타' 그룹의 로딩 셀을 보여준다 (PRD §10.8: 새 이미지는 의류 탭에 추가).
   const varyGenerate = async ({ source, changes, refBg, refBgAssetId }) => {
     const loadingId = uid('w');
@@ -563,7 +569,7 @@ export function Editor() {
   };
   const varyImage = (im) => {
     setVaryTarget(im?.id ? { id: im.id } : null); // 클릭한 의류 이미지가 변형 대상 — 이미지별 독립 상태
-    setTab('ai'); toast.push('현재 컷 변형으로 이동했어요', { icon: 'wand' });
+    setTab('ai'); toast.push('현재 이미지 수정으로 이동했어요', { icon: 'wand' });
   };
   // 변형 대상 결정 — 'AI 편집' 지정이 있으면 그 의류 이미지, 없으면 선택된 캔버스 이미지
   const varySource = (() => {
@@ -730,7 +736,7 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} clothingType={clothingType} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickRefImage(projectId)} onPickMoodRef={() => api.pickRefImage(projectId)} onSetCutType={setVaryCutType} />;
+      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} hasDetailImage={hasDetailImage} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickRefImage(projectId)} onPickMoodRef={() => api.pickRefImage(projectId)} onSetCutType={setVaryCutType} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} onFreshSeen={freshSeen} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} onVary={varyImage} />;
       case 'frame': return <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />;

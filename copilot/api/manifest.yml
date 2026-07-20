@@ -14,7 +14,15 @@ http:
 
 # Configuration for your containers and service.
 image:
-  build: server/Dockerfile       # 빌드 컨텍스트 = server/ (server/.dockerignore 적용)
+  build:
+    dockerfile: server/Dockerfile
+    context: server              # server/.dockerignore 적용
+    # GitHub hosted runner는 매 배포마다 비어 있으므로 직전 성공 이미지의
+    # 원격 BuildKit 레이어 캐시를 가져온다. CD가 성공 후 buildcache 태그를 갱신한다.
+    cache_from:
+      - 439328746001.dkr.ecr.ap-northeast-2.amazonaws.com/wearless/api:buildcache
+    args:
+      BUILDKIT_INLINE_CACHE: "1" # 다음 배포가 레지스트리 이미지에서 캐시 메타데이터를 복원
   port: 8080
 
 cpu: 512        # Pillow 이미지 처리 여유

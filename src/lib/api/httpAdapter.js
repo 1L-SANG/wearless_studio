@@ -6,7 +6,7 @@
    ============================================================= */
 import { supabase } from '@/lib/supabase.js';
 import { LIMITS } from '@/lib/limits.js';
-import { defaultAnalysisShape, defaultStoryboard } from '@/lib/api/shapes.js';
+import { defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const LONG_IMAGE_JOB_TIMEOUT_MS = 15 * 60 * 1000;
@@ -321,13 +321,21 @@ export const httpAdapter = {
   },
   // ---- 상세페이지 (PL-4) — 콘티·에디터는 서버 소유. detail_page job 이 저장 콘티를 읽는다 ----
   async getStoryboard(projectId) {
-    const saved = await http(`/v1/projects/${projectId}/storyboard`);
-    if (Array.isArray(saved) && saved.length) return saved;
-    // 첫 진입 — 서버에 저장 콘티 없음(GET 은 빈 []). 원 기본 콘티(7컷, d2fb3ee:
-    // 후킹/셀링포인트/스타일링×2/호리존×2/제품컷)를 빌드해 서버에 시드한다.
-    // detail_page job 이 '저장된 콘티'를 읽으므로 저장까지 해야 생성에 반영된다.
-    const product = await http(`/v1/projects/${projectId}/product`);
-    const blocks = defaultStoryboard(product?.colors || []);
+    const [saved, product, project] = await Promise.all([
+      http(`/v1/projects/${projectId}/storyboard`),
+      http(`/v1/projects/${projectId}/product`),
+      http(`/v1/projects/${projectId}`),
+    ]);
+    const colors = product?.colors || [];
+    const mode = project?.composeMode === 'extended' ? 'extended' : 'basic';
+    if (Array.isArray(saved) && saved.length) {
+      const previousMode = mode === 'extended' ? 'basic' : 'extended';
+      // 이전 모드의 기본 시드 그대로일 때만 사진 양 변경을 반영한다.
+      // 사용자가 옵션·순서·레이아웃 중 하나라도 바꾼 콘티는 교체하지 않는다.
+      if (!isDefaultStoryboardForMode(saved, colors, previousMode)) return saved;
+    }
+    // 첫 진입 또는 손대지 않은 이전 모드 시드 — 현재 사진 양의 같은 3단 구조로 교체.
+    const blocks = defaultStoryboard(colors, mode);
     try {
       await http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
     } catch { /* 시드 저장 실패 — 보드는 뜨게 두고, 편집/생성 시 자동저장이 다시 시도 */ }

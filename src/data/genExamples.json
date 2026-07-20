@@ -1,0 +1,3485 @@
+[
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_bottom_full_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_full_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_bottom_full_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_full_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_bottom_full_03",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_full_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_bottom_full_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_full_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_bottom_medium_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_medium_01.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_bottom_medium_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_medium_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_bottom_medium_03",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_medium_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_bottom_medium_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_medium_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_outer_full_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_outer_full_01.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_outer_medium_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_outer_medium_01.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_full_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_full_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_full_03",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_full_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_full_05",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "outer"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_full_06",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 6,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_medium_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_01.webp",
+    "variants": [
+      "all",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_medium_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_medium_03",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_medium_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_medium_05",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_horizon_men_top_medium_06",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 6,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_bottom_full_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_full_01.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_bottom_full_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_full_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_bottom_full_03",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_full_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_bottom_full_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_full_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_bottom_medium_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_medium_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_bottom_medium_03",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_medium_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_bottom_medium_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_medium_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_bottom_medium_05",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_medium_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_top_full_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_full_01.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_top_full_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_full_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_top_full_03",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_full_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_top_full_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_full_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_top_full_05",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_full_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_03",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_05",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_horizon_women_top_medium_06",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 6,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "mirror",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_mirror_men_top_medium_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_men_top_medium_02.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "mirror",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_mirror_women_bottom_full_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_bottom_full_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "mirror",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_mirror_women_bottom_full_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_bottom_full_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "mirror",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_mirror_women_top_full_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_top_full_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "mirror",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_mirror_women_top_full_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_top_full_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "mirror",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_mirror_women_top_medium_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_top_medium_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "mirror",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_mirror_women_top_medium_03",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_top_medium_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "mirror",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_mirror_women_top_medium_05",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_top_medium_05.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "product",
+    "detailSubject": "단추·지퍼",
+    "gender": null,
+    "id": "ex_product_bottom_detail_closure_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "detail",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_detail_closure_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "product",
+    "detailSubject": "단추·지퍼",
+    "gender": null,
+    "id": "ex_product_bottom_detail_closure_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "detail",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_detail_closure_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "product",
+    "detailSubject": "포켓",
+    "gender": null,
+    "id": "ex_product_bottom_detail_pocket_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "detail",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_detail_pocket_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "product",
+    "detailSubject": "포켓",
+    "gender": null,
+    "id": "ex_product_bottom_detail_pocket_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "detail",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_detail_pocket_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_bottom_ghost_01",
+    "mood": null,
+    "presentationMethod": "ghost",
+    "rank": 1,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_bottom_ghost_02",
+    "mood": null,
+    "presentationMethod": "ghost",
+    "rank": 2,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_bottom_ghost_03",
+    "mood": null,
+    "presentationMethod": "flatlay",
+    "rank": 3,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_bottom_ghost_04",
+    "mood": null,
+    "presentationMethod": "flatlay",
+    "rank": 4,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_bottom_ghost_05",
+    "mood": null,
+    "presentationMethod": "flatlay",
+    "rank": 5,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_bottom_ghost_06",
+    "mood": null,
+    "presentationMethod": "ghost",
+    "rank": 6,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_outer_ghost_01",
+    "mood": null,
+    "presentationMethod": "ghost",
+    "rank": 1,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_outer_ghost_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "product",
+    "detailSubject": "단추·지퍼",
+    "gender": null,
+    "id": "ex_product_top_detail_closure_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "detail",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_detail_closure_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "product",
+    "detailSubject": "단추·지퍼",
+    "gender": null,
+    "id": "ex_product_top_detail_closure_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "detail",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_detail_closure_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "product",
+    "detailSubject": "단추·지퍼",
+    "gender": null,
+    "id": "ex_product_top_detail_closure_03",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "detail",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_detail_closure_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "product",
+    "detailSubject": "원단·봉제",
+    "gender": null,
+    "id": "ex_product_top_detail_fabric_sewing_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "detail",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_detail_fabric_sewing_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "product",
+    "detailSubject": "포켓",
+    "gender": null,
+    "id": "ex_product_top_detail_pocket_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "detail",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_detail_pocket_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_top_ghost_01",
+    "mood": null,
+    "presentationMethod": "ghost",
+    "rank": 1,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_top_ghost_02",
+    "mood": null,
+    "presentationMethod": "ghost",
+    "rank": 2,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_top_ghost_03",
+    "mood": null,
+    "presentationMethod": "ghost",
+    "rank": 3,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_top_ghost_04",
+    "mood": null,
+    "presentationMethod": "ghost",
+    "rank": 4,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_top_ghost_05",
+    "mood": null,
+    "presentationMethod": "flatlay",
+    "rank": 5,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "product",
+    "detailSubject": null,
+    "gender": null,
+    "id": "ex_product_top_ghost_06",
+    "mood": null,
+    "presentationMethod": "flatlay",
+    "rank": 6,
+    "shot": "ghost",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_full_cafe_shop_01",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_full_cafe_shop_01.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_full_city_01",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_full_city_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_full_city_02",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_full_city_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_full_city_03",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_full_city_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_full_home_01",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_full_home_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_full_resort_01",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_full_resort_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_medium_cafe_shop_01",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_cafe_shop_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_medium_city_01",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_city_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_medium_home_01",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_home_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_medium_home_02",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_home_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_medium_park_01",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_park_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_medium_park_02",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_park_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_medium_park_03",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_park_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_bottom_medium_resort_01",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_resort_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_full_city_01",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_city_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_full_city_02",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_city_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_full_city_03",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_city_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_full_city_04",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_city_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_full_city_05",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_city_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_full_home_01",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_home_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_medium_city_01",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_city_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_medium_city_02",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_city_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_medium_city_03",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_city_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_medium_city_04",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_city_04.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_medium_home_01",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_home_01.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_medium_home_02",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_home_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_medium_resort_01",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_resort_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "men",
+    "id": "ex_styling_men_top_medium_resort_02",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_resort_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_cafe_shop_01",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_cafe_shop_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_cafe_shop_03",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_cafe_shop_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_cafe_shop_04",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_cafe_shop_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_city_01",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_city_02",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_city_03",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_city_04",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_city_05",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_city_06",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 6,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_home_01",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_home_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_home_02",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_home_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_home_03",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_home_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_home_05",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_home_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_park_01",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_park_02",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_park_03",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_park_04",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_park_05",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_park_06",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 6,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_resort_01",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_resort_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_resort_02",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_resort_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_resort_03",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_resort_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_resort_04",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_resort_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_staged_01",
+    "mood": "staged",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_staged_01.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_full_staged_02",
+    "mood": "staged",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_staged_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_cafe_shop_01",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_cafe_shop_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_cafe_shop_02",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_cafe_shop_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_cafe_shop_03",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_cafe_shop_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_cafe_shop_04",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_cafe_shop_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_city_02",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_city_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_city_03",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_city_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_city_04",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_city_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_city_05",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_city_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_home_01",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_home_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_home_03",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_home_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_home_04",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_home_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_home_05",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_home_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_park_01",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_park_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_park_02",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_park_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_park_03",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_park_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_park_04",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_park_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_park_05",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_park_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_resort_01",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_resort_02",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_resort_03",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_resort_04",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_resort_05",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "bottom"
+    ],
+    "clothingType": "bottom",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_bottom_medium_resort_06",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 6,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_cafe_shop_01",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_cafe_shop_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_cafe_shop_02",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_cafe_shop_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_cafe_shop_03",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_cafe_shop_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_cafe_shop_04",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_cafe_shop_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_city_01",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_city_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_city_02",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_city_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_city_03",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_city_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_city_04",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_city_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_home_01",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_home_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_home_02",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_home_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_park_01",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_park_02",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_park_03",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_park_04",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_park_05",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_05.webp",
+    "variants": [
+      "all",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_park_06",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 6,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_resort_01",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_resort_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_resort_02",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_resort_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_resort_03",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_resort_03.webp",
+    "variants": [
+      "all",
+      "pose",
+      "bg"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_resort_04",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_resort_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_full_staged_01",
+    "mood": "staged",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_staged_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_cafe_shop_01",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_cafe_shop_02",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_cafe_shop_03",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_cafe_shop_04",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_cafe_shop_05",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_cafe_shop_06",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 6,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_city_01",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_city_02",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_city_03",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_city_04",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_city_05",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_city_06",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 6,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_home_01",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_home_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_home_02",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_home_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_home_04",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_home_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_park_01",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_park_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_park_02",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_park_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_park_03",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_park_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_resort_01",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_resort_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_resort_02",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_resort_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_resort_03",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_resort_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_resort_04",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 4,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_resort_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_resort_05",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 5,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_resort_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top"
+    ],
+    "clothingType": "top",
+    "cutType": "styling",
+    "detailSubject": null,
+    "gender": "women",
+    "id": "ex_styling_women_top_medium_staged_01",
+    "mood": "staged",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_staged_01.webp",
+    "variants": [
+      "all"
+    ]
+  }
+]

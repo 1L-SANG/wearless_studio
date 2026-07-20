@@ -65,7 +65,7 @@ seed/matching/{matchingItemId}.{ext}
 
 ## 4. HTTP API 매핑
 
-`lib/api` 함수 시그니처는 불변 — 어댑터가 HTTP를 숨긴다. job형 endpoint는 `202 { jobId }` 반환 → 어댑터가 SSE/폴링을 구독해 `onProgress`/`onStep` 콜백으로 변환 후 `{ data, credits }` resolve.
+`lib/api` 함수 시그니처는 불변 — 어댑터가 HTTP를 숨긴다. job형 endpoint는 `202 { jobId }`를 반환한다. 서버의 SSE·폴링 경로는 모두 구현됐지만, **현재 프론트 어댑터는 폴링으로 `onProgress`만 전달**한다. SSE 구독과 `onStep` 변환은 후속 작업이며, 완료 뒤 `{ data, credits }`를 resolve하는 경계는 유지한다.
 
 | 계약 함수 (§6) | HTTP |
 |---|---|

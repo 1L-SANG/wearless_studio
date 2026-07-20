@@ -4,24 +4,28 @@
    The mock layer (mock/) produces values that conform to these;
    when a real backend lands it must return these same shapes.
 
-   SOURCE OF TRUTH: documents/common_data_contract.md (2026-06-11).
+   SOURCE OF TRUTH: documents/common_data_contract.md (2026-07-17).
    This file mirrors that contract; if they disagree, the contract
-   document wins. Decisions: docs/adr/0001~0003.
+   document wins. Decisions: docs/adr/0001~0005.
 
    NOTE (TS adoption): when we migrate this file to .ts, generate
-   the types from the contract document §3~§4. BlockKind stays
-   non-exhaustive for auto blocks ('size'|'care'|'ai-notice')
-   [user decision 2026-06-09, kept in the 2026-06-11 contract].
+   the types from the contract document §3~§4. EditorBlock.kind
+   additionally accepts automatic information blocks ('size'|'care'|'ai-notice').
    ============================================================= */
 
 /* ---- Closed enums (the union types referenced in JSDoc) ---- */
 export const ClothingType = Object.freeze({ TOP: 'top', BOTTOM: 'bottom', OUTER: 'outer', DRESS: 'dress' });
 export const Gender = Object.freeze({ WOMEN: 'women', MEN: 'men' });
 export const Fit = Object.freeze({ SLIM: 'slim', REGULAR: 'regular', SEMI_OVER: 'semi_over', OVER: 'over' });
-export const ComposeMode = Object.freeze({ SIMPLE: 'simple', BASIC: 'basic', EXTENDED: 'extended' });
-export const BlockKind = Object.freeze({ HOOK: 'hook', SELLING: 'selling', STYLING: 'styling', HORIZON: 'horizon', PRODUCT: 'product', INFO: 'info' });
-/** 컷 종류 — 공식 용어: 스타일링컷·호리존컷·제품컷 (ADR-0003. 'daily'·'studio' 토큰 폐기)
-    + 거울샷 'mirror' (ADR-0004. 방향 없음, 샷은 full/knee만, 얼굴 기본 'hide'=폰으로 가림) */
+export const ComposeMode = Object.freeze({ BASIC: 'basic', EXTENDED: 'extended' });
+/** 콘티보드에서 사용자가 보는 상세페이지의 세 사진 역할. 구매 정보는 에디터 전용이다. */
+export const SectionRole = Object.freeze({ BENEFIT: 'benefit', FIT: 'fit', PRODUCT: 'product' });
+/** 한 장의 사진이 섹션 안에서 맡는 구체적인 목적. */
+export const ContentRole = Object.freeze({
+  HERO: 'hero', BENEFIT: 'benefit', COORDINATION: 'coordination', FIT: 'fit',
+  REAL_WEAR: 'realWear', PRODUCT_OVERVIEW: 'productOverview', DETAIL: 'detail', CUSTOM: 'custom',
+});
+/** AI 생성기의 비노출 렌더 레시피. 사용자 화면의 분류가 아니며 contentRole에서 자동 파생한다. */
 export const CutType = Object.freeze({ STYLING: 'styling', HORIZON: 'horizon', PRODUCT: 'product', MIRROR: 'mirror' });
 /** 블록 출처 — '내 이미지'는 컷 종류가 아니라 source다 (ADR-0003) */
 export const BlockSource = Object.freeze({ AI: 'ai', MINE: 'mine' });
@@ -29,9 +33,11 @@ export const BlockSource = Object.freeze({ AI: 'ai', MINE: 'mine' });
 export const SpaceVariation = Object.freeze({ SUBTLE: 'subtle', VARIED: 'varied' });
 export const Direction = Object.freeze({ FRONT: 'front', BACK: 'back', SIDE: 'side' });
 export const ProductDirection = Object.freeze({ FRONT: 'front', BACK: 'back' });
-export const ShotType = Object.freeze({ FULL: 'full', KNEE: 'knee', MEDIUM: 'medium', CLOSE: 'close' });
-export const ProductShotType = Object.freeze({ GHOST: 'ghost', HANGER: 'hanger', FLATLAY: 'flatlay' });
-/** 아우터 착용컷의 앞부분 열림 정도 — 누락 기본 open, 제품컷·타 카테고리에서는 무시 */
+/** 착용 이미지 프레이밍 — 풀샷 또는 중간샷. 제품 단독컷은 ProductShotType을 쓴다. */
+export const ShotType = Object.freeze({ FULL: 'full', MEDIUM: 'medium' });
+/** 제품 단독컷 — 고스트샷은 옷 전체(기본 고스트 부피, 플랫레이 예시면 펼친 구도), 디테일샷은 확인된 부위 확대. */
+export const ProductShotType = Object.freeze({ GHOST: 'ghost', DETAIL: 'detail' });
+/** 아우터 착용 이미지의 앞부분 열림 정도 — 누락 기본 open, 제품 이미지·타 카테고리에서는 무시 */
 export const OuterClosureState = Object.freeze({ OPEN: 'open', PARTIAL: 'partial', CLOSED: 'closed' });
 export const ProjectStatus = Object.freeze({ DRAFT: 'draft', GENERATING: 'generating', DONE: 'done' });
 export const JobStatus = Object.freeze({ IDLE: 'idle', RUNNING: 'running', DONE: 'done', ERROR: 'error' });
@@ -177,9 +183,11 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
 
    @typedef {Object} StoryboardBlock
    @property {string} id
-   @property {BlockKind} kind            섹션 역할 (사용자 추가 블록 기본 'info')
+   @property {SectionRole} sectionRole   핵심 장점 | 핏·코디 | 제품 확인
+   @property {ContentRole} contentRole   카드의 구체적인 사진 목적
+   @property {2} taxonomyVersion         역할 중심 콘티 taxonomy 버전
    @property {BlockSource} source        'ai' | 'mine'
-   @property {string|null} cutType       CutType. source='mine'이면 null
+   @property {string|null} cutType       비노출 생성 레시피. source='mine'이면 null
    @property {Direction|ProductDirection|null} [direction]  mirror는 null — 방향 개념 없음 (ADR-0004)
    @property {ShotType|ProductShotType} [shot]
    @property {OuterClosureState|null} [outerClosureState] 아우터 착용컷 전용, 누락 기본 open
@@ -189,12 +197,12 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {'same'|'show'|'hide'} faceExposure
    @property {'same'|'low'|'high'} angle
    @property {string[]} refImages        내 레퍼런스 — 생성 입력(NewCutRequest)에 포함. 프로젝트(블록) 한정, 전역 저장 없음
-   @property {string|null} [exampleId]   분위기 예시 선택 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
+   @property {string|null} [exampleId]   촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
    @property {string|null} [spaceGroupId] 공간 무드 유지 그룹 — 같은 id = 같은 공간에서 생성 (ADR-0004)
    @property {SpaceVariation} [spaceVariation] 그룹 내 변화 강도 — 기본 'subtle'
    @property {string[]} [ownImages]      source='mine'
    @property {string} thumb              예시 썸네일 (최종 이미지 아님)
-   @property {string} [title]            과도기 표시 필드 — 계약상 파생 (kind 라벨)
+   @property {string} [title]            contentRole에서 파생한 쉬운 표시명
 
    @typedef {Object} Element
    @property {string} id
@@ -220,20 +228,20 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @typedef {Object} Block               EditorBlock
    @property {string} id
    @property {string} name
-   @property {string} kind               BlockKind | 'size'|'care'|'ai-notice' (auto)
+   @property {string} kind               SectionRole | 'size'|'care'|'ai-notice' (auto)
    @property {string} bg
    @property {number} [h]                고정 높이 (px, 기준 폭 1000)
    @property {Element[]} elements        배열 순서 = z-order
    @property {boolean} [auto]
 
-   @typedef {Object} NewCutRequest    AI 탭 '새 컷 추가' 생성 입력 (계약 §6)
+   @typedef {Object} NewCutRequest    AI 탭 '새 이미지 추가' 생성 입력 (계약 §6)
    @property {'new'} mode
    @property {string} colorId
    @property {CutType} cutType
    @property {Direction|ProductDirection|null} direction  mirror는 null — 방향 없음 (ADR-0004)
    @property {ShotType|ProductShotType} shot
    @property {string} modelId
-   @property {string|null} [exampleId]   분위기 예시 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
+   @property {string|null} [exampleId]   촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
    @property {string[]} [refImages]
 
    @typedef {Object} GenStep
@@ -245,7 +253,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string} [id]
    @property {number} progress
    @property {GenStep[]} steps
-   @property {BlockKind[]} composition
+   @property {SectionRole[]} composition
 
    @typedef {Object} Account
    @property {string} name
@@ -259,9 +267,9 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
 
 /** Convenience namespace mirroring the prototype's window.WT */
 export const WT = Object.freeze({
-  ClothingType, Gender, Fit, ComposeMode, BlockKind, CutType, BlockSource, SpaceVariation,
-  Direction, ProductDirection, ShotType, ProductShotType, ProjectStatus,
-  JobStatus, ElementType, AngleSlot, AdjustFit, AdjustLength,
+  ClothingType, Gender, Fit, ComposeMode, SectionRole, ContentRole, CutType,
+  BlockSource, SpaceVariation, Direction, ProductDirection, ShotType, ProductShotType,
+  OuterClosureState, ProjectStatus, JobStatus, ElementType, AngleSlot, AdjustFit, AdjustLength,
 });
 
 export default WT;

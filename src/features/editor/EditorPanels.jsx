@@ -8,6 +8,11 @@ import { Icon, Button, IconButton, Chips, EmptyState } from '@/components/ui.jsx
 import { UnderlineTabs, ColorDots, MoodGuide } from '@/features/storyboard/Storyboard.jsx';
 import { ModelThumb } from '@/features/analysis/AnalysisForm.jsx';
 import { SHAPE_D } from '@/features/editor/shapes.js';
+import {
+  CONTENT_ROLES,
+  allAiContentTemplates,
+  blockPatchForContentRole,
+} from '@/lib/storyboardTaxonomy.js';
 
 function PanelHead({ title, sub }) {
   return <><div className="panel-h">{title}</div>{sub && <div className="panel-sub">{sub}</div>}</>;
@@ -113,7 +118,7 @@ function SwatchField({ value, palette, opacity, allowNone, thumb, onColor, onOpa
   );
 }
 
-/* ---------- AI · 현재 컷 변형 — 예시 카드 선택 + 누적 트레이 ---------- */
+/* ---------- AI · 현재 이미지 수정 — 예시 카드 선택 + 누적 트레이 ---------- */
 const VARY_CATS = [
   { id: 'cut', label: '컷 변경' }, { id: 'bg', label: '배경' },
   { id: 'pose', label: '포즈' }, { id: 'face', label: '표정' },
@@ -123,7 +128,7 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
   const [cat, setCat] = useState('cut');
   const [sel, setSel] = useState({});
   const [refBg, setRefBg] = useState(null); // 레퍼런스 배경 src — bg 프리셋 카드와 상호 배타
-  const [cutDir, setCutDir] = useState('keep'); // 컷 변경 · 방향 — 'keep' = 현재 유지 (일상컷 기준 옵션)
+  const [cutDir, setCutDir] = useState('keep'); // 컷 변경 · 방향 — 'keep' = 현재 유지
   const [cutShot, setCutShot] = useState('keep'); // 컷 변경 · 샷 종류
   const busyRef = useRef(false); // 같은 틱 더블클릭으로 생성이 2번 나가는 것 방지
   if (!source) {
@@ -133,11 +138,11 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
   // 미상이면 '모델 착용 컷'으로 가정하고(B안), 질문 카드로 제품 사진 전환만 받는다.
   const srcType = source.cutType || null;
   const isProduct = srcType === 'product';
-  // 거울샷 소스(ADR-0004): 방향 변경 없음, 샷 full/knee만, 포즈는 셀피 구도 자동이라 변형 대상 아님
+  // mirror 레시피 소스(ADR-0004): 방향 변경 없음, 샷 full/medium만, 포즈는 셀피 구도 자동이라 변형 대상 아님
   const isMirror = srcType === 'mirror';
   const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
-  const shotOpts = isProduct ? catalogs.productShotTypes
-    : isMirror ? catalogs.shotTypes.filter((s) => s.value === 'full' || s.value === 'knee')
+  // 현재 이미지 수정은 색상별 Detail 근거를 안전하게 연결할 수 없으므로 디테일샷을 제공하지 않는다.
+  const shotOpts = isProduct ? catalogs.productShotTypes.filter((option) => option.value !== 'detail')
     : catalogs.shotTypes;
   const cats = isProduct ? VARY_CATS.filter((c) => c.id === 'cut' || c.id === 'bg')
     : isMirror ? VARY_CATS.filter((c) => c.id !== 'pose')
@@ -272,9 +277,9 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
 }
 
 /* ---------- AI ---------- */
-export function AIPanel({ catalogs, fmModels, account, colorOpts = [], clothingType = 'top', varySource, onGenerate, onVaryGenerate, onPickRef, onPickMoodRef, onSetCutType }) {
+export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', hasDetailImage = false, varySource, onGenerate, onVaryGenerate, onPickRef, onPickMoodRef, onSetCutType }) {
   const [tab, setTab] = useState('vary');
-  const [cut, setCut] = useState('horizon');
+  const [purpose, setPurpose] = useState(CONTENT_ROLES.FIT);
   const [dir, setDir] = useState('front');
   const [shot, setShot] = useState('full');
   const [color, setColor] = useState(null);
@@ -289,10 +294,17 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], clothingT
     if (useFm && !fmList.some((m) => m.id === model)) setModel(fmList[0].id);
   }, [useFm]); // eslint-disable-line react-hooks/exhaustive-deps
   const [refImages, setRefImages] = useState([]);       // 내 레퍼런스 — NewCutRequest.refImages (계약 §6)
-  const [exampleId, setExampleId] = useState(null);     // 분위기 예시 선택 — "예시 그대로, 옷·모델만 교체" (ADR-0004)
-  const colorVal = color || colorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
+  const [exampleId, setExampleId] = useState(null);     // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
+  const [refScope, setRefScope] = useState('all');
+  const purposeOptions = allAiContentTemplates({ hasDetailImage });
+  const purposePatch = blockPatchForContentRole(null, purpose, { clothingType });
+  const cut = purposePatch.cutType;
   const isProduct = cut === 'product';
-  const isMirror = cut === 'mirror'; // 거울샷(ADR-0004): 방향 없음, 샷 full/knee만
+  const isMirror = cut === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
+  const isDetail = purpose === CONTENT_ROLES.DETAIL;
+  const activeColorOpts = isDetail ? detailColorOpts : colorOpts;
+  const colorVal = activeColorOpts.some((option) => option.id === color)
+    ? color : activeColorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
   const [modelOpen, setModelOpen] = useState(false);
   const modelRef = useRef(null);
   const smoothScroll = (p, to, dur = 300) => {
@@ -313,40 +325,55 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], clothingT
     }
   };
   const dirOpts = isProduct ? catalogs.productDirections : catalogs.directions;
-  const shotOpts = isProduct ? catalogs.productShotTypes
-    : isMirror ? catalogs.shotTypes.filter((s) => s.value === 'full' || s.value === 'knee')
+  const shotOpts = isDetail ? catalogs.productShotTypes.filter((option) => option.value === 'detail')
+    : isProduct ? catalogs.productShotTypes.filter((option) => option.value !== 'detail')
     : catalogs.shotTypes;
   const dirVal = dirOpts.some((o) => o.value === dir) ? dir : dirOpts[0].value;
   const shotVal = shotOpts.some((o) => o.value === shot) ? shot : shotOpts[0].value;
+  const modelGender = (catalogs.models || []).find((item) => item.id === model)?.gender || null;
+  const selectPurpose = (value) => {
+    if (!value) return; // 사진 목적은 필수 단일 선택이다.
+    const next = blockPatchForContentRole(null, value, { clothingType });
+    setPurpose(value); setDir(next.direction || 'front'); setShot(next.shot || 'full');
+    setExampleId(null); setRefScope('all');
+  };
+  const selectExample = (value) => {
+    setExampleId(value);
+    if (!value) setRefScope('all');
+  };
   return (
     <div>
       <div className="seg" data-idx={tab === 'vary' ? 1 : 0}>
-        <button className={tab === 'new' ? 'on' : ''} onClick={() => setTab('new')}>새 컷 추가</button>
-        <button className={tab === 'vary' ? 'on' : ''} onClick={() => setTab('vary')}>현재 컷 변형</button>
+        <button className={tab === 'new' ? 'on' : ''} onClick={() => setTab('new')}>새 이미지 추가</button>
+        <button className={tab === 'vary' ? 'on' : ''} onClick={() => setTab('vary')}>현재 이미지 수정</button>
       </div>
       {tab === 'new' ? (
         <div>
-          <div className="insp-sec"><label className="lbl">컷 종류</label>
-            <UnderlineTabs options={catalogs.cutTypes} value={cut} onChange={(v) => { setCut(v); setExampleId(null); }} /></div>
+          <div className="insp-sec"><label className="lbl">사진 목적</label>
+            <Chips options={purposeOptions} value={purpose} onChange={selectPurpose} />
+            <p className="hint" style={{ marginTop: 8 }}>{purposeOptions.find((option) => option.value === purpose)?.description}</p>
+          </div>
 
           {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
           <MoodGuide catalogs={catalogs} cut={cut} direction={isMirror ? null : dirVal} shot={shotVal}
-            onShotChange={(v) => { setShot(v); setExampleId(null); }} clothingType={clothingType}
-            exampleId={exampleId} onExampleChange={setExampleId}
+            shotOptions={isProduct ? shotOpts : null}
+            onShotChange={(v) => { setShot(v); setExampleId(null); setRefScope('all'); }} clothingType={clothingType} gender={modelGender}
+            exampleId={exampleId} onExampleChange={selectExample}
+            refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
-          {!isMirror && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
+          {!isMirror && !isDetail && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
 
           <div className="insp-divider" />
 
           <div className="insp-sec"><label className="lbl">색상</label>
-            <ColorDots colorOpts={colorOpts} value={colorVal} onChange={setColor} /></div>
+            <ColorDots colorOpts={activeColorOpts} value={colorVal} onChange={setColor} /></div>
 
-          <details ref={modelRef} className="insp-extra ai-model" open={modelOpen}>
+          {!isProduct && <details ref={modelRef} className="insp-extra ai-model" open={modelOpen}>
             <summary onClick={toggleModel}><Icon name="chevRight" size={15} />모델</summary>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
               {useFm ? fmList.map((m) => (
                 <div key={m.id} className={`model-card fm-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
-                  onClick={() => setModel(m.id)}
+                  onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}
                   title={`${m.displayName}${m.unitPrice != null ? ` · ₩${Number(m.unitPrice).toLocaleString('ko-KR')}/건` : ''}`}>
                   {m.coverImageUrl
                     ? <img src={m.coverImageUrl} alt={m.displayName} style={{ height: 104 }} />
@@ -354,15 +381,15 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], clothingT
                   {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
                 </div>
               )) : (catalogs.models || []).map((m) => (
-                <div key={m.id} className={`model-card img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }} onClick={() => setModel(m.id)}>
+                <div key={m.id} className={`model-card img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }} onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}>
                   <img src={m.thumb} alt={m.name} style={{ height: 104 }} />
                 </div>
               ))}
             </div>
-          </details>
+          </details>}
 
           <Button variant="primary" block icon="sparkles" className="btn-glowring" onClick={() => onGenerate({
-            colorId: colorVal, cutType: cut, direction: isMirror ? null : dirVal, shot: shotVal, modelId: model, exampleId,
+            contentRole: purpose, colorId: colorVal, cutType: cut, direction: isMirror ? null : dirVal, shot: shotVal, modelId: model, exampleId, refScope,
             refImages: refImages.map((r) => r?.url || r),                  // 표시용 URL (mock 계약 유지)
             refAssetIds: refImages.map((r) => r?.assetId).filter(Boolean), // 서버 첨부용 asset id (계약 §6)
           })}>새 이미지 생성 · {catalogs.creditCosts?.editorImage ?? 1} 크레딧</Button>

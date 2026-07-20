@@ -5,7 +5,7 @@
 수용해 이미지 1장을 반환 ③ latency 관측. DB·R2·job 불필요 — Gemini 이미지 1콜(비용 주의).
 
 실행: cd server && .venv/bin/python -m scripts.smoke_cut
-      (옵션) --cut mirror|styling|horizon|product --shot full|knee|… --clothing top|bottom
+      (옵션) --cut mirror|styling|horizon|product --shot full|medium --clothing top|bottom
              --front <이미지> --out <저장 경로>
 """
 
@@ -46,7 +46,7 @@ _MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".web
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cut", default="mirror", choices=list(cut.CUT_TYPES))
-    ap.add_argument("--shot", default="knee")
+    ap.add_argument("--shot", default="medium")
     ap.add_argument("--direction", default=None)
     ap.add_argument("--clothing", default="top", choices=["top", "bottom"])
     ap.add_argument("--front", default=str(ROOT / "Test image_front.jpeg"))

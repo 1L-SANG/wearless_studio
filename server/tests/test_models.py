@@ -34,6 +34,11 @@ def test_project_patch_rejects_explicit_null_on_non_nullable():
         ProjectPatch(**{"copywriting": None})
 
 
+def test_project_patch_rejects_retired_simple_mode():
+    with pytest.raises(ValidationError):
+        ProjectPatch(**{"composeMode": "simple"})
+
+
 def test_project_patch_allows_null_mannequin_and_omitted_fields():
     # selectedMannequinId는 null 허용, 나머지는 생략 가능
     patch = ProjectPatch(**{"selectedMannequinId": None})
@@ -93,3 +98,19 @@ def test_project_serializes_to_camel():
     assert "createdAt" in out and "updatedAt" in out
     # snake_case 키는 노출되지 않아야
     assert "compose_mode" not in out
+
+
+def test_project_rejects_retired_simple_mode():
+    now = datetime(2026, 6, 16, tzinfo=timezone.utc)
+    with pytest.raises(ValidationError):
+        Project(
+            id="p1",
+            status="draft",
+            title="",
+            compose_mode="simple",
+            copywriting=True,
+            selected_mannequin_id=None,
+            adjust_count=0,
+            created_at=now,
+            updated_at=now,
+        )
