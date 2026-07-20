@@ -18,6 +18,7 @@ import hmac
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -92,8 +93,12 @@ def _wake_dispatcher(request: Request) -> None:
 
 
 async def _fetch_trans(base_url: str, token: str) -> dict:
-    """CX `trans/{token}` 서버발 호출 → 실 신원 필드(dict). 테스트 monkeypatch 지점."""
-    url = f"{base_url}/oacx/api/v1.0/trans/{token}"
+    """CX `trans/{token}` 서버발 호출 → 실 신원 필드(dict). 테스트 monkeypatch 지점.
+
+    token 은 URL 인코딩 후 보간(cx_identity.fetch_trans 와 동일 근거 — 미인코딩 보간은
+    `x/../..`·`x?a=b` 로 CX 호스트 내 경로 이탈/쿼리 주입 가능).
+    """
+    url = f"{base_url}/oacx/api/v1.0/trans/{quote(token, safe='')}"
     async with httpx.AsyncClient(timeout=CX_TRANS_TIMEOUT) as client:
         resp = await client.get(url)
     if resp.status_code != 200:
