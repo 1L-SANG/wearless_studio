@@ -16,12 +16,19 @@ REGION=ap-northeast-2
 PREFIX=/copilot/wearless/prod/secrets
 
 cd "$(dirname "$0")/.."
-[[ -f server/.env.local ]] || { echo "server/.env.local 없음" >&2; exit 1; }
-set -a; source server/.env.local; set +a
+# .env.local 은 gitignore 라 워크트리에는 없다 — 없으면 메인 워크트리(원본 체크아웃)에서 찾는다.
+ENV_FILE="${1:-server/.env.local}"
+if [[ ! -f "$ENV_FILE" ]]; then
+  MAIN_ROOT="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+  [[ -f "$MAIN_ROOT/server/.env.local" ]] && ENV_FILE="$MAIN_ROOT/server/.env.local"
+fi
+[[ -f "$ENV_FILE" ]] || { echo "server/.env.local 없음 (경로 직접 지정 가능: $0 /path/to/.env.local)" >&2; exit 1; }
+echo "env: $ENV_FILE"
+set -a; source "$ENV_FILE"; set +a
 
 for NAME in FM_CHAIN_RPC_URL FM_CHAIN_PRIVATE_KEY; do
   VAL="${!NAME:-}"
-  [[ -n "$VAL" ]] || { echo "$NAME 이 server/.env.local 에 없음" >&2; exit 1; }
+  [[ -n "$VAL" ]] || { echo "$NAME 이 $ENV_FILE 에 없음" >&2; exit 1; }
   if aws ssm put-parameter --profile "$PROFILE" --region "$REGION" \
       --name "$PREFIX/$NAME" --type SecureString --value "$VAL" \
       --tags Key=copilot-application,Value=wearless Key=copilot-environment,Value=prod \
