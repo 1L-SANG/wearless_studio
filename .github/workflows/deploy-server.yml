@@ -29,6 +29,7 @@ env:
     COPILOT_APP: wearless
     COPILOT_ENV: prod
     COPILOT_SVC: api
+    ECR_IMAGE: 439328746001.dkr.ecr.ap-northeast-2.amazonaws.com/wearless/api
 
 jobs:
     test:
@@ -73,7 +74,8 @@ jobs:
                   copilot svc deploy \
                     --app "$COPILOT_APP" \
                     --name "$COPILOT_SVC" \
-                    --env "$COPILOT_ENV"
+                    --env "$COPILOT_ENV" \
+                    --tag "$GITHUB_SHA"
 
             - name: 브라우저 API·R2 CORS 회귀 게이트
               shell: bash
@@ -143,3 +145,14 @@ jobs:
 
                   check_origin 'https://ai.wearless.kr'
                   check_origin 'http://localhost:5173'
+
+            - name: 다음 배포용 Docker 레이어 캐시 갱신
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  source_image="$ECR_IMAGE:$GITHUB_SHA"
+                  cache_image="$ECR_IMAGE:buildcache"
+                  docker image inspect "$source_image" >/dev/null 2>&1 \
+                    || docker pull "$source_image"
+                  docker tag "$source_image" "$cache_image"
+                  docker push "$cache_image"
