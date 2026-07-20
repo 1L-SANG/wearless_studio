@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Icon, Button, IconButton, Chips, EmptyState } from '@/components/ui.jsx';
 import { UnderlineTabs, ColorDots, MoodGuide } from '@/features/storyboard/Storyboard.jsx';
+import { ModelThumb } from '@/features/analysis/AnalysisForm.jsx';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import {
   CONTENT_ROLES,
@@ -276,14 +277,22 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
 }
 
 /* ---------- AI ---------- */
-export function AIPanel({ catalogs, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', hasDetailImage = false, varySource, onGenerate, onVaryGenerate, onPickRef, onPickMoodRef, onSetCutType }) {
+export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', hasDetailImage = false, varySource, onGenerate, onVaryGenerate, onPickRef, onPickMoodRef, onSetCutType }) {
   const [tab, setTab] = useState('vary');
   const [purpose, setPurpose] = useState(CONTENT_ROLES.FIT);
   const [dir, setDir] = useState('front');
   const [shot, setShot] = useState('full');
   const [color, setColor] = useState(null);
-  const initialModel = (catalogs.models || []).find((m) => m.recommended) || (catalogs.models || [])[0];
+  // 실존(FaceMarket) 검증 모델 — 활성 라이선스 + 그리드 자산(assetsReady)까지 갖춰야 컷 생성 가능.
+  // 목록이 비면(오프/미등록/mock 모드) 기존 가상모델(catalogs.models)로 폴백 — 서버도 동일 분기.
+  const fmList = (fmModels || []).filter((m) => m.hasActiveLicense && m.assetsReady);
+  const useFm = fmList.length > 0;
+  const initialModel = useFm ? fmList[0]
+    : (catalogs.models || []).find((m) => m.recommended) || (catalogs.models || [])[0];
   const [model, setModel] = useState(initialModel?.id || 'mA');
+  useEffect(() => {   // 패널 열린 뒤 fm 카탈로그가 도착한 레이스 — mock id 선택을 실존 모델로 승격
+    if (useFm && !fmList.some((m) => m.id === model)) setModel(fmList[0].id);
+  }, [useFm]); // eslint-disable-line react-hooks/exhaustive-deps
   const [refImages, setRefImages] = useState([]);       // 내 레퍼런스 — NewCutRequest.refImages (계약 §6)
   const [exampleId, setExampleId] = useState(null);     // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   const [refScope, setRefScope] = useState('all');
@@ -362,7 +371,16 @@ export function AIPanel({ catalogs, account, colorOpts = [], detailColorOpts = [
           {!isProduct && <details ref={modelRef} className="insp-extra ai-model" open={modelOpen}>
             <summary onClick={toggleModel}><Icon name="chevRight" size={15} />모델</summary>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
-              {(catalogs.models || []).map((m) => (
+              {useFm ? fmList.map((m) => (
+                <div key={m.id} className={`model-card fm-model img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }}
+                  onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}
+                  title={`${m.displayName}${m.unitPrice != null ? ` · ₩${Number(m.unitPrice).toLocaleString('ko-KR')}/건` : ''}`}>
+                  {m.coverImageUrl
+                    ? <img src={m.coverImageUrl} alt={m.displayName} style={{ height: 104 }} />
+                    : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
+                  {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
+                </div>
+              )) : (catalogs.models || []).map((m) => (
                 <div key={m.id} className={`model-card img-only${model === m.id ? ' on' : ''}`} style={{ width: 'auto' }} onClick={() => { setModel(m.id); setExampleId(null); setRefScope('all'); }}>
                   <img src={m.thumb} alt={m.name} style={{ height: 104 }} />
                 </div>

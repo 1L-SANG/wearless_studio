@@ -18,6 +18,7 @@ import hmac
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -92,8 +93,12 @@ def _wake_dispatcher(request: Request) -> None:
 
 
 async def _fetch_trans(base_url: str, token: str) -> dict:
-    """CX `trans/{token}` 서버발 호출 → 실 신원 필드(dict). 테스트 monkeypatch 지점."""
-    url = f"{base_url}/oacx/api/v1.0/trans/{token}"
+    """CX `trans/{token}` 서버발 호출 → 실 신원 필드(dict). 테스트 monkeypatch 지점.
+
+    token 은 URL 인코딩 후 보간(cx_identity.fetch_trans 와 동일 근거 — 미인코딩 보간은
+    `x/../..`·`x?a=b` 로 CX 호스트 내 경로 이탈/쿼리 주입 가능).
+    """
+    url = f"{base_url}/oacx/api/v1.0/trans/{quote(token, safe='')}"
     async with httpx.AsyncClient(timeout=CX_TRANS_TIMEOUT) as client:
         resp = await client.get(url)
     if resp.status_code != 200:
@@ -1205,11 +1210,19 @@ async def resolve_project_license(conn, project: dict, analysis: dict) -> dict |
         if row:
             return row
 
-    selected = (analysis or {}).get("selectedModelId")
-    if not selected:
+    return await resolve_model_license(conn, (analysis or {}).get("selectedModelId"))
+
+
+async def resolve_model_license(conn, model_id) -> dict | None:
+    """모델 id 하나의 검증 대상 라이선스를 해석 — active 우선, 없으면 최신.
+
+    에디터 새 컷(NewCutRequest.modelId) 경로가 상세페이지와 같은 게이트를 타도록 분리.
+    비-UUID(구 'mA'/'mB' 가상모델)·미선택·무라이선스 → None(게이트 no-op).
+    """
+    if not model_id:
         return None
     try:
-        uuid.UUID(str(selected))
+        uuid.UUID(str(model_id))
     except (ValueError, TypeError):
         return None  # 구 정적 mock id('mA'/'mB' 등) → 비-FaceMarket → no-op
 
@@ -1218,7 +1231,7 @@ async def resolve_project_license(conn, project: dict, analysis: dict) -> dict |
             f"""select {_LICENSE_VERIFY_COLS} from fm_licenses
                 where model_id = %s
                 order by (status = 'active') desc, created_at desc limit 1""",
-            (str(selected),),
+            (str(model_id),),
         )
         return await cur.fetchone()
 

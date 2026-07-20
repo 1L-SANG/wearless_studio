@@ -12,8 +12,8 @@ from io import BytesIO
 
 from PIL import Image
 
-from .. import repo
-from ..agents import content_roles, cut_generator, cut_variator
+from .. import facemarket, repo
+from ..agents import content_roles, cut_generator, cut_variator, identity_source
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..r2 import ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
@@ -68,6 +68,9 @@ async def run_editor_image_job(app, job: dict) -> None:
         mime: str
         group: str | None
         cut_type: str | None
+        fm_source: str | None = None      # 에디터 컷 아이덴티티 소스 — REAL 이면 성공 시 정산 대상
+        fm_license_row: dict | None = None
+        fm_face_injected = False          # REAL 자산 2장이 실제 첨부됐을 때만 정산(미첨부 과금 방지)
 
         if mode == "vary":
             source = payload.get("source") or {}
@@ -188,11 +191,36 @@ async def run_editor_image_job(app, job: dict) -> None:
             except ValueError:
                 await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
                 return
+
+            # 아이덴티티 소스 1회 결정(detail_page 와 동일 계약, codex [P1]) — 실존 모델(UUID)은
+            # REAL 로 비공개 자산을 첨부하고, 라이선스 실패면 조용한 폴백 없이 잡 실패(라우트 409
+            # 게이트 이후 해지 레이스 방어). 가상모델('mA' 등)은 기존 VIRTUAL 경로 그대로.
+            selected_model_id = normalized.get("modelId") or normalized.get("model_id")
+            real_refs = None
+            if s.facemarket_enabled and selected_model_id:
+                async with pool.connection() as conn:
+                    real_refs = await identity_source.resolve_real_model_assets(
+                        conn, selected_model_id)
+                    if real_refs is not None:
+                        fm_license_row = await facemarket.resolve_model_license(
+                            conn, selected_model_id)
+                fm_source = identity_source.select_source(
+                    selected_model_id=selected_model_id, license_row=fm_license_row,
+                    has_real_assets=real_refs is not None, has_license_face=False)
+                log.info("AG-06 identity source=%s job=%s hasReal=%s",
+                         fm_source, job_id, real_refs is not None)
+                if fm_source == "REJECTED":
+                    await _fail("모델의 얼굴 라이선스가 활성 상태가 아니에요. 다시 확인해 주세요.",
+                                {"error": "license_rejected", "modelId": str(selected_model_id)})
+                    return
+
             # NewCutRequest.modelId가 이 경로의 정본. C방식 두 장을 원자적으로 로드하며,
-            # 모르는 modelId/manifest/R2 실패는 모델 참조만 빼고 기존 상품 참조로 계속한다.
+            # 모르는 modelId/manifest/R2 실패는 모델 참조만 빼고 기존 상품 참조로 계속한다
+            # (단, REAL 은 라이선스 소비 대상이라 자산 로드 실패 시 계속하지 않고 잡 실패).
             model_images: list[InlineImage] = []
             try:
-                model_refs = cut_generator.resolve_virtual_model_assets(normalized)
+                model_refs = (real_refs if real_refs is not None
+                              else cut_generator.resolve_virtual_model_assets(normalized))
                 if model_refs is not None:
                     # 버킷 인지 — 실존 모델 그리드(bucket='face')는 비공개 r2_face 에서 로드해
                     # 공개 버킷으로 얼굴 키가 새지 않게 한다(가상 모델은 bucket='public').
@@ -206,11 +234,17 @@ async def run_editor_image_job(app, job: dict) -> None:
                             InlineImage(ref["mime"],
                                         await asyncio.to_thread(client.get_bytes, ref["key"])))
             except Exception as e:
+                if fm_source == "REAL":
+                    await _fail("모델 자산을 불러오지 못했어요. 다시 시도해 주세요.",
+                                {"error": "real_model_assets_unavailable",
+                                 "detail": repr(e)[:200]})
+                    return
                 log.warning(
                     "AG-06 virtual model assets unavailable for job %s model %s; "
                     "continuing without model references: %r",
                     job_id, normalized.get("modelId"), e)
                 model_images = []
+            fm_face_injected = fm_source == "REAL" and len(model_images) == 2
             images = [
                 *model_images,
                 *[
@@ -310,5 +344,18 @@ async def run_editor_image_job(app, job: dict) -> None:
                 await asyncio.to_thread(app.state.r2.delete, key)
             except Exception:
                 log.warning("orphan R2 cleanup failed: %s", key)
+        elif (s.facemarket_enabled and fm_face_injected and fm_license_row is not None
+              and fm_license_row.get("unit_price") is not None
+              and getattr(app.state, "fm_chain", None) is not None):
+            # FaceMarket 온체인 정산 훅(선택과제2) — 에디터 컷도 얼굴 라이선스 1회 사용으로
+            # detail_page 와 동일하게 70/20/10 기록. payment_key=job:{id} 멱등(컨트랙트 중복
+            # revert + fm_settlements UNIQUE). best-effort: 정산 실패가 완료된 생성을 안 되돌림.
+            try:
+                await facemarket.record_license_settlement(
+                    app, payment_key=f"job:{job_id}", license_id=str(fm_license_row["id"]),
+                    model_id=str(fm_license_row["model_id"]),
+                    total=int(fm_license_row["unit_price"]), job_id=job_id)
+            except Exception:
+                log.exception("editor_image settlement hook failed for job %s", job_id)
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
         await _fail("이미지 생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})

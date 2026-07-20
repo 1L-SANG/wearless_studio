@@ -382,11 +382,14 @@ export const httpAdapter = {
   async saveAnalysis(projectId, patch) {
     const { matchClothing: matchPatch, ...rest } = patch;
     let cached = cachedAnalysisFor(projectId);
+    let serverEmpty = false;   // 하이드레이션이 "서버 저장분 없음"을 증명 — delta PATCH 로 유실될 게 없다
     if (!cached && projectId) {   // 하드 새로고침 후에도 persist 되도록 저장분 1회 하이드레이션(getMatchClothing 동일)
       const saved = await http(`/v1/projects/${projectId}/analysis`);
       if (saved && Object.keys(saved).length > 1) {   // {projectId} 만 있으면 미저장 — 스킵
         analysisCache = { projectId, analysis: saved };
         cached = saved;
+      } else {
+        serverEmpty = true;
       }
     }
     const base = cached ? { ...cached } : {};
@@ -398,9 +401,11 @@ export const httpAdapter = {
       base.matchClothing = mergeMatchSelection(base.matchClothing || [], matchPatch);
     }
     analysisCache = { projectId, analysis: base };
-    // 서버 PATCH 는 REPLACE — full base(analyze 가 seed 한 캐시)일 때만 지속한다. 캐시가 없는(비정상)
-    // 상태에서 delta 만으로 덮어쓰면 서버의 더 완전한 analysis 를 유실하므로 그 경우 persist 를 건너뛴다(F3).
-    if (projectId && cached) {
+    // 서버 PATCH 는 REPLACE — full base(analyze 가 seed 한 캐시)일 때만 지속한다. 예외: 하이드레이션이
+    // 서버 저장분이 비었음을 증명한 경우(serverEmpty)는 유실될 상위 상태가 없으므로 delta 라도 지속한다
+    // — 분석 실패로 빈 프로젝트에 재진입해 모델만 고른 케이스(F3)에서 selectedModelId 무음 유실 방지.
+    // 캐시도 없고 하이드레이션도 안 뛴(비정상) 상태만 계속 스킵.
+    if (projectId && (cached || serverEmpty)) {
       await http(`/v1/projects/${projectId}/analysis`, { method: 'PATCH', body: base });
     }
     return base;

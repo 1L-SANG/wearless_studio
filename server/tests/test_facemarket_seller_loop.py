@@ -376,3 +376,12 @@ def test_job_settlement_404_when_unrecorded(route, make_token):
     r = client.get("/v1/facemarket/jobs/unknown/settlement",
                    headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 404
+
+
+# ── resolve_model_license (에디터 새 컷 게이트 해석) ──────────────────
+def test_resolve_model_license_noop_guards_before_db():
+    """미선택·비-UUID(구 'mA'/'mB' 가상모델)는 커서 생성 전에 None — DB 없이 검증."""
+    conn = object()  # cursor() 호출되면 AttributeError로 즉시 드러난다
+    assert asyncio.run(facemarket.resolve_model_license(conn, None)) is None
+    assert asyncio.run(facemarket.resolve_model_license(conn, "")) is None
+    assert asyncio.run(facemarket.resolve_model_license(conn, "mA")) is None

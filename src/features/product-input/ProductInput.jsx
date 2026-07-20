@@ -255,7 +255,9 @@ export function ProductInput() {
 
       // 같은 탭에서 마네킹/후속 단계로 갔다가 input 으로 돌아온 경우에는 현재 프로젝트를
       // 편집한다. cold input 은 라우트 계층이 먼저 beginProject 해서 여기까지 stale id가 오지 않는다.
-      if (editingProjectId && existingAnalysis) {
+      // getAnalysis 는 미저장이어도 {projectId} 봉투를 돌려주므로 truthy — payload 실존 여부로
+      // 판정해야 분석이 실패한 프로젝트가 빈 '고스트' 분석 폼으로 뜨는 걸 막는다(F3 진입로).
+      if (editingProjectId && existingAnalysis && Object.keys(existingAnalysis).length > 1) {
         setProduct(p);
         setAnalysis(mergeProductOwnedAnalysisFields(existingAnalysis, p));
         setAnalysisProjectId(editingProjectId);
