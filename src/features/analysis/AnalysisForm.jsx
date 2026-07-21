@@ -317,7 +317,12 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     const licensable = models.filter((m) => m.hasActiveLicense);
     const valid = AI_MODELS.some((m) => m.id === a.selectedModelId)
       || licensable.some((m) => m.id === a.selectedModelId);
-    if (!valid) onChange({ selectedModelId: AI_MODELS[0].id });
+    if (!valid) {
+      // 자동 선택도 상품 대상 성별의 AI 모델부터 (없으면 첫 모델). 수동 선택은 덮지 않는다.
+      const g = a.targetGenders?.[0];
+      const pool = g ? AI_MODELS.filter((m) => m.gender === g) : AI_MODELS;
+      onChange({ selectedModelId: (pool[0] || AI_MODELS[0]).id });
+    }
   }, [models]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
 
@@ -562,22 +567,34 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
             : '검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.'}
         </div>
         {modelTab === 'ai' ? (
-          <div className="model-grid">
-            {AI_MODELS.map((m) => {
-              const on = a.selectedModelId === m.id;
-              return (
-                <div key={m.id} className={`model-card fm-model${on ? ' on' : ''}`}
-                  onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
-                  <img src={m.thumb} alt={m.displayName} />
-                  <span className="fm-verified">AI</span>
-                  <div className="fm-meta">
-                    <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
-                    <div className="fm-price">무료</div>
-                  </div>
+          /* 남녀 그룹 구분(2026-07-21 사용자 결정) — 상품 대상 성별과 같은 그룹을 먼저 보여준다 */
+          (a.targetGenders?.[0] === 'men' ? ['men', 'women'] : ['women', 'men']).map((g) => {
+            const group = AI_MODELS.filter((m) => m.gender === g);
+            if (!group.length) return null;
+            return (
+              <div key={g} style={{ marginBottom: 14 }}>
+                <div className="lbl" style={{ fontSize: 12.5, color: 'var(--fg-2)', marginBottom: 8 }}>
+                  {g === 'women' ? '여성 모델' : '남성 모델'}
                 </div>
-              );
-            })}
-          </div>
+                <div className="model-grid">
+                  {group.map((m) => {
+                    const on = a.selectedModelId === m.id;
+                    return (
+                      <div key={m.id} className={`model-card fm-model${on ? ' on' : ''}`}
+                        onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
+                        <img src={m.thumb} alt={m.displayName} />
+                        <span className="fm-verified">AI</span>
+                        <div className="fm-meta">
+                          <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
+                          <div className="fm-price">무료</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })
         ) : modelsLoading ? (
           <div className="hint">검증 모델을 불러오는 중이에요…</div>
         ) : models.length === 0 ? (
