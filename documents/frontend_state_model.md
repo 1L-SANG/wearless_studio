@@ -81,7 +81,7 @@ useAppStore = {
 | `/editor/:projectId` | getEditorBlocks, getWardrobe, getCatalogs, getAccount, getProduct | 이미지 생성/변형 → `generateImage` + `syncCredits`; 저장 → `saveEditorBlocks`(저장 버튼+디바운스) | account(표시), syncCredits, projectId | blocks + undo 히스토리, selEls/selBlock, cropping, scale, tab, layerFloat, pendingSlot, varyTarget |
 | `/library` | getLibrary | 새 상세페이지 → `startProject()` | startProject | phase, items |
 
-콘티보드의 blocks는 "서버 상태의 working copy" 패턴이다: 진입 시 fetch → `taxonomyVersion:2`, `sectionRole`, `contentRole`을 검증하고 누락값과 첫 `hero`를 섹션·카드 순서로 자동 정규화 → 로컬에서 편집(스냅샷/원래대로 포함) → 생성 CTA에서 한 번에 `saveStoryboard`. 카드 단위 '수정 완료'는 로컬 확정일 뿐 서버 저장이 아니다. UI는 `contentRole`과 `cutType`을 노출하지 않고 생성예시와 필요한 세부 옵션만 보여준다.
+콘티보드의 blocks는 "서버 상태의 working copy" 패턴이다: 진입 시 fetch → `taxonomyVersion:2`, `sectionRole`, `contentRole`과 섹션별 허용 `cutType`·`shot`을 검증하고 내부 역할을 자동 정규화 → 로컬에서 편집(스냅샷/원래대로 포함) → 생성 CTA에서 한 번에 `saveStoryboard`. 핵심 장점의 역할은 순서(첫 AI=`hero`), 핏·코디의 역할은 선택한 컷, 제품 확인의 역할은 선택한 샷으로 파생한다. 카드 단위 '수정 완료'는 로컬 확정일 뿐 서버 저장이 아니다. UI는 `contentRole`은 노출하지 않고, 현재 섹션에 허용된 컷 종류와 생성예시·세부 옵션을 보여준다. 생성예시는 현재 `cutType`에 정확히 맞는 후보만 최대 6장 보여준다.
 
 ---
 
@@ -97,7 +97,7 @@ useAppStore = {
             컷 선택 → selectMannequin(id) → patchProject({selectedMannequinId})
             사진 양(기본형/확장형) → setComposeMode(v) → patchProject({composeMode})
 [콘티]      getStoryboard(projectId)  ← project.composeMode 기반 구성
-            taxonomyVersion=2 검증(핵심 장점→핏·코디→제품 확인, v2 누락 contentRole 방어 정규화)
+            taxonomyVersion=2 검증(핵심 장점→핏·코디→제품 확인, 허용 cutType·shot 및 내부 contentRole 방어 정규화)
             편집은 로컬 → 생성 CTA → saveStoryboard(blocks) + setCopywriting 동기화 → navigate
 [생성 대기]  generateDetailPage(projectId) — 서버가 저장된 콘티·selectedMannequinId·copywriting을 읽음
             완료 → navigate(/editor/:projectId)

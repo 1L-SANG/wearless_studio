@@ -4,8 +4,9 @@
    사용자는 상세페이지의 세 섹션과 생성예시·세부 옵션만 다룬다:
    핵심 장점 → 핏·코디 → 제품 확인.
 
-   contentRole과 cutType은 AI가 사진을 구성할 때만 쓰는 내부값이다.
-   화면에는 노출하지 않고 기본 구성·카드 위치·선택한 샷에서 정한다.
+   contentRole은 AI가 사진의 설명 목적을 정할 때만 쓰는 내부값이다.
+   cutType은 사용자가 인스펙터에서 고르는 촬영 방식이며, 내부 역할은
+   현재 섹션·카드 위치·선택한 cutType/shot에 맞춰 자동으로 정한다.
    ============================================================= */
 
 export const STORYBOARD_TAXONOMY_VERSION = 2;
@@ -25,6 +26,25 @@ export const SECTION_ROLE_OPTIONS = Object.freeze([
 export const SECTION_TITLES = Object.freeze(Object.fromEntries(
   SECTION_ROLE_OPTIONS.map((option) => [option.value, option.label]),
 ));
+
+const CUT_TYPE_OPTIONS_BY_SECTION = Object.freeze({
+  [SECTION_ROLES.BENEFIT]: Object.freeze([
+    Object.freeze({ value: 'styling', label: '스타일링컷' }),
+    Object.freeze({ value: 'horizon', label: '호리존컷' }),
+  ]),
+  [SECTION_ROLES.FIT]: Object.freeze([
+    Object.freeze({ value: 'styling', label: '스타일링컷' }),
+    Object.freeze({ value: 'horizon', label: '호리존컷' }),
+    Object.freeze({ value: 'mirror', label: '거울샷' }),
+  ]),
+  [SECTION_ROLES.PRODUCT]: Object.freeze([
+    Object.freeze({ value: 'product', label: '제품컷' }),
+  ]),
+});
+
+export const cutTypeOptionsForSection = (sectionRole) => (
+  CUT_TYPE_OPTIONS_BY_SECTION[sectionRole] || Object.freeze([])
+);
 
 export const CONTENT_ROLES = Object.freeze({
   HERO: 'hero',
@@ -104,6 +124,11 @@ const WORN_DIRECTIONS = new Set(['front', 'back', 'side']);
 const WORN_SHOTS = new Set(['full', 'medium']);
 const PRODUCT_DIRECTIONS = new Set(['front', 'back']);
 const PRODUCT_OVERVIEW_SHOTS = new Set(['ghost']);
+const FIT_ROLE_BY_CUT_TYPE = Object.freeze({
+  styling: CONTENT_ROLES.COORDINATION,
+  horizon: CONTENT_ROLES.FIT,
+  mirror: CONTENT_ROLES.REAL_WEAR,
+});
 
 export const contentTemplate = (role) => TEMPLATE_BY_ROLE.get(role) || TEMPLATE_BY_ROLE.get(CONTENT_ROLES.CUSTOM);
 export const contentTitle = (role) => contentTemplate(role).label;
@@ -190,6 +215,14 @@ export function normalizedRecipePatch(block, role, { hasDetailImage = null } = {
   }
 
   let nextRole = isContentRole(role) ? role : inferContentRole(block);
+  if ([CONTENT_ROLES.COORDINATION, CONTENT_ROLES.FIT, CONTENT_ROLES.REAL_WEAR].includes(nextRole)
+    && FIT_ROLE_BY_CUT_TYPE[block?.cutType]) {
+    nextRole = FIT_ROLE_BY_CUT_TYPE[block.cutType];
+  }
+  if ([CONTENT_ROLES.PRODUCT_OVERVIEW, CONTENT_ROLES.DETAIL].includes(nextRole)
+    && block?.cutType === 'product') {
+    nextRole = block?.shot === 'detail' ? CONTENT_ROLES.DETAIL : CONTENT_ROLES.PRODUCT_OVERVIEW;
+  }
   if (nextRole === CONTENT_ROLES.DETAIL
     && hasDetailImage === false) {
     nextRole = CONTENT_ROLES.PRODUCT_OVERVIEW;
@@ -213,12 +246,15 @@ export function normalizedRecipePatch(block, role, { hasDetailImage = null } = {
     return { contentRole: nextRole, title: template.label };
   }
 
+  const cutType = [CONTENT_ROLES.HERO, CONTENT_ROLES.BENEFIT].includes(nextRole)
+    && ['styling', 'horizon'].includes(block?.cutType)
+    ? block.cutType : template.cutType;
   let direction = template.direction;
   let shot = template.shot;
-  if (template.cutType === 'mirror') {
+  if (cutType === 'mirror') {
     direction = null;
     if (WORN_SHOTS.has(block?.shot)) shot = block.shot;
-  } else if (template.cutType === 'product') {
+  } else if (cutType === 'product') {
     if (PRODUCT_DIRECTIONS.has(block?.direction)) direction = block.direction;
     if (nextRole === CONTENT_ROLES.DETAIL) shot = 'detail';
     else if (block?.shot === 'flatlay') shot = 'ghost';
@@ -231,12 +267,12 @@ export function normalizedRecipePatch(block, role, { hasDetailImage = null } = {
   return {
     contentRole: nextRole,
     title: template.label,
-    cutType: template.cutType,
+    cutType,
     direction,
     shot,
-    ...(template.cutType === 'mirror' && !['show', 'hide'].includes(block?.faceExposure)
+    ...(cutType === 'mirror' && !['show', 'hide'].includes(block?.faceExposure)
       ? { faceExposure: 'hide' } : {}),
-    ...(['styling', 'horizon'].includes(template.cutType)
+    ...(['styling', 'horizon'].includes(cutType)
       && !['same', 'show', 'hide'].includes(block?.faceExposure)
       ? { faceExposure: 'same' } : {}),
   };

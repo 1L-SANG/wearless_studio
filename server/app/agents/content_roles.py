@@ -1,10 +1,9 @@
 """Storyboard content-role inference and canonicalization helpers.
 
-``contentRole`` is an internal semantic source of truth.  The storyboard UI
-does not ask the seller to choose it; the default composition and card order
-assign it.  The rendering recipe (``cutType``/``direction``/``shot``) is
-derived from it.  A missing role may be inferred defensively from ``cutType``;
-retired kind values are not interpreted.
+``contentRole`` is internal and never selected by the seller. ``cutType`` and
+product ``shot`` are user-facing recipe choices; the current section, card
+order and those choices keep the hidden role aligned. A missing role may be
+inferred defensively from ``cutType``; retired kind values are not interpreted.
 """
 
 CONTENT_ROLES = (
@@ -54,6 +53,21 @@ _WORN_DIRECTIONS = ("front", "side", "back")
 _WORN_SHOTS = ("full", "medium")
 _PRODUCT_DIRECTIONS = ("front", "back")
 _PRODUCT_OVERVIEW_SHOTS = ("ghost",)
+_FIT_ROLE_BY_CUT_TYPE = {
+    "styling": "coordination",
+    "horizon": "fit",
+    "mirror": "realWear",
+}
+
+
+def _role_for_selected_recipe(block: dict, role: str) -> str:
+    """Align a hidden role with the seller-facing cut/shot choice."""
+    cut_type = block.get("cutType") or block.get("cut_type")
+    if role in ("coordination", "fit", "realWear") and cut_type in _FIT_ROLE_BY_CUT_TYPE:
+        return _FIT_ROLE_BY_CUT_TYPE[cut_type]
+    if role in ("productOverview", "detail") and cut_type == "product":
+        return "detail" if block.get("shot") == "detail" else "productOverview"
+    return role
 
 
 def resolve_content_role(block: dict | None) -> str:
@@ -95,10 +109,12 @@ def resolve_section_role(block: dict | None, content_role: str | None = None) ->
 def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> dict:
     """Return a copy whose hidden cut recipe agrees with its content role.
 
-    A valid explicit ``contentRole`` wins over contradictory recipe fields.
-    When the role is absent, :func:`resolve_content_role` may infer it from
-    ``cutType``. User-owned blocks clear the recipe; explicit ``custom`` blocks
-    keep an existing recipe but never invent one.
+    A valid explicit ``contentRole`` supplies section semantics. Within that
+    section, a valid seller-selected ``cutType`` (or product ``shot``) wins and
+    realigns the hidden role. When the role is absent,
+    :func:`resolve_content_role` may infer it from ``cutType``. User-owned
+    blocks clear the recipe; explicit ``custom`` blocks keep an existing recipe
+    but never invent one.
     """
     if not isinstance(block, dict):
         return block
@@ -121,6 +137,7 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
 
     explicit_role = block.get("contentRole") or block.get("content_role")
     role = explicit_role if explicit_role in CONTENT_ROLES else resolve_content_role(block)
+    role = _role_for_selected_recipe(block, role)
     out["contentRole"] = role
 
     if role == "custom":
@@ -138,7 +155,12 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
         return out
 
     recipe = _CONTENT_ROLE_RECIPES[role]
-    cut_type = recipe["cutType"]
+    requested_cut_type = block.get("cutType") or block.get("cut_type")
+    cut_type = (
+        requested_cut_type
+        if role in ("hero", "benefit") and requested_cut_type in ("styling", "horizon")
+        else recipe["cutType"]
+    )
     direction = recipe["direction"]
     shot = recipe["shot"]
 
