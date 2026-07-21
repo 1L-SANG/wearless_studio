@@ -102,6 +102,21 @@ def test_save_storyboard_persists_canonical_blocks(client, make_token, monkeypat
     assert mine["ownImages"] == ["asset-1"]
 
 
+def test_save_storyboard_rejects_invalid_example_selection_origin_before_db(client, make_token):
+    res = client.put(
+        "/v1/projects/p1/storyboard",
+        headers=_auth(make_token),
+        json=[{
+            "id": "b1", "source": "ai", "sectionRole": "fit", "contentRole": "fit",
+            "cutType": "horizon", "direction": "front", "shot": "full",
+            "exampleId": "example-id", "exampleSelectionOrigin": "system",
+        }],
+    )
+
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "invalid_example_selection_origin"
+
+
 def test_save_storyboard_rejects_bg_example_when_pilot_disabled(client, make_token):
     res = client.put(
         "/v1/projects/p1/storyboard",

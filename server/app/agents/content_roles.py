@@ -60,6 +60,56 @@ _FIT_ROLE_BY_CUT_TYPE = {
 }
 
 
+def _canonicalize_example_selection(out: dict) -> dict:
+    """Normalize the persisted example selection without leaving orphan metadata."""
+    example_id = out.get("exampleId") or out.get("example_id")
+    origin = out.get("exampleSelectionOrigin")
+    if origin is not None and origin not in ("auto", "user"):
+        raise ValueError("invalid_example_selection_origin")
+    out.pop("example_id", None)
+    if example_id:
+        if origin is None:
+            origin = "user"  # legacy selections are protected from automatic replacement
+        out["exampleId"] = example_id
+        out["exampleSelectionOrigin"] = origin
+        return out
+
+    out["exampleId"] = None
+    out["exampleSelectionOrigin"] = None
+    if out.get("baseThumb") is not None:
+        out["thumb"] = out.get("baseThumb")
+        out["baseThumb"] = None
+    return out
+
+
+def validate_storyboard_example_references(
+    blocks: list, *, assets: dict[str, dict], clothing_type: str, gender: str,
+) -> tuple[str, str] | None:
+    """Validate stable ID/applicability; shot/direction may differ outside same-space pose use."""
+    for block in blocks or []:
+        if not isinstance(block, dict) or not block.get("exampleId"):
+            continue
+        entry = assets.get(str(block["exampleId"]))
+        if not entry or not entry.get("all"):
+            return "unknown_example_id", "저장된 생성예시를 찾을 수 없어요. 다른 예시를 골라주세요."
+        if clothing_type not in (entry.get("applicableClothingTypes") or []):
+            return "example_not_applicable", "상품 조건에 맞지 않는 생성예시예요. 다른 예시를 골라주세요."
+        if entry.get("cutType") != block.get("cutType"):
+            return "example_cut_mismatch", "컷 종류에 맞지 않는 생성예시예요. 다른 예시를 골라주세요."
+        expected_gender = None if block.get("cutType") == "product" else gender
+        if entry.get("gender") != expected_gender:
+            return "example_gender_mismatch", "모델 조건에 맞지 않는 생성예시예요. 다른 예시를 골라주세요."
+        if block.get("spaceGroupId"):
+            if not entry.get("pose"):
+                return "example_pose_unavailable", "같은 공간 컷에는 포즈 자산이 있는 생성예시가 필요해요."
+            if block.get("cutType") != "mirror" and entry.get("direction") != block.get("direction"):
+                return (
+                    "example_pose_direction_mismatch",
+                    "같은 공간 컷의 방향과 생성예시 포즈 방향이 맞지 않아요.",
+                )
+    return None
+
+
 def _role_for_selected_recipe(block: dict, role: str) -> str:
     """Align a hidden role with the seller-facing cut/shot choice."""
     cut_type = block.get("cutType") or block.get("cut_type")
@@ -133,7 +183,7 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
         section_role = resolve_section_role(block)
         if section_role:
             out["sectionRole"] = section_role
-        return out
+        return _canonicalize_example_selection(out)
 
     explicit_role = block.get("contentRole") or block.get("content_role")
     role = explicit_role if explicit_role in CONTENT_ROLES else resolve_content_role(block)
@@ -152,7 +202,7 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
                 block.get("direction") if block.get("direction") in _WORN_DIRECTIONS else "front"
             )
             out["shot"] = block.get("shot") if block.get("shot") in _WORN_SHOTS else "full"
-        return out
+        return _canonicalize_example_selection(out)
 
     recipe = _CONTENT_ROLE_RECIPES[role]
     requested_cut_type = block.get("cutType") or block.get("cut_type")
@@ -197,7 +247,7 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
         out["faceExposure"] = "show" if face == "show" else "hide"
     elif (block.get("faceExposure") or block.get("face_exposure")) not in ("same", "show", "hide"):
         out["faceExposure"] = "same"
-    return out
+    return _canonicalize_example_selection(out)
 
 
 def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
@@ -246,7 +296,7 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
             if block.get("baseThumb") or block.get("thumb"):
                 updated["thumb"] = block.get("baseThumb") or block.get("thumb")
             updated["baseThumb"] = None
-        return updated
+        return _canonicalize_example_selection(updated)
 
     canonical = [canonicalize_for_storyboard(block) for block in (blocks or [])]
     # Custom/mine cards without a semantic section inherit the preceding

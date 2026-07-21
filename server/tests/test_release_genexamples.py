@@ -1,7 +1,5 @@
 import hashlib
 import json
-import subprocess
-import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -9,6 +7,16 @@ import pytest
 from PIL import Image
 
 from tools import release_genexamples as release
+
+
+_LOAD_PUBLIC_COMBINATIONS = release.load_public_combinations
+_GENERATION_EXAMPLE_COVERAGE = release.generation_example_coverage
+
+
+@pytest.fixture(autouse=True)
+def _isolate_manifest_schema_tests_from_production_coverage(monkeypatch):
+    monkeypatch.setattr(release, "load_public_combinations", lambda path=None: [])
+    monkeypatch.setattr(release, "generation_example_coverage", lambda examples, combinations=None: ({}, [], []))
 
 
 def _write_png(path: Path, *, alpha: bool = False, color=(80, 120, 160)) -> dict:
@@ -415,27 +423,50 @@ def test_apply_copies_only_staged_json_to_configured_repo_targets(tmp_path, monk
     assert catalog_target.read_bytes() == result.catalog_path.read_bytes()
 
 
-def test_cli_synthetic_fixture_end_to_end_staging_and_upload_dry_run(tmp_path):
+def test_declared_zero_count_is_a_hard_validation_failure(tmp_path, monkeypatch):
+    manifest_path, root, manifest = _fixture(tmp_path)
+    monkeypatch.setattr(release, "generation_example_coverage", _GENERATION_EXAMPLE_COVERAGE)
+    monkeypatch.setattr(release, "load_public_combinations", lambda path=None: [{
+        "cutType": "horizon", "shot": "full", "clothingType": "top", "gender": "women",
+    }])
+    with pytest.raises(release.ReleaseValidationError) as caught:
+        release.validate_manifest(manifest, root, manifest_path=manifest_path)
+    assert any("공개 선언 조합에 all 발행 예시가 0장입니다" in item
+               for item in caught.value.violations)
+
+
+def test_undeclared_published_combination_is_reported_not_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(release, "generation_example_coverage", _GENERATION_EXAMPLE_COVERAGE)
+    manifest_path, root, manifest = _fixture(tmp_path)
+    examples, _files, warnings = release.validate_manifest(
+        manifest, root, manifest_path=manifest_path
+    )
+    assert examples
+    assert any("미선언 조합은 UI에서 비활성화합니다" in item for item in warnings)
+
+
+def test_public_combination_file_validates_owner_editable_schema():
+    combinations = _LOAD_PUBLIC_COMBINATIONS()
+    assert combinations
+    assert all(set(item) == {"cutType", "shot", "clothingType", "gender"}
+               for item in combinations)
+
+
+def test_cli_synthetic_fixture_end_to_end_staging_and_upload_dry_run(tmp_path, capsys):
     manifest_path, root, _manifest = _fixture(tmp_path)
     output = tmp_path / "cli-stage"
-    command = [
-        sys.executable,
-        str(release.SERVER_DIR / "tools" / "release_genexamples.py"),
+    return_code = release.main([
         str(manifest_path),
         str(root),
         "--out", str(output),
         "--public-base-url", "https://images.example.test",
         "--upload",
-    ]
-    completed = subprocess.run(command, text=True, capture_output=True, check=False)
-    print(completed.stdout, end="")
-    if completed.stderr:
-        print(completed.stderr, file=sys.stderr, end="")
-
-    assert completed.returncode == 0
+    ])
+    output_text = capsys.readouterr().out
+    assert return_code == 0
     assert (output / "example_assets.json").is_file()
     assert (output / "genExamples.json").is_file()
-    assert "UPLOAD DRY-RUN: 3 objects" in completed.stdout
-    assert "/all/" in completed.stdout
-    assert "/pose/" in completed.stdout
-    assert "/thumb/" in completed.stdout
+    assert "UPLOAD DRY-RUN: 3 objects" in output_text
+    assert "/all/" in output_text
+    assert "/pose/" in output_text
+    assert "/thumb/" in output_text

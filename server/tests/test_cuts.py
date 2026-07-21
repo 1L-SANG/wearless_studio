@@ -258,6 +258,115 @@ def test_canonical_selected_fit_cut_realigns_hidden_role():
     assert (normalized["direction"], normalized["shot"]) == ("side", "medium")
 
 
+def test_example_selection_origin_canonicalization_protects_legacy_and_clears_orphans():
+    legacy = content_roles.canonicalize_storyboard_block({
+        "source": "ai", "sectionRole": "fit", "contentRole": "fit",
+        "cutType": "horizon", "direction": "front", "shot": "full",
+        "exampleId": "legacy-id", "thumb": "example.png", "baseThumb": "base.png",
+    })
+    cleared = content_roles.canonicalize_storyboard_block({
+        "source": "ai", "sectionRole": "fit", "contentRole": "fit",
+        "cutType": "horizon", "direction": "front", "shot": "full",
+        "exampleSelectionOrigin": "auto", "thumb": "example.png", "baseThumb": "base.png",
+    })
+
+    assert legacy["exampleId"] == "legacy-id"
+    assert legacy["exampleSelectionOrigin"] == "user"
+    assert cleared["exampleId"] is None
+    assert cleared["exampleSelectionOrigin"] is None
+    assert cleared["thumb"] == "base.png"
+    assert cleared["baseThumb"] is None
+
+
+def test_example_selection_origin_rejects_unknown_enum():
+    with pytest.raises(ValueError, match="invalid_example_selection_origin"):
+        content_roles.canonicalize_storyboard_block({
+            "source": "ai", "sectionRole": "fit", "contentRole": "fit",
+            "cutType": "horizon", "direction": "front", "shot": "full",
+            "exampleId": "example-id", "exampleSelectionOrigin": "system",
+        })
+    with pytest.raises(ValueError, match="invalid_example_selection_origin"):
+        content_roles.canonicalize_storyboard_block({
+            "source": "ai", "contentRole": "fit", "exampleSelectionOrigin": "system",
+        })
+
+
+def test_server_example_validation_rejects_id_applicability_cut_and_gender_but_allows_shot_direction():
+    assets = {
+        "valid": {
+            "all": "all.png", "cutType": "styling", "gender": "women",
+            "shot": "full", "direction": "front", "applicableClothingTypes": ["top"],
+        },
+        "bottom": {
+            "all": "all.png", "cutType": "styling", "gender": "women",
+            "applicableClothingTypes": ["bottom"],
+        },
+        "horizon": {
+            "all": "all.png", "cutType": "horizon", "gender": "women",
+            "applicableClothingTypes": ["top"],
+        },
+        "men": {
+            "all": "all.png", "cutType": "styling", "gender": "men",
+            "applicableClothingTypes": ["top"],
+        },
+        "pose_front": {
+            "all": "all.png", "pose": "pose.png", "cutType": "styling", "gender": "women",
+            "shot": "full", "direction": "front", "applicableClothingTypes": ["top"],
+        },
+        "pose_back": {
+            "all": "all.png", "pose": "pose.png", "cutType": "styling", "gender": "women",
+            "shot": "full", "direction": "back", "applicableClothingTypes": ["top"],
+        },
+        "no_pose": {
+            "all": "all.png", "cutType": "styling", "gender": "women",
+            "shot": "full", "direction": "front", "applicableClothingTypes": ["top"],
+        },
+    }
+    compatible = [{
+        "exampleId": "valid", "cutType": "styling", "shot": "medium", "direction": "back",
+    }]
+    assert content_roles.validate_storyboard_example_references(
+        compatible, assets=assets, clothing_type="top", gender="women"
+    ) is None
+
+    same_space = [{
+        "exampleId": "pose_front", "cutType": "styling", "shot": "medium",
+        "direction": "front", "spaceGroupId": "space-1",
+    }]
+    assert content_roles.validate_storyboard_example_references(
+        same_space, assets=assets, clothing_type="top", gender="women"
+    ) is None
+    no_pose_error = content_roles.validate_storyboard_example_references(
+        [{
+            "exampleId": "no_pose", "cutType": "styling", "direction": "front",
+            "spaceGroupId": "space-1",
+        }],
+        assets=assets, clothing_type="top", gender="women",
+    )
+    assert no_pose_error[0] == "example_pose_unavailable"
+    direction_error = content_roles.validate_storyboard_example_references(
+        [{
+            "exampleId": "pose_back", "cutType": "styling", "direction": "front",
+            "spaceGroupId": "space-1",
+        }],
+        assets=assets, clothing_type="top", gender="women",
+    )
+    assert direction_error[0] == "example_pose_direction_mismatch"
+
+    cases = [
+        ("missing", "styling", "unknown_example_id"),
+        ("bottom", "styling", "example_not_applicable"),
+        ("horizon", "styling", "example_cut_mismatch"),
+        ("men", "styling", "example_gender_mismatch"),
+    ]
+    for example_id, cut_type, expected in cases:
+        error = content_roles.validate_storyboard_example_references(
+            [{"exampleId": example_id, "cutType": cut_type}],
+            assets=assets, clothing_type="top", gender="women",
+        )
+        assert error[0] == expected
+
+
 def test_normalize_cut_type_only_request_uses_defensive_inference():
     spec = cut.normalize_spec({
         "cutType": "horizon", "direction": "side", "shot": "medium",

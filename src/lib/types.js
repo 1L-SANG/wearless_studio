@@ -198,6 +198,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {'same'|'low'|'high'} angle
    @property {string[]} refImages        내 레퍼런스 — 생성 입력(NewCutRequest)에 포함. 프로젝트(블록) 한정, 전역 저장 없음
    @property {string|null} [exampleId]   촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
+   @property {'auto'|'user'|null} [exampleSelectionOrigin] 자동 배정/사용자 확정 출처. exampleId가 없으면 null
    @property {string|null} [spaceGroupId] 공간 무드 유지 그룹 — 같은 id = 같은 공간에서 생성 (ADR-0004)
    @property {SpaceVariation} [spaceVariation] 그룹 내 변화 강도 — 기본 'subtle'
    @property {string[]} [ownImages]      source='mine'

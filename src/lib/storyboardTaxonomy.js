@@ -184,7 +184,8 @@ export function blockPatchForContentRole(block, role, { clothingType = 'top' } =
   const template = contentTemplate(role);
   if (!template.cutType) {
     return {
-      contentRole: CONTENT_ROLES.CUSTOM, title: template.label, exampleId: null,
+      contentRole: CONTENT_ROLES.CUSTOM, title: template.label, exampleId: null, exampleSelectionOrigin: null,
+      ...(block ? { thumb: block.baseThumb || block.thumb, baseThumb: null } : {}),
     };
   }
   const worn = template.cutType === 'styling' || template.cutType === 'horizon' || template.cutType === 'mirror';
@@ -200,6 +201,8 @@ export function blockPatchForContentRole(block, role, { clothingType = 'top' } =
     poseLabel: 'AI 자동',
     angle: 'same',
     exampleId: null,
+    exampleSelectionOrigin: null,
+    ...(block ? { thumb: block.baseThumb || block.thumb, baseThumb: null } : {}),
     outerClosureState: clothingType === 'outer' && worn
       ? (block?.outerClosureState || 'open') : null,
     ...(template.cutType === 'product' ? { matchIds: [] } : {}),
@@ -332,6 +335,7 @@ export function assignInternalContentRoles(blocks) {
         ? { matchIds: [], outerClosureState: null, faceExposure: null } : {}),
       ...(recipeChanged ? {
         exampleId: null,
+        exampleSelectionOrigin: null,
         thumb: block.baseThumb || block.thumb,
         baseThumb: null,
       } : {}),

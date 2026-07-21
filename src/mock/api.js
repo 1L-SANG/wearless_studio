@@ -17,6 +17,7 @@ import { Placeholder } from '@/mock/placeholders.js';
 import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
+import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -258,7 +259,14 @@ export const api = {
 
   /* ---- storyboard (PRD §8) ---- */
   async getStoryboard(/* projectId */) { await wait(160); return clone(DB.storyboard); },
-  async saveStoryboard(_projectId, blocks) { await wait(150); DB.storyboard = clone(blocks); DB.storyboardDirty = true; touch(); return clone(DB.storyboard); },
+  async saveStoryboard(_projectId, blocks, { autoAssignment = false } = {}) {
+    await wait(150);
+    DB.storyboard = clone(blocks);
+    // 자동 예시 배정은 기본 콘티의 일부다. 이미 생긴 사용자 dirty는 유지한다.
+    if (shouldMarkStoryboardDirty({ autoAssignment })) DB.storyboardDirty = true;
+    touch();
+    return clone(DB.storyboard);
+  },
 
   /* ---- generation waiting (PRD §9) ----
      입력은 전부 서버 상태(저장된 콘티 + project 선택값)에서 읽는다 (계약 §6).

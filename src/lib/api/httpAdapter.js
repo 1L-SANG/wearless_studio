@@ -334,14 +334,10 @@ export const httpAdapter = {
       // 사용자가 옵션·순서·레이아웃 중 하나라도 바꾼 콘티는 교체하지 않는다.
       if (!isDefaultStoryboardForMode(saved, colors, previousMode)) return saved;
     }
-    // 첫 진입 또는 손대지 않은 이전 모드 시드 — 현재 사진 양의 같은 3단 구조로 교체.
-    const blocks = defaultStoryboard(colors, mode);
-    try {
-      await http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
-    } catch { /* 시드 저장 실패 — 보드는 뜨게 두고, 편집/생성 시 자동저장이 다시 시도 */ }
-    return blocks;
+    // 첫 진입/재시드는 화면의 자동 예시 배정 뒤 한 번만 PUT한다(예시 없는 시드 선저장 금지).
+    return defaultStoryboard(colors, mode);
   },
-  async saveStoryboard(projectId, blocks) {
+  async saveStoryboard(projectId, blocks, _options = {}) {
     return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
   },
   async getEditorBlocks(projectId) {
