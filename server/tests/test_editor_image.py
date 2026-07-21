@@ -279,6 +279,61 @@ def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
     }]
 
 
+def test_run_editor_image_job_rejects_pose_direction_before_generation(monkeypatch):
+    calls = {"load": 0, "generate": 0}
+    failed = {}
+
+    async def fake_get_product(conn, pid):
+        return {"clothingType": "top", "colors": [{
+            "id": "col1", "isBase": True,
+            "images": [{"slot": "Front", "id": "a1"}],
+        }]}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def fake_example(*_args, **_kwargs):
+        calls["load"] += 1
+        return eij.InlineImage("image/png", b"POSE")
+
+    async def fake_generate(*_args, **_kwargs):
+        calls["generate"] += 1
+        return b"IMG", "image/png"
+
+    async def fake_finalize_failure(conn, **kw):
+        failed.update(kw)
+        return True
+
+    async def fake_emit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
+    monkeypatch.setattr(eij.cut_generator, "pose_direction_compatible", lambda *_args: False)
+    monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_finalize_failure)
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+    payload = {
+        "mode": "new", "colorId": "col1", "contentRole": "fit",
+        "direction": "front", "exampleId": "ex_back_pose", "refScope": "pose",
+    }
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert calls == {"load": 0, "generate": 0}
+    assert failed["metadata"] == {
+        "error": "pose_direction_incompatible",
+        "exampleId": "ex_back_pose",
+        "direction": "front",
+    }
+
 def test_run_editor_image_job_new_uses_selected_color_detail_assets(monkeypatch):
     captured = {"asset_ids": []}
 

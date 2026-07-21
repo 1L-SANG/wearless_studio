@@ -273,6 +273,20 @@ async def run_editor_image_job(app, job: dict) -> None:
                     })
                     # 미첨부 all 예시의 레거시 EXNUANCE까지 제거해 예시가 완전히 무효가 되게 한다.
                     cut_spec["exampleId"] = None
+                elif scope == "pose" and not cut_generator.pose_direction_compatible(
+                    example_id, normalized
+                ):
+                    # 단건 에디터는 배치의 빈 슬롯 대신 명시적 실패로 닫는다. 이 지점은
+                    # 이미지 로드와 Gemini 호출보다 앞이라 불일치 조합의 생성 호출은 0회다.
+                    await _fail(
+                        "이 예시의 포즈 방향이 현재 컷 방향과 맞지 않아요. 다른 예시를 선택해 주세요.",
+                        {
+                            "error": "pose_direction_incompatible",
+                            "exampleId": example_id,
+                            "direction": normalized.get("direction"),
+                        },
+                    )
+                    return
                 else:
                     example_image = await cut_generator.load_example_image(
                         s, example_id, scope=scope, clothing_type=clothing_type)

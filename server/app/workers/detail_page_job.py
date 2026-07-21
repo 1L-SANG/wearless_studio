@@ -508,6 +508,19 @@ async def run_detail_page_job(app, job: dict) -> None:
                         # 이미지 미첨부만으로는 all 범위의 레거시 EXNUANCE 해시가 남는다.
                         # 부적합/미발행 예시가 텍스트로도 영향을 주지 않게 런타임 사본에서 해제한다.
                         cut_spec["exampleId"] = None
+                    elif scope == "pose" and not cut_generator.pose_direction_compatible(
+                        example_id, normalized
+                    ):
+                        # v2 preflight: 호환되지 않는 포즈는 이미지 모델 호출 전에 이 컷만
+                        # 빈 슬롯으로 닫는다. 배치의 다른 컷은 계속 생성한다.
+                        example_warnings.append({
+                            "code": "pose_direction_incompatible",
+                            "blockId": b.get("id"),
+                            "exampleId": example_id,
+                            "direction": normalized.get("direction"),
+                        })
+                        prepared.append((cut_spec, [], "", False))
+                        continue
                     else:
                         # 캐시 키에 scope 포함 — pose는 누끼 variant, all은 원본이라 자산이 다르다
                         cache_key = f"{example_id}:{scope}"

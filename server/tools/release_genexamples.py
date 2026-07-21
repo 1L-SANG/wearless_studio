@@ -489,6 +489,7 @@ def stage_release(
                 "cutType": example["cutType"],
                 "shot": example["shot"],
                 "gender": example["gender"],
+                "direction": example["direction"],
             })
             registry_assets[example_id] = entry
             catalog.append({
@@ -499,6 +500,7 @@ def stage_release(
                 "clothingType": example["sourceClothingType"],
                 "applicableClothingTypes": example["applicableClothingTypes"],
                 "shot": example["shot"],
+                "direction": example["direction"],
                 "mood": example.get("mood"),
                 "detailSubject": example.get("detailSubject"),
                 "presentationMethod": example.get("presentationMethod"),

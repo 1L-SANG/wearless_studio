@@ -25,6 +25,7 @@ import {
   contentTemplatesForSection,
   contentTitle,
   hasDetailSource,
+  poseExampleDirectionCompatible,
   sectionTitle,
 } from '@/lib/storyboardTaxonomy.js';
 
@@ -413,11 +414,14 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   }), [catalogs.genExamples, cut, shotVal, clothingType, gender]);
   const selectedExample = examples.find((example) => example.id === exampleId) || null;
   const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
+  const selectedPoseCompatible = poseExampleDirectionCompatible(selectedExample, {
+    cutType: cut, direction,
+  });
   useEffect(() => {
     if (!exampleId || !onExampleChange) return;
     const published = (selectedExample?.variants || []).filter((variant) => (
       variant !== 'bg' || BG_EXAMPLES_ENABLED
-    ));
+    )).filter((variant) => variant !== 'pose' || selectedPoseCompatible);
     if (!selectedExample || (inSpace && !published.includes('pose'))) {
       onExampleChange(null);
       return;
@@ -426,17 +430,21 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
       onRefScopeChange('pose');
       return;
     }
-    if (!inSpace && (cut === 'product' || moodOnly) && refScope !== 'all' && onRefScopeChange) {
+    if (!inSpace && cut === 'product' && refScope !== 'all' && onRefScopeChange) {
       onRefScopeChange('all');
       return;
     }
     if (cut !== 'product' && !published.includes(refScope) && onRefScopeChange) {
       onRefScopeChange('all');
     }
-  }, [exampleId, selectedExample, inSpace, cut, moodOnly, refScope, onExampleChange, onRefScopeChange]);
+  }, [exampleId, selectedExample, selectedPoseCompatible, inSpace, cut, refScope, onExampleChange, onRefScopeChange]);
   const unavailableReason = (scope) => scope === 'pose'
     ? '이 예시는 아직 포즈 전용 자산이 없어요'
     : '이 예시는 아직 배경 전용 자산이 없어요';
+  const poseDirectionReason = (example) => {
+    const label = { front: '정면', back: '뒷면', side: '사이드' }[example?.direction] || '다른 방향';
+    return `이 예시의 포즈는 ${label} 전용이에요`;
+  };
   return (
     <div className="insp-sec">
       {/* 같은 공간 묶음 안에서는 배경 기준이 묶음에 있으므로 예시는 '포즈 예시'로 강등 (P5 확정) */}
@@ -457,30 +465,37 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
         {examples.map((e) => {
           const on = exampleId === e.id;
           const variants = Array.isArray(e.variants) ? e.variants : [];
-          const inSpaceDisabled = inSpace && !variants.includes('pose');
-          // 레퍼런스 범위 — 호버 오버레이에서 선택. 시리즈 안은 '포즈만' 고정, 제품·비정면(moodOnly)은 범위 개념 없음.
-          const scopeChoices = !onRefScopeChange || moodOnly || cut === 'product' ? null
-            : inSpace ? [{ v: 'pose', l: '포즈만', disabled: !variants.includes('pose') }]
+          const poseCompatible = poseExampleDirectionCompatible(e, { cutType: cut, direction });
+          const poseDisabled = !variants.includes('pose') || !poseCompatible;
+          const poseDisabledReason = !variants.includes('pose')
+            ? unavailableReason('pose') : poseDirectionReason(e);
+          const inSpaceDisabled = inSpace && poseDisabled;
+          // 레퍼런스 범위 — 호버 오버레이에서 선택. 시리즈 안은 호환되는 '포즈만'으로 고정.
+          const scopeChoices = !onRefScopeChange || cut === 'product' ? null
+            : inSpace ? [{ v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason }]
               : [
                 { v: 'all', l: '전부', disabled: !variants.includes('all') },
                 ...(BG_EXAMPLES_ENABLED
                   ? [{ v: 'bg', l: '배경만', disabled: !variants.includes('bg') }]
                   : []),
-                { v: 'pose', l: '포즈만', disabled: !variants.includes('pose') },
+                { v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason },
               ];
           const pick = (scope) => {
             if (!onExampleChange) return;
             if (!variants.includes(scope)) return;
+            if (scope === 'pose' && !poseCompatible) return;
             if (on && (refScope || 'all') === scope) { onExampleChange(null); return; }   // 같은 선택 재클릭 = 해제
             onExampleChange(e.id);
             if (onRefScopeChange) onRefScopeChange(scope);
           };
           const defaultScope = cut === 'product' || moodOnly ? 'all'
             : inSpace ? 'pose'
-              : variants.includes(refScope || 'all') ? (refScope || 'all') : 'all';
+              : variants.includes(refScope || 'all')
+                && ((refScope || 'all') !== 'pose' || poseCompatible)
+                ? (refScope || 'all') : 'all';
           return (
             <button key={e.id} type="button" disabled={inSpaceDisabled}
-              title={inSpaceDisabled ? unavailableReason('pose') : undefined}
+              title={inSpaceDisabled ? poseDisabledReason : undefined}
               className={`sb-excell${on ? ' sel' : ''}${inSpaceDisabled ? ' unavailable' : ''}`}
               onClick={() => { if (on) onExampleChange?.(null); else pick(defaultScope); }}>
               <img src={e.thumb} alt="" />{on && <span className="ck"><Icon name="check" size={11} /></span>}
@@ -493,7 +508,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
                     {scopeChoices.map((c) => (
                       <span key={c.v} role="button" tabIndex={c.disabled ? -1 : 0}
                         aria-disabled={c.disabled || undefined}
-                        title={c.disabled ? unavailableReason(c.v) : undefined}
+                        title={c.disabled ? (c.reason || unavailableReason(c.v)) : undefined}
                         className={`sb-exov-btn${on && (refScope || 'all') === c.v ? ' on' : ''}${c.disabled ? ' unavailable' : ''}`}
                         onClick={(ev) => { ev.stopPropagation(); if (!c.disabled) pick(c.v); }}
                         onKeyDown={(ev) => { if (!c.disabled && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); ev.stopPropagation(); pick(c.v); } }}>
@@ -522,7 +537,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           </button>
         )}
       </div>
-      {moodOnly && <div className="sb-exnote">예시의 <b>포즈·구도·분위기</b>를 참고하되, 촬영 방향은 {direction === 'side' ? '사이드' : '뒷면'}로 유지해요.</div>}
+      {moodOnly && refScope !== 'pose' && <div className="sb-exnote">예시의 <b>포즈·구도·분위기</b>를 참고하되, 촬영 방향은 {direction === 'side' ? '사이드' : '뒷면'}로 유지해요.</div>}
       {/* 레퍼런스 범위 (P5 확정, 전부|포즈만|배경만) — 같은 공간 묶음은 포즈 고정, 제품 생성 레시피는 범위 개념 없음 */}
       {!moodOnly && exampleId && inSpace && (
         <div className="sb-exnote pick"><b>포즈만 참고해요</b> — 배경은 같은 공간 묶음의 기준을 따라요.</div>
@@ -530,9 +545,9 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
       {!moodOnly && exampleId && !inSpace && cut === 'product' && (
         <div className="sb-exnote pick"><b>이 예시처럼 생성돼요</b> — 옷만 우리 걸로 교체</div>
       )}
-      {!moodOnly && exampleId && !inSpace && cut !== 'product' && (
+      {exampleId && !inSpace && cut !== 'product' && (
         refScope === 'pose'
-          ? <div className="sb-exnote">포즈만 참고해요. 배경에 맞지 않으면 자세와 구도가 자연스럽게 조정될 수 있어요.</div>
+          ? <div className="sb-exnote">포즈의 좌우와 비대칭을 그대로 따르고, 프레이밍은 현재 샷을 따라요.</div>
           : refScope === 'bg'
             ? <div className="sb-exnote">배경·분위기만 참고해요. 포즈는 이 옷과 장소에 어울리게 새로 잡혀요.</div>
             : <div className="sb-exnote pick"><b>이 예시처럼 생성돼요</b> — 상품·매칭 의류와 우리 모델로 교체</div>

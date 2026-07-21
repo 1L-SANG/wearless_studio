@@ -58,8 +58,8 @@
 
 ## 3. 소비 (1단계 구현 대상 — 릴리스 도구 하나가 두 산출물 생성)
 
-- **서버 레지스트리** `server/app/data/example_assets.json` v2: `assets[id] = { all, pose?, bg?, applicableClothingTypes, cutType, shot, gender }` (URL = baseUrl+key). 기존 `load_example_asset_registry()` 스키마의 상위 호환 확장 — 서버는 §5 규칙(적용 의류 검증, 미발행 범위 첨부 생략, spaceGroup은 pose 강제)을 정본으로 검증.
-- **프론트 카탈로그** `catalogs.genExamples`: `{ id, thumb, cutType, gender, clothingType(=source), applicableClothingTypes, shot, mood, rank, variants: ["all","pose","bg"] }` — 제품의 `gender=null`은 성별 공용으로 필터링하고, 갤러리는 현재 상품·조건으로 필터링, rank 순 최대 6장, 범위 버튼은 발행 variant만 활성화.
+- **서버 레지스트리** `server/app/data/example_assets.json` v2: `assets[id] = { all, pose?, bg?, applicableClothingTypes, cutType, shot, gender, direction }` (URL = baseUrl+key). 기존 `load_example_asset_registry()` 스키마의 상위 호환 확장 — 서버는 §5 규칙(적용 의류 검증, 미발행 범위 첨부 생략, spaceGroup은 pose 강제)을 정본으로 검증하고, pose 범위는 예시의 관찰 `direction`과 카드 레시피 방향의 사전 호환 게이트를 통과해야 한다.
+- **프론트 카탈로그** `catalogs.genExamples`: `{ id, thumb, cutType, gender, direction, clothingType(=source), applicableClothingTypes, shot, mood, rank, variants: ["all","pose","bg"] }` — 제품의 `gender=null`은 성별 공용으로 필터링하고, 갤러리는 현재 상품·조건으로 필터링, rank 순 최대 6장, 범위 버튼은 발행 variant와 pose 방향 호환 여부에 따라 활성화한다.
 - 파일럿 범위: **pose·bg는 파일럿 19개만 variants에 존재** → UI에서 자동으로 그 19개만 포즈만·배경만 활성화(별도 플래그 불필요 — 계약이 곧 스위치).
 
 ## 4. 확인된 현황 (0단계 조사, 2026-07-19)

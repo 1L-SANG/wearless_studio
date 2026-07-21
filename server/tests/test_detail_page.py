@@ -499,6 +499,8 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
              "exampleId": "ex_wrong_clothing", "refScope": "all"},
             {"id": "unpublished", "source": "ai", "cutType": "horizon",
              "exampleId": "ex_without_bg", "refScope": "bg"},
+            {"id": "direction-mismatch", "source": "ai", "cutType": "styling",
+             "direction": "front", "exampleId": "ex_back_pose", "refScope": "pose"},
             {"id": "named", "source": "ai", "cutType": "styling", "pose": "walk",
              "exampleId": "ex_styling_top_full_1", "refScope": "pose"},
         ]
@@ -524,6 +526,9 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         if example_id == "ex_without_bg":
             return "variant_unpublished"
         return "available"
+
+    def fake_pose_compatible(example_id, normalized):
+        return example_id != "ex_back_pose"
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
         captured[cut_spec["id"]] = {
@@ -551,6 +556,7 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
     monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
     monkeypatch.setattr(dpj.cut_generator, "example_asset_status", fake_example_status)
+    monkeypatch.setattr(dpj.cut_generator, "pose_direction_compatible", fake_pose_compatible)
     monkeypatch.setattr(dpj.cut_generator, "load_example_image", fake_example)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
@@ -565,9 +571,10 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         assert len(item["images"]) == 2  # PRODUCT 다음에 resolved EXAMPLE 실제 첨부
         assert item["images"][-1].data.startswith(b"EXAMPLE:")
         assert item["images"][-1].data.endswith(f":{scope}".encode())  # scope별 자산(누끼 variant) 선택 검증
-        assert f"EXAMPLE REFERENCE (scope: {scope})" in item["manifest"]
+    assert "EXAMPLE REFERENCE (scope: all)" in captured["all"]["manifest"]
+    assert "POSE CONTROL" in captured["pose"]["manifest"]
     assert "follow the attached EXAMPLE REFERENCE's background/location" in captured["all"]["prompt"]
-    assert "never copy its background, location, lighting, mood" in captured["pose"]["prompt"]
+    assert "Do not transfer any background, lighting, color grade" in captured["pose"]["prompt"]
     assert "follow the attached EXAMPLE REFERENCE's background/location" not in captured["pose"]["prompt"]
     assert len(captured["named"]["images"]) == 1
     assert "EXAMPLE REFERENCE" not in captured["named"]["manifest"]
@@ -586,7 +593,12 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
             "code": "example_variant_unpublished", "blockId": "unpublished",
             "exampleId": "ex_without_bg", "clothingType": "top", "refScope": "bg",
         },
+        {
+            "code": "pose_direction_incompatible", "blockId": "direction-mismatch",
+            "exampleId": "ex_back_pose", "direction": "front",
+        },
     ]
+    assert "direction-mismatch" not in captured  # preflight에서 빈 슬롯, 생성 호출 0회
 
 
 def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(monkeypatch):

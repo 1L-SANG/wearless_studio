@@ -25,6 +25,7 @@ from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
 from .prompts import _product_block, _sanitize
+from . import pose_crop
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "cut_generate_v1.txt")
@@ -229,6 +230,10 @@ def load_example_asset_registry() -> tuple[str | None, dict[str, dict]]:
             for field in ("cutType", "shot"):
                 if isinstance(value.get(field), str) and value[field]:
                     entry[field] = value[field]
+            if "direction" in value and (
+                value.get("direction") is None or value.get("direction") in _DIRECTIONS
+            ):
+                entry["direction"] = value.get("direction")
             # 제품 생성예시는 성별 공용이라 v2 레지스트리에 명시된 null도 메타데이터다.
             # 키 자체가 없는 구 레지스트리와 구분해 그대로 보존한다.
             if "gender" in value and (
@@ -264,6 +269,28 @@ def example_asset_status(
     if not entry.get(variant):
         return "variant_unpublished"
     return "available"
+
+
+def pose_direction_compatible(example_id: str | None, spec: dict) -> bool:
+    """pose 전용 자산과 현재 카드의 방향 계열이 같은지 API 호출 전에 판정한다.
+
+    mirror 카드에는 mirror 예시만 허용한다. 그 외 착용컷은 관찰 메타 direction이
+    카드 레시피 direction과 정확히 같아야 한다. 레거시 레지스트리처럼 메타가 없으면
+    v2 포즈 계약을 증명할 수 없으므로 fail-closed한다.
+    """
+    if not example_id or spec.get("cutType") not in _WORN_CUTS:
+        return False
+    _default_base, assets = load_example_asset_registry()
+    entry = assets.get(str(example_id)) or {}
+    example_cut = entry.get("cutType")
+    card_cut = spec.get("cutType")
+    if card_cut == "mirror" or example_cut == "mirror":
+        return card_cut == example_cut == "mirror"
+    return (
+        example_cut in ("styling", "horizon")
+        and entry.get("direction") in _DIRECTIONS
+        and entry.get("direction") == spec.get("direction")
+    )
 
 
 @lru_cache(maxsize=1)
@@ -635,7 +662,7 @@ _MATCH_LABEL = "MATCHING — the user-selected coordinating garment worn in the 
 _FACE_LABEL = ("MODEL FACE — the licensed model's face reference: reproduce THIS person's "
                "facial identity (never copy their clothing, background or framing)")
 _EXAMPLE_ALL_LABEL = "EXAMPLE REFERENCE (scope: all)"
-_EXAMPLE_POSE_LABEL = "EXAMPLE REFERENCE (scope: pose)"
+_EXAMPLE_POSE_LABEL = "POSE CONTROL"
 _EXAMPLE_BG_LABEL = "EXAMPLE REFERENCE (scope: bg)"
 
 
@@ -648,7 +675,8 @@ def build_manifest(
     """첨부 이미지와 동일 순서의 역할 목록.
 
     순서: mannequin?, virtual-model face+sheet?, *product, match?, licensed-face?,
-    *mood, example?. 라이선스 얼굴은 옷 근거 뒤에 두며, 호출자는 정체성 충돌을 막기 위해
+    *mood, example?. pose의 상대 순서는 PRODUCT → MATCHING → POSE CONTROL로 고정한다.
+    라이선스 얼굴은 옷 근거 뒤에 두며, 호출자는 정체성 충돌을 막기 위해
     licensed-face와 virtual-model 참조를 동시에 켜지 않는다.
     """
     lines: list[str] = []
@@ -686,9 +714,9 @@ def build_manifest(
         )
     elif example_scope == "pose":
         lines.append(
-            f"{i}. {_EXAMPLE_POSE_LABEL} — source of pose ONLY; CUT TYPE and FRAMING control "
-            "camera distance, body scale and crop; never copy its background, location, lighting, "
-            "mood, garments, shoes, accessories or model identity"
+            f"{i}. {_EXAMPLE_POSE_LABEL} — transparent neutral mannequin used ONLY as a kinematic "
+            "control; PRODUCT and MATCHING remain the only clothing evidence; CUT SPEC controls "
+            "camera, crop, placement and background"
         )
     elif example_scope == "bg":
         # 스파이크(2026-07-12): 자산은 인물을 지운 '빈 무대 플레이트' — 포즈·의류 유출을 구조적으로 차단
@@ -714,6 +742,10 @@ def build_prompt(
     첨부한다고 가정하고 동일 순서 목록을 만든다(+ has_face 면 얼굴)."""
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
+    # pose-only medium은 v2 QC 결론대로 먼저 full 프레이밍으로 생성하고 generate()가
+    # 결정적 body-landmark crop을 적용한다. all/bg 및 비-pose 경로는 기존 프롬프트 그대로다.
+    if spec["refScope"] == "pose" and spec["shot"] == "medium":
+        spec = {**spec, "shot": "full"}
     if manifest is None:
         if spec["cutType"] == "product" and spec["shot"] == "detail":
             selected_images, transfer = detail_reference_images(product, spec["colorId"])
@@ -746,9 +778,14 @@ async def generate(
     has_face=True 는 '호출자가 images 에 라이선스 얼굴을 매니페스트와 같은 자리
     (옷 근거 뒤·무드 앞)로 넣었다'는 뜻이다 — 첨부와 어긋나면 라벨이 밀린다."""
     model = resolve_model(settings, "image_high")
+    clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+    spec = normalize_spec(cut_spec, clothing_type=clothing_type)
+    crop_pose_medium = spec["refScope"] == "pose" and spec["shot"] == "medium"
     prompt = build_prompt(cut_spec, product, analysis=analysis, manifest=manifest, has_face=has_face)
     res = await gemini.generate_content_image(
         model, prompt, images, settings.mannequin_image_size,
         aspect_ratio=settings.mannequin_aspect_ratio,
     )
+    if crop_pose_medium:
+        return await pose_crop.crop_pose_medium(settings, res.image, res.mime)
     return res.image, res.mime

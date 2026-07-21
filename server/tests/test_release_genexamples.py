@@ -88,6 +88,8 @@ def test_happy_release_stages_registry_catalog_and_deterministic_thumb(tmp_path)
     example_id = catalog[0]["id"]
     assert registry["_meta"]["schemaVersion"] == 2
     assert registry["assets"][example_id]["applicableClothingTypes"] == ["top"]
+    assert registry["assets"][example_id]["direction"] == "front"
+    assert catalog[0]["direction"] == "front"
     assert catalog[0]["variants"] == ["all", "pose"]
     assert catalog[0]["thumb"].endswith(f"/thumb/{example_id}.webp")
     assert (

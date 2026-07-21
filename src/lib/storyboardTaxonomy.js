@@ -114,6 +114,16 @@ export const sectionRoleForContentRole = (role) => contentTemplate(role).section
 export const defaultContentRoleForSection = (sectionRole) =>
   contentTemplatesForSection(sectionRole, { hasDetailImage: false })[0]?.value || CONTENT_ROLES.CUSTOM;
 
+export function poseExampleDirectionCompatible(example, { cutType, direction }) {
+  if (!example || !['styling', 'horizon', 'mirror'].includes(cutType)) return false;
+  if (cutType === 'mirror' || example.cutType === 'mirror') {
+    return cutType === 'mirror' && example.cutType === 'mirror';
+  }
+  return ['styling', 'horizon'].includes(example.cutType)
+    && ['front', 'back', 'side'].includes(example.direction)
+    && example.direction === direction;
+}
+
 export function contentTemplatesForSection(sectionRole, { hasDetailImage = true } = {}) {
   return CONTENT_TEMPLATES.filter((template) => template.sectionRole === sectionRole
     && (!template.requiresDetailImage || hasDetailImage));

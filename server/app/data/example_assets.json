@@ -12,6 +12,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_full_01.webp"
@@ -22,6 +23,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_full_02.webp"
@@ -32,6 +34,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_full_03.webp"
@@ -42,6 +45,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_full_04.webp"
@@ -53,6 +57,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_horizon_men_bottom_medium_01.png",
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_horizon_men_bottom_medium_01.png",
       "shot": "medium",
@@ -64,6 +69,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_medium_02.webp"
@@ -74,6 +80,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_medium_03.webp"
@@ -84,6 +91,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_bottom_medium_04.webp"
@@ -95,6 +103,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_horizon_men_outer_full_01.png",
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_horizon_men_outer_full_01.png",
       "shot": "full",
@@ -107,6 +116,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_horizon_men_outer_medium_01.png",
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_horizon_men_outer_medium_01.png",
       "shot": "medium",
@@ -118,6 +128,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_01.webp"
@@ -128,6 +139,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_02.webp"
@@ -138,6 +150,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_03.webp"
@@ -148,6 +161,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_04.webp"
@@ -158,6 +172,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_05.webp"
@@ -169,6 +184,7 @@
         "outer"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_full_06.webp"
@@ -180,6 +196,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_horizon_men_top_medium_01.png",
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_01.webp"
@@ -190,6 +207,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_02.webp"
@@ -200,6 +218,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_03.webp"
@@ -210,6 +229,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_04.webp"
@@ -220,6 +240,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_05.webp"
@@ -230,6 +251,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_men_top_medium_06.webp"
@@ -241,6 +263,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_horizon_women_bottom_full_01.png",
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_horizon_women_bottom_full_01.png",
       "shot": "full",
@@ -252,6 +275,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_full_02.webp"
@@ -262,6 +286,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_full_03.webp"
@@ -272,6 +297,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_full_04.webp"
@@ -282,6 +308,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_medium_01.webp"
@@ -292,6 +319,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_medium_03.webp"
@@ -302,6 +330,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_medium_04.webp"
@@ -312,6 +341,7 @@
         "bottom"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_bottom_medium_05.webp"
@@ -323,6 +353,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_horizon_women_top_full_01.png",
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_horizon_women_top_full_01.png",
       "shot": "full",
@@ -334,6 +365,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_full_02.webp"
@@ -344,6 +376,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_full_03.webp"
@@ -354,6 +387,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_full_04.webp"
@@ -364,6 +398,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_full_05.webp"
@@ -374,6 +409,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_01.webp"
@@ -384,6 +420,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_02.webp"
@@ -394,6 +431,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_03.webp"
@@ -404,6 +442,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_04.webp"
@@ -414,6 +453,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_05.webp"
@@ -424,6 +464,7 @@
         "top"
       ],
       "cutType": "horizon",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_horizon_women_top_medium_06.webp"
@@ -435,6 +476,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_mirror_men_top_medium_02.png",
       "cutType": "mirror",
+      "direction": "front",
       "gender": "men",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_mirror_men_top_medium_02.png",
       "shot": "medium",
@@ -446,6 +488,7 @@
         "bottom"
       ],
       "cutType": "mirror",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_bottom_full_02.webp"
@@ -456,6 +499,7 @@
         "bottom"
       ],
       "cutType": "mirror",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_bottom_full_04.webp"
@@ -466,6 +510,7 @@
         "top"
       ],
       "cutType": "mirror",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_top_full_02.webp"
@@ -476,6 +521,7 @@
         "top"
       ],
       "cutType": "mirror",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_top_full_04.webp"
@@ -486,6 +532,7 @@
         "top"
       ],
       "cutType": "mirror",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_top_medium_02.webp"
@@ -496,6 +543,7 @@
         "top"
       ],
       "cutType": "mirror",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_mirror_women_top_medium_03.webp"
@@ -507,6 +555,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_mirror_women_top_medium_05.png",
       "cutType": "mirror",
+      "direction": "front",
       "gender": "women",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_mirror_women_top_medium_05.png",
       "shot": "medium",
@@ -518,6 +567,7 @@
         "bottom"
       ],
       "cutType": "product",
+      "direction": null,
       "gender": null,
       "shot": "detail",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_detail_closure_01.webp"
@@ -528,6 +578,7 @@
         "bottom"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "detail",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_detail_closure_02.webp"
@@ -538,6 +589,7 @@
         "bottom"
       ],
       "cutType": "product",
+      "direction": null,
       "gender": null,
       "shot": "detail",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_detail_pocket_01.webp"
@@ -548,6 +600,7 @@
         "bottom"
       ],
       "cutType": "product",
+      "direction": null,
       "gender": null,
       "shot": "detail",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_detail_pocket_02.webp"
@@ -558,6 +611,7 @@
         "bottom"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_01.webp"
@@ -568,6 +622,7 @@
         "bottom"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_02.webp"
@@ -578,6 +633,7 @@
         "bottom"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_03.webp"
@@ -588,6 +644,7 @@
         "bottom"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_04.webp"
@@ -598,6 +655,7 @@
         "bottom"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_05.webp"
@@ -608,6 +666,7 @@
         "bottom"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_bottom_ghost_06.webp"
@@ -618,6 +677,7 @@
         "outer"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_outer_ghost_01.webp"
@@ -628,6 +688,7 @@
         "top"
       ],
       "cutType": "product",
+      "direction": null,
       "gender": null,
       "shot": "detail",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_detail_closure_01.webp"
@@ -638,6 +699,7 @@
         "top"
       ],
       "cutType": "product",
+      "direction": null,
       "gender": null,
       "shot": "detail",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_detail_closure_02.webp"
@@ -648,6 +710,7 @@
         "top"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "detail",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_detail_closure_03.webp"
@@ -658,6 +721,7 @@
         "top"
       ],
       "cutType": "product",
+      "direction": null,
       "gender": null,
       "shot": "detail",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_detail_fabric_sewing_01.webp"
@@ -668,6 +732,7 @@
         "top"
       ],
       "cutType": "product",
+      "direction": null,
       "gender": null,
       "shot": "detail",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_detail_pocket_01.webp"
@@ -678,6 +743,7 @@
         "top"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_01.webp"
@@ -688,6 +754,7 @@
         "top"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_02.webp"
@@ -698,6 +765,7 @@
         "top"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_03.webp"
@@ -708,6 +776,7 @@
         "top"
       ],
       "cutType": "product",
+      "direction": "back",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_04.webp"
@@ -718,6 +787,7 @@
         "top"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_05.webp"
@@ -728,6 +798,7 @@
         "top"
       ],
       "cutType": "product",
+      "direction": "front",
       "gender": null,
       "shot": "ghost",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_product_top_ghost_06.webp"
@@ -739,6 +810,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_styling_men_bottom_full_cafe_shop_01.png",
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_styling_men_bottom_full_cafe_shop_01.png",
       "shot": "full",
@@ -750,6 +822,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_full_city_01.webp"
@@ -760,6 +833,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_full_city_02.webp"
@@ -770,6 +844,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_full_city_03.webp"
@@ -780,6 +855,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_full_home_01.webp"
@@ -790,6 +866,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_full_resort_01.webp"
@@ -800,6 +877,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_cafe_shop_01.webp"
@@ -810,6 +888,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_city_01.webp"
@@ -820,6 +899,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_home_01.webp"
@@ -830,6 +910,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_home_02.webp"
@@ -840,6 +921,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_park_01.webp"
@@ -850,6 +932,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_park_02.webp"
@@ -860,6 +943,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_park_03.webp"
@@ -870,6 +954,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_bottom_medium_resort_01.webp"
@@ -880,6 +965,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_city_01.webp"
@@ -890,6 +976,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_city_02.webp"
@@ -900,6 +987,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_city_03.webp"
@@ -910,6 +998,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_city_04.webp"
@@ -920,6 +1009,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_city_05.webp"
@@ -930,6 +1020,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_full_home_01.webp"
@@ -940,6 +1031,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_city_01.webp"
@@ -950,6 +1042,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_city_02.webp"
@@ -960,6 +1053,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_city_03.webp"
@@ -971,6 +1065,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_styling_men_top_medium_city_04.png",
       "cutType": "styling",
+      "direction": "side",
       "gender": "men",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_styling_men_top_medium_city_04.png",
       "shot": "medium",
@@ -983,6 +1078,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_styling_men_top_medium_home_01.png",
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_styling_men_top_medium_home_01.png",
       "shot": "medium",
@@ -994,6 +1090,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_home_02.webp"
@@ -1004,6 +1101,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_resort_01.webp"
@@ -1014,6 +1112,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "back",
       "gender": "men",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_men_top_medium_resort_02.webp"
@@ -1024,6 +1123,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_cafe_shop_01.webp"
@@ -1034,6 +1134,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_cafe_shop_03.webp"
@@ -1044,6 +1145,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_cafe_shop_04.webp"
@@ -1054,6 +1156,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_01.webp"
@@ -1064,6 +1167,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_02.webp"
@@ -1074,6 +1178,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_03.webp"
@@ -1084,6 +1189,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_04.webp"
@@ -1094,6 +1200,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_05.webp"
@@ -1104,6 +1211,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_city_06.webp"
@@ -1114,6 +1222,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_home_01.webp"
@@ -1124,6 +1233,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_home_02.webp"
@@ -1134,6 +1244,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_home_03.webp"
@@ -1144,6 +1255,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_home_05.webp"
@@ -1154,6 +1266,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_01.webp"
@@ -1164,6 +1277,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_02.webp"
@@ -1174,6 +1288,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "back",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_03.webp"
@@ -1184,6 +1299,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_04.webp"
@@ -1194,6 +1310,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_05.webp"
@@ -1204,6 +1321,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_park_06.webp"
@@ -1214,6 +1332,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_resort_01.webp"
@@ -1224,6 +1343,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_resort_02.webp"
@@ -1234,6 +1354,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_resort_03.webp"
@@ -1244,6 +1365,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_resort_04.webp"
@@ -1255,6 +1377,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_styling_women_bottom_full_staged_01.png",
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_styling_women_bottom_full_staged_01.png",
       "shot": "full",
@@ -1266,6 +1389,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_full_staged_02.webp"
@@ -1276,6 +1400,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_cafe_shop_01.webp"
@@ -1286,6 +1411,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_cafe_shop_02.webp"
@@ -1296,6 +1422,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_cafe_shop_03.webp"
@@ -1306,6 +1433,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "back",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_cafe_shop_04.webp"
@@ -1316,6 +1444,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_city_02.webp"
@@ -1326,6 +1455,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_city_03.webp"
@@ -1336,6 +1466,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_city_04.webp"
@@ -1346,6 +1477,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_city_05.webp"
@@ -1356,6 +1488,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_home_01.webp"
@@ -1366,6 +1499,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_home_03.webp"
@@ -1376,6 +1510,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_home_04.webp"
@@ -1386,6 +1521,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_home_05.webp"
@@ -1396,6 +1532,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_park_01.webp"
@@ -1406,6 +1543,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_park_02.webp"
@@ -1416,6 +1554,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_park_03.webp"
@@ -1426,6 +1565,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_park_04.webp"
@@ -1436,6 +1576,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_park_05.webp"
@@ -1446,6 +1587,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_01.webp"
@@ -1456,6 +1598,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_02.webp"
@@ -1466,6 +1609,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_03.webp"
@@ -1476,6 +1620,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_04.webp"
@@ -1486,6 +1631,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_05.webp"
@@ -1496,6 +1642,7 @@
         "bottom"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_bottom_medium_resort_06.webp"
@@ -1506,6 +1653,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_cafe_shop_01.webp"
@@ -1516,6 +1664,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_cafe_shop_02.webp"
@@ -1526,6 +1675,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_cafe_shop_03.webp"
@@ -1536,6 +1686,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_cafe_shop_04.webp"
@@ -1546,6 +1697,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_city_01.webp"
@@ -1556,6 +1708,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_city_02.webp"
@@ -1566,6 +1719,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_city_03.webp"
@@ -1576,6 +1730,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_city_04.webp"
@@ -1586,6 +1741,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_home_01.webp"
@@ -1596,6 +1752,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_home_02.webp"
@@ -1606,6 +1763,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_01.webp"
@@ -1616,6 +1774,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_02.webp"
@@ -1626,6 +1785,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_03.webp"
@@ -1636,6 +1796,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_04.webp"
@@ -1647,6 +1808,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_styling_women_top_full_park_05.png",
       "cutType": "styling",
+      "direction": "back",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_05.webp"
@@ -1657,6 +1819,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_park_06.webp"
@@ -1667,6 +1830,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_resort_01.webp"
@@ -1677,6 +1841,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_resort_02.webp"
@@ -1688,6 +1853,7 @@
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_styling_women_top_full_resort_03.png",
       "cutType": "styling",
+      "direction": "back",
       "gender": "women",
       "pose": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/pose/ex_styling_women_top_full_resort_03.png",
       "shot": "full",
@@ -1699,6 +1865,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "back",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_resort_04.webp"
@@ -1709,6 +1876,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "full",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_full_staged_01.webp"
@@ -1719,6 +1887,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_01.webp"
@@ -1729,6 +1898,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_02.webp"
@@ -1739,6 +1909,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_03.webp"
@@ -1749,6 +1920,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_04.webp"
@@ -1759,6 +1931,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_05.webp"
@@ -1769,6 +1942,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_cafe_shop_06.webp"
@@ -1779,6 +1953,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_01.webp"
@@ -1789,6 +1964,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_02.webp"
@@ -1799,6 +1975,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_03.webp"
@@ -1809,6 +1986,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_04.webp"
@@ -1819,6 +1997,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_05.webp"
@@ -1829,6 +2008,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_city_06.webp"
@@ -1839,6 +2019,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_home_01.webp"
@@ -1849,6 +2030,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_home_02.webp"
@@ -1859,6 +2041,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_home_04.webp"
@@ -1869,6 +2052,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_park_01.webp"
@@ -1879,6 +2063,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "side",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_park_02.webp"
@@ -1889,6 +2074,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_park_03.webp"
@@ -1899,6 +2085,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_resort_01.webp"
@@ -1909,6 +2096,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_resort_02.webp"
@@ -1919,6 +2107,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_resort_03.webp"
@@ -1929,6 +2118,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_resort_04.webp"
@@ -1939,6 +2129,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_resort_05.webp"
@@ -1949,6 +2140,7 @@
         "top"
       ],
       "cutType": "styling",
+      "direction": "front",
       "gender": "women",
       "shot": "medium",
       "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/thumb/ex_styling_women_top_medium_staged_01.webp"
