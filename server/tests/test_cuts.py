@@ -129,7 +129,7 @@ def test_canonical_mine_and_custom_blocks_do_not_invent_ai_recipe():
     )
 
 
-def test_canonical_detail_forces_product_detail_and_overview_rejects_detail():
+def test_canonical_product_shot_realigns_hidden_detail_role():
     detail = content_roles.canonicalize_storyboard_block({
         "contentRole": "detail", "cutType": "horizon", "shot": "full",
     })
@@ -141,8 +141,8 @@ def test_canonical_detail_forces_product_detail_and_overview_rejects_detail():
     assert (detail["sectionRole"], detail["cutType"], detail["shot"]) == (
         "product", "product", "detail",
     )
-    assert (overview["sectionRole"], overview["cutType"], overview["shot"]) == (
-        "product", "product", "ghost",
+    assert (overview["contentRole"], overview["sectionRole"], overview["cutType"], overview["shot"]) == (
+        "detail", "product", "product", "detail",
     )
     assert overview["matchIds"] == []
     assert overview["outerClosureState"] is None
@@ -203,9 +203,9 @@ def test_canonical_storyboard_assigns_hidden_roles_and_only_one_hero():
     assert [block["contentRole"] for block in normalized] == [
         "custom", "hero", "benefit", "coordination",
     ]
-    assert normalized[1]["cutType"] == "styling"
-    assert normalized[1]["exampleId"] is None
-    assert normalized[2]["cutType"] == "horizon"
+    assert normalized[1]["cutType"] == "horizon"
+    assert normalized[1]["exampleId"] == "old-example"
+    assert normalized[2]["cutType"] == "styling"
     assert normalized[3]["cutType"] == "styling"
 
 
@@ -226,13 +226,13 @@ def test_canonical_storyboard_section_wins_stale_internal_role_and_recipe():
     ]
     assert (
         normalized[0]["sectionRole"], normalized[0]["contentRole"], normalized[0]["cutType"]
-    ) == ("benefit", "hero", "styling")
+    ) == ("benefit", "hero", "horizon")
     assert (
         normalized[1]["sectionRole"], normalized[1]["contentRole"], normalized[1]["cutType"]
     ) == ("product", "productOverview", "product")
 
 
-def test_canonical_storyboard_restores_base_thumb_when_auto_role_changes_recipe():
+def test_canonical_storyboard_keeps_example_when_auto_role_changes_but_selected_cut_does_not():
     normalized = content_roles.canonicalize_storyboard([{
         "id": "first-benefit", "source": "ai", "sectionRole": "benefit",
         "contentRole": "benefit", "cutType": "horizon", "direction": "front", "shot": "medium",
@@ -240,9 +240,22 @@ def test_canonical_storyboard_restores_base_thumb_when_auto_role_changes_recipe(
     }])
 
     assert normalized[0]["contentRole"] == "hero"
-    assert normalized[0]["exampleId"] is None
-    assert normalized[0]["baseThumb"] is None
-    assert normalized[0]["thumb"] == "base.png"
+    assert normalized[0]["cutType"] == "horizon"
+    assert normalized[0]["exampleId"] == "example-1"
+    assert normalized[0]["baseThumb"] == "base.png"
+    assert normalized[0]["thumb"] == "example.png"
+
+
+def test_canonical_selected_fit_cut_realigns_hidden_role():
+    normalized = content_roles.canonicalize_storyboard_block({
+        "source": "ai", "sectionRole": "fit", "contentRole": "fit",
+        "cutType": "styling", "direction": "side", "shot": "medium",
+    })
+
+    assert (normalized["sectionRole"], normalized["contentRole"], normalized["cutType"]) == (
+        "fit", "coordination", "styling",
+    )
+    assert (normalized["direction"], normalized["shot"]) == ("side", "medium")
 
 
 def test_normalize_cut_type_only_request_uses_defensive_inference():

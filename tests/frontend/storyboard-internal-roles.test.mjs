@@ -5,6 +5,8 @@ import {
   CONTENT_ROLES,
   STORYBOARD_TAXONOMY_VERSION,
   assignInternalContentRoles,
+  cutTypeOptionsForSection,
+  normalizedRecipePatch,
 } from '../../src/lib/storyboardTaxonomy.js';
 
 test('the first AI image in benefit is the only internally assigned hero', () => {
@@ -26,11 +28,43 @@ test('the first AI image in benefit is the only internally assigned hero', () =>
 
   assert.equal(normalized[0], blocks[0]);
   assert.equal(normalized[1].contentRole, CONTENT_ROLES.HERO);
-  assert.equal(normalized[1].cutType, 'styling');
-  assert.equal(normalized[1].exampleId, null);
-  assert.equal(normalized[1].thumb, baseThumb);
+  assert.equal(normalized[1].cutType, 'horizon');
+  assert.equal(normalized[1].exampleId, 'old-example');
+  assert.equal(normalized[1].thumb, 'https://example.com/example.png');
   assert.equal(normalized[2].contentRole, CONTENT_ROLES.BENEFIT);
-  assert.equal(normalized[2].cutType, 'horizon');
+  assert.equal(normalized[2].cutType, 'styling');
+});
+
+test('the inspector offers cut types by section without exposing content roles', () => {
+  assert.deepEqual(cutTypeOptionsForSection('benefit').map((option) => option.value), [
+    'styling', 'horizon',
+  ]);
+  assert.deepEqual(cutTypeOptionsForSection('fit').map((option) => option.value), [
+    'styling', 'horizon', 'mirror',
+  ]);
+  assert.deepEqual(cutTypeOptionsForSection('product').map((option) => option.value), [
+    'product',
+  ]);
+});
+
+test('a selected fit cut realigns the hidden role instead of being overwritten by it', () => {
+  const mirror = normalizedRecipePatch({
+    source: 'ai', sectionRole: 'fit', contentRole: 'coordination',
+    cutType: 'mirror', shot: 'medium', faceExposure: 'same',
+  }, CONTENT_ROLES.COORDINATION);
+  const styling = normalizedRecipePatch({
+    source: 'ai', sectionRole: 'fit', contentRole: 'fit',
+    cutType: 'styling', direction: 'side', shot: 'medium',
+  }, CONTENT_ROLES.FIT);
+
+  assert.deepEqual(
+    [mirror.contentRole, mirror.cutType, mirror.direction, mirror.shot, mirror.faceExposure],
+    [CONTENT_ROLES.REAL_WEAR, 'mirror', null, 'medium', 'hide'],
+  );
+  assert.deepEqual(
+    [styling.contentRole, styling.cutType, styling.direction, styling.shot],
+    [CONTENT_ROLES.COORDINATION, 'styling', 'side', 'medium'],
+  );
 });
 
 test('AI cards with no usable role receive the safe internal role for their section', () => {

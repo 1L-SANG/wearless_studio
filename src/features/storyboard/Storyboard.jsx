@@ -2,8 +2,8 @@
    features/storyboard — ⑤ 콘티보드 (PRD §8)
    blocks 는 "서버 상태의 working copy" 패턴: 진입 시 fetch → 로컬 편집
    → 생성 CTA 에서 saveStoryboard 로 한 번에 저장 (frontend_state_model §4).
-   사용자는 sectionRole(핵심 장점/핏·코디/제품 확인)과 생성예시를 다룬다.
-   contentRole과 cutType은 카드 위치·기본 구성에서 정하는 내부 생성값이다.
+   사용자는 sectionRole(핵심 장점/핏·코디/제품 확인), 컷 종류와 생성예시를 다룬다.
+   contentRole은 섹션·카드 위치·선택한 컷에서 정하는 내부 생성값이다.
    카피라이팅 토글은 store(copywriting) → patchProject 동기화.
    UnderlineTabs/ColorDots/MoodGuide/hexFor are exported for the editor.
    ============================================================= */
@@ -22,8 +22,10 @@ import {
   SECTION_ROLE_OPTIONS,
   STORYBOARD_TAXONOMY_VERSION,
   blockPatchForContentRole,
+  cutTypeOptionsForSection,
   defaultContentRoleForSection,
   hasDetailSource,
+  normalizedRecipePatch,
   poseExampleDirectionCompatible,
   sectionRoleForContentRole,
   sectionTitle,
@@ -78,7 +80,6 @@ const SCOPE_LABELS = { all: '전부', bg: '배경만', pose: '포즈만' };
 const BG_EXAMPLES_ENABLED = Boolean(import.meta.env?.DEV)
   || import.meta.env?.VITE_GENEXAMPLE_BG_ENABLED === 'true';
 const WORN_CUT_TYPES = new Set(['styling', 'horizon', 'mirror']);
-const FIT_EXAMPLE_CUT_TYPES = Object.freeze(['styling', 'horizon', 'mirror']);
 const FIT_ROLE_BY_CUT_TYPE = Object.freeze({
   styling: CONTENT_ROLES.COORDINATION,
   horizon: CONTENT_ROLES.FIT,
@@ -95,17 +96,15 @@ const byRankThenId = (left, right) => (
   || (String(left.id) < String(right.id) ? -1 : String(left.id) > String(right.id) ? 1 : 0)
 );
 
-export function selectGenerationExamples(catalog, { cutType, cutTypes = null, shot, clothingType, gender }) {
-  const allowedCutTypes = new Set(Array.isArray(cutTypes) && cutTypes.length ? cutTypes : [cutType]);
+export function selectGenerationExamples(catalog, { cutType, shot, clothingType, gender }) {
   const matched = (catalog || []).filter((example) => (
-    allowedCutTypes.has(example?.cutType)
+    example?.cutType === cutType
     && example?.shot === shot
     && (example?.cutType === 'product' ? example?.gender == null : example?.gender === gender)
     && Array.isArray(example?.applicableClothingTypes)
     && example.applicableClothingTypes.includes(clothingType)
   ));
-  const mixAxis = allowedCutTypes.size > 1 ? 'cutType'
-    : cutType === 'styling' ? 'mood'
+  const mixAxis = cutType === 'styling' ? 'mood'
     : cutType === 'product' && shot === 'detail' ? 'detailSubject'
       : null;
   if (!mixAxis) return [...matched].sort(byRankThenId).slice(0, 6);
@@ -413,13 +412,13 @@ function ShotIcon({ cut, shot, clothingType }) {
    · 내 사진(refImages) = '+ 타일'로 갤러리에 통합 — 점선 테두리·배지, 분위기(조명·색감)만 참고
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, allowedCutTypes = null, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false }) {
+export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false }) {
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
   const examples = React.useMemo(() => selectGenerationExamples(catalogs.genExamples, {
-    cutType: cut, cutTypes: allowedCutTypes, shot: shotVal, clothingType, gender,
-  }), [catalogs.genExamples, cut, allowedCutTypes, shotVal, clothingType, gender]);
+    cutType: cut, shot: shotVal, clothingType, gender,
+  }), [catalogs.genExamples, cut, shotVal, clothingType, gender]);
   const selectedExample = examples.find((example) => example.id === exampleId) || null;
   const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
   const selectedPoseCompatible = poseExampleDirectionCompatible(selectedExample, {
@@ -633,8 +632,36 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const isProduct = block.cutType === 'product';
   const isMirror = block.cutType === 'mirror';
   const isDetail = block.contentRole === CONTENT_ROLES.DETAIL;
+  const cutTypeOptions = cutTypeOptionsForSection(block.sectionRole);
   const productShotOptions = catalogs.productShotTypes
     .filter((option) => hasDetailImage || option.value !== 'detail');
+  const onCutTypeChange = (cutType) => onChange((current) => {
+    if (current.cutType === cutType) return {};
+    const nextRole = current.sectionRole === SECTION_ROLES.FIT
+      ? FIT_ROLE_BY_CUT_TYPE[cutType]
+      : [CONTENT_ROLES.HERO, CONTENT_ROLES.BENEFIT].includes(current.contentRole)
+        ? current.contentRole : defaultContentRoleForSection(current.sectionRole);
+    const recipePatch = normalizedRecipePatch(
+      { ...current, source: 'ai', cutType },
+      nextRole,
+      { hasDetailImage },
+    );
+    const feedback = referenceFeedbackPatch(current, {
+      ...recipePatch,
+      source: 'ai',
+      pose: 'auto',
+      poseLabel: 'AI 자동',
+      angle: 'same',
+      exampleId: null,
+      refScope: 'all',
+      outerClosureState: clothingType === 'outer' && WORN_CUT_TYPES.has(cutType)
+        ? (closureOptions.some((option) => option.value === current.outerClosureState)
+          ? current.outerClosureState : 'open')
+        : null,
+      ...(cutType === 'product' ? { matchIds: [], faceExposure: null } : {}),
+    }, catalogs);
+    return { ...feedback, baseThumb: null };
+  });
   const onShotChange = (shot) => onChange((current) => {
     if (current.cutType !== 'product') {
       return referenceFeedbackPatch(current, { shot, exampleId: null }, catalogs);
@@ -655,30 +682,13 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     };
   });
   const onGenerationExampleChange = (exampleId) => onChange((current) => {
-    const example = exampleId
-      ? (catalogs.genExamples || []).find((candidate) => candidate.id === exampleId)
-      : null;
-    const nextRole = current.sectionRole === SECTION_ROLES.FIT
-      ? FIT_ROLE_BY_CUT_TYPE[example?.cutType] : null;
-    let changes = {
+    const changes = {
       exampleId,
       refScope: !exampleId ? 'all'
         : current.spaceGroupId ? 'pose' : (current.refScope || 'all'),
     };
-    if (nextRole && nextRole !== current.contentRole) {
-      const rolePatch = blockPatchForContentRole(current, nextRole, { clothingType });
-      const direction = rolePatch.cutType === 'mirror' ? null
-        : ['front', 'back', 'side'].includes(current.direction) ? current.direction
-          : ['front', 'back', 'side'].includes(example?.direction) ? example.direction : 'front';
-      changes = {
-        ...rolePatch,
-        direction,
-        shot: current.shot,
-        exampleId,
-        refScope: current.spaceGroupId ? 'pose' : (current.refScope || 'all'),
-      };
-    }
-    return referenceFeedbackPatch(current, changes, catalogs);
+    const feedback = referenceFeedbackPatch(current, changes, catalogs);
+    return exampleId ? feedback : { ...feedback, baseThumb: null };
   });
   const showOuterClosure = clothingType === 'outer' && block.source === 'ai' && WORN_CUT_TYPES.has(block.cutType);
   const outerClosureState = closureOptions.some((option) => option.value === block.outerClosureState) ? block.outerClosureState : 'open';
@@ -702,9 +712,12 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </>
       ) : (
         <>
+      <div className="insp-sec"><label className="lbl">컷 종류</label>
+        <UnderlineTabs options={cutTypeOptions} value={block.cutType} onChange={onCutTypeChange} />
+      </div>
+
       {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터, 방향은 아래로 강등 (B+C안, ADR-0004) */}
       <MoodGuide catalogs={catalogs} cut={block.cutType}
-        allowedCutTypes={block.sectionRole === SECTION_ROLES.FIT ? FIT_EXAMPLE_CUT_TYPES : null}
         direction={block.direction} shot={block.shot}
         shotOptions={isProduct ? productShotOptions : null}
         onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}

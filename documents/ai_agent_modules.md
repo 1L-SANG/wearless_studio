@@ -115,13 +115,13 @@ OPENAI_API_KEY=   # 예비 — text tier를 OpenAI 계열로 재배정할 때만
 
 ### AG-06 cut-generator — 이미지 생성 (내부 레시피: styling·horizon·product·mirror)
 
-`cutType`은 사용자가 고르는 콘티 분류가 아니다. 기본 `contentRole`에서 앞 단계가 정한 내부 레시피를 AG-06이 받아 렌더링한다. 생성예시는 그 레시피 안에서 가능한 구도와 분위기를 보탠다 (ADR-0005).
+`cutType`은 페이지를 나누는 콘티 분류가 아니라 이미지 생성 레시피다. 콘티 카드 인스펙터에서 사용자가 섹션별 허용 컷 종류를 직접 고르면, 앞 단계가 그 `cutType`을 저장하고 내부 `contentRole`을 자동으로 맞춘다. AG-06은 선택된 레시피를 렌더링하며, 생성예시는 현재 `cutType` 안에서 가능한 구도와 분위기를 보탠다(ADR-0005).
 
 | | |
 |---|---|
 | tier | `image_high` |
 | 호출 시점 | ① PL-4: 저장된 콘티의 `source='ai'` 블록별 1콜 ② 에디터 `새 이미지 추가` → `generateImage(mode:'new')` (PL-5) |
-| 입력 | `{ contentRole, sectionRole?, cutType, direction, shot, outerClosureState?, colorGroup: { swatchId, images: URL[] }, baseMannequinUrl(project.selectedMannequinId의 컷), modelId?, pose?, matchItems?: MatchingItem[], faceExposure, angle, refImages?: URL[] }`. 유효한 `contentRole`이 기준이며 서버가 내부 `cutType`과 세부 옵션을 다시 맞춘다. **mirror 계약(ADR-0004·0007)**: `direction=null` · `shot`은 full/medium만 · `faceExposure`는 hide(기본, 폰으로 가림)/show만 · `pose='auto'` 고정. 유효한 `contentRole`이 없고 legacy `cutType`도 해석할 수 없을 때만 **에러**(`unknown_cut_type`)다. `product+detail`은 상품 전체 중 실제 `Detail` 입력 이미지가 생성 입력에 포함돼야 한다. 목표 색상에 없으면 기준색, 그다음 Detail 보유 첫 색상의 구조·재질을 근거로 쓰고 색만 목표 색상군으로 전환하며, 전 색상에 없으면 `detail_reference_required`로 해당 사진을 실패시킨다. |
+| 입력 | `{ contentRole, sectionRole?, cutType, direction, shot, outerClosureState?, colorGroup: { swatchId, images: URL[] }, baseMannequinUrl(project.selectedMannequinId의 컷), modelId?, pose?, matchItems?: MatchingItem[], faceExposure, angle, refImages?: URL[] }`. `cutType`은 사용자가 고른 생성 레시피의 정본이며, 서버는 섹션별 허용 컷과 세부 옵션을 검증한다. `contentRole`은 핵심 장점의 순서, 핏·코디의 `cutType`, 제품 확인의 `shot`에서 파생한 내부값으로 일치시킨다. 유효한 사용자 컷 선택을 예전 역할 기본값으로 덮어쓰지 않는다. **mirror 계약(ADR-0004·0007)**: `direction=null` · `shot`은 full/medium만 · `faceExposure`는 hide(기본, 폰으로 가림)/show만 · `pose='auto'` 고정. 유효한 `cutType`을 해석할 수 없을 때만 **에러**(`unknown_cut_type`)다. `product+detail`은 상품 전체 중 실제 `Detail` 입력 이미지가 생성 입력에 포함돼야 한다. 목표 색상에 없으면 기준색, 그다음 Detail 보유 첫 색상의 구조·재질을 근거로 쓰고 색만 목표 색상군으로 전환하며, 전 색상에 없으면 `detail_reference_required`로 해당 사진을 실패시킨다. |
 | 출력 | `{ imageUrl, cutType }` → PL-4에선 블록 이미지, PL-5에선 `WardrobeImage { ai:true, cutType }` |
 | 색상 변형 | 별도 에이전트 아님 — `colorGroup`이 추가 색상이면 같은 의류를 해당 스와치로 재현 (PRD §17 '색상별 동일 의류 재현' R&D 인지) |
 | 프롬프트 핵심 제약 | 상품 동일성 보존 최우선 · 선택 마네킹컷의 핏·실루엣 기준 준수(PRD §7.1) · product는 모델 없음(고스트/플랫레이/디테일) · 디테일은 입력 근거 밖의 원단·안감·부자재 생성 금지 · styling·mirror는 matchItems 착장 반영 · mirror는 캐주얼 거울 셀피 구도(스튜디오 연출 아님) |
@@ -180,7 +180,7 @@ OPENAI_API_KEY=   # 예비 — text tier를 OpenAI 계열로 재배정할 때만
 - **AG-P2 image-qc — 이미지 동일성 검수 + 보정 지시** (`text`, 비전 입력): 생성 이미지가 입력 상품과 같은 옷인지(색·패턴·넥라인·디테일 변형 여부) 판정. 입력 = `{ productImages, generatedUrl, sourceAgent, genSpec }` — `genSpec`은 상위 에이전트의 생성 파라미터로 **에이전트별 형태가 다름**(AG-06/07=cutSpec, AG-04/05=마네킹 spec). 출력 = `{ verdict: 'pass'\|'retry', mismatches[], correctionPrompt?: string }`. **retry면 실패원인+보완점을 담은 `correctionPrompt`를 생성**해, 재생성 호출 시 **그 상위 에이전트의 원래 프롬프트에** 우선순위 보정 지시로 주입(주입 메커니즘은 에이전트 무관)(2026-06-20 결정). 훅 위치: AG-04/05/06/07 출력 직후 게이트(ai_pipeline_spec §3) — 마네킹·컷 공통 게이트라 입력을 cut 전용으로 가정하지 않는다. 재시도 상한·크레딧 정책은 PRD §12.2와 함께 확정.
   - **선례(메커니즘만)**: 스파이크(`spike/codex-phase4-mannequin-job-design.md` §5)에 **비-AI 싼 QC**(Pillow 크롭/프레이밍/고스트 휴리스틱)를 1차 게이트로 두고, `format_qc_feedback()`이 실패 사유를 다음 시도 프롬프트에 붙이는 **피드백 재시도 루프**가 설계돼 있다. AG-P2는 이 루프의 **의미(semantic) 단계**를 채운다(동일한 correctionPrompt 주입 메커니즘을 '같은 옷인가' 판정으로 확장).
     - ⚠️ **폐기 주의**: 스파이크의 *Flash 기본 → QC 실패 시 Pro 승격(4회 escalation)* tier 설계는 **현행 §1 라우팅에서 폐기**. 최종 이미지(AG-04/05/06/07)는 `image_high`(Pro) 직접 사용이고 `image_light`(Flash)는 MVP 미배정 — 재시도도 동일 tier(`image_high`)에서 correctionPrompt만 강화한다(별도 Flash→Pro 단계 없음). 재시도 상한은 PRD §12.2와 함께 확정.
-- **사진 다양성 (shot-list 구성) — 책임 분리, 구현 방식 미확정**: 같은 `contentRole`의 사진이 여러 장일 때 전부 비슷한 구도와 느낌이면 안 된다. **이 변주는 AG-06이 아니라 콘티 구성 단계의 책임**이다. 콘티가 목적에 맞는 내부 레시피를 고른 뒤 서로 다른 `(direction × shot × pose × angle)`을 배정한다. 결정 대기: ⓐ 비-AI 룰 기반 분산(결정적·비용 0, 추천) vs ⓑ AI art-director가 묶음 전체를 큐레이션. ⓐ로 시작하고 결과가 기계적으로 느껴질 때 ⓑ를 P1로 검토한다.
+- **사진 다양성 (shot-list 구성) — 책임 분리, 구현 방식 미확정**: 같은 내부 `contentRole`과 사용자가 고른 `cutType`의 사진이 여러 장일 때 전부 비슷한 구도와 느낌이면 안 된다. **이 변주는 AG-06이 아니라 콘티 구성 단계의 책임**이다. 콘티가 선택된 레시피 안에서 서로 다른 `(direction × shot × pose × angle)`을 배정한다. 결정 대기: ⓐ 비-AI 룰 기반 분산(결정적·비용 0, 추천) vs ⓑ AI art-director가 묶음 전체를 큐레이션. ⓐ로 시작하고 결과가 기계적으로 느껴질 때 ⓑ를 P1로 검토한다.
 - **분위기 예시는 에이전트가 아니다** — 콘티/에디터의 '생성예시'는 AI 모델·매칭 의류처럼 **운영자가 미리 넣는 시드 데이터**로 확정(사용자 결정). `image_light` tier는 이런 저난도 생성 수요가 실제로 생길 때 배정한다.
 
 ---
