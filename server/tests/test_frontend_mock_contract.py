@@ -50,8 +50,14 @@ def test_dev_generation_example_catalog_matches_server_registry_v2():
         assert item["cutType"] == entry["cutType"]
         assert item["shot"] == entry["shot"]
         assert item["gender"] == entry["gender"]
+        assert item["direction"] == entry["direction"]
         assert item["variants"] == [
             variant for variant in ("all", "pose", "bg") if variant in entry
         ]
         if item["cutType"] == "product":
             assert item["variants"] == ["all"]
+
+
+def test_storyboard_pose_direction_tooltip_matches_service_copy():
+    source = (REPO_ROOT / "src/features/storyboard/Storyboard.jsx").read_text(encoding="utf-8")
+    assert "이 예시의 포즈는 ${label} 전용이에요" in source

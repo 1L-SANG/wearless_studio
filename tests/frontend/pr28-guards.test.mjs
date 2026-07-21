@@ -15,6 +15,7 @@ import {
   markInitialGenerationRequested,
 } from '../../src/features/mannequin/initialGenerationSession.js';
 import { shouldAdoptRouteProject } from '../../src/lib/projectRoute.js';
+import { poseExampleDirectionCompatible } from '../../src/lib/storyboardTaxonomy.js';
 
 test('splitAnalysisEditPatch routes product-owned fields away from saveAnalysis', () => {
   const { productPatch, analysisPatch } = splitAnalysisEditPatch({
@@ -151,4 +152,23 @@ test('hasPatchFields is false only for empty or missing patches', () => {
   assert.equal(hasPatchFields(null), false);
   assert.equal(hasPatchFields({}), false);
   assert.equal(hasPatchFields({ clothingType: null }), true);
+});
+
+test('pose example direction gate matches worn directions and mirror recipe', () => {
+  assert.equal(poseExampleDirectionCompatible(
+    { cutType: 'styling', direction: 'back' },
+    { cutType: 'horizon', direction: 'back' },
+  ), true);
+  assert.equal(poseExampleDirectionCompatible(
+    { cutType: 'styling', direction: 'back' },
+    { cutType: 'horizon', direction: 'front' },
+  ), false);
+  assert.equal(poseExampleDirectionCompatible(
+    { cutType: 'mirror', direction: 'front' },
+    { cutType: 'mirror', direction: null },
+  ), true);
+  assert.equal(poseExampleDirectionCompatible(
+    { cutType: 'styling', direction: 'front' },
+    { cutType: 'mirror', direction: null },
+  ), false);
 });

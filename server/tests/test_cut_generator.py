@@ -6,9 +6,13 @@ DEFECT 1), 빈 이미지 폴백 문구, 미상 cutType 은 조용한 styling 폴
 mirror 가 정식 컷으로 렌더되는지.
 """
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 
 from app.agents import cut_generator as cg
+from conftest import make_settings
 
 
 def test_cut_types_constant_includes_mirror():
@@ -154,6 +158,78 @@ def test_build_prompt_respects_given_manifest():
     assert "worn on a mannequin" in p and "MATCH" in p and "MOOD" in p
 
 
+def test_pose_medium_prompt_generates_full_frame_before_deterministic_crop():
+    product = {"name": "니트", "colors": [{"isBase": True, "images": [
+        {"slot": "Front", "id": "a1"},
+    ]}]}
+    pose_manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="pose",
+    )
+
+    pose_prompt = cg.build_prompt(
+        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "pose"},
+        product, manifest=pose_manifest,
+    )
+    all_prompt = cg.build_prompt(
+        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "all"},
+        product,
+    )
+
+    assert "full body from head to feet" in pose_prompt
+    assert "medium framing:" not in pose_prompt
+    assert "medium framing:" in all_prompt
+
+
+def test_generate_applies_medium_crop_only_to_pose_scope(monkeypatch):
+    calls = []
+
+    class FakeGemini:
+        async def generate_content_image(self, model, prompt, images, image_size, aspect_ratio):
+            return SimpleNamespace(image=b"FULL", mime="image/png")
+
+    async def fake_crop(settings, image, mime):
+        calls.append((image, mime))
+        return b"CROPPED", mime
+
+    monkeypatch.setattr(cg.pose_crop, "crop_pose_medium", fake_crop)
+    settings = make_settings(gemini_api_key="x")
+    product = {"name": "니트", "colors": []}
+    pose_manifest = cg.build_manifest(
+        [], has_mannequin=False, has_match=False, mood_count=0, example_scope="pose"
+    )
+
+    pose_result = asyncio.run(cg.generate(
+        settings, FakeGemini(),
+        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "pose"},
+        product, [], manifest=pose_manifest,
+    ))
+    all_result = asyncio.run(cg.generate(
+        settings, FakeGemini(),
+        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "all"},
+        product, [],
+    ))
+    bg_manifest = cg.build_manifest(
+        [], has_mannequin=False, has_match=False, mood_count=0, example_scope="bg"
+    )
+    bg_result = asyncio.run(cg.generate(
+        settings, FakeGemini(),
+        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "bg"},
+        product, [], manifest=bg_manifest,
+    ))
+    pose_full_result = asyncio.run(cg.generate(
+        settings, FakeGemini(),
+        {"cutType": "styling", "direction": "front", "shot": "full", "refScope": "pose"},
+        product, [], manifest=pose_manifest,
+    ))
+
+    assert pose_result == (b"CROPPED", "image/png")
+    assert all_result == (b"FULL", "image/png")
+    assert bg_result == (b"FULL", "image/png")
+    assert pose_full_result == (b"FULL", "image/png")
+    assert calls == [(b"FULL", "image/png")]
+
+
 def test_build_manifest_places_exact_model_labels_after_mannequin():
     manifest = cg.build_manifest(
         [{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1,
@@ -166,6 +242,20 @@ def test_build_manifest_places_exact_model_labels_after_mannequin():
         "5. MATCHING — the user-selected coordinating garment worn in the same outfit",
         "6. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)",
     ]
+
+
+def test_pose_manifest_keeps_product_matching_pose_relative_order():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1,
+        example_scope="pose",
+    )
+    lines = manifest.splitlines()
+    product_index = next(i for i, line in enumerate(lines) if "front view of the garment" in line)
+    matching_index = next(i for i, line in enumerate(lines) if "MATCHING —" in line)
+    pose_index = next(i for i, line in enumerate(lines) if "POSE CONTROL" in line)
+
+    assert product_index < matching_index < pose_index
+    assert pose_index == len(lines) - 1
 
 
 def test_build_prompt_injects_fit_profile_and_drops_legacy_fit():

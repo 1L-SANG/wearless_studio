@@ -467,12 +467,14 @@ def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path
                 "thumb": "releases/r1/thumb/v2.webp",
                 "applicableClothingTypes": ["top", "outer"],
                 "cutType": "styling", "shot": "full", "gender": "women",
+                "direction": "side",
             },
             "product": {
                 "all": "releases/r1/all/product.png",
                 "thumb": "releases/r1/thumb/product.webp",
                 "applicableClothingTypes": ["top"],
                 "cutType": "product", "shot": "ghost", "gender": None,
+                "direction": None,
             },
             "legacy-string": "legacy/all.png",
             "legacy-dict": {"all": "legacy/dict.png", "pose": "legacy/pose.png"},
@@ -487,6 +489,8 @@ def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path
         assert base == "https://images.example.test"
         assert assets["v2"]["applicableClothingTypes"] == ["top", "outer"]
         assert assets["v2"]["thumb"].endswith("v2.webp")
+        assert assets["v2"]["direction"] == "side"
+        assert "direction" in assets["product"] and assets["product"]["direction"] is None
         assert "gender" in assets["product"] and assets["product"]["gender"] is None
         assert assets["legacy-string"] == {"all": "legacy/all.png"}
         assert assets["legacy-dict"] == {
@@ -499,6 +503,37 @@ def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path
             "https://images.example.test/releases/r1/all/v2.png"
         )
         assert cut.example_asset_status("legacy-string", "dress", "all") == "available"
+    finally:
+        cut.load_example_asset_registry.cache_clear()
+
+
+def test_pose_direction_preflight_matches_worn_and_mirror_rules(tmp_path, monkeypatch):
+    registry = {
+        "_meta": {"defaultBaseUrl": "https://images.example.test"},
+        "assets": {
+            "front": {"pose": "front.png", "cutType": "styling", "direction": "front"},
+            "back": {"pose": "back.png", "cutType": "horizon", "direction": "back"},
+            "mirror": {"pose": "mirror.png", "cutType": "mirror", "direction": "front"},
+            "legacy": {"pose": "legacy.png"},
+        },
+    }
+    path = tmp_path / "example_assets.json"
+    path.write_text(json.dumps(registry), encoding="utf-8")
+    monkeypatch.setattr(cut, "_DEFAULT_EXAMPLE_ASSETS", str(path))
+    cut.load_example_asset_registry.cache_clear()
+    try:
+        assert cut.pose_direction_compatible(
+            "front", cut.normalize_spec({"cutType": "styling", "direction": "front"}))
+        assert not cut.pose_direction_compatible(
+            "back", cut.normalize_spec({"cutType": "styling", "direction": "front"}))
+        assert cut.pose_direction_compatible(
+            "mirror", cut.normalize_spec({"cutType": "mirror"}))
+        assert not cut.pose_direction_compatible(
+            "front", cut.normalize_spec({"cutType": "mirror"}))
+        assert not cut.pose_direction_compatible(
+            "mirror", cut.normalize_spec({"cutType": "horizon", "direction": "front"}))
+        assert not cut.pose_direction_compatible(
+            "legacy", cut.normalize_spec({"cutType": "styling", "direction": "front"}))
     finally:
         cut.load_example_asset_registry.cache_clear()
 
@@ -541,17 +576,23 @@ def test_resolved_example_manifest_and_prompt_apply_pose_only_scope():
          "refScope": "pose"},
         manifest=manifest,
     )
-    assert "EXAMPLE REFERENCE (scope: pose)" in manifest
-    assert "source of pose ONLY" in manifest
-    assert "CUT TYPE and FRAMING control" in manifest
-    assert "follow ONLY the pose" in p
+    assert "POSE CONTROL" in manifest
+    assert "used ONLY as a kinematic control" in manifest
+    assert "CUT SPEC controls" in manifest
+    assert "POSE-ONLY RETARGETING CONTRACT" in p
     assert "screen-left versus screen-right limb placement" in p
-    assert "Do not mirror it" in p
-    assert "CUT TYPE and FRAMING requested above control" in p
+    assert "Do not mirror the pose, swap left and right" in p
+    assert "The requested direction is already compatible with this pose" in p
+    assert "The current CUT SPEC alone controls camera distance" in p
+    assert "canvas padding or subject size" in p
+    assert "hidden lower-body landmarks do not control the crop" in p
+    assert "Do not copy the mannequin's body shape" in p
+    assert "without inventing that pocket" in p
+    assert "one plain unbranded phone" in p
+    assert "do not copy a case, logo, screen content" in p
     assert "adjust it naturally" not in p
-    assert "Do NOT carry over" in p
-    assert "the example's background, location, lighting, mood, garments" in p
-    assert "shoes or accessories" in p
+    assert "render it from the requested" not in p
+    assert "Do not transfer any background, lighting, color grade, clothing" in p
     assert "follow the attached EXAMPLE REFERENCE's background/location" not in p
     assert "Composition nuance" not in p
     assert "Pose: natural and unforced" not in p
@@ -580,9 +621,9 @@ def test_in_space_resolved_example_forces_pose_scope_prompt():
     p = cut.render_cut_prompt(
         cut.load_cut_template(), spec, {}, {}, "top", manifest)
     assert spec["refScope"] == "pose"
-    assert "EXAMPLE REFERENCE (scope: pose)" in manifest
+    assert "POSE CONTROL" in manifest
     assert "SPACE CONTINUITY" in p
-    assert "Do NOT carry over" in p and "the example's background" in p
+    assert "Do not transfer any background" in p
     assert "follow the attached EXAMPLE REFERENCE's background/location" not in p
 
 

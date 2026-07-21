@@ -138,18 +138,21 @@ lighting, mood, framing and composition. Swap in the exact garment from PRODUCT 
 is still a PRODUCT CUT: do NOT copy the example's garments, shoes, accessories, model or pose, and
 do not add a person or visible body parts.
 
-[[REFSCOPE:pose]]REFERENCE SCOPE: from the attached EXAMPLE REFERENCE follow ONLY the pose.
-Preserve its torso orientation, weight distribution, screen-left versus screen-right limb placement,
-shoulder and hip levels, elbow and knee bends, hand heights and leg stance. Do not mirror it or replace
-an asymmetric/interacting pose with a generic resting pose. If the requested camera DIRECTION differs
-from the angle the pose asset is seen from, keep the SAME body pose and render it from the requested
-camera direction — never straighten, relax or swap the pose just to face the camera.
-CUT TYPE and FRAMING requested above control the camera distance, body scale and crop; do not copy
-the pose asset's canvas padding. Do NOT carry over
-the example's background, location, lighting, mood, garments, shoes or accessories — the scene must follow
-this prompt's own background direction. If a removed prop or pocket explained a hand position, keep the same
-broad arm direction and hand height without recreating that prop or inventing a pocket. Garment fidelity and
-the requested outer opening state still win if the exact posture is physically impossible.
+[[REFSCOPE:pose]]POSE-ONLY RETARGETING CONTRACT — HARD REQUIREMENTS
+
+The attached image labeled POSE CONTROL is a transparent neutral mannequin used only as a kinematic control. It is not a person, styling, scene, camera, body-shape, or garment reference.
+
+Retarget only these visible pose features: torso and pelvis orientation; weight-bearing leg and balance; shoulder and hip tilt; screen-left versus screen-right limb placement; elbow and knee bends; hand heights and arm directions; foot placement and stance; and head/neck orientation when compatible with face handling.
+
+Do not mirror the pose, swap left and right, neutralize its asymmetry, straighten it, or replace it with a generic resting stance. The requested direction is already compatible with this pose. Keep that same view family; never reconstruct the pose from another front, side, or back view.
+
+The current CUT SPEC alone controls camera distance, body scale, crop, placement, and background. Do not copy POSE CONTROL canvas padding or subject size. For a medium shot, preserve every pose landmark still visible inside the requested crop; hidden lower-body landmarks do not control the crop.
+
+Do not copy the mannequin's body shape, height, proportions, gender presentation, featureless face, white material, hands, feet, or anatomy styling. Do not transfer any background, lighting, color grade, clothing, footwear, accessory, or prop from it.
+
+PRODUCT and MATCHING remain the only clothing evidence. If a hand position depended on a pocket or removed prop, preserve the broad arm direction and hand height without inventing that pocket or prop and without pushing a hand through fabric. If exact retargeting conflicts with verified garment construction, make only the smallest local hand adjustment; preserve the torso, balance, limbs, and overall pose.
+
+Mirror-cut exception: a blank phone proxy in POSE CONTROL determines only the phone-holding hand and arm. Render one plain unbranded phone because the MIRROR cut requires it; do not copy a case, logo, screen content, or other accessory.
 
 [[CUT:bg_edit]]EDIT TASK — INSERT A MODEL INTO THE ATTACHED SCENE:
 - The FIRST attached image is the finished, real location of this photo. Treat it as the base
