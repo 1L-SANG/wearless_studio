@@ -9,6 +9,7 @@ import { uid } from '@/lib/ids.js';
 import {
   STORYBOARD_TAXONOMY_VERSION,
   SECTION_ROLES,
+  assignInternalContentRoles,
   defaultContentRoleForSection,
   contentTitle,
   isContentRole,
@@ -38,7 +39,7 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
   if (!Array.isArray(blocks)) return blocks;
   const needsNormalization = blocks.some((b) => b.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION
     || !isSectionRole(b.sectionRole) || !isContentRole(b.contentRole));
-  const out = blocks.map((raw) => {
+  let out = blocks.map((raw) => {
     const b = { ...raw };
     let sectionRole = inferSectionRole(b);
     let contentRole = inferContentRole(b);
@@ -54,6 +55,7 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
     Object.assign(b, normalizedRecipePatch(b, contentRole, { hasDetailImage }));
     if (previousRecipe.cutType !== b.cutType || previousRecipe.direction !== b.direction || previousRecipe.shot !== b.shot) {
       b.exampleId = null;
+      b.thumb = b.baseThumb || b.thumb;
       b.baseThumb = null;
     }
     b.taxonomyVersion = STORYBOARD_TAXONOMY_VERSION;
@@ -87,6 +89,10 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
   if (needsNormalization) {
     out.sort((a, b) => (SECTION_ORDER.get(a.sectionRole) ?? 99) - (SECTION_ORDER.get(b.sectionRole) ?? 99));
   }
+
+  // 사용자에게 역할을 묻지 않는다. 첫 장면과 비어 있는 내부 역할은
+  // 현재 섹션·카드 순서로 자동 확정한다(ADR-0005 후속 결정).
+  out = assignInternalContentRoles(out);
 
   let prevKey = null, prevSid = null;
   for (const b of out) {
@@ -177,12 +183,14 @@ export function adoptSection(blocks, movedId, targetSid, targetRole = null) {
       if (!crossed) return b; // 같은 섹션 내 순서 변경 — 소속·공간 유지
       const { layoutRowId: _layoutRowId, ...single } = b;
       const rowVersion = host.layoutRowVersion || b.layoutRowVersion;
-      const purposePatch = b.source === 'mine' ? {}
-        : {
-          ...normalizedRecipePatch(b, defaultContentRoleForSection(host.sectionRole)),
-          exampleId: null,
-          baseThumb: null,
-        };
+      const purposePatch = b.source === 'mine' ? {} : {
+        ...normalizedRecipePatch(b, defaultContentRoleForSection(host.sectionRole)),
+        exampleId: null,
+        thumb: b.baseThumb || b.thumb,
+        baseThumb: null,
+        ...(host.sectionRole === SECTION_ROLES.PRODUCT
+          ? { matchIds: [], outerClosureState: null } : {}),
+      };
       return {
         ...single,
         ...purposePatch,
@@ -286,7 +294,7 @@ export function normalizeSectionLayouts(blocks) {
 }
 
 /* normalizeBoard — 구조 변경 후 공통 위생 절차 (행 위생 + 레이아웃 배타 규칙) */
-export const normalizeBoard = (blocks) => normalizeSectionLayouts(normalizeRows(blocks));
+export const normalizeBoard = (blocks) => normalizeSectionLayouts(normalizeRows(assignInternalContentRoles(blocks)));
 
 /* ---- 섹션 레이아웃 행 크기 — 보드 행 모델과 mock 조립기가 공유하는 단일 소스 ---- */
 export const LAYOUT_ROW = { stack: 1, twoColumn: 2, threeColumn: 3, grid2x2: 2, colorCompare: 3 };   // 행당 컷 수

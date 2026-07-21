@@ -1,8 +1,10 @@
 """Storyboard content-role inference and canonicalization helpers.
 
-``contentRole`` is the user-facing source of truth.  The rendering recipe
-(``cutType``/``direction``/``shot``) is derived from it.  A missing role may be
-inferred defensively from ``cutType``; retired kind values are not interpreted.
+``contentRole`` is an internal semantic source of truth.  The storyboard UI
+does not ask the seller to choose it; the default composition and card order
+assign it.  The rendering recipe (``cutType``/``direction``/``shot``) is
+derived from it.  A missing role may be inferred defensively from ``cutType``;
+retired kind values are not interpreted.
 """
 
 CONTENT_ROLES = (
@@ -166,6 +168,8 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
     })
     if cut_type == "product":
         out["faceExposure"] = None
+        out["matchIds"] = []
+        out["outerClosureState"] = None
     elif cut_type == "mirror":
         face = block.get("faceExposure") or block.get("face_exposure")
         out["faceExposure"] = "show" if face == "show" else "hide"
@@ -175,13 +179,54 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
 
 
 def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
-    """Canonicalize blocks and enforce the benefit → fit → product order.
+    """Canonicalize blocks and assign hidden roles from section/card order.
 
     Python's sort is stable, so the user's order inside each section is kept.
     Custom blocks without a section inherit their neighboring section;
-    malformed non-dictionary entries remain at the end.
+    malformed non-dictionary entries remain at the end. The first AI image in
+    the benefit section is the only ``hero``; later hero values are demoted to
+    ``benefit``. AI custom/missing roles use the section's safe default.
     """
-    canonical = [canonicalize_storyboard_block(block, for_storage=for_storage) for block in (blocks or [])]
+    defaults = {"benefit": "hero", "fit": "coordination", "product": "productOverview"}
+
+    def canonicalize_for_storyboard(block):
+        if not isinstance(block, dict):
+            return block
+        candidate = dict(block)
+        declared_section = candidate.get("sectionRole") or candidate.get("section_role")
+        if declared_section not in SECTION_ROLES and candidate.get("kind") in SECTION_ROLES:
+            declared_section = candidate["kind"]
+
+        # Storyboard-list 계약에서는 화면의 유효한 섹션이 정본이다. 단일 블록
+        # 헬퍼의 defensive explicit-role 우선 규칙은 에디터 등 다른 소비처를
+        # 위해 그대로 두고, 여기서만 섹션 안의 내부 역할을 다시 정한다.
+        if candidate.get("source") != "mine" and declared_section in SECTION_ROLES:
+            role = resolve_content_role(candidate)
+            if role == "custom" or _CONTENT_ROLE_TO_SECTION_ROLE.get(role) != declared_section:
+                role = defaults[declared_section]
+            candidate["sectionRole"] = declared_section
+            candidate["contentRole"] = role
+
+        previous_recipe = (
+            block.get("cutType") or block.get("cut_type"),
+            block.get("direction"),
+            block.get("shot"),
+        )
+        updated = canonicalize_storyboard_block(candidate, for_storage=for_storage)
+        next_recipe = (updated.get("cutType"), updated.get("direction"), updated.get("shot"))
+        recipe_incompatible = (
+            previous_recipe[0] != next_recipe[0]
+            or (previous_recipe[1] is not None and previous_recipe[1] != next_recipe[1])
+            or (previous_recipe[2] is not None and previous_recipe[2] != next_recipe[2])
+        )
+        if recipe_incompatible:
+            updated["exampleId"] = None
+            if block.get("baseThumb") or block.get("thumb"):
+                updated["thumb"] = block.get("baseThumb") or block.get("thumb")
+            updated["baseThumb"] = None
+        return updated
+
+    canonical = [canonicalize_for_storyboard(block) for block in (blocks or [])]
     # Custom/mine cards without a semantic section inherit the preceding
     # section; leading cards inherit the next valid section (or benefit when
     # the board has no section at all). This mirrors frontend normalization.
@@ -202,8 +247,30 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
         next_role = block["sectionRole"]
 
     section_order = {"benefit": 0, "fit": 1, "product": 2}
-    return sorted(
+    ordered = sorted(
         canonical,
         key=lambda block: section_order.get(block.get("sectionRole"), 3)
         if isinstance(block, dict) else 3,
     )
+
+    hero_assigned = False
+    out = []
+    for block in ordered:
+        if not isinstance(block, dict) or block.get("source") == "mine":
+            out.append(block)
+            continue
+
+        section_role = block.get("sectionRole")
+        role = block.get("contentRole")
+        if role == "custom" or _CONTENT_ROLE_TO_SECTION_ROLE.get(role) != section_role:
+            role = defaults.get(section_role, "hero")
+        if section_role == "benefit":
+            if not hero_assigned:
+                role = "hero"
+                hero_assigned = True
+            elif role == "hero":
+                role = "benefit"
+
+        updated = canonicalize_for_storyboard({**block, "contentRole": role})
+        out.append(updated)
+    return out

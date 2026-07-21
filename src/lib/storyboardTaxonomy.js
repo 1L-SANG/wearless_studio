@@ -1,11 +1,11 @@
 /* =============================================================
    콘티보드 사용자 분류의 단일 소스.
 
-   사용자는 상세페이지에서 사진이 맡는 역할을 고른다:
+   사용자는 상세페이지의 세 섹션과 생성예시·세부 옵션만 다룬다:
    핵심 장점 → 핏·코디 → 제품 확인.
 
-   cutType은 AI가 사진을 그릴 때만 쓰는 기술 레시피다. 화면에서는
-   노출하지 않고 contentRole 선택에서 자동으로 정한다.
+   contentRole과 cutType은 AI가 사진을 구성할 때만 쓰는 내부값이다.
+   화면에는 노출하지 않고 기본 구성·카드 위치·선택한 샷에서 정한다.
    ============================================================= */
 
 export const STORYBOARD_TAXONOMY_VERSION = 2;
@@ -236,7 +236,72 @@ export function normalizedRecipePatch(block, role, { hasDetailImage = null } = {
     shot,
     ...(template.cutType === 'mirror' && !['show', 'hide'].includes(block?.faceExposure)
       ? { faceExposure: 'hide' } : {}),
+    ...(['styling', 'horizon'].includes(template.cutType)
+      && !['same', 'show', 'hide'].includes(block?.faceExposure)
+      ? { faceExposure: 'same' } : {}),
   };
+}
+
+/* contentRole은 사용자 입력값이 아니다. 기본 구성에서 받은 역할은 보존하되,
+   잘못되거나 비어 있는 AI 카드는 현재 섹션의 안전한 기본 역할로 복구하고
+   핵심 장점의 첫 AI 카드만 hero가 되도록 카드 순서에 맞춰 자동 배정한다.
+
+   역할이 바뀌어 생성 레시피까지 달라질 때는 이전 생성예시를 그대로 쓰면
+   조건이 어긋나므로 선택을 해제하고, 예시 적용 전 썸네일이 있으면 복원한다. */
+export function assignInternalContentRoles(blocks) {
+  if (!Array.isArray(blocks)) return blocks;
+  let heroAssigned = false;
+  let changed = false;
+  const next = blocks.map((block) => {
+    if (!block || block.source === 'mine') return block;
+
+    const sectionRole = inferSectionRole(block) || SECTION_ROLES.BENEFIT;
+    const currentRole = isContentRole(block.contentRole) ? block.contentRole : CONTENT_ROLES.CUSTOM;
+    const currentRoleSection = sectionRoleForContentRole(currentRole);
+    let role = currentRole;
+
+    if (role === CONTENT_ROLES.CUSTOM || currentRoleSection !== sectionRole) {
+      role = defaultContentRoleForSection(sectionRole);
+    }
+    if (sectionRole === SECTION_ROLES.BENEFIT) {
+      if (!heroAssigned) {
+        role = CONTENT_ROLES.HERO;
+        heroAssigned = true;
+      } else if (role === CONTENT_ROLES.HERO) {
+        role = CONTENT_ROLES.BENEFIT;
+      }
+    }
+
+    const recipePatch = normalizedRecipePatch(block, role);
+    const recipeChanged = block.cutType !== recipePatch.cutType
+      || block.direction !== recipePatch.direction
+      || block.shot !== recipePatch.shot;
+    const roleChanged = block.contentRole !== recipePatch.contentRole
+      || block.title !== recipePatch.title
+      || block.sectionRole !== sectionRole
+      || block.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION;
+    const productStateChanged = recipePatch.cutType === 'product'
+      && ((block.matchIds || []).length > 0
+        || block.outerClosureState != null
+        || block.faceExposure != null);
+    if (!recipeChanged && !roleChanged && !productStateChanged) return block;
+
+    changed = true;
+    return {
+      ...block,
+      ...recipePatch,
+      sectionRole,
+      taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
+      ...(recipePatch.cutType === 'product'
+        ? { matchIds: [], outerClosureState: null, faceExposure: null } : {}),
+      ...(recipeChanged ? {
+        exampleId: null,
+        thumb: block.baseThumb || block.thumb,
+        baseThumb: null,
+      } : {}),
+    };
+  });
+  return changed ? next : blocks;
 }
 
 export function hasDetailSource(product) {
