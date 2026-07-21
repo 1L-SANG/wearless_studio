@@ -77,3 +77,6 @@ reference/competitive-analysis/
 
 # 얼굴 대조 QC weights (OpenCV Zoo, Apache-2.0) — Docker 빌드시 재다운로드+checksum
 server/app/data/face_models/*.onnx
+
+# Vercel CLI의 로컬 프로젝트 연결 메타데이터
+.vercel/
