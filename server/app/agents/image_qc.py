@@ -1,10 +1,9 @@
-"""AG-P2 image-qc — 생성 이미지 동일성 검수 (vision LLM, bytes 입력).
+"""AG-P2 image-qc — 생성 이미지 동일성 검수와 best-of-N 선택.
 
 생성 컷이 입력 상품과 "같은 옷인가"(색·패턴·넥라인·디테일)를 판정. retry면 mismatches +
 correctionPrompt(재생성 시 보정 지시)를 반환한다(ai_agent_modules §5). vision_llm 재사용.
 
-지금은 **shadow 한정**(판정 로그만) — enforce(재시도 게이트)·크레딧/상한 정책은 별도 결정.
-코어(순수 + 얇은 오케스트레이터)만.
+단일 후보 판정(verdict)과 전 후보 불합격 시 최선 후보 선택(pick_best)을 제공한다.
 """
 
 import os
@@ -12,12 +11,13 @@ import os
 from ..config import Settings
 from .gemini_image import InlineImage
 from .prompts import clean_text
-from .vision_llm import analyze_with_fallback
+from .vision_llm import VisionError, analyze_with_fallback
 
 VERDICTS = ("pass", "retry")
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "image_qc_v1.txt")
+_PICK_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "garment_pick_v1.txt")
 
 
 def qc_schema() -> dict:
@@ -58,6 +58,114 @@ async def verdict(
     prompt = build_prompt(len(product_images))
     raw, _provider = await analyze_with_fallback(settings, prompt, images, qc_schema())
     return validate(raw)
+
+
+def pick_schema(candidate_count: int) -> dict:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "chosenIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": max(0, candidate_count - 1),
+            },
+            "reason": {"type": "string"},
+        },
+        "required": ["chosenIndex", "reason"],
+    }
+
+
+def validate_pick(raw: dict, candidate_count: int) -> dict:
+    raw = raw or {}
+    chosen = raw.get("chosenIndex")
+    if isinstance(chosen, bool) or not isinstance(chosen, int) or not 0 <= chosen < candidate_count:
+        chosen = 0
+    return {"chosenIndex": chosen, "reason": clean_text(raw.get("reason"), 300)}
+
+
+async def pick_best(
+    settings: Settings,
+    product_images: list[InlineImage],
+    candidates: list[InlineImage],
+) -> dict:
+    """상품 원본과 후보들을 비교해 로고·프린트·원장 동일성이 가장 높은 후보를 고른다."""
+    with open(_PICK_PROMPT_FILE, encoding="utf-8") as f:
+        prompt = f.read()
+    prompt = prompt.replace("${productCount}", str(len(product_images)))
+    prompt = prompt.replace("${candidateCount}", str(len(candidates)))
+    raw, _provider = await analyze_with_fallback(
+        settings, prompt, [*product_images, *candidates], pick_schema(len(candidates)))
+    return validate_pick(raw, len(candidates))
+
+
+def _candidate_qc(index: int, result: dict) -> dict:
+    return {
+        "index": index,
+        "verdict": result["verdict"],
+        "mismatches": result["mismatches"][:5],
+    }
+
+
+def _garment_metadata(results: list[dict], chosen_index: int) -> dict:
+    chosen = results[chosen_index]
+    return {
+        "verdict": chosen["verdict"],
+        "candidates": [_candidate_qc(i, result) for i, result in enumerate(results)],
+        "chosenIndex": chosen_index,
+        "mismatches": chosen["mismatches"][:5],
+    }
+
+
+async def best_of(
+    settings: Settings,
+    product_images: list[InlineImage],
+    initial: InlineImage,
+    generate_candidate,
+) -> tuple[InlineImage, dict | None, list[dict]]:
+    """최초 생성본을 판정하고 필요할 때 원본 입력 기반 후보 중 최선을 채택한다."""
+    mode = settings.garment_qc_mode
+    if mode == "off":
+        return initial, None, []
+    if not product_images:
+        return initial, None, [{"code": "garment_qc_product_reference_unavailable"}]
+
+    try:
+        first_result = await verdict(settings, product_images, initial)
+    except VisionError:
+        return initial, None, [{"code": "garment_qc_unavailable"}]
+
+    candidates = [initial]
+    results = [first_result]
+    if mode == "shadow" or first_result["verdict"] == "pass":
+        return initial, _garment_metadata(results, 0), []
+
+    warnings: list[dict] = []
+    for _ in range(max(0, settings.garment_qc_extra_candidates)):
+        try:
+            candidate = await generate_candidate()
+        except Exception:
+            warnings.append({"code": "garment_qc_candidate_generation_failed"})
+            break
+        try:
+            candidate_result = await verdict(settings, product_images, candidate)
+        except VisionError:
+            warnings.append({"code": "garment_qc_unavailable"})
+            break
+        candidates.append(candidate)
+        results.append(candidate_result)
+        if candidate_result["verdict"] == "pass":
+            chosen = len(candidates) - 1
+            return candidate, _garment_metadata(results, chosen), warnings
+
+    try:
+        picked = await pick_best(settings, product_images, candidates)
+        chosen = picked["chosenIndex"]
+    except VisionError:
+        chosen = 0
+        warnings.append({"code": "garment_qc_picker_unavailable"})
+    return candidates[chosen], _garment_metadata(results, chosen), warnings
+
 
 _SCENE_PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "scene_qc_v1.txt")
 

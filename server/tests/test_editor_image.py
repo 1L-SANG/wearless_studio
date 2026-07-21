@@ -116,17 +116,22 @@ def test_run_editor_image_job_vary_charges_cost_and_group_misc(monkeypatch):
     async def fake_emit(pool, job_id, et, payload):
         return None
 
+    async def fail_garment_qc(*_args, **_kwargs):
+        raise AssertionError("vary must not run garment QC")
+
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
     monkeypatch.setattr(eij.cut_variator, "generate", fake_gen)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
     monkeypatch.setattr(eij, "_emit", fake_emit)
+    monkeypatch.setattr(eij.image_qc, "verdict", fail_garment_qc)
 
     payload = {
         "mode": "vary",
         "source": {"src": "/v1/assets/a1/file", "cutType": "styling"},
         "changes": [{"type": "pose", "value": "standing"}],
     }
-    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    app = fake_worker_app(make_settings(
+        gemini_api_key="x", r2_bucket="b", garment_qc_mode="bestof"))
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["charge"] == 1  # credit_cost_editor_image 기본값

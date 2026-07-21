@@ -214,13 +214,14 @@ def test_gen_cuts_detail_requires_loaded_detail_manifest(monkeypatch):
     manifest = dpj.cut_generator.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0)
 
-    cut_results, cut_assets, face_cuts = asyncio.run(dpj._gen_cuts(
-        app, _job(reserved=1), [(spec, images, manifest, False)],
+    cut_results, cut_assets, face_cuts, garment_qcs, warnings = asyncio.run(dpj._gen_cuts(
+        app, _job(reserved=1), [(spec, images, manifest, False, images)],
         {"name": "니트", "clothingType": "top"}, {},
     ))
 
     assert app.state.gemini.calls == 0
     assert cut_results == [] and cut_assets == [] and face_cuts == 0
+    assert garment_qcs == [] and warnings == []
 
 
 def test_gen_cuts_detail_reaches_gemini_with_loaded_detail_manifest(monkeypatch):
@@ -240,14 +241,15 @@ def test_gen_cuts_detail_reaches_gemini_with_loaded_detail_manifest(monkeypatch)
         has_mannequin=False, has_match=False, mood_count=0,
     )
 
-    cut_results, cut_assets, face_cuts = asyncio.run(dpj._gen_cuts(
-        app, _job(reserved=1), [(spec, images, manifest, False)],
+    cut_results, cut_assets, face_cuts, garment_qcs, warnings = asyncio.run(dpj._gen_cuts(
+        app, _job(reserved=1), [(spec, images, manifest, False, images)],
         {"name": "니트", "clothingType": "top"}, {},
     ))
 
     assert app.state.gemini.calls == 1
     assert len(cut_results) == len(cut_assets) == 1
     assert face_cuts == 0
+    assert garment_qcs == [] and warnings == []
 
 
 def test_run_detail_page_job_partial_success(monkeypatch):

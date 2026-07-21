@@ -95,6 +95,9 @@ def make_settings(**overrides) -> Settings:
         r2_bucket=None,
         r2_endpoint=None,
         r2_public_base=None,
+        # 운영 기본은 bestof. 관련 없는 기존 워커 테스트는 외부 vision 판정을 호출하지 않게
+        # 테스트 기본만 명시적으로 off로 두고 QC 테스트에서 모드를 개별 활성화한다.
+        garment_qc_mode="off",
     )
     base.update(overrides)
     return Settings(**base)
