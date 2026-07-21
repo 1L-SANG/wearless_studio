@@ -1,6 +1,7 @@
 import asyncio
 
 from app.agents import image_qc as iq
+from app.config import Settings, load_settings
 from app.agents.gemini_image import InlineImage
 from conftest import make_settings
 
@@ -15,6 +16,20 @@ def _img():
 
 def test_config_image_qc_defaults_off():
     assert make_settings().image_qc == "off"
+
+def test_config_garment_qc_defaults_and_env(monkeypatch):
+    assert Settings.__dataclass_fields__["garment_qc_mode"].default == "bestof"
+    assert Settings.__dataclass_fields__["garment_qc_extra_candidates"].default == 2
+
+    monkeypatch.setenv("GARMENT_QC_MODE", "shadow")
+    monkeypatch.setenv("GARMENT_QC_EXTRA_CANDIDATES", "4")
+    settings = load_settings()
+    assert settings.garment_qc_mode == "shadow"
+    assert settings.garment_qc_extra_candidates == 4
+
+    monkeypatch.setenv("GARMENT_QC_MODE", "invalid")
+    assert load_settings().garment_qc_mode == "bestof"
+
 
 
 def test_qc_schema_shape():
@@ -54,3 +69,37 @@ def test_verdict_orchestrates(monkeypatch):
     gen = InlineImage("image/png", b"GEN")
     out = run(iq.verdict(make_settings(gemini_api_key="x"), [_img(), _img()], gen))
     assert out["verdict"] == "retry" and out["mismatches"] == ["색 다름"]
+
+
+def test_pick_schema_and_validate_are_bounded():
+    schema = iq.pick_schema(3)
+    assert schema["properties"]["chosenIndex"]["maximum"] == 2
+    assert iq.validate_pick({"chosenIndex": 2, "reason": " logo "}, 3) == {
+        "chosenIndex": 2, "reason": "logo",
+    }
+    assert iq.validate_pick({"chosenIndex": 3, "reason": "bad"}, 3)["chosenIndex"] == 0
+    assert iq.validate_pick({"chosenIndex": True, "reason": "bad"}, 3)["chosenIndex"] == 0
+
+
+def test_pick_best_orchestrates_product_then_candidates(monkeypatch):
+    product = InlineImage("image/png", b"PRODUCT")
+    candidates = [
+        InlineImage("image/png", b"C0"),
+        InlineImage("image/jpeg", b"C1"),
+    ]
+
+    async def fake_fallback(settings, prompt, images, schema):
+        assert [image.data for image in images] == [b"PRODUCT", b"C0", b"C1"]
+        assert "FIRST 1 image" in prompt
+        assert "2 image(s) are generated candidates" in prompt
+        assert "${productCount}" not in prompt and "${candidateCount}" not in prompt
+        assert schema["properties"]["chosenIndex"]["maximum"] == 1
+        return {"chosenIndex": 1, "reason": "logo is closest"}, "gemini"
+
+    monkeypatch.setattr(iq, "analyze_with_fallback", fake_fallback)
+    out = run(iq.pick_best(
+        make_settings(gemini_api_key="x"),
+        [product],
+        candidates,
+    ))
+    assert out == {"chosenIndex": 1, "reason": "logo is closest"}

@@ -1,0 +1,13 @@
+You are selecting the AI-generated candidate that most faithfully preserves a seller's real
+garment. The FIRST ${productCount} image(s) are real product references. The following
+${candidateCount} image(s) are generated candidates, in zero-based candidate index order.
+
+Choose the candidate whose garment is most identical to the product references. Prioritize
+logos, printed graphics and embroidery: compare outer shape, internal shapes, exact letters and
+letter order, placement, scale and colors. Then compare silhouette, color, fabric appearance,
+pattern, neckline, sleeves, length, seams, trims and fasteners. Do not reward scene, model or
+pose quality over garment identity. You must choose one candidate even when every candidate has
+a mismatch.
+
+Return a single JSON object:
+{ "chosenIndex": 0, "reason": "short reason for this candidate" }

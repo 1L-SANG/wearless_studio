@@ -53,6 +53,7 @@ async def run_editor_image_job(app, job: dict) -> None:
     mode = payload.get("mode")
     example_warnings: list[dict] = []
     scene_qc_attempts: int | None = None  # bg 장소일치 QC 통과까지의 시도 수(관찰용, new 모드 bg만)
+    garment_qc_metadata: dict | None = None  # new 모드만; vary 경로는 QC·메타 모두 무변경
 
     async def _fail(message: str, meta: dict):
         try:
@@ -247,13 +248,18 @@ async def run_editor_image_job(app, job: dict) -> None:
                     job_id, normalized.get("modelId"), e)
                 model_images = []
             fm_face_injected = fm_source == "REAL" and len(model_images) == 2
-            images = [
-                *model_images,
-                *[
-                    InlineImage(a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"]))
-                    for a in (*assets, *mood_rows)
-                ],
-            ]  # 순서 = 매니페스트: MODEL 2장? → 상품 슬롯들 → 무드
+            product_images = [
+                InlineImage(a["mime_type"], await asyncio.to_thread(
+                    app.state.r2.get_bytes, a["r2_key"]))
+                for a in assets
+            ]
+            mood_images = [
+                InlineImage(a["mime_type"], await asyncio.to_thread(
+                    app.state.r2.get_bytes, a["r2_key"]))
+                for a in mood_rows
+            ]
+            images = [*model_images, *product_images, *mood_images]
+            # 순서 = 매니페스트: MODEL 2장? → 상품 슬롯들 → 무드
             example_scope = None
             example_id = normalized.get("exampleId")
             pose_overrides_example = (
@@ -330,16 +336,18 @@ async def run_editor_image_job(app, job: dict) -> None:
                 await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                 return
 
+            scene_plate = None
             # bg 편집 컷 — 장소일치 QC 게이트(2026-07-20): 생성은 샘플링이라 편집 프레이밍을
             # 줘도 확률적으로 다른 장소가 나온다. 플레이트(첫 첨부)와 대조해 불일치면 재생성,
             # 상한 초과면 실패 종결(부분 성공 아님 — 에디터는 단건). QC 판정 불능은 fail-open.
             if example_scope == "bg" and example_image is not None:
                 attempts_max = max(1, s.bg_scene_qc_attempts)
+                scene_plate = example_image
                 attempt = 1
                 while True:
                     try:
                         scene_qc = await image_qc.scene_verdict(
-                            s, example_image, InlineImage(mime, image))
+                            s, scene_plate, InlineImage(mime, image))
                     except VisionError as e:
                         log.warning("AG-06 scene QC unavailable job %s: %r — fail-open", job_id, e)
                         example_warnings.append({"code": "scene_qc_unavailable"})
@@ -361,6 +369,43 @@ async def run_editor_image_job(app, job: dict) -> None:
                         await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                         return
                 scene_qc_attempts = attempt
+
+            async def _generate_candidate():
+                candidate_image, candidate_mime = await cut_generator.generate(
+                    s, app.state.gemini, cut_spec, product, images,
+                    analysis=analysis, manifest=manifest)
+                if scene_plate is None:
+                    return InlineImage(candidate_mime, candidate_image)
+
+                candidate_attempt = 1
+                while True:
+                    try:
+                        scene_qc = await image_qc.scene_verdict(
+                            s, scene_plate, InlineImage(candidate_mime, candidate_image))
+                    except VisionError as e:
+                        log.warning(
+                            "AG-06 candidate scene QC unavailable job %s: %r — fail-open",
+                            job_id, e)
+                        example_warnings.append({"code": "scene_qc_unavailable"})
+                        break
+                    if scene_qc["verdict"] == "pass":
+                        break
+                    if candidate_attempt >= max(1, s.bg_scene_qc_attempts):
+                        raise RuntimeError("bg candidate scene mismatch")
+                    candidate_attempt += 1
+                    candidate_image, candidate_mime = await cut_generator.generate(
+                        s, app.state.gemini, cut_spec, product, images,
+                        analysis=analysis, manifest=manifest)
+                return InlineImage(candidate_mime, candidate_image)
+
+            chosen, garment_qc_metadata, garment_warnings = await image_qc.best_of(
+                s,
+                product_images,
+                InlineImage(mime, image),
+                _generate_candidate,
+            )
+            image, mime = chosen.data, chosen.mime
+            example_warnings.extend(garment_warnings)
             group = normalized["colorId"] or None
             cut_type = normalized["cutType"]
 
@@ -387,6 +432,8 @@ async def run_editor_image_job(app, job: dict) -> None:
         success_metadata = {"creditCostVersion": s.credit_cost_version}
         if scene_qc_attempts is not None:
             success_metadata["sceneQc"] = {"attempts": scene_qc_attempts}
+        if garment_qc_metadata is not None:
+            success_metadata["garmentQc"] = garment_qc_metadata
         if example_warnings:
             success_metadata["warnings"] = example_warnings
         async with pool.connection() as conn:
