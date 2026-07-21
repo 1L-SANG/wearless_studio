@@ -60,7 +60,7 @@
 
 - **서버 레지스트리** `server/app/data/example_assets.json` v2: `assets[id] = { all, pose?, bg?, applicableClothingTypes, cutType, shot, gender, direction }` (URL = baseUrl+key). 기존 `load_example_asset_registry()` 스키마의 상위 호환 확장 — 서버는 §5 규칙(적용 의류 검증, 미발행 범위 첨부 생략, spaceGroup은 pose 강제)을 정본으로 검증하고, pose 범위는 예시의 관찰 `direction`과 카드 레시피 방향의 사전 호환 게이트를 통과해야 한다.
 - **프론트 카탈로그** `catalogs.genExamples`: `{ id, thumb, cutType, gender, direction, clothingType(=source), applicableClothingTypes, shot, mood, rank, variants: ["all","pose","bg"] }` — 제품의 `gender=null`은 성별 공용으로 필터링하고, 갤러리는 현재 상품·조건으로 필터링, rank 순 최대 6장, 범위 버튼은 발행 variant와 pose 방향 호환 여부에 따라 활성화한다.
-- 파일럿 범위: **pose·bg는 파일럿 19개만 variants에 존재** → UI에서 자동으로 그 19개만 포즈만·배경만 활성화(별도 플래그 불필요 — 계약이 곧 스위치).
+- 파일럿 범위: **pose·bg는 발행된 항목에만 variants가 존재** → UI는 해당 항목에서만 포즈만·배경만 버튼을 활성화한다. `variants`는 항목별 사용 가능 여부이고, 전역 공개·긴급 롤백은 별도 운영 게이트가 담당한다. 2026-07-21 production 공개부터 프론트 `VITE_GENEXAMPLE_BG_ENABLED`와 서버 `GENEXAMPLE_BG_ENABLED`를 함께 사용하며, 이는 ADR-0009가 과거의 “별도 플래그 불필요” 결정을 대체한 것이다.
 
 ## 4. 확인된 현황 (0단계 조사, 2026-07-19)
 
