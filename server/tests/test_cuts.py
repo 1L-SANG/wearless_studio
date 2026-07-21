@@ -396,6 +396,7 @@ def test_render_ref_scope_bg_uses_plate_and_blocks_pose_garment_transfer(dev_exa
     assert "street, cafe, cozy interior" not in p             # 경쟁 배경 나열이 아예 없음(섹션 교체)
     assert "lifestyle setting" not in p
     assert "choose a natural pose" in p                        # 포즈 유출 차단(플레이트는 포즈 미제어)
+    assert "COMPLETE outfit" in p                              # 하의·신발 누락 방지(2026-07-20 실측: 맨다리 컷)
     assert "shoes or accessories" in p                         # 의류·신발 유출 차단(실험서 관찰된 실패)
     assert "FRAMING OVERRIDE" in p                             # 캔버스 크롭보다 요청 샷이 우선
     assert "Pose: natural and unforced" in p                   # 빈 배경은 포즈를 제어하지 않음
