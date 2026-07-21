@@ -263,6 +263,15 @@ export function AnalysisSkeleton() {
   );
 }
 
+// AI(가상) 모델 — 서버 레지스트리(server/app/data/virtual_models.json)와 동기 유지.
+// 컷 생성(AG-06)이 이 id('mA'…)로 아이덴티티 자산을 해석하고, 라이선스 게이트는
+// 비-UUID id를 no-op 처리한다(과금 없음). 실제 모델(FaceMarket)과 탭으로 구분 표시.
+const AI_MODELS = [
+  { id: 'mA', displayName: '모델 A', gender: 'women', thumb: '/models/women/w1.webp' },
+  { id: 'mB', displayName: '모델 B', gender: 'men', thumb: '/models/men/m1.webp' },
+  { id: 'mC', displayName: '모델 C', gender: 'men', thumb: '/models/men/m2.webp' },
+];
+
 export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const a = analysis;
   const toast = useToast();
@@ -282,6 +291,9 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [detailFor, setDetailFor] = useState(null); // 상세 모달 대상 모델 카드
+  // AI 모델 / 실제 모델 탭 (2026-07-21 사용자 결정). 초기 탭은 현재 선택이 속한 쪽.
+  const [modelTab, setModelTab] = useState(() =>
+    (a.selectedModelId && !AI_MODELS.some((m) => m.id === a.selectedModelId)) ? 'real' : 'ai');
   useEffect(() => {
     let alive = true;
     listModels()
@@ -298,13 +310,14 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, 5) });
   }, []);
 
-  // 카탈로그 로드 후 선택값이 없거나 더 이상 라이선스 활성 모델이 아니면 첫 라이선스 활성 모델로 자동 선택.
-  // (구 정적 selectedModelId 'mA' 등도 여기서 실 fm_models.id(UUID)로 교체 → 생성 게이트가 해석 가능.)
+  // 카탈로그 로드 후 선택값이 AI 모델도, 라이선스 활성 실제 모델도 아니면 첫 AI 모델로 자동 선택.
+  // 기본은 무료 AI 모델 — 실제 모델(유료 라이선스)은 사용자가 탭에서 명시적으로 고를 때만.
+  // (AI 모델 id 'mA'…는 비-UUID라 생성 라이선스 게이트가 no-op 처리 — 레거시 호환 확인됨.)
   useEffect(() => {
     const licensable = models.filter((m) => m.hasActiveLicense);
-    if (licensable.length && !licensable.some((m) => m.id === a.selectedModelId)) {
-      onChange({ selectedModelId: licensable[0].id });
-    }
+    const valid = AI_MODELS.some((m) => m.id === a.selectedModelId)
+      || licensable.some((m) => m.id === a.selectedModelId);
+    if (!valid) onChange({ selectedModelId: AI_MODELS[0].id });
   }, [models]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
 
@@ -538,11 +551,34 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
         </div>
       </div>
 
-      {/* 5. model select — FaceMarket 검증 모델 카탈로그(라이선스 활성 모델만 선택 가능) */}
+      {/* 5. model select — AI(가상) 모델 / 실제(FaceMarket 라이선스) 모델 탭 구분 (2026-07-21) */}
       <div className="surface">
         <div className="sec-title" style={{ marginBottom: 6 }}>모델 선택</div>
-        <div className="sec-sub" style={{ marginBottom: 16 }}>검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.</div>
-        {modelsLoading ? (
+        <Chips className="model-tabs" options={[{ value: 'ai', label: 'AI 모델' }, { value: 'real', label: '실제 모델' }]}
+          value={modelTab} onChange={(v) => v && setModelTab(v)} />
+        <div className="sec-sub" style={{ margin: '10px 0 16px' }}>
+          {modelTab === 'ai'
+            ? '가상 인물 모델이에요 · 라이선스 비용 없이 바로 쓸 수 있어요.'
+            : '검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.'}
+        </div>
+        {modelTab === 'ai' ? (
+          <div className="model-grid">
+            {AI_MODELS.map((m) => {
+              const on = a.selectedModelId === m.id;
+              return (
+                <div key={m.id} className={`model-card fm-model${on ? ' on' : ''}`}
+                  onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
+                  <img src={m.thumb} alt={m.displayName} />
+                  <span className="fm-verified">AI</span>
+                  <div className="fm-meta">
+                    <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
+                    <div className="fm-price">무료</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : modelsLoading ? (
           <div className="hint">검증 모델을 불러오는 중이에요…</div>
         ) : models.length === 0 ? (
           <div className="hint">아직 등록된 검증 모델이 없어요.</div>
