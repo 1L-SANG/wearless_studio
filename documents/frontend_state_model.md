@@ -81,7 +81,7 @@ useAppStore = {
 | `/editor/:projectId` | getEditorBlocks, getWardrobe, getCatalogs, getAccount, getProduct | 이미지 생성/변형 → `generateImage` + `syncCredits`; 저장 → `saveEditorBlocks`(저장 버튼+디바운스) | account(표시), syncCredits, projectId | blocks + undo 히스토리, selEls/selBlock, cropping, scale, tab, layerFloat, pendingSlot, varyTarget |
 | `/library` | getLibrary | 새 상세페이지 → `startProject()` | startProject | phase, items |
 
-콘티보드의 blocks는 "서버 상태의 working copy" 패턴이다: 진입 시 fetch → `taxonomyVersion:2`, `sectionRole`, `contentRole`을 검증하고 v2 누락값만 방어적으로 정규화 → 로컬에서 편집(스냅샷/원래대로 포함) → 생성 CTA에서 한 번에 `saveStoryboard`. 카드 단위 '수정 완료'는 로컬 확정일 뿐 서버 저장이 아니다. UI는 `contentRole`을 보여주고 `cutType`은 생성 요청을 위한 내부 값으로만 유지한다.
+콘티보드의 blocks는 "서버 상태의 working copy" 패턴이다: 진입 시 fetch → `taxonomyVersion:2`, `sectionRole`, `contentRole`을 검증하고 누락값과 첫 `hero`를 섹션·카드 순서로 자동 정규화 → 로컬에서 편집(스냅샷/원래대로 포함) → 생성 CTA에서 한 번에 `saveStoryboard`. 카드 단위 '수정 완료'는 로컬 확정일 뿐 서버 저장이 아니다. UI는 `contentRole`과 `cutType`을 노출하지 않고 생성예시와 필요한 세부 옵션만 보여준다.
 
 ---
 

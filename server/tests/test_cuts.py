@@ -135,6 +135,7 @@ def test_canonical_detail_forces_product_detail_and_overview_rejects_detail():
     })
     overview = content_roles.canonicalize_storyboard_block({
         "contentRole": "productOverview", "cutType": "product", "shot": "detail",
+        "matchIds": ["pants-1"], "outerClosureState": "closed",
     })
 
     assert (detail["sectionRole"], detail["cutType"], detail["shot"]) == (
@@ -143,6 +144,8 @@ def test_canonical_detail_forces_product_detail_and_overview_rejects_detail():
     assert (overview["sectionRole"], overview["cutType"], overview["shot"]) == (
         "product", "product", "ghost",
     )
+    assert overview["matchIds"] == []
+    assert overview["outerClosureState"] is None
 
 
 def test_canonical_storyboard_list_returns_normalized_copies():
@@ -177,6 +180,69 @@ def test_canonical_storyboard_stably_orders_the_three_sections():
         "benefit-1", "benefit-2", "fit-1", "fit-2", "custom", "product-1",
     ]
     assert normalized[4]["sectionRole"] == "fit"  # 앞 이웃 섹션을 상속해 원래 위치를 지킨다.
+
+
+def test_canonical_storyboard_assigns_hidden_roles_and_only_one_hero():
+    normalized = content_roles.canonicalize_storyboard([
+        {"id": "mine", "source": "mine", "sectionRole": "benefit"},
+        {
+            "id": "first-ai", "source": "ai", "sectionRole": "benefit",
+            "contentRole": "benefit", "cutType": "horizon", "shot": "medium",
+            "exampleId": "old-example",
+        },
+        {
+            "id": "second-ai", "source": "ai", "sectionRole": "benefit",
+            "contentRole": "hero", "cutType": "styling", "shot": "full",
+        },
+        {
+            "id": "fit-ai", "source": "ai", "sectionRole": "fit",
+            "contentRole": "custom",
+        },
+    ])
+
+    assert [block["contentRole"] for block in normalized] == [
+        "custom", "hero", "benefit", "coordination",
+    ]
+    assert normalized[1]["cutType"] == "styling"
+    assert normalized[1]["exampleId"] is None
+    assert normalized[2]["cutType"] == "horizon"
+    assert normalized[3]["cutType"] == "styling"
+
+
+def test_canonical_storyboard_section_wins_stale_internal_role_and_recipe():
+    normalized = content_roles.canonicalize_storyboard([
+        {
+            "id": "benefit-with-fit-recipe", "source": "ai", "sectionRole": "benefit",
+            "cutType": "horizon", "direction": "front", "shot": "medium",
+        },
+        {
+            "id": "product-with-fit-role", "source": "ai", "sectionRole": "product",
+            "contentRole": "fit", "cutType": "horizon", "direction": "side", "shot": "full",
+        },
+    ])
+
+    assert [block["id"] for block in normalized] == [
+        "benefit-with-fit-recipe", "product-with-fit-role",
+    ]
+    assert (
+        normalized[0]["sectionRole"], normalized[0]["contentRole"], normalized[0]["cutType"]
+    ) == ("benefit", "hero", "styling")
+    assert (
+        normalized[1]["sectionRole"], normalized[1]["contentRole"], normalized[1]["cutType"]
+    ) == ("product", "productOverview", "product")
+
+
+def test_canonical_storyboard_restores_base_thumb_when_auto_role_changes_recipe():
+    normalized = content_roles.canonicalize_storyboard([{
+        "id": "first-benefit", "source": "ai", "sectionRole": "benefit",
+        "contentRole": "benefit", "cutType": "horizon", "direction": "front", "shot": "medium",
+        "exampleId": "example-1", "baseThumb": "base.png", "thumb": "example.png",
+    }])
+
+    assert normalized[0]["contentRole"] == "hero"
+    assert normalized[0]["exampleId"] is None
+    assert normalized[0]["baseThumb"] is None
+    assert normalized[0]["thumb"] == "base.png"
 
 
 def test_normalize_cut_type_only_request_uses_defensive_inference():
