@@ -269,6 +269,9 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const [washing, setWashing] = useState(false);
   const [spDraft, setSpDraft] = useState('');
   const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
+  // 직접 입력에 커서가 있는 동안 enum 칩 하이라이트를 지운다 — 커밋은 여전히 blur 시점이라
+  // 데이터는 안 바뀌고, 빈 채로 나가면 칩 선택이 그대로 돌아온다(오클릭 무해).
+  const [ccFocus, setCcFocus] = useState(false);
   useEffect(() => { setCcDraft(a.customCategory || ''); }, [a.customCategory]);
   const [spAdding, setSpAdding] = useState(false);
   const [editMatIdx, setEditMatIdx] = useState(null);
@@ -424,16 +427,18 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               비우고, custom을 쓰면 칩 해제. AI 추측(customCategory)이 있으면 pill에 채워짐.
               저장은 blur/Enter 커밋, key로 분석 갱신 시 리셋(소재 인라인 편집 관례). */}
           <div className="field-row"><label className="lbl">세부 카테고리</label>
-            <Chips options={subCats} value={a.subCategory}
+            <Chips options={subCats} value={ccFocus ? null : a.subCategory}
               onChange={(v) => onChange(withFitProfile({ subCategory: v, customCategory: null }))}
               trailing={
                 <input
-                  className={`chip chip-input${a.customCategory && !a.subCategory ? ' on' : ''}`}
+                  className={`chip chip-input${ccFocus || (a.customCategory && !a.subCategory) ? ' on' : ''}`}
                   value={ccDraft} maxLength={20} placeholder="직접 입력"
                   style={{ width: `calc(${chWidth(ccDraft || '직접 입력')}em + 32px)` }}
                   onChange={(e) => setCcDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  onFocus={() => setCcFocus(true)}
                   onBlur={() => {
+                    setCcFocus(false);
                     const v = ccDraft.trim();
                     if (v === (a.customCategory || '')) return;
                     onChange(withFitProfile(v ? { customCategory: v, subCategory: null } : { customCategory: null }));
