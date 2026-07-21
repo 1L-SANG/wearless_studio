@@ -76,7 +76,7 @@ const withoutLayoutRow = (block) => {
 };
 
 const SCOPE_LABELS = { all: '전부', bg: '배경만', pose: '포즈만' };
-// 배경-only는 파일럿 실측 성공률이 안정화될 때까지 로컬 dev 또는 명시적 Vite opt-in에서만 노출한다.
+// 서버 게이트와 함께 켠다. dev에서는 검증용으로 열고 production은 명시적 Vite 플래그로 공개한다.
 const BG_EXAMPLES_ENABLED = Boolean(import.meta.env?.DEV)
   || import.meta.env?.VITE_GENEXAMPLE_BG_ENABLED === 'true';
 const WORN_CUT_TYPES = new Set(['styling', 'horizon', 'mirror']);
