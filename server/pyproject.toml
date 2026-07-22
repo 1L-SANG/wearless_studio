@@ -19,6 +19,17 @@ dependencies = [
     "numpy>=1.26",
 ]
 
+[project.optional-dependencies]
+# 검색 증강 Phase 3(retrieval_upgrade_prd) 자체 호스팅 임베딩. prod 기본 이미지 미포함(R3 완화) —
+# 오프라인 배치/로컬에서만 설치. torch=CPU/MPS 추론(GPU 불요). SigLIP=이미지, bge-m3=텍스트(2b).
+embeddings = [
+    "torch>=2.2",
+    "torchvision>=0.17",   # SigLIP fast image processor(AutoImageProcessor) 백엔드
+    "transformers>=4.44",
+    "sentence-transformers>=3.0",
+    "sentencepiece>=0.2",  # bge-m3(텍스트 2b) 토크나이저
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8",

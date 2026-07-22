@@ -83,6 +83,18 @@ class Settings:
     # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
     retrieval_matching: str = "off"  # off | tags (styleTags 친화도 v1)
     retrieval_knowledge: str = "off"  # off | static (정적 지식 블록)
+    # ---- Phase 3 재진입(ADR D2 해제, 2026-07-22): 레퍼런스 컷 검색 → 마네킹 STYLE REFERENCE 첨부 ----
+    # off면 기존 생성 경로 무변화(행위 변화 0). 임베딩은 자체 호스팅 로컬 모델(ADR D2 v1.3),
+    # 오프라인 배치(scripts/embed_corpus.py)로 사전 적재. 요청 경로에서 코퍼스 임베딩 금지(FR-C2).
+    retrieval_refimages: str = "off"  # off | on
+    ref_images_topk: int = 2  # 마네킹 생성에 첨부할 레퍼런스 컷 최대 수
+    # 벡터 차원은 ref_images.image_embedding / kb_chunks.text_embedding 컬럼 차원과 반드시 일치.
+    # 모델 교체 = 별도 forward 마이그레이션(차원 변경). torch/sentence-transformers 는
+    # pyproject optional group [embeddings] — prod 기본 이미지 미포함(R3 완화).
+    embed_image_model: str = "google/siglip-base-patch16-224"  # 이미지 임베딩(SigLIP, 768-d)
+    embed_image_dim: int = 768
+    embed_text_model: str = "BAAI/bge-m3"  # 텍스트 임베딩(2b 챌린저 스트레치, 1024-d)
+    embed_text_dim: int = 1024
     seller_text_canonicalize: str = "off"  # off | shadow | enforce (FR-D1 안전 게이트)
     input_qc: str = "off"  # off | shadow | enforce — 업로드 입력 QC (FR-D4, decode·해상도)
     # ---- FaceMarket (해커톤, 검증 실명 모델 마켓) — 기본 off 로 프로드 보호(FACEMARKET_ENABLED) ----
@@ -192,6 +204,12 @@ def load_settings() -> Settings:
         credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "1")),
         retrieval_matching=_flag("RETRIEVAL_MATCHING", "off", {"off", "tags"}),
         retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static"}),
+        retrieval_refimages=_flag("RETRIEVAL_REFIMAGES", "off", {"off", "on"}),
+        ref_images_topk=int(os.getenv("REF_IMAGES_TOPK", "2")),
+        embed_image_model=os.getenv("EMBED_IMAGE_MODEL", "google/siglip-base-patch16-224"),
+        embed_image_dim=int(os.getenv("EMBED_IMAGE_DIM", "768")),
+        embed_text_model=os.getenv("EMBED_TEXT_MODEL", "BAAI/bge-m3"),
+        embed_text_dim=int(os.getenv("EMBED_TEXT_DIM", "1024")),
         seller_text_canonicalize=_flag(
             "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
         ),

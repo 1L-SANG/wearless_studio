@@ -426,6 +426,54 @@ async def get_mannequin_cut_asset(
         return await cur.fetchone()
 
 
+# ---------- 검색 증강 Phase 3: 레퍼런스 컷 벡터 검색 (retrieval_upgrade_prd FR-C) ----------
+
+
+async def search_ref_images(
+    conn: AsyncConnection,
+    query_vec: list[float],
+    *,
+    cut_type: str | None = None,
+    clothing_type: str | None = None,
+    gender: str | None = None,
+    embed_model: str | None = None,
+    k: int = 2,
+) -> list[dict]:
+    """레퍼런스 컷 벡터 검색 — pgvector 코사인 거리(<=>) 오름차순 top-k.
+
+    결정적 프리필터(FR-A2 원칙 승계): is_active + image_embedding not null (+ 선택
+    cut_type/clothing_type/gender/embed_model). gender 지정 시 동일·unisex·null 허용(성별 무관
+    레퍼런스 포함). embed_model 지정 시 그 모델로 임베딩된 행만 — 동일차원 모델 스왑 시
+    구 모델 벡터와의 무의미한 비교(silent garbage)를 차단한다. 동점 tie-break id 오름차순(NFR-1).
+    service-role 전용 코퍼스라 소유 조건 없음(운영자 큐레이션). query_vec 비면 빈 결과."""
+    if not query_vec:
+        return []
+    vec = "[" + ",".join(repr(float(x)) for x in query_vec) + "]"
+    where = ["is_active", "image_embedding is not null"]
+    params: list = []
+    if cut_type:
+        where.append("cut_type = %s")
+        params.append(cut_type)
+    if clothing_type:
+        where.append("clothing_type = %s")
+        params.append(clothing_type)
+    if gender:
+        where.append("(gender = %s or gender = 'unisex' or gender is null)")
+        params.append(gender)
+    if embed_model:  # 모델 스왑 시 구 벡터와의 cross-model 비교 차단
+        where.append("embed_model = %s")
+        params.append(embed_model)
+    sql = (
+        "select id, r2_bucket, r2_key, cut_type, clothing_type, gender, source, "
+        "1 - (image_embedding <=> %s::vector) as similarity "
+        "from ref_images where " + " and ".join(where) +
+        " order by image_embedding <=> %s::vector asc, id asc limit %s"
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(sql, (vec, *params, vec, k))
+        return await cur.fetchall()
+
+
 # ---------- jobs ----------
 
 _JOB_COLS = (
