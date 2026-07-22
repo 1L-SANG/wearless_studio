@@ -9,7 +9,16 @@ type: Load Balanced Web Service
 # Distribute traffic to your service.
 http:
   path: '/'
-  healthcheck: '/healthz'        # FastAPI 헬스체크 (app/main.py)
+  # 배포 시간 단축(2026-07-20 실측): 기본값(30s×5회=150s healthy 대기 + 드레인 60s)이
+  # copilot svc deploy 430s 중 ~210s 를 차지했다. /healthz 는 즉답 엔드포인트라
+  # 10s×2회=20s 판정 + 10s 드레인이면 충분. timeout(5s) < interval(10s) ALB 제약 준수.
+  healthcheck:                   # FastAPI 헬스체크 (app/main.py)
+    path: '/healthz'
+    healthy_threshold: 2
+    unhealthy_threshold: 2
+    interval: 10s
+    timeout: 5s
+  deregistration_delay: 10s      # 구 태스크 유휴 드레인 — API 응답이 초 단위라 10s 로 안전
   alias: api.wearless.kr         # ACM cert(c878a5bb) — env manifest certificates 로 ALB 리스너에 import
 
 # Configuration for your containers and service.
