@@ -38,7 +38,6 @@ from app.agents import mannequin, mannequin_structure_qc as SQ  # noqa: E402
 from app.config import load_settings  # noqa: E402
 from app.r2 import R2Client  # noqa: E402
 from app.routes import _fit_profile_snapshot  # noqa: E402
-from scripts.smoke_realwire import InlineWorker  # noqa: E402
 
 OUT = Path(__file__).resolve().parents[2] / "server/ab_out/goldenset_types"
 BASE_KEY = {"women": "seed/mannequin/base-women-2K.png", "men": "seed/mannequin/base-men-2K.png"}
@@ -191,6 +190,8 @@ async def main() -> int:
     manifest = json.loads((OUT / "_seed_manifest.json").read_text())
     if only:
         manifest = [m for m in manifest if m["arm"] in only]
+    from scripts.smoke_realwire import InlineWorker
+
     worker = InlineWorker()
     s = worker._s
     r2 = R2Client(s)

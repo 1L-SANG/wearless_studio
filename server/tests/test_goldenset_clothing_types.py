@@ -2,7 +2,7 @@ import asyncio
 import importlib
 import json
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -12,10 +12,17 @@ def goldenset(monkeypatch):
     from scripts import _env
 
     monkeypatch.setattr(_env, "load_env", lambda: None)
+    for key in ("SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setitem(sys.modules, "scripts.smoke_realwire", ModuleType("scripts.smoke_realwire"))
     sys.modules.pop("scripts.goldenset_clothing_types", None)
     module = importlib.import_module("scripts.goldenset_clothing_types")
     yield module
     sys.modules.pop("scripts.goldenset_clothing_types", None)
+
+
+def test_import_does_not_load_realwire_worker(goldenset):
+    assert not hasattr(goldenset, "InlineWorker")
 
 
 def test_result_asset_id_requires_successful_job(goldenset):
@@ -116,15 +123,10 @@ def test_rejudge_reuses_recorded_output_without_starting_worker(
             "notes": "",
         }
 
-    class ForbiddenWorker:
-        def __init__(self):
-            raise AssertionError("rejudge must not create a generation worker")
-
     settings = SimpleNamespace(model_text_gemini="judge-model")
     monkeypatch.setattr(goldenset, "OUT", tmp_path)
     monkeypatch.setattr(goldenset, "load_settings", lambda: settings)
     monkeypatch.setattr(goldenset, "R2Client", lambda _settings: FakeR2())
-    monkeypatch.setattr(goldenset, "InlineWorker", ForbiddenWorker)
     monkeypatch.setattr(goldenset.SQ, "judge", fake_judge)
     monkeypatch.setattr(goldenset, "_git_sha", lambda: "abc123")
     monkeypatch.setattr(
