@@ -16,6 +16,8 @@ codex 2라운드 반영:
 DB·네트워크 없음 → 유닛 테스트 대상.
 """
 
+import re
+
 from .gemini_image import InlineImage
 from .vision_llm import VisionError, _call_gemini
 
@@ -29,11 +31,12 @@ _FAMILY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
                "overcoat", "windbreaker", "cardigan", "outerwear", "outer")),
     ("dress", ("dress", "gown", "one-piece", "onepiece", "one piece")),
     ("skirt", ("skirt",)),
-    ("pants", ("pant", "trouser", "jean", "denim", "slack", "chino", "legging",
-               "short", "jogger", "sweatpant", "bottom")),
-    ("top", ("t-shirt", "tshirt", "tee", "shirt", "top", "knit", "sweater", "jumper",
-             "hoodie", "hood", "sweatshirt", "blouse", "polo", "henley", "turtleneck",
-             "crewneck", "pullover")),
+    ("pants", ("pants", "pant", "trousers", "trouser", "jeans", "jean", "denim",
+               "slacks", "slack", "chinos", "chino", "leggings", "legging", "shorts",
+               "joggers", "jogger", "sweatpants", "sweatpant", "bottoms", "bottom")),
+    ("top", ("t-shirt", "tshirt", "tee", "shirts", "shirt", "top", "knit", "sweater",
+             "jumper", "hoodie", "hood", "sweatshirt", "blouse", "polo", "henley",
+             "turtleneck", "crewneck", "pullover")),
 ]
 
 _CORE_AXES: dict[str, tuple[str, str, str]] = {
@@ -50,7 +53,7 @@ def _family_of(type_seen: str) -> str | None:
     if not t:
         return None
     for family, kws in _FAMILY_KEYWORDS:
-        if any(kw in t for kw in kws):
+        if any(re.search(rf"(?<!\w){re.escape(kw)}(?!\w)", t) for kw in kws):
             return family
     return None
 

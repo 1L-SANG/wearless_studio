@@ -13,6 +13,8 @@ codex 반영:
   cd server && DATABASE_URL=...54322 RETRIEVAL_REFIMAGES=off GEMINI_API_KEY=... \
     .venv/bin/python -m scripts.goldenset_clothing_types --reps 3 [--only top-w,pants-w] \
     [--phase baseline] [--run-id <tag>] [--dry-run]
+  재판정: .venv/bin/python -m scripts.goldenset_clothing_types --phase rejudge \
+    --source-run <baseline-run-id> [--run-id <new-tag>]
 산출: server/ab_out/goldenset_types/<runId>/<arm>_rep<k>.png + results.jsonl + REPORT.md
 """
 import argparse
@@ -24,15 +26,16 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import unquote
 
 from scripts._env import load_env
 
 load_env()
 os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres")
-os.environ.setdefault("RETRIEVAL_REFIMAGES", "off")   # freeze — 이동부품 제거(codex)
 
 from app import repo  # noqa: E402
 from app.agents import mannequin, mannequin_structure_qc as SQ  # noqa: E402
+from app.config import load_settings  # noqa: E402
 from app.r2 import R2Client  # noqa: E402
 from app.routes import _fit_profile_snapshot  # noqa: E402
 from scripts.smoke_realwire import InlineWorker  # noqa: E402
@@ -58,14 +61,34 @@ def _settings_snapshot(s) -> dict:
     return {k: getattr(s, k, None) for k in keys}
 
 
-async def _newest_cut_key(pool, pid: str) -> str | None:
-    async with pool.connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "select a.r2_key from mannequin_cuts mc join assets a on a.id=mc.asset_id "
-                "where mc.project_id=%s order by mc.created_at desc limit 1", (pid,))
-            r = await cur.fetchone()
-    return r["r2_key"] if r else None
+def _freeze_retrieval() -> None:
+    os.environ["RETRIEVAL_REFIMAGES"] = "off"
+
+
+def _result_asset_id(job: dict | None) -> str:
+    if not job or job.get("status") != "done":
+        status = (job or {}).get("status") or "missing"
+        message = (job or {}).get("error_message") or ""
+        raise RuntimeError(f"mannequin job {status}: {message}"[:300])
+    cuts = ((job.get("result") or {}).get("data") or [])
+    if len(cuts) != 1:
+        raise RuntimeError(f"mannequin job 결과 컷 수 비정상: {len(cuts)}")
+    src = cuts[0].get("src") or ""
+    prefix, suffix = "/v1/assets/", "/file"
+    if not src.startswith(prefix) or not src.endswith(suffix):
+        raise RuntimeError(f"mannequin job 결과 asset 경로 비정상: {src!r}")
+    return unquote(src[len(prefix):-len(suffix)])
+
+
+def _load_rejudge_records(path: Path, only: set[str] | None = None) -> list[dict]:
+    if not path.exists():
+        raise FileNotFoundError(f"rejudge 원본 없음: {path}")
+    records = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return [
+        record for record in records
+        if record.get("genKey")
+        and (only is None or record.get("arm") in only)
+    ]
 
 
 async def _src_key(pool, pid: str) -> str | None:
@@ -92,9 +115,18 @@ async def _gen_once(worker, user_id, pid) -> str:
     assert created, f"{pid[:8]}: mannequin job 미생성(활성 중복)"
     who = await worker.claim_and_run(job["id"])
     assert who == "claimed", f"{pid[:8]}: job {who} — 로컬 dispatcher 꺼야 함"
-    key = await _newest_cut_key(worker.pool, pid)
-    assert key, f"{pid[:8]}: 저장컷 없음(생성 실패)"
-    return key
+    async with worker.pool.connection() as conn:
+        completed = await repo.get_job(conn, user_id, job["id"])
+        asset_id = _result_asset_id(completed)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select r2_key from assets where id=%s and user_id=%s and project_id=%s",
+                (asset_id, user_id, pid),
+            )
+            asset = await cur.fetchone()
+    if not asset:
+        raise RuntimeError(f"{pid[:8]}: job 결과 asset 없음: {asset_id}")
+    return asset["r2_key"]
 
 
 async def main() -> int:
@@ -103,17 +135,62 @@ async def main() -> int:
     ap.add_argument("--only", help="쉼표구분 arm id")
     ap.add_argument("--phase", default="baseline", choices=["baseline", "rerun", "rejudge"])
     ap.add_argument("--run-id", default=None)
+    ap.add_argument("--source-run", help="rejudge 원본 run id (--phase rejudge에서 필수)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    if args.phase == "rejudge" and not args.source_run:
+        ap.error("--phase rejudge에는 --source-run이 필요합니다")
 
-    manifest = json.loads((OUT / "_seed_manifest.json").read_text())
-    if args.only:
-        manifest = [m for m in manifest if m["arm"] in args.only.split(",")]
+    _freeze_retrieval()
+    only = set(args.only.split(",")) if args.only else None
     run_id = args.run_id or f"{args.phase}-{time.strftime('%Y%m%d-%H%M%S')}"
     run_dir = OUT / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     sha = _git_sha()
 
+    if args.phase == "rejudge":
+        source = _load_rejudge_records(OUT / args.source_run / "results.jsonl", only)
+        s = load_settings()
+        r2 = R2Client(s)
+        settings_snap = _settings_snapshot(s)
+        print(f"[rejudge] runId={run_id} sourceRun={args.source_run} records={len(source)} "
+              f"sha={sha} retrieval={settings_snap.get('retrieval_refimages')}")
+        if args.dry_run:
+            for old in source:
+                print(f"  [dry] {old['arm']} rep{old['rep']}: genKey={old['genKey']}")
+            return 0
+        results = []
+        for old in source:
+            rec = {k: v for k, v in old.items() if k not in ("verdict", "aggregate", "error")}
+            rec.update({"runId": run_id, "phase": "rejudge", "sourceRun": args.source_run,
+                        "commit": sha, "judgeModel": s.model_text_gemini,
+                        "settings": settings_snap})
+            try:
+                gen_bytes = await asyncio.to_thread(r2.get_bytes, rec["genKey"])
+                src_key, base_key = rec.get("srcKey"), rec.get("baseKey")
+                src_bytes = await asyncio.to_thread(r2.get_bytes, src_key) if src_key else b""
+                base_bytes = await asyncio.to_thread(r2.get_bytes, base_key)
+                if rec.get("outputHash") and _sha(gen_bytes) != rec["outputHash"]:
+                    raise RuntimeError("rejudge 원본 outputHash 불일치")
+                (run_dir / f"{rec['arm']}_rep{rec['rep']}.png").write_bytes(gen_bytes)
+                verdict = await SQ.judge(
+                    s, gen_bytes, [src_bytes] if src_bytes else [], base_bytes)
+                agg = SQ.aggregate(verdict, rec["family"])
+                rec["verdict"], rec["aggregate"] = verdict, agg
+                print(f"  {rec['arm']} rep{rec['rep']}: overall={agg['overallPass']} "
+                      f"typeSeen={verdict['typeSeen'][:20]!r} modes={agg['failureModes']} "
+                      f"unjudge={agg['unjudgeable']}")
+            except Exception as e:
+                rec["error"] = f"{type(e).__name__}: {e}"[:300]
+                print(f"  ✗ {rec['arm']} rep{rec['rep']}: {rec['error']}")
+            results.append(rec)
+            _append_result(run_dir, rec)
+        _finish_report(run_dir, run_id, args.phase, sha, settings_snap, results)
+        return 0
+
+    manifest = json.loads((OUT / "_seed_manifest.json").read_text())
+    if only:
+        manifest = [m for m in manifest if m["arm"] in only]
     worker = InlineWorker()
     s = worker._s
     r2 = R2Client(s)
@@ -167,18 +244,33 @@ async def main() -> int:
                     rec["error"] = f"{type(e).__name__}: {e}"[:300]
                     print(f"  ✗ {arm} rep{k}: {rec['error']}")
                 results.append(rec)
-                with open(run_dir / "results.jsonl", "a") as f:
-                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                _append_result(run_dir, rec)
     finally:
         await worker.close()
 
-    _write_report(run_dir, run_id, args.phase, sha, results)
+    _finish_report(run_dir, run_id, args.phase, sha, settings_snap, results)
+    return 0
+
+
+def _append_result(run_dir: Path, record: dict) -> None:
+    with open(run_dir / "results.jsonl", "a") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _finish_report(
+    run_dir: Path,
+    run_id: str,
+    phase: str,
+    sha: str,
+    settings_snap: dict,
+    results: list,
+) -> None:
+    _write_report(run_dir, run_id, phase, sha, settings_snap, results)
     ok = sum(1 for r in results if r.get("aggregate", {}).get("overallPass") is True)
     fail = sum(1 for r in results if r.get("aggregate", {}).get("overallPass") is False)
     unj = sum(1 for r in results if r.get("aggregate", {}).get("overallPass") is None and "aggregate" in r)
     err = sum(1 for r in results if "error" in r)
     print(f"\n[결과] pass={ok} fail={fail} unjudgeable={unj} error={err} → {run_dir}/REPORT.md")
-    return 0
 
 
 async def _owner(pool, pid: str) -> str:
@@ -189,9 +281,17 @@ async def _owner(pool, pid: str) -> str:
     return r["user_id"]
 
 
-def _write_report(run_dir: Path, run_id: str, phase: str, sha: str, results: list) -> None:
+def _write_report(
+    run_dir: Path,
+    run_id: str,
+    phase: str,
+    sha: str,
+    settings_snap: dict,
+    results: list,
+) -> None:
+    retrieval = settings_snap.get("retrieval_refimages")
     lines = [f"# T3 골드셋 구조 견고성 — {run_id}", "",
-             f"phase={phase} · commit={sha} · backend=gemini(prod 생성기) · RETRIEVAL=off",
+             f"phase={phase} · commit={sha} · backend=gemini(prod 생성기) · RETRIEVAL={retrieval}",
              "",
              "> **파일럿·arm-level per-garment 관찰**. 교차 rate·gender 효과·type robustness 일반화 안 함.",
              "> autoVerdict(judge)는 스크리닝. **육안(humanVerdict)이 정본** — 이미지 병기 검토 필수.",

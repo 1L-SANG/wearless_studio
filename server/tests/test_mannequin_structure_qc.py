@@ -27,6 +27,12 @@ def test_family_of_ambiguous_prefers_more_specific():
     assert SQ._family_of("cardigan") == "outer"
 
 
+def test_family_of_short_sleeve_top_does_not_match_shorts():
+    assert SQ._family_of("short sleeve shirt") == "top"
+    assert SQ._family_of("short-sleeve t-shirt") == "top"
+    assert SQ._family_of("denim shorts") == "pants"
+
+
 def test_family_of_unknown_is_none():
     assert SQ._family_of("") is None
     assert SQ._family_of("umbrella") is None
