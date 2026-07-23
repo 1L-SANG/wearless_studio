@@ -67,6 +67,13 @@ async def main() -> int:
         print("업로드 상품 이미지 없음", file=sys.stderr)
         return 2
     gender = mannequin.select_base_gender(analysis)
+    cat = clothing_type if clothing_type in ("top", "outer", "pants", "skirt", "dress") else "top"
+    try:
+        expected = PQ.validated_expected_more_side(
+            cat, gender, args.axis, args.value_a, args.value_b)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     base_id = s.base_mannequin_women_asset_id if gender == "women" else s.base_mannequin_men_asset_id
     r2 = R2Client(s, bucket=s.r2_bucket)
     with psycopg.connect(url, row_factory=dict_row) as conn, conn.cursor() as cur:
@@ -80,8 +87,7 @@ async def main() -> int:
 
     async def gen(value, tag):
         # length 축만 선언한 seller fit_profile (다른 축은 미선언 → 사진 근거)
-        fit_profile = {"category": clothing_type if clothing_type in
-                       ("top", "outer", "pants", "skirt", "dress") else "top",
+        fit_profile = {"category": cat,
                        "gender": gender, "source": "seller", "version": 1,
                        "axes": {args.axis: value}}
         ctx = mannequin.prompt_context(clothing_type=clothing_type, product_count=len(prod_imgs),
@@ -99,13 +105,12 @@ async def main() -> int:
     b_data, b_path = await gen(args.value_b, "B")
 
     # pairwise 심판: LEFT=A, RIGHT=B. expected = A/B 축값 매핑.
-    cat = fit_cat = (clothing_type if clothing_type in ("top", "outer", "pants", "skirt", "dress") else "top")
     verdict = await PQ.judge(s, a_data, b_data, args.axis, timeout=60)
     score = PQ.score_pair(verdict, cat, args.axis, args.value_a, args.value_b)
     print(f"[judge] verdict={verdict}")
     print(f"[score] {score}")
     print(f"[expected] LEFT(A={args.value_a}) vs RIGHT(B={args.value_b}) → "
-          f"more={PQ.expected_more_side(cat, args.axis, args.value_a, args.value_b)}")
+          f"more={expected}")
     print(f"저장: {a_path} / {b_path}")
     return 0
 

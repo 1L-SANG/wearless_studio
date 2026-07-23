@@ -9,7 +9,7 @@ analysis_model_order)를 따르면 실행 간 평가자가 달라질 수 있어 
 
 순수 함수(_ORDINAL·expected_more_side·score_pair·build_prompt·schema)는 DB·네트워크 없음."""
 
-from .fit_axes import AXIS_OBSERVABLES  # noqa: F401  (문서적 — 어휘 정본)
+from .fit_axes import AXIS_OBSERVABLES, normalize_fit_profile  # noqa: F401
 from .gemini_image import InlineImage
 from .vision_llm import VisionError, _call_gemini
 
@@ -57,6 +57,36 @@ def expected_more_side(category: str, axis: str, value_left, value_right) -> str
     if a == b:
         return "equal"
     return "left" if a > b else "right"
+
+
+def validated_expected_more_side(
+    category: str,
+    gender: str,
+    axis: str,
+    value_left,
+    value_right,
+) -> str:
+    """카탈로그상 유효한 두 축값의 기대 방향. 동값·미지원 조합은 측정 전에 거부한다."""
+    for value in (value_left, value_right):
+        profile = normalize_fit_profile({
+            "category": category,
+            "gender": gender,
+            "source": "seller",
+            "version": 1,
+            "axes": {axis: value},
+        })
+        if not profile or (profile.get("axes") or {}).get(axis) != value:
+            raise ValueError(
+                f"pairwise 미지원 값: category={category} gender={gender} "
+                f"axis={axis} value={value}"
+            )
+    expected = expected_more_side(category, axis, value_left, value_right)
+    if expected not in ("left", "right"):
+        raise ValueError(
+            f"pairwise 방향 없음: category={category} axis={axis} "
+            f"left={value_left} right={value_right}"
+        )
+    return expected
 
 
 def build_prompt(axis: str) -> str:

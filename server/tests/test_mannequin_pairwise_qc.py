@@ -29,6 +29,20 @@ def test_expected_more_side_equal_and_incomparable():
     assert PQ.expected_more_side("dress", "silhouette", "a_line", "fit_and_flare") == "equal"
 
 
+def test_validated_expected_more_side_checks_catalog_and_gender():
+    assert PQ.validated_expected_more_side(
+        "top", "women", "length", "crop", "long") == "right"
+    with pytest.raises(ValueError, match="미지원 값"):
+        PQ.validated_expected_more_side(
+            "pants", "women", "length", "crop", "long")
+    with pytest.raises(ValueError, match="미지원 값"):
+        PQ.validated_expected_more_side(
+            "top", "men", "length", "ultra_crop", "long")
+    with pytest.raises(ValueError, match="방향 없음"):
+        PQ.validated_expected_more_side(
+            "top", "women", "length", "crop", "crop")
+
+
 # ─────────────── score_pair (채점) ───────────────
 
 def test_score_pair_correct_direction_passes():

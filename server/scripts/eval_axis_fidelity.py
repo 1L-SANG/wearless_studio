@@ -24,6 +24,7 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 from scripts._env import load_env
 
@@ -41,6 +42,36 @@ def _profile(clothing_type, gender, axis, value):
     cat = clothing_type if clothing_type in _FIT_CATS else "top"
     return {"category": cat, "gender": gender, "source": "seller", "version": 1,
             "axes": {axis: value}}
+
+
+def _result_asset_id(job: dict | None) -> str:
+    if not job or job.get("status") != "done":
+        status = (job or {}).get("status") or "missing"
+        message = (job or {}).get("error_message") or ""
+        raise RuntimeError(f"mannequin job {status}: {message}"[:300])
+    cuts = ((job.get("result") or {}).get("data") or [])
+    if len(cuts) != 1:
+        raise RuntimeError(f"mannequin job 결과 컷 수 비정상: {len(cuts)}")
+    src = cuts[0].get("src") or ""
+    prefix, suffix = "/v1/assets/", "/file"
+    if not src.startswith(prefix) or not src.endswith(suffix):
+        raise RuntimeError(f"mannequin job 결과 asset 경로 비정상: {src!r}")
+    return unquote(src[len(prefix):-len(suffix)])
+
+
+def _directional_rate(results: list[dict]) -> float | None:
+    visible = [r for r in results if r.get("observed") != "unclear"]
+    if not visible:
+        return None
+    return sum(r.get("directionalPass") is True for r in visible) / len(visible)
+
+
+def _false_positive_rate(results: list[dict]) -> float | None:
+    visible = [r for r in results if r.get("observed") != "unclear"]
+    if not visible:
+        return None
+    directional = sum(r.get("observed") in ("left", "right") for r in visible)
+    return directional / len(visible)
 
 
 async def main() -> int:
@@ -79,7 +110,13 @@ async def main() -> int:
     gender = mannequin.select_base_gender(analysis)
     cat = clothing_type if clothing_type in _FIT_CATS else "top"
     baseline_fit_profile = analysis.get("fitProfile")  # replicate 리셋 복원용
-    expected = PQ.expected_more_side(cat, args.axis, args.value_a, args.value_b)
+    try:
+        expected = PQ.validated_expected_more_side(
+            cat, gender, args.axis, args.value_a, args.value_b)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        await worker.close()
+        return 2
     print(f"[axis_fidelity] project={pid[:8]} {cat} {gender} axis={args.axis} "
           f"A={args.value_a} B={args.value_b} reps={args.reps} expected_more={expected}")
 
@@ -100,22 +137,28 @@ async def main() -> int:
         prof = _profile(clothing_type, gender, args.axis, value)
         async with pool.connection() as conn:
             snapshot = await _fit_profile_snapshot(conn, pid, prof, validate_matching_fit=True)
-            job, _ = await repo.create_job(
+            job, created = await repo.create_job(
                 conn, user_id=user_id, project_id=pid, kind="mannequin",
                 payload={"mode": "regenerate", "fitProfile": prof, "fitProfileSnapshot": snapshot},
                 idempotency_key=None, credits_reserved=0, metadata={})
             await conn.commit()
+        if not created:
+            raise RuntimeError(f"활성 mannequin job 존재: {job['id']}")
         who = await worker.claim_and_run(job["id"])
         if who != "claimed":
             raise RuntimeError(f"job {job['id']} stolen — 로컬 dispatcher 꺼야 함")
-        # 최신 저장컷 bytes
         async with pool.connection() as conn:
+            completed = await repo.get_job(conn, user_id, job["id"])
+            asset_id = _result_asset_id(completed)
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "select a.r2_bucket, a.r2_key from mannequin_cuts mc join assets a on a.id=mc.asset_id "
-                    "where mc.project_id=%s order by mc.created_at desc limit 1", (pid,))
-                c = await cur.fetchone()
-        data = worker.app.state.r2.get_bytes(c["r2_key"])
+                    "select r2_key from assets where id=%s and user_id=%s and project_id=%s",
+                    (asset_id, user_id, pid),
+                )
+                asset = await cur.fetchone()
+        if not asset:
+            raise RuntimeError(f"job 결과 asset 없음: {asset_id}")
+        data = worker.app.state.r2.get_bytes(asset["r2_key"])
         p = out_dir / f"{pid[:8]}_{args.axis}_{value}_{tag}.png"
         p.write_bytes(data)
         return data, p
@@ -146,17 +189,10 @@ async def main() -> int:
             print(f"  rep{i}: treat={treat[-1]['directionalPass']} "
                   f"ctrlA={ctrl_a[-1]['observed']} ctrlB={ctrl_b[-1]['observed']}")
 
-        def rate(rs):
-            scored = [r for r in rs if not r["abstain"]]
-            return (sum(1 for r in scored if r["directionalPass"]) / len(scored)) if scored else None
-        t = rate(treat)
+        t = _directional_rate(treat)
         # control directional율: control 은 '변화 방향' 오검출률 — expected=equal 이라 'similar' 이 정답,
         # 방향 답이 곧 false-positive. false-positive율 = 방향 답(비-similar) 비율.
-        def fp_rate(rs):
-            n = [r for r in rs if r["observed"] in ("left", "right")]  # 방향 답(=오검출)
-            tot = [r for r in rs if r["observed"] != "unclear"]
-            return (len(n) / len(tot)) if tot else None
-        c_fp = fp_rate(ctrl_a + ctrl_b)
+        c_fp = _false_positive_rate(ctrl_a + ctrl_b)
         print(f"\n[결과] treatment directional율={t}  control false-positive율(방향오검출)={c_fp}")
         print(f"[인과-라이트] 인과효과 ≈ treatment {t} − control {c_fp} "
               f"= {None if t is None or c_fp is None else round(t - c_fp, 3)}")
