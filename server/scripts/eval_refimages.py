@@ -5,9 +5,11 @@
 워커와 동일 조립). 자기 프로젝트 컷은 코퍼스에서 임시 제외(순환 방지). image_qc(①동일성) 점수 병기.
 
 실행: cd server && DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \\
-        .venv/bin/python -m scripts.eval_refimages --project <uuid> [--out ab_out/refeval] [--topk N]
-전제: 로컬 54322 에 코퍼스 임베딩(seed_ref_images + embed_corpus), GEMINI_API_KEY, [embeddings] 설치.
-비용: 생성 2콜(off/on) + image_qc 2콜/프로젝트. Gemini 실호출.
+        .venv/bin/python -m scripts.eval_refimages --project <uuid> [--backend gemini|gpt] \\
+        [--out ab_out/refeval] [--topk N]
+전제: 로컬 54322 에 코퍼스 임베딩(seed_ref_images + embed_corpus), 선택 백엔드 API 키,
+      [embeddings] 설치.
+비용: 생성 2콜(off/on) + image_qc 2콜/프로젝트.
 """
 import argparse
 import asyncio
@@ -95,6 +97,20 @@ async def _score(s, prod_imgs, out_bytes, mime):
         return {"error": str(e)[:120]}
 
 
+def _backend_key_error(s, backend):
+    if backend == "gpt" and not s.openai_api_key:
+        return "OPENAI_API_KEY 없음 (server/.env)"
+    if backend == "gemini" and not s.gemini_api_key:
+        return "GEMINI_API_KEY 없음 (server/.env)"
+    return None
+
+
+def _active_generation_model(s, args):
+    if args.backend == "gpt":
+        return args.gpt_model
+    return resolve_model(s, s.mannequin_tier)
+
+
 async def _gen_gpt_image(s, model, prompt, images, size="1024x1536"):
     """OpenAI Images edits (gpt-image-2) — base+상품(+ref) 를 image[] 로 넣어 image-to-image 합성.
     Gemini 쿼터 소진 시 대체 백엔드. OPENAI_API_KEY 필요(server/.env). 반환: PNG bytes."""
@@ -124,8 +140,8 @@ async def main() -> int:
     ap.add_argument("--gpt-size", default="1024x1536", help="세로 마네킹용 2:3 근사")
     args = ap.parse_args()
     s = load_settings()
-    if not s.gemini_api_key:
-        print("GEMINI_API_KEY 없음 (server/.env)", file=sys.stderr)
+    if key_error := _backend_key_error(s, args.backend):
+        print(key_error, file=sys.stderr)
         return 2
     url = s.database_url
     pid, topk = args.project, (args.topk or s.ref_images_topk)
@@ -153,19 +169,20 @@ async def main() -> int:
     base_prompt = render_mannequin_prompt(
         template, ctx, {"name": "", "clothing_type": clothing_type}, analysis,
         seller_canon=s.seller_text_canonicalize, knowledge=s.retrieval_knowledge)
-    gemini = GeminiImageClient(s)
-    model = resolve_model(s, s.mannequin_tier)
+    gemini = GeminiImageClient(s) if args.backend == "gemini" else None
+    model = _active_generation_model(s, args)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"[eval] project={pid[:8]} clothing={clothing_type} gender={gender} "
-          f"prod_imgs={len(prod_imgs)} topk={topk} model={model}")
+          f"prod_imgs={len(prod_imgs)} topk={topk} backend={args.backend} model={model}")
 
     async def _gen(prompt, images, tag):
         t0 = time.time()
         if args.backend == "gpt":
-            out_bytes = await _gen_gpt_image(s, args.gpt_model, prompt, images, size=args.gpt_size)
+            out_bytes = await _gen_gpt_image(s, model, prompt, images, size=args.gpt_size)
             mime = "image/png"
         else:
+            assert gemini is not None
             res = await gemini.generate_content_image(
                 model, prompt, images, s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
             out_bytes, mime = res.image, res.mime
