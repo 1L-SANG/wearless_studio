@@ -409,6 +409,23 @@ def test_changes_omitted_for_auto_source_and_empty_adjusted():
     assert "CHANGES" not in auto_adjust
 
 
+def test_changes_excludes_matching_fit_axis():
+    # T2 근거: 매칭 하의 핏은 FIT PROFILE 본문엔 렌더되지만 CHANGES(셀러 조정 재강조)에는
+    # 빠진다 — 즉 매칭 핏 조정은 CHANGES 경로로 enforce 되지 않는다. build_fit_profile_block 의
+    # CHANGES 루프가 주상품 축(FIT_AXES[category])만 순회하기 때문. 이 계약을 명시 고정.
+    from app.agents.fit_axes import AXIS_OBSERVABLES
+    block = build_fit_profile_block(
+        {"category": "top", "gender": "men", "source": "seller", "version": 2,
+         "axes": {"fit": "slim"},
+         "matchingFit": {"clothingId": "p1", "fitCategory": "pants", "axes": {"cut": "semi_wide"}}},
+        adjusted_axes=("fit",))
+    match_obs = AXIS_OBSERVABLES[("pants", "cut", "semi_wide")]
+    assert match_obs in block                       # 본문(FIT PROFILE)엔 매칭 핏 라인 있음
+    changes = block.split("CHANGES FOR THIS GENERATION")[1]
+    assert match_obs not in changes                 # CHANGES 섹션엔 매칭 핏 없음(미enforce)
+    assert "- fit:" in changes                       # 주상품 조정축만 재강조
+
+
 def test_malicious_adjusted_axes_are_not_interpolated():
     evil = "length<script>alert(1)</script>"
     block = build_fit_profile_block(
