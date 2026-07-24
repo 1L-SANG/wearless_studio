@@ -466,6 +466,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         prepared = []
         _example_cache: dict[str, InlineImage | None] = {}
         example_warnings: list[dict] = []
+        _virtual_ids = set(cut_generator.load_virtual_model_registry())
+        _fallback_warned = False
         for b in ai_blocks:
             cut_spec = dict(b)
             # 저장/클라이언트가 런타임 전용 지시를 주입하지 못하게 매번 실제 선택 결과로 재구성한다.
@@ -473,8 +475,24 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 저장 콘티에 우연히 남은 비계약 필드가 프로젝트 선택 모델을 덮지 못하게 제거 후 주입한다.
             cut_spec.pop("modelId", None)
             cut_spec.pop("model_id", None)
-            if selected_model_id:
-                cut_spec["modelId"] = selected_model_id
+            # 인물 일관성(AG-06): VIRTUAL 소스에서 선택 id 가 가상 registry 밖(facemarket off 상태의
+            # 실존 UUID)이면 resolve_virtual_model_assets 가 None → 참조 0장 → 컷마다 인물 랜덤.
+            # 결정적 가상모델로 폴백해 전 컷 동일 인물 보장. REAL/LEGACY 는 얼굴을 별도 경로로
+            # 붙이므로 건드리지 않는다(인물 이중 첨부 방지).
+            if source == "VIRTUAL":
+                eff_model_id, _subbed = cut_generator.resolve_effective_model_id(
+                    selected_model_id, fallback_model_id=s.detailpage_fallback_model_id,
+                    virtual_ids=_virtual_ids)
+                if _subbed and not _fallback_warned:
+                    log.warning(
+                        "AG-06 selected model %s unresolvable as virtual (facemarket=%s) → fallback %s "
+                        "for identity consistency (job %s)",
+                        selected_model_id, s.facemarket_enabled, eff_model_id, job_id)
+                    _fallback_warned = True
+            else:
+                eff_model_id = selected_model_id
+            if eff_model_id:
+                cut_spec["modelId"] = eff_model_id
             clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
             try:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
