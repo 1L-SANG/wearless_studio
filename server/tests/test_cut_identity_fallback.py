@@ -5,7 +5,7 @@
 
 import asyncio
 
-from app.agents.cut_generator import resolve_effective_model_id
+from app.agents.cut_generator import real_identity_plan, resolve_effective_model_id
 from app.workers import detail_page_job as dpj
 from conftest import fake_worker_app, make_settings, worker_job
 
@@ -142,3 +142,31 @@ def test_worker_missing_manifest_keeps_selected_model_without_substitution(monke
     assert "failure" not in captured
     assert captured["success"]["charge"] == 1
     assert captured["cut_spec"]["modelId"] == "real-uuid"
+# --- REAL 소스 identity 첨부 계획 (A4: mirror/back 참조 0장 회귀 방지) ---
+
+def test_real_face_shown_cut_attaches_grid_and_badge():
+    # 얼굴 노출 착용컷(styling full 등, wants_face=True) → 그리드 첨부 + 검증 배지
+    assert real_identity_plan("styling", wants_face=True) == (True, True)
+    assert real_identity_plan("horizon", wants_face=True) == (True, True)
+
+
+def test_real_mirror_attaches_grid_without_badge():
+    # mirror(폰이 얼굴 가림, wants_face=False) — 그리드는 붙여 인물 일관성 유지, 배지는 없음.
+    # 이게 A4 핵심: 예전엔 wants=False → 참조 0장 → mirror 만 인물 랜덤이었다.
+    assert real_identity_plan("mirror", wants_face=False) == (True, False)
+
+
+def test_real_back_pose_attaches_grid_without_badge():
+    # 뒷모습(styling 이지만 얼굴 프레임 밖, wants_face=False) — 그리드로 체형·정체성 고정, 배지 없음
+    assert real_identity_plan("styling", wants_face=False) == (True, False)
+
+
+def test_real_product_cut_no_grid():
+    # product 컷(사람 금지) → 그리드 미첨부, 배지 없음
+    assert real_identity_plan("product", wants_face=False) == (False, False)
+
+
+def test_real_unknown_cut_no_grid():
+    # 미상/None cutType → 첨부 안 함(빈 슬롯 경로가 처리)
+    assert real_identity_plan(None, wants_face=False) == (False, False)
+    assert real_identity_plan("bogus", wants_face=True) == (False, False)

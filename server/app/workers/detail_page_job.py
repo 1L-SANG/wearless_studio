@@ -531,8 +531,13 @@ async def run_detail_page_job(app, job: dict) -> None:
             # face_slot=단일 얼굴 슬롯(LEGACY만). has_identity=검증 얼굴이 실제 담기는 컷(REAL·LEGACY)
             # → face_cuts·검증 배지 근거. 세 소스가 한 컷에 겹치지 않아 인물 혼합·이중주입이 없다.
             if source == "REAL":
-                model_images = await _real_model_images() if wants else []
-                has_identity = wants and len(model_images) == 2
+                # 실존 모델 그리드는 얼굴 노출과 무관하게 모든 착용컷에 identity 앵커로 붙인다(A4).
+                # wants(얼굴 노출)로만 게이트하면 mirror/back 이 참조 0장 → 그 컷만 인물 랜덤이 된다
+                # (REAL 은 VIRTUAL 과 달리 mB 폴백도 없음). 배지(has_identity)만 wants 로 준다.
+                attach_grid, _badge = cut_generator.real_identity_plan(
+                    normalized.get("cutType") if normalized else None, wants_face=wants)
+                model_images = await _real_model_images() if attach_grid else []
+                has_identity = _badge and len(model_images) == 2
                 face_slot = False
             elif source == "LEGACY":
                 model_images = []
