@@ -326,6 +326,36 @@ def resolve_effective_model_id(
     return fallback_model_id, selected_model_id is not None
 
 
+def real_identity_plan(cut_type, *, wants_face: bool) -> tuple[bool, bool]:
+    """REAL 소스에서 이 컷의 (실존모델 그리드 첨부?, 검증-얼굴 배지?). **순수 함수.**
+
+    인물 일관성(AG-06/A4): 실존 모델 그리드(face_front+grid_sedcard)는 **얼굴 노출 여부와
+    무관하게** 모든 착용컷(styling/horizon/mirror)에 identity 앵커로 붙인다 — VIRTUAL 경로와
+    동형. 안 그러면 얼굴을 가리는 컷(mirror 기본·back)이 `wants_face=False` 라 참조 0장이 되어
+    그 컷만 인물이 랜덤이 된다(REAL 은 VIRTUAL 과 달리 mB 폴백도 못 탄다).
+
+    검증-얼굴 배지(has_identity=face_cuts 계수·26.06 고지 근거)는 얼굴이 **실제로 노출되는**
+    컷에만(wants_face) 준다 — 그리드가 붙어도 얼굴을 가린 컷은 '검증 얼굴 노출'이 아니다.
+
+    반환: (attach_grid, has_identity). has_identity 는 호출자가 실제 그리드 2장 로드 성공
+    (len==2)과 다시 AND 한다(로드 실패 시 배지·앵커 동반 소거, fail-open).
+    """
+    attach = cut_type in _WORN_CUTS
+    return attach, (attach and wants_face)
+
+
+def needs_identity_fallback(*, cut_type, has_model_images: bool, face_slot: bool) -> bool:
+    """착용컷인데 인물 참조가 0장이면 결정적 폴백이 필요한가. **순수 함수.**
+
+    prod facemarket ON 안전망: 실존 모델을 골랐는데 (1) 유효 라이선스 없음(select_source=REJECTED)
+    또는 (2) 실 grid 로드 실패면, REAL/REJECTED 경로는 model_images 가 0장이 되고 mB 폴백(VIRTUAL
+    전용)도 안 타 컷마다 인물이 랜덤이 된다. 이때 결정적 가상모델로 폴백해 랜덤을 원천 차단한다.
+
+    LEGACY 단일 얼굴(face_slot=True)은 얼굴을 별도 경로로 넣으므로 폴백 대상이 아니다. 폴백은
+    무라이선스 실 얼굴을 재사용하지 않는다(대체 가상 인물 mB → 생체 라이선스 위반 없음)."""
+    return cut_type in _WORN_CUTS and not has_model_images and not face_slot
+
+
 def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, str]] | None:
     """정규화된 사람컷 spec의 C방식 자산(face_front, grid_sedcard)을 계약 순서로 반환.
 

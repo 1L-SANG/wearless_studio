@@ -5,7 +5,11 @@
 
 import asyncio
 
-from app.agents.cut_generator import resolve_effective_model_id
+from app.agents.cut_generator import (
+    needs_identity_fallback,
+    real_identity_plan,
+    resolve_effective_model_id,
+)
 from app.workers import detail_page_job as dpj
 from conftest import fake_worker_app, make_settings, worker_job
 
@@ -142,3 +146,56 @@ def test_worker_missing_manifest_keeps_selected_model_without_substitution(monke
     assert "failure" not in captured
     assert captured["success"]["charge"] == 1
     assert captured["cut_spec"]["modelId"] == "real-uuid"
+# --- REAL 소스 identity 첨부 계획 (A4: mirror/back 참조 0장 회귀 방지) ---
+
+def test_real_face_shown_cut_attaches_grid_and_badge():
+    # 얼굴 노출 착용컷(styling full 등, wants_face=True) → 그리드 첨부 + 검증 배지
+    assert real_identity_plan("styling", wants_face=True) == (True, True)
+    assert real_identity_plan("horizon", wants_face=True) == (True, True)
+
+
+def test_real_mirror_attaches_grid_without_badge():
+    # mirror(폰이 얼굴 가림, wants_face=False) — 그리드는 붙여 인물 일관성 유지, 배지는 없음.
+    # 이게 A4 핵심: 예전엔 wants=False → 참조 0장 → mirror 만 인물 랜덤이었다.
+    assert real_identity_plan("mirror", wants_face=False) == (True, False)
+
+
+def test_real_back_pose_attaches_grid_without_badge():
+    # 뒷모습(styling 이지만 얼굴 프레임 밖, wants_face=False) — 그리드로 체형·정체성 고정, 배지 없음
+    assert real_identity_plan("styling", wants_face=False) == (True, False)
+
+
+def test_real_product_cut_no_grid():
+    # product 컷(사람 금지) → 그리드 미첨부, 배지 없음
+    assert real_identity_plan("product", wants_face=False) == (False, False)
+
+
+def test_real_unknown_cut_no_grid():
+    # 미상/None cutType → 첨부 안 함(빈 슬롯 경로가 처리)
+    assert real_identity_plan(None, wants_face=False) == (False, False)
+    assert real_identity_plan("bogus", wants_face=True) == (False, False)
+
+
+# --- prod 안전망: 착용컷 인물참조 0장 → 결정적 폴백 (REJECTED·REAL 로드실패) ---
+
+def test_fallback_when_worn_cut_has_no_identity():
+    # REJECTED(무라이선스 실모델) 또는 REAL grid 로드 실패 → 착용컷 참조 0장 → 폴백 필요
+    assert needs_identity_fallback(cut_type="styling", has_model_images=False, face_slot=False) is True
+    assert needs_identity_fallback(cut_type="mirror", has_model_images=False, face_slot=False) is True
+    assert needs_identity_fallback(cut_type="horizon", has_model_images=False, face_slot=False) is True
+
+
+def test_no_fallback_when_identity_present():
+    # 이미 인물 참조 있음(REAL grid·VIRTUAL mB 성공) → 폴백 불필요
+    assert needs_identity_fallback(cut_type="styling", has_model_images=True, face_slot=False) is False
+
+
+def test_no_fallback_for_legacy_face_slot():
+    # LEGACY 단일 얼굴은 face_ref 로 별도 첨부 → 그리드 폴백 대상 아님(인물 이중주입 방지)
+    assert needs_identity_fallback(cut_type="styling", has_model_images=False, face_slot=True) is False
+
+
+def test_no_fallback_for_non_worn_cut():
+    # product(사람 금지)·미상 컷 → 폴백 안 함
+    assert needs_identity_fallback(cut_type="product", has_model_images=False, face_slot=False) is False
+    assert needs_identity_fallback(cut_type=None, has_model_images=False, face_slot=False) is False

@@ -469,7 +469,10 @@ async def run_detail_page_job(app, job: dict) -> None:
         example_warnings: list[dict] = []
         _virtual_ids: set[str] = set()
         fallback_model_id = s.detailpage_fallback_model_id
-        if source == "VIRTUAL" and fallback_model_id:
+        # 폴백 registry 는 폴백이 실제로 가능한 소스에서만 지연 로드(파일 없으면 fail-open, 잡 안 죽임):
+        #  VIRTUAL           → Phase B 결정적 치환(resolve_effective_model_id)
+        #  REAL·REJECTED     → prod 안전망(needs_identity_fallback → mB). 이 둘도 _virtual_ids 필요.
+        if fallback_model_id and source in ("VIRTUAL", "REAL", "REJECTED"):
             try:
                 _virtual_ids = set(cut_generator.load_virtual_model_registry())
             except (OSError, json.JSONDecodeError) as e:
@@ -531,8 +534,13 @@ async def run_detail_page_job(app, job: dict) -> None:
             # face_slot=단일 얼굴 슬롯(LEGACY만). has_identity=검증 얼굴이 실제 담기는 컷(REAL·LEGACY)
             # → face_cuts·검증 배지 근거. 세 소스가 한 컷에 겹치지 않아 인물 혼합·이중주입이 없다.
             if source == "REAL":
-                model_images = await _real_model_images() if wants else []
-                has_identity = wants and len(model_images) == 2
+                # 실존 모델 그리드는 얼굴 노출과 무관하게 모든 착용컷에 identity 앵커로 붙인다(A4).
+                # wants(얼굴 노출)로만 게이트하면 mirror/back 이 참조 0장 → 그 컷만 인물 랜덤이 된다
+                # (REAL 은 VIRTUAL 과 달리 mB 폴백도 없음). 배지(has_identity)만 wants 로 준다.
+                attach_grid, _badge = cut_generator.real_identity_plan(
+                    normalized.get("cutType") if normalized else None, wants_face=wants)
+                model_images = await _real_model_images() if attach_grid else []
+                has_identity = _badge and len(model_images) == 2
                 face_slot = False
             elif source == "LEGACY":
                 model_images = []
@@ -546,6 +554,25 @@ async def run_detail_page_job(app, job: dict) -> None:
                 model_images = []
                 has_identity = False
                 face_slot = False
+            # 안전망(prod facemarket ON): **실존 모델을 골랐는데** 착용컷 인물 참조가 0장이면
+            # (REJECTED=무라이선스 실모델, REAL grid 로드 실패) 결정적 가상모델로 폴백 — 랜덤 인물
+            # 원천 차단. Phase B 의 mB 폴백은 VIRTUAL 전용이라 REAL/REJECTED 를 못 막는다. 무모델
+            # 선택(NONE)은 기존 동작 유지(모델을 요청하지 않은 프로젝트에 인물을 강요하지 않는다).
+            # 무라이선스 실 얼굴은 재사용 안 함(대체 인물 mB → 생체 라이선스 위반 없음). 검증 배지
+            # (has_identity)는 주지 않는다(실 얼굴 아님).
+            if source in ("REAL", "REJECTED") and cut_generator.needs_identity_fallback(
+                    cut_type=normalized.get("cutType") if normalized else None,
+                    has_model_images=bool(model_images), face_slot=face_slot):
+                _fb_id = s.detailpage_fallback_model_id
+                if _fb_id and _fb_id in _virtual_ids:
+                    model_images = await _model_images(
+                        {"cutType": normalized["cutType"], "modelId": _fb_id})
+                    if model_images and not _fallback_warned:
+                        log.warning(
+                            "AG-06 worn cut identity empty (source=%s model=%s) → deterministic %s "
+                            "fallback for consistency (job %s)",
+                            source, selected_model_id, _fb_id, job_id)
+                        _fallback_warned = True
             imgs = []
             product_images = []
             if mannequin_asset is not None:
