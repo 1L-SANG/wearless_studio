@@ -51,6 +51,11 @@ ARMS = [
     {"id": "knit-w", "family": "top", "gender_hint": "women", "img": INP / "knit.jpg"},
     {"id": "hood-w", "family": "top", "gender_hint": "women", "img": INP / "hoodie.jpg"},
     {"id": "shirt-m", "family": "top", "gender_hint": "men", "img": INP / "shirt.jpg"},
+    # T2b 홀드아웃 — 진짜 다른 옷(사용자 제공 상품컷). 프롬프트 수정 확증 전용, 진단·튜닝 미사용.
+    {"id": "holdout-skirt", "family": "skirt", "gender_hint": "women",
+     "img": OUT.parent / "holdout_inputs/holdout_skirt.jpg", "holdout": True},
+    {"id": "holdout-outer", "family": "outer", "gender_hint": "women",
+     "img": OUT.parent / "holdout_inputs/holdout_outer.jpg", "holdout": True},
 ]
 
 
@@ -118,7 +123,7 @@ async def _seed_one(worker: InlineWorker, user_id: str, arm: dict) -> dict:
         json.dumps(analysis, ensure_ascii=False, indent=2))
     rec = {"arm": arm["id"], "family": arm["family"], "gender_hint": arm["gender_hint"],
            "project_id": pid, "clothing_type": (prod or {}).get("clothing_type"),
-           "targetGenders": tg, "has_materials": bool(mats)}
+           "targetGenders": tg, "has_materials": bool(mats), "holdout": arm.get("holdout", False)}
     print(f"  ✅ {arm['id']}: pid={pid[:8]} type={rec['clothing_type']} "
           f"targetGenders={tg} materials={'Y' if mats else 'N'}")
     return rec

@@ -50,9 +50,12 @@ from app.routes import _fit_profile_snapshot  # noqa: E402
 
 GOLDEN = Path(__file__).resolve().parents[2] / "server/ab_out/goldenset_types"
 OUT = Path(__file__).resolve().parents[2] / "server/ab_out/axis_reflection"
-# family(측정 축 카테고리) → T3 시드 arm (dev 셋). holdout 은 별도 플래그로 조달.
+# family(측정 축 카테고리) → 시드 arm. dev 셋(진단·튜닝)과 holdout 셋(수정 확증)을 분리한다.
 FAMILY_ARM = {"top": "top-w", "pants": "pants-w", "skirt": "skirt-w",
               "dress": "dress-w", "outer": "outer-w"}
+# holdout = 진짜 다른 옷(과적합 배제). pants 는 T3 의 남성 데님(pants-m) 재사용,
+# skirt/outer 는 사용자 제공 상품컷. dev 셋에서 튜닝한 프롬프트를 여기서 확증만 한다.
+HOLDOUT_ARM = {"pants": "pants-m", "skirt": "holdout-skirt", "outer": "holdout-outer"}
 
 
 def _sha(b: bytes) -> str:
@@ -140,6 +143,7 @@ async def main() -> int:
     ap.add_argument("--reps", type=int, default=2)
     ap.add_argument("--gender", default="women")
     ap.add_argument("--only", help="쉼표구분 category:axis (예: top:fit,pants:cut)")
+    ap.add_argument("--holdout", action="store_true", help="dev arm 대신 holdout(진짜 다른 옷) 사용 — 수정 확증")
     ap.add_argument("--axis-qc", default="off", choices=["off", "shadow", "enforce"])
     ap.add_argument("--run-id", default=None)
     ap.add_argument("--phase", default="stage1")
@@ -175,7 +179,7 @@ async def main() -> int:
         await worker.open()
         try:
             for p in pairs:
-                arm = FAMILY_ARM.get(p["category"])
+                arm = (HOLDOUT_ARM if args.holdout else FAMILY_ARM).get(p["category"])
                 m = manifest.get(arm)
                 if not m:
                     print(f"  ✗ {p['category']}:{p['axis']} — 시드 arm {arm} 없음"); continue
@@ -200,7 +204,7 @@ async def main() -> int:
     try:
         for p in pairs:
             cat, axis, gender = p["category"], p["axis"], p["gender"]
-            arm = FAMILY_ARM.get(cat)
+            arm = (HOLDOUT_ARM if args.holdout else FAMILY_ARM).get(cat)
             m = manifest.get(arm)
             if not m:
                 print(f"  ✗ {cat}:{axis} — 시드 arm {arm} 없음"); continue
