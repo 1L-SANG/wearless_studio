@@ -18,7 +18,7 @@ codex 2라운드 반영:
 실행(LOCAL):
   cd server && DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \
     .venv/bin/python -m scripts.eval_axis_reflection --reps 2 [--only top:fit,pants:cut] \
-    [--axis-qc off|enforce] [--dry-run]
+    [--axis-qc off|enforce] [--allow-partial] [--dry-run]
 산출: server/ab_out/axis_reflection/<runId>/ PNG + results.jsonl + REPORT.md
 """
 import argparse
@@ -84,14 +84,25 @@ async def _reset_baseline(pool, pid: str) -> None:
         await conn.commit()
 
 
-async def _newest_cut_key(pool, pid: str) -> str | None:
+async def _completed_job_cut_key(pool, user_id: str, job_id: str) -> str:
+    """완료된 해당 job이 생성한 단일 컷의 R2 key를 반환한다."""
     async with pool.connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "select a.r2_key from mannequin_cuts mc join assets a on a.id=mc.asset_id "
-                "where mc.project_id=%s order by mc.created_at desc limit 1", (pid,))
-            r = await cur.fetchone()
-    return r["r2_key"] if r else None
+        job = await repo.get_job(conn, user_id, job_id)
+        if job is None:
+            raise RuntimeError(f"job {job_id[:8]} 조회 실패")
+        if job.get("status") != "done":
+            detail = job.get("error_message") or f"status={job.get('status')}"
+            raise RuntimeError(f"job {job_id[:8]} 생성 실패: {detail}")
+        result = job.get("result") or {}
+        cuts = result.get("data") if isinstance(result, dict) else None
+        if (not isinstance(cuts, list) or len(cuts) != 1
+                or not isinstance(cuts[0], dict) or not cuts[0].get("id")):
+            raise RuntimeError(f"job {job_id[:8]} 단일 컷 결과 없음")
+        asset = await repo.get_mannequin_cut_asset(
+            conn, user_id, job["project_id"], cuts[0]["id"])
+    if not asset or not asset.get("r2_key"):
+        raise RuntimeError(f"job {job_id[:8]} 컷 에셋 조회 실패")
+    return asset["r2_key"]
 
 
 async def _product_image_keys(pool, pid: str) -> list[str]:
@@ -125,9 +136,50 @@ async def _gen_one(worker, user_id: str, pid: str, profile: dict, axis: str) -> 
     assert created, f"{pid[:8]}: job 미생성(활성 중복)"
     who = await worker.claim_and_run(job["id"])
     assert who == "claimed", f"{pid[:8]}: job {who} — 로컬 dispatcher 꺼야 함"
-    key = await _newest_cut_key(worker.pool, pid)
-    assert key, f"{pid[:8]}: 저장컷 없음"
+    key = await _completed_job_cut_key(worker.pool, user_id, job["id"])
     return key, snapshot
+
+
+def _summarize_block(block: dict, *, planned_absolute: int, planned_directional: int) -> None:
+    """유효 판정 수를 계획과 대조해 원시 집계와 불완전 상태를 기록한다."""
+    directional_ok = [d for d in block["directional"] if "error" not in d]
+    treat = [d for d in directional_ok if d.get("kind") == "treatment"]
+    ctrl = [d for d in directional_ok if d.get("kind") == "control"]
+    t_scored = [d for d in treat if not d.get("abstain")]
+    abs_ok = [a for a in block["absolute"] if "error" not in a]
+    block["raw"] = {
+        "treatmentPass": sum(1 for d in t_scored if d.get("directionalPass")),
+        "treatmentScored": len(t_scored),
+        "treatmentAbstain": len(treat) - len(t_scored),
+        "controlFalseDirection": sum(
+            1 for d in ctrl if d.get("observed") in ("left", "right")),
+        "controlTotal": len(ctrl),
+        "absolutePass": sum(1 for a in abs_ok if a.get("pass")),
+        "absoluteFail": sum(1 for a in abs_ok if not a.get("pass")),
+        "absoluteTotal": len(abs_ok),
+        "absolutePlanned": planned_absolute,
+        "directionalTotal": len(directional_ok),
+        "directionalPlanned": planned_directional,
+    }
+    block["incomplete"] = (
+        len(abs_ok) < planned_absolute or len(directional_ok) < planned_directional)
+    block["suspect"] = block["incomplete"] or FM.is_suspect(
+        block["raw"]["treatmentPass"],
+        block["raw"]["treatmentScored"],
+        block["raw"]["absoluteFail"],
+    )
+    # 절대 통과인데 방향 무변화 → 심판 관대 의심(면죄 아님).
+    # 불완전 실행은 수치 비교 자체가 성립하지 않으므로 별도 incomplete 로만 표시한다.
+    block["metricDisagreement"] = (
+        not block["incomplete"]
+        and block["raw"]["absoluteFail"] == 0
+        and block["raw"]["treatmentScored"] > 0
+        and block["raw"]["treatmentPass"] == 0
+    )
+
+
+def _result_exit_code(records: list[dict], *, allow_partial: bool) -> int:
+    return 0 if allow_partial or not any(r.get("incomplete") for r in records) else 1
 
 
 async def _owner(pool, pid: str) -> str:
@@ -145,6 +197,11 @@ async def main() -> int:
     ap.add_argument("--only", help="쉼표구분 category:axis (예: top:fit,pants:cut)")
     ap.add_argument("--holdout", action="store_true", help="dev arm 대신 holdout(진짜 다른 옷) 사용 — 수정 확증")
     ap.add_argument("--axis-qc", default="off", choices=["off", "shadow", "enforce"])
+    ap.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="생성·판정 오류로 불완전한 결과가 있어도 보고서 작성 후 종료 코드 0 허용",
+    )
     ap.add_argument("--run-id", default=None)
     ap.add_argument("--phase", default="stage1")
     ap.add_argument("--dry-run", action="store_true")
@@ -218,9 +275,12 @@ async def main() -> int:
             block = {"runId": run_id, "phase": args.phase, "commit": sha, "category": cat,
                      "axis": axis, "gender": gender, "low": p["low"], "high": p["high"],
                      "projectId": pid, "axisQC": args.axis_qc, "providerPin": "gemini",
-                     "settings": settings_snap, "absolute": [], "directional": []}
+                     "allowPartial": args.allow_partial, "settings": settings_snap,
+                     "absolute": [], "directional": []}
+            cut_plan = FM.cut_labels(args.reps)
+            comparison_plan = FM.comparison_plan(p["low"], p["high"], args.reps)
             # ── 교차 생성 A0,B0,A1,B1 (시간 드리프트 ⊥ 값) ──
-            for label, side in FM.cut_labels(args.reps):
+            for label, side in cut_plan:
                 value = values[side]
                 prof = _profile(cat, gender, axis, value)
                 try:
@@ -245,7 +305,7 @@ async def main() -> int:
                                               "error": f"{type(e).__name__}: {e}"[:200]})
                     print(f"  ✗ {cat}:{axis} {label}={value}: {type(e).__name__}: {e}")
             # ── 방향 판정: treatment 4(양 배치) + control 2 ──
-            for comp in FM.comparison_plan(p["low"], p["high"], args.reps):
+            for comp in comparison_plan:
                 lc, rc = comp["leftCut"], comp["rightCut"]
                 if lc not in cuts or rc not in cuts:
                     continue
@@ -260,27 +320,13 @@ async def main() -> int:
                 except Exception as e:
                     block["directional"].append({**comp, "error": f"{type(e).__name__}: {e}"[:200]})
             # ── 원시 집계 + 사전 등록 의심 규칙 (복합 점수 없음) ──
-            treat = [d for d in block["directional"] if d.get("kind") == "treatment" and "error" not in d]
-            ctrl = [d for d in block["directional"] if d.get("kind") == "control" and "error" not in d]
-            t_scored = [d for d in treat if not d.get("abstain")]
-            abs_ok = [a for a in block["absolute"] if "error" not in a]
-            block["raw"] = {
-                "treatmentPass": sum(1 for d in t_scored if d.get("directionalPass")),
-                "treatmentScored": len(t_scored),
-                "treatmentAbstain": len(treat) - len(t_scored),
-                "controlFalseDirection": sum(1 for d in ctrl if d.get("observed") in ("left", "right")),
-                "controlTotal": len(ctrl),
-                "absolutePass": sum(1 for a in abs_ok if a.get("pass")),
-                "absoluteFail": sum(1 for a in abs_ok if not a.get("pass")),
-                "absoluteTotal": len(abs_ok)}
-            block["suspect"] = FM.is_suspect(block["raw"]["treatmentPass"],
-                                             block["raw"]["treatmentScored"],
-                                             block["raw"]["absoluteFail"])
-            # 절대 통과인데 방향 무변화 → 심판 관대 의심(면죄 아님)
-            block["metricDisagreement"] = (block["raw"]["absoluteFail"] == 0
-                                           and block["raw"]["treatmentScored"] > 0
-                                           and block["raw"]["treatmentPass"] == 0)
+            _summarize_block(
+                block,
+                planned_absolute=len(cut_plan),
+                planned_directional=len(comparison_plan),
+            )
             print(f"  ▶ {cat}:{axis} raw={block['raw']} suspect={block['suspect']} "
+                  f"incomplete={block['incomplete']} "
                   f"metricDisagreement={block['metricDisagreement']}")
             records.append(block)
             with open(run_dir / "results.jsonl", "a") as f:
@@ -290,27 +336,38 @@ async def main() -> int:
 
     _write_report(run_dir, run_id, args, sha, records)
     susp = [f"{r['category']}:{r['axis']}" for r in records if r.get("suspect")]
-    print(f"\n[결과] 축 {len(records)}개 · 의심 축 {susp or '없음'} → {run_dir}/REPORT.md")
-    return 0
+    incomplete = [f"{r['category']}:{r['axis']}" for r in records if r.get("incomplete")]
+    exit_code = _result_exit_code(records, allow_partial=args.allow_partial)
+    print(f"\n[결과] 축 {len(records)}개 · 의심 축 {susp or '없음'} · "
+          f"불완전 축 {incomplete or '없음'} → {run_dir}/REPORT.md")
+    if incomplete and not args.allow_partial:
+        print("  ✗ 불완전한 생성·판정이 있어 종료 코드 1 "
+              "(부분 결과를 의도적으로 허용하려면 --allow-partial)")
+    return exit_code
 
 
 def _write_report(run_dir: Path, run_id: str, args, sha: str, records: list) -> None:
     L = [f"# T2 고도화 — 축 반영 원시 블록 ({run_id})", "",
          f"phase={args.phase} · axisQC={args.axis_qc} · reps={args.reps} · commit={sha} · "
+         f"allowPartial={args.allow_partial} · "
          f"provider=**gemini 핀**(ANALYSIS_MODEL_ORDER, 폴백 없음)", "",
          "> **원시 카운트만.** treatment−control 뺄셈·비율 추정·등급 없음(codex).",
          "> control 은 감산항이 아니라 *같은 값인데 심판이 방향을 본 빈도* 기준선.",
          "> 기권(similar/unclear)은 통과도 실패도 아님 — 별도 카운트.",
          "> 의심 규칙(사전 등록): treatment 정답 <1/2 **또는** 절대 fail ≥1.",
+         "> 계획보다 유효 판정이 적으면 **불완전**이며 항상 의심. 기본 종료 코드 1.",
          "> auditability 만 보장(시드·모델 리비전 미통제 → 재생 불가).", "",
-         "| 카테고리 | 축 | 극단쌍 | 절대 P/F/총 | treat 정답/채점(기권) | control 오검출/총 | 의심 | 지표불일치 |",
-         "|---|---|---|---|---|---|---|---|"]
+         "| 카테고리 | 축 | 극단쌍 | 절대 P/F/완료/계획 | 방향 완료/계획 | treat 정답/채점(기권) | control 오검출/총 | 불완전 | 의심 | 지표불일치 |",
+         "|---|---|---|---|---|---|---|---|---|---|"]
     for r in records:
         raw = r.get("raw", {})
         L.append(f"| {r['category']} | {r['axis']} | {r['low']}↔{r['high']} | "
-                 f"{raw.get('absolutePass')}/{raw.get('absoluteFail')}/{raw.get('absoluteTotal')} | "
+                 f"{raw.get('absolutePass')}/{raw.get('absoluteFail')}/"
+                 f"{raw.get('absoluteTotal')}/{raw.get('absolutePlanned')} | "
+                 f"{raw.get('directionalTotal')}/{raw.get('directionalPlanned')} | "
                  f"{raw.get('treatmentPass')}/{raw.get('treatmentScored')}({raw.get('treatmentAbstain')}) | "
                  f"{raw.get('controlFalseDirection')}/{raw.get('controlTotal')} | "
+                 f"{'**불완전**' if r.get('incomplete') else '완료'} | "
                  f"{'**의심**' if r.get('suspect') else 'ok'} | "
                  f"{'⚠️' if r.get('metricDisagreement') else '—'} |")
     L += ["", "## 의심 축 상세(육안 병기 필수)", ""]
