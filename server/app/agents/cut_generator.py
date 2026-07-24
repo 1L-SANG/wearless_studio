@@ -344,6 +344,18 @@ def real_identity_plan(cut_type, *, wants_face: bool) -> tuple[bool, bool]:
     return attach, (attach and wants_face)
 
 
+def needs_identity_fallback(*, cut_type, has_model_images: bool, face_slot: bool) -> bool:
+    """착용컷인데 인물 참조가 0장이면 결정적 폴백이 필요한가. **순수 함수.**
+
+    prod facemarket ON 안전망: 실존 모델을 골랐는데 (1) 유효 라이선스 없음(select_source=REJECTED)
+    또는 (2) 실 grid 로드 실패면, REAL/REJECTED 경로는 model_images 가 0장이 되고 mB 폴백(VIRTUAL
+    전용)도 안 타 컷마다 인물이 랜덤이 된다. 이때 결정적 가상모델로 폴백해 랜덤을 원천 차단한다.
+
+    LEGACY 단일 얼굴(face_slot=True)은 얼굴을 별도 경로로 넣으므로 폴백 대상이 아니다. 폴백은
+    무라이선스 실 얼굴을 재사용하지 않는다(대체 가상 인물 mB → 생체 라이선스 위반 없음)."""
+    return cut_type in _WORN_CUTS and not has_model_images and not face_slot
+
+
 def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, str]] | None:
     """정규화된 사람컷 spec의 C방식 자산(face_front, grid_sedcard)을 계약 순서로 반환.
 

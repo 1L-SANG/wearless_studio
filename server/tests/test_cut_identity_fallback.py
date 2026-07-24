@@ -5,7 +5,11 @@
 
 import asyncio
 
-from app.agents.cut_generator import real_identity_plan, resolve_effective_model_id
+from app.agents.cut_generator import (
+    needs_identity_fallback,
+    real_identity_plan,
+    resolve_effective_model_id,
+)
 from app.workers import detail_page_job as dpj
 from conftest import fake_worker_app, make_settings, worker_job
 
@@ -170,3 +174,28 @@ def test_real_unknown_cut_no_grid():
     # 미상/None cutType → 첨부 안 함(빈 슬롯 경로가 처리)
     assert real_identity_plan(None, wants_face=False) == (False, False)
     assert real_identity_plan("bogus", wants_face=True) == (False, False)
+
+
+# --- prod 안전망: 착용컷 인물참조 0장 → 결정적 폴백 (REJECTED·REAL 로드실패) ---
+
+def test_fallback_when_worn_cut_has_no_identity():
+    # REJECTED(무라이선스 실모델) 또는 REAL grid 로드 실패 → 착용컷 참조 0장 → 폴백 필요
+    assert needs_identity_fallback(cut_type="styling", has_model_images=False, face_slot=False) is True
+    assert needs_identity_fallback(cut_type="mirror", has_model_images=False, face_slot=False) is True
+    assert needs_identity_fallback(cut_type="horizon", has_model_images=False, face_slot=False) is True
+
+
+def test_no_fallback_when_identity_present():
+    # 이미 인물 참조 있음(REAL grid·VIRTUAL mB 성공) → 폴백 불필요
+    assert needs_identity_fallback(cut_type="styling", has_model_images=True, face_slot=False) is False
+
+
+def test_no_fallback_for_legacy_face_slot():
+    # LEGACY 단일 얼굴은 face_ref 로 별도 첨부 → 그리드 폴백 대상 아님(인물 이중주입 방지)
+    assert needs_identity_fallback(cut_type="styling", has_model_images=False, face_slot=True) is False
+
+
+def test_no_fallback_for_non_worn_cut():
+    # product(사람 금지)·미상 컷 → 폴백 안 함
+    assert needs_identity_fallback(cut_type="product", has_model_images=False, face_slot=False) is False
+    assert needs_identity_fallback(cut_type=None, has_model_images=False, face_slot=False) is False
