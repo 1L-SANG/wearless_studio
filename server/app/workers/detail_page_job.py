@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from io import BytesIO
@@ -466,7 +467,15 @@ async def run_detail_page_job(app, job: dict) -> None:
         prepared = []
         _example_cache: dict[str, InlineImage | None] = {}
         example_warnings: list[dict] = []
-        _virtual_ids = set(cut_generator.load_virtual_model_registry())
+        _virtual_ids: set[str] = set()
+        fallback_model_id = s.detailpage_fallback_model_id
+        if source == "VIRTUAL" and fallback_model_id:
+            try:
+                _virtual_ids = set(cut_generator.load_virtual_model_registry())
+            except (OSError, json.JSONDecodeError) as e:
+                log.warning(
+                    "AG-06 virtual model manifest unavailable; skipping fallback substitution "
+                    "for job %s: %r", job_id, e)
         _fallback_warned = False
         for b in ai_blocks:
             cut_spec = dict(b)
@@ -481,7 +490,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 붙이므로 건드리지 않는다(인물 이중 첨부 방지).
             if source == "VIRTUAL":
                 eff_model_id, _subbed = cut_generator.resolve_effective_model_id(
-                    selected_model_id, fallback_model_id=s.detailpage_fallback_model_id,
+                    selected_model_id, fallback_model_id=fallback_model_id,
                     virtual_ids=_virtual_ids)
                 if _subbed and not _fallback_warned:
                     log.warning(
