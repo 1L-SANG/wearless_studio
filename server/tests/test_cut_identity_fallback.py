@@ -146,6 +146,31 @@ def test_worker_missing_manifest_keeps_selected_model_without_substitution(monke
     assert "failure" not in captured
     assert captured["success"]["charge"] == 1
     assert captured["cut_spec"]["modelId"] == "real-uuid"
+
+
+def test_worker_survives_malformed_manifest_encoding(monkeypatch):
+    # 깨진 UTF-8 virtual_models.json → load 가 UnicodeDecodeError. OSError/JSONDecodeError 만
+    # 잡으면 예외가 새서 잡 전체가 실패한다(codex 재현). fail-open 이어야 한다(폴백만 스킵).
+    captured = {"registry_reads": 0}
+    _patch_worker(monkeypatch, captured)
+
+    def malformed_registry():
+        captured["registry_reads"] += 1
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(dpj.cut_generator, "load_virtual_model_registry", malformed_registry)
+    app = fake_worker_app(make_settings(
+        gemini_api_key="x",
+        r2_bucket="b",
+        facemarket_enabled=False,
+        detailpage_fallback_model_id="mB",
+    ))
+
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    assert "failure" not in captured            # 잡 안 죽음
+    assert captured["success"]["charge"] == 1
+    assert captured["cut_spec"]["modelId"] == "real-uuid"  # 폴백만 스킵, 기존 동작 유지
 # --- REAL 소스 identity 첨부 계획 (A4: mirror/back 참조 0장 회귀 방지) ---
 
 def test_real_face_shown_cut_attaches_grid_and_badge():

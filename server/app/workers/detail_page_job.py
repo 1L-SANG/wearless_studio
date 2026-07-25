@@ -475,7 +475,9 @@ async def run_detail_page_job(app, job: dict) -> None:
         if fallback_model_id and source in ("VIRTUAL", "REAL", "REJECTED"):
             try:
                 _virtual_ids = set(cut_generator.load_virtual_model_registry())
-            except (OSError, json.JSONDecodeError) as e:
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+                # 파일 부재/권한(OSError)·JSON 파손(JSONDecodeError)·깨진 인코딩(UnicodeDecodeError)
+                # 모두 fail-open — 폴백만 건너뛰고 잡은 계속(폴백은 선택적 보정이지 잡 필수 입력 아님).
                 log.warning(
                     "AG-06 virtual model manifest unavailable; skipping fallback substitution "
                     "for job %s: %r", job_id, e)
