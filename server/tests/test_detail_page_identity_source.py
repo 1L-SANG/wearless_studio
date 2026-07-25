@@ -180,3 +180,20 @@ def test_rejected_when_license_model_mismatch(monkeypatch):
 
     assert face_r2.gets == []                      # 그리드 미로드
     assert captured["license_notice"] is None      # 배지 없음
+
+
+def test_rejected_falls_back_to_virtual_grid_for_consistency(monkeypatch):
+    # prod 안전망: 실모델 골랐는데 라이선스 무효(REJECTED) → 착용컷이 참조 0장으로 랜덤이 되지 않게
+    # 결정적 가상모델(mB) 그리드로 폴백. 단 무라이선스 실 얼굴은 재사용 안 함(private face 버킷 미접근),
+    # 검증 배지도 없음(실 얼굴 아님). = 랜덤 차단 + 컴플라이언스 동시 충족.
+    captured = {}
+    face_r2 = _FaceR2()
+    _patch(monkeypatch, captured)
+    app = _app(_asset_rows(), _license_meta(model_id="other-model"), face_r2)
+
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    assert face_r2.gets == []                       # 무라이선스 실 얼굴 미사용(컴플라이언스)
+    assert captured["license_notice"] is None       # 검증 배지 없음(실 얼굴 아님)
+    # 착용컷 b1: 상품 1장 + mB 그리드 2장 = 3 (참조 0장 → 랜덤을 막는 결정적 인물)
+    assert captured["calls"] and captured["calls"][0]["n_images"] == 3
