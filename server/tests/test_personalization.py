@@ -19,6 +19,7 @@ import contextlib
 import hashlib
 import json
 import os
+import time
 import types
 import uuid
 from datetime import date
@@ -99,6 +100,51 @@ def _drop_user(user_id: str) -> None:
     conn = _sync_conn()
     conn.execute("delete from auth.users where id = %s", (user_id,))
     conn.close()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _guard_no_external_dispatcher():
+    """이 파일은 로컬 Postgres(DATABASE_URL)의 공유 `jobs` 큐를 실제로 쓴다. 같은 DB 를 향한
+    JobDispatcher(대개 로컬에 켜둔 dev 서버 `uvicorn app.main:app`)가 떠 있으면, 그 디스패처가
+    pending 개인화 잡을 FOR UPDATE SKIP LOCKED 로 가로채(app/workers/dispatcher.py) running 으로
+    뒤집고 워커까지 돌려버린다 — 라우트가 만든 잡의 pending 상태를 검증하는 테스트(예:
+    test_withdraw_*_returns_202_purging_*)가 런마다 다르게 깨진다. CI 는 dev 서버가 없어 안 겪지만
+    로컬 풀런에서는 재현된다.
+
+    canary(빈 payload 의 personalization_purge 잡 — 워커는 profileId 부재로 즉시 _fail 하므로
+    R2·크레딧·외부호출 등 파괴적 부수효과 0)를 하나 심어 poll_interval(기본 3s) 안에 채가는지 본다.
+    안 채가면(디스패처 없음) 정상 진행하고, 채가면 원인 모를 flake 대신 조치 가능한 사유로 스킵한다.
+    """
+    probe_user = _new_user()
+    probe_job = str(uuid.uuid4())
+    conn = _sync_conn()
+    claimed = False
+    try:
+        conn.execute(
+            "insert into jobs (id, user_id, project_id, kind, status, payload) "
+            "values (%s, %s, null, 'personalization_purge', 'pending', %s)",
+            (probe_job, probe_user, Json({})),
+        )
+        deadline = time.monotonic() + 4.0  # > poll_interval(3s) 여유. 채가면 즉시 탈출
+        while time.monotonic() < deadline:
+            row = conn.execute(
+                "select status from jobs where id = %s", (probe_job,)
+            ).fetchone()
+            if row is None or row["status"] != "pending":
+                claimed = True
+                break
+            time.sleep(0.1)
+    finally:
+        conn.execute("delete from jobs where id = %s", (probe_job,))
+        conn.close()
+        _drop_user(probe_user)
+    if claimed:
+        pytest.skip(
+            f"외부 JobDispatcher 가 테스트 DB({DB_URL})의 jobs 큐를 폴링 중이라 개인화 잡이 "
+            "가로채진다 — 이 파일은 그 상태에서 비결정적으로 깨진다. 같은 DATABASE_URL 로 뜬 "
+            "dev 서버(uvicorn app.main:app)를 끄거나 다른 DB 로 붙인 뒤 다시 실행하세요."
+        )
+    yield
 
 
 def _seed_adult_verification(user_id: str) -> None:
