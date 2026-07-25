@@ -304,6 +304,28 @@ def load_virtual_model_registry() -> dict[str, dict]:
     return {str(model_id): model for model_id, model in models.items() if isinstance(model, dict)}
 
 
+def resolve_effective_model_id(
+    selected_model_id, *, fallback_model_id: str | None, virtual_ids,
+) -> tuple[str | None, bool]:
+    """상세페이지 착용컷에 붙일 '유효' 가상모델 id (인물 일관성 — AG-06). **순수 함수.**
+
+    호출자는 identity source == 'VIRTUAL' 일 때만 쓴다(REAL/LEGACY 는 얼굴을 별도 경로로 붙이므로
+    폴백하면 인물이 이중 첨부된다). VIRTUAL 인데 선택 id 가 가상 registry(mA/mB/mC) 밖이면
+    (예: facemarket off 상태의 실존 UUID) `resolve_virtual_model_assets` 가 None 을 반환해
+    참조가 0장이 되고 컷마다 인물이 랜덤이 된다. 그 경우 결정적 폴백으로 전 컷 동일 인물 보장.
+
+    - 선택이 가상모델이면 그대로 (effective=선택, substituted=False).
+    - 선택이 가상 밖(실존 UUID)이거나 미선택이면 폴백 (effective=fallback, substituted=선택있었나).
+    - 폴백 id 가 비었거나 registry 밖이면 폴백 불가 → 기존 동작(effective=선택, substituted=False).
+    반환: (effective_id, substituted). substituted=True 면 워커가 경고 로그를 남긴다.
+    """
+    if selected_model_id and selected_model_id in virtual_ids:
+        return selected_model_id, False
+    if not fallback_model_id or fallback_model_id not in virtual_ids:
+        return selected_model_id, False
+    return fallback_model_id, selected_model_id is not None
+
+
 def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, str]] | None:
     """정규화된 사람컷 spec의 C방식 자산(face_front, grid_sedcard)을 계약 순서로 반환.
 

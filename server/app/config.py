@@ -101,6 +101,10 @@ class Settings:
     # off면 라우터 자체가 미등록 → 기존 셀러 플로우 무영향(main.py 조건부 include).
     facemarket_enabled: bool = False
     fm_ci_pepper: str | None = None  # HMAC-SHA256(CI, pepper) dedup용 secret. 없으면 verify 503
+    # 상세페이지 착용컷 인물 일관성(AG-06): 실존 모델을 골랐는데 facemarket off 라 해석 불가하면
+    # 컷마다 인물 참조가 0장이 되어 사람이 랜덤이 된다 → 결정적 가상모델로 폴백해 전 컷 동일 인물
+    # 보장. 빈 문자열이면 폴백 비활성(기존 동작). REAL/LEGACY 경로는 폴백하지 않는다(이중 인물 방지).
+    detailpage_fallback_model_id: str = "mB"
     # ---- 개인화(사용자 본인 얼굴·신체) — 기본 off 로 프로드 보호(PERSONALIZATION_ENABLED) ----
     # off면 라우터 자체가 미등록 → 생체정보 처리 코드 미배포(main.py 조건부 include).
     personalization_enabled: bool = False
@@ -220,6 +224,7 @@ def load_settings() -> Settings:
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
+        detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),
         personalization_enabled=(
             os.getenv("PERSONALIZATION_ENABLED", "false").lower() == "true"
         ),
