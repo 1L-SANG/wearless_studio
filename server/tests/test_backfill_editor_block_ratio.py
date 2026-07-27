@@ -75,8 +75,10 @@ def test_moves_generated_body_copy_but_not_other_text(bf):
     # 구 body 카피(x120,y560,w760,h40)만 따라 내리고, 같은 y 의 사용자 캡션은 그대로 둔다.
     block = _old_block()
     block["elements"] += [
-        {"id": "b0e1", "type": "text", "x": 120, "y": 560, "w": 760, "h": 40, "text": "생성 카피"},
-        {"id": "b0e2", "type": "text", "x": 300, "y": 560, "w": 200, "h": 40, "text": "내 캡션"},
+        {"id": "b0e1", "type": "text", "x": 120, "y": 560, "w": 760, "h": 40,
+         "style": {"size": 18, "color": "#4a4a45"}, "text": "생성 카피"},
+        {"id": "b0e2", "type": "text", "x": 300, "y": 560, "w": 200, "h": 40,
+         "style": {"size": 18, "color": "#4a4a45"}, "text": "내 캡션"},
     ]
     plan = bf._plan_block(block, {AID: (848, 1264)})
     bf._apply_block(block, plan)
@@ -101,6 +103,43 @@ def test_survives_malformed_blocks(bf):
     for bad in ("bad", None, 123, {}, {"h": 660}, {"h": 660, "elements": None},
                 {"h": 660, "elements": [None, "x"]}):
         assert bf._plan_block(bad, {AID: (848, 1264)}) is None
+
+
+def test_skips_element_with_existing_crop(bf):
+    # 사용자가 크롭을 커밋한 요소는 crop{iw,ih} 가 프레임과 짝 — 프레임만 키우면 공백이 생긴다.
+    block = _old_block()
+    block["elements"][0]["crop"] = {"ox": 0, "oy": 0, "iw": 880, "ih": 560}
+    assert bf._plan_block(block, {AID: (848, 1264)}) is None
+
+
+def test_skips_image_without_id(bf):
+    # id 가 없으면 대상 식별 불가 — 다른 id 없는 요소까지 함께 리사이즈된다.
+    block = _old_block()
+    block["elements"][0].pop("id")
+    assert bf._plan_block(block, {AID: (848, 1264)}) is None
+
+
+def test_body_move_requires_generated_style(bf):
+    # 같은 자리의 사용자 라벨(스타일 다름)은 옮기지 않는다.
+    block = _old_block()
+    block["elements"] += [
+        {"id": "t1", "type": "text", "x": 120, "y": 560, "w": 760, "h": 40,
+         "style": {"size": 18, "color": "#4a4a45"}, "text": "생성 카피"},
+        {"id": "t2", "type": "text", "x": 120, "y": 560, "w": 760, "h": 40,
+         "style": {"size": 12, "color": "#000000"}, "text": "사용자 법적 고지"},
+        {"id": "t3", "type": "text", "x": 120, "y": 560, "w": 760, "h": 40, "text": "스타일 없음"},
+    ]
+    plan = bf._plan_block(block, {AID: (848, 1264)})
+    bf._apply_block(block, plan)
+    by_id = {e["id"]: e for e in block["elements"]}
+    assert by_id["t1"]["y"] == 50 + 1312 - 50
+    assert by_id["t2"]["y"] == 560 and by_id["t3"]["y"] == 560
+
+
+def test_asset_id_regex_rejects_non_uuid(bf):
+    assert bf._asset_id("/v1/assets/------------------------------------/file") is None
+    assert bf._asset_id("/v1/assets/not-a-uuid/file") is None
+    assert bf._asset_id(f"/v1/assets/{AID}/file") == AID
 
 
 def test_idempotent_after_apply(bf):
