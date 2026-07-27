@@ -49,11 +49,44 @@ def _image_el(block_i: int, el_j: int, x, y, w, h, src, radius=None, cut_type=No
     return el
 
 
-def _cut_url_by_block(cut_results: list[dict] | None) -> dict:
-    out: dict[str, str] = {}
+# AI 컷 요소 박스 — x·y·폭은 고정, **높이는 소스 이미지 비율에서 유도**한다.
+# 하드코딩(구 880×560)은 2:3 세로컷을 가로 박스에 넣어 object-fit:cover 로 높이를 잘라먹었다
+# (에디터·미리보기·다운로드가 같은 지오메트리를 쓰므로 산출물까지 잘림). 생성 종횡비 설정이
+# 바뀌어도 레이아웃이 따라오도록 비율은 계산으로만 얻는다.
+_IMG_X, _IMG_Y = 60, 50
+_IMG_W = 880
+_IMG_MARGIN_B = 50          # 이미지 하단 ~ 블록 바닥 여백
+_BODY_INSET_B = 50          # body 카피를 이미지 하단 근처에 두는 오프셋(구 레이아웃 관계 보존)
+_FALLBACK_RATIO = (2, 3)    # dims 미상 시 기본 세로비(현 mannequin_aspect_ratio=2:3)
+
+
+def _image_box(width, height) -> tuple[int, int]:
+    """(w, h) — 폭은 _IMG_W 고정, 높이는 소스 비율. dims 미상·이상치면 2:3 폴백."""
+    try:
+        src_w, src_h = int(width), int(height)
+    except (TypeError, ValueError):
+        src_w = src_h = 0
+    if src_w > 0 and src_h > 0:
+        return _IMG_W, max(1, round(_IMG_W * src_h / src_w))
+    fw, fh = _FALLBACK_RATIO
+    return _IMG_W, round(_IMG_W * fh / fw)
+
+
+def _block_height(img_h: int) -> int:
+    """이미지가 블록 밖으로 넘치지 않는 높이."""
+    return _IMG_Y + img_h + _IMG_MARGIN_B
+
+
+def _cut_meta_by_block(cut_results: list[dict] | None) -> dict:
+    """blockId → {imageUrl, width, height}. width/height 는 없을 수 있다(구 데이터·실패)."""
+    out: dict[str, dict] = {}
     for r in cut_results or []:
         if isinstance(r, dict) and r.get("blockId"):
-            out[r["blockId"]] = r.get("imageUrl")
+            out[r["blockId"]] = {
+                "imageUrl": r.get("imageUrl"),
+                "width": r.get("width"),
+                "height": r.get("height"),
+            }
     return out
 
 
@@ -234,7 +267,7 @@ def assemble(
     sectionRole, contentRole은 사진의 구체 역할로 mock 출력 계약과 맞춘다.
     license_notice 는 AI 생성 안내 문구 분기용으로 그대로 통과시킨다(build_auto_blocks 참고).
     """
-    cut_url_by_block = _cut_url_by_block(cut_results)
+    cut_meta_by_block = _cut_meta_by_block(cut_results)
     copy_by_block = _copy_texts_by_block(copy_results)
 
     blocks: list[dict] = []
@@ -259,8 +292,10 @@ def assemble(
         section_role = resolve_section_role(b, content_role) or "fit"
         name = CONTENT_ROLE_NAMES[content_role]
         cut_type = b.get("cutType") or None
-        src = cut_url_by_block.get(b.get("id"))  # 없으면 None → 빈 슬롯 (생성 실패해도 크래시 안 함)
-        els = [_image_el(i, 0, 60, 50, 880, 560, src, 12, cut_type)]
+        meta = cut_meta_by_block.get(b.get("id")) or {}
+        src = meta.get("imageUrl")  # 없으면 None → 빈 슬롯 (생성 실패해도 크래시 안 함)
+        img_w, img_h = _image_box(meta.get("width"), meta.get("height"))
+        els = [_image_el(i, 0, _IMG_X, _IMG_Y, img_w, img_h, src, 12, cut_type)]
         el_j = 1
 
         if copywriting:
@@ -274,14 +309,15 @@ def assemble(
             else:
                 body = _text_for_role(texts, "body")
                 if body:
-                    els.append(_text_el(i, el_j, 120, 560, 760, 40, body,
+                    # 이미지 하단 근처(구 레이아웃의 시각 관계) — 이미지 높이에서 유도한다.
+                    els.append(_text_el(i, el_j, 120, _IMG_Y + img_h - _BODY_INSET_B, 760, 40, body,
                                          {"size": 18, "color": "#4a4a45"}))
                     el_j += 1
 
         editor_block = {
             "id": _block_id(i), "name": name, "kind": section_role,
             "contentRole": content_role,
-            "bg": bg, "h": 660, "elements": els,
+            "bg": bg, "h": _block_height(img_h), "elements": els,
         }
         blocks.append(editor_block)
 

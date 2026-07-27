@@ -220,7 +220,10 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             await asyncio.to_thread(r2.put_bytes, key, img, mime)
             w, h = _dims(img)
             return (
-                {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file"},
+                # width/height 는 조립(M-02)이 요소 박스를 **이미지 비율대로** 잡는 근거다.
+                # 없으면 page_assembler 가 기본 비율로 폴백한다(생성 실패·구 데이터 안전).
+                {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file",
+                 "width": w, "height": h},
                 {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
                  "size": len(img), "width": w, "height": h},
                 has_face,
