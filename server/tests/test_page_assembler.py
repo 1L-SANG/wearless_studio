@@ -32,13 +32,84 @@ def test_ai_block_maps_to_image_element_with_cut_result_url():
     assert block["kind"] == "fit"
     assert block["contentRole"] == "coordination"
     assert block["name"] == "코디 활용"
-    assert block["h"] == 660
+    # dims 미제공 → 기본 세로비(2:3) 폴백. 블록은 이미지+여백을 담는다.
+    assert block["h"] == 1420
     img = block["elements"][0]
     assert img["type"] == "image"
     assert img["src"] == "https://cdn.example.com/blk3.png"
     assert img["cutType"] == "styling"
     assert img["radius"] == 12
-    assert img["x"] == 60 and img["y"] == 50 and img["w"] == 880 and img["h"] == 560
+    assert img["x"] == 60 and img["y"] == 50 and img["w"] == 880 and img["h"] == 1320
+
+
+# ── 이미지 비율 보존 (WS2: 에디터·산출물 크롭 회귀 방지) ──────────────────────
+def _one_ai_block(cut_result: dict):
+    return assemble([_storyboard()[2]], [cut_result], [], PRODUCT, False)[0]
+
+
+def test_image_element_keeps_source_aspect_ratio():
+    # 실제 AG-06 컷(848×1264 = 2:3)을 주면 요소도 같은 비율이어야 한다.
+    # 구현 전에는 880×560(가로)로 고정돼 object-fit:cover 가 높이를 ~58% 잘라먹었다.
+    block = _one_ai_block({"blockId": "blk3", "imageUrl": "u", "width": 848, "height": 1264})
+    img = block["elements"][0]
+    assert (img["w"], img["h"]) == (880, 1312)
+    assert abs(img["w"] / img["h"] - 848 / 1264) < 0.002
+
+
+def test_image_element_follows_non_default_ratio():
+    # 하드코딩이 아님을 증명 — 3:4 소스면 요소도 3:4.
+    block = _one_ai_block({"blockId": "blk3", "imageUrl": "u", "width": 900, "height": 1200})
+    img = block["elements"][0]
+    assert (img["w"], img["h"]) == (880, 1173)
+    assert abs(img["w"] / img["h"] - 0.75) < 0.002
+
+
+def test_image_box_falls_back_when_dims_missing_or_invalid():
+    # 구 데이터·측정 실패(None/0/문자열) → 2:3 폴백, 크래시 없음
+    for bad in ({}, {"width": None, "height": None}, {"width": 0, "height": 0},
+                {"width": "x", "height": "y"}):
+        img = _one_ai_block({"blockId": "blk3", "imageUrl": "u", **bad})["elements"][0]
+        assert (img["w"], img["h"]) == (880, 1320)
+
+
+def test_block_contains_image_without_overflow():
+    # 요소가 블록 밖으로 넘치면 에디터·산출물에서 잘린다 — 블록 h 가 항상 이미지를 담아야 한다.
+    for dims in ({"width": 848, "height": 1264}, {"width": 900, "height": 1200},
+                 {"width": 1200, "height": 900}, {}):
+        block = _one_ai_block({"blockId": "blk3", "imageUrl": "u", **dims})
+        img = block["elements"][0]
+        assert block["h"] >= img["y"] + img["h"], f"{dims} 에서 이미지가 블록을 넘침"
+
+
+def test_absurd_dims_are_clamped_and_block_stays_sane():
+    # 파손·조작 dims(10000×1, 1×10000)가 레이아웃을 무너뜨리면 안 된다 (codex 리뷰 #4).
+    flat = _one_ai_block({"blockId": "blk3", "imageUrl": "u", "width": 10000, "height": 1})
+    tall = _one_ai_block({"blockId": "blk3", "imageUrl": "u", "width": 1, "height": 10000})
+    assert 200 <= flat["elements"][0]["h"] <= 2400
+    assert 200 <= tall["elements"][0]["h"] <= 2400
+    assert flat["h"] < 3000 and tall["h"] < 3000
+
+
+def test_short_image_still_contains_headline():
+    # 이미지가 짧아도 헤드라인(y=110)이 블록 밖으로 잘리면 안 된다 — 블록 높이는 모든 요소 기준.
+    storyboard = [dict(_storyboard()[0])]  # hero
+    cut_results = [{"blockId": "blk1", "imageUrl": "u", "width": 10000, "height": 1}]
+    copy_results = [{"blockId": "blk1", "texts": [{"role": "headline", "text": "봄의 무드"}]}]
+    block = assemble(storyboard, cut_results, copy_results, PRODUCT, True)[0]
+    for el in block["elements"]:
+        assert el["y"] + el["h"] <= block["h"], f"{el['type']} 이 블록 밖으로 넘침"
+
+
+def test_body_copy_sits_near_image_bottom_inside_block():
+    # 이미지가 커지면 body 카피도 따라 내려가야 한다(하드코딩 y=560 이면 이미지 한가운데 박힘).
+    storyboard = [_storyboard()[2]]
+    cut_results = [{"blockId": "blk3", "imageUrl": "u", "width": 848, "height": 1264}]
+    copy_results = [{"blockId": "blk3", "texts": [{"role": "body", "text": "부드러운 촉감"}]}]
+    block = assemble(storyboard, cut_results, copy_results, PRODUCT, True)[0]
+    img = block["elements"][0]
+    body = next(el for el in block["elements"] if el["type"] == "text")
+    assert img["y"] + img["h"] - 100 <= body["y"] <= img["y"] + img["h"]  # 이미지 하단 근처
+    assert body["y"] + body["h"] <= block["h"]                            # 블록 안
 
 
 # ── source='mine' 블록 ───────────────────────────────────────────────────────
