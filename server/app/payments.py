@@ -51,6 +51,15 @@ def _err(code: str, message: str, status: int = 400) -> HTTPException:
     return HTTPException(status_code=status, detail={"code": code, "message": message})
 
 
+class _RetryableConfirm(Exception):
+    """승인 결과를 알 수 없는 실패(전송 오류·게이트웨이 5xx). 주문을 실패로 굳히지 않는다."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 def _require_secret(request: Request) -> str:
     secret = request.app.state.settings.toss_secret_key
     if not secret:
@@ -116,8 +125,13 @@ async def _confirm_with_toss(request: Request, *, secret: str, body: ConfirmBody
                 auth=auth,
             )
     except httpx.HTTPError as e:
+        # 전송 실패(타임아웃·연결 끊김)는 **결과를 모르는 상태**다. 카드가 승인됐는데 응답만
+        # 유실됐을 수 있으므로 주문을 실패로 굳히면 안 된다(돈만 받고 크레딧 미지급).
+        # retryable=True → 호출자가 주문을 pending 으로 남긴다. 같은 Idempotency-Key 로
+        # 재시도하면 토스가 원 승인 결과를 그대로 돌려준다.
         log.warning("toss confirm unreachable order=%s: %r", body.order_id, e)
-        raise _err("payment_gateway_unreachable", "결제 승인 요청이 실패했어요. 잠시 후 다시 시도해 주세요.", 502)
+        raise _RetryableConfirm("payment_gateway_unreachable",
+                                "결제 확인이 지연되고 있어요. 잠시 후 다시 시도해 주세요.")
     if res.status_code != 200:
         try:
             payload = res.json()
@@ -127,7 +141,10 @@ async def _confirm_with_toss(request: Request, *, secret: str, body: ConfirmBody
         message = str(payload.get("message") or "결제 승인에 실패했어요.")
         log.warning("toss confirm rejected order=%s status=%s code=%s",
                     body.order_id, res.status_code, code)
-        raise _err(code, message, 402)
+        if res.status_code >= 500:
+            # 게이트웨이 장애 — 승인 여부가 확정되지 않았다. 위와 같은 이유로 재시도 가능 상태 유지.
+            raise _RetryableConfirm(code, "결제 확인이 지연되고 있어요. 잠시 후 다시 시도해 주세요.")
+        raise _err(code, message, 402)   # 4xx = 토스의 확정적 거절(카드사 거절 등)
     return res.json()
 
 
@@ -172,6 +189,9 @@ async def confirm_payment(
             try:
                 payment = await _confirm_with_toss(
                     request, secret=secret, body=body, amount=order["amount"])
+            except _RetryableConfirm as e:
+                # 승인 여부 미확정 — 주문은 pending 그대로 두고(재시도 가능) 커밋하지 않는다.
+                raise _err(e.code, e.message, 503)
             except HTTPException as e:
                 detail = e.detail if isinstance(e.detail, dict) else {}
                 await cur.execute(
@@ -207,6 +227,8 @@ async def confirm_payment(
                 idempotency_key=order["order_id"], provider="toss",
                 provider_ref=body.payment_key,
                 metadata={"orderId": order["order_id"], "method": payment.get("method")},
+                # 결제 시점 확정값으로 적립 — 그 사이 카탈로그가 바뀌어도 결제한 만큼만 준다.
+                snapshot={"credits": order["credits"], "price": order["amount"]},
             )
         except repo.CreditError as e:
             raise _err(e.code, e.message, e.status)

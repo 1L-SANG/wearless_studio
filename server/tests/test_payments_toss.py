@@ -6,6 +6,7 @@
 
 import contextlib
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -74,7 +75,9 @@ def pay(monkeypatch, keypair):
     """결제 라우터 + 스텁 DB/토스/적립. state 로 호출 흔적을 관찰한다."""
     private_key, public_key = keypair
     state = {"orders": {}, "plan_ok": True, "commits": 0,
-             "toss_calls": [], "toss_response": (200, {}), "grants": [], "balance": 1000}
+             "toss_calls": [], "toss_response": (200, {}), "grants": [], "balance": 1000,
+             # 실제 승인 함수 — 에러 처리(타임아웃→재시도 유지)를 검증할 때 되살려 쓴다
+             "real_confirm": payments._confirm_with_toss}
 
     @contextlib.asynccontextmanager
     async def fake_conn(_request):
@@ -89,14 +92,17 @@ def pay(monkeypatch, keypair):
         return {"status": "DONE", "totalAmount": amount, "method": "카드", **payload}
 
     async def fake_purchase_topup(conn, *, user_id, plan_code, idempotency_key=None,
-                                  metadata=None, provider="test", provider_ref=None):
+                                  metadata=None, provider="test", provider_ref=None,
+                                  snapshot=None):
         for g in state["grants"]:      # 원장 멱등 — 같은 키면 재적립 없이 기존 결과
             if g["idempotency_key"] == idempotency_key:
                 return {**g["result"], "idempotent": True}
-        state["balance"] += PLAN["credits"]
-        result = {"credits": PLAN["credits"], "available": state["balance"]}
+        credits = (snapshot or {}).get("credits", PLAN["credits"])
+        state["balance"] += credits
+        result = {"credits": credits, "available": state["balance"]}
         state["grants"].append({"idempotency_key": idempotency_key, "provider": provider,
-                                "provider_ref": provider_ref, "result": result})
+                                "provider_ref": provider_ref, "snapshot": snapshot,
+                                "result": result})
         return result
 
     async def fake_get_account(conn, user_id):
@@ -236,10 +242,12 @@ def test_confirm_twice_grants_credits_only_once(pay, make_token):
     assert len(state["toss_calls"]) == 1             # 이미 paid → 토스 재호출도 안 함
 
 
-def test_free_topup_route_is_closed_in_prod(keypair, make_token):
-    # 결제 없이 크레딧을 주는 구 임시 라우트 — 실 결제가 생긴 뒤 prod 에 열려 있으면 결제 우회다.
+@pytest.mark.parametrize("env", ["production", "prod", "staging", ""])
+def test_free_topup_route_is_closed_outside_dev(keypair, make_token, env):
+    # 결제 없이 크레딧을 주는 구 임시 라우트 — 실 결제가 생긴 뒤 열려 있으면 결제 우회다.
+    # 'production' 은 **실제 배포값**(copilot manifest). 특정 문자열만 막으면 구멍이 남는다.
     _, public_key = keypair
-    app = create_app(make_settings(app_env="prod"))
+    app = create_app(make_settings(app_env=env))
     app.state.jwt_key_resolver = lambda token: public_key
     res = TestClient(app).post("/v1/credits/topups:purchase",
                                headers=_auth(make_token), json={"planCode": "topup_basic"})
@@ -256,6 +264,48 @@ def test_free_topup_route_still_available_in_dev(keypair, make_token):
     res = client.post("/v1/credits/topups:purchase",
                       headers=_auth(make_token), json={"planCode": "topup_basic"})
     assert res.status_code != 404
+
+
+def test_confirm_grants_using_order_snapshot_not_current_catalog(pay, make_token):
+    # 결제 후 카탈로그가 바뀌어도 '결제한 만큼'만 지급되어야 한다 → 적립에 주문 스냅샷을 넘긴다.
+    client, state = pay
+    order = _checkout(client, make_token)
+    client.post("/v1/payments/toss/confirm", headers=_auth(make_token),
+                json={"paymentKey": "pk_1", "orderId": order["orderId"],
+                      "amount": order["amount"]})
+    snap = state["grants"][0]["snapshot"]
+    assert snap == {"credits": order["credits"], "price": order["amount"]}
+
+
+def test_transport_failure_keeps_order_retryable(monkeypatch, pay, make_token):
+    """타임아웃은 '승인 여부 미확정'이다 — 실패로 굳히면 돈만 받고 크레딧을 못 준다.
+
+    스텁이 실제 에러 처리를 우회하지 않도록 httpx 를 끊어 **진짜 _confirm_with_toss** 를 태운다."""
+    client, state = pay
+    order = _checkout(client, make_token)
+    # DB 스텁은 유지한 채 승인 함수만 진짜로 되돌린다(스텁이 에러 처리를 가리지 않게)
+    monkeypatch.setattr(payments, "_confirm_with_toss", state["real_confirm"])
+
+    class _Boom:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **kw):
+            raise httpx.ConnectTimeout("timeout")
+
+    monkeypatch.setattr(payments.httpx, "AsyncClient", _Boom)
+    res = client.post("/v1/payments/toss/confirm", headers=_auth(make_token),
+                      json={"paymentKey": "pk_1", "orderId": order["orderId"],
+                            "amount": order["amount"]})
+    assert res.status_code == 503                                   # 재시도 안내
+    assert state["orders"][order["orderId"]]["status"] == "pending"  # 실패로 굳히지 않음
+    assert state["grants"] == []
 
 
 def test_purchase_topup_defaults_to_test_provider(pay):
