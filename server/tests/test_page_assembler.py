@@ -81,6 +81,25 @@ def test_block_contains_image_without_overflow():
         assert block["h"] >= img["y"] + img["h"], f"{dims} 에서 이미지가 블록을 넘침"
 
 
+def test_absurd_dims_are_clamped_and_block_stays_sane():
+    # 파손·조작 dims(10000×1, 1×10000)가 레이아웃을 무너뜨리면 안 된다 (codex 리뷰 #4).
+    flat = _one_ai_block({"blockId": "blk3", "imageUrl": "u", "width": 10000, "height": 1})
+    tall = _one_ai_block({"blockId": "blk3", "imageUrl": "u", "width": 1, "height": 10000})
+    assert 200 <= flat["elements"][0]["h"] <= 2400
+    assert 200 <= tall["elements"][0]["h"] <= 2400
+    assert flat["h"] < 3000 and tall["h"] < 3000
+
+
+def test_short_image_still_contains_headline():
+    # 이미지가 짧아도 헤드라인(y=110)이 블록 밖으로 잘리면 안 된다 — 블록 높이는 모든 요소 기준.
+    storyboard = [dict(_storyboard()[0])]  # hero
+    cut_results = [{"blockId": "blk1", "imageUrl": "u", "width": 10000, "height": 1}]
+    copy_results = [{"blockId": "blk1", "texts": [{"role": "headline", "text": "봄의 무드"}]}]
+    block = assemble(storyboard, cut_results, copy_results, PRODUCT, True)[0]
+    for el in block["elements"]:
+        assert el["y"] + el["h"] <= block["h"], f"{el['type']} 이 블록 밖으로 넘침"
+
+
 def test_body_copy_sits_near_image_bottom_inside_block():
     # 이미지가 커지면 body 카피도 따라 내려가야 한다(하드코딩 y=560 이면 이미지 한가운데 박힘).
     storyboard = [_storyboard()[2]]

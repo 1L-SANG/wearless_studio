@@ -39,7 +39,8 @@ _SRC_RE = re.compile(r"/v1/assets/([0-9a-fA-F-]{36})/file")
 # 구 page_assembler 가 만든 AI 컷 블록의 지문 — 이것과 다르면 사용자 편집분으로 보고 건너뛴다.
 _OLD_EL = {"x": 60, "y": 50, "w": 880, "h": 560}
 _OLD_BLOCK_H = 660
-_OLD_BODY_Y = 560
+# 구 body 카피의 완전한 지문(x·y·w·h). y 만 보면 같은 높이에 있는 사용자 캡션까지 옮겨버린다.
+_OLD_BODY = {"x": 120, "y": 560, "w": 760, "h": 40}
 
 
 def _asset_id(src) -> str | None:
@@ -51,7 +52,9 @@ def _plan_block(block: dict, dims_by_asset: dict) -> dict | None:
     """이 블록을 어떻게 고칠지. 대상 아니면 None."""
     if not isinstance(block, dict) or block.get("h") != _OLD_BLOCK_H:
         return None
-    els = block.get("elements") or []
+    els = block.get("elements")
+    if not isinstance(els, list):
+        return None
     img = next((e for e in els
                 if isinstance(e, dict) and e.get("type") == "image" and e.get("cutType")
                 and all(e.get(k) == v for k, v in _OLD_EL.items())), None)
@@ -59,21 +62,27 @@ def _plan_block(block: dict, dims_by_asset: dict) -> dict | None:
         return None
     aid = _asset_id(img.get("src"))
     dims = dims_by_asset.get(aid) if aid else None
-    new_w, new_h = _image_box(*(dims or (None, None)))
+    # **실측 dims 를 아는 블록만** 고친다. 모르면 손대지 않는다 — 여기서 2:3 폴백을 쓰면
+    # 가로 이미지(예: 외부 URL·구 자산)의 프레임을 세로로 바꿔 오히려 폭을 잘라먹는다.
+    if not dims or not all(isinstance(v, int) and v > 0 for v in dims):
+        return None
+    new_w, new_h = _image_box(*dims)
     if (new_w, new_h) == (_OLD_EL["w"], _OLD_EL["h"]):
         return None  # 이미 맞는 비율(가로 소스) — 손댈 것 없음
-    return {"img_id": img.get("id"), "w": new_w, "h": new_h,
-            "block_h": _block_height(new_h), "dims": dims}
+    return {"img_id": img.get("id"), "w": new_w, "h": new_h, "dims": dims}
 
 
-def _apply_block(block: dict, plan: dict) -> None:
-    for el in block.get("elements") or []:
+def _apply_block(block: dict, plan: dict) -> int:
+    """블록을 제자리 수정하고 새 블록 높이를 반환."""
+    els = [e for e in (block.get("elements") or []) if isinstance(e, dict)]
+    for el in els:
         if el.get("id") == plan["img_id"]:
             el["w"], el["h"] = plan["w"], plan["h"]
-        # body 카피는 이미지 하단 근처가 원래 관계 — 구 y(560)인 텍스트만 따라 내린다.
-        elif el.get("type") == "text" and el.get("y") == _OLD_BODY_Y:
+        # 구 body 카피(x·y·w·h 전부 일치)만 이미지 하단 근처로 따라 내린다.
+        elif el.get("type") == "text" and all(el.get(k) == v for k, v in _OLD_BODY.items()):
             el["y"] = _OLD_EL["y"] + plan["h"] - 50
-    block["h"] = plan["block_h"]
+    block["h"] = _block_height(els)  # 이미지·카피 전부를 담는 높이(프로덕션 헬퍼 재사용)
+    return block["h"]
 
 
 async def main() -> int:
@@ -99,12 +108,14 @@ async def main() -> int:
             await cur.execute(sql, params)
             rows = await cur.fetchall()
 
-            # 참조된 asset dims 를 한 번에 — 없으면 _image_box 가 2:3 폴백
+            # 참조된 asset dims 를 한 번에. 파손 JSON(문자열 블록·null 요소)이 섞여도 죽지 않게
+            # 전 구간 isinstance 방어 — 한 프로젝트 때문에 전체 백필이 중단되면 안 된다.
             asset_ids = {
                 aid
                 for r in rows
                 for b in (r["editor_blocks"] or [])
-                for e in ((b or {}).get("elements") or [])
+                if isinstance(b, dict)
+                for e in (b.get("elements") or [])
                 if isinstance(e, dict) and (aid := _asset_id(e.get("src")))
             }
             dims_by_asset: dict[str, tuple] = {}
@@ -114,20 +125,25 @@ async def main() -> int:
                     (list(asset_ids),))
                 dims_by_asset = {a["id"]: (a["width"], a["height"]) for a in await cur.fetchall()}
 
-            total_projects = total_blocks = 0
+            total_projects = total_blocks = failed = 0
             for r in rows:
                 blocks = r["editor_blocks"] or []
                 changed = 0
-                for blk in blocks:
-                    plan = _plan_block(blk, dims_by_asset)
-                    if plan is None:
-                        continue
-                    if changed == 0:
-                        print(f"  project {str(r['id'])[:8]}")
-                    print(f"    {blk.get('id')}: 880x560/h660 → {plan['w']}x{plan['h']}"
-                          f"/h{plan['block_h']}  (asset dims={plan['dims']})")
-                    _apply_block(blk, plan)
-                    changed += 1
+                try:
+                    for blk in blocks:
+                        plan = _plan_block(blk, dims_by_asset)
+                        if plan is None:
+                            continue
+                        if changed == 0:
+                            print(f"  project {str(r['id'])[:8]}")
+                        new_block_h = _apply_block(blk, plan)
+                        print(f"    {blk.get('id')}: 880x560/h660 → {plan['w']}x{plan['h']}"
+                              f"/h{new_block_h}  (asset dims={plan['dims']})")
+                        changed += 1
+                except Exception as e:  # 파손 데이터 1건이 전체 백필을 중단시키지 않게 격리
+                    failed += 1
+                    print(f"  !! project {str(r['id'])[:8]} 건너뜀: {e!r}")
+                    continue
                 if not changed:
                     continue
                 total_projects += 1
@@ -139,7 +155,8 @@ async def main() -> int:
         if args.apply:
             await conn.commit()
 
-    print(f"\n{'적용' if args.apply else '대상'}: 프로젝트 {total_projects}개 · 블록 {total_blocks}개")
+    print(f"\n{'적용' if args.apply else '대상'}: 프로젝트 {total_projects}개 · 블록 {total_blocks}개"
+          + (f" · 건너뜀(파손) {failed}개" if failed else ""))
     if not args.apply and total_blocks:
         print("실제 반영하려면 --apply 를 붙여 다시 실행")
     return 0

@@ -58,23 +58,31 @@ _IMG_W = 880
 _IMG_MARGIN_B = 50          # 이미지 하단 ~ 블록 바닥 여백
 _BODY_INSET_B = 50          # body 카피를 이미지 하단 근처에 두는 오프셋(구 레이아웃 관계 보존)
 _FALLBACK_RATIO = (2, 3)    # dims 미상 시 기본 세로비(현 mannequin_aspect_ratio=2:3)
+# 파손·조작된 dims(예: 10000×1, 1×10000)가 레이아웃을 무너뜨리지 않게 유도 높이를 가둔다.
+# 정상 컷(2:3≈1320)은 이 범위 한가운데라 실사용에선 발화하지 않는다.
+_IMG_MIN_H, _IMG_MAX_H = 200, 2400
 
 
 def _image_box(width, height) -> tuple[int, int]:
-    """(w, h) — 폭은 _IMG_W 고정, 높이는 소스 비율. dims 미상·이상치면 2:3 폴백."""
+    """(w, h) — 폭은 _IMG_W 고정, 높이는 소스 비율. dims 미상·이상치면 2:3 폴백 + 클램프."""
     try:
         src_w, src_h = int(width), int(height)
     except (TypeError, ValueError):
         src_w = src_h = 0
     if src_w > 0 and src_h > 0:
-        return _IMG_W, max(1, round(_IMG_W * src_h / src_w))
-    fw, fh = _FALLBACK_RATIO
-    return _IMG_W, round(_IMG_W * fh / fw)
+        derived = round(_IMG_W * src_h / src_w)
+    else:
+        fw, fh = _FALLBACK_RATIO
+        derived = round(_IMG_W * fh / fw)
+    return _IMG_W, min(max(derived, _IMG_MIN_H), _IMG_MAX_H)
 
 
-def _block_height(img_h: int) -> int:
-    """이미지가 블록 밖으로 넘치지 않는 높이."""
-    return _IMG_Y + img_h + _IMG_MARGIN_B
+def _block_height(elements: list[dict]) -> int:
+    """모든 요소를 담는 블록 높이 — 이미지뿐 아니라 카피까지(짧은 이미지에서 헤드라인이
+    블록 밖으로 잘리던 문제 방지)."""
+    bottom = max((int(e.get("y") or 0) + int(e.get("h") or 0)
+                  for e in elements if isinstance(e, dict)), default=0)
+    return bottom + _IMG_MARGIN_B
 
 
 def _cut_meta_by_block(cut_results: list[dict] | None) -> dict:
@@ -317,7 +325,7 @@ def assemble(
         editor_block = {
             "id": _block_id(i), "name": name, "kind": section_role,
             "contentRole": content_role,
-            "bg": bg, "h": _block_height(img_h), "elements": els,
+            "bg": bg, "h": _block_height(els), "elements": els,
         }
         blocks.append(editor_block)
 
