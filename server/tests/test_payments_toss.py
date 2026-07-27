@@ -236,6 +236,28 @@ def test_confirm_twice_grants_credits_only_once(pay, make_token):
     assert len(state["toss_calls"]) == 1             # 이미 paid → 토스 재호출도 안 함
 
 
+def test_free_topup_route_is_closed_in_prod(keypair, make_token):
+    # 결제 없이 크레딧을 주는 구 임시 라우트 — 실 결제가 생긴 뒤 prod 에 열려 있으면 결제 우회다.
+    _, public_key = keypair
+    app = create_app(make_settings(app_env="prod"))
+    app.state.jwt_key_resolver = lambda token: public_key
+    res = TestClient(app).post("/v1/credits/topups:purchase",
+                               headers=_auth(make_token), json={"planCode": "topup_basic"})
+    assert res.status_code == 404
+
+
+def test_free_topup_route_still_available_in_dev(keypair, make_token):
+    # dev 에서는 게이트가 발화하지 않아야 한다(로컬 테스트 수단 보존).
+    # DB 가 없어 이후 단계에서 실패하더라도 '404(라우트 없음)'는 아니어야 한다.
+    _, public_key = keypair
+    app = create_app(make_settings(app_env="dev"))
+    app.state.jwt_key_resolver = lambda token: public_key
+    client = TestClient(app, raise_server_exceptions=False)
+    res = client.post("/v1/credits/topups:purchase",
+                      headers=_auth(make_token), json={"planCode": "topup_basic"})
+    assert res.status_code != 404
+
+
 def test_purchase_topup_defaults_to_test_provider(pay):
     # 기존 호출자(수동 충전 라우트)는 provider 인자를 안 넘긴다 → 기본값이 바뀌면 회귀
     import inspect

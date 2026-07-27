@@ -258,13 +258,19 @@ async def purchase_topup(
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
-    """지정된 요금제 코드로 크레딧을 수동 충전합니다. (PG 연동 전 임시 테스트용)
+    """지정된 요금제 코드로 크레딧을 수동 충전합니다. **개발 환경 전용**(결제 없이 지급).
 
     - **Bearer Token**: 필수
     - **Header**: `Idempotency-Key` (선택, 동일 요청 중복 방지)
     - **에지 케이스**:
+      - `404 Not Found`: 프로덕션에서는 라우트가 없는 것처럼 응답합니다.
       - `400 Bad Request`: 존재하지 않는 요금제 코드이거나 중복 충전 시도 시 발생
     """
+    # 결제 없이 크레딧을 주는 경로다. PG(토스) 연동 전에는 임시 수단이었지만, 실 결제가 생긴 뒤로는
+    # 프로덕션에 열려 있으면 '돈 내는 길'과 '공짜 길'이 공존하는 결제 우회 창구가 된다.
+    # dev 에서만 허용하고 prod 에서는 존재 자체를 숨긴다(404).
+    if request.app.state.settings.app_env == "prod":
+        raise _not_found()
     async with get_conn(request) as conn:
         try:
             result = await repo.purchase_topup(
