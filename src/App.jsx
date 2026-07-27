@@ -14,6 +14,7 @@ import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
 import { CreditsHistory } from '@/features/credits/CreditsHistory.jsx';
+import { PaymentSuccess, PaymentFail } from '@/features/payments/PaymentResult.jsx';
 import { ModelHub } from '@/features/model/ModelHub.jsx';
 import { ModelRegister } from '@/features/model/ModelRegister.jsx';
 import { ModelLicense } from '@/features/model/ModelLicense.jsx';
@@ -253,6 +254,9 @@ export default function App() {
             {/* 크레딧 에이전트 페이지 — auth 는 라우트만 등록, 본문 컴포넌트는 크레딧 에이전트 소유 */}
             <Route path="pricing" element={<Pricing />} />
             <Route path="credits/history" element={<CreditsHistory />} />
+            {/* 토스 결제 리다이렉트 착지점(WS3) — 승인은 success 화면이 서버에 위임한다 */}
+            <Route path="payments/success" element={<PaymentSuccess />} />
+            <Route path="payments/fail" element={<PaymentFail />} />
             {/* FaceMarket 모델 섹션 — 본인확인·라이선스(FM-10)와 개인화(사용자 얼굴·신체)가
                 한 섹션이다. 개인화 화면 순서는 docs/personalization/phase0-ux-flow.md.
                 본인확인(성인 인증, T2-1)은 register 하나로 흡수됐다 — FaceMarket 실명 인증

@@ -1507,7 +1507,8 @@ async def grant_subscription(
 
 async def purchase_topup(
     conn: AsyncConnection, *, user_id: str, plan_code: str,
-    idempotency_key: str | None = None, metadata: dict | None = None
+    idempotency_key: str | None = None, metadata: dict | None = None,
+    provider: str = "test", provider_ref: str | None = None,
 ) -> dict:
     """추가구매(§3.2, 테스트용 provider='test'): payment + topup 버킷 + grant 원장.
     멱등: Idempotency-Key 주면 중복 지급 방지(더블클릭/재시도) — account FOR UPDATE가 동시
@@ -1544,9 +1545,11 @@ async def purchase_topup(
         if plan is None:
             raise CreditError("unknown_plan", f"추가구매 상품을 찾을 수 없어요: {plan_code}", 404)
         await cur.execute(
-            "insert into payment_history (user_id, plan_id, amount, kind, provider, status) "
-            "values (%s, %s, %s, 'topup', 'test', 'paid') returning id::text as id",
-            (user_id, plan["id"], plan["price"]),
+            # provider/provider_ref 는 PG 연동(토스)에서 채운다. 기본값 'test' 는 기존 테스트
+            # 구매 경로 그대로 — 실 결제는 provider='toss', provider_ref=paymentKey.
+            "insert into payment_history (user_id, plan_id, amount, kind, provider, provider_ref, "
+            "status) values (%s, %s, %s, 'topup', %s, %s, 'paid') returning id::text as id",
+            (user_id, plan["id"], plan["price"], provider, provider_ref),
         )
         pay_id = (await cur.fetchone())["id"]
         await cur.execute(

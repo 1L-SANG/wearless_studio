@@ -214,6 +214,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(v1_router)
 
+    # 토스 크레딧 추가구매(WS3) — 라우터는 항상 등록하고, 키 미설정이면 checkout 이 503 으로
+    # 거절한다(플래그로 라우트를 숨기면 프론트가 404 를 '미배포'와 구분 못 해 디버깅이 어렵다).
+    from .payments import router as payments_router
+
+    app.include_router(payments_router)
+
     # FaceMarket(해커톤) — 플래그 on일 때만 등록. off(프로드 기본)면 라우트 미존재 →
     # 기존 셀러 플로우/배포 무영향. verify·settle 훅이 OpenDID env 없는 프로드를 파손하지 않게.
     if settings.facemarket_enabled:
