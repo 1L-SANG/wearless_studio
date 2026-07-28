@@ -24,7 +24,7 @@ from psycopg.types.json import Json
 from .. import repo
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
-from ..r2 import ext_for_mime
+from ..r2 import IMMUTABLE_CACHE, ext_for_mime
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.personalization_generation_job")
@@ -314,7 +314,7 @@ async def run_personalization_generation_job(app, job: dict) -> None:
         ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
         gid = generation_id or job_id
         key = _result_key(user_id, gid, 0, ext)
-        await asyncio.to_thread(r2_face.put_bytes, key, res.image, res.mime)
+        await asyncio.to_thread(r2_face.put_bytes, key, res.image, res.mime, cache=IMMUTABLE_CACHE)
         w, h = _dims(res.image)
         result_assets = [{
             "key": key, "mime": res.mime,

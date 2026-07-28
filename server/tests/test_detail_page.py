@@ -138,7 +138,7 @@ class _FakeR2:
     def get_bytes(self, key):
         return b"\x89PNG-bytes"
 
-    def put_bytes(self, key, data, mime):
+    def put_bytes(self, key, data, mime, cache=None):
         return None
 
 
@@ -365,7 +365,7 @@ def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
         def get_bytes(self, key):
             return key.encode()
 
-        def put_bytes(self, key, data, mime):
+        def put_bytes(self, key, data, mime, cache=None):
             return None
 
     monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
@@ -614,7 +614,7 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
         def get_bytes(self, key):
             return key.encode()
 
-        def put_bytes(self, key, data, mime):
+        def put_bytes(self, key, data, mime, cache=None):
             return None
 
         def delete(self, key):

@@ -654,7 +654,7 @@ def test_run_editor_image_job_new_attaches_c_model_pair_and_excludes_product(mon
             self.reads.append(key)
             return key.encode()
 
-        def put_bytes(self, key, data, mime):
+        def put_bytes(self, key, data, mime, cache=None):
             return None
 
         def delete(self, key):
@@ -730,7 +730,7 @@ def test_run_editor_image_job_model_r2_failure_falls_back_to_product(monkeypatch
                 raise RuntimeError("sheet unavailable")
             return key.encode()
 
-        def put_bytes(self, key, data, mime):
+        def put_bytes(self, key, data, mime, cache=None):
             return None
 
         def delete(self, key):

@@ -13,6 +13,7 @@ import {
   allAiContentTemplates,
   blockPatchForContentRole,
 } from '@/lib/storyboardTaxonomy.js';
+import { thumbUrl } from '@/lib/imageCdn.js';
 
 function PanelHead({ title, sub }) {
   return <><div className="panel-h">{title}</div>{sub && <div className="panel-sub">{sub}</div>}</>;
@@ -439,7 +440,7 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert,
                 ) : (
                   <div className={`ward-cell${sel.has(im.id) ? ' checked' : ''}${im.fresh ? ' fresh' : ''}`} key={im.id} onClick={() => onInsert(im)} title="클릭하면 캔버스에 삽입"
                     onAnimationEnd={im.fresh ? () => onFreshSeen && onFreshSeen(im.id) : undefined}>
-                    <img src={im.src} alt="" />
+                    <img src={thumbUrl(im.src, 240)} alt="" loading="lazy" decoding="async" />
                     <button className="ward-check" onClick={(e) => { e.stopPropagation(); toggleSel(im.id); }} title="선택">
                       {sel.has(im.id) && <Icon name="check" size={13} />}
                     </button>
