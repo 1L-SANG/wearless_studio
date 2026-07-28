@@ -97,4 +97,10 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   # 온체인 정산 시크릿. RPC URL 은 쿼리에 게이트웨이 auth 토큰이 박혀 있어 URL 전체가 시크릿.
   # ⚠️ 배포 전 값 저장 필요(없으면 ECS 태스크 기동 실패): scripts/fm-chain-secrets.sh 참고.
   FM_CHAIN_RPC_URL: /copilot/wearless/prod/secrets/FM_CHAIN_RPC_URL
+  # 토스페이먼츠 결제 승인 API 시크릿(WS3). 없으면 /v1/payments/toss/checkout 이 503
+  # payment_not_configured — 키 없이 '목 성공'을 주지 않는 설계라 결제만 비활성된다.
+  # ⚠️ 이 줄을 배포하기 **전에** SSM 값을 먼저 만들어야 한다(없으면 ECS 기동 실패→롤백):
+  #     copilot-aws secret init --name TOSS_SECRET_KEY
+  #   raw `aws ssm put-parameter` 로 만들면 copilot 태그가 없어 태스크가 못 읽는다(2026-07-17 실경험).
+  TOSS_SECRET_KEY: /copilot/wearless/prod/secrets/TOSS_SECRET_KEY
   FM_CHAIN_PRIVATE_KEY: /copilot/wearless/prod/secrets/FM_CHAIN_PRIVATE_KEY
