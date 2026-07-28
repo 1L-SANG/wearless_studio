@@ -33,7 +33,7 @@ export const BlockSource = Object.freeze({ AI: 'ai', MINE: 'mine' });
 export const SpaceVariation = Object.freeze({ SUBTLE: 'subtle', VARIED: 'varied' });
 export const Direction = Object.freeze({ FRONT: 'front', BACK: 'back', SIDE: 'side' });
 export const ProductDirection = Object.freeze({ FRONT: 'front', BACK: 'back' });
-/** 착용 이미지 프레이밍 — 풀샷 또는 중간샷. 제품 단독컷은 ProductShotType을 쓴다. */
+/** 착용 이미지 프레이밍 — 풀샷 또는 미디움샷. 제품 단독컷은 ProductShotType을 쓴다. */
 export const ShotType = Object.freeze({ FULL: 'full', MEDIUM: 'medium' });
 /** 제품 단독컷 — 고스트샷은 옷 전체(기본 고스트 부피, 플랫레이 예시면 펼친 구도), 디테일샷은 확인된 부위 확대. */
 export const ProductShotType = Object.freeze({ GHOST: 'ghost', DETAIL: 'detail' });
