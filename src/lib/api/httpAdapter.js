@@ -460,6 +460,16 @@ export const httpAdapter = {
   async getCreditSources() {
     return http('/v1/credits/sources');
   },
+  // ---- 토스 추가구매 (WS3) — 금액은 서버가 정한다. 클라이언트는 planCode 만 보낸다. ----
+  // checkout 이 돌려준 orderId/amount 를 그대로 결제창에 넘기고, 승인도 그 값으로만 한다.
+  async createTossCheckout(planCode) {
+    return http('/v1/payments/toss/checkout', { method: 'POST', body: { planCode } });
+  },
+  async confirmTossPayment({ paymentKey, orderId, amount }) {
+    return http('/v1/payments/toss/confirm', {
+      method: 'POST', body: { paymentKey, orderId, amount },
+    });
+  },
   // ---- 마네킹 (PRD §7) — generate/getMannequins/adjust 는 배포된 라우트로 실배선 ----
   // 마네킹 컷 목록 (계약 §6) — [{id,src,candidate,version,baseFit,fitAdjust,lengthAdjust,matchAdjust}].
   async getMannequins(projectId) {

@@ -105,6 +105,12 @@ class Settings:
     # 컷마다 인물 참조가 0장이 되어 사람이 랜덤이 된다 → 결정적 가상모델로 폴백해 전 컷 동일 인물
     # 보장. 빈 문자열이면 폴백 비활성(기존 동작). REAL/LEGACY 경로는 폴백하지 않는다(이중 인물 방지).
     detailpage_fallback_model_id: str = "mB"
+    # ---- 토스페이먼츠 크레딧 추가구매(WS3) — 시크릿 키가 있어야만 활성 ----
+    # 시크릿 키는 **서버 전용**(결제 승인 API Basic auth). 없으면 checkout 이 503 으로 거절한다
+    # — 키 없이 조용히 '목 성공'을 돌려주면 결제 안 하고 크레딧이 늘어나는 구멍이 된다.
+    toss_secret_key: str | None = None
+    toss_api_base: str = "https://api.tosspayments.com"   # 테스트에서 스텁 서버로 오버라이드
+    toss_confirm_timeout: float = 15.0                     # 승인 API 타임아웃(초)
     # ---- 개인화(사용자 본인 얼굴·신체) — 기본 off 로 프로드 보호(PERSONALIZATION_ENABLED) ----
     # off면 라우터 자체가 미등록 → 생체정보 처리 코드 미배포(main.py 조건부 include).
     personalization_enabled: bool = False
@@ -229,6 +235,9 @@ def load_settings() -> Settings:
             os.getenv("PERSONALIZATION_ENABLED", "false").lower() == "true"
         ),
         fm_ci_pepper=os.getenv("FM_CI_PEPPER") or None,
+        toss_secret_key=os.getenv("TOSS_SECRET_KEY") or None,
+        toss_api_base=os.getenv("TOSS_API_BASE", "https://api.tosspayments.com").rstrip("/"),
+        toss_confirm_timeout=float(os.getenv("TOSS_CONFIRM_TIMEOUT", "15")),
         cx_trans_base_url=(
             os.getenv("CX_TRANS_BASE_URL") or "https://cx.raonsecure.co.kr:18543"
         ).rstrip("/"),
