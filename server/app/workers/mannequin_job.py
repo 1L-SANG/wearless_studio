@@ -22,7 +22,7 @@ from ..agents import image_qc, mannequin, mannequin_fit_qc
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
 from ..agents.prompts import load_prompt_template, render_mannequin_prompt
-from ..r2 import ai_key, ext_for_mime
+from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
 from ..services import qc
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
 
@@ -350,7 +350,7 @@ async def _run_candidate(
             ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
-            await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime)
+            await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime, cache=IMMUTABLE_CACHE)
             w, h = _image_dims(res.image)
             return {
                 "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,

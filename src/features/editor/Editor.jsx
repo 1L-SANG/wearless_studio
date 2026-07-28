@@ -20,6 +20,7 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
+import { thumbUrl } from '@/lib/imageCdn.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
 
@@ -258,7 +259,7 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
             <div className="mini-canvas" style={{ background: b.bg, aspectRatio: `1000 / ${b.h || 660}` }}>
               {b.elements.filter((e) => e.type === 'image' && e.src).map((e) => {
                 const bh = b.h || 660;
-                return <img key={e.id} src={e.src} style={{ left: (e.x / 1000) * 100 + '%', top: (e.y / bh) * 100 + '%', width: (e.w / 1000) * 100 + '%', height: (e.h / bh) * 100 + '%' }} alt="" draggable={false} />;
+                return <img key={e.id} src={thumbUrl(e.src, 200)} style={{ left: (e.x / 1000) * 100 + '%', top: (e.y / bh) * 100 + '%', width: (e.w / 1000) * 100 + '%', height: (e.h / bh) * 100 + '%' }} alt="" draggable={false} loading="lazy" decoding="async" />;
               })}
             </div>
           </div>

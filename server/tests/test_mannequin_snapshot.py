@@ -231,7 +231,7 @@ def test_run_candidate_emits_prompt_rendered_hashes(monkeypatch):
             return types.SimpleNamespace(image=_PNG_1PX, mime="image/png")
 
     class _R2:
-        def put_bytes(self, key, data, mime):
+        def put_bytes(self, key, data, mime, cache=None):
             return None
 
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)

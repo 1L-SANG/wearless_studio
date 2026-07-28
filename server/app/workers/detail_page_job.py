@@ -17,7 +17,7 @@ from .. import repo
 from ..agents import content_roles, copy_qc, copywriter, cut_generator, page_assembler, image_qc
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
-from ..r2 import ai_key, ext_for_mime
+from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.detail_page_job")
@@ -217,7 +217,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
-            await asyncio.to_thread(r2.put_bytes, key, img, mime)
+            await asyncio.to_thread(r2.put_bytes, key, img, mime, cache=IMMUTABLE_CACHE)
             w, h = _dims(img)
             return (
                 # width/height 는 조립(M-02)이 요소 박스를 **이미지 비율대로** 잡는 근거다.

@@ -16,7 +16,7 @@ from .. import facemarket, repo
 from ..agents import content_roles, cut_generator, cut_variator, identity_source, image_qc
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.vision_llm import VisionError
-from ..r2 import ai_key, ext_for_mime
+from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.editor_image_job")
@@ -419,7 +419,7 @@ async def run_editor_image_job(app, job: dict) -> None:
         ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
         asset_id = str(uuid.uuid4())
         key = ai_key(user_id, project_id, job_id, asset_id, ext)
-        await asyncio.to_thread(app.state.r2.put_bytes, key, image, mime)
+        await asyncio.to_thread(app.state.r2.put_bytes, key, image, mime, cache=IMMUTABLE_CACHE)
         w, h = _image_dims(image)
         image_row = {
             "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,

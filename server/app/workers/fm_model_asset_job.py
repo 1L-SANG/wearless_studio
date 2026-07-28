@@ -21,7 +21,7 @@ from psycopg.types.json import Json
 from .. import repo
 from ..agents.face_grid import compose_sedcard
 from ..agents.face_qc import QcFailed, load_face_qc
-from ..r2 import ext_for_mime
+from ..r2 import IMMUTABLE_CACHE, ext_for_mime
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.fm_model_asset_job")
@@ -136,7 +136,7 @@ async def run_fm_model_asset_job(app, job: dict) -> None:
         for view, data, mime in assets:
             ext = ext_for_mime(mime) or "png"
             key = _asset_key(model_id, view, ext)
-            await asyncio.to_thread(r2_face.put_bytes, key, data, mime)
+            await asyncio.to_thread(r2_face.put_bytes, key, data, mime, cache=IMMUTABLE_CACHE)
             put_keys.append(key)
             registered.append((view, key, mime))
         await _emit(pool, job_id, "progress", {"progress": 80, "phase": "stored"})

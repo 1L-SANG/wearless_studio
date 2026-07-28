@@ -41,7 +41,7 @@ from .models import (
     UploadUrlRequest,
     UploadUrlResponse,
 )
-from .r2 import R2Client, ext_for_mime, upload_key
+from .r2 import IMMUTABLE_CACHE, R2Client, ext_for_mime, upload_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1")
@@ -1277,7 +1277,11 @@ async def get_asset_file(request: Request, asset_id: str):
     if asset is None:
         raise HTTPException(
             status_code=404, detail={"code": "not_found", "message": "자산을 찾을 수 없습니다."})
-    return RedirectResponse(_r2(request).public_url(asset["r2_key"]), status_code=302)
+    return RedirectResponse(
+        _r2(request).public_url(asset["r2_key"]),
+        status_code=302,
+        headers={"Cache-Control": IMMUTABLE_CACHE},
+    )
 
 
 @router.get(

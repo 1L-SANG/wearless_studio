@@ -88,7 +88,7 @@ class _FaceR2:
             raise RuntimeError("no such object")
         return FACE_BYTES
 
-    def put_bytes(self, key, data, mime):
+    def put_bytes(self, key, data, mime, cache=None):
         return None
 
     def delete(self, key):

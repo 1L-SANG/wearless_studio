@@ -91,7 +91,7 @@ class _FaceR2:
         self.gets.append(key)
         return b"\x89PNG-face-bytes"
 
-    def put_bytes(self, key, data, mime):
+    def put_bytes(self, key, data, mime, cache=None):
         return None
 
     def delete(self, key):

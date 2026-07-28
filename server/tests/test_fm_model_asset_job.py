@@ -88,7 +88,7 @@ class _FaceR2:
     def get_bytes(self, key):
         return _png_bytes(hash(key) % 200)
 
-    def put_bytes(self, key, data, mime):
+    def put_bytes(self, key, data, mime, cache=None):
         self.puts.append((key, mime))
 
     def delete(self, key):
