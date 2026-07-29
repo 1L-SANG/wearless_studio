@@ -1630,3 +1630,6 @@
 /* 내 사진 셀 — 클릭하면 현재 컷을 그 사진으로 교체 */
 .sb-excell.up.usable { cursor: pointer; }
 .sb-excell.up.usable:hover { box-shadow: inset 0 0 0 2px var(--fg-1); }
+
+/* 예시(전부 스코프)와 달라진 방향/샷 값 — 포인트색 강조 */
+.sb-detail .sb-val-changed { color: var(--link); font-weight: 700; }

@@ -178,6 +178,11 @@ function StoryboardCard({ block, displayLabel, catalogs, colorOpts, matchClothin
   const refMiniThumb = refMiniScope ? exampleThumbFor(catalogs, block.exampleId, block.cutType) : null;
   const refMiniLabel = refMiniScope === 'bg' ? '배경' : '포즈';
   const isProduct = block.cutType === 'product';
+  // '전부' 스코프는 예시 그대로 생성이 기본 — 사용자가 방향/샷을 예시와 다르게 바꾸면 값에 포인트색 강조
+  const cardExample = block.exampleId ? (catalogs?.genExamples || []).find((e) => e.id === block.exampleId) : null;
+  const scopeAll = !block.spaceGroupId && (block.refScope || 'all') === 'all';
+  const dirDiffers = scopeAll && !!cardExample?.direction && !!block.direction && cardExample.direction !== block.direction;
+  const shotDiffers = scopeAll && !!cardExample?.shot && !!block.shot && cardExample.shot !== block.shot;
   const dirLabel = isProduct
     ? (catalogs.productDirections.find((d) => d.value === block.direction)?.label || '앞면')
     : (catalogs.directions.find((d) => d.value === block.direction)?.label || '—');
@@ -205,8 +210,10 @@ function StoryboardCard({ block, displayLabel, catalogs, colorOpts, matchClothin
               {block.cutType ? (
                 <>
                   {/* mirror 생성 레시피는 방향 개념이 없다 (ADR-0004) — 행 자체를 숨김 */}
-                  {block.cutType !== 'mirror' && <div className="sb-detail">방향: {dirLabel}</div>}
-                  <div className="sb-detail">샷 종류: {shotLabel}</div>
+                  {block.cutType !== 'mirror' && (
+                    <div className="sb-detail">방향: <span className={dirDiffers ? 'sb-val-changed' : ''}>{dirLabel}</span></div>
+                  )}
+                  <div className="sb-detail">샷 종류: <span className={shotDiffers ? 'sb-val-changed' : ''}>{shotLabel}</span></div>
                   {showOuterClosure && <div className="sb-detail">아우터 열림 정도: {closureLabel}</div>}
                 </>
               ) : <div className="sb-detail muted">생성 설정 준비 중</div>}
@@ -407,6 +414,7 @@ function ShotSegment({ options, value, onChange, cut, clothingType, gender }) {
 }
 
 function SpaceMemberStrip({ set, siblings, currentId }) {
+  if (!set) return null;
   return (
     <div className={`sb-space-strip tone-${set.tone}`}>
       <div className="sb-space-strip-thumbs" aria-hidden="true">
@@ -1725,7 +1733,7 @@ export function Storyboard() {
   const insertControl = (idx, sec, targetSpaceGroupId = null) => {
     const menuKey = `${sec.id}:${idx}`;
     const menuOpen = addMenu?.key === menuKey;
-    const label = targetSpaceGroupId ? '이 공간에 컷 추가' : '개별 컷 추가';
+    const label = targetSpaceGroupId ? '이 공간에 컷 추가' : '컷 추가';
     return (
       <div className={`sb-insert-wrap${targetSpaceGroupId ? ' in-space' : ''}`} key={`insert:${menuKey}:${targetSpaceGroupId || 'single'}`}>
         <button className="sb-insert" onClick={() => {

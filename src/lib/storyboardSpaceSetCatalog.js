@@ -69,8 +69,11 @@ export function spaceSetIdFromGroupId(groupId) {
 }
 
 export function inferStoryboardSpaceSet(groupId, members = []) {
+  // 저장된 세트 ID가 현 카탈로그에 없어도(개발 중 ID 변경·구버전 저장분) 항상 유효한 세트를 돌려준다.
+  // 미폴백 시 공간 스트립이 set.name 접근에서 죽어 인스펙터가 통째로 비었다(2026-07-29 제보).
   const storedId = spaceSetIdFromGroupId(groupId);
-  if (storedId) return storyboardSpaceSetById(storedId);
+  const stored = storedId ? storyboardSpaceSetById(storedId) : null;
+  if (stored) return stored;
   const looksLikeStudio = members.length >= 3
     && members.every((block) => block?.cutType === 'horizon' && block?.shot === 'full');
   return storyboardSpaceSetById(looksLikeStudio ? 'studio' : 'cafe');
