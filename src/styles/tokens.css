@@ -96,10 +96,10 @@
      NEVER use these on buttons, pills, text, icons, borders,
      or any UI chrome. They live inside aurora.html / orb.html.
      ============================================================ */
-  --glow-sky: #c3dcf6;
-  --glow-sage: #d8e8c6;
-  --glow-sun: #f8d978;
-  --glow-mauve: #ead0e3;
+  --glow-sky: #7fd0f0;   /* 밝은 블루 */
+  --glow-sage: #b9a5e8;  /* 라벤더 */
+  --glow-sun: #e3ddf3;   /* 연보라 힌트 */
+  --glow-mauve: #5fa7dd; /* 딥 블루 — 원안 #0A6DB9 를 연하게 톤 조정 */
 
   /* ---- White glass plate (for text/UI over a glow zone) ---- */
   --glass-bg: rgba(255, 255, 255, 0.92);

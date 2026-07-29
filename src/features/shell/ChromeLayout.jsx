@@ -47,6 +47,7 @@ function MannequinJobRibbon() {
 
 export function ChromeLayout() {
   const { session } = useAuth();
+  const { pathname } = useLocation();
   const loadAccount = useAppStore((s) => s.loadAccount);
   const loadCatalogs = useAppStore((s) => s.loadCatalogs);
 
@@ -58,14 +59,15 @@ export function ChromeLayout() {
   // The wizard stepper now lives centered inside TopNav (see shell.jsx),
   // so the hero content starts directly under the nav.
   return (
-    <div className="app-shell">
+    <div className="app-shell fx-sheen fx-lift fx-pagefade">
       <div className="app-bg">
-        <div className="edge" />
+        <div className="edge-glow" />
         <div className="orb-bg"><div className="l1" /><div className="l2" /><div className="l3" /><div className="hi" /></div>
       </div>
       <TopNav />
       <MannequinJobRibbon />
-      <div className="app-main">
+      {/* key=pathname: 라우트 이동마다 리마운트되어 page-enter 애니메이션이 항상 처음부터 재생 */}
+      <div className="app-main page-enter" key={pathname}>
         <Outlet />
       </div>
     </div>

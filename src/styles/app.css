@@ -21,63 +21,45 @@ button { font-family: inherit; }
 input, textarea, select { font-family: inherit; }
 
 /* ---- App canvas + the single faint aurora wash ---- */
-:root { --glow-a: 1; --canvas: #fff; }
+:root { --glow-a: 0.7; --canvas: #fff; }
 .app-shell { min-height: 100vh; display: flex; flex-direction: column; position: relative; background: transparent; }
 .app-main { position: relative; z-index: 1; }
 .app-bg {
   position: fixed; inset: 0; z-index: 0; background: #fff; overflow: hidden; pointer-events: none;
 }
-/* ---- Background v2: center orb + side-margin aurora (uploads/Wearless Background v2.html, verbatim
-   color/blur/opacity/animation values). No white overlay over the content — content wrappers stay
-   transparent so the orb shows through; only cards carry white. --glow-a is the Tweaks dimmer (default 1). ---- */
+/* ---- Background v3: "Wearless Orb (portable).html" (2026-07) —
+   소프트 블루 + 라벤더 팔레트 · 강도 0.7 · 색 회전만(숨쉬기 제거, 크기는 최대 직전 1.12배 고정) · 가장자리 글로우.
+   팔레트는 tokens.css 전역 글로우 토큰 사용(딥 블루는 #0A6DB9 → #5fa7dd 로 톤 조정). ---- */
+/* ---- 중심 오브 ---- */
 .orb-bg {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  opacity: calc(.75 * var(--glow-a)); transform: translateY(var(--orb-shift, -32%)) scale(var(--orb-scale, 2.7)); transform-origin: center;
+  opacity: calc(.82 * var(--glow-a));
+  transform: translateY(var(--orb-shift, -32%)) scale(calc(var(--orb-scale, 2.7) * 1.12));
+  transform-origin: center;
 }
 .orb-bg > div { position: absolute; border-radius: 50%; }
 .orb-bg .l1 { width: 240px; height: 240px; background: conic-gradient(var(--glow-sky), var(--glow-mauve), var(--glow-sage), var(--glow-sky)); filter: blur(27px); opacity: .85; animation: orbA 12s linear infinite; }
 .orb-bg .l2 { width: 185px; height: 185px; background: conic-gradient(var(--glow-sky), var(--glow-mauve), #fff, var(--glow-sun), var(--glow-sage), var(--glow-sky)); filter: blur(14px); opacity: .80; animation: orbB 17s linear infinite; }
 .orb-bg .l3 { width: 130px; height: 130px; background: #fff; filter: blur(12px); opacity: .85; animation: orbA 14s linear infinite; }
 .orb-bg .hi { width: 74px; height: 74px; background: radial-gradient(#fff 0%, transparent 70%); filter: blur(14px); }
-.edge {
-  position: absolute; inset: 0; pointer-events: none; opacity: calc(.40 * var(--glow-a));
-  filter: blur(24px);
+/* ---- 화면 가장자리 글로우 ---- */
+.edge-glow {
+  position: absolute; inset: 0; pointer-events: none; opacity: calc(.34 * var(--glow-a));
+  background:
+    radial-gradient(34% 58% at -10% 38%, var(--glow-sky) 0%, transparent 62%),
+    radial-gradient(30% 52% at -6% 78%, var(--glow-sage) 0%, transparent 60%),
+    radial-gradient(34% 58% at 110% 46%, var(--glow-mauve) 0%, transparent 62%),
+    radial-gradient(30% 52% at 106% 82%, var(--glow-sun) 0%, transparent 60%);
+  filter: blur(34px);
 }
-.edge::before,
-.edge::after {
-  content: ''; position: absolute; top: 0; bottom: 0; width: 4px;
-  color: rgba(14, 13, 20, .26);
-  background: linear-gradient(180deg, transparent 0%, rgba(14, 13, 20, .16) 22%, rgba(14, 13, 20, .32) 50%, rgba(14, 13, 20, .16) 78%, transparent 100%);
-  box-shadow: 0 0 110px 76px currentColor;
-}
-.edge::before { left: 0; }
-.edge::after { right: 0; }
+/* ---- 애니메이션: 색 회전만 ---- */
 @keyframes orbA { to { transform: rotate(360deg); } }
 @keyframes orbB { to { transform: rotate(-360deg); } }
-/* Color edge option, kept for comparison:
-@keyframes edgeLineColor {
-  0%, 100% { color: var(--glow-sky); }
-  25% { color: var(--glow-sage); }
-  50% { color: var(--glow-sun); }
-  75% { color: var(--glow-mauve); }
-}
-*/
-@keyframes edgeLineColor {
-  0%, 100% { color: rgba(14, 13, 20, .16); }
-  50% { color: rgba(137, 137, 137, .22); }
-}
-/* Animated mono edge option, kept for comparison:
-@keyframes edgeLineTone {
-  0%, 100% { color: rgba(14, 13, 20, .24); opacity: .9; }
-  50% { color: rgba(14, 13, 20, .34); opacity: 1; }
-}
-*/
-/* 반응형: 화면이 넓어질수록 orb 를 키워 같은 비중으로 */
+/* ---- 반응형: 화면이 넓을수록 orb 비중 유지 ---- */
 @media (min-width: 1280px) { .orb-bg { --orb-scale: 3.1; } }
 @media (min-width: 1600px) { .orb-bg { --orb-scale: 3.7; } }
 @media (min-width: 2000px) { .orb-bg { --orb-scale: 4.4; } }
-@media (max-aspect-ratio: 21/9) and (min-width: 1280px) { .orb-bg { --orb-shift: -20%; } }
-.no-glow .orb-bg, .no-glow .edge { opacity: 0; }
+.no-glow .orb-bg, .no-glow .edge-glow { opacity: 0; }
 
 /* ---- hero eyebrow chip ---- */
 .eyebrow-chip {
@@ -396,3 +378,48 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 /* ---- media placeholder tiles ---- */
 .media { background: var(--bg-2); border-radius: var(--r-4); overflow: hidden; display: block; object-fit: cover; }
 .media-wrap { position: relative; border-radius: var(--r-4); overflow: hidden; background: var(--bg-2); }
+
+/* ====================== FX MOTION 3종 (프로토타입 이식) ======================
+   fx-sheen / fx-lift / fx-pagefade — 전부 무채색·모션 전용(새 색 없음), app-shell 에 상시 부여.
+   lift 는 인터랙티브 카드에만 적용: .surface 는 정보 표시 전용이라 제외. */
+
+/* 1) 버튼 쉬인 — 검정 Primary CTA hover 시 흰 하이라이트가 좌→우 1회 */
+.fx-sheen .btn-primary { position: relative; overflow: hidden; }
+.fx-sheen .btn-primary::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: -60%; width: 42%;
+  background: linear-gradient(105deg, transparent, rgba(255,255,255,.25), transparent);
+  transform: skewX(-18deg); pointer-events: none;
+}
+.fx-sheen .btn-primary:hover:not([disabled])::after { animation: fxSheen .72s ease; }
+@keyframes fxSheen { to { left: 130%; } }
+
+/* 2) 카드 리프트 — hover 시 그림자 한 단계 심화 + 1px 상승 (클릭 가능한 카드만) */
+.fx-lift .tile,
+.fx-lift .model-card,
+.fx-lift .ward-cell { transition: box-shadow .18s ease, transform .18s ease; }
+
+.fx-lift .tile:hover,
+.fx-lift .model-card:hover,
+.fx-lift .ward-cell:hover { box-shadow: var(--elev-lift); transform: translateY(-1px); }
+
+/* 3) 페이지 전환 — 라우트 이동 시 아래에서 올라오며 블러 해제, 상단 블록부터 스태거.
+   ChromeLayout 에서 .app-main 에 page-enter + key(pathname) 리마운트로 재생. */
+.fx-pagefade .app-main.page-enter > * {
+  animation: fxPageIn .52s cubic-bezier(.16, 1, .3, 1) both;
+}
+.fx-pagefade .app-main.page-enter > *:nth-child(2)   { animation-delay: .07s; }
+.fx-pagefade .app-main.page-enter > *:nth-child(3)   { animation-delay: .13s; }
+.fx-pagefade .app-main.page-enter > *:nth-child(n+4) { animation-delay: .18s; }
+
+@keyframes fxPageIn {
+  from { opacity: 0; transform: translateY(18px) scale(.985); filter: blur(3px); }
+}
+
+/* 접근성 — OS 동작 줄이기 설정 시 세 효과 모두 정지 */
+@media (prefers-reduced-motion: reduce) {
+  .fx-sheen .btn-primary:hover:not([disabled])::after { animation: none; }
+  .fx-lift .tile:hover,
+  .fx-lift .model-card:hover,
+  .fx-lift .ward-cell:hover { transform: none; }
+  .fx-pagefade .app-main.page-enter > * { animation: none; }
+}
