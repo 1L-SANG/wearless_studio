@@ -226,6 +226,18 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
                 <span key={d} className={`crop-h ch-${d}`} onPointerDown={(e) => onCropDrag(e, 'frame', d)} />
               ))}
             </div>
+            {/* 포토샵식 마칭앤츠 테두리 + 3분할 그리드 — 프레임 밖(비클립) 형제로 렌더해 stroke 안 잘림, pointer-events none */}
+            <svg className="crop-svg" style={{ left: crop.fx, top: crop.fy, width: crop.fw, height: crop.fh }}
+              viewBox={`0 0 ${Math.max(1, crop.fw)} ${Math.max(1, crop.fh)}`} preserveAspectRatio="none">
+              <g className="crop-thirds">
+                <line x1={crop.fw / 3} y1={0} x2={crop.fw / 3} y2={crop.fh} />
+                <line x1={crop.fw * 2 / 3} y1={0} x2={crop.fw * 2 / 3} y2={crop.fh} />
+                <line x1={0} y1={crop.fh / 3} x2={crop.fw} y2={crop.fh / 3} />
+                <line x1={0} y1={crop.fh * 2 / 3} x2={crop.fw} y2={crop.fh * 2 / 3} />
+              </g>
+              <rect className="crop-ant ant-w" x={0} y={0} width={crop.fw} height={crop.fh} />
+              <rect className="crop-ant ant-b" x={0} y={0} width={crop.fw} height={crop.fh} />
+            </svg>
           </div>
         )}
       </div>

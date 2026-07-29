@@ -1291,7 +1291,15 @@
 .crop-ghost { position: absolute; cursor: move; }
 .crop-ghost img { width: 100%; height: 100%; display: block; }
 .crop-frame { position: absolute; overflow: hidden; cursor: move;
-  outline: 1.5px solid #8fbfee; box-shadow: 0 0 0 100000px rgba(14, 13, 20, 0.32); }
+  box-shadow: 0 0 0 100000px rgba(14, 13, 20, 0.32); }
+/* 포토샵식 크롭 오버레이 — 마칭앤츠 테두리(흰 실선 위 검정 점선 흐름) + 3분할 그리드.
+   프레임(overflow:hidden) 밖 형제 SVG 라 stroke 안 잘림. non-scaling-stroke 로 줌 무관 1.5px. */
+.crop-svg { position: absolute; pointer-events: none; overflow: visible; z-index: 3; }
+.crop-thirds line { stroke: rgba(255, 255, 255, .55); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+.crop-ant { fill: none; vector-effect: non-scaling-stroke; }
+.crop-ant.ant-w { stroke: #fff; stroke-width: 1.5px; }
+.crop-ant.ant-b { stroke: #0e0d14; stroke-width: 1.5px; stroke-dasharray: 5 5; animation: crop-march .55s linear infinite; }
+@keyframes crop-march { to { stroke-dashoffset: -10; } }
 .crop-h { position: absolute; width: 12px; height: 12px; background: #fff; border-radius: 3px;
   box-shadow: 0 0 0 1.5px #8fbfee, 0 1px 4px rgba(14, 13, 20, 0.25); z-index: 2; }
 .ch-nw { left: 0; top: 0; transform: translate(-50%, -50%) scale(var(--inv, 1)); cursor: nwse-resize; }
