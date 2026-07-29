@@ -167,7 +167,9 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
 
 function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onAddImage, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, idx }) {
   const contentBottom = block.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0);
-  const blockH = block.h || Math.max(220, contentBottom + 50);
+  // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
+  // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
+  const blockH = Math.max(block.h || 220, contentBottom + 50);
   const blockSelected = selectedBlockId === block.id && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
 
