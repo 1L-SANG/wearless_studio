@@ -231,10 +231,12 @@ type EditorBlock =
   | EditorBlockBase & {
       kind: 'info'
       infoType: EditorInfoType      // 일반 구매 정보·문구 블록은 종류 필수
+      info?: object                 // `내용 추가` 폼 상태 정본 (infoType별 shape, §3.5.1)
     }
   | EditorBlockBase & {
       kind: AutoBlockKind
       auto: true
+      info?: object                 // size/care 를 폼으로 강화한 경우에만 존재 (§3.5.1)
     }
 
 Element (공통) {
@@ -281,6 +283,30 @@ TextStyle {
 }
 ```
 
+#### 3.5.1 `info` — `내용 추가` 폼 상태 (PRD §10.14)
+
+`내용 추가`(에디터 '내용' 탭)로 만든 블록은 폼 상태를 `block.info`에 정본으로 저장하고,
+`elements`는 info로부터 재생성한다(재편집 시 폼은 info를 읽고, 제출하면 elements를 통째로
+교체 — 해당 블록의 수동 캔버스 수정은 대체된다). 요소는 위 primitives만 사용한다.
+size/care 자동 블록은 새 블록을 만들지 않고 **제자리 강화**한다(kind·auto 유지 + info 부착).
+
+infoType별 info shape (frontend `src/features/editor/presets/infoPresets.js`가 단일 소스):
+
+| infoType | info |
+|---|---|
+| (kind='size') | `{ unit, columns: MeasurementKey[], rows: [{label, values: Record<MeasurementKey, number\|null>}], note, withDiagram }` |
+| (kind='care') | `{ family, text }` — text에는 케어라벨 확인 문장이 항상 포함된다 |
+| `required_notice` | `{ fields: [{key, label, value}] }` — 빈 value는 `정보 입력 필요`로 렌더 |
+| `shipping_returns` | `{ sections: [{title, body}] }` |
+| `header` | `{ nameKo, nameEn, eyebrow }` |
+| `benefit_copy` | `{ items: [{title, desc}] }` (최대 3) |
+| `fit_guide` | `{ fits: Fit[], current: Fit\|null }` |
+| `size_matrix` | `{ heights: string[], weights: string[], cells: string[][], note }` |
+| `model_info` | `{ models: [{name, height, size}] }` (최대 3) |
+
+`normalizeEditorBlockRole`은 `kind='info'` 블록을 그대로 통과시켜야 한다 — 섹션 역할
+추론 대상이 아니다(재로드 시 kind가 덮이면 정보 블록이 깨진다).
+
 ### 3.6 Wardrobe — 에디터 의류 탭
 
 그룹 키는 표시 문자열('색상 1')이 아니라 **colorId**다. 색상 그룹 외 이미지는 `'misc'`(표시: '기타').
@@ -326,7 +352,7 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | **CutType** | `styling` `horizon` `product` `mirror` | 스타일링컷/호리존컷/제품컷/거울샷 | 생성 레시피 값. 콘티 인스펙터에서 섹션별 허용 컷을 직접 선택하지만 사용자 섹션·상단 탭으로 쓰지 않음 (ADR-0003~0005) |
 | **BlockSource** | `ai` `mine` | AI 생성/내 이미지 | ★ 신설 — '내 이미지'는 컷 종류가 아님 |
 | AutoBlockKind | `size` `care` `ai-notice` | 사이즈/세탁/AI 생성 안내 | 2026-06-09 결정 유지 |
-| EditorInfoType | `materials` `options` `shipping_returns` `required_notice` `benefit_copy` `fit_copy` `model_info` `fabric_properties` `color_description` `brand_story` `faq` `reviews` `related_products` `promotion` `social` | 에디터의 구매 정보·문구·선택 콘텐츠 | `kind='info'`일 때 사용. AutoBlockKind 3종과 겹치지 않음 |
+| EditorInfoType | `materials` `options` `shipping_returns` `required_notice` `benefit_copy` `fit_copy` `model_info` `fabric_properties` `color_description` `brand_story` `faq` `reviews` `related_products` `promotion` `social` `header` `fit_guide` `size_matrix` | 에디터의 구매 정보·문구·선택 콘텐츠 | `kind='info'`일 때 사용. AutoBlockKind 3종과 겹치지 않음. ★ `header`(타이포 상품명 헤더)·`fit_guide`(핏 도식 비교)·`size_matrix`(키×몸무게 추천 사이즈)는 2026-07-29 상세페이지 분석에서 승격 (§3.5.1) |
 | SectionLayout | `stack` `twoColumn` `threeColumn` `grid2x2` `colorCompare` | 세로 1열/2단/3단/2×2/컬러 비교 | 섹션 안 사진 배치 |
 | Direction | `front` `back` `side` | 정면/뒷면/사이드 | 모델 컷용 |
 | ProductDirection | `front` `back` | 앞면/뒷면 | 내부 product 레시피용 ★ 카탈로그 승격 |

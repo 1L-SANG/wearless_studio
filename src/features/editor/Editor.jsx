@@ -18,6 +18,9 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/components/ui.jsx';
 import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
+import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
+import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
+import { INFO_TEMPLATES, applyInfoTemplate, buildInfoBlock, defaultInfoFor, presetTypeOf, templateStyleFor } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -165,7 +168,7 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   return <div {...common} className={cls()} style={base}>{inner}</div>;
 }
 
-function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onAddImage, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropReset, idx }) {
+function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onAddImage, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, onEditInfo, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropReset, idx }) {
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
@@ -254,6 +257,7 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
         <IconButton name="chevUp" onClick={() => onMove(idx, -1)} title="위로" />
         <IconButton name="chevDown" onClick={() => onMove(idx, 1)} title="아래로" />
         <IconButton name="plus" onClick={() => onAddEmpty(idx)} title="빈 블록 추가" />
+        {onEditInfo && block.info && <IconButton name="pencil" onClick={() => onEditInfo(block)} title="내용 수정" />}
         <IconButton name="layers" onClick={() => onOpenLayers(block.id)} title="레이어" />
         <IconButton name="download" onClick={() => onDownload(block)} title="이 블록 다운로드" />
         <IconButton name="trash" onClick={() => onDelete(block.id)} title="블록 삭제" />
@@ -324,6 +328,10 @@ export function Editor() {
   const [clothingType, setClothingType] = useState('top'); // 샷 필터 아이콘·예시 크롭용 (계약 §3.1)
   const [hasDetailImage, setHasDetailImage] = useState(false);
   const [productName, setProductName] = useState('');
+  const [product, setProduct] = useState(null);   // 실측(measurements) 등 — 정보 블록 프리필 (PRD §10.14)
+  const [analysis, setAnalysis] = useState(null); // targetGenders·materials·fit·sellingPoints — 추천 배지·프리필 전용
+  const [infoModal, setInfoModal] = useState(null); // { type, blockId|null, initialInfo }
+  const [tplStyle, setTplStyle] = useState(null);   // 정보 템플릿 토글 오버라이드 (null = targetGenders 파생 기본값)
   const [tab, setTab] = useState('ai');
   const [selBlock, setSelBlock] = useState(null);
   const [selEl, setSelEl] = useState(null);
@@ -367,13 +375,16 @@ export function Editor() {
     // 에디터는 앱 크롬 밖에서 열린다 — account 는 store 캐시를 직접 로드 (단일 소스)
     Promise.all([api.getEditorBlocks(projectId), api.getWardrobe(projectId), api.getCatalogs(), useAppStore.getState().loadAccount(), api.getProduct(projectId),
       // 실존 모델 카탈로그 — mock 모드는 서버가 없으니 스킵, 실패는 null(AIPanel 이 가상모델 폴백)
-      isMockMode ? Promise.resolve(null) : listModels().catch(() => null)])
-      .then(([b, w, c, _a, p, fm]) => {
+      isMockMode ? Promise.resolve(null) : listModels().catch(() => null),
+      // 분석 컨텍스트 — 정보 블록 프리필·추천 배지 전용(실패해도 에디터는 뜬다)
+      api.getAnalysis(projectId).catch(() => null)])
+      .then(([b, w, c, _a, p, fm, an]) => {
         const withH = b.map((blk) => normalizeEditorBlockRole(blk));
         setBlocks(withH); setWardrobe(w); setCatalogs(c); setFmModels(fm); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         setClothingType(p.clothingType || 'top');
         setHasDetailImage(hasDetailSource(p));
+        setProduct(p); setAnalysis(an);
         const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
         const opts = allColorOpts.filter((_option, index) => (p.colors[index].images || []).length || p.colors[index].isBase);
         setDetailColorOpts(allColorOpts.length ? allColorOpts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
@@ -691,6 +702,60 @@ export function Editor() {
     selectEl(id, el); setTab('text');
     toast.push(garment ? '옷 글자를 추가했어요 — 뭉갠 글자 위로 옮겨 덮으세요' : '텍스트를 추가했어요');
   };
+  /* ---- 정보 블록 (PRD §10.14 `내용 추가`) — infoPresets 빌더로 폼→블록 생성 ---- */
+  const targetGenders = (analysis && analysis.targetGenders) || [];
+  const recommendGender = targetGenders.length
+    ? (targetGenders.every((g) => g === 'men') ? 'men' : 'women')
+    : null;
+  const templateStyle = tplStyle || templateStyleFor(targetGenders);
+  const infoCtx = {
+    productName,
+    clothingType,
+    measurementSchema: catalogs?.measurementSchema,
+    measurementLabels: catalogs?.measurementLabels,
+    measurements: product?.measurements,
+    materials: analysis?.materials,
+    sellingPoints: (analysis?.sellingPoints?.length ? analysis.sellingPoints : analysis?.aiSuggestedPoints) || [],
+    fit: analysis?.fit,
+    fits: catalogs?.fits,
+    colorLabels: colorOpts.map((o) => o.label),
+  };
+  const openInfoPreset = (type) => {
+    // size/care 는 자동 블록 제자리 강화, info 는 같은 infoType 이 있으면 그 블록을 수정한다(중복 방지)
+    const kind = type === 'size_table' ? 'size' : type === 'care' ? 'care' : null;
+    const existing = kind ? blocks.find((b) => b.kind === kind) : blocks.find((b) => presetTypeOf(b) === type);
+    setInfoModal({ type, blockId: existing ? existing.id : null, initialInfo: existing?.info || defaultInfoFor(type, infoCtx) });
+  };
+  const openInfoEdit = (block) => {
+    const type = presetTypeOf(block);
+    if (!type) return;
+    setInfoModal({ type, blockId: block.id, initialInfo: block.info || defaultInfoFor(type, infoCtx) });
+  };
+  const submitInfo = (info) => {
+    const m = infoModal; if (!m) return;
+    const built = buildInfoBlock(m.type, info, infoCtx);
+    if (m.blockId) {
+      setBlocks((bs) => bs.map((b) => (b.id === m.blockId ? { ...built, id: b.id } : b)));
+      setSelBlock(m.blockId);
+      toast.push('내용을 업데이트했어요', { icon: 'check' });
+    } else {
+      setBlocks((bs) => {
+        const n = [...bs];
+        const idx = n.findIndex((b) => b.id === selBlock);
+        n.splice(idx >= 0 ? idx + 1 : n.length, 0, built);
+        return n;
+      });
+      setSelBlock(built.id);
+      toast.push(`${built.name} 블록을 추가했어요`, { icon: 'check' });
+    }
+    setInfoModal(null);
+  };
+  const applyTemplate = () => {
+    const res = applyInfoTemplate(blocks, templateStyle, infoCtx);
+    setBlocks(res.blocks);
+    setSelBlock(res.blocks[0]?.id);
+    toast.push(`${INFO_TEMPLATES[templateStyle].label} 정보 템플릿을 적용했어요 — ${res.inserted.length}개 구성${res.skipped.length ? ` · 이미 있는 ${res.skipped.length}개는 건너뜀` : ''}`, { icon: 'check' });
+  };
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
   const save = async () => { await api.saveEditorBlocks(projectId, blocks); toast.push('저장했어요', { icon: 'check' }); };
@@ -825,6 +890,7 @@ export function Editor() {
     { id: 'wardrobe', icon: 'shirt', label: '의류', dot: true }, // 생성 점 표시는 결과가 쌓이는 의류 탭에
     { id: 'image', icon: 'image', label: '이미지' },
     { id: 'frame', icon: 'layout', label: '프레임' },
+    { id: 'content', icon: 'info', label: '내용' },
     { id: 'text', icon: 'type', label: '텍스트' },
     { id: 'shape', icon: 'shapes', label: '오브젝트' },
   ];
@@ -843,6 +909,7 @@ export function Editor() {
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} onFreshSeen={freshSeen} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} onVary={varyImage} />;
       case 'frame': return <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />;
+      case 'content': return <ContentPanel recommendGender={recommendGender} templateStyle={templateStyle} onTemplateStyle={setTplStyle} onApplyTemplate={applyTemplate} onPick={openInfoPreset} />;
       case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onLayer={layerEl} onAddText={() => addText()} onAddGarmentText={() => addText(undefined, 'garment')} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
       default: return null;
@@ -989,7 +1056,7 @@ export function Editor() {
                   onSelectBlock={(id) => { setSelBlock(id); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
                   onElPatch={patchElById} onAddImage={requestSlotImage} onOpenLayers={(id) => { setLayerFloat(id); setLayerPos(null); }}
                   onObjectDrop={(bid, type, id, ev) => addShape(type, id, bid, ev)} onReshape={reshapeBlock}
-                  onMove={moveBlock} onAddEmpty={addEmpty} onDelete={deleteBlock}
+                  onMove={moveBlock} onAddEmpty={addEmpty} onDelete={deleteBlock} onEditInfo={openInfoEdit}
                   onDownload={() => toast.push('이 블록을 PNG로 저장했어요', { icon: 'download' })} />
               </div>
             ))}
@@ -1118,6 +1185,12 @@ export function Editor() {
           <p>이미 생성이 완료된 상세페이지입니다. 필요한 컷은 이 페이지에서 추가하거나 수정해주세요.</p>
           <div className="modal-actions"><Button variant="primary" onClick={() => setBackWarn(false)}>확인</Button></div>
         </Modal>
+      )}
+
+      {/* 정보 블록 입력 폼 (PRD §10.14) */}
+      {infoModal && (
+        <InfoBlockModal type={infoModal.type} initialInfo={infoModal.initialInfo} ctx={infoCtx}
+          editing={!!infoModal.blockId} onClose={() => setInfoModal(null)} onSubmit={submitInfo} />
       )}
     </div>
   );
