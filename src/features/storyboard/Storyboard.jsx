@@ -32,7 +32,6 @@ import {
 } from '@/lib/storyboardTaxonomy.js';
 import {
   assignGenerationExamples,
-  directionBadgeLabel,
   hasPublicGenerationExamplesForCut,
   isGenerationCombinationPublic,
   selectGenerationExamples,
@@ -521,7 +520,18 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
             cut={cut} clothingType={clothingType} gender={gender} />
           : <span className="sb-exhint">내 사진은 이 프로젝트에서만</span>}
       </div>
-      {exampleId && (
+      {inSpace && cut !== 'product' && (
+        <div className="sb-exnote-blue">포즈만 레퍼런스로 사용돼요 — 배경은 같은 공간 묶음을 따라요</div>
+      )}
+      {exampleId && !inSpace && selectedStatus !== 'valid' && (
+        <div className="sb-current-example has-error">
+          <div className="sb-example-error">{selectedExample ? '조건이 바뀌어 예시를 다시 골라주세요' : '저장된 예시를 불러오지 못했어요'}</div>
+          {examples.length > 0 && (
+            <button type="button" className="sb-example-retry" onClick={selectFirstAvailable}>다시 선택</button>
+          )}
+        </div>
+      )}
+      {exampleId && inSpace && (
         <div className={`sb-current-example${selectedStatus !== 'valid' ? ' has-error' : ''}`}>
           <div className="sb-current-title">현재 선택</div>
           {selectedExample ? (
@@ -530,7 +540,6 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
                 <ExampleThumb example={selectedExample} />
                 {cropFromFull && <><span className="sb-crop-frame" /><span className="sb-crop-dim" /></>}
                 {extendFromMedium && <span className="sb-extend-zone"><span>이어 그리기</span></span>}
-                <span className="sb-direction-badge">{directionBadgeLabel(selectedExample.direction)}</span>
               </div>
               {selectedStatus === 'changed' && <div className="sb-example-error">조건이 바뀌어 예시를 다시 골라주세요</div>}
             </>
@@ -590,7 +599,6 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
               className={`sb-excell${on ? ' sel' : ''}${inSpaceDisabled ? ' unavailable' : ''}`}
               onClick={() => pick(defaultScope)}>
               <ExampleThumb example={e} />
-              <span className="sb-direction-badge">{directionBadgeLabel(e.direction)}</span>
               {on && <span className="ck"><Icon name="check" size={11} /></span>}
               {on && scopeChoices && <span className="sb-exscope">{SCOPE_LABELS[refScope || 'all'] || '전부'}</span>}
               {scopeChoices && (
@@ -632,20 +640,6 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
       </div>
       {moodOnly && refScope !== 'pose' && <div className="sb-exnote">예시의 <b>포즈·구도·분위기</b>를 참고하되, 촬영 방향은 {direction === 'side' ? '사이드' : '뒷면'}로 유지해요.</div>}
       {/* 레퍼런스 범위 (P5 확정, 전부|포즈만|배경만) — 같은 공간 묶음은 포즈 고정, 제품 생성 레시피는 범위 개념 없음 */}
-      {!moodOnly && inSpace && cut !== 'product' && (
-        <div className="sb-space-scope">
-          <label className="lbl">레퍼런스 범위</label>
-          <div className="sb-scope-pills" aria-label="레퍼런스 범위">
-            <button type="button" disabled>전부</button>
-            <button type="button" disabled>배경만</button>
-            <button type="button" className="on" aria-pressed="true">포즈만</button>
-          </div>
-          <p>세트 컷은 배경을 함께 쓰므로 포즈만 고를 수 있어요.</p>
-        </div>
-      )}
-      {!moodOnly && exampleId && inSpace && (
-        <div className="sb-exnote pick"><b>포즈만 참고해요</b> — 배경은 같은 공간 묶음의 기준을 따라요.</div>
-      )}
       {!moodOnly && exampleId && !inSpace && cut === 'product' && (
         <div className="sb-exnote pick"><b>이 예시처럼 생성돼요</b> — 옷만 우리 걸로 교체</div>
       )}
@@ -662,10 +656,12 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
 
 function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, mode, onMode, onChange, onAtomicChange, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onDissolveSpaceSet, onDuplicate, onDelete, dirty, warn, onDone, onRevert, onAddMine, onImgDrag, onCancelNew, isNew }) {
   const doneRef = useRef(null);
+  const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
   const [pendingError, setPendingError] = useState(null);
   const [pendingSaving, setPendingSaving] = useState(false);
+  useEffect(() => { setMatchOpen(false); }, [block?.id]);
   useEffect(() => {
     setPendingRecipe(requestedRecipe?.blockId === block?.id
       ? { cutType: requestedRecipe.cutType, shot: requestedRecipe.shot } : null);
@@ -703,34 +699,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         <button className="ref-upload" onClick={async () => onChange({ ownImages: [...(block.ownImages || []), await api.pickAnyImage()] })}>
           <Icon name="upload" size={16} />로컬에서 이미지 업로드
         </button>
-      </div>
-    );
-  }
-
-  // 매칭 의류 detail editor (AI cuts only) — 포즈 편집은 폐기(2026-07-10): 포즈는 생성예시(레퍼런스 범위)가 담당
-  if (mode === 'edit') {
-    return (
-      <div className="surface inspector insp-edit-panel">
-        <div className="insp-edit-head">
-          <Button variant="quiet" size="sm" icon="arrowLeft" onClick={() => onMode('props')}>뒤로 가기</Button>
-        </div>
-        <div className="sec-title" style={{ fontSize: 15, margin: '2px 0 14px' }}>{sectionTitle(block.sectionRole)} 이미지 · 매칭 의류 편집</div>
-        {matchClothing && (
-          <div className="insp-sec">
-            <label className="lbl">매칭 의류<span className="opt" style={{ fontWeight: 400, color: 'var(--fg-3)', marginLeft: 6 }}>착용컷에 함께</span></label>
-            <div className="match-grid" style={{ marginTop: 9 }}>
-              {matchClothing.map((m) => {
-                const on = (block.matchIds || []).includes(m.id);
-                return (
-                  <button key={m.id} className={`match-cell${on ? ' on' : ''}`} onClick={() => {
-                    const cur = new Set(block.matchIds || []); on ? cur.delete(m.id) : cur.add(m.id); onChange({ matchIds: [...cur] });
-                  }}><img src={m.thumb} alt={m.name} /><span className="ml">{m.name}{on && <Icon name="check" size={12} />}</span></button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-        <div className="insp-note"><Icon name="info" size={14} />변경 사항은 다음 생성 단계에서 적용돼요.</div>
       </div>
     );
   }
@@ -940,13 +908,12 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
               refImages: references.map((value) => value?.url || value),
               refAssetIds: references.map((value) => value?.assetId).filter(Boolean),
             })} />
-          {!isProduct && <div className="sb-exnote">풀샷·미디움샷은 화면 범위만 바뀌며 현재 예시는 그대로 유지돼요.</div>}
         </>
       )}
 
       {/* 방향 — mirror 생성 레시피는 방향 개념 없음 (ADR-0004) */}
       {!isMirror && !isDetail && (
-        <div className="insp-sec"><label className="lbl">방향</label>
+        <div className="insp-sec" style={{ marginBottom: 12 }}><label className="lbl">방향</label>
           <Chips options={isProduct ? catalogs.productDirections : catalogs.directions}
             value={(isProduct ? catalogs.productDirections : catalogs.directions).some((d) => d.value === block.direction) ? block.direction : 'front'}
             onChange={onDirectionChange} /></div>
@@ -972,17 +939,31 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </div>
       )}
 
-      <div className="insp-divider" />
-
       <div className="insp-sec"><label className="lbl">대상 색상</label>
         <ColorDots colorOpts={isDetail ? detailColorOpts : colorOpts}
           value={block.colorId} onChange={(v) => onChange({ colorId: v })} /></div>
 
       {/* 매칭 의류가 없으면 편집 패널이 빈 화면이 되므로 진입 자체를 막는다 */}
       {WORN_CUT_TYPES.has(block.cutType) && Array.isArray(matchClothing) && matchClothing.length > 0 && (
-        <button className="insp-detail-btn" onClick={() => onMode('edit')}>
-          <Icon name="settings" size={17} />매칭 의류 편집
-        </button>
+        <>
+          <button className={`insp-detail-btn${matchOpen ? ' open' : ''}`} onClick={() => setMatchOpen((v) => !v)}>
+            <Icon name="settings" size={17} />매칭 의류 편집
+          </button>
+          {matchOpen && (
+            <div className="sb-match-inline">
+              <div className="match-grid">
+                {matchClothing.map((m) => {
+                  const on = (block.matchIds || []).includes(m.id);
+                  return (
+                    <button key={m.id} className={`match-cell${on ? ' on' : ''}`} onClick={() => {
+                      const cur = new Set(block.matchIds || []); on ? cur.delete(m.id) : cur.add(m.id); onChange({ matchIds: [...cur] });
+                    }}><img src={m.thumb} alt={m.name} /><span className="ml">{m.name}{on && <Icon name="check" size={12} />}</span></button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* 추가 옵션 — 이미지별 얼굴 노출 / 앵글 (PRD 6.8, 9.x). mirror 레시피는 얼굴 기본 '폰으로 가림', 앵글 없음 (ADR-0004) */}

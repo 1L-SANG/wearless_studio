@@ -639,20 +639,14 @@
 .sb-insert:hover .sb-insert-pill { transform: scale(1); opacity: 1; color: var(--fg-1); }
 .sb-insert-gap { margin: -6px 0 4px; }   /* 섹션 사이 hover 인서트 — 밴드 간격을 파고들어 자리 차지 없이 */
 .sb-insert-wrap { position: relative; width: 100%; z-index: 2; }
-.sb-insert-wrap.in-space .sb-insert-line { background: var(--glow-mauve); }
-.sb-insert-wrap.in-space .sb-insert-pill { color: var(--fg-1); background: color-mix(in srgb, var(--glow-mauve) 36%, var(--bg-1)); }
+.sb-insert-wrap.in-space .sb-insert-line { background: var(--link); }
+.sb-insert-wrap.in-space .sb-insert-pill { color: var(--fg-1); background: color-mix(in srgb, var(--link) 18%, var(--bg-1)); }
 .sb-addmenu-inline { left: 50%; right: auto; top: calc(100% + 3px); width: 250px; transform: translateX(-50%); }
 
 /* 같은 공간 세트 = 기존 로우 카드들을 감싸는 2층 래퍼. 카드 자체는 변경하지 않는다. */
-.sb-space-band { --space-tone: var(--glow-mauve); margin: 5px 4px 7px; overflow: visible;
-  border-radius: var(--r-5); background: color-mix(in srgb, var(--space-tone) 16%, var(--bg-1));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone) 56%, var(--ring-strong)); }
-.tone-cafe { --space-tone: var(--glow-sun); }
-.tone-street { --space-tone: var(--glow-sky); }
-.tone-home { --space-tone: var(--glow-mauve); }
-.tone-beach { --space-tone: var(--glow-sky); }
-.tone-garden { --space-tone: var(--glow-sage); }
-.tone-studio { --space-tone: var(--ring-strong); }
+.sb-space-band { --space-tone: var(--link); margin: 5px 4px 7px; overflow: visible;
+  border-radius: var(--r-5); background: color-mix(in srgb, var(--space-tone) 7%, var(--bg-1));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone) 30%, var(--ring-strong)); }
 .sb-space-band-head { min-height: 38px; display: flex; align-items: center; gap: 7px; padding: 7px 9px;
   cursor: grab; color: var(--fg-2); font-size: 11.5px; box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--space-tone) 48%, var(--ring)); }
 .sb-space-band-head:active { cursor: grabbing; }
@@ -1620,3 +1614,15 @@
 .insp-cancel-new { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent;
   font-size: 12px; font-weight: 600; color: var(--fg-2); cursor: pointer; }
 .insp-cancel-new:hover { color: var(--accent-error, #d92d20); }
+
+/* 세트 컷 — 포즈만 안내 (파란 포인트) */
+.sb-exnote-blue { font-size: 11.5px; color: var(--link); margin: -3px 0 10px; line-height: 1.5; }
+
+/* 매칭 의류 인라인 편집 — 인스펙터 안 고정 높이(3열 x 약 2줄), 토글로 열고 닫음 */
+.sb-match-inline { margin-top: 8px; border: 1px solid var(--ring); border-radius: var(--r-4);
+  padding: 8px; max-height: 216px; overflow-y: auto; background: var(--bg-1); }
+.sb-match-inline .match-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 0; }
+.insp-detail-btn.open { box-shadow: inset 0 0 0 1.5px var(--ring-strong); }
+
+/* 공간 관련 컴포넌트 공통 톤 = 포인트 컬러 (오너 확정: 톤별 색 대신 연한 포인트 컬러) */
+.sb-space-strip, .sb-set-card { --space-tone: var(--link); }
