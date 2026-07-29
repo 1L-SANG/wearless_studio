@@ -526,7 +526,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           : <span className="sb-exhint">내 사진은 이 프로젝트에서만</span>}
       </div>
       {inSpace && cut !== 'product' && (
-        <div className="sb-exnote-blue">포즈만 레퍼런스로 사용돼요 — 배경은 같은 공간 묶음을 따라요</div>
+        <div className="sb-exnote-blue">아래 생성예시의 포즈만 이용하여 변경할 수 있습니다</div>
       )}
       {exampleId && !inSpace && selectedStatus !== 'valid' && (
         <div className="sb-current-example has-error">
@@ -653,7 +653,6 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           </button>
         )}
       </div>
-      {moodOnly && refScope !== 'pose' && <div className="sb-exnote">예시의 <b>포즈·구도·분위기</b>를 참고하되, 촬영 방향은 {direction === 'side' ? '사이드' : '뒷면'}로 유지해요.</div>}
       {/* 레퍼런스 범위 (P5 확정, 전부|포즈만|배경만) — 같은 공간 묶음은 포즈 고정, 제품 생성 레시피는 범위 개념 없음 */}
       {exampleId && !inSpace && cut !== 'product' && refScope === 'pose' && (
         <div className="sb-exnote">포즈의 좌우와 비대칭을 그대로 따르고, 프레이밍은 현재 샷을 따라요.</div>
