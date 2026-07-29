@@ -1,7 +1,22 @@
 """환경 변수 → Settings. backend_integration_plan §9 (인증·CORS) 기준."""
 
 import os
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
+
+
+def _json_str_map(raw: str | None) -> dict[str, str]:
+    """JSON object(str→str) 파싱. 실패·형식 불일치는 빈 맵 — 설정 오타가 부팅을 막지 않는다."""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items()
+            if isinstance(k, str) and isinstance(v, str) and v}
 
 
 @dataclass(frozen=True)
@@ -70,6 +85,10 @@ class Settings:
     mannequin_prompt_version: str = "v1"
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
+    # 여성 베이스 체형 매트릭스 — {"{bust}_{hip}": assetId}. bust/hip ∈ slim|regular|volume.
+    # regular_regular 은 넣지 않는다(base_mannequin_women_asset_id 가 담당). 미설정·파싱 실패는
+    # 빈 맵 → 전부 현행 단일 에셋 폴백이라 에셋보다 코드를 먼저 배포해도 안전하다.
+    base_mannequin_women_matrix: dict[str, str] = field(default_factory=dict)
     job_dispatcher_enabled: bool = True  # §5
     job_poll_interval_seconds: float = 3.0
     job_lease_timeout_seconds: int = 900
@@ -203,6 +222,7 @@ def load_settings() -> Settings:
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
+        base_mannequin_women_matrix=_json_str_map(os.getenv("MANNEQUIN_BASE_WOMEN_MATRIX")),
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
         job_poll_interval_seconds=float(os.getenv("JOB_POLL_INTERVAL_SECONDS", "3")),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),

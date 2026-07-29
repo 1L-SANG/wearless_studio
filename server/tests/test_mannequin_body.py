@@ -1,6 +1,8 @@
 """마네킹 베이스 체형(bust/hip 볼륨) 정규화 — 순수 함수 회귀."""
 
 from app.agents.mannequin_body import DEFAULT, LEVELS, matrix_key, normalize
+from app.agents import mannequin as m
+from tests.conftest import make_settings
 
 
 def test_levels_are_exactly_three():
@@ -48,3 +50,47 @@ def test_matrix_key_rejects_invalid_input():
     assert matrix_key(None) is None
     assert matrix_key({"bust": "huge", "hip": "slim"}) is None
     assert matrix_key({"bust": "slim"}) is None
+
+
+MATRIX = {"slim_volume": "asset-slim-volume", "volume_volume": "asset-volume-volume"}
+
+
+def test_select_base_asset_id_hits_the_matrix():
+    s = make_settings(base_mannequin_women_asset_id="asset-women-default",
+                      base_mannequin_men_asset_id="asset-men",
+                      base_mannequin_women_matrix=MATRIX)
+    assert m.select_base_asset_id(s, "women", {"bust": "slim", "hip": "volume"}) \
+        == "asset-slim-volume"
+
+
+def test_select_base_asset_id_falls_back_when_combination_missing():
+    # 매트릭스에 없는 조합(에셋 미제작) → 현행 단일 에셋. 조용히 동작하되 결과가 바뀌지 않는다.
+    s = make_settings(base_mannequin_women_asset_id="asset-women-default",
+                      base_mannequin_men_asset_id="asset-men",
+                      base_mannequin_women_matrix=MATRIX)
+    assert m.select_base_asset_id(s, "women", {"bust": "volume", "hip": "slim"}) \
+        == "asset-women-default"
+
+
+def test_select_base_asset_id_falls_back_when_matrix_unset():
+    # 코드를 매트릭스 env 보다 먼저 배포해도 안전해야 한다(배포 순서 무관).
+    s = make_settings(base_mannequin_women_asset_id="asset-women-default",
+                      base_mannequin_men_asset_id="asset-men")
+    assert m.select_base_asset_id(s, "women", {"bust": "slim", "hip": "volume"}) \
+        == "asset-women-default"
+
+
+def test_select_base_asset_id_default_body_matches_current_behavior():
+    s = make_settings(base_mannequin_women_asset_id="asset-women-default",
+                      base_mannequin_men_asset_id="asset-men",
+                      base_mannequin_women_matrix=MATRIX)
+    assert m.select_base_asset_id(s, "women", None) == "asset-women-default"
+    assert m.select_base_asset_id(
+        s, "women", {"bust": "regular", "hip": "regular"}) == "asset-women-default"
+
+
+def test_select_base_asset_id_men_ignores_body():
+    s = make_settings(base_mannequin_women_asset_id="asset-women-default",
+                      base_mannequin_men_asset_id="asset-men",
+                      base_mannequin_women_matrix=MATRIX)
+    assert m.select_base_asset_id(s, "men", {"bust": "slim", "hip": "volume"}) == "asset-men"
