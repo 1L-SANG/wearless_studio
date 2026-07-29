@@ -17,6 +17,7 @@ import {
   matchingFitFromProfile,
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
+import { resolveSelectedModelId } from './modelSelection.js';
 
 // 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
 // Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
@@ -314,16 +315,17 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   // 기본은 무료 AI 모델 — 실제 모델(유료 라이선스)은 사용자가 탭에서 명시적으로 고를 때만.
   // (AI 모델 id 'mA'…는 비-UUID라 생성 라이선스 게이트가 no-op 처리 — 레거시 호환 확인됨.)
   useEffect(() => {
-    const licensable = models.filter((m) => m.hasActiveLicense);
-    const valid = AI_MODELS.some((m) => m.id === a.selectedModelId)
-      || licensable.some((m) => m.id === a.selectedModelId);
-    if (!valid) {
-      // 자동 선택도 상품 대상 성별의 AI 모델부터 (없으면 첫 모델). 수동 선택은 덮지 않는다.
-      const g = a.targetGenders?.[0];
-      const pool = g ? AI_MODELS.filter((m) => m.gender === g) : AI_MODELS;
-      onChange({ selectedModelId: (pool[0] || AI_MODELS[0]).id });
+    const nextSelectedModelId = resolveSelectedModelId({
+      selectedModelId: a.selectedModelId,
+      targetGenders: a.targetGenders,
+      models,
+      modelsLoading,
+      aiModels: AI_MODELS,
+    });
+    if (nextSelectedModelId !== a.selectedModelId) {
+      onChange({ selectedModelId: nextSelectedModelId });
     }
-  }, [models]);
+  }, [models, modelsLoading, a.selectedModelId, a.targetGenders, onChange]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
 
   const commitSp = () => {
