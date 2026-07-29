@@ -242,7 +242,8 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
             </svg>
             <div className="crop-bar" style={{ left: crop.fx, top: crop.fy + crop.fh }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
               <button className="crop-reset" onClick={(e) => { e.stopPropagation(); onCropReset && onCropReset(); }}>원본</button>
-              <span className="crop-hint">Enter 확정 · Esc 취소</span>
+              <span className="crop-hint">안쪽 드래그 사진 이동 · 휠 확대 · 모서리 영역 조절</span>
+              <span className="crop-hint quiet">Enter 확정 · Esc 취소</span>
             </div>
           </div>
         )}
@@ -467,6 +468,32 @@ export function Editor() {
     };
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // 크롭 중 휠 = 사진 확대/축소(프레임 고정, 중앙 기준). Ctrl+휠(캔버스 줌)은 그대로 둔다.
+  // 로직을 effect 안에 인라인으로 둬 early-return 뒤 선언(TDZ)에 의존하지 않게 한다.
+  useEffect(() => {
+    if (!cropping) return;
+    const wrap = wrapRef.current; if (!wrap) return;
+    const onWheel = (e) => {
+      if (e.ctrlKey || e.metaKey) return;
+      if (!e.target.closest || !e.target.closest('.crop-layer')) return;
+      e.preventDefault(); e.stopPropagation();
+      const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+      setCropping((c) => {
+        if (!c || !c.iw || !c.ih) return c;
+        const ratio = c.ih / c.iw;
+        const minIw = Math.max(c.fw, c.fh / ratio);          // 프레임보다 작아지지 않게(빈틈 방지)
+        const niw = Math.min(c.fw * 12, Math.max(minIw, c.iw * factor));
+        const nih = niw * ratio;
+        const cx = (c.ox + c.fw / 2) / c.iw, cy = (c.oy + c.fh / 2) / c.ih;  // 프레임 중앙의 사진 지점 유지
+        const ox = Math.min(Math.max(0, cx * niw - c.fw / 2), Math.max(0, niw - c.fw));
+        const oy = Math.min(Math.max(0, cy * nih - c.fh / 2), Math.max(0, nih - c.fh));
+        return { ...c, iw: niw, ih: nih, ox, oy };
+      });
+    };
+    wrap.addEventListener('wheel', onWheel, { passive: false });
+    return () => wrap.removeEventListener('wheel', onWheel);
+  }, [cropping]);
 
   // Phase 4 — space-드래그 팬 모드 토글. **early-return 앞**에 둬야 hook 개수 안정(blank 크래시 방지).
   useEffect(() => {
@@ -816,12 +843,18 @@ export function Editor() {
   const liveResize = (target, width, height, drag) => {
     const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    const rect = clampElementRect(
-      st.x + (drag?.beforeTranslate?.[0] || 0),
-      st.y + (drag?.beforeTranslate?.[1] || 0),
-      width,
-      height,
-    );
+    let nx = st.x + (drag?.beforeTranslate?.[0] || 0);
+    let ny = st.y + (drag?.beforeTranslate?.[1] || 0);
+    let nw = width, nh = height;
+    // 이미지(크롭 안 한 것)는 원본 사진 비율을 따라간다 — 리사이즈로 잘리거나 늘어나지 않게.
+    // 위쪽 핸들로 끌 땐 아래 변을 고정해 높이 보정이 튀지 않도록 y 를 되맞춘다.
+    const elNow = elById(elId);
+    const imgNode = target.querySelector('img');
+    if (elNow && elNow.type === 'image' && !elNow.crop && imgNode && imgNode.naturalWidth && imgNode.naturalHeight) {
+      nh = Math.max(24, Math.round(nw * imgNode.naturalHeight / imgNode.naturalWidth));
+      if ((drag?.beforeTranslate?.[1] || 0) !== 0) ny = st.y + st.h - nh;
+    }
+    const rect = clampElementRect(nx, ny, nw, nh);
     target.style.left = rect.x + 'px'; target.style.top = rect.y + 'px';
     target.style.width = rect.w + 'px'; target.style.height = rect.h + 'px';
     liveRef.current[elId] = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h) };
@@ -1095,7 +1128,7 @@ export function Editor() {
                 snapGap: true,
                 snapHorizontalThreshold: 8,
                 snapVerticalThreshold: 8,
-                isDisplaySnapDigit: true,
+                isDisplaySnapDigit: false,   // 스냅 거리 숫자(px) 표시 안 함 — 가이드선만
               } : {})}
               renderDirections={lockRatio ? ['nw', 'ne', 'sw', 'se'] : ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']}
               origin={false}
