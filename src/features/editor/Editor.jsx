@@ -327,6 +327,7 @@ export function Editor() {
   const [selEl, setSelEl] = useState(null);
   const [selEls, setSelEls] = useState([]);
   const [scale, setScale] = useState(0.4);
+  const [spaceDown, setSpaceDown] = useState(false); // space-드래그 팬 모드 (Phase 4)
   const [rightHidden, setRightHidden] = useState(false);
   const [preview, setPreview] = useState(false);
   const [download, setDownload] = useState(false);
@@ -828,6 +829,24 @@ export function Editor() {
     }
   };
 
+  // Phase 4 — space-드래그 팬 + fit-to-screen
+  useEffect(() => {
+    const isType = (t) => /input|textarea/i.test(t.tagName) || t.isContentEditable || t.tagName === 'BUTTON';
+    const down = (e) => { if (e.code === 'Space' && !isType(e.target)) { e.preventDefault(); setSpaceDown(true); } };
+    const up = (e) => { if (e.code === 'Space') setSpaceDown(false); };
+    const blur = () => setSpaceDown(false);
+    window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
+  }, []);
+  const startPan = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const wrap = wrapRef.current; if (!wrap) return;
+    const sx = e.clientX, sy = e.clientY, sl = wrap.scrollLeft, st = wrap.scrollTop;
+    const move = (ev) => { wrap.scrollLeft = sl - (ev.clientX - sx); wrap.scrollTop = st - (ev.clientY - sy); };
+    const upp = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', upp); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', upp);
+  };
+  const fitToScreen = () => { const wrap = wrapRef.current; if (!wrap) return; setScale(Math.min(2, Math.max(0.1, +((wrap.clientWidth - 80) / 1000).toFixed(2)))); };
   const single = selEls.length === 1 && !editEl;
   const group = selEls.length > 1 && !editEl;
   // 정렬·분배(Phase 3b) — 다중선택이 "한 블록"일 때만(좌표가 블록-상대라 cross-block 정렬 무의미).
@@ -909,8 +928,9 @@ export function Editor() {
           {renderPanel()}
         </div>
 
-        <div className="ed-canvas-wrap" ref={wrapRef}
-          onClick={(e) => { if (e.target.closest && e.target.closest('.moveable-control-box')) return; if (cropping) { commitCrop(); return; } clearSel(); }}
+        <div className={`ed-canvas-wrap${spaceDown ? ' panning' : ''}`} ref={wrapRef}
+          onPointerDown={(e) => { if (spaceDown) startPan(e); }}
+          onClick={(e) => { if (spaceDown) return; if (e.target.closest && e.target.closest('.moveable-control-box')) return; if (cropping) { commitCrop(); return; } clearSel(); }}
           onScroll={() => moveableRef.current?.updateRect()}
           onMouseMove={(e) => { const g = !e.target.closest('.canvas-block'); setHoverGray((v) => v === g ? v : g); }}
           onMouseLeave={() => setHoverGray(false)}>
@@ -919,6 +939,8 @@ export function Editor() {
               <button onClick={() => setScale((s) => Math.max(0.1, +(s - 0.1).toFixed(2)))}><Icon name="minus" size={15} /></button>
               <span>{Math.round(scale * 100)}%</span>
               <button onClick={() => setScale((s) => Math.min(2, +(s + 0.1).toFixed(2)))}><Icon name="plus" size={15} /></button>
+              <span className="zoom-div" />
+              <button className="zoom-fit" onClick={fitToScreen} title="화면 너비에 맞춤">맞춤</button>
             </div>
           </div>
           {rightHidden && <div style={{ position: 'absolute', right: 10, top: 10, zIndex: 3 }}><IconButton name="layout" size="sm" onClick={() => setRightHidden(false)} /></div>}

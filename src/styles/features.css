@@ -1315,6 +1315,14 @@
 .align-bar button:hover { background: var(--bg-2); }
 .align-bar button:disabled { opacity: .35; cursor: default; }
 .align-sep { width: 1px; height: 20px; background: var(--ring); margin: 0 3px; }
+/* Phase 4 — space-드래그 팬 + fit 버튼 */
+.ed-canvas-wrap.panning { cursor: grab; }
+.ed-canvas-wrap.panning:active { cursor: grabbing; }
+.ed-canvas-wrap.panning .canvas-block,
+.ed-canvas-wrap.panning .moveable-control-box,
+.ed-canvas-wrap.panning .align-bar { pointer-events: none; }
+.zoom-div { width: 1px; height: 15px; background: var(--ring); margin: 0 1px; }
+.zoom-fit { width: auto !important; padding: 0 7px !important; font-size: 11px; font-weight: 600; color: var(--fg-1); }
 .crop-h { position: absolute; width: 12px; height: 12px; background: #fff; border-radius: 3px;
   box-shadow: 0 0 0 1.5px #8fbfee, 0 1px 4px rgba(14, 13, 20, 0.25); z-index: 2; }
 .ch-nw { left: 0; top: 0; transform: translate(-50%, -50%) scale(var(--inv, 1)); cursor: nwse-resize; }
