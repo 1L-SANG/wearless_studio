@@ -17,6 +17,7 @@ import { Placeholder as P } from '@/mock/placeholders.js';
 import genExamples from '@/data/genExamples.json';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
+import { spaceSetGroupId } from '@/lib/storyboardSpaceSetCatalog.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { ensureSections, rowSizeFor } from '@/lib/sections.js';
@@ -80,7 +81,7 @@ const catalogs = {
     { value: 'front', label: '정면' }, { value: 'back', label: '뒷면' }, { value: 'side', label: '사이드' },
   ],
   shotTypes: [
-    { value: 'full', label: '풀샷' }, { value: 'medium', label: '중간샷' },
+    { value: 'full', label: '풀샷' }, { value: 'medium', label: '미디움샷' },
   ],
   // 제품 이미지 전용 옵션 — 화면 하드코딩 금지 (계약 §5)
   productDirections: [{ value: 'front', label: '앞면' }, { value: 'back', label: '뒷면' }],
@@ -359,10 +360,10 @@ export function buildStoryboard(mode, colors) {
   const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
   // 같은 공간에서 포즈·프레이밍만 달리하는 코디 활용 2컷 묶음
   const spacePair = (colorId) => {
-    const sg = uid('sg');
+    const sg = spaceSetGroupId('cafe', uid('sg'));
     return [
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'full', colorId, { spaceGroupId: sg, spaceVariation: 'subtle' }),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'side', 'medium', colorId, { spaceGroupId: sg, spaceVariation: 'subtle' }),
+      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'full', colorId, { spaceGroupId: sg, spaceVariation: 'subtle', refScope: 'pose' }),
+      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'side', 'medium', colorId, { spaceGroupId: sg, spaceVariation: 'subtle', refScope: 'pose' }),
     ];
   };
   const out = [
@@ -406,7 +407,7 @@ export function buildStoryboard(mode, colors) {
       ? sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor)
       : sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base));
   }
-  // 같은 장소 쌍은 FIT 섹션 안에서 spaceGroupId 배지로만 표현된다.
+  // 같은 장소 쌍은 FIT 섹션 안에서 연속 spaceGroupId 밴드로 표현된다.
   return ensureSections(out);
 }
 
