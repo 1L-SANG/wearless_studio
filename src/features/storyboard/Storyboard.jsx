@@ -631,7 +631,14 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           <span className={`sb-excell up${onUseMine ? ' usable' : ''}`} key={'u' + i}
             title={onUseMine ? '누르면 이 컷을 이 사진으로 바꿔요' : '분위기(조명·색감)만 참고해요. 옷과 모델은 바뀌지 않아요.'}
             onClick={onUseMine ? () => onUseMine(r) : undefined}
-            role={onUseMine ? 'button' : undefined}>
+            onKeyDown={onUseMine ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onUseMine(r);
+              }
+            } : undefined}
+            role={onUseMine ? 'button' : undefined}
+            tabIndex={onUseMine ? 0 : undefined}>
             <img src={r?.url || r} alt="" /><span className="upb">내 사진</span>
             <button type="button" className="rm" onClick={(ev) => { ev.stopPropagation(); onRefsChange && onRefsChange(refs.filter((_, j) => j !== i)); }}><Icon name="x" size={11} /></button>
           </span>
@@ -656,22 +663,6 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
       )}
     </div>
   );
-}
-
-class InspectorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { failed: false }; }
-  static getDerivedStateFromError() { return { failed: true }; }
-  componentDidCatch(err) { console.error('[inspector] render failed', err); }
-  render() {
-    if (this.state.failed) {
-      return (
-        <div className="surface inspector">
-          <div className="insp-note" style={{ marginTop: 8 }}><Icon name="alert" size={14} />설정 창을 불러오지 못했어요. 다른 카드를 눌렀다가 다시 열어보세요.</div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
 }
 
 function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, mode, onMode, onChange, onAtomicChange, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onDissolveSpaceSet, onDuplicate, onDelete, dirty, warn, onDone, onRevert, onAddMine, onImgDrag, onCancelNew, isNew }) {
@@ -1975,14 +1966,14 @@ export function Storyboard() {
     ? groupConsecutiveSpaceRuns(blocks).find((run) => run.kind === 'space'
       && run.items.some((block) => block.id === selected.id)) : null;
   const selectedSpaceSiblings = selectedSpaceRun?.items || [];
-  const selectedSpaceContext = selectedSpaceSiblings.length > 1 ? {
+  const selectedSpaceContext = selectedSpaceRun ? {
     siblings: selectedSpaceSiblings,
     set: inferStoryboardSpaceSet(selectedSpaceRun.spaceGroupId, selectedSpaceSiblings),
   } : null;
   const inspector = setPicker ? (
     <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}
       onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
-  ) : <InspectorBoundary key={selectedId}><Inspector block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} mode={mode} onMode={setMode}
+  ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} mode={mode} onMode={setMode}
     onChange={(p) => patch(selectedId, p)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
     spaceContext={selectedSpaceContext} onDissolveSpaceSet={dissolveSelectedSpaceSet}
@@ -1999,7 +1990,7 @@ export function Storyboard() {
       setBlocks((bs) => valid ? restore.preInsert : normalizeBoard(bs.filter((b) => b.id !== id)));
       finishEdit();
       toast.push('블록을 취소했어요');
-    }} /></InspectorBoundary>;
+    }} />;
 
   const previewRail = <PagePreviewRail sections={sections} selectedId={selectedId} onHover={setPreviewHoverId}
     onSelect={(id) => {

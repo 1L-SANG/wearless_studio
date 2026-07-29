@@ -34,7 +34,7 @@ test('consecutive spaceGroupId runs become bands without joining separated runs'
     ['block', ['a']],
     ['space', ['b', 'c']],
     ['block', ['d']],
-    ['block', ['e']],
+    ['space', ['e']],
   ]);
 });
 
@@ -95,4 +95,8 @@ test('dragging a member out keeps its content and keeps the remaining set intact
   assert.equal(out.exampleId, 'ex-2');
   const remaining = moved.find((item) => item.id === 'a');
   assert.equal(remaining.spaceGroupId, 'space-1');
+  const remainingRun = groupConsecutiveSpaceRuns(moved)
+    .find((group) => group.spaceGroupId === 'space-1');
+  assert.equal(remainingRun.kind, 'space');
+  assert.deepEqual(remainingRun.items.map((item) => item.id), ['a']);
 });

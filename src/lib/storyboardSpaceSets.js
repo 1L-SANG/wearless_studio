@@ -45,9 +45,7 @@ export function groupConsecutiveSpaceRuns(items, getBlock = defaultBlock) {
       end += 1;
     }
     const members = items.slice(index, end);
-    groups.push(members.length > 1
-      ? { kind: 'space', spaceGroupId: groupId, items: members, start: index, end }
-      : { kind: 'block', items: members, start: index, end });
+    groups.push({ kind: 'space', spaceGroupId: groupId, items: members, start: index, end });
     index = end;
   }
   return groups;
@@ -58,7 +56,7 @@ export function dissolveSingletonSpaceRuns(blocks) {
   let changed = false;
   for (const run of groupConsecutiveSpaceRuns(blocks)) {
     const block = run.items[0];
-    if (run.kind !== 'block' || !block?.spaceGroupId) continue;
+    if (run.items.length !== 1 || !block?.spaceGroupId) continue;
     const index = next.findIndex((candidate) => candidate.id === block.id);
     if (index < 0) continue;
     next[index] = clearSpace(next[index]);
