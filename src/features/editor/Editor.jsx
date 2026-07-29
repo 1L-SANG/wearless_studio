@@ -869,6 +869,16 @@ export function Editor() {
     const rect = clampElementRect(nx, ny, nw, nh);
     target.style.left = rect.x + 'px'; target.style.top = rect.y + 'px';
     target.style.width = rect.w + 'px'; target.style.height = rect.h + 'px';
+    // 크롭된 이미지는 안쪽 원본(<img> 인라인 px)도 같은 배율로 라이브 스케일 —
+    // 안 하면 틀만 커지고 사진은 제자리라 "사진이 같이 안 커지는" 것처럼 보인다.
+    // (gesture end 의 commitLive 가 crop{ox,oy,iw,ih} 을 같은 비율로 커밋해 이어짐)
+    if (elNow && elNow.crop && imgNode && st.w && st.h) {
+      const kx = rect.w / st.w, ky = rect.h / st.h;
+      imgNode.style.width = (elNow.crop.iw * kx) + 'px';
+      imgNode.style.height = (elNow.crop.ih * ky) + 'px';
+      imgNode.style.left = (-elNow.crop.ox * kx) + 'px';
+      imgNode.style.top = (-elNow.crop.oy * ky) + 'px';
+    }
     liveRef.current[elId] = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h) };
   };
   const liveRotate = (target, rotation) => {
