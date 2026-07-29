@@ -630,13 +630,14 @@
 /* insert-between: a thin gap that opens up on hover to reveal "블록 추가" */
 .sb-insert { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; background: transparent;
   cursor: pointer; padding: 0; height: 8px; overflow: hidden; transition: height .2s cubic-bezier(.2,.7,.3,1); }
-.sb-insert:hover { height: 48px; }
+.sb-insert:hover, .sb-insert:focus-within { height: 48px; }
 .sb-insert-line { flex: 1; height: 1px; background: var(--ring-strong); opacity: 0; transition: opacity .18s; }
 .sb-insert-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--fg-2);
   background: #fff; box-shadow: var(--elev-card); border-radius: var(--r-pill); padding: 7px 14px;
   transform: scale(.7); opacity: 0; transition: transform .2s cubic-bezier(.2,.7,.3,1), opacity .18s, color .14s; flex: none; }
-.sb-insert:hover .sb-insert-line { opacity: 1; }
-.sb-insert:hover .sb-insert-pill { transform: scale(1); opacity: 1; color: var(--fg-1); }
+.sb-insert:hover .sb-insert-line, .sb-insert:focus-within .sb-insert-line { opacity: 1; }
+.sb-insert:hover .sb-insert-pill, .sb-insert:focus-within .sb-insert-pill { transform: scale(1); opacity: 1; color: var(--fg-1); }
+@media (hover: none) { .sb-insert { height: 48px; } .sb-insert .sb-insert-line { opacity: 1; } .sb-insert .sb-insert-pill { transform: scale(1); opacity: 1; color: var(--fg-1); } }
 .sb-insert-gap { margin: -6px 0 4px; }   /* 섹션 사이 hover 인서트 — 밴드 간격을 파고들어 자리 차지 없이 */
 .sb-insert-wrap { position: relative; width: 100%; z-index: 2; }
 .sb-insert-wrap.in-space .sb-insert-line { background: var(--link); }
