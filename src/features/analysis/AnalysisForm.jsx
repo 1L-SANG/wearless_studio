@@ -12,6 +12,7 @@ import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppSt
 import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
+import { BODY_LEVELS, normalizeMannequinBody } from '@/lib/mannequinBody.js';
 import {
   matchingFitDefinition,
   matchingFitFromProfile,
@@ -433,6 +434,17 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const setMeasure = (key, value) => onChange({ measurements: (a.measurements || []).map((m) => m.key === key ? { ...m, value: value === '' ? null : Number(value) } : m) });
   const typeLabel = catalogs.clothingTypes.find((t) => t.value === a.clothingType)?.label;
   const fitOpts = fitOptsOf(a).opts;
+  // 체형 = 베이스 마네킹 선택(가슴·힙 볼륨). fitProfile 밖의 독립 필드 — 프롬프트에 안 들어간다.
+  // 여성 타깃일 때만 값이 존재하고, 그 외엔 null 이라 행 자체가 렌더되지 않는다.
+  const body = normalizeMannequinBody(a.mannequinBody, genderOf(a.targetGenders));
+  const setBody = (axis, value) => onChange({
+    mannequinBody: { ...normalizeMannequinBody(a.mannequinBody, 'women'), [axis]: value },
+  });
+  // 남성 타깃으로 바뀌면 체형 값을 떨군다 — fitProfile 의 성별 변경 축 리셋과 같은 방어.
+  const withGenderScope = (patch) => (
+    genderOf('targetGenders' in patch ? patch.targetGenders : a.targetGenders) === 'women'
+      ? patch
+      : { ...patch, mannequinBody: null });
 
   const sections = (
     <>
@@ -465,10 +477,18 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
                   }} />
               } /></div>
           <div className="field-row"><label className="lbl">대상 성별</label>
-            <Chips options={catalogs.genders} value={a.targetGenders?.[0] || null} onChange={(v) => onChange(withFitProfile({ targetGenders: v ? [v] : [] }))} /></div>
+            <Chips options={catalogs.genders} value={a.targetGenders?.[0] || null} onChange={(v) => onChange(withGenderScope(withFitProfile({ targetGenders: v ? [v] : [] })))} /></div>
           {fitOpts.length > 0 && (
             <div className="field-row"><label className="lbl">핏</label>
               <Chips options={fitOpts} value={a.fit} onChange={(v) => onChange(withFitProfile({ fit: v }, 'seller'))} /></div>
+          )}
+          {body && (
+            <>
+              <div className="field-row"><label className="lbl">체형 · 가슴</label>
+                <Chips options={BODY_LEVELS} value={body.bust} onChange={(v) => setBody('bust', v)} /></div>
+              <div className="field-row"><label className="lbl">체형 · 힙</label>
+                <Chips options={BODY_LEVELS} value={body.hip} onChange={(v) => setBody('hip', v)} /></div>
+            </>
           )}
         </div>
       </div>
