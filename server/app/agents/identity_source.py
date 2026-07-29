@@ -12,6 +12,8 @@ detail_page/editor 워커가 컷 루프 전 1회 소스를 정한다 — 컷마�
 키·바이트는 여기서 다루지 않는다(private 키 미직렬화) — 상위 워커가 refs 로 r2_face 에서 로드.
 """
 
+import uuid
+
 
 def select_source(*, selected_model_id, license_row, has_real_assets: bool,
                   has_license_face: bool) -> str:
@@ -34,7 +36,17 @@ async def resolve_real_model_assets(conn, model_id: str):
 
     assets_status='ready' 이고 두 뷰가 모두 유효할 때만 refs 리스트. 아니면 None(→ VIRTUAL/폴백).
     각 ref = {key, mime, bucket}. bucket='face' 면 워커가 r2_face(비공개)에서 로드한다.
+
+    가상모델 id(mA·mB·mC — 계약 §catalogs.models)는 UUID 가 아니다. fm_models.id(uuid)
+    쿼리에 그대로 바인딩하면 psycopg InvalidTextRepresentation 으로 **쿼리 자체가 죽어**
+    상세페이지·에디터 이미지 잡 전체가 실패한다(2026-07-29 재현: facemarket_enabled=true
+    + 가상모델 선택 → progress 5 즉사). UUID 형식이 아니면 실존 모델일 수 없으므로
+    조회 없이 None → VIRTUAL 폴백.
     """
+    try:
+        uuid.UUID(str(model_id))
+    except (TypeError, ValueError):
+        return None
     async with conn.cursor() as cur:
         await cur.execute(
             "select m.assets_status, a.view, a.r2_key, a.mime, a.bucket "

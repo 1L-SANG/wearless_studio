@@ -13,8 +13,8 @@ from datetime import datetime, timedelta, timezone
 from app.workers import detail_page_job as dpj
 from conftest import FakeR2, make_settings, worker_job
 
-GRID_KEY = "facemarket/models/model-1/grid_sedcard.png"
-FACE_FRONT_KEY = "facemarket/models/model-1/face_front.png"
+GRID_KEY = "facemarket/models/11111111-1111-1111-1111-111111111111/grid_sedcard.png"
+FACE_FRONT_KEY = "facemarket/models/11111111-1111-1111-1111-111111111111/face_front.png"
 
 
 def _asset_rows(status="ready"):
@@ -26,7 +26,7 @@ def _asset_rows(status="ready"):
     ]
 
 
-def _license_meta(model_id="model-1", status="active", days=30):
+def _license_meta(model_id="11111111-1111-1111-1111-111111111111", status="active", days=30):
     return {"id": "lic-1", "model_id": model_id, "status": status,
             "license_valid_until": datetime.now(timezone.utc) + timedelta(days=days),
             "display_name": "노지운"}
@@ -118,7 +118,7 @@ def _patch(monkeypatch, captured):
                 "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_analysis(conn, pid):
-        return {"selectedModelId": "model-1"}
+        return {"selectedModelId": "11111111-1111-1111-1111-111111111111"}
 
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
