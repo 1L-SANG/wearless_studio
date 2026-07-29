@@ -24,6 +24,11 @@ import { thumbUrl } from '@/lib/imageCdn.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
 
+/* Phase 0 스냅 스파이크 토글 — DEV 에서만 react-moveable 내장 snap(elementGuidelines + 캔버스 센티넬)
+   활성화하고 커스텀 snapX 를 우회한다. scale(0.4/1/2)×좌표계 + 리사이즈 생존 검증용.
+   검증 통과 시 Phase 1 에서 상시 on + snapX 완전 제거로 승격 예정. */
+const SNAP_SPIKE = import.meta.env.DEV;
+
 /* 라이선스 검증 배지 QR (제안서 step03 "& DID 서명 첨부") — 라이선스가 잠긴 상세페이지의
    ai-notice 블록에만 백엔드가 넣는 'license-verify' 요소를 렌더한다. QR 내용은 스캔 대상이
    외부 폰이라 반드시 절대 URL: `{현재 origin}/verify/{licenseId}`. 심사위원이 찍으면 무인증
@@ -324,6 +329,7 @@ export function Editor() {
   const [cropping, setCropping] = useState(null);
   const [lockRatio, setLockRatio] = useState(true); // 이미지 패널 자물쇠 = moveable keepRatio
   const [mvTargets, setMvTargets] = useState([]);  // DOM nodes for react-moveable
+  const [mvGuides, setMvGuides] = useState([]);    // Phase0 스파이크: elementGuidelines 소스(형제 요소+센티넬), effect-수집(identity 안정)
   const dragSnap = useRef(null);                   // start coords during a moveable gesture
   const gesturing = useRef(false);                 // moveable 제스처 진행 중 — 상태 커밋/updateRect 금지
   const liveRef = useRef({});                      // elId → 라이브 적용값 (gesture end에 한 번 커밋)
@@ -431,6 +437,24 @@ export function Editor() {
     setMvTargets(nodes);
   }, [selEls, blocks, scale, tab, preview, editEl, layerFloat]);
 
+  // Phase0 스파이크: elementGuidelines 소스 = 선택 요소가 속한 블록의 형제 요소 노드 + 캔버스 센티넬.
+  // mvTargets 와 동일한 effect+state 패턴(렌더-타임 DOM 쿼리 금지) — deps 는 제스처-안정이라
+  // 드래그 중 배열 identity 가 안 변함(prop-churn 재렌더로 리사이즈 죽는 것 방지, critic M1).
+  useEffect(() => {
+    if (!SNAP_SPIKE || !blocks || preview) { setMvGuides([]); return; }
+    const wrap = wrapRef.current; if (!wrap) { setMvGuides([]); return; }
+    const selBlockIds = new Set();
+    blocks.forEach((b) => { if (b.elements.some((e) => selEls.includes(e.id))) selBlockIds.add(b.id); });
+    const targetSet = new Set(selEls);
+    const sib = [];
+    blocks.forEach((b) => { if (!selBlockIds.has(b.id)) return; b.elements.forEach((el) => {
+      if (targetSet.has(el.id) || el.hidden || el.locked) return;
+      const n = wrap.querySelector(`[data-elid="${el.id}"]`); if (n) sib.push(n);
+    }); });
+    const sentinels = Array.from(wrap.querySelectorAll('[data-snap-sentinel]'));
+    setMvGuides([...sib, ...sentinels]);
+  }, [selEls, blocks, scale, tab, preview, mvTargets]);
+
   // transform: scale doesn't take layout space — measure the unscaled canvas
   // height so the spacer can reserve the SCALED scroll area (zoom-equivalent)
   useLayoutEffect(() => {
@@ -450,6 +474,16 @@ export function Editor() {
   useEffect(() => { if (tab === 'wardrobe' && genDot === 'done') setGenDot('none'); }, [tab, genDot]);
   // dev-only QA hook: drive gestures via moveable.request() (real pointer pipeline)
   useEffect(() => { if (import.meta.env.DEV) window.__mv = moveableRef; }, []);
+  // Phase0 스파이크 QA 훅: 콘솔에서 window.__spike.zoom(0.4) 후 요소 선택 → __spike.resize(120,120)
+  // 로 리사이즈 파이프라인을 스크립트 구동(생존 검증). __spike.guides() = 현재 가이드 노드 수.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    window.__spike = {
+      resize: (dw = 120, dh = 120) => moveableRef.current?.request('resizable', { deltaWidth: dw, deltaHeight: dh, isInstant: true }),
+      zoom: (s) => setScale(Math.min(2, Math.max(0.1, +(+s).toFixed(2)))),
+      guides: () => mvGuides.length,
+    };
+  });
 
   if (!blocks || !catalogs) return <div className="editor"><div style={{ margin: 'auto' }}><Icon name="loader" size={26} className="spin" /></div></div>;
 
@@ -646,7 +680,7 @@ export function Editor() {
     const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
     let nx = st.x + beforeTranslate[0]; let ny = st.y + beforeTranslate[1];
-    if (selEls.length === 1) nx = snapX(nx, st.w || 0);
+    if (!SNAP_SPIKE && selEls.length === 1) nx = snapX(nx, st.w || 0);  // 스파이크 on: moveable 내장 스냅(beforeTranslate 이미 스냅됨) 사용, snapX 우회
     target.style.left = nx + 'px'; target.style.top = ny + 'px';
     liveRef.current[elId] = { x: Math.round(nx), y: Math.round(ny) };
   };
@@ -827,6 +861,11 @@ export function Editor() {
               onDragLeave={() => setFrameOver((o) => o === blocks.length ? null : o)} onDrop={(e) => onFrameDrop(e, blocks.length)}>
               <div className={`canvas-dropline${frameOver === blocks.length ? ' on' : ''}`} />
             </div>
+            {/* Phase0 스파이크: 캔버스 세로 센티넬(좌40/중앙500/우960) — elementGuidelines 소스.
+                zero-width·투명, .ed-canvas(언스케일 좌표) 안이라 x 는 언스케일 px. */}
+            {SNAP_SPIKE && [40, 500, 960].map((x) => (
+              <div key={`snap-sentinel-${x}`} data-snap-sentinel style={{ position: 'absolute', left: x, top: 0, width: 0, height: canvasH || 4000, pointerEvents: 'none', opacity: 0 }} />
+            ))}
 
           </div>
           </div>
@@ -844,6 +883,16 @@ export function Editor() {
               resizable={single}
               rotatable={single}
               keepRatio={lockRatio}
+              {...(SNAP_SPIKE ? {
+                snappable: true,
+                elementGuidelines: mvGuides,
+                snapDirections: { top: true, left: true, bottom: true, right: true, center: true, middle: true },
+                elementSnapDirections: { top: true, left: true, bottom: true, right: true, center: true, middle: true },
+                snapGap: true,
+                snapHorizontalThreshold: 6,
+                snapVerticalThreshold: 6,
+                isDisplaySnapDigit: true,
+              } : {})}
               renderDirections={['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']}
               origin={false}
               throttleDrag={0}
