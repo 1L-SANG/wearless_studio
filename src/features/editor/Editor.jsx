@@ -690,6 +690,9 @@ export function Editor() {
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
     let nx = st.x + beforeTranslate[0]; let ny = st.y + beforeTranslate[1];
     if (!SNAP_SPIKE && selEls.length === 1) nx = snapX(nx, st.w || 0);  // 스파이크 on: moveable 내장 스냅(beforeTranslate 이미 스냅됨) 사용, snapX 우회
+    // 캔버스 밖으로 넘어가지 않게 clamp — 왼쪽 끝에서 x=0 flush(overshoot 방지), 오른쪽은 1000-w, 위(y<0)도 막음.
+    // block-clip 이 어차피 넘친 부분을 자르므로 손실 없음. ("맨 왼쪽 끌면 몇 px 더 넘어가던" 문제 해결)
+    if (selEls.length === 1) { const w = st.w || 0; nx = Math.max(0, Math.min(Math.max(0, 1000 - w), nx)); ny = Math.max(0, ny); }
     target.style.left = nx + 'px'; target.style.top = ny + 'px';
     liveRef.current[elId] = { x: Math.round(nx), y: Math.round(ny) };
   };
