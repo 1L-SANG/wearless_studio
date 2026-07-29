@@ -1385,7 +1385,39 @@
 .crop-ghost { position: absolute; cursor: move; }
 .crop-ghost img { width: 100%; height: 100%; display: block; }
 .crop-frame { position: absolute; overflow: hidden; cursor: move;
-  outline: 1.5px solid #8fbfee; box-shadow: 0 0 0 100000px rgba(14, 13, 20, 0.32); }
+  box-shadow: 0 0 0 100000px rgba(14, 13, 20, 0.32); }
+/* 포토샵식 크롭 오버레이 — 마칭앤츠 테두리(흰 실선 위 검정 점선 흐름) + 3분할 그리드.
+   프레임(overflow:hidden) 밖 형제 SVG 라 stroke 안 잘림. non-scaling-stroke 로 줌 무관 1.5px. */
+.crop-svg { position: absolute; pointer-events: none; overflow: visible; z-index: 3; }
+.crop-thirds line { stroke: rgba(255, 255, 255, .55); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+.crop-ant { fill: none; vector-effect: non-scaling-stroke; }
+.crop-ant.ant-w { stroke: #fff; stroke-width: 1.5px; }
+.crop-ant.ant-b { stroke: #0e0d14; stroke-width: 1.5px; stroke-dasharray: 5 5; animation: crop-march .55s linear infinite; }
+@keyframes crop-march { to { stroke-dashoffset: -10; } }
+@media (prefers-reduced-motion: reduce) { .crop-ant.ant-b { animation: none; } }
+/* 크롭 하단 바 — 원본(리셋) 버튼 + Enter/Esc 힌트. --inv 역스케일로 줌 무관 일정 크기. */
+.crop-bar { position: absolute; display: inline-flex; align-items: center; gap: 8px; padding-top: 8px;
+  transform: scale(var(--inv, 1)); transform-origin: top left; z-index: 4; white-space: nowrap; pointer-events: auto; }
+.crop-hint { font-size: 12px; color: #fff; background: rgba(14, 13, 20, .72); padding: 4px 9px; border-radius: 6px; font-weight: 500; }
+.crop-reset { font-size: 12px; font-weight: 600; color: #0e0d14; background: #fff; border: 0; padding: 5px 11px; border-radius: 6px; cursor: pointer; box-shadow: 0 1px 4px rgba(14, 13, 20, .25); }
+.crop-reset:hover { background: #f0f0f2; }
+/* 다중선택 정렬·분배 바 (Phase 3b) — 캔버스 상단 중앙 floating */
+.align-bar { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;
+  display: inline-flex; align-items: center; gap: 2px; padding: 5px; background: #fff; border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(14, 13, 20, .18), 0 0 0 1px var(--ring); }
+.align-bar button { width: 30px; height: 30px; border: 0; background: transparent; border-radius: 7px; cursor: pointer;
+  font-size: 17px; line-height: 1; color: var(--fg-1); display: grid; place-items: center; }
+.align-bar button:hover { background: var(--bg-2); }
+.align-bar button:disabled { opacity: .35; cursor: default; }
+.align-sep { width: 1px; height: 20px; background: var(--ring); margin: 0 3px; }
+/* Phase 4 — space-드래그 팬 + fit 버튼 */
+.ed-canvas-wrap.panning { cursor: grab; }
+.ed-canvas-wrap.panning:active { cursor: grabbing; }
+.ed-canvas-wrap.panning .canvas-block,
+.ed-canvas-wrap.panning .moveable-control-box,
+.ed-canvas-wrap.panning .align-bar { pointer-events: none; }
+.zoom-div { width: 1px; height: 15px; background: var(--ring); margin: 0 1px; }
+.zoom-fit { width: auto !important; padding: 0 7px !important; font-size: 11px; font-weight: 600; color: var(--fg-1); }
 .crop-h { position: absolute; width: 12px; height: 12px; background: #fff; border-radius: 3px;
   box-shadow: 0 0 0 1.5px #8fbfee, 0 1px 4px rgba(14, 13, 20, 0.25); z-index: 2; }
 .ch-nw { left: 0; top: 0; transform: translate(-50%, -50%) scale(var(--inv, 1)); cursor: nwse-resize; }

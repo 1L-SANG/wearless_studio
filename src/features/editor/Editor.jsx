@@ -19,10 +19,15 @@ import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/compone
 import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { SHAPE_D } from '@/features/editor/shapes.js';
+import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
+
+/* 스냅 엔진 상시 on (Phase 1 정식 승격) — react-moveable 내장 snap(elementGuidelines + 캔버스 센티넬).
+   DEV 게이트 제거: prod 배포에서도 동작. 옛 커스텀 snapX 는 삭제됨. */
+const SNAP_SPIKE = true;
 
 /* 라이선스 검증 배지 QR (제안서 step03 "& DID 서명 첨부") — 라이선스가 잠긴 상세페이지의
    ai-notice 블록에만 백엔드가 넣는 'license-verify' 요소를 렌더한다. QR 내용은 스캔 대상이
@@ -160,9 +165,10 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   return <div {...common} className={cls()} style={base}>{inner}</div>;
 }
 
-function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onAddImage, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, idx }) {
-  const contentBottom = block.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0);
-  const blockH = block.h || Math.max(220, contentBottom + 50);
+function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onAddImage, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropReset, idx }) {
+  // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
+  // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
+  const blockH = getBlockRenderHeight(block);
   const blockSelected = selectedBlockId === block.id && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
 
@@ -219,6 +225,22 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
                 <span key={d} className={`crop-h ch-${d}`} onPointerDown={(e) => onCropDrag(e, 'frame', d)} />
               ))}
             </div>
+            {/* 포토샵식 마칭앤츠 테두리 + 3분할 그리드 — 프레임 밖(비클립) 형제로 렌더해 stroke 안 잘림, pointer-events none */}
+            <svg className="crop-svg" style={{ left: crop.fx, top: crop.fy, width: crop.fw, height: crop.fh }}
+              viewBox={`0 0 ${Math.max(1, crop.fw)} ${Math.max(1, crop.fh)}`} preserveAspectRatio="none">
+              <g className="crop-thirds">
+                <line x1={crop.fw / 3} y1={0} x2={crop.fw / 3} y2={crop.fh} />
+                <line x1={crop.fw * 2 / 3} y1={0} x2={crop.fw * 2 / 3} y2={crop.fh} />
+                <line x1={0} y1={crop.fh / 3} x2={crop.fw} y2={crop.fh / 3} />
+                <line x1={0} y1={crop.fh * 2 / 3} x2={crop.fw} y2={crop.fh * 2 / 3} />
+              </g>
+              <rect className="crop-ant ant-w" x={0} y={0} width={crop.fw} height={crop.fh} />
+              <rect className="crop-ant ant-b" x={0} y={0} width={crop.fw} height={crop.fh} />
+            </svg>
+            <div className="crop-bar" style={{ left: crop.fx, top: crop.fy + crop.fh }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+              <button className="crop-reset" onClick={(e) => { e.stopPropagation(); onCropReset && onCropReset(); }}>원본</button>
+              <span className="crop-hint">Enter 확정 · Esc 취소</span>
+            </div>
           </div>
         )}
       </div>
@@ -247,7 +269,9 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
   return (
     <div className="ed-right">
       <div className="mini-head">상세페이지 · 드래그로 순서 변경</div>
-      {blocks.map((b, i) => (
+      {blocks.map((b, i) => {
+        const blockH = getBlockRenderHeight(b);
+        return (
         <div key={b.id} style={{ display: 'contents' }}>
           <div className={`mini-dropline${lineAt === i ? ' on' : ''}`} />
           <div className={`mini-block${selectedBlockId === b.id ? ' on' : ''}${dragId === b.id ? ' dragging' : ''}`}
@@ -256,15 +280,15 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
             onDragEnd={end}
             onDragOver={(e) => { if (dragId) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setLineAt(e.clientY > r.top + r.height / 2 ? i + 1 : i); } }}
             onDrop={(e) => { e.preventDefault(); if (!dragId) return; const from = blocks.findIndex((x) => x.id === dragId); let to = lineAt == null ? i : lineAt; if (from < to) to--; to = Math.max(0, Math.min(blocks.length - 1, to)); if (from > -1 && from !== to) onReorder(from, to); end(); }}>
-            <div className="mini-canvas" style={{ background: b.bg, aspectRatio: `1000 / ${b.h || 660}` }}>
+            <div className="mini-canvas" style={{ background: b.bg, aspectRatio: `1000 / ${blockH}` }}>
               {b.elements.filter((e) => e.type === 'image' && e.src).map((e) => {
-                const bh = b.h || 660;
-                return <img key={e.id} src={thumbUrl(e.src, 200)} style={{ left: (e.x / 1000) * 100 + '%', top: (e.y / bh) * 100 + '%', width: (e.w / 1000) * 100 + '%', height: (e.h / bh) * 100 + '%' }} alt="" draggable={false} loading="lazy" decoding="async" />;
+                return <img key={e.id} src={thumbUrl(e.src, 200)} style={{ left: (e.x / 1000) * 100 + '%', top: (e.y / blockH) * 100 + '%', width: (e.w / 1000) * 100 + '%', height: (e.h / blockH) * 100 + '%' }} alt="" draggable={false} loading="lazy" decoding="async" />;
               })}
             </div>
           </div>
         </div>
-      ))}
+        );
+      })}
       <div className={`mini-dropline${lineAt === blocks.length ? ' on' : ''}`} />
     </div>
   );
@@ -287,7 +311,7 @@ export function Editor() {
   // 마지막 편집이 유실되던 구멍의 수정.
   const latestBlocks = useRef(null);
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
-    const next = typeof u === 'function' ? u(prev) : u;
+    const next = expandBlockHeights(typeof u === 'function' ? u(prev) : u);
     latestBlocks.current = next;
     return next;
   }), []);
@@ -305,6 +329,7 @@ export function Editor() {
   const [selEl, setSelEl] = useState(null);
   const [selEls, setSelEls] = useState([]);
   const [scale, setScale] = useState(0.4);
+  const [spaceDown, setSpaceDown] = useState(false); // space-드래그 팬 모드 (Phase 4)
   const [rightHidden, setRightHidden] = useState(false);
   const [preview, setPreview] = useState(false);
   const [download, setDownload] = useState(false);
@@ -324,6 +349,7 @@ export function Editor() {
   const [cropping, setCropping] = useState(null);
   const [lockRatio, setLockRatio] = useState(true); // 이미지 패널 자물쇠 = moveable keepRatio
   const [mvTargets, setMvTargets] = useState([]);  // DOM nodes for react-moveable
+  const [mvGuides, setMvGuides] = useState([]);    // Phase0 스파이크: elementGuidelines 소스(형제 요소+센티넬), effect-수집(identity 안정)
   const dragSnap = useRef(null);                   // start coords during a moveable gesture
   const gesturing = useRef(false);                 // moveable 제스처 진행 중 — 상태 커밋/updateRect 금지
   const liveRef = useRef({});                      // elId → 라이브 적용값 (gesture end에 한 번 커밋)
@@ -343,7 +369,7 @@ export function Editor() {
       // 실존 모델 카탈로그 — mock 모드는 서버가 없으니 스킵, 실패는 null(AIPanel 이 가상모델 폴백)
       isMockMode ? Promise.resolve(null) : listModels().catch(() => null)])
       .then(([b, w, c, _a, p, fm]) => {
-        const withH = b.map((blk) => normalizeEditorBlockRole({ ...blk, h: blk.h || Math.max(220, blk.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0) + 50) }));
+        const withH = b.map((blk) => normalizeEditorBlockRole(blk));
         setBlocks(withH); setWardrobe(w); setCatalogs(c); setFmModels(fm); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         setClothingType(p.clothingType || 'top');
@@ -389,6 +415,22 @@ export function Editor() {
         setSelEl(null); setSelEls([]);
         toast.push(`${selEls.length > 1 ? selEls.length + '개 요소를' : '요소를'} 삭제했어요`, { icon: 'trash' });
       }
+      // 방향키 nudge — 1px, Shift=10px. 타이핑/크롭 중 제외. drag 와 동일 clamp([0,1000-w]·y≥0). 연타는 350ms 히스토리 창으로 1 undo.
+      if (selEls.length && e.key.startsWith('Arrow')) {
+        const t = e.target;
+        if (/input|textarea/i.test(t.tagName) || t.isContentEditable || kb.current.croppingOn) return;
+        const step = e.shiftKey ? 10 : 1;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        if (!dx && !dy) return;
+        e.preventDefault();
+        setBlocks((bs) => {
+          const snapshot = Object.fromEntries(bs.flatMap((b) => b.elements.filter((el) => selEls.includes(el.id)).map((el) => [el.id, el])));
+          const [moveX, moveY] = clampDragDelta(snapshot, [dx, dy]);
+          return bs.map((b) => ({ ...b, elements: b.elements.map((el) => (selEls.includes(el.id)
+            ? { ...el, x: (el.x || 0) + moveX, y: (el.y || 0) + moveY } : el)) }));
+        });
+      }
     };
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   }, [selEls]);
@@ -414,6 +456,16 @@ export function Editor() {
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Phase 4 — space-드래그 팬 모드 토글. **early-return 앞**에 둬야 hook 개수 안정(blank 크래시 방지).
+  useEffect(() => {
+    const isType = (t) => /input|textarea/i.test(t.tagName) || t.isContentEditable || t.tagName === 'BUTTON';
+    const down = (e) => { if (e.code === 'Space' && !isType(e.target)) { e.preventDefault(); setSpaceDown(true); } };
+    const up = (e) => { if (e.code === 'Space') setSpaceDown(false); };
+    const blur = () => setSpaceDown(false);
+    window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
+  }, []);
+
   // Ctrl/Cmd + wheel → zoom in 10% steps
   useEffect(() => {
     const wrap = wrapRef.current; if (!wrap) return;
@@ -430,6 +482,32 @@ export function Editor() {
     const nodes = ids.map((id) => wrap.querySelector(`[data-elid="${id}"]`)).filter(Boolean);
     setMvTargets(nodes);
   }, [selEls, blocks, scale, tab, preview, editEl, layerFloat]);
+
+  // Phase0 스파이크: elementGuidelines 소스 = 선택 요소가 속한 블록의 형제 요소 노드 + 캔버스 센티넬.
+  // mvTargets 와 동일한 effect+state 패턴(렌더-타임 DOM 쿼리 금지) — deps 는 제스처-안정이라
+  // 드래그 중 배열 identity 가 안 변함(prop-churn 재렌더로 리사이즈 죽는 것 방지, critic M1).
+  useEffect(() => {
+    if (!SNAP_SPIKE || !blocks || preview) { setMvGuides([]); return; }
+    const wrap = wrapRef.current; if (!wrap) { setMvGuides([]); return; }
+    // 스냅 걸림 범위 = 선택 요소가 있는 페이지(블록) + 바로 위/아래 페이지만. 먼 페이지엔 안 걸린다.
+    const selIdx = new Set();
+    blocks.forEach((b, i) => { if (b.elements.some((e) => selEls.includes(e.id))) selIdx.add(i); });
+    const inRange = new Set();
+    selIdx.forEach((i) => { inRange.add(i - 1); inRange.add(i); inRange.add(i + 1); });
+    const targetSet = new Set(selEls);
+    const sib = [];
+    blocks.forEach((b, i) => { if (!inRange.has(i)) return; b.elements.forEach((el) => {
+      if (targetSet.has(el.id) || el.hidden || el.locked) return;
+      const n = wrap.querySelector(`[data-elid="${el.id}"]`); if (n) sib.push(n);
+    }); });
+    // 센티넬(캔버스 세로선)은 세로 가이드만 방출 — 전체높이라 top/bottom/middle 수평선까지 뿜던 잡음 제거(critic side-effect).
+    // 한 페이지(블록) 내 가운데 정렬 — 선택 블록의 클립 영역을 center/middle 가이드로(요소 중앙이 페이지 중앙 x·y 에 오면 스냅).
+    const blockNodes = wrap.querySelectorAll('.canvas-block');
+    const centerGuides = [];
+    selIdx.forEach((i) => { const clip = blockNodes[i]?.querySelector('.block-clip'); if (clip) centerGuides.push({ element: clip, center: true, middle: true }); });
+    const sentinels = Array.from(wrap.querySelectorAll('[data-snap-sentinel]')).map((el) => ({ element: el, left: true, center: true, right: true }));
+    setMvGuides([...sib, ...centerGuides, ...sentinels]);
+  }, [selEls, blocks, scale, tab, preview, mvTargets]);
 
   // transform: scale doesn't take layout space — measure the unscaled canvas
   // height so the spacer can reserve the SCALED scroll area (zoom-equivalent)
@@ -450,6 +528,16 @@ export function Editor() {
   useEffect(() => { if (tab === 'wardrobe' && genDot === 'done') setGenDot('none'); }, [tab, genDot]);
   // dev-only QA hook: drive gestures via moveable.request() (real pointer pipeline)
   useEffect(() => { if (import.meta.env.DEV) window.__mv = moveableRef; }, []);
+  // Phase0 스파이크 QA 훅: 콘솔에서 window.__spike.zoom(0.4) 후 요소 선택 → __spike.resize(120,120)
+  // 로 리사이즈 파이프라인을 스크립트 구동(생존 검증). __spike.guides() = 현재 가이드 노드 수.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    window.__spike = {
+      resize: (dw = 120, dh = 120) => moveableRef.current?.request('resizable', { deltaWidth: dw, deltaHeight: dh, isInstant: true }),
+      zoom: (s) => setScale(Math.min(2, Math.max(0.1, +(+s).toFixed(2)))),
+      guides: () => mvGuides.length,
+    };
+  });
 
   if (!blocks || !catalogs) return <div className="editor"><div style={{ margin: 'auto' }}><Icon name="loader" size={26} className="spin" /></div></div>;
 
@@ -630,7 +718,7 @@ export function Editor() {
      상태를 커밋한다 — 매 프레임 setState→컨트롤박스 재생성이 리사이즈 제스처를
      죽이던 되먹임 루프 차단 (드래그는 타깃 노드에 붙어 살아남던 비대칭). ---- */
   const blockIdOf = (elId) => (blocks.find((b) => b.elements.some((e) => e.id === elId)) || {}).id;
-  const snapX = (nx, w) => { const W = 1000, s = 10, targets = [40, (W - w) / 2, W - 40 - w]; for (const t of targets) { if (Math.abs(nx - t) < s) return t; } return nx; };
+  // snapX 제거됨(promote) — moveable 내장 스냅(snappable + elementGuidelines)이 대체.
   const snapDeg = (n) => { for (const t of [0, 90, 180, 270]) { const diff = ((n - t + 540) % 360) - 180; if (Math.abs(diff) <= 7) return normDeg(t); } return n; };
   const commitLive = () => {
     const lv = liveRef.current; liveRef.current = {};
@@ -651,8 +739,10 @@ export function Editor() {
   const liveDrag = (target, beforeTranslate) => {
     const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    let nx = st.x + beforeTranslate[0]; let ny = st.y + beforeTranslate[1];
-    if (selEls.length === 1) nx = snapX(nx, st.w || 0);
+    const [dx, dy] = clampDragDelta(dragSnap.current, beforeTranslate);
+    const nx = st.x + dx; const ny = st.y + dy;  // moveable 내장 스냅으로 beforeTranslate 는 이미 스냅된 값
+    // 캔버스 밖으로 넘어가지 않게 clamp — 왼쪽 끝에서 x=0 flush(overshoot 방지), 오른쪽은 1000-w, 위(y<0)도 막음.
+    // block-clip 이 어차피 넘친 부분을 자르므로 손실 없음. ("맨 왼쪽 끌면 몇 px 더 넘어가던" 문제 해결)
     target.style.left = nx + 'px'; target.style.top = ny + 'px';
     liveRef.current[elId] = { x: Math.round(nx), y: Math.round(ny) };
   };
@@ -660,11 +750,15 @@ export function Editor() {
   const liveResize = (target, width, height, drag) => {
     const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    const w = Math.max(24, width); const h = Math.max(24, height);
-    const nx = st.x + (drag?.beforeTranslate?.[0] || 0); const ny = st.y + (drag?.beforeTranslate?.[1] || 0);
-    target.style.left = nx + 'px'; target.style.top = ny + 'px';
-    target.style.width = w + 'px'; target.style.height = h + 'px';
-    liveRef.current[elId] = { x: Math.round(nx), y: Math.round(ny), w: Math.round(w), h: Math.round(h) };
+    const rect = clampElementRect(
+      st.x + (drag?.beforeTranslate?.[0] || 0),
+      st.y + (drag?.beforeTranslate?.[1] || 0),
+      width,
+      height,
+    );
+    target.style.left = rect.x + 'px'; target.style.top = rect.y + 'px';
+    target.style.width = rect.w + 'px'; target.style.height = rect.h + 'px';
+    liveRef.current[elId] = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h) };
   };
   const liveRotate = (target, rotation) => {
     const elId = target.dataset.elid;
@@ -691,6 +785,8 @@ export function Editor() {
     });
   };
   const cancelCrop = () => setCropping(null);
+  // 크롭 리셋 — 프레임을 원본 이미지 전체로 되돌린다(자른 것 원위치, 오프셋 0).
+  const resetCrop = () => setCropping((c) => (c ? { ...c, fx: c.fx - c.ox, fy: c.fy - c.oy, fw: c.iw, fh: c.ih, ox: 0, oy: 0 } : c));
   // 크롭 핸들·내부 이미지 드래그 — 자체 포인터 핸들러 (리사이즈와 동일하게 /scale 환산)
   const cropDrag = (e, mode, dir) => {
     if (e.button != null && e.button !== 0) return;
@@ -753,8 +849,59 @@ export function Editor() {
     }
   };
 
+  // Phase 4 — space-드래그 팬 핸들러 (keydown/up effect 는 early-return 앞에 위치, Rules of Hooks)
+  const startPan = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const wrap = wrapRef.current; if (!wrap) return;
+    const sx = e.clientX, sy = e.clientY, sl = wrap.scrollLeft, st = wrap.scrollTop;
+    const move = (ev) => { wrap.scrollLeft = sl - (ev.clientX - sx); wrap.scrollTop = st - (ev.clientY - sy); };
+    const upp = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', upp); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', upp);
+  };
+  const fitToScreen = () => { const wrap = wrapRef.current; if (!wrap) return; setScale(Math.min(2, Math.max(0.1, +((wrap.clientWidth - 80) / 1000).toFixed(2)))); };
   const single = selEls.length === 1 && !editEl;
   const group = selEls.length > 1 && !editEl;
+  // 정렬·분배(Phase 3b) — 다중선택이 "한 블록"일 때만(좌표가 블록-상대라 cross-block 정렬 무의미).
+  const groupBlockId = (() => {
+    if (!group) return null;
+    const bids = new Set();
+    blocks.forEach((b) => b.elements.forEach((e) => { if (selEls.includes(e.id)) bids.add(b.id); }));
+    return bids.size === 1 ? [...bids][0] : null;
+  })();
+  const alignEls = (mode) => {
+    if (!groupBlockId) return;
+    setBlocks((bs) => bs.map((b) => {
+      if (b.id !== groupBlockId) return b;
+      const sel = b.elements.filter((e) => selEls.includes(e.id));
+      if (sel.length < 2) return b;
+      const minX = Math.min(...sel.map((e) => e.x)), maxX = Math.max(...sel.map((e) => e.x + e.w));
+      const minY = Math.min(...sel.map((e) => e.y)), maxY = Math.max(...sel.map((e) => e.y + e.h));
+      const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+      const mv = (e) => {
+        let { x, y } = e;
+        if (mode === 'left') x = minX; else if (mode === 'centerH') x = Math.round(cx - e.w / 2); else if (mode === 'right') x = maxX - e.w;
+        else if (mode === 'top') y = minY; else if (mode === 'middleV') y = Math.round(cy - e.h / 2); else if (mode === 'bottom') y = maxY - e.h;
+        return { ...e, x, y };
+      };
+      return { ...b, elements: b.elements.map((e) => (selEls.includes(e.id) ? mv(e) : e)) };
+    }));
+  };
+  const distributeEls = (axis) => {
+    if (!groupBlockId) return;
+    setBlocks((bs) => bs.map((b) => {
+      if (b.id !== groupBlockId) return b;
+      const sel = b.elements.filter((e) => selEls.includes(e.id));
+      if (sel.length < 3) return b;
+      const k = axis === 'h' ? 'x' : 'y', d = axis === 'h' ? 'w' : 'h';
+      const sorted = [...sel].sort((a, c) => a[k] - c[k]);
+      const start = sorted[0][k], last = sorted[sorted.length - 1];
+      const totalSize = sorted.reduce((s, e) => s + e[d], 0);
+      const gap = (last[k] + last[d] - start - totalSize) / (sorted.length - 1);
+      const pos = {}; let cur = start;
+      sorted.forEach((e) => { pos[e.id] = Math.round(cur); cur += e[d] + gap; });
+      return { ...b, elements: b.elements.map((e) => (pos[e.id] != null ? { ...e, [k]: pos[e.id] } : e)) };
+    }));
+  };
 
   return (
     <div className="editor">
@@ -793,8 +940,9 @@ export function Editor() {
           {renderPanel()}
         </div>
 
-        <div className="ed-canvas-wrap" ref={wrapRef}
-          onClick={(e) => { if (e.target.closest && e.target.closest('.moveable-control-box')) return; if (cropping) { commitCrop(); return; } clearSel(); }}
+        <div className={`ed-canvas-wrap${spaceDown ? ' panning' : ''}`} ref={wrapRef}
+          onPointerDown={(e) => { if (spaceDown) startPan(e); }}
+          onClick={(e) => { if (spaceDown) return; if (e.target.closest && e.target.closest('.moveable-control-box')) return; if (cropping) { commitCrop(); return; } clearSel(); }}
           onScroll={() => moveableRef.current?.updateRect()}
           onMouseMove={(e) => { const g = !e.target.closest('.canvas-block'); setHoverGray((v) => v === g ? v : g); }}
           onMouseLeave={() => setHoverGray(false)}>
@@ -803,9 +951,25 @@ export function Editor() {
               <button onClick={() => setScale((s) => Math.max(0.1, +(s - 0.1).toFixed(2)))}><Icon name="minus" size={15} /></button>
               <span>{Math.round(scale * 100)}%</span>
               <button onClick={() => setScale((s) => Math.min(2, +(s + 0.1).toFixed(2)))}><Icon name="plus" size={15} /></button>
+              <span className="zoom-div" />
+              <button className="zoom-fit" onClick={fitToScreen} title="화면 너비에 맞춤">맞춤</button>
             </div>
           </div>
           {rightHidden && <div style={{ position: 'absolute', right: 10, top: 10, zIndex: 3 }}><IconButton name="layout" size="sm" onClick={() => setRightHidden(false)} /></div>}
+          {groupBlockId && (
+            <div className="align-bar" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+              <button aria-label="왼쪽 정렬" title="왼쪽 정렬" onClick={() => alignEls('left')}>⇤</button>
+              <button aria-label="가로 가운데 정렬" title="가로 가운데 정렬" onClick={() => alignEls('centerH')}>⇔</button>
+              <button aria-label="오른쪽 정렬" title="오른쪽 정렬" onClick={() => alignEls('right')}>⇥</button>
+              <span className="align-sep" />
+              <button aria-label="위 정렬" title="위 정렬" onClick={() => alignEls('top')}>⤒</button>
+              <button aria-label="세로 가운데 정렬" title="세로 가운데 정렬" onClick={() => alignEls('middleV')}>⇕</button>
+              <button aria-label="아래 정렬" title="아래 정렬" onClick={() => alignEls('bottom')}>⤓</button>
+              <span className="align-sep" />
+              <button aria-label="가로 균등 분배" title="가로 균등 분배 (3개+)" onClick={() => distributeEls('h')} disabled={selEls.length < 3}>⇿</button>
+              <button aria-label="세로 균등 분배" title="세로 균등 분배 (3개+)" onClick={() => distributeEls('v')} disabled={selEls.length < 3}>⇳</button>
+            </div>
+          )}
           {/* CSS `zoom` is invisible to react-moveable (it only reads the transform
               matrix) — scale via transform instead. transform doesn't take layout
               space, so a spacer reserves the SCALED dimensions for scrolling. */}
@@ -821,7 +985,7 @@ export function Editor() {
                 <CanvasBlock block={b} scale={scale} idx={i}
                   selectedBlockId={selBlock} selEls={selEls} editEl={editEl} onEdit={setEditEl}
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
-                  onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop}
+                  onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropReset={resetCrop}
                   onSelectBlock={(id) => { setSelBlock(id); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
                   onElPatch={patchElById} onAddImage={requestSlotImage} onOpenLayers={(id) => { setLayerFloat(id); setLayerPos(null); }}
                   onObjectDrop={(bid, type, id, ev) => addShape(type, id, bid, ev)} onReshape={reshapeBlock}
@@ -833,6 +997,11 @@ export function Editor() {
               onDragLeave={() => setFrameOver((o) => o === blocks.length ? null : o)} onDrop={(e) => onFrameDrop(e, blocks.length)}>
               <div className={`canvas-dropline${frameOver === blocks.length ? ' on' : ''}`} />
             </div>
+            {/* Phase0 스파이크: 캔버스 세로 센티넬(좌40/중앙500/우960) — elementGuidelines 소스.
+                zero-width·투명, .ed-canvas(언스케일 좌표) 안이라 x 는 언스케일 px. */}
+            {SNAP_SPIKE && [40, 500, 960].map((x) => (
+              <div key={`snap-sentinel-${x}`} data-snap-sentinel style={{ position: 'absolute', left: x, top: 0, width: 0, height: canvasH || 4000, pointerEvents: 'none', opacity: 0 }} />
+            ))}
 
           </div>
           </div>
@@ -850,7 +1019,17 @@ export function Editor() {
               resizable={single}
               rotatable={single}
               keepRatio={lockRatio}
-              renderDirections={['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']}
+              {...(SNAP_SPIKE ? {
+                snappable: true,
+                elementGuidelines: mvGuides,
+                snapDirections: { top: true, left: true, bottom: true, right: true, center: true, middle: true },
+                elementSnapDirections: { top: true, left: true, bottom: true, right: true, center: true, middle: true },
+                snapGap: true,
+                snapHorizontalThreshold: 8,
+                snapVerticalThreshold: 8,
+                isDisplaySnapDigit: true,
+              } : {})}
+              renderDirections={lockRatio ? ['nw', 'ne', 'sw', 'se'] : ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']}
               origin={false}
               throttleDrag={0}
               throttleResize={0}
@@ -893,7 +1072,7 @@ export function Editor() {
           <div className="preview-close"><IconButton name="x" onClick={() => setPreview(false)} /></div>
           <div className="preview-sheet">
             {blocks.map((b) => (
-              <div key={b.id} style={{ position: 'relative', height: b.h || 660, background: b.bg, overflow: 'hidden', boxSizing: 'border-box' }}>
+              <div key={b.id} style={{ position: 'relative', height: getBlockRenderHeight(b), background: b.bg, overflow: 'hidden', boxSizing: 'border-box' }}>
                 {b.elements.map((el) => <CanvasElement key={el.id} el={el} preview selected={false} onSelect={() => {}} onEdit={() => {}} />)}
               </div>
             ))}
