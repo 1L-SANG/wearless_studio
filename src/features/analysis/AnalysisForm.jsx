@@ -17,6 +17,7 @@ import {
   matchingFitFromProfile,
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
+import { resolveSelectedModelId } from './modelSelection.js';
 
 // 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
 // Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
@@ -263,12 +264,24 @@ export function AnalysisSkeleton() {
   );
 }
 
+// AI(가상) 모델 — 서버 레지스트리(server/app/data/virtual_models.json)와 동기 유지.
+// 컷 생성(AG-06)이 이 id('mA'…)로 아이덴티티 자산을 해석하고, 라이선스 게이트는
+// 비-UUID id를 no-op 처리한다(과금 없음). 실제 모델(FaceMarket)과 탭으로 구분 표시.
+const AI_MODELS = [
+  { id: 'mA', displayName: '모델 A', gender: 'women', thumb: '/models/women/w1.webp' },
+  { id: 'mB', displayName: '모델 B', gender: 'men', thumb: '/models/men/m1.webp' },
+  { id: 'mC', displayName: '모델 C', gender: 'men', thumb: '/models/men/m2.webp' },
+];
+
 export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const a = analysis;
   const toast = useToast();
   const [washing, setWashing] = useState(false);
   const [spDraft, setSpDraft] = useState('');
   const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
+  // 직접 입력에 커서가 있는 동안 enum 칩 하이라이트를 지운다 — 커밋은 여전히 blur 시점이라
+  // 데이터는 안 바뀌고, 빈 채로 나가면 칩 선택이 그대로 돌아온다(오클릭 무해).
+  const [ccFocus, setCcFocus] = useState(false);
   useEffect(() => { setCcDraft(a.customCategory || ''); }, [a.customCategory]);
   const [spAdding, setSpAdding] = useState(false);
   const [editMatIdx, setEditMatIdx] = useState(null);
@@ -279,6 +292,9 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [detailFor, setDetailFor] = useState(null); // 상세 모달 대상 모델 카드
+  // AI 모델 / 실제 모델 탭 (2026-07-21 사용자 결정). 초기 탭은 현재 선택이 속한 쪽.
+  const [modelTab, setModelTab] = useState(() =>
+    (a.selectedModelId && !AI_MODELS.some((m) => m.id === a.selectedModelId)) ? 'real' : 'ai');
   useEffect(() => {
     let alive = true;
     listModels()
@@ -295,14 +311,21 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, 5) });
   }, []);
 
-  // 카탈로그 로드 후 선택값이 없거나 더 이상 라이선스 활성 모델이 아니면 첫 라이선스 활성 모델로 자동 선택.
-  // (구 정적 selectedModelId 'mA' 등도 여기서 실 fm_models.id(UUID)로 교체 → 생성 게이트가 해석 가능.)
+  // 카탈로그 로드 후 선택값이 AI 모델도, 라이선스 활성 실제 모델도 아니면 첫 AI 모델로 자동 선택.
+  // 기본은 무료 AI 모델 — 실제 모델(유료 라이선스)은 사용자가 탭에서 명시적으로 고를 때만.
+  // (AI 모델 id 'mA'…는 비-UUID라 생성 라이선스 게이트가 no-op 처리 — 레거시 호환 확인됨.)
   useEffect(() => {
-    const licensable = models.filter((m) => m.hasActiveLicense);
-    if (licensable.length && !licensable.some((m) => m.id === a.selectedModelId)) {
-      onChange({ selectedModelId: licensable[0].id });
+    const nextSelectedModelId = resolveSelectedModelId({
+      selectedModelId: a.selectedModelId,
+      targetGenders: a.targetGenders,
+      models,
+      modelsLoading,
+      aiModels: AI_MODELS,
+    });
+    if (nextSelectedModelId !== a.selectedModelId) {
+      onChange({ selectedModelId: nextSelectedModelId });
     }
-  }, [models]);
+  }, [models, modelsLoading, a.selectedModelId, a.targetGenders, onChange]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
 
   const commitSp = () => {
@@ -424,16 +447,18 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               비우고, custom을 쓰면 칩 해제. AI 추측(customCategory)이 있으면 pill에 채워짐.
               저장은 blur/Enter 커밋, key로 분석 갱신 시 리셋(소재 인라인 편집 관례). */}
           <div className="field-row"><label className="lbl">세부 카테고리</label>
-            <Chips options={subCats} value={a.subCategory}
+            <Chips options={subCats} value={ccFocus ? null : a.subCategory}
               onChange={(v) => onChange(withFitProfile({ subCategory: v, customCategory: null }))}
               trailing={
                 <input
-                  className={`chip chip-input${a.customCategory && !a.subCategory ? ' on' : ''}`}
+                  className={`chip chip-input${ccFocus || (a.customCategory && !a.subCategory) ? ' on' : ''}`}
                   value={ccDraft} maxLength={20} placeholder="직접 입력"
                   style={{ width: `calc(${chWidth(ccDraft || '직접 입력')}em + 32px)` }}
                   onChange={(e) => setCcDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  onFocus={() => setCcFocus(true)}
                   onBlur={() => {
+                    setCcFocus(false);
                     const v = ccDraft.trim();
                     if (v === (a.customCategory || '')) return;
                     onChange(withFitProfile(v ? { customCategory: v, subCategory: null } : { customCategory: null }));
@@ -533,11 +558,46 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
         </div>
       </div>
 
-      {/* 5. model select — FaceMarket 검증 모델 카탈로그(라이선스 활성 모델만 선택 가능) */}
+      {/* 5. model select — AI(가상) 모델 / 실제(FaceMarket 라이선스) 모델 탭 구분 (2026-07-21) */}
       <div className="surface">
         <div className="sec-title" style={{ marginBottom: 6 }}>모델 선택</div>
-        <div className="sec-sub" style={{ marginBottom: 16 }}>검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.</div>
-        {modelsLoading ? (
+        <Chips className="model-tabs" options={[{ value: 'ai', label: 'AI 모델' }, { value: 'real', label: '실제 모델' }]}
+          value={modelTab} onChange={(v) => v && setModelTab(v)} />
+        <div className="sec-sub" style={{ margin: '10px 0 16px' }}>
+          {modelTab === 'ai'
+            ? '가상 인물 모델이에요 · 라이선스 비용 없이 바로 쓸 수 있어요.'
+            : '검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.'}
+        </div>
+        {modelTab === 'ai' ? (
+          /* 남녀 그룹 구분(2026-07-21 사용자 결정) — 상품 대상 성별과 같은 그룹을 먼저 보여준다 */
+          (a.targetGenders?.[0] === 'men' ? ['men', 'women'] : ['women', 'men']).map((g) => {
+            const group = AI_MODELS.filter((m) => m.gender === g);
+            if (!group.length) return null;
+            return (
+              <div key={g} style={{ marginBottom: 14 }}>
+                <div className="lbl" style={{ fontSize: 12.5, color: 'var(--fg-2)', marginBottom: 8 }}>
+                  {g === 'women' ? '여성 모델' : '남성 모델'}
+                </div>
+                <div className="model-grid">
+                  {group.map((m) => {
+                    const on = a.selectedModelId === m.id;
+                    return (
+                      <div key={m.id} className={`model-card fm-model${on ? ' on' : ''}`}
+                        onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
+                        <img src={m.thumb} alt={m.displayName} />
+                        <span className="fm-verified">AI</span>
+                        <div className="fm-meta">
+                          <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
+                          <div className="fm-price">무료</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })
+        ) : modelsLoading ? (
           <div className="hint">검증 모델을 불러오는 중이에요…</div>
         ) : models.length === 0 ? (
           <div className="hint">아직 등록된 검증 모델이 없어요.</div>
