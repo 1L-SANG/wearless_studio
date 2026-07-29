@@ -17,9 +17,11 @@ import { uid } from '../../../lib/ids.js';
 /* ---- 요소 헬퍼 — mock/db.js 의 T/IMG 문법과 동일한 shape ---- */
 const T = (idFn) => (x, y, w, h, text, style) => ({ id: idFn('el'), type: 'text', x, y, w, h, text, style: style || {} });
 const RECT = (idFn) => (x, y, w, h, fill, radius) => ({ id: idFn('el'), type: 'shape', shape: 'rect', x, y, w, h, fill, radius: radius ?? 8 });
-const CIRCLE = (idFn) => (x, y, d, fill) => ({ id: idFn('el'), type: 'shape', shape: 'circle', x, y, w: d, h: d, fill });
 const RULE = (idFn) => (x, y, w, stroke, strokeWidth) => ({ id: idFn('el'), type: 'line', shape: 'line', x, y, w, h: 8, stroke: stroke || '#e5e5e3', strokeWidth: strokeWidth || 1 });
 const SLOT = (idFn) => (x, y, w, h) => ({ id: idFn('el'), type: 'image', x, y, w, h, src: null, radius: 8 });
+
+export const FEATURE_ITEMS_MIN = 2;
+export const FEATURE_ITEMS_MAX = 5;
 
 const HEAD = { font: 'Cal Sans', weight: 600, color: '#0e0d14' };
 const MUTED = '#4a4a45';
@@ -97,7 +99,7 @@ export const INFO_PRESET_TYPES = [
   { type: 'care', label: '세탁·케어 가이드', desc: '소재별 관리 방법 안내', tier: 'must', recommend: null },
   { type: 'policy', label: '배송·교환 안내', desc: '배송·교환·반품 표준 문구', tier: 'must', recommend: null },
   { type: 'header', label: '상품명 헤더', desc: '국문+영문 타이포 헤더', tier: 'boost', recommend: 'women' },
-  { type: 'feature_icons', label: '특징 포인트 3종', desc: '핵심 장점 아이콘 카드', tier: 'boost', recommend: 'women' },
+  { type: 'feature_icons', label: '특징 포인트', desc: '사진+장점 카드 2~5개', tier: 'boost', recommend: 'women' },
   { type: 'fit_guide', label: '핏 가이드', desc: '핏 실루엣 비교 도식', tier: 'boost', recommend: 'men' },
   { type: 'size_matrix', label: '추천 사이즈', desc: '키×몸무게 추천 사이즈 표', tier: 'boost', recommend: 'men' },
   { type: 'model_info', label: '모델 정보', desc: '모델 스펙 카드', tier: 'extra', recommend: 'women' },
@@ -129,9 +131,11 @@ export function defaultInfoFor(type, ctx = {}) {
       return { sections: POLICY_DEFAULT_SECTIONS.map((s) => ({ ...s })) };
     case 'header':
       return { nameKo: ctx.productName || '', nameEn: '', eyebrow: 'PRODUCT INFORMATION' };
-    case 'feature_icons':
-      return { items: (ctx.sellingPoints || []).slice(0, 3).map((p, i) => ({ title: p, desc: '' }))
-        .concat(Array.from({ length: Math.max(0, 3 - Math.min(3, (ctx.sellingPoints || []).length)) }, () => ({ title: '', desc: '' }))) };
+    case 'feature_icons': {
+      const points = (ctx.sellingPoints || []).slice(0, FEATURE_ITEMS_MAX).map((p) => ({ title: p, desc: '', src: null }));
+      while (points.length < 3) points.push({ title: '', desc: '', src: null });
+      return { items: points };
+    }
     case 'fit_guide':
       return { fits: ['slim', 'regular', 'semi_over', 'over'], current: ctx.fit || null };
     case 'size_matrix': {
@@ -244,23 +248,27 @@ function buildHeader(info, ctx, idFn) {
 }
 
 function buildFeatureIcons(info, ctx, idFn) {
-  const t = T(idFn); const circle = CIRCLE(idFn);
-  // info 는 입력 원본 그대로 보존한다(필터·placeholder 를 정본으로 저장하면 빈 슬롯이
-  // 영구 소실되고 안내 문구가 판매 문구로 둔갑한다 — 리뷰 확정 결함). 렌더만 필터.
-  const rawItems = (info.items || []).slice(0, 3).map((it) => ({ title: it.title || '', desc: it.desc || '' }));
-  const filled = rawItems.filter((it) => it.title || it.desc);
-  const list = filled.length ? filled : [{ title: '핵심 장점을 입력하세요', desc: '' }];
-  const n = Math.min(3, list.length);
+  const t = T(idFn);
+  // 포인트는 2~5개. info 는 입력 원본 그대로 보존한다(필터·placeholder 를 정본으로
+  // 저장하면 빈 슬롯이 영구 소실되고 안내 문구가 판매 문구로 둔갑한다 — 리뷰 확정 결함).
+  const rawItems = (info.items || []).slice(0, FEATURE_ITEMS_MAX).map((it) => ({ title: it.title || '', desc: it.desc || '', src: it.src || null }));
+  while (rawItems.length < FEATURE_ITEMS_MIN) rawItems.push({ title: '', desc: '', src: null });
+  const n = rawItems.length;
   const colW = 880 / n;
+  const d = Math.min(110, colW - 36);              // 원형 사진 슬롯 지름 — 개수에 맞춰 축소
+  const anyFilled = rawItems.some((it) => it.title || it.desc || it.src);
   const els = [];
-  list.slice(0, 3).forEach((it, i) => {
+  rawItems.forEach((it, i) => {
     const x = 60 + i * colW;
-    els.push(circle(x + colW / 2 - 36, 56, 72, '#f5f5f5'));
-    els.push(t(x, 144, colW, 18, `POINT ${i + 1}`, { font: 'Roboto Mono', size: 11, tracking: 2, color: FAINT, align: 'center' }));
-    els.push(t(x + 10, 170, colW - 20, 24, it.title || '—', { size: 17, weight: 600, color: '#0e0d14', align: 'center' }));
-    if (it.desc) els.push(t(x + 14, 200, colW - 28, 40, it.desc, { size: 13, color: MUTED, align: 'center', lineHeight: 19 }));
+    // 도형 대신 원형 이미지 슬롯 — 비어 있으면 '이미지 추가' 로 의류 탭에서 채운다
+    els.push({ id: idFn('el'), type: 'image', x: x + colW / 2 - d / 2, y: 56, w: d, h: d, src: it.src || null, radius: d / 2 });
+    const ty = 56 + d + 18;
+    els.push(t(x, ty, colW, 18, `POINT ${i + 1}`, { font: 'Roboto Mono', size: 11, tracking: 2, color: FAINT, align: 'center' }));
+    els.push(t(x + 10, ty + 26, colW - 20, 24, it.title || (anyFilled ? '—' : '핵심 장점을 입력하세요'), { size: n >= 5 ? 15 : 17, weight: 600, color: '#0e0d14', align: 'center' }));
+    if (it.desc) els.push(t(x + 14, ty + 56, colW - 28, 40, it.desc, { size: 13, color: MUTED, align: 'center', lineHeight: 19 }));
   });
-  return { id: idFn('b'), name: '특징 포인트', kind: 'info', infoType: 'benefit_copy', bg: '#ffffff', h: 300, info: { items: rawItems }, elements: els };
+  const h = 56 + d + 18 + 26 + 30 + (rawItems.some((it) => it.desc) ? 46 : 0) + 50;
+  return { id: idFn('b'), name: '특징 포인트', kind: 'info', infoType: 'benefit_copy', bg: '#ffffff', h, info: { items: rawItems }, elements: els };
 }
 
 function buildFitGuide(info, ctx, idFn) {
@@ -343,6 +351,21 @@ export function buildInfoBlock(type, info, ctx = {}, idFn = uid) {
   return build(info || defaultInfoFor(type, ctx), ctx, idFn);
 }
 
+/* 재생성된 블록에 기존 이미지 슬롯의 src 를 순서대로 이월한다 — 폼 재제출·템플릿
+   재적용이 사용자가 채워 넣은 사진(실측도·특징 포인트 사진)을 날리지 않게.
+   crop 은 지오메트리가 달라져 무효라 이월하지 않는다. */
+export function carrySlotImages(prevElements, block) {
+  const prevSrcs = (prevElements || []).filter((e) => e.type === 'image' && e.src).map((e) => e.src);
+  if (!prevSrcs.length) return block;
+  let i = 0;
+  return {
+    ...block,
+    elements: block.elements.map((el) => (
+      el.type === 'image' && !el.src && i < prevSrcs.length ? { ...el, src: prevSrcs[i++] } : el
+    )),
+  };
+}
+
 /* 블록 → 프리셋 타입 역매핑 (재편집 진입용). size/care 는 kind 로, 나머지는 infoType 로. */
 export function presetTypeOf(block) {
   if (!block) return null;
@@ -407,10 +430,10 @@ export function applyInfoTemplate(blocks, styleKey, ctx = {}, idFn = uid) {
           next = insertAt(next, at, pending);
           if (idx >= at) idx += pending.length;
         }
-        // 제자리 강화 — 사용자가 입력해 둔 info 와 블록 id 를 보존한 채 elements 만 재생성.
+        // 제자리 강화 — 사용자가 입력해 둔 info·블록 id·슬롯 사진을 보존한 채 elements 만 재생성.
         // 기본값으로 다시 지으면 템플릿 재적용 때 입력한 실측·케어 문구가 소실된다(리뷰 확정 결함).
         const prev = next[idx];
-        const seeded = buildInfoBlock(type, prev.info || defaultInfoFor(type, ctx), ctx, idFn);
+        const seeded = carrySlotImages(prev.elements, buildInfoBlock(type, prev.info || defaultInfoFor(type, ctx), ctx, idFn));
         next = next.map((b, i) => (i === idx ? { ...seeded, id: prev.id } : b));
         cursor = Math.max(at + pending.length, idx + 1);
         pending = [];

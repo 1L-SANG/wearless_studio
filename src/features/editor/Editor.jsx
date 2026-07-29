@@ -20,7 +20,7 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
-import { INFO_TEMPLATES, applyInfoTemplate, buildInfoBlock, defaultInfoFor, presetTypeOf, templateStyleFor } from '@/features/editor/presets/infoPresets.js';
+import { INFO_TEMPLATES, applyInfoTemplate, buildInfoBlock, carrySlotImages, defaultInfoFor, presetTypeOf, templateStyleFor } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -86,9 +86,11 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   if (el.type === 'image') {
     if (!el.src) {
       const inv = 1 / (scale || 1);
-      if (preview) return <div className="el el-slot" style={base} />;
+      // 빈 슬롯도 radius 를 따른다 — 특징 포인트의 원형 사진 슬롯이 원으로 보이게
+      const slotBase = { ...base, borderRadius: el.radius };
+      if (preview) return <div className="el el-slot" style={slotBase} />;
       return (
-        <div {...common} className={cls('el-slot')} style={base}>
+        <div {...common} className={cls('el-slot')} style={slotBase}>
           <button className="slot-add" style={{ transform: `scale(${inv})` }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onAddImage && onAddImage(el); }}>
@@ -286,9 +288,18 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
             onDragEnd={end}
             onDragOver={(e) => { if (dragId) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setLineAt(e.clientY > r.top + r.height / 2 ? i + 1 : i); } }}
             onDrop={(e) => { e.preventDefault(); if (!dragId) return; const from = blocks.findIndex((x) => x.id === dragId); let to = lineAt == null ? i : lineAt; if (from < to) to--; to = Math.max(0, Math.min(blocks.length - 1, to)); if (from > -1 && from !== to) onReorder(from, to); end(); }}>
-            <div className="mini-canvas" style={{ background: b.bg, aspectRatio: `1000 / ${blockH}` }}>
-              {b.elements.filter((e) => e.type === 'image' && e.src).map((e) => {
-                return <img key={e.id} src={thumbUrl(e.src, 200)} style={{ left: (e.x / 1000) * 100 + '%', top: (e.y / blockH) * 100 + '%', width: (e.w / 1000) * 100 + '%', height: (e.h / blockH) * 100 + '%' }} alt="" draggable={false} loading="lazy" decoding="async" />;
+            <div className="mini-canvas" style={{ background: b.bg, aspectRatio: `1000 / ${blockH}` }} title={b.name}>
+              {/* 이미지 외 요소도 스키매틱으로 표시 — 정보 블록(표·텍스트)이 빈 칸으로 보이지 않게 */}
+              {b.elements.map((e) => {
+                const pos = { left: (e.x / 1000) * 100 + '%', top: (e.y / blockH) * 100 + '%', width: (e.w / 1000) * 100 + '%', height: ((e.h || 24) / blockH) * 100 + '%' };
+                if (e.type === 'image') {
+                  if (e.src) return <img key={e.id} src={thumbUrl(e.src, 200)} style={{ ...pos, borderRadius: e.radius >= (e.w || 0) / 2 ? '50%' : 1 }} alt="" draggable={false} loading="lazy" decoding="async" />;
+                  return <span key={e.id} style={{ position: 'absolute', ...pos, background: '#ececee', borderRadius: e.radius >= (e.w || 0) / 2 ? '50%' : 1 }} />;
+                }
+                if (e.type === 'text') return <span key={e.id} style={{ position: 'absolute', ...pos, height: Math.max(2, ((e.style?.size || 14) * 1.1 / blockH) * 100) + '%', background: e.style?.color === '#ffffff' ? '#f0f0f2' : '#c9c9cc', opacity: .75, borderRadius: 1 }} />;
+                if (e.type === 'shape') return <span key={e.id} style={{ position: 'absolute', ...pos, background: e.fill || '#e2e2e4', opacity: .8, borderRadius: e.shape === 'circle' ? '50%' : 1 }} />;
+                if (e.type === 'line') return <span key={e.id} style={{ position: 'absolute', ...pos, height: 1, background: '#d4d4d8' }} />;
+                return null;
               })}
             </div>
           </div>
@@ -763,7 +774,8 @@ export function Editor() {
     const m = infoModal; if (!m) return;
     const built = buildInfoBlock(m.type, info, infoCtx);
     if (m.blockId) {
-      setBlocks((bs) => bs.map((b) => (b.id === m.blockId ? { ...built, id: b.id } : b)));
+      // 슬롯에 채워 둔 사진(실측도·특징 포인트)은 재생성 후에도 이월한다
+      setBlocks((bs) => bs.map((b) => (b.id === m.blockId ? { ...carrySlotImages(b.elements, built), id: b.id } : b)));
       setSelBlock(m.blockId);
       toast.push('내용을 업데이트했어요', { icon: 'check' });
     } else {
@@ -924,7 +936,6 @@ export function Editor() {
     { id: 'wardrobe', icon: 'shirt', label: '의류', dot: true }, // 생성 점 표시는 결과가 쌓이는 의류 탭에
     { id: 'image', icon: 'image', label: '이미지' },
     { id: 'frame', icon: 'layout', label: '프레임' },
-    { id: 'content', icon: 'info', label: '내용' },
     { id: 'text', icon: 'type', label: '텍스트' },
     { id: 'shape', icon: 'shapes', label: '오브젝트' },
   ];
@@ -942,8 +953,15 @@ export function Editor() {
       case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} hasDetailImage={hasDetailImage} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickRefImage(projectId)} onPickMoodRef={() => api.pickRefImage(projectId)} onSetCutType={setVaryCutType} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} onFreshSeen={freshSeen} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} onVary={varyImage} />;
-      case 'frame': return <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />;
-      case 'content': return <ContentPanel recommendGender={recommendGender} templateStyle={templateStyle} onTemplateStyle={setTplStyle} onApplyTemplate={applyTemplate} onPick={openInfoPreset} />;
+      case 'frame': return (
+        <>
+          <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />
+          {/* 내용 프리셋 — 프레임 탭에 통합 (별도 탭 없음) */}
+          <div style={{ marginTop: 22 }}>
+            <ContentPanel recommendGender={recommendGender} templateStyle={templateStyle} onTemplateStyle={setTplStyle} onApplyTemplate={applyTemplate} onPick={openInfoPreset} />
+          </div>
+        </>
+      );
       case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onLayer={layerEl} onAddText={() => addText()} onAddGarmentText={() => addText(undefined, 'garment')} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
       default: return null;

@@ -5,7 +5,7 @@
    ============================================================= */
 import { Fragment, useState } from 'react';
 import { Button, Icon, IconButton, Modal } from '@/components/ui.jsx';
-import { CARE_COPY_LIBRARY, CARE_LABEL_SENTENCE, INFO_PRESET_TYPES, careFamilyFor } from '@/features/editor/presets/infoPresets.js';
+import { CARE_COPY_LIBRARY, CARE_LABEL_SENTENCE, FEATURE_ITEMS_MAX, FEATURE_ITEMS_MIN, INFO_PRESET_TYPES, careFamilyFor } from '@/features/editor/presets/infoPresets.js';
 
 const inp = { width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid #e5e5e3', borderRadius: 8, fontSize: 14, background: '#fff', color: '#0e0d14' };
 const inpSm = { ...inp, padding: '6px 8px', fontSize: 13 };
@@ -147,16 +147,23 @@ function HeaderForm({ info, setInfo }) {
 function FeatureIconsForm({ info, setInfo }) {
   const setItem = (i, patch) => setInfo((f) => ({ ...f, items: f.items.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
   return (
-    <Field label="특징 3가지" hint="분석에서 뽑은 핵심 장점이 미리 채워져요.">
+    <Field label={`특징 포인트 (${FEATURE_ITEMS_MIN}~${FEATURE_ITEMS_MAX}개)`}
+      hint="분석에서 뽑은 핵심 장점이 미리 채워져요. 각 포인트의 사진은 블록의 원형 칸에서 '이미지 추가'로 넣어요.">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {info.items.slice(0, 3).map((it, i) => (
+        {info.items.map((it, i) => (
           <div key={i} style={rowGap}>
             <span style={{ width: 60, flexShrink: 0, fontSize: 12, color: '#898989' }}>POINT {i + 1}</span>
             <input style={inpSm} placeholder="특징 (예: 롤업 배색 소매)" value={it.title} onChange={(e) => setItem(i, { title: e.target.value })} />
             <input style={inpSm} placeholder="짧은 설명 (선택)" value={it.desc} onChange={(e) => setItem(i, { desc: e.target.value })} />
+            <IconButton name="trash" size="sm" title={info.items.length <= FEATURE_ITEMS_MIN ? `최소 ${FEATURE_ITEMS_MIN}개` : '삭제'}
+              onClick={() => { if (info.items.length > FEATURE_ITEMS_MIN) setInfo((f) => ({ ...f, items: f.items.filter((_x, j) => j !== i) })); }} />
           </div>
         ))}
       </div>
+      {info.items.length < FEATURE_ITEMS_MAX && (
+        <Button variant="ghost" size="sm" icon="plus" style={{ marginTop: 8 }}
+          onClick={() => setInfo((f) => ({ ...f, items: [...f.items, { title: '', desc: '', src: null }] }))}>포인트 추가</Button>
+      )}
     </Field>
   );
 }
@@ -235,12 +242,12 @@ const FORMS = {
   model_info: ModelInfoForm,
 };
 
-/* 저장된 info 를 폼이 기대하는 모양으로 정규화 — feature_icons 는 3칸을 항상 보여준다
-   (저장본이 3칸 미만이어도 재편집에서 빈 슬롯을 되살릴 수 있어야 한다 — 리뷰 확정 결함) */
+/* 저장된 info 를 폼이 기대하는 모양으로 정규화 — feature_icons 는 2~5개 범위로
+   클램프하고 최소 2칸은 항상 보여준다(빈 슬롯 복구 가능해야 한다 — 리뷰 확정 결함) */
 function normalizeFormInfo(type, info) {
   if (type === 'feature_icons') {
-    const items = (info.items || []).slice(0, 3).map((it) => ({ title: it.title || '', desc: it.desc || '' }));
-    while (items.length < 3) items.push({ title: '', desc: '' });
+    const items = (info.items || []).slice(0, FEATURE_ITEMS_MAX).map((it) => ({ title: it.title || '', desc: it.desc || '', src: it.src || null }));
+    while (items.length < FEATURE_ITEMS_MIN) items.push({ title: '', desc: '', src: null });
     return { ...info, items };
   }
   return info;

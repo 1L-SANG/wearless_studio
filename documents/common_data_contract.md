@@ -299,7 +299,7 @@ infoType별 info shape (frontend `src/features/editor/presets/infoPresets.js`가
 | `required_notice` | `{ fields: [{key, label, value}] }` — 빈 value는 `정보 입력 필요`로 렌더 |
 | `shipping_returns` | `{ sections: [{title, body}] }` |
 | `header` | `{ nameKo, nameEn, eyebrow }` |
-| `benefit_copy` | `{ items: [{title, desc}] }` (최대 3) |
+| `benefit_copy` | `{ items: [{title, desc, src}] }` (2~5개, src = 원형 사진 슬롯 이월값) |
 | `fit_guide` | `{ fits: Fit[], current: Fit\|null }` |
 | `size_matrix` | `{ heights: string[], weights: string[], cells: string[][], note }` |
 | `model_info` | `{ models: [{name, height, size}] }` (최대 3) |

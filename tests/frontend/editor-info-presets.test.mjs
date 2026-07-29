@@ -9,6 +9,7 @@ import {
   applyInfoTemplate,
   buildInfoBlock,
   careFamilyFor,
+  carrySlotImages,
   defaultInfoFor,
   presetTypeOf,
   templateStyleFor,
@@ -154,7 +155,7 @@ test('soho template inserts top blocks first, flows before anchors, replaces siz
 test('re-applying a template skips duplicate info types but re-enriches anchors', () => {
   const first = applyInfoTemplate(baseDoc(), 'soho', CTX, seqId());
   const second = applyInfoTemplate(first.blocks, 'soho', CTX, seqId());
-  assert.deepEqual(second.skipped.sort(), ['모델 정보', '배송·교환 안내', '상품명 헤더', '특징 포인트 3종'].sort());
+  assert.deepEqual(second.skipped.sort(), ['모델 정보', '배송·교환 안내', '상품명 헤더', '특징 포인트'].sort());
   assert.equal(second.blocks.length, first.blocks.length, 'no duplicate blocks added');
 });
 
@@ -189,10 +190,38 @@ test('care anchor above size does not scramble flow order (cursor never moves ba
 test('feature icons keep raw form state — empty slots survive, placeholder never persisted', () => {
   const partial = buildInfoBlock('feature_icons', { items: [{ title: 'A', desc: '' }, { title: '', desc: '' }, { title: '', desc: '' }] }, CTX, seqId());
   assert.equal(partial.info.items.length, 3, 'raw padded items preserved');
-  assert.deepEqual(partial.info.items[1], { title: '', desc: '' }, 'empty slot survives round-trip');
+  assert.deepEqual(partial.info.items[1], { title: '', desc: '', src: null }, 'empty slot survives round-trip');
   const empty = buildInfoBlock('feature_icons', { items: [] }, CTX, seqId());
   assert.ok(!empty.info.items.some((it) => it.title.includes('핵심 장점')), 'placeholder not stored as content');
   assert.ok(empty.elements.some((e) => e.type === 'text' && e.text.includes('핵심 장점')), 'placeholder still rendered');
+});
+
+test('feature icons are photo cards clamped to 2~5 points', () => {
+  const two = buildInfoBlock('feature_icons', { items: [{ title: 'A' }, { title: 'B' }] }, CTX, seqId());
+  assert.equal(two.elements.filter((e) => e.type === 'image').length, 2, 'one circular photo slot per point');
+  assert.ok(two.elements.filter((e) => e.type === 'image').every((e) => e.radius === e.w / 2), 'slots are circles');
+  const seven = buildInfoBlock('feature_icons', { items: Array.from({ length: 7 }, (_x, i) => ({ title: `P${i}` })) }, CTX, seqId());
+  assert.equal(seven.info.items.length, 5, 'max 5 points');
+  const one = buildInfoBlock('feature_icons', { items: [{ title: 'only' }] }, CTX, seqId());
+  assert.equal(one.info.items.length, 2, 'min 2 points (padded)');
+  const withSrc = buildInfoBlock('feature_icons', { items: [{ title: 'A', src: '/img.jpg' }, { title: 'B' }] }, CTX, seqId());
+  assert.equal(withSrc.elements.find((e) => e.type === 'image').src, '/img.jpg', 'stored src rendered into slot');
+});
+
+test('carrySlotImages moves user-filled slot photos into rebuilt blocks (edit + template paths)', () => {
+  // 재편집 경로: 이전 블록에서 채운 원형 슬롯 사진이 재생성 블록에 이월
+  const prev = buildInfoBlock('feature_icons', { items: [{ title: 'A' }, { title: 'B' }] }, CTX, seqId());
+  const filled = { ...prev, elements: prev.elements.map((e, i) => (e.type === 'image' && i === 0 ? { ...e, src: '/user-photo.jpg' } : e)) };
+  const rebuilt = buildInfoBlock('feature_icons', filled.info, CTX, seqId());
+  const merged = carrySlotImages(filled.elements, rebuilt);
+  assert.equal(merged.elements.find((e) => e.type === 'image').src, '/user-photo.jpg');
+  // 템플릿 재적용 경로: size 실측도 슬롯 사진 보존
+  const doc = baseDoc();
+  doc[1] = { ...doc[1], info: { ...defaultInfoFor('size_table', CTX), withDiagram: true },
+    elements: [{ id: 'd1', type: 'image', x: 300, y: 400, w: 400, h: 300, src: '/diagram.png', radius: 8 }] };
+  const { blocks } = applyInfoTemplate(doc, 'brand', CTX, seqId());
+  const size = blocks.find((b) => b.kind === 'size');
+  assert.equal(size.elements.find((e) => e.type === 'image').src, '/diagram.png', 'diagram photo carried across template re-apply');
 });
 
 test('careFamilyFor does not false-match 모달/기모 as knit', () => {
