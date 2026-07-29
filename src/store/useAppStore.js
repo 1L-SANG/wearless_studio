@@ -72,6 +72,7 @@ const generationRelevantAnalysisKeys = new Set([
   'targetGenders',
   'fit',
   'fitProfile',
+  'mannequinBody',
 ]);
 
 export function isGenerationRelevantAnalysisPatch(patch) {
