@@ -35,14 +35,20 @@ function Chip({ on, children, onClick }) {
 function SizeTableForm({ info, setInfo, ctx }) {
   const schema = (ctx.measurementSchema && ctx.measurementSchema[ctx.clothingType]) || info.columns;
   const labels = ctx.measurementLabels || {};
-  const toggleCol = (key) => setInfo((f) => ({ ...f, columns: f.columns.includes(key) ? f.columns.filter((k) => k !== key) : [...schema.filter((k) => f.columns.includes(k) || k === key)] }));
+  // 칩 후보 = 현재 스키마 ∪ 저장돼 있던 컬럼 — 의류 종류가 바뀌어도 기존 컬럼·값이 소실되지 않는다(리뷰 확정 결함)
+  const allCols = [...schema, ...info.columns.filter((k) => !schema.includes(k))];
+  const toggleCol = (key) => setInfo((f) => ({ ...f, columns: f.columns.includes(key) ? f.columns.filter((k) => k !== key) : allCols.filter((k) => f.columns.includes(k) || k === key) }));
   const setRow = (i, patch) => setInfo((f) => ({ ...f, rows: f.rows.map((r, j) => (j === i ? { ...r, ...patch } : r)) }));
-  const setVal = (i, key, v) => setRow(i, { values: { ...info.rows[i].values, [key]: v } });
+  // 계약 §3.5.1: values 는 number|null — input 문자열을 저장 전에 숫자로 강제한다
+  const setVal = (i, key, raw) => {
+    const num = raw === '' ? null : Number(raw);
+    setRow(i, { values: { ...info.rows[i].values, [key]: Number.isFinite(num) ? num : null } });
+  };
   return (
     <>
       <Field label="측정 항목" hint="의류 종류에 맞는 항목만 골라요.">
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {schema.map((key) => <Chip key={key} on={info.columns.includes(key)} onClick={() => toggleCol(key)}>{labels[key] || key}</Chip>)}
+          {allCols.map((key) => <Chip key={key} on={info.columns.includes(key)} onClick={() => toggleCol(key)}>{labels[key] || key}</Chip>)}
         </div>
       </Field>
       <Field label="사이즈별 실측 (cm)">
@@ -229,8 +235,19 @@ const FORMS = {
   model_info: ModelInfoForm,
 };
 
+/* 저장된 info 를 폼이 기대하는 모양으로 정규화 — feature_icons 는 3칸을 항상 보여준다
+   (저장본이 3칸 미만이어도 재편집에서 빈 슬롯을 되살릴 수 있어야 한다 — 리뷰 확정 결함) */
+function normalizeFormInfo(type, info) {
+  if (type === 'feature_icons') {
+    const items = (info.items || []).slice(0, 3).map((it) => ({ title: it.title || '', desc: it.desc || '' }));
+    while (items.length < 3) items.push({ title: '', desc: '' });
+    return { ...info, items };
+  }
+  return info;
+}
+
 export function InfoBlockModal({ type, initialInfo, ctx, editing, onClose, onSubmit }) {
-  const [info, setInfo] = useState(initialInfo);
+  const [info, setInfo] = useState(() => normalizeFormInfo(type, initialInfo));
   const meta = INFO_PRESET_TYPES.find((p) => p.type === type) || { label: '내용' };
   const Form = FORMS[type];
   if (!Form) return null;

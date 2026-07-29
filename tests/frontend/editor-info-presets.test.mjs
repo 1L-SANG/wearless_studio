@@ -8,6 +8,7 @@ import {
   NEEDS_INPUT,
   applyInfoTemplate,
   buildInfoBlock,
+  careFamilyFor,
   defaultInfoFor,
   presetTypeOf,
   templateStyleFor,
@@ -155,6 +156,55 @@ test('re-applying a template skips duplicate info types but re-enriches anchors'
   const second = applyInfoTemplate(first.blocks, 'soho', CTX, seqId());
   assert.deepEqual(second.skipped.sort(), ['모델 정보', '배송·교환 안내', '상품명 헤더', '특징 포인트 3종'].sort());
   assert.equal(second.blocks.length, first.blocks.length, 'no duplicate blocks added');
+});
+
+test('template re-apply preserves user-entered anchor info and block ids (no data wipe)', () => {
+  const doc = baseDoc();
+  const userRows = [{ label: 'S', values: { totalLength: 65 } }, { label: 'M', values: { totalLength: 67 } }];
+  doc[1] = { ...doc[1], info: { ...defaultInfoFor('size_table', CTX), rows: userRows } };
+  doc[2] = { ...doc[2], info: { family: 'cotton', text: `내가 쓴 케어 문구\n${CARE_LABEL_SENTENCE}` } };
+  const { blocks } = applyInfoTemplate(doc, 'soho', CTX, seqId());
+  const size = blocks.find((b) => b.kind === 'size');
+  const care = blocks.find((b) => b.kind === 'care');
+  assert.equal(size.id, 'b1', 'size block id preserved');
+  assert.equal(care.id, 'b2', 'care block id preserved');
+  assert.deepEqual(size.info.rows.map((r) => r.label), ['S', 'M'], 'user size rows preserved');
+  assert.ok(care.info.text.includes('내가 쓴 케어 문구'), 'user care text preserved');
+  assert.ok(size.elements.some((e) => e.type === 'text' && e.text === '65'), 'user value rendered');
+});
+
+test('care anchor above size does not scramble flow order (cursor never moves backward)', () => {
+  const doc = [baseDoc()[0], baseDoc()[2], baseDoc()[1], baseDoc()[3]]; // cut, care, size, ai-notice
+  const { blocks } = applyInfoTemplate(doc, 'brand', CTX, seqId());
+  const kinds = blocks.map((b) => `${b.kind}${b.infoType ? ':' + b.infoType : ''}`);
+  assert.deepEqual(kinds, [
+    'info:header',
+    'benefit',
+    'care',                                       // 사용자가 올려둔 위치 유지 (제자리 강화)
+    'info:fit_guide', 'size', 'info:size_matrix', 'info:required_notice',
+    'ai-notice',
+  ]);
+});
+
+test('feature icons keep raw form state — empty slots survive, placeholder never persisted', () => {
+  const partial = buildInfoBlock('feature_icons', { items: [{ title: 'A', desc: '' }, { title: '', desc: '' }, { title: '', desc: '' }] }, CTX, seqId());
+  assert.equal(partial.info.items.length, 3, 'raw padded items preserved');
+  assert.deepEqual(partial.info.items[1], { title: '', desc: '' }, 'empty slot survives round-trip');
+  const empty = buildInfoBlock('feature_icons', { items: [] }, CTX, seqId());
+  assert.ok(!empty.info.items.some((it) => it.title.includes('핵심 장점')), 'placeholder not stored as content');
+  assert.ok(empty.elements.some((e) => e.type === 'text' && e.text.includes('핵심 장점')), 'placeholder still rendered');
+});
+
+test('careFamilyFor does not false-match 모달/기모 as knit', () => {
+  assert.equal(careFamilyFor([{ name: '모달', ratio: 100 }]), 'poly');
+  assert.notEqual(careFamilyFor([{ name: '기모 원단' }]), 'knit');
+  assert.equal(careFamilyFor([{ name: '캐시미어' }]), 'knit');
+});
+
+test('long unbroken text grows block height (wrap-aware estimation)', () => {
+  const short = buildInfoBlock('policy', { sections: [{ title: '배송', body: '짧은 문구' }] }, CTX, seqId());
+  const long = buildInfoBlock('policy', { sections: [{ title: '배송', body: '아'.repeat(200) }] }, CTX, seqId());
+  assert.ok(long.h > short.h + 40, `wrapped single line grows height (${short.h} → ${long.h})`);
 });
 
 test('brand template on a doc without anchors appends the flow before ai-notice in order', () => {

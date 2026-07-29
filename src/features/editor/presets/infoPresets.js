@@ -42,12 +42,19 @@ export const CARE_COPY_LIBRARY = {
 export function careFamilyFor(materials) {
   const names = (materials || []).map((m) => (m && m.name) || '').join(' ');
   if (/면|코튼|cotton/i.test(names)) return 'cotton';
-  if (/울|wool|니트|캐시미어|모/i.test(names)) return 'knit';
+  // '모' 단독 매칭 금지 — '모달'(레이온)·'기모'가 니트로 오분류되고 poly 분기가 죽는다(리뷰 확정 결함)
+  if (/울|wool|니트|캐시미어|앙고라|모헤어|양모/i.test(names)) return 'knit';
   if (/아크릴/i.test(names)) return 'acrylic';
-  if (/데님|청/i.test(names)) return 'denim';
+  if (/데님|denim/i.test(names)) return 'denim';
   if (/쿨맥스|coolmax|기능성/i.test(names)) return 'functional';
-  if (/폴리|나일론|스판/i.test(names)) return 'poly';
+  if (/폴리|나일론|스판|모달|레이온/i.test(names)) return 'poly';
   return 'generic';
+}
+
+/* 줄 수 추정 — 렌더는 width 고정·height auto 로 줄바꿈되므로 '\n' 개수만으로 높이를
+   잡으면 긴 문단이 다음 요소를 덮는다(리뷰 확정 결함). 한글 위주 글자폭 근사(0.92em). */
+function estLines(text, width, size) {
+  return String(text || '').split('\n').reduce((n, ln) => n + Math.max(1, Math.ceil(((ln.length || 1) * size * 0.92) / width)), 0);
 }
 
 /* ---- 법정 고시 항목 (전자상거래 표시·광고 고시 — 의류) ---- */
@@ -178,15 +185,18 @@ function buildRequiredNotice(info, ctx, idFn) {
   const t = T(idFn); const rule = RULE(idFn);
   const fields = (info.fields || []).length ? info.fields : NOTICE_FIELDS.map((f) => ({ ...f, value: '' }));
   const els = [t(60, 56, 500, 40, '상품 고시정보', { size: 24, ...HEAD })];
+  let y = 120;
   fields.forEach((f, i) => {
-    const y = 120 + i * 44;
     const filled = f.value != null && String(f.value).trim() !== '';
+    const value = filled ? String(f.value) : NEEDS_INPUT;
+    const vLines = estLines(value, 640, 14);
+    const rowH = Math.max(44, vLines * 20 + 24);
     els.push(t(60, y, 220, 20, f.label, { size: 14, color: MUTED }));
-    els.push(t(300, y, 640, 20, filled ? String(f.value) : NEEDS_INPUT, { size: 14, color: filled ? '#0e0d14' : FAINT }));
-    if (i < fields.length - 1) els.push(rule(60, y + 30, 880));
+    els.push(t(300, y, 640, vLines * 20, value, { size: 14, color: filled ? '#0e0d14' : FAINT, lineHeight: 20 }));
+    if (i < fields.length - 1) els.push(rule(60, y + rowH - 14, 880));
+    y += rowH;
   });
-  const bottom = 120 + fields.length * 44;
-  return { id: idFn('b'), name: '상품 고시정보', kind: 'info', infoType: 'required_notice', bg: '#ffffff', h: bottom + 50, info: { fields: fields.map((f) => ({ ...f })) }, elements: els };
+  return { id: idFn('b'), name: '상품 고시정보', kind: 'info', infoType: 'required_notice', bg: '#ffffff', h: y + 50, info: { fields: fields.map((f) => ({ ...f })) }, elements: els };
 }
 
 function buildCare(info, ctx, idFn) {
@@ -195,7 +205,7 @@ function buildCare(info, ctx, idFn) {
   if (!text) text = defaultInfoFor('care', ctx).text;
   if (!text.includes('케어라벨')) text = `${text}\n${CARE_LABEL_SENTENCE}`;
   const lines = textBlockLines(text);
-  const bodyH = Math.max(26, lines.length * 26);
+  const bodyH = Math.max(26, estLines(lines.join('\n'), 860, 15) * 26);
   const els = [
     t(60, 56, 500, 40, '세탁 안내', { size: 24, ...HEAD }),
     t(60, 104, 880, bodyH, lines.join('\n'), { size: 15, color: '#0e0d14', lineHeight: 26, list: 'bullet' }),
@@ -210,7 +220,7 @@ function buildPolicy(info, ctx, idFn) {
   let y = 120;
   sections.forEach((s) => {
     const lines = textBlockLines(s.body);
-    const bodyH = Math.max(22, lines.length * 22);
+    const bodyH = Math.max(22, estLines(lines.join('\n'), 880, 14) * 22);
     els.push(t(60, y, 500, 24, s.title, { size: 16, weight: 600, color: '#0e0d14' }));
     els.push(t(60, y + 30, 880, bodyH, lines.join('\n'), { size: 14, color: MUTED, lineHeight: 22 }));
     y += 30 + bodyH + 26;
@@ -235,8 +245,11 @@ function buildHeader(info, ctx, idFn) {
 
 function buildFeatureIcons(info, ctx, idFn) {
   const t = T(idFn); const circle = CIRCLE(idFn);
-  const items = (info.items || []).filter((it) => it.title || it.desc);
-  const list = items.length ? items : [{ title: '핵심 장점을 입력하세요', desc: '' }];
+  // info 는 입력 원본 그대로 보존한다(필터·placeholder 를 정본으로 저장하면 빈 슬롯이
+  // 영구 소실되고 안내 문구가 판매 문구로 둔갑한다 — 리뷰 확정 결함). 렌더만 필터.
+  const rawItems = (info.items || []).slice(0, 3).map((it) => ({ title: it.title || '', desc: it.desc || '' }));
+  const filled = rawItems.filter((it) => it.title || it.desc);
+  const list = filled.length ? filled : [{ title: '핵심 장점을 입력하세요', desc: '' }];
   const n = Math.min(3, list.length);
   const colW = 880 / n;
   const els = [];
@@ -247,7 +260,7 @@ function buildFeatureIcons(info, ctx, idFn) {
     els.push(t(x + 10, 170, colW - 20, 24, it.title || '—', { size: 17, weight: 600, color: '#0e0d14', align: 'center' }));
     if (it.desc) els.push(t(x + 14, 200, colW - 28, 40, it.desc, { size: 13, color: MUTED, align: 'center', lineHeight: 19 }));
   });
-  return { id: idFn('b'), name: '특징 포인트', kind: 'info', infoType: 'benefit_copy', bg: '#ffffff', h: 300, info: { items: list.map((it) => ({ ...it })) }, elements: els };
+  return { id: idFn('b'), name: '특징 포인트', kind: 'info', infoType: 'benefit_copy', bg: '#ffffff', h: 300, info: { items: rawItems }, elements: els };
 }
 
 function buildFitGuide(info, ctx, idFn) {
@@ -386,13 +399,24 @@ export function applyInfoTemplate(blocks, styleKey, ctx = {}, idFn = uid) {
     if (type === 'size_table' || type === 'care') {
       const kind = type === 'size_table' ? 'size' : 'care';
       let idx = next.findIndex((b) => b.kind === kind);
-      const built = buildInfoBlock(type, defaultInfoFor(type, ctx), ctx, idFn);
       if (idx >= 0) {
-        if (pending.length) { next = insertAt(next, idx, pending); idx += pending.length; pending = []; }
-        next = next.map((b, i) => (i === idx ? built : b));
-        cursor = idx + 1;
+        // pending 플러시 위치는 뒤로만 간다 — 앵커가 문서에서 앞쪽에 있어도(사용자가
+        // care 를 size 위로 옮긴 문서 등) cursor 를 역행시키면 흐름 순서가 섞인다(리뷰 확정 결함).
+        const at = cursor != null ? Math.max(cursor, idx) : idx;
+        if (pending.length) {
+          next = insertAt(next, at, pending);
+          if (idx >= at) idx += pending.length;
+        }
+        // 제자리 강화 — 사용자가 입력해 둔 info 와 블록 id 를 보존한 채 elements 만 재생성.
+        // 기본값으로 다시 지으면 템플릿 재적용 때 입력한 실측·케어 문구가 소실된다(리뷰 확정 결함).
+        const prev = next[idx];
+        const seeded = buildInfoBlock(type, prev.info || defaultInfoFor(type, ctx), ctx, idFn);
+        next = next.map((b, i) => (i === idx ? { ...seeded, id: prev.id } : b));
+        cursor = Math.max(at + pending.length, idx + 1);
+        pending = [];
       } else {
         // 앵커가 없는 문서 — ai-notice 앞(없으면 끝)을 기준점으로 흐름을 이어간다.
+        const built = buildInfoBlock(type, defaultInfoFor(type, ctx), ctx, idFn);
         const noticeIdx = next.findIndex((b) => b.kind === 'ai-notice');
         const at = cursor != null ? cursor : (noticeIdx >= 0 ? noticeIdx : next.length);
         next = insertAt(next, at, [...pending, built]);

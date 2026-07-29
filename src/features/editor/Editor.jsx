@@ -257,7 +257,8 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
         <IconButton name="chevUp" onClick={() => onMove(idx, -1)} title="위로" />
         <IconButton name="chevDown" onClick={() => onMove(idx, 1)} title="아래로" />
         <IconButton name="plus" onClick={() => onAddEmpty(idx)} title="빈 블록 추가" />
-        {onEditInfo && block.info && <IconButton name="pencil" onClick={() => onEditInfo(block)} title="내용 수정" />}
+        {/* presetTypeOf 로 게이트 — 갓 조립된 size/care auto 블록은 info 가 없어도 폼 편집 대상이다 */}
+        {onEditInfo && presetTypeOf(block) && <IconButton name="pencil" onClick={() => onEditInfo(block)} title="내용 수정" />}
         <IconButton name="layers" onClick={() => onOpenLayers(block.id)} title="레이어" />
         <IconButton name="download" onClick={() => onDownload(block)} title="이 블록 다운로드" />
         <IconButton name="trash" onClick={() => onDelete(block.id)} title="블록 삭제" />
