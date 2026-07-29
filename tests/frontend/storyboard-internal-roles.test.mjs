@@ -8,6 +8,7 @@ import {
   cutTypeOptionsForSection,
   normalizedRecipePatch,
 } from '../../src/lib/storyboardTaxonomy.js';
+import { adoptSection } from '../../src/lib/sections.js';
 
 test('the first AI image in benefit is the only internally assigned hero', () => {
   const baseThumb = 'https://example.com/original.png';
@@ -111,4 +112,33 @@ test('an internally normalized product image drops worn-only settings', () => {
   assert.deepEqual(product.matchIds, []);
   assert.equal(product.outerClosureState, null);
   assert.equal(product.faceExposure, null);
+});
+
+
+test('section moves retain compatible examples and clear all example metadata only when the recipe must change', () => {
+  const compatible = {
+    id: 'moving', source: 'ai', sectionId: 'benefit-section', sectionRole: 'benefit',
+    contentRole: 'hero', cutType: 'styling', direction: 'front', shot: 'full',
+    exampleId: 'example-1', exampleSelectionOrigin: 'auto',
+    thumb: 'example.png', baseThumb: 'base.png',
+  };
+  const fitHost = {
+    id: 'fit-host', source: 'ai', sectionId: 'fit-section', sectionRole: 'fit',
+    contentRole: 'fit', cutType: 'horizon', direction: 'front', shot: 'full',
+    sectionTitle: '핏·코디', sectionLayout: 'stack',
+  };
+  const retained = adoptSection([compatible, fitHost], 'moving', 'fit-section', 'fit');
+  assert.equal(retained[0].exampleId, 'example-1');
+  assert.equal(retained[0].exampleSelectionOrigin, 'auto');
+  assert.equal(retained[0].thumb, 'example.png');
+
+  const product = {
+    ...compatible, cutType: 'product', shot: 'ghost', contentRole: 'productOverview',
+    sectionRole: 'product', sectionId: 'product-section',
+  };
+  const cleared = adoptSection([product, fitHost], 'moving', 'fit-section', 'fit');
+  assert.equal(cleared[0].exampleId, null);
+  assert.equal(cleared[0].exampleSelectionOrigin, null);
+  assert.equal(cleared[0].thumb, 'base.png');
+  assert.equal(cleared[0].baseThumb, null);
 });

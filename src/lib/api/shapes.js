@@ -20,16 +20,17 @@ const MEASUREMENT_TEMPLATE = [
 
 // 기본/확장 콘티 — http getStoryboard 가 저장 콘티 없을 때 시드한다.
 // mock buildStoryboard와 같은 역할 중심 블록 shape을 만든다.
-import { uid } from '@/lib/ids.js';
-import { Placeholder as P } from '@/mock/placeholders.js';
-import { ensureSections } from '@/lib/sections.js';
+import { uid } from '../ids.js';
+import { Placeholder as P } from '../../mock/placeholders.js';
+import { ensureSections } from '../sections.js';
+import { exampleSelectionFingerprintFields } from '../generationExamples.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
   STORYBOARD_TAXONOMY_VERSION,
   contentTitle,
   hasDetailSource,
-} from '@/lib/storyboardTaxonomy.js';
+} from '../storyboardTaxonomy.js';
 
 const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) => ({
   id: uid('blk'), sectionRole, contentRole, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
@@ -121,8 +122,7 @@ function storyboardTemplateFingerprint(blocks) {
     faceExposure: block.faceExposure ?? null,
     angle: block.angle ?? null,
     outerClosureState: block.outerClosureState ?? null,
-    exampleId: block.exampleId ?? null,
-    refScope: block.refScope ?? null,
+    ...exampleSelectionFingerprintFields(block),
     refImages: block.refImages || [],
     refAssetIds: block.refAssetIds || [],
     ownImages: block.ownImages || [],

@@ -7,7 +7,7 @@
    카피라이팅 토글은 store(copywriting) → patchProject 동기화.
    UnderlineTabs/ColorDots/MoodGuide/hexFor are exported for the editor.
    ============================================================= */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
@@ -30,6 +30,15 @@ import {
   sectionRoleForContentRole,
   sectionTitle,
 } from '@/lib/storyboardTaxonomy.js';
+import {
+  assignGenerationExamples,
+  directionBadgeLabel,
+  hasPublicGenerationExamplesForCut,
+  isGenerationCombinationPublic,
+  selectGenerationExamples,
+  storedExampleConditionStatus,
+} from '@/lib/generationExamples.js';
+
 
 const COLOR_HEX = {
   white: '#ffffff', ivory: '#f3eee1', beige: '#d8c4a3', brown: '#7a5230', black: '#15141a',
@@ -51,7 +60,7 @@ const sbStable = (v) => JSON.stringify(v, (k, val) =>
   (val && typeof val === 'object' && !Array.isArray(val))
     ? Object.keys(val).sort().reduce((o, key) => { o[key] = val[key]; return o; }, {})
     : val);
-function sbSaveNow(pid, getSnap) {
+function sbSaveNow(pid, getSnap, options = {}) {
   const run = sbSaveChain.catch(() => {}).then(() => {
     const snap = getSnap();
     if (!pid || !snap) return;
@@ -61,7 +70,7 @@ function sbSaveNow(pid, getSnap) {
       sbPending.delete(pid);
       return;
     }
-    return api.saveStoryboard(pid, snap).then(
+    return api.saveStoryboard(pid, snap, options).then(
       () => { sbLastSaved.set(pid, snap); sbPending.delete(pid); },
       (err) => { sbPending.set(pid, snap); throw err; },   // 실패 = 완료 아님 — 스냅샷 보관 후 전파
     );
@@ -91,47 +100,6 @@ const exampleThumbFor = (catalogs, exampleId, cut) => (
   || Placeholder.photo(exampleId, exampleCategoryFor(cut), 240, 320)
 );
 
-const byRankThenId = (left, right) => (
-  (Number(left.rank) || 0) - (Number(right.rank) || 0)
-  || (String(left.id) < String(right.id) ? -1 : String(left.id) > String(right.id) ? 1 : 0)
-);
-
-export function selectGenerationExamples(catalog, { cutType, shot, clothingType, gender }) {
-  const matched = (catalog || []).filter((example) => (
-    example?.cutType === cutType
-    && example?.shot === shot
-    && (example?.cutType === 'product' ? example?.gender == null : example?.gender === gender)
-    && Array.isArray(example?.applicableClothingTypes)
-    && example.applicableClothingTypes.includes(clothingType)
-  ));
-  const mixAxis = cutType === 'styling' ? 'mood'
-    : cutType === 'product' && shot === 'detail' ? 'detailSubject'
-      : null;
-  if (!mixAxis) return [...matched].sort(byRankThenId).slice(0, 6);
-
-  const buckets = new Map();
-  for (const example of matched) {
-    const key = String(example[mixAxis] || '');
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(example);
-  }
-  const orderedBuckets = [...buckets.entries()]
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([, examples]) => examples.sort(byRankThenId));
-  const mixed = [];
-  for (let rankIndex = 0; mixed.length < 6; rankIndex += 1) {
-    let added = false;
-    for (const examples of orderedBuckets) {
-      if (examples[rankIndex]) {
-        mixed.push(examples[rankIndex]);
-        added = true;
-        if (mixed.length === 6) break;
-      }
-    }
-    if (!added) break;
-  }
-  return mixed;
-}
 
 function exampleGenderFromAnalysis(analysis, catalogs) {
   const allowed = new Set(['women', 'men']);
@@ -224,6 +192,9 @@ function StoryboardCard({ block, displayLabel, catalogs, colorOpts, matchClothin
                 </>
               ) : <div className="sb-detail muted">생성 설정 준비 중</div>}
             </div>
+          )}
+          {!isMine && !block.exampleId && (
+            <div className="sb-example-missing">생성예시를 배정하지 못했어요 · 카드를 열어 다시 시도</div>
           )}
           {!isMine && block.cutType && cols.length > 0 && (
             <div className="sb-reveal sb-cfoot">
@@ -359,7 +330,8 @@ export function UnderlineTabs({ options, value, onChange }) {
   return (
     <div className="utabs" ref={ref} style={{ '--ul-left': line.left + 'px', '--ul-width': line.width + 'px' }}>
       {options.map((o) => (
-        <button key={o.value} className={`utab${value === o.value ? ' on' : ''}`} onClick={() => onChange(o.value)}>{o.label}</button>
+        <button key={o.value} disabled={o.disabled} title={o.disabled ? '이 조건은 아직 서비스에 공개되지 않았어요' : undefined}
+          className={`utab${value === o.value ? ' on' : ''}`} onClick={() => onChange(o.value)}>{o.label}</button>
       ))}
     </div>
   );
@@ -405,6 +377,25 @@ function ShotIcon({ cut, shot, clothingType }) {
     </svg>
   );
 }
+function ExampleThumb({ example }) {
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setAttempt(0); setFailed(false); }, [example?.thumb]);
+  if (failed) return (
+    <span className="sb-exthumb-error">썸네일을 불러오지 못했어요
+      <span role="button" tabIndex={0} onClick={(event) => {
+        event.stopPropagation(); setAttempt((value) => value + 1); setFailed(false);
+      }} onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault(); event.stopPropagation(); setAttempt((value) => value + 1); setFailed(false);
+        }
+      }}>다시 시도</span>
+    </span>
+  );
+  const separator = String(example?.thumb || '').includes('?') ? '&' : '?';
+  return <img src={`${example.thumb}${attempt ? `${separator}retry=${attempt}` : ''}`} alt="" onError={() => setFailed(true)} />;
+}
+
 
 /* 분위기 예시 — 갤러리가 주인공 (B+C안 확정, ADR-0004):
    · 샷 종류 = 갤러리의 아이콘 필터 타일 (설정과 같은 shot 필드를 바꾼다)
@@ -412,39 +403,37 @@ function ShotIcon({ cut, shot, clothingType }) {
    · 내 사진(refImages) = '+ 타일'로 갤러리에 통합 — 점선 테두리·배지, 분위기(조명·색감)만 참고
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false }) {
+export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onCycleExample, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false }) {
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
   const examples = React.useMemo(() => selectGenerationExamples(catalogs.genExamples, {
     cutType: cut, shot: shotVal, clothingType, gender,
   }), [catalogs.genExamples, cut, shotVal, clothingType, gender]);
-  const selectedExample = examples.find((example) => example.id === exampleId) || null;
+  const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
   const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
-  const selectedPoseCompatible = poseExampleDirectionCompatible(selectedExample, {
-    cutType: selectedExample?.cutType || cut, direction,
+  const conditionStatus = !exampleId ? null : storedExampleConditionStatus(selectedExample, {
+    cutType: cut, clothingType, gender,
   });
-  useEffect(() => {
-    if (!exampleId || !onExampleChange) return;
-    const published = (selectedExample?.variants || []).filter((variant) => (
-      variant !== 'bg' || BG_EXAMPLES_ENABLED
-    )).filter((variant) => variant !== 'pose' || selectedPoseCompatible);
-    if (!selectedExample || (inSpace && !published.includes('pose'))) {
-      onExampleChange(null);
-      return;
-    }
-    if (inSpace && refScope !== 'pose' && onRefScopeChange) {
-      onRefScopeChange('pose');
-      return;
-    }
-    if (!inSpace && cut === 'product' && refScope !== 'all' && onRefScopeChange) {
-      onRefScopeChange('all');
-      return;
-    }
-    if (cut !== 'product' && !published.includes(refScope) && onRefScopeChange) {
-      onRefScopeChange('all');
-    }
-  }, [exampleId, selectedExample, selectedPoseCompatible, inSpace, cut, refScope, onExampleChange, onRefScopeChange]);
+  const selectedStatus = conditionStatus === 'valid' && inSpace
+    && (!(selectedExample.variants || []).includes('pose')
+      || !poseExampleDirectionCompatible(selectedExample, { cutType: selectedExample.cutType || cut, direction }))
+    ? 'changed' : conditionStatus;
+  const cycleExamples = inSpace ? examples.filter((example) => (
+    (example.variants || []).includes('pose')
+    && poseExampleDirectionCompatible(example, { cutType: example.cutType || cut, direction })
+  )) : examples;
+  const cycle = () => {
+    if (cycleExamples.length <= 1) return;
+    const current = cycleExamples.findIndex((example) => example.id === exampleId);
+    const next = cycleExamples[(current + 1 + cycleExamples.length) % cycleExamples.length];
+    if (onCycleExample) Promise.resolve(onCycleExample(next.id)).catch(() => {});
+    else onExampleChange?.(next.id);
+  };
+  const selectFirstAvailable = () => {
+    const available = inSpace ? cycleExamples : examples;
+    if (available[0]) onExampleChange?.(available[0].id);
+  };
   const unavailableReason = (scope) => scope === 'pose'
     ? '이 예시는 아직 포즈 전용 자산이 없어요'
     : '이 예시는 아직 배경 전용 자산이 없어요';
@@ -458,16 +447,45 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
       <div className="sb-exhead"><label className="lbl">{cut === 'product' ? '생성 예시' : inSpace ? '포즈 예시' : '분위기 예시'}</label><span className="sb-exhint">내 사진은 이 프로젝트에서만</span></div>
       {onShotChange && (
         <div className="shot-tiles">
-          {shotOpts.map((s) => (
-            <button key={s.value} type="button" className={`shot-tile${shotVal === s.value ? ' on' : ''}`} onClick={() => onShotChange(s.value)}>
-              <ShotIcon cut={cut} shot={s.value} clothingType={clothingType} />{s.label}
-            </button>
-          ))}
+          {shotOpts.map((s) => {
+            const published = isGenerationCombinationPublic({ cutType: cut, shot: s.value, clothingType, gender });
+            return (
+              <button key={s.value} type="button" disabled={!published}
+                title={!published ? '이 조건은 아직 서비스에 공개되지 않았어요' : undefined}
+                className={`shot-tile${shotVal === s.value ? ' on' : ''}`} onClick={() => onShotChange(s.value)}>
+                <ShotIcon cut={cut} shot={s.value} clothingType={clothingType} />{s.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {exampleId && (
+        <div className={`sb-current-example${selectedStatus !== 'valid' ? ' has-error' : ''}`}>
+          <div className="sb-current-title">현재 선택</div>
+          {selectedExample ? (
+            <>
+              <div className="sb-current-thumb">
+                <ExampleThumb example={selectedExample} />
+                <span className="sb-direction-badge">{directionBadgeLabel(selectedExample.direction)}</span>
+              </div>
+              {selectedStatus === 'changed' && <div className="sb-example-error">조건이 바뀌어 예시를 다시 골라주세요</div>}
+            </>
+          ) : <div className="sb-example-error">저장된 예시를 불러오지 못했어요</div>}
+          {selectedStatus !== 'valid' && examples.length > 0 && (
+            <button type="button" className="sb-example-retry" onClick={selectFirstAvailable}>다시 선택</button>
+          )}
+          <button type="button" className="sb-cycle-example" disabled={cycleExamples.length <= 1}
+            title={cycleExamples.length <= 1 ? '이 조건에는 다른 예시가 없어요' : undefined}
+            onClick={cycle}>다른 예시 보기</button>
         </div>
       )}
       <div className={`sb-exgrid${moodOnly ? ' moodonly' : ''}`}>
         {examples.length === 0 && (
-          <div className="sb-exempty">이 조건의 생성예시는 준비 중이에요</div>
+          <div className="sb-exempty">
+            {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
+              ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
+            <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
+          </div>
         )}
         {examples.map((e) => {
           const on = exampleId === e.id;
@@ -491,7 +509,6 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
             if (!onExampleChange) return;
             if (!variants.includes(scope)) return;
             if (scope === 'pose' && !poseCompatible) return;
-            if (on && (refScope || 'all') === scope) { onExampleChange(null); return; }   // 같은 선택 재클릭 = 해제
             onExampleChange(e.id);
             if (onRefScopeChange) onRefScopeChange(scope);
           };
@@ -504,8 +521,10 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
             <button key={e.id} type="button" disabled={inSpaceDisabled}
               title={inSpaceDisabled ? poseDisabledReason : undefined}
               className={`sb-excell${on ? ' sel' : ''}${inSpaceDisabled ? ' unavailable' : ''}`}
-              onClick={() => { if (on) onExampleChange?.(null); else pick(defaultScope); }}>
-              <img src={e.thumb} alt="" />{on && <span className="ck"><Icon name="check" size={11} /></span>}
+              onClick={() => pick(defaultScope)}>
+              <ExampleThumb example={e} />
+              <span className="sb-direction-badge">{directionBadgeLabel(e.direction)}</span>
+              {on && <span className="ck"><Icon name="check" size={11} /></span>}
               {on && scopeChoices && <span className="sb-exscope">{SCOPE_LABELS[refScope || 'all'] || '전부'}</span>}
               {scopeChoices && (
                 /* 오버레이 배경 클릭은 셀 기본 선택으로 통과(기존 클릭 선택 유지) — 버튼 클릭만 범위 지정 */
@@ -563,8 +582,17 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   );
 }
 
-function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, mode, onMode, onChange, matchClothing, dirty, warn, onDone, onRevert, onAddMine, onImgDrag, onCancelNew, isNew }) {
+function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, mode, onMode, onChange, onAtomicChange, requestedRecipe, onCancelRequestedRecipe, matchClothing, dirty, warn, onDone, onRevert, onAddMine, onImgDrag, onCancelNew, isNew }) {
   const doneRef = useRef(null);
+  const [pendingRecipe, setPendingRecipe] = useState(null);
+  const [pendingChoice, setPendingChoice] = useState(null);
+  const [pendingError, setPendingError] = useState(null);
+  const [pendingSaving, setPendingSaving] = useState(false);
+  useEffect(() => {
+    setPendingRecipe(requestedRecipe?.blockId === block?.id
+      ? { cutType: requestedRecipe.cutType, shot: requestedRecipe.shot } : null);
+    setPendingChoice(null); setPendingError(null); setPendingSaving(false);
+  }, [block?.id, requestedRecipe?.blockId, requestedRecipe?.cutType, requestedRecipe?.shot]);
   useEffect(() => { if (warn && doneRef.current) doneRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, [warn]);
 
   if (!block) return (
@@ -632,64 +660,112 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const isProduct = block.cutType === 'product';
   const isMirror = block.cutType === 'mirror';
   const isDetail = block.contentRole === CONTENT_ROLES.DETAIL;
-  const cutTypeOptions = cutTypeOptionsForSection(block.sectionRole);
+  const effectiveSectionRole = requestedRecipe?.sectionRole || block.sectionRole;
+  const pendingInSpace = !!block.spaceGroupId && !requestedRecipe;
   const productShotOptions = catalogs.productShotTypes
     .filter((option) => hasDetailImage || option.value !== 'detail');
-  const onCutTypeChange = (cutType) => onChange((current) => {
-    if (current.cutType === cutType) return {};
-    const nextRole = current.sectionRole === SECTION_ROLES.FIT
-      ? FIT_ROLE_BY_CUT_TYPE[cutType]
-      : [CONTENT_ROLES.HERO, CONTENT_ROLES.BENEFIT].includes(current.contentRole)
-        ? current.contentRole : defaultContentRoleForSection(current.sectionRole);
-    const recipePatch = normalizedRecipePatch(
-      { ...current, source: 'ai', cutType },
-      nextRole,
-      { hasDetailImage },
-    );
-    const feedback = referenceFeedbackPatch(current, {
-      ...recipePatch,
-      source: 'ai',
-      pose: 'auto',
-      poseLabel: 'AI 자동',
-      angle: 'same',
-      exampleId: null,
-      refScope: 'all',
-      outerClosureState: clothingType === 'outer' && WORN_CUT_TYPES.has(cutType)
-        ? (closureOptions.some((option) => option.value === current.outerClosureState)
-          ? current.outerClosureState : 'open')
-        : null,
-      ...(cutType === 'product' ? { matchIds: [], faceExposure: null } : {}),
-    }, catalogs);
-    return { ...feedback, baseThumb: null };
+  const cutTypeOptions = cutTypeOptionsForSection(effectiveSectionRole).map((option) => {
+    const shots = option.value === 'product'
+      ? productShotOptions.map((item) => item.value)
+      : catalogs.shotTypes.map((item) => item.value);
+    return {
+      ...option,
+      disabled: !hasPublicGenerationExamplesForCut({
+        cutType: option.value, clothingType, gender: exampleGender, shots,
+      }),
+    };
   });
-  const onShotChange = (shot) => onChange((current) => {
-    if (current.cutType !== 'product') {
-      return referenceFeedbackPatch(current, { shot, exampleId: null }, catalogs);
+  const onCutTypeChange = (cutType) => {
+    if (block.cutType === cutType) { setPendingRecipe(null); return; }
+    const availableShots = cutType === 'product' ? productShotOptions : catalogs.shotTypes;
+    const shot = availableShots.find((option) => option.value === block.shot
+      && isGenerationCombinationPublic({
+        cutType, shot: option.value, clothingType, gender: exampleGender,
+      }))?.value || availableShots.find((option) => isGenerationCombinationPublic({
+      cutType, shot: option.value, clothingType, gender: exampleGender,
+    }))?.value || block.shot;
+    setPendingError(null);
+    setPendingChoice(null);
+    setPendingRecipe({ cutType, shot });
+  };
+  const onShotChange = (shot) => {
+    if (block.cutType === 'product') {
+      if (block.shot === shot) { setPendingRecipe(null); return; }
+      setPendingError(null);
+      setPendingChoice(null);
+      setPendingRecipe({ cutType: 'product', shot });
+      return;
     }
-    const nextRole = shot === 'detail' ? CONTENT_ROLES.DETAIL : CONTENT_ROLES.PRODUCT_OVERVIEW;
-    const rolePatch = current.contentRole === nextRole
-      ? { shot, exampleId: null }
-      : { ...blockPatchForContentRole(current, nextRole, { clothingType }), shot, exampleId: null };
+    onChange((current) => ({
+      shot,
+      exampleSelectionOrigin: current.exampleId ? 'user' : null,
+    }));
+  };
+  const commitPendingRecipe = async (exampleId) => {
+    if (!pendingRecipe || pendingSaving) return;
+    const example = (catalogs.genExamples || []).find((item) => item.id === exampleId);
+    if (!example) return;
+    const current = block;
+    const nextRole = pendingRecipe.cutType === 'product'
+      ? (pendingRecipe.shot === 'detail' ? CONTENT_ROLES.DETAIL : CONTENT_ROLES.PRODUCT_OVERVIEW)
+      : effectiveSectionRole === SECTION_ROLES.FIT
+        ? FIT_ROLE_BY_CUT_TYPE[pendingRecipe.cutType]
+        : [CONTENT_ROLES.HERO, CONTENT_ROLES.BENEFIT].includes(current.contentRole)
+          ? current.contentRole : defaultContentRoleForSection(effectiveSectionRole);
+    const recipePatch = normalizedRecipePatch({
+      ...current,
+      source: 'ai',
+      cutType: pendingRecipe.cutType,
+      shot: pendingRecipe.shot,
+    }, nextRole, { hasDetailImage });
     const nextColorOpts = nextRole === CONTENT_ROLES.DETAIL ? detailColorOpts : colorOpts;
     const colorId = nextColorOpts.some((color) => color.id === current.colorId)
       ? current.colorId : nextColorOpts[0]?.id;
-    const feedback = referenceFeedbackPatch(current, rolePatch, catalogs);
-    return {
-      ...feedback,
+    const changes = referenceFeedbackPatch(current, {
+      ...recipePatch,
+      source: 'ai',
+      shot: pendingRecipe.shot,
       colorId,
-      baseThumb: null,
-      thumb: Placeholder.photo(`product_${current.id}_${shot}`, 'product', 240, 320),
-    };
-  });
+      pose: 'auto',
+      poseLabel: 'AI 자동',
+      angle: 'same',
+      exampleId,
+      baseThumb: current.baseThumb ?? current.thumb,
+      exampleSelectionOrigin: 'user',
+      refScope: pendingInSpace ? 'pose' : 'all',
+      outerClosureState: clothingType === 'outer' && WORN_CUT_TYPES.has(pendingRecipe.cutType)
+        ? (closureOptions.some((option) => option.value === current.outerClosureState)
+          ? current.outerClosureState : 'open')
+        : null,
+      ...(pendingRecipe.cutType === 'product' ? { matchIds: [], faceExposure: null } : {}),
+    }, catalogs);
+    setPendingChoice(exampleId);
+    setPendingSaving(true);
+    setPendingError(null);
+    try {
+      await onAtomicChange(changes, { pickerOwnsError: true });
+      setPendingRecipe(null);
+      setPendingChoice(null);
+    } catch {
+      setPendingError('변경 내용을 저장하지 못했어요');
+    } finally {
+      setPendingSaving(false);
+    }
+  };
   const onGenerationExampleChange = (exampleId) => onChange((current) => {
     const changes = {
       exampleId,
-      refScope: !exampleId ? 'all'
-        : current.spaceGroupId ? 'pose' : (current.refScope || 'all'),
+      baseThumb: current.baseThumb ?? current.thumb,
+      exampleSelectionOrigin: exampleId ? 'user' : null,
+      refScope: current.spaceGroupId ? 'pose' : (current.refScope || 'all'),
     };
-    const feedback = referenceFeedbackPatch(current, changes, catalogs);
-    return exampleId ? feedback : { ...feedback, baseThumb: null };
+    return referenceFeedbackPatch(current, changes, catalogs);
   });
+  const onCycleGenerationExample = (exampleId) => onAtomicChange(referenceFeedbackPatch(block, {
+    exampleId,
+    exampleSelectionOrigin: 'user',
+    refScope: block.spaceGroupId ? 'pose' : (block.refScope || 'all'),
+  }, catalogs), { retryAtomic: true });
   const showOuterClosure = clothingType === 'outer' && block.source === 'ai' && WORN_CUT_TYPES.has(block.cutType);
   const outerClosureState = closureOptions.some((option) => option.value === block.outerClosureState) ? block.outerClosureState : 'open';
   return (
@@ -713,22 +789,48 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       ) : (
         <>
       <div className="insp-sec"><label className="lbl">컷 종류</label>
-        <UnderlineTabs options={cutTypeOptions} value={block.cutType} onChange={onCutTypeChange} />
+        <UnderlineTabs options={cutTypeOptions} value={pendingRecipe?.cutType || block.cutType} onChange={onCutTypeChange} />
       </div>
 
-      {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터, 방향은 아래로 강등 (B+C안, ADR-0004) */}
-      <MoodGuide catalogs={catalogs} cut={block.cutType}
-        direction={block.direction} shot={block.shot}
-        shotOptions={isProduct ? productShotOptions : null}
-        onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}
-        exampleId={block.exampleId || null}
-        onExampleChange={onGenerationExampleChange}
-        refScope={block.refScope || 'all'} onRefScopeChange={(v) => onChange((current) => referenceFeedbackPatch(current, { refScope: v }, catalogs))} inSpace={!!block.spaceGroupId}
-        refs={(block.refImages || []).map((u, i) => ({ url: u?.url || u, assetId: u?.assetId || (block.refAssetIds || [])[i] }))}
-        onRefsChange={(r) => onChange({
-          refImages: r.map((x) => x?.url || x),                        // 표시용 URL
-          refAssetIds: r.map((x) => x?.assetId).filter(Boolean),       // 서버 첨부용 asset id (계약 §6)
-        })} />
+      {pendingRecipe ? (
+        <div className="sb-pending-recipe">
+          <div className="insp-note"><Icon name="info" size={14} />새 컷의 예시를 먼저 골라주세요. 선택하면 컷·샷·예시가 함께 바뀌어요.</div>
+          {requestedRecipe && <button type="button" className="insp-cancel-new" onClick={() => {
+            setPendingRecipe(null);
+            onCancelRequestedRecipe?.();
+          }}>섹션 이동 취소</button>}
+          <MoodGuide catalogs={catalogs} cut={pendingRecipe.cutType}
+            direction={pendingRecipe.cutType === 'mirror' ? null : block.direction} shot={pendingRecipe.shot}
+            shotOptions={pendingRecipe.cutType === 'product' ? productShotOptions : null}
+            onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot }))}
+            clothingType={clothingType} gender={exampleGender}
+            exampleId={pendingChoice} onExampleChange={commitPendingRecipe}
+            refScope={pendingInSpace ? 'pose' : 'all'} inSpace={pendingInSpace} />
+          {pendingError && <div className="sb-save-error">{pendingError}
+            <button type="button" disabled={!pendingChoice || pendingSaving}
+              onClick={() => commitPendingRecipe(pendingChoice)}>다시 시도</button>
+          </div>}
+        </div>
+      ) : (
+        <>
+          <MoodGuide catalogs={catalogs} cut={block.cutType}
+            direction={block.direction} shot={block.shot}
+            shotOptions={isProduct ? productShotOptions : null}
+            onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}
+            exampleId={block.exampleId || null}
+            onExampleChange={onGenerationExampleChange} onCycleExample={onCycleGenerationExample}
+            refScope={block.refScope || 'all'} onRefScopeChange={(value) => onChange((current) => referenceFeedbackPatch(current, {
+              refScope: value,
+              exampleSelectionOrigin: current.exampleId ? 'user' : null,
+            }, catalogs))} inSpace={!!block.spaceGroupId}
+            refs={(block.refImages || []).map((value, index) => ({ url: value?.url || value, assetId: value?.assetId || (block.refAssetIds || [])[index] }))}
+            onRefsChange={(references) => onChange({
+              refImages: references.map((value) => value?.url || value),
+              refAssetIds: references.map((value) => value?.assetId).filter(Boolean),
+            })} />
+          {!isProduct && <div className="sb-exnote">풀샷·중간샷은 화면 범위만 바뀌며 현재 예시는 그대로 유지돼요.</div>}
+        </>
+      )}
 
       {/* 방향 — mirror 생성 레시피는 방향 개념 없음 (ADR-0004) */}
       {!isMirror && !isDetail && (
@@ -821,6 +923,15 @@ export function Storyboard() {
   const [collapsed, setCollapsed] = useState(() => new Set()); // 접힌 섹션 id (UI 전용, 저장 안 함)
   const [warn, setWarn] = useState(false);
   const [previewHoverId, setPreviewHoverId] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [loadRetry, setLoadRetry] = useState(0);
+  const [saveError, setSaveError] = useState(null);
+  const [pendingSectionMove, setPendingSectionMove] = useState(null);
+  const [atomicSaving, setAtomicSaving] = useState(false);
+  const atomicSavingRef = useRef(false);
+  const atomicRetryRef = useRef(null);
+  const directSaveSnapshots = useRef(new WeakSet());
+  const saveRetryOptions = useRef({});
   const snapRef = useRef(null);
   const newSeq = useRef(0);
   const cardRefs = useRef(new Map());
@@ -867,6 +978,8 @@ export function Storyboard() {
 
   useEffect(() => {
     (async () => {
+      try {
+        setLoadError(null);
       await useAppStore.getState().loadProject();
       const pid = useAppStore.getState().projectId;
       if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
@@ -890,37 +1003,67 @@ export function Storyboard() {
         sbPending.delete(pid);
         toast.push('다른 곳에서 저장된 최신 콘티를 불러왔어요 — 이전에 저장 못 한 변경은 반영되지 않았어요');
       }
-      if (usePending) sbSkipFirstSave.current = false;   // 복원분은 미저장 상태 — 첫 자동저장 생략 없이 즉시 재시도
-      else sbLastSaved.set(pid, b);   // 이번 로드의 서버 상태를 기준선으로 기록 — 다음 복원 판별의 비교 대상
+      if (!usePending) sbLastSaved.set(pid, b);   // 이번 로드의 서버 상태를 기준선으로 기록
       const sourceBlocks = usePending ? pending : b;
       const productHasDetail = hasDetailSource(p);
-      const initBlocks = ensureSections(sourceBlocks, { hasDetailImage: productHasDetail }).map((block) => ({
+      const resolvedGender = exampleGenderFromAnalysis(a, c);
+      const normalizedBlocks = ensureSections(sourceBlocks, { hasDetailImage: productHasDetail }).map((block) => ({
         ...block, ...referenceFeedbackPatch(block, {}, c),
       }));
-      const normalized = sbStable(initBlocks) !== sbStable(sourceBlocks);
-      setCollapsed(new Set(deriveSections(initBlocks).map((s) => s.id)));   // 진입 기본 상태 = 모든 섹션 접힘 (사용자 확정)
+      const normalized = sbStable(normalizedBlocks) !== sbStable(sourceBlocks);
+      const assignment = assignGenerationExamples(normalizedBlocks, {
+        catalog: c.genExamples,
+        product: p,
+        gender: resolvedGender,
+      });
+      const initBlocks = assignment.blocks;
+      setCollapsed(new Set(deriveSections(initBlocks).map((section) => section.id)));
       setBlocks(initBlocks); setCatalogs(c); setMatchClothing(m); setClothingType(p.clothingType || 'top');
-      setExampleGender(exampleGenderFromAnalysis(a, c)); setHasDetailImage(productHasDetail);
-      if (normalized) sbSkipFirstSave.current = false; // v2 계약 정규화 결과를 자동저장한다.
+      setExampleGender(resolvedGender); setHasDetailImage(productHasDetail);
+      if (normalized || assignment.changed || usePending) {
+        const autoAssignmentOnly = assignment.assignedIds.length > 0
+          && assignment.protectedIds.length === 0 && !normalized && !usePending;
+        try {
+          await sbSaveNow(pid, () => initBlocks, { autoAssignment: autoAssignmentOnly });
+          saveRetryOptions.current = {};
+          setSaveError(null);
+        } catch {
+          saveRetryOptions.current = { autoAssignment: autoAssignmentOnly };
+          setSaveError('변경 내용을 저장하지 못했어요');
+        }
+      }
       const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexFor(col) }));
       const opts = allColorOpts.filter((_option, index) => (p.colors[index].images || []).length || p.colors[index].isBase);
       setDetailColorOpts(allColorOpts.length ? allColorOpts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
       setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
+      } catch {
+        setLoadError('생성예시 카탈로그를 불러오지 못했어요');
+      }
     })();
-  }, []);
+  }, [loadRetry]);
   // 콘티 편집 자동저장 — Editor 와 동일 패턴(1.5s debounce). generate 클릭 전 이탈해도 콘티 유실 없음.
   const saveTimer = useRef(null);
   const latestBlocks = useRef(null);
   const pidRef = useRef(null);   // 이 인스턴스가 로드한 프로젝트 — 플러시가 스토어의 "현재" id(새 프로젝트로 바뀌었을 수 있음)를 쓰지 않게 고정
   const pendingRowRestore = useRef(null);   // 새 블록 삽입이 가른 행 { blockId, rowId, memberIds } — 취소 시 복원용
   const saveNow = (pid) => sbSaveNow(pid, () => latestBlocks.current);
-  useEffect(() => { latestBlocks.current = blocks; }, [blocks]);
+  useLayoutEffect(() => {
+    latestBlocks.current = blocks;
+    if (blocks != null) saveRetryOptions.current = {};
+  }, [blocks]);
   const sbSkipFirstSave = useRef(true);
   useEffect(() => {
     if (blocks == null || !projectId) return;
     if (sbSkipFirstSave.current) { sbSkipFirstSave.current = false; return; }  // 최초 로드분은 저장 생략(불필요 dirty 방지)
+    if (directSaveSnapshots.current.has(blocks)) {
+      directSaveSnapshots.current.delete(blocks);
+      return;
+    }
+    saveRetryOptions.current = {};
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { saveNow(projectId).catch(() => {}); }, 1500);
+    saveTimer.current = setTimeout(() => {
+      saveNow(projectId).then(() => setSaveError(null)).catch(() => setSaveError('변경 내용을 저장하지 못했어요'));
+    }, 1500);
     return () => clearTimeout(saveTimer.current);
   }, [blocks, projectId]);
   // 언마운트 시 보류 자동저장 플러시 — '이전' 등 이탈 직전 1.5s 안의 변경 유실 방지.
@@ -949,11 +1092,18 @@ export function Storyboard() {
       }
     }
   }, [blocks]);
+  if (loadError) return (
+    <div className="wizard wide"><div className="surface sb-load-error">
+      <div>{loadError}</div>
+      <button type="button" className="btn btn-primary" onClick={() => setLoadRetry((value) => value + 1)}>다시 시도</button>
+    </div></div>
+  );
   if (!blocks || !catalogs) return <div className="wizard wide">{doneBlocked && <DoneGuardModal />}<div className="surface"><Skeleton h={400} /></div></div>;
 
   const selected = blocks.find((b) => b.id === selectedId);
   const isMineSel = selected && selected.source === 'mine';
   const patch = (id, changes) => {
+    if (atomicSavingRef.current) return;
     setBlocks((bs) => {
       const current = bs.find((b) => b.id === id);
       const p = typeof changes === 'function' ? changes(current) : changes;
@@ -974,16 +1124,66 @@ export function Storyboard() {
     const b = cur0;
     if (!b || b.source !== 'mine' || typeof changes === 'function' || ('source' in changes)) setDirty(true);
   };
+  const atomicPatch = async (id, changes, { retryAtomic = false, pickerOwnsError = false } = {}) => {
+    if (atomicSavingRef.current) throw new Error('storyboard_atomic_save_in_progress');
+    atomicSavingRef.current = true;
+    setAtomicSaving(true);
+    setSaveError(null);
+    const previous = blocks;
+    const move = pendingSectionMove?.blockId === id ? pendingSectionMove : null;
+    let staged = previous;
+    if (move) {
+      const from = staged.findIndex((block) => block.id === id);
+      if (from >= 0) {
+        let to = Math.max(0, Math.min(move.index, staged.length));
+        if (from < to) to -= 1;
+        const movedRowId = staged[from].layoutRowId;
+        const moved = [...staged];
+        const [item] = moved.splice(from, 1);
+        moved.splice(Math.min(to, moved.length), 0, item);
+        const dissolved = movedRowId
+          ? moved.map((block) => block.layoutRowId === movedRowId ? withoutLayoutRow(block) : block)
+          : moved;
+        staged = adoptSection(dissolved, id, move.targetSid, move.targetRole);
+      }
+    }
+    const next = normalizeBoard(staged.map((block) => (
+      block.id === id ? { ...block, ...changes } : block
+    )));
+    directSaveSnapshots.current.add(next);
+    setBlocks(next);
+    try {
+      await sbSaveNow(projectId, () => next);
+      if (move) setPendingSectionMove(null);
+      atomicRetryRef.current = null;
+      saveRetryOptions.current = {};
+      setSaveError(null);
+      setDirty(true);
+    } catch (error) {
+      if (sbPending.get(projectId) === next) sbPending.delete(projectId);
+      atomicRetryRef.current = retryAtomic ? { previous, next } : null;
+      directSaveSnapshots.current.add(previous);
+      setBlocks(previous);
+      saveRetryOptions.current = {};
+      if (!pickerOwnsError) setSaveError('변경 내용을 저장하지 못했어요');
+      throw error;
+    } finally {
+      atomicSavingRef.current = false;
+      setAtomicSaving(false);
+    }
+  };
   const selectCard = (id) => {
+    if (atomicSavingRef.current) return;
     if (selectedId === id) { finishEdit(); return; }      // click again → deselect
     const cur = blocks.find((b) => b.id === selectedId);
     const curLocked = selectedId && dirty && cur && cur.source !== 'mine';   // 내 이미지는 잠그지 않음
     if (curLocked) { setWarn(true); return; }
+    setPendingSectionMove(null);
     const target = blocks.find((b) => b.id === id);
     snapRef.current = target ? { ...target } : null;
     setSelectedId(id); setMode('props'); setDirty(false); setWarn(false); setSplitOpen(true);
   };
-  const finishEdit = () => { pendingRowRestore.current = null; setSelectedId(null); setMode('props'); setDirty(false); setWarn(false); snapRef.current = null; };
+  const finishEdit = () => { pendingRowRestore.current = null; setPendingSectionMove(null); setSelectedId(null); setMode('props'); setDirty(false); setWarn(false); snapRef.current = null; };
   const revertEdit = () => {
     if (snapRef.current) {
       const snap = snapRef.current;
@@ -1044,18 +1244,46 @@ export function Storyboard() {
     }) });
   };
   // 이동 후 adoptSection — 섹션 경계를 넘으면 이웃 섹션을 채택하고 대상 섹션을 '직접 구성' 처리
-  const moveBlock = (id, dir) => setBlocks((bs) => {
-    const i = bs.findIndex((b) => b.id === id); const j = i + dir;
-    if (i < 0 || j < 0 || j >= bs.length) return bs;
-    const rowId = bs[i].layoutRowId;
-    // 행 내부 화살표 이동은 멤버 순서만 바꾸고, 행 밖으로 빼는 이동은 행 전체를 단일 컷으로 해제한다.
-    const base = rowId && bs[j].layoutRowId !== rowId
-      ? bs.map((b) => b.layoutRowId === rowId ? withoutLayoutRow(b) : b)
-      : [...bs];
-    const n = [...base]; [n[i], n[j]] = [n[j], n[i]];
-    return normalizeBoard(adoptSection(n, id));
-  });
-  const addBlock = (idx, targetSid, targetRole = null) => {
+  const moveBlock = (id, dir) => {
+    const i = blocks.findIndex((block) => block.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= blocks.length) return;
+    const moving = blocks[i];
+    const target = blocks[j];
+    const crossesSection = moving.sectionId !== target.sectionId;
+    const cutAllowed = moving.source === 'mine' || !crossesSection
+      || cutTypeOptionsForSection(target.sectionRole).some((option) => option.value === moving.cutType);
+    if (!cutAllowed) {
+      const targetContentRole = defaultContentRoleForSection(target.sectionRole);
+      const targetRecipe = blockPatchForContentRole(moving, targetContentRole, { clothingType });
+      setPendingSectionMove({
+        blockId: id,
+        index: dir > 0 ? j + 1 : j,
+        targetSid: target.sectionId,
+        targetRole: target.sectionRole,
+        cutType: targetRecipe.cutType,
+        shot: targetRecipe.shot,
+        sectionRole: target.sectionRole,
+      });
+      snapRef.current = { ...moving };
+      setSelectedId(id); setMode('props'); setDirty(false); setWarn(false); setSplitOpen(true);
+      toast.push('새 섹션에 맞는 컷 예시를 먼저 골라주세요');
+      return;
+    }
+    setBlocks((bs) => {
+      const from = bs.findIndex((block) => block.id === id);
+      const to = from + dir;
+      if (from < 0 || to < 0 || to >= bs.length) return bs;
+      const rowId = bs[from].layoutRowId;
+      // 행 내부 화살표 이동은 멤버 순서만 바꾸고, 행 밖으로 빼는 이동은 행 전체를 단일 컷으로 해제한다.
+      const base = rowId && bs[to].layoutRowId !== rowId
+        ? bs.map((block) => block.layoutRowId === rowId ? withoutLayoutRow(block) : block)
+        : [...bs];
+      const next = [...base]; [next[from], next[to]] = [next[to], next[from]];
+      return normalizeBoard(adoptSection(next, id));
+    });
+  };
+  const addBlock = async (idx, targetSid, targetRole = null) => {
     newSeq.current += 1;
     const targetHost = blocks.find((b) => b.sectionId === targetSid);
     const host = targetHost || (!targetRole ? blocks[Math.max(0, Math.min(idx - 1, blocks.length - 1))] : null);
@@ -1081,8 +1309,7 @@ export function Storyboard() {
       pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
       ...purposePatch,
       thumb: Placeholder.photo('new' + Date.now(), purposePatch.cutType === 'product' ? 'product' : purposePatch.cutType === 'horizon' ? 'horizon' : 'styling', 240, 320), poseThumb: Placeholder.pose('stand'), poseLabel: 'AI 자동' };
-    setBlocks((bs) => {
-      const m = [...bs]; m.splice(idx, 0, nb);
+    const m = [...blocks]; m.splice(idx, 0, nb);
       let out = adoptSection(m, nb.id, targetSid, sectionRole);             // 이웃/명시된 섹션 소속으로 삽입
       // 빈 보드 등 이웃이 없으면 기본 섹션 부여 — 무소속(unsupported state) 블록 방지
       out = out.map((b) => b.id === nb.id && !b.sectionId
@@ -1100,10 +1327,25 @@ export function Storyboard() {
       out = normalizeBoard(out);   // 행 한가운데 삽입·컷 수 변경에 따른 강등 등 공통 위생 (삽입 경로 공통 규칙)
       // 취소-복원 = 삽입 전 배열 통짜 보관 — 행 id 뿐 아니라 레이아웃 강등·소속까지 원상 복구.
       // "삽입 직후 상태 그대로"일 때만 유효(이후 어떤 조작이든 snapshot identity 가 바뀌어 자동 무효화).
-      pendingRowRestore.current = { blockId: nb.id, preInsert: bs, snapshot: out };
-      snapRef.current = { ...out.find((b) => b.id === nb.id) };             // '원래대로' 스냅샷은 소속 부여 후 기준 (섹션 유실 방지)
-      return out;
+    const assignment = assignGenerationExamples(out, {
+      catalog: catalogs.genExamples,
+      product: { clothingType },
+      gender: exampleGender,
+      onlyBlockIds: [nb.id],
     });
+    const next = assignment.blocks;
+    pendingRowRestore.current = { blockId: nb.id, preInsert: blocks, snapshot: next };
+    snapRef.current = { ...next.find((b) => b.id === nb.id) };             // '원래대로' 스냅샷은 소속 부여 후 기준 (섹션 유실 방지)
+    directSaveSnapshots.current.add(next);
+    setBlocks(next);
+    saveRetryOptions.current = {};
+    try {
+      await sbSaveNow(projectId, () => next);
+      saveRetryOptions.current = {};
+      setSaveError(null);
+    } catch {
+      setSaveError('변경 내용을 저장하지 못했어요');
+    }
     setSelectedId(nb.id); setMode('props'); setDirty(false); setWarn(false); setSplitOpen(true);
     toast.push('블록을 추가했어요', { icon: 'plus' });
   };
@@ -1144,6 +1386,21 @@ export function Storyboard() {
     setDragOver(null); setDragOverSec(null);
     if (img) { setDragMine(null); insertMineAt(idx, img, targetSid, targetRole); return; }   // 내 이미지를 새 블록으로 삽입
     const id = e.dataTransfer.getData('text/blk') || dragId; setDragId(null); if (!id) return;
+    const moving = blocks.find((block) => block.id === id);
+    const cutAllowed = !targetRole || moving?.source === 'mine'
+      || cutTypeOptionsForSection(targetRole).some((option) => option.value === moving?.cutType);
+    if (moving && !cutAllowed) {
+      const targetContentRole = defaultContentRoleForSection(targetRole);
+      const targetRecipe = blockPatchForContentRole(moving, targetContentRole, { clothingType });
+      setPendingSectionMove({
+        blockId: id, index: idx, targetSid, targetRole,
+        cutType: targetRecipe.cutType, shot: targetRecipe.shot, sectionRole: targetRole,
+      });
+      snapRef.current = { ...moving };
+      setSelectedId(id); setMode('props'); setDirty(false); setWarn(false); setSplitOpen(true);
+      toast.push('새 섹션에 맞는 컷 예시를 먼저 골라주세요');
+      return;
+    }
     setBlocks((bs) => {
       const from = bs.findIndex((b) => b.id === id); if (from < 0) return bs;
       let to = idx; if (from < idx) to -= 1;
@@ -1357,7 +1614,8 @@ export function Storyboard() {
   );
 
   const inspector = <Inspector block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} mode={mode} onMode={setMode}
-    onChange={(p) => patch(selectedId, p)} matchClothing={matchClothing} dirty={dirty && !isMineSel} warn={warn} onDone={finishEdit} onRevert={revertEdit} onAddMine={addMineBlock}
+    onChange={(p) => patch(selectedId, p)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} requestedRecipe={pendingSectionMove}
+    onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing} dirty={dirty && !isMineSel} warn={warn} onDone={finishEdit} onRevert={revertEdit} onAddMine={addMineBlock}
     isNew={pendingRowRestore.current?.blockId === selectedId}
     onImgDrag={(v) => { setDragMine(v); if (v == null) { setDragOver(null); setDragOverSec(null); } }}
     onCancelNew={() => {
@@ -1405,6 +1663,42 @@ export function Storyboard() {
   // 크레딧은 AI 생성 컷에만 — 내 이미지 블록은 생성 작업이 없어 제외 (계약 §6)
   const aiCount = blocks.filter((b) => b.source !== 'mine').length;
   const mineCount = cutCount - aiCount;
+  const retryFailedSave = async () => {
+    let atomicRetry = atomicRetryRef.current;
+    if (atomicRetry && latestBlocks.current !== atomicRetry.previous) {
+      atomicRetryRef.current = null;
+      atomicRetry = null;
+    }
+    if (!atomicRetry) {
+      try {
+        await sbSaveNow(projectId, () => latestBlocks.current, saveRetryOptions.current);
+        saveRetryOptions.current = {};
+        setSaveError(null);
+      } catch {
+        setSaveError('변경 내용을 저장하지 못했어요');
+      }
+      return;
+    }
+    if (atomicSavingRef.current) return;
+    atomicSavingRef.current = true;
+    setAtomicSaving(true);
+    directSaveSnapshots.current.add(atomicRetry.next);
+    setBlocks(atomicRetry.next);
+    try {
+      await sbSaveNow(projectId, () => atomicRetry.next);
+      atomicRetryRef.current = null;
+      setSaveError(null);
+      setDirty(true);
+    } catch {
+      if (sbPending.get(projectId) === atomicRetry.next) sbPending.delete(projectId);
+      directSaveSnapshots.current.add(atomicRetry.previous);
+      setBlocks(atomicRetry.previous);
+      setSaveError('변경 내용을 저장하지 못했어요');
+    } finally {
+      atomicSavingRef.current = false;
+      setAtomicSaving(false);
+    }
+  };
   const generate = async () => {
     // 방어: UI disabled 와 별개로 함수 자체도 게이트 — 다른 호출 경로가 생겨도 미설정 블록 생성 불가
     if (blocks.length === 0) return;
@@ -1416,9 +1710,15 @@ export function Storyboard() {
     navigate('/create/generating');
   };
   return (
-    <div className="wizard wide sb-page">
+    <div className={`wizard wide sb-page${atomicSaving ? ' is-atomic-saving' : ''}`}
+      aria-busy={atomicSaving || undefined}
+      onClickCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
+      onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>
       {doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
+      {saveError && <div className="sb-save-error">{saveError}
+        <button type="button" onClick={retryFailedSave}>다시 시도</button>
+      </div>}
       <div className={`sb-count-head${splitOpen ? ' is-split' : ''}`}>
         구성컷: <strong>{cutCount}개</strong>
       </div>

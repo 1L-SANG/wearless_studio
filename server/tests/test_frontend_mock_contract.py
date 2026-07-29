@@ -3,6 +3,8 @@ import json
 import re
 from pathlib import Path
 
+from tools import release_genexamples as release
+
 
 MOCK_DB = Path(__file__).resolve().parents[2] / "src/mock/db.js"
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -61,3 +63,33 @@ def test_dev_generation_example_catalog_matches_server_registry_v2():
 def test_storyboard_pose_direction_tooltip_matches_service_copy():
     source = (REPO_ROOT / "src/features/storyboard/Storyboard.jsx").read_text(encoding="utf-8")
     assert "이 예시의 포즈는 ${label} 전용이에요" in source
+
+
+def test_committed_catalog_and_registry_cover_the_single_public_combination_table():
+    catalog = json.loads(
+        (REPO_ROOT / "src/data/genExamples.json").read_text(encoding="utf-8")
+    )
+    registry = json.loads(
+        (REPO_ROOT / "server/app/data/example_assets.json").read_text(encoding="utf-8")
+    )
+    combinations = release.load_public_combinations()
+
+    catalog_counts, catalog_missing, catalog_undeclared = (
+        release.generation_example_coverage(catalog, combinations)
+    )
+    registry_counts, registry_missing, registry_undeclared = (
+        release.generation_example_coverage(list(registry["assets"].values()), combinations)
+    )
+
+    assert release.PUBLIC_COMBINATIONS_PATH == (
+        REPO_ROOT / "data/genexamples_public_combinations.json"
+    )
+    assert catalog_missing == []
+    assert registry_missing == []
+    assert catalog_counts == registry_counts
+    assert catalog_undeclared == registry_undeclared
+
+    frontend_source = (REPO_ROOT / "src/lib/generationExamples.js").read_text(
+        encoding="utf-8"
+    )
+    assert "../../data/genexamples_public_combinations.json" in frontend_source

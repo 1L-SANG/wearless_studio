@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import facemarket, repo
-from .agents import content_roles, fit_axes, mannequin, product_analyst, style_affinity
+from .agents import content_roles, cut_generator, fit_axes, mannequin, product_analyst, style_affinity
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import input_qc, matching, retrieval
@@ -1081,12 +1081,28 @@ async def get_storyboard(request: Request, project_id: str, user_id: str = Depen
 async def save_storyboard(request: Request, project_id: str, blocks: list = Body(...),
                           user_id: str = Depends(require_user)):
     _require_bg_examples_enabled(request, blocks)
+    try:
+        canonical = content_roles.canonicalize_storyboard(blocks, for_storage=True)
+    except ValueError as exc:
+        if str(exc) == "invalid_example_selection_origin":
+            raise _bad_request("invalid_example_selection_origin", "생성예시 선택 출처 값이 올바르지 않아요.")
+        raise
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        out = await repo.save_storyboard(
-            conn, user_id, project_id,
-            content_roles.canonicalize_storyboard(blocks, for_storage=True))
+        if any(isinstance(block, dict) and block.get("exampleId") for block in canonical):
+            product = await repo.get_product(conn, project_id) or {}
+            analysis = await repo.get_analysis(conn, project_id) or {}
+            _base_url, assets = cut_generator.load_example_asset_registry()
+            error = content_roles.validate_storyboard_example_references(
+                canonical,
+                assets=assets,
+                clothing_type=product.get("clothingType") or product.get("clothing_type") or "top",
+                gender=mannequin.select_base_gender(analysis),
+            )
+            if error:
+                raise _bad_request(*error)
+        out = await repo.save_storyboard(conn, user_id, project_id, canonical)
         await conn.commit()
     return out
 
