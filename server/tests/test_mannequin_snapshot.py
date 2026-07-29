@@ -280,6 +280,25 @@ def test_worker_men_ignore_matrix_entirely(monkeypatch):
     assert calls["success"][0]["metadata"]["mannequinBody"] is None
 
 
+def test_worker_men_missing_base_asset_fails_loudly_not_women_fallback(monkeypatch):
+    # 남성 잡의 단일 베이스(bm)가 없으면 여성 베이스(bw)로 조용히 대체되면 안 된다 — 성별이
+    # 뒤바뀐 컷이 나갈 수 있다. "매트릭스 오설정 폴백"은 여성 매트릭스 전용이라
+    # gender != "men" 가드가 지켜져야 base_mannequin_missing 으로 죽는다(review round 2).
+    calls = {"success": [], "failure": [], "emits": [], "run": []}
+    app, job = _wire_worker(
+        monkeypatch,
+        analysis={"targetGenders": ["men"]},
+        payload={"mode": "generate"},
+        calls=calls,
+        missing_asset_ids={"bm"})  # 남성 베이스만 없음. 여성 기본(bw)은 정상 조회 가능.
+    asyncio.run(mannequin_job.run_mannequin_job(app, job))
+    assert calls["run"] == []
+    assert calls["success"] == []
+    assert calls["failure"] and calls["failure"][0]["metadata"]["error"] == "base_mannequin_missing"
+    assert calls["failure"][0]["metadata"]["gender"] == "men"
+    assert "bw" not in calls["get_asset"]  # 여성 베이스로 재조회(=조용한 성별 대체)가 없었어야 함
+
+
 # ---------- 관측 이벤트 (prompt_rendered 해시) ----------
 
 _PNG_1PX = bytes.fromhex(
