@@ -1642,4 +1642,4 @@
 .sb-insert-duo .sb-insert-pill.setpill { box-shadow: var(--elev-card), inset 0 0 0 1.5px var(--link); }
 .sb-insert-duo:hover .sb-insert-line { opacity: 1; }
 .sb-insert-duo:hover .sb-insert-pill { transform: scale(1); opacity: 1; color: var(--fg-1); }
-.sb-insert-duo .sb-insert-pill:hover { box-shadow: var(--elev-card); }
+.sb-insert-duo .sb-insert-pill:hover { background: var(--bg-2); }
