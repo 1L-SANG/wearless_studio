@@ -24,10 +24,9 @@ import { thumbUrl } from '@/lib/imageCdn.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
 
-/* Phase 0 스냅 스파이크 토글 — DEV 에서만 react-moveable 내장 snap(elementGuidelines + 캔버스 센티넬)
-   활성화하고 커스텀 snapX 를 우회한다. scale(0.4/1/2)×좌표계 + 리사이즈 생존 검증용.
-   검증 통과 시 Phase 1 에서 상시 on + snapX 완전 제거로 승격 예정. */
-const SNAP_SPIKE = import.meta.env.DEV;
+/* 스냅 엔진 상시 on (Phase 1 정식 승격) — react-moveable 내장 snap(elementGuidelines + 캔버스 센티넬).
+   DEV 게이트 제거: prod 배포에서도 동작. 옛 커스텀 snapX 는 삭제됨. */
+const SNAP_SPIKE = true;
 
 /* 라이선스 검증 배지 QR (제안서 step03 "& DID 서명 첨부") — 라이선스가 잠긴 상세페이지의
    ai-notice 블록에만 백엔드가 넣는 'license-verify' 요소를 렌더한다. QR 내용은 스캔 대상이
@@ -690,7 +689,7 @@ export function Editor() {
      상태를 커밋한다 — 매 프레임 setState→컨트롤박스 재생성이 리사이즈 제스처를
      죽이던 되먹임 루프 차단 (드래그는 타깃 노드에 붙어 살아남던 비대칭). ---- */
   const blockIdOf = (elId) => (blocks.find((b) => b.elements.some((e) => e.id === elId)) || {}).id;
-  const snapX = (nx, w) => { const W = 1000, s = 10, targets = [40, (W - w) / 2, W - 40 - w]; for (const t of targets) { if (Math.abs(nx - t) < s) return t; } return nx; };
+  // snapX 제거됨(promote) — moveable 내장 스냅(snappable + elementGuidelines)이 대체.
   const snapDeg = (n) => { for (const t of [0, 90, 180, 270]) { const diff = ((n - t + 540) % 360) - 180; if (Math.abs(diff) <= 7) return normDeg(t); } return n; };
   const commitLive = () => {
     const lv = liveRef.current; liveRef.current = {};
@@ -711,8 +710,7 @@ export function Editor() {
   const liveDrag = (target, beforeTranslate) => {
     const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    let nx = st.x + beforeTranslate[0]; let ny = st.y + beforeTranslate[1];
-    if (!SNAP_SPIKE && selEls.length === 1) nx = snapX(nx, st.w || 0);  // 스파이크 on: moveable 내장 스냅(beforeTranslate 이미 스냅됨) 사용, snapX 우회
+    let nx = st.x + beforeTranslate[0]; let ny = st.y + beforeTranslate[1];  // moveable 내장 스냅으로 beforeTranslate 는 이미 스냅된 값
     // 캔버스 밖으로 넘어가지 않게 clamp — 왼쪽 끝에서 x=0 flush(overshoot 방지), 오른쪽은 1000-w, 위(y<0)도 막음.
     // block-clip 이 어차피 넘친 부분을 자르므로 손실 없음. ("맨 왼쪽 끌면 몇 px 더 넘어가던" 문제 해결)
     if (selEls.length === 1) { const w = st.w || 0; nx = Math.max(0, Math.min(Math.max(0, 1000 - w), nx)); ny = Math.max(0, ny); }
