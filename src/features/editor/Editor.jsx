@@ -450,6 +450,16 @@ export function Editor() {
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Phase 4 — space-드래그 팬 모드 토글. **early-return 앞**에 둬야 hook 개수 안정(blank 크래시 방지).
+  useEffect(() => {
+    const isType = (t) => /input|textarea/i.test(t.tagName) || t.isContentEditable || t.tagName === 'BUTTON';
+    const down = (e) => { if (e.code === 'Space' && !isType(e.target)) { e.preventDefault(); setSpaceDown(true); } };
+    const up = (e) => { if (e.code === 'Space') setSpaceDown(false); };
+    const blur = () => setSpaceDown(false);
+    window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
+  }, []);
+
   // Ctrl/Cmd + wheel → zoom in 10% steps
   useEffect(() => {
     const wrap = wrapRef.current; if (!wrap) return;
@@ -829,15 +839,7 @@ export function Editor() {
     }
   };
 
-  // Phase 4 — space-드래그 팬 + fit-to-screen
-  useEffect(() => {
-    const isType = (t) => /input|textarea/i.test(t.tagName) || t.isContentEditable || t.tagName === 'BUTTON';
-    const down = (e) => { if (e.code === 'Space' && !isType(e.target)) { e.preventDefault(); setSpaceDown(true); } };
-    const up = (e) => { if (e.code === 'Space') setSpaceDown(false); };
-    const blur = () => setSpaceDown(false);
-    window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur);
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
-  }, []);
+  // Phase 4 — space-드래그 팬 핸들러 (keydown/up effect 는 early-return 앞에 위치, Rules of Hooks)
   const startPan = (e) => {
     e.preventDefault(); e.stopPropagation();
     const wrap = wrapRef.current; if (!wrap) return;
