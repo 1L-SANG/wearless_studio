@@ -12,6 +12,7 @@ import {
   careFamilyFor,
   carrySlotImages,
   defaultInfoFor,
+  needsDefaultTemplate,
   presetTypeOf,
 } from '../../src/features/editor/presets/infoPresets.js';
 import { normalizeEditorBlockRole } from '../../src/lib/storyboardTaxonomy.js';
@@ -122,6 +123,20 @@ const baseDoc = () => [
   { id: 'b2', name: '세탁 안내', kind: 'care', auto: true, bg: '#f5f5f5', h: 200, elements: [] },
   { id: 'b3', name: 'AI 생성 안내', kind: 'ai-notice', auto: true, bg: '#ffffff', h: 140, elements: [] },
 ];
+
+test('needsDefaultTemplate gates auto-apply to untouched assembler docs only', () => {
+  // 생성 직후 기본 문서(옛 자동 size/care, info 없음) → 적용 대상
+  assert.equal(needsDefaultTemplate(baseDoc()), true);
+  // 이미 템플릿이 깔린 문서 → 재적용 금지
+  const templated = applyInfoTemplate(baseDoc(), CTX, seqId()).blocks;
+  assert.equal(needsDefaultTemplate(templated), false);
+  // info 블록은 다 지웠지만 size/care 가 폼으로 강화된 문서(사용자 손댐) → 금지
+  const enriched = templated.filter((b) => b.kind !== 'info');
+  assert.equal(needsDefaultTemplate(enriched), false);
+  // 빈 문서/size·care 없는 문서 → 금지
+  assert.equal(needsDefaultTemplate([]), false);
+  assert.equal(needsDefaultTemplate([baseDoc()[0], baseDoc()[3]]), false);
+});
 
 test('default template inserts top blocks first, flows before anchors, replaces size/care in place', () => {
   const doc = baseDoc();

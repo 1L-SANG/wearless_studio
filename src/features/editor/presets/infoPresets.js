@@ -418,6 +418,16 @@ export const DEFAULT_INFO_TEMPLATE = {
   flow: ['feature_icons', 'size_table', 'care', 'required_notice'],
 };
 
+/* 아직 정보 템플릿이 적용된 적 없는 "생성 직후 기본 문서"인지 판별 —
+   에디터가 로드 시 자동으로 기본 템플릿을 깔아 주는 게이트(2026-07-29 결정:
+   수동 버튼 대신 기본값). info 블록이 하나라도 있으면 이미 손댄 문서,
+   size/care 가 info 없이 있으면 어셈블러의 옛 기본 블록 그대로인 문서다. */
+export function needsDefaultTemplate(blocks) {
+  if (!Array.isArray(blocks) || !blocks.length) return false;
+  if (blocks.some((b) => b && b.kind === 'info')) return false;
+  return blocks.some((b) => b && (b.kind === 'size' || b.kind === 'care') && !b.info);
+}
+
 export function applyInfoTemplate(blocks, ctx = {}, idFn = uid) {
   const tpl = DEFAULT_INFO_TEMPLATE;
   const presentInfoTypes = new Set(blocks.filter((b) => b.kind === 'info' && b.infoType).map((b) => b.infoType));

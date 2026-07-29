@@ -20,7 +20,7 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
-import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
+import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -312,6 +312,37 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
 
 const hexForCol = (col) => hexFor(col);
 
+/* 프로젝트가 실제 사용 중인 모델(마네킹/분석 단계 선택, analysis.selectedModelId 정본).
+   FaceMarket 실존 모델 우선. ⚠️ faceThumbUri 는 인증 게이트 URL(공개 아님) — 문서에
+   저장하면 <img> 401 로 깨진다. 저장 가능한 공개 coverImageUrl 만 쓴다. */
+function resolveSelectedModel(analysis, fmModels, catalogs) {
+  const id = analysis?.selectedModelId;
+  if (!id) return null;
+  const fm = (fmModels || []).find((m) => m.id === id);
+  if (fm) return { name: fm.displayName || '실제 모델', thumb: fm.coverImageUrl || null };
+  const cat = ((catalogs && catalogs.models) || []).find((m) => m.id === id);
+  if (cat) return { name: cat.name, thumb: cat.thumb || null };
+  const am = ((analysis && analysis.models) || []).find((m) => m.id === id);
+  return am ? { name: am.name, thumb: am.thumb || null } : null;
+}
+
+/* 정보 블록 프리셋 프리필 컨텍스트 — 마운트(자동 템플릿)와 렌더(폼)가 같은 정의를 쓴다 */
+function buildInfoCtx({ productName, clothingType, catalogs, product, analysis, colorOpts, fmModels }) {
+  return {
+    productName,
+    clothingType,
+    measurementSchema: catalogs?.measurementSchema,
+    measurementLabels: catalogs?.measurementLabels,
+    measurements: product?.measurements,
+    materials: analysis?.materials,
+    sellingPoints: (analysis?.sellingPoints?.length ? analysis.sellingPoints : analysis?.aiSuggestedPoints) || [],
+    fit: analysis?.fit,
+    fits: catalogs?.fits,
+    colorLabels: (colorOpts || []).map((o) => o.label),
+    selectedModel: resolveSelectedModel(analysis, fmModels, catalogs),
+  };
+}
+
 /* rotate 정규화: 무한 누적(-1080° 등) 방지 — 항상 (-180, 180] 로 저장·표시 */
 const normDeg = (d) => { let n = ((d % 360) + 360) % 360; return n > 180 ? n - 360 : n; };
 
@@ -394,14 +425,21 @@ export function Editor() {
       // 분석 컨텍스트 — 정보 블록 프리필·추천 배지 전용(실패해도 에디터는 뜬다)
       api.getAnalysis(projectId).catch(() => null)])
       .then(([b, w, c, _a, p, fm, an]) => {
-        const withH = b.map((blk) => normalizeEditorBlockRole(blk));
+        let withH = b.map((blk) => normalizeEditorBlockRole(blk));
+        const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
+        const opts = allColorOpts.filter((_option, index) => (p.colors[index].images || []).length || p.colors[index].isBase);
+        // 생성 직후 기본 문서(옛 자동 size/care 블록만 있고 info 블록 없음)면
+        // 기본 정보 템플릿을 자동으로 구성한다 — 수동 '템플릿 추가' 버튼 대체(2026-07-29 결정).
+        if (needsDefaultTemplate(withH)) {
+          const ctx = buildInfoCtx({ productName: p.name || '', clothingType: p.clothingType || 'top', catalogs: c, product: p, analysis: an, colorOpts: opts, fmModels: fm });
+          withH = applyInfoTemplate(withH, ctx).blocks;
+          toast.push('기본 정보 템플릿으로 구성했어요 — 사이즈·케어·고시 내용을 채워주세요', { icon: 'check' });
+        }
         setBlocks(withH); setWardrobe(w); setCatalogs(c); setFmModels(fm); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         setClothingType(p.clothingType || 'top');
         setHasDetailImage(hasDetailSource(p));
         setProduct(p); setAnalysis(an);
-        const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
-        const opts = allColorOpts.filter((_option, index) => (p.colors[index].images || []).length || p.colors[index].isBase);
         setDetailColorOpts(allColorOpts.length ? allColorOpts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
         setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
       });
@@ -751,34 +789,7 @@ export function Editor() {
   const recommendGender = targetGenders.length
     ? (targetGenders.every((g) => g === 'men') ? 'men' : 'women')
     : null;
-  // 프로젝트가 실제 사용 중인 모델(마네킹/분석 단계에서 고른 것, analysis.selectedModelId 정본)
-  // — 모델 정보 프리셋 프리필. FaceMarket 실존 모델 우선.
-  // ⚠️ faceThumbUri 는 인증 게이트 URL(공개 URL 아님) — 문서에 저장하면 <img> 가 401 로
-  // 깨지고 저장본에도 박제된다. 저장 가능한 공개 coverImageUrl 만 쓰고, 없으면 빈 슬롯
-  // (원형 칸에서 '이미지 추가'로 채움).
-  const selectedModel = (() => {
-    const id = analysis?.selectedModelId;
-    if (!id) return null;
-    const fm = (fmModels || []).find((m) => m.id === id);
-    if (fm) return { name: fm.displayName || '실제 모델', thumb: fm.coverImageUrl || null };
-    const cat = ((catalogs && catalogs.models) || []).find((m) => m.id === id);
-    if (cat) return { name: cat.name, thumb: cat.thumb || null };
-    const am = ((analysis && analysis.models) || []).find((m) => m.id === id);
-    return am ? { name: am.name, thumb: am.thumb || null } : null;
-  })();
-  const infoCtx = {
-    productName,
-    clothingType,
-    measurementSchema: catalogs?.measurementSchema,
-    measurementLabels: catalogs?.measurementLabels,
-    measurements: product?.measurements,
-    materials: analysis?.materials,
-    sellingPoints: (analysis?.sellingPoints?.length ? analysis.sellingPoints : analysis?.aiSuggestedPoints) || [],
-    fit: analysis?.fit,
-    fits: catalogs?.fits,
-    colorLabels: colorOpts.map((o) => o.label),
-    selectedModel,
-  };
+  const infoCtx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis, colorOpts, fmModels });
   const openInfoPreset = (type) => {
     // size/care 는 자동 블록 제자리 강화, info 는 같은 infoType 이 있으면 그 블록을 수정한다(중복 방지)
     const kind = type === 'size_table' ? 'size' : type === 'care' ? 'care' : null;
@@ -809,12 +820,6 @@ export function Editor() {
       toast.push(`${built.name} 블록을 추가했어요`, { icon: 'check' });
     }
     setInfoModal(null);
-  };
-  const applyTemplate = () => {
-    const res = applyInfoTemplate(blocks, infoCtx);
-    setBlocks(res.blocks);
-    setSelBlock(res.blocks[0]?.id);
-    toast.push(`기본 정보 템플릿을 적용했어요 — ${res.inserted.length}개 구성${res.skipped.length ? ` · 이미 있는 ${res.skipped.length}개는 건너뜀` : ''}`, { icon: 'check' });
   };
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
@@ -986,9 +991,9 @@ export function Editor() {
       case 'frame': return (
         <>
           <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />
-          {/* 내용 프리셋 — 프레임 탭에 통합 (별도 탭 없음) */}
+          {/* 내용 프리셋 — 프레임 탭에 통합 (별도 탭 없음). 기본 템플릿은 로드 시 자동 구성 */}
           <div style={{ marginTop: 22 }}>
-            <ContentPanel recommendGender={recommendGender} onApplyTemplate={applyTemplate} onPick={openInfoPreset} />
+            <ContentPanel recommendGender={recommendGender} onPick={openInfoPreset} />
           </div>
         </>
       );
@@ -1276,6 +1281,7 @@ export function Editor() {
       {/* 정보 블록 입력 폼 (PRD §10.14) */}
       {infoModal && (
         <InfoBlockModal type={infoModal.type} initialInfo={infoModal.initialInfo} ctx={infoCtx}
+          wardrobe={wardrobe} colorOpts={colorOpts}
           editing={!!infoModal.blockId} onClose={() => setInfoModal(null)} onSubmit={submitInfo} />
       )}
     </div>

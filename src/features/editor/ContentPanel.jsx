@@ -6,7 +6,6 @@
    쓴다(UI 분기 금지). 상단에는 작은 스타일 토글(브랜드형/소호형) + 일괄 삽입.
    각 항목은 프레임 카드와 같은 문법의 스키매틱 썸네일로 내용을 식별한다.
    ============================================================= */
-import { Button } from '@/components/ui.jsx';
 import { INFO_PRESET_TYPES } from '@/features/editor/presets/infoPresets.js';
 
 const TIERS = [
@@ -87,22 +86,14 @@ function PresetThumb({ type }) {
   }
 }
 
-export function ContentPanel({ recommendGender, onApplyTemplate, onPick }) {
+export function ContentPanel({ recommendGender, onPick }) {
   return (
     <div>
       <div className="lbl" style={{ marginBottom: 6 }}>내용 추가</div>
-      <p className="panel-sub" style={{ marginBottom: 12 }}>표·글·안내처럼 사진이 필요 없는 내용을 블록으로 넣어요.</p>
-
-      {/* 기본 정보 템플릿 — 단일 세트 일괄 삽입 (2026-07-29 회의: 스타일 분기 제거).
-          컷 블록은 건드리지 않는다. */}
-      <div style={{ border: '1px solid #e5e5e3', borderRadius: 12, padding: 14, marginBottom: 16, background: '#fafafa' }}>
-        <div className="lbl" style={{ marginBottom: 4 }}>기본 템플릿</div>
-        <p className="hint" style={{ marginBottom: 10 }}>공지 · 상품명 헤더 · 특징 포인트 · 사이즈표 · 케어 · 고시정보를 한 번에 구성해요.</p>
-        <Button variant="primary" size="sm" icon="plus" onClick={onApplyTemplate} style={{ width: '100%' }}>
-          기본 템플릿 추가
-        </Button>
-        <p className="hint" style={{ marginTop: 8 }}>정보 블록 세트만 넣고, 사진 블록은 그대로 둬요. 이미 있는 항목은 건너뛰어요.</p>
-      </div>
+      <p className="panel-sub" style={{ marginBottom: 12 }}>
+        표·글·안내처럼 사진이 필요 없는 내용을 블록으로 넣어요.
+        기본 구성(공지·헤더·특징·사이즈표·케어·고시)은 상세페이지 생성 때 자동으로 깔려요.
+      </p>
 
       {TIERS.map((tier) => {
         const items = INFO_PRESET_TYPES.filter((p) => p.tier === tier.id);
