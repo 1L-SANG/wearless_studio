@@ -1421,6 +1421,11 @@
 .align-bar button:disabled { opacity: .35; cursor: default; }
 .align-sep { width: 1px; height: 20px; background: var(--ring); margin: 0 3px; }
 /* Phase 4 — space-드래그 팬 + fit 버튼 */
+/* 이어보기 — 블록 간격·개별 카드 그림자를 없애 실제 상세페이지처럼 한 장으로 붙여 본다.
+   편집은 그대로 가능(선택·드래그·핸들 유지). 프레임 드래그 중에는 드롭행을 되살려 삽입 위치를 보이게 한다. */
+.ed-canvas.stitched .canvas-block { margin-bottom: 0; box-shadow: none; }
+.ed-canvas.stitched:not(.frame-dragging) .canvas-droprow { height: 0; }
+.ed-canvas.stitched { box-shadow: var(--elev-card); }
 .ed-canvas-wrap.panning { cursor: grab; }
 .ed-canvas-wrap.panning:active { cursor: grabbing; }
 .ed-canvas-wrap.panning .canvas-block,

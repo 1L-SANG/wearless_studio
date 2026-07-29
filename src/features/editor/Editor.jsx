@@ -351,6 +351,8 @@ export function Editor() {
   const [spaceDown, setSpaceDown] = useState(false); // space-드래그 팬 모드 (Phase 4)
   const [rightHidden, setRightHidden] = useState(false);
   const [preview, setPreview] = useState(false);
+  // 이어보기 — 블록 사이 간격·카드 그림자를 없애 실제 상세페이지처럼 붙여 본다(편집은 그대로 가능).
+  const [stitched, setStitched] = useState(false);
   const [download, setDownload] = useState(false);
   const [dlFormat, setDlFormat] = useState('long');
   const [backWarn, setBackWarn] = useState(false);
@@ -1072,6 +1074,10 @@ export function Editor() {
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           <button className="ed-tool compact" onClick={undo} title="실행 취소 (Ctrl+Z)"><Icon name="undo" size={19} />Undo</button>
           <button className="ed-tool compact" onClick={redo} title="다시 실행 (Shift+Ctrl+Z)"><Icon name="redo" size={19} />Redo</button>
+          <button className={`ed-tool compact${stitched ? ' on' : ''}`} onClick={() => setStitched((v) => !v)}
+            title={stitched ? '블록을 떨어뜨려 편집하기 편하게 봅니다' : '블록을 붙여 실제 상세페이지처럼 봅니다 (편집 그대로 가능)'}>
+            <Icon name={stitched ? 'layers' : 'layout'} size={19} />{stitched ? '떼어보기' : '이어보기'}
+          </button>
           <Button variant="ghost" size="sm" icon="eye" onClick={() => setPreview(true)}>미리보기</Button>
           <Button variant="ghost" size="sm" icon="save" onClick={save}>저장</Button>
           <Button variant="primary" size="sm" icon="download" onClick={() => setDownload(true)}>다운로드</Button>
@@ -1119,7 +1125,7 @@ export function Editor() {
               matrix) — scale via transform instead. transform doesn't take layout
               space, so a spacer reserves the SCALED dimensions for scrolling. */}
           <div style={{ position: 'relative', width: 1000 * scale, height: canvasH * scale, margin: '40px auto' }}>
-          <div className={`ed-canvas${frameDragging ? ' frame-dragging' : ''}`} ref={canvasRef}
+          <div className={`ed-canvas${frameDragging ? ' frame-dragging' : ''}${stitched ? ' stitched' : ''}`} ref={canvasRef}
             style={{ transform: `scale(${scale})`, transformOrigin: 'top left', position: 'absolute', top: 0, left: 0, margin: 0 }}>
             {blocks.map((b, i) => (
               <div key={b.id} style={{ display: 'contents' }}>
