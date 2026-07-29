@@ -1731,11 +1731,11 @@ export function Storyboard() {
           /* 팝업 메뉴 대신 좌우 두 버튼 — 왼쪽 개별 컷, 오른쪽 공간 세트 (오너 확정, 팝업 잘림 이슈 제거) */
           <div className="sb-insert sb-insert-duo" role="group" aria-label="여기에 블록 추가">
             <span className="sb-insert-line" />
-            <button type="button" className="sb-insert-pill" onClick={() => addBlock(idx, sec.id, sec.role)}>
+            <button type="button" className="sb-insert-pill single" onClick={() => addBlock(idx, sec.id, sec.role)}>
               개별 컷 추가
             </button>
             {sec.role !== SECTION_ROLES.PRODUCT && (
-              <button type="button" className="sb-insert-pill" onClick={() => openSetPicker({
+              <button type="button" className="sb-insert-pill setpill" onClick={() => openSetPicker({
                 mode: 'add', index: idx, targetSid: sec.id, targetRole: sec.role,
               })}>
                 공간 세트 추가

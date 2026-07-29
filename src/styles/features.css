@@ -1637,7 +1637,9 @@
 /* 사이사이 추가 — 두 버튼(개별/세트) 나란히, 호버 시 함께 나타남 */
 .sb-insert-duo { cursor: default; }
 .sb-insert-duo .sb-insert-pill { border: 0; background: var(--bg-1); cursor: pointer; font-family: inherit; }
-.sb-insert-duo .sb-insert-pill + .sb-insert-pill { margin-left: 22px; }
+.sb-insert-duo .sb-insert-pill + .sb-insert-pill { margin-left: 56px; }  /* 두 버튼 시각 간격 = 기존의 2배 */
+.sb-insert-duo .sb-insert-pill.single { box-shadow: var(--elev-card), inset 0 0 0 1.5px var(--ring-strong); }
+.sb-insert-duo .sb-insert-pill.setpill { box-shadow: var(--elev-card), inset 0 0 0 1.5px var(--link); }
 .sb-insert-duo:hover .sb-insert-line { opacity: 1; }
 .sb-insert-duo:hover .sb-insert-pill { transform: scale(1); opacity: 1; color: var(--fg-1); }
 .sb-insert-duo .sb-insert-pill:hover { box-shadow: var(--elev-card); }
