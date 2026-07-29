@@ -7,7 +7,7 @@
    각 항목은 프레임 카드와 같은 문법의 스키매틱 썸네일로 내용을 식별한다.
    ============================================================= */
 import { Button } from '@/components/ui.jsx';
-import { INFO_PRESET_TYPES, INFO_TEMPLATES } from '@/features/editor/presets/infoPresets.js';
+import { INFO_PRESET_TYPES } from '@/features/editor/presets/infoPresets.js';
 
 const TIERS = [
   { id: 'must', label: '반드시 확인' },
@@ -87,29 +87,19 @@ function PresetThumb({ type }) {
   }
 }
 
-export function ContentPanel({ recommendGender, templateStyle, onTemplateStyle, onApplyTemplate, onPick }) {
+export function ContentPanel({ recommendGender, onApplyTemplate, onPick }) {
   return (
     <div>
       <div className="lbl" style={{ marginBottom: 6 }}>내용 추가</div>
       <p className="panel-sub" style={{ marginBottom: 12 }}>표·글·안내처럼 사진이 필요 없는 내용을 블록으로 넣어요.</p>
 
-      {/* 정보 템플릿 — 작은 토글 + 일괄 삽입. 컷 블록은 건드리지 않는다. */}
+      {/* 기본 정보 템플릿 — 단일 세트 일괄 삽입 (2026-07-29 회의: 스타일 분기 제거).
+          컷 블록은 건드리지 않는다. */}
       <div style={{ border: '1px solid #e5e5e3', borderRadius: 12, padding: 14, marginBottom: 16, background: '#fafafa' }}>
-        <div className="lbl" style={{ marginBottom: 8 }}>정보 템플릿</div>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-          {Object.entries(INFO_TEMPLATES).map(([key, t]) => {
-            const on = templateStyle === key;
-            return (
-              <button key={key} onClick={() => onTemplateStyle(key)}
-                style={{ flex: 1, padding: '7px 0', borderRadius: 8, fontSize: 13, fontWeight: on ? 600 : 400, cursor: 'pointer',
-                  border: on ? '1.5px solid #0e0d14' : '1px solid #e5e5e3', background: on ? '#0e0d14' : '#fff', color: on ? '#fff' : '#4a4a45' }}>
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
+        <div className="lbl" style={{ marginBottom: 4 }}>기본 템플릿</div>
+        <p className="hint" style={{ marginBottom: 10 }}>공지 · 상품명 헤더 · 특징 포인트 · 사이즈표 · 케어 · 고시정보를 한 번에 구성해요.</p>
         <Button variant="primary" size="sm" icon="plus" onClick={onApplyTemplate} style={{ width: '100%' }}>
-          템플릿으로 한 번에 추가
+          기본 템플릿 추가
         </Button>
         <p className="hint" style={{ marginTop: 8 }}>정보 블록 세트만 넣고, 사진 블록은 그대로 둬요. 이미 있는 항목은 건너뛰어요.</p>
       </div>

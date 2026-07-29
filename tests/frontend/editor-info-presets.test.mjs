@@ -3,8 +3,8 @@ import test from 'node:test';
 
 import {
   CARE_LABEL_SENTENCE,
+  DEFAULT_INFO_TEMPLATE,
   INFO_PRESET_TYPES,
-  INFO_TEMPLATES,
   NEEDS_INPUT,
   applyInfoTemplate,
   applySlotFillToInfo,
@@ -13,7 +13,6 @@ import {
   carrySlotImages,
   defaultInfoFor,
   presetTypeOf,
-  templateStyleFor,
 } from '../../src/features/editor/presets/infoPresets.js';
 import { normalizeEditorBlockRole } from '../../src/lib/storyboardTaxonomy.js';
 
@@ -117,14 +116,6 @@ test('normalizeEditorBlockRole passes info blocks through untouched (reload guar
   assert.equal(normalized.kind, 'info');
 });
 
-test('templateStyleFor derives brand only for all-men targets', () => {
-  assert.equal(templateStyleFor(['men']), 'brand');
-  assert.equal(templateStyleFor(['women']), 'soho');
-  assert.equal(templateStyleFor(['men', 'women']), 'soho');
-  assert.equal(templateStyleFor([]), 'soho');
-  assert.equal(templateStyleFor(undefined), 'soho');
-});
-
 const baseDoc = () => [
   { id: 'b0', name: '첫 장면', kind: 'benefit', contentRole: 'hero', bg: '#ffffff', h: 800, elements: [{ id: 'b0e0', type: 'image', x: 60, y: 50, w: 880, h: 700, src: '/cut.jpg' }] },
   { id: 'b1', name: '사이즈 안내', kind: 'size', auto: true, bg: '#ffffff', h: 260, elements: [] },
@@ -132,17 +123,18 @@ const baseDoc = () => [
   { id: 'b3', name: 'AI 생성 안내', kind: 'ai-notice', auto: true, bg: '#ffffff', h: 140, elements: [] },
 ];
 
-test('soho template inserts top blocks first, flows before anchors, replaces size/care in place', () => {
+test('default template inserts top blocks first, flows before anchors, replaces size/care in place', () => {
   const doc = baseDoc();
-  const { blocks, inserted, skipped } = applyInfoTemplate(doc, 'soho', CTX, seqId());
+  const { blocks, inserted, skipped } = applyInfoTemplate(doc, CTX, seqId());
   assert.equal(skipped.length, 0);
-  assert.equal(inserted.length, INFO_TEMPLATES.soho.top.length + INFO_TEMPLATES.soho.flow.length);
+  assert.equal(inserted.length, DEFAULT_INFO_TEMPLATE.top.length + DEFAULT_INFO_TEMPLATE.flow.length);
   const kinds = blocks.map((b) => `${b.kind}${b.infoType ? ':' + b.infoType : ''}`);
   assert.deepEqual(kinds, [
     'info:shipping_returns', 'info:header',            // top: 공지 → 헤더
     'benefit',                                          // 컷 블록 (그대로)
-    'info:benefit_copy', 'info:model_info',             // size 앵커 앞 플러시
+    'info:benefit_copy',                                // size 앵커 앞 플러시
     'size', 'care',                                     // 제자리 강화
+    'info:required_notice',                             // care 뒤
     'ai-notice',
   ]);
   // 컷 블록 불변 — 같은 참조
@@ -153,10 +145,10 @@ test('soho template inserts top blocks first, flows before anchors, replaces siz
   assert.equal(size.auto, true);
 });
 
-test('re-applying a template skips duplicate info types but re-enriches anchors', () => {
-  const first = applyInfoTemplate(baseDoc(), 'soho', CTX, seqId());
-  const second = applyInfoTemplate(first.blocks, 'soho', CTX, seqId());
-  assert.deepEqual(second.skipped.sort(), ['모델 정보', '배송·교환 안내', '상품명 헤더', '특징 포인트'].sort());
+test('re-applying the template skips duplicate info types but re-enriches anchors', () => {
+  const first = applyInfoTemplate(baseDoc(), CTX, seqId());
+  const second = applyInfoTemplate(first.blocks, CTX, seqId());
+  assert.deepEqual(second.skipped.sort(), ['배송·교환 안내', '상품명 헤더', '상품 고시정보', '특징 포인트'].sort());
   assert.equal(second.blocks.length, first.blocks.length, 'no duplicate blocks added');
 });
 
@@ -165,7 +157,7 @@ test('template re-apply preserves user-entered anchor info and block ids (no dat
   const userRows = [{ label: 'S', values: { totalLength: 65 } }, { label: 'M', values: { totalLength: 67 } }];
   doc[1] = { ...doc[1], info: { ...defaultInfoFor('size_table', CTX), rows: userRows } };
   doc[2] = { ...doc[2], info: { family: 'cotton', text: `내가 쓴 케어 문구\n${CARE_LABEL_SENTENCE}` } };
-  const { blocks } = applyInfoTemplate(doc, 'soho', CTX, seqId());
+  const { blocks } = applyInfoTemplate(doc, CTX, seqId());
   const size = blocks.find((b) => b.kind === 'size');
   const care = blocks.find((b) => b.kind === 'care');
   assert.equal(size.id, 'b1', 'size block id preserved');
@@ -177,13 +169,13 @@ test('template re-apply preserves user-entered anchor info and block ids (no dat
 
 test('care anchor above size does not scramble flow order (cursor never moves backward)', () => {
   const doc = [baseDoc()[0], baseDoc()[2], baseDoc()[1], baseDoc()[3]]; // cut, care, size, ai-notice
-  const { blocks } = applyInfoTemplate(doc, 'brand', CTX, seqId());
+  const { blocks } = applyInfoTemplate(doc, CTX, seqId());
   const kinds = blocks.map((b) => `${b.kind}${b.infoType ? ':' + b.infoType : ''}`);
   assert.deepEqual(kinds, [
-    'info:header',
+    'info:shipping_returns', 'info:header',
     'benefit',
     'care',                                       // 사용자가 올려둔 위치 유지 (제자리 강화)
-    'info:fit_guide', 'size', 'info:size_matrix', 'info:required_notice',
+    'info:benefit_copy', 'size', 'info:required_notice',
     'ai-notice',
   ]);
 });
@@ -223,7 +215,7 @@ test('carrySlotImages carries photos by ordinal — photo stays on its own point
   const doc = baseDoc();
   doc[1] = { ...doc[1], info: { ...defaultInfoFor('size_table', CTX), withDiagram: true },
     elements: [{ id: 'd1', type: 'image', x: 300, y: 400, w: 400, h: 300, src: '/diagram.png', radius: 8 }] };
-  const { blocks } = applyInfoTemplate(doc, 'brand', CTX, seqId());
+  const { blocks } = applyInfoTemplate(doc, CTX, seqId());
   const size = blocks.find((b) => b.kind === 'size');
   assert.equal(size.elements.find((e) => e.type === 'image').src, '/diagram.png', 'diagram photo carried across template re-apply');
 });
@@ -270,14 +262,14 @@ test('long unbroken text grows block height (wrap-aware estimation)', () => {
   assert.ok(long.h > short.h + 40, `wrapped single line grows height (${short.h} → ${long.h})`);
 });
 
-test('brand template on a doc without anchors appends the flow before ai-notice in order', () => {
+test('template on a doc without anchors appends the flow before ai-notice in order', () => {
   const doc = [baseDoc()[0], baseDoc()[3]];
-  const { blocks } = applyInfoTemplate(doc, 'brand', CTX, seqId());
+  const { blocks } = applyInfoTemplate(doc, CTX, seqId());
   const kinds = blocks.map((b) => `${b.kind}${b.infoType ? ':' + b.infoType : ''}`);
   assert.deepEqual(kinds, [
-    'info:header',
+    'info:shipping_returns', 'info:header',
     'benefit',
-    'info:fit_guide', 'size', 'info:size_matrix', 'care', 'info:required_notice',
+    'info:benefit_copy', 'size', 'care', 'info:required_notice',
     'ai-notice',
   ]);
 });

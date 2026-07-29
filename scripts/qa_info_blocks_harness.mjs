@@ -1,7 +1,7 @@
 /* 정보 블록 빌더 육안 QA 하니스 — 빌더 출력을 CanvasElement 근사 HTML 로 렌더.
    사용: node scripts/qa_info_blocks_harness.mjs > qa-info-blocks.html
    (임시 검증용 — 커밋 대상 아님. 에디터 실렌더의 근사치이며 정확한 폰트/줄바꿈은 다를 수 있다) */
-import { INFO_PRESET_TYPES, INFO_TEMPLATES, applyInfoTemplate, buildInfoBlock, defaultInfoFor } from '../src/features/editor/presets/infoPresets.js';
+import { INFO_PRESET_TYPES, applyInfoTemplate, buildInfoBlock, defaultInfoFor } from '../src/features/editor/presets/infoPresets.js';
 
 const CTX = {
   productName: '와일드 팝컬러 롤업 반팔 T',
@@ -54,15 +54,15 @@ out += '<h2 style="text-align:center;font-family:system-ui">개별 프리셋 9�
 for (const p of INFO_PRESET_TYPES) {
   out += renderBlock(buildInfoBlock(p.type, defaultInfoFor(p.type, CTX), CTX), `${p.label} (${p.type})`);
 }
-for (const style of Object.keys(INFO_TEMPLATES)) {
+{
   const doc = [
     { id: 'cut', name: '컷', kind: 'benefit', contentRole: 'hero', bg: '#ffffff', h: 300, elements: [{ id: 'cutimg', type: 'image', x: 60, y: 50, w: 880, h: 200, src: null }] },
     { id: 's', name: '사이즈 안내', kind: 'size', auto: true, bg: '#ffffff', h: 200, elements: [] },
     { id: 'c', name: '세탁 안내', kind: 'care', auto: true, bg: '#f5f5f5', h: 160, elements: [] },
     { id: 'n', name: 'AI 생성 안내', kind: 'ai-notice', auto: true, bg: '#ffffff', h: 120, elements: [{ id: 'nt', type: 'text', x: 60, y: 48, w: 880, h: 40, text: '본 상세페이지의 일부 이미지는 AI를 활용해 생성되었습니다.', style: { size: 13, color: '#4a4a45', align: 'center' } }] },
   ];
-  const res = applyInfoTemplate(doc, style, CTX);
-  out += `<h2 style="text-align:center;font-family:system-ui">${INFO_TEMPLATES[style].label} 템플릿 적용 결과 (${res.inserted.length} 구성)</h2>`;
+  const res = applyInfoTemplate(doc, CTX);
+  out += `<h2 style="text-align:center;font-family:system-ui">기본 템플릿 적용 결과 (${res.inserted.length} 구성)</h2>`;
   for (const b of res.blocks) out += renderBlock(b, `${b.name} — kind:${b.kind}${b.infoType ? ' · ' + b.infoType : ''}`);
 }
 out += '</body>';

@@ -20,7 +20,7 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
-import { INFO_TEMPLATES, applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, presetTypeOf, templateStyleFor } from '@/features/editor/presets/infoPresets.js';
+import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -343,7 +343,6 @@ export function Editor() {
   const [product, setProduct] = useState(null);   // 실측(measurements) 등 — 정보 블록 프리필 (PRD §10.14)
   const [analysis, setAnalysis] = useState(null); // targetGenders·materials·fit·sellingPoints — 추천 배지·프리필 전용
   const [infoModal, setInfoModal] = useState(null); // { type, blockId|null, initialInfo }
-  const [tplStyle, setTplStyle] = useState(null);   // 정보 템플릿 토글 오버라이드 (null = targetGenders 파생 기본값)
   const [tab, setTab] = useState('ai');
   const [selBlock, setSelBlock] = useState(null);
   const [selEl, setSelEl] = useState(null);
@@ -748,7 +747,6 @@ export function Editor() {
   const recommendGender = targetGenders.length
     ? (targetGenders.every((g) => g === 'men') ? 'men' : 'women')
     : null;
-  const templateStyle = tplStyle || templateStyleFor(targetGenders);
   // 프로젝트가 실제 사용 중인 모델 — 모델 정보 프리셋 프리필 (FaceMarket 실존 모델 우선)
   const selectedModel = (() => {
     const id = analysis?.selectedModelId;
@@ -805,10 +803,10 @@ export function Editor() {
     setInfoModal(null);
   };
   const applyTemplate = () => {
-    const res = applyInfoTemplate(blocks, templateStyle, infoCtx);
+    const res = applyInfoTemplate(blocks, infoCtx);
     setBlocks(res.blocks);
     setSelBlock(res.blocks[0]?.id);
-    toast.push(`${INFO_TEMPLATES[templateStyle].label} 정보 템플릿을 적용했어요 — ${res.inserted.length}개 구성${res.skipped.length ? ` · 이미 있는 ${res.skipped.length}개는 건너뜀` : ''}`, { icon: 'check' });
+    toast.push(`기본 정보 템플릿을 적용했어요 — ${res.inserted.length}개 구성${res.skipped.length ? ` · 이미 있는 ${res.skipped.length}개는 건너뜀` : ''}`, { icon: 'check' });
   };
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
@@ -982,7 +980,7 @@ export function Editor() {
           <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />
           {/* 내용 프리셋 — 프레임 탭에 통합 (별도 탭 없음) */}
           <div style={{ marginTop: 22 }}>
-            <ContentPanel recommendGender={recommendGender} templateStyle={templateStyle} onTemplateStyle={setTplStyle} onApplyTemplate={applyTemplate} onPick={openInfoPreset} />
+            <ContentPanel recommendGender={recommendGender} onApplyTemplate={applyTemplate} onPick={openInfoPreset} />
           </div>
         </>
       );

@@ -407,22 +407,19 @@ export function presetTypeOf(block) {
   return BUILDERS[block.infoType] ? block.infoType : null;
 }
 
-/* ---- 정보 템플릿 — 작은 토글(브랜드형/소호형) + 일괄 삽입.
+/* ---- 기본 정보 템플릿 — 단일 세트 일괄 삽입 (2026-07-29 회의: 소호형/브랜드형
+   분기 제거, 하나로 통합). 시퀀스는 5개 플랫폼 분석의 공통 코어. 핏가이드·추천
+   사이즈·모델 정보는 개별 프리셋으로 추가한다.
    컷 블록은 절대 건드리지 않는다. size/care 는 제자리 강화(교체), 이미 있는
    infoType 은 중복 삽입 대신 스킵. 상단(top) 항목은 문서 맨 앞에 순서대로. ---- */
-export const INFO_TEMPLATES = {
-  soho: { label: '소호형', top: ['policy', 'header'], flow: ['feature_icons', 'model_info', 'size_table', 'care'] },
-  brand: { label: '브랜드형', top: ['header'], flow: ['fit_guide', 'size_table', 'size_matrix', 'care', 'required_notice'] },
+export const DEFAULT_INFO_TEMPLATE = {
+  label: '기본',
+  top: ['policy', 'header'],
+  flow: ['feature_icons', 'size_table', 'care', 'required_notice'],
 };
 
-export function templateStyleFor(targetGenders) {
-  const g = targetGenders || [];
-  return g.length && g.every((x) => x === 'men') ? 'brand' : 'soho';
-}
-
-export function applyInfoTemplate(blocks, styleKey, ctx = {}, idFn = uid) {
-  const tpl = INFO_TEMPLATES[styleKey];
-  if (!tpl) throw new Error(`[infoPresets] unknown template style: ${styleKey}`);
+export function applyInfoTemplate(blocks, ctx = {}, idFn = uid) {
+  const tpl = DEFAULT_INFO_TEMPLATE;
   const presentInfoTypes = new Set(blocks.filter((b) => b.kind === 'info' && b.infoType).map((b) => b.infoType));
   const inserted = []; const skipped = [];
   const labelOf = (type) => (INFO_PRESET_TYPES.find((p) => p.type === type) || { label: type }).label;
