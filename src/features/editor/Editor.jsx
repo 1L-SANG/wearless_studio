@@ -830,6 +830,47 @@ export function Editor() {
 
   const single = selEls.length === 1 && !editEl;
   const group = selEls.length > 1 && !editEl;
+  // 정렬·분배(Phase 3b) — 다중선택이 "한 블록"일 때만(좌표가 블록-상대라 cross-block 정렬 무의미).
+  const groupBlockId = (() => {
+    if (!group) return null;
+    const bids = new Set();
+    blocks.forEach((b) => b.elements.forEach((e) => { if (selEls.includes(e.id)) bids.add(b.id); }));
+    return bids.size === 1 ? [...bids][0] : null;
+  })();
+  const alignEls = (mode) => {
+    if (!groupBlockId) return;
+    setBlocks((bs) => bs.map((b) => {
+      if (b.id !== groupBlockId) return b;
+      const sel = b.elements.filter((e) => selEls.includes(e.id));
+      if (sel.length < 2) return b;
+      const minX = Math.min(...sel.map((e) => e.x)), maxX = Math.max(...sel.map((e) => e.x + e.w));
+      const minY = Math.min(...sel.map((e) => e.y)), maxY = Math.max(...sel.map((e) => e.y + e.h));
+      const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+      const mv = (e) => {
+        let { x, y } = e;
+        if (mode === 'left') x = minX; else if (mode === 'centerH') x = Math.round(cx - e.w / 2); else if (mode === 'right') x = maxX - e.w;
+        else if (mode === 'top') y = minY; else if (mode === 'middleV') y = Math.round(cy - e.h / 2); else if (mode === 'bottom') y = maxY - e.h;
+        return { ...e, x, y };
+      };
+      return { ...b, elements: b.elements.map((e) => (selEls.includes(e.id) ? mv(e) : e)) };
+    }));
+  };
+  const distributeEls = (axis) => {
+    if (!groupBlockId) return;
+    setBlocks((bs) => bs.map((b) => {
+      if (b.id !== groupBlockId) return b;
+      const sel = b.elements.filter((e) => selEls.includes(e.id));
+      if (sel.length < 3) return b;
+      const k = axis === 'h' ? 'x' : 'y', d = axis === 'h' ? 'w' : 'h';
+      const sorted = [...sel].sort((a, c) => a[k] - c[k]);
+      const start = sorted[0][k], last = sorted[sorted.length - 1];
+      const totalSize = sorted.reduce((s, e) => s + e[d], 0);
+      const gap = (last[k] + last[d] - start - totalSize) / (sorted.length - 1);
+      const pos = {}; let cur = start;
+      sorted.forEach((e) => { pos[e.id] = Math.round(cur); cur += e[d] + gap; });
+      return { ...b, elements: b.elements.map((e) => (pos[e.id] != null ? { ...e, [k]: pos[e.id] } : e)) };
+    }));
+  };
 
   return (
     <div className="editor">
@@ -881,6 +922,20 @@ export function Editor() {
             </div>
           </div>
           {rightHidden && <div style={{ position: 'absolute', right: 10, top: 10, zIndex: 3 }}><IconButton name="layout" size="sm" onClick={() => setRightHidden(false)} /></div>}
+          {groupBlockId && (
+            <div className="align-bar" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+              <button title="왼쪽 정렬" onClick={() => alignEls('left')}>⇤</button>
+              <button title="가로 가운데 정렬" onClick={() => alignEls('centerH')}>⇔</button>
+              <button title="오른쪽 정렬" onClick={() => alignEls('right')}>⇥</button>
+              <span className="align-sep" />
+              <button title="위 정렬" onClick={() => alignEls('top')}>⤒</button>
+              <button title="세로 가운데 정렬" onClick={() => alignEls('middleV')}>⇕</button>
+              <button title="아래 정렬" onClick={() => alignEls('bottom')}>⤓</button>
+              <span className="align-sep" />
+              <button title="가로 균등 분배 (3개+)" onClick={() => distributeEls('h')} disabled={selEls.length < 3}>⇿</button>
+              <button title="세로 균등 분배 (3개+)" onClick={() => distributeEls('v')} disabled={selEls.length < 3}>⇳</button>
+            </div>
+          )}
           {/* CSS `zoom` is invisible to react-moveable (it only reads the transform
               matrix) — scale via transform instead. transform doesn't take layout
               space, so a spacer reserves the SCALED dimensions for scrolling. */}
