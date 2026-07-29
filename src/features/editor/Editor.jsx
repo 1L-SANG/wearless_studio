@@ -22,7 +22,7 @@ import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
+import { clampDragDelta, expandBlockHeights, getBlockRenderHeight, resolveEditorBorderRadius, resolveEditorElementResize } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
@@ -83,10 +83,11 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   const common = { ref, 'data-elid': el.id, onPointerDown: pick, onClick: (e) => e.stopPropagation() };
 
   if (el.type === 'image') {
+    const borderRadius = resolveEditorBorderRadius(el.radius, el.w, el.h);
     if (!el.src) {
       const inv = 1 / (scale || 1);
       // 빈 슬롯도 radius 를 따른다 — 특징 포인트의 원형 사진 슬롯이 원으로 보이게
-      const slotBase = { ...base, borderRadius: el.radius };
+      const slotBase = { ...base, borderRadius };
       if (preview) return <div className="el el-slot" style={slotBase} />;
       return (
         <div {...common} className={cls('el-slot')} style={slotBase}>
@@ -103,11 +104,11 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
         onDoubleClick={preview ? undefined : (e) => { e.stopPropagation(); onCropStart && onCropStart(el); }}>
         {el.crop ? (
           /* 커밋된 인라인 크롭: 프레임(overflow hidden) 안에 원본을 -ox,-oy 오프셋으로 */
-          <div className="el-cropped" style={{ borderRadius: el.radius }}>
+          <div className="el-cropped" style={{ borderRadius }}>
             <img src={el.src} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
           </div>
         ) : (
-          <img src={el.src} alt="" style={{ borderRadius: el.radius }} draggable={false} />
+          <img src={el.src} alt="" style={{ borderRadius }} draggable={false} />
         )}
       </div>
     );
@@ -143,7 +144,7 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   const sc = el.stroke && el.stroke !== 'none' ? el.stroke : null;
   const sw = sc ? (el.strokeWidth || 2) : 0;
   if (el.shape === 'circle') inner = <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: fill, boxShadow: sc ? `inset 0 0 0 ${sw}px ${sc}` : undefined }} />;
-  else if (el.shape === 'rect') inner = <div style={{ width: '100%', height: '100%', borderRadius: el.radius || 0, background: fill, boxShadow: sc ? `inset 0 0 0 ${sw}px ${sc}` : undefined }} />;
+  else if (el.shape === 'rect') inner = <div style={{ width: '100%', height: '100%', borderRadius: resolveEditorBorderRadius(el.radius, el.w, el.h), background: fill, boxShadow: sc ? `inset 0 0 0 ${sw}px ${sc}` : undefined }} />;
   else if (el.shape === 'triangle') inner = (
     <svg width="100%" height="100%" viewBox={`0 0 ${el.w} ${el.h}`} preserveAspectRatio="none" style={{ display: 'block', overflow: 'visible' }}>
       <polygon points={`${el.w / 2},${sw / 2 || 0} ${el.w - (sw / 2 || 0)},${el.h - (sw / 2 || 0)} ${sw / 2 || 0},${el.h - (sw / 2 || 0)}`} fill={fill} stroke={sc || 'none'} strokeWidth={sw} strokeLinejoin="round" />
@@ -222,7 +223,7 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
               onPointerDown={(e) => onCropDrag(e, 'img')}>
               <img src={crop.src} alt="" draggable={false} />
             </div>
-            <div className="crop-frame" style={{ left: crop.fx, top: crop.fy, width: crop.fw, height: crop.fh, borderRadius: crop.radius }}
+            <div className="crop-frame" style={{ left: crop.fx, top: crop.fy, width: crop.fw, height: crop.fh, borderRadius: resolveEditorBorderRadius(crop.radius, crop.fw, crop.fh) }}
               onPointerDown={(e) => onCropDrag(e, 'img')}>
               <img src={crop.src} alt="" draggable={false} style={{ left: -crop.ox, top: -crop.oy, width: crop.iw, height: crop.ih }} />
               {['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'].map((d) => (
@@ -880,18 +881,20 @@ export function Editor() {
   const liveResize = (target, width, height, drag) => {
     const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    let nx = st.x + (drag?.beforeTranslate?.[0] || 0);
-    let ny = st.y + (drag?.beforeTranslate?.[1] || 0);
-    let nw = width, nh = height;
-    // 이미지(크롭 안 한 것)는 원본 사진 비율을 따라간다 — 리사이즈로 잘리거나 늘어나지 않게.
-    // 위쪽 핸들로 끌 땐 아래 변을 고정해 높이 보정이 튀지 않도록 y 를 되맞춘다.
     const elNow = elById(elId);
     const imgNode = target.querySelector('img');
-    if (elNow && elNow.type === 'image' && !elNow.crop && imgNode && imgNode.naturalWidth && imgNode.naturalHeight) {
-      nh = Math.max(24, Math.round(nw * imgNode.naturalHeight / imgNode.naturalWidth));
-      if ((drag?.beforeTranslate?.[1] || 0) !== 0) ny = st.y + st.h - nh;
-    }
-    const rect = clampElementRect(nx, ny, nw, nh);
+    const naturalRatio = elNow && elNow.type === 'image' && !elNow.crop && imgNode?.naturalWidth && imgNode?.naturalHeight
+      ? imgNode.naturalWidth / imgNode.naturalHeight
+      : null;
+    const rect = resolveEditorElementResize({
+      start: st,
+      width,
+      height,
+      deltaX: drag?.beforeTranslate?.[0] || 0,
+      deltaY: drag?.beforeTranslate?.[1] || 0,
+      keepImageRatio: lockRatio,
+      naturalRatio,
+    });
     target.style.left = rect.x + 'px'; target.style.top = rect.y + 'px';
     target.style.width = rect.w + 'px'; target.style.height = rect.h + 'px';
     // 크롭된 이미지는 안쪽 원본(<img> 인라인 px)도 같은 배율로 라이브 스케일 —

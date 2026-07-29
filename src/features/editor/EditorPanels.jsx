@@ -14,6 +14,7 @@ import {
   blockPatchForContentRole,
 } from '@/lib/storyboardTaxonomy.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
+import { clampEditorNumber, resolveEditorNumberDraft } from '@/features/editor/editorInputs.js';
 
 function PanelHead({ title, sub }) {
   return <><div className="panel-h">{title}</div>{sub && <div className="panel-sub">{sub}</div>}</>;
@@ -30,12 +31,34 @@ function NumStepper({ value, min = 0, max = 9999, step = 1, onChange }) {
     </div>
   );
 }
-function NumField({ icon, iconText, labelText, value, min = -9999, max = 9999, onChange, suffix }) {
+function NumField({ icon, iconText, labelText, value, min = -9999, max, onChange, suffix }) {
+  const [draft, setDraft] = useState(String(value ?? ''));
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) setDraft(String(value ?? ''));
+  }, [value]);
+  const updateDraft = (nextDraft) => {
+    const next = resolveEditorNumberDraft(nextDraft, min, max);
+    setDraft(next.draft);
+    if (next.value != null) onChange(next.value);
+  };
+  const commitDraft = () => {
+    focused.current = false;
+    const next = resolveEditorNumberDraft(draft, min, max);
+    const committed = next.value ?? clampEditorNumber(0, min, max);
+    setDraft(String(committed));
+    onChange(committed);
+  };
   return (
     <label className="numfield" title={labelText || undefined}>
       <span className="nf-ico">{iconText || <Icon name={icon} size={15} />}</span>
       {labelText && <span className="nf-label">{labelText}</span>}
-      <input value={value} onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v)) onChange(Math.min(max, Math.max(min, v))); }} />
+      <input
+        value={draft}
+        onFocus={() => { focused.current = true; }}
+        onChange={(e) => updateDraft(e.target.value)}
+        onBlur={commitDraft}
+      />
       {suffix && <span className="nf-suf">{suffix}</span>}
     </label>
   );
@@ -512,7 +535,7 @@ export function ImagePanel({ el, onChange, onLayer, onCrop, onVary, lock = true,
         <div className="field-2up labeled">
           <LabeledField label="회전"><NumField icon="rotate" value={el.rotate || 0} min={-180} max={180} suffix="°" onChange={(v) => onChange({ rotate: v })} /></LabeledField>
           {!isLine
-            ? <LabeledField label="둥근 모서리"><NumField icon="cornerRadius" value={el.radius || 0} min={0} max={400} onChange={(v) => onChange({ radius: v })} /></LabeledField>
+            ? <LabeledField label="둥근 모서리"><NumField icon="cornerRadius" value={el.radius || 0} min={0} onChange={(v) => onChange({ radius: v })} /></LabeledField>
             : <span />}
         </div>
       </PanelSection>
