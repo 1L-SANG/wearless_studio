@@ -1031,7 +1031,6 @@ export function Storyboard() {
   const [dragOverSec, setDragOverSec] = useState(null); // 호버 중인 드롭 대상 섹션 — 하이라이트와 드롭이 같은 신호를 쓴다
   const [dragOverSpaceGroupId, setDragOverSpaceGroupId] = useState(null);
   const [dragMine, setDragMine] = useState(null);
-  const [addMenu, setAddMenu] = useState(null);
   const [setPicker, setSetPicker] = useState(null);
   const [setPickerError, setSetPickerError] = useState(null);
   const [collapsed, setCollapsed] = useState(() => new Set()); // 접힌 섹션 id (UI 전용, 저장 안 함)
@@ -1324,7 +1323,7 @@ export function Storyboard() {
   };
   const selectCard = (id) => {
     if (atomicSavingRef.current) return;
-    setSetPicker(null); setSetPickerError(null); setAddMenu(null);
+    setSetPicker(null); setSetPickerError(null);
     if (selectedId === id) { finishEdit(); return; }      // click again → deselect
     const cur = blocks.find((b) => b.id === selectedId);
     const curLocked = selectedId && dirty && cur && cur.source !== 'mine';   // 내 이미지는 잠그지 않음
@@ -1640,7 +1639,6 @@ export function Storyboard() {
   };
   const openSetPicker = (picker) => {
     setSetPickerError(null);
-    setAddMenu(null);
     setSetPicker(picker);
     setSplitOpen(true);
   };
@@ -1723,29 +1721,27 @@ export function Storyboard() {
   });
   const insertControl = (idx, sec, targetSpaceGroupId = null) => {
     const menuKey = `${sec.id}:${idx}`;
-    const menuOpen = addMenu?.key === menuKey;
-    const label = targetSpaceGroupId ? '이 공간에 컷 추가' : '컷 추가';
     return (
       <div className={`sb-insert-wrap${targetSpaceGroupId ? ' in-space' : ''}`} key={`insert:${menuKey}:${targetSpaceGroupId || 'single'}`}>
-        <button className="sb-insert" onClick={() => {
-          if (targetSpaceGroupId) { addBlock(idx, sec.id, sec.role, targetSpaceGroupId); return; }
-          setAddMenu(menuOpen ? null : { key: menuKey, index: idx, targetSid: sec.id, targetRole: sec.role });
-        }} title={`여기에 ${label}`}>
-          <span className="sb-insert-line" /><span className="sb-insert-pill"><Icon name="plus" size={15} />{label}</span><span className="sb-insert-line" />
-        </button>
-        {menuOpen && (
-          <div className="sb-addmenu sb-addmenu-inline">
-            <div className="sb-addmenu-h">추가할 블록</div>
-            <button type="button" className="sb-addmenu-item" onClick={() => { setAddMenu(null); addBlock(idx, sec.id, sec.role); }}>
-              <span className="ico"><Icon name="plus" size={16} /></span><span>개별 컷 추가</span>
+        {targetSpaceGroupId ? (
+          <button className="sb-insert" onClick={() => addBlock(idx, sec.id, sec.role, targetSpaceGroupId)} title="여기에 이 공간에 컷 추가">
+            <span className="sb-insert-line" /><span className="sb-insert-pill"><Icon name="plus" size={15} />이 공간에 컷 추가</span><span className="sb-insert-line" />
+          </button>
+        ) : (
+          /* 팝업 메뉴 대신 좌우 두 버튼 — 왼쪽 개별 컷, 오른쪽 공간 세트 (오너 확정, 팝업 잘림 이슈 제거) */
+          <div className="sb-insert sb-insert-duo" role="group" aria-label="여기에 블록 추가">
+            <span className="sb-insert-line" />
+            <button type="button" className="sb-insert-pill" onClick={() => addBlock(idx, sec.id, sec.role)}>
+              <Icon name="plus" size={15} />개별 컷 추가
             </button>
             {sec.role !== SECTION_ROLES.PRODUCT && (
-              <button type="button" className="sb-addmenu-item" onClick={() => openSetPicker({
+              <button type="button" className="sb-insert-pill" onClick={() => openSetPicker({
                 mode: 'add', index: idx, targetSid: sec.id, targetRole: sec.role,
               })}>
-                <span className="ico">📍</span><span>같은 공간 세트</span>
+                <span aria-hidden="true">📍</span>공간 세트 추가
               </button>
             )}
+            <span className="sb-insert-line" />
           </div>
         )}
       </div>
