@@ -67,7 +67,7 @@ export function TopNav() {
       <div className="nav-right">
         {session ? (
           <>
-            <span className="credit-badge"><Icon name="coins" size={15} stroke={1.8} />크레딧 <b>{account.credits}</b></span>
+            <button type="button" className="credit-badge" onClick={() => navigate('/pricing')} title="요금제·크레딧 충전"><Icon name="coins" size={15} stroke={1.8} />크레딧 <b>{account.credits}</b></button>
             {account.plan && <span className="plan-badge">{account.plan}</span>}
             <ProfileMenu />
           </>
