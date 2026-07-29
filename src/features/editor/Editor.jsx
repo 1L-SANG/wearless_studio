@@ -445,11 +445,14 @@ export function Editor() {
   useEffect(() => {
     if (!SNAP_SPIKE || !blocks || preview) { setMvGuides([]); return; }
     const wrap = wrapRef.current; if (!wrap) { setMvGuides([]); return; }
-    const selBlockIds = new Set();
-    blocks.forEach((b) => { if (b.elements.some((e) => selEls.includes(e.id))) selBlockIds.add(b.id); });
+    // 스냅 걸림 범위 = 선택 요소가 있는 페이지(블록) + 바로 위/아래 페이지만. 먼 페이지엔 안 걸린다.
+    const selIdx = new Set();
+    blocks.forEach((b, i) => { if (b.elements.some((e) => selEls.includes(e.id))) selIdx.add(i); });
+    const inRange = new Set();
+    selIdx.forEach((i) => { inRange.add(i - 1); inRange.add(i); inRange.add(i + 1); });
     const targetSet = new Set(selEls);
     const sib = [];
-    blocks.forEach((b) => { if (!selBlockIds.has(b.id)) return; b.elements.forEach((el) => {
+    blocks.forEach((b, i) => { if (!inRange.has(i)) return; b.elements.forEach((el) => {
       if (targetSet.has(el.id) || el.hidden || el.locked) return;
       const n = wrap.querySelector(`[data-elid="${el.id}"]`); if (n) sib.push(n);
     }); });
