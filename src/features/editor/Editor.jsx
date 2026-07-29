@@ -747,12 +747,16 @@ export function Editor() {
   const recommendGender = targetGenders.length
     ? (targetGenders.every((g) => g === 'men') ? 'men' : 'women')
     : null;
-  // 프로젝트가 실제 사용 중인 모델 — 모델 정보 프리셋 프리필 (FaceMarket 실존 모델 우선)
+  // 프로젝트가 실제 사용 중인 모델(마네킹/분석 단계에서 고른 것, analysis.selectedModelId 정본)
+  // — 모델 정보 프리셋 프리필. FaceMarket 실존 모델 우선.
+  // ⚠️ faceThumbUri 는 인증 게이트 URL(공개 URL 아님) — 문서에 저장하면 <img> 가 401 로
+  // 깨지고 저장본에도 박제된다. 저장 가능한 공개 coverImageUrl 만 쓰고, 없으면 빈 슬롯
+  // (원형 칸에서 '이미지 추가'로 채움).
   const selectedModel = (() => {
     const id = analysis?.selectedModelId;
     if (!id) return null;
     const fm = (fmModels || []).find((m) => m.id === id);
-    if (fm) return { name: fm.displayName || '실제 모델', thumb: fm.faceThumbUri || fm.coverImageUrl || null };
+    if (fm) return { name: fm.displayName || '실제 모델', thumb: fm.coverImageUrl || null };
     const cat = ((catalogs && catalogs.models) || []).find((m) => m.id === id);
     if (cat) return { name: cat.name, thumb: cat.thumb || null };
     const am = ((analysis && analysis.models) || []).find((m) => m.id === id);
