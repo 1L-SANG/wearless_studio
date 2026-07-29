@@ -2,6 +2,7 @@
 
 from app.agents.mannequin_body import DEFAULT, LEVELS, matrix_key, normalize
 from app.agents import mannequin as m
+from app.workers import mannequin_job
 from tests.conftest import make_settings
 
 
@@ -94,3 +95,34 @@ def test_select_base_asset_id_men_ignores_body():
                       base_mannequin_men_asset_id="asset-men",
                       base_mannequin_women_matrix=MATRIX)
     assert m.select_base_asset_id(s, "men", {"bust": "slim", "hip": "volume"}) == "asset-men"
+
+
+def test_body_from_job_prefers_the_payload_snapshot():
+    # 스냅샷이 정본 — 잡 생성 후 셀러가 analysis 를 바꿔도 이번 잡은 잡힌 값으로 돈다.
+    job = {"payload": {"mannequinBodySnapshot": {
+        "version": 1, "gender": "women", "body": {"bust": "volume", "hip": "slim"}}}}
+    analysis = {"mannequinBody": {"bust": "slim", "hip": "slim"}}
+    assert mannequin_job._mannequin_body_from_job(job, analysis, "women") == {
+        "bust": "volume", "hip": "slim"}
+
+
+def test_body_from_job_falls_back_to_analysis_for_legacy_jobs():
+    # 키가 없는 legacy 잡만 analysis 폴백(fitProfileSnapshot 과 동일 규율).
+    job = {"payload": {"mode": "generate"}}
+    analysis = {"mannequinBody": {"bust": "slim", "hip": "volume"}}
+    assert mannequin_job._mannequin_body_from_job(job, analysis, "women") == {
+        "bust": "slim", "hip": "volume"}
+
+
+def test_body_from_job_returns_none_for_men():
+    job = {"payload": {"mannequinBodySnapshot": {
+        "version": 1, "gender": "women", "body": {"bust": "volume", "hip": "volume"}}}}
+    assert mannequin_job._mannequin_body_from_job(job, {}, "men") is None
+
+
+def test_body_from_job_ignores_unknown_snapshot_version():
+    # 미래 버전 스냅샷은 신뢰하지 않고 analysis 폴백 — 조용한 오해석보다 낫다.
+    job = {"payload": {"mannequinBodySnapshot": {"version": 99, "body": {"bust": "volume"}}}}
+    analysis = {"mannequinBody": {"bust": "slim", "hip": "slim"}}
+    assert mannequin_job._mannequin_body_from_job(job, analysis, "women") == {
+        "bust": "slim", "hip": "slim"}
