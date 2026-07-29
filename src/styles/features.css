@@ -1616,7 +1616,7 @@
 .insp-cancel-new:hover { color: var(--accent-error, #d92d20); }
 
 /* 세트 컷 — 포즈만 안내 (파란 포인트) */
-.sb-exnote-blue { font-size: 11.5px; color: var(--link); margin: -3px 0 10px; line-height: 1.5; }
+.sb-exnote-blue { font-size: 11.5px; color: var(--link); margin: 9px 0 11px; line-height: 1.5; }
 
 /* 매칭 의류 인라인 편집 — 인스펙터 안 고정 높이(3열 x 약 2줄), 토글로 열고 닫음 */
 .sb-match-inline { margin-top: 8px; border: 1px solid var(--ring); border-radius: var(--r-4);
