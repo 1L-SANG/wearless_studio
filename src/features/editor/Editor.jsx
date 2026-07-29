@@ -353,6 +353,8 @@ export function Editor() {
   const [preview, setPreview] = useState(false);
   // 이어보기 — 블록 사이 간격·카드 그림자를 없애 실제 상세페이지처럼 붙여 본다(편집은 그대로 가능).
   const [stitched, setStitched] = useState(false);
+  // 블록 강조 표시 여부 — 캔버스 빈 곳을 클릭하면 꺼진다. selBlock 자체는 삽입 대상으로 계속 쓰므로 건드리지 않는다.
+  const [blockFocused, setBlockFocused] = useState(false);
   const [download, setDownload] = useState(false);
   const [dlFormat, setDlFormat] = useState('long');
   const [backWarn, setBackWarn] = useState(false);
@@ -1093,7 +1095,7 @@ export function Editor() {
 
         <div className={`ed-canvas-wrap${spaceDown ? ' panning' : ''}`} ref={wrapRef}
           onPointerDown={(e) => { if (spaceDown) startPan(e); }}
-          onClick={(e) => { if (spaceDown) return; if (e.target.closest && e.target.closest('.moveable-control-box')) return; if (cropping) { commitCrop(); return; } clearSel(); }}
+          onClick={(e) => { if (spaceDown) return; if (e.target.closest && e.target.closest('.moveable-control-box')) return; if (cropping) { commitCrop(); return; } clearSel(); setBlockFocused(false); }}
           onScroll={() => moveableRef.current?.updateRect()}
           onMouseMove={(e) => { const g = !e.target.closest('.canvas-block'); setHoverGray((v) => v === g ? v : g); }}
           onMouseLeave={() => setHoverGray(false)}>
@@ -1134,10 +1136,10 @@ export function Editor() {
                   <div className={`canvas-dropline${frameOver === i ? ' on' : ''}`} />
                 </div>
                 <CanvasBlock block={b} scale={scale} idx={i}
-                  selectedBlockId={selBlock} selEls={selEls} editEl={editEl} onEdit={setEditEl}
+                  selectedBlockId={blockFocused ? selBlock : null} selEls={selEls} editEl={editEl} onEdit={setEditEl}
                   crop={cropping && cropping.blockId === b.id ? cropping : null}
                   onCropDrag={cropDrag} onCropStart={startCrop} onCropCommit={commitCrop} onCropReset={resetCrop}
-                  onSelectBlock={(id) => { setSelBlock(id); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
+                  onSelectBlock={(id) => { setSelBlock(id); setBlockFocused(true); clearSel(); setTab('shape'); }} onSelectEl={selectEl}
                   onElPatch={patchElById} onAddImage={requestSlotImage} onOpenLayers={(id) => { setLayerFloat(id); setLayerPos(null); }}
                   onObjectDrop={(bid, type, id, ev) => addShape(type, id, bid, ev)} onReshape={reshapeBlock}
                   onMove={moveBlock} onAddEmpty={addEmpty} onDelete={deleteBlock} onEditInfo={openInfoEdit}
