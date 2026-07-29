@@ -1632,11 +1632,12 @@
 .sb-excell.up.usable:hover { box-shadow: inset 0 0 0 2px var(--fg-1); }
 
 /* 예시(전부 스코프)와 달라진 방향/샷 값 — 포인트색 강조 */
-.sb-detail .sb-val-changed { color: #8fbfee; }
+.sb-detail .sb-val-changed { color: #4a90e2; }
 
 /* 사이사이 추가 — 두 버튼(개별/세트) 나란히, 호버 시 함께 나타남 */
 .sb-insert-duo { cursor: default; }
-.sb-insert-duo .sb-insert-pill { border: 0; background: var(--bg-1); cursor: pointer; font: inherit; }
+.sb-insert-duo .sb-insert-pill { border: 0; background: var(--bg-1); cursor: pointer; font-family: inherit; }
+.sb-insert-duo .sb-insert-pill + .sb-insert-pill { margin-left: 22px; }
 .sb-insert-duo:hover .sb-insert-line { opacity: 1; }
 .sb-insert-duo:hover .sb-insert-pill { transform: scale(1); opacity: 1; color: var(--fg-1); }
 .sb-insert-duo .sb-insert-pill:hover { box-shadow: var(--elev-card); }

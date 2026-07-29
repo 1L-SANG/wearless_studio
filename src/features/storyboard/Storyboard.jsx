@@ -1732,13 +1732,13 @@ export function Storyboard() {
           <div className="sb-insert sb-insert-duo" role="group" aria-label="여기에 블록 추가">
             <span className="sb-insert-line" />
             <button type="button" className="sb-insert-pill" onClick={() => addBlock(idx, sec.id, sec.role)}>
-              <Icon name="plus" size={15} />개별 컷 추가
+              개별 컷 추가
             </button>
             {sec.role !== SECTION_ROLES.PRODUCT && (
               <button type="button" className="sb-insert-pill" onClick={() => openSetPicker({
                 mode: 'add', index: idx, targetSid: sec.id, targetRole: sec.role,
               })}>
-                <span aria-hidden="true">📍</span>공간 세트 추가
+                공간 세트 추가
               </button>
             )}
             <span className="sb-insert-line" />
