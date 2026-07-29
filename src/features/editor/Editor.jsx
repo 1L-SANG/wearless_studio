@@ -24,7 +24,6 @@ import { INFO_TEMPLATES, applyInfoTemplate, applySlotFillToInfo, buildInfoBlock,
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
-import { thumbUrl } from '@/lib/imageCdn.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
 
@@ -273,6 +272,9 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
 function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
   const [dragId, setDragId] = useState(null);
   const [lineAt, setLineAt] = useState(null);
+  // 실제 내용 축소 렌더용 썸네일 폭 — 첫 mini-canvas 마운트 시 측정 (패널 폭 75% 파생)
+  const [thumbW, setThumbW] = useState(0);
+  const measureRef = useCallback((node) => { if (node) setThumbW(node.clientWidth); }, []);
   const end = () => { setDragId(null); setLineAt(null); };
   return (
     <div className="ed-right">
@@ -288,21 +290,16 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
             onDragEnd={end}
             onDragOver={(e) => { if (dragId) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setLineAt(e.clientY > r.top + r.height / 2 ? i + 1 : i); } }}
             onDrop={(e) => { e.preventDefault(); if (!dragId) return; const from = blocks.findIndex((x) => x.id === dragId); let to = lineAt == null ? i : lineAt; if (from < to) to--; to = Math.max(0, Math.min(blocks.length - 1, to)); if (from > -1 && from !== to) onReorder(from, to); end(); }}>
-            <div className="mini-canvas" style={{ background: b.bg, aspectRatio: `1000 / ${blockH}` }} title={b.name}>
-              {/* 이미지 외 요소도 스키매틱으로 표시 — 정보 블록(표·텍스트)이 빈 칸으로 보이지 않게.
-                  hidden 요소는 캔버스·미리보기와 동일하게 제외한다. */}
-              {b.elements.map((e) => {
-                if (e.hidden) return null;
-                const pos = { left: (e.x / 1000) * 100 + '%', top: (e.y / blockH) * 100 + '%', width: (e.w / 1000) * 100 + '%', height: ((e.h || 24) / blockH) * 100 + '%' };
-                if (e.type === 'image') {
-                  if (e.src) return <img key={e.id} src={thumbUrl(e.src, 200)} style={{ ...pos, borderRadius: e.radius >= (e.w || 0) / 2 ? '50%' : 1 }} alt="" draggable={false} loading="lazy" decoding="async" />;
-                  return <span key={e.id} style={{ position: 'absolute', ...pos, background: '#ececee', borderRadius: e.radius >= (e.w || 0) / 2 ? '50%' : 1 }} />;
-                }
-                if (e.type === 'text') return <span key={e.id} style={{ position: 'absolute', ...pos, height: Math.max(2, ((e.style?.size || 14) * 1.1 / blockH) * 100) + '%', background: e.style?.color === '#ffffff' ? '#f0f0f2' : '#c9c9cc', opacity: .75, borderRadius: 1 }} />;
-                if (e.type === 'shape') return <span key={e.id} style={{ position: 'absolute', ...pos, background: e.fill || '#e2e2e4', opacity: .8, borderRadius: e.shape === 'circle' ? '50%' : 1 }} />;
-                if (e.type === 'line') return <span key={e.id} style={{ position: 'absolute', ...pos, height: 1, background: '#d4d4d8' }} />;
-                return null;
-              })}
+            <div className="mini-canvas" style={{ background: b.bg, aspectRatio: `1000 / ${blockH}` }} title={b.name}
+              ref={i === 0 ? measureRef : undefined}>
+              {/* 실제 내용 축소 렌더 — 1000px 블록을 그대로 그려 scale 로 줄인다.
+                  글자·표·도형이 캔버스와 동일하게 보인다 (CanvasElement preview 재사용, hidden 자동 제외) */}
+              <div style={{ position: 'absolute', top: 0, left: 0, width: 1000, height: blockH,
+                transform: `scale(${(thumbW || 140) / 1000})`, transformOrigin: 'top left', pointerEvents: 'none' }}>
+                {b.elements.map((el) => (
+                  <CanvasElement key={el.id} el={el} preview selected={false} onSelect={() => {}} onEdit={() => {}} />
+                ))}
+              </div>
             </div>
           </div>
         </div>

@@ -1112,7 +1112,9 @@
 .mini-block .mb-cap { font-size: 10px; color: var(--fg-2); padding: 5px 8px; display: flex; justify-content: space-between; }
 /* mini-canvas mirrors the real block ratio (1000 × b.h), set inline via aspect-ratio */
 .mini-canvas { width: 100%; background: var(--bg-2); position: relative; overflow: hidden; }
-.mini-canvas img { position: absolute; object-fit: cover; }
+/* 직계 img 만 — 축소 실렌더(.el 내부 img)에 absolute 가 새면 레이아웃이 깨진다 */
+.mini-canvas > img { position: absolute; object-fit: cover; }
+.mini-canvas .el img { object-fit: cover; }
 
 /* left panel content */
 .panel-h { font-family: var(--font-display); font-size: 15px; letter-spacing: .2px; margin-bottom: 4px; }
