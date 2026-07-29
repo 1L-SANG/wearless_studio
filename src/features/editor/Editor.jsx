@@ -412,6 +412,18 @@ export function Editor() {
         setSelEl(null); setSelEls([]);
         toast.push(`${selEls.length > 1 ? selEls.length + '개 요소를' : '요소를'} 삭제했어요`, { icon: 'trash' });
       }
+      // 방향키 nudge — 1px, Shift=10px. 타이핑/크롭 중 제외. drag 와 동일 clamp([0,1000-w]·y≥0). 연타는 350ms 히스토리 창으로 1 undo.
+      if (selEls.length && e.key.startsWith('Arrow')) {
+        const t = e.target;
+        if (/input|textarea/i.test(t.tagName) || t.isContentEditable || kb.current.croppingOn) return;
+        const step = e.shiftKey ? 10 : 1;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        if (!dx && !dy) return;
+        e.preventDefault();
+        setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.map((el) => (selEls.includes(el.id)
+          ? { ...el, x: Math.max(0, Math.min(Math.max(0, 1000 - (el.w || 0)), (el.x || 0) + dx)), y: Math.max(0, (el.y || 0) + dy) } : el)) })));
+      }
     };
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   }, [selEls]);
