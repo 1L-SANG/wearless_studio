@@ -294,7 +294,7 @@ infoType별 info shape (frontend `src/features/editor/presets/infoPresets.js`가
 
 | infoType | info |
 |---|---|
-| (kind='size') | `{ unit, columns: MeasurementKey[], rows: [{label, values: Record<MeasurementKey, number\|null>}], note, withDiagram }` |
+| (kind='size') | `{ unit, columns: MeasurementKey[], rows: [{label, values: Record<MeasurementKey, number\|null>}], note, withDiagram, diagramSrc }` — diagramSrc = 실측도 슬롯 사진 정본(토글 off→on 에도 보존) |
 | (kind='care') | `{ family, text }` — text에는 케어라벨 확인 문장이 항상 포함된다 |
 | `required_notice` | `{ fields: [{key, label, value}] }` — 빈 value는 `정보 입력 필요`로 렌더 |
 | `shipping_returns` | `{ sections: [{title, body}] }` |
@@ -302,10 +302,16 @@ infoType별 info shape (frontend `src/features/editor/presets/infoPresets.js`가
 | `benefit_copy` | `{ items: [{title, desc, src}] }` (2~5개, src = 원형 사진 슬롯 이월값) |
 | `fit_guide` | `{ fits: Fit[], current: Fit\|null }` |
 | `size_matrix` | `{ heights: string[], weights: string[], cells: string[][], note }` |
-| `model_info` | `{ models: [{name, height, size}] }` (최대 3) |
+| `model_info` | `{ models: [{name, height, size, src}] }` (최대 3) — 기본값은 프로젝트가 실제 사용 중인 모델(선택 가상모델 또는 FaceMarket 실존 모델)의 이름·사진으로 프리필 |
 
 `normalizeEditorBlockRole`은 `kind='info'` 블록을 그대로 통과시켜야 한다 — 섹션 역할
 추론 대상이 아니다(재로드 시 kind가 덮이면 정보 블록이 깨진다).
+
+이미지 슬롯을 가진 정보 블록(특징 포인트·모델 정보·사이즈 실측도)의 슬롯을 채울 때는
+요소 `src` 와 `info` 정본을 **동시에** 기록한다(`applySlotFillToInfo`) — 이미지 요소의
+서수(ordinal) = info 배열 인덱스. elements 재생성 시 사진은 info 에서 복원되고,
+info 동기화 이전에 채워진 레거시 블록은 같은 서수끼리만 이월한다(`carrySlotImages`,
+압축 채움 금지 — 사진이 다른 포인트로 이사하면 안 된다).
 
 ### 3.6 Wardrobe — 에디터 의류 탭
 

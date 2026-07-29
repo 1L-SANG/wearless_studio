@@ -7,6 +7,7 @@ import {
   INFO_TEMPLATES,
   NEEDS_INPUT,
   applyInfoTemplate,
+  applySlotFillToInfo,
   buildInfoBlock,
   careFamilyFor,
   carrySlotImages,
@@ -208,13 +209,16 @@ test('feature icons are photo cards clamped to 2~5 points', () => {
   assert.equal(withSrc.elements.find((e) => e.type === 'image').src, '/img.jpg', 'stored src rendered into slot');
 });
 
-test('carrySlotImages moves user-filled slot photos into rebuilt blocks (edit + template paths)', () => {
-  // 재편집 경로: 이전 블록에서 채운 원형 슬롯 사진이 재생성 블록에 이월
-  const prev = buildInfoBlock('feature_icons', { items: [{ title: 'A' }, { title: 'B' }] }, CTX, seqId());
-  const filled = { ...prev, elements: prev.elements.map((e, i) => (e.type === 'image' && i === 0 ? { ...e, src: '/user-photo.jpg' } : e)) };
+test('carrySlotImages carries photos by ordinal — photo stays on its own point', () => {
+  const prev = buildInfoBlock('feature_icons', { items: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] }, CTX, seqId());
+  // 3번 포인트 슬롯만 채움 → 재생성 후에도 3번 슬롯에 있어야 한다 (압축 채움이면 1번으로 이사)
+  const imgIds = prev.elements.filter((e) => e.type === 'image').map((e) => e.id);
+  const filled = { ...prev, elements: prev.elements.map((e) => (e.id === imgIds[2] ? { ...e, src: '/point3.jpg' } : e)) };
   const rebuilt = buildInfoBlock('feature_icons', filled.info, CTX, seqId());
   const merged = carrySlotImages(filled.elements, rebuilt);
-  assert.equal(merged.elements.find((e) => e.type === 'image').src, '/user-photo.jpg');
+  const slots = merged.elements.filter((e) => e.type === 'image');
+  assert.equal(slots[0].src, null, 'point 1 stays empty');
+  assert.equal(slots[2].src, '/point3.jpg', 'point 3 keeps its photo');
   // 템플릿 재적용 경로: size 실측도 슬롯 사진 보존
   const doc = baseDoc();
   doc[1] = { ...doc[1], info: { ...defaultInfoFor('size_table', CTX), withDiagram: true },
@@ -222,6 +226,36 @@ test('carrySlotImages moves user-filled slot photos into rebuilt blocks (edit + 
   const { blocks } = applyInfoTemplate(doc, 'brand', CTX, seqId());
   const size = blocks.find((b) => b.kind === 'size');
   assert.equal(size.elements.find((e) => e.type === 'image').src, '/diagram.png', 'diagram photo carried across template re-apply');
+});
+
+test('applySlotFillToInfo writes slot photos into info so rebuilds restore them exactly', () => {
+  const block = buildInfoBlock('feature_icons', { items: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] }, CTX, seqId());
+  const imgIds = block.elements.filter((e) => e.type === 'image').map((e) => e.id);
+  const synced = applySlotFillToInfo(block, imgIds[2], { src: '/p3.jpg', cutType: 'product' });
+  assert.equal(synced.info.items[2].src, '/p3.jpg', 'info index matches slot ordinal');
+  assert.equal(synced.info.items[0].src, null);
+  const rebuilt = buildInfoBlock('feature_icons', synced.info, CTX, seqId());
+  assert.equal(rebuilt.elements.filter((e) => e.type === 'image')[2].src, '/p3.jpg', 'rebuild from info restores the right point');
+  // size 실측도: 토글 off→on 왕복에도 info.diagramSrc 로 사진 복원
+  const size = buildInfoBlock('size_table', { ...defaultInfoFor('size_table', CTX), withDiagram: true }, CTX, seqId());
+  const slotId = size.elements.find((e) => e.type === 'image').id;
+  const sizeSynced = applySlotFillToInfo(size, slotId, { src: '/diagram.png' });
+  assert.equal(sizeSynced.info.diagramSrc, '/diagram.png');
+  const off = buildInfoBlock('size_table', { ...sizeSynced.info, withDiagram: false }, CTX, seqId());
+  assert.ok(!off.elements.some((e) => e.type === 'image'), 'diagram slot removed while off');
+  const backOn = buildInfoBlock('size_table', { ...off.info, withDiagram: true }, CTX, seqId());
+  assert.equal(backOn.elements.find((e) => e.type === 'image').src, '/diagram.png', 'photo survives off→on round trip');
+});
+
+test('model info prefills from the model actually used by the project', () => {
+  const withModel = { ...CTX, selectedModel: { name: '모델 A', thumb: '/models/women/w1.webp' } };
+  const info = defaultInfoFor('model_info', withModel);
+  assert.equal(info.models[0].name, '모델 A');
+  assert.equal(info.models[0].src, '/models/women/w1.webp');
+  const block = buildInfoBlock('model_info', info, withModel, seqId());
+  assert.equal(block.elements.find((e) => e.type === 'image').src, '/models/women/w1.webp', 'model photo rendered into card slot');
+  const bare = defaultInfoFor('model_info', CTX);
+  assert.equal(bare.models[0].name, 'MODEL A', 'fallback without selected model');
 });
 
 test('careFamilyFor does not false-match 모달/기모 as knit', () => {

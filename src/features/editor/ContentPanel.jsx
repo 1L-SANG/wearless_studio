@@ -124,7 +124,7 @@ export function ContentPanel({ recommendGender, templateStyle, onTemplateStyle, 
               {items.map((p) => {
                 const rec = recommendGender && p.recommend === recommendGender;
                 return (
-                  <div key={p.type} className="frame-item" onClick={() => onPick(p.type)} title={p.desc}>
+                  <div key={p.type} className="frame-item" style={{ cursor: 'pointer' }} onClick={() => onPick(p.type)} title={p.desc}>
                     <div className="frame-prev" style={{ display: 'block', padding: 4 }}>
                       <PresetThumb type={p.type} />
                     </div>

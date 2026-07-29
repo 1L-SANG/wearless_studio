@@ -20,7 +20,7 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
-import { INFO_TEMPLATES, applyInfoTemplate, buildInfoBlock, carrySlotImages, defaultInfoFor, presetTypeOf, templateStyleFor } from '@/features/editor/presets/infoPresets.js';
+import { INFO_TEMPLATES, applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, presetTypeOf, templateStyleFor } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -289,8 +289,10 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
             onDragOver={(e) => { if (dragId) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setLineAt(e.clientY > r.top + r.height / 2 ? i + 1 : i); } }}
             onDrop={(e) => { e.preventDefault(); if (!dragId) return; const from = blocks.findIndex((x) => x.id === dragId); let to = lineAt == null ? i : lineAt; if (from < to) to--; to = Math.max(0, Math.min(blocks.length - 1, to)); if (from > -1 && from !== to) onReorder(from, to); end(); }}>
             <div className="mini-canvas" style={{ background: b.bg, aspectRatio: `1000 / ${blockH}` }} title={b.name}>
-              {/* 이미지 외 요소도 스키매틱으로 표시 — 정보 블록(표·텍스트)이 빈 칸으로 보이지 않게 */}
+              {/* 이미지 외 요소도 스키매틱으로 표시 — 정보 블록(표·텍스트)이 빈 칸으로 보이지 않게.
+                  hidden 요소는 캔버스·미리보기와 동일하게 제외한다. */}
               {b.elements.map((e) => {
+                if (e.hidden) return null;
                 const pos = { left: (e.x / 1000) * 100 + '%', top: (e.y / blockH) * 100 + '%', width: (e.w / 1000) * 100 + '%', height: ((e.h || 24) / blockH) * 100 + '%' };
                 if (e.type === 'image') {
                   if (e.src) return <img key={e.id} src={thumbUrl(e.src, 200)} style={{ ...pos, borderRadius: e.radius >= (e.w || 0) / 2 ? '50%' : 1 }} alt="" draggable={false} loading="lazy" decoding="async" />;
@@ -664,8 +666,11 @@ export function Editor() {
   };
   const requestSlotImage = (blockId, el) => { setPendingSlot({ blockId, elId: el.id }); setTab('wardrobe'); };
   const wardrobeInsert = (im) => {
-    if (pendingSlot) { patchElById(pendingSlot.blockId, pendingSlot.elId, { src: im.src, ...(im.cutType ? { cutType: im.cutType } : {}) }); setPendingSlot(null); setTab('image'); toast.push('빈 칸에 이미지를 넣었어요'); }
-    else insertImage(im);
+    if (pendingSlot) {
+      // 정보 블록 슬롯이면 info(폼 정본)에도 동기화 — 재생성 때 사진-포인트 연결 유지
+      setBlocks((bs) => bs.map((b) => (b.id === pendingSlot.blockId ? applySlotFillToInfo(b, pendingSlot.elId, { src: im.src, cutType: im.cutType || null }) : b)));
+      setPendingSlot(null); setTab('image'); toast.push('빈 칸에 이미지를 넣었어요');
+    } else insertImage(im);
   };
   // fresh = 새로 생성된 컷의 4색 glow 하이라이트 — 사용자가 본 뒤(애니메이션 종료) 해제
   const freshSeen = (id) => setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === id && x.fresh ? { ...x, fresh: false } : x); return nw; });
@@ -747,6 +752,17 @@ export function Editor() {
     ? (targetGenders.every((g) => g === 'men') ? 'men' : 'women')
     : null;
   const templateStyle = tplStyle || templateStyleFor(targetGenders);
+  // 프로젝트가 실제 사용 중인 모델 — 모델 정보 프리셋 프리필 (FaceMarket 실존 모델 우선)
+  const selectedModel = (() => {
+    const id = analysis?.selectedModelId;
+    if (!id) return null;
+    const fm = (fmModels || []).find((m) => m.id === id);
+    if (fm) return { name: fm.displayName || '실제 모델', thumb: fm.faceThumbUri || fm.coverImageUrl || null };
+    const cat = ((catalogs && catalogs.models) || []).find((m) => m.id === id);
+    if (cat) return { name: cat.name, thumb: cat.thumb || null };
+    const am = ((analysis && analysis.models) || []).find((m) => m.id === id);
+    return am ? { name: am.name, thumb: am.thumb || null } : null;
+  })();
   const infoCtx = {
     productName,
     clothingType,
@@ -758,6 +774,7 @@ export function Editor() {
     fit: analysis?.fit,
     fits: catalogs?.fits,
     colorLabels: colorOpts.map((o) => o.label),
+    selectedModel,
   };
   const openInfoPreset = (type) => {
     // size/care 는 자동 블록 제자리 강화, info 는 같은 infoType 이 있으면 그 블록을 수정한다(중복 방지)

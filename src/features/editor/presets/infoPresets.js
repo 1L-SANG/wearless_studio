@@ -112,7 +112,7 @@ export function defaultInfoFor(type, ctx = {}) {
     case 'size_table': {
       const values = {};
       (ctx.measurements || []).forEach((m) => { if (m && m.key != null && m.value != null) values[m.key] = m.value; });
-      return { unit: 'cm', columns: schema, rows: [{ label: 'FREE', values }], note: '단위: cm · 측정 위치에 따라 1~3cm 오차가 있을 수 있어요', withDiagram: false };
+      return { unit: 'cm', columns: schema, rows: [{ label: 'FREE', values }], note: '단위: cm · 측정 위치에 따라 1~3cm 오차가 있을 수 있어요', withDiagram: false, diagramSrc: null };
     }
     case 'required_notice': {
       const materials = (ctx.materials || []).map((m) => (m.ratio != null ? `${m.name} ${m.ratio}%` : m.name)).join(', ');
@@ -133,7 +133,8 @@ export function defaultInfoFor(type, ctx = {}) {
       return { nameKo: ctx.productName || '', nameEn: '', eyebrow: 'PRODUCT INFORMATION' };
     case 'feature_icons': {
       const points = (ctx.sellingPoints || []).slice(0, FEATURE_ITEMS_MAX).map((p) => ({ title: p, desc: '', src: null }));
-      while (points.length < 3) points.push({ title: '', desc: '', src: null });
+      // 새 블록 기본 칸수는 3 (분석 특징이 더 많으면 그 수) — MIN 이 3을 넘게 바뀌어도 하한은 지킨다
+      while (points.length < Math.max(3, FEATURE_ITEMS_MIN)) points.push({ title: '', desc: '', src: null });
       return { items: points };
     }
     case 'fit_guide':
@@ -144,8 +145,12 @@ export function defaultInfoFor(type, ctx = {}) {
       return { heights: [...DEFAULT_MATRIX_HEIGHTS], weights: [...DEFAULT_MATRIX_WEIGHTS], cells,
         note: '체형에 따라 다를 수 있어요 · 상세 실측 치수 확인을 권장드려요' };
     }
-    case 'model_info':
-      return { models: [{ name: 'MODEL A', height: '', size: '' }] };
+    case 'model_info': {
+      // 프로젝트에서 실제 사용 중인 모델(가상 mA~mC 또는 FaceMarket 실존 모델)을 프리필.
+      // 저장된 스펙 데이터는 이름·사진뿐이라 키·착용 사이즈는 사용자가 채운다.
+      const sel = ctx.selectedModel;
+      return { models: [sel ? { name: sel.name || 'MODEL A', height: '', size: '', src: sel.thumb || null } : { name: 'MODEL A', height: '', size: '', src: null }] };
+    }
     default:
       return {};
   }
@@ -179,7 +184,8 @@ function buildSizeTable(info, ctx, idFn) {
   });
   let bottom = 216 + rows.length * 48;
   if (info.withDiagram) {
-    els.push(slot(300, bottom + 24, 400, 300));
+    // 실측도 사진은 info.diagramSrc 가 정본 — 토글을 껐다 켜도 사진이 살아난다
+    els.push({ ...slot(300, bottom + 24, 400, 300), src: info.diagramSrc || null });
     bottom += 24 + 300;
   }
   return { id: idFn('b'), name: '사이즈 안내', kind: 'size', auto: true, bg: '#ffffff', h: bottom + 50, info: { ...info }, elements: els };
@@ -317,19 +323,21 @@ function buildSizeMatrix(info, ctx, idFn) {
 
 function buildModelInfo(info, ctx, idFn) {
   const t = T(idFn); const rect = RECT(idFn);
-  const models = (info.models || []).filter((m) => m.name || m.height || m.size);
-  const list = models.length ? models : [{ name: 'MODEL A', height: '', size: '' }];
+  const models = (info.models || []).filter((m) => m.name || m.height || m.size || m.src);
+  const list = models.length ? models : [{ name: 'MODEL A', height: '', size: '', src: null }];
   const n = Math.min(3, list.length);
   const gap = 16; const colW = (880 - (n - 1) * gap) / n;
   const els = [t(60, 56, 880, 24, 'MODEL INFO', { font: 'Roboto Mono', size: 15, tracking: 3, weight: 600, color: '#0e0d14', align: 'center' })];
+  const d = 72; // 모델 사진 원형 슬롯 — 실제 사용 모델 썸네일 프리필, 비면 '이미지 추가'
   list.slice(0, 3).forEach((m, i) => {
     const x = 60 + i * (colW + gap);
-    els.push(rect(x, 110, colW, 130, '#f5f5f5', 12));
-    els.push(t(x, 136, colW, 22, m.name || `MODEL ${i + 1}`, { size: 15, weight: 600, align: 'center', color: '#0e0d14' }));
+    els.push(rect(x, 110, colW, 196, '#f5f5f5', 12));
+    els.push({ id: idFn('el'), type: 'image', x: x + colW / 2 - d / 2, y: 128, w: d, h: d, src: m.src || null, radius: d / 2 });
+    els.push(t(x, 214, colW, 22, m.name || `MODEL ${i + 1}`, { size: 15, weight: 600, align: 'center', color: '#0e0d14' }));
     const spec = [m.height, m.size ? `${m.size} 착용` : ''].filter(Boolean).join(' · ');
-    els.push(t(x + 10, 166, colW - 20, 44, spec || '스펙을 입력하세요', { size: 13, align: 'center', color: MUTED, lineHeight: 20 }));
+    els.push(t(x + 10, 242, colW - 20, 44, spec || '스펙을 입력하세요', { size: 13, align: 'center', color: MUTED, lineHeight: 20 }));
   });
-  return { id: idFn('b'), name: '모델 정보', kind: 'info', infoType: 'model_info', bg: '#ffffff', h: 110 + 130 + 56, info: { models: list.map((m) => ({ ...m })) }, elements: els };
+  return { id: idFn('b'), name: '모델 정보', kind: 'info', infoType: 'model_info', bg: '#ffffff', h: 110 + 196 + 56, info: { models: list.map((m) => ({ ...m })) }, elements: els };
 }
 
 const BUILDERS = {
@@ -351,19 +359,41 @@ export function buildInfoBlock(type, info, ctx = {}, idFn = uid) {
   return build(info || defaultInfoFor(type, ctx), ctx, idFn);
 }
 
-/* 재생성된 블록에 기존 이미지 슬롯의 src 를 순서대로 이월한다 — 폼 재제출·템플릿
-   재적용이 사용자가 채워 넣은 사진(실측도·특징 포인트 사진)을 날리지 않게.
-   crop 은 지오메트리가 달라져 무효라 이월하지 않는다. */
+/* 재생성된 블록에 기존 이미지 슬롯의 src 를 **같은 서수(ordinal)끼리** 이월한다 —
+   압축(compaction)해서 앞에서부터 채우면 3번 포인트 사진이 1번 밑으로 이사한다
+   (리뷰 확정 결함). n번째 이미지 요소 ↔ n번째 이미지 요소로만 매칭하고, 이미
+   src 가 있는 슬롯(info 정본에서 채워진 것)은 건드리지 않는다. crop 은 지오메트리가
+   달라져 무효라 이월하지 않는다. 정본 동기화는 applySlotFillToInfo 가 담당하고,
+   이 함수는 info 동기화 이전에 채워진 레거시 블록의 안전망이다. */
 export function carrySlotImages(prevElements, block) {
-  const prevSrcs = (prevElements || []).filter((e) => e.type === 'image' && e.src).map((e) => e.src);
-  if (!prevSrcs.length) return block;
-  let i = 0;
+  const prevImgs = (prevElements || []).filter((e) => e.type === 'image');
+  if (!prevImgs.some((e) => e.src)) return block;
+  let ord = -1;
   return {
     ...block,
-    elements: block.elements.map((el) => (
-      el.type === 'image' && !el.src && i < prevSrcs.length ? { ...el, src: prevSrcs[i++] } : el
-    )),
+    elements: block.elements.map((el) => {
+      if (el.type !== 'image') return el;
+      ord += 1;
+      const prev = prevImgs[ord];
+      return !el.src && prev && prev.src ? { ...el, src: prev.src, ...(prev.cutType ? { cutType: prev.cutType } : {}) } : el;
+    }),
   };
+}
+
+/* 슬롯 채움을 elements 와 info(폼 정본)에 **동시에** 기록한다 — 요소에만 쓰면
+   재생성(재편집·템플릿 재적용) 때 사진-포인트 연결이 끊긴다(리뷰 확정 결함).
+   이미지 요소의 서수 = info 배열 인덱스 (빌더가 같은 순서로 방출). */
+export function applySlotFillToInfo(block, elId, { src, cutType }) {
+  const elements = block.elements.map((e) => (e.id === elId ? { ...e, src, ...(cutType ? { cutType } : {}) } : e));
+  const type = presetTypeOf(block);
+  if (!type || !block.info) return { ...block, elements };
+  const ord = block.elements.filter((e) => e.type === 'image').findIndex((e) => e.id === elId);
+  if (ord < 0) return { ...block, elements };
+  let info = block.info;
+  if (type === 'feature_icons') info = { ...info, items: (info.items || []).map((it, i) => (i === ord ? { ...it, src } : it)) };
+  else if (type === 'model_info') info = { ...info, models: (info.models || []).map((m, i) => (i === ord ? { ...m, src } : m)) };
+  else if (type === 'size_table') info = { ...info, diagramSrc: src };
+  return { ...block, info, elements };
 }
 
 /* 블록 → 프리셋 타입 역매핑 (재편집 진입용). size/care 는 kind 로, 나머지는 infoType 로. */

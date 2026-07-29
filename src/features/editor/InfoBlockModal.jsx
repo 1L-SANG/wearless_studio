@@ -211,7 +211,7 @@ function SizeMatrixForm({ info, setInfo }) {
 function ModelInfoForm({ info, setInfo }) {
   const setModel = (i, patch) => setInfo((f) => ({ ...f, models: f.models.map((m, j) => (j === i ? { ...m, ...patch } : m)) }));
   return (
-    <Field label="모델 스펙 (최대 3명)">
+    <Field label="모델 스펙 (최대 3명)" hint="프로젝트에서 쓰는 모델의 이름·사진이 자동으로 채워져요. 키·착용 사이즈만 입력하면 돼요. 사진은 카드의 원형 칸에서 바꿀 수 있어요.">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {info.models.map((m, i) => (
           <div key={i} style={rowGap}>
@@ -224,7 +224,7 @@ function ModelInfoForm({ info, setInfo }) {
       </div>
       {info.models.length < 3 && (
         <Button variant="ghost" size="sm" icon="plus" style={{ marginTop: 8 }}
-          onClick={() => setInfo((f) => ({ ...f, models: [...f.models, { name: `MODEL ${'ABC'[f.models.length] || ''}`.trim(), height: '', size: '' }] }))}>모델 추가</Button>
+          onClick={() => setInfo((f) => ({ ...f, models: [...f.models, { name: `MODEL ${'ABC'[f.models.length] || ''}`.trim(), height: '', size: '', src: null }] }))}>모델 추가</Button>
       )}
     </Field>
   );
