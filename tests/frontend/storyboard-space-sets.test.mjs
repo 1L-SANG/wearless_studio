@@ -83,16 +83,16 @@ test('space set replacement swaps the whole composition in one immutable board r
   assert.deepEqual(next.map((item) => item.id), ['before', 'old-a', 'old-b', 'new-2', 'after']);
 });
 
-test('leaving one member behind automatically dissolves the remaining singleton', () => {
+test('dragging a member out keeps its content and keeps the remaining set intact', () => {
   const source = [
-    block('set-a', { spaceGroupId: 'space-1', refScope: 'pose' }),
-    block('set-b', { spaceGroupId: 'space-1', refScope: 'pose' }),
-    block('outside'),
+    block('a', { spaceGroupId: 'space-1', refScope: 'pose', exampleId: 'ex-1' }),
+    block('b', { spaceGroupId: 'space-1', refScope: 'pose', exampleId: 'ex-2' }),
+    block('c', {}),
   ];
-  const moved = moveBlockWithSpaceMembership(source, 'set-a', 3);
-  assert.equal(moved.find((item) => item.id === 'set-a').spaceGroupId, undefined);
-  assert.equal(moved.find((item) => item.id === 'set-b').spaceGroupId, undefined);
-
-  const dissolved = dissolveSpaceSet(source, 'space-1');
-  assert.ok(dissolved.every((item) => item.spaceGroupId == null));
+  const moved = moveBlockWithSpaceMembership(source, 'b', 3, { targetSpaceGroupId: null });
+  const out = moved.find((item) => item.id === 'b');
+  assert.equal(out.spaceGroupId, undefined);
+  assert.equal(out.exampleId, 'ex-2');
+  const remaining = moved.find((item) => item.id === 'a');
+  assert.equal(remaining.spaceGroupId, 'space-1');
 });

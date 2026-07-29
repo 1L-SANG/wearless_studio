@@ -102,7 +102,8 @@ export function moveBlockWithSpaceMembership(
   }
   const adjustedTarget = from < targetIndex ? targetIndex - 1 : targetIndex;
   next.splice(Math.max(0, Math.min(adjustedTarget, next.length)), 0, moving);
-  return dissolveSingletonSpaceRuns(next);
+  // 남은 멤버가 1개여도 세트를 풀지 않는다 — 세트 유지는 오너 확정(2026-07-29)
+  return next;
 }
 
 export function moveSpaceSetRun(blocks, spaceGroupId, targetIndex) {

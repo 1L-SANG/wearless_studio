@@ -43,7 +43,6 @@ import {
   spaceSetGroupId,
 } from '@/lib/storyboardSpaceSetCatalog.js';
 import {
-  dissolveSingletonSpaceRuns,
   dissolveSpaceSet,
   groupConsecutiveSpaceRuns,
   insertSpaceSet,
@@ -449,9 +448,7 @@ function SpaceSetGallery({ mode, error, onChoose, onClose }) {
                 </span>
               ))}
             </span>
-            <span className="sb-set-composition">{set.compositionLabel}</span>
             <strong>{set.name}</strong>
-            <small>{set.place} · 같은 공간</small>
           </button>
         ))}
       </div>
@@ -467,7 +464,7 @@ function SpaceSetGallery({ mode, error, onChoose, onClose }) {
    · 내 사진(refImages) = '+ 타일'로 갤러리에 통합 — 점선 테두리·배지, 분위기(조명·색감)만 참고
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onCycleExample, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false }) {
+export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onCycleExample, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false, onUseMine = null }) {
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
@@ -623,9 +620,12 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           );
         })}
         {refs.map((r, i) => (
-          <span className="sb-excell up" key={'u' + i} title="분위기(조명·색감)만 참고해요. 옷과 모델은 바뀌지 않아요.">
+          <span className={`sb-excell up${onUseMine ? ' usable' : ''}`} key={'u' + i}
+            title={onUseMine ? '누르면 이 컷을 이 사진으로 바꿔요' : '분위기(조명·색감)만 참고해요. 옷과 모델은 바뀌지 않아요.'}
+            onClick={onUseMine ? () => onUseMine(r) : undefined}
+            role={onUseMine ? 'button' : undefined}>
             <img src={r?.url || r} alt="" /><span className="upb">내 사진</span>
-            <button type="button" className="rm" onClick={() => onRefsChange && onRefsChange(refs.filter((_, j) => j !== i))}><Icon name="x" size={11} /></button>
+            <button type="button" className="rm" onClick={(ev) => { ev.stopPropagation(); onRefsChange && onRefsChange(refs.filter((_, j) => j !== i)); }}><Icon name="x" size={11} /></button>
           </span>
         ))}
         {onRefsChange && (
@@ -640,18 +640,30 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
       </div>
       {moodOnly && refScope !== 'pose' && <div className="sb-exnote">예시의 <b>포즈·구도·분위기</b>를 참고하되, 촬영 방향은 {direction === 'side' ? '사이드' : '뒷면'}로 유지해요.</div>}
       {/* 레퍼런스 범위 (P5 확정, 전부|포즈만|배경만) — 같은 공간 묶음은 포즈 고정, 제품 생성 레시피는 범위 개념 없음 */}
-      {!moodOnly && exampleId && !inSpace && cut === 'product' && (
-        <div className="sb-exnote pick"><b>이 예시처럼 생성돼요</b> — 옷만 우리 걸로 교체</div>
+      {exampleId && !inSpace && cut !== 'product' && refScope === 'pose' && (
+        <div className="sb-exnote">포즈의 좌우와 비대칭을 그대로 따르고, 프레이밍은 현재 샷을 따라요.</div>
       )}
-      {exampleId && !inSpace && cut !== 'product' && (
-        refScope === 'pose'
-          ? <div className="sb-exnote">포즈의 좌우와 비대칭을 그대로 따르고, 프레이밍은 현재 샷을 따라요.</div>
-          : refScope === 'bg'
-            ? <div className="sb-exnote">배경·분위기만 참고해요. 포즈는 이 옷과 장소에 어울리게 새로 잡혀요.</div>
-            : <div className="sb-exnote pick"><b>이 예시처럼 생성돼요</b> — 상품·매칭 의류와 우리 모델로 교체</div>
+      {exampleId && !inSpace && cut !== 'product' && refScope === 'bg' && (
+        <div className="sb-exnote">배경·분위기만 참고해요. 포즈는 이 옷과 장소에 어울리게 새로 잡혀요.</div>
       )}
     </div>
   );
+}
+
+class InspectorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(err) { console.error('[inspector] render failed', err); }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="surface inspector">
+          <div className="insp-note" style={{ marginTop: 8 }}><Icon name="alert" size={14} />설정 창을 불러오지 못했어요. 다른 카드를 눌렀다가 다시 열어보세요.</div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, mode, onMode, onChange, onAtomicChange, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onDissolveSpaceSet, onDuplicate, onDelete, dirty, warn, onDone, onRevert, onAddMine, onImgDrag, onCancelNew, isNew }) {
@@ -893,7 +905,12 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </div>
       ) : (
         <>
-          <MoodGuide catalogs={catalogs} cut={block.cutType}
+          <MoodGuide onUseMine={(ref) => onChange({
+            source: 'mine', title: '내 이미지', cutType: null, contentRole: CONTENT_ROLES.CUSTOM,
+            ownImages: [ref?.url || ref], thumb: ref?.url || ref,
+            exampleId: null, exampleSelectionOrigin: null, refScope: null,
+            spaceGroupId: null, spaceVariation: null,
+          })} catalogs={catalogs} cut={block.cutType}
             direction={block.direction} shot={block.shot}
             shotOptions={isProduct ? productShotOptions : null}
             onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}
@@ -981,11 +998,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       </details>
         </>
       )}
-
-      <div className="insp-block-actions" aria-label="블록 작업">
-        <button type="button" onClick={onDuplicate}><Icon name="copy" size={15} />복제</button>
-        <button type="button" className="danger" onClick={onDelete}><Icon name="trash" size={15} />삭제</button>
-      </div>
 
       <div ref={doneRef}>
         {warn && <div className="insp-warn">수정 완료를 먼저 눌러주세요</div>}
@@ -1110,7 +1122,7 @@ export function Storyboard() {
       const sourceBlocks = usePending ? pending : b;
       const productHasDetail = hasDetailSource(p);
       const resolvedGender = exampleGenderFromAnalysis(a, c);
-      const normalizedBlocks = dissolveSingletonSpaceRuns(ensureSections(sourceBlocks, { hasDetailImage: productHasDetail }).map((block) => ({
+      const normalizedBlocks = (ensureSections(sourceBlocks, { hasDetailImage: productHasDetail }).map((block) => ({
         ...block, ...referenceFeedbackPatch(block, {}, c),
       })));
       const normalized = sbStable(normalizedBlocks) !== sbStable(sourceBlocks);
@@ -1358,7 +1370,7 @@ export function Storyboard() {
     const preDelete = blocks;
     let postDelete = null;   // 삭제 직후 상태 — identity 가 그대로일 때만 통짜 복원 유효
     setBlocks((bs) => {
-      postDelete = normalizeBoard(dissolveSingletonSpaceRuns(bs.filter((b) => b.id !== id).map((b) => {
+      postDelete = normalizeBoard((bs.filter((b) => b.id !== id).map((b) => {
         // 삭제 규칙: 한 멤버가 사라지면 남은 파트너 전원의 행 id를 내려 모두 일반 단일 카드로 돌린다.
         // normalizeBoard: 컷 수가 줄어든 섹션의 레이아웃 위생(예: 3컷 threeColumn 에서 1개 삭제 → 스테일 레이아웃 해소)
         return rowId && b.layoutRowId === rowId ? withoutLayoutRow(b) : b;
@@ -1962,7 +1974,7 @@ export function Storyboard() {
   const inspector = setPicker ? (
     <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}
       onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
-  ) : <Inspector block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} mode={mode} onMode={setMode}
+  ) : <InspectorBoundary key={selectedId}><Inspector block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} mode={mode} onMode={setMode}
     onChange={(p) => patch(selectedId, p)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
     spaceContext={selectedSpaceContext} onDissolveSpaceSet={dissolveSelectedSpaceSet}
@@ -1979,7 +1991,7 @@ export function Storyboard() {
       setBlocks((bs) => valid ? restore.preInsert : normalizeBoard(bs.filter((b) => b.id !== id)));
       finishEdit();
       toast.push('블록을 취소했어요');
-    }} />;
+    }} /></InspectorBoundary>;
 
   const previewRail = <PagePreviewRail sections={sections} selectedId={selectedId} onHover={setPreviewHoverId}
     onSelect={(id) => {
