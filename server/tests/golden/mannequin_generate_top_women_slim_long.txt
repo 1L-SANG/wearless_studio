@@ -19,7 +19,7 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 
 - FIT view (if attached): this shows the same garment worn on a real body. Use it as the priority reference only for FIT PROFILE axes that are not declared — including where the hem falls, cut or silhouette, ease, drape, and which body areas the garment emphasizes or skims. Do not use it to override a declared axis.
 
-- MATCHING BOTTOM (if attached, the last image): also dress the mannequin in this bottom garment, coordinated naturally with the top. If the main product is a top or outerwear and its length axis is declared in FIT PROFILE, keep the main product untucked with its entire hem visible and do not let the matching bottom cover it; otherwise use appropriate layering, tuck, and proportion.
+- MATCHING BOTTOM (if attached, the last image): also dress the mannequin in this bottom garment, coordinated naturally with the top. If the main product is a top or outerwear, ALWAYS keep it untucked with its entire hem fully visible — never tuck it into the matching bottom, and never let the bottom cover its hem. This holds whether or not a length axis is declared in FIT PROFILE. Choose layering and proportion only in ways that keep the main product's hem visible.
 </instruction>
 
 <output format>
@@ -34,6 +34,7 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 <critical rules>
 - Use ONLY the attached images. If a back, detail, fit, or bottom image is not attached, simply omit it — do NOT fabricate it.
 - The attached product photos are the ground truth for garment identity — color, pattern, fabric, construction, seams, neckline, trims, hardware, logos, and prints. The only exceptions to their fit, length, cut, or silhouette are declared FIT PROFILE axes, and only where visual evidence conflicts with the declaration; PRODUCT CONTEXT must NEVER override what the photos clearly show.
+- The main product is NEVER tucked into the matching bottom and is never hidden by it.
 - You are ONLY changing what the mannequin wears — never its head, body, pose, camera framing, or background.
 </critical rules>
 
