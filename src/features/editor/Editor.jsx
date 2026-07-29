@@ -457,8 +457,12 @@ export function Editor() {
       const n = wrap.querySelector(`[data-elid="${el.id}"]`); if (n) sib.push(n);
     }); });
     // 센티넬(캔버스 세로선)은 세로 가이드만 방출 — 전체높이라 top/bottom/middle 수평선까지 뿜던 잡음 제거(critic side-effect).
+    // 한 페이지(블록) 내 가운데 정렬 — 선택 블록의 클립 영역을 center/middle 가이드로(요소 중앙이 페이지 중앙 x·y 에 오면 스냅).
+    const blockNodes = wrap.querySelectorAll('.canvas-block');
+    const centerGuides = [];
+    selIdx.forEach((i) => { const clip = blockNodes[i]?.querySelector('.block-clip'); if (clip) centerGuides.push({ element: clip, center: true, middle: true }); });
     const sentinels = Array.from(wrap.querySelectorAll('[data-snap-sentinel]')).map((el) => ({ element: el, left: true, center: true, right: true }));
-    setMvGuides([...sib, ...sentinels]);
+    setMvGuides([...sib, ...centerGuides, ...sentinels]);
   }, [selEls, blocks, scale, tab, preview, mvTargets]);
 
   // transform: scale doesn't take layout space — measure the unscaled canvas
