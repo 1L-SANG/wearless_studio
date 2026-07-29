@@ -591,11 +591,17 @@ export function Editor() {
     const wrap = wrapRef.current; if (!wrap) return;
     const target = wrap.querySelectorAll('.canvas-block')[idx];
     if (target) { const wr = wrap.getBoundingClientRect(); const tr = target.getBoundingClientRect(); wrap.scrollTo({ top: wrap.scrollTop + (tr.top - wr.top) - 40, behavior: 'smooth' }); } };
-  const addText = (bId) => {
+  const addText = (bId, preset) => {
     const id = bId || visibleBlock();
-    const el = { id: uid('el'), type: 'text', x: 120, y: 80, w: 420, h: 60, text: '텍스트를 입력하세요', style: { font: 'Pretendard', size: 32, weight: 500, color: '#0e0d14' } };
+    // preset 'garment' = AI 컷의 뭉갠 프린트 글자를 정확한 글자로 덮는 오버레이. 프린트는 보통
+    // 크고 굵고 가운데라 기본값을 다르게 준다(색은 셀러가 원본 프린트에 맞게 조절).
+    const garment = preset === 'garment';
+    const el = garment
+      ? { id: uid('el'), type: 'text', x: 90, y: 70, w: 480, h: 60, text: '옷 글자 입력', style: { font: 'Pretendard', size: 44, weight: 700, color: '#0e0d14', align: 'center' } }
+      : { id: uid('el'), type: 'text', x: 120, y: 80, w: 420, h: 60, text: '텍스트를 입력하세요', style: { font: 'Pretendard', size: 32, weight: 500, color: '#0e0d14' } };
     setBlocks((bs) => bs.map((b) => b.id === id ? { ...b, elements: [...b.elements, el] } : b));
-    selectEl(id, el); setTab('text'); toast.push('텍스트를 추가했어요');
+    selectEl(id, el); setTab('text');
+    toast.push(garment ? '옷 글자를 추가했어요 — 뭉갠 글자 위로 옮겨 덮으세요' : '텍스트를 추가했어요');
   };
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
@@ -741,7 +747,7 @@ export function Editor() {
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} onFreshSeen={freshSeen} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} onVary={varyImage} />;
       case 'frame': return <FramePanel catalogs={catalogs} onAdd={addFrame} onDragStart={() => setFrameDragging(true)} onDragEnd={() => setFrameDragging(false)} />;
-      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onLayer={layerEl} onAddText={() => addText()} />;
+      case 'text': return <TextPanel el={selectedElObj} catalogs={catalogs} onChange={patchEl} onLayer={layerEl} onAddText={() => addText()} onAddGarmentText={() => addText(undefined, 'garment')} />;
       case 'shape': return <ShapePanel catalogs={catalogs} onAdd={addShape} block={(selEls.length === 0 && selBlock) ? blocks.find((b) => b.id === selBlock) : null} onBgChange={changeBg} />;
       default: return null;
     }
