@@ -673,7 +673,9 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const [pendingSaving, setPendingSaving] = useState(false);
   useEffect(() => { setMatchOpen(false); }, [block?.id]);
   useEffect(() => {
-    setPendingRecipe(requestedRecipe?.blockId === block?.id
+    // block과 requestedRecipe가 둘 다 null이면 undefined===undefined로 참이 되어
+    // null.cutType을 읽다 죽는다(같은 카드 재클릭=선택 해제 시 백지 화면의 원인, 2026-07-29)
+    setPendingRecipe(requestedRecipe && block && requestedRecipe.blockId === block.id
       ? { cutType: requestedRecipe.cutType, shot: requestedRecipe.shot } : null);
     setPendingChoice(null); setPendingError(null); setPendingSaving(false);
   }, [block?.id, requestedRecipe?.blockId, requestedRecipe?.cutType, requestedRecipe?.shot]);
