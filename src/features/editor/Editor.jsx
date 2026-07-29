@@ -19,6 +19,7 @@ import { Icon, IconButton, Button, Modal, EmptyState, useToast } from '@/compone
 import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { SHAPE_D } from '@/features/editor/shapes.js';
+import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 
@@ -165,10 +166,9 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
 }
 
 function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onSelectEl, onElPatch, onAddImage, onOpenLayers, onObjectDrop, onReshape, onMove, onAddEmpty, onDelete, onDownload, editEl, onEdit, crop, onCropDrag, onCropStart, onCropCommit, onCropReset, idx }) {
-  const contentBottom = block.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0);
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
-  const blockH = Math.max(block.h || 220, contentBottom + 50);
+  const blockH = getBlockRenderHeight(block);
   const blockSelected = selectedBlockId === block.id && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
 
@@ -269,7 +269,9 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
   return (
     <div className="ed-right">
       <div className="mini-head">상세페이지 · 드래그로 순서 변경</div>
-      {blocks.map((b, i) => (
+      {blocks.map((b, i) => {
+        const blockH = getBlockRenderHeight(b);
+        return (
         <div key={b.id} style={{ display: 'contents' }}>
           <div className={`mini-dropline${lineAt === i ? ' on' : ''}`} />
           <div className={`mini-block${selectedBlockId === b.id ? ' on' : ''}${dragId === b.id ? ' dragging' : ''}`}
@@ -278,15 +280,15 @@ function MiniPreview({ blocks, selectedBlockId, onJump, onReorder }) {
             onDragEnd={end}
             onDragOver={(e) => { if (dragId) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setLineAt(e.clientY > r.top + r.height / 2 ? i + 1 : i); } }}
             onDrop={(e) => { e.preventDefault(); if (!dragId) return; const from = blocks.findIndex((x) => x.id === dragId); let to = lineAt == null ? i : lineAt; if (from < to) to--; to = Math.max(0, Math.min(blocks.length - 1, to)); if (from > -1 && from !== to) onReorder(from, to); end(); }}>
-            <div className="mini-canvas" style={{ background: b.bg, aspectRatio: `1000 / ${b.h || 660}` }}>
+            <div className="mini-canvas" style={{ background: b.bg, aspectRatio: `1000 / ${blockH}` }}>
               {b.elements.filter((e) => e.type === 'image' && e.src).map((e) => {
-                const bh = b.h || 660;
-                return <img key={e.id} src={thumbUrl(e.src, 200)} style={{ left: (e.x / 1000) * 100 + '%', top: (e.y / bh) * 100 + '%', width: (e.w / 1000) * 100 + '%', height: (e.h / bh) * 100 + '%' }} alt="" draggable={false} loading="lazy" decoding="async" />;
+                return <img key={e.id} src={thumbUrl(e.src, 200)} style={{ left: (e.x / 1000) * 100 + '%', top: (e.y / blockH) * 100 + '%', width: (e.w / 1000) * 100 + '%', height: (e.h / blockH) * 100 + '%' }} alt="" draggable={false} loading="lazy" decoding="async" />;
               })}
             </div>
           </div>
         </div>
-      ))}
+        );
+      })}
       <div className={`mini-dropline${lineAt === blocks.length ? ' on' : ''}`} />
     </div>
   );
@@ -309,7 +311,7 @@ export function Editor() {
   // 마지막 편집이 유실되던 구멍의 수정.
   const latestBlocks = useRef(null);
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
-    const next = typeof u === 'function' ? u(prev) : u;
+    const next = expandBlockHeights(typeof u === 'function' ? u(prev) : u);
     latestBlocks.current = next;
     return next;
   }), []);
@@ -367,7 +369,7 @@ export function Editor() {
       // 실존 모델 카탈로그 — mock 모드는 서버가 없으니 스킵, 실패는 null(AIPanel 이 가상모델 폴백)
       isMockMode ? Promise.resolve(null) : listModels().catch(() => null)])
       .then(([b, w, c, _a, p, fm]) => {
-        const withH = b.map((blk) => normalizeEditorBlockRole({ ...blk, h: blk.h || Math.max(220, blk.elements.reduce((m, e) => Math.max(m, (e.y || 0) + (e.h || 40)), 0) + 50) }));
+        const withH = b.map((blk) => normalizeEditorBlockRole(blk));
         setBlocks(withH); setWardrobe(w); setCatalogs(c); setFmModels(fm); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         setClothingType(p.clothingType || 'top');
@@ -422,8 +424,12 @@ export function Editor() {
         const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
         if (!dx && !dy) return;
         e.preventDefault();
-        setBlocks((bs) => bs.map((b) => ({ ...b, elements: b.elements.map((el) => (selEls.includes(el.id)
-          ? { ...el, x: Math.max(0, Math.min(Math.max(0, 1000 - (el.w || 0)), (el.x || 0) + dx)), y: Math.max(0, (el.y || 0) + dy) } : el)) })));
+        setBlocks((bs) => {
+          const snapshot = Object.fromEntries(bs.flatMap((b) => b.elements.filter((el) => selEls.includes(el.id)).map((el) => [el.id, el])));
+          const [moveX, moveY] = clampDragDelta(snapshot, [dx, dy]);
+          return bs.map((b) => ({ ...b, elements: b.elements.map((el) => (selEls.includes(el.id)
+            ? { ...el, x: (el.x || 0) + moveX, y: (el.y || 0) + moveY } : el)) }));
+        });
       }
     };
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
@@ -733,10 +739,10 @@ export function Editor() {
   const liveDrag = (target, beforeTranslate) => {
     const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    let nx = st.x + beforeTranslate[0]; let ny = st.y + beforeTranslate[1];  // moveable 내장 스냅으로 beforeTranslate 는 이미 스냅된 값
+    const [dx, dy] = clampDragDelta(dragSnap.current, beforeTranslate);
+    const nx = st.x + dx; const ny = st.y + dy;  // moveable 내장 스냅으로 beforeTranslate 는 이미 스냅된 값
     // 캔버스 밖으로 넘어가지 않게 clamp — 왼쪽 끝에서 x=0 flush(overshoot 방지), 오른쪽은 1000-w, 위(y<0)도 막음.
     // block-clip 이 어차피 넘친 부분을 자르므로 손실 없음. ("맨 왼쪽 끌면 몇 px 더 넘어가던" 문제 해결)
-    if (selEls.length === 1) { const w = st.w || 0; nx = Math.max(0, Math.min(Math.max(0, 1000 - w), nx)); ny = Math.max(0, ny); }
     target.style.left = nx + 'px'; target.style.top = ny + 'px';
     liveRef.current[elId] = { x: Math.round(nx), y: Math.round(ny) };
   };
@@ -744,11 +750,15 @@ export function Editor() {
   const liveResize = (target, width, height, drag) => {
     const elId = target.dataset.elid;
     const st = dragSnap.current && dragSnap.current[elId]; if (!st) return;
-    const w = Math.max(24, width); const h = Math.max(24, height);
-    const nx = st.x + (drag?.beforeTranslate?.[0] || 0); const ny = st.y + (drag?.beforeTranslate?.[1] || 0);
-    target.style.left = nx + 'px'; target.style.top = ny + 'px';
-    target.style.width = w + 'px'; target.style.height = h + 'px';
-    liveRef.current[elId] = { x: Math.round(nx), y: Math.round(ny), w: Math.round(w), h: Math.round(h) };
+    const rect = clampElementRect(
+      st.x + (drag?.beforeTranslate?.[0] || 0),
+      st.y + (drag?.beforeTranslate?.[1] || 0),
+      width,
+      height,
+    );
+    target.style.left = rect.x + 'px'; target.style.top = rect.y + 'px';
+    target.style.width = rect.w + 'px'; target.style.height = rect.h + 'px';
+    liveRef.current[elId] = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h) };
   };
   const liveRotate = (target, rotation) => {
     const elId = target.dataset.elid;
@@ -948,16 +958,16 @@ export function Editor() {
           {rightHidden && <div style={{ position: 'absolute', right: 10, top: 10, zIndex: 3 }}><IconButton name="layout" size="sm" onClick={() => setRightHidden(false)} /></div>}
           {groupBlockId && (
             <div className="align-bar" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-              <button title="왼쪽 정렬" onClick={() => alignEls('left')}>⇤</button>
-              <button title="가로 가운데 정렬" onClick={() => alignEls('centerH')}>⇔</button>
-              <button title="오른쪽 정렬" onClick={() => alignEls('right')}>⇥</button>
+              <button aria-label="왼쪽 정렬" title="왼쪽 정렬" onClick={() => alignEls('left')}>⇤</button>
+              <button aria-label="가로 가운데 정렬" title="가로 가운데 정렬" onClick={() => alignEls('centerH')}>⇔</button>
+              <button aria-label="오른쪽 정렬" title="오른쪽 정렬" onClick={() => alignEls('right')}>⇥</button>
               <span className="align-sep" />
-              <button title="위 정렬" onClick={() => alignEls('top')}>⤒</button>
-              <button title="세로 가운데 정렬" onClick={() => alignEls('middleV')}>⇕</button>
-              <button title="아래 정렬" onClick={() => alignEls('bottom')}>⤓</button>
+              <button aria-label="위 정렬" title="위 정렬" onClick={() => alignEls('top')}>⤒</button>
+              <button aria-label="세로 가운데 정렬" title="세로 가운데 정렬" onClick={() => alignEls('middleV')}>⇕</button>
+              <button aria-label="아래 정렬" title="아래 정렬" onClick={() => alignEls('bottom')}>⤓</button>
               <span className="align-sep" />
-              <button title="가로 균등 분배 (3개+)" onClick={() => distributeEls('h')} disabled={selEls.length < 3}>⇿</button>
-              <button title="세로 균등 분배 (3개+)" onClick={() => distributeEls('v')} disabled={selEls.length < 3}>⇳</button>
+              <button aria-label="가로 균등 분배" title="가로 균등 분배 (3개+)" onClick={() => distributeEls('h')} disabled={selEls.length < 3}>⇿</button>
+              <button aria-label="세로 균등 분배" title="세로 균등 분배 (3개+)" onClick={() => distributeEls('v')} disabled={selEls.length < 3}>⇳</button>
             </div>
           )}
           {/* CSS `zoom` is invisible to react-moveable (it only reads the transform
@@ -1062,7 +1072,7 @@ export function Editor() {
           <div className="preview-close"><IconButton name="x" onClick={() => setPreview(false)} /></div>
           <div className="preview-sheet">
             {blocks.map((b) => (
-              <div key={b.id} style={{ position: 'relative', height: b.h || 660, background: b.bg, overflow: 'hidden', boxSizing: 'border-box' }}>
+              <div key={b.id} style={{ position: 'relative', height: getBlockRenderHeight(b), background: b.bg, overflow: 'hidden', boxSizing: 'border-box' }}>
                 {b.elements.map((el) => <CanvasElement key={el.id} el={el} preview selected={false} onSelect={() => {}} onEdit={() => {}} />)}
               </div>
             ))}

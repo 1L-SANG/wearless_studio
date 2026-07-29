@@ -1300,6 +1300,7 @@
 .crop-ant.ant-w { stroke: #fff; stroke-width: 1.5px; }
 .crop-ant.ant-b { stroke: #0e0d14; stroke-width: 1.5px; stroke-dasharray: 5 5; animation: crop-march .55s linear infinite; }
 @keyframes crop-march { to { stroke-dashoffset: -10; } }
+@media (prefers-reduced-motion: reduce) { .crop-ant.ant-b { animation: none; } }
 /* 크롭 하단 바 — 원본(리셋) 버튼 + Enter/Esc 힌트. --inv 역스케일로 줌 무관 일정 크기. */
 .crop-bar { position: absolute; display: inline-flex; align-items: center; gap: 8px; padding-top: 8px;
   transform: scale(var(--inv, 1)); transform-origin: top left; z-index: 4; white-space: nowrap; pointer-events: auto; }
