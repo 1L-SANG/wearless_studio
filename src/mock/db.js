@@ -157,10 +157,11 @@ const catalogs = {
     ],
   },
   genExamples,
+  // 프레임 = 순수 이미지 레이아웃만. 정보성 프리셋(FAQ·상품 정보 카드 등 빈 그리드만
+  // 만들던 장식 항목)은 '내용' 탭(PRD §10.14 infoPresets)이 정식 대체해 제거.
   frames: [
     { id: 'split2', label: '2분할', cols: 2 }, { id: 'grid3', label: '3컷 구성', cols: 3 },
-    { id: 'faq', label: 'FAQ', cols: 1 }, { id: 'ba', label: 'Before / After', cols: 2 },
-    { id: 'colorcmp', label: '컬러 비교', cols: 3 }, { id: 'infocard', label: '상품 정보 카드', cols: 1 },
+    { id: 'ba', label: 'Before / After', cols: 2 }, { id: 'colorcmp', label: '컬러 비교', cols: 3 },
   ],
   shapes: [
     { id: 'circle', label: '원' }, { id: 'rect', label: '사각형' }, { id: 'triangle', label: '삼각형' },
