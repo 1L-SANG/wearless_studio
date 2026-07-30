@@ -104,6 +104,7 @@ def main() -> int:
         for k, n in outcomes.most_common():
             print(f"  {k:34} {n}")
 
+    _report_threshold_health(rows, s)
     _report_edit_impact(rows, s)
     _report_stored_outcomes(s)
 
@@ -119,6 +120,46 @@ def main() -> int:
     if not rows:
         print("\n(이벤트 없음 — IMAGE_QC 가 off 이거나 아직 생성이 없다)")
     return 0
+
+
+def _report_threshold_health(rows: list[dict], s) -> None:
+    """임계가 **분포의 어디에 놓였는지** 본다 — 평균만 보면 안 보이는 것.
+
+    2026-07-31 실측: 판정기가 쓰는 눈금이 11개뿐이고 80 이 지배적 기본값이라, 컷의 절반이
+    `auto_pass` 임계(80)에 정확히 걸린다. 임계를 분포의 최빈값에 두면 등급이 실제 품질이
+    아니라 판정기의 양자화 한 칸으로 갈린다 — 그게 문제인지 아닌지는 **그 임계가 무엇을
+    하는지**에 달렸다(§ 아래 출력의 해석 줄 참고).
+    """
+    scores = []
+    for r in rows:
+        p = r["payload"] or {}
+        if p.get("status") in ("image_qc", "image_qc_rescored"):
+            qc = p.get("imageQc") or {}
+            vals = [qc.get(k) for k in image_qc_keys()
+                    if isinstance(qc.get(k), int) and not isinstance(qc.get(k), bool)]
+            if vals:
+                scores.append(min(vals))
+    if not scores:
+        return
+    hist = collections.Counter(scores)
+    print(f"\n최저축(=등급 결정값) 분포 n={len(scores)} · 임계 "
+          f"{s.qc_score_auto_pass}/{s.qc_score_review}:")
+    for v in sorted(hist):
+        mark = ""
+        if v == s.qc_score_auto_pass:
+            mark = "  ← auto_pass 임계와 동일"
+        elif v == s.qc_score_review:
+            mark = "  ← review 임계와 동일"
+        print(f"   {v:3} {'#' * hist[v]} {hist[v]}{mark}")
+    on_pass = hist.get(s.qc_score_auto_pass, 0)
+    print(f"  임계에 정확히 걸린 컷 {on_pass}/{len(scores)} = {on_pass / len(scores):.0%}")
+    print("  해석: auto_pass 임계는 **라벨**이고(사람 검수 라우팅), 예산을 쓰는 게이트는")
+    print("        regenerate 임계 하나다. 후자가 분포의 빈 구간에 있으면 건전하다.")
+
+
+def image_qc_keys():
+    from app.agents.image_qc import SCORE_KEYS
+    return SCORE_KEYS
 
 
 def _report_edit_impact(rows: list[dict], s) -> None:
