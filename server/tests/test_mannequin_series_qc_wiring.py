@@ -241,6 +241,32 @@ def test_series_reject_on_last_attempt_ships_instead_of_dropping(monkeypatch):
     assert result["qc_scores"]["outcome"] == "regenerate"  # 판정은 감추지 않는다
 
 
+def test_shadow_never_rerolls_even_on_worst_scores(monkeypatch):
+    """**배포되는 설정(IMAGE_QC=shadow)의 안전 계약.**
+
+    manifest 가 싣는 값이 shadow 다. 여기서 재생성이 발화하면 관측만 켠 배포가 조용히
+    생성 비용을 늘리고, 최악의 경우 MANNEQUIN_QC_ENABLED 사고처럼 파이프라인을 흔든다.
+    점수가 바닥이고 치명 오류가 있어도 생성은 1회, 저장은 1건이어야 한다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    async def fake_series(app, pool, s, job_id, user_id, project_id, candidate, attempt, res):
+        return {"consistency": 5, "inconsistencies": ["완전히 다른 스튜디오"]}
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    result, g, r2, emits = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=2, verdicts=[], image_qc="shadow",
+        p2={"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "fix",
+            "product_fidelity": 10, "physical_naturalness": 10, "image_quality": 10,
+            "series_consistency": None, "critical_errors": ["garment color changed"]})
+    assert len(g.calls) == 1, "shadow 인데 재생성이 발화했다"
+    assert len(r2.puts) == 1 and result is not None
+    assert not [p for _t, p in emits if p.get("status") == "final_qc_reject"]
+    # 판정은 기록하되 출고는 막지 않는다 — 관측의 정의.
+    assert result["qc_scores"]["outcome"] == "regenerate"
+    assert result["qc_scores"]["salvaged"] is False
+
+
 def test_axis_edit_consumes_budget_so_no_extra_generation(monkeypatch):
     """axis 편집이 이번 attempt 를 썼으면 D축 reject 여도 재생성하지 않는다.
 
