@@ -425,6 +425,18 @@ def _build_retry_feedback(scores: dict | None, series: dict | None, p2) -> str:
     return "\n\n".join(parts)
 
 
+def has_budget_for_retry(s, *, attempt: int, edits_spent: int) -> bool:
+    """재생성 여유가 있는가 (순수).
+
+    예산은 **누적 이미지 모델 호출**이다: 생성 `attempt` 회 + 편집 `edits_spent` 회.
+    재생성하면 다음 attempt 가 생성 1회를 쓰고, axis QC 가 enforce 면 편집 1회도 쓸 수 있다.
+    둘 다 미리 세지 않으면 상한을 넘긴다 — 편집은 재생성 판단보다 **먼저** 일어나므로
+    사후에는 막을 수 없다(codex 2026-07-31: max_attempts=3 에 4회 호출 관측).
+    """
+    next_cost = 2 if _effective_axis_qc_mode(s) == "enforce" else 1
+    return attempt + edits_spent + next_cost <= s.mannequin_max_attempts
+
+
 def final_decision(s, scores: dict | None) -> str:
     """출고 직전 단일 판정 → ship | retry (순수).
 
@@ -641,14 +653,9 @@ async def _run_candidate(
             qc_scores = merge_qc_scores(
                 p2, series, salvaged=salvaged,
                 thresholds=(s.qc_score_auto_pass, s.qc_score_review))
-            # 예산은 **누적 이미지 모델 호출**이다: 생성 attempt 회 + 편집 edits_spent 회.
-            # 재생성하면 다음 attempt 가 생성 1회를 쓰고, axis QC 가 켜져 있으면 편집 1회도
-            # 쓸 수 있다. 둘 다 미리 세지 않으면 상한을 넘긴다 — 편집은 재생성 판단보다
-            # **먼저** 일어나므로 사후에는 막을 수 없다(codex 2026-07-31: 3 예산에 4회 관측).
             if axis_spent:
                 edits_spent += 1
-            next_cost = 2 if _effective_axis_qc_mode(s) == "enforce" else 1
-            budget_left = attempt + edits_spent + next_cost <= s.mannequin_max_attempts
+            budget_left = has_budget_for_retry(s, attempt=attempt, edits_spent=edits_spent)
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
             if final_decision(s, qc_scores) == "retry" and budget_left and not salvaged:
                 await _emit(pool, job_id, "step", {
