@@ -26,7 +26,7 @@ from app.config import load_settings  # noqa: E402
 
 # QC 관련 step 이벤트만. payload shape 은 mannequin_job 의 _emit 호출부와 짝이다.
 _SQL = """
-select je.payload, je.created_at
+select je.job_id, je.payload, je.created_at
 from job_events je
 join jobs j on j.id = je.job_id
 where je.event_type = 'step'
@@ -104,6 +104,7 @@ def main() -> int:
         for k, n in outcomes.most_common():
             print(f"  {k:34} {n}")
 
+    _report_edit_impact(rows, s)
     _report_stored_outcomes(s)
 
     if criticals:
@@ -118,6 +119,52 @@ def main() -> int:
     if not rows:
         print("\n(이벤트 없음 — IMAGE_QC 가 off 이거나 아직 생성이 없다)")
     return 0
+
+
+def _report_edit_impact(rows: list[dict], s) -> None:
+    """편집(축 교정·가슴 2패스)이 컷을 좋게 했는지 나쁘게 했는지.
+
+    `image_qc`(편집 전) ↔ `image_qc_rescored`(편집 후)를 (job, candidate, attempt) 로 짝지어
+    비교한다. 4축 분포만 보면 두 판정이 한 통에 섞여서 **편집의 효과가 평균에 묻힌다** —
+    실측에서 이 짝짓기로만 "가슴 2패스가 42% 를 망친다"가 보였다.
+    """
+    from app.workers.mannequin_job import edit_regressed
+
+    pairs: dict[tuple, dict] = {}
+    for r in rows:
+        p = r["payload"] or {}
+        st = p.get("status")
+        if st not in ("image_qc", "image_qc_rescored", "axis_retry", "bust_pass"):
+            continue
+        slot = pairs.setdefault((r["job_id"], p.get("candidate"), p.get("attempt")), {})
+        if st == "image_qc":
+            slot["pre"] = p.get("imageQc")
+        elif st == "image_qc_rescored":
+            slot["post"] = p.get("imageQc")
+        else:
+            slot.setdefault("edits", set()).add("bust" if st == "bust_pass" else "axis")
+
+    judged = [v for v in pairs.values() if v.get("pre") and v.get("post")]
+    if not judged:
+        return
+    drops = reverts = new_critical = 0
+    by_edit: collections.Counter = collections.Counter()
+    for v in judged:
+        pre, post = v["pre"], v["post"]
+        if (post.get("product_fidelity") or 0) < (pre.get("product_fidelity") or 0):
+            drops += 1
+        if edit_regressed(s, pre, post):
+            reverts += 1
+            by_edit["+".join(sorted(v.get("edits") or ["?"]))] += 1
+            if post.get("critical_errors") and not pre.get("critical_errors"):
+                new_critical += 1
+
+    print(f"\n편집 전/후 비교 {len(judged)}쌍:")
+    print(f"  product_fidelity 하락        {drops}/{len(judged)}")
+    print(f"  되돌림 발동(등급하락·신규치명) {reverts}/{len(judged)}")
+    print(f"  편집이 없던 치명오류를 만듦   {new_critical}")
+    if by_edit:
+        print("  회귀 귀속: " + " · ".join(f"{k} {n}" for k, n in by_edit.most_common()))
 
 
 def _report_stored_outcomes(s) -> None:
