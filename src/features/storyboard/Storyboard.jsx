@@ -503,11 +503,6 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
     appendSetOnly: !inSpace && cut !== 'product',
   }), [catalogs.genExamples, cut, shotVal, clothingType, gender, inSpace, direction]);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
-  const cropFromFull = cut !== 'product' && selectedExample?.shot === 'full' && shotVal === 'medium';
-  const extendFromMedium = cut !== 'product' && selectedExample?.shot === 'medium' && shotVal === 'full';
-  const cropClass = cropFromFull
-    ? ` is-crop ${clothingType === 'bottom' ? 'crop-bottom' : 'crop-top'}`
-    : extendFromMedium ? ' is-extend' : '';
   const moodOnly = !inSpace && (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
   const conditionStatus = !exampleId ? null : storedExampleConditionStatus(selectedExample, {
     cutType: cut, clothingType, gender,
@@ -584,10 +579,8 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           <div className="sb-current-title">현재 선택</div>
           {selectedExample ? (
             <>
-              <div className={`sb-current-thumb${cropClass}`}>
+              <div className="sb-current-thumb">
                 <ExampleThumb example={selectedExample} />
-                {cropFromFull && <><span className="sb-crop-frame" /><span className="sb-crop-dim" /></>}
-                {extendFromMedium && <span className="sb-extend-zone"><span>이어 그리기</span></span>}
               </div>
               {selectedStatus === 'changed' && <div className="sb-example-error">조건이 바뀌어 예시를 다시 골라주세요</div>}
             </>
@@ -598,9 +591,6 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           <button type="button" className="sb-cycle-example" disabled={cycleExamples.length <= 1}
             title={cycleExamples.length <= 1 ? '이 조건에는 다른 예시가 없어요' : undefined}
             onClick={cycle}>다른 예시 보기</button>
-          {extendFromMedium && (
-            <div className="sb-extend-note">아래쪽은 새로 그려져 예시와 조금 다를 수 있어요</div>
-          )}
         </div>
       )}
       <div className={`sb-exgrid${moodOnly ? ' moodonly' : ''}`}>
