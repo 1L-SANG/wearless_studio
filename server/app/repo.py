@@ -406,7 +406,8 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
         await cur.execute(
             """
             select mc.candidate, mc.version, mc.base_fit, mc.fit_adjust,
-                   mc.length_adjust, mc.match_adjust, a.id::text as asset_id, a.r2_key
+                   mc.length_adjust, mc.match_adjust, mc.qc_scores,
+                   a.id::text as asset_id, a.r2_key
             from mannequin_cuts mc
             join projects pr on pr.id = mc.project_id
             join assets a on a.id = mc.asset_id
@@ -953,16 +954,21 @@ async def finalize_mannequin_success(
                 (project_id, c["candidate"]),
             )
             version = (await cur.fetchone())["v"]
+            qc_scores = c.get("qc_scores")
             await cur.execute(
-                "insert into mannequin_cuts (project_id, candidate, version, asset_id, base_fit) "
-                "values (%s, %s, %s, %s, %s)",
-                (project_id, c["candidate"], version, c["asset_id"], c["base_fit"]),
+                "insert into mannequin_cuts (project_id, candidate, version, asset_id, base_fit, "
+                "qc_scores) values (%s, %s, %s, %s, %s, %s)",
+                (project_id, c["candidate"], version, c["asset_id"], c["base_fit"],
+                 Json(qc_scores) if qc_scores is not None else None),
             )
             cuts.append({  # MannequinCut shape (계약 §3.3) — /jobs·SSE done에서 그대로 직렬화
                 "id": f"{c['candidate']}-{version}",
                 "src": f"/v1/assets/{c['asset_id']}/file",  # 안정 앱 URL (만료 없음, §3). assetId 인코딩됨
                 "candidate": c["candidate"], "version": version, "baseFit": c["base_fit"],
                 "fitAdjust": None, "lengthAdjust": None, "matchAdjust": None,
+                # 재생성 경로는 이 봉투를 버리고 GET /mannequins 를 재조회하므로, 컬럼(위)과
+                # 봉투(여기) 양쪽에 실어야 생성 직후·재생성 후 표시가 일치한다.
+                "qcScores": qc_scores,
             })
     # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
     # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.

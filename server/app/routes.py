@@ -920,6 +920,9 @@ def _cut_to_api(c: dict) -> dict:
         "fitAdjust": c["fit_adjust"],
         "lengthAdjust": c["length_adjust"],
         "matchAdjust": c["match_adjust"],
+        # QC 점수 스냅샷. 재생성 경로는 jobs.result 봉투를 버리고 이 라우트를 재조회하므로,
+        # 여기서 안 실으면 "생성 직후엔 보이다 재생성 후 사라지는" 비대칭이 생긴다.
+        "qcScores": c.get("qc_scores"),
     }
 
 

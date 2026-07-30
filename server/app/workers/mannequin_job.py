@@ -18,7 +18,7 @@ from PIL import Image
 log = logging.getLogger("wearless.mannequin_job")
 
 from .. import repo
-from ..agents import image_qc, mannequin, mannequin_bust, mannequin_fit_qc
+from ..agents import image_qc, mannequin, mannequin_bust, mannequin_fit_qc, mannequin_series_qc
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
 from ..agents.prompts import (
@@ -287,6 +287,41 @@ def score_outcome(s, p2) -> str:
     return "regenerate"
 
 
+async def _apply_series_qc(*, app, pool, s, job_id, user_id, project_id, candidate, attempt, res):
+    """D축 시리즈 일관성 — 채택본이 같은 프로젝트 기존 컷들과 한 세트로 보이는지 판정.
+
+    **fail-open** — _apply_axis_qc·_apply_bust_pass 와 같은 규율. 판정은 관측이지 게이트가
+    아니다. 기존 컷 0장(첫 생성)·모델 오류·R2 미스 어떤 경우에도 None 을 돌려 생성을 통과시킨다.
+
+    호출 위치가 중요하다: bust 2패스 **뒤**여야 측정 대상이 실제 출고본과 같다. 그리고 게이트
+    통과 뒤에만 불리므로 reject 된 attempt 에서 기존 컷을 헛되이 로드하지 않는다.
+    """
+    try:
+        async with pool.connection() as conn:
+            cuts = await repo.list_mannequin_cuts(conn, user_id, project_id)
+        refs = mannequin_series_qc.select_reference_cuts(cuts)
+        if not refs:
+            return None  # 첫 컷 — 비교 대상 없음(0점이 아니라 판정 없음)
+        ref_imgs = []
+        for c in refs:
+            data = await asyncio.to_thread(app.state.r2.get_bytes, c["r2_key"])
+            ref_imgs.append(InlineImage(_REF_MIME.get(
+                c["r2_key"].rsplit(".", 1)[-1].lower(), "image/jpeg"), data))
+        out = await mannequin_series_qc.judge(
+            s, InlineImage(res.mime, res.image), ref_imgs)
+    except Exception as e:
+        log.warning("series_qc failed for job %s: %r", job_id, e)
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "series_qc_failed",
+            "error": type(e).__name__, "message": str(e)[:200]})
+        return None
+    if out is not None:
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "series_qc",
+            "seriesQc": out, "referenceCount": len(refs)})
+    return out
+
+
 def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
     """생성 컷 게이팅 결정 (순수) → (pillow_reject, p2_reject).
 
@@ -438,6 +473,10 @@ async def _run_candidate(
             res = await _apply_bust_pass(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
                 attempt=attempt, base_gender=base_gender, res=res)
+            # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
+            series = await _apply_series_qc(
+                app=app, pool=pool, s=s, job_id=job_id, user_id=user_id,
+                project_id=project_id, candidate=candidate, attempt=attempt, res=res)
             ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -446,12 +485,18 @@ async def _run_candidate(
             # 채택본의 QC 점수를 후보 dict 에 실어 finalize → mannequin_cuts.qc_scores →
             # API 까지 운반한다. 여기서 안 실으면 판정 결과가 job_events 에만 남고 셀러·검수
             # 화면에서는 영원히 못 본다(프론트는 SSE 를 안 쓰고 result 봉투만 읽는다).
-            outcome = "needs_review" if salvaged else score_outcome(s, p2)
             qc_scores = None
-            if isinstance(p2, dict):
-                qc_scores = {k: p2.get(k) for k in image_qc.SCORE_KEYS}
-                qc_scores["critical_errors"] = p2.get("critical_errors") or []
-                qc_scores["outcome"] = outcome
+            if isinstance(p2, dict) or series is not None:
+                p2d = p2 if isinstance(p2, dict) else {}
+                qc_scores = {k: p2d.get(k) for k in image_qc.SCORE_KEYS}
+                # D축은 별도 판정자가 채운다 — 여기서 합류시켜야 4축이 한 곳에 모인다.
+                if series is not None:
+                    qc_scores["series_consistency"] = series["consistency"]
+                    qc_scores["series_inconsistencies"] = series["inconsistencies"]
+                qc_scores["critical_errors"] = p2d.get("critical_errors") or []
+                # outcome 은 D축까지 합친 뒤 다시 계산한다 — 일관성 붕괴가 판정에 반영되도록.
+                qc_scores["outcome"] = (
+                    "needs_review" if salvaged else score_outcome(s, qc_scores))
             return {
                 "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
                 "size": len(res.image), "width": w, "height": h,

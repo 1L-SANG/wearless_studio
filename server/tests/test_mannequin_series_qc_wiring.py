@@ -1,0 +1,137 @@
+"""D축 시리즈 일관성 QC 워커 배선 — fail-open 규율과 점수 합류.
+
+핵심 계약: 판정은 **관측이지 게이트가 아니다**. 기존 컷 조회 실패·R2 미스·모델 오류·첫 컷
+어느 경우에도 생성이 멈추면 안 된다(_apply_axis_qc·_apply_bust_pass 와 같은 규율).
+"""
+import asyncio
+import contextlib
+import types
+
+from app.agents import mannequin_series_qc
+from app.workers import mannequin_job
+from conftest import make_settings
+
+
+class _Conn:
+    pass
+
+
+class _FakePool:
+    def connection(self):
+        @contextlib.asynccontextmanager
+        async def _cm():
+            yield _Conn()
+        return _cm()
+
+
+class _R2:
+    def __init__(self, error=False):
+        self.error, self.gets = error, []
+
+    def get_bytes(self, key):
+        self.gets.append(key)
+        if self.error:
+            raise RuntimeError("R2 down")
+        return b"ref-bytes"
+
+
+def _apply(monkeypatch, *, cuts=None, judge=None, r2=None):
+    emits = []
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        emits.append((event_type, dict(payload)))
+
+    async def fake_list(conn, user_id, project_id):
+        if isinstance(cuts, Exception):
+            raise cuts
+        return cuts or []
+
+    monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
+    monkeypatch.setattr(mannequin_job.repo, "list_mannequin_cuts", fake_list)
+    if judge is not None:
+        async def fake_judge(settings, generated, references, **kw):
+            if isinstance(judge, Exception):
+                raise judge
+            return judge
+        monkeypatch.setattr(mannequin_series_qc, "judge", fake_judge)
+
+    r2 = r2 or _R2()
+    app = types.SimpleNamespace(state=types.SimpleNamespace(r2=r2))
+    out = asyncio.run(mannequin_job._apply_series_qc(
+        app=app, pool=_FakePool(), s=make_settings(), job_id="j1", user_id="u1",
+        project_id="p1", candidate="A", attempt=1,
+        res=types.SimpleNamespace(mime="image/png", image=b"gen")))
+    return out, emits, r2
+
+
+def _statuses(emits):
+    return [p.get("status") for t, p in emits if t == "step"]
+
+
+# ── 스킵 / fail-open ─────────────────────────────────────────────────────────
+
+def test_first_cut_skips_without_event(monkeypatch):
+    """첫 컷은 비교 대상이 없다 — 판정 없음(None)이지 0점이 아니고, 잡음 이벤트도 안 남긴다."""
+    out, emits, r2 = _apply(monkeypatch, cuts=[])
+    assert out is None
+    assert _statuses(emits) == []
+    assert r2.gets == []  # 기존 컷이 없으면 R2 를 건드리지도 않는다
+
+
+def test_db_error_fails_open(monkeypatch):
+    out, emits, _ = _apply(monkeypatch, cuts=RuntimeError("db down"))
+    assert out is None
+    assert "series_qc_failed" in _statuses(emits)
+
+
+def test_r2_error_fails_open(monkeypatch):
+    out, emits, _ = _apply(
+        monkeypatch, cuts=[{"candidate": "A", "version": 1, "r2_key": "a.png"}],
+        r2=_R2(error=True))
+    assert out is None
+    assert "series_qc_failed" in _statuses(emits)
+
+
+def test_judge_error_fails_open(monkeypatch):
+    out, emits, _ = _apply(
+        monkeypatch, cuts=[{"candidate": "A", "version": 1, "r2_key": "a.png"}],
+        judge=RuntimeError("vision down"))
+    assert out is None
+    assert "series_qc_failed" in _statuses(emits)
+
+
+# ── 정상 판정 ────────────────────────────────────────────────────────────────
+
+def test_success_emits_score_and_reference_count(monkeypatch):
+    out, emits, r2 = _apply(
+        monkeypatch,
+        cuts=[{"candidate": "A", "version": 1, "r2_key": "a.jpg"},
+              {"candidate": "A", "version": 2, "r2_key": "b.jpg"}],
+        judge={"consistency": 72, "inconsistencies": ["배경이 더 밝음"]})
+    assert out == {"consistency": 72, "inconsistencies": ["배경이 더 밝음"]}
+    step = [p for t, p in emits if t == "step" and p.get("status") == "series_qc"][0]
+    assert step["seriesQc"]["consistency"] == 72
+    # candidate 별 최신 버전만 → A-2 한 장
+    assert step["referenceCount"] == 1
+    assert r2.gets == ["b.jpg"]
+
+
+def test_reference_cap_applied(monkeypatch):
+    cuts = [{"candidate": c, "version": 1, "r2_key": f"{c}.jpg"} for c in "ABCDE"]
+    _out, emits, r2 = _apply(monkeypatch, cuts=cuts,
+                             judge={"consistency": 90, "inconsistencies": []})
+    step = [p for t, p in emits if t == "step" and p.get("status") == "series_qc"][0]
+    assert step["referenceCount"] == mannequin_series_qc.MAX_REFERENCE_CUTS
+    assert len(r2.gets) == mannequin_series_qc.MAX_REFERENCE_CUTS
+
+
+# ── 점수 합류 (score_outcome 이 D축을 본다) ───────────────────────────────────
+
+def test_series_score_participates_in_outcome():
+    """일관성 붕괴가 outcome 에 반영돼야 D축이 실제로 판정에 쓰인다."""
+    s = make_settings(qc_score_auto_pass=90, qc_score_review=75)
+    healthy = {"product_fidelity": 95, "physical_naturalness": 95,
+               "image_quality": 95, "series_consistency": 95, "critical_errors": []}
+    assert mannequin_job.score_outcome(s, healthy) == "auto_pass"
+    broken = {**healthy, "series_consistency": 40}
+    assert mannequin_job.score_outcome(s, broken) == "regenerate"
