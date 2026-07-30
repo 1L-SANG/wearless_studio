@@ -137,6 +137,22 @@ def test_scored_prompt_makes_fidelity_cover_fit():
     assert "ease between garment and body" not in iq.build_prompt(2)
 
 
+def test_scored_prompt_lists_fit_change_as_critical():
+    """핏 변화는 **치명오류 어휘**에 있어야 실효가 있다.
+
+    2026-07-31 인과 측정: fidelity 설명에 핏을 넣은 것만으로는 점수가 노이즈 범위 안에서만
+    움직였다(n=5, 개별 [-5, 2, -3, 30, -25] — 같은 판정기가 같은 이미지에 ±30 을 낸다).
+    반면 `garment fit changed` 를 치명오류 목록에 넣자 2/5 에서 새로 발화했다.
+
+    치명오류가 실효 경로인 이유: `score_outcome` 이 점수와 무관하게 regenerate 로 보내고,
+    `edit_regressed` 가 "없던 치명오류"를 되돌리기 조건으로 쓴다. 즉 이 한 줄이 옷을 조이는
+    편집을 자동으로 폐기시킨다.
+    """
+    p = iq.build_prompt(2, scored=True)
+    assert "garment fit changed" in p
+    assert "order the wrong size" in p, "왜 출고 불가인지(사이즈 오주문)가 근거로 있어야 한다"
+
+
 def test_validate_pass_clears_fields():
     out = iq.validate({"verdict": "pass", "mismatches": ["x"], "correctionPrompt": "y"})
     assert out == {"verdict": "pass", "mismatches": [], "correctionPrompt": None}

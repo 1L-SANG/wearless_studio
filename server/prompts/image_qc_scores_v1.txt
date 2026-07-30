@@ -20,6 +20,8 @@ Set series_consistency to null. It is scored by a separate judge that sees the s
 
 critical_errors: a list of defects severe enough that the image must not ship regardless of the
 scores. Use it only for: text or logo altered, invented or unreadable; garment color changed;
-garment type changed; a sleeve, button, pocket or other structural element missing; an element
-present that does not exist on the original; body or garment shape broken. Write each one as a
-short phrase. Return an empty list when none apply — an empty list is the common case.
+garment type changed; garment fit changed — a loose or oversized garment shown as fitted, or the
+hem pulled to a different height, so a shopper would order the wrong size; a sleeve, button,
+pocket or other structural element missing; an element present that does not exist on the
+original; body or garment shape broken. Write each one as a short phrase. Return an empty list
+when none apply — an empty list is the common case.

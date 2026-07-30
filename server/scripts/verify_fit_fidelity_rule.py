@@ -38,10 +38,20 @@ _WITHOUT_FIT = """- product_fidelity: does the generated garment reproduce the s
   or a length that reads as a different product caps this axis below 60."""
 
 
+_CRITICAL_WITHOUT_FIT = """garment type changed; a sleeve"""
+_CRITICAL_WITH_FIT_MARKER = "garment fit changed"
+
+
 def _swap_to_off(text: str) -> str:
+    """핏 관련 문장을 **전부** 빼서 규칙 도입 이전 상태로 되돌린다."""
     start = text.index("- product_fidelity:")
     end = text.index("- physical_naturalness:")
-    return text[:start] + _WITHOUT_FIT + "\n" + text[end:]
+    out = text[:start] + _WITHOUT_FIT + "\n" + text[end:]
+    cs = out.index("garment type changed;")
+    ce = out.index("a sleeve, button,")
+    out = out[:cs] + "garment type changed; " + out[ce:]
+    assert _CRITICAL_WITH_FIT_MARKER not in out
+    return out
 
 
 async def _score(s, prod_imgs, img: bytes, *, fit_rule: bool, monkey) -> dict:
@@ -89,9 +99,12 @@ async def main() -> int:
         _TMP.unlink(missing_ok=True)
 
     deltas = [r[2].get("product_fidelity", 0) - r[1].get("product_fidelity", 0) for r in rows]
-    print(f"\n[fit_rule] n={len(rows)} · fidelity 변화 평균 {sum(deltas)/len(deltas):+.1f} "
-          f"(개별 {deltas})")
-    print("음수면 규칙이 핏 변화를 벌점으로 잡고 있다는 뜻이다.")
+    def _fit_crit(v):
+        return [e for e in (v.get("critical_errors") or []) if "fit" in e.lower()]
+    gained = sum(bool(_fit_crit(r[2])) and not _fit_crit(r[1]) for r in rows)
+    print(f"\n[fit_rule] n={len(rows)}")
+    print(f"  fidelity 변화 평균 {sum(deltas)/len(deltas):+.1f} (개별 {deltas})")
+    print(f"  핏 치명오류 신규 발생 {gained}/{len(rows)}  ← 되돌리기를 실제로 트리거하는 신호")
     return 0
 
 
