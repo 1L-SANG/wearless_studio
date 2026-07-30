@@ -677,12 +677,24 @@ def test_untuck_instruction_survives_undeclared_length_axis(f):
         product={"name": "테스트 반팔 티셔츠", "clothing_type": "top"},
         analysis={"clothingType": "top", "targetGenders": ["women"]})
     if f is None:
-        assert "ALWAYS keep it untucked" in prompt
-        assert "never tuck it into the matching bottom" in prompt
+        assert "COMPLETELY OUTSIDE the bottom" in prompt
+        assert "hem forms an unbroken visible line" in prompt
+        # round 3: 부분 tuck(French/half/one-side) 금지 명문화(2026-07-30) — "coordinated
+        # naturally with the top" 는 스타일링을 licence 해 부분 tuck 을 허용하는 여지를 줬으므로
+        # 삭제됐다. 되돌아오면 실패시킨다.
+        assert "not even partially" in prompt
+        assert "French tuck" in prompt
+        assert "coordinated naturally with the top" not in prompt
         # 조건부 분기가 남아 있으면 실패시킨다
         assert "otherwise use appropriate layering, tuck, and proportion" not in prompt
+        # round 3: 체형 볼륨(가슴·힙) 보존 강제(2026-07-30) — image 모델이 표준 마네킹으로
+        # flatten 하는 걸 막는 critical rule.
+        assert "never flattens them" in prompt
     else:
-        assert "절대 하의 안에 넣지 말고" in prompt
-        assert "하의에 가려지지 않는다" in prompt
+        assert "완전히 밖으로 빼서 입힌다" in prompt
+        assert "끊김 없이 이어진 하나의 선" in prompt
+        assert "조금이라도 넣지 마라" in prompt
+        assert "하프 턱" in prompt
         # 조건부 분기가 남아 있으면 실패시킨다
         assert "적절한 레이어링·턱·비율" not in prompt
+        assert "절대 평평하게 만들지 않는다" in prompt
