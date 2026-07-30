@@ -429,8 +429,8 @@ def test_scores_rescored_when_edit_changed_the_image(monkeypatch):
          "product_fidelity": 90, "physical_naturalness": 90, "image_quality": 90,
          "series_consistency": None, "critical_errors": []},          # 편집 전
         {"verdict": "pass", "mismatches": [], "correctionPrompt": None,
-         "product_fidelity": 70, "physical_naturalness": 70, "image_quality": 70,
-         "series_consistency": None, "critical_errors": []},          # 편집 후(하락)
+         "product_fidelity": 85, "physical_naturalness": 85, "image_quality": 85,
+         "series_consistency": None, "critical_errors": []},          # 편집 후(등급 내 하락)
     ]
     calls = {"n": 0}
 
@@ -451,8 +451,65 @@ def test_scores_rescored_when_edit_changed_the_image(monkeypatch):
     result, _g, _r2, emits = harness._run(
         monkeypatch, mode="off", guard=True, max_attempts=1, verdicts=[], image_qc="shadow")
     assert calls["n"] == 2, "편집 후 재판정이 일어나지 않았다"
-    assert result["qc_scores"]["product_fidelity"] == 70, "편집 전 점수가 저장됐다"
+    assert result["qc_scores"]["product_fidelity"] == 85, "편집 전 점수가 저장됐다"
     assert "image_qc_rescored" in [p.get("status") for _t, p in emits]
+
+
+def _p2(fid=90, nat=90, qual=90, critical=()):
+    return {"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": fid, "physical_naturalness": nat, "image_quality": qual,
+            "series_consistency": None, "critical_errors": list(critical)}
+
+
+def test_edit_regressed_only_fires_on_grade_drop_or_new_critical():
+    """편집은 A~C 가 안 재는 축(핏·볼륨)을 고치러 돈다 — 작은 하락까지 되돌리면 교정이 죽는다."""
+    from app.workers.mannequin_job import edit_regressed
+    s = types.SimpleNamespace(qc_score_auto_pass=80, qc_score_review=65, image_qc="enforce")
+
+    assert edit_regressed(s, _p2(90), _p2(85)) is False, "등급 안에서의 하락은 노이즈"
+    assert edit_regressed(s, _p2(90), _p2(70)) is True, "auto_pass → needs_review"
+    assert edit_regressed(s, _p2(90), _p2(30)) is True, "실측된 85→30 손상"
+    assert edit_regressed(s, _p2(90), _p2(90, critical=["logo altered"])) is True
+    assert edit_regressed(s, _p2(90, critical=["x"]), _p2(90, critical=["x"])) is False
+    assert edit_regressed(s, _p2(70), _p2(90)) is False, "개선을 되돌리면 안 된다"
+    # 신호 부재는 비교 불가 → 기존 동작(편집 유지) 유지
+    assert edit_regressed(s, None, _p2(30)) is False
+    assert edit_regressed(s, {"critical_errors": []}, _p2(30)) is False
+
+
+def test_regressive_edit_is_reverted_to_pre_edit_image(monkeypatch):
+    """편집이 등급을 떨어뜨리면 이미지·점수 **둘 다** 편집 전으로 돌아가야 한다.
+
+    재판정만으로는 하락을 기록할 뿐 망친 편집본이 그대로 출고된다(2026-07-31 관측:
+    가슴 2패스가 치마를 왜곡해 product_fidelity 85 → 30).
+    """
+    import test_mannequin_axis_qc as harness
+
+    seq, calls = [_p2(90), _p2(30)], {"n": 0}
+
+    async def fake_p2(s, prods, gen, *, scored=False):
+        calls["n"] += 1
+        return seq[min(calls["n"] - 1, len(seq) - 1)]
+
+    async def fake_axis(**kw):
+        return types.SimpleNamespace(mime=kw["res"].mime, image=b"edited-worse"), False
+
+    captured = {}
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        captured["image"] = res.image     # D축은 되돌린 이미지를 봐야 한다
+        return None
+
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    result, _g, r2, emits = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=1, verdicts=[], image_qc="shadow")
+
+    assert result["qc_scores"]["product_fidelity"] == 90, "편집본 점수가 저장됐다"
+    assert captured["image"] != b"edited-worse", "D축이 되돌리기 전 이미지를 봤다"
+    assert all(b"edited-worse" != d for _k, d, _m in r2.puts), "망친 편집본이 R2 로 나갔다"
+    assert "edit_reverted" in [p.get("status") for _t, p in emits]
 
 
 def test_salvaged_candidate_still_gets_edit_and_series_qc(monkeypatch):

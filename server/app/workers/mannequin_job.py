@@ -298,6 +298,33 @@ def _is_better_candidate(s, new_p2, old_p2) -> bool:
     return new_worst > old_worst
 
 
+_GRADE_RANK = {"regenerate": 0, "needs_review": 1, "auto_pass": 2}
+
+
+def edit_regressed(s, pre_p2, post_p2) -> bool:
+    """편집(축 교정·가슴 2패스)이 컷을 **더 나쁘게** 만들었는가 (순수).
+
+    편집은 선언 핏 축·가슴 볼륨을 고치려고 도는데, 그건 A~C 가 재는 축이 아니다. 그래서
+    편집이 A~C 를 깎아도 그 대가가 정당한지는 A~C 만 봐서는 알 수 없다 — 작은 하락은
+    판정 노이즈로 보고 편집을 살린다.
+
+    다만 편집이 **등급을 떨어뜨리거나**(auto_pass → needs_review 등) **없던 치명 오류를
+    만들면** 얘기가 다르다. 그건 교정의 대가가 아니라 손상이다. 실측(2026-07-31 관측):
+    가슴 2패스가 치마 원단을 왜곡해 product_fidelity 85 → 30, "breast-like bulges".
+
+    신호가 한쪽이라도 없으면 비교 불가 → 되돌리지 않는다(편집 유지가 기존 동작).
+    """
+    if not isinstance(pre_p2, dict) or not isinstance(post_p2, dict):
+        return False
+    if _worst_score(pre_p2, _COMPARABLE_KEYS) is None:
+        return False  # 편집 전 점수가 없으면 하락을 논할 수 없다
+    if post_p2.get("critical_errors") and not pre_p2.get("critical_errors"):
+        return True
+    pre_rank = _GRADE_RANK[score_outcome(s, pre_p2)]
+    post_rank = _GRADE_RANK[score_outcome(s, post_p2)]
+    return post_rank < pre_rank
+
+
 def score_outcome(s, p2) -> str:
     """4축 점수 → auto_pass | needs_review | regenerate (순수).
 
@@ -615,6 +642,7 @@ async def _run_candidate(
                     "reason": "budget_exhausted", "outcome": score_outcome(s, salvaged_scores)})
         if not pillow_reject and not p2_reject:
             pre_edit_hash = hashlib.sha256(res.image).hexdigest()  # 편집 여부 판정용
+            pre_edit_res, pre_edit_p2 = res, p2  # 편집이 망쳤을 때 되돌릴 지점
             # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
             # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
             res, axis_spent = await _apply_axis_qc(
@@ -637,6 +665,16 @@ async def _run_candidate(
                     await _emit(pool, job_id, "step", {
                         "candidate": candidate, "attempt": attempt,
                         "status": "image_qc_rescored", "imageQc": p2})
+                    # 재판정은 하락을 **기록**할 뿐이라, 망친 편집본이 그대로 출고됐다.
+                    # 등급이 떨어졌거나 없던 치명 오류가 생겼으면 편집 전으로 되돌린다 —
+                    # 두 판정 다 이미 손에 있어서 추가 vision 콜은 들지 않는다.
+                    if edit_regressed(s, pre_edit_p2, p2):
+                        await _emit(pool, job_id, "step", {
+                            "candidate": candidate, "attempt": attempt,
+                            "status": "edit_reverted",
+                            "from": score_outcome(s, p2),
+                            "to": score_outcome(s, pre_edit_p2)})
+                        res, p2 = pre_edit_res, pre_edit_p2
                 except Exception as e:
                     # fail-open: 재판정 실패 시 편집 전 점수를 쓰되, 그 사실을 남긴다.
                     log.warning("image_qc rescore failed for job %s: %r", job_id, e)
