@@ -104,6 +104,8 @@ def main() -> int:
         for k, n in outcomes.most_common():
             print(f"  {k:34} {n}")
 
+    _report_stored_outcomes(s)
+
     if criticals:
         print("\ncritical_errors 빈도:")
         for e, n in criticals.most_common(8):
@@ -116,6 +118,31 @@ def main() -> int:
     if not rows:
         print("\n(이벤트 없음 — IMAGE_QC 가 off 이거나 아직 생성이 없다)")
     return 0
+
+
+def _report_stored_outcomes(s) -> None:
+    """저장된 판정을 **임계별로 층화**해 집계한다.
+
+    임계를 바꿔도 과거 판정은 재계산되지 않는다. 층화 없이 등급 분포만 보면 임계 변경 전후가
+    섞여 "왜 auto_pass 가 이렇게 적지" 같은 오독을 하게 된다(2026-07-31 실측: 90/75 시절
+    판정 11건이 80/65 기준으로는 전부 불일치로 보였다 — 정상 이력인데 버그처럼 읽힌다).
+    """
+    with psycopg.connect(s.database_url, row_factory=dict_row) as conn, conn.cursor() as cur:
+        cur.execute("select qc_scores from mannequin_cuts where qc_scores is not null")
+        rows = [r["qc_scores"] for r in cur.fetchall()]
+    if not rows:
+        return
+    buckets: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    for q in rows:
+        t = q.get("thresholds")
+        key = f"{t['auto_pass']}/{t['review']}" if t else "미기록(임계 저장 이전)"
+        buckets[key][q.get("outcome") or "?"] += 1
+    print(f"\n저장된 판정 {len(rows)}건 — 임계별 층화:")
+    for key in sorted(buckets, key=lambda k: (k.startswith("미기록"), k)):
+        c = buckets[key]
+        total = sum(c.values())
+        parts = " · ".join(f"{k} {v}" for k, v in sorted(c.items()))
+        print(f"  임계 {key:22} n={total:3}  {parts}")
 
 
 if __name__ == "__main__":
