@@ -70,32 +70,33 @@ def test_enforce_falls_back_to_binary_verdict_when_unscored():
 
 # ── 재생성 예산 (순수) ───────────────────────────────────────────────────────
 
-def test_budget_reserves_generation_and_edit_when_axis_enforced():
-    """axis enforce 면 다음 attempt 가 생성 1 + 편집 1 을 쓸 수 있다 — 둘 다 미리 센다.
+def test_budget_counts_actual_calls_not_attempts():
+    """예산은 **실제 나간 호출**로 센다 — 편집이 먹은 만큼 재생성 여력이 준다.
 
-    편집은 재생성 판단보다 먼저 일어나므로 사후에 못 막는다. 미리 안 세면 상한을 넘긴다.
+    예약형(다음 생성+다음 편집을 미리 차감)은 세 방향으로 틀렸다: 사전 게이트가 검사를
+    안 거쳐 상한을 넘었고, bust 호출은 세지도 않았고, 마지막 attempt 에서는 쓰지도 않을
+    편집분을 예약해 안전한 재생성을 막았다(codex 2026-07-31 7차).
     """
     from app.workers.mannequin_job import has_budget_for_retry
     s = make_settings(mannequin_axis_qc="enforce", mannequin_max_attempts=3)
-    # 1회차 생성 + 편집 1회 소비 → 다음이 2회를 더 쓰면 5 > 3 이라 재생성 불가
-    assert has_budget_for_retry(s, attempt=1, edits_spent=1) is False
-    # 편집이 없었으면 1 + 0 + 2 = 3 <= 3 이라 가능
-    assert has_budget_for_retry(s, attempt=1, edits_spent=0) is True
+    assert has_budget_for_retry(s, calls_spent=2) is True    # 1 남음 → 생성 가능
+    assert has_budget_for_retry(s, calls_spent=3) is False   # 소진
+    # 편집이 예산을 먹었으면 attempt 가 1 이어도 재생성 여력이 없을 수 있다
+    assert has_budget_for_retry(s, calls_spent=3) is False
 
 
-def test_budget_reserves_only_generation_when_axis_off():
-    """axis 가 꺼져 있으면 편집이 없으므로 생성 1회만 예약한다 — 과소 사용 방지."""
+def test_budget_does_not_reserve_unused_edit():
+    """axis 모드와 무관하게 잔량만 본다 — 예약이 없으니 과소 사용도 없다."""
     from app.workers.mannequin_job import has_budget_for_retry
-    s = make_settings(mannequin_axis_qc="off", mannequin_max_attempts=3)
-    assert has_budget_for_retry(s, attempt=1, edits_spent=0) is True   # 1+0+1 = 2
-    assert has_budget_for_retry(s, attempt=2, edits_spent=0) is True   # 2+0+1 = 3
-    assert has_budget_for_retry(s, attempt=3, edits_spent=0) is False  # 3+0+1 = 4
+    for mode in ("off", "enforce"):
+        s = make_settings(mannequin_axis_qc=mode, mannequin_max_attempts=4)
+        assert has_budget_for_retry(s, calls_spent=3) is True, mode
 
 
 def test_budget_exhausted_at_single_attempt():
     from app.workers.mannequin_job import has_budget_for_retry
     s = make_settings(mannequin_axis_qc="off", mannequin_max_attempts=1)
-    assert has_budget_for_retry(s, attempt=1, edits_spent=0) is False
+    assert has_budget_for_retry(s, calls_spent=1) is False
 
 
 def test_default_thresholds_pass_observed_production_scores():

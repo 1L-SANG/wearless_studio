@@ -71,7 +71,7 @@ def _verdict(fit_ok=True, len_ok=True, identity=True, visible=True):
 
 
 def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=None,
-         profile=PROFILE, image_qc="off", p2=None):
+         profile=PROFILE, image_qc="off", p2=None, **settings_kw):
     """_run_candidate 를 실제 경로로 실행. verdicts=판정 fake 가 순서대로 돌려줄 값(or 예외)."""
     emits = []
 
@@ -99,7 +99,8 @@ def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=Non
     g = gemini or _FakeGemini()
     r2 = _R2()
     settings = make_settings(r2_bucket="b", mannequin_axis_qc=mode,
-                             mannequin_max_attempts=max_attempts, image_qc=image_qc)
+                             mannequin_max_attempts=max_attempts, image_qc=image_qc,
+                             **settings_kw)
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=settings, pool=_FakePool(), r2=r2, gemini=g))
     job = {"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:t"}

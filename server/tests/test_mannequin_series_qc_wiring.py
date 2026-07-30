@@ -568,8 +568,8 @@ def test_pre_gate_feedback_never_empty_when_only_scores_low(monkeypatch):
 def test_budget_invariant_holds_for_every_max_attempts(monkeypatch, max_attempts):
     """어떤 max_attempts 에서도 생성+편집 총합이 상한을 넘지 않는다.
 
-    워커의 `budget_left` 와 `_apply_axis_qc` 내부 예산(attempt >= max_attempts)이 서로 다른
-    기준을 쓴다. 내부는 누적 편집을 모르므로, 둘의 상호작용을 값마다 확인해야 안심할 수 있다.
+    워커의 `budget_left` 와 `_apply_axis_qc` 내부 예산은 이제 같은 잔량(calls_spent)을 본다.
+    한쪽만 고치면 다시 어긋나므로 값마다 확인한다.
     """
     import test_mannequin_axis_qc as harness
 
@@ -581,7 +581,7 @@ def test_budget_invariant_holds_for_every_max_attempts(monkeypatch, max_attempts
     async def fake_axis(**kw):
         # 실제 _apply_axis_qc 의 내부 예산 가드를 그대로 재현한다. 통째로 fake 하면 가드를
         # 우회해 "코드가 막는 것"까지 초과로 세게 된다(내 fake 가 만든 거짓 실패).
-        if kw["attempt"] >= kw["s"].mannequin_max_attempts:
+        if kw["calls_spent"] >= kw["s"].mannequin_max_attempts:
             return kw["res"], False
         edits["n"] += 1
         return kw["res"], True
@@ -616,6 +616,8 @@ def test_total_image_model_calls_never_exceed_budget(monkeypatch):
         return {"consistency": 10, "inconsistencies": ["다름"]}
 
     async def fake_axis(**kw):
+        if kw["calls_spent"] >= kw["s"].mannequin_max_attempts:
+            return kw["res"], False
         calls["n"] += 1          # 편집 = 이미지 모델 호출 1회
         return kw["res"], True
 
@@ -630,6 +632,160 @@ def test_total_image_model_calls_never_exceed_budget(monkeypatch):
     total = len(g.calls) + calls["n"]
     assert total <= 3, f"이미지 모델 호출 {total}회(생성 {len(g.calls)} + 편집 {calls['n']}) — 예산 3 초과"
     assert len(r2.puts) == 1
+
+
+def _p2c(fid, critical=()):
+    return {"verdict": "retry" if critical else "pass", "mismatches": [],
+            "correctionPrompt": None, "product_fidelity": fid,
+            "physical_naturalness": 95, "image_quality": 95,
+            "series_consistency": None, "critical_errors": list(critical)}
+
+
+def test_bust_pass_counts_against_the_same_budget(monkeypatch):
+    """bust 2패스도 같은 통에서 나간다 — 안 세면 계약이 이 설정에서만 조용히 깨진다.
+
+    `mannequin_bust_pass=on` 이면 매 채택본마다 이미지 모델을 한 번 더 부른다. 예산 카운터에
+    빠져 있으면 max_attempts=3 에서 6회까지 나갈 수 있다(codex 2026-07-31 7차 HIGH).
+    여기서는 fake gemini 가 생성·편집을 **한 카운터로** 세므로 누락되면 바로 초과로 잡힌다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return {"consistency": 10, "inconsistencies": ["다름"]}   # 항상 재생성 압력
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    _r, g, r2, _e = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=3, verdicts=[], image_qc="enforce",
+        mannequin_bust_pass="on",
+        p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
+            "series_consistency": None, "critical_errors": []})
+    assert len(g.calls) <= 3, f"이미지 모델 {len(g.calls)}회 — 예산 3 초과(bust 미계상)"
+    assert len(r2.puts) == 1
+
+
+def test_pre_gate_reject_respects_budget(monkeypatch):
+    """사전 게이트 거절 경로도 잔량을 봐야 한다.
+
+    직전 버전은 예산 검사가 최종 게이트에만 있어, 사전 게이트로 빠진 attempt 가 예산을
+    안 보고 다음 생성을 돌렸다.
+    max=3 에서 1회차가 생성+편집으로 2콜을 쓰고 최종 거절되면, 2회차 생성(3콜)에서 예산이
+    끝난다. 사전 게이트가 `attempt` 만 보면(2 < 3) 예산이 없는데도 재시도로 판단해 **구제를
+    안 하고** 후보를 통째로 잃는다 — 손에 든 final_reject 가 있는데도 빈손으로 끝난다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    # 1회차 통과(편집 발생) → 재판정 → D축 10 으로 최종 거절 / 2회차 치명 오류로 사전 거절.
+    seq = [_p2c(95), _p2c(95), _p2c(20, critical=["logo altered"])]
+    n = {"i": 0}
+    edits = {"n": 0}
+
+    async def fake_p2(s, prods, gen, *, scored=False):
+        n["i"] += 1
+        return seq[min(n["i"] - 1, len(seq) - 1)]
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return {"consistency": 10, "inconsistencies": ["다름"]}
+
+    async def fake_axis(**kw):
+        if kw["calls_spent"] >= kw["s"].mannequin_max_attempts:
+            return kw["res"], False       # 실제 가드 재현
+        edits["n"] += 1
+        return types.SimpleNamespace(mime=kw["res"].mime, image=b"edited-%d" % edits["n"]), True
+
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    result, g, r2, _e = harness._run(
+        monkeypatch, mode="enforce", guard=True, max_attempts=3, verdicts=[], image_qc="enforce")
+    total = len(g.calls) + edits["n"]
+    assert total <= 3, (
+        f"이미지 모델 {total}회(생성 {len(g.calls)} + 편집 {edits['n']}) — 예산 3 초과")
+    assert result is not None, "예산이 끝났는데 구제하지 않아 후보를 통째로 잃었다"
+    assert result["qc_scores"]["salvaged"] is True
+    assert len(r2.puts) == 1
+
+
+def test_last_attempt_generation_not_blocked_by_unused_edit_reservation(monkeypatch):
+    """쓰지도 않을 편집분을 예약해 안전한 재생성을 막으면 안 된다(과소 사용).
+
+    예약형에서는 max=4·attempt=3·편집 0 일 때 next_cost=2 라 4회차 생성이 막혔다.
+    실소비만 세면 3콜 뒤 잔량 1 이 남아 4회차가 돈다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return {"consistency": 10, "inconsistencies": ["다름"]}
+
+    async def fake_axis(**kw):
+        return kw["res"], False          # 편집은 한 번도 안 일어난다
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    _r, g, _r2, _e = harness._run(
+        monkeypatch, mode="enforce", guard=True, max_attempts=4, verdicts=[], image_qc="enforce",
+        p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
+            "series_consistency": None, "critical_errors": []})
+    assert len(g.calls) == 4, f"생성 {len(g.calls)}회 — 남은 예산을 안 썼다"
+
+
+def test_comparator_uses_series_when_both_candidates_have_it():
+    """둘 다 D축을 가졌으면 비교에 포함해야 한다.
+
+    빼버리면 A~C 95/D10(일관성 붕괴)이 A~C 90/D60 을 이겨서, 세트에서 튀는 컷이 구제된다.
+    한쪽만 가진 경우(사전 후보 vs 최종 후보)에는 여전히 빼야 공정하다.
+    """
+    s = make_settings(qc_score_auto_pass=80, qc_score_review=65)
+    broken = {"product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
+              "series_consistency": 10, "critical_errors": []}
+    balanced = {"product_fidelity": 90, "physical_naturalness": 90, "image_quality": 90,
+                "series_consistency": 60, "critical_errors": []}
+    assert mannequin_job._is_better_candidate(s, broken, balanced) is False
+    assert mannequin_job._is_better_candidate(s, balanced, broken) is True
+    # 한쪽에 D축이 없으면 D 를 빼고 본다 — D 보유가 그 자체로 불리해지면 안 된다
+    no_series = {**broken, "series_consistency": None}
+    assert mannequin_job._is_better_candidate(s, no_series, balanced) is True
+
+
+def test_final_salvage_is_not_reprocessed(monkeypatch):
+    """최종 단계 구제본은 편집·D축을 **다시 돌리지 않는다**.
+
+    이미 편집·재판정·D축까지 끝난 출고 준비본이다. 본 경로를 다시 태우면 bust 가 두 번
+    적용되고 D축 스냅샷이 새 판정으로 덮어써진다(codex 2026-07-31 7차 MEDIUM).
+    """
+    import test_mannequin_axis_qc as harness
+
+    # 1회차: 사전 게이트 통과 → D축 10 으로 최종 거절되어 final_reject 에 적재
+    # 2회차: 치명 오류로 사전 게이트 거절 + 예산 소진 → final_reject 구제
+    seq = [_p2c(95), _p2c(20, critical=["logo altered"])]
+    calls = {"p2": 0, "series": 0, "axis": 0}
+
+    async def fake_p2(s, prods, gen, *, scored=False):
+        calls["p2"] += 1
+        return seq[min(calls["p2"] - 1, len(seq) - 1)]
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        calls["series"] += 1
+        return {"consistency": 10, "inconsistencies": ["다름"]}
+
+    async def fake_axis(**kw):
+        calls["axis"] += 1
+        return kw["res"], False
+
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    result, _g, r2, emits = harness._run(
+        monkeypatch, mode="enforce", guard=True, max_attempts=2, verdicts=[],
+        image_qc="enforce")
+
+    assert result is not None and result["qc_scores"]["salvaged"] is True
+    assert calls["series"] == 1, f"D축이 {calls['series']}회 — 구제본을 다시 판정했다"
+    assert calls["axis"] == 1, f"축 편집이 {calls['axis']}회 — 구제본을 다시 편집했다"
+    assert result["qc_scores"]["series_consistency"] == 10, "D축 스냅샷이 유실됐다"
+    assert len(r2.puts) == 1
+    assert "qc_salvaged" in [p.get("status") for _t, p in emits]
 
 
 def test_loop_terminates_when_every_attempt_rejects(monkeypatch):

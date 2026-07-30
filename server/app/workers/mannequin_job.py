@@ -160,7 +160,7 @@ def _effective_axis_qc_mode(s) -> str:
 
 async def _apply_axis_qc(
     *, pool, gemini, s, job_id, candidate, attempt, model, res,
-    prod_imgs, match_img, fit_profile, profile_hash,
+    prod_imgs, match_img, fit_profile, profile_hash, calls_spent,
 ):
     """생성 채택본에 축 QC 판정 + (enforce 시) 편집 교정 1회. → (선택 결과, 편집콜 소비 여부).
 
@@ -228,7 +228,7 @@ async def _apply_axis_qc(
         await _emit_retry("enforce_guarded" if configured == "enforce" else "shadow_observed",
                           failed=failed, edit_hash=edit_hash)
         return res, False
-    if attempt >= s.mannequin_max_attempts:  # 공유 예산: 생성+편집 <= max_attempts
+    if calls_spent >= s.mannequin_max_attempts:  # 공유 예산: 생성+편집 <= max_attempts
         await _emit_retry("budget_exhausted", failed=failed, edit_hash=edit_hash)
         return res, False
     edit_attempt = attempt + 1
@@ -288,9 +288,14 @@ def _is_better_candidate(s, new_p2, old_p2) -> bool:
     old_critical = bool((old_p2 or {}).get("critical_errors"))
     if new_critical != old_critical:
         return not new_critical
-    # D축 제외 — 사전/최종 후보는 D축 보유 여부가 달라 포함하면 비교가 불공정해진다.
-    new_worst, old_worst = (_worst_score(new_p2, _COMPARABLE_KEYS),
-                            _worst_score(old_p2, _COMPARABLE_KEYS))
+    # 한쪽만 D축을 가졌으면 D 를 빼고 비교한다 — 사전 후보(D 없음)와 최종 후보(D 있음)를
+    # 그대로 견주면 D 를 가진 쪽이 그것만으로 불리해진다. 둘 다 가졌으면 **포함한다**:
+    # 빼버리면 A~C 95/D10 이 A~C 90/D60 을 이겨 일관성이 무너진 컷이 구제된다
+    # (codex 2026-07-31 7차 MEDIUM).
+    both_have_series = all(
+        isinstance((p or {}).get("series_consistency"), int) for p in (new_p2, old_p2))
+    keys = image_qc.SCORE_KEYS if both_have_series else _COMPARABLE_KEYS
+    new_worst, old_worst = _worst_score(new_p2, keys), _worst_score(old_p2, keys)
     if new_worst is None:
         return False
     if old_worst is None:
@@ -452,16 +457,19 @@ def _build_retry_feedback(scores: dict | None, series: dict | None, p2) -> str:
     return "\n\n".join(parts)
 
 
-def has_budget_for_retry(s, *, attempt: int, edits_spent: int) -> bool:
+def has_budget_for_retry(s, *, calls_spent: int) -> bool:
     """재생성 여유가 있는가 (순수).
 
-    예산은 **누적 이미지 모델 호출**이다: 생성 `attempt` 회 + 편집 `edits_spent` 회.
-    재생성하면 다음 attempt 가 생성 1회를 쓰고, axis QC 가 enforce 면 편집 1회도 쓸 수 있다.
-    둘 다 미리 세지 않으면 상한을 넘긴다 — 편집은 재생성 판단보다 **먼저** 일어나므로
-    사후에는 막을 수 없다(codex 2026-07-31: max_attempts=3 에 4회 호출 관측).
+    예산은 **실제로 나간 이미지 모델 호출 수**다. 생성·axis 편집·bust 2패스가 모두 같은
+    한 통에서 나가고, 호출 직전에 하나씩 소비한다.
+
+    앞선 버전은 "다음 생성 + 다음 편집"을 미리 예약하는 예측형이었다. 세 가지가 어긋났다
+    (codex 2026-07-31 7차): 사전 게이트 경로가 이 검사를 안 거쳐 상한을 넘길 수 있었고,
+    bust 호출은 아예 안 세어져 계약이 설정 전체에서 성립하지 않았고, 반대로 마지막 attempt
+    에서는 쓰지도 않을 편집분을 예약해 안전한 재생성까지 막았다. 실소비만 세면 세 문제가
+    같이 사라진다 — 예약은 틀릴 수 있지만 소비는 틀릴 수 없다.
     """
-    next_cost = 2 if _effective_axis_qc_mode(s) == "enforce" else 1
-    return attempt + edits_spent + next_cost <= s.mannequin_max_attempts
+    return calls_spent < s.mannequin_max_attempts
 
 
 def final_decision(s, scores: dict | None) -> str:
@@ -498,8 +506,10 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
     return pillow_reject, isinstance(p2, dict) and p2.get("verdict") == "retry"
 
 
-async def _apply_bust_pass(*, pool, gemini, s, job_id, candidate, attempt, base_gender, res):
-    """여성 기본 가슴 볼륨 2패스 — 채택본에 "가슴만 바꿔라"를 단독 과제로 한 번 더 돌린다.
+async def _apply_bust_pass(
+    *, pool, gemini, s, job_id, candidate, attempt, base_gender, res, calls_spent,
+):
+    """여성 기본 가슴 볼륨 2패스. → (선택 결과, 편집콜 소비 여부).
 
     1패스만으로는 안 된다(2026-07-30 스파이크): 베이스를 볼륨 있는 것으로 바꿔도, 1패스
     프롬프트에 가슴 지시를 주입해도 모델이 몸을 표준으로 정규화한다. 이미지 1장·과제 1개일
@@ -511,7 +521,15 @@ async def _apply_bust_pass(*, pool, gemini, s, job_id, candidate, attempt, base_
     죽으면 안 된다.
     """
     if not mannequin_bust.should_apply(base_gender, getattr(s, "mannequin_bust_pass", "off")):
-        return res
+        return res, False
+    if calls_spent >= s.mannequin_max_attempts:
+        # axis 편집과 **같은 통**에서 나간다. 여기만 무제한이면 "총 호출 <= max_attempts" 가
+        # bust_pass=on 설정에서 성립하지 않는다(codex 2026-07-31 7차 HIGH).
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "bust_pass",
+            "outcome": "budget_exhausted",
+            "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
+        return res, False
     before = hashlib.sha256(res.image).hexdigest()[:12]
     try:
         prompt = mannequin_bust.build_prompt(load_bust_prompt_template())
@@ -525,12 +543,12 @@ async def _apply_bust_pass(*, pool, gemini, s, job_id, candidate, attempt, base_
             "candidate": candidate, "attempt": attempt, "status": "bust_pass",
             "outcome": "failed_open", "image_hash": before,
             "error_type": type(e).__name__, "error_message": str(e)[:200]})
-        return res
+        return res, True  # 실패해도 호출은 나갔다 — 예산은 소비됐다
     await _emit(pool, job_id, "step", {
         "candidate": candidate, "attempt": attempt, "status": "bust_pass",
         "outcome": "applied", "image_hash": before,
         "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
-    return out
+    return out, True
 
 
 async def _run_candidate(
@@ -568,9 +586,17 @@ async def _run_candidate(
     # 저장 shape 이 계약(QcScores)을 벗어나지 않게. 네 번째는 이벤트·correctionPrompt 용.
     pre_reject: tuple | None = None
     final_reject: tuple | None = None
-    edits_spent = 0  # axis 편집이 소비한 이미지 모델 호출 누적 — 예산은 생성+편집 총합이다
+    # 이미지 모델 호출 예산은 한 통이다 — 생성·axis 편집·bust 2패스가 전부 여기서 나간다.
+    # 호출 **직전**에 소비하고, 재생성 여부는 남은 잔량으로만 판단한다.
+    calls_spent = 0
     profile_hash = _canonical_profile_hash(fit_profile)
     for attempt in range(1, s.mannequin_max_attempts + 1):
+        if calls_spent >= s.mannequin_max_attempts:
+            # 편집이 예산을 다 먹어 생성조차 못 하는 상태. 사전·최종 게이트가 둘 다 잔량을
+            # 보므로 **현재는 도달 불가**다(Pillow QC 가 코드상 강제 shadow 라 그 경로도 죽어
+            # 있다). 테스트로 못 잡는 건 커버리지 누락이 아니라 이게 백스톱이기 때문이다 —
+            # Pillow enforce 를 되살리면 그 경로가 여기로 떨어진다.
+            break
         prompt = f"{feedback}\n\n{base_prompt}" if feedback else base_prompt
         # 관측성(fidelity 설계 D3): 이 attempt 가 실제 쓰는 프로필·프롬프트의 다이제스트만 남긴다
         # (원문 미포함 — 이벤트 ~250B). 실패 원인이 되지 않게 기존 step 과 동일 best-effort.
@@ -580,6 +606,7 @@ async def _run_candidate(
             "prompt_hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "prompt_version": s.mannequin_prompt_version,
             "input_source": fit_profile_source})
+        calls_spent += 1  # 성공하든 실패하든 호출은 나갔다
         try:
             res = await gemini.generate_content_image(
                 model, prompt, images, s.mannequin_image_size,
@@ -618,6 +645,8 @@ async def _run_candidate(
         # 한 번 거른다. 최종 출고 판정은 여기가 아니라 아래 final_decision 하나가 내린다.
         pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
         salvaged = False
+        reprocess = True          # 구제본이 이미 편집·D축을 거쳤으면 False 로 내린다
+        salvaged_series = None
         if p2_reject:
             # reject 후보를 점수와 함께 보관 — 예산 소진 시 "마지막 시도"가 아니라 **최선본**을
             # 구제하기 위해서다. 1차 70점 / 2차 20점인데 20점을 내보내면 재시도가 손해가 된다.
@@ -626,15 +655,20 @@ async def _run_candidate(
             pre_scores = merge_qc_scores(p2, None)
             if _is_better_candidate(s, pre_scores, pre_reject[1] if pre_reject else None):
                 pre_reject = (res, pre_scores, None, p2)
-            if attempt >= s.mannequin_max_attempts:
+            if not has_budget_for_retry(s, calls_spent=calls_spent):
+                # 재생성 여력이 없으면 여기서 끝이다. attempt 번호가 아니라 **남은 호출**로
+                # 판단해야 한다 — 편집이 예산을 먹은 상태에서 attempt 만 보면 상한을 넘긴다
+                # (codex 2026-07-31 7차 HIGH: max=4 에 5콜 경로).
                 # 구제 대상은 **두 풀을 통틀어 최선**이어야 한다. 이전 attempt 에서 편집·D축까지
                 # 통과했다가 최종 게이트에서 걸린 후보(final_reject)가 더 좋으면 그걸 쓴다 —
                 # 사전 게이트 후보만 보면 60점 검증본을 두고 20점을 내보낸다(codex 2026-07-31).
                 if final_reject and _is_better_candidate(s, final_reject[1], pre_reject[1]):
-                    res, qc_override, _series, p2 = final_reject
-                    salvaged_scores = qc_override
+                    # 이미 편집·재판정·D축을 다 거친 출고 준비본이다. 본 경로를 다시 태우면
+                    # bust 가 두 번 적용되고 D축 스냅샷이 덮어써진다(codex 7차 MEDIUM).
+                    res, salvaged_scores, salvaged_series, p2 = final_reject
+                    reprocess = False
                 else:
-                    res, salvaged_scores, _series, p2 = pre_reject
+                    res, salvaged_scores, salvaged_series, p2 = pre_reject
                     # 사전 게이트 후보는 편집·D축을 안 거쳤다 → 아래 본 경로가 그걸 수행한다.
                 p2_reject, salvaged = False, True
                 await _emit(pool, job_id, "step", {
@@ -643,16 +677,21 @@ async def _run_candidate(
         if not pillow_reject and not p2_reject:
             pre_edit_hash = hashlib.sha256(res.image).hexdigest()  # 편집 여부 판정용
             pre_edit_res, pre_edit_p2 = res, p2  # 편집이 망쳤을 때 되돌릴 지점
-            # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
-            # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
-            res, axis_spent = await _apply_axis_qc(
-                pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
-                attempt=attempt, model=model, res=res, prod_imgs=prod_imgs,
-                match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash)
-            # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
-            res = await _apply_bust_pass(
-                pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
-                attempt=attempt, base_gender=base_gender, res=res)
+            axis_spent = bust_spent = False
+            if reprocess:
+                # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
+                # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
+                res, axis_spent = await _apply_axis_qc(
+                    pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+                    attempt=attempt, model=model, res=res, prod_imgs=prod_imgs,
+                    match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
+                    calls_spent=calls_spent)
+                calls_spent += axis_spent
+                # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
+                res, bust_spent = await _apply_bust_pass(
+                    pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+                    attempt=attempt, base_gender=base_gender, res=res, calls_spent=calls_spent)
+                calls_spent += bust_spent
             # A~C 점수는 **편집 전** 원본에 매긴 것이다. axis QC 편집·bust 2패스가 이미지를
             # 바꿨다면 저장되는 점수가 실제 출고본의 점수가 아니게 된다(검수자가 다른 이미지의
             # 숫자를 보고 판단하게 됨). 이미지가 실제로 바뀐 경우에만 재판정한다 — 안 바뀌었으면
@@ -682,18 +721,19 @@ async def _run_candidate(
                         "candidate": candidate, "attempt": attempt,
                         "status": "image_qc_rescore_failed", "error": type(e).__name__})
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
-            series = await _apply_series_qc(
-                app=app, pool=pool, s=s, job_id=job_id,
-                project_id=project_id, candidate=candidate, attempt=attempt, res=res)
+            # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
+            series = (
+                await _apply_series_qc(
+                    app=app, pool=pool, s=s, job_id=job_id,
+                    project_id=project_id, candidate=candidate, attempt=attempt, res=res)
+                if reprocess else salvaged_series)
             # ── 최종 판정 (단일 지점) ────────────────────────────────────────
             # A~C·D 를 한 스냅샷으로 합쳐 여기서 한 번만 결정한다. 판정이 흩어지면 "API 엔
             # 재생성 필요라 적혀 있는데 성공 컷으로 나가는" 모순이 생긴다(codex 2026-07-31).
             qc_scores = merge_qc_scores(
                 p2, series, salvaged=salvaged,
                 thresholds=(s.qc_score_auto_pass, s.qc_score_review))
-            if axis_spent:
-                edits_spent += 1
-            budget_left = has_budget_for_retry(s, attempt=attempt, edits_spent=edits_spent)
+            budget_left = has_budget_for_retry(s, calls_spent=calls_spent)
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
             if final_decision(s, qc_scores) == "retry" and budget_left and not salvaged:
                 await _emit(pool, job_id, "step", {

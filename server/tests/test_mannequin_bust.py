@@ -78,7 +78,7 @@ def test_build_prompt_rejects_unresolved_token():
 
 # ---------- 워커 배선 ----------
 
-def _run(*, gender, mode, generate):
+def _run(*, gender, mode, generate, calls_spent=0):
     """_apply_bust_pass 를 격리 실행. (결과, 발행된 step 이벤트) 반환."""
     emits = []
 
@@ -92,7 +92,7 @@ def _run(*, gender, mode, generate):
     try:
         out = asyncio.run(mannequin_job._apply_bust_pass(
             pool=None, gemini=gemini, s=s, job_id="j1", candidate="A", attempt=1,
-            base_gender=gender, res=_ORIG))
+            base_gender=gender, res=_ORIG, calls_spent=calls_spent))[0]
     finally:
         mannequin_job._emit = orig_emit
     return out, emits
