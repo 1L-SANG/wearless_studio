@@ -414,6 +414,41 @@ def test_salvage_picks_best_across_both_pools(monkeypatch):
         f"20점 사전게이트 후보가 70점 검증본을 제치고 나갔다: {result['qc_scores']}"
 
 
+def test_salvaged_candidate_still_gets_edit_and_series_qc(monkeypatch):
+    """구제본도 편집·D축을 받고 그 결과가 저장된다 — salvaged 는 '더 재생성 안 함'만 뜻한다.
+
+    사전 게이트에서 구제하면 본 경로로 계속 흐른다. 그때 편집·재판정·D축을 건너뛰면
+    검증 안 된 이미지가 나가고, 반대로 이중 구제가 일어나면 상태가 꼬인다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    seen = {"series": 0, "axis": 0}
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        seen["series"] += 1
+        return {"consistency": 88, "inconsistencies": ["여백 다름"]}
+
+    async def fake_axis(**kw):
+        seen["axis"] += 1
+        return kw["res"], False
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    result, g, r2, emits = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=1, verdicts=[], image_qc="enforce",
+        p2={"verdict": "retry", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 30, "physical_naturalness": 90, "image_quality": 90,
+            "series_consistency": None, "critical_errors": []})
+    assert result is not None and len(r2.puts) == 1
+    assert seen["axis"] == 1 and seen["series"] == 1, "구제본이 편집·D축을 건너뛰었다"
+    q = result["qc_scores"]
+    assert q["series_consistency"] == 88, "구제본의 D축 결과가 저장되지 않았다"
+    assert q["salvaged"] is True
+    # 이중 구제 방지: qc_salvaged 이벤트는 1회만
+    assert len([p for _t, p in emits if p.get("status") == "qc_salvaged"]) == 1
+    assert len(g.calls) == 1  # 구제이므로 재생성 없음
+
+
 def test_pre_gate_feedback_never_empty_when_only_scores_low(monkeypatch):
     """사전 게이트도 빈 피드백을 내면 안 된다 (codex MEDIUM — 최종 게이트만 고쳤던 것).
 
