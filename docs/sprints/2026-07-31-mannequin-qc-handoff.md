@@ -38,6 +38,17 @@
 
 **배선 완결** — 워커 → DB → repo → 라우트 → response_model → `qcScores` 실 DB 확인.
 
+**enforce 게이팅 실동작** — 임계 드리프트를 고친 뒤 `IMAGE_QC=enforce` 로 3건 생성:
+
+| 프로젝트 | 최저축 | outcome |
+|---|---|---|
+| 8e364b59 | 85 | `auto_pass` |
+| 76bed77e | 78 | `needs_review` |
+| 38d5832a | 76 | `needs_review` |
+
+3분기가 임계(80/65)대로 갈리고, 전부 정상 출고되며 잡 실패 0. 게이팅을 켜도 셀러가
+빈손이 되지 않는다는 것이 실 파이프라인으로 확인됐다.
+
 ## 4. 임계 (실측 근거)
 
 신규 표본 16건: `product_fidelity` 55~85(중앙 80) · `physical_naturalness` 72~85(79) ·
