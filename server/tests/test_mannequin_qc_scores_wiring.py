@@ -75,6 +75,23 @@ def test_merge_qc_scores_stays_within_contract():
     assert merged["salvaged"] is True
 
 
+def test_merge_qc_scores_records_thresholds():
+    """판정에 쓰인 임계를 남겨야 한다.
+
+    임계를 바꿔도 과거 판정은 재계산되지 않는다. 이게 없으면 나중에 저장된 outcome 을
+    재계산해봤을 때 불일치가 나와 **정상 이력을 버그로 오해**한다(2026-07-31 실측:
+    90/75 → 80/65 변경 후 과거 11건이 전부 불일치로 보였다).
+    """
+    from app.workers.mannequin_job import merge_qc_scores
+
+    scores = {"product_fidelity": 82, "physical_naturalness": 85, "image_quality": 88,
+              "series_consistency": None, "critical_errors": []}
+    out = merge_qc_scores(scores, None, thresholds=(80, 65))
+    assert out["thresholds"] == {"auto_pass": 80, "review": 65}
+    # 임계를 안 넘기면 키 자체가 없다 — 사전 게이트 비교용 스냅샷은 저장 대상이 아니다.
+    assert "thresholds" not in merge_qc_scores(scores, None)
+
+
 def test_merge_qc_scores_none_when_no_signal():
     from app.workers.mannequin_job import merge_qc_scores
     assert merge_qc_scores(None, None) is None
