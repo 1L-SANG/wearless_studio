@@ -703,6 +703,10 @@ def test_pre_gate_reject_respects_budget(monkeypatch):
         f"이미지 모델 {total}회(생성 {len(g.calls)} + 편집 {edits['n']}) — 예산 3 초과")
     assert result is not None, "예산이 끝났는데 구제하지 않아 후보를 통째로 잃었다"
     assert result["qc_scores"]["salvaged"] is True
+    # 구제는 **예산이 끝나는 그 지점**에서 일어나야 한다. 루프 밖으로 떨어져 나가서
+    # 뒤늦게 건지는 것과는 다르다 — 사전 게이트가 잔량을 안 보면 reason 이 달라진다.
+    salv = [p for _t, p in _e if p.get("status") == "qc_salvaged"]
+    assert salv and salv[-1]["reason"] == "budget_exhausted", salv
     assert len(r2.puts) == 1
 
 
@@ -1005,7 +1009,9 @@ def test_final_salvage_is_not_reprocessed(monkeypatch):
 
     # 1회차: 사전 게이트 통과 → D축 10 으로 최종 거절되어 final_reject 에 적재
     # 2회차: 치명 오류로 사전 게이트 거절 + 예산 소진 → final_reject 구제
-    seq = [_p2c(95), _p2c(20, critical=["logo altered"])]
+    # 1회차 통과(편집으로 이미지 변경 → 재판정) → D축 10 으로 최종 거절 → final_reject 적재
+    # 2회차 치명오류로 사전 게이트 거절 + 예산 소진 → final_reject 구제
+    seq = [_p2c(95), _p2c(95), _p2c(20, critical=["logo altered"])]
     calls = {"p2": 0, "series": 0, "axis": 0}
 
     async def fake_p2(s, prods, gen, *, scored=False):
@@ -1024,7 +1030,7 @@ def test_final_salvage_is_not_reprocessed(monkeypatch):
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
     monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
     result, _g, r2, emits = harness._run(
-        monkeypatch, mode="enforce", guard=True, max_attempts=2, verdicts=[],
+        monkeypatch, mode="enforce", guard=True, max_attempts=3, verdicts=[],
         image_qc="enforce", mannequin_bust_pass="on")
 
     assert result is not None and result["qc_scores"]["salvaged"] is True
