@@ -310,6 +310,101 @@ def test_final_reject_feedback_includes_critical_errors(monkeypatch):
     assert "CRITICAL" in g.calls[1]["prompt"] and "logo altered" in g.calls[1]["prompt"]
 
 
+# ── codex 5차 지적 ────────────────────────────────────────────────────────────
+
+def test_retry_feedback_never_empty_when_only_scores_are_low():
+    """점수만 낮고 텍스트 사유가 없어도 지시가 나가야 한다 (codex MEDIUM).
+
+    verdict=pass · critical_errors=[] · correctionPrompt=None 인데 축만 낮은 경우가 실제로
+    있다. 그때 빈 피드백이면 다음 attempt 가 같은 프롬프트로 돌아 같은 결과를 낸다.
+    """
+    fb = mannequin_job._build_retry_feedback(
+        {"product_fidelity": 40, "physical_naturalness": 90, "image_quality": 90,
+         "series_consistency": None, "critical_errors": []},
+        None, {"verdict": "pass", "correctionPrompt": None})
+    assert fb, "피드백이 비었다 — 재생성이 같은 결과를 반복한다"
+    assert "product_fidelity" in fb          # 가장 낮은 축을 집는다
+    assert "color, pattern, print, logo" in fb
+
+
+def test_retry_feedback_prefers_concrete_reasons_over_axis_fallback():
+    fb = mannequin_job._build_retry_feedback(
+        {"product_fidelity": 40, "critical_errors": ["logo altered"]},
+        {"consistency": 30, "inconsistencies": ["배경 어두움"]},
+        {"correctionPrompt": "keep the neckline"})
+    assert "CRITICAL: logo altered" in fb
+    assert "배경 어두움" in fb
+    assert "keep the neckline" in fb
+    assert "IMPROVE" not in fb  # 구체 사유가 있으면 폴백은 안 붙인다
+
+
+def test_final_salvage_never_uses_unedited_pre_gate_candidate(monkeypatch):
+    """사전 게이트 후보는 편집·재판정·D축을 안 거쳤다 — 최종 구제에 쓰면 안 된다 (codex HIGH).
+
+    1회차: 사전 게이트에서 거절(낮은 p2) → pre_reject 에 원본 보관
+    2회차: 사전 게이트 통과 후 D축에서 거절 → 예산 소진 → 구제
+    구제본은 2회차의 편집 완료 이미지여야 하고, 1회차 원본이면 안 된다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return {"consistency": 10, "inconsistencies": ["다름"]}
+
+    p2_seq = [
+        # 1회차: 사전 게이트가 거절할 만큼 낮게
+        {"verdict": "retry", "mismatches": [], "correctionPrompt": None,
+         "product_fidelity": 20, "physical_naturalness": 20, "image_quality": 20,
+         "series_consistency": None, "critical_errors": []},
+        # 2회차: 사전 게이트는 통과, D축이 거절
+        {"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+         "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
+         "series_consistency": None, "critical_errors": []},
+        {"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+         "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
+         "series_consistency": None, "critical_errors": []},
+    ]
+    seq = list(p2_seq)
+
+    async def fake_p2(s, prods, gen, *, scored=False):
+        return seq.pop(0) if len(seq) > 1 else seq[0]
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
+    result, _g, r2, _emits = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=2, verdicts=[], image_qc="enforce")
+    assert result is not None and len(r2.puts) == 1
+    # 구제본의 점수는 2회차(사전게이트 통과분)여야 한다 — 1회차의 20점대가 아니라.
+    q = result["qc_scores"]
+    assert q["product_fidelity"] == 95, f"편집 안 거친 1회차 원본이 출고됐다: {q}"
+    assert q["salvaged"] is True
+
+
+def test_axis_edit_does_not_end_loop_when_slots_remain(monkeypatch):
+    """axis 편집이 있어도 총예산이 남으면 재생성한다 (codex MEDIUM).
+
+    max_attempts=3 · 생성 1 + 편집 1 = 2 소비면 슬롯이 하나 남는다. 그때 조기 종료하면
+    셀러가 쓸 수 있었던 재시도 기회를 잃는다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return {"consistency": 10, "inconsistencies": ["다름"]}
+
+    async def fake_axis(**kw):
+        return kw["res"], True  # 매 attempt 편집 발생
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    _r, g, r2, _e = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=3, verdicts=[], image_qc="enforce",
+        p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
+            "series_consistency": None, "critical_errors": []})
+    # attempt1: 1+1=2 < 3 → 재생성. attempt2: 2+1=3 → 소진, 구제.
+    assert len(g.calls) == 2, f"생성 {len(g.calls)}회 — 슬롯이 남는데 조기 종료했다"
+    assert len(r2.puts) == 1
+
+
 def test_loop_terminates_when_every_attempt_rejects(monkeypatch):
     """전 attempt 가 D축 거절이어도 루프는 max_attempts 에서 끝난다 — 무한 루프 방지.
 
