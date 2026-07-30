@@ -126,6 +126,25 @@ def _ctx(profile=None):
     )
 
 
+def test_render_prompt_injects_mirror_block_only_when_flagged():
+    """sourceMirrored=true 일 때만 정방향 복원 지시가 붙는다.
+
+    정상(미반전) 사진에 이 지시가 새어 들어가면 멀쩡한 옷을 좌우로 뒤집는 역효과가 난다 —
+    그래서 기본값(False)·키 없음 양쪽에서 블록이 없어야 한다.
+    """
+    template = "Dress ${baseGender} ${clothingType} with ${productCount} image.\n${imageManifest}"
+    product = {"name": "로고 티", "clothing_type": "top"}
+
+    on = render_mannequin_prompt(template, _ctx(), product, {"sourceMirrored": True})
+    assert "MIRRORED SOURCE PHOTOS" in on
+    assert "normal readable orientation" in on
+    assert "opposite side from the photo" in on  # 비대칭 요소도 되돌린다
+
+    for analysis in ({"sourceMirrored": False}, {}):
+        off = render_mannequin_prompt(template, _ctx(), product, analysis)
+        assert "MIRRORED" not in off, analysis
+
+
 def test_render_mannequin_prompt_injects_fit_profile_before_product_context():
     template = (
         "Dress ${baseGender} ${clothingType} with ${productCount} product image.\n"

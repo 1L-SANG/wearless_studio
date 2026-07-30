@@ -8,6 +8,21 @@ seams, trims and fasteners. Be especially strict about logos, printed graphics a
 their outer shape, internal shapes, letters and letter order, placement, scale and colors must
 match the original. A simplified, garbled, missing or invented mark is a mismatch.
 
+MIRRORED SOURCE PHOTOS — this rule takes precedence over the letter-order rule above.
+Sellers often shoot in a mirror, so the product photo can show the garment laterally flipped:
+letters and numbers read backwards, and the print sits on the opposite side of the chest.
+You are judging the GARMENT'S TRUE DESIGN, not the optics of the photograph.
+- Decide first whether the product photos are mirrored. Reversed lettering is the reliable
+  signal; a phone or hand held up in frame is supporting evidence.
+- When the product photos are mirrored, the correct generated result shows the text and logo
+  in NORMAL, readable orientation, on the mirrored-back (i.e. true) side. Judge that as a
+  MATCH even though it does not overlay the photo pixel for pixel.
+- When the product photos are mirrored and the generated image REPRODUCES the reversal —
+  backwards lettering, or a mark left as an unreadable smear — that is a mismatch. Say so in
+  "mismatches" and have "correctionPrompt" ask for the correct, readable orientation.
+- When the product photos are NOT mirrored, the letter-order rule applies unchanged: a flipped
+  or reversed mark in the generated image is a mismatch.
+
 - verdict "pass": same garment, no meaningful mismatch.
 - verdict "retry": there is a visible mismatch. List each mismatch in "mismatches", and
   write a short "correctionPrompt" (an instruction to fix it on regeneration, e.g. "keep the

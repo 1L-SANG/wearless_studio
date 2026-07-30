@@ -43,6 +43,24 @@ def test_build_prompt_injects_count():
     assert "FIRST 3 image" in p and "${productCount}" not in p
 
 
+def test_build_prompt_has_mirrored_source_precedence():
+    """거울 셀카 원본에서 '정방향 교정 = 일치' 규칙이 프롬프트에 있어야 한다.
+
+    2026-07-30 A/B 실측: 셀러 원본이 거울 셀카라 로고·숫자가 반전돼 있었는데, QC 가
+    '원본과 일치'만 보고 **반전 보존본에 pass** 를 줬고 정방향 교정본에는 retry 를 줬다
+    (correctionPrompt 가 "exact mirrored numbers '201' 을 유지하라"). 판정기가 교정을
+    처벌하는 구조였다. 이 규칙이 빠지면 그 회귀다.
+    """
+    p = iq.build_prompt(2)
+    assert "MIRRORED SOURCE PHOTOS" in p
+    # 기존 letter-order 규칙과의 우선순위가 명시돼야 모순 판정이 안 난다.
+    assert "takes precedence" in p
+    # 판정 기준이 사진의 광학이 아니라 의류의 실제 디자인임을 못박았는가.
+    assert "TRUE DESIGN" in p
+    # 반전 보존을 mismatch 로 판정하라는 지시가 있는가.
+    assert "REPRODUCES the reversal" in p
+
+
 def test_validate_pass_clears_fields():
     out = iq.validate({"verdict": "pass", "mismatches": ["x"], "correctionPrompt": "y"})
     assert out == {"verdict": "pass", "mismatches": [], "correctionPrompt": None}

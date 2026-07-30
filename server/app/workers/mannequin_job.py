@@ -377,6 +377,11 @@ async def _run_candidate(
                     "candidate": candidate, "attempt": attempt, "status": "image_qc", "imageQc": p2})
             except Exception as e:
                 log.warning("AG-P2 image_qc failed for job %s: %r", job_id, e)
+                # 실패도 이벤트로 남긴다 — 로그만 남기면 shadow 관측에서 "판정 실패율" 자체가
+                # 안 잡혀 pass/retry 분포가 생존 편향된다(캘리브레이션 근거 오염).
+                await _emit(pool, job_id, "step", {
+                    "candidate": candidate, "attempt": attempt, "status": "image_qc_failed",
+                    "error": type(e).__name__, "message": str(e)[:200]})
         # 게이팅: Pillow QC + AG-P2. 둘 다 통과면 채택(off/shadow 는 항상 통과 — 기존 동작 불변).
         pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
         if not pillow_reject and not p2_reject:

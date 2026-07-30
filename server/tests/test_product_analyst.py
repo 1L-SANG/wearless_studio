@@ -84,6 +84,44 @@ def test_validate_forces_dress_to_women():
     })["targetGenders"] == ["women"]
 
 
+def test_source_mirrored_flows_schema_to_analysis():
+    """거울 셀카 신호가 스키마→validate→distribute 4접점을 끝까지 통과하는가.
+
+    셋 중 하나만 빠져도 필드가 조용히 사라진다: 스키마 미등록이면 strict 계약상 모델이
+    아예 안 뱉고, validate 화이트리스트에 없으면 드롭되고, distribute 에서 빠지면
+    analysis payload 에 안 실려 생성 프롬프트가 못 읽는다.
+    """
+    schema = pa.analysis_schema()
+    assert schema["properties"]["sourceMirrored"] == {"type": "boolean"}
+    # strict(GPT) 는 properties 의 전 키가 required 여야 400 이 안 난다.
+    assert "sourceMirrored" in schema["required"]
+    assert set(schema["properties"]) == set(schema["required"])
+
+    assert pa.validate({"clothingType": "top", "sourceMirrored": True})["sourceMirrored"] is True
+    assert pa.distribute(
+        pa.validate({"clothingType": "top", "sourceMirrored": True})
+    )["analysis"]["sourceMirrored"] is True
+
+
+def test_source_mirrored_defaults_false_on_junk():
+    """판정 불명은 미반전으로 눕힌다 — 오탐이면 멀쩡한 사진을 좌우로 뒤집게 된다."""
+    for junk in (None, "true", 1, {}, "yes"):
+        out = pa.validate({"clothingType": "top", "sourceMirrored": junk})
+        assert out["sourceMirrored"] is False, junk
+    assert pa.validate({"clothingType": "top"})["sourceMirrored"] is False
+
+
+def test_build_prompt_declares_source_mirrored():
+    """프롬프트 2접점(판정 규칙 + 반환 키 나열) 둘 다 있어야 모델이 필드를 채운다.
+
+    키 나열에서 빠지면 규칙만 읽고 필드는 안 뱉는다 — strict 스키마가 required 로 강제해도
+    Gemini 경로는 변환 후 관대해서 조용히 누락될 수 있다.
+    """
+    p = pa.build_prompt({"name": "소프트 니트", "clothing_type": "top"})
+    assert "shot in a mirror" in p          # 판정 규칙
+    assert "styleTags, sourceMirrored." in p  # 반환 키 나열
+
+
 def test_validate_never_includes_measurements():
     raw = {"clothingType": "top", "measurements": [{"key": "totalLength", "value": 70}]}
     v = pa.validate(raw)

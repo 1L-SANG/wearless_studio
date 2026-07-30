@@ -1,0 +1,76 @@
+"""배포 매니페스트의 QC 플래그 계약 — 오타·미선언이 조용히 off 로 떨어지는 사고 방지.
+
+동기(2026-07-31): `IMAGE_QC` 가 copilot manifest 에 **아예 없어서** config 기본 "off" 로
+떨어졌고, 의류 동일성 QC(AG-P2)가 프로덕션에서 무측정 상태였다. 에러도 경고도 안 난다 —
+`_flag()` 는 허용집합 밖 값이나 미설정을 전부 default 로 조용히 폴백하기 때문이다.
+
+여기서 잠그는 것 두 가지:
+1. 배포되는 플래그 값이 `_flag()` 허용집합 안에 있는가 (오타면 값이 살아남지 못한다).
+2. QC 플래그가 매니페스트에 **명시 선언**돼 있는가 (기본값 의존 = 무측정 재발 경로).
+"""
+import os
+import pathlib
+
+import pytest
+import yaml
+
+from app.config import load_settings
+
+MANIFEST = pathlib.Path(__file__).resolve().parents[2] / "copilot/api/manifest.yml"
+
+# (매니페스트 변수명, Settings 속성명) — 값이 로더를 통과해 살아남아야 하는 플래그.
+QC_FLAGS = [
+    ("IMAGE_QC", "image_qc"),
+    ("MANNEQUIN_AXIS_QC", "mannequin_axis_qc"),
+    ("MANNEQUIN_QC_ENABLED", "mannequin_qc_enabled"),
+]
+
+
+@pytest.fixture(scope="module")
+def manifest_vars() -> dict:
+    doc = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    return doc.get("variables") or {}
+
+
+def test_qc_flags_are_declared(manifest_vars):
+    """QC 플래그는 매니페스트에 명시돼야 한다 — 기본값 의존이 무측정 사고의 원인이었다."""
+    missing = [name for name, _ in QC_FLAGS if name not in manifest_vars]
+    assert not missing, f"매니페스트에 QC 플래그 미선언: {missing}"
+
+
+@pytest.mark.parametrize("env_name,attr", QC_FLAGS)
+def test_manifest_flag_value_survives_loader(env_name, attr, manifest_vars, monkeypatch):
+    """배포값을 실제 로더에 넣었을 때 그대로 살아남는가.
+
+    `_flag()` 는 허용집합 밖 값을 조용히 default 로 바꾼다. 매니페스트 오타(예: "shadwo")는
+    배포도 성공하고 앱도 뜨지만 QC 는 꺼진 채로 돈다. 값이 왕복하는지 확인해 그걸 잡는다.
+    """
+    raw = str(manifest_vars[env_name])
+    monkeypatch.setenv(env_name, raw)
+    # load_settings 는 필수 env 를 요구하므로 최소 세트를 채운다.
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    loaded = getattr(load_settings(), attr)
+    expected = raw.lower() == "true" if isinstance(loaded, bool) else raw
+    assert loaded == expected, (
+        f"{env_name}={raw!r} 가 로더를 통과하지 못하고 {loaded!r} 로 폴백됐다 — "
+        f"허용집합 밖 값(오타)이면 QC 가 조용히 꺼진다."
+    )
+
+
+def test_image_qc_not_enforce_without_calibration(manifest_vars):
+    """enforce 승격은 판정 정확도 캘리브레이션 뒤에만 — 오탐이 전 생성을 막는 사고 방지.
+
+    2026-07-07 `MANNEQUIN_QC_ENABLED=true` 가 오탐(pass율 0%)으로 전 생성을 차단한 전례가 있다.
+    캘리브레이션 결과로 enforce 를 올릴 때 이 테스트를 의도적으로 갱신하라 — 무의식적 승격만 막는다.
+    """
+    assert manifest_vars.get("IMAGE_QC") in ("off", "shadow"), (
+        "IMAGE_QC=enforce 는 거짓양성률 실측 후에만. 캘리브레이션 근거와 함께 이 테스트를 갱신할 것."
+    )
+
+
+def test_loader_silently_falls_back_on_typo(monkeypatch):
+    """가드의 전제 확인 — 오타는 예외가 아니라 조용한 폴백이다(그래서 위 테스트가 필요하다)."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("IMAGE_QC", "shadwo")
+    assert load_settings().image_qc == "off"
+    assert os.environ["IMAGE_QC"] == "shadwo"  # env 는 그대로인데 설정만 off

@@ -158,6 +158,26 @@ def _product_block(
     return context
 
 
+def build_mirrored_source_block(analysis: dict) -> str:
+    """원본이 거울 셀카일 때 텍스트·로고를 정방향으로 되돌리라는 지시 (AG-01 sourceMirrored).
+
+    셀러 거울 셀카는 흔하고, 지시가 없으면 모델이 반전된 로고·숫자를 **충실히 재현**해
+    뒤집힌 글자가 상세페이지로 나간다(2026-07-30 실측: '808'→반전, '302'→'802').
+    분석이 반전을 판정하지 않았으면(기본 False) 블록 자체가 없다 — 정상 사진에 좌우 반전
+    지시가 새어 들어가면 멀쩡한 옷을 뒤집는 역효과가 나기 때문이다.
+    """
+    if not analysis.get("sourceMirrored"):
+        return ""
+    return (
+        "MIRRORED SOURCE PHOTOS: the product photos were shot in a mirror, so all lettering, "
+        "numbers, logos and asymmetric details appear laterally flipped in them. Reproduce the "
+        "garment's TRUE design, not the mirror image: render every text, number and logo in "
+        "normal readable orientation, and place asymmetric elements (chest print, pocket, "
+        "closure side) on the side they truly belong to — the opposite side from the photo. "
+        "Everything else about the garment stays exactly as shown."
+    )
+
+
 def render_mannequin_prompt(
     template: str,
     ctx: MannequinPromptContext,
@@ -181,7 +201,8 @@ def render_mannequin_prompt(
     product_block = _product_block(
         product, analysis, seller_canon, knowledge, include_legacy_fit=fit_profile is None
     )
-    blocks = [text, fit_block, product_block]
+    mirror_block = build_mirrored_source_block(analysis)
+    blocks = [text, fit_block, product_block, mirror_block]
     return "\n\n".join(block for block in blocks if block)
 
 
