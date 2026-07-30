@@ -310,6 +310,34 @@ def test_final_reject_feedback_includes_critical_errors(monkeypatch):
     assert "CRITICAL" in g.calls[1]["prompt"] and "logo altered" in g.calls[1]["prompt"]
 
 
+def test_loop_terminates_when_every_attempt_rejects(monkeypatch):
+    """전 attempt 가 D축 거절이어도 루프는 max_attempts 에서 끝난다 — 무한 루프 방지.
+
+    `continue` 경로가 예산 조건을 잘못 읽으면 생성 콜이 무한히 늘 수 있다. 상한을 못박는다.
+    """
+    result, g, r2, emits = _run_loop(
+        monkeypatch, max_attempts=3,
+        series_scores=[{"consistency": 10, "inconsistencies": ["다름"]}] * 3)
+    assert len(g.calls) == 3, f"생성 콜 {len(g.calls)}회 — max_attempts(3) 를 넘었다"
+    assert len(r2.puts) == 1                      # 마지막 1건만 저장
+    assert result is not None                      # 구제 출고
+    assert result["qc_scores"]["salvaged"] is True
+    rejects = [p for _t, p in emits if p.get("status") == "final_qc_reject"]
+    assert len(rejects) == 2                       # 1·2회차만 거절, 3회차는 구제
+
+
+def test_feedback_reaches_every_subsequent_attempt(monkeypatch):
+    """거절 사유가 다음 attempt 프롬프트에 계속 실린다 — 중간에 끊기면 재생성이 무의미해진다."""
+    _r, g, _r2, _e = _run_loop(
+        monkeypatch, max_attempts=3,
+        series_scores=[{"consistency": 10, "inconsistencies": ["배경 어두움"]},
+                       {"consistency": 12, "inconsistencies": ["여백 다름"]},
+                       {"consistency": 99, "inconsistencies": []}])
+    assert "배경 어두움" in g.calls[1]["prompt"]
+    assert "여백 다름" in g.calls[2]["prompt"]     # 2회차 사유가 3회차로
+    assert "배경 어두움" not in g.calls[2]["prompt"]  # 낡은 사유는 갈아탄다
+
+
 def test_series_reject_does_not_leave_orphan_r2_object(monkeypatch):
     """D축 재생성 분기는 **R2 저장 전에** 일어나야 한다.
 

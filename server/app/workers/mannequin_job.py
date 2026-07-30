@@ -468,7 +468,10 @@ async def _run_candidate(
     # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
     model = resolve_model(s, s.mannequin_tier)
     feedback = ""
-    best_reject: tuple | None = None  # (res, p2) — 예산 소진 시 구제할 최선 reject 후보
+    # 예산 소진 시 구제할 최선 reject 후보: (res, merged_scores, series, p2).
+    # 두 번째는 **항상 merge_qc_scores 결과** — 저장 shape 이 계약(QcScores)을 벗어나지 않게.
+    # 네 번째(p2 원본)는 이벤트 outcome 계산과 correctionPrompt 재사용에만 쓴다.
+    best_reject: tuple | None = None
     profile_hash = _canonical_profile_hash(fit_profile)
     for attempt in range(1, s.mannequin_max_attempts + 1):
         prompt = f"{feedback}\n\n{base_prompt}" if feedback else base_prompt
