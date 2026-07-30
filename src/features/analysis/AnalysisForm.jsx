@@ -437,9 +437,16 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   // 체형 = 베이스 마네킹 선택(가슴·힙 볼륨). fitProfile 밖의 독립 필드 — 프롬프트에 안 들어간다.
   // 여성 타깃일 때만 값이 존재하고, 그 외엔 null 이라 행 자체가 렌더되지 않는다.
   const body = normalizeMannequinBody(a.mannequinBody, genderOf(a.targetGenders));
-  const setBody = (axis, value) => onChange({
-    mannequinBody: { ...normalizeMannequinBody(a.mannequinBody, 'women'), [axis]: value },
-  });
+  const setBody = (axis, value) => {
+    // 체형 축은 항상 3단계 중 하나가 채워진 상태 — Chips 는 재클릭 시 null 로 토글하지만
+    // (ui.jsx:136) 여기선 그걸 그대로 반영하면 안 된다: null 이 저장됐다가 다음 렌더에서
+    // normalizeMannequinBody 가 '보통'으로 되돌리는 화면 점프 + 불필요한 PATCH가 생긴다
+    // (Minor-3). 재클릭은 무시하고 이전 값을 유지한다.
+    if (!value) return;
+    onChange({
+      mannequinBody: { ...normalizeMannequinBody(a.mannequinBody, 'women'), [axis]: value },
+    });
+  };
   // 남성 타깃으로 바뀌면 체형 값을 떨군다 — fitProfile 의 성별 변경 축 리셋과 같은 방어.
   const withGenderScope = (patch) => (
     genderOf('targetGenders' in patch ? patch.targetGenders : a.targetGenders) === 'women'

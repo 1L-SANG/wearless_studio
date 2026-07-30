@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import app.repo as repo
 from app.agents.fit_axes import (
     FIT_AXES,
@@ -654,13 +656,16 @@ def test_prompt_golden_top_women_slim_long():
     assert prompt == golden
 
 
-def test_untuck_instruction_survives_undeclared_length_axis():
+@pytest.mark.parametrize("f", [None, "prompts/mannequin_generate_v1.ko.txt"])
+def test_untuck_instruction_survives_undeclared_length_axis(f):
     # 회귀: untuck 강제가 length 축 선언 시에만 걸리면, fit 축만 채우는 AnalysisForm 경로의
     # 모든 잡이 tuck 허용 분기로 빠져 주상품 상의가 하의 안에 넣어진다(2026-07-29).
+    # 영문(f=None)·한국어(ko.txt) 두 템플릿 모두에서 검증 — prod가 어느 쪽을 가리키든
+    # (MANNEQUIN_PROMPT_FILE) 이 수정이 보호돼야 한다(Minor-1).
     from app.agents.prompts import load_prompt_template, render_mannequin_prompt
     from app.agents import mannequin as m
     from conftest import make_settings
-    template = load_prompt_template(make_settings())
+    template = load_prompt_template(make_settings(mannequin_prompt_file=f))
     profile = {"category": "top", "gender": "women", "source": "seller",
                "axes": {"fit": "regular"}, "version": 1}  # length 미선언 — 실사용 기본 경로
     ctx = m.prompt_context(
@@ -671,7 +676,13 @@ def test_untuck_instruction_survives_undeclared_length_axis():
         template, ctx,
         product={"name": "테스트 반팔 티셔츠", "clothing_type": "top"},
         analysis={"clothingType": "top", "targetGenders": ["women"]})
-    assert "ALWAYS keep it untucked" in prompt
-    assert "never tuck it into the matching bottom" in prompt
-    # 조건부 분기가 남아 있으면 실패시킨다
-    assert "otherwise use appropriate layering, tuck, and proportion" not in prompt
+    if f is None:
+        assert "ALWAYS keep it untucked" in prompt
+        assert "never tuck it into the matching bottom" in prompt
+        # 조건부 분기가 남아 있으면 실패시킨다
+        assert "otherwise use appropriate layering, tuck, and proportion" not in prompt
+    else:
+        assert "절대 하의 안에 넣지 말고" in prompt
+        assert "하의에 가려지지 않는다" in prompt
+        # 조건부 분기가 남아 있으면 실패시킨다
+        assert "적절한 레이어링·턱·비율" not in prompt
