@@ -325,6 +325,8 @@ def validate(raw: dict) -> dict:
     style_tags = [t for t in (raw.get("styleTags") or []) if is_style_tag(t)]
     name = _sanitize(raw.get("suggestedName"))
     clothing_type = raw.get("clothingType") if _in(raw.get("clothingType"), CLOTHING_TYPES) else None
+    if clothing_type == "dress":
+        genders = ["women"]
     # cross-field: subCategory 는 clothingType 그룹 안에서만 유효 (top+slacks 환각 조합 차단).
     # 종류 미상(None)이면 어떤 subCategory 도 검증 불가 → 드롭.
     allowed_subs = SUBCATEGORY_BY_TYPE.get(clothing_type, frozenset()) if clothing_type else frozenset()

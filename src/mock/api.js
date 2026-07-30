@@ -18,6 +18,7 @@ import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
+import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -87,7 +88,12 @@ export const api = {
     if ('selectedMannequinId' in patch) syncSelectedCut(patch.selectedMannequinId);
     if ('fitProfile' in patch) DB.analysis.fitProfile = clone(patch.fitProfile);
     // 사진 양 변경 시, 사용자가 콘티를 손대기 전이면 기본 콘티를 새 모드로 재구성 (PRD §7.7)
-    if (modeChanged && !DB.storyboardDirty) DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors);
+    if (modeChanged && !DB.storyboardDirty) {
+      DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors, {
+        clothingType: DB.product.clothingType,
+        targetGenders: DB.analysis.targetGenders,
+      });
+    }
     return clone(DB.project);
   },
 
@@ -136,6 +142,9 @@ export const api = {
   async saveProduct(_projectId, patch) {
     await wait(200);
     Object.assign(DB.product, patch);
+    if (DB.product.clothingType === 'dress') {
+      DB.analysis.targetGenders = ['women'];
+    }
     if (patch.name != null) { DB.project.title = patch.name; touch(); }
     return clone(DB.product);
   },
@@ -164,6 +173,10 @@ export const api = {
     // 클라 스냅샷이 갱신된 후보 목록을 되살리는 레이스 차단 (stale save 방어).
     const { matchClothing: matchPatch, ...rest } = patch;
     Object.assign(DB.analysis, rest);
+    DB.analysis.targetGenders = normalizeTargetGendersForClothingType(
+      DB.product.clothingType,
+      DB.analysis.targetGenders,
+    );
     if ('fitProfile' in rest) DB.project.fitProfile = clone(rest.fitProfile);
     if (shouldRefreshMatchClothing(patch)) {
       DB.analysis.matchClothing = recommendLegacyMatchClothing({

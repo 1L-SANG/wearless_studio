@@ -319,6 +319,25 @@ def test_worn_gender_null_is_rejected(tmp_path, cut_type):
     assert any("gender는 착용컷에서 women|men" in item for item in caught.value.violations)
 
 
+def test_men_dress_generation_example_is_rejected(tmp_path):
+    manifest_path, root, manifest = _fixture(tmp_path)
+    example = manifest["examples"][0]
+    example.update({
+        "serviceGroupKey": "styling:men:dress:full:daily",
+        "gender": "men",
+        "sourceClothingType": "dress",
+        "applicableClothingTypes": ["dress"],
+    })
+
+    with pytest.raises(release.ReleaseValidationError) as caught:
+        release.validate_manifest(manifest, root, manifest_path=manifest_path)
+
+    assert any(
+        "남성 원피스 생성예시는 지원하지 않습니다" in item
+        for item in caught.value.violations
+    )
+
+
 def test_image_extension_must_match_actual_format(tmp_path):
     manifest_path, root, manifest = _fixture(tmp_path)
     example = manifest["examples"][0]

@@ -22,7 +22,9 @@
   - 서버 canonicalize: enum 검증, exampleId 없으면 null 강제. **exampleId를 지우는 모든 기존 경로(레시피 정규화·섹션 이동 등)에서 origin·thumb도 동반 정리**(고아 값 금지).
 - **기본 콘티 지문(fingerprint) 규칙**: `origin='auto'`인 exampleId는 기본값으로 간주(지문 제외), `'user'`만 사용자 수정으로 취급 — 자동 배정만으로 "수정된 콘티"로 오판돼 사진 양 전환 재시드가 막히는 것 방지. mock의 storyboardDirty도 동일 규칙(자동 배정 저장은 dirty 아님).
 - 선택창의 임시 상태(pendingCutType·후보 목록·저장 중·오류)는 화면 로컬 — 블록·스토어에 저장하지 않음.
-- 구조 필드(sectionId·sectionLayout·layoutRowId·spaceGroupId·배열 순서)는 자동 배정이 절대 변경하지 않음.
+- 구조 필드(sectionId·sectionLayout·layoutRowId·배열 순서)는 자동 배정이 절대
+  변경하지 않는다. `spaceGroupId`는 발행된 정식 촬영 세트를 선택하거나 기본
+  콘티가 정식 세트를 시드할 때만 별도 세트 로직이 만든다.
 
 ## 3. 자동 배정 알고리즘
 
@@ -33,7 +35,7 @@ eligible(block, product, gender):
   && cutType == block.cutType && shot == block.shot   # 최초 배정 시점 기준
   && product.clothingType ∈ applicableClothingTypes
   && (제품컷 ? example.gender == null : example.gender == 분석 성별)
-  && (block.spaceGroupId ? pose variant 발행 && 방향 호환 : true)   # 같은 공간=pose 강제 계약
+  && (정식 촬영 세트 멤버 ? pose variant 발행 && 방향 호환 : true)
 ```
 
 **배정**(결정적 — 같은 입력이면 항상 같은 결과):
@@ -81,7 +83,8 @@ eligible(block, product, gender):
 - 사용자 보호: 4가지 행위 각각 origin='user' / 재클릭 해제 경로 부재 / 이후 자동 배정 제외
 - 지문: auto 배정만 있는 콘티 = 기본 콘티 판정(사진 양 전환 재시드 정상) / user 선택 있으면 수정 판정 / mock storyboardDirty 동등 규칙
 - 샷·컷 전환: 샷 변경 예시 유지(기존 null 경로 2곳 제거 회귀 테스트) / 컷 전환 원자성·중간 상태 부재 / 저장 실패 시 원상 유지
-- 같은 공간: pose+방향 호환 후보만 배정 / 0이면 미배정+명시 표시 / 무음 all 강등 금지
+- 정식 촬영 세트: pose+방향 호환 후보만 배정 / 0이면 미배정+명시 표시 /
+  무음 all 강등 금지 / 임의·미등록 group ID 거부
 - 커버리지: 선언 조합 0장 hard fail / 미선언 리포트·UI 비활성 / CI 커버리지·parity
 - 서버 저장 검증: 미존재·부적용·컷 불일치 거부, 방향·샷 차이 허용, 원자 PUT
 - 오류 표시: 카탈로그/썸네일/저장 실패 각각 오류+재시도, 'AI 자동 포즈' 문구 전무(grep)

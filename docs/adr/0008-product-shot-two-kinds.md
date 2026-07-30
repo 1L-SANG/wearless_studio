@@ -13,8 +13,8 @@
 
 기본 콘티의 제품 확인 시드는 다음과 같다.
 
-- 기본형: `ghost(front)` + Detail 입력이 있으면 `detail`, 없으면 `ghost(back)` — 전체 12컷 유지
-- 확장형: `ghost(front)` + `ghost(back)` + Detail 입력이 있으면 `detail` — 기존 컷 수 유지
+- 기본형: `ghost(front)` + Detail 입력이 있으면 `detail`, 없으면 `ghost(back)` — 정식 3컷 촬영 세트를 포함해 전체 13컷
+- 확장형: `ghost(front)` + `ghost(back)` + Detail 입력이 있으면 `detail` — 색상 수에 따라 전체 14~33컷
 
 생성예시 선택판에서는 기존 ghost·flatlay 후보와 선택을 하나의 고스트샷 묶음으로 합친다. 원본 표현 방식은 후보별 `presentationMethod`로 보존한다. 합칠 때는 선택을 먼저 모두 복원하고, 최종화 단계에서 일반 묶음 최대 6장 규칙을 적용하되 제외 대상과 이유를 기록한다.
 

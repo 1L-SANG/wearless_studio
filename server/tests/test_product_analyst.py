@@ -73,6 +73,17 @@ def test_validate_cross_field_subcategory_group():
     assert pa.validate({"clothingType": "hat", "subCategory": "knit"})["subCategory"] is None
 
 
+def test_validate_forces_dress_to_women():
+    assert pa.validate({
+        "clothingType": "dress",
+        "targetGenders": ["men"],
+    })["targetGenders"] == ["women"]
+    assert pa.validate({
+        "clothingType": "dress",
+        "targetGenders": [],
+    })["targetGenders"] == ["women"]
+
+
 def test_validate_never_includes_measurements():
     raw = {"clothingType": "top", "measurements": [{"key": "totalLength", "value": 70}]}
     v = pa.validate(raw)
@@ -198,6 +209,7 @@ def test_build_prompt_injects_enums_and_context():
     p = pa.build_prompt({"name": "소프트 니트", "clothing_type": "top"})
     assert "basic daily minimal casual formal classic sporty trendy" in p
     assert "소프트 니트" in p
+    assert 'targetGenders MUST be exactly ["women"]' in p
     assert "${styleTags}" not in p  # 토큰 전부 치환됨
     assert "${clothingTypes}" not in p
 

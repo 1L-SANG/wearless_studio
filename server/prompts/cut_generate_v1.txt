@@ -174,5 +174,17 @@ Mirror-cut exception: a blank phone proxy in POSE CONTROL determines only the ph
 
 [[SPACE]]SPACE CONTINUITY: this cut belongs to a set shot in ONE location. Keep the lighting,
 background elements and color temperature consistent with a single coherent space
-(variation level: ${spaceVariation} — "subtle" means nearly the same camera setup, "varied"
-allows a different pose and framing within the same space).
+(variation level: ${spaceVariation} — "fixed" keeps a consistent studio setup, "subtle" allows
+nearby camera movement with a different pose and framing inside the same space).
+
+[[SPACE_SET_PLATE]]PUBLISHED SPACE-SET LOCATION — HARD REQUIREMENTS:
+- The attached image labeled SPACE SET PLATE is the authoritative representative view of the
+  ONE real location shared by this set. The output must be recognizably another photograph made
+  inside that same place, not a generic place of the same type.
+- Preserve the location's distinctive architecture, wall/floor/ground materials, furniture and
+  fixtures, plants, spatial layout and depth, weather, light direction and color temperature.
+- This plate is a location anchor, not a pixel-identical edit canvas. The requested CUT SPEC and
+  POSE CONTROL may move the model and camera, change viewing direction and use an independent
+  full or medium framing, provided the result remains physically coherent within the same space.
+- Match the person's perspective, scale, ground contact, cast/contact shadows and reflected light
+  to this camera position and illumination so the result reads as one real photograph.

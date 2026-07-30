@@ -217,7 +217,11 @@ async def main() -> int:
             user_id = await _owner(worker.pool, pid)
             async with worker.pool.connection() as conn:
                 analysis = await repo.get_analysis(conn, pid) or {}
-            gender = mannequin.select_base_gender(analysis)
+                product = await repo.get_product(conn, pid) or {}
+            gender = mannequin.select_base_gender(
+                analysis,
+                product.get("clothing_type") or product.get("clothingType"),
+            )
             base_key = BASE_KEY[gender]
             base_bytes = await asyncio.to_thread(r2.get_bytes, base_key)
             src_key = await _src_key(worker.pool, pid)

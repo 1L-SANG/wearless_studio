@@ -128,7 +128,9 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         "refAssetIds": [str(a) for a in (raw.get("refAssetIds") or raw.get("ref_asset_ids") or [])][:3],
         "exampleId": _sanitize(raw.get("exampleId") or raw.get("example_id") or "") or None,
         "spaceGroupId": _sanitize(raw.get("spaceGroupId") or raw.get("space_group_id") or "") or None,
-        "spaceVariation": variation if variation in ("subtle", "varied") else "subtle",
+        "spaceVariation": variation
+        if variation in ("fixed", "subtle")
+        else "subtle",
         "outerClosureState": closure,
         "modelId": _sanitize(raw.get("modelId") or raw.get("model_id") or "") or None,
         # 레퍼런스 범위 (ADR-0009) — 'pose'면 예시에서 자세만 따르고, 프레이밍은 현재
@@ -136,12 +138,15 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         "refScope": (raw.get("refScope") or raw.get("ref_scope")) if (raw.get("refScope") or raw.get("ref_scope")) in ("all", "pose", "bg") else "all",
         # 워커가 실제 첨부 자산을 고른 뒤 붙이는 런타임 전용 정보. 저장 계약에는 포함하지 않는다.
         "_detailColorTransfer": _normalize_detail_color_transfer(raw.get("_detailColorTransfer")),
+        # 런타임 공간세트 레지스트리만 주입한다. horizon-sequence 중 plate가 없는 세트는
+        # UI 묶음은 유지하되 한 장소 연속성 프롬프트를 켜지 않는다.
+        "_spaceSetContinuity": raw.get("_spaceSetContinuity") is not False,
     }
     # 제품컷은 '배경만/포즈만'이 성립하지 않는다(사람·포즈 없음) — 예시는 통째 참조만 허용.
     if cut == "product" and spec["refScope"] != "all":
         spec["refScope"] = "all"
-    # 같은 장소 세트 안의 예시는 '포즈 예시' 강등이 계약(2026-07) — 배경은 세트 연속성([[SPACE]])이
-    # 담당하므로, refScope 없는 레거시 저장분·우회 클라이언트도 서버에서 'pose'로 강제한다.
+    # 정식 촬영 세트 안의 예시는 '포즈 예시' 강등이 계약(2026-07) — 배경은 세트
+    # 연속성([[SPACE]])이 담당하므로 입력 refScope와 무관하게 서버에서 'pose'로 강제한다.
     # (배경만도 마찬가지 — 세트의 배경 기준과 충돌하므로 포즈로 강등)
     if spec["spaceGroupId"] and spec["exampleId"]:
         spec["refScope"] = "pose"
@@ -546,8 +551,10 @@ def render_cut_prompt(
         if scope_line not in example_line:
             example_line = "\n".join(part for part in (example_line, scope_line) if part)
     space_line = ""
-    if spec.get("spaceGroupId"):
+    if spec.get("spaceGroupId") and spec.get("_spaceSetContinuity", True):
         space_line = need("SPACE").replace("${spaceVariation}", spec["spaceVariation"])
+        if _SPACE_SET_PLATE_LABEL in image_manifest:
+            space_line = "\n".join((space_line, need("SPACE_SET_PLATE")))
     outer_closure_line = ""
     if _is_outer(clothing_type) and cut in _WORN_CUTS:
         closure = spec.get("outerClosureState")
@@ -716,13 +723,14 @@ _FACE_LABEL = ("MODEL FACE — the licensed model's face reference: reproduce TH
 _EXAMPLE_ALL_LABEL = "EXAMPLE REFERENCE (scope: all)"
 _EXAMPLE_POSE_LABEL = "POSE CONTROL"
 _EXAMPLE_BG_LABEL = "EXAMPLE REFERENCE (scope: bg)"
+_SPACE_SET_PLATE_LABEL = "SPACE SET PLATE"
 
 
 def build_manifest(
     prod_assets: list[dict], *, has_mannequin: bool, has_match: bool,
     mood_count: int, has_model_face: bool = False, has_model_sheet: bool = False,
     has_face: bool = False, example_scope: str | None = None,
-    example_is_product: bool = False,
+    example_is_product: bool = False, has_space_set_plate: bool = False,
 ) -> str:
     """첨부 이미지와 동일 순서의 역할 목록.
 
@@ -754,6 +762,14 @@ def build_manifest(
     for _ in range(mood_count):
         lines.append(f"{i}. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)")
         i += 1
+    if has_space_set_plate:
+        lines.append(
+            f"{i}. {_SPACE_SET_PLATE_LABEL} — representative view of the ONE shared real "
+            "location for this set; preserve its recognizable architecture, materials, spatial "
+            "layout, light direction and color temperature while allowing the requested camera "
+            "view and crop"
+        )
+        i += 1
     if example_scope == "all" and example_is_product:
         lines.append(
             f"{i}. {_EXAMPLE_ALL_LABEL} — source of background, lighting, mood, framing and "
@@ -765,11 +781,19 @@ def build_manifest(
             "framing/composition; never copy its garments, shoes, accessories or model identity"
         )
     elif example_scope == "pose":
-        lines.append(
-            f"{i}. {_EXAMPLE_POSE_LABEL} — transparent neutral mannequin used ONLY as a kinematic "
-            "control; PRODUCT and MATCHING remain the only clothing evidence; CUT SPEC controls "
-            "camera, crop, placement and background"
-        )
+        if has_space_set_plate:
+            lines.append(
+                f"{i}. {_EXAMPLE_POSE_LABEL} — transparent neutral mannequin used ONLY as a "
+                "kinematic control; PRODUCT and MATCHING remain the only clothing evidence; "
+                "CUT SPEC controls camera, crop and model placement, while SPACE SET PLATE "
+                "exclusively controls the location and background"
+            )
+        else:
+            lines.append(
+                f"{i}. {_EXAMPLE_POSE_LABEL} — transparent neutral mannequin used ONLY as a "
+                "kinematic control; PRODUCT and MATCHING remain the only clothing evidence; "
+                "CUT SPEC controls camera, crop, placement and background"
+            )
     elif example_scope == "bg":
         # 스파이크(2026-07-12): 자산은 인물을 지운 '빈 무대 플레이트' — 포즈·의류 유출을 구조적으로 차단
         # 라벨은 명령형 + 첫 첨부(2026-07-20 파일럿): 서술형 라벨·마지막 첨부는 컷 섹션의 배경
@@ -796,7 +820,11 @@ def build_prompt(
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
     # pose-only medium은 v2 QC 결론대로 먼저 full 프레이밍으로 생성하고 generate()가
     # 결정적 body-landmark crop을 적용한다. all/bg 및 비-pose 경로는 기존 프롬프트 그대로다.
-    if spec["refScope"] == "pose" and spec["shot"] == "medium":
+    if (
+        spec["refScope"] == "pose"
+        and spec["shot"] == "medium"
+        and not spec.get("spaceGroupId")
+    ):
         spec = {**spec, "shot": "full"}
     if manifest is None:
         if spec["cutType"] == "product" and spec["shot"] == "detail":
@@ -832,7 +860,11 @@ async def generate(
     model = resolve_model(settings, "image_high")
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
-    crop_pose_medium = spec["refScope"] == "pose" and spec["shot"] == "medium"
+    crop_pose_medium = (
+        spec["refScope"] == "pose"
+        and spec["shot"] == "medium"
+        and not spec.get("spaceGroupId")
+    )
     prompt = build_prompt(cut_spec, product, analysis=analysis, manifest=manifest, has_face=has_face)
     res = await gemini.generate_content_image(
         model, prompt, images, settings.mannequin_image_size,

@@ -107,7 +107,7 @@ async def main() -> int:
     user_id = row["u"]
     clothing_type = row["ct"] or "top"
     analysis = (arow or {}).get("payload") or {}
-    gender = mannequin.select_base_gender(analysis)
+    gender = mannequin.select_base_gender(analysis, clothing_type)
     cat = clothing_type if clothing_type in _FIT_CATS else "top"
     baseline_fit_profile = analysis.get("fitProfile")  # replicate 리셋 복원용
     try:
