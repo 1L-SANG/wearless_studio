@@ -25,7 +25,10 @@ import { Placeholder as P } from '../../mock/placeholders.js';
 import { ensureSections } from '../sections.js';
 import { exampleSelectionFingerprintFields } from '../generationExamples.js';
 import { genderForClothingType } from '../productGender.js';
-import { spaceSetGroupId, storyboardSpaceSetsFor } from '../storyboardSpaceSetCatalog.js';
+import {
+  distinctPlaceStylingSetsFor,
+  spaceSetGroupId,
+} from '../storyboardSpaceSetCatalog.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
@@ -53,11 +56,14 @@ export function defaultStoryboard(colors, mode = 'basic', product = {}) {
     product.clothingType,
     product.targetGenders,
   );
-  const stylingSet = storyboardSpaceSetsFor({
+  const stylingSets = distinctPlaceStylingSetsFor({
     gender,
     clothingType: product.clothingType || 'top',
-  }).find((set) => set.setType === 'styling');
-  const shootingSet = (colorId) => {
+  });
+  const shootingSet = (colorId, rotationIndex = 0) => {
+    const stylingSet = stylingSets.length
+      ? stylingSets[rotationIndex % stylingSets.length]
+      : null;
     if (!stylingSet) return [];
     const groupId = spaceSetGroupId(stylingSet.id, uid('sg'));
     return stylingSet.members.map((member) => sb(
@@ -85,7 +91,7 @@ export function defaultStoryboard(colors, mode = 'basic', product = {}) {
   if (mode === 'extended') {
     list.slice(0, 4).forEach((color, colorIndex) => {
       blocks.push(
-        ...shootingSet(color.id),
+        ...shootingSet(color.id, colorIndex),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', color.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),

@@ -43,8 +43,8 @@
         }
       ],
       "name": "01. 보태니컬 리조트",
-      "place": "botanical-resort",
-      "placeType": "botanical-resort",
+      "place": "resort-terrace",
+      "placeType": "resort-terrace",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-botanical-attrangs-160835-root01.png"
@@ -91,8 +91,8 @@
         }
       ],
       "name": "02. 도심 담쟁이 골목",
-      "place": "city-ivy-facade",
-      "placeType": "city-ivy-facade",
+      "place": "urban-building-exterior",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-city-ivy-modimood-2928-root02.png"
@@ -139,8 +139,8 @@
         }
       ],
       "name": "03. 카페 정원 입구",
-      "place": "cafe-garden-entrance",
-      "placeType": "cafe-garden-entrance",
+      "place": "park-garden",
+      "placeType": "park-garden",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-cafe-garden-attrangs-160544-root03.png"
@@ -187,8 +187,8 @@
         }
       ],
       "name": "04. 생활형 주택 골목",
-      "place": "residential-neighborhood-garage",
-      "placeType": "residential-neighborhood-garage",
+      "place": "urban-alley",
+      "placeType": "urban-alley",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-neighborhood-garage-modimood-3266-root04.png"
@@ -235,8 +235,8 @@
         }
       ],
       "name": "05. 작은 해변·항구",
-      "place": "05. 작은 해변·항구",
-      "placeType": "05. 작은 해변·항구",
+      "place": "waterfront",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-coast-beach-hotping-48001-root05.png"
@@ -283,8 +283,8 @@
         }
       ],
       "name": "06. 밝은 생활형 집·거실",
-      "place": "bright-lived-in-home",
-      "placeType": "bright-lived-in-home",
+      "place": "home-interior",
+      "placeType": "home-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-home-living-musinsa-6570399-root06.png"
@@ -331,8 +331,8 @@
         }
       ],
       "name": "07. 야간 강변 산책로",
-      "place": "night-riverwalk",
-      "placeType": "night-riverwalk",
+      "place": "waterfront",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-night-riverwalk-maybins-40948-root07.png"
@@ -379,8 +379,8 @@
         }
       ],
       "name": "01 · Attrangs 170129 · 따뜻한 실내 작업실 기존 PASS 보존",
-      "place": "indoor",
-      "placeType": "indoor",
+      "place": "atelier-interior",
+      "placeType": "atelier-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_indoor_attrangs_170129_prod01.png"
@@ -427,8 +427,8 @@
         }
       ],
       "name": "02 · Slowand 10690 · 햇빛 강한 시장 골목 기존 PASS 보존",
-      "place": "outdoor",
-      "placeType": "outdoor",
+      "place": "storefront-street",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_outdoor_slowand_10690_prod01.png"
@@ -475,8 +475,8 @@
         }
       ],
       "name": "03 · Common Unique 26096 · 밝은 렌털 아틀리에 기존 PASS 보존",
-      "place": "indoor",
-      "placeType": "indoor",
+      "place": "atelier-interior",
+      "placeType": "atelier-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_outer_indoor_commonunique_26096_prod01.png"
@@ -523,8 +523,8 @@
         }
       ],
       "name": "04 · Attrangs 170103 · 작은 카페·상점 독립 검수 PASS",
-      "place": "mixed-cafe",
-      "placeType": "mixed-cafe",
+      "place": "storefront-street",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_cafe_attrangs_170103_prod02.png"
@@ -571,8 +571,8 @@
         }
       ],
       "name": "05 · Hotping 48041 · 중성색 집 안 독립 검수 PASS",
-      "place": "indoor-home",
-      "placeType": "indoor-home",
+      "place": "home-interior",
+      "placeType": "home-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_home_hotping_48041_prod02.png"
@@ -619,8 +619,8 @@
         }
       ],
       "name": "06 · Cream Cheese 26667 · 회색 도심 외벽 독립 검수 PASS",
-      "place": "outdoor-urban",
-      "placeType": "outdoor-urban",
+      "place": "urban-building-exterior",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_urban_creamcheese_26667_prod02.png"
@@ -667,8 +667,8 @@
         }
       ],
       "name": "07 · Lowclassic 6495851 · 조용한 서점 앞 독립 검수 PASS",
-      "place": "outdoor-storefront",
-      "placeType": "outdoor-storefront",
+      "place": "storefront-street",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_outer_storefront_lowclassic_6495851_prod02.png"
@@ -715,8 +715,8 @@
         }
       ],
       "name": "08 · Realcoco 161014511 · 잔디 공원 독립 검수 PASS",
-      "place": "outdoor-park",
-      "placeType": "outdoor-park",
+      "place": "park-garden",
+      "placeType": "park-garden",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_park_realcoco_161014511_prod02.png"
@@ -763,8 +763,8 @@
         }
       ],
       "name": "09 · Sinoon 6575707 · 해안 산책로 독립 검수 PASS",
-      "place": "outdoor-coast",
-      "placeType": "outdoor-coast",
+      "place": "waterfront",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_coast_sinoon_6575707_prod02.png"
@@ -859,8 +859,8 @@
         }
       ],
       "name": "11 · Beidelli 5067 · 동네 편의점·버스정류장 독립 검수 PASS",
-      "place": "outdoor-convenience",
-      "placeType": "outdoor-convenience",
+      "place": "storefront-street",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_convenience_beidelli_5067_prod03.png"
@@ -907,8 +907,8 @@
         }
       ],
       "name": "13 · Nearwear 12582 · 비 젖은 코인세탁소 안뜰 독립 검수 PASS",
-      "place": "outdoor-rainy-courtyard",
-      "placeType": "outdoor-rainy-courtyard",
+      "place": "industrial-yard",
+      "placeType": "industrial-yard",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_outer_rainy_courtyard_nearwear_12582_prod03.png"
@@ -955,8 +955,8 @@
         }
       ],
       "name": "14 · Beidelli 3920 · 지하 주차장 로딩존 독립 검수 PASS",
-      "place": "indoor-loading-zone",
-      "placeType": "indoor-loading-zone",
+      "place": "industrial-yard",
+      "placeType": "industrial-yard",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_outer_loadingzone_beidelli_3920_prod03.png"
@@ -1003,8 +1003,8 @@
         }
       ],
       "name": "도심 골목의 자연스러운 거리 스냅",
-      "place": "street",
-      "placeType": "street",
+      "place": "urban-alley",
+      "placeType": "urban-alley",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-01-women-bottom-street-slowand-10666.png"
@@ -1051,8 +1051,8 @@
         }
       ],
       "name": "밝은 실내의 편안한 원피스 스냅",
-      "place": "bright-interior",
-      "placeType": "bright-interior",
+      "place": "building-interior",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-03-women-dress-bright-interior-hotping-47530.png"
@@ -1099,8 +1099,8 @@
         }
       ],
       "name": "창가 생활공간의 부드러운 자연광",
-      "place": "home/living",
-      "placeType": "home/living",
+      "place": "home-interior",
+      "placeType": "home-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-01-women-bottom-home-undervi-22793.png"
@@ -1147,8 +1147,8 @@
         }
       ],
       "name": "동네 상점 앞의 편안한 거리 스냅",
-      "place": "street",
-      "placeType": "street",
+      "place": "urban-building-exterior",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-04-women-bottom-street-slowand-10563.png"
@@ -1195,8 +1195,8 @@
         }
       ],
       "name": "오래된 소형 건물 복도의 창가 스냅",
-      "place": "building-corridor",
-      "placeType": "building-corridor",
+      "place": "building-interior",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-06-women-bottom-corridor-musinsa-6495795.png"
@@ -1243,8 +1243,8 @@
         }
       ],
       "name": "흐린 날 강변 산책로의 나들이 스냅",
-      "place": "riverside-promenade",
-      "placeType": "riverside-promenade",
+      "place": "waterfront",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-07-women-bottom-riverside-bbibbongunni-22538.png"
@@ -1291,8 +1291,8 @@
         }
       ],
       "name": "동네 공공도서관 열람 코너의 독서 스냅",
-      "place": "neighborhood-public-library",
-      "placeType": "neighborhood-public-library",
+      "place": "library-interior",
+      "placeType": "library-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-08-women-bottom-library-musinsa-6661117.png"
@@ -1339,8 +1339,8 @@
         }
       ],
       "name": "01 · 동네 카운터",
-      "place": "indoor",
-      "placeType": "indoor",
+      "place": "cafe-shop-interior",
+      "placeType": "cafe-shop-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-01-men-top-indoor-retro-counter-byslim-28625.png"
@@ -1387,8 +1387,8 @@
         }
       ],
       "name": "02 · 콘크리트 알코브",
-      "place": "indoor",
-      "placeType": "indoor",
+      "place": "building-interior",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-02-men-top-indoor-concrete-byslim-28635.png"
@@ -1435,8 +1435,8 @@
         }
       ],
       "name": "03 · 햇빛 드는 정원길",
-      "place": "street-outdoor",
-      "placeType": "street-outdoor",
+      "place": "park-garden",
+      "placeType": "park-garden",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-03-men-outer-outdoor-garden-byslim-28570.png"
@@ -1483,8 +1483,8 @@
         }
       ],
       "name": "04 · 창가 원룸",
-      "place": "indoor",
-      "placeType": "indoor",
+      "place": "home-interior",
+      "placeType": "home-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-04-men-top-indoor-window-room-anotheroffice-1881.png"
@@ -1531,8 +1531,8 @@
         }
       ],
       "name": "05 · 낮의 회색 외벽",
-      "place": "urban-outdoor",
-      "placeType": "urban-outdoor",
+      "place": "urban-building-exterior",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-05-men-common-outdoor-grey-wall-lockerroom-23701.png"
@@ -1579,8 +1579,8 @@
         }
       ],
       "name": "06 · 조용한 보도·골목",
-      "place": "urban-outdoor",
-      "placeType": "urban-outdoor",
+      "place": "urban-alley",
+      "placeType": "urban-alley",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-06-men-common-outdoor-quiet-alley-jogunshop-32115.png"
@@ -1627,8 +1627,8 @@
         }
       ],
       "name": "07 · 작은 카페·생활매장",
-      "place": "indoor",
-      "placeType": "indoor",
+      "place": "cafe-shop-interior",
+      "placeType": "cafe-shop-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-07-men-top-indoor-small-shop-upnormal-7126.png"
@@ -1675,8 +1675,8 @@
         }
       ],
       "name": "08 · 바다·항구·방파제",
-      "place": "coast-outdoor",
-      "placeType": "coast-outdoor",
+      "place": "waterfront",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-08-men-top-outdoor-coast-ordercloset-2396.png"
@@ -1723,8 +1723,8 @@
         }
       ],
       "name": "09 · 리조트 풀 테라스",
-      "place": "resort-outdoor",
-      "placeType": "resort-outdoor",
+      "place": "resort-terrace",
+      "placeType": "resort-terrace",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-09-men-outer-outdoor-resort-upnormal-7100.png"
@@ -1771,8 +1771,8 @@
         }
       ],
       "name": "10 · 계단·건물 통로",
-      "place": "indoor",
-      "placeType": "indoor",
+      "place": "building-interior",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-10-men-outer-indoor-passage-lockerroom-23651.png"
@@ -1819,8 +1819,8 @@
         }
       ],
       "name": "11 · 주민센터 외부 계단",
-      "place": "outdoor",
-      "placeType": "outdoor",
+      "place": "urban-building-exterior",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-11-men-outer-outdoor-community-steps-gopeople-7214.png"
@@ -1867,8 +1867,8 @@
         }
       ],
       "name": "12 · 동네 헌책방 독서 코너",
-      "place": "indoor",
-      "placeType": "indoor",
+      "place": "library-interior",
+      "placeType": "library-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-12-men-common-indoor-reading-corner-gopeople-7896.png"
@@ -1915,8 +1915,8 @@
         }
       ],
       "name": "14 · 심야 동네 세탁실",
-      "place": "indoor",
-      "placeType": "indoor",
+      "place": "service-interior",
+      "placeType": "service-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-14-men-top-indoor-late-night-laundromat-lookple-8966.png"
@@ -1963,8 +1963,8 @@
         }
       ],
       "name": "01 · 실내",
-      "place": "indoor",
-      "placeType": "indoor",
+      "place": "building-interior",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-01-indoor.png"
@@ -2011,8 +2011,8 @@
         }
       ],
       "name": "02 · 거리",
-      "place": "street",
-      "placeType": "street",
+      "place": "urban-alley",
+      "placeType": "urban-alley",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-02-street.png"
@@ -2059,8 +2059,8 @@
         }
       ],
       "name": "03 · 리조트",
-      "place": "resort",
-      "placeType": "resort",
+      "place": "resort-terrace",
+      "placeType": "resort-terrace",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-03-resort.png"
@@ -2107,8 +2107,8 @@
         }
       ],
       "name": "04 · 중성 거실·원룸",
-      "place": "living",
-      "placeType": "living",
+      "place": "home-interior",
+      "placeType": "home-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-04-living.png"
@@ -2155,8 +2155,8 @@
         }
       ],
       "name": "05 · 카페·소형 매장",
-      "place": "cafe",
-      "placeType": "cafe",
+      "place": "cafe-shop-interior",
+      "placeType": "cafe-shop-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-05-cafe.png"
@@ -2203,8 +2203,8 @@
         }
       ],
       "name": "08 · 공원·수목 산책길",
-      "place": "park",
-      "placeType": "park",
+      "place": "park-garden",
+      "placeType": "park-garden",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-08-park.png"
@@ -2251,8 +2251,8 @@
         }
       ],
       "name": "09 · 바다·해안 보도",
-      "place": "coast",
-      "placeType": "coast",
+      "place": "waterfront",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-09-coast.png"
@@ -2299,8 +2299,8 @@
         }
       ],
       "name": "10 · 저녁 도심·상점 앞",
-      "place": "night",
-      "placeType": "night",
+      "place": "storefront-street",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-10-night.png"
@@ -2347,8 +2347,8 @@
         }
       ],
       "name": "13 · 생활체육관 계단",
-      "place": "sports-center",
-      "placeType": "sports-center",
+      "place": "service-interior",
+      "placeType": "service-interior",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-13-sports-center.png"
@@ -2395,8 +2395,8 @@
         }
       ],
       "name": "14 · 셀프 세차장",
-      "place": "car-wash",
-      "placeType": "car-wash",
+      "place": "industrial-yard",
+      "placeType": "industrial-yard",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-14-car-wash.png"
@@ -2443,8 +2443,8 @@
         }
       ],
       "name": "A2 · 여성 하의 회전 세트",
-      "place": "A2 · 여성 하의 회전 세트",
-      "placeType": "A2 · 여성 하의 회전 세트",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_horizon_women_bottom_threetimes_7563033280596_prod01.png"
@@ -2491,8 +2491,8 @@
         }
       ],
       "name": "A3 · 남성 하의 회전 세트",
-      "place": "A3 · 남성 하의 회전 세트",
-      "placeType": "A3 · 남성 하의 회전 세트",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_horizon_men_bottom_hatchingroom_2161_prod01.png"
@@ -2557,8 +2557,8 @@
         }
       ],
       "name": "D1 · 여성 스카프형 아우터",
-      "place": "D1 · 여성 스카프형 아우터",
-      "placeType": "D1 · 여성 스카프형 아우터",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
       "platePolicy": "not-required",
       "representativePlate": null,
       "setId": "horizon-set-01-women-scarf-outer",
@@ -2612,8 +2612,8 @@
         }
       ],
       "name": "D2 · 여성 유동감 팬츠",
-      "place": "D2 · 여성 유동감 팬츠",
-      "placeType": "D2 · 여성 유동감 팬츠",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
       "platePolicy": "not-required",
       "representativePlate": null,
       "setId": "horizon-set-02-women-fluid-trousers",
@@ -2676,8 +2676,8 @@
         }
       ],
       "name": "D3 · 남성 톤온톤 아우터",
-      "place": "D3 · 남성 톤온톤 아우터",
-      "placeType": "D3 · 남성 톤온톤 아우터",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
       "platePolicy": "not-required",
       "representativePlate": null,
       "setId": "horizon-set-03-men-tonal-outer",
@@ -2740,8 +2740,8 @@
         }
       ],
       "name": "D4 · 남성 치노 팬츠 집중",
-      "place": "D4 · 남성 치노 팬츠 집중",
-      "placeType": "D4 · 남성 치노 팬츠 집중",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
       "platePolicy": "not-required",
       "representativePlate": null,
       "setId": "horizon-set-04-men-chino-focus",

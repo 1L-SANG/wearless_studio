@@ -1,4 +1,5 @@
 import spaceSetRelease from '../data/storyboardSpaceSets.json' with { type: 'json' };
+import placeTypeTable from '../../data/storyboard_space_place_types.json' with { type: 'json' };
 
 const ALL_CLOTHING_TYPES = Object.freeze(['top', 'bottom', 'outer', 'dress']);
 const SET_TYPES = new Set(['styling', 'horizon-rotation', 'horizon-sequence']);
@@ -10,6 +11,14 @@ const RELEASE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
 const EXAMPLE_ID = /^ss_[A-Za-z0-9_-]{1,197}$/;
 const GROUP_PREFIX = 'ssg1__';
 const GROUP_INSTANCE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
+
+export const STORYBOARD_SPACE_PLACE_TYPES = Object.freeze(
+  placeTypeTable.placeTypes.map((item) => Object.freeze({
+    value: item.value,
+    label: item.label,
+  })),
+);
+const PLACE_TYPES = new Set(STORYBOARD_SPACE_PLACE_TYPES.map((item) => item.value));
 
 const text = (value, fallback = '') => (
   typeof value === 'string' && value.trim() ? value.trim() : fallback
@@ -54,6 +63,7 @@ function normalizedSet(set, index) {
   const id = text(set.setId);
   const setType = set.setType;
   const clothingTypes = set.applicableClothingTypes;
+  const placeType = typeof set.placeType === 'string' ? set.placeType : '';
   if (
     !validReleaseId(id)
     || !SET_TYPES.has(setType)
@@ -66,7 +76,8 @@ function normalizedSet(set, index) {
     || !SPACE_VARIATIONS.has(set.spaceVariation)
     || !PLATE_POLICIES.has(set.platePolicy)
     || !text(set.name)
-    || !text(set.placeType)
+    || !PLACE_TYPES.has(placeType)
+    || (set.place !== undefined && set.place !== placeType)
     || !text(set.tone)
     || !text(set.compositionLabel)
     || !Array.isArray(set.members)
@@ -119,8 +130,8 @@ function normalizedSet(set, index) {
     setType,
     gender: set.gender,
     applicableClothingTypes: Object.freeze([...clothingTypes]),
-    place: text(set.placeType),
-    placeType: text(set.placeType),
+    place: placeType,
+    placeType,
     tone: text(set.tone),
     compositionLabel: text(set.compositionLabel),
     spaceVariation: set.spaceVariation,
@@ -191,6 +202,15 @@ export function storyboardSpaceSetsFor({ gender = null, clothingType = null } = 
   return STORYBOARD_SPACE_SETS.filter((set) => isStoryboardSpaceSetEligible(set, {
     gender, clothingType,
   }));
+}
+
+export function distinctPlaceStylingSetsFor({ gender = null, clothingType = null } = {}) {
+  const seenPlaceTypes = new Set();
+  return storyboardSpaceSetsFor({ gender, clothingType }).filter((set) => {
+    if (set.setType !== 'styling' || seenPlaceTypes.has(set.placeType)) return false;
+    seenPlaceTypes.add(set.placeType);
+    return true;
+  });
 }
 
 export function withStoryboardSpaceSetExamples(catalogs) {

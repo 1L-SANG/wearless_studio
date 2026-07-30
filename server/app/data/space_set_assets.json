@@ -76,7 +76,7 @@
         }
       ],
       "name": "01. 보태니컬 리조트",
-      "placeType": "botanical-resort",
+      "placeType": "resort-terrace",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -162,7 +162,7 @@
         }
       ],
       "name": "02. 도심 담쟁이 골목",
-      "placeType": "city-ivy-facade",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -248,7 +248,7 @@
         }
       ],
       "name": "03. 카페 정원 입구",
-      "placeType": "cafe-garden-entrance",
+      "placeType": "park-garden",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -334,7 +334,7 @@
         }
       ],
       "name": "04. 생활형 주택 골목",
-      "placeType": "residential-neighborhood-garage",
+      "placeType": "urban-alley",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -420,7 +420,7 @@
         }
       ],
       "name": "05. 작은 해변·항구",
-      "placeType": "05. 작은 해변·항구",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1350,
@@ -506,7 +506,7 @@
         }
       ],
       "name": "06. 밝은 생활형 집·거실",
-      "placeType": "bright-lived-in-home",
+      "placeType": "home-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1350,
@@ -592,7 +592,7 @@
         }
       ],
       "name": "07. 야간 강변 산책로",
-      "placeType": "night-riverwalk",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -678,7 +678,7 @@
         }
       ],
       "name": "01 · Attrangs 170129 · 따뜻한 실내 작업실 기존 PASS 보존",
-      "placeType": "indoor",
+      "placeType": "atelier-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1609,
@@ -764,7 +764,7 @@
         }
       ],
       "name": "02 · Slowand 10690 · 햇빛 강한 시장 골목 기존 PASS 보존",
-      "placeType": "outdoor",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1581,
@@ -850,7 +850,7 @@
         }
       ],
       "name": "03 · Common Unique 26096 · 밝은 렌털 아틀리에 기존 PASS 보존",
-      "placeType": "indoor",
+      "placeType": "atelier-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1559,
@@ -936,7 +936,7 @@
         }
       ],
       "name": "04 · Attrangs 170103 · 작은 카페·상점 독립 검수 PASS",
-      "placeType": "mixed-cafe",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -1022,7 +1022,7 @@
         }
       ],
       "name": "05 · Hotping 48041 · 중성색 집 안 독립 검수 PASS",
-      "placeType": "indoor-home",
+      "placeType": "home-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1849,
@@ -1108,7 +1108,7 @@
         }
       ],
       "name": "06 · Cream Cheese 26667 · 회색 도심 외벽 독립 검수 PASS",
-      "placeType": "outdoor-urban",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1536,
@@ -1194,7 +1194,7 @@
         }
       ],
       "name": "07 · Lowclassic 6495851 · 조용한 서점 앞 독립 검수 PASS",
-      "placeType": "outdoor-storefront",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1774,
@@ -1280,7 +1280,7 @@
         }
       ],
       "name": "08 · Realcoco 161014511 · 잔디 공원 독립 검수 PASS",
-      "placeType": "outdoor-park",
+      "placeType": "park-garden",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -1366,7 +1366,7 @@
         }
       ],
       "name": "09 · Sinoon 6575707 · 해안 산책로 독립 검수 PASS",
-      "placeType": "outdoor-coast",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1822,
@@ -1538,7 +1538,7 @@
         }
       ],
       "name": "11 · Beidelli 5067 · 동네 편의점·버스정류장 독립 검수 PASS",
-      "placeType": "outdoor-convenience",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1825,
@@ -1624,7 +1624,7 @@
         }
       ],
       "name": "13 · Nearwear 12582 · 비 젖은 코인세탁소 안뜰 독립 검수 PASS",
-      "placeType": "outdoor-rainy-courtyard",
+      "placeType": "industrial-yard",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -1710,7 +1710,7 @@
         }
       ],
       "name": "14 · Beidelli 3920 · 지하 주차장 로딩존 독립 검수 PASS",
-      "placeType": "indoor-loading-zone",
+      "placeType": "industrial-yard",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1402,
@@ -1796,7 +1796,7 @@
         }
       ],
       "name": "도심 골목의 자연스러운 거리 스냅",
-      "placeType": "street",
+      "placeType": "urban-alley",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -1882,7 +1882,7 @@
         }
       ],
       "name": "밝은 실내의 편안한 원피스 스냅",
-      "placeType": "bright-interior",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1481,
@@ -1968,7 +1968,7 @@
         }
       ],
       "name": "창가 생활공간의 부드러운 자연광",
-      "placeType": "home/living",
+      "placeType": "home-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1536,
@@ -2054,7 +2054,7 @@
         }
       ],
       "name": "동네 상점 앞의 편안한 거리 스냅",
-      "placeType": "street",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1536,
@@ -2140,7 +2140,7 @@
         }
       ],
       "name": "오래된 소형 건물 복도의 창가 스냅",
-      "placeType": "building-corridor",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -2226,7 +2226,7 @@
         }
       ],
       "name": "흐린 날 강변 산책로의 나들이 스냅",
-      "placeType": "riverside-promenade",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -2312,7 +2312,7 @@
         }
       ],
       "name": "동네 공공도서관 열람 코너의 독서 스냅",
-      "placeType": "neighborhood-public-library",
+      "placeType": "library-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -2398,7 +2398,7 @@
         }
       ],
       "name": "01 · 동네 카운터",
-      "placeType": "indoor",
+      "placeType": "cafe-shop-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -2484,7 +2484,7 @@
         }
       ],
       "name": "02 · 콘크리트 알코브",
-      "placeType": "indoor",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -2570,7 +2570,7 @@
         }
       ],
       "name": "03 · 햇빛 드는 정원길",
-      "placeType": "street-outdoor",
+      "placeType": "park-garden",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -2656,7 +2656,7 @@
         }
       ],
       "name": "04 · 창가 원룸",
-      "placeType": "indoor",
+      "placeType": "home-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -2742,7 +2742,7 @@
         }
       ],
       "name": "05 · 낮의 회색 외벽",
-      "placeType": "urban-outdoor",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -2828,7 +2828,7 @@
         }
       ],
       "name": "06 · 조용한 보도·골목",
-      "placeType": "urban-outdoor",
+      "placeType": "urban-alley",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -2914,7 +2914,7 @@
         }
       ],
       "name": "07 · 작은 카페·생활매장",
-      "placeType": "indoor",
+      "placeType": "cafe-shop-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -3000,7 +3000,7 @@
         }
       ],
       "name": "08 · 바다·항구·방파제",
-      "placeType": "coast-outdoor",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -3086,7 +3086,7 @@
         }
       ],
       "name": "09 · 리조트 풀 테라스",
-      "placeType": "resort-outdoor",
+      "placeType": "resort-terrace",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -3172,7 +3172,7 @@
         }
       ],
       "name": "10 · 계단·건물 통로",
-      "placeType": "indoor",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -3258,7 +3258,7 @@
         }
       ],
       "name": "11 · 주민센터 외부 계단",
-      "placeType": "outdoor",
+      "placeType": "urban-building-exterior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -3344,7 +3344,7 @@
         }
       ],
       "name": "12 · 동네 헌책방 독서 코너",
-      "placeType": "indoor",
+      "placeType": "library-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -3430,7 +3430,7 @@
         }
       ],
       "name": "14 · 심야 동네 세탁실",
-      "placeType": "indoor",
+      "placeType": "service-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -3516,7 +3516,7 @@
         }
       ],
       "name": "01 · 실내",
-      "placeType": "indoor",
+      "placeType": "building-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1536,
@@ -3602,7 +3602,7 @@
         }
       ],
       "name": "02 · 거리",
-      "placeType": "street",
+      "placeType": "urban-alley",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1536,
@@ -3688,7 +3688,7 @@
         }
       ],
       "name": "03 · 리조트",
-      "placeType": "resort",
+      "placeType": "resort-terrace",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1536,
@@ -3774,7 +3774,7 @@
         }
       ],
       "name": "04 · 중성 거실·원룸",
-      "placeType": "living",
+      "placeType": "home-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -3860,7 +3860,7 @@
         }
       ],
       "name": "05 · 카페·소형 매장",
-      "placeType": "cafe",
+      "placeType": "cafe-shop-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -3946,7 +3946,7 @@
         }
       ],
       "name": "08 · 공원·수목 산책길",
-      "placeType": "park",
+      "placeType": "park-garden",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1402,
@@ -4032,7 +4032,7 @@
         }
       ],
       "name": "09 · 바다·해안 보도",
-      "placeType": "coast",
+      "placeType": "waterfront",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1200,
@@ -4118,7 +4118,7 @@
         }
       ],
       "name": "10 · 저녁 도심·상점 앞",
-      "placeType": "night",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1254,
@@ -4204,7 +4204,7 @@
         }
       ],
       "name": "13 · 생활체육관 계단",
-      "placeType": "sports-center",
+      "placeType": "service-interior",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1536,
@@ -4290,7 +4290,7 @@
         }
       ],
       "name": "14 · 셀프 세차장",
-      "placeType": "car-wash",
+      "placeType": "industrial-yard",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1844,
@@ -4376,7 +4376,7 @@
         }
       ],
       "name": "A2 · 여성 하의 회전 세트",
-      "placeType": "A2 · 여성 하의 회전 세트",
+      "placeType": "horizon-studio",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -4462,7 +4462,7 @@
         }
       ],
       "name": "A3 · 남성 하의 회전 세트",
-      "placeType": "A3 · 남성 하의 회전 세트",
+      "placeType": "horizon-studio",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1448,
@@ -4590,7 +4590,7 @@
         }
       ],
       "name": "D1 · 여성 스카프형 아우터",
-      "placeType": "D1 · 여성 스카프형 아우터",
+      "placeType": "horizon-studio",
       "platePolicy": "not-required",
       "representativePlate": null,
       "setId": "horizon-set-01-women-scarf-outer",
@@ -4691,7 +4691,7 @@
         }
       ],
       "name": "D2 · 여성 유동감 팬츠",
-      "placeType": "D2 · 여성 유동감 팬츠",
+      "placeType": "horizon-studio",
       "platePolicy": "not-required",
       "representativePlate": null,
       "setId": "horizon-set-02-women-fluid-trousers",
@@ -4813,7 +4813,7 @@
         }
       ],
       "name": "D3 · 남성 톤온톤 아우터",
-      "placeType": "D3 · 남성 톤온톤 아우터",
+      "placeType": "horizon-studio",
       "platePolicy": "not-required",
       "representativePlate": null,
       "setId": "horizon-set-03-men-tonal-outer",
@@ -4935,7 +4935,7 @@
         }
       ],
       "name": "D4 · 남성 치노 팬츠 집중",
-      "placeType": "D4 · 남성 치노 팬츠 집중",
+      "placeType": "horizon-studio",
       "platePolicy": "not-required",
       "representativePlate": null,
       "setId": "horizon-set-04-men-chino-focus",

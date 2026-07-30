@@ -38,6 +38,22 @@ _CUT_TYPES = ("styling", "horizon", "mirror")
 _SET_TYPES = ("styling", "horizon-rotation", "horizon-sequence")
 _SHOTS = ("full", "medium")
 _DIRECTIONS = ("front", "side", "back")
+_PLACE_TYPES = frozenset({
+    "home-interior",
+    "cafe-shop-interior",
+    "atelier-interior",
+    "library-interior",
+    "building-interior",
+    "service-interior",
+    "industrial-yard",
+    "urban-alley",
+    "storefront-street",
+    "urban-building-exterior",
+    "park-garden",
+    "waterfront",
+    "resort-terrace",
+    "horizon-studio",
+})
 
 log = logging.getLogger("wearless.space_set_assets")
 
@@ -186,6 +202,9 @@ def validate_space_set_registry_document(
         set_type = raw_set.get("setType")
         if set_type not in _SET_TYPES:
             raise ValueError("space_set_registry_set_type_invalid")
+        place_type = raw_set.get("placeType")
+        if place_type not in _PLACE_TYPES:
+            raise ValueError("space_set_registry_place_type_invalid")
         plate_policy = raw_set.get("platePolicy")
         if plate_policy not in ("required", "not-required"):
             raise ValueError("space_set_registry_plate_policy_invalid")
@@ -282,6 +301,7 @@ def validate_space_set_registry_document(
             "setType": set_type,
             "gender": gender,
             "applicableClothingTypes": list(applicable),
+            "placeType": place_type,
             "spaceVariation": space_variation,
             "platePolicy": plate_policy,
             "representativePlate": representative_plate,

@@ -111,7 +111,7 @@ def _fixture(
             "setType": set_type,
             "gender": "women",
             "applicableClothingTypes": ["top"],
-            "placeType": "cafe",
+            "placeType": "cafe-shop-interior",
             "tone": "daily-snapshot",
             "compositionLabel": "테스트 구성",
             "spaceVariation": "subtle",
@@ -203,8 +203,24 @@ def test_valid_manifest_stages_dedicated_catalog_registry_and_deterministic_thum
     space_set_assets.load_space_set_registry.cache_clear()
     base_url, loaded = space_set_assets.load_space_set_registry()
     assert base_url == PUBLIC_BASE
+    assert loaded[set_id]["placeType"] == "cafe-shop-interior"
     assert loaded[set_id]["members"][0]["exampleId"] == example_id
     space_set_assets.load_space_set_registry.cache_clear()
+
+
+def test_runtime_registry_rejects_noncanonical_place_type(tmp_path):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    registry = json.loads(result.server_registry_path.read_text(encoding="utf-8"))
+    registry["sets"][0]["placeType"] = "indoor"
+
+    with pytest.raises(ValueError, match="space_set_registry_place_type_invalid"):
+        space_set_assets.validate_space_set_registry_document(registry)
 
 
 @pytest.mark.parametrize(
@@ -231,6 +247,45 @@ def test_set_and_example_ids_share_backend_safe_grammar(
         release.validate_manifest(manifest, root)
 
     assert any(f".{field}" in item for item in caught.value.violations)
+
+
+@pytest.mark.parametrize(
+    "place_type",
+    ["indoor", "05. 작은 해변·항구", "A2 · 여성 하의 회전 세트", " cafe-shop-interior "],
+)
+def test_manifest_rejects_noncanonical_place_type(tmp_path, place_type):
+    _path, root, manifest = _fixture(tmp_path)
+    manifest["sets"][0]["placeType"] = place_type
+
+    with pytest.raises(release.SpaceSetReleaseValidationError) as caught:
+        release.validate_manifest(manifest, root)
+
+    assert any(".placeType" in item for item in caught.value.violations)
+
+
+def test_committed_catalogs_share_the_canonical_place_vocabulary():
+    place_table = json.loads(release.PLACE_TYPES_PATH.read_text(encoding="utf-8"))
+    allowed = {item["value"] for item in place_table["placeTypes"]}
+    frontend = json.loads(
+        release.DEFAULT_FRONTEND_CATALOG_PATH.read_text(encoding="utf-8")
+    )
+    registry = json.loads(
+        release.DEFAULT_SERVER_REGISTRY_PATH.read_text(encoding="utf-8")
+    )
+    front_by_id = {item["setId"]: item for item in frontend["sets"]}
+    server_by_id = {item["setId"]: item for item in registry["sets"]}
+
+    assert allowed == release._PLACE_TYPES == space_set_assets._PLACE_TYPES
+    assert front_by_id.keys() == server_by_id.keys()
+    assert all(item["placeType"] in allowed for item in front_by_id.values())
+    assert all(
+        item["place"] == item["placeType"]
+        for item in front_by_id.values()
+    )
+    assert all(
+        front_by_id[set_id]["placeType"] == server_by_id[set_id]["placeType"]
+        for set_id in front_by_id
+    )
 
 
 def test_flat_id_source_is_union_of_frontend_catalog_and_server_registry(tmp_path):

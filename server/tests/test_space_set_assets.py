@@ -41,6 +41,7 @@ def space_registry(tmp_path, monkeypatch):
             {
                 "setId": "women_top_cafe_01",
                 "setType": "styling",
+                "placeType": "cafe-shop-interior",
                 "gender": "women",
                 "applicableClothingTypes": ["top"],
                 "spaceVariation": "subtle",
@@ -583,6 +584,7 @@ def test_horizon_sequence_may_publish_without_representative_plate(
             {
                 "setId": "horizon-sequence-01",
                 "setType": "horizon-sequence",
+                "placeType": "horizon-studio",
                 "gender": "women",
                 "applicableClothingTypes": ["top"],
                 "spaceVariation": "fixed",

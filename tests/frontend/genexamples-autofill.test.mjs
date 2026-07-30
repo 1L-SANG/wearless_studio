@@ -14,6 +14,7 @@ import {
 import {
   spaceSetGroupId,
   spaceSetIdFromGroupId,
+  storyboardSpaceSetById,
   storyboardSpaceSetsFor,
 } from '../../src/lib/storyboardSpaceSetCatalog.js';
 
@@ -336,10 +337,19 @@ test('every supported gender and clothing category seeds a published three-cut s
       && item.refScope === 'pose'
       && item.exampleId
     )));
+    const extended = defaultStoryboard(fourColorsWithDetail, 'extended', context);
+    assert.equal(extended.length, 33, `${gender}/${clothingType} extended`);
+    const groupIds = [...new Set(
+      extended.filter((item) => item.spaceGroupId).map((item) => item.spaceGroupId),
+    )];
+    const placeTypes = groupIds.map((groupId) => (
+      storyboardSpaceSetById(spaceSetIdFromGroupId(groupId)).placeType
+    ));
+    assert.equal(groupIds.length, 4, `${gender}/${clothingType} extended set count`);
     assert.equal(
-      defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
-      33,
-      `${gender}/${clothingType} extended`,
+      new Set(placeTypes).size,
+      placeTypes.length,
+      `${gender}/${clothingType} repeated place type`,
     );
   }
 });
