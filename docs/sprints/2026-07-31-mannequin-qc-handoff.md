@@ -1,7 +1,7 @@
 # 마네킹컷 QC 고도화 — 인수 리포트 (2026-07-31)
 
 브랜치 `feat/refimages-ab-eval` · 정본 플랜 `.omc/plans/2026-07-30-mannequin-qc-scoring-consistency.md`
-테스트 **1027 passed / 97 skipped** (베이스라인 913) · 프론트 **75 passed** · **prod 무접촉**
+테스트 **1030 passed / 97 skipped** (베이스라인 913) · 프론트 **75 passed** · **prod 무접촉**
 
 ---
 
@@ -134,8 +134,35 @@ text/logo·색·형태 붕괴 **전부 0건**이다. 갓 생성한 16장(레터�
 | 등급 | — | auto_pass 6 · needs_review 2 |
 
 n=8 단독으로는 확정적이지 않다(수정 전 비율이 유지된다면 0건이 나올 확률 ≈ 11%). 다만 같은
-방향의 짝 비교 증거가 따로 있다 — 핏 깨짐 v1 7/10 → v3 0/10(§6.6.2). 둘을 합치면 근거가
-선다. 계속 쌓을 것.
+방향의 짝 비교 증거가 따로 있다 — 핏 깨짐 v1 7/10 → v3 0/10(§6.6.2).
+
+**그리고 계속 쌓아보길 잘했다 — 17건에서 1건이 나왔고, 원인은 전혀 다른 것이었다.**
+
+### 3.2 내가 넣은 치명오류가 핏 조정 기능을 망가뜨리고 있었다
+
+누적 17건 중 1건에 `garment fit changed from oversized to tight crop` 이 붙어 regenerate 가
+됐다. 이벤트로 귀속해보니 **2패스가 아니라 생성 자체**였다 — 첫 판정(편집 전)부터 이미 붙었고
+재생성 3회가 전부 같은 결과였다.
+
+원인은 생성이 아니라 **판정**이었다. 이 상품의 `fitProfile` 은 셀러가 `fit: slim`·
+`length: crop` 으로 **의도적으로 조정한 것**이고, 생성은 선언대로 냈다. QC 는 그걸 모른 채
+상품 사진(오버사이즈)과 비교해 "핏이 바뀌었다"를 붙였다. 치명오류는 점수와 무관하게
+regenerate 이므로 **핏 조정 기능을 쓰는 상품마다 예산이 소진될 때까지 재생성**한다.
+
+판정기의 관찰은 정확했다 — *"오버사이즈 티가 슬림 크롭탑으로 바뀌었다"*. 틀린 건 판정이다.
+그게 요청된 것이라는 정보가 없었으니까.
+
+→ 선언 축을 관측 문구로 풀어 QC 에 전달하고, **핏만** 그 기준으로 판정하게 했다
+(`build_declared_fit_block`). 색·프린트·구조는 그대로 사진 기준이다.
+
+**인과 분리** (`scripts/verify_declared_fit_rule.py` — 같은 이미지, 규칙만 토글):
+
+| | fidelity | 핏 치명오류 |
+|---|---|---|
+| OFF(선언핏 미전달) | 55 | 1 |
+| ON (선언핏 전달) | **80** | **0** |
+
+이후 실 워커 8건에서 핏 치명오류 **0건**(top 3·outer 2·bottom 2·dress 1).
 
 ## 4. 임계 (실측 근거)
 
@@ -387,5 +414,7 @@ D축 비교 범위도 정정했다. 후보 비교에서 D 를 **항상** 뺐더�
 | `ab_lettering_prompt.py` | 생성 프롬프트 A/B |
 | `ab_bust_pass.py` | 가슴 2패스 손익 짝비교 (편익=blinded pairwise, 비용=4축) |
 | `qc_observe.py` | shadow 관측 리포트 (job_events 집계) |
+| `verify_declared_fit_rule.py` | 선언 핏 전달 규칙의 인과 효과 (같은 이미지·규칙만 토글) |
+| `verify_fit_fidelity_rule.py` | 채점 프롬프트 핏 항목의 인과 효과 |
 
 산출물은 `server/ab_out/` (gitignore). 종합 사진: `server/ab_out/QA_SUMMARY.jpg`
