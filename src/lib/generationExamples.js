@@ -42,24 +42,12 @@ function matchesProductAndGender(example, { clothingType, gender }) {
     && (example.cutType === 'product' ? example.gender == null : example.gender === gender);
 }
 
-export function selectGenerationExamples(catalog, {
-  cutType, shot, clothingType, gender, spaceGroupId = null, direction = null,
-}) {
-  if (!isGenerationCombinationPublic({ cutType, shot, clothingType, gender })) return [];
-  const matched = (catalog || []).filter((example) => (
-    isPublishedAll(example)
-    && example?.cutType === cutType
-    && example?.shot === shot
-    && matchesProductAndGender(example, { clothingType, gender })
-    && (!spaceGroupId || (
-      example.variants.includes('pose')
-      && poseExampleDirectionCompatible(example, { cutType, direction })
-    ))
-  ));
+function orderGenerationExamples(matched, { cutType, shot, limit = 6 }) {
+  const maxItems = Math.min(matched.length, limit);
   const mixAxis = cutType === 'styling' ? 'mood'
     : cutType === 'product' && shot === 'detail' ? 'detailSubject'
       : null;
-  if (!mixAxis) return [...matched].sort(byRankThenId).slice(0, 6);
+  if (!mixAxis) return [...matched].sort(byRankThenId).slice(0, maxItems);
 
   const buckets = new Map();
   for (const example of matched) {
@@ -71,18 +59,50 @@ export function selectGenerationExamples(catalog, {
     .sort(([left], [right]) => compareText(left, right))
     .map(([, examples]) => examples.sort(byRankThenId));
   const mixed = [];
-  for (let rankIndex = 0; mixed.length < 6; rankIndex += 1) {
+  for (let rankIndex = 0; mixed.length < maxItems; rankIndex += 1) {
     let added = false;
     for (const examples of orderedBuckets) {
       if (examples[rankIndex]) {
         mixed.push(examples[rankIndex]);
         added = true;
-        if (mixed.length === 6) break;
+        if (mixed.length === maxItems) break;
       }
     }
     if (!added) break;
   }
   return mixed;
+}
+
+export function selectGenerationExamples(catalog, {
+  cutType, shot, clothingType, gender, spaceGroupId = null, direction = null,
+  includeSetOnly = false, appendSetOnly = false,
+}) {
+  const flatCombinationPublished = isGenerationCombinationPublic({
+    cutType, shot, clothingType, gender,
+  });
+  if (!flatCombinationPublished && !includeSetOnly && !appendSetOnly) return [];
+  const matched = (catalog || []).filter((example) => (
+    (!example?.setOnly || includeSetOnly || appendSetOnly)
+    && (example?.setOnly || flatCombinationPublished)
+    &&
+    isPublishedAll(example)
+    && example?.cutType === cutType
+    && example?.shot === shot
+    && matchesProductAndGender(example, { clothingType, gender })
+    && (!spaceGroupId || (
+      example.variants.includes('pose')
+      && poseExampleDirectionCompatible(example, { cutType, direction })
+    ))
+  ));
+  if (appendSetOnly) {
+    const ordinary = matched.filter((example) => !example.setOnly);
+    const setMembers = matched.filter((example) => example.setOnly);
+    return [
+      ...orderGenerationExamples(ordinary, { cutType, shot }),
+      ...orderGenerationExamples(setMembers, { cutType, shot, limit: setMembers.length }),
+    ];
+  }
+  return orderGenerationExamples(matched, { cutType, shot });
 }
 
 function candidatesForBlock(block, catalog, product, gender) {

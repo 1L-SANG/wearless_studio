@@ -13,7 +13,15 @@ from io import BytesIO
 from PIL import Image
 
 from .. import facemarket, repo
-from ..agents import content_roles, cut_generator, cut_variator, identity_source, image_qc
+from ..agents import (
+    content_roles,
+    cut_generator,
+    cut_variator,
+    identity_source,
+    image_qc,
+    mannequin,
+    space_set_assets,
+)
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
@@ -175,7 +183,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                     await _fail("기준 색상 이미지를 찾을 수 없어요. 다시 시도해 주세요.",
                                 {"error": "no_base_color_images"})
                 return
-            # 컷 계약 필드 통과(ADR-0004) — mirror·얼굴·포즈·생성예시·공간그룹까지 서버 정규화에 맡긴다.
+            # 컷 계약 필드 통과(ADR-0004) — mirror·얼굴·포즈·생성예시까지 서버 정규화에 맡긴다.
+            # 촬영 세트는 콘티보드 전용이며 에디터의 독립 새 이미지에는 그룹을 전달하지 않는다.
             # 에디터 새 이미지 패널은 아직 매칭 의류를 고르는 UI·payload를 제공하지 않으므로
             # matchIds를 의도적으로 제외한다. 후속 배선 시에는 상세페이지와 같은 정책으로
             # styling·horizon·mirror에만 MATCHING을 첨부하고 product에는 적용하지 않는다.
@@ -183,7 +192,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             cut_spec = {
                 k: new_payload.get(k)
                 for k in ("contentRole", "cutType", "direction", "shot", "faceExposure", "pose",
-                          "outerClosureState", "exampleId", "spaceGroupId", "spaceVariation", "modelId", "model_id",
+                          "outerClosureState", "exampleId", "modelId", "model_id",
                           "colorId", "refScope")
             }
             if detail_color_transfer:
@@ -267,50 +276,79 @@ async def run_editor_image_job(app, job: dict) -> None:
             )
             if example_id and not pose_overrides_example:
                 scope = normalized["refScope"]
-                status = cut_generator.example_asset_status(
-                    example_id, clothing_type, scope)
-                if status in ("not_applicable", "variant_unpublished"):
-                    example_warnings.append({
-                        "code": "example_not_applicable"
-                        if status == "not_applicable" else "example_variant_unpublished",
-                        "exampleId": example_id,
-                        "clothingType": clothing_type,
-                        "refScope": scope,
-                    })
-                    # 미첨부 all 예시의 레거시 EXNUANCE까지 제거해 예시가 완전히 무효가 되게 한다.
-                    cut_spec["exampleId"] = None
-                elif scope == "pose" and not cut_generator.pose_direction_compatible(
-                    example_id, normalized
-                ):
-                    # 단건 에디터는 배치의 빈 슬롯 대신 명시적 실패로 닫는다. 이 지점은
-                    # 이미지 로드와 Gemini 호출보다 앞이라 불일치 조합의 생성 호출은 0회다.
-                    await _fail(
-                        "이 예시의 포즈 방향이 현재 컷 방향과 맞지 않아요. 다른 예시를 선택해 주세요.",
-                        {
-                            "error": "pose_direction_incompatible",
-                            "exampleId": example_id,
-                            "direction": normalized.get("direction"),
-                        },
-                    )
-                    return
-                else:
-                    example_image = await cut_generator.load_example_image(
-                        s, example_id, scope=scope, clothing_type=clothing_type)
-                    if example_image is None and scope in ("pose", "bg"):
-                        # 전용 자산 없이 pose/bg를 생성하면 "참고한 척"이 된다 — 무음 강등 금지
-                        # (2026-07-20 실측: 이 강등이 bg 실패의 실제 원인 일부였다. ADR-0009 §2)
-                        await _fail("예시 자산을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
-                                    {"error": "example_asset_unavailable",
-                                     "exampleId": example_id, "refScope": scope})
+                if example_id.startswith("ss_"):
+                    try:
+                        example_reference = (
+                            space_set_assets.resolve_published_example_reference(
+                                normalized,
+                                clothing_type=clothing_type,
+                                gender=mannequin.select_base_gender(
+                                    analysis, clothing_type
+                                ),
+                                scope=scope,
+                            )
+                        )
+                        example_image = await space_set_assets.load_space_set_image(
+                            s,
+                            example_reference["asset"],
+                            role="전체 예시" if scope == "all" else "포즈",
+                        )
+                    except space_set_assets.SpaceSetBindingError as exc:
+                        await _fail(
+                            exc.message,
+                            {
+                                "error": exc.code,
+                                "exampleId": example_id,
+                                "refScope": scope,
+                            },
+                        )
                         return
-                    if example_image is not None:
-                        # bg 플레이트는 시각 앵커가 약해 마지막 첨부로는 무시된다(2026-07-20
-                        # 파일럿 실측: 텍스트 강화만으로 2/7) — 첫 첨부로 올려 프라이머시를 준다.
-                        if scope == "bg":
-                            images.insert(0, example_image)
-                        else:
-                            images.append(example_image)
-                        example_scope = scope
+                else:
+                    status = cut_generator.example_asset_status(
+                        example_id, clothing_type, scope)
+                    if status in ("not_applicable", "variant_unpublished"):
+                        example_warnings.append({
+                            "code": "example_not_applicable"
+                            if status == "not_applicable" else "example_variant_unpublished",
+                            "exampleId": example_id,
+                            "clothingType": clothing_type,
+                            "refScope": scope,
+                        })
+                        # 미첨부 all 예시의 레거시 EXNUANCE까지 제거해 예시가 완전히 무효가 되게 한다.
+                        cut_spec["exampleId"] = None
+                        example_image = None
+                    elif scope == "pose" and not cut_generator.pose_direction_compatible(
+                        example_id, normalized
+                    ):
+                        # 단건 에디터는 배치의 빈 슬롯 대신 명시적 실패로 닫는다. 이 지점은
+                        # 이미지 로드와 Gemini 호출보다 앞이라 불일치 조합의 생성 호출은 0회다.
+                        await _fail(
+                            "이 예시의 포즈 방향이 현재 컷 방향과 맞지 않아요. 다른 예시를 선택해 주세요.",
+                            {
+                                "error": "pose_direction_incompatible",
+                                "exampleId": example_id,
+                                "direction": normalized.get("direction"),
+                            },
+                        )
+                        return
+                    else:
+                        example_image = await cut_generator.load_example_image(
+                            s, example_id, scope=scope, clothing_type=clothing_type)
+                        if example_image is None and scope in ("pose", "bg"):
+                            # 전용 자산 없이 pose/bg를 생성하면 "참고한 척"이 된다 — 무음 강등 금지
+                            # (2026-07-20 실측: 이 강등이 bg 실패의 실제 원인 일부였다. ADR-0009 §2)
+                            await _fail("예시 자산을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+                                        {"error": "example_asset_unavailable",
+                                         "exampleId": example_id, "refScope": scope})
+                            return
+                if example_image is not None:
+                    # bg 플레이트는 시각 앵커가 약해 마지막 첨부로는 무시된다(2026-07-20
+                    # 파일럿 실측: 텍스트 강화만으로 2/7) — 첫 첨부로 올려 프라이머시를 준다.
+                    if scope == "bg":
+                        images.insert(0, example_image)
+                    else:
+                        images.append(example_image)
+                    example_scope = scope
             await _emit(pool, job_id, "progress", {"progress": 20, "phase": "inputs_loaded"})
 
             manifest = cut_generator.build_manifest(

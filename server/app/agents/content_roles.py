@@ -99,14 +99,6 @@ def validate_storyboard_example_references(
         expected_gender = None if block.get("cutType") == "product" else gender
         if entry.get("gender") != expected_gender:
             return "example_gender_mismatch", "모델 조건에 맞지 않는 생성예시예요. 다른 예시를 골라주세요."
-        if block.get("spaceGroupId"):
-            if not entry.get("pose"):
-                return "example_pose_unavailable", "같은 공간 컷에는 포즈 자산이 있는 생성예시가 필요해요."
-            if block.get("cutType") != "mirror" and entry.get("direction") != block.get("direction"):
-                return (
-                    "example_pose_direction_mismatch",
-                    "같은 공간 컷의 방향과 생성예시 포즈 방향이 맞지 않아요.",
-                )
     return None
 
 

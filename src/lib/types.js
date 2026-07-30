@@ -29,8 +29,8 @@ export const ContentRole = Object.freeze({
 export const CutType = Object.freeze({ STYLING: 'styling', HORIZON: 'horizon', PRODUCT: 'product', MIRROR: 'mirror' });
 /** 블록 출처 — '내 이미지'는 컷 종류가 아니라 source다 (ADR-0003) */
 export const BlockSource = Object.freeze({ AI: 'ai', MINE: 'mine' });
-/** 공간 무드 유지 그룹의 변화 강도 — 'subtle'=같은 구도 미세 이동(기본), 'varied'=포즈·프레이밍 변주 (ADR-0004) */
-export const SpaceVariation = Object.freeze({ SUBTLE: 'subtle', VARIED: 'varied' });
+/** 촬영 세트의 공간 변화 — 'fixed'=고정 호리존, 'subtle'=같은 장소 안의 자연스러운 시점 이동 */
+export const SpaceVariation = Object.freeze({ FIXED: 'fixed', SUBTLE: 'subtle' });
 export const Direction = Object.freeze({ FRONT: 'front', BACK: 'back', SIDE: 'side' });
 export const ProductDirection = Object.freeze({ FRONT: 'front', BACK: 'back' });
 /** 착용 이미지 프레이밍 — 풀샷 또는 미디움샷. 제품 단독컷은 ProductShotType을 쓴다. */
@@ -199,8 +199,8 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string[]} refImages        내 레퍼런스 — 생성 입력(NewCutRequest)에 포함. 프로젝트(블록) 한정, 전역 저장 없음
    @property {string|null} [exampleId]   촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
    @property {'auto'|'user'|null} [exampleSelectionOrigin] 자동 배정/사용자 확정 출처. exampleId가 없으면 null
-   @property {string|null} [spaceGroupId] 공간 무드 유지 그룹 — 같은 id = 같은 공간에서 생성 (ADR-0004)
-   @property {SpaceVariation} [spaceVariation] 그룹 내 변화 강도 — 기본 'subtle'
+   @property {string|null} [spaceGroupId] 발행 촬영 세트 인스턴스 — `ssg1__<setId>__<instanceId>`
+   @property {SpaceVariation} [spaceVariation] 발행 세트의 공간 변화 강도
    @property {string[]} [ownImages]      source='mine'
    @property {string} thumb              예시 썸네일 (최종 이미지 아님)
    @property {string} [title]            contentRole에서 파생한 쉬운 표시명

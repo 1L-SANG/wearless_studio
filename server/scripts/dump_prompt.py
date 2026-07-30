@@ -241,7 +241,7 @@ def render_one(name: str, *, seller_canon: str | None = None, knowledge: str | N
     template = load_prompt_template(settings)
 
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "상의"
-    base_gender = mannequin.select_base_gender(analysis)
+    base_gender = mannequin.select_base_gender(analysis, clothing_type)
     manifest = _build_manifest(fx["slots"], fx["has_match"])
     product_count = len(fx["slots"]) + (1 if fx["has_match"] else 0)
 

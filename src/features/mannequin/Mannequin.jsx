@@ -16,6 +16,7 @@ import { CREDIT_COSTS } from '@/lib/limits.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { fitExampleImage } from '@/lib/fitExampleImages.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
+import { genderForClothingType } from '@/lib/productGender.js';
 import {
   matchingFitDefinition,
   matchingFitFromProfile,
@@ -45,13 +46,12 @@ const MATCH_SKIRT_NAME = '매칭 스커트 실루엣';
 const MATCH_SKIRT_QUESTION = '매칭 스커트의 실루엣도 조정할까요?';
 
 const cutImage = (cut) => cut?.imageUrl || cut?.src || '';
-const isMenOnly = (genders) => Array.isArray(genders) && genders.length > 0 && genders.every((g) => g === 'men');
 const validAxisValue = (values, value) => values.some((v) => v.value === value);
 const axisIsDone = (s) => s?.mode === 'keep' || s?.mode === 'picked';
 
 function derivedGender(analysis, product) {
   const genders = analysis?.targetGenders?.length ? analysis.targetGenders : product?.targetGenders;
-  return isMenOnly(genders) ? 'men' : 'women';
+  return genderForClothingType(product?.clothingType, genders);
 }
 
 function autoAxisValues(axisDefs, analysis) {

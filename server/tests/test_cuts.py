@@ -14,6 +14,8 @@ from app.agents import content_roles
 from app.agents import cut_generator as cut
 from conftest import make_settings
 
+_SPACE_GROUP_ID = "ssg1__test-set__instance-1"
+
 
 @pytest.fixture
 def dev_example_registry(tmp_path, monkeypatch):
@@ -329,30 +331,6 @@ def test_server_example_validation_rejects_id_applicability_cut_and_gender_but_a
         compatible, assets=assets, clothing_type="top", gender="women"
     ) is None
 
-    same_space = [{
-        "exampleId": "pose_front", "cutType": "styling", "shot": "medium",
-        "direction": "front", "spaceGroupId": "space-1",
-    }]
-    assert content_roles.validate_storyboard_example_references(
-        same_space, assets=assets, clothing_type="top", gender="women"
-    ) is None
-    no_pose_error = content_roles.validate_storyboard_example_references(
-        [{
-            "exampleId": "no_pose", "cutType": "styling", "direction": "front",
-            "spaceGroupId": "space-1",
-        }],
-        assets=assets, clothing_type="top", gender="women",
-    )
-    assert no_pose_error[0] == "example_pose_unavailable"
-    direction_error = content_roles.validate_storyboard_example_references(
-        [{
-            "exampleId": "pose_back", "cutType": "styling", "direction": "front",
-            "spaceGroupId": "space-1",
-        }],
-        assets=assets, clothing_type="top", gender="women",
-    )
-    assert direction_error[0] == "example_pose_direction_mismatch"
-
     cases = [
         ("missing", "styling", "unknown_example_id"),
         ("bottom", "styling", "example_not_applicable"),
@@ -542,7 +520,11 @@ def test_virtual_model_loader_resolves_c_pair_and_excludes_product(tmp_path, mon
 
 
 def test_normalize_space_variation_default_subtle():
-    spec = cut.normalize_spec({"cutType": "horizon", "spaceGroupId": "sg1", "spaceVariation": "weird"})
+    spec = cut.normalize_spec({
+        "cutType": "horizon",
+        "spaceGroupId": _SPACE_GROUP_ID,
+        "spaceVariation": "weird",
+    })
     assert spec["spaceVariation"] == "subtle"
 
 
@@ -594,22 +576,35 @@ def test_render_ref_scope_bg_uses_plate_and_blocks_pose_garment_transfer(dev_exa
 
 
 def test_normalize_ref_scope_in_space_forces_pose():
-    # 같은 장소 세트 + 예시 = '포즈 예시' 계약 — 레거시(refScope 부재)·'all' 저장분도 서버가 강제
-    legacy = cut.normalize_spec({"cutType": "styling", "spaceGroupId": "sg1", "exampleId": "ex_1"})
-    assert legacy["refScope"] == "pose"
-    explicit = cut.normalize_spec({"cutType": "styling", "spaceGroupId": "sg1", "exampleId": "ex_1", "refScope": "all"})
+    # 촬영 세트 + 예시 = '포즈 예시' 계약 — refScope 부재·'all' 입력도 서버가 강제
+    implicit = cut.normalize_spec({
+        "cutType": "styling",
+        "spaceGroupId": _SPACE_GROUP_ID,
+        "exampleId": "ex_1",
+    })
+    assert implicit["refScope"] == "pose"
+    explicit = cut.normalize_spec({
+        "cutType": "styling",
+        "spaceGroupId": _SPACE_GROUP_ID,
+        "exampleId": "ex_1",
+        "refScope": "all",
+    })
     assert explicit["refScope"] == "pose"
     # 예시가 없으면 강제 없음 — 배경 연속성([[SPACE]])만 작동
-    no_example = cut.normalize_spec({"cutType": "styling", "spaceGroupId": "sg1"})
+    no_example = cut.normalize_spec({
+        "cutType": "styling",
+        "spaceGroupId": _SPACE_GROUP_ID,
+    })
     assert no_example["refScope"] == "all"
 
 
 def test_render_named_pose_overrides_pose_scope_example():
-    # 포즈 직접 지정 + '포즈만' 예시 = 지시 충돌 → 예시 라인 전체 미적용 (레거시 in-space 포함)
+    # 포즈 직접 지정 + '포즈만' 예시 = 지시 충돌 → 예시 라인 전체 미적용
     template = cut.load_cut_template()
     spec = cut.normalize_spec({
         "cutType": "styling", "direction": "front", "exampleId": "ex_1",
-        "spaceGroupId": "sg1", "pose": "walk",   # in-space라 refScope는 'pose'로 강제됨
+        "spaceGroupId": _SPACE_GROUP_ID,
+        "pose": "walk",   # 촬영 세트 안이라 refScope는 'pose'로 강제됨
     })
     p = cut.render_cut_prompt(template, spec, product={}, analysis={}, clothing_type="top", image_manifest="x")
     assert "Composition nuance" not in p and "REFERENCE SCOPE" not in p
@@ -801,7 +796,7 @@ def test_unresolved_example_keeps_v0_nuance_only_fallback():
 def test_in_space_resolved_example_forces_pose_scope_prompt():
     spec = cut.normalize_spec({
         "cutType": "styling", "shot": "full", "exampleId": "ex_styling_top_full_1",
-        "spaceGroupId": "sg1", "refScope": "all",
+        "spaceGroupId": _SPACE_GROUP_ID, "refScope": "all",
     })
     manifest = cut.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=False,
@@ -954,7 +949,11 @@ def test_build_prompt_passes_product_category_to_outer_closure_normalization(cat
 
 
 def test_render_space_group_line_only_when_grouped():
-    grouped = _render({"cutType": "styling", "shot": "full", "spaceGroupId": "sg1"})
+    grouped = _render({
+        "cutType": "styling",
+        "shot": "full",
+        "spaceGroupId": _SPACE_GROUP_ID,
+    })
     solo = _render({"cutType": "styling", "shot": "full"})
     assert "SPACE CONTINUITY" in grouped and "subtle" in grouped
     assert "SPACE CONTINUITY" not in solo

@@ -380,6 +380,10 @@ def validate_manifest(
                 violations.append(f"{prefix}.applicableClothingTypes에 중복이 있습니다")
             if source_type not in applicable:
                 violations.append(f"{prefix}.applicableClothingTypes가 sourceClothingType을 포함해야 합니다")
+            if gender == "men" and "dress" in applicable:
+                violations.append(
+                    f"{prefix} 남성 원피스 생성예시는 지원하지 않습니다"
+                )
             if len(applicable) > 1 and not (
                 set(applicable) == {"top", "outer"}
                 and cut_type in {"styling", "horizon"}

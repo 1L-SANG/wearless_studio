@@ -84,7 +84,13 @@ done     project.status='done' · { data: EditorBlock[], credits }
 - **진행 표시**: HTTP 경로는 현재 `inputs_loaded → cuts → copy → done`의 수치 진행률만 전달한다. mock 체크리스트는 호환용 key(info/prep/styling/horizon/product/copy/assemble)를 유지하지만 화면 라벨은 `핵심 장점 이미지 생성 / 핏·코디 이미지 생성 / 제품 확인 이미지 생성`으로 보여준다. 내부 key 이름을 사용자 분류로 해석하지 않는다. HTTP의 단계 체크리스트 실배선은 TODO다.
 - **크레딧**: `storyboardPerCut × ai 블록 수` (내 이미지 제외 — 계약 §6). 컷 단위 실패는 해당 컷 미차감.
 - **부분 실패 정책**: 일부 컷만 실패하면 그 자리만 빈 슬롯으로 조립하고, 성공한 컷만 과금한다. AI 컷이 전부 실패하면 빈 상세페이지를 완료 처리하지 않고 `all_cuts_failed`로 작업을 실패시키며 예약 크레딧을 해제한다. 일부 실패 컷은 에디터 의류 탭에서 다시 만들 수 있다(PL-5).
-- **생성예시 레지스트리 v2**: `exampleId`의 현재 상품 종류가 `applicableClothingTypes`에 없거나 요청 `refScope` variant가 발행되지 않았으면 그 예시만 픽셀·텍스트 양쪽에서 생략하고 컷 생성은 계속한다. 생략 사유는 job 결과 metadata의 `warnings`에 남긴다. `spaceGroupId`가 있는 예시는 `pose`로 강제한다. 현재 레지스트리는 개발 합성 데이터이며 운영 manifest·R2 자산 적용은 2단계다.
+- **생성예시·촬영 세트 레지스트리**: `exampleId`의 현재 상품 종류가
+  `applicableClothingTypes`에 없거나 요청 `refScope` variant가 발행되지 않았으면
+  그 예시만 픽셀·텍스트 양쪽에서 생략하고 컷 생성은 계속한다. 생략 사유는 job
+  결과 metadata의 `warnings`에 남긴다. 발행된
+  `ssg1__<setId>__<instanceId>` 촬영 세트 안의 예시는 `pose`로 강제하고 대표
+  plate를 함께 사용한다. 임의 그룹 값은 거부한다. 현재 운영 R2에는 개별
+  생성예시와 `space-sets-20260730-v1` 촬영 세트가 발행돼 있다.
 - **멱등**: status='generating' 재호출 → 합류, status='done' 재호출 → 기존 결과 반환 (계약 §6).
 - [P1 훅] AG-P2 image-qc 게이트 (styling/horizon/product/mirror 각 AG-06 컷 출력 직후, correctionPrompt 주입 재시도; 상한 초과 실패 컷은 부분 실패 정책으로 빈 슬롯).
 

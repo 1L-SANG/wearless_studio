@@ -184,7 +184,10 @@ async def _load_inputs(s, conn, project: str, user: str, job: str | None):
             row = await cur.fetchone()
         job_payload = (row or {}).get("payload") or {}
 
-    gender = mannequin.select_base_gender(analysis)
+    gender = mannequin.select_base_gender(
+        analysis,
+        product.get("clothing_type") or product.get("clothingType"),
+    )
     # 1패스는 체형과 무관 — 현행 기본 베이스를 쓴다(반복분을 slim/volume 이 공유).
     base_id = (s.base_mannequin_men_asset_id if gender == "men"
                else s.base_mannequin_women_asset_id)

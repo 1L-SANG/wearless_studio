@@ -124,6 +124,47 @@ def test_match_candidates_shape_and_public_url(client, make_token, monkeypatch):
     assert body[0]["fitCategory"] == "pants"
 
 
+def test_dress_match_candidates_ignore_stale_men_query(
+    client, make_token, monkeypatch
+):
+    object.__setattr__(
+        client.app.state.settings,
+        "r2_public_base",
+        "https://img.example.com",
+    )
+    monkeypatch.setattr(routes, "_r2", lambda request: _FakeR2())
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_list(conn):
+        return [{
+            "id": "women-bottom",
+            "name": "여성용 하의",
+            "clothing_type": "bottom",
+            "gender": "women",
+            "category": "트라우저",
+            "color_brightness": 50,
+            "sort_order": 1,
+            "is_active": True,
+            "image_key": "seed/matching/women-bottom.png",
+            "thumb_key": "seed/matching/thumb/women-bottom.png",
+        }]
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "list_active_matching_items", fake_list)
+    _no_db(monkeypatch)
+
+    res = client.get(
+        "/v1/projects/p1/analysis/match-candidates"
+        "?clothingType=dress&gender=men",
+        headers=_auth(make_token),
+    )
+
+    assert res.status_code == 200, res.text
+    assert [item["id"] for item in res.json()] == ["women-bottom"]
+
+
 def test_match_candidates_failfast_without_public_base(client, make_token, monkeypatch):
     object.__setattr__(client.app.state.settings, "r2_public_base", None)
 

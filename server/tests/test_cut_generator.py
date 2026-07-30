@@ -230,6 +230,83 @@ def test_generate_applies_medium_crop_only_to_pose_scope(monkeypatch):
     assert calls == [(b"FULL", "image/png")]
 
 
+def test_space_set_medium_is_independent_camera_result_not_full_crop(monkeypatch):
+    calls = []
+
+    class FakeGemini:
+        async def generate_content_image(self, model, prompt, images, image_size, aspect_ratio):
+            assert "medium framing:" in prompt
+            assert "PUBLISHED SPACE-SET LOCATION" in prompt
+            return SimpleNamespace(image=b"MEDIUM", mime="image/png")
+
+    async def fake_crop(settings, image, mime):
+        calls.append((image, mime))
+        return b"CROPPED", mime
+
+    monkeypatch.setattr(cg.pose_crop, "crop_pose_medium", fake_crop)
+    settings = make_settings(gemini_api_key="x")
+    manifest = cg.build_manifest(
+        [],
+        has_mannequin=False,
+        has_match=False,
+        mood_count=0,
+        example_scope="pose",
+        has_space_set_plate=True,
+    )
+    result = asyncio.run(
+        cg.generate(
+            settings,
+            FakeGemini(),
+            {
+                "cutType": "styling",
+                "direction": "side",
+                "shot": "medium",
+                "refScope": "pose",
+                "exampleId": "ss_member-02",
+                "spaceGroupId": "ssg1__set-01__instance-01",
+            },
+            {"name": "니트", "clothingType": "top"},
+            [],
+            manifest=manifest,
+        )
+    )
+
+    assert result == (b"MEDIUM", "image/png")
+    assert calls == []
+    assert manifest.splitlines()[-2].startswith("1. SPACE SET PLATE")
+    assert manifest.splitlines()[-1].startswith("2. POSE CONTROL")
+    assert "SPACE SET PLATE exclusively controls the location and background" in manifest
+
+
+def test_horizon_sequence_without_plate_does_not_claim_one_shared_location():
+    manifest = cg.build_manifest(
+        [],
+        has_mannequin=False,
+        has_match=False,
+        mood_count=0,
+        example_scope="pose",
+        has_space_set_plate=False,
+    )
+    prompt = cg.build_prompt(
+        {
+            "cutType": "horizon",
+            "direction": "front",
+            "shot": "full",
+            "refScope": "pose",
+            "exampleId": "ss_horizon-01",
+            "spaceGroupId": "ssg1__horizon-sequence-01__instance-01",
+            "_spaceSetContinuity": False,
+        },
+        {"name": "니트", "clothingType": "top"},
+        manifest=manifest,
+    )
+
+    assert "POSE CONTROL" in manifest
+    assert "SPACE SET PLATE" not in manifest
+    assert "SPACE CONTINUITY" not in prompt
+    assert "PUBLISHED SPACE-SET LOCATION" not in prompt
+
+
 def test_build_manifest_places_exact_model_labels_after_mannequin():
     manifest = cg.build_manifest(
         [{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1,

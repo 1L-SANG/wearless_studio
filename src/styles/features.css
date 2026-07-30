@@ -857,14 +857,20 @@
   border-radius: var(--r-2); background: var(--bg-1); box-shadow: 0 2px 7px var(--ring-strong); transform: rotate(-5deg); }
 .sb-set-polaroid::before { content: ''; position: absolute; inset: 4px 4px 10px; border-radius: var(--r-2);
   background: color-mix(in srgb, var(--space-tone) 62%, var(--bg-1)); }
+.sb-set-polaroid img { position: absolute; z-index: 2; inset: 4px 4px 10px; width: calc(100% - 8px);
+  height: calc(100% - 14px); border-radius: var(--r-2); object-fit: cover; }
 .sb-set-polaroid.p2 { left: 38%; top: 9px; transform: rotate(3deg); }
 .sb-set-polaroid.p3 { left: 58%; top: 13px; transform: rotate(7deg); }
+.sb-set-polaroid.p4 { left: 68%; top: 7px; transform: rotate(-2deg); }
+.sb-set-polaroid.p5 { left: 76%; top: 12px; transform: rotate(5deg); }
 .sb-set-polaroid .figure { position: absolute; z-index: 1; left: 50%; top: 15px; width: 12px; height: 38px;
   border-radius: var(--r-pill); background: color-mix(in srgb, var(--fg-1) 65%, transparent); transform: translateX(-50%); }
 .sb-set-polaroid .figure::before { content: ''; position: absolute; left: 2px; top: -8px; width: 8px; height: 8px; border-radius: 50%; background: inherit; }
 .sb-set-polaroid .figure.medium { height: 23px; }
 .sb-set-composition { position: absolute; right: 8px; top: 8px; z-index: 3; padding: 3px 6px; border-radius: var(--r-pill);
   background: var(--glass-bg); color: var(--fg-1); font-size: 9.5px; font-weight: 700; }
+.sb-set-empty { grid-column: 1 / -1; padding: 24px 12px; border-radius: var(--r-4); background: var(--bg-2);
+  color: var(--fg-2); font-size: 12px; text-align: center; }
 .sb-set-picker .sb-save-error { margin: 12px 0 0; }
 
 /* underline tab navigation — sliding indicator */
@@ -1587,6 +1593,12 @@
 
 .sb-exgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; transition: opacity .15s; }
 .sb-exgrid.moodonly { opacity: .55; }
+.sb-ex-source-label {
+  grid-column: 1 / -1; margin-top: 2px; color: var(--fg-2); font-size: 11px; font-weight: 700;
+}
+.sb-ex-source-label.set {
+  margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--ring);
+}
 .sb-exempty {
   grid-column: 1 / -1; min-height: 76px; display: flex; flex-direction: column; gap: 7px; align-items: center; justify-content: center;
   padding: 14px; border-radius: 8px; background: var(--bg-2); color: var(--fg-2); font-size: 12px; text-align: center;
