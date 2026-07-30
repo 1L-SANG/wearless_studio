@@ -40,8 +40,23 @@ def test_build_prompt_substitutes_target_and_keeps_calibrated_wording():
     assert "go FURTHER" in prompt
     assert "TENTS over the bust apex" in prompt      # 천이 몸 변화를 보고해야 보인다
     assert "falls AWAY from the stomach" in prompt
-    # 전신 비대화 방지 — 1차 스파이크에서 허리까지 굵어져 "뚱뚱하게" 나온 실패 모드.
-    assert "waist and hips are NOT the requested change" in prompt
+    # 실루엣 — 슬림 아워글래스. 골반 존재감을 "골반을 넓혀서"가 아니라 "허리를 좁혀서" 만든다.
+    # 1차 스파이크에서 torso·hips 를 함께 키웠더니 허리가 +8.7% 굵어져 전신이 "뚱뚱하게"
+    # 나왔으므로, 방향을 반대로 주고 골반 폭 상한을 명시한다(2026-07-30).
+    assert "SLIMMER waist" in prompt
+    assert "HIP WIDTH MUST NOT INCREASE" in prompt
+    assert "never from the hips spreading out" in prompt
+    # 전신 비대화 방지 — 1차 실패 모드의 직접 가드.
+    assert "NOT read as heavier" in prompt
+    # 앞섬 잠금 — 2패스가 가슴 공간을 만드느라 단추를 풀어버린다(1패스 4/4 잠김 vs 2패스 풀림).
+    assert "stays done up" in prompt
+    assert "Do NOT open, unbutton, unzip" in prompt
+    assert "STAYING FASTENED" in prompt
+    # "잠긴 건 잠긴 채로" 만으로는 4회 중 1회가 목 부분을 더 벌렸다. 원본 셔츠 사진은 맨 위
+    # 단추가 풀린 상태(사진 관례)라 어디까지가 원래 열림인지 판단 여지가 있었다. 판정 가능한
+    # 기준(잠긴 단추 수·개구부 깊이가 입력보다 나빠지지 않을 것)으로 대체한다(2026-07-30).
+    assert "THE SAME OR MORE" in prompt
+    assert "NO LOWER on the body" in prompt
     # untuck 교정 — 1패스의 untuck 지시는 실측 2/4 만 지켜진다(확률적). 지시를 더 세게 쓰는 건
     # 수확 체감이라, 이미 여성 컷마다 도는 이 패스에서 결과를 교정한다. 보존이 아니라 강제다:
     # 들어와 있으면 빼내고, 이미 나와 있으면 그대로 둔다(2026-07-30).

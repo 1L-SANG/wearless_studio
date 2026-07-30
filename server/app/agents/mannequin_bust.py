@@ -18,12 +18,33 @@ of the mannequin's chest" 로 거부(이미지 없이 텍스트 반환), 거부�
 # 배수(1.5)와 컵 표기를 함께 올리거나 내린다.
 #
 # "더 크게" 같은 상대 표현은 변화폭이 사실상 0이었다. 컵 사이즈 + 물리적 배수라야 움직인다.
+# 크기는 실측 사다리(원본B → C1.5배 → C~D1.75배 → D2배)에서 사용자가 고른 값이다.
+#
+# 1.3배 실험(2026-07-30, 되돌림): 셔츠 앞섬이 4회 중 1회 벌어지는 것이 "커진 가슴이 셔츠에
+# 안 들어가서"라고 보고 크기를 낮춰봤다. 결과는 여전히 3/4 — 같은 샘플(#4)만 계속 실패했고,
+# 1.5배 원문구·1.5배 강화문구·1.3배 세 설정에서 실패 패턴이 동일했다. 즉 앞섬 열림은 가슴
+# 크기가 아니라 **입력 이미지 의존**이다. 크기를 낮춰 얻은 것은 없고 허리만 과하게 잘록해져
+# 되돌린다.
 BUST_TARGET = (
     "a full C CUP — clearly bigger than the B cup in the attached image. The bust must "
     "project forward from the chest wall roughly 1.5 times as far as it does now"
 )
 
-_TOKEN = "${bustTarget}"
+# 허리·골반 목표(2026-07-30). 상세페이지에서 마네킹이 상품 인상을 좌우하므로 슬림 아워글래스로
+# 잡는다: 몸통은 마르게, 골반은 라인이 드러나게.
+#
+# **핵심 설계**: 골반 존재감을 "골반을 넓혀서"가 아니라 "허리를 좁혀서" 만든다. 1차 스파이크에서
+# torso·hips 를 함께 키우라고 했더니 허리까지 굵어져(+8.7%) 전신이 "뚱뚱하게" 나왔다. 방향을
+# 반대로 주면 같은 실패로 돌아갈 수 없다 — 골반 폭 상한을 명시적으로 못 박는다.
+WAIST_HIP_TARGET = (
+    "a visibly SLIMMER waist than in the attached image, nipped in at its narrowest point, "
+    "flowing into hips whose line is clearly defined by a curve rather than a straight drop. "
+    "The hips must NOT become wider than they are in the attached image — the shape comes from "
+    "the waist coming IN, never from the hips going OUT. The whole body must read as slimmer "
+    "than the attached image, never heavier"
+)
+
+_TOKENS = {"${bustTarget}": BUST_TARGET, "${waistHipTarget}": WAIST_HIP_TARGET}
 
 
 def should_apply(gender: str, mode: str) -> bool:
@@ -36,12 +57,14 @@ def should_apply(gender: str, mode: str) -> bool:
 
 
 def build_prompt(template: str) -> str:
-    """템플릿의 ${bustTarget} 치환. 미해결 토큰이 남으면 즉시 실패시킨다(오타 검출).
+    """템플릿의 ${bustTarget}·${waistHipTarget} 치환. 미해결 토큰이 남으면 즉시 실패시킨다.
 
     render_mannequin_prompt 와 같은 규약 — 조용히 토큰이 남은 프롬프트가 모델로 가면
     무슨 일이 일어나는지 알 수 없다.
     """
-    prompt = template.replace(_TOKEN, BUST_TARGET)
+    prompt = template
+    for token, value in _TOKENS.items():
+        prompt = prompt.replace(token, value)
     if "${" in prompt:
         leftover = sorted({p.split("}")[0] + "}" for p in prompt.split("${")[1:]})
         raise ValueError(f"가슴 프롬프트 템플릿에 해결되지 않은 토큰: {leftover}")
