@@ -181,3 +181,18 @@ def test_better_candidate_prefers_no_critical_error_over_score():
 def test_better_candidate_keeps_old_when_new_has_no_signal():
     s = make_settings()
     assert mannequin_job._is_better_candidate(s, {"verdict": "retry"}, _p2(50)) is False
+
+
+# ── D축 재생성 분기가 R2 를 오염시키지 않는가 ────────────────────────────────
+
+def test_series_reject_does_not_leave_orphan_r2_object(monkeypatch):
+    """D축 재생성 분기는 **R2 저장 전에** 일어나야 한다.
+
+    저장 후 continue 하면 재시도마다 아무도 참조하지 않는 객체가 버킷에 쌓인다(DB 행은
+    최종 채택본만 생기므로 정리할 근거조차 남지 않는다). 소스 순서로 계약을 고정한다.
+    """
+    import inspect
+    src = inspect.getsource(mannequin_job._run_candidate)
+    reject_at = src.index('"status": "series_qc_reject"')
+    put_at = src.index("r2.put_bytes")
+    assert reject_at < put_at, "series_qc_reject 분기가 R2 저장보다 뒤에 있다 — 고아 객체가 쌓인다"

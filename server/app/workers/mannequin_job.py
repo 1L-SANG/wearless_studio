@@ -534,14 +534,9 @@ async def _run_candidate(
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, user_id=user_id,
                 project_id=project_id, candidate=candidate, attempt=attempt, res=res)
-            ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
-            asset_id = str(uuid.uuid4())
-            key = ai_key(user_id, project_id, job_id, asset_id, ext)
-            await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime, cache=IMMUTABLE_CACHE)
-            w, h = _image_dims(res.image)
-            # 채택본의 QC 점수를 후보 dict 에 실어 finalize → mannequin_cuts.qc_scores →
-            # API 까지 운반한다. 여기서 안 실으면 판정 결과가 job_events 에만 남고 셀러·검수
-            # 화면에서는 영원히 못 본다(프론트는 SSE 를 안 쓰고 result 봉투만 읽는다).
+            # 채택본의 QC 점수 — finalize → mannequin_cuts.qc_scores → API 까지 운반한다.
+            # 여기서 안 실으면 판정 결과가 job_events 에만 남고 셀러·검수 화면에서는 영원히
+            # 못 본다(프론트는 SSE 를 안 쓰고 result 봉투만 읽는다).
             qc_scores = None
             if isinstance(p2, dict) or series is not None:
                 p2d = p2 if isinstance(p2, dict) else {}
@@ -556,19 +551,26 @@ async def _run_candidate(
                 # 깨진다. 구제 여부는 별도 필드로 남겨 검수자가 맥락을 알게 한다.
                 qc_scores["outcome"] = score_outcome(s, qc_scores)
                 qc_scores["salvaged"] = salvaged
-            # D축이 재생성 판정을 냈으면 실제로 재생성한다. 여기까지 오면 A~C 는 통과했고
-            # 이미지도 확정됐으므로, 관측만 하고 내보내면 API 에 "재생성 필요"라 표시된 컷이
-            # 성공 컷으로 출고되는 모순이 된다. 예산이 남아 있을 때만 — 소진 시엔 아래
-            # 저장 경로로 계속 가서 needs_review 로 출고한다(빈손보다 낫다).
+            # D축이 재생성 판정을 냈으면 실제로 재생성한다. 관측만 하고 내보내면 API 에
+            # "재생성 필요"라 표시된 컷이 성공 컷으로 출고되는 모순이 된다. 예산이 남아 있을
+            # 때만 — 소진 시엔 아래 저장 경로로 계속 가서 그대로 출고한다(빈손보다 낫다).
+            # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
             if (series is not None and s.image_qc == "enforce"
                     and (qc_scores or {}).get("outcome") == "regenerate"
                     and attempt < s.mannequin_max_attempts):
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "series_qc_reject",
                     "seriesConsistency": series["consistency"]})
+                if _is_better_candidate(s, p2, best_reject[1] if best_reject else None):
+                    best_reject = (res, p2)  # 구제 후보에 포함 — D축 사유도 재시도 대상이다
                 feedback = ("CONSISTENCY: match the studio setup of this shop's existing cuts — "
                             + "; ".join(series["inconsistencies"][:3]))
                 continue
+            ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
+            asset_id = str(uuid.uuid4())
+            key = ai_key(user_id, project_id, job_id, asset_id, ext)
+            await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime, cache=IMMUTABLE_CACHE)
+            w, h = _image_dims(res.image)
             return {
                 "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
                 "size": len(res.image), "width": w, "height": h,
