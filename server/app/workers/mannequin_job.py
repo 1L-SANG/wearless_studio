@@ -554,16 +554,38 @@ async def _apply_bust_pass(
     return out, True
 
 
+async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, res, qc_scores):
+    """채택본을 R2 에 올리고 finalize 용 dict 를 만든다. 출고 지점은 여기 하나뿐이다."""
+    if qc_scores is not None:
+        qc_scores["outcome"] = score_outcome(s, qc_scores)
+    ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
+    asset_id = str(uuid.uuid4())
+    key = ai_key(user_id, project_id, job_id, asset_id, ext)
+    await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime, cache=IMMUTABLE_CACHE)
+    w, h = _image_dims(res.image)
+    return {
+        "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
+        "size": len(res.image), "width": w, "height": h,
+        "candidate": candidate, "base_fit": base_fit, "qc_scores": qc_scores,
+    }
+
+
 async def _rollback_edits(
     *, pool, s, job_id, candidate, attempt, prod_imgs,
-    pre_res, pre_p2, post_axis_res, post_p2, axis_spent, bust_spent,
+    pre_res, pre_p2, post_axis_res, post_p2, axis_changed, bust_changed,
 ):
     """회귀한 편집을 되돌린다. → (선택 이미지, 그 이미지의 판정)
 
-    두 편집이 **둘 다** 돌았으면 통째로 버리지 않는다. axis 가 핏을 제대로 고쳐놨는데 bust 가
-    형태를 망친 경우, 한 덩어리로 되돌리면 멀쩡한 교정까지 같이 버린다(codex 8차 MEDIUM).
-    그래서 bust 만 떼어낸 중간본을 먼저 재판정한다 — 이 추가 vision 콜은 **회귀가 실제로
-    일어났고 두 편집이 다 돈** 경우에만 나간다(관측상 드물다).
+    두 편집이 **둘 다 이미지를 바꿨으면** 통째로 버리지 않는다. axis 가 핏을 제대로 고쳐놨는데
+    bust 가 형태를 망친 경우, 한 덩어리로 되돌리면 멀쩡한 교정까지 같이 버린다(codex 8차
+    MEDIUM). 그래서 bust 만 떼어낸 중간본을 먼저 재판정한다 — 이 추가 vision 콜은 **회귀가
+    실제로 일어났고 두 편집이 다 이미지를 바꾼** 경우에만 나간다(관측상 드물다).
+
+    판정 기준은 "호출을 썼는가"가 아니라 **"이미지가 바뀌었는가"**다. bust 는 거부·오류 시
+    fail-open 으로 원본을 그대로 돌려주면서도 예산은 소비했다고 보고한다. 소비 기준으로
+    분기하면 axis 가 망치고 bust 가 실패한 경우 최종본과 중간본이 **같은 이미지**인데도
+    분기를 타서, 같은 손상본을 한 번 더 재판정하고 이번엔 통과하면 그대로 출고한다
+    (codex 9차 HIGH — 재현됨).
 
     중간본 재판정이 실패하면 편집 전으로 되돌린다. fail-open 이 아니라 fail-safe 인 이유:
     여기까지 왔다는 건 이미 손상이 확인됐다는 뜻이라, 판정 불가 시엔 안전한 쪽을 고른다.
@@ -574,7 +596,7 @@ async def _rollback_edits(
             "reason": reason, "from": score_outcome(s, post_p2), "to": score_outcome(s, p2)})
         return res, p2
 
-    if not (axis_spent and bust_spent and post_axis_res is not None and prod_imgs):
+    if not (axis_changed and bust_changed and post_axis_res is not None and prod_imgs):
         return await _revert_to(pre_res, pre_p2, "all_edits")
     try:
         mid_p2 = await image_qc.verdict(
@@ -748,11 +770,14 @@ async def _run_candidate(
                     # 재판정은 하락을 **기록**할 뿐이라, 망친 편집본이 그대로 출고됐다.
                     # 등급이 떨어졌거나 없던 치명 오류가 생겼으면 되돌린다.
                     if edit_regressed(s, pre_edit_p2, p2):
+                        axis_hash = (hashlib.sha256(post_axis_res.image).hexdigest()
+                                     if post_axis_res is not None else pre_edit_hash)
                         res, p2 = await _rollback_edits(
                             pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
                             prod_imgs=prod_imgs, pre_res=pre_edit_res, pre_p2=pre_edit_p2,
                             post_axis_res=post_axis_res, post_p2=p2,
-                            axis_spent=axis_spent, bust_spent=bust_spent)
+                            axis_changed=axis_hash != pre_edit_hash,
+                            bust_changed=hashlib.sha256(res.image).hexdigest() != axis_hash)
                 except Exception as e:
                     # fail-open: 재판정 실패 시 편집 전 점수를 쓰되, 그 사실을 남긴다.
                     log.warning("image_qc rescore failed for job %s: %r", job_id, e)
@@ -794,19 +819,9 @@ async def _run_candidate(
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
                     "reason": "budget_exhausted", "outcome": score_outcome(s, qc_scores)})
-            if qc_scores is not None:
-                qc_scores["outcome"] = score_outcome(s, qc_scores)
-            ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
-            asset_id = str(uuid.uuid4())
-            key = ai_key(user_id, project_id, job_id, asset_id, ext)
-            await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime, cache=IMMUTABLE_CACHE)
-            w, h = _image_dims(res.image)
-            return {
-                "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
-                "size": len(res.image), "width": w, "height": h,
-                "candidate": candidate, "base_fit": base_fit,
-                "qc_scores": qc_scores,
-            }
+            return await _save_cut(
+                s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
+                candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores)
         # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
         # 정체성 게이트가 선점하면 축 QC/편집은 이 attempt에서 미실행 — 잘못된 옷을 편집하면
         # 그 정체성이 보존되므로 신규 생성(re-roll)이 우선한다(설계 결정 3).
@@ -830,7 +845,20 @@ async def _run_candidate(
         if p2_reject:
             parts.append(_build_retry_feedback(merge_qc_scores(p2, None), None, p2))
         feedback = "\n\n".join(p for p in parts if p)
-    return None  # max_attempts 내 통과본 없음 → 이 후보 드롭(부분 성공 허용)
+    # 루프가 통과본 없이 끝났다 — 마지막 생성이 GeminiError 로 죽었거나 전 attempt 가 거절.
+    # 여기서 그냥 None 을 돌려주면 앞 attempt 에서 편집·D축까지 통과했다가 최종 게이트에만
+    # 걸린 후보(final_reject)를 손에 들고도 셀러가 빈손이 된다(codex 9차 HIGH — 마지막
+    # 생성 실패 시 재현). 구제 규율은 예산 소진 경로와 같다: **final_reject 만** 쓴다.
+    if final_reject:
+        res, qc_scores, _series, _p2 = final_reject
+        qc_scores = {**(qc_scores or {}), "salvaged": True}
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "status": "qc_salvaged",
+            "reason": "loop_exhausted", "outcome": score_outcome(s, qc_scores)})
+        return await _save_cut(
+            s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
+            candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores)
+    return None  # 구제할 후보조차 없음 → 이 후보 드롭(부분 성공 허용)
 
 
 async def run_mannequin_job(app, job: dict) -> None:

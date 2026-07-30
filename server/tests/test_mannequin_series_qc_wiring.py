@@ -823,8 +823,90 @@ def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
         monkeypatch, mode="enforce", guard=True, max_attempts=3, verdicts=[],
         image_qc="shadow", mannequin_bust_pass="on")
 
-    assert r2.puts[-1][1] not in (b"axis-broke-it",), "손상된 중간본이 나갔다"
+    saved = r2.puts[-1][1]
+    assert saved == harness._PNG_1PX, f"편집 전 원본이 아니다: {saved!r}"
+    assert _r["qc_scores"]["product_fidelity"] == 90, "편집 전 점수가 아니다"
+    ev = [p for _t, p in emits if p.get("status") == "edit_reverted"][-1]
+    assert ev["reason"] == "all_edits"
+    assert (ev["from"], ev["to"]) == ("regenerate", "auto_pass")
+
+
+def test_failed_bust_does_not_fake_a_second_checkpoint(monkeypatch):
+    """bust 가 fail-open 하면 이미지는 안 바뀐다 — "둘 다 편집됨" 분기를 타면 안 된다.
+
+    bust 는 거부·오류 때 원본을 그대로 돌려주면서 예산은 썼다고 보고한다. 소비 기준으로
+    분기하면 최종본과 중간본이 **같은 이미지**인데도 중간본을 한 번 더 재판정하고, 확률적으로
+    통과하면 손상본을 `bust_only` 로 그대로 출고한다(codex 9차 HIGH — 재현됨).
+    """
+    import test_mannequin_axis_qc as harness
+
+    # axis 가 망친다 → 재판정 회귀 → bust 는 실패(이미지 불변). 세 번째 판정이 소비되면
+    # (=중간본 분기를 탔다면) 그 값이 통과라 손상본이 출고된다.
+    seq = [_p2c(90), _p2c(20, critical=["garment shape broken"]), _p2c(95)]
+    n = {"i": 0}
+
+    async def fake_p2(s, prods, gen, *, scored=False):
+        n["i"] += 1
+        return seq[min(n["i"] - 1, len(seq) - 1)]
+
+    async def fake_axis(**kw):
+        return types.SimpleNamespace(mime=kw["res"].mime, image=b"axis-broke-it"), True
+
+    async def fake_bust(**kw):
+        return kw["res"], True          # fail-open: 원본 그대로, 예산은 소비
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return None
+
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    monkeypatch.setattr(mannequin_job, "_apply_bust_pass", fake_bust)
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    _r, _g, r2, emits = harness._run(
+        monkeypatch, mode="enforce", guard=True, max_attempts=1, verdicts=[],
+        image_qc="shadow", mannequin_bust_pass="on")
+
+    assert r2.puts[-1][1] != b"axis-broke-it", "손상본이 가짜 중간본 분기로 출고됐다"
+    assert n["i"] == 2, f"판정이 {n['i']}회 — 같은 이미지를 다시 판정했다"
     assert [p for _t, p in emits if p.get("status") == "edit_reverted"][-1]["reason"] == "all_edits"
+
+
+def test_generation_failure_still_salvages_accumulated_candidate(monkeypatch):
+    """마지막 생성이 죽어도 손에 든 final_reject 는 출고한다.
+
+    이전 attempt 에서 편집·D축까지 통과했다가 최종 게이트에만 걸린 후보가 있는데, 마지막
+    생성 호출이 GeminiError 면 그냥 루프가 끝나 셀러가 빈손이 됐다(codex 9차 HIGH).
+    """
+    import test_mannequin_axis_qc as harness
+    from app.agents.gemini_image import GeminiError
+
+    class _G:
+        def __init__(self):
+            self.calls = []
+
+        async def generate_content_image(self, model, prompt, images, size, aspect_ratio=None):
+            self.calls.append({"prompt": prompt})
+            if len(self.calls) >= 2:
+                raise GeminiError("생성 실패")
+            return types.SimpleNamespace(mime="image/png", image=b"first-cut")
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return {"consistency": 10, "inconsistencies": ["다름"]}   # 1회차를 최종 거절시킨다
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    result, g, r2, emits = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=3, verdicts=[], image_qc="enforce",
+        gemini=_G(),
+        p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
+            "series_consistency": None, "critical_errors": []})
+
+    assert result is not None, "구제 가능한 후보를 들고도 빈손으로 끝났다"
+    assert result["qc_scores"]["salvaged"] is True
+    assert result["qc_scores"]["series_consistency"] == 10, "구제본의 D축 스냅샷이 유실됐다"
+    assert len(r2.puts) == 1 and r2.puts[0][1] == b"first-cut"
+    salv = [p for _t, p in emits if p.get("status") == "qc_salvaged"]
+    assert salv and salv[-1]["reason"] == "loop_exhausted"
 
 
 def test_real_axis_qc_respects_shared_budget(monkeypatch):
