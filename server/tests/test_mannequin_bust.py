@@ -42,6 +42,11 @@ def test_build_prompt_substitutes_target_and_keeps_calibrated_wording():
     assert "falls AWAY from the stomach" in prompt
     # 전신 비대화 방지 — 1차 스파이크에서 허리까지 굵어져 "뚱뚱하게" 나온 실패 모드.
     assert "waist and hips are NOT the requested change" in prompt
+    # untuck 보존 — 1패스가 어렵게 밖으로 빼놓은 상의를 2패스가 재드레이프하면서 다시 넣어버릴
+    # 수 있다. tuck 수정은 생성 프롬프트에만 있으므로 이 패스에서 따로 지켜야 한다(2026-07-30).
+    assert "stays outside" in prompt
+    assert "not even partially" in prompt
+    assert "French tuck" in prompt
 
 
 def test_build_prompt_rejects_unresolved_token():

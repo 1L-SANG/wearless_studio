@@ -34,6 +34,12 @@ pose, camera angle, framing, distance, crop and background; and the garment's co
 fabric, seams, neckline, hem height, length, buttons, pockets and prints. The mannequin must NOT
 read as heavier, wider or larger overall — the waist and hips in particular stay exactly as they
 are. Only the bust differs.
+
+HOW THE TOP IS WORN IS ALSO UNCHANGED. If the top in the attached image is worn OUTSIDE the
+bottom, it stays outside: its entire hem keeps hanging below the bottom's waistband exactly as
+it does now. Re-draping the fabric over the new bust must NOT change this — do not tuck the top
+in, not even partially, and do not let the bottom's waistband end up on top of the hem. No front
+tuck, no half tuck, no French tuck, no tucking one side.
 </keep identical>
 
 <output format>
@@ -47,5 +53,6 @@ are. Only the bust differs.
 - The BUST SIZE is the requested change. Do NOT preserve the original chest; changing it is the entire point of this edit.
 - If you are unsure how far to go, go FURTHER. Under-shooting this change is the single most common failure and is not acceptable.
 - The waist and hips are NOT the requested change — their width must be identical to the attached image.
+- A top worn outside the bottom in the attached image is STILL worn outside in your output. Tucking it in is a failure of this edit.
 - Use ONLY the attached image as the base — do not fabricate new garment details, and do not change the garment's identity.
 </critical rules>
