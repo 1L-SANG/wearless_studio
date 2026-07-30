@@ -150,7 +150,7 @@ async def main() -> int:
     if not uploads:
         print("업로드 상품 이미지가 없습니다.", file=sys.stderr)
         return 2
-    gender = mannequin.select_base_gender(analysis)
+    gender = mannequin.select_base_gender(analysis, clothing_type)
     base_id = s.base_mannequin_women_asset_id if gender == "women" else s.base_mannequin_men_asset_id
     r2 = R2Client(s, bucket=s.r2_bucket)
     with psycopg.connect(url, row_factory=dict_row) as conn, conn.cursor() as cur:

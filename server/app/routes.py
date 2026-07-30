@@ -754,7 +754,11 @@ async def match_candidates(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         items = await repo.list_active_matching_items(conn)
-    genders = [g.strip() for part in gender for g in part.split(",") if g.strip()]
+    genders = (
+        ["women"]
+        if clothingType == "dress"
+        else [g.strip() for part in gender for g in part.split(",") if g.strip()]
+    )
     product_tags = [t.strip() for part in styleTags for t in part.split(",") if t.strip()]
     if request.app.state.settings.retrieval_matching == "tags" and product_tags:
         ranked = retrieval.recommend_v1(

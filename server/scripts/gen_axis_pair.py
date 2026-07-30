@@ -66,7 +66,7 @@ async def main() -> int:
     if not uploads:
         print("업로드 상품 이미지 없음", file=sys.stderr)
         return 2
-    gender = mannequin.select_base_gender(analysis)
+    gender = mannequin.select_base_gender(analysis, clothing_type)
     cat = clothing_type if clothing_type in ("top", "outer", "pants", "skirt", "dress") else "top"
     try:
         expected = PQ.validated_expected_more_side(

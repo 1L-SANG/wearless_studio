@@ -401,15 +401,19 @@ export const httpAdapter = {
     if (Array.isArray(matchPatch)) {
       base.matchClothing = mergeMatchSelection(base.matchClothing || [], matchPatch);
     }
-    analysisCache = { projectId, analysis: base };
     // 서버 PATCH 는 REPLACE — full base(analyze 가 seed 한 캐시)일 때만 지속한다. 예외: 하이드레이션이
     // 서버 저장분이 비었음을 증명한 경우(serverEmpty)는 유실될 상위 상태가 없으므로 delta 라도 지속한다
     // — 분석 실패로 빈 프로젝트에 재진입해 모델만 고른 케이스(F3)에서 selectedModelId 무음 유실 방지.
     // 캐시도 없고 하이드레이션도 안 뛴(비정상) 상태만 계속 스킵.
+    let savedAnalysis = base;
     if (projectId && (cached || serverEmpty)) {
-      await http(`/v1/projects/${projectId}/analysis`, { method: 'PATCH', body: base });
+      savedAnalysis = await http(`/v1/projects/${projectId}/analysis`, {
+        method: 'PATCH',
+        body: base,
+      });
     }
-    return base;
+    analysisCache = { projectId, analysis: savedAnalysis };
+    return savedAnalysis;
   },
   // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.
   async getAnalysis(projectId) {

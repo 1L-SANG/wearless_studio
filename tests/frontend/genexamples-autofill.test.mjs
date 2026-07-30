@@ -41,6 +41,10 @@ const editorSource = readFileSync(
   new URL('../../src/features/editor/Editor.jsx', import.meta.url),
   'utf8',
 );
+const httpAdapterSource = readFileSync(
+  new URL('../../src/lib/api/httpAdapter.js', import.meta.url),
+  'utf8',
+);
 
 test('owner declarations gate frontend combinations', () => {
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' }), true);
@@ -348,6 +352,9 @@ test('dress is women-only even when stale input still says men', () => {
   assert.deepEqual(normalizeTargetGendersForClothingType('outer', ['men']), ['men']);
   assert.match(storyboardSource, /if \(clothingType === 'dress'\) return genderForClothingType/);
   assert.match(storyboardSource, /exampleGenderFromAnalysis\(\s*a,\s*hydratedCatalogs,\s*p\.clothingType/);
+  assert.match(httpAdapterSource, /savedAnalysis = await http\([^]*method: 'PATCH'/);
+  assert.match(httpAdapterSource, /analysisCache = \{ projectId, analysis: savedAnalysis \}/);
+  assert.match(httpAdapterSource, /return savedAnalysis/);
 });
 
 test('direction badge labels are front, side and back', () => {
