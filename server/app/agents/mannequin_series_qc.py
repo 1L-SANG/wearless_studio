@@ -35,25 +35,6 @@ _ASPECTS = (
 )
 
 
-def select_reference_cuts(cuts: list[dict], *, limit: int = MAX_REFERENCE_CUTS) -> list[dict]:
-    """비교 기준으로 쓸 기존 컷 선택 — candidate 별 **최신 버전만**, 최신순 limit 개.
-
-    전 버전을 그대로 넘기면 셀러가 이미 갈아치운 구버전에 새 컷을 맞추게 된다(나쁜 컷에
-    앵커링). 최신 버전이 "사실상 확정본"이라는 것이 현재 스키마에서 가능한 최선의 근사다 —
-    확정/승인 플래그가 생기면 그걸로 교체할 것.
-    """
-    latest: dict[str, dict] = {}
-    for c in cuts or []:
-        cand = c.get("candidate")
-        version = c.get("version") or 0
-        if cand is None:
-            continue
-        if cand not in latest or version > (latest[cand].get("version") or 0):
-            latest[cand] = c
-    ordered = sorted(latest.values(), key=lambda c: (-(c.get("version") or 0), c.get("candidate")))
-    return ordered[:limit]
-
-
 def build_prompt(reference_count: int) -> str:
     aspects = "\n".join(f"- {a}" for a in _ASPECTS)
     return (

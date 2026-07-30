@@ -269,10 +269,11 @@ def test_legacy_identity_rejection_preempts_axis_edit(monkeypatch):
 
 
 def test_identity_reject_on_last_attempt_salvages_instead_of_dropping(monkeypatch):
-    """예산 소진 시 후보를 버리지 않고 '검수 필요'로 내보낸다.
+    """예산 소진 시 후보를 버리지 않고 내보낸다 — 셀러가 크레딧만 쓰고 빈손이 되는 것보다 낫다.
 
-    기존엔 마지막 attempt 가 reject 면 곧장 None → 후보 드롭 → 잡 실패였고, 셀러는
-    크레딧만 쓰고 빈손이 됐다. 최선본을 사람이 판단하게 넘기는 편이 낫다.
+    단 `outcome` 은 **실제 품질**을 그대로 말한다. 구제됐다고 needs_review 로 눕히면
+    critical_errors("must not ship")까지 함께 세탁돼 프롬프트 계약이 깨진다.
+    구제 여부는 `salvaged` 별도 필드로 남겨 검수자가 맥락을 알게 한다.
     """
     result, g, r2, emits = _run(
         monkeypatch, mode="off", guard=True, max_attempts=1,
@@ -280,11 +281,27 @@ def test_identity_reject_on_last_attempt_salvages_instead_of_dropping(monkeypatc
         p2={"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "fix color",
             "product_fidelity": 40, "physical_naturalness": None,
             "image_quality": None, "series_consistency": None, "critical_errors": []})
-    assert result is not None                      # 드롭 대신 구제
-    assert result["qc_scores"]["outcome"] == "needs_review"
+    assert result is not None                       # 드롭 대신 구제
+    assert result["qc_scores"]["outcome"] == "regenerate"  # 품질을 세탁하지 않는다
+    assert result["qc_scores"]["salvaged"] is True        # 구제 사실은 별도로
     assert result["qc_scores"]["product_fidelity"] == 40
     salvage = _events(emits, "qc_salvaged")
     assert salvage and salvage[0]["reason"] == "budget_exhausted"
+
+
+def test_salvaged_candidate_keeps_critical_errors_visible(monkeypatch):
+    """치명 오류는 구제되어도 지워지지 않는다 — 검수자가 'must not ship' 을 봐야 한다."""
+    result, _g, _r2, _emits = _run(
+        monkeypatch, mode="off", guard=True, max_attempts=1,
+        verdicts=[], image_qc="enforce",
+        p2={"verdict": "retry", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95,
+            "image_quality": 95, "series_consistency": None,
+            "critical_errors": ["logo altered"]})
+    q = result["qc_scores"]
+    assert q["critical_errors"] == ["logo altered"]
+    assert q["outcome"] == "regenerate"  # 점수 95 여도 치명 오류가 이긴다
+    assert q["salvaged"] is True
 
 
 def test_identity_reject_with_budget_left_still_rerolls(monkeypatch):

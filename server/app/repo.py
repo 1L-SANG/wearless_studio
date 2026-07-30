@@ -419,6 +419,38 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
         return await cur.fetchall()
 
 
+async def list_series_reference_cuts(
+    conn: AsyncConnection, project_id: str, *, limit: int = 3
+) -> list[dict]:
+    """D축 시리즈 일관성 비교 기준 컷 — candidate 별 **최신 1장**, 최대 limit 개.
+
+    `list_mannequin_cuts` 로 전 버전을 끌어와 파이썬에서 자르면 재생성 이력에 비례해 DB
+    전송·정렬 비용이 계속 늘어난다. 여기서 `distinct on` 으로 SQL 단에서 좁힌다.
+
+    `outcome='regenerate'` 판정을 받은 버전은 기준에서 제외한다 — 실패본을 앵커로 삼으면
+    다음 생성이 그 실패에 맞춰져 오류가 전파된다. 판정이 없는 구 행(qc_scores null)은
+    포함한다(대부분의 기존 컷이 여기 해당하고, 배제하면 기준이 통째로 비어버린다).
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select * from (
+                select distinct on (mc.candidate)
+                       mc.candidate, mc.version, a.r2_bucket, a.r2_key
+                from mannequin_cuts mc
+                join assets a on a.id = mc.asset_id and a.deleted_at is null
+                where mc.project_id = %s
+                  and coalesce(mc.qc_scores ->> 'outcome', '') <> 'regenerate'
+                order by mc.candidate, mc.version desc
+            ) latest
+            order by version desc
+            limit %s
+            """,
+            (project_id, limit),
+        )
+        return await cur.fetchall()
+
+
 async def get_mannequin_cut_asset(
     conn: AsyncConnection, user_id: str, project_id: str, client_id: str
 ) -> dict | None:

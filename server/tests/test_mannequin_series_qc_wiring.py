@@ -41,13 +41,13 @@ def _apply(monkeypatch, *, cuts=None, judge=None, r2=None):
     async def fake_emit(pool, job_id, event_type, payload):
         emits.append((event_type, dict(payload)))
 
-    async def fake_list(conn, user_id, project_id):
+    async def fake_list(conn, project_id, *, limit=3):
         if isinstance(cuts, Exception):
             raise cuts
-        return cuts or []
+        return (cuts or [])[:limit]  # SQL LIMIT 재연
 
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
-    monkeypatch.setattr(mannequin_job.repo, "list_mannequin_cuts", fake_list)
+    monkeypatch.setattr(mannequin_job.repo, "list_series_reference_cuts", fake_list)
     if judge is not None:
         async def fake_judge(settings, generated, references, **kw):
             if isinstance(judge, Exception):
@@ -105,24 +105,39 @@ def test_judge_error_fails_open(monkeypatch):
 def test_success_emits_score_and_reference_count(monkeypatch):
     out, emits, r2 = _apply(
         monkeypatch,
-        cuts=[{"candidate": "A", "version": 1, "r2_key": "a.jpg"},
-              {"candidate": "A", "version": 2, "r2_key": "b.jpg"}],
+        cuts=[{"candidate": "A", "version": 2, "r2_key": "b.jpg"}],
         judge={"consistency": 72, "inconsistencies": ["배경이 더 밝음"]})
     assert out == {"consistency": 72, "inconsistencies": ["배경이 더 밝음"]}
     step = [p for t, p in emits if t == "step" and p.get("status") == "series_qc"][0]
     assert step["seriesQc"]["consistency"] == 72
-    # candidate 별 최신 버전만 → A-2 한 장
     assert step["referenceCount"] == 1
     assert r2.gets == ["b.jpg"]
 
 
-def test_reference_cap_applied(monkeypatch):
-    cuts = [{"candidate": c, "version": 1, "r2_key": f"{c}.jpg"} for c in "ABCDE"]
-    _out, emits, r2 = _apply(monkeypatch, cuts=cuts,
-                             judge={"consistency": 90, "inconsistencies": []})
-    step = [p for t, p in emits if t == "step" and p.get("status") == "series_qc"][0]
-    assert step["referenceCount"] == mannequin_series_qc.MAX_REFERENCE_CUTS
-    assert len(r2.gets) == mannequin_series_qc.MAX_REFERENCE_CUTS
+def test_reference_cap_passed_to_sql(monkeypatch):
+    """cap 은 SQL LIMIT 로 내려간다 — 파이썬에서 자르면 DB 전송 비용이 안 줄어든다."""
+    seen = {}
+
+    async def fake_list(conn, project_id, *, limit=3):
+        seen["limit"] = limit
+        return [{"candidate": "A", "version": 9, "r2_key": "a.jpg"}]
+
+    monkeypatch.setattr(mannequin_job.repo, "list_series_reference_cuts", fake_list)
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        pass
+
+    async def fake_judge(settings, generated, references, **kw):
+        return {"consistency": 90, "inconsistencies": []}
+
+    monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
+    monkeypatch.setattr(mannequin_series_qc, "judge", fake_judge)
+    app = types.SimpleNamespace(state=types.SimpleNamespace(r2=_R2()))
+    asyncio.run(mannequin_job._apply_series_qc(
+        app=app, pool=_FakePool(), s=make_settings(), job_id="j1", user_id="u1",
+        project_id="p1", candidate="A", attempt=1,
+        res=types.SimpleNamespace(mime="image/png", image=b"gen")))
+    assert seen["limit"] == mannequin_series_qc.MAX_REFERENCE_CUTS
 
 
 # ── 점수 합류 (score_outcome 이 D축을 본다) ───────────────────────────────────
@@ -135,3 +150,34 @@ def test_series_score_participates_in_outcome():
     assert mannequin_job.score_outcome(s, healthy) == "auto_pass"
     broken = {**healthy, "series_consistency": 40}
     assert mannequin_job.score_outcome(s, broken) == "regenerate"
+
+
+# ── 최선본 구제 (codex MEDIUM 3) ──────────────────────────────────────────────
+
+def _p2(worst, critical=()):
+    return {"verdict": "retry", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": worst, "physical_naturalness": 99,
+            "image_quality": 99, "series_consistency": None,
+            "critical_errors": list(critical)}
+
+
+def test_better_candidate_prefers_higher_worst_axis():
+    """1차 70점 / 2차 20점이면 20점을 구제하면 안 된다 — 재시도가 손해가 된다."""
+    s = make_settings()
+    assert mannequin_job._is_better_candidate(s, _p2(70), None) is True
+    assert mannequin_job._is_better_candidate(s, _p2(20), _p2(70)) is False
+    assert mannequin_job._is_better_candidate(s, _p2(85), _p2(70)) is True
+
+
+def test_better_candidate_prefers_no_critical_error_over_score():
+    """치명 오류는 출고 불가라, 점수가 낮아도 결함 없는 쪽이 낫다."""
+    s = make_settings()
+    assert mannequin_job._is_better_candidate(
+        s, _p2(40), _p2(95, critical=["logo altered"])) is True
+    assert mannequin_job._is_better_candidate(
+        s, _p2(95, critical=["logo altered"]), _p2(40)) is False
+
+
+def test_better_candidate_keeps_old_when_new_has_no_signal():
+    s = make_settings()
+    assert mannequin_job._is_better_candidate(s, {"verdict": "retry"}, _p2(50)) is False

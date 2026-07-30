@@ -261,6 +261,35 @@ async def _apply_axis_qc(
     return res, True
 
 
+def _worst_score(p2) -> int | None:
+    """4축 최저 점수. 점수 신호가 하나도 없으면 None."""
+    if not isinstance(p2, dict):
+        return None
+    scores = [v for k in image_qc.SCORE_KEYS
+              if isinstance(v := p2.get(k), int) and not isinstance(v, bool)]
+    return min(scores) if scores else None
+
+
+def _is_better_candidate(s, new_p2, old_p2) -> bool:
+    """reject 후보끼리의 우열 — 구제할 '최선본'을 고르기 위한 순수 비교.
+
+    치명 오류 없는 쪽이 무조건 낫다(점수가 낮아도 출고 가능한 결함이라). 그 다음 최저축.
+    점수 신호가 없는 후보는 비교 불가라 기존 후보를 유지한다.
+    """
+    if old_p2 is None:
+        return True
+    new_critical = bool((new_p2 or {}).get("critical_errors"))
+    old_critical = bool((old_p2 or {}).get("critical_errors"))
+    if new_critical != old_critical:
+        return not new_critical
+    new_worst, old_worst = _worst_score(new_p2), _worst_score(old_p2)
+    if new_worst is None:
+        return False
+    if old_worst is None:
+        return True
+    return new_worst > old_worst
+
+
 def score_outcome(s, p2) -> str:
     """4축 점수 → auto_pass | needs_review | regenerate (순수).
 
@@ -275,11 +304,9 @@ def score_outcome(s, p2) -> str:
         return "auto_pass"
     if p2.get("critical_errors"):
         return "regenerate"
-    scores = [v for k in image_qc.SCORE_KEYS
-              if isinstance(v := p2.get(k), int) and not isinstance(v, bool)]
-    if not scores:
+    worst = _worst_score(p2)  # 평균이 아니라 최저 — 한 축 붕괴가 고득점에 가려지면 안 된다
+    if worst is None:
         return "auto_pass"
-    worst = min(scores)  # 평균이 아니라 최저 — 한 축의 붕괴가 다른 축 고득점에 가려지면 안 된다
     if worst >= s.qc_score_auto_pass:
         return "auto_pass"
     if worst >= s.qc_score_review:
@@ -298,8 +325,10 @@ async def _apply_series_qc(*, app, pool, s, job_id, user_id, project_id, candida
     """
     try:
         async with pool.connection() as conn:
-            cuts = await repo.list_mannequin_cuts(conn, user_id, project_id)
-        refs = mannequin_series_qc.select_reference_cuts(cuts)
+            # SQL 단에서 candidate 별 최신 1장·limit 로 좁힌다 — 전 버전을 끌어와 파이썬에서
+            # 자르면 재생성 이력에 비례해 DB 전송·정렬 비용이 계속 늘어난다.
+            refs = await repo.list_series_reference_cuts(
+                conn, project_id, limit=mannequin_series_qc.MAX_REFERENCE_CUTS)
         if not refs:
             return None  # 첫 컷 — 비교 대상 없음(0점이 아니라 판정 없음)
         ref_imgs = []
@@ -406,6 +435,7 @@ async def _run_candidate(
     # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
     model = resolve_model(s, s.mannequin_tier)
     feedback = ""
+    best_reject: tuple | None = None  # (res, p2) — 예산 소진 시 구제할 최선 reject 후보
     profile_hash = _canonical_profile_hash(fit_profile)
     for attempt in range(1, s.mannequin_max_attempts + 1):
         prompt = f"{feedback}\n\n{base_prompt}" if feedback else base_prompt
@@ -457,12 +487,21 @@ async def _run_candidate(
         # 빈손으로 끝나는 것보다, 최선본을 "검수 필요"로 내보내고 사람이 판단하게 하는 편이 낫다.
         # (기존엔 이 경로가 곧장 None → 후보 드롭 → 잡 실패였다.)
         salvaged = False
-        if p2_reject and attempt >= s.mannequin_max_attempts:
-            p2_reject, salvaged = False, True
-            await _emit(pool, job_id, "step", {
-                "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
-                "reason": "budget_exhausted", "outcome": score_outcome(s, p2)})
+        if p2_reject:
+            # reject 후보를 점수와 함께 보관해 둔다 — 예산 소진 시 "마지막 시도"가 아니라
+            # **최선본**을 구제하기 위해서다. 1차 70점 / 2차 20점인데 20점을 내보내면
+            # 재시도가 오히려 셀러에게 손해가 된다.
+            if _is_better_candidate(s, p2, best_reject[1] if best_reject else None):
+                best_reject = (res, p2)
+            if attempt >= s.mannequin_max_attempts:
+                if best_reject and best_reject[1] is not p2:
+                    res, p2 = best_reject  # 더 나은 이전 후보로 되돌린다
+                p2_reject, salvaged = False, True
+                await _emit(pool, job_id, "step", {
+                    "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
+                    "reason": "budget_exhausted", "outcome": score_outcome(s, p2)})
         if not pillow_reject and not p2_reject:
+            pre_edit_hash = hashlib.sha256(res.image).hexdigest()  # 편집 여부 판정용
             # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
             # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
             res, _ = await _apply_axis_qc(
@@ -473,6 +512,24 @@ async def _run_candidate(
             res = await _apply_bust_pass(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
                 attempt=attempt, base_gender=base_gender, res=res)
+            # A~C 점수는 **편집 전** 원본에 매긴 것이다. axis QC 편집·bust 2패스가 이미지를
+            # 바꿨다면 저장되는 점수가 실제 출고본의 점수가 아니게 된다(검수자가 다른 이미지의
+            # 숫자를 보고 판단하게 됨). 이미지가 실제로 바뀐 경우에만 재판정한다 — 안 바뀌었으면
+            # 같은 입력에 vision 콜을 한 번 더 쓰는 낭비다.
+            if (isinstance(p2, dict) and prod_imgs
+                    and hashlib.sha256(res.image).hexdigest() != pre_edit_hash):
+                try:
+                    p2 = await image_qc.verdict(
+                        s, prod_imgs, InlineImage(res.mime, res.image), scored=True)
+                    await _emit(pool, job_id, "step", {
+                        "candidate": candidate, "attempt": attempt,
+                        "status": "image_qc_rescored", "imageQc": p2})
+                except Exception as e:
+                    # fail-open: 재판정 실패 시 편집 전 점수를 쓰되, 그 사실을 남긴다.
+                    log.warning("image_qc rescore failed for job %s: %r", job_id, e)
+                    await _emit(pool, job_id, "step", {
+                        "candidate": candidate, "attempt": attempt,
+                        "status": "image_qc_rescore_failed", "error": type(e).__name__})
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, user_id=user_id,
@@ -494,9 +551,24 @@ async def _run_candidate(
                     qc_scores["series_consistency"] = series["consistency"]
                     qc_scores["series_inconsistencies"] = series["inconsistencies"]
                 qc_scores["critical_errors"] = p2d.get("critical_errors") or []
-                # outcome 은 D축까지 합친 뒤 다시 계산한다 — 일관성 붕괴가 판정에 반영되도록.
-                qc_scores["outcome"] = (
-                    "needs_review" if salvaged else score_outcome(s, qc_scores))
+                # 4축 전부 합친 뒤의 판정. salvaged 여도 이 값을 **덮지 않는다** —
+                # critical_errors("must not ship")를 needs_review 로 눕히면 프롬프트 계약이
+                # 깨진다. 구제 여부는 별도 필드로 남겨 검수자가 맥락을 알게 한다.
+                qc_scores["outcome"] = score_outcome(s, qc_scores)
+                qc_scores["salvaged"] = salvaged
+            # D축이 재생성 판정을 냈으면 실제로 재생성한다. 여기까지 오면 A~C 는 통과했고
+            # 이미지도 확정됐으므로, 관측만 하고 내보내면 API 에 "재생성 필요"라 표시된 컷이
+            # 성공 컷으로 출고되는 모순이 된다. 예산이 남아 있을 때만 — 소진 시엔 아래
+            # 저장 경로로 계속 가서 needs_review 로 출고한다(빈손보다 낫다).
+            if (series is not None and s.image_qc == "enforce"
+                    and (qc_scores or {}).get("outcome") == "regenerate"
+                    and attempt < s.mannequin_max_attempts):
+                await _emit(pool, job_id, "step", {
+                    "candidate": candidate, "attempt": attempt, "status": "series_qc_reject",
+                    "seriesConsistency": series["consistency"]})
+                feedback = ("CONSISTENCY: match the studio setup of this shop's existing cuts — "
+                            + "; ".join(series["inconsistencies"][:3]))
+                continue
             return {
                 "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
                 "size": len(res.image), "width": w, "height": h,

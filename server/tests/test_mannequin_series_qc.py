@@ -9,29 +9,10 @@ from app.agents.vision_llm import VisionError
 from conftest import make_settings
 
 
-def _cut(candidate, version):
-    return {"candidate": candidate, "version": version}
-
-
-# ── 비교 대상 선택 ────────────────────────────────────────────────────────────
-
-def test_selects_latest_version_per_candidate():
-    """구버전에 앵커링하면 셀러가 이미 갈아치운 나쁜 컷에 새 컷을 맞추게 된다."""
-    picked = sq.select_reference_cuts([_cut("A", 1), _cut("A", 3), _cut("A", 2)])
-    assert picked == [_cut("A", 3)]
-
-
-def test_caps_reference_count():
-    """list_mannequin_cuts 는 전 버전을 무제한 반환한다 — cap 없으면 이미지·비용이 무한 증가."""
-    cuts = [_cut(c, 1) for c in "ABCDE"]
-    assert len(sq.select_reference_cuts(cuts)) == sq.MAX_REFERENCE_CUTS
-    assert len(sq.select_reference_cuts(cuts, limit=2)) == 2
-
-
-def test_empty_and_malformed_inputs():
-    assert sq.select_reference_cuts([]) == []
-    assert sq.select_reference_cuts(None) == []
-    assert sq.select_reference_cuts([{"version": 2}]) == []  # candidate 없음 → 제외
+# 비교 대상 선택은 SQL(repo.list_series_reference_cuts)이 담당한다 — 전 버전을 끌어와
+# 파이썬에서 자르면 DB 전송·정렬 비용이 재생성 이력에 비례해 늘어나기 때문. 선택 정책
+# (candidate 별 최신 1장 · outcome=regenerate 제외 · limit)의 계약 테스트는
+# test_mannequin_series_qc_wiring.py 에 있다.
 
 
 # ── 스키마·검증 ───────────────────────────────────────────────────────────────
