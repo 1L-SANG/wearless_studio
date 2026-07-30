@@ -363,7 +363,7 @@ async def _apply_series_qc(*, app, pool, s, job_id, project_id, candidate, attem
     return out
 
 
-def merge_qc_scores(p2, series, *, salvaged: bool = False) -> dict | None:
+def merge_qc_scores(p2, series, *, salvaged: bool = False, thresholds: tuple | None = None) -> dict | None:
     """A~C(image_qc) + D(series) 를 한 스냅샷으로 합치고 최종 outcome 을 계산한다 (순수).
 
     판정이 여러 곳에 흩어지면 "API 엔 재생성 필요라 적혀 있는데 성공 컷으로 출고되는" 모순이
@@ -378,6 +378,11 @@ def merge_qc_scores(p2, series, *, salvaged: bool = False) -> dict | None:
         out["series_inconsistencies"] = series["inconsistencies"]
     out["critical_errors"] = p2d.get("critical_errors") or []
     out["salvaged"] = salvaged
+    # 판정에 쓰인 임계를 함께 남긴다. 임계를 바꾸면 과거 판정은 재계산되지 않으므로, 이게
+    # 없으면 나중에 저장된 outcome 을 재계산해봤을 때 불일치가 나와 버그로 오해하게 된다
+    # (2026-07-31 실측: 임계를 90/75 → 80/65 로 바꾼 뒤 과거 11건이 불일치로 보였다).
+    if thresholds:
+        out["thresholds"] = {"auto_pass": thresholds[0], "review": thresholds[1]}
     return out
 
 
@@ -633,7 +638,9 @@ async def _run_candidate(
             # ── 최종 판정 (단일 지점) ────────────────────────────────────────
             # A~C·D 를 한 스냅샷으로 합쳐 여기서 한 번만 결정한다. 판정이 흩어지면 "API 엔
             # 재생성 필요라 적혀 있는데 성공 컷으로 나가는" 모순이 생긴다(codex 2026-07-31).
-            qc_scores = merge_qc_scores(p2, series, salvaged=salvaged)
+            qc_scores = merge_qc_scores(
+                p2, series, salvaged=salvaged,
+                thresholds=(s.qc_score_auto_pass, s.qc_score_review))
             # 예산은 **누적 이미지 모델 호출**이다: 생성 attempt 회 + 편집 edits_spent 회.
             # 재생성하면 다음 attempt 가 생성 1회를 쓰고, axis QC 가 켜져 있으면 편집 1회도
             # 쓸 수 있다. 둘 다 미리 세지 않으면 상한을 넘긴다 — 편집은 재생성 판단보다

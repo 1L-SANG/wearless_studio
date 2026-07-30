@@ -191,6 +191,8 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string[]} critical_errors          출고 불가 결함(로고 변형·색 변경 등). 점수 무관 재생성
    @property {'auto_pass'|'needs_review'|'regenerate'} outcome  4축 최저값 + 치명오류 기반 등급
    @property {boolean} salvaged          예산 소진으로 재생성을 못 하고 내보낸 컷인가
+   @property {{auto_pass:number,review:number}} [thresholds] 판정 시점 임계 — 임계를 바꿔도
+   과거 판정은 재계산되지 않으므로, 이 값 없이 재계산하면 불일치가 버그처럼 보인다
 
    @typedef {Object} StoryboardBlock
    @property {string} id

@@ -16,6 +16,8 @@ comment on column public.mannequin_cuts.qc_scores is
   'image_quality·series_consistency (각 0-100 정수 또는 null=신호 없음), '
   'series_inconsistencies text[](선택), critical_errors text[](출고 불가 결함 — 점수 무관 재생성), '
   'outcome auto_pass|needs_review|regenerate (4축 최저값 + 치명오류 기반 등급), '
-  'salvaged bool(예산 소진으로 재생성 못 하고 내보낸 컷). '
+  'salvaged bool(예산 소진으로 재생성 못 하고 내보낸 컷), '
+  'thresholds {auto_pass, review}(판정 시점 임계 — 임계를 바꿔도 과거 판정은 재계산되지 '
+  '않으므로 이 값 없이 재계산하면 불일치가 버그처럼 보인다). '
   '컬럼 자체가 null = 판정 없음(QC off·판정 실패·이 마이그레이션 이전 행). '
   'API 노출 경로: routes._cut_to_api → models.MannequinCut.qc_scores → qcScores(camel).';

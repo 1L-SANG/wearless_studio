@@ -50,7 +50,7 @@ def test_model_declares_qc_scores_or_response_filters_it():
 
 QC_SCORE_KEYS = {
     "product_fidelity", "physical_naturalness", "image_quality", "series_consistency",
-    "series_inconsistencies", "critical_errors", "outcome", "salvaged",
+    "series_inconsistencies", "critical_errors", "outcome", "salvaged", "thresholds",
 }
 
 
