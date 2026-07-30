@@ -137,11 +137,28 @@ async def main() -> int:
     def _crit(label):
         return sum(1 for r in results if r.get(label, {}).get("critical_errors"))
 
+    def _text_crit(label):
+        """**text/logo 치명오류만** 센다 — 이 규칙이 겨냥하는 결함이다.
+
+        직전 판정(2026-07-31)은 fidelity 평균 80.8 vs 80.0 을 보고 규칙을 기각했다. 그 뒤
+        같은 판정기가 같은 이미지에 ±30 을 낸다는 것이 측정됐다 — 0.8 차이는 노이즈였고
+        그 기각은 근거가 없었다. 이산 신호인 치명오류 발생률이 올바른 종점이다.
+        """
+        n = 0
+        for r in results:
+            errs = r.get(label, {}).get("critical_errors") or []
+            if any(k in e.lower() for e in errs for k in ("text", "logo", "letter")):
+                n += 1
+        return n
+
     print(f"\n[집계] n={len(results)}")
     for label in ("OFF", "ON"):
         f = _avg(label, "product_fidelity")
-        print(f"  {label}: fidelity 평균 {f if f is None else round(f, 1)} · "
-              f"critical 보유 {_crit(label)}/{len(results)}")
+        print(f"  {label}: fidelity 평균 {f if f is None else round(f, 1)}"
+              f"  ·  critical 보유 {_crit(label)}/{len(results)}"
+              f"  ·  **text/logo 치명오류 {_text_crit(label)}/{len(results)}**")
+    print("  (fidelity 평균은 판정기 노이즈 ±30 때문에 이 표본 크기에서 무의미하다 — "
+          "text/logo 발생률로 판단할 것)")
     print(f"  → {OUT / 'results.json'}")
     return 0
 
