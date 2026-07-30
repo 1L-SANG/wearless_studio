@@ -18,11 +18,15 @@ from PIL import Image
 log = logging.getLogger("wearless.mannequin_job")
 
 from .. import repo
-from ..agents import image_qc, mannequin, mannequin_fit_qc
+from ..agents import image_qc, mannequin, mannequin_bust, mannequin_fit_qc
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
-from ..agents.prompts import load_prompt_template, render_mannequin_prompt
-from ..r2 import ai_key, ext_for_mime
+from ..agents.prompts import (
+    load_bust_prompt_template,
+    load_prompt_template,
+    render_mannequin_prompt,
+)
+from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
 from ..services import qc
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
 
@@ -75,6 +79,68 @@ def _build_manifest(prod_assets: list[dict], has_match: bool) -> str:
     if has_match:
         lines.append(f"{i}. matching BOTTOM garment — also dress the mannequin in this, coordinated with the top")
     return "\n".join(lines)
+
+
+# 검색 증강 Phase 3 (retrieval_upgrade_prd FR-C): 유사한 '성공 스튜디오 컷'을 STYLE REFERENCE 로
+# 첨부해 컷 간 톤·조명·프레이밍·마감 일관성을 끌어올린다. 최대 리스크 = 레퍼런스의 '다른 옷'이
+# 결과에 새는 오염 → 아래 가드로 look-only 를 강하게 못박고, image_qc(①동일성)로 계측한다.
+_STYLE_REF_GUARD = (
+    "STYLE REFERENCE images (labeled in the manifest) are provided ONLY as examples of the target "
+    "studio look — lighting, background tone, camera framing and finish. They show DIFFERENT garments. "
+    "NEVER copy any garment, color, pattern, print, logo, or detail from a STYLE REFERENCE; the garment "
+    "identity comes exclusively from the product photos and the PRODUCT CONTEXT."
+)
+_REF_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+
+
+def _ref_manifest_lines(start_index: int, n: int) -> str:
+    """images 끝에 붙는 STYLE REFERENCE 슬롯의 매니페스트 라벨(고정 문자열 — 셀러 데이터 미포함)."""
+    return "\n".join(
+        f"{start_index + i}. STYLE REFERENCE — target studio look ONLY "
+        "(a DIFFERENT garment; never copy its garment)"
+        for i in range(n)
+    )
+
+
+async def _load_style_refs(app, s, *, prod_imgs, clothing_type, gender):
+    """retrieval_refimages=on 시 프론트 상품 이미지로 유사 레퍼런스 컷 top-k 검색 → 바이트 로드.
+    best-effort — 임베딩/검색/로드 실패는 조용히 ([], []) (생성 절대 안 막음, FR-C).
+    프리필터(cut_type='mannequin' + clothing_type/gender)로 좁힌 풀에서만 벡터 랭킹(FR-A2 원칙).
+    clothing_type 이 코퍼스와 어휘 불일치로 빈 결과면 clothing_type 없이 1회 폴백."""
+    if getattr(s, "retrieval_refimages", "off") != "on" or not prod_imgs:
+        return [], []
+    try:
+        from ..services import embeddings as E
+        qv = await asyncio.to_thread(
+            E.embed_image, prod_imgs[0].data,
+            model_id=s.embed_image_model, expected_dim=s.embed_image_dim)
+    except Exception as e:  # torch 미설치·모델 로드 실패 등 → 조용히 스킵
+        log.warning("style_ref embed 실패: %r", e)
+        return [], []
+    topk = getattr(s, "ref_images_topk", 2)
+    try:
+        async with app.state.pool.connection() as conn:
+            hits = await repo.search_ref_images(
+                conn, qv, cut_type="mannequin", embed_model=s.embed_image_model,
+                clothing_type=clothing_type or None, gender=gender or None, k=topk)
+            if not hits and clothing_type:  # 어휘 불일치 폴백
+                hits = await repo.search_ref_images(
+                    conn, qv, cut_type="mannequin", embed_model=s.embed_image_model,
+                    gender=gender or None, k=topk)
+    except Exception as e:
+        log.warning("style_ref 검색 실패: %r", e)
+        return [], []
+    refs, ids = [], []
+    for h in hits:
+        try:
+            data = await asyncio.to_thread(app.state.r2.get_bytes, h["r2_key"])
+        except Exception as e:
+            log.warning("style_ref 로드 실패 %s: %r", h.get("id"), e)
+            continue
+        ext = (h["r2_key"].rsplit(".", 1)[-1] if "." in h["r2_key"] else "").lower()
+        refs.append(InlineImage(_REF_MIME.get(ext, "image/jpeg"), data))
+        ids.append(h["id"])
+    return refs, ids
 
 
 # P1 축 QC enforce 승격 가드 — env·요청·payload·CLI 어떤 경로로도 우회 불가한 코드 레벨 스위치
@@ -211,16 +277,52 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
     return pillow_reject, p2_reject
 
 
+async def _apply_bust_pass(*, pool, gemini, s, job_id, candidate, attempt, base_gender, res):
+    """여성 기본 가슴 볼륨 2패스 — 채택본에 "가슴만 바꿔라"를 단독 과제로 한 번 더 돌린다.
+
+    1패스만으로는 안 된다(2026-07-30 스파이크): 베이스를 볼륨 있는 것으로 바꿔도, 1패스
+    프롬프트에 가슴 지시를 주입해도 모델이 몸을 표준으로 정규화한다. 이미지 1장·과제 1개일
+    때만 반영된다.
+
+    **fail-open** — _apply_axis_qc 와 동일 규율. 거부·오류·빈 응답 어떤 경우에도 1패스
+    결과를 그대로 돌려준다. 실제로 Flash 는 "I cannot modify the physical characteristics
+    of the mannequin's chest" 로 거부하는 것이 관측됐다. 콘텐츠 필터 한 번에 셀러 잡이
+    죽으면 안 된다.
+    """
+    if not mannequin_bust.should_apply(base_gender, getattr(s, "mannequin_bust_pass", "off")):
+        return res
+    before = hashlib.sha256(res.image).hexdigest()[:12]
+    try:
+        prompt = mannequin_bust.build_prompt(load_bust_prompt_template())
+        out = await gemini.generate_content_image(
+            resolve_model(s, "image_high"),  # Flash 는 거부·미반영으로 탈락 — 티어 고정
+            prompt, [InlineImage(res.mime, res.image)],
+            s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
+    except Exception as e:
+        log.warning("bust pass failed for job %s (원본 유지): %r", job_id, e)
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "bust_pass",
+            "outcome": "failed_open", "image_hash": before,
+            "error_type": type(e).__name__, "error_message": str(e)[:200]})
+        return res
+    await _emit(pool, job_id, "step", {
+        "candidate": candidate, "attempt": attempt, "status": "bust_pass",
+        "outcome": "applied", "image_hash": before,
+        "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
+    return out
+
+
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
-    adjusted_axes=(), fit_profile_source="legacy_analysis_fallback",
+    adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
     s = app.state.settings
     pool, r2, gemini = app.state.pool, app.state.r2, app.state.gemini
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
-    images = [base_img, *prod_imgs] + ([match_img] if match_img else [])
+    # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
+    images = [base_img, *prod_imgs] + ([match_img] if match_img else []) + list(ref_imgs)
     ctx = mannequin.prompt_context(
         clothing_type=clothing_type, product_count=product_count,
         base_gender=base_gender, image_manifest=image_manifest, fit_profile=fit_profile,
@@ -230,6 +332,8 @@ async def _run_candidate(
         template, ctx, product, analysis,
         seller_canon=s.seller_text_canonicalize, knowledge=s.retrieval_knowledge,
     )
+    if ref_imgs:  # 레퍼런스 첨부 시에만 오염 가드를 프롬프트 말미에 강조(look-only)
+        base_prompt = f"{base_prompt}\n\n{_STYLE_REF_GUARD}"
     # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
     # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
     model = resolve_model(s, s.mannequin_tier)
@@ -262,8 +366,11 @@ async def _run_candidate(
             "qc": {"verdict": verdict.verdict, "reasons": verdict.reasons, "metrics": verdict.metrics}})
         # AG-P2 이미지 동일성 검수 — shadow(로그만)·enforce(게이트) 시 판정. off면 skip.
         # vision 실패(키미설정 등)는 삼켜 p2=None → 게이트 미적용(생성 자체 안 막음).
+        # STYLE REFERENCE 첨부 시 오염(다른 옷 유출)을 반드시 계측 — image_qc=off 여도 최소 shadow 로
+        # 승격해 동일성 판정을 기록한다(게이팅 아님 — enforce 만 reject, gate_decision). off↔측정 결합.
+        eff_image_qc = s.image_qc if s.image_qc != "off" else ("shadow" if ref_imgs else "off")
         p2 = None
-        if s.image_qc in ("shadow", "enforce") and prod_imgs:
+        if eff_image_qc in ("shadow", "enforce") and prod_imgs:
             try:
                 p2 = await image_qc.verdict(s, prod_imgs, InlineImage(res.mime, res.image))
                 await _emit(pool, job_id, "step", {
@@ -279,10 +386,14 @@ async def _run_candidate(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
                 attempt=attempt, model=model, res=res, prod_imgs=prod_imgs,
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash)
+            # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
+            res = await _apply_bust_pass(
+                pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+                attempt=attempt, base_gender=base_gender, res=res)
             ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
-            await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime)
+            await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime, cache=IMMUTABLE_CACHE)
             w, h = _image_dims(res.image)
             return {
                 "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
@@ -334,7 +445,14 @@ async def run_mannequin_job(app, job: dict) -> None:
         async with pool.connection() as conn:
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
-            gender = mannequin.select_base_gender(analysis)
+            product_clothing_type = (
+                product.get("clothing_type")
+                or product.get("clothingType")
+                or "top"
+            )
+            gender = mannequin.select_base_gender(
+                analysis, product_clothing_type
+            )
             base_asset_id = (s.base_mannequin_men_asset_id if gender == "men"
                              else s.base_mannequin_women_asset_id)
             base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)
@@ -378,6 +496,20 @@ async def run_mannequin_job(app, job: dict) -> None:
         #    크레딧 단가(2/잡)는 잡 기준이라 불변. 다양화는 핏 조정→재생성 루프가 담당.
         clothing_type = product.get("clothing_type") or "상의"
         manifest = _build_manifest(prod_assets, match_img is not None)
+        # Phase 3(retrieval_refimages=on): 유사 성공 컷을 STYLE REFERENCE 로 첨부(컷 톤·조명 일관성).
+        # off 면 ([], []) → 매니페스트·images 무변화(행위 변화 0). best-effort.
+        ref_imgs, ref_ids = await _load_style_refs(
+            app, s, prod_imgs=prod_imgs,
+            clothing_type=(product.get("clothing_type") or product.get("clothingType")), gender=gender)
+        if ref_imgs:
+            next_i = 2 + len(prod_assets) + (1 if match_img else 0)
+            manifest = manifest + "\n" + _ref_manifest_lines(next_i, len(ref_imgs))
+            # 이벤트는 잡 소유자(다른 셀러)에게 전달되므로 ref id(타 프로젝트 UUID 포함)를 그대로
+            # 노출하지 않는다 — opaque 해시만. 실제 id 는 서버 로그로만(운영자 디버깅용).
+            log.info("job %s style_refs_attached ids=%s", job_id, ref_ids)
+            opaque = [hashlib.sha1(i.encode("utf-8")).hexdigest()[:12] for i in ref_ids]
+            await _emit(pool, job_id, "step",
+                        {"status": "style_refs_attached", "ref_hashes": opaque, "n": len(ref_imgs)})
         # fit profile 은 잡 생성 시점 스냅샷이 정본(payload.fitProfileSnapshot — fidelity 설계 D3).
         # 워커가 최신 analysis 를 재독하면 잡 생성↔실행 사이의 저장 경합으로 다른 프로필이
         # 조용히 쓰일 수 있다(무음 유실). 키가 없는 legacy 잡만 analysis 폴백.
@@ -442,7 +574,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                     product_count=product_count, template=template, product=product,
                     analysis=analysis, clothing_type=clothing_type, image_manifest=manifest,
                     fit_profile=profile, adjusted_axes=adjusted_axes,
-                    fit_profile_source=fit_profile_source)
+                    fit_profile_source=fit_profile_source, ref_imgs=ref_imgs)
             except Exception as e:
                 log.warning("job %s candidate %s failed: %r", job_id, letter, e)
                 r = None

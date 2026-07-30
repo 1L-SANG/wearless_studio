@@ -75,7 +75,7 @@ class _FakeR2:
     def get_bytes(self, key):
         return b"\x89PNG-bytes"
 
-    def put_bytes(self, key, data, mime):
+    def put_bytes(self, key, data, mime, cache=None):
         return None
 
     def delete(self, key):

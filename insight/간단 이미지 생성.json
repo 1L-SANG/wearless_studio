@@ -1,0 +1,126 @@
+{
+  "id": "b1c2d3e4-0001-4a11-92f6-038513280001",
+  "revision": 0,
+  "last_node_id": 5,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "PrimitiveStringMultiline",
+      "pos": [260, -60],
+      "size": [420, 360],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "값", "name": "value", "type": "STRING", "widget": {"name": "value"}, "link": null}
+      ],
+      "outputs": [
+        {"localized_name": "문자열", "name": "STRING", "type": "STRING", "links": [1, 2]}
+      ],
+      "title": "프롬프트",
+      "properties": {"Node name for S&R": "PrimitiveStringMultiline"},
+      "widgets_values": ["A real photo of a fluffy corgi puppy sitting on a sunny park lawn, looking at the camera, shot on an iPhone."]
+    },
+    {
+      "id": 2,
+      "type": "OpenAIGPTImageNodeV2",
+      "pos": [780, -280],
+      "size": [400, 344],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "프롬프트", "name": "prompt", "type": "STRING", "widget": {"name": "prompt"}, "link": 1},
+        {"localized_name": "모델", "name": "model", "type": "COMFY_DYNAMICCOMBO_V3", "widget": {"name": "model"}, "link": null},
+        {"localized_name": "사이즈", "name": "model.size", "type": "COMBO", "widget": {"name": "model.size"}, "link": null},
+        {"localized_name": "사용자 지정 너비", "name": "model.custom_width", "type": "INT", "widget": {"name": "model.custom_width"}, "link": null},
+        {"localized_name": "사용자 지정 높이", "name": "model.custom_height", "type": "INT", "widget": {"name": "model.custom_height"}, "link": null},
+        {"localized_name": "배경", "name": "model.background", "type": "COMBO", "widget": {"name": "model.background"}, "link": null},
+        {"localized_name": "품질", "name": "model.quality", "type": "COMBO", "widget": {"name": "model.quality"}, "link": null},
+        {"label": "image_1", "localized_name": "model.images.image_1", "name": "model.images.image_1", "shape": 7, "type": "IMAGE", "link": null},
+        {"label": "image_2", "localized_name": "model.images.image_2", "name": "model.images.image_2", "shape": 7, "type": "IMAGE", "link": null},
+        {"label": "mask", "localized_name": "model.mask", "name": "model.mask", "shape": 7, "type": "MASK", "link": null},
+        {"localized_name": "개수", "name": "n", "type": "INT", "widget": {"name": "n"}, "link": null},
+        {"localized_name": "시드", "name": "seed", "type": "INT", "widget": {"name": "seed"}, "link": null}
+      ],
+      "outputs": [
+        {"localized_name": "이미지", "name": "IMAGE", "type": "IMAGE", "links": [3]}
+      ],
+      "properties": {"Node name for S&R": "OpenAIGPTImageNodeV2"},
+      "widgets_values": ["", "gpt-image-2", "1024x1024", 1024, 1024, "auto", "medium", 1, 42, "randomize"],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 3,
+      "type": "GeminiImage2Node",
+      "pos": [780, 140],
+      "size": [400, 396],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "이미지", "name": "images", "shape": 7, "type": "IMAGE", "link": null},
+        {"localized_name": "파일", "name": "files", "shape": 7, "type": "GEMINI_INPUT_FILES", "link": null},
+        {"localized_name": "프롬프트", "name": "prompt", "type": "STRING", "widget": {"name": "prompt"}, "link": 2},
+        {"localized_name": "모델", "name": "model", "type": "COMBO", "widget": {"name": "model"}, "link": null},
+        {"localized_name": "시드", "name": "seed", "type": "INT", "widget": {"name": "seed"}, "link": null},
+        {"localized_name": "종횡비", "name": "aspect_ratio", "type": "COMBO", "widget": {"name": "aspect_ratio"}, "link": null},
+        {"localized_name": "해상도", "name": "resolution", "type": "COMBO", "widget": {"name": "resolution"}, "link": null},
+        {"localized_name": "응답 형식", "name": "response_modalities", "type": "COMBO", "widget": {"name": "response_modalities"}, "link": null},
+        {"localized_name": "시스템 프롬프트", "name": "system_prompt", "shape": 7, "type": "STRING", "widget": {"name": "system_prompt"}, "link": null}
+      ],
+      "outputs": [
+        {"localized_name": "이미지", "name": "IMAGE", "type": "IMAGE", "links": [4]},
+        {"localized_name": "문자열", "name": "STRING", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "GeminiImage2Node"},
+      "widgets_values": ["", "gemini-3-pro-image-preview", 42, "randomize", "1:1", "1K", "IMAGE", ""],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 4,
+      "type": "PreviewImage",
+      "pos": [1290, -280],
+      "size": [360, 360],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "이미지", "name": "images", "type": "IMAGE", "link": 3}
+      ],
+      "outputs": [],
+      "title": "결과물(GPT)",
+      "properties": {"Node name for S&R": "PreviewImage"},
+      "widgets_values": []
+    },
+    {
+      "id": 5,
+      "type": "PreviewImage",
+      "pos": [1290, 140],
+      "size": [360, 360],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {"localized_name": "이미지", "name": "images", "type": "IMAGE", "link": 4}
+      ],
+      "outputs": [],
+      "title": "결과물(나노바나나)",
+      "properties": {"Node name for S&R": "PreviewImage"},
+      "widgets_values": []
+    }
+  ],
+  "links": [
+    [1, 1, 0, 2, 0, "STRING"],
+    [2, 1, 0, 3, 2, "STRING"],
+    [3, 2, 0, 4, 0, "IMAGE"],
+    [4, 3, 0, 5, 0, "IMAGE"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

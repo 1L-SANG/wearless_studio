@@ -56,12 +56,12 @@ export const FIT_AXES = Object.freeze({
       women: [
         { value: 'above_ankle', label: '발목 위', promptEn: 'hem ends just above the ankle bone, ankle visible' },
         { value: 'ankle', label: '발목', promptEn: 'hem ends at the ankle bone, no break' },
-        { value: 'below_ankle', label: '발목 덮음', promptEn: 'hem falls just past the ankle, lightly resting on the top of the foot with one soft break' },
+        { value: 'below_ankle', label: '발목 덮음', promptEn: 'a lengthened version of the same trousers whose hem falls just past the ankle and rests lightly on the top of the foot with one soft break; if the photographed garment stops at or above the ankle bone, visibly re-tailor only its length proportions by extending the leg hems down over the instep until a single soft break forms; if it already satisfies this target, preserve those proportions' },
       ],
       men: [
         { value: 'above_ankle', label: '발목 위', promptEn: 'hem ends just above the ankle bone, ankle visible' },
         { value: 'ankle', label: '발목', promptEn: 'hem ends at the ankle bone, no break' },
-        { value: 'below_ankle', label: '발목 덮음', promptEn: 'hem falls just past the ankle, lightly resting on the top of the foot with one soft break' },
+        { value: 'below_ankle', label: '발목 덮음', promptEn: 'a lengthened version of the same trousers whose hem falls just past the ankle and rests lightly on the top of the foot with one soft break; if the photographed garment stops at or above the ankle bone, visibly re-tailor only its length proportions by extending the leg hems down over the instep until a single soft break forms; if it already satisfies this target, preserve those proportions' },
       ],
     },
   },
@@ -76,7 +76,7 @@ export const FIT_AXES = Object.freeze({
     },
     silhouette: {
       women: [
-        { value: 'h_line', label: 'H라인', promptEn: 'H-line / pencil — straight narrow column, no flare' },
+        { value: 'h_line', label: 'H라인', promptEn: 'an H-line / pencil version of the same skirt — a straight narrow column with parallel side seams and no flare; if the photographed garment flares outward toward the hem, visibly re-tailor only its silhouette by straightening the side seams into parallel lines from hip to hem; if it already satisfies this target, preserve those proportions' },
         { value: 'a_line', label: 'A라인', promptEn: 'fitted at the waist then flares out steadily to a wide hem' },
         { value: 'mermaid', label: '머메이드', promptEn: 'tight through hip and thigh, then flares out sharply near the hem' },
       ],
@@ -108,25 +108,25 @@ export const FIT_AXES = Object.freeze({
         { value: 'slim', label: '슬림', promptEn: 'close outerwear fit with narrow sleeves and minimal ease' },
         { value: 'regular', label: '레귤러', promptEn: 'regular outerwear fit with natural room for layering' },
         { value: 'semi_over', label: '세미오버', promptEn: 'semi-oversized outerwear with relaxed shoulders and extra body room' },
-        { value: 'over', label: '오버', promptEn: 'oversized outerwear with dropped shoulders, broad body volume and roomy sleeves' },
+        { value: 'over', label: '오버', promptEn: 'an oversized version of the same outerwear; if the photographed garment sits at the natural shoulder point or is close-fitting, visibly re-tailor only its fit proportions by dropping the shoulder seams clearly below the shoulder points and adding broad air volume through the body and sleeves; if it already satisfies this target, preserve those proportions' },
       ],
       men: [
         { value: 'slim', label: '슬림', promptEn: 'close outerwear fit with narrow sleeves and minimal ease' },
         { value: 'regular', label: '레귤러', promptEn: 'regular outerwear fit with natural room for layering' },
         { value: 'semi_over', label: '세미오버', promptEn: 'semi-oversized outerwear with relaxed shoulders and extra body room' },
-        { value: 'over', label: '오버', promptEn: 'oversized outerwear with dropped shoulders, broad body volume and roomy sleeves' },
+        { value: 'over', label: '오버', promptEn: 'an oversized version of the same outerwear; if the photographed garment sits at the natural shoulder point or is close-fitting, visibly re-tailor only its fit proportions by dropping the shoulder seams clearly below the shoulder points and adding broad air volume through the body and sleeves; if it already satisfies this target, preserve those proportions' },
       ],
     },
     length: {
       women: [
         { value: 'crop_short', label: '크롭·숏', promptEn: 'short outerwear hem ending around the waist or high hip' },
         { value: 'basic', label: '기본', promptEn: 'standard outerwear hem ending around the hip' },
-        { value: 'long', label: '롱', promptEn: 'long outerwear hem extending to mid-thigh or lower' },
+        { value: 'long', label: '롱', promptEn: 'a lengthened version of the same outerwear whose hem extends to mid-thigh or lower; if the photographed garment ends above mid-thigh, visibly re-tailor only its length proportions by proportionally extending the front and back body panels downward past mid-thigh; if it already satisfies this target, preserve those proportions' },
       ],
       men: [
         { value: 'crop_short', label: '크롭·숏', promptEn: 'short outerwear hem ending around the waist or high hip' },
         { value: 'basic', label: '기본', promptEn: 'standard outerwear hem ending around the hip' },
-        { value: 'long', label: '롱', promptEn: 'long outerwear hem extending to mid-thigh or lower' },
+        { value: 'long', label: '롱', promptEn: 'a lengthened version of the same outerwear whose hem extends to mid-thigh or lower; if the photographed garment ends above mid-thigh, visibly re-tailor only its length proportions by proportionally extending the front and back body panels downward past mid-thigh; if it already satisfies this target, preserve those proportions' },
       ],
     },
   },

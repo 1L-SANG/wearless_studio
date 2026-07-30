@@ -112,6 +112,7 @@ def _wire_worker(monkeypatch, *, analysis, payload, calls):
         return dict(analysis)
 
     async def get_asset_for_user(conn, uid, aid):
+        calls.setdefault("get_asset", []).append(aid)
         return {"id": aid, "mime_type": "image/png", "r2_key": f"{aid}.png"}
 
     async def finalize_success(conn, **kw):
@@ -139,7 +140,7 @@ def _wire_worker(monkeypatch, *, analysis, payload, calls):
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
     monkeypatch.setattr(mannequin_job, "_run_candidate", fake_run_candidate)
     settings = make_settings(base_mannequin_women_asset_id="bw", base_mannequin_men_asset_id="bm",
-                             r2_bucket="bucket")
+                              r2_bucket="bucket")
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=settings, pool=_FakePool(),
         r2=types.SimpleNamespace(get_bytes=lambda key: b"img"), gemini=None))
@@ -231,7 +232,7 @@ def test_run_candidate_emits_prompt_rendered_hashes(monkeypatch):
             return types.SimpleNamespace(image=_PNG_1PX, mime="image/png")
 
     class _R2:
-        def put_bytes(self, key, data, mime):
+        def put_bytes(self, key, data, mime, cache=None):
             return None
 
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)

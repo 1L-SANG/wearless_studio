@@ -13,10 +13,15 @@ import { Icon, Chips, Button, Skeleton, ErrorState, Modal, useToast } from '@/co
 import { PageHead, WizardCTA } from '@/features/shell/shell.jsx';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import {
+  genderForClothingType,
+  normalizeTargetGendersForClothingType,
+} from '@/lib/productGender.js';
+import {
   matchingFitDefinition,
   matchingFitFromProfile,
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
+import { resolveSelectedModelId } from './modelSelection.js';
 
 // 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
 // Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
@@ -125,12 +130,6 @@ const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 
 import { CREDIT_COSTS } from '@/lib/limits.js';
 
 export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
-
-// 남성 단독일 때만 'men' — mannequin.py select_base_gender 와 동일 규칙 (핏 프로필 성별 키)
-const genderOf = (genders) => {
-  const g = (genders || []).map((x) => String(x).toLowerCase());
-  return g.length && g.every((x) => ['men', 'male', '남성', '남'].includes(x)) ? 'men' : 'women';
-};
 
 // ── 분석 대기 연출 (A안 · 단계 체크리스트 — 2026-07-13 확정, mockups/analysis-waiting-concepts.html) ──
 // 앞 4단계 자연 페이스는 실측 체감 시간에 맞춘다. 2026-07-16 prod 실측(의류 5종·사진 1~3장
@@ -263,12 +262,24 @@ export function AnalysisSkeleton() {
   );
 }
 
+// AI(가상) 모델 — 서버 레지스트리(server/app/data/virtual_models.json)와 동기 유지.
+// 컷 생성(AG-06)이 이 id('mA'…)로 아이덴티티 자산을 해석하고, 라이선스 게이트는
+// 비-UUID id를 no-op 처리한다(과금 없음). 실제 모델(FaceMarket)과 탭으로 구분 표시.
+const AI_MODELS = [
+  { id: 'mA', displayName: '모델 A', gender: 'women', thumb: '/models/women/w1.webp' },
+  { id: 'mB', displayName: '모델 B', gender: 'men', thumb: '/models/men/m1.webp' },
+  { id: 'mC', displayName: '모델 C', gender: 'men', thumb: '/models/men/m2.webp' },
+];
+
 export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const a = analysis;
   const toast = useToast();
   const [washing, setWashing] = useState(false);
   const [spDraft, setSpDraft] = useState('');
   const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
+  // 직접 입력에 커서가 있는 동안 enum 칩 하이라이트를 지운다 — 커밋은 여전히 blur 시점이라
+  // 데이터는 안 바뀌고, 빈 채로 나가면 칩 선택이 그대로 돌아온다(오클릭 무해).
+  const [ccFocus, setCcFocus] = useState(false);
   useEffect(() => { setCcDraft(a.customCategory || ''); }, [a.customCategory]);
   const [spAdding, setSpAdding] = useState(false);
   const [editMatIdx, setEditMatIdx] = useState(null);
@@ -279,6 +290,9 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [detailFor, setDetailFor] = useState(null); // 상세 모달 대상 모델 카드
+  // AI 모델 / 실제 모델 탭 (2026-07-21 사용자 결정). 초기 탭은 현재 선택이 속한 쪽.
+  const [modelTab, setModelTab] = useState(() =>
+    (a.selectedModelId && !AI_MODELS.some((m) => m.id === a.selectedModelId)) ? 'real' : 'ai');
   useEffect(() => {
     let alive = true;
     listModels()
@@ -295,14 +309,21 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, 5) });
   }, []);
 
-  // 카탈로그 로드 후 선택값이 없거나 더 이상 라이선스 활성 모델이 아니면 첫 라이선스 활성 모델로 자동 선택.
-  // (구 정적 selectedModelId 'mA' 등도 여기서 실 fm_models.id(UUID)로 교체 → 생성 게이트가 해석 가능.)
+  // 카탈로그 로드 후 선택값이 AI 모델도, 라이선스 활성 실제 모델도 아니면 첫 AI 모델로 자동 선택.
+  // 기본은 무료 AI 모델 — 실제 모델(유료 라이선스)은 사용자가 탭에서 명시적으로 고를 때만.
+  // (AI 모델 id 'mA'…는 비-UUID라 생성 라이선스 게이트가 no-op 처리 — 레거시 호환 확인됨.)
   useEffect(() => {
-    const licensable = models.filter((m) => m.hasActiveLicense);
-    if (licensable.length && !licensable.some((m) => m.id === a.selectedModelId)) {
-      onChange({ selectedModelId: licensable[0].id });
+    const nextSelectedModelId = resolveSelectedModelId({
+      selectedModelId: a.selectedModelId,
+      targetGenders: a.targetGenders,
+      models,
+      modelsLoading,
+      aiModels: AI_MODELS,
+    });
+    if (nextSelectedModelId !== a.selectedModelId) {
+      onChange({ selectedModelId: nextSelectedModelId });
     }
-  }, [models]);
+  }, [models, modelsLoading, a.selectedModelId, a.targetGenders, onChange]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
 
   const commitSp = () => {
@@ -318,7 +339,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const subMatchId = selMatch[1]?.id;
   const withMatchSelection = (matchClothing) => {
     const category = fitProfileCategory(a.clothingType, a.subCategory) || 'top';
-    const gender = genderOf(a.targetGenders);
+    const gender = genderForClothingType(a.clothingType, a.targetGenders);
     const previousProfile = a.fitProfile;
     const sameProfileScope = previousProfile?.category === category && previousProfile?.gender === gender;
     const previousMain = resolveMainMatchingItem(a);
@@ -376,7 +397,10 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   // 값 세트는 카테고리×성별로 fitAxes 에서 파생 (여성 상의 = 타이트~오버 5단 등). 원피스는 핏 축 없음 → 행 숨김.
   const fitOptsOf = (draft) => {
     const cat = fitProfileCategory(draft.clothingType, draft.subCategory) || 'top';
-    const values = axesFor(cat, genderOf(draft.targetGenders)).fit || [];
+    const values = axesFor(
+      cat,
+      genderForClothingType(draft.clothingType, draft.targetGenders),
+    ).fit || [];
     return { cat, opts: values.map(({ value, label }) => ({ value, label })) };
   };
   // patch 적용 후의 핏·fitProfile 을 함께 산출. 카테고리·성별 변경으로 기존 값이 무효면 regular(없으면 첫 값)로 방어 리셋.
@@ -388,7 +412,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     if (!opts.length) fit = null; // 원피스 등 핏 축 없는 카테고리
     else if (!opts.some((o) => o.value === fit)) { fit = opts.some((o) => o.value === 'regular') ? 'regular' : opts[0].value; src = 'auto'; }
     const prev = next.fitProfile;
-    const gender = genderOf(next.targetGenders);
+    const gender = genderForClothingType(next.clothingType, next.targetGenders);
     const sameProfileScope = prev?.category === cat && prev?.gender === gender;
     const axes = sameProfileScope ? { ...(prev.axes || {}) } : {}; // 카테고리·성별이 바뀌면 타 축 무효 → 리셋
     if (fit === null) delete axes.fit; else axes.fit = fit;
@@ -405,11 +429,18 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     } };
   };
   // subCategory 는 영문 토큰, 실측 key 는 MeasurementKey — 라벨은 catalogs 에서 파생 (계약 §4)
-  const changeType = (t) => onChange(withFitProfile({ clothingType: t, subCategory: (catalogs.subCategories[t] || [])[0]?.value ?? null,
-    measurements: (catalogs.measurementSchema[t] || []).map((k) => ({ key: k, value: null, unit: 'cm' })) }));
+  const changeType = (t) => onChange(withFitProfile({
+    clothingType: t,
+    subCategory: (catalogs.subCategories[t] || [])[0]?.value ?? null,
+    targetGenders: normalizeTargetGendersForClothingType(t, a.targetGenders),
+    measurements: (catalogs.measurementSchema[t] || []).map((k) => ({ key: k, value: null, unit: 'cm' })),
+  }));
   const setMeasure = (key, value) => onChange({ measurements: (a.measurements || []).map((m) => m.key === key ? { ...m, value: value === '' ? null : Number(value) } : m) });
   const typeLabel = catalogs.clothingTypes.find((t) => t.value === a.clothingType)?.label;
   const fitOpts = fitOptsOf(a).opts;
+  const genderOptions = a.clothingType === 'dress'
+    ? catalogs.genders.filter((option) => option.value === 'women')
+    : catalogs.genders;
 
   const sections = (
     <>
@@ -424,23 +455,31 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               비우고, custom을 쓰면 칩 해제. AI 추측(customCategory)이 있으면 pill에 채워짐.
               저장은 blur/Enter 커밋, key로 분석 갱신 시 리셋(소재 인라인 편집 관례). */}
           <div className="field-row"><label className="lbl">세부 카테고리</label>
-            <Chips options={subCats} value={a.subCategory}
+            <Chips options={subCats} value={ccFocus ? null : a.subCategory}
               onChange={(v) => onChange(withFitProfile({ subCategory: v, customCategory: null }))}
               trailing={
                 <input
-                  className={`chip chip-input${a.customCategory && !a.subCategory ? ' on' : ''}`}
+                  className={`chip chip-input${ccFocus || (a.customCategory && !a.subCategory) ? ' on' : ''}`}
                   value={ccDraft} maxLength={20} placeholder="직접 입력"
                   style={{ width: `calc(${chWidth(ccDraft || '직접 입력')}em + 32px)` }}
                   onChange={(e) => setCcDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  onFocus={() => setCcFocus(true)}
                   onBlur={() => {
+                    setCcFocus(false);
                     const v = ccDraft.trim();
                     if (v === (a.customCategory || '')) return;
                     onChange(withFitProfile(v ? { customCategory: v, subCategory: null } : { customCategory: null }));
                   }} />
               } /></div>
           <div className="field-row"><label className="lbl">대상 성별</label>
-            <Chips options={catalogs.genders} value={a.targetGenders?.[0] || null} onChange={(v) => onChange(withFitProfile({ targetGenders: v ? [v] : [] }))} /></div>
+            <Chips options={genderOptions} value={a.targetGenders?.[0] || null}
+              onChange={(v) => onChange(withFitProfile({
+                targetGenders: normalizeTargetGendersForClothingType(
+                  a.clothingType,
+                  v ? [v] : [],
+                ),
+              }))} /></div>
           {fitOpts.length > 0 && (
             <div className="field-row"><label className="lbl">핏</label>
               <Chips options={fitOpts} value={a.fit} onChange={(v) => onChange(withFitProfile({ fit: v }, 'seller'))} /></div>
@@ -533,11 +572,46 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
         </div>
       </div>
 
-      {/* 5. model select — FaceMarket 검증 모델 카탈로그(라이선스 활성 모델만 선택 가능) */}
+      {/* 5. model select — AI(가상) 모델 / 실제(FaceMarket 라이선스) 모델 탭 구분 (2026-07-21) */}
       <div className="surface">
         <div className="sec-title" style={{ marginBottom: 6 }}>모델 선택</div>
-        <div className="sec-sub" style={{ marginBottom: 16 }}>검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.</div>
-        {modelsLoading ? (
+        <Chips className="model-tabs" options={[{ value: 'ai', label: 'AI 모델' }, { value: 'real', label: '실제 모델' }]}
+          value={modelTab} onChange={(v) => v && setModelTab(v)} />
+        <div className="sec-sub" style={{ margin: '10px 0 16px' }}>
+          {modelTab === 'ai'
+            ? '가상 인물 모델이에요 · 라이선스 비용 없이 바로 쓸 수 있어요.'
+            : '검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.'}
+        </div>
+        {modelTab === 'ai' ? (
+          /* 남녀 그룹 구분(2026-07-21 사용자 결정) — 상품 대상 성별과 같은 그룹을 먼저 보여준다 */
+          (a.targetGenders?.[0] === 'men' ? ['men', 'women'] : ['women', 'men']).map((g) => {
+            const group = AI_MODELS.filter((m) => m.gender === g);
+            if (!group.length) return null;
+            return (
+              <div key={g} style={{ marginBottom: 14 }}>
+                <div className="lbl" style={{ fontSize: 12.5, color: 'var(--fg-2)', marginBottom: 8 }}>
+                  {g === 'women' ? '여성 모델' : '남성 모델'}
+                </div>
+                <div className="model-grid">
+                  {group.map((m) => {
+                    const on = a.selectedModelId === m.id;
+                    return (
+                      <div key={m.id} className={`model-card fm-model${on ? ' on' : ''}`}
+                        onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
+                        <img src={m.thumb} alt={m.displayName} />
+                        <span className="fm-verified">AI</span>
+                        <div className="fm-meta">
+                          <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
+                          <div className="fm-price">무료</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })
+        ) : modelsLoading ? (
           <div className="hint">검증 모델을 불러오는 중이에요…</div>
         ) : models.length === 0 ? (
           <div className="hint">아직 등록된 검증 모델이 없어요.</div>

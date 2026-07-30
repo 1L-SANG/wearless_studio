@@ -29,6 +29,7 @@ SERVER_DIR = Path(__file__).resolve().parents[1]
 REPO_DIR = SERVER_DIR.parent
 DEFAULT_REGISTRY_PATH = SERVER_DIR / "app" / "data" / "example_assets.json"
 DEFAULT_CATALOG_PATH = REPO_DIR / "src" / "data" / "genExamples.json"
+PUBLIC_COMBINATIONS_PATH = REPO_DIR / "data" / "genexamples_public_combinations.json"
 R2_PREFIX = "seed/genexamples/v1/releases"
 THUMB_MAX_SIDE = 480
 THUMB_QUALITY = 82
@@ -85,6 +86,95 @@ def _read_json(path: Path) -> dict:
     if not isinstance(value, dict):
         raise ReleaseValidationError(["manifest 최상위 값은 object여야 합니다"])
     return value
+
+
+def _coverage_key(value: dict) -> tuple[str, str, str, str | None]:
+    cut_type = value.get("cutType")
+    return (
+        cut_type,
+        value.get("shot"),
+        value.get("clothingType"),
+        None if cut_type == "product" else value.get("gender"),
+    )
+
+
+def _coverage_label(key: tuple[str, str, str, str | None]) -> str:
+    cut_type, shot, clothing_type, gender = key
+    return f"{cut_type}:{shot}:{clothing_type}:{gender or 'any'}"
+
+
+def load_public_combinations(path: Path | None = None) -> list[dict]:
+    """오너가 편집하는 단일 공개 조합표를 검증해 반환한다."""
+    target = (path or PUBLIC_COMBINATIONS_PATH).resolve()
+    value = _read_json(target)
+    violations: list[str] = []
+    if value.get("schemaVersion") != 1:
+        violations.append("공개 선언 조합표 schemaVersion은 1이어야 합니다")
+    combinations = value.get("combinations")
+    if not isinstance(combinations, list) or not combinations:
+        violations.append("공개 선언 조합표 combinations는 비어 있지 않은 배열이어야 합니다")
+        combinations = []
+    seen: set[tuple[str, str, str, str | None]] = set()
+    for index, combination in enumerate(combinations):
+        prefix = f"공개 선언 조합표 combinations[{index}]"
+        if not isinstance(combination, dict):
+            violations.append(f"{prefix}는 object여야 합니다")
+            continue
+        cut_type = combination.get("cutType")
+        shot = combination.get("shot")
+        clothing_type = combination.get("clothingType")
+        gender = combination.get("gender")
+        if cut_type not in _WORN_CUTS | {"product"}:
+            violations.append(f"{prefix}.cutType이 허용값이 아닙니다: {cut_type}")
+        if clothing_type not in _CLOTHING_TYPES:
+            violations.append(f"{prefix}.clothingType이 허용값이 아닙니다: {clothing_type}")
+        if cut_type == "product":
+            if shot not in {"ghost", "detail"}:
+                violations.append(f"{prefix}.shot은 ghost|detail이어야 합니다")
+            if gender is not None:
+                violations.append(f"{prefix}.gender는 제품컷에서 null이어야 합니다")
+        else:
+            if shot not in {"full", "medium"}:
+                violations.append(f"{prefix}.shot은 full|medium이어야 합니다")
+            if gender not in _GENDERS:
+                violations.append(f"{prefix}.gender는 women|men이어야 합니다")
+        key = _coverage_key(combination)
+        if key in seen:
+            violations.append(f"{prefix}가 중복됐습니다: {_coverage_label(key)}")
+        seen.add(key)
+    if violations:
+        raise ReleaseValidationError(violations)
+    return combinations
+
+
+def generation_example_coverage(
+    examples: list[dict], combinations: list[dict] | None = None,
+) -> tuple[dict[tuple[str, str, str, str | None], int], list[str], list[str]]:
+    """all 발행분을 적용 의류·실사용 성별 축으로 펼쳐 공개 커버리지를 계산한다."""
+    declared = combinations if combinations is not None else load_public_combinations()
+    declared_keys = {_coverage_key(item) for item in declared}
+    counts: dict[tuple[str, str, str, str | None], int] = defaultdict(int)
+    for example in examples or []:
+        if not isinstance(example, dict):
+            continue
+        variants = example.get("variants")
+        has_all = (
+            "all" in variants if isinstance(variants, (dict, list)) else bool(example.get("all"))
+        )
+        if not has_all:
+            continue
+        cut_type = example.get("cutType")
+        for clothing_type in example.get("applicableClothingTypes") or []:
+            key = _coverage_key({
+                "cutType": cut_type,
+                "shot": example.get("shot"),
+                "clothingType": clothing_type,
+                "gender": example.get("gender"),
+            })
+            counts[key] += 1
+    missing = [_coverage_label(key) for key in sorted(declared_keys) if counts.get(key, 0) == 0]
+    undeclared = [_coverage_label(key) for key in sorted(counts) if key not in declared_keys]
+    return dict(counts), missing, undeclared
 
 
 def _resolved_asset_path(asset_root: Path, file_value: object) -> Path | None:
@@ -290,6 +380,10 @@ def validate_manifest(
                 violations.append(f"{prefix}.applicableClothingTypes에 중복이 있습니다")
             if source_type not in applicable:
                 violations.append(f"{prefix}.applicableClothingTypes가 sourceClothingType을 포함해야 합니다")
+            if gender == "men" and "dress" in applicable:
+                violations.append(
+                    f"{prefix} 남성 원피스 생성예시는 지원하지 않습니다"
+                )
             if len(applicable) > 1 and not (
                 set(applicable) == {"top", "outer"}
                 and cut_type in {"styling", "horizon"}
@@ -355,6 +449,18 @@ def validate_manifest(
             violations.append(
                 f"serviceGroupKey '{group}' rank는 1부터 연속·유일해야 합니다: {sorted(ranks)}"
             )
+
+    try:
+        public_combinations = load_public_combinations()
+    except ReleaseValidationError as exc:
+        violations.extend(exc.violations)
+    else:
+        _counts, missing, undeclared = generation_example_coverage(examples, public_combinations)
+        violations.extend(
+            f"공개 선언 조합에 all 발행 예시가 0장입니다: {label}" for label in missing
+        )
+        if undeclared:
+            warnings.append("미선언 조합은 UI에서 비활성화합니다: " + ", ".join(undeclared))
 
     if root.is_dir():
         declared = {path for path in resolved_files.values()}

@@ -15,7 +15,15 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import facemarket, repo
-from .agents import content_roles, fit_axes, mannequin, product_analyst, style_affinity
+from .agents import (
+    content_roles,
+    cut_generator,
+    fit_axes,
+    mannequin,
+    product_analyst,
+    space_set_assets,
+    style_affinity,
+)
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import input_qc, matching, retrieval
@@ -41,7 +49,7 @@ from .models import (
     UploadUrlRequest,
     UploadUrlResponse,
 )
-from .r2 import R2Client, ext_for_mime, upload_key
+from .r2 import IMMUTABLE_CACHE, R2Client, ext_for_mime, upload_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1")
@@ -153,12 +161,28 @@ def _require_bg_examples_enabled(request: Request, value) -> None:
     if getattr(request.app.state.settings, "genexample_bg_enabled", False):
         return
     items = value if isinstance(value, list) else [value]
-    requested = any(
-        isinstance(item, dict)
-        and (item.get("refScope") or item.get("ref_scope")) == "bg"
-        and bool(item.get("exampleId") or item.get("example_id"))
-        for item in items
-    )
+    is_storyboard = isinstance(value, list)
+    requested = False
+    for item in items:
+        if (
+            not isinstance(item, dict)
+            or (item.get("refScope") or item.get("ref_scope")) != "bg"
+            or not bool(item.get("exampleId") or item.get("example_id"))
+        ):
+            continue
+        if is_storyboard:
+            try:
+                if (
+                    space_set_assets.parse_space_set_group_id(
+                        item.get("spaceGroupId") or item.get("space_group_id")
+                    )
+                    is not None
+                ):
+                    continue
+            except space_set_assets.SpaceSetBindingError as exc:
+                raise _bad_request(exc.code, exc.message) from exc
+        requested = True
+        break
     if requested:
         raise _bad_request(
             "genexample_bg_disabled",
@@ -258,13 +282,21 @@ async def purchase_topup(
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
-    """지정된 요금제 코드로 크레딧을 수동 충전합니다. (PG 연동 전 임시 테스트용)
+    """지정된 요금제 코드로 크레딧을 수동 충전합니다. **개발 환경 전용**(결제 없이 지급).
 
     - **Bearer Token**: 필수
     - **Header**: `Idempotency-Key` (선택, 동일 요청 중복 방지)
     - **에지 케이스**:
+      - `404 Not Found`: 프로덕션에서는 라우트가 없는 것처럼 응답합니다.
       - `400 Bad Request`: 존재하지 않는 요금제 코드이거나 중복 충전 시도 시 발생
     """
+    # 결제 없이 크레딧을 주는 경로다. PG(토스) 연동 전에는 임시 수단이었지만, 실 결제가 생긴 뒤로는
+    # 프로덕션에 열려 있으면 '돈 내는 길'과 '공짜 길'이 공존하는 결제 우회 창구가 된다.
+    # **fail-closed**: dev 일 때만 허용한다. 특정 값('prod')을 차단하는 방식은 실제 배포값
+    # (copilot manifest 의 APP_ENV=production)을 놓쳐 구멍이 그대로 열린다. docs 게이트
+    # (main.py 의 app_env == "dev")와 같은 화이트리스트 판정으로 맞춘다.
+    if request.app.state.settings.app_env != "dev":
+        raise _not_found()
     async with get_conn(request) as conn:
         try:
             result = await repo.purchase_topup(
@@ -508,6 +540,17 @@ async def save_product(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         row = await repo.save_product(conn, project_id, user_id, fields)
+        if (
+            row
+            and (row.get("clothingType") or row.get("clothing_type")) == "dress"
+        ):
+            analysis = await repo.get_analysis(conn, project_id) or {}
+            if analysis and analysis.get("targetGenders") != ["women"]:
+                await repo.save_analysis(
+                    conn,
+                    project_id,
+                    {**analysis, "targetGenders": ["women"]},
+                )
         await conn.commit()
     return row
 
@@ -537,6 +580,11 @@ async def save_analysis(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        if (
+            product.get("clothingType") or product.get("clothing_type")
+        ) == "dress":
+            analysis = {**analysis, "targetGenders": ["women"]}
         row = await repo.save_analysis(conn, project_id, analysis)
         await conn.commit()
     return {"projectId": row["project_id"], **(row["payload"] or {})}
@@ -706,7 +754,11 @@ async def match_candidates(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         items = await repo.list_active_matching_items(conn)
-    genders = [g.strip() for part in gender for g in part.split(",") if g.strip()]
+    genders = (
+        ["women"]
+        if clothingType == "dress"
+        else [g.strip() for part in gender for g in part.split(",") if g.strip()]
+    )
     product_tags = [t.strip() for part in styleTags for t in part.split(",") if t.strip()]
     if request.app.state.settings.retrieval_matching == "tags" and product_tags:
         ranked = retrieval.recommend_v1(
@@ -1073,12 +1125,82 @@ async def get_storyboard(request: Request, project_id: str, user_id: str = Depen
 async def save_storyboard(request: Request, project_id: str, blocks: list = Body(...),
                           user_id: str = Depends(require_user)):
     _require_bg_examples_enabled(request, blocks)
+    try:
+        canonical = content_roles.canonicalize_storyboard(blocks, for_storage=True)
+    except ValueError as exc:
+        if str(exc) == "invalid_example_selection_origin":
+            raise _bad_request("invalid_example_selection_origin", "생성예시 선택 출처 값이 올바르지 않아요.")
+        raise
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        out = await repo.save_storyboard(
-            conn, user_id, project_id,
-            content_roles.canonicalize_storyboard(blocks, for_storage=True))
+        if any(
+            isinstance(block, dict)
+            and (
+                block.get("exampleId")
+                or block.get("spaceGroupId")
+                or block.get("space_group_id")
+            )
+            for block in canonical
+        ):
+            product = await repo.get_product(conn, project_id) or {}
+            analysis = await repo.get_analysis(conn, project_id) or {}
+            clothing_type = (
+                product.get("clothingType")
+                or product.get("clothing_type")
+                or "top"
+            )
+            gender = mannequin.select_base_gender(analysis, clothing_type)
+            error = space_set_assets.validate_storyboard_space_sets(
+                canonical, clothing_type=clothing_type, gender=gender
+            )
+            if error:
+                raise _bad_request(*error)
+            standalone_set_example_blocks = [
+                block
+                for block in canonical
+                if isinstance(block, dict)
+                and str(block.get("exampleId") or "").startswith("ss_")
+                and not (
+                    block.get("spaceGroupId") or block.get("space_group_id")
+                )
+            ]
+            for block in standalone_set_example_blocks:
+                scope = block.get("refScope") or block.get("ref_scope") or "all"
+                try:
+                    space_set_assets.resolve_published_example_reference(
+                        block,
+                        clothing_type=clothing_type,
+                        gender=gender,
+                        scope=scope,
+                    )
+                except space_set_assets.SpaceSetBindingError as exc:
+                    raise _bad_request(exc.code, exc.message) from exc
+            standalone_set_example_ids = {
+                id(block) for block in standalone_set_example_blocks
+            }
+            flat_blocks = [
+                block
+                for block in canonical
+                if isinstance(block, dict)
+                and block.get("exampleId")
+                and id(block) not in standalone_set_example_ids
+                and space_set_assets.parse_space_set_group_id(
+                    block.get("spaceGroupId") or block.get("space_group_id")
+                )
+                is None
+            ]
+            if flat_blocks:
+                _base_url, assets = cut_generator.load_example_asset_registry()
+                error = content_roles.validate_storyboard_example_references(
+                    flat_blocks,
+                    assets=assets,
+                    clothing_type=clothing_type,
+                    gender=gender,
+                )
+                if error:
+                    raise _bad_request(*error)
+        out = await repo.save_storyboard(conn, user_id, project_id, canonical)
         await conn.commit()
     return out
 
@@ -1161,12 +1283,49 @@ async def generate_editor_image(
     - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
     """
     _require_bg_examples_enabled(request, body)
+    if (body or {}).get("mode") == "new" and (
+        (body or {}).get("spaceGroupId") or (body or {}).get("space_group_id")
+    ):
+        raise _bad_request(
+            "space_set_editor_unsupported",
+            "촬영 세트는 콘티보드에서만 사용할 수 있어요.",
+        )
     s = request.app.state.settings
     cost = s.credit_cost_editor_image
     scoped_key = f"{project_id}:editor_image:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
+        if (
+            (body or {}).get("mode") == "new"
+            and str((body or {}).get("exampleId") or "").startswith("ss_")
+        ):
+            product = await repo.get_product(conn, project_id) or {}
+            analysis = await repo.get_analysis(conn, project_id) or {}
+            clothing_type = (
+                product.get("clothingType")
+                or product.get("clothing_type")
+                or "top"
+            )
+            try:
+                example_spec = cut_generator.normalize_spec(
+                    content_roles.canonicalize_storyboard_block(body),
+                    clothing_type=clothing_type,
+                )
+                space_set_assets.resolve_published_example_reference(
+                    example_spec,
+                    clothing_type=clothing_type,
+                    gender=mannequin.select_base_gender(
+                        analysis, clothing_type
+                    ),
+                    scope=example_spec["refScope"],
+                )
+            except space_set_assets.SpaceSetBindingError as exc:
+                raise _bad_request(exc.code, exc.message) from exc
+            except ValueError as exc:
+                raise _bad_request(
+                    "invalid_spec", "컷 설정이 올바르지 않아요. 다시 시도해 주세요."
+                ) from exc
         # FaceMarket verify-before-use 게이트(FM-30) — 에디터 새 컷도 상세페이지와 동일하게,
         # 실존 모델(UUID modelId) 선택 시 라이선스 자격을 잡 생성 전에 검증한다(실패=409, 예약 없음).
         # 가상모델('mA' 등 비-UUID)·무라이선스 모델은 no-op → 기존 플로우 무영향.
@@ -1269,7 +1428,11 @@ async def get_asset_file(request: Request, asset_id: str):
     if asset is None:
         raise HTTPException(
             status_code=404, detail={"code": "not_found", "message": "자산을 찾을 수 없습니다."})
-    return RedirectResponse(_r2(request).public_url(asset["r2_key"]), status_code=302)
+    return RedirectResponse(
+        _r2(request).public_url(asset["r2_key"]),
+        status_code=302,
+        headers={"Cache-Control": IMMUTABLE_CACHE},
+    )
 
 
 @router.get(

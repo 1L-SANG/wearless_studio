@@ -15,6 +15,8 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { fitExampleImage } from '@/lib/fitExampleImages.js';
+import { thumbUrl } from '@/lib/imageCdn.js';
+import { genderForClothingType } from '@/lib/productGender.js';
 import {
   matchingFitDefinition,
   matchingFitFromProfile,
@@ -44,13 +46,12 @@ const MATCH_SKIRT_NAME = '매칭 스커트 실루엣';
 const MATCH_SKIRT_QUESTION = '매칭 스커트의 실루엣도 조정할까요?';
 
 const cutImage = (cut) => cut?.imageUrl || cut?.src || '';
-const isMenOnly = (genders) => Array.isArray(genders) && genders.length > 0 && genders.every((g) => g === 'men');
 const validAxisValue = (values, value) => values.some((v) => v.value === value);
 const axisIsDone = (s) => s?.mode === 'keep' || s?.mode === 'picked';
 
 function derivedGender(analysis, product) {
   const genders = analysis?.targetGenders?.length ? analysis.targetGenders : product?.targetGenders;
-  return isMenOnly(genders) ? 'men' : 'women';
+  return genderForClothingType(product?.clothingType, genders);
 }
 
 function autoAxisValues(axisDefs, analysis) {
@@ -521,17 +522,18 @@ function MineColumn({
         {arrival ? (
           <>
             {arrival.from && (
-              <img className="fit-cut-layer fit-cut-layer-old" src={cutImage(arrival.from)} alt="" />
+              <img className="fit-cut-layer fit-cut-layer-old" src={thumbUrl(cutImage(arrival.from), 720)} alt="" decoding="async" />
             )}
             <img
               className={`fit-cut-layer fit-cut-layer-next${arrival.visible ? ' is-visible' : ''}`}
-              src={cutImage(arrival.to)}
+              src={thumbUrl(cutImage(arrival.to), 720)}
               alt={`내 마네킹컷 버전 ${arrival.to.version}`}
+              decoding="async"
             />
             <span className={`fit-arrival-shine${arrival.shine ? ' run' : ''}`} aria-hidden="true" />
           </>
         ) : selected ? (
-          <img src={cutImage(selected)} alt={`내 마네킹컷 버전 ${selected.version}`} />
+          <img src={thumbUrl(cutImage(selected), 720)} alt={`내 마네킹컷 버전 ${selected.version}`} decoding="async" />
         ) : (
           <div className="busy-tile">마네킹컷이 아직 없어요</div>
         )}
@@ -547,7 +549,7 @@ function MineColumn({
               aria-label={`버전 ${cut.version} 선택`}
               aria-pressed={cut.id === selectedCutId}
             >
-              <img src={cutImage(cut)} alt="" />
+              <img src={thumbUrl(cutImage(cut), 120)} alt="" loading="lazy" decoding="async" />
               <span className="fit-ver-chip">v{cut.version}</span>
             </button>
           ))}
@@ -1005,7 +1007,7 @@ export function Mannequin() {
         if (!newCut) throw new Error('새로 생성된 마네킹컷을 아직 찾지 못했어요.');
         knownLandedListRef.current = list;
         setRegenerateListReady(true);
-        await decodeCutImage(cutImage(newCut));
+        await decodeCutImage(thumbUrl(cutImage(newCut), 720));
         if (!runIsCurrent(runId)) return;
         setRegenerateImageReady(true);
         completeRegeneration(runId, list, newCut, profile);

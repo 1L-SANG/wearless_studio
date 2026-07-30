@@ -68,6 +68,11 @@ class Settings:
     mannequin_axis_qc: str = "off"
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
     mannequin_prompt_version: str = "v1"
+    # 여성 기본 가슴 볼륨 2패스 (2026-07-30 스파이크). 생성된 컷에 "가슴만 바꿔라"를 단독 과제로
+    # 한 번 더 돌린다 — 1패스만으로는 모델이 몸을 표준으로 정규화해 반영되지 않는다.
+    # off | on. 기본 off, 실물 확인 후 on. 켜면 여성 컷당 이미지 호출이 1→2회.
+    # 2패스 실패·거부는 삼키고 1패스 컷을 쓴다(잡을 죽이지 않는다).
+    mannequin_bust_pass: str = "off"
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
@@ -83,12 +88,34 @@ class Settings:
     # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
     retrieval_matching: str = "off"  # off | tags (styleTags 친화도 v1)
     retrieval_knowledge: str = "off"  # off | static (정적 지식 블록)
+    # ---- Phase 3 재진입(ADR D2 해제, 2026-07-22): 레퍼런스 컷 검색 → 마네킹 STYLE REFERENCE 첨부 ----
+    # off면 기존 생성 경로 무변화(행위 변화 0). 임베딩은 자체 호스팅 로컬 모델(ADR D2 v1.3),
+    # 오프라인 배치(scripts/embed_corpus.py)로 사전 적재. 요청 경로에서 코퍼스 임베딩 금지(FR-C2).
+    retrieval_refimages: str = "off"  # off | on
+    ref_images_topk: int = 2  # 마네킹 생성에 첨부할 레퍼런스 컷 최대 수
+    # 벡터 차원은 ref_images.image_embedding / kb_chunks.text_embedding 컬럼 차원과 반드시 일치.
+    # 모델 교체 = 별도 forward 마이그레이션(차원 변경). torch/sentence-transformers 는
+    # pyproject optional group [embeddings] — prod 기본 이미지 미포함(R3 완화).
+    embed_image_model: str = "google/siglip-base-patch16-224"  # 이미지 임베딩(SigLIP, 768-d)
+    embed_image_dim: int = 768
+    embed_text_model: str = "BAAI/bge-m3"  # 텍스트 임베딩(2b 챌린저 스트레치, 1024-d)
+    embed_text_dim: int = 1024
     seller_text_canonicalize: str = "off"  # off | shadow | enforce (FR-D1 안전 게이트)
     input_qc: str = "off"  # off | shadow | enforce — 업로드 입력 QC (FR-D4, decode·해상도)
     # ---- FaceMarket (해커톤, 검증 실명 모델 마켓) — 기본 off 로 프로드 보호(FACEMARKET_ENABLED) ----
     # off면 라우터 자체가 미등록 → 기존 셀러 플로우 무영향(main.py 조건부 include).
     facemarket_enabled: bool = False
     fm_ci_pepper: str | None = None  # HMAC-SHA256(CI, pepper) dedup용 secret. 없으면 verify 503
+    # 상세페이지 착용컷 인물 일관성(AG-06): 실존 모델을 골랐는데 facemarket off 라 해석 불가하면
+    # 컷마다 인물 참조가 0장이 되어 사람이 랜덤이 된다 → 결정적 가상모델로 폴백해 전 컷 동일 인물
+    # 보장. 빈 문자열이면 폴백 비활성(기존 동작). REAL/LEGACY 경로는 폴백하지 않는다(이중 인물 방지).
+    detailpage_fallback_model_id: str = "mB"
+    # ---- 토스페이먼츠 크레딧 추가구매(WS3) — 시크릿 키가 있어야만 활성 ----
+    # 시크릿 키는 **서버 전용**(결제 승인 API Basic auth). 없으면 checkout 이 503 으로 거절한다
+    # — 키 없이 조용히 '목 성공'을 돌려주면 결제 안 하고 크레딧이 늘어나는 구멍이 된다.
+    toss_secret_key: str | None = None
+    toss_api_base: str = "https://api.tosspayments.com"   # 테스트에서 스텁 서버로 오버라이드
+    toss_confirm_timeout: float = 15.0                     # 승인 API 타임아웃(초)
     # ---- 개인화(사용자 본인 얼굴·신체) — 기본 off 로 프로드 보호(PERSONALIZATION_ENABLED) ----
     # off면 라우터 자체가 미등록 → 생체정보 처리 코드 미배포(main.py 조건부 include).
     personalization_enabled: bool = False
@@ -109,6 +136,13 @@ class Settings:
     fm_face_qc_enabled: bool = False
     fm_face_qc_threshold: float = 0.363  # OpenCV SFace 권장 코사인 동일인 기준선(캘리브 전 잠정)
     fm_face_qc_dir: str | None = None    # SFace/YuNet onnx 디렉터리. None이면 app/data/face_models
+
+
+def _bust_pass() -> str:
+    """MANNEQUIN_BUST_PASS 파싱. 미지값은 off — 알 수 없는 설정으로 여성 전건에 호출이
+    2배가 되는 사고를 막는다(켜는 쪽이 명시적이어야 한다)."""
+    v = os.getenv("MANNEQUIN_BUST_PASS", "off").lower()
+    return v if v in {"off", "on"} else "off"
 
 
 def _image_size() -> str:
@@ -179,6 +213,7 @@ def load_settings() -> Settings:
         mannequin_qc_enabled=(os.getenv("MANNEQUIN_QC_ENABLED", "false").lower() == "true"),
         mannequin_prompt_file=os.getenv("MANNEQUIN_PROMPT_FILE") or None,
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
+        mannequin_bust_pass=_bust_pass(),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
@@ -192,6 +227,12 @@ def load_settings() -> Settings:
         credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "1")),
         retrieval_matching=_flag("RETRIEVAL_MATCHING", "off", {"off", "tags"}),
         retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static"}),
+        retrieval_refimages=_flag("RETRIEVAL_REFIMAGES", "off", {"off", "on"}),
+        ref_images_topk=int(os.getenv("REF_IMAGES_TOPK", "2")),
+        embed_image_model=os.getenv("EMBED_IMAGE_MODEL", "google/siglip-base-patch16-224"),
+        embed_image_dim=int(os.getenv("EMBED_IMAGE_DIM", "768")),
+        embed_text_model=os.getenv("EMBED_TEXT_MODEL", "BAAI/bge-m3"),
+        embed_text_dim=int(os.getenv("EMBED_TEXT_DIM", "1024")),
         seller_text_canonicalize=_flag(
             "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
         ),
@@ -202,10 +243,14 @@ def load_settings() -> Settings:
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
+        detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),
         personalization_enabled=(
             os.getenv("PERSONALIZATION_ENABLED", "false").lower() == "true"
         ),
         fm_ci_pepper=os.getenv("FM_CI_PEPPER") or None,
+        toss_secret_key=os.getenv("TOSS_SECRET_KEY") or None,
+        toss_api_base=os.getenv("TOSS_API_BASE", "https://api.tosspayments.com").rstrip("/"),
+        toss_confirm_timeout=float(os.getenv("TOSS_CONFIRM_TIMEOUT", "15")),
         cx_trans_base_url=(
             os.getenv("CX_TRANS_BASE_URL") or "https://cx.raonsecure.co.kr:18543"
         ).rstrip("/"),

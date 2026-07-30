@@ -12,11 +12,43 @@ import { Button, Icon, Skeleton, EmptyState, ErrorState } from '@/components/ui.
 import s from './Pricing.module.css';
 
 const won = (n) => '₩' + Number(n).toLocaleString('ko-KR');
+// 공개 클라이언트 키(테스트). 없으면 결제 버튼을 비활성 — 키 없이 결제창을 띄우면 런타임에 깨진다.
+const TOSS_CLIENT_KEY = import.meta.env.VITE_TOSS_CLIENT_KEY;
 
 export function Pricing() {
   const [tab, setTab] = useState('subscription'); // 'subscription' | 'topup'
+  const [buying, setBuying] = useState(null);     // 결제창 여는 중인 planCode
+  const [payError, setPayError] = useState('');
   const account = useAppStore((a) => a.account);
   const currentPlan = (account?.plan || '').toLowerCase();
+
+  // 추가구매: 서버가 주문(금액 스냅샷)을 만들고 → 그 값 그대로 토스 결제창을 연다.
+  // 성공/실패는 리다이렉트로 돌아와 /payments/success|fail 이 승인·안내를 담당한다.
+  async function buyTopup(planCode) {
+    setPayError('');
+    setBuying(planCode);
+    try {
+      const order = await api.createTossCheckout(planCode);
+      const { loadTossPayments } = await import('@tosspayments/tosspayments-sdk');
+      const toss = await loadTossPayments(TOSS_CLIENT_KEY);
+      const payment = toss.payment({ customerKey: order.customerKey });
+      await payment.requestPayment({
+        method: 'CARD',
+        amount: { currency: 'KRW', value: order.amount },
+        orderId: order.orderId,
+        orderName: order.orderName,
+        successUrl: `${window.location.origin}/payments/success`,
+        failUrl: `${window.location.origin}/payments/fail`,
+      });
+    } catch (e) {
+      // 사용자가 결제창을 닫은 경우도 여기로 온다 — 조용히 버튼만 되돌린다.
+      const code = e?.code || '';
+      if (code !== 'USER_CANCEL' && code !== 'PAY_PROCESS_CANCELED') {
+        setPayError(e?.message || '결제를 시작하지 못했어요.');
+      }
+      setBuying(null);
+    }
+  }
 
   const { data: plans = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['pricingPlans'],
@@ -38,6 +70,8 @@ export function Pricing() {
         <button className={`${s.tab}${tab === 'subscription' ? ' ' + s.active : ''}`} onClick={() => setTab('subscription')}>구독</button>
         <button className={`${s.tab}${tab === 'topup' ? ' ' + s.active : ''}`} onClick={() => setTab('topup')}>추가 구매</button>
       </div>
+
+      {payError && <div className="surface" role="alert" style={{ marginBottom: 12 }}>{payError}</div>}
       <p className={s.tabDesc}>
         {recurring
           ? '매달 자동으로 크레딧이 충전되는 정기 구독이에요.'
@@ -83,9 +117,22 @@ export function Pricing() {
                   </>
                 )}
                 <div className={s.cta}>
-                  <Button variant={isCurrent ? 'ghost' : 'primary'} block disabled title="결제 연동 준비 중">
-                    {isCurrent ? '이용 중' : recurring ? '구독하기' : '구매하기'} {!isCurrent && '(준비 중)'}
-                  </Button>
+                  {recurring ? (
+                    // 정기구독(빌링키)은 이번 범위 밖 — 기존 '준비 중' 유지
+                    <Button variant={isCurrent ? 'ghost' : 'primary'} block disabled title="결제 연동 준비 중">
+                      {isCurrent ? '이용 중' : '구독하기'} {!isCurrent && '(준비 중)'}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="primary" block
+                      disabled={!TOSS_CLIENT_KEY || buying !== null}
+                      title={TOSS_CLIENT_KEY ? undefined : '결제 키가 설정되지 않았어요'}
+                      onClick={() => buyTopup(p.code)}
+                    >
+                      {buying === p.code ? '결제창 여는 중…' : '구매하기'}
+                      {!TOSS_CLIENT_KEY && ' (준비 중)'}
+                    </Button>
+                  )}
                 </div>
               </div>
             );

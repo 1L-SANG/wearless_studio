@@ -1,0 +1,2753 @@
+{
+  "_meta": {
+    "defaultBaseUrl": "https://images.wearless.kr",
+    "releaseId": "space-sets-20260730-v1",
+    "releasedAt": "2026-07-30T06:00:29.811365+00:00",
+    "schemaVersion": 1
+  },
+  "sets": [
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "set-style-women-dress-botanical-attrangs-160835-root01",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_botanical_attrangs_160835_root01_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_botanical_attrangs_160835_root01_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_botanical_attrangs_160835_root01_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_botanical_attrangs_160835_root01_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_botanical_attrangs_160835_root01_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_botanical_attrangs_160835_root01_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_botanical_attrangs_160835_root01_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_botanical_attrangs_160835_root01_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_botanical_attrangs_160835_root01_03.webp"
+        }
+      ],
+      "name": "01. 보태니컬 리조트",
+      "place": "botanical-resort",
+      "placeType": "botanical-resort",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-botanical-attrangs-160835-root01.png"
+      },
+      "setId": "set-style-women-dress-botanical-attrangs-160835-root01",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "set-style-women-dress-city-ivy-modimood-2928-root02",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_city_ivy_modimood_2928_root02_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_city_ivy_modimood_2928_root02_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_city_ivy_modimood_2928_root02_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_city_ivy_modimood_2928_root02_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_city_ivy_modimood_2928_root02_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_city_ivy_modimood_2928_root02_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_city_ivy_modimood_2928_root02_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_city_ivy_modimood_2928_root02_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_city_ivy_modimood_2928_root02_03.webp"
+        }
+      ],
+      "name": "02. 도심 담쟁이 골목",
+      "place": "city-ivy-facade",
+      "placeType": "city-ivy-facade",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-city-ivy-modimood-2928-root02.png"
+      },
+      "setId": "set-style-women-dress-city-ivy-modimood-2928-root02",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "set-style-women-dress-cafe-garden-attrangs-160544-root03",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_cafe_garden_attrangs_160544_root03_03.webp"
+        }
+      ],
+      "name": "03. 카페 정원 입구",
+      "place": "cafe-garden-entrance",
+      "placeType": "cafe-garden-entrance",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-cafe-garden-attrangs-160544-root03.png"
+      },
+      "setId": "set-style-women-dress-cafe-garden-attrangs-160544-root03",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set-style-women-dress-neighborhood-garage-modimood-3266-root04",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_neighborhood_garage_modimood_3266_root04_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_neighborhood_garage_modimood_3266_root04_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_neighborhood_garage_modimood_3266_root04_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_neighborhood_garage_modimood_3266_root04_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_neighborhood_garage_modimood_3266_root04_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_neighborhood_garage_modimood_3266_root04_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_neighborhood_garage_modimood_3266_root04_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_neighborhood_garage_modimood_3266_root04_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_neighborhood_garage_modimood_3266_root04_03.webp"
+        }
+      ],
+      "name": "04. 생활형 주택 골목",
+      "place": "residential-neighborhood-garage",
+      "placeType": "residential-neighborhood-garage",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-neighborhood-garage-modimood-3266-root04.png"
+      },
+      "setId": "set-style-women-dress-neighborhood-garage-modimood-3266-root04",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set-style-women-dress-coast-beach-hotping-48001-root05",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_coast_beach_hotping_48001_root05_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_coast_beach_hotping_48001_root05_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_coast_beach_hotping_48001_root05_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_coast_beach_hotping_48001_root05_02.png",
+          "cutType": "styling",
+          "direction": "side",
+          "exampleId": "ss_set_style_women_dress_coast_beach_hotping_48001_root05_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_coast_beach_hotping_48001_root05_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_coast_beach_hotping_48001_root05_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_coast_beach_hotping_48001_root05_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_coast_beach_hotping_48001_root05_03.webp"
+        }
+      ],
+      "name": "05. 작은 해변·항구",
+      "place": "05. 작은 해변·항구",
+      "placeType": "05. 작은 해변·항구",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-coast-beach-hotping-48001-root05.png"
+      },
+      "setId": "set-style-women-dress-coast-beach-hotping-48001-root05",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "set-style-women-dress-home-living-musinsa-6570399-root06",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_home_living_musinsa_6570399_root06_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_home_living_musinsa_6570399_root06_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_home_living_musinsa_6570399_root06_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_home_living_musinsa_6570399_root06_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_home_living_musinsa_6570399_root06_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_home_living_musinsa_6570399_root06_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_home_living_musinsa_6570399_root06_03.png",
+          "cutType": "styling",
+          "direction": "side",
+          "exampleId": "ss_set_style_women_dress_home_living_musinsa_6570399_root06_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_home_living_musinsa_6570399_root06_03.webp"
+        }
+      ],
+      "name": "06. 밝은 생활형 집·거실",
+      "place": "bright-lived-in-home",
+      "placeType": "bright-lived-in-home",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-home-living-musinsa-6570399-root06.png"
+      },
+      "setId": "set-style-women-dress-home-living-musinsa-6570399-root06",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set-style-women-dress-night-riverwalk-maybins-40948-root07",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_dress_night_riverwalk_maybins_40948_root07_03.webp"
+        }
+      ],
+      "name": "07. 야간 강변 산책로",
+      "place": "night-riverwalk",
+      "placeType": "night-riverwalk",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-style-women-dress-night-riverwalk-maybins-40948-root07.png"
+      },
+      "setId": "set-style-women-dress-night-riverwalk-maybins-40948-root07",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set_style_women_top_indoor_attrangs_170129_prod01",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_indoor_attrangs_170129_prod01_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_indoor_attrangs_170129_prod01_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_indoor_attrangs_170129_prod01_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_indoor_attrangs_170129_prod01_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_indoor_attrangs_170129_prod01_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_indoor_attrangs_170129_prod01_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_indoor_attrangs_170129_prod01_03.png",
+          "cutType": "styling",
+          "direction": "back",
+          "exampleId": "ss_set_style_women_top_indoor_attrangs_170129_prod01_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_indoor_attrangs_170129_prod01_03.webp"
+        }
+      ],
+      "name": "01 · Attrangs 170129 · 따뜻한 실내 작업실 기존 PASS 보존",
+      "place": "indoor",
+      "placeType": "indoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_indoor_attrangs_170129_prod01.png"
+      },
+      "setId": "set_style_women_top_indoor_attrangs_170129_prod01",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set_style_women_top_outdoor_slowand_10690_prod01",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_outdoor_slowand_10690_prod01_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_outdoor_slowand_10690_prod01_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_outdoor_slowand_10690_prod01_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_outdoor_slowand_10690_prod01_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_outdoor_slowand_10690_prod01_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_outdoor_slowand_10690_prod01_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_outdoor_slowand_10690_prod01_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_outdoor_slowand_10690_prod01_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_outdoor_slowand_10690_prod01_03.webp"
+        }
+      ],
+      "name": "02 · Slowand 10690 · 햇빛 강한 시장 골목 기존 PASS 보존",
+      "place": "outdoor",
+      "placeType": "outdoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_outdoor_slowand_10690_prod01.png"
+      },
+      "setId": "set_style_women_top_outdoor_slowand_10690_prod01",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "set_style_women_outer_indoor_commonunique_26096_prod01",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_indoor_commonunique_26096_prod01_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_indoor_commonunique_26096_prod01_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_indoor_commonunique_26096_prod01_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_indoor_commonunique_26096_prod01_02.png",
+          "cutType": "styling",
+          "direction": "side",
+          "exampleId": "ss_set_style_women_outer_indoor_commonunique_26096_prod01_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_indoor_commonunique_26096_prod01_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_indoor_commonunique_26096_prod01_03.png",
+          "cutType": "styling",
+          "direction": "back",
+          "exampleId": "ss_set_style_women_outer_indoor_commonunique_26096_prod01_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_indoor_commonunique_26096_prod01_03.webp"
+        }
+      ],
+      "name": "03 · Common Unique 26096 · 밝은 렌털 아틀리에 기존 PASS 보존",
+      "place": "indoor",
+      "placeType": "indoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_outer_indoor_commonunique_26096_prod01.png"
+      },
+      "setId": "set_style_women_outer_indoor_commonunique_26096_prod01",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set_style_women_top_cafe_attrangs_170103_prod02",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_cafe_attrangs_170103_prod02_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_cafe_attrangs_170103_prod02_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_cafe_attrangs_170103_prod02_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_cafe_attrangs_170103_prod02_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_cafe_attrangs_170103_prod02_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_cafe_attrangs_170103_prod02_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_cafe_attrangs_170103_prod02_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_cafe_attrangs_170103_prod02_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_cafe_attrangs_170103_prod02_03.webp"
+        }
+      ],
+      "name": "04 · Attrangs 170103 · 작은 카페·상점 독립 검수 PASS",
+      "place": "mixed-cafe",
+      "placeType": "mixed-cafe",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_cafe_attrangs_170103_prod02.png"
+      },
+      "setId": "set_style_women_top_cafe_attrangs_170103_prod02",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set_style_women_top_home_hotping_48041_prod02",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_home_hotping_48041_prod02_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_home_hotping_48041_prod02_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_home_hotping_48041_prod02_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_home_hotping_48041_prod02_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_home_hotping_48041_prod02_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_home_hotping_48041_prod02_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_home_hotping_48041_prod02_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_home_hotping_48041_prod02_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_home_hotping_48041_prod02_03.webp"
+        }
+      ],
+      "name": "05 · Hotping 48041 · 중성색 집 안 독립 검수 PASS",
+      "place": "indoor-home",
+      "placeType": "indoor-home",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_home_hotping_48041_prod02.png"
+      },
+      "setId": "set_style_women_top_home_hotping_48041_prod02",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set_style_women_top_urban_creamcheese_26667_prod02",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_urban_creamcheese_26667_prod02_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_urban_creamcheese_26667_prod02_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_urban_creamcheese_26667_prod02_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_urban_creamcheese_26667_prod02_02.png",
+          "cutType": "styling",
+          "direction": "side",
+          "exampleId": "ss_set_style_women_top_urban_creamcheese_26667_prod02_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_urban_creamcheese_26667_prod02_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_urban_creamcheese_26667_prod02_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_urban_creamcheese_26667_prod02_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_urban_creamcheese_26667_prod02_03.webp"
+        }
+      ],
+      "name": "06 · Cream Cheese 26667 · 회색 도심 외벽 독립 검수 PASS",
+      "place": "outdoor-urban",
+      "placeType": "outdoor-urban",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_urban_creamcheese_26667_prod02.png"
+      },
+      "setId": "set_style_women_top_urban_creamcheese_26667_prod02",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set_style_women_outer_storefront_lowclassic_6495851_prod02",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_storefront_lowclassic_6495851_prod02_03.webp"
+        }
+      ],
+      "name": "07 · Lowclassic 6495851 · 조용한 서점 앞 독립 검수 PASS",
+      "place": "outdoor-storefront",
+      "placeType": "outdoor-storefront",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_outer_storefront_lowclassic_6495851_prod02.png"
+      },
+      "setId": "set_style_women_outer_storefront_lowclassic_6495851_prod02",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set_style_women_top_park_realcoco_161014511_prod02",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_park_realcoco_161014511_prod02_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_park_realcoco_161014511_prod02_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_park_realcoco_161014511_prod02_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_park_realcoco_161014511_prod02_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_park_realcoco_161014511_prod02_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_park_realcoco_161014511_prod02_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_park_realcoco_161014511_prod02_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_park_realcoco_161014511_prod02_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_park_realcoco_161014511_prod02_03.webp"
+        }
+      ],
+      "name": "08 · Realcoco 161014511 · 잔디 공원 독립 검수 PASS",
+      "place": "outdoor-park",
+      "placeType": "outdoor-park",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_park_realcoco_161014511_prod02.png"
+      },
+      "setId": "set_style_women_top_park_realcoco_161014511_prod02",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "set_style_women_top_coast_sinoon_6575707_prod02",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_coast_sinoon_6575707_prod02_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_coast_sinoon_6575707_prod02_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_coast_sinoon_6575707_prod02_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_coast_sinoon_6575707_prod02_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_coast_sinoon_6575707_prod02_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_coast_sinoon_6575707_prod02_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_coast_sinoon_6575707_prod02_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_coast_sinoon_6575707_prod02_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_coast_sinoon_6575707_prod02_03.webp"
+        }
+      ],
+      "name": "09 · Sinoon 6575707 · 해안 산책로 독립 검수 PASS",
+      "place": "outdoor-coast",
+      "placeType": "outdoor-coast",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_coast_sinoon_6575707_prod02.png"
+      },
+      "setId": "set_style_women_top_coast_sinoon_6575707_prod02",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "set_style_women_outer_terrace_lowclassic_6495831_prod02",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_terrace_lowclassic_6495831_prod02_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_terrace_lowclassic_6495831_prod02_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_terrace_lowclassic_6495831_prod02_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_terrace_lowclassic_6495831_prod02_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_terrace_lowclassic_6495831_prod02_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_terrace_lowclassic_6495831_prod02_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_terrace_lowclassic_6495831_prod02_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_terrace_lowclassic_6495831_prod02_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_terrace_lowclassic_6495831_prod02_03.webp"
+        }
+      ],
+      "name": "10 · Lowclassic 6495831 · 리조트 테라스 독립 검수 PASS",
+      "place": "resort-terrace",
+      "placeType": "resort-terrace",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_outer_terrace_lowclassic_6495831_prod02.png"
+      },
+      "setId": "set_style_women_outer_terrace_lowclassic_6495831_prod02",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set_style_women_top_convenience_beidelli_5067_prod03",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_convenience_beidelli_5067_prod03_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_convenience_beidelli_5067_prod03_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_convenience_beidelli_5067_prod03_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_convenience_beidelli_5067_prod03_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_convenience_beidelli_5067_prod03_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_convenience_beidelli_5067_prod03_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_top_convenience_beidelli_5067_prod03_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_top_convenience_beidelli_5067_prod03_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_top_convenience_beidelli_5067_prod03_03.webp"
+        }
+      ],
+      "name": "11 · Beidelli 5067 · 동네 편의점·버스정류장 독립 검수 PASS",
+      "place": "outdoor-convenience",
+      "placeType": "outdoor-convenience",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_top_convenience_beidelli_5067_prod03.png"
+      },
+      "setId": "set_style_women_top_convenience_beidelli_5067_prod03",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set_style_women_outer_rainy_courtyard_nearwear_12582_prod03",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_rainy_courtyard_nearwear_12582_prod03_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_rainy_courtyard_nearwear_12582_prod03_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_rainy_courtyard_nearwear_12582_prod03_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_rainy_courtyard_nearwear_12582_prod03_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_rainy_courtyard_nearwear_12582_prod03_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_rainy_courtyard_nearwear_12582_prod03_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_rainy_courtyard_nearwear_12582_prod03_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_rainy_courtyard_nearwear_12582_prod03_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_rainy_courtyard_nearwear_12582_prod03_03.webp"
+        }
+      ],
+      "name": "13 · Nearwear 12582 · 비 젖은 코인세탁소 안뜰 독립 검수 PASS",
+      "place": "outdoor-rainy-courtyard",
+      "placeType": "outdoor-rainy-courtyard",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_outer_rainy_courtyard_nearwear_12582_prod03.png"
+      },
+      "setId": "set_style_women_outer_rainy_courtyard_nearwear_12582_prod03",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "set_style_women_outer_loadingzone_beidelli_3920_prod03",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_loadingzone_beidelli_3920_prod03_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_loadingzone_beidelli_3920_prod03_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_loadingzone_beidelli_3920_prod03_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_loadingzone_beidelli_3920_prod03_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_loadingzone_beidelli_3920_prod03_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_loadingzone_beidelli_3920_prod03_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_style_women_outer_loadingzone_beidelli_3920_prod03_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_style_women_outer_loadingzone_beidelli_3920_prod03_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_style_women_outer_loadingzone_beidelli_3920_prod03_03.webp"
+        }
+      ],
+      "name": "14 · Beidelli 3920 · 지하 주차장 로딩존 독립 검수 PASS",
+      "place": "indoor-loading-zone",
+      "placeType": "indoor-loading-zone",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_style_women_outer_loadingzone_beidelli_3920_prod03.png"
+      },
+      "setId": "set_style_women_outer_loadingzone_beidelli_3920_prod03",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 3장",
+      "gender": "women",
+      "id": "set-01-women-bottom-street-slowand-10666",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_women_bottom_street_slowand_10666_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_01_women_bottom_street_slowand_10666_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_women_bottom_street_slowand_10666_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_women_bottom_street_slowand_10666_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_01_women_bottom_street_slowand_10666_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_women_bottom_street_slowand_10666_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_women_bottom_street_slowand_10666_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_01_women_bottom_street_slowand_10666_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_women_bottom_street_slowand_10666_03.webp"
+        }
+      ],
+      "name": "도심 골목의 자연스러운 거리 스냅",
+      "place": "street",
+      "placeType": "street",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-01-women-bottom-street-slowand-10666.png"
+      },
+      "setId": "set-01-women-bottom-street-slowand-10666",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀샷 3장",
+      "gender": "women",
+      "id": "set-03-women-dress-bright-interior-hotping-47530",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_03_women_dress_bright_interior_hotping_47530_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_03_women_dress_bright_interior_hotping_47530_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_03_women_dress_bright_interior_hotping_47530_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_03_women_dress_bright_interior_hotping_47530_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_03_women_dress_bright_interior_hotping_47530_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_03_women_dress_bright_interior_hotping_47530_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_03_women_dress_bright_interior_hotping_47530_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_03_women_dress_bright_interior_hotping_47530_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_03_women_dress_bright_interior_hotping_47530_03.webp"
+        }
+      ],
+      "name": "밝은 실내의 편안한 원피스 스냅",
+      "place": "bright-interior",
+      "placeType": "bright-interior",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-03-women-dress-bright-interior-hotping-47530.png"
+      },
+      "setId": "set-03-women-dress-bright-interior-hotping-47530",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 3장",
+      "gender": "women",
+      "id": "set-01-women-bottom-home-undervi-22793",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_women_bottom_home_undervi_22793_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_01_women_bottom_home_undervi_22793_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_women_bottom_home_undervi_22793_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_women_bottom_home_undervi_22793_02.png",
+          "cutType": "styling",
+          "direction": "back",
+          "exampleId": "ss_set_01_women_bottom_home_undervi_22793_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_women_bottom_home_undervi_22793_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_women_bottom_home_undervi_22793_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_01_women_bottom_home_undervi_22793_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_women_bottom_home_undervi_22793_03.webp"
+        }
+      ],
+      "name": "창가 생활공간의 부드러운 자연광",
+      "place": "home/living",
+      "placeType": "home/living",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-01-women-bottom-home-undervi-22793.png"
+      },
+      "setId": "set-01-women-bottom-home-undervi-22793",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 3장",
+      "gender": "women",
+      "id": "set-04-women-bottom-street-slowand-10563",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_04_women_bottom_street_slowand_10563_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_04_women_bottom_street_slowand_10563_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_04_women_bottom_street_slowand_10563_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_04_women_bottom_street_slowand_10563_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_04_women_bottom_street_slowand_10563_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_04_women_bottom_street_slowand_10563_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_04_women_bottom_street_slowand_10563_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_04_women_bottom_street_slowand_10563_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_04_women_bottom_street_slowand_10563_03.webp"
+        }
+      ],
+      "name": "동네 상점 앞의 편안한 거리 스냅",
+      "place": "street",
+      "placeType": "street",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-04-women-bottom-street-slowand-10563.png"
+      },
+      "setId": "set-04-women-bottom-street-slowand-10563",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 3장",
+      "gender": "women",
+      "id": "set-06-women-bottom-corridor-musinsa-6495795",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_06_women_bottom_corridor_musinsa_6495795_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_06_women_bottom_corridor_musinsa_6495795_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_06_women_bottom_corridor_musinsa_6495795_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_06_women_bottom_corridor_musinsa_6495795_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_06_women_bottom_corridor_musinsa_6495795_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_06_women_bottom_corridor_musinsa_6495795_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_06_women_bottom_corridor_musinsa_6495795_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_06_women_bottom_corridor_musinsa_6495795_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_06_women_bottom_corridor_musinsa_6495795_03.webp"
+        }
+      ],
+      "name": "오래된 소형 건물 복도의 창가 스냅",
+      "place": "building-corridor",
+      "placeType": "building-corridor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-06-women-bottom-corridor-musinsa-6495795.png"
+      },
+      "setId": "set-06-women-bottom-corridor-musinsa-6495795",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 3장",
+      "gender": "women",
+      "id": "set-07-women-bottom-riverside-bbibbongunni-22538",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_07_women_bottom_riverside_bbibbongunni_22538_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_07_women_bottom_riverside_bbibbongunni_22538_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_07_women_bottom_riverside_bbibbongunni_22538_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_07_women_bottom_riverside_bbibbongunni_22538_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_07_women_bottom_riverside_bbibbongunni_22538_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_07_women_bottom_riverside_bbibbongunni_22538_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_07_women_bottom_riverside_bbibbongunni_22538_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_07_women_bottom_riverside_bbibbongunni_22538_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_07_women_bottom_riverside_bbibbongunni_22538_03.webp"
+        }
+      ],
+      "name": "흐린 날 강변 산책로의 나들이 스냅",
+      "place": "riverside-promenade",
+      "placeType": "riverside-promenade",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-07-women-bottom-riverside-bbibbongunni-22538.png"
+      },
+      "setId": "set-07-women-bottom-riverside-bbibbongunni-22538",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 3장",
+      "gender": "women",
+      "id": "set-08-women-bottom-library-musinsa-6661117",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_08_women_bottom_library_musinsa_6661117_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_08_women_bottom_library_musinsa_6661117_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_08_women_bottom_library_musinsa_6661117_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_08_women_bottom_library_musinsa_6661117_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_08_women_bottom_library_musinsa_6661117_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_08_women_bottom_library_musinsa_6661117_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_08_women_bottom_library_musinsa_6661117_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_08_women_bottom_library_musinsa_6661117_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_08_women_bottom_library_musinsa_6661117_03.webp"
+        }
+      ],
+      "name": "동네 공공도서관 열람 코너의 독서 스냅",
+      "place": "neighborhood-public-library",
+      "placeType": "neighborhood-public-library",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-08-women-bottom-library-musinsa-6661117.png"
+      },
+      "setId": "set-08-women-bottom-library-musinsa-6661117",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-01-men-top-indoor-retro-counter-byslim-28625",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_men_top_indoor_retro_counter_byslim_28625_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_01_men_top_indoor_retro_counter_byslim_28625_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_men_top_indoor_retro_counter_byslim_28625_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_men_top_indoor_retro_counter_byslim_28625_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_01_men_top_indoor_retro_counter_byslim_28625_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_men_top_indoor_retro_counter_byslim_28625_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_men_top_indoor_retro_counter_byslim_28625_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_01_men_top_indoor_retro_counter_byslim_28625_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_men_top_indoor_retro_counter_byslim_28625_03.webp"
+        }
+      ],
+      "name": "01 · 동네 카운터",
+      "place": "indoor",
+      "placeType": "indoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-01-men-top-indoor-retro-counter-byslim-28625.png"
+      },
+      "setId": "set-01-men-top-indoor-retro-counter-byslim-28625",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-02-men-top-indoor-concrete-byslim-28635",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_02_men_top_indoor_concrete_byslim_28635_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_02_men_top_indoor_concrete_byslim_28635_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_02_men_top_indoor_concrete_byslim_28635_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_02_men_top_indoor_concrete_byslim_28635_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_02_men_top_indoor_concrete_byslim_28635_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_02_men_top_indoor_concrete_byslim_28635_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_02_men_top_indoor_concrete_byslim_28635_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_02_men_top_indoor_concrete_byslim_28635_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_02_men_top_indoor_concrete_byslim_28635_03.webp"
+        }
+      ],
+      "name": "02 · 콘크리트 알코브",
+      "place": "indoor",
+      "placeType": "indoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-02-men-top-indoor-concrete-byslim-28635.png"
+      },
+      "setId": "set-02-men-top-indoor-concrete-byslim-28635",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-03-men-outer-outdoor-garden-byslim-28570",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_03_men_outer_outdoor_garden_byslim_28570_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_03_men_outer_outdoor_garden_byslim_28570_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_03_men_outer_outdoor_garden_byslim_28570_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_03_men_outer_outdoor_garden_byslim_28570_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_03_men_outer_outdoor_garden_byslim_28570_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_03_men_outer_outdoor_garden_byslim_28570_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_03_men_outer_outdoor_garden_byslim_28570_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_03_men_outer_outdoor_garden_byslim_28570_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_03_men_outer_outdoor_garden_byslim_28570_03.webp"
+        }
+      ],
+      "name": "03 · 햇빛 드는 정원길",
+      "place": "street-outdoor",
+      "placeType": "street-outdoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-03-men-outer-outdoor-garden-byslim-28570.png"
+      },
+      "setId": "set-03-men-outer-outdoor-garden-byslim-28570",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-04-men-top-indoor-window-room-anotheroffice-1881",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_04_men_top_indoor_window_room_anotheroffice_1881_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_04_men_top_indoor_window_room_anotheroffice_1881_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_04_men_top_indoor_window_room_anotheroffice_1881_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_04_men_top_indoor_window_room_anotheroffice_1881_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_04_men_top_indoor_window_room_anotheroffice_1881_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_04_men_top_indoor_window_room_anotheroffice_1881_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_04_men_top_indoor_window_room_anotheroffice_1881_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_04_men_top_indoor_window_room_anotheroffice_1881_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_04_men_top_indoor_window_room_anotheroffice_1881_03.webp"
+        }
+      ],
+      "name": "04 · 창가 원룸",
+      "place": "indoor",
+      "placeType": "indoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-04-men-top-indoor-window-room-anotheroffice-1881.png"
+      },
+      "setId": "set-04-men-top-indoor-window-room-anotheroffice-1881",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-05-men-common-outdoor-grey-wall-lockerroom-23701",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_05_men_common_outdoor_grey_wall_lockerroom_23701_01.png",
+          "cutType": "styling",
+          "direction": "back",
+          "exampleId": "ss_set_05_men_common_outdoor_grey_wall_lockerroom_23701_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_05_men_common_outdoor_grey_wall_lockerroom_23701_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_05_men_common_outdoor_grey_wall_lockerroom_23701_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_05_men_common_outdoor_grey_wall_lockerroom_23701_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_05_men_common_outdoor_grey_wall_lockerroom_23701_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_05_men_common_outdoor_grey_wall_lockerroom_23701_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_05_men_common_outdoor_grey_wall_lockerroom_23701_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_05_men_common_outdoor_grey_wall_lockerroom_23701_03.webp"
+        }
+      ],
+      "name": "05 · 낮의 회색 외벽",
+      "place": "urban-outdoor",
+      "placeType": "urban-outdoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-05-men-common-outdoor-grey-wall-lockerroom-23701.png"
+      },
+      "setId": "set-05-men-common-outdoor-grey-wall-lockerroom-23701",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-06-men-common-outdoor-quiet-alley-jogunshop-32115",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_06_men_common_outdoor_quiet_alley_jogunshop_32115_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_06_men_common_outdoor_quiet_alley_jogunshop_32115_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_06_men_common_outdoor_quiet_alley_jogunshop_32115_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_06_men_common_outdoor_quiet_alley_jogunshop_32115_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_06_men_common_outdoor_quiet_alley_jogunshop_32115_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_06_men_common_outdoor_quiet_alley_jogunshop_32115_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_06_men_common_outdoor_quiet_alley_jogunshop_32115_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_06_men_common_outdoor_quiet_alley_jogunshop_32115_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_06_men_common_outdoor_quiet_alley_jogunshop_32115_03.webp"
+        }
+      ],
+      "name": "06 · 조용한 보도·골목",
+      "place": "urban-outdoor",
+      "placeType": "urban-outdoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-06-men-common-outdoor-quiet-alley-jogunshop-32115.png"
+      },
+      "setId": "set-06-men-common-outdoor-quiet-alley-jogunshop-32115",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "men",
+      "id": "set-07-men-top-indoor-small-shop-upnormal-7126",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_07_men_top_indoor_small_shop_upnormal_7126_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_07_men_top_indoor_small_shop_upnormal_7126_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_07_men_top_indoor_small_shop_upnormal_7126_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_07_men_top_indoor_small_shop_upnormal_7126_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_07_men_top_indoor_small_shop_upnormal_7126_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_07_men_top_indoor_small_shop_upnormal_7126_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_07_men_top_indoor_small_shop_upnormal_7126_03.png",
+          "cutType": "styling",
+          "direction": "back",
+          "exampleId": "ss_set_07_men_top_indoor_small_shop_upnormal_7126_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_07_men_top_indoor_small_shop_upnormal_7126_03.webp"
+        }
+      ],
+      "name": "07 · 작은 카페·생활매장",
+      "place": "indoor",
+      "placeType": "indoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-07-men-top-indoor-small-shop-upnormal-7126.png"
+      },
+      "setId": "set-07-men-top-indoor-small-shop-upnormal-7126",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-08-men-top-outdoor-coast-ordercloset-2396",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_08_men_top_outdoor_coast_ordercloset_2396_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_08_men_top_outdoor_coast_ordercloset_2396_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_08_men_top_outdoor_coast_ordercloset_2396_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_08_men_top_outdoor_coast_ordercloset_2396_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_08_men_top_outdoor_coast_ordercloset_2396_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_08_men_top_outdoor_coast_ordercloset_2396_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_08_men_top_outdoor_coast_ordercloset_2396_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_08_men_top_outdoor_coast_ordercloset_2396_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_08_men_top_outdoor_coast_ordercloset_2396_03.webp"
+        }
+      ],
+      "name": "08 · 바다·항구·방파제",
+      "place": "coast-outdoor",
+      "placeType": "coast-outdoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-08-men-top-outdoor-coast-ordercloset-2396.png"
+      },
+      "setId": "set-08-men-top-outdoor-coast-ordercloset-2396",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-09-men-outer-outdoor-resort-upnormal-7100",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_09_men_outer_outdoor_resort_upnormal_7100_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_09_men_outer_outdoor_resort_upnormal_7100_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_09_men_outer_outdoor_resort_upnormal_7100_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_09_men_outer_outdoor_resort_upnormal_7100_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_09_men_outer_outdoor_resort_upnormal_7100_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_09_men_outer_outdoor_resort_upnormal_7100_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_09_men_outer_outdoor_resort_upnormal_7100_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_09_men_outer_outdoor_resort_upnormal_7100_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_09_men_outer_outdoor_resort_upnormal_7100_03.webp"
+        }
+      ],
+      "name": "09 · 리조트 풀 테라스",
+      "place": "resort-outdoor",
+      "placeType": "resort-outdoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-09-men-outer-outdoor-resort-upnormal-7100.png"
+      },
+      "setId": "set-09-men-outer-outdoor-resort-upnormal-7100",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-10-men-outer-indoor-passage-lockerroom-23651",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_10_men_outer_indoor_passage_lockerroom_23651_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_10_men_outer_indoor_passage_lockerroom_23651_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_10_men_outer_indoor_passage_lockerroom_23651_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_10_men_outer_indoor_passage_lockerroom_23651_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_10_men_outer_indoor_passage_lockerroom_23651_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_10_men_outer_indoor_passage_lockerroom_23651_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_10_men_outer_indoor_passage_lockerroom_23651_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_10_men_outer_indoor_passage_lockerroom_23651_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_10_men_outer_indoor_passage_lockerroom_23651_03.webp"
+        }
+      ],
+      "name": "10 · 계단·건물 통로",
+      "place": "indoor",
+      "placeType": "indoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-10-men-outer-indoor-passage-lockerroom-23651.png"
+      },
+      "setId": "set-10-men-outer-indoor-passage-lockerroom-23651",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "men",
+      "id": "set-11-men-outer-outdoor-community-steps-gopeople-7214",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_11_men_outer_outdoor_community_steps_gopeople_7214_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_11_men_outer_outdoor_community_steps_gopeople_7214_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_11_men_outer_outdoor_community_steps_gopeople_7214_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_11_men_outer_outdoor_community_steps_gopeople_7214_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_11_men_outer_outdoor_community_steps_gopeople_7214_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_11_men_outer_outdoor_community_steps_gopeople_7214_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_11_men_outer_outdoor_community_steps_gopeople_7214_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_11_men_outer_outdoor_community_steps_gopeople_7214_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_11_men_outer_outdoor_community_steps_gopeople_7214_03.webp"
+        }
+      ],
+      "name": "11 · 주민센터 외부 계단",
+      "place": "outdoor",
+      "placeType": "outdoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-11-men-outer-outdoor-community-steps-gopeople-7214.png"
+      },
+      "setId": "set-11-men-outer-outdoor-community-steps-gopeople-7214",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-12-men-common-indoor-reading-corner-gopeople-7896",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_12_men_common_indoor_reading_corner_gopeople_7896_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_12_men_common_indoor_reading_corner_gopeople_7896_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_12_men_common_indoor_reading_corner_gopeople_7896_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_12_men_common_indoor_reading_corner_gopeople_7896_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_12_men_common_indoor_reading_corner_gopeople_7896_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_12_men_common_indoor_reading_corner_gopeople_7896_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_12_men_common_indoor_reading_corner_gopeople_7896_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_12_men_common_indoor_reading_corner_gopeople_7896_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_12_men_common_indoor_reading_corner_gopeople_7896_03.webp"
+        }
+      ],
+      "name": "12 · 동네 헌책방 독서 코너",
+      "place": "indoor",
+      "placeType": "indoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-12-men-common-indoor-reading-corner-gopeople-7896.png"
+      },
+      "setId": "set-12-men-common-indoor-reading-corner-gopeople-7896",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-14-men-top-indoor-late-night-laundromat-lookple-8966",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_14_men_top_indoor_late_night_laundromat_lookple_8966_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_14_men_top_indoor_late_night_laundromat_lookple_8966_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_14_men_top_indoor_late_night_laundromat_lookple_8966_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_14_men_top_indoor_late_night_laundromat_lookple_8966_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_14_men_top_indoor_late_night_laundromat_lookple_8966_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_14_men_top_indoor_late_night_laundromat_lookple_8966_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_14_men_top_indoor_late_night_laundromat_lookple_8966_03.png",
+          "cutType": "styling",
+          "direction": "side",
+          "exampleId": "ss_set_14_men_top_indoor_late_night_laundromat_lookple_8966_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_14_men_top_indoor_late_night_laundromat_lookple_8966_03.webp"
+        }
+      ],
+      "name": "14 · 심야 동네 세탁실",
+      "place": "indoor",
+      "placeType": "indoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-14-men-top-indoor-late-night-laundromat-lookple-8966.png"
+      },
+      "setId": "set-14-men-top-indoor-late-night-laundromat-lookple-8966",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "men",
+      "id": "set-01-indoor",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_indoor_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_01_indoor_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_indoor_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_indoor_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_01_indoor_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_indoor_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_01_indoor_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_01_indoor_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_01_indoor_03.webp"
+        }
+      ],
+      "name": "01 · 실내",
+      "place": "indoor",
+      "placeType": "indoor",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-01-indoor.png"
+      },
+      "setId": "set-01-indoor",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-02-street",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_02_street_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_02_street_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_02_street_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_02_street_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_02_street_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_02_street_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_02_street_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_02_street_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_02_street_03.webp"
+        }
+      ],
+      "name": "02 · 거리",
+      "place": "street",
+      "placeType": "street",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-02-street.png"
+      },
+      "setId": "set-02-street",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "men",
+      "id": "set-03-resort",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_03_resort_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_03_resort_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_03_resort_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_03_resort_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_03_resort_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_03_resort_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_03_resort_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_03_resort_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_03_resort_03.webp"
+        }
+      ],
+      "name": "03 · 리조트",
+      "place": "resort",
+      "placeType": "resort",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-03-resort.png"
+      },
+      "setId": "set-03-resort",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-04-living",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_04_living_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_04_living_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_04_living_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_04_living_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_04_living_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_04_living_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_04_living_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_04_living_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_04_living_03.webp"
+        }
+      ],
+      "name": "04 · 중성 거실·원룸",
+      "place": "living",
+      "placeType": "living",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-04-living.png"
+      },
+      "setId": "set-04-living",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "men",
+      "id": "set-05-cafe",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_05_cafe_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_05_cafe_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_05_cafe_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_05_cafe_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_05_cafe_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_05_cafe_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_05_cafe_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_05_cafe_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_05_cafe_03.webp"
+        }
+      ],
+      "name": "05 · 카페·소형 매장",
+      "place": "cafe",
+      "placeType": "cafe",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-05-cafe.png"
+      },
+      "setId": "set-05-cafe",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-08-park",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_08_park_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_08_park_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_08_park_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_08_park_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_08_park_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_08_park_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_08_park_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_08_park_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_08_park_03.webp"
+        }
+      ],
+      "name": "08 · 공원·수목 산책길",
+      "place": "park",
+      "placeType": "park",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-08-park.png"
+      },
+      "setId": "set-08-park",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-09-coast",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_09_coast_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_09_coast_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_09_coast_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_09_coast_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_09_coast_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_09_coast_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_09_coast_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_09_coast_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_09_coast_03.webp"
+        }
+      ],
+      "name": "09 · 바다·해안 보도",
+      "place": "coast",
+      "placeType": "coast",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-09-coast.png"
+      },
+      "setId": "set-09-coast",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "men",
+      "id": "set-10-night",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_10_night_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_10_night_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_10_night_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_10_night_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_10_night_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_10_night_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_10_night_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_10_night_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_10_night_03.webp"
+        }
+      ],
+      "name": "10 · 저녁 도심·상점 앞",
+      "place": "night",
+      "placeType": "night",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-10-night.png"
+      },
+      "setId": "set-10-night",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 1장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "set-13-sports-center",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_13_sports_center_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_13_sports_center_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_13_sports_center_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_13_sports_center_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_13_sports_center_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_13_sports_center_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_13_sports_center_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_13_sports_center_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_13_sports_center_03.webp"
+        }
+      ],
+      "name": "13 · 생활체육관 계단",
+      "place": "sports-center",
+      "placeType": "sports-center",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-13-sports-center.png"
+      },
+      "setId": "set-13-sports-center",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "men",
+      "id": "set-14-car-wash",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_14_car_wash_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_14_car_wash_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_14_car_wash_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_14_car_wash_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_14_car_wash_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_14_car_wash_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_14_car_wash_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_14_car_wash_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_14_car_wash_03.webp"
+        }
+      ],
+      "name": "14 · 셀프 세차장",
+      "place": "car-wash",
+      "placeType": "car-wash",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-14-car-wash.png"
+      },
+      "setId": "set-14-car-wash",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "정면 · 사이드 · 뒷면",
+      "gender": "women",
+      "id": "set_horizon_women_bottom_threetimes_7563033280596_prod01",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_horizon_women_bottom_threetimes_7563033280596_prod01_01.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_set_horizon_women_bottom_threetimes_7563033280596_prod01_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_horizon_women_bottom_threetimes_7563033280596_prod01_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_horizon_women_bottom_threetimes_7563033280596_prod01_02.png",
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_set_horizon_women_bottom_threetimes_7563033280596_prod01_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_horizon_women_bottom_threetimes_7563033280596_prod01_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_horizon_women_bottom_threetimes_7563033280596_prod01_03.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_set_horizon_women_bottom_threetimes_7563033280596_prod01_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_horizon_women_bottom_threetimes_7563033280596_prod01_03.webp"
+        }
+      ],
+      "name": "A2 · 여성 하의 회전 세트",
+      "place": "A2 · 여성 하의 회전 세트",
+      "placeType": "A2 · 여성 하의 회전 세트",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_horizon_women_bottom_threetimes_7563033280596_prod01.png"
+      },
+      "setId": "set_horizon_women_bottom_threetimes_7563033280596_prod01",
+      "setType": "horizon-rotation",
+      "spaceVariation": "fixed",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "정면 · 사이드 · 뒷면",
+      "gender": "men",
+      "id": "set_horizon_men_bottom_hatchingroom_2161_prod01",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_horizon_men_bottom_hatchingroom_2161_prod01_01.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_set_horizon_men_bottom_hatchingroom_2161_prod01_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_horizon_men_bottom_hatchingroom_2161_prod01_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_horizon_men_bottom_hatchingroom_2161_prod01_02.png",
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_set_horizon_men_bottom_hatchingroom_2161_prod01_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_horizon_men_bottom_hatchingroom_2161_prod01_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_set_horizon_men_bottom_hatchingroom_2161_prod01_03.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_set_horizon_men_bottom_hatchingroom_2161_prod01_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_set_horizon_men_bottom_hatchingroom_2161_prod01_03.webp"
+        }
+      ],
+      "name": "A3 · 남성 하의 회전 세트",
+      "place": "A3 · 남성 하의 회전 세트",
+      "placeType": "A3 · 남성 하의 회전 세트",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_horizon_men_bottom_hatchingroom_2161_prod01.png"
+      },
+      "setId": "set_horizon_men_bottom_hatchingroom_2161_prod01",
+      "setType": "horizon-rotation",
+      "spaceVariation": "fixed",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 4장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "horizon-set-01-women-scarf-outer",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_01_women_scarf_outer_01.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_01_women_scarf_outer_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_01_women_scarf_outer_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_01_women_scarf_outer_02.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_01_women_scarf_outer_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_01_women_scarf_outer_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_01_women_scarf_outer_03.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_01_women_scarf_outer_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_01_women_scarf_outer_03.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_01_women_scarf_outer_04.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_01_women_scarf_outer_04",
+          "order": 4,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_01_women_scarf_outer_04.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_01_women_scarf_outer_05.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_01_women_scarf_outer_05",
+          "order": 5,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_01_women_scarf_outer_05.webp"
+        }
+      ],
+      "name": "D1 · 여성 스카프형 아우터",
+      "place": "D1 · 여성 스카프형 아우터",
+      "placeType": "D1 · 여성 스카프형 아우터",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-set-01-women-scarf-outer",
+      "setType": "horizon-sequence",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 2장",
+      "gender": "women",
+      "id": "horizon-set-02-women-fluid-trousers",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_02_women_fluid_trousers_01.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_02_women_fluid_trousers_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_02_women_fluid_trousers_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_02_women_fluid_trousers_02.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_02_women_fluid_trousers_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_02_women_fluid_trousers_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_02_women_fluid_trousers_03.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_set_02_women_fluid_trousers_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_02_women_fluid_trousers_03.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_02_women_fluid_trousers_04.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_02_women_fluid_trousers_04",
+          "order": 4,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_02_women_fluid_trousers_04.webp"
+        }
+      ],
+      "name": "D2 · 여성 유동감 팬츠",
+      "place": "D2 · 여성 유동감 팬츠",
+      "placeType": "D2 · 여성 유동감 팬츠",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-set-02-women-fluid-trousers",
+      "setType": "horizon-sequence",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "outer"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 3장",
+      "gender": "men",
+      "id": "horizon-set-03-men-tonal-outer",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_03_men_tonal_outer_01.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_03_men_tonal_outer_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_03_men_tonal_outer_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_03_men_tonal_outer_02.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_03_men_tonal_outer_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_03_men_tonal_outer_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_03_men_tonal_outer_03.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_03_men_tonal_outer_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_03_men_tonal_outer_03.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_03_men_tonal_outer_04.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_03_men_tonal_outer_04",
+          "order": 4,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_03_men_tonal_outer_04.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_03_men_tonal_outer_05.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_03_men_tonal_outer_05",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_03_men_tonal_outer_05.webp"
+        }
+      ],
+      "name": "D3 · 남성 톤온톤 아우터",
+      "place": "D3 · 남성 톤온톤 아우터",
+      "placeType": "D3 · 남성 톤온톤 아우터",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-set-03-men-tonal-outer",
+      "setType": "horizon-sequence",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 3장 + 미디움샷 2장",
+      "gender": "men",
+      "id": "horizon-set-04-men-chino-focus",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_04_men_chino_focus_01.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_04_men_chino_focus_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_04_men_chino_focus_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_04_men_chino_focus_02.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_04_men_chino_focus_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_04_men_chino_focus_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_04_men_chino_focus_03.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_04_men_chino_focus_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_04_men_chino_focus_03.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_04_men_chino_focus_04.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_04_men_chino_focus_04",
+          "order": 4,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_04_men_chino_focus_04.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/all/ss_horizon_set_04_men_chino_focus_05.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_set_04_men_chino_focus_05",
+          "order": 5,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/thumb/ss_horizon_set_04_men_chino_focus_05.webp"
+        }
+      ],
+      "name": "D4 · 남성 치노 팬츠 집중",
+      "place": "D4 · 남성 치노 팬츠 집중",
+      "placeType": "D4 · 남성 치노 팬츠 집중",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-set-04-men-chino-focus",
+      "setType": "horizon-sequence",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    }
+  ]
+}

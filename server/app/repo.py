@@ -426,6 +426,54 @@ async def get_mannequin_cut_asset(
         return await cur.fetchone()
 
 
+# ---------- 검색 증강 Phase 3: 레퍼런스 컷 벡터 검색 (retrieval_upgrade_prd FR-C) ----------
+
+
+async def search_ref_images(
+    conn: AsyncConnection,
+    query_vec: list[float],
+    *,
+    cut_type: str | None = None,
+    clothing_type: str | None = None,
+    gender: str | None = None,
+    embed_model: str | None = None,
+    k: int = 2,
+) -> list[dict]:
+    """레퍼런스 컷 벡터 검색 — pgvector 코사인 거리(<=>) 오름차순 top-k.
+
+    결정적 프리필터(FR-A2 원칙 승계): is_active + image_embedding not null (+ 선택
+    cut_type/clothing_type/gender/embed_model). gender 지정 시 동일·unisex·null 허용(성별 무관
+    레퍼런스 포함). embed_model 지정 시 그 모델로 임베딩된 행만 — 동일차원 모델 스왑 시
+    구 모델 벡터와의 무의미한 비교(silent garbage)를 차단한다. 동점 tie-break id 오름차순(NFR-1).
+    service-role 전용 코퍼스라 소유 조건 없음(운영자 큐레이션). query_vec 비면 빈 결과."""
+    if not query_vec:
+        return []
+    vec = "[" + ",".join(repr(float(x)) for x in query_vec) + "]"
+    where = ["is_active", "image_embedding is not null"]
+    params: list = []
+    if cut_type:
+        where.append("cut_type = %s")
+        params.append(cut_type)
+    if clothing_type:
+        where.append("clothing_type = %s")
+        params.append(clothing_type)
+    if gender:
+        where.append("(gender = %s or gender = 'unisex' or gender is null)")
+        params.append(gender)
+    if embed_model:  # 모델 스왑 시 구 벡터와의 cross-model 비교 차단
+        where.append("embed_model = %s")
+        params.append(embed_model)
+    sql = (
+        "select id, r2_bucket, r2_key, cut_type, clothing_type, gender, source, "
+        "1 - (image_embedding <=> %s::vector) as similarity "
+        "from ref_images where " + " and ".join(where) +
+        " order by image_embedding <=> %s::vector asc, id asc limit %s"
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(sql, (vec, *params, vec, k))
+        return await cur.fetchall()
+
+
 # ---------- jobs ----------
 
 _JOB_COLS = (
@@ -1459,7 +1507,9 @@ async def grant_subscription(
 
 async def purchase_topup(
     conn: AsyncConnection, *, user_id: str, plan_code: str,
-    idempotency_key: str | None = None, metadata: dict | None = None
+    idempotency_key: str | None = None, metadata: dict | None = None,
+    provider: str = "test", provider_ref: str | None = None,
+    snapshot: dict | None = None,   # {"credits": int, "price": int} — 결제 시점 확정값
 ) -> dict:
     """추가구매(§3.2, 테스트용 provider='test'): payment + topup 버킷 + grant 원장.
     멱등: Idempotency-Key 주면 중복 지급 방지(더블클릭/재시도) — account FOR UPDATE가 동시
@@ -1487,18 +1537,33 @@ async def purchase_topup(
             if existing is not None:
                 return {"creditSourceId": existing["src"], "credits": existing["initial_credits"],
                         "available": acct["balance"] - acct["reserved"], "idempotent": True}
+        if snapshot is not None:
+            # PG 결제 경로 — **결제 시점에 확정된 금액·크레딧**으로 적립한다. 여기서 카탈로그를
+            # 다시 읽으면 결제 후 SKU 가 바뀐 만큼 더/덜 지급되고, 비활성화됐으면 승인은 났는데
+            # unknown_plan 으로 적립이 막힌다(돈만 받고 크레딧 미지급). is_active 도 보지 않는다.
+            await cur.execute(
+                "select id::text as id from pricing_plans where code = %s and kind = 'topup'",
+                (plan_code,),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise CreditError("unknown_plan", f"추가구매 상품을 찾을 수 없어요: {plan_code}", 404)
+            plan = {"id": row["id"], "credits": snapshot["credits"], "price": snapshot["price"]}
+        else:
+            await cur.execute(
+                "select id::text as id, credits, price from pricing_plans "
+                "where code = %s and kind = 'topup' and is_active",
+                (plan_code,),
+            )
+            plan = await cur.fetchone()
+            if plan is None:
+                raise CreditError("unknown_plan", f"추가구매 상품을 찾을 수 없어요: {plan_code}", 404)
         await cur.execute(
-            "select id::text as id, credits, price from pricing_plans "
-            "where code = %s and kind = 'topup' and is_active",
-            (plan_code,),
-        )
-        plan = await cur.fetchone()
-        if plan is None:
-            raise CreditError("unknown_plan", f"추가구매 상품을 찾을 수 없어요: {plan_code}", 404)
-        await cur.execute(
-            "insert into payment_history (user_id, plan_id, amount, kind, provider, status) "
-            "values (%s, %s, %s, 'topup', 'test', 'paid') returning id::text as id",
-            (user_id, plan["id"], plan["price"]),
+            # provider/provider_ref 는 PG 연동(토스)에서 채운다. 기본값 'test' 는 기존 테스트
+            # 구매 경로 그대로 — 실 결제는 provider='toss', provider_ref=paymentKey.
+            "insert into payment_history (user_id, plan_id, amount, kind, provider, provider_ref, "
+            "status) values (%s, %s, %s, 'topup', %s, %s, 'paid') returning id::text as id",
+            (user_id, plan["id"], plan["price"], provider, provider_ref),
         )
         pay_id = (await cur.fetchone())["id"]
         await cur.execute(

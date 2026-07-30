@@ -57,7 +57,7 @@ class _R2:
     def __init__(self):
         self.puts = []
 
-    def put_bytes(self, key, data, mime):
+    def put_bytes(self, key, data, mime, cache=None):
         self.puts.append((key, data, mime))
 
 

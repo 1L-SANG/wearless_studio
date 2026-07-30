@@ -321,27 +321,28 @@ export const httpAdapter = {
   },
   // ---- 상세페이지 (PL-4) — 콘티·에디터는 서버 소유. detail_page job 이 저장 콘티를 읽는다 ----
   async getStoryboard(projectId) {
-    const [saved, product, project] = await Promise.all([
+    const [saved, product, project, analysis] = await Promise.all([
       http(`/v1/projects/${projectId}/storyboard`),
       http(`/v1/projects/${projectId}/product`),
       http(`/v1/projects/${projectId}`),
+      http(`/v1/projects/${projectId}/analysis`),
     ]);
     const colors = product?.colors || [];
     const mode = project?.composeMode === 'extended' ? 'extended' : 'basic';
+    const storyboardContext = {
+      clothingType: product?.clothingType || 'top',
+      targetGenders: analysis?.targetGenders || [],
+    };
     if (Array.isArray(saved) && saved.length) {
       const previousMode = mode === 'extended' ? 'basic' : 'extended';
       // 이전 모드의 기본 시드 그대로일 때만 사진 양 변경을 반영한다.
       // 사용자가 옵션·순서·레이아웃 중 하나라도 바꾼 콘티는 교체하지 않는다.
-      if (!isDefaultStoryboardForMode(saved, colors, previousMode)) return saved;
+      if (!isDefaultStoryboardForMode(saved, colors, previousMode, storyboardContext)) return saved;
     }
-    // 첫 진입 또는 손대지 않은 이전 모드 시드 — 현재 사진 양의 같은 3단 구조로 교체.
-    const blocks = defaultStoryboard(colors, mode);
-    try {
-      await http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
-    } catch { /* 시드 저장 실패 — 보드는 뜨게 두고, 편집/생성 시 자동저장이 다시 시도 */ }
-    return blocks;
+    // 첫 진입/재시드는 화면의 자동 예시 배정 뒤 한 번만 PUT한다.
+    return defaultStoryboard(colors, mode, storyboardContext);
   },
-  async saveStoryboard(projectId, blocks) {
+  async saveStoryboard(projectId, blocks, _options = {}) {
     return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
   },
   async getEditorBlocks(projectId) {
@@ -400,15 +401,19 @@ export const httpAdapter = {
     if (Array.isArray(matchPatch)) {
       base.matchClothing = mergeMatchSelection(base.matchClothing || [], matchPatch);
     }
-    analysisCache = { projectId, analysis: base };
     // 서버 PATCH 는 REPLACE — full base(analyze 가 seed 한 캐시)일 때만 지속한다. 예외: 하이드레이션이
     // 서버 저장분이 비었음을 증명한 경우(serverEmpty)는 유실될 상위 상태가 없으므로 delta 라도 지속한다
     // — 분석 실패로 빈 프로젝트에 재진입해 모델만 고른 케이스(F3)에서 selectedModelId 무음 유실 방지.
     // 캐시도 없고 하이드레이션도 안 뛴(비정상) 상태만 계속 스킵.
+    let savedAnalysis = base;
     if (projectId && (cached || serverEmpty)) {
-      await http(`/v1/projects/${projectId}/analysis`, { method: 'PATCH', body: base });
+      savedAnalysis = await http(`/v1/projects/${projectId}/analysis`, {
+        method: 'PATCH',
+        body: base,
+      });
     }
-    return base;
+    analysisCache = { projectId, analysis: savedAnalysis };
+    return savedAnalysis;
   },
   // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.
   async getAnalysis(projectId) {
@@ -459,6 +464,16 @@ export const httpAdapter = {
   },
   async getCreditSources() {
     return http('/v1/credits/sources');
+  },
+  // ---- 토스 추가구매 (WS3) — 금액은 서버가 정한다. 클라이언트는 planCode 만 보낸다. ----
+  // checkout 이 돌려준 orderId/amount 를 그대로 결제창에 넘기고, 승인도 그 값으로만 한다.
+  async createTossCheckout(planCode) {
+    return http('/v1/payments/toss/checkout', { method: 'POST', body: { planCode } });
+  },
+  async confirmTossPayment({ paymentKey, orderId, amount }) {
+    return http('/v1/payments/toss/confirm', {
+      method: 'POST', body: { paymentKey, orderId, amount },
+    });
   },
   // ---- 마네킹 (PRD §7) — generate/getMannequins/adjust 는 배포된 라우트로 실배선 ----
   // 마네킹 컷 목록 (계약 §6) — [{id,src,candidate,version,baseFit,fitAdjust,lengthAdjust,matchAdjust}].

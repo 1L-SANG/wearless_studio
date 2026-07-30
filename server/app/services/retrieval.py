@@ -129,3 +129,38 @@ def build_retrieval_log(
     }
     logger.info("retrieval_call", extra=log)
     return log
+
+
+def cosine(a: list[float], b: list[float]) -> float:
+    """코사인 유사도. 벡터가 L2 정규화돼 있으면 내적과 동일하지만, 미정규화 입력도
+    안전하게 처리한다(0 벡터는 0.0). 순수 함수 — 테스트·폴백 랭킹용."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def rank_ref_images_by_vector(
+    rows: list[dict],
+    query_vec: list[float],
+    *,
+    k: int | None = None,
+    tie_break: str = "id",
+) -> list[dict]:
+    """레퍼런스 컷 벡터 랭킹 — Phase 3 (FR-C, 결정적 정렬).
+
+    프리필터(cut_type·clothing_type·gender·is_active)는 **호출부(DB 쿼리)**가 이미 적용한
+    풀만 넘어온다는 전제다(FR-A2 원칙: 프리필터 불변, 랭킹은 통과 풀 내부에서만). 이 함수는
+    순수 정렬만 담당하며 DB·임베딩 호출이 없다(실 검색은 repo.search_ref_images 의 pgvector).
+
+    각 row 는 `embedding`(list[float]) 을 가진다. 정렬: 코사인 내림차순, 동점이면
+    `row[tie_break]`(기본 'id') 오름차순 — 이 두 키 외로는 재정렬하지 않는다(NFR-1 결정성).
+    embedding 이 없거나 차원 불일치면 유사도 0.0 으로 최하위."""
+    scored = [(r, cosine(query_vec, r.get("embedding") or [])) for r in rows]
+    scored.sort(key=lambda pair: (-pair[1], pair[0].get(tie_break, "")))
+    ranked = [r for r, _ in scored]
+    return ranked[:k] if k is not None else ranked

@@ -93,11 +93,13 @@ input, textarea, select { font-family: inherit; }
 .nav-link:hover { background: var(--bg-2); color: var(--fg-1); }
 .nav-link.active { color: var(--fg-1); background: var(--bg-2); box-shadow: 0 0 0 1px var(--ring); }
 .nav-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
-.credit-badge { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500;
-  color: var(--fg-1); padding: 6px 12px; border-radius: var(--r-pill); background: #fff; box-shadow: var(--elev-card); }
+.credit-badge { display: inline-flex; align-items: center; gap: 7px; height: 32px; font-size: 13px; font-weight: 500;
+  color: var(--fg-1); padding: 0 12px; border-radius: var(--r-pill); background: #fff; box-shadow: var(--elev-card);
+  border: 0; font-family: inherit; cursor: pointer; transition: box-shadow .15s, transform .15s; }
+.credit-badge:hover { box-shadow: var(--elev-card-hover, var(--elev-card)); transform: translateY(-1px); }
 .credit-badge b { font-family: var(--font-display); font-size: 14px; }
-.plan-badge { font-family: var(--font-body); font-size: 12px; font-weight: 600; letter-spacing: .2px;
-  padding: 5px 11px; border-radius: var(--r-pill); background: var(--fg-1); color: #fff; }
+.plan-badge { display: inline-flex; align-items: center; height: 32px; font-family: var(--font-body); font-size: 12px; font-weight: 600; letter-spacing: .2px;
+  padding: 0 11px; border-radius: var(--r-pill); background: var(--fg-1); color: #fff; }
 .avatar { width: 32px; height: 32px; border-radius: var(--r-pill); object-fit: cover; box-shadow: 0 0 0 1px var(--ring); cursor: pointer; }
 .avatar-initial { display: inline-flex; align-items: center; justify-content: center; background: var(--fg-1);
   color: #fff; font-family: var(--font-display); font-weight: 600; line-height: 1; }

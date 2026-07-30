@@ -66,8 +66,26 @@ class _Conn:
         return _Cur(self._rows)
 
 
+_FM_UUID = "11111111-1111-1111-1111-111111111111"  # 실존 모델 id 는 uuid (fm_models.id)
+
+
 def _run(rows):
-    return asyncio.run(resolve_real_model_assets(_Conn(rows), "m1"))
+    return asyncio.run(resolve_real_model_assets(_Conn(rows), _FM_UUID))
+
+
+class _ExplodingConn:
+    """가상모델 id 가 DB 에 닿으면 실패하는 감시 스텁."""
+
+    def cursor(self):
+        raise AssertionError("non-UUID model id must not reach the fm_models query")
+
+
+def test_resolve_virtual_model_id_skips_db_and_returns_none():
+    # 가상모델 id(mA 등)는 UUID 가 아니다 — fm_models.id(uuid) 쿼리에 그대로 바인딩하면
+    # psycopg InvalidTextRepresentation 으로 상세페이지 잡 전체가 죽는다(2026-07-29 prod 재현:
+    # facemarket_enabled=true + 가상모델 선택 조합에서 progress 5 즉사).
+    for vid in ("mA", "mB", "mC", "model-1", ""):
+        assert asyncio.run(resolve_real_model_assets(_ExplodingConn(), vid)) is None
 
 
 def test_resolve_ready_returns_two_refs_face_bucket():

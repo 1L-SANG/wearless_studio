@@ -5,7 +5,7 @@
    사용자 섹션은 핵심 장점/핏·코디/제품 확인 3개다. 같은 장소 정보는
    핏·코디 안의 배지일 뿐 별도 섹션을 만들지 않는다.
    ============================================================= */
-import { uid } from '@/lib/ids.js';
+import { uid } from './ids.js';
 import {
   STORYBOARD_TAXONOMY_VERSION,
   SECTION_ROLES,
@@ -19,7 +19,7 @@ import {
   normalizedRecipePatch,
   sectionRoleForContentRole,
   sectionTitle,
-} from '@/lib/storyboardTaxonomy.js';
+} from './storyboardTaxonomy.js';
 
 const SECTION_ORDER = new Map([
   [SECTION_ROLES.BENEFIT, 0],
@@ -55,7 +55,7 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
     Object.assign(b, normalizedRecipePatch(b, contentRole, { hasDetailImage }));
     if (previousRecipe.cutType !== b.cutType || previousRecipe.direction !== b.direction || previousRecipe.shot !== b.shot) {
       b.exampleId = null;
-      b.refScope = 'all';
+      b.exampleSelectionOrigin = null;
       b.thumb = b.baseThumb || b.thumb;
       b.baseThumb = null;
     }
@@ -184,14 +184,21 @@ export function adoptSection(blocks, movedId, targetSid, targetRole = null) {
       if (!crossed) return b; // 같은 섹션 내 순서 변경 — 소속·공간 유지
       const { layoutRowId: _layoutRowId, ...single } = b;
       const rowVersion = host.layoutRowVersion || b.layoutRowVersion;
+      const recipePatch = b.source === 'mine'
+        ? {}
+        : normalizedRecipePatch(b, defaultContentRoleForSection(host.sectionRole));
+      const recipeChanged = b.source !== 'mine' && (
+        b.cutType !== recipePatch.cutType
+        || b.direction !== recipePatch.direction
+        || b.shot !== recipePatch.shot
+      );
       const purposePatch = b.source === 'mine' ? {} : {
-        ...normalizedRecipePatch(b, defaultContentRoleForSection(host.sectionRole)),
-        exampleId: null,
-        refScope: 'all',
-        thumb: b.baseThumb || b.thumb,
-        baseThumb: null,
-        ...(host.sectionRole === SECTION_ROLES.PRODUCT
-          ? { matchIds: [], outerClosureState: null } : {}),
+        ...recipePatch,
+        ...(recipeChanged ? {
+          exampleId: null, exampleSelectionOrigin: null,
+          thumb: b.baseThumb || b.thumb, baseThumb: null,
+        } : {}),
+        ...(host.sectionRole === SECTION_ROLES.PRODUCT ? { matchIds: [], outerClosureState: null } : {}),
       };
       return {
         ...single,

@@ -122,7 +122,6 @@ const VALID_SECTION_ROLES = new Set(SECTION_ROLE_OPTIONS.map((option) => option.
 const VALID_CONTENT_ROLES = new Set(CONTENT_TEMPLATES.map((template) => template.value));
 const WORN_DIRECTIONS = new Set(['front', 'back', 'side']);
 const WORN_SHOTS = new Set(['full', 'medium']);
-const WORN_CUT_TYPES = new Set(['styling', 'horizon', 'mirror']);
 const PRODUCT_DIRECTIONS = new Set(['front', 'back']);
 const PRODUCT_OVERVIEW_SHOTS = new Set(['ghost']);
 const FIT_ROLE_BY_CUT_TYPE = Object.freeze({
@@ -139,45 +138,6 @@ export const isContentRole = (role) => VALID_CONTENT_ROLES.has(role);
 export const sectionRoleForContentRole = (role) => contentTemplate(role).sectionRole;
 export const defaultContentRoleForSection = (sectionRole) =>
   contentTemplatesForSection(sectionRole, { hasDetailImage: false })[0]?.value || CONTENT_ROLES.CUSTOM;
-
-export function isWornCrossShotPair(cutType, sourceShot, targetShot) {
-  // TODO(cross-shot polish): add another shot family only after its framing/expansion behavior
-  // has real-generation evidence; unsupported pairs intentionally clear the selected example.
-  return WORN_CUT_TYPES.has(cutType)
-    && sourceShot !== targetShot
-    && WORN_SHOTS.has(sourceShot)
-    && WORN_SHOTS.has(targetShot);
-}
-
-export function generationExampleCompatible(example, {
-  cutType, shot, clothingType, gender,
-}, { allowCrossShot = false } = {}) {
-  if (!example || example.cutType !== cutType) return false;
-  if (example.shot !== shot
-    && !(allowCrossShot && isWornCrossShotPair(cutType, example.shot, shot))) return false;
-  if (!Array.isArray(example.applicableClothingTypes)
-    || !example.applicableClothingTypes.includes(clothingType)) return false;
-  return cutType === 'product' ? example.gender == null : example.gender === gender;
-}
-
-export function keepExampleOnShotChange(cutType, currentShot, nextShot) {
-  return currentShot === nextShot || isWornCrossShotPair(cutType, currentShot, nextShot);
-}
-
-export function generationExampleStateAfterShotChange(
-  cutType, currentShot, nextShot, { exampleId = null, refScope = 'all' } = {},
-) {
-  return keepExampleOnShotChange(cutType, currentShot, nextShot)
-    ? { shot: nextShot, exampleId, refScope }
-    : { shot: nextShot, exampleId: null, refScope: 'all' };
-}
-
-export function generationExampleScopeAvailable(
-  variants, refScope, { inSpace = false, isProduct = false } = {},
-) {
-  const requiredScope = inSpace ? 'pose' : isProduct ? 'all' : refScope;
-  return Array.isArray(variants) && variants.includes(requiredScope);
-}
 
 export function poseExampleDirectionCompatible(example, { cutType, direction }) {
   if (!example || !['styling', 'horizon', 'mirror'].includes(cutType)) return false;
@@ -224,8 +184,8 @@ export function blockPatchForContentRole(block, role, { clothingType = 'top' } =
   const template = contentTemplate(role);
   if (!template.cutType) {
     return {
-      contentRole: CONTENT_ROLES.CUSTOM, title: template.label,
-      exampleId: null, refScope: 'all',
+      contentRole: CONTENT_ROLES.CUSTOM, title: template.label, exampleId: null, exampleSelectionOrigin: null,
+      ...(block ? { thumb: block.baseThumb || block.thumb, baseThumb: null } : {}),
     };
   }
   const worn = template.cutType === 'styling' || template.cutType === 'horizon' || template.cutType === 'mirror';
@@ -241,7 +201,8 @@ export function blockPatchForContentRole(block, role, { clothingType = 'top' } =
     poseLabel: 'AI 자동',
     angle: 'same',
     exampleId: null,
-    refScope: 'all',
+    exampleSelectionOrigin: null,
+    ...(block ? { thumb: block.baseThumb || block.thumb, baseThumb: null } : {}),
     outerClosureState: clothingType === 'outer' && worn
       ? (block?.outerClosureState || 'open') : null,
     ...(template.cutType === 'product' ? { matchIds: [] } : {}),
@@ -362,9 +323,7 @@ export function assignInternalContentRoles(blocks) {
       && ((block.matchIds || []).length > 0
         || block.outerClosureState != null
         || block.faceExposure != null);
-    const orphanedReferenceScope = !block.exampleId
-      && (block.refScope === 'pose' || block.refScope === 'bg');
-    if (!recipeChanged && !roleChanged && !productStateChanged && !orphanedReferenceScope) return block;
+    if (!recipeChanged && !roleChanged && !productStateChanged) return block;
 
     changed = true;
     return {
@@ -374,10 +333,9 @@ export function assignInternalContentRoles(blocks) {
       taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
       ...(recipePatch.cutType === 'product'
         ? { matchIds: [], outerClosureState: null, faceExposure: null } : {}),
-      ...(orphanedReferenceScope ? { refScope: 'all' } : {}),
       ...(recipeChanged ? {
         exampleId: null,
-        refScope: 'all',
+        exampleSelectionOrigin: null,
         thumb: block.baseThumb || block.thumb,
         baseThumb: null,
       } : {}),
@@ -390,9 +348,11 @@ export function hasDetailSource(product) {
   return (product?.colors || []).some((color) => (color?.images || []).some((image) => image?.slot === 'Detail'));
 }
 
-/* 불러온 EditorBlock의 이미지와 순서는 건드리지 않고 v2 표시 역할만 정규화한다. */
+/* 불러온 EditorBlock의 이미지와 순서는 건드리지 않고 v2 표시 역할만 정규화한다.
+   kind='info'(내용 추가 블록, PRD §10.14)는 섹션 역할 추론 대상이 아니다 —
+   여기서 통과시키지 않으면 재로드 때 kind가 'fit'으로 덮여 정보 블록이 깨진다. */
 export function normalizeEditorBlockRole(block) {
-  if (!block || block.auto || ['twocol', 'threecol', 'grid2x2', 'colorcmp', 'size', 'care', 'ai-notice'].includes(block.kind)) return block;
+  if (!block || block.auto || block.kind === 'info' || ['twocol', 'threecol', 'grid2x2', 'colorcmp', 'size', 'care', 'ai-notice'].includes(block.kind)) return block;
   const contentRole = inferContentRole(block);
   const sectionRole = inferSectionRole(block) || SECTION_ROLES.FIT;
   const name = block.name === '내 이미지' ? '내 이미지'

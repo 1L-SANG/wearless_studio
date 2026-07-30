@@ -28,6 +28,8 @@ HARD RULES (a violation makes the output invalid):
   "가슴 중앙의 심플한 브랜드 로고 프린팅" (sentence-like/too long).
   Zero or one strong point beats two fillers; an empty list is a valid answer.
 - subCategory must match clothingType's group; for a dress, subCategory is null.
+- When clothingType is dress, targetGenders MUST be exactly ["women"]. There is no
+  men's dress category in this service.
 - customCategory: when the garment does not fit any subCategory token exactly, or a more
   specific common Korean name exists (e.g. "후드 집업", "니트 베스트", "점프수트",
   "카고 팬츠"), output that short Korean noun name (2-12 characters). If a subCategory

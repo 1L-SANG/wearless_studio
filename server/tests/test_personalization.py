@@ -19,6 +19,7 @@ import contextlib
 import hashlib
 import json
 import os
+import time
 import types
 import uuid
 from datetime import date
@@ -42,6 +43,11 @@ DB_URL = os.environ.get(
 ANGLES = personalization.ANGLES
 CONSENT_DOC_VERSION = personalization.CONSENT_DOC_VERSION
 PNG_BYTES = b"\x89PNG\r\n\x1a\nFAKE-PNG-BYTES"
+_DEFAULT_JOB_POLL_INTERVAL_SECONDS = 3.0
+_DISPATCHER_PROBE_POLLS = 2
+_DISPATCHER_PROBE_MARGIN_SECONDS = 1.0
+_DISPATCHER_PROBE_POLL_SECONDS = 0.1
+_DISPATCHER_SETTLE_TIMEOUT_SECONDS = 5.0
 
 
 # ── DB 어댑터 ────────────────────────────────────────────────
@@ -99,6 +105,98 @@ def _drop_user(user_id: str) -> None:
     conn = _sync_conn()
     conn.execute("delete from auth.users where id = %s", (user_id,))
     conn.close()
+
+
+def _dispatcher_probe_timeout_seconds() -> float:
+    try:
+        poll_interval = float(
+            os.environ.get("JOB_POLL_INTERVAL_SECONDS", _DEFAULT_JOB_POLL_INTERVAL_SECONDS)
+        )
+    except (TypeError, ValueError):
+        poll_interval = _DEFAULT_JOB_POLL_INTERVAL_SECONDS
+    return (
+        max(_DEFAULT_JOB_POLL_INTERVAL_SECONDS, poll_interval)
+        * _DISPATCHER_PROBE_POLLS
+        + _DISPATCHER_PROBE_MARGIN_SECONDS
+    )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _guard_no_external_dispatcher():
+    """이 파일은 로컬 Postgres(DATABASE_URL)의 공유 `jobs` 큐를 실제로 쓴다. 같은 DB 를 향한
+    JobDispatcher(대개 로컬에 켜둔 dev 서버 `uvicorn app.main:app`)가 떠 있으면, 그 디스패처가
+    pending 개인화 잡을 FOR UPDATE SKIP LOCKED 로 가로채(app/workers/dispatcher.py) running 으로
+    뒤집고 워커까지 돌려버린다 — 라우트가 만든 잡의 pending 상태를 검증하는 테스트(예:
+    test_withdraw_*_returns_202_purging_*)가 런마다 다르게 깨진다. CI 는 dev 서버가 없어 안 겪지만
+    로컬 풀런에서는 재현된다.
+
+    canary(빈 payload 의 personalization_purge 잡 — 워커는 profileId 부재로 즉시 _fail 하므로
+    R2·크레딧·외부호출 등 파괴적 부수효과 0)를 하나 심어 설정된 poll_interval 기준 두 번의
+    poll 기회 안에 채가는지 본다. 안 채가면(디스패처 없음) 정상 진행하고, 채가면 원인 모를
+    flake 대신 조치 가능한 사유로 스킵한다. 단 CI 에서는 테스트가 조용히 사라지지 않도록 실패한다.
+    """
+    probe_user = _new_user()
+    probe_job = str(uuid.uuid4())
+    conn = _sync_conn()
+    claimed = False
+    probe_status = "pending"
+    guard_error = None
+    try:
+        conn.execute(
+            "insert into jobs (id, user_id, project_id, kind, status, payload) "
+            "values (%s, %s, null, 'personalization_purge', 'pending', %s)",
+            (probe_job, probe_user, Json({})),
+        )
+        deadline = time.monotonic() + _dispatcher_probe_timeout_seconds()
+        while time.monotonic() < deadline:
+            row = conn.execute(
+                "select status from jobs where id = %s", (probe_job,)
+            ).fetchone()
+            if row is None:
+                guard_error = "외부 요인이 dispatcher canary 행을 삭제했다."
+                break
+            probe_status = row["status"]
+            if probe_status != "pending":
+                claimed = True
+                break
+            time.sleep(_DISPATCHER_PROBE_POLL_SECONDS)
+
+        if claimed and probe_status == "running":
+            settle_deadline = time.monotonic() + _DISPATCHER_SETTLE_TIMEOUT_SECONDS
+            while time.monotonic() < settle_deadline:
+                row = conn.execute(
+                    "select status from jobs where id = %s", (probe_job,)
+                ).fetchone()
+                if row is None:
+                    guard_error = "실행 중이던 dispatcher canary 행이 사라졌다."
+                    break
+                probe_status = row["status"]
+                if probe_status in {"done", "error"}:
+                    break
+                time.sleep(_DISPATCHER_PROBE_POLL_SECONDS)
+            else:
+                guard_error = (
+                    "외부 JobDispatcher 가 canary 를 claim 했지만 "
+                    f"{_DISPATCHER_SETTLE_TIMEOUT_SECONDS:.0f}초 안에 종결하지 못했다."
+                )
+    finally:
+        if probe_status in {"pending", "done", "error"}:
+            conn.execute("delete from jobs where id = %s", (probe_job,))
+        conn.close()
+        if probe_status != "running":
+            _drop_user(probe_user)
+    if guard_error:
+        pytest.fail(f"테스트 DB dispatcher guard 실패: {guard_error}")
+    if claimed:
+        reason = (
+            f"외부 JobDispatcher 가 테스트 DB({DB_URL})의 jobs 큐를 폴링 중이라 개인화 잡이 "
+            "가로채진다 — 이 파일은 그 상태에서 비결정적으로 깨진다. 같은 DATABASE_URL 로 뜬 "
+            "dev 서버(uvicorn app.main:app)를 끄거나 다른 DB 로 붙인 뒤 다시 실행하세요."
+        )
+        if os.environ.get("CI"):
+            pytest.fail(reason)
+        pytest.skip(reason)
+    yield
 
 
 def _seed_adult_verification(user_id: str) -> None:

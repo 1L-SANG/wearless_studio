@@ -19,6 +19,9 @@ from botocore.exceptions import ClientError
 
 from .config import Settings
 
+# 불변 자산(asset id = content, 재생성은 새 asset id) 공용 Cache-Control 값.
+IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
+
 # 업로드 허용 이미지 MIME → 확장자. 화이트리스트(임의 타입 업로드 차단).
 MIME_EXT = {
     "image/png": "png",

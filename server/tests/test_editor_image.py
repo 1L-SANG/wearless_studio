@@ -51,6 +51,80 @@ def test_generate_image_creates_job_and_reserves(client, make_token, monkeypatch
     assert seen["payload"] == body
 
 
+def test_generate_image_validates_standalone_set_example_before_reserving(
+    client, make_token, monkeypatch
+):
+    seen = {}
+
+    async def fake_gp(conn, uid, pid):
+        return {"id": pid}
+
+    async def fake_product(conn, pid):
+        return {"clothingType": "top"}
+
+    async def fake_analysis(conn, pid):
+        return {"targetGenders": ["women"]}
+
+    def fake_resolve(block, *, clothing_type, gender, scope):
+        seen["resolved"] = (
+            block["exampleId"],
+            block["cutType"],
+            block["shot"],
+            block["direction"],
+            clothing_type,
+            gender,
+            scope,
+        )
+        return {"asset": {"key": "all"}}
+
+    async def fake_create_job(conn, **kw):
+        seen["job"] = kw
+        return {"id": "job-set-example"}, True
+
+    async def fake_reserve(conn, uid, amount):
+        seen["reserved"] = amount
+        return 99
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(
+        routes.space_set_assets,
+        "resolve_published_example_reference",
+        fake_resolve,
+    )
+    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    body = {
+        "mode": "new",
+        "contentRole": "coordination",
+        "cutType": "styling",
+        "direction": "front",
+        "shot": "full",
+        "exampleId": "ss_cafe_01",
+        "refScope": "all",
+    }
+    res = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        json=body,
+        headers=auth_headers(make_token),
+    )
+
+    assert res.status_code == 202, res.text
+    assert seen["resolved"] == (
+        "ss_cafe_01",
+        "styling",
+        "full",
+        "front",
+        "top",
+        "women",
+        "all",
+    )
+    assert seen["reserved"] == 1
+
+
 def test_generate_image_402_insufficient_credits(client, make_token, monkeypatch):
     async def fake_gp(conn, uid, pid):
         return {"id": pid}
@@ -188,14 +262,6 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
         assert clothing_type == "outer"
         return eij.InlineImage("image/png", b"EXAMPLE")
 
-    def fake_example_status(example_id, clothing_type, scope="all", *, spec, gender):
-        assert example_id == "ex_editor"
-        assert clothing_type == "outer"
-        assert scope == "all"
-        assert spec["cutType"] == "horizon" and spec["shot"] == "full"
-        assert gender == "women"
-        return "available"
-
     async def fake_finalize(conn, **kw):
         captured.update(kw)
         return {"id": "w-new2"}
@@ -206,7 +272,7 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "example_asset_status", fake_example_status)
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
@@ -225,19 +291,117 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
     assert captured["cut_type"] == "horizon"
 
 
+@pytest.mark.parametrize("scope", ["all", "pose"])
+def test_run_editor_image_job_new_uses_standalone_set_member(
+    monkeypatch, scope
+):
+    captured = {"loads": []}
+
+    async def fake_get_product(conn, pid):
+        return {
+            "clothingType": "top",
+            "colors": [{
+                "id": "col1",
+                "isBase": True,
+                "images": [{"slot": "Front", "id": "a1"}],
+            }],
+        }
+
+    async def fake_get_analysis(conn, pid):
+        return {"targetGenders": ["women"]}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    def fake_resolve(block, *, clothing_type, gender, scope):
+        assert block["exampleId"] == "ss_cafe_01"
+        assert clothing_type == "top" and gender == "women"
+        return {
+            "exampleId": block["exampleId"],
+            "scope": scope,
+            "asset": {"key": f"{scope}-asset"},
+        }
+
+    async def fake_set_image(settings, asset, *, role):
+        captured["loads"].append((asset["key"], role))
+        return eij.InlineImage("image/png", asset["key"].encode())
+
+    async def fail_flat(*_args, **_kwargs):
+        raise AssertionError("set member must not use the flat registry")
+
+    async def fake_gen(
+        settings, gemini, cut_spec, product, images, *,
+        analysis=None, manifest=None
+    ):
+        captured["images"] = [item.data for item in images]
+        captured["manifest"] = manifest
+        captured["cut_spec"] = cut_spec
+        return b"SET-EXAMPLE", "image/png"
+
+    async def fake_finalize(conn, **kw):
+        captured["finalize"] = kw
+        return {"id": "w-set-example"}
+
+    async def fake_emit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(
+        eij.space_set_assets,
+        "resolve_published_example_reference",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        eij.space_set_assets, "load_space_set_image", fake_set_image
+    )
+    monkeypatch.setattr(eij.cut_generator, "load_example_image", fail_flat)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(
+        eij.repo, "finalize_editor_image_success", fake_finalize
+    )
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+    payload = {
+        "mode": "new",
+        "colorId": "col1",
+        "contentRole": "coordination",
+        "cutType": "styling",
+        "direction": "front",
+        "shot": "full",
+        "pose": "auto",
+        "exampleId": "ss_cafe_01",
+        "refScope": scope,
+    }
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b")
+    )
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert captured["loads"] == [
+        (
+            f"{scope}-asset",
+            "전체 예시" if scope == "all" else "포즈",
+        )
+    ]
+    assert captured["images"][-1] == f"{scope}-asset".encode()
+    if scope == "all":
+        assert "EXAMPLE REFERENCE (scope: all)" in captured["manifest"]
+    else:
+        assert "POSE CONTROL" in captured["manifest"]
+    assert captured["cut_spec"]["refScope"] == scope
+
+
 @pytest.mark.parametrize(
-    ("status", "scope", "warning_code", "keeps_nuance"),
+    ("status", "scope", "warning_code"),
     [
-        ("not_applicable", "all", "example_not_applicable", False),
-        ("variant_unpublished", "pose", "example_variant_unpublished", False),
-        ("variant_unpublished", "all", "example_variant_unpublished", True),
-        ("cut_type_mismatch", "all", "example_cut_type_mismatch", False),
-        ("shot_incompatible", "all", "example_shot_incompatible", False),
-        ("gender_mismatch", "all", "example_gender_mismatch", False),
+        ("not_applicable", "all", "example_not_applicable"),
+        ("variant_unpublished", "pose", "example_variant_unpublished"),
     ],
 )
 def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
-    monkeypatch, status, scope, warning_code, keeps_nuance,
+    monkeypatch, status, scope, warning_code,
 ):
     captured = {}
 
@@ -248,7 +412,7 @@ def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
         }]}
 
     async def fake_get_analysis(conn, pid):
-        return {"fitProfile": {"gender": "women"}}
+        return {}
 
     async def fake_get_asset(conn, uid, aid):
         return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
@@ -260,8 +424,6 @@ def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
         captured["cut_spec"] = cut_spec
         captured["images"] = images
         captured["manifest"] = manifest
-        captured["prompt"] = eij.cut_generator.build_prompt(
-            cut_spec, product, analysis=analysis, manifest=manifest)
         return b"NEWIMG", "image/png"
 
     async def fake_finalize(conn, **kw):
@@ -274,16 +436,7 @@ def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-
-    def fake_example_status(example_id, clothing_type, passed_scope="all", *, spec, gender):
-        assert example_id == "ex_unusable"
-        assert clothing_type == "bottom"
-        assert passed_scope == scope
-        assert spec["cutType"] == "horizon" and spec["shot"] == "full"
-        assert gender == "women"
-        return status
-
-    monkeypatch.setattr(eij.cut_generator, "example_asset_status", fake_example_status)
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: status)
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fail_example_load)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
@@ -296,11 +449,9 @@ def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
-    assert captured["cut_spec"]["exampleId"] == (
-        "ex_unusable" if keeps_nuance else None)
+    assert captured["cut_spec"]["exampleId"] is None
     assert len(captured["images"]) == 1
     assert "EXAMPLE REFERENCE" not in captured["manifest"]
-    assert ("Composition nuance" in captured["prompt"]) is keeps_nuance
     assert captured["finalize"]["metadata"]["warnings"] == [{
         "code": warning_code,
         "exampleId": "ex_unusable",
@@ -343,11 +494,7 @@ def test_run_editor_image_job_rejects_pose_direction_before_generation(monkeypat
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(
-        eij.cut_generator,
-        "example_asset_status",
-        lambda *_args, **_kwargs: "available",
-    )
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
     monkeypatch.setattr(eij.cut_generator, "pose_direction_compatible", lambda *_args: False)
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
@@ -683,7 +830,7 @@ def test_run_editor_image_job_new_attaches_c_model_pair_and_excludes_product(mon
             self.reads.append(key)
             return key.encode()
 
-        def put_bytes(self, key, data, mime):
+        def put_bytes(self, key, data, mime, cache=None):
             return None
 
         def delete(self, key):
@@ -759,7 +906,7 @@ def test_run_editor_image_job_model_r2_failure_falls_back_to_product(monkeypatch
                 raise RuntimeError("sheet unavailable")
             return key.encode()
 
-        def put_bytes(self, key, data, mime):
+        def put_bytes(self, key, data, mime, cache=None):
             return None
 
         def delete(self, key):
@@ -976,11 +1123,7 @@ def _bg_qc_setup(monkeypatch, *, verdicts, gen_calls, finalize_ok, finalize_fail
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(
-        eij.cut_generator,
-        "example_asset_status",
-        lambda *_args, **_kwargs: "available",
-    )
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_a: "available")
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(eij.image_qc, "scene_verdict", fake_scene_verdict)

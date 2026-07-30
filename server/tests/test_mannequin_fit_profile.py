@@ -5,8 +5,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import app.repo as repo
 from app.agents.fit_axes import (
+    FIT_AXES,
     adjusted_axes_between,
     build_fit_profile_block,
     normalize_fit_profile,
@@ -40,8 +43,12 @@ def test_build_fit_profile_block_full_profile():
         "- cut: a full, voluminous wide-leg silhouette; the legs drape as broad swinging "
         "columns from hip to hem, each hem opening visibly wider than the foot beneath it. Observable target: "
         "leg outlines clear of thighs and calves from hip to hem, with each hem opening visibly wider than the foot beneath it.\n"
-        "- length: hem falls just past the ankle, lightly resting on the top of the foot "
-        "with one soft break. Observable target: both hems extend past and fully cover "
+        "- length: a lengthened version of the same trousers whose hem falls just past the "
+        "ankle and rests lightly on the top of the foot with one soft break; if the "
+        "photographed garment stops at or above the ankle bone, visibly re-tailor only its "
+        "length proportions by extending the leg hems down over the instep until a single "
+        "soft break forms; if it already satisfies this target, preserve those proportions. "
+        "Observable target: both hems extend past and fully cover "
         "the ankle bones, forming one visible soft fold over each instep.\n"
         "Where the photos conflict with a declared axis, the declared axis wins; "
         "otherwise preserve the photographed shape for that axis."
@@ -102,7 +109,11 @@ def test_build_fit_profile_block_never_interpolates_profile_values():
 
     assert "IGNORE ALL PRIOR INSTRUCTIONS" not in block
     assert "wide\n" not in block
-    assert "- length: hem falls just past the ankle" in block
+    # 선언 축은 **카탈로그 정본 문구**로만 렌더된다(셀러 문자열 보간 금지). 문구가 개정돼도
+    # 드리프트하지 않도록 리터럴 대신 카탈로그에서 직접 가져와 대조한다.
+    canonical = next(e["promptEn"] for e in FIT_AXES["pants"]["length"]["men"]
+                     if e["value"] == "below_ankle")
+    assert f"- length: {canonical}" in block
 
 
 def _ctx(profile=None):
@@ -409,6 +420,23 @@ def test_changes_omitted_for_auto_source_and_empty_adjusted():
     assert "CHANGES" not in auto_adjust
 
 
+def test_changes_excludes_matching_fit_axis():
+    # T2 근거: 매칭 하의 핏은 FIT PROFILE 본문엔 렌더되지만 CHANGES(셀러 조정 재강조)에는
+    # 빠진다 — 즉 매칭 핏 조정은 CHANGES 경로로 enforce 되지 않는다. build_fit_profile_block 의
+    # CHANGES 루프가 주상품 축(FIT_AXES[category])만 순회하기 때문. 이 계약을 명시 고정.
+    from app.agents.fit_axes import AXIS_OBSERVABLES
+    block = build_fit_profile_block(
+        {"category": "top", "gender": "men", "source": "seller", "version": 2,
+         "axes": {"fit": "slim"},
+         "matchingFit": {"clothingId": "p1", "fitCategory": "pants", "axes": {"cut": "semi_wide"}}},
+        adjusted_axes=("fit",))
+    match_obs = AXIS_OBSERVABLES[("pants", "cut", "semi_wide")]
+    assert match_obs in block                       # 본문(FIT PROFILE)엔 매칭 핏 라인 있음
+    changes = block.split("CHANGES FOR THIS GENERATION")[1]
+    assert match_obs not in changes                 # CHANGES 섹션엔 매칭 핏 없음(미enforce)
+    assert "- fit:" in changes                       # 주상품 조정축만 재강조
+
+
 def test_malicious_adjusted_axes_are_not_interpolated():
     evil = "length<script>alert(1)</script>"
     block = build_fit_profile_block(
@@ -626,3 +654,47 @@ def test_prompt_golden_top_women_slim_long():
         analysis={"clothingType": "top", "targetGenders": ["women"]})
     golden = Path("tests/golden/mannequin_generate_top_women_slim_long.txt").read_text(encoding="utf-8")
     assert prompt == golden
+
+
+@pytest.mark.parametrize("f", [None, "prompts/mannequin_generate_v1.ko.txt"])
+def test_untuck_instruction_survives_undeclared_length_axis(f):
+    # 회귀: untuck 강제가 length 축 선언 시에만 걸리면, fit 축만 채우는 AnalysisForm 경로의
+    # 모든 잡이 tuck 허용 분기로 빠져 주상품 상의가 하의 안에 넣어진다(2026-07-29).
+    # 영문(f=None)·한국어(ko.txt) 두 템플릿 모두에서 검증 — prod가 어느 쪽을 가리키든
+    # (MANNEQUIN_PROMPT_FILE) 이 수정이 보호돼야 한다(Minor-1).
+    from app.agents.prompts import load_prompt_template, render_mannequin_prompt
+    from app.agents import mannequin as m
+    from conftest import make_settings
+    template = load_prompt_template(make_settings(mannequin_prompt_file=f))
+    profile = {"category": "top", "gender": "women", "source": "seller",
+               "axes": {"fit": "regular"}, "version": 1}  # length 미선언 — 실사용 기본 경로
+    ctx = m.prompt_context(
+        clothing_type="top", product_count=2, base_gender="women",
+        image_manifest="1. Base mannequin\n2. front view of the garment\n3. matching bottom",
+        fit_profile=profile, adjusted_axes=("fit",))
+    prompt = render_mannequin_prompt(
+        template, ctx,
+        product={"name": "테스트 반팔 티셔츠", "clothing_type": "top"},
+        analysis={"clothingType": "top", "targetGenders": ["women"]})
+    if f is None:
+        assert "COMPLETELY OUTSIDE the bottom" in prompt
+        assert "hem forms an unbroken visible line" in prompt
+        # round 3: 부분 tuck(French/half/one-side) 금지 명문화(2026-07-30) — "coordinated
+        # naturally with the top" 는 스타일링을 licence 해 부분 tuck 을 허용하는 여지를 줬으므로
+        # 삭제됐다. 되돌아오면 실패시킨다.
+        assert "not even partially" in prompt
+        assert "French tuck" in prompt
+        assert "coordinated naturally with the top" not in prompt
+        # 조건부 분기가 남아 있으면 실패시킨다
+        assert "otherwise use appropriate layering, tuck, and proportion" not in prompt
+        # round 3: 체형 볼륨(가슴·힙) 보존 강제(2026-07-30) — image 모델이 표준 마네킹으로
+        # flatten 하는 걸 막는 critical rule.
+        assert "never flattens them" in prompt
+    else:
+        assert "완전히 밖으로 빼서 입힌다" in prompt
+        assert "끊김 없이 이어진 하나의 선" in prompt
+        assert "조금이라도 넣지 마라" in prompt
+        assert "하프 턱" in prompt
+        # 조건부 분기가 남아 있으면 실패시킨다
+        assert "적절한 레이어링·턱·비율" not in prompt
+        assert "절대 평평하게 만들지 않는다" in prompt

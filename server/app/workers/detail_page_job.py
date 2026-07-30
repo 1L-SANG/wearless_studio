@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from io import BytesIO
@@ -13,10 +14,19 @@ from io import BytesIO
 from PIL import Image
 
 from .. import repo
-from ..agents import content_roles, copy_qc, copywriter, cut_generator, page_assembler, image_qc
+from ..agents import (
+    content_roles,
+    copy_qc,
+    copywriter,
+    cut_generator,
+    image_qc,
+    mannequin,
+    page_assembler,
+    space_set_assets,
+)
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
-from ..r2 import ai_key, ext_for_mime
+from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
 from ._common import emit_job_event as _emit
 
 log = logging.getLogger("wearless.detail_page_job")
@@ -114,7 +124,9 @@ async def _load_license_row(app, conn, project) -> dict | None:
 
 
 async def _gen_cuts(app, job, prepared, product, analysis):
-    """준비된 블록별 (block, images, manifest, has_face, product_images)로 AG-06 컷 생성
+    """준비된 블록별
+    (block, images, manifest, has_face, product_images,
+    space_set_plate, strict_space_scene_qc)로 AG-06 컷 생성
     → (cut_results, cut_assets, face_cuts, garment_qcs, garment_warnings).
     face_cuts = 라이선스 얼굴이 실제로 들어가고
     **성공까지 한** 컷 수 — AI 고지 문구 분기의 사실 근거(주입 0건이면 기본 문구).
@@ -126,7 +138,9 @@ async def _gen_cuts(app, job, prepared, product, analysis):
 
     async def _one(item):
         """컷 1개 생성+저장. 실패(빈 슬롯)면 None. 각 블록 독립이라 동시 실행 가능."""
-        b, images, manifest, has_face, product_images = item
+        b, images, manifest, has_face, product_images = item[:5]
+        space_set_plate = item[5] if len(item) > 5 else None
+        strict_space_scene_qc = bool(item[6]) if len(item) > 6 else False
         async with sem:
             if not images:  # 옷 근거(상품/마네킹) 없음 — 무드만으로는 동일성 보장 불가, 생성하지 않는다
                 log.warning("AG-06 cut skipped (no garment-truth references) job %s block %s", job_id, b.get("id"))
@@ -144,24 +158,52 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 await _emit(app.state.pool, job_id, "step",
                             {"blockId": b.get("id"), "status": "cut_failed"})
                 return None
-            plate = None
-            # bg 편집 컷 — 장소일치 QC 게이트(에디터 경로와 동일 정책, 2026-07-20).
-            # 불일치면 재생성, 상한 초과면 이 컷만 빈 슬롯(부분 성공 계약 유지). 판정 불능은 fail-open.
-            if b.get("refScope") == "bg" and manifest.startswith("1. EXAMPLE REFERENCE (scope: bg)"):
+            plate = space_set_plate
+            # bg 편집 컷은 첫 첨부, 공간 세트는 별도 전달된 대표 plate를 같은 장소 QC 기준으로 쓴다.
+            if (
+                plate is None
+                and b.get("refScope") == "bg"
+                and manifest.startswith("1. EXAMPLE REFERENCE (scope: bg)")
+            ):
                 plate = images[0]
+            # 장소일치 QC 게이트. 불일치면 재생성, 상한 초과면 이 컷만 빈 슬롯(부분 성공).
+            # 일반 bg 편집은 기존 fail-open, 발행 공간세트는 QC 불능도 fail-closed다.
+            if plate is not None:
                 attempt = 1
                 while True:
                     try:
                         scene_qc = await image_qc.scene_verdict(
                             s, plate, InlineImage(mime, img))
                     except VisionError as e:
-                        log.warning("AG-06 scene QC unavailable job %s block %s: %r — fail-open",
-                                    job_id, b.get("id"), e)
+                        if strict_space_scene_qc:
+                            log.warning(
+                                "AG-06 production space-set scene QC unavailable "
+                                "job %s block %s: %r — fail-closed",
+                                job_id,
+                                b.get("id"),
+                                e,
+                            )
+                            await _emit(
+                                app.state.pool,
+                                job_id,
+                                "step",
+                                {
+                                    "blockId": b.get("id"),
+                                    "status": "cut_failed",
+                                },
+                            )
+                            return None
+                        log.warning(
+                            "AG-06 scene QC unavailable job %s block %s: %r — fail-open",
+                            job_id,
+                            b.get("id"),
+                            e,
+                        )
                         break
                     if scene_qc["verdict"] == "pass":
                         break
                     if attempt >= max(1, s.bg_scene_qc_attempts):
-                        log.warning("AG-06 bg scene mismatch after %d attempts job %s block %s: %s",
+                        log.warning("AG-06 scene mismatch after %d attempts job %s block %s: %s",
                                     attempt, job_id, b.get("id"), scene_qc["mismatches"][:3])
                         await _emit(app.state.pool, job_id, "step",
                                     {"blockId": b.get("id"), "status": "cut_failed"})
@@ -171,7 +213,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                         img, mime = await cut_generator.generate(
                             s, gemini, b, product, images, **generate_kwargs)
                     except Exception as e:
-                        log.warning("AG-06 bg retry generate failed job %s block %s: %r",
+                        log.warning("AG-06 scene retry generate failed job %s block %s: %r",
                                     job_id, b.get("id"), e)
                         await _emit(app.state.pool, job_id, "step",
                                     {"blockId": b.get("id"), "status": "cut_failed"})
@@ -190,6 +232,10 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                         scene_qc = await image_qc.scene_verdict(
                             s, plate, InlineImage(candidate_mime, candidate_img))
                     except VisionError as e:
+                        if strict_space_scene_qc:
+                            raise RuntimeError(
+                                "production space-set scene QC unavailable"
+                            ) from e
                         log.warning(
                             "AG-06 candidate scene QC unavailable job %s block %s: %r — fail-open",
                             job_id, b.get("id"), e)
@@ -198,7 +244,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                     if scene_qc["verdict"] == "pass":
                         break
                     if candidate_attempt >= max(1, s.bg_scene_qc_attempts):
-                        raise RuntimeError("bg candidate scene mismatch")
+                        raise RuntimeError("candidate scene mismatch")
                     candidate_attempt += 1
                     candidate_img, candidate_mime = await cut_generator.generate(
                         s, gemini, b, product, images, **generate_kwargs)
@@ -216,10 +262,13 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
-            await asyncio.to_thread(r2.put_bytes, key, img, mime)
+            await asyncio.to_thread(r2.put_bytes, key, img, mime, cache=IMMUTABLE_CACHE)
             w, h = _dims(img)
             return (
-                {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file"},
+                # width/height 는 조립(M-02)이 요소 박스를 **이미지 비율대로** 잡는 근거다.
+                # 없으면 page_assembler 가 기본 비율로 폴백한다(생성 실패·구 데이터 안전).
+                {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file",
+                 "width": w, "height": h},
                 {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
                  "size": len(img), "width": w, "height": h},
                 has_face,
@@ -316,6 +365,10 @@ async def run_detail_page_job(app, job: dict) -> None:
                 isinstance(block, dict)
                 and (block.get("refScope") or block.get("ref_scope")) == "bg"
                 and bool(block.get("exampleId") or block.get("example_id"))
+                and space_set_assets.parse_space_set_group_id(
+                    block.get("spaceGroupId") or block.get("space_group_id")
+                )
+                is None
                 for block in storyboard
             ):
                 raise ValueError("genexample_bg_disabled")
@@ -324,7 +377,23 @@ async def run_detail_page_job(app, job: dict) -> None:
             # contentRole가 사용자 선택의 정본이다. 저장 입력을 여기서도 방어적으로
             # 정규화해 매칭 첨부·컷·카피·조립이 모두 같은 역할/레시피를 읽게 한다.
             storyboard = content_roles.canonicalize_storyboard(storyboard)
-            ai_blocks = [b for b in storyboard if isinstance(b, dict) and b.get("source") == "ai"]
+            clothing_type = (
+                product.get("clothing_type")
+                or product.get("clothingType")
+                or "top"
+            )
+            space_set_bindings = space_set_assets.bind_storyboard_space_sets(
+                storyboard,
+                clothing_type=clothing_type,
+                gender=mannequin.select_base_gender(
+                    analysis, clothing_type
+                ),
+            )
+            ai_blocks = [
+                b
+                for b in storyboard
+                if isinstance(b, dict) and b.get("source") == "ai"
+            ]
             # StoryboardBlock에는 modelId가 없다(계약 §3.4). 상세페이지의 프로젝트 단위 선택값은
             # Analysis.selectedModelId가 정본이며, 아래 prep에서 저장 블록을 바꾸지 않고 런타임 주입한다.
             selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
@@ -462,22 +531,62 @@ async def run_detail_page_job(app, job: dict) -> None:
                     _real_cache["refs"] = None
             return _real_cache["refs"] or []
 
-        # (runtime block, images, manifest, has_face, product_images) — images 순서는 manifest 계약과 동일.
+        # (runtime block, images, manifest, has_face, product_images,
+        #  space_set_plate, strict_space_scene_qc)
+        # — images 순서는 manifest 계약과 동일. 대표 plate는 같은 세트에서 1회만 로드해 공유한다.
         prepared = []
         _example_cache: dict[str, InlineImage | None] = {}
+        _space_plate_cache: dict[str, InlineImage] = {}
+        _space_example_cache: dict[str, InlineImage] = {}
         example_warnings: list[dict] = []
-        clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
-        example_gender = cut_generator.generation_example_gender(
-            analysis, product, selected_model_id)
+        _virtual_ids: set[str] = set()
+        fallback_model_id = s.detailpage_fallback_model_id
+        # 폴백 registry 는 폴백이 실제로 가능한 소스에서만 지연 로드(파일 없으면 fail-open, 잡 안 죽임):
+        #  VIRTUAL           → Phase B 결정적 치환(resolve_effective_model_id)
+        #  REAL·REJECTED     → prod 안전망(needs_identity_fallback → mB). 이 둘도 _virtual_ids 필요.
+        if fallback_model_id and source in ("VIRTUAL", "REAL", "REJECTED"):
+            try:
+                _virtual_ids = set(cut_generator.load_virtual_model_registry())
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+                # 파일 부재/권한(OSError)·JSON 파손(JSONDecodeError)·깨진 인코딩(UnicodeDecodeError)
+                # 모두 fail-open — 폴백만 건너뛰고 잡은 계속(폴백은 선택적 보정이지 잡 필수 입력 아님).
+                log.warning(
+                    "AG-06 virtual model manifest unavailable; skipping fallback substitution "
+                    "for job %s: %r", job_id, e)
+        _fallback_warned = False
         for b in ai_blocks:
             cut_spec = dict(b)
+            space_binding = space_set_bindings.get(id(b))
             # 저장/클라이언트가 런타임 전용 지시를 주입하지 못하게 매번 실제 선택 결과로 재구성한다.
             cut_spec.pop("_detailColorTransfer", None)
+            cut_spec.pop("_spaceSetContinuity", None)
+            if space_binding is not None:
+                # 공간 세트의 pose/범위/변주 강도는 저장 payload가 아니라 발행 레지스트리가
+                # 정본이다. 오래된 값이나 우회 클라이언트가 전용 pose·plate 계약을 바꾸지 못한다.
+                cut_spec["refScope"] = "pose"
+                cut_spec["pose"] = "auto"
+                cut_spec["spaceVariation"] = space_binding["set"]["spaceVariation"]
             # 저장 콘티에 우연히 남은 비계약 필드가 프로젝트 선택 모델을 덮지 못하게 제거 후 주입한다.
             cut_spec.pop("modelId", None)
             cut_spec.pop("model_id", None)
-            if selected_model_id:
-                cut_spec["modelId"] = selected_model_id
+            # 인물 일관성(AG-06): VIRTUAL 소스에서 선택 id 가 가상 registry 밖(facemarket off 상태의
+            # 실존 UUID)이면 resolve_virtual_model_assets 가 None → 참조 0장 → 컷마다 인물 랜덤.
+            # 결정적 가상모델로 폴백해 전 컷 동일 인물 보장. REAL/LEGACY 는 얼굴을 별도 경로로
+            # 붙이므로 건드리지 않는다(인물 이중 첨부 방지).
+            if source == "VIRTUAL":
+                eff_model_id, _subbed = cut_generator.resolve_effective_model_id(
+                    selected_model_id, fallback_model_id=fallback_model_id,
+                    virtual_ids=_virtual_ids)
+                if _subbed and not _fallback_warned:
+                    log.warning(
+                        "AG-06 selected model %s unresolvable as virtual (facemarket=%s) → fallback %s "
+                        "for identity consistency (job %s)",
+                        selected_model_id, s.facemarket_enabled, eff_model_id, job_id)
+                    _fallback_warned = True
+            else:
+                eff_model_id = selected_model_id
+            if eff_model_id:
+                cut_spec["modelId"] = eff_model_id
             try:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             except ValueError:
@@ -491,7 +600,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 얼굴은 이 가드 **뒤에서만** 붙는다 — 여기 얼굴을 넣으면 images 가 비지 않아
             # _gen_cuts 의 `if not images` 스킵이 무력화되고 옷 근거 0으로 생성이 돌아간다.
             if mannequin_asset is None and not prods:
-                prepared.append((cut_spec, [], "", False, []))
+                prepared.append((cut_spec, [], "", False, [], None, False))
                 continue
             mids = b.get("matchIds") or []
             match_a = match_assets.get(str(mids[0])) if mids and b.get("cutType") in _WORN_CUT_TYPES else None
@@ -506,8 +615,13 @@ async def run_detail_page_job(app, job: dict) -> None:
             # face_slot=단일 얼굴 슬롯(LEGACY만). has_identity=검증 얼굴이 실제 담기는 컷(REAL·LEGACY)
             # → face_cuts·검증 배지 근거. 세 소스가 한 컷에 겹치지 않아 인물 혼합·이중주입이 없다.
             if source == "REAL":
-                model_images = await _real_model_images() if wants else []
-                has_identity = wants and len(model_images) == 2
+                # 실존 모델 그리드는 얼굴 노출과 무관하게 모든 착용컷에 identity 앵커로 붙인다(A4).
+                # wants(얼굴 노출)로만 게이트하면 mirror/back 이 참조 0장 → 그 컷만 인물 랜덤이 된다
+                # (REAL 은 VIRTUAL 과 달리 mB 폴백도 없음). 배지(has_identity)만 wants 로 준다.
+                attach_grid, _badge = cut_generator.real_identity_plan(
+                    normalized.get("cutType") if normalized else None, wants_face=wants)
+                model_images = await _real_model_images() if attach_grid else []
+                has_identity = _badge and len(model_images) == 2
                 face_slot = False
             elif source == "LEGACY":
                 model_images = []
@@ -521,6 +635,25 @@ async def run_detail_page_job(app, job: dict) -> None:
                 model_images = []
                 has_identity = False
                 face_slot = False
+            # 안전망(prod facemarket ON): **실존 모델을 골랐는데** 착용컷 인물 참조가 0장이면
+            # (REJECTED=무라이선스 실모델, REAL grid 로드 실패) 결정적 가상모델로 폴백 — 랜덤 인물
+            # 원천 차단. Phase B 의 mB 폴백은 VIRTUAL 전용이라 REAL/REJECTED 를 못 막는다. 무모델
+            # 선택(NONE)은 기존 동작 유지(모델을 요청하지 않은 프로젝트에 인물을 강요하지 않는다).
+            # 무라이선스 실 얼굴은 재사용 안 함(대체 인물 mB → 생체 라이선스 위반 없음). 검증 배지
+            # (has_identity)는 주지 않는다(실 얼굴 아님).
+            if source in ("REAL", "REJECTED") and cut_generator.needs_identity_fallback(
+                    cut_type=normalized.get("cutType") if normalized else None,
+                    has_model_images=bool(model_images), face_slot=face_slot):
+                _fb_id = s.detailpage_fallback_model_id
+                if _fb_id and _fb_id in _virtual_ids:
+                    model_images = await _model_images(
+                        {"cutType": normalized["cutType"], "modelId": _fb_id})
+                    if model_images and not _fallback_warned:
+                        log.warning(
+                            "AG-06 worn cut identity empty (source=%s model=%s) → deterministic %s "
+                            "fallback for consistency (job %s)",
+                            source, selected_model_id, _fb_id, job_id)
+                        _fallback_warned = True
             imgs = []
             product_images = []
             if mannequin_asset is not None:
@@ -538,73 +671,131 @@ async def run_detail_page_job(app, job: dict) -> None:
             for a in moods:
                 imgs.append(await _img(a))
             example_scope = None
+            space_set_plate = None
+            has_space_set_plate = False
             example_id = b.get("exampleId") or b.get("example_id")
-            if example_id:
+            if space_binding is not None:
+                set_entry = space_binding["set"]
+                pose_reference = space_binding["poseReference"]
+                set_id = set_entry["setId"]
+                plate_asset = set_entry["representativePlate"]
+                if plate_asset is not None and set_id not in _space_plate_cache:
+                    _space_plate_cache[set_id] = (
+                        await space_set_assets.load_space_set_image(
+                            s, plate_asset, role="대표 배경"
+                        )
+                    )
+                pose_cache_key = (
+                    f"{pose_reference['source']}:{pose_reference['exampleId']}"
+                )
+                if pose_cache_key not in _space_example_cache:
+                    if pose_reference["source"] == "space-set":
+                        pose_image = await space_set_assets.load_space_set_image(
+                            s, pose_reference["asset"], role="포즈"
+                        )
+                    else:
+                        pose_image = await cut_generator.load_example_image(
+                            s,
+                            pose_reference["exampleId"],
+                            scope="pose",
+                            clothing_type=clothing_type,
+                        )
+                        if pose_image is None:
+                            raise space_set_assets.SpaceSetBindingError(
+                                "space_set_pose_unavailable",
+                                "공간 세트의 포즈 예시를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+                            )
+                    _space_example_cache[pose_cache_key] = pose_image
+                space_set_plate = _space_plate_cache.get(set_id)
+                if space_set_plate is not None:
+                    imgs.append(space_set_plate)
+                imgs.append(_space_example_cache[pose_cache_key])
+                example_scope = "pose"
+                has_space_set_plate = space_set_plate is not None
+                cut_spec["_spaceSetContinuity"] = has_space_set_plate
+            elif example_id:
                 # 직접 포즈가 pose-scope 예시보다 우선한다는 기존 계약: 이미지 자체도 첨부하지 않아
                 # 픽셀 조건이 텍스트 가드를 우회해 포즈를 되살리지 못하게 한다.
                 pose_overrides_example = normalized is not None \
                     and normalized["pose"] != "auto" and normalized["refScope"] == "pose"
                 if normalized is not None and not pose_overrides_example:
                     scope = normalized["refScope"]
-                    status = cut_generator.example_asset_status(
-                        example_id, clothing_type, scope,
-                        spec=normalized, gender=example_gender)
-                    incompatible_codes = {
-                        "not_applicable": "example_not_applicable",
-                        "variant_unpublished": "example_variant_unpublished",
-                        "cut_type_mismatch": "example_cut_type_mismatch",
-                        "shot_incompatible": "example_shot_incompatible",
-                        "gender_mismatch": "example_gender_mismatch",
-                    }
-                    if status in incompatible_codes:
-                        example_warnings.append({
-                            "code": incompatible_codes[status],
-                            "blockId": b.get("id"),
-                            "exampleId": example_id,
-                            "clothingType": clothing_type,
-                            "refScope": scope,
-                        })
-                        # 이미지 미첨부만으로는 all 범위의 레거시 EXNUANCE 해시가 남는다.
-                        # 부적합/미발행 예시가 텍스트로도 영향을 주지 않게 런타임 사본에서 해제한다.
-                        # 단, all 자산 미발행은 v0 nuance-only 폴백을 유지한다. pose/bg는
-                        # 전용 픽셀 없이는 범위 계약을 지킬 수 없으므로 계속 완전히 해제한다.
-                        if status != "variant_unpublished" or scope != "all":
-                            cut_spec["exampleId"] = None
-                    elif scope == "pose" and not cut_generator.pose_direction_compatible(
-                        example_id, normalized
+                    if example_id.startswith("ss_") and not (
+                        b.get("spaceGroupId") or b.get("space_group_id")
                     ):
-                        # v2 preflight: 호환되지 않는 포즈는 이미지 모델 호출 전에 이 컷만
-                        # 빈 슬롯으로 닫는다. 배치의 다른 컷은 계속 생성한다.
-                        example_warnings.append({
-                            "code": "pose_direction_incompatible",
-                            "blockId": b.get("id"),
-                            "exampleId": example_id,
-                            "direction": normalized.get("direction"),
-                        })
-                        prepared.append((cut_spec, [], "", False, []))
-                        continue
+                        example_reference = (
+                            space_set_assets.resolve_published_example_reference(
+                                normalized,
+                                clothing_type=clothing_type,
+                                gender=mannequin.select_base_gender(
+                                    analysis, clothing_type
+                                ),
+                                scope=scope,
+                            )
+                        )
+                        cache_key = (
+                            f"space-set:{example_reference['exampleId']}:{scope}"
+                        )
+                        if cache_key not in _space_example_cache:
+                            _space_example_cache[cache_key] = (
+                                await space_set_assets.load_space_set_image(
+                                    s,
+                                    example_reference["asset"],
+                                    role="전체 예시" if scope == "all" else "포즈",
+                                )
+                            )
+                        imgs.append(_space_example_cache[cache_key])
+                        example_scope = scope
                     else:
-                        # 캐시 키에 scope 포함 — pose는 누끼 variant, all은 원본이라 자산이 다르다
-                        cache_key = f"{example_id}:{scope}"
-                        if cache_key not in _example_cache:
-                            _example_cache[cache_key] = await cut_generator.load_example_image(
-                                s, example_id, scope=scope, clothing_type=clothing_type)
-                        example_img = _example_cache[cache_key]
-                        if example_img is None and scope in ("pose", "bg"):
-                            # 전용 자산 로드 실패 — 무음 강등 대신 이 컷만 빈 슬롯(ADR-0009 §2,
-                            # 2026-07-20 실측: 강등이 '참고 안 된 bg 컷'을 조용히 만들었다)
-                            log.warning("AG-06 %s example unavailable — cut fail-closed job %s block %s",
-                                        scope, job_id, b.get("id"))
-                            prepared.append((cut_spec, [], "", False, []))
+                        status = cut_generator.example_asset_status(
+                            example_id, clothing_type, scope)
+                        if status in ("not_applicable", "variant_unpublished"):
+                            example_warnings.append({
+                                "code": "example_not_applicable"
+                                if status == "not_applicable" else "example_variant_unpublished",
+                                "blockId": b.get("id"),
+                                "exampleId": example_id,
+                                "clothingType": clothing_type,
+                                "refScope": scope,
+                            })
+                            # 이미지 미첨부만으로는 all 범위의 레거시 EXNUANCE 해시가 남는다.
+                            # 부적합/미발행 예시가 텍스트로도 영향을 주지 않게 런타임 사본에서 해제한다.
+                            cut_spec["exampleId"] = None
+                        elif scope == "pose" and not cut_generator.pose_direction_compatible(
+                            example_id, normalized
+                        ):
+                            # v2 preflight: 호환되지 않는 포즈는 이미지 모델 호출 전에 이 컷만
+                            # 빈 슬롯으로 닫는다. 배치의 다른 컷은 계속 생성한다.
+                            example_warnings.append({
+                                "code": "pose_direction_incompatible",
+                                "blockId": b.get("id"),
+                                "exampleId": example_id,
+                                "direction": normalized.get("direction"),
+                            })
+                            prepared.append((cut_spec, [], "", False, [], None, False))
                             continue
-                        if example_img is not None:
-                            # bg 플레이트는 첫 첨부(에디터 경로와 동일) — 마지막 첨부는 컷 섹션의
-                            # 배경 나열에 밀려 무시된다(2026-07-20 파일럿 실측).
-                            if scope == "bg":
-                                imgs.insert(0, example_img)
-                            else:
-                                imgs.append(example_img)
-                            example_scope = scope
+                        else:
+                            # 캐시 키에 scope 포함 — pose는 누끼 variant, all은 원본이라 자산이 다르다
+                            cache_key = f"{example_id}:{scope}"
+                            if cache_key not in _example_cache:
+                                _example_cache[cache_key] = await cut_generator.load_example_image(
+                                    s, example_id, scope=scope, clothing_type=clothing_type)
+                            example_img = _example_cache[cache_key]
+                            if example_img is None and scope in ("pose", "bg"):
+                                # 전용 자산 로드 실패 — 무음 강등 대신 이 컷만 빈 슬롯(ADR-0009 §2,
+                                # 2026-07-20 실측: 강등이 '참고 안 된 bg 컷'을 조용히 만들었다)
+                                log.warning("AG-06 %s example unavailable — cut fail-closed job %s block %s",
+                                            scope, job_id, b.get("id"))
+                                prepared.append((cut_spec, [], "", False, [], None, False))
+                                continue
+                            if example_img is not None:
+                                # bg 플레이트는 첫 첨부(에디터 경로와 동일) — 마지막 첨부는 컷 섹션의
+                                # 배경 나열에 밀려 무시된다(2026-07-20 파일럿 실측).
+                                if scope == "bg":
+                                    imgs.insert(0, example_img)
+                                else:
+                                    imgs.append(example_img)
+                                example_scope = scope
             manifest = cut_generator.build_manifest(
                 prods, has_mannequin=mannequin_asset is not None,
                 has_match=match_a is not None, mood_count=len(moods),
@@ -612,11 +803,20 @@ async def run_detail_page_job(app, job: dict) -> None:
                 has_face=face_slot,
                 example_scope=example_scope,
                 example_is_product=normalized is not None and normalized["cutType"] == "product",
-                example_source_shot=normalized.get("_exampleShot") if normalized is not None else None,
-                requested_shot=normalized.get("shot") if normalized is not None else None)
+                has_space_set_plate=has_space_set_plate)
             # 4번째 = has_identity: 검증 얼굴(REAL 그리드·LEGACY 단일)이 실제 담긴 컷 → face_cuts 계수·
             # generate has_face·검증 배지 근거. VIRTUAL 그리드는 검증 얼굴이 아니므로 False.
-            prepared.append((cut_spec, imgs, manifest, has_identity, product_images))
+            prepared.append(
+                (
+                    cut_spec,
+                    imgs,
+                    manifest,
+                    has_identity,
+                    product_images,
+                    space_set_plate,
+                    space_binding is not None and space_set_plate is not None,
+                )
+            )
 
         copywriting = bool(project.get("copywriting"))
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
@@ -715,12 +915,21 @@ async def run_detail_page_job(app, job: dict) -> None:
                         log.warning("facemarket settlement hook failed for job %s", job_id)
     except Exception as e:
         error = str(e)[:300]
+        is_space_set_error = isinstance(e, space_set_assets.SpaceSetBindingError)
         await _fail(
-            "배경만 생성예시는 현재 사용할 수 없어요. 콘티에서 해당 예시를 제거해 주세요."
-            if error == "genexample_bg_disabled"
-            else "상세페이지 생성에 실패했어요. 다시 시도해 주세요.",
+            (
+                e.message
+                if is_space_set_error
+                else "배경만 생성예시는 현재 사용할 수 없어요. 콘티에서 해당 예시를 제거해 주세요."
+                if error == "genexample_bg_disabled"
+                else "상세페이지 생성에 실패했어요. 다시 시도해 주세요."
+            ),
             {"error": error},
-            code="genexample_bg_disabled"
-            if error == "genexample_bg_disabled"
-            else "generation_failed",
+            code=(
+                e.code
+                if is_space_set_error
+                else "genexample_bg_disabled"
+                if error == "genexample_bg_disabled"
+                else "generation_failed"
+            ),
         )

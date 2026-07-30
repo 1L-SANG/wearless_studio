@@ -11,9 +11,13 @@ from .prompts import MannequinPromptContext
 _SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "Fit": 3}
 
 
-def select_base_gender(analysis: dict) -> str:
+def select_base_gender(
+    analysis: dict, clothing_type: str | None = None
+) -> str:
     """분석의 targetGenders로 남/여 베이스 결정. 남성 단독일 때만 'men', 그 외(혼합·비어있음·여성)
-    는 'women' (MVP 결정적 규칙)."""
+    는 'women'. 원피스는 손상된 분석값이 남아 있어도 항상 여성이다."""
+    if str(clothing_type or "").lower() == "dress":
+        return "women"
     genders = {str(g).lower() for g in (analysis.get("targetGenders") or [])}
     men_tokens = {"men", "male", "남성", "남"}
     if genders and genders <= men_tokens:  # 전부 남성 토큰

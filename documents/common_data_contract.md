@@ -102,7 +102,7 @@ Analysis {
   suggestedName: string
   subCategory: SubCategory | null  // 영문 토큰화 (§4). dress는 null
   customCategory: string | null    // enum 밖 의류의 자유 명칭(한국어, ≤20자) — AI 추측 + 사용자 주관식 수정 (2026-07-13)
-  targetGenders: Gender[]          // UI 단일 선택 — 1-element 배열로 저장
+  targetGenders: Gender[]          // UI 단일 선택 — 1-element 배열. dress는 ['women'] 고정
   fit: Fit
   materials: Material[]            // Material { name: string(자유 텍스트), ratio: number(%) }
   sellingPoints: string[]          // 자유 텍스트, max LIMITS.sellingPointMax(5)
@@ -112,7 +112,8 @@ Analysis {
   matchSelections: { clothingId: string, role: 'main' | 'sub' }[]   // max 2
   locked: boolean
 }
-// fit·clothingType은 필수(null 불가) — 분석 폼에서 해제 불가 칩(PRD §6.3). subCategory(원피스=null)·targetGenders(배열)는 비울 수 있음.
+// fit·clothingType은 필수(null 불가) — 분석 폼에서 해제 불가 칩(PRD §6.3).
+// subCategory는 원피스에서 null, targetGenders는 일반 카테고리에서 비울 수 있으나 dress는 ['women']으로 정규화.
 
 MatchClothing { id: string, name: string, thumb: string }
 // 폐기: Analysis.clothingType / measurements / measurementsUnknown (Product 소유),
@@ -168,8 +169,9 @@ StoryboardBlock {
   angle: CameraAngle               // 기본 'same'
   refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함) — 프로젝트 한정, 전역 저장 없음 (ADR-0004)
   exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
-  spaceGroupId?: string | null     // 공간 무드 유지 그룹 — 같은 id = 같은 공간에서 생성 (ADR-0004)
-  spaceVariation?: 'subtle' | 'varied'  // 그룹 내 변화 강도. 기본 'subtle' (ADR-0004)
+  exampleSelectionOrigin?: 'auto' | 'user' | null  // 자동 배정인지 사용자 확정인지. source와 다른 축
+  spaceGroupId?: string | null     // 발행된 촬영 세트 인스턴스. `ssg1__<setId>__<instanceId>`만 허용
+  spaceVariation?: 'fixed' | 'subtle'  // 발행 세트가 정한 변화 강도. 임의 입력값은 허용하지 않음
   refScope?: 'all' | 'bg' | 'pose' // 예시에서 참고할 범위
   layoutRowId?: string             // 2단·3단 배치에서 같은 행을 공유하는 id
   layoutRowVersion?: 1
@@ -191,6 +193,10 @@ StoryboardBlock {
 - `contentRole='detail'`은 상품 전체 색상 중 `ImageAsset.slot='Detail'` 입력이 하나 이상 있으면 유효하다. 목표 `colorId`에 Detail이 없으면 기준색, 그다음 Detail 보유 첫 색상의 사진을 구조·재질 근거로 쓰고 색만 목표 색상군으로 전환한다.
 - `taxonomyVersion: 2`만 저장한다. 레거시 블록 매핑은 제공하지 않으며, v2 입력의 역할 누락은 `source='mine'`과 `cutType` 규칙으로만 방어적으로 정규화한다.
 - `sectionTitle`과 `title`은 현재 구현의 전환기 캐시일 뿐 기준 데이터가 아니다. 읽을 때 enum 라벨로 덮어쓰며, 후속 정리에서 저장 shape에서 제거한다.
+- 공개된 정상 조합의 `source='ai'` 블록은 자동 배정 뒤 `exampleId`가 사실상 필수다. 같은 공간의 pose·방향 호환 자산이 0장인 예외에는 미배정 상태와 오류 안내를 유지하며 `all`로 강등하지 않는다.
+- 자동 배정은 `exampleSelectionOrigin='auto'`, 직접 선택·다른 예시 보기·참고 범위 변경·샷/컷 변경 확정은 `'user'`로 저장한다. `exampleId`가 있는데 이 필드가 없는 과거 저장분은 사용자 선택으로 간주해 `'user'`로 정규화한다.
+- `exampleId`가 없으면 서버는 `exampleSelectionOrigin=null`을 강제한다. 레시피 정규화·섹션 이동 등으로 `exampleId`를 지울 때 예시 썸네일도 원래 카드 썸네일로 복원해 origin·thumb 고아 값을 남기지 않는다.
+- 기본 콘티 지문과 mock `storyboardDirty` 판정에서는 `exampleSelectionOrigin='auto'`인 `exampleId`와 그 배정이 정한 `refScope`를 기본값으로 취급한다. 따라서 자동 배정 저장만으로 사진 양 변경 시 기본 콘티 재시드가 막히지 않으며, `'user'` 또는 origin 없는 기존 선택은 사용자 수정으로 판정한다.
 
 사진 목적과 내부 생성값의 조합:
 
@@ -226,10 +232,12 @@ type EditorBlock =
   | EditorBlockBase & {
       kind: 'info'
       infoType: EditorInfoType      // 일반 구매 정보·문구 블록은 종류 필수
+      info?: object                 // `내용 추가` 폼 상태 정본 (infoType별 shape, §3.5.1)
     }
   | EditorBlockBase & {
       kind: AutoBlockKind
       auto: true
+      info?: object                 // size/care 를 폼으로 강화한 경우에만 존재 (§3.5.1)
     }
 
 Element (공통) {
@@ -276,6 +284,36 @@ TextStyle {
 }
 ```
 
+#### 3.5.1 `info` — `내용 추가` 폼 상태 (PRD §10.14)
+
+`내용 추가`(에디터 '내용' 탭)로 만든 블록은 폼 상태를 `block.info`에 정본으로 저장하고,
+`elements`는 info로부터 재생성한다(재편집 시 폼은 info를 읽고, 제출하면 elements를 통째로
+교체 — 해당 블록의 수동 캔버스 수정은 대체된다). 요소는 위 primitives만 사용한다.
+size/care 자동 블록은 새 블록을 만들지 않고 **제자리 강화**한다(kind·auto 유지 + info 부착).
+
+infoType별 info shape (frontend `src/features/editor/presets/infoPresets.js`가 단일 소스):
+
+| infoType | info |
+|---|---|
+| (kind='size') | `{ unit, columns: MeasurementKey[], rows: [{label, values: Record<MeasurementKey, number\|null>}], note, withDiagram, diagramSrc }` — diagramSrc = 실측도 슬롯 사진 정본(토글 off→on 에도 보존) |
+| (kind='care') | `{ family, text }` — text에는 케어라벨 확인 문장이 항상 포함된다 |
+| `required_notice` | `{ fields: [{key, label, value}] }` — 빈 value는 `정보 입력 필요`로 렌더 |
+| `shipping_returns` | `{ sections: [{title, body}] }` |
+| `header` | `{ nameKo, nameEn, eyebrow }` |
+| `benefit_copy` | `{ items: [{title, desc, src}] }` (2~5개, src = 원형 사진 슬롯 이월값) |
+| `fit_guide` | `{ fits: Fit[], current: Fit\|null }` |
+| `size_matrix` | `{ heights: string[], weights: string[], cells: string[][], note }` |
+| `model_info` | `{ models: [{name, height, size, src}] }` (최대 3) — 기본값은 프로젝트가 실제 사용 중인 모델(선택 가상모델 또는 FaceMarket 실존 모델)의 이름·사진으로 프리필 |
+
+`normalizeEditorBlockRole`은 `kind='info'` 블록을 그대로 통과시켜야 한다 — 섹션 역할
+추론 대상이 아니다(재로드 시 kind가 덮이면 정보 블록이 깨진다).
+
+이미지 슬롯을 가진 정보 블록(특징 포인트·모델 정보·사이즈 실측도)의 슬롯을 채울 때는
+요소 `src` 와 `info` 정본을 **동시에** 기록한다(`applySlotFillToInfo`) — 이미지 요소의
+서수(ordinal) = info 배열 인덱스. elements 재생성 시 사진은 info 에서 복원되고,
+info 동기화 이전에 채워진 레거시 블록은 같은 서수끼리만 이월한다(`carrySlotImages`,
+압축 채움 금지 — 사진이 다른 포인트로 이사하면 안 된다).
+
 ### 3.6 Wardrobe — 에디터 의류 탭
 
 그룹 키는 표시 문자열('색상 1')이 아니라 **colorId**다. 색상 그룹 외 이미지는 `'misc'`(표시: '기타').
@@ -321,7 +359,7 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | **CutType** | `styling` `horizon` `product` `mirror` | 스타일링컷/호리존컷/제품컷/거울샷 | 생성 레시피 값. 콘티 인스펙터에서 섹션별 허용 컷을 직접 선택하지만 사용자 섹션·상단 탭으로 쓰지 않음 (ADR-0003~0005) |
 | **BlockSource** | `ai` `mine` | AI 생성/내 이미지 | ★ 신설 — '내 이미지'는 컷 종류가 아님 |
 | AutoBlockKind | `size` `care` `ai-notice` | 사이즈/세탁/AI 생성 안내 | 2026-06-09 결정 유지 |
-| EditorInfoType | `materials` `options` `shipping_returns` `required_notice` `benefit_copy` `fit_copy` `model_info` `fabric_properties` `color_description` `brand_story` `faq` `reviews` `related_products` `promotion` `social` | 에디터의 구매 정보·문구·선택 콘텐츠 | `kind='info'`일 때 사용. AutoBlockKind 3종과 겹치지 않음 |
+| EditorInfoType | `materials` `options` `shipping_returns` `required_notice` `benefit_copy` `fit_copy` `model_info` `fabric_properties` `color_description` `brand_story` `faq` `reviews` `related_products` `promotion` `social` `header` `fit_guide` `size_matrix` | 에디터의 구매 정보·문구·선택 콘텐츠 | `kind='info'`일 때 사용. AutoBlockKind 3종과 겹치지 않음. ★ `header`(타이포 상품명 헤더)·`fit_guide`(핏 도식 비교)·`size_matrix`(키×몸무게 추천 사이즈)는 2026-07-29 상세페이지 분석에서 승격 (§3.5.1) |
 | SectionLayout | `stack` `twoColumn` `threeColumn` `grid2x2` `colorCompare` | 세로 1열/2단/3단/2×2/컬러 비교 | 섹션 안 사진 배치 |
 | Direction | `front` `back` `side` | 정면/뒷면/사이드 | 모델 컷용 |
 | ProductDirection | `front` `back` | 앞면/뒷면 | 내부 product 레시피용 ★ 카탈로그 승격 |

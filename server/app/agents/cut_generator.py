@@ -128,7 +128,9 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         "refAssetIds": [str(a) for a in (raw.get("refAssetIds") or raw.get("ref_asset_ids") or [])][:3],
         "exampleId": _sanitize(raw.get("exampleId") or raw.get("example_id") or "") or None,
         "spaceGroupId": _sanitize(raw.get("spaceGroupId") or raw.get("space_group_id") or "") or None,
-        "spaceVariation": variation if variation in ("subtle", "varied") else "subtle",
+        "spaceVariation": variation
+        if variation in ("fixed", "subtle")
+        else "subtle",
         "outerClosureState": closure,
         "modelId": _sanitize(raw.get("modelId") or raw.get("model_id") or "") or None,
         # 레퍼런스 범위 (ADR-0009) — 'pose'면 예시에서 자세만 따르고, 프레이밍은 현재
@@ -136,27 +138,18 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         "refScope": (raw.get("refScope") or raw.get("ref_scope")) if (raw.get("refScope") or raw.get("ref_scope")) in ("all", "pose", "bg") else "all",
         # 워커가 실제 첨부 자산을 고른 뒤 붙이는 런타임 전용 정보. 저장 계약에는 포함하지 않는다.
         "_detailColorTransfer": _normalize_detail_color_transfer(raw.get("_detailColorTransfer")),
+        # 런타임 공간세트 레지스트리만 주입한다. horizon-sequence 중 plate가 없는 세트는
+        # UI 묶음은 유지하되 한 장소 연속성 프롬프트를 켜지 않는다.
+        "_spaceSetContinuity": raw.get("_spaceSetContinuity") is not False,
     }
     # 제품컷은 '배경만/포즈만'이 성립하지 않는다(사람·포즈 없음) — 예시는 통째 참조만 허용.
     if cut == "product" and spec["refScope"] != "all":
         spec["refScope"] = "all"
-    # 같은 장소 세트 안의 예시는 '포즈 예시' 강등이 계약(2026-07) — 배경은 세트 연속성([[SPACE]])이
-    # 담당하므로, refScope 없는 레거시 저장분·우회 클라이언트도 서버에서 'pose'로 강제한다.
+    # 정식 촬영 세트 안의 예시는 '포즈 예시' 강등이 계약(2026-07) — 배경은 세트
+    # 연속성([[SPACE]])이 담당하므로 입력 refScope와 무관하게 서버에서 'pose'로 강제한다.
     # (배경만도 마찬가지 — 세트의 배경 기준과 충돌하므로 포즈로 강등)
     if spec["spaceGroupId"] and spec["exampleId"]:
         spec["refScope"] = "pose"
-    # 교차 샷은 저장 필드를 늘리지 않는다. 등록 예시의 원래 shot을 런타임에만 파생해
-    # render_cut_prompt/build_manifest가 현재 카드 shot과 비교한다. 같은 worn cut의
-    # full↔medium 불일치는 의도한 조합이므로 exampleId를 유지한다.
-    if spec["exampleId"] and cut in _WORN_CUTS:
-        try:
-            _base, example_assets = load_example_asset_registry()
-            example_entry = example_assets.get(spec["exampleId"]) or {}
-        except (OSError, json.JSONDecodeError):
-            example_entry = {}
-        example_shot = example_entry.get("shot")
-        if example_entry.get("cutType") == cut and example_shot in _PERSON_SHOTS:
-            spec["_exampleShot"] = example_shot
     return spec
 
 
@@ -262,12 +255,10 @@ def example_asset_status(
     example_id: str | None,
     clothing_type: str | None,
     scope: str = "all",
-    *, spec: dict | None = None, gender: str | None = None,
 ) -> str:
     """예시 첨부 가능 상태를 워커가 경고 사유와 함께 구분할 수 있게 반환한다.
 
-    반환값은 ``available | unknown | not_applicable | cut_type_mismatch |
-    shot_incompatible | gender_mismatch | variant_unpublished``.
+    반환값은 ``available | unknown | not_applicable | variant_unpublished``.
     메타가 없는 구 레지스트리는 적용성 검증만 생략해 상위 호환을 유지한다.
     """
     if not example_id:
@@ -279,26 +270,6 @@ def example_asset_status(
     applicable = entry.get("applicableClothingTypes")
     if applicable is not None and str(clothing_type or "") not in applicable:
         return "not_applicable"
-    if spec is not None:
-        card_cut = spec.get("cutType")
-        example_cut = entry.get("cutType")
-        if example_cut is not None and example_cut != card_cut:
-            return "cut_type_mismatch"
-        card_shot = spec.get("shot")
-        example_shot = entry.get("shot")
-        if example_shot is not None and example_shot != card_shot:
-            cross_shot = (
-                card_cut in _WORN_CUTS
-                and example_cut == card_cut
-                and card_shot in _PERSON_SHOTS
-                and example_shot in _PERSON_SHOTS
-            )
-            if not cross_shot:
-                return "shot_incompatible"
-        example_gender = entry.get("gender")
-        if card_cut in _WORN_CUTS and example_gender in ("women", "men") \
-                and example_gender != gender:
-            return "gender_mismatch"
     variant = scope if scope in ("pose", "bg") else "all"
     if not entry.get(variant):
         return "variant_unpublished"
@@ -338,31 +309,56 @@ def load_virtual_model_registry() -> dict[str, dict]:
     return {str(model_id): model for model_id, model in models.items() if isinstance(model, dict)}
 
 
-def generation_example_gender(
-    analysis: dict | None, product: dict | None, model_id: str | None = None,
-) -> str | None:
-    """현재 worn cut 모델의 성별을 예시 안전 게이트용으로 파생한다."""
-    analysis = analysis if isinstance(analysis, dict) else {}
-    product = product if isinstance(product, dict) else {}
-    selected = model_id or analysis.get("selectedModelId") or analysis.get("selected_model_id")
-    if selected:
-        for model in analysis.get("models") or []:
-            if isinstance(model, dict) and str(model.get("id")) == str(selected) \
-                    and model.get("gender") in ("women", "men"):
-                return model["gender"]
-        try:
-            registered = load_virtual_model_registry().get(str(selected)) or {}
-        except (OSError, json.JSONDecodeError):
-            registered = {}
-        if registered.get("gender") in ("women", "men"):
-            return registered["gender"]
-    fit_gender = (analysis.get("fitProfile") or {}).get("gender") \
-        if isinstance(analysis.get("fitProfile"), dict) else None
-    if fit_gender in ("women", "men"):
-        return fit_gender
-    targets = analysis.get("targetGenders") or product.get("targetGenders") or []
-    targets = [value for value in targets if value in ("women", "men")]
-    return targets[0] if len(set(targets)) == 1 else None
+def resolve_effective_model_id(
+    selected_model_id, *, fallback_model_id: str | None, virtual_ids,
+) -> tuple[str | None, bool]:
+    """상세페이지 착용컷에 붙일 '유효' 가상모델 id (인물 일관성 — AG-06). **순수 함수.**
+
+    호출자는 identity source == 'VIRTUAL' 일 때만 쓴다(REAL/LEGACY 는 얼굴을 별도 경로로 붙이므로
+    폴백하면 인물이 이중 첨부된다). VIRTUAL 인데 선택 id 가 가상 registry(mA/mB/mC) 밖이면
+    (예: facemarket off 상태의 실존 UUID) `resolve_virtual_model_assets` 가 None 을 반환해
+    참조가 0장이 되고 컷마다 인물이 랜덤이 된다. 그 경우 결정적 폴백으로 전 컷 동일 인물 보장.
+
+    - 선택이 가상모델이면 그대로 (effective=선택, substituted=False).
+    - 선택이 가상 밖(실존 UUID)이거나 미선택이면 폴백 (effective=fallback, substituted=선택있었나).
+    - 폴백 id 가 비었거나 registry 밖이면 폴백 불가 → 기존 동작(effective=선택, substituted=False).
+    반환: (effective_id, substituted). substituted=True 면 워커가 경고 로그를 남긴다.
+    """
+    if selected_model_id and selected_model_id in virtual_ids:
+        return selected_model_id, False
+    if not fallback_model_id or fallback_model_id not in virtual_ids:
+        return selected_model_id, False
+    return fallback_model_id, selected_model_id is not None
+
+
+def real_identity_plan(cut_type, *, wants_face: bool) -> tuple[bool, bool]:
+    """REAL 소스에서 이 컷의 (실존모델 그리드 첨부?, 검증-얼굴 배지?). **순수 함수.**
+
+    인물 일관성(AG-06/A4): 실존 모델 그리드(face_front+grid_sedcard)는 **얼굴 노출 여부와
+    무관하게** 모든 착용컷(styling/horizon/mirror)에 identity 앵커로 붙인다 — VIRTUAL 경로와
+    동형. 안 그러면 얼굴을 가리는 컷(mirror 기본·back)이 `wants_face=False` 라 참조 0장이 되어
+    그 컷만 인물이 랜덤이 된다(REAL 은 VIRTUAL 과 달리 mB 폴백도 못 탄다).
+
+    검증-얼굴 배지(has_identity=face_cuts 계수·26.06 고지 근거)는 얼굴이 **실제로 노출되는**
+    컷에만(wants_face) 준다 — 그리드가 붙어도 얼굴을 가린 컷은 '검증 얼굴 노출'이 아니다.
+
+    반환: (attach_grid, has_identity). has_identity 는 호출자가 실제 그리드 2장 로드 성공
+    (len==2)과 다시 AND 한다(로드 실패 시 배지·앵커 동반 소거, fail-open).
+    """
+    attach = cut_type in _WORN_CUTS
+    return attach, (attach and wants_face)
+
+
+def needs_identity_fallback(*, cut_type, has_model_images: bool, face_slot: bool) -> bool:
+    """착용컷인데 인물 참조가 0장이면 결정적 폴백이 필요한가. **순수 함수.**
+
+    prod facemarket ON 안전망: 실존 모델을 골랐는데 (1) 유효 라이선스 없음(select_source=REJECTED)
+    또는 (2) 실 grid 로드 실패면, REAL/REJECTED 경로는 model_images 가 0장이 되고 mB 폴백(VIRTUAL
+    전용)도 안 타 컷마다 인물이 랜덤이 된다. 이때 결정적 가상모델로 폴백해 랜덤을 원천 차단한다.
+
+    LEGACY 단일 얼굴(face_slot=True)은 얼굴을 별도 경로로 넣으므로 폴백 대상이 아니다. 폴백은
+    무라이선스 실 얼굴을 재사용하지 않는다(대체 가상 인물 mB → 생체 라이선스 위반 없음)."""
+    return cut_type in _WORN_CUTS and not has_model_images and not face_slot
 
 
 def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, str]] | None:
@@ -549,31 +545,16 @@ def render_cut_prompt(
     # 참고 방식은 텍스트·순서 개선을 다 해도 성공률 ~40%에서 정체 — 10회 판정).
     bg_edit_mode = has_resolved_example and spec["refScope"] == "bg"
     if has_resolved_example and not pose_overrides_example and not bg_edit_mode:
-        if spec["refScope"] == "all" and cut == "product":
-            scope_key = "REFSCOPE:all_product"
-        elif spec["refScope"] == "all" and cut == "horizon":
-            scope_key = "REFSCOPE:all_horizon"
-        else:
-            scope_key = f"REFSCOPE:{spec['refScope']}"
+        scope_key = "REFSCOPE:all_product" if spec["refScope"] == "all" and cut == "product" \
+            else f"REFSCOPE:{spec['refScope']}"
         scope_line = need(scope_key)
         if scope_line not in example_line:
             example_line = "\n".join(part for part in (example_line, scope_line) if part)
-    cross_shot_line = ""
-    example_shot = spec.get("_exampleShot")
-    requested_shot = spec.get("_requestedShot") or shot
-    pose_medium_post_crop = spec["refScope"] == "pose" and requested_shot == "medium"
-    if has_resolved_example and cut in _WORN_CUTS and example_shot in _PERSON_SHOTS \
-            and requested_shot in _PERSON_SHOTS and example_shot != requested_shot \
-            and not pose_medium_post_crop:
-        cross_section = "CROSSSHOT" if spec["refScope"] == "all" else "CROSSSHOT_FRAMING"
-        cross_shot_line = (
-            need(cross_section)
-            .replace("${exampleShot}", example_shot)
-            .replace("${requestedShot}", requested_shot)
-        )
     space_line = ""
-    if spec.get("spaceGroupId"):
+    if spec.get("spaceGroupId") and spec.get("_spaceSetContinuity", True):
         space_line = need("SPACE").replace("${spaceVariation}", spec["spaceVariation"])
+        if _SPACE_SET_PLATE_LABEL in image_manifest:
+            space_line = "\n".join((space_line, need("SPACE_SET_PLATE")))
     outer_closure_line = ""
     if _is_outer(clothing_type) and cut in _WORN_CUTS:
         closure = spec.get("outerClosureState")
@@ -591,27 +572,18 @@ def render_cut_prompt(
             .replace("${referenceColor}", transfer.get("referenceName") or "another colorway")
         )
 
-    if bg_edit_mode:
-        cut_section = need("CUT:bg_edit")
-        if cut == "mirror":
-            cut_section = "\n\n".join((cut_section, need("CUT:bg_edit_mirror")))
-    else:
-        cut_section = need(f"CUT:{cut}")
-
     text = (
         need("BASE")
         # bg 편집 모드는 라벨의 'lifestyle' 뉘앙스도 제거 — 장소 단서는 첨부 캔버스뿐이어야 한다
         .replace("${cutLabel}",
                  "worn cut composed into the attached scene" if bg_edit_mode else _CUT_LABELS[cut])
-        # bg 편집 모드는 배경 서술을 플레이트 계약으로 교체한다. 거울샷은 장소 서술 없이
-        # 반사·폰·거울 프레임이라는 촬영 문법만 별도 섹션으로 남긴다.
-        .replace("${cutSection}", cut_section)
+        # bg 편집 모드는 컷 종류 섹션을 통째로 교체 — 경쟁할 배경 서술이 존재하지 않게 한다
+        .replace("${cutSection}", need("CUT:bg_edit") if bg_edit_mode else need(f"CUT:{cut}"))
         .replace("${shotLine}", need(f"SHOT:{shot_key}"))
         .replace("${directionLine}", direction_line)
         .replace("${faceLine}", face_line)
         .replace("${poseLine}", pose_line)
         .replace("${exampleLine}", example_line)
-        .replace("${crossShotLine}", cross_shot_line)
         .replace("${outerClosureLine}", outer_closure_line)
         .replace("${spaceLine}", space_line)
         .replace("${detailColorTransferLine}", detail_color_transfer_line)
@@ -751,14 +723,14 @@ _FACE_LABEL = ("MODEL FACE — the licensed model's face reference: reproduce TH
 _EXAMPLE_ALL_LABEL = "EXAMPLE REFERENCE (scope: all)"
 _EXAMPLE_POSE_LABEL = "POSE CONTROL"
 _EXAMPLE_BG_LABEL = "EXAMPLE REFERENCE (scope: bg)"
+_SPACE_SET_PLATE_LABEL = "SPACE SET PLATE"
 
 
 def build_manifest(
     prod_assets: list[dict], *, has_mannequin: bool, has_match: bool,
     mood_count: int, has_model_face: bool = False, has_model_sheet: bool = False,
     has_face: bool = False, example_scope: str | None = None,
-    example_is_product: bool = False,
-    example_source_shot: str | None = None, requested_shot: str | None = None,
+    example_is_product: bool = False, has_space_set_plate: bool = False,
 ) -> str:
     """첨부 이미지와 동일 순서의 역할 목록.
 
@@ -790,12 +762,14 @@ def build_manifest(
     for _ in range(mood_count):
         lines.append(f"{i}. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)")
         i += 1
-    cross_note = (
-        f"; CROSS-SHOT source is registered {example_source_shot}, while requested "
-        f"{requested_shot} framing wins"
-        if example_source_shot in _PERSON_SHOTS and requested_shot in _PERSON_SHOTS
-        and example_source_shot != requested_shot else ""
-    )
+    if has_space_set_plate:
+        lines.append(
+            f"{i}. {_SPACE_SET_PLATE_LABEL} — representative view of the ONE shared real "
+            "location for this set; preserve its recognizable architecture, materials, spatial "
+            "layout, light direction and color temperature while allowing the requested camera "
+            "view and crop"
+        )
+        i += 1
     if example_scope == "all" and example_is_product:
         lines.append(
             f"{i}. {_EXAMPLE_ALL_LABEL} — source of background, lighting, mood, framing and "
@@ -803,23 +777,23 @@ def build_manifest(
         )
     elif example_scope == "all":
         lines.append(
-            f"{i}. {_EXAMPLE_ALL_LABEL} — art-direction source for lighting, mood, pose, "
-            "framing/composition and scene archetype; the active cut-specific scope decides "
-            "whether its exact generic studio or a varied real-location instance is used; "
-            "never copy its garments, shoes or model identity; worn props supply functional "
-            f"pose roles only, never exact branded designs{cross_note}"
+            f"{i}. {_EXAMPLE_ALL_LABEL} — source of background, lighting, mood, pose and "
+            "framing/composition; never copy its garments, shoes, accessories or model identity"
         )
     elif example_scope == "pose":
-        pose_cross_note = (
-            f"; CROSS-SHOT source is registered {example_source_shot}; keep full pose control for "
-            "the requested medium output's deterministic post-generation crop"
-            if cross_note and requested_shot == "medium" else cross_note
-        )
-        lines.append(
-            f"{i}. {_EXAMPLE_POSE_LABEL} — transparent neutral mannequin used ONLY as a kinematic "
-            "control; PRODUCT and MATCHING remain the only clothing evidence; CUT SPEC controls "
-            f"camera, crop, placement and background{pose_cross_note}"
-        )
+        if has_space_set_plate:
+            lines.append(
+                f"{i}. {_EXAMPLE_POSE_LABEL} — transparent neutral mannequin used ONLY as a "
+                "kinematic control; PRODUCT and MATCHING remain the only clothing evidence; "
+                "CUT SPEC controls camera, crop and model placement, while SPACE SET PLATE "
+                "exclusively controls the location and background"
+            )
+        else:
+            lines.append(
+                f"{i}. {_EXAMPLE_POSE_LABEL} — transparent neutral mannequin used ONLY as a "
+                "kinematic control; PRODUCT and MATCHING remain the only clothing evidence; "
+                "CUT SPEC controls camera, crop, placement and background"
+            )
     elif example_scope == "bg":
         # 스파이크(2026-07-12): 자산은 인물을 지운 '빈 무대 플레이트' — 포즈·의류 유출을 구조적으로 차단
         # 라벨은 명령형 + 첫 첨부(2026-07-20 파일럿): 서술형 라벨·마지막 첨부는 컷 섹션의 배경
@@ -828,7 +802,7 @@ def build_manifest(
             f"{_EXAMPLE_BG_LABEL} — THE scene canvas (the base image being edited): insert the "
             "model into this exact scene; outside the person everything stays as in this image; "
             "it has no person, so choose the pose yourself and never copy garments, shoes or "
-            f"props onto the model{cross_note}"
+            "props onto the model"
         )
         renumbered = [bg_label] + [line.split(". ", 1)[1] for line in lines]
         lines = [f"{n}. {label}" for n, label in enumerate(renumbered, start=1)]
@@ -846,8 +820,12 @@ def build_prompt(
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
     # pose-only medium은 v2 QC 결론대로 먼저 full 프레이밍으로 생성하고 generate()가
     # 결정적 body-landmark crop을 적용한다. all/bg 및 비-pose 경로는 기존 프롬프트 그대로다.
-    if spec["refScope"] == "pose" and spec["shot"] == "medium":
-        spec = {**spec, "_requestedShot": spec["shot"], "shot": "full"}
+    if (
+        spec["refScope"] == "pose"
+        and spec["shot"] == "medium"
+        and not spec.get("spaceGroupId")
+    ):
+        spec = {**spec, "shot": "full"}
     if manifest is None:
         if spec["cutType"] == "product" and spec["shot"] == "detail":
             selected_images, transfer = detail_reference_images(product, spec["colorId"])
@@ -882,13 +860,16 @@ async def generate(
     model = resolve_model(settings, "image_high")
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
-    crop_pose_medium = spec["refScope"] == "pose" and spec["shot"] == "medium"
+    crop_pose_medium = (
+        spec["refScope"] == "pose"
+        and spec["shot"] == "medium"
+        and not spec.get("spaceGroupId")
+    )
     prompt = build_prompt(cut_spec, product, analysis=analysis, manifest=manifest, has_face=has_face)
     res = await gemini.generate_content_image(
         model, prompt, images, settings.mannequin_image_size,
         aspect_ratio=settings.mannequin_aspect_ratio,
     )
     if crop_pose_medium:
-        return await pose_crop.crop_pose_medium(
-            settings, res.image, res.mime, clothing_type)
+        return await pose_crop.crop_pose_medium(settings, res.image, res.mime)
     return res.image, res.mime

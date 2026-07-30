@@ -138,7 +138,7 @@ class _FakeR2:
     def get_bytes(self, key):
         return b"\x89PNG-bytes"
 
-    def put_bytes(self, key, data, mime):
+    def put_bytes(self, key, data, mime, cache=None):
         return None
 
 
@@ -199,6 +199,108 @@ def test_run_detail_page_job_rejects_bg_example_when_pilot_disabled(monkeypatch)
     assert captured["metadata"] == {"error": "genexample_bg_disabled"}
     assert captured["code"] == "genexample_bg_disabled"
     assert captured["reserved"] == 1
+
+
+def test_run_detail_page_job_reports_space_set_binding_error_without_generation(
+    monkeypatch,
+):
+    captured = {}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [
+            {
+                "id": "set-1",
+                "source": "ai",
+                "sectionRole": "fit",
+                "contentRole": "coordination",
+                "cutType": "styling",
+                "direction": "front",
+                "shot": "full",
+                "spaceGroupId": "ssg1__missing-set__instance-1",
+                "spaceSetMemberOrder": 1,
+                "exampleId": "missing-member",
+            }
+        ]
+
+    async def fake_prod(conn, pid):
+        return {"clothingType": "top"}
+
+    async def fake_analysis(conn, pid):
+        return {"targetGenders": ["women"]}
+
+    def fake_bind(blocks, *, clothing_type, gender):
+        raise dpj.space_set_assets.SpaceSetBindingError(
+            "unknown_space_set",
+            "저장된 공간 세트를 찾을 수 없어요. 세트를 다시 선택해 주세요.",
+        )
+
+    async def fake_failure(conn, **kw):
+        captured.update(kw)
+        return {"ok": True}
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(
+        dpj.space_set_assets, "bind_storyboard_space_sets", fake_bind
+    )
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
+
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=1)))
+
+    assert captured["code"] == "unknown_space_set"
+    assert captured["metadata"] == {"error": "unknown_space_set"}
+    assert captured["message"] == (
+        "저장된 공간 세트를 찾을 수 없어요. 세트를 다시 선택해 주세요."
+    )
+
+
+def test_production_space_set_scene_qc_outage_fails_cut_closed(monkeypatch):
+    events = []
+
+    async def fake_generate(*_args, **_kwargs):
+        return b"generated", "image/png"
+
+    async def unavailable_scene_qc(*_args, **_kwargs):
+        raise dpj.VisionError("qc unavailable")
+
+    async def fake_emit(_pool, _job_id, event_type, payload):
+        events.append((event_type, payload))
+
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
+    monkeypatch.setattr(dpj.image_qc, "scene_verdict", unavailable_scene_qc)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    product_image = dpj.InlineImage("image/png", b"product")
+    plate = dpj.InlineImage("image/png", b"plate")
+    result = asyncio.run(
+        dpj._gen_cuts(
+            _app(_settings()),
+            _job(reserved=1),
+            [
+                (
+                    {"id": "set-cut", "refScope": "pose"},
+                    [product_image, plate],
+                    "1. PRODUCT\n2. SPACE SET PLATE",
+                    False,
+                    [product_image],
+                    plate,
+                    True,
+                )
+            ],
+            {"clothingType": "top"},
+            {},
+        )
+    )
+
+    assert result[:3] == ([], [], 0)
+    assert events == [
+        ("step", {"blockId": "set-cut", "status": "cut_failed"})
+    ]
 
 
 def test_gen_cuts_detail_requires_loaded_detail_manifest(monkeypatch):
@@ -365,7 +467,7 @@ def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
         def get_bytes(self, key):
             return key.encode()
 
-        def put_bytes(self, key, data, mime):
+        def put_bytes(self, key, data, mime, cache=None):
             return None
 
     monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
@@ -501,23 +603,17 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
              "exampleId": "ex_wrong_clothing", "refScope": "all"},
             {"id": "unpublished", "source": "ai", "cutType": "horizon",
              "exampleId": "ex_without_bg", "refScope": "bg"},
-            {"id": "unpublished-all", "source": "ai", "cutType": "styling",
-             "shot": "medium", "exampleId": "ex_without_all", "refScope": "all"},
             {"id": "direction-mismatch", "source": "ai", "cutType": "styling",
              "direction": "front", "exampleId": "ex_back_pose", "refScope": "pose"},
             {"id": "named", "source": "ai", "cutType": "styling", "pose": "walk",
              "exampleId": "ex_styling_top_full_1", "refScope": "pose"},
-            {"id": "cross", "source": "ai", "cutType": "styling", "shot": "medium",
-             "exampleId": "ex_styling_women_top_full_city_02", "refScope": "all"},
-            {"id": "bg", "source": "ai", "cutType": "mirror", "shot": "full",
-             "exampleId": "ex_mirror_top_full_1", "refScope": "bg"},
         ]
 
     async def fake_prod(conn, pid):
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_analysis(conn, pid):
-        return {"targetGenders": ["women"]}
+        return {}
 
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
@@ -527,17 +623,11 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         assert clothing_type == "top"
         return dpj.InlineImage("image/jpeg", f"EXAMPLE:{example_id}:{scope}".encode())
 
-    def fake_example_status(example_id, clothing_type, scope="all", **kwargs):
+    def fake_example_status(example_id, clothing_type, scope="all"):
         assert clothing_type == "top"
-        if example_id == "ex_styling_women_top_full_city_02":
-            assert kwargs["spec"]["shot"] == "medium"
-            assert kwargs["spec"]["_exampleShot"] == "full"
-            assert kwargs["gender"] == "women"
         if example_id == "ex_wrong_clothing":
             return "not_applicable"
         if example_id == "ex_without_bg":
-            return "variant_unpublished"
-        if example_id == "ex_without_all":
             return "variant_unpublished"
         return "available"
 
@@ -553,10 +643,6 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
                 cut_spec, product, analysis=analysis, manifest=manifest),
         }
         return b"IMG", "image/png"
-
-    async def fake_scene_verdict(settings, plate, candidate):
-        captured.setdefault("scene_qc", []).append((plate.data, candidate.data))
-        return {"verdict": "pass", "mismatches": []}
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
         return []
@@ -577,7 +663,6 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
     monkeypatch.setattr(dpj.cut_generator, "pose_direction_compatible", fake_pose_compatible)
     monkeypatch.setattr(dpj.cut_generator, "load_example_image", fake_example)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
-    monkeypatch.setattr(dpj.image_qc, "scene_verdict", fake_scene_verdict)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
@@ -590,24 +675,11 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         assert len(item["images"]) == 2  # PRODUCT 다음에 resolved EXAMPLE 실제 첨부
         assert item["images"][-1].data.startswith(b"EXAMPLE:")
         assert item["images"][-1].data.endswith(f":{scope}".encode())  # scope별 자산(누끼 variant) 선택 검증
-    bg_item = captured["bg"]
-    assert len(bg_item["images"]) == 2
-    assert bg_item["images"][0].data == b"EXAMPLE:ex_mirror_top_full_1:bg"
-    assert bg_item["manifest"].splitlines()[0].startswith(
-        "1. EXAMPLE REFERENCE (scope: bg)")
-    assert "FIRST attached image is the finished, real location" in bg_item["prompt"]
-    assert "MIRROR-CUT MECHANICS" in bg_item["prompt"]
-    assert captured["scene_qc"] == [
-        (b"EXAMPLE:ex_mirror_top_full_1:bg", b"IMG")]
     assert "EXAMPLE REFERENCE (scope: all)" in captured["all"]["manifest"]
     assert "POSE CONTROL" in captured["pose"]["manifest"]
-    assert "STYLING/MIRROR ART-DIRECTION TRANSFER" in captured["all"]["prompt"]
-    assert "different specific place of the same type" in captured["all"]["prompt"]
-    assert "CROSS-SHOT source is registered full" in captured["cross"]["manifest"]
-    assert "requested medium framing wins" in captured["cross"]["manifest"]
-    assert "CROSS-SHOT REFERENCE — HARD REQUIREMENTS" in captured["cross"]["prompt"]
+    assert "follow the attached EXAMPLE REFERENCE's background/location" in captured["all"]["prompt"]
     assert "Do not transfer any background, lighting, color grade" in captured["pose"]["prompt"]
-    assert "STYLING/MIRROR ART-DIRECTION TRANSFER" not in captured["pose"]["prompt"]
+    assert "follow the attached EXAMPLE REFERENCE's background/location" not in captured["pose"]["prompt"]
     assert len(captured["named"]["images"]) == 1
     assert "EXAMPLE REFERENCE" not in captured["named"]["manifest"]
     assert "REFERENCE SCOPE" not in captured["named"]["prompt"]
@@ -616,12 +688,6 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         assert captured[block_id]["cut_spec"]["exampleId"] is None
         assert "EXAMPLE REFERENCE" not in captured[block_id]["manifest"]
         assert "Composition nuance" not in captured[block_id]["prompt"]
-    unresolved_all = captured["unpublished-all"]
-    assert len(unresolved_all["images"]) == 1
-    assert unresolved_all["cut_spec"]["exampleId"] == "ex_without_all"
-    assert "EXAMPLE REFERENCE" not in unresolved_all["manifest"]
-    assert "Composition nuance" in unresolved_all["prompt"]
-    assert "CROSS-SHOT" not in unresolved_all["prompt"]
     assert captured["finalize"]["metadata"]["warnings"] == [
         {
             "code": "example_not_applicable", "blockId": "mismatch",
@@ -632,15 +698,274 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
             "exampleId": "ex_without_bg", "clothingType": "top", "refScope": "bg",
         },
         {
-            "code": "example_variant_unpublished", "blockId": "unpublished-all",
-            "exampleId": "ex_without_all", "clothingType": "top", "refScope": "all",
-        },
-        {
             "code": "pose_direction_incompatible", "blockId": "direction-mismatch",
             "exampleId": "ex_back_pose", "direction": "front",
         },
     ]
     assert "direction-mismatch" not in captured  # preflight에서 빈 슬롯, 생성 호출 0회
+
+
+def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch):
+    captured = {"loads": [], "flatLoads": [], "cuts": {}}
+    group_id = "ssg1__set-cafe-01__instance-01"
+    storyboard = [
+        {
+            "id": "set-1",
+            "source": "ai",
+            "sectionRole": "fit",
+            "contentRole": "coordination",
+            "cutType": "styling",
+            "direction": "front",
+            "shot": "full",
+            "spaceGroupId": group_id,
+            "spaceSetMemberOrder": 1,
+            "exampleId": "ss_cafe_01",
+            "refScope": "all",
+            "pose": "arms crossed",
+            "spaceVariation": "fixed",
+        },
+        {
+            "id": "set-2",
+            "source": "ai",
+            "sectionRole": "fit",
+            "contentRole": "coordination",
+            "cutType": "styling",
+            "direction": "side",
+            "shot": "medium",
+            "spaceGroupId": group_id,
+            "spaceSetMemberOrder": 2,
+            "exampleId": "ex-flat-side-medium",
+            "refScope": "all",
+            "pose": "hands in pockets",
+            "spaceVariation": "fixed",
+        },
+        {
+            "id": "dragged-out",
+            "source": "ai",
+            "sectionRole": "fit",
+            "contentRole": "coordination",
+            "cutType": "styling",
+            "direction": "front",
+            "shot": "full",
+            "exampleId": "ss_drag_pose",
+            "refScope": "pose",
+            "pose": "auto",
+        },
+        {
+            "id": "standalone-all",
+            "source": "ai",
+            "sectionRole": "fit",
+            "contentRole": "coordination",
+            "cutType": "styling",
+            "direction": "front",
+            "shot": "full",
+            "exampleId": "ss_all_example",
+            "refScope": "all",
+            "pose": "auto",
+        },
+        {
+            "id": "mine",
+            "source": "mine",
+            "sectionRole": "product",
+        },
+    ]
+    set_entry = {
+        "setId": "set-cafe-01",
+        "spaceVariation": "subtle",
+        "representativePlate": {"key": "plate"},
+        "members": [],
+    }
+    members = [
+        {
+            "exampleId": "ss_cafe_01",
+            "order": 1,
+            "cutType": "styling",
+            "direction": "front",
+            "shot": "full",
+            "pose": {"key": "pose-1"},
+        },
+        {
+            "exampleId": "ss_cafe_02",
+            "order": 2,
+            "cutType": "styling",
+            "direction": "side",
+            "shot": "medium",
+            "pose": {"key": "pose-2"},
+        },
+    ]
+    set_entry["members"] = members
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return storyboard
+
+    async def fake_prod(conn, pid):
+        return {
+            "clothingType": "top",
+            "colors": [
+                {
+                    "isBase": True,
+                    "images": [{"slot": "Front", "id": "product-front"}],
+                }
+            ],
+        }
+
+    async def fake_analysis(conn, pid):
+        return {"targetGenders": ["women"]}
+
+    async def fake_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
+
+    def fake_bind(blocks, *, clothing_type, gender):
+        assert clothing_type == "top" and gender == "women"
+        captured["boundBlocks"] = [block["id"] for block in blocks]
+        return {
+            id(blocks[0]): {
+                "groupId": group_id,
+                "set": set_entry,
+                "poseReference": {
+                    "source": "space-set",
+                    "exampleId": members[0]["exampleId"],
+                    "asset": members[0]["pose"],
+                },
+            },
+            id(blocks[1]): {
+                "groupId": group_id,
+                "set": set_entry,
+                "poseReference": {
+                    "source": "flat",
+                    "exampleId": "ex-flat-side-medium",
+                    "asset": None,
+                },
+            },
+        }
+
+    async def fake_set_image(settings, asset, *, role):
+        captured["loads"].append((asset["key"], role))
+        return dpj.InlineImage("image/png", asset["key"].encode())
+
+    def fake_resolve_example(block, *, clothing_type, gender, scope):
+        assert block["exampleId"] in ("ss_drag_pose", "ss_all_example")
+        assert clothing_type == "top" and gender == "women"
+        expected_scope = (
+            "pose" if block["exampleId"] == "ss_drag_pose" else "all"
+        )
+        assert scope == expected_scope
+        return {
+            "source": "space-set",
+            "exampleId": block["exampleId"],
+            "scope": scope,
+            "asset": {
+                "key": "pose-drag" if scope == "pose" else "all-example"
+            },
+        }
+
+    async def fake_flat_image(
+        settings, example_id, scope="all", clothing_type=None
+    ):
+        captured["flatLoads"].append((example_id, scope, clothing_type))
+        return dpj.InlineImage("image/png", b"flat-pose")
+
+    async def fake_gen(
+        settings,
+        gemini,
+        cut_spec,
+        product,
+        images,
+        *,
+        analysis=None,
+        manifest=None,
+        **_kwargs,
+    ):
+        captured["cuts"][cut_spec["id"]] = {
+            "images": [image.data for image in images],
+            "manifest": manifest,
+            "cutSpec": dict(cut_spec),
+        }
+        return b"IMG", "image/png"
+
+    async def fake_scene(_settings, plate, generated):
+        assert plate.data == b"plate"
+        return {"verdict": "pass", "mismatches": [], "correctionPrompt": None}
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
+        return []
+
+    async def fake_finalize(conn, **kw):
+        captured["finalize"] = kw
+        return {"editor_blocks": [], "available": 99}
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(
+        dpj.space_set_assets, "bind_storyboard_space_sets", fake_bind
+    )
+    monkeypatch.setattr(
+        dpj.space_set_assets, "load_space_set_image", fake_set_image
+    )
+    monkeypatch.setattr(
+        dpj.space_set_assets,
+        "resolve_published_example_reference",
+        fake_resolve_example,
+    )
+    monkeypatch.setattr(dpj.cut_generator, "load_example_image", fake_flat_image)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.image_qc, "scene_verdict", fake_scene)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=4)))
+
+    assert captured["loads"] == [
+        ("plate", "대표 배경"),
+        ("pose-1", "포즈"),
+        ("pose-drag", "포즈"),
+        ("all-example", "전체 예시"),
+    ]
+    assert captured["flatLoads"] == [
+        ("ex-flat-side-medium", "pose", "top")
+    ]
+    assert captured["boundBlocks"] == [
+        "set-1",
+        "set-2",
+        "dragged-out",
+        "standalone-all",
+        "mine",
+    ]
+    assert captured["cuts"]["set-1"]["images"][-2:] == [b"plate", b"pose-1"]
+    assert captured["cuts"]["set-2"]["images"][-2:] == [b"plate", b"flat-pose"]
+    assert captured["cuts"]["dragged-out"]["images"][-1:] == [b"pose-drag"]
+    assert captured["cuts"]["standalone-all"]["images"][-1:] == [
+        b"all-example"
+    ]
+    for block_id, item in captured["cuts"].items():
+        assert "EXAMPLE REFERENCE (scope: bg)" not in item["manifest"]
+        assert item["cutSpec"]["pose"] == "auto"
+        expected_scope = "all" if block_id == "standalone-all" else "pose"
+        assert item["cutSpec"]["refScope"] == expected_scope
+        if expected_scope == "pose":
+            assert "POSE CONTROL" in item["manifest"]
+    assert "EXAMPLE REFERENCE (scope: all)" in (
+        captured["cuts"]["standalone-all"]["manifest"]
+    )
+    for block_id in ("set-1", "set-2"):
+        assert (
+            captured["cuts"][block_id]["cutSpec"]["spaceVariation"]
+            == "subtle"
+        )
+    assert "SPACE SET PLATE" in captured["cuts"]["set-1"]["manifest"]
+    assert "SPACE SET PLATE" in captured["cuts"]["set-2"]["manifest"]
+    assert "SPACE SET PLATE" not in captured["cuts"]["dragged-out"]["manifest"]
+    assert captured["finalize"]["charge"] == 4
 
 
 def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(monkeypatch):
@@ -654,7 +979,7 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
         def get_bytes(self, key):
             return key.encode()
 
-        def put_bytes(self, key, data, mime):
+        def put_bytes(self, key, data, mime, cache=None):
             return None
 
         def delete(self, key):

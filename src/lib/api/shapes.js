@@ -20,16 +20,19 @@ const MEASUREMENT_TEMPLATE = [
 
 // 기본/확장 콘티 — http getStoryboard 가 저장 콘티 없을 때 시드한다.
 // mock buildStoryboard와 같은 역할 중심 블록 shape을 만든다.
-import { uid } from '@/lib/ids.js';
-import { Placeholder as P } from '@/mock/placeholders.js';
-import { ensureSections } from '@/lib/sections.js';
+import { uid } from '../ids.js';
+import { Placeholder as P } from '../../mock/placeholders.js';
+import { ensureSections } from '../sections.js';
+import { exampleSelectionFingerprintFields } from '../generationExamples.js';
+import { genderForClothingType } from '../productGender.js';
+import { spaceSetGroupId, storyboardSpaceSetsFor } from '../storyboardSpaceSetCatalog.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
   STORYBOARD_TAXONOMY_VERSION,
   contentTitle,
   hasDetailSource,
-} from '@/lib/storyboardTaxonomy.js';
+} from '../storyboardTaxonomy.js';
 
 const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) => ({
   id: uid('blk'), sectionRole, contentRole, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
@@ -40,18 +43,40 @@ const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) 
   ...(extra || {}),
 });
 
-export function defaultStoryboard(colors, mode = 'basic') {
+export function defaultStoryboard(colors, mode = 'basic', product = {}) {
   if (mode !== 'basic' && mode !== 'extended') throw new Error('invalid_compose_mode');
   const list = Array.isArray(colors) && colors.length ? colors : [{ id: 'col1', isBase: true }];
   const base = (list.find((c) => c.isBase) || list[0]).id;
   const hasDetail = hasDetailSource({ colors: list });
   const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
-  const spacePair = (colorId) => {
-    const spaceGroupId = uid('sg');
-    return [
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'full', colorId, { spaceGroupId, spaceVariation: 'subtle' }),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'side', 'medium', colorId, { spaceGroupId, spaceVariation: 'subtle' }),
-    ];
+  const gender = genderForClothingType(
+    product.clothingType,
+    product.targetGenders,
+  );
+  const stylingSet = storyboardSpaceSetsFor({
+    gender,
+    clothingType: product.clothingType || 'top',
+  }).find((set) => set.setType === 'styling');
+  const shootingSet = (colorId) => {
+    if (!stylingSet) return [];
+    const groupId = spaceSetGroupId(stylingSet.id, uid('sg'));
+    return stylingSet.members.map((member) => sb(
+      SECTION_ROLES.FIT,
+      CONTENT_ROLES.COORDINATION,
+      member.cutType,
+      member.direction,
+      member.shot,
+      colorId,
+      {
+        spaceGroupId: groupId,
+        spaceVariation: stylingSet.spaceVariation,
+        spaceSetMemberOrder: member.order,
+        refScope: 'pose',
+        exampleId: member.exampleId,
+        exampleSelectionOrigin: 'auto',
+        thumb: member.thumb,
+      },
+    ));
   };
   const blocks = [
     sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.HERO, 'styling', 'front', 'full', base),
@@ -60,7 +85,7 @@ export function defaultStoryboard(colors, mode = 'basic') {
   if (mode === 'extended') {
     list.slice(0, 4).forEach((color, colorIndex) => {
       blocks.push(
-        ...spacePair(color.id),
+        ...shootingSet(color.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', color.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
@@ -79,7 +104,7 @@ export function defaultStoryboard(colors, mode = 'basic') {
     if (hasDetail) blocks.push(sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor));
   } else {
     blocks.push(
-      ...spacePair(base),
+      ...shootingSet(base),
       sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', base),
       sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', base),
       sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'side', 'full', base),
@@ -121,8 +146,7 @@ function storyboardTemplateFingerprint(blocks) {
     faceExposure: block.faceExposure ?? null,
     angle: block.angle ?? null,
     outerClosureState: block.outerClosureState ?? null,
-    exampleId: block.exampleId ?? null,
-    refScope: block.refScope ?? null,
+    ...exampleSelectionFingerprintFields(block),
     refImages: block.refImages || [],
     refAssetIds: block.refAssetIds || [],
     ownImages: block.ownImages || [],
@@ -135,12 +159,12 @@ function storyboardTemplateFingerprint(blocks) {
   })));
 }
 
-export function isDefaultStoryboardForMode(blocks, colors, mode) {
+export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
   if (!Array.isArray(blocks) || !blocks.length) return false;
   // v2 계약을 충족하지 않는 보드는 기본 시드로 간주해 교체하지 않는다.
   if (blocks.some((block) => block.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION)) return false;
   return storyboardTemplateFingerprint(blocks)
-    === storyboardTemplateFingerprint(defaultStoryboard(colors, mode));
+    === storyboardTemplateFingerprint(defaultStoryboard(colors, mode, product));
 }
 
 // analyzeProduct 의 shape 뼈대 — AnalysisForm 이 무가드로 읽는 필드 전부 포함(계약 §6).

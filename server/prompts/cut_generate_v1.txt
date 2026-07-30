@@ -8,12 +8,8 @@ GARMENT FIDELITY (highest priority — never violate):
   pattern placement, logos/text, stitching, hardware, length and silhouette.
 - If any instruction below conflicts with what the PRODUCT references show, the references win.
 - In worn cuts, MATCHING is the seller's chosen coordinating garment and must also be reproduced
-  faithfully when attached. PRODUCT and MATCHING are the ONLY product-specific garment identity
-  and fidelity sources. If they leave uncovered outfit areas, synthesize only plain neutral,
-  unbranded completion basics; never copy those basics from EXAMPLE REFERENCE or MOOD images.
-- Never transfer garments or shoes from EXAMPLE REFERENCE or MOOD images. Props from an all-scope
-  EXAMPLE REFERENCE follow the explicit all-scope/cross-shot contract below; MOOD-image props
-  are never transferred.
+  faithfully when attached. PRODUCT and MATCHING are the ONLY clothing sources.
+- Never transfer garments, shoes or accessories from EXAMPLE REFERENCE or MOOD images.
 
 ${detailColorTransferLine}
 
@@ -24,7 +20,6 @@ ${directionLine}
 ${faceLine}
 ${poseLine}
 ${exampleLine}
-${crossShotLine}
 ${outerClosureLine}
 ${spaceLine}
 ${faceRefLine}
@@ -33,16 +28,12 @@ MOOD REFERENCES (images labeled MOOD in the manifest, if any):
 - Use them ONLY for lighting, color grading, and overall ambience.
 - NEVER copy their garment, their model's identity/face/body, or their camera framing.
 - If a mood reference conflicts with the cut rules above, ignore the conflicting part.
-- When an all-scope example or bg plate is attached, that active scope owns scene lighting, color,
-  and ambience; MOOD references must not restyle or override the reference-controlled scene.
 
 KOREAN COMMERCE AESTHETIC:
 - Natural, believable posture; realistic skin texture (no over-smoothing, no plastic look).
 - One consistent light direction across the frame; garment drape must look physically correct.
 - Clean composition in the tone of Korean fashion platforms (Musinsa / Ably) — slightly cool,
   airy, uncluttered.
-- Treat that generic tone only as a fallback. Never cool, brighten, airify, or otherwise restyle
-  lighting and color that the active all-scope example or bg plate explicitly controls.
 
 OUTPUT: exactly one photorealistic image, portrait 2:3. No text, no watermark, no collage.
 
@@ -58,8 +49,7 @@ CUT TYPE — STYLING CUT (lifestyle):
 [[CUT:horizon]]
 CUT TYPE — HORIZON CUT (studio):
 - A model wears the garment against a clean seamless studio backdrop in a soft neutral tone.
-- Even, soft studio lighting; the silhouette and fit must read clearly; add no new props or busy
-  background. If an all-scope EXAMPLE REFERENCE is attached, keep only its contract-allowed props.
+- Even, soft studio lighting; the silhouette and fit must read clearly; no props, no busy background.
 
 [[CUT:product]]
 CUT TYPE — PRODUCT CUT (garment only):
@@ -75,8 +65,8 @@ CUT TYPE — MIRROR SELFIE (거울샷):
 - Composition follows typical Korean OOTD mirror selfies.
 
 [[SHOT:full]]full body from head to feet, the whole outfit visible
-[[SHOT:medium]]medium framing: for tops, outerwear and dresses, frame from the head to the hip;
-for bottoms, frame from the waist through the legs — keep the target garment clearly visible
+[[SHOT:medium]]medium framing: for tops, outerwear and dresses, frame from the head to the waist;
+for bottoms, frame from the legs up to the waist — keep the target garment clearly visible
 [[SHOT:ghost]]no visible person; show the complete garment. Default presentation: ghost-mannequin volume, preserving a worn three-dimensional shape. If an EXAMPLE REFERENCE is attached and shows a laid-flat, top-down presentation, follow that example's presentation and framing instead. Garment truth still comes only from PRODUCT references; never copy clothing, shoes, accessories, logos, or branding from the example
 [[SHOT:detail]]a tight product-only close-up of ONE clearly visible detail from the attached PRODUCT
 image labeled "detail close-up" (fabric surface, stitching, pocket, or real closure). Reproduce only
@@ -137,88 +127,11 @@ garment supports. Do not turn an open-front garment into a closable garment.
 [[EXNUANCE:1]]Composition nuance (from the seller's chosen style example): the body turned slightly (about 15–30°) with a relaxed stance — still reads as a front-family cut.
 [[EXNUANCE:2]]Composition nuance (from the seller's chosen style example): weight shifted onto one leg, one hand relaxed (in a pocket or at the side) — candid, unposed energy.
 
-[[REFSCOPE:all]]REFERENCE SCOPE — STYLING/MIRROR ART-DIRECTION TRANSFER:
-- Treat the attached EXAMPLE REFERENCE as art direction, not as a base canvas to copy. Preserve its
-  pose and screen-left/screen-right contacts, framing, camera geometry, light direction and softness,
-  time of day, color grade, mood, scene archetype and broad composition.
-- Preserve its capture class without upgrading it. A casual phone or handheld snapshot must remain
-  an ordinary snapshot with comparable lens behavior, modest sharpness, natural skin texture,
-  exposure variation, white balance, contrast, saturation and environmental palette. Never turn it
-  into a glossy campaign, luxury editorial interior, cinematic fashion ad or beauty-retouched portrait.
-- Face visibility is part of this scope's composition. If the example face is outside the frame,
-  covered, deeply bowed or turned fully away, keep the generated face unidentifiable in the same broad
-  way; do not reveal or front-align it. An example with hidden face is incompatible with a requirement
-  to show a licensed face and must be replaced upstream rather than silently violating either rule.
-- Preserve the example's body asymmetry and camera perspective: torso/pelvis yaw, weight-bearing leg,
-  unequal shoulder and hip lines, screen-left/screen-right arms and hand heights, stance and knee bends,
-  head/gaze, hair flow and near/far foreshortening. Do not neutralize an asymmetric pose into a centered
-  mannequin with level shoulders, equal arm drops, matching hand heights, even leg spacing or mirrored folds.
-- Create a recognizably different specific place of the same type. Change only two or three visible
-  instance details such as architecture/surfaces, fixtures, furniture, plants or background props;
-  those items may change, move or disappear while their broad compositional roles remain. Do not
-  copy the exact room, shop, street, fitting room, bedroom, elevator, mirror or prop layout, and do
-  not drift to a different scene type, lighting setup or mood. An uninformed viewer must still
-  immediately recognize which example supplied the composition, camera, lighting, palette and mood;
-  sharing only a generic label such as cafe, street, room, park or beach is insufficient.
-  Mirror cuts follow this same rule.
-- Swap in the exact garment from PRODUCT references and any attached MATCHING garment; do NOT copy
-  the example's garments or shoes. A non-face-covering worn prop may keep only the functional role
-  needed for the pose and must become a different generic unbranded counterpart. Remove face-covering
-  props such as sunglasses or masks, except the plain phone required by a mirror cut, and remove
-  layered non-product outerwear/cardigans worn over the item.
-- The example person is not identity evidence: replace their face, hair, body identity and tattoos
-  with the current model. CUT TYPE, FRAMING, camera direction, face handling and SPACE CONTINUITY
-  remain fixed requirements.
-- This scope owns scene lighting, time, color grade and ambience. MOOD references and the generic
-  Korean-commerce aesthetic must not alter those reference-controlled scene characteristics.
-- Apply the scene's light physically to the inserted person: the same key direction, height, softness,
-  temperature and contrast must appear on face, hair, skin and garment folds, with grounded contact
-  and cast shadows consistent with the environment. A detailed directional background with a flatly
-  lit or shadowless person is a failed composite.
-- Bottoms and footwear are outfit garments, never WYSIWYG props. Use attached MATCHING when it
-  supplies them; otherwise replace any needed outfit-completion item with a plain neutral coordinating
-  basic. Never copy those items from the example or leave the lower body or feet undressed.
-
-[[REFSCOPE:all_horizon]]REFERENCE SCOPE — HORIZON STUDIO:
-- Follow the attached EXAMPLE REFERENCE's pose, framing, camera geometry, lighting, shadow direction,
-  neutral color grade and clean seamless studio composition. A neutral cyclorama is a generic studio,
-  so its exact or near-identical backdrop may be retained; do not force a different set, surface,
-  prop layout or lighting scheme merely to create variation. Add no props, text, logo or busy detail.
-- Swap in the exact garment from PRODUCT references and any attached MATCHING garment. Never copy
-  the example's garments, shoes, model identity, face, hair, body details or tattoos. Use MATCHING
-  when it supplies the rest of the outfit; otherwise use plain neutral coordinating basics.
-- CUT TYPE, FRAMING, camera direction, face handling and SPACE CONTINUITY remain fixed requirements.
-- This scope owns studio lighting, shadow, neutral color grade and ambience. MOOD references and the
-  generic Korean-commerce aesthetic must not alter them.
-
-[[CROSSSHOT]]CROSS-SHOT REFERENCE — HARD REQUIREMENTS:
-- FRAMING OVERRIDE: the attached EXAMPLE REFERENCE is registered as a ${exampleShot} shot, but THIS
-  cut is requested as ${requestedShot}. The current CUT TYPE, FRAMING and camera direction always win
-  over the example crop. Recompose camera distance and crop while retaining compatible location,
-  lighting, mood and pose cues.
-- Obey the category-aware FRAMING line above exactly. If expanding medium to full, naturally create
-  the previously unseen lower body, legs, feet, simple suitable footwear, headroom and believable
-  ground contact. Never stop at the example's original crop.
-- IDENTITY LOCK: never reproduce or blend the example person's face, hair, body identity or tattoos.
-  Use the attached MODEL/MODEL FACE identity when present; otherwise use a clearly different model.
-- PROP ROLES: a non-face-covering worn prop such as a bag or hat may keep its pose function but must
-  become a different generic unbranded counterpart. Location-instance handling belongs solely to the
-  active all-scope contract: styling and mirror vary two or three specific place details, while horizon
-  may retain its generic neutral studio. Face-covering props such as sunglasses or masks are removed
-  except for the plain phone required by a mirror cut; layered non-product outerwear/cardigans are
-  removed. PRODUCT/MATCHING garment replacement and model-identity replacement remain separate
-  mandatory swaps. Example bottoms and footwear are garments, not props:
-  replace them with MATCHING when attached or plain neutral coordinating basics, and never leave the
-  generated lower body or feet undressed.
-
-[[CROSSSHOT_FRAMING]]CROSS-SHOT FRAMING OVERRIDE — HARD REQUIREMENTS:
-- The attached scope-specific reference is registered as a ${exampleShot} shot, but THIS cut is
-  requested as ${requestedShot}. The current CUT TYPE, FRAMING and camera direction always win over
-  its crop. If expanding medium to full, naturally create the previously unseen lower body, legs,
-  feet, simple suitable footwear, headroom and believable ground contact; never keep the source crop.
-- Preserve only the current REFERENCE SCOPE: POSE CONTROL supplies kinematics only, while a bg plate
-  supplies the scene only. Never import a person's identity, garments, footwear or worn props from
-  these scope-specific assets. Their existing pose/bg contracts remain in force.
+[[REFSCOPE:all]]REFERENCE SCOPE: follow the attached EXAMPLE REFERENCE's background/location,
+lighting, mood, pose, framing and composition. Swap in the exact garment from PRODUCT references
+and any attached MATCHING garment; do NOT copy the example's garments, shoes, accessories or model
+identity. CUT TYPE, FRAMING, camera direction, face handling and SPACE CONTINUITY remain
+fixed requirements; adapt the example's pose/composition as needed without changing them.
 
 [[REFSCOPE:all_product]]REFERENCE SCOPE: follow the attached EXAMPLE REFERENCE's background/location,
 lighting, mood, framing and composition. Swap in the exact garment from PRODUCT references. This
@@ -234,11 +147,6 @@ Retarget only these visible pose features: torso and pelvis orientation; weight-
 Do not mirror the pose, swap left and right, neutralize its asymmetry, straighten it, or replace it with a generic resting stance. The requested direction is already compatible with this pose. Keep that same view family; never reconstruct the pose from another front, side, or back view.
 
 The current CUT SPEC alone controls camera distance, body scale, crop, placement, and background. Do not copy POSE CONTROL canvas padding or subject size. For a medium shot, preserve every pose landmark still visible inside the requested crop; hidden lower-body landmarks do not control the crop.
-
-If a requested full shot extends beyond the POSE CONTROL crop, construct the unseen lower body, legs, feet, simple suitable footwear and ground contact naturally. Never keep the source crop at the expense of the current full-shot requirement.
-
-Complete newly visible outfit areas with MATCHING when attached or plain neutral coordinating basics,
-including bottoms for a top/outer target and footwear. Never leave the lower body or feet undressed.
 
 Do not copy the mannequin's body shape, height, proportions, gender presentation, featureless face, white material, hands, feet, or anatomy styling. Do not transfer any background, lighting, color grade, clothing, footwear, accessory, or prop from it.
 
@@ -257,28 +165,26 @@ Mirror-cut exception: a blank phone proxy in POSE CONTROL determines only the ph
 - Match the person's perspective, scale, ground contact and shadow softness to the scene's camera
   and light so the insertion looks like a single real photograph, not a paste.
 - The scene contains no person, so choose a natural pose that suits the place; never place
-  garments, shoes or props from the scene plate, EXAMPLE REFERENCE or MOOD onto the model.
+  garments, shoes or props from anywhere but PRODUCT/MATCHING onto the model.
 - Dress a COMPLETE outfit: PRODUCT (and MATCHING when attached) plus simple neutral basics for
   the rest (plain bottoms and footwear that suit the scene). Never leave the model without
   bottoms or shoes; basics stay visually plain so the PRODUCT garment remains the hero.
-- This exact plate owns the location, lighting, color and ambience. MOOD references and the generic
-  Korean-commerce aesthetic must not restyle, relight or recolor it.
 - FRAMING OVERRIDE: the FRAMING and DIRECTION requested below win over the first image's crop —
   extend or re-crop the scene consistently if needed, keeping the same location.
 
-[[CUT:bg_edit_mirror]]MIRROR-CUT MECHANICS — PRESERVE INSIDE THE EXACT PLATE:
-- This remains a mirror selfie: show the model as a physically correct mirror reflection, holding
-  one plain unbranded smartphone toward the mirror so the phone, holding hand and part of the
-  plate's existing mirror frame are visible.
-- Use the mirror and reflected room already present in the plate. Do not add a second mirror,
-  convert it into a third-person photograph, or redesign the room, fitting room or elevator.
-- Keep the casual Korean OOTD selfie composition and obey the requested FRAMING while preserving
-  the plate as the exact scene canvas.
-
 [[SPACE]]SPACE CONTINUITY: this cut belongs to a set shot in ONE location. Keep the lighting,
-background elements and color temperature consistent with a single coherent space. The camera and
-model may move, so each cut may reveal a different wall, window, furniture group or light angle, but
-repeated architecture/material cues and physically coherent light must make the location continuous.
-Do not fake a medium shot by cropping the full shot; photograph it from its own camera position
-(variation level: ${spaceVariation} — "subtle" means a nearby camera setup, "varied" allows a
-clearer camera move, pose and framing change inside the same space).
+background elements and color temperature consistent with a single coherent space
+(variation level: ${spaceVariation} — "fixed" keeps a consistent studio setup, "subtle" allows
+nearby camera movement with a different pose and framing inside the same space).
+
+[[SPACE_SET_PLATE]]PUBLISHED SPACE-SET LOCATION — HARD REQUIREMENTS:
+- The attached image labeled SPACE SET PLATE is the authoritative representative view of the
+  ONE real location shared by this set. The output must be recognizably another photograph made
+  inside that same place, not a generic place of the same type.
+- Preserve the location's distinctive architecture, wall/floor/ground materials, furniture and
+  fixtures, plants, spatial layout and depth, weather, light direction and color temperature.
+- This plate is a location anchor, not a pixel-identical edit canvas. The requested CUT SPEC and
+  POSE CONTROL may move the model and camera, change viewing direction and use an independent
+  full or medium framing, provided the result remains physically coherent within the same space.
+- Match the person's perspective, scale, ground contact, cast/contact shadows and reflected light
+  to this camera position and illumination so the result reads as one real photograph.
