@@ -17,7 +17,6 @@ import { Placeholder as P } from '@/mock/placeholders.js';
 import genExamples from '@/data/genExamples.json';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
-import { spaceSetGroupId } from '@/lib/storyboardSpaceSetCatalog.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { ensureSections, rowSizeFor } from '@/lib/sections.js';
@@ -361,7 +360,8 @@ export function buildStoryboard(mode, colors) {
   const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
   // 같은 공간에서 포즈·프레이밍만 달리하는 코디 활용 2컷 묶음
   const spacePair = (colorId) => {
-    const sg = spaceSetGroupId('cafe', uid('sg'));
+    // mock 묶음은 발행된 공간 세트가 아니므로 production ssg1__ namespace를 쓰지 않는다.
+    const sg = uid('sg');
     return [
       sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'full', colorId, { spaceGroupId: sg, spaceVariation: 'subtle', refScope: 'pose' }),
       sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'side', 'medium', colorId, { spaceGroupId: sg, spaceVariation: 'subtle', refScope: 'pose' }),

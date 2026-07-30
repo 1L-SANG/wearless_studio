@@ -124,7 +124,7 @@ export function createSpaceSetMembers(set, template, {
   if (!set || !spaceGroupId) return [];
   return set.members.map((member, index) => {
     const previous = previousMembers[index] || template || {};
-    const base = clearExample(clearLayoutRow({
+    const base = clearLayoutRow({
       ...template,
       ...previous,
       id: previousMembers[index]?.id || makeId(member, index),
@@ -138,11 +138,16 @@ export function createSpaceSetMembers(set, template, {
         previous.contentRole || template?.contentRole,
       ),
       spaceGroupId,
-      spaceVariation: 'subtle',
+      spaceVariation: set.spaceVariation || 'subtle',
       refScope: 'pose',
+      exampleId: member.exampleId || null,
+      exampleSelectionOrigin: member.exampleId ? 'user' : null,
+      thumb: member.thumb || member.thumbUrl || member.allUrl || previous.thumb || template?.thumb,
+      baseThumb: null,
+      spaceSetMemberOrder: member.order || index + 1,
       pose: 'auto',
       poseLabel: 'AI 자동',
-    }));
+    });
     return member.cutType === 'product'
       ? { ...base, matchIds: [], faceExposure: null, outerClosureState: null }
       : base;

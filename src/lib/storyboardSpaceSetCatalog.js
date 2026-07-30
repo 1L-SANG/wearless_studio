@@ -1,80 +1,241 @@
-/*
- * 공간 세트 파일럿 카탈로그.
- *
- * 실제 세트 자산이 준비되면 이 파일의 데이터만 같은 shape로 교체한다.
- * 보드/인스펙터는 공간 이름과 구성만 소비하고 서버 저장 계약은 기존
- * StoryboardBlock.spaceGroupId 공유 방식 그대로 유지한다.
- */
-export const STORYBOARD_SPACE_SETS = Object.freeze([
-  Object.freeze({
-    id: 'cafe', name: '햇살 카페', place: '카페', compositionLabel: '풀+미디움', tone: 'cafe',
-    members: Object.freeze([
-      Object.freeze({ cutType: 'styling', direction: 'front', shot: 'full' }),
-      Object.freeze({ cutType: 'styling', direction: 'side', shot: 'medium' }),
-    ]),
-  }),
-  Object.freeze({
-    id: 'street', name: '도심 거리', place: '거리', compositionLabel: '풀+미디움', tone: 'street',
-    members: Object.freeze([
-      Object.freeze({ cutType: 'styling', direction: 'front', shot: 'full' }),
-      Object.freeze({ cutType: 'styling', direction: 'side', shot: 'medium' }),
-    ]),
-  }),
-  Object.freeze({
-    id: 'home', name: '포근한 집', place: '집', compositionLabel: '풀+미디움', tone: 'home',
-    members: Object.freeze([
-      Object.freeze({ cutType: 'styling', direction: 'front', shot: 'full' }),
-      Object.freeze({ cutType: 'styling', direction: 'side', shot: 'medium' }),
-    ]),
-  }),
-  Object.freeze({
-    id: 'beach', name: '잔잔한 해변', place: '해변', compositionLabel: '풀+미디움', tone: 'beach',
-    members: Object.freeze([
-      Object.freeze({ cutType: 'styling', direction: 'front', shot: 'full' }),
-      Object.freeze({ cutType: 'styling', direction: 'side', shot: 'medium' }),
-    ]),
-  }),
-  Object.freeze({
-    id: 'garden', name: '초록 정원', place: '정원', compositionLabel: '풀+미디움', tone: 'garden',
-    members: Object.freeze([
-      Object.freeze({ cutType: 'styling', direction: 'front', shot: 'full' }),
-      Object.freeze({ cutType: 'styling', direction: 'side', shot: 'medium' }),
-    ]),
-  }),
-  Object.freeze({
-    id: 'studio', name: '화이트 스튜디오', place: '스튜디오', compositionLabel: '회전 풀×3', tone: 'studio',
-    members: Object.freeze([
-      Object.freeze({ cutType: 'horizon', direction: 'front', shot: 'full' }),
-      Object.freeze({ cutType: 'horizon', direction: 'side', shot: 'full' }),
-      Object.freeze({ cutType: 'horizon', direction: 'back', shot: 'full' }),
-    ]),
-  }),
-]);
+import spaceSetRelease from '../data/storyboardSpaceSets.json' with { type: 'json' };
+
+const ALL_CLOTHING_TYPES = Object.freeze(['top', 'bottom', 'outer', 'dress']);
+const SET_TYPES = new Set(['styling', 'horizon-rotation', 'horizon-sequence']);
+const SPACE_VARIATIONS = new Set(['subtle', 'fixed']);
+const PLATE_POLICIES = new Set(['required', 'not-required']);
+const SHOTS = new Set(['full', 'medium']);
+const DIRECTIONS = new Set(['front', 'side', 'back']);
+const RELEASE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
+const EXAMPLE_ID = /^ss_[A-Za-z0-9_-]{1,197}$/;
+const GROUP_PREFIX = 'ssg1__';
+const GROUP_INSTANCE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
+
+const text = (value, fallback = '') => (
+  typeof value === 'string' && value.trim() ? value.trim() : fallback
+);
+
+const validReleaseId = (value) => (
+  typeof value === 'string'
+  && RELEASE_ID.test(value)
+  && !value.includes('__')
+);
+
+function normalizedMember(member, index, setType) {
+  if (!member || typeof member !== 'object') return null;
+  const exampleId = text(member.exampleId);
+  const allUrl = text(member.allUrl);
+  const thumb = text(member.thumbUrl);
+  const expectedCutType = setType === 'styling' ? 'styling' : 'horizon';
+  if (
+    !EXAMPLE_ID.test(exampleId)
+    || exampleId.includes('__')
+    || member.order !== index + 1
+    || member.cutType !== expectedCutType
+    || !SHOTS.has(member.shot)
+    || !DIRECTIONS.has(member.direction)
+    || !allUrl
+    || !thumb
+  ) return null;
+  return Object.freeze({
+    exampleId,
+    order: member.order,
+    cutType: member.cutType,
+    shot: member.shot,
+    direction: member.direction,
+    thumb,
+    thumbUrl: thumb,
+    allUrl,
+  });
+}
+
+function normalizedSet(set, index) {
+  if (!set || typeof set !== 'object') return null;
+  const id = text(set.setId);
+  const setType = set.setType;
+  const clothingTypes = set.applicableClothingTypes;
+  if (
+    !validReleaseId(id)
+    || !SET_TYPES.has(setType)
+    || !['women', 'men'].includes(set.gender)
+    || !Array.isArray(clothingTypes)
+    || clothingTypes.length === 0
+    || new Set(clothingTypes).size !== clothingTypes.length
+    || clothingTypes.some((value) => !ALL_CLOTHING_TYPES.includes(value))
+    || !SPACE_VARIATIONS.has(set.spaceVariation)
+    || !PLATE_POLICIES.has(set.platePolicy)
+    || !text(set.name)
+    || !text(set.placeType)
+    || !text(set.tone)
+    || !text(set.compositionLabel)
+    || !Array.isArray(set.members)
+    || set.members.length < 2
+    || set.members.length > 5
+  ) return null;
+  if (
+    clothingTypes.length > 1
+    && (
+      clothingTypes.length !== 2
+      || !clothingTypes.includes('top')
+      || !clothingTypes.includes('outer')
+      || set.members.some((member) => member?.shot !== 'full')
+    )
+  ) return null;
+  if (
+    (setType === 'horizon-sequence' && set.platePolicy !== 'not-required')
+    || (setType !== 'horizon-sequence' && set.platePolicy !== 'required')
+  ) return null;
+  if (
+    setType === 'horizon-rotation'
+    && (
+      set.members.length !== 3
+      || set.members.some((member) => member?.shot !== 'full')
+      || set.members.map((member) => member?.direction).join(',') !== 'front,side,back'
+    )
+  ) return null;
+  const plate = set.representativePlate;
+  const representativePlate = set.platePolicy === 'required'
+    && plate
+    && typeof plate === 'object'
+    && text(plate.url)
+    ? Object.freeze({ url: text(plate.url), thumbUrl: text(plate.url) })
+    : null;
+  if (
+    (set.platePolicy === 'required' && !representativePlate)
+    || (set.platePolicy === 'not-required' && plate !== null)
+  ) return null;
+  const members = set.members.map((member, memberIndex) => (
+    normalizedMember(member, memberIndex, setType)
+  ));
+  if (
+    members.some((member) => !member)
+    || new Set(members.map((member) => member.exampleId)).size !== members.length
+  ) return null;
+  return Object.freeze({
+    id,
+    setId: id,
+    name: text(set.name),
+    setType,
+    gender: set.gender,
+    applicableClothingTypes: Object.freeze([...clothingTypes]),
+    place: text(set.placeType),
+    placeType: text(set.placeType),
+    tone: text(set.tone),
+    compositionLabel: text(set.compositionLabel),
+    spaceVariation: set.spaceVariation,
+    platePolicy: set.platePolicy,
+    representativePlate,
+    members: Object.freeze(members),
+  });
+}
+
+export function normalizeStoryboardSpaceSetRelease(release) {
+  const schemaVersion = release?._meta?.schemaVersion ?? release?.schemaVersion;
+  const source = Array.isArray(release) ? release : release?.sets;
+  const releaseId = release?._meta?.releaseId ?? release?.releaseId;
+  if (schemaVersion !== 1 || !Array.isArray(source)) return [];
+  if (source.length && !validReleaseId(releaseId)) return [];
+  const seen = new Set();
+  const exampleIds = new Set();
+  return source.map(normalizedSet).filter((set) => {
+    if (
+      !set
+      || seen.has(set.id)
+      || set.members.some((member) => exampleIds.has(member.exampleId))
+    ) return false;
+    seen.add(set.id);
+    set.members.forEach((member) => exampleIds.add(member.exampleId));
+    return true;
+  });
+}
+
+const RELEASE_SPACE_SETS = normalizeStoryboardSpaceSetRelease(spaceSetRelease);
+
+export const STORYBOARD_SPACE_SETS = Object.freeze(RELEASE_SPACE_SETS);
+
+export const STORYBOARD_SPACE_SET_EXAMPLES = Object.freeze(
+  RELEASE_SPACE_SETS.flatMap((set) => set.members
+    .filter((member) => member.exampleId && member.thumb)
+    .map((member) => Object.freeze({
+      id: member.exampleId,
+      cutType: member.cutType,
+      shot: member.shot,
+      direction: member.direction,
+      gender: set.gender,
+      applicableClothingTypes: set.applicableClothingTypes,
+      thumb: member.thumb,
+      assetUrl: member.allUrl,
+      variants: Object.freeze(['all', 'pose']),
+      rank: member.order,
+      mood: set.tone,
+      setOnly: true,
+      spaceSetId: set.id,
+    }))),
+);
 
 const SET_BY_ID = new Map(STORYBOARD_SPACE_SETS.map((set) => [set.id, set]));
-const GROUP_PREFIX = 'sgset__';
+const UNKNOWN_SPACE_SET = Object.freeze({
+  id: 'unknown',
+  setId: 'unknown',
+  name: '저장된 촬영 묶음',
+  setType: null,
+  place: '공간',
+  placeType: 'space',
+  tone: 'default',
+  compositionLabel: '',
+  spaceVariation: 'subtle',
+  applicableClothingTypes: ALL_CLOTHING_TYPES,
+  members: Object.freeze([]),
+});
 
 export function storyboardSpaceSetById(id) {
   return SET_BY_ID.get(id) || null;
 }
 
+export function isStoryboardSpaceSetEligible(set, { gender = null, clothingType = null } = {}) {
+  return !!set
+    && !!gender
+    && set.gender === gender
+    && (!clothingType || set.applicableClothingTypes.includes(clothingType));
+}
+
+export function storyboardSpaceSetsFor({ gender = null, clothingType = null } = {}) {
+  return STORYBOARD_SPACE_SETS.filter((set) => isStoryboardSpaceSetEligible(set, {
+    gender, clothingType,
+  }));
+}
+
+export function withStoryboardSpaceSetExamples(catalogs) {
+  if (!catalogs || !STORYBOARD_SPACE_SET_EXAMPLES.length) return catalogs;
+  const current = Array.isArray(catalogs.genExamples) ? catalogs.genExamples : [];
+  const currentIds = new Set(current.map((example) => example.id));
+  const additions = STORYBOARD_SPACE_SET_EXAMPLES.filter((example) => !currentIds.has(example.id));
+  return additions.length ? { ...catalogs, genExamples: [...current, ...additions] } : catalogs;
+}
+
 export function spaceSetGroupId(setId, uniqueId) {
+  if (!validReleaseId(setId) || !GROUP_INSTANCE.test(uniqueId) || uniqueId.includes('__')) {
+    throw new Error('invalid production space-set group id');
+  }
   return `${GROUP_PREFIX}${setId}__${uniqueId}`;
 }
 
 export function spaceSetIdFromGroupId(groupId) {
   if (typeof groupId !== 'string' || !groupId.startsWith(GROUP_PREFIX)) return null;
-  const id = groupId.slice(GROUP_PREFIX.length).split('__')[0];
+  const parts = groupId.slice(GROUP_PREFIX.length).split('__');
+  if (parts.length !== 2 || !validReleaseId(parts[0]) || !GROUP_INSTANCE.test(parts[1])) return null;
+  const [id] = parts;
   return SET_BY_ID.has(id) ? id : null;
 }
 
 export function inferStoryboardSpaceSet(groupId, members = []) {
-  // 저장된 세트 ID가 현 카탈로그에 없어도(개발 중 ID 변경·구버전 저장분) 항상 유효한 세트를 돌려준다.
-  // 미폴백 시 공간 스트립이 set.name 접근에서 죽어 인스펙터가 통째로 비었다(2026-07-29 제보).
+  // 저장된 세트 ID가 현 카탈로그에 없어도 항상 안전한 중립 표시를 돌려준다.
+  // 모르는 ID를 카페로 추측하면 실제와 다른 공간 이름이 노출된다.
   const storedId = spaceSetIdFromGroupId(groupId);
   const stored = storedId ? storyboardSpaceSetById(storedId) : null;
   if (stored) return stored;
-  const looksLikeStudio = members.length >= 3
-    && members.every((block) => block?.cutType === 'horizon' && block?.shot === 'full');
-  return storyboardSpaceSetById(looksLikeStudio ? 'studio' : 'cafe');
+  return {
+    ...UNKNOWN_SPACE_SET,
+    compositionLabel: members.length ? `${members.length}컷 구성` : '',
+  };
 }
