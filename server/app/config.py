@@ -60,9 +60,18 @@ class Settings:
     image_qc: str = "off"
     # AG-P2 4축 점수 임계 (플랜 Phase 2). 이진 pass/retry 로는 "얼마나 나쁜지"를 몰라
     # 자동통과/사람검수/자동재생성 3분기를 못 만든다. image_qc=enforce 일 때만 게이팅에 쓰인다.
-    # 기본값은 캘리브레이션 전 잠정치 — 로컬 40건 실측 pass율 45% 기준으로 재조정 대상.
-    qc_score_auto_pass: int = 90   # 이상 → 자동 통과
-    qc_score_review: int = 75      # 이상 → 사람 검수(출고는 하되 표시), 미만 → 자동 재생성
+    #
+    # 2026-07-31 로컬 실컷 30건 캘리브레이션(scripts/qc_calibrate_image.py):
+    #   product_fidelity 중앙 58 · physical_naturalness 78 · image_quality 80 (최저축 중앙 58)
+    #   임계 90/75 → 통과 0/30 (0%)   ← 초기 추측값. MANNEQUIN_QC_ENABLED 가 pass율 0% 로
+    #                                   전 생성을 막았던 2026-07-07 사고와 같은 조건이라 폐기.
+    #   임계 80/65 → 통과 12/30 (40%) ← 채택
+    # 주의: 임계를 어떻게 바꿔도 재생성률이 ~55% 로 고정된다. critical_errors 가 30건 중
+    # 17건(대부분 "text or logo altered")이라 점수와 무관하게 재생성을 트리거하기 때문이다.
+    # 즉 이건 임계 문제가 아니라 **로고·텍스트 재현 품질** 문제다 — enforce 승격은 그쪽
+    # 개선이 선행돼야 하며, 지금 올리면 생성 콜만 늘고 결과는 같다.
+    qc_score_auto_pass: int = 80   # 이상 → 자동 통과
+    qc_score_review: int = 65      # 이상 → 사람 검수(출고는 하되 표시), 미만 → 자동 재생성
     # 생성 컷의 상품·로고 동일성 QC. off=미판정, shadow=판정만 기록,
     # bestof=불일치 시 원본 입력에서 후보를 더 생성해 첫 pass 또는 picker 최선을 채택.
     garment_qc_mode: str = "bestof"  # off | shadow | bestof

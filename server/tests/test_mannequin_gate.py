@@ -68,6 +68,28 @@ def test_enforce_falls_back_to_binary_verdict_when_unscored():
     assert gate_decision(s, "pass", {"verdict": "pass"}) == (False, False)
 
 
+def test_default_thresholds_pass_observed_production_scores():
+    """기본 임계가 실측 분포에서 아무것도 통과시키지 못하면 안 된다.
+
+    2026-07-31 로컬 실컷 30건 캘리브레이션 중앙값(fidelity 58 · natural 78 · quality 80).
+    초기 추측값 90/75 는 통과 0/30 이었다 — MANNEQUIN_QC_ENABLED 가 pass율 0% 로 전 생성을
+    막았던 2026-07-07 사고와 같은 조건이다. 임계를 다시 올릴 때는 이 테스트를 근거와 함께
+    갱신하라(무의식적 상향만 막는다).
+    """
+    from app.config import Settings
+    s = make_settings()
+    assert Settings.__dataclass_fields__["qc_score_auto_pass"].default == 80
+    assert Settings.__dataclass_fields__["qc_score_review"].default == 65
+    # 실측 상위권(최저축 82)은 통과해야 한다.
+    good = {"product_fidelity": 82, "physical_naturalness": 85,
+            "image_quality": 88, "series_consistency": 100, "critical_errors": []}
+    assert score_outcome(s, good) == "auto_pass"
+    # 실측 중앙값(최저축 58)은 재생성 — 실제로 로고가 깨진 컷들이다.
+    median = {"product_fidelity": 58, "physical_naturalness": 78,
+              "image_quality": 80, "series_consistency": 100, "critical_errors": []}
+    assert score_outcome(s, median) == "regenerate"
+
+
 def test_enforce_scores_win_over_stale_verdict():
     """점수 신호가 있으면 그쪽이 정본 — verdict=retry 여도 전 축 고득점이면 통과시킨다."""
     s = make_settings(image_qc="enforce")
