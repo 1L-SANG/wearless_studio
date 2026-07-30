@@ -17,7 +17,7 @@ import { thumbUrl } from '@/lib/imageCdn.js';
 import { clampEditorNumber, resolveEditorNumberDraft } from '@/features/editor/editorInputs.js';
 
 function PanelHead({ title, sub }) {
-  return <><div className="panel-h">{title}</div>{sub && <div className="panel-sub">{sub}</div>}</>;
+  return <>{sub && <div className="panel-sub">{sub}</div>}</>;
 }
 
 /* ---------- shared input atoms (used by 이미지 / 텍스트 props) ---------- */
