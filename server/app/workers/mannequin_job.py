@@ -594,7 +594,8 @@ async def _apply_edits(
             and hashlib.sha256(res.image).hexdigest() != pre_hash):
         return res, p2, calls_spent
     try:
-        p2 = await image_qc.verdict(s, prod_imgs, InlineImage(res.mime, res.image), scored=True)
+        p2 = await image_qc.verdict(
+            s, prod_imgs, InlineImage(res.mime, res.image), scored=True, fit_profile=fit_profile)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt,
             "status": "image_qc_rescored", "imageQc": p2})
@@ -613,7 +614,8 @@ async def _apply_edits(
             prod_imgs=prod_imgs, pre_res=pre_res, pre_p2=pre_p2,
             post_axis_res=post_axis_res, post_p2=p2,
             axis_changed=axis_hash != pre_hash,
-            bust_changed=hashlib.sha256(res.image).hexdigest() != axis_hash)
+            bust_changed=hashlib.sha256(res.image).hexdigest() != axis_hash,
+            fit_profile=fit_profile)
     return res, p2, calls_spent
 
 
@@ -635,7 +637,7 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
 
 async def _rollback_edits(
     *, pool, s, job_id, candidate, attempt, prod_imgs,
-    pre_res, pre_p2, post_axis_res, post_p2, axis_changed, bust_changed,
+    pre_res, pre_p2, post_axis_res, post_p2, axis_changed, bust_changed, fit_profile=None,
 ):
     """회귀한 편집을 되돌린다. → (선택 이미지, 그 이미지의 판정)
 
@@ -663,7 +665,8 @@ async def _rollback_edits(
         return await _revert_to(pre_res, pre_p2, "all_edits")
     try:
         mid_p2 = await image_qc.verdict(
-            s, prod_imgs, InlineImage(post_axis_res.mime, post_axis_res.image), scored=True)
+            s, prod_imgs, InlineImage(post_axis_res.mime, post_axis_res.image), scored=True,
+            fit_profile=fit_profile)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt,
             "status": "image_qc_post_axis", "imageQc": mid_p2})
@@ -755,7 +758,8 @@ async def _run_candidate(
         if eff_image_qc in ("shadow", "enforce") and prod_imgs:
             try:
                 p2 = await image_qc.verdict(
-                    s, prod_imgs, InlineImage(res.mime, res.image), scored=True)
+                    s, prod_imgs, InlineImage(res.mime, res.image), scored=True,
+                    fit_profile=fit_profile)
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "image_qc", "imageQc": p2})
             except Exception as e:

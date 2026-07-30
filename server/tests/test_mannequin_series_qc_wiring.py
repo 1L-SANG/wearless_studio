@@ -367,7 +367,7 @@ def test_final_salvage_never_uses_unedited_pre_gate_candidate(monkeypatch):
     ]
     seq = list(p2_seq)
 
-    async def fake_p2(s, prods, gen, *, scored=False):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
         return seq.pop(0) if len(seq) > 1 else seq[0]
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
@@ -401,7 +401,7 @@ def test_salvage_picks_best_across_both_pools(monkeypatch):
     ]
     seq = list(p2_seq)
 
-    async def fake_p2(s, prods, gen, *, scored=False):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
         return seq.pop(0) if len(seq) > 1 else seq[0]
 
     async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
@@ -434,7 +434,7 @@ def test_scores_rescored_when_edit_changed_the_image(monkeypatch):
     ]
     calls = {"n": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
         calls["n"] += 1
         return seq[min(calls["n"] - 1, len(seq) - 1)]
 
@@ -487,7 +487,7 @@ def test_regressive_edit_is_reverted_to_pre_edit_image(monkeypatch):
 
     seq, calls = [_p2(90), _p2(30)], {"n": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
         calls["n"] += 1
         return seq[min(calls["n"] - 1, len(seq) - 1)]
 
@@ -680,7 +680,7 @@ def test_pre_gate_reject_respects_budget(monkeypatch):
     n = {"i": 0}
     edits = {"n": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -779,7 +779,7 @@ def test_rollback_keeps_axis_fix_when_only_bust_regressed(monkeypatch):
     seq = [_p2c(90), _p2c(30, critical=["garment shape broken"]), _p2c(88)]
     n = {"i": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -810,7 +810,7 @@ def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
     seq = [_p2c(90), _p2c(30, critical=["broken"]), _p2c(30, critical=["broken"])]
     n = {"i": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -849,7 +849,7 @@ def test_failed_bust_does_not_fake_a_second_checkpoint(monkeypatch):
     seq = [_p2c(90), _p2c(20, critical=["garment shape broken"]), _p2c(95)]
     n = {"i": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
@@ -1014,7 +1014,7 @@ def test_final_salvage_is_not_reprocessed(monkeypatch):
     seq = [_p2c(95), _p2c(95), _p2c(20, critical=["logo altered"])]
     calls = {"p2": 0, "series": 0, "axis": 0}
 
-    async def fake_p2(s, prods, gen, *, scored=False):
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
         calls["p2"] += 1
         return seq[min(calls["p2"] - 1, len(seq) - 1)]
 
@@ -1073,3 +1073,23 @@ def test_feedback_reaches_every_subsequent_attempt(monkeypatch):
 
 # 고아 객체 계약은 test_low_series_score_actually_rerolls_and_stores_once 의
 # `len(r2.puts) == 1` 이 행동으로 잠근다(소스 문자열 순서를 보는 테스트는 구현 복사라 제거).
+
+
+def test_worker_passes_declared_fit_to_image_qc(monkeypatch):
+    """워커가 선언 핏을 QC 로 넘겨야 한다 — 안 넘기면 조정된 핏이 전부 치명오류가 된다."""
+    import test_mannequin_axis_qc as harness
+
+    seen = []
+
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+        seen.append(fit_profile)
+        return _p2c(90)
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return None
+
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    harness._run(monkeypatch, mode="off", guard=True, max_attempts=1, verdicts=[],
+                 image_qc="shadow")
+    assert seen and seen[0] is harness.PROFILE, seen

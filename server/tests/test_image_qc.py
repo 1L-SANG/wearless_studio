@@ -153,6 +153,39 @@ def test_scored_prompt_lists_fit_change_as_critical():
     assert "order the wrong size" in p, "왜 출고 불가인지(사이즈 오주문)가 근거로 있어야 한다"
 
 
+_FIT_PROFILE = {"category": "top", "gender": "women", "source": "seller", "version": 2,
+                "axes": {"fit": "slim", "length": "crop"}}
+
+
+def test_declared_fit_moves_the_judgment_from_photos_to_intent():
+    """셀러가 조정한 핏은 결함이 아니다 — QC 가 그걸 알아야 한다.
+
+    2026-07-31 실측: `fit: slim`·`length: crop` 으로 선언된 오버사이즈 티에서, 생성은 선언대로
+    슬림·크롭으로 냈는데 QC 가 **상품 사진**과 비교해 매 시도마다 `garment fit changed from
+    oversized to tight crop` 을 붙였다. 치명오류는 점수와 무관하게 regenerate 이므로 예산이
+    소진될 때까지 재생성하다 구제 출고(regenerate)로 끝났다 — 핏 조정 기능을 쓰는 상품마다.
+    """
+    p = iq.build_prompt(2, scored=True, fit_profile=_FIT_PROFILE)
+    assert "DECLARED FIT" in p
+    assert "NOT the fit seen in the product photos" in p
+    assert "must not be reported as a mismatch or as a critical error" in p
+    # 선언 축이 관측 문구로 풀려야 판정기가 무엇을 볼지 안다
+    assert "follows chest and waist closely" in p
+
+    # 선언이 없으면 블록 자체가 없다 — 멀쩡한 상품에 "핏이 달라도 된다"를 흘리면 안 된다.
+    assert "DECLARED FIT" not in iq.build_prompt(2, scored=True)
+    assert "DECLARED FIT" not in iq.build_prompt(2, scored=True, fit_profile={})
+    # scored 격리 — scene/best_of 가 쓰는 기본 경로는 바이트 단위로 불변이어야 한다.
+    assert "DECLARED FIT" not in iq.build_prompt(2, fit_profile=_FIT_PROFILE)
+
+
+def test_declared_fit_ignores_unknown_axes():
+    """카탈로그에 없는 축·값은 조용히 스킵 — 판정기에 빈 지시가 가면 안 된다."""
+    p = iq.build_prompt(2, scored=True,
+                        fit_profile={"category": "top", "axes": {"fit": "made_up_value"}})
+    assert "DECLARED FIT" not in p
+
+
 def test_validate_pass_clears_fields():
     out = iq.validate({"verdict": "pass", "mismatches": ["x"], "correctionPrompt": "y"})
     assert out == {"verdict": "pass", "mismatches": [], "correctionPrompt": None}

@@ -54,7 +54,40 @@ def qc_schema(*, scored: bool = False) -> dict:
     }
 
 
-def build_prompt(product_count: int, *, scored: bool = False) -> str:
+def build_declared_fit_block(fit_profile: dict | None) -> str:
+    """셀러가 **의도적으로 조정한 핏**을 판정기에 알린다.
+
+    이게 없으면 QC 는 상품 사진만 보고 "핏이 바뀌었다"를 치명오류로 붙인다 — 그런데 핏 조정은
+    지원되는 기능이고, 생성은 선언 축대로 낸 것이다. 2026-07-31 실측: 셀러가 `fit: slim`·
+    `length: crop` 으로 선언한 오버사이즈 티에서 QC 가 매 시도마다 `garment fit changed from
+    oversized to tight crop` 을 붙여 **무한 재생성 → 구제 출고(regenerate)** 로 끝났다.
+    판정 기준을 사진이 아니라 **의도**로 옮겨야 한다.
+    """
+    from .fit_axes import AXIS_OBSERVABLES
+
+    if not isinstance(fit_profile, dict):
+        return ""
+    category = fit_profile.get("category")
+    axes = fit_profile.get("axes") if isinstance(fit_profile.get("axes"), dict) else {}
+    lines = []
+    for axis, value in axes.items():
+        observable = AXIS_OBSERVABLES.get((category, axis, value))
+        if observable:
+            lines.append(f"- {axis}: {observable}")
+    if not lines:
+        return ""
+    return (
+        "\nDECLARED FIT (the seller deliberately adjusted how this garment is worn; the "
+        "generated photo was asked to follow this, NOT the fit seen in the product photos):\n"
+        + "\n".join(lines)
+        + "\nJudge fit against this declaration. A difference in fit, ease or hem height that "
+        "matches what is declared here is CORRECT and must not be reported as a mismatch or as "
+        "a critical error. Everything else — colour, print, logo, structure — is still judged "
+        "against the product photos as usual.\n"
+    )
+
+
+def build_prompt(product_count: int, *, scored: bool = False, fit_profile: dict | None = None) -> str:
     with open(_PROMPT_FILE, encoding="utf-8") as f:
         template = f.read()
     prompt = template.replace("${productCount}", str(max(1, product_count)))
@@ -62,6 +95,8 @@ def build_prompt(product_count: int, *, scored: bool = False) -> str:
         # 스키마만 바꾸면 근거 없는 숫자가 나온다 — 채점 기준을 프롬프트로 준다.
         with open(_SCORE_PROMPT_FILE, encoding="utf-8") as f:
             prompt = f"{prompt}\n{f.read()}"
+        # 선언 핏은 **scored 경로 전용** — 다른 호출부(scene·best_of)의 요청은 불변이어야 한다.
+        prompt += build_declared_fit_block(fit_profile)
     return prompt
 
 
@@ -98,7 +133,7 @@ def validate(raw: dict, *, scored: bool = False) -> dict:
 
 async def verdict(
     settings: Settings, product_images: list[InlineImage], generated_image: InlineImage,
-    *, scored: bool = False,
+    *, scored: bool = False, fit_profile: dict | None = None,
 ) -> dict:
     """상품사진들 + 생성이미지(맨 뒤)를 vision LLM에 넣어 동일성 판정. 실패 시 VisionError.
 
@@ -106,7 +141,7 @@ async def verdict(
     상세페이지·에디터)는 기본값 그대로라 요청·응답이 바이트 단위로 불변이다.
     """
     images = [*product_images, generated_image]  # bytes — 마지막이 생성 결과
-    prompt = build_prompt(len(product_images), scored=scored)
+    prompt = build_prompt(len(product_images), scored=scored, fit_profile=fit_profile)
     raw, _provider = await analyze_with_fallback(
         settings, prompt, images, qc_schema(scored=scored))
     return validate(raw, scored=scored)
