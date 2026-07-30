@@ -29,12 +29,15 @@ def _auth(make_token):
     return {"Authorization": f"Bearer {make_token()}"}
 
 
-def _wire_route_fakes(monkeypatch, *, stored_profile, captured):
+def _wire_route_fakes(monkeypatch, *, stored_profile, captured, analysis_extra=None):
     async def fake_get_project(conn, uid, pid):
         return {"id": pid}
 
     async def fake_get_analysis(conn, pid):
-        return {"fitProfile": stored_profile} if stored_profile is not None else {}
+        analysis = {"fitProfile": stored_profile} if stored_profile is not None else {}
+        if analysis_extra:
+            analysis.update(analysis_extra)
+        return analysis
 
     async def fake_create_job(conn, **kw):
         captured.update(kw)
@@ -91,6 +94,66 @@ def test_generate_snapshots_stored_profile_without_inventing(client, make_token,
     assert res.status_code == 202, res.text
     snap = captured["payload"]["fitProfileSnapshot"]
     assert snap == {"version": 1, "profile": None, "adjustedAxes": []}  # auto 값 발명 금지
+
+
+# ---------- 체형 스냅샷 생산 (Important-1: 생산 지점 회귀 커버) ----------
+
+
+def test_generate_carries_body_snapshot(client, make_token, monkeypatch):
+    captured = {}
+    _wire_route_fakes(
+        monkeypatch, stored_profile=None, captured=captured,
+        analysis_extra={"targetGenders": ["women"],
+                        "mannequinBody": {"bust": "volume", "hip": "slim"}})
+    res = client.post("/v1/projects/p1/mannequins:generate", headers=_auth(make_token))
+    assert res.status_code == 202, res.text
+    assert captured["payload"]["mannequinBodySnapshot"] == {
+        "version": 1, "gender": "women", "body": {"bust": "volume", "hip": "slim"}}
+
+
+def test_generate_body_snapshot_defaults_when_unset(client, make_token, monkeypatch):
+    captured = {}
+    _wire_route_fakes(monkeypatch, stored_profile=None, captured=captured)
+    res = client.post("/v1/projects/p1/mannequins:generate", headers=_auth(make_token))
+    assert res.status_code == 202, res.text
+    assert captured["payload"]["mannequinBodySnapshot"] == {
+        "version": 1, "gender": "women", "body": {"bust": "regular", "hip": "regular"}}
+
+
+def test_generate_body_snapshot_is_none_for_men(client, make_token, monkeypatch):
+    captured = {}
+    _wire_route_fakes(
+        monkeypatch, stored_profile=None, captured=captured,
+        analysis_extra={"targetGenders": ["men"]})
+    res = client.post("/v1/projects/p1/mannequins:generate", headers=_auth(make_token))
+    assert res.status_code == 202, res.text
+    assert captured["payload"]["mannequinBodySnapshot"] == {
+        "version": 1, "gender": "men", "body": None}
+
+
+def test_regenerate_carries_body_snapshot(client, make_token, monkeypatch):
+    captured = {}
+    _wire_route_fakes(
+        monkeypatch, stored_profile=None, captured=captured,
+        analysis_extra={"targetGenders": ["women"],
+                        "mannequinBody": {"bust": "slim", "hip": "volume"}})
+    res = client.post("/v1/projects/p1/mannequins:regenerate", json={}, headers=_auth(make_token))
+    assert res.status_code == 202, res.text
+    assert captured["payload"]["mannequinBodySnapshot"] == {
+        "version": 1, "gender": "women", "body": {"bust": "slim", "hip": "volume"}}
+
+
+def test_generate_body_snapshot_normalizes_garbage(client, make_token, monkeypatch):
+    # JSONB 왕복 경계에서 실제로 들어올 수 있는 쓰레기값 — 조용히 DEFAULT 로 떨어져야 한다.
+    captured = {}
+    _wire_route_fakes(
+        monkeypatch, stored_profile=None, captured=captured,
+        analysis_extra={"targetGenders": ["women"],
+                        "mannequinBody": {"bust": ["volume"], "hip": "VOLUME"}})
+    res = client.post("/v1/projects/p1/mannequins:generate", headers=_auth(make_token))
+    assert res.status_code == 202, res.text
+    assert captured["payload"]["mannequinBodySnapshot"]["body"] == {
+        "bust": "regular", "hip": "regular"}
 
 
 # ---------- 워커 소비 ----------
