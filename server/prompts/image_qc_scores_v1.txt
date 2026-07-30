@@ -4,9 +4,12 @@ integer from 0 to 100, where 100 means indistinguishable from an ideal studio re
 unusable. Score what you actually observe; do not inflate a score to be agreeable.
 
 - product_fidelity: does the generated garment reproduce the seller's product? Color, pattern,
-  print and logo accuracy, neckline, sleeve and hem length, closures, pockets, trims. Every
-  mismatch you listed above must be reflected here. A garbled or restyled logo, a changed color,
-  or a length that reads as a different product caps this axis below 60.
+  print and logo accuracy, neckline, sleeve and hem length, closures, pockets, trims, and HOW IT
+  FITS — the ease between garment and body, where the hem falls, how wide the sleeves and body
+  are. A shopper describes a product by its fit as much as by its print: an oversized tee shown
+  as a fitted one is the wrong product even if every other detail matches. Every mismatch you
+  listed above must be reflected here. A garbled or restyled logo, a changed color, a length or
+  a fit that reads as a different product caps this axis below 60.
 - physical_naturalness: does the garment sit on the body like real cloth? Sleeves and hems fall
   correctly, no fabric passing through the body, no impossible asymmetry, folds and drape follow
   the material, closures line up. Anatomical or garment-structure breakdown caps this below 50.
