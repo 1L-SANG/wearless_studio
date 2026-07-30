@@ -35,12 +35,24 @@ fabric, seams, neckline, hem height, length, buttons, pockets and prints. The ma
 read as heavier, wider or larger overall — the waist and hips in particular stay exactly as they
 are. Only the bust differs.
 
-HOW THE TOP IS WORN IS ALSO UNCHANGED. If the top in the attached image is worn OUTSIDE the
-bottom, it stays outside: its entire hem keeps hanging below the bottom's waistband exactly as
-it does now. Re-draping the fabric over the new bust must NOT change this — do not tuck the top
-in, not even partially, and do not let the bottom's waistband end up on top of the hem. No front
-tuck, no half tuck, no French tuck, no tucking one side.
+One thing you DO fix, if it is wrong in the attached image — see below.
 </keep identical>
+
+<ALSO FIX: THE TOP MUST BE WORN OUTSIDE THE BOTTOM>
+If the mannequin is wearing a top (or outerwear) together with a bottom, the top is worn
+COMPLETELY OUTSIDE that bottom.
+
+If the top in the attached image is tucked into the bottom — even partially, even just at the
+front, even if only the hem edge disappears — PULL IT OUT. Redraw the top so its full hem hangs
+down over the bottom's waistband and is visible all the way around the body.
+
+- The top's hem must form an unbroken visible line around the body. No part of the top may
+  disappear behind or under the bottom's waistband.
+- Keep the hem's natural shape and length from the attached image — a curved shirttail hem stays
+  curved. You are moving the hem OUT from under the waistband, not lengthening or reshaping it.
+- If the top is already worn outside in the attached image, leave it exactly as it is.
+- This overrides any styling convention that would look more fashionable.
+</ALSO FIX: THE TOP MUST BE WORN OUTSIDE THE BOTTOM>
 
 <output format>
 - Output ONE brand-new, FULLY OPAQUE, photorealistic e-commerce studio PHOTOGRAPH of the SAME mannequin wearing the SAME garment, with ONLY the bust size changed.
@@ -53,6 +65,6 @@ tuck, no half tuck, no French tuck, no tucking one side.
 - The BUST SIZE is the requested change. Do NOT preserve the original chest; changing it is the entire point of this edit.
 - If you are unsure how far to go, go FURTHER. Under-shooting this change is the single most common failure and is not acceptable.
 - The waist and hips are NOT the requested change — their width must be identical to the attached image.
-- A top worn outside the bottom in the attached image is STILL worn outside in your output. Tucking it in is a failure of this edit.
+- The top is worn OUTSIDE the bottom in your output — always. If the attached image has it tucked in, pull it out; if it is already out, leave it. Producing a tucked-in top is a failure of this edit.
 - Use ONLY the attached image as the base — do not fabricate new garment details, and do not change the garment's identity.
 </critical rules>

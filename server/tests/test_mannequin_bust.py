@@ -42,11 +42,14 @@ def test_build_prompt_substitutes_target_and_keeps_calibrated_wording():
     assert "falls AWAY from the stomach" in prompt
     # 전신 비대화 방지 — 1차 스파이크에서 허리까지 굵어져 "뚱뚱하게" 나온 실패 모드.
     assert "waist and hips are NOT the requested change" in prompt
-    # untuck 보존 — 1패스가 어렵게 밖으로 빼놓은 상의를 2패스가 재드레이프하면서 다시 넣어버릴
-    # 수 있다. tuck 수정은 생성 프롬프트에만 있으므로 이 패스에서 따로 지켜야 한다(2026-07-30).
-    assert "stays outside" in prompt
-    assert "not even partially" in prompt
-    assert "French tuck" in prompt
+    # untuck 교정 — 1패스의 untuck 지시는 실측 2/4 만 지켜진다(확률적). 지시를 더 세게 쓰는 건
+    # 수확 체감이라, 이미 여성 컷마다 도는 이 패스에서 결과를 교정한다. 보존이 아니라 강제다:
+    # 들어와 있으면 빼내고, 이미 나와 있으면 그대로 둔다(2026-07-30).
+    assert "PULL IT OUT" in prompt
+    assert "COMPLETELY OUTSIDE" in prompt
+    assert "unbroken visible line" in prompt
+    # 밑단 모양·길이는 건드리지 않는다 — 빼내는 것이지 늘리는 게 아니다.
+    assert "curved shirttail hem stays" in prompt
 
 
 def test_build_prompt_rejects_unresolved_token():
