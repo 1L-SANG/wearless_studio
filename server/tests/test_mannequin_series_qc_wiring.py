@@ -217,8 +217,9 @@ def test_low_series_score_actually_rerolls_and_stores_once(monkeypatch):
     assert len(r2.puts) == 1, f"R2 저장이 {len(r2.puts)}건 — 고아 객체가 남았다"
     assert result["qc_scores"]["series_consistency"] == 96
     assert result["qc_scores"]["outcome"] == "auto_pass"
-    rejects = [p for t, p in emits if t == "step" and p.get("status") == "series_qc_reject"]
+    rejects = [p for t, p in emits if t == "step" and p.get("status") == "final_qc_reject"]
     assert rejects and rejects[0]["seriesConsistency"] == 30
+    assert rejects[0]["outcome"] == "regenerate"
 
 
 def test_series_reject_feedback_reaches_regeneration_prompt(monkeypatch):
@@ -240,6 +241,49 @@ def test_series_reject_on_last_attempt_ships_instead_of_dropping(monkeypatch):
     assert result["qc_scores"]["outcome"] == "regenerate"  # 판정은 감추지 않는다
 
 
+def test_axis_edit_consumes_budget_so_no_extra_generation(monkeypatch):
+    """axis 편집이 이번 attempt 를 썼으면 D축 reject 여도 재생성하지 않는다.
+
+    codex 지적: 편집으로 예산을 쓰고 또 생성하면 "생성 + 편집 <= max_attempts" 불변식이
+    깨져 한 attempt 번호에 생성성 호출이 두 번 들어간다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    async def fake_series(app, pool, s, job_id, user_id, project_id, candidate, attempt, res):
+        return {"consistency": 10, "inconsistencies": ["완전 다름"]}
+
+    async def fake_axis(**kw):
+        return kw["res"], True  # 편집 발생 = 예산 소비
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    result, g, r2, _emits = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=2, verdicts=[], image_qc="enforce",
+        p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
+            "series_consistency": None, "critical_errors": []})
+    assert len(g.calls) == 1, "편집이 예산을 썼는데 추가 생성이 일어났다"
+    assert result is not None and len(r2.puts) == 1
+    assert result["qc_scores"]["salvaged"] is True  # 재생성 못 하니 구제 출고
+
+
+def test_final_reject_feedback_includes_critical_errors(monkeypatch):
+    """치명 오류가 있으면 재생성 프롬프트가 그걸 먼저 말해야 한다."""
+    import test_mannequin_axis_qc as harness
+
+    async def fake_series(app, pool, s, job_id, user_id, project_id, candidate, attempt, res):
+        return {"consistency": 99, "inconsistencies": []}
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    _r, g, _r2, _e = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=2, verdicts=[], image_qc="enforce",
+        p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 99, "physical_naturalness": 99, "image_quality": 99,
+            "series_consistency": None, "critical_errors": ["logo altered"]})
+    assert len(g.calls) == 2, "치명 오류는 점수와 무관하게 재생성이어야 한다"
+    assert "CRITICAL" in g.calls[1]["prompt"] and "logo altered" in g.calls[1]["prompt"]
+
+
 def test_series_reject_does_not_leave_orphan_r2_object(monkeypatch):
     """D축 재생성 분기는 **R2 저장 전에** 일어나야 한다.
 
@@ -248,6 +292,6 @@ def test_series_reject_does_not_leave_orphan_r2_object(monkeypatch):
     """
     import inspect
     src = inspect.getsource(mannequin_job._run_candidate)
-    reject_at = src.index('"status": "series_qc_reject"')
+    reject_at = src.index('"status": "final_qc_reject"')
     put_at = src.index("r2.put_bytes")
-    assert reject_at < put_at, "series_qc_reject 분기가 R2 저장보다 뒤에 있다 — 고아 객체가 쌓인다"
+    assert reject_at < put_at, "final_qc_reject 분기가 R2 저장보다 뒤에 있다 — 고아 객체가 쌓인다"

@@ -142,7 +142,9 @@ async def main() -> int:
                     failed += 1
                     continue
                 try:
-                    p2 = await image_qc.verdict(s, prod_imgs, cut_img)
+                    # 마네킹 경로와 동일하게 4축 점수까지 받는다 — 임계(90/75)를 실 분포로
+                    # 캘리브레이션하려면 verdict 만으로는 부족하다.
+                    p2 = await image_qc.verdict(s, prod_imgs, cut_img, scored=True)
                 except Exception as e:
                     # 판정 실패도 분포의 일부다 — 성공만 기록하면 생존 편향이 생긴다.
                     # jsonl 에도 남긴다: 출력만 하면 누적 결과에서 실패율이 통째로 사라진다.
@@ -166,6 +168,8 @@ async def main() -> int:
                     "verdict": p2.get("verdict"),
                     "mismatches": p2.get("mismatches") or [],
                     "correctionPrompt": p2.get("correctionPrompt"),
+                    **{k: p2.get(k) for k in image_qc.SCORE_KEYS},
+                    "critical_errors": p2.get("critical_errors") or [],
                 }
                 sink.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 sink.flush()  # 중단돼도 진척 보존(멱등)

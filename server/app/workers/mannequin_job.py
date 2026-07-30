@@ -351,6 +351,35 @@ async def _apply_series_qc(*, app, pool, s, job_id, user_id, project_id, candida
     return out
 
 
+def merge_qc_scores(p2, series, *, salvaged: bool = False) -> dict | None:
+    """A~C(image_qc) + D(series) 를 한 스냅샷으로 합치고 최종 outcome 을 계산한다 (순수).
+
+    판정이 여러 곳에 흩어지면 "API 엔 재생성 필요라 적혀 있는데 성공 컷으로 출고되는" 모순이
+    생긴다(codex 2026-07-31). 4축 합류·outcome·salvaged 를 여기 한 곳에서만 만든다.
+    """
+    if not isinstance(p2, dict) and series is None:
+        return None
+    p2d = p2 if isinstance(p2, dict) else {}
+    out = {k: p2d.get(k) for k in image_qc.SCORE_KEYS}
+    if series is not None:
+        out["series_consistency"] = series["consistency"]
+        out["series_inconsistencies"] = series["inconsistencies"]
+    out["critical_errors"] = p2d.get("critical_errors") or []
+    out["salvaged"] = salvaged
+    return out
+
+
+def final_decision(s, scores: dict | None) -> str:
+    """출고 직전 단일 판정 → ship | retry (순수).
+
+    `score_outcome` 이 등급(auto_pass/needs_review/regenerate)이라면 이건 **행동**이다.
+    게이팅은 enforce 에서만 — off/shadow 는 관측이므로 무엇이 나와도 출고한다.
+    """
+    if s.image_qc != "enforce" or not scores:
+        return "ship"
+    return "retry" if score_outcome(s, scores) == "regenerate" else "ship"
+
+
 def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
     """생성 컷 게이팅 결정 (순수) → (pillow_reject, p2_reject).
 
@@ -481,21 +510,18 @@ async def _run_candidate(
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "image_qc_failed",
                     "error": type(e).__name__, "message": str(e)[:200]})
-        # 게이팅: Pillow QC + AG-P2. 둘 다 통과면 채택(off/shadow 는 항상 통과 — 기존 동작 불변).
+        # **사전 게이트** — 잘못된 옷을 axis/bust 편집하면 그 정체성이 보존되므로, 편집 전에
+        # 한 번 거른다. 최종 출고 판정은 여기가 아니라 아래 final_decision 하나가 내린다.
         pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
-        # 마지막 attempt 가 reject 여도 잡을 통째로 실패시키지 않는다 — 셀러가 크레딧만 쓰고
-        # 빈손으로 끝나는 것보다, 최선본을 "검수 필요"로 내보내고 사람이 판단하게 하는 편이 낫다.
-        # (기존엔 이 경로가 곧장 None → 후보 드롭 → 잡 실패였다.)
         salvaged = False
         if p2_reject:
-            # reject 후보를 점수와 함께 보관해 둔다 — 예산 소진 시 "마지막 시도"가 아니라
-            # **최선본**을 구제하기 위해서다. 1차 70점 / 2차 20점인데 20점을 내보내면
-            # 재시도가 오히려 셀러에게 손해가 된다.
+            # reject 후보를 점수와 함께 보관 — 예산 소진 시 "마지막 시도"가 아니라 **최선본**을
+            # 구제하기 위해서다. 1차 70점 / 2차 20점인데 20점을 내보내면 재시도가 손해가 된다.
             if _is_better_candidate(s, p2, best_reject[1] if best_reject else None):
-                best_reject = (res, p2)
+                best_reject = (res, p2, None)
             if attempt >= s.mannequin_max_attempts:
                 if best_reject and best_reject[1] is not p2:
-                    res, p2 = best_reject  # 더 나은 이전 후보로 되돌린다
+                    res, p2, _ = best_reject  # 더 나은 이전 후보로 되돌린다
                 p2_reject, salvaged = False, True
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
@@ -504,7 +530,7 @@ async def _run_candidate(
             pre_edit_hash = hashlib.sha256(res.image).hexdigest()  # 편집 여부 판정용
             # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
             # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
-            res, _ = await _apply_axis_qc(
+            res, axis_spent = await _apply_axis_qc(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
                 attempt=attempt, model=model, res=res, prod_imgs=prod_imgs,
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash)
@@ -534,38 +560,43 @@ async def _run_candidate(
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, user_id=user_id,
                 project_id=project_id, candidate=candidate, attempt=attempt, res=res)
-            # 채택본의 QC 점수 — finalize → mannequin_cuts.qc_scores → API 까지 운반한다.
-            # 여기서 안 실으면 판정 결과가 job_events 에만 남고 셀러·검수 화면에서는 영원히
-            # 못 본다(프론트는 SSE 를 안 쓰고 result 봉투만 읽는다).
-            qc_scores = None
-            if isinstance(p2, dict) or series is not None:
-                p2d = p2 if isinstance(p2, dict) else {}
-                qc_scores = {k: p2d.get(k) for k in image_qc.SCORE_KEYS}
-                # D축은 별도 판정자가 채운다 — 여기서 합류시켜야 4축이 한 곳에 모인다.
-                if series is not None:
-                    qc_scores["series_consistency"] = series["consistency"]
-                    qc_scores["series_inconsistencies"] = series["inconsistencies"]
-                qc_scores["critical_errors"] = p2d.get("critical_errors") or []
-                # 4축 전부 합친 뒤의 판정. salvaged 여도 이 값을 **덮지 않는다** —
-                # critical_errors("must not ship")를 needs_review 로 눕히면 프롬프트 계약이
-                # 깨진다. 구제 여부는 별도 필드로 남겨 검수자가 맥락을 알게 한다.
-                qc_scores["outcome"] = score_outcome(s, qc_scores)
-                qc_scores["salvaged"] = salvaged
-            # D축이 재생성 판정을 냈으면 실제로 재생성한다. 관측만 하고 내보내면 API 에
-            # "재생성 필요"라 표시된 컷이 성공 컷으로 출고되는 모순이 된다. 예산이 남아 있을
-            # 때만 — 소진 시엔 아래 저장 경로로 계속 가서 그대로 출고한다(빈손보다 낫다).
+            # ── 최종 판정 (단일 지점) ────────────────────────────────────────
+            # A~C·D 를 한 스냅샷으로 합쳐 여기서 한 번만 결정한다. 판정이 흩어지면 "API 엔
+            # 재생성 필요라 적혀 있는데 성공 컷으로 나가는" 모순이 생긴다(codex 2026-07-31).
+            qc_scores = merge_qc_scores(p2, series, salvaged=salvaged)
+            # 예산: axis 편집이 이번 attempt 를 이미 소비했으면 재생성하지 않는다 —
+            # "생성 + 편집 <= max_attempts" 불변식(_apply_axis_qc 와 공유)을 지키기 위해서다.
+            budget_left = attempt < s.mannequin_max_attempts and not axis_spent
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
-            if (series is not None and s.image_qc == "enforce"
-                    and (qc_scores or {}).get("outcome") == "regenerate"
-                    and attempt < s.mannequin_max_attempts):
+            if final_decision(s, qc_scores) == "retry" and budget_left and not salvaged:
                 await _emit(pool, job_id, "step", {
-                    "candidate": candidate, "attempt": attempt, "status": "series_qc_reject",
-                    "seriesConsistency": series["consistency"]})
-                if _is_better_candidate(s, p2, best_reject[1] if best_reject else None):
-                    best_reject = (res, p2)  # 구제 후보에 포함 — D축 사유도 재시도 대상이다
-                feedback = ("CONSISTENCY: match the studio setup of this shop's existing cuts — "
-                            + "; ".join(series["inconsistencies"][:3]))
+                    "candidate": candidate, "attempt": attempt, "status": "final_qc_reject",
+                    "outcome": score_outcome(s, qc_scores),
+                    "seriesConsistency": (series or {}).get("consistency")})
+                # 편집 완료 이미지 + A~D 전체 스냅샷을 함께 보관 — 구제 시 되돌릴 대상이다.
+                if _is_better_candidate(s, qc_scores, best_reject[1] if best_reject else None):
+                    best_reject = (res, qc_scores, series)
+                parts = []
+                if (qc_scores or {}).get("critical_errors"):
+                    parts.append("CRITICAL: " + "; ".join(qc_scores["critical_errors"][:3]))
+                if series and series["inconsistencies"]:
+                    parts.append("CONSISTENCY: match the studio setup of this shop's existing "
+                                 "cuts — " + "; ".join(series["inconsistencies"][:3]))
+                if isinstance(p2, dict) and p2.get("correctionPrompt"):
+                    parts.append("CORRECTION (generate the SAME garment as the product photos): "
+                                 + p2["correctionPrompt"])
+                feedback = "\n\n".join(parts)
                 continue
+            # 예산 소진인데 최종 판정이 retry 라면 최선본으로 되돌려 구제 출고한다.
+            if final_decision(s, qc_scores) == "retry" and not salvaged:
+                if best_reject and _is_better_candidate(s, best_reject[1], qc_scores):
+                    res, qc_scores, _series = best_reject
+                qc_scores = {**(qc_scores or {}), "salvaged": True}
+                await _emit(pool, job_id, "step", {
+                    "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
+                    "reason": "budget_exhausted", "outcome": score_outcome(s, qc_scores)})
+            if qc_scores is not None:
+                qc_scores["outcome"] = score_outcome(s, qc_scores)
             ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -594,9 +625,14 @@ async def _run_candidate(
         parts = []
         if pillow_reject:
             parts.append(qc.format_qc_feedback(verdict))
-        if p2_reject and isinstance(p2, dict) and p2.get("correctionPrompt"):
-            parts.append("CORRECTION (generate the SAME garment as the product photos): "
-                         + p2["correctionPrompt"])
+        if p2_reject and isinstance(p2, dict):
+            # 치명 오류를 먼저 말한다 — correctionPrompt 가 비어 있을 때(치명 오류만 있고
+            # mismatches 는 없는 경우) 재생성이 아무 지시도 못 받고 같은 결과를 반복한다.
+            if p2.get("critical_errors"):
+                parts.append("CRITICAL: " + "; ".join(p2["critical_errors"][:3]))
+            if p2.get("correctionPrompt"):
+                parts.append("CORRECTION (generate the SAME garment as the product photos): "
+                             + p2["correctionPrompt"])
         feedback = "\n\n".join(parts)
     return None  # max_attempts 내 통과본 없음 → 이 후보 드롭(부분 성공 허용)
 
