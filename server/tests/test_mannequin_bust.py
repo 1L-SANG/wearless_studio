@@ -30,41 +30,59 @@ def test_should_apply_only_for_women_with_flag_on():
 
 
 def test_build_prompt_substitutes_target_and_keeps_calibrated_wording():
+    """v3(핏 인식본)의 계약. **v1 의 최대치 압박 문구는 의도적으로 빠졌다.**
+
+    v1 은 "과소 변화는 FAILURE", "확신 없으면 go FURTHER", "허리를 눈에 띄게 SLIMMER" 로
+    최대한 밀어붙이게 했다. 짝 비교 n=10 실측: 그 문구들이 오버사이즈 티를 몸에 붙는
+    미니원피스로 바꿔 **핏 깨짐 7/10**, 옷을 조여서 이긴 편익 7건을 만들었다. v3 는 0/10.
+    그래서 여기서 잠그는 것은 "얼마나 세게 미느냐"가 아니라 **무엇을 지키느냐**다.
+    """
     prompt = mannequin_bust.build_prompt(load_bust_prompt_template())
     assert "${" not in prompt
     # 실측 캘리브레이션으로 고른 크기 — 이 배수가 결과 크기를 결정한다.
     assert "a full C CUP" in prompt
     assert "1.5 times" in prompt
-    # 스파이크에서 실제로 효과를 만든 요소들. 빠지면 변화폭이 0에 가까워진다(2026-07-30 실측).
-    assert "FAILURE of this task" in prompt          # 과소 변화 = 실패 선언
-    assert "go FURTHER" in prompt
-    assert "TENTS over the bust apex" in prompt      # 천이 몸 변화를 보고해야 보인다
+    # 변화가 보이게 만드는 메커니즘(2026-07-30 스파이크) — 이건 유지한다.
+    assert "TENTS over the bust apex" in prompt
     assert "falls AWAY from the stomach" in prompt
-    # 실루엣 — 슬림 아워글래스. 골반 존재감을 "골반을 넓혀서"가 아니라 "허리를 좁혀서" 만든다.
-    # 1차 스파이크에서 torso·hips 를 함께 키웠더니 허리가 +8.7% 굵어져 전신이 "뚱뚱하게"
-    # 나왔으므로, 방향을 반대로 주고 골반 폭 상한을 명시한다(2026-07-30).
-    assert "SLIMMER waist" in prompt
+    # 핏 보존이 크기보다 위다. 이 우선순위가 v3 의 핵심이고, 빠지면 v1 회귀다.
+    assert "WHAT OUTRANKS WHAT" in prompt
+    assert "The garment's FIT is untouchable" in prompt
+    assert "A drawn-in waist on a loose garment is WRONG" in prompt
+    assert "GIVE UP THE VOLUME" in prompt
+    # 프린트·레터링 보존 — v1 에서 'text or logo altered' 가 실제로 발생했다.
+    assert "letter for letter" in prompt
+    # 전신 비대화·골반 확대 방지 — 1차 스파이크 실패 모드의 직접 가드(유지).
     assert "HIP WIDTH MUST NOT INCREASE" in prompt
-    assert "never from the hips spreading out" in prompt
-    # 전신 비대화 방지 — 1차 실패 모드의 직접 가드.
     assert "NOT read as heavier" in prompt
+    # 프레이밍 — v2 가 한 건에서 전신 프레임을 잘랐다. v3 에서 하드 룰로 승격.
+    assert "The FRAMING is unchanged" in prompt
     # 앞섬 잠금 — 2패스가 가슴 공간을 만드느라 단추를 풀어버린다(1패스 4/4 잠김 vs 2패스 풀림).
     assert "stays done up" in prompt
     assert "Do NOT open, unbutton, unzip" in prompt
     assert "STAYING FASTENED" in prompt
-    # "잠긴 건 잠긴 채로" 만으로는 4회 중 1회가 목 부분을 더 벌렸다. 원본 셔츠 사진은 맨 위
-    # 단추가 풀린 상태(사진 관례)라 어디까지가 원래 열림인지 판단 여지가 있었다. 판정 가능한
-    # 기준(잠긴 단추 수·개구부 깊이가 입력보다 나빠지지 않을 것)으로 대체한다(2026-07-30).
+    # "잠긴 건 잠긴 채로" 만으로는 4회 중 1회가 목 부분을 더 벌렸다. 판정 가능한 기준
+    # (잠긴 단추 수·개구부 깊이가 입력보다 나빠지지 않을 것)으로 대체한다(2026-07-30).
     assert "THE SAME OR MORE" in prompt
     assert "NO LOWER on the body" in prompt
-    # untuck 교정 — 1패스의 untuck 지시는 실측 2/4 만 지켜진다(확률적). 지시를 더 세게 쓰는 건
-    # 수확 체감이라, 이미 여성 컷마다 도는 이 패스에서 결과를 교정한다. 보존이 아니라 강제다:
-    # 들어와 있으면 빼내고, 이미 나와 있으면 그대로 둔다(2026-07-30).
+    # untuck 교정 — 들어와 있으면 빼내고, 이미 나와 있으면 그대로 둔다(2026-07-30).
     assert "PULL IT OUT" in prompt
     assert "COMPLETELY OUTSIDE" in prompt
     assert "unbroken visible line" in prompt
     # 밑단 모양·길이는 건드리지 않는다 — 빼내는 것이지 늘리는 게 아니다.
     assert "curved shirttail hem stays" in prompt
+
+
+def test_retired_maximal_push_wording_stays_out():
+    """v1 의 과편집 유발 문구가 되살아나면 안 된다 — 회귀 알람.
+
+    이 문구들은 취향이 아니라 **측정으로 기각됐다**(핏 깨짐 7/10). 누가 "변화가 약한데?"
+    라고 되돌리기 쉬운 자리라 명시적으로 막는다. 크기를 키우려면 BUST_TARGET 배수를 올리고
+    다시 재라 — 압박 문구를 되살리는 게 아니라.
+    """
+    prompt = mannequin_bust.build_prompt(load_bust_prompt_template())
+    for retired in ("FAILURE of this task", "go FURTHER", "Err on the side of too much"):
+        assert retired not in prompt, retired
 
 
 def test_build_prompt_rejects_unresolved_token():

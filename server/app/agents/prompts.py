@@ -21,7 +21,10 @@ logger = logging.getLogger(__name__)
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_generate_v1.txt")
-_BUST_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_bust_v1.txt")
+# v3 = 핏 인식본. v1 은 옷 종류와 무관하게 허리를 조이게 해서 오버사이즈 티를 몸에 붙는
+# 미니원피스로 바꿨다(2026-07-31 짝 비교 n=10: 핏 깨짐 v1 7/10 → v3 0/10, 핏 유지하며 이긴
+# 순편익 2 → 4). v1·v2 는 이력 보존용으로 남긴다 — ab_bust_pass.py --variant 로 재비교 가능.
+_BUST_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_bust_v3.txt")
 
 
 def _sanitize(value: Any) -> str:
