@@ -521,11 +521,14 @@ async def _run_candidate(
         if p2_reject:
             # reject 후보를 점수와 함께 보관 — 예산 소진 시 "마지막 시도"가 아니라 **최선본**을
             # 구제하기 위해서다. 1차 70점 / 2차 20점인데 20점을 내보내면 재시도가 손해가 된다.
-            if _is_better_candidate(s, p2, best_reject[1] if best_reject else None):
-                best_reject = (res, p2, None)
+            # 두 번째 요소는 **항상 merge 된 shape** 으로 통일한다. 경로마다 p2(verdict·
+            # mismatches 포함)와 qc_scores 가 섞이면, 구제 시 API 계약에 없는 키가 저장된다.
+            pre_scores = merge_qc_scores(p2, None)
+            if _is_better_candidate(s, pre_scores, best_reject[1] if best_reject else None):
+                best_reject = (res, pre_scores, None, p2)
             if attempt >= s.mannequin_max_attempts:
-                if best_reject and best_reject[1] is not p2:
-                    res, p2, _ = best_reject  # 더 나은 이전 후보로 되돌린다
+                if best_reject and best_reject[1] is not pre_scores:
+                    res, _scores, _series, p2 = best_reject  # 더 나은 이전 후보로 되돌린다
                 p2_reject, salvaged = False, True
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
@@ -579,7 +582,7 @@ async def _run_candidate(
                     "seriesConsistency": (series or {}).get("consistency")})
                 # 편집 완료 이미지 + A~D 전체 스냅샷을 함께 보관 — 구제 시 되돌릴 대상이다.
                 if _is_better_candidate(s, qc_scores, best_reject[1] if best_reject else None):
-                    best_reject = (res, qc_scores, series)
+                    best_reject = (res, qc_scores, series, p2)
                 parts = []
                 if (qc_scores or {}).get("critical_errors"):
                     parts.append("CRITICAL: " + "; ".join(qc_scores["critical_errors"][:3]))
@@ -594,7 +597,7 @@ async def _run_candidate(
             # 예산 소진인데 최종 판정이 retry 라면 최선본으로 되돌려 구제 출고한다.
             if final_decision(s, qc_scores) == "retry" and not salvaged:
                 if best_reject and _is_better_candidate(s, best_reject[1], qc_scores):
-                    res, qc_scores, _series = best_reject
+                    res, qc_scores, _series, _p2 = best_reject
                 qc_scores = {**(qc_scores or {}), "salvaged": True}
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",

@@ -48,6 +48,38 @@ def test_model_declares_qc_scores_or_response_filters_it():
     assert dumped["qcScores"] == _SCORES
 
 
+QC_SCORE_KEYS = {
+    "product_fidelity", "physical_naturalness", "image_quality", "series_consistency",
+    "series_inconsistencies", "critical_errors", "outcome", "salvaged",
+}
+
+
+def test_merge_qc_scores_stays_within_contract():
+    """저장되는 qc_scores 는 QcScores 계약(types.js) 키만 담아야 한다.
+
+    구제 경로에서 `best_reject` 에 image_qc 원본(p2)을 담았다가 그대로 저장하면
+    `verdict`·`mismatches`·`correctionPrompt` 가 섞여 들어간다. 프론트가 계약 밖 키를
+    보게 되고, 마이그레이션 주석의 키 목록과도 어긋난다.
+    """
+    from app.workers.mannequin_job import merge_qc_scores
+
+    p2 = {"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "fix",
+          "product_fidelity": 70, "physical_naturalness": 80, "image_quality": 90,
+          "series_consistency": None, "critical_errors": ["logo altered"]}
+    merged = merge_qc_scores(p2, {"consistency": 88, "inconsistencies": ["배경 밝음"]},
+                             salvaged=True)
+    assert set(merged) <= QC_SCORE_KEYS, f"계약 밖 키: {set(merged) - QC_SCORE_KEYS}"
+    for leaked in ("verdict", "mismatches", "correctionPrompt"):
+        assert leaked not in merged
+    assert merged["series_consistency"] == 88
+    assert merged["salvaged"] is True
+
+
+def test_merge_qc_scores_none_when_no_signal():
+    from app.workers.mannequin_job import merge_qc_scores
+    assert merge_qc_scores(None, None) is None
+
+
 def test_missing_scores_stay_none_not_crash():
     """QC off·구 행은 qc_scores 가 null — 표시 경로가 죽으면 안 된다."""
     assert _cut_to_api(_row(qc_scores=None))["qcScores"] is None
