@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import facemarket, repo
-from .agents import content_roles, cut_generator, fit_axes, mannequin, product_analyst, style_affinity
+from .agents import content_roles, cut_generator, fit_axes, mannequin, mannequin_body, product_analyst, style_affinity
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import input_qc, matching, retrieval
@@ -142,6 +142,18 @@ async def _fit_profile_snapshot(
         if not has_match:
             profile = {k: v for k, v in profile.items() if k not in ("matchCut", "matchingFit")}
     return {"version": 1, "profile": profile, "adjustedAxes": adjusted}
+
+
+async def _mannequin_body_snapshot(conn, project_id: str) -> dict:
+    """잡 생성 시점 체형 스냅샷 — 워커의 불변 입력(fitProfileSnapshot 과 동일 규율).
+
+    체형은 프롬프트에 들어가지 않고 베이스 마네킹 에셋 선택에만 쓰인다. gender 는 provenance
+    용으로만 싣는다 — 워커는 자신의 select_base_gender 결과를 쓴다.
+    """
+    analysis = await repo.get_analysis(conn, project_id) or {}
+    gender = mannequin.select_base_gender(analysis)
+    return {"version": 1, "gender": gender,
+            "body": mannequin_body.normalize(analysis.get("mannequinBody"), gender)}
 
 
 def _bad_request(code: str, message: str) -> HTTPException:
@@ -925,9 +937,11 @@ async def generate_mannequins(
         # 합류(created=False)는 게이트·예약 없이 기존 job 반환 → 동시 재시도/입력검증으로 막지 않음.
         # 합류 시 기존 job payload 가 정본 — 아래 스냅샷은 신규 job 에만 실린다.
         snapshot = await _fit_profile_snapshot(conn, project_id, None)
+        body_snapshot = await _mannequin_body_snapshot(conn, project_id)
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
-            payload={"mode": "generate", "fitProfileSnapshot": snapshot}, idempotency_key=scoped_key,
+            payload={"mode": "generate", "fitProfileSnapshot": snapshot,
+                     "mannequinBodySnapshot": body_snapshot}, idempotency_key=scoped_key,
             credits_reserved=cost,
             metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
@@ -1035,10 +1049,12 @@ async def regenerate_mannequins(
             body.get("fitProfile"),
             validate_matching_fit=True,
         )
+        body_snapshot = await _mannequin_body_snapshot(conn, project_id)
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload={"mode": "regenerate", "fitProfile": body.get("fitProfile"),
-                     "fitProfileSnapshot": snapshot},
+                     "fitProfileSnapshot": snapshot,
+                     "mannequinBodySnapshot": body_snapshot},
             idempotency_key=scoped_key, credits_reserved=cost,
             metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백

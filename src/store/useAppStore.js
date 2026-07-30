@@ -61,22 +61,9 @@ const initialFlow = {
   resumePath: null,
 };
 
-// 분석 확정 후 이미 생성된 마네킹을 다시 만들지 판단하는 탭 세션 전용 신호.
-// flow 영속 대상에 넣지 않는다: 새 브라우저 세션의 복원은 명시적 이어서일 뿐, 과거 탭의
-// 미확정 편집 의도까지 재생성 트리거로 복원하면 안 된다.
-const generationRelevantAnalysisKeys = new Set([
-  'matchClothing',
-  'clothingType',
-  'subCategory',
-  'customCategory',
-  'targetGenders',
-  'fit',
-  'fitProfile',
-]);
-
-export function isGenerationRelevantAnalysisPatch(patch) {
-  return !!patch && Object.keys(patch).some((key) => generationRelevantAnalysisKeys.has(key));
-}
+// 재생성 트리거 판정(순수 로직)은 src/lib/generationRelevance.js 로 분리 — node --test 로
+// 직접 단위 테스트하기 위해 이 스토어(Vite 전용 @/ 임포트·import.meta.env 의존)에서 뺐다.
+export { isGenerationRelevantAnalysisPatch } from '@/lib/generationRelevance.js';
 
 const initialMannequinJob = () => ({
   status: 'idle', // idle | running | error

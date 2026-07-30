@@ -103,7 +103,8 @@ class _FakePool:
         return _cm()
 
 
-def _wire_worker(monkeypatch, *, analysis, payload, calls):
+def _wire_worker(monkeypatch, *, analysis, payload, calls, missing_asset_ids=(),
+                  settings_overrides=None):
     async def get_product(conn, pid):
         return {"name": "티", "clothing_type": "top",
                 "colors": [{"isBase": True, "images": [{"id": "a1", "slot": "Front"}]}]}
@@ -112,6 +113,9 @@ def _wire_worker(monkeypatch, *, analysis, payload, calls):
         return dict(analysis)
 
     async def get_asset_for_user(conn, uid, aid):
+        calls.setdefault("get_asset", []).append(aid)
+        if aid in missing_asset_ids:  # 매트릭스 오설정(에셋 미제작) 재현용
+            return None
         return {"id": aid, "mime_type": "image/png", "r2_key": f"{aid}.png"}
 
     async def finalize_success(conn, **kw):
@@ -138,8 +142,10 @@ def _wire_worker(monkeypatch, *, analysis, payload, calls):
         monkeypatch.setattr(mannequin_job.repo, name, fn)
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
     monkeypatch.setattr(mannequin_job, "_run_candidate", fake_run_candidate)
-    settings = make_settings(base_mannequin_women_asset_id="bw", base_mannequin_men_asset_id="bm",
-                             r2_bucket="bucket")
+    settings_kwargs = dict(base_mannequin_women_asset_id="bw", base_mannequin_men_asset_id="bm",
+                            r2_bucket="bucket")
+    settings_kwargs.update(settings_overrides or {})
+    settings = make_settings(**settings_kwargs)
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=settings, pool=_FakePool(),
         r2=types.SimpleNamespace(get_bytes=lambda key: b"img"), gemini=None))
@@ -210,6 +216,87 @@ def test_worker_malformed_snapshot_fails_loudly(monkeypatch):
     asyncio.run(mannequin_job.run_mannequin_job(app, job))
     assert calls["run"] == []
     assert calls["failure"] and calls["failure"][0]["metadata"]["error"] == "invalid_fit_profile_snapshot"
+
+
+# ---------- 베이스 마네킹 에셋 선택 (체형 매트릭스, Task 4) ----------
+
+_BODY_MATRIX = {"slim_volume": "asset-slim-volume", "volume_volume": "asset-volume-volume"}
+
+
+def test_worker_selects_matrix_asset_and_records_body_in_metadata(monkeypatch):
+    # 매트릭스 히트 → base_asset_id 로 기본(bw)이 아닌 매트릭스 asset 을 조회하고,
+    # 성공 metadata 에 실제 쓰인 체형이 남아야 재현 가능(review finding #1).
+    calls = {"success": [], "failure": [], "emits": [], "run": []}
+    app, job = _wire_worker(
+        monkeypatch,
+        analysis={"targetGenders": ["women"]},
+        payload={"mode": "generate",
+                 "mannequinBodySnapshot": {"version": 1, "gender": "women",
+                                           "body": {"bust": "slim", "hip": "volume"}}},
+        calls=calls,
+        settings_overrides={"base_mannequin_women_matrix": _BODY_MATRIX})
+    asyncio.run(mannequin_job.run_mannequin_job(app, job))
+    assert calls["failure"] == []
+    assert calls["get_asset"][0] == "asset-slim-volume"  # 기본(bw) 아닌 매트릭스 asset 조회
+    assert calls["success"][0]["metadata"]["mannequinBody"] == {"bust": "slim", "hip": "volume"}
+
+
+def test_worker_falls_back_to_default_asset_when_matrix_asset_missing(monkeypatch):
+    # 매트릭스에 오타난/미제작 asset id → get_asset_for_user 가 None. 셀러 잡을 죽이지 않고
+    # 현행 단일 베이스로 물러나며, metadata 의 mannequinBody 도 함께 초기화돼야 한다.
+    calls = {"success": [], "failure": [], "emits": [], "run": []}
+    app, job = _wire_worker(
+        monkeypatch,
+        analysis={"targetGenders": ["women"]},
+        payload={"mode": "generate",
+                 "mannequinBodySnapshot": {"version": 1, "gender": "women",
+                                           "body": {"bust": "slim", "hip": "volume"}}},
+        calls=calls,
+        missing_asset_ids={"asset-slim-volume"},
+        settings_overrides={"base_mannequin_women_matrix": _BODY_MATRIX})
+    asyncio.run(mannequin_job.run_mannequin_job(app, job))
+    assert calls["failure"] == []  # base_mannequin_missing 으로 죽지 않음
+    assert calls["get_asset"][0] == "asset-slim-volume"  # 매트릭스 asset 시도
+    assert calls["get_asset"][1] == "bw"  # 미제작 → 현행 베이스로 재조회
+    assert calls["success"][0]["metadata"]["mannequinBody"] is None  # 폴백이 body 초기화
+
+
+def test_worker_men_ignore_matrix_entirely(monkeypatch):
+    # 남성은 체형 매트릭스가 없다 — select_base_gender 가 men 이면 매트릭스에 무엇이 있든
+    # 현행 남성 베이스만 조회하고 metadata 의 mannequinBody 는 None.
+    calls = {"success": [], "failure": [], "emits": [], "run": []}
+    app, job = _wire_worker(
+        monkeypatch,
+        analysis={"targetGenders": ["men"]},
+        payload={"mode": "generate",
+                 "mannequinBodySnapshot": {"version": 1, "gender": "women",
+                                           "body": {"bust": "volume", "hip": "volume"}}},
+        calls=calls,
+        settings_overrides={"base_mannequin_women_matrix": _BODY_MATRIX})
+    asyncio.run(mannequin_job.run_mannequin_job(app, job))
+    assert calls["failure"] == []
+    assert calls["get_asset"][0] == "bm"  # 남성 베이스, 매트릭스 무시
+    assert calls["success"][0]["metadata"]["gender"] == "men"
+    assert calls["success"][0]["metadata"]["mannequinBody"] is None
+
+
+def test_worker_men_missing_base_asset_fails_loudly_not_women_fallback(monkeypatch):
+    # 남성 잡의 단일 베이스(bm)가 없으면 여성 베이스(bw)로 조용히 대체되면 안 된다 — 성별이
+    # 뒤바뀐 컷이 나갈 수 있다. "매트릭스 오설정 폴백"은 여성 매트릭스 전용이라
+    # gender != "men" 가드가 지켜져야 base_mannequin_missing 으로 죽는다(review round 2).
+    calls = {"success": [], "failure": [], "emits": [], "run": []}
+    app, job = _wire_worker(
+        monkeypatch,
+        analysis={"targetGenders": ["men"]},
+        payload={"mode": "generate"},
+        calls=calls,
+        missing_asset_ids={"bm"})  # 남성 베이스만 없음. 여성 기본(bw)은 정상 조회 가능.
+    asyncio.run(mannequin_job.run_mannequin_job(app, job))
+    assert calls["run"] == []
+    assert calls["success"] == []
+    assert calls["failure"] and calls["failure"][0]["metadata"]["error"] == "base_mannequin_missing"
+    assert calls["failure"][0]["metadata"]["gender"] == "men"
+    assert "bw" not in calls["get_asset"]  # 여성 베이스로 재조회(=조용한 성별 대체)가 없었어야 함
 
 
 # ---------- 관측 이벤트 (prompt_rendered 해시) ----------

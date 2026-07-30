@@ -19,6 +19,7 @@ log = logging.getLogger("wearless.mannequin_job")
 
 from .. import repo
 from ..agents import image_qc, mannequin, mannequin_fit_qc
+from ..agents import mannequin_body
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
 from ..agents.prompts import load_prompt_template, render_mannequin_prompt
@@ -40,6 +41,19 @@ def _fit_profile_for_match_image(profile: dict | None, has_match_image: bool) ->
     if not profile or has_match_image:
         return profile
     return {k: v for k, v in profile.items() if k not in ("matchCut", "matchingFit")}
+
+
+def _mannequin_body_from_job(job: dict, analysis: dict, gender: str) -> dict | None:
+    """체형은 잡 생성 시점 스냅샷이 정본(fitProfileSnapshot 과 동일 규율).
+
+    워커가 analysis 를 재독하면 잡 생성↔실행 사이의 저장 경합으로 다른 체형이 조용히
+    쓰인다. 키가 없는 legacy 잡과 알 수 없는 버전만 analysis 로 폴백한다.
+    normalize 는 멱등이라 스냅샷을 다시 정규화해도 값이 변하지 않는다.
+    """
+    snap = (job.get("payload") or {}).get("mannequinBodySnapshot")
+    if isinstance(snap, dict) and snap.get("version") == 1:
+        return mannequin_body.normalize(snap.get("body"), gender)
+    return mannequin_body.normalize(analysis.get("mannequinBody"), gender)
 
 
 _GENERATION_PROGRESS_INTERVAL_SECONDS = 7.0
@@ -403,10 +417,18 @@ async def run_mannequin_job(app, job: dict) -> None:
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
             gender = mannequin.select_base_gender(analysis)
-            base_asset_id = (s.base_mannequin_men_asset_id if gender == "men"
-                             else s.base_mannequin_women_asset_id)
+            body = _mannequin_body_from_job(job, analysis, gender)
+            base_asset_id = mannequin.select_base_asset_id(s, gender, body)
             base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)
                           if base_asset_id else None)
+            if base_asset is None and base_asset_id != s.base_mannequin_women_asset_id \
+                    and gender != "men":
+                # 매트릭스 asset id 오설정 — 셀러 잡을 죽이지 않고 현행 베이스로 물러난다.
+                log.warning("mannequin base matrix asset missing: %s (body=%s)", base_asset_id, body)
+                body = None
+                base_asset_id = s.base_mannequin_women_asset_id
+                base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)
+                              if base_asset_id else None)
             prod_assets = []
             for slot, aid in mannequin.base_color_images(product):
                 a = await repo.get_asset_for_user(conn, user_id, aid)
@@ -559,7 +581,8 @@ async def run_mannequin_job(app, job: dict) -> None:
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, candidates=passed, reserved=reserved, charge=charge,
                 metadata={"creditCostVersion": s.credit_cost_version,
-                          "promptVersion": s.mannequin_prompt_version, "gender": gender})
+                          "promptVersion": s.mannequin_prompt_version, "gender": gender,
+                          "mannequinBody": body})
             await conn.commit()
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
             for c in passed:

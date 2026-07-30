@@ -5,6 +5,7 @@
 실제 바이트 로드·R2 저장·DB 쓰기는 워커/repo가 한다 (ai_agent_modules §3 AG-04).
 """
 
+from . import mannequin_body
 from .prompts import MannequinPromptContext
 
 # 기준 색상 이미지 정렬 순서 (common_data_contract §4 AngleSlot)
@@ -19,6 +20,23 @@ def select_base_gender(analysis: dict) -> str:
     if genders and genders <= men_tokens:  # 전부 남성 토큰
         return "men"
     return "women"
+
+
+def select_base_asset_id(settings, gender: str, body: dict | None) -> str | None:
+    """베이스 마네킹 에셋 id — 여성 체형 매트릭스 우선, 없으면 현행 단일 에셋.
+
+    남성·매트릭스 미설정·조합 미스는 전부 현행 값으로 폴백한다. 그래서 매트릭스 env 없이
+    코드만 먼저 배포해도 동작이 변하지 않는다(배포 순서 무관). 프롬프트는 이 선택을
+    알지 못한다 — "image 1 을 그대로 보존하라"는 계약이 그대로 유지된다.
+    """
+    if gender == "men":
+        return settings.base_mannequin_men_asset_id
+    key = mannequin_body.matrix_key(body)
+    if key:
+        asset_id = (settings.base_mannequin_women_matrix or {}).get(key)
+        if asset_id:
+            return asset_id
+    return settings.base_mannequin_women_asset_id
 
 
 def generation_spec(analysis: dict) -> dict | None:
