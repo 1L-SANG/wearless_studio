@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_generate_v1.txt")
+_BUST_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_bust_v1.txt")
 
 
 def _sanitize(value: Any) -> str:
@@ -53,6 +54,13 @@ def load_prompt_template(settings: Settings) -> str:
     if not os.path.isabs(path):  # 상대경로는 server/ 기준 (CWD 의존 제거)
         path = os.path.join(_SERVER_DIR, path)
     with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def load_bust_prompt_template() -> str:
+    """여성 기본 가슴 2패스 템플릿. 생성 템플릿과 달리 env 오버라이드가 없다 —
+    문구 강도가 실측 캘리브레이션 결과라 배포별로 갈리면 결과 크기가 흔들린다."""
+    with open(_BUST_PROMPT, encoding="utf-8") as f:
         return f.read()
 
 

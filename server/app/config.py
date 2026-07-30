@@ -1,22 +1,7 @@
 """환경 변수 → Settings. backend_integration_plan §9 (인증·CORS) 기준."""
 
 import os
-import json
-from dataclasses import dataclass, field
-
-
-def _json_str_map(raw: str | None) -> dict[str, str]:
-    """JSON object(str→str) 파싱. 실패·형식 불일치는 빈 맵 — 설정 오타가 부팅을 막지 않는다."""
-    if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-    except ValueError:
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {k: v for k, v in data.items()
-            if isinstance(k, str) and isinstance(v, str) and v}
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -83,12 +68,13 @@ class Settings:
     mannequin_axis_qc: str = "off"
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
     mannequin_prompt_version: str = "v1"
+    # 여성 기본 가슴 볼륨 2패스 (2026-07-30 스파이크). 생성된 컷에 "가슴만 바꿔라"를 단독 과제로
+    # 한 번 더 돌린다 — 1패스만으로는 모델이 몸을 표준으로 정규화해 반영되지 않는다.
+    # off | on. 기본 off, 실물 확인 후 on. 켜면 여성 컷당 이미지 호출이 1→2회.
+    # 2패스 실패·거부는 삼키고 1패스 컷을 쓴다(잡을 죽이지 않는다).
+    mannequin_bust_pass: str = "off"
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
-    # 여성 베이스 체형 매트릭스 — {"{bust}_{hip}": assetId}. bust/hip ∈ slim|regular|volume.
-    # regular_regular 은 넣지 않는다(base_mannequin_women_asset_id 가 담당). 미설정·파싱 실패는
-    # 빈 맵 → 전부 현행 단일 에셋 폴백이라 에셋보다 코드를 먼저 배포해도 안전하다.
-    base_mannequin_women_matrix: dict[str, str] = field(default_factory=dict)
     job_dispatcher_enabled: bool = True  # §5
     job_poll_interval_seconds: float = 3.0
     job_lease_timeout_seconds: int = 900
@@ -150,6 +136,13 @@ class Settings:
     fm_face_qc_enabled: bool = False
     fm_face_qc_threshold: float = 0.363  # OpenCV SFace 권장 코사인 동일인 기준선(캘리브 전 잠정)
     fm_face_qc_dir: str | None = None    # SFace/YuNet onnx 디렉터리. None이면 app/data/face_models
+
+
+def _bust_pass() -> str:
+    """MANNEQUIN_BUST_PASS 파싱. 미지값은 off — 알 수 없는 설정으로 여성 전건에 호출이
+    2배가 되는 사고를 막는다(켜는 쪽이 명시적이어야 한다)."""
+    v = os.getenv("MANNEQUIN_BUST_PASS", "off").lower()
+    return v if v in {"off", "on"} else "off"
 
 
 def _image_size() -> str:
@@ -220,9 +213,9 @@ def load_settings() -> Settings:
         mannequin_qc_enabled=(os.getenv("MANNEQUIN_QC_ENABLED", "false").lower() == "true"),
         mannequin_prompt_file=os.getenv("MANNEQUIN_PROMPT_FILE") or None,
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
+        mannequin_bust_pass=_bust_pass(),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
-        base_mannequin_women_matrix=_json_str_map(os.getenv("MANNEQUIN_BASE_WOMEN_MATRIX")),
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
         job_poll_interval_seconds=float(os.getenv("JOB_POLL_INTERVAL_SECONDS", "3")),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),
