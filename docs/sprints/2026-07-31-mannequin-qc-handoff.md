@@ -1,7 +1,7 @@
 # 마네킹컷 QC 고도화 — 인수 리포트 (2026-07-31)
 
 브랜치 `feat/refimages-ab-eval` · 정본 플랜 `.omc/plans/2026-07-30-mannequin-qc-scoring-consistency.md`
-테스트 **983 passed / 97 skipped** (베이스라인 913) · 프론트 **75 passed** · **prod 무접촉**
+테스트 **991 passed / 97 skipped** (베이스라인 913) · 프론트 **75 passed** · **prod 무접촉**
 
 ---
 
@@ -82,6 +82,28 @@ pass율 0% 로 전 생성을 막았던 사고를 반복했다.
 32개를 전수 점검(다른 드리프트 없음), 회귀 테스트를 붙였다.
 → **교훈: 설정 변경은 실행 경로(`load_settings`)로 확인할 것.**
 
+## 6.5 관측이 잡아낸 것 — 편집 단계가 품질을 떨어뜨린다
+
+`scripts/qc_observe.py` 로 `job_events` 를 집계했더니, **편집(axis QC·bust 2패스) 전후로
+점수가 내려가는 경향**이 나왔다. n=16:
+
+| 축 | 평균 변화 | 하락 | 상승 | 최악 |
+|---|---|---|---|---|
+| `product_fidelity` | **−3.6** | 9/16 | 4 | −30 |
+| `physical_naturalness` | **−3.4** | 7/16 | 2 | −15 |
+| `image_quality` | −1.5 | 6/16 | 2 | −8 |
+
+가장 심한 사례는 `85 → 30`. 사유는 *"스커트 상단 원단이 심하게 왜곡돼 허리 아래에 가슴 같은
+돌출 두 개가 생김"* — 육안으로도 명백한 결함이고, `critical_errors: ["body or garment shape
+broken"]` 까지 붙었다.
+
+⚠️ **codex 가 지적한 "편집 후 재판정"(HIGH 2)을 고치지 않았으면 이 하락이 통째로 안 보였다.**
+편집 전 85점이 저장됐을 것이고, 검수자는 실제 출고본과 다른 이미지의 점수를 보게 됐을 것이다.
+
+→ 후속 트랙: axis QC 편집과 bust 2패스의 손익을 재검토할 것. 지금은 "핏을 맞추려다 형태를
+깨뜨리는" 교환이 일어나고 있고, 그 교환이 이득인지 측정된 적이 없다. `physical_naturalness`
+가 계측 지표를 제공한다.
+
 ## 7. 알아둘 것
 
 - **표본은 반드시 생성 시점으로 층화할 것.** 뭉뚱그렸다가 "로고 재현 55% 실패" 라는 잘못된
@@ -102,5 +124,6 @@ pass율 0% 로 전 생성을 막았던 사고를 반복했다.
 | `verify_mirror_rule.py` | QC 규칙의 인과 효과만 분리 측정 |
 | `verify_series_discrimination.py` | D축 변별력 (합성 변형) |
 | `ab_lettering_prompt.py` | 생성 프롬프트 A/B |
+| `qc_observe.py` | shadow 관측 리포트 (job_events 집계) |
 
 산출물은 `server/ab_out/` (gitignore). 종합 사진: `server/ab_out/QA_SUMMARY.jpg`
