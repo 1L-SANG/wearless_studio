@@ -120,6 +120,23 @@ def test_build_prompt_has_mirrored_source_precedence():
     assert "REPRODUCES the reversal" in p
 
 
+def test_scored_prompt_makes_fidelity_cover_fit():
+    """`product_fidelity` 는 핏도 봐야 한다 — 실측으로 확인된 구멍.
+
+    2026-07-31: 오버사이즈 티가 몸에 붙는 미니원피스로 바뀐 컷의 fidelity 가 83→78 이었다.
+    실루엣이 통째로 바뀌었는데 5점이다. 채점 설명에 색·프린트·길이는 있어도 **핏이 없었기**
+    때문이다. 쇼퍼는 프린트만큼이나 핏으로 상품을 설명한다.
+
+    이 문장이 빠지면 가슴 2패스·축 편집이 옷을 조여도 QC 가 통과시킨다.
+    """
+    p = iq.build_prompt(2, scored=True)
+    assert "product_fidelity" in p
+    for token in ("ease between garment and body", "where the hem falls", "oversized tee"):
+        assert token in p, token
+    # 미채점 경로에는 새 문장이 새어 들어가면 안 된다(scored 격리).
+    assert "ease between garment and body" not in iq.build_prompt(2)
+
+
 def test_validate_pass_clears_fields():
     out = iq.validate({"verdict": "pass", "mismatches": ["x"], "correctionPrompt": "y"})
     assert out == {"verdict": "pass", "mismatches": [], "correctionPrompt": None}
