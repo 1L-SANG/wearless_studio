@@ -8,6 +8,7 @@
 1. 배포되는 플래그 값이 `_flag()` 허용집합 안에 있는가 (오타면 값이 살아남지 못한다).
 2. QC 플래그가 매니페스트에 **명시 선언**돼 있는가 (기본값 의존 = 무측정 재발 경로).
 """
+import dataclasses
 import os
 import pathlib
 
@@ -66,6 +67,40 @@ def test_image_qc_not_enforce_without_calibration(manifest_vars):
     assert manifest_vars.get("IMAGE_QC") in ("off", "shadow"), (
         "IMAGE_QC=enforce 는 거짓양성률 실측 후에만. 캘리브레이션 근거와 함께 이 테스트를 갱신할 것."
     )
+
+
+def test_dataclass_defaults_match_loader_defaults(monkeypatch):
+    """dataclass 선언 기본값과 `load_settings` 의 env 기본값이 어긋나면 안 된다.
+
+    실행 경로는 `load_settings` 라 그쪽이 정본인데, dataclass 만 고치면 **테스트는 통과하고
+    실서비스는 옛 값으로 돈다.** 2026-07-31 실측: `qc_score_auto_pass` 를 90→80 으로 낮췄는데
+    로더가 "90" 을 그대로 들고 있어 enforce E2E 에서 90 이 찍혔다. 단위 테스트는 dataclass 만
+    봐서 전부 통과했고, 실 파이프라인을 돌려서야 드러났다.
+    """
+    import pathlib
+    import re
+
+    from app.config import Settings
+
+    src = (pathlib.Path(__file__).resolve().parents[1] / "app/config.py").read_text(
+        encoding="utf-8")
+    loader = src[src.index("def load_settings"):]
+    pairs = re.findall(r'(\w+)=\w*\(?os\.getenv\("([A-Z0-9_]+)",\s*"([^"]*)"\)', loader)
+    assert pairs, "로더에서 env 기본값 패턴을 못 찾았다 — 정규식을 갱신하라"
+
+    for _field, env, _default in pairs:
+        monkeypatch.delenv(env, raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    loaded = load_settings()
+
+    drift = []
+    for field, env, _default in pairs:
+        spec = Settings.__dataclass_fields__.get(field)
+        if spec is None or spec.default is dataclasses.MISSING:
+            continue  # 기본값 없는 필수 필드(jwt_audience 등)는 비교 대상 아님
+        if str(spec.default) != str(getattr(loaded, field)):
+            drift.append(f"{field}({env}): dataclass={spec.default!r} 실제={getattr(loaded, field)!r}")
+    assert not drift, "dataclass 기본값과 로더 기본값 불일치:\n  " + "\n  ".join(drift)
 
 
 def test_loader_silently_falls_back_on_typo(monkeypatch):

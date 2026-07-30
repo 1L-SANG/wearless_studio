@@ -172,6 +172,9 @@ export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
 export function defaultAnalysisShape() {
   return {
     clothingType: null, subCategory: null, targetGenders: [],
+    // enum 밖 의류의 자유 명칭(AG-01 추측 + 셀러 주관식 수정, 계약 §3.2). mock/db.js 에는
+    // 있는데 여기 없어서 http 경로에서만 유실됐다 — AI 가 "후드 집업" 을 추측해도 폼에 안 떴다.
+    customCategory: null,
     fit: null, suggestedName: '',
     materials: [], sellingPoints: [], aiSuggestedPoints: [],
     styleTags: [], swatchSuggestions: [],

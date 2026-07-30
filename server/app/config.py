@@ -252,8 +252,13 @@ def load_settings() -> Settings:
         ),
         input_qc=_flag("INPUT_QC", "off", {"off", "shadow", "enforce"}),
         image_qc=_flag("IMAGE_QC", "off", {"off", "shadow", "enforce"}),
-        qc_score_auto_pass=int(os.getenv("QC_SCORE_AUTO_PASS", "90")),
-        qc_score_review=int(os.getenv("QC_SCORE_REVIEW", "75")),
+        # 기본값은 dataclass 선언과 **반드시 일치**해야 한다. 실행 경로는 load_settings 라
+        # 여기가 정본이고, dataclass 만 고치면 테스트는 통과하는데 실서비스는 옛 값으로 돈다
+        # (2026-07-31 실측: dataclass 80 인데 로더 90 이라 enforce E2E 에서 90 이 찍혔다).
+        qc_score_auto_pass=int(os.getenv(
+            "QC_SCORE_AUTO_PASS", str(Settings.__dataclass_fields__["qc_score_auto_pass"].default))),
+        qc_score_review=int(os.getenv(
+            "QC_SCORE_REVIEW", str(Settings.__dataclass_fields__["qc_score_review"].default))),
         garment_qc_mode=_flag(
             "GARMENT_QC_MODE", "bestof", {"off", "shadow", "bestof"}),
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),
