@@ -185,6 +185,61 @@ def test_better_candidate_keeps_old_when_new_has_no_signal():
 
 # ── D축 재생성 분기가 R2 를 오염시키지 않는가 ────────────────────────────────
 
+def _run_loop(monkeypatch, *, series_scores, max_attempts=2):
+    """_run_candidate 를 실 경로로 돌리되 series QC 만 대본대로 응답시킨다."""
+    import test_mannequin_axis_qc as harness
+
+    seq = list(series_scores)
+
+    async def fake_series(app, pool, s, job_id, user_id, project_id, candidate, attempt, res):
+        return seq.pop(0) if seq else None
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    return harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=max_attempts, verdicts=[],
+        image_qc="enforce",
+        p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95,
+            "image_quality": 95, "series_consistency": None, "critical_errors": []})
+
+
+def test_low_series_score_actually_rerolls_and_stores_once(monkeypatch):
+    """D축 regenerate 는 관측이 아니라 실제 재생성으로 이어진다 (codex HIGH 1).
+
+    그리고 재시도해도 R2 에는 최종 채택본 **1개만** 남아야 한다 — 분기가 저장 뒤에 있으면
+    버려진 이미지가 버킷에 쌓인다.
+    """
+    result, g, r2, emits = _run_loop(
+        monkeypatch,
+        series_scores=[{"consistency": 30, "inconsistencies": ["배경이 훨씬 어두움"]},
+                       {"consistency": 96, "inconsistencies": []}])
+    assert len(g.calls) == 2, "1회차 D축 30점 → 재생성했어야 한다"
+    assert len(r2.puts) == 1, f"R2 저장이 {len(r2.puts)}건 — 고아 객체가 남았다"
+    assert result["qc_scores"]["series_consistency"] == 96
+    assert result["qc_scores"]["outcome"] == "auto_pass"
+    rejects = [p for t, p in emits if t == "step" and p.get("status") == "series_qc_reject"]
+    assert rejects and rejects[0]["seriesConsistency"] == 30
+
+
+def test_series_reject_feedback_reaches_regeneration_prompt(monkeypatch):
+    """재생성이 같은 프롬프트면 같은 결과가 나온다 — 불일치 사유가 주입돼야 한다."""
+    _result, g, _r2, _emits = _run_loop(
+        monkeypatch,
+        series_scores=[{"consistency": 20, "inconsistencies": ["배경이 훨씬 어두움"]},
+                       {"consistency": 95, "inconsistencies": []}])
+    assert "CONSISTENCY" in g.calls[1]["prompt"]
+    assert "배경이 훨씬 어두움" in g.calls[1]["prompt"]
+
+
+def test_series_reject_on_last_attempt_ships_instead_of_dropping(monkeypatch):
+    """예산이 없으면 D축이 낮아도 출고한다 — 셀러를 빈손으로 보내지 않는다."""
+    result, g, r2, _emits = _run_loop(
+        monkeypatch, max_attempts=1,
+        series_scores=[{"consistency": 25, "inconsistencies": ["배경 톤 불일치"]}])
+    assert result is not None and len(g.calls) == 1 and len(r2.puts) == 1
+    assert result["qc_scores"]["outcome"] == "regenerate"  # 판정은 감추지 않는다
+
+
 def test_series_reject_does_not_leave_orphan_r2_object(monkeypatch):
     """D축 재생성 분기는 **R2 저장 전에** 일어나야 한다.
 
