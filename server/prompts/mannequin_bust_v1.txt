@@ -1,0 +1,58 @@
+<role>
+You are retouching a studio mannequin photo. You have exactly ONE job: change the mannequin's BUST SIZE.
+</role>
+
+<input image>
+The single attached image is the CURRENT mannequin cut. Its bust is a B cup.
+</input image>
+
+<THE ONE CHANGE YOU MUST MAKE>
+Rebuild the mannequin's chest so that it is ${bustTarget}.
+
+This change must be UNMISTAKABLE. Someone holding your output next to the attached image must
+see a different bust size instantly, without looking for it. A subtle, tasteful, or conservative
+change is a FAILURE of this task — deliberately go far enough that the difference is obvious at
+a glance. Err on the side of too much rather than too little.
+</THE ONE CHANGE YOU MUST MAKE>
+
+<how the garment must report the new bust>
+The mannequin is clothed, so the fabric is the ONLY way the bust size is visible. Redraw the
+fabric so it physically reports the new chest:
+- The fabric is pushed outward and TENTS over the bust apex instead of hanging flat.
+- Below the bust, the fabric falls AWAY from the stomach into shadow, rather than continuing
+  straight down the body.
+- The front placket, the chest pockets and any seams curve as they pass over the bust —
+  they are not flat panels lying on a flat plane.
+- The widest point of the torso silhouette sits at the bust line, with visible tension and
+  shadow there.
+</how the garment must report the new bust>
+
+<keep identical>
+Everything except the bust and the fabric draping over it is unchanged from the attached image:
+waist width, hip width, stomach, shoulders, arms, neck, legs, height and overall body weight;
+pose, camera angle, framing, distance, crop and background; and the garment's color, pattern,
+fabric, seams, neckline, hem height, length, buttons, pockets and prints. The mannequin must NOT
+read as heavier, wider or larger overall — the waist and hips in particular stay exactly as they
+are. Only the bust differs.
+
+HOW THE TOP IS WORN IS ALSO UNCHANGED. If the top in the attached image is worn OUTSIDE the
+bottom, it stays outside: its entire hem keeps hanging below the bottom's waistband exactly as
+it does now. Re-draping the fabric over the new bust must NOT change this — do not tuck the top
+in, not even partially, and do not let the bottom's waistband end up on top of the hem. No front
+tuck, no half tuck, no French tuck, no tucking one side.
+</keep identical>
+
+<output format>
+- Output ONE brand-new, FULLY OPAQUE, photorealistic e-commerce studio PHOTOGRAPH of the SAME mannequin wearing the SAME garment, with ONLY the bust size changed.
+- The mannequin and garments must be solid and opaque — NEVER translucent, faded, washed-out, or ghosted, and NOT a see-through overlay of the input photo.
+- FULL BODY in frame, from the top of the head down to the feet — nothing cropped. Portrait orientation.
+- Output EXACTLY ONE image — no grid, no collage, no multiple views, no panels, no text, and no human skin, face, or hair.
+</output format>
+
+<critical rules>
+- The BUST SIZE is the requested change. Do NOT preserve the original chest; changing it is the entire point of this edit.
+- If you are unsure how far to go, go FURTHER. Under-shooting this change is the single most common failure and is not acceptable.
+- The waist and hips are NOT the requested change — their width must be identical to the attached image.
+- A top worn outside the bottom in the attached image is STILL worn outside in your output. Tucking it in is a failure of this edit.
+- Use ONLY the attached image as the base — do not fabricate new garment details, and do not change the garment's identity.
+</critical rules>

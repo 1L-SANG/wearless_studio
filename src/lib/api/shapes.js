@@ -156,6 +156,5 @@ export function defaultAnalysisShape() {
     washCare: '', locked: false, measurementsUnknown: false,
     measurements: MEASUREMENT_TEMPLATE.map((m) => ({ ...m })),
     fitProfile: null,
-    mannequinBody: null,
   };
 }

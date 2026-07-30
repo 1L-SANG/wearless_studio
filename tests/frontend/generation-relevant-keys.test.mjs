@@ -3,13 +3,6 @@ import assert from 'node:assert/strict';
 
 import { isGenerationRelevantAnalysisPatch } from '../../src/lib/generationRelevance.js';
 
-test('mannequinBody patch is generation-relevant — regression guard for the missed refresh trigger', () => {
-  assert.equal(
-    isGenerationRelevantAnalysisPatch({ mannequinBody: { bust: 'volume', hip: 'regular' } }),
-    true,
-  );
-});
-
 test('a patch touching only a non-generation-relevant key is not flagged', () => {
   assert.equal(isGenerationRelevantAnalysisPatch({ suggestedName: 'x' }), false);
 });
