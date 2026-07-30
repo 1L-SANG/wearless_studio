@@ -307,6 +307,7 @@ export const httpAdapter = {
       suggestedName: ai.suggestedName ?? base.suggestedName,
       styleTags: ai.styleTags ?? [],
       swatchSuggestions: ai.swatchSuggestions ?? [],
+      sourceMirrored: ai.sourceMirrored === true,  // 서버 파생 — 저장 왕복에서 보존되어야 한다
       sellingPoints: [],  // 셀러는 빈 상태로 시작 — AI 제안(aiSuggestedPoints)은 폼이 자동으로 채운다
     };
     // 실측은 AI 미산출 → 기본 shape(defaultAnalysisShape)이 이미 value:null (사용자 직접 입력, PRD §6.5).

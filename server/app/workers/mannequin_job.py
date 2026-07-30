@@ -261,6 +261,32 @@ async def _apply_axis_qc(
     return res, True
 
 
+def score_outcome(s, p2) -> str:
+    """4축 점수 → auto_pass | needs_review | regenerate (순수).
+
+    이진 verdict 로는 "얼마나 나쁜지"를 몰라 셀러에게 보일지/자동으로 다시 만들지를 못 가른다.
+    점수 신호가 아예 없으면(off·shadow·판정실패·미채점 모델) **auto_pass** 로 눕힌다 —
+    신호 부재를 나쁨으로 읽으면 QC 를 켜는 순간 멀쩡한 컷이 재생성된다.
+
+    치명 오류(로고 변형·색 변경·구조 붕괴)는 점수와 무관하게 regenerate. 점수는 평균으로
+    희석되지만 이런 결함은 하나만 있어도 출고 불가라 별도 축으로 둔다.
+    """
+    if not isinstance(p2, dict):
+        return "auto_pass"
+    if p2.get("critical_errors"):
+        return "regenerate"
+    scores = [v for k in image_qc.SCORE_KEYS
+              if isinstance(v := p2.get(k), int) and not isinstance(v, bool)]
+    if not scores:
+        return "auto_pass"
+    worst = min(scores)  # 평균이 아니라 최저 — 한 축의 붕괴가 다른 축 고득점에 가려지면 안 된다
+    if worst >= s.qc_score_auto_pass:
+        return "auto_pass"
+    if worst >= s.qc_score_review:
+        return "needs_review"
+    return "regenerate"
+
+
 def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
     """생성 컷 게이팅 결정 (순수) → (pillow_reject, p2_reject).
 
@@ -273,8 +299,15 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
       off/shadow 는 게이트 안 함(항상 통과 — 기존 동작 불변). p2 없음(키미설정·판정실패)도 통과.
     """
     pillow_reject = False  # 강제 shadow — s.mannequin_qc_enabled 는 재캘리브 전까지 게이트에 미사용
-    p2_reject = s.image_qc == "enforce" and isinstance(p2, dict) and p2.get("verdict") == "retry"
-    return pillow_reject, p2_reject
+    if s.image_qc != "enforce":
+        return pillow_reject, False  # off/shadow 는 항상 통과 — 기존 동작 불변
+    # 점수 신호가 있으면 그쪽이 정본(3분기). 없으면 기존 이진 verdict 로 폴백한다 —
+    # 미채점 응답에서 게이트가 통째로 풀리지 않게.
+    if isinstance(p2, dict) and (p2.get("critical_errors") or any(
+            isinstance(p2.get(k), int) and not isinstance(p2.get(k), bool)
+            for k in image_qc.SCORE_KEYS)):
+        return pillow_reject, score_outcome(s, p2) == "regenerate"
+    return pillow_reject, isinstance(p2, dict) and p2.get("verdict") == "retry"
 
 
 async def _apply_bust_pass(*, pool, gemini, s, job_id, candidate, attempt, base_gender, res):
@@ -372,7 +405,8 @@ async def _run_candidate(
         p2 = None
         if eff_image_qc in ("shadow", "enforce") and prod_imgs:
             try:
-                p2 = await image_qc.verdict(s, prod_imgs, InlineImage(res.mime, res.image))
+                p2 = await image_qc.verdict(
+                    s, prod_imgs, InlineImage(res.mime, res.image), scored=True)
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "image_qc", "imageQc": p2})
             except Exception as e:
@@ -384,6 +418,15 @@ async def _run_candidate(
                     "error": type(e).__name__, "message": str(e)[:200]})
         # 게이팅: Pillow QC + AG-P2. 둘 다 통과면 채택(off/shadow 는 항상 통과 — 기존 동작 불변).
         pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
+        # 마지막 attempt 가 reject 여도 잡을 통째로 실패시키지 않는다 — 셀러가 크레딧만 쓰고
+        # 빈손으로 끝나는 것보다, 최선본을 "검수 필요"로 내보내고 사람이 판단하게 하는 편이 낫다.
+        # (기존엔 이 경로가 곧장 None → 후보 드롭 → 잡 실패였다.)
+        salvaged = False
+        if p2_reject and attempt >= s.mannequin_max_attempts:
+            p2_reject, salvaged = False, True
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
+                "reason": "budget_exhausted", "outcome": score_outcome(s, p2)})
         if not pillow_reject and not p2_reject:
             # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
             # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
@@ -400,10 +443,20 @@ async def _run_candidate(
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
             await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime, cache=IMMUTABLE_CACHE)
             w, h = _image_dims(res.image)
+            # 채택본의 QC 점수를 후보 dict 에 실어 finalize → mannequin_cuts.qc_scores →
+            # API 까지 운반한다. 여기서 안 실으면 판정 결과가 job_events 에만 남고 셀러·검수
+            # 화면에서는 영원히 못 본다(프론트는 SSE 를 안 쓰고 result 봉투만 읽는다).
+            outcome = "needs_review" if salvaged else score_outcome(s, p2)
+            qc_scores = None
+            if isinstance(p2, dict):
+                qc_scores = {k: p2.get(k) for k in image_qc.SCORE_KEYS}
+                qc_scores["critical_errors"] = p2.get("critical_errors") or []
+                qc_scores["outcome"] = outcome
             return {
                 "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
                 "size": len(res.image), "width": w, "height": h,
                 "candidate": candidate, "base_fit": base_fit,
+                "qc_scores": qc_scores,
             }
         # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
         # 정체성 게이트가 선점하면 축 QC/편집은 이 attempt에서 미실행 — 잘못된 옷을 편집하면

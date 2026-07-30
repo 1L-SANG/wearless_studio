@@ -166,7 +166,9 @@ def build_mirrored_source_block(analysis: dict) -> str:
     분석이 반전을 판정하지 않았으면(기본 False) 블록 자체가 없다 — 정상 사진에 좌우 반전
     지시가 새어 들어가면 멀쩡한 옷을 뒤집는 역효과가 나기 때문이다.
     """
-    if not analysis.get("sourceMirrored"):
+    # `is True` 엄격 비교 — 저장 API 는 임의 JSON 을 받으므로 문자열 "false" 나 0 이 들어올 수
+    # 있고, truthiness 로 읽으면 "false" 가 블록을 켜서 멀쩡한 옷을 좌우로 뒤집는다.
+    if analysis.get("sourceMirrored") is not True:
         return ""
     return (
         "MIRRORED SOURCE PHOTOS: the product photos were shot in a mirror, so all lettering, "

@@ -5,8 +5,12 @@
 산출물은 `server/ab_out/imageqc_calib/results.jsonl` 뿐이다.
 
 왜 필요한가: `IMAGE_QC` 가 매니페스트에 없어 프로덕션에서 동일성 QC 가 무측정이었다.
-게이팅(enforce)으로 올리기 전에 거짓양성률(정상 컷을 retry 판정)을 알아야 한다 —
+게이팅(enforce)으로 올리기 전에 **판정이 얼마나 자주 발화하는지**부터 알아야 한다 —
 `MANNEQUIN_QC_ENABLED` 가 오탐으로 pass율 0% 를 내 전 생성을 막았던 2026-07-07 전례.
+
+**측정 범위 주의**: 이 배치가 내는 것은 pass/retry **발화 분포**이지 정확도가 아니다.
+거짓양성률(정상 컷을 retry 로 판정)·거짓음성률을 계산하려면 사람이 붙인 정답 라벨이
+있어야 한다. enforce 승격 근거로 쓰려면 여기 산출물 위에 육안 채점을 얹어야 한다.
 
 실행:
     cd server && .venv/bin/python -m scripts.qc_calibrate_image [--limit 30] [--force]
@@ -50,6 +54,7 @@ join assets a   on a.id = mc.asset_id
 join projects p on p.id = mc.project_id
 left join products pr on pr.project_id = mc.project_id
 where a.deleted_at is null
+  and mc.id::text <> all(%s)
 order by mc.created_at desc
 limit %s
 """
@@ -106,9 +111,11 @@ async def main() -> int:
         return r2_cache[bucket]
 
     with psycopg.connect(s.database_url, row_factory=dict_row) as conn, conn.cursor() as cur:
-        cur.execute(_CUTS_SQL, (args.limit,))
+        # 판정 완료분을 SQL 에서 제외한 뒤 LIMIT — 파이썬에서 걸러내면 재실행이 같은 N건만
+        # 다시 집어와 미처리 컷으로 영영 진행하지 못한다.
+        cur.execute(_CUTS_SQL, (list(done) or [""], args.limit))
         rows = cur.fetchall()
-        print(f"[qc_calibrate_image] 대상 {len(rows)}건 (판정완료 {len(done)}건 스킵)")
+        print(f"[qc_calibrate_image] 미판정 대상 {len(rows)}건 (판정완료 {len(done)}건 제외)")
         judged, skipped, failed = 0, 0, 0
         counts: dict[str, int] = {}
         with RESULTS.open("a", encoding="utf-8") as sink:
@@ -138,6 +145,13 @@ async def main() -> int:
                     p2 = await image_qc.verdict(s, prod_imgs, cut_img)
                 except Exception as e:
                     # 판정 실패도 분포의 일부다 — 성공만 기록하면 생존 편향이 생긴다.
+                    # jsonl 에도 남긴다: 출력만 하면 누적 결과에서 실패율이 통째로 사라진다.
+                    sink.write(json.dumps({
+                        "cut_id": cid, "project_id": row["project_id"],
+                        "clothing_type": row["clothing_type"], "verdict": "error",
+                        "error": type(e).__name__, "message": str(e)[:200],
+                    }, ensure_ascii=False) + "\n")
+                    sink.flush()
                     print(f"  FAIL {cid[:8]}: {type(e).__name__} {str(e)[:80]}")
                     failed += 1
                     counts["error"] = counts.get("error", 0) + 1

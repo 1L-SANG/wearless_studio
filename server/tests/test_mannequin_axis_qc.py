@@ -91,7 +91,8 @@ def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=Non
     if guard:
         monkeypatch.setattr(mannequin_job, "_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY", True)
     if p2 is not None:
-        async def fake_p2(s, prods, gen):
+        async def fake_p2(s, prods, gen, *, scored=False):
+            assert scored, "마네킹 경로는 4축 점수를 받아야 한다(scored=True)"
             return p2
         monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
 
@@ -256,13 +257,46 @@ def test_legacy_identity_rejection_preempts_axis_edit(monkeypatch):
     # AG-P2 enforce 가 reject → 그 attempt 는 축 QC 미실행 + 선점 이벤트, re-roll 이 우선.
     boom = RuntimeError("judge must not be called on rejected candidate")
     result, g, r2, emits = _run(
-        monkeypatch, mode="enforce", guard=True, max_attempts=1,
-        verdicts=[boom], image_qc="enforce",
+        monkeypatch, mode="enforce", guard=True, max_attempts=2,
+        verdicts=[boom, boom], image_qc="enforce",
         p2={"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "fix color"})
-    assert result is None  # max_attempts=1 → 후보 드롭(기존 동작)
-    assert _events(emits, "axis_qc") == []
+    assert len(g.calls) == 2  # reject → re-roll (편집이 아니라 신규 생성)
+    # 선점된 attempt 1 에서는 축 QC 가 아예 안 돈다(잘못된 옷을 편집하면 정체성이 보존된다).
+    # attempt 2 는 예산 소진이라 구제 경로로 넘어가고 거기선 축 QC 가 정상 발화한다.
+    assert [e for e in _events(emits, "axis_qc") if e["attempt"] == 1] == []
     pre = _events(emits, "axis_retry")
     assert pre and pre[0]["outcome"] == "identity_gate_preempted" and pre[0]["fired"] is False
+
+
+def test_identity_reject_on_last_attempt_salvages_instead_of_dropping(monkeypatch):
+    """예산 소진 시 후보를 버리지 않고 '검수 필요'로 내보낸다.
+
+    기존엔 마지막 attempt 가 reject 면 곧장 None → 후보 드롭 → 잡 실패였고, 셀러는
+    크레딧만 쓰고 빈손이 됐다. 최선본을 사람이 판단하게 넘기는 편이 낫다.
+    """
+    result, g, r2, emits = _run(
+        monkeypatch, mode="off", guard=True, max_attempts=1,
+        verdicts=[], image_qc="enforce",
+        p2={"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "fix color",
+            "product_fidelity": 40, "physical_naturalness": None,
+            "image_quality": None, "series_consistency": None, "critical_errors": []})
+    assert result is not None                      # 드롭 대신 구제
+    assert result["qc_scores"]["outcome"] == "needs_review"
+    assert result["qc_scores"]["product_fidelity"] == 40
+    salvage = _events(emits, "qc_salvaged")
+    assert salvage and salvage[0]["reason"] == "budget_exhausted"
+
+
+def test_identity_reject_with_budget_left_still_rerolls(monkeypatch):
+    """예산이 남아 있으면 구제하지 않고 재생성한다 — 구제가 게이트를 무력화하면 안 된다."""
+    result, g, r2, emits = _run(
+        monkeypatch, mode="off", guard=True, max_attempts=2,
+        verdicts=[], image_qc="enforce",
+        p2={"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "fix",
+            "product_fidelity": 10, "physical_naturalness": None,
+            "image_quality": None, "series_consistency": None, "critical_errors": []})
+    assert len(g.calls) == 2                                   # 1회차는 re-roll
+    assert _events(emits, "qc_salvaged")[0]["attempt"] == 2     # 2회차(마지막)에서만 구제
 
 
 def test_axis_qc_never_unshadows_pillow_gate():

@@ -269,8 +269,24 @@ async def save_product(
     return row
 
 
+# AG-01 이 파생하고 셀러가 편집하지 않는 서버 소유 필드. 저장은 REPLACE 라 클라가 모르는
+# 키는 한 번의 저장으로 사라진다 — 구버전 클라·부분 payload 에서도 살아남게 여기서 보존한다.
+_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored",)
+
+
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
-    """analysis 작업본을 payload jsonb 로 upsert (계약 §3.2). 소유권은 라우트 선검증."""
+    """analysis 작업본을 payload jsonb 로 upsert (계약 §3.2). 소유권은 라우트 선검증.
+
+    REPLACE 시맨틱이라 들어온 payload 가 곧 새 전문이다. 다만 `_SERVER_OWNED_ANALYSIS_KEYS`
+    는 클라가 안 보냈을 때 기존 값을 이월한다 — 셀러가 소재·핏을 한 번 수정하면 AI 파생
+    신호가 조용히 소실되고, sourceMirrored 의 경우 그 결과로 반전된 로고가 출고된다.
+    """
+    missing = [k for k in _SERVER_OWNED_ANALYSIS_KEYS if k not in analysis]
+    if missing:
+        prev = await get_analysis(conn, project_id) or {}
+        carried = {k: prev[k] for k in missing if k in prev}
+        if carried:
+            analysis = {**analysis, **carried}
     locked = bool(analysis.get("locked", False))
     async with conn.cursor() as cur:
         await cur.execute(

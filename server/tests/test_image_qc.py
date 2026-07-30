@@ -38,6 +38,65 @@ def test_qc_schema_shape():
     assert set(s["required"]) == {"verdict", "mismatches", "correctionPrompt"}
 
 
+def test_qc_schema_default_stays_three_fields():
+    """기본 스키마는 3필드 고정 — scene_verdict·best_of 가 공유하기 때문.
+
+    공간세트 scene QC 는 fail-closed(PR#62)라 스키마 오류가 경고 강등이 아니라 셀러 컷
+    전멸로 이어진다. 점수 확장이 기본값으로 새면 그 경로가 같이 흔들린다.
+    """
+    assert set(iq.qc_schema()["properties"]) == {"verdict", "mismatches", "correctionPrompt"}
+    assert "${" not in iq.build_prompt(2)
+    assert "SCORING" not in iq.build_prompt(2)
+
+
+def test_qc_schema_scored_adds_axes_and_keeps_strict_contract():
+    s = iq.qc_schema(scored=True)
+    for key in iq.SCORE_KEYS:
+        assert s["properties"][key] == {"type": ["integer", "null"]}
+    assert s["properties"]["critical_errors"]["type"] == "array"
+    # GPT strict: properties 전 키가 required 여야 400 이 안 난다.
+    assert set(s["required"]) == set(s["properties"])
+    assert "SCORING" in iq.build_prompt(2, scored=True)
+
+
+def test_validate_scored_clamps_and_preserves():
+    out = iq.validate({
+        "verdict": "retry", "mismatches": ["로고 뭉개짐"], "correctionPrompt": "고쳐",
+        "product_fidelity": 140, "physical_naturalness": -5,
+        "image_quality": 87.6, "series_consistency": None,
+        "critical_errors": ["logo altered", "  "],
+    }, scored=True)
+    assert out["product_fidelity"] == 100   # 상한 클램핑
+    assert out["physical_naturalness"] == 0  # 하한 클램핑
+    assert out["image_quality"] == 87        # 정수화
+    assert out["series_consistency"] is None  # Phase 3 이 채운다
+    assert out["critical_errors"] == ["logo altered"]
+
+
+def test_validate_scored_unparseable_is_none_not_zero():
+    """판독 불가는 신호 없음(None)이지 최악(0)이 아니다 — 0 이면 멀쩡한 컷이 재생성된다."""
+    out = iq.validate({"verdict": "pass", "product_fidelity": "high",
+                       "physical_naturalness": True}, scored=True)
+    assert out["product_fidelity"] is None
+    assert out["physical_naturalness"] is None  # bool 은 int 지만 점수가 아니다
+
+
+def test_validate_scored_keeps_critical_errors_on_pass():
+    """pass 판정이어도 치명 오류는 살린다 — 'pass 인데 로고가 바뀐' 케이스를 놓치지 않으려고."""
+    out = iq.validate({"verdict": "pass", "critical_errors": ["garment color changed"]},
+                      scored=True)
+    assert out["verdict"] == "pass"
+    assert out["mismatches"] == []
+    assert out["critical_errors"] == ["garment color changed"]
+
+
+def test_validate_default_shape_unchanged_for_shared_callers():
+    """기본 경로 반환 키는 3개 그대로 — scene/best_of 소비처가 키 추가를 전제하지 않는다."""
+    out = iq.validate({"verdict": "retry", "mismatches": ["x"], "correctionPrompt": "y",
+                       "product_fidelity": 50})
+    assert set(out) == {"verdict", "mismatches", "correctionPrompt"}
+
+
 def test_build_prompt_injects_count():
     p = iq.build_prompt(3)
     assert "FIRST 3 image" in p and "${productCount}" not in p

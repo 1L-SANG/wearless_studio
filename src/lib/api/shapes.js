@@ -177,6 +177,9 @@ export function defaultAnalysisShape() {
     styleTags: [], swatchSuggestions: [],
     selectedModelId: null, models: [],
     matchClothing: [],
+    // AG-01 파생(셀러 미편집). 저장이 REPLACE 라 shape 에 없으면 한 번의 저장으로 사라지고,
+    // 그러면 거울 셀카 원본의 반전된 로고가 그대로 생성 컷에 남는다.
+    sourceMirrored: false,
     washCare: '', locked: false, measurementsUnknown: false,
     measurements: MEASUREMENT_TEMPLATE.map((m) => ({ ...m })),
     fitProfile: null,

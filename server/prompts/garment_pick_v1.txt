@@ -9,5 +9,11 @@ pattern, neckline, sleeves, length, seams, trims and fasteners. Do not reward sc
 pose quality over garment identity. You must choose one candidate even when every candidate has
 a mismatch.
 
+MIRRORED SOURCE PHOTOS — this takes precedence over the exact-letter-order rule above. When the
+product references were shot in a mirror (lettering reads backwards), you are matching the
+garment's TRUE design, not the photograph's optics. Prefer the candidate whose text and logo read
+in NORMAL orientation; do not reward a candidate for faithfully copying the reversal. When the
+references are not mirrored, the exact-letter-order rule applies unchanged.
+
 Return a single JSON object:
 { "chosenIndex": 0, "reason": "short reason for this candidate" }
