@@ -1,0 +1,147 @@
+<role>
+You are retouching a studio mannequin photo. You have exactly ONE job: change the mannequin's BUST SIZE.
+</role>
+
+<input image>
+The single attached image is the CURRENT mannequin cut. Its bust is a B cup.
+</input image>
+
+<WHAT OUTRANKS WHAT>
+Read this before anything else. When two instructions below pull against each other, this order decides:
+
+1. The garment's IDENTITY is untouchable. Its print, text, logo, colour, pattern, seams, buttons,
+   pockets, neckline, hem and overall cut come through this edit unchanged. If making the bust
+   bigger would require altering, redrawing, warping or re-lettering any of them, you make the
+   bust smaller instead. There is no bust size worth a damaged garment.
+2. The garment's FIT is untouchable. Whatever ease it has, it keeps. A loose garment stays
+   loose; the hem stays at the same height; nothing is nipped in that was not nipped in before.
+3. The garment's STRUCTURE stays sound. No fabric that folds into a shape the body cannot make,
+   no panel that collapses into the torso, no hem or placket that breaks its line.
+4. Only then: make the bust as full as rules 1-3 allow.
+
+A slightly under-sized bust on an intact, correctly-fitting garment is a SUCCESS. A well-sized bust on a garment
+whose print is smeared or whose front has buckled is a FAILURE, no matter how good the shape is.
+</WHAT OUTRANKS WHAT>
+
+<THE ONE CHANGE YOU MUST MAKE>
+Rebuild the mannequin's CHEST so that it is ${bustTarget}.
+
+You are changing the BODY that is underneath the clothes. You are not restyling the clothes.
+
+<the garment's fit is fixed — it decides how much of the body shows>
+Look at how the garment sits in the attached image and keep it sitting that way.
+
+- If the garment hangs LOOSE and away from the body (an oversized tee, a boxy shirt, a relaxed
+  knit), it CONTINUES to hang loose. Its side seams stay where they are, its hem stays at the
+  same height and the same width, and no waist appears through it. On a loose garment the new
+  bust shows ONLY as fabric tenting at chest level, with the garment falling straight and free
+  below that. A drawn-in waist on a loose garment is WRONG — it turns the product into a
+  different product.
+- If the garment already FOLLOWS the body (a fitted top, a bodycon dress), it may follow the
+  new body: fabric in at the waist, out over the hip curve.
+
+The test: hold your output next to the attached image. If a shopper would describe the fit
+differently — "oh, that one's tighter", "that one's shorter" — you have failed, even if the
+bust is perfect. Ease, hem height, hem width and sleeve width all come through unchanged.
+</the garment's fit is fixed — it decides how much of the body shows>
+
+The bust difference should be clear at a glance. Aim for clearly visible, not maximal.
+</THE ONE CHANGE YOU MUST MAKE>
+
+<how the garment reports the new bust>
+The mannequin is clothed, so the fabric is the ONLY way the bust size is visible. The fabric is
+not repainted; it is DRAPED over a body that changed shape underneath it:
+- The fabric is pushed outward and TENTS over the bust apex instead of hanging flat.
+- Below the bust, the fabric falls AWAY from the stomach into shadow, rather than continuing
+  straight down the body.
+- The front placket, the chest pockets and any seams curve as they pass over the bust —
+  they are not flat panels lying on a flat plane. The placket curves while STAYING FASTENED.
+- The widest point of the torso silhouette sits at the bust line, with visible tension and
+  shadow there.
+- On a garment that already follows the body, the fabric goes IN at the waist and back out over
+  the hip. On a loose garment it does none of that — it falls straight from the bust.
+
+Every one of these is a change in how existing fabric FALLS. None of them is a licence to redraw
+what is printed on the fabric or to change where a seam, pocket or edge sits on the garment.
+</how the garment reports the new bust>
+
+<prints, text and logos are pixel-work — do not touch them>
+Any graphic on the garment — printed text, numbers, a logo, an embroidered mark, a pattern
+repeat — must survive this edit letter for letter and stitch for stitch.
+
+A print that sits over the bust may curve and catch light with the fabric beneath it. It may NOT
+be re-typeset, re-spaced, re-lettered, re-coloured, cropped, stretched into illegibility, or
+regenerated from your idea of what it said. If you cannot make the print follow the new curve
+without redrawing it, keep the chest flatter so the print stays flat.
+
+Garbled or approximated lettering is the single most damaging failure of this edit.
+</prints, text and logos are pixel-work — do not touch them>
+
+<the garment stays fastened>
+Whatever is done up in the attached image stays done up. If the shirt's buttons are fastened,
+they remain fastened all the way down; the same holds for zips, snaps, hooks and belts.
+
+Do NOT open, unbutton, unzip or spread the front to make room for the bigger bust. The extra
+volume is expressed through fabric tension, strain lines and shadow — not by opening the
+garment. At most, the gaps BETWEEN fastened buttons may pull slightly apart; the buttons
+themselves stay closed and no skin or undergarment becomes visible that was not visible before.
+
+Measurable rule: count the fastened buttons in the attached image and the depth of the neckline
+opening. In your output the number of fastened buttons must be THE SAME OR MORE, and the
+opening must reach NO LOWER on the body than it does in the attached image. An opening that
+gets deeper, or a collar that spreads wider apart, is a failure — even if it looks better.
+
+If a garment is genuinely open in the attached image (an unbuttoned overshirt, an open jacket),
+leave it open exactly as it is — do not fasten it either.
+</the garment stays fastened>
+
+<keep identical>
+Only the torso silhouette described above changes. Everything else is unchanged from the
+attached image: shoulder width, arms, neck, stomach depth, thighs, legs, feet and height;
+pose, camera angle, framing, distance, crop and background; and the garment's color, pattern,
+fabric, seams, neckline, hem height, length, buttons, pockets and prints.
+
+Two hard limits on the resculpt:
+- HIP WIDTH MUST NOT INCREASE. The hips may be no wider than in the attached image. Their
+  shape comes from the waist drawing in above them, never from the hips spreading out.
+- The mannequin must NOT read as heavier, wider or larger overall. If your output looks like a
+  bigger body rather than a slimmer one with a fuller bust, you have failed this task.
+
+One thing you DO fix, if it is wrong in the attached image — see below.
+</keep identical>
+
+<ALSO FIX: THE TOP MUST BE WORN OUTSIDE THE BOTTOM>
+If the mannequin is wearing a top (or outerwear) together with a bottom, the top is worn
+COMPLETELY OUTSIDE that bottom.
+
+If the top in the attached image is tucked into the bottom — even partially, even just at the
+front, even if only the hem edge disappears — PULL IT OUT so its full hem hangs down over the
+bottom's waistband and is visible all the way around the body.
+
+- You are moving the existing hem OUT from under the waistband. You are not lengthening it,
+  reshaping it, or drawing a new one — a curved shirttail hem stays exactly as curved as it is.
+- The top's hem must form an unbroken visible line around the body.
+- If the top is already worn outside in the attached image, leave it exactly as it is.
+- If pulling the hem out cannot be done without inventing fabric that is not in the attached
+  image, leave the top as it is. The bust change is this edit's job; this is a fix of last resort.
+</ALSO FIX: THE TOP MUST BE WORN OUTSIDE THE BOTTOM>
+
+<output format>
+- Output ONE brand-new, FULLY OPAQUE, photorealistic e-commerce studio PHOTOGRAPH of the SAME mannequin wearing the SAME garment, with ONLY the bust size changed.
+- The mannequin and garments must be solid and opaque — NEVER translucent, faded, washed-out, or ghosted, and NOT a see-through overlay of the input photo.
+- FULL BODY in frame, from the top of the head down to the feet — nothing cropped. Portrait orientation.
+- Output EXACTLY ONE image — no grid, no collage, no multiple views, no panels, no text, and no human skin, face, or hair.
+</output format>
+
+<critical rules>
+- The garment's print, text and logo come through UNCHANGED. Garbled lettering fails this edit outright.
+- The garment's shape stays sound — no buckled front, no collapsed panel, no broken hem line.
+- The BUST SIZE is the requested change. Do NOT preserve the original chest; changing it is the point.
+- If bust volume and garment integrity conflict, GIVE UP THE VOLUME. A smaller bust on an intact garment is the correct answer.
+- The waist comes IN and the hips keep their width — the hourglass comes from the waist, never from widening the hips or the body.
+- The garment stays fastened exactly as it is in the attached image. Opening the front to fit the bust is a failure of this edit.
+- The top is worn OUTSIDE the bottom in your output — always. If the attached image has it tucked in, pull it out; if it is already out, leave it.
+- The FRAMING is unchanged: same crop, same distance, same zoom. The whole mannequin from head
+  to feet stays in frame exactly as in the attached image. A tighter crop fails this edit.
+- Use ONLY the attached image as the base — do not fabricate new garment details, and do not change the garment's identity.
+</critical rules>
