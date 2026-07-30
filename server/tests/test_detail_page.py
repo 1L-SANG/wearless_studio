@@ -737,7 +737,7 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
             "exampleId": "ex-flat-side-medium",
             "refScope": "all",
             "pose": "hands in pockets",
-            "spaceVariation": "varied",
+            "spaceVariation": "fixed",
         },
         {
             "id": "dragged-out",

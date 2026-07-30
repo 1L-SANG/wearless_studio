@@ -385,7 +385,9 @@ async def run_detail_page_job(app, job: dict) -> None:
             space_set_bindings = space_set_assets.bind_storyboard_space_sets(
                 storyboard,
                 clothing_type=clothing_type,
-                gender=mannequin.select_base_gender(analysis),
+                gender=mannequin.select_base_gender(
+                    analysis, clothing_type
+                ),
             )
             ai_blocks = [
                 b
@@ -725,7 +727,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                             space_set_assets.resolve_published_example_reference(
                                 normalized,
                                 clothing_type=clothing_type,
-                                gender=mannequin.select_base_gender(analysis),
+                                gender=mannequin.select_base_gender(
+                                    analysis, clothing_type
+                                ),
                                 scope=scope,
                             )
                         )

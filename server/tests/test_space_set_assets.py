@@ -85,6 +85,7 @@ def _blocks():
         {
             "id": "b1",
             "spaceGroupId": group_id,
+            "spaceVariation": "subtle",
             "spaceSetMemberOrder": 1,
             "exampleId": "ss_cafe_01_01",
             "cutType": "styling",
@@ -94,6 +95,7 @@ def _blocks():
         {
             "id": "b2",
             "spaceGroupId": group_id,
+            "spaceVariation": "subtle",
             "spaceSetMemberOrder": 2,
             "exampleId": "ss_cafe_01_02",
             "cutType": "styling",
@@ -103,14 +105,15 @@ def _blocks():
     ]
 
 
-def test_parse_group_id_keeps_legacy_outside_registry():
-    assert sets.parse_space_set_group_id("sg-legacy") is None
-    assert (
-        sets.parse_space_set_group_id(
-            "sgset__women_top_cafe_01__instance-123"
-        )
-        is None
-    )
+def test_parse_group_id_accepts_only_the_published_namespace():
+    assert sets.parse_space_set_group_id(None) is None
+    for invalid in (
+        "sg-legacy",
+        "sgset__women_top_cafe_01__instance-123",
+    ):
+        with pytest.raises(sets.SpaceSetBindingError) as caught:
+            sets.parse_space_set_group_id(invalid)
+        assert caught.value.code == "invalid_space_set_group_id"
     assert sets.parse_space_set_group_id(
         "ssg1__women_top_cafe_01__instance-123"
     ) == ("women_top_cafe_01", "instance-123")
@@ -121,6 +124,15 @@ def test_parse_group_id_keeps_legacy_outside_registry():
         sets.parse_space_set_group_id(f"ssg1__{'a' * 201}__instance")
     with pytest.raises(sets.SpaceSetBindingError):
         sets.parse_space_set_group_id("ssg1__set__bad__instance")
+
+
+def test_registry_rejects_men_dress_sets(space_registry):
+    invalid = json.loads(json.dumps(space_registry))
+    invalid["sets"][0]["gender"] = "men"
+    invalid["sets"][0]["applicableClothingTypes"] = ["dress"]
+
+    with pytest.raises(ValueError, match="space_set_registry_applicability_invalid"):
+        sets.validate_space_set_registry_document(invalid)
 
 
 def test_exact_space_set_binding_and_key_resolution(space_registry):
@@ -307,9 +319,10 @@ def test_space_set_binding_allows_pose_swap_add_and_drag_out(
         ),
     )
     added = {
-        "id": "b3",
-        "spaceGroupId": blocks[0]["spaceGroupId"],
-        "exampleId": flat_example_id,
+            "id": "b3",
+            "spaceGroupId": blocks[0]["spaceGroupId"],
+            "spaceVariation": "subtle",
+            "exampleId": flat_example_id,
         "cutType": "horizon",
         "shot": "full",
         "direction": "front",
@@ -509,7 +522,9 @@ def test_asset_fetch_checks_hash_dimensions_and_never_follows_redirects(
     assert all("evil.example" not in url for url in calls)
 
 
-def test_empty_registry_does_not_affect_legacy_groups(tmp_path, monkeypatch):
+def test_non_release_group_is_rejected_even_with_an_empty_registry(
+    tmp_path, monkeypatch
+):
     path = tmp_path / "space_set_assets.json"
     path.write_text(
         json.dumps(
@@ -525,7 +540,7 @@ def test_empty_registry_does_not_affect_legacy_groups(tmp_path, monkeypatch):
     monkeypatch.setattr(sets, "_DEFAULT_SPACE_SET_ASSETS", str(path))
     sets.load_space_set_registry.cache_clear()
 
-    assert (
+    with pytest.raises(sets.SpaceSetBindingError) as caught:
         sets.bind_storyboard_space_sets(
             [
                 {
@@ -536,8 +551,25 @@ def test_empty_registry_does_not_affect_legacy_groups(tmp_path, monkeypatch):
             clothing_type="top",
             gender="women",
         )
-        == {}
-    )
+    assert caught.value.code == "invalid_space_set_group_id"
+
+
+@pytest.mark.parametrize("variation", [None, "varied", "fixed"])
+def test_group_member_variation_must_match_the_published_set(
+    space_registry, variation
+):
+    blocks = _blocks()
+    if variation is None:
+        blocks[0].pop("spaceVariation", None)
+    else:
+        blocks[0]["spaceVariation"] = variation
+
+    with pytest.raises(sets.SpaceSetBindingError) as caught:
+        sets.bind_storyboard_space_sets(
+            blocks, clothing_type="top", gender="women"
+        )
+
+    assert caught.value.code == "space_set_variation_mismatch"
 
 
 def test_horizon_sequence_may_publish_without_representative_plate(

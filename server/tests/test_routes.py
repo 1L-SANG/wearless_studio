@@ -46,6 +46,83 @@ def test_openapi_only_advertises_current_compose_modes(client):
     ]
 
 
+def test_save_analysis_forces_dress_to_women(client, make_token, monkeypatch):
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_get_product(conn, project_id):
+        return {"clothingType": "dress"}
+
+    async def fake_save_analysis(conn, project_id, analysis):
+        seen["analysis"] = analysis
+        return {"project_id": project_id, "payload": analysis}
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(routes.repo, "save_analysis", fake_save_analysis)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.patch(
+        "/v1/projects/p1/analysis",
+        headers=_auth(make_token),
+        json={"targetGenders": ["men"], "fit": "regular"},
+    )
+
+    assert res.status_code == 200, res.text
+    assert seen["analysis"]["targetGenders"] == ["women"]
+    assert res.json()["targetGenders"] == ["women"]
+
+
+def test_save_product_atomically_repairs_dress_analysis_gender(
+    client, make_token, monkeypatch
+):
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_save_product(conn, project_id, user_id, fields):
+        seen["product"] = fields
+        return {
+            "id": "product-1",
+            "project_id": project_id,
+            "name": "원피스",
+            "clothing_type": "dress",
+            "colors": [],
+            "measurements": [],
+            "measurements_unknown": False,
+            "upload_complete": True,
+        }
+
+    async def fake_get_analysis(conn, project_id):
+        return {"targetGenders": ["men"], "fit": "regular"}
+
+    async def fake_save_analysis(conn, project_id, analysis):
+        seen["analysis"] = analysis
+        return {"project_id": project_id, "payload": analysis}
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "save_product", fake_save_product)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(routes.repo, "save_analysis", fake_save_analysis)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.patch(
+        "/v1/projects/p1/product",
+        headers=_auth(make_token),
+        json={"clothingType": "dress"},
+    )
+
+    assert res.status_code == 200, res.text
+    assert seen["product"]["clothing_type"] == "dress"
+    assert seen["analysis"] == {
+        "targetGenders": ["women"],
+        "fit": "regular",
+    }
+
+
 def test_save_storyboard_persists_canonical_blocks(client, make_token, monkeypatch):
     seen = {}
 
@@ -115,6 +192,42 @@ def test_save_storyboard_rejects_invalid_example_selection_origin_before_db(clie
 
     assert res.status_code == 400
     assert res.json()["error"]["code"] == "invalid_example_selection_origin"
+
+
+def test_save_storyboard_rejects_pre_release_space_group_ids(
+    client, make_token, monkeypatch
+):
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_product(conn, project_id):
+        return {"clothingType": "top"}
+
+    async def fake_analysis(conn, project_id):
+        return {"targetGenders": ["women"]}
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_product)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.put(
+        "/v1/projects/p1/storyboard",
+        headers=_auth(make_token),
+        json=[{
+            "id": "b1",
+            "source": "ai",
+            "sectionRole": "fit",
+            "contentRole": "coordination",
+            "cutType": "styling",
+            "direction": "front",
+            "shot": "full",
+            "spaceGroupId": "legacy-space",
+        }],
+    )
+
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "invalid_space_set_group_id"
 
 
 def test_save_storyboard_rejects_bg_example_when_pilot_disabled(client, make_token):
@@ -243,6 +356,23 @@ def test_generate_editor_image_rejects_bg_example_before_credit_reservation(
 
     assert res.status_code == 400
     assert res.json()["error"]["code"] == "genexample_bg_disabled"
+
+
+def test_generate_editor_image_rejects_space_groups_before_credit_reservation(
+    client, make_token,
+):
+    res = client.post(
+        "/v1/projects/p1/editor:generate-image",
+        headers=_auth(make_token),
+        json={
+            "mode": "new",
+            "cutType": "styling",
+            "spaceGroupId": "ssg1__set-cafe-01__instance-01",
+        },
+    )
+
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "space_set_editor_unsupported"
 
 
 def test_patch_unknown_status_field_ignored_not_500(client, make_token):

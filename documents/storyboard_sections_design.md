@@ -47,7 +47,7 @@ Claude(Fable)–Codex(GPT-5.6-sol ultra) 교차 토론으로 확정, 같은 날 
 3. 새 컷 **간소 컴포저** — 콘티에서는 사진 목적을 묻지 않고 섹션별 컷 종류·생성예시와 필요한 샷·방향·색상만 보여준다. 내부 목적은 핵심 장점의 순서, 핏·코디의 컷 종류, 제품 확인의 샷으로 정하며, 같은 장소는 새 섹션이 아니라 핏·코디 안의 묶음으로 다룬다(§8, ADR-0005).
 4. 시리즈 '가입' 명시 액션(현재 이탈만 자동, 가입은 섹션 ＋컷으로만).
 5. ~~섹션 taxonomy~~ → §8과 ADR-0005로 확정. 레이아웃 프리셋의 별도 개선만 남음.
-6. ~~생성 계약 — `refScope`의 서버 소비~~ → **완료(2026-07-10)**: `cut_generator.normalize_spec`이 refScope('all'|'pose', 그 외 'all' 클램프)를 정규화하고, 'pose'면 예시 뉘앙스(EXNUANCE)에 `[[REFSCOPE:pose]]` 가드(배경·장소 미전이)를 덧붙인다. **불변식**: 같은 장소 세트 안 예시(spaceGroupId+exampleId)는 레거시 저장분·'all' 값도 서버가 'pose'로 강제(배경은 [[SPACE]] 담당). pytest 3건 추가(241 pass).
+6. ~~생성 계약 — `refScope`의 서버 소비~~ → **완료(2026-07-10)**: `cut_generator.normalize_spec`이 refScope('all'|'pose', 그 외 'all' 클램프)를 정규화하고, 'pose'면 예시 뉘앙스(EXNUANCE)에 `[[REFSCOPE:pose]]` 가드(배경·장소 미전이)를 덧붙인다. **불변식**: 정식 촬영 세트 안 예시(spaceGroupId+exampleId)는 입력 refScope가 없거나 'all'이어도 서버가 'pose'로 강제한다(배경은 [[SPACE]] 담당). pytest 3건 추가(241 pass).
 7. 생성 계약(잔여) — `sectionLayout: colorCompare`의 **서버 조립(M-02 page_assembler)** 소비. mock 생성기는 배선됨; **http 모드에서는 칩 자체를 숨김**("배선된 칩만" 규칙, 2026-07-10 최종 리뷰 반영). 서버 조립 구현 시 게이트 해제.
 8. (최종 리뷰 잔여, Medium-low↓) ⓐ 컬러 비교 자격 상실(색 삭제·변경) 시 stack 자동 강등, ⓑ 새 컷 취소 시 '직접 구성' 마킹 원복(커밋 시점 마킹으로 이연), ⓒ refScope '전부' 문구가 v0 예시 한계(구도 프리셋 수준, 예시 이미지 미전달)를 과장 — **예시 자산 실배선은 생성예시 앵커 재생성 트랙(ANCHOR_REGEN_PLAN)이 선행**이라 그때 함께 해소.
 
@@ -57,7 +57,7 @@ Codex working-tree 리뷰 4건(P2) 전부 실확인 후 수정 — 공통 원인
 
 1. **복제(duplicate) 후 normalizeBoard 누락** → 컷 수 변화에 레이아웃 스테일(예: 2컷 twoColumn에 복제 → 활성 칩 없음) — 삽입·이동과 동일 위생 적용.
 2. **삭제(remove) 후 normalizeBoard 누락** → 동일 수정( undo 경로도 adoptSection 뒤 normalizeBoard).
-3. **같은 공간 섹션에 ＋컷 추가 시 spaceGroupId 미상속** → deriveSections가 시리즈 해제, SPACE 연속성·포즈 범위 계약 소실. adoptSection의 "가입 자동 금지"는 이동용 규칙 — **명시적 추가 = 가입**으로 상속(그룹+variation). (백로그 4번의 절반이 이걸로 해소 — '섹션 ＋컷' 경로는 가입 동작 확보)
+3. **정식 촬영 세트에 ＋컷 추가 시 spaceGroupId 미상속** → deriveSections가 시리즈 해제, SPACE 연속성·포즈 범위 계약 소실. adoptSection의 "가입 자동 금지"는 이동용 규칙 — **명시적 추가 = 가입**으로 상속(그룹+variation). (백로그 4번의 절반이 이걸로 해소 — '섹션 ＋컷' 경로는 가입 동작 확보)
 4. **에디터 AIPanel의 MoodGuide 범위 오버레이** — onRefScopeChange 미전달 소비처에선 '포즈만' 선택이 저장·전송 안 되는 빈 클릭 → 핸들러 없으면 범위 UI 숨김. **후속(백로그)**: 에디터 새 컷 요청에 refScope 실배선(6번의 에디터 경로판).
 
 검증: vite build ✓. (콘티 서버 계약 무변경 — 전부 프론트 보드 위생)

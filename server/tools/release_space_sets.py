@@ -580,6 +580,10 @@ def validate_manifest(
                 )
             if len(applicable) != len(set(applicable)):
                 violations.append(f"{prefix}.applicableClothingTypes에 중복이 있습니다")
+            if space_set.get("gender") == "men" and "dress" in applicable:
+                violations.append(
+                    f"{prefix} 남성 원피스 적용 범위는 지원하지 않습니다"
+                )
             if len(applicable) > 1 and set(applicable) != {"top", "outer"}:
                 violations.append(
                     f"{prefix} 복수 적용 범위는 검토된 [top,outer]만 허용합니다"

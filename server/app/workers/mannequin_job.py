@@ -445,7 +445,14 @@ async def run_mannequin_job(app, job: dict) -> None:
         async with pool.connection() as conn:
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
-            gender = mannequin.select_base_gender(analysis)
+            product_clothing_type = (
+                product.get("clothing_type")
+                or product.get("clothingType")
+                or "top"
+            )
+            gender = mannequin.select_base_gender(
+                analysis, product_clothing_type
+            )
             base_asset_id = (s.base_mannequin_men_asset_id if gender == "men"
                              else s.base_mannequin_women_asset_id)
             base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)

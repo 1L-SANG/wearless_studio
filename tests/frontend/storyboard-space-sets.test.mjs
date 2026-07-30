@@ -30,13 +30,20 @@ const block = (id, extra = {}) => ({
   ...extra,
 });
 
+const releasedStylingSet = storyboardSpaceSetsFor({
+  gender: 'women',
+  clothingType: 'top',
+}).find((set) => set.setType === 'styling');
+const groupA = spaceSetGroupId(releasedStylingSet.id, 'instance-a');
+const groupB = spaceSetGroupId(releasedStylingSet.id, 'instance-b');
+
 test('consecutive spaceGroupId runs become bands without joining separated runs', () => {
   const groups = groupConsecutiveSpaceRuns([
     block('a'),
-    block('b', { spaceGroupId: 'space-1' }),
-    block('c', { spaceGroupId: 'space-1' }),
+    block('b', { spaceGroupId: groupA }),
+    block('c', { spaceGroupId: groupA }),
     block('d'),
-    block('e', { spaceGroupId: 'space-1' }),
+    block('e', { spaceGroupId: groupA }),
   ]);
   assert.deepEqual(groups.map((group) => [group.kind, group.items.map((item) => item.id)]), [
     ['block', ['a']],
@@ -49,30 +56,30 @@ test('consecutive spaceGroupId runs become bands without joining separated runs'
 test('dragging into and out of a band transitions spaceGroupId and refScope', () => {
   const source = [
     block('outside', { exampleId: 'all-only', refScope: 'all', baseThumb: 'base.png', thumb: 'example.png' }),
-    block('inside-a', { spaceGroupId: 'space-1', refScope: 'pose' }),
-    block('inside-b', { spaceGroupId: 'space-1', refScope: 'pose' }),
+    block('inside-a', { spaceGroupId: groupA, refScope: 'pose' }),
+    block('inside-b', { spaceGroupId: groupA, refScope: 'pose' }),
   ];
   const entered = moveBlockWithSpaceMembership(source, 'outside', 3, {
-    targetSpaceGroupId: 'space-1',
+    targetSpaceGroupId: groupA,
     isPoseCompatible: () => false,
   });
   const joined = entered.find((item) => item.id === 'outside');
-  assert.equal(joined.spaceGroupId, 'space-1');
+  assert.equal(joined.spaceGroupId, groupA);
   assert.equal(joined.refScope, 'pose');
   assert.equal(joined.exampleId, null);
   assert.equal(joined.thumb, 'base.png');
 
   const left = moveBlockWithSpaceMembership(entered, 'outside', 0);
   assert.equal(left.find((item) => item.id === 'outside').spaceGroupId, undefined);
-  assert.equal(left.find((item) => item.id === 'inside-a').spaceGroupId, 'space-1');
-  assert.equal(left.find((item) => item.id === 'inside-b').spaceGroupId, 'space-1');
+  assert.equal(left.find((item) => item.id === 'inside-a').spaceGroupId, groupA);
+  assert.equal(left.find((item) => item.id === 'inside-b').spaceGroupId, groupA);
 });
 
 test('space set replacement swaps the whole composition in one immutable board result', () => {
   const source = [
     block('before'),
-    block('old-a', { spaceGroupId: 'space-1', exampleId: 'pose-a', refScope: 'pose' }),
-    block('old-b', { spaceGroupId: 'space-1', exampleId: 'pose-b', refScope: 'pose' }),
+    block('old-a', { spaceGroupId: groupA, exampleId: 'pose-a', refScope: 'pose' }),
+    block('old-b', { spaceGroupId: groupA, exampleId: 'pose-b', refScope: 'pose' }),
     block('after'),
   ];
   const studioSet = {
@@ -84,8 +91,8 @@ test('space set replacement swaps the whole composition in one immutable board r
       { exampleId: 'back', order: 3, cutType: 'horizon', direction: 'back', shot: 'full', thumb: 'back.webp' },
     ],
   };
-  const next = replaceSpaceSetRun(source, 'space-1', studioSet, {
-    spaceGroupId: 'space-2',
+  const next = replaceSpaceSetRun(source, groupA, studioSet, {
+    spaceGroupId: groupB,
     makeId: (_member, index) => `new-${index}`,
   });
   assert.notEqual(next, source);
@@ -94,9 +101,9 @@ test('space set replacement swaps the whole composition in one immutable board r
     item.spaceGroupId, item.cutType, item.direction, item.shot, item.refScope,
     item.exampleId, item.exampleSelectionOrigin, item.thumb,
   ]), [
-    ['space-2', 'horizon', 'front', 'full', 'pose', 'front', 'user', 'front.webp'],
-    ['space-2', 'horizon', 'side', 'full', 'pose', 'side', 'user', 'side.webp'],
-    ['space-2', 'horizon', 'back', 'full', 'pose', 'back', 'user', 'back.webp'],
+    [groupB, 'horizon', 'front', 'full', 'pose', 'front', 'user', 'front.webp'],
+    [groupB, 'horizon', 'side', 'full', 'pose', 'side', 'user', 'side.webp'],
+    [groupB, 'horizon', 'back', 'full', 'pose', 'back', 'user', 'back.webp'],
   ]);
   assert.deepEqual(next.map((item) => item.id), ['before', 'old-a', 'old-b', 'new-2', 'after']);
 });
@@ -190,6 +197,11 @@ test('release normalization fails closed instead of widening malformed sets', ()
   assert.equal(normalize({ ...base, applicableClothingTypes: [] }).length, 0);
   assert.equal(normalize({
     ...base,
+    gender: 'men',
+    applicableClothingTypes: ['dress'],
+  }).length, 0);
+  assert.equal(normalize({
+    ...base,
     members: base.members.map((member) => ({ ...member, direction: null })),
   }).length, 0);
   assert.equal(normalize({ ...base, setId: 'bad__id' }).length, 0);
@@ -240,7 +252,7 @@ test('production set eligibility filters by gender and clothing type', () => {
 test('creating released members preserves exact ordered example choices as user selections', () => {
   const members = createSpaceSetMembers({
     id: 'released',
-    spaceVariation: 'related-views',
+    spaceVariation: 'subtle',
     members: [
       { exampleId: 'exact-full', order: 1, cutType: 'styling', shot: 'full', direction: 'front', thumb: 'full.webp' },
       { exampleId: 'exact-medium', order: 2, cutType: 'styling', shot: 'medium', direction: 'side', thumb: 'medium.webp' },
@@ -253,24 +265,20 @@ test('creating released members preserves exact ordered example choices as user 
     order: member.spaceSetMemberOrder,
     variation: member.spaceVariation,
   })), [
-    { exampleId: 'exact-full', origin: 'user', thumb: 'full.webp', order: 1, variation: 'related-views' },
-    { exampleId: 'exact-medium', origin: 'user', thumb: 'medium.webp', order: 2, variation: 'related-views' },
+    { exampleId: 'exact-full', origin: 'user', thumb: 'full.webp', order: 1, variation: 'subtle' },
+    { exampleId: 'exact-medium', origin: 'user', thumb: 'medium.webp', order: 2, variation: 'subtle' },
   ]);
 });
 
-test('unknown persisted set ids use a neutral label rather than guessing a cafe', () => {
-  const inferred = inferStoryboardSpaceSet('sgset__removed-release-id__legacy', [
-    block('a'), block('b'),
-  ]);
-  assert.equal(inferred.name, '저장된 촬영 묶음');
-  assert.equal(inferred.tone, 'default');
-  assert.equal(inferred.compositionLabel, '2컷 구성');
+test('unknown or pre-release group ids are not inferred as a shooting set', () => {
+  assert.equal(inferStoryboardSpaceSet('ssg1__removed-release-id__instance'), null);
+  assert.equal(inferStoryboardSpaceSet('sgset__removed-release-id__legacy'), null);
 });
 
 test('dragging a member out keeps its content and keeps the remaining set intact', () => {
   const source = [
-    block('a', { spaceGroupId: 'space-1', refScope: 'pose', exampleId: 'ex-1' }),
-    block('b', { spaceGroupId: 'space-1', refScope: 'pose', exampleId: 'ex-2' }),
+    block('a', { spaceGroupId: groupA, refScope: 'pose', exampleId: 'ex-1' }),
+    block('b', { spaceGroupId: groupA, refScope: 'pose', exampleId: 'ex-2' }),
     block('c', {}),
   ];
   const moved = moveBlockWithSpaceMembership(source, 'b', 3, { targetSpaceGroupId: null });
@@ -278,9 +286,9 @@ test('dragging a member out keeps its content and keeps the remaining set intact
   assert.equal(out.spaceGroupId, undefined);
   assert.equal(out.exampleId, 'ex-2');
   const remaining = moved.find((item) => item.id === 'a');
-  assert.equal(remaining.spaceGroupId, 'space-1');
+  assert.equal(remaining.spaceGroupId, groupA);
   const remainingRun = groupConsecutiveSpaceRuns(moved)
-    .find((group) => group.spaceGroupId === 'space-1');
+    .find((group) => group.spaceGroupId === groupA);
   assert.equal(remainingRun.kind, 'space');
   assert.deepEqual(remainingRun.items.map((item) => item.id), ['a']);
 });

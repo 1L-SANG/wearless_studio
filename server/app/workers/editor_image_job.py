@@ -183,7 +183,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                     await _fail("기준 색상 이미지를 찾을 수 없어요. 다시 시도해 주세요.",
                                 {"error": "no_base_color_images"})
                 return
-            # 컷 계약 필드 통과(ADR-0004) — mirror·얼굴·포즈·생성예시·공간그룹까지 서버 정규화에 맡긴다.
+            # 컷 계약 필드 통과(ADR-0004) — mirror·얼굴·포즈·생성예시까지 서버 정규화에 맡긴다.
+            # 촬영 세트는 콘티보드 전용이며 에디터의 독립 새 이미지에는 그룹을 전달하지 않는다.
             # 에디터 새 이미지 패널은 아직 매칭 의류를 고르는 UI·payload를 제공하지 않으므로
             # matchIds를 의도적으로 제외한다. 후속 배선 시에는 상세페이지와 같은 정책으로
             # styling·horizon·mirror에만 MATCHING을 첨부하고 product에는 적용하지 않는다.
@@ -191,7 +192,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             cut_spec = {
                 k: new_payload.get(k)
                 for k in ("contentRole", "cutType", "direction", "shot", "faceExposure", "pose",
-                          "outerClosureState", "exampleId", "spaceGroupId", "spaceVariation", "modelId", "model_id",
+                          "outerClosureState", "exampleId", "modelId", "model_id",
                           "colorId", "refScope")
             }
             if detail_color_transfer:
@@ -281,7 +282,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                             space_set_assets.resolve_published_example_reference(
                                 normalized,
                                 clothing_type=clothing_type,
-                                gender=mannequin.select_base_gender(analysis),
+                                gender=mannequin.select_base_gender(
+                                    analysis, clothing_type
+                                ),
                                 scope=scope,
                             )
                         )

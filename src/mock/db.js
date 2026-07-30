@@ -17,6 +17,8 @@ import { Placeholder as P } from '@/mock/placeholders.js';
 import genExamples from '@/data/genExamples.json';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
+import { genderForClothingType } from '@/lib/productGender.js';
+import { spaceSetGroupId, storyboardSpaceSetsFor } from '@/lib/storyboardSpaceSetCatalog.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { ensureSections, rowSizeFor } from '@/lib/sections.js';
@@ -38,10 +40,12 @@ const copyFitProfile = (profile) => ({
     matchingFit: { ...profile.matchingFit, axes: { ...(profile.matchingFit.axes || {}) } },
   } : {}),
 });
-const isMenOnly = (genders) => Array.isArray(genders) && genders.length > 0 && genders.every((g) => g === 'men');
 const defaultFitProfile = (product, analysis) => {
   const category = fitProfileCategory(product?.clothingType, analysis?.subCategory) || 'top';
-  const gender = isMenOnly(analysis?.targetGenders || product?.targetGenders) ? 'men' : 'women';
+  const gender = genderForClothingType(
+    product?.clothingType,
+    analysis?.targetGenders || product?.targetGenders,
+  );
   const axes = Object.fromEntries(Object.keys(axesFor(category, gender)).map((axis) => [axis, null]));
   return { category, gender, axes, source: 'auto', version: 2 };
 };
@@ -121,8 +125,8 @@ const catalogs = {
   ],
   // 사진 양 — 두 방식은 섹션 순서가 같고 사진 수만 다르다.
   composeModes: [
-    { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로 필요한 사진만', count: '12', flow: ['핵심 장점', '핏·코디', '제품 확인'] },
-    { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '13~29', flow: ['핵심 장점', '핏·코디', '제품 확인'] },
+    { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로 필요한 사진만', count: '13', flow: ['핵심 장점', '핏·코디', '제품 확인'] },
+    { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '14~33', flow: ['핵심 장점', '핏·코디', '제품 확인'] },
   ],
   poses: [
     { id: 'auto', label: 'AI 자동', auto: true }, { id: 'stand', label: '서기', thumb: P.pose('stand') },
@@ -337,7 +341,7 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
 }
 
 /* =============================================================
-   buildStoryboard(mode, colors) — 역할 중심 기본 콘티.
+   buildStoryboard(mode, colors, product) — 역할 중심 기본 콘티.
    기본형과 확장형은 핵심 장점 → 핏·코디 → 제품 확인 순서가 같고,
    확장형만 색상별 사진 수를 늘린다. cutType은 contentRole에서 파생한
    비노출 생성 레시피다.
@@ -352,20 +356,40 @@ const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) 
 });
 const mirrorSb = (colorId) => sb(SECTION_ROLES.FIT, CONTENT_ROLES.REAL_WEAR, 'mirror', null, 'full', colorId, { faceExposure: 'hide' });
 
-export function buildStoryboard(mode, colors) {
+export function buildStoryboard(mode, colors, product = {}) {
   if (mode !== 'basic' && mode !== 'extended') throw new Error('invalid_compose_mode');
   const list = Array.isArray(colors) && colors.length ? colors : [{ id: 'col1', isBase: true }];
   const base = (list.find((c) => c.isBase) || list[0]).id;
   const hasDetail = hasDetailSource({ colors: list });
   const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
-  // 같은 공간에서 포즈·프레이밍만 달리하는 코디 활용 2컷 묶음
-  const spacePair = (colorId) => {
-    // mock 묶음은 발행된 공간 세트가 아니므로 production ssg1__ namespace를 쓰지 않는다.
-    const sg = uid('sg');
-    return [
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'full', colorId, { spaceGroupId: sg, spaceVariation: 'subtle', refScope: 'pose' }),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'side', 'medium', colorId, { spaceGroupId: sg, spaceVariation: 'subtle', refScope: 'pose' }),
-    ];
+  const gender = genderForClothingType(
+    product.clothingType,
+    product.targetGenders,
+  );
+  const stylingSet = storyboardSpaceSetsFor({
+    gender,
+    clothingType: product.clothingType || 'top',
+  }).find((set) => set.setType === 'styling');
+  const shootingSet = (colorId) => {
+    if (!stylingSet) return [];
+    const groupId = spaceSetGroupId(stylingSet.id, uid('sg'));
+    return stylingSet.members.map((member) => sb(
+      SECTION_ROLES.FIT,
+      CONTENT_ROLES.COORDINATION,
+      member.cutType,
+      member.direction,
+      member.shot,
+      colorId,
+      {
+        spaceGroupId: groupId,
+        spaceVariation: stylingSet.spaceVariation,
+        spaceSetMemberOrder: member.order,
+        refScope: 'pose',
+        exampleId: member.exampleId,
+        exampleSelectionOrigin: 'auto',
+        thumb: member.thumb,
+      },
+    ));
   };
   const out = [
     sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.HERO, 'styling', 'front', 'full', base),
@@ -374,7 +398,7 @@ export function buildStoryboard(mode, colors) {
   if (mode === 'extended') {
     list.slice(0, 4).forEach((c, colorIndex) => {
       out.push(
-        ...spacePair(c.id),
+        ...shootingSet(c.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', c.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', c.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', c.id),
@@ -395,7 +419,7 @@ export function buildStoryboard(mode, colors) {
     if (hasDetail) out.push(sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor));
   } else { // basic
     out.push(
-      ...spacePair(base),
+      ...shootingSet(base),
       sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', base),
       sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', base),
       sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'side', 'full', base),
@@ -408,7 +432,7 @@ export function buildStoryboard(mode, colors) {
       ? sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor)
       : sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base));
   }
-  // 같은 장소 쌍은 FIT 섹션 안에서 연속 spaceGroupId 밴드로 표현된다.
+  // 발행된 촬영 세트는 FIT 섹션 안에서 연속 spaceGroupId 밴드로 표현된다.
   return ensureSections(out);
 }
 
@@ -486,7 +510,10 @@ function buildDraft() {
   const mannequins = [];
 
   /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004) ---- */
-  const storyboard = buildStoryboard(project.composeMode, product.colors);
+  const storyboard = buildStoryboard(project.composeMode, product.colors, {
+    clothingType: product.clothingType,
+    targetGenders: analysis.targetGenders,
+  });
 
   /* ---- Editor blocks: 5 prefilled demo + auto info blocks (PRD §10.14) ----
      (직접 /editor 진입용 데모. 생성 플로우는 generateDetailPage 가

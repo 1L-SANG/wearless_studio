@@ -62,6 +62,7 @@ function normalizedSet(set, index) {
     || clothingTypes.length === 0
     || new Set(clothingTypes).size !== clothingTypes.length
     || clothingTypes.some((value) => !ALL_CLOTHING_TYPES.includes(value))
+    || (set.gender === 'men' && clothingTypes.includes('dress'))
     || !SPACE_VARIATIONS.has(set.spaceVariation)
     || !PLATE_POLICIES.has(set.platePolicy)
     || !text(set.name)
@@ -174,19 +175,6 @@ export const STORYBOARD_SPACE_SET_EXAMPLES = Object.freeze(
 );
 
 const SET_BY_ID = new Map(STORYBOARD_SPACE_SETS.map((set) => [set.id, set]));
-const UNKNOWN_SPACE_SET = Object.freeze({
-  id: 'unknown',
-  setId: 'unknown',
-  name: '저장된 촬영 묶음',
-  setType: null,
-  place: '공간',
-  placeType: 'space',
-  tone: 'default',
-  compositionLabel: '',
-  spaceVariation: 'subtle',
-  applicableClothingTypes: ALL_CLOTHING_TYPES,
-  members: Object.freeze([]),
-});
 
 export function storyboardSpaceSetById(id) {
   return SET_BY_ID.get(id) || null;
@@ -228,14 +216,7 @@ export function spaceSetIdFromGroupId(groupId) {
   return SET_BY_ID.has(id) ? id : null;
 }
 
-export function inferStoryboardSpaceSet(groupId, members = []) {
-  // 저장된 세트 ID가 현 카탈로그에 없어도 항상 안전한 중립 표시를 돌려준다.
-  // 모르는 ID를 카페로 추측하면 실제와 다른 공간 이름이 노출된다.
+export function inferStoryboardSpaceSet(groupId) {
   const storedId = spaceSetIdFromGroupId(groupId);
-  const stored = storedId ? storyboardSpaceSetById(storedId) : null;
-  if (stored) return stored;
-  return {
-    ...UNKNOWN_SPACE_SET,
-    compositionLabel: members.length ? `${members.length}컷 구성` : '',
-  };
+  return storedId ? storyboardSpaceSetById(storedId) : null;
 }

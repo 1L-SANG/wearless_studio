@@ -129,7 +129,7 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         "exampleId": _sanitize(raw.get("exampleId") or raw.get("example_id") or "") or None,
         "spaceGroupId": _sanitize(raw.get("spaceGroupId") or raw.get("space_group_id") or "") or None,
         "spaceVariation": variation
-        if variation in ("fixed", "subtle", "varied")
+        if variation in ("fixed", "subtle")
         else "subtle",
         "outerClosureState": closure,
         "modelId": _sanitize(raw.get("modelId") or raw.get("model_id") or "") or None,
@@ -145,8 +145,8 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
     # 제품컷은 '배경만/포즈만'이 성립하지 않는다(사람·포즈 없음) — 예시는 통째 참조만 허용.
     if cut == "product" and spec["refScope"] != "all":
         spec["refScope"] = "all"
-    # 같은 장소 세트 안의 예시는 '포즈 예시' 강등이 계약(2026-07) — 배경은 세트 연속성([[SPACE]])이
-    # 담당하므로, refScope 없는 레거시 저장분·우회 클라이언트도 서버에서 'pose'로 강제한다.
+    # 정식 촬영 세트 안의 예시는 '포즈 예시' 강등이 계약(2026-07) — 배경은 세트
+    # 연속성([[SPACE]])이 담당하므로 입력 refScope와 무관하게 서버에서 'pose'로 강제한다.
     # (배경만도 마찬가지 — 세트의 배경 기준과 충돌하므로 포즈로 강등)
     if spec["spaceGroupId"] and spec["exampleId"]:
         spec["refScope"] = "pose"

@@ -258,6 +258,20 @@ def test_flat_id_source_is_union_of_frontend_catalog_and_server_registry(tmp_pat
     }
 
 
+def test_manifest_rejects_men_dress_set(tmp_path):
+    _path, root, manifest = _fixture(tmp_path)
+    manifest["sets"][0]["gender"] = "men"
+    manifest["sets"][0]["applicableClothingTypes"] = ["dress"]
+
+    with pytest.raises(release.SpaceSetReleaseValidationError) as caught:
+        release.validate_manifest(manifest, root)
+
+    assert any(
+        "남성 원피스 적용 범위는 지원하지 않습니다" in item
+        for item in caught.value.violations
+    )
+
+
 def test_space_set_example_id_collision_with_actual_flat_ids_is_rejected(tmp_path):
     _path, root, manifest = _fixture(tmp_path)
     example_id = manifest["sets"][0]["members"][0]["exampleId"]

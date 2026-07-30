@@ -321,21 +321,26 @@ export const httpAdapter = {
   },
   // ---- 상세페이지 (PL-4) — 콘티·에디터는 서버 소유. detail_page job 이 저장 콘티를 읽는다 ----
   async getStoryboard(projectId) {
-    const [saved, product, project] = await Promise.all([
+    const [saved, product, project, analysis] = await Promise.all([
       http(`/v1/projects/${projectId}/storyboard`),
       http(`/v1/projects/${projectId}/product`),
       http(`/v1/projects/${projectId}`),
+      http(`/v1/projects/${projectId}/analysis`),
     ]);
     const colors = product?.colors || [];
     const mode = project?.composeMode === 'extended' ? 'extended' : 'basic';
+    const storyboardContext = {
+      clothingType: product?.clothingType || 'top',
+      targetGenders: analysis?.targetGenders || [],
+    };
     if (Array.isArray(saved) && saved.length) {
       const previousMode = mode === 'extended' ? 'basic' : 'extended';
       // 이전 모드의 기본 시드 그대로일 때만 사진 양 변경을 반영한다.
       // 사용자가 옵션·순서·레이아웃 중 하나라도 바꾼 콘티는 교체하지 않는다.
-      if (!isDefaultStoryboardForMode(saved, colors, previousMode)) return saved;
+      if (!isDefaultStoryboardForMode(saved, colors, previousMode, storyboardContext)) return saved;
     }
-    // 첫 진입/재시드는 화면의 자동 예시 배정 뒤 한 번만 PUT한다(예시 없는 시드 선저장 금지).
-    return defaultStoryboard(colors, mode);
+    // 첫 진입/재시드는 화면의 자동 예시 배정 뒤 한 번만 PUT한다.
+    return defaultStoryboard(colors, mode, storyboardContext);
   },
   async saveStoryboard(projectId, blocks, _options = {}) {
     return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });

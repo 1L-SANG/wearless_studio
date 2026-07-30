@@ -540,6 +540,17 @@ async def save_product(
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         row = await repo.save_product(conn, project_id, user_id, fields)
+        if (
+            row
+            and (row.get("clothingType") or row.get("clothing_type")) == "dress"
+        ):
+            analysis = await repo.get_analysis(conn, project_id) or {}
+            if analysis and analysis.get("targetGenders") != ["women"]:
+                await repo.save_analysis(
+                    conn,
+                    project_id,
+                    {**analysis, "targetGenders": ["women"]},
+                )
         await conn.commit()
     return row
 
@@ -569,6 +580,11 @@ async def save_analysis(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        if (
+            product.get("clothingType") or product.get("clothing_type")
+        ) == "dress":
+            analysis = {**analysis, "targetGenders": ["women"]}
         row = await repo.save_analysis(conn, project_id, analysis)
         await conn.commit()
     return {"projectId": row["project_id"], **(row["payload"] or {})}
@@ -1118,11 +1134,8 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
             isinstance(block, dict)
             and (
                 block.get("exampleId")
-                or str(
-                    block.get("spaceGroupId")
-                    or block.get("space_group_id")
-                    or ""
-                ).startswith("ssg1__")
+                or block.get("spaceGroupId")
+                or block.get("space_group_id")
             )
             for block in canonical
         ):
@@ -1133,7 +1146,7 @@ async def save_storyboard(request: Request, project_id: str, blocks: list = Body
                 or product.get("clothing_type")
                 or "top"
             )
-            gender = mannequin.select_base_gender(analysis)
+            gender = mannequin.select_base_gender(analysis, clothing_type)
             error = space_set_assets.validate_storyboard_space_sets(
                 canonical, clothing_type=clothing_type, gender=gender
             )
@@ -1266,6 +1279,13 @@ async def generate_editor_image(
     - **에지 케이스**: `402 Payment Required` — 크레딧(설정값, 기본 1)이 없으면 발생
     """
     _require_bg_examples_enabled(request, body)
+    if (body or {}).get("mode") == "new" and (
+        (body or {}).get("spaceGroupId") or (body or {}).get("space_group_id")
+    ):
+        raise _bad_request(
+            "space_set_editor_unsupported",
+            "촬영 세트는 콘티보드에서만 사용할 수 있어요.",
+        )
     s = request.app.state.settings
     cost = s.credit_cost_editor_image
     scoped_key = f"{project_id}:editor_image:{idempotency_key}" if idempotency_key else None
@@ -1291,7 +1311,9 @@ async def generate_editor_image(
                 space_set_assets.resolve_published_example_reference(
                     example_spec,
                     clothing_type=clothing_type,
-                    gender=mannequin.select_base_gender(analysis),
+                    gender=mannequin.select_base_gender(
+                        analysis, clothing_type
+                    ),
                     scope=example_spec["refScope"],
                 )
             except space_set_assets.SpaceSetBindingError as exc:

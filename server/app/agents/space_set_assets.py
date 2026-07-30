@@ -54,20 +54,24 @@ class SpaceSetBindingError(ValueError):
 def parse_space_set_group_id(group_id: object) -> tuple[str, str] | None:
     """Return ``(set_id, instance)`` for a production set group.
 
-    Legacy arbitrary ``spaceGroupId`` values remain outside this registry.  A value
-    that starts with the production prefix but is malformed is rejected rather than
-    silently falling back to the legacy flat-example path.
+    A missing value means an ordinary standalone block. Every present group id must
+    use the published v1 namespace; arbitrary pre-release group ids are rejected.
     """
 
+    if group_id is None:
+        return None
     if not isinstance(group_id, str) or not group_id.startswith(
         _PRODUCTION_GROUP_PREFIX
     ):
-        return None
+        raise SpaceSetBindingError(
+            "invalid_space_set_group_id",
+            "촬영 세트 식별자가 올바르지 않아요. 세트를 다시 선택해 주세요.",
+        )
     segments = group_id[len(_PRODUCTION_GROUP_PREFIX) :].split("__")
     if len(segments) != 2 or any(not _is_safe_id(segment) for segment in segments):
         raise SpaceSetBindingError(
             "invalid_space_set_group_id",
-            "공간 세트 식별자가 올바르지 않아요. 세트를 다시 선택해 주세요.",
+            "촬영 세트 식별자가 올바르지 않아요. 세트를 다시 선택해 주세요.",
         )
     return segments[0], segments[1]
 
@@ -204,6 +208,7 @@ def validate_space_set_registry_document(
             or not applicable
             or len(applicable) != len(set(applicable))
             or any(item not in _CLOTHING_TYPES for item in applicable)
+            or (gender == "men" and "dress" in applicable)
         ):
             raise ValueError("space_set_registry_applicability_invalid")
         space_variation = raw_set.get("spaceVariation")
@@ -523,6 +528,14 @@ def bind_storyboard_space_sets(
             raise SpaceSetBindingError(
                 "space_set_not_applicable",
                 "상품 종류에 맞지 않는 공간 세트예요. 다른 세트를 골라주세요.",
+            )
+        if any(
+            block.get("spaceVariation") != set_entry["spaceVariation"]
+            for _position, block in indexed_group_blocks
+        ):
+            raise SpaceSetBindingError(
+                "space_set_variation_mismatch",
+                "촬영 세트의 공간 변화 설정이 발행 정보와 맞지 않아요. 세트를 다시 선택해 주세요.",
             )
         positions = [position for position, _block in indexed_group_blocks]
         if positions != list(range(positions[0], positions[0] + len(positions))):

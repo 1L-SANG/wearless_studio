@@ -7,6 +7,15 @@ import {
   storedExampleConditionStatus,
 } from '../../src/lib/generationExamples.js';
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
+import {
+  genderForClothingType,
+  normalizeTargetGendersForClothingType,
+} from '../../src/lib/productGender.js';
+import {
+  spaceSetGroupId,
+  spaceSetIdFromGroupId,
+  storyboardSpaceSetsFor,
+} from '../../src/lib/storyboardSpaceSetCatalog.js';
 
 const example = (id, extra = {}) => ({
   id, thumb: `https://images.test/${id}.webp`, rank: 1, cutType: 'styling', shot: 'full',
@@ -19,6 +28,11 @@ const block = (id, extra = {}) => ({
   spaceGroupId: null, thumb: `placeholder:${id}`, matchIds: ['ignored'], ...extra,
 });
 const product = { clothingType: 'top' };
+const releasedStylingSet = storyboardSpaceSetsFor({
+  gender: 'women',
+  clothingType: 'top',
+}).find((set) => set.setType === 'styling');
+const releasedSpaceGroupId = spaceSetGroupId(releasedStylingSet.id, 'autofill-test');
 const storyboardSource = readFileSync(
   new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
   'utf8',
@@ -123,15 +137,6 @@ test('space-set-only poses enter only the in-space compatible pose pool', () => 
     gender: 'women',
   });
   assert.deepEqual(generic.map((item) => item.id), ['generic-back']);
-  const legacySpace = selectGenerationExamples(catalog, {
-    cutType: 'styling',
-    shot: 'full',
-    clothingType: 'top',
-    gender: 'women',
-    spaceGroupId: 'legacy-space',
-    direction: 'back',
-  });
-  assert.deepEqual(legacySpace.map((item) => item.id), ['generic-back']);
   const inSpace = selectGenerationExamples(catalog, {
     cutType: 'styling',
     shot: 'full',
@@ -242,10 +247,10 @@ test('same-space assignment requires direction-compatible pose and never falls b
     example('back-pose', { direction: 'back', variants: ['all', 'pose'], rank: 2 }),
     example('side-all-only', { direction: 'side', variants: ['all'], rank: 3 }),
   ];
-  const back = assignGenerationExamples([block('back', { direction: 'back', spaceGroupId: 'space-a' })], { catalog, product, gender: 'women' });
+  const back = assignGenerationExamples([block('back', { direction: 'back', spaceGroupId: releasedSpaceGroupId })], { catalog, product, gender: 'women' });
   assert.equal(back.blocks[0].exampleId, 'back-pose');
   assert.equal(back.blocks[0].refScope, 'pose');
-  const side = assignGenerationExamples([block('side', { direction: 'side', spaceGroupId: 'space-a' })], { catalog, product, gender: 'women' });
+  const side = assignGenerationExamples([block('side', { direction: 'side', spaceGroupId: releasedSpaceGroupId })], { catalog, product, gender: 'women' });
   assert.equal(side.blocks[0].exampleId, undefined);
   assert.deepEqual(side.missingIds, ['side']);
 });
@@ -265,12 +270,12 @@ test('same-space autofill also stays flat-only even when matching released set p
     }),
   ];
   const assigned = assignGenerationExamples([
-    block('back', { direction: 'back', spaceGroupId: 'space-a' }),
+    block('back', { direction: 'back', spaceGroupId: releasedSpaceGroupId }),
   ], { catalog, product, gender: 'women' });
   assert.equal(assigned.blocks[0].exampleId, 'flat-back');
 
   const missing = assignGenerationExamples([
-    block('back', { direction: 'back', spaceGroupId: 'space-a' }),
+    block('back', { direction: 'back', spaceGroupId: releasedSpaceGroupId }),
   ], { catalog: [catalog[0]], product, gender: 'women' });
   assert.equal(missing.blocks[0].exampleId, undefined);
   assert.deepEqual(missing.missingIds, ['back']);
@@ -301,6 +306,50 @@ test('a storyboard containing only auto assignments still matches the untouched 
   assert.equal(isDefaultStoryboardForMode(automatic, colors, 'basic'), false);
 });
 
+test('every supported gender and clothing category seeds a published three-cut set', () => {
+  const colors = [{ id: 'color-1', isBase: true, images: [] }];
+  const fourColorsWithDetail = Array.from({ length: 4 }, (_, index) => ({
+    id: `color-${index + 1}`,
+    isBase: index === 0,
+    images: index === 0 ? [{ slot: 'Detail' }] : [],
+  }));
+  const supported = [
+    ['women', 'top'], ['women', 'bottom'], ['women', 'outer'], ['women', 'dress'],
+    ['men', 'top'], ['men', 'bottom'], ['men', 'outer'],
+  ];
+
+  for (const [gender, clothingType] of supported) {
+    const context = { clothingType, targetGenders: [gender] };
+    const basic = defaultStoryboard(colors, 'basic', context);
+    const setMembers = basic.filter((item) => item.spaceGroupId);
+
+    assert.equal(basic.length, 13, `${gender}/${clothingType} basic`);
+    assert.equal(setMembers.length, 3, `${gender}/${clothingType} set members`);
+    assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 1);
+    assert.ok(spaceSetIdFromGroupId(setMembers[0].spaceGroupId));
+    assert.ok(setMembers.every((item) => (
+      item.exampleSelectionOrigin === 'auto'
+      && item.refScope === 'pose'
+      && item.exampleId
+    )));
+    assert.equal(
+      defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
+      33,
+      `${gender}/${clothingType} extended`,
+    );
+  }
+});
+
+test('dress is women-only even when stale input still says men', () => {
+  assert.equal(genderForClothingType('dress', ['men']), 'women');
+  assert.deepEqual(normalizeTargetGendersForClothingType('dress', ['men']), ['women']);
+  assert.deepEqual(normalizeTargetGendersForClothingType('dress', []), ['women']);
+  assert.equal(genderForClothingType('outer', ['men']), 'men');
+  assert.deepEqual(normalizeTargetGendersForClothingType('outer', ['men']), ['men']);
+  assert.match(storyboardSource, /if \(clothingType === 'dress'\) return genderForClothingType/);
+  assert.match(storyboardSource, /exampleGenderFromAnalysis\(\s*a,\s*hydratedCatalogs,\s*p\.clothingType/);
+});
+
 test('direction badge labels are front, side and back', () => {
   assert.deepEqual(['front', 'side', 'back'].map(directionBadgeLabel), ['정면', '사이드', '뒷면']);
 });
@@ -310,8 +359,7 @@ test('storyboard interaction source clears an incompatible in-space shot and rem
     storyboardSource.indexOf('const onShotChange ='),
     storyboardSource.indexOf('const commitPendingRecipe ='),
   );
-  assert.match(shotHandler, /includeSetOnly:\s*inReleasedSpaceSet/);
-  assert.match(storyboardSource, /const inReleasedSpaceSet = !!spaceSetIdFromGroupId\(block\.spaceGroupId\)/);
+  assert.match(shotHandler, /includeSetOnly:\s*true/);
   assert.match(shotHandler, /exampleId:\s*null/);
   assert.match(shotHandler, /exampleSelectionOrigin: current\.exampleId \? 'user' : null/);
   assert.match(storyboardSource, /await onAtomicChange\(changes, \{ pickerOwnsError: true \}\)/);

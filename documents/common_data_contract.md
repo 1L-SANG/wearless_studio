@@ -102,7 +102,7 @@ Analysis {
   suggestedName: string
   subCategory: SubCategory | null  // 영문 토큰화 (§4). dress는 null
   customCategory: string | null    // enum 밖 의류의 자유 명칭(한국어, ≤20자) — AI 추측 + 사용자 주관식 수정 (2026-07-13)
-  targetGenders: Gender[]          // UI 단일 선택 — 1-element 배열로 저장
+  targetGenders: Gender[]          // UI 단일 선택 — 1-element 배열. dress는 ['women'] 고정
   fit: Fit
   materials: Material[]            // Material { name: string(자유 텍스트), ratio: number(%) }
   sellingPoints: string[]          // 자유 텍스트, max LIMITS.sellingPointMax(5)
@@ -112,7 +112,8 @@ Analysis {
   matchSelections: { clothingId: string, role: 'main' | 'sub' }[]   // max 2
   locked: boolean
 }
-// fit·clothingType은 필수(null 불가) — 분석 폼에서 해제 불가 칩(PRD §6.3). subCategory(원피스=null)·targetGenders(배열)는 비울 수 있음.
+// fit·clothingType은 필수(null 불가) — 분석 폼에서 해제 불가 칩(PRD §6.3).
+// subCategory는 원피스에서 null, targetGenders는 일반 카테고리에서 비울 수 있으나 dress는 ['women']으로 정규화.
 
 MatchClothing { id: string, name: string, thumb: string }
 // 폐기: Analysis.clothingType / measurements / measurementsUnknown (Product 소유),
@@ -169,8 +170,8 @@ StoryboardBlock {
   refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함) — 프로젝트 한정, 전역 저장 없음 (ADR-0004)
   exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   exampleSelectionOrigin?: 'auto' | 'user' | null  // 자동 배정인지 사용자 확정인지. source와 다른 축
-  spaceGroupId?: string | null     // 공간 무드 유지 그룹 — 같은 id = 같은 공간에서 생성 (ADR-0004)
-  spaceVariation?: 'subtle' | 'varied'  // 그룹 내 변화 강도. 기본 'subtle' (ADR-0004)
+  spaceGroupId?: string | null     // 발행된 촬영 세트 인스턴스. `ssg1__<setId>__<instanceId>`만 허용
+  spaceVariation?: 'fixed' | 'subtle'  // 발행 세트가 정한 변화 강도. 임의 입력값은 허용하지 않음
   refScope?: 'all' | 'bg' | 'pose' // 예시에서 참고할 범위
   layoutRowId?: string             // 2단·3단 배치에서 같은 행을 공유하는 id
   layoutRowVersion?: 1

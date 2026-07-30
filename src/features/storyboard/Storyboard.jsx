@@ -39,10 +39,10 @@ import {
 import {
   inferStoryboardSpaceSet,
   spaceSetGroupId,
-  spaceSetIdFromGroupId,
   storyboardSpaceSetsFor,
   withStoryboardSpaceSetExamples,
 } from '@/lib/storyboardSpaceSetCatalog.js';
+import { genderForClothingType } from '@/lib/productGender.js';
 import {
   dissolveSpaceSet,
   groupConsecutiveSpaceRuns,
@@ -121,7 +121,8 @@ const blockHasCompatiblePoseExample = (block, catalogs) => {
 
 
 
-function exampleGenderFromAnalysis(analysis, catalogs) {
+function exampleGenderFromAnalysis(analysis, catalogs, clothingType) {
+  if (clothingType === 'dress') return genderForClothingType(clothingType, []);
   const allowed = new Set(['women', 'men']);
   const modelId = analysis?.selectedModelId || analysis?.selected_model_id;
   const models = [...(catalogs?.models || []), ...(analysis?.models || [])];
@@ -203,7 +204,7 @@ function StoryboardCard({ block, displayLabel, catalogs, colorOpts, matchClothin
         <div className="thumb"><img src={block.thumb} alt="" /></div>
         <div className="sb-textcol">
           <div className="bk">{isMine ? '내 이미지' : displayLabel}
-            {/* 같은 공간에서 이어 찍는 컷 묶음 표시 (spaceGroupId, ADR-0004) */}
+            {/* 발행된 촬영 세트의 연속 컷 표시 (spaceGroupId, ADR-0004) */}
             {!isMine && spaceTag && <span className="sb-space" title="같은 공간에서 이어 찍는 컷이에요">공간 {spaceTag}</span>}
           </div>
           {!isMine && (
@@ -420,9 +421,7 @@ function ShotSegment({
 
 function SpaceMemberStrip({ set, siblings, currentId }) {
   if (!set) return null;
-  const summary = !set.setType
-    ? `${siblings.length}컷의 저장된 촬영 묶음이에요`
-    : set.setType === 'horizon-rotation'
+  const summary = set.setType === 'horizon-rotation'
     ? `${siblings.length}컷으로 정면·옆면·뒷면을 이어 봐요`
     : set.setType === 'horizon-sequence'
       ? `${siblings.length}컷의 호리존 연속 예시예요`
@@ -489,7 +488,7 @@ function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType 
    · 내 사진(refImages) = '+ 타일'로 갤러리에 통합 — 점선 테두리·배지, 분위기(조명·색감)만 참고
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onCycleExample, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false, includeSetOnlyInSpace = false, onUseMine = null }) {
+export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onCycleExample, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false, onUseMine = null }) {
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
@@ -500,9 +499,9 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
     gender,
     spaceGroupId: inSpace ? 'inspector' : null,
     direction,
-    includeSetOnly: inSpace && includeSetOnlyInSpace,
+    includeSetOnly: inSpace,
     appendSetOnly: !inSpace && cut !== 'product',
-  }), [catalogs.genExamples, cut, shotVal, clothingType, gender, inSpace, includeSetOnlyInSpace, direction]);
+  }), [catalogs.genExamples, cut, shotVal, clothingType, gender, inSpace, direction]);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
   const cropFromFull = cut !== 'product' && selectedExample?.shot === 'full' && shotVal === 'medium';
   const extendFromMedium = cut !== 'product' && selectedExample?.shot === 'medium' && shotVal === 'full';
@@ -563,7 +562,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
                 gender,
                 spaceGroupId: inSpace ? 'inspector' : null,
                 direction,
-                includeSetOnly: inSpace && includeSetOnlyInSpace,
+                includeSetOnly: inSpace,
                 appendSetOnly: !inSpace,
               },
             ).length > 0 : null} />
@@ -771,7 +770,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const isDetail = block.contentRole === CONTENT_ROLES.DETAIL;
   const effectiveSectionRole = requestedRecipe?.sectionRole || block.sectionRole;
   const pendingInSpace = !!block.spaceGroupId && !requestedRecipe;
-  const inReleasedSpaceSet = !!spaceSetIdFromGroupId(block.spaceGroupId);
   const productShotOptions = catalogs.productShotTypes
     .filter((option) => hasDetailImage || option.value !== 'detail');
   const hasSelectableExamples = (cutType, shot) => selectGenerationExamples(
@@ -826,7 +824,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         gender: exampleGender,
         spaceGroupId: current.spaceGroupId,
         direction: current.direction,
-        includeSetOnly: inReleasedSpaceSet,
+        includeSetOnly: true,
       }).some((example) => example.id === current.exampleId);
       if (compatible) return { shot, refScope: 'pose', exampleSelectionOrigin: 'user' };
       return {
@@ -985,8 +983,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot }))}
             clothingType={clothingType} gender={exampleGender}
             exampleId={pendingChoice} onExampleChange={commitPendingRecipe}
-            refScope={pendingInSpace ? 'pose' : 'all'} inSpace={pendingInSpace}
-            includeSetOnlyInSpace={inReleasedSpaceSet} />
+            refScope={pendingInSpace ? 'pose' : 'all'} inSpace={pendingInSpace} />
           {pendingError && <div className="sb-save-error">{pendingError}
             <button type="button" disabled={!pendingChoice || pendingSaving}
               onClick={() => commitPendingRecipe(pendingChoice)}>다시 시도</button>
@@ -1009,7 +1006,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
               refScope: value,
               exampleSelectionOrigin: current.exampleId ? 'user' : null,
             }, catalogs))} inSpace={!!block.spaceGroupId}
-            includeSetOnlyInSpace={inReleasedSpaceSet}
             refs={(block.refImages || []).map((value, index) => ({ url: value?.url || value, assetId: value?.assetId || (block.refAssetIds || [])[index] }))}
             onRefsChange={(references) => onChange({
               refImages: references.map((value) => value?.url || value),
@@ -1211,7 +1207,11 @@ export function Storyboard() {
       if (!usePending) sbLastSaved.set(pid, b);   // 이번 로드의 서버 상태를 기준선으로 기록
       const sourceBlocks = usePending ? pending : b;
       const productHasDetail = hasDetailSource(p);
-      const resolvedGender = exampleGenderFromAnalysis(a, hydratedCatalogs);
+      const resolvedGender = exampleGenderFromAnalysis(
+        a,
+        hydratedCatalogs,
+        p.clothingType,
+      );
       const normalizedBlocks = (ensureSections(sourceBlocks, { hasDetailImage: productHasDetail }).map((block) => ({
         ...block, ...referenceFeedbackPatch(block, {}, hydratedCatalogs),
       })));
@@ -1995,10 +1995,8 @@ export function Storyboard() {
                   {spaceUnits.map((unit) => {
                     if (unit.kind === 'block') return cardEl(unit.items[0], sec, unit.start);
                     const memberBlocks = unit.items.map((item) => item.b);
-                    const set = inferStoryboardSpaceSet(unit.spaceGroupId, memberBlocks);
-                    const setSummary = !set.setType
-                      ? `${memberBlocks.length}컷 저장된 촬영 묶음`
-                      : set.setType === 'horizon-rotation'
+                    const set = inferStoryboardSpaceSet(unit.spaceGroupId);
+                    const setSummary = set.setType === 'horizon-rotation'
                       ? `${memberBlocks.length}컷 회전 구성`
                       : set.setType === 'horizon-sequence'
                         ? `${memberBlocks.length}컷 호리존 연속`
@@ -2065,7 +2063,7 @@ export function Storyboard() {
   const selectedSpaceSiblings = selectedSpaceRun?.items || [];
   const selectedSpaceContext = selectedSpaceRun ? {
     siblings: selectedSpaceSiblings,
-    set: inferStoryboardSpaceSet(selectedSpaceRun.spaceGroupId, selectedSpaceSiblings),
+    set: inferStoryboardSpaceSet(selectedSpaceRun.spaceGroupId),
   } : null;
   const inspector = setPicker ? (
     <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}
