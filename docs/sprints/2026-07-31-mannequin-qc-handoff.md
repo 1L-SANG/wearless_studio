@@ -1,7 +1,7 @@
 # 마네킹컷 QC 고도화 — 인수 리포트 (2026-07-31)
 
 브랜치 `feat/refimages-ab-eval` · 정본 플랜 `.omc/plans/2026-07-30-mannequin-qc-scoring-consistency.md`
-테스트 **1025 passed / 97 skipped** (베이스라인 913) · 프론트 **75 passed** · **prod 무접촉**
+테스트 **1027 passed / 97 skipped** (베이스라인 913) · 프론트 **75 passed** · **prod 무접촉**
 
 ---
 
@@ -59,6 +59,18 @@
 
 후자는 실 파이프라인 라이브다 — `bust_pass: applied` → `image_qc_rescored` → 되돌리기
 미발동 → `auto_pass` 출고, D축 100. 총 호출 2회(생성 1 + bust 1) ≤ 예산 3.
+
+**v3 + 카테고리 게이트 실 워커 확인** (`IMAGE_QC=enforce`·`MANNEQUIN_BUST_PASS=on`)
+
+| 프로젝트 | 카테고리 | 2패스 | 결과 |
+|---|---|---|---|
+| 38d5832a | outer | 적용 | `auto_pass` 85 |
+| 8e364b59 | bottom | **스킵** | `needs_review` 78 |
+| 76bed77e | bottom | **스킵** | `auto_pass` 83 |
+
+직전 실행(게이트 전)에서는 세 건 모두 2패스가 돌았고 그중 하나가 80→78 로 등급이 떨어져
+`edit_reverted(all_edits)` 가 발동했다. 되돌리기·게이트가 순서대로 작동하는 것이 라이브로
+확인됐다. 사진: `server/ab_out/e2e_qc/QA_worker_v3.jpg`
 
 **구제 경로 실발화** — `salvaged: true` + `critical_errors: ["garment shape broken"]` +
 `outcome: regenerate`. 치명 오류로 재생성했으나 예산이 소진돼 구제 출고됐고, **판정을
