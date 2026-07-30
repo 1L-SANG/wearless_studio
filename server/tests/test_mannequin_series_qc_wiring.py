@@ -379,29 +379,86 @@ def test_final_salvage_never_uses_unedited_pre_gate_candidate(monkeypatch):
     assert q["salvaged"] is True
 
 
-def test_axis_edit_does_not_end_loop_when_slots_remain(monkeypatch):
-    """axis 편집이 있어도 총예산이 남으면 재생성한다 (codex MEDIUM).
+def test_salvage_picks_best_across_both_pools(monkeypatch):
+    """구제는 두 풀(pre/final)을 통틀어 최선을 고른다 (codex MEDIUM).
 
-    max_attempts=3 · 생성 1 + 편집 1 = 2 소비면 슬롯이 하나 남는다. 그때 조기 종료하면
-    셀러가 쓸 수 있었던 재시도 기회를 잃는다.
+    1회차: 사전 게이트 통과(70점 — 임계 65 위) → D축 거절 → final_reject 에 검증본 보관
+    2회차: 사전 게이트에서 20점으로 거절 → 예산 소진
+    이때 사전 게이트 풀만 보면 20점이 나간다. 70점 검증본이 있으면 그걸 써야 한다.
     """
     import test_mannequin_axis_qc as harness
+
+    p2_seq = [
+        # 사전 게이트(review 임계 65)를 통과해야 최종 단계까지 가 final_reject 에 담긴다.
+        {"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+         "product_fidelity": 70, "physical_naturalness": 70, "image_quality": 70,
+         "series_consistency": None, "critical_errors": []},
+        {"verdict": "retry", "mismatches": [], "correctionPrompt": None,
+         "product_fidelity": 20, "physical_naturalness": 20, "image_quality": 20,
+         "series_consistency": None, "critical_errors": []},
+    ]
+    seq = list(p2_seq)
+
+    async def fake_p2(s, prods, gen, *, scored=False):
+        return seq.pop(0) if len(seq) > 1 else seq[0]
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return {"consistency": 10, "inconsistencies": ["다름"]}  # 1회차를 최종에서 거절
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
+    result, _g, r2, _e = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=2, verdicts=[], image_qc="enforce")
+    assert result is not None and len(r2.puts) == 1
+    assert result["qc_scores"]["product_fidelity"] == 70, \
+        f"20점 사전게이트 후보가 70점 검증본을 제치고 나갔다: {result['qc_scores']}"
+
+
+def test_pre_gate_feedback_never_empty_when_only_scores_low(monkeypatch):
+    """사전 게이트도 빈 피드백을 내면 안 된다 (codex MEDIUM — 최종 게이트만 고쳤던 것).
+
+    점수만 낮고 critical_errors·correctionPrompt 가 없으면 재시도가 같은 프롬프트로 돈다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    _r, g, _r2, _e = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=2, verdicts=[], image_qc="enforce",
+        p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 20, "physical_naturalness": 90, "image_quality": 90,
+            "series_consistency": None, "critical_errors": []})
+    assert len(g.calls) == 2
+    assert "IMPROVE" in g.calls[1]["prompt"], "사전 게이트 재시도가 지시 없이 돌았다"
+    assert "product_fidelity" in g.calls[1]["prompt"]
+
+
+def test_total_image_model_calls_never_exceed_budget(monkeypatch):
+    """예산은 **생성 + 편집 총합**이다 (codex MEDIUM).
+
+    직전 버전은 편집 비용을 현재 attempt 에만 더해 이전 attempt 들의 편집이 안 세어졌고,
+    max_attempts=3 에서 이미지 모델이 4회 호출됐다. 그때 내 테스트는 편집을 fake 처리하고
+    **생성 횟수만 세어** 결함을 승인했다. 이제 편집도 같은 카운터로 센다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    calls = {"n": 0}
 
     async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
         return {"consistency": 10, "inconsistencies": ["다름"]}
 
     async def fake_axis(**kw):
-        return kw["res"], True  # 매 attempt 편집 발생
+        calls["n"] += 1          # 편집 = 이미지 모델 호출 1회
+        return kw["res"], True
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
     monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    # axis QC 를 enforce 로 둔다 — 편집이 실제로 발생할 수 있는 조건이어야 예산 계산이 검증된다.
     _r, g, r2, _e = harness._run(
-        monkeypatch, mode="off", guard=True, max_attempts=3, verdicts=[], image_qc="enforce",
+        monkeypatch, mode="enforce", guard=True, max_attempts=3, verdicts=[], image_qc="enforce",
         p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
             "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
             "series_consistency": None, "critical_errors": []})
-    # attempt1: 1+1=2 < 3 → 재생성. attempt2: 2+1=3 → 소진, 구제.
-    assert len(g.calls) == 2, f"생성 {len(g.calls)}회 — 슬롯이 남는데 조기 종료했다"
+    total = len(g.calls) + calls["n"]
+    assert total <= 3, f"이미지 모델 호출 {total}회(생성 {len(g.calls)} + 편집 {calls['n']}) — 예산 3 초과"
     assert len(r2.puts) == 1
 
 
@@ -433,14 +490,5 @@ def test_feedback_reaches_every_subsequent_attempt(monkeypatch):
     assert "배경 어두움" not in g.calls[2]["prompt"]  # 낡은 사유는 갈아탄다
 
 
-def test_series_reject_does_not_leave_orphan_r2_object(monkeypatch):
-    """D축 재생성 분기는 **R2 저장 전에** 일어나야 한다.
-
-    저장 후 continue 하면 재시도마다 아무도 참조하지 않는 객체가 버킷에 쌓인다(DB 행은
-    최종 채택본만 생기므로 정리할 근거조차 남지 않는다). 소스 순서로 계약을 고정한다.
-    """
-    import inspect
-    src = inspect.getsource(mannequin_job._run_candidate)
-    reject_at = src.index('"status": "final_qc_reject"')
-    put_at = src.index("r2.put_bytes")
-    assert reject_at < put_at, "final_qc_reject 분기가 R2 저장보다 뒤에 있다 — 고아 객체가 쌓인다"
+# 고아 객체 계약은 test_low_series_score_actually_rerolls_and_stores_once 의
+# `len(r2.puts) == 1` 이 행동으로 잠근다(소스 문자열 순서를 보는 테스트는 구현 복사라 제거).

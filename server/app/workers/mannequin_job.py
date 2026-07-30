@@ -261,13 +261,19 @@ async def _apply_axis_qc(
     return res, True
 
 
-def _worst_score(p2) -> int | None:
-    """4축 최저 점수. 점수 신호가 하나도 없으면 None."""
+def _worst_score(p2, keys=image_qc.SCORE_KEYS) -> int | None:
+    """지정 축의 최저 점수. 점수 신호가 하나도 없으면 None."""
     if not isinstance(p2, dict):
         return None
-    scores = [v for k in image_qc.SCORE_KEYS
+    scores = [v for k in keys
               if isinstance(v := p2.get(k), int) and not isinstance(v, bool)]
     return min(scores) if scores else None
+
+
+# 후보끼리 비교할 때 쓰는 축. D축(series_consistency)은 **제외**한다 — 사전 게이트 후보는
+# 아직 D축 판정을 안 받았고 최종 후보는 받았으므로, 포함하면 축 개수가 달라 비교가
+# 불공정해진다(70점 검증본이 D축 10 때문에 20점 후보에게 진다).
+_COMPARABLE_KEYS = tuple(k for k in image_qc.SCORE_KEYS if k != "series_consistency")
 
 
 def _is_better_candidate(s, new_p2, old_p2) -> bool:
@@ -282,7 +288,9 @@ def _is_better_candidate(s, new_p2, old_p2) -> bool:
     old_critical = bool((old_p2 or {}).get("critical_errors"))
     if new_critical != old_critical:
         return not new_critical
-    new_worst, old_worst = _worst_score(new_p2), _worst_score(old_p2)
+    # D축 제외 — 사전/최종 후보는 D축 보유 여부가 달라 포함하면 비교가 불공정해진다.
+    new_worst, old_worst = (_worst_score(new_p2, _COMPARABLE_KEYS),
+                            _worst_score(old_p2, _COMPARABLE_KEYS))
     if new_worst is None:
         return False
     if old_worst is None:
@@ -516,6 +524,7 @@ async def _run_candidate(
     # 저장 shape 이 계약(QcScores)을 벗어나지 않게. 네 번째는 이벤트·correctionPrompt 용.
     pre_reject: tuple | None = None
     final_reject: tuple | None = None
+    edits_spent = 0  # axis 편집이 소비한 이미지 모델 호출 누적 — 예산은 생성+편집 총합이다
     profile_hash = _canonical_profile_hash(fit_profile)
     for attempt in range(1, s.mannequin_max_attempts + 1):
         prompt = f"{feedback}\n\n{base_prompt}" if feedback else base_prompt
@@ -574,12 +583,19 @@ async def _run_candidate(
             if _is_better_candidate(s, pre_scores, pre_reject[1] if pre_reject else None):
                 pre_reject = (res, pre_scores, None, p2)
             if attempt >= s.mannequin_max_attempts:
-                if pre_reject and pre_reject[1] is not pre_scores:
-                    res, _scores, _series, p2 = pre_reject  # 더 나은 이전 후보로 되돌린다
+                # 구제 대상은 **두 풀을 통틀어 최선**이어야 한다. 이전 attempt 에서 편집·D축까지
+                # 통과했다가 최종 게이트에서 걸린 후보(final_reject)가 더 좋으면 그걸 쓴다 —
+                # 사전 게이트 후보만 보면 60점 검증본을 두고 20점을 내보낸다(codex 2026-07-31).
+                if final_reject and _is_better_candidate(s, final_reject[1], pre_reject[1]):
+                    res, qc_override, _series, p2 = final_reject
+                    salvaged_scores = qc_override
+                else:
+                    res, salvaged_scores, _series, p2 = pre_reject
+                    # 사전 게이트 후보는 편집·D축을 안 거쳤다 → 아래 본 경로가 그걸 수행한다.
                 p2_reject, salvaged = False, True
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
-                    "reason": "budget_exhausted", "outcome": score_outcome(s, p2)})
+                    "reason": "budget_exhausted", "outcome": score_outcome(s, salvaged_scores)})
         if not pillow_reject and not p2_reject:
             pre_edit_hash = hashlib.sha256(res.image).hexdigest()  # 편집 여부 판정용
             # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
@@ -618,11 +634,14 @@ async def _run_candidate(
             # A~C·D 를 한 스냅샷으로 합쳐 여기서 한 번만 결정한다. 판정이 흩어지면 "API 엔
             # 재생성 필요라 적혀 있는데 성공 컷으로 나가는" 모순이 생긴다(codex 2026-07-31).
             qc_scores = merge_qc_scores(p2, series, salvaged=salvaged)
-            # 예산: 생성 슬롯이 남아 있어야 재생성한다. axis 편집이 이번 attempt 를 썼으면
-            # 그 슬롯 하나를 더 소비한 셈이라 한 칸 더 당겨 센다("생성 + 편집 <= max_attempts").
-            # `axis_spent` 만으로 즉시 종료하면 max_attempts=3 에서 슬롯이 남는데도 조기 종료된다.
-            spent = attempt + (1 if axis_spent else 0)
-            budget_left = spent < s.mannequin_max_attempts
+            # 예산은 **누적 이미지 모델 호출**이다: 생성 attempt 회 + 편집 edits_spent 회.
+            # 재생성하면 다음 attempt 가 생성 1회를 쓰고, axis QC 가 켜져 있으면 편집 1회도
+            # 쓸 수 있다. 둘 다 미리 세지 않으면 상한을 넘긴다 — 편집은 재생성 판단보다
+            # **먼저** 일어나므로 사후에는 막을 수 없다(codex 2026-07-31: 3 예산에 4회 관측).
+            if axis_spent:
+                edits_spent += 1
+            next_cost = 2 if _effective_axis_qc_mode(s) == "enforce" else 1
+            budget_left = attempt + edits_spent + next_cost <= s.mannequin_max_attempts
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
             if final_decision(s, qc_scores) == "retry" and budget_left and not salvaged:
                 await _emit(pool, job_id, "step", {
@@ -671,18 +690,15 @@ async def _run_candidate(
                 "failed_axes": [], "edit_hash": None,
                 "original_image_hash": hashlib.sha256(res.image).hexdigest(),
                 "edited_image_hash": None, "outcome": "identity_gate_preempted"})
+        # 사전 게이트도 최종 게이트와 **같은 피드백 조립기**를 쓴다. 여기만 빠뜨리면
+        # 점수만 낮고 텍스트 사유가 없는 경우 재시도가 같은 프롬프트로 돌아 같은 결과를 낸다
+        # (codex 2026-07-31 — 최종 게이트만 고쳤던 것을 여기로도 확장).
         parts = []
         if pillow_reject:
             parts.append(qc.format_qc_feedback(verdict))
-        if p2_reject and isinstance(p2, dict):
-            # 치명 오류를 먼저 말한다 — correctionPrompt 가 비어 있을 때(치명 오류만 있고
-            # mismatches 는 없는 경우) 재생성이 아무 지시도 못 받고 같은 결과를 반복한다.
-            if p2.get("critical_errors"):
-                parts.append("CRITICAL: " + "; ".join(p2["critical_errors"][:3]))
-            if p2.get("correctionPrompt"):
-                parts.append("CORRECTION (generate the SAME garment as the product photos): "
-                             + p2["correctionPrompt"])
-        feedback = "\n\n".join(parts)
+        if p2_reject:
+            parts.append(_build_retry_feedback(merge_qc_scores(p2, None), None, p2))
+        feedback = "\n\n".join(p for p in parts if p)
     return None  # max_attempts 내 통과본 없음 → 이 후보 드롭(부분 성공 허용)
 
 
