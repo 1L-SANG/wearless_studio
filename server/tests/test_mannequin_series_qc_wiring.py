@@ -58,7 +58,7 @@ def _apply(monkeypatch, *, cuts=None, judge=None, r2=None):
     r2 = r2 or _R2()
     app = types.SimpleNamespace(state=types.SimpleNamespace(r2=r2))
     out = asyncio.run(mannequin_job._apply_series_qc(
-        app=app, pool=_FakePool(), s=make_settings(), job_id="j1", user_id="u1",
+        app=app, pool=_FakePool(), s=make_settings(), job_id="j1",
         project_id="p1", candidate="A", attempt=1,
         res=types.SimpleNamespace(mime="image/png", image=b"gen")))
     return out, emits, r2
@@ -134,7 +134,7 @@ def test_reference_cap_passed_to_sql(monkeypatch):
     monkeypatch.setattr(mannequin_series_qc, "judge", fake_judge)
     app = types.SimpleNamespace(state=types.SimpleNamespace(r2=_R2()))
     asyncio.run(mannequin_job._apply_series_qc(
-        app=app, pool=_FakePool(), s=make_settings(), job_id="j1", user_id="u1",
+        app=app, pool=_FakePool(), s=make_settings(), job_id="j1",
         project_id="p1", candidate="A", attempt=1,
         res=types.SimpleNamespace(mime="image/png", image=b"gen")))
     assert seen["limit"] == mannequin_series_qc.MAX_REFERENCE_CUTS
@@ -191,7 +191,7 @@ def _run_loop(monkeypatch, *, series_scores, max_attempts=2):
 
     seq = list(series_scores)
 
-    async def fake_series(app, pool, s, job_id, user_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
         return seq.pop(0) if seq else None
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
@@ -250,7 +250,7 @@ def test_shadow_never_rerolls_even_on_worst_scores(monkeypatch):
     """
     import test_mannequin_axis_qc as harness
 
-    async def fake_series(app, pool, s, job_id, user_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
         return {"consistency": 5, "inconsistencies": ["완전히 다른 스튜디오"]}
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
@@ -275,7 +275,7 @@ def test_axis_edit_consumes_budget_so_no_extra_generation(monkeypatch):
     """
     import test_mannequin_axis_qc as harness
 
-    async def fake_series(app, pool, s, job_id, user_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
         return {"consistency": 10, "inconsistencies": ["완전 다름"]}
 
     async def fake_axis(**kw):
@@ -297,7 +297,7 @@ def test_final_reject_feedback_includes_critical_errors(monkeypatch):
     """치명 오류가 있으면 재생성 프롬프트가 그걸 먼저 말해야 한다."""
     import test_mannequin_axis_qc as harness
 
-    async def fake_series(app, pool, s, job_id, user_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
         return {"consistency": 99, "inconsistencies": []}
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)

@@ -314,7 +314,7 @@ def score_outcome(s, p2) -> str:
     return "regenerate"
 
 
-async def _apply_series_qc(*, app, pool, s, job_id, user_id, project_id, candidate, attempt, res):
+async def _apply_series_qc(*, app, pool, s, job_id, project_id, candidate, attempt, res):
     """D축 시리즈 일관성 — 채택본이 같은 프로젝트 기존 컷들과 한 세트로 보이는지 판정.
 
     **fail-open** — _apply_axis_qc·_apply_bust_pass 와 같은 규율. 판정은 관측이지 게이트가
@@ -322,6 +322,10 @@ async def _apply_series_qc(*, app, pool, s, job_id, user_id, project_id, candida
 
     호출 위치가 중요하다: bust 2패스 **뒤**여야 측정 대상이 실제 출고본과 같다. 그리고 게이트
     통과 뒤에만 불리므로 reject 된 attempt 에서 기존 컷을 헛되이 로드하지 않는다.
+
+    소유권: `list_series_reference_cuts` 는 user 스코프를 걸지 않는다. 여기 들어오는
+    project_id 는 워커가 클레임한 잡의 것이고, 잡은 생성 시점에 소유자 검증을 통과했다.
+    비교 대상도 **같은 프로젝트의 과거 버전**이라 크로스테넌트 노출 경로가 없다.
     """
     try:
         async with pool.connection() as conn:
@@ -558,7 +562,7 @@ async def _run_candidate(
                         "status": "image_qc_rescore_failed", "error": type(e).__name__})
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             series = await _apply_series_qc(
-                app=app, pool=pool, s=s, job_id=job_id, user_id=user_id,
+                app=app, pool=pool, s=s, job_id=job_id,
                 project_id=project_id, candidate=candidate, attempt=attempt, res=res)
             # ── 최종 판정 (단일 지점) ────────────────────────────────────────
             # A~C·D 를 한 스냅샷으로 합쳐 여기서 한 번만 결정한다. 판정이 흩어지면 "API 엔
