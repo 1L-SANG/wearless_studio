@@ -262,23 +262,34 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 순서 = 매니페스트: MODEL 2장? → 상품 슬롯들 → 무드
             example_scope = None
             example_id = normalized.get("exampleId")
+            example_gender = cut_generator.generation_example_gender(
+                analysis, product, selected_model_id)
             pose_overrides_example = (
                 normalized["pose"] != "auto" and normalized["refScope"] == "pose"
             )
             if example_id and not pose_overrides_example:
                 scope = normalized["refScope"]
                 status = cut_generator.example_asset_status(
-                    example_id, clothing_type, scope)
-                if status in ("not_applicable", "variant_unpublished"):
+                    example_id, clothing_type, scope,
+                    spec=normalized, gender=example_gender)
+                incompatible_codes = {
+                    "not_applicable": "example_not_applicable",
+                    "variant_unpublished": "example_variant_unpublished",
+                    "cut_type_mismatch": "example_cut_type_mismatch",
+                    "shot_incompatible": "example_shot_incompatible",
+                    "gender_mismatch": "example_gender_mismatch",
+                }
+                if status in incompatible_codes:
                     example_warnings.append({
-                        "code": "example_not_applicable"
-                        if status == "not_applicable" else "example_variant_unpublished",
+                        "code": incompatible_codes[status],
                         "exampleId": example_id,
                         "clothingType": clothing_type,
                         "refScope": scope,
                     })
                     # 미첨부 all 예시의 레거시 EXNUANCE까지 제거해 예시가 완전히 무효가 되게 한다.
-                    cut_spec["exampleId"] = None
+                    # all 자산 미발행만 v0 nuance-only 폴백을 유지한다.
+                    if status != "variant_unpublished" or scope != "all":
+                        cut_spec["exampleId"] = None
                 elif scope == "pose" and not cut_generator.pose_direction_compatible(
                     example_id, normalized
                 ):

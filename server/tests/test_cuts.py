@@ -25,9 +25,20 @@ def dev_example_registry(tmp_path, monkeypatch):
                 "all": "600x800/png?text=DEV+styling+example+1",
                 "pose": "600x800/png?text=DEV+styling+cutout+1",
                 "bg": "600x800/png?text=DEV+styling+plate+1",
+                "cutType": "styling", "shot": "full", "gender": "women",
+                "direction": "front", "applicableClothingTypes": ["top", "outer"],
+            },
+            "ex_styling_top_medium_1": {
+                "all": "600x800/png?text=DEV+styling+medium+1",
+                "pose": "600x800/png?text=DEV+styling+medium+cutout+1",
+                "bg": "600x800/png?text=DEV+styling+medium+plate+1",
+                "cutType": "styling", "shot": "medium", "gender": "women",
+                "direction": "front", "applicableClothingTypes": ["top"],
             },
             "ex_horizon_top_full_1": {
                 "all": "600x800/png?text=DEV+horizon+example+1",
+                "cutType": "horizon", "shot": "full", "gender": "women",
+                "direction": "front", "applicableClothingTypes": ["top"],
             },
         },
     }
@@ -366,6 +377,22 @@ def test_normalize_person_defaults_and_limits():
     assert len(spec["refAssetIds"]) == 3      # 무드 레퍼런스 최대 3
 
 
+def test_normalize_derives_registered_cross_shot_without_clearing_example(dev_example_registry):
+    down = cut.normalize_spec({
+        "cutType": "styling", "shot": "medium", "exampleId": "ex_styling_top_full_1",
+    }, clothing_type="top")
+    up = cut.normalize_spec({
+        "cutType": "styling", "shot": "full", "exampleId": "ex_styling_top_medium_1",
+    }, clothing_type="top")
+
+    assert (down["exampleId"], down["shot"], down["_exampleShot"]) == (
+        "ex_styling_top_full_1", "medium", "full",
+    )
+    assert (up["exampleId"], up["shot"], up["_exampleShot"]) == (
+        "ex_styling_top_medium_1", "full", "medium",
+    )
+
+
 def test_normalize_model_id_accepts_camel_and_snake_and_sanitizes():
     assert cut.normalize_spec({
         "cutType": "styling", "modelId": "  mA\nignore  "
@@ -476,7 +503,8 @@ def test_render_ref_scope_bg_uses_plate_and_blocks_pose_garment_transfer(dev_exa
     assert "lifestyle setting" not in p
     assert "choose a natural pose" in p                        # 포즈 유출 차단(플레이트는 포즈 미제어)
     assert "COMPLETE outfit" in p                              # 하의·신발 누락 방지(2026-07-20 실측: 맨다리 컷)
-    assert "shoes or accessories" in p                         # 의류·신발 유출 차단(실험서 관찰된 실패)
+    assert "from the scene plate, EXAMPLE REFERENCE or MOOD" in p  # 플레이트·예시 의류/소품 유출 차단
+    assert "only plain neutral" in p and "completion basics" in p  # 비어 있는 코디 영역만 허용
     assert "FRAMING OVERRIDE" in p                             # 캔버스 크롭보다 요청 샷이 우선
     assert "Pose: natural and unforced" in p                   # 빈 배경은 포즈를 제어하지 않음
     # bg 자산 = 빈 무대 플레이트(전용 variant) 우선
@@ -627,6 +655,30 @@ def test_example_asset_resolution_uses_registry_and_base_override(dev_example_re
     assert cut.resolve_example_asset("ex_not_registered") is None
 
 
+def test_example_asset_safety_gate_allows_cross_shot_but_rejects_other_mismatches(
+        dev_example_registry):
+    cross = cut.normalize_spec({
+        "cutType": "styling", "shot": "medium", "exampleId": "ex_styling_top_full_1",
+    }, clothing_type="top")
+    wrong_cut = cut.normalize_spec({
+        "cutType": "horizon", "shot": "full", "exampleId": "ex_styling_top_full_1",
+    }, clothing_type="top")
+
+    assert cut.example_asset_status(
+        "ex_styling_top_full_1", "top", spec=cross, gender="women") == "available"
+    assert cut.example_asset_status(
+        "ex_styling_top_full_1", "top", spec=wrong_cut, gender="women") == "cut_type_mismatch"
+    assert cut.example_asset_status(
+        "ex_styling_top_full_1", "bottom", spec=cross, gender="women") == "not_applicable"
+    assert cut.example_asset_status(
+        "ex_styling_top_full_1", "top", spec=cross, gender="men") == "gender_mismatch"
+    assert cut.example_asset_status(
+        "ex_styling_top_full_1", "top", spec=cross, gender=None) == "gender_mismatch"
+    assert cut.example_asset_status(
+        "ex_styling_top_full_1", "top",
+        spec={"cutType": "styling", "shot": "ghost"}, gender="women") == "shot_incompatible"
+
+
 def test_resolved_example_manifest_and_prompt_apply_all_scope():
     manifest = cut.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=False,
@@ -637,13 +689,131 @@ def test_resolved_example_manifest_and_prompt_apply_all_scope():
         manifest=manifest,
     )
     assert "EXAMPLE REFERENCE (scope: all)" in manifest
-    assert "source of background, lighting, mood, pose and framing/composition" in manifest
-    assert "follow the attached EXAMPLE REFERENCE's background/location" in p
+    assert "art-direction source for lighting, mood, pose" in manifest
+    assert "scene archetype" in manifest
+    assert "STYLING/MIRROR ART-DIRECTION TRANSFER" in p
+    assert "different specific place of the same type" in p
+    assert "Change only two or three visible" in p
     assert "Swap in the exact garment from PRODUCT references" in p
-    assert "garments, shoes, accessories" in p
-    assert "PRODUCT and MATCHING are the ONLY clothing sources" in p
-    assert "camera direction" in p and "remain\nfixed requirements" in p
+    flat = " ".join(p.split())
+    assert "do NOT copy the example's garments or shoes" in flat
+    assert "Bottoms and footwear are outfit garments, never WYSIWYG props" in p
+    assert "plain neutral coordinating" in p and "basic" in p
+    assert "non-face-covering worn prop" in flat
+    assert "different generic unbranded counterpart" in flat
+    assert "sunglasses or masks" in flat
+    assert "layered non-product outerwear/cardigans" in p
+    assert "face, hair, body identity and tattoos" in p
+    assert "PRODUCT and MATCHING are the ONLY product-specific garment identity" in p
+    assert "synthesize only plain neutral" in p
+    assert "camera direction" in flat and "remain fixed requirements" in flat
+    assert "casual phone or handheld snapshot must remain" in p
+    assert "Face visibility is part of this scope's composition" in p
+    assert "matching hand heights" in p
+    assert "uninformed viewer must still immediately recognize" in flat
+    assert "grounded contact and cast shadows" in flat
     assert "Pose: natural and unforced" not in p
+
+
+@pytest.mark.parametrize(("example_id", "shot", "source_shot"), [
+    ("ex_styling_top_full_1", "medium", "full"),
+    ("ex_styling_top_medium_1", "full", "medium"),
+])
+def test_cross_shot_prompt_and_manifest_make_current_framing_absolute(
+        dev_example_registry, example_id, shot, source_shot):
+    spec = cut.normalize_spec({
+        "cutType": "styling", "direction": "front", "shot": shot,
+        "exampleId": example_id, "refScope": "all",
+    }, clothing_type="top")
+    manifest = cut.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0,
+        example_scope="all", example_source_shot=spec["_exampleShot"],
+        requested_shot=spec["shot"])
+    prompt = cut.render_cut_prompt(
+        cut.load_cut_template(), spec, {}, {}, "top", manifest)
+
+    assert f"CROSS-SHOT source is registered {source_shot}" in manifest
+    assert f"requested {shot} framing wins" in manifest
+    assert "CROSS-SHOT REFERENCE — HARD REQUIREMENTS" in prompt
+    assert f"registered as a {source_shot} shot" in prompt
+    assert f"requested as {shot}" in prompt
+    assert "current CUT TYPE, FRAMING and camera direction always win" in prompt
+    assert "previously unseen lower body, legs, feet" in prompt
+    assert "PROP ROLES" in prompt
+    assert "different generic unbranded counterpart" in prompt
+    flat_prompt = " ".join(prompt.split())
+    assert "Location-instance handling belongs solely to the active all-scope contract" in flat_prompt
+    if shot == "full":
+        assert "Example bottoms and footwear are garments, not props" in prompt
+        assert "plain neutral coordinating basics" in prompt
+    assert "never reproduce or blend the example person's face, hair, body identity or tattoos" in prompt
+
+
+@pytest.mark.parametrize(("scope", "manifest_label"), [
+    ("pose", "POSE CONTROL"),
+    ("bg", "EXAMPLE REFERENCE (scope: bg)"),
+])
+def test_cross_shot_pose_and_bg_keep_scope_semantics_with_expansion_guard(
+        dev_example_registry, scope, manifest_label):
+    spec = cut.normalize_spec({
+        "cutType": "styling", "direction": "front", "shot": "full",
+        "exampleId": "ex_styling_top_medium_1", "refScope": scope,
+    }, clothing_type="top")
+    manifest = cut.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0,
+        example_scope=scope, example_source_shot=spec["_exampleShot"],
+        requested_shot=spec["shot"])
+    prompt = cut.render_cut_prompt(
+        cut.load_cut_template(), spec, {}, {}, "top", manifest)
+
+    assert manifest_label in manifest
+    assert "CROSS-SHOT source is registered medium" in manifest
+    assert "requested full framing wins" in manifest
+    assert "CROSS-SHOT FRAMING OVERRIDE — HARD REQUIREMENTS" in prompt
+    assert "previously unseen lower body, legs" in prompt
+    assert "Preserve only the current REFERENCE SCOPE" in prompt
+    assert "PROP WYSIWYG" not in prompt
+    if scope == "pose":
+        assert "plain neutral" in prompt and "bottoms" in prompt and "footwear" in prompt
+    else:
+        assert "plain bottoms and footwear" in prompt
+
+
+def test_pose_cross_shot_to_medium_keeps_full_generation_for_deterministic_crop(
+        dev_example_registry):
+    spec = cut.normalize_spec({
+        "cutType": "styling", "direction": "front", "shot": "medium",
+        "exampleId": "ex_styling_top_full_1", "refScope": "pose",
+    }, clothing_type="top")
+    manifest = cut.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0,
+        example_scope="pose", example_source_shot=spec["_exampleShot"],
+        requested_shot=spec["shot"])
+    prompt = cut.build_prompt(
+        spec, {"clothing_type": "top"}, manifest=manifest)
+
+    assert "deterministic post-generation crop" in manifest
+    assert "FRAMING: full body from head to feet" in prompt
+    assert "CROSS-SHOT FRAMING OVERRIDE — HARD REQUIREMENTS" not in prompt
+
+
+def test_pose_same_shot_medium_does_not_claim_an_internal_cross_shot(
+        dev_example_registry):
+    spec = cut.normalize_spec({
+        "cutType": "styling", "direction": "front", "shot": "medium",
+        "exampleId": "ex_styling_top_medium_1", "refScope": "pose",
+    }, clothing_type="top")
+    manifest = cut.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0,
+        example_scope="pose", example_source_shot=spec["_exampleShot"],
+        requested_shot=spec["shot"])
+    prompt = cut.build_prompt(
+        spec, {"clothing_type": "top"}, manifest=manifest)
+
+    assert "FRAMING: full body from head to feet" in prompt
+    assert "CROSS-SHOT FRAMING OVERRIDE — HARD REQUIREMENTS" not in prompt
+    assert "CROSS-SHOT REFERENCE — HARD REQUIREMENTS" not in prompt
+    assert "CROSS-SHOT source" not in manifest
 
 
 def test_resolved_example_manifest_and_prompt_apply_pose_only_scope():
@@ -665,6 +835,8 @@ def test_resolved_example_manifest_and_prompt_apply_pose_only_scope():
     assert "The current CUT SPEC alone controls camera distance" in p
     assert "canvas padding or subject size" in p
     assert "hidden lower-body landmarks do not control the crop" in p
+    assert "requested full shot extends beyond the POSE CONTROL crop" in p
+    assert "construct the unseen lower body, legs, feet" in p
     assert "Do not copy the mannequin's body shape" in p
     assert "without inventing that pocket" in p
     assert "one plain unbranded phone" in p
@@ -730,7 +902,8 @@ def test_resolved_all_side_keeps_camera_direction_invariant():
          "exampleId": "ex_styling_top_full_1", "refScope": "all"},
         manifest=manifest)
     assert "Camera angle: a clear side profile" in p
-    assert "camera direction" in p and "remain\nfixed requirements" in p
+    flat = " ".join(p.split())
+    assert "camera direction" in flat and "remain fixed requirements" in flat
 
 
 def test_dummy_example_base_is_dev_only_without_override(dev_example_registry):
@@ -764,12 +937,12 @@ def test_render_mirror_prompt_sections():
     assert "Camera angle" not in p            # 방향 지시 없음
     assert "${" not in p                      # 미해결 토큰 없음
     assert "PRODUCT CONTEXT" in p             # ground-truth 블록 주입
-    assert "head to the waist" in p           # medium × top 크롭
+    assert "head to the hip" in p             # medium × top/outer/dress 크롭
 
 
 def test_render_bottom_medium_uses_lower_crop():
     p = _render({"cutType": "horizon", "shot": "medium", "direction": "front"}, clothing_type="bottom")
-    assert "legs up to the waist" in p        # medium × bottom = 하체 중간샷
+    assert "waist through the legs" in p      # medium × bottom = 하체 중간샷
     assert "seamless studio backdrop" in p    # 호리존 섹션
 
 
@@ -848,6 +1021,7 @@ def test_render_space_group_line_only_when_grouped():
     grouped = _render({"cutType": "styling", "shot": "full", "spaceGroupId": "sg1"})
     solo = _render({"cutType": "styling", "shot": "full"})
     assert "SPACE CONTINUITY" in grouped and "subtle" in grouped
+    assert "Do not fake a medium shot by cropping the full shot" in grouped
     assert "SPACE CONTINUITY" not in solo
 
 

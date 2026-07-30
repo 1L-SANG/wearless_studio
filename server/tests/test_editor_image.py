@@ -188,6 +188,14 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
         assert clothing_type == "outer"
         return eij.InlineImage("image/png", b"EXAMPLE")
 
+    def fake_example_status(example_id, clothing_type, scope="all", *, spec, gender):
+        assert example_id == "ex_editor"
+        assert clothing_type == "outer"
+        assert scope == "all"
+        assert spec["cutType"] == "horizon" and spec["shot"] == "full"
+        assert gender == "women"
+        return "available"
+
     async def fake_finalize(conn, **kw):
         captured.update(kw)
         return {"id": "w-new2"}
@@ -198,7 +206,7 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", fake_example_status)
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
@@ -218,14 +226,18 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("status", "scope", "warning_code"),
+    ("status", "scope", "warning_code", "keeps_nuance"),
     [
-        ("not_applicable", "all", "example_not_applicable"),
-        ("variant_unpublished", "pose", "example_variant_unpublished"),
+        ("not_applicable", "all", "example_not_applicable", False),
+        ("variant_unpublished", "pose", "example_variant_unpublished", False),
+        ("variant_unpublished", "all", "example_variant_unpublished", True),
+        ("cut_type_mismatch", "all", "example_cut_type_mismatch", False),
+        ("shot_incompatible", "all", "example_shot_incompatible", False),
+        ("gender_mismatch", "all", "example_gender_mismatch", False),
     ],
 )
 def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
-    monkeypatch, status, scope, warning_code,
+    monkeypatch, status, scope, warning_code, keeps_nuance,
 ):
     captured = {}
 
@@ -236,7 +248,7 @@ def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
         }]}
 
     async def fake_get_analysis(conn, pid):
-        return {}
+        return {"fitProfile": {"gender": "women"}}
 
     async def fake_get_asset(conn, uid, aid):
         return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
@@ -248,6 +260,8 @@ def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
         captured["cut_spec"] = cut_spec
         captured["images"] = images
         captured["manifest"] = manifest
+        captured["prompt"] = eij.cut_generator.build_prompt(
+            cut_spec, product, analysis=analysis, manifest=manifest)
         return b"NEWIMG", "image/png"
 
     async def fake_finalize(conn, **kw):
@@ -260,7 +274,16 @@ def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: status)
+
+    def fake_example_status(example_id, clothing_type, passed_scope="all", *, spec, gender):
+        assert example_id == "ex_unusable"
+        assert clothing_type == "bottom"
+        assert passed_scope == scope
+        assert spec["cutType"] == "horizon" and spec["shot"] == "full"
+        assert gender == "women"
+        return status
+
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", fake_example_status)
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fail_example_load)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
@@ -273,9 +296,11 @@ def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
-    assert captured["cut_spec"]["exampleId"] is None
+    assert captured["cut_spec"]["exampleId"] == (
+        "ex_unusable" if keeps_nuance else None)
     assert len(captured["images"]) == 1
     assert "EXAMPLE REFERENCE" not in captured["manifest"]
+    assert ("Composition nuance" in captured["prompt"]) is keeps_nuance
     assert captured["finalize"]["metadata"]["warnings"] == [{
         "code": warning_code,
         "exampleId": "ex_unusable",
@@ -318,7 +343,11 @@ def test_run_editor_image_job_rejects_pose_direction_before_generation(monkeypat
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
+    monkeypatch.setattr(
+        eij.cut_generator,
+        "example_asset_status",
+        lambda *_args, **_kwargs: "available",
+    )
     monkeypatch.setattr(eij.cut_generator, "pose_direction_compatible", lambda *_args: False)
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
@@ -947,7 +976,11 @@ def _bg_qc_setup(monkeypatch, *, verdicts, gen_calls, finalize_ok, finalize_fail
     monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_a: "available")
+    monkeypatch.setattr(
+        eij.cut_generator,
+        "example_asset_status",
+        lambda *_args, **_kwargs: "available",
+    )
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(eij.image_qc, "scene_verdict", fake_scene_verdict)

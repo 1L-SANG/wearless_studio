@@ -466,6 +466,9 @@ async def run_detail_page_job(app, job: dict) -> None:
         prepared = []
         _example_cache: dict[str, InlineImage | None] = {}
         example_warnings: list[dict] = []
+        clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+        example_gender = cut_generator.generation_example_gender(
+            analysis, product, selected_model_id)
         for b in ai_blocks:
             cut_spec = dict(b)
             # 저장/클라이언트가 런타임 전용 지시를 주입하지 못하게 매번 실제 선택 결과로 재구성한다.
@@ -475,7 +478,6 @@ async def run_detail_page_job(app, job: dict) -> None:
             cut_spec.pop("model_id", None)
             if selected_model_id:
                 cut_spec["modelId"] = selected_model_id
-            clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
             try:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             except ValueError:
@@ -545,11 +547,18 @@ async def run_detail_page_job(app, job: dict) -> None:
                 if normalized is not None and not pose_overrides_example:
                     scope = normalized["refScope"]
                     status = cut_generator.example_asset_status(
-                        example_id, clothing_type, scope)
-                    if status in ("not_applicable", "variant_unpublished"):
+                        example_id, clothing_type, scope,
+                        spec=normalized, gender=example_gender)
+                    incompatible_codes = {
+                        "not_applicable": "example_not_applicable",
+                        "variant_unpublished": "example_variant_unpublished",
+                        "cut_type_mismatch": "example_cut_type_mismatch",
+                        "shot_incompatible": "example_shot_incompatible",
+                        "gender_mismatch": "example_gender_mismatch",
+                    }
+                    if status in incompatible_codes:
                         example_warnings.append({
-                            "code": "example_not_applicable"
-                            if status == "not_applicable" else "example_variant_unpublished",
+                            "code": incompatible_codes[status],
                             "blockId": b.get("id"),
                             "exampleId": example_id,
                             "clothingType": clothing_type,
@@ -557,7 +566,10 @@ async def run_detail_page_job(app, job: dict) -> None:
                         })
                         # 이미지 미첨부만으로는 all 범위의 레거시 EXNUANCE 해시가 남는다.
                         # 부적합/미발행 예시가 텍스트로도 영향을 주지 않게 런타임 사본에서 해제한다.
-                        cut_spec["exampleId"] = None
+                        # 단, all 자산 미발행은 v0 nuance-only 폴백을 유지한다. pose/bg는
+                        # 전용 픽셀 없이는 범위 계약을 지킬 수 없으므로 계속 완전히 해제한다.
+                        if status != "variant_unpublished" or scope != "all":
+                            cut_spec["exampleId"] = None
                     elif scope == "pose" and not cut_generator.pose_direction_compatible(
                         example_id, normalized
                     ):
@@ -599,7 +611,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                 has_model_face=len(model_images) == 2, has_model_sheet=len(model_images) == 2,
                 has_face=face_slot,
                 example_scope=example_scope,
-                example_is_product=normalized is not None and normalized["cutType"] == "product")
+                example_is_product=normalized is not None and normalized["cutType"] == "product",
+                example_source_shot=normalized.get("_exampleShot") if normalized is not None else None,
+                requested_shot=normalized.get("shot") if normalized is not None else None)
             # 4번째 = has_identity: 검증 얼굴(REAL 그리드·LEGACY 단일)이 실제 담긴 컷 → face_cuts 계수·
             # generate has_face·검증 배지 근거. VIRTUAL 그리드는 검증 얼굴이 아니므로 False.
             prepared.append((cut_spec, imgs, manifest, has_identity, product_images))

@@ -6,8 +6,64 @@ import {
   STORYBOARD_TAXONOMY_VERSION,
   assignInternalContentRoles,
   cutTypeOptionsForSection,
+  generationExampleCompatible,
+  generationExampleScopeAvailable,
+  generationExampleStateAfterShotChange,
+  isWornCrossShotPair,
+  keepExampleOnShotChange,
   normalizedRecipePatch,
 } from '../../src/lib/storyboardTaxonomy.js';
+
+test('worn full and medium examples can stay selected without entering the current-shot gallery', () => {
+  const example = {
+    id: 'full-example', cutType: 'styling', shot: 'full', gender: 'women',
+    applicableClothingTypes: ['top', 'outer'],
+  };
+  const full = { cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' };
+  const medium = { ...full, shot: 'medium' };
+
+  assert.equal(generationExampleCompatible(example, full), true);
+  assert.equal(generationExampleCompatible(example, medium), false);
+  assert.equal(generationExampleCompatible(example, medium, { allowCrossShot: true }), true);
+  assert.equal(generationExampleCompatible(example, { ...medium, cutType: 'horizon' }, { allowCrossShot: true }), false);
+  assert.equal(generationExampleCompatible(example, { ...medium, clothingType: 'bottom' }, { allowCrossShot: true }), false);
+  assert.equal(generationExampleCompatible(example, { ...medium, gender: 'men' }, { allowCrossShot: true }), false);
+});
+
+test('shot toggles retain examples only for the decided worn full-medium pair', () => {
+  assert.equal(isWornCrossShotPair('styling', 'full', 'medium'), true);
+  assert.equal(isWornCrossShotPair('mirror', 'medium', 'full'), true);
+  assert.equal(keepExampleOnShotChange('horizon', 'full', 'medium'), true);
+  assert.equal(keepExampleOnShotChange('styling', 'full', 'full'), true);
+  assert.equal(keepExampleOnShotChange('product', 'ghost', 'detail'), false);
+  assert.equal(keepExampleOnShotChange('styling', 'full', 'detail'), false);
+});
+
+test('shot-change state keeps both reference fields only for worn full-medium toggles', () => {
+  const selected = { exampleId: 'example-1', refScope: 'pose' };
+
+  for (const cutType of ['styling', 'horizon', 'mirror']) {
+    assert.deepEqual(
+      generationExampleStateAfterShotChange(cutType, 'full', 'medium', selected),
+      { shot: 'medium', ...selected },
+    );
+  }
+  assert.deepEqual(
+    generationExampleStateAfterShotChange('product', 'ghost', 'detail', selected),
+    { shot: 'detail', exampleId: null, refScope: 'all' },
+  );
+  assert.deepEqual(
+    generationExampleStateAfterShotChange('styling', 'full', 'detail', selected),
+    { shot: 'detail', exampleId: null, refScope: 'all' },
+  );
+});
+
+test('an unavailable selected scope cannot silently fall back to the all asset', () => {
+  assert.equal(generationExampleScopeAvailable(['all'], 'pose'), false);
+  assert.equal(generationExampleScopeAvailable(['all'], 'bg'), false);
+  assert.equal(generationExampleScopeAvailable(['all', 'pose'], 'all', { inSpace: true }), true);
+  assert.equal(generationExampleScopeAvailable(['pose'], 'all', { isProduct: true }), false);
+});
 
 test('the first AI image in benefit is the only internally assigned hero', () => {
   const baseThumb = 'https://example.com/original.png';
@@ -99,11 +155,23 @@ test('a valid internal composition is returned unchanged', () => {
   assert.equal(assignInternalContentRoles(blocks), blocks);
 });
 
+test('a saved block without an example cannot retain an orphaned scoped reference', () => {
+  const [normalized] = assignInternalContentRoles([{
+    id: 'hero', source: 'ai', sectionRole: 'benefit', contentRole: 'hero',
+    title: '첫 장면', cutType: 'styling', direction: 'front', shot: 'full', taxonomyVersion: 2,
+    exampleId: null, refScope: 'pose',
+  }]);
+
+  assert.equal(normalized.exampleId, null);
+  assert.equal(normalized.refScope, 'all');
+});
+
 test('an internally normalized product image drops worn-only settings', () => {
   const [product] = assignInternalContentRoles([{
     id: 'product', source: 'ai', sectionRole: 'product', contentRole: 'fit',
     title: '핏 확인', cutType: 'horizon', direction: 'front', shot: 'full', taxonomyVersion: 2,
     matchIds: ['pants-1'], outerClosureState: 'closed', faceExposure: 'show',
+    exampleId: 'worn-example', refScope: 'pose',
   }]);
 
   assert.equal(product.contentRole, CONTENT_ROLES.PRODUCT_OVERVIEW);
@@ -111,4 +179,6 @@ test('an internally normalized product image drops worn-only settings', () => {
   assert.deepEqual(product.matchIds, []);
   assert.equal(product.outerClosureState, null);
   assert.equal(product.faceExposure, null);
+  assert.equal(product.exampleId, null);
+  assert.equal(product.refScope, 'all');
 });

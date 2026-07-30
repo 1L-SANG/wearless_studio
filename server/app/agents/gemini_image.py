@@ -29,7 +29,20 @@ class GeminiImageResult:
 
 
 class GeminiError(RuntimeError):
-    pass
+    """A provider error with enough structure for callers to retry safely."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retryable: bool = False,
+        quota_exhausted: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.retryable = retryable
+        self.quota_exhausted = quota_exhausted
 
 
 class GeminiImageClient:
@@ -51,8 +64,20 @@ class GeminiImageClient:
             )
         return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
-    def _body(self, prompt: str, images: list[InlineImage], image_size: str,
-              temperature: float | None, aspect_ratio: str | None = None) -> dict:
+    def _body(
+        self,
+        prompt: str,
+        images: list[InlineImage],
+        image_size: str,
+        temperature: float | None,
+        aspect_ratio: str | None = None,
+        *,
+        system_instruction: str | None = None,
+        image_labels: list[str] | None = None,
+        final_instruction: str | None = None,
+    ) -> dict:
+        if image_labels is not None and len(image_labels) != len(images):
+            raise ValueError("image_labels must have exactly one label per image")
         image_cfg: dict = {"imageSize": image_size}
         if aspect_ratio:
             image_cfg["aspectRatio"] = aspect_ratio
@@ -62,21 +87,35 @@ class GeminiImageClient:
         }
         if temperature is not None:
             gen["temperature"] = temperature
-        return {
+        parts: list[dict] = [{"text": prompt}]
+        for index, image in enumerate(images):
+            if image_labels is not None:
+                label = image_labels[index].strip()
+                if not label:
+                    raise ValueError("image labels must not be blank")
+                parts.append({"text": label})
+            parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": image.mime,
+                        "data": base64.b64encode(image.data).decode(),
+                    }
+                }
+            )
+        if final_instruction:
+            parts.append({"text": final_instruction})
+        body = {
             "contents": [
                 {
                     "role": "user",
-                    "parts": [
-                        {"text": prompt},
-                        *[
-                            {"inline_data": {"mime_type": im.mime, "data": base64.b64encode(im.data).decode()}}
-                            for im in images
-                        ],
-                    ],
+                    "parts": parts,
                 }
             ],
             "generationConfig": gen,
         }
+        if system_instruction:
+            body["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+        return body
 
     async def generate_content_image(
         self,
@@ -87,24 +126,61 @@ class GeminiImageClient:
         temperature: float | None = None,
         aspect_ratio: str | None = None,
         timeout: float = 180.0,
+        *,
+        system_instruction: str | None = None,
+        image_labels: list[str] | None = None,
+        final_instruction: str | None = None,
     ) -> GeminiImageResult:
         if not self._key:
             raise GeminiError("GEMINI_API_KEY 미설정")
-        body = self._body(prompt, images, image_size, temperature, aspect_ratio)
+        body = self._body(
+            prompt,
+            images,
+            image_size,
+            temperature,
+            aspect_ratio,
+            system_instruction=system_instruction,
+            image_labels=image_labels,
+            final_instruction=final_instruction,
+        )
         t0 = time.perf_counter()
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            res = await client.post(
-                self._endpoint(model), json=body, headers={"x-goog-api-key": self._key}
-            )
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                res = await client.post(
+                    self._endpoint(model), json=body, headers={"x-goog-api-key": self._key}
+                )
+        except httpx.RequestError as exc:
+            raise GeminiError(
+                f"Gemini request failed: {type(exc).__name__}: {exc}",
+                retryable=True,
+            ) from exc
         latency_ms = int((time.perf_counter() - t0) * 1000)
         if res.status_code != 200:
-            raise GeminiError(f"Gemini {res.status_code}: {res.text[:500]}")
+            error_text = res.text[:500]
+            normalized = error_text.lower()
+            quota_exhausted = res.status_code == 429 or any(
+                marker in normalized
+                for marker in (
+                    "resource_exhausted",
+                    "quota exceeded",
+                    "generate_requests_per_model_per_day",
+                )
+            )
+            raise GeminiError(
+                f"Gemini {res.status_code}: {error_text}",
+                status_code=res.status_code,
+                retryable=res.status_code in {408, 500, 502, 503, 504},
+                quota_exhausted=quota_exhausted,
+            )
         data = res.json()
         parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
         image_parts = [p for p in parts if (p.get("inlineData") or {}).get("data")]
         if not image_parts:
             text = " ".join(p.get("text", "") for p in parts).strip()[:300]
-            raise GeminiError(f"응답에 이미지 없음. 텍스트: {text or '(없음)'}")
+            raise GeminiError(
+                f"응답에 이미지 없음. 텍스트: {text or '(없음)'}",
+                retryable=True,
+            )
         # 가장 큰 image part 채택 (4K 응답은 프리뷰+본체 2개일 수 있음 — spike 노트)
         best = max(image_parts, key=lambda p: len(p["inlineData"]["data"]))
         return GeminiImageResult(

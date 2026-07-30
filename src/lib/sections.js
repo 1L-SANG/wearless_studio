@@ -55,6 +55,7 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
     Object.assign(b, normalizedRecipePatch(b, contentRole, { hasDetailImage }));
     if (previousRecipe.cutType !== b.cutType || previousRecipe.direction !== b.direction || previousRecipe.shot !== b.shot) {
       b.exampleId = null;
+      b.refScope = 'all';
       b.thumb = b.baseThumb || b.thumb;
       b.baseThumb = null;
     }
@@ -186,6 +187,7 @@ export function adoptSection(blocks, movedId, targetSid, targetRole = null) {
       const purposePatch = b.source === 'mine' ? {} : {
         ...normalizedRecipePatch(b, defaultContentRoleForSection(host.sectionRole)),
         exampleId: null,
+        refScope: 'all',
         thumb: b.baseThumb || b.thumb,
         baseThumb: null,
         ...(host.sectionRole === SECTION_ROLES.PRODUCT

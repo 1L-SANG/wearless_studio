@@ -193,7 +193,10 @@ def _run_editor(
     monkeypatch.setattr(eij, "_emit", fake_emit)
     monkeypatch.setattr(eij.image_qc, "scene_verdict", fake_scene)
     if bg:
-        monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
+        monkeypatch.setattr(
+            eij.cut_generator, "example_asset_status",
+            lambda *_args, **_kwargs: "available",
+        )
         monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
 
     r2 = _CapturingR2()

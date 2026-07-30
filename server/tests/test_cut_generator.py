@@ -158,6 +158,89 @@ def test_build_prompt_respects_given_manifest():
     assert "worn on a mannequin" in p and "MATCH" in p and "MOOD" in p
 
 
+@pytest.mark.parametrize("cut_type", ["styling", "mirror"])
+def test_all_scope_varies_recognizable_real_location_for_styling_and_mirror(cut_type):
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all",
+    )
+    prompt = cg.build_prompt(
+        {"cutType": cut_type, "shot": "full", "refScope": "all"},
+        PRODUCT_TOP, manifest=manifest,
+    )
+
+    assert "STYLING/MIRROR ART-DIRECTION TRANSFER" in prompt
+    assert "different specific place of the same type" in prompt
+    assert "Change only two or three visible" in prompt
+    assert "Mirror cuts follow this same rule" in prompt
+    assert "exact or near-identical backdrop may be retained" not in prompt
+
+
+def test_all_scope_horizon_may_retain_generic_studio_without_forced_variation():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all",
+    )
+    prompt = cg.build_prompt(
+        {"cutType": "horizon", "shot": "full", "refScope": "all"},
+        PRODUCT_TOP, manifest=manifest,
+    )
+
+    assert "REFERENCE SCOPE — HORIZON STUDIO" in prompt
+    assert "exact or near-identical backdrop may be retained" in prompt
+    assert "do not force a different set" in prompt
+    assert "different specific place of the same type" not in prompt
+
+
+@pytest.mark.parametrize("cut_type", ["styling", "horizon", "mirror"])
+def test_bg_scope_keeps_exact_empty_plate_and_chooses_a_new_pose(cut_type):
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="bg",
+    )
+    prompt = cg.build_prompt(
+        {"cutType": cut_type, "shot": "full", "refScope": "bg"},
+        PRODUCT_TOP, manifest=manifest,
+    )
+
+    assert "FIRST attached image is the finished, real location" in prompt
+    assert "Outside the inserted person and their contact shadow/reflection" in prompt
+    assert "scene must stay the SAME" in prompt
+    assert "place: same architecture" in prompt
+    assert "choose a natural pose that suits the place" in prompt
+    assert "STYLING/MIRROR ART-DIRECTION TRANSFER" not in prompt
+    assert "REFERENCE SCOPE — HORIZON STUDIO" not in prompt
+    assert "exact plate owns the location, lighting, color and ambience" in prompt
+    if cut_type == "mirror":
+        assert "MIRROR-CUT MECHANICS" in prompt
+        assert "physically correct mirror reflection" in prompt
+        assert "plate's existing mirror frame" in prompt
+        assert "convert it into a third-person photograph" in prompt
+    else:
+        assert "MIRROR-CUT MECHANICS" not in prompt
+
+
+@pytest.mark.parametrize("cut_type,scope,authority", [
+    ("styling", "all", "scope owns scene lighting, time, color grade and ambience"),
+    ("horizon", "all", "scope owns studio lighting, shadow, neutral color grade and ambience"),
+    ("mirror", "bg", "exact plate owns the location, lighting, color and ambience"),
+])
+def test_resolved_scene_scope_outranks_mood_and_generic_aesthetic(
+        cut_type, scope, authority):
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=1, example_scope=scope,
+    )
+    prompt = cg.build_prompt(
+        {"cutType": cut_type, "shot": "full", "refScope": scope},
+        PRODUCT_TOP, manifest=manifest,
+    )
+
+    assert authority in prompt
+    assert "MOOD references must not restyle or override" in prompt
+    assert "Never cool, brighten, airify" in prompt
+
+
 def test_pose_medium_prompt_generates_full_frame_before_deterministic_crop():
     product = {"name": "니트", "colors": [{"isBase": True, "images": [
         {"slot": "Front", "id": "a1"},
@@ -188,8 +271,8 @@ def test_generate_applies_medium_crop_only_to_pose_scope(monkeypatch):
         async def generate_content_image(self, model, prompt, images, image_size, aspect_ratio):
             return SimpleNamespace(image=b"FULL", mime="image/png")
 
-    async def fake_crop(settings, image, mime):
-        calls.append((image, mime))
+    async def fake_crop(settings, image, mime, clothing_type):
+        calls.append((image, mime, clothing_type))
         return b"CROPPED", mime
 
     monkeypatch.setattr(cg.pose_crop, "crop_pose_medium", fake_crop)
@@ -227,7 +310,37 @@ def test_generate_applies_medium_crop_only_to_pose_scope(monkeypatch):
     assert all_result == (b"FULL", "image/png")
     assert bg_result == (b"FULL", "image/png")
     assert pose_full_result == (b"FULL", "image/png")
-    assert calls == [(b"FULL", "image/png")]
+    assert calls == [(b"FULL", "image/png", "top")]
+
+
+def test_generate_bottom_cross_pose_medium_passes_bottom_category_to_crop(monkeypatch):
+    calls = []
+
+    class FakeGemini:
+        async def generate_content_image(self, model, prompt, images, image_size, aspect_ratio):
+            return SimpleNamespace(image=b"FULL", mime="image/png")
+
+    async def fake_crop(settings, image, mime, clothing_type):
+        calls.append((image, mime, clothing_type))
+        return b"LOWER_CROP", mime
+
+    monkeypatch.setattr(cg.pose_crop, "crop_pose_medium", fake_crop)
+    product = {"name": "팬츠", "clothing_type": "bottom", "colors": []}
+    pose_manifest = cg.build_manifest(
+        [], has_mannequin=False, has_match=False, mood_count=0, example_scope="pose",
+    )
+
+    result = asyncio.run(cg.generate(
+        make_settings(gemini_api_key="x"), FakeGemini(),
+        {
+            "cutType": "styling", "direction": "front", "shot": "medium",
+            "refScope": "pose", "exampleId": "ex_styling_women_bottom_full_staged_01",
+        },
+        product, [], manifest=pose_manifest,
+    ))
+
+    assert result == (b"LOWER_CROP", "image/png")
+    assert calls == [(b"FULL", "image/png", "bottom")]
 
 
 def test_build_manifest_places_exact_model_labels_after_mannequin():

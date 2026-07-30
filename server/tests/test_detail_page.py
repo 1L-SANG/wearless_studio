@@ -501,17 +501,23 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
              "exampleId": "ex_wrong_clothing", "refScope": "all"},
             {"id": "unpublished", "source": "ai", "cutType": "horizon",
              "exampleId": "ex_without_bg", "refScope": "bg"},
+            {"id": "unpublished-all", "source": "ai", "cutType": "styling",
+             "shot": "medium", "exampleId": "ex_without_all", "refScope": "all"},
             {"id": "direction-mismatch", "source": "ai", "cutType": "styling",
              "direction": "front", "exampleId": "ex_back_pose", "refScope": "pose"},
             {"id": "named", "source": "ai", "cutType": "styling", "pose": "walk",
              "exampleId": "ex_styling_top_full_1", "refScope": "pose"},
+            {"id": "cross", "source": "ai", "cutType": "styling", "shot": "medium",
+             "exampleId": "ex_styling_women_top_full_city_02", "refScope": "all"},
+            {"id": "bg", "source": "ai", "cutType": "mirror", "shot": "full",
+             "exampleId": "ex_mirror_top_full_1", "refScope": "bg"},
         ]
 
     async def fake_prod(conn, pid):
         return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
 
     async def fake_analysis(conn, pid):
-        return {}
+        return {"targetGenders": ["women"]}
 
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
@@ -521,11 +527,17 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         assert clothing_type == "top"
         return dpj.InlineImage("image/jpeg", f"EXAMPLE:{example_id}:{scope}".encode())
 
-    def fake_example_status(example_id, clothing_type, scope="all"):
+    def fake_example_status(example_id, clothing_type, scope="all", **kwargs):
         assert clothing_type == "top"
+        if example_id == "ex_styling_women_top_full_city_02":
+            assert kwargs["spec"]["shot"] == "medium"
+            assert kwargs["spec"]["_exampleShot"] == "full"
+            assert kwargs["gender"] == "women"
         if example_id == "ex_wrong_clothing":
             return "not_applicable"
         if example_id == "ex_without_bg":
+            return "variant_unpublished"
+        if example_id == "ex_without_all":
             return "variant_unpublished"
         return "available"
 
@@ -541,6 +553,10 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
                 cut_spec, product, analysis=analysis, manifest=manifest),
         }
         return b"IMG", "image/png"
+
+    async def fake_scene_verdict(settings, plate, candidate):
+        captured.setdefault("scene_qc", []).append((plate.data, candidate.data))
+        return {"verdict": "pass", "mismatches": []}
 
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting):
         return []
@@ -561,6 +577,7 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
     monkeypatch.setattr(dpj.cut_generator, "pose_direction_compatible", fake_pose_compatible)
     monkeypatch.setattr(dpj.cut_generator, "load_example_image", fake_example)
     monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.image_qc, "scene_verdict", fake_scene_verdict)
     monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
     monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
     monkeypatch.setattr(dpj, "_emit", fake_emit)
@@ -573,11 +590,24 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         assert len(item["images"]) == 2  # PRODUCT 다음에 resolved EXAMPLE 실제 첨부
         assert item["images"][-1].data.startswith(b"EXAMPLE:")
         assert item["images"][-1].data.endswith(f":{scope}".encode())  # scope별 자산(누끼 variant) 선택 검증
+    bg_item = captured["bg"]
+    assert len(bg_item["images"]) == 2
+    assert bg_item["images"][0].data == b"EXAMPLE:ex_mirror_top_full_1:bg"
+    assert bg_item["manifest"].splitlines()[0].startswith(
+        "1. EXAMPLE REFERENCE (scope: bg)")
+    assert "FIRST attached image is the finished, real location" in bg_item["prompt"]
+    assert "MIRROR-CUT MECHANICS" in bg_item["prompt"]
+    assert captured["scene_qc"] == [
+        (b"EXAMPLE:ex_mirror_top_full_1:bg", b"IMG")]
     assert "EXAMPLE REFERENCE (scope: all)" in captured["all"]["manifest"]
     assert "POSE CONTROL" in captured["pose"]["manifest"]
-    assert "follow the attached EXAMPLE REFERENCE's background/location" in captured["all"]["prompt"]
+    assert "STYLING/MIRROR ART-DIRECTION TRANSFER" in captured["all"]["prompt"]
+    assert "different specific place of the same type" in captured["all"]["prompt"]
+    assert "CROSS-SHOT source is registered full" in captured["cross"]["manifest"]
+    assert "requested medium framing wins" in captured["cross"]["manifest"]
+    assert "CROSS-SHOT REFERENCE — HARD REQUIREMENTS" in captured["cross"]["prompt"]
     assert "Do not transfer any background, lighting, color grade" in captured["pose"]["prompt"]
-    assert "follow the attached EXAMPLE REFERENCE's background/location" not in captured["pose"]["prompt"]
+    assert "STYLING/MIRROR ART-DIRECTION TRANSFER" not in captured["pose"]["prompt"]
     assert len(captured["named"]["images"]) == 1
     assert "EXAMPLE REFERENCE" not in captured["named"]["manifest"]
     assert "REFERENCE SCOPE" not in captured["named"]["prompt"]
@@ -586,6 +616,12 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         assert captured[block_id]["cut_spec"]["exampleId"] is None
         assert "EXAMPLE REFERENCE" not in captured[block_id]["manifest"]
         assert "Composition nuance" not in captured[block_id]["prompt"]
+    unresolved_all = captured["unpublished-all"]
+    assert len(unresolved_all["images"]) == 1
+    assert unresolved_all["cut_spec"]["exampleId"] == "ex_without_all"
+    assert "EXAMPLE REFERENCE" not in unresolved_all["manifest"]
+    assert "Composition nuance" in unresolved_all["prompt"]
+    assert "CROSS-SHOT" not in unresolved_all["prompt"]
     assert captured["finalize"]["metadata"]["warnings"] == [
         {
             "code": "example_not_applicable", "blockId": "mismatch",
@@ -594,6 +630,10 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         {
             "code": "example_variant_unpublished", "blockId": "unpublished",
             "exampleId": "ex_without_bg", "clothingType": "top", "refScope": "bg",
+        },
+        {
+            "code": "example_variant_unpublished", "blockId": "unpublished-all",
+            "exampleId": "ex_without_all", "clothingType": "top", "refScope": "all",
         },
         {
             "code": "pose_direction_incompatible", "blockId": "direction-mismatch",

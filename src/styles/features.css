@@ -1415,6 +1415,21 @@
 .shot-tile.on .si { fill: #fff; }
 .shot-tile:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
 
+.sb-expinned {
+  margin: 0 0 10px; padding: 9px; border: 1px solid var(--ring-strong); border-radius: 10px;
+  background: var(--bg-2);
+}
+.sb-expinned-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 7px; margin-bottom: 7px;
+  color: var(--fg-2); font-size: 11px; font-weight: 700;
+}
+.sb-expinned-cell { width: 72px; }
+.sb-crossshot-badge {
+  display: inline-flex; align-items: center; border: 1px solid var(--ring-strong); border-radius: var(--r-pill);
+  background: var(--bg-1); color: var(--fg-2); padding: 2px 7px; font-size: 9.5px; font-weight: 700;
+  white-space: nowrap;
+}
+
 .sb-exgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; transition: opacity .15s; }
 .sb-exgrid.moodonly { opacity: .55; }
 .sb-exempty {

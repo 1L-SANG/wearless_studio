@@ -24,7 +24,11 @@ import {
   blockPatchForContentRole,
   cutTypeOptionsForSection,
   defaultContentRoleForSection,
+  generationExampleCompatible,
+  generationExampleScopeAvailable,
+  generationExampleStateAfterShotChange,
   hasDetailSource,
+  isWornCrossShotPair,
   normalizedRecipePatch,
   poseExampleDirectionCompatible,
   sectionRoleForContentRole,
@@ -80,6 +84,7 @@ const SCOPE_LABELS = { all: '전부', bg: '배경만', pose: '포즈만' };
 const BG_EXAMPLES_ENABLED = Boolean(import.meta.env?.DEV)
   || import.meta.env?.VITE_GENEXAMPLE_BG_ENABLED === 'true';
 const WORN_CUT_TYPES = new Set(['styling', 'horizon', 'mirror']);
+const CROSS_SHOT_LABELS = Object.freeze({ full: '풀샷', medium: '중간샷' });
 const FIT_ROLE_BY_CUT_TYPE = Object.freeze({
   styling: CONTENT_ROLES.COORDINATION,
   horizon: CONTENT_ROLES.FIT,
@@ -97,13 +102,9 @@ const byRankThenId = (left, right) => (
 );
 
 export function selectGenerationExamples(catalog, { cutType, shot, clothingType, gender }) {
-  const matched = (catalog || []).filter((example) => (
-    example?.cutType === cutType
-    && example?.shot === shot
-    && (example?.cutType === 'product' ? example?.gender == null : example?.gender === gender)
-    && Array.isArray(example?.applicableClothingTypes)
-    && example.applicableClothingTypes.includes(clothingType)
-  ));
+  const matched = (catalog || []).filter((example) => generationExampleCompatible(example, {
+    cutType, shot, clothingType, gender,
+  }));
   const mixAxis = cutType === 'styling' ? 'mood'
     : cutType === 'product' && shot === 'detail' ? 'detailSubject'
       : null;
@@ -408,7 +409,7 @@ function ShotIcon({ cut, shot, clothingType }) {
 
 /* 분위기 예시 — 갤러리가 주인공 (B+C안 확정, ADR-0004):
    · 샷 종류 = 갤러리의 아이콘 필터 타일 (설정과 같은 shot 필드를 바꾼다)
-   · 생성예시 셀 선택 = 촬영 연출만 참고 — 예시 속 옷·신발·액세서리는 제외하고 exampleId로 생성 입력에 포함
+   · 생성예시 셀 선택 = 촬영 연출+허용 소품을 참고 — 상품·매칭 의류와 모델 정체성은 교체
    · 내 사진(refImages) = '+ 타일'로 갤러리에 통합 — 점선 테두리·배지, 분위기(조명·색감)만 참고
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
@@ -419,7 +420,14 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   const examples = React.useMemo(() => selectGenerationExamples(catalogs.genExamples, {
     cutType: cut, shot: shotVal, clothingType, gender,
   }), [catalogs.genExamples, cut, shotVal, clothingType, gender]);
-  const selectedExample = examples.find((example) => example.id === exampleId) || null;
+  const selectedExample = React.useMemo(() => {
+    const selected = (catalogs.genExamples || []).find((example) => example.id === exampleId);
+    return generationExampleCompatible(selected, {
+      cutType: cut, shot: shotVal, clothingType, gender,
+    }, { allowCrossShot: true }) ? selected : null;
+  }, [catalogs.genExamples, exampleId, cut, shotVal, clothingType, gender]);
+  const galleryExamples = examples.filter((example) => example.id !== selectedExample?.id);
+  const crossShot = isWornCrossShotPair(cut, selectedExample?.shot, shotVal);
   const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
   const selectedPoseCompatible = poseExampleDirectionCompatible(selectedExample, {
     cutType: selectedExample?.cutType || cut, direction,
@@ -429,7 +437,10 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
     const published = (selectedExample?.variants || []).filter((variant) => (
       variant !== 'bg' || BG_EXAMPLES_ENABLED
     )).filter((variant) => variant !== 'pose' || selectedPoseCompatible);
-    if (!selectedExample || (inSpace && !published.includes('pose'))) {
+    if (!selectedExample
+      || !generationExampleScopeAvailable(published, refScope, {
+        inSpace, isProduct: cut === 'product',
+      })) {
       onExampleChange(null);
       return;
     }
@@ -452,6 +463,65 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
     const label = { front: '정면', back: '뒷면', side: '사이드' }[example?.direction] || '다른 방향';
     return `이 예시의 포즈는 ${label} 전용이에요`;
   };
+  const exampleCell = (e) => {
+    const on = exampleId === e.id;
+    const variants = Array.isArray(e.variants) ? e.variants : [];
+    const poseCompatible = poseExampleDirectionCompatible(e, { cutType: e.cutType || cut, direction });
+    const poseDisabled = !variants.includes('pose') || !poseCompatible;
+    const poseDisabledReason = !variants.includes('pose')
+      ? unavailableReason('pose') : poseDirectionReason(e);
+    const inSpaceDisabled = inSpace && poseDisabled;
+    // 레퍼런스 범위 — 호버 오버레이에서 선택. 시리즈 안은 호환되는 '포즈만'으로 고정.
+    const scopeChoices = !onRefScopeChange || cut === 'product' ? null
+      : inSpace ? [{ v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason }]
+        : [
+          { v: 'all', l: '전부', disabled: !variants.includes('all') },
+          ...(BG_EXAMPLES_ENABLED
+            ? [{ v: 'bg', l: '배경만', disabled: !variants.includes('bg') }]
+            : []),
+          { v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason },
+        ];
+    const pick = (scope) => {
+      if (!onExampleChange) return;
+      if (!variants.includes(scope)) return;
+      if (scope === 'pose' && !poseCompatible) return;
+      if (on && (refScope || 'all') === scope) { onExampleChange(null); return; }   // 같은 선택 재클릭 = 해제
+      onExampleChange(e.id);
+      if (onRefScopeChange) onRefScopeChange(scope);
+    };
+    const defaultScope = cut === 'product' || moodOnly ? 'all'
+      : inSpace ? 'pose'
+        : variants.includes(refScope || 'all')
+          && ((refScope || 'all') !== 'pose' || poseCompatible)
+          ? (refScope || 'all') : 'all';
+    return (
+      <button key={e.id} type="button" disabled={inSpaceDisabled}
+        title={inSpaceDisabled ? poseDisabledReason : undefined}
+        className={`sb-excell${on ? ' sel' : ''}${inSpaceDisabled ? ' unavailable' : ''}`}
+        onClick={() => { if (on) onExampleChange?.(null); else pick(defaultScope); }}>
+        <img src={e.thumb} alt="" />{on && <span className="ck"><Icon name="check" size={11} /></span>}
+        {on && scopeChoices && <span className="sb-exscope">{SCOPE_LABELS[refScope || 'all'] || '전부'}</span>}
+        {scopeChoices && (
+          /* 오버레이 배경 클릭은 셀 기본 선택으로 통과(기존 클릭 선택 유지) — 버튼 클릭만 범위 지정 */
+          <span className="sb-exov">
+            <span className="sb-exov-t">레퍼런스 범위</span>
+            <span className="sb-exov-b">
+              {scopeChoices.map((c) => (
+                <span key={c.v} role="button" tabIndex={c.disabled ? -1 : 0}
+                  aria-disabled={c.disabled || undefined}
+                  title={c.disabled ? (c.reason || unavailableReason(c.v)) : undefined}
+                  className={`sb-exov-btn${on && (refScope || 'all') === c.v ? ' on' : ''}${c.disabled ? ' unavailable' : ''}`}
+                  onClick={(ev) => { ev.stopPropagation(); if (!c.disabled) pick(c.v); }}
+                  onKeyDown={(ev) => { if (!c.disabled && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); ev.stopPropagation(); pick(c.v); } }}>
+                  {c.l}
+                </span>
+              ))}
+            </span>
+          </span>
+        )}
+      </button>
+    );
+  };
   return (
     <div className="insp-sec">
       {/* 같은 공간 묶음 안에서는 배경 기준이 묶음에 있으므로 예시는 '포즈 예시'로 강등 (P5 확정) */}
@@ -465,69 +535,28 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           ))}
         </div>
       )}
+      {/* TODO(cross-shot polish): validate this pinned treatment with a browser screenshot pass
+          when the released generation-example catalog next changes. */}
+      {selectedExample && (
+        <div className="sb-expinned">
+          <div className="sb-expinned-head">
+            <span>현재 선택한 예시</span>
+            {crossShot && (
+              <span className="sb-crossshot-badge">
+                {CROSS_SHOT_LABELS[selectedExample.shot]} 예시로 {CROSS_SHOT_LABELS[shotVal]} 생성
+              </span>
+            )}
+          </div>
+          <div className="sb-expinned-cell">{exampleCell(selectedExample)}</div>
+        </div>
+      )}
       <div className={`sb-exgrid${moodOnly ? ' moodonly' : ''}`}>
-        {examples.length === 0 && (
-          <div className="sb-exempty">이 조건의 생성예시는 준비 중이에요</div>
+        {galleryExamples.length === 0 && (
+          <div className="sb-exempty">
+            {selectedExample ? '이 조건의 다른 생성예시는 준비 중이에요' : '이 조건의 생성예시는 준비 중이에요'}
+          </div>
         )}
-        {examples.map((e) => {
-          const on = exampleId === e.id;
-          const variants = Array.isArray(e.variants) ? e.variants : [];
-          const poseCompatible = poseExampleDirectionCompatible(e, { cutType: e.cutType || cut, direction });
-          const poseDisabled = !variants.includes('pose') || !poseCompatible;
-          const poseDisabledReason = !variants.includes('pose')
-            ? unavailableReason('pose') : poseDirectionReason(e);
-          const inSpaceDisabled = inSpace && poseDisabled;
-          // 레퍼런스 범위 — 호버 오버레이에서 선택. 시리즈 안은 호환되는 '포즈만'으로 고정.
-          const scopeChoices = !onRefScopeChange || cut === 'product' ? null
-            : inSpace ? [{ v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason }]
-              : [
-                { v: 'all', l: '전부', disabled: !variants.includes('all') },
-                ...(BG_EXAMPLES_ENABLED
-                  ? [{ v: 'bg', l: '배경만', disabled: !variants.includes('bg') }]
-                  : []),
-                { v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason },
-              ];
-          const pick = (scope) => {
-            if (!onExampleChange) return;
-            if (!variants.includes(scope)) return;
-            if (scope === 'pose' && !poseCompatible) return;
-            if (on && (refScope || 'all') === scope) { onExampleChange(null); return; }   // 같은 선택 재클릭 = 해제
-            onExampleChange(e.id);
-            if (onRefScopeChange) onRefScopeChange(scope);
-          };
-          const defaultScope = cut === 'product' || moodOnly ? 'all'
-            : inSpace ? 'pose'
-              : variants.includes(refScope || 'all')
-                && ((refScope || 'all') !== 'pose' || poseCompatible)
-                ? (refScope || 'all') : 'all';
-          return (
-            <button key={e.id} type="button" disabled={inSpaceDisabled}
-              title={inSpaceDisabled ? poseDisabledReason : undefined}
-              className={`sb-excell${on ? ' sel' : ''}${inSpaceDisabled ? ' unavailable' : ''}`}
-              onClick={() => { if (on) onExampleChange?.(null); else pick(defaultScope); }}>
-              <img src={e.thumb} alt="" />{on && <span className="ck"><Icon name="check" size={11} /></span>}
-              {on && scopeChoices && <span className="sb-exscope">{SCOPE_LABELS[refScope || 'all'] || '전부'}</span>}
-              {scopeChoices && (
-                /* 오버레이 배경 클릭은 셀 기본 선택으로 통과(기존 클릭 선택 유지) — 버튼 클릭만 범위 지정 */
-                <span className="sb-exov">
-                  <span className="sb-exov-t">레퍼런스 범위</span>
-                  <span className="sb-exov-b">
-                    {scopeChoices.map((c) => (
-                      <span key={c.v} role="button" tabIndex={c.disabled ? -1 : 0}
-                        aria-disabled={c.disabled || undefined}
-                        title={c.disabled ? (c.reason || unavailableReason(c.v)) : undefined}
-                        className={`sb-exov-btn${on && (refScope || 'all') === c.v ? ' on' : ''}${c.disabled ? ' unavailable' : ''}`}
-                        onClick={(ev) => { ev.stopPropagation(); if (!c.disabled) pick(c.v); }}
-                        onKeyDown={(ev) => { if (!c.disabled && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); ev.stopPropagation(); pick(c.v); } }}>
-                        {c.l}
-                      </span>
-                    ))}
-                  </span>
-                </span>
-              )}
-            </button>
-          );
-        })}
+        {galleryExamples.map(exampleCell)}
         {refs.map((r, i) => (
           <span className="sb-excell up" key={'u' + i} title="분위기(조명·색감)만 참고해요. 옷과 모델은 바뀌지 않아요.">
             <img src={r?.url || r} alt="" /><span className="upb">내 사진</span>
@@ -664,12 +693,18 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   });
   const onShotChange = (shot) => onChange((current) => {
     if (current.cutType !== 'product') {
-      return referenceFeedbackPatch(current, { shot, exampleId: null }, catalogs);
+      const exampleState = generationExampleStateAfterShotChange(
+        current.cutType, current.shot, shot, current,
+      );
+      return referenceFeedbackPatch(current, exampleState, catalogs);
     }
     const nextRole = shot === 'detail' ? CONTENT_ROLES.DETAIL : CONTENT_ROLES.PRODUCT_OVERVIEW;
     const rolePatch = current.contentRole === nextRole
-      ? { shot, exampleId: null }
-      : { ...blockPatchForContentRole(current, nextRole, { clothingType }), shot, exampleId: null };
+      ? { shot, exampleId: null, refScope: 'all' }
+      : {
+        ...blockPatchForContentRole(current, nextRole, { clothingType }),
+        shot, exampleId: null, refScope: 'all',
+      };
     const nextColorOpts = nextRole === CONTENT_ROLES.DETAIL ? detailColorOpts : colorOpts;
     const colorId = nextColorOpts.some((color) => color.id === current.colorId)
       ? current.colorId : nextColorOpts[0]?.id;

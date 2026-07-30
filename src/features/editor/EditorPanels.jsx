@@ -12,6 +12,7 @@ import {
   CONTENT_ROLES,
   allAiContentTemplates,
   blockPatchForContentRole,
+  generationExampleStateAfterShotChange,
 } from '@/lib/storyboardTaxonomy.js';
 
 function PanelHead({ title, sub }) {
@@ -294,7 +295,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
     if (useFm && !fmList.some((m) => m.id === model)) setModel(fmList[0].id);
   }, [useFm]); // eslint-disable-line react-hooks/exhaustive-deps
   const [refImages, setRefImages] = useState([]);       // 내 레퍼런스 — NewCutRequest.refImages (계약 §6)
-  const [exampleId, setExampleId] = useState(null);     // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
+  const [exampleId, setExampleId] = useState(null);     // 촬영 연출+허용 소품 예시 — 상품·매칭 의류/모델 정체성은 교체 (§8)
   const [refScope, setRefScope] = useState('all');
   const purposeOptions = allAiContentTemplates({ hasDetailImage });
   const purposePatch = blockPatchForContentRole(null, purpose, { clothingType });
@@ -357,7 +358,12 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
           {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
           <MoodGuide catalogs={catalogs} cut={cut} direction={isMirror ? null : dirVal} shot={shotVal}
             shotOptions={isProduct ? shotOpts : null}
-            onShotChange={(v) => { setShot(v); setExampleId(null); setRefScope('all'); }} clothingType={clothingType} gender={modelGender}
+            onShotChange={(v) => {
+              const next = generationExampleStateAfterShotChange(
+                cut, shotVal, v, { exampleId, refScope },
+              );
+              setShot(next.shot); setExampleId(next.exampleId); setRefScope(next.refScope);
+            }} clothingType={clothingType} gender={modelGender}
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
