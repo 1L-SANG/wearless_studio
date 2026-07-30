@@ -416,6 +416,45 @@ def test_salvage_picks_best_across_both_pools(monkeypatch):
         f"20점 사전게이트 후보가 70점 검증본을 제치고 나갔다: {result['qc_scores']}"
 
 
+def test_scores_rescored_when_edit_changed_the_image(monkeypatch):
+    """편집으로 이미지가 바뀌면 A~C 를 **최종본 기준으로 재판정**한다 (codex HIGH 2).
+
+    안 하면 저장 점수가 편집 전 이미지의 것이고, 검수자는 실제 출고본과 다른 이미지의
+    숫자를 보고 판단하게 된다. 관측에서 이 재판정이 하락을 잡아냈다(85 → 30 사례).
+    """
+    import test_mannequin_axis_qc as harness
+
+    seq = [
+        {"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+         "product_fidelity": 90, "physical_naturalness": 90, "image_quality": 90,
+         "series_consistency": None, "critical_errors": []},          # 편집 전
+        {"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+         "product_fidelity": 70, "physical_naturalness": 70, "image_quality": 70,
+         "series_consistency": None, "critical_errors": []},          # 편집 후(하락)
+    ]
+    calls = {"n": 0}
+
+    async def fake_p2(s, prods, gen, *, scored=False):
+        calls["n"] += 1
+        return seq[min(calls["n"] - 1, len(seq) - 1)]
+
+    async def fake_axis(**kw):
+        # 이미지를 실제로 바꾼다 → 해시가 달라져 재판정 조건이 성립
+        return types.SimpleNamespace(mime=kw["res"].mime, image=b"edited-bytes"), False
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return None
+
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    result, _g, _r2, emits = harness._run(
+        monkeypatch, mode="off", guard=True, max_attempts=1, verdicts=[], image_qc="shadow")
+    assert calls["n"] == 2, "편집 후 재판정이 일어나지 않았다"
+    assert result["qc_scores"]["product_fidelity"] == 70, "편집 전 점수가 저장됐다"
+    assert "image_qc_rescored" in [p.get("status") for _t, p in emits]
+
+
 def test_salvaged_candidate_still_gets_edit_and_series_qc(monkeypatch):
     """구제본도 편집·D축을 받고 그 결과가 저장된다 — salvaged 는 '더 재생성 안 함'만 뜻한다.
 
