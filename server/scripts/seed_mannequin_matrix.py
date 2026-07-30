@@ -144,12 +144,18 @@ def load_base_bytes(settings, conn) -> tuple[bytes, str]:
 
 async def generate(settings, base: InlineImage, bust: str, hip: str) -> tuple[bytes, str]:
     """(image bytes, 실제 응답 mime). mime 은 하드코딩하지 않는다 — Gemini 가 png 가 아닌
-    형식을 돌려줄 수 있고, 그러면 R2 Content-Type·assets.mime_type 이 틀어진다."""
+    형식을 돌려줄 수 있고, 그러면 R2 Content-Type·assets.mime_type 이 틀어진다.
+
+    해상도는 하드코딩 "2K" — env MANNEQUIN_IMAGE_SIZE 로 조절되는 런타임 컷 출력 해상도
+    설정(기본값 "1K")을 쓰지 않는다. 베이스 에셋은 한 번 생성되면 앞으로 모든 생성의 입력
+    이미지로 영구히 쓰이므로, 그때그때 바뀌는 런타임 출력 설정과 무관하게 항상 최대 실용
+    해상도로 만든다 — 안 그러면 옆에 있는 기존 2K 기본 베이스보다 낮은 해상도의 매트릭스
+    셀이 조용히 섞여 들어간다."""
     gemini = GeminiImageClient(settings)
     prompt = PROMPT.format(bust=_VOLUME_EN[bust], hip=_VOLUME_EN[hip])
     res = await gemini.generate_content_image(
         resolve_model(settings, "image_high"), prompt, [base],
-        settings.mannequin_image_size, aspect_ratio=settings.mannequin_aspect_ratio)
+        "2K", aspect_ratio=settings.mannequin_aspect_ratio)
     return res.image, res.mime
 
 
