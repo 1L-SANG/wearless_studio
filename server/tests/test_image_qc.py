@@ -246,3 +246,24 @@ def test_pick_best_orchestrates_product_then_candidates(monkeypatch):
         candidates,
     ))
     assert out == {"chosenIndex": 1, "reason": "logo is closest"}
+
+
+def test_every_catalog_axis_value_has_an_observable():
+    """선언 축 커버리지에 구멍이 생기면 **핏 조정 버그가 조용히 재발한다**.
+
+    `build_declared_fit_block` 은 관측 문구가 없는 축·값을 조용히 스킵한다(빈 지시가 판정기로
+    가면 안 되므로 그게 맞다). 그런데 카탈로그에 새 값을 추가하면서 `AXIS_OBSERVABLES` 를
+    안 채우면, 그 값을 선언한 셀러의 상품만 QC 에 의도가 전달되지 않아 다시
+    `garment fit changed` 로 무한 재생성에 걸린다 — 특정 옵션에서만 나는 버그라 찾기 어렵다.
+    """
+    from app.agents.fit_axes import AXIS_OBSERVABLES, FIT_AXES
+
+    missing = sorted({
+        (cat, axis, e["value"])
+        for cat, axes in FIT_AXES.items()
+        for axis, by_gender in axes.items()
+        for entries in by_gender.values()
+        for e in entries
+        if (cat, axis, e["value"]) not in AXIS_OBSERVABLES
+    })
+    assert not missing, f"관측 문구 없는 축값: {missing}"
