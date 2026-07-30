@@ -42,7 +42,7 @@ RESULTS = OUT_DIR / "results.jsonl"
 _CUTS_SQL = """
 select mc.id::text        as cut_id,
        mc.project_id::text as project_id,
-       mc.candidate, mc.version,
+       mc.candidate, mc.version, mc.created_at,
        p.user_id::text    as user_id,
        pr.clothing_type,
        pr.colors,
@@ -164,6 +164,10 @@ async def main() -> int:
                     "candidate": row["candidate"],
                     "version": row["version"],
                     "clothing_type": row["clothing_type"],
+                    # 생성 시점 — **집계 시 반드시 층화할 것**. 저장된 컷은 여러 시점·설정의
+                    # 산출물이라 섞으면 현재 파이프라인 품질을 오독한다(2026-07-31 실측:
+                    # 07-24 컷 중앙 56.5 vs 07-31 신규 80.0).
+                    "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
                     "product_image_count": len(prod_imgs),
                     "verdict": p2.get("verdict"),
                     "mismatches": p2.get("mismatches") or [],
@@ -184,8 +188,41 @@ async def main() -> int:
     if total:
         pass_n = counts.get("pass", 0)
         print(f"  pass율 {pass_n}/{total} = {pass_n / total:.1%}")
+    _report_by_created_at()
     print(f"  → {RESULTS}")
     return 0
+
+
+def _report_by_created_at() -> None:
+    """생성 시점별 층화 리포트 — 뭉뚱그리면 현재 파이프라인 품질을 오독한다.
+
+    2026-07-31 실측: 같은 배치 안에 07-24 컷(fidelity 중앙 56.5)과 07-31 신규 컷(80.0)이
+    섞여 있어, 합산하면 "로고 재현이 절반 이상 깨진다"는 잘못된 결론이 나왔다.
+    """
+    import statistics as stats
+
+    rows = []
+    for line in RESULTS.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if r.get("verdict") != "error" and r.get("created_at"):
+            rows.append(r)
+    if not rows:
+        return
+    buckets: dict[str, list] = {}
+    for r in rows:
+        buckets.setdefault(r["created_at"][:10], []).append(r)
+    print("\n  생성 시점별 (층화 — 합산 금지):")
+    for day in sorted(buckets):
+        group = buckets[day]
+        fid = [v for r in group if isinstance(v := r.get("product_fidelity"), int)]
+        crit = sum(1 for r in group if r.get("critical_errors"))
+        median = f"{stats.median(fid):.1f}" if fid else "-"
+        print(f"    {day}  n={len(group):3}  fidelity 중앙={median:>5}  critical {crit}/{len(group)}")
 
 
 if __name__ == "__main__":

@@ -1,44 +1,61 @@
 # AG-P2 4축 임계 캘리브레이션 — 2026-07-31
 
-표본: 로컬 54322 실 마네킹컷 30건 (scripts/qc_calibrate_image.py, scored=True)
+도구: `server/scripts/qc_calibrate_image.py` (읽기 전용, scored=True) ·
+`server/scripts/ab_lettering_prompt.py` (프롬프트 A/B)
 
-## 축별 분포
+## 핵심 — 표본을 생성 시점으로 층화해야 한다
 
-- `product_fidelity` min 45 · 중앙 58 · max 85
-- `physical_naturalness` min 72 · 중앙 78 · max 85
-- `image_quality` min 75 · 중앙 80 · max 88
+저장된 마네킹컷은 여러 시점·설정의 산출물이다. 섞어서 집계하면 **현재 파이프라인 품질을
+오독한다.** 처음 30건을 뭉뚱그렸을 때 "로고 재현이 55% 깨진다"는 결론이 나왔는데, 층화해
+보니 그 대부분이 일주일 전 컷이었다.
 
-- 최저축(게이트 기준) min 45 · 중앙 58 · max 85
+| 생성 시점 | n | product_fidelity 중앙 | critical_errors 보유 |
+|---|---|---|---|
+| 07-24 | 26 | 56.5 | 16/26 (62%) |
+| 07-30 | 4 | 82.5 | 1/4 (25%) |
+| 07-31 (신규 생성) | 8 | 80.0 | 0/8 (0%) |
 
-## 임계별 분기
+07-24 → 07-30 사이에 마네킹 2패스 등이 들어가며 품질이 올랐다. **현재 파이프라인의 실제
+분포는 fidelity 75~85, critical 0~25%** 다.
 
-| auto_pass / review | 통과 | 검수 | 재생성 | 통과율 |
-|---|---|---|---|---|
-| 90 / 75 | 0 | 13 | 17 | 0% ← 초기 추측값, 폐기 |
-| 85 / 70 | 4 | 9 | 17 | 13% |
-| 80 / 65 | 12 | 1 | 17 | 40% ← 채택 |
-| 75 / 60 | 13 | 1 | 16 | 43% |
+## 축별 분포 (전체 30건, 층화 전)
 
-## 결론
+| 축 | min | 중앙 | max |
+|---|---|---|---|
+| `product_fidelity` | 45 | 58 | 85 |
+| `physical_naturalness` | 72 | 78 | 85 |
+| `image_quality` | 75 | 80 | 88 |
 
-- 초기 추측값 90/75 는 **통과 0/30**. MANNEQUIN_QC_ENABLED 가 pass율 0% 로 전 생성을
-  막았던 2026-07-07 사고와 같은 조건이라 폐기하고 80/65 채택.
-- 병목은 `product_fidelity`(중앙 58). 다른 두 축보다 20점 낮다.
-- **임계를 어떻게 바꿔도 재생성률이 ~55% 로 고정된다.** critical_errors 가 17/30건이라
-  점수와 무관하게 재생성을 트리거하기 때문. 즉 임계 문제가 아니라 로고·텍스트 재현 품질 문제다.
+`product_fidelity` 가 항상 최저축이다 — 게이트는 사실상 이 축이 결정한다.
 
-### critical_errors 내역
+## 임계 결정
 
-- 5건 — text or logo altered
-- 3건 — garment type changed
-- 3건 — text or logo altered, invented or unreadable
-- 2건 — garment length changed
-- 2건 — garment shape broken
-- 1건 — garment color changed
-- 1건 — text or altered text on product text altered text misspelling
-- 1건 — text_or_logo_altered_invented_or_unreadable
+| auto_pass / review | 채택 여부 | 근거 |
+|---|---|---|
+| 90 / 75 | 폐기 | 구컷·신규 양쪽에서 통과 0. `MANNEQUIN_QC_ENABLED` 가 pass율 0% 로 전 생성을 막았던 2026-07-07 사고와 같은 조건 |
+| **80 / 65** | **채택** | 신규 분포(75~85)에서 상위 절반이 통과, 75 미만만 재생성 |
 
-### enforce 승격 조건
+회귀 가드: `tests/test_mannequin_gate.py::test_default_thresholds_pass_observed_production_scores`
+— 임계를 다시 올리려면 근거와 함께 이 테스트를 갱신해야 한다.
 
-지금 올리면 재생성 콜만 ~1.5배 늘고 결과는 같다. 로고·텍스트 재현 개선이 선행돼야 한다.
-정확도(FPR/FNR)는 이 발화 분포로는 못 낸다 — 사람이 붙인 정답 라벨이 필요하다.
+## 기각한 개선안 — 레터링 프롬프트 규칙
+
+가설: 생성 프롬프트가 로고를 "재현할 그래픽"으로만 말하고 글자를 정확히 옮기라는 지시가
+없어서 워드마크가 뭉개진다. 문자 단위 복사 규칙(모르는 글자 발명 금지, 흐리면 흐린 채로)을
+추가해 같은 입력으로 A/B 생성.
+
+| | fidelity 평균 | critical 보유 |
+|---|---|---|
+| OFF (현행) | 80.8 | 0/4 |
+| ON (레터링 규칙) | 80.0 | 0/4 |
+
+**기각.** 차이 0.8점은 노이즈다. 덧붙여 이 실험은 설계 결함이 있었다 — 표본 4건이 OFF 에서도
+critical 0 이라 애초에 개선할 결함이 없었다. 다만 그 사실 자체가 위의 층화 발견으로 이어졌다
+(캘리브레이션에서 fidelity 55 로 실패했던 바로 그 프로젝트들이, 지금 생성하니 75~80 이 나왔다).
+
+## 남은 것
+
+- **정확도(FPR/FNR)는 아직 못 잰다.** 이 배치가 내는 것은 발화 분포이지 정확도가 아니다.
+  사람이 붙인 정답 라벨이 있어야 "정상 컷을 retry 로 판정한 비율"이 나온다.
+- enforce 승격 전에 신규 생성 표본을 20건 이상으로 늘려 분포를 굳힐 것. 현재 근거는 8건이다.
+- 구컷을 재판정 표본으로 쓸 때는 반드시 생성 시점을 함께 보고할 것.
