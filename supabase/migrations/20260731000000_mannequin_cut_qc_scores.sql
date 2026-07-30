@@ -12,5 +12,10 @@ alter table public.mannequin_cuts
   add column if not exists qc_scores jsonb;
 
 comment on column public.mannequin_cuts.qc_scores is
-  'AG-P2 4축 점수 스냅샷: {product_fidelity, physical_naturalness, image_quality, '
-  'series_consistency, critical_errors[], outcome}. null = 판정 없음(QC off·shadow 실패·구 행).';
+  'AG-P2 4축 판정 스냅샷(서버 소유, 클라 표시 전용). 키: product_fidelity·physical_naturalness·'
+  'image_quality·series_consistency (각 0-100 정수 또는 null=신호 없음), '
+  'series_inconsistencies text[](선택), critical_errors text[](출고 불가 결함 — 점수 무관 재생성), '
+  'outcome auto_pass|needs_review|regenerate (4축 최저값 + 치명오류 기반 등급), '
+  'salvaged bool(예산 소진으로 재생성 못 하고 내보낸 컷). '
+  '컬럼 자체가 null = 판정 없음(QC off·판정 실패·이 마이그레이션 이전 행). '
+  'API 노출 경로: routes._cut_to_api → models.MannequinCut.qc_scores → qcScores(camel).';
