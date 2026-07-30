@@ -511,6 +511,7 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
 
 async def _apply_bust_pass(
     *, pool, gemini, s, job_id, candidate, attempt, base_gender, res, calls_spent,
+    clothing_type=None,
 ):
     """여성 기본 가슴 볼륨 2패스. → (선택 결과, 편집콜 소비 여부).
 
@@ -523,7 +524,8 @@ async def _apply_bust_pass(
     of the mannequin's chest" 로 거부하는 것이 관측됐다. 콘텐츠 필터 한 번에 셀러 잡이
     죽으면 안 된다.
     """
-    if not mannequin_bust.should_apply(base_gender, getattr(s, "mannequin_bust_pass", "off")):
+    if not mannequin_bust.should_apply(
+            base_gender, getattr(s, "mannequin_bust_pass", "off"), clothing_type):
         return res, False
     if calls_spent >= s.mannequin_max_attempts:
         # axis 편집과 **같은 통**에서 나간다. 여기만 무제한이면 "총 호출 <= max_attempts" 가
@@ -556,7 +558,7 @@ async def _apply_bust_pass(
 
 async def _apply_edits(
     *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_imgs, match_img,
-    fit_profile, profile_hash, base_gender, calls_spent, enabled=True,
+    fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
 ):
     """채택본에 편집(축 교정 → 가슴 2패스)을 적용하고, 바뀌었으면 재판정·회귀 시 되돌린다.
 
@@ -582,7 +584,8 @@ async def _apply_edits(
     # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
     res, bust_spent = await _apply_bust_pass(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-        base_gender=base_gender, res=res, calls_spent=calls_spent)
+        base_gender=base_gender, res=res, calls_spent=calls_spent,
+        clothing_type=clothing_type)
     calls_spent += bust_spent
     # A~C 점수는 **편집 전** 원본에 매긴 것이다. 편집이 이미지를 바꿨다면 저장되는 점수가
     # 실제 출고본의 점수가 아니게 된다(검수자가 다른 이미지의 숫자를 보고 판단하게 됨).
@@ -800,7 +803,8 @@ async def _run_candidate(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
                 attempt=attempt, model=model, res=res, p2=p2, prod_imgs=prod_imgs,
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
-                base_gender=base_gender, calls_spent=calls_spent, enabled=reprocess)
+                base_gender=base_gender, calls_spent=calls_spent,
+                clothing_type=clothing_type, enabled=reprocess)
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
             series = (
@@ -878,7 +882,8 @@ async def _run_candidate(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
                 attempt=s.mannequin_max_attempts, model=model, res=res, p2=p2,
                 prod_imgs=prod_imgs, match_img=match_img, fit_profile=fit_profile,
-                profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent)
+                profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent,
+                clothing_type=clothing_type)
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
                 candidate=candidate, attempt=s.mannequin_max_attempts, res=res)

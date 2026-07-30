@@ -29,6 +29,48 @@ def test_should_apply_only_for_women_with_flag_on():
     assert mannequin_bust.should_apply("men", "off") is False
 
 
+def test_skips_when_garment_does_not_cover_the_chest():
+    """하의 컷에는 가슴을 덮는 옷이 없다 — 2패스의 전제가 성립하지 않는다.
+
+    프롬프트가 "마네킹이 옷을 입고 있으니 **천이 가슴 크기를 보여주는 유일한 수단**"이라고
+    말하는데, 진·스커트 컷은 상체가 맨몸이다. 2026-07-31 실 워커 출고본에서 하의 컷에도
+    2패스가 돌아 이미지모델 호출을 쓰고(1건은 등급을 떨어뜨려 되돌려짐) 상품과 무관한
+    맨상체만 키우는 것이 확인됐다.
+    """
+    assert mannequin_bust.should_apply("women", "on", "bottom") is False
+    for covered in ("top", "outer", "dress", "TOP", "Outer"):
+        assert mannequin_bust.should_apply("women", "on", covered) is True, covered
+    # 카테고리를 모르면 적용한다 — 상의가 대다수라 모를 때 거르는 쪽이 더 자주 틀린다.
+    assert mannequin_bust.should_apply("women", "on", None) is True
+    # 기존 조건은 그대로 우선한다.
+    assert mannequin_bust.should_apply("men", "on", "top") is False
+    assert mannequin_bust.should_apply("women", "off", "top") is False
+
+
+def test_worker_passes_clothing_type_to_bust_gate(monkeypatch):
+    """워커가 카테고리를 실제로 넘겨야 게이트가 동작한다 — 안 넘기면 조용히 전건 적용된다."""
+    import types
+
+    import test_mannequin_axis_qc as harness
+    from app.workers import mannequin_job
+
+    seen = {}
+
+    def fake_should_apply(gender, mode, clothing_type=None):
+        seen["clothing_type"] = clothing_type
+        return False
+
+    monkeypatch.setattr(mannequin_job.mannequin_bust, "should_apply", fake_should_apply)
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return None
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    harness._run(monkeypatch, mode="off", guard=True, max_attempts=1, verdicts=[],
+                 image_qc="off", mannequin_bust_pass="on")
+    assert seen.get("clothing_type") == "top", seen
+
+
 def test_build_prompt_substitutes_target_and_keeps_calibrated_wording():
     """v3(핏 인식본)의 계약. **v1 의 최대치 압박 문구는 의도적으로 빠졌다.**
 

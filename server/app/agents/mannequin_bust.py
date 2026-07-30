@@ -47,13 +47,27 @@ WAIST_HIP_TARGET = (
 _TOKENS = {"${bustTarget}": BUST_TARGET, "${waistHipTarget}": WAIST_HIP_TARGET}
 
 
-def should_apply(gender: str, mode: str) -> bool:
-    """2패스를 돌릴지. 여성 + 플래그 on 일 때만.
+# 가슴을 덮는 옷. 2패스는 이 카테고리에서만 의미가 있다.
+_CHEST_COVERING = {"top", "outer", "dress"}
+
+
+def should_apply(gender: str, mode: str, clothing_type: str | None = None) -> bool:
+    """2패스를 돌릴지. 여성 + 플래그 on + **가슴을 덮는 상품**일 때만.
 
     남성은 현행과 완전히 동일한 경로를 타야 한다(2패스 없음). mode 는 config 의
     mannequin_bust_pass ('off' | 'on') — 기본 off 로 두고 확인 후 켠다.
+
+    하의(bottom)를 뺀 이유는 이 패스의 전제 그대로다 — 프롬프트가 "마네킹이 옷을 입고 있으니
+    **천이 가슴 크기를 보여주는 유일한 수단**"이라고 말하는데, 하의 컷에는 가슴을 덮는 옷이
+    없다. 2026-07-31 실 워커 출고본에서 확인: 진·스커트 컷에도 2패스가 돌아 이미지모델 호출을
+    쓰고(1건은 등급을 떨어뜨려 되돌려짐) **상품과 무관한 맨상체만 키웠다**.
+
+    카테고리를 모르면(None) 적용한다 — 상의가 대다수라 모를 때 거르는 쪽이 더 자주 틀린다.
+    하의에 상의를 함께 입혀 연출하게 되면 이 판단을 다시 봐야 한다.
     """
-    return mode == "on" and gender == "women"
+    if mode != "on" or gender != "women":
+        return False
+    return clothing_type is None or str(clothing_type).lower() in _CHEST_COVERING
 
 
 def build_prompt(template: str) -> str:
