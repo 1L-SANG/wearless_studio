@@ -7,6 +7,8 @@ import asyncio
 import contextlib
 import types
 
+import pytest
+
 from app.agents import mannequin_series_qc
 from app.workers import mannequin_job
 from conftest import make_settings
@@ -464,6 +466,43 @@ def test_pre_gate_feedback_never_empty_when_only_scores_low(monkeypatch):
     assert len(g.calls) == 2
     assert "IMPROVE" in g.calls[1]["prompt"], "사전 게이트 재시도가 지시 없이 돌았다"
     assert "product_fidelity" in g.calls[1]["prompt"]
+
+
+@pytest.mark.parametrize("max_attempts", [1, 2, 3, 4, 5])
+def test_budget_invariant_holds_for_every_max_attempts(monkeypatch, max_attempts):
+    """어떤 max_attempts 에서도 생성+편집 총합이 상한을 넘지 않는다.
+
+    워커의 `budget_left` 와 `_apply_axis_qc` 내부 예산(attempt >= max_attempts)이 서로 다른
+    기준을 쓴다. 내부는 누적 편집을 모르므로, 둘의 상호작용을 값마다 확인해야 안심할 수 있다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    edits = {"n": 0}
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return {"consistency": 10, "inconsistencies": ["다름"]}   # 항상 재생성 압력
+
+    async def fake_axis(**kw):
+        # 실제 _apply_axis_qc 의 내부 예산 가드를 그대로 재현한다. 통째로 fake 하면 가드를
+        # 우회해 "코드가 막는 것"까지 초과로 세게 된다(내 fake 가 만든 거짓 실패).
+        if kw["attempt"] >= kw["s"].mannequin_max_attempts:
+            return kw["res"], False
+        edits["n"] += 1
+        return kw["res"], True
+
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    _r, g, r2, _e = harness._run(
+        monkeypatch, mode="enforce", guard=True, max_attempts=max_attempts,
+        verdicts=[], image_qc="enforce",
+        p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
+            "series_consistency": None, "critical_errors": []})
+    total = len(g.calls) + edits["n"]
+    assert total <= max_attempts, (
+        f"max_attempts={max_attempts} 인데 이미지 모델 {total}회"
+        f"(생성 {len(g.calls)} + 편집 {edits['n']})")
+    assert len(r2.puts) == 1, "저장은 최종 1건이어야 한다"
 
 
 def test_total_image_model_calls_never_exceed_budget(monkeypatch):
