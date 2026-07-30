@@ -1,7 +1,7 @@
 # 마네킹컷 QC 고도화 — 인수 리포트 (2026-07-31)
 
 브랜치 `feat/refimages-ab-eval` · 정본 플랜 `.omc/plans/2026-07-30-mannequin-qc-scoring-consistency.md`
-테스트 **1022 passed / 97 skipped** (베이스라인 913) · 프론트 **75 passed** · **prod 무접촉**
+테스트 **1025 passed / 97 skipped** (베이스라인 913) · 프론트 **75 passed** · **prod 무접촉**
 
 ---
 
