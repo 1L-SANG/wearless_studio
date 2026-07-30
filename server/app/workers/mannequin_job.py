@@ -18,11 +18,14 @@ from PIL import Image
 log = logging.getLogger("wearless.mannequin_job")
 
 from .. import repo
-from ..agents import image_qc, mannequin, mannequin_fit_qc
-from ..agents import mannequin_body
+from ..agents import image_qc, mannequin, mannequin_bust, mannequin_fit_qc
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
-from ..agents.prompts import load_prompt_template, render_mannequin_prompt
+from ..agents.prompts import (
+    load_bust_prompt_template,
+    load_prompt_template,
+    render_mannequin_prompt,
+)
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
 from ..services import qc
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
@@ -41,19 +44,6 @@ def _fit_profile_for_match_image(profile: dict | None, has_match_image: bool) ->
     if not profile or has_match_image:
         return profile
     return {k: v for k, v in profile.items() if k not in ("matchCut", "matchingFit")}
-
-
-def _mannequin_body_from_job(job: dict, analysis: dict, gender: str) -> dict | None:
-    """체형은 잡 생성 시점 스냅샷이 정본(fitProfileSnapshot 과 동일 규율).
-
-    워커가 analysis 를 재독하면 잡 생성↔실행 사이의 저장 경합으로 다른 체형이 조용히
-    쓰인다. 키가 없는 legacy 잡과 알 수 없는 버전만 analysis 로 폴백한다.
-    normalize 는 멱등이라 스냅샷을 다시 정규화해도 값이 변하지 않는다.
-    """
-    snap = (job.get("payload") or {}).get("mannequinBodySnapshot")
-    if isinstance(snap, dict) and snap.get("version") == 1:
-        return mannequin_body.normalize(snap.get("body"), gender)
-    return mannequin_body.normalize(analysis.get("mannequinBody"), gender)
 
 
 _GENERATION_PROGRESS_INTERVAL_SECONDS = 7.0
@@ -287,6 +277,41 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
     return pillow_reject, p2_reject
 
 
+async def _apply_bust_pass(*, pool, gemini, s, job_id, candidate, attempt, base_gender, res):
+    """여성 기본 가슴 볼륨 2패스 — 채택본에 "가슴만 바꿔라"를 단독 과제로 한 번 더 돌린다.
+
+    1패스만으로는 안 된다(2026-07-30 스파이크): 베이스를 볼륨 있는 것으로 바꿔도, 1패스
+    프롬프트에 가슴 지시를 주입해도 모델이 몸을 표준으로 정규화한다. 이미지 1장·과제 1개일
+    때만 반영된다.
+
+    **fail-open** — _apply_axis_qc 와 동일 규율. 거부·오류·빈 응답 어떤 경우에도 1패스
+    결과를 그대로 돌려준다. 실제로 Flash 는 "I cannot modify the physical characteristics
+    of the mannequin's chest" 로 거부하는 것이 관측됐다. 콘텐츠 필터 한 번에 셀러 잡이
+    죽으면 안 된다.
+    """
+    if not mannequin_bust.should_apply(base_gender, getattr(s, "mannequin_bust_pass", "off")):
+        return res
+    before = hashlib.sha256(res.image).hexdigest()[:12]
+    try:
+        prompt = mannequin_bust.build_prompt(load_bust_prompt_template())
+        out = await gemini.generate_content_image(
+            resolve_model(s, "image_high"),  # Flash 는 거부·미반영으로 탈락 — 티어 고정
+            prompt, [InlineImage(res.mime, res.image)],
+            s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
+    except Exception as e:
+        log.warning("bust pass failed for job %s (원본 유지): %r", job_id, e)
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "bust_pass",
+            "outcome": "failed_open", "image_hash": before,
+            "error_type": type(e).__name__, "error_message": str(e)[:200]})
+        return res
+    await _emit(pool, job_id, "step", {
+        "candidate": candidate, "attempt": attempt, "status": "bust_pass",
+        "outcome": "applied", "image_hash": before,
+        "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
+    return out
+
+
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
@@ -361,6 +386,10 @@ async def _run_candidate(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
                 attempt=attempt, model=model, res=res, prod_imgs=prod_imgs,
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash)
+            # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
+            res = await _apply_bust_pass(
+                pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+                attempt=attempt, base_gender=base_gender, res=res)
             ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -417,18 +446,10 @@ async def run_mannequin_job(app, job: dict) -> None:
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
             gender = mannequin.select_base_gender(analysis)
-            body = _mannequin_body_from_job(job, analysis, gender)
-            base_asset_id = mannequin.select_base_asset_id(s, gender, body)
+            base_asset_id = (s.base_mannequin_men_asset_id if gender == "men"
+                             else s.base_mannequin_women_asset_id)
             base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)
                           if base_asset_id else None)
-            if base_asset is None and base_asset_id != s.base_mannequin_women_asset_id \
-                    and gender != "men":
-                # 매트릭스 asset id 오설정 — 셀러 잡을 죽이지 않고 현행 베이스로 물러난다.
-                log.warning("mannequin base matrix asset missing: %s (body=%s)", base_asset_id, body)
-                body = None
-                base_asset_id = s.base_mannequin_women_asset_id
-                base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)
-                              if base_asset_id else None)
             prod_assets = []
             for slot, aid in mannequin.base_color_images(product):
                 a = await repo.get_asset_for_user(conn, user_id, aid)
@@ -581,8 +602,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, candidates=passed, reserved=reserved, charge=charge,
                 metadata={"creditCostVersion": s.credit_cost_version,
-                          "promptVersion": s.mannequin_prompt_version, "gender": gender,
-                          "mannequinBody": body})
+                          "promptVersion": s.mannequin_prompt_version, "gender": gender})
             await conn.commit()
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
             for c in passed:
