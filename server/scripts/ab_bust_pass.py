@@ -93,9 +93,19 @@ async def _benefit_vote(s, before: bytes, after: bytes, mime: str) -> dict:
 async def _run_one(app, pool, s, row: dict) -> dict:
     from app.workers.mannequin_job import run_mannequin_job
 
+    from app.agents import mannequin
+
     pid, uid = row["project_id"], row["user_id"]
     async with pool.connection() as conn:
+        analysis = await repo.get_analysis(conn, pid)
+        product = await repo.get_product(conn, pid)
         before_cuts = await repo.list_mannequin_cuts(conn, uid, pid)
+    # 2패스는 **여성 기본 마네킹 전용**이다(`mannequin_bust.should_apply`). 남성 프로젝트에
+    # 강제로 걸면 운영에서 절대 일어나지 않는 조합을 재고 있는 셈이라 결과가 무의미해진다.
+    gender = mannequin.select_base_gender(
+        analysis or {}, (product or {}).get("clothing_type"))
+    if gender != "women":
+        return {"project_id": pid, "status": "skipped", "reason": f"base_gender={gender}"}
         job, created = await repo.create_job(
             conn, user_id=uid, project_id=pid, kind="mannequin", payload={},
             idempotency_key=None, credits_reserved=0, metadata={"ab": "bust"})
@@ -119,12 +129,16 @@ async def _run_one(app, pool, s, row: dict) -> dict:
     await run_mannequin_job(app, claimed)          # 베이스 컷 (bust 는 off 로 돌린다)
     async with pool.connection() as conn:
         after_cuts = await repo.list_mannequin_cuts(conn, uid, pid)
-    if len(after_cuts) <= len(before_cuts):
+    # `list_mannequin_cuts` 는 (candidate, version) 정렬이라 마지막 원소가 방금 만든 컷이라는
+    # 보장이 없다 — 기존 B 컷이 있으면 과거 B 를 집는다. 집합 차이로 고른다.
+    seen = {(c["candidate"], c["version"]) for c in before_cuts}
+    fresh = [c for c in after_cuts if (c["candidate"], c["version"]) not in seen]
+    if not fresh:
         return {"project_id": pid, "status": "no_cut"}
-    cut = after_cuts[-1]
+    cut = fresh[-1]
 
     base = await asyncio.to_thread(app.state.r2.get_bytes, cut["r2_key"])
-    mime = "image/png"
+    mime = cut.get("mime_type") or "image/png"
     busted = await app.state.gemini.generate_content_image(
         resolve_model(s, "image_high"), mannequin_bust.build_prompt(load_bust_prompt_template()),
         [InlineImage(mime, base)], s.mannequin_image_size,

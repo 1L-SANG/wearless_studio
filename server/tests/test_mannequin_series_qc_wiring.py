@@ -909,6 +909,52 @@ def test_generation_failure_still_salvages_accumulated_candidate(monkeypatch):
     assert salv and salv[-1]["reason"] == "loop_exhausted"
 
 
+def test_pre_gate_only_candidate_is_processed_then_salvaged(monkeypatch):
+    """사전 게이트 후보만 남고 후속 생성이 전부 죽어도 빈손으로 끝나지 않는다.
+
+    "마지막 거절본이라도 빈손보다 낫다"는 기존 계약(test_mannequin_axis_qc)과 "검증 안 된
+    원본을 그대로 내보내지 않는다"(codex 4차 HIGH)를 **둘 다** 지켜야 한다 — 즉 편집·D축을
+    태운 뒤 구제한다(codex 10차 HIGH).
+    """
+    import test_mannequin_axis_qc as harness
+    from app.agents.gemini_image import GeminiError
+
+    class _G:
+        def __init__(self):
+            self.calls = []
+
+        async def generate_content_image(self, model, prompt, images, size, aspect_ratio=None):
+            self.calls.append({"prompt": prompt})
+            if len(self.calls) == 1:
+                return types.SimpleNamespace(mime="image/png", image=b"only-cut")
+            raise GeminiError("생성 실패")
+
+    seen = {"series": 0, "axis": 0}
+
+    async def fake_axis(**kw):
+        seen["axis"] += 1
+        return kw["res"], False
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        seen["series"] += 1
+        return {"consistency": 55, "inconsistencies": ["배경 밝음"]}
+
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    result, _g, r2, emits = harness._run(
+        monkeypatch, mode="enforce", guard=True, max_attempts=3, verdicts=[], image_qc="enforce",
+        gemini=_G(),
+        p2=_p2c(20, critical=["logo altered"]))          # 매 attempt 사전 게이트 거절
+
+    assert result is not None, "사전 게이트 후보를 들고도 빈손으로 끝났다"
+    assert result["qc_scores"]["salvaged"] is True
+    assert seen["series"] == 1, "구제본이 D축 판정을 못 받았다"
+    assert seen["axis"] == 1, "구제본이 편집 단계를 건너뛰었다(사전 게이트 경로는 축 QC 미실행)"
+    assert result["qc_scores"]["series_consistency"] == 55
+    assert len(r2.puts) == 1 and r2.puts[0][1] == b"only-cut"
+    assert [p for _t, p in emits if p.get("status") == "qc_salvaged"][-1]["reason"] == "loop_exhausted"
+
+
 def test_real_axis_qc_respects_shared_budget(monkeypatch):
     """`_apply_axis_qc` 를 **실제로** 돌려 예산 가드를 확인한다.
 

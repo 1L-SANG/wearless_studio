@@ -554,6 +554,66 @@ async def _apply_bust_pass(
     return out, True
 
 
+async def _apply_edits(
+    *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_imgs, match_img,
+    fit_profile, profile_hash, base_gender, calls_spent, enabled=True,
+):
+    """채택본에 편집(축 교정 → 가슴 2패스)을 적용하고, 바뀌었으면 재판정·회귀 시 되돌린다.
+
+    → (선택 이미지, 그 이미지의 판정, 갱신된 calls_spent)
+
+    루프 안 정상 경로와 루프 종료 구제 경로가 **같은 함수**를 쓴다. 이 시퀀스(편집 → 해시
+    비교 → 재판정 → 되돌리기)는 미묘해서 두 벌로 두면 반드시 갈린다.
+
+    `enabled=False` 는 이미 편집을 거친 구제본용 — 아무것도 하지 않고 그대로 돌려준다.
+    """
+    if not enabled:
+        return res, p2, calls_spent
+    pre_hash = hashlib.sha256(res.image).hexdigest()
+    pre_res, pre_p2 = res, p2
+    # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
+    # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
+    res, axis_spent = await _apply_axis_qc(
+        pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+        model=model, res=res, prod_imgs=prod_imgs, match_img=match_img,
+        fit_profile=fit_profile, profile_hash=profile_hash, calls_spent=calls_spent)
+    calls_spent += axis_spent
+    post_axis_res = res
+    # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
+    res, bust_spent = await _apply_bust_pass(
+        pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+        base_gender=base_gender, res=res, calls_spent=calls_spent)
+    calls_spent += bust_spent
+    # A~C 점수는 **편집 전** 원본에 매긴 것이다. 편집이 이미지를 바꿨다면 저장되는 점수가
+    # 실제 출고본의 점수가 아니게 된다(검수자가 다른 이미지의 숫자를 보고 판단하게 됨).
+    # 이미지가 실제로 바뀐 경우에만 재판정한다 — 안 바뀌었으면 vision 콜 낭비다.
+    if not (isinstance(p2, dict) and prod_imgs
+            and hashlib.sha256(res.image).hexdigest() != pre_hash):
+        return res, p2, calls_spent
+    try:
+        p2 = await image_qc.verdict(s, prod_imgs, InlineImage(res.mime, res.image), scored=True)
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt,
+            "status": "image_qc_rescored", "imageQc": p2})
+    except Exception as e:
+        # fail-open: 재판정 실패 시 편집 전 점수를 쓰되, 그 사실을 남긴다.
+        log.warning("image_qc rescore failed for job %s: %r", job_id, e)
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt,
+            "status": "image_qc_rescore_failed", "error": type(e).__name__})
+        return res, pre_p2, calls_spent
+    # 재판정은 하락을 **기록**할 뿐이라, 망친 편집본이 그대로 출고됐다.
+    if edit_regressed(s, pre_p2, p2):
+        axis_hash = hashlib.sha256(post_axis_res.image).hexdigest()
+        res, p2 = await _rollback_edits(
+            pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+            prod_imgs=prod_imgs, pre_res=pre_res, pre_p2=pre_p2,
+            post_axis_res=post_axis_res, post_p2=p2,
+            axis_changed=axis_hash != pre_hash,
+            bust_changed=hashlib.sha256(res.image).hexdigest() != axis_hash)
+    return res, p2, calls_spent
+
+
 async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, res, qc_scores):
     """채택본을 R2 에 올리고 finalize 용 dict 를 만든다. 출고 지점은 여기 하나뿐이다."""
     if qc_scores is not None:
@@ -736,54 +796,11 @@ async def _run_candidate(
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
                     "reason": "budget_exhausted", "outcome": score_outcome(s, salvaged_scores)})
         if not pillow_reject and not p2_reject:
-            pre_edit_hash = hashlib.sha256(res.image).hexdigest()  # 편집 여부 판정용
-            pre_edit_res, pre_edit_p2 = res, p2  # 편집이 망쳤을 때 되돌릴 지점
-            post_axis_res = None                 # 두 편집이 다 돌았을 때의 중간 체크포인트
-            axis_spent = bust_spent = False
-            if reprocess:
-                # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
-                # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
-                res, axis_spent = await _apply_axis_qc(
-                    pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
-                    attempt=attempt, model=model, res=res, prod_imgs=prod_imgs,
-                    match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
-                    calls_spent=calls_spent)
-                calls_spent += axis_spent
-                post_axis_res = res
-                # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
-                res, bust_spent = await _apply_bust_pass(
-                    pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
-                    attempt=attempt, base_gender=base_gender, res=res, calls_spent=calls_spent)
-                calls_spent += bust_spent
-            # A~C 점수는 **편집 전** 원본에 매긴 것이다. axis QC 편집·bust 2패스가 이미지를
-            # 바꿨다면 저장되는 점수가 실제 출고본의 점수가 아니게 된다(검수자가 다른 이미지의
-            # 숫자를 보고 판단하게 됨). 이미지가 실제로 바뀐 경우에만 재판정한다 — 안 바뀌었으면
-            # 같은 입력에 vision 콜을 한 번 더 쓰는 낭비다.
-            if (isinstance(p2, dict) and prod_imgs
-                    and hashlib.sha256(res.image).hexdigest() != pre_edit_hash):
-                try:
-                    p2 = await image_qc.verdict(
-                        s, prod_imgs, InlineImage(res.mime, res.image), scored=True)
-                    await _emit(pool, job_id, "step", {
-                        "candidate": candidate, "attempt": attempt,
-                        "status": "image_qc_rescored", "imageQc": p2})
-                    # 재판정은 하락을 **기록**할 뿐이라, 망친 편집본이 그대로 출고됐다.
-                    # 등급이 떨어졌거나 없던 치명 오류가 생겼으면 되돌린다.
-                    if edit_regressed(s, pre_edit_p2, p2):
-                        axis_hash = (hashlib.sha256(post_axis_res.image).hexdigest()
-                                     if post_axis_res is not None else pre_edit_hash)
-                        res, p2 = await _rollback_edits(
-                            pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-                            prod_imgs=prod_imgs, pre_res=pre_edit_res, pre_p2=pre_edit_p2,
-                            post_axis_res=post_axis_res, post_p2=p2,
-                            axis_changed=axis_hash != pre_edit_hash,
-                            bust_changed=hashlib.sha256(res.image).hexdigest() != axis_hash)
-                except Exception as e:
-                    # fail-open: 재판정 실패 시 편집 전 점수를 쓰되, 그 사실을 남긴다.
-                    log.warning("image_qc rescore failed for job %s: %r", job_id, e)
-                    await _emit(pool, job_id, "step", {
-                        "candidate": candidate, "attempt": attempt,
-                        "status": "image_qc_rescore_failed", "error": type(e).__name__})
+            res, p2, calls_spent = await _apply_edits(
+                pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+                attempt=attempt, model=model, res=res, p2=p2, prod_imgs=prod_imgs,
+                match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
+                base_gender=base_gender, calls_spent=calls_spent, enabled=reprocess)
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
             series = (
@@ -849,8 +866,24 @@ async def _run_candidate(
     # 여기서 그냥 None 을 돌려주면 앞 attempt 에서 편집·D축까지 통과했다가 최종 게이트에만
     # 걸린 후보(final_reject)를 손에 들고도 셀러가 빈손이 된다(codex 9차 HIGH — 마지막
     # 생성 실패 시 재현). 구제 규율은 예산 소진 경로와 같다: **final_reject 만** 쓴다.
-    if final_reject:
-        res, qc_scores, _series, _p2 = final_reject
+    if final_reject or pre_reject:
+        if final_reject:
+            # 이미 편집·D축까지 끝난 출고 준비본 — 다시 태우지 않는다.
+            res, qc_scores, series, p2 = final_reject
+        else:
+            # 사전 게이트 후보는 편집·D축을 안 거쳤다. 그대로 저장하면 검증 안 된 이미지가
+            # 나간다(codex 4차 HIGH) — 예산 소진 경로와 **같은 처리**를 태운 뒤 구제한다.
+            res, _scores, series, p2 = pre_reject
+            res, p2, calls_spent = await _apply_edits(
+                pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+                attempt=s.mannequin_max_attempts, model=model, res=res, p2=p2,
+                prod_imgs=prod_imgs, match_img=match_img, fit_profile=fit_profile,
+                profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent)
+            series = await _apply_series_qc(
+                app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
+                candidate=candidate, attempt=s.mannequin_max_attempts, res=res)
+            qc_scores = merge_qc_scores(
+                p2, series, thresholds=(s.qc_score_auto_pass, s.qc_score_review))
         qc_scores = {**(qc_scores or {}), "salvaged": True}
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "status": "qc_salvaged",
