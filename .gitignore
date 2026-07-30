@@ -56,6 +56,9 @@ agents.md
 # 로컬 dev 런타임(로그·pid)
 .dev/
 
+# 작업 중 스크린샷·생성 이미지·크롬 프로필 등 일회성 산출물(수백 MB) — 로컬 전용.
+tmp/
+
 # solc 컴파일 아티팩트(재생성 가능)
 build/
 spike/posescope/out/
