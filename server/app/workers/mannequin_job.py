@@ -321,10 +321,13 @@ def edit_regressed(s, pre_p2, post_p2) -> bool:
     """
     if not isinstance(pre_p2, dict) or not isinstance(post_p2, dict):
         return False
-    if _worst_score(pre_p2, _COMPARABLE_KEYS) is None:
-        return False  # 편집 전 점수가 없으면 하락을 논할 수 없다
+    # 신규 치명오류는 **점수 유무보다 먼저** 본다. 점수 없음 검사를 앞에 두면, 편집 전 판정에
+    # 숫자가 없던 경우(미채점 모델·판정 부분실패) 편집이 로고를 망가뜨려도 그냥 나간다
+    # (codex 2026-07-31 8차 HIGH). 치명오류는 점수와 무관하게 그 자체로 출고 불가다.
     if post_p2.get("critical_errors") and not pre_p2.get("critical_errors"):
         return True
+    if _worst_score(pre_p2, _COMPARABLE_KEYS) is None:
+        return False  # 편집 전 점수가 없으면 등급 하락은 논할 수 없다
     pre_rank = _GRADE_RANK[score_outcome(s, pre_p2)]
     post_rank = _GRADE_RANK[score_outcome(s, post_p2)]
     return post_rank < pre_rank
@@ -551,6 +554,42 @@ async def _apply_bust_pass(
     return out, True
 
 
+async def _rollback_edits(
+    *, pool, s, job_id, candidate, attempt, prod_imgs,
+    pre_res, pre_p2, post_axis_res, post_p2, axis_spent, bust_spent,
+):
+    """회귀한 편집을 되돌린다. → (선택 이미지, 그 이미지의 판정)
+
+    두 편집이 **둘 다** 돌았으면 통째로 버리지 않는다. axis 가 핏을 제대로 고쳐놨는데 bust 가
+    형태를 망친 경우, 한 덩어리로 되돌리면 멀쩡한 교정까지 같이 버린다(codex 8차 MEDIUM).
+    그래서 bust 만 떼어낸 중간본을 먼저 재판정한다 — 이 추가 vision 콜은 **회귀가 실제로
+    일어났고 두 편집이 다 돈** 경우에만 나간다(관측상 드물다).
+
+    중간본 재판정이 실패하면 편집 전으로 되돌린다. fail-open 이 아니라 fail-safe 인 이유:
+    여기까지 왔다는 건 이미 손상이 확인됐다는 뜻이라, 판정 불가 시엔 안전한 쪽을 고른다.
+    """
+    async def _revert_to(res, p2, reason):
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "edit_reverted",
+            "reason": reason, "from": score_outcome(s, post_p2), "to": score_outcome(s, p2)})
+        return res, p2
+
+    if not (axis_spent and bust_spent and post_axis_res is not None and prod_imgs):
+        return await _revert_to(pre_res, pre_p2, "all_edits")
+    try:
+        mid_p2 = await image_qc.verdict(
+            s, prod_imgs, InlineImage(post_axis_res.mime, post_axis_res.image), scored=True)
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt,
+            "status": "image_qc_post_axis", "imageQc": mid_p2})
+    except Exception as e:
+        log.warning("post-axis rescore failed for job %s: %r", job_id, e)
+        return await _revert_to(pre_res, pre_p2, "post_axis_rescore_failed")
+    if edit_regressed(s, pre_p2, mid_p2):
+        return await _revert_to(pre_res, pre_p2, "all_edits")  # axis 도 손상원
+    return await _revert_to(post_axis_res, mid_p2, "bust_only")
+
+
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
@@ -677,6 +716,7 @@ async def _run_candidate(
         if not pillow_reject and not p2_reject:
             pre_edit_hash = hashlib.sha256(res.image).hexdigest()  # 편집 여부 판정용
             pre_edit_res, pre_edit_p2 = res, p2  # 편집이 망쳤을 때 되돌릴 지점
+            post_axis_res = None                 # 두 편집이 다 돌았을 때의 중간 체크포인트
             axis_spent = bust_spent = False
             if reprocess:
                 # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
@@ -687,6 +727,7 @@ async def _run_candidate(
                     match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
                     calls_spent=calls_spent)
                 calls_spent += axis_spent
+                post_axis_res = res
                 # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
                 res, bust_spent = await _apply_bust_pass(
                     pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
@@ -705,15 +746,13 @@ async def _run_candidate(
                         "candidate": candidate, "attempt": attempt,
                         "status": "image_qc_rescored", "imageQc": p2})
                     # 재판정은 하락을 **기록**할 뿐이라, 망친 편집본이 그대로 출고됐다.
-                    # 등급이 떨어졌거나 없던 치명 오류가 생겼으면 편집 전으로 되돌린다 —
-                    # 두 판정 다 이미 손에 있어서 추가 vision 콜은 들지 않는다.
+                    # 등급이 떨어졌거나 없던 치명 오류가 생겼으면 되돌린다.
                     if edit_regressed(s, pre_edit_p2, p2):
-                        await _emit(pool, job_id, "step", {
-                            "candidate": candidate, "attempt": attempt,
-                            "status": "edit_reverted",
-                            "from": score_outcome(s, p2),
-                            "to": score_outcome(s, pre_edit_p2)})
-                        res, p2 = pre_edit_res, pre_edit_p2
+                        res, p2 = await _rollback_edits(
+                            pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+                            prod_imgs=prod_imgs, pre_res=pre_edit_res, pre_p2=pre_edit_p2,
+                            post_axis_res=post_axis_res, post_p2=p2,
+                            axis_spent=axis_spent, bust_spent=bust_spent)
                 except Exception as e:
                     # fail-open: 재판정 실패 시 편집 전 점수를 쓰되, 그 사실을 남긴다.
                     log.warning("image_qc rescore failed for job %s: %r", job_id, e)

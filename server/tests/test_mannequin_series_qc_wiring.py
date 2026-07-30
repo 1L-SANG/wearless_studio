@@ -748,6 +748,125 @@ def test_comparator_uses_series_when_both_candidates_have_it():
     assert mannequin_job._is_better_candidate(s, no_series, balanced) is True
 
 
+def test_new_critical_error_reverts_even_without_pre_scores():
+    """편집 전 판정에 숫자가 없어도 신규 치명오류면 되돌린다.
+
+    점수 유무 검사를 앞에 두면, 미채점 모델·판정 부분실패로 편집 전 점수가 비어 있을 때
+    편집이 로고를 망가뜨려도 그냥 출고된다(codex 2026-07-31 8차 HIGH). 치명오류는 점수와
+    무관하게 그 자체로 출고 불가다.
+    """
+    from app.workers.mannequin_job import edit_regressed
+    s = make_settings(qc_score_auto_pass=80, qc_score_review=65, image_qc="enforce")
+    no_scores = {"verdict": "pass", "mismatches": [], "critical_errors": []}
+    assert edit_regressed(s, no_scores, _p2c(90, critical=["logo altered"])) is True
+    # 치명오류가 안 생겼으면 점수 없는 편집 전과는 여전히 비교 불가 → 유지
+    assert edit_regressed(s, no_scores, _p2c(10)) is False
+
+
+def test_rollback_keeps_axis_fix_when_only_bust_regressed(monkeypatch):
+    """두 편집이 다 돌았고 bust 만 망쳤으면 axis 교정은 살린다.
+
+    한 덩어리로 되돌리면 핏을 제대로 고친 axis 결과까지 같이 버린다(codex 8차 MEDIUM).
+    중간본 재판정 1콜은 **회귀가 실제로 났고 두 편집이 다 돈** 경우에만 나간다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    # 1: 생성 직후(양호) → 2: 두 편집 후(치명오류) → 3: axis 까지만(양호)
+    seq = [_p2c(90), _p2c(30, critical=["garment shape broken"]), _p2c(88)]
+    n = {"i": 0}
+
+    async def fake_p2(s, prods, gen, *, scored=False):
+        n["i"] += 1
+        return seq[min(n["i"] - 1, len(seq) - 1)]
+
+    async def fake_axis(**kw):
+        return types.SimpleNamespace(mime=kw["res"].mime, image=b"axis-fixed"), True
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return None
+
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    result, _g, r2, emits = harness._run(
+        monkeypatch, mode="enforce", guard=True, max_attempts=3, verdicts=[],
+        image_qc="shadow", mannequin_bust_pass="on")
+
+    saved = r2.puts[-1][1]
+    assert saved == b"axis-fixed", f"axis 교정까지 버렸다: {saved!r}"
+    assert result["qc_scores"]["product_fidelity"] == 88
+    reverted = [p for _t, p in emits if p.get("status") == "edit_reverted"]
+    assert reverted and reverted[-1]["reason"] == "bust_only"
+
+
+def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
+    """중간본도 회귀면 편집 전까지 되돌린다 — axis 가 손상원인 경우."""
+    import test_mannequin_axis_qc as harness
+
+    seq = [_p2c(90), _p2c(30, critical=["broken"]), _p2c(30, critical=["broken"])]
+    n = {"i": 0}
+
+    async def fake_p2(s, prods, gen, *, scored=False):
+        n["i"] += 1
+        return seq[min(n["i"] - 1, len(seq) - 1)]
+
+    async def fake_axis(**kw):
+        return types.SimpleNamespace(mime=kw["res"].mime, image=b"axis-broke-it"), True
+
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+        return None
+
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
+    _r, _g, r2, emits = harness._run(
+        monkeypatch, mode="enforce", guard=True, max_attempts=3, verdicts=[],
+        image_qc="shadow", mannequin_bust_pass="on")
+
+    assert r2.puts[-1][1] not in (b"axis-broke-it",), "손상된 중간본이 나갔다"
+    assert [p for _t, p in emits if p.get("status") == "edit_reverted"][-1]["reason"] == "all_edits"
+
+
+def test_real_axis_qc_respects_shared_budget(monkeypatch):
+    """`_apply_axis_qc` 를 **실제로** 돌려 예산 가드를 확인한다.
+
+    다른 예산 테스트들은 이 함수를 mock 하고 가드를 테스트 안에 복사한다 — 운영 가드를
+    `attempt` 기준으로 되돌려도 통과한다(codex 8차 LOW). 여기서는 진짜를 부른다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    calls = {"n": 0}
+
+    class _G:
+        async def generate_content_image(self, *a, **kw):
+            calls["n"] += 1
+            return types.SimpleNamespace(mime="image/png", image=b"edited")
+
+    async def run(calls_spent):
+        calls["n"] = 0
+        res = types.SimpleNamespace(mime="image/png", image=b"orig")
+        out, spent = await mannequin_job._apply_axis_qc(
+            pool=_FakePool(), gemini=_G(), s=make_settings(
+                mannequin_axis_qc="enforce", mannequin_max_attempts=3),
+            job_id="j1", candidate="A", attempt=1, model="m", res=res,
+            prod_imgs=[types.SimpleNamespace(mime="image/png", data=b"p")], match_img=None,
+            fit_profile=harness.PROFILE, profile_hash="h", calls_spent=calls_spent)
+        return spent, calls["n"]
+
+    async def fake_verdict(settings, prods, gen_img, fit_profile, match_image=None):
+        return harness._verdict(fit_ok=False)          # 편집이 필요한 상태
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        pass
+
+    monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
+    monkeypatch.setattr(mannequin_job.mannequin_fit_qc, "verdict", fake_verdict)
+    monkeypatch.setattr(mannequin_job, "_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY", True)
+
+    assert asyncio.run(run(1)) == (True, 1), "잔량이 있는데 편집을 안 했다"
+    assert asyncio.run(run(3)) == (False, 0), "예산이 없는데 편집 호출이 나갔다"
+
+
 def test_final_salvage_is_not_reprocessed(monkeypatch):
     """최종 단계 구제본은 편집·D축을 **다시 돌리지 않는다**.
 
@@ -778,11 +897,13 @@ def test_final_salvage_is_not_reprocessed(monkeypatch):
     monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
     result, _g, r2, emits = harness._run(
         monkeypatch, mode="enforce", guard=True, max_attempts=2, verdicts=[],
-        image_qc="enforce")
+        image_qc="enforce", mannequin_bust_pass="on")
 
     assert result is not None and result["qc_scores"]["salvaged"] is True
     assert calls["series"] == 1, f"D축이 {calls['series']}회 — 구제본을 다시 판정했다"
     assert calls["axis"] == 1, f"축 편집이 {calls['axis']}회 — 구제본을 다시 편집했다"
+    bust = [p for _t, p in emits if p.get("status") == "bust_pass"]
+    assert len(bust) == 1, f"bust 가 {len(bust)}회 — 구제본에 2패스가 다시 적용됐다"
     assert result["qc_scores"]["series_consistency"] == 10, "D축 스냅샷이 유실됐다"
     assert len(r2.puts) == 1
     assert "qc_salvaged" in [p.get("status") for _t, p in emits]
