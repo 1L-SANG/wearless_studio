@@ -28,7 +28,8 @@ from app.r2 import R2Client  # noqa: E402
 
 OUT = pathlib.Path(__file__).resolve().parents[1] / "ab_out/fit_examples"
 
-_BASE_KEY = {"women": "seed/mannequin/base-women-2K.png", "men": "seed/mannequin/base-men-2K.png"}
+# 여성은 다리 단축본(v2)이 정본 — 기존 타일과 새 타일의 다리 비율이 어긋나지 않게 한다.
+_BASE_KEY = {"women": "seed/mannequin/base-women-2K-v2.png", "men": "seed/mannequin/base-men-2K.png"}
 
 # (파일 키, 베이스 성별, 옷+핏 지시). 지시는 기존 세트의 옷 계열 + 카탈로그 promptEn 서술.
 COMBOS = [

@@ -34,11 +34,18 @@ load_env()
 from app.config import load_settings  # noqa: E402
 from app.r2 import R2Client  # noqa: E402
 
-GENDERS = ("women", "men")
+# 현재 서빙 중인 베이스 키. 여성은 2026-08-01 다리 단축본(v2, 다리비율 52%→49%)이 정본이다
+# — 원본 base-women-2K.png 도 R2 에 그대로 남아 있으니 롤백은 이 값과 환경변수를 되돌리면 된다.
+# v2 재생성은 scripts/shorten_base_legs.py (기하 변환만, 바이트 재현 가능).
+_KEY = {
+    "women": "seed/mannequin/base-women-2K-v2.png",
+    "men": "seed/mannequin/base-men-2K.png",
+}
+GENDERS = tuple(_KEY)
 
 
 def _key(gender: str) -> str:
-    return f"seed/mannequin/base-{gender}-2K.png"
+    return _KEY[gender]
 
 
 def _env_id(gender: str) -> str | None:
