@@ -925,12 +925,12 @@ def test_render_product_detail_is_grounded_and_has_no_person_lines():
     assert "Face handling" not in p
 
 
-@pytest.mark.parametrize("state, phrase", [
-    ("open", "FULLY OPEN"),
-    ("partial", "PARTIALLY OPEN"),
-    ("closed", "FULLY CLOSED"),
+@pytest.mark.parametrize("state, phrase, inner_phrase", [
+    ("open", "FULLY OPEN", "naturally visible through the open front"),
+    ("partial", "PARTIALLY OPEN", "partially visible through the open portion"),
+    ("closed", "FULLY CLOSED", "almost entirely hidden"),
 ])
-def test_render_outer_closure_states_and_hardware_guard(state, phrase):
+def test_render_outer_closure_states_and_hardware_guard(state, phrase, inner_phrase):
     p = _render({
         "cutType": "styling", "shot": "full", "direction": "front",
         "outerClosureState": state, "exampleId": "ex_styling_outer_full_1",
@@ -939,12 +939,15 @@ def test_render_outer_closure_states_and_hardware_guard(state, phrase):
     assert "overrides any different open/closed styling shown in EXAMPLE or MOOD images" in p
     assert "NEVER invent, remove, relocate or redesign closure hardware" in p
     assert "garment fidelity wins" in p
+    assert "keep the inner T-shirt exactly the same as in the attached MANNEQUIN" in p
+    assert inner_phrase in p
     assert p.index("Composition nuance") < p.index("OUTER FRONT OPENING")
 
 
 def test_render_outer_closure_defaults_open_and_applies_to_mirror():
     p = _render({"cutType": "mirror", "shot": "full"}, clothing_type="outer")
     assert "FULLY OPEN" in p
+    assert "keep the inner T-shirt exactly the same as in the attached MANNEQUIN" in p
 
 
 def test_render_outer_closure_does_not_turn_side_or_back_to_show_front_hardware():
@@ -958,11 +961,17 @@ def test_render_outer_closure_does_not_turn_side_or_back_to_show_front_hardware(
         {"cutType": "horizon", "direction": "back"}, clothing_type="outer")
 
 
-def test_render_outer_closure_absent_for_non_outer_and_product():
-    top = _render({"cutType": "horizon", "outerClosureState": "closed"}, clothing_type="top")
+@pytest.mark.parametrize("non_outer_type", ["top", "bottom", "dress"])
+def test_render_outer_closure_absent_for_non_outer_and_product(non_outer_type):
+    non_outer = _render(
+        {"cutType": "horizon", "outerClosureState": "closed"}, clothing_type=non_outer_type)
     product = _render({"cutType": "product", "outerClosureState": "closed"}, clothing_type="outer")
-    assert "OUTER FRONT OPENING" not in top
+    assert "OUTER FRONT OPENING" not in non_outer
     assert "OUTER FRONT OPENING" not in product
+    assert "OUTERWEAR INNER" not in non_outer
+    assert "OUTERWEAR INNER" not in product
+    assert "inner T-shirt from the MANNEQUIN" not in non_outer
+    assert "inner T-shirt from the MANNEQUIN" not in product
 
 
 @pytest.mark.parametrize("category_key", ["clothingType", "clothing_type"])

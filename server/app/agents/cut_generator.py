@@ -557,6 +557,9 @@ def render_cut_prompt(
         space_line = need("SPACE").replace("${spaceVariation}", spec["spaceVariation"])
         if _SPACE_SET_PLATE_LABEL in image_manifest:
             space_line = "\n".join((space_line, need("SPACE_SET_PLATE")))
+    outerwear_inner_line = ""
+    if _is_outer(clothing_type) and cut in _WORN_CUTS:
+        outerwear_inner_line = need("OUTER_INNER")
     outer_closure_line = ""
     if _is_outer(clothing_type) and cut in _WORN_CUTS:
         closure = spec.get("outerClosureState")
@@ -586,6 +589,7 @@ def render_cut_prompt(
         .replace("${faceLine}", face_line)
         .replace("${poseLine}", pose_line)
         .replace("${exampleLine}", example_line)
+        .replace("${outerwearInnerLine}", outerwear_inner_line)
         .replace("${outerClosureLine}", outer_closure_line)
         .replace("${spaceLine}", space_line)
         .replace("${detailColorTransferLine}", detail_color_transfer_line)
