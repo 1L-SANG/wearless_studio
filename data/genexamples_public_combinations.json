@@ -42,6 +42,30 @@
       "shot": "medium",
       "clothingType": "bottom",
       "gender": "women"
+    },
+    {
+      "cutType": "product",
+      "shot": "ghost",
+      "clothingType": "top",
+      "gender": null
+    },
+    {
+      "cutType": "product",
+      "shot": "detail",
+      "clothingType": "top",
+      "gender": null
+    },
+    {
+      "cutType": "product",
+      "shot": "ghost",
+      "clothingType": "bottom",
+      "gender": null
+    },
+    {
+      "cutType": "product",
+      "shot": "detail",
+      "clothingType": "bottom",
+      "gender": null
     }
   ]
 }

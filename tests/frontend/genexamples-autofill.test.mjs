@@ -57,7 +57,8 @@ test('owner declarations gate frontend combinations', () => {
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'bottom', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' }), false);
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'women' }), false);
-  assert.equal(isGenerationCombinationPublic({ cutType: 'product', shot: 'detail', clothingType: 'bottom', gender: 'women' }), false);
+  // 제품컷 22개는 오너 지시로 롤백 유지(2026-07-31) — 세트가 못 덮는 유일 영역.
+  assert.equal(isGenerationCombinationPublic({ cutType: 'product', shot: 'detail', clothingType: 'bottom', gender: 'women' }), true);
 });
 
 test('eligibility uses cut, shot, clothing, gender and all publication, not direction or matchIds', () => {
@@ -71,11 +72,10 @@ test('eligibility uses cut, shot, clothing, gender and all publication, not dire
     cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
     direction: 'back', matchIds: ['ignored'],
   }).map((item) => item.id), ['front-ok', 'back-ok']);
-  // 제품 조합은 구세대 정리(2026-07-31)로 전부 비공개 — 재생성 발행 전까지 플랫 선택은 빈 목록이 정상.
-  const products = [example('product-ok', { cutType: 'product', shot: 'ghost', gender: null, mood: null })];
+  const products = [example('product-ok', { cutType: 'product', shot: 'ghost', gender: null, mood: null, applicableClothingTypes: ['top'] })];
   assert.equal(selectGenerationExamples(products, {
-    cutType: 'product', shot: 'ghost', clothingType: 'outer', gender: 'women',
-  }).length, 0);
+    cutType: 'product', shot: 'ghost', clothingType: 'top', gender: 'women',
+  })[0].id, 'product-ok');
 });
 
 test('space-set-only examples stay out of the default selector and autofill pool', () => {
