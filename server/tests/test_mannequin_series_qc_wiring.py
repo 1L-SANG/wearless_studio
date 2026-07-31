@@ -1229,17 +1229,24 @@ def test_fabric_pass_sends_product_photos_with_the_cut():
         model_image_light="gemini-3.1-flash-image", model_text="gpt-5.4-mini")
     mj._emit = fake_emit
     res = types.SimpleNamespace(image=b"cut", mime="image/png")
-    prod = [mj.InlineImage("image/jpeg", b"front"), mj.InlineImage("image/jpeg", b"detail"),
-            mj.InlineImage("image/jpeg", b"back")]
+    # 실제 업로드 슬롯 순서(Front → Back → Detail)로 준다 — 예전 `prod_imgs[:2]` 는 여기서
+    # Detail 을 잘라 먹었다. 개수만 세면 그 결함이 그대로 통과하므로 슬롯까지 본다.
+    prod = [
+        mj.ProductReference("Front", "a-front", mj.InlineImage("image/jpeg", b"front")),
+        mj.ProductReference("Back", "a-back", mj.InlineImage("image/jpeg", b"back")),
+        mj.ProductReference("Detail", "a-detail", mj.InlineImage("image/jpeg", b"detail")),
+    ]
 
     out, spent = asyncio.run(mj._apply_fabric_pass(
         pool=None, gemini=_Gemini(), s=s, job_id="j1", candidate="A", attempt=1,
-        res=res, prod_imgs=prod, calls_spent=0, has_fine_pattern=True, image_size="4K"))
+        res=res, prod_refs=prod, calls_spent=0, has_fine_pattern=True, image_size="4K"))
 
     assert spent is True and out.image == b"edited"
-    # 생성본 + 상품 사진 앞 2장 — 전부 넣으면 편집 과제가 다시 흐려진다
+    # 생성본 + 상품 사진 2장 — 전부 넣으면 편집 과제가 다시 흐려진다
     assert len(sent["images"]) == 3
     assert sent["images"][0].data == b"cut"
+    # 그 2장은 **역할 우선순위** 로 고른다: Detail 이 패턴의 기준이므로 첫 상품 참조다.
+    assert [i.data for i in sent["images"][1:]] == [b"detail", b"front"]
     assert sent["size"] == "4K", "승급된 해상도를 편집에서도 유지해야 한다"
     assert "${" not in sent["prompt"]
     assert any(e.get("status") == "fabric_pass" and e.get("outcome") == "applied"

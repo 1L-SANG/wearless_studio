@@ -35,6 +35,12 @@ from ..agents.mannequin_adjust import (
 )
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
+from ..agents.product_reference import (
+    ProductReference,
+    order_by_role,
+    reference_event_payload,
+    select_fabric_references,
+)
 from ..agents.prompts import (
     load_bust_prompt_template,
     load_fabric_prompt_template,
@@ -71,27 +77,62 @@ def _valid_fit_profile_snapshot(snapshot) -> bool:
     )
 
 
+# 조정 요청이 편집(parent-first)이 아니라 fresh 생성으로 떨어지는 사유 — typed 상수.
+# 이유를 남기지 않으면 셀러 입장에선 "조정했는데 패턴이 또 달라졌다"만 보이고, 우리도 그게
+# 편집이 안 걸린 탓인지 편집이 실패한 탓인지 구분할 수 없다(계획 §9 silent fresh 리스크).
+EDIT_FALLBACK_REASONS = frozenset({
+    "invalid_fit_snapshot",       # payload 스냅샷이 없거나 계약 밖 형태
+    "invalid_fit_profile",        # 스냅샷은 유효한데 프로필이 dict/축 계약을 못 채움
+    "no_adjust_directives",       # 조정된 축이 없어 편집 지시문이 비었다
+    "parent_lookup_failed",       # 부모 컷 조회 자체가 실패(DB)
+    "no_parent_cut",              # 편집할 기존 컷이 없다(첫 생성)
+    "legacy_parent",              # PR #72 이전 자산 — generation metadata 부재
+    "incompatible_parent",        # 카테고리/성별/매칭 상품이 지금 요청과 다르다
+    "edit_depth_cap",             # 편집의 편집 상한(2세대) 도달 — 화질 누적 열화 방지
+    "parent_asset_load_failed",   # R2 에서 부모 컷 바이트를 못 읽었다
+    "missing_edit_inputs",        # 편집 경로로 들어왔는데 부모 컷/지시문이 비었다(방어)
+    "unclassified",               # 위 어디에도 안 걸림 — 분류 누락 자체를 관측하기 위한 값
+})
+
+
+def classify_parent_edit(
+    parent: dict | None, profile: dict | None, match_item_id: str | None
+) -> tuple[int | None, str | None]:
+    """부모 컷이 편집 자격을 갖췄는지 → (호환 editDepth, 부적격 사유).
+
+    자격이 있으면 `(depth, None)`, 없으면 `(None, reason)`. 사유는 `EDIT_FALLBACK_REASONS`
+    의 typed 값이라 이벤트에서 집계할 수 있다 — 자유 문자열이면 오타 하나로 집계가 갈린다.
+    """
+    if not parent:
+        return None, "no_parent_cut"
+    if not isinstance(profile, dict):
+        return None, "invalid_fit_profile"
+    category, gender = profile.get("category"), profile.get("gender")
+    if not isinstance(category, str) or not isinstance(gender, str):
+        return None, "invalid_fit_profile"
+    metadata = parent.get("generation_metadata")
+    # 빈 dict 도 legacy 다 — PR #72 이후 워커는 항상 editDepth 를 함께 쓴다. "메타데이터가
+    # 아예 없음"과 "지금 요청과 안 맞음"은 대응이 달라서(전자는 새 기준 컷 필요) 나눠 센다.
+    if not isinstance(metadata, dict) or not metadata or "editDepth" not in metadata:
+        return None, "legacy_parent"
+    if (metadata.get("profileCategory") != category
+            or metadata.get("profileGender") != gender):
+        return None, "incompatible_parent"
+    if metadata.get("matchItemId") != match_item_id:
+        return None, "incompatible_parent"
+    depth = metadata.get("editDepth")
+    if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0:
+        return None, "legacy_parent"
+    if depth >= 2:
+        return None, "edit_depth_cap"
+    return depth, None
+
+
 def _compatible_parent_edit_depth(
     parent: dict | None, profile: dict | None, match_item_id: str | None
 ) -> int | None:
     """부모 메타데이터가 현재 조정 입력과 호환되면 기존 editDepth, 아니면 None."""
-    if not parent or not isinstance(profile, dict):
-        return None
-    category, gender = profile.get("category"), profile.get("gender")
-    if not isinstance(category, str) or not isinstance(gender, str):
-        return None
-    metadata = parent.get("generation_metadata")
-    if not isinstance(metadata, dict):
-        return None
-    if (metadata.get("profileCategory") != category
-            or metadata.get("profileGender") != gender):
-        return None
-    if metadata.get("matchItemId") != match_item_id:
-        return None
-    depth = metadata.get("editDepth")
-    if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0 or depth >= 2:
-        return None
-    return depth
+    return classify_parent_edit(parent, profile, match_item_id)[0]
 
 
 _GENERATION_PROGRESS_INTERVAL_SECONDS = 7.0
@@ -226,7 +267,33 @@ def effective_image_size(s, product: dict | None, analysis: dict | None) -> str:
     return upgrade if mannequin.has_fine_pattern(product, analysis) else s.mannequin_image_size
 
 
-def tier_for_job(s, job: dict | None) -> str:
+_PATTERN_SAFE_TIER = "image_high"
+
+
+def _guard_pattern_tier(tier: str, has_fine_pattern: bool) -> str:
+    """미세 패턴 상품이 낮은 tier 로 내려가는 것을 막는다 (순수).
+
+    2K 실측(2026-08-01)에서 줄 주기가 8.9px 이라 한 주기를 이루는 요소당 2px 남짓이었다.
+    그 정도 여유에서는 모델 등급 차이가 곧 두 색 줄이 한 색으로 뭉개지느냐를 가른다.
+    조정 tier 는 실험용 스위치(`MANNEQUIN_ADJUST_TIER`)라 설정 하나로 전 조정이 내려가는데,
+    무지 상품에서 비용을 아끼려던 설정이 패턴 상품의 결과까지 같이 깎으면 안 된다.
+    """
+    if has_fine_pattern and tier != _PATTERN_SAFE_TIER:
+        return _PATTERN_SAFE_TIER
+    return tier
+
+
+def adjust_edit_tier(s, *, has_fine_pattern: bool = False) -> str:
+    """조정 **편집**(parent-first) 1콜이 쓸 tier (순수). 미설정이면 image_high.
+
+    편집은 원본 컷 위에 지시를 얹는 작업이라 Flash 가 지시를 거부·미반영한 기록이 있다
+    (untuck·bust 2패스가 image_high 로 고정된 이유와 같다). 여기에 더해 패턴 가드가 걸린다.
+    """
+    configured = (getattr(s, "mannequin_adjust_tier", "") or "").strip() or _PATTERN_SAFE_TIER
+    return _guard_pattern_tier(configured, has_fine_pattern)
+
+
+def tier_for_job(s, job: dict | None, *, has_fine_pattern: bool = False) -> str:
     """이 잡의 1패스 생성이 쓸 이미지 tier (순수).
 
     조정(`:regenerate`)과 초기 생성(`:generate`)은 같은 워커·같은 프롬프트를 타므로
@@ -241,8 +308,8 @@ def tier_for_job(s, job: dict | None) -> str:
     """
     adjust = (getattr(s, "mannequin_adjust_tier", "") or "").strip()
     if adjust and ((job or {}).get("payload") or {}).get("mode") == "regenerate":
-        return adjust
-    return s.mannequin_tier
+        return _guard_pattern_tier(adjust, has_fine_pattern)
+    return _guard_pattern_tier(s.mannequin_tier, has_fine_pattern)
 
 
 async def _apply_axis_qc(
@@ -703,24 +770,32 @@ async def _apply_untuck_pass(
 
 
 async def _apply_fabric_pass(
-    *, pool, gemini, s, job_id, candidate, attempt, res, prod_imgs, calls_spent,
+    *, pool, gemini, s, job_id, candidate, attempt, res, prod_refs, calls_spent,
     has_fine_pattern=False, image_size=None,
 ):
     """미세 패턴 상품의 원단 패턴 2패스. → (선택 결과, 편집콜 소비 여부).
 
     가슴 2패스와 **입력이 다르다**: 생성본만 주는 게 아니라 상품 사진을 함께 넣는다.
     고칠 대상이 "상품 사진과 같은 패턴"이라 근거 이미지가 없으면 모델이 패턴을 지어낸다.
-    상품 사진은 앞쪽 몇 장만 — 전부 넣으면 편집 과제가 다시 흐려진다(과제 1개 원칙).
+    상품 사진은 두 장만 — 전부 넣으면 편집 과제가 다시 흐려진다(과제 1개 원칙).
+
+    **어느 두 장인지가 이 패스의 전부다.** 예전에는 `prod_imgs[:2]` 로 업로드 순서 앞 두 장을
+    골랐는데, 슬롯 순서가 `Front → Back → Detail → Fit` 이라 Front+Back+Detail 을 올린 셀러는
+    정작 패턴의 기준인 Detail 을 못 보내고 있었다. 이제 역할 우선순위로 고른다
+    (`select_fabric_references`).
 
     fail-open — 거부·오류·빈 응답 어떤 경우에도 1패스 결과를 그대로 돌려준다.
     """
     if not mannequin_fabric.should_apply(
-            getattr(s, "mannequin_fabric_pass", "off"), has_fine_pattern, bool(prod_imgs)):
+            getattr(s, "mannequin_fabric_pass", "off"), has_fine_pattern, bool(prod_refs)):
         return res, False
+    selected = select_fabric_references(prod_refs)
+    # 어떤 슬롯/자산이 어떤 순서로 나갔는지 — 이미지 바이트·URL 은 넣지 않는다(메타데이터만).
+    ref_event = reference_event_payload(selected, all_refs=prod_refs)
     if calls_spent >= s.mannequin_max_attempts:
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
-            "outcome": "budget_exhausted",
+            "outcome": "budget_exhausted", **ref_event,
             "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
         return res, False
     before = hashlib.sha256(res.image).hexdigest()[:12]
@@ -728,24 +803,25 @@ async def _apply_fabric_pass(
         prompt = mannequin_fabric.build_prompt(load_fabric_prompt_template())
         out = await gemini.generate_content_image(
             resolve_model(s, "image_high"),
-            prompt, [InlineImage(res.mime, res.image), *prod_imgs[:2]],
+            prompt,
+            [InlineImage(res.mime, res.image), *(r.image for r in selected)],
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except Exception as e:
         log.warning("fabric pass failed for job %s (원본 유지): %r", job_id, e)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
-            "outcome": "failed_open", "image_hash": before,
+            "outcome": "failed_open", "image_hash": before, **ref_event,
             "error_type": type(e).__name__, "error_message": str(e)[:200]})
         return res, True  # 호출은 나갔다 — 예산 소비
     await _emit(pool, job_id, "step", {
         "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
-        "outcome": "applied", "image_hash": before,
+        "outcome": "applied", "image_hash": before, **ref_event,
         "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
     return out, True
 
 
 async def _apply_edits(
-    *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_imgs, match_img,
+    *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_refs, match_img,
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
     image_size=None, has_fine_pattern=False,
 ):
@@ -760,6 +836,9 @@ async def _apply_edits(
     """
     if not enabled:
         return res, p2, calls_spent
+    # 판정(axis/image QC)은 상품 사진 **전체**를 그대로 본다 — 기존 동작 불변. 역할 기반
+    # 선택은 원단 2패스만의 문제라 거기서만 refs 를 쓴다.
+    prod_imgs = [r.image for r in prod_refs]
     pre_hash = hashlib.sha256(res.image).hexdigest()
     pre_res, pre_p2 = res, p2
     # untuck — 편집 체인 **맨 앞**. 밑단 위치(구도)가 먼저 확정돼야 축 QC 가 실제 밑단을 보고
@@ -789,7 +868,7 @@ async def _apply_edits(
     # 방금 맞춘 패턴을 다시 늘린다). 회귀 판정은 아래에서 두 편집을 합쳐 한 번에 본다.
     res, fabric_spent = await _apply_fabric_pass(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-        res=res, prod_imgs=prod_imgs, calls_spent=calls_spent,
+        res=res, prod_refs=prod_refs, calls_spent=calls_spent,
         has_fine_pattern=has_fine_pattern, image_size=image_size)
     calls_spent += fabric_spent
     # A~C 점수는 **편집 전** 원본에 매긴 것이다. 편집이 이미지를 바꿨다면 저장되는 점수가
@@ -884,27 +963,47 @@ async def _rollback_edits(
 
 
 async def _run_candidate(
-    *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
+    *, app, job, candidate, base_fit, base_gender, base_img, prod_refs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
     adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
 ) -> dict | None:
-    """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
+    """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None.
+
+    `prod_refs` 는 역할(slot)이 붙은 상품 참조다. 기존 생성·QC 가 쓰는 bare 바이트 목록은
+    여기서 파생한다 — 슬롯을 버리는 지점을 하나도 남기지 않으려고 입력 자체를 refs 로 받는다.
+    """
     s = app.state.settings
     pool, r2, gemini = app.state.pool, app.state.r2, app.state.gemini
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
+    prod_refs = tuple(prod_refs)
+    prod_imgs = [r.image for r in prod_refs]
     # 미세 패턴 상품은 해상도를 올린다. **편집 패스(축 교정·2패스)도 같은 값**을 써야 한다 —
     # 편집이 기본 해상도로 다시 렌더하면 어렵게 올린 4K 가 그 자리에서 깎인다.
     image_size = effective_image_size(s, product, analysis)
     has_fine_pattern = mannequin.has_fine_pattern(product, analysis)
     if generation_path == "edit" and parent_cut_img is not None and adjust_directives:
         # 편집 프롬프트의 image 1 계약: 현재 컷이 반드시 첫 장이고, 상품 정체성 앵커가 뒤따른다.
-        images = [parent_cut_img, *prod_imgs] + ([match_img] if match_img else [])
+        # 상품 참조끼리는 역할 우선순위(Detail → Front → Back → Fit)로 정렬한다 — 매니페스트가
+        # 슬롯별 권위를 선언하므로 번호와 실제 이미지가 같은 순서여야 그 문장이 유효하다.
+        edit_refs = order_by_role(prod_refs)
+        images = [parent_cut_img, *(r.image for r in edit_refs)] + (
+            [match_img] if match_img else [])
         base_prompt = render_adjust_prompt(
-            adjust_directives, build_adjust_manifest(len(prod_imgs), match_img is not None))
+            adjust_directives, build_adjust_manifest(edit_refs, match_img is not None))
         prompt_version = ADJUST_PROMPT_VERSION
-        model = resolve_model(s, getattr(s, "mannequin_adjust_tier", "") or "image_high")
+        tier = adjust_edit_tier(s, has_fine_pattern=has_fine_pattern)
+        pattern_tier_guard = tier != adjust_edit_tier(s)  # 가드가 실제로 발화했는가
+        model = resolve_model(s, tier)
+        manifest_refs = edit_refs
     else:
+        if generation_path == "edit":
+            # 여기 오면 워커가 편집 자격을 줬는데 입력이 비어 온 것이다(현재 도달 불가).
+            # 조용히 fresh 로 눕히지 않고 사실을 남긴다 — 패턴이 다시 무작위 생성되는 경로다.
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "status": "edit_path_fallback",
+                "reason": "missing_edit_inputs", "requested_mode": "regenerate",
+                "pattern_risk": has_fine_pattern})
         generation_path = "fresh"
         # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
         images = [base_img, *prod_imgs] + ([match_img] if match_img else []) + list(ref_imgs)
@@ -922,7 +1021,10 @@ async def _run_candidate(
         prompt_version = s.mannequin_prompt_version
         # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
         # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
-        model = resolve_model(s, tier_for_job(s, job))
+        tier = tier_for_job(s, job, has_fine_pattern=has_fine_pattern)
+        pattern_tier_guard = tier != tier_for_job(s, job)  # 가드가 실제로 발화했는가
+        model = resolve_model(s, tier)
+        manifest_refs = prod_refs
     feedback = ""
     # 구제 후보 풀을 **두 단계로 분리**한다(codex 2026-07-31 HIGH).
     #  - pre_reject: 사전 게이트에서 걸린 후보. axis/bust 편집·재판정·D축을 아직 안 거쳤다.
@@ -953,6 +1055,13 @@ async def _run_candidate(
             "prompt_hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "prompt_version": prompt_version,
             "generation_path": generation_path,
+            # 관측 계약: "어떤 역할의 asset 이 어떤 모델·해상도로 나갔는가"를 로그만으로 재현
+            # 할 수 있어야 한다(계획 P0 완료 기준). 바이트·URL 은 넣지 않는다(id/slot 만).
+            "product_refs": [{"slot": r.slot, "asset_id": r.asset_id} for r in manifest_refs],
+            "model_tier": tier,
+            "pattern_tier_guard": pattern_tier_guard,
+            "has_fine_pattern": has_fine_pattern,
+            "image_size": image_size,
             "input_source": fit_profile_source})
         calls_spent += 1  # 성공하든 실패하든 호출은 나갔다
         try:
@@ -1026,7 +1135,7 @@ async def _run_candidate(
         if not pillow_reject and not p2_reject:
             res, p2, calls_spent = await _apply_edits(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
-                attempt=attempt, model=model, res=res, p2=p2, prod_imgs=prod_imgs,
+                attempt=attempt, model=model, res=res, p2=p2, prod_refs=prod_refs,
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
                 base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, enabled=reprocess, image_size=image_size,
@@ -1107,7 +1216,7 @@ async def _run_candidate(
             res, p2, calls_spent = await _apply_edits(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
                 attempt=s.mannequin_max_attempts, model=model, res=res, p2=p2,
-                prod_imgs=prod_imgs, match_img=match_img, fit_profile=fit_profile,
+                prod_refs=prod_refs, match_img=match_img, fit_profile=fit_profile,
                 profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, image_size=image_size,
                 has_fine_pattern=has_fine_pattern)
@@ -1183,7 +1292,15 @@ async def run_mannequin_job(app, job: dict) -> None:
 
         # 2) 바이트 다운로드 (to_thread)
         base_img = InlineImage(base_asset["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, base_asset["r2_key"]))
-        prod_imgs = [InlineImage(a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"])) for a in prod_assets]
+        # 바이트로 납작해지는 **이 지점**이 예전에 슬롯을 잃던 곳이다. 역할을 함께 들고 간다.
+        prod_refs = [
+            ProductReference(
+                slot=a.get("slot") or "Front", asset_id=a["id"],
+                image=InlineImage(
+                    a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"])))
+            for a in prod_assets
+        ]
+        prod_imgs = [r.image for r in prod_refs]  # 기존 생성/QC 호환 — refs 에서 파생
         match_img = None
         if match_asset:
             match_img = InlineImage(match_asset["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, match_asset["r2_key"]))
@@ -1226,29 +1343,53 @@ async def run_mannequin_job(app, job: dict) -> None:
         parent_edit_depth = None
         parent_cut_img = None
         adjust_directives = ""
+        fallback_reason = None
         payload_mode = (job.get("payload") or {}).get("mode")
-        if payload_mode == "regenerate" and snap_valid and isinstance(fit_profile, dict):
-            adjust_directives = build_adjust_directives(fit_profile, adjusted_axes)
-            if adjust_directives:
-                parent = None
-                try:
-                    async with pool.connection() as conn:
-                        parent = await repo.get_mannequin_edit_parent(
-                            conn, user_id, project_id)
-                except Exception:
-                    parent = None
-                parent_edit_depth = _compatible_parent_edit_depth(
-                    parent, fit_profile, resolved_match_id)
-                if parent_edit_depth is not None:
+        if payload_mode == "regenerate":
+            if not (snap_valid and isinstance(fit_profile, dict)):
+                fallback_reason = "invalid_fit_snapshot"
+            else:
+                adjust_directives = build_adjust_directives(fit_profile, adjusted_axes)
+                if not adjust_directives:
+                    fallback_reason = "no_adjust_directives"
+                else:
+                    parent, lookup_failed = None, False
                     try:
-                        parent_bytes = await asyncio.to_thread(
-                            app.state.r2.get_bytes, parent["r2_key"])
-                        parent_cut_img = InlineImage(parent["mime_type"], parent_bytes)
+                        async with pool.connection() as conn:
+                            parent = await repo.get_mannequin_edit_parent(
+                                conn, user_id, project_id)
                     except Exception:
-                        parent_cut_img = None
-                    if parent_cut_img is not None:
-                        generation_path = "edit"
-                        parent_cut_id = parent["id"]
+                        parent, lookup_failed = None, True
+                    parent_edit_depth, fallback_reason = classify_parent_edit(
+                        parent, fit_profile, resolved_match_id)
+                    if lookup_failed:
+                        fallback_reason = "parent_lookup_failed"
+                    if parent_edit_depth is not None:
+                        try:
+                            parent_bytes = await asyncio.to_thread(
+                                app.state.r2.get_bytes, parent["r2_key"])
+                            parent_cut_img = InlineImage(parent["mime_type"], parent_bytes)
+                        except Exception:
+                            parent_cut_img = None
+                        if parent_cut_img is not None:
+                            generation_path = "edit"
+                            parent_cut_id = parent["id"]
+                        else:
+                            # 부모 컷을 못 읽으면 편집 자격도 없다 — depth 를 비워 metadata 가
+                            # "edit 인 척"하지 않게 한다.
+                            parent_edit_depth = None
+                            fallback_reason = "parent_asset_load_failed"
+        # 조정 요청이 fresh 로 떨어졌으면 그 사유를 남긴다. 조용히 폴백하면 셀러에겐 "조정했는데
+        # 패턴이 또 달라졌다"만 남고, 우리는 그게 편집 미적용 탓인지 편집 실패 탓인지 못 가른다.
+        if payload_mode == "regenerate" and generation_path != "edit":
+            await _emit(pool, job_id, "step", {
+                "status": "edit_path_fallback",
+                # 분류에 실패했으면 그 사실을 그대로 남긴다. 그럴듯한 사유를 기본값으로 채우면
+                # 집계가 조용히 오염돼, 없는 원인을 고치러 가게 된다.
+                "reason": fallback_reason or "unclassified",
+                "requested_mode": payload_mode,
+                # 패턴 위험도와 함께 집계 — 고위험 상품의 silent fresh 가 가장 아픈 경우다.
+                "pattern_risk": mannequin.has_fine_pattern(product, analysis)})
 
         # Fresh 생성에만 유사 성공 컷을 STYLE REFERENCE 로 첨부한다. Edit 입력은 v2 계약의
         # [parent, products..., match?] 정확한 순서를 유지해야 하므로 검색 자체를 건너뛴다.
@@ -1304,7 +1445,7 @@ async def run_mannequin_job(app, job: dict) -> None:
             try:
                 r = await _run_candidate(
                     app=app, job=job, candidate=letter, base_fit=base_fit, base_gender=gender,
-                    base_img=base_img, prod_imgs=prod_imgs, match_img=match_img,
+                    base_img=base_img, prod_refs=prod_refs, match_img=match_img,
                     product_count=product_count, template=template, product=product,
                     analysis=analysis, clothing_type=clothing_type, image_manifest=manifest,
                     fit_profile=profile, adjusted_axes=adjusted_axes,

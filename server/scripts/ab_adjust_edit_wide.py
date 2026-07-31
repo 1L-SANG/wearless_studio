@@ -21,7 +21,7 @@ from scripts.smoke_realwire import _load_env  # noqa: E402
 
 _load_env(SERVER / ".env")
 
-from scripts.fit_fidelity_campaign import ARMS, SRC, load_local  # noqa: E402
+from scripts.fit_fidelity_campaign import ARMS, SRC, harness_refs, load_local  # noqa: E402
 from app.agents import mannequin_fit_qc  # noqa: E402
 from app.agents.gemini_image import GeminiImageClient, InlineImage  # noqa: E402
 from app.agents.mannequin_adjust import (  # noqa: E402
@@ -91,7 +91,8 @@ async def run_case(s, g, arm_id, adjust, sem):
         baseline = load_local(SERVER / "ab_out" / "fit_campaign" / f"{arm_id}.png")
         model = resolve_model(s, "image_high")
         directives = build_adjust_directives(profile, tuple(adjust.keys()))
-        prompt = render_adjust_prompt(directives, build_adjust_manifest(len(srcs), False))
+        prompt = render_adjust_prompt(
+            directives, build_adjust_manifest(harness_refs(srcs), False))
         adjusted_desc = ", ".join(f"{k} → {v}" for k, v in adjust.items())
         spec = mannequin_fit_qc.declared_axis_spec(profile)
         rows = []

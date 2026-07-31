@@ -107,7 +107,9 @@ def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=Non
     result = asyncio.run(mannequin_job._run_candidate(
         app=app, job=job, candidate="A", base_fit="regular", base_gender="women",
         base_img=types.SimpleNamespace(mime="image/png", data=b"x"),
-        prod_imgs=[types.SimpleNamespace(mime="image/png", data=b"p")], match_img=None,
+        prod_refs=[mannequin_job.ProductReference(
+            slot="Front", asset_id="prod-1",
+            image=types.SimpleNamespace(mime="image/png", data=b"p"))], match_img=None,
         product_count=1, template="Dress ${baseGender} ${clothingType}.\n${imageManifest}",
         product={"name": "티"}, analysis={}, clothing_type="top", image_manifest="1. base",
         fit_profile=profile, adjusted_axes=("fit",), fit_profile_source="payload_snapshot"))
