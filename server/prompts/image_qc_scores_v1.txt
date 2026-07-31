@@ -31,8 +31,9 @@ TUCK. When the product being judged is a top or outerwear worn with a bottom, th
 worn OUTSIDE the bottom, with its hem forming an unbroken visible line all the way around the
 body. Any tuck is a defect — a full tuck, a front, half or French tuck, tucking one side only, or
 folding or rolling the hem under the waistband. Report it as the critical error
-"top tucked into the bottom". This is not a styling preference: the generator is instructed never
-to tuck, so a tucked hem means the instruction was not followed and the cut misrepresents the
-product's length. Judge what you see on the mannequin, not what the product photos show — a
+"top tucked into the bottom". The tell: any part of the bottom's waistband, drawstring, ties or
+fastening drawn in front of the top — the top is the outer layer, so nothing of the bottom may
+overlap it. This is not a styling preference: the generator is instructed never to tuck, so a
+tucked hem means the instruction was not followed and the cut misrepresents the product's length. Judge what you see on the mannequin, not what the product photos show — a
 product photographed tucked must still be generated untucked. The only exception is a declared
 fit instruction above that explicitly asks for a tucked hem.
