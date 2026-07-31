@@ -211,3 +211,28 @@ def test_dress_gets_no_matching_bottom():
     assert [i["id"] for i in matching.recommend(items, "top", ["women"])] == ["b1"]
     assert [i["id"] for i in matching.recommend(items, "outer", ["women"])] == ["b1"]
     assert [i["id"] for i in matching.recommend(items, "bottom", ["women"])] == ["t1"]
+
+
+def test_matching_top_exposes_length_vocabulary_for_bottom_products():
+    """하의 상품의 매칭 상의는 fitCategory='top' — 조정 스텝이 뜨기 위한 전제(WS2).
+
+    2026-08-01 이전에는 상의 아이템이 전부 None 이라 하의 상품에서 매칭 조정 스텝이
+    구조적으로 뜰 수 없었다. 상의 기장이 상품(바지)의 허리 노출을 결정하므로 축은 length 다.
+    """
+    from app.agents.fit_axes import _MATCHING_FIT_AXIS, normalize_fit_profile
+
+    assert matching.fit_category({"clothing_type": "top", "category": "셔츠"}) == "top"
+    assert _MATCHING_FIT_AXIS["top"] == "length"
+
+    # 정규화 경로: top matchingFit 이 카탈로그 어휘로 살아남는다
+    profile = {
+        "category": "pants", "gender": "men", "axes": {}, "source": "seller", "version": 2,
+        "matchingFit": {"clothingId": "m1", "fitCategory": "top", "axes": {"length": "crop"}},
+    }
+    out = normalize_fit_profile(profile)
+    assert out and out.get("matchingFit") == {
+        "clothingId": "m1", "fitCategory": "top", "axes": {"length": "crop"}}
+    # 미지값·타 축은 여전히 버려진다 (allowlist 불변)
+    bad = dict(profile, matchingFit={"clothingId": "m1", "fitCategory": "top",
+                                     "axes": {"length": "banana"}})
+    assert normalize_fit_profile(bad).get("matchingFit") is None

@@ -28,9 +28,14 @@ def complementary_type(clothing_type: str) -> str | None:
 def fit_category(item: dict) -> str | None:
     """Return the matching-fit catalog category from curated item metadata.
 
-    Only known full-length pants and skirts expose an adjustable vocabulary.
-    Shorts/Bermudas, tops, and unknown metadata deliberately return ``None``.
+    bottoms: only known full-length pants and skirts expose an adjustable vocabulary —
+    shorts/Bermudas and unknown metadata deliberately return ``None``.
+    tops: return ``"top"`` (2026-08-01, WS2) — 하의 상품의 매칭 상의는 length 축으로 조정된다.
+    상의가 상품(바지)의 허리를 가리는 문제의 조정 수단이라, 여기서 None 을 돌려주면 프론트
+    매칭 조정 스텝이 구조적으로 뜰 수 없다(matchingFit.js MATCHING_AXIS 미러).
     """
+    if item.get("clothing_type") == "top":
+        return "top"
     if item.get("clothing_type") != "bottom":
         return None
     category = item.get("category")
