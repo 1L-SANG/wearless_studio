@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "placeTypes": [
+    {
+      "value": "home-interior",
+      "label": "집·거실·원룸"
+    },
+    {
+      "value": "cafe-shop-interior",
+      "label": "카페·소형 매장 내부"
+    },
+    {
+      "value": "atelier-interior",
+      "label": "작업실·아틀리에"
+    },
+    {
+      "value": "library-interior",
+      "label": "도서관·서점 독서 공간"
+    },
+    {
+      "value": "building-interior",
+      "label": "복도·계단·건물 공용부"
+    },
+    {
+      "value": "service-interior",
+      "label": "세탁실·생활체육시설"
+    },
+    {
+      "value": "industrial-yard",
+      "label": "주차장·세차장·작업 안뜰"
+    },
+    {
+      "value": "urban-alley",
+      "label": "주택가·도심 골목"
+    },
+    {
+      "value": "storefront-street",
+      "label": "상점 앞·상업 거리"
+    },
+    {
+      "value": "urban-building-exterior",
+      "label": "도심 외벽·건물 외부"
+    },
+    {
+      "value": "park-garden",
+      "label": "공원·정원"
+    },
+    {
+      "value": "waterfront",
+      "label": "해변·항구·강변"
+    },
+    {
+      "value": "resort-terrace",
+      "label": "리조트·풀·테라스"
+    },
+    {
+      "value": "horizon-studio",
+      "label": "무채색 호리존 스튜디오"
+    }
+  ]
+}

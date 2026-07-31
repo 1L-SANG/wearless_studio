@@ -18,7 +18,10 @@ import genExamples from '@/data/genExamples.json';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { genderForClothingType } from '@/lib/productGender.js';
-import { spaceSetGroupId, storyboardSpaceSetsFor } from '@/lib/storyboardSpaceSetCatalog.js';
+import {
+  distinctPlaceStylingSetsFor,
+  spaceSetGroupId,
+} from '@/lib/storyboardSpaceSetCatalog.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { ensureSections, rowSizeFor } from '@/lib/sections.js';
@@ -366,11 +369,14 @@ export function buildStoryboard(mode, colors, product = {}) {
     product.clothingType,
     product.targetGenders,
   );
-  const stylingSet = storyboardSpaceSetsFor({
+  const stylingSets = distinctPlaceStylingSetsFor({
     gender,
     clothingType: product.clothingType || 'top',
-  }).find((set) => set.setType === 'styling');
-  const shootingSet = (colorId) => {
+  });
+  const shootingSet = (colorId, rotationIndex = 0) => {
+    const stylingSet = stylingSets.length
+      ? stylingSets[rotationIndex % stylingSets.length]
+      : null;
     if (!stylingSet) return [];
     const groupId = spaceSetGroupId(stylingSet.id, uid('sg'));
     return stylingSet.members.map((member) => sb(
@@ -398,7 +404,7 @@ export function buildStoryboard(mode, colors, product = {}) {
   if (mode === 'extended') {
     list.slice(0, 4).forEach((c, colorIndex) => {
       out.push(
-        ...shootingSet(c.id),
+        ...shootingSet(c.id, colorIndex),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', c.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', c.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', c.id),
