@@ -1204,3 +1204,54 @@ def test_fabric_pass_sends_product_photos_with_the_cut():
     assert "${" not in sent["prompt"]
     assert any(e.get("status") == "fabric_pass" and e.get("outcome") == "applied"
                for e in sent["events"])
+
+
+def test_untuck_pass_gate_and_single_task_call():
+    """untuck 패스 — top/outer + 매칭 하의 첨부에서만, 생성본 1장·과제 1개로 호출된다.
+
+    프롬프트 5회 강화와 QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). QC 검출이
+    불안정해(같은 유형을 잡기도 02:05, 놓치기도 04:57) 게이트로 쓰지 않고 항상 1회 돈다.
+    bust v3 안에 untuck 이 부차 지시로 있을 땐 실패했다 — 단일 과제 분리가 변수다.
+    """
+    import asyncio
+    from app.agents import mannequin_untuck
+    from app.workers import mannequin_job as mj
+
+    # 게이트
+    assert mannequin_untuck.should_apply("on", "top", True)
+    assert mannequin_untuck.should_apply("on", "outer", True)
+    assert not mannequin_untuck.should_apply("off", "top", True), "플래그 off 면 안 돈다"
+    assert not mannequin_untuck.should_apply("on", "bottom", True), "하의 상품은 방향이 다르다(WS4)"
+    assert not mannequin_untuck.should_apply("on", "dress", True), "원피스는 매칭 하의가 없다"
+    assert not mannequin_untuck.should_apply("on", "top", False), "하의가 화면에 없으면 tuck 이 없다"
+
+    sent = {}
+
+    class _Gemini:
+        async def generate_content_image(self, model, prompt, images, size, aspect_ratio=None):
+            sent["images"] = images; sent["prompt"] = prompt; sent["size"] = size
+            return types.SimpleNamespace(image=b"untucked", mime="image/png")
+
+    async def fake_emit(pool, job_id, et, payload):
+        sent.setdefault("events", []).append(payload)
+
+    s = types.SimpleNamespace(
+        mannequin_untuck_pass="on", mannequin_max_attempts=5, mannequin_image_size="2K",
+        mannequin_aspect_ratio="2:3", model_image_high="gemini-3-pro-image",
+        model_image_light="gemini-3.1-flash-image", model_text="gpt-5.4-mini")
+    mj._emit = fake_emit
+    res = types.SimpleNamespace(image=b"cut", mime="image/png")
+    match = mj.InlineImage("image/png", b"bottom")
+
+    out, spent = asyncio.run(mj._apply_untuck_pass(
+        pool=None, gemini=_Gemini(), s=s, job_id="j1", candidate="A", attempt=1,
+        res=res, match_img=match, calls_spent=0, clothing_type="top", image_size="4K"))
+
+    assert spent is True and out.image == b"untucked"
+    assert len(sent["images"]) == 1 and sent["images"][0].data == b"cut", \
+        "이미지 1장·과제 1개 — 매칭/상품 사진을 섞으면 과제가 흐려진다"
+    assert sent["size"] == "4K", "승급 해상도를 편집에서도 유지"
+    assert "unbroken visible line" in sent["prompt"], "관측 가능한 목표가 있어야 한다"
+    assert "return it unchanged" in sent["prompt"], "이미 빠져 있으면 무변경 — no-op 계약"
+    assert any(e.get("status") == "untuck_pass" and e.get("outcome") == "applied"
+               for e in sent["events"])

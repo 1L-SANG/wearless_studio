@@ -26,6 +26,7 @@ _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_generate_v1.tx
 # 순편익 2 → 4). v1·v2 는 이력 보존용으로 남긴다 — ab_bust_pass.py --variant 로 재비교 가능.
 _BUST_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_bust_v3.txt")
 _FABRIC_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_fabric_v1.txt")
+_UNTUCK_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_untuck_v1.txt")
 
 
 def _sanitize(value: Any) -> str:
@@ -72,6 +73,12 @@ def load_fabric_prompt_template() -> str:
     """원단 패턴 2패스 템플릿. 가슴 2패스와 같은 이유로 env 오버라이드를 두지 않는다 —
     문구가 실측으로 조정되는 자산이라 배포별로 갈리면 결과를 비교할 수 없다."""
     with open(_FABRIC_PROMPT, encoding="utf-8") as f:
+        return f.read()
+
+
+def load_untuck_prompt_template() -> str:
+    """untuck 2패스 템플릿. 같은 규약 — env 오버라이드 없음."""
+    with open(_UNTUCK_PROMPT, encoding="utf-8") as f:
         return f.read()
 
 

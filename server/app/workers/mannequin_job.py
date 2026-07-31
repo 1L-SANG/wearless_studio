@@ -25,6 +25,7 @@ from ..agents import (
     mannequin_fabric,
     mannequin_fit_qc,
     mannequin_series_qc,
+    mannequin_untuck,
 )
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
@@ -32,6 +33,7 @@ from ..agents.prompts import (
     load_bust_prompt_template,
     load_fabric_prompt_template,
     load_prompt_template,
+    load_untuck_prompt_template,
     render_mannequin_prompt,
 )
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
@@ -594,6 +596,48 @@ async def _apply_bust_pass(
     return out, True
 
 
+async def _apply_untuck_pass(
+    *, pool, gemini, s, job_id, candidate, attempt, res, match_img, calls_spent,
+    clothing_type=None, image_size=None,
+):
+    """상의 밑단을 하의 밖으로 빼는 untuck 2패스. → (선택 결과, 편집콜 소비 여부).
+
+    **편집 체인의 맨 앞**에서 돈다 — 구도(밑단 위치)가 먼저 확정돼야 축 QC 가 실제 밑단을
+    보고 판정하고, 볼륨·원단 편집이 최종 구도 위에서 이뤄진다. QC 검출을 게이트로 쓰지
+    않는 이유는 mannequin_untuck 모듈 주석 참조(검출 불안정 실측).
+
+    fail-open — 거부·오류·빈 응답 어떤 경우에도 이전 결과를 그대로 돌려준다.
+    """
+    if not mannequin_untuck.should_apply(
+            getattr(s, "mannequin_untuck_pass", "off"), clothing_type, match_img is not None):
+        return res, False
+    if calls_spent >= s.mannequin_max_attempts:
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "untuck_pass",
+            "outcome": "budget_exhausted",
+            "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
+        return res, False
+    before = hashlib.sha256(res.image).hexdigest()[:12]
+    try:
+        prompt = mannequin_untuck.build_prompt(load_untuck_prompt_template())
+        out = await gemini.generate_content_image(
+            resolve_model(s, "image_high"),
+            prompt, [InlineImage(res.mime, res.image)],
+            image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
+    except Exception as e:
+        log.warning("untuck pass failed for job %s (원본 유지): %r", job_id, e)
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "untuck_pass",
+            "outcome": "failed_open", "image_hash": before,
+            "error_type": type(e).__name__, "error_message": str(e)[:200]})
+        return res, True  # 호출은 나갔다 — 예산 소비
+    await _emit(pool, job_id, "step", {
+        "candidate": candidate, "attempt": attempt, "status": "untuck_pass",
+        "outcome": "applied", "image_hash": before,
+        "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
+    return out, True
+
+
 async def _apply_fabric_pass(
     *, pool, gemini, s, job_id, candidate, attempt, res, prod_imgs, calls_spent,
     has_fine_pattern=False, image_size=None,
@@ -654,6 +698,13 @@ async def _apply_edits(
         return res, p2, calls_spent
     pre_hash = hashlib.sha256(res.image).hexdigest()
     pre_res, pre_p2 = res, p2
+    # untuck — 편집 체인 **맨 앞**. 밑단 위치(구도)가 먼저 확정돼야 축 QC 가 실제 밑단을 보고
+    # 판정하고(특히 length 축), 볼륨·원단 편집이 최종 구도 위에서 이뤄진다.
+    res, untuck_spent = await _apply_untuck_pass(
+        pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+        res=res, match_img=match_img, calls_spent=calls_spent,
+        clothing_type=clothing_type, image_size=image_size)
+    calls_spent += untuck_spent
     # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
     # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
     res, axis_spent = await _apply_axis_qc(

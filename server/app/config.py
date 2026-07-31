@@ -99,6 +99,10 @@ class Settings:
     # 원단 패턴 2패스 — 미세 패턴 상품에서 표면 패턴만 상품 사진 기준으로 다시 입힌다.
     # 가슴 2패스와 같은 규약: 기본 off 로 두고 실측 확인 뒤 켠다.
     mannequin_fabric_pass: str = "off"  # off | on
+    # untuck 2패스 — 상의 밑단을 하의 허리밴드 밖으로 빼는 전용 편집. 프롬프트 5회 강화와
+    # QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). QC 검출이 불안정해 게이트로 쓰지
+    # 않고 매칭 하의가 붙는 top/outer 잡마다 1회 돈다(이미 빠져 있으면 무변경 반환 지시).
+    mannequin_untuck_pass: str = "off"  # off | on
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
@@ -241,6 +245,7 @@ def load_settings() -> Settings:
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
         mannequin_bust_pass=_bust_pass(),
         mannequin_fabric_pass=_flag("MANNEQUIN_FABRIC_PASS", "off", {"off", "on"}),
+        mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
