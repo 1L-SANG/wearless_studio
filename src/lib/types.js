@@ -179,7 +179,20 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string|null} fitAdjust     @deprecated AdjustFit — FitProfile로 대체
    @property {string|null} lengthAdjust  @deprecated AdjustLength — FitProfile로 대체
    @property {{clothingId:string,fitAdjust:string|null,lengthAdjust:string|null}|null} matchAdjust @deprecated 매칭 의류 자동 시드 메타 사용
+   @property {QcScores|null} [qcScores]  AG-P2 4축 판정. null=판정 없음(QC off·판정 실패·구 컷)
    (선택 여부는 project.selectedMannequinId가 소유 — cut.selected 폐기)
+
+   @typedef {Object} QcScores            서버 소유 — 클라는 표시만 한다(생성·수정 금지)
+   @property {number|null} product_fidelity      의류 재현: 색·패턴·로고·길이 (0-100)
+   @property {number|null} physical_naturalness  형태·물리: 드레이프·대칭·구조 (0-100)
+   @property {number|null} image_quality         이미지 품질: 선명도·크롭·아티팩트 (0-100)
+   @property {number|null} series_consistency    시리즈 일관성: 기존 컷과 세트로 보이는가 (0-100)
+   @property {string[]} [series_inconsistencies] 일관성이 깨진 구체 항목
+   @property {string[]} critical_errors          출고 불가 결함(로고 변형·색 변경 등). 점수 무관 재생성
+   @property {'auto_pass'|'needs_review'|'regenerate'} outcome  4축 최저값 + 치명오류 기반 등급
+   @property {boolean} salvaged          예산 소진으로 재생성을 못 하고 내보낸 컷인가
+   @property {{auto_pass:number,review:number}} [thresholds] 판정 시점 임계 — 임계를 바꿔도
+   과거 판정은 재계산되지 않으므로, 이 값 없이 재계산하면 불일치가 버그처럼 보인다
 
    @typedef {Object} StoryboardBlock
    @property {string} id

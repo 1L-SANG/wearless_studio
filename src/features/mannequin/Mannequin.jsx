@@ -44,6 +44,8 @@ const MATCH_NAME = '매칭 의류 핏';
 const MATCH_QUESTION = '매칭 의류의 핏도 조정할까요?';
 const MATCH_SKIRT_NAME = '매칭 스커트 실루엣';
 const MATCH_SKIRT_QUESTION = '매칭 스커트의 실루엣도 조정할까요?';
+const MATCH_TOP_NAME = '매칭 상의 기장';
+const MATCH_TOP_QUESTION = '매칭 상의의 기장도 조정할까요? 짧을수록 상품(하의)이 잘 보여요.';
 
 const cutImage = (cut) => cut?.imageUrl || cut?.src || '';
 const validAxisValue = (values, value) => values.some((v) => v.value === value);
@@ -808,10 +810,12 @@ export function Mannequin() {
 
   // 스텝 표시 헬퍼
   const stepName = (step) => (step.kind === 'match'
-    ? (step.fitCategory === 'skirt' ? MATCH_SKIRT_NAME : MATCH_NAME)
+    ? (step.fitCategory === 'skirt' ? MATCH_SKIRT_NAME
+      : step.fitCategory === 'top' ? MATCH_TOP_NAME : MATCH_NAME)
     : (AXIS_LABELS[step.key] || step.key));
   const stepQuestion = (step) => (step.kind === 'match'
-    ? (step.fitCategory === 'skirt' ? MATCH_SKIRT_QUESTION : MATCH_QUESTION)
+    ? (step.fitCategory === 'skirt' ? MATCH_SKIRT_QUESTION
+      : step.fitCategory === 'top' ? MATCH_TOP_QUESTION : MATCH_QUESTION)
     : (AXIS_QUESTIONS[step.key] || `${stepName(step)}을(를) 조정할까요?`));
   const stepExCategory = (step) => (step.kind === 'match' ? step.fitCategory : category);
   const stepExAxis = (step) => (step.kind === 'match' ? step.axisKey : step.key);
@@ -819,7 +823,9 @@ export function Mannequin() {
   const stepExNote = (step) => (step.kind === 'match'
     ? (step.fitCategory === 'skirt'
       ? '예시에 보여지는 스커트의 실루엣만 참고해주세요.'
-      : '예시에 보여지는 하의의 핏만 참고해주세요.')
+      : step.fitCategory === 'top'
+        ? '예시에 보여지는 상의의 기장만 참고해주세요.'
+        : '예시에 보여지는 하의의 핏만 참고해주세요.')
     : `예시에 보여지는 의류의 ${stepName(step)}만 참고해주세요.`);
 
   // 파생값 — 순차: 첫 미완료 스텝이 '현재'

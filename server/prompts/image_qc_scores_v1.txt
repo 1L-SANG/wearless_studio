@@ -1,0 +1,53 @@
+
+SCORING. In addition to the verdict, score the generated image on three axes. Each score is an
+integer from 0 to 100, where 100 means indistinguishable from an ideal studio result and 0 means
+unusable. Score what you actually observe; do not inflate a score to be agreeable.
+
+- product_fidelity: does the generated garment reproduce the seller's product? Color, pattern,
+  print and logo accuracy, neckline, sleeve and hem length, closures, pockets, trims, and HOW IT
+  FITS — the ease between garment and body, where the hem falls, how wide the sleeves and body
+  are. A shopper describes a product by its fit as much as by its print: an oversized tee shown
+  as a fitted one is the wrong product even if every other detail matches. Every mismatch you
+  listed above must be reflected here. A garbled or restyled logo, a changed color, a length or
+  a fit that reads as a different product caps this axis below 60.
+- physical_naturalness: does the garment sit on the body like real cloth? Sleeves and hems fall
+  correctly, no fabric passing through the body, no impossible asymmetry, folds and drape follow
+  the material, closures line up. Anatomical or garment-structure breakdown caps this below 50.
+- image_quality: is this publishable as an e-commerce photo? Sharpness, correct exposure, clean
+  background, no generation artifacts or smearing, nothing important cropped out of frame.
+
+Set series_consistency to null. It is scored by a separate judge that sees the seller's other cuts.
+
+critical_errors: a list of defects severe enough that the image must not ship regardless of the
+scores. Use it only for: text or logo altered, invented or unreadable; garment color changed;
+garment type changed; garment fit changed — a loose or oversized garment shown as fitted, or the
+hem pulled to a different height, so a shopper would order the wrong size; a sleeve, button,
+pocket or other structural element missing; an element present that does not exist on the
+original; body or garment shape broken; the top or outerwear product tucked into the bottom;
+pattern scale changed. Write each one as a short phrase. Return an empty list when none apply —
+an empty list is the common case.
+
+PATTERN. Stripes, checks, pinstripes and other repeating patterns must keep the product's own
+scale and structure, not just its colours. Count the repeats across the garment's width in the
+product photo and in the generated image: if the generated stripes are visibly thicker, more
+widely spaced, or far fewer, report the critical error "pattern scale changed". Also keep the
+figure-ground relationship — a white ground with coloured stripes must not become a coloured
+ground with white stripes, and a two-colour stripe pair must not collapse into a single colour.
+Fine, dense patterns are the common failure: they get simplified into bold wide bands that read
+as a different fabric, so judge the repeat spacing explicitly rather than trusting overall colour.
+
+When the product being judged is a BOTTOM garment worn with a matching top, the product is the
+hero: if the matching top covers the product's waistband and closure so a shopper cannot see how
+the product sits at the waist, report the mismatch "product waistband covered by the matching
+top". This is a mismatch, not a critical error.
+
+TUCK. When the product being judged is a top or outerwear worn with a bottom, the product must be
+worn OUTSIDE the bottom, with its hem forming an unbroken visible line all the way around the
+body. Any tuck is a defect — a full tuck, a front, half or French tuck, tucking one side only, or
+folding or rolling the hem under the waistband. Report it as the critical error
+"top tucked into the bottom". The tell: any part of the bottom's waistband, drawstring, ties or
+fastening drawn in front of the top — the top is the outer layer, so nothing of the bottom may
+overlap it. This is not a styling preference: the generator is instructed never to tuck, so a
+tucked hem means the instruction was not followed and the cut misrepresents the product's length. Judge what you see on the mannequin, not what the product photos show — a
+product photographed tucked must still be generated untucked. The only exception is a declared
+fit instruction above that explicitly asks for a tucked hem.

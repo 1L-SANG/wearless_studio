@@ -147,6 +147,9 @@ class MannequinCut(CamelModel):
     fit_adjust: str | None = None
     length_adjust: str | None = None
     match_adjust: dict | None = None
+    # AG-P2 4축 점수 스냅샷. None = 판정 없음(QC off·판정 실패·구 행). response_model 이
+    # 미선언 필드를 걸러내므로 여기 없으면 라우트가 실어도 클라에 안 나간다.
+    qc_scores: dict | None = None
 
 
 class JobView(CamelModel):

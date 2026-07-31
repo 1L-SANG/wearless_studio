@@ -411,7 +411,7 @@ async def build_my_model_assets(request: Request, user_id: str = Depends(require
 # ── 얼굴 라이선스 (FM: 얼굴 업로드 + 조건) ─────────────────────────
 # 얼굴 이미지 = 생체 PII. 공개 R2 URL 절대 노출 금지 → 비공개 버킷 저장 + 게이트 스트림.
 # face_image_uri = 게이트 라우트 URL(공개 URL 아님). face_image_key = 내부 비공개 키(응답 제외).
-MAX_FACE_BYTES = 15 * 1024 * 1024  # 15MB (routes.py MAX_UPLOAD_BYTES 미러)
+MAX_FACE_BYTES = 25 * 1024 * 1024  # 25MB (routes.py MAX_UPLOAD_BYTES 미러 — 아이폰 HEIC 대응 상향)
 MAX_USE_ITEMS = 20                 # allowed/forbidden 용도 태그 개수 상한
 MAX_USE_LEN = 60                   # 용도 태그 1개 길이 상한
 _EXT_TO_MIME = {ext: mime for mime, ext in MIME_EXT.items()}  # 게이트 응답 Content-Type 역매핑
@@ -592,7 +592,7 @@ async def create_license(
         if not data:
             raise _err("bad_image", "빈 파일입니다.")
         if len(data) > MAX_FACE_BYTES:
-            raise _err("file_too_large", "이미지는 15MB 이하만 가능합니다.", status=413)
+            raise _err("file_too_large", "이미지는 25MB 이하만 가능합니다.", status=413)
 
     model_id = await _my_verified_model_id(request, user_id)
     if not model_id:

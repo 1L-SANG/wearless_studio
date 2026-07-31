@@ -4,7 +4,11 @@
 규칙: 보색 타입 → isActive·타입·성별 필터 → colorBrightness 내림차순, 동률 sort_order.
 """
 
-_TOP_SIDE = {"top", "outer", "dress"}
+_TOP_SIDE = {"top", "outer"}
+# 원피스는 그 자체로 상·하의가 붙은 한 벌이라 **맞춰 입힐 하의가 없다**. 예전에는 dress 를
+# 상의쪽으로 묶어 하의를 추천했는데, 셀러 화면에 필요 없는 매칭 카드가 뜨고 마네킹 컷에도
+# 원피스 아래 바지·치마가 함께 들어가 옷을 가렸다(2026-08-01 셀러 보고).
+_NO_MATCH = {"dress"}
 
 # matching_items.category is curated seed metadata (not seller text).  Keep this
 # mapping explicit so a new/unknown category cannot accidentally acquire a fit
@@ -14,16 +18,24 @@ _SKIRT_CATEGORIES = frozenset({"스커트"})
 _SHORT_CATEGORIES = frozenset({"쇼츠", "버뮤다쇼츠"})
 
 
-def complementary_type(clothing_type: str) -> str:
+def complementary_type(clothing_type: str) -> str | None:
+    """맞춰 입힐 반대편 카테고리. 매칭이 성립하지 않는 종류(원피스)는 None."""
+    if clothing_type in _NO_MATCH:
+        return None
     return "bottom" if clothing_type in _TOP_SIDE else "top"
 
 
 def fit_category(item: dict) -> str | None:
     """Return the matching-fit catalog category from curated item metadata.
 
-    Only known full-length pants and skirts expose an adjustable vocabulary.
-    Shorts/Bermudas, tops, and unknown metadata deliberately return ``None``.
+    bottoms: only known full-length pants and skirts expose an adjustable vocabulary —
+    shorts/Bermudas and unknown metadata deliberately return ``None``.
+    tops: return ``"top"`` (2026-08-01, WS2) — 하의 상품의 매칭 상의는 length 축으로 조정된다.
+    상의가 상품(바지)의 허리를 가리는 문제의 조정 수단이라, 여기서 None 을 돌려주면 프론트
+    매칭 조정 스텝이 구조적으로 뜰 수 없다(matchingFit.js MATCHING_AXIS 미러).
     """
+    if item.get("clothing_type") == "top":
+        return "top"
     if item.get("clothing_type") != "bottom":
         return None
     category = item.get("category")
@@ -44,6 +56,8 @@ def prefilter(items, clothing_type, genders):
     쓰도록 여기 한 곳에만 둔다(드리프트 방지, FR-A2 "프리필터 불변").
     """
     preferred = complementary_type(clothing_type)
+    if preferred is None:      # 원피스 — 추천할 반대편이 없다
+        return []
     gset = set(genders or [])
     return [
         i for i in items

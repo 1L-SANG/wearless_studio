@@ -269,8 +269,24 @@ async def save_product(
     return row
 
 
+# AG-01 이 파생하고 셀러가 편집하지 않는 서버 소유 필드. 저장은 REPLACE 라 클라가 모르는
+# 키는 한 번의 저장으로 사라진다 — 구버전 클라·부분 payload 에서도 살아남게 여기서 보존한다.
+_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored",)
+
+
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
-    """analysis 작업본을 payload jsonb 로 upsert (계약 §3.2). 소유권은 라우트 선검증."""
+    """analysis 작업본을 payload jsonb 로 upsert (계약 §3.2). 소유권은 라우트 선검증.
+
+    REPLACE 시맨틱이라 들어온 payload 가 곧 새 전문이다. 다만 `_SERVER_OWNED_ANALYSIS_KEYS`
+    는 클라가 안 보냈을 때 기존 값을 이월한다 — 셀러가 소재·핏을 한 번 수정하면 AI 파생
+    신호가 조용히 소실되고, sourceMirrored 의 경우 그 결과로 반전된 로고가 출고된다.
+    """
+    missing = [k for k in _SERVER_OWNED_ANALYSIS_KEYS if k not in analysis]
+    if missing:
+        prev = await get_analysis(conn, project_id) or {}
+        carried = {k: prev[k] for k in missing if k in prev}
+        if carried:
+            analysis = {**analysis, **carried}
     locked = bool(analysis.get("locked", False))
     async with conn.cursor() as cur:
         await cur.execute(
@@ -390,7 +406,8 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
         await cur.execute(
             """
             select mc.candidate, mc.version, mc.base_fit, mc.fit_adjust,
-                   mc.length_adjust, mc.match_adjust, a.id::text as asset_id, a.r2_key
+                   mc.length_adjust, mc.match_adjust, mc.qc_scores,
+                   a.id::text as asset_id, a.r2_key
             from mannequin_cuts mc
             join projects pr on pr.id = mc.project_id
             join assets a on a.id = mc.asset_id
@@ -398,6 +415,38 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
             order by mc.candidate, mc.version
             """,
             (project_id, user_id),
+        )
+        return await cur.fetchall()
+
+
+async def list_series_reference_cuts(
+    conn: AsyncConnection, project_id: str, *, limit: int = 3
+) -> list[dict]:
+    """D축 시리즈 일관성 비교 기준 컷 — candidate 별 **최신 1장**, 최대 limit 개.
+
+    `list_mannequin_cuts` 로 전 버전을 끌어와 파이썬에서 자르면 재생성 이력에 비례해 DB
+    전송·정렬 비용이 계속 늘어난다. 여기서 `distinct on` 으로 SQL 단에서 좁힌다.
+
+    `outcome='regenerate'` 판정을 받은 버전은 기준에서 제외한다 — 실패본을 앵커로 삼으면
+    다음 생성이 그 실패에 맞춰져 오류가 전파된다. 판정이 없는 구 행(qc_scores null)은
+    포함한다(대부분의 기존 컷이 여기 해당하고, 배제하면 기준이 통째로 비어버린다).
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select * from (
+                select distinct on (mc.candidate)
+                       mc.candidate, mc.version, a.r2_bucket, a.r2_key
+                from mannequin_cuts mc
+                join assets a on a.id = mc.asset_id and a.deleted_at is null
+                where mc.project_id = %s
+                  and coalesce(mc.qc_scores ->> 'outcome', '') <> 'regenerate'
+                order by mc.candidate, mc.version desc
+            ) latest
+            order by version desc
+            limit %s
+            """,
+            (project_id, limit),
         )
         return await cur.fetchall()
 
@@ -937,16 +986,21 @@ async def finalize_mannequin_success(
                 (project_id, c["candidate"]),
             )
             version = (await cur.fetchone())["v"]
+            qc_scores = c.get("qc_scores")
             await cur.execute(
-                "insert into mannequin_cuts (project_id, candidate, version, asset_id, base_fit) "
-                "values (%s, %s, %s, %s, %s)",
-                (project_id, c["candidate"], version, c["asset_id"], c["base_fit"]),
+                "insert into mannequin_cuts (project_id, candidate, version, asset_id, base_fit, "
+                "qc_scores) values (%s, %s, %s, %s, %s, %s)",
+                (project_id, c["candidate"], version, c["asset_id"], c["base_fit"],
+                 Json(qc_scores) if qc_scores is not None else None),
             )
             cuts.append({  # MannequinCut shape (계약 §3.3) — /jobs·SSE done에서 그대로 직렬화
                 "id": f"{c['candidate']}-{version}",
                 "src": f"/v1/assets/{c['asset_id']}/file",  # 안정 앱 URL (만료 없음, §3). assetId 인코딩됨
                 "candidate": c["candidate"], "version": version, "baseFit": c["base_fit"],
                 "fitAdjust": None, "lengthAdjust": None, "matchAdjust": None,
+                # 재생성 경로는 이 봉투를 버리고 GET /mannequins 를 재조회하므로, 컬럼(위)과
+                # 봉투(여기) 양쪽에 실어야 생성 직후·재생성 후 표시가 일치한다.
+                "qcScores": qc_scores,
             })
     # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
     # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.

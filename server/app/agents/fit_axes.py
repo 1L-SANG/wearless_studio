@@ -188,7 +188,10 @@ def _axis_entry(category: str, axis: str, gender: str, value):
     return next((e for e in entries if e["value"] == value), None)
 
 
-_MATCHING_FIT_AXIS = {"pants": "cut", "skirt": "silhouette"}
+# 매칭 의류가 '상의'인 경우(주상품=하의)의 축은 length — 상의 기장이 상품(바지)의 허리
+# 가림/노출을 결정한다(2026-08-01 WS2). cut/silhouette 처럼 매칭 의류 자체의 실루엣이 아니라
+# 상품 노출을 조정하는 축이라는 점이 다르다.
+_MATCHING_FIT_AXIS = {"pants": "cut", "skirt": "silhouette", "top": "length"}
 
 
 def _profile_version(profile: dict) -> int:
@@ -294,9 +297,15 @@ def _render_matching_axis_line(category: str, axis: str, gender: str, value) -> 
     observable = AXIS_OBSERVABLES.get((category, axis, value))
     if not entry or not observable:
         return None
-    label = "matching bottom" if category == "pants" else "matching skirt silhouette"
+    labels = {
+        "pants": ("matching bottom", "the separate bottom garment styled with the product"),
+        "skirt": ("matching skirt silhouette", "the separate bottom garment styled with the product"),
+        "top": ("matching top length", "the separate top garment styled with the product"),
+    }
+    label, subject = labels.get(
+        category, ("matching garment", "the separate garment styled with the product"))
     return (
-        f"- {label} (the separate bottom garment styled with the product, "
+        f"- {label} ({subject}, "
         f"NOT the product itself): {entry['promptEn']}. Observable target: {observable}."
     )
 

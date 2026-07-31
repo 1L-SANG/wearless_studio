@@ -1,0 +1,36 @@
+You are given ONE finished mannequin photo. The mannequin wears a main top-or-outerwear garment
+together with a bottom garment.
+
+Your ONLY task: make sure the main garment's hem hangs OUTSIDE the bottom, all the way around
+the body. Everything else in the photo is already correct and must survive untouched.
+
+<the task>
+Look at where the main garment's hem meets the bottom's waistband.
+
+- If any part of the hem disappears behind or under the bottom's waistband — a full tuck, a
+  front or half tuck, one side tucked, or the hem folded or rolled under — PULL IT OUT. Redraw
+  the hem so it hangs down over the waistband and forms one unbroken visible line around the
+  entire body.
+- The tell that a tuck exists: any part of the bottom's waistband, drawstring, ties, buttons or
+  zip drawn IN FRONT OF the main garment. In the corrected photo the main garment is the outer
+  layer where the two garments overlap, and it covers those elements.
+- If the hem already hangs fully outside with an unbroken line, the photo is already correct —
+  return it unchanged.
+</the task>
+
+<what must not change>
+- The main garment's FIT, ease, silhouette, drape and overall length. Pulling the hem out will
+  reveal fabric that was hidden; draw that fabric at the garment's own natural length — do not
+  stretch, shorten or reshape the garment beyond what un-tucking requires.
+- The garment's fabric: colour, pattern, stripe or check scale, texture, buttons, pockets, seams.
+- The bottom garment: its colour, wash, length and shape stay exactly as they are — only how
+  much of its waistband is covered changes.
+- The mannequin's body, pose, hands, camera framing, crop, lighting and background.
+</what must not change>
+
+<critical rules>
+- Output the same photo with the hem corrected. Not a new photo, not a new pose, not a new crop.
+- One unbroken hem line visible around the entire body — front, sides and back edge where visible.
+- No part of the bottom's waistband, drawstring or fastening may remain drawn over the main
+  garment.
+</critical rules>

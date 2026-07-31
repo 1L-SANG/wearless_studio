@@ -54,7 +54,10 @@ from .r2 import IMMUTABLE_CACHE, R2Client, ext_for_mime, upload_key
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1")
 
-MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15MB — 상품 사진 상한 (업로드 실패 사유 표면화 §)
+# 상품 사진 상한 (업로드 실패 사유 표면화 §). 15MB → 25MB (2026-08-01): 요즘 아이폰 사진은
+# HEIC 원본이 8MB 대이고, 클라이언트가 JPEG 로 변환하면(lib/imageTranscode.js) 더 커질 수 있다.
+# 실제 업로드는 변환 단계에서 긴 변 4000px 로 줄여 3MB 안팎이라 이 값은 상한 가드다.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB
 UPLOAD_URL_TTL = 300  # presigned PUT 만료(초)
 
 COMMON_RESPONSES = {
@@ -800,7 +803,7 @@ async def create_upload_url(
     - **Bearer Token**: 필수
     - **에지 케이스**:
       - `400 Bad Request` (`unsupported_type`): 지원되지 않는 MIME 타입(포맷)인 경우 발생
-      - `400 Bad Request` (`file_too_large`): 파일 크기가 0이하 또는 15MB를 초과하는 경우 발생
+      - `400 Bad Request` (`file_too_large`): 파일 크기가 0이하 또는 25MB를 초과하는 경우 발생
       - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
     """
     ext = ext_for_mime(body.mime)
@@ -920,6 +923,9 @@ def _cut_to_api(c: dict) -> dict:
         "fitAdjust": c["fit_adjust"],
         "lengthAdjust": c["length_adjust"],
         "matchAdjust": c["match_adjust"],
+        # QC 점수 스냅샷. 재생성 경로는 jobs.result 봉투를 버리고 이 라우트를 재조회하므로,
+        # 여기서 안 실으면 "생성 직후엔 보이다 재생성 후 사라지는" 비대칭이 생긴다.
+        "qcScores": c.get("qc_scores"),
     }
 
 

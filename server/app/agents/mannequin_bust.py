@@ -25,9 +25,14 @@ of the mannequin's chest" 로 거부(이미지 없이 텍스트 반환), 거부�
 # 1.5배 원문구·1.5배 강화문구·1.3배 세 설정에서 실패 패턴이 동일했다. 즉 앞섬 열림은 가슴
 # 크기가 아니라 **입력 이미지 의존**이다. 크기를 낮춰 얻은 것은 없고 허리만 과하게 잘록해져
 # 되돌린다.
+# 배수는 1.5 → 1.3 (2026-08-01). 1.5 는 가슴이 앞으로 너무 나와 전신이 "뚱뚱하게" 읽혔다 —
+# 상세페이지는 옷을 소개하는 화면이라 마네킹이 무거워 보이면 상품 인상까지 같이 내려간다.
+# 같은 베이스 컷에 배수만 바꿔 뽑은 그리드(scratch/cmp_c13_full.png, 1.5 ×1 vs 1.3 ×4)에서
+# 셀러가 1.3 쪽을 골랐다. 컵 표기는 그대로 둔다 — 배수만으로 크기가 움직이는 게 확인됐고,
+# 둘을 같이 내리면 무엇이 효과인지 다시 알 수 없어진다.
 BUST_TARGET = (
     "a full C CUP — clearly bigger than the B cup in the attached image. The bust must "
-    "project forward from the chest wall roughly 1.5 times as far as it does now"
+    "project forward from the chest wall roughly 1.3 times as far as it does now"
 )
 
 # 허리·골반 목표(2026-07-30). 상세페이지에서 마네킹이 상품 인상을 좌우하므로 슬림 아워글래스로
@@ -47,13 +52,27 @@ WAIST_HIP_TARGET = (
 _TOKENS = {"${bustTarget}": BUST_TARGET, "${waistHipTarget}": WAIST_HIP_TARGET}
 
 
-def should_apply(gender: str, mode: str) -> bool:
-    """2패스를 돌릴지. 여성 + 플래그 on 일 때만.
+# 가슴을 덮는 옷. 2패스는 이 카테고리에서만 의미가 있다.
+_CHEST_COVERING = {"top", "outer", "dress"}
+
+
+def should_apply(gender: str, mode: str, clothing_type: str | None = None) -> bool:
+    """2패스를 돌릴지. 여성 + 플래그 on + **가슴을 덮는 상품**일 때만.
 
     남성은 현행과 완전히 동일한 경로를 타야 한다(2패스 없음). mode 는 config 의
     mannequin_bust_pass ('off' | 'on') — 기본 off 로 두고 확인 후 켠다.
+
+    하의(bottom)를 뺀 이유는 이 패스의 전제 그대로다 — 프롬프트가 "마네킹이 옷을 입고 있으니
+    **천이 가슴 크기를 보여주는 유일한 수단**"이라고 말하는데, 하의 컷에는 가슴을 덮는 옷이
+    없다. 2026-07-31 실 워커 출고본에서 확인: 진·스커트 컷에도 2패스가 돌아 이미지모델 호출을
+    쓰고(1건은 등급을 떨어뜨려 되돌려짐) **상품과 무관한 맨상체만 키웠다**.
+
+    카테고리를 모르면(None) 적용한다 — 상의가 대다수라 모를 때 거르는 쪽이 더 자주 틀린다.
+    하의에 상의를 함께 입혀 연출하게 되면 이 판단을 다시 봐야 한다.
     """
-    return mode == "on" and gender == "women"
+    if mode != "on" or gender != "women":
+        return False
+    return clothing_type is None or str(clothing_type).lower() in _CHEST_COVERING
 
 
 def build_prompt(template: str) -> str:

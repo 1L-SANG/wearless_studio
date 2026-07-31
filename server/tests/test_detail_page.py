@@ -1297,3 +1297,38 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     assert captured["storyboard"][0]["cutType"] == "product"
     assert captured["storyboard"][0]["shot"] == "detail"
     assert captured["copy_results"] == [{"blockId": "b1", "texts": [{"role": "body", "text": "원본 카피"}]}]
+
+
+def test_detail_passthrough_ships_the_sellers_original_without_generating(monkeypatch):
+    """미세 패턴 상품의 디테일 컷은 셀러 원본을 그대로 싣는다 — 이미지 모델을 부르지 않는다.
+
+    2026-08-01 측정: 줄 하나가 파란 실 2가닥 + 베이지 1가닥인 원단은 4K 에서도 한 주기 14px →
+    요소당 2.3px 이라 재현이 불가능하다. 원본이 있는데 다시 그리면 있던 정보를 버리는 셈이다.
+
+    과금은 **생성한 컷 수**(cut_assets)로 매기므로 패스스루는 거기 들어가면 안 된다 —
+    호출하지 않은 컷에 크레딧이 붙는다.
+    """
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+    app = _app(_settings())
+    app.state.gemini = _RecordingGemini()
+    spec = {"id": "detail-1", "cutType": "product", "shot": "detail"}
+    images = [dpj.InlineImage("image/png", b"front")]
+    original = {"id": "asset-detail-1", "width": 3000, "height": 4000, "slot": "Detail"}
+
+    cut_results, cut_assets, face_cuts, garment_qcs, warnings = asyncio.run(dpj._gen_cuts(
+        app, _job(reserved=1),
+        [(spec, images, "manifest", False, images, None, False, original)],
+        {"name": "스트라이프 셔츠", "clothingType": "top"}, {},
+    ))
+
+    assert app.state.gemini.calls == 0, "패스스루는 이미지 모델을 부르지 않는다"
+    assert cut_results == [{
+        "blockId": "detail-1",
+        "imageUrl": "/v1/assets/asset-detail-1/file",
+        "width": 3000, "height": 4000,
+    }]
+    assert cut_assets == [], "새 asset 을 만들지 않는다 — 과금 단위에 들어가면 안 된다"
+    assert face_cuts == 0 and garment_qcs == [] and warnings == []

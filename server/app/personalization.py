@@ -50,7 +50,7 @@ router = APIRouter(prefix="/v1/personalization", tags=["Personalization"])
 ANGLES = ("front", "side", "angle45")
 ALL_CONSENT_TYPES = ("service_use", "training_use", "cross_border_transfer")
 REQUIRED_CONSENTS = ("service_use", "cross_border_transfer")
-MAX_FACE_BYTES = 15 * 1024 * 1024  # 15MB — routes.MAX_UPLOAD_BYTES / facemarket MAX_FACE_BYTES 미러
+MAX_FACE_BYTES = 25 * 1024 * 1024  # 25MB — routes.MAX_UPLOAD_BYTES / facemarket MAX_FACE_BYTES 미러
 _ALLOWED_FACE_MIME = {"image/png", "image/jpeg", "image/webp"}  # 얼굴은 png/jpg/webp 만(§3.2)
 
 # 동의 문서 현행 버전(법무 확정값 자리). 제출 docVersion 이 불일치하면 400 stale_consent_doc.
@@ -692,7 +692,7 @@ async def _latest_consent_ts(conn, user_id: str, consent_type: str, action: str)
 )
 async def upload_face_photo(
     request: Request,
-    photo: UploadFile = File(..., description="얼굴 이미지(png/jpg/webp, ≤15MB)"),
+    photo: UploadFile = File(..., description="얼굴 이미지(png/jpg/webp, ≤25MB)"),
     angle: str = Form(..., description="각도 슬롯: front|side|angle45"),
     user_id: str = Depends(require_user),
 ):
@@ -723,7 +723,7 @@ async def upload_face_photo(
     if not data:
         raise _err("unsupported_type", "빈 파일입니다.")
     if len(data) > MAX_FACE_BYTES:
-        raise _err("file_too_large", "이미지는 15MB 이하만 가능합니다.", status=413)
+        raise _err("file_too_large", "이미지는 25MB 이하만 가능합니다.", status=413)
 
     # 3) 동기 QC(외부 비전 API — cross_border 동의가 전제라 국외전송 정합). 실패=503 fail-safe.
     try:

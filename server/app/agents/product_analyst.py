@@ -266,11 +266,14 @@ def analysis_schema() -> dict:
             "suggestedName": {"type": _nullable("string")},
             "swatchSuggestions": {"type": "array", "items": swatch},
             "styleTags": {"type": "array", "items": {"type": "string", "enum": list(STYLE_TAGS)}},
+            # 원본이 거울 셀카인가 — 생성 프롬프트가 텍스트·로고를 정방향으로 되돌리게 하는 신호.
+            # 셀러 거울 셀카는 흔한데, 이걸 모르면 반전된 로고가 그대로 상세페이지로 나간다.
+            "sourceMirrored": {"type": "boolean"},
         },
         "required": [
             "clothingType", "subCategory", "customCategory", "targetGenders", "fit", "materials",
             "materialPresetIndex", "aiSuggestedPoints", "suggestedName", "swatchSuggestions",
-            "styleTags",
+            "styleTags", "sourceMirrored",
         ],
     }
 
@@ -355,6 +358,9 @@ def validate(raw: dict) -> dict:
         "suggestedName": name or None,
         "swatchSuggestions": swatches,
         "styleTags": style_tags,
+        # bool 강제 — 모델이 문자열("true")이나 null 을 뱉어도 판정 불명은 False(미반전)로 눕힌다.
+        # 반전 아님을 기본으로 두는 쪽이 안전하다: 오탐이면 정상 사진을 좌우로 뒤집게 된다.
+        "sourceMirrored": raw.get("sourceMirrored") is True,
     }
 
 
@@ -388,6 +394,8 @@ def distribute(validated: dict) -> dict:
             "materials": materials,
             "aiSuggestedPoints": validated.get("aiSuggestedPoints", []),
             "suggestedName": validated.get("suggestedName"),
+            # 생성 경로가 읽어 텍스트·로고를 정방향으로 렌더하게 한다(prompts.mannequin_context).
+            "sourceMirrored": validated.get("sourceMirrored", False),
         },
         "intermediate": {
             "swatchSuggestions": validated.get("swatchSuggestions", []),

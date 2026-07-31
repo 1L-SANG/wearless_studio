@@ -71,7 +71,7 @@ def _verdict(fit_ok=True, len_ok=True, identity=True, visible=True):
 
 
 def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=None,
-         profile=PROFILE, image_qc="off", p2=None):
+         profile=PROFILE, image_qc="off", p2=None, **settings_kw):
     """_run_candidate 를 실제 경로로 실행. verdicts=판정 fake 가 순서대로 돌려줄 값(or 예외)."""
     emits = []
 
@@ -91,14 +91,16 @@ def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=Non
     if guard:
         monkeypatch.setattr(mannequin_job, "_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY", True)
     if p2 is not None:
-        async def fake_p2(s, prods, gen):
+        async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+            assert scored, "마네킹 경로는 4축 점수를 받아야 한다(scored=True)"
             return p2
         monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
 
     g = gemini or _FakeGemini()
     r2 = _R2()
     settings = make_settings(r2_bucket="b", mannequin_axis_qc=mode,
-                             mannequin_max_attempts=max_attempts, image_qc=image_qc)
+                             mannequin_max_attempts=max_attempts, image_qc=image_qc,
+                             **settings_kw)
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=settings, pool=_FakePool(), r2=r2, gemini=g))
     job = {"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:t"}
@@ -256,13 +258,63 @@ def test_legacy_identity_rejection_preempts_axis_edit(monkeypatch):
     # AG-P2 enforce 가 reject → 그 attempt 는 축 QC 미실행 + 선점 이벤트, re-roll 이 우선.
     boom = RuntimeError("judge must not be called on rejected candidate")
     result, g, r2, emits = _run(
-        monkeypatch, mode="enforce", guard=True, max_attempts=1,
-        verdicts=[boom], image_qc="enforce",
+        monkeypatch, mode="enforce", guard=True, max_attempts=2,
+        verdicts=[boom, boom], image_qc="enforce",
         p2={"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "fix color"})
-    assert result is None  # max_attempts=1 → 후보 드롭(기존 동작)
-    assert _events(emits, "axis_qc") == []
+    assert len(g.calls) == 2  # reject → re-roll (편집이 아니라 신규 생성)
+    # 선점된 attempt 1 에서는 축 QC 가 아예 안 돈다(잘못된 옷을 편집하면 정체성이 보존된다).
+    # attempt 2 는 예산 소진이라 구제 경로로 넘어가고 거기선 축 QC 가 정상 발화한다.
+    assert [e for e in _events(emits, "axis_qc") if e["attempt"] == 1] == []
     pre = _events(emits, "axis_retry")
     assert pre and pre[0]["outcome"] == "identity_gate_preempted" and pre[0]["fired"] is False
+
+
+def test_identity_reject_on_last_attempt_salvages_instead_of_dropping(monkeypatch):
+    """예산 소진 시 후보를 버리지 않고 내보낸다 — 셀러가 크레딧만 쓰고 빈손이 되는 것보다 낫다.
+
+    단 `outcome` 은 **실제 품질**을 그대로 말한다. 구제됐다고 needs_review 로 눕히면
+    critical_errors("must not ship")까지 함께 세탁돼 프롬프트 계약이 깨진다.
+    구제 여부는 `salvaged` 별도 필드로 남겨 검수자가 맥락을 알게 한다.
+    """
+    result, g, r2, emits = _run(
+        monkeypatch, mode="off", guard=True, max_attempts=1,
+        verdicts=[], image_qc="enforce",
+        p2={"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "fix color",
+            "product_fidelity": 40, "physical_naturalness": None,
+            "image_quality": None, "series_consistency": None, "critical_errors": []})
+    assert result is not None                       # 드롭 대신 구제
+    assert result["qc_scores"]["outcome"] == "regenerate"  # 품질을 세탁하지 않는다
+    assert result["qc_scores"]["salvaged"] is True        # 구제 사실은 별도로
+    assert result["qc_scores"]["product_fidelity"] == 40
+    salvage = _events(emits, "qc_salvaged")
+    assert salvage and salvage[0]["reason"] == "budget_exhausted"
+
+
+def test_salvaged_candidate_keeps_critical_errors_visible(monkeypatch):
+    """치명 오류는 구제되어도 지워지지 않는다 — 검수자가 'must not ship' 을 봐야 한다."""
+    result, _g, _r2, _emits = _run(
+        monkeypatch, mode="off", guard=True, max_attempts=1,
+        verdicts=[], image_qc="enforce",
+        p2={"verdict": "retry", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95,
+            "image_quality": 95, "series_consistency": None,
+            "critical_errors": ["logo altered"]})
+    q = result["qc_scores"]
+    assert q["critical_errors"] == ["logo altered"]
+    assert q["outcome"] == "regenerate"  # 점수 95 여도 치명 오류가 이긴다
+    assert q["salvaged"] is True
+
+
+def test_identity_reject_with_budget_left_still_rerolls(monkeypatch):
+    """예산이 남아 있으면 구제하지 않고 재생성한다 — 구제가 게이트를 무력화하면 안 된다."""
+    result, g, r2, emits = _run(
+        monkeypatch, mode="off", guard=True, max_attempts=2,
+        verdicts=[], image_qc="enforce",
+        p2={"verdict": "retry", "mismatches": ["색 다름"], "correctionPrompt": "fix",
+            "product_fidelity": 10, "physical_naturalness": None,
+            "image_quality": None, "series_consistency": None, "critical_errors": []})
+    assert len(g.calls) == 2                                   # 1회차는 re-roll
+    assert _events(emits, "qc_salvaged")[0]["attempt"] == 2     # 2회차(마지막)에서만 구제
 
 
 def test_axis_qc_never_unshadows_pillow_gate():

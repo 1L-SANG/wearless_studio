@@ -258,11 +258,17 @@ export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
 export function defaultAnalysisShape() {
   return {
     clothingType: null, subCategory: null, targetGenders: [],
+    // enum 밖 의류의 자유 명칭(AG-01 추측 + 셀러 주관식 수정, 계약 §3.2). mock/db.js 에는
+    // 있는데 여기 없어서 http 경로에서만 유실됐다 — AI 가 "후드 집업" 을 추측해도 폼에 안 떴다.
+    customCategory: null,
     fit: null, suggestedName: '',
     materials: [], sellingPoints: [], aiSuggestedPoints: [],
     styleTags: [], swatchSuggestions: [],
     selectedModelId: null, models: [],
     matchClothing: [],
+    // AG-01 파생(셀러 미편집). 저장이 REPLACE 라 shape 에 없으면 한 번의 저장으로 사라지고,
+    // 그러면 거울 셀카 원본의 반전된 로고가 그대로 생성 컷에 남는다.
+    sourceMirrored: false,
     washCare: '', locked: false, measurementsUnknown: false,
     measurements: MEASUREMENT_TEMPLATE.map((m) => ({ ...m })),
     fitProfile: null,

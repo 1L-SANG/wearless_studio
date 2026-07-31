@@ -21,7 +21,12 @@ logger = logging.getLogger(__name__)
 
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_generate_v1.txt")
-_BUST_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_bust_v1.txt")
+# v3 = 핏 인식본. v1 은 옷 종류와 무관하게 허리를 조이게 해서 오버사이즈 티를 몸에 붙는
+# 미니원피스로 바꿨다(2026-07-31 짝 비교 n=10: 핏 깨짐 v1 7/10 → v3 0/10, 핏 유지하며 이긴
+# 순편익 2 → 4). v1·v2 는 이력 보존용으로 남긴다 — ab_bust_pass.py --variant 로 재비교 가능.
+_BUST_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_bust_v3.txt")
+_FABRIC_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_fabric_v1.txt")
+_UNTUCK_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_untuck_v1.txt")
 
 
 def _sanitize(value: Any) -> str:
@@ -61,6 +66,19 @@ def load_bust_prompt_template() -> str:
     """여성 기본 가슴 2패스 템플릿. 생성 템플릿과 달리 env 오버라이드가 없다 —
     문구 강도가 실측 캘리브레이션 결과라 배포별로 갈리면 결과 크기가 흔들린다."""
     with open(_BUST_PROMPT, encoding="utf-8") as f:
+        return f.read()
+
+
+def load_fabric_prompt_template() -> str:
+    """원단 패턴 2패스 템플릿. 가슴 2패스와 같은 이유로 env 오버라이드를 두지 않는다 —
+    문구가 실측으로 조정되는 자산이라 배포별로 갈리면 결과를 비교할 수 없다."""
+    with open(_FABRIC_PROMPT, encoding="utf-8") as f:
+        return f.read()
+
+
+def load_untuck_prompt_template() -> str:
+    """untuck 2패스 템플릿. 같은 규약 — env 오버라이드 없음."""
+    with open(_UNTUCK_PROMPT, encoding="utf-8") as f:
         return f.read()
 
 
@@ -158,6 +176,28 @@ def _product_block(
     return context
 
 
+def build_mirrored_source_block(analysis: dict) -> str:
+    """원본이 거울 셀카일 때 텍스트·로고를 정방향으로 되돌리라는 지시 (AG-01 sourceMirrored).
+
+    셀러 거울 셀카는 흔하고, 지시가 없으면 모델이 반전된 로고·숫자를 **충실히 재현**해
+    뒤집힌 글자가 상세페이지로 나간다(2026-07-30 실측: '808'→반전, '302'→'802').
+    분석이 반전을 판정하지 않았으면(기본 False) 블록 자체가 없다 — 정상 사진에 좌우 반전
+    지시가 새어 들어가면 멀쩡한 옷을 뒤집는 역효과가 나기 때문이다.
+    """
+    # `is True` 엄격 비교 — 저장 API 는 임의 JSON 을 받으므로 문자열 "false" 나 0 이 들어올 수
+    # 있고, truthiness 로 읽으면 "false" 가 블록을 켜서 멀쩡한 옷을 좌우로 뒤집는다.
+    if analysis.get("sourceMirrored") is not True:
+        return ""
+    return (
+        "MIRRORED SOURCE PHOTOS: the product photos were shot in a mirror, so all lettering, "
+        "numbers, logos and asymmetric details appear laterally flipped in them. Reproduce the "
+        "garment's TRUE design, not the mirror image: render every text, number and logo in "
+        "normal readable orientation, and place asymmetric elements (chest print, pocket, "
+        "closure side) on the side they truly belong to — the opposite side from the photo. "
+        "Everything else about the garment stays exactly as shown."
+    )
+
+
 def render_mannequin_prompt(
     template: str,
     ctx: MannequinPromptContext,
@@ -188,7 +228,8 @@ def render_mannequin_prompt(
     product_block = _product_block(
         product, analysis, seller_canon, knowledge, include_legacy_fit=fit_profile is None
     )
-    blocks = [text, fit_block, product_block]
+    mirror_block = build_mirrored_source_block(analysis)
+    blocks = [text, fit_block, product_block, mirror_block]
     return "\n\n".join(block for block in blocks if block)
 
 

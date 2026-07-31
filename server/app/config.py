@@ -58,6 +58,29 @@ class Settings:
     # enforce(불일치 시 correctionPrompt로 재생성 — 마네킹 재시도 루프 재사용, max_attempts 내).
     # 키 미설정/판정 실패는 게이트 미적용(graceful). 기본 off.
     image_qc: str = "off"
+    # AG-P2 4축 점수 임계 (플랜 Phase 2). 이진 pass/retry 로는 "얼마나 나쁜지"를 몰라
+    # 자동통과/사람검수/자동재생성 3분기를 못 만든다. image_qc=enforce 일 때만 게이팅에 쓰인다.
+    #
+    # 2026-07-31 캘리브레이션(scripts/qc_calibrate_image.py). **생성 시점으로 층화해야 한다** —
+    # 저장된 컷은 여러 시점·설정의 산출물이라 섞으면 현재 파이프라인 품질을 오독한다:
+    #   07-24 구컷 26건: product_fidelity 중앙 56.5 · critical 16/26
+    #   07-30 컷   4건: 중앙 82.5 · critical 1/4
+    #   07-31 신규 8건: 중앙 80.0 · critical 0/8   ← 현재 파이프라인의 실제 분포
+    # 초기 추측값 90/75 는 신규 분포(75~85)에서도 통과 0 이라 폐기했다. MANNEQUIN_QC_ENABLED 가
+    # pass율 0% 로 전 생성을 막았던 2026-07-07 사고와 같은 조건이다.
+    # 80/65 는 신규 분포에서 상위 절반이 통과하고 75점 미만만 재생성으로 간다.
+    # 주의: 구컷 기준 재생성률(~55%)을 현재 품질로 읽지 말 것 — 신규 8건의 critical 은 0 이다.
+    qc_score_auto_pass: int = 80   # 이상 → 자동 통과
+    qc_score_review: int = 65      # 이상 → 사람 검수(출고는 하되 표시), 미만 → 자동 재생성
+    # 편집(축 교정·가슴 2패스) 회귀 판정의 노이즈 마진. 등급이 내려가도 최저점 하락이 이 값
+    # 이하면 편집을 살린다. 판정기는 같은 이미지에 ±30 이 나오고 컷의 23% 가 정확히 80(=경계)
+    # 이라, 등급만 보면 2패스가 4~7점 노이즈에도 매번 롤백된다(2026-07-31 prod 실측:
+    # 80/83/85 → 76/78/77 로 롤백 → 가슴 볼륨이 한 번도 출고되지 않음).
+    qc_edit_regression_margin: int = 10
+    # 미세 반복 패턴(스트라이프·체크) 상품의 출력 해상도. 'off' 면 승급 없이 mannequin_image_size 를 쓴다.
+    # 2K 실측(2026-08-01): 줄 주기 8.9px → 한 주기를 이루는 요소당 2px 남짓이라 두 색 줄이 한 색으로
+    # 뭉개졌다. 4K 면 주기 ~18px 로 요소당 4~5px 이 확보된다. 무지 상품은 승급하지 않는다(비용).
+    mannequin_pattern_image_size: str = "4K"  # off | 1K | 2K | 4K
     # 생성 컷의 상품·로고 동일성 QC. off=미판정, shadow=판정만 기록,
     # bestof=불일치 시 원본 입력에서 후보를 더 생성해 첫 pass 또는 picker 최선을 채택.
     garment_qc_mode: str = "bestof"  # off | shadow | bestof
@@ -73,6 +96,13 @@ class Settings:
     # off | on. 기본 off, 실물 확인 후 on. 켜면 여성 컷당 이미지 호출이 1→2회.
     # 2패스 실패·거부는 삼키고 1패스 컷을 쓴다(잡을 죽이지 않는다).
     mannequin_bust_pass: str = "off"
+    # 원단 패턴 2패스 — 미세 패턴 상품에서 표면 패턴만 상품 사진 기준으로 다시 입힌다.
+    # 가슴 2패스와 같은 규약: 기본 off 로 두고 실측 확인 뒤 켠다.
+    mannequin_fabric_pass: str = "off"  # off | on
+    # untuck 2패스 — 상의 밑단을 하의 허리밴드 밖으로 빼는 전용 편집. 프롬프트 5회 강화와
+    # QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). QC 검출이 불안정해 게이트로 쓰지
+    # 않고 매칭 하의가 붙는 top/outer 잡마다 1회 돈다(이미 빠져 있으면 무변경 반환 지시).
+    mannequin_untuck_pass: str = "off"  # off | on
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
@@ -214,6 +244,8 @@ def load_settings() -> Settings:
         mannequin_prompt_file=os.getenv("MANNEQUIN_PROMPT_FILE") or None,
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
         mannequin_bust_pass=_bust_pass(),
+        mannequin_fabric_pass=_flag("MANNEQUIN_FABRIC_PASS", "off", {"off", "on"}),
+        mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
@@ -238,6 +270,18 @@ def load_settings() -> Settings:
         ),
         input_qc=_flag("INPUT_QC", "off", {"off", "shadow", "enforce"}),
         image_qc=_flag("IMAGE_QC", "off", {"off", "shadow", "enforce"}),
+        # 기본값은 dataclass 선언과 **반드시 일치**해야 한다. 실행 경로는 load_settings 라
+        # 여기가 정본이고, dataclass 만 고치면 테스트는 통과하는데 실서비스는 옛 값으로 돈다
+        # (2026-07-31 실측: dataclass 80 인데 로더 90 이라 enforce E2E 에서 90 이 찍혔다).
+        qc_score_auto_pass=int(os.getenv(
+            "QC_SCORE_AUTO_PASS", str(Settings.__dataclass_fields__["qc_score_auto_pass"].default))),
+        qc_score_review=int(os.getenv(
+            "QC_SCORE_REVIEW", str(Settings.__dataclass_fields__["qc_score_review"].default))),
+        qc_edit_regression_margin=int(os.getenv(
+            "QC_EDIT_REGRESSION_MARGIN",
+            str(Settings.__dataclass_fields__["qc_edit_regression_margin"].default))),
+        mannequin_pattern_image_size=_flag(
+            "MANNEQUIN_PATTERN_IMAGE_SIZE", "4K", {"off", "1k", "2k", "4k"}).upper(),
         garment_qc_mode=_flag(
             "GARMENT_QC_MODE", "bestof", {"off", "shadow", "bestof"}),
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),

@@ -5,7 +5,9 @@
    ============================================================= */
 import { axesFor } from './fitAxes.js';
 
-const MATCHING_AXIS = Object.freeze({ pants: 'cut', skirt: 'silhouette' });
+// top: 하의 상품의 매칭 상의는 length 축 — 상의 기장이 상품(바지)의 허리 노출을 결정한다
+// (2026-08-01 WS2, 서버 fit_axes._MATCHING_FIT_AXIS 미러).
+const MATCHING_AXIS = Object.freeze({ pants: 'cut', skirt: 'silhouette', top: 'length' });
 
 const selectionId = (selection) => {
   if (typeof selection === 'string') return selection;
