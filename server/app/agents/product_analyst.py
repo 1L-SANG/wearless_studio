@@ -318,7 +318,11 @@ def _materials(raw) -> list[dict]:
 def validate(raw: dict) -> dict:
     """enum 밖 값 드롭, measurements 강제 제거, points 절단, styleTags 필터. 출력 키는 고정 집합만."""
     raw = raw or {}
-    genders = [g for g in (raw.get("targetGenders") or []) if _in(g, GENDERS)]
+    # 성별은 단일값으로 좁힌다(2026-07-31 사용자 결정). 폼의 성별 칩이 단일 선택인데 AI 는
+    # 유니섹스 옷에 ["women","men"] 둘을 채워, 칩엔 첫 값만 켜지고 매칭 의류 조회는 남녀 전부를
+    # 통과시켜 "성별 상관없이 다 뜬다"가 됐다(실측: 저장 분석 55건 중 17건이 2개).
+    # AI 가 앞에 둔 값(주 대상)을 살린다 — 화면에 보이는 칩 = 매칭 필터.
+    genders = [g for g in (raw.get("targetGenders") or []) if _in(g, GENDERS)][:1]
     swatches = []
     for s in raw.get("swatchSuggestions") or []:
         if isinstance(s, dict) and _in(s.get("swatchId"), SWATCH_IDS):
