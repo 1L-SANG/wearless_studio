@@ -141,8 +141,8 @@
 /* E — 2×2 angle wells: all four angles at a glance, images stack inside each */
 .slot-wells { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 /* 위계 정리(2026-07-31): 그림자 테두리는 바깥 색상 그룹 카드가 담당 — 안쪽 이미지 박스는
-   그림자를 겹치지 않고 옅은 배경 틴트로만 구역을 나눈다 (업로드 타일 점선이 3단계). */
-.slot-well { background: var(--bg-2); border-radius: var(--r-5); padding: 14px; }
+   상자감 없이 라벨+업로드 점선만 (회색 틴트는 사용자 피드백으로 제거). */
+.slot-well { background: transparent; border-radius: var(--r-5); padding: 14px 0 4px; }
 .slot-well-head { display: flex; align-items: center; margin-bottom: 12px; }
 .slot-well-head { font-size: 14px; font-weight: 700; color: var(--fg-1); }
 .slot-well-head .swh-label { display: inline-flex; align-items: center; }
