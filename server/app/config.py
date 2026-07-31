@@ -72,6 +72,11 @@ class Settings:
     # 주의: 구컷 기준 재생성률(~55%)을 현재 품질로 읽지 말 것 — 신규 8건의 critical 은 0 이다.
     qc_score_auto_pass: int = 80   # 이상 → 자동 통과
     qc_score_review: int = 65      # 이상 → 사람 검수(출고는 하되 표시), 미만 → 자동 재생성
+    # 편집(축 교정·가슴 2패스) 회귀 판정의 노이즈 마진. 등급이 내려가도 최저점 하락이 이 값
+    # 이하면 편집을 살린다. 판정기는 같은 이미지에 ±30 이 나오고 컷의 23% 가 정확히 80(=경계)
+    # 이라, 등급만 보면 2패스가 4~7점 노이즈에도 매번 롤백된다(2026-07-31 prod 실측:
+    # 80/83/85 → 76/78/77 로 롤백 → 가슴 볼륨이 한 번도 출고되지 않음).
+    qc_edit_regression_margin: int = 10
     # 생성 컷의 상품·로고 동일성 QC. off=미판정, shadow=판정만 기록,
     # bestof=불일치 시 원본 입력에서 후보를 더 생성해 첫 pass 또는 picker 최선을 채택.
     garment_qc_mode: str = "bestof"  # off | shadow | bestof
@@ -259,6 +264,9 @@ def load_settings() -> Settings:
             "QC_SCORE_AUTO_PASS", str(Settings.__dataclass_fields__["qc_score_auto_pass"].default))),
         qc_score_review=int(os.getenv(
             "QC_SCORE_REVIEW", str(Settings.__dataclass_fields__["qc_score_review"].default))),
+        qc_edit_regression_margin=int(os.getenv(
+            "QC_EDIT_REGRESSION_MARGIN",
+            str(Settings.__dataclass_fields__["qc_edit_regression_margin"].default))),
         garment_qc_mode=_flag(
             "GARMENT_QC_MODE", "bestof", {"off", "shadow", "bestof"}),
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),

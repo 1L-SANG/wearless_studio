@@ -477,6 +477,36 @@ def test_edit_regressed_only_fires_on_grade_drop_or_new_critical():
     assert edit_regressed(s, {"critical_errors": []}, _p2(30)) is False
 
 
+def test_edit_regressed_absorbs_judge_noise_within_margin():
+    """등급이 내려가도 하락폭이 마진 이내면 편집을 살린다 — 2패스가 노이즈에 상시 롤백되던 버그.
+
+    2026-07-31 prod 실측(job 3c6dd251): 가슴 2패스가 `applied` 로 이미지를 바꿨는데 재채점이
+    85/83/80 → 77/78/76 으로 나와 auto_pass→needs_review 로 갈렸고, 편집이 통째로 롤백되어
+    (`edit_reverted reason=all_edits`) 가슴 볼륨이 한 번도 출고되지 않았다. 최저점 하락은 4점
+    뿐인데 임계 80 이 판정기 최빈값이라 등급만 보면 매번 이 경계에서 깨진다.
+    """
+    from app.workers.mannequin_job import edit_regressed
+    s = types.SimpleNamespace(qc_score_auto_pass=80, qc_score_review=65, image_qc="enforce",
+                              qc_edit_regression_margin=10)
+
+    # 실측 케이스: 최저 80 → 76 (4점) — 등급은 내려가지만 노이즈 범위라 편집 유지
+    pre, post = _p2(fid=83, nat=80, qual=85), _p2(fid=78, nat=76, qual=77)
+    assert edit_regressed(s, pre, post) is False, "4점 하락은 판정 노이즈 — 2패스를 살려야 한다"
+
+    # 경계: 마진과 정확히 같은 하락은 유지, 한 점 더 떨어지면 되돌린다
+    assert edit_regressed(s, _p2(80), _p2(70)) is False, "하락 10 = 마진 → 유지"
+    assert edit_regressed(s, _p2(80), _p2(69)) is True, "하락 11 > 마진 → 롤백"
+
+    # 진짜 손상은 마진과 무관하게 걸러진다
+    assert edit_regressed(s, _p2(90), _p2(30)) is True, "실측 85→30 손상"
+    assert edit_regressed(s, _p2(90), _p2(88, critical=["breast-like bulges"])) is True, \
+        "신규 치명오류는 하락폭과 무관"
+
+    # 마진 미설정(구 동작)에서는 등급 하락만으로 롤백 — 설정이 없는 호출자 보호
+    old = types.SimpleNamespace(qc_score_auto_pass=80, qc_score_review=65, image_qc="enforce")
+    assert edit_regressed(old, pre, post) is True
+
+
 def test_regressive_edit_is_reverted_to_pre_edit_image(monkeypatch):
     """편집이 등급을 떨어뜨리면 이미지·점수 **둘 다** 편집 전으로 돌아가야 한다.
 

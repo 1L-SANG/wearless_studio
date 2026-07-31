@@ -313,9 +313,14 @@ def edit_regressed(s, pre_p2, post_p2) -> bool:
     편집이 A~C 를 깎아도 그 대가가 정당한지는 A~C 만 봐서는 알 수 없다 — 작은 하락은
     판정 노이즈로 보고 편집을 살린다.
 
-    다만 편집이 **등급을 떨어뜨리거나**(auto_pass → needs_review 등) **없던 치명 오류를
-    만들면** 얘기가 다르다. 그건 교정의 대가가 아니라 손상이다. 실측(2026-07-31 관측):
-    가슴 2패스가 치마 원단을 왜곡해 product_fidelity 85 → 30, "breast-like bulges".
+    다만 편집이 **등급을 떨어뜨리면서 최저점이 마진(qc_edit_regression_margin)보다 크게
+    깎이거나**, **없던 치명 오류를 만들면** 얘기가 다르다. 그건 교정의 대가가 아니라 손상이다.
+    실측(2026-07-31 관측): 가슴 2패스가 치마 원단을 왜곡해 product_fidelity 85 → 30,
+    "breast-like bulges".
+
+    등급 하락만으로 되돌리지 않는 이유: 임계(80)가 판정기 최빈값이라 컷의 23% 가 정확히 80 에
+    걸리고, 재현성은 같은 이미지에 ±30 이다. 등급만 보면 4점 노이즈에도 편집이 상시 롤백된다
+    (prod 실측 80→76 롤백으로 가슴 볼륨이 한 번도 출고되지 않음).
 
     신호가 한쪽이라도 없으면 비교 불가 → 되돌리지 않는다(편집 유지가 기존 동작).
     """
@@ -326,11 +331,23 @@ def edit_regressed(s, pre_p2, post_p2) -> bool:
     # (codex 2026-07-31 8차 HIGH). 치명오류는 점수와 무관하게 그 자체로 출고 불가다.
     if post_p2.get("critical_errors") and not pre_p2.get("critical_errors"):
         return True
-    if _worst_score(pre_p2, _COMPARABLE_KEYS) is None:
+    pre_worst = _worst_score(pre_p2, _COMPARABLE_KEYS)
+    if pre_worst is None:
         return False  # 편집 전 점수가 없으면 등급 하락은 논할 수 없다
     pre_rank = _GRADE_RANK[score_outcome(s, pre_p2)]
     post_rank = _GRADE_RANK[score_outcome(s, post_p2)]
-    return post_rank < pre_rank
+    if post_rank >= pre_rank:
+        return False
+    # 등급이 내려갔어도 **하락폭이 판정 노이즈 수준이면 편집을 살린다.** 등급만 보면 임계(80)에
+    # 몰린 분포 탓에 2패스가 상시 롤백된다 — 2026-07-31 prod 실측: 80/83/85 → 76/78/77(최저
+    # 4점 하락)에 auto_pass→needs_review 로 갈려 가슴 볼륨이 통째로 되돌려졌다. 판정기 재현성이
+    # 같은 이미지에 ±30 인데 4점 차를 손상으로 읽으면 편집은 영원히 출고되지 않는다.
+    # 진짜 손상(실측 85→30)은 마진을 훨씬 넘으므로 그대로 걸러진다.
+    post_worst = _worst_score(post_p2, _COMPARABLE_KEYS)
+    margin = getattr(s, "qc_edit_regression_margin", 0) or 0
+    if post_worst is not None and (pre_worst - post_worst) <= margin:
+        return False
+    return True
 
 
 def score_outcome(s, p2) -> str:

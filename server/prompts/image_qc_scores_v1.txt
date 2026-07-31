@@ -23,5 +23,16 @@ scores. Use it only for: text or logo altered, invented or unreadable; garment c
 garment type changed; garment fit changed — a loose or oversized garment shown as fitted, or the
 hem pulled to a different height, so a shopper would order the wrong size; a sleeve, button,
 pocket or other structural element missing; an element present that does not exist on the
-original; body or garment shape broken. Write each one as a short phrase. Return an empty list
-when none apply — an empty list is the common case.
+original; body or garment shape broken; the top or outerwear product tucked into the bottom.
+Write each one as a short phrase. Return an empty list when none apply — an empty list is the
+common case.
+
+TUCK. When the product being judged is a top or outerwear worn with a bottom, the product must be
+worn OUTSIDE the bottom, with its hem forming an unbroken visible line all the way around the
+body. Any tuck is a defect — a full tuck, a front, half or French tuck, tucking one side only, or
+folding or rolling the hem under the waistband. Report it as the critical error
+"top tucked into the bottom". This is not a styling preference: the generator is instructed never
+to tuck, so a tucked hem means the instruction was not followed and the cut misrepresents the
+product's length. Judge what you see on the mannequin, not what the product photos show — a
+product photographed tucked must still be generated untucked. The only exception is a declared
+fit instruction above that explicitly asks for a tucked hem.

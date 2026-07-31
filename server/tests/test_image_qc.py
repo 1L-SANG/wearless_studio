@@ -153,6 +153,28 @@ def test_scored_prompt_lists_fit_change_as_critical():
     assert "order the wrong size" in p, "왜 출고 불가인지(사이즈 오주문)가 근거로 있어야 한다"
 
 
+def test_scored_prompt_lists_tuck_as_critical():
+    """상의를 하의에 넣어버리는 건 치명오류다 — 생성 프롬프트만으로는 안 잡혔다.
+
+    `mannequin_generate_v1.txt` 는 이미 "COMPLETELY OUTSIDE / never tuck / no French tuck" 까지
+    명문화했고 `1d70338` 로 부분 tuck 금지도 넣었는데, 2026-07-31 prod 컷(job 3c6dd251)은
+    셔츠를 청바지에 넣은 채 나왔고 QC 는 `mismatches: []`·`critical_errors: []` 로 **통과**시켰다.
+    검출이 없으면 재생성 트리거도 없다 — 그래서 판정기 어휘에 올린다.
+
+    치명오류로 두는 이유는 핏 변화와 같다: `score_outcome` 이 점수와 무관하게 regenerate 로
+    보내는 유일한 경로다. 대신 오탐이 무한 재생성을 부르지 않도록 선언 의도(DECLARED FIT)에
+    tuck 요청이 있으면 예외라는 문장을 함께 둔다.
+    """
+    p = iq.build_prompt(2, scored=True)
+    assert "top tucked into the bottom" in p, "치명오류 어휘에 있어야 재생성이 걸린다"
+    assert "French tuck" in p, "부분 tuck 도 결함임을 명시해야 한다"
+    assert "declared\nfit instruction" in p or "declared fit instruction" in p, \
+        "선언된 의도는 예외로 빠져야 무한 재생성을 막는다"
+    # 주입 블록 마커(대문자 DECLARED FIT)는 fit_profile 이 있을 때만 나와야 한다 —
+    # 기본 프롬프트가 그 토큰을 쓰면 build_declared_fit_block 유무를 구분할 수 없다.
+    assert "DECLARED FIT" not in p
+
+
 _FIT_PROFILE = {"category": "top", "gender": "women", "source": "seller", "version": 2,
                 "axes": {"fit": "slim", "length": "crop"}}
 
