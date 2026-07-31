@@ -26,6 +26,17 @@ const PLACE_TYPE_GROUPS = {
   outdoor: ['outdoor'],
 };
 
+// 카탈로그 정규화 릴리스(codex/normalize-space-place-types)의 13개 표준 어휘 선반영 —
+// 릴리스가 합쳐져도 분산 판정이 같은 버킷으로 이어지도록 한다.
+Object.assign(PLACE_TYPE_GROUPS, {
+  cafe: [...PLACE_TYPE_GROUPS.cafe, 'cafe-shop-interior'],
+  home: [...PLACE_TYPE_GROUPS.home, 'home-interior'],
+  indoor: [...PLACE_TYPE_GROUPS.indoor, 'building-interior', 'library-interior', 'atelier-interior'],
+  urban: [...PLACE_TYPE_GROUPS.urban, 'urban-building-exterior', 'urban-alley', 'storefront-street', 'industrial-yard', 'service-interior'],
+  coast: [...PLACE_TYPE_GROUPS.coast, 'waterfront'],
+  nature: [...PLACE_TYPE_GROUPS.nature, 'park-garden'],
+});
+
 const NORMALIZED_PLACE_TYPES = new Map(
   Object.entries(PLACE_TYPE_GROUPS)
     .flatMap(([normalized, rawValues]) => rawValues.map((raw) => [raw, normalized])),
@@ -99,7 +110,10 @@ export function pickEntrySets({
     }
   }
 
-  const horizonPool = storyboardSpaceSetsFor({ gender });
+  // 서버 저장 검증(space_set_not_applicable)과 정합 — 호리존도 카탈로그 의류 메타를 따른다.
+  // "호리존 세트 = 전 의류" 오너 결정은 카탈로그·서버 레지스트리(server/app/data/space_set_assets.json)의
+  // 전의류 선언으로 실현되며, 선언이 반영되면 이 필터는 자동으로 전 의류를 통과시킨다.
+  const horizonPool = storyboardSpaceSetsFor({ gender, clothingType });
   return {
     stylingSets,
     rotationSet: seededPick(

@@ -44,12 +44,6 @@ const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) 
   ...(extra || {}),
 });
 
-function entryGender(product) {
-  if (product.clothingType === 'dress') return 'women';
-  if (!Array.isArray(product.targetGenders) || product.targetGenders.length === 0) return null;
-  return genderForClothingType(product.clothingType, product.targetGenders);
-}
-
 function setMemberBlocks(set, colorId, contentRole) {
   if (!set) return [];
   const groupId = spaceSetGroupId(set.id, uid('sg'));
@@ -127,7 +121,8 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   const hasDetail = hasDetailSource({ colors: list });
   const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
   const clothingType = context.clothingType || 'top';
-  const gender = entryGender({ ...context, clothingType });
+  // 서버(select_base_gender)와 동일 의미론: 남성 단독일 때만 men, 혼합·미상은 women.
+  const gender = genderForClothingType(clothingType, context.targetGenders);
   const { stylingSets, rotationSet, sequenceSet } = pickEntrySets({
     gender,
     clothingType,

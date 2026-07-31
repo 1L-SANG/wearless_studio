@@ -7,6 +7,7 @@ import {
   storedExampleConditionStatus,
 } from '../../src/lib/generationExamples.js';
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
+import { pickEntrySets } from '../../src/lib/storyboardEntryPlacement.js';
 import {
   genderForClothingType,
   normalizeTargetGendersForClothingType,
@@ -329,10 +330,12 @@ test('every supported gender and clothing category seeds styling and horizon set
     const stylingMembers = setMembers.filter((item) => item.cutType === 'styling');
     const horizonMembers = setMembers.filter((item) => item.cutType === 'horizon');
 
+    // 전의류 선언 전 서버 정합: 회전 세트는 의류 메타(bottom)가 맞을 때만, 그 외엔 낱장 트리오 폴백.
+    const rotationApplies = clothingType === 'bottom';
     assert.equal(basic.length, 14, `${gender}/${clothingType} basic`);
     assert.equal(stylingMembers.length, 6, `${gender}/${clothingType} styling members`);
-    assert.equal(horizonMembers.length, 3, `${gender}/${clothingType} rotation members`);
-    assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 3);
+    assert.equal(horizonMembers.length, rotationApplies ? 3 : 0, `${gender}/${clothingType} rotation members`);
+    assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, rotationApplies ? 3 : 2);
     assert.ok(spaceSetIdFromGroupId(setMembers[0].spaceGroupId));
     assert.ok(setMembers.every((item) => (
       item.exampleSelectionOrigin === 'auto'
@@ -340,10 +343,18 @@ test('every supported gender and clothing category seeds styling and horizon set
       && item.refScope === 'pose'
       && item.exampleId
     )));
-    const extendedLength = defaultStoryboard(fourColorsWithDetail, 'extended', context).length;
-    assert.ok(
-      extendedLength === 32 || extendedLength === 33,
-      `${gender}/${clothingType} extended: ${extendedLength}`,
+    // 확장형 기대 컷수를 실제 추첨 결과에서 유도 — 세트 슬롯 고갈(낱장 2컷 폴백)과
+    // 호리존 시퀀스 미커버(트리오 3컷 폴백)를 카테고리별로 그대로 반영한다.
+    const picked = pickEntrySets({
+      gender, clothingType, projectId: context.projectId, stylingCount: 3,
+    });
+    const stylingCuts = picked.stylingSets
+      .reduce((sum, set) => sum + (set ? set.members.length : 2), 0);
+    const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
+    assert.equal(
+      defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
+      2 + stylingCuts + horizonCuts + 1 + 12 + 4,
+      `${gender}/${clothingType} extended`,
     );
   }
 });
