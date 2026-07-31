@@ -152,10 +152,14 @@ def scene_anchor_cut_id(s, job: dict | None) -> str | None:
 
 
 async def _load_scene_anchor(app, pool, job_id, user_id, project_id, cut_id):
-    """앵커 컷 바이트 로드. 실패해도 생성은 계속하되 **원인을 구분해서** 남긴다.
+    """앵커 컷 바이트 + 그때의 QC 스냅샷 로드 → (InlineImage, qc_scores) 또는 (None, None).
 
-    "선택이 없다"는 정상(첫 조정·선택 해제)이라 여기 오지도 않는다. 여기까지 왔는데 못 찾으면
-    선택된 컷의 자산이 DB/R2 에서 사라진 것이고, 그건 데이터 손상이라 조용히 넘기면 안 된다.
+    실패해도 생성은 계속하되 **원인을 구분해서** 남긴다. "선택이 없다"는 정상(첫 조정·선택
+    해제)이라 여기 오지도 않는다. 여기까지 왔는데 못 찾으면 선택된 컷의 자산이 DB/R2 에서
+    사라진 것이고, 그건 데이터 손상이라 조용히 넘기면 안 된다.
+
+    qc_scores 를 같이 돌려주는 이유: 이 컷을 **편집 캔버스**로 쓸지 판단해야 한다. 결함 있는
+    컷 위에 편집을 쌓으면 그 결함이 조정할 때마다 영구히 따라온다.
     """
     try:
         async with pool.connection() as conn:
@@ -163,14 +167,14 @@ async def _load_scene_anchor(app, pool, job_id, user_id, project_id, cut_id):
         if asset is None:
             log.warning("job %s scene_anchor 자산 없음 cut=%s", job_id, cut_id)
             await _emit(pool, job_id, "step", {"status": "scene_anchor_missing", "cut": cut_id})
-            return None
+            return None, None
         data = await asyncio.to_thread(app.state.r2.get_bytes, asset["r2_key"])
     except Exception as e:
         log.warning("job %s scene_anchor 로드 실패 cut=%s: %r", job_id, cut_id, e)
         await _emit(pool, job_id, "step", {
             "status": "scene_anchor_failed", "cut": cut_id, "error": type(e).__name__})
-        return None
-    return InlineImage(asset.get("mime_type") or "image/jpeg", data)
+        return None, None
+    return InlineImage(asset.get("mime_type") or "image/jpeg", data), asset.get("qc_scores")
 
 
 def _ref_manifest_lines(start_index: int, n: int) -> str:
@@ -268,6 +272,142 @@ def tier_for_job(s, job: dict | None) -> str:
     if adjust and ((job or {}).get("payload") or {}).get("mode") == "regenerate":
         return adjust
     return s.mannequin_tier
+
+
+def adjust_edit_plan(s, job, *, fit_profile, adjusted_axes, anchor_qc) -> tuple[list, str]:
+    """조정을 편집으로 처리할 수 있는가 + 무엇을 편집할지 (순수). → (specs, reason).
+
+    specs 가 비면 편집하지 않고 기존 재생성으로 간다. reason 은 이벤트로 남겨서, QA 때
+    "왜 편집이 안 돌았지"를 추측하지 않고 읽을 수 있게 한다.
+
+    거르는 조건 하나하나가 실패 사례다:
+    - `no_delta`: 조정 축이 비었다(프로필 미전송·동일 값 재요청). "핏을 바꿔라"라는 지시에
+      바꿀 대상이 없으면 모델이 아무거나 건드린다 — 편집이 가장 위험해지는 입력이다.
+    - `unsupported_axes`: 조정된 축 중 편집 문장 템플릿이 없는 것이 있다(매칭 의류 축·축 제거
+      등). 일부만 편집하면 셀러 요청의 나머지가 조용히 사라진다 → 통째로 재생성이 정직하다.
+    - `canvas_not_clean`: 캔버스 컷이 auto_pass 가 아니다(구 컷의 판정 없음 포함). 결함 있는
+      컷 위에 편집을 쌓으면 그 결함이 조정할 때마다 영구 전파된다.
+    """
+    if getattr(s, "mannequin_adjust_edit", "off") != "on":
+        return [], "flag_off"
+    if ((job or {}).get("payload") or {}).get("mode") != "regenerate":
+        return [], "not_regenerate"
+    changed = tuple(a for a in (adjusted_axes or ()) if isinstance(a, str))
+    if not changed:
+        return [], "no_delta"
+    spec = mannequin_fit_qc.declared_axis_spec(fit_profile)
+    if not spec:
+        return [], "no_declared_axes"
+    by_axis = {e["axis"]: e for e in spec}
+    if any(a not in by_axis for a in changed):
+        return [], "unsupported_axes"
+    if not isinstance(anchor_qc, dict) or anchor_qc.get("outcome") != "auto_pass":
+        return [], "canvas_not_clean"
+    # 카탈로그 순서 유지 — 편집 문장 순서가 결정적이어야 프롬프트 해시가 안정된다.
+    return [e for e in spec if e["axis"] in set(changed)], "eligible"
+
+
+async def _try_adjust_by_edit(
+    *, app, job, candidate, base_fit, base_gender, prod_imgs, match_img, product, analysis,
+    fit_profile, adjusted_axes, scene_ref, anchor_qc, image_size, profile_hash,
+):
+    """조정을 이전 컷 **편집**으로 수행한다. 성공 시 저장된 컷 dict, 아니면 None(→ 재생성).
+
+    왜 편집인가(2026-07-31 셀러 관측): 조정이 재생성이라 배경·조명뿐 아니라 **체형·가슴까지**
+    매번 다시 뽑혔다. 캔버스를 이전 컷으로 주면 그 축들이 그림을 그리는 시작점이 되므로
+    "핏만 바뀐다"가 구조적으로 성립한다. untuck·fabric·bust 가 이미 같은 방식(생성본 위 단일
+    과제 편집)으로 작동한다 — 새 프레임워크가 아니라 그 패턴의 재사용이다.
+
+    설계 규율 넷:
+    - **편집 지시는 mannequin_fit_qc 것을 그대로 쓴다.** 축별 문장 템플릿과 "Change NOTHING
+      else" 꼬리가 이미 캘리브레이션돼 있다. 병렬 프레임워크를 또 만들지 않는다.
+    - **모델은 Pro 고정.** Flash 가 편집 지시를 거부·미반영한 기록이 있고, 조정 tier 실험
+      (MANNEQUIN_ADJUST_TIER)은 폴백 재생성 쪽에서 계속 유효하다.
+    - **후속 편집 체인(untuck·fabric·bust)을 돌리지 않는다.** 캔버스는 이미 그 패스들을 통과한
+      컷이다. 다시 돌리면 가슴이 누적으로 커지고 장면이 또 흔들린다 — 이 기능이 막으려는 현상
+      그 자체다(codex 2026-07-31 HIGH).
+    - **판정 실패는 폴백**이다. 다른 경로의 fail-open(판정 실패 시 원본 채택)과 반대로 간다.
+      여기선 "검증 못 한 편집본"보다 "검증된 재생성본"이 낫다.
+
+    예산: 이 편집 콜은 재생성 루프의 `mannequin_max_attempts` 와 **별도**로 나간다. 같은 통을
+    쓰면 편집이 실패했을 때 폴백 재생성이 굶는다(codex BLOCKER). 대가는 편집 실패 시 이미지
+    호출 1회 추가이고, 그건 폴백을 굶기는 것보다 싸다.
+    """
+    s = app.state.settings
+    pool, r2, gemini = app.state.pool, app.state.r2, app.state.gemini
+    job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
+    specs, reason = adjust_edit_plan(
+        s, job, fit_profile=fit_profile, adjusted_axes=adjusted_axes, anchor_qc=anchor_qc)
+    if scene_ref is None and reason == "eligible":
+        specs, reason = [], "no_canvas"
+    base_event = {"candidate": candidate, "status": "adjust_edit", "profile_hash": profile_hash,
+                  "axes": [e["axis"] for e in specs]}
+    if not specs:
+        await _emit(pool, job_id, "step", {**base_event, "outcome": reason})
+        return None
+
+    instruction = mannequin_fit_qc.build_edit_instruction(specs)
+    model = resolve_model(s, "image_high")
+    try:
+        edited = await gemini.generate_content_image(
+            model, instruction, [scene_ref], image_size,
+            aspect_ratio=s.mannequin_aspect_ratio)
+    except Exception as e:
+        log.warning("job %s adjust_edit 호출 실패: %r", job_id, e)
+        await _emit(pool, job_id, "step", {
+            **base_event, "outcome": "edit_error", "error": type(e).__name__})
+        return None
+
+    # ── 검증: 선언 축이 실제로 반영됐는가 + 옷 정체성이 살아 있는가 ──────────────
+    # 여기서 통과 못 하면 재생성으로 간다. 편집은 "싸게 되면 좋은" 경로지 최후 수단이 아니다.
+    try:
+        v = await mannequin_fit_qc.verdict(
+            s, prod_imgs, InlineImage(edited.mime, edited.image), fit_profile, match_img)
+    except Exception as e:
+        log.warning("job %s adjust_edit 축 판정 실패: %r", job_id, e)
+        await _emit(pool, job_id, "step", {
+            **base_event, "outcome": "axis_judge_error", "error": type(e).__name__})
+        return None
+    failed = mannequin_fit_qc.failed_axis_specs(specs, v)
+    if failed or not v.get("identityPass"):
+        await _emit(pool, job_id, "step", {
+            **base_event, "outcome": "axis_not_applied" if failed else "identity_lost",
+            "failed_axes": [e["axis"] for e in failed]})
+        return None
+
+    # A~C 는 게이트로 남긴다 — D축(장면 일관성)만 재롤을 유발하지 않게 뺀다. 치명오류(로고
+    # 변형·색 변경·구조 붕괴)까지 눈감으면 편집 경로가 검증 구멍이 된다(codex BLOCKER).
+    p2 = None
+    if prod_imgs:
+        try:
+            p2 = await image_qc.verdict(
+                s, prod_imgs, InlineImage(edited.mime, edited.image), scored=True,
+                fit_profile=fit_profile)
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "status": "image_qc", "imageQc": p2, "phase": "adjust_edit"})
+        except Exception as e:
+            log.warning("job %s adjust_edit image_qc 실패: %r", job_id, e)
+            await _emit(pool, job_id, "step", {
+                **base_event, "outcome": "image_qc_error", "error": type(e).__name__})
+            return None  # 판정 못 했으면 폴백 — 검증 안 된 편집본을 내보내지 않는다
+        if p2.get("critical_errors"):
+            await _emit(pool, job_id, "step", {
+                **base_event, "outcome": "critical_error",
+                "critical_errors": p2.get("critical_errors")[:3]})
+            return None
+
+    # D축은 **측정만** 한다. 편집본은 캔버스에서 장면을 물려받으므로 높게 나와야 정상이고,
+    # 낮게 나오면 그건 이 기능이 실패했다는 신호다 — 그걸 재롤로 덮으면 관측 자체가 사라진다.
+    series = await _apply_series_qc(
+        app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
+        candidate=candidate, attempt=1, res=edited, anchor_img=scene_ref)
+    qc_scores = merge_qc_scores(p2, series, thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+    await _emit(pool, job_id, "step", {
+        **base_event, "outcome": "accepted", "model": model,
+        "seriesConsistency": (series or {}).get("consistency")})
+    return await _save_cut(
+        s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
+        candidate=candidate, base_fit=base_fit, res=edited, qc_scores=qc_scores)
 
 
 async def _apply_axis_qc(
@@ -923,6 +1063,7 @@ async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
     adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(), scene_ref=None,
+    anchor_qc=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
     s = app.state.settings
@@ -973,6 +1114,16 @@ async def _run_candidate(
     # 호출 **직전**에 소비하고, 재생성 여부는 남은 잔량으로만 판단한다.
     calls_spent = 0
     profile_hash = _canonical_profile_hash(fit_profile)
+    # ── 조정 편집 경로 (재생성 루프 **앞**) ──────────────────────────────────────
+    # 성공하면 여기서 끝난다. 실패·부적격이면 아래 재생성이 그대로 돈다 — 즉 이 블록은
+    # 경로를 더할 뿐 기존 경로를 바꾸지 않는다. 예산도 루프와 분리돼 있어 폴백이 굶지 않는다.
+    edited_cut = await _try_adjust_by_edit(
+        app=app, job=job, candidate=candidate, base_fit=base_fit, base_gender=base_gender,
+        prod_imgs=prod_imgs, match_img=match_img, product=product, analysis=analysis,
+        fit_profile=fit_profile, adjusted_axes=adjusted_axes, scene_ref=scene_ref,
+        anchor_qc=anchor_qc, image_size=image_size, profile_hash=profile_hash)
+    if edited_cut is not None:
+        return edited_cut
     for attempt in range(1, s.mannequin_max_attempts + 1):
         if calls_spent >= s.mannequin_max_attempts:
             # 편집이 예산을 다 먹어 생성조차 못 하는 상태. 사전·최종 게이트가 둘 다 잔량을
@@ -1254,10 +1405,10 @@ async def run_mannequin_job(app, job: dict) -> None:
                         {"status": "style_refs_attached", "ref_hashes": opaque, "n": len(ref_imgs)})
         # 장면 앵커(조정 잡 + 플래그 on + 선택 컷 존재). 셀러가 보고 조정한 그 컷에 배경·조명·
         # 프레이밍을 맞춘다. 못 붙어도 생성은 그대로 진행한다(앵커는 개선이지 전제가 아니다).
-        scene_ref = None
+        scene_ref, anchor_qc = None, None
         anchor_cut_id = scene_anchor_cut_id(s, job)
         if anchor_cut_id:
-            scene_ref = await _load_scene_anchor(
+            scene_ref, anchor_qc = await _load_scene_anchor(
                 app, pool, job_id, user_id, project_id, anchor_cut_id)
             if scene_ref is not None:
                 anchor_i = 2 + len(prod_assets) + (1 if match_img else 0) + len(ref_imgs)
@@ -1329,7 +1480,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                     analysis=analysis, clothing_type=clothing_type, image_manifest=manifest,
                     fit_profile=profile, adjusted_axes=adjusted_axes,
                     fit_profile_source=fit_profile_source, ref_imgs=ref_imgs,
-                    scene_ref=scene_ref)
+                    scene_ref=scene_ref, anchor_qc=anchor_qc)
             except Exception as e:
                 log.warning("job %s candidate %s failed: %r", job_id, letter, e)
                 r = None

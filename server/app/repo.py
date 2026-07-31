@@ -463,7 +463,10 @@ async def get_mannequin_cut_asset(
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            select a.id::text as id, a.r2_key, a.mime_type
+            -- qc_scores 도 같이 준다: 이 컷을 편집 캔버스로 쓸 자격이 있는지(그때 판정이
+            -- auto_pass 였는지) 워커가 판단해야 한다. 결함 있는 컷을 캔버스로 삼으면 그 결함이
+            -- 조정할 때마다 영구히 전파된다.
+            select a.id::text as id, a.r2_key, a.mime_type, mc.qc_scores
             from mannequin_cuts mc
             join projects pr on pr.id = mc.project_id
             -- deleted_at 필터는 list_series_reference_cuts 와 같은 이유다: 지워진 자산을

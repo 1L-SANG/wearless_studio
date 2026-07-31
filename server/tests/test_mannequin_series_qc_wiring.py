@@ -1151,6 +1151,222 @@ def test_effective_image_size_upgrades_only_pattern_products():
     assert effective_image_size(legacy, *striped) == "1K"
 
 
+_PROFILE_TOP = {"category": "top", "gender": "women", "source": "seller",
+                "axes": {"fit": "slim", "length": "long"}}
+
+
+def _plan(**kw):
+    """adjust_edit_plan 호출 축약 — 기본은 '전부 통과' 조합이고 인자로 한 조건만 깬다."""
+    from app.workers.mannequin_job import adjust_edit_plan
+
+    s = types.SimpleNamespace(mannequin_adjust_edit=kw.pop("flag", "on"))
+    job = {"payload": {"mode": kw.pop("mode", "regenerate")}}
+    return adjust_edit_plan(
+        s, job,
+        fit_profile=kw.pop("fit_profile", _PROFILE_TOP),
+        adjusted_axes=kw.pop("adjusted_axes", ("fit",)),
+        anchor_qc=kw.pop("anchor_qc", {"outcome": "auto_pass"}))
+
+
+def test_adjust_edit_plan_gates_every_way_it_can_go_wrong():
+    """편집 조정 자격은 순수 함수 — 거르는 조건 하나하나가 실제 실패 사례다.
+
+    동기(2026-07-31 셀러 관측): 조정하면 배경·조명뿐 아니라 **체형·가슴까지** 매번 바뀐다.
+    조정이 이전 컷 편집이 아니라 전체 재생성이기 때문이다. 편집으로 돌리면 그 축들이
+    캔버스에서 그대로 따라온다. 다만 아무 때나 편집하면 안 된다:
+
+    - no_delta: 바꿀 축이 없는데 "핏을 바꿔라"라고 하면 모델이 아무거나 건드린다
+    - unsupported_axes: 일부만 편집하면 셀러 요청의 나머지가 조용히 사라진다
+    - canvas_not_clean: 결함 있는 컷 위에 편집을 쌓으면 결함이 영구 전파된다
+    """
+    specs, reason = _plan()
+    assert reason == "eligible" and [e["axis"] for e in specs] == ["fit"]
+
+    assert _plan(flag="off")[1] == "flag_off", "기본 off 여야 기존 경로가 안 바뀐다"
+    assert _plan(mode="generate")[1] == "not_regenerate", "초기 생성엔 캔버스가 없다"
+    assert _plan(adjusted_axes=())[1] == "no_delta"
+    assert _plan(adjusted_axes=None)[1] == "no_delta"
+    assert _plan(fit_profile=None)[1] == "no_declared_axes"
+    # 선언되지 않은 축(매칭 의류 축·축 제거 등)이 섞이면 통째로 재생성이 정직하다
+    assert _plan(adjusted_axes=("fit", "matchingFit"))[1] == "unsupported_axes"
+    for bad in (None, {}, {"outcome": "needs_review"}, {"outcome": "regenerate"}):
+        assert _plan(anchor_qc=bad)[1] == "canvas_not_clean", bad
+    # 여러 축을 한 번에 조정하면 카탈로그 순서를 유지한다(프롬프트 해시 안정)
+    specs, reason = _plan(adjusted_axes=("length", "fit"))
+    assert reason == "eligible" and [e["axis"] for e in specs] == ["fit", "length"]
+
+
+class _EditGemini:
+    def __init__(self, error=None):
+        self.error, self.calls = error, []
+
+    async def generate_content_image(self, model, prompt, images, size, aspect_ratio=None):
+        self.calls.append({"model": model, "prompt": prompt, "n_images": len(images)})
+        if self.error:
+            raise self.error
+        return types.SimpleNamespace(mime="image/png", image=b"edited")
+
+
+def _run_edit(monkeypatch, *, axis_verdict=None, axis_error=None, image_qc=None,
+              image_qc_error=None, series=None, gemini=None, anchor_qc=None):
+    """편집 조정 경로 1회 실행 → (결과, 이벤트, gemini)."""
+    from app.workers import mannequin_job as mj
+
+    emits = []
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        emits.append((event_type, dict(payload)))
+
+    async def fake_axis_verdict(s, prod_imgs, img, profile, match_img):
+        if axis_error:
+            raise axis_error
+        return axis_verdict
+
+    async def fake_image_qc(s, prod_imgs, img, scored=True, fit_profile=None):
+        if image_qc_error:
+            raise image_qc_error
+        return image_qc
+
+    async def fake_series(**kw):
+        return series
+
+    async def fake_save(**kw):
+        return {"saved": True, "qc_scores": kw["qc_scores"], "res": kw["res"]}
+
+    monkeypatch.setattr(mj, "_emit", fake_emit)
+    monkeypatch.setattr(mj.mannequin_fit_qc, "verdict", fake_axis_verdict)
+    monkeypatch.setattr(mj.image_qc, "verdict", fake_image_qc)
+    monkeypatch.setattr(mj, "_apply_series_qc", fake_series)
+    monkeypatch.setattr(mj, "_save_cut", fake_save)
+
+    gemini = gemini or _EditGemini()
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=make_settings(mannequin_adjust_edit="on", mannequin_scene_anchor="on"),
+        pool=_FakePool(), r2=_R2(), gemini=gemini))
+    out = asyncio.run(mj._try_adjust_by_edit(
+        app=app, job={"id": "j1", "user_id": "u1", "project_id": "p1",
+                      "payload": {"mode": "regenerate"}},
+        candidate="A", base_fit="regular", base_gender="women",
+        prod_imgs=[mj.InlineImage("image/png", b"prod")], match_img=None,
+        product={}, analysis={}, fit_profile=_PROFILE_TOP, adjusted_axes=("fit",),
+        scene_ref=mj.InlineImage("image/png", b"canvas"),
+        anchor_qc=anchor_qc if anchor_qc is not None else {"outcome": "auto_pass"},
+        image_size="2K", profile_hash="ph"))
+    return out, emits, gemini
+
+
+def _edit_outcome(emits):
+    return [p.get("outcome") for t, p in emits if p.get("status") == "adjust_edit"]
+
+
+_AXIS_OK = {"identityPass": True,
+            "axisPass": [{"axis": "fit", "target": "slim", "pass": True, "visible": True}],
+            "mismatches": []}
+
+
+def test_adjust_edit_accepts_and_skips_the_post_edit_chain(monkeypatch):
+    """편집이 통과하면 저장하고 끝 — untuck·fabric·bust 체인을 다시 돌리지 않는다.
+
+    캔버스는 **이미 그 패스들을 통과한 컷**이다. 다시 돌리면 가슴이 누적으로 커지고 장면이 또
+    흔들린다 — 이 기능이 막으려는 현상 그 자체다(codex 2026-07-31 HIGH). 편집 경로가 재생성
+    루프 앞에서 return 하는 구조가 그 계약을 구조적으로 보장한다.
+
+    캔버스만 이미지로 보낸다는 것도 계약이다. 상품 사진을 같이 보내면 모델이 그걸 다시 그려
+    넣으면서 장면이 흔들린다.
+    """
+    out, emits, gemini = _run_edit(
+        monkeypatch, axis_verdict=_AXIS_OK,
+        image_qc={"critical_errors": [], "product_fidelity": 85},
+        series={"consistency": 92, "inconsistencies": []})
+
+    assert out and out["saved"] is True
+    assert out["res"].image == b"edited"
+    assert _edit_outcome(emits)[-1] == "accepted"
+    assert len(gemini.calls) == 1, "편집은 이미지 호출 1회다"
+    assert gemini.calls[0]["n_images"] == 1, "캔버스 한 장만 — 상품 사진 재첨부 금지"
+    assert gemini.calls[0]["model"] == "gemini-3-pro-image", \
+        "편집은 Pro 고정 — Flash 는 편집 지시를 거부·미반영한 기록이 있다"
+    assert "Change NOTHING else" in gemini.calls[0]["prompt"], \
+        "보존 계약(mannequin_fit_qc.EDIT_TAIL)을 그대로 쓴다"
+
+
+def test_adjust_edit_falls_back_when_the_declared_axis_did_not_land(monkeypatch):
+    """축이 반영 안 됐으면 폴백 — 조정했는데 안 바뀐 컷을 내보내는 게 최악이다."""
+    out, emits, _ = _run_edit(monkeypatch, axis_verdict={
+        "identityPass": True,
+        "axisPass": [{"axis": "fit", "target": "slim", "pass": False, "visible": True}],
+        "mismatches": []})
+    assert out is None
+    assert _edit_outcome(emits)[-1] == "axis_not_applied"
+
+
+def test_adjust_edit_falls_back_when_identity_is_lost(monkeypatch):
+    out, emits, _ = _run_edit(monkeypatch, axis_verdict={
+        "identityPass": False,
+        "axisPass": [{"axis": "fit", "target": "slim", "pass": True, "visible": True}],
+        "mismatches": ["색이 다르다"]})
+    assert out is None
+    assert _edit_outcome(emits)[-1] == "identity_lost"
+
+
+def test_adjust_edit_falls_back_on_critical_error(monkeypatch):
+    """치명오류(로고 변형·색 변경·구조 붕괴)는 D축과 달리 그대로 게이트로 남는다.
+
+    "조정 경로에선 QC 를 다 끄자"는 유혹이 있었지만, 그러면 로고 깨진 컷이 그대로 나간다.
+    끄는 대상은 **D축이 유발하는 재롤** 하나다(codex 2026-07-31 BLOCKER).
+    """
+    out, emits, _ = _run_edit(
+        monkeypatch, axis_verdict=_AXIS_OK,
+        image_qc={"critical_errors": ["garment color changed"], "product_fidelity": 40})
+    assert out is None
+    assert _edit_outcome(emits)[-1] == "critical_error"
+
+
+def test_adjust_edit_falls_back_when_a_judge_fails(monkeypatch):
+    """판정 실패는 폴백 — 다른 경로의 fail-open 과 **반대**로 간다.
+
+    보통은 판정이 죽어도 원본을 채택한다(판정이 생성을 막지 않게). 편집 경로는 다르다:
+    검증 못 한 편집본보다 검증된 재생성본이 낫고, 폴백 경로가 바로 옆에 살아 있다.
+    """
+    out, emits, _ = _run_edit(monkeypatch, axis_error=RuntimeError("vision down"))
+    assert out is None
+    assert _edit_outcome(emits)[-1] == "axis_judge_error"
+
+    out, emits, _ = _run_edit(
+        monkeypatch, axis_verdict=_AXIS_OK, image_qc_error=RuntimeError("vision down"))
+    assert out is None
+    assert _edit_outcome(emits)[-1] == "image_qc_error"
+
+    out, emits, _ = _run_edit(
+        monkeypatch, axis_verdict=_AXIS_OK, gemini=_EditGemini(error=RuntimeError("api down")))
+    assert out is None
+    assert _edit_outcome(emits)[-1] == "edit_error"
+
+
+def test_adjust_edit_measures_series_but_never_re_rolls_on_it(monkeypatch):
+    """D축이 낮아도 편집본을 채택한다 — 측정은 하되 재롤은 안 한다.
+
+    편집본은 캔버스에서 장면을 물려받으므로 D축이 높게 나와야 정상이다. 낮게 나왔다면 그건
+    이 기능이 실패했다는 신호인데, 그걸 재롤로 덮으면 관측 자체가 사라지고 셀러는 또 다른
+    사진을 받는다 — 정확히 이 기능이 없애려는 경험이다.
+    """
+    out, emits, gemini = _run_edit(
+        monkeypatch, axis_verdict=_AXIS_OK,
+        image_qc={"critical_errors": [], "product_fidelity": 85},
+        series={"consistency": 20, "inconsistencies": ["different studio"]})
+    assert out and out["saved"] is True, "D축 20 이어도 재롤하지 않는다"
+    assert out["qc_scores"]["series_consistency"] == 20, "점수는 그대로 기록된다"
+    assert len(gemini.calls) == 1
+
+
+def test_adjust_edit_reports_why_it_did_not_fire(monkeypatch):
+    """부적격이면 이벤트로 이유를 남기고 이미지 호출을 안 쓴다 — QA 때 추측하지 않게."""
+    out, emits, gemini = _run_edit(monkeypatch, anchor_qc={"outcome": "needs_review"})
+    assert out is None
+    assert _edit_outcome(emits) == ["canvas_not_clean"]
+    assert gemini.calls == [], "부적격 판단에 이미지 호출을 쓰지 않는다"
+
+
 def test_scene_anchor_cut_id_only_fires_for_flagged_regenerate():
     """장면 앵커 선택은 순수 함수 — 플래그·모드·payload 세 조건이 다 맞을 때만 붙는다.
 

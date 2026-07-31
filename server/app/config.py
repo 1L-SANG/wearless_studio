@@ -54,6 +54,11 @@ class Settings:
     # 조정은 장면을 처음부터 다시 뽑기 때문에 앵커가 없으면 배경·조명이 롤마다 흔들린다.
     # off | on. 킬 스위치를 둔 이유: OFF/ON 짝 비교와 롤백이 배포와 독립이어야 한다.
     mannequin_scene_anchor: str = "off"
+    # 조정을 **재생성이 아니라 편집**으로 수행한다. 이전 채택 컷을 캔버스로 주고 선언 축만
+    # 고치게 한다 — 체형·가슴·배경·조명이 캔버스에서 그대로 따라오므로 "조정만" 이 성립한다.
+    # 실패·부적격이면 기존 재생성으로 폴백하므로 이 플래그는 경로를 더할 뿐 빼지 않는다.
+    # scene_anchor 가 켜져 있어야 캔버스를 로드하므로 사실상 그것의 상위 기능이다.
+    mannequin_adjust_edit: str = "off"
     mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
     mannequin_aspect_ratio: str = "2:3"
@@ -252,6 +257,7 @@ def load_settings() -> Settings:
         mannequin_tier=_mannequin_tier(),
         mannequin_adjust_tier=_mannequin_adjust_tier(),
         mannequin_scene_anchor=_flag("MANNEQUIN_SCENE_ANCHOR", "off", {"off", "on"}),
+        mannequin_adjust_edit=_flag("MANNEQUIN_ADJUST_EDIT", "off", {"off", "on"}),
         mannequin_image_size=_image_size(),
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
         mannequin_max_attempts=int(os.getenv("MANNEQUIN_MAX_ATTEMPTS", "2")),
