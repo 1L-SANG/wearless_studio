@@ -141,6 +141,23 @@ async def _gen_cuts(app, job, prepared, product, analysis):
         b, images, manifest, has_face, product_images = item[:5]
         space_set_plate = item[5] if len(item) > 5 else None
         strict_space_scene_qc = bool(item[6]) if len(item) > 6 else False
+        passthrough = item[7] if len(item) > 7 else None
+        # 원본 패스스루 — 미세 패턴(스트라이프·체크) 상품의 디테일 컷은 **생성하지 않고**
+        # 셀러가 찍은 그 색상의 Detail 사진을 그대로 쓴다. 원단 매크로는 전신 컷 해상도로는
+        # 재현이 불가능하다(2026-08-01 측정: 4K 에서도 줄 한 주기당 14px → 파란 2가닥을 그리려면
+        # 가닥당 1px 미만). 있는 원본을 다시 그려 정보를 버리는 대신 그대로 싣는다.
+        # 생성 호출도 그만큼 줄어든다. 여기서 하는 이유: gather 순서가 곧 블록 순서라
+        # 나중에 합치면 컷 배열이 어긋난다.
+        if passthrough is not None:
+            await _emit(app.state.pool, job_id, "step",
+                        {"blockId": b.get("id"), "status": "cut_passthrough",
+                         "assetId": passthrough["id"]})
+            return (
+                {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{passthrough['id']}/file",
+                 "width": passthrough.get("width"), "height": passthrough.get("height")},
+                None,          # 새 asset 을 만들지 않는다 — 이미 존재하는 셀러 자산이다
+                False, None, [],
+            )
         async with sem:
             if not images:  # 옷 근거(상품/마네킹) 없음 — 무드만으로는 동일성 보장 불가, 생성하지 않는다
                 log.warning("AG-06 cut skipped (no garment-truth references) job %s block %s", job_id, b.get("id"))
@@ -282,7 +299,10 @@ async def _gen_cuts(app, job, prepared, product, analysis):
     for r in await asyncio.gather(*[_one(item) for item in prepared]):
         if r:
             cut_results.append(r[0])
-            cut_assets.append(r[1])
+            # 패스스루는 새 asset 이 없다(None). 이 목록의 길이가 **과금 단위**라 여기 넣으면
+            # 이미지 모델을 부르지도 않은 컷에 크레딧이 붙는다.
+            if r[1] is not None:
+                cut_assets.append(r[1])
             face_cuts += 1 if r[2] else 0
             if r[3] is not None:
                 garment_qcs.append({"blockId": r[0]["blockId"], **r[3]})
@@ -444,6 +464,24 @@ async def run_detail_page_job(app, job: dict) -> None:
 
             def _is_detail(block: dict) -> bool:
                 return block.get("cutType") == "product" and block.get("shot") == "detail"
+
+            # 미세 패턴 상품의 디테일 컷은 셀러 원본을 그대로 쓴다 → 생성 스킵.
+            # 왜: 원단 매크로(줄 하나가 파란 실 2가닥 + 베이지 1가닥)는 전신·근접 어느 쪽이든
+            # 생성 해상도로 재현이 안 된다(2026-08-01 측정: 4K 에서도 한 주기 14px → 요소당 2.3px).
+            # 원본이 있는데 다시 그리면 있던 정보를 버리는 셈이고, 체크·스트라이프는 그 원단이
+            # 곧 상품 정체성이라 셀러가 가장 먼저 알아본다. 무지는 생성도 잘 되므로 대상이 아니다.
+            # 타색(그 색상에 Detail 원본이 없어 색 전환이 필요한 경우)은 원본이 없으니 기존 생성.
+            fine_pattern = mannequin.has_fine_pattern(product, analysis)
+
+            def _detail_passthrough(block: dict, asset_key) -> dict | None:
+                if not (fine_pattern and _is_detail(block)):
+                    return None
+                if detail_color_transfers.get(asset_key):   # 타색 전환 = 그 색 원본이 없다
+                    return None
+                for asset in color_assets.get(asset_key, []):
+                    if asset.get("slot") == "Detail":
+                        return asset
+                return None
 
             for b in ai_blocks:
                 ckey = _color_key(b)
@@ -815,6 +853,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     product_images,
                     space_set_plate,
                     space_binding is not None and space_set_plate is not None,
+                    _detail_passthrough(b, asset_key),
                 )
             )
 
@@ -828,7 +867,9 @@ async def run_detail_page_job(app, job: dict) -> None:
         example_warnings.extend(garment_warnings)
         await _emit(pool, job_id, "progress", {"progress": 65, "phase": "cuts",
                                                "generated": len(cut_assets)})
-        if ai_blocks and not cut_assets:
+        # 판정 기준은 **컷이 하나라도 나왔는가**(cut_results)다. cut_assets 로 보면 전 블록이
+        # 원본 패스스루인 상세페이지가 "전멸"로 오인된다 — 그 경우 컷은 멀쩡히 있다.
+        if ai_blocks and not cut_results:
             # AI 컷이 하나도 없는데 done으로 종결하면 빈 상세페이지가 완성본처럼 보이고
             # 완료 화면 가드와도 충돌한다. 예약 크레딧을 환불하는 실패 종결로 보낸다.
             await _fail(
