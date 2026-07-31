@@ -170,6 +170,7 @@ StoryboardBlock {
   refImages: string[]              // '내 레퍼런스' 업로드 (생성 입력에 포함) — 프로젝트 한정, 전역 저장 없음 (ADR-0004)
   exampleId?: string | null        // 촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
   exampleSelectionOrigin?: 'auto' | 'user' | null  // 자동 배정인지 사용자 확정인지. source와 다른 축
+  setSelectionOrigin?: 'auto' | 'user' | null      // 촬영 세트의 진입 자동 배치인지 사용자 선택인지
   spaceGroupId?: string | null     // 발행된 촬영 세트 인스턴스. `ssg1__<setId>__<instanceId>`만 허용
   spaceVariation?: 'fixed' | 'subtle'  // 발행 세트가 정한 변화 강도. 임의 입력값은 허용하지 않음
   refScope?: 'all' | 'bg' | 'pose' // 예시에서 참고할 범위
@@ -195,6 +196,7 @@ StoryboardBlock {
 - `sectionTitle`과 `title`은 현재 구현의 전환기 캐시일 뿐 기준 데이터가 아니다. 읽을 때 enum 라벨로 덮어쓰며, 후속 정리에서 저장 shape에서 제거한다.
 - 공개된 정상 조합의 `source='ai'` 블록은 자동 배정 뒤 `exampleId`가 사실상 필수다. 같은 공간의 pose·방향 호환 자산이 0장인 예외에는 미배정 상태와 오류 안내를 유지하며 `all`로 강등하지 않는다.
 - 자동 배정은 `exampleSelectionOrigin='auto'`, 직접 선택·다른 예시 보기·참고 범위 변경·샷/컷 변경 확정은 `'user'`로 저장한다. `exampleId`가 있는데 이 필드가 없는 과거 저장분은 사용자 선택으로 간주해 `'user'`로 정규화한다.
+- 진입 시 자동 배치된 촬영 세트는 `setSelectionOrigin='auto'`, 셀러가 추가하거나 교체한 세트는 `'user'`로 저장한다. 이 값은 기본 콘티 지문에서 제외한다.
 - `exampleId`가 없으면 서버는 `exampleSelectionOrigin=null`을 강제한다. 레시피 정규화·섹션 이동 등으로 `exampleId`를 지울 때 예시 썸네일도 원래 카드 썸네일로 복원해 origin·thumb 고아 값을 남기지 않는다.
 - 기본 콘티 지문과 mock `storyboardDirty` 판정에서는 `exampleSelectionOrigin='auto'`인 `exampleId`와 그 배정이 정한 `refScope`를 기본값으로 취급한다. 따라서 자동 배정 저장만으로 사진 양 변경 시 기본 콘티 재시드가 막히지 않으며, `'user'` 또는 origin 없는 기존 선택은 사용자 수정으로 판정한다.
 
@@ -417,8 +419,8 @@ GenerationExample {
 
 - `applicableClothingTypes`는 비어 있지 않고 중복이 없으며 `clothingType`을 포함한다.
 - 제품 생성예시는 성별 공용이므로 `gender=null`이고, UI 성별 필터의 영향을 받지 않는다. 착용 생성예시는 `women|men`을 유지한다.
-- `upper`는 `ClothingType`이 아니다. `[top, outer]`을 화면에서 `상의·아우터 공용`으로 표시할 뿐이다.
-- 둘 이상의 종류에 공용인 예시는 사람 검토를 거친 스타일링·호리존 풀샷에만 허용한다. 샷을 중간샷(선택판 `medium_knee`)·제품·디테일로 다시 분류하면 적용 목록을 `[sourceClothingType]`으로 좁힌다.
+- `upper`는 `ClothingType`이 아니다. 공용 범위도 실제 상품 종류 배열로 명시한다.
+- 스타일링 공용은 사람 검토를 거친 풀샷 `[top,outer]`만 허용한다. 일반 호리존 풀샷은 성별이 지원하는 전 의류, 호리존 중간샷은 상단 크롭 계열(여성 `[top,outer,dress]`, 남성 `[top,outer]`)끼리 공유한다. 하의 중간샷은 `[bottom]` 전용이다(ADR-0006).
 - UI와 서버는 현재 `Product.clothingType`이 적용 목록에 있는지 검증한다. 목록은 `StoryboardBlock`에 복제하지 않고 `exampleId`가 가리키는 생성예시 정본에서 읽는다.
 - `refScope`는 예시에서 전부·배경·포즈 중 무엇을 참고할지 나타내는 별도 축이며 의류 종류 적용 범위로 재사용하지 않는다.
 - `refScope='all'`은 장소·조명·분위기·포즈·프레이밍·구성을 함께 참고하되 컷 종류별 배경 규칙을 적용한다. `styling | mirror`는 카메라·광원·시간대·색감·분위기와 장소 종류를 유지하면서 알아볼 수 있는 정확한 장소와 배경 소품 2~3개를 변주한다. `horizon`은 같거나 거의 같은 일반적인 중립 스튜디오 배경·조명·그림자를 허용하며 강제로 다른 세트를 만들지 않는다.

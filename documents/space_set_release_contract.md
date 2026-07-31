@@ -28,6 +28,8 @@
     "setType": "styling", // styling | horizon-rotation | horizon-sequence
     "gender": "women",
     "applicableClothingTypes": ["top"],
+    // 선택 필드. 생략하면 applicableClothingTypes와 같다.
+    "setApplicableClothingTypes": ["top"],
     "placeType": "cafe-shop-interior",
     "tone": "daily-snapshot",
     "compositionLabel": "풀 1 + 미디움 2",
@@ -213,9 +215,15 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
 3. `styling` 세트 멤버는 모두 styling, 호리존 세트 멤버는 모두 horizon이다.
    착용 샷은 `full|medium`, 방향은 `front|side|back`만 허용한다. 공간 세트의
    멤버 레시피는 생성 시점을 명확히 고정해야 하므로 null 방향은 발행하지 않는다.
-4. `applicableClothingTypes`는 비어 있지 않고 중복이 없다. 복수 적용은
-   ADR-0006에 따라 `[top, outer]` 또는 `[outer, top]`인
-   styling/horizon **풀샷 전용 세트**에만 허용한다.
+4. `applicableClothingTypes`는 낱장 `all` 이미지의 적용 범위이며 비어
+   있지 않고 중복이 없다. 복수 적용은 ADR-0006에 따라
+   `[top, outer]` 또는 `[outer, top]`인 styling/horizon **풀샷 전용
+   세트**, 또는 성별이 지원하는 전 의류 범위를 정확히 선언한
+   `horizon-rotation`에만 허용한다.
+   `setApplicableClothingTypes`는 선택적인 세트 배치·포즈 범위이며,
+   생략하면 앞 필드와 같다. 두 값이 다를 수 있는 것은
+   `horizon-rotation`뿐이고 여성은 `[top,bottom,outer,dress]`, 남성은
+   `[top,bottom,outer]`의 정해진 순서와 전체 범위를 사용한다.
 5. 모든 해시·픽셀 크기·실제 이미지 형식·확장자가 manifest와 일치한다.
 6. 자산 key는 이 releaseId의 불변 R2 루트 밖을 가리킬 수 없다.
 7. 같은 releaseId의 스테이징 경로와 R2 prefix는 덮어쓰지 않는다. 수정은 새
@@ -231,6 +239,14 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
    릴리스에서만 존재하는 setId를 보존해 저장된 프로젝트가 계속 생성되게
    한다. 기존과 새 릴리스에 같은 setId가 있으면 정의가 바이트 수준으로
    동일한 경우만 허용하며, 하나라도 바뀌면 새 setId를 요구한다.
+   단, 이미지·레시피·ID·URL·key·해시는 그대로 두고
+   `applicableClothingTypes`/`setApplicableClothingTypes`를 기존 범위의
+   상위집합으로 넓히는 **소비 라우팅 메타데이터 개정**은 예외다. 이 개정은
+   R2 발행물을 교체하지 않고 프론트·서버 카탈로그를 한 코드 변경에서 함께
+   갱신하며, 런타임 검증과 갤러리 필터가 같은 범위를 읽는 테스트를
+   동반한다. 범위 축소나 다른 필드 변경은 계속 새 setId가 필요하다.
+   기존 공간 세트 릴리스 CLI의 same-ID 병합은 이 코드 메타데이터 개정
+   경로가 아니므로 계속 바이트 동일 정의만 허용한다.
 10. 프론트·서버 두 정식 파일은 한 적용 단위다. 첫 파일 교체 뒤 두 번째
     파일 교체가 실패하면 첫 파일을 이전 바이트로 되돌린다. 적용 전 기존
     서버 레지스트리 검증·병합도 모두 끝내므로 병합 오류는 정식 파일을

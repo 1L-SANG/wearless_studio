@@ -90,6 +90,7 @@ export const api = {
     // 사진 양 변경 시, 사용자가 콘티를 손대기 전이면 기본 콘티를 새 모드로 재구성 (PRD §7.7)
     if (modeChanged && !DB.storyboardDirty) {
       DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors, {
+        projectId: DB.project.id,
         clothingType: DB.product.clothingType,
         targetGenders: DB.analysis.targetGenders,
       });

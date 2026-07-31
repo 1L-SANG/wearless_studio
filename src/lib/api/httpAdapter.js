@@ -330,6 +330,7 @@ export const httpAdapter = {
     const colors = product?.colors || [];
     const mode = project?.composeMode === 'extended' ? 'extended' : 'basic';
     const storyboardContext = {
+      projectId,
       clothingType: product?.clothingType || 'top',
       targetGenders: analysis?.targetGenders || [],
     };

@@ -1719,6 +1719,7 @@ export function Storyboard() {
           const replaced = replaceSpaceSetRun(current, setPicker.spaceGroupId, set, {
             spaceGroupId: groupId,
             makeId: (_member, index) => newIds[index],
+            setSelectionOrigin: 'user',
           });
           const normalized = normalizeBoard(replaced);
           return assignGenerationExamples(normalized, {
@@ -1745,6 +1746,7 @@ export function Storyboard() {
           let inserted = insertSpaceSet(current, setPicker.index, set, template, {
             spaceGroupId: groupId,
             makeId: (_member, index) => memberIds[index],
+            setSelectionOrigin: 'user',
           });
           for (const id of memberIds) inserted = adoptSection(inserted, id, setPicker.targetSid, setPicker.targetRole);
           inserted = inserted.map((block) => memberIdSet.has(block.id) ? {
