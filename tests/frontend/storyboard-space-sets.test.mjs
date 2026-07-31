@@ -99,11 +99,11 @@ test('space set replacement swaps the whole composition in one immutable board r
   assert.deepEqual(source.map((item) => item.id), ['before', 'old-a', 'old-b', 'after']);
   assert.deepEqual(next.slice(1, 4).map((item) => [
     item.spaceGroupId, item.cutType, item.direction, item.shot, item.refScope,
-    item.exampleId, item.exampleSelectionOrigin, item.thumb,
+    item.exampleId, item.exampleSelectionOrigin, item.setSelectionOrigin, item.thumb,
   ]), [
-    [groupB, 'horizon', 'front', 'full', 'pose', 'front', 'user', 'front.webp'],
-    [groupB, 'horizon', 'side', 'full', 'pose', 'side', 'user', 'side.webp'],
-    [groupB, 'horizon', 'back', 'full', 'pose', 'back', 'user', 'back.webp'],
+    [groupB, 'horizon', 'front', 'full', 'pose', 'front', 'user', 'user', 'front.webp'],
+    [groupB, 'horizon', 'side', 'full', 'pose', 'side', 'user', 'user', 'side.webp'],
+    [groupB, 'horizon', 'back', 'full', 'pose', 'back', 'user', 'user', 'back.webp'],
   ]);
   assert.deepEqual(next.map((item) => item.id), ['before', 'old-a', 'old-b', 'new-2', 'after']);
 });
@@ -261,12 +261,13 @@ test('creating released members preserves exact ordered example choices as user 
   assert.deepEqual(members.map((member) => ({
     exampleId: member.exampleId,
     origin: member.exampleSelectionOrigin,
+    setOrigin: member.setSelectionOrigin,
     thumb: member.thumb,
     order: member.spaceSetMemberOrder,
     variation: member.spaceVariation,
   })), [
-    { exampleId: 'exact-full', origin: 'user', thumb: 'full.webp', order: 1, variation: 'subtle' },
-    { exampleId: 'exact-medium', origin: 'user', thumb: 'medium.webp', order: 2, variation: 'subtle' },
+    { exampleId: 'exact-full', origin: 'user', setOrigin: 'user', thumb: 'full.webp', order: 1, variation: 'subtle' },
+    { exampleId: 'exact-medium', origin: 'user', setOrigin: 'user', thumb: 'medium.webp', order: 2, variation: 'subtle' },
   ]);
 });
 

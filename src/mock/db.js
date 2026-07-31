@@ -18,16 +18,14 @@ import genExamples from '@/data/genExamples.json';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { genderForClothingType } from '@/lib/productGender.js';
-import { spaceSetGroupId, storyboardSpaceSetsFor } from '@/lib/storyboardSpaceSetCatalog.js';
+import { defaultStoryboard } from '@/lib/api/shapes.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { ensureSections, rowSizeFor } from '@/lib/sections.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
-  STORYBOARD_TAXONOMY_VERSION,
   contentTitle,
-  hasDetailSource,
   inferContentRole,
   inferSectionRole,
 } from '@/lib/storyboardTaxonomy.js';
@@ -341,99 +339,11 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
 }
 
 /* =============================================================
-   buildStoryboard(mode, colors, product) — 역할 중심 기본 콘티.
-   기본형과 확장형은 핵심 장점 → 핏·코디 → 제품 확인 순서가 같고,
-   확장형만 색상별 사진 수를 늘린다. cutType은 contentRole에서 파생한
-   비노출 생성 레시피다.
+   buildStoryboard(mode, colors, context) — HTTP 기본 콘티와 동일한 빌더를
+   공유해 mock에서도 선택 세트·순서·지문이 완전히 같게 유지한다.
    ============================================================= */
-const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) => ({
-  id: uid('blk'), sectionRole, contentRole, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
-  title: contentTitle(contentRole), source: 'ai', cutType, direction, shot, colorId,
-  pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [],
-  thumb: P.photo(contentRole + (colorId || '') + (shot || ''), cutType === 'product' ? 'product' : cutType === 'horizon' ? 'horizon' : 'styling', 240, 320),
-  poseThumb: P.pose('stand'), poseLabel: 'AI 자동',
-  ...(extra || {}),
-});
-const mirrorSb = (colorId) => sb(SECTION_ROLES.FIT, CONTENT_ROLES.REAL_WEAR, 'mirror', null, 'full', colorId, { faceExposure: 'hide' });
-
-export function buildStoryboard(mode, colors, product = {}) {
-  if (mode !== 'basic' && mode !== 'extended') throw new Error('invalid_compose_mode');
-  const list = Array.isArray(colors) && colors.length ? colors : [{ id: 'col1', isBase: true }];
-  const base = (list.find((c) => c.isBase) || list[0]).id;
-  const hasDetail = hasDetailSource({ colors: list });
-  const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
-  const gender = genderForClothingType(
-    product.clothingType,
-    product.targetGenders,
-  );
-  const stylingSet = storyboardSpaceSetsFor({
-    gender,
-    clothingType: product.clothingType || 'top',
-  }).find((set) => set.setType === 'styling');
-  const shootingSet = (colorId) => {
-    if (!stylingSet) return [];
-    const groupId = spaceSetGroupId(stylingSet.id, uid('sg'));
-    return stylingSet.members.map((member) => sb(
-      SECTION_ROLES.FIT,
-      CONTENT_ROLES.COORDINATION,
-      member.cutType,
-      member.direction,
-      member.shot,
-      colorId,
-      {
-        spaceGroupId: groupId,
-        spaceVariation: stylingSet.spaceVariation,
-        spaceSetMemberOrder: member.order,
-        refScope: 'pose',
-        exampleId: member.exampleId,
-        exampleSelectionOrigin: 'auto',
-        thumb: member.thumb,
-      },
-    ));
-  };
-  const out = [
-    sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.HERO, 'styling', 'front', 'full', base),
-    sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.BENEFIT, 'horizon', 'front', 'medium', base),
-  ];
-  if (mode === 'extended') {
-    list.slice(0, 4).forEach((c, colorIndex) => {
-      out.push(
-        ...shootingSet(c.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', c.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', c.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', c.id),
-      );
-      // 한 색상 확장형도 기본형보다 풍부해야 한다. 대표 색상에만 세 장을 더하고,
-      // 추가 색상은 핵심 다섯 장씩 늘려 전체 분량이 과도하게 커지지 않게 한다.
-      if (colorIndex === 0) out.push(
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', c.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'side', 'full', c.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'full', c.id),
-      );
-    });
-    out.push(
-      mirrorSb(base),
-      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
-      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base),
-    );
-    if (hasDetail) out.push(sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor));
-  } else { // basic
-    out.push(
-      ...shootingSet(base),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', base),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', base),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'side', 'full', base),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', base),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', base),
-      mirrorSb(base),
-      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
-    );
-    out.push(hasDetail
-      ? sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor)
-      : sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base));
-  }
-  // 발행된 촬영 세트는 FIT 섹션 안에서 연속 spaceGroupId 밴드로 표현된다.
-  return ensureSections(out);
+export function buildStoryboard(mode, colors, context = {}) {
+  return defaultStoryboard(colors, mode, context);
 }
 
 /* =============================================================
@@ -511,6 +421,7 @@ function buildDraft() {
 
   /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004) ---- */
   const storyboard = buildStoryboard(project.composeMode, product.colors, {
+    projectId: project.id,
     clothingType: product.clothingType,
     targetGenders: analysis.targetGenders,
   });

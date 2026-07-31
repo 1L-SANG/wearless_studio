@@ -310,7 +310,7 @@ test('a storyboard containing only auto assignments still matches the untouched 
   assert.equal(isDefaultStoryboardForMode(automatic, colors, 'basic'), false);
 });
 
-test('every supported gender and clothing category seeds a published three-cut set', () => {
+test('every supported gender and clothing category seeds styling and horizon sets', () => {
   const colors = [{ id: 'color-1', isBase: true, images: [] }];
   const fourColorsWithDetail = Array.from({ length: 4 }, (_, index) => ({
     id: `color-${index + 1}`,
@@ -323,23 +323,27 @@ test('every supported gender and clothing category seeds a published three-cut s
   ];
 
   for (const [gender, clothingType] of supported) {
-    const context = { clothingType, targetGenders: [gender] };
+    const context = { projectId: `test-${gender}-${clothingType}`, clothingType, targetGenders: [gender] };
     const basic = defaultStoryboard(colors, 'basic', context);
     const setMembers = basic.filter((item) => item.spaceGroupId);
+    const stylingMembers = setMembers.filter((item) => item.cutType === 'styling');
+    const horizonMembers = setMembers.filter((item) => item.cutType === 'horizon');
 
-    assert.equal(basic.length, 13, `${gender}/${clothingType} basic`);
-    assert.equal(setMembers.length, 3, `${gender}/${clothingType} set members`);
-    assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 1);
+    assert.equal(basic.length, 14, `${gender}/${clothingType} basic`);
+    assert.equal(stylingMembers.length, 6, `${gender}/${clothingType} styling members`);
+    assert.equal(horizonMembers.length, 3, `${gender}/${clothingType} rotation members`);
+    assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 3);
     assert.ok(spaceSetIdFromGroupId(setMembers[0].spaceGroupId));
     assert.ok(setMembers.every((item) => (
       item.exampleSelectionOrigin === 'auto'
+      && item.setSelectionOrigin === 'auto'
       && item.refScope === 'pose'
       && item.exampleId
     )));
-    assert.equal(
-      defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
-      33,
-      `${gender}/${clothingType} extended`,
+    const extendedLength = defaultStoryboard(fourColorsWithDetail, 'extended', context).length;
+    assert.ok(
+      extendedLength === 32 || extendedLength === 33,
+      `${gender}/${clothingType} extended: ${extendedLength}`,
     );
   }
 });

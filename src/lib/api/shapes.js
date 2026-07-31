@@ -25,7 +25,8 @@ import { Placeholder as P } from '../../mock/placeholders.js';
 import { ensureSections } from '../sections.js';
 import { exampleSelectionFingerprintFields } from '../generationExamples.js';
 import { genderForClothingType } from '../productGender.js';
-import { spaceSetGroupId, storyboardSpaceSetsFor } from '../storyboardSpaceSetCatalog.js';
+import { spaceSetGroupId } from '../storyboardSpaceSetCatalog.js';
+import { pickEntrySets } from '../storyboardEntryPlacement.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
@@ -43,79 +44,169 @@ const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) 
   ...(extra || {}),
 });
 
-export function defaultStoryboard(colors, mode = 'basic', product = {}) {
+function entryGender(product) {
+  if (product.clothingType === 'dress') return 'women';
+  if (!Array.isArray(product.targetGenders) || product.targetGenders.length === 0) return null;
+  return genderForClothingType(product.clothingType, product.targetGenders);
+}
+
+function setMemberBlocks(set, colorId, contentRole) {
+  if (!set) return [];
+  const groupId = spaceSetGroupId(set.id, uid('sg'));
+  return set.members.map((member) => sb(
+    SECTION_ROLES.FIT,
+    contentRole,
+    member.cutType,
+    member.direction,
+    member.shot,
+    colorId,
+    {
+      spaceGroupId: groupId,
+      spaceVariation: set.spaceVariation,
+      spaceSetMemberOrder: member.order,
+      refScope: 'pose',
+      exampleId: member.exampleId,
+      exampleSelectionOrigin: 'auto',
+      setSelectionOrigin: 'auto',
+      thumb: member.thumb,
+    },
+  ));
+}
+
+function stylingFallback(colorId, clothingType) {
+  return [
+    sb(
+      SECTION_ROLES.FIT,
+      CONTENT_ROLES.COORDINATION,
+      'styling',
+      clothingType === 'bottom' ? 'back' : 'front',
+      'full',
+      colorId,
+    ),
+    sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', colorId),
+  ];
+}
+
+function horizonRotationFallback(colorId) {
+  return ['front', 'side', 'back'].map((direction) => sb(
+    SECTION_ROLES.FIT,
+    CONTENT_ROLES.FIT,
+    'horizon',
+    direction,
+    'full',
+    colorId,
+  ));
+}
+
+function realWearBlock(colorId, gender, clothingType) {
+  if (gender === 'women') {
+    return sb(
+      SECTION_ROLES.FIT,
+      CONTENT_ROLES.REAL_WEAR,
+      'mirror',
+      null,
+      'full',
+      colorId,
+      { faceExposure: 'hide' },
+    );
+  }
+  return sb(
+    SECTION_ROLES.FIT,
+    CONTENT_ROLES.COORDINATION,
+    'styling',
+    clothingType === 'bottom' ? 'back' : 'front',
+    'full',
+    colorId,
+  );
+}
+
+export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   if (mode !== 'basic' && mode !== 'extended') throw new Error('invalid_compose_mode');
   const list = Array.isArray(colors) && colors.length ? colors : [{ id: 'col1', isBase: true }];
   const base = (list.find((c) => c.isBase) || list[0]).id;
   const hasDetail = hasDetailSource({ colors: list });
   const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
-  const gender = genderForClothingType(
-    product.clothingType,
-    product.targetGenders,
-  );
-  const stylingSet = storyboardSpaceSetsFor({
+  const clothingType = context.clothingType || 'top';
+  const gender = entryGender({ ...context, clothingType });
+  const { stylingSets, rotationSet, sequenceSet } = pickEntrySets({
     gender,
-    clothingType: product.clothingType || 'top',
-  }).find((set) => set.setType === 'styling');
-  const shootingSet = (colorId) => {
-    if (!stylingSet) return [];
-    const groupId = spaceSetGroupId(stylingSet.id, uid('sg'));
-    return stylingSet.members.map((member) => sb(
-      SECTION_ROLES.FIT,
-      CONTENT_ROLES.COORDINATION,
-      member.cutType,
-      member.direction,
-      member.shot,
-      colorId,
-      {
-        spaceGroupId: groupId,
-        spaceVariation: stylingSet.spaceVariation,
-        spaceSetMemberOrder: member.order,
-        refScope: 'pose',
-        exampleId: member.exampleId,
-        exampleSelectionOrigin: 'auto',
-        thumb: member.thumb,
-      },
-    ));
-  };
+    clothingType,
+    projectId: context.projectId,
+    stylingCount: mode === 'extended' ? 3 : 2,
+  });
   const blocks = [
     sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.HERO, 'styling', 'front', 'full', base),
     sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.BENEFIT, 'horizon', 'front', 'medium', base),
   ];
+
+  for (const set of stylingSets) {
+    blocks.push(...(set
+      ? setMemberBlocks(set, base, CONTENT_ROLES.COORDINATION)
+      : stylingFallback(base, clothingType)));
+  }
+
   if (mode === 'extended') {
-    list.slice(0, 4).forEach((color, colorIndex) => {
+    const horizonSet = sequenceSet || rotationSet;
+    blocks.push(...(horizonSet
+      ? setMemberBlocks(horizonSet, base, CONTENT_ROLES.FIT)
+      : horizonRotationFallback(base)));
+    blocks.push(realWearBlock(base, gender, clothingType));
+
+    const additionalColors = list.slice(1, 4);
+    for (const color of additionalColors) {
       blocks.push(
-        ...shootingSet(color.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', color.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
-      );
-      if (colorIndex === 0) blocks.push(
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', color.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'side', 'full', color.id),
         sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'full', color.id),
+        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', color.id),
       );
-    });
+    }
+
+    for (const color of additionalColors) {
+      blocks.push(sb(
+        SECTION_ROLES.PRODUCT,
+        CONTENT_ROLES.PRODUCT_OVERVIEW,
+        'product',
+        'front',
+        'ghost',
+        color.id,
+      ));
+    }
     blocks.push(
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.REAL_WEAR, 'mirror', null, 'full', base, { faceExposure: 'hide' }),
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base),
     );
-    if (hasDetail) blocks.push(sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor));
+    if (hasDetail) {
+      blocks.push(
+        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
+        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
+      );
+    } else {
+      blocks.push(
+        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
+        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base),
+      );
+    }
   } else {
+    blocks.push(...(rotationSet
+      ? setMemberBlocks(rotationSet, base, CONTENT_ROLES.FIT)
+      : horizonRotationFallback(base)));
+    blocks.push(realWearBlock(base, gender, clothingType));
     blocks.push(
-      ...shootingSet(base),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', base),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', base),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'side', 'full', base),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', base),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', base),
-      sb(SECTION_ROLES.FIT, CONTENT_ROLES.REAL_WEAR, 'mirror', null, 'full', base, { faceExposure: 'hide' }),
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
-      hasDetail
-        ? sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor)
-        : sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base),
     );
+    for (const color of list.slice(1, 4)) {
+      blocks.push(sb(
+        SECTION_ROLES.PRODUCT,
+        CONTENT_ROLES.PRODUCT_OVERVIEW,
+        'product',
+        'front',
+        'ghost',
+        color.id,
+      ));
+    }
+    blocks.push(hasDetail
+      ? sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor)
+      : sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base));
   }
   return ensureSections(blocks);
 }
