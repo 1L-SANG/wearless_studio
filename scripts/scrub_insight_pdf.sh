@@ -8,11 +8,16 @@ trap 'echo ""; echo "❌ 실패(라인 $LINENO): 중간 오류로 멈췄습니�
 echo "== 이력 청소 시작 =="
 
 BRANCH=feat/orb-motion-fx
+BACKUP=backup/pre-pdf-scrub
 BASE=bb7d58a          # 이 커밋까지는 깨끗함 — 재작성하지 않는 경계
 TAINT_MERGE=2a59bca   # PDF가 실수로 들어간 병합 커밋
 
 [ "$(git rev-parse --abbrev-ref HEAD)" = "$BRANCH" ] || { echo "중단: $BRANCH 브랜치에서 실행하세요"; exit 1; }
 git diff --quiet --cached || { echo "중단: 스테이징된 변경이 있습니다. 먼저 커밋/해제하세요"; exit 1; }
+if git show-ref --verify --quiet "refs/heads/$BACKUP"; then
+  echo "중단: $BACKUP 브랜치가 이미 있습니다. 이전 백업을 확인·이름 변경한 뒤 다시 실행하세요."
+  exit 1
+fi
 
 # 저장된 실제 경로명을 git에서 직접 얻는다 (macOS 한글 정규화 차이 회피)
 # core.quotepath=off — 한글 경로를 따옴표·이스케이프 없이 날것으로 받아야 grep과 제거가 정확히 맞는다
@@ -48,21 +53,26 @@ for c in $(git rev-list --reverse --first-parent "$BASE..HEAD"); do
 done
 
 old="$(git rev-parse HEAD)"
-git branch "backup/pre-pdf-scrub" "$old" 2>/dev/null || echo "(백업 브랜치가 이미 있음 — 기존 것 유지)"
-git update-ref -m "scrub: 유료 PDF만 이력에서 제거" "refs/heads/$BRANCH" "$prev" "$old"
 
 echo ""
 echo "===== 검증 ====="
-echo "① 최근 커밋(메시지 동일·해시만 변경):" && git log --oneline -6
+echo "① 최근 커밋(메시지 동일·해시만 변경):" && git log --oneline -6 "$prev"
 echo ""
 echo "② 이력 전체에 insight PDF가 남았는가 (아무것도 안 나와야 정상):"
-if git rev-list --objects HEAD | grep "insight/.*\.pdf"; then echo "실패: PDF가 아직 이력에 있음 — backup/pre-pdf-scrub 로 복구 가능"; exit 1
+if git rev-list --objects "$prev" | grep "insight/.*\.pdf"; then echo "실패: PDF가 새 이력에 남아 있음"; exit 1
 else echo "  → 없음. 제거 성공"; fi
 echo ""
-echo "③ 병합 커밋에 JSON 8개는 유지됐는가:" && git ls-tree "$merge_new" insight/ | sed 's/^/  /'
+json_count="$(git ls-tree -r --name-only "$merge_new" -- insight/ | grep -c '\.json$' || true)"
+[ "$json_count" -eq 8 ] || { echo "실패: 병합 커밋의 insight JSON이 8개가 아님($json_count개)"; exit 1; }
+echo "③ 병합 커밋의 JSON 8개 유지 확인"
+
+git branch "$BACKUP" "$old"
+git update-ref -m "scrub: 유료 PDF만 이력에서 제거" "refs/heads/$BRANCH" "$prev" "$old"
+trap - ERR
+
 echo ""
 echo "④ 원격과의 관계 (일반 push 가능 여부):"
 if git merge-base --is-ancestor "origin/$BRANCH" HEAD 2>/dev/null; then echo "  → 원격 tip이 조상 그대로 → 일반 push 가능(강제 push 불필요)"
 else echo "  → 강제 push(--force-with-lease) 필요"; fi
 echo ""
-echo "완료. 백업은 backup/pre-pdf-scrub (로컬 전용 — 절대 push 금지, PR 머지 후 git branch -D 로 삭제)."
+echo "완료. 백업은 $BACKUP (로컬 전용 — 절대 push 금지, PR 머지 후 git branch -D 로 삭제)."

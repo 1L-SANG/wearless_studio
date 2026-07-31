@@ -750,6 +750,32 @@ def test_resolved_example_manifest_and_prompt_apply_all_scope():
     assert "Pose: natural and unforced" not in p
 
 
+def test_horizon_all_scope_uses_neutral_studio_contract():
+    manifest = cut.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all")
+    p = _render(
+        {"cutType": "horizon", "shot": "full", "exampleId": "ex_horizon_top_full_1",
+         "refScope": "all"},
+        manifest=manifest,
+    )
+    assert "REFERENCE SCOPE — HORIZON STUDIO" in p
+    assert "Create a recognizably different specific place" not in p
+
+
+def test_styling_all_scope_keeps_requested_framing_when_example_shot_differs():
+    manifest = cut.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all")
+    p = _render(
+        {"cutType": "styling", "shot": "medium", "exampleId": "ex_styling_top_full_1",
+         "refScope": "all"},
+        manifest=manifest,
+    )
+    assert "current FRAMING wins" in p
+    assert "no more, no less" not in p
+
+
 def test_resolved_example_manifest_and_prompt_apply_pose_only_scope():
     manifest = cut.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=False,
@@ -873,7 +899,7 @@ def test_render_mirror_prompt_sections():
 
 def test_render_bottom_medium_uses_lower_crop():
     p = _render({"cutType": "horizon", "shot": "medium", "direction": "front"}, clothing_type="bottom")
-    assert "waist through the legs" in p        # medium × bottom = 하체 중간샷
+    assert "waist through the feet" in p        # medium × bottom = 하체 중간샷
     assert "seamless studio backdrop" in p    # 호리존 섹션
 
 

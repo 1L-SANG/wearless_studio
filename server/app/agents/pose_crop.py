@@ -19,6 +19,7 @@ from .vision_llm import VisionError, analyze_with_fallback
 log = logging.getLogger("wearless.pose_crop")
 
 MEDIUM_BOTTOM_RATIO = 0.62
+BOTTOM_MEDIUM_TOP_RATIO = 1 / 3
 MEDIUM_MIN_WIDTH = 640
 MEDIUM_MIN_HEIGHT = 960
 
@@ -86,8 +87,15 @@ def _portrait_crop_box(width: int, height: int, top: int, bottom: int) -> tuple[
     return left, crop_top, left + crop_width, crop_bottom
 
 
-def landmark_crop_box(width: int, height: int, landmarks: dict) -> tuple[int, int, int, int]:
+def landmark_crop_box(
+    width: int,
+    height: int,
+    landmarks: dict,
+    clothing_type: str = "top",
+) -> tuple[int, int, int, int]:
     values = _validated_landmarks(landmarks, height)
+    if str(clothing_type).lower() in {"bottom", "하의"}:
+        return _portrait_crop_box(width, height, values["waist"], height)
     head_margin = max(2, round(height * 0.02))
     return _portrait_crop_box(
         width,
@@ -97,8 +105,16 @@ def landmark_crop_box(width: int, height: int, landmarks: dict) -> tuple[int, in
     )
 
 
-def fallback_crop_box(width: int, height: int) -> tuple[int, int, int, int]:
-    """전신 세로 이미지의 상단부터 약 62%를 쓰는 보수적 2:3 중앙 크롭."""
+def fallback_crop_box(
+    width: int,
+    height: int,
+    clothing_type: str = "top",
+) -> tuple[int, int, int, int]:
+    """상의는 머리~허벅지, 하의는 허리~발을 남기는 결정적 2:3 폴백."""
+    if str(clothing_type).lower() in {"bottom", "하의"}:
+        return _portrait_crop_box(
+            width, height, round(height * BOTTOM_MEDIUM_TOP_RATIO), height
+        )
     return _portrait_crop_box(width, height, 0, round(height * MEDIUM_BOTTOM_RATIO))
 
 
@@ -114,16 +130,23 @@ def _encode(image: Image.Image, mime: str) -> tuple[bytes, str]:
     return output.getvalue(), mime
 
 
-async def crop_pose_medium(settings, image_bytes: bytes, mime: str) -> tuple[bytes, str]:
+async def crop_pose_medium(
+    settings,
+    image_bytes: bytes,
+    mime: str,
+    clothing_type: str = "top",
+) -> tuple[bytes, str]:
     with Image.open(BytesIO(image_bytes)) as source:
         source.load()
         image = source.copy()
     try:
         landmarks = await _detect_landmarks(settings, image_bytes, mime)
-        box = landmark_crop_box(image.width, image.height, landmarks)
+        box = landmark_crop_box(
+            image.width, image.height, landmarks, clothing_type
+        )
     except (VisionError, ValueError, TypeError) as exc:
         log.warning("pose medium landmark crop unavailable; using ratio fallback: %s", exc)
-        box = fallback_crop_box(image.width, image.height)
+        box = fallback_crop_box(image.width, image.height, clothing_type)
 
     cropped = image.crop(box)
     scale = max(

@@ -83,7 +83,7 @@ CUT TYPE — MIRROR SELFIE (거울샷):
 
 [[SHOT:full]]full body from head to feet, the whole outfit visible
 [[SHOT:medium]]medium framing: for tops, outerwear and dresses, frame from the head to the hip;
-for bottoms, frame from the waist through the legs — keep the target garment clearly visible.
+for bottoms, frame from the waist through the feet — keep the entire target garment visible.
 For tops, outerwear and dresses, give this medium shot its own camera setup — noticeably closer
 than a full-body setup, lens slightly higher (around upper-chest height) — so it reads as a
 purpose-shot garment cut, not a crop of a wider photo
@@ -151,9 +151,9 @@ garment supports. Do not turn an open-front garment into a closable garment.
 - Treat the attached EXAMPLE REFERENCE as art direction, not as a base canvas to copy. Preserve its
   pose and screen-left/screen-right contacts, framing, camera geometry, light direction and softness,
   time of day, color grade, mood, scene archetype and broad composition.
-- Match the example's crop boundary and subject scale
-  exactly: the frame includes the same portion of the body as the example — no more, no less. Do not
-  frame tighter than the example and do not frame wider; keep comparable headroom and negative space.
+- Preserve the example's crop boundary, subject scale, headroom and negative space when compatible
+  with the requested shot. If the example and requested shot differ, the current FRAMING wins:
+  reframe the same pose and broad composition for the requested full or medium result.
 - Preserve its capture class without upgrading it. A casual phone or handheld snapshot must remain
   an ordinary snapshot with comparable lens behavior, modest sharpness, natural skin texture,
   exposure variation, white balance, contrast, saturation and environmental palette. Never turn it

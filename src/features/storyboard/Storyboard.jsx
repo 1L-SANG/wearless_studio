@@ -514,7 +514,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
     });
   const selectedStatus = conditionStatus === 'valid'
     && (
-      (inSpace && (selectedExample.shot !== shotVal || !selectedPoseCompatible))
+      (inSpace && !selectedPoseCompatible)
       || (!inSpace && refScope === 'pose' && !selectedPoseCompatible)
     )
     ? 'changed' : conditionStatus;
@@ -807,24 +807,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           exampleSelectionOrigin: current.exampleId ? 'user' : null,
         };
       }
-      const compatible = selectGenerationExamples(catalogs.genExamples, {
-        cutType: current.cutType,
-        shot,
-        clothingType,
-        gender: exampleGender,
-        spaceGroupId: current.spaceGroupId,
-        direction: current.direction,
-        includeSetOnly: true,
-      }).some((example) => example.id === current.exampleId);
-      if (compatible) return { shot, refScope: 'pose', exampleSelectionOrigin: 'user' };
-      return {
-        shot,
-        refScope: 'pose',
-        exampleId: null,
-        exampleSelectionOrigin: null,
-        thumb: current.baseThumb || current.thumb,
-        baseThumb: null,
-      };
+      return { shot, refScope: 'pose', exampleSelectionOrigin: 'user' };
     });
   };
   const commitPendingRecipe = async (exampleId) => {

@@ -36,6 +36,24 @@ def test_landmark_crop_uses_head_margin_and_upper_thigh_boundary(monkeypatch):
     assert mime == "image/png"
 
 
+def test_bottom_landmark_crop_keeps_waist_through_feet(monkeypatch):
+    landmarks = {"head_top": 90, "waist": 600, "hem": 850, "upper_thigh": 1050}
+
+    async def fake_detect(*_args, **_kwargs):
+        return landmarks
+
+    monkeypatch.setattr(pose_crop, "_detect_landmarks", fake_detect)
+    result, mime = asyncio.run(pose_crop.crop_pose_medium(
+        make_settings(), _png(), "image/png", "bottom"
+    ))
+
+    assert pose_crop.landmark_crop_box(
+        1200, 1800, landmarks, "bottom"
+    ) == (200, 600, 1000, 1800)
+    assert _size(result) == (800, 1200)
+    assert mime == "image/png"
+
+
 def test_landmark_failure_uses_deterministic_ratio_fallback(monkeypatch):
     async def fail_detect(*_args, **_kwargs):
         raise VisionError("vision unavailable")
@@ -52,6 +70,19 @@ def test_landmark_failure_uses_deterministic_ratio_fallback(monkeypatch):
     assert pose_crop.fallback_crop_box(1200, 1800) == (228, 0, 972, 1116)
     assert _size(first) == (744, 1116)
     assert first == second
+
+
+def test_bottom_landmark_failure_keeps_lower_body_fallback(monkeypatch):
+    async def fail_detect(*_args, **_kwargs):
+        raise VisionError("vision unavailable")
+
+    monkeypatch.setattr(pose_crop, "_detect_landmarks", fail_detect)
+    result, _mime = asyncio.run(pose_crop.crop_pose_medium(
+        make_settings(), _png(), "image/png", "bottom"
+    ))
+
+    assert pose_crop.fallback_crop_box(1200, 1800, "bottom") == (200, 600, 1000, 1800)
+    assert _size(result) == (800, 1200)
 
 
 def test_ratio_fallback_upscales_to_minimum_medium_resolution(monkeypatch):
