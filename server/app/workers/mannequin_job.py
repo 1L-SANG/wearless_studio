@@ -77,17 +77,24 @@ _SLOT_LABEL = {
 }
 
 
-def _build_manifest(prod_assets: list[dict], has_match: bool) -> str:
+def _build_manifest(prod_assets: list[dict], has_match: bool, clothing_type: str | None = None) -> str:
     """images=[base, *prod(slot순), match]와 동일 순서의 역할 목록 (모델이 어느 이미지가 무엇인지 알게).
     내용은 전부 고정 라벨(_SLOT_LABEL 룩업) — 셀러 데이터를 직접 끼우지 않는다(프롬프트 인젝션 방지).
-    의류 종류는 sanitize된 ${clothingType}·PRODUCT CONTEXT로 따로 전달되므로 여기엔 넣지 않는다."""
+    의류 종류는 sanitize된 ${clothingType}·PRODUCT CONTEXT로 따로 전달되므로 여기엔 넣지 않는다.
+
+    매칭 라벨은 주상품 종류에 따라 갈린다(2026-08-01 WS4). 예전엔 무조건 "matching BOTTOM" 이라
+    하의 상품에서 첨부된 매칭 '상의' 이미지를 하의라고 잘못 알려줬다 — 모델이 상의를 길게 그려
+    상품(바지) 허리를 가리는 원인 중 하나."""
     lines = ["1. Base mannequin — the canvas to dress (keep it identical)"]
     i = 2
     for a in prod_assets:
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'view of the garment')}")
         i += 1
     if has_match:
-        lines.append(f"{i}. matching BOTTOM garment — also dress the mannequin in this, coordinated with the top")
+        if str(clothing_type or "").lower() == "bottom":
+            lines.append(f"{i}. matching TOP garment — also dress the mannequin in this, worn short so the PRODUCT bottom stays fully visible")
+        else:
+            lines.append(f"{i}. matching BOTTOM garment — also dress the mannequin in this, coordinated with the top")
     return "\n".join(lines)
 
 
@@ -1121,7 +1128,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         #    함께 떠서 혼란(버전 스트립에 2개) + 재생성마다 2컷씩 쌓이던 문제.
         #    크레딧 단가(2/잡)는 잡 기준이라 불변. 다양화는 핏 조정→재생성 루프가 담당.
         clothing_type = product.get("clothing_type") or "상의"
-        manifest = _build_manifest(prod_assets, match_img is not None)
+        manifest = _build_manifest(prod_assets, match_img is not None, clothing_type)
         # Phase 3(retrieval_refimages=on): 유사 성공 컷을 STYLE REFERENCE 로 첨부(컷 톤·조명 일관성).
         # off 면 ([], []) → 매니페스트·images 무변화(행위 변화 0). best-effort.
         ref_imgs, ref_ids = await _load_style_refs(

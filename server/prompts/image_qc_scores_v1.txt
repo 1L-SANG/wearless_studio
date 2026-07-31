@@ -36,6 +36,11 @@ ground with white stripes, and a two-colour stripe pair must not collapse into a
 Fine, dense patterns are the common failure: they get simplified into bold wide bands that read
 as a different fabric, so judge the repeat spacing explicitly rather than trusting overall colour.
 
+When the product being judged is a BOTTOM garment worn with a matching top, the product is the
+hero: if the matching top covers the product's waistband and closure so a shopper cannot see how
+the product sits at the waist, report the mismatch "product waistband covered by the matching
+top". This is a mismatch, not a critical error.
+
 TUCK. When the product being judged is a top or outerwear worn with a bottom, the product must be
 worn OUTSIDE the bottom, with its hem forming an unbroken visible line all the way around the
 body. Any tuck is a defect — a full tuck, a front, half or French tuck, tucking one side only, or

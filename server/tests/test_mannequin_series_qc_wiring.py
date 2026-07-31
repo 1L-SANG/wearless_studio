@@ -1255,3 +1255,29 @@ def test_untuck_pass_gate_and_single_task_call():
     assert "return it unchanged" in sent["prompt"], "이미 빠져 있으면 무변경 — no-op 계약"
     assert any(e.get("status") == "untuck_pass" and e.get("outcome") == "applied"
                for e in sent["events"])
+
+
+def test_bottom_product_manifest_and_prompt_keep_the_product_visible():
+    """하의 상품 + 매칭 상의 — 매니페스트가 상의를 '하의'라고 잘못 알려주지 않는다(WS4).
+
+    예전 매니페스트는 무조건 "matching BOTTOM" 이라, 하의 상품에서 첨부된 매칭 '상의' 이미지를
+    하의라고 서술했다. 프롬프트에도 매칭 상의 규칙이 전무해 모델이 상의를 길게 그려 상품(바지)
+    허리를 가렸다(2026-08-01 셀러 보고).
+    """
+    from app.workers.mannequin_job import _build_manifest
+    from app.agents.prompts import load_prompt_template
+    from conftest import make_settings
+
+    prod = [{"slot": "Front"}]
+    bottom = _build_manifest(prod, True, "bottom")
+    top = _build_manifest(prod, True, "top")
+    assert "matching TOP garment" in bottom and "fully visible" in bottom
+    assert "matching BOTTOM garment" in top, "상의 상품 경로는 불변"
+    assert _build_manifest(prod, False, "bottom").count("matching") == 0
+
+    template = load_prompt_template(make_settings())
+    assert "MATCHING TOP (if attached" in template
+    assert "waistband, closure and belt loops are visible" in template, \
+        "관측 가능한 목표 — 상품 허리 전부 노출"
+    assert "unless a matching-top length is declared" in template, \
+        "셀러가 조정하면(WS2 스텝) 선언이 이긴다"

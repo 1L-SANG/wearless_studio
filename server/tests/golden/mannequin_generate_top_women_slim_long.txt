@@ -16,6 +16,7 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 - Fit and proportion precedence, axis by axis: each declared FIT PROFILE axis overrides conflicting visual evidence for that axis; for every undeclared axis, use the FIT view reference photo (if attached), then the default impression from the other product photos.
 
 - DETAIL view (if attached): read its close-up details carefully — texture, stitching, trims, hardware, prints — and reproduce them faithfully. Make sure the seller's "Key features" listed in the PRODUCT CONTEXT are clearly visible and expressed in the result. When the fabric has a repeating pattern, this close-up is the reference for its SCALE — measure the stripe or check spacing here, not from the full-length view where it is easy to under-read.
+- MATCHING TOP (if attached, the last image): when the main product is a BOTTOM garment, also dress the mannequin in this top, but the bottom is the hero of this photo. Wear the top SHORT — its hem ends at or above the bottom's waistband — unless a matching-top length is declared in FIT PROFILE, in which case follow that declaration. Observable target: the product bottom's entire waistband, closure and belt loops are visible; no part of the product is hidden behind the matching top. A long top drooping over the product's waist defeats the purpose of the photo.
 - PATTERN SCALE: reproduce a repeating pattern at the product's own scale, not a simplified version of it. Fine, dense stripes and checks must stay fine and dense — count the repeats across the garment's width in the product photo and produce the same count, rather than a handful of bold wide bands. Keep the figure-ground relationship exactly as photographed: a white ground carrying coloured stripes stays a white ground, and a pair of differently coloured thin stripes stays a pair — never merge them into one colour or swap which colour is the background. A pattern drawn thicker, sparser or inverted reads as a different fabric to a shopper, which makes the cut unusable even when every other detail is right.
 
 - FIT view (if attached): this shows the same garment worn on a real body. Use it as the priority reference only for FIT PROFILE axes that are not declared — including where the hem falls, cut or silhouette, ease, drape, and which body areas the garment emphasizes or skims. Do not use it to override a declared axis.
@@ -39,6 +40,7 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 - The main product is NEVER tucked into the matching bottom and is never hidden by it.
 - No part of the matching bottom's waistband, drawstring or fastening is drawn over the main product.
 - A repeating pattern keeps the product's own repeat spacing, stripe widths and background colour — never simplified into fewer, thicker bands or inverted into a coloured ground.
+- When the main product is a bottom, the matching top never hides the product's waistband, closure or belt loops.
 - You are ONLY changing what the mannequin wears — never its head, body, pose, camera framing, or background.
 </critical rules>
 
