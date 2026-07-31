@@ -18,11 +18,19 @@ from PIL import Image
 log = logging.getLogger("wearless.mannequin_job")
 
 from .. import repo
-from ..agents import image_qc, mannequin, mannequin_bust, mannequin_fit_qc, mannequin_series_qc
+from ..agents import (
+    image_qc,
+    mannequin,
+    mannequin_bust,
+    mannequin_fabric,
+    mannequin_fit_qc,
+    mannequin_series_qc,
+)
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
 from ..agents.prompts import (
     load_bust_prompt_template,
+    load_fabric_prompt_template,
     load_prompt_template,
     render_mannequin_prompt,
 )
@@ -586,10 +594,52 @@ async def _apply_bust_pass(
     return out, True
 
 
+async def _apply_fabric_pass(
+    *, pool, gemini, s, job_id, candidate, attempt, res, prod_imgs, calls_spent,
+    has_fine_pattern=False, image_size=None,
+):
+    """미세 패턴 상품의 원단 패턴 2패스. → (선택 결과, 편집콜 소비 여부).
+
+    가슴 2패스와 **입력이 다르다**: 생성본만 주는 게 아니라 상품 사진을 함께 넣는다.
+    고칠 대상이 "상품 사진과 같은 패턴"이라 근거 이미지가 없으면 모델이 패턴을 지어낸다.
+    상품 사진은 앞쪽 몇 장만 — 전부 넣으면 편집 과제가 다시 흐려진다(과제 1개 원칙).
+
+    fail-open — 거부·오류·빈 응답 어떤 경우에도 1패스 결과를 그대로 돌려준다.
+    """
+    if not mannequin_fabric.should_apply(
+            getattr(s, "mannequin_fabric_pass", "off"), has_fine_pattern, bool(prod_imgs)):
+        return res, False
+    if calls_spent >= s.mannequin_max_attempts:
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
+            "outcome": "budget_exhausted",
+            "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
+        return res, False
+    before = hashlib.sha256(res.image).hexdigest()[:12]
+    try:
+        prompt = mannequin_fabric.build_prompt(load_fabric_prompt_template())
+        out = await gemini.generate_content_image(
+            resolve_model(s, "image_high"),
+            prompt, [InlineImage(res.mime, res.image), *prod_imgs[:2]],
+            image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
+    except Exception as e:
+        log.warning("fabric pass failed for job %s (원본 유지): %r", job_id, e)
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
+            "outcome": "failed_open", "image_hash": before,
+            "error_type": type(e).__name__, "error_message": str(e)[:200]})
+        return res, True  # 호출은 나갔다 — 예산 소비
+    await _emit(pool, job_id, "step", {
+        "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
+        "outcome": "applied", "image_hash": before,
+        "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
+    return out, True
+
+
 async def _apply_edits(
     *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_imgs, match_img,
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
-    image_size=None,
+    image_size=None, has_fine_pattern=False,
 ):
     """채택본에 편집(축 교정 → 가슴 2패스)을 적용하고, 바뀌었으면 재판정·회귀 시 되돌린다.
 
@@ -619,6 +669,14 @@ async def _apply_edits(
         base_gender=base_gender, res=res, calls_spent=calls_spent,
         clothing_type=clothing_type, image_size=image_size)
     calls_spent += bust_spent
+    # 원단 패턴 2패스 — 가슴 2패스 **뒤**에 둔다. 두 편집이 겹치면 순서가 결과를 가르는데,
+    # 몸 형태가 먼저 확정돼야 그 위의 천에 패턴을 얹는 게 자연스럽다(반대로 하면 볼륨 편집이
+    # 방금 맞춘 패턴을 다시 늘린다). 회귀 판정은 아래에서 두 편집을 합쳐 한 번에 본다.
+    res, fabric_spent = await _apply_fabric_pass(
+        pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+        res=res, prod_imgs=prod_imgs, calls_spent=calls_spent,
+        has_fine_pattern=has_fine_pattern, image_size=image_size)
+    calls_spent += fabric_spent
     # A~C 점수는 **편집 전** 원본에 매긴 것이다. 편집이 이미지를 바꿨다면 저장되는 점수가
     # 실제 출고본의 점수가 아니게 된다(검수자가 다른 이미지의 숫자를 보고 판단하게 됨).
     # 이미지가 실제로 바뀐 경우에만 재판정한다 — 안 바뀌었으면 vision 콜 낭비다.
@@ -722,6 +780,7 @@ async def _run_candidate(
     # 미세 패턴 상품은 해상도를 올린다. **편집 패스(축 교정·2패스)도 같은 값**을 써야 한다 —
     # 편집이 기본 해상도로 다시 렌더하면 어렵게 올린 4K 가 그 자리에서 깎인다.
     image_size = effective_image_size(s, product, analysis)
+    has_fine_pattern = mannequin.has_fine_pattern(product, analysis)
     # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
     images = [base_img, *prod_imgs] + ([match_img] if match_img else []) + list(ref_imgs)
     ctx = mannequin.prompt_context(
@@ -843,7 +902,8 @@ async def _run_candidate(
                 attempt=attempt, model=model, res=res, p2=p2, prod_imgs=prod_imgs,
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
                 base_gender=base_gender, calls_spent=calls_spent,
-                clothing_type=clothing_type, enabled=reprocess, image_size=image_size)
+                clothing_type=clothing_type, enabled=reprocess, image_size=image_size,
+                has_fine_pattern=has_fine_pattern)
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
             series = (
@@ -922,7 +982,8 @@ async def _run_candidate(
                 attempt=s.mannequin_max_attempts, model=model, res=res, p2=p2,
                 prod_imgs=prod_imgs, match_img=match_img, fit_profile=fit_profile,
                 profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent,
-                clothing_type=clothing_type, image_size=image_size)
+                clothing_type=clothing_type, image_size=image_size,
+                has_fine_pattern=has_fine_pattern)
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
                 candidate=candidate, attempt=s.mannequin_max_attempts, res=res)
