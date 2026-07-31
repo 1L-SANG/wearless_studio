@@ -1,11 +1,523 @@
 {
   "_meta": {
     "defaultBaseUrl": "https://images.wearless.kr",
-    "releaseId": "space-sets-20260730-v1",
-    "releasedAt": "2026-07-30T06:00:29.811365+00:00",
+    "releaseId": "space-sets-20260731-zara-v1",
+    "releasedAt": "2026-07-31T10:21:14.109552+00:00",
     "schemaVersion": 1
   },
   "sets": [
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀 1 + 미디움 4",
+      "gender": "women",
+      "id": "horizon-sequence-05-women-top-draped",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_05_women_top_draped_01.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_05_women_top_draped_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_05_women_top_draped_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_05_women_top_draped_02.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_05_women_top_draped_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_05_women_top_draped_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_05_women_top_draped_03.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_05_women_top_draped_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_05_women_top_draped_03.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_05_women_top_draped_04.png",
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_05_women_top_draped_04",
+          "order": 4,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_05_women_top_draped_04.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_05_women_top_draped_05.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_05_women_top_draped_05",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_05_women_top_draped_05.webp"
+        }
+      ],
+      "name": "D5 · 여성 드레이프 셔츠",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-05-women-top-draped",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "미디움 5",
+      "gender": "women",
+      "id": "horizon-sequence-06-women-top-linen",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_06_women_top_linen_01.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_01",
+          "order": 1,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_06_women_top_linen_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_06_women_top_linen_02.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_06_women_top_linen_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_06_women_top_linen_03.png",
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_06_women_top_linen_03.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_06_women_top_linen_04.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_04",
+          "order": 4,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_06_women_top_linen_04.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_06_women_top_linen_05.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_05",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_06_women_top_linen_05.webp"
+        }
+      ],
+      "name": "D6 · 여성 리넨 셔츠",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-06-women-top-linen",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀 1 + 미디움 4",
+      "gender": "men",
+      "id": "horizon-sequence-07-men-top-pleated",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_07_men_top_pleated_01.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_07_men_top_pleated_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_07_men_top_pleated_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_07_men_top_pleated_02.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_07_men_top_pleated_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_07_men_top_pleated_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_07_men_top_pleated_03.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_07_men_top_pleated_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_07_men_top_pleated_03.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_07_men_top_pleated_04.png",
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_07_men_top_pleated_04",
+          "order": 4,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_07_men_top_pleated_04.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_07_men_top_pleated_05.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_07_men_top_pleated_05",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_07_men_top_pleated_05.webp"
+        }
+      ],
+      "name": "D7 · 남성 플리츠 셔츠",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-07-men-top-pleated",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀 1 + 미디움 4",
+      "gender": "men",
+      "id": "horizon-sequence-08-men-top-textured",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_08_men_top_textured_01.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_08_men_top_textured_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_08_men_top_textured_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_08_men_top_textured_02.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_08_men_top_textured_02",
+          "order": 2,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_08_men_top_textured_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_08_men_top_textured_03.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_08_men_top_textured_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_08_men_top_textured_03.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_08_men_top_textured_04.png",
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_08_men_top_textured_04",
+          "order": 4,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_08_men_top_textured_04.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_08_men_top_textured_05.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_08_men_top_textured_05",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_08_men_top_textured_05.webp"
+        }
+      ],
+      "name": "D8 · 남성 텍스처 셔츠",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-08-men-top-textured",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀 4 + 미디움 1",
+      "gender": "women",
+      "id": "horizon-sequence-09-women-dress-knit",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_09_women_dress_knit_01.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_09_women_dress_knit_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_09_women_dress_knit_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_09_women_dress_knit_02.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_09_women_dress_knit_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_09_women_dress_knit_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_09_women_dress_knit_03.png",
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_09_women_dress_knit_03",
+          "order": 3,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_09_women_dress_knit_03.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_09_women_dress_knit_04.png",
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_09_women_dress_knit_04",
+          "order": 4,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_09_women_dress_knit_04.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_09_women_dress_knit_05.png",
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_09_women_dress_knit_05",
+          "order": 5,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/thumb/ss_horizon_sequence_09_women_dress_knit_05.webp"
+        }
+      ],
+      "name": "D9 · 여성 니트 원피스",
+      "place": "horizon-studio",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-09-women-dress-knit",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "set-women-bottom-rainy-storefront-kclub-140072876",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_rainy_storefront_kclub_140072876_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_rainy_storefront_kclub_140072876_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_rainy_storefront_kclub_140072876_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_rainy_storefront_kclub_140072876_02.png",
+          "cutType": "styling",
+          "direction": "side",
+          "exampleId": "ss_set_women_bottom_rainy_storefront_kclub_140072876_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_rainy_storefront_kclub_140072876_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_rainy_storefront_kclub_140072876_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_rainy_storefront_kclub_140072876_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_rainy_storefront_kclub_140072876_03.webp"
+        }
+      ],
+      "name": "비 오는 상점 앞의 우산 산책 스냅",
+      "place": "storefront-street",
+      "placeType": "storefront-street",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/plate/set-women-bottom-rainy-storefront-kclub-140072876.png"
+      },
+      "setId": "set-women-bottom-rainy-storefront-kclub-140072876",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "set-women-bottom-urban-ggsing-140741411",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_urban_ggsing_140741411_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_urban_ggsing_140741411_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_urban_ggsing_140741411_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_urban_ggsing_140741411_02.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_urban_ggsing_140741411_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_urban_ggsing_140741411_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_urban_ggsing_140741411_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_urban_ggsing_140741411_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_urban_ggsing_140741411_03.webp"
+        }
+      ],
+      "name": "낡은 상가 앞의 가벼운 거리 스냅",
+      "place": "storefront-street",
+      "placeType": "storefront-street",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/plate/set-women-bottom-urban-ggsing-140741411.png"
+      },
+      "setId": "set-women-bottom-urban-ggsing-140741411",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "set-women-bottom-home-petrichoor-162619101",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_home_petrichoor_162619101_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_home_petrichoor_162619101_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_home_petrichoor_162619101_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_home_petrichoor_162619101_02.png",
+          "cutType": "styling",
+          "direction": "side",
+          "exampleId": "ss_set_women_bottom_home_petrichoor_162619101_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_home_petrichoor_162619101_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_home_petrichoor_162619101_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_home_petrichoor_162619101_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_home_petrichoor_162619101_03.webp"
+        }
+      ],
+      "name": "작은 집 안의 따뜻한 생활 스냅",
+      "place": "home-interior",
+      "placeType": "home-interior",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/plate/set-women-bottom-home-petrichoor-162619101.png"
+      },
+      "setId": "set-women-bottom-home-petrichoor-162619101",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "id": "set-women-bottom-beach-nissome-133330805",
+      "members": [
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_beach_nissome_133330805_01.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_beach_nissome_133330805_01",
+          "order": 1,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_beach_nissome_133330805_01.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_beach_nissome_133330805_02.png",
+          "cutType": "styling",
+          "direction": "back",
+          "exampleId": "ss_set_women_bottom_beach_nissome_133330805_02",
+          "order": 2,
+          "shot": "full",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_beach_nissome_133330805_02.webp"
+        },
+        {
+          "allUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_beach_nissome_133330805_03.png",
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_beach_nissome_133330805_03",
+          "order": 3,
+          "shot": "medium",
+          "thumbUrl": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/thumb/ss_set_women_bottom_beach_nissome_133330805_03.webp"
+        }
+      ],
+      "name": "맑은 해변의 한낮 여행 스냅",
+      "place": "waterfront",
+      "placeType": "waterfront",
+      "platePolicy": "required",
+      "representativePlate": {
+        "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/plate/set-women-bottom-beach-nissome-133330805.png"
+      },
+      "setId": "set-women-bottom-beach-nissome-133330805",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
     {
       "applicableClothingTypes": [
         "dress"
@@ -2413,12 +2925,6 @@
         "outer",
         "dress"
       ],
-      "setApplicableClothingTypes": [
-        "top",
-        "bottom",
-        "outer",
-        "dress"
-      ],
       "compositionLabel": "정면 · 사이드 · 뒷면",
       "gender": "women",
       "id": "set_horizon_women_bottom_threetimes_7563033280596_prod01",
@@ -2458,6 +2964,12 @@
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_horizon_women_bottom_threetimes_7563033280596_prod01.png"
       },
+      "setApplicableClothingTypes": [
+        "top",
+        "bottom",
+        "outer",
+        "dress"
+      ],
       "setId": "set_horizon_women_bottom_threetimes_7563033280596_prod01",
       "setType": "horizon-rotation",
       "spaceVariation": "fixed",
@@ -2465,11 +2977,6 @@
     },
     {
       "applicableClothingTypes": [
-        "top",
-        "bottom",
-        "outer"
-      ],
-      "setApplicableClothingTypes": [
         "top",
         "bottom",
         "outer"
@@ -2513,6 +3020,11 @@
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set_horizon_men_bottom_hatchingroom_2161_prod01.png"
       },
+      "setApplicableClothingTypes": [
+        "top",
+        "bottom",
+        "outer"
+      ],
       "setId": "set_horizon_men_bottom_hatchingroom_2161_prod01",
       "setType": "horizon-rotation",
       "spaceVariation": "fixed",
