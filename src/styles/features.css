@@ -7,7 +7,8 @@
 .pi-reveal { margin-top: 18px; animation: revealIn .42s cubic-bezier(.2,.7,.3,1) both; }
 @keyframes revealIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 
-.color-group { padding: 18px; border-radius: var(--r-5); background: var(--bg-2); }.color-group + .color-group { margin-top: 14px; }
+/* 색상 그룹 카드 — 상품명 입력창(.field)과 같은 흰 배경+은은한 그림자 테두리 (2026-07-31 사용자 결정) */
+.color-group { padding: 18px; border-radius: var(--r-5); background: #fff; box-shadow: var(--elev-card); }.color-group + .color-group { margin-top: 14px; }
 .color-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .color-group-head .ttl { display: flex; align-items: center; gap: 10px; }
 .color-swatch { width: 16px; height: 16px; border-radius: 50%; box-shadow: 0 0 0 1px var(--ring); flex: none; }
