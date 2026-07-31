@@ -140,9 +140,8 @@
 
 /* E — 2×2 angle wells: all four angles at a glance, images stack inside each */
 .slot-wells { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-/* 위계 정리(2026-07-31): 그림자 테두리는 바깥 색상 그룹 카드가 담당 — 안쪽 이미지 박스는
-   상자감 없이 라벨+업로드 점선만 (회색 틴트는 사용자 피드백으로 제거). */
-.slot-well { background: transparent; border-radius: var(--r-5); padding: 14px 0 4px; }
+/* 안쪽 이미지 박스는 원래의 1px 라인 유지 — 그림자 카드 효과는 바깥 색상 그룹만 (2026-07-31 확정) */
+.slot-well { background: #fff; border-radius: var(--r-5); box-shadow: 0 0 0 1px var(--ring); padding: 14px; }
 .slot-well-head { display: flex; align-items: center; margin-bottom: 12px; }
 .slot-well-head { font-size: 14px; font-weight: 700; color: var(--fg-1); }
 .slot-well-head .swh-label { display: inline-flex; align-items: center; }
