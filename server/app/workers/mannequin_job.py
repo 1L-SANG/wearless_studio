@@ -27,6 +27,12 @@ from ..agents import (
     mannequin_series_qc,
     mannequin_untuck,
 )
+from ..agents.mannequin_adjust import (
+    ADJUST_PROMPT_VERSION,
+    build_adjust_directives,
+    build_adjust_manifest,
+    render_adjust_prompt,
+)
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
 from ..agents.prompts import (
@@ -54,6 +60,38 @@ def _fit_profile_for_match_image(profile: dict | None, has_match_image: bool) ->
     if not profile or has_match_image:
         return profile
     return {k: v for k, v in profile.items() if k not in ("matchCut", "matchingFit")}
+
+
+def _valid_fit_profile_snapshot(snapshot) -> bool:
+    return (
+        isinstance(snapshot, dict)
+        and snapshot.get("version") == 1
+        and (snapshot.get("profile") is None or isinstance(snapshot.get("profile"), dict))
+        and isinstance(snapshot.get("adjustedAxes"), list)
+    )
+
+
+def _compatible_parent_edit_depth(
+    parent: dict | None, profile: dict | None, match_item_id: str | None
+) -> int | None:
+    """부모 메타데이터가 현재 조정 입력과 호환되면 기존 editDepth, 아니면 None."""
+    if not parent or not isinstance(profile, dict):
+        return None
+    category, gender = profile.get("category"), profile.get("gender")
+    if not isinstance(category, str) or not isinstance(gender, str):
+        return None
+    metadata = parent.get("generation_metadata")
+    if not isinstance(metadata, dict):
+        return None
+    if (metadata.get("profileCategory") != category
+            or metadata.get("profileGender") != gender):
+        return None
+    if metadata.get("matchItemId") != match_item_id:
+        return None
+    depth = metadata.get("editDepth")
+    if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0 or depth >= 2:
+        return None
+    return depth
 
 
 _GENERATION_PROGRESS_INTERVAL_SECONDS = 7.0
@@ -849,6 +887,7 @@ async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
     adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
+    generation_path="fresh", parent_cut_img=None, adjust_directives="",
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
     s = app.state.settings
@@ -858,23 +897,32 @@ async def _run_candidate(
     # 편집이 기본 해상도로 다시 렌더하면 어렵게 올린 4K 가 그 자리에서 깎인다.
     image_size = effective_image_size(s, product, analysis)
     has_fine_pattern = mannequin.has_fine_pattern(product, analysis)
-    # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
-    images = [base_img, *prod_imgs] + ([match_img] if match_img else []) + list(ref_imgs)
-    ctx = mannequin.prompt_context(
-        clothing_type=clothing_type, product_count=product_count,
-        base_gender=base_gender, image_manifest=image_manifest, fit_profile=fit_profile,
-        adjusted_axes=adjusted_axes,
-    )
-    base_prompt = render_mannequin_prompt(
-        template, ctx, product, analysis,
-        seller_canon=s.seller_text_canonicalize, knowledge=s.retrieval_knowledge,
-    )
-    if ref_imgs:  # 레퍼런스 첨부 시에만 오염 가드를 프롬프트 말미에 강조(look-only)
-        base_prompt = f"{base_prompt}\n\n{_STYLE_REF_GUARD}"
-    # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
-    # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
-    # 조정 잡은 MANNEQUIN_ADJUST_TIER 가 설정됐을 때만 다른 tier 를 탄다(tier_for_job).
-    model = resolve_model(s, tier_for_job(s, job))
+    if generation_path == "edit" and parent_cut_img is not None and adjust_directives:
+        # 편집 프롬프트의 image 1 계약: 현재 컷이 반드시 첫 장이고, 상품 정체성 앵커가 뒤따른다.
+        images = [parent_cut_img, *prod_imgs] + ([match_img] if match_img else [])
+        base_prompt = render_adjust_prompt(
+            adjust_directives, build_adjust_manifest(len(prod_imgs), match_img is not None))
+        prompt_version = ADJUST_PROMPT_VERSION
+        model = resolve_model(s, getattr(s, "mannequin_adjust_tier", "") or "image_high")
+    else:
+        generation_path = "fresh"
+        # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
+        images = [base_img, *prod_imgs] + ([match_img] if match_img else []) + list(ref_imgs)
+        ctx = mannequin.prompt_context(
+            clothing_type=clothing_type, product_count=product_count,
+            base_gender=base_gender, image_manifest=image_manifest, fit_profile=fit_profile,
+            adjusted_axes=adjusted_axes,
+        )
+        base_prompt = render_mannequin_prompt(
+            template, ctx, product, analysis,
+            seller_canon=s.seller_text_canonicalize, knowledge=s.retrieval_knowledge,
+        )
+        if ref_imgs:  # 레퍼런스 첨부 시에만 오염 가드를 프롬프트 말미에 강조(look-only)
+            base_prompt = f"{base_prompt}\n\n{_STYLE_REF_GUARD}"
+        prompt_version = s.mannequin_prompt_version
+        # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
+        # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
+        model = resolve_model(s, tier_for_job(s, job))
     feedback = ""
     # 구제 후보 풀을 **두 단계로 분리**한다(codex 2026-07-31 HIGH).
     #  - pre_reject: 사전 게이트에서 걸린 후보. axis/bust 편집·재판정·D축을 아직 안 거쳤다.
@@ -903,7 +951,8 @@ async def _run_candidate(
             "status": "prompt_rendered", "candidate": candidate, "attempt": attempt,
             "profile_hash": profile_hash,
             "prompt_hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            "prompt_version": s.mannequin_prompt_version,
+            "prompt_version": prompt_version,
+            "generation_path": generation_path,
             "input_source": fit_profile_source})
         calls_spent += 1  # 성공하든 실패하든 호출은 나갔다
         try:
@@ -1149,42 +1198,74 @@ async def run_mannequin_job(app, job: dict) -> None:
         #    크레딧 단가(2/잡)는 잡 기준이라 불변. 다양화는 핏 조정→재생성 루프가 담당.
         clothing_type = product.get("clothing_type") or "상의"
         manifest = _build_manifest(prod_assets, match_img is not None, clothing_type)
-        # Phase 3(retrieval_refimages=on): 유사 성공 컷을 STYLE REFERENCE 로 첨부(컷 톤·조명 일관성).
-        # off 면 ([], []) → 매니페스트·images 무변화(행위 변화 0). best-effort.
-        ref_imgs, ref_ids = await _load_style_refs(
-            app, s, prod_imgs=prod_imgs,
-            clothing_type=(product.get("clothing_type") or product.get("clothingType")), gender=gender)
-        if ref_imgs:
-            next_i = 2 + len(prod_assets) + (1 if match_img else 0)
-            manifest = manifest + "\n" + _ref_manifest_lines(next_i, len(ref_imgs))
-            # 이벤트는 잡 소유자(다른 셀러)에게 전달되므로 ref id(타 프로젝트 UUID 포함)를 그대로
-            # 노출하지 않는다 — opaque 해시만. 실제 id 는 서버 로그로만(운영자 디버깅용).
-            log.info("job %s style_refs_attached ids=%s", job_id, ref_ids)
-            opaque = [hashlib.sha1(i.encode("utf-8")).hexdigest()[:12] for i in ref_ids]
-            await _emit(pool, job_id, "step",
-                        {"status": "style_refs_attached", "ref_hashes": opaque, "n": len(ref_imgs)})
         # fit profile 은 잡 생성 시점 스냅샷이 정본(payload.fitProfileSnapshot — fidelity 설계 D3).
         # 워커가 최신 analysis 를 재독하면 잡 생성↔실행 사이의 저장 경합으로 다른 프로필이
-        # 조용히 쓰일 수 있다(무음 유실). 키가 없는 legacy 잡만 analysis 폴백.
+        # 조용히 쓰일 수 있다(무음 유실). 키가 없는 legacy 잡과 malformed 스냅샷은 analysis 폴백.
         snap = (job.get("payload") or {}).get("fitProfileSnapshot")
-        if snap is not None:
-            valid = (isinstance(snap, dict) and snap.get("version") == 1
-                     and (snap.get("profile") is None or isinstance(snap.get("profile"), dict))
-                     and isinstance(snap.get("adjustedAxes"), list))
-            if not valid:
-                await _fail("마네킹컷 생성에 실패했어요. 다시 시도해 주세요.",
-                            {"error": "invalid_fit_profile_snapshot"})
-                return
+        snap_valid = _valid_fit_profile_snapshot(snap)
+        if snap_valid:
             fit_profile = snap.get("profile")
             adjusted_axes = tuple(a for a in snap.get("adjustedAxes") if isinstance(a, str))
             fit_profile_source = "payload_snapshot"
         else:
+            # 편집 자격만 잃는다. malformed/legacy payload 때문에 잡 자체를 실패시키지 않고,
+            # 신뢰 가능한 persisted analysis 로 fresh generation 을 수행한다.
             fit_profile = mannequin.effective_fit_profile(analysis, match_img is not None)
             adjusted_axes = ()
-            fit_profile_source = "legacy_analysis_fallback"
+            fit_profile_source = (
+                "legacy_analysis_fallback" if snap is None else "invalid_snapshot_fallback")
         # 방어: 스냅샷 이후 매칭 자산이 사라졌거나 legacy analysis 에 v2 프로필이 남아 있어도
         # 화면에 없는 별도 의류의 지시가 프롬프트로 전달되지 않게 두 버전 키를 함께 제거한다.
         fit_profile = _fit_profile_for_match_image(fit_profile, match_img is not None)
+        resolved_match_id = match_id if match_img is not None else None
+
+        # 조정 편집 자격은 전부 best-effort다. 어느 조건이든 빠지면 기존 fresh 경로로 조용히
+        # 돌아가며, 부모 조회/R2 로드 실패가 잡 실패로 번지지 않는다.
+        generation_path = "fresh"
+        parent_cut_id = None
+        parent_edit_depth = None
+        parent_cut_img = None
+        adjust_directives = ""
+        payload_mode = (job.get("payload") or {}).get("mode")
+        if payload_mode == "regenerate" and snap_valid and isinstance(fit_profile, dict):
+            adjust_directives = build_adjust_directives(fit_profile, adjusted_axes)
+            if adjust_directives:
+                parent = None
+                try:
+                    async with pool.connection() as conn:
+                        parent = await repo.get_mannequin_edit_parent(
+                            conn, user_id, project_id)
+                except Exception:
+                    parent = None
+                parent_edit_depth = _compatible_parent_edit_depth(
+                    parent, fit_profile, resolved_match_id)
+                if parent_edit_depth is not None:
+                    try:
+                        parent_bytes = await asyncio.to_thread(
+                            app.state.r2.get_bytes, parent["r2_key"])
+                        parent_cut_img = InlineImage(parent["mime_type"], parent_bytes)
+                    except Exception:
+                        parent_cut_img = None
+                    if parent_cut_img is not None:
+                        generation_path = "edit"
+                        parent_cut_id = parent["id"]
+
+        # Fresh 생성에만 유사 성공 컷을 STYLE REFERENCE 로 첨부한다. Edit 입력은 v2 계약의
+        # [parent, products..., match?] 정확한 순서를 유지해야 하므로 검색 자체를 건너뛴다.
+        ref_imgs, ref_ids = [], []
+        if generation_path == "fresh":
+            ref_imgs, ref_ids = await _load_style_refs(
+                app, s, prod_imgs=prod_imgs,
+                clothing_type=(product.get("clothing_type") or product.get("clothingType")),
+                gender=gender)
+            if ref_imgs:
+                next_i = 2 + len(prod_assets) + (1 if match_img else 0)
+                manifest = manifest + "\n" + _ref_manifest_lines(next_i, len(ref_imgs))
+                # 이벤트는 잡 소유자에게 전달되므로 타 프로젝트 UUID 는 opaque 해시만 노출한다.
+                log.info("job %s style_refs_attached ids=%s", job_id, ref_ids)
+                opaque = [hashlib.sha1(i.encode("utf-8")).hexdigest()[:12] for i in ref_ids]
+                await _emit(pool, job_id, "step", {
+                    "status": "style_refs_attached", "ref_hashes": opaque, "n": len(ref_imgs)})
         legacy_base_fit = analysis.get("fit") or "regular"
         await _emit(pool, job_id, "progress", {"progress": 35, "phase": "generating"})
 
@@ -1227,7 +1308,9 @@ async def run_mannequin_job(app, job: dict) -> None:
                     product_count=product_count, template=template, product=product,
                     analysis=analysis, clothing_type=clothing_type, image_manifest=manifest,
                     fit_profile=profile, adjusted_axes=adjusted_axes,
-                    fit_profile_source=fit_profile_source, ref_imgs=ref_imgs)
+                    fit_profile_source=fit_profile_source, ref_imgs=ref_imgs,
+                    generation_path=generation_path, parent_cut_img=parent_cut_img,
+                    adjust_directives=adjust_directives)
             except Exception as e:
                 log.warning("job %s candidate %s failed: %r", job_id, letter, e)
                 r = None
@@ -1253,6 +1336,19 @@ async def run_mannequin_job(app, job: dict) -> None:
             return
         await _emit(pool, job_id, "progress", {"progress": 85, "phase": "finalizing"})
 
+        cut_generation_metadata = {
+            "generationPath": generation_path,
+            "editDepth": (parent_edit_depth + 1) if generation_path == "edit" else 0,
+            "parentCutId": parent_cut_id if generation_path == "edit" else None,
+            "profileCategory": fit_profile.get("category") if isinstance(fit_profile, dict) else None,
+            "profileGender": fit_profile.get("gender") if isinstance(fit_profile, dict) else None,
+            "matchItemId": resolved_match_id,
+            "promptVersion": (ADJUST_PROMPT_VERSION if generation_path == "edit"
+                              else s.mannequin_prompt_version),
+        }
+        for candidate_result in passed:
+            candidate_result["generation_metadata"] = dict(cut_generation_metadata)
+
         # 4) 성공 종결 (원자·lease 펜스). charge = reserved — 예약 시점 견적을 그대로 확정한다
         # (단일컷 전환으로 구 "성공 후보 수 × 1" 폐기. 실행 시점 설정값을 다시 읽으면 배포/env 변경
         # 사이에 낀 잡이 예약액과 다른 금액을 차감하거나 settle 실패할 수 있음). 실패는 _fail(release).
@@ -1262,7 +1358,8 @@ async def run_mannequin_job(app, job: dict) -> None:
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, candidates=passed, reserved=reserved, charge=charge,
                 metadata={"creditCostVersion": s.credit_cost_version,
-                          "promptVersion": s.mannequin_prompt_version, "gender": gender})
+                          "promptVersion": cut_generation_metadata["promptVersion"],
+                          "gender": gender})
             await conn.commit()
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
             for c in passed:
