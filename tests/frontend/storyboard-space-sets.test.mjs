@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   createSpaceSetMembers,
@@ -10,11 +11,14 @@ import {
 } from '../../src/lib/storyboardSpaceSets.js';
 import {
   STORYBOARD_SPACE_SET_EXAMPLES,
+  distinctPlaceStylingSetsFor,
   inferStoryboardSpaceSet,
   isStoryboardSpaceSetEligible,
   normalizeStoryboardSpaceSetRelease,
   spaceSetGroupId,
   spaceSetIdFromGroupId,
+  STORYBOARD_SPACE_SETS,
+  STORYBOARD_SPACE_PLACE_TYPES,
   storyboardSpaceSetsFor,
 } from '../../src/lib/storyboardSpaceSetCatalog.js';
 
@@ -37,6 +41,10 @@ const releasedStylingSet = storyboardSpaceSetsFor({
 }).find((set) => set.setType === 'styling');
 const groupA = spaceSetGroupId(releasedStylingSet.id, 'instance-a');
 const groupB = spaceSetGroupId(releasedStylingSet.id, 'instance-b');
+const rawSpaceSetRelease = JSON.parse(readFileSync(
+  new URL('../../src/data/storyboardSpaceSets.json', import.meta.url),
+  'utf8',
+));
 
 test('consecutive spaceGroupId runs become bands without joining separated runs', () => {
   const groups = groupConsecutiveSpaceRuns([
@@ -119,7 +127,7 @@ test('release normalization keeps canonical applicability and thumbnails', () =>
       setType: 'styling',
       gender: 'women',
       applicableClothingTypes: ['top'],
-      placeType: 'indoor',
+      placeType: 'building-interior',
       tone: 'daily-snapshot',
       compositionLabel: '풀 1 + 미디움 1',
       spaceVariation: 'subtle',
@@ -163,7 +171,7 @@ test('release normalization fails closed instead of widening malformed sets', ()
     setType: 'styling',
     gender: 'women',
     applicableClothingTypes: ['top'],
-    placeType: 'indoor',
+    placeType: 'building-interior',
     tone: 'daily-snapshot',
     compositionLabel: '풀 2',
     spaceVariation: 'subtle',
@@ -211,6 +219,10 @@ test('release normalization fails closed instead of widening malformed sets', ()
     members: base.members.map((member) => ({ ...member, direction: null })),
   }).length, 0);
   assert.equal(normalize({ ...base, setId: 'bad__id' }).length, 0);
+  assert.equal(normalize({ ...base, placeType: 'indoor' }).length, 0);
+  assert.equal(normalize({ ...base, placeType: '05. 작은 해변·항구' }).length, 0);
+  assert.equal(normalize({ ...base, placeType: ' building-interior ' }).length, 0);
+  assert.equal(normalize({ ...base, place: 'waterfront' }).length, 0);
   assert.equal(normalize({
     ...base,
     setType: 'horizon-rotation',
@@ -221,6 +233,26 @@ test('release normalization fails closed instead of widening malformed sets', ()
       direction: 'front',
     })),
   }).length, 0);
+});
+
+test('published sets use only the shared place vocabulary and matching catalog fields', () => {
+  const allowed = new Set(STORYBOARD_SPACE_PLACE_TYPES.map((item) => item.value));
+  const released = STORYBOARD_SPACE_SETS;
+  assert.ok(released.length > 0);
+  assert.equal(released.length, rawSpaceSetRelease.sets.length);
+  assert.ok(released.every((set) => allowed.has(set.placeType)));
+  assert.ok(released.every((set) => set.place === set.placeType));
+});
+
+test('styling-set rotation keeps one candidate per place type and excludes horizon sets', () => {
+  const sets = distinctPlaceStylingSetsFor({
+    gender: 'women',
+    clothingType: 'top',
+  });
+  assert.ok(sets.length > 1);
+  assert.ok(sets.every((set) => set.setType === 'styling'));
+  assert.equal(new Set(sets.map((set) => set.placeType)).size, sets.length);
+  assert.ok(sets.every((set) => set.placeType !== 'horizon-studio'));
 });
 
 test('empty release stays empty and production group ids use the versioned namespace', () => {

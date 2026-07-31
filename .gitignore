@@ -56,6 +56,9 @@ agents.md
 # 로컬 dev 런타임(로그·pid)
 .dev/
 
+# 작업 중 스크린샷·생성 이미지·크롬 프로필 등 일회성 산출물(수백 MB) — 로컬 전용.
+tmp/
+
 # solc 컴파일 아티팩트(재생성 가능)
 build/
 spike/posescope/out/
@@ -80,3 +83,6 @@ server/app/data/face_models/*.onnx
 
 # Vercel CLI의 로컬 프로젝트 연결 메타데이터
 .vercel/
+
+# 구매 자료(전자책·프롬프트 팩) — 저작권. 로컬 전용.
+insight/

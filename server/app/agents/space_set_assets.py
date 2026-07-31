@@ -153,6 +153,18 @@ def validate_space_set_registry_document(
     raw_sets = raw.get("sets")
     if not isinstance(raw_sets, list):
         raise ValueError("space_set_registry_sets_invalid")
+    raw_place_types = raw.get("placeTypes")
+    if (
+        not isinstance(raw_place_types, list)
+        or not raw_place_types
+        or any(
+            not isinstance(value, str) or not value
+            for value in raw_place_types
+        )
+        or len(raw_place_types) != len(set(raw_place_types))
+    ):
+        raise ValueError("space_set_registry_place_types_invalid")
+    place_types = set(raw_place_types)
     release_id = raw.get("releaseId")
     if raw_sets and not _is_safe_id(release_id):
         raise ValueError("space_set_registry_release_id_invalid")
@@ -190,6 +202,9 @@ def validate_space_set_registry_document(
         set_type = raw_set.get("setType")
         if set_type not in _SET_TYPES:
             raise ValueError("space_set_registry_set_type_invalid")
+        place_type = raw_set.get("placeType")
+        if place_type not in place_types:
+            raise ValueError("space_set_registry_place_type_invalid")
         plate_policy = raw_set.get("platePolicy")
         if plate_policy not in ("required", "not-required"):
             raise ValueError("space_set_registry_plate_policy_invalid")
@@ -320,6 +335,7 @@ def validate_space_set_registry_document(
             "gender": gender,
             "applicableClothingTypes": list(applicable),
             "setApplicableClothingTypes": list(set_applicable),
+            "placeType": place_type,
             "spaceVariation": space_variation,
             "platePolicy": plate_policy,
             "representativePlate": representative_plate,

@@ -32,6 +32,7 @@ DEFAULT_SERVER_REGISTRY_PATH = SERVER_DIR / "app" / "data" / "space_set_assets.j
 DEFAULT_FRONTEND_CATALOG_PATH = REPO_DIR / "src" / "data" / "storyboardSpaceSets.json"
 FLAT_FRONTEND_CATALOG_PATH = REPO_DIR / "src" / "data" / "genExamples.json"
 FLAT_SERVER_REGISTRY_PATH = SERVER_DIR / "app" / "data" / "example_assets.json"
+PLACE_TYPES_PATH = REPO_DIR / "data" / "storyboard_space_place_types.json"
 R2_PREFIX = "seed/genexamples/space-sets/v1/releases"
 THUMB_MAX_SIDE = 480
 THUMB_QUALITY = 82
@@ -61,6 +62,31 @@ _LEGACY_PROMPT_EXCEPTION_SETS = {
     "set-style-women-dress-neighborhood-garage-modimood-3266-root04",
     "set-style-women-dress-night-riverwalk-maybins-40948-root07",
 }
+
+
+def _load_place_types(path: Path = PLACE_TYPES_PATH) -> frozenset[str]:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise RuntimeError("storyboard space place-type vocabulary is invalid")
+    items = raw.get("placeTypes")
+    values = [
+        item.get("value")
+        for item in items or []
+        if isinstance(item, dict)
+    ]
+    if (
+        raw.get("schemaVersion") != 1
+        or not isinstance(items, list)
+        or not items
+        or any(not isinstance(value, str) or not value for value in values)
+        or len(values) != len(items)
+        or len(values) != len(set(values))
+    ):
+        raise RuntimeError("storyboard space place-type vocabulary is invalid")
+    return frozenset(values)
+
+
+_PLACE_TYPES = _load_place_types()
 
 _TOP_LEVEL_FIELDS = {"schemaVersion", "releaseId", "releasedAt", "sets"}
 _SET_FIELDS = {
@@ -566,6 +592,11 @@ def validate_manifest(
         for field in ("name", "placeType", "tone", "compositionLabel"):
             if not isinstance(space_set.get(field), str) or not space_set[field].strip():
                 violations.append(f"{prefix}.{field}는 비어 있지 않은 문자열이어야 합니다")
+        place_type = space_set.get("placeType")
+        if isinstance(place_type, str) and place_type not in _PLACE_TYPES:
+            violations.append(
+                f"{prefix}.placeType이 통일 장소 어휘에 없습니다: {place_type}"
+            )
 
         set_type = space_set.get("setType")
         if set_type not in _SET_TYPES:
@@ -1180,6 +1211,7 @@ def stage_release(
             "releaseId": release_id,
             "releasedAt": manifest["releasedAt"],
             "baseUrl": base,
+            "placeTypes": sorted(_PLACE_TYPES),
             "sets": registry_sets,
         }
         release_audit = {
@@ -1507,6 +1539,13 @@ def load_staged_release(output_dir: Path) -> SpaceSetReleaseResult:
             audit_set.get("setId") != set_id
         ):
             cross_violations.append(f"{label} setId가 서로 다릅니다")
+        server_place_type = server_set.get("placeType")
+        if (
+            server_place_type not in _PLACE_TYPES
+            or front_set.get("placeType") != server_place_type
+            or front_set.get("place") != server_place_type
+        ):
+            cross_violations.append(f"{label} placeType이 서로 다르거나 허용값이 아닙니다")
         server_plate = server_set.get("representativePlate")
         front_plate = front_set.get("representativePlate")
         audit_plate = audit_set.get("representativePlate")

@@ -1,4 +1,5 @@
 import spaceSetRelease from '../data/storyboardSpaceSets.json' with { type: 'json' };
+import placeTypeTable from '../../data/storyboard_space_place_types.json' with { type: 'json' };
 
 const ALL_CLOTHING_TYPES = Object.freeze(['top', 'bottom', 'outer', 'dress']);
 const SET_TYPES = new Set(['styling', 'horizon-rotation', 'horizon-sequence']);
@@ -14,6 +15,14 @@ const SET_SCOPE_BY_GENDER = Object.freeze({
   women: Object.freeze(['top', 'bottom', 'outer', 'dress']),
   men: Object.freeze(['top', 'bottom', 'outer']),
 });
+
+export const STORYBOARD_SPACE_PLACE_TYPES = Object.freeze(
+  placeTypeTable.placeTypes.map((item) => Object.freeze({
+    value: item.value,
+    label: item.label,
+  })),
+);
+const PLACE_TYPES = new Set(STORYBOARD_SPACE_PLACE_TYPES.map((item) => item.value));
 
 const text = (value, fallback = '') => (
   typeof value === 'string' && value.trim() ? value.trim() : fallback
@@ -59,6 +68,7 @@ function normalizedSet(set, index) {
   const setType = set.setType;
   const clothingTypes = set.applicableClothingTypes;
   const setClothingTypes = set.setApplicableClothingTypes ?? clothingTypes;
+  const placeType = typeof set.placeType === 'string' ? set.placeType : '';
   if (
     !validReleaseId(id)
     || !SET_TYPES.has(setType)
@@ -76,7 +86,8 @@ function normalizedSet(set, index) {
     || !SPACE_VARIATIONS.has(set.spaceVariation)
     || !PLATE_POLICIES.has(set.platePolicy)
     || !text(set.name)
-    || !text(set.placeType)
+    || !PLACE_TYPES.has(placeType)
+    || (set.place !== undefined && set.place !== placeType)
     || !text(set.tone)
     || !text(set.compositionLabel)
     || !Array.isArray(set.members)
@@ -144,8 +155,8 @@ function normalizedSet(set, index) {
     gender: set.gender,
     applicableClothingTypes: Object.freeze([...clothingTypes]),
     setApplicableClothingTypes: Object.freeze([...setClothingTypes]),
-    place: text(set.placeType),
-    placeType: text(set.placeType),
+    place: placeType,
+    placeType,
     tone: text(set.tone),
     compositionLabel: text(set.compositionLabel),
     spaceVariation: set.spaceVariation,
@@ -218,6 +229,15 @@ export function storyboardSpaceSetsFor({ gender = null, clothingType = null } = 
   return STORYBOARD_SPACE_SETS.filter((set) => isStoryboardSpaceSetEligible(set, {
     gender, clothingType,
   }));
+}
+
+export function distinctPlaceStylingSetsFor({ gender = null, clothingType = null } = {}) {
+  const seenPlaceTypes = new Set();
+  return storyboardSpaceSetsFor({ gender, clothingType }).filter((set) => {
+    if (set.setType !== 'styling' || seenPlaceTypes.has(set.placeType)) return false;
+    seenPlaceTypes.add(set.placeType);
+    return true;
+  });
 }
 
 export function withStoryboardSpaceSetExamples(catalogs) {
