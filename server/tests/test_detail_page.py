@@ -677,9 +677,9 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
         assert item["images"][-1].data.endswith(f":{scope}".encode())  # scope별 자산(누끼 variant) 선택 검증
     assert "EXAMPLE REFERENCE (scope: all)" in captured["all"]["manifest"]
     assert "POSE CONTROL" in captured["pose"]["manifest"]
-    assert "follow the attached EXAMPLE REFERENCE's background/location" in captured["all"]["prompt"]
+    assert "EXAMPLE REFERENCE as art direction" in captured["all"]["prompt"]
     assert "Do not transfer any background, lighting, color grade" in captured["pose"]["prompt"]
-    assert "follow the attached EXAMPLE REFERENCE's background/location" not in captured["pose"]["prompt"]
+    assert "EXAMPLE REFERENCE as art direction" not in captured["pose"]["prompt"]
     assert len(captured["named"]["images"]) == 1
     assert "EXAMPLE REFERENCE" not in captured["named"]["manifest"]
     assert "REFERENCE SCOPE" not in captured["named"]["prompt"]

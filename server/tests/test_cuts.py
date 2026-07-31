@@ -567,7 +567,7 @@ def test_render_ref_scope_bg_uses_plate_and_blocks_pose_garment_transfer(dev_exa
     assert "lifestyle setting" not in p
     assert "choose a natural pose" in p                        # 포즈 유출 차단(플레이트는 포즈 미제어)
     assert "COMPLETE outfit" in p                              # 하의·신발 누락 방지(2026-07-20 실측: 맨다리 컷)
-    assert "shoes or accessories" in p                         # 의류·신발 유출 차단(실험서 관찰된 실패)
+    assert "garments, shoes or props" in p                         # 의류·신발 유출 차단(실험서 관찰된 실패)
     assert "FRAMING OVERRIDE" in p                             # 캔버스 크롭보다 요청 샷이 우선
     assert "Pose: natural and unforced" in p                   # 빈 배경은 포즈를 제어하지 않음
     # bg 자산 = 빈 무대 플레이트(전용 variant) 우선
@@ -742,11 +742,11 @@ def test_resolved_example_manifest_and_prompt_apply_all_scope():
     )
     assert "EXAMPLE REFERENCE (scope: all)" in manifest
     assert "source of background, lighting, mood, pose and framing/composition" in manifest
-    assert "follow the attached EXAMPLE REFERENCE's background/location" in p
+    assert "EXAMPLE REFERENCE as art direction" in p
     assert "Swap in the exact garment from PRODUCT references" in p
     assert "garments, shoes, accessories" in p
-    assert "PRODUCT and MATCHING are the ONLY clothing sources" in p
-    assert "camera direction" in p and "remain\nfixed requirements" in p
+    assert "PRODUCT and MATCHING are the ONLY product-specific garment identity" in p
+    assert "camera direction" in p and "remain fixed requirements" in p
     assert "Pose: natural and unforced" not in p
 
 
@@ -776,7 +776,7 @@ def test_resolved_example_manifest_and_prompt_apply_pose_only_scope():
     assert "adjust it naturally" not in p
     assert "render it from the requested" not in p
     assert "Do not transfer any background, lighting, color grade, clothing" in p
-    assert "follow the attached EXAMPLE REFERENCE's background/location" not in p
+    assert "EXAMPLE REFERENCE as art direction" not in p
     assert "Composition nuance" not in p
     assert "Pose: natural and unforced" not in p
 
@@ -807,7 +807,7 @@ def test_in_space_resolved_example_forces_pose_scope_prompt():
     assert "POSE CONTROL" in manifest
     assert "SPACE CONTINUITY" in p
     assert "Do not transfer any background" in p
-    assert "follow the attached EXAMPLE REFERENCE's background/location" not in p
+    assert "EXAMPLE REFERENCE as art direction" not in p
 
 
 def test_resolved_product_example_keeps_product_cut_invariants():
@@ -834,7 +834,7 @@ def test_resolved_all_side_keeps_camera_direction_invariant():
          "exampleId": "ex_styling_top_full_1", "refScope": "all"},
         manifest=manifest)
     assert "Camera angle: a clear side profile" in p
-    assert "camera direction" in p and "remain\nfixed requirements" in p
+    assert "camera direction" in p and "remain fixed requirements" in p
 
 
 def test_dummy_example_base_is_dev_only_without_override(dev_example_registry):
@@ -868,12 +868,12 @@ def test_render_mirror_prompt_sections():
     assert "Camera angle" not in p            # 방향 지시 없음
     assert "${" not in p                      # 미해결 토큰 없음
     assert "PRODUCT CONTEXT" in p             # ground-truth 블록 주입
-    assert "head to the waist" in p           # medium × top 크롭
+    assert "head to the hip" in p           # medium × top 크롭
 
 
 def test_render_bottom_medium_uses_lower_crop():
     p = _render({"cutType": "horizon", "shot": "medium", "direction": "front"}, clothing_type="bottom")
-    assert "legs up to the waist" in p        # medium × bottom = 하체 중간샷
+    assert "waist through the legs" in p        # medium × bottom = 하체 중간샷
     assert "seamless studio backdrop" in p    # 호리존 섹션
 
 
