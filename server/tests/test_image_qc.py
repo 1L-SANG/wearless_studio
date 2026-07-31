@@ -175,6 +175,27 @@ def test_scored_prompt_lists_tuck_as_critical():
     assert "DECLARED FIT" not in p
 
 
+def test_scored_prompt_lists_pattern_scale_as_critical():
+    """미세 줄무늬가 굵은 띠로 단순화되는 건 "다른 원단"이다 — 치명오류 어휘에 있어야 잡힌다.
+
+    2026-08-01 실측(prod da1b8101, 남성 스트라이프 셔츠): 원본은 흰 바탕에 하늘색+베이지 얇은
+    줄이 페어로 앞판 폭에 40~50줄인데, 생성본은 **하늘색 바탕에 굵은 베이지 줄 12~15개**로
+    나왔다. 바탕색이 뒤집히고 줄 간격이 3~4배가 됐는데도 QC 는 fid=82 로 auto_pass 했다.
+    DETAIL 클로즈업이 이미 첨부된 상태였다 — 정보 부족이 아니라 고주파 패턴을 저주파로
+    단순화하는 생성 모델의 실패 모드다. 무지 상품이 잘 나오는 이유도 같다(재현할 고주파가 없다).
+
+    핏 변화 때와 같은 이유로 치명오류에 둔다: 점수 설명 문장은 판정기 노이즈(±30) 안에서만
+    움직였고, critical_errors 어휘에 올렸을 때만 실제로 발화했다.
+    """
+    p = iq.build_prompt(2, scored=True)
+    assert "pattern scale changed" in p, "치명오류 어휘에 있어야 재생성이 걸린다"
+    assert "figure-ground" in p, "바탕/줄 반전(흰 바탕 → 색 바탕)도 결함으로 봐야 한다"
+    assert "repeats across the garment" in p, "판정 기준이 '반복 개수'로 관측 가능해야 한다"
+    # 주입 블록 마커(대문자 DECLARED FIT)는 fit_profile 이 있을 때만 나와야 한다 —
+    # 기본 프롬프트가 그 토큰을 쓰면 build_declared_fit_block 유무를 구분할 수 없다.
+    assert "DECLARED FIT" not in p
+
+
 _FIT_PROFILE = {"category": "top", "gender": "women", "source": "seller", "version": 2,
                 "axes": {"fit": "slim", "length": "crop"}}
 
