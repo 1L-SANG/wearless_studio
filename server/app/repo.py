@@ -466,7 +466,9 @@ async def get_mannequin_cut_asset(
             select a.id::text as id, a.r2_key, a.mime_type
             from mannequin_cuts mc
             join projects pr on pr.id = mc.project_id
-            join assets a on a.id = mc.asset_id
+            -- deleted_at 필터는 list_series_reference_cuts 와 같은 이유다: 지워진 자산을
+            -- 집어오면 R2 로드가 실패하거나 유령 이미지가 입력으로 들어간다.
+            join assets a on a.id = mc.asset_id and a.deleted_at is null
             where mc.project_id = %s and pr.user_id = %s and pr.deleted_at is null
               and mc.candidate = %s and mc.version = %s
             """,

@@ -50,6 +50,10 @@ class Settings:
     # 분리가 안 된다. 빈 값이면 분기 없이 mannequin_tier 를 그대로 쓴다(기존 동작).
     # 조정 흐름에서만 다른 모델을 시험할 때 쓴다 — 초기 생성 품질을 건드리지 않고 비교한다.
     mannequin_adjust_tier: str = ""  # "" | image_light | image_high
+    # 조정(:regenerate) 시 이전 채택 컷을 SCENE REFERENCE 로 첨부해 배경·조명·프레이밍을 고정한다.
+    # 조정은 장면을 처음부터 다시 뽑기 때문에 앵커가 없으면 배경·조명이 롤마다 흔들린다.
+    # off | on. 킬 스위치를 둔 이유: OFF/ON 짝 비교와 롤백이 배포와 독립이어야 한다.
+    mannequin_scene_anchor: str = "off"
     mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
     mannequin_aspect_ratio: str = "2:3"
@@ -247,6 +251,7 @@ def load_settings() -> Settings:
             "ANALYSIS_THINKING_LEVEL", "low", {"low", "medium", "high", "off"}),
         mannequin_tier=_mannequin_tier(),
         mannequin_adjust_tier=_mannequin_adjust_tier(),
+        mannequin_scene_anchor=_flag("MANNEQUIN_SCENE_ANCHOR", "off", {"off", "on"}),
         mannequin_image_size=_image_size(),
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
         mannequin_max_attempts=int(os.getenv("MANNEQUIN_MAX_ATTEMPTS", "2")),

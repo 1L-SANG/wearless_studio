@@ -37,7 +37,7 @@ class _R2:
         return b"ref-bytes"
 
 
-def _apply(monkeypatch, *, cuts=None, judge=None, r2=None):
+def _apply(monkeypatch, *, cuts=None, judge=None, r2=None, anchor_img=None, capture_refs=None):
     emits = []
 
     async def fake_emit(pool, job_id, event_type, payload):
@@ -52,6 +52,8 @@ def _apply(monkeypatch, *, cuts=None, judge=None, r2=None):
     monkeypatch.setattr(mannequin_job.repo, "list_series_reference_cuts", fake_list)
     if judge is not None:
         async def fake_judge(settings, generated, references, **kw):
+            if capture_refs is not None:
+                capture_refs.extend(references)
             if isinstance(judge, Exception):
                 raise judge
             return judge
@@ -62,7 +64,8 @@ def _apply(monkeypatch, *, cuts=None, judge=None, r2=None):
     out = asyncio.run(mannequin_job._apply_series_qc(
         app=app, pool=_FakePool(), s=make_settings(), job_id="j1",
         project_id="p1", candidate="A", attempt=1,
-        res=types.SimpleNamespace(mime="image/png", image=b"gen")))
+        res=types.SimpleNamespace(mime="image/png", image=b"gen"),
+        anchor_img=anchor_img))
     return out, emits, r2
 
 
@@ -193,7 +196,7 @@ def _run_loop(monkeypatch, *, series_scores, max_attempts=2):
 
     seq = list(series_scores)
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return seq.pop(0) if seq else None
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
@@ -252,7 +255,7 @@ def test_shadow_never_rerolls_even_on_worst_scores(monkeypatch):
     """
     import test_mannequin_axis_qc as harness
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return {"consistency": 5, "inconsistencies": ["완전히 다른 스튜디오"]}
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
@@ -277,7 +280,7 @@ def test_axis_edit_consumes_budget_so_no_extra_generation(monkeypatch):
     """
     import test_mannequin_axis_qc as harness
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return {"consistency": 10, "inconsistencies": ["완전 다름"]}
 
     async def fake_axis(**kw):
@@ -299,7 +302,7 @@ def test_final_reject_feedback_includes_critical_errors(monkeypatch):
     """치명 오류가 있으면 재생성 프롬프트가 그걸 먼저 말해야 한다."""
     import test_mannequin_axis_qc as harness
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return {"consistency": 99, "inconsistencies": []}
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
@@ -349,7 +352,7 @@ def test_final_salvage_never_uses_unedited_pre_gate_candidate(monkeypatch):
     """
     import test_mannequin_axis_qc as harness
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return {"consistency": 10, "inconsistencies": ["다름"]}
 
     p2_seq = [
@@ -404,7 +407,7 @@ def test_salvage_picks_best_across_both_pools(monkeypatch):
     async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
         return seq.pop(0) if len(seq) > 1 else seq[0]
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return {"consistency": 10, "inconsistencies": ["다름"]}  # 1회차를 최종에서 거절
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
@@ -442,7 +445,7 @@ def test_scores_rescored_when_edit_changed_the_image(monkeypatch):
         # 이미지를 실제로 바꾼다 → 해시가 달라져 재판정 조건이 성립
         return types.SimpleNamespace(mime=kw["res"].mime, image=b"edited-bytes"), False
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return None
 
     monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
@@ -526,7 +529,7 @@ def test_regressive_edit_is_reverted_to_pre_edit_image(monkeypatch):
 
     captured = {}
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         captured["image"] = res.image     # D축은 되돌린 이미지를 봐야 한다
         return None
 
@@ -552,7 +555,7 @@ def test_salvaged_candidate_still_gets_edit_and_series_qc(monkeypatch):
 
     seen = {"series": 0, "axis": 0}
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         seen["series"] += 1
         return {"consistency": 88, "inconsistencies": ["여백 다름"]}
 
@@ -605,7 +608,7 @@ def test_budget_invariant_holds_for_every_max_attempts(monkeypatch, max_attempts
 
     edits = {"n": 0}
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return {"consistency": 10, "inconsistencies": ["다름"]}   # 항상 재생성 압력
 
     async def fake_axis(**kw):
@@ -642,7 +645,7 @@ def test_total_image_model_calls_never_exceed_budget(monkeypatch):
 
     calls = {"n": 0}
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return {"consistency": 10, "inconsistencies": ["다름"]}
 
     async def fake_axis(**kw):
@@ -680,7 +683,7 @@ def test_bust_pass_counts_against_the_same_budget(monkeypatch):
     """
     import test_mannequin_axis_qc as harness
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return {"consistency": 10, "inconsistencies": ["다름"]}   # 항상 재생성 압력
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
@@ -714,7 +717,7 @@ def test_pre_gate_reject_respects_budget(monkeypatch):
         n["i"] += 1
         return seq[min(n["i"] - 1, len(seq) - 1)]
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return {"consistency": 10, "inconsistencies": ["다름"]}
 
     async def fake_axis(**kw):
@@ -748,7 +751,7 @@ def test_last_attempt_generation_not_blocked_by_unused_edit_reservation(monkeypa
     """
     import test_mannequin_axis_qc as harness
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return {"consistency": 10, "inconsistencies": ["다름"]}
 
     async def fake_axis(**kw):
@@ -816,7 +819,7 @@ def test_rollback_keeps_axis_fix_when_only_bust_regressed(monkeypatch):
     async def fake_axis(**kw):
         return types.SimpleNamespace(mime=kw["res"].mime, image=b"axis-fixed"), True
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return None
 
     monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
@@ -847,7 +850,7 @@ def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
     async def fake_axis(**kw):
         return types.SimpleNamespace(mime=kw["res"].mime, image=b"axis-broke-it"), True
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return None
 
     monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
@@ -889,7 +892,7 @@ def test_failed_bust_does_not_fake_a_second_checkpoint(monkeypatch):
     async def fake_bust(**kw):
         return kw["res"], True          # fail-open: 원본 그대로, 예산은 소비
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return None
 
     monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
@@ -924,7 +927,7 @@ def test_generation_failure_still_salvages_accumulated_candidate(monkeypatch):
                 raise GeminiError("생성 실패")
             return types.SimpleNamespace(mime="image/png", image=b"first-cut")
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return {"consistency": 10, "inconsistencies": ["다름"]}   # 1회차를 최종 거절시킨다
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
@@ -969,7 +972,7 @@ def test_pre_gate_only_candidate_is_processed_then_salvaged(monkeypatch):
         seen["axis"] += 1
         return kw["res"], False
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         seen["series"] += 1
         return {"consistency": 55, "inconsistencies": ["배경 밝음"]}
 
@@ -1048,7 +1051,7 @@ def test_final_salvage_is_not_reprocessed(monkeypatch):
         calls["p2"] += 1
         return seq[min(calls["p2"] - 1, len(seq) - 1)]
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         calls["series"] += 1
         return {"consistency": 10, "inconsistencies": ["다름"]}
 
@@ -1115,7 +1118,7 @@ def test_worker_passes_declared_fit_to_image_qc(monkeypatch):
         seen.append(fit_profile)
         return _p2c(90)
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return None
 
     monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
@@ -1146,6 +1149,91 @@ def test_effective_image_size_upgrades_only_pattern_products():
     # 설정 자체가 없는 호출자(구 설정 객체)도 죽지 않는다
     legacy = types.SimpleNamespace(mannequin_image_size="1K")
     assert effective_image_size(legacy, *striped) == "1K"
+
+
+def test_scene_anchor_cut_id_only_fires_for_flagged_regenerate():
+    """장면 앵커 선택은 순수 함수 — 플래그·모드·payload 세 조건이 다 맞을 때만 붙는다.
+
+    동기(2026-07-31 사용자 관측): 조정하면 배경·조명이 이전 컷과 안 맞는다. 조정은 이전 컷을
+    고치는 게 아니라 장면을 처음부터 다시 뽑기 때문이다. 앵커가 그 기준선을 준다.
+
+    앵커 id 는 **payload 스냅샷에서만** 온다. 워커가 실행 시점에 프로젝트 선택을 다시 읽으면,
+    큐에서 대기하는 사이 셀러가 다른 버전을 고르거나 새 컷이 쌓였을 때 셀러가 보고 조정한 그
+    컷이 아닌 다른 컷에 장면을 맞추게 된다(codex 2026-07-31 BLOCKER).
+    """
+    from app.workers.mannequin_job import scene_anchor_cut_id
+
+    on = types.SimpleNamespace(mannequin_scene_anchor="on")
+    off = types.SimpleNamespace(mannequin_scene_anchor="off")
+    regen = {"payload": {"mode": "regenerate", "sceneAnchorCutId": "A-2"}}
+
+    assert scene_anchor_cut_id(on, regen) == "A-2"
+    assert scene_anchor_cut_id(off, regen) is None, "킬 스위치가 실제로 꺼야 한다"
+    assert scene_anchor_cut_id(
+        on, {"payload": {"mode": "generate", "sceneAnchorCutId": "A-2"}}) is None, \
+        "초기 생성은 맞출 대상이 없다"
+    # 선택이 없던 프로젝트·구 잡·payload 부재 — 전부 조용히 앵커 없음
+    assert scene_anchor_cut_id(on, {"payload": {"mode": "regenerate"}}) is None
+    assert scene_anchor_cut_id(on, {"payload": {"mode": "regenerate", "sceneAnchorCutId": None}}) is None
+    assert scene_anchor_cut_id(on, {"payload": {"mode": "regenerate", "sceneAnchorCutId": ""}}) is None
+    assert scene_anchor_cut_id(on, {}) is None
+    assert scene_anchor_cut_id(on, None) is None
+    # 설정 객체에 필드가 없는 호출자(구 설정)도 죽지 않고 분기 없음
+    assert scene_anchor_cut_id(types.SimpleNamespace(), regen) is None
+
+
+def test_series_qc_judges_against_the_same_anchor_generation_used(monkeypatch):
+    """앵커가 붙은 생성은 **그 앵커로** 채점한다 — 생성 기준과 판정 기준이 갈리면 안 된다.
+
+    기본 조회(list_series_reference_cuts)는 candidate 별 **최신 버전**을 집어온다. 셀러가 고른
+    컷이 최신이라는 보장은 없어서, A-1 에 맞춰 그린 결과를 A-4 기준으로 채점하는 일이 생긴다.
+    그러면 생성이 잘 됐는데도 D축이 깎여 불필요한 재생성이 돈다(codex 2026-07-31 HIGH).
+    """
+    anchor = mannequin_job.InlineImage("image/png", b"anchor-bytes")
+    seen = []
+    out, emits, r2 = _apply(
+        monkeypatch,
+        cuts=[{"candidate": "A", "version": 9, "r2_key": "newer.png"}],  # 최신본 — 써서는 안 된다
+        judge={"consistency": 88, "inconsistencies": []},
+        anchor_img=anchor, capture_refs=seen)
+
+    assert out == {"consistency": 88, "inconsistencies": []}
+    assert seen == [anchor], "앵커 하나만 기준으로 써야 한다(최신본 혼입 금지)"
+    assert r2.gets == [], "앵커는 이미 메모리에 있다 — R2 를 다시 때리지 않는다"
+    step = [p for t, p in emits if t == "step" and p.get("status") == "series_qc"]
+    assert step and step[0]["referenceSource"] == "scene_anchor", \
+        "무엇을 기준으로 쟀는지 남아야 ON/OFF 짝 비교를 사후에 해석할 수 있다"
+    assert step[0]["referenceCount"] == 1
+
+
+def test_series_qc_without_anchor_keeps_latest_version_policy(monkeypatch):
+    """앵커가 없으면 기존 정책 그대로 — 이 기능은 조정 경로에만 얹힌다."""
+    out, emits, r2 = _apply(
+        monkeypatch,
+        cuts=[{"candidate": "A", "version": 9, "r2_key": "newer.png"}],
+        judge={"consistency": 70, "inconsistencies": ["warmer background"]})
+    assert out["consistency"] == 70
+    assert r2.gets == ["newer.png"]
+    step = [p for t, p in emits if t == "step" and p.get("status") == "series_qc"]
+    assert step[0]["referenceSource"] == "latest_versions"
+
+
+def test_scene_anchor_guard_is_not_the_style_ref_guard():
+    """앵커 가드는 STYLE REFERENCE 가드를 재사용하지 않는다.
+
+    STYLE REFERENCE 가드는 "They show DIFFERENT garments" 를 전제로 쓰여 있다. 앵커는 **같은
+    상품의 이전 컷**이라 그 문장이 거짓이 된다. 거짓 전제를 주면 모델이 "다른 옷이니 참고만"
+    으로 읽어 장면 추종이 약해진다(codex 2026-07-31 HIGH).
+
+    앵커 가드가 실제로 못박아야 하는 두 가지: 장면은 앵커가 정본(image 1 과 충돌 시 우선),
+    핏은 절대 가져오지 말 것(앵커가 보여주는 건 조정 **전** 핏이다).
+    """
+    guard = mannequin_job._SCENE_ANCHOR_GUARD
+    assert "DIFFERENT garments" not in guard
+    assert "follow the SCENE REFERENCE" in guard, "image 1 과의 우선순위가 명시돼야 한다"
+    for token in ("background", "lighting", "white balance", "in the frame"):
+        assert token in guard, f"장면 축 누락: {token}"
+    assert "PREVIOUS fit" in guard, "앵커의 핏이 옛 핏이라는 사실이 명시돼야 한다"
 
 
 def test_tier_for_job_splits_adjust_from_initial_generation():

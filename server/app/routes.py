@@ -1075,7 +1075,8 @@ async def regenerate_mannequins(
     cost = request.app.state.settings.credit_cost_mannequin_generate
     scoped_key = f"{project_id}:mannequin_regenerate:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
+        project = await repo.get_project(conn, user_id, project_id)
+        if project is None:
             raise _not_found()
         # generate 와 달리 완료 캐시 게이트 없음 — 항상 새 job 을 만들어 새 버전을 append 한다.
         # 스냅샷 = 잡 시점 effective profile + 서버 산출 adjustedAxes (fidelity 설계 D3·§E-2).
@@ -1085,10 +1086,15 @@ async def regenerate_mannequins(
             body.get("fitProfile"),
             validate_matching_fit=True,
         )
+        # 장면 앵커도 **여기서 스냅샷**한다(fitProfileSnapshot 과 같은 이유). 워커가 실행 시점에
+        # 프로젝트 선택을 다시 읽으면, 큐에서 대기하는 사이 셀러가 다른 버전을 고르거나 새 컷이
+        # 쌓였을 때 셀러가 보고 조정한 그 컷이 아닌 다른 컷에 장면을 맞추게 된다.
+        scene_anchor_cut_id = project.get("selected_mannequin_id")
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload={"mode": "regenerate", "fitProfile": body.get("fitProfile"),
-                     "fitProfileSnapshot": snapshot},
+                     "fitProfileSnapshot": snapshot,
+                     "sceneAnchorCutId": scene_anchor_cut_id},
             idempotency_key=scoped_key, credits_reserved=cost,
             metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백

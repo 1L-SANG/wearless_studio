@@ -109,6 +109,69 @@ _STYLE_REF_GUARD = (
 )
 _REF_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
 
+# 장면 앵커(2026-07-31). STYLE REFERENCE 가드를 재사용하지 않는다 — 그쪽은 "DIFFERENT garments"
+# 를 전제로 쓰여 있는데, 앵커는 **같은 상품의 이전 컷**이라 그 문장이 거짓이 된다. 거짓 전제를
+# 주면 모델이 "다른 옷이니 참고만"으로 읽어 장면 추종이 약해지고, 반대로 옷을 베껴도 가드가
+# 지목하는 대상이 어긋난다. 그래서 별도 문구로 "장면은 따르고 핏은 절대 따르지 마라"를 못박는다.
+_SCENE_ANCHOR_GUARD = (
+    "SCENE REFERENCE (labeled in the manifest) is an earlier approved photo of THIS SAME product. "
+    "It is the authority for the STUDIO SETUP only: background tone and brightness, lighting "
+    "direction, shadow treatment, white balance, and how large the mannequin is and where it sits "
+    "in the frame. Reproduce those so the two photos look shot in one session. Where the SCENE "
+    "REFERENCE and image 1 differ on background, lighting or framing, follow the SCENE REFERENCE. "
+    "It is NOT the authority for the garment: it shows the PREVIOUS fit, which is exactly what "
+    "this photo is changing. Take no garment length, silhouette, ease, hem position or drape from "
+    "it — those come from the FIT PROFILE and the product photos."
+)
+
+
+def _scene_anchor_manifest_line(index: int) -> str:
+    """장면 앵커 슬롯의 매니페스트 라벨(고정 문자열 — 셀러 데이터 미포함)."""
+    return (f"{index}. SCENE REFERENCE — an earlier approved cut of this same product; "
+            "match its studio setup ONLY, never its garment fit")
+
+
+def scene_anchor_cut_id(s, job: dict | None) -> str | None:
+    """이 잡이 장면 앵커로 쓸 컷의 client_id (순수). 대상이 아니면 None.
+
+    조정은 이전 컷을 고치는 게 아니라 장면을 처음부터 다시 뽑는다. 그래서 앵커가 없으면
+    배경 톤·조명 방향·그림자·화이트밸런스가 롤마다 흔들리고, 셀러에겐 "조정했더니 배경이
+    바뀐" 것으로 보인다. D축 QC 가 그걸 잡아내긴 하지만 재시도도 앵커 없는 재롤이라
+    수렴시키지는 못한다.
+
+    앵커 id 는 **잡 payload 스냅샷**만 읽는다(라우트가 요청 시점에 박는다). 워커가 실행 시점에
+    프로젝트 선택을 다시 읽으면 큐 대기 중 선택이 바뀌었을 때 다른 컷에 맞추게 된다.
+    """
+    if getattr(s, "mannequin_scene_anchor", "off") != "on":
+        return None
+    payload = (job or {}).get("payload") or {}
+    if payload.get("mode") != "regenerate":
+        return None  # 초기 생성은 맞출 대상 자체가 없다
+    cut_id = payload.get("sceneAnchorCutId")
+    return cut_id if isinstance(cut_id, str) and cut_id else None
+
+
+async def _load_scene_anchor(app, pool, job_id, user_id, project_id, cut_id):
+    """앵커 컷 바이트 로드. 실패해도 생성은 계속하되 **원인을 구분해서** 남긴다.
+
+    "선택이 없다"는 정상(첫 조정·선택 해제)이라 여기 오지도 않는다. 여기까지 왔는데 못 찾으면
+    선택된 컷의 자산이 DB/R2 에서 사라진 것이고, 그건 데이터 손상이라 조용히 넘기면 안 된다.
+    """
+    try:
+        async with pool.connection() as conn:
+            asset = await repo.get_mannequin_cut_asset(conn, user_id, project_id, cut_id)
+        if asset is None:
+            log.warning("job %s scene_anchor 자산 없음 cut=%s", job_id, cut_id)
+            await _emit(pool, job_id, "step", {"status": "scene_anchor_missing", "cut": cut_id})
+            return None
+        data = await asyncio.to_thread(app.state.r2.get_bytes, asset["r2_key"])
+    except Exception as e:
+        log.warning("job %s scene_anchor 로드 실패 cut=%s: %r", job_id, cut_id, e)
+        await _emit(pool, job_id, "step", {
+            "status": "scene_anchor_failed", "cut": cut_id, "error": type(e).__name__})
+        return None
+    return InlineImage(asset.get("mime_type") or "image/jpeg", data)
+
 
 def _ref_manifest_lines(start_index: int, n: int) -> str:
     """images 끝에 붙는 STYLE REFERENCE 슬롯의 매니페스트 라벨(고정 문자열 — 셀러 데이터 미포함)."""
@@ -423,7 +486,8 @@ def score_outcome(s, p2) -> str:
     return "regenerate"
 
 
-async def _apply_series_qc(*, app, pool, s, job_id, project_id, candidate, attempt, res):
+async def _apply_series_qc(*, app, pool, s, job_id, project_id, candidate, attempt, res,
+                           anchor_img=None):
     """D축 시리즈 일관성 — 채택본이 같은 프로젝트 기존 컷들과 한 세트로 보이는지 판정.
 
     **fail-open** — _apply_axis_qc·_apply_bust_pass 와 같은 규율. 판정은 관측이지 게이트가
@@ -437,18 +501,25 @@ async def _apply_series_qc(*, app, pool, s, job_id, project_id, candidate, attem
     비교 대상도 **같은 프로젝트의 과거 버전**이라 크로스테넌트 노출 경로가 없다.
     """
     try:
-        async with pool.connection() as conn:
-            # SQL 단에서 candidate 별 최신 1장·limit 로 좁힌다 — 전 버전을 끌어와 파이썬에서
-            # 자르면 재생성 이력에 비례해 DB 전송·정렬 비용이 계속 늘어난다.
-            refs = await repo.list_series_reference_cuts(
-                conn, project_id, limit=mannequin_series_qc.MAX_REFERENCE_CUTS)
-        if not refs:
-            return None  # 첫 컷 — 비교 대상 없음(0점이 아니라 판정 없음)
-        ref_imgs = []
-        for c in refs:
-            data = await asyncio.to_thread(app.state.r2.get_bytes, c["r2_key"])
-            ref_imgs.append(InlineImage(_REF_MIME.get(
-                c["r2_key"].rsplit(".", 1)[-1].lower(), "image/jpeg"), data))
+        if anchor_img is not None:
+            # 장면 앵커가 붙은 생성이면 **판정 기준도 그 앵커**여야 한다. 기본 조회는 candidate
+            # 별 최신 버전을 집어오는데, 셀러가 고른 컷이 최신이라는 보장은 없다 — 그러면
+            # A-1 에 맞춰 그린 결과를 A-4 기준으로 채점하게 되고, 생성이 잘 됐는데도 D축이
+            # 깎여 불필요한 재생성이 돈다(생성 앵커 ≠ 판정 앵커).
+            ref_imgs = [anchor_img]
+        else:
+            async with pool.connection() as conn:
+                # SQL 단에서 candidate 별 최신 1장·limit 로 좁힌다 — 전 버전을 끌어와 파이썬에서
+                # 자르면 재생성 이력에 비례해 DB 전송·정렬 비용이 계속 늘어난다.
+                refs = await repo.list_series_reference_cuts(
+                    conn, project_id, limit=mannequin_series_qc.MAX_REFERENCE_CUTS)
+            if not refs:
+                return None  # 첫 컷 — 비교 대상 없음(0점이 아니라 판정 없음)
+            ref_imgs = []
+            for c in refs:
+                data = await asyncio.to_thread(app.state.r2.get_bytes, c["r2_key"])
+                ref_imgs.append(InlineImage(_REF_MIME.get(
+                    c["r2_key"].rsplit(".", 1)[-1].lower(), "image/jpeg"), data))
         out = await mannequin_series_qc.judge(
             s, InlineImage(res.mime, res.image), ref_imgs)
     except Exception as e:
@@ -460,7 +531,10 @@ async def _apply_series_qc(*, app, pool, s, job_id, project_id, candidate, attem
     if out is not None:
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": "series_qc",
-            "seriesQc": out, "referenceCount": len(refs)})
+            "seriesQc": out, "referenceCount": len(ref_imgs),
+            # 무엇을 기준으로 쟀는지 남긴다 — 앵커 ON/OFF 짝 비교에서 이 표시가 없으면
+            # 점수 차이가 앵커 때문인지 기준 컷이 달라서인지 사후에 구분할 수 없다.
+            "referenceSource": "scene_anchor" if anchor_img is not None else "latest_versions"})
     return out
 
 
@@ -848,7 +922,7 @@ async def _rollback_edits(
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
-    adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
+    adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(), scene_ref=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
     s = app.state.settings
@@ -858,8 +932,14 @@ async def _run_candidate(
     # 편집이 기본 해상도로 다시 렌더하면 어렵게 올린 4K 가 그 자리에서 깎인다.
     image_size = effective_image_size(s, product, analysis)
     has_fine_pattern = mannequin.has_fine_pattern(product, analysis)
-    # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
-    images = [base_img, *prod_imgs] + ([match_img] if match_img else []) + list(ref_imgs)
+    # STYLE REFERENCE(있으면)는 상품·매칭 뒤에, SCENE REFERENCE(있으면)는 그 뒤 맨 끝에 붙는다
+    # — _run_job 이 매니페스트를 같은 순서로 만든다(번호 어긋나면 모델이 역할을 바꿔 읽는다).
+    images = (
+        [base_img, *prod_imgs]
+        + ([match_img] if match_img else [])
+        + list(ref_imgs)
+        + ([scene_ref] if scene_ref is not None else [])
+    )
     ctx = mannequin.prompt_context(
         clothing_type=clothing_type, product_count=product_count,
         base_gender=base_gender, image_manifest=image_manifest, fit_profile=fit_profile,
@@ -871,6 +951,10 @@ async def _run_candidate(
     )
     if ref_imgs:  # 레퍼런스 첨부 시에만 오염 가드를 프롬프트 말미에 강조(look-only)
         base_prompt = f"{base_prompt}\n\n{_STYLE_REF_GUARD}"
+    if scene_ref is not None:
+        # 템플릿에 조건부 절을 만들지 않고 여기서 덧붙인다 — STYLE REFERENCE 와 같은 방식이고,
+        # 앵커가 없는 경로(초기 생성)의 프롬프트가 한 글자도 안 바뀐다.
+        base_prompt = f"{base_prompt}\n\n{_SCENE_ANCHOR_GUARD}"
     # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
     # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
     # 조정 잡은 MANNEQUIN_ADJUST_TIER 가 설정됐을 때만 다른 tier 를 탄다(tier_for_job).
@@ -925,7 +1009,10 @@ async def _run_candidate(
         # vision 실패(키미설정 등)는 삼켜 p2=None → 게이트 미적용(생성 자체 안 막음).
         # STYLE REFERENCE 첨부 시 오염(다른 옷 유출)을 반드시 계측 — image_qc=off 여도 최소 shadow 로
         # 승격해 동일성 판정을 기록한다(게이팅 아님 — enforce 만 reject, gate_decision). off↔측정 결합.
-        eff_image_qc = s.image_qc if s.image_qc != "off" else ("shadow" if ref_imgs else "off")
+        # SCENE REFERENCE 도 같은 오염 위험을 진다 — 오히려 **같은 상품의 이전 핏**이라
+        # 새 나가면 "조정이 반영 안 됨"으로 보인다. 그래서 앵커가 붙은 잡도 최소 shadow 로.
+        eff_image_qc = (s.image_qc if s.image_qc != "off"
+                        else ("shadow" if (ref_imgs or scene_ref is not None) else "off"))
         p2 = None
         if eff_image_qc in ("shadow", "enforce") and prod_imgs:
             try:
@@ -987,7 +1074,8 @@ async def _run_candidate(
             series = (
                 await _apply_series_qc(
                     app=app, pool=pool, s=s, job_id=job_id,
-                    project_id=project_id, candidate=candidate, attempt=attempt, res=res)
+                    project_id=project_id, candidate=candidate, attempt=attempt, res=res,
+                    anchor_img=scene_ref)
                 if reprocess else salvaged_series)
             # ── 최종 판정 (단일 지점) ────────────────────────────────────────
             # A~C·D 를 한 스냅샷으로 합쳐 여기서 한 번만 결정한다. 판정이 흩어지면 "API 엔
@@ -1064,7 +1152,8 @@ async def _run_candidate(
                 has_fine_pattern=has_fine_pattern)
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
-                candidate=candidate, attempt=s.mannequin_max_attempts, res=res)
+                candidate=candidate, attempt=s.mannequin_max_attempts, res=res,
+                anchor_img=scene_ref)
             qc_scores = merge_qc_scores(
                 p2, series, thresholds=(s.qc_score_auto_pass, s.qc_score_review))
         qc_scores = {**(qc_scores or {}), "salvaged": True}
@@ -1163,6 +1252,18 @@ async def run_mannequin_job(app, job: dict) -> None:
             opaque = [hashlib.sha1(i.encode("utf-8")).hexdigest()[:12] for i in ref_ids]
             await _emit(pool, job_id, "step",
                         {"status": "style_refs_attached", "ref_hashes": opaque, "n": len(ref_imgs)})
+        # 장면 앵커(조정 잡 + 플래그 on + 선택 컷 존재). 셀러가 보고 조정한 그 컷에 배경·조명·
+        # 프레이밍을 맞춘다. 못 붙어도 생성은 그대로 진행한다(앵커는 개선이지 전제가 아니다).
+        scene_ref = None
+        anchor_cut_id = scene_anchor_cut_id(s, job)
+        if anchor_cut_id:
+            scene_ref = await _load_scene_anchor(
+                app, pool, job_id, user_id, project_id, anchor_cut_id)
+            if scene_ref is not None:
+                anchor_i = 2 + len(prod_assets) + (1 if match_img else 0) + len(ref_imgs)
+                manifest = manifest + "\n" + _scene_anchor_manifest_line(anchor_i)
+                await _emit(pool, job_id, "step",
+                            {"status": "scene_anchor_attached", "cut": anchor_cut_id})
         # fit profile 은 잡 생성 시점 스냅샷이 정본(payload.fitProfileSnapshot — fidelity 설계 D3).
         # 워커가 최신 analysis 를 재독하면 잡 생성↔실행 사이의 저장 경합으로 다른 프로필이
         # 조용히 쓰일 수 있다(무음 유실). 키가 없는 legacy 잡만 analysis 폴백.
@@ -1227,7 +1328,8 @@ async def run_mannequin_job(app, job: dict) -> None:
                     product_count=product_count, template=template, product=product,
                     analysis=analysis, clothing_type=clothing_type, image_manifest=manifest,
                     fit_profile=profile, adjusted_axes=adjusted_axes,
-                    fit_profile_source=fit_profile_source, ref_imgs=ref_imgs)
+                    fit_profile_source=fit_profile_source, ref_imgs=ref_imgs,
+                    scene_ref=scene_ref)
             except Exception as e:
                 log.warning("job %s candidate %s failed: %r", job_id, letter, e)
                 r = None

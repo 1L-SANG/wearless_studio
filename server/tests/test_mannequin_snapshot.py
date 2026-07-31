@@ -29,9 +29,9 @@ def _auth(make_token):
     return {"Authorization": f"Bearer {make_token()}"}
 
 
-def _wire_route_fakes(monkeypatch, *, stored_profile, captured):
+def _wire_route_fakes(monkeypatch, *, stored_profile, captured, selected_cut=None):
     async def fake_get_project(conn, uid, pid):
-        return {"id": pid}
+        return {"id": pid, "selected_mannequin_id": selected_cut}
 
     async def fake_get_analysis(conn, pid):
         return {"fitProfile": stored_profile} if stored_profile is not None else {}
@@ -82,6 +82,38 @@ def test_regenerate_snapshots_profile_and_server_computed_adjusted_axes(client, 
     assert snap["profile"]["source"] == "seller"
     assert snap["adjustedAxes"] == ["fit", "length"]  # regular→slim, basic→long (서버 diff)
     assert captured["saved_analysis"]["fitProfile"]["axes"]["length"] == "long"  # UI 연속성 유지
+
+
+def test_regenerate_snapshots_the_scene_anchor_at_request_time(client, make_token, monkeypatch):
+    """장면 앵커도 잡 생성 시점에 박는다 — fitProfileSnapshot 과 같은 이유(경합).
+
+    워커가 실행 시점에 프로젝트 선택을 다시 읽으면, 큐에서 대기하는 사이 셀러가 다른 버전을
+    고르거나 새 컷이 쌓였을 때 셀러가 보고 조정한 그 컷이 아닌 다른 컷에 장면을 맞추게 된다
+    (codex 2026-07-31 BLOCKER). 라우트가 박아두면 그 창이 닫힌다.
+    """
+    captured = {}
+    _wire_route_fakes(monkeypatch, stored_profile=None, captured=captured, selected_cut="A-2")
+    res = client.post("/v1/projects/p1/mannequins:regenerate", json={}, headers=_auth(make_token))
+    assert res.status_code == 202, res.text
+    assert captured["payload"]["sceneAnchorCutId"] == "A-2"
+
+
+def test_regenerate_without_selection_carries_no_anchor(client, make_token, monkeypatch):
+    """선택이 없으면 앵커도 없다 — 정상 경로지 오류가 아니다(첫 조정·선택 해제)."""
+    captured = {}
+    _wire_route_fakes(monkeypatch, stored_profile=None, captured=captured, selected_cut=None)
+    res = client.post("/v1/projects/p1/mannequins:regenerate", json={}, headers=_auth(make_token))
+    assert res.status_code == 202, res.text
+    assert captured["payload"]["sceneAnchorCutId"] is None
+
+
+def test_generate_never_carries_a_scene_anchor(client, make_token, monkeypatch):
+    """초기 생성 payload 엔 앵커 키 자체가 없다 — 맞출 대상이 없는 경로다."""
+    captured = {}
+    _wire_route_fakes(monkeypatch, stored_profile=None, captured=captured, selected_cut="A-2")
+    res = client.post("/v1/projects/p1/mannequins:generate", headers=_auth(make_token))
+    assert res.status_code == 202, res.text
+    assert "sceneAnchorCutId" not in captured["payload"]
 
 
 def test_generate_snapshots_stored_profile_without_inventing(client, make_token, monkeypatch):

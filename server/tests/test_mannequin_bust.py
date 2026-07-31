@@ -62,7 +62,7 @@ def test_worker_passes_clothing_type_to_bust_gate(monkeypatch):
 
     monkeypatch.setattr(mannequin_job.mannequin_bust, "should_apply", fake_should_apply)
 
-    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res):
+    async def fake_series(app, pool, s, job_id, project_id, candidate, attempt, res, anchor_img=None):
         return None
 
     monkeypatch.setattr(mannequin_job, "_apply_series_qc", fake_series)
