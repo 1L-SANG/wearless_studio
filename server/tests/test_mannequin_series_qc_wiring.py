@@ -1123,3 +1123,26 @@ def test_worker_passes_declared_fit_to_image_qc(monkeypatch):
     harness._run(monkeypatch, mode="off", guard=True, max_attempts=1, verdicts=[],
                  image_qc="shadow")
     assert seen and seen[0] is harness.PROFILE, seen
+
+
+def test_effective_image_size_upgrades_only_pattern_products():
+    """미세 패턴만 해상도를 올린다 — 2K 에서는 한 주기당 픽셀이 모자라 두 색 줄이 뭉개진다.
+
+    2026-08-01 실측: 줄 주기 8.9px @2K → 주기를 이루는 요소(색 선·흰 간격)당 2px 남짓.
+    프롬프트로는 못 넘는 축이라 해상도로 푼다. 무지는 승급하지 않는다(비용만 증가).
+    """
+    from app.workers.mannequin_job import effective_image_size
+
+    s = types.SimpleNamespace(mannequin_image_size="2K", mannequin_pattern_image_size="4K")
+    striped = ({"name": "스트라이프 셔츠"}, {})
+    plain = ({"name": "무지 티셔츠"}, {})
+    assert effective_image_size(s, *striped) == "4K"
+    assert effective_image_size(s, *plain) == "2K"
+
+    # 킬 스위치 — off 면 승급 없이 기본값을 쓴다
+    off = types.SimpleNamespace(mannequin_image_size="2K", mannequin_pattern_image_size="OFF")
+    assert effective_image_size(off, *striped) == "2K"
+
+    # 설정 자체가 없는 호출자(구 설정 객체)도 죽지 않는다
+    legacy = types.SimpleNamespace(mannequin_image_size="1K")
+    assert effective_image_size(legacy, *striped) == "1K"

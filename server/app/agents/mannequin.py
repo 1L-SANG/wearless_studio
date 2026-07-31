@@ -30,6 +30,40 @@ def select_base_gender(
     return "men" if genders and genders[0] in men_tokens else "women"
 
 
+# 미세 반복 패턴 어휘. 이런 원단은 한 주기 안에 얇은 선 여러 개가 들어가므로 출력 해상도가
+# 곧 재현 한계가 된다 — 2K 실측(2026-08-01)에서 줄 주기가 8.9px 이라 한 주기를 구성하는
+# 요소(하늘색 선·흰 간격·베이지 선)당 2px 남짓뿐이어서, 두 색 줄이 한 색으로 뭉개졌다.
+# 무지·단색은 재현할 고주파가 없어 해당 없음(그래서 잘 나온다).
+_FINE_PATTERN_TOKENS = (
+    "스트라이프", "줄무늬", "핀스트라이프", "체크", "깅엄", "타탄", "글렌체크", "하운드투스",
+    "헤링본", "도트", "물방울", "잔무늬", "패턴", "격자",
+    "stripe", "pinstripe", "check", "gingham", "tartan", "plaid", "houndstooth",
+    "herringbone", "polka", "dot", "windowpane",
+)
+
+
+def has_fine_pattern(product: dict | None, analysis: dict | None) -> bool:
+    """미세 반복 패턴 상품인가 — 셀러·AI 가 쓴 텍스트에서 찾는다(순수).
+
+    분석 payload 에 패턴 전용 필드가 없어서 이름·특징(sellingPoints)·카테고리를 훑는다.
+    실측 예: 스트라이프 셔츠의 sellingPoints = ["멀티 스트라이프", "세미 크롭 기장"].
+    과탐(무지인데 4K)은 비용만 더 쓰고 결과는 같지만, 미탐(패턴인데 2K)은 셀러가 원단이
+    다르다고 느끼는 컷이 나가므로 **넓게 잡는 쪽**이 맞다.
+    """
+    parts = []
+    for src in (product or {}), (analysis or {}):
+        for key in ("name", "suggestedName", "customCategory", "subCategory"):
+            v = src.get(key)
+            if isinstance(v, str):
+                parts.append(v)
+        for key in ("sellingPoints", "aiSuggestedPoints", "styleTags"):
+            v = src.get(key)
+            if isinstance(v, list):
+                parts.extend(x for x in v if isinstance(x, str))
+    blob = " ".join(parts).lower()
+    return any(tok.lower() in blob for tok in _FINE_PATTERN_TOKENS)
+
+
 def generation_spec(analysis: dict) -> dict | None:
     """단일 마네킹 생성 spec. fitProfile이 없거나 형태가 아니면 프로필 블록 없이 생성한다."""
     profile = (analysis or {}).get("fitProfile")

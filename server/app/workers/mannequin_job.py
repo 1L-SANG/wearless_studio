@@ -158,9 +158,22 @@ def _effective_axis_qc_mode(s) -> str:
     return mode
 
 
+def effective_image_size(s, product: dict | None, analysis: dict | None) -> str:
+    """이 잡이 쓸 출력 해상도 (순수). 미세 패턴 상품만 승급한다.
+
+    2K 실측(2026-08-01, 스트라이프 셔츠): 줄 주기 8.9px → 한 주기를 이루는 요소(색 선·흰 간격)당
+    2px 남짓이라 두 색 줄이 한 색으로 뭉개졌다. 해상도가 곧 재현 한계인 축이라 프롬프트로는
+    못 넘는다. 무지 상품은 재현할 고주파가 없어 승급하지 않는다 — 비용만 늘고 결과는 같다.
+    """
+    upgrade = getattr(s, "mannequin_pattern_image_size", "OFF")
+    if upgrade in (None, "", "OFF"):
+        return s.mannequin_image_size
+    return upgrade if mannequin.has_fine_pattern(product, analysis) else s.mannequin_image_size
+
+
 async def _apply_axis_qc(
     *, pool, gemini, s, job_id, candidate, attempt, model, res,
-    prod_imgs, match_img, fit_profile, profile_hash, calls_spent,
+    prod_imgs, match_img, fit_profile, profile_hash, calls_spent, image_size=None,
 ):
     """생성 채택본에 축 QC 판정 + (enforce 시) 편집 교정 1회. → (선택 결과, 편집콜 소비 여부).
 
@@ -235,7 +248,7 @@ async def _apply_axis_qc(
     try:
         edited = await gemini.generate_content_image(
             model, instruction, [InlineImage(res.mime, res.image)],
-            s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
+            image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except GeminiError as e:
         log.warning("axis_qc edit call failed for job %s: %r", job_id, e)
         await _emit_retry("edit_error", fired=True, failed=failed, edit_hash=edit_hash,
@@ -528,7 +541,7 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
 
 async def _apply_bust_pass(
     *, pool, gemini, s, job_id, candidate, attempt, base_gender, res, calls_spent,
-    clothing_type=None,
+    clothing_type=None, image_size=None,
 ):
     """여성 기본 가슴 볼륨 2패스. → (선택 결과, 편집콜 소비 여부).
 
@@ -558,7 +571,7 @@ async def _apply_bust_pass(
         out = await gemini.generate_content_image(
             resolve_model(s, "image_high"),  # Flash 는 거부·미반영으로 탈락 — 티어 고정
             prompt, [InlineImage(res.mime, res.image)],
-            s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
+            image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except Exception as e:
         log.warning("bust pass failed for job %s (원본 유지): %r", job_id, e)
         await _emit(pool, job_id, "step", {
@@ -576,6 +589,7 @@ async def _apply_bust_pass(
 async def _apply_edits(
     *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_imgs, match_img,
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
+    image_size=None,
 ):
     """채택본에 편집(축 교정 → 가슴 2패스)을 적용하고, 바뀌었으면 재판정·회귀 시 되돌린다.
 
@@ -595,14 +609,15 @@ async def _apply_edits(
     res, axis_spent = await _apply_axis_qc(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
         model=model, res=res, prod_imgs=prod_imgs, match_img=match_img,
-        fit_profile=fit_profile, profile_hash=profile_hash, calls_spent=calls_spent)
+        fit_profile=fit_profile, profile_hash=profile_hash, calls_spent=calls_spent,
+        image_size=image_size)
     calls_spent += axis_spent
     post_axis_res = res
     # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
     res, bust_spent = await _apply_bust_pass(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
         base_gender=base_gender, res=res, calls_spent=calls_spent,
-        clothing_type=clothing_type)
+        clothing_type=clothing_type, image_size=image_size)
     calls_spent += bust_spent
     # A~C 점수는 **편집 전** 원본에 매긴 것이다. 편집이 이미지를 바꿨다면 저장되는 점수가
     # 실제 출고본의 점수가 아니게 된다(검수자가 다른 이미지의 숫자를 보고 판단하게 됨).
@@ -704,6 +719,9 @@ async def _run_candidate(
     s = app.state.settings
     pool, r2, gemini = app.state.pool, app.state.r2, app.state.gemini
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
+    # 미세 패턴 상품은 해상도를 올린다. **편집 패스(축 교정·2패스)도 같은 값**을 써야 한다 —
+    # 편집이 기본 해상도로 다시 렌더하면 어렵게 올린 4K 가 그 자리에서 깎인다.
+    image_size = effective_image_size(s, product, analysis)
     # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
     images = [base_img, *prod_imgs] + ([match_img] if match_img else []) + list(ref_imgs)
     ctx = mannequin.prompt_context(
@@ -753,7 +771,7 @@ async def _run_candidate(
         calls_spent += 1  # 성공하든 실패하든 호출은 나갔다
         try:
             res = await gemini.generate_content_image(
-                model, prompt, images, s.mannequin_image_size,
+                model, prompt, images, image_size,
                 aspect_ratio=s.mannequin_aspect_ratio)
         except GeminiError as e:
             await _emit(pool, job_id, "step", {
@@ -825,7 +843,7 @@ async def _run_candidate(
                 attempt=attempt, model=model, res=res, p2=p2, prod_imgs=prod_imgs,
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
                 base_gender=base_gender, calls_spent=calls_spent,
-                clothing_type=clothing_type, enabled=reprocess)
+                clothing_type=clothing_type, enabled=reprocess, image_size=image_size)
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
             series = (
@@ -904,7 +922,7 @@ async def _run_candidate(
                 attempt=s.mannequin_max_attempts, model=model, res=res, p2=p2,
                 prod_imgs=prod_imgs, match_img=match_img, fit_profile=fit_profile,
                 profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent,
-                clothing_type=clothing_type)
+                clothing_type=clothing_type, image_size=image_size)
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
                 candidate=candidate, attempt=s.mannequin_max_attempts, res=res)

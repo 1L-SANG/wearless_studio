@@ -77,6 +77,10 @@ class Settings:
     # 이라, 등급만 보면 2패스가 4~7점 노이즈에도 매번 롤백된다(2026-07-31 prod 실측:
     # 80/83/85 → 76/78/77 로 롤백 → 가슴 볼륨이 한 번도 출고되지 않음).
     qc_edit_regression_margin: int = 10
+    # 미세 반복 패턴(스트라이프·체크) 상품의 출력 해상도. 'off' 면 승급 없이 mannequin_image_size 를 쓴다.
+    # 2K 실측(2026-08-01): 줄 주기 8.9px → 한 주기를 이루는 요소당 2px 남짓이라 두 색 줄이 한 색으로
+    # 뭉개졌다. 4K 면 주기 ~18px 로 요소당 4~5px 이 확보된다. 무지 상품은 승급하지 않는다(비용).
+    mannequin_pattern_image_size: str = "4K"  # off | 1K | 2K | 4K
     # 생성 컷의 상품·로고 동일성 QC. off=미판정, shadow=판정만 기록,
     # bestof=불일치 시 원본 입력에서 후보를 더 생성해 첫 pass 또는 picker 최선을 채택.
     garment_qc_mode: str = "bestof"  # off | shadow | bestof
@@ -267,6 +271,8 @@ def load_settings() -> Settings:
         qc_edit_regression_margin=int(os.getenv(
             "QC_EDIT_REGRESSION_MARGIN",
             str(Settings.__dataclass_fields__["qc_edit_regression_margin"].default))),
+        mannequin_pattern_image_size=_flag(
+            "MANNEQUIN_PATTERN_IMAGE_SIZE", "4K", {"off", "1k", "2k", "4k"}).upper(),
         garment_qc_mode=_flag(
             "GARMENT_QC_MODE", "bestof", {"off", "shadow", "bestof"}),
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),
