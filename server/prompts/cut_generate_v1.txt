@@ -268,8 +268,7 @@ background elements and color temperature consistent with a single coherent spac
 nearby camera movement with a different pose and framing inside the same space).
 The camera and model may move, so each cut may reveal a different wall, window, furniture group or
 light angle, but repeated architecture/material cues and physically coherent light must make the
-location continuous. Do not fake a medium shot by cropping the full shot; photograph it from its
-own camera position.
+location continuous.
 Treat the set as different frames from ONE real photo session, shot moments apart: when the camera
 moves, it has physically moved, so re-render the whole scene (person + background) from the new
 viewpoint with correct new perspective, scale and parallax — never a warped, stretched or re-cropped
