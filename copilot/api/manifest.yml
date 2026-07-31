@@ -61,13 +61,23 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # (2026-07-14 사용자 결정). 판정 실패는 fail-open — 생성을 절대 막지 않음. 발화율·판정
   # 정확도는 axis_qc/axis_retry 이벤트로 관측, 골드셋 캘리브는 켠 상태로 병행.
   MANNEQUIN_AXIS_QC: enforce
-  # AG-P2 의류 동일성 QC(색·패턴·로고·프린트가 원본과 같은 옷인가). 지금까지 이 변수가 아예
-  # 없어 config 기본 off 로 떨어졌고, STYLE REFERENCE 첨부 잡만 코드에서 shadow 로 자동 승격돼
-  # 있었다(mannequin_job.py eff_image_qc) — 즉 일반 생성 경로는 동일성 판정이 무측정 상태였다.
-  # shadow 우선: 판정·metrics 만 남기고 게이팅은 안 한다(gate_decision 은 enforce 에서만 reject).
-  # MANNEQUIN_QC_ENABLED 가 오탐으로 pass율 0% 를 냈던 2026-07-07 전례를 반복하지 않기 위해,
-  # 실측 분포로 판정 정확도(거짓양성·거짓음성)를 캘리브레이션한 뒤에만 enforce 로 올린다.
-  IMAGE_QC: shadow
+  # AG-P2 의류 동일성 QC(색·패턴·로고·프린트가 원본과 같은 옷인가).
+  # 2026-07-31 shadow → enforce. 위 주석이 요구하던 "실측 분포 캘리브레이션"을 마쳤다:
+  # 임계를 실측으로 교정(90/75 는 통과율 0% 였다), 판정자 변별력 하니스, 거짓양성 육안 점검
+  # 3건 오탐 0, 신규 표본 16건 + 층화 재측정, 계약 뮤테이션 26/26 — docs/mannequin-qc 참고.
+  # 판정 실패는 fail-open 이라 판정기가 죽어도 생성은 안 막힌다. 되돌리려면 shadow 로 낮춘다
+  # (판정·metrics 는 계속 남고 게이팅만 꺼진다).
+  IMAGE_QC: enforce
+  # enforce 는 regenerate 판정에서 재시도를 쓰므로 상한이 필요하다. 기본값 2 는 편집 패스
+  # (untuck·fabric·bust)와 예산을 공유해서 재시도 전에 소진된다 — 실제로 그래서 가슴 2패스가
+  # 한 번도 출고되지 않았다. 5 는 그 실측에서 나온 값이고, 상한이지 매번 쓰는 횟수가 아니다.
+  MANNEQUIN_MAX_ATTEMPTS: "5"
+  # 단일 목적 편집 패스 3종. 전부 fail-open(편집 실패 = 편집 전 컷 그대로 출고)이고,
+  # 편집이 등급을 떨어뜨리면 편집 전으로 되돌린다(qc_edit_regression_margin=10, 판정 노이즈
+  # ±30 을 감안한 마진). 셋 다 여기 없으면 config 기본 off 로 떨어져 조용히 안 돈다.
+  MANNEQUIN_UNTUCK_PASS: "on"   # 상의·아우터를 하의 밖으로 — QC 탐지가 불안정해 무조건 실행
+  MANNEQUIN_FABRIC_PASS: "on"   # 미세 패턴 표면 재적용 — 두 색 줄이 한 색으로 뭉개지던 문제
+  MANNEQUIN_BUST_PASS: "on"     # 가슴 볼륨(배수 1.3). 하의 상품엔 코드에서 미적용
   # AG-01 분석 provider 모델 — config.py 기본(gemini-2.5-pro) 오버라이드. AI Studio 유효 id 여야 함
   # (구값 'gemini-3-pro' 는 미존재 → Gemini 404 로 분석 실패했음). OpenAI 키 미설정이라 gemini 가 유일 provider.
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
