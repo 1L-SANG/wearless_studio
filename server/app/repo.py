@@ -419,6 +419,33 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
         return await cur.fetchall()
 
 
+async def get_mannequin_edit_parent(
+    conn: AsyncConnection, user_id: str, project_id: str
+) -> dict | None:
+    """조정 편집의 부모 컷. 프로젝트 선택 컷을 우선하고, 없으면 최신 컷을 반환한다.
+
+    생성 메타데이터는 외부 MannequinCut 계약에 노출하지 않고 컷의 asset JSONB 에서 워커만
+    읽는다. 선택 포인터가 오래되어 실제 컷을 가리키지 않으면 최신 컷으로 자연스럽게 폴백한다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select mc.candidate || '-' || mc.version::text as id,
+                   a.r2_key, a.mime_type, a.metadata as generation_metadata
+            from mannequin_cuts mc
+            join projects pr on pr.id = mc.project_id
+            join assets a on a.id = mc.asset_id and a.deleted_at is null
+            where mc.project_id = %s and pr.user_id = %s and pr.deleted_at is null
+            order by (pr.selected_mannequin_id =
+                      mc.candidate || '-' || mc.version::text) desc,
+                     mc.version desc, mc.candidate
+            limit 1
+            """,
+            (project_id, user_id),
+        )
+        return await cur.fetchone()
+
+
 async def list_series_reference_cuts(
     conn: AsyncConnection, project_id: str, *, limit: int = 3
 ) -> list[dict]:
@@ -975,10 +1002,11 @@ async def finalize_mannequin_success(
         for c in candidates:
             await cur.execute(
                 "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
-                "r2_key, mime_type, byte_size, width, height) "
-                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s)",
+                "r2_key, mime_type, byte_size, width, height, metadata) "
+                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s)",
                 (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
-                 c.get("size"), c.get("width"), c.get("height")),
+                 c.get("size"), c.get("width"), c.get("height"),
+                 Json(c.get("generation_metadata") or {})),
             )
             await cur.execute(
                 "select coalesce(max(version), 0) + 1 as v from mannequin_cuts "
