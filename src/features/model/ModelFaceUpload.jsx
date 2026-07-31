@@ -16,6 +16,7 @@ import { Button, ErrorState, Icon, useToast } from '@/components/ui.jsx';
 import {
   deleteFacePhoto, fetchFacePhotoUrl, getStatus, listFacePhotos, uploadFacePhoto,
 } from '@/lib/api/personalization.js';
+import { toUploadableImage } from '@/lib/imageTranscode.js';
 import s from './ModelPersonalization.module.css';
 
 const ANGLES = [
@@ -87,7 +88,7 @@ function SlotCard({ index, angle, label, guide, slot, onPicked, onDelete, checki
           </button>
         )}
       </div>
-      <input ref={fileRef} type="file" accept="image/*" hidden
+      <input ref={fileRef} type="file" accept="image/*,.heic,.heif,.hif" hidden
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPicked(angle, f); e.target.value = ''; }} />
       <p className={s.slotGuide}>{guide}</p>
       {slot?.lastFail && (
@@ -129,11 +130,22 @@ export function ModelFaceUpload({ embedded = false, onDone }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const onPicked = async (angle, file) => {
-    if (!file.type.startsWith('image/')) { push?.('이미지 파일만 올릴 수 있어요.', { icon: 'alertCircle' }); return; }
+  const onPicked = async (angle, picked) => {
+    // 아이폰 HEIC 는 File.type 이 비어 오기도 한다 — type 만 보고 막으면 아이폰 사진이 전부 거절된다.
+    const looksImage = picked.type ? picked.type.startsWith('image/') : /\.(hei[cf]|hif|jpe?g|png|webp)$/i.test(picked.name || '');
+    if (!looksImage) { push?.('이미지 파일만 올릴 수 있어요.', { icon: 'alertCircle' }); return; }
     setBusyAngle(angle);
     setSlots((m) => ({ ...m, [angle]: { ...(m[angle] || {}), lastFail: null } }));
     try {
+      // HEIC → JPEG(+긴 변 축소). 서버·QC(SFace)가 HEIC 를 못 읽으므로 업로드 전에 바꾼다.
+      let file;
+      try {
+        file = await toUploadableImage(picked);
+      } catch {
+        push?.('이 사진은 불러오지 못했어요. JPG·PNG 로 저장해 올려주세요.', { icon: 'alertCircle' });
+        setBusyAngle(null);
+        return;
+      }
       const res = await uploadFacePhoto({ angle, fileBlob: file, filename: file.name });
       setSlots((m) => ({ ...m, [angle]: res }));
       push?.('사진이 등록됐어요.', { icon: 'check' });

@@ -11,6 +11,7 @@ import { uid } from '@/lib/ids.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
+import { toUploadableImages } from '@/lib/imageTranscode.js';
 import { syncDraftToBackend } from '@/lib/draftSync.js';
 import { Icon, Button, IconButton, ErrorState, Skeleton, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
@@ -49,10 +50,25 @@ function ColorSwatchPicker({ swatchColors, value, onChange }) {
   );
 }
 
-// build file metas from a FileList (drag-drop / picker), capping to the room left
-const filesToMetas = (fileList, room) => {
-  const imgs = [...fileList].filter((f) => f.type && f.type.startsWith('image/'));
-  return imgs.slice(0, Math.max(0, room)).map((f) => ({ src: URL.createObjectURL(f), name: f.name, size: f.size, type: f.type || 'image', lastModified: f.lastModified }));
+// 확장자 폴백 — iOS/일부 브라우저는 HEIC 에 File.type 을 빈 문자열로 준다. type 만 믿고
+// 거르면 아이폰 사진이 선택 단계에서 조용히 사라진다(정확한 판별은 매직바이트가 한다).
+const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif|heic|heif|hif)$/i;
+const looksLikeImage = (f) => (f.type ? f.type.startsWith('image/') : IMAGE_EXT.test(f.name || ''));
+
+// build file metas from a FileList (drag-drop / picker), capping to the room left.
+// HEIC(아이폰 기본 포맷)는 여기서 JPEG 로 바꾼다 — 이 objectURL 이 미리보기·draft·업로드에
+// 그대로 흘러가므로(다운스트림이 fetch(src).blob() 으로 복원) 변환 지점은 여기 한 곳이면 된다.
+const filesToMetas = async (fileList, room) => {
+  const picked = [...fileList].filter(looksLikeImage).slice(0, Math.max(0, room));
+  if (!picked.length) return { metas: [], failed: [] };
+  const { files, failed } = await toUploadableImages(picked);
+  return {
+    metas: files.map((f) => ({
+      src: URL.createObjectURL(f), name: f.name, size: f.size,
+      type: f.type || 'image', lastModified: f.lastModified,
+    })),
+    failed,
+  };
 };
 const fileExt = (im) => (im.type && im.type.split('/')[1] ? im.type.split('/')[1].toUpperCase() : 'IMG');
 
@@ -69,16 +85,31 @@ function MetaCap({ im }) {
 // add target that ALSO accepts drag-drop + click-to-pick (keeps original .tile.add / .up-empty styles)
 function AddDrop({ className, slot, room, onAddFiles, children }) {
   const [over, setOver] = useState(false);
+  const [busy, setBusy] = useState(false);   // HEIC 변환 중 — 큰 사진은 1~2초 걸린다
   const inputRef = useRef(null);
-  const disabled = room <= 0;
-  const take = (fileList) => { const metas = filesToMetas(fileList, room); if (metas.length) onAddFiles(slot, metas); };
+  const toast = useToast();
+  const disabled = room <= 0 || busy;
+  const take = async (fileList) => {
+    setBusy(true);
+    try {
+      const { metas, failed } = await filesToMetas(fileList, room);
+      if (metas.length) onAddFiles(slot, metas);
+      if (failed.length) {
+        toast.push(`${failed.length}장은 불러오지 못했어요. 다른 형식(JPG·PNG)으로 저장해 올려주세요.`,
+          { icon: 'alertTri' });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <button type="button" className={`${className}${over ? ' over' : ''}`} disabled={disabled}
       onClick={() => inputRef.current && inputRef.current.click()}
       onDragOver={(e) => { e.preventDefault(); if (!disabled) setOver(true); }}
       onDragLeave={() => setOver(false)}
       onDrop={(e) => { e.preventDefault(); setOver(false); if (!disabled) take(e.dataTransfer.files); }}>
-      <input ref={inputRef} type="file" accept="image/*" multiple hidden
+      {/* .heic/.heif 를 명시 — 일부 브라우저·OS 는 image/* 만으로는 HEIC 를 선택지에 안 띄운다 */}
+      <input ref={inputRef} type="file" accept="image/*,.heic,.heif,.hif" multiple hidden
         onChange={(e) => { take(e.target.files); e.target.value = ''; }} />
       {children}
     </button>
