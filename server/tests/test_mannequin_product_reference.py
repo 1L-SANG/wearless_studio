@@ -410,12 +410,66 @@ def test_tier_for_job_guards_pattern_products_on_regenerate():
     assert mj.tier_for_job(off, regen, has_fine_pattern=True) == "image_high"
 
 
+def test_tier_for_job_also_guards_a_low_base_tier_on_initial_generation():
+    """`MANNEQUIN_TIER` 자체가 낮게 잡혀도 패턴 상품은 내려가지 않는다.
+
+    현재 배포는 `image_high` 기본값이라 발화하지 않지만, 가드가 조정 경로에만 걸려 있으면
+    기본 tier 를 낮추는 순간 최초 생성부터 잔줄이 뭉개진다(계획 §4.2).
+    """
+    low_base = make_settings(mannequin_tier="image_light", mannequin_adjust_tier="")
+    gen = {"payload": {"mode": "generate"}}
+    assert mj.tier_for_job(low_base, gen) == "image_light", "무지 상품은 설정대로"
+    assert mj.tier_for_job(low_base, gen, has_fine_pattern=True) == "image_high"
+    assert mj.tier_for_job(low_base, None, has_fine_pattern=True) == "image_high"
+
+
 def test_adjust_edit_tier_defaults_to_high_and_guards_pattern():
     light = make_settings(mannequin_adjust_tier="image_light")
     blank = make_settings(mannequin_adjust_tier="")
     assert mj.adjust_edit_tier(blank, has_fine_pattern=False) == "image_high"
     assert mj.adjust_edit_tier(light, has_fine_pattern=False) == "image_light"
     assert mj.adjust_edit_tier(light, has_fine_pattern=True) == "image_high"
+
+
+def test_worker_private_api_call_sites_still_bind_to_their_signatures():
+    """스크립트 하니스는 테스트가 아니라 CI 가 안 돌린다 — 시그니처를 AST 로 대조한다.
+
+    실제로 이 변경에서 `scripts/prove_mannequin_axis_qc_retry.py` 가 옛 `prod_imgs=` 인자로
+    남아 첫 arm 에서 `TypeError` 로 죽었다(독립 코드리뷰가 잡음). 전체 suite 가 green 이어도
+    보이지 않는 부류라, 같은 사고가 조용히 재발하지 않게 여기서 고정한다.
+    """
+    import ast
+    import inspect
+    import pathlib
+
+    targets = {
+        "_run_candidate": mj._run_candidate,
+        "_apply_edits": mj._apply_edits,
+        "_apply_fabric_pass": mj._apply_fabric_pass,
+    }
+    server_dir = pathlib.Path(mj.__file__).resolve().parents[2]
+    checked = []
+    for sub in ("app", "scripts", "tests"):
+        for path in sorted((server_dir / sub).rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                name = (node.func.attr if isinstance(node.func, ast.Attribute)
+                        else getattr(node.func, "id", None))
+                fn = targets.get(name)
+                if fn is None:
+                    continue
+                if any(k.arg is None for k in node.keywords):
+                    continue  # `**kwargs` 전개는 정적으로 검증할 수 없다
+                try:
+                    inspect.signature(fn).bind(
+                        *([None] * len(node.args)), **{k.arg: None for k in node.keywords})
+                except TypeError as e:
+                    raise AssertionError(
+                        f"{path}:{node.lineno} — {name}(...) 호출이 시그니처와 안 맞는다: {e}")
+                checked.append(f"{path.name}:{node.lineno}")
+    assert len(checked) >= 5, f"호출부를 거의 못 찾았다 — 스캐너 고장 의심: {checked}"
 
 
 # ---------- fresh fallback 관측성 (P0-A7) ----------
@@ -447,6 +501,15 @@ def _parent(**overrides):
          "incompatible_parent"),
         ("edit_depth_cap", _parent(editDepth=2), PROFILE, None, "edit_depth_cap"),
         ("invalid_profile", _parent(), None, None, "invalid_fit_profile"),
+        ("non_str_category", _parent(), {**PROFILE, "category": 7}, None,
+         "invalid_fit_profile"),
+        ("non_str_gender", _parent(), {**PROFILE, "gender": None}, None,
+         "invalid_fit_profile"),
+        # editDepth 가 bool/음수/비정수면 PR #72 워커가 쓴 값이 아니다 — 세대 수를 믿을 수
+        # 없으므로 편집을 태우지 않고 legacy 로 센다.
+        ("bool_depth", _parent(editDepth=True), PROFILE, None, "legacy_parent"),
+        ("negative_depth", _parent(editDepth=-1), PROFILE, None, "legacy_parent"),
+        ("non_int_depth", _parent(editDepth="1"), PROFILE, None, "legacy_parent"),
     ],
     ids=lambda v: v if isinstance(v, str) else None,
 )
@@ -595,6 +658,48 @@ def test_eligible_edit_emits_no_fallback_event(monkeypatch):
     calls = _run_worker_fallback(monkeypatch, parent=_parent(editDepth=1))
     assert calls["run"][0]["generation_path"] == "edit"
     assert _fallback_events(calls) == []
+
+
+def test_candidate_with_edit_path_but_empty_inputs_reports_instead_of_silently_freshing(
+        monkeypatch):
+    """편집 자격을 받고도 입력이 비어 오면 조용히 fresh 로 눕지 않고 사실을 남긴다.
+
+    현재 워커 배선으로는 도달 불가한 방어 분기다. 그래도 고정하는 이유: 이 지점이 바로
+    "패턴이 다시 무작위 생성됐는데 아무도 모르는" 경로라, 나중에 호출부가 하나 늘었을 때
+    침묵으로 되돌아가면 안 된다.
+    """
+    emits = []
+
+    class _Gemini:
+        async def generate_content_image(self, model, prompt, images, size,
+                                         temperature=None, aspect_ratio=None):
+            return types.SimpleNamespace(image=_PNG_1PX, mime="image/png")
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        emits.append((event_type, dict(payload)))
+
+    monkeypatch.setattr(mj, "_emit", fake_emit)
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=make_settings(r2_bucket="bucket"), pool=_FakePool(), r2=_SaveR2(),
+        gemini=_Gemini()))
+    result = asyncio.run(mj._run_candidate(
+        app=app, job={"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:t",
+                      "payload": {"mode": "regenerate"}},
+        candidate="A", base_fit="regular", base_gender="women",
+        base_img=InlineImage("image/png", b"base"),
+        prod_refs=[_ref("Front", "f", b"front")], match_img=None, product_count=1,
+        template="Dress ${baseGender} ${clothingType}.\n${imageManifest}",
+        product={"name": "티"}, analysis={}, clothing_type="top", image_manifest="1. base",
+        fit_profile=PROFILE, adjusted_axes=("fit",), fit_profile_source="payload_snapshot",
+        generation_path="edit", parent_cut_img=None, adjust_directives=""))
+
+    assert result is not None, "관측만 하고 생성 자체는 계속돼야 한다(fail-open)"
+    fallback = [p for e, p in emits if e == "step" and p.get("status") == "edit_path_fallback"]
+    assert len(fallback) == 1
+    assert fallback[0]["reason"] == "missing_edit_inputs"
+    assert fallback[0]["reason"] in mj.EDIT_FALLBACK_REASONS
+    rendered = [p for e, p in emits if e == "step" and p.get("status") == "prompt_rendered"]
+    assert rendered[0]["generation_path"] == "fresh"
 
 
 def test_initial_generation_is_not_reported_as_fallback(monkeypatch):
