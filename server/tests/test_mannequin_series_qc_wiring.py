@@ -1148,6 +1148,46 @@ def test_effective_image_size_upgrades_only_pattern_products():
     assert effective_image_size(legacy, *striped) == "1K"
 
 
+def test_tier_for_job_splits_adjust_from_initial_generation():
+    """조정만 다른 모델로 보낼 수 있어야 한다 — 둘은 같은 워커를 타서 env 하나로는 못 가른다.
+
+    동기(2026-07-31): 조정 흐름에서만 Flash 를 시험하고 싶다는 요구. 초기 생성까지 같이
+    바뀌면 결과 차이가 모델 탓인지 생성 자체가 바뀐 탓인지 구분되지 않는다.
+    기본값(빈 문자열)에서는 분기가 아예 없어야 한다 — 프로덕션 동작 불변이 이 노브의 전제다.
+    """
+    from app.workers.mannequin_job import tier_for_job
+
+    regen = {"payload": {"mode": "regenerate"}}
+    gen = {"payload": {"mode": "generate"}}
+
+    off = types.SimpleNamespace(mannequin_tier="image_high", mannequin_adjust_tier="")
+    assert tier_for_job(off, regen) == "image_high", "미설정이면 조정도 분기 없음"
+    assert tier_for_job(off, gen) == "image_high"
+
+    on = types.SimpleNamespace(mannequin_tier="image_high", mannequin_adjust_tier="image_light")
+    assert tier_for_job(on, regen) == "image_light", "조정만 다른 tier"
+    assert tier_for_job(on, gen) == "image_high", "초기 생성은 고정 — 비교의 기준선"
+
+    # payload 가 없거나 job 자체가 없어도 죽지 않는다(구 잡·직접 호출 경로)
+    assert tier_for_job(on, {}) == "image_high"
+    assert tier_for_job(on, {"payload": None}) == "image_high"
+    assert tier_for_job(on, None) == "image_high"
+    # 설정 객체에 필드가 없는 호출자(구 설정)도 분기 없이 동작
+    legacy = types.SimpleNamespace(mannequin_tier="image_high")
+    assert tier_for_job(legacy, regen) == "image_high"
+
+
+def test_adjust_tier_loader_falls_back_on_typo(monkeypatch):
+    """오타는 조용히 ""(분기 없음)로 떨어져야 한다 — 알 수 없는 tier 로 resolve 하면 터진다."""
+    from app.config import load_settings
+
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("MANNEQUIN_ADJUST_TIER", "image_ligth")  # 오타
+    assert load_settings().mannequin_adjust_tier == ""
+    monkeypatch.setenv("MANNEQUIN_ADJUST_TIER", "image_light")
+    assert load_settings().mannequin_adjust_tier == "image_light"
+
+
 def test_fabric_pass_gate_needs_pattern_and_product_evidence():
     """원단 2패스는 미세 패턴 + 원단 근거 사진이 있을 때만 돈다.
 

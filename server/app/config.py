@@ -46,6 +46,10 @@ class Settings:
     # 깊은 추론을 돌려 수 초 낭비). off=미전송(모델 기본). 2026-07-07 속도 개선.
     analysis_thinking_level: str = "low"  # low | medium | high | off
     mannequin_tier: str = "image_high"  # AG-04 = Gemini 3 Pro (사용자 결정 — Flash 미사용)
+    # 조정(:regenerate) 전용 tier. 조정과 초기 생성은 같은 워커·같은 프롬프트를 타서 env 하나로는
+    # 분리가 안 된다. 빈 값이면 분기 없이 mannequin_tier 를 그대로 쓴다(기존 동작).
+    # 조정 흐름에서만 다른 모델을 시험할 때 쓴다 — 초기 생성 품질을 건드리지 않고 비교한다.
+    mannequin_adjust_tier: str = ""  # "" | image_light | image_high
     mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
     mannequin_aspect_ratio: str = "2:3"
@@ -185,6 +189,12 @@ def _mannequin_tier() -> str:
     return t if t in {"image_light", "image_high"} else "image_high"
 
 
+def _mannequin_adjust_tier() -> str:
+    """조정 전용 tier — 미설정·오타면 "" (분기 없음, mannequin_tier 그대로)."""
+    t = os.getenv("MANNEQUIN_ADJUST_TIER", "")
+    return t if t in {"image_light", "image_high"} else ""
+
+
 def _flag(env: str, default: str, allowed: set[str]) -> str:
     """검색 증강 flag — 허용값 밖이면 안전하게 default(대개 'off')로 폴백."""
     v = (os.getenv(env, default) or default).strip().lower()
@@ -236,6 +246,7 @@ def load_settings() -> Settings:
         analysis_thinking_level=_flag(
             "ANALYSIS_THINKING_LEVEL", "low", {"low", "medium", "high", "off"}),
         mannequin_tier=_mannequin_tier(),
+        mannequin_adjust_tier=_mannequin_adjust_tier(),
         mannequin_image_size=_image_size(),
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
         mannequin_max_attempts=int(os.getenv("MANNEQUIN_MAX_ATTEMPTS", "2")),
