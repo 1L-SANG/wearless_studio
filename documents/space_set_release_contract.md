@@ -248,8 +248,9 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
   가지며, 대표 plate는 `{url}`, 각 멤버에는 정확한 `exampleId`와
   `allUrl|thumbUrl`이 들어간다.
 - `space_set_assets.json`: 서버 공간 세트 레지스트리. 최상위 형식은
-  `{schemaVersion, releaseId, releasedAt, baseUrl, sets: []}`다. 대표 plate와
-  멤버별 `all|pose`는 URL 문자열이 아니라
+  `{schemaVersion, releaseId, releasedAt, baseUrl, placeTypes, sets: []}`다.
+  `placeTypes`는 §1.1 정본에서 생성한 런타임 허용값이며, 대표 plate와 멤버별
+  `all|pose`는 URL 문자열이 아니라
   `{key, sha256, width, height, mime}`로 기록한다. 서버는 `baseUrl+key`로
   실제 URL을 해석한다. `sets`는 manifest 순서를 보존하는 배열이다.
 - `space_set_release_audit.json`: 릴리스 검증에 사용한 세트별 QC receipt와

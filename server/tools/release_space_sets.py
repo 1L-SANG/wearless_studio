@@ -1160,6 +1160,7 @@ def stage_release(
             "releaseId": release_id,
             "releasedAt": manifest["releasedAt"],
             "baseUrl": base,
+            "placeTypes": sorted(_PLACE_TYPES),
             "sets": registry_sets,
         }
         release_audit = {

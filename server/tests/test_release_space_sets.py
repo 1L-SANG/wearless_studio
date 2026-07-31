@@ -164,6 +164,7 @@ def test_valid_manifest_stages_dedicated_catalog_registry_and_deterministic_thum
         "releaseId",
         "releasedAt",
         "baseUrl",
+        "placeTypes",
         "sets",
     }
     assert registry["baseUrl"] == PUBLIC_BASE
@@ -275,7 +276,7 @@ def test_committed_catalogs_share_the_canonical_place_vocabulary():
     front_by_id = {item["setId"]: item for item in frontend["sets"]}
     server_by_id = {item["setId"]: item for item in registry["sets"]}
 
-    assert allowed == release._PLACE_TYPES == space_set_assets._PLACE_TYPES
+    assert allowed == release._PLACE_TYPES == set(registry["placeTypes"])
     assert front_by_id.keys() == server_by_id.keys()
     assert all(item["placeType"] in allowed for item in front_by_id.values())
     assert all(
@@ -286,6 +287,8 @@ def test_committed_catalogs_share_the_canonical_place_vocabulary():
         front_by_id[set_id]["placeType"] == server_by_id[set_id]["placeType"]
         for set_id in front_by_id
     )
+    storefront_set_id = "set-04-women-bottom-street-slowand-10563"
+    assert front_by_id[storefront_set_id]["placeType"] == "storefront-street"
 
 
 def test_flat_id_source_is_union_of_frontend_catalog_and_server_registry(tmp_path):
@@ -643,6 +646,7 @@ def _empty_server_registry(release_id="old-release") -> dict:
         "releaseId": release_id,
         "releasedAt": "2026-07-29T00:00:00Z",
         "baseUrl": PUBLIC_BASE,
+        "placeTypes": sorted(release._PLACE_TYPES),
         "sets": [],
     }
 

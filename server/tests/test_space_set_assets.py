@@ -37,6 +37,7 @@ def space_registry(tmp_path, monkeypatch):
         "schemaVersion": 1,
         "releaseId": "test-release",
         "baseUrl": "https://images.example.test",
+        "placeTypes": ["cafe-shop-interior"],
         "sets": [
             {
                 "setId": "women_top_cafe_01",
@@ -533,6 +534,7 @@ def test_non_release_group_is_rejected_even_with_an_empty_registry(
                 "schemaVersion": 1,
                 "releaseId": None,
                 "baseUrl": None,
+                "placeTypes": ["horizon-studio"],
                 "sets": [],
             }
         ),
@@ -580,6 +582,7 @@ def test_horizon_sequence_may_publish_without_representative_plate(
         "schemaVersion": 1,
         "releaseId": "horizon-release",
         "baseUrl": "https://images.example.test",
+        "placeTypes": ["horizon-studio"],
         "sets": [
             {
                 "setId": "horizon-sequence-01",

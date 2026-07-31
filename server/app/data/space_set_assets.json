@@ -3,6 +3,22 @@
   "releaseId": "space-sets-20260730-v1",
   "releasedAt": "2026-07-30T06:00:29.811365+00:00",
   "schemaVersion": 1,
+  "placeTypes": [
+    "atelier-interior",
+    "building-interior",
+    "cafe-shop-interior",
+    "home-interior",
+    "horizon-studio",
+    "industrial-yard",
+    "library-interior",
+    "park-garden",
+    "resort-terrace",
+    "service-interior",
+    "storefront-street",
+    "urban-alley",
+    "urban-building-exterior",
+    "waterfront"
+  ],
   "sets": [
     {
       "applicableClothingTypes": [
@@ -2054,7 +2070,7 @@
         }
       ],
       "name": "동네 상점 앞의 편안한 거리 스냅",
-      "placeType": "urban-building-exterior",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "height": 1536,

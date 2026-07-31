@@ -38,22 +38,6 @@ _CUT_TYPES = ("styling", "horizon", "mirror")
 _SET_TYPES = ("styling", "horizon-rotation", "horizon-sequence")
 _SHOTS = ("full", "medium")
 _DIRECTIONS = ("front", "side", "back")
-_PLACE_TYPES = frozenset({
-    "home-interior",
-    "cafe-shop-interior",
-    "atelier-interior",
-    "library-interior",
-    "building-interior",
-    "service-interior",
-    "industrial-yard",
-    "urban-alley",
-    "storefront-street",
-    "urban-building-exterior",
-    "park-garden",
-    "waterfront",
-    "resort-terrace",
-    "horizon-studio",
-})
 
 log = logging.getLogger("wearless.space_set_assets")
 
@@ -165,6 +149,18 @@ def validate_space_set_registry_document(
     raw_sets = raw.get("sets")
     if not isinstance(raw_sets, list):
         raise ValueError("space_set_registry_sets_invalid")
+    raw_place_types = raw.get("placeTypes")
+    if (
+        not isinstance(raw_place_types, list)
+        or not raw_place_types
+        or any(
+            not isinstance(value, str) or not value
+            for value in raw_place_types
+        )
+        or len(raw_place_types) != len(set(raw_place_types))
+    ):
+        raise ValueError("space_set_registry_place_types_invalid")
+    place_types = set(raw_place_types)
     release_id = raw.get("releaseId")
     if raw_sets and not _is_safe_id(release_id):
         raise ValueError("space_set_registry_release_id_invalid")
@@ -203,7 +199,7 @@ def validate_space_set_registry_document(
         if set_type not in _SET_TYPES:
             raise ValueError("space_set_registry_set_type_invalid")
         place_type = raw_set.get("placeType")
-        if place_type not in _PLACE_TYPES:
+        if place_type not in place_types:
             raise ValueError("space_set_registry_place_type_invalid")
         plate_policy = raw_set.get("platePolicy")
         if plate_policy not in ("required", "not-required"):

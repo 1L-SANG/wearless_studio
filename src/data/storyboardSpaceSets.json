@@ -1147,8 +1147,8 @@
         }
       ],
       "name": "동네 상점 앞의 편안한 거리 스냅",
-      "place": "urban-building-exterior",
-      "placeType": "urban-building-exterior",
+      "place": "storefront-street",
+      "placeType": "storefront-street",
       "platePolicy": "required",
       "representativePlate": {
         "url": "https://images.wearless.kr/seed/genexamples/space-sets/v1/releases/space-sets-20260730-v1/plate/set-04-women-bottom-street-slowand-10563.png"
