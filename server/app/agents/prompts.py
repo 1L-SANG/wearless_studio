@@ -167,6 +167,13 @@ def render_mannequin_prompt(
     knowledge: str = "off",
 ) -> str:
     """템플릿 ${토큰} 치환 + 분석 정보 자동 주입."""
+    outerwear_inner_token = "${outerwearInnerLine}"
+    if str(ctx.clothing_type or "").strip().lower() in ("outer", "아우터"):
+        template = template.replace(outerwear_inner_token, "")
+    else:
+        template = re.sub(
+            rf"^.*{re.escape(outerwear_inner_token)}.*(?:\n|$)", "", template, flags=re.MULTILINE
+        )
     text = (
         template.replace("${clothingType}", _sanitize(ctx.clothing_type))
         .replace("${productCount}", str(ctx.product_count))

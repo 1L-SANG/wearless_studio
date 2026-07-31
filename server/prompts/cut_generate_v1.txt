@@ -14,6 +14,7 @@ GARMENT FIDELITY (highest priority — never violate):
 - Never transfer garments or shoes from EXAMPLE REFERENCE or MOOD images. Props from an all-scope
   EXAMPLE REFERENCE follow the explicit all-scope contract below; MOOD-image props
   are never transferred.
+${outerwearInnerLine}
 
 ${detailColorTransferLine}
 
@@ -49,6 +50,11 @@ OUTPUT: exactly one photorealistic image, portrait 2:3. No text, no watermark, n
 
 ATTACHED IMAGES (in order):
 ${imageManifest}
+
+[[OUTER_INNER]]OUTERWEAR INNER — MANNEQUIN ANCHOR:
+- For an outerwear product, keep the inner T-shirt exactly the same as in the attached MANNEQUIN
+  image. Never replace or restyle it, and never transfer an inner garment or layer from EXAMPLE
+  REFERENCE or MOOD images.
 
 [[CUT:styling]]
 CUT TYPE — STYLING CUT (lifestyle):
@@ -135,13 +141,17 @@ what that reference visibly proves; never invent lining, hardware, seams, textur
 [[OUTER_CLOSURE:open]]Opening state: FULLY OPEN. Leave every real front closure unfastened and let
 the two front panels hang naturally. Keep all hardware unchanged; preserve only what is naturally
 visible from the requested camera angle, and never change direction or framing to expose it.
+- The inner T-shirt from the MANNEQUIN image must be naturally visible through the open front.
 
 [[OUTER_CLOSURE:partial]]Opening state: PARTIALLY OPEN. Fasten only some of the garment's real front
 closure at a natural position for its actual construction; leave the rest open. Do not invent a
 button count or zipper behavior that PRODUCT references do not support.
+- The inner T-shirt from the MANNEQUIN image must be partially visible through the open portion.
 
 [[OUTER_CLOSURE:closed]]Opening state: FULLY CLOSED. Fasten every real front closure that this exact
 garment supports. Do not turn an open-front garment into a closable garment.
+- The inner T-shirt from the MANNEQUIN image must be almost entirely hidden, with at most its collar
+  line naturally visible.
 
 [[EXNUANCE:0]]Composition nuance (from the seller's chosen style example): straight-on, centered and calm — minimal body angle, balanced negative space.
 [[EXNUANCE:1]]Composition nuance (from the seller's chosen style example): the body turned slightly (about 15–30°) with a relaxed stance — still reads as a front-family cut.

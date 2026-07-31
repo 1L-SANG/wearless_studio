@@ -183,6 +183,63 @@ def test_default_mannequin_template_uses_profile_axis_fallback():
     assert "For any fit or length axis" not in template
 
 
+@pytest.mark.parametrize("clothing_type, has_rule", [
+    ("outer", True),
+    ("top", False),
+    ("bottom", False),
+    ("dress", False),
+])
+def test_mannequin_outerwear_inner_rule_is_category_scoped(clothing_type, has_rule):
+    from app.agents.prompts import load_prompt_template
+    from conftest import make_settings
+
+    template = load_prompt_template(make_settings())
+    ctx = MannequinPromptContext(
+        clothing_type=clothing_type,
+        product_count=1,
+        base_gender="women",
+        image_manifest="1. Base mannequin\n2. front view",
+    )
+    prompt = render_mannequin_prompt(
+        template,
+        ctx,
+        {"name": "테스트 상품", "clothing_type": clothing_type},
+        {},
+    )
+
+    assert ("OUTERWEAR INNER" in prompt) is has_rule
+    assert ("Choose only white or black" in prompt) is has_rule
+    assert ("no logo, pattern, print, or graphic" in prompt) is has_rule
+    assert "${outerwearInnerLine}" not in prompt
+
+
+def test_mannequin_outerwear_inner_rule_has_korean_template_parity():
+    from app.agents.prompts import load_prompt_template
+    from conftest import make_settings
+
+    template = load_prompt_template(
+        make_settings(mannequin_prompt_file="prompts/mannequin_generate_v1.ko.txt")
+    )
+    ctx = MannequinPromptContext(
+        clothing_type="outer",
+        product_count=1,
+        base_gender="women",
+        image_manifest="1. 베이스 마네킹\n2. 상품 정면",
+    )
+    prompt = render_mannequin_prompt(
+        template,
+        ctx,
+        {"name": "테스트 아우터", "clothing_type": "outer"},
+        {},
+    )
+
+    assert "무지 솔리드 크루넥 티셔츠 한 장만" in prompt
+    assert "흰색과 검정 중" in prompt
+    assert "명도 대비가 더 큰 하나" in prompt
+    assert "로고·패턴·프린트·그래픽이 없는" in prompt
+    assert "과한 크롭이나 터틀넥은 금지" in prompt
+
+
 def test_mannequin_worker_runs_dual_candidates(monkeypatch):
     profile = {
         "category": "pants",

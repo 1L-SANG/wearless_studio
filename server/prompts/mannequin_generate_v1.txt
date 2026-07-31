@@ -19,6 +19,7 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 - FIT view (if attached): this shows the same garment worn on a real body. Use it as the priority reference only for FIT PROFILE axes that are not declared — including where the hem falls, cut or silhouette, ease, drape, and which body areas the garment emphasizes or skims. Do not use it to override a declared axis.
 
 - MATCHING BOTTOM (if attached, the last image): also dress the mannequin in this bottom garment. If the main product is a top or outerwear, it is worn COMPLETELY OUTSIDE the bottom. Do NOT tuck it in, not even partially — no front tuck, no half tuck, no French tuck, no tucking one side, and no folding or rolling the hem under. Observable target: the main product's hem forms an unbroken visible line all the way around the body, and no part of the main product disappears behind or under the bottom's waistband. This holds whether or not a length axis is declared in FIT PROFILE, and it overrides any styling convention that would look more fashionable.
+${outerwearInnerLine}- OUTERWEAR INNER (only when the main product is outerwear): Dress the mannequin in exactly one plain, solid crew-neck T-shirt underneath. Choose only white or black, whichever creates the stronger lightness contrast with the outerwear's color and tone. The T-shirt must be unbranded, with no logo, pattern, print, or graphic, and must naturally cover the arms and torso as a basic inner layer — never an extreme crop or turtleneck.
 </instruction>
 
 <output format>
