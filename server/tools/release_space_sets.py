@@ -1721,6 +1721,22 @@ def _read_server_registry(path: Path) -> dict | None:
     return value
 
 
+def _read_frontend_catalog(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"기존 공간 세트 프론트 카탈로그를 읽을 수 없습니다: {path}"
+        ) from exc
+    if not isinstance(value, dict):
+        raise RuntimeError(
+            f"기존 공간 세트 프론트 카탈로그 형식이 올바르지 않습니다: {path}"
+        )
+    return value
+
+
 def _validate_runtime_registry(value: object, *, label: str) -> None:
     if str(SERVER_DIR) not in sys.path:
         sys.path.insert(0, str(SERVER_DIR))
@@ -1732,12 +1748,125 @@ def _validate_runtime_registry(value: object, *, label: str) -> None:
         raise RuntimeError(f"{label} 형식이 런타임 계약과 다릅니다: {exc}") from exc
 
 
-def _merged_server_registry(result: SpaceSetReleaseResult) -> dict:
+def _validate_catalog_pair(frontend: object, registry: object, *, label: str) -> None:
+    if not isinstance(frontend, dict) or set(frontend) != {"_meta", "sets"}:
+        raise RuntimeError(f"{label} 프론트 카탈로그 형식이 올바르지 않습니다")
+    meta = frontend.get("_meta")
+    frontend_sets = frontend.get("sets")
+    if (
+        not isinstance(meta, dict)
+        or meta.get("schemaVersion") != 1
+        or not isinstance(frontend_sets, list)
+    ):
+        raise RuntimeError(f"{label} 프론트 카탈로그 메타데이터가 올바르지 않습니다")
+
+    _validate_runtime_registry(registry, label=f"{label} 서버 레지스트리")
+    assert isinstance(registry, dict)
+    if (
+        meta.get("releaseId") != registry.get("releaseId")
+        or meta.get("releasedAt") != registry.get("releasedAt")
+        or meta.get("defaultBaseUrl") != registry.get("baseUrl")
+    ):
+        raise RuntimeError(f"{label} 프론트·서버 릴리스 메타데이터가 다릅니다")
+
+    server_sets = registry.get("sets")
+    if not isinstance(server_sets, list) or len(frontend_sets) != len(server_sets):
+        raise RuntimeError(f"{label} 프론트·서버 세트 수가 다릅니다")
+
+    common_set_fields = (
+        "setId",
+        "name",
+        "setType",
+        "gender",
+        "applicableClothingTypes",
+        "placeType",
+        "tone",
+        "compositionLabel",
+        "spaceVariation",
+        "platePolicy",
+    )
+    common_member_fields = ("exampleId", "order", "cutType", "shot", "direction")
+    base_url = registry.get("baseUrl")
+    for frontend_set, server_set in zip(frontend_sets, server_sets):
+        if not isinstance(frontend_set, dict) or not isinstance(server_set, dict):
+            raise RuntimeError(f"{label} 세트 형식이 올바르지 않습니다")
+        set_id = server_set.get("setId")
+        if frontend_set.get("id") != set_id or frontend_set.get("place") != server_set.get(
+            "placeType"
+        ):
+            raise RuntimeError(f"{label} 프론트 세트 식별자가 다릅니다: {set_id}")
+        if any(frontend_set.get(field) != server_set.get(field) for field in common_set_fields):
+            raise RuntimeError(f"{label} 프론트·서버 세트 정의가 다릅니다: {set_id}")
+        frontend_scope = frontend_set.get(
+            "setApplicableClothingTypes", frontend_set.get("applicableClothingTypes")
+        )
+        server_scope = server_set.get(
+            "setApplicableClothingTypes", server_set.get("applicableClothingTypes")
+        )
+        if frontend_scope != server_scope:
+            raise RuntimeError(f"{label} 프론트·서버 세트 적용 범위가 다릅니다: {set_id}")
+
+        server_plate = server_set.get("representativePlate")
+        frontend_plate = frontend_set.get("representativePlate")
+        expected_plate_url = (
+            _public_url(base_url, server_plate["key"])
+            if isinstance(server_plate, dict)
+            else None
+        )
+        actual_plate_url = (
+            frontend_plate.get("url") if isinstance(frontend_plate, dict) else None
+        )
+        if actual_plate_url != expected_plate_url:
+            raise RuntimeError(f"{label} 프론트·서버 대표 배경이 다릅니다: {set_id}")
+
+        frontend_members = frontend_set.get("members")
+        server_members = server_set.get("members")
+        if (
+            not isinstance(frontend_members, list)
+            or not isinstance(server_members, list)
+            or len(frontend_members) != len(server_members)
+        ):
+            raise RuntimeError(f"{label} 프론트·서버 멤버 수가 다릅니다: {set_id}")
+        for frontend_member, server_member in zip(frontend_members, server_members):
+            if not isinstance(frontend_member, dict) or not isinstance(server_member, dict):
+                raise RuntimeError(f"{label} 멤버 형식이 올바르지 않습니다: {set_id}")
+            example_id = server_member.get("exampleId")
+            if any(
+                frontend_member.get(field) != server_member.get(field)
+                for field in common_member_fields
+            ):
+                raise RuntimeError(
+                    f"{label} 프론트·서버 멤버 정의가 다릅니다: {example_id}"
+                )
+            all_asset = server_member.get("all")
+            if not isinstance(all_asset, dict):
+                raise RuntimeError(f"{label} 서버 all 자산이 없습니다: {example_id}")
+            all_key = all_asset.get("key")
+            release_root = all_key.rsplit("/all/", 1)[0] if isinstance(all_key, str) else ""
+            expected_thumb_key = f"{release_root}/thumb/{example_id}.webp"
+            if (
+                frontend_member.get("allUrl") != _public_url(base_url, all_key)
+                or frontend_member.get("thumbUrl")
+                != _public_url(base_url, expected_thumb_key)
+            ):
+                raise RuntimeError(
+                    f"{label} 프론트·서버 멤버 자산이 다릅니다: {example_id}"
+                )
+
+
+def _merged_catalogs(result: SpaceSetReleaseResult) -> tuple[dict, dict]:
+    next_frontend = _read_json(result.frontend_catalog_path)
     next_registry = _read_json(result.server_registry_path)
-    _validate_runtime_registry(next_registry, label="새 공간 세트 서버 레지스트리")
+    _validate_catalog_pair(next_frontend, next_registry, label="새 공간 세트 릴리스")
+    current_frontend = _read_frontend_catalog(DEFAULT_FRONTEND_CATALOG_PATH)
     current_registry = _read_server_registry(DEFAULT_SERVER_REGISTRY_PATH)
-    if current_registry is None:
-        return next_registry
+    if current_frontend is None and current_registry is None:
+        return next_frontend, next_registry
+    if current_frontend is None or current_registry is None:
+        raise RuntimeError(
+            "기존 공간 세트 프론트·서버 파일 중 하나만 존재해 병합을 거부합니다"
+        )
+    _validate_catalog_pair(current_frontend, current_registry, label="기존 공간 세트")
 
     current_base = current_registry.get("baseUrl")
     next_base = next_registry.get("baseUrl")
@@ -1746,26 +1875,41 @@ def _merged_server_registry(result: SpaceSetReleaseResult) -> dict:
             "기존 공간 세트 서버 레지스트리와 새 릴리스의 baseUrl이 다릅니다"
         )
 
-    next_sets = next_registry["sets"]
-    next_by_id = {item["setId"]: item for item in next_sets}
-    preserved: list[dict] = []
-    for existing in current_registry["sets"]:
-        set_id = existing["setId"]
-        replacement = next_by_id.get(set_id)
-        if replacement is None:
-            preserved.append(existing)
-        elif replacement != existing:
+    next_frontend_sets = next_frontend["sets"]
+    next_server_sets = next_registry["sets"]
+    next_frontend_by_id = {item["setId"]: item for item in next_frontend_sets}
+    next_server_by_id = {item["setId"]: item for item in next_server_sets}
+    preserved_frontend: list[dict] = []
+    preserved_server: list[dict] = []
+    for existing_frontend, existing_server in zip(
+        current_frontend["sets"], current_registry["sets"]
+    ):
+        set_id = existing_server["setId"]
+        frontend_replacement = next_frontend_by_id.get(set_id)
+        server_replacement = next_server_by_id.get(set_id)
+        if frontend_replacement is None and server_replacement is None:
+            preserved_frontend.append(existing_frontend)
+            preserved_server.append(existing_server)
+        elif (
+            frontend_replacement != existing_frontend
+            or server_replacement != existing_server
+        ):
             raise RuntimeError(
                 f"동일 setId의 정의 변경을 거부합니다: {set_id}. "
                 "새 세트는 새 setId로 발행하세요"
             )
-    merged = {
+
+    merged_frontend = {
+        **next_frontend,
+        "sets": [*next_frontend_sets, *preserved_frontend],
+    }
+    merged_registry = {
         **next_registry,
         "baseUrl": next_base or current_base,
-        "sets": [*next_sets, *preserved],
+        "sets": [*next_server_sets, *preserved_server],
     }
-    _validate_runtime_registry(merged, label="병합된 공간 세트 서버 레지스트리")
-    return merged
+    _validate_catalog_pair(merged_frontend, merged_registry, label="병합된 공간 세트")
+    return merged_frontend, merged_registry
 
 
 def _restore_bytes(path: Path, previous: bytes | None) -> None:
@@ -1789,8 +1933,9 @@ def apply_release(result: SpaceSetReleaseResult) -> None:
             raise FileExistsError(
                 f"같은 releaseId가 이미 적용되어 덮어쓰기를 거부합니다: {target}"
             )
-    merged_registry = _merged_server_registry(result)
+    merged_frontend, merged_registry = _merged_catalogs(result)
     merge_dir = Path(tempfile.mkdtemp(prefix=".space-set-registry-merge."))
+    merged_frontend_path = merge_dir / "storyboardSpaceSets.json"
     merged_path = merge_dir / "space_set_assets.json"
     frontend_previous = (
         DEFAULT_FRONTEND_CATALOG_PATH.read_bytes()
@@ -1803,8 +1948,9 @@ def apply_release(result: SpaceSetReleaseResult) -> None:
         else None
     )
     try:
+        _write_json(merged_frontend_path, merged_frontend)
         _write_json(merged_path, merged_registry)
-        _atomic_copy(result.frontend_catalog_path, DEFAULT_FRONTEND_CATALOG_PATH)
+        _atomic_copy(merged_frontend_path, DEFAULT_FRONTEND_CATALOG_PATH)
         _atomic_copy(merged_path, DEFAULT_SERVER_REGISTRY_PATH)
     except Exception:
         rollback_errors: list[str] = []
