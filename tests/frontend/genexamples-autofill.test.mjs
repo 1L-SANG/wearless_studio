@@ -50,7 +50,9 @@ const httpAdapterSource = readFileSync(
 
 test('owner declarations gate frontend combinations', () => {
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' }), true);
-  assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'dress', gender: 'women' }), false);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'medium', clothingType: 'outer', gender: 'men' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'dress', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'outer', gender: 'men' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'men' }), false);
@@ -156,43 +158,6 @@ test('space-set-only poses enter only the in-space compatible pose pool', () => 
     includeSetOnly: true,
   });
   assert.deepEqual(inSpace.map((item) => item.id), ['generic-back', 'set-back']);
-});
-
-test('a released set pose is available even when the flat combination is not published', () => {
-  const catalog = [example('released-dress-pose', {
-    setOnly: true,
-    variants: ['all', 'pose'],
-    applicableClothingTypes: ['dress'],
-    spaceSetId: 'released-dress-set',
-  })];
-  assert.equal(isGenerationCombinationPublic({
-    cutType: 'styling',
-    shot: 'full',
-    clothingType: 'dress',
-    gender: 'women',
-  }), false);
-  assert.deepEqual(selectGenerationExamples(catalog, {
-    cutType: 'styling',
-    shot: 'full',
-    clothingType: 'dress',
-    gender: 'women',
-  }), []);
-  assert.deepEqual(selectGenerationExamples(catalog, {
-    cutType: 'styling',
-    shot: 'full',
-    clothingType: 'dress',
-    gender: 'women',
-    appendSetOnly: true,
-  }).map((item) => item.id), ['released-dress-pose']);
-  assert.deepEqual(selectGenerationExamples(catalog, {
-    cutType: 'styling',
-    shot: 'full',
-    clothingType: 'dress',
-    gender: 'women',
-    spaceGroupId: 'ssg1__released-dress-set__instance',
-    direction: 'front',
-    includeSetOnly: true,
-  }).map((item) => item.id), ['released-dress-pose']);
 });
 
 test('gallery mood round-robin supplies the quality top three and six cards cycle 1,2,3', () => {
