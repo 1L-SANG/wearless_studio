@@ -86,3 +86,6 @@ server/app/data/face_models/*.onnx
 
 # 구매 자료(전자책·프롬프트 팩) — 저작권. 로컬 전용.
 insight/
+
+# codex CLI 세션 id (로컬 도구 산출물 — 커밋 대상 아님)
+.context/
