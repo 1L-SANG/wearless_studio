@@ -188,6 +188,25 @@ def effective_image_size(s, product: dict | None, analysis: dict | None) -> str:
     return upgrade if mannequin.has_fine_pattern(product, analysis) else s.mannequin_image_size
 
 
+def tier_for_job(s, job: dict | None) -> str:
+    """이 잡의 1패스 생성이 쓸 이미지 tier (순수).
+
+    조정(`:regenerate`)과 초기 생성(`:generate`)은 같은 워커·같은 프롬프트를 타므로
+    `MANNEQUIN_TIER` 하나로는 둘을 다른 모델로 돌릴 수 없다. `mannequin_adjust_tier` 가
+    설정된 경우에만 조정 잡을 그쪽으로 보낸다 — 빈 값이면 분기 자체가 없다(기존 동작).
+
+    조정에서만 모델을 바꿔 보려는 요구가 실제 동기다(2026-07-31). 초기 생성 품질을 고정한 채
+    비교해야 결과 차이를 모델 탓으로 돌릴 수 있다.
+
+    편집 패스(untuck·fabric·bust)는 여기 해당 없다 — 그쪽은 코드에서 image_high 로 고정돼
+    있고, Flash 가 편집 지시를 거부·미반영해 탈락한 기록이 있다.
+    """
+    adjust = (getattr(s, "mannequin_adjust_tier", "") or "").strip()
+    if adjust and ((job or {}).get("payload") or {}).get("mode") == "regenerate":
+        return adjust
+    return s.mannequin_tier
+
+
 async def _apply_axis_qc(
     *, pool, gemini, s, job_id, candidate, attempt, model, res,
     prod_imgs, match_img, fit_profile, profile_hash, calls_spent, image_size=None,
@@ -854,7 +873,8 @@ async def _run_candidate(
         base_prompt = f"{base_prompt}\n\n{_STYLE_REF_GUARD}"
     # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
     # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
-    model = resolve_model(s, s.mannequin_tier)
+    # 조정 잡은 MANNEQUIN_ADJUST_TIER 가 설정됐을 때만 다른 tier 를 탄다(tier_for_job).
+    model = resolve_model(s, tier_for_job(s, job))
     feedback = ""
     # 구제 후보 풀을 **두 단계로 분리**한다(codex 2026-07-31 HIGH).
     #  - pre_reject: 사전 게이트에서 걸린 후보. axis/bust 편집·재판정·D축을 아직 안 거쳤다.
