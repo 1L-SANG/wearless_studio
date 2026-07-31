@@ -11,7 +11,9 @@ def _it(id, ct, gender, cb, so, active=True):
 
 def test_complementary_type():
     assert matching.complementary_type("top") == "bottom"
-    assert matching.complementary_type("dress") == "bottom"
+    # 원피스는 한 벌이라 맞춰 입힐 반대편이 없다(2026-08-01). 예전엔 "bottom" 을 돌려줘
+    # 하의를 추천했다 — 셀러 화면에 불필요한 매칭 카드가 뜨고 컷에도 하의가 함께 들어갔다.
+    assert matching.complementary_type("dress") is None
     assert matching.complementary_type("outer") == "bottom"
     assert matching.complementary_type("bottom") == "top"
 
@@ -161,8 +163,10 @@ def test_dress_match_candidates_ignore_stale_men_query(
         headers=_auth(make_token),
     )
 
+    # 원피스는 매칭 후보가 없다 — 성별 쿼리가 무엇이든(묵은 men 포함) 빈 목록이어야 한다.
+    # (옛 계약: 하의를 추천하되 성별만 여성으로 눕혔다. 2026-08-01 부터 추천 자체를 안 한다.)
     assert res.status_code == 200, res.text
-    assert [item["id"] for item in res.json()] == ["women-bottom"]
+    assert res.json() == []
 
 
 def test_match_candidates_failfast_without_public_base(client, make_token, monkeypatch):
@@ -185,3 +189,25 @@ def test_recommend_limit_zero_returns_empty():
     # limit=0 은 '빈 결과' (0은 falsy — 전체 반환 아님, 리뷰 반영)
     items = [_it("b1", "bottom", "women", 80, 1), _it("b2", "bottom", "women", 70, 2)]
     assert matching.recommend(items, "top", ["women"], limit=0) == []
+
+
+def test_dress_gets_no_matching_bottom():
+    """원피스는 상·하의가 붙은 한 벌이라 맞춰 입힐 하의가 없다.
+
+    예전에는 dress 를 상의쪽(_TOP_SIDE)으로 묶어 하의를 추천했다 — 셀러 화면에 필요 없는 매칭
+    카드가 뜨고, 마네킹 컷에도 원피스 아래 바지·치마가 들어가 상품을 가렸다(2026-08-01 보고).
+    """
+    from app.services import matching
+
+    assert matching.complementary_type("dress") is None
+    items = [
+        {"id": "b1", "is_active": True, "clothing_type": "bottom", "gender": "women",
+         "color_brightness": 50, "sort_order": 1},
+        {"id": "t1", "is_active": True, "clothing_type": "top", "gender": "women",
+         "color_brightness": 50, "sort_order": 1},
+    ]
+    assert matching.recommend(items, "dress", ["women"]) == []
+    # 상의·아우터는 그대로 하의를 받는다(회귀 방지)
+    assert [i["id"] for i in matching.recommend(items, "top", ["women"])] == ["b1"]
+    assert [i["id"] for i in matching.recommend(items, "outer", ["women"])] == ["b1"]
+    assert [i["id"] for i in matching.recommend(items, "bottom", ["women"])] == ["t1"]

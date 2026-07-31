@@ -14,15 +14,20 @@ _SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "Fit": 3}
 def select_base_gender(
     analysis: dict, clothing_type: str | None = None
 ) -> str:
-    """분석의 targetGenders로 남/여 베이스 결정. 남성 단독일 때만 'men', 그 외(혼합·비어있음·여성)
-    는 'women'. 원피스는 손상된 분석값이 남아 있어도 항상 여성이다."""
+    """분석의 targetGenders로 남/여 베이스 결정 — **첫 번째 값**을 따른다. 원피스는 항상 여성.
+
+    셀러 화면의 '대상 성별'은 단일 선택 칩이고 `targetGenders[0]` 만 표시한다
+    (AnalysisForm.jsx: `value={a.targetGenders?.[0]}`). 그런데 예전 규칙은 "전부 남성 토큰일
+    때만 men"이라, AI 분석이 `["men","women"]` 을 넣어두면 **화면에는 '남성'이 선택돼 보이는데
+    여성 베이스가 나갔다**(2026-08-01 실측: 회색 후드·회색 니트 등 혼합 프로젝트에서 여성
+    마네킹 + 가슴 2패스까지 적용). 셀러가 고른 것과 결과가 다르면 그건 배선이 끊긴 것이다.
+    화면이 보여주는 값을 정본으로 삼아 UI 와 서버를 한 곳에 모은다.
+    """
     if str(clothing_type or "").lower() == "dress":
         return "women"
-    genders = {str(g).lower() for g in (analysis.get("targetGenders") or [])}
+    genders = [str(g).lower() for g in (analysis.get("targetGenders") or [])]
     men_tokens = {"men", "male", "남성", "남"}
-    if genders and genders <= men_tokens:  # 전부 남성 토큰
-        return "men"
-    return "women"
+    return "men" if genders and genders[0] in men_tokens else "women"
 
 
 def generation_spec(analysis: dict) -> dict | None:
