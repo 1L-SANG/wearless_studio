@@ -443,7 +443,7 @@ def test_top_outer_shared_set_with_medium_member_is_rejected(tmp_path):
         release.validate_manifest(manifest, root)
 
     assert any(
-        "[top,outer] 공용 세트는 모든 멤버가 full" in item
+        "공용 세트는 모든 멤버가 full" in item
         for item in caught.value.violations
     )
 
@@ -468,7 +468,7 @@ def test_rotation_requires_front_side_back_full_order(tmp_path):
     )
 
 
-def test_rotation_release_keeps_member_scope_and_publishes_universal_set_scope(
+def test_rotation_release_publishes_universal_member_and_set_scope(
     tmp_path,
 ):
     manifest_path, root, manifest = _fixture(
@@ -482,7 +482,9 @@ def test_rotation_release_keeps_member_scope_and_publishes_universal_set_scope(
         ],
     )
     space_set = manifest["sets"][0]
-    space_set["applicableClothingTypes"] = ["bottom"]
+    space_set["applicableClothingTypes"] = [
+        "top", "bottom", "outer", "dress",
+    ]
     space_set["setApplicableClothingTypes"] = [
         "top", "bottom", "outer", "dress",
     ]
@@ -501,7 +503,9 @@ def test_rotation_release_keeps_member_scope_and_publishes_universal_set_scope(
         result.server_registry_path.read_text(encoding="utf-8")
     )
     for published in (frontend["sets"][0], registry["sets"][0]):
-        assert published["applicableClothingTypes"] == ["bottom"]
+        assert published["applicableClothingTypes"] == [
+            "top", "bottom", "outer", "dress",
+        ]
         assert published["setApplicableClothingTypes"] == [
             "top", "bottom", "outer", "dress",
         ]

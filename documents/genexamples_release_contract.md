@@ -49,13 +49,27 @@
 2. `rank`는 serviceGroupKey 내 1부터 연속·유일, 그룹당 최대 6개(현행 노출 한도 — 확대 시 이 계약만 갱신).
 3. `variants`에는 **QC publishable 판정을 통과해 실제 존재하는 자산만** 기재한다. manifest에 적힌 미래 경로는 자산이 아니다(ADR-0009 §2). `all`은 모든 예시에 필수.
 4. `pose`·`bg`는 착용컷(styling|horizon|mirror)에만 허용. 제품(ghost|detail)은 `all`만(ADR-0008).
-5. `applicableClothingTypes`는 비어있지 않고 중복 없이 `sourceClothingType`을 포함. 공용([top,outer])은 사람 검토를 거친 스타일링·호리존 풀샷만(ADR-0006).
+5. `applicableClothingTypes`는 비어있지 않고 중복 없이 `sourceClothingType`을 포함한다. 스타일링 공용은 사람 검토를 거친 풀샷 `[top,outer]`만 허용한다. 일반 호리존 풀샷은 여성 `top|bottom|outer|dress`, 남성 `top|bottom|outer`에 공용 적용하며, 호리존 중간샷은 상단 크롭 계열(여성 `top|outer|dress`, 남성 `top|outer`)끼리만 공유한다. 하의 중간샷은 `bottom` 전용이다(ADR-0006).
 6. `shot`은 서비스 정본(full|medium, 제품은 ghost|detail 체계)만. 선별판 전용 토큰(medium_knee)은 등장하지 않는다.
    착용컷 `gender`는 women|men, 성별 공용 제품컷은 null이다. `direction`은 앵커의 관찰 메타를 보존하며 front로 강제 변환하지 않는다.
 7. 자산 픽셀 규칙: `pose`=옷·배경 없는 투명 PNG 중립 마네킹(빈 휴대폰 소품만 허용), `bg`=사람·의류·소품·접촉 그림자 없는 빈 장소 플레이트(ADR-0009 §1·§3).
 8. 썸네일(합의 ③): 릴리스 도구가 모든 예시의 `all`에서 **WebP 축소본을 결정적으로 파생 생성**해 `thumb/<id>.webp`로 발행한다(원본 평균 ~9.3MB → 갤러리에 원본 사용 금지). 갤러리 표시는 thumb, 생성 첨부는 원본. `pose`·`bg` 썸네일은 만들지 않는다. 파생은 기계적 변환이므로 합의 ①(도구는 추론 금지)과 상충하지 않는다.
 9. 필드 규칙(2026-07-20 명문화, 동일자 정정): `gender`는 착용컷(styling|horizon|mirror) → `women|men` 필수, **product → null**(모델 없음). `direction`은 **관찰 메타**다 — 컷 종류와 무관하게 `front|back|side|null` 전부 허용하며, 서비스 레시피 입력이 아니고 front로 강제 변환하지 않는다(§1 주석·불변식 6과 동일). 거울 예시의 front(거울을 향한 관찰값), 디테일 접사의 null이 정상 사례다. 서비스의 방향 규칙(거울=방향 없음 등)은 카드 레시피의 것이지 예시 메타의 것이 아니다. validator는 이 규칙 밖의 값만 거부한다.
 10. 공개 범위의 단일 정본은 `data/genexamples_public_combinations.json`이다. 릴리스 도구는 이 표에 선언된 `cutType×shot×clothingType×gender` 조합에 `all` 예시가 0장이면 릴리스를 거부하고, 미선언 발행 조합은 경고만 남긴다. 방향은 커버리지 축이 아니다. 이 파일은 CI 커버리지와 프론트 컷·샷 비활성화 로직도 직접 읽으며 복제본을 두지 않는다.
+
+### 발행 후 적용 범위 개정
+
+이미지 바이트·ID·R2 key·해시·variant는 불변이다. 반면
+`applicableClothingTypes`는 현재 서비스가 어떤 상품에 해당 자산을 보여주고
+허용할지 정하는 **소비 라우팅 메타데이터**다. 오너가 적용 범위 확대를
+확정한 경우에는 기존 범위를 포함하는 단조 확대만 코드 메타데이터 개정으로
+허용하며 R2 자산을 다시 올리지 않는다. 이때 프론트
+`src/data/genExamples.json`, 서버 `server/app/data/example_assets.json`,
+공개 조합표를 한 변경에서 함께 갱신하고, 두 소비자가 같은 범위를
+허용하는지 테스트한다. 과거 `release_manifest.json`은 당시 발행 감사 기록으로
+다시 쓰지 않는다. 범위 축소나 이미지·레시피 변경은 이 예외에 해당하지
+않으며 새 ID·새 릴리스가 필요하다. 기존 릴리스 CLI는 이 코드 메타데이터
+개정 경로가 아니므로 같은 releaseId 덮어쓰기 금지 규칙을 그대로 유지한다.
 
 ## 3. 소비 (1단계 구현 대상 — 릴리스 도구 하나가 두 산출물 생성)
 

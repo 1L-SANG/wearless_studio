@@ -296,11 +296,17 @@ def validate_space_set_registry_document(
                 }
             )
             example_ids.add(example_id)
-        if len(applicable) > 1 and (
-            set(applicable) != {"top", "outer"}
-            or any(member["shot"] != "full" for member in members)
-        ):
-            raise ValueError("space_set_registry_applicability_invalid")
+        if len(applicable) > 1:
+            shared_top_outer = set(applicable) == {"top", "outer"}
+            universal_rotation = (
+                set_type == "horizon-rotation"
+                and tuple(applicable) == _SET_SCOPE_BY_GENDER[gender]
+            )
+            if (
+                (not shared_top_outer and not universal_rotation)
+                or any(member["shot"] != "full" for member in members)
+            ):
+                raise ValueError("space_set_registry_applicability_invalid")
         if set_type == "horizon-rotation" and (
             len(members) != 3
             or any(member["shot"] != "full" for member in members)

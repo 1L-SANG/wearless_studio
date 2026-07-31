@@ -589,10 +589,18 @@ def validate_manifest(
                 violations.append(
                     f"{prefix} 남성 원피스 적용 범위는 지원하지 않습니다"
                 )
-            if len(applicable) > 1 and set(applicable) != {"top", "outer"}:
-                violations.append(
-                    f"{prefix} 복수 적용 범위는 검토된 [top,outer]만 허용합니다"
+            if len(applicable) > 1:
+                shared_top_outer = set(applicable) == {"top", "outer"}
+                universal_rotation = (
+                    space_set.get("setType") == "horizon-rotation"
+                    and applicable
+                    == _SET_SCOPE_BY_GENDER.get(space_set.get("gender"))
                 )
+                if not shared_top_outer and not universal_rotation:
+                    violations.append(
+                        f"{prefix} 복수 적용 범위는 검토된 [top,outer] 또는 "
+                        "성별 전 의류 horizon-rotation만 허용합니다"
+                    )
         set_applicable = space_set.get(
             "setApplicableClothingTypes", applicable
         )
@@ -776,7 +784,7 @@ def validate_manifest(
 
         if len(applicable) > 1 and any(shot != "full" for shot in member_shots):
             violations.append(
-                f"{prefix} [top,outer] 공용 세트는 모든 멤버가 full이어야 합니다"
+                f"{prefix} 공용 세트는 모든 멤버가 full이어야 합니다"
             )
         if set_type == "horizon-rotation" and (
             len(members) != 3

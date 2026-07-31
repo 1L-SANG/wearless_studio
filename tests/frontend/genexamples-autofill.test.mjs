@@ -50,6 +50,9 @@ const httpAdapterSource = readFileSync(
 test('owner declarations gate frontend combinations', () => {
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'dress', gender: 'women' }), false);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'women' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'outer', gender: 'men' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'men' }), false);
   assert.equal(isGenerationCombinationPublic({ cutType: 'product', shot: 'detail', clothingType: 'bottom', gender: 'women' }), true);
 });
 

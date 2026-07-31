@@ -91,15 +91,21 @@ function normalizedSet(set, index) {
       || setClothingTypes.join(',') !== SET_SCOPE_BY_GENDER[set.gender].join(',')
     )
   ) return null;
-  if (
-    clothingTypes.length > 1
-    && (
-      clothingTypes.length !== 2
-      || !clothingTypes.includes('top')
-      || !clothingTypes.includes('outer')
+  if (clothingTypes.length > 1) {
+    const sharedTopOuter = (
+      clothingTypes.length === 2
+      && clothingTypes.includes('top')
+      && clothingTypes.includes('outer')
+    );
+    const universalRotation = (
+      setType === 'horizon-rotation'
+      && clothingTypes.join(',') === SET_SCOPE_BY_GENDER[set.gender].join(',')
+    );
+    if (
+      (!sharedTopOuter && !universalRotation)
       || set.members.some((member) => member?.shot !== 'full')
-    )
-  ) return null;
+    ) return null;
+  }
   if (
     (setType === 'horizon-sequence' && set.platePolicy !== 'not-required')
     || (setType !== 'horizon-sequence' && set.platePolicy !== 'required')

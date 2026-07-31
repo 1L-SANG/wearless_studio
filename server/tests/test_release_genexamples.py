@@ -338,6 +338,51 @@ def test_men_dress_generation_example_is_rejected(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    ("gender", "shot", "applicable"),
+    (
+        ("women", "full", ["top", "bottom", "outer", "dress"]),
+        ("men", "full", ["top", "bottom", "outer"]),
+        ("women", "medium", ["top", "outer", "dress"]),
+        ("men", "medium", ["top", "outer"]),
+    ),
+)
+def test_horizon_shared_scopes_are_allowed(tmp_path, gender, shot, applicable):
+    manifest_path, root, manifest = _fixture(tmp_path)
+    example = manifest["examples"][0]
+    example.update({
+        "serviceGroupKey": f"horizon:{gender}:top:{shot}",
+        "cutType": "horizon",
+        "gender": gender,
+        "shot": shot,
+        "mood": None,
+        "applicableClothingTypes": applicable,
+    })
+
+    release.validate_manifest(manifest, root, manifest_path=manifest_path)
+
+
+def test_horizon_bottom_medium_cannot_use_the_upper_crop_scope(tmp_path):
+    manifest_path, root, manifest = _fixture(tmp_path)
+    example = manifest["examples"][0]
+    example.update({
+        "serviceGroupKey": "horizon:women:bottom:medium",
+        "cutType": "horizon",
+        "shot": "medium",
+        "mood": None,
+        "sourceClothingType": "bottom",
+        "applicableClothingTypes": ["top", "bottom", "outer", "dress"],
+    })
+
+    with pytest.raises(release.ReleaseValidationError) as caught:
+        release.validate_manifest(manifest, root, manifest_path=manifest_path)
+
+    assert any(
+        "호리존 상단 중간샷 규칙" in item
+        for item in caught.value.violations
+    )
+
+
 def test_image_extension_must_match_actual_format(tmp_path):
     manifest_path, root, manifest = _fixture(tmp_path)
     example = manifest["examples"][0]

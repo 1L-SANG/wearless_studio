@@ -9,7 +9,9 @@
     "ex_horizon_men_bottom_full_01": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_bottom_full_01.png",
       "applicableClothingTypes": [
-        "bottom"
+        "top",
+        "bottom",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -20,7 +22,9 @@
     "ex_horizon_men_bottom_full_02": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_bottom_full_02.png",
       "applicableClothingTypes": [
-        "bottom"
+        "top",
+        "bottom",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -31,7 +35,9 @@
     "ex_horizon_men_bottom_full_03": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_bottom_full_03.png",
       "applicableClothingTypes": [
-        "bottom"
+        "top",
+        "bottom",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -42,7 +48,9 @@
     "ex_horizon_men_bottom_full_04": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_bottom_full_04.png",
       "applicableClothingTypes": [
-        "bottom"
+        "top",
+        "bottom",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -99,6 +107,8 @@
     "ex_horizon_men_outer_full_01": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_outer_full_01.png",
       "applicableClothingTypes": [
+        "top",
+        "bottom",
         "outer"
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_horizon_men_outer_full_01.png",
@@ -112,6 +122,7 @@
     "ex_horizon_men_outer_medium_01": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_outer_medium_01.png",
       "applicableClothingTypes": [
+        "top",
         "outer"
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_horizon_men_outer_medium_01.png",
@@ -125,7 +136,9 @@
     "ex_horizon_men_top_full_01": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_full_01.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "bottom",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -136,7 +149,9 @@
     "ex_horizon_men_top_full_02": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_full_02.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "bottom",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -147,7 +162,9 @@
     "ex_horizon_men_top_full_03": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_full_03.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "bottom",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -158,7 +175,9 @@
     "ex_horizon_men_top_full_04": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_full_04.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "bottom",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -169,7 +188,9 @@
     "ex_horizon_men_top_full_05": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_full_05.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "bottom",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -181,6 +202,7 @@
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_full_06.png",
       "applicableClothingTypes": [
         "top",
+        "bottom",
         "outer"
       ],
       "cutType": "horizon",
@@ -192,7 +214,8 @@
     "ex_horizon_men_top_medium_01": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_medium_01.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer"
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_horizon_men_top_medium_01.png",
       "cutType": "horizon",
@@ -204,7 +227,8 @@
     "ex_horizon_men_top_medium_02": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_medium_02.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -215,7 +239,8 @@
     "ex_horizon_men_top_medium_03": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_medium_03.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -226,7 +251,8 @@
     "ex_horizon_men_top_medium_04": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_medium_04.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -237,7 +263,8 @@
     "ex_horizon_men_top_medium_05": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_medium_05.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -248,7 +275,8 @@
     "ex_horizon_men_top_medium_06": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_men_top_medium_06.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -259,7 +287,10 @@
     "ex_horizon_women_bottom_full_01": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_bottom_full_01.png",
       "applicableClothingTypes": [
-        "bottom"
+        "top",
+        "bottom",
+        "outer",
+        "dress"
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_horizon_women_bottom_full_01.png",
       "cutType": "horizon",
@@ -272,7 +303,10 @@
     "ex_horizon_women_bottom_full_02": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_bottom_full_02.png",
       "applicableClothingTypes": [
-        "bottom"
+        "top",
+        "bottom",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -283,7 +317,10 @@
     "ex_horizon_women_bottom_full_03": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_bottom_full_03.png",
       "applicableClothingTypes": [
-        "bottom"
+        "top",
+        "bottom",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -294,7 +331,10 @@
     "ex_horizon_women_bottom_full_04": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_bottom_full_04.png",
       "applicableClothingTypes": [
-        "bottom"
+        "top",
+        "bottom",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -349,7 +389,10 @@
     "ex_horizon_women_top_full_01": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_top_full_01.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "bottom",
+        "outer",
+        "dress"
       ],
       "bg": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/bg/ex_horizon_women_top_full_01.png",
       "cutType": "horizon",
@@ -362,7 +405,10 @@
     "ex_horizon_women_top_full_02": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_top_full_02.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "bottom",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -373,7 +419,10 @@
     "ex_horizon_women_top_full_03": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_top_full_03.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "bottom",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -384,7 +433,10 @@
     "ex_horizon_women_top_full_04": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_top_full_04.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "bottom",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -395,7 +447,10 @@
     "ex_horizon_women_top_full_05": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_top_full_05.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "bottom",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -406,7 +461,9 @@
     "ex_horizon_women_top_medium_01": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_top_medium_01.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -417,7 +474,9 @@
     "ex_horizon_women_top_medium_02": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_top_medium_02.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -428,7 +487,9 @@
     "ex_horizon_women_top_medium_03": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_top_medium_03.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -439,7 +500,9 @@
     "ex_horizon_women_top_medium_04": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_top_medium_04.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -450,7 +513,9 @@
     "ex_horizon_women_top_medium_05": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_top_medium_05.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",
@@ -461,7 +526,9 @@
     "ex_horizon_women_top_medium_06": {
       "all": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-19-pilot-qc-01/all/ex_horizon_women_top_medium_06.png",
       "applicableClothingTypes": [
-        "top"
+        "top",
+        "outer",
+        "dress"
       ],
       "cutType": "horizon",
       "direction": "front",

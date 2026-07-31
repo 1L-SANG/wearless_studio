@@ -256,13 +256,16 @@ test('production set eligibility filters by gender and clothing type', () => {
   }
 });
 
-test('rotation set scope covers supported clothing without widening standalone all examples', () => {
+test('rotation set members and grouped set both cover every supported clothing type', () => {
   const rotation = storyboardSpaceSetsFor({
     gender: 'women',
     clothingType: 'dress',
   }).find((set) => set.setType === 'horizon-rotation');
   assert.ok(rotation);
-  assert.deepEqual(rotation.applicableClothingTypes, ['bottom']);
+  assert.deepEqual(
+    rotation.applicableClothingTypes,
+    ['top', 'bottom', 'outer', 'dress'],
+  );
   assert.deepEqual(
     rotation.setApplicableClothingTypes,
     ['top', 'bottom', 'outer', 'dress'],
@@ -273,8 +276,8 @@ test('rotation set scope covers supported clothing without widening standalone a
   assert.ok(standaloneMembers.length > 0);
   assert.ok(standaloneMembers.every(
     (example) => (
-      example.applicableClothingTypes.includes('bottom')
-      && !example.applicableClothingTypes.includes('dress')
+      example.shot === 'full'
+      && example.applicableClothingTypes.includes('dress')
     ),
   ));
 });

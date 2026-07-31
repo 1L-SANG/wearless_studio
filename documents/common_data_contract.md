@@ -419,8 +419,8 @@ GenerationExample {
 
 - `applicableClothingTypes`는 비어 있지 않고 중복이 없으며 `clothingType`을 포함한다.
 - 제품 생성예시는 성별 공용이므로 `gender=null`이고, UI 성별 필터의 영향을 받지 않는다. 착용 생성예시는 `women|men`을 유지한다.
-- `upper`는 `ClothingType`이 아니다. `[top, outer]`을 화면에서 `상의·아우터 공용`으로 표시할 뿐이다.
-- 둘 이상의 종류에 공용인 예시는 사람 검토를 거친 스타일링·호리존 풀샷에만 허용한다. 샷을 중간샷(선택판 `medium_knee`)·제품·디테일로 다시 분류하면 적용 목록을 `[sourceClothingType]`으로 좁힌다.
+- `upper`는 `ClothingType`이 아니다. 공용 범위도 실제 상품 종류 배열로 명시한다.
+- 스타일링 공용은 사람 검토를 거친 풀샷 `[top,outer]`만 허용한다. 일반 호리존 풀샷은 성별이 지원하는 전 의류, 호리존 중간샷은 상단 크롭 계열(여성 `[top,outer,dress]`, 남성 `[top,outer]`)끼리 공유한다. 하의 중간샷은 `[bottom]` 전용이다(ADR-0006).
 - UI와 서버는 현재 `Product.clothingType`이 적용 목록에 있는지 검증한다. 목록은 `StoryboardBlock`에 복제하지 않고 `exampleId`가 가리키는 생성예시 정본에서 읽는다.
 - `refScope`는 예시에서 전부·배경·포즈 중 무엇을 참고할지 나타내는 별도 축이며 의류 종류 적용 범위로 재사용하지 않는다.
 - `refScope='all'`은 장소·조명·분위기·포즈·프레이밍·구성, `pose`는 자세만, `bg`는 장소·조명·분위기만 참고한다. `pose` 자산의 캔버스나 원본 크롭은 프레이밍 근거가 아니며 현재 카드의 `shot`과 `cutType`이 카메라 거리·몸 크기·크롭을 정한다. 어느 범위에서도 예시 속 의류·신발·액세서리를 가져오지 않는다(ADR-0009).

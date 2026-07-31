@@ -43,6 +43,14 @@ _DIRECTIONS = {"front", "side", "back"}
 _DETAIL_SUBJECTS = {"원단·봉제", "단추·지퍼", "포켓"}
 _PRESENTATION_METHODS = {"ghost", "flatlay"}
 _VARIANT_ORDER = ("all", "pose", "bg", "thumb")
+_ALL_CLOTHING_BY_GENDER = {
+    "women": {"top", "bottom", "outer", "dress"},
+    "men": {"top", "bottom", "outer"},
+}
+_UPPER_CROP_BY_GENDER = {
+    "women": {"top", "outer", "dress"},
+    "men": {"top", "outer"},
+}
 
 
 class ReleaseValidationError(ValueError):
@@ -384,14 +392,33 @@ def validate_manifest(
                 violations.append(
                     f"{prefix} 남성 원피스 생성예시는 지원하지 않습니다"
                 )
-            if len(applicable) > 1 and not (
-                set(applicable) == {"top", "outer"}
-                and cut_type in {"styling", "horizon"}
-                and shot == "full"
-            ):
-                violations.append(
-                    f"{prefix} 공용 적용 범위는 검토된 styling|horizon full의 [top,outer]만 허용합니다"
+            if len(applicable) > 1:
+                applicable_set = set(applicable)
+                shared_top_outer_full = (
+                    applicable_set == {"top", "outer"}
+                    and cut_type in {"styling", "horizon"}
+                    and shot == "full"
                 )
+                universal_horizon_full = (
+                    cut_type == "horizon"
+                    and shot == "full"
+                    and applicable_set == _ALL_CLOTHING_BY_GENDER.get(gender)
+                )
+                shared_horizon_upper_medium = (
+                    cut_type == "horizon"
+                    and shot == "medium"
+                    and source_type != "bottom"
+                    and applicable_set == _UPPER_CROP_BY_GENDER.get(gender)
+                )
+                if not (
+                    shared_top_outer_full
+                    or universal_horizon_full
+                    or shared_horizon_upper_medium
+                ):
+                    violations.append(
+                        f"{prefix} 공용 적용 범위가 허용된 풀샷 또는 "
+                        "호리존 상단 중간샷 규칙과 맞지 않습니다"
+                    )
 
         mood = example.get("mood")
         detail_subject = example.get("detailSubject")

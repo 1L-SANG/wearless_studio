@@ -135,7 +135,7 @@ def test_registry_rejects_men_dress_sets(space_registry):
         sets.validate_space_set_registry_document(invalid)
 
 
-def test_rotation_set_scope_is_universal_but_standalone_all_stays_category_specific(
+def test_rotation_set_and_standalone_members_are_universal_for_supported_clothing(
     tmp_path, monkeypatch
 ):
     set_id = "women_rotation_01"
@@ -169,7 +169,9 @@ def test_rotation_set_scope_is_universal_but_standalone_all_stays_category_speci
             "setId": set_id,
             "setType": "horizon-rotation",
             "gender": "women",
-            "applicableClothingTypes": ["bottom"],
+            "applicableClothingTypes": [
+                "top", "bottom", "outer", "dress",
+            ],
             "setApplicableClothingTypes": [
                 "top", "bottom", "outer", "dress",
             ],
@@ -210,11 +212,10 @@ def test_rotation_set_scope_is_universal_but_standalone_all_stays_category_speci
         blocks[0], clothing_type="dress", gender="women", scope="pose"
     )
     assert pose["scope"] == "pose"
-    with pytest.raises(sets.SpaceSetBindingError) as caught:
-        sets.resolve_published_example_reference(
-            blocks[0], clothing_type="dress", gender="women", scope="all"
-        )
-    assert caught.value.code == "space_set_example_incompatible"
+    all_reference = sets.resolve_published_example_reference(
+        blocks[0], clothing_type="dress", gender="women", scope="all"
+    )
+    assert all_reference["scope"] == "all"
     sets.load_space_set_registry.cache_clear()
 
 

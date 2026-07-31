@@ -4306,7 +4306,10 @@
     },
     {
       "applicableClothingTypes": [
-        "bottom"
+        "top",
+        "bottom",
+        "outer",
+        "dress"
       ],
       "setApplicableClothingTypes": [
         "top",
@@ -4398,7 +4401,9 @@
     },
     {
       "applicableClothingTypes": [
-        "bottom"
+        "top",
+        "bottom",
+        "outer"
       ],
       "setApplicableClothingTypes": [
         "top",
