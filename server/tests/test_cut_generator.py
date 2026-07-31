@@ -188,13 +188,13 @@ def test_generate_applies_medium_crop_only_to_pose_scope(monkeypatch):
         async def generate_content_image(self, model, prompt, images, image_size, aspect_ratio):
             return SimpleNamespace(image=b"FULL", mime="image/png")
 
-    async def fake_crop(settings, image, mime):
-        calls.append((image, mime))
+    async def fake_crop(settings, image, mime, clothing_type):
+        calls.append((image, mime, clothing_type))
         return b"CROPPED", mime
 
     monkeypatch.setattr(cg.pose_crop, "crop_pose_medium", fake_crop)
     settings = make_settings(gemini_api_key="x")
-    product = {"name": "니트", "colors": []}
+    product = {"name": "바지", "clothingType": "bottom", "colors": []}
     pose_manifest = cg.build_manifest(
         [], has_mannequin=False, has_match=False, mood_count=0, example_scope="pose"
     )
@@ -227,7 +227,7 @@ def test_generate_applies_medium_crop_only_to_pose_scope(monkeypatch):
     assert all_result == (b"FULL", "image/png")
     assert bg_result == (b"FULL", "image/png")
     assert pose_full_result == (b"FULL", "image/png")
-    assert calls == [(b"FULL", "image/png")]
+    assert calls == [(b"FULL", "image/png", "bottom")]
 
 
 def test_space_set_medium_is_independent_camera_result_not_full_crop(monkeypatch):

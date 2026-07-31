@@ -371,14 +371,23 @@ test('direction badge labels are front, side and back', () => {
   assert.deepEqual(['front', 'side', 'back'].map(directionBadgeLabel), ['정면', '사이드', '뒷면']);
 });
 
-test('storyboard interaction source clears an incompatible in-space shot and remains atomically retryable', () => {
+test('storyboard preserves an in-space pose across shot changes and remains atomically retryable', () => {
   const shotHandler = storyboardSource.slice(
     storyboardSource.indexOf('const onShotChange ='),
     storyboardSource.indexOf('const commitPendingRecipe ='),
   );
-  assert.match(shotHandler, /includeSetOnly:\s*true/);
-  assert.match(shotHandler, /exampleId:\s*null/);
+  assert.match(
+    shotHandler,
+    /return \{ shot, refScope: 'pose', exampleSelectionOrigin: 'user' \}/,
+  );
+  assert.doesNotMatch(shotHandler, /selectGenerationExamples/);
+  assert.doesNotMatch(shotHandler, /exampleId:\s*null/);
   assert.match(shotHandler, /exampleSelectionOrigin: current\.exampleId \? 'user' : null/);
+  const selectedStatus = storyboardSource.slice(
+    storyboardSource.indexOf('const selectedStatus ='),
+    storyboardSource.indexOf('const cycleExamples ='),
+  );
+  assert.doesNotMatch(selectedStatus, /selectedExample\.shot !== shotVal/);
   assert.match(storyboardSource, /await onAtomicChange\(changes, \{ pickerOwnsError: true \}\)/);
   assert.match(storyboardSource, /\}, catalogs\), \{ retryAtomic: true \}\)/);
   assert.match(storyboardSource, /latestBlocks\.current !== atomicRetry\.previous/);

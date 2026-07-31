@@ -92,10 +92,15 @@ class GeminiImageClient:
             raise GeminiError("GEMINI_API_KEY 미설정")
         body = self._body(prompt, images, image_size, temperature, aspect_ratio)
         t0 = time.perf_counter()
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            res = await client.post(
-                self._endpoint(model), json=body, headers={"x-goog-api-key": self._key}
-            )
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                res = await client.post(
+                    self._endpoint(model), json=body, headers={"x-goog-api-key": self._key}
+                )
+        except httpx.RequestError as exc:
+            raise GeminiError(
+                f"Gemini request failed: {type(exc).__name__}: {exc}"
+            ) from exc
         latency_ms = int((time.perf_counter() - t0) * 1000)
         if res.status_code != 200:
             raise GeminiError(f"Gemini {res.status_code}: {res.text[:500]}")
