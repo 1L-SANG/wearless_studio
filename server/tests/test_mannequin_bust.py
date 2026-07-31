@@ -82,8 +82,10 @@ def test_build_prompt_substitutes_target_and_keeps_calibrated_wording():
     prompt = mannequin_bust.build_prompt(load_bust_prompt_template())
     assert "${" not in prompt
     # 실측 캘리브레이션으로 고른 크기 — 이 배수가 결과 크기를 결정한다.
+    # 1.5 → 1.3 (2026-08-01): 1.5 는 전신이 "뚱뚱하게" 읽혀 상품 인상을 깎았다. 같은 베이스 컷에
+    # 배수만 바꾼 그리드(1.5 ×1 vs 1.3 ×4)에서 셀러가 1.3 을 골랐다.
     assert "a full C CUP" in prompt
-    assert "1.5 times" in prompt
+    assert "1.3 times" in prompt
     # 변화가 보이게 만드는 메커니즘(2026-07-30 스파이크) — 이건 유지한다.
     assert "TENTS over the bust apex" in prompt
     assert "falls AWAY from the stomach" in prompt

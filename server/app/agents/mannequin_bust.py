@@ -25,9 +25,14 @@ of the mannequin's chest" 로 거부(이미지 없이 텍스트 반환), 거부�
 # 1.5배 원문구·1.5배 강화문구·1.3배 세 설정에서 실패 패턴이 동일했다. 즉 앞섬 열림은 가슴
 # 크기가 아니라 **입력 이미지 의존**이다. 크기를 낮춰 얻은 것은 없고 허리만 과하게 잘록해져
 # 되돌린다.
+# 배수는 1.5 → 1.3 (2026-08-01). 1.5 는 가슴이 앞으로 너무 나와 전신이 "뚱뚱하게" 읽혔다 —
+# 상세페이지는 옷을 소개하는 화면이라 마네킹이 무거워 보이면 상품 인상까지 같이 내려간다.
+# 같은 베이스 컷에 배수만 바꿔 뽑은 그리드(scratch/cmp_c13_full.png, 1.5 ×1 vs 1.3 ×4)에서
+# 셀러가 1.3 쪽을 골랐다. 컵 표기는 그대로 둔다 — 배수만으로 크기가 움직이는 게 확인됐고,
+# 둘을 같이 내리면 무엇이 효과인지 다시 알 수 없어진다.
 BUST_TARGET = (
     "a full C CUP — clearly bigger than the B cup in the attached image. The bust must "
-    "project forward from the chest wall roughly 1.5 times as far as it does now"
+    "project forward from the chest wall roughly 1.3 times as far as it does now"
 )
 
 # 허리·골반 목표(2026-07-30). 상세페이지에서 마네킹이 상품 인상을 좌우하므로 슬림 아워글래스로
