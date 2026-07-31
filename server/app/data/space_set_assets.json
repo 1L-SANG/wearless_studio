@@ -4308,6 +4308,12 @@
       "applicableClothingTypes": [
         "bottom"
       ],
+      "setApplicableClothingTypes": [
+        "top",
+        "bottom",
+        "outer",
+        "dress"
+      ],
       "compositionLabel": "정면 · 사이드 · 뒷면",
       "gender": "women",
       "members": [
@@ -4393,6 +4399,11 @@
     {
       "applicableClothingTypes": [
         "bottom"
+      ],
+      "setApplicableClothingTypes": [
+        "top",
+        "bottom",
+        "outer"
       ],
       "compositionLabel": "정면 · 사이드 · 뒷면",
       "gender": "men",

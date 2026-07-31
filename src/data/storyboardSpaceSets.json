@@ -2410,6 +2410,12 @@
       "applicableClothingTypes": [
         "bottom"
       ],
+      "setApplicableClothingTypes": [
+        "top",
+        "bottom",
+        "outer",
+        "dress"
+      ],
       "compositionLabel": "정면 · 사이드 · 뒷면",
       "gender": "women",
       "id": "set_horizon_women_bottom_threetimes_7563033280596_prod01",
@@ -2457,6 +2463,11 @@
     {
       "applicableClothingTypes": [
         "bottom"
+      ],
+      "setApplicableClothingTypes": [
+        "top",
+        "bottom",
+        "outer"
       ],
       "compositionLabel": "정면 · 사이드 · 뒷면",
       "gender": "men",

@@ -330,12 +330,11 @@ test('every supported gender and clothing category seeds styling and horizon set
     const stylingMembers = setMembers.filter((item) => item.cutType === 'styling');
     const horizonMembers = setMembers.filter((item) => item.cutType === 'horizon');
 
-    // 전의류 선언 전 서버 정합: 회전 세트는 의류 메타(bottom)가 맞을 때만, 그 외엔 낱장 트리오 폴백.
-    const rotationApplies = clothingType === 'bottom';
+    // 회전 세트는 별도 세트 범위로 성별 내 모든 지원 의류에 배치된다.
     assert.equal(basic.length, 14, `${gender}/${clothingType} basic`);
     assert.equal(stylingMembers.length, 6, `${gender}/${clothingType} styling members`);
-    assert.equal(horizonMembers.length, rotationApplies ? 3 : 0, `${gender}/${clothingType} rotation members`);
-    assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, rotationApplies ? 3 : 2);
+    assert.equal(horizonMembers.length, 3, `${gender}/${clothingType} rotation members`);
+    assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 3);
     assert.ok(spaceSetIdFromGroupId(setMembers[0].spaceGroupId));
     assert.ok(setMembers.every((item) => (
       item.exampleSelectionOrigin === 'auto'

@@ -135,6 +135,101 @@ def test_registry_rejects_men_dress_sets(space_registry):
         sets.validate_space_set_registry_document(invalid)
 
 
+def test_rotation_set_scope_is_universal_but_standalone_all_stays_category_specific(
+    tmp_path, monkeypatch
+):
+    set_id = "women_rotation_01"
+    release_id = "rotation-release"
+    directions = ("front", "side", "back")
+    members = [
+        {
+            "exampleId": f"ss_rotation_{direction}",
+            "order": index,
+            "cutType": "horizon",
+            "shot": "full",
+            "direction": direction,
+            "all": _asset(
+                "all",
+                f"ss_rotation_{direction}.png",
+                release_id=release_id,
+            ),
+            "pose": _asset(
+                "pose",
+                f"ss_rotation_{direction}.png",
+                release_id=release_id,
+            ),
+        }
+        for index, direction in enumerate(directions, start=1)
+    ]
+    registry = {
+        "schemaVersion": 1,
+        "releaseId": release_id,
+        "baseUrl": "https://images.example.test",
+        "sets": [{
+            "setId": set_id,
+            "setType": "horizon-rotation",
+            "gender": "women",
+            "applicableClothingTypes": ["bottom"],
+            "setApplicableClothingTypes": [
+                "top", "bottom", "outer", "dress",
+            ],
+            "spaceVariation": "fixed",
+            "platePolicy": "required",
+            "representativePlate": _asset(
+                "plate",
+                f"{set_id}.png",
+                release_id=release_id,
+            ),
+            "members": members,
+        }],
+    }
+    path = tmp_path / "space_set_assets.json"
+    path.write_text(json.dumps(registry), encoding="utf-8")
+    monkeypatch.setattr(sets, "_DEFAULT_SPACE_SET_ASSETS", str(path))
+    sets.load_space_set_registry.cache_clear()
+    blocks = [
+        {
+            "id": f"b{index}",
+            "spaceGroupId": f"ssg1__{set_id}__instance-1",
+            "spaceVariation": "fixed",
+            "exampleId": member["exampleId"],
+            "cutType": "horizon",
+            "shot": "full",
+            "direction": member["direction"],
+        }
+        for index, member in enumerate(members, start=1)
+    ]
+
+    assert sets.validate_storyboard_space_sets(
+        blocks, clothing_type="dress", gender="women"
+    ) is None
+    assert len(sets.bind_storyboard_space_sets(
+        blocks, clothing_type="outer", gender="women"
+    )) == 3
+    pose = sets.resolve_published_example_reference(
+        blocks[0], clothing_type="dress", gender="women", scope="pose"
+    )
+    assert pose["scope"] == "pose"
+    with pytest.raises(sets.SpaceSetBindingError) as caught:
+        sets.resolve_published_example_reference(
+            blocks[0], clothing_type="dress", gender="women", scope="all"
+        )
+    assert caught.value.code == "space_set_example_incompatible"
+    sets.load_space_set_registry.cache_clear()
+
+
+def test_non_rotation_cannot_widen_only_the_set_scope(space_registry):
+    invalid = json.loads(json.dumps(space_registry))
+    invalid["sets"][0]["setApplicableClothingTypes"] = [
+        "top", "bottom", "outer", "dress",
+    ]
+
+    with pytest.raises(
+        ValueError, match="space_set_registry_set_applicability_invalid"
+    ):
+        sets.validate_space_set_registry_document(invalid)
+
+
 def test_exact_space_set_binding_and_key_resolution(space_registry):
     blocks = _blocks()
     bindings = sets.bind_storyboard_space_sets(

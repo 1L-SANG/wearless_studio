@@ -28,6 +28,8 @@
     "setType": "styling", // styling | horizon-rotation | horizon-sequence
     "gender": "women",
     "applicableClothingTypes": ["top"],
+    // 선택 필드. 생략하면 applicableClothingTypes와 같다.
+    "setApplicableClothingTypes": ["top"],
     "placeType": "cafe",
     "tone": "daily-snapshot",
     "compositionLabel": "풀 1 + 미디움 2",
@@ -180,9 +182,14 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
 3. `styling` 세트 멤버는 모두 styling, 호리존 세트 멤버는 모두 horizon이다.
    착용 샷은 `full|medium`, 방향은 `front|side|back`만 허용한다. 공간 세트의
    멤버 레시피는 생성 시점을 명확히 고정해야 하므로 null 방향은 발행하지 않는다.
-4. `applicableClothingTypes`는 비어 있지 않고 중복이 없다. 복수 적용은
+4. `applicableClothingTypes`는 낱장 `all` 이미지의 적용 범위이며 비어
+   있지 않고 중복이 없다. 복수 적용은
    ADR-0006에 따라 `[top, outer]` 또는 `[outer, top]`인
    styling/horizon **풀샷 전용 세트**에만 허용한다.
+   `setApplicableClothingTypes`는 선택적인 세트 배치·포즈 범위이며,
+   생략하면 앞 필드와 같다. 두 값이 다를 수 있는 것은
+   `horizon-rotation`뿐이고 여성은 `[top,bottom,outer,dress]`, 남성은
+   `[top,bottom,outer]`의 정해진 순서와 전체 범위를 사용한다.
 5. 모든 해시·픽셀 크기·실제 이미지 형식·확장자가 manifest와 일치한다.
 6. 자산 key는 이 releaseId의 불변 R2 루트 밖을 가리킬 수 없다.
 7. 같은 releaseId의 스테이징 경로와 R2 prefix는 덮어쓰지 않는다. 수정은 새

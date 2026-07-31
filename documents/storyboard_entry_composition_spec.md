@@ -89,6 +89,13 @@
 ## 8. 전제·전달 사항
 
 - **placeType 정규화**(카탈로그 세션): 진행 중 확인(2026-07-31, codex/normalize-space-place-types 브랜치 — 13개 표준 어휘). 진입 배치의 정규화 매핑은 신구 어휘를 모두 흡수하도록 선반영됨(storyboardEntryPlacement.js).
-- **회전 세트 전 의류화 = 스코프 분리 방식**(카탈로그 세션 설계 채택, 2026-07-31): applicableClothingTypes를 직접 바꾸지 않고(발행본 불변 계약·갤러리 오염·서버 [top,outer] 조합 제한 — server/app/agents/space_set_assets.py:276 실측) **"세트 배치 스코프" 필드를 분리 신설** — 세트로 통째 배치될 때는 성별 내 전 의류, 낱장 예시로 노출될 때는 기존 하의 유지. 시퀀스 D1~D4는 양쪽 모두 현행 의류 메타 유지. **수반 조건**: ① 서버 저장 검증(validate_storyboard_space_sets)도 세트-스코프 기준으로 통과하게 변경 ② 필드명·스키마 확정 시 진입 배치(storyboardEntryPlacement.js — 현재 applicableClothingTypes 필터)가 회전 세트에 한해 그 필드를 읽도록 후속 수정(그 전까지 하의 외 상품은 낱장 트리오 폴백 유지).
+- **회전 세트 전 의류화 = 스코프 분리 방식**(2026-07-31 확정·구현):
+  스키마 v1의 선택 필드 `setApplicableClothingTypes`를 세트 배치·포즈
+  범위로 사용하고, 생략 시 기존 `applicableClothingTypes`로 되돌아간다.
+  기존 필드는 낱장 `all` 이미지 범위로 유지한다. A2 여성 회전 세트는
+  `top|bottom|outer|dress`, A3 남성 회전 세트는 `top|bottom|outer`로
+  배치된다. 시퀀스 D1~D4는 현행 의류 구분을 유지한다.
+  프론트 진입 배치와 서버 `validate_storyboard_space_sets`가 모두 새
+  필드를 읽으며, 낱장 갤러리는 기존 필드만 읽는다.
 - **신규 세트 생산 표준**(생성 세션): §6 전방 기준 — 앞으로는 컷 많은 원본 시퀀스 위주로 골라 세트당 3~5컷 생산. 기존 세트 소급 없음.
 - 핵심 장점 오프닝·거울 낱장도 §3 분산·풀 제외 규칙의 적용 대상이다.

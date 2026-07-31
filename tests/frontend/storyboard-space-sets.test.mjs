@@ -9,6 +9,7 @@ import {
   replaceSpaceSetRun,
 } from '../../src/lib/storyboardSpaceSets.js';
 import {
+  STORYBOARD_SPACE_SET_EXAMPLES,
   inferStoryboardSpaceSet,
   isStoryboardSpaceSetEligible,
   normalizeStoryboardSpaceSetRelease,
@@ -148,6 +149,7 @@ test('release normalization keeps canonical applicability and thumbnails', () =>
   });
   assert.equal(set.id, 'set-women-top');
   assert.deepEqual(set.applicableClothingTypes, ['top']);
+  assert.deepEqual(set.setApplicableClothingTypes, ['top']);
   assert.deepEqual(set.members.map((member) => [member.exampleId, member.thumb]), [
     ['ss_full', 'full.webp'],
     ['ss_medium', 'medium.webp'],
@@ -202,6 +204,10 @@ test('release normalization fails closed instead of widening malformed sets', ()
   }).length, 0);
   assert.equal(normalize({
     ...base,
+    setApplicableClothingTypes: ['top', 'bottom', 'outer', 'dress'],
+  }).length, 0);
+  assert.equal(normalize({
+    ...base,
     members: base.members.map((member) => ({ ...member, direction: null })),
   }).length, 0);
   assert.equal(normalize({ ...base, setId: 'bad__id' }).length, 0);
@@ -237,16 +243,40 @@ test('empty release stays empty and production group ids use the versioned names
 test('production set eligibility filters by gender and clothing type', () => {
   const released = {
     gender: 'women',
-    applicableClothingTypes: ['top', 'outer'],
+    applicableClothingTypes: ['bottom'],
+    setApplicableClothingTypes: ['top', 'bottom', 'outer', 'dress'],
   };
   assert.equal(isStoryboardSpaceSetEligible(released, { gender: 'women', clothingType: 'top' }), true);
   assert.equal(isStoryboardSpaceSetEligible(released, { gender: null, clothingType: 'top' }), false);
   assert.equal(isStoryboardSpaceSetEligible(released, { gender: 'men', clothingType: 'top' }), false);
-  assert.equal(isStoryboardSpaceSetEligible(released, { gender: 'women', clothingType: 'bottom' }), false);
+  assert.equal(isStoryboardSpaceSetEligible(released, { gender: 'women', clothingType: 'bottom' }), true);
   for (const set of storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })) {
     assert.ok(set.gender == null || set.gender === 'women');
-    assert.ok(set.applicableClothingTypes.includes('top'));
+    assert.ok(set.setApplicableClothingTypes.includes('top'));
   }
+});
+
+test('rotation set scope covers supported clothing without widening standalone all examples', () => {
+  const rotation = storyboardSpaceSetsFor({
+    gender: 'women',
+    clothingType: 'dress',
+  }).find((set) => set.setType === 'horizon-rotation');
+  assert.ok(rotation);
+  assert.deepEqual(rotation.applicableClothingTypes, ['bottom']);
+  assert.deepEqual(
+    rotation.setApplicableClothingTypes,
+    ['top', 'bottom', 'outer', 'dress'],
+  );
+  const standaloneMembers = STORYBOARD_SPACE_SET_EXAMPLES.filter(
+    (example) => example.spaceSetId === rotation.id,
+  );
+  assert.ok(standaloneMembers.length > 0);
+  assert.ok(standaloneMembers.every(
+    (example) => (
+      example.applicableClothingTypes.includes('bottom')
+      && !example.applicableClothingTypes.includes('dress')
+    ),
+  ));
 });
 
 test('creating released members preserves exact ordered example choices as user selections', () => {

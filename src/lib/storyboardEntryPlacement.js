@@ -110,9 +110,8 @@ export function pickEntrySets({
     }
   }
 
-  // 서버 저장 검증(space_set_not_applicable)과 정합 — 호리존도 카탈로그 의류 메타를 따른다.
-  // "호리존 세트 = 전 의류" 오너 결정은 카탈로그·서버 레지스트리(server/app/data/space_set_assets.json)의
-  // 전의류 선언으로 실현되며, 선언이 반영되면 이 필터는 자동으로 전 의류를 통과시킨다.
+  // 세트 배치 범위(setApplicableClothingTypes)로 필터한다. 회전 세트의 완성 이미지가
+  // 낱장 갤러리에서 다른 의류로 번지는 일 없이, 세트 자체만 전 의류에 배치될 수 있다.
   const horizonPool = storyboardSpaceSetsFor({ gender, clothingType });
   return {
     stylingSets,

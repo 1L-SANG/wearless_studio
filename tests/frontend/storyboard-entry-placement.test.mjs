@@ -107,13 +107,15 @@ test('category filters stay server-consistent for styling and horizon pools', ()
   for (const [gender, clothingType] of supported) {
     const picked = pickEntrySets({ gender, clothingType, projectId: `${gender}-${clothingType}`, stylingCount: 2 });
     assert.ok(picked.stylingSets.every((set) => (
-      !set || (set.gender === gender && set.applicableClothingTypes.includes(clothingType))
+      !set || (
+        set.gender === gender
+        && set.setApplicableClothingTypes.includes(clothingType)
+      )
     )));
-    // 호리존도 서버 저장 검증(space_set_not_applicable)과 같은 의류 메타를 따른다 —
-    // 전의류 선언이 카탈로그·서버 레지스트리에 반영되기 전까지 하의 외에는 낱장 폴백.
+    // 세트 배치 범위는 서버 저장 검증(space_set_not_applicable)과 동일하다.
     for (const set of [picked.rotationSet, picked.sequenceSet].filter(Boolean)) {
       assert.equal(set.gender, gender);
-      assert.ok(set.applicableClothingTypes.includes(clothingType));
+      assert.ok(set.setApplicableClothingTypes.includes(clothingType));
     }
   }
   assert.equal(pickEntrySets({
@@ -121,7 +123,13 @@ test('category filters stay server-consistent for styling and horizon pools', ()
   }).rotationSet?.setType, 'horizon-rotation');
   assert.equal(pickEntrySets({
     gender: 'women', clothingType: 'top', projectId: 'rot-top', stylingCount: 2,
-  }).rotationSet, null);
+  }).rotationSet?.setType, 'horizon-rotation');
+  assert.equal(pickEntrySets({
+    gender: 'women', clothingType: 'dress', projectId: 'rot-dress', stylingCount: 2,
+  }).rotationSet?.setType, 'horizon-rotation');
+  assert.equal(pickEntrySets({
+    gender: 'men', clothingType: 'outer', projectId: 'rot-outer', stylingCount: 2,
+  }).rotationSet?.setType, 'horizon-rotation');
   assert.ok(pickEntrySets({
     gender: 'women', clothingType: 'dress', projectId: 'dress-women', stylingCount: 2,
   }).stylingSets.every(Boolean));
@@ -184,7 +192,7 @@ test('multi-color basic and extended seeds follow product and studio repetition 
 test('cut counts include normal ranges and a forced one-slot styling fallback', () => {
   const basic = defaultStoryboard(baseColors, 'basic', context('counts', 'top', 'women'));
   assert.equal(basic.length, 14);
-  // 확장형: 하의 = 시퀀스 세트(여 4컷=20 · 남 5컷=21), 상의 = 전의류 선언 전 낱장 트리오 폴백(19).
+  // 확장형: 하의는 카테고리별 시퀀스, 상의는 전 의류 회전 세트를 사용한다.
   assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-a', 'bottom', 'women')).length, 20);
   assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-b', 'bottom', 'men')).length, 21);
   assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-c', 'top', 'women')).length, 19);
@@ -192,7 +200,7 @@ test('cut counts include normal ranges and a forced one-slot styling fallback', 
   const oneStylingSet = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })[0];
   const originalIncludes = Array.prototype.includes;
   Array.prototype.includes = function mockedIncludes(value, ...rest) {
-    if (value === 'forced-single') return this === oneStylingSet.applicableClothingTypes;
+    if (value === 'forced-single') return this === oneStylingSet.setApplicableClothingTypes;
     return originalIncludes.call(this, value, ...rest);
   };
   try {

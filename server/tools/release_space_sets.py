@@ -46,6 +46,10 @@ _SHOTS = {"full", "medium"}
 _DIRECTIONS = {"front", "side", "back"}
 _SPACE_VARIATIONS = {"subtle", "fixed"}
 _PLATE_POLICIES = {"required", "not-required"}
+_SET_SCOPE_BY_GENDER = {
+    "women": ["top", "bottom", "outer", "dress"],
+    "men": ["top", "bottom", "outer"],
+}
 _QC_GATES = {
     "sameSpace",
     "sourceSimilarity",
@@ -65,6 +69,7 @@ _SET_FIELDS = {
     "setType",
     "gender",
     "applicableClothingTypes",
+    "setApplicableClothingTypes",
     "placeType",
     "tone",
     "compositionLabel",
@@ -588,6 +593,40 @@ def validate_manifest(
                 violations.append(
                     f"{prefix} 복수 적용 범위는 검토된 [top,outer]만 허용합니다"
                 )
+        set_applicable = space_set.get(
+            "setApplicableClothingTypes", applicable
+        )
+        if not isinstance(set_applicable, list) or not set_applicable:
+            violations.append(
+                f"{prefix}.setApplicableClothingTypes는 비어 있지 않은 배열이어야 합니다"
+            )
+            set_applicable = []
+        else:
+            if any(value not in _CLOTHING_TYPES for value in set_applicable):
+                violations.append(
+                    f"{prefix}.setApplicableClothingTypes에 허용되지 않은 값이 있습니다"
+                )
+            if len(set_applicable) != len(set(set_applicable)):
+                violations.append(
+                    f"{prefix}.setApplicableClothingTypes에 중복이 있습니다"
+                )
+            if space_set.get("gender") == "men" and "dress" in set_applicable:
+                violations.append(
+                    f"{prefix} 남성 원피스 세트 적용 범위는 지원하지 않습니다"
+                )
+            if (
+                "setApplicableClothingTypes" in space_set
+                and set_applicable != applicable
+                and (
+                    set_type != "horizon-rotation"
+                    or set_applicable
+                    != _SET_SCOPE_BY_GENDER.get(space_set.get("gender"))
+                )
+            ):
+                violations.append(
+                    f"{prefix} 별도 세트 적용 범위는 회전 세트의 성별 전 의류 "
+                    "목록에만 허용합니다"
+                )
 
         if space_set.get("spaceVariation") not in _SPACE_VARIATIONS:
             violations.append(
@@ -1096,6 +1135,10 @@ def stage_release(
                 "spaceVariation": space_set["spaceVariation"],
                 "platePolicy": space_set["platePolicy"],
             }
+            if "setApplicableClothingTypes" in space_set:
+                common_set["setApplicableClothingTypes"] = (
+                    space_set["setApplicableClothingTypes"]
+                )
             frontend_sets.append({
                 **common_set,
                 "id": set_id,
