@@ -1577,16 +1577,22 @@
   max-width: 920px; padding: 10px 12px; border-radius: 8px; background: var(--bg-2); color: var(--accent-error, #d92d20); font-size: 12px; }
 .sb-pending-recipe { padding: 10px; border-radius: 10px; background: var(--bg-2); }
 
-.sb-exgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; transition: opacity .15s; }
+/* 3×3 고정 뷰포트 + 좌우 스크롤 — 세로로 늘어나지 않고 열 단위로 옆으로 이어진다.
+   일반 예시와 세트 예시는 구획 없이 한 흐름(세트 예시가 뒤에 자연 배치). */
+.sb-exgrid {
+  display: grid; grid-auto-flow: column;
+  grid-template-rows: repeat(3, auto);
+  grid-auto-columns: calc((100% - 16px) / 3);
+  gap: 8px; transition: opacity .15s;
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory; padding-bottom: 6px;
+}
+.sb-exgrid::-webkit-scrollbar { height: 6px; }
+.sb-exgrid::-webkit-scrollbar-thumb { background: var(--ring); border-radius: 99px; }
+.sb-exgrid > * { scroll-snap-align: start; }
 .sb-exgrid.moodonly { opacity: .55; }
-.sb-ex-source-label {
-  grid-column: 1 / -1; margin-top: 2px; color: var(--fg-2); font-size: 11px; font-weight: 700;
-}
-.sb-ex-source-label.set {
-  margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--ring);
-}
 .sb-exempty {
-  grid-column: 1 / -1; min-height: 76px; display: flex; flex-direction: column; gap: 7px; align-items: center; justify-content: center;
+  grid-row: 1 / -1; min-width: 100%; min-height: 76px; display: flex; flex-direction: column; gap: 7px; align-items: center; justify-content: center;
   padding: 14px; border-radius: 8px; background: var(--bg-2); color: var(--fg-2); font-size: 12px; text-align: center;
 }
 .sb-excell {
