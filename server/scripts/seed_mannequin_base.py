@@ -34,9 +34,8 @@ load_env()
 from app.config import load_settings  # noqa: E402
 from app.r2 import R2Client  # noqa: E402
 
-# 현재 서빙 중인 베이스 키. 여성 다리 단축본(v2)은 2026-07-31 만들어 R2·assets 에 올렸으나
-# 실제 착장컷을 보고 원본이 낫다고 판단해 되돌렸다 — v2 객체와 asset 행은 남아 있지만
-# 서빙하지 않는다(scripts/shorten_base_legs.py 참고).
+# 현재 서빙 중인 베이스 키. 여성 다리 단축본(v2)은 2026-07-31 만들어 올렸다가 실제 착장컷
+# 비교에서 밀려 되돌리고 R2·assets 에서 지웠다(scripts/shorten_base_legs.py 에 경위·측정값).
 _KEY = {
     "women": "seed/mannequin/base-women-2K.png",
     "men": "seed/mannequin/base-men-2K.png",
