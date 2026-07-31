@@ -13,7 +13,7 @@ import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
 import { toUploadableImages } from '@/lib/imageTranscode.js';
 import { syncDraftToBackend } from '@/lib/draftSync.js';
-import { Icon, Button, IconButton, ErrorState, Skeleton, useToast } from '@/components/ui.jsx';
+import { Icon, Button, IconButton, ErrorState, Skeleton, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 import {
@@ -210,6 +210,12 @@ export function ProductInput() {
   const [analysis, setAnalysis] = useState(null);
   const [analysisProjectId, setAnalysisProjectId] = useState(null);
   const [expanded, setExpanded] = useState(false);
+  // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드일 때만 내려온다(shadow/off 면 undefined).
+  // 업로드 순간이 아니라 **생성으로 넘어가는 버튼**에서 한 번 띄운다 — 사진을 고르는 도중에
+  // 끼어들면 아직 다 올리지도 않은 셀러를 방해한다.
+  const [inputConsistency, setInputConsistency] = useState(null);
+  const [consistencyAck, setConsistencyAck] = useState(false);   // '계속 진행' 누른 뒤 재차 막지 않는다
+  const [consistencyOpen, setConsistencyOpen] = useState(false);
   const { session, loading: authLoading, openLogin } = useAuth();
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
@@ -223,8 +229,17 @@ export function ProductInput() {
   const analysisSaveErrorRef = useRef(null);
   const failedAnalysisPatchRef = useRef(null);
   const latestAnalysisPatchRef = useRef({});
-  const goToMannequin = async () => {
+  // force: 경고 모달에서 '계속 진행'을 누른 경로. setState 는 비동기라 ack 상태를 기다릴 수
+  // 없어 인자로 넘긴다. onNext 콜백이 이벤트 객체를 넘겨도 force 는 undefined 라 안전하다.
+  const goToMannequin = async (opts) => {
+    const force = opts?.force === true;   // null·이벤트 객체로 불려도 안전하게
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
+    // 다른 옷이 섞였을 수 있다는 경고 — 생성에 들어가기 직전 한 번만. 확인하면 그대로 진행한다
+    // (차단이 아니다. 판정이 틀렸을 때 셀러가 갇히면 경고가 없느니만 못하다).
+    if (inputConsistency && !consistencyAck && !force) {
+      setConsistencyOpen(true);
+      return;
+    }
     redirectingRef.current = true;
     try {
       // 직전 입력 이벤트의 PATCH가 getAnalysis보다 늦게 도착하는 레이스를 막는다. 모든 분석 저장을
@@ -291,6 +306,9 @@ export function ProductInput() {
       if (editingProjectId && existingAnalysis && Object.keys(existingAnalysis).length > 1) {
         setProduct(p);
         setAnalysis(mergeProductOwnedAnalysisFields(existingAnalysis, p));
+        // 저장분에서 경고를 복원한다 — 이게 없으면 새로고침·재진입한 탭에서만 게이트가
+        // 사라져 그대로 통과한다(분석 직후 탭에서는 멀쩡히 뜨므로 재현이 헷갈린다).
+        setInputConsistency(existingAnalysis.inputConsistency || null);
         setAnalysisProjectId(editingProjectId);
         setPhase('done');
         return;
@@ -393,6 +411,9 @@ export function ProductInput() {
         await api.saveProduct(pid, analyzedProductPatch);
       }
       setAnalysis(mergeProductOwnedAnalysisFields(a, nextProduct));
+      // 사진 묶음이 바뀌었을 수 있으므로 이전 판정의 확인 상태는 버린다.
+      setInputConsistency(a.inputConsistency || null);
+      setConsistencyAck(false);
       if (!enteredName) {
         await api.saveProduct(pid, { name: finalName });
       }
@@ -470,12 +491,60 @@ export function ProductInput() {
   return (
     <div className={`wizard${wide ? ' wide' : ''}`}>
       {doneBlocked && <DoneGuardModal />}
+      {consistencyOpen && inputConsistency && (
+        <Modal onClose={() => setConsistencyOpen(false)}>
+          <h3>사진을 한 번만 확인해 주세요</h3>
+          <p>올려주신 사진 중 다른 옷으로 보이는 게 있어요. 이대로 만들면 결과물이 어색해질 수 있어요.</p>
+          <ul style={{ margin: '12px 0 0', paddingLeft: 18 }}>
+            {inputConsistency.offending.map((o) => (
+              <li key={o.index} style={{ marginTop: 4 }}>
+                <b>{(catalogs.angleLabels && catalogs.angleLabels[o.slot]) || o.slot}</b> 사진 — {o.reason}
+              </li>
+            ))}
+          </ul>
+          <div className="modal-actions">
+            {/* 판정이 틀렸을 수 있다 — 진행 경로는 항상 열려 있어야 한다 */}
+            <Button variant="ghost" onClick={() => {
+              setConsistencyAck(true);
+              setConsistencyOpen(false);
+              goToMannequin({ force: true });
+            }}>이대로 진행</Button>
+            {/* 사진을 고치러 가는 쪽이 기본 행동 — 분석 결과는 그대로 두고 입력만 펼친다 */}
+            <Button variant="primary" onClick={() => {
+              setConsistencyOpen(false);
+              setExpanded(true);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}>사진 수정하기</Button>
+          </div>
+        </Modal>
+      )}
       <PageHead
         title="의류 이미지를 올려주세요"
         sub={<>사진 몇장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}
       />
 
       {phase === 'input' ? inputSection : summaryCard}
+
+      {/* 경고를 CTA 모달에만 걸면 그 버튼을 누르기 전까지 화면에 아무 흔적이 없어, 셀러 눈에는
+          "다른 옷을 넣었는데 아무 일도 안 일어난" 것으로 보인다(2026-07-31 실측). 분석 직후
+          바로 보이는 배너를 함께 둔다 — 모달은 진행 직전 마지막 확인용으로 남긴다. */}
+      {inputConsistency && (
+        <div className="surface" style={{ marginTop: 12, borderColor: '#f0b429', background: '#fffaf0' }}>
+          <div className="sec-title" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15 }}>
+            <Icon name="alertTri" size={17} /> 다른 옷이 섞인 것 같아요
+          </div>
+          <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+            {inputConsistency.offending.map((o) => (
+              <li key={o.index} style={{ marginTop: 4 }}>
+                <b>{(catalogs.angleLabels && catalogs.angleLabels[o.slot]) || o.slot}</b> 사진 — {o.reason}
+              </li>
+            ))}
+          </ul>
+          <p className="hint" style={{ marginTop: 8 }}>
+            잘못 올린 사진이면 위에서 펼쳐 교체해주세요. 맞다면 그대로 진행해도 괜찮아요.
+          </p>
+        </div>
+      )}
 
       {phase === 'input' && (
         <>

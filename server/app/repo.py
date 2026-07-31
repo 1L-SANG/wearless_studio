@@ -271,7 +271,10 @@ async def save_product(
 
 # AG-01 이 파생하고 셀러가 편집하지 않는 서버 소유 필드. 저장은 REPLACE 라 클라가 모르는
 # 키는 한 번의 저장으로 사라진다 — 구버전 클라·부분 payload 에서도 살아남게 여기서 보존한다.
-_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored",)
+# inputConsistency: 셀러가 분석 폼을 한 번 수정하면 REPLACE 로 경고가 사라져, 생성 직전
+# 게이트가 조용히 없어진다(사라지는 경고 = 없는 경고). 재분석 때는 finalize 가 payload 를
+# 통째로 갈아끼우므로 낡은 판정이 남지 않는다.
+_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored", "inputConsistency")
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:

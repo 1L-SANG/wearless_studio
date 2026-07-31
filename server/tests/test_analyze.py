@@ -266,3 +266,111 @@ def test_shrink_for_vision_passthrough_small_and_broken():
     assert analyze_job.shrink_for_vision(small, "image/png") == (small, "image/png")
     broken = b"y" * 500_000  # 크지만 이미지 아님 → 안전 폴백(원본 유지)
     assert analyze_job.shrink_for_vision(broken, "image/png") == (broken, "image/png")
+
+
+# ---- AG-IC 입력 사진 동일성 배선 (2026-07-31) ----
+# 이 축의 위험은 판정 자체가 아니라 **노출 게이팅**이다: shadow 인데 프론트로 새면 캘리브레이션
+# 전에 오탐 경고가 셀러에게 나간다. 그래서 모드별 봉투를 직접 검증한다.
+
+def _ic_harness(monkeypatch, verdict_payload, *, judge_raises=False):
+    captured = {}
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{"isBase": True, "images": [
+            {"slot": "Front", "id": "a1"}, {"slot": "Back", "id": "a2"}]}]}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
+
+    async def fake_analyze(settings, product, images):
+        return ({"product": {"clothingType": "top"},
+                 "analysis": {"subCategory": "knit", "fit": "regular", "targetGenders": ["women"],
+                              "materials": [], "aiSuggestedPoints": [], "suggestedName": "니트"},
+                 "intermediate": {"styleTags": [], "swatchSuggestions": []}}, "gemini")
+
+    async def fake_extract(settings, product, images, slots=None):
+        return [], "gemini"
+
+    async def fake_judge(settings, images, slots):
+        if judge_raises:
+            raise RuntimeError("boom")
+        assert slots == ["Front", "Back"]   # 슬롯이 이미지와 같은 순서로 전달돼야 한다
+        return verdict_payload
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"result": kw["result"]}
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        return None
+
+    monkeypatch.setattr(analyze_job.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(analyze_job.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(analyze_job.product_analyst, "analyze", fake_analyze)
+    monkeypatch.setattr(analyze_job.feature_extractor, "extract", fake_extract)
+    monkeypatch.setattr(analyze_job.input_consistency, "judge", fake_judge)
+    monkeypatch.setattr(analyze_job.repo, "finalize_analyze_success", fake_finalize)
+    monkeypatch.setattr(analyze_job, "_emit", fake_emit)
+    return captured
+
+
+_MISMATCH = {"verdict": "mismatch", "confidence": 0.9,
+             "offending": [{"index": 2, "slot": "Back", "reason": "지퍼 점퍼예요"}]}
+
+
+def _run(captured_settings):
+    app = fake_worker_app(captured_settings)
+    asyncio.run(analyze_job.run_analyze_job(app, worker_job()))
+
+
+def test_input_consistency_shadow_records_but_does_not_reach_frontend(monkeypatch):
+    captured = _ic_harness(monkeypatch, _MISMATCH)
+    _run(make_settings(gemini_api_key="g-x", input_consistency="shadow"))
+    assert "inputConsistency" not in captured["result"]["data"]     # 프론트 무노출
+    assert captured["metadata"]["inputConsistency"] == _MISMATCH    # 분포는 쌓인다
+
+
+def test_input_consistency_warn_surfaces_mismatch(monkeypatch):
+    captured = _ic_harness(monkeypatch, _MISMATCH)
+    _run(make_settings(gemini_api_key="g-x", input_consistency="warn"))
+    assert captured["result"]["data"]["inputConsistency"] == _MISMATCH
+
+
+def test_input_consistency_warn_persists_into_saved_analysis(monkeypatch):
+    """저장분에 없으면 새로고침·재진입한 탭에서 경고가 사라져 그대로 통과한다.
+    job 결과에만 실렸던 최초 구현의 실제 증상(2026-07-31 로컬 실측)."""
+    captured = _ic_harness(monkeypatch, _MISMATCH)
+    _run(make_settings(gemini_api_key="g-x", input_consistency="warn"))
+    assert captured["analysis_payload"]["inputConsistency"] == _MISMATCH
+
+
+def test_input_consistency_shadow_does_not_persist(monkeypatch):
+    """shadow 가 저장분에 들어가면 GET /analysis 로 프론트에 새어 모달이 뜬다."""
+    captured = _ic_harness(monkeypatch, _MISMATCH)
+    _run(make_settings(gemini_api_key="g-x", input_consistency="shadow"))
+    assert "inputConsistency" not in captured["analysis_payload"]
+
+
+def test_input_consistency_warn_stays_silent_on_match(monkeypatch):
+    captured = _ic_harness(
+        monkeypatch, {"verdict": "match", "confidence": 0.9, "offending": []})
+    _run(make_settings(gemini_api_key="g-x", input_consistency="warn"))
+    assert "inputConsistency" not in captured["result"]["data"]
+
+
+def test_input_consistency_off_skips_the_call(monkeypatch):
+    async def boom(settings, images, slots):
+        raise AssertionError("off 인데 판정을 호출했다")
+
+    captured = _ic_harness(monkeypatch, _MISMATCH)
+    monkeypatch.setattr(analyze_job.input_consistency, "judge", boom)
+    _run(make_settings(gemini_api_key="g-x", input_consistency="off"))
+    assert "inputConsistency" not in captured["metadata"]
+
+
+def test_input_consistency_failure_does_not_break_analysis(monkeypatch):
+    """관찰용 축이 분석 잡을 죽이면 안 된다."""
+    captured = _ic_harness(monkeypatch, None, judge_raises=True)
+    _run(make_settings(gemini_api_key="g-x", input_consistency="warn"))
+    assert captured["clothing_type"] == "top"                       # 분석은 정상 종결
+    assert "inputConsistency" not in captured["result"]["data"]

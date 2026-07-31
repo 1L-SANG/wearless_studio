@@ -12,7 +12,7 @@ from io import BytesIO
 from PIL import Image
 
 from .. import repo
-from ..agents import feature_extractor, mannequin, product_analyst
+from ..agents import feature_extractor, input_consistency, mannequin, product_analyst
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
 from ._common import emit_job_event as _emit  # 공용 헬퍼(mannequin_job과 공유). 테스트가 이 이름을 monkeypatch
@@ -24,6 +24,19 @@ log = logging.getLogger("wearless.analyze_job")
 # 마네킹/컷 '생성' 입력은 디테일 재현이 필요해 축소하지 않는다(이 함수는 분석 전용).
 _VISION_MAX_DIM = 1024
 _VISION_SKIP_BYTES = 400_000  # 이보다 작으면 그대로 (재인코딩 이득 없음)
+
+
+async def _judge_input_consistency(settings, images, slots) -> dict | None:
+    """AG-IC 판정 — 플래그 off 거나 레퍼런스가 정면이 아니면 아예 호출하지 않는다.
+
+    첫 장이 Front 가 아니면(정면 미업로드) 판정을 건너뛴다. 뒷면을 레퍼런스로 삼으면
+    나머지 사진이 전부 '앞면과 다르다'로 몰려 오탐이 된다.
+    """
+    if settings.input_consistency == "off":
+        return None
+    if not slots or slots[0] != "Front":
+        return None
+    return await input_consistency.judge(settings, images, slots)
 
 
 def shrink_for_vision(data: bytes, mime: str) -> tuple[bytes, str]:
@@ -97,9 +110,12 @@ async def run_analyze_job(app, job: dict) -> None:
 
         # 3) 분석(AG-01)과 특징 발굴(AG-08)을 병렬 실행 — 전체 지연 = 둘 중 느린 쪽.
         #    특징 에이전트는 실패해도 분석을 막지 않는다(AG-01의 points로 폴백 — 2026-07-13).
-        analyze_res, feature_res = await asyncio.gather(
+        #    AG-IC(입력 사진 동일성)도 같은 gather 에 태운다 — 이미지는 이미 메모리에 있고
+        #    다른 두 에이전트가 더 느려서 실질 추가 지연이 없다. 실패해도 분석을 막지 않는다.
+        analyze_res, feature_res, consistency_res = await asyncio.gather(
             product_analyst.analyze(s, product, images),
             feature_extractor.extract(s, product, images, slots=slots),
+            _judge_input_consistency(s, images, slots),
             return_exceptions=True,
         )
         if isinstance(analyze_res, BaseException):
@@ -115,11 +131,30 @@ async def run_analyze_job(app, job: dict) -> None:
             points, feature_provider = feature_res
             if points:  # 전용 에이전트 결과가 있으면 교체, 비면 AG-01 것 유지
                 distributed["analysis"]["aiSuggestedPoints"] = points
+        # AG-IC — shadow 는 기록만, warn 만 프론트로 나간다. 예외·None 은 조용히 미판정.
+        consistency = None
+        if isinstance(consistency_res, BaseException):
+            log.warning("AG-IC input consistency failed for job %s: %r", job_id, consistency_res)
+        elif consistency_res:
+            consistency = consistency_res
+            log.info("AG-IC job=%s verdict=%s confidence=%.2f offending=%s mode=%s",
+                     job_id, consistency["verdict"], consistency["confidence"],
+                     [o["slot"] for o in consistency["offending"]], s.input_consistency)
+
         await _emit(pool, job_id, "progress", {"progress": 80, "phase": "analyzed",
                                                "provider": provider,
                                                "featureProvider": feature_provider})
 
         analysis_payload = distributed["analysis"]
+        # warn + mismatch 일 때만 내보낸다. shadow 는 로그·metadata 에만 남아 분포를 쌓는다.
+        #
+        # **저장분(analyses.payload)에 넣는다.** 처음엔 "이번 업로드 묶음에 대한 관찰이라 상품
+        # 분석의 소유가 아니다"라며 job 결과에만 실었는데, 그러면 분석을 막 끝낸 탭에서만
+        # 경고가 뜨고 새로고침·재진입한 탭에서는 GET /analysis 에 값이 없어 조용히 통과한다
+        # (2026-07-31 로컬 실측: 서버는 mismatch 를 냈는데 UI 가 그냥 넘어갔다).
+        # 사라지는 경고는 없는 경고다 — 소유권 논리보다 이 사실이 우선한다.
+        if consistency and s.input_consistency == "warn" and consistency["verdict"] == "mismatch":
+            analysis_payload["inputConsistency"] = consistency
         clothing_type = distributed["product"]["clothingType"]
         # 프론트 반환 객체 — analyses 저장분 + clothingType + 중간산출물(styleTags/스와치, 매칭·폼용)
         # + measurements 는 빈 배열(AG-01 실측 미산출, 사용자 직접 입력 — PRD §6.5).
@@ -129,7 +164,7 @@ async def run_analyze_job(app, job: dict) -> None:
             "styleTags": distributed["intermediate"]["styleTags"],
             "swatchSuggestions": distributed["intermediate"]["swatchSuggestions"],
             "measurements": [],
-        }
+        }   # inputConsistency 는 analysis_payload 를 통해 자동으로 실린다(위 스프레드)
 
         # 4) 성공 종결 (원자·lease 펜스, 무과금)
         async with pool.connection() as conn:
@@ -138,7 +173,9 @@ async def run_analyze_job(app, job: dict) -> None:
                 project_id=project_id, clothing_type=clothing_type,
                 analysis_payload=analysis_payload, result={"data": result_data},
                 metadata={"provider": provider, "featureProvider": feature_provider,
-                          "promptVersion": "v1"})
+                          "promptVersion": "v1",
+                          # shadow 캘리브레이션의 유일한 기록처 — 여기가 비면 분포를 못 쌓는다.
+                          **({"inputConsistency": consistency} if consistency else {})})
             await conn.commit()
         if out is None:  # lease 상실(복구·재클레임) → 결과 폐기
             log.warning("analyze job %s lost lease", job_id)

@@ -45,6 +45,12 @@ class Settings:
     # Gemini thinking 수준 — 분석은 분류·추출 작업이라 low로 충분(미지정 시 모델 기본이
     # 깊은 추론을 돌려 수 초 낭비). off=미전송(모델 기본). 2026-07-07 속도 개선.
     analysis_thinking_level: str = "low"  # low | medium | high | off
+    # AG-IC 입력 사진 동일성(셀러가 올린 사진들이 같은 옷인가 — input_consistency.py).
+    # off=미판정 | shadow=판정만 기록(프론트 무노출) | warn=프론트 경고 노출.
+    # **enforce 값이 없는 것은 의도**다: 이 판정은 어떤 잡도 막지 않는다. 오탐 1건의 비용
+    # (멀쩡한 사진을 지우게 함)이 미탐 1건의 비용(어제와 동일)보다 크기 때문이다.
+    # 기본 shadow — 실데이터 분포를 먼저 쌓고 warn 은 별도 결정으로 켠다.
+    input_consistency: str = "shadow"  # off | shadow | warn
     mannequin_tier: str = "image_high"  # AG-04 = Gemini 3 Pro (사용자 결정 — Flash 미사용)
     # 조정(:regenerate) 전용 tier. 조정과 초기 생성은 같은 워커·같은 프롬프트를 타서 env 하나로는
     # 분리가 안 된다. 빈 값이면 분기 없이 mannequin_tier 를 그대로 쓴다(기존 동작).
@@ -280,6 +286,7 @@ def load_settings() -> Settings:
             "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
         ),
         input_qc=_flag("INPUT_QC", "off", {"off", "shadow", "enforce"}),
+        input_consistency=_flag("INPUT_CONSISTENCY", "shadow", {"off", "shadow", "warn"}),
         image_qc=_flag("IMAGE_QC", "off", {"off", "shadow", "enforce"}),
         # 기본값은 dataclass 선언과 **반드시 일치**해야 한다. 실행 경로는 load_settings 라
         # 여기가 정본이고, dataclass 만 고치면 테스트는 통과하는데 실서비스는 옛 값으로 돈다
