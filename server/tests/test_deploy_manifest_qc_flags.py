@@ -24,6 +24,10 @@ QC_FLAGS = [
     ("IMAGE_QC", "image_qc"),
     ("MANNEQUIN_AXIS_QC", "mannequin_axis_qc"),
     ("MANNEQUIN_QC_ENABLED", "mannequin_qc_enabled"),
+    # 편집 패스 3종도 같은 사고 경로다 — 미선언이면 config 기본 off 로 조용히 안 돈다.
+    ("MANNEQUIN_UNTUCK_PASS", "mannequin_untuck_pass"),
+    ("MANNEQUIN_FABRIC_PASS", "mannequin_fabric_pass"),
+    ("MANNEQUIN_BUST_PASS", "mannequin_bust_pass"),
 ]
 
 
@@ -58,14 +62,25 @@ def test_manifest_flag_value_survives_loader(env_name, attr, manifest_vars, monk
     )
 
 
-def test_image_qc_not_enforce_without_calibration(manifest_vars):
-    """enforce 승격은 판정 정확도 캘리브레이션 뒤에만 — 오탐이 전 생성을 막는 사고 방지.
+def test_image_qc_enforce_carries_its_retry_budget(manifest_vars):
+    """enforce 는 재시도 예산과 함께여야 한다 — 예산 없는 enforce 는 실제로 아무것도 못 고쳤다.
 
-    2026-07-07 `MANNEQUIN_QC_ENABLED=true` 가 오탐(pass율 0%)으로 전 생성을 차단한 전례가 있다.
-    캘리브레이션 결과로 enforce 를 올릴 때 이 테스트를 의도적으로 갱신하라 — 무의식적 승격만 막는다.
+    이 테스트는 원래 "enforce 로 올리지 말 것"이었다(2026-07-07 `MANNEQUIN_QC_ENABLED=true`
+    가 오탐 pass율 0% 로 전 생성을 차단한 전례). 그 조건인 캘리브레이션을 2026-07-31 끝내고
+    의도적으로 승격했다 — 임계 실측 교정(90/75 는 통과율 0% 였다), 판정자 변별력 하니스,
+    거짓양성 육안 점검 오탐 0, 층화 재측정, 계약 뮤테이션 26/26.
+
+    그래서 잠그는 대상이 바뀐다. enforce 의 `regenerate` 판정은 재시도를 쓰는데, 그 예산은
+    편집 패스(untuck·fabric·bust)와 공유된다. 기본값 2 로 두면 재시도 전에 소진돼서
+    **판정만 하고 아무것도 고치지 못한다** — 가슴 2패스가 한 번도 출고되지 않던 실제 원인이다.
+    enforce 를 켰으면 예산도 같이 올라가 있어야 한다는 것이 여기서 지킬 불변식이다.
     """
-    assert manifest_vars.get("IMAGE_QC") in ("off", "shadow"), (
-        "IMAGE_QC=enforce 는 거짓양성률 실측 후에만. 캘리브레이션 근거와 함께 이 테스트를 갱신할 것."
+    if manifest_vars.get("IMAGE_QC") != "enforce":
+        pytest.skip("enforce 가 아니면 예산 불변식은 해당 없음")
+    attempts = int(manifest_vars.get("MANNEQUIN_MAX_ATTEMPTS", 0))
+    assert attempts >= 3, (
+        f"IMAGE_QC=enforce 인데 MANNEQUIN_MAX_ATTEMPTS={attempts} — 편집 패스와 예산을 "
+        "공유하므로 재시도가 돌기 전에 소진된다. 판정만 하고 못 고치는 상태가 된다."
     )
 
 

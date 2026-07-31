@@ -1,4 +1,5 @@
 import spaceSetRelease from '../data/storyboardSpaceSets.json' with { type: 'json' };
+import placeTypeTable from '../../data/storyboard_space_place_types.json' with { type: 'json' };
 
 const ALL_CLOTHING_TYPES = Object.freeze(['top', 'bottom', 'outer', 'dress']);
 const SET_TYPES = new Set(['styling', 'horizon-rotation', 'horizon-sequence']);
@@ -10,6 +11,18 @@ const RELEASE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
 const EXAMPLE_ID = /^ss_[A-Za-z0-9_-]{1,197}$/;
 const GROUP_PREFIX = 'ssg1__';
 const GROUP_INSTANCE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
+const SET_SCOPE_BY_GENDER = Object.freeze({
+  women: Object.freeze(['top', 'bottom', 'outer', 'dress']),
+  men: Object.freeze(['top', 'bottom', 'outer']),
+});
+
+export const STORYBOARD_SPACE_PLACE_TYPES = Object.freeze(
+  placeTypeTable.placeTypes.map((item) => Object.freeze({
+    value: item.value,
+    label: item.label,
+  })),
+);
+const PLACE_TYPES = new Set(STORYBOARD_SPACE_PLACE_TYPES.map((item) => item.value));
 
 const text = (value, fallback = '') => (
   typeof value === 'string' && value.trim() ? value.trim() : fallback
@@ -54,6 +67,8 @@ function normalizedSet(set, index) {
   const id = text(set.setId);
   const setType = set.setType;
   const clothingTypes = set.applicableClothingTypes;
+  const setClothingTypes = set.setApplicableClothingTypes ?? clothingTypes;
+  const placeType = typeof set.placeType === 'string' ? set.placeType : '';
   if (
     !validReleaseId(id)
     || !SET_TYPES.has(setType)
@@ -63,10 +78,16 @@ function normalizedSet(set, index) {
     || new Set(clothingTypes).size !== clothingTypes.length
     || clothingTypes.some((value) => !ALL_CLOTHING_TYPES.includes(value))
     || (set.gender === 'men' && clothingTypes.includes('dress'))
+    || !Array.isArray(setClothingTypes)
+    || setClothingTypes.length === 0
+    || new Set(setClothingTypes).size !== setClothingTypes.length
+    || setClothingTypes.some((value) => !ALL_CLOTHING_TYPES.includes(value))
+    || (set.gender === 'men' && setClothingTypes.includes('dress'))
     || !SPACE_VARIATIONS.has(set.spaceVariation)
     || !PLATE_POLICIES.has(set.platePolicy)
     || !text(set.name)
-    || !text(set.placeType)
+    || !PLACE_TYPES.has(placeType)
+    || (set.place !== undefined && set.place !== placeType)
     || !text(set.tone)
     || !text(set.compositionLabel)
     || !Array.isArray(set.members)
@@ -74,14 +95,28 @@ function normalizedSet(set, index) {
     || set.members.length > 5
   ) return null;
   if (
-    clothingTypes.length > 1
+    set.setApplicableClothingTypes != null
+    && setClothingTypes.join(',') !== clothingTypes.join(',')
     && (
-      clothingTypes.length !== 2
-      || !clothingTypes.includes('top')
-      || !clothingTypes.includes('outer')
-      || set.members.some((member) => member?.shot !== 'full')
+      setType !== 'horizon-rotation'
+      || setClothingTypes.join(',') !== SET_SCOPE_BY_GENDER[set.gender].join(',')
     )
   ) return null;
+  if (clothingTypes.length > 1) {
+    const sharedTopOuter = (
+      clothingTypes.length === 2
+      && clothingTypes.includes('top')
+      && clothingTypes.includes('outer')
+    );
+    const universalRotation = (
+      setType === 'horizon-rotation'
+      && clothingTypes.join(',') === SET_SCOPE_BY_GENDER[set.gender].join(',')
+    );
+    if (
+      (!sharedTopOuter && !universalRotation)
+      || set.members.some((member) => member?.shot !== 'full')
+    ) return null;
+  }
   if (
     (setType === 'horizon-sequence' && set.platePolicy !== 'not-required')
     || (setType !== 'horizon-sequence' && set.platePolicy !== 'required')
@@ -119,8 +154,9 @@ function normalizedSet(set, index) {
     setType,
     gender: set.gender,
     applicableClothingTypes: Object.freeze([...clothingTypes]),
-    place: text(set.placeType),
-    placeType: text(set.placeType),
+    setApplicableClothingTypes: Object.freeze([...setClothingTypes]),
+    place: placeType,
+    placeType,
     tone: text(set.tone),
     compositionLabel: text(set.compositionLabel),
     spaceVariation: set.spaceVariation,
@@ -184,13 +220,24 @@ export function isStoryboardSpaceSetEligible(set, { gender = null, clothingType 
   return !!set
     && !!gender
     && set.gender === gender
-    && (!clothingType || set.applicableClothingTypes.includes(clothingType));
+    && (!clothingType || (
+      set.setApplicableClothingTypes || set.applicableClothingTypes
+    ).includes(clothingType));
 }
 
 export function storyboardSpaceSetsFor({ gender = null, clothingType = null } = {}) {
   return STORYBOARD_SPACE_SETS.filter((set) => isStoryboardSpaceSetEligible(set, {
     gender, clothingType,
   }));
+}
+
+export function distinctPlaceStylingSetsFor({ gender = null, clothingType = null } = {}) {
+  const seenPlaceTypes = new Set();
+  return storyboardSpaceSetsFor({ gender, clothingType }).filter((set) => {
+    if (set.setType !== 'styling' || seenPlaceTypes.has(set.placeType)) return false;
+    seenPlaceTypes.add(set.placeType);
+    return true;
+  });
 }
 
 export function withStoryboardSpaceSetExamples(catalogs) {

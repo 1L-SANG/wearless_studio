@@ -7,6 +7,7 @@ import {
   storedExampleConditionStatus,
 } from '../../src/lib/generationExamples.js';
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
+import { pickEntrySets } from '../../src/lib/storyboardEntryPlacement.js';
 import {
   genderForClothingType,
   normalizeTargetGendersForClothingType,
@@ -14,6 +15,7 @@ import {
 import {
   spaceSetGroupId,
   spaceSetIdFromGroupId,
+  storyboardSpaceSetById,
   storyboardSpaceSetsFor,
 } from '../../src/lib/storyboardSpaceSetCatalog.js';
 
@@ -49,6 +51,9 @@ const httpAdapterSource = readFileSync(
 test('owner declarations gate frontend combinations', () => {
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'dress', gender: 'women' }), false);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'women' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'outer', gender: 'men' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'men' }), false);
   assert.equal(isGenerationCombinationPublic({ cutType: 'product', shot: 'detail', clothingType: 'bottom', gender: 'women' }), true);
 });
 
@@ -310,7 +315,7 @@ test('a storyboard containing only auto assignments still matches the untouched 
   assert.equal(isDefaultStoryboardForMode(automatic, colors, 'basic'), false);
 });
 
-test('every supported gender and clothing category seeds a published three-cut set', () => {
+test('every supported gender and clothing category seeds styling and horizon sets', () => {
   const colors = [{ id: 'color-1', isBase: true, images: [] }];
   const fourColorsWithDetail = Array.from({ length: 4 }, (_, index) => ({
     id: `color-${index + 1}`,
@@ -323,22 +328,35 @@ test('every supported gender and clothing category seeds a published three-cut s
   ];
 
   for (const [gender, clothingType] of supported) {
-    const context = { clothingType, targetGenders: [gender] };
+    const context = { projectId: `test-${gender}-${clothingType}`, clothingType, targetGenders: [gender] };
     const basic = defaultStoryboard(colors, 'basic', context);
     const setMembers = basic.filter((item) => item.spaceGroupId);
+    const stylingMembers = setMembers.filter((item) => item.cutType === 'styling');
+    const horizonMembers = setMembers.filter((item) => item.cutType === 'horizon');
 
-    assert.equal(basic.length, 13, `${gender}/${clothingType} basic`);
-    assert.equal(setMembers.length, 3, `${gender}/${clothingType} set members`);
-    assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 1);
+    // 회전 세트는 별도 세트 범위로 성별 내 모든 지원 의류에 배치된다.
+    assert.equal(basic.length, 14, `${gender}/${clothingType} basic`);
+    assert.equal(stylingMembers.length, 6, `${gender}/${clothingType} styling members`);
+    assert.equal(horizonMembers.length, 3, `${gender}/${clothingType} rotation members`);
+    assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 3);
     assert.ok(spaceSetIdFromGroupId(setMembers[0].spaceGroupId));
     assert.ok(setMembers.every((item) => (
       item.exampleSelectionOrigin === 'auto'
+      && item.setSelectionOrigin === 'auto'
       && item.refScope === 'pose'
       && item.exampleId
     )));
+    // 확장형 기대 컷수를 실제 추첨 결과에서 유도 — 세트 슬롯 고갈(낱장 2컷 폴백)과
+    // 호리존 시퀀스 미커버(트리오 3컷 폴백)를 카테고리별로 그대로 반영한다.
+    const picked = pickEntrySets({
+      gender, clothingType, projectId: context.projectId, stylingCount: 3,
+    });
+    const stylingCuts = picked.stylingSets
+      .reduce((sum, set) => sum + (set ? set.members.length : 2), 0);
+    const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
     assert.equal(
       defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
-      33,
+      2 + stylingCuts + horizonCuts + 1 + 12 + 4,
       `${gender}/${clothingType} extended`,
     );
   }
@@ -361,14 +379,23 @@ test('direction badge labels are front, side and back', () => {
   assert.deepEqual(['front', 'side', 'back'].map(directionBadgeLabel), ['정면', '사이드', '뒷면']);
 });
 
-test('storyboard interaction source clears an incompatible in-space shot and remains atomically retryable', () => {
+test('storyboard preserves an in-space pose across shot changes and remains atomically retryable', () => {
   const shotHandler = storyboardSource.slice(
     storyboardSource.indexOf('const onShotChange ='),
     storyboardSource.indexOf('const commitPendingRecipe ='),
   );
-  assert.match(shotHandler, /includeSetOnly:\s*true/);
-  assert.match(shotHandler, /exampleId:\s*null/);
+  assert.match(
+    shotHandler,
+    /return \{ shot, refScope: 'pose', exampleSelectionOrigin: 'user' \}/,
+  );
+  assert.doesNotMatch(shotHandler, /selectGenerationExamples/);
+  assert.doesNotMatch(shotHandler, /exampleId:\s*null/);
   assert.match(shotHandler, /exampleSelectionOrigin: current\.exampleId \? 'user' : null/);
+  const selectedStatus = storyboardSource.slice(
+    storyboardSource.indexOf('const selectedStatus ='),
+    storyboardSource.indexOf('const cycleExamples ='),
+  );
+  assert.doesNotMatch(selectedStatus, /selectedExample\.shot !== shotVal/);
   assert.match(storyboardSource, /await onAtomicChange\(changes, \{ pickerOwnsError: true \}\)/);
   assert.match(storyboardSource, /\}, catalogs\), \{ retryAtomic: true \}\)/);
   assert.match(storyboardSource, /latestBlocks\.current !== atomicRetry\.previous/);

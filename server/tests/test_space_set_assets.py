@@ -37,10 +37,12 @@ def space_registry(tmp_path, monkeypatch):
         "schemaVersion": 1,
         "releaseId": "test-release",
         "baseUrl": "https://images.example.test",
+        "placeTypes": ["cafe-shop-interior"],
         "sets": [
             {
                 "setId": "women_top_cafe_01",
                 "setType": "styling",
+                "placeType": "cafe-shop-interior",
                 "gender": "women",
                 "applicableClothingTypes": ["top"],
                 "spaceVariation": "subtle",
@@ -132,6 +134,104 @@ def test_registry_rejects_men_dress_sets(space_registry):
     invalid["sets"][0]["applicableClothingTypes"] = ["dress"]
 
     with pytest.raises(ValueError, match="space_set_registry_applicability_invalid"):
+        sets.validate_space_set_registry_document(invalid)
+
+
+def test_rotation_set_and_standalone_members_are_universal_for_supported_clothing(
+    tmp_path, monkeypatch
+):
+    set_id = "women_rotation_01"
+    release_id = "rotation-release"
+    directions = ("front", "side", "back")
+    members = [
+        {
+            "exampleId": f"ss_rotation_{direction}",
+            "order": index,
+            "cutType": "horizon",
+            "shot": "full",
+            "direction": direction,
+            "all": _asset(
+                "all",
+                f"ss_rotation_{direction}.png",
+                release_id=release_id,
+            ),
+            "pose": _asset(
+                "pose",
+                f"ss_rotation_{direction}.png",
+                release_id=release_id,
+            ),
+        }
+        for index, direction in enumerate(directions, start=1)
+    ]
+    registry = {
+        "schemaVersion": 1,
+        "releaseId": release_id,
+        "baseUrl": "https://images.example.test",
+        "placeTypes": ["horizon-studio"],
+        "sets": [{
+            "setId": set_id,
+            "setType": "horizon-rotation",
+            "gender": "women",
+            "applicableClothingTypes": [
+                "top", "bottom", "outer", "dress",
+            ],
+            "setApplicableClothingTypes": [
+                "top", "bottom", "outer", "dress",
+            ],
+            "placeType": "horizon-studio",
+            "spaceVariation": "fixed",
+            "platePolicy": "required",
+            "representativePlate": _asset(
+                "plate",
+                f"{set_id}.png",
+                release_id=release_id,
+            ),
+            "members": members,
+        }],
+    }
+    path = tmp_path / "space_set_assets.json"
+    path.write_text(json.dumps(registry), encoding="utf-8")
+    monkeypatch.setattr(sets, "_DEFAULT_SPACE_SET_ASSETS", str(path))
+    sets.load_space_set_registry.cache_clear()
+    blocks = [
+        {
+            "id": f"b{index}",
+            "spaceGroupId": f"ssg1__{set_id}__instance-1",
+            "spaceVariation": "fixed",
+            "exampleId": member["exampleId"],
+            "cutType": "horizon",
+            "shot": "full",
+            "direction": member["direction"],
+        }
+        for index, member in enumerate(members, start=1)
+    ]
+
+    assert sets.validate_storyboard_space_sets(
+        blocks, clothing_type="dress", gender="women"
+    ) is None
+    assert len(sets.bind_storyboard_space_sets(
+        blocks, clothing_type="outer", gender="women"
+    )) == 3
+    pose = sets.resolve_published_example_reference(
+        blocks[0], clothing_type="dress", gender="women", scope="pose"
+    )
+    assert pose["scope"] == "pose"
+    all_reference = sets.resolve_published_example_reference(
+        blocks[0], clothing_type="dress", gender="women", scope="all"
+    )
+    assert all_reference["scope"] == "all"
+    sets.load_space_set_registry.cache_clear()
+
+
+def test_non_rotation_cannot_widen_only_the_set_scope(space_registry):
+    invalid = json.loads(json.dumps(space_registry))
+    invalid["sets"][0]["setApplicableClothingTypes"] = [
+        "top", "bottom", "outer", "dress",
+    ]
+
+    with pytest.raises(
+        ValueError, match="space_set_registry_set_applicability_invalid"
+    ):
         sets.validate_space_set_registry_document(invalid)
 
 
@@ -532,6 +632,7 @@ def test_non_release_group_is_rejected_even_with_an_empty_registry(
                 "schemaVersion": 1,
                 "releaseId": None,
                 "baseUrl": None,
+                "placeTypes": ["horizon-studio"],
                 "sets": [],
             }
         ),
@@ -579,10 +680,12 @@ def test_horizon_sequence_may_publish_without_representative_plate(
         "schemaVersion": 1,
         "releaseId": "horizon-release",
         "baseUrl": "https://images.example.test",
+        "placeTypes": ["horizon-studio"],
         "sets": [
             {
                 "setId": "horizon-sequence-01",
                 "setType": "horizon-sequence",
+                "placeType": "horizon-studio",
                 "gender": "women",
                 "applicableClothingTypes": ["top"],
                 "spaceVariation": "fixed",

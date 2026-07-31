@@ -32,6 +32,7 @@ DEFAULT_SERVER_REGISTRY_PATH = SERVER_DIR / "app" / "data" / "space_set_assets.j
 DEFAULT_FRONTEND_CATALOG_PATH = REPO_DIR / "src" / "data" / "storyboardSpaceSets.json"
 FLAT_FRONTEND_CATALOG_PATH = REPO_DIR / "src" / "data" / "genExamples.json"
 FLAT_SERVER_REGISTRY_PATH = SERVER_DIR / "app" / "data" / "example_assets.json"
+PLACE_TYPES_PATH = REPO_DIR / "data" / "storyboard_space_place_types.json"
 R2_PREFIX = "seed/genexamples/space-sets/v1/releases"
 THUMB_MAX_SIDE = 480
 THUMB_QUALITY = 82
@@ -46,6 +47,10 @@ _SHOTS = {"full", "medium"}
 _DIRECTIONS = {"front", "side", "back"}
 _SPACE_VARIATIONS = {"subtle", "fixed"}
 _PLATE_POLICIES = {"required", "not-required"}
+_SET_SCOPE_BY_GENDER = {
+    "women": ["top", "bottom", "outer", "dress"],
+    "men": ["top", "bottom", "outer"],
+}
 _QC_GATES = {
     "sameSpace",
     "sourceSimilarity",
@@ -58,6 +63,31 @@ _LEGACY_PROMPT_EXCEPTION_SETS = {
     "set-style-women-dress-night-riverwalk-maybins-40948-root07",
 }
 
+
+def _load_place_types(path: Path = PLACE_TYPES_PATH) -> frozenset[str]:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise RuntimeError("storyboard space place-type vocabulary is invalid")
+    items = raw.get("placeTypes")
+    values = [
+        item.get("value")
+        for item in items or []
+        if isinstance(item, dict)
+    ]
+    if (
+        raw.get("schemaVersion") != 1
+        or not isinstance(items, list)
+        or not items
+        or any(not isinstance(value, str) or not value for value in values)
+        or len(values) != len(items)
+        or len(values) != len(set(values))
+    ):
+        raise RuntimeError("storyboard space place-type vocabulary is invalid")
+    return frozenset(values)
+
+
+_PLACE_TYPES = _load_place_types()
+
 _TOP_LEVEL_FIELDS = {"schemaVersion", "releaseId", "releasedAt", "sets"}
 _SET_FIELDS = {
     "setId",
@@ -65,6 +95,7 @@ _SET_FIELDS = {
     "setType",
     "gender",
     "applicableClothingTypes",
+    "setApplicableClothingTypes",
     "placeType",
     "tone",
     "compositionLabel",
@@ -561,6 +592,11 @@ def validate_manifest(
         for field in ("name", "placeType", "tone", "compositionLabel"):
             if not isinstance(space_set.get(field), str) or not space_set[field].strip():
                 violations.append(f"{prefix}.{field}는 비어 있지 않은 문자열이어야 합니다")
+        place_type = space_set.get("placeType")
+        if isinstance(place_type, str) and place_type not in _PLACE_TYPES:
+            violations.append(
+                f"{prefix}.placeType이 통일 장소 어휘에 없습니다: {place_type}"
+            )
 
         set_type = space_set.get("setType")
         if set_type not in _SET_TYPES:
@@ -584,9 +620,51 @@ def validate_manifest(
                 violations.append(
                     f"{prefix} 남성 원피스 적용 범위는 지원하지 않습니다"
                 )
-            if len(applicable) > 1 and set(applicable) != {"top", "outer"}:
+            if len(applicable) > 1:
+                shared_top_outer = set(applicable) == {"top", "outer"}
+                universal_rotation = (
+                    space_set.get("setType") == "horizon-rotation"
+                    and applicable
+                    == _SET_SCOPE_BY_GENDER.get(space_set.get("gender"))
+                )
+                if not shared_top_outer and not universal_rotation:
+                    violations.append(
+                        f"{prefix} 복수 적용 범위는 검토된 [top,outer] 또는 "
+                        "성별 전 의류 horizon-rotation만 허용합니다"
+                    )
+        set_applicable = space_set.get(
+            "setApplicableClothingTypes", applicable
+        )
+        if not isinstance(set_applicable, list) or not set_applicable:
+            violations.append(
+                f"{prefix}.setApplicableClothingTypes는 비어 있지 않은 배열이어야 합니다"
+            )
+            set_applicable = []
+        else:
+            if any(value not in _CLOTHING_TYPES for value in set_applicable):
                 violations.append(
-                    f"{prefix} 복수 적용 범위는 검토된 [top,outer]만 허용합니다"
+                    f"{prefix}.setApplicableClothingTypes에 허용되지 않은 값이 있습니다"
+                )
+            if len(set_applicable) != len(set(set_applicable)):
+                violations.append(
+                    f"{prefix}.setApplicableClothingTypes에 중복이 있습니다"
+                )
+            if space_set.get("gender") == "men" and "dress" in set_applicable:
+                violations.append(
+                    f"{prefix} 남성 원피스 세트 적용 범위는 지원하지 않습니다"
+                )
+            if (
+                "setApplicableClothingTypes" in space_set
+                and set_applicable != applicable
+                and (
+                    set_type != "horizon-rotation"
+                    or set_applicable
+                    != _SET_SCOPE_BY_GENDER.get(space_set.get("gender"))
+                )
+            ):
+                violations.append(
+                    f"{prefix} 별도 세트 적용 범위는 회전 세트의 성별 전 의류 "
+                    "목록에만 허용합니다"
                 )
 
         if space_set.get("spaceVariation") not in _SPACE_VARIATIONS:
@@ -737,7 +815,7 @@ def validate_manifest(
 
         if len(applicable) > 1 and any(shot != "full" for shot in member_shots):
             violations.append(
-                f"{prefix} [top,outer] 공용 세트는 모든 멤버가 full이어야 합니다"
+                f"{prefix} 공용 세트는 모든 멤버가 full이어야 합니다"
             )
         if set_type == "horizon-rotation" and (
             len(members) != 3
@@ -1096,6 +1174,10 @@ def stage_release(
                 "spaceVariation": space_set["spaceVariation"],
                 "platePolicy": space_set["platePolicy"],
             }
+            if "setApplicableClothingTypes" in space_set:
+                common_set["setApplicableClothingTypes"] = (
+                    space_set["setApplicableClothingTypes"]
+                )
             frontend_sets.append({
                 **common_set,
                 "id": set_id,
@@ -1129,6 +1211,7 @@ def stage_release(
             "releaseId": release_id,
             "releasedAt": manifest["releasedAt"],
             "baseUrl": base,
+            "placeTypes": sorted(_PLACE_TYPES),
             "sets": registry_sets,
         }
         release_audit = {
@@ -1456,6 +1539,13 @@ def load_staged_release(output_dir: Path) -> SpaceSetReleaseResult:
             audit_set.get("setId") != set_id
         ):
             cross_violations.append(f"{label} setId가 서로 다릅니다")
+        server_place_type = server_set.get("placeType")
+        if (
+            server_place_type not in _PLACE_TYPES
+            or front_set.get("placeType") != server_place_type
+            or front_set.get("place") != server_place_type
+        ):
+            cross_violations.append(f"{label} placeType이 서로 다르거나 허용값이 아닙니다")
         server_plate = server_set.get("representativePlate")
         front_plate = front_set.get("representativePlate")
         audit_plate = audit_set.get("representativePlate")

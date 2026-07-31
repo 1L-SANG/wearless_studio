@@ -1563,20 +1563,6 @@
 .sb-current-title { grid-column: 1 / -1; font-size: 11px; font-weight: 700; color: var(--fg-2); }
 .sb-current-thumb { position: relative; grid-row: span 3; width: 72px; aspect-ratio: 3 / 4; overflow: hidden; border-radius: 7px; background: var(--bg-2); }
 .sb-current-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.sb-current-thumb.is-crop img { transform: scale(1.45); }
-.sb-current-thumb.crop-top img { transform-origin: 50% 10%; }
-.sb-current-thumb.crop-bottom img { transform-origin: 50% 70%; }
-.sb-crop-frame { position: absolute; z-index: 2; left: 4px; right: 4px; border: 1.5px dashed var(--bg-1); pointer-events: none; }
-.crop-top .sb-crop-frame { top: 4px; bottom: 32%; }
-.crop-bottom .sb-crop-frame { top: 30%; bottom: 6px; }
-.sb-crop-dim { position: absolute; z-index: 1; left: 0; right: 0; background: var(--ink-overlay); pointer-events: none; }
-.crop-top .sb-crop-dim { bottom: 0; height: 32%; }
-.crop-bottom .sb-crop-dim { top: 0; height: 30%; }
-.sb-current-thumb.is-extend img { display: block; height: 58%; object-position: center top; }
-.sb-extend-zone { position: absolute; z-index: 1; left: 0; right: 0; bottom: 0; height: 42%; display: grid; place-items: center;
-  background: repeating-linear-gradient(135deg, var(--bg-2) 0 5px, var(--ring-strong) 5px 7px); }
-.sb-extend-zone span { padding: 2px 4px; border-radius: var(--r-2); background: var(--glass-bg); color: var(--fg-2); font-size: 8px; font-weight: 700; }
-.sb-extend-note { grid-column: 2; color: var(--fg-2); font-size: 10.5px; line-height: 1.4; }
 .sb-direction-badge { position: absolute; left: 5px; top: 5px; z-index: 2; padding: 2px 6px; border-radius: 99px;
   color: #fff; background: var(--ink-overlay); font-size: 9.5px; font-weight: 700; }
 .sb-example-error, .sb-example-missing { color: var(--accent-error, #d92d20); font-size: 11px; line-height: 1.45; }

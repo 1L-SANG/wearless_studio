@@ -120,6 +120,7 @@ export function createSpaceSetMembers(set, template, {
   spaceGroupId,
   makeId = (_member, index) => `${spaceGroupId}-${index + 1}`,
   previousMembers = [],
+  setSelectionOrigin = 'user',
 } = {}) {
   if (!set || !spaceGroupId) return [];
   return set.members.map((member, index) => {
@@ -142,6 +143,7 @@ export function createSpaceSetMembers(set, template, {
       refScope: 'pose',
       exampleId: member.exampleId || null,
       exampleSelectionOrigin: member.exampleId ? 'user' : null,
+      setSelectionOrigin,
       thumb: member.thumb || member.thumbUrl || member.allUrl || previous.thumb || template?.thumb,
       baseThumb: null,
       spaceSetMemberOrder: member.order || index + 1,

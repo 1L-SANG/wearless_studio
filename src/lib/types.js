@@ -212,6 +212,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string[]} refImages        내 레퍼런스 — 생성 입력(NewCutRequest)에 포함. 프로젝트(블록) 한정, 전역 저장 없음
    @property {string|null} [exampleId]   촬영 연출 예시 — 예시 속 옷·신발·액세서리는 생성 근거에서 제외 (ADR-0004)
    @property {'auto'|'user'|null} [exampleSelectionOrigin] 자동 배정/사용자 확정 출처. exampleId가 없으면 null
+   @property {'auto'|'user'|null} [setSelectionOrigin] 촬영 세트의 진입 자동 배치/사용자 선택 출처
    @property {string|null} [spaceGroupId] 발행 촬영 세트 인스턴스 — `ssg1__<setId>__<instanceId>`
    @property {SpaceVariation} [spaceVariation] 발행 세트의 공간 변화 강도
    @property {string[]} [ownImages]      source='mine'

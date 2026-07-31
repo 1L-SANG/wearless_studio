@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   createSpaceSetMembers,
@@ -9,11 +10,15 @@ import {
   replaceSpaceSetRun,
 } from '../../src/lib/storyboardSpaceSets.js';
 import {
+  STORYBOARD_SPACE_SET_EXAMPLES,
+  distinctPlaceStylingSetsFor,
   inferStoryboardSpaceSet,
   isStoryboardSpaceSetEligible,
   normalizeStoryboardSpaceSetRelease,
   spaceSetGroupId,
   spaceSetIdFromGroupId,
+  STORYBOARD_SPACE_SETS,
+  STORYBOARD_SPACE_PLACE_TYPES,
   storyboardSpaceSetsFor,
 } from '../../src/lib/storyboardSpaceSetCatalog.js';
 
@@ -36,6 +41,10 @@ const releasedStylingSet = storyboardSpaceSetsFor({
 }).find((set) => set.setType === 'styling');
 const groupA = spaceSetGroupId(releasedStylingSet.id, 'instance-a');
 const groupB = spaceSetGroupId(releasedStylingSet.id, 'instance-b');
+const rawSpaceSetRelease = JSON.parse(readFileSync(
+  new URL('../../src/data/storyboardSpaceSets.json', import.meta.url),
+  'utf8',
+));
 
 test('consecutive spaceGroupId runs become bands without joining separated runs', () => {
   const groups = groupConsecutiveSpaceRuns([
@@ -99,11 +108,11 @@ test('space set replacement swaps the whole composition in one immutable board r
   assert.deepEqual(source.map((item) => item.id), ['before', 'old-a', 'old-b', 'after']);
   assert.deepEqual(next.slice(1, 4).map((item) => [
     item.spaceGroupId, item.cutType, item.direction, item.shot, item.refScope,
-    item.exampleId, item.exampleSelectionOrigin, item.thumb,
+    item.exampleId, item.exampleSelectionOrigin, item.setSelectionOrigin, item.thumb,
   ]), [
-    [groupB, 'horizon', 'front', 'full', 'pose', 'front', 'user', 'front.webp'],
-    [groupB, 'horizon', 'side', 'full', 'pose', 'side', 'user', 'side.webp'],
-    [groupB, 'horizon', 'back', 'full', 'pose', 'back', 'user', 'back.webp'],
+    [groupB, 'horizon', 'front', 'full', 'pose', 'front', 'user', 'user', 'front.webp'],
+    [groupB, 'horizon', 'side', 'full', 'pose', 'side', 'user', 'user', 'side.webp'],
+    [groupB, 'horizon', 'back', 'full', 'pose', 'back', 'user', 'user', 'back.webp'],
   ]);
   assert.deepEqual(next.map((item) => item.id), ['before', 'old-a', 'old-b', 'new-2', 'after']);
 });
@@ -118,7 +127,7 @@ test('release normalization keeps canonical applicability and thumbnails', () =>
       setType: 'styling',
       gender: 'women',
       applicableClothingTypes: ['top'],
-      placeType: 'indoor',
+      placeType: 'building-interior',
       tone: 'daily-snapshot',
       compositionLabel: '풀 1 + 미디움 1',
       spaceVariation: 'subtle',
@@ -148,6 +157,7 @@ test('release normalization keeps canonical applicability and thumbnails', () =>
   });
   assert.equal(set.id, 'set-women-top');
   assert.deepEqual(set.applicableClothingTypes, ['top']);
+  assert.deepEqual(set.setApplicableClothingTypes, ['top']);
   assert.deepEqual(set.members.map((member) => [member.exampleId, member.thumb]), [
     ['ss_full', 'full.webp'],
     ['ss_medium', 'medium.webp'],
@@ -161,7 +171,7 @@ test('release normalization fails closed instead of widening malformed sets', ()
     setType: 'styling',
     gender: 'women',
     applicableClothingTypes: ['top'],
-    placeType: 'indoor',
+    placeType: 'building-interior',
     tone: 'daily-snapshot',
     compositionLabel: '풀 2',
     spaceVariation: 'subtle',
@@ -202,9 +212,17 @@ test('release normalization fails closed instead of widening malformed sets', ()
   }).length, 0);
   assert.equal(normalize({
     ...base,
+    setApplicableClothingTypes: ['top', 'bottom', 'outer', 'dress'],
+  }).length, 0);
+  assert.equal(normalize({
+    ...base,
     members: base.members.map((member) => ({ ...member, direction: null })),
   }).length, 0);
   assert.equal(normalize({ ...base, setId: 'bad__id' }).length, 0);
+  assert.equal(normalize({ ...base, placeType: 'indoor' }).length, 0);
+  assert.equal(normalize({ ...base, placeType: '05. 작은 해변·항구' }).length, 0);
+  assert.equal(normalize({ ...base, placeType: ' building-interior ' }).length, 0);
+  assert.equal(normalize({ ...base, place: 'waterfront' }).length, 0);
   assert.equal(normalize({
     ...base,
     setType: 'horizon-rotation',
@@ -215,6 +233,26 @@ test('release normalization fails closed instead of widening malformed sets', ()
       direction: 'front',
     })),
   }).length, 0);
+});
+
+test('published sets use only the shared place vocabulary and matching catalog fields', () => {
+  const allowed = new Set(STORYBOARD_SPACE_PLACE_TYPES.map((item) => item.value));
+  const released = STORYBOARD_SPACE_SETS;
+  assert.ok(released.length > 0);
+  assert.equal(released.length, rawSpaceSetRelease.sets.length);
+  assert.ok(released.every((set) => allowed.has(set.placeType)));
+  assert.ok(released.every((set) => set.place === set.placeType));
+});
+
+test('styling-set rotation keeps one candidate per place type and excludes horizon sets', () => {
+  const sets = distinctPlaceStylingSetsFor({
+    gender: 'women',
+    clothingType: 'top',
+  });
+  assert.ok(sets.length > 1);
+  assert.ok(sets.every((set) => set.setType === 'styling'));
+  assert.equal(new Set(sets.map((set) => set.placeType)).size, sets.length);
+  assert.ok(sets.every((set) => set.placeType !== 'horizon-studio'));
 });
 
 test('empty release stays empty and production group ids use the versioned namespace', () => {
@@ -237,16 +275,43 @@ test('empty release stays empty and production group ids use the versioned names
 test('production set eligibility filters by gender and clothing type', () => {
   const released = {
     gender: 'women',
-    applicableClothingTypes: ['top', 'outer'],
+    applicableClothingTypes: ['bottom'],
+    setApplicableClothingTypes: ['top', 'bottom', 'outer', 'dress'],
   };
   assert.equal(isStoryboardSpaceSetEligible(released, { gender: 'women', clothingType: 'top' }), true);
   assert.equal(isStoryboardSpaceSetEligible(released, { gender: null, clothingType: 'top' }), false);
   assert.equal(isStoryboardSpaceSetEligible(released, { gender: 'men', clothingType: 'top' }), false);
-  assert.equal(isStoryboardSpaceSetEligible(released, { gender: 'women', clothingType: 'bottom' }), false);
+  assert.equal(isStoryboardSpaceSetEligible(released, { gender: 'women', clothingType: 'bottom' }), true);
   for (const set of storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })) {
     assert.ok(set.gender == null || set.gender === 'women');
-    assert.ok(set.applicableClothingTypes.includes('top'));
+    assert.ok(set.setApplicableClothingTypes.includes('top'));
   }
+});
+
+test('rotation set members and grouped set both cover every supported clothing type', () => {
+  const rotation = storyboardSpaceSetsFor({
+    gender: 'women',
+    clothingType: 'dress',
+  }).find((set) => set.setType === 'horizon-rotation');
+  assert.ok(rotation);
+  assert.deepEqual(
+    rotation.applicableClothingTypes,
+    ['top', 'bottom', 'outer', 'dress'],
+  );
+  assert.deepEqual(
+    rotation.setApplicableClothingTypes,
+    ['top', 'bottom', 'outer', 'dress'],
+  );
+  const standaloneMembers = STORYBOARD_SPACE_SET_EXAMPLES.filter(
+    (example) => example.spaceSetId === rotation.id,
+  );
+  assert.ok(standaloneMembers.length > 0);
+  assert.ok(standaloneMembers.every(
+    (example) => (
+      example.shot === 'full'
+      && example.applicableClothingTypes.includes('dress')
+    ),
+  ));
 });
 
 test('creating released members preserves exact ordered example choices as user selections', () => {
@@ -261,12 +326,13 @@ test('creating released members preserves exact ordered example choices as user 
   assert.deepEqual(members.map((member) => ({
     exampleId: member.exampleId,
     origin: member.exampleSelectionOrigin,
+    setOrigin: member.setSelectionOrigin,
     thumb: member.thumb,
     order: member.spaceSetMemberOrder,
     variation: member.spaceVariation,
   })), [
-    { exampleId: 'exact-full', origin: 'user', thumb: 'full.webp', order: 1, variation: 'subtle' },
-    { exampleId: 'exact-medium', origin: 'user', thumb: 'medium.webp', order: 2, variation: 'subtle' },
+    { exampleId: 'exact-full', origin: 'user', setOrigin: 'user', thumb: 'full.webp', order: 1, variation: 'subtle' },
+    { exampleId: 'exact-medium', origin: 'user', setOrigin: 'user', thumb: 'medium.webp', order: 2, variation: 'subtle' },
   ]);
 });
 

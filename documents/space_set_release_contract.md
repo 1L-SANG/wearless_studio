@@ -28,7 +28,9 @@
     "setType": "styling", // styling | horizon-rotation | horizon-sequence
     "gender": "women",
     "applicableClothingTypes": ["top"],
-    "placeType": "cafe",
+    // 선택 필드. 생략하면 applicableClothingTypes와 같다.
+    "setApplicableClothingTypes": ["top"],
+    "placeType": "cafe-shop-interior",
     "tone": "daily-snapshot",
     "compositionLabel": "풀 1 + 미디움 2",
     "spaceVariation": "subtle", // subtle | fixed
@@ -92,6 +94,39 @@
   }]
 }
 ```
+
+### 1.1 `placeType` 통일 어휘
+
+`placeType`은 화면 제목이 아니라 **장소 겹침을 판단하는 기계 코드**다. 단일
+정본은 `data/storyboard_space_place_types.json`이며 다음 14개만 허용한다.
+
+| 값 | 뜻 |
+|---|---|
+| `home-interior` | 집·거실·원룸 |
+| `cafe-shop-interior` | 카페·소형 매장 내부 |
+| `atelier-interior` | 작업실·아틀리에 |
+| `library-interior` | 도서관·서점 독서 공간 |
+| `building-interior` | 복도·계단·건물 공용부 |
+| `service-interior` | 세탁실·생활체육시설 |
+| `industrial-yard` | 주차장·세차장·작업 안뜰 |
+| `urban-alley` | 주택가·도심 골목 |
+| `storefront-street` | 상점 앞·상업 거리 |
+| `urban-building-exterior` | 도심 외벽·건물 외부 |
+| `park-garden` | 공원·정원 |
+| `waterfront` | 해변·항구·강변 |
+| `resort-terrace` | 리조트·풀·테라스 |
+| `horizon-studio` | 무채색 호리존 스튜디오 |
+
+`indoor|outdoor`처럼 너무 넓은 값, 한글 화면 라벨, 세트 제목을 넣지 않는다.
+밤·비·밝기·색감 같은 촬영 조건도 장소가 아니므로 `placeType`에 섞지 않는다.
+릴리스 도구와 프론트 로더는 별칭을 추측해 바꾸지 않고, 정본 밖의 값을
+fail-closed로 거부한다.
+
+2026-07-30 최초 공간 세트 기능이 아직 병합·사용되기 전 발견된 혼재값은
+같은 56개 setId와 같은 R2 이미지 바이트를 유지한 채 프론트·서버 카탈로그
+메타데이터만 이 어휘로 교정했다. 기존 sealed stage는 업로드 바이트 감사
+기록으로만 남기고 다시 적용하지 않는다. 서비스 활성화 이후의 메타데이터
+변경은 이 사전 교정의 선례로 보지 않으며 새 릴리스 계약을 따른다.
 
 ## 2. 자산과 경로
 
@@ -180,9 +215,15 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
 3. `styling` 세트 멤버는 모두 styling, 호리존 세트 멤버는 모두 horizon이다.
    착용 샷은 `full|medium`, 방향은 `front|side|back`만 허용한다. 공간 세트의
    멤버 레시피는 생성 시점을 명확히 고정해야 하므로 null 방향은 발행하지 않는다.
-4. `applicableClothingTypes`는 비어 있지 않고 중복이 없다. 복수 적용은
-   ADR-0006에 따라 `[top, outer]` 또는 `[outer, top]`인
-   styling/horizon **풀샷 전용 세트**에만 허용한다.
+4. `applicableClothingTypes`는 낱장 `all` 이미지의 적용 범위이며 비어
+   있지 않고 중복이 없다. 복수 적용은 ADR-0006에 따라
+   `[top, outer]` 또는 `[outer, top]`인 styling/horizon **풀샷 전용
+   세트**, 또는 성별이 지원하는 전 의류 범위를 정확히 선언한
+   `horizon-rotation`에만 허용한다.
+   `setApplicableClothingTypes`는 선택적인 세트 배치·포즈 범위이며,
+   생략하면 앞 필드와 같다. 두 값이 다를 수 있는 것은
+   `horizon-rotation`뿐이고 여성은 `[top,bottom,outer,dress]`, 남성은
+   `[top,bottom,outer]`의 정해진 순서와 전체 범위를 사용한다.
 5. 모든 해시·픽셀 크기·실제 이미지 형식·확장자가 manifest와 일치한다.
 6. 자산 key는 이 releaseId의 불변 R2 루트 밖을 가리킬 수 없다.
 7. 같은 releaseId의 스테이징 경로와 R2 prefix는 덮어쓰지 않는다. 수정은 새
@@ -198,10 +239,21 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
    릴리스에서만 존재하는 setId를 보존해 저장된 프로젝트가 계속 생성되게
    한다. 기존과 새 릴리스에 같은 setId가 있으면 정의가 바이트 수준으로
    동일한 경우만 허용하며, 하나라도 바뀌면 새 setId를 요구한다.
+   단, 이미지·레시피·ID·URL·key·해시는 그대로 두고
+   `applicableClothingTypes`/`setApplicableClothingTypes`를 기존 범위의
+   상위집합으로 넓히는 **소비 라우팅 메타데이터 개정**은 예외다. 이 개정은
+   R2 발행물을 교체하지 않고 프론트·서버 카탈로그를 한 코드 변경에서 함께
+   갱신하며, 런타임 검증과 갤러리 필터가 같은 범위를 읽는 테스트를
+   동반한다. 범위 축소나 다른 필드 변경은 계속 새 setId가 필요하다.
+   기존 공간 세트 릴리스 CLI의 same-ID 병합은 이 코드 메타데이터 개정
+   경로가 아니므로 계속 바이트 동일 정의만 허용한다.
 10. 프론트·서버 두 정식 파일은 한 적용 단위다. 첫 파일 교체 뒤 두 번째
     파일 교체가 실패하면 첫 파일을 이전 바이트로 되돌린다. 적용 전 기존
     서버 레지스트리 검증·병합도 모두 끝내므로 병합 오류는 정식 파일을
     변경하지 않는다.
+11. `placeType`은 §1.1의 통일 어휘 중 하나여야 한다. 프론트 카탈로그의
+    중복 필드 `place`가 존재하면 `placeType`과 정확히 같아야 하며, 서버
+    레지스트리도 같은 `setId`에 같은 값을 보존해야 한다.
 
 ## 6. 릴리스 도구 산출물
 
@@ -212,8 +264,9 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
   가지며, 대표 plate는 `{url}`, 각 멤버에는 정확한 `exampleId`와
   `allUrl|thumbUrl`이 들어간다.
 - `space_set_assets.json`: 서버 공간 세트 레지스트리. 최상위 형식은
-  `{schemaVersion, releaseId, releasedAt, baseUrl, sets: []}`다. 대표 plate와
-  멤버별 `all|pose`는 URL 문자열이 아니라
+  `{schemaVersion, releaseId, releasedAt, baseUrl, placeTypes, sets: []}`다.
+  `placeTypes`는 §1.1 정본에서 생성한 런타임 허용값이며, 대표 plate와 멤버별
+  `all|pose`는 URL 문자열이 아니라
   `{key, sha256, width, height, mime}`로 기록한다. 서버는 `baseUrl+key`로
   실제 URL을 해석한다. `sets`는 manifest 순서를 보존하는 배열이다.
 - `space_set_release_audit.json`: 릴리스 검증에 사용한 세트별 QC receipt와

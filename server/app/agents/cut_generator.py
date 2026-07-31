@@ -545,8 +545,10 @@ def render_cut_prompt(
     # 참고 방식은 텍스트·순서 개선을 다 해도 성공률 ~40%에서 정체 — 10회 판정).
     bg_edit_mode = has_resolved_example and spec["refScope"] == "bg"
     if has_resolved_example and not pose_overrides_example and not bg_edit_mode:
-        scope_key = "REFSCOPE:all_product" if spec["refScope"] == "all" and cut == "product" \
-            else f"REFSCOPE:{spec['refScope']}"
+        if spec["refScope"] == "all" and cut in {"horizon", "product"}:
+            scope_key = f"REFSCOPE:all_{cut}"
+        else:
+            scope_key = f"REFSCOPE:{spec['refScope']}"
         scope_line = need(scope_key)
         if scope_line not in example_line:
             example_line = "\n".join(part for part in (example_line, scope_line) if part)
@@ -555,6 +557,9 @@ def render_cut_prompt(
         space_line = need("SPACE").replace("${spaceVariation}", spec["spaceVariation"])
         if _SPACE_SET_PLATE_LABEL in image_manifest:
             space_line = "\n".join((space_line, need("SPACE_SET_PLATE")))
+    outerwear_inner_line = ""
+    if _is_outer(clothing_type) and cut in _WORN_CUTS:
+        outerwear_inner_line = need("OUTER_INNER")
     outer_closure_line = ""
     if _is_outer(clothing_type) and cut in _WORN_CUTS:
         closure = spec.get("outerClosureState")
@@ -584,6 +589,7 @@ def render_cut_prompt(
         .replace("${faceLine}", face_line)
         .replace("${poseLine}", pose_line)
         .replace("${exampleLine}", example_line)
+        .replace("${outerwearInnerLine}", outerwear_inner_line)
         .replace("${outerClosureLine}", outer_closure_line)
         .replace("${spaceLine}", space_line)
         .replace("${detailColorTransferLine}", detail_color_transfer_line)
@@ -871,5 +877,7 @@ async def generate(
         aspect_ratio=settings.mannequin_aspect_ratio,
     )
     if crop_pose_medium:
-        return await pose_crop.crop_pose_medium(settings, res.image, res.mime)
+        return await pose_crop.crop_pose_medium(
+            settings, res.image, res.mime, clothing_type
+        )
     return res.image, res.mime

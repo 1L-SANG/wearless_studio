@@ -38,6 +38,10 @@ _CUT_TYPES = ("styling", "horizon", "mirror")
 _SET_TYPES = ("styling", "horizon-rotation", "horizon-sequence")
 _SHOTS = ("full", "medium")
 _DIRECTIONS = ("front", "side", "back")
+_SET_SCOPE_BY_GENDER = {
+    "women": ("top", "bottom", "outer", "dress"),
+    "men": ("top", "bottom", "outer"),
+}
 
 log = logging.getLogger("wearless.space_set_assets")
 
@@ -149,6 +153,18 @@ def validate_space_set_registry_document(
     raw_sets = raw.get("sets")
     if not isinstance(raw_sets, list):
         raise ValueError("space_set_registry_sets_invalid")
+    raw_place_types = raw.get("placeTypes")
+    if (
+        not isinstance(raw_place_types, list)
+        or not raw_place_types
+        or any(
+            not isinstance(value, str) or not value
+            for value in raw_place_types
+        )
+        or len(raw_place_types) != len(set(raw_place_types))
+    ):
+        raise ValueError("space_set_registry_place_types_invalid")
+    place_types = set(raw_place_types)
     release_id = raw.get("releaseId")
     if raw_sets and not _is_safe_id(release_id):
         raise ValueError("space_set_registry_release_id_invalid")
@@ -186,6 +202,9 @@ def validate_space_set_registry_document(
         set_type = raw_set.get("setType")
         if set_type not in _SET_TYPES:
             raise ValueError("space_set_registry_set_type_invalid")
+        place_type = raw_set.get("placeType")
+        if place_type not in place_types:
+            raise ValueError("space_set_registry_place_type_invalid")
         plate_policy = raw_set.get("platePolicy")
         if plate_policy not in ("required", "not-required"):
             raise ValueError("space_set_registry_plate_policy_invalid")
@@ -211,6 +230,26 @@ def validate_space_set_registry_document(
             or (gender == "men" and "dress" in applicable)
         ):
             raise ValueError("space_set_registry_applicability_invalid")
+        set_applicable = raw_set.get(
+            "setApplicableClothingTypes", applicable
+        )
+        if (
+            not isinstance(set_applicable, list)
+            or not set_applicable
+            or len(set_applicable) != len(set(set_applicable))
+            or any(item not in _CLOTHING_TYPES for item in set_applicable)
+            or (gender == "men" and "dress" in set_applicable)
+        ):
+            raise ValueError("space_set_registry_set_applicability_invalid")
+        if (
+            "setApplicableClothingTypes" in raw_set
+            and set_applicable != applicable
+            and (
+                set_type != "horizon-rotation"
+                or tuple(set_applicable) != _SET_SCOPE_BY_GENDER[gender]
+            )
+        ):
+            raise ValueError("space_set_registry_set_applicability_invalid")
         space_variation = raw_set.get("spaceVariation")
         if space_variation not in ("fixed", "subtle"):
             raise ValueError("space_set_registry_space_variation_invalid")
@@ -272,16 +311,31 @@ def validate_space_set_registry_document(
                 }
             )
             example_ids.add(example_id)
-        if len(applicable) > 1 and (
-            set(applicable) != {"top", "outer"}
+        if len(applicable) > 1:
+            shared_top_outer = set(applicable) == {"top", "outer"}
+            universal_rotation = (
+                set_type == "horizon-rotation"
+                and tuple(applicable) == _SET_SCOPE_BY_GENDER[gender]
+            )
+            if (
+                (not shared_top_outer and not universal_rotation)
+                or any(member["shot"] != "full" for member in members)
+            ):
+                raise ValueError("space_set_registry_applicability_invalid")
+        if set_type == "horizon-rotation" and (
+            len(members) != 3
             or any(member["shot"] != "full" for member in members)
+            or [member["direction"] for member in members]
+            != ["front", "side", "back"]
         ):
-            raise ValueError("space_set_registry_applicability_invalid")
+            raise ValueError("space_set_registry_rotation_invalid")
         sets[set_id] = {
             "setId": set_id,
             "setType": set_type,
             "gender": gender,
             "applicableClothingTypes": list(applicable),
+            "setApplicableClothingTypes": list(set_applicable),
+            "placeType": place_type,
             "spaceVariation": space_variation,
             "platePolicy": plate_policy,
             "representativePlate": representative_plate,
@@ -314,14 +368,20 @@ def _resolve_pose_reference(
             "공간 세트의 포즈 예시가 올바르지 않아요. 다른 예시를 골라주세요.",
         )
     if example_id.startswith("ss_"):
-        pose_entry = next(
+        found = next(
             (
-                member
+                (member, set_entry)
                 for set_entry in registry.values()
                 for member in set_entry["members"]
                 if member["exampleId"] == example_id
             ),
             None,
+        )
+        pose_entry, pose_set = found if found is not None else (None, None)
+        pose_applicable = (
+            pose_set.get("setApplicableClothingTypes")
+            if pose_set is not None
+            else []
         )
         source = "space-set"
     else:
@@ -343,6 +403,11 @@ def _resolve_pose_reference(
                     "포즈 예시 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
                 ) from exc
         pose_entry = flat_assets.get(example_id)
+        pose_applicable = (
+            pose_entry.get("applicableClothingTypes")
+            if pose_entry is not None
+            else []
+        )
         source = "flat"
     if not pose_entry or not pose_entry.get("pose"):
         raise SpaceSetBindingError(
@@ -354,8 +419,7 @@ def _resolve_pose_reference(
         and pose_entry.get("shot") == block.get("shot")
         and pose_entry.get("direction") == block.get("direction")
         and pose_entry.get("gender") == gender
-        and clothing_type
-        in (pose_entry.get("applicableClothingTypes") or [])
+        and clothing_type in (pose_applicable or [])
     )
     if not compatible:
         raise SpaceSetBindingError(
@@ -431,15 +495,16 @@ def resolve_published_example_reference(
             "space_set_registry_unavailable",
             "공간 세트 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
         ) from exc
-    member = next(
+    found = next(
         (
-            candidate
+            (candidate, set_entry)
             for set_entry in registry.values()
             for candidate in set_entry["members"]
             if candidate["exampleId"] == example_id
         ),
         None,
     )
+    member, parent_set = found if found is not None else (None, None)
     if member is None or not member.get(scope):
         raise SpaceSetBindingError(
             "space_set_example_unavailable",
@@ -452,7 +517,14 @@ def resolve_published_example_reference(
             or member.get("direction") == block.get("direction")
         )
         and member.get("gender") == gender
-        and clothing_type in (member.get("applicableClothingTypes") or [])
+        and clothing_type in (
+            (
+                parent_set.get("setApplicableClothingTypes")
+                if scope == "pose"
+                else member.get("applicableClothingTypes")
+            )
+            or []
+        )
     )
     if not compatible:
         raise SpaceSetBindingError(
@@ -524,7 +596,7 @@ def bind_storyboard_space_sets(
                 "space_set_gender_mismatch",
                 "모델 조건에 맞지 않는 공간 세트예요. 다른 세트를 골라주세요.",
             )
-        if clothing_type not in set_entry["applicableClothingTypes"]:
+        if clothing_type not in set_entry["setApplicableClothingTypes"]:
             raise SpaceSetBindingError(
                 "space_set_not_applicable",
                 "상품 종류에 맞지 않는 공간 세트예요. 다른 세트를 골라주세요.",
