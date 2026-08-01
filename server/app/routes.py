@@ -27,12 +27,15 @@ from .agents import (
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import baseline as baseline_service
+from .services import edit_session as edit_service
 from .services import input_qc, matching, retrieval
 from .auth import require_user
 from .db import get_conn
 from .models import (
     ApprovedBaseline,
     BaselineApproveRequest,
+    EditRequest,
+    EditSessionView,
     Account,
     Asset,
     AssetCompleteRequest,
@@ -1046,6 +1049,78 @@ async def adjust_mannequin(
         status_code=410,
         detail={"code": "deprecated_endpoint",
                 "message": "마네킹 조정은 종료된 기능이에요. 핏 수정 후 재생성을 이용해 주세요."})
+
+
+@router.post(
+    "/projects/{project_id}/mannequins:edit",
+    response_model=EditSessionView,
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins"],
+    summary="승인 baseline 기반 제한 편집",
+)
+async def edit_mannequin(
+    request: Request,
+    project_id: str,
+    body: EditRequest,
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """승인된 baseline 을 **입력 이미지로** 써서 요청한 속성만 바꿉니다.
+
+    - **Bearer Token**: 필수
+    - **Body**: `{ editType, adjustments }` — step 은 -2..2 만. edit type 과 무관한 축을
+      함께 바꾸는 요청은 거부합니다(그 edit type 의 이름이 거짓이 되므로).
+    - regenerate 와 다릅니다: regenerate 는 상품 원본에서 **새로** 만들고, edit 는 승인된
+      결과를 편집합니다. 승인 baseline 이 없으면 fresh 생성으로 조용히 넘어가지 않고
+      `409 no_approved_baseline` 을 돌려줍니다.
+    - 어떤 편집 결과도 baseline 을 자동 교체하지 않습니다 — 새 baseline 은 승인 API 를
+      다시 호출해야 생깁니다.
+    - **에지 케이스**: `400`(요청 계약 위반), `402 insufficient_credits`,
+      `409 no_approved_baseline`, `503`(기능 미노출 — 플래그 off).
+    """
+    s = request.app.state.settings
+    if s.mannequin_edit_intent_qc == "off":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "edit_not_enabled",
+                    "message": "편집 기능이 아직 열리지 않았어요."})
+    try:
+        edit_type = edit_service.normalize_edit_type(body.edit_type)
+        adjustments = edit_service.validate_adjustments(edit_type, body.adjustments)
+    except edit_service.EditRequestError as e:
+        raise _bad_request(e.code, str(e))
+    scope = edit_service.allowed_scope(edit_type)
+    cost = s.credit_cost_mannequin_generate
+    scoped_key = f"{project_id}:mannequin_edit:{idempotency_key}" if idempotency_key else None
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        baseline = await repo.get_active_baseline(conn, project_id)
+        if baseline is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "no_approved_baseline",
+                        "message": "먼저 마네킹 컷을 승인해 주세요."})
+        locks = edit_service.locked_invariants_for_edit(
+            baseline.get("locked_invariants"), edit_type)
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="mannequin",
+            payload={"mode": "edit", "editType": edit_type, "adjustments": adjustments,
+                     "baselineId": baseline["id"]},
+            idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": s.credit_cost_version})
+        if created:
+            if await repo.reserve_credits(conn, user_id, cost) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        session = await repo.create_edit_session(
+            conn, project_id=project_id, user_id=user_id, job_id=job["id"],
+            baseline=baseline, edit_type=edit_type, adjustments=adjustments,
+            locked_invariants=locks, allowed_scope=scope)
+        await repo.update_job_payload_edit_session(conn, job["id"], session["id"])
+        await conn.commit()
+    return {**session, "job_id": job["id"]}
 
 
 @router.post(

@@ -56,6 +56,25 @@ class ApprovedBaseline(CamelModel):
     idempotent: bool = False      # 같은 컷 재승인 — 아무것도 바꾸지 않았다
 
 
+class EditRequest(CamelModel):
+    """구조화 편집 요청. 자유 텍스트는 계약이 아니다 — step(-2..2)만 받는다."""
+
+    edit_type: str
+    adjustments: dict = {}
+
+
+class EditSessionView(CamelModel):
+    id: str
+    project_id: str
+    baseline_id: str
+    parent_output_id: str | None
+    edit_type: str
+    requested_adjustments: dict
+    allowed_scope: dict
+    status: str
+    job_id: str | None = None
+
+
 class BaselineApproveRequest(CamelModel):
     cut_id: str
 

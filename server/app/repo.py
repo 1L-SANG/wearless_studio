@@ -676,6 +676,105 @@ async def approve_mannequin_baseline(
     return {"baseline": baseline, "superseded_id": superseded_id, "idempotent": False}
 
 
+async def create_edit_session(
+    conn: AsyncConnection,
+    *,
+    project_id: str,
+    user_id: str,
+    job_id: str | None,
+    baseline: dict,
+    edit_type: str,
+    adjustments: dict,
+    locked_invariants: dict,
+    allowed_scope: dict,
+) -> dict:
+    """편집 세션 1건 생성(queued). baseline 은 **active 만** 넘어온다(호출자가 보장).
+
+    superseded baseline 을 입력으로 쓰지 않는 이유: 사용자가 이미 다른 결과를 정본으로
+    바꿨는데 옛 정본을 편집하면, 결과는 어느 쪽 계보에도 정직하게 붙지 않는다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into edit_sessions
+              (project_id, job_id, baseline_id, parent_output_id, edit_type,
+               requested_adjustments, locked_invariants, allowed_scope, status, created_by)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, 'queued', %s)
+            returning id::text as id, project_id::text as project_id,
+                      baseline_id::text as baseline_id,
+                      parent_output_id::text as parent_output_id,
+                      edit_type, requested_adjustments, locked_invariants,
+                      allowed_scope, status, retry_count, created_at
+            """,
+            (project_id, job_id, baseline["id"], baseline.get("output_id"), edit_type,
+             Json(adjustments), Json(locked_invariants), Json(allowed_scope), user_id),
+        )
+        return await cur.fetchone()
+
+
+async def update_job_payload_edit_session(
+    conn: AsyncConnection, job_id: str, session_id: str
+) -> None:
+    """잡 payload 에 세션 id 를 실어 워커가 자기 세션을 찾게 한다.
+
+    세션을 먼저 만들 수 없어서(잡 id 가 필요하다) 잡 → 세션 → 역참조 순이 된다. 같은 tx 라
+    중간 상태가 밖에서 보이지 않는다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set payload = payload || %s where id = %s",
+            (Json({"editSessionId": session_id}), job_id))
+
+
+async def get_edit_session(conn: AsyncConnection, session_id: str) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, project_id::text as project_id, "
+            "baseline_id::text as baseline_id, parent_output_id::text as parent_output_id, "
+            "edit_type, requested_adjustments, locked_invariants, allowed_scope, status, "
+            "retry_count, output_id::text as output_id, edit_qc_result "
+            "from edit_sessions where id = %s",
+            (session_id,),
+        )
+        return await cur.fetchone()
+
+
+async def update_edit_session(
+    conn: AsyncConnection,
+    *,
+    session_id: str,
+    status: str,
+    qc_result: dict | None = None,
+    prompt_sha256: str | None = None,
+    prompt_r2_key: str | None = None,
+    model_snapshot: dict | None = None,
+    retry_count: int | None = None,
+) -> None:
+    """세션 상태 전이. 종결 상태면 completed_at 을 함께 채운다(CHECK 가 요구한다).
+
+    전이 유효성은 호출자(services.edit_session.assert_transition)가 검증한다 — 여기서
+    또 판단하면 규칙이 두 곳에 살고 갈라진다.
+    """
+    terminal = status in ("pass", "review_required", "reject", "failed")
+    sets = ["status = %s", "completed_at = " + ("now()" if terminal else "null")]
+    params: list = [status]
+    for col, val in (("edit_qc_result", qc_result), ("model_snapshot", model_snapshot)):
+        if val is not None:
+            sets.append(f"{col} = %s")
+            params.append(Json(val))
+    for col, val in (("prompt_sha256", prompt_sha256), ("prompt_r2_key", prompt_r2_key)):
+        if val is not None:
+            sets.append(f"{col} = %s")
+            params.append(val)
+    if retry_count is not None:
+        sets.append("retry_count = %s")
+        params.append(retry_count)
+    params.append(session_id)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"update edit_sessions set {', '.join(sets)} where id = %s", params)
+
+
 async def list_series_reference_cuts(
     conn: AsyncConnection, project_id: str, *, limit: int = 3
 ) -> list[dict]:

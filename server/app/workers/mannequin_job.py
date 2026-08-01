@@ -58,8 +58,9 @@ from ..agents.prompts import (
     render_mannequin_prompt,
 )
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
-from ..services import qc
-from ..services.generation_run import RunLogger
+from ..services import edit_intent_qc, qc
+from ..services import edit_session as edit_service
+from ..services.generation_run import RunLogger, prompt_sha256 as gr_prompt_sha
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
 
 
@@ -1226,6 +1227,14 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
                 qc_scores["outcome"] = "needs_review"
             if hc.get("deterministicPassed") and qc_scores["outcome"] == "regenerate":
                 qc_scores["outcome"] = "needs_review"
+        # Edit Intent QC 도 같은 규율: **강등만, 승격 없음**. 4축 점수 신호가 없으면
+        # score_outcome 은 auto_pass 로 눕히는데(설계상 옳다 — 미채점을 실패로 보지 않는다),
+        # 편집은 그 신호가 없어도 "요청대로 됐는가"라는 자기 판정을 갖는다. pass 가 아니면
+        # 사람이 봐야 한다.
+        eq = qc_scores.get("editIntentQc")
+        if isinstance(eq, dict) and eq.get("decision") != "pass" \
+                and qc_scores["outcome"] == "auto_pass":
+            qc_scores["outcome"] = "needs_review"
     ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
     asset_id = str(uuid.uuid4())
     key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -1696,6 +1705,238 @@ async def _run_candidate(
     return None  # 구제할 후보조차 없음 → 이 후보 드롭(부분 성공 허용)
 
 
+
+
+async def _run_baseline_edit(app, job: dict, *, fail) -> None:
+    """승인 baseline 을 입력 이미지로 하는 제한 편집 1회.
+
+    생성 경로와 공유하는 것: gemini 클라이언트·RunLogger·_save_cut·finalize·크레딧.
+    공유하지 않는 것: 후보 풀·구제·재시도 루프 — 편집은 "다시 뽑기"가 아니라 "지정한 것만
+    바꾸기"라서 최선본 고르기가 의미가 없다.
+
+    baseline 이미지를 못 읽으면 **fresh 생성으로 넘어가지 않는다**. 그건 사용자가 요청한
+    편집이 아니라 다른 상품 이미지를 새로 만드는 것이고, 계보상 baseline 파생도 아니다.
+    """
+    s = app.state.settings
+    pool, r2, gemini = app.state.pool, app.state.r2, app.state.gemini
+    job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
+    lease_token = job["lease_token"]
+    reserved = job.get("credits_reserved") or 0
+    payload = job.get("payload") or {}
+    session_id = payload.get("editSessionId")
+    edit_type = payload.get("editType") or "CUSTOM_REVIEW_REQUIRED"
+    adjustments = payload.get("adjustments") or {}
+    enforce = s.mannequin_edit_intent_qc == "enforce"
+
+    async def _set_session(status, **kw):
+        if not session_id:
+            return
+        try:
+            async with pool.connection() as conn:
+                await repo.update_edit_session(conn, session_id=session_id,
+                                               status=status, **kw)
+                await conn.commit()
+        except Exception as e:   # 세션 기록 실패가 편집 자체를 죽이지 않는다
+            log.warning("edit session update failed (job=%s error=%s)",
+                        job_id, type(e).__name__)
+
+    try:
+        async with pool.connection() as conn:
+            product = await repo.get_product(conn, project_id) or {}
+            analysis = await repo.get_analysis(conn, project_id) or {}
+            baseline = await repo.get_active_baseline(conn, project_id)
+            session = (await repo.get_edit_session(conn, session_id)
+                       if session_id else None)
+        if baseline is None:
+            await _set_session("failed", qc_result={"reason": "no_active_baseline"})
+            return await fail("승인된 마네킹 컷이 없어요. 먼저 컷을 승인해 주세요.",
+                              {"error": "no_approved_baseline"})
+        # superseded baseline 은 여기 오지 않는다(active 만 조회). 세션이 다른 baseline 을
+        # 가리키면 그 사이 사용자가 정본을 바꾼 것이다 — 옛 정본을 편집하지 않는다.
+        if session and session.get("baseline_id") != baseline["id"]:
+            await _set_session("failed", qc_result={"reason": "baseline_superseded"})
+            return await fail("승인 컷이 바뀌었어요. 다시 시도해 주세요.",
+                              {"error": "baseline_superseded"})
+
+        async with pool.connection() as conn:
+            parent = await repo.get_mannequin_edit_parent(conn, user_id, project_id)
+        cut_row = None
+        if parent and parent.get("id") == baseline.get("cut_client_id"):
+            cut_row = parent
+        else:
+            # 선택 포인터가 baseline 과 다르다 — Phase 3 의 편집 입력 정본은 **baseline** 이다.
+            async with pool.connection() as conn:
+                cut_row = await repo.get_mannequin_cut_for_approval(
+                    conn, user_id, project_id, baseline["cut_client_id"])
+            if cut_row is not None:
+                async with pool.connection() as conn:
+                    asset = await repo.get_asset_for_user(conn, user_id,
+                                                          cut_row["asset_id"])
+                cut_row = {**cut_row, "r2_key": (asset or {}).get("r2_key"),
+                           "mime_type": (asset or {}).get("mime_type")}
+        if not cut_row or not cut_row.get("r2_key"):
+            await _set_session("failed", qc_result={"reason": "baseline_asset_missing"})
+            return await fail("승인 컷 이미지를 불러오지 못했어요.",
+                              {"error": "baseline_asset_load_failed"})
+        try:
+            base_bytes = await asyncio.to_thread(r2.get_bytes, cut_row["r2_key"])
+        except Exception as e:
+            await _set_session("failed", qc_result={"reason": "baseline_asset_read_failed"})
+            return await fail("승인 컷 이미지를 불러오지 못했어요.",
+                              {"error": "baseline_asset_load_failed",
+                               "detail": type(e).__name__})
+        baseline_img = InlineImage(cut_row.get("mime_type") or "image/png", base_bytes)
+
+        # 상품 참조는 **보조 입력**이다 — 편집 대상은 baseline 이고, 이것들은 디테일 보존의
+        # 근거로만 붙는다. 로드 실패는 편집을 죽이지 않는다(baseline 실패와 다르다).
+        prod_refs = []
+        try:
+            async with pool.connection() as conn:
+                assets = []
+                for slot, aid in mannequin.base_color_images(product):
+                    row = await repo.get_asset_for_user(conn, user_id, aid)
+                    if row:
+                        assets.append((slot, row))
+            for slot, row in assets:
+                data = await asyncio.to_thread(r2.get_bytes, row["r2_key"])
+                prod_refs.append(ProductReference(
+                    slot=slot or "Front", asset_id=row["id"],
+                    image=InlineImage(row["mime_type"], data)))
+            prod_refs = list(order_by_role(prod_refs))
+        except Exception as e:
+            log.warning("edit product refs unavailable (job=%s error=%s)",
+                        job_id, type(e).__name__)
+        scope = (session or {}).get("allowed_scope") or edit_service.allowed_scope(edit_type)
+        locks = (session or {}).get("locked_invariants") or {}
+        target_ratio = edit_service.target_delta_ratio(edit_type, adjustments)
+
+        # 입력 순서 고정: baseline 이 0번, 상품 참조가 그 뒤. 스냅샷도 같은 리스트에서 만든다.
+        input_entries = [("parent_cut", baseline_img, cut_row.get("asset_id"), None,
+                          baseline.get("output_id"))]
+        input_entries += [("product_reference", r.image, r.asset_id, r.slot)
+                          for r in prod_refs]
+        images = [e[1] for e in input_entries]
+        prompt = build_edit_prompt(edit_type=edit_type, adjustments=adjustments,
+                                   allowed_scope=scope, locked_invariants=locks)
+        model = resolve_model(s, getattr(s, "mannequin_adjust_tier", "") or "image_high")
+        runlog = RunLogger(pool=pool, r2=r2, job_id=job_id, project_id=project_id,
+                           user_id=user_id, enabled=(s.generation_run_log == "shadow"))
+        await _set_session("running", prompt_sha256=gr_prompt_sha(prompt),
+                           model_snapshot={"model": model,
+                                           "imageSize": s.mannequin_image_size})
+
+        result = None
+        qc_result = None
+        retry_count = 0
+        for attempt in range(2):        # 최초 1회 + 정책이 허용할 때만 재시도 1회
+            run_id = await _runlog_begin(
+                runlog, kind="mannequin_baseline_edit", prompt=prompt, model=model,
+                candidate="A", attempt=attempt + 1, image_size=s.mannequin_image_size,
+                aspect_ratio=s.mannequin_aspect_ratio, inputs=input_entries,
+                input_image=baseline_img,
+                explicit_parent_generation_run_id=baseline.get("generation_run_id"),
+                settings=s)
+            t0 = time.monotonic()
+            try:
+                result = await gemini.generate_content_image(
+                    model, prompt, images, s.mannequin_image_size,
+                    aspect_ratio=s.mannequin_aspect_ratio)
+            except Exception as e:
+                await _runlog_finish(runlog, run_id, started=t0, error=e, candidate="A")
+                await _set_session("failed", qc_result={"reason": "provider_error"})
+                return await fail("이미지 편집에 실패했어요. 잠시 후 다시 시도해 주세요.",
+                                  {"error": "generation_failed"})
+            await _runlog_finish(runlog, run_id, started=t0, result=result, candidate="A")
+
+            qc_result = await asyncio.to_thread(
+                edit_intent_qc.evaluate,
+                baseline_bgr=_decode_bgr(base_bytes),
+                edited_bgr=_decode_bgr(result.image),
+                edit_type=edit_type, allowed_scope=scope, target_ratio=target_ratio,
+                vision=None)
+            await _emit(pool, job_id, "step", {
+                "status": "edit_intent_qc", "attempt": attempt + 1,
+                "decision": qc_result["decision"],
+                "unexpectedChanges": qc_result["unexpectedChanges"],
+                "lockedInvariantViolations": qc_result["lockedInvariantViolations"],
+                "requestedChangeSatisfied": qc_result["requestedChangeSatisfied"]})
+            if not edit_intent_qc.should_retry(qc_result, retry_count=retry_count):
+                break
+            retry_count += 1
+            prompt = f"{prompt}\n\nCORRECTIONS:\n" + "\n".join(
+                f"- {i}" for i in qc_result["regenerationInstructions"])
+
+        decision = qc_result["decision"] if qc_result else "review_required"
+        # enforce 에서만 판정이 출고를 지배한다. shadow 는 기록만 하고 기존 계약을 그대로 둔다.
+        if enforce and decision == "reject":
+            await _set_session("reject", qc_result=qc_result, retry_count=retry_count)
+            return await fail("요청한 변경이 반영되지 않았어요. 다시 시도해 주세요.",
+                              {"error": "edit_intent_rejected",
+                               "editIntentQc": {"decision": decision,
+                                                "violations": qc_result[
+                                                    "lockedInvariantViolations"]}})
+        qc_scores = {"outcome": ("auto_pass" if (decision == "pass" and enforce)
+                                 else "needs_review"),
+                     "editIntentQc": {k: qc_result[k] for k in
+                                      ("decision", "requestedChangeSatisfied",
+                                       "unexpectedChanges", "lockedInvariantViolations")}}
+        cut = await _save_cut(
+            s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
+            candidate="A", base_fit=(product.get("fit") or "regular"), res=result,
+            qc_scores=qc_scores, runlog=runlog,
+            carrier_run_id=runlog.run_id_for_image(result.image, "A"),
+            parent_lineage={"asset_id": cut_row.get("asset_id"),
+                            "generation_output_id": baseline.get("output_id"),
+                            "generation_run_id": baseline.get("generation_run_id"),
+                            "baseline_id": baseline["id"]})
+        async with pool.connection() as conn:
+            out = await repo.finalize_mannequin_success(
+                conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
+                project_id=project_id, candidates=[cut], reserved=reserved,
+                charge=reserved,
+                metadata={"creditCostVersion": s.credit_cost_version,
+                          "editSessionId": session_id, "editType": edit_type})
+            await conn.commit()
+        if out is None:                 # lease 상실 — 부수효과 0
+            return
+        await _set_session("pass" if decision == "pass" else "review_required",
+                           qc_result=qc_result, retry_count=retry_count)
+    except Exception as e:
+        log.exception("baseline edit failed for job %s", job_id)
+        await _set_session("failed", qc_result={"reason": type(e).__name__})
+        await fail("이미지 편집에 실패했어요.", {"error": "generation_failed"})
+
+
+def build_edit_prompt(*, edit_type: str, adjustments: dict, allowed_scope: dict,
+                      locked_invariants: dict) -> str:
+    """제한 편집 지시. **전체 재생성이 아니라는 것**을 문장으로 못박는다.
+
+    프롬프트만으로 보존이 보장되지 않는다는 것이 이 파이프라인의 실측 결론이다 — 그래서
+    Edit Intent QC 가 뒤에 붙는다. 여기서는 모델에게 가장 유리한 조건을 만들 뿐이다.
+    """
+    changes = [f"{k} = {v:+d} step" for k, v in sorted(adjustments.items()) if v]
+    forbidden = ", ".join(allowed_scope.get("forbidden") or ())
+    allowed = ", ".join(allowed_scope.get("allowed") or ()) or "(none)"
+    lines = [
+        "TASK: EDIT the attached IMAGE 1 (the approved baseline). This is a LIMITED EDIT,",
+        "not a regeneration. Return the same photograph with ONLY the requested change.",
+        f"EDIT TYPE: {edit_type}",
+        f"REQUESTED CHANGE: {', '.join(changes) or '(see edit type)'}",
+        f"MAY CHANGE: {allowed}",
+        f"MUST NOT CHANGE: {forbidden}",
+        "Keep the mannequin identity, pose, camera angle, framing, crop, background and",
+        "lighting pixel-identical to IMAGE 1. Keep every garment detail that is not the",
+        "requested change: collar, placket, buttons, pockets, cuffs, pattern, print, colour.",
+        "IMAGE 1 is the image to edit. The remaining images are the product ground truth —",
+        "use them only to preserve garment detail, never to change the composition.",
+    ]
+    unavailable = [k for k, v in (locked_invariants.get("locks") or {}).items()
+                   if isinstance(v, dict) and v.get("locked")]
+    if unavailable:
+        lines.append("LOCKED: " + ", ".join(sorted(unavailable)))
+    return "\n".join(lines)
+
+
 async def run_mannequin_job(app, job: dict) -> None:
     s = app.state.settings
     pool = app.state.pool
@@ -1711,6 +1952,13 @@ async def run_mannequin_job(app, job: dict) -> None:
                 project_id=project_id, reserved=reserved, settle_key=settle_key,
                 message=message, metadata=meta)
             await conn.commit()
+
+    # Phase 3: baseline 편집은 **독립 경로**다. 생성 루프(후보 풀·구제·hybrid)를 통과시키면
+    # "요청한 축만 바꾼다"는 계약이 그 안의 다른 규율들과 섞인다. 기존 생성 경로를 건드리지
+    # 않는 것이 이 분리의 첫 번째 이유다.
+    if ((job.get("payload") or {}).get("mode") == "edit"
+            and s.mannequin_edit_intent_qc != "off"):
+        return await _run_baseline_edit(app, job, fail=_fail)
 
     try:
         # 1) 입력 로드

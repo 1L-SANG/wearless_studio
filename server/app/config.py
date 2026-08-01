@@ -122,6 +122,13 @@ class Settings:
     # migration(20260801000000_generation_runs) 미적용 환경에서 켜도 안전하다 — insert 가
     # 실패하고 기록만 비는 것으로 끝난다.
     generation_run_log: str = "off"  # off | shadow
+    # Phase 3 baseline 편집 — 신규 :edit 엔드포인트와 Edit Intent QC 의 rollout.
+    #   off     : :edit 는 503(미노출), 편집 잡도 생기지 않는다. 기존 동작 완전 불변.
+    #   shadow  : :edit 노출 + QC 판정을 **기록만** 한다. 출고 계약은 기존과 동일 —
+    #             decision 이 reject 여도 컷은 기존 규율대로 저장되고 사유만 남는다.
+    #   enforce : decision 이 출고를 지배한다 — reject 는 저장 없이 실패 종결(크레딧 환불),
+    #             review_required 는 needs_review 로 저장.
+    mannequin_edit_intent_qc: str = "off"  # off | shadow | enforce
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
@@ -273,6 +280,8 @@ def load_settings() -> Settings:
         mannequin_hybrid_composite=_flag("MANNEQUIN_HYBRID_COMPOSITE", "off", {"off", "on"}),
         mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
         generation_run_log=_flag("GENERATION_RUN_LOG", "off", {"off", "shadow"}),
+        mannequin_edit_intent_qc=_flag(
+            "MANNEQUIN_EDIT_INTENT_QC", "off", {"off", "shadow", "enforce"}),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
