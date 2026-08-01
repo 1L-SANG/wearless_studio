@@ -246,7 +246,7 @@ def test_run_candidate_emits_prompt_rendered_hashes(monkeypatch):
     result = asyncio.run(mannequin_job._run_candidate(
         app=app, job=job, candidate="A", base_fit="regular", base_gender="women",
         base_img=types.SimpleNamespace(mime="image/png", data=b"x"),
-        prod_imgs=[], match_img=None, product_count=1,
+        prod_refs=[], match_img=None, product_count=1,
         template="Dress ${baseGender} ${clothingType}.\n${imageManifest}",
         product={"name": "티"}, analysis={}, clothing_type="top",
         image_manifest="1. base", fit_profile=SNAP_PROFILE,

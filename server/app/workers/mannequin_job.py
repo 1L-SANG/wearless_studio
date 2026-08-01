@@ -13,6 +13,8 @@ import uuid
 from contextlib import suppress
 from io import BytesIO
 
+import cv2
+import numpy as np
 from PIL import Image
 
 log = logging.getLogger("wearless.mannequin_job")
@@ -22,7 +24,6 @@ from ..agents import (
     image_qc,
     mannequin,
     mannequin_bust,
-    mannequin_fabric,
     mannequin_fit_qc,
     mannequin_series_qc,
     mannequin_untuck,
@@ -33,11 +34,23 @@ from ..agents.mannequin_adjust import (
     build_adjust_manifest,
     render_adjust_prompt,
 )
-from ..agents.gemini_image import GeminiError, InlineImage
+from ..agents.gemini_image import GeminiError, GeminiImageResult, InlineImage
 from ..agents.model_routing import resolve_model
+from ..agents import hybrid_landmarks
+from ..agents.product_reference import ProductReference, order_by_role, select_pattern_sources
+from ..services.hybrid_composite import (
+    deterministic_qc as hc_qc,
+    panel_map as hc_panel,
+    source_validation as hc_source,
+    stripe_model as hc_stripe,
+    warp_composite as hc_warp,
+)
+from ..services.hybrid_composite.types import (
+    PIPELINE_VERSION as HC_PIPELINE_VERSION,
+    CompositeFailure,
+)
 from ..agents.prompts import (
     load_bust_prompt_template,
-    load_fabric_prompt_template,
     load_prompt_template,
     load_untuck_prompt_template,
     render_mannequin_prompt,
@@ -71,27 +84,62 @@ def _valid_fit_profile_snapshot(snapshot) -> bool:
     )
 
 
+# 조정 요청이 편집(parent-first)이 아니라 fresh 생성으로 떨어지는 사유 — typed 상수.
+# 이유를 남기지 않으면 셀러 입장에선 "조정했는데 패턴이 또 달라졌다"만 보이고, 우리도 그게
+# 편집이 안 걸린 탓인지 편집이 실패한 탓인지 구분할 수 없다(계획 §9 silent fresh 리스크).
+EDIT_FALLBACK_REASONS = frozenset({
+    "invalid_fit_snapshot",       # payload 스냅샷이 없거나 계약 밖 형태
+    "invalid_fit_profile",        # 스냅샷은 유효한데 프로필이 dict/축 계약을 못 채움
+    "no_adjust_directives",       # 조정된 축이 없어 편집 지시문이 비었다
+    "parent_lookup_failed",       # 부모 컷 조회 자체가 실패(DB)
+    "no_parent_cut",              # 편집할 기존 컷이 없다(첫 생성)
+    "legacy_parent",              # PR #72 이전 자산 — generation metadata 부재
+    "incompatible_parent",        # 카테고리/성별/매칭 상품이 지금 요청과 다르다
+    "edit_depth_cap",             # 편집의 편집 상한(2세대) 도달 — 화질 누적 열화 방지
+    "parent_asset_load_failed",   # R2 에서 부모 컷 바이트를 못 읽었다
+    "missing_edit_inputs",        # 편집 경로로 들어왔는데 부모 컷/지시문이 비었다(방어)
+    "unclassified",               # 위 어디에도 안 걸림 — 분류 누락 자체를 관측하기 위한 값
+})
+
+
+def classify_parent_edit(
+    parent: dict | None, profile: dict | None, match_item_id: str | None
+) -> tuple[int | None, str | None]:
+    """부모 컷이 편집 자격을 갖췄는지 → (호환 editDepth, 부적격 사유).
+
+    자격이 있으면 `(depth, None)`, 없으면 `(None, reason)`. 사유는 `EDIT_FALLBACK_REASONS`
+    의 typed 값이라 이벤트에서 집계할 수 있다 — 자유 문자열이면 오타 하나로 집계가 갈린다.
+    """
+    if not parent:
+        return None, "no_parent_cut"
+    if not isinstance(profile, dict):
+        return None, "invalid_fit_profile"
+    category, gender = profile.get("category"), profile.get("gender")
+    if not isinstance(category, str) or not isinstance(gender, str):
+        return None, "invalid_fit_profile"
+    metadata = parent.get("generation_metadata")
+    # 빈 dict 도 legacy 다 — PR #72 이후 워커는 항상 editDepth 를 함께 쓴다. "메타데이터가
+    # 아예 없음"과 "지금 요청과 안 맞음"은 대응이 달라서(전자는 새 기준 컷 필요) 나눠 센다.
+    if not isinstance(metadata, dict) or not metadata or "editDepth" not in metadata:
+        return None, "legacy_parent"
+    if (metadata.get("profileCategory") != category
+            or metadata.get("profileGender") != gender):
+        return None, "incompatible_parent"
+    if metadata.get("matchItemId") != match_item_id:
+        return None, "incompatible_parent"
+    depth = metadata.get("editDepth")
+    if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0:
+        return None, "legacy_parent"
+    if depth >= 2:
+        return None, "edit_depth_cap"
+    return depth, None
+
+
 def _compatible_parent_edit_depth(
     parent: dict | None, profile: dict | None, match_item_id: str | None
 ) -> int | None:
     """부모 메타데이터가 현재 조정 입력과 호환되면 기존 editDepth, 아니면 None."""
-    if not parent or not isinstance(profile, dict):
-        return None
-    category, gender = profile.get("category"), profile.get("gender")
-    if not isinstance(category, str) or not isinstance(gender, str):
-        return None
-    metadata = parent.get("generation_metadata")
-    if not isinstance(metadata, dict):
-        return None
-    if (metadata.get("profileCategory") != category
-            or metadata.get("profileGender") != gender):
-        return None
-    if metadata.get("matchItemId") != match_item_id:
-        return None
-    depth = metadata.get("editDepth")
-    if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0 or depth >= 2:
-        return None
-    return depth
+    return classify_parent_edit(parent, profile, match_item_id)[0]
 
 
 _GENERATION_PROGRESS_INTERVAL_SECONDS = 7.0
@@ -226,7 +274,33 @@ def effective_image_size(s, product: dict | None, analysis: dict | None) -> str:
     return upgrade if mannequin.has_fine_pattern(product, analysis) else s.mannequin_image_size
 
 
-def tier_for_job(s, job: dict | None) -> str:
+_PATTERN_SAFE_TIER = "image_high"
+
+
+def _guard_pattern_tier(tier: str, has_fine_pattern: bool) -> str:
+    """미세 패턴 상품이 낮은 tier 로 내려가는 것을 막는다 (순수).
+
+    2K 실측(2026-08-01)에서 줄 주기가 8.9px 이라 한 주기를 이루는 요소당 2px 남짓이었다.
+    그 정도 여유에서는 모델 등급 차이가 곧 두 색 줄이 한 색으로 뭉개지느냐를 가른다.
+    조정 tier 는 실험용 스위치(`MANNEQUIN_ADJUST_TIER`)라 설정 하나로 전 조정이 내려가는데,
+    무지 상품에서 비용을 아끼려던 설정이 패턴 상품의 결과까지 같이 깎으면 안 된다.
+    """
+    if has_fine_pattern and tier != _PATTERN_SAFE_TIER:
+        return _PATTERN_SAFE_TIER
+    return tier
+
+
+def adjust_edit_tier(s, *, has_fine_pattern: bool = False) -> str:
+    """조정 **편집**(parent-first) 1콜이 쓸 tier (순수). 미설정이면 image_high.
+
+    편집은 원본 컷 위에 지시를 얹는 작업이라 Flash 가 지시를 거부·미반영한 기록이 있다
+    (untuck·bust 2패스가 image_high 로 고정된 이유와 같다). 여기에 더해 패턴 가드가 걸린다.
+    """
+    configured = (getattr(s, "mannequin_adjust_tier", "") or "").strip() or _PATTERN_SAFE_TIER
+    return _guard_pattern_tier(configured, has_fine_pattern)
+
+
+def tier_for_job(s, job: dict | None, *, has_fine_pattern: bool = False) -> str:
     """이 잡의 1패스 생성이 쓸 이미지 tier (순수).
 
     조정(`:regenerate`)과 초기 생성(`:generate`)은 같은 워커·같은 프롬프트를 타므로
@@ -236,13 +310,13 @@ def tier_for_job(s, job: dict | None) -> str:
     조정에서만 모델을 바꿔 보려는 요구가 실제 동기다(2026-07-31). 초기 생성 품질을 고정한 채
     비교해야 결과 차이를 모델 탓으로 돌릴 수 있다.
 
-    편집 패스(untuck·fabric·bust)는 여기 해당 없다 — 그쪽은 코드에서 image_high 로 고정돼
+    편집 패스(untuck·bust)는 여기 해당 없다 — 그쪽은 코드에서 image_high 로 고정돼
     있고, Flash 가 편집 지시를 거부·미반영해 탈락한 기록이 있다.
     """
     adjust = (getattr(s, "mannequin_adjust_tier", "") or "").strip()
     if adjust and ((job or {}).get("payload") or {}).get("mode") == "regenerate":
-        return adjust
-    return s.mannequin_tier
+        return _guard_pattern_tier(adjust, has_fine_pattern)
+    return _guard_pattern_tier(s.mannequin_tier, has_fine_pattern)
 
 
 async def _apply_axis_qc(
@@ -702,50 +776,289 @@ async def _apply_untuck_pass(
     return out, True
 
 
-async def _apply_fabric_pass(
-    *, pool, gemini, s, job_id, candidate, attempt, res, prod_imgs, calls_spent,
-    has_fine_pattern=False, image_size=None,
+def _decode_bgr(image_bytes: bytes):
+    arr = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if arr is None:
+        raise ValueError("이미지 디코드 실패")
+    return arr
+
+
+def _hc_fail_summary(reason: str, detail: str = "", **extra) -> dict:
+    """hybrid composite 실패 요약 — qc_scores 에 저장되는 shape (바이트/URL 없음)."""
+    return {"applied": False, "needsReview": True, "failureReason": reason,
+            "failureDetail": detail[:200], "pipelineVersion": HC_PIPELINE_VERSION, **extra}
+
+
+class _HybridCompositeFailClosed(Exception):
+    """P0 hybrid composite fail-closed signal before R2 save/finalize success."""
+
+    def __init__(self, summary: dict):
+        self.summary = dict(summary)
+        reason = self.summary.get("failureReason") or "pattern_metric_failed"
+        detail = self.summary.get("failureDetail") or ""
+        super().__init__(f"{reason}: {detail}"[:300])
+
+
+def _raise_if_hybrid_failed_closed(summary: dict | None) -> None:
+    if isinstance(summary, dict) and summary.get("applied") is False:
+        raise _HybridCompositeFailClosed(summary)
+
+
+async def _delete_uploaded_candidate_keys(r2, candidates: list[dict]) -> None:
+    """이미 업로드된 후보를 best-effort 삭제한다. 실패 종결 전 orphan 방지용."""
+    for c in candidates:
+        key = c.get("key") if isinstance(c, dict) else None
+        if not key:
+            continue
+        try:
+            await asyncio.to_thread(r2.delete, key)
+        except Exception:
+            log.warning("orphan R2 cleanup failed: %s", key)
+
+
+async def _fail_closed_hybrid_job_if_needed(r2, fail, passed: list[dict], meta: dict | None) -> bool:
+    """hybrid fail-closed 가 하나라도 있으면 업로드 후보를 지우고 job 실패로 종결한다."""
+    if meta is None:
+        return False
+    await _delete_uploaded_candidate_keys(r2, passed)
+    await fail("패턴 합성 검증에 실패했어요. 상품 사진을 확인한 뒤 다시 시도해 주세요.", meta)
+    return True
+
+
+async def _apply_hybrid_composite(
+    *, pool, s, job_id, candidate, attempt, res, prod_refs, product, analysis,
+    has_fine_pattern,
 ):
-    """미세 패턴 상품의 원단 패턴 2패스. → (선택 결과, 편집콜 소비 여부).
+    """deterministic hybrid stripe composite. → (선택 결과, hybrid 요약 dict|None).
 
-    가슴 2패스와 **입력이 다르다**: 생성본만 주는 게 아니라 상품 사진을 함께 넣는다.
-    고칠 대상이 "상품 사진과 같은 패턴"이라 근거 이미지가 없으면 모델이 패턴을 지어낸다.
-    상품 사진은 앞쪽 몇 장만 — 전부 넣으면 편집 과제가 다시 흐려진다(과제 1개 원칙).
-
-    fail-open — 거부·오류·빈 응답 어떤 경우에도 1패스 결과를 그대로 돌려준다.
+    모든 generative geometry edit(untuck/axis/bust) **뒤**, 최종 QC/R2 저장 **앞**에서만
+    호출된다. 여기서부터 출고까지 image-generation/edit 호출은 0회다 — 합성 불가·저신뢰·
+    metric 실패는 전부 typed needs_review 로 끝나고, 구 generative 재생성으로 돌아가는
+    경로는 존재하지 않는다(코드째 삭제됨).
     """
-    if not mannequin_fabric.should_apply(
-            getattr(s, "mannequin_fabric_pass", "off"), has_fine_pattern, bool(prod_imgs)):
-        return res, False
-    if calls_spent >= s.mannequin_max_attempts:
+    if getattr(s, "mannequin_hybrid_composite", "off") != "on":
+        return res, None
+    if not has_fine_pattern:
+        return res, None  # 무지 상품 — 재현할 고주파가 없어 대상 아님(기존 경로 그대로)
+
+    async def emit(status, **payload):
         await _emit(pool, job_id, "step", {
-            "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
-            "outcome": "budget_exhausted",
-            "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
-        return res, False
-    before = hashlib.sha256(res.image).hexdigest()[:12]
+            "candidate": candidate, "attempt": attempt, "status": status, **payload})
+
+    await emit("hybrid_composite_started", pattern_risk=True,
+               pipeline_version=HC_PIPELINE_VERSION)
+
+    async def fail(reason, detail="", **extra):
+        summary = _hc_fail_summary(reason, detail, **extra)
+        await emit("hybrid_composite_completed", outcome=reason, detail=detail[:200])
+        return res, summary
+
+    # 소스 선택은 P0 authority 계약 그대로 — `Detail → Front → Back → Fit`, asset dedup.
+    sources = select_pattern_sources(prod_refs, limit=2)
+    detail_ref = next((r for r in sources if r.slot == "Detail"), None)
+    front_ref = next((r for r in sources if r.slot == "Front"), None)
+    if detail_ref is None or front_ref is None:
+        return await fail("reference_insufficient",
+                          f"필수 슬롯 부재 (Detail={detail_ref is not None}, "
+                          f"Front={front_ref is not None})",
+                          selectedSlots=[r.slot for r in sources])
+
     try:
-        prompt = mannequin_fabric.build_prompt(load_fabric_prompt_template())
-        out = await gemini.generate_content_image(
-            resolve_model(s, "image_high"),
-            prompt, [InlineImage(res.mime, res.image), *prod_imgs[:2]],
-            image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
+        detail_bgr = await asyncio.to_thread(_decode_bgr, detail_ref.image.data)
+        front_bgr = await asyncio.to_thread(_decode_bgr, front_ref.image.data)
+        carrier_bgr = await asyncio.to_thread(_decode_bgr, res.image)
     except Exception as e:
-        log.warning("fabric pass failed for job %s (원본 유지): %r", job_id, e)
-        await _emit(pool, job_id, "step", {
-            "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
-            "outcome": "failed_open", "image_hash": before,
-            "error_type": type(e).__name__, "error_message": str(e)[:200]})
-        return res, True  # 호출은 나갔다 — 예산 소비
-    await _emit(pool, job_id, "step", {
-        "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
-        "outcome": "applied", "image_hash": before,
-        "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
-    return out, True
+        return await fail("reference_insufficient", f"디코드 실패: {e}")
+
+    front_sha_early = hashlib.sha256(front_ref.image.data).hexdigest()
+    # Stage 1 — 입력 gate (Detail)
+    val = await asyncio.to_thread(hc_source.validate_stripe_source, detail_bgr)
+    if isinstance(val, CompositeFailure):
+        await emit("hybrid_source_validated", ok=False, reason=val.reason,
+                   detail=val.detail[:200])
+        return await fail(val.reason, val.detail)
+    await emit("hybrid_source_validated", ok=True, roi=list(val.roi),
+               n_periods=val.n_periods_in_roi, axis=val.axis, **val.metrics)
+
+    # Stage 2 — stripe model (Detail ROI)
+    x0, y0, x1, y1 = val.roi
+    detail_sha = hashlib.sha256(detail_ref.image.data).hexdigest()
+    model_or_fail = await asyncio.to_thread(
+        hc_stripe.extract_stripe_model_scan, detail_bgr[y0:y1, x0:x1],
+        source_asset_id=detail_ref.asset_id, source_sha256=detail_sha,
+        source_roi=val.roi)
+    if isinstance(model_or_fail, CompositeFailure):
+        await emit("hybrid_stripe_model", ok=False, reason=model_or_fail.reason,
+                   detail=model_or_fail.detail[:200])
+        return await fail(model_or_fail.reason, model_or_fail.detail)
+    model = model_or_fail
+    await emit("hybrid_stripe_model", ok=True, **model.summary())
+
+    # Stage 3 준비 — source/carrier 기하 (vision 은 좌표만, 판정은 코드)
+    try:
+        # 이중 호출 합의 — vision landmark 지터가 결과를 run 마다 굴리는 것을 실측으로
+        # 확인(zero-cost 평가). 좌표는 평균, 불일치는 typed 실패.
+        src_raw = hybrid_landmarks.merge_geometry_pair(
+            await hybrid_landmarks.extract_geometry(s, front_ref.image),
+            await hybrid_landmarks.extract_geometry(s, front_ref.image))
+        car_img = InlineImage(res.mime, res.image)
+        car_raw = hybrid_landmarks.merge_geometry_pair(
+            await hybrid_landmarks.extract_geometry(s, car_img),
+            await hybrid_landmarks.extract_geometry(s, car_img))
+    except Exception as e:
+        return await fail("panel_landmarks_invalid", f"기하 추출 실패: {type(e).__name__}")
+    if src_raw[1] is not None:
+        return await fail("panel_landmarks_invalid", f"source: {src_raw[1]}")
+    if car_raw[1] is not None:
+        return await fail("panel_landmarks_invalid", f"carrier: {car_raw[1]}")
+    src_raw, car_raw = src_raw[0], car_raw[0]
+    src_lm, src_inv, src_err = hybrid_landmarks.validate_geometry(
+        src_raw, aspect_hw=front_bgr.shape[0] / front_bgr.shape[1])
+    if src_err:
+        return await fail("panel_landmarks_invalid", f"source: {src_err}")
+    car_lm, car_inv, car_err = hybrid_landmarks.validate_geometry(
+        car_raw, aspect_hw=carrier_bgr.shape[0] / carrier_bgr.shape[1])
+    if car_err:
+        return await fail("panel_landmarks_invalid", f"carrier: {car_err}")
+    src_boxes = (src_inv or {}).pop("component_boxes", {})
+    car_boxes = (car_inv or {}).pop("component_boxes", {})
+
+    # scale anchor — source Front torso 에서 **의류 기준 줄 방향과** 단위 반복 수를 잰다.
+    # Detail 근접컷은 원단을 눕혀 찍는 경우가 흔해서(실측: 세로 줄 셔츠의 Detail 이 수평 밴드)
+    # model.axis(사진 좌표)는 의류 방향의 근거가 못 된다. 의류에 실제로 입혀진 방향은
+    # Front(의류 전체가 보이는 사진)의 torso 측정이 정본이다. 1D 프로파일 모델은 방향과
+    # 무관하므로 축만 Front 기준으로 바꿔 끼운다.
+    fh, fw = front_bgr.shape[:2]
+    fy0 = int(min(src_lm["shoulder_l"][1], src_lm["shoulder_r"][1]) * fh)
+    fy1 = int(max(src_lm["hem_l"][1], src_lm["hem_r"][1]) * fh)
+    fx0 = int(min(src_lm["shoulder_l"][0], src_lm["hem_l"][0]) * fw)
+    fx1 = int(max(src_lm["shoulder_r"][0], src_lm["hem_r"][0]) * fw)
+    torso_crop = front_bgr[max(0, fy0):fy1, max(0, fx0):fx1]
+    # 스케일 앵커 = Front torso 에서의 **scan 재추출 + Detail 모델과의 구조 대조**.
+    # guided 상관 탐색은 sub-line lag 에 잠겼다(실측: 15px/corr 0.54 vs scan 21px/4색 일치).
+    # 두 사진에서 독립 추출한 모델의 색 수·폭 비가 일치하면 그 주기는 신뢰할 수 있다.
+    front_model = await asyncio.to_thread(
+        hc_stripe.extract_stripe_model_scan, torso_crop,
+        source_asset_id=front_ref.asset_id, source_sha256=front_sha_early,
+        source_roi=(fx0, fy0, fx1, fy1))
+    anchor_corr = None
+    if not isinstance(front_model, CompositeFailure) and (
+            len(front_model.color_sequence_lab) == len(model.color_sequence_lab)
+            and max(abs(a - b) / max(b, 1e-6) for a, b in
+                    zip(front_model.line_width_ratios, model.line_width_ratios)) <= 0.6):
+        garment_axis = front_model.axis
+        front_period_px = float(front_model.period_px)
+        anchor_corr = round(front_model.confidence, 3)
+    else:
+        anchor = await asyncio.to_thread(hc_stripe.find_period_guided, torso_crop, model)
+        if anchor is None:
+            return await fail(
+                "stripe_model_low_confidence",
+                "source Front torso 반복 앵커 실패 (scan 구조 불일치 + guided 실패)",
+                frontScan=(front_model.reason if isinstance(front_model, CompositeFailure)
+                           else {"n_colors": len(front_model.color_sequence_lab)}))
+        garment_axis, front_period_px, anchor_corr = anchor
+    torso_span_src = (fy1 - fy0) if garment_axis == "horizontal" else (fx1 - fx0)
+    repeats_on_torso = torso_span_src / front_period_px
+    ch, cw = carrier_bgr.shape[:2]
+    t_torso_span = (
+        (max(car_lm["hem_l"][1], car_lm["hem_r"][1])
+         - min(car_lm["shoulder_l"][1], car_lm["shoulder_r"][1])) * ch
+        if garment_axis == "horizontal" else
+        (max(car_lm["shoulder_r"][0], car_lm["hem_r"][0])
+         - min(car_lm["shoulder_l"][0], car_lm["hem_l"][0])) * cw)
+    target_period_px = float(t_torso_span / max(repeats_on_torso, 1e-6))
+    await emit("hybrid_scale_anchor", garment_axis=garment_axis,
+               detail_photo_axis=model.axis,
+               front_period_px=round(front_period_px, 2),
+               anchor_corr=round(anchor_corr, 3),
+               repeats_on_torso=round(repeats_on_torso, 2),
+               target_period_px=round(target_period_px, 2))
+
+    # Stage 3 — panel map (+ construction 대조)
+    pm = await asyncio.to_thread(
+        hc_panel.build_panel_map, carrier_bgr, car_lm,
+        source_inventory=src_inv, carrier_inventory=car_inv, strategy="auto")
+    if isinstance(pm, CompositeFailure):
+        await emit("hybrid_panel_map", ok=False, reason=pm.reason, detail=pm.detail[:200],
+                   metrics=pm.metrics)
+        return await fail(pm.reason, pm.detail, constructionMetrics=pm.metrics)
+    await emit("hybrid_panel_map", ok=True, confidence=round(pm.confidence, 3),
+               strategy=pm.strategy, panels=[p.name for p in pm.panels],
+               metrics=pm.metrics)
+
+    # Stage 4 — 결정론 warp/composite
+    art = await asyncio.to_thread(
+        hc_warp.composite_stripe, carrier_bgr, pm, model,
+        target_period_px=target_period_px, target_axis=garment_axis,
+        component_boxes=car_boxes, source_bgr=front_bgr,
+        source_component_boxes=src_boxes)
+    if isinstance(art, CompositeFailure):
+        await emit("hybrid_warp_composite", ok=False, reason=art.reason,
+                   detail=art.detail[:200], metrics=art.metrics)
+        return await fail(art.reason, art.detail)
+    await emit("hybrid_warp_composite", ok=True, coverage=round(art.source_coverage, 4),
+               panel_metrics=art.panel_metrics,
+               components_needing_review=list(art.components_needing_review),
+               **art.metrics)
+
+    # Stage 5 — deterministic QC (LLM 이 못 뒤집는 판정)
+    qc = await asyncio.to_thread(
+        hc_qc.verify_composite, art.image_bgr, carrier_bgr, pm, model,
+        target_period_px=target_period_px, target_axis=garment_axis)
+    qc_event_metrics = {k: v for k, v in qc.metrics.items() if k != "failure_details"}
+    await emit("hybrid_deterministic_qc", passed=qc.passed,
+               failures=list(qc.failures), metrics=qc_event_metrics,
+               failure_details=[d.get("detail", "")[:160]
+                                for d in qc.metrics.get("failure_details", [])][:6])
+    if not qc.passed:
+        return await fail(qc.failures[0] if qc.failures else "pattern_metric_failed",
+                          "; ".join(d.get("detail", "") for d in
+                                    qc.metrics.get("failure_details", []))[:200],
+                          deterministicMetrics=qc_event_metrics)
+
+    ok, png = cv2.imencode(".png", art.image_bgr)
+    if not ok:
+        return await fail("pattern_metric_failed", "출력 인코딩 실패")
+    out_bytes = png.tobytes()
+    needs_review = bool(art.components_needing_review)
+    front_sha = front_sha_early
+    summary = {
+        "applied": True,
+        "needsReview": needs_review,
+        "componentsNeedingReview": list(art.components_needing_review),
+        "deterministicPassed": True,
+        "pipelineVersion": HC_PIPELINE_VERSION,
+        "versions": {"pipeline": HC_PIPELINE_VERSION,
+                     "extractor": model.extractor_version, "panelMap": pm.version,
+                     "warp": art.version, "qc": qc.version},
+        "stripeModel": model.summary(),
+        "sourceAssets": {
+            "detail": {"assetId": detail_ref.asset_id, "sha256": detail_sha,
+                       "roi": list(val.roi)},
+            "front": {"assetId": front_ref.asset_id, "sha256": front_sha},
+        },
+        "targetPeriodPx": round(target_period_px, 2),
+        "targetAxis": garment_axis,
+        "sourceCoverage": round(art.source_coverage, 4),
+        "panelMetrics": art.panel_metrics,
+        "deterministicMetrics": qc_event_metrics,
+        "outputSha256": hashlib.sha256(out_bytes).hexdigest(),
+        "carrierSha256": hashlib.sha256(res.image).hexdigest(),
+    }
+    await emit("hybrid_composite_completed", outcome="applied",
+               needs_review=needs_review,
+               components_needing_review=list(art.components_needing_review),
+               coverage=round(art.source_coverage, 4),
+               output_hash=summary["outputSha256"][:12])
+    new_res = GeminiImageResult(
+        image=out_bytes, mime="image/png",
+        latency_ms=getattr(res, "latency_ms", 0), usage=getattr(res, "usage", None))
+    return new_res, summary
 
 
 async def _apply_edits(
-    *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_imgs, match_img,
+    *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_refs, match_img,
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
     image_size=None, has_fine_pattern=False,
 ):
@@ -760,6 +1073,9 @@ async def _apply_edits(
     """
     if not enabled:
         return res, p2, calls_spent
+    # 판정(axis/image QC)은 상품 사진 **전체**를 그대로 본다 — 기존 동작 불변. 역할 기반
+    # 선택은 원단 2패스만의 문제라 거기서만 refs 를 쓴다.
+    prod_imgs = [r.image for r in prod_refs]
     pre_hash = hashlib.sha256(res.image).hexdigest()
     pre_res, pre_p2 = res, p2
     # untuck — 편집 체인 **맨 앞**. 밑단 위치(구도)가 먼저 확정돼야 축 QC 가 실제 밑단을 보고
@@ -784,14 +1100,9 @@ async def _apply_edits(
         base_gender=base_gender, res=res, calls_spent=calls_spent,
         clothing_type=clothing_type, image_size=image_size)
     calls_spent += bust_spent
-    # 원단 패턴 2패스 — 가슴 2패스 **뒤**에 둔다. 두 편집이 겹치면 순서가 결과를 가르는데,
-    # 몸 형태가 먼저 확정돼야 그 위의 천에 패턴을 얹는 게 자연스럽다(반대로 하면 볼륨 편집이
-    # 방금 맞춘 패턴을 다시 늘린다). 회귀 판정은 아래에서 두 편집을 합쳐 한 번에 본다.
-    res, fabric_spent = await _apply_fabric_pass(
-        pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-        res=res, prod_imgs=prod_imgs, calls_spent=calls_spent,
-        has_fine_pattern=has_fine_pattern, image_size=image_size)
-    calls_spent += fabric_spent
+    # (2026-08-01) 원단 패턴 2패스는 제거됐다 — whole-image generative 재생성으로는 잔줄
+    # 패턴 동일성을 증명할 수 없었고(실측 blind visual 3/3 FAIL), 패턴 동일성은 이제
+    # geometry 편집이 모두 끝난 뒤 deterministic hybrid composite 가 담당한다.
     # A~C 점수는 **편집 전** 원본에 매긴 것이다. 편집이 이미지를 바꿨다면 저장되는 점수가
     # 실제 출고본의 점수가 아니게 된다(검수자가 다른 이미지의 숫자를 보고 판단하게 됨).
     # 이미지가 실제로 바뀐 경우에만 재판정한다 — 안 바뀌었으면 vision 콜 낭비다.
@@ -828,6 +1139,16 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
     """채택본을 R2 에 올리고 finalize 용 dict 를 만든다. 출고 지점은 여기 하나뿐이다."""
     if qc_scores is not None:
         qc_scores["outcome"] = score_outcome(s, qc_scores)
+        hc = qc_scores.get("hybridComposite")
+        if isinstance(hc, dict):
+            # deterministic 판정과 LLM 판정의 우선순위를 출고 지점 한 곳에서 강제한다:
+            #  · 합성 실패/부분실패(needsReview) → auto_pass 로 나갈 수 없다(강등만, 승격 없음)
+            #  · deterministic 통과 → LLM 의 regenerate 가 정상 출고를 막지 못하되,
+            #    자동통과로 미화하지도 않는다 → needs_review 로 사람에게 보인다
+            if hc.get("needsReview") and qc_scores["outcome"] == "auto_pass":
+                qc_scores["outcome"] = "needs_review"
+            if hc.get("deterministicPassed") and qc_scores["outcome"] == "regenerate":
+                qc_scores["outcome"] = "needs_review"
     ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
     asset_id = str(uuid.uuid4())
     key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -884,27 +1205,47 @@ async def _rollback_edits(
 
 
 async def _run_candidate(
-    *, app, job, candidate, base_fit, base_gender, base_img, prod_imgs, match_img,
+    *, app, job, candidate, base_fit, base_gender, base_img, prod_refs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
     adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
 ) -> dict | None:
-    """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
+    """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None.
+
+    `prod_refs` 는 역할(slot)이 붙은 상품 참조다. 기존 생성·QC 가 쓰는 bare 바이트 목록은
+    여기서 파생한다 — 슬롯을 버리는 지점을 하나도 남기지 않으려고 입력 자체를 refs 로 받는다.
+    """
     s = app.state.settings
     pool, r2, gemini = app.state.pool, app.state.r2, app.state.gemini
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
+    prod_refs = tuple(prod_refs)
+    prod_imgs = [r.image for r in prod_refs]
     # 미세 패턴 상품은 해상도를 올린다. **편집 패스(축 교정·2패스)도 같은 값**을 써야 한다 —
     # 편집이 기본 해상도로 다시 렌더하면 어렵게 올린 4K 가 그 자리에서 깎인다.
     image_size = effective_image_size(s, product, analysis)
     has_fine_pattern = mannequin.has_fine_pattern(product, analysis)
     if generation_path == "edit" and parent_cut_img is not None and adjust_directives:
         # 편집 프롬프트의 image 1 계약: 현재 컷이 반드시 첫 장이고, 상품 정체성 앵커가 뒤따른다.
-        images = [parent_cut_img, *prod_imgs] + ([match_img] if match_img else [])
+        # 상품 참조끼리는 역할 우선순위(Detail → Front → Back → Fit)로 정렬한다 — 매니페스트가
+        # 슬롯별 권위를 선언하므로 번호와 실제 이미지가 같은 순서여야 그 문장이 유효하다.
+        edit_refs = order_by_role(prod_refs)
+        images = [parent_cut_img, *(r.image for r in edit_refs)] + (
+            [match_img] if match_img else [])
         base_prompt = render_adjust_prompt(
-            adjust_directives, build_adjust_manifest(len(prod_imgs), match_img is not None))
+            adjust_directives, build_adjust_manifest(edit_refs, match_img is not None))
         prompt_version = ADJUST_PROMPT_VERSION
-        model = resolve_model(s, getattr(s, "mannequin_adjust_tier", "") or "image_high")
+        tier = adjust_edit_tier(s, has_fine_pattern=has_fine_pattern)
+        pattern_tier_guard = tier != adjust_edit_tier(s)  # 가드가 실제로 발화했는가
+        model = resolve_model(s, tier)
+        manifest_refs = edit_refs
     else:
+        if generation_path == "edit":
+            # 여기 오면 워커가 편집 자격을 줬는데 입력이 비어 온 것이다(현재 도달 불가).
+            # 조용히 fresh 로 눕히지 않고 사실을 남긴다 — 패턴이 다시 무작위 생성되는 경로다.
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "status": "edit_path_fallback",
+                "reason": "missing_edit_inputs", "requested_mode": "regenerate",
+                "pattern_risk": has_fine_pattern})
         generation_path = "fresh"
         # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
         images = [base_img, *prod_imgs] + ([match_img] if match_img else []) + list(ref_imgs)
@@ -922,7 +1263,10 @@ async def _run_candidate(
         prompt_version = s.mannequin_prompt_version
         # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
         # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
-        model = resolve_model(s, tier_for_job(s, job))
+        tier = tier_for_job(s, job, has_fine_pattern=has_fine_pattern)
+        pattern_tier_guard = tier != tier_for_job(s, job)  # 가드가 실제로 발화했는가
+        model = resolve_model(s, tier)
+        manifest_refs = prod_refs
     feedback = ""
     # 구제 후보 풀을 **두 단계로 분리**한다(codex 2026-07-31 HIGH).
     #  - pre_reject: 사전 게이트에서 걸린 후보. axis/bust 편집·재판정·D축을 아직 안 거쳤다.
@@ -953,6 +1297,13 @@ async def _run_candidate(
             "prompt_hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "prompt_version": prompt_version,
             "generation_path": generation_path,
+            # 관측 계약: "어떤 역할의 asset 이 어떤 모델·해상도로 나갔는가"를 로그만으로 재현
+            # 할 수 있어야 한다(계획 P0 완료 기준). 바이트·URL 은 넣지 않는다(id/slot 만).
+            "product_refs": [{"slot": r.slot, "asset_id": r.asset_id} for r in manifest_refs],
+            "model_tier": tier,
+            "pattern_tier_guard": pattern_tier_guard,
+            "has_fine_pattern": has_fine_pattern,
+            "image_size": image_size,
             "input_source": fit_profile_source})
         calls_spent += 1  # 성공하든 실패하든 호출은 나갔다
         try:
@@ -1026,11 +1377,35 @@ async def _run_candidate(
         if not pillow_reject and not p2_reject:
             res, p2, calls_spent = await _apply_edits(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
-                attempt=attempt, model=model, res=res, p2=p2, prod_imgs=prod_imgs,
+                attempt=attempt, model=model, res=res, p2=p2, prod_refs=prod_refs,
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
                 base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, enabled=reprocess, image_size=image_size,
                 has_fine_pattern=has_fine_pattern)
+            # deterministic hybrid composite — 모든 generative geometry edit 뒤, 저장 앞.
+            # 이 지점 이후 출고까지 image-generation/edit 호출은 0회다.
+            hybrid_info = None
+            if reprocess:
+                res, hybrid_info = await _apply_hybrid_composite(
+                    pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+                    res=res, prod_refs=prod_refs, product=product, analysis=analysis,
+                    has_fine_pattern=has_fine_pattern)
+                _raise_if_hybrid_failed_closed(hybrid_info)
+                if (hybrid_info and hybrid_info.get("applied")
+                        and isinstance(p2, dict) and prod_imgs):
+                    # 보조 신호 — 출고본(합성본)에 대한 기존 QC 재판정(analyze 호출, 생성 아님).
+                    # deterministic 판정을 뒤집을 수 없다(아래 retry 억제·outcome 강등 참조).
+                    try:
+                        p2 = await image_qc.verdict(
+                            s, prod_imgs, InlineImage(res.mime, res.image), scored=True,
+                            fit_profile=fit_profile)
+                        await _emit(pool, job_id, "step", {
+                            "candidate": candidate, "attempt": attempt,
+                            "status": "image_qc_rescored", "imageQc": p2,
+                            "subject": "hybrid_composite"})
+                    except Exception as e:
+                        log.warning("post-composite image_qc failed for job %s: %r",
+                                    job_id, e)
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
             series = (
@@ -1044,9 +1419,22 @@ async def _run_candidate(
             qc_scores = merge_qc_scores(
                 p2, series, salvaged=salvaged,
                 thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+            if hybrid_info is not None:
+                qc_scores = {**(qc_scores or {}), "hybridComposite": hybrid_info}
             budget_left = has_budget_for_retry(s, calls_spent=calls_spent)
+            # deterministic 합성이 통과한 컷은 LLM 점수의 retry 로 재생성하지 않는다 —
+            # 기존 QC 는 보조 신호다(같은 이미지에 3회 중 2회 pass 를 주던 판정으로
+            # 결정론적으로 옳은 패턴을 다시 뽑으면 비용만 태운다). outcome 강등은
+            # _save_cut 에서 수행되므로 판정 기록은 남는다.
+            deterministic_ok = bool(hybrid_info and hybrid_info.get("deterministicPassed"))
+            if deterministic_ok and final_decision(s, qc_scores) == "retry":
+                await _emit(pool, job_id, "step", {
+                    "candidate": candidate, "attempt": attempt,
+                    "status": "hybrid_llm_retry_suppressed",
+                    "outcome": score_outcome(s, qc_scores)})
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
-            if final_decision(s, qc_scores) == "retry" and budget_left and not salvaged:
+            if (final_decision(s, qc_scores) == "retry" and budget_left and not salvaged
+                    and not deterministic_ok):
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "final_qc_reject",
                     "outcome": score_outcome(s, qc_scores),
@@ -1059,7 +1447,9 @@ async def _run_candidate(
             # 예산 소진인데 최종 판정이 retry 라면 최선본으로 되돌려 구제 출고한다.
             # **final_reject 만** 쓴다 — pre_reject 는 편집·재판정·D축을 안 거친 원본이라
             # 그대로 저장하면 검증 안 된 이미지가 출고된다(codex HIGH).
-            if final_decision(s, qc_scores) == "retry" and not salvaged:
+            # deterministic 통과 컷은 구제(salvage) 표기 대상이 아니다 — LLM retry 억제와
+            # 같은 이유. 그대로 저장 경로로 떨어진다.
+            if final_decision(s, qc_scores) == "retry" and not salvaged and not deterministic_ok:
                 if final_reject and _is_better_candidate(s, final_reject[1], qc_scores):
                     res, qc_scores, _series, _p2 = final_reject
                 qc_scores = {**(qc_scores or {}), "salvaged": True}
@@ -1100,6 +1490,8 @@ async def _run_candidate(
         if final_reject:
             # 이미 편집·D축까지 끝난 출고 준비본 — 다시 태우지 않는다.
             res, qc_scores, series, p2 = final_reject
+            _raise_if_hybrid_failed_closed(
+                (qc_scores or {}).get("hybridComposite") if isinstance(qc_scores, dict) else None)
         else:
             # 사전 게이트 후보는 편집·D축을 안 거쳤다. 그대로 저장하면 검증 안 된 이미지가
             # 나간다(codex 4차 HIGH) — 예산 소진 경로와 **같은 처리**를 태운 뒤 구제한다.
@@ -1107,15 +1499,24 @@ async def _run_candidate(
             res, p2, calls_spent = await _apply_edits(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
                 attempt=s.mannequin_max_attempts, model=model, res=res, p2=p2,
-                prod_imgs=prod_imgs, match_img=match_img, fit_profile=fit_profile,
+                prod_refs=prod_refs, match_img=match_img, fit_profile=fit_profile,
                 profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, image_size=image_size,
                 has_fine_pattern=has_fine_pattern)
+            # 구제 경로도 같은 규율 — geometry edit 뒤에는 반드시 composite 를 거친다.
+            # high-risk 패턴이 구제라는 이유로 생성 결과 그대로 나가면 안 된다.
+            res, salvage_hybrid = await _apply_hybrid_composite(
+                pool=pool, s=s, job_id=job_id, candidate=candidate,
+                attempt=s.mannequin_max_attempts, res=res, prod_refs=prod_refs,
+                product=product, analysis=analysis, has_fine_pattern=has_fine_pattern)
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
                 candidate=candidate, attempt=s.mannequin_max_attempts, res=res)
             qc_scores = merge_qc_scores(
                 p2, series, thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+            if salvage_hybrid is not None:
+                qc_scores = {**(qc_scores or {}), "hybridComposite": salvage_hybrid}
+            _raise_if_hybrid_failed_closed(salvage_hybrid)
         qc_scores = {**(qc_scores or {}), "salvaged": True}
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "status": "qc_salvaged",
@@ -1183,7 +1584,15 @@ async def run_mannequin_job(app, job: dict) -> None:
 
         # 2) 바이트 다운로드 (to_thread)
         base_img = InlineImage(base_asset["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, base_asset["r2_key"]))
-        prod_imgs = [InlineImage(a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"])) for a in prod_assets]
+        # 바이트로 납작해지는 **이 지점**이 예전에 슬롯을 잃던 곳이다. 역할을 함께 들고 간다.
+        prod_refs = [
+            ProductReference(
+                slot=a.get("slot") or "Front", asset_id=a["id"],
+                image=InlineImage(
+                    a["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"])))
+            for a in prod_assets
+        ]
+        prod_imgs = [r.image for r in prod_refs]  # 기존 생성/QC 호환 — refs 에서 파생
         match_img = None
         if match_asset:
             match_img = InlineImage(match_asset["mime_type"], await asyncio.to_thread(app.state.r2.get_bytes, match_asset["r2_key"]))
@@ -1226,29 +1635,53 @@ async def run_mannequin_job(app, job: dict) -> None:
         parent_edit_depth = None
         parent_cut_img = None
         adjust_directives = ""
+        fallback_reason = None
         payload_mode = (job.get("payload") or {}).get("mode")
-        if payload_mode == "regenerate" and snap_valid and isinstance(fit_profile, dict):
-            adjust_directives = build_adjust_directives(fit_profile, adjusted_axes)
-            if adjust_directives:
-                parent = None
-                try:
-                    async with pool.connection() as conn:
-                        parent = await repo.get_mannequin_edit_parent(
-                            conn, user_id, project_id)
-                except Exception:
-                    parent = None
-                parent_edit_depth = _compatible_parent_edit_depth(
-                    parent, fit_profile, resolved_match_id)
-                if parent_edit_depth is not None:
+        if payload_mode == "regenerate":
+            if not (snap_valid and isinstance(fit_profile, dict)):
+                fallback_reason = "invalid_fit_snapshot"
+            else:
+                adjust_directives = build_adjust_directives(fit_profile, adjusted_axes)
+                if not adjust_directives:
+                    fallback_reason = "no_adjust_directives"
+                else:
+                    parent, lookup_failed = None, False
                     try:
-                        parent_bytes = await asyncio.to_thread(
-                            app.state.r2.get_bytes, parent["r2_key"])
-                        parent_cut_img = InlineImage(parent["mime_type"], parent_bytes)
+                        async with pool.connection() as conn:
+                            parent = await repo.get_mannequin_edit_parent(
+                                conn, user_id, project_id)
                     except Exception:
-                        parent_cut_img = None
-                    if parent_cut_img is not None:
-                        generation_path = "edit"
-                        parent_cut_id = parent["id"]
+                        parent, lookup_failed = None, True
+                    parent_edit_depth, fallback_reason = classify_parent_edit(
+                        parent, fit_profile, resolved_match_id)
+                    if lookup_failed:
+                        fallback_reason = "parent_lookup_failed"
+                    if parent_edit_depth is not None:
+                        try:
+                            parent_bytes = await asyncio.to_thread(
+                                app.state.r2.get_bytes, parent["r2_key"])
+                            parent_cut_img = InlineImage(parent["mime_type"], parent_bytes)
+                        except Exception:
+                            parent_cut_img = None
+                        if parent_cut_img is not None:
+                            generation_path = "edit"
+                            parent_cut_id = parent["id"]
+                        else:
+                            # 부모 컷을 못 읽으면 편집 자격도 없다 — depth 를 비워 metadata 가
+                            # "edit 인 척"하지 않게 한다.
+                            parent_edit_depth = None
+                            fallback_reason = "parent_asset_load_failed"
+        # 조정 요청이 fresh 로 떨어졌으면 그 사유를 남긴다. 조용히 폴백하면 셀러에겐 "조정했는데
+        # 패턴이 또 달라졌다"만 남고, 우리는 그게 편집 미적용 탓인지 편집 실패 탓인지 못 가른다.
+        if payload_mode == "regenerate" and generation_path != "edit":
+            await _emit(pool, job_id, "step", {
+                "status": "edit_path_fallback",
+                # 분류에 실패했으면 그 사실을 그대로 남긴다. 그럴듯한 사유를 기본값으로 채우면
+                # 집계가 조용히 오염돼, 없는 원인을 고치러 가게 된다.
+                "reason": fallback_reason or "unclassified",
+                "requested_mode": payload_mode,
+                # 패턴 위험도와 함께 집계 — 고위험 상품의 silent fresh 가 가장 아픈 경우다.
+                "pattern_risk": mannequin.has_fine_pattern(product, analysis)})
 
         # Fresh 생성에만 유사 성공 컷을 STYLE REFERENCE 로 첨부한다. Edit 입력은 v2 계약의
         # [parent, products..., match?] 정확한 순서를 유지해야 하므로 검색 자체를 건너뛴다.
@@ -1300,17 +1733,25 @@ async def run_mannequin_job(app, job: dict) -> None:
                         estimated=True)
 
         async def _cand(letter, base_fit, profile):
-            nonlocal _done
+            nonlocal _done, hybrid_fail_closed_meta
             try:
                 r = await _run_candidate(
                     app=app, job=job, candidate=letter, base_fit=base_fit, base_gender=gender,
-                    base_img=base_img, prod_imgs=prod_imgs, match_img=match_img,
+                    base_img=base_img, prod_refs=prod_refs, match_img=match_img,
                     product_count=product_count, template=template, product=product,
                     analysis=analysis, clothing_type=clothing_type, image_manifest=manifest,
                     fit_profile=profile, adjusted_axes=adjusted_axes,
                     fit_profile_source=fit_profile_source, ref_imgs=ref_imgs,
                     generation_path=generation_path, parent_cut_img=parent_cut_img,
                     adjust_directives=adjust_directives)
+            except _HybridCompositeFailClosed as e:
+                hybrid_fail_closed_meta = {
+                    "error": "hybrid_composite_failed_closed",
+                    "failureReason": e.summary.get("failureReason"),
+                    "detail": e.summary.get("failureDetail", ""),
+                    "hybridComposite": e.summary,
+                }
+                r = None
             except Exception as e:
                 log.warning("job %s candidate %s failed: %r", job_id, letter, e)
                 r = None
@@ -1321,6 +1762,7 @@ async def run_mannequin_job(app, job: dict) -> None:
             await _emit_generation_progress(next_progress)
             return r
 
+        hybrid_fail_closed_meta = None
         progress_task = asyncio.create_task(_tick_generation_progress())
         try:
             results = [await _cand("A", legacy_base_fit, fit_profile)]
@@ -1330,6 +1772,10 @@ async def run_mannequin_job(app, job: dict) -> None:
             with suppress(asyncio.CancelledError):
                 await progress_task
         passed = [r for r in results if isinstance(r, dict)]
+
+        if await _fail_closed_hybrid_job_if_needed(
+                app.state.r2, _fail, passed, hybrid_fail_closed_meta):
+            return
 
         if not passed:
             await _fail("마네킹컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": "all_candidates_failed"})
@@ -1347,7 +1793,23 @@ async def run_mannequin_job(app, job: dict) -> None:
                               else s.mannequin_prompt_version),
         }
         for candidate_result in passed:
-            candidate_result["generation_metadata"] = dict(cut_generation_metadata)
+            md = dict(cut_generation_metadata)
+            qs = candidate_result.get("qc_scores")
+            hc = qs.get("hybridComposite") if isinstance(qs, dict) else None
+            if isinstance(hc, dict) and hc.get("applied"):
+                # lineage — 이 컷의 표면이 어느 원본·어느 알고리즘 버전에서 왔는지.
+                # 전체 metric 은 qc_scores/job_events 에 있고, 여기는 재현에 필요한 최소만.
+                md["generationPath"] = "hybrid_stripe_composite"
+                md["hybridComposite"] = {
+                    "versions": hc.get("versions"),
+                    "sourceAssets": hc.get("sourceAssets"),
+                    "targetPeriodPx": hc.get("targetPeriodPx"),
+                    "sourceCoverage": hc.get("sourceCoverage"),
+                    "outputSha256": hc.get("outputSha256"),
+                    "carrierSha256": hc.get("carrierSha256"),
+                    "componentsNeedingReview": hc.get("componentsNeedingReview", []),
+                }
+            candidate_result["generation_metadata"] = md
 
         # 4) 성공 종결 (원자·lease 펜스). charge = reserved — 예약 시점 견적을 그대로 확정한다
         # (단일컷 전환으로 구 "성공 후보 수 × 1" 폐기. 실행 시점 설정값을 다시 읽으면 배포/env 변경
@@ -1362,10 +1824,6 @@ async def run_mannequin_job(app, job: dict) -> None:
                           "gender": gender})
             await conn.commit()
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
-            for c in passed:
-                try:
-                    await asyncio.to_thread(app.state.r2.delete, c["key"])
-                except Exception:
-                    log.warning("orphan R2 cleanup failed: %s", c["key"])
+            await _delete_uploaded_candidate_keys(app.state.r2, passed)
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
         await _fail("생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})

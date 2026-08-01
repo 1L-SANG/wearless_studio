@@ -24,11 +24,15 @@ QC_FLAGS = [
     ("IMAGE_QC", "image_qc"),
     ("MANNEQUIN_AXIS_QC", "mannequin_axis_qc"),
     ("MANNEQUIN_QC_ENABLED", "mannequin_qc_enabled"),
-    # 편집 패스 3종도 같은 사고 경로다 — 미선언이면 config 기본 off 로 조용히 안 돈다.
+    # 편집 패스 2종도 같은 사고 경로다 — 미선언이면 config 기본 off 로 조용히 안 돈다.
     ("MANNEQUIN_UNTUCK_PASS", "mannequin_untuck_pass"),
-    ("MANNEQUIN_FABRIC_PASS", "mannequin_fabric_pass"),
     ("MANNEQUIN_BUST_PASS", "mannequin_bust_pass"),
 ]
+
+# 폐기된 flag — manifest 에 다시 나타나면 안 된다. 구 generative fabric pass 는 blind visual
+# 3/3 FAIL 로 코드째 삭제됐다(2026-08-01, hybrid composite 로 대체). env 잔재로 재선언되면
+# 로더에 대응 필드가 없어 조용히 무시되는데, 운영자는 켜졌다고 믿게 된다 — 그 사고를 막는다.
+RETIRED_FLAGS = ["MANNEQUIN_FABRIC_PASS"]
 
 
 @pytest.fixture(scope="module")
@@ -41,6 +45,15 @@ def test_qc_flags_are_declared(manifest_vars):
     """QC 플래그는 매니페스트에 명시돼야 한다 — 기본값 의존이 무측정 사고의 원인이었다."""
     missing = [name for name, _ in QC_FLAGS if name not in manifest_vars]
     assert not missing, f"매니페스트에 QC 플래그 미선언: {missing}"
+
+
+def test_retired_flags_are_not_declared(manifest_vars):
+    """폐기 flag 가 manifest 에 되살아나면 안 된다 — 로더에 필드가 없어 조용히 무시된다."""
+    revived = [name for name in RETIRED_FLAGS if name in manifest_vars]
+    assert not revived, (
+        f"폐기된 flag 가 manifest 에 재선언됨: {revived} — 대응 config 필드가 삭제돼 "
+        "아무 효과 없이 켜진 것처럼 보인다"
+    )
 
 
 @pytest.mark.parametrize("env_name,attr", QC_FLAGS)
@@ -71,7 +84,7 @@ def test_image_qc_enforce_carries_its_retry_budget(manifest_vars):
     거짓양성 육안 점검 오탐 0, 층화 재측정, 계약 뮤테이션 26/26.
 
     그래서 잠그는 대상이 바뀐다. enforce 의 `regenerate` 판정은 재시도를 쓰는데, 그 예산은
-    편집 패스(untuck·fabric·bust)와 공유된다. 기본값 2 로 두면 재시도 전에 소진돼서
+    편집 패스(untuck·bust)와 공유된다. 기본값 2 로 두면 재시도 전에 소진돼서
     **판정만 하고 아무것도 고치지 못한다** — 가슴 2패스가 한 번도 출고되지 않던 실제 원인이다.
     enforce 를 켰으면 예산도 같이 올라가 있어야 한다는 것이 여기서 지킬 불변식이다.
     """

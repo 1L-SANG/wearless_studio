@@ -15,6 +15,7 @@ from app.agents.mannequin_adjust import (
     build_adjust_manifest,
     render_adjust_prompt,
 )
+from app.agents.product_reference import ProductReference
 from app.workers import mannequin_job
 from conftest import make_settings
 
@@ -340,7 +341,7 @@ def test_edit_candidate_uses_parent_first_pro_model_adjust_prompt_axis_qc_and_sa
         base_fit="regular",
         base_gender="women",
         base_img=InlineImage("image/png", b"fresh-base"),
-        prod_imgs=[product],
+        prod_refs=[ProductReference(slot="Front", asset_id="prod", image=product)],
         match_img=match,
         product_count=2,
         template="unused fresh template",
@@ -362,7 +363,9 @@ def test_edit_candidate_uses_parent_first_pro_model_adjust_prompt_axis_qc_and_sa
     assert call["model"] == "pro-test"  # 빈 adjust tier도 image_high로 강제 해석
     assert [image.data for image in call["images"]] == [b"parent", b"product", b"match"]
     assert call["prompt"] == render_adjust_prompt(
-        directives, build_adjust_manifest(1, True))
+        directives,
+        build_adjust_manifest(
+            [ProductReference(slot="Front", asset_id="prod", image=product)], True))
     assert judged == [_PNG_1PX]  # 편집 경로의 최초 출력에도 기존 axis QC가 실행됨
 
     rendered = [

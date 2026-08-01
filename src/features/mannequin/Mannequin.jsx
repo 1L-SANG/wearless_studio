@@ -29,6 +29,15 @@ import {
   cutsExistedBeforeInitialGeneration,
   markInitialGenerationRequested,
 } from './initialGenerationSession.js';
+import {
+  classifyMannequinReview,
+  isNonRetryableMannequinRegenerateError,
+  mannequinCanEnterStoryboard,
+  mannequinRegenerateFailureNotice,
+  mannequinReviewAcknowledgedForCut,
+  mannequinReviewBlocksStoryboard,
+  mannequinVersionAriaLabel,
+} from './reviewState.js';
 import './Mannequin.css';
 
 const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
@@ -147,14 +156,6 @@ function newestCutSince(list, baseline) {
     || landed.reduce((latest, cut) => (
       !latest || (Number(cut.version) || 0) >= (Number(latest.version) || 0) ? cut : latest
     ), null);
-}
-
-function isNonRetryableRegenerateError(error) {
-  const status = Number(error?.status) || 0;
-  const message = String(error?.message || '');
-  return status === 402
-    || message.includes('크레딧')
-    || (status >= 400 && status < 500);
 }
 
 function decodeCutImage(src) {
@@ -490,9 +491,11 @@ function RegenerateChecklist({
 // 가운데 "내 옷" 컬럼: 큰 컷(태그 없음) + 버전 썸네일 스트립 + 조정 대기 체크리스트.
 function MineColumn({
   selected,
+  selectedReviewState,
   cuts,
   selectedCutId,
   onSelect,
+  versionSelectDisabled,
   arrival,
   waitTile,
   showWaitPanel,
@@ -539,22 +542,40 @@ function MineColumn({
         ) : (
           <div className="busy-tile">마네킹컷이 아직 없어요</div>
         )}
+        {selectedReviewState?.badge && (
+          <span className={`fit-review-overlay is-${selectedReviewState.level}`}>
+            {selectedReviewState.badge}
+          </span>
+        )}
       </div>
+      {selectedReviewState?.hardBlocked || selectedReviewState?.visibleReview ? (
+        <div className={`fit-review-banner is-${selectedReviewState.level}`} role={selectedReviewState.hardBlocked ? 'alert' : 'status'}>
+          <b>{selectedReviewState.title}</b>
+          <span>{selectedReviewState.description}</span>
+        </div>
+      ) : null}
       {(cuts.length > 1 || waitTile) && (
         <div className="fit-strip" role="group" aria-label="버전 목록">
-          {cuts.map((cut) => (
-            <button
-              type="button"
-              key={cut.id}
-              className={`fit-ver${cut.id === selectedCutId ? ' on' : ''}`}
-              onClick={() => onSelect(cut.id)}
-              aria-label={`버전 ${cut.version} 선택`}
-              aria-pressed={cut.id === selectedCutId}
-            >
-              <img src={thumbUrl(cutImage(cut), 120)} alt="" loading="lazy" decoding="async" />
-              <span className="fit-ver-chip">v{cut.version}</span>
-            </button>
-          ))}
+          {cuts.map((cut) => {
+            const reviewState = classifyMannequinReview(cut);
+            return (
+              <button
+                type="button"
+                key={cut.id}
+                className={`fit-ver${cut.id === selectedCutId ? ' on' : ''}`}
+                onClick={() => onSelect(cut.id)}
+                disabled={versionSelectDisabled}
+                aria-label={mannequinVersionAriaLabel(cut)}
+                aria-pressed={cut.id === selectedCutId}
+              >
+                <img src={thumbUrl(cutImage(cut), 120)} alt="" loading="lazy" decoding="async" />
+                <span className="fit-ver-chip">v{cut.version}</span>
+                {reviewState.badge && (
+                  <span className={`fit-ver-review is-${reviewState.level}`}>{reviewState.badge}</span>
+                )}
+              </button>
+            );
+          })}
           {waitTile === 'pending' && (
             <div
               ref={waitSlotRef}
@@ -627,12 +648,14 @@ export function Mannequin() {
   const [regenerateState, setRegenerateState] = useState('idle');
   const [regenerateListReady, setRegenerateListReady] = useState(false);
   const [regenerateImageReady, setRegenerateImageReady] = useState(false);
+  const [regenerateFailure, setRegenerateFailure] = useState(null);
   const [waitCopyBand, setWaitCopyBand] = useState(0);
   const [arrival, setArrival] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
+  const [reviewAcknowledgedCutId, setReviewAcknowledgedCutId] = useState(null);
   const submittingRef = useRef(false);   // 결제(재생성) 이중 제출 방지 — busy 반영 전 연타 차단
   const cutsRef = useRef(cuts);
   const selectedRef = useRef(null);
@@ -802,6 +825,8 @@ export function Mannequin() {
 
   const selected = cuts.find((c) => c.id === selectedId) || cuts.find((c) => c.isSelected) || cuts[0];
   const selectedCutId = selected?.id || selectedId;
+  const selectedReviewState = useMemo(() => classifyMannequinReview(selected), [selected]);
+  const selectedReviewAcknowledged = mannequinReviewAcknowledgedForCut(selected, reviewAcknowledgedCutId);
   selectedRef.current = selected;
   const loadingProgress = mannequinJob?.status === 'running'
     && (!projectId || mannequinJob.projectId === projectId)
@@ -846,6 +871,7 @@ export function Mannequin() {
   const editStep = (key) => setStep(key, { mode: 'changing', pick: null, pickLb: null });
 
   const chooseCut = (cutId) => {
+    if (busy) return;
     setCuts((prev) => prev.map((cut) => ({ ...cut, isSelected: cut.id === cutId })));
     selectMannequin(cutId);
   };
@@ -917,6 +943,7 @@ export function Mannequin() {
     setRegenerateListReady(false);
     setRegenerateImageReady(false);
     setProgress(0);
+    setRegenerateFailure(mannequinRegenerateFailureNotice(error));
     setBusy(false);
     submittingRef.current = false;
     pushToast(error?.message || '마네킹 재생성에 실패했어요. 다시 시도해 주세요.', { icon: 'alertTri' });
@@ -944,6 +971,7 @@ export function Mannequin() {
     if (!runIsCurrent(runId)) return;
     clearWaitCopyTimers();
     clearArrivalTimers();
+    setRegenerateFailure(null);
 
     const previousCut = selectedRef.current;
     const selectedCuts = list.map((cut) => ({ ...cut, isSelected: cut.id === newCut.id }));
@@ -969,7 +997,15 @@ export function Mannequin() {
       setArrival(null);
     }
 
-    pushToast('새 마네킹 버전을 추가했어요. 다시 확인해 주세요.', { icon: 'refresh' });
+    const newCutReviewState = classifyMannequinReview(newCut);
+    pushToast(
+      newCutReviewState.visibleReview
+        ? '새 버전이 추가됐지만 품질 확인이 필요해요.'
+        : newCutReviewState.hardBlocked
+          ? '새 버전이 품질 기준을 통과하지 못했어요. 다른 버전을 선택해 주세요.'
+          : '새 마네킹 버전을 추가했어요. 다시 확인해 주세요.',
+      { icon: newCutReviewState.level === 'normal' || newCutReviewState.level === 'passed' ? 'refresh' : 'alertTri' },
+    );
 
     const collapseTimer = setTimeout(() => {
       if (!runIsCurrent(runId)) return;
@@ -1063,7 +1099,7 @@ export function Mannequin() {
           await loadCreatedVersion(runId, profile);
           return;
         }
-        if (isNonRetryableRegenerateError(error)) {
+        if (isNonRetryableMannequinRegenerateError(error)) {
           finishNonRetryable(runId, error);
           return;
         }
@@ -1109,6 +1145,7 @@ export function Mannequin() {
     knownLandedListRef.current = null;
     clearArrivalTimers();
     setArrival(null);
+    setRegenerateFailure(null);
     setBusy(true);
     setProgress(0);
     setRegenerateListReady(false);
@@ -1160,6 +1197,15 @@ export function Mannequin() {
     if (!allDone || busy) return;
     if (regenerateState === 'load-exhausted') { retryLoad(); return; }
     if (needsRegen) { regenerate(); return; }
+    if (!mannequinCanEnterStoryboard(selected, reviewAcknowledgedCutId)) {
+      pushToast(
+        selectedReviewState.hardBlocked
+          ? selectedReviewState.description || '이 버전은 상세페이지에 사용할 수 없어요. 다른 버전을 선택해 주세요.'
+          : '검토 내용을 확인한 뒤 상세페이지로 진행해 주세요.',
+        { icon: 'alertTri' },
+      );
+      return;
+    }
     // 확정(무변경)도 프로필을 영속 — 다음 단계(컷 생성)가 analysis.fitProfile 을 텍스트 제약으로
     // 재사용하므로, 이동(=생성 가능 시점) 전에 저장 완료를 보장한다(순서 계약). 저장 실패 시엔
     // 안내 후 이동을 허용 — 선택 마네킹컷 이미지가 1번 참조(진실)로 여전히 전달된다.
@@ -1171,14 +1217,26 @@ export function Mannequin() {
         setAnalysis((prev) => ({ ...(prev || {}), fitProfile: profile }));
       } catch {
         pushToast('핏 정보 저장에 실패했어요. 컷 생성은 마네킹컷 이미지를 기준으로 진행돼요.', { icon: 'alertTri' });
-      } finally {
-        setBusy(false);
       }
     }
     // 최신 사진 양이 서버에 저장된 뒤 콘티를 읽어야 첫 시드도 올바른 모드로 만들어진다.
     setBusy(true);
     try {
       await setComposeMode(composeMode);
+      const latestSelected = selectedRef.current;
+      const latestReviewState = classifyMannequinReview(latestSelected);
+      if (!mannequinCanEnterStoryboard(latestSelected, reviewAcknowledgedCutId)) {
+        pushToast(
+          mannequinReviewBlocksStoryboard(latestSelected)
+            ? latestReviewState.description || '이 버전은 상세페이지에 사용할 수 없어요. 다른 버전을 선택해 주세요.'
+            : '검토 내용을 확인한 뒤 상세페이지로 진행해 주세요.',
+          { icon: 'alertTri' },
+        );
+        return;
+      }
+      if (latestReviewState.visibleReview) {
+        pushToast('검토가 필요한 버전으로 진행해요. 상세페이지 생성 전 이미지를 다시 확인해 주세요.', { icon: 'alertTri' });
+      }
       navigate('/create/storyboard');
     } catch {
       pushToast('사진 양을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertTri' });
@@ -1245,9 +1303,11 @@ export function Mannequin() {
       <div className={`fit-stage${changingStep ? ' comparing' : ''}`} aria-busy={regenerateActive}>
         <MineColumn
           selected={selected}
+          selectedReviewState={selectedReviewState}
           cuts={cuts}
           selectedCutId={selectedCutId}
           onSelect={chooseCut}
+          versionSelectDisabled={busy}
           arrival={arrival}
           waitTile={waitTile}
           showWaitPanel={showWaitPanel}
@@ -1277,6 +1337,13 @@ export function Mannequin() {
       </div>
 
       <div className="fit-ask">
+        {regenerateFailure && (
+          <div className="fit-regenerate-failure" role="alert" aria-live="assertive">
+            <b>{regenerateFailure.title}</b>
+            <span>{regenerateFailure.description}</span>
+            {regenerateFailure.note && <small>{regenerateFailure.note}</small>}
+          </div>
+        )}
         {/* 확인 항목 칩 — 완료 전에도 모든 스텝을 고스트로 표시해 공간을 미리 확보(버튼 밀림 방지) */}
         {steps.length > 0 && (
           <div className="fit-doner" style={{ minHeight: steps.length >= 3 ? 62 : 31 }}>
@@ -1344,8 +1411,30 @@ export function Mannequin() {
                 );
               })}
             </div>
-            <Button variant="primary" size="lg" block iconRight="arrowRight" disabled={busy} onClick={onCta}>
-              이 사진 양으로 만들기
+            {selectedReviewState.visibleReview && (
+              <label className="fit-review-ack">
+                <input
+                  type="checkbox"
+                  checked={selectedReviewAcknowledged}
+                  disabled={busy}
+                  onChange={(event) => setReviewAcknowledgedCutId(event.target.checked ? selectedCutId : null)}
+                />
+                <span>검토 내용을 확인했어요</span>
+              </label>
+            )}
+            <Button
+              variant="primary"
+              size="lg"
+              block
+              iconRight="arrowRight"
+              disabled={busy || !mannequinCanEnterStoryboard(selected, reviewAcknowledgedCutId)}
+              onClick={onCta}
+            >
+              {selectedReviewState.hardBlocked
+                ? '다른 버전을 선택해 주세요'
+                : selectedReviewState.visibleReview && !selectedReviewAcknowledged
+                  ? '검토 확인 후 만들기'
+                  : '이 사진 양으로 만들기'}
             </Button>
           </div>
         )}

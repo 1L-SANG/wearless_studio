@@ -1188,64 +1188,6 @@ def test_adjust_tier_loader_falls_back_on_typo(monkeypatch):
     assert load_settings().mannequin_adjust_tier == "image_light"
 
 
-def test_fabric_pass_gate_needs_pattern_and_product_evidence():
-    """원단 2패스는 미세 패턴 + 원단 근거 사진이 있을 때만 돈다.
-
-    근거 사진이 없으면 무엇을 기준으로 고칠지가 없어 모델이 패턴을 지어낸다(ADR-0004).
-    무지 상품은 재현할 고주파가 없어 호출만 나간다.
-    """
-    from app.agents import mannequin_fabric
-
-    assert mannequin_fabric.should_apply("on", True, True)
-    assert not mannequin_fabric.should_apply("off", True, True), "플래그 off 면 안 돈다"
-    assert not mannequin_fabric.should_apply("on", False, True), "무지 상품은 대상 아님"
-    assert not mannequin_fabric.should_apply("on", True, False), "원단 근거 없으면 안 돈다"
-
-
-def test_fabric_pass_sends_product_photos_with_the_cut():
-    """가슴 2패스와 달리 **상품 사진을 함께** 보낸다 — 고칠 기준이 사진에 있다.
-
-    2026-08-01 관측: 같은 모델·해상도인데 인물 착용컷(2K)은 줄의 두 색 페어가 살고 마네킹컷(4K)은
-    단색으로 뭉갰다. 해상도가 아니라 구성 문제이므로, 표면 패턴만 과제로 분리해 다시 입힌다.
-    """
-    import asyncio
-    from app.workers import mannequin_job as mj
-
-    sent = {}
-
-    class _Gemini:
-        async def generate_content_image(self, model, prompt, images, size, aspect_ratio=None):
-            sent["images"] = images
-            sent["prompt"] = prompt
-            sent["size"] = size
-            return types.SimpleNamespace(image=b"edited", mime="image/png")
-
-    async def fake_emit(pool, job_id, et, payload):
-        sent.setdefault("events", []).append(payload)
-
-    s = types.SimpleNamespace(
-        mannequin_fabric_pass="on", mannequin_max_attempts=3, mannequin_image_size="2K",
-        mannequin_aspect_ratio="2:3", model_image_high="gemini-3-pro-image",
-        model_image_light="gemini-3.1-flash-image", model_text="gpt-5.4-mini")
-    mj._emit = fake_emit
-    res = types.SimpleNamespace(image=b"cut", mime="image/png")
-    prod = [mj.InlineImage("image/jpeg", b"front"), mj.InlineImage("image/jpeg", b"detail"),
-            mj.InlineImage("image/jpeg", b"back")]
-
-    out, spent = asyncio.run(mj._apply_fabric_pass(
-        pool=None, gemini=_Gemini(), s=s, job_id="j1", candidate="A", attempt=1,
-        res=res, prod_imgs=prod, calls_spent=0, has_fine_pattern=True, image_size="4K"))
-
-    assert spent is True and out.image == b"edited"
-    # 생성본 + 상품 사진 앞 2장 — 전부 넣으면 편집 과제가 다시 흐려진다
-    assert len(sent["images"]) == 3
-    assert sent["images"][0].data == b"cut"
-    assert sent["size"] == "4K", "승급된 해상도를 편집에서도 유지해야 한다"
-    assert "${" not in sent["prompt"]
-    assert any(e.get("status") == "fabric_pass" and e.get("outcome") == "applied"
-               for e in sent["events"])
-
-
 def test_untuck_pass_gate_and_single_task_call():
     """untuck 패스 — top/outer + 매칭 하의 첨부에서만, 생성본 1장·과제 1개로 호출된다.
 

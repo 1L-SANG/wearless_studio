@@ -106,9 +106,12 @@ class Settings:
     # off | on. 기본 off, 실물 확인 후 on. 켜면 여성 컷당 이미지 호출이 1→2회.
     # 2패스 실패·거부는 삼키고 1패스 컷을 쓴다(잡을 죽이지 않는다).
     mannequin_bust_pass: str = "off"
-    # 원단 패턴 2패스 — 미세 패턴 상품에서 표면 패턴만 상품 사진 기준으로 다시 입힌다.
-    # 가슴 2패스와 같은 규약: 기본 off 로 두고 실측 확인 뒤 켠다.
-    mannequin_fabric_pass: str = "off"  # off | on
+    # deterministic hybrid composite — 스트라이프 상품의 최종 의류 표면을 원본 사진에서
+    # 추출한 패턴으로 결정론적으로 합성한다(생성 모델은 geometry carrier 만 담당).
+    # 구 원단 2패스 env 플래그(whole-image generative 재생성)는 blind visual 3/3 FAIL 로
+    # 폐기·삭제됐다(2026-08-01, 폐기 이름은 test_deploy_manifest_qc_flags.RETIRED_FLAGS 참조).
+    # 같은 이름을 재사용하지 않는다 — env 잔재가 남은 배포에서 옛 의미로 켜지는 사고 방지.
+    mannequin_hybrid_composite: str = "off"  # off | on
     # untuck 2패스 — 상의 밑단을 하의 허리밴드 밖으로 빼는 전용 편집. 프롬프트 5회 강화와
     # QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). QC 검출이 불안정해 게이트로 쓰지
     # 않고 매칭 하의가 붙는 top/outer 잡마다 1회 돈다(이미 빠져 있으면 무변경 반환 지시).
@@ -261,7 +264,7 @@ def load_settings() -> Settings:
         mannequin_prompt_file=os.getenv("MANNEQUIN_PROMPT_FILE") or None,
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
         mannequin_bust_pass=_bust_pass(),
-        mannequin_fabric_pass=_flag("MANNEQUIN_FABRIC_PASS", "off", {"off", "on"}),
+        mannequin_hybrid_composite=_flag("MANNEQUIN_HYBRID_COMPOSITE", "off", {"off", "on"}),
         mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,

@@ -558,8 +558,84 @@ async def search_ref_images(
 _JOB_COLS = (
     "id::text as id, user_id::text as user_id, project_id::text as project_id, kind, "
     "status, progress, steps, payload, result, error_message, credits_reserved, "
-    "credits_charged, metadata, created_at, updated_at, finished_at"
+    "credits_charged, metadata, metadata #>> '{publicFailure,code}' as error_code, "
+    "metadata #> '{publicFailure,details}' as error_details, "
+    "created_at, updated_at, finished_at"
 )
+
+PUBLIC_JOB_FAILURE_CODES = frozenset({
+    "hybrid_composite_failed_closed",
+})
+
+
+def _clean_public_failure_detail(value, *, limit: int = 200):
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    return value[:limit]
+
+
+def _public_failure_from_metadata(code: str, metadata: dict | None) -> dict | None:
+    """Return the whitelisted job-error contract persisted for API polling.
+
+    Worker metadata can contain provider/internal diagnostics. Only the explicit
+    typed failure fields below are safe to surface to clients.
+    """
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    internal_error = metadata.get("error")
+    if not isinstance(internal_error, str) or not internal_error.strip():
+        internal_error = None
+    else:
+        internal_error = internal_error.strip()
+
+    failure_reason = metadata.get("failureReason")
+    if not isinstance(failure_reason, str) or not failure_reason.strip():
+        failure_reason = None
+    else:
+        failure_reason = failure_reason.strip()
+
+    public_code = None
+    if internal_error in PUBLIC_JOB_FAILURE_CODES:
+        public_code = internal_error
+    elif code in PUBLIC_JOB_FAILURE_CODES:
+        public_code = code
+    if public_code is None:
+        return None
+
+    details: dict = {}
+    if internal_error == public_code:
+        details["error"] = internal_error
+    if failure_reason:
+        details["failureReason"] = failure_reason
+    detail = _clean_public_failure_detail(metadata.get("detail"))
+    if detail:
+        details["detail"] = detail
+
+    hybrid = metadata.get("hybridComposite")
+    if isinstance(hybrid, dict):
+        public_hybrid = {}
+        for key in ("applied", "needsReview"):
+            if isinstance(hybrid.get(key), bool):
+                public_hybrid[key] = hybrid[key]
+        hybrid_reason = hybrid.get("failureReason")
+        if isinstance(hybrid_reason, str) and hybrid_reason.strip():
+            public_hybrid["failureReason"] = hybrid_reason.strip()
+        hybrid_detail = _clean_public_failure_detail(hybrid.get("failureDetail"))
+        if hybrid_detail:
+            public_hybrid["failureDetail"] = hybrid_detail
+        pipeline_version = hybrid.get("pipelineVersion")
+        if isinstance(pipeline_version, str) and pipeline_version.strip():
+            public_hybrid["pipelineVersion"] = pipeline_version.strip()
+        if public_hybrid:
+            details["hybridComposite"] = public_hybrid
+
+    if not details:
+        return None
+    return {"code": public_code, "details": details}
 
 
 async def get_job(conn: AsyncConnection, user_id: str, job_id: str) -> dict | None:
@@ -962,15 +1038,25 @@ async def _finalize_job_failure(
             settle_key=release["settle_key"],
             metadata=metadata,
         )
+    public_failure = _public_failure_from_metadata(code, metadata)
+    failure_metadata = dict(metadata or {})
+    failure_metadata.pop("publicFailure", None)
+    if public_failure is not None:
+        failure_metadata["publicFailure"] = public_failure
     async with conn.cursor() as cur:
         await cur.execute(
             "update jobs set status = 'error', error_message = %s, "
-            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
-            (message, job_id),
+            "metadata = (metadata - 'publicFailure') || %s::jsonb, locked_by = null, locked_at = null, "
+            "finished_at = now() where id = %s",
+            (message, Json(failure_metadata), job_id),
         )
+        error_payload = {"code": code, "message": message}
+        if public_failure is not None:
+            error_payload["errorCode"] = public_failure["code"]
+            error_payload["errorDetails"] = public_failure["details"]
         await cur.execute(
             "insert into job_events (job_id, event_type, payload) values (%s, 'error', %s)",
-            (job_id, Json({"code": code, "message": message})),
+            (job_id, Json(error_payload)),
         )
     return True
 

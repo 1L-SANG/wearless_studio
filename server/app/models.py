@@ -163,6 +163,8 @@ class JobView(CamelModel):
     steps: list | None = None
     result: dict | None = None
     error_message: str | None = None
+    error_code: str | None = None
+    error_details: dict | None = None
     credits_charged: int | None = None
     created_at: datetime
     updated_at: datetime

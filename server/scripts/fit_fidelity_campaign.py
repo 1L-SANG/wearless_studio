@@ -27,6 +27,7 @@ _load_env(SERVER / ".env")
 from app.agents import mannequin  # noqa: E402
 from app.agents.gemini_image import GeminiImageClient, InlineImage  # noqa: E402
 from app.agents.model_routing import resolve_model  # noqa: E402
+from app.agents.product_reference import ProductReference  # noqa: E402
 from app.agents.prompts import load_prompt_template, render_mannequin_prompt  # noqa: E402
 from app.agents.vision_llm import analyze_with_fallback  # noqa: E402
 from app.config import load_settings  # noqa: E402
@@ -150,6 +151,20 @@ def sniff_mime(data: bytes) -> str:
 def load_local(path: Path) -> InlineImage:
     data = path.read_bytes()
     return InlineImage(sniff_mime(data), data)  # 확장자 아닌 sniff (M4 — png 확장자에 JPEG 바이트 존재)
+
+
+# 하니스 입력에는 DB asset 이 없다. `SRC` 는 파일 순서가 곧 슬롯 순서(1_front → 2_back)이므로
+# 그 순서대로 역할을 붙여 준다 — 편집 매니페스트가 슬롯별 권위를 선언하려면 역할이 필요하다.
+_HARNESS_SLOTS = ("Front", "Back", "Detail", "Fit")
+
+
+def harness_refs(srcs: list[InlineImage]) -> list[ProductReference]:
+    return [
+        ProductReference(
+            slot=_HARNESS_SLOTS[i] if i < len(_HARNESS_SLOTS) else "Detail",
+            asset_id=f"local-{i}", image=img)
+        for i, img in enumerate(srcs)
+    ]
 
 
 def build_prompt_for(s, arm) -> str:

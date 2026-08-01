@@ -25,7 +25,6 @@ _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_generate_v1.tx
 # 미니원피스로 바꿨다(2026-07-31 짝 비교 n=10: 핏 깨짐 v1 7/10 → v3 0/10, 핏 유지하며 이긴
 # 순편익 2 → 4). v1·v2 는 이력 보존용으로 남긴다 — ab_bust_pass.py --variant 로 재비교 가능.
 _BUST_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_bust_v3.txt")
-_FABRIC_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_fabric_v1.txt")
 _UNTUCK_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_untuck_v1.txt")
 
 
@@ -66,13 +65,6 @@ def load_bust_prompt_template() -> str:
     """여성 기본 가슴 2패스 템플릿. 생성 템플릿과 달리 env 오버라이드가 없다 —
     문구 강도가 실측 캘리브레이션 결과라 배포별로 갈리면 결과 크기가 흔들린다."""
     with open(_BUST_PROMPT, encoding="utf-8") as f:
-        return f.read()
-
-
-def load_fabric_prompt_template() -> str:
-    """원단 패턴 2패스 템플릿. 가슴 2패스와 같은 이유로 env 오버라이드를 두지 않는다 —
-    문구가 실측으로 조정되는 자산이라 배포별로 갈리면 결과를 비교할 수 없다."""
-    with open(_FABRIC_PROMPT, encoding="utf-8") as f:
         return f.read()
 
 
