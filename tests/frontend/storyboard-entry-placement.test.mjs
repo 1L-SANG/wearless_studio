@@ -195,9 +195,15 @@ test('cut counts include normal ranges and a forced one-slot styling fallback', 
   // 확장형: 하의는 카테고리별 시퀀스, 상의는 전 의류 회전 세트를 사용한다.
   assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-a', 'bottom', 'women')).length, 20);
   assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-b', 'bottom', 'men')).length, 21);
-  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-c', 'top', 'women')).length, 19);
+  // 여성 상의 21 = 19 + 2. horizon zara 릴리스(04b19be)가 women/top 세트를 9→11 로 늘렸다
+  // (데이터만 변경, 조립 로직 무변경). men/bottom 은 12개 그대로라 위 기대값이 유지된다.
+  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-c', 'top', 'women')).length, 21);
 
-  const oneStylingSet = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })[0];
+  // styling 세트를 **명시적으로** 고른다. [0] 은 카탈로그 정렬에 딸려가는데, horizon zara
+  // 릴리스(04b19be)가 horizon-sequence 를 앞에 넣으면서 이 시나리오가 조용히 "호리존 1개
+  // 강제"로 바뀌어 있었다(13→12). 이 테스트가 재는 건 스타일링 폴백이다.
+  const oneStylingSet = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })
+    .find((set) => set.setType === 'styling');
   const originalIncludes = Array.prototype.includes;
   Array.prototype.includes = function mockedIncludes(value, ...rest) {
     if (value === 'forced-single') return this === oneStylingSet.setApplicableClothingTypes;
