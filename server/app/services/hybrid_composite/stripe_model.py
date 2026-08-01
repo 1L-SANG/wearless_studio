@@ -345,11 +345,15 @@ def extract_stripe_model(
         idx = (np.arange(start, start + length) % K)
         return tuple(float(x) for x in np.median(folded[idx], axis=0))
 
-    # canonical 순서: 가장 넓은 run(=바탕)에서 시작하는 cyclic 순서
+    # canonical 순서: 가장 넓은 run(=바탕)에서 시작하는 cyclic 순서.
+    # **프로파일도 같은 기준으로 회전**한다 — 색/폭 시퀀스는 ground-시작인데 프로파일이
+    # fold 위상 그대로면, 소비자(합성·guided QC)의 run-center 인덱싱이 어긋난다
+    # (2026-08-01 실측: crop 위상이 0 이 아닐 때 QC 가 바탕색만 읽어 '줄 소실'로 오판).
     widest = max(range(len(runs)), key=lambda i: runs[i][1])
     ordered = runs[widest:] + runs[:widest]
     colors = tuple(run_color(s, ln) for s, ln in ordered)
     widths = tuple(ln / K for _s, ln in ordered)
+    folded = np.roll(folded, -ordered[0][0], axis=0)
 
     axis_separation = 1.0 - min(1.0, (secondary.strength / primary.strength)
                                 if primary.strength > 0 else 1.0)

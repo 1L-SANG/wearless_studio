@@ -15,7 +15,11 @@ from .types import CompositeFailure
 
 MIN_ROI_SIDE_PX = 800          # 유효 원단 ROI 최소 변 (계획 P1 임계의 P0-적용판)
 MIN_LAPLACIAN_VAR = 60.0       # 선명도 하한 — live preflight 실측(front 302, detail 2192) 대비 보수적
-MAX_CLIPPED_FRAC = 0.10        # 과노출(=255 포화) 픽셀 허용 비율
+# 과노출 gate 는 **하드클립**(전 채널 포화)만 센다. 흰 바탕 셔츠는 정상 촬영에서도 250+에
+# 앉으므로, 소프트 하이라이트를 세면 흰 바탕 상품 전부가 오탐된다(fixture 실측 30%).
+# 패턴 정보를 실제로 파괴하는 것은 넓은 영역의 전채널 포화다.
+MAX_CLIPPED_FRAC = 0.35
+_CLIP_LEVEL = 254
 CENTER_CROP_FRAC = 0.60        # 원단 ROI 근사 — 중앙 crop (flat-lay/정면 상품 사진 가정)
 
 
@@ -55,10 +59,10 @@ def validate_stripe_source(image_bgr: np.ndarray, *, roi: tuple | None = None,
         return CompositeFailure("reference_insufficient",
                                 f"선명도 미달 (laplacian {lap:.0f} < {MIN_LAPLACIAN_VAR})",
                                 {"laplacian_var": lap})
-    clipped = float((gray >= 250).mean())
+    clipped = float((crop.min(axis=-1) >= _CLIP_LEVEL).mean())
     if clipped > MAX_CLIPPED_FRAC:
         return CompositeFailure("reference_insufficient",
-                                f"과노출 {clipped:.2%} > {MAX_CLIPPED_FRAC:.0%}",
+                                f"하드클립 {clipped:.2%} > {MAX_CLIPPED_FRAC:.0%}",
                                 {"clipped_frac": clipped})
     axes = measure_axes(crop)
     primary_name = ("horizontal" if axes["horizontal"].strength >= axes["vertical"].strength

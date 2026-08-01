@@ -13,6 +13,8 @@ import uuid
 from contextlib import suppress
 from io import BytesIO
 
+import cv2
+import numpy as np
 from PIL import Image
 
 log = logging.getLogger("wearless.mannequin_job")
@@ -32,9 +34,21 @@ from ..agents.mannequin_adjust import (
     build_adjust_manifest,
     render_adjust_prompt,
 )
-from ..agents.gemini_image import GeminiError, InlineImage
+from ..agents.gemini_image import GeminiError, GeminiImageResult, InlineImage
 from ..agents.model_routing import resolve_model
-from ..agents.product_reference import ProductReference, order_by_role
+from ..agents import hybrid_landmarks
+from ..agents.product_reference import ProductReference, order_by_role, select_pattern_sources
+from ..services.hybrid_composite import (
+    deterministic_qc as hc_qc,
+    panel_map as hc_panel,
+    source_validation as hc_source,
+    stripe_model as hc_stripe,
+    warp_composite as hc_warp,
+)
+from ..services.hybrid_composite.types import (
+    PIPELINE_VERSION as HC_PIPELINE_VERSION,
+    CompositeFailure,
+)
 from ..agents.prompts import (
     load_bust_prompt_template,
     load_prompt_template,
@@ -762,6 +776,207 @@ async def _apply_untuck_pass(
     return out, True
 
 
+def _decode_bgr(image_bytes: bytes):
+    arr = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if arr is None:
+        raise ValueError("이미지 디코드 실패")
+    return arr
+
+
+def _hc_fail_summary(reason: str, detail: str = "", **extra) -> dict:
+    """hybrid composite 실패 요약 — qc_scores 에 저장되는 shape (바이트/URL 없음)."""
+    return {"applied": False, "needsReview": True, "failureReason": reason,
+            "failureDetail": detail[:200], "pipelineVersion": HC_PIPELINE_VERSION, **extra}
+
+
+async def _apply_hybrid_composite(
+    *, pool, s, job_id, candidate, attempt, res, prod_refs, product, analysis,
+    has_fine_pattern,
+):
+    """deterministic hybrid stripe composite. → (선택 결과, hybrid 요약 dict|None).
+
+    모든 generative geometry edit(untuck/axis/bust) **뒤**, 최종 QC/R2 저장 **앞**에서만
+    호출된다. 여기서부터 출고까지 image-generation/edit 호출은 0회다 — 합성 불가·저신뢰·
+    metric 실패는 전부 typed needs_review 로 끝나고, 구 generative 재생성으로 돌아가는
+    경로는 존재하지 않는다(코드째 삭제됨).
+    """
+    if getattr(s, "mannequin_hybrid_composite", "off") != "on":
+        return res, None
+    if not has_fine_pattern:
+        return res, None  # 무지 상품 — 재현할 고주파가 없어 대상 아님(기존 경로 그대로)
+
+    async def emit(status, **payload):
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, "status": status, **payload})
+
+    await emit("hybrid_composite_started", pattern_risk=True,
+               pipeline_version=HC_PIPELINE_VERSION)
+
+    async def fail(reason, detail="", **extra):
+        summary = _hc_fail_summary(reason, detail, **extra)
+        await emit("hybrid_composite_completed", outcome=reason, detail=detail[:200])
+        return res, summary
+
+    # 소스 선택은 P0 authority 계약 그대로 — `Detail → Front → Back → Fit`, asset dedup.
+    sources = select_pattern_sources(prod_refs, limit=2)
+    detail_ref = next((r for r in sources if r.slot == "Detail"), None)
+    front_ref = next((r for r in sources if r.slot == "Front"), None)
+    if detail_ref is None or front_ref is None:
+        return await fail("reference_insufficient",
+                          f"필수 슬롯 부재 (Detail={detail_ref is not None}, "
+                          f"Front={front_ref is not None})",
+                          selectedSlots=[r.slot for r in sources])
+
+    try:
+        detail_bgr = await asyncio.to_thread(_decode_bgr, detail_ref.image.data)
+        front_bgr = await asyncio.to_thread(_decode_bgr, front_ref.image.data)
+        carrier_bgr = await asyncio.to_thread(_decode_bgr, res.image)
+    except Exception as e:
+        return await fail("reference_insufficient", f"디코드 실패: {e}")
+
+    # Stage 1 — 입력 gate (Detail)
+    val = await asyncio.to_thread(hc_source.validate_stripe_source, detail_bgr)
+    if isinstance(val, CompositeFailure):
+        await emit("hybrid_source_validated", ok=False, reason=val.reason,
+                   detail=val.detail[:200])
+        return await fail(val.reason, val.detail)
+    await emit("hybrid_source_validated", ok=True, roi=list(val.roi),
+               n_periods=val.n_periods_in_roi, axis=val.axis, **val.metrics)
+
+    # Stage 2 — stripe model (Detail ROI)
+    x0, y0, x1, y1 = val.roi
+    detail_sha = hashlib.sha256(detail_ref.image.data).hexdigest()
+    model_or_fail = await asyncio.to_thread(
+        hc_stripe.extract_stripe_model, detail_bgr[y0:y1, x0:x1],
+        source_asset_id=detail_ref.asset_id, source_sha256=detail_sha,
+        source_roi=val.roi)
+    if isinstance(model_or_fail, CompositeFailure):
+        await emit("hybrid_stripe_model", ok=False, reason=model_or_fail.reason,
+                   detail=model_or_fail.detail[:200])
+        return await fail(model_or_fail.reason, model_or_fail.detail)
+    model = model_or_fail
+    await emit("hybrid_stripe_model", ok=True, **model.summary())
+
+    # Stage 3 준비 — source/carrier 기하 (vision 은 좌표만, 판정은 코드)
+    try:
+        src_raw = await hybrid_landmarks.extract_geometry(s, front_ref.image)
+        car_raw = await hybrid_landmarks.extract_geometry(
+            s, InlineImage(res.mime, res.image))
+    except Exception as e:
+        return await fail("panel_landmarks_invalid", f"기하 추출 실패: {type(e).__name__}")
+    src_lm, src_inv, src_err = hybrid_landmarks.validate_geometry(src_raw)
+    if src_err:
+        return await fail("panel_landmarks_invalid", f"source: {src_err}")
+    car_lm, car_inv, car_err = hybrid_landmarks.validate_geometry(car_raw)
+    if car_err:
+        return await fail("panel_landmarks_invalid", f"carrier: {car_err}")
+    src_boxes = (src_inv or {}).pop("component_boxes", {})
+    car_boxes = (car_inv or {}).pop("component_boxes", {})
+
+    # scale anchor — source Front torso 에서 의류 단위 반복 수를 잰다
+    fh, fw = front_bgr.shape[:2]
+    fy0 = int(min(src_lm["shoulder_l"][1], src_lm["shoulder_r"][1]) * fh)
+    fy1 = int(max(src_lm["hem_l"][1], src_lm["hem_r"][1]) * fh)
+    fx0 = int(min(src_lm["shoulder_l"][0], src_lm["hem_l"][0]) * fw)
+    fx1 = int(max(src_lm["shoulder_r"][0], src_lm["hem_r"][0]) * fw)
+    torso_crop = front_bgr[max(0, fy0):fy1, max(0, fx0):fx1]
+    axes = await asyncio.to_thread(hc_stripe.measure_axes, torso_crop)
+    front_ax = axes.get(model.axis)
+    if front_ax is None or front_ax.period_px is None or front_ax.strength < 0.2:
+        return await fail("stripe_model_low_confidence",
+                          "source Front torso 에서 반복 스케일 앵커 실패")
+    torso_span_src = (fy1 - fy0) if model.axis == "horizontal" else (fx1 - fx0)
+    repeats_on_torso = torso_span_src / float(front_ax.period_px)
+    ch, cw = carrier_bgr.shape[:2]
+    t_torso_span = (
+        (max(car_lm["hem_l"][1], car_lm["hem_r"][1])
+         - min(car_lm["shoulder_l"][1], car_lm["shoulder_r"][1])) * ch
+        if model.axis == "horizontal" else
+        (max(car_lm["shoulder_r"][0], car_lm["hem_r"][0])
+         - min(car_lm["shoulder_l"][0], car_lm["hem_l"][0])) * cw)
+    target_period_px = float(t_torso_span / max(repeats_on_torso, 1e-6))
+
+    # Stage 3 — panel map (+ construction 대조)
+    pm = await asyncio.to_thread(
+        hc_panel.build_panel_map, carrier_bgr, car_lm,
+        source_inventory=src_inv, carrier_inventory=car_inv, strategy="bg_diff")
+    if isinstance(pm, CompositeFailure):
+        await emit("hybrid_panel_map", ok=False, reason=pm.reason, detail=pm.detail[:200],
+                   metrics=pm.metrics)
+        return await fail(pm.reason, pm.detail, constructionMetrics=pm.metrics)
+    await emit("hybrid_panel_map", ok=True, confidence=round(pm.confidence, 3),
+               strategy=pm.strategy, panels=[p.name for p in pm.panels],
+               metrics=pm.metrics)
+
+    # Stage 4 — 결정론 warp/composite
+    art = await asyncio.to_thread(
+        hc_warp.composite_stripe, carrier_bgr, pm, model,
+        target_period_px=target_period_px, target_axis=model.axis,
+        component_boxes=car_boxes, source_bgr=front_bgr,
+        source_component_boxes=src_boxes)
+    if isinstance(art, CompositeFailure):
+        await emit("hybrid_warp_composite", ok=False, reason=art.reason,
+                   detail=art.detail[:200], metrics=art.metrics)
+        return await fail(art.reason, art.detail)
+    await emit("hybrid_warp_composite", ok=True, coverage=round(art.source_coverage, 4),
+               panel_metrics=art.panel_metrics,
+               components_needing_review=list(art.components_needing_review),
+               **art.metrics)
+
+    # Stage 5 — deterministic QC (LLM 이 못 뒤집는 판정)
+    qc = await asyncio.to_thread(
+        hc_qc.verify_composite, art.image_bgr, carrier_bgr, pm, model,
+        target_period_px=target_period_px, target_axis=model.axis)
+    qc_event_metrics = {k: v for k, v in qc.metrics.items() if k != "failure_details"}
+    await emit("hybrid_deterministic_qc", passed=qc.passed,
+               failures=list(qc.failures), metrics=qc_event_metrics,
+               failure_details=[d.get("detail", "")[:160]
+                                for d in qc.metrics.get("failure_details", [])][:6])
+    if not qc.passed:
+        return await fail(qc.failures[0] if qc.failures else "pattern_metric_failed",
+                          "; ".join(d.get("detail", "") for d in
+                                    qc.metrics.get("failure_details", []))[:200],
+                          deterministicMetrics=qc_event_metrics)
+
+    ok, png = cv2.imencode(".png", art.image_bgr)
+    if not ok:
+        return await fail("pattern_metric_failed", "출력 인코딩 실패")
+    out_bytes = png.tobytes()
+    needs_review = bool(art.components_needing_review)
+    front_sha = hashlib.sha256(front_ref.image.data).hexdigest()
+    summary = {
+        "applied": True,
+        "needsReview": needs_review,
+        "componentsNeedingReview": list(art.components_needing_review),
+        "deterministicPassed": True,
+        "pipelineVersion": HC_PIPELINE_VERSION,
+        "versions": {"pipeline": HC_PIPELINE_VERSION,
+                     "extractor": model.extractor_version, "panelMap": pm.version,
+                     "warp": art.version, "qc": qc.version},
+        "stripeModel": model.summary(),
+        "sourceAssets": {
+            "detail": {"assetId": detail_ref.asset_id, "sha256": detail_sha,
+                       "roi": list(val.roi)},
+            "front": {"assetId": front_ref.asset_id, "sha256": front_sha},
+        },
+        "targetPeriodPx": round(target_period_px, 2),
+        "sourceCoverage": round(art.source_coverage, 4),
+        "panelMetrics": art.panel_metrics,
+        "deterministicMetrics": qc_event_metrics,
+        "outputSha256": hashlib.sha256(out_bytes).hexdigest(),
+        "carrierSha256": hashlib.sha256(res.image).hexdigest(),
+    }
+    await emit("hybrid_composite_completed", outcome="applied",
+               needs_review=needs_review,
+               components_needing_review=list(art.components_needing_review),
+               coverage=round(art.source_coverage, 4),
+               output_hash=summary["outputSha256"][:12])
+    new_res = GeminiImageResult(
+        image=out_bytes, mime="image/png",
+        latency_ms=getattr(res, "latency_ms", 0), usage=getattr(res, "usage", None))
+    return new_res, summary
+
+
 async def _apply_edits(
     *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_refs, match_img,
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
@@ -844,6 +1059,16 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
     """채택본을 R2 에 올리고 finalize 용 dict 를 만든다. 출고 지점은 여기 하나뿐이다."""
     if qc_scores is not None:
         qc_scores["outcome"] = score_outcome(s, qc_scores)
+        hc = qc_scores.get("hybridComposite")
+        if isinstance(hc, dict):
+            # deterministic 판정과 LLM 판정의 우선순위를 출고 지점 한 곳에서 강제한다:
+            #  · 합성 실패/부분실패(needsReview) → auto_pass 로 나갈 수 없다(강등만, 승격 없음)
+            #  · deterministic 통과 → LLM 의 regenerate 가 정상 출고를 막지 못하되,
+            #    자동통과로 미화하지도 않는다 → needs_review 로 사람에게 보인다
+            if hc.get("needsReview") and qc_scores["outcome"] == "auto_pass":
+                qc_scores["outcome"] = "needs_review"
+            if hc.get("deterministicPassed") and qc_scores["outcome"] == "regenerate":
+                qc_scores["outcome"] = "needs_review"
     ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
     asset_id = str(uuid.uuid4())
     key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -1077,6 +1302,29 @@ async def _run_candidate(
                 base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, enabled=reprocess, image_size=image_size,
                 has_fine_pattern=has_fine_pattern)
+            # deterministic hybrid composite — 모든 generative geometry edit 뒤, 저장 앞.
+            # 이 지점 이후 출고까지 image-generation/edit 호출은 0회다.
+            hybrid_info = None
+            if reprocess:
+                res, hybrid_info = await _apply_hybrid_composite(
+                    pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+                    res=res, prod_refs=prod_refs, product=product, analysis=analysis,
+                    has_fine_pattern=has_fine_pattern)
+                if (hybrid_info and hybrid_info.get("applied")
+                        and isinstance(p2, dict) and prod_imgs):
+                    # 보조 신호 — 출고본(합성본)에 대한 기존 QC 재판정(analyze 호출, 생성 아님).
+                    # deterministic 판정을 뒤집을 수 없다(아래 retry 억제·outcome 강등 참조).
+                    try:
+                        p2 = await image_qc.verdict(
+                            s, prod_imgs, InlineImage(res.mime, res.image), scored=True,
+                            fit_profile=fit_profile)
+                        await _emit(pool, job_id, "step", {
+                            "candidate": candidate, "attempt": attempt,
+                            "status": "image_qc_rescored", "imageQc": p2,
+                            "subject": "hybrid_composite"})
+                    except Exception as e:
+                        log.warning("post-composite image_qc failed for job %s: %r",
+                                    job_id, e)
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
             series = (
@@ -1090,9 +1338,22 @@ async def _run_candidate(
             qc_scores = merge_qc_scores(
                 p2, series, salvaged=salvaged,
                 thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+            if hybrid_info is not None:
+                qc_scores = {**(qc_scores or {}), "hybridComposite": hybrid_info}
             budget_left = has_budget_for_retry(s, calls_spent=calls_spent)
+            # deterministic 합성이 통과한 컷은 LLM 점수의 retry 로 재생성하지 않는다 —
+            # 기존 QC 는 보조 신호다(같은 이미지에 3회 중 2회 pass 를 주던 판정으로
+            # 결정론적으로 옳은 패턴을 다시 뽑으면 비용만 태운다). outcome 강등은
+            # _save_cut 에서 수행되므로 판정 기록은 남는다.
+            deterministic_ok = bool(hybrid_info and hybrid_info.get("deterministicPassed"))
+            if deterministic_ok and final_decision(s, qc_scores) == "retry":
+                await _emit(pool, job_id, "step", {
+                    "candidate": candidate, "attempt": attempt,
+                    "status": "hybrid_llm_retry_suppressed",
+                    "outcome": score_outcome(s, qc_scores)})
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
-            if final_decision(s, qc_scores) == "retry" and budget_left and not salvaged:
+            if (final_decision(s, qc_scores) == "retry" and budget_left and not salvaged
+                    and not deterministic_ok):
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "final_qc_reject",
                     "outcome": score_outcome(s, qc_scores),
@@ -1105,7 +1366,9 @@ async def _run_candidate(
             # 예산 소진인데 최종 판정이 retry 라면 최선본으로 되돌려 구제 출고한다.
             # **final_reject 만** 쓴다 — pre_reject 는 편집·재판정·D축을 안 거친 원본이라
             # 그대로 저장하면 검증 안 된 이미지가 출고된다(codex HIGH).
-            if final_decision(s, qc_scores) == "retry" and not salvaged:
+            # deterministic 통과 컷은 구제(salvage) 표기 대상이 아니다 — LLM retry 억제와
+            # 같은 이유. 그대로 저장 경로로 떨어진다.
+            if final_decision(s, qc_scores) == "retry" and not salvaged and not deterministic_ok:
                 if final_reject and _is_better_candidate(s, final_reject[1], qc_scores):
                     res, qc_scores, _series, _p2 = final_reject
                 qc_scores = {**(qc_scores or {}), "salvaged": True}
@@ -1157,11 +1420,19 @@ async def _run_candidate(
                 profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, image_size=image_size,
                 has_fine_pattern=has_fine_pattern)
+            # 구제 경로도 같은 규율 — geometry edit 뒤에는 반드시 composite 를 거친다.
+            # high-risk 패턴이 구제라는 이유로 생성 결과 그대로 나가면 안 된다.
+            res, salvage_hybrid = await _apply_hybrid_composite(
+                pool=pool, s=s, job_id=job_id, candidate=candidate,
+                attempt=s.mannequin_max_attempts, res=res, prod_refs=prod_refs,
+                product=product, analysis=analysis, has_fine_pattern=has_fine_pattern)
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
                 candidate=candidate, attempt=s.mannequin_max_attempts, res=res)
             qc_scores = merge_qc_scores(
                 p2, series, thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+            if salvage_hybrid is not None:
+                qc_scores = {**(qc_scores or {}), "hybridComposite": salvage_hybrid}
         qc_scores = {**(qc_scores or {}), "salvaged": True}
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "status": "qc_salvaged",
@@ -1425,7 +1696,23 @@ async def run_mannequin_job(app, job: dict) -> None:
                               else s.mannequin_prompt_version),
         }
         for candidate_result in passed:
-            candidate_result["generation_metadata"] = dict(cut_generation_metadata)
+            md = dict(cut_generation_metadata)
+            qs = candidate_result.get("qc_scores")
+            hc = qs.get("hybridComposite") if isinstance(qs, dict) else None
+            if isinstance(hc, dict) and hc.get("applied"):
+                # lineage — 이 컷의 표면이 어느 원본·어느 알고리즘 버전에서 왔는지.
+                # 전체 metric 은 qc_scores/job_events 에 있고, 여기는 재현에 필요한 최소만.
+                md["generationPath"] = "hybrid_stripe_composite"
+                md["hybridComposite"] = {
+                    "versions": hc.get("versions"),
+                    "sourceAssets": hc.get("sourceAssets"),
+                    "targetPeriodPx": hc.get("targetPeriodPx"),
+                    "sourceCoverage": hc.get("sourceCoverage"),
+                    "outputSha256": hc.get("outputSha256"),
+                    "carrierSha256": hc.get("carrierSha256"),
+                    "componentsNeedingReview": hc.get("componentsNeedingReview", []),
+                }
+            candidate_result["generation_metadata"] = md
 
         # 4) 성공 종결 (원자·lease 펜스). charge = reserved — 예약 시점 견적을 그대로 확정한다
         # (단일컷 전환으로 구 "성공 후보 수 × 1" 폐기. 실행 시점 설정값을 다시 읽으면 배포/env 변경

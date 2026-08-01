@@ -249,6 +249,7 @@ def test_worker_private_api_call_sites_still_bind_to_their_signatures():
     targets = {
         "_run_candidate": mj._run_candidate,
         "_apply_edits": mj._apply_edits,
+        "_apply_hybrid_composite": mj._apply_hybrid_composite,
     }
     server_dir = pathlib.Path(mj.__file__).resolve().parents[2]
     checked = []
