@@ -192,10 +192,19 @@ test('multi-color basic and extended seeds follow product and studio repetition 
 test('cut counts include normal ranges and a forced one-slot styling fallback', () => {
   const basic = defaultStoryboard(baseColors, 'basic', context('counts', 'top', 'women'));
   assert.equal(basic.length, 14);
-  // 확장형: 하의는 카테고리별 시퀀스, 상의는 전 의류 회전 세트를 사용한다.
-  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-a', 'bottom', 'women')).length, 20);
-  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-b', 'bottom', 'men')).length, 21);
-  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-c', 'top', 'women')).length, 19);
+  // 확장형 기대치는 실제 추첨(pickEntrySets)에서 유도 — 카탈로그가 자라도 테스트가 낡지 않게.
+  for (const [pid, clothing, gender] of [
+    ['counts-a', 'bottom', 'women'], ['counts-b', 'bottom', 'men'], ['counts-c', 'top', 'women'],
+  ]) {
+    const picked = pickEntrySets({ gender, clothingType: clothing, projectId: pid, stylingCount: 3 });
+    const stylingCuts = picked.stylingSets.reduce((s, set) => s + (set ? set.members.length : 2), 0);
+    const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
+    assert.equal(
+      defaultStoryboard(baseColors, 'extended', context(pid, clothing, gender)).length,
+      2 + stylingCuts + horizonCuts + 1 + 4,
+      `${gender}/${clothing} extended`,
+    );
+  }
 
   const oneStylingSet = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })[0];
   const originalIncludes = Array.prototype.includes;
