@@ -65,8 +65,15 @@ def validate_stripe_source(image_bgr: np.ndarray, *, roi: tuple | None = None,
                                 f"하드클립 {clipped:.2%} > {MAX_CLIPPED_FRAC:.0%}",
                                 {"clipped_frac": clipped})
     axes = measure_axes(crop)
-    primary_name = ("horizontal" if axes["horizontal"].strength >= axes["vertical"].strength
-                    else "vertical")
+    # 합의 있는 축 우선 — 직조 텍스처(강도만 높은 무합의 축)에 속지 않는다(extractor 와 동일 규율)
+    candidates = [n for n in ("horizontal", "vertical")
+                  if axes[f"{n}_consensus"] and axes[n].period_px is not None]
+    if candidates:
+        primary_name = max(candidates, key=lambda n: axes[n].strength)
+    else:
+        primary_name = ("horizontal"
+                        if axes["horizontal"].strength >= axes["vertical"].strength
+                        else "vertical")
     primary = axes[primary_name]
     if primary.period_px is None:
         return CompositeFailure("reference_insufficient", "반복 신호 없음")

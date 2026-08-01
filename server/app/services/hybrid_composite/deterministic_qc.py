@@ -204,10 +204,18 @@ def verify_composite(
     if outside.any():
         de = delta_e76(bgr_to_lab(out_bgr)[outside], bgr_to_lab(carrier_bgr)[outside])
         drift_frac = float((de > OUTSIDE_DRIFT_DELTA_E).mean())
+        mean_de = float(de.mean())
         metrics["outside_drift_frac"] = round(drift_frac, 5)
+        metrics["outside_mean_de76"] = round(mean_de, 3)
         if drift_frac > OUTSIDE_DRIFT_MAX_FRAC:
             failures.append({"code": "protected_region_drift",
                              "detail": f"mask 밖 ΔE76>10 비율 {drift_frac:.4f}"})
+        # 픽셀-임계 하나만 보면 임계 바로 밑의 **균일 틴트**(예: 12% 블렌드 누출 ≈ ΔE76 9)가
+        # 통째로 숨는다(mutation 실측 — HM7 생존). 설계상 mask 밖은 carrier 와 정확히
+        # 동일해야 하므로 평균 드리프트는 사실상 0 이다 — 1.5 는 인코딩 여유일 뿐.
+        if mean_de > 1.5:
+            failures.append({"code": "protected_region_drift",
+                             "detail": f"mask 밖 평균 ΔE76 {mean_de:.2f} > 1.5 (균일 누출)"})
         metrics["outside_ssim"] = round(ssim_gray(
             out_bgr, carrier_bgr, mask=(panel_map.garment_mask == 0).astype(np.uint8) * 255), 4)
 

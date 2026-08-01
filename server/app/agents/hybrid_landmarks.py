@@ -59,10 +59,57 @@ async def extract_geometry(settings, image: InlineImage) -> dict:
     return raw
 
 
-def validate_geometry(raw: dict) -> tuple[dict | None, dict | None, str | None]:
+AGREEMENT_MAX_DELTA = 0.06  # 두 호출의 같은 landmark 가 이보다 벌어지면 불일치(정규화 좌표)
+
+
+def merge_geometry_pair(a: dict, b: dict) -> tuple[dict | None, str | None]:
+    """vision 이중 호출 합의 — 좌표는 중앙값(평균), 불일치는 typed 실패 사유로.
+
+    zero-cost 평가 실측(2026-08-01): 같은 이미지에 대한 호출 간 landmark 지터가 결과를
+    run 마다 다른 typed 실패로 굴렸다(anchor OK → mask 0.34 → aspect 0.25). 결정론
+    파이프라인의 앞단이 흔들리면 전체가 흔들린다 — 두 호출이 서로를 검증하게 한다.
+    """
+    if not (isinstance(a, dict) and isinstance(b, dict)):
+        return None, "기하 응답 형식 오류"
+    if not (a.get("garment_visible") and b.get("garment_visible")):
+        return None, "의류 미검출(이중 호출 불일치)"
+    merged = dict(a)
+    for key in ("shoulder_l", "shoulder_r", "hem_l", "hem_r",
+                "sleeve_l_end", "sleeve_r_end"):
+        va, vb = a.get(key), b.get(key)
+        ok_a = isinstance(va, list) and len(va) == 2
+        ok_b = isinstance(vb, list) and len(vb) == 2
+        if ok_a and ok_b:
+            if max(abs(va[0] - vb[0]), abs(va[1] - vb[1])) > AGREEMENT_MAX_DELTA:
+                return None, f"landmark 불일치: {key}"
+            merged[key] = [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2]
+        elif ok_a or ok_b:
+            merged[key] = va if ok_a else vb
+        else:
+            merged.pop(key, None)
+    for key in ("collar_box", "placket_box"):
+        if not isinstance(merged.get(key), list) and isinstance(b.get(key), list):
+            merged[key] = b[key]
+    counts = [int(x.get("visible_button_count") or 0) for x in (a, b)]
+    merged["visible_button_count"] = int(round(sum(counts) / 2))
+    merged["confidence"] = min(float(a.get("confidence") or 0),
+                               float(b.get("confidence") or 0))
+    for key in ("has_collar", "has_placket", "has_cuffs"):
+        merged[key] = bool(a.get(key)) or bool(b.get(key))
+    return merged, None
+
+
+def validate_geometry(
+    raw: dict, *, aspect_hw: float = 1.0,
+) -> tuple[dict | None, dict | None, str | None]:
     """vision 원시 출력 → (landmarks, inventory, 실패사유). 판정은 전부 여기(순수)서.
 
-    → landmarks: panel_map 이 쓰는 정규화 점들. inventory: construction 대조용.
+    `aspect_hw` = 이미지 H/W. inventory 의 비율(torso_aspect·sleeve_len_ratio)은 반드시
+    **물리 픽셀 비**로 계산해야 한다 — 정규화 좌표 그대로 나누면 서로 다른 종횡비의
+    사진(source 3:4 vs carrier 2:3)끼리 비교가 무의미해진다(실측: 같은 셔츠가 상대 오차
+    0.29 로 오판). x 차분에 1/aspect... 대신 y 를 픽셀 비율로 환산: Δy_phys = Δy·H/W·Δx 기준.
+
+    → landmarks: panel_map 이 쓰는 정규화 점들(불변). inventory: construction 대조용(물리 비).
     실패사유가 None 이 아니면 나머지는 None.
     """
     if not isinstance(raw, dict) or not raw.get("garment_visible"):
@@ -108,9 +155,11 @@ def validate_geometry(raw: dict) -> tuple[dict | None, dict | None, str | None]:
         if b:
             boxes[name] = b
 
+    # 물리 비 환산: x 는 그대로(폭 기준), y 차분에 aspect_hw(H/W)를 곱해 같은 단위로.
     shoulder_w = lm["shoulder_r"][0] - lm["shoulder_l"][0]
     hem_w = lm["hem_r"][0] - lm["hem_l"][0]
-    torso_h = ((lm["hem_l"][1] + lm["hem_r"][1]) - (lm["shoulder_l"][1] + lm["shoulder_r"][1])) / 2
+    torso_h = (((lm["hem_l"][1] + lm["hem_r"][1])
+                - (lm["shoulder_l"][1] + lm["shoulder_r"][1])) / 2) * aspect_hw
     if shoulder_w <= 0.02 or torso_h <= 0.02:
         return None, None, "torso 치수 비현실"
     sleeve_len_ratio = None
@@ -121,7 +170,7 @@ def validate_geometry(raw: dict) -> tuple[dict | None, dict | None, str | None]:
             end = lm.get(f"sleeve_{side}_end")
             if end:
                 sh = lm[f"shoulder_{side}"]
-                lens.append(math.hypot(end[0] - sh[0], end[1] - sh[1]))
+                lens.append(math.hypot(end[0] - sh[0], (end[1] - sh[1]) * aspect_hw))
         if lens:
             sleeve_len_ratio = sum(lens) / len(lens) / torso_h
 

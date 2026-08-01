@@ -45,10 +45,12 @@ def _stripe_source_png() -> bytes:
     return _png(tiled)
 
 
+# source fixture 는 1536² 정방형 — 물리 torso aspect 가 carrier fixture(G1, 848×1264,
+# 물리 aspect ≈1.89)와 22% 안에서 맞아야 construction gate 를 통과한다(물리 비 계약).
 SOURCE_GEOM_RAW = {
     "garment_visible": True, "confidence": 0.9,
-    "shoulder_l": [0.15, 0.05], "shoulder_r": [0.85, 0.05],
-    "hem_l": [0.15, 0.95], "hem_r": [0.85, 0.95],
+    "shoulder_l": [0.25, 0.04], "shoulder_r": [0.75, 0.04],
+    "hem_l": [0.25, 0.96], "hem_r": [0.75, 0.96],
     "has_collar": True, "has_placket": True, "has_cuffs": True,
     "visible_button_count": 7,
 }

@@ -305,12 +305,14 @@ def test_shading_transfer_keeps_source_chroma_and_order():
     # protected 내부에서 파랑 줄의 b* 는 음수(파랑), 갈색 줄의 b* 는 양수여야 한다
     sel = pm.protected > 0
     bs = lab[..., 2][sel]
-    assert float(np.percentile(bs, 2)) < -12.0, "파란 줄 chroma 소실"
-    assert float(np.percentile(bs, 98)) > 4.0, "갈색/베이지 줄 chroma 소실"
+    # 임계는 절반 오염(carrier 무채색과 50% 혼합 시 b* 가 반토막)도 잡을 만큼 타이트해야
+    # 한다 — 실측 원값 blue b*≈-40 / brown b*≈+26, 절반 오염 시 -20/+13 (mutation HM9 실측).
+    assert float(np.percentile(bs, 2)) < -28.0, "파란 줄 chroma 소실/희석"
+    assert float(np.percentile(bs, 98)) > 16.0, "갈색/베이지 줄 chroma 소실/희석"
     # carrier(무지 회색)의 chroma 가 섞였다면 분포가 0 근처로 붕괴한다
     carrier_bs = bgr_to_lab(cx["image"])[..., 2][sel]
     assert float(np.abs(carrier_bs).max()) < 6.0  # 전제 확인: carrier 는 무채색
-    assert float(np.abs(bs).max()) > 20.0
+    assert float(np.abs(bs).max()) > 30.0
 
 
 def test_decal_component_without_source_pixels_is_flagged_for_review():

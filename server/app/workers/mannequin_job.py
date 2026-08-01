@@ -834,6 +834,7 @@ async def _apply_hybrid_composite(
     except Exception as e:
         return await fail("reference_insufficient", f"디코드 실패: {e}")
 
+    front_sha_early = hashlib.sha256(front_ref.image.data).hexdigest()
     # Stage 1 — 입력 gate (Detail)
     val = await asyncio.to_thread(hc_source.validate_stripe_source, detail_bgr)
     if isinstance(val, CompositeFailure):
@@ -847,7 +848,7 @@ async def _apply_hybrid_composite(
     x0, y0, x1, y1 = val.roi
     detail_sha = hashlib.sha256(detail_ref.image.data).hexdigest()
     model_or_fail = await asyncio.to_thread(
-        hc_stripe.extract_stripe_model, detail_bgr[y0:y1, x0:x1],
+        hc_stripe.extract_stripe_model_scan, detail_bgr[y0:y1, x0:x1],
         source_asset_id=detail_ref.asset_id, source_sha256=detail_sha,
         source_roi=val.roi)
     if isinstance(model_or_fail, CompositeFailure):
@@ -859,47 +860,89 @@ async def _apply_hybrid_composite(
 
     # Stage 3 준비 — source/carrier 기하 (vision 은 좌표만, 판정은 코드)
     try:
-        src_raw = await hybrid_landmarks.extract_geometry(s, front_ref.image)
-        car_raw = await hybrid_landmarks.extract_geometry(
-            s, InlineImage(res.mime, res.image))
+        # 이중 호출 합의 — vision landmark 지터가 결과를 run 마다 굴리는 것을 실측으로
+        # 확인(zero-cost 평가). 좌표는 평균, 불일치는 typed 실패.
+        src_raw = hybrid_landmarks.merge_geometry_pair(
+            await hybrid_landmarks.extract_geometry(s, front_ref.image),
+            await hybrid_landmarks.extract_geometry(s, front_ref.image))
+        car_img = InlineImage(res.mime, res.image)
+        car_raw = hybrid_landmarks.merge_geometry_pair(
+            await hybrid_landmarks.extract_geometry(s, car_img),
+            await hybrid_landmarks.extract_geometry(s, car_img))
     except Exception as e:
         return await fail("panel_landmarks_invalid", f"기하 추출 실패: {type(e).__name__}")
-    src_lm, src_inv, src_err = hybrid_landmarks.validate_geometry(src_raw)
+    if src_raw[1] is not None:
+        return await fail("panel_landmarks_invalid", f"source: {src_raw[1]}")
+    if car_raw[1] is not None:
+        return await fail("panel_landmarks_invalid", f"carrier: {car_raw[1]}")
+    src_raw, car_raw = src_raw[0], car_raw[0]
+    src_lm, src_inv, src_err = hybrid_landmarks.validate_geometry(
+        src_raw, aspect_hw=front_bgr.shape[0] / front_bgr.shape[1])
     if src_err:
         return await fail("panel_landmarks_invalid", f"source: {src_err}")
-    car_lm, car_inv, car_err = hybrid_landmarks.validate_geometry(car_raw)
+    car_lm, car_inv, car_err = hybrid_landmarks.validate_geometry(
+        car_raw, aspect_hw=carrier_bgr.shape[0] / carrier_bgr.shape[1])
     if car_err:
         return await fail("panel_landmarks_invalid", f"carrier: {car_err}")
     src_boxes = (src_inv or {}).pop("component_boxes", {})
     car_boxes = (car_inv or {}).pop("component_boxes", {})
 
-    # scale anchor — source Front torso 에서 의류 단위 반복 수를 잰다
+    # scale anchor — source Front torso 에서 **의류 기준 줄 방향과** 단위 반복 수를 잰다.
+    # Detail 근접컷은 원단을 눕혀 찍는 경우가 흔해서(실측: 세로 줄 셔츠의 Detail 이 수평 밴드)
+    # model.axis(사진 좌표)는 의류 방향의 근거가 못 된다. 의류에 실제로 입혀진 방향은
+    # Front(의류 전체가 보이는 사진)의 torso 측정이 정본이다. 1D 프로파일 모델은 방향과
+    # 무관하므로 축만 Front 기준으로 바꿔 끼운다.
     fh, fw = front_bgr.shape[:2]
     fy0 = int(min(src_lm["shoulder_l"][1], src_lm["shoulder_r"][1]) * fh)
     fy1 = int(max(src_lm["hem_l"][1], src_lm["hem_r"][1]) * fh)
     fx0 = int(min(src_lm["shoulder_l"][0], src_lm["hem_l"][0]) * fw)
     fx1 = int(max(src_lm["shoulder_r"][0], src_lm["hem_r"][0]) * fw)
     torso_crop = front_bgr[max(0, fy0):fy1, max(0, fx0):fx1]
-    axes = await asyncio.to_thread(hc_stripe.measure_axes, torso_crop)
-    front_ax = axes.get(model.axis)
-    if front_ax is None or front_ax.period_px is None or front_ax.strength < 0.2:
-        return await fail("stripe_model_low_confidence",
-                          "source Front torso 에서 반복 스케일 앵커 실패")
-    torso_span_src = (fy1 - fy0) if model.axis == "horizontal" else (fx1 - fx0)
-    repeats_on_torso = torso_span_src / float(front_ax.period_px)
+    # 스케일 앵커 = Front torso 에서의 **scan 재추출 + Detail 모델과의 구조 대조**.
+    # guided 상관 탐색은 sub-line lag 에 잠겼다(실측: 15px/corr 0.54 vs scan 21px/4색 일치).
+    # 두 사진에서 독립 추출한 모델의 색 수·폭 비가 일치하면 그 주기는 신뢰할 수 있다.
+    front_model = await asyncio.to_thread(
+        hc_stripe.extract_stripe_model_scan, torso_crop,
+        source_asset_id=front_ref.asset_id, source_sha256=front_sha_early,
+        source_roi=(fx0, fy0, fx1, fy1))
+    anchor_corr = None
+    if not isinstance(front_model, CompositeFailure) and (
+            len(front_model.color_sequence_lab) == len(model.color_sequence_lab)
+            and max(abs(a - b) / max(b, 1e-6) for a, b in
+                    zip(front_model.line_width_ratios, model.line_width_ratios)) <= 0.6):
+        garment_axis = front_model.axis
+        front_period_px = float(front_model.period_px)
+        anchor_corr = round(front_model.confidence, 3)
+    else:
+        anchor = await asyncio.to_thread(hc_stripe.find_period_guided, torso_crop, model)
+        if anchor is None:
+            return await fail(
+                "stripe_model_low_confidence",
+                "source Front torso 반복 앵커 실패 (scan 구조 불일치 + guided 실패)",
+                frontScan=(front_model.reason if isinstance(front_model, CompositeFailure)
+                           else {"n_colors": len(front_model.color_sequence_lab)}))
+        garment_axis, front_period_px, anchor_corr = anchor
+    torso_span_src = (fy1 - fy0) if garment_axis == "horizontal" else (fx1 - fx0)
+    repeats_on_torso = torso_span_src / front_period_px
     ch, cw = carrier_bgr.shape[:2]
     t_torso_span = (
         (max(car_lm["hem_l"][1], car_lm["hem_r"][1])
          - min(car_lm["shoulder_l"][1], car_lm["shoulder_r"][1])) * ch
-        if model.axis == "horizontal" else
+        if garment_axis == "horizontal" else
         (max(car_lm["shoulder_r"][0], car_lm["hem_r"][0])
          - min(car_lm["shoulder_l"][0], car_lm["hem_l"][0])) * cw)
     target_period_px = float(t_torso_span / max(repeats_on_torso, 1e-6))
+    await emit("hybrid_scale_anchor", garment_axis=garment_axis,
+               detail_photo_axis=model.axis,
+               front_period_px=round(front_period_px, 2),
+               anchor_corr=round(anchor_corr, 3),
+               repeats_on_torso=round(repeats_on_torso, 2),
+               target_period_px=round(target_period_px, 2))
 
     # Stage 3 — panel map (+ construction 대조)
     pm = await asyncio.to_thread(
         hc_panel.build_panel_map, carrier_bgr, car_lm,
-        source_inventory=src_inv, carrier_inventory=car_inv, strategy="bg_diff")
+        source_inventory=src_inv, carrier_inventory=car_inv, strategy="auto")
     if isinstance(pm, CompositeFailure):
         await emit("hybrid_panel_map", ok=False, reason=pm.reason, detail=pm.detail[:200],
                    metrics=pm.metrics)
@@ -911,7 +954,7 @@ async def _apply_hybrid_composite(
     # Stage 4 — 결정론 warp/composite
     art = await asyncio.to_thread(
         hc_warp.composite_stripe, carrier_bgr, pm, model,
-        target_period_px=target_period_px, target_axis=model.axis,
+        target_period_px=target_period_px, target_axis=garment_axis,
         component_boxes=car_boxes, source_bgr=front_bgr,
         source_component_boxes=src_boxes)
     if isinstance(art, CompositeFailure):
@@ -926,7 +969,7 @@ async def _apply_hybrid_composite(
     # Stage 5 — deterministic QC (LLM 이 못 뒤집는 판정)
     qc = await asyncio.to_thread(
         hc_qc.verify_composite, art.image_bgr, carrier_bgr, pm, model,
-        target_period_px=target_period_px, target_axis=model.axis)
+        target_period_px=target_period_px, target_axis=garment_axis)
     qc_event_metrics = {k: v for k, v in qc.metrics.items() if k != "failure_details"}
     await emit("hybrid_deterministic_qc", passed=qc.passed,
                failures=list(qc.failures), metrics=qc_event_metrics,
@@ -943,7 +986,7 @@ async def _apply_hybrid_composite(
         return await fail("pattern_metric_failed", "출력 인코딩 실패")
     out_bytes = png.tobytes()
     needs_review = bool(art.components_needing_review)
-    front_sha = hashlib.sha256(front_ref.image.data).hexdigest()
+    front_sha = front_sha_early
     summary = {
         "applied": True,
         "needsReview": needs_review,
@@ -960,6 +1003,7 @@ async def _apply_hybrid_composite(
             "front": {"assetId": front_ref.asset_id, "sha256": front_sha},
         },
         "targetPeriodPx": round(target_period_px, 2),
+        "targetAxis": garment_axis,
         "sourceCoverage": round(art.source_coverage, 4),
         "panelMetrics": art.panel_metrics,
         "deterministicMetrics": qc_event_metrics,

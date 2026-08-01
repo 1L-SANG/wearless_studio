@@ -172,10 +172,13 @@ def composite_stripe(
     sigma = max(target_period_px * 1.2, 15.0)
     blur_l = cv2.GaussianBlur(carrier_lab[..., 0], (0, 0), sigmaX=sigma)
     work_sel = panel_map.garment_mask > 0
-    mean_l = float(blur_l[work_sel].mean()) if work_sel.any() else float(blur_l.mean())
-    shading = blur_l - mean_l
+    # 절대 휘도의 정본은 carrier 의 저주파 L 이다(계약: 저주파 luminance/fold 는 carrier 에서).
+    # 패턴은 L **구조**(줄 간 상대차)와 chroma 만 기여한다 — Detail 사진의 노출(그늘에서
+    # 찍혀 L~65)이 절대 레벨로 새면 장면과 동떨어진 어두운 슬랩이 된다(실측).
     shaded = pattern_lab.copy()
-    shaded[..., 0] = np.clip(pattern_lab[..., 0] + shading, 0.0, 100.0)
+    pat_sel = painted > 0
+    pat_mean = float(pattern_lab[..., 0][pat_sel].mean()) if pat_sel.any() else 0.0
+    shaded[..., 0] = np.clip(pattern_lab[..., 0] - pat_mean + blur_l, 0.0, 100.0)
 
     # ── feather blend ────────────────────────────────────────────────────────────
     alpha = np.zeros((h, w), np.float32)
