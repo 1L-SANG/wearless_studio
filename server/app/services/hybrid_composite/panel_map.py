@@ -77,7 +77,10 @@ def mask_bg_diff(carrier_bgr: np.ndarray, panel_polys: list[np.ndarray]) -> np.n
     poly_mask = np.zeros((h, w), np.uint8)
     for p in panel_polys:
         cv2.fillPoly(poly_mask, [p.astype(np.int32)], 255)
-    poly_dilated = cv2.dilate(poly_mask, kernel, iterations=6)
+    # 이웃 확장은 이미지 크기에 비례 — 고정 6회(≈12px)는 밑단 플레어·소매 밖 실루엣을
+    # 잘라 다시 quad 근방 슬랩으로 만든다.
+    poly_dilated = cv2.dilate(poly_mask, kernel,
+                              iterations=max(6, int(min(h, w) * 0.14 / 4)))
     return cv2.bitwise_and(fg, poly_dilated)
 
 
@@ -325,7 +328,9 @@ def build_panel_map(
              "texture_energy_p95": round(texture_p95, 3),
              "strategy": strategy_used})
 
-    work = cv2.bitwise_and(garment, poly_mask)  # 패턴 대상 = mask ∩ panel 합집합
+    # 패턴 대상 = **실루엣 mask 자체**. quad 는 방향/워프 힌트일 뿐이다 — mask 를 quad 로
+    # 자르면 실루엣이 아무리 정확해도 출력이 사각 슬랩이 된다(aed4e94 QA FAIL 결함 #5 뿌리).
+    work = garment.copy()
     band = max(3, int(min(h, w) * BOUNDARY_BAND_PX_FRAC))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (band * 2 + 1, band * 2 + 1))
     protected = cv2.erode(work, kernel)

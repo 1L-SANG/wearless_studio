@@ -103,7 +103,23 @@ def composite_stripe(
     painted = np.zeros((h, w), np.uint8)
     panel_metrics = {}
 
-    for panel in panel_map.panels:
+    # ── per-pixel panel 배정 — 페인트 영역 = 실루엣 mask 전체 ─────────────────────
+    # quad 사각형을 warp 해 붙이는 방식은 페인트를 quad 로 클리핑해 사각 슬랩을 만든다.
+    # 대신 mask 의 모든 픽셀을 각 panel 의 H⁻¹ 로 역사상해, 로컬 좌표가 [0,1]² 에
+    # 가장 가까운 panel 에 배정하고 그 panel 좌표계의 위상으로 프로파일을 샘플한다.
+    # v(줄 진행) 축은 주기적이라 범위 밖 확장이 자연스럽고, quad 경계 아티팩트가 없다.
+    K = len(model.period_profile_lab)
+    profile = model.period_profile_lab.astype(np.float32)
+    ys, xs = np.nonzero(panel_map.garment_mask)
+    if len(xs) == 0:
+        return CompositeFailure("panel_landmarks_invalid", "실루엣 mask 가 비어 있음")
+    pts = np.stack([xs.astype(np.float64), ys.astype(np.float64),
+                    np.ones(len(xs))], axis=0)
+    best_cost = np.full(len(xs), np.inf)
+    best_coord = np.zeros(len(xs))
+    best_panel = np.full(len(xs), -1, np.int32)
+    MAX_ASSIGN_COST = 0.5   # panel 로컬 박스에서 이보다 먼 픽셀은 미배정(=carrier 유지)
+    for p_idx, panel in enumerate(panel_map.panels):
         if panel.kind != "stripe":
             continue
         q = panel.quad
@@ -111,9 +127,6 @@ def composite_stripe(
         bh = int(max(np.linalg.norm(q[3] - q[0]), np.linalg.norm(q[2] - q[1]))) + 1
         if bw < 4 or bh < 4:
             continue
-        # 소매 panel 은 자체 좌표계 — quad 의 로컬 u/v 가 곧 panel 방향이다. 줄 방향은
-        # target_axis 를 따르되 panel 로컬 공간에서 생성 후 quad 사상으로 함께 회전된다.
-        local = synthesize_pattern_lab(model, bw, bh, target_period_px, target_axis)
         src_rect = np.float32([[0, 0], [bw - 1, 0], [bw - 1, bh - 1], [0, bh - 1]])
         H = cv2.getPerspectiveTransform(src_rect, q)
         validity = _homography_validity(H, bw, bh, 0.0)
@@ -125,17 +138,38 @@ def composite_stripe(
                 "warp_invalid",
                 f"{panel.name}: 이방 신장 {validity['stretch_over_frac']:.3f} > {MAX_STRETCH_FRAC}",
                 {"panel": panel.name, **validity})
-        warped = cv2.warpPerspective(local, H, (w, h), flags=cv2.INTER_LINEAR)
-        cover = cv2.warpPerspective(np.full((bh, bw), 255, np.uint8), H, (w, h),
-                                    flags=cv2.INTER_NEAREST)
-        region = cv2.bitwise_and(cover, panel_map.garment_mask)
-        region = cv2.bitwise_and(region, cv2.bitwise_not(painted))
-        sel = region > 0
-        pattern_lab[sel] = warped[sel]
-        painted[sel] = 255
+        Hinv = np.linalg.inv(H)
+        loc = Hinv @ pts
+        lu = loc[0] / loc[2]
+        lv = loc[1] / loc[2]
+        u = lu / max(bw - 1, 1)
+        v = lv / max(bh - 1, 1)
+        du = np.maximum(np.maximum(-u, u - 1.0), 0.0)
+        dv = np.maximum(np.maximum(-v, v - 1.0), 0.0)
+        cost = np.hypot(du, dv)
+        coord = lv if target_axis == "horizontal" else lu
+        sel = cost < best_cost
+        best_cost[sel] = cost[sel]
+        best_coord[sel] = coord[sel]
+        best_panel[sel] = p_idx
         panel_metrics[panel.name] = {
-            "painted_px": int(sel.sum()), **{k: round(v, 4) if isinstance(v, float) else v
-                                             for k, v in validity.items()}}
+            **{k: round(vv, 4) if isinstance(vv, float) else vv
+               for k, vv in validity.items()}}
+    assigned = (best_panel >= 0) & (best_cost <= MAX_ASSIGN_COST)
+    if not assigned.any():
+        return CompositeFailure("panel_landmarks_invalid", "합성 가능한 stripe panel 이 없음")
+    phase = (best_coord[assigned] / target_period_px * K) % K
+    i0 = np.floor(phase).astype(int) % K
+    i1 = (i0 + 1) % K
+    frac = (phase - np.floor(phase)).astype(np.float32).reshape(-1, 1)
+    colors = profile[i0] * (1 - frac) + profile[i1] * frac
+    ay, ax_ = ys[assigned], xs[assigned]
+    pattern_lab[ay, ax_] = colors
+    painted[ay, ax_] = 255
+    for p_idx, panel in enumerate(panel_map.panels):
+        if panel.name in panel_metrics:
+            panel_metrics[panel.name]["painted_px"] = int(
+                ((best_panel == p_idx) & assigned).sum())
 
     if not panel_metrics:
         return CompositeFailure("panel_landmarks_invalid", "합성 가능한 stripe panel 이 없음")
