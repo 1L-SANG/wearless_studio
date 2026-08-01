@@ -21,6 +21,7 @@ import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, 
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { VaryReviewModal } from '@/features/editor/VaryReviewModal.jsx';
+import { createReviewGate } from '@/features/editor/reviewGate.js';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
@@ -378,6 +379,13 @@ export function Editor() {
   const [infoModal, setInfoModal] = useState(null); // { type, blockId|null, initialInfo }
   const [review, setReview] = useState(null);      // { image, busy } — AI 편집 결과 검수
   const reviewKeys = useRef(new Map());            // sessionId → { sig, key } (진행 중 판단 1건)
+  const recordReview = useRef(null);               // 최신 reviewVaryResult (게이트가 stale 클로저를 잡지 않게)
+  const gateRef = useRef(null);
+  // wardrobe 이미지를 상세페이지 데이터로 쓰는 **모든** 경로가 지나는 한 곳.
+  const gate = () => (gateRef.current ||= createReviewGate({
+    record: (im, decision, reason) => recordReview.current(im, decision, reason),
+    onChange: setReview,
+  }));
   const [tab, setTab] = useState('ai');
   const [selBlock, setSelBlock] = useState(null);
   const [selEl, setSelEl] = useState(null);
@@ -708,7 +716,6 @@ export function Editor() {
     toast.push('이미지를 캔버스에 삽입했어요');
   };
   const requestSlotImage = (blockId, el) => { setPendingSlot({ blockId, elId: el.id }); setTab('wardrobe'); };
-  // 서버가 자동 통과시키지 못한 결과는 사람이 원본과 비교하기 전에는 캔버스에 넣지 않는다.
   // 정책 gate 를 통과한 뒤에만 부르는 내부 삽입 — 슬롯이면 슬롯, 아니면 캔버스.
   // 밖으로 내보내지 않는다(이걸 공개하면 gate 를 우회하는 경로가 생긴다).
   const insertPastGate = (im) => {
@@ -720,11 +727,9 @@ export function Editor() {
   };
   // 검수가 필요한 컷은 accepted 일 때만 바로 들어간다. 미검수(null)든 거절(rejected)이든
   // 모달을 거친다 — 거절을 뒤집는 건 "무시하고 넣기"가 아니라 새 승인 이력이어야 한다.
-  const needsReviewNow = (im) => !!im?.needsReview && im?.reviewDecision !== 'accepted';
-  const wardrobeInsert = (im) => {
-    if (needsReviewNow(im)) { setReview({ image: im, busy: false }); return; }
-    insertPastGate(im);
-  };
+  // 사용 목적(continuation)은 호출자가 정한다 — 게이트는 그걸 모른 채 승인 뒤에 실행만 한다.
+  const requestWardrobeUse = (im, use) => gate().request(im, use);
+  const wardrobeInsert = (im) => requestWardrobeUse(im, insertPastGate);
   // fresh = 새로 생성된 컷의 4색 glow 하이라이트 — 사용자가 본 뒤(애니메이션 종료) 해제
   const freshSeen = (id) => setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === id && x.fresh ? { ...x, fresh: false } : x); return nw; });
   const deleteWardrobeImages = (ids) => {
@@ -802,23 +807,13 @@ export function Editor() {
     });
     return true;
   };
-  // 승인은 **먼저 기록되고 나서** 삽입된다. 기록이 실패했는데 캔버스에만 들어가면
-  // 사용자가 승인한 적 없는 컷이 상세페이지에 남는다.
-  const acceptReview = async () => {
-    const im = review?.image; if (!im) return;
-    setReview((r) => ({ ...r, busy: true }));
-    const ok = await reviewVaryResult(im, 'accepted');
-    if (!ok) { setReview((r) => (r ? { ...r, busy: false } : r)); return; }
-    setReview(null);
-    insertPastGate(im);
-  };
+  recordReview.current = reviewVaryResult;
+  // 승인은 **먼저 기록되고 나서** 반영된다. 기록이 실패했는데 화면에만 들어가면
+  // 사용자가 승인한 적 없는 컷이 상세페이지에 남는다. 순서·1회성은 게이트가 보장한다.
+  const acceptReview = () => gate().accept();
   // 거절은 삭제가 아니다 — 판단만 남기고 이미지는 목록에 그대로 둔다.
   const rejectReview = async () => {
-    const im = review?.image; if (!im) return;
-    setReview((r) => ({ ...r, busy: true }));
-    const ok = await reviewVaryResult(im, 'rejected');
-    if (!ok) { setReview((r) => (r ? { ...r, busy: false } : r)); return; }
-    setReview(null); toast.push('사용하지 않기로 했어요');
+    if (await gate().reject()) toast.push('사용하지 않기로 했어요');
   };
   const varyImage = (im) => {
     setVaryTarget(im?.id ? { id: im.id } : null); // 클릭한 의류 이미지가 변형 대상 — 이미지별 독립 상태
@@ -1350,14 +1345,14 @@ export function Editor() {
       )}
 
       {/* 정보 블록 입력 폼 (PRD §10.14) */}
-      {review && (
-        <VaryReviewModal image={review.image} busy={review.busy}
-          onAccept={acceptReview} onReject={rejectReview} onClose={() => setReview(null)} />
-      )}
       {infoModal && (
         <InfoBlockModal type={infoModal.type} initialInfo={infoModal.initialInfo} ctx={infoCtx}
-          wardrobe={wardrobe} colorOpts={colorOpts}
+          wardrobe={wardrobe} colorOpts={colorOpts} onRequestUse={requestWardrobeUse}
           editing={!!infoModal.blockId} onClose={() => setInfoModal(null)} onSubmit={submitInfo} />
+      )}
+      {review && (
+        <VaryReviewModal image={review.image} busy={review.busy}
+          onAccept={acceptReview} onReject={rejectReview} onClose={() => gate().close()} />
       )}
     </div>
   );

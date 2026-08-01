@@ -3,9 +3,10 @@
    프리셋 타입별 폼으로 block.info(정본)를 편집한다. 제출하면 에디터가
    buildInfoBlock 으로 elements 를 통째로 재생성한다(수동 수정 대체).
    ============================================================= */
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Button, Icon, IconButton, Modal } from '@/components/ui.jsx';
 import { thumbUrl } from '@/lib/imageCdn.js';
+import { createContinuationSlot } from '@/features/editor/reviewGate.js';
 import { CARE_COPY_LIBRARY, CARE_LABEL_SENTENCE, FEATURE_ITEMS_MAX, FEATURE_ITEMS_MIN, INFO_PRESET_TYPES, careFamilyFor } from '@/features/editor/presets/infoPresets.js';
 
 const inp = { width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid #e5e5e3', borderRadius: 8, fontSize: 14, background: '#fff', color: '#0e0d14' };
@@ -322,12 +323,18 @@ function normalizeFormInfo(type, info) {
   return info;
 }
 
-export function InfoBlockModal({ type, initialInfo, ctx, wardrobe, colorOpts, editing, onClose, onSubmit }) {
+export function InfoBlockModal({ type, initialInfo, ctx, wardrobe, colorOpts, editing, onClose, onSubmit, onRequestUse }) {
   const [info, setInfo] = useState(() => normalizeFormInfo(type, initialInfo));
   const [photoFor, setPhotoFor] = useState(null); // 사진 팝업 대상 인덱스 (특징 포인트/모델 카드)
   const meta = INFO_PRESET_TYPES.find((p) => p.type === type) || { label: '내용' };
   const Form = FORMS[type];
   if (!Form) return null;
+  // 사진 슬롯도 캔버스와 같은 검수 게이트를 지난다. 게이트는 목적을 모르므로 "몇 번
+  // 슬롯이었는지"는 여기서 표로 고정하고, 폼이 닫히거나 대상이 바뀌면 그 표를 버린다.
+  const slot = useRef(null);
+  if (!slot.current) slot.current = createContinuationSlot();
+  useEffect(() => () => slot.current.dispose(), []);
+  const requestUse = onRequestUse || ((im, use) => use(im));
   const photoList = type === 'feature_icons' ? info.items : type === 'model_info' ? info.models : null;
   const setPhotoAt = (index, src) => setInfo((f) => (type === 'feature_icons'
     ? { ...f, items: f.items.map((x, j) => (j === index ? { ...x, src } : x)) }
@@ -344,7 +351,11 @@ export function InfoBlockModal({ type, initialInfo, ctx, wardrobe, colorOpts, ed
       {photoFor != null && photoList && (
         <PhotoPicker wardrobe={wardrobe} colorOpts={colorOpts}
           currentSrc={photoList[photoFor]?.src || null}
-          onPick={(im) => { setPhotoAt(photoFor, im.src); setPhotoFor(null); }}
+          onPick={(im) => {
+            const claimed = slot.current.claim(photoFor);
+            setPhotoFor(null);   // 팝업은 닫고, 검수가 필요하면 그 모달만 남긴다
+            requestUse(im, () => slot.current.run(claimed, (i) => setPhotoAt(i, im.src)));
+          }}
           onClear={() => { setPhotoAt(photoFor, null); setPhotoFor(null); }}
           onClose={() => setPhotoFor(null)} />
       )}

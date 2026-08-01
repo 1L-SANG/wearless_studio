@@ -63,72 +63,30 @@ test('review does not update local state when the API fails', () => {
 });
 
 // ── 검수 UI (item 5) ────────────────────────────────────────────────────────
+// 삽입 정책의 **전이**(승인 순서·1회성·실패 시 미반영·continuation 수명)는
+// editor-review-gate.test.mjs 에서 실제로 돌린다. 여기서는 에디터가 그 게이트에
+// 제대로 연결돼 있는지만 본다.
 
-test('an unreviewed review_required result never reaches the canvas', () => {
-  const body = editor.slice(editor.indexOf('const wardrobeInsert'), editor.indexOf('  // fresh ='));
-  const gate = editor.slice(editor.indexOf('const needsReviewNow'), editor.indexOf('const wardrobeInsert'));
-  assert.match(gate, /!!im\?\.needsReview/);
-  // 슬롯 채우기도 같은 gate 를 지난다 — 삽입 경로가 하나뿐이라 우회로가 없다.
-  assert.equal((body.match(/insertPastGate\(im\)/g) || []).length, 1);
-  assert.match(body, /needsReviewNow\(im\)\) \{ setReview\(\{ image: im, busy: false \}\); return; \}/);
+test('the editor routes every wardrobe use through one gate', () => {
+  assert.match(editor, /const requestWardrobeUse = \(im, use\) => gate\(\)\.request\(im, use\)/);
+  assert.match(editor, /const wardrobeInsert = \(im\) => requestWardrobeUse\(im, insertPastGate\)/);
 });
 
-test('only an accepted result inserts without re-asking', () => {
-  const gate = editor.slice(editor.indexOf('const needsReviewNow'), editor.indexOf('const wardrobeInsert'));
-  assert.match(gate, /im\?\.reviewDecision !== 'accepted'/);
-});
-
-test('a rejected result cannot be inserted directly', () => {
-  // 거절을 뒤집는 건 "무시하고 넣기"가 아니라 새 승인 이력이어야 한다.
-  const gate = editor.slice(editor.indexOf('const needsReviewNow'), editor.indexOf('const wardrobeInsert'));
-  assert.doesNotMatch(gate, /!im\?\.reviewDecision/);
-  const body = editor.slice(editor.indexOf('const wardrobeInsert'), editor.indexOf('  // fresh ='));
-  // gate 통과 전에는 삽입 경로가 아예 없다.
-  assert.ok(body.indexOf('needsReviewNow(im)') < body.indexOf('insertPastGate(im)'));
-});
-
-test('a rejected result reopens the review dialog', () => {
-  const body = editor.slice(editor.indexOf('const wardrobeInsert'), editor.indexOf('  // fresh ='));
-  assert.match(body, /needsReviewNow\(im\)\) \{ setReview\(\{ image: im, busy: false \}\); return; \}/);
-});
-
-test('one insert helper serves both the gate and the approval path', () => {
-  const helper = editor.slice(editor.indexOf('const insertPastGate'), editor.indexOf('const needsReviewNow'));
-  assert.match(helper, /if \(pendingSlot\)[\s\S]*applySlotFillToInfo[\s\S]*else insertImage\(im\)/);
+test('the review actions delegate to the gate, not to local ordering', () => {
   const accept = editor.slice(editor.indexOf('const acceptReview'), editor.indexOf('const rejectReview'));
-  assert.match(accept, /insertPastGate\(im\)/);
-  // 승인 경로가 슬롯 처리를 따로 복제하지 않는다(두 벌이면 한쪽만 고쳐진다).
-  assert.doesNotMatch(accept, /applySlotFillToInfo/);
-});
-
-test('the insert helper is never exported past the gate', () => {
-  assert.doesNotMatch(editor, /export (const|function) insertPastGate/);
-});
-
-test('acceptance is recorded before the image is inserted', () => {
-  const body = editor.slice(editor.indexOf('const acceptReview'), editor.indexOf('const rejectReview'));
-  assert.ok(body.indexOf("reviewVaryResult(im, 'accepted')") < body.indexOf('insertPastGate(im)'));
-});
-
-test('a failed acceptance blocks the insert and reopens the dialog', () => {
-  const body = editor.slice(editor.indexOf('const acceptReview'), editor.indexOf('const rejectReview'));
-  assert.match(body, /if \(!ok\) \{ setReview\(\(r\) => \(r \? \{ \.\.\.r, busy: false \} : r\)\); return; \}/);
-  assert.ok(body.indexOf('if (!ok)') < body.indexOf('insertPastGate(im)'));
+  assert.match(accept, /gate\(\)\.accept\(\)/);
+  // 순서를 손으로 다시 짜면 게이트가 보장하는 1회성이 깨진다.
+  assert.doesNotMatch(accept, /reviewVaryResult|insertPastGate/);
 });
 
 test('rejection records a decision and never deletes the image', () => {
   const body = editor.slice(editor.indexOf('const rejectReview'), editor.indexOf('const varyImage'));
-  assert.match(body, /reviewVaryResult\(im, 'rejected'\)/);
+  assert.match(body, /gate\(\)\.reject\(\)/);
   assert.doesNotMatch(body, /deleteWardrobeImages|setWardrobe\(/);
 });
 
-test('acceptance honours a pending info-block slot', () => {
-  // 슬롯 채우기 도중 검수가 뜨면 승인 후에도 슬롯으로 가야 한다(캔버스 한복판이 아니라).
-  // 슬롯 처리는 공용 helper 안에 한 벌만 있으므로 승인 경로가 그걸 부르면 충족된다.
-  const accept = editor.slice(editor.indexOf('const acceptReview'), editor.indexOf('const rejectReview'));
-  assert.match(accept, /insertPastGate\(im\)/);
-  const helper = editor.slice(editor.indexOf('const insertPastGate'), editor.indexOf('const needsReviewNow'));
-  assert.match(helper, /if \(pendingSlot\)[\s\S]*applySlotFillToInfo/);
+test('the insert helper is never exported past the gate', () => {
+  assert.doesNotMatch(editor, /export (const|function) insertPastGate/);
 });
 
 test('badges distinguish machine review from user decision', () => {
