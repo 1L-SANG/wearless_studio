@@ -848,6 +848,67 @@ async def get_unique_output_for_asset(
             "generation_run_id": rows[0]["generation_run_id"], "status": "linked"}
 
 
+async def record_edit_review(
+    conn: AsyncConnection,
+    *,
+    project_id: str,
+    user_id: str,
+    session_id: str,
+    decision: str,
+    reason: str | None,
+    idempotency_key: str | None,
+) -> dict:
+    """사용자 검수 1건(append-only). machine QC 는 **건드리지 않는다**.
+
+    → {"event": row, "idempotent": bool}. 같은 키 재호출은 기존 행을 돌려주고, 같은 키에
+    다른 판단이면 ValueError("idempotency_conflict") — 한 요청이 두 결정을 뜻할 수 없다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select es.id::text as id, es.status, es.output_id::text as output_id,
+                   es.project_id::text as project_id,
+                   (select wi.id::text from wardrobe_images wi
+                     where wi.edit_session_id = es.id limit 1) as wardrobe_image_id
+            from edit_sessions es
+            join projects pr on pr.id = es.project_id
+            where es.id = %s and es.project_id = %s and pr.user_id = %s
+              and pr.deleted_at is null
+            """,
+            (session_id, project_id, user_id),
+        )
+        session = await cur.fetchone()
+        if session is None:
+            raise LookupError("edit_session_not_found")   # 타 프로젝트·타 사용자 포함
+        if session["status"] != "review_required":
+            # 통과했거나 거부된 결과는 검수 대상이 아니다 — 검수는 "사람이 판단해야 하는
+            # 상태"에만 의미가 있다.
+            raise ValueError("not_reviewable")
+        if idempotency_key:
+            await cur.execute(
+                "select id, decision, reason, created_at from edit_review_events "
+                "where edit_session_id = %s and idempotency_key = %s",
+                (session_id, idempotency_key))
+            prior = await cur.fetchone()
+            if prior is not None:
+                if prior["decision"] != decision or (prior["reason"] or None) != (
+                        reason or None):
+                    raise ValueError("idempotency_conflict")
+                return {"event": prior, "idempotent": True}
+        await cur.execute(
+            """
+            insert into edit_review_events
+              (project_id, edit_session_id, wardrobe_image_id, output_id, actor_id,
+               decision, reason, idempotency_key)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            returning id, decision, reason, created_at
+            """,
+            (project_id, session_id, session["wardrobe_image_id"], session["output_id"],
+             user_id, decision, reason, idempotency_key),
+        )
+        return {"event": await cur.fetchone(), "idempotent": False}
+
+
 async def get_edit_session(conn: AsyncConnection, session_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -2102,29 +2163,90 @@ async def finalize_detail_page_failure(
 async def list_wardrobe_images(conn: AsyncConnection, user_id: str, project_id: str) -> list[dict]:
     """프로젝트 Wardrobe 이미지 목록 (owner join, sort_order순). 그룹핑은 라우트가 group by
     color_id ?? 'misc' 로 수행(계약 §3.6 Record<colorId|'misc', WardrobeImage[]>)."""
+    base = """
+        select wi.id::text as id, wi.color_id, wi.asset_id::text as asset_id,
+               wi.ai, wi.cut_type, wi.sort_order
+        from wardrobe_images wi
+        join projects pr on pr.id = wi.project_id
+        where wi.project_id = %s and pr.user_id = %s and pr.deleted_at is null
+          and wi.deleted_at is null
+        order by wi.sort_order, wi.created_at
+    """
+    # Phase 3 컬럼까지 한 번에 읽되, migration 미적용 환경에서 **목록 조회 자체가 죽지 않게**
+    # savepoint 로 감싸고 실패 시 기존 쿼리로 떨어진다(계보는 관측이고 목록은 기능이다).
     async with conn.cursor() as cur:
-        await cur.execute(
-            """
-            select wi.id::text as id, wi.color_id, wi.asset_id::text as asset_id,
-                   wi.ai, wi.cut_type, wi.sort_order
-            from wardrobe_images wi
-            join projects pr on pr.id = wi.project_id
-            where wi.project_id = %s and pr.user_id = %s and pr.deleted_at is null
-              and wi.deleted_at is null
-            order by wi.sort_order, wi.created_at
-            """,
-            (project_id, user_id),
-        )
-        return await cur.fetchall()
+        await cur.execute("savepoint wardrobe_phase3")
+        try:
+            await cur.execute(
+                """
+                select wi.id::text as id, wi.color_id, wi.asset_id::text as asset_id,
+                       wi.ai, wi.cut_type, wi.sort_order,
+                       wi.edit_session_id::text as edit_session_id, wi.qc_status,
+                       es.source_asset_id::text as source_asset_id,
+                       es.edit_qc_result,
+                       (select re.decision from edit_review_events re
+                         where re.edit_session_id = wi.edit_session_id
+                         order by re.created_at desc, re.id desc limit 1)
+                         as review_decision
+                from wardrobe_images wi
+                join projects pr on pr.id = wi.project_id
+                left join edit_sessions es on es.id = wi.edit_session_id
+                where wi.project_id = %s and pr.user_id = %s and pr.deleted_at is null
+                  and wi.deleted_at is null
+                order by wi.sort_order, wi.created_at
+                """,
+                (project_id, user_id),
+            )
+            rows = await cur.fetchall()
+            await cur.execute("release savepoint wardrobe_phase3")
+            return rows
+        except errors.DatabaseError:
+            await cur.execute("rollback to savepoint wardrobe_phase3")
+            await cur.execute("release savepoint wardrobe_phase3")
+            await cur.execute(base, (project_id, user_id))
+            return await cur.fetchall()
+
+
+# UI 검수에 필요한 것만. Vision 원문·프롬프트·provider 오류·metrics 전체·R2 키는 나가지 않는다.
+_QC_SUMMARY_KEYS = ("decision", "requestedChangeSatisfied", "unexpectedChanges",
+                    "lockedInvariantViolations")
+
+
+def _qc_summary(qc_result) -> dict | None:
+    """edit_qc_result → 공개 요약. 없는 키는 만들지 않는다(모르는 것을 지어내지 않는다)."""
+    if not isinstance(qc_result, dict):
+        return None
+    out = {k: qc_result[k] for k in _QC_SUMMARY_KEYS if k in qc_result}
+    vision = qc_result.get("vision")
+    if isinstance(vision, dict) and isinstance(vision.get("meta"), dict):
+        out["visionStatus"] = vision["meta"].get("status")
+    return out or None
 
 
 def _wardrobe_image_api(row: dict) -> dict:
-    """wardrobe_images row → WardrobeImage (계약 §3.6). src=안정 앱 URL(만료 없음, §3)."""
+    """wardrobe_images row → WardrobeImage (계약 §3.6). src=안정 앱 URL(만료 없음, §3).
+
+    Phase 3 필드는 **추가만** 한다. legacy·mode:new row 는 컬럼이 없거나 null 이라 전부
+    null/false 로 나가고(row.get 사용 — migration 미적용 조회에서도 죽지 않는다), 기존
+    프론트는 모르는 키를 무시하면 그대로 동작한다.
+    """
+    qc_status = row.get("qc_status")
+    source_asset_id = row.get("source_asset_id")
     return {
         "id": row["id"],
         "src": f"/v1/assets/{row['asset_id']}/file",
         "ai": bool(row["ai"]),
         "cutType": row["cut_type"],
+        "editSessionId": row.get("edit_session_id"),
+        "qcStatus": qc_status,
+        # 사용자가 승인해도 machine QC 값은 그대로다 — needsReview 는 **판정**이지
+        # 사용자의 처리 여부가 아니다. 처리 여부는 reviewDecision 이 따로 말한다.
+        "needsReview": qc_status == "review_required",
+        "reviewDecision": row.get("review_decision"),
+        "sourceAssetId": source_asset_id,
+        "sourceSrc": (f"/v1/assets/{source_asset_id}/file"
+                      if source_asset_id else None),
+        "qcSummary": _qc_summary(row.get("edit_qc_result")),
     }
 
 
@@ -2202,12 +2324,18 @@ async def finalize_editor_image_success(
             await cur.execute(
                 "update edit_sessions set output_id = %s where id = %s",
                 (out_row["id"] if out_row else None, edit_session["id"]))
-        image_api = {  # WardrobeImage shape (계약 §3.6) — _wardrobe_image_api와 동일
-            "id": wardrobe_id,
-            "src": f"/v1/assets/{image['asset_id']}/file",
-            "ai": True,
-            "cutType": cut_type,
-        }
+        # 같은 row 에 대해 finalize 응답과 GET wardrobe 가 다른 의미를 주지 않도록
+        # **직렬화기를 공유**한다. 두 벌로 두면 한쪽만 고쳐지고 갈라진다.
+        image_api = _wardrobe_image_api({
+            "id": wardrobe_id, "asset_id": image["asset_id"], "ai": True,
+            "cut_type": cut_type,
+            "edit_session_id": (edit_session or {}).get("id"),
+            "qc_status": qc_status,
+            "source_asset_id": ((edit_session or {}).get("lineage") or {}).get(
+                "source_asset_id"),
+            "edit_qc_result": (edit_session or {}).get("qc_result"),
+            "review_decision": None,   # 방금 만들어진 결과 — 아직 사람이 보지 않았다
+        })
     # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
     # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.
     available = await _consume_buckets(

@@ -51,7 +51,7 @@ function absolutizeAssetUrls(v) {
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
-export async function http(path, { method = 'GET', body } = {}) {
+export async function http(path, { method = 'GET', body, idempotencyKey } = {}) {
   let data;
   try {
     ({ data } = await supabase.auth.getSession());
@@ -87,6 +87,8 @@ export async function http(path, { method = 'GET', body } = {}) {
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        // 같은 판단의 재시도가 서버에서 새 이력이 되지 않게 한다(append-only 라 중복이 곧 왜곡).
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -563,6 +565,15 @@ export const httpAdapter = {
   },
   // AG-06(mode:'new')/AG-07(mode:'vary') — req = NewCutRequest | VaryRequest (계약 §6).
   // 완료 재호출 없음(매 호출이 새 이미지 생성, mock과 동일 계약) — onProgress는 body에서 제외.
+  // 편집 결과 사용자 검수 — machine QC 는 바뀌지 않는다(사람의 판단만 append 된다).
+  // 같은 판단의 재시도가 이력을 부풀리지 않게 idempotency key 를 붙인다.
+  async reviewEditSession(projectId, sessionId, { decision, reason, key } = {}) {
+    return http(`/v1/projects/${projectId}/edit-sessions/${sessionId}:review`, {
+      method: 'POST',
+      body: { decision, ...(reason ? { reason } : {}) },
+      idempotencyKey: key || `${sessionId}:${decision}`,
+    });
+  },
   async generateImage(projectId, req = {}) {
     const { onProgress, ...body } = req;
     const res = await http(`/v1/projects/${projectId}/editor:generate-image`, {

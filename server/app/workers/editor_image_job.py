@@ -54,6 +54,30 @@ def _parse_source_asset_id(src: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+_SAFE_CODE_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+
+
+def _safe_error_code(exc: BaseException) -> str | None:
+    """도메인 예외의 **코드**만 통과시킨다.
+
+    이 코드베이스는 자체 ValueError 의 메시지를 그대로 에러 코드로 쓴다("invalid_color").
+    그건 계약이므로 보존한다. 반면 provider·네트워크 예외의 메시지는 URL·토큰·응답 본문이라
+    절대 나가면 안 된다 — 소문자 스네이크 한 토큰인 것만 코드로 인정하고 나머지는 버린다.
+    """
+    if not isinstance(exc, ValueError):
+        return None
+    msg = str(exc).strip()
+    return msg if _SAFE_CODE_RE.match(msg) else None
+
+
+def _editor_failure_meta(exc: BaseException) -> dict:
+    """job metadata 용 실패 요약. 도메인 코드면 그 모양 그대로, 아니면 분류만."""
+    code = _safe_error_code(exc)
+    if code:
+        return {"error": code}
+    return {"error": "generation_failed", "category": _provider_category(exc)}
+
+
 def _provider_category(exc: BaseException) -> str:
     """provider 실패 분류 — 원문은 남기지 않는다(URL·응답 본문이 들어 있다)."""
     msg = str(exc)
@@ -308,8 +332,11 @@ async def run_editor_image_job(app, job: dict) -> None:
                         s, app.state.gemini, src_img, changes, cut_type,
                         ref_bg=ref_bg_img)
                 except GeminiError as e:
+                    # provider 메시지에는 요청 URL·쿼리(키 포함 가능)와 응답 본문이 들어
+                    # 있다. 그것이 job metadata 에 저장되면 API 응답으로도 나간다 —
+                    # 원문 유지가 하위 호환 계약인 적은 없었다(에러 **코드**가 계약이다).
                     await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.",
-                                {"error": str(e)[:300]})
+                                _editor_failure_meta(e))
                     return
                 res = None
             else:
@@ -327,8 +354,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                                            error=e)
                     await _vary_session_fail(app, vary_ctx, reason="provider_error")
                     await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.",
-                                {"error": "generation_failed",
-                                 "category": _provider_category(e)})
+                                _editor_failure_meta(e))
                     return
             if vary_ctx:
                 await _vary_run_finish(app, job, run_id, vary_ctx, started=t0,
@@ -584,7 +610,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                                 {"error": "invalid_spec"})
                 return
             except GeminiError as e:
-                await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
+                await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.",
+                            _editor_failure_meta(e))
                 return
 
             scene_plate = None
@@ -617,7 +644,8 @@ async def run_editor_image_job(app, job: dict) -> None:
                             s, app.state.gemini, cut_spec, product, images,
                             analysis=analysis, manifest=manifest)
                     except (GeminiError, ValueError) as e:
-                        await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
+                        await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.",
+                                    _editor_failure_meta(e))
                         return
                 scene_qc_attempts = attempt
 
@@ -744,4 +772,12 @@ async def run_editor_image_job(app, job: dict) -> None:
             except Exception:
                 log.exception("editor_image settlement hook failed for job %s", job_id)
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
-        await _fail("이미지 생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
+        # 최상위 핸들러 — 어떤 예외든 원문을 저장하지 않는다(URL·토큰·프롬프트·SQL 이
+        # 섞여 들어올 수 있고, job metadata 는 API 응답으로 나간다).
+        # 도메인 코드는 그 자체가 계약이라 **모양도 그대로** 둔다(부가 필드 없음).
+        # provider·예상 밖 예외에만 분류를 붙인다.
+        code = _safe_error_code(e)
+        await _fail("이미지 생성 중 오류가 발생했어요. 다시 시도해 주세요.",
+                    {"error": code} if code else
+                    {"error": "generation_failed", "category": _provider_category(e),
+                     "errorType": type(e).__name__})

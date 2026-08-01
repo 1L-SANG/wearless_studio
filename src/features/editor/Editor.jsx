@@ -20,6 +20,7 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
+import { VaryReviewModal } from '@/features/editor/VaryReviewModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
@@ -375,6 +376,7 @@ export function Editor() {
   const [product, setProduct] = useState(null);   // 실측(measurements) 등 — 정보 블록 프리필 (PRD §10.14)
   const [analysis, setAnalysis] = useState(null); // targetGenders·materials·fit·sellingPoints — 추천 배지·프리필 전용
   const [infoModal, setInfoModal] = useState(null); // { type, blockId|null, initialInfo }
+  const [review, setReview] = useState(null);      // { image, busy } — AI 편집 결과 검수
   const [tab, setTab] = useState('ai');
   const [selBlock, setSelBlock] = useState(null);
   const [selEl, setSelEl] = useState(null);
@@ -705,7 +707,10 @@ export function Editor() {
     toast.push('이미지를 캔버스에 삽입했어요');
   };
   const requestSlotImage = (blockId, el) => { setPendingSlot({ blockId, elId: el.id }); setTab('wardrobe'); };
+  // 서버가 자동 통과시키지 못한 결과는 사람이 원본과 비교하기 전에는 캔버스에 넣지 않는다.
+  const needsReviewNow = (im) => !!im?.needsReview && !im?.reviewDecision;
   const wardrobeInsert = (im) => {
+    if (needsReviewNow(im)) { setReview({ image: im, busy: false }); return; }
     if (pendingSlot) {
       // 정보 블록 슬롯이면 info(폼 정본)에도 동기화 — 재생성 때 사진-포인트 연결 유지
       setBlocks((bs) => bs.map((b) => (b.id === pendingSlot.blockId ? applySlotFillToInfo(b, pendingSlot.elId, { src: im.src, cutType: im.cutType || null }) : b)));
@@ -745,11 +750,62 @@ export function Editor() {
     setTab('wardrobe');
     genCount.current += 1; setGenDot('busy');
     toast.push(changes.length ? `${changes.length}개 변경을 적용한 컷을 생성하는 중이에요` : '비슷한 컷을 생성하는 중이에요', { icon: 'sparkles' });
-    const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
-    setWardrobe((w) => ({ ...w, misc: w.misc.map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
-    genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done'); toast.push('이미지 생성을 완료했어요', { icon: 'check' });
-    syncCredits(credits);
-    return img;
+    // 실패해도 자리 표시자와 카운터는 반드시 정리한다. try/finally 가 없으면 라우트 실패·
+    // 폴링 실패·enforce reject 어느 쪽이든 로딩 카드가 영구히 남고 busy 점이 안 꺼진다.
+    let img = null;
+    try {
+      const out = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
+      img = out?.data ?? null;
+      setWardrobe((w) => ({ ...w, misc: (w.misc || []).map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
+      toast.push('이미지 생성을 완료했어요', { icon: 'check' });
+      syncCredits(out?.credits);
+      return img;
+    } catch (err) {
+      // 실패 결과는 wardrobe 에 남기지 않는다 — 자리 표시자만 걷어낸다.
+      setWardrobe((w) => ({ ...w, misc: (w.misc || []).filter((x) => x.id !== loadingId) }));
+      toast.push(err?.message || '이미지 생성에 실패했어요', { icon: 'alertTri' });
+      return null;
+    } finally {
+      genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
+    }
+  };
+  // 편집 결과 검수 — machine QC 는 바뀌지 않는다. 사용자의 판단만 서버에 append 하고,
+  // 로컬 row 의 reviewDecision 을 그 결과로 맞춘다(성공한 경우에만).
+  const reviewVaryResult = async (im, decision, reason) => {
+    if (!im?.editSessionId) return false;
+    try {
+      await api.reviewEditSession(projectId, im.editSessionId, { decision, reason });
+    } catch (err) {
+      toast.push(err?.message || '검수 기록에 실패했어요', { icon: 'alertTri' });
+      return false;
+    }
+    setWardrobe((w) => {
+      const nw = {};
+      for (const [g, arr] of Object.entries(w || {})) nw[g] = (arr || []).map((x) => x.id === im.id ? { ...x, reviewDecision: decision } : x);
+      return nw;
+    });
+    return true;
+  };
+  // 승인은 **먼저 기록되고 나서** 삽입된다. 기록이 실패했는데 캔버스에만 들어가면
+  // 사용자가 승인한 적 없는 컷이 상세페이지에 남는다.
+  const acceptReview = async () => {
+    const im = review?.image; if (!im) return;
+    setReview((r) => ({ ...r, busy: true }));
+    const ok = await reviewVaryResult(im, 'accepted');
+    if (!ok) { setReview((r) => (r ? { ...r, busy: false } : r)); return; }
+    setReview(null);
+    if (pendingSlot) {
+      setBlocks((bs) => bs.map((b) => (b.id === pendingSlot.blockId ? applySlotFillToInfo(b, pendingSlot.elId, { src: im.src, cutType: im.cutType || null }) : b)));
+      setPendingSlot(null); setTab('image'); toast.push('빈 칸에 이미지를 넣었어요');
+    } else insertImage(im);
+  };
+  // 거절은 삭제가 아니다 — 판단만 남기고 이미지는 목록에 그대로 둔다.
+  const rejectReview = async () => {
+    const im = review?.image; if (!im) return;
+    setReview((r) => ({ ...r, busy: true }));
+    const ok = await reviewVaryResult(im, 'rejected');
+    if (!ok) { setReview((r) => (r ? { ...r, busy: false } : r)); return; }
+    setReview(null); toast.push('사용하지 않기로 했어요');
   };
   const varyImage = (im) => {
     setVaryTarget(im?.id ? { id: im.id } : null); // 클릭한 의류 이미지가 변형 대상 — 이미지별 독립 상태
@@ -1281,6 +1337,10 @@ export function Editor() {
       )}
 
       {/* 정보 블록 입력 폼 (PRD §10.14) */}
+      {review && (
+        <VaryReviewModal image={review.image} busy={review.busy}
+          onAccept={acceptReview} onReject={rejectReview} onClose={() => setReview(null)} />
+      )}
       {infoModal && (
         <InfoBlockModal type={infoModal.type} initialInfo={infoModal.initialInfo} ctx={infoCtx}
           wardrobe={wardrobe} colorOpts={colorOpts}

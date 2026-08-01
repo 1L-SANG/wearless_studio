@@ -164,8 +164,19 @@ def test_get_wardrobe_groups_by_color_id_or_misc(client, make_token, monkeypatch
     res = client.get("/v1/projects/p1/wardrobe", headers=auth_headers(make_token))
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["col1"] == [{"id": "w1", "src": "/v1/assets/a1/file", "ai": True, "cutType": "styling"}]
-    assert body["misc"] == [{"id": "w2", "src": "/v1/assets/a2/file", "ai": False, "cutType": None}]
+    # 기존 필드는 그대로. Phase 3 필드는 legacy row 에서 전부 null/false 다 —
+    # 기존 프론트가 모르는 키를 무시하면 동작이 같다.
+    for got, want in ((body["col1"][0],
+                       {"id": "w1", "src": "/v1/assets/a1/file", "ai": True,
+                        "cutType": "styling"}),
+                      (body["misc"][0],
+                       {"id": "w2", "src": "/v1/assets/a2/file", "ai": False,
+                        "cutType": None})):
+        assert {k: got[k] for k in want} == want
+        assert got["editSessionId"] is None and got["qcStatus"] is None
+        assert got["needsReview"] is False and got["reviewDecision"] is None
+        assert got["sourceAssetId"] is None and got["sourceSrc"] is None
+        assert got["qcSummary"] is None
 
 
 # ---------- 워커 ----------

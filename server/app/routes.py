@@ -1466,6 +1466,58 @@ def _parse_editor_source_asset_id(src) -> str | None:
 
 
 @router.post(
+    "/projects/{project_id}/edit-sessions/{session_id}:review",
+    responses={**COMMON_RESPONSES, 409: {"model": ErrorResponse}},
+    tags=["Editor"],
+    summary="편집 결과 사용자 검수",
+)
+async def review_edit_session(
+    request: Request,
+    project_id: str,
+    session_id: str,
+    body: dict = Body(...),
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    """`review_required` 결과에 대한 **사용자 판단**을 기록합니다(append-only).
+
+    - **Body**: `{ decision: 'accepted' | 'rejected', reason? }`
+    - machine QC 는 바뀌지 않습니다 — `qcStatus` 는 계속 `review_required` 이고, 이 기록은
+      "사람이 무엇을 결정했는가"만 말합니다. 나중에 판단이 바뀌면 **새 키로 새 기록**을
+      남기며, 유효 판단은 가장 최근 기록입니다.
+    - `rejected` 는 결과를 삭제하지 않습니다.
+    - **에지 케이스**: `404`(없거나 타 프로젝트), `409 not_reviewable`(검수 대상이 아닌
+      상태), `409 idempotency_conflict`(같은 키·다른 판단).
+    """
+    decision = (body or {}).get("decision")
+    if decision not in ("accepted", "rejected"):
+        raise _bad_request("invalid_decision", "검수 결과 값이 올바르지 않아요.")
+    reason = (body or {}).get("reason")
+    if reason is not None and (not isinstance(reason, str) or len(reason) > 500):
+        raise _bad_request("invalid_reason", "사유 형식이 올바르지 않아요.")
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        try:
+            result = await repo.record_edit_review(
+                conn, project_id=project_id, user_id=user_id, session_id=session_id,
+                decision=decision, reason=reason, idempotency_key=idempotency_key)
+        except LookupError:
+            raise _not_found()
+        except ValueError as e:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": str(e),
+                        "message": ("이미 처리된 요청이에요." if str(e) ==
+                                    "idempotency_conflict"
+                                    else "검수할 수 있는 결과가 아니에요.")})
+        await conn.commit()
+    ev = result["event"]
+    return {"editSessionId": session_id, "decision": ev["decision"],
+            "reviewedAt": ev["created_at"]}
+
+
+@router.post(
     "/projects/{project_id}/editor:generate-image",
     responses={
         **COMMON_RESPONSES,
@@ -1600,7 +1652,12 @@ async def generate_editor_image(
                             status_code=409,
                             detail={"code": "idempotency_conflict",
                                     "message": "같은 요청 키로 다른 편집을 보낼 수 없어요."})
-                    return {**prior, "editSessionId": existing["id"]}   # 부수효과 0
+                    # 신규와 **같은 공개 DTO** 로 돌려준다. 내부 job row 를 펼치면
+                    # payload·metadata·lease 가 새고, 프론트는 jobId 가 없어 폴링도 못 한다.
+                    return JSONResponse(
+                        status_code=202,
+                        content={"jobId": prior["id"],
+                                 "editSessionId": existing["id"]})   # 부수효과 0
 
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="editor_image",
@@ -1631,7 +1688,10 @@ async def generate_editor_image(
                     detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
         await conn.commit()
     _wake_dispatcher(request)
-    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+    body_out = {"jobId": job["id"]}
+    if vary_ctx and vary_ctx.get("session_id"):
+        body_out["editSessionId"] = vary_ctx["session_id"]
+    return JSONResponse(status_code=202, content=body_out)
 
 
 @router.post(
