@@ -160,6 +160,16 @@ def _order(settings: Settings) -> list[str]:
     return [n for n in names if n in _PROVIDERS] or ["gpt", "gemini"]
 
 
+def _failure_category(exc: BaseException) -> str:
+    """실패 분류 — 원문 없이 대응을 가르는 최소 정보만."""
+    name = type(exc).__name__
+    if "Timeout" in name:
+        return "timeout"
+    if isinstance(exc, VisionError):
+        return "provider_error"
+    return "unexpected_error"
+
+
 async def analyze_with_fallback(
     settings: Settings, prompt: str, images: list[InlineImage], schema: dict,
     thinking_level: str | None = None,
@@ -186,7 +196,12 @@ async def analyze_with_fallback(
         except (VisionError, httpx.HTTPError) as e:
             last_error = e
             attempts.append(f"{name}:err")
-            logger.warning("vision_llm provider failed: %s (%s)", name, str(e)[:200])
+            # 원문을 남기지 않는다: provider 오류 메시지에는 요청 URL·쿼리(키 포함 가능)와
+            # 응답 본문 300자가 들어간다(_call_gpt·_call_gemini 참조). 운영에 필요한 것은
+            # "어느 provider 가 어떤 종류로 실패했는가"까지다.
+            logger.warning("vision_llm provider failed",
+                           extra={"provider": name, "error_type": type(e).__name__,
+                                  "category": _failure_category(e)})
             continue
     if last_error is None:  # 시도할 provider 자체가 없었음(키 전무)
         raise VisionError("분석 AI 키가 설정되지 않았어요. 관리자에게 문의해 주세요.")

@@ -100,9 +100,16 @@ def test_bad_confidence_is_rejected(bad):
         eiv.validate(_obs(confidence=bad))
 
 
-@pytest.mark.parametrize("value,expected", [(1.7, 1.0), (-0.2, 0.0), (0.5, 0.5)])
-def test_confidence_is_clamped(value, expected):
-    assert eiv.validate(_obs(confidence=value))["confidence"] == expected
+@pytest.mark.parametrize("bad", [1.7, -0.2, 100.0])
+def test_confidence_out_of_range_is_rejected(bad):
+    """클램프하지 않는다 — 1.7 을 1.0 으로 접으면 "매우 확신"이라는 거짓 신호가 된다."""
+    with pytest.raises(VisionError):
+        eiv.validate(_obs(confidence=bad))
+
+
+@pytest.mark.parametrize("ok", [0.0, 0.5, 1.0])
+def test_confidence_in_range_is_kept_exactly(ok):
+    assert eiv.validate(_obs(confidence=ok))["confidence"] == ok
 
 
 def test_evidence_is_capped_and_trimmed():
@@ -111,9 +118,26 @@ def test_evidence_is_capped_and_trimmed():
     assert all(len(e) <= 100 for e in out["evidence"])
 
 
-def test_uncertain_fields_only_accept_known_names():
-    out = eiv.validate(_obs(uncertainFields=["collarChanged", "nonsense"]))
-    assert "nonsense" not in out["uncertainFields"]
+def test_unknown_uncertain_field_name_is_rejected():
+    """조용히 버리면 "모델이 무엇을 모른다고 했는지"가 사라진다."""
+    with pytest.raises(VisionError):
+        eiv.validate(_obs(uncertainFields=["collarChanged", "nonsense"]))
+
+
+@pytest.mark.parametrize("bad", [[1], [None], [{"a": 1}]])
+def test_non_string_evidence_is_rejected(bad):
+    with pytest.raises(VisionError):
+        eiv.validate(_obs(evidence=bad))
+
+
+def test_schema_declares_the_same_bounds_as_the_validator():
+    sc = eiv.schema()
+    assert sc["properties"]["confidence"]["minimum"] == 0
+    assert sc["properties"]["confidence"]["maximum"] == 1
+    assert sc["properties"]["uncertainFields"]["items"]["enum"] == list(
+        eiv.OBSERVATION_FIELDS)
+    assert sc["properties"]["evidence"]["maxItems"] == eiv._EVIDENCE_MAX
+    assert sc["properties"]["evidence"]["items"]["maxLength"] == eiv._EVIDENCE_LEN
 
 
 def test_malformed_response_is_rejected():

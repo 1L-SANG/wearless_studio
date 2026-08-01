@@ -40,9 +40,15 @@ _EVIDENCE_LEN = 100
 def schema() -> dict:
     """strict-호환 관찰 스키마. bool|null 만 받는다 — "모르겠다"가 1급 값이다."""
     props: dict = {f: {"type": ["boolean", "null"]} for f in OBSERVATION_FIELDS}
-    props["confidence"] = {"type": "number"}
-    props["uncertainFields"] = {"type": "array", "items": {"type": "string"}}
-    props["evidence"] = {"type": "array", "items": {"type": "string"}}
+    # 제약을 스키마에도 적는다. _to_gemini_schema 가 minimum/maximum 같은 키를 변환에서
+    # 버리므로(image_qc 와 같은 관례) 이건 GPT 쪽 강제이자 문서일 뿐 — **최종 방어선은
+    # validate() 다**. 스키마만 믿으면 provider 를 바꾸는 순간 조용히 뚫린다.
+    props["confidence"] = {"type": "number", "minimum": 0, "maximum": 1}
+    props["uncertainFields"] = {"type": "array",
+                                "items": {"type": "string",
+                                          "enum": list(OBSERVATION_FIELDS)}}
+    props["evidence"] = {"type": "array", "maxItems": _EVIDENCE_MAX,
+                         "items": {"type": "string", "maxLength": _EVIDENCE_LEN}}
     return {
         "type": "object",
         "additionalProperties": False,
@@ -102,20 +108,34 @@ def validate(raw: dict) -> dict:
     conf = raw.get("confidence")
     if isinstance(conf, bool) or not isinstance(conf, (int, float)):
         raise VisionError("confidence 가 숫자가 아니에요.")
-    out["confidence"] = float(min(1.0, max(0.0, conf)))
+    # 범위 밖은 **클램프하지 않는다**. 1.7 을 1.0 으로 접으면 "매우 확신"이라는 잘못된
+    # 신호가 되고, 계약을 못 지킨 응답을 통과시킨 사실도 사라진다.
+    if not 0.0 <= float(conf) <= 1.0:
+        raise VisionError("confidence 가 0~1 범위를 벗어났어요.")
+    out["confidence"] = float(conf)
     uncertain = raw.get("uncertainFields")
     if not isinstance(uncertain, list):
         raise VisionError("uncertainFields 가 배열이 아니에요.")
-    out["uncertainFields"] = sorted(
-        {u for u in uncertain if isinstance(u, str) and u in OBSERVATION_FIELDS})
+    unknown_uncertain = [u for u in uncertain
+                         if not isinstance(u, str) or u not in OBSERVATION_FIELDS]
+    if unknown_uncertain:
+        # 조용히 버리면 "모델이 무엇을 모른다고 했는지"가 사라진다. 필드명을 못 맞춘
+        # 응답은 관찰 자체를 신뢰할 수 없다는 신호다.
+        raise VisionError(f"uncertainFields 에 알 수 없는 값: {unknown_uncertain[:3]}")
+    out["uncertainFields"] = sorted(set(uncertain))
     # 모델이 빠뜨려도 null 인 항목은 불확실 목록에 넣는다 — 두 신호가 갈라지면 안 된다.
     out["uncertainFields"] = sorted(
         set(out["uncertainFields"]) | {f for f in OBSERVATION_FIELDS if out[f] is None})
     evidence = raw.get("evidence")
     if not isinstance(evidence, list):
         raise VisionError("evidence 가 배열이 아니에요.")
+    if any(not isinstance(e, str) for e in evidence):
+        raise VisionError("evidence 에 문자열이 아닌 값이 있어요.")
+    # 개수·길이는 **bounded normalize** 다(거부 아님) — 설명이 길거나 많은 것은 계약 위반이
+    # 아니라 수다스러움이고, 그것 때문에 관찰 전체를 버릴 이유가 없다. 잘린다는 사실은
+    # 여기 문서와 테스트에 고정돼 있다.
     out["evidence"] = [e.strip()[:_EVIDENCE_LEN] for e in evidence
-                       if isinstance(e, str) and e.strip()][:_EVIDENCE_MAX]
+                       if e.strip()][:_EVIDENCE_MAX]
     return out
 
 

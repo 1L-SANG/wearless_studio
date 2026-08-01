@@ -190,7 +190,9 @@ def measure(baseline_bgr, edited_bgr) -> dict:
 
 def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
            metrics: dict, vision: dict | None = None,
-           require_vision: bool = False) -> dict:
+           require_vision: bool = False,
+           semantic_scope: dict | None = None,
+           extra_entailed: tuple = ()) -> dict:
     """측정 + (선택) Vision 관찰 → decision. **LLM 이 아니라 여기가 정한다.**
 
     반환: {decision, requestedChangeSatisfied, requestedChangeMeasurements,
@@ -199,7 +201,8 @@ def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
     allowed = list(allowed_scope.get("allowed") or ())
     checks: dict = {}
     unexpected: list[str] = []
-    violations: list[str] = []
+    violations: list[str] = []      # 관찰 유래 — 보호 대상이 실제로 달라졌다
+    geo_violations: list[str] = []  # 기하 유래 — 구도·배경이 설명되지 않게 움직였다
     instructions: list[str] = []
 
     conf = float(metrics.get("confidence") or 0.0)
@@ -234,6 +237,7 @@ def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
 
     # ② 요청하지 않은 축의 드리프트
     entailed = set(_AXIS_ENTAILED.get(axis, ())) if axis else set()
+    entailed |= set(extra_entailed or ())   # 요청이 필연적으로 끌고 가는 지표(editor vary)
     checks["entailedMetrics"] = sorted(entailed)
     if measurable:
         for key, tol in DRIFT_TOL.items():
@@ -245,14 +249,18 @@ def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
         # 프레이밍·구도는 모든 edit type 에서 잠긴다
         for key in ("centerX", "centerY", "subjectHeight"):
             if key in unexpected and "framing" not in allowed:
-                violations.append("framing")
+                geo_violations.append("framing")
                 break
         # 배경/조명
         bg = metrics.get("backgroundDeltaE")
         checks["backgroundDeltaE"] = bg
-        if bg is not None and bg > BACKGROUND_DELTA_TOL and "background" not in allowed:
+        bg_requested = ("background" in allowed
+                        or "backgroundDeltaE" in entailed
+                        or "backgroundChanged" in (
+                            (semantic_scope or {}).get("allowedObservations") or ()))
+        if bg is not None and bg > BACKGROUND_DELTA_TOL and not bg_requested:
             unexpected.append("background")
-            violations.append("background")
+            geo_violations.append("background")
             instructions.append("Preserve the baseline background exactly.")
         iou = metrics.get("silhouetteIou")
         checks["silhouetteIou"] = iou
@@ -261,7 +269,7 @@ def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
         if (iou is not None and iou < SILHOUETTE_IOU_MIN
                 and edit_type in ("BACKGROUND_ONLY", "LIGHTING_ONLY")):
             unexpected.append("silhouette")
-            violations.append("garmentOrMannequin")
+            geo_violations.append("garmentOrMannequin")
             instructions.append("Keep the garment and mannequin pixel-identical.")
 
     # ③ Vision 관찰. **판정이 아니라 관찰이다** — 여기서 정책으로 환산한다.
@@ -275,7 +283,12 @@ def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
         vconf = float(vision.get("confidence") or 0.0)
         checks["visionConfidence"] = vconf
         checks["visionUncertainFields"] = list(vision.get("uncertainFields") or ())
-        allowed_changes = VISION_ALLOWED_CHANGES.get(edit_type, ())
+        # editor vary 처럼 edit type 하나로 표현되지 않는 요청은 서버가 changes[] 에서
+        # 유도한 의미 범위를 넘긴다. 없으면 edit type 고정표를 쓴다.
+        allowed_changes = tuple(
+            (semantic_scope or {}).get("allowedObservations")
+            or VISION_ALLOWED_CHANGES.get(edit_type, ()))
+        checks["semanticAllowed"] = list(allowed_changes)
         trusted = vconf >= MIN_VISION_CONFIDENCE
         checks["visionTrusted"] = trusted
         if trusted:
@@ -299,16 +312,26 @@ def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
     checks["visionConflict"] = vision_conflict
 
     unexpected = sorted(set(unexpected))
+    # CUSTOM 은 "정량으로 검증할 수 없어 사람이 본다"는 뜻이다. 설명되지 않는 구도 변화는
+    # 사람이 볼 일이지 거부할 일이 아니다 — 다만 **관찰이 본 보호 대상 변화**(카라·패턴·
+    # 로고 등)는 어떤 요청이었든 거부다. 두 출처를 여기서 가른다.
+    if edit_type == "CUSTOM_REVIEW_REQUIRED":
+        unexpected = sorted(set(unexpected) | set(geo_violations))
+    else:
+        violations.extend(geo_violations)
     violations = sorted(set(violations))
 
     # ── 결정 ────────────────────────────────────────────────────────────────
     # 정책은 고정 순서다. 자유 판단이 끼어들 자리를 만들지 않는다.
-    if edit_type == "CUSTOM_REVIEW_REQUIRED":
-        decision = "review_required"          # 자동 PASS 경로 자체가 없다
-    elif violations:
+    # 순서가 곧 정책이다. **위반이 CUSTOM 뒤로 밀리면 안 된다** — CUSTOM 은 "사람이
+    # 본다"는 뜻이지 "위반을 못 본 척한다"는 뜻이 아니다. 카라·패턴·로고가 바뀐 결과는
+    # 어떤 요청이었든 거부다(fail-closed 와 같은 규율).
+    if violations:
         decision = "reject"                   # 잠근 것이 바뀌었다
     elif vision_conflict:
         decision = "review_required"          # 측정과 관찰이 어긋난다 — 자동 통과 금지
+    elif edit_type == "CUSTOM_REVIEW_REQUIRED":
+        decision = "review_required"          # 자동 PASS 경로 자체가 없다
     elif require_vision and not vision_ok:
         decision = "review_required"          # 관찰이 필요한데 없다(장애·미호출)
     elif require_vision and vision_ok and not checks.get("visionTrusted"):
@@ -337,12 +360,14 @@ def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
 
 def evaluate(*, baseline_bgr, edited_bgr, edit_type: str, allowed_scope: dict,
              target_ratio: float | None, vision: dict | None = None,
-             require_vision: bool = False) -> dict:
+             require_vision: bool = False, semantic_scope: dict | None = None,
+             extra_entailed: tuple = ()) -> dict:
     """측정 + 판정 한 번에. 워커가 쓰는 진입점."""
     metrics = measure(baseline_bgr, edited_bgr)
     result = decide(edit_type=edit_type, allowed_scope=allowed_scope,
                     target_ratio=target_ratio, metrics=metrics, vision=vision,
-                    require_vision=require_vision)
+                    require_vision=require_vision, semantic_scope=semantic_scope,
+                    extra_entailed=extra_entailed)
     result["metrics"] = metrics
     return result
 

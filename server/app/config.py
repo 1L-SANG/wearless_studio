@@ -129,6 +129,13 @@ class Settings:
     #   enforce : decision 이 출고를 지배한다 — reject 는 저장 없이 실패 종결(크레딧 환불),
     #             review_required 는 needs_review 로 저장.
     mannequin_edit_intent_qc: str = "off"  # off | shadow | enforce
+    # 에디터 생성형 vary(mode:'vary')의 Edit Session·Generation Run·Edit Intent QC 연결.
+    # 마네킹 편집과 **별도 플래그**다 — 두 경로는 입력도(baseline vs 에디터 자산) 판정
+    # 가능한 범위도 다르므로 같은 스위치로 묶으면 한쪽 준비가 다른 쪽을 막는다.
+    #   off     : 현재 vary 동작 완전 불변(세션·기록·Vision 호출 0)
+    #   shadow  : 세션·기록·QC 판정을 남기되 저장 계약은 기존과 동일(결과는 review 표시)
+    #   enforce : pass 저장 / review_required 저장+표시 / reject 미저장·환불
+    editor_vary_intent_qc: str = "off"  # off | shadow | enforce
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
@@ -282,6 +289,8 @@ def load_settings() -> Settings:
         generation_run_log=_flag("GENERATION_RUN_LOG", "off", {"off", "shadow"}),
         mannequin_edit_intent_qc=_flag(
             "MANNEQUIN_EDIT_INTENT_QC", "off", {"off", "shadow", "enforce"}),
+        editor_vary_intent_qc=_flag(
+            "EDITOR_VARY_INTENT_QC", "off", {"off", "shadow", "enforce"}),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
