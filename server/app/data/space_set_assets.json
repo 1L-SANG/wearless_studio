@@ -1660,7 +1660,11 @@
       "setId": "set_style_women_top_indoor_attrangs_170129_prod01",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -1746,7 +1750,11 @@
       "setId": "set_style_women_top_outdoor_slowand_10690_prod01",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -1832,7 +1840,11 @@
       "setId": "set_style_women_outer_indoor_commonunique_26096_prod01",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -1918,7 +1930,11 @@
       "setId": "set_style_women_top_cafe_attrangs_170103_prod02",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -2004,7 +2020,11 @@
       "setId": "set_style_women_top_home_hotping_48041_prod02",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -2090,7 +2110,11 @@
       "setId": "set_style_women_top_urban_creamcheese_26667_prod02",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -2176,7 +2200,11 @@
       "setId": "set_style_women_outer_storefront_lowclassic_6495851_prod02",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -2262,7 +2290,11 @@
       "setId": "set_style_women_top_park_realcoco_161014511_prod02",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -2348,7 +2380,11 @@
       "setId": "set_style_women_top_coast_sinoon_6575707_prod02",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -2434,7 +2470,11 @@
       "setId": "set_style_women_outer_terrace_lowclassic_6495831_prod02",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -2520,7 +2560,11 @@
       "setId": "set_style_women_top_convenience_beidelli_5067_prod03",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -2606,7 +2650,11 @@
       "setId": "set_style_women_outer_rainy_courtyard_nearwear_12582_prod03",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -2692,7 +2740,11 @@
       "setId": "set_style_women_outer_loadingzone_beidelli_3920_prod03",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -3380,7 +3432,11 @@
       "setId": "set-01-men-top-indoor-retro-counter-byslim-28625",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -3466,7 +3522,11 @@
       "setId": "set-02-men-top-indoor-concrete-byslim-28635",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -3552,7 +3612,11 @@
       "setId": "set-03-men-outer-outdoor-garden-byslim-28570",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -3638,7 +3702,11 @@
       "setId": "set-04-men-top-indoor-window-room-anotheroffice-1881",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -3724,7 +3792,11 @@
       "setId": "set-05-men-common-outdoor-grey-wall-lockerroom-23701",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -3810,7 +3882,11 @@
       "setId": "set-06-men-common-outdoor-quiet-alley-jogunshop-32115",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -3896,7 +3972,11 @@
       "setId": "set-07-men-top-indoor-small-shop-upnormal-7126",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -3982,7 +4062,11 @@
       "setId": "set-08-men-top-outdoor-coast-ordercloset-2396",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -4068,7 +4152,11 @@
       "setId": "set-09-men-outer-outdoor-resort-upnormal-7100",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -4154,7 +4242,11 @@
       "setId": "set-10-men-outer-indoor-passage-lockerroom-23651",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -4240,7 +4332,11 @@
       "setId": "set-11-men-outer-outdoor-community-steps-gopeople-7214",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -4326,7 +4422,11 @@
       "setId": "set-12-men-common-indoor-reading-corner-gopeople-7896",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [
@@ -4412,7 +4512,11 @@
       "setId": "set-14-men-top-indoor-late-night-laundromat-lookple-8966",
       "setType": "styling",
       "spaceVariation": "subtle",
-      "tone": "source-matched"
+      "tone": "source-matched",
+      "setApplicableClothingTypes": [
+        "top",
+        "outer"
+      ]
     },
     {
       "applicableClothingTypes": [

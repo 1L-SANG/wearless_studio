@@ -235,6 +235,17 @@ def test_non_rotation_cannot_widen_only_the_set_scope(space_registry):
         sets.validate_space_set_registry_document(invalid)
 
 
+def test_styling_set_can_share_placement_between_top_and_outer(space_registry):
+    shared = json.loads(json.dumps(space_registry))
+    shared["sets"][0]["setApplicableClothingTypes"] = ["top", "outer"]
+
+    _base_url, document = sets.validate_space_set_registry_document(shared)
+    assert document["women_top_cafe_01"]["applicableClothingTypes"] == ["top"]
+    assert document["women_top_cafe_01"]["setApplicableClothingTypes"] == [
+        "top", "outer"
+    ]
+
+
 def test_exact_space_set_binding_and_key_resolution(space_registry):
     blocks = _blocks()
     bindings = sets.bind_storyboard_space_sets(

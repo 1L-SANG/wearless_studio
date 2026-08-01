@@ -1,6 +1,133 @@
 [
   {
     "applicableClothingTypes": [
+      "top",
+      "bottom",
+      "outer"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_horizon_men_bottom_full_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_horizon_men_bottom_full_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "bottom",
+      "outer"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_horizon_men_top_full_01",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_horizon_men_top_full_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "bottom",
+      "outer"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_horizon_men_top_full_03",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_horizon_men_top_full_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "outer"
+    ],
+    "clothingType": "top",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_horizon_men_top_medium_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_horizon_men_top_medium_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "bottom",
+      "outer",
+      "dress"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_horizon_women_bottom_full_02",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_horizon_women_bottom_full_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "top",
+      "bottom",
+      "outer",
+      "dress"
+    ],
+    "clothingType": "bottom",
+    "cutType": "horizon",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_horizon_women_bottom_full_04",
+    "mood": null,
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_horizon_women_bottom_full_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
       "bottom"
     ],
     "clothingType": "bottom",
@@ -13,7 +140,7 @@
     "presentationMethod": null,
     "rank": 1,
     "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_horizon_women_bottom_medium_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_horizon_women_bottom_medium_01.webp",
     "variants": [
       "all"
     ]
@@ -32,862 +159,49 @@
     "presentationMethod": null,
     "rank": 2,
     "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_horizon_women_bottom_medium_03.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_horizon_women_bottom_medium_03.webp",
     "variants": [
       "all"
     ]
   },
   {
     "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_full_01",
-    "mood": "hard-sun neighborhood café storefront phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_full_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_full_02",
-    "mood": "planted café seated phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_full_02.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_full_03",
-    "mood": "dim workshop café standing phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_full_03.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_full_04",
-    "mood": "shaded urban building-entrance phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_full_04.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "side",
-    "gender": "men",
-    "id": "ex_styling_men_outer_full_05",
-    "mood": "sunlit minimal café bench phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_full_05.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_full_06",
-    "mood": "bright indoor plant-corner walking phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_full_06.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_full_07",
-    "mood": "hard-sun street storefront phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_full_07.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_full_08",
-    "mood": "soft-window indoor lounge older-phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_full_08.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_medium_01",
-    "mood": "close hard-sun café storefront phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_medium_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "side",
-    "gender": "men",
-    "id": "ex_styling_men_outer_medium_02",
-    "mood": "seated café conversational phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_medium_02.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_medium_03",
-    "mood": "dim seated workshop phone snap with warm task light",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_medium_03.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "back",
-    "gender": "men",
-    "id": "ex_styling_men_outer_medium_04",
-    "mood": "building-entrance back three-quarter phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_medium_04.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "back",
-    "gender": "men",
-    "id": "ex_styling_men_outer_medium_05",
-    "mood": "window-side café back three-quarter phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_medium_05.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_medium_06",
-    "mood": "sunny riverside park close phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_medium_06.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_medium_07",
-    "mood": "hard-sun storefront profile phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_medium_07.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "men",
-    "id": "ex_styling_men_outer_medium_08",
-    "mood": "soft-window indoor torso older-phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_men_outer_medium_08.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
+      "top",
+      "outer",
       "dress"
     ],
     "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "side",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_cafe_shop_09",
-    "mood": "cafe-shop",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_full_cafe_shop_09.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
+    "cutType": "horizon",
     "detailSubject": null,
     "direction": "front",
     "gender": "women",
-    "id": "ex_styling_women_dress_full_city_03",
-    "mood": "city",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_full_city_03.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_city_10",
-    "mood": "city",
-    "presentationMethod": null,
-    "rank": 2,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_full_city_10.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_home_01",
-    "mood": "home",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_full_home_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_home_04",
-    "mood": "home",
-    "presentationMethod": null,
-    "rank": 2,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_full_home_04.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_home_07",
-    "mood": "home",
-    "presentationMethod": null,
-    "rank": 3,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_full_home_07.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_home_08",
-    "mood": "home",
-    "presentationMethod": null,
-    "rank": 4,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_full_home_08.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_park_05",
-    "mood": "park",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_full_park_05.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_full_resort_06",
-    "mood": "resort",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_full_resort_06.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "side",
-    "gender": "women",
-    "id": "ex_styling_women_dress_medium_cafe_shop_09",
-    "mood": "cafe-shop",
+    "id": "ex_horizon_women_dress_medium_front_satin_01",
+    "mood": null,
     "presentationMethod": null,
     "rank": 1,
     "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_medium_cafe_shop_09.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_horizon_women_dress_medium_front_satin_01.webp",
     "variants": [
       "all"
     ]
   },
   {
     "applicableClothingTypes": [
+      "top",
+      "outer",
       "dress"
     ],
-    "clothingType": "dress",
-    "cutType": "styling",
+    "clothingType": "top",
+    "cutType": "horizon",
     "detailSubject": null,
     "direction": "front",
     "gender": "women",
-    "id": "ex_styling_women_dress_medium_city_03",
-    "mood": "city",
+    "id": "ex_horizon_women_top_medium_02",
+    "mood": null,
     "presentationMethod": null,
     "rank": 1,
     "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_medium_city_03.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_medium_city_10",
-    "mood": "city",
-    "presentationMethod": null,
-    "rank": 2,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_medium_city_10.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_medium_home_01",
-    "mood": "home",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_medium_home_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_medium_home_04",
-    "mood": "home",
-    "presentationMethod": null,
-    "rank": 2,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_medium_home_04.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_medium_home_08",
-    "mood": "home",
-    "presentationMethod": null,
-    "rank": 3,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_medium_home_08.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "dress"
-    ],
-    "clothingType": "dress",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_dress_medium_resort_06",
-    "mood": "resort",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_dress_medium_resort_06.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_outer_full_alley_01",
-    "mood": "bright everyday alley walking snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_full_alley_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "side",
-    "gender": "women",
-    "id": "ex_styling_women_outer_full_bakery_storefront_01",
-    "mood": "bakery storefront walking pause",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_full_bakery_storefront_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "back",
-    "gender": "women",
-    "id": "ex_styling_women_outer_full_coffee_shop_entry_01",
-    "mood": "coffee-shop entrance phone check",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_full_coffee_shop_entry_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_outer_full_garden_01",
-    "mood": "casual residential-garden phone snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_full_garden_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_outer_full_night_city_01",
-    "mood": "handheld urban night travel snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_full_night_city_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_outer_full_rain_street_01",
-    "mood": "rainy neighborhood street phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_full_rain_street_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_outer_full_stone_doorway_replacement_01",
-    "mood": "ordinary backlit stone-wall doorway bag-checking phone snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_full_stone_doorway_replacement_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "back",
-    "gender": "women",
-    "id": "ex_styling_women_outer_full_terrace_back_01",
-    "mood": "playful overcast terrace phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "full",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_full_terrace_back_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_outer_medium_building_01",
-    "mood": "neutral everyday building-entry detail snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_medium_building_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_outer_medium_cafe_01",
-    "mood": "playful bright-cafe phone snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_medium_cafe_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "back",
-    "gender": "women",
-    "id": "ex_styling_women_outer_medium_market_01",
-    "mood": "ordinary fruit-market browsing phone snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_medium_market_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": "women",
-    "id": "ex_styling_women_outer_medium_rainy_city_01",
-    "mood": "rainy neighborhood-crosswalk phone snapshot",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_medium_rainy_city_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "styling",
-    "detailSubject": null,
-    "direction": "side",
-    "gender": "women",
-    "id": "ex_styling_women_outer_medium_record_store_01",
-    "mood": "record-store browsing snap",
-    "presentationMethod": null,
-    "rank": 1,
-    "shot": "medium",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_styling_women_outer_medium_record_store_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_horizon_women_top_medium_02.webp",
     "variants": [
       "all"
     ]
@@ -906,7 +220,7 @@
     "presentationMethod": null,
     "rank": 1,
     "shot": "detail",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_bottom_detail_closure_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_product_bottom_detail_closure_01.webp",
     "variants": [
       "all"
     ]
@@ -925,7 +239,7 @@
     "presentationMethod": null,
     "rank": 2,
     "shot": "detail",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_bottom_detail_closure_02.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_product_bottom_detail_closure_02.webp",
     "variants": [
       "all"
     ]
@@ -944,7 +258,7 @@
     "presentationMethod": null,
     "rank": 1,
     "shot": "detail",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_bottom_detail_pocket_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_product_bottom_detail_pocket_01.webp",
     "variants": [
       "all"
     ]
@@ -963,140 +277,7 @@
     "presentationMethod": null,
     "rank": 2,
     "shot": "detail",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_bottom_detail_pocket_02.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "bottom"
-    ],
-    "clothingType": "bottom",
-    "cutType": "product",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": null,
-    "id": "ex_product_bottom_ghost_01",
-    "mood": null,
-    "presentationMethod": "ghost",
-    "rank": 1,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_bottom_ghost_01.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "bottom"
-    ],
-    "clothingType": "bottom",
-    "cutType": "product",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": null,
-    "id": "ex_product_bottom_ghost_02",
-    "mood": null,
-    "presentationMethod": "ghost",
-    "rank": 2,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_bottom_ghost_02.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "bottom"
-    ],
-    "clothingType": "bottom",
-    "cutType": "product",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": null,
-    "id": "ex_product_bottom_ghost_03",
-    "mood": null,
-    "presentationMethod": "flatlay",
-    "rank": 3,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_bottom_ghost_03.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "bottom"
-    ],
-    "clothingType": "bottom",
-    "cutType": "product",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": null,
-    "id": "ex_product_bottom_ghost_04",
-    "mood": null,
-    "presentationMethod": "flatlay",
-    "rank": 4,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_bottom_ghost_04.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "bottom"
-    ],
-    "clothingType": "bottom",
-    "cutType": "product",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": null,
-    "id": "ex_product_bottom_ghost_05",
-    "mood": null,
-    "presentationMethod": "flatlay",
-    "rank": 5,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_bottom_ghost_05.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "bottom"
-    ],
-    "clothingType": "bottom",
-    "cutType": "product",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": null,
-    "id": "ex_product_bottom_ghost_06",
-    "mood": null,
-    "presentationMethod": "ghost",
-    "rank": 6,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_bottom_ghost_06.webp",
-    "variants": [
-      "all"
-    ]
-  },
-  {
-    "applicableClothingTypes": [
-      "outer"
-    ],
-    "clothingType": "outer",
-    "cutType": "product",
-    "detailSubject": null,
-    "direction": "front",
-    "gender": null,
-    "id": "ex_product_outer_ghost_01",
-    "mood": null,
-    "presentationMethod": "ghost",
-    "rank": 1,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_outer_ghost_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_product_bottom_detail_pocket_02.webp",
     "variants": [
       "all"
     ]
@@ -1115,7 +296,7 @@
     "presentationMethod": null,
     "rank": 1,
     "shot": "detail",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_top_detail_closure_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_product_top_detail_closure_01.webp",
     "variants": [
       "all"
     ]
@@ -1134,7 +315,7 @@
     "presentationMethod": null,
     "rank": 2,
     "shot": "detail",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_top_detail_closure_02.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_product_top_detail_closure_02.webp",
     "variants": [
       "all"
     ]
@@ -1153,7 +334,7 @@
     "presentationMethod": null,
     "rank": 3,
     "shot": "detail",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_top_detail_closure_03.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_product_top_detail_closure_03.webp",
     "variants": [
       "all"
     ]
@@ -1172,7 +353,7 @@
     "presentationMethod": null,
     "rank": 1,
     "shot": "detail",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_top_detail_fabric_sewing_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_product_top_detail_fabric_sewing_01.webp",
     "variants": [
       "all"
     ]
@@ -1191,7 +372,7 @@
     "presentationMethod": null,
     "rank": 1,
     "shot": "detail",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_top_detail_pocket_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_product_top_detail_pocket_01.webp",
     "variants": [
       "all"
     ]
@@ -1210,102 +391,862 @@
     "presentationMethod": "ghost",
     "rank": 1,
     "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_top_ghost_01.webp",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_product_top_ghost_01.webp",
     "variants": [
       "all"
     ]
   },
   {
     "applicableClothingTypes": [
-      "top"
+      "outer"
     ],
-    "clothingType": "top",
-    "cutType": "product",
+    "clothingType": "outer",
+    "cutType": "styling",
     "detailSubject": null,
     "direction": "front",
-    "gender": null,
-    "id": "ex_product_top_ghost_02",
-    "mood": null,
-    "presentationMethod": "ghost",
-    "rank": 2,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_top_ghost_02.webp",
+    "gender": "men",
+    "id": "ex_styling_men_outer_full_01",
+    "mood": "hard-sun neighborhood café storefront phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_full_01.webp",
     "variants": [
       "all"
     ]
   },
   {
     "applicableClothingTypes": [
-      "top"
+      "outer"
     ],
-    "clothingType": "top",
-    "cutType": "product",
+    "clothingType": "outer",
+    "cutType": "styling",
     "detailSubject": null,
     "direction": "front",
-    "gender": null,
-    "id": "ex_product_top_ghost_03",
-    "mood": null,
-    "presentationMethod": "ghost",
-    "rank": 3,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_top_ghost_03.webp",
+    "gender": "men",
+    "id": "ex_styling_men_outer_full_02",
+    "mood": "planted café seated phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_full_02.webp",
     "variants": [
       "all"
     ]
   },
   {
     "applicableClothingTypes": [
-      "top"
+      "outer"
     ],
-    "clothingType": "top",
-    "cutType": "product",
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_styling_men_outer_full_03",
+    "mood": "dim workshop café standing phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_full_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_styling_men_outer_full_04",
+    "mood": "shaded urban building-entrance phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_full_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "side",
+    "gender": "men",
+    "id": "ex_styling_men_outer_full_05",
+    "mood": "sunlit minimal café bench phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_full_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_styling_men_outer_full_06",
+    "mood": "bright indoor plant-corner walking phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_full_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_styling_men_outer_full_07",
+    "mood": "hard-sun street storefront phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_full_07.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_styling_men_outer_full_08",
+    "mood": "soft-window indoor lounge older-phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_full_08.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_styling_men_outer_medium_01",
+    "mood": "close hard-sun café storefront phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_medium_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "side",
+    "gender": "men",
+    "id": "ex_styling_men_outer_medium_02",
+    "mood": "seated café conversational phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_medium_02.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_styling_men_outer_medium_03",
+    "mood": "dim seated workshop phone snap with warm task light",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_medium_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
     "detailSubject": null,
     "direction": "back",
-    "gender": null,
-    "id": "ex_product_top_ghost_04",
-    "mood": null,
-    "presentationMethod": "ghost",
+    "gender": "men",
+    "id": "ex_styling_men_outer_medium_04",
+    "mood": "building-entrance back three-quarter phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_medium_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "back",
+    "gender": "men",
+    "id": "ex_styling_men_outer_medium_05",
+    "mood": "window-side café back three-quarter phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_medium_05.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_styling_men_outer_medium_06",
+    "mood": "sunny riverside park close phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_medium_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_styling_men_outer_medium_07",
+    "mood": "hard-sun storefront profile phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_medium_07.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "men",
+    "id": "ex_styling_men_outer_medium_08",
+    "mood": "soft-window indoor torso older-phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_men_outer_medium_08.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "side",
+    "gender": "women",
+    "id": "ex_styling_women_dress_full_cafe_shop_09",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_full_cafe_shop_09.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_full_city_03",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_full_city_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_full_city_10",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_full_city_10.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_full_home_01",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_full_home_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_full_home_04",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_full_home_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_full_home_07",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_full_home_07.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_full_home_08",
+    "mood": "home",
+    "presentationMethod": null,
     "rank": 4,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_top_ghost_04.webp",
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_full_home_08.webp",
     "variants": [
       "all"
     ]
   },
   {
     "applicableClothingTypes": [
-      "top"
+      "dress"
     ],
-    "clothingType": "top",
-    "cutType": "product",
+    "clothingType": "dress",
+    "cutType": "styling",
     "detailSubject": null,
     "direction": "front",
-    "gender": null,
-    "id": "ex_product_top_ghost_05",
-    "mood": null,
-    "presentationMethod": "flatlay",
-    "rank": 5,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_top_ghost_05.webp",
+    "gender": "women",
+    "id": "ex_styling_women_dress_full_park_05",
+    "mood": "park",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_full_park_05.webp",
     "variants": [
       "all"
     ]
   },
   {
     "applicableClothingTypes": [
-      "top"
+      "dress"
     ],
-    "clothingType": "top",
-    "cutType": "product",
+    "clothingType": "dress",
+    "cutType": "styling",
     "detailSubject": null,
     "direction": "front",
-    "gender": null,
-    "id": "ex_product_top_ghost_06",
-    "mood": null,
-    "presentationMethod": "flatlay",
-    "rank": 6,
-    "shot": "ghost",
-    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-07-31-individual-styling-01/thumb/ex_product_top_ghost_06.webp",
+    "gender": "women",
+    "id": "ex_styling_women_dress_full_resort_06",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_full_resort_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "side",
+    "gender": "women",
+    "id": "ex_styling_women_dress_medium_cafe_shop_09",
+    "mood": "cafe-shop",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_medium_cafe_shop_09.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_medium_city_03",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_medium_city_03.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_medium_city_10",
+    "mood": "city",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_medium_city_10.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_medium_home_01",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_medium_home_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_medium_home_04",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 2,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_medium_home_04.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_medium_home_08",
+    "mood": "home",
+    "presentationMethod": null,
+    "rank": 3,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_medium_home_08.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "dress"
+    ],
+    "clothingType": "dress",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_dress_medium_resort_06",
+    "mood": "resort",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_dress_medium_resort_06.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_outer_full_alley_01",
+    "mood": "bright everyday alley walking snapshot",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_full_alley_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "side",
+    "gender": "women",
+    "id": "ex_styling_women_outer_full_bakery_storefront_01",
+    "mood": "bakery storefront walking pause",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_full_bakery_storefront_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "back",
+    "gender": "women",
+    "id": "ex_styling_women_outer_full_coffee_shop_entry_01",
+    "mood": "coffee-shop entrance phone check",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_full_coffee_shop_entry_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_outer_full_garden_01",
+    "mood": "casual residential-garden phone snapshot",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_full_garden_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_outer_full_night_city_01",
+    "mood": "handheld urban night travel snapshot",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_full_night_city_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_outer_full_rain_street_01",
+    "mood": "rainy neighborhood street phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_full_rain_street_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_outer_full_stone_doorway_replacement_01",
+    "mood": "ordinary backlit stone-wall doorway bag-checking phone snapshot",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_full_stone_doorway_replacement_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "back",
+    "gender": "women",
+    "id": "ex_styling_women_outer_full_terrace_back_01",
+    "mood": "playful overcast terrace phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "full",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_full_terrace_back_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_outer_medium_building_01",
+    "mood": "neutral everyday building-entry detail snapshot",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_medium_building_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_outer_medium_cafe_01",
+    "mood": "playful bright-cafe phone snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_medium_cafe_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "back",
+    "gender": "women",
+    "id": "ex_styling_women_outer_medium_market_01",
+    "mood": "ordinary fruit-market browsing phone snapshot",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_medium_market_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "front",
+    "gender": "women",
+    "id": "ex_styling_women_outer_medium_rainy_city_01",
+    "mood": "rainy neighborhood-crosswalk phone snapshot",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_medium_rainy_city_01.webp",
+    "variants": [
+      "all"
+    ]
+  },
+  {
+    "applicableClothingTypes": [
+      "outer"
+    ],
+    "clothingType": "outer",
+    "cutType": "styling",
+    "detailSubject": null,
+    "direction": "side",
+    "gender": "women",
+    "id": "ex_styling_women_outer_medium_record_store_01",
+    "mood": "record-store browsing snap",
+    "presentationMethod": null,
+    "rank": 1,
+    "shot": "medium",
+    "thumb": "https://images.wearless.kr/seed/genexamples/v1/releases/2026-08-01-active-catalog-01/thumb/ex_styling_women_outer_medium_record_store_01.webp",
     "variants": [
       "all"
     ]

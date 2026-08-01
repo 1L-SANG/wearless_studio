@@ -245,8 +245,16 @@ def validate_space_set_registry_document(
             "setApplicableClothingTypes" in raw_set
             and set_applicable != applicable
             and (
-                set_type != "horizon-rotation"
-                or tuple(set_applicable) != _SET_SCOPE_BY_GENDER[gender]
+                not (
+                    set_type == "styling"
+                    and len(applicable) == 1
+                    and applicable[0] in ("top", "outer")
+                    and set_applicable == ["top", "outer"]
+                )
+                and not (
+                    set_type == "horizon-rotation"
+                    and tuple(set_applicable) == _SET_SCOPE_BY_GENDER[gender]
+                )
             )
         ):
             raise ValueError("space_set_registry_set_applicability_invalid")

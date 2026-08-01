@@ -657,14 +657,22 @@ def validate_manifest(
                 "setApplicableClothingTypes" in space_set
                 and set_applicable != applicable
                 and (
-                    set_type != "horizon-rotation"
-                    or set_applicable
-                    != _SET_SCOPE_BY_GENDER.get(space_set.get("gender"))
+                    not (
+                        set_type == "styling"
+                        and len(applicable) == 1
+                        and applicable[0] in ("top", "outer")
+                        and set_applicable == ["top", "outer"]
+                    )
+                    and not (
+                        set_type == "horizon-rotation"
+                        and set_applicable
+                        == _SET_SCOPE_BY_GENDER.get(space_set.get("gender"))
+                    )
                 )
             ):
                 violations.append(
-                    f"{prefix} 별도 세트 적용 범위는 회전 세트의 성별 전 의류 "
-                    "목록에만 허용합니다"
+                    f"{prefix} 별도 세트 적용 범위는 스타일링 top|outer 공유 또는 "
+                    "회전 세트의 성별 전 의류 목록만 허용합니다"
                 )
 
         if space_set.get("spaceVariation") not in _SPACE_VARIATIONS:

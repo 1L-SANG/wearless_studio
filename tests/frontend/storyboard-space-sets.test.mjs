@@ -164,6 +164,53 @@ test('release normalization keeps canonical applicability and thumbnails', () =>
   ]);
 });
 
+test('styling sets can share set placement between top and outer without widening member previews', () => {
+  const [set] = normalizeStoryboardSpaceSetRelease({
+    schemaVersion: 1,
+    releaseId: 'test-release-1',
+    sets: [{
+      setId: 'set-women-top-shared',
+      name: '밝은 실내',
+      setType: 'styling',
+      gender: 'women',
+      applicableClothingTypes: ['top'],
+      setApplicableClothingTypes: ['top', 'outer'],
+      placeType: 'building-interior',
+      tone: 'daily-snapshot',
+      compositionLabel: '풀 1 + 미디움 1',
+      spaceVariation: 'subtle',
+      platePolicy: 'required',
+      representativePlate: { url: 'plate.png' },
+      members: [
+        {
+          exampleId: 'ss_shared_full',
+          order: 1,
+          cutType: 'styling',
+          shot: 'full',
+          direction: 'front',
+          allUrl: 'full.png',
+          thumbUrl: 'full.webp',
+        },
+        {
+          exampleId: 'ss_shared_medium',
+          order: 2,
+          cutType: 'styling',
+          shot: 'medium',
+          direction: 'side',
+          allUrl: 'medium.png',
+          thumbUrl: 'medium.webp',
+        },
+      ],
+    }],
+  });
+  assert.deepEqual(set.applicableClothingTypes, ['top']);
+  assert.deepEqual(set.setApplicableClothingTypes, ['top', 'outer']);
+  assert.equal(isStoryboardSpaceSetEligible(set, {
+    gender: 'women',
+    clothingType: 'outer',
+  }), true);
+});
+
 test('release normalization fails closed instead of widening malformed sets', () => {
   const base = {
     setId: 'set-women-top',

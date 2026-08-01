@@ -85,6 +85,28 @@ def test_horizon_catalog_uses_the_owner_confirmed_shared_clothing_scopes():
         assert item["applicableClothingTypes"] == expected, item["id"]
 
 
+def test_product_ghost_catalog_keeps_only_the_owner_approved_top_example():
+    catalog = json.loads(
+        (REPO_ROOT / "src/data/genExamples.json").read_text(encoding="utf-8")
+    )
+    registry = json.loads(
+        (REPO_ROOT / "server/app/data/example_assets.json").read_text(encoding="utf-8")
+    )
+    catalog_ids = {
+        item["id"]
+        for item in catalog
+        if item["cutType"] == "product" and item["shot"] == "ghost"
+    }
+    registry_ids = {
+        item_id
+        for item_id, item in registry["assets"].items()
+        if item["cutType"] == "product" and item["shot"] == "ghost"
+    }
+
+    assert catalog_ids == {"ex_product_top_ghost_01"}
+    assert registry_ids == catalog_ids
+
+
 def test_storyboard_pose_direction_tooltip_matches_service_copy():
     source = (REPO_ROOT / "src/features/storyboard/Storyboard.jsx").read_text(encoding="utf-8")
     assert "이 예시의 포즈는 ${label} 전용이에요" in source

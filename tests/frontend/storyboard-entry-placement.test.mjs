@@ -192,12 +192,14 @@ test('multi-color basic and extended seeds follow product and studio repetition 
 test('cut counts include normal ranges and a forced one-slot styling fallback', () => {
   const basic = defaultStoryboard(baseColors, 'basic', context('counts', 'top', 'women'));
   assert.equal(basic.length, 14);
-  // 확장형: 하의는 카테고리별 시퀀스, 상의는 전 의류 회전 세트를 사용한다.
+  // 확장형: 발행된 카테고리별 호리존 시퀀스가 있으면 회전 세트 대신 사용한다.
   assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-a', 'bottom', 'women')).length, 20);
   assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-b', 'bottom', 'men')).length, 21);
-  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-c', 'top', 'women')).length, 19);
+  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-c', 'top', 'women')).length, 21);
 
-  const oneStylingSet = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })[0];
+  const oneStylingSet = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })
+    .find((set) => set.setType === 'styling');
+  assert.ok(oneStylingSet);
   const originalIncludes = Array.prototype.includes;
   Array.prototype.includes = function mockedIncludes(value, ...rest) {
     if (value === 'forced-single') return this === oneStylingSet.setApplicableClothingTypes;

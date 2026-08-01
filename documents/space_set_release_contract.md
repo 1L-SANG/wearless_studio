@@ -226,9 +226,12 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
    세트**, 또는 성별이 지원하는 전 의류 범위를 정확히 선언한
    `horizon-rotation`에만 허용한다.
    `setApplicableClothingTypes`는 선택적인 세트 배치·포즈 범위이며,
-   생략하면 앞 필드와 같다. 두 값이 다를 수 있는 것은
-   `horizon-rotation`뿐이고 여성은 `[top,bottom,outer,dress]`, 남성은
-   `[top,bottom,outer]`의 정해진 순서와 전체 범위를 사용한다.
+   생략하면 앞 필드와 같다. 두 값이 다를 수 있는 경우는 두 가지다.
+   `styling`의 낱장 범위가 `top` 또는 `outer` 하나라면 세트 범위를
+   `[top,outer]`로 공유할 수 있다. 이때 낱장 미리보기 범위는 원래 의류를
+   유지하고, 세트 배치와 pose 참조만 공유한다. `horizon-rotation`은 여성
+   `[top,bottom,outer,dress]`, 남성 `[top,bottom,outer]`의 정해진 순서와
+   전체 범위를 사용한다.
 5. 모든 해시·픽셀 크기·실제 이미지 형식·확장자가 manifest와 일치한다.
 6. 자산 key는 이 releaseId의 불변 R2 루트 밖을 가리킬 수 없다.
 7. 같은 releaseId의 스테이징 경로와 R2 prefix는 덮어쓰지 않는다. 수정은 새

@@ -579,9 +579,31 @@ def test_non_rotation_release_cannot_widen_only_the_set_scope(tmp_path):
         release.validate_manifest(manifest, root)
 
     assert any(
-        "별도 세트 적용 범위는 회전 세트" in item
+        "별도 세트 적용 범위는 스타일링 top|outer 공유" in item
         for item in caught.value.violations
     )
+
+
+def test_styling_release_can_share_set_scope_between_top_and_outer(tmp_path):
+    manifest_path, root, manifest = _fixture(tmp_path)
+    manifest["sets"][0]["setApplicableClothingTypes"] = ["top", "outer"]
+    _write_manifest(manifest_path, manifest)
+
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "styling-shared-staged",
+    )
+    frontend = json.loads(
+        result.frontend_catalog_path.read_text(encoding="utf-8")
+    )
+    registry = json.loads(
+        result.server_registry_path.read_text(encoding="utf-8")
+    )
+    for published in (frontend["sets"][0], registry["sets"][0]):
+        assert published["applicableClothingTypes"] == ["top"]
+        assert published["setApplicableClothingTypes"] == ["top", "outer"]
 
 
 def test_staging_and_apply_refuse_same_release_overwrite(tmp_path, monkeypatch):

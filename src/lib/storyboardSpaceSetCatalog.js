@@ -98,8 +98,16 @@ function normalizedSet(set, index) {
     set.setApplicableClothingTypes != null
     && setClothingTypes.join(',') !== clothingTypes.join(',')
     && (
-      setType !== 'horizon-rotation'
-      || setClothingTypes.join(',') !== SET_SCOPE_BY_GENDER[set.gender].join(',')
+      !(
+        setType === 'styling'
+        && clothingTypes.length === 1
+        && ['top', 'outer'].includes(clothingTypes[0])
+        && setClothingTypes.join(',') === 'top,outer'
+      )
+      && !(
+        setType === 'horizon-rotation'
+        && setClothingTypes.join(',') === SET_SCOPE_BY_GENDER[set.gender].join(',')
+      )
     )
   ) return null;
   if (clothingTypes.length > 1) {

@@ -49,16 +49,18 @@ const httpAdapterSource = readFileSync(
 );
 
 test('owner declarations gate frontend combinations', () => {
-  // 2026-07-31 구세대 정리: 플랫 공개 조합 = 신규 45(아우터·원피스 스타일링) + 유지 2(여성 하의 호리존 미디움).
-  // 닫힌 조합의 갤러리는 세트 멤버(setOnly 우회)로 유지되고, 재생성 발행 시 조합이 다시 열린다.
+  // 2026-08-01 정합 복구: 신규 스타일링 45 + 호리존 10 + 제품 10만 공개한다.
+  // 닫힌 스타일링 조합의 갤러리는 세트 멤버(setOnly 우회)로 유지한다.
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'medium', clothingType: 'outer', gender: 'men' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'dress', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'bottom', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' }), false);
-  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'women' }), false);
-  // 제품컷 22개는 오너 지시로 롤백 유지(2026-07-31) — 세트가 못 덮는 유일 영역.
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'women' }), true);
+  // 제품 고스트는 오너가 남긴 상의 1개만 공개한다.
   assert.equal(isGenerationCombinationPublic({ cutType: 'product', shot: 'detail', clothingType: 'bottom', gender: 'women' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'product', shot: 'ghost', clothingType: 'top', gender: 'women' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'product', shot: 'ghost', clothingType: 'bottom', gender: 'women' }), false);
 });
 
 test('eligibility uses cut, shot, clothing, gender and all publication, not direction or matchIds', () => {
