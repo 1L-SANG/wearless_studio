@@ -210,12 +210,38 @@ def test_cuff_band_keeps_carrier_pixels():
 
 
 def test_no_paint_above_collar_or_below_hem():
-    """해부학 y-경계 밖(칼라 위·밑단 아래)은 carrier 그대로 — 목/스커트 페인트 금지."""
-    cx, art = _composited_g1()
-    h = cx["image"].shape[0]
+    """해부학 y-경계 밖(칼라 위·밑단 아래)은 carrier 그대로 — 목/스커트 페인트 금지.
+
+    G1 기본 fixture 는 어깨 위에 전경 자체가 없어 이 계약이 장식이 된다(adversary
+    실측: y-클립 삭제해도 green). 어깨 위에 의류색 목 플랩을 심어 pre-clip mask 가
+    경계 밖에서 실제로 발화하게 만든 뒤 0px 를 요구한다 — 이제 y-클립을 지우면 RED.
+    """
+    model = extract_stripe_model(
+        render_signal("S1_blue_brown_fine", "illum"),
+        source_asset_id="fx", source_sha256="0" * 8, source_roi=(0, 0, 768, 768))
+    assert not isinstance(model, CompositeFailure)
+    cx = render_carrier("G1_regular", 0)
+    img = cx["image"].copy()
+    mask = cx["garment_mask"].copy()
+    h, w = img.shape[:2]
     lm = cx["landmarks"]
     shoulder_y = min(lm["shoulder_l"][1], lm["shoulder_r"][1]) * h
     hem_y = max(lm["hem_l"][1], lm["hem_r"][1]) * h
+    # 어깨 위 목 플랩(의류색) — bg_diff 전경이 되지만 셔츠가 존재할 수 없는 영역
+    cxr = int((lm["shoulder_l"][0] + lm["shoulder_r"][0]) / 2 * w)
+    y1 = int(shoulder_y - h * 0.03)
+    y0 = max(0, y1 - int(h * 0.06))
+    cv2.rectangle(img, (cxr - 40, y0), (cxr + 40, y1), (176, 176, 176), -1)
+    cv2.rectangle(mask, (cxr - 40, y0), (cxr + 40, y1), 255, -1)
+    cx = dict(cx); cx["image"] = img; cx["garment_mask"] = mask
+    pm = build_panel_map(cx["image"], cx["landmarks"])
+    assert not isinstance(pm, CompositeFailure), pm
+    torso_h = np.ptp([p[1] for p in cx["torso_poly"]])
+    art = composite_stripe(cx["image"], pm, model,
+                           target_period_px=torso_h / 22.0, target_axis="horizontal")
+    assert not isinstance(art, CompositeFailure), art
+    # 전제: 플랩이 정말 pre-clip 전경이었는가 — 경계 위 mask 픽셀이 실존해야 비장식
+    assert np.count_nonzero(mask[:max(0, int(shoulder_y - h * 0.02))]) > 500
     assert np.count_nonzero(art.painted[:max(0, int(shoulder_y - h * 0.02))]) == 0
     assert np.count_nonzero(art.painted[min(h, int(hem_y + h * 0.03)):]) == 0
 

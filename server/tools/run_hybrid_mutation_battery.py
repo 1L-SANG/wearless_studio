@@ -117,6 +117,10 @@ MUTANTS = [
     ("HM14", "커프스 보호 밴드 제거", WC,
      [("    CUFF_BAND_FRAC = 0.78", "    CUFF_BAND_FRAC = 10.0")],
      f"{FIXV2}", ["cuff_band_keeps_carrier_pixels"]),
+    ("HM15", "해부학 y-경계(칼라 위) 클립 제거", PM,
+     [("    work[:y_top] = 0\n    work[y_bot:] = 0\n    # 프린지/홀 충전",
+       "    work[y_bot:] = 0\n    # 프린지/홀 충전")],
+     f"{FIXV2}", ["no_paint_above_collar_or_below_hem"]),
 ]
 
 before = reviewed_state()
