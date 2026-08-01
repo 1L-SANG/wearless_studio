@@ -601,7 +601,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
             <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
           </div>
         )}
-        {examples.map((e, exampleIndex) => {
+        {examples.map((e) => {
           const on = exampleId === e.id;
           const variants = Array.isArray(e.variants) ? e.variants : [];
           const poseCompatible = poseExampleDirectionCompatible(e, { cutType: e.cutType || cut, direction });
@@ -631,13 +631,8 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
               : variants.includes(refScope || 'all')
                 && ((refScope || 'all') !== 'pose' || poseCompatible)
                 ? (refScope || 'all') : 'all';
-          const firstSetMember = !inSpace && e.setOnly && !examples[exampleIndex - 1]?.setOnly;
-          const firstOrdinary = !inSpace && !e.setOnly && examples.some((example) => example.setOnly)
-            && exampleIndex === 0;
           return (
             <React.Fragment key={e.id}>
-              {firstOrdinary && <div className="sb-ex-source-label">일반 생성예시</div>}
-              {firstSetMember && <div className="sb-ex-source-label set">공간세트에서 사용된 컷</div>}
               <button type="button" disabled={inSpaceDisabled}
                 title={inSpaceDisabled ? poseDisabledReason : undefined}
                 className={`sb-excell${on ? ' sel' : ''}${inSpaceDisabled ? ' unavailable' : ''}`}
