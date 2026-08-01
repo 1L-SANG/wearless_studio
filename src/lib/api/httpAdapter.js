@@ -51,6 +51,12 @@ function absolutizeAssetUrls(v) {
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
+export function newIdempotencyKey() {
+  return globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : `rv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export async function http(path, { method = 'GET', body, idempotencyKey } = {}) {
   let data;
   try {
@@ -567,11 +573,15 @@ export const httpAdapter = {
   // 완료 재호출 없음(매 호출이 새 이미지 생성, mock과 동일 계약) — onProgress는 body에서 제외.
   // 편집 결과 사용자 검수 — machine QC 는 바뀌지 않는다(사람의 판단만 append 된다).
   // 같은 판단의 재시도가 이력을 부풀리지 않게 idempotency key 를 붙인다.
+  // key 는 **요청 1회**의 정체지 판단의 이름이 아니다. `${sessionId}:${decision}` 처럼
+  // 판단으로 키를 만들면 거절했다가 다시 승인할 때 과거 승인 event 의 replay 로 처리돼
+  // 이력이 한 줄도 늘지 않는다. 호출자가 키 수명을 관리하고, 없으면 매번 새 키를 쓴다
+  // (최악이 "멱등이 아님"이지 "과거 판단으로 되돌아감"이 아니어야 한다).
   async reviewEditSession(projectId, sessionId, { decision, reason, key } = {}) {
     return http(`/v1/projects/${projectId}/edit-sessions/${sessionId}:review`, {
       method: 'POST',
       body: { decision, ...(reason ? { reason } : {}) },
-      idempotencyKey: key || `${sessionId}:${decision}`,
+      idempotencyKey: key || newIdempotencyKey(),
     });
   },
   async generateImage(projectId, req = {}) {

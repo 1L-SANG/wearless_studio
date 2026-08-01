@@ -54,6 +54,16 @@ def _parse_source_asset_id(src: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+# _ASSET_FILE_RE 는 하이픈 36자를 통과시켜 UUID 가 아닌 것도 잡는다. 저장 전에 한 번 더 조인다.
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def _safe_asset_id(asset_id: str | None) -> dict:
+    """실패 metadata 에 넣어도 되는 asset id만 골라낸다 — 아니면 아무것도 넣지 않는다."""
+    return {"sourceAssetId": asset_id} if asset_id and _UUID_RE.match(asset_id) else {}
+
+
 _SAFE_CODE_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 
 
@@ -294,8 +304,10 @@ async def run_editor_image_job(app, job: dict) -> None:
                 if rb:
                     ref_bg_asset = await repo.get_asset_for_user(conn, user_id, str(rb))
             if src_asset is None:
+                # src 원문은 남기지 않는다 — 클라이언트가 준 URL 에는 query·token 이 붙을 수
+                # 있고, 어느 컷이었는지 알아내는 데 필요한 건 asset id 뿐이다.
                 await _fail("변형할 컷을 찾을 수 없어요. 다시 시도해 주세요.",
-                            {"error": "source_asset_missing", "src": source.get("src")})
+                            {"error": "source_asset_missing", **_safe_asset_id(asset_id)})
                 return
             src_img = InlineImage(
                 src_asset["mime_type"],

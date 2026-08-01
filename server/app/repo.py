@@ -884,29 +884,37 @@ async def record_edit_review(
             # 통과했거나 거부된 결과는 검수 대상이 아니다 — 검수는 "사람이 판단해야 하는
             # 상태"에만 의미가 있다.
             raise ValueError("not_reviewable")
-        if idempotency_key:
-            await cur.execute(
-                "select id, decision, reason, created_at from edit_review_events "
-                "where edit_session_id = %s and idempotency_key = %s",
-                (session_id, idempotency_key))
-            prior = await cur.fetchone()
-            if prior is not None:
-                if prior["decision"] != decision or (prior["reason"] or None) != (
-                        reason or None):
-                    raise ValueError("idempotency_conflict")
-                return {"event": prior, "idempotent": True}
+        # SELECT 로 먼저 확인하고 INSERT 하면 두 요청이 동시에 "없다"를 보고 둘 다 넣는다.
+        # 판정은 DB 의 partial unique index 에 맡기고, 진 쪽이 이긴 행을 읽는다.
+        # on conflict do nothing 이라 unique violation 이 트랜잭션을 abort 시키지도 않는다.
         await cur.execute(
             """
             insert into edit_review_events
               (project_id, edit_session_id, wardrobe_image_id, output_id, actor_id,
                decision, reason, idempotency_key)
             values (%s, %s, %s, %s, %s, %s, %s, %s)
+            on conflict (edit_session_id, idempotency_key)
+              where idempotency_key is not null do nothing
             returning id, decision, reason, created_at
             """,
             (project_id, session_id, session["wardrobe_image_id"], session["output_id"],
              user_id, decision, reason, idempotency_key),
         )
-        return {"event": await cur.fetchone(), "idempotent": False}
+        inserted = await cur.fetchone()
+        if inserted is not None:
+            return {"event": inserted, "idempotent": False}
+        # 같은 키가 이미 있다 — 먼저 들어간 행이 정본이다.
+        await cur.execute(
+            "select id, decision, reason, created_at from edit_review_events "
+            "where edit_session_id = %s and idempotency_key = %s",
+            (session_id, idempotency_key))
+        prior = await cur.fetchone()
+        if prior is None:
+            # 키가 없는데 삽입도 안 됐다 = 인덱스 추론 밖의 충돌. 조용히 성공시키지 않는다.
+            raise ValueError("review_not_recorded")
+        if prior["decision"] != decision or (prior["reason"] or None) != (reason or None):
+            raise ValueError("idempotency_conflict")
+        return {"event": prior, "idempotent": True}
 
 
 async def get_edit_session(conn: AsyncConnection, session_id: str) -> dict | None:

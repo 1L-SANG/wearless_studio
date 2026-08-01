@@ -1505,10 +1505,13 @@ async def review_edit_session(
         except LookupError:
             raise _not_found()
         except ValueError as e:
+            code = str(e)
+            if code not in ("idempotency_conflict", "not_reviewable"):
+                raise   # 알 수 없는 상태를 사용자 잘못(409)으로 위장하지 않는다
             raise HTTPException(
                 status_code=409,
-                detail={"code": str(e),
-                        "message": ("이미 처리된 요청이에요." if str(e) ==
+                detail={"code": code,
+                        "message": ("이미 처리된 요청이에요." if code ==
                                     "idempotency_conflict"
                                     else "검수할 수 있는 결과가 아니에요.")})
         await conn.commit()

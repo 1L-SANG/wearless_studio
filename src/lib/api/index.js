@@ -7,7 +7,10 @@
      호출 즉시 throw — 과거 poison(조용한 폴백이 가짜 데이터를 실서버 요청에 흘려 404) 재발 방지.
    ============================================================= */
 import { mockAdapter } from './mockAdapter.js';
-import { httpAdapter } from './httpAdapter.js';
+import { httpAdapter, newIdempotencyKey } from './httpAdapter.js';
+
+// 요청 1회의 정체를 만드는 순수 헬퍼 — 어댑터 선택과 무관해 두 모드에서 같다.
+export { newIdempotencyKey };
 
 const mode = import.meta.env.VITE_API_MODE ?? 'mock';
 export const isMockMode = mode !== 'http';

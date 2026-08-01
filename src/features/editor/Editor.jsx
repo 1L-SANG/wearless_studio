@@ -11,7 +11,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react
 import { useNavigate, useParams } from 'react-router-dom';
 import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
-import { api, isMockMode } from '@/lib/api/index.js';
+import { api, isMockMode, newIdempotencyKey } from '@/lib/api/index.js';
 import { listModels } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
@@ -377,6 +377,7 @@ export function Editor() {
   const [analysis, setAnalysis] = useState(null); // targetGenders·materials·fit·sellingPoints — 추천 배지·프리필 전용
   const [infoModal, setInfoModal] = useState(null); // { type, blockId|null, initialInfo }
   const [review, setReview] = useState(null);      // { image, busy } — AI 편집 결과 검수
+  const reviewKeys = useRef(new Map());            // sessionId → { sig, key } (진행 중 판단 1건)
   const [tab, setTab] = useState('ai');
   const [selBlock, setSelBlock] = useState(null);
   const [selEl, setSelEl] = useState(null);
@@ -708,14 +709,21 @@ export function Editor() {
   };
   const requestSlotImage = (blockId, el) => { setPendingSlot({ blockId, elId: el.id }); setTab('wardrobe'); };
   // 서버가 자동 통과시키지 못한 결과는 사람이 원본과 비교하기 전에는 캔버스에 넣지 않는다.
-  const needsReviewNow = (im) => !!im?.needsReview && !im?.reviewDecision;
-  const wardrobeInsert = (im) => {
-    if (needsReviewNow(im)) { setReview({ image: im, busy: false }); return; }
+  // 정책 gate 를 통과한 뒤에만 부르는 내부 삽입 — 슬롯이면 슬롯, 아니면 캔버스.
+  // 밖으로 내보내지 않는다(이걸 공개하면 gate 를 우회하는 경로가 생긴다).
+  const insertPastGate = (im) => {
     if (pendingSlot) {
       // 정보 블록 슬롯이면 info(폼 정본)에도 동기화 — 재생성 때 사진-포인트 연결 유지
       setBlocks((bs) => bs.map((b) => (b.id === pendingSlot.blockId ? applySlotFillToInfo(b, pendingSlot.elId, { src: im.src, cutType: im.cutType || null }) : b)));
       setPendingSlot(null); setTab('image'); toast.push('빈 칸에 이미지를 넣었어요');
     } else insertImage(im);
+  };
+  // 검수가 필요한 컷은 accepted 일 때만 바로 들어간다. 미검수(null)든 거절(rejected)이든
+  // 모달을 거친다 — 거절을 뒤집는 건 "무시하고 넣기"가 아니라 새 승인 이력이어야 한다.
+  const needsReviewNow = (im) => !!im?.needsReview && im?.reviewDecision !== 'accepted';
+  const wardrobeInsert = (im) => {
+    if (needsReviewNow(im)) { setReview({ image: im, busy: false }); return; }
+    insertPastGate(im);
   };
   // fresh = 새로 생성된 컷의 4색 glow 하이라이트 — 사용자가 본 뒤(애니메이션 종료) 해제
   const freshSeen = (id) => setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === id && x.fresh ? { ...x, fresh: false } : x); return nw; });
@@ -773,12 +781,20 @@ export function Editor() {
   // 로컬 row 의 reviewDecision 을 그 결과로 맞춘다(성공한 경우에만).
   const reviewVaryResult = async (im, decision, reason) => {
     if (!im?.editSessionId) return false;
+    // 키는 "이 판단을 보내는 이 요청"의 정체다. 판단이나 사유가 달라지면 새 키를 쓰고,
+    // 같은 판단을 실패 후 재시도할 때만 같은 키를 재사용한다(서버 이력이 부풀지 않게).
+    const sid = im.editSessionId;
+    const sig = `${decision}|${reason || ''}`;
+    const held = reviewKeys.current.get(sid);
+    const key = held && held.sig === sig ? held.key : newIdempotencyKey();
+    reviewKeys.current.set(sid, { sig, key });
     try {
-      await api.reviewEditSession(projectId, im.editSessionId, { decision, reason });
+      await api.reviewEditSession(projectId, sid, { decision, reason, key });
     } catch (err) {
       toast.push(err?.message || '검수 기록에 실패했어요', { icon: 'alertTri' });
-      return false;
+      return false;   // 키는 남겨 둔다 — 같은 판단의 재시도는 같은 요청이다.
     }
+    reviewKeys.current.delete(sid);   // 기록됐다. 다음 판단은 새 요청이다.
     setWardrobe((w) => {
       const nw = {};
       for (const [g, arr] of Object.entries(w || {})) nw[g] = (arr || []).map((x) => x.id === im.id ? { ...x, reviewDecision: decision } : x);
@@ -794,10 +810,7 @@ export function Editor() {
     const ok = await reviewVaryResult(im, 'accepted');
     if (!ok) { setReview((r) => (r ? { ...r, busy: false } : r)); return; }
     setReview(null);
-    if (pendingSlot) {
-      setBlocks((bs) => bs.map((b) => (b.id === pendingSlot.blockId ? applySlotFillToInfo(b, pendingSlot.elId, { src: im.src, cutType: im.cutType || null }) : b)));
-      setPendingSlot(null); setTab('image'); toast.push('빈 칸에 이미지를 넣었어요');
-    } else insertImage(im);
+    insertPastGate(im);
   };
   // 거절은 삭제가 아니다 — 판단만 남기고 이미지는 목록에 그대로 둔다.
   const rejectReview = async () => {
