@@ -377,6 +377,16 @@ def build_panel_map(
     # 패턴 대상 = **실루엣 mask 자체**. quad 는 방향/워프 힌트일 뿐이다 — mask 를 quad 로
     # 자르면 실루엣이 아무리 정확해도 출력이 사각 슬랩이 된다(aed4e94 QA FAIL 결함 #5 뿌리).
     work = garment.copy()
+    # 해부학적 y-경계 — 에너지 mask 는 사람 모델이 없어 목/머리(칼라 위)와 스커트(밑단
+    # 아래)로 번진다(실캐리어 실측: 목까지 줄무늬 + 밑단 드립). 어깨선 위와 밑단 아래는
+    # 셔츠가 존재할 수 없는 영역이므로 landmark y-경계로 클립한다. y 좌표는 landmark 중
+    # 가장 안정적인 성분이다(지터는 주로 폭 방향).
+    shoulder_y = min(sl[1], sr[1])
+    hem_y = max(hl[1], hr[1])
+    y_top = max(0, int(shoulder_y - h * 0.02))
+    y_bot = min(h, int(hem_y + h * 0.03))
+    work[:y_top] = 0
+    work[y_bot:] = 0
     band = max(3, int(min(h, w) * BOUNDARY_BAND_PX_FRAC))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (band * 2 + 1, band * 2 + 1))
     protected = cv2.erode(work, kernel)
