@@ -3,7 +3,8 @@
 계약:
   · baseline 은 "가장 최근 생성본"이 아니다. **승인 API 만이** 만든다.
   · project 당 active baseline 은 하나. 새 승인이 이전 것을 supersede 한다(같은 tx).
-  · 같은 컷 재승인은 멱등 — 아무것도 바꾸지 않는다.
+  · 같은 컷 재승인은 멱등 — baseline 상태(id·approved_at·supersede)는 그대로. 단 시도
+    자체는 감사 event(baseline_reapproved)로 남는다.
   · 승인은 선택을 포함하지만(selected_mannequin_id 동기화), 선택은 승인이 아니다.
   · generation_run_id(이 결과를 만든 호출) ≠ parent_output_id(무엇을 편집했는가).
   · 값을 모르는 invariant 는 거짓으로 채우지 않고 unavailable + 사유로 남긴다.
@@ -122,7 +123,8 @@ def test_approval_of_a_legacy_cut_without_output_still_succeeds():
     assert out["baseline"]["baseline_cut_id"] == "cut-uuid-1"
 
 
-def test_reapproving_the_same_cut_is_idempotent():
+def test_reapproving_the_same_cut_leaves_baseline_state_untouched():
+    """멱등 = baseline 상태 불변. 감사 기록까지 없는 게 아니다(시도는 남는다)."""
     st, out = _approve({"active": {"id": "base-old", "baseline_cut_id": "cut-uuid-1"}})
     assert out["idempotent"] is True and out["superseded_id"] is None
     assert not _sql_of(st, "insert into approved_baselines"), "행이 또 생겼다"
@@ -580,3 +582,106 @@ def test_baseline_route_returns_null_before_any_approval(approve_client, make_to
     r = approve_client.get("/v1/projects/p1/mannequins/baseline",
                            headers=_auth(make_token))
     assert r.status_code == 200 and r.json() is None
+
+
+# ── 릴리스 전 보정: actor 삭제가 승인 기록을 지우지 않는다 ───────────────────
+
+INTEGRITY_MIGRATION = (
+    "/Users/nojeong-un/devs/wearless_studio/supabase/migrations/"
+    "20260801030000_baseline_integrity.sql"
+)
+
+
+def _integrity_sql():
+    return open(INTEGRITY_MIGRATION, encoding="utf-8").read()
+
+
+def test_approved_by_becomes_nullable():
+    """actor 가 사라져도 행이 남으려면 컬럼이 null 을 받아야 한다."""
+    assert re.search(
+        r"alter table public\.approved_baselines\s+alter column approved_by drop not null",
+        _integrity_sql())
+
+
+def test_cascade_fk_on_approved_by_is_dropped():
+    """cascade 였다면 탈퇴 한 번에 승인 baseline 이 통째로 사라진다."""
+    sql = _integrity_sql()
+    assert "drop constraint if exists approved_baselines_approved_by_fkey" in sql
+    idx_drop = sql.index("drop constraint if exists approved_baselines_approved_by_fkey")
+    idx_add = sql.index("add constraint approved_baselines_approved_by_fkey")
+    assert idx_drop < idx_add, "drop 이 add 보다 뒤면 기존 cascade 가 남는다"
+
+
+def test_approved_by_fk_is_recreated_as_set_null():
+    assert re.search(
+        r"add constraint approved_baselines_approved_by_fkey\s+"
+        r"foreign key \(approved_by\) references auth\.users \(id\) on delete set null",
+        _integrity_sql())
+
+
+def test_baseline_actor_policy_matches_the_audit_table():
+    """두 테이블의 actor 삭제 정책이 갈라져 있으면 한쪽만 증발한다."""
+    base_sql = open(MIGRATION, encoding="utf-8").read()
+    assert "actor_id uuid references auth.users (id) on delete set null" in base_sql
+    assert "on delete set null" in _integrity_sql()
+    # 보정 후 approved_baselines 에 cascade 정책이 남아 있으면 안 된다
+    assert "references auth.users (id) on delete cascade" not in _integrity_sql()
+
+
+def test_baseline_row_survives_actor_deletion_by_contract():
+    """정적 계약: 승인 baseline 은 actor 삭제로 지워지지 않고 approved_by 만 null 이 된다.
+
+    (실행 검증은 migration 적용 후 가능 — 여기서는 스키마 계약을 고정한다.)
+    """
+    sql = _integrity_sql()
+    assert "alter column approved_by drop not null" in sql
+    assert "on delete set null" in sql
+    assert "drop table" not in sql.lower() and "delete from" not in sql.lower()
+
+
+def test_audit_action_values_are_constrained_to_the_three_in_use():
+    """자유 text 는 오타를 영구 데이터로 만든다. 목록은 코드 실측 3개뿐이다."""
+    sql = _integrity_sql()
+    assert re.search(
+        r"check \(action in \('baseline_approved', 'baseline_superseded', "
+        r"'baseline_reapproved'\)\)", sql)
+
+
+def test_constrained_actions_match_every_action_the_code_writes():
+    """코드가 쓰는 action 과 CHECK 목록이 어긋나면 승인이 런타임에 죽는다."""
+    import inspect
+    src = inspect.getsource(repo.approve_mannequin_baseline)
+    used = set(re.findall(r"'(baseline_[a-z_]+)'", src))
+    allowed = set(re.findall(
+        r"check \(action in \((.*?)\)\)", _integrity_sql(), re.S)[0].replace("'", "").split(", "))
+    allowed = {a.strip() for a in allowed}
+    assert used, "action 리터럴을 찾지 못했다 — 테스트 전제 확인"
+    assert used <= allowed, f"CHECK 에 없는 action 사용: {used - allowed}"
+    assert allowed <= used, f"코드가 쓰지 않는 action 을 추측으로 허용: {allowed - used}"
+
+
+def test_integrity_migration_is_append_only():
+    sql = _integrity_sql()
+    assert "drop table" not in sql.lower()
+    # 기존 migration 파일은 손대지 않는다 — 그 파일에는 여전히 cascade 원문이 있다
+    assert "on delete cascade" in open(MIGRATION, encoding="utf-8").read()
+
+
+# ── Phase 경계 계약 (동작 변경 아님, 사실 고정) ──────────────────────────────
+
+def test_edit_parent_still_resolves_by_selected_pointer_in_phase_2():
+    """Phase 2 는 저장·계보 인프라까지다. edit input 정본 전환은 Phase 3."""
+    import inspect
+    src = inspect.getsource(repo.get_mannequin_edit_parent)
+    assert "pr.selected_mannequin_id =" in src, "선택 포인터 우선 정렬이 바뀌었다"
+    assert "Phase 3" in src, "경계가 코드에 남아 있어야 한다"
+
+
+def test_baseline_id_is_null_when_the_edited_cut_is_not_the_baseline():
+    """다른 컷을 선택한 상태의 조정은 baseline 파생이 아니다 — null 이 정직하다."""
+    res = types.SimpleNamespace(image=b"x", mime="image/png")
+    lin = mj._output_lineage(
+        _FakeRunlog(), res, "A", None, None,
+        {"generation_output_id": "out-other", "baseline_id": None})
+    assert lin["parent_output_id"] == "out-other"
+    assert lin["baseline_id"] is None

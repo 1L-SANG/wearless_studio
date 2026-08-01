@@ -1261,6 +1261,9 @@ def _output_lineage(runlog, res, candidate, qc_scores, carrier_run_id=None,
     # 편집 입력으로 쓴 이전 결과(대개 승인 baseline 의 output). generation_run_id 와는 다른
     # 축이다 — 전자는 "이 결과를 만든 호출", 이건 "무엇을 편집했는가". 이전 job 의 것이라
     # 워커가 명시로 받아야만 이어진다. legacy 컷이면 output 이 없어 null 이다(추정 금지).
+    # baseline_id 는 **편집한 컷이 실제로 active baseline 일 때만** 채워진다. Phase 2 에서
+    # 편집 부모는 selected_mannequin_id 가 정하므로(Phase 3 에서 baseline 정본으로 전환),
+    # 사용자가 다른 컷을 선택한 상태면 null 이 맞다 — 없는 관계를 지어내지 않는다.
     pl = parent_lineage or {}
     lineage["parent_output_id"] = pl.get("generation_output_id")
     lineage["baseline_id"] = pl.get("baseline_id")

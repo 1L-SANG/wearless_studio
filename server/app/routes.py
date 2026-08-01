@@ -1067,8 +1067,9 @@ async def approve_mannequin(
     - **Body**: `{ cutId }` — 목록에서 쓰는 `"A-3"` 형식 id.
     - 승인은 **명시적 사용자 행위**입니다. 생성 성공만으로 baseline 이 바뀌지 않고,
       새 승인이 있을 때만 기존 baseline 이 supersede 됩니다(같은 트랜잭션).
-    - 같은 컷을 다시 승인하면 아무것도 바꾸지 않고 기존 baseline 을 그대로 돌려줍니다
-      (`idempotent: true`).
+    - 같은 컷을 다시 승인하면 baseline 상태(id·승인 시각·supersede)는 그대로 두고 기존
+      baseline 을 돌려줍니다(`idempotent: true`). 재승인 **시도 자체는 감사 기록**에
+      남습니다 — 상태가 안 바뀐 것과 아무 일도 없었던 것은 다릅니다.
     - 검수 필요(`needs_review`) 결과도 승인할 수 있습니다 — 사람이 보고 누른 것이므로
       감사 기록에 그 사실이 남습니다. 실패 결과는 애초에 저장되지 않습니다(fail-closed).
     - **에지 케이스**: `404 Not Found` — 프로젝트·컷이 없거나 타 사용자 소유인 경우.

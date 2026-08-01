@@ -431,6 +431,13 @@ async def get_mannequin_edit_parent(
 ) -> dict | None:
     """조정 편집의 부모 컷. 프로젝트 선택 컷을 우선하고, 없으면 최신 컷을 반환한다.
 
+    **Phase 경계(2026-08-01)**: 부모를 정하는 것은 여전히 projects.selected_mannequin_id 다
+    — active baseline 이 아니다. 승인이 그 포인터를 함께 맞추므로 보통은 baseline 이 부모가
+    되지만, 사용자가 PATCH 로 다른 컷을 고르면 부모는 baseline 이 아니고 반환되는
+    baseline_id 는 null 이다(정직한 결과 — 없는 관계를 만들지 않는다). edit input 의 정본을
+    active baseline 으로 바꾸는 것은 Phase 3 이다. 그전까지 "모든 조정이 baseline 기반"이라고
+    말할 수 없다.
+
     생성 메타데이터는 외부 MannequinCut 계약에 노출하지 않고 컷의 asset JSONB 에서 워커만
     읽는다. 선택 포인터가 오래되어 실제 컷을 가리키지 않으면 최신 컷으로 자연스럽게 폴백한다.
     """
@@ -559,8 +566,11 @@ async def approve_mannequin_baseline(
 
     → {"baseline": {...}, "superseded_id": str|None, "idempotent": bool}
 
-    같은 컷을 다시 승인하면 **아무것도 바꾸지 않고** 기존 행을 돌려준다(멱등). 그렇지 않으면
-    승인이 눌릴 때마다 supersede 사슬이 늘어나고 approved_at 이 흔들린다.
+    같은 컷을 다시 승인하면 **baseline 상태는 그대로** 두고 기존 행을 돌려준다(멱등):
+    baseline id·approved_at·supersede 상태 어느 것도 바뀌지 않는다. 그렇지 않으면 승인이
+    눌릴 때마다 supersede 사슬이 늘고 approved_at 이 흔들린다. 다만 **시도 자체는 감사
+    기록으로 남는다**(baseline_reapproved) — "아무 일도 없었다"와 "같은 결정을 다시
+    확인했다"는 다른 사실이고, 후자를 지우면 승인 행위의 이력이 비어 보인다.
 
     동시 승인은 `for update` 로 직렬화하고, 그래도 뚫리면 partial unique index
     (project 당 active 1개)가 DB 레벨에서 막는다 — 애플리케이션 락만으로는 워커·다중
