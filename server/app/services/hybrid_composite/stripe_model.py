@@ -461,7 +461,12 @@ def _extract_axis_candidate(
                     idx = np.arange(st_, st_ + ln_) % K
                     t_b = (folded[idx, 2] - b0) / (b1 - b0)
                     folded[idx, 2] = fam_lo[1] + np.clip(t_b, -0.25, 1.25) * (fam_hi[1] - fam_lo[1])
-                    if a1 - a0 > 0.1:
+                    # a-매핑은 family 간 a·b 가 공단조일 때만 유효 — b-백분위로 뽑은
+                    # 끝점을 a 에 재사용하므로, 순서가 어긋난 팔레트(마젠타/옐로그린류)
+                    # 에선 a 가 반대 family 로 회전한다(final-code 리뷰 M1). 순서 불일치
+                    # 시 a 는 접합값 유지(보수적).
+                    a_monotone = (fam_hi[0] - fam_lo[0]) * (a1 - a0) > 0
+                    if a1 - a0 > 0.1 and a_monotone:
                         t_a = (folded[idx, 1] - a0) / (a1 - a0)
                         folded[idx, 1] = fam_lo[0] + np.clip(t_a, -0.25, 1.25) * (fam_hi[0] - fam_lo[0])
                 colors = tuple(run_color(st_, ln_) for st_, ln_ in ordered)

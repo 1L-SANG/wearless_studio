@@ -287,6 +287,15 @@ def build_panel_map(
             if k == "torso_aspect":
                 s_m = source_inventory.get("torso_aspect_mask")
                 c_m = carrier_inventory.get("torso_aspect_mask")
+                if ("torso_aspect_mask" in source_inventory
+                        and "torso_aspect_mask" in carrier_inventory
+                        and s_m is None and c_m is None):
+                    # 워커의 명시 신호: 줄 수 불변량이 정체성을 이미 보증했으니 aspect
+                    # 비교를 생략하라(키 존재 + None). 이걸 generic vision 쌍 하드
+                    # 게이트로 떨어뜨리면 교차-포즈 지터 오차단(rel 0.80 실측)이
+                    # happy path 에서 재발한다 — final-code 리뷰 H1.
+                    inv_metrics[k] = {"skipped_by_repeat_invariant": True}
+                    continue
                 if isinstance(s_m, (int, float)) and isinstance(c_m, (int, float)):
                     # 같은 측정 연산자(mask 유도)끼리의 비교가 정본 — vision 지터 배제.
                     # 관용도 넓힌다(0.60): 이 제품의 기능 자체가 핏/기장 **조정**이라

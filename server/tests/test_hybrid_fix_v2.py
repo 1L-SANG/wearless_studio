@@ -282,3 +282,24 @@ def test_degraded_composite_is_rejected_not_shipped():
                               painted_mask=r["art"].painted)
     assert not qc_bad.passed, "줄 소실 합성이 QC 를 통과 — carrier 보다 나쁜 출력이 출고된다"
     assert "pattern_metric_failed" in qc_bad.failures
+
+
+def test_repeat_invariant_none_signal_skips_vision_aspect_gate():
+    """워커가 torso_aspect_mask=None(키 존재)으로 'aspect 비교 생략'을 명시하면 vision
+    쌍 하드 게이트로 떨어지면 안 된다 — 교차-포즈 지터(rel 0.80 실측) 오차단 재발 방지
+    (final-code 리뷰 H1 회귀 테스트)."""
+    cx = render_carrier("G1_regular", 0)
+    base = dict(cx["construction_inventory"])
+    src = {**base, "torso_aspect": 1.0, "torso_aspect_mask": None}
+    car = {**base, "torso_aspect": 1.8, "torso_aspect_mask": None}   # rel 0.8 > 0.35
+    pm = build_panel_map(cx["image"], cx["landmarks"],
+                         source_inventory=src, carrier_inventory=car)
+    assert not isinstance(pm, CompositeFailure), (
+        f"None-skip 신호가 무시되고 vision aspect 하드 게이트가 발화: {pm}")
+    assert pm.metrics["torso_aspect"].get("skipped_by_repeat_invariant")
+    # 신호가 없으면 기존대로 차단되어야 한다 (게이트 자체는 살아 있음)
+    src2 = {**base, "torso_aspect": 1.0}
+    car2 = {**base, "torso_aspect": 1.8}
+    pm2 = build_panel_map(cx["image"], cx["landmarks"],
+                          source_inventory=src2, carrier_inventory=car2)
+    assert isinstance(pm2, CompositeFailure) and pm2.reason == "geometry_carrier_mismatch"
