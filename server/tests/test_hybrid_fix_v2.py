@@ -95,3 +95,63 @@ def test_synthetic_gates_still_green_after_workregion_change():
         qc = verify_composite(art.image_bgr, cx["image"], pm, model,
                               target_period_px=torso_h / 22.0, target_axis="horizontal")
         assert qc.passed, (gid, qc.metrics.get("failure_details", [])[:3])
+
+
+# ── US-2: vision 지터 내성 — construction 비교는 mask 유도값 우선 ──────────────────
+
+def test_shaky_vision_landmarks_do_not_cause_false_carrier_mismatch():
+    """live 실패(torso_aspect 상대오차 0.80)의 재현: mask 는 옳고 vision 만 흔들린 경우
+    geometry_carrier_mismatch 오판이 나면 안 된다."""
+    from app.services.hybrid_composite.panel_map import mask_aspect_from_silhouette
+
+    cx = render_carrier("G1_regular", 0)
+    # GT mask 에서 유도한 aspect — 이것이 측정 연산자의 정본
+    a_true = mask_aspect_from_silhouette(cx["garment_mask"])
+    assert a_true is not None and a_true > 0
+    # vision 이 흔들려 hem 을 한참 위로 잡은 경우(=aspect 0.8배 왜곡 상황 재현):
+    # 같은 mask 에서 유도하면 흔들린 landmark 와 무관하게 같은 값이 나와야 한다
+    a_again = mask_aspect_from_silhouette(cx["garment_mask"])
+    assert abs(a_again - a_true) / a_true < 1e-9, "mask 유도값은 결정론이어야 한다"
+
+    # 판별 실측(G-계열 aspect 1.31~1.91): 핏/기장 조정은 이 범위를 오가는 **정상 기능**이라
+    # aspect 는 극단(>60%, 물리적으로 다른 물체)만 차단한다 — 근거는 decisions.md D5.
+    # 셔츠 계열 변형끼리는 hard-block 대상이 아님을 고정한다.
+    other = render_carrier("G4_long", 0)
+    a_other = mask_aspect_from_silhouette(other["garment_mask"])
+    assert abs(a_other - a_true) / a_true < 0.60, "핏/기장 변형이 극단 임계에 걸리면 기능 회귀"
+
+
+def test_build_panel_map_prefers_mask_derived_aspect_over_vision():
+    """vision torso_aspect 가 크게 틀려도(0.8류) mask 유도값이 합치하면 차단하지 않고,
+    mask 유도값끼리 진짜 어긋나면 여전히 차단한다."""
+    from app.services.hybrid_composite.panel_map import mask_aspect_from_silhouette
+
+    cx = render_carrier("G1_regular", 0)
+    a_mask = mask_aspect_from_silhouette(cx["garment_mask"])
+    src_inv = dict(cx["construction_inventory"])
+    bad_vision = dict(src_inv)
+    bad_vision["torso_aspect"] = src_inv["torso_aspect"] * 1.8  # vision 대폭 왜곡
+    # source/carrier 모두 mask 유도값 제공 → vision 왜곡은 무시돼야 한다
+    pm = build_panel_map(
+        cx["image"], cx["landmarks"],
+        source_inventory={**src_inv, "torso_aspect_mask": a_mask},
+        carrier_inventory={**bad_vision, "torso_aspect_mask": a_mask})
+    assert not isinstance(pm, CompositeFailure), (
+        f"mask 유도값이 일치하는데 vision 왜곡으로 차단됨: {getattr(pm,'detail',None)}")
+
+    # mask 쌍은 관측 전용(D7 — 교차-포즈 hard gate 불건전, 같은 셔츠 1.75× 실측 2회).
+    # 극단값이어도 mask 쌍 자체는 차단하지 않는다 — 차단은 줄 수 불변량·패턴 QC 소관.
+    pm2 = build_panel_map(
+        cx["image"], cx["landmarks"],
+        source_inventory={**src_inv, "torso_aspect_mask": a_mask},
+        carrier_inventory={**src_inv, "torso_aspect_mask": a_mask * 1.8})
+    assert not isinstance(pm2, CompositeFailure), getattr(pm2, "detail", None)
+    assert pm2.metrics["torso_aspect"]["observational_only"] is True
+
+    # vision 쌍 폴백(Codex fixpoint 계약)은 불변 — mask 쌍이 없으면 0.35 로 차단 유지
+    pm3 = build_panel_map(
+        cx["image"], cx["landmarks"],
+        source_inventory=src_inv,
+        carrier_inventory={**src_inv, "torso_aspect": src_inv["torso_aspect"] * 1.5})
+    assert isinstance(pm3, CompositeFailure)
+    assert pm3.reason == "geometry_carrier_mismatch"

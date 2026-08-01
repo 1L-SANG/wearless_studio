@@ -975,6 +975,83 @@ async def _apply_hybrid_composite(
                repeats_on_torso=round(repeats_on_torso, 2),
                target_period_px=round(target_period_px, 2))
 
+    # construction 비교 입력 보강 — 양쪽 실루엣 mask 에서 같은 연산자로 aspect 유도.
+    # vision landmark 지터가 live 에서 torso_aspect 상대오차 0.80 오판을 만들었다(QA).
+    # stripe 상품은 양쪽 다 줄무늬 에너지 mask 가 성립한다(source=실물 줄, carrier=생성 줄).
+    def _aspect_via_energy(img, lm):
+        ih, iw = img.shape[:2]
+        quad = np.array([[lm["shoulder_l"][0] * iw, lm["shoulder_l"][1] * ih],
+                         [lm["shoulder_r"][0] * iw, lm["shoulder_r"][1] * ih],
+                         [lm["hem_r"][0] * iw, lm["hem_r"][1] * ih],
+                         [lm["hem_l"][0] * iw, lm["hem_l"][1] * ih]], np.float32)
+        m = hc_panel.mask_stripe_energy(img, [quad])
+        return hc_panel.mask_aspect_from_silhouette(m)
+
+    try:
+        src_aspect_mask = await asyncio.to_thread(_aspect_via_energy, front_bgr, src_lm)
+        car_aspect_mask = await asyncio.to_thread(_aspect_via_energy, carrier_bgr, car_lm)
+    except Exception:
+        src_aspect_mask = car_aspect_mask = None
+    # 포즈 불변량 — **줄무늬 수**. mask-aspect 는 소매 포즈(펼침 vs 내림)에 오염된다
+    # (실측: 같은 셔츠 flat-lay↔착장 1.76×). 줄은 원단에 붙어 있어 torso 를 가로지르는
+    # 반복 수는 포즈·줌·뷰와 무관하다. carrier 의 자체 줄 주기를 재서 source 반복 수와
+    # 대조한다 — 이것이 v6(회색 핀스트라이프 = pitch 자체가 다른 재해석)를 잡는 검사다.
+    car_repeats = None
+    try:
+        cy0 = int(min(car_lm["shoulder_l"][1], car_lm["shoulder_r"][1]) * ch)
+        cy1 = int(max(car_lm["hem_l"][1], car_lm["hem_r"][1]) * ch)
+        cx0 = int(min(car_lm["shoulder_l"][0], car_lm["hem_l"][0]) * cw)
+        cx1 = int(max(car_lm["shoulder_r"][0], car_lm["hem_r"][0]) * cw)
+        crop_c = carrier_bgr[max(0, cy0):cy1, max(0, cx0):cx1]
+        # 줄무늬는 원단 전역 신호, 플래킷 단추는 중앙 국소 신호다 — 무지 fixture 에서
+        # 단추 7개가 주기(repeats 4.0)로 오인돼 오차단한 실측. 중앙 20% 를 제외한
+        # 좌/우 반쪽이 **둘 다** 의류 스케일에서 유효하고 주기가 15% 내로 합치할 때만
+        # carrier 에 줄무늬가 있다고 인정한다.
+        cw_c = crop_c.shape[1]
+        halves = [crop_c[:, :int(cw_c * 0.40)], crop_c[:, int(cw_c * 0.60):]]
+        periods = []
+        for half in halves:
+            if min(half.shape[:2]) < 64:
+                break
+            hx = await asyncio.to_thread(hc_stripe.measure_axes, half)
+            ax_h = hx.get(garment_axis)
+            if (ax_h is None or not ax_h.period_px or ax_h.strength < 0.3
+                    or not hx.get(f"{garment_axis}_valid")):
+                break
+            periods.append(float(ax_h.period_px))
+        if (len(periods) == 2
+                and abs(periods[0] - periods[1]) / max(periods) <= 0.15):
+            car_span = (cy1 - cy0) if garment_axis == "horizontal" else (cx1 - cx0)
+            cand = car_span / (sum(periods) / 2)
+            if cand >= 4.0:  # 저주파 주름(반복 1~3회) 배제
+                car_repeats = cand
+    except Exception:
+        car_repeats = None
+    if car_repeats:
+        rel = abs(car_repeats - repeats_on_torso) / max(repeats_on_torso, 1e-6)
+        await emit("hybrid_repeat_invariant",
+                   source_repeats=round(repeats_on_torso, 1),
+                   carrier_repeats=round(car_repeats, 1), rel_err=round(rel, 3))
+        if rel > 0.40:
+            summary = _hc_fail_summary(
+                "geometry_carrier_mismatch",
+                f"torso 줄 수 불변량 위반: source {repeats_on_torso:.1f} vs "
+                f"carrier {car_repeats:.1f} (rel {rel:.2f} > 0.40)")
+            await emit("hybrid_composite_completed", outcome="geometry_carrier_mismatch",
+                       detail=summary["failureDetail"])
+            return res, summary
+        # 줄 수 불변량이 성립하면 aspect(포즈 오염) 비교는 생략 — 관측만 남긴다
+        src_inv = {**(src_inv or {}), "torso_aspect_mask": None}
+        car_inv = {**(car_inv or {}), "torso_aspect_mask": None}
+    elif src_aspect_mask and car_aspect_mask:
+        src_inv = {**(src_inv or {}), "torso_aspect_mask": src_aspect_mask}
+        car_inv = {**(car_inv or {}), "torso_aspect_mask": car_aspect_mask}
+        await emit("hybrid_geometry_anchor",
+                   source_aspect_mask=round(src_aspect_mask, 3),
+                   carrier_aspect_mask=round(car_aspect_mask, 3),
+                   source_aspect_vision=(src_inv or {}).get("torso_aspect"),
+                   carrier_aspect_vision=(car_inv or {}).get("torso_aspect"))
+
     # Stage 3 — panel map (+ construction 대조)
     pm = await asyncio.to_thread(
         hc_panel.build_panel_map, carrier_bgr, car_lm,
