@@ -117,9 +117,13 @@ MUTANTS = [
     ("HM14", "커프스 보호 밴드 제거", WC,
      [("    CUFF_BAND_FRAC = 0.78", "    CUFF_BAND_FRAC = 10.0")],
      f"{FIXV2}", ["cuff_band_keeps_carrier_pixels"]),
-    ("HM15", "해부학 y-경계(칼라 위) 클립 제거", PM,
+    # HM15: y_top 클립은 close 전/후 두 곳 — 한 곳만 제거하면 재클립이 커버해
+    # 생존한다(1차 실행 실측 = 이중 방어의 증명). 질병 표현엔 양쪽 제거가 필요.
+    ("HM15", "해부학 y-경계(칼라 위) 클립 제거(전/후 양쪽)", PM,
      [("    work[:y_top] = 0\n    work[y_bot:] = 0\n    # 프린지/홀 충전",
-       "    work[y_bot:] = 0\n    # 프린지/홀 충전")],
+       "    work[y_bot:] = 0\n    # 프린지/홀 충전"),
+      ("    work = cv2.morphologyEx(work, cv2.MORPH_CLOSE, close_kernel)\n    work[:y_top] = 0",
+       "    work = cv2.morphologyEx(work, cv2.MORPH_CLOSE, close_kernel)")],
      f"{FIXV2}", ["no_paint_above_collar_or_below_hem"]),
 ]
 
