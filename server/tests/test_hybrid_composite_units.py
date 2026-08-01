@@ -239,6 +239,73 @@ def test_panel_map_fails_closed_on_bad_landmarks():
     assert isinstance(r, CompositeFailure) and r.reason == "panel_landmarks_invalid"
 
 
+def test_panel_map_rejects_blank_carrier_instead_of_echoing_panel_polygon():
+    """무신호 carrier 에서 stripe_energy/GrabCut seed polygon 이 high-confidence mask 가 되면 안 된다."""
+    cx = render_carrier("G1_regular", 0)
+    washed = np.full_like(cx["image"], 242)
+    r = build_panel_map(washed, cx["landmarks"], strategy="auto")
+    assert isinstance(r, CompositeFailure)
+    assert r.reason == "mask_low_confidence"
+    assert r.metrics["texture_energy_p95"] < 1.0
+
+
+def test_panel_map_rejects_textured_washed_carrier_echoing_panel_polygon():
+    """약한 그림자·폴드·노이즈가 있어도 paint target 이 panel union 이면 slab 합성을 막는다."""
+    import cv2
+
+    cx = render_carrier("G1_regular", 0)
+    h, w = cx["image"].shape[:2]
+    seed = build_panel_map(cx["image"], cx["landmarks"], strategy="bg_diff")
+    assert not isinstance(seed, CompositeFailure)
+    panel_seed = np.zeros((h, w), np.uint8)
+    for p in seed.panels:
+        cv2.fillPoly(panel_seed, [p.quad.astype(np.int32)], 255)
+
+    y_grad = np.linspace(238, 246, h, dtype=np.float32)[:, None]
+    x_grad = np.linspace(-3, 3, w, dtype=np.float32)[None, :]
+    folds = 2.0 * np.sin(np.linspace(0, 10 * np.pi, h, dtype=np.float32))[:, None]
+    panel_texture = 3.0 * np.sin(
+        2 * np.pi * np.arange(w, dtype=np.float32)[None, :] / 6.0)
+    noise = np.random.default_rng(7).normal(0, 0.4, (h, w)).astype(np.float32)
+    gray = np.clip(
+        y_grad + x_grad + folds + noise + (panel_seed > 0) * panel_texture,
+        0, 255).astype(np.uint8)
+    washed = np.dstack([gray, gray, gray])
+
+    r = build_panel_map(washed, cx["landmarks"], strategy="auto")
+    assert isinstance(r, CompositeFailure)
+    assert r.reason == "mask_low_confidence"
+    assert r.metrics["texture_energy_p95"] > 1.0
+    assert r.metrics["strategy"] == "stripe_energy"
+    assert r.metrics["iou"] > 0.98
+    assert 0.985 <= r.metrics["mask_area_ratio"] <= 1.015
+
+
+def test_panel_map_allows_grabcut_mask_that_covers_panels_but_has_real_silhouette():
+    """fallback mask 는 panel 을 덮어야 한다. seed 와 같은 형상일 때만 echo 로 막는다."""
+    import cv2
+
+    cx = render_carrier("G1_regular", 0)
+    h, w = cx["image"].shape[:2]
+    seed = build_panel_map(cx["image"], cx["landmarks"], strategy="bg_diff")
+    assert not isinstance(seed, CompositeFailure)
+    panel_seed = np.zeros((h, w), np.uint8)
+    for p in seed.panels:
+        cv2.fillPoly(panel_seed, [p.quad.astype(np.int32)], 255)
+
+    carrier = np.full((h, w, 3), 245, np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (41, 41))
+    real_silhouette = cv2.dilate(panel_seed, kernel)
+    carrier[real_silhouette > 0] = (170, 170, 170)
+
+    r = build_panel_map(carrier, cx["landmarks"], strategy="grabcut")
+    assert not isinstance(r, CompositeFailure)
+    assert r.strategy == "grabcut"
+    assert r.metrics["poly_cover"] > 0.985
+    assert r.metrics["iou_poly_mask"] < 0.98
+    assert r.metrics["mask_area_ratio"] > 1.05
+
+
 # ── Stage 4/5 — composite·QC 집계 gate ─────────────────────────────────────────
 
 def _run_full(gid, var, model, *, period_divisor=22.0):

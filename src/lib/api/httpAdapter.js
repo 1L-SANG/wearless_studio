@@ -122,6 +122,13 @@ export async function http(path, { method = 'GET', body } = {}) {
 // job 폴링 어댑터 — job형 API(202 {jobId})를 mock 의 onProgress 콜백 계약으로 변환.
 // GET /v1/jobs/{id} 를 폴링해 progress 를 전달하고, done 이면 result, error 면 한국어 message throw.
 // SSE 대신 폴링(마네킹 경로와 동일 GET 재사용, plan §7). 무과금 분석엔 stall 로직 불필요.
+export function jobErrorFromStatus(job, fallbackMessage = '작업에 실패했어요.') {
+  const error = new Error(job?.errorMessage || fallbackMessage);
+  if (job?.errorCode) error.code = job.errorCode;
+  if (job?.errorDetails != null) error.details = job.errorDetails;
+  return error;
+}
+
 async function pollJob(
   jobId,
   { onProgress, intervalMs = 1200, timeoutMs = 90000, timeoutMessage = DEFAULT_JOB_TIMEOUT_MESSAGE } = {},
@@ -135,7 +142,7 @@ async function pollJob(
       onProgress && onProgress(job.progress);
     }
     if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
-    if (job.status === 'error') throw new Error(job.errorMessage || '작업에 실패했어요.');
+    if (job.status === 'error') throw jobErrorFromStatus(job);
     if (Date.now() - start > timeoutMs) throw new Error(timeoutMessage);
     await new Promise((r) => setTimeout(r, intervalMs));
   }

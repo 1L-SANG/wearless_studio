@@ -789,6 +789,42 @@ def _hc_fail_summary(reason: str, detail: str = "", **extra) -> dict:
             "failureDetail": detail[:200], "pipelineVersion": HC_PIPELINE_VERSION, **extra}
 
 
+class _HybridCompositeFailClosed(Exception):
+    """P0 hybrid composite fail-closed signal before R2 save/finalize success."""
+
+    def __init__(self, summary: dict):
+        self.summary = dict(summary)
+        reason = self.summary.get("failureReason") or "pattern_metric_failed"
+        detail = self.summary.get("failureDetail") or ""
+        super().__init__(f"{reason}: {detail}"[:300])
+
+
+def _raise_if_hybrid_failed_closed(summary: dict | None) -> None:
+    if isinstance(summary, dict) and summary.get("applied") is False:
+        raise _HybridCompositeFailClosed(summary)
+
+
+async def _delete_uploaded_candidate_keys(r2, candidates: list[dict]) -> None:
+    """이미 업로드된 후보를 best-effort 삭제한다. 실패 종결 전 orphan 방지용."""
+    for c in candidates:
+        key = c.get("key") if isinstance(c, dict) else None
+        if not key:
+            continue
+        try:
+            await asyncio.to_thread(r2.delete, key)
+        except Exception:
+            log.warning("orphan R2 cleanup failed: %s", key)
+
+
+async def _fail_closed_hybrid_job_if_needed(r2, fail, passed: list[dict], meta: dict | None) -> bool:
+    """hybrid fail-closed 가 하나라도 있으면 업로드 후보를 지우고 job 실패로 종결한다."""
+    if meta is None:
+        return False
+    await _delete_uploaded_candidate_keys(r2, passed)
+    await fail("패턴 합성 검증에 실패했어요. 상품 사진을 확인한 뒤 다시 시도해 주세요.", meta)
+    return True
+
+
 async def _apply_hybrid_composite(
     *, pool, s, job_id, candidate, attempt, res, prod_refs, product, analysis,
     has_fine_pattern,
@@ -1354,6 +1390,7 @@ async def _run_candidate(
                     pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
                     res=res, prod_refs=prod_refs, product=product, analysis=analysis,
                     has_fine_pattern=has_fine_pattern)
+                _raise_if_hybrid_failed_closed(hybrid_info)
                 if (hybrid_info and hybrid_info.get("applied")
                         and isinstance(p2, dict) and prod_imgs):
                     # 보조 신호 — 출고본(합성본)에 대한 기존 QC 재판정(analyze 호출, 생성 아님).
@@ -1453,6 +1490,8 @@ async def _run_candidate(
         if final_reject:
             # 이미 편집·D축까지 끝난 출고 준비본 — 다시 태우지 않는다.
             res, qc_scores, series, p2 = final_reject
+            _raise_if_hybrid_failed_closed(
+                (qc_scores or {}).get("hybridComposite") if isinstance(qc_scores, dict) else None)
         else:
             # 사전 게이트 후보는 편집·D축을 안 거쳤다. 그대로 저장하면 검증 안 된 이미지가
             # 나간다(codex 4차 HIGH) — 예산 소진 경로와 **같은 처리**를 태운 뒤 구제한다.
@@ -1477,6 +1516,7 @@ async def _run_candidate(
                 p2, series, thresholds=(s.qc_score_auto_pass, s.qc_score_review))
             if salvage_hybrid is not None:
                 qc_scores = {**(qc_scores or {}), "hybridComposite": salvage_hybrid}
+            _raise_if_hybrid_failed_closed(salvage_hybrid)
         qc_scores = {**(qc_scores or {}), "salvaged": True}
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "status": "qc_salvaged",
@@ -1693,7 +1733,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                         estimated=True)
 
         async def _cand(letter, base_fit, profile):
-            nonlocal _done
+            nonlocal _done, hybrid_fail_closed_meta
             try:
                 r = await _run_candidate(
                     app=app, job=job, candidate=letter, base_fit=base_fit, base_gender=gender,
@@ -1704,6 +1744,14 @@ async def run_mannequin_job(app, job: dict) -> None:
                     fit_profile_source=fit_profile_source, ref_imgs=ref_imgs,
                     generation_path=generation_path, parent_cut_img=parent_cut_img,
                     adjust_directives=adjust_directives)
+            except _HybridCompositeFailClosed as e:
+                hybrid_fail_closed_meta = {
+                    "error": "hybrid_composite_failed_closed",
+                    "failureReason": e.summary.get("failureReason"),
+                    "detail": e.summary.get("failureDetail", ""),
+                    "hybridComposite": e.summary,
+                }
+                r = None
             except Exception as e:
                 log.warning("job %s candidate %s failed: %r", job_id, letter, e)
                 r = None
@@ -1714,6 +1762,7 @@ async def run_mannequin_job(app, job: dict) -> None:
             await _emit_generation_progress(next_progress)
             return r
 
+        hybrid_fail_closed_meta = None
         progress_task = asyncio.create_task(_tick_generation_progress())
         try:
             results = [await _cand("A", legacy_base_fit, fit_profile)]
@@ -1723,6 +1772,10 @@ async def run_mannequin_job(app, job: dict) -> None:
             with suppress(asyncio.CancelledError):
                 await progress_task
         passed = [r for r in results if isinstance(r, dict)]
+
+        if await _fail_closed_hybrid_job_if_needed(
+                app.state.r2, _fail, passed, hybrid_fail_closed_meta):
+            return
 
         if not passed:
             await _fail("마네킹컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": "all_candidates_failed"})
@@ -1771,10 +1824,6 @@ async def run_mannequin_job(app, job: dict) -> None:
                           "gender": gender})
             await conn.commit()
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
-            for c in passed:
-                try:
-                    await asyncio.to_thread(app.state.r2.delete, c["key"])
-                except Exception:
-                    log.warning("orphan R2 cleanup failed: %s", c["key"])
+            await _delete_uploaded_candidate_keys(app.state.r2, passed)
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
         await _fail("생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})

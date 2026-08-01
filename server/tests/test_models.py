@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from app import repo
-from app.models import Account, Product, ProductPatch, Project, ProjectPatch
+from app.models import Account, JobView, Product, ProductPatch, Project, ProjectPatch
 
 
 def test_project_patch_ignores_server_only_fields():
@@ -98,6 +98,206 @@ def test_project_serializes_to_camel():
     assert "createdAt" in out and "updatedAt" in out
     # snake_case 키는 노출되지 않아야
     assert "compose_mode" not in out
+
+
+def test_job_view_serializes_typed_failure_contract_without_raw_metadata():
+    now = datetime(2026, 7, 31, tzinfo=timezone.utc)
+    job = JobView(
+        id="j1",
+        project_id="p1",
+        kind="mannequin",
+        status="error",
+        progress=100,
+        error_message="마네킹컷 생성에 실패했어요.",
+        error_code="hybrid_composite_failed_closed",
+        error_details={
+            "error": "hybrid_composite_failed_closed",
+            "failureReason": "geometry_carrier_mismatch",
+            "detail": "carrier geometry does not match source",
+            "hybridComposite": {
+                "applied": False,
+                "needsReview": True,
+                "failureReason": "geometry_carrier_mismatch",
+            },
+        },
+        metadata={"providerPrompt": "internal"},
+        created_at=now,
+        updated_at=now,
+    )
+
+    out = job.model_dump(by_alias=True)
+
+    assert out["errorMessage"] == "마네킹컷 생성에 실패했어요."
+    assert out["errorCode"] == "hybrid_composite_failed_closed"
+    assert out["errorDetails"]["error"] == "hybrid_composite_failed_closed"
+    assert out["errorDetails"]["hybridComposite"]["failureReason"] == (
+        "geometry_carrier_mismatch"
+    )
+    assert "metadata" not in out
+
+
+def test_repo_public_failure_whitelists_hybrid_closed_metadata():
+    public = repo._public_failure_from_metadata(
+        "generation_failed",
+        {
+            "error": "hybrid_composite_failed_closed",
+            "failureReason": "geometry_carrier_mismatch",
+            "detail": "carrier geometry does not match source",
+            "providerPrompt": "internal",
+            "hybridComposite": {
+                "applied": False,
+                "needsReview": True,
+                "failureReason": "geometry_carrier_mismatch",
+                "failureDetail": "geometry carrier mismatch",
+                "metrics": {"internal": True},
+            },
+        },
+    )
+
+    assert public == {
+        "code": "hybrid_composite_failed_closed",
+        "details": {
+            "error": "hybrid_composite_failed_closed",
+            "failureReason": "geometry_carrier_mismatch",
+            "detail": "carrier geometry does not match source",
+            "hybridComposite": {
+                "applied": False,
+                "needsReview": True,
+                "failureReason": "geometry_carrier_mismatch",
+                "failureDetail": "geometry carrier mismatch",
+            },
+        },
+    }
+
+
+def test_repo_public_failure_rejects_arbitrary_exception_error_strings():
+    public = repo._public_failure_from_metadata(
+        "generation_failed",
+        {
+            "error": "ValueError('carrier path leaked /tmp/internal.png')",
+            "failureReason": "geometry_carrier_mismatch",
+            "detail": "internal detail should not become public",
+            "hybridComposite": {
+                "applied": False,
+                "needsReview": True,
+                "failureReason": "geometry_carrier_mismatch",
+            },
+        },
+    )
+
+    assert public is None
+
+
+class _CaptureCursor:
+    def __init__(self):
+        self.calls = []
+        self._fetches = [{"id": "j1"}]
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def execute(self, sql, params=None):
+        self.calls.append((sql, params))
+
+    async def fetchone(self):
+        return self._fetches.pop(0)
+
+
+class _CaptureConn:
+    def __init__(self):
+        self.cursor_obj = _CaptureCursor()
+
+    def cursor(self):
+        return self.cursor_obj
+
+
+def _json_obj(value):
+    return getattr(value, "obj", value)
+
+
+@pytest.mark.anyio
+async def test_finalize_failure_persists_and_emits_public_error_contract():
+    conn = _CaptureConn()
+
+    ok = await repo._finalize_job_failure(
+        conn,
+        job_id="j1",
+        lease_token="lease",
+        message="마네킹컷 생성에 실패했어요.",
+        metadata={
+            "error": "hybrid_composite_failed_closed",
+            "failureReason": "geometry_carrier_mismatch",
+            "providerPrompt": "internal",
+            "hybridComposite": {
+                "applied": False,
+                "needsReview": True,
+                "failureReason": "geometry_carrier_mismatch",
+                "metrics": {"internal": True},
+            },
+        },
+        code="generation_failed",
+    )
+
+    assert ok is True
+    update_sql = conn.cursor_obj.calls[1][0]
+    assert "metadata = (metadata - 'publicFailure') || %s::jsonb" in update_sql
+    update_params = conn.cursor_obj.calls[1][1]
+    persisted = _json_obj(update_params[1])
+    assert persisted["publicFailure"]["code"] == "hybrid_composite_failed_closed"
+    assert persisted["publicFailure"]["details"]["failureReason"] == (
+        "geometry_carrier_mismatch"
+    )
+    assert "providerPrompt" in persisted
+    assert "metrics" not in persisted["publicFailure"]["details"]["hybridComposite"]
+
+    event_params = conn.cursor_obj.calls[2][1]
+    event_payload = _json_obj(event_params[1])
+    assert event_payload["code"] == "generation_failed"
+    assert event_payload["message"] == "마네킹컷 생성에 실패했어요."
+    assert event_payload["errorCode"] == "hybrid_composite_failed_closed"
+    assert event_payload["errorDetails"]["failureReason"] == (
+        "geometry_carrier_mismatch"
+    )
+    assert "providerPrompt" not in event_payload["errorDetails"]
+
+
+@pytest.mark.anyio
+async def test_finalize_failure_does_not_emit_public_error_for_raw_exception_metadata():
+    conn = _CaptureConn()
+
+    ok = await repo._finalize_job_failure(
+        conn,
+        job_id="j1",
+        lease_token="lease",
+        message="마네킹컷 생성에 실패했어요.",
+        metadata={
+            "error": "RuntimeError('provider traceback /tmp/secret.png')",
+            "failureReason": "geometry_carrier_mismatch",
+            "detail": "internal detail should not become public",
+            "hybridComposite": {
+                "applied": False,
+                "needsReview": True,
+                "failureReason": "geometry_carrier_mismatch",
+            },
+        },
+        code="generation_failed",
+    )
+
+    assert ok is True
+    update_params = conn.cursor_obj.calls[1][1]
+    persisted = _json_obj(update_params[1])
+    assert persisted["error"] == "RuntimeError('provider traceback /tmp/secret.png')"
+    assert "publicFailure" not in persisted
+
+    event_params = conn.cursor_obj.calls[2][1]
+    event_payload = _json_obj(event_params[1])
+    assert event_payload == {
+        "code": "generation_failed",
+        "message": "마네킹컷 생성에 실패했어요.",
+    }
 
 
 def test_project_rejects_retired_simple_mode():

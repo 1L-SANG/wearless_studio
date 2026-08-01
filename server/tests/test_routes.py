@@ -44,6 +44,55 @@ def test_openapi_only_advertises_current_compose_modes(client):
         "basic",
         "extended",
     ]
+    assert "errorCode" in schemas["JobView"]["properties"]
+    assert "errorDetails" in schemas["JobView"]["properties"]
+
+
+def test_get_job_returns_typed_failure_without_raw_metadata(client, make_token, monkeypatch):
+    async def fake_get_job(conn, user_id, job_id):
+        return {
+            "id": job_id,
+            "user_id": user_id,
+            "project_id": "p1",
+            "kind": "mannequin",
+            "status": "error",
+            "progress": 100,
+            "steps": [],
+            "payload": {},
+            "result": None,
+            "error_message": "마네킹컷 생성에 실패했어요.",
+            "error_code": "hybrid_composite_failed_closed",
+            "error_details": {
+                "error": "hybrid_composite_failed_closed",
+                "failureReason": "geometry_carrier_mismatch",
+                "hybridComposite": {
+                    "applied": False,
+                    "needsReview": True,
+                    "failureReason": "geometry_carrier_mismatch",
+                },
+            },
+            "metadata": {"providerPrompt": "internal"},
+            "credits_reserved": 2,
+            "credits_charged": None,
+            "created_at": "2026-07-31T00:00:00Z",
+            "updated_at": "2026-07-31T00:00:00Z",
+            "finished_at": "2026-07-31T00:00:01Z",
+        }
+
+    monkeypatch.setattr(routes.repo, "get_job", fake_get_job)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.get("/v1/jobs/j1", headers=_auth(make_token))
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["errorMessage"] == "마네킹컷 생성에 실패했어요."
+    assert body["errorCode"] == "hybrid_composite_failed_closed"
+    assert body["errorDetails"]["error"] == "hybrid_composite_failed_closed"
+    assert body["errorDetails"]["hybridComposite"]["failureReason"] == (
+        "geometry_carrier_mismatch"
+    )
+    assert "metadata" not in body
 
 
 def test_save_analysis_forces_dress_to_women(client, make_token, monkeypatch):

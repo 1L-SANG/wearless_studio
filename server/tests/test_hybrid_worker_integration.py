@@ -83,7 +83,8 @@ class _Pool:
 
 
 def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name="스트라이프 셔츠",
-             settings_kw=None, p2_verdict=None, source_png=None):
+             settings_kw=None, p2_verdict=None, source_png=None,
+             carrier_component_box=False):
     """워커 전체 실행. → (oplog, calls, r2_saved, emits)"""
     oplog: list[tuple] = []          # ("gen",) | ("evt", status) — 순서가 곧 증거
     emits: list[tuple] = []
@@ -113,7 +114,13 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
 
     async def fake_geometry(settings, image):
         # source(front)와 carrier 를 바이트로 구분 — vision 은 좌표만 준다는 계약의 fake
-        return SOURCE_GEOM_RAW if image.data == source_png else _carrier_geom_raw(cx)
+        if image.data == source_png:
+            return SOURCE_GEOM_RAW
+        raw = _carrier_geom_raw(cx)
+        if carrier_component_box:
+            raw["collar_box"] = [[0.45, 0.16], [0.55, 0.16],
+                                 [0.55, 0.20], [0.45, 0.20]]
+        return raw
 
     async def get_product(conn, project_id):
         images = [{"id": "front", "slot": "Front"}, {"id": "back", "slot": "Back"}]
@@ -182,6 +189,28 @@ def _statuses(emits):
     return [p.get("status") for e, p in emits if e == "step"]
 
 
+def test_hybrid_fail_closed_aggregator_deletes_uploaded_candidates_before_failure():
+    deleted = []
+    failures = []
+
+    class R2:
+        def delete(self, key):
+            deleted.append(key)
+
+    async def fail(message, meta):
+        failures.append((message, meta))
+
+    meta = {"error": "hybrid_composite_failed_closed", "failureReason": "mask_low_confidence"}
+    handled = asyncio.run(mj._fail_closed_hybrid_job_if_needed(
+        R2(), fail, [{"key": "candidate-a.png"}, {"asset_id": "missing-key"}], meta))
+
+    assert handled is True
+    assert deleted == ["candidate-a.png"]
+    assert failures == [(
+        "패턴 합성 검증에 실패했어요. 상품 사진을 확인한 뒤 다시 시도해 주세요.",
+        meta)]
+
+
 def test_composite_applies_end_to_end_and_freezes_generation_after_completion(monkeypatch):
     oplog, calls, r2_saved, emits = _run_job(monkeypatch)
     assert calls["failure"] == [] and len(calls["success"]) == 1
@@ -217,33 +246,36 @@ def test_composite_applies_end_to_end_and_freezes_generation_after_completion(mo
     assert sm["source_asset_id"] == "detail"
 
 
-def test_unsupported_pattern_becomes_typed_needs_review_without_fallback(monkeypatch):
+def test_unsupported_pattern_fails_closed_before_save_or_success_finalize(monkeypatch):
     check_png = _png(np.tile(render_negative("N2_gingham_check"), (2, 2, 1))[:1536, :1536])
     oplog, calls, r2_saved, emits = _run_job(monkeypatch, detail_png=check_png)
-    assert calls["failure"] == [] and len(calls["success"]) == 1
+    assert calls["success"] == []
+    assert len(calls["failure"]) == 1
+    assert r2_saved == {}
 
     completed = next(p for e, p in emits if p.get("status") == "hybrid_composite_completed")
     assert completed["outcome"] == "unsupported_pattern"
-    cut = calls["success"][0]["candidates"][0]
-    hc = cut["qc_scores"]["hybridComposite"]
-    assert hc["applied"] is False and hc["needsReview"] is True
-    assert hc["failureReason"] == "unsupported_pattern"
-    assert cut["qc_scores"]["outcome"] == "needs_review", "auto_pass 로 미화되면 안 된다"
-    assert cut["generation_metadata"]["generationPath"] == "fresh", "합성 안 됐는데 합성 표기 금지"
+    meta = calls["failure"][0]["metadata"]
+    assert meta["error"] == "hybrid_composite_failed_closed"
+    assert meta["failureReason"] == "unsupported_pattern"
+    assert meta["hybridComposite"]["applied"] is False
+    assert meta["hybridComposite"]["failureReason"] == "unsupported_pattern"
+    assert "detail" in meta and isinstance(meta["detail"], str)
     # fallback 재생성 0회 — 생성은 geometry 1회뿐
     assert sum(1 for op in oplog if op[0] == "gen") == 1
-    # 저장본 = carrier 그대로 (실패를 숨기는 재칠 없음)
-    carrier_png = _png(render_carrier("G1_regular", 0)["image"])
-    assert hashlib.sha256(r2_saved["data"]).hexdigest() == hashlib.sha256(
-        carrier_png).hexdigest()
+    assert calls["failure"][0]["reserved"] == 2
 
 
 def test_missing_detail_slot_is_reference_insufficient(monkeypatch):
-    _oplog, calls, _r2, emits = _run_job(monkeypatch, include_detail=False)
+    _oplog, calls, r2_saved, emits = _run_job(monkeypatch, include_detail=False)
+    assert calls["success"] == []
+    assert len(calls["failure"]) == 1
+    assert r2_saved == {}
     completed = next(p for e, p in emits if p.get("status") == "hybrid_composite_completed")
     assert completed["outcome"] == "reference_insufficient"
-    cut = calls["success"][0]["candidates"][0]
-    assert cut["qc_scores"]["outcome"] == "needs_review"
+    meta = calls["failure"][0]["metadata"]
+    assert meta["error"] == "hybrid_composite_failed_closed"
+    assert meta["failureReason"] == "reference_insufficient"
 
 
 def test_plain_product_skips_composite_entirely(monkeypatch):
@@ -286,20 +318,50 @@ def test_deterministic_pass_suppresses_llm_retry_and_records_it(monkeypatch):
         "deterministic 통과 + LLM regenerate → 자동통과 미화도, 재생성도 아닌 needs_review")
 
 
+def test_applied_composite_with_components_needing_review_finalizes_as_review(monkeypatch):
+    _oplog, calls, _r2, _emits = _run_job(monkeypatch, carrier_component_box=True)
+    assert calls["failure"] == []
+    assert len(calls["success"]) == 1
+    cut = calls["success"][0]["candidates"][0]
+    hc = cut["qc_scores"]["hybridComposite"]
+    assert hc["applied"] is True
+    assert hc["componentsNeedingReview"] == ["collar_box"]
+    assert cut["qc_scores"]["outcome"] == "needs_review"
+
+
 def test_composite_failure_cannot_be_overridden_by_llm_auto_pass(monkeypatch):
-    """반대 방향 — LLM 만점이라도 composite typed 실패면 auto_pass 로 나갈 수 없다."""
+    """반대 방향 — LLM 만점이라도 composite typed 실패면 성공 출고될 수 없다."""
     check_png = _png(np.tile(render_negative("N2_gingham_check"), (2, 2, 1))[:1536, :1536])
     good_p2 = {"verdict": "pass", "product_fidelity": 95, "physical_naturalness": 95,
                "image_quality": 95, "critical_errors": [], "mismatches": [],
                "correctionPrompt": ""}
-    _oplog, calls, _r2, _emits = _run_job(
+    _oplog, calls, r2_saved, _emits = _run_job(
         monkeypatch, detail_png=check_png,
         settings_kw={"image_qc": "enforce", "qc_score_auto_pass": 80,
                      "qc_score_review": 65},
         p2_verdict=good_p2)
-    cut = calls["success"][0]["candidates"][0]
-    assert cut["qc_scores"]["outcome"] == "needs_review"
-    assert cut["qc_scores"]["hybridComposite"]["failureReason"] == "unsupported_pattern"
+    assert calls["success"] == []
+    assert r2_saved == {}
+    assert calls["failure"][0]["metadata"]["failureReason"] == "unsupported_pattern"
+
+
+def test_salvage_candidate_with_composite_failure_fails_closed_before_save(monkeypatch):
+    """사전 QC reject 구제본도 저장 직전 composite applied=false 면 실패 종결한다."""
+    check_png = _png(np.tile(render_negative("N2_gingham_check"), (2, 2, 1))[:1536, :1536])
+    bad_p2 = {"verdict": "retry", "product_fidelity": 20, "physical_naturalness": 80,
+              "image_quality": 80, "critical_errors": [], "mismatches": [],
+              "correctionPrompt": "wrong garment"}
+    oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch, detail_png=check_png,
+        settings_kw={"image_qc": "enforce", "mannequin_max_attempts": 1,
+                     "qc_score_auto_pass": 80, "qc_score_review": 65},
+        p2_verdict=bad_p2)
+    assert "qc_salvaged" in _statuses(emits)
+    assert calls["success"] == []
+    assert len(calls["failure"]) == 1
+    assert r2_saved == {}
+    assert calls["failure"][0]["metadata"]["failureReason"] == "unsupported_pattern"
+    assert sum(1 for op in oplog if op[0] == "gen") == 1
 
 
 def test_events_carry_no_image_bytes_base64_or_urls(monkeypatch):

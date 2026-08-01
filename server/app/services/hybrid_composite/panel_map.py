@@ -121,6 +121,29 @@ def mask_stripe_energy(carrier_bgr: np.ndarray, panel_polys: list[np.ndarray]) -
     return keep
 
 
+def _panel_texture_energy(carrier_bgr: np.ndarray, poly_mask: np.ndarray) -> float:
+    """Panel 내부의 실제 carrier 신호량. 0에 가까우면 seed polygon 말고 볼 근거가 없다."""
+    gray = cv2.cvtColor(carrier_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    band = cv2.GaussianBlur(gray, (0, 0), 1.0) - cv2.GaussianBlur(gray, (0, 0), 4.0)
+    energy = np.abs(band)[poly_mask > 0]
+    if energy.size == 0:
+        return 0.0
+    return float(np.percentile(energy, 95))
+
+
+def _mask_poly_shape_metrics(mask: np.ndarray, poly_mask: np.ndarray) -> dict:
+    """Raw selected mask 와 panel seed union 의 형상 유사도."""
+    mask_area = np.count_nonzero(mask)
+    poly_area = np.count_nonzero(poly_mask)
+    inter = np.count_nonzero(cv2.bitwise_and(mask, poly_mask))
+    union = np.count_nonzero(cv2.bitwise_or(mask, poly_mask))
+    return {
+        "iou": float(inter) / max(1, union),
+        "poly_cover": float(inter) / max(1, poly_area),
+        "mask_area_ratio": float(mask_area) / max(1, poly_area),
+    }
+
+
 def mask_grabcut(carrier_bgr: np.ndarray, panel_polys: list[np.ndarray]) -> np.ndarray:
     """GrabCut mask — panel polygon 을 확실-전경 seed 로.
 
@@ -262,22 +285,45 @@ def build_panel_map(
         tried["bg_diff"] = mask_bg_diff(carrier_bgr, polys)
     if strategy in ("stripe_energy", "auto"):
         tried["stripe_energy"] = mask_stripe_energy(carrier_bgr, polys)
+    texture_p95 = _panel_texture_energy(carrier_bgr, poly_mask)
+    if (strategy == "auto"
+            and tried
+            and max(score(m)[0] for m in tried.values()) < MIN_MASK_CONFIDENCE
+            and texture_p95 < 1.0):
+        return CompositeFailure(
+            "mask_low_confidence",
+            "carrier panel 내부에 mask 를 지지할 stripe/texture 신호가 없음",
+            {"texture_energy_p95": round(texture_p95, 3),
+             "strategies_tried": {k: round(score(v)[0], 3) for k, v in tried.items()}})
     if strategy == "grabcut" or (
             strategy == "auto"
             and max(score(m)[0] for m in tried.values()) < MIN_MASK_CONFIDENCE):
         tried["grabcut"] = mask_grabcut(carrier_bgr, polys)
     strategy_used, garment = max(tried.items(), key=lambda kv: score(kv[1])[0])
     confidence, poly_cover, bg_inside = score(garment)
-    iou = float(np.count_nonzero(cv2.bitwise_and(garment, poly_mask))) / max(
-        1, np.count_nonzero(cv2.bitwise_or(garment, poly_mask)))  # 관측용 기록
+    shape_metrics = _mask_poly_shape_metrics(garment, poly_mask)
+    iou = shape_metrics["iou"]  # 관측용 기록
+    mask_area_ratio = shape_metrics["mask_area_ratio"]
     strategy = strategy_used
     if confidence < MIN_MASK_CONFIDENCE:
         return CompositeFailure(
             "mask_low_confidence",
             f"mask-panel 정합 {confidence:.2f} < {MIN_MASK_CONFIDENCE}",
             {"iou": round(iou, 3), "poly_cover": round(poly_cover, 3),
+             "mask_area_ratio": round(mask_area_ratio, 3),
              "bg_inside_frac": round(bg_inside, 3),
+             "texture_energy_p95": round(texture_p95, 3),
              "strategies_tried": {k: round(score(v)[0], 3) for k, v in tried.items()}})
+    if (strategy_used in ("stripe_energy", "grabcut")
+            and iou > 0.98
+            and 0.985 <= mask_area_ratio <= 1.015):
+        return CompositeFailure(
+            "mask_low_confidence",
+            "carrier mask 가 panel seed geometry 와 구분되지 않음",
+            {"iou": round(iou, 3), "poly_cover": round(poly_cover, 3),
+             "mask_area_ratio": round(mask_area_ratio, 3),
+             "texture_energy_p95": round(texture_p95, 3),
+             "strategy": strategy_used})
 
     work = cv2.bitwise_and(garment, poly_mask)  # 패턴 대상 = mask ∩ panel 합집합
     band = max(3, int(min(h, w) * BOUNDARY_BAND_PX_FRAC))
@@ -289,4 +335,6 @@ def build_panel_map(
         garment_mask=work, protected=protected, boundary=boundary,
         panels=tuple(panels), confidence=float(min(confidence, 1.0)), strategy=strategy,
         metrics={"iou_poly_mask": round(iou, 3), "poly_cover": round(poly_cover, 3),
+                 "mask_area_ratio": round(mask_area_ratio, 3),
+                 "texture_energy_p95": round(texture_p95, 3),
                  "boundary_band_px": band, **inv_metrics})
