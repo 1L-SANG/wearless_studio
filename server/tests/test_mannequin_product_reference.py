@@ -1,13 +1,12 @@
-"""P0 상품 참조 배선 — slot 을 끝까지 들고 가서 원단 보정이 Detail 을 잃지 않게.
+"""P0 상품 참조 배선 — slot 을 끝까지 들고 가 역할·권위·관측성을 보존한다.
 
-배경(2026-07-31 재조사): 원단 2패스는 `prod_imgs[:2]` 로 상품 사진 앞 두 장을 골랐다.
-실제 슬롯 순서는 `Front → Back → Detail → Fit` 이라, 셀러가 정상적으로 `Front + Back + Detail`
-을 올리면 **패턴의 기준인 Detail 이 잘려 나가고 Front + Back 만** 편집 입력으로 들어갔다.
-프롬프트(`prompts/mannequin_fabric_v1.txt`)는 Detail 을 패턴 스케일의 기준으로 지목하는데
-그 이미지가 없으니, 모델이 패턴을 "비슷한 셔츠"로 다시 그려도 막을 근거가 없었다.
+배경(2026-07-31 재조사): 워커가 자산을 바이트로 바꿀 때 슬롯을 버려, 당시 원단 보정이
+`Front + Back + Detail` 업로드에서 Detail 을 잘라 먹었다. P0 는 `ProductReference` 로 슬롯을
+배선 끝까지 보존했고, 이후 generative 원단 재생성 경로 자체가 폐기되면서(blind visual 3/3
+FAIL) 순수 소스 선택 계약은 `test_composite_source_reference.py` 로 이관됐다.
 
-기존 테스트(test_mannequin_series_qc_wiring.py)는 전달 배열의 **개수**만 확인해서 이 결함을
-통과시켰다. 여기서는 슬롯·자산 id·순서를 직접 본다.
+여기 남는 것: adjust manifest 역할·권위 계약, 편집 경로 입력 순서·tier 가드,
+fresh fallback 관측성, prompt_rendered 재현성, 워커 private API 시그니처 fence.
 """
 
 import asyncio
@@ -19,12 +18,7 @@ import pytest
 from app import repo
 from app.agents.gemini_image import InlineImage
 from app.agents.mannequin_adjust import build_adjust_directives, build_adjust_manifest
-from app.agents.product_reference import (
-    ProductReference,
-    order_by_role,
-    reference_event_payload,
-    select_fabric_references,
-)
+from app.agents.product_reference import ProductReference, order_by_role
 from app.workers import mannequin_job as mj
 from conftest import make_settings
 
@@ -50,196 +44,6 @@ def _ref(slot, asset_id=None, data=None):
         asset_id=asset_id,
         image=InlineImage("image/jpeg", data or slot.lower().encode()),
     )
-
-
-# ---------- 순수 선택 계약 (P0-A2 / P0-A3) ----------
-
-def test_product_reference_keeps_slot_asset_id_and_image():
-    """참조는 bytes 가 아니라 (slot, asset_id, image) 로 다닌다 — 배선 도중 역할이 사라지지 않게."""
-    image = InlineImage("image/jpeg", b"bytes")
-    ref = ProductReference(slot="Detail", asset_id="a-1", image=image)
-    assert (ref.slot, ref.asset_id, ref.image) == ("Detail", "a-1", image)
-    with pytest.raises(Exception):  # frozen — 중간 단계가 역할을 덮어쓰지 못한다
-        ref.slot = "Front"  # type: ignore[misc]
-
-
-@pytest.mark.parametrize(
-    ("case", "slots", "expected"),
-    [
-        ("front_back_detail_fit", ["Front", "Back", "Detail", "Fit"], ["Detail", "Front"]),
-        ("front_back_detail", ["Front", "Back", "Detail"], ["Detail", "Front"]),
-        ("front_back", ["Front", "Back"], ["Front", "Back"]),
-        ("front_only", ["Front"], ["Front"]),
-        ("detail_only", ["Detail"], ["Detail"]),
-        ("back_detail", ["Back", "Detail"], ["Detail", "Back"]),
-        ("fit_front", ["Fit", "Front"], ["Front", "Fit"]),
-    ],
-    ids=lambda v: v if isinstance(v, str) else None,
-)
-def test_select_fabric_references_orders_detail_front_back_fit(case, slots, expected):
-    """`Detail → Front → Back → Fit` 우선순위로 최대 2개. 입력 슬롯 순서와 무관하다."""
-    selected = select_fabric_references([_ref(s) for s in slots])
-    assert [r.slot for r in selected] == expected, case
-    assert len(selected) <= 2
-
-
-def test_select_fabric_references_puts_detail_first_whenever_present():
-    """Detail 이 있으면 **항상** 첫 번째 상품 참조 — 패턴 색·간격의 기준이라 순서가 곧 권위다."""
-    for slots in (
-        ["Front", "Detail"], ["Front", "Back", "Detail"], ["Front", "Back", "Detail", "Fit"],
-        ["Fit", "Back", "Detail"], ["Detail", "Front", "Back", "Fit"],
-    ):
-        selected = select_fabric_references([_ref(s) for s in slots])
-        assert selected[0].slot == "Detail", slots
-
-
-def test_select_fabric_references_dedupes_the_same_asset_across_slots():
-    """같은 asset 이 여러 슬롯에 걸려 있으면 **한 번만** 전달한다.
-
-    같은 바이트를 두 번 넣으면 편집 입력의 두 자리를 한 사진이 차지해, 실제로 다른 각도를
-    보여줄 두 번째 참조가 밀려난다.
-    """
-    refs = [
-        _ref("Front", "same-asset", b"one"),
-        _ref("Detail", "same-asset", b"one"),
-        _ref("Back", "back-asset", b"back"),
-    ]
-    selected = select_fabric_references(refs)
-    assert [r.asset_id for r in selected] == ["same-asset", "back-asset"]
-    assert [r.slot for r in selected] == ["Detail", "Back"], "중복은 더 높은 우선순위 슬롯으로 남는다"
-    assert len({r.asset_id for r in selected}) == len(selected)
-
-
-def test_select_fabric_references_respects_limit_and_empty_input():
-    assert select_fabric_references([]) == ()
-    refs = [_ref(s) for s in ("Front", "Back", "Detail", "Fit")]
-    assert [r.slot for r in select_fabric_references(refs, limit=3)] == ["Detail", "Front", "Back"]
-    assert [r.slot for r in select_fabric_references(refs, limit=1)] == ["Detail"]
-
-
-def test_order_by_role_keeps_unknown_slots_last_and_stable():
-    """알 수 없는 슬롯은 버리지 않고 뒤로 — 새 슬롯이 생겨도 참조가 조용히 사라지지 않는다."""
-    refs = [_ref("Mystery", "m1"), _ref("Front", "f"), _ref("Other", "o1"), _ref("Detail", "d")]
-    assert [r.asset_id for r in order_by_role(refs)] == ["d", "f", "m1", "o1"]
-
-
-def test_reference_event_payload_is_metadata_only():
-    """이벤트에 남는 것은 slot/asset_id/priority 뿐 — 이미지 바이트·base64·URL 은 없다."""
-    refs = [_ref("Front", "f", b"front-bytes"), _ref("Detail", "d", b"detail-bytes")]
-    selected = select_fabric_references(refs)
-    payload = reference_event_payload(selected, all_refs=refs)
-    assert payload["refs"] == [
-        {"slot": "Detail", "asset_id": "d", "priority": 1},
-        {"slot": "Front", "asset_id": "f", "priority": 2},
-    ]
-    assert payload["detail_missing"] is False
-    blob = str(payload)
-    assert "front-bytes" not in blob and "detail-bytes" not in blob
-
-
-def test_reference_event_payload_flags_missing_detail():
-    refs = [_ref("Front", "f"), _ref("Back", "b")]
-    payload = reference_event_payload(select_fabric_references(refs), all_refs=refs)
-    assert payload["detail_missing"] is True
-    assert [r["slot"] for r in payload["refs"]] == ["Front", "Back"]
-
-
-# ---------- 원단 2패스 배선 (P0-A3 / P0-A4) ----------
-
-def _fabric_settings(**kw):
-    return make_settings(
-        mannequin_fabric_pass="on", mannequin_max_attempts=3, mannequin_image_size="2K",
-        mannequin_aspect_ratio="2:3", **kw)
-
-
-def _run_fabric(refs, *, monkeypatch, calls_spent=0, fail=False):
-    sent = {"events": []}
-
-    class _Gemini:
-        async def generate_content_image(self, model, prompt, images, size, aspect_ratio=None):
-            sent["images"] = list(images)
-            sent["prompt"] = prompt
-            if fail:
-                raise RuntimeError("refused")
-            return types.SimpleNamespace(image=b"edited", mime="image/png")
-
-    async def fake_emit(pool, job_id, et, payload):
-        sent["events"].append(dict(payload))
-
-    monkeypatch.setattr(mj, "_emit", fake_emit)
-    res = types.SimpleNamespace(image=b"cut", mime="image/png")
-    out, spent = asyncio.run(mj._apply_fabric_pass(
-        pool=None, gemini=_Gemini(), s=_fabric_settings(), job_id="j1", candidate="A",
-        attempt=1, res=res, prod_refs=refs, calls_spent=calls_spent,
-        has_fine_pattern=True, image_size="4K"))
-    return out, spent, sent
-
-
-def test_fabric_pass_sends_detail_first_not_the_first_two_uploads(monkeypatch):
-    """`Front + Back + Detail` 에서 편집 입력은 [생성본, Detail, Front] 다.
-
-    수정 전에는 `prod_imgs[:2]` 라 [생성본, Front, Back] 이 나가 Detail 이 통째로 빠졌다.
-    """
-    refs = [_ref("Front", "f", b"front"), _ref("Back", "b", b"back"), _ref("Detail", "d", b"detail")]
-    out, spent, sent = _run_fabric(refs, monkeypatch=monkeypatch)
-
-    assert spent is True and out.image == b"edited"
-    assert [i.data for i in sent["images"]] == [b"cut", b"detail", b"front"]
-    assert sent["images"][1].data == b"detail", "Detail 이 첫 번째 상품 참조여야 한다"
-
-
-def test_fabric_pass_event_records_selected_slot_id_priority_and_detail_presence(monkeypatch):
-    refs = [_ref("Front", "f", b"front"), _ref("Back", "b", b"back"), _ref("Detail", "d", b"detail")]
-    _out, _spent, sent = _run_fabric(refs, monkeypatch=monkeypatch)
-
-    applied = [e for e in sent["events"] if e.get("status") == "fabric_pass"
-               and e.get("outcome") == "applied"]
-    assert len(applied) == 1
-    event = applied[0]
-    assert event["refs"] == [
-        {"slot": "Detail", "asset_id": "d", "priority": 1},
-        {"slot": "Front", "asset_id": "f", "priority": 2},
-    ]
-    assert event["detail_missing"] is False
-
-
-def test_fabric_pass_event_records_detail_missing_when_seller_has_none(monkeypatch):
-    refs = [_ref("Front", "f", b"front"), _ref("Back", "b", b"back")]
-    _out, _spent, sent = _run_fabric(refs, monkeypatch=monkeypatch)
-    event = next(e for e in sent["events"] if e.get("status") == "fabric_pass")
-    assert event["detail_missing"] is True
-    assert [r["slot"] for r in event["refs"]] == ["Front", "Back"]
-
-
-def test_fabric_pass_events_never_carry_image_bytes_or_urls(monkeypatch):
-    """민감 데이터 비기록 — 바이트·base64·서명 URL·R2 키가 이벤트에 들어가면 안 된다."""
-    import base64
-
-    secret = b"detail-pattern-bytes"
-    refs = [_ref("Detail", "d", secret), _ref("Front", "f", b"front")]
-    for fail in (False, True):
-        _out, _spent, sent = _run_fabric(refs, monkeypatch=monkeypatch, fail=fail)
-        blob = str(sent["events"])
-        assert secret.decode() not in blob
-        assert base64.b64encode(secret).decode() not in blob
-        assert "http://" not in blob and "https://" not in blob
-        assert ".png" not in blob and ".jpg" not in blob
-
-
-def test_fabric_pass_budget_exhausted_still_reports_detail_presence(monkeypatch):
-    refs = [_ref("Front", "f", b"front")]
-    out, spent, sent = _run_fabric(refs, monkeypatch=monkeypatch, calls_spent=3)
-    assert spent is False and out.image == b"cut"
-    event = next(e for e in sent["events"] if e.get("status") == "fabric_pass")
-    assert event["outcome"] == "budget_exhausted"
-    assert event["detail_missing"] is True
-
-
-def test_fabric_pass_gate_uses_refs_as_product_evidence(monkeypatch):
-    """참조가 하나도 없으면 돌지 않는다(근거 없는 편집 금지) — 게이트가 refs 를 본다."""
-    out, spent, sent = _run_fabric([], monkeypatch=monkeypatch)
-    assert spent is False and out.image == b"cut"
-    assert not [e for e in sent["events"] if e.get("status") == "fabric_pass"]
 
 
 # ---------- adjust manifest 역할·권위 계약 (P0-A5) ----------
@@ -445,7 +249,6 @@ def test_worker_private_api_call_sites_still_bind_to_their_signatures():
     targets = {
         "_run_candidate": mj._run_candidate,
         "_apply_edits": mj._apply_edits,
-        "_apply_fabric_pass": mj._apply_fabric_pass,
     }
     server_dir = pathlib.Path(mj.__file__).resolve().parents[2]
     checked = []
@@ -707,91 +510,3 @@ def test_initial_generation_is_not_reported_as_fallback(monkeypatch):
     calls = _run_worker_fallback(monkeypatch, parent=_parent(), mode="generate")
     assert calls["run"][0]["generation_path"] == "fresh"
     assert _fallback_events(calls) == []
-
-
-# ---------- 워커 → 원단 2패스 통합 (P0-A3) ----------
-
-def test_worker_carries_detail_slot_all_the_way_into_the_fabric_pass(monkeypatch):
-    """`Front + Back + Detail` 업로드 → 원단 2패스 입력에 Detail 이 첫 상품 참조로 들어간다.
-
-    이 경로 전체(자산 로드 → prod_refs → _run_candidate → _apply_edits → _apply_fabric_pass)를
-    실제로 태운다. 중간 어느 한 단계라도 슬롯을 버리면 여기서 깨진다.
-    """
-    gemini_calls = []
-    emits = []
-
-    class _Gemini:
-        async def generate_content_image(self, model, prompt, images, size,
-                                         temperature=None, aspect_ratio=None):
-            gemini_calls.append({"model": model, "images": list(images), "size": size,
-                                 "prompt": prompt})
-            return types.SimpleNamespace(image=_PNG_1PX, mime="image/png")
-
-    class _R2:
-        def get_bytes(self, key):
-            return {"bw.png": b"base", "front.png": b"front-bytes",
-                    "back.png": b"back-bytes", "detail.png": b"detail-bytes"}[key]
-
-        def put_bytes(self, key, data, mime, cache=None):
-            return None
-
-    async def get_product(conn, project_id):
-        return {"name": "스트라이프 셔츠", "clothing_type": "top", "colors": [{
-            "isBase": True,
-            "images": [{"id": "front", "slot": "Front"}, {"id": "back", "slot": "Back"},
-                       {"id": "detail", "slot": "Detail"}],
-        }]}
-
-    async def get_analysis(conn, project_id):
-        return {"targetGenders": ["women"], "fit": "regular"}
-
-    async def get_asset_for_user(conn, user_id, asset_id):
-        return {"bw": {"id": "bw", "mime_type": "image/png", "r2_key": "bw.png"},
-                "front": {"id": "front", "mime_type": "image/png", "r2_key": "front.png"},
-                "back": {"id": "back", "mime_type": "image/png", "r2_key": "back.png"},
-                "detail": {"id": "detail", "mime_type": "image/png",
-                           "r2_key": "detail.png"}}.get(asset_id)
-
-    async def get_matching_item_asset(conn, item_id):
-        return None
-
-    async def finalize_success(conn, **kwargs):
-        return {"cuts": kwargs["candidates"], "available": 7}
-
-    async def finalize_failure(conn, **kwargs):
-        raise AssertionError("잡이 실패하면 안 된다")
-
-    async def fake_emit(pool, job_id, event_type, payload):
-        emits.append((event_type, dict(payload)))
-
-    for name, fn in (("get_product", get_product), ("get_analysis", get_analysis),
-                     ("get_asset_for_user", get_asset_for_user),
-                     ("get_matching_item_asset", get_matching_item_asset),
-                     ("finalize_mannequin_success", finalize_success),
-                     ("finalize_mannequin_failure", finalize_failure)):
-        monkeypatch.setattr(repo, name, fn)
-    monkeypatch.setattr(mj, "_emit", fake_emit)
-
-    settings = make_settings(
-        base_mannequin_women_asset_id="bw", r2_bucket="bucket",
-        mannequin_fabric_pass="on", mannequin_max_attempts=3, image_qc="off",
-        mannequin_pattern_image_size="4K", mannequin_image_size="1K")
-    app = types.SimpleNamespace(state=types.SimpleNamespace(
-        settings=settings, pool=_FakePool(), r2=_R2(), gemini=_Gemini()))
-    job = {"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:t",
-           "credits_reserved": 2, "payload": {}}
-    asyncio.run(mj.run_mannequin_job(app, job))
-
-    assert len(gemini_calls) == 2, "1패스 생성 + 원단 2패스"
-    generation, fabric = gemini_calls
-    # 최초 생성 입력 순서는 기존 그대로 — 슬롯 순서(Front→Back→Detail)를 바꾸지 않는다.
-    assert [i.data for i in generation["images"]] == [
-        b"base", b"front-bytes", b"back-bytes", b"detail-bytes"]
-    # 원단 2패스만 역할 우선순위로 고른다.
-    assert [i.data for i in fabric["images"]][1:] == [b"detail-bytes", b"front-bytes"]
-    assert fabric["size"] == "4K"
-
-    event = next(p for e, p in emits if e == "step" and p.get("status") == "fabric_pass")
-    assert event["refs"] == [{"slot": "Detail", "asset_id": "detail", "priority": 1},
-                             {"slot": "Front", "asset_id": "front", "priority": 2}]
-    assert event["detail_missing"] is False

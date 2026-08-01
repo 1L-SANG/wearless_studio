@@ -1,15 +1,15 @@
-"""역할(slot)이 붙은 상품 참조 — 원단 보정이 Detail 을 잃지 않게 (순수, IO 없음).
+"""역할(slot)이 붙은 상품 참조 — 패턴 소스 선택이 Detail 을 잃지 않게 (순수, IO 없음).
 
 왜 필요한가(2026-07-31 재조사): 워커는 상품 자산을 로드하는 즉시 `InlineImage` 바이트 배열로
 납작하게 만들었고, 그 뒤로는 어느 사진이 Front 이고 어느 사진이 Detail 인지 알 방법이 없었다.
-그래서 원단 2패스가 "앞에서 두 장"(`prod_imgs[:2]`)을 골랐는데, 실제 슬롯 순서는
+당시 소비자였던 원단 2패스는 "앞에서 두 장"을 골랐는데, 실제 슬롯 순서는
 `Front → Back → Detail → Fit` 이라 **정상적으로 세 장을 올린 셀러일수록 Detail 이 빠졌다**.
-원단 프롬프트는 Detail 을 패턴 스케일의 기준으로 지목하는데, 그 사진이 입력에 없으면 모델은
-패턴을 기억이 아니라 상상으로 채운다.
+
+지금의 소비자는 deterministic hybrid composite 다 — 패턴의 바탕색·색 순서·반복 주기를 원본
+사진에서 **추출**하므로, 어느 사진이 그 정본인지(slot 권위)가 결과의 상한을 결정한다.
 
 `InlineImage` 를 `ProductReference(slot, asset_id, image)` 로 감싸 배선 끝까지 역할을 들고 간다.
-기존 생성·QC 가 쓰는 bare 바이트 목록은 여기서 파생한다(`[r.image for r in refs]`) — 계약을
-바꾸는 대신 잃어버린 정보만 되살리는 게 이번 변경의 범위다.
+기존 생성·QC 가 쓰는 bare 바이트 목록은 여기서 파생한다(`[r.image for r in refs]`).
 """
 
 from collections.abc import Sequence
@@ -17,14 +17,14 @@ from dataclasses import dataclass
 
 from .gemini_image import InlineImage
 
-# 원단 참조 우선순위. **업로드 슬롯 순서와 다르다.**
+# 패턴 소스 우선순위. **업로드 슬롯 순서와 다르다.**
 #  · Detail: 패턴 색·색 순서·반복 간격·선 굵기·질감의 기준 (근접 촬영이라 고주파가 살아 있다)
 #  · Front : 전체 형태·봉제 구조·패턴의 전체 배치 기준
 #  · Back  : 뒷면 구조와 패턴 연속성
 #  · Fit   : 착용 핏 참고일 뿐 — 사람이 입은 사진은 조명·주름·색 왜곡이 커서 원단 기준이 못 된다
-FABRIC_PRIORITY: tuple[str, ...] = ("Detail", "Front", "Back", "Fit")
+PATTERN_SOURCE_PRIORITY: tuple[str, ...] = ("Detail", "Front", "Back", "Fit")
 
-_UNKNOWN_PRIORITY = len(FABRIC_PRIORITY)
+_UNKNOWN_PRIORITY = len(PATTERN_SOURCE_PRIORITY)
 
 
 @dataclass(frozen=True)
@@ -37,9 +37,9 @@ class ProductReference:
 
 
 def role_priority(slot: str | None) -> int:
-    """`FABRIC_PRIORITY` 내 순위. 모르는 슬롯은 맨 뒤 — 새 슬롯이 생겨도 조용히 버리지 않는다."""
+    """`PATTERN_SOURCE_PRIORITY` 내 순위. 모르는 슬롯은 맨 뒤 — 새 슬롯이 생겨도 조용히 버리지 않는다."""
     try:
-        return FABRIC_PRIORITY.index(slot or "")
+        return PATTERN_SOURCE_PRIORITY.index(slot or "")
     except ValueError:
         return _UNKNOWN_PRIORITY
 
@@ -49,13 +49,13 @@ def order_by_role(refs: Sequence[ProductReference]) -> tuple[ProductReference, .
     return tuple(sorted(refs, key=lambda r: role_priority(r.slot)))
 
 
-def select_fabric_references(
+def select_pattern_sources(
     refs: Sequence[ProductReference], *, limit: int = 2
 ) -> tuple[ProductReference, ...]:
-    """원단 2패스에 넣을 참조를 `Detail → Front → Back → Fit` 순으로 중복 없이 최대 limit 개.
+    """패턴 합성이 소비할 소스를 `Detail → Front → Back → Fit` 순으로 중복 없이 최대 limit 개.
 
-    `limit` 을 두는 이유는 가슴/untuck 2패스와 같다 — 편집은 과제가 하나일 때만 반영된다.
-    사진을 전부 넣으면 "이 패턴으로 고쳐라"가 다시 흐려진다.
+    Detail 이 있으면 항상 첫 번째다 — 근접 원단컷이 색·간격·선 그룹의 정본이고,
+    Front 는 전체 배치·구조 확인용 보조 소스다.
 
     같은 asset 이 여러 슬롯에 걸려 있으면 **더 높은 우선순위 슬롯으로 한 번만** 남긴다.
     같은 바이트를 두 번 넣으면 두 자리 중 하나를 한 사진이 낭비해, 실제로 다른 각도를 보여줄

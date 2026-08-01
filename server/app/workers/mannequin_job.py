@@ -22,7 +22,6 @@ from ..agents import (
     image_qc,
     mannequin,
     mannequin_bust,
-    mannequin_fabric,
     mannequin_fit_qc,
     mannequin_series_qc,
     mannequin_untuck,
@@ -35,15 +34,9 @@ from ..agents.mannequin_adjust import (
 )
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.model_routing import resolve_model
-from ..agents.product_reference import (
-    ProductReference,
-    order_by_role,
-    reference_event_payload,
-    select_fabric_references,
-)
+from ..agents.product_reference import ProductReference, order_by_role
 from ..agents.prompts import (
     load_bust_prompt_template,
-    load_fabric_prompt_template,
     load_prompt_template,
     load_untuck_prompt_template,
     render_mannequin_prompt,
@@ -303,7 +296,7 @@ def tier_for_job(s, job: dict | None, *, has_fine_pattern: bool = False) -> str:
     조정에서만 모델을 바꿔 보려는 요구가 실제 동기다(2026-07-31). 초기 생성 품질을 고정한 채
     비교해야 결과 차이를 모델 탓으로 돌릴 수 있다.
 
-    편집 패스(untuck·fabric·bust)는 여기 해당 없다 — 그쪽은 코드에서 image_high 로 고정돼
+    편집 패스(untuck·bust)는 여기 해당 없다 — 그쪽은 코드에서 image_high 로 고정돼
     있고, Flash 가 편집 지시를 거부·미반영해 탈락한 기록이 있다.
     """
     adjust = (getattr(s, "mannequin_adjust_tier", "") or "").strip()
@@ -769,57 +762,6 @@ async def _apply_untuck_pass(
     return out, True
 
 
-async def _apply_fabric_pass(
-    *, pool, gemini, s, job_id, candidate, attempt, res, prod_refs, calls_spent,
-    has_fine_pattern=False, image_size=None,
-):
-    """미세 패턴 상품의 원단 패턴 2패스. → (선택 결과, 편집콜 소비 여부).
-
-    가슴 2패스와 **입력이 다르다**: 생성본만 주는 게 아니라 상품 사진을 함께 넣는다.
-    고칠 대상이 "상품 사진과 같은 패턴"이라 근거 이미지가 없으면 모델이 패턴을 지어낸다.
-    상품 사진은 두 장만 — 전부 넣으면 편집 과제가 다시 흐려진다(과제 1개 원칙).
-
-    **어느 두 장인지가 이 패스의 전부다.** 예전에는 `prod_imgs[:2]` 로 업로드 순서 앞 두 장을
-    골랐는데, 슬롯 순서가 `Front → Back → Detail → Fit` 이라 Front+Back+Detail 을 올린 셀러는
-    정작 패턴의 기준인 Detail 을 못 보내고 있었다. 이제 역할 우선순위로 고른다
-    (`select_fabric_references`).
-
-    fail-open — 거부·오류·빈 응답 어떤 경우에도 1패스 결과를 그대로 돌려준다.
-    """
-    if not mannequin_fabric.should_apply(
-            getattr(s, "mannequin_fabric_pass", "off"), has_fine_pattern, bool(prod_refs)):
-        return res, False
-    selected = select_fabric_references(prod_refs)
-    # 어떤 슬롯/자산이 어떤 순서로 나갔는지 — 이미지 바이트·URL 은 넣지 않는다(메타데이터만).
-    ref_event = reference_event_payload(selected, all_refs=prod_refs)
-    if calls_spent >= s.mannequin_max_attempts:
-        await _emit(pool, job_id, "step", {
-            "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
-            "outcome": "budget_exhausted", **ref_event,
-            "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
-        return res, False
-    before = hashlib.sha256(res.image).hexdigest()[:12]
-    try:
-        prompt = mannequin_fabric.build_prompt(load_fabric_prompt_template())
-        out = await gemini.generate_content_image(
-            resolve_model(s, "image_high"),
-            prompt,
-            [InlineImage(res.mime, res.image), *(r.image for r in selected)],
-            image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
-    except Exception as e:
-        log.warning("fabric pass failed for job %s (원본 유지): %r", job_id, e)
-        await _emit(pool, job_id, "step", {
-            "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
-            "outcome": "failed_open", "image_hash": before, **ref_event,
-            "error_type": type(e).__name__, "error_message": str(e)[:200]})
-        return res, True  # 호출은 나갔다 — 예산 소비
-    await _emit(pool, job_id, "step", {
-        "candidate": candidate, "attempt": attempt, "status": "fabric_pass",
-        "outcome": "applied", "image_hash": before, **ref_event,
-        "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
-    return out, True
-
-
 async def _apply_edits(
     *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_refs, match_img,
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
@@ -863,14 +805,9 @@ async def _apply_edits(
         base_gender=base_gender, res=res, calls_spent=calls_spent,
         clothing_type=clothing_type, image_size=image_size)
     calls_spent += bust_spent
-    # 원단 패턴 2패스 — 가슴 2패스 **뒤**에 둔다. 두 편집이 겹치면 순서가 결과를 가르는데,
-    # 몸 형태가 먼저 확정돼야 그 위의 천에 패턴을 얹는 게 자연스럽다(반대로 하면 볼륨 편집이
-    # 방금 맞춘 패턴을 다시 늘린다). 회귀 판정은 아래에서 두 편집을 합쳐 한 번에 본다.
-    res, fabric_spent = await _apply_fabric_pass(
-        pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-        res=res, prod_refs=prod_refs, calls_spent=calls_spent,
-        has_fine_pattern=has_fine_pattern, image_size=image_size)
-    calls_spent += fabric_spent
+    # (2026-08-01) 원단 패턴 2패스는 제거됐다 — whole-image generative 재생성으로는 잔줄
+    # 패턴 동일성을 증명할 수 없었고(실측 blind visual 3/3 FAIL), 패턴 동일성은 이제
+    # geometry 편집이 모두 끝난 뒤 deterministic hybrid composite 가 담당한다.
     # A~C 점수는 **편집 전** 원본에 매긴 것이다. 편집이 이미지를 바꿨다면 저장되는 점수가
     # 실제 출고본의 점수가 아니게 된다(검수자가 다른 이미지의 숫자를 보고 판단하게 됨).
     # 이미지가 실제로 바뀐 경우에만 재판정한다 — 안 바뀌었으면 vision 콜 낭비다.
