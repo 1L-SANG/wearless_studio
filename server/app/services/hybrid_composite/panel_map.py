@@ -387,6 +387,14 @@ def build_panel_map(
     y_bot = min(h, int(hem_y + h * 0.03))
     work[:y_top] = 0
     work[y_bot:] = 0
+    # 프린지/홀 충전 — stripe-energy 기반 mask 는 줄 위상에 따라 톱니(소매 가장자리 미페인트
+    # 띠)와 그늘 홀(어깨 그림자 패치)을 남긴다(실캐리어 paint-map 실측). close 는 mask 내부
+    # 간극만 잇고 실루엣 밖(배경엔 mask 픽셀이 없음)으로는 못 자란다. y-경계는 재적용.
+    ck = max(15, int(min(h, w) * 0.02) | 1)
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ck, ck))
+    work = cv2.morphologyEx(work, cv2.MORPH_CLOSE, close_kernel)
+    work[:y_top] = 0
+    work[y_bot:] = 0
     band = max(3, int(min(h, w) * BOUNDARY_BAND_PX_FRAC))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (band * 2 + 1, band * 2 + 1))
     protected = cv2.erode(work, kernel)

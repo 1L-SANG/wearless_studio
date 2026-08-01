@@ -942,13 +942,50 @@ async def _apply_hybrid_composite(
         source_asset_id=front_ref.asset_id, source_sha256=front_sha_early,
         source_roi=(fx0, fy0, fx1, fy1))
     anchor_corr = None
-    if not isinstance(front_model, CompositeFailure) and (
-            len(front_model.color_sequence_lab) == len(model.color_sequence_lab)
-            and max(abs(a - b) / max(b, 1e-6) for a, b in
-                    zip(front_model.line_width_ratios, model.line_width_ratios)) <= 0.6):
+    front_scan_ok = (not isinstance(front_model, CompositeFailure)
+                     and front_model.confidence >= 0.5)
+    # 주기(스케일 진실)와 팔레트는 별개 판단이다. front 줌에서 잔줄이 2색으로 퇴화해도
+    # (선폭 2.7px 해상 한계 실측) scan 의 **주기**는 패치 합의라 신뢰 가능(20.6 vs
+    # guided 하모닉 45 — 2.2×). 주기를 guided 에 맡기면 출력 줄 간격이 실물의 ~3배로
+    # 성겨지고, QC 는 target 자기일관만 재서 그 스케일 오류를 못 잡는다.
+    if front_scan_ok:
         garment_axis = front_model.axis
         front_period_px = float(front_model.period_px)
         anchor_corr = round(front_model.confidence, 3)
+        # 색 팔레트의 정본 = front-scan 모델 — 단, **구조 완전 일치**(색 수 동일 + 폭 비
+        # 60% 이내)일 때만. 그늘 착용 Detail 은 chroma 가 퇴색된다(실측: beige warm b*
+        # 소실 → 민트-그린). 구조 대조 통과 시에만 교체하므로 바꿔치기는 불가능하다.
+        if (len(front_model.color_sequence_lab) == len(model.color_sequence_lab)
+                and max(abs(a - b) / max(b, 1e-6) for a, b in
+                        zip(front_model.line_width_ratios,
+                            model.line_width_ratios)) <= 0.6):
+            await emit("hybrid_palette_source", chosen="front_scan",
+                       detail_colors=len(model.color_sequence_lab),
+                       front_colors=len(front_model.color_sequence_lab))
+            model = front_model
+        else:
+            # 구조가 퇴화(front 줌에서 잔줄 미해상)해도 **ground 색**은 양쪽 모두 최광폭
+            # run 이라 대응이 확실하다. 그늘 Detail 의 조명 캐스트(민트 방향 ab 편이)를
+            # front ground 와의 Δab 로 전 팔레트에 가산 보정 — 상대 색 구조는 Detail 것
+            # 그대로, 절대 캐스트만 flat-lay 자연광으로 옮긴다. 색 발명 없음.
+            import dataclasses as _dc
+            d_ab = np.array(model.ground_color_lab[1:], np.float32)
+            f_ab = np.array(front_model.ground_color_lab[1:], np.float32)
+            delta = np.clip(f_ab - d_ab, -15.0, 15.0)
+            if float(np.abs(delta).max()) >= 1.0:
+                prof = model.period_profile_lab.copy()
+                prof[:, 1:] += delta
+                model = _dc.replace(
+                    model,
+                    period_profile_lab=prof,
+                    ground_color_lab=(model.ground_color_lab[0],
+                                      float(d_ab[0] + delta[0]), float(d_ab[1] + delta[1])),
+                    color_sequence_lab=tuple(
+                        (c[0], float(c[1] + delta[0]), float(c[2] + delta[1]))
+                        for c in model.color_sequence_lab),
+                )
+                await emit("hybrid_palette_source", chosen="detail_plus_front_ground_cast",
+                           delta_a=round(float(delta[0]), 2), delta_b=round(float(delta[1]), 2))
     else:
         anchor = await asyncio.to_thread(hc_stripe.find_period_guided, torso_crop, model)
         if anchor is None:
@@ -968,6 +1005,13 @@ async def _apply_hybrid_composite(
         (max(car_lm["shoulder_r"][0], car_lm["hem_r"][0])
          - min(car_lm["shoulder_l"][0], car_lm["hem_l"][0])) * cw)
     target_period_px = float(t_torso_span / max(repeats_on_torso, 1e-6))
+    if target_period_px < 6.0:
+        # 선폭이 1px 대로 떨어지는 피치 — line 단위 합성·검증이 물리적으로 성립하지 않는
+        # 영역이다(sub-Nyquist). 평균색 블렌드 합성 모드가 구현되기 전까지 typed 거부가
+        # 정직한 동작이다. 성긴 가짜 스케일로 출력하는 것이 최악(같은 상품 아님).
+        return await fail("pattern_metric_failed",
+                          f"target pitch {target_period_px:.1f}px — line 합성 하한(6px) 미만, "
+                          "sub-Nyquist 블렌드 모드 미구현")
     await emit("hybrid_scale_anchor", garment_axis=garment_axis,
                detail_photo_axis=model.axis,
                front_period_px=round(front_period_px, 2),

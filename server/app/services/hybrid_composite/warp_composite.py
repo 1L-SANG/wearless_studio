@@ -118,7 +118,9 @@ def composite_stripe(
     best_cost = np.full(len(xs), np.inf)
     best_coord = np.zeros(len(xs))
     best_panel = np.full(len(xs), -1, np.int32)
-    MAX_ASSIGN_COST = 0.5   # panel 로컬 박스에서 이보다 먼 픽셀은 미배정(=carrier 유지)
+    MAX_ASSIGN_COST = 0.75  # panel 로컬 박스에서 이보다 먼 픽셀은 미배정(=carrier 유지)
+    # 0.5 는 좌측 소매(카메라 각도로 quad 오차 큼)를 미페인트로 남겼다 — mask 가 이미
+    # 실루엣·해부학 y-경계로 제한하므로 상한 완화의 번짐 위험은 mask 가 흡수한다.
     for p_idx, panel in enumerate(panel_map.panels):
         if panel.kind != "stripe":
             continue
