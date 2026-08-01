@@ -1084,6 +1084,14 @@ async def edit_mannequin(
             status_code=503,
             detail={"code": "edit_not_enabled",
                     "message": "편집 기능이 아직 열리지 않았어요."})
+    # 편집 결과의 계보(generation_outputs)는 Generation Run 기록 위에 세워진다. 그게 꺼진
+    # 채로 편집을 켜면 output 행이 생기지 않아 "무엇을 편집한 결과인지 모르는 컷"이 나온다.
+    # 조용히 허용하지 않는다 — 편집 플래그가 기록 플래그를 몰래 켜지도 않는다.
+    if s.generation_run_log == "off":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "misconfigured_feature",
+                    "message": "편집 기능 설정이 완전하지 않아요."})
     try:
         edit_type = edit_service.normalize_edit_type(body.edit_type)
         adjustments = edit_service.validate_adjustments(edit_type, body.adjustments)
@@ -1103,17 +1111,51 @@ async def edit_mannequin(
                         "message": "먼저 마네킹 컷을 승인해 주세요."})
         locks = edit_service.locked_invariants_for_edit(
             baseline.get("locked_invariants"), edit_type)
+        # ── 멱등·충돌을 **만들기 전에** 판정한다 ──
+        # create_job 은 "같은 키 재시도"와 "다른 활성 job 합류"를 둘 다 created=False 로
+        # 돌려준다. 그걸 구분하지 않고 진행하면 두 경우 모두 새 세션이 생기고 남의 job
+        # payload 가 덮어써진다(4/N 이전의 실제 동작).
+        if scoped_key:
+            prior = await repo.get_job_by_idempotency_key(conn, user_id, scoped_key)
+            if prior is not None:
+                existing = await repo.get_edit_session_by_job_id(conn, prior["id"])
+                if existing is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "job_in_progress",
+                                "message": "이미 진행 중인 작업이 있어요."})
+                same = (existing["edit_type"] == edit_type
+                        and (existing["requested_adjustments"] or {}) == adjustments
+                        and existing["baseline_id"] == baseline["id"])
+                if not same:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "idempotency_conflict",
+                                "message": "같은 요청 키로 다른 편집을 보낼 수 없어요."})
+                return {**existing, "job_id": prior["id"]}   # 부수효과 0
+        active = await repo.get_active_job(conn, user_id, project_id, "mannequin")
+        if active is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "job_in_progress",
+                        "message": "이미 진행 중인 작업이 있어요."})
+
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload={"mode": "edit", "editType": edit_type, "adjustments": adjustments,
                      "baselineId": baseline["id"]},
             idempotency_key=scoped_key, credits_reserved=cost,
             metadata={"creditCostVersion": s.credit_cost_version})
-        if created:
-            if await repo.reserve_credits(conn, user_id, cost) is None:
-                raise HTTPException(
-                    status_code=402,
-                    detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        if not created:
+            # 위 검사와 INSERT 사이의 레이스 — 합류하지 않고 거절한다. 세션도 크레딧도 없다.
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "job_in_progress",
+                        "message": "이미 진행 중인 작업이 있어요."})
+        if await repo.reserve_credits(conn, user_id, cost) is None:
+            raise HTTPException(
+                status_code=402,
+                detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
         session = await repo.create_edit_session(
             conn, project_id=project_id, user_id=user_id, job_id=job["id"],
             baseline=baseline, edit_type=edit_type, adjustments=adjustments,

@@ -712,6 +712,60 @@ async def create_edit_session(
         return await cur.fetchone()
 
 
+async def get_job_by_idempotency_key(
+    conn: AsyncConnection, user_id: str, key: str
+) -> dict | None:
+    """키로 기존 job 조회. create_job 은 (row, created=False) 로 '같은 키 재시도'와 '다른
+    활성 job 합류'를 구분하지 못한다 — 라우트가 **만들기 전에** 구분해야 부수효과가 안 생긴다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select {_JOB_COLS} from jobs where idempotency_key = %s and user_id = %s",
+            (key, user_id))
+        return await cur.fetchone()
+
+
+async def get_active_job(
+    conn: AsyncConnection, user_id: str, project_id: str, kind: str
+) -> dict | None:
+    """진행 중인 같은 종류의 job. 있으면 편집 요청은 합류하지 않고 거절한다 — 합류하면
+    그 job 의 결과가 이 요청의 편집인 것처럼 보인다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select {_JOB_COLS} from jobs where project_id = %s and user_id = %s "
+            "and kind = %s and status in ('pending', 'running') limit 1",
+            (project_id, user_id, kind))
+        return await cur.fetchone()
+
+
+async def get_edit_session_by_job_id(
+    conn: AsyncConnection, job_id: str
+) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, project_id::text as project_id, "
+            "baseline_id::text as baseline_id, parent_output_id::text as parent_output_id, "
+            "edit_type, requested_adjustments, locked_invariants, allowed_scope, status, "
+            "retry_count, output_id::text as output_id, edit_qc_result, "
+            "job_id::text as job_id from edit_sessions where job_id = %s",
+            (job_id,))
+        return await cur.fetchone()
+
+
+async def set_edit_session_prompt(
+    conn: AsyncConnection, *, session_id: str, sha: str | None, key: str | None
+) -> None:
+    """프롬프트 스냅샷만 기록한다 — **상태 전이가 아니다**.
+
+    update_edit_session 을 재사용하면 running→running 이 유효하지 않은 전이로 거부된다
+    (그 함수는 전이 전용이다). 두 관심사를 섞지 않는다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update edit_sessions set prompt_sha256 = coalesce(%s, prompt_sha256), "
+            "prompt_r2_key = coalesce(%s, prompt_r2_key) where id = %s",
+            (sha, key, session_id))
+
+
 async def update_job_payload_edit_session(
     conn: AsyncConnection, job_id: str, session_id: str
 ) -> None:
@@ -739,6 +793,21 @@ async def get_edit_session(conn: AsyncConnection, session_id: str) -> dict | Non
         return await cur.fetchone()
 
 
+# 목적 상태 → 허용되는 **이전** 상태. services.edit_session._TRANSITIONS 의 역방향이며
+# 두 곳이 갈라지지 않는지는 테스트가 고정한다.
+_EDIT_TRANSITION_SOURCES = {
+    "running": ("queued",),
+    "pass": ("running",),
+    "review_required": ("running",),
+    "reject": ("running",),
+    "failed": ("queued", "running"),
+}
+
+
+class InvalidEditTransition(RuntimeError):
+    """허용되지 않은 상태 전이 — 이미 종결된 세션을 되돌리려 했거나 단계를 건너뛰었다."""
+
+
 async def update_edit_session(
     conn: AsyncConnection,
     *,
@@ -749,12 +818,16 @@ async def update_edit_session(
     prompt_r2_key: str | None = None,
     model_snapshot: dict | None = None,
     retry_count: int | None = None,
-) -> None:
-    """세션 상태 전이. 종결 상태면 completed_at 을 함께 채운다(CHECK 가 요구한다).
+) -> dict:
+    """세션 상태 전이 — **UPDATE 자체가 전이를 검증한다**.
 
-    전이 유효성은 호출자(services.edit_session.assert_transition)가 검증한다 — 여기서
-    또 판단하면 규칙이 두 곳에 살고 갈라진다.
+    애플리케이션에서 status 를 읽고 판단한 뒤 일반 UPDATE 를 쏘면 그 사이에 다른 워커가
+    종결시킬 수 있다(TOCTOU). `where status in (허용 이전 상태)` 로 원자화하고, 영향받은
+    행이 0 이면 같은 종결 상태로의 **멱등 재기록**인지 확인한 뒤 아니면 예외를 던진다.
     """
+    allowed_from = _EDIT_TRANSITION_SOURCES.get(status)
+    if allowed_from is None:
+        raise InvalidEditTransition(f"unknown edit_session status: {status}")
     terminal = status in ("pass", "review_required", "reject", "failed")
     sets = ["status = %s", "completed_at = " + ("now()" if terminal else "null")]
     params: list = [status]
@@ -770,9 +843,27 @@ async def update_edit_session(
         sets.append("retry_count = %s")
         params.append(retry_count)
     params.append(session_id)
+    params.append(list(allowed_from))
     async with conn.cursor() as cur:
         await cur.execute(
-            f"update edit_sessions set {', '.join(sets)} where id = %s", params)
+            f"update edit_sessions set {', '.join(sets)} "
+            "where id = %s and status = any(%s) "
+            "returning id::text as id, status, completed_at, retry_count",
+            params)
+        row = await cur.fetchone()
+        if row is not None:
+            return row
+        # 0 rows — 이미 그 상태였거나(멱등), 잘못된 전이거나, 세션이 없다.
+        await cur.execute(
+            "select id::text as id, status, completed_at, retry_count "
+            "from edit_sessions where id = %s", (session_id,))
+        current = await cur.fetchone()
+    if current is None:
+        raise InvalidEditTransition(f"edit_session not found: {session_id}")
+    if current["status"] == status and terminal:
+        return current            # 같은 종결 상태 재기록 — 워커 재진입에서 정상이다
+    raise InvalidEditTransition(
+        f"invalid transition {current['status']} → {status}")
 
 
 async def list_series_reference_cuts(
@@ -1404,6 +1495,7 @@ async def finalize_mannequin_success(
     reserved: int,
     charge: int,
     metadata: dict,
+    edit_session: dict | None = None,   # {"id", "status", "qc_result"} — 편집 경로 전용
 ) -> dict | None:
     """성공 종결(원자·lease 펜스). None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음."""
     async with conn.cursor() as cur:
@@ -1414,6 +1506,7 @@ async def finalize_mannequin_success(
         if await cur.fetchone() is None:
             return None  # lease 빼앗김 — 부수효과 0 (워커는 폐기)
         cuts = []
+        output_ids: list = []
         for c in candidates:
             await cur.execute(
                 "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
@@ -1450,16 +1543,24 @@ async def finalize_mannequin_success(
                     await cur.execute(
                         "insert into generation_outputs (generation_run_id, project_id, "
                         "mannequin_cut_id, asset_id, output_sha256, post_processed, "
-                        "transformation, parent_output_id, baseline_id) "
-                        "values (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        "transformation, parent_output_id, baseline_id, edit_session_id) "
+                        "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) returning id",
                         (lineage.get("generation_run_id"), project_id, cut_row["id"],
                          c["asset_id"], lineage.get("output_sha256"),
                          bool(lineage.get("post_processed")),
                          Json(lineage.get("transformation"))
                          if lineage.get("transformation") is not None else None,
-                         lineage.get("parent_output_id"), lineage.get("baseline_id")),
+                         lineage.get("parent_output_id"), lineage.get("baseline_id"),
+                         (edit_session or {}).get("id")),
                     )
+                    out_row = await cur.fetchone()
+                    output_ids.append(out_row["id"] if out_row else None)
                 except errors.DatabaseError as e:
+                    if edit_session is not None:
+                        # 편집 경로는 fail-open 하지 않는다. 계보를 못 남긴 편집을 PASS 로
+                        # 완료하면 "무엇을 편집한 결과인지 모르는 컷"이 정본 후보가 된다.
+                        # fresh/regenerate 의 Phase 1 정책은 그대로 둔다(관측 부가 기능).
+                        raise
                     await cur.execute("rollback to savepoint genout_insert")
                     # fail-open 은 유지하되 **왜** 실패했는지는 분류해 남긴다. schema_missing
                     # 은 배포 순서 문제(migration 미적용)고, integrity 는 코드가 잘못된
@@ -1487,6 +1588,19 @@ async def finalize_mannequin_success(
                 # 봉투(여기) 양쪽에 실어야 생성 직후·재생성 후 표시가 일치한다.
                 "qcScores": qc_scores,
             })
+    if edit_session is not None:
+        # 같은 tx 다 — job=success 인데 session=running 인 불일치를 만들지 않는다.
+        # output_id 는 방금 insert 의 RETURNING 값이다("가장 최근 output" 재조회 금지 —
+        # 동시 생성이 있으면 남의 결과를 자기 세션에 붙인다).
+        await update_edit_session(
+            conn, session_id=edit_session["id"], status=edit_session["status"],
+            qc_result=edit_session.get("qc_result"),
+            retry_count=edit_session.get("retry_count"))
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update edit_sessions set output_id = %s where id = %s",
+                (output_ids[0] if output_ids else None, edit_session["id"]))
+
     # 크레딧 확정 — 버킷 FIFO 차감(구독먼저→topup), 같은 tx·jobs 락 유지.
     # 멱등 = job.status(위 status='running' FOR UPDATE) → 재진입 없음. settle_key는 release 전용.
     available = await _consume_buckets(

@@ -265,7 +265,8 @@ def test_enforce_review_required_saves_as_needs_review(monkeypatch):
     seen = _run(monkeypatch, qc_decision="review_required", enforce=True)
     cand = seen["success"][0]["candidates"][0]
     assert cand["qc_scores"]["outcome"] == "needs_review"
-    assert "review_required" in [x["status"] for x in seen["sessions"]]
+    # 세션 종결은 finalize 와 **같은 tx** 다 — 별도 update 가 아니라 인자로 넘어간다
+    assert seen["success"][0]["edit_session"]["status"] == "review_required"
 
 
 def test_shadow_never_blocks_delivery(monkeypatch):
@@ -277,10 +278,14 @@ def test_shadow_never_blocks_delivery(monkeypatch):
     assert cand["qc_scores"]["editIntentQc"]["decision"] == "reject"
 
 
-def test_pass_is_recorded_on_the_session(monkeypatch):
+def test_pass_is_recorded_in_the_same_transaction_as_finalize(monkeypatch):
+    """job=success 인데 session=running 인 불일치를 만들지 않는다."""
     seen = _run(monkeypatch, qc_decision="pass")
-    assert "pass" in [x["status"] for x in seen["sessions"]]
-    assert any(x.get("qc_result") for x in seen["sessions"])
+    es = seen["success"][0]["edit_session"]
+    assert es["status"] == "pass" and es["id"] == "sess-1"
+    assert es["qc_result"]["decision"] == "pass"
+    assert "pass" not in [x["status"] for x in seen["sessions"]], \
+        "종결이 별도 tx 로 새어 나갔다"
 
 
 def test_edit_never_supersedes_the_baseline(monkeypatch):

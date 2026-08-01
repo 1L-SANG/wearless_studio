@@ -57,7 +57,7 @@ from ..agents.prompts import (
     load_untuck_prompt_template,
     render_mannequin_prompt,
 )
-from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
+from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime, genrun_prompt_key
 from ..services import edit_intent_qc, qc
 from ..services import edit_session as edit_service
 from ..services.generation_run import RunLogger, prompt_sha256 as gr_prompt_sha
@@ -1821,9 +1821,12 @@ async def _run_baseline_edit(app, job: dict, *, fail) -> None:
         model = resolve_model(s, getattr(s, "mannequin_adjust_tier", "") or "image_high")
         runlog = RunLogger(pool=pool, r2=r2, job_id=job_id, project_id=project_id,
                            user_id=user_id, enabled=(s.generation_run_log == "shadow"))
-        await _set_session("running", prompt_sha256=gr_prompt_sha(prompt),
+        await _set_session("running",
                            model_snapshot={"model": model,
                                            "imageSize": s.mannequin_image_size})
+        # 프롬프트 객체는 Generation Run 이 이미 R2 에 올린다 — 같은 바이트를 두 번 올리지
+        # 않고 그 키를 세션에 연결한다. 전문은 DB 에 넣지 않는다(해시만).
+        first_prompt_sha = gr_prompt_sha(prompt)
 
         result = None
         qc_result = None
@@ -1847,6 +1850,12 @@ async def _run_baseline_edit(app, job: dict, *, fail) -> None:
                 return await fail("이미지 편집에 실패했어요. 잠시 후 다시 시도해 주세요.",
                                   {"error": "generation_failed"})
             await _runlog_finish(runlog, run_id, started=t0, result=result, candidate="A")
+            if run_id and attempt == 0:
+                # 최초 프롬프트만 세션의 정본으로 남긴다. 재시도 교정본은 그 run 행에
+                # 따로 있고(자기 sha·자기 객체), 세션의 sha 를 덮어쓰면 "무엇으로 시작했는가"
+                # 를 잃는다.
+                await _set_session_prompt(pool, session_id, first_prompt_sha,
+                                          runlog, run_id)
 
             qc_result = await asyncio.to_thread(
                 edit_intent_qc.evaluate,
@@ -1889,23 +1898,49 @@ async def _run_baseline_edit(app, job: dict, *, fail) -> None:
                             "generation_output_id": baseline.get("output_id"),
                             "generation_run_id": baseline.get("generation_run_id"),
                             "baseline_id": baseline["id"]})
+        # 세션 종결을 **finalize 와 같은 tx** 로 넘긴다. 별도 tx 로 두면 job=success 인데
+        # session=running 인 상태가 남고, 그 세션은 영원히 종결되지 않는다.
+        # 계보 insert 가 실패하면 finalize 전체가 롤백된다(편집 경로는 fail-open 아님).
         async with pool.connection() as conn:
             out = await repo.finalize_mannequin_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, candidates=[cut], reserved=reserved,
                 charge=reserved,
                 metadata={"creditCostVersion": s.credit_cost_version,
-                          "editSessionId": session_id, "editType": edit_type})
+                          "editSessionId": session_id, "editType": edit_type},
+                edit_session=({"id": session_id,
+                               "status": "pass" if decision == "pass" else "review_required",
+                               "qc_result": qc_result, "retry_count": retry_count}
+                              if session_id else None))
             await conn.commit()
-        if out is None:                 # lease 상실 — 부수효과 0
+        if out is None:                 # lease 상실 — 부수효과 0(세션도 그대로 running)
             return
-        await _set_session("pass" if decision == "pass" else "review_required",
-                           qc_result=qc_result, retry_count=retry_count)
     except Exception as e:
         log.exception("baseline edit failed for job %s", job_id)
         await _set_session("failed", qc_result={"reason": type(e).__name__})
         await fail("이미지 편집에 실패했어요.", {"error": "generation_failed"})
 
+
+
+
+async def _set_session_prompt(pool, session_id, sha, runlog, run_id) -> None:
+    """세션에 프롬프트 sha 와 **RunLogger 가 올린 객체 키**를 연결한다(중복 업로드 없음)."""
+    if not session_id:
+        return
+    key = None
+    try:
+        key = genrun_prompt_key(runlog.user_id, runlog.project_id, runlog.job_id, run_id) \
+            if runlog.enabled else None
+    except Exception:
+        key = None
+    try:
+        async with pool.connection() as conn:
+            await repo.set_edit_session_prompt(conn, session_id=session_id,
+                                               sha=sha, key=key)
+            await conn.commit()
+    except Exception as e:   # 키 원문·프롬프트는 로그에 남기지 않는다
+        log.warning("edit session prompt link failed (session=%s error=%s)",
+                    session_id, type(e).__name__)
 
 def build_edit_prompt(*, edit_type: str, adjustments: dict, allowed_scope: dict,
                       locked_invariants: dict) -> str:
