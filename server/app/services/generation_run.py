@@ -13,6 +13,7 @@ URL, API key, provider 응답 원문. provider 실패는 **예외 타입 + allow
 — GeminiError 메시지에는 요청 URL 과 응답 본문 500자가 들어간다(gemini_image.py).
 """
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -190,8 +191,8 @@ class RunLogger:
                     candidate: str | None = None, attempt: int | None = None,
                     image_size: str | None = None, aspect_ratio: str | None = None,
                     prompt_version: str | None = None, inputs=None,
-                    input_image=None, fit_profile: dict | None = None,
-                    settings=None) -> str | None:
+                    input_image=None, explicit_parent_generation_run_id: str | None = None,
+                    fit_profile: dict | None = None, settings=None) -> str | None:
         """호출 **직전** 기록. 프로세스가 응답 대기 중 죽어도 시도 흔적이 남는다.
 
         순서가 중요하다: **DB 행을 먼저** 만들고 그 다음 R2 에 프롬프트를 올린다. 반대로 하면
@@ -201,7 +202,13 @@ class RunLogger:
             return None
         run_id = str(uuid.uuid4())
         in_sha = image_sha256(input_image) if input_image is not None else None
-        parent = self._by_image.get((candidate, in_sha)) if in_sha else None
+        # 부모 결정: **명시 부모가 정본**이다. 이전 job 의 컷을 편집하는 조정 경로는 이 job
+        # 안에 그 이미지를 만든 호출이 없으므로 역참조로는 절대 찾을 수 없다.
+        # 명시 부모가 없을 때만 이 job 안의 (candidate, 입력 sha) 역참조로 떨어진다.
+        # 둘 다 없으면 null — 부모를 **추정하지 않는다**(flag-off 시기 컷이 부모인 정상 경우).
+        parent = explicit_parent_generation_run_id
+        if parent is None and in_sha:
+            parent = self._by_image.get((candidate, in_sha))
         try:
             async with self.pool.connection() as conn:
                 await repo.insert_generation_run(
@@ -229,7 +236,10 @@ class RunLogger:
             return
         key = genrun_prompt_key(self.user_id, self.project_id, self.job_id, run_id)
         try:
-            self.r2.put_bytes(key, prompt.encode("utf-8"), "text/plain; charset=utf-8")
+            # boto3 는 동기 blocking 이다 — event loop 에서 직접 부르면 그 시간만큼 워커의
+            # 다른 코루틴(진행률 tick·이벤트 emit)이 통째로 멈춘다.
+            await asyncio.to_thread(
+                self.r2.put_bytes, key, prompt.encode("utf-8"), "text/plain; charset=utf-8")
         except Exception as e:
             log.warning("genrun prompt upload failed (job=%s run=%s error=%s)",
                         self.job_id, run_id, type(e).__name__)
@@ -243,9 +253,11 @@ class RunLogger:
             log.warning("genrun prompt key update failed (job=%s run=%s error=%s)",
                         self.job_id, run_id, type(e).__name__)
             try:
-                self.r2.delete(key)
-            except Exception:
-                pass
+                await asyncio.to_thread(self.r2.delete, key)
+            except Exception as de:
+                # 삭제까지 실패하면 고아가 남는다 — 사실을 남기되 키 원문은 로그에 없다.
+                log.warning("genrun orphan prompt delete failed (job=%s run=%s error=%s)",
+                            self.job_id, run_id, type(de).__name__)
 
     async def finish(self, run_id: str | None, *, image=None, candidate: str | None = None,
                      usage: dict | None = None, latency_ms: int | None = None,
@@ -271,20 +283,27 @@ class RunLogger:
                         self.job_id, run_id, type(e).__name__)
 
     # ── 산출물 계보 ─────────────────────────────────────────────────────────
-    def output_lineage(self, image, candidate: str | None = None) -> dict:
+    def output_lineage(self, image, candidate: str | None = None,
+                       carrier_run_id: str | None = None) -> dict:
         """최종 채택 바이트 → generation_outputs 에 넣을 계보 (순수 조회).
 
         `generation_run_id` 의 의미는 **"최종 결과의 마지막 provider 조상"**이다 —
         "최종 바이트와 동일한 응답"이 아니다. hybrid composite 같은 deterministic 후처리가
         바이트를 바꿔도 행이 사라지면 안 되기 때문이다. 둘의 구분은 `post_processed` 가 한다:
         False 면 그 run 의 응답 바이트와 최종 바이트가 **정확히 같다**.
+
+        조상은 **추정하지 않는다**. 후처리로 바이트가 달라진 경우, 호출자가 후처리 **직전**에
+        캡처한 `carrier_run_id` 만 쓴다. "마지막으로 성공한 run" 같은 추정은 틀린 조상을
+        기록한다 — 편집이 회귀로 폐기됐거나(G→E→rollback G) 후보 여러 개 중 앞선 것이
+        선택된 경우(G1,G2→G1), 마지막 성공 run 은 **폐기된 쪽**이다. carrier 가 없으면
+        null 로 남겨 사람이 볼 수 있게 한다(잘못된 계보보다 빈 계보가 낫다).
         """
         sha = image_sha256(image)
         exact = self._by_image.get((candidate, sha)) if sha else None
         if exact:
             return {"generation_run_id": exact, "output_sha256": sha, "post_processed": False}
         return {
-            "generation_run_id": self.last_provider_run(candidate),
+            "generation_run_id": carrier_run_id,
             "output_sha256": sha,
             "post_processed": True,
         }

@@ -14,6 +14,7 @@
 import asyncio
 import contextlib
 import hashlib
+import threading
 import types
 
 import cv2
@@ -416,16 +417,63 @@ def test_output_lineage_is_exact_when_no_post_processing(monkeypatch):
 
 
 def test_deterministic_post_processing_keeps_the_output_row(monkeypatch):
+    """hybrid 가 바이트를 바꿔도 행은 남는다 — 단 조상은 **캡처된 carrier** 여야 한다."""
     _Recorder().install(monkeypatch)
-    """hybrid composite 가 최종 바이트를 바꿔도 행은 남고, 마지막 provider 조상을 가리킨다."""
     runlog = gr.RunLogger(pool=_Pool(), r2=None, job_id="j", project_id="p",
                           user_id="u", enabled=True)
     gen = asyncio.run(runlog.begin(kind="mannequin_generate", prompt="g", candidate="A"))
     asyncio.run(runlog.finish(gen, image=b"carrier", candidate="A"))
-    lin = runlog.output_lineage(b"composited-bytes", "A")   # 후처리로 바이트가 달라짐
+    carrier = runlog.run_id_for_image(b"carrier", "A")      # 후처리 직전 캡처
+    lin = runlog.output_lineage(b"composited-bytes", "A", carrier_run_id=carrier)
     assert lin["generation_run_id"] == gen, "조상을 잃으면 output 행이 통째로 사라진다"
     assert lin["post_processed"] is True
     assert lin["output_sha256"] == hashlib.sha256(b"composited-bytes").hexdigest()
+
+
+def test_post_processing_without_a_captured_carrier_leaves_lineage_null(monkeypatch):
+    """carrier 를 못 잡았으면 **추정하지 않는다** — 틀린 계보보다 빈 계보가 낫다."""
+    _Recorder().install(monkeypatch)
+    runlog = gr.RunLogger(pool=_Pool(), r2=None, job_id="j", project_id="p",
+                          user_id="u", enabled=True)
+    gen = asyncio.run(runlog.begin(kind="mannequin_generate", prompt="g", candidate="A"))
+    asyncio.run(runlog.finish(gen, image=b"carrier", candidate="A"))
+    lin = runlog.output_lineage(b"composited", "A")         # carrier 미전달
+    assert lin["generation_run_id"] is None
+    assert lin["post_processed"] is True
+
+
+def test_rollback_then_hybrid_points_at_the_restored_run(monkeypatch):
+    """G → E → (회귀로) G 복구 → Hybrid. 조상은 **G**다. 폐기된 E 가 아니다."""
+    _Recorder().install(monkeypatch)
+    runlog = gr.RunLogger(pool=_Pool(), r2=None, job_id="j", project_id="p",
+                          user_id="u", enabled=True)
+    g = asyncio.run(runlog.begin(kind="mannequin_generate", prompt="g", candidate="A"))
+    asyncio.run(runlog.finish(g, image=b"G", candidate="A"))
+    e = asyncio.run(runlog.begin(kind="mannequin_axis_edit", prompt="e", candidate="A",
+                                 input_image=b"G"))
+    asyncio.run(runlog.finish(e, image=b"E", candidate="A"))
+    # 회귀 판정으로 G 로 되돌아간 상태에서 후처리 직전 캡처
+    carrier = runlog.run_id_for_image(b"G", "A")
+    assert carrier == g
+    lin = runlog.output_lineage(b"H", "A", carrier_run_id=carrier)
+    assert lin["generation_run_id"] == g
+    assert lin["generation_run_id"] != e, "폐기된 편집이 조상으로 기록됐다"
+    assert runlog.last_provider_run("A") == e, "전제: 마지막 성공 run 은 폐기된 E 다"
+
+
+def test_earlier_candidate_selected_then_hybrid_points_at_that_run(monkeypatch):
+    """G1, G2 생성 후 G1 채택 → Hybrid. 조상은 G1 — 마지막 성공 run(G2)이 아니다."""
+    _Recorder().install(monkeypatch)
+    runlog = gr.RunLogger(pool=_Pool(), r2=None, job_id="j", project_id="p",
+                          user_id="u", enabled=True)
+    g1 = asyncio.run(runlog.begin(kind="mannequin_generate", prompt="g", candidate="A"))
+    asyncio.run(runlog.finish(g1, image=b"G1", candidate="A"))
+    g2 = asyncio.run(runlog.begin(kind="mannequin_generate", prompt="g", candidate="A"))
+    asyncio.run(runlog.finish(g2, image=b"G2", candidate="A"))
+    carrier = runlog.run_id_for_image(b"G1", "A")
+    lin = runlog.output_lineage(b"H", "A", carrier_run_id=carrier)
+    assert lin["generation_run_id"] == g1
+    assert runlog.last_provider_run("A") == g2, "전제: 마지막 성공 run 은 미채택 G2 다"
 
 
 def test_worker_records_hybrid_transformation_metadata(monkeypatch):
@@ -793,3 +841,221 @@ class _FakeR2:
 
 async def _noop():
     return None
+
+
+# ── cross-job 부모 연결 (이전 job 의 채택 컷을 편집) ─────────────────────────
+
+def _run_adjust(monkeypatch, parent_lineage):
+    """조정 편집 1회 → (rec, 기록된 run 행들)."""
+    rec = _Recorder()
+    rec.install(monkeypatch)
+    monkeypatch.setattr(mj, "_emit", lambda *a, **k: _noop())
+    parent = InlineImage("image/png", _plain(77))
+
+    class _Gemini:
+        async def generate_content_image(self, model, prompt, images, size,
+                                         temperature=None, aspect_ratio=None):
+            return types.SimpleNamespace(image=_plain(88), mime="image/png",
+                                         latency_ms=1, usage=None)
+
+    settings = make_settings(r2_bucket="bucket", generation_run_log="shadow")
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=settings, pool=_Pool(), r2=_FakeR2(), gemini=_Gemini()))
+    runlog = gr.RunLogger(pool=_Pool(), r2=_FakeR2(), job_id="j2", project_id="p1",
+                          user_id="u1", enabled=True)
+    asyncio.run(mj._run_candidate(
+        app=app, job={"id": "j2", "user_id": "u1", "project_id": "p1", "lease_token": "t"},
+        candidate="A", base_fit="regular", base_gender="women",
+        base_img=InlineImage("image/png", _plain(30)),
+        prod_refs=[ProductReference(slot="Front", asset_id="a1",
+                                    image=InlineImage("image/png", _plain(10)))],
+        match_img=None, product_count=1,
+        template="T ${baseGender} ${clothingType}.\n${imageManifest}",
+        product={"name": "티"}, analysis={}, clothing_type="top",
+        image_manifest="1. base", fit_profile=SNAP_PROFILE,
+        generation_path="edit", parent_cut_img=parent,
+        adjust_directives="MAIN PRODUCT: shorter",
+        parent_lineage=parent_lineage, runlog=runlog))
+    rows = [r for r in rec.runs if r["kind"] == "mannequin_adjust_edit"]
+    assert rows, "조정 편집이 기록되지 않았다"
+    return rows[0], hashlib.sha256(parent.data).hexdigest()
+
+
+def test_adjust_edit_links_to_the_previous_jobs_output_run(monkeypatch):
+    """이전 job 의 컷을 편집하면 그 컷의 run 이 부모다 — 이 job 안엔 그 호출이 없다."""
+    row, parent_sha = _run_adjust(monkeypatch, {
+        "asset_id": "asset-prev", "generation_output_id": "out-prev",
+        "generation_run_id": "run-prev"})
+    assert row["parent_generation_run_id"] == "run-prev"
+    assert row["input_image_sha256"] == parent_sha
+    snap = row["input_assets"][0]
+    assert snap["role"] == "parent_cut"
+    assert snap["assetId"] == "asset-prev"
+    assert snap["outputId"] == "out-prev"
+    assert snap["sha256"] == parent_sha
+
+
+def test_legacy_parent_without_output_row_keeps_asset_and_hash(monkeypatch):
+    """flag-off 시기에 만들어진 컷이 부모면 run 은 null — 그래도 asset·sha 는 남는다."""
+    row, parent_sha = _run_adjust(monkeypatch, {
+        "asset_id": "asset-legacy", "generation_output_id": None,
+        "generation_run_id": None})
+    assert row["parent_generation_run_id"] is None
+    assert row["input_image_sha256"] == parent_sha
+    snap = row["input_assets"][0]
+    assert snap["assetId"] == "asset-legacy" and snap["outputId"] is None
+    assert snap["sha256"] == parent_sha
+
+
+def test_explicit_parent_wins_over_same_job_reverse_lookup(monkeypatch):
+    """명시 부모가 정본. 우연히 같은 바이트가 이 job 안에 있어도 그쪽으로 붙지 않는다."""
+    _Recorder().install(monkeypatch)
+    runlog = gr.RunLogger(pool=_Pool(), r2=None, job_id="j", project_id="p",
+                          user_id="u", enabled=True)
+    local = asyncio.run(runlog.begin(kind="mannequin_generate", prompt="g", candidate="A"))
+    asyncio.run(runlog.finish(local, image=b"same-bytes", candidate="A"))
+    rec = _Recorder()
+    rec.install(monkeypatch)
+    asyncio.run(runlog.begin(kind="mannequin_adjust_edit", prompt="e", candidate="A",
+                             input_image=b"same-bytes",
+                             explicit_parent_generation_run_id="run-from-prev-job"))
+    assert rec.runs[-1]["parent_generation_run_id"] == "run-from-prev-job"
+
+
+# ── R2 는 event loop 밖에서 ──────────────────────────────────────────────────
+
+def test_r2_calls_run_off_the_event_loop(monkeypatch):
+    """boto3 는 동기 blocking — loop 스레드에서 부르면 워커의 다른 코루틴이 통째로 멈춘다."""
+    rec = _Recorder()
+    rec.install(monkeypatch)
+    seen: dict = {}
+
+    class R2:
+        def put_bytes(self, key, data, mime, cache=None):
+            seen["put"] = threading.get_ident()
+
+        def delete(self, key):
+            seen["delete"] = threading.get_ident()
+
+    async def scenario():
+        loop_thread = threading.get_ident()
+        logger = gr.RunLogger(pool=_Pool(), r2=R2(), job_id="j", project_id="p",
+                              user_id="u", enabled=True)
+        await logger.begin(kind="mannequin_generate", prompt="x")
+        return loop_thread
+
+    loop_thread = asyncio.run(scenario())
+    assert seen["put"] != loop_thread, "put_bytes 가 event loop 스레드에서 실행됐다"
+
+
+def test_orphan_delete_also_runs_off_the_event_loop_and_warns(monkeypatch, caplog):
+    """키 갱신 실패 → 삭제도 to_thread. 삭제까지 실패하면 warning 만 남고 진행한다."""
+    seen: dict = {}
+
+    async def key_boom(conn, **kw):
+        raise RuntimeError("db down")
+
+    rec = _Recorder()
+    rec.install(monkeypatch, update_key=key_boom)
+
+    class R2:
+        def put_bytes(self, key, data, mime, cache=None):
+            seen["put"] = threading.get_ident()
+
+        def delete(self, key):
+            seen["delete"] = threading.get_ident()
+            raise RuntimeError("r2 delete down")
+
+    async def scenario():
+        logger = gr.RunLogger(pool=_Pool(), r2=R2(), job_id="j", project_id="p",
+                              user_id="u", enabled=True)
+        return threading.get_ident(), await logger.begin(kind="mannequin_generate",
+                                                         prompt="x")
+
+    with caplog.at_level("WARNING"):
+        loop_thread, run_id = asyncio.run(scenario())
+    assert run_id, "삭제 실패가 기록 자체를 무효화하면 안 된다"
+    assert seen["delete"] != loop_thread
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("orphan prompt delete failed" in m for m in msgs)
+    assert all("users/" not in m for m in msgs), "로그에 R2 키 원문이 있다"
+
+
+# ── outputs 실패 분류 ────────────────────────────────────────────────────────
+
+def test_output_insert_failure_is_classified_as_schema_missing(monkeypatch, caplog):
+    with caplog.at_level("WARNING"):
+        _sink, out = _finalize(monkeypatch, {"generation_lineage": LINEAGE},
+                               fail_outputs=True)
+    msg = next(r.getMessage() for r in caplog.records
+               if "generation_outputs insert failed" in r.getMessage())
+    assert "category=schema_missing" in msg
+    assert "insert into" not in msg, "raw SQL 이 로그에 남았다"
+    assert out["cuts"], "컷 출고가 막혔다"
+
+
+# ── 부모 조회: 계보 컬럼 + migration 미적용 폴백 ─────────────────────────────
+
+class _ParentCursor:
+    """get_mannequin_edit_parent 용 — 두 번째(계보) select 만 선택적으로 실패시킨다."""
+
+    def __init__(self, sink, fail_lineage=False):
+        self.sink = sink
+        self.fail_lineage = fail_lineage
+        self._kind = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def execute(self, sql, params=None):
+        flat = " ".join(sql.split())
+        self.sink.append(flat)
+        if "generation_outputs" in flat:
+            self._kind = "lineage"
+            if self.fail_lineage:
+                from psycopg import errors
+                raise errors.UndefinedTable("relation does not exist")
+        elif "mannequin_cuts" in flat:
+            self._kind = "parent"
+        else:
+            self._kind = "other"
+
+    async def fetchone(self):
+        if self._kind == "parent":
+            return {"id": "A-3", "mannequin_cut_id": "cut-1", "asset_id": "asset-1",
+                    "r2_key": "k", "mime_type": "image/png", "generation_metadata": {}}
+        if self._kind == "lineage":
+            return {"generation_output_id": "out-1", "generation_run_id": "run-1"}
+        return None
+
+
+class _ParentConn:
+    def __init__(self, sink, fail_lineage=False):
+        self.sink = sink
+        self.fail_lineage = fail_lineage
+
+    def cursor(self):
+        return _ParentCursor(self.sink, self.fail_lineage)
+
+
+def test_edit_parent_returns_output_lineage():
+    sink: list[str] = []
+    out = asyncio.run(repo.get_mannequin_edit_parent(_ParentConn(sink), "u1", "p1"))
+    assert out["mannequin_cut_id"] == "cut-1" and out["asset_id"] == "asset-1"
+    assert out["generation_output_id"] == "out-1"
+    assert out["generation_run_id"] == "run-1"
+    assert out["r2_key"] == "k" and out["mime_type"] == "image/png"
+
+
+def test_edit_parent_survives_missing_generation_tables():
+    """migration 미적용 환경에서 계보 조회가 실패해도 **편집 자체는 막히면 안 된다**."""
+    sink: list[str] = []
+    out = asyncio.run(repo.get_mannequin_edit_parent(
+        _ParentConn(sink, fail_lineage=True), "u1", "p1"))
+    assert out is not None and out["r2_key"] == "k", "부모 컷을 못 받으면 편집이 죽는다"
+    assert out["generation_run_id"] is None and out["generation_output_id"] is None
+    assert any(s.startswith("rollback to savepoint edit_parent_lineage") for s in sink)
+    assert any(s.startswith("release savepoint edit_parent_lineage") for s in sink)

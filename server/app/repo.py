@@ -438,6 +438,7 @@ async def get_mannequin_edit_parent(
         await cur.execute(
             """
             select mc.candidate || '-' || mc.version::text as id,
+                   mc.id as mannequin_cut_id, mc.asset_id,
                    a.r2_key, a.mime_type, a.metadata as generation_metadata
             from mannequin_cuts mc
             join projects pr on pr.id = mc.project_id
@@ -450,7 +451,33 @@ async def get_mannequin_edit_parent(
             """,
             (project_id, user_id),
         )
-        return await cur.fetchone()
+        parent = await cur.fetchone()
+        if parent is None:
+            return None
+        # 계보 컬럼은 **별도 statement + savepoint** 로 붙인다. 한 쿼리에 join 하면
+        # migration 미적용 환경에서 이 select 가 통째로 실패해 **조정 편집 자체가 막힌다**
+        # (호출자는 예외를 부모 없음으로 해석한다). 계보는 관측이고 편집은 기능이다.
+        await cur.execute("savepoint edit_parent_lineage")
+        try:
+            await cur.execute(
+                """
+                select go.id as generation_output_id, go.generation_run_id
+                from mannequin_cuts mc
+                join generation_outputs go on go.mannequin_cut_id = mc.id
+                where mc.project_id = %s
+                  and mc.candidate || '-' || mc.version::text = %s
+                order by go.created_at desc
+                limit 1
+                """,
+                (project_id, parent["id"]),
+            )
+            lineage = await cur.fetchone()
+        except errors.DatabaseError:
+            await cur.execute("rollback to savepoint edit_parent_lineage")
+            lineage = None
+        await cur.execute("release savepoint edit_parent_lineage")
+        return {**parent, **(lineage or {"generation_output_id": None,
+                                         "generation_run_id": None})}
 
 
 async def list_series_reference_cuts(
@@ -1137,10 +1164,19 @@ async def finalize_mannequin_success(
                     )
                 except errors.DatabaseError as e:
                     await cur.execute("rollback to savepoint genout_insert")
+                    # fail-open 은 유지하되 **왜** 실패했는지는 분류해 남긴다. schema_missing
+                    # 은 배포 순서 문제(migration 미적용)고, integrity 는 코드가 잘못된
+                    # 참조를 만든 것 — 대응이 완전히 다르다. raw SQL·메시지는 남기지 않는다.
+                    if isinstance(e, errors.UndefinedTable | errors.UndefinedColumn):
+                        category = "schema_missing"
+                    elif isinstance(e, errors.IntegrityError):
+                        category = "integrity"
+                    else:
+                        category = "database"
                     log.warning(
                         "generation_outputs insert failed — 컷은 정상 출고 "
-                        "(job=%s project=%s run=%s cut=%s error=%s)",
-                        job_id, project_id, lineage.get("generation_run_id"),
+                        "(category=%s job=%s project=%s run=%s cut=%s error=%s)",
+                        category, job_id, project_id, lineage.get("generation_run_id"),
                         cut_row["id"], type(e).__name__)
                 # rollback 후에도 savepoint 는 남아 있다 — 후보가 여러 개면 같은 이름이
                 # 겹쳐 쌓이므로 성공/실패 어느 쪽이든 반드시 release 한다.

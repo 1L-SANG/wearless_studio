@@ -1196,7 +1196,7 @@ async def _apply_edits(
 
 
 async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, res, qc_scores,
-                    runlog=None):
+                    runlog=None, carrier_run_id=None):
     """채택본을 R2 에 올리고 finalize 용 dict 를 만든다. 출고 지점은 여기 하나뿐이다."""
     if qc_scores is not None:
         qc_scores["outcome"] = score_outcome(s, qc_scores)
@@ -1224,15 +1224,16 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
         # 때문. 후처리 없이 provider 응답 그대로면 post_processed=False 로 "그 응답과
         # 동일한 바이트"임이 고정된다. finalize 가 같은 tx 에서 generation_outputs 로 쓴다.
         # 봉투(MannequinCut §3.3)에는 나가지 않는다 — finalize 가 키를 명시 나열해 만든다.
-        "generation_lineage": _output_lineage(runlog, res, candidate, qc_scores),
+        "generation_lineage": _output_lineage(runlog, res, candidate, qc_scores,
+                                              carrier_run_id),
     }
 
 
-def _output_lineage(runlog, res, candidate, qc_scores) -> dict | None:
+def _output_lineage(runlog, res, candidate, qc_scores, carrier_run_id=None) -> dict | None:
     """채택본 → generation_outputs 행 재료. 기록 off/미기록이면 None(행 없음)."""
     if runlog is None:
         return None
-    lineage = runlog.output_lineage(res.image, candidate)
+    lineage = runlog.output_lineage(res.image, candidate, carrier_run_id=carrier_run_id)
     if lineage.get("generation_run_id") is None:
         return None  # provider 조상 자체가 기록되지 않았다(플래그 off·기록 실패)
     hc = (qc_scores or {}).get("hybridComposite") if isinstance(qc_scores, dict) else None
@@ -1292,7 +1293,8 @@ async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_refs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
     adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
-    generation_path="fresh", parent_cut_img=None, adjust_directives="", runlog=None,
+    generation_path="fresh", parent_cut_img=None, adjust_directives="",
+    parent_lineage=None, runlog=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None.
 
@@ -1315,7 +1317,9 @@ async def _run_candidate(
         edit_refs = order_by_role(prod_refs)
         # 스냅샷과 images 는 **같은 리스트에서** 파생한다 — 두 벌로 두면 프롬프트의
         # "image 1 = 현재 컷" 계약과 기록이 조용히 어긋난다.
-        input_entries = [("parent_cut", parent_cut_img, None, None)]
+        pl = parent_lineage or {}
+        input_entries = [("parent_cut", parent_cut_img, pl.get("asset_id"), None,
+                          pl.get("generation_output_id"))]
         input_entries += [("product_reference", r.image, r.asset_id, r.slot)
                           for r in edit_refs]
         if match_img:
@@ -1409,6 +1413,9 @@ async def _run_candidate(
             image_size=image_size, aspect_ratio=s.mannequin_aspect_ratio,
             prompt_version=prompt_version, inputs=input_entries,
             input_image=(parent_cut_img if generation_path == "edit" else None),
+            explicit_parent_generation_run_id=(
+                (parent_lineage or {}).get("generation_run_id")
+                if generation_path == "edit" else None),
             fit_profile=fit_profile, settings=s)
         t0 = time.monotonic()
         try:
@@ -1492,6 +1499,10 @@ async def _run_candidate(
             # deterministic hybrid composite — 모든 generative geometry edit 뒤, 저장 앞.
             # 이 지점 이후 출고까지 image-generation/edit 호출은 0회다.
             hybrid_info = None
+            # 후처리 조상은 **여기서 고정한다**. 이 시점의 res 가 곧 carrier 이고, 그 바이트를
+            # 만든 호출이 유일하게 옳은 조상이다. 나중에 "마지막 성공 run" 으로 추정하면
+            # 회귀로 폐기된 편집이나 선택되지 않은 후보를 조상으로 적게 된다.
+            carrier_run_id = runlog.run_id_for_image(res.image, candidate) if runlog else None
             if reprocess:
                 res, hybrid_info = await _apply_hybrid_composite(
                     pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
@@ -1566,7 +1577,7 @@ async def _run_candidate(
             return await _save_cut(
                 s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
                 candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
-                runlog=runlog)
+                runlog=runlog, carrier_run_id=carrier_run_id)
         # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
         # 정체성 게이트가 선점하면 축 QC/편집은 이 attempt에서 미실행 — 잘못된 옷을 편집하면
         # 그 정체성이 보존되므로 신규 생성(re-roll)이 우선한다(설계 결정 3).
@@ -1613,6 +1624,7 @@ async def _run_candidate(
                 has_fine_pattern=has_fine_pattern, runlog=runlog)
             # 구제 경로도 같은 규율 — geometry edit 뒤에는 반드시 composite 를 거친다.
             # high-risk 패턴이 구제라는 이유로 생성 결과 그대로 나가면 안 된다.
+            carrier_run_id = runlog.run_id_for_image(res.image, candidate) if runlog else None
             res, salvage_hybrid = await _apply_hybrid_composite(
                 pool=pool, s=s, job_id=job_id, candidate=candidate,
                 attempt=s.mannequin_max_attempts, res=res, prod_refs=prod_refs,
@@ -1632,7 +1644,7 @@ async def _run_candidate(
         return await _save_cut(
             s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
             candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
-            runlog=runlog)
+            runlog=runlog, carrier_run_id=carrier_run_id)
     return None  # 구제할 후보조차 없음 → 이 후보 드롭(부분 성공 허용)
 
 
@@ -1739,6 +1751,7 @@ async def run_mannequin_job(app, job: dict) -> None:
 
         # 조정 편집 자격은 전부 best-effort다. 어느 조건이든 빠지면 기존 fresh 경로로 조용히
         # 돌아가며, 부모 조회/R2 로드 실패가 잡 실패로 번지지 않는다.
+        parent_lineage = None
         generation_path = "fresh"
         parent_cut_id = None
         parent_edit_depth = None
@@ -1775,6 +1788,15 @@ async def run_mannequin_job(app, job: dict) -> None:
                         if parent_cut_img is not None:
                             generation_path = "edit"
                             parent_cut_id = parent["id"]
+                            # 이전 job 의 컷을 편집하는 경로다 — 그 컷을 만든 호출은 이 job
+                            # 안에 없으므로 역참조로는 절대 찾을 수 없다. 계보는 여기서
+                            # 명시적으로 넘겨야 이어진다. flag-off 시기에 만들어진 컷이면
+                            # generation_run_id 가 없고, 그때는 null 로 남는다(정상).
+                            parent_lineage = {
+                                "asset_id": parent.get("asset_id"),
+                                "generation_output_id": parent.get("generation_output_id"),
+                                "generation_run_id": parent.get("generation_run_id"),
+                            }
                         else:
                             # 부모 컷을 못 읽으면 편집 자격도 없다 — depth 를 비워 metadata 가
                             # "edit 인 척"하지 않게 한다.
@@ -1858,7 +1880,8 @@ async def run_mannequin_job(app, job: dict) -> None:
                     fit_profile=profile, adjusted_axes=adjusted_axes,
                     fit_profile_source=fit_profile_source, ref_imgs=ref_imgs,
                     generation_path=generation_path, parent_cut_img=parent_cut_img,
-                    adjust_directives=adjust_directives, runlog=runlog)
+                    adjust_directives=adjust_directives, parent_lineage=parent_lineage,
+                    runlog=runlog)
             except _HybridCompositeFailClosed as e:
                 hybrid_fail_closed_meta = {
                     "error": "hybrid_composite_failed_closed",
