@@ -141,11 +141,11 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   }
 
   if (mode === 'extended') {
+    blocks.push(realWearBlock(base, gender, clothingType));
     const horizonSet = sequenceSet || rotationSet;
     blocks.push(...(horizonSet
       ? setMemberBlocks(horizonSet, base, CONTENT_ROLES.FIT)
       : horizonRotationFallback(base)));
-    blocks.push(realWearBlock(base, gender, clothingType));
 
     const additionalColors = list.slice(1, 4);
     for (const color of additionalColors) {
@@ -182,10 +182,10 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
       );
     }
   } else {
+    blocks.push(realWearBlock(base, gender, clothingType));
     blocks.push(...(rotationSet
       ? setMemberBlocks(rotationSet, base, CONTENT_ROLES.FIT)
       : horizonRotationFallback(base)));
-    blocks.push(realWearBlock(base, gender, clothingType));
     blocks.push(
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
     );
