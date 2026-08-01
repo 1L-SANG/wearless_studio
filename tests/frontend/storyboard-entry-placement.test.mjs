@@ -192,26 +192,33 @@ test('multi-color basic and extended seeds follow product and studio repetition 
 test('cut counts include normal ranges and a forced one-slot styling fallback', () => {
   const basic = defaultStoryboard(baseColors, 'basic', context('counts', 'top', 'women'));
   assert.equal(basic.length, 14);
-  // 확장형: 하의는 카테고리별 시퀀스, 상의는 전 의류 회전 세트를 사용한다.
-  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-a', 'bottom', 'women')).length, 20);
-  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-b', 'bottom', 'men')).length, 21);
-  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-c', 'top', 'women')).length, 19);
-
-  const oneStylingSet = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })[0];
-  const originalIncludes = Array.prototype.includes;
-  Array.prototype.includes = function mockedIncludes(value, ...rest) {
-    if (value === 'forced-single') return this === oneStylingSet.setApplicableClothingTypes;
-    return originalIncludes.call(this, value, ...rest);
-  };
-  try {
-    const fallback = defaultStoryboard(baseColors, 'basic', context('fallback', 'forced-single', 'women'));
-    assert.equal(fallback.length, 13);
-    // 스타일링 세트 1개만 — 호리존은 의류 메타 불일치로 낱장 트리오 폴백(그룹 없음).
-    assert.equal(new Set(fallback.filter((block) => block.spaceGroupId)
-      .map((block) => block.spaceGroupId)).size, 1);
-  } finally {
-    Array.prototype.includes = originalIncludes;
+  // 확장형 기대치는 실제 추첨(pickEntrySets)에서 유도 — 카탈로그가 자라도 테스트가 낡지 않게.
+  for (const [pid, clothing, gender] of [
+    ['counts-a', 'bottom', 'women'], ['counts-b', 'bottom', 'men'], ['counts-c', 'top', 'women'],
+  ]) {
+    const picked = pickEntrySets({ gender, clothingType: clothing, projectId: pid, stylingCount: 3 });
+    const stylingCuts = picked.stylingSets.reduce((s, set) => s + (set ? set.members.length : 2), 0);
+    const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
+    assert.equal(
+      defaultStoryboard(baseColors, 'extended', context(pid, clothing, gender)).length,
+      2 + stylingCuts + horizonCuts + 1 + 4,
+      `${gender}/${clothing} extended`,
+    );
   }
+
+  // 미지의 의류(후보 0)에서도 시드는 추첨 결과와 정확히 정합하며 낱장 폴백으로 채운다(fail-closed).
+  const forced = context('fallback', 'forced-single', 'women');
+  const fPicked = pickEntrySets({
+    gender: 'women', clothingType: 'forced-single', projectId: 'fallback', stylingCount: 2,
+  });
+  const fallback = defaultStoryboard(baseColors, 'basic', forced);
+  const fStyling = fPicked.stylingSets.reduce((s, set) => s + (set ? set.members.length : 2), 0);
+  const fHorizon = fPicked.rotationSet?.members.length ?? 3;
+  assert.equal(fallback.length, 2 + fStyling + fHorizon + 1 + 2);
+  assert.equal(
+    new Set(fallback.filter((block) => block.spaceGroupId).map((block) => block.spaceGroupId)).size,
+    fPicked.stylingSets.filter(Boolean).length + (fPicked.rotationSet ? 1 : 0),
+  );
 });
 
 test('every seeded space group keeps the complete catalog member run', () => {
