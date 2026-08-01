@@ -1106,10 +1106,29 @@ async def finalize_mannequin_success(
             qc_scores = c.get("qc_scores")
             await cur.execute(
                 "insert into mannequin_cuts (project_id, candidate, version, asset_id, base_fit, "
-                "qc_scores) values (%s, %s, %s, %s, %s, %s)",
+                "qc_scores) values (%s, %s, %s, %s, %s, %s) returning id",
                 (project_id, c["candidate"], version, c["asset_id"], c["base_fit"],
                  Json(qc_scores) if qc_scores is not None else None),
             )
+            cut_row = await cur.fetchone()
+            # generation_outputs — 채택본 ↔ 그것을 만든 provider 호출 연결. 같은 tx·lease
+            # 펜스 안에서 쓴다(별도 tx 면 lease 를 잃은 워커가 고아 행을 남긴다).
+            # 플래그 off 면 run_id 가 없으므로 아무것도 쓰지 않는다.
+            run_id = c.get("generation_run_id")
+            if run_id and cut_row is not None:
+                # savepoint 없이 실패하면 tx 전체가 abort 되어 **컷 저장이 통째로 날아간다**.
+                # 기록은 부가 기능이므로 실패는 이 지점에서만 되돌린다(migration 미적용 환경).
+                await cur.execute("savepoint genout_insert")
+                try:
+                    await cur.execute(
+                        "insert into generation_outputs (generation_run_id, project_id, "
+                        "mannequin_cut_id, asset_id) values (%s, %s, %s, %s)",
+                        (run_id, project_id, cut_row["id"], c["asset_id"]),
+                    )
+                except errors.DatabaseError:
+                    await cur.execute("rollback to savepoint genout_insert")
+                else:
+                    await cur.execute("release savepoint genout_insert")
             cuts.append({  # MannequinCut shape (계약 §3.3) — /jobs·SSE done에서 그대로 직렬화
                 "id": f"{c['candidate']}-{version}",
                 "src": f"/v1/assets/{c['asset_id']}/file",  # 안정 앱 URL (만료 없음, §3). assetId 인코딩됨
@@ -1139,6 +1158,60 @@ async def finalize_mannequin_success(
             (job_id, Json(envelope)),
         )
     return {"cuts": cuts, "available": available}
+
+
+async def insert_generation_run(
+    conn: AsyncConnection,
+    *,
+    run_id: str,
+    job_id: str,
+    project_id: str,
+    user_id: str,
+    kind: str,
+    candidate: str | None = None,
+    attempt: int | None = None,
+    model: str | None = None,
+    image_size: str | None = None,
+    aspect_ratio: str | None = None,
+    prompt_version: str | None = None,
+    prompt_sha256: str | None = None,
+    prompt_r2_key: str | None = None,
+    input_assets: list | None = None,
+    fit_profile_snapshot: dict | None = None,
+    settings_snapshot: dict | None = None,
+) -> None:
+    """provider 호출 **직전** 기록(status='created'). 프롬프트 전문은 담지 않는다 — R2 키만."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "insert into generation_runs (id, job_id, project_id, user_id, kind, candidate, "
+            "attempt, status, model, image_size, aspect_ratio, prompt_version, prompt_sha256, "
+            "prompt_r2_key, input_assets, fit_profile_snapshot, settings_snapshot) "
+            "values (%s, %s, %s, %s, %s, %s, %s, 'created', %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (run_id, job_id, project_id, user_id, kind, candidate, attempt, model, image_size,
+             aspect_ratio, prompt_version, prompt_sha256, prompt_r2_key,
+             Json(input_assets) if input_assets is not None else None,
+             Json(fit_profile_snapshot) if fit_profile_snapshot is not None else None,
+             Json(settings_snapshot) if settings_snapshot is not None else None),
+        )
+
+
+async def update_generation_run(
+    conn: AsyncConnection,
+    *,
+    run_id: str,
+    status: str,
+    usage: dict | None = None,
+    latency_ms: int | None = None,
+    provider_error: str | None = None,
+) -> None:
+    """응답 후 종결(succeeded|failed). created 상태로 남은 행 = 응답 전에 죽은 호출."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update generation_runs set status = %s, usage = %s, latency_ms = %s, "
+            "provider_error = %s, completed_at = now() where id = %s",
+            (status, Json(usage) if usage is not None else None, latency_ms,
+             provider_error, run_id),
+        )
 
 
 async def finalize_mannequin_failure(

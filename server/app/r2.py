@@ -46,6 +46,12 @@ def ai_key(user_id: str, project_id: str, job_id: str, asset_id: str, ext: str) 
     return f"users/{user_id}/projects/{project_id}/ai/{job_id}/{asset_id}.{ext}"
 
 
+def genrun_prompt_key(user_id: str, project_id: str, job_id: str, run_id: str) -> str:
+    """generation_run 프롬프트 전문의 R2 키. 컷과 같은 소유 경로 아래 두어 프로젝트 삭제 시
+    prefix 단위로 함께 지워진다. DB 에는 이 키와 sha256 만 남는다(전문 미저장)."""
+    return f"users/{user_id}/projects/{project_id}/genruns/{job_id}/{run_id}.txt"
+
+
 def face_key(model_id: str, license_id: str, ext: str) -> str:
     """FaceMarket 얼굴 라이선스 이미지의 비공개 R2 키. 서버에서만 유도(클라 신뢰 금지).
     게이트 라우트만 스트림 → 공개 URL 미노출. license_id(uuid) = 추측 불가."""

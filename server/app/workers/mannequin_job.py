@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from contextlib import suppress
 from io import BytesIO
@@ -57,7 +58,34 @@ from ..agents.prompts import (
 )
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
 from ..services import qc
+from ..services.generation_run import RunLogger
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
+
+
+async def _runlog_begin(runlog, **kw) -> str | None:
+    """generation run 기록 시작 — 기록기가 없거나(플래그 off) 실패해도 생성은 계속된다."""
+    if runlog is None:
+        return None
+    try:
+        return await runlog.begin(**kw)
+    except Exception as e:  # 관측기는 생성 경로를 죽이지 않는다 (emit 과 같은 규율)
+        log.warning("generation run begin failed: %r", e)
+        return None
+
+
+async def _runlog_finish(runlog, run_id, *, started=None, result=None, error=None) -> None:
+    if runlog is None or run_id is None:
+        return
+    try:
+        await runlog.finish(
+            run_id,
+            image=getattr(result, "image", None),
+            usage=getattr(result, "usage", None),
+            latency_ms=int((time.monotonic() - started) * 1000) if started else None,
+            error=error)
+    except Exception as e:
+        log.warning("generation run finish failed: %r", e)
+
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 
@@ -322,6 +350,7 @@ def tier_for_job(s, job: dict | None, *, has_fine_pattern: bool = False) -> str:
 async def _apply_axis_qc(
     *, pool, gemini, s, job_id, candidate, attempt, model, res,
     prod_imgs, match_img, fit_profile, profile_hash, calls_spent, image_size=None,
+    runlog=None,
 ):
     """생성 채택본에 축 QC 판정 + (enforce 시) 편집 교정 1회. → (선택 결과, 편집콜 소비 여부).
 
@@ -393,15 +422,23 @@ async def _apply_axis_qc(
         await _emit_retry("budget_exhausted", failed=failed, edit_hash=edit_hash)
         return res, False
     edit_attempt = attempt + 1
+    run_id = await _runlog_begin(
+        runlog, kind="mannequin_axis_edit", prompt=instruction, model=model,
+        candidate=candidate, attempt=edit_attempt,
+        image_size=image_size or s.mannequin_image_size,
+        aspect_ratio=s.mannequin_aspect_ratio, fit_profile=fit_profile, settings=s)
+    t0 = time.monotonic()
     try:
         edited = await gemini.generate_content_image(
             model, instruction, [InlineImage(res.mime, res.image)],
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except GeminiError as e:
+        await _runlog_finish(runlog, run_id, started=t0, error=e)
         log.warning("axis_qc edit call failed for job %s: %r", job_id, e)
         await _emit_retry("edit_error", fired=True, failed=failed, edit_hash=edit_hash,
                           edit_attempt=edit_attempt)
         return res, True
+    await _runlog_finish(runlog, run_id, started=t0, result=edited)
     edited_hash = hashlib.sha256(edited.image).hexdigest()
     try:
         v2 = await _judge(edited)
@@ -689,7 +726,7 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
 
 async def _apply_bust_pass(
     *, pool, gemini, s, job_id, candidate, attempt, base_gender, res, calls_spent,
-    clothing_type=None, image_size=None,
+    clothing_type=None, image_size=None, runlog=None,
 ):
     """여성 기본 가슴 볼륨 2패스. → (선택 결과, 편집콜 소비 여부).
 
@@ -714,19 +751,27 @@ async def _apply_bust_pass(
             "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
         return res, False
     before = hashlib.sha256(res.image).hexdigest()[:12]
+    prompt = mannequin_bust.build_prompt(load_bust_prompt_template())
+    bust_model = resolve_model(s, "image_high")  # Flash 는 거부·미반영으로 탈락 — 티어 고정
+    run_id = await _runlog_begin(
+        runlog, kind="mannequin_bust_edit", prompt=prompt, model=bust_model,
+        candidate=candidate, attempt=attempt,
+        image_size=image_size or s.mannequin_image_size,
+        aspect_ratio=s.mannequin_aspect_ratio, settings=s)
+    t0 = time.monotonic()
     try:
-        prompt = mannequin_bust.build_prompt(load_bust_prompt_template())
         out = await gemini.generate_content_image(
-            resolve_model(s, "image_high"),  # Flash 는 거부·미반영으로 탈락 — 티어 고정
-            prompt, [InlineImage(res.mime, res.image)],
+            bust_model, prompt, [InlineImage(res.mime, res.image)],
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except Exception as e:
+        await _runlog_finish(runlog, run_id, started=t0, error=e)
         log.warning("bust pass failed for job %s (원본 유지): %r", job_id, e)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": "bust_pass",
             "outcome": "failed_open", "image_hash": before,
             "error_type": type(e).__name__, "error_message": str(e)[:200]})
         return res, True  # 실패해도 호출은 나갔다 — 예산은 소비됐다
+    await _runlog_finish(runlog, run_id, started=t0, result=out)
     await _emit(pool, job_id, "step", {
         "candidate": candidate, "attempt": attempt, "status": "bust_pass",
         "outcome": "applied", "image_hash": before,
@@ -736,7 +781,7 @@ async def _apply_bust_pass(
 
 async def _apply_untuck_pass(
     *, pool, gemini, s, job_id, candidate, attempt, res, match_img, calls_spent,
-    clothing_type=None, image_size=None,
+    clothing_type=None, image_size=None, runlog=None,
 ):
     """상의 밑단을 하의 밖으로 빼는 untuck 2패스. → (선택 결과, 편집콜 소비 여부).
 
@@ -756,19 +801,27 @@ async def _apply_untuck_pass(
             "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
         return res, False
     before = hashlib.sha256(res.image).hexdigest()[:12]
+    prompt = mannequin_untuck.build_prompt(load_untuck_prompt_template())
+    untuck_model = resolve_model(s, "image_high")
+    run_id = await _runlog_begin(
+        runlog, kind="mannequin_untuck_edit", prompt=prompt, model=untuck_model,
+        candidate=candidate, attempt=attempt,
+        image_size=image_size or s.mannequin_image_size,
+        aspect_ratio=s.mannequin_aspect_ratio, settings=s)
+    t0 = time.monotonic()
     try:
-        prompt = mannequin_untuck.build_prompt(load_untuck_prompt_template())
         out = await gemini.generate_content_image(
-            resolve_model(s, "image_high"),
-            prompt, [InlineImage(res.mime, res.image)],
+            untuck_model, prompt, [InlineImage(res.mime, res.image)],
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except Exception as e:
+        await _runlog_finish(runlog, run_id, started=t0, error=e)
         log.warning("untuck pass failed for job %s (원본 유지): %r", job_id, e)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": "untuck_pass",
             "outcome": "failed_open", "image_hash": before,
             "error_type": type(e).__name__, "error_message": str(e)[:200]})
         return res, True  # 호출은 나갔다 — 예산 소비
+    await _runlog_finish(runlog, run_id, started=t0, result=out)
     await _emit(pool, job_id, "step", {
         "candidate": candidate, "attempt": attempt, "status": "untuck_pass",
         "outcome": "applied", "image_hash": before,
@@ -1060,7 +1113,7 @@ async def _apply_hybrid_composite(
 async def _apply_edits(
     *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_refs, match_img,
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
-    image_size=None, has_fine_pattern=False,
+    image_size=None, has_fine_pattern=False, runlog=None,
 ):
     """채택본에 편집(축 교정 → 가슴 2패스)을 적용하고, 바뀌었으면 재판정·회귀 시 되돌린다.
 
@@ -1083,7 +1136,7 @@ async def _apply_edits(
     res, untuck_spent = await _apply_untuck_pass(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
         res=res, match_img=match_img, calls_spent=calls_spent,
-        clothing_type=clothing_type, image_size=image_size)
+        clothing_type=clothing_type, image_size=image_size, runlog=runlog)
     calls_spent += untuck_spent
     # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
     # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
@@ -1091,14 +1144,14 @@ async def _apply_edits(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
         model=model, res=res, prod_imgs=prod_imgs, match_img=match_img,
         fit_profile=fit_profile, profile_hash=profile_hash, calls_spent=calls_spent,
-        image_size=image_size)
+        image_size=image_size, runlog=runlog)
     calls_spent += axis_spent
     post_axis_res = res
     # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
     res, bust_spent = await _apply_bust_pass(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
         base_gender=base_gender, res=res, calls_spent=calls_spent,
-        clothing_type=clothing_type, image_size=image_size)
+        clothing_type=clothing_type, image_size=image_size, runlog=runlog)
     calls_spent += bust_spent
     # (2026-08-01) 원단 패턴 2패스는 제거됐다 — whole-image generative 재생성으로는 잔줄
     # 패턴 동일성을 증명할 수 없었고(실측 blind visual 3/3 FAIL), 패턴 동일성은 이제
@@ -1135,7 +1188,8 @@ async def _apply_edits(
     return res, p2, calls_spent
 
 
-async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, res, qc_scores):
+async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, res, qc_scores,
+                    runlog=None):
     """채택본을 R2 에 올리고 finalize 용 dict 를 만든다. 출고 지점은 여기 하나뿐이다."""
     if qc_scores is not None:
         qc_scores["outcome"] = score_outcome(s, qc_scores)
@@ -1158,6 +1212,10 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
         "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
         "size": len(res.image), "width": w, "height": h,
         "candidate": candidate, "base_fit": base_fit, "qc_scores": qc_scores,
+        # 채택본을 **실제로 만든** 호출(편집이 회귀로 되돌려졌다면 그 이전 호출). finalize 가
+        # 같은 tx 에서 generation_outputs 로 연결한다. 기록 off/실패면 None → 연결 없음.
+        # 봉투(MannequinCut §3.3)에는 나가지 않는다 — finalize 가 키를 명시 나열해 만든다.
+        "generation_run_id": runlog.run_id_for_image(res.image) if runlog else None,
     }
 
 
@@ -1208,7 +1266,7 @@ async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_refs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
     adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
-    generation_path="fresh", parent_cut_img=None, adjust_directives="",
+    generation_path="fresh", parent_cut_img=None, adjust_directives="", runlog=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None.
 
@@ -1306,15 +1364,25 @@ async def _run_candidate(
             "image_size": image_size,
             "input_source": fit_profile_source})
         calls_spent += 1  # 성공하든 실패하든 호출은 나갔다
+        run_id = await _runlog_begin(
+            runlog, kind=("mannequin_adjust_edit" if generation_path == "edit"
+                          else "mannequin_generate"),
+            prompt=prompt, model=model, candidate=candidate, attempt=attempt,
+            image_size=image_size, aspect_ratio=s.mannequin_aspect_ratio,
+            prompt_version=prompt_version, input_assets=manifest_refs,
+            fit_profile=fit_profile, settings=s)
+        t0 = time.monotonic()
         try:
             res = await gemini.generate_content_image(
                 model, prompt, images, image_size,
                 aspect_ratio=s.mannequin_aspect_ratio)
         except GeminiError as e:
+            await _runlog_finish(runlog, run_id, started=t0, error=e)
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "model": model, "attempt": attempt,
                 "status": "error", "message": str(e)[:200]})
             continue
+        await _runlog_finish(runlog, run_id, started=t0, result=res)
         verdict = qc.evaluate_mannequin_qc(res.image)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "model": model, "attempt": attempt, "status": "generated",
@@ -1381,7 +1449,7 @@ async def _run_candidate(
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
                 base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, enabled=reprocess, image_size=image_size,
-                has_fine_pattern=has_fine_pattern)
+                has_fine_pattern=has_fine_pattern, runlog=runlog)
             # deterministic hybrid composite — 모든 generative geometry edit 뒤, 저장 앞.
             # 이 지점 이후 출고까지 image-generation/edit 호출은 0회다.
             hybrid_info = None
@@ -1458,7 +1526,8 @@ async def _run_candidate(
                     "reason": "budget_exhausted", "outcome": score_outcome(s, qc_scores)})
             return await _save_cut(
                 s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
-                candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores)
+                candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
+                runlog=runlog)
         # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
         # 정체성 게이트가 선점하면 축 QC/편집은 이 attempt에서 미실행 — 잘못된 옷을 편집하면
         # 그 정체성이 보존되므로 신규 생성(re-roll)이 우선한다(설계 결정 3).
@@ -1502,7 +1571,7 @@ async def _run_candidate(
                 prod_refs=prod_refs, match_img=match_img, fit_profile=fit_profile,
                 profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, image_size=image_size,
-                has_fine_pattern=has_fine_pattern)
+                has_fine_pattern=has_fine_pattern, runlog=runlog)
             # 구제 경로도 같은 규율 — geometry edit 뒤에는 반드시 composite 를 거친다.
             # high-risk 패턴이 구제라는 이유로 생성 결과 그대로 나가면 안 된다.
             res, salvage_hybrid = await _apply_hybrid_composite(
@@ -1523,7 +1592,8 @@ async def _run_candidate(
             "reason": "loop_exhausted", "outcome": score_outcome(s, qc_scores)})
         return await _save_cut(
             s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
-            candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores)
+            candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
+            runlog=runlog)
     return None  # 구제할 후보조차 없음 → 이 후보 드롭(부분 성공 허용)
 
 
@@ -1732,6 +1802,12 @@ async def run_mannequin_job(app, job: dict) -> None:
                         min(_GENERATION_PROGRESS_MAX, _reported_generation_progress + 1),
                         estimated=True)
 
+        # provider 호출 기록기 — shadow 전용 관측기. 플래그 off 면 모든 메서드가 no-op 이고,
+        # 기록 실패는 삼켜진다(생성 경로 불변).
+        runlog = RunLogger(
+            pool=pool, r2=app.state.r2, job_id=job_id, project_id=project_id,
+            user_id=user_id, enabled=(s.generation_run_log == "shadow"))
+
         async def _cand(letter, base_fit, profile):
             nonlocal _done, hybrid_fail_closed_meta
             try:
@@ -1743,7 +1819,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                     fit_profile=profile, adjusted_axes=adjusted_axes,
                     fit_profile_source=fit_profile_source, ref_imgs=ref_imgs,
                     generation_path=generation_path, parent_cut_img=parent_cut_img,
-                    adjust_directives=adjust_directives)
+                    adjust_directives=adjust_directives, runlog=runlog)
             except _HybridCompositeFailClosed as e:
                 hybrid_fail_closed_meta = {
                     "error": "hybrid_composite_failed_closed",
