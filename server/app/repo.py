@@ -438,7 +438,7 @@ async def get_mannequin_edit_parent(
         await cur.execute(
             """
             select mc.candidate || '-' || mc.version::text as id,
-                   mc.id as mannequin_cut_id, mc.asset_id,
+                   mc.id::text as mannequin_cut_id, mc.asset_id::text as asset_id,
                    a.r2_key, a.mime_type, a.metadata as generation_metadata
             from mannequin_cuts mc
             join projects pr on pr.id = mc.project_id
@@ -461,7 +461,8 @@ async def get_mannequin_edit_parent(
         try:
             await cur.execute(
                 """
-                select go.id as generation_output_id, go.generation_run_id
+                select go.id::text as generation_output_id,
+                       go.generation_run_id::text as generation_run_id
                 from mannequin_cuts mc
                 join generation_outputs go on go.mannequin_cut_id = mc.id
                 where mc.project_id = %s
@@ -476,8 +477,16 @@ async def get_mannequin_edit_parent(
             await cur.execute("rollback to savepoint edit_parent_lineage")
             lineage = None
         await cur.execute("release savepoint edit_parent_lineage")
-        return {**parent, **(lineage or {"generation_output_id": None,
-                                         "generation_run_id": None})}
+        merged = {**parent, **(lineage or {"generation_output_id": None,
+                                           "generation_run_id": None})}
+        # ::text 캐스트가 정본이지만 반환 계층에서도 방어한다 — uuid.UUID 는 json 직렬화가
+        # 안 되고(스냅샷은 jsonb 로 들어간다), 드라이버·쿼리 변경 한 번이면 다시 새어 든다.
+        for k in ("mannequin_cut_id", "asset_id", "generation_output_id",
+                  "generation_run_id"):
+            v = merged.get(k)
+            if v is not None and not isinstance(v, str):
+                merged[k] = str(v)
+        return merged
 
 
 async def list_series_reference_cuts(

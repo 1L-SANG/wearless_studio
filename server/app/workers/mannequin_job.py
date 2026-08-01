@@ -11,6 +11,7 @@ import json
 import logging
 import time
 import uuid
+from typing import NamedTuple
 from contextlib import suppress
 from io import BytesIO
 
@@ -86,6 +87,21 @@ async def _runlog_finish(runlog, run_id, *, started=None, result=None, error=Non
             error=error)
     except Exception as e:
         log.warning("generation run finish failed: %r", e)
+
+
+class CandidateSnapshot(NamedTuple):
+    """구제 풀에 보관하는 후보 1개. **이미지와 그 계보는 절대 분리하지 않는다.**
+
+    carrier_run_id 를 따로 두면 "이전 attempt 의 이미지 + 현재 attempt 의 carrier" 조합이
+    만들어진다 — 복구된 이미지를 만들지도 않은 호출이 조상으로 기록된다. 한 튜플에 묶어
+    복구가 항상 쌍으로 일어나게 한다.
+    """
+
+    res: object
+    qc_scores: dict | None
+    series: dict | None
+    p2: dict | None
+    carrier_run_id: str | None = None
 
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
@@ -1230,12 +1246,17 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
 
 
 def _output_lineage(runlog, res, candidate, qc_scores, carrier_run_id=None) -> dict | None:
-    """채택본 → generation_outputs 행 재료. 기록 off/미기록이면 None(행 없음)."""
-    if runlog is None:
+    """채택본 → generation_outputs 행 재료. 기록기가 없으면 None(행 없음).
+
+    조상이 null 이라고 행을 버리지 않는다. "계보를 모른다"는 것 자체가 기록할 사실이고,
+    행이 없으면 그 컷은 조사조차 불가능해진다 — 출고된 컷 수와 output 행 수가 어긋나면
+    "기록기가 꺼져 있었나, 계보를 놓쳤나"를 구분할 방법이 사라진다.
+    행을 만들지 않는 경우는 둘뿐이다: 플래그 off, 그리고 성공한 run 이 하나도 기록되지
+    않은 경우(DB 기록 실패) — 그때는 FK 로 이을 대상 자체가 없다.
+    """
+    if runlog is None or not runlog.has_recorded_success(candidate):
         return None
     lineage = runlog.output_lineage(res.image, candidate, carrier_run_id=carrier_run_id)
-    if lineage.get("generation_run_id") is None:
-        return None  # provider 조상 자체가 기록되지 않았다(플래그 off·기록 실패)
     hc = (qc_scores or {}).get("hybridComposite") if isinstance(qc_scores, dict) else None
     if isinstance(hc, dict):
         lineage["transformation"] = {"hybridComposite": {
@@ -1375,8 +1396,8 @@ async def _run_candidate(
     # final_reject 만 쓰고, pre_reject 는 사전 게이트 안에서만 되돌린다.
     # 튜플: (res, merged_scores, series, p2). 두 번째는 **항상 merge_qc_scores 결과** —
     # 저장 shape 이 계약(QcScores)을 벗어나지 않게. 네 번째는 이벤트·correctionPrompt 용.
-    pre_reject: tuple | None = None
-    final_reject: tuple | None = None
+    pre_reject: CandidateSnapshot | None = None
+    final_reject: CandidateSnapshot | None = None
     # 이미지 모델 호출 예산은 한 통이다 — 생성·axis 편집·bust 2패스가 전부 여기서 나간다.
     # 호출 **직전**에 소비하고, 재생성 여부는 남은 잔량으로만 판단한다.
     calls_spent = 0
@@ -1459,6 +1480,7 @@ async def _run_candidate(
         # 한 번 거른다. 최종 출고 판정은 여기가 아니라 아래 final_decision 하나가 내린다.
         pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
         salvaged = False
+        restored_carrier = None   # 구제 복구 시에만 채워진다(복구본의 원래 carrier)
         reprocess = True          # 구제본이 이미 편집·D축을 거쳤으면 False 로 내린다
         salvaged_series = None
         if p2_reject:
@@ -1468,7 +1490,9 @@ async def _run_candidate(
             # mismatches 포함)와 qc_scores 가 섞이면, 구제 시 API 계약에 없는 키가 저장된다.
             pre_scores = merge_qc_scores(p2, None)
             if _is_better_candidate(s, pre_scores, pre_reject[1] if pre_reject else None):
-                pre_reject = (res, pre_scores, None, p2)
+                pre_reject = CandidateSnapshot(
+                    res, pre_scores, None, p2,
+                    runlog.run_id_for_image(res.image, candidate) if runlog else None)
             if not has_budget_for_retry(s, calls_spent=calls_spent):
                 # 재생성 여력이 없으면 여기서 끝이다. attempt 번호가 아니라 **남은 호출**로
                 # 판단해야 한다 — 편집이 예산을 먹은 상태에서 attempt 만 보면 상한을 넘긴다
@@ -1476,13 +1500,18 @@ async def _run_candidate(
                 # 구제 대상은 **두 풀을 통틀어 최선**이어야 한다. 이전 attempt 에서 편집·D축까지
                 # 통과했다가 최종 게이트에서 걸린 후보(final_reject)가 더 좋으면 그걸 쓴다 —
                 # 사전 게이트 후보만 보면 60점 검증본을 두고 20점을 내보낸다(codex 2026-07-31).
-                if final_reject and _is_better_candidate(s, final_reject[1], pre_reject[1]):
+                if final_reject and _is_better_candidate(
+                        s, final_reject.qc_scores, pre_reject.qc_scores):
                     # 이미 편집·재판정·D축을 다 거친 출고 준비본이다. 본 경로를 다시 태우면
                     # bust 가 두 번 적용되고 D축 스냅샷이 덮어써진다(codex 7차 MEDIUM).
-                    res, salvaged_scores, salvaged_series, p2 = final_reject
+                    # 이 경로는 hybrid 를 다시 타지 않으므로(reprocess=False) carrier 를
+                    # 여기서 복구하지 않으면 계보가 통째로 비거나 다른 attempt 것이 붙는다.
+                    (res, salvaged_scores, salvaged_series, p2,
+                     restored_carrier) = final_reject
                     reprocess = False
                 else:
-                    res, salvaged_scores, salvaged_series, p2 = pre_reject
+                    (res, salvaged_scores, salvaged_series, p2,
+                     restored_carrier) = pre_reject
                     # 사전 게이트 후보는 편집·D축을 안 거쳤다 → 아래 본 경로가 그걸 수행한다.
                 p2_reject, salvaged = False, True
                 await _emit(pool, job_id, "step", {
@@ -1502,7 +1531,11 @@ async def _run_candidate(
             # 후처리 조상은 **여기서 고정한다**. 이 시점의 res 가 곧 carrier 이고, 그 바이트를
             # 만든 호출이 유일하게 옳은 조상이다. 나중에 "마지막 성공 run" 으로 추정하면
             # 회귀로 폐기된 편집이나 선택되지 않은 후보를 조상으로 적게 된다.
-            carrier_run_id = runlog.run_id_for_image(res.image, candidate) if runlog else None
+            # reprocess=False 는 이미 hybrid 를 거친 복구본이다 — 그 바이트는 provider 응답이
+            # 아니라 조회해도 None 이고, 옳은 carrier 는 스냅샷과 함께 복구된 값이다.
+            carrier_run_id = (
+                runlog.run_id_for_image(res.image, candidate) if (runlog and reprocess)
+                else restored_carrier)
             if reprocess:
                 res, hybrid_info = await _apply_hybrid_composite(
                     pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
@@ -1558,8 +1591,10 @@ async def _run_candidate(
                     "outcome": score_outcome(s, qc_scores),
                     "seriesConsistency": (series or {}).get("consistency")})
                 # 편집 완료 이미지 + A~D 전체 스냅샷 — 최종 단계 후보 풀에만 담는다.
-                if _is_better_candidate(s, qc_scores, final_reject[1] if final_reject else None):
-                    final_reject = (res, qc_scores, series, p2)
+                if _is_better_candidate(
+                        s, qc_scores, final_reject.qc_scores if final_reject else None):
+                    final_reject = CandidateSnapshot(
+                        res, qc_scores, series, p2, carrier_run_id)
                 feedback = _build_retry_feedback(qc_scores, series, p2)
                 continue
             # 예산 소진인데 최종 판정이 retry 라면 최선본으로 되돌려 구제 출고한다.
@@ -1568,8 +1603,9 @@ async def _run_candidate(
             # deterministic 통과 컷은 구제(salvage) 표기 대상이 아니다 — LLM retry 억제와
             # 같은 이유. 그대로 저장 경로로 떨어진다.
             if final_decision(s, qc_scores) == "retry" and not salvaged and not deterministic_ok:
-                if final_reject and _is_better_candidate(s, final_reject[1], qc_scores):
-                    res, qc_scores, _series, _p2 = final_reject
+                if final_reject and _is_better_candidate(
+                        s, final_reject.qc_scores, qc_scores):
+                    res, qc_scores, _series, _p2, carrier_run_id = final_reject
                 qc_scores = {**(qc_scores or {}), "salvaged": True}
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
@@ -1608,13 +1644,13 @@ async def _run_candidate(
     if final_reject or pre_reject:
         if final_reject:
             # 이미 편집·D축까지 끝난 출고 준비본 — 다시 태우지 않는다.
-            res, qc_scores, series, p2 = final_reject
+            res, qc_scores, series, p2, carrier_run_id = final_reject
             _raise_if_hybrid_failed_closed(
                 (qc_scores or {}).get("hybridComposite") if isinstance(qc_scores, dict) else None)
         else:
             # 사전 게이트 후보는 편집·D축을 안 거쳤다. 그대로 저장하면 검증 안 된 이미지가
             # 나간다(codex 4차 HIGH) — 예산 소진 경로와 **같은 처리**를 태운 뒤 구제한다.
-            res, _scores, series, p2 = pre_reject
+            res, _scores, series, p2, _carrier = pre_reject
             res, p2, calls_spent = await _apply_edits(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
                 attempt=s.mannequin_max_attempts, model=model, res=res, p2=p2,

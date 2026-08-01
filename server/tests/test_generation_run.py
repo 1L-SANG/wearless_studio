@@ -14,8 +14,11 @@
 import asyncio
 import contextlib
 import hashlib
+import inspect
+import json
 import threading
 import types
+import uuid
 
 import cv2
 import numpy as np
@@ -1059,3 +1062,197 @@ def test_edit_parent_survives_missing_generation_tables():
     assert out["generation_run_id"] is None and out["generation_output_id"] is None
     assert any(s.startswith("rollback to savepoint edit_parent_lineage") for s in sink)
     assert any(s.startswith("release savepoint edit_parent_lineage") for s in sink)
+
+
+# ── UUID 직렬화 (드라이버가 uuid.UUID 를 돌려줘도 jsonb 로 나가야 한다) ────────
+
+class _UuidParentCursor(_ParentCursor):
+    async def fetchone(self):
+        row = await super().fetchone()
+        if row is None:
+            return None
+        out = dict(row)
+        for k in ("mannequin_cut_id", "asset_id", "generation_output_id",
+                  "generation_run_id"):
+            if out.get(k):
+                out[k] = uuid.uuid5(uuid.NAMESPACE_DNS, str(out[k]))
+        return out
+
+
+class _UuidParentConn(_ParentConn):
+    def cursor(self):
+        return _UuidParentCursor(self.sink, self.fail_lineage)
+
+
+def test_edit_parent_sql_casts_uuid_columns_to_text():
+    """드라이버 설정이 바뀌어도 새지 않게 SQL 자체가 ::text 로 못박는다."""
+    src = inspect.getsource(repo.get_mannequin_edit_parent)
+    for frag in ("mc.id::text as mannequin_cut_id", "mc.asset_id::text as asset_id",
+                 "go.id::text as generation_output_id",
+                 "go.generation_run_id::text as generation_run_id"):
+        assert frag in src, f"SQL 에 캐스트 누락: {frag}"
+
+
+def test_uuid_objects_from_the_driver_are_normalised_to_str():
+    out = asyncio.run(repo.get_mannequin_edit_parent(_UuidParentConn([]), "u1", "p1"))
+    for k in ("mannequin_cut_id", "asset_id", "generation_output_id",
+              "generation_run_id"):
+        assert isinstance(out[k], str), f"{k} 가 uuid.UUID 로 남았다"
+    json.dumps(out)  # 직렬화 가능해야 한다 — 실패하면 여기서 TypeError
+
+
+def test_uuid_parent_lineage_survives_snapshot_serialisation(monkeypatch):
+    """부모 값이 UUID 로 흘러들어도 input_assets 스냅샷이 jsonb 로 나갈 수 있어야 한다."""
+    parent = asyncio.run(repo.get_mannequin_edit_parent(_UuidParentConn([]), "u1", "p1"))
+    row, parent_sha = _run_adjust(monkeypatch, {
+        "asset_id": parent["asset_id"],
+        "generation_output_id": parent["generation_output_id"],
+        "generation_run_id": parent["generation_run_id"]})
+    json.dumps(row["input_assets"])            # 실패하면 insert 가 죽는다
+    assert row["input_assets"][0]["assetId"] == parent["asset_id"]
+    assert row["parent_generation_run_id"] == parent["generation_run_id"]
+    assert row["input_image_sha256"] == parent_sha
+
+
+# ── carrier 가 후보 스냅샷과 함께 복구된다 (워커 실제 경로) ───────────────────
+
+def _run_candidate_pool(monkeypatch, *, images, series_by_attempt, fail_from=None):
+    """실제 `_run_candidate` 후보 풀 경로 실행 → (rec, 저장된 컷 dict, 이미지 목록)."""
+    rec = _Recorder()
+    rec.install(monkeypatch)
+    monkeypatch.setattr(mj, "_emit", lambda *a, **k: _noop())
+    state = {"n": 0}
+
+    class _Gemini:
+        async def generate_content_image(self, model, prompt, imgs, size,
+                                         temperature=None, aspect_ratio=None):
+            n = state["n"]
+            state["n"] += 1
+            if fail_from is not None and n >= fail_from:
+                raise GeminiError("Gemini 503: unavailable")
+            return types.SimpleNamespace(image=images[min(n, len(images) - 1)],
+                                         mime="image/png", latency_ms=1, usage=None)
+
+    async def fake_series(*, app, pool, s, job_id, project_id, candidate, attempt, res):
+        return series_by_attempt(attempt)
+
+    async def fake_p2(settings, prods, gen_img, scored=True, fit_profile=None):
+        # A~C 는 통과선. 최종 게이트는 D축(series)이 끌어내린다 → pre-gate 아닌 final_reject.
+        return {"product_fidelity": 90, "physical_naturalness": 90, "image_quality": 90,
+                "verdict": "pass"}
+
+    monkeypatch.setattr(mj, "_apply_series_qc", fake_series)
+    monkeypatch.setattr(mj.image_qc, "verdict", fake_p2)
+
+    settings = make_settings(r2_bucket="bucket", generation_run_log="shadow",
+                             image_qc="enforce", mannequin_max_attempts=2,
+                             mannequin_hybrid_composite="off")
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=settings, pool=_Pool(), r2=_FakeR2(), gemini=_Gemini()))
+    runlog = gr.RunLogger(pool=_Pool(), r2=_FakeR2(), job_id="j1", project_id="p1",
+                          user_id="u1", enabled=True)
+    cut = asyncio.run(mj._run_candidate(
+        app=app, job={"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "t"},
+        candidate="A", base_fit="regular", base_gender="women",
+        base_img=InlineImage("image/png", _plain(30)),
+        prod_refs=[ProductReference(slot="Front", asset_id="a1",
+                                    image=InlineImage("image/png", _plain(10)))],
+        match_img=None, product_count=1,
+        template="T ${baseGender} ${clothingType}.\n${imageManifest}",
+        product={"name": "티"}, analysis={}, clothing_type="top",
+        image_manifest="1. base", fit_profile=SNAP_PROFILE, runlog=runlog))
+    return rec, cut
+
+
+def _run_id_for(rec, image_bytes):
+    """그 이미지를 만든 run — 기록된 순서와 attempt 로 특정한다."""
+    gen_rows = [r for r in rec.runs if r["kind"] == "mannequin_generate"]
+    return gen_rows
+
+
+def test_restored_candidate_keeps_its_own_carrier_not_a_later_one(monkeypatch):
+    """시나리오 A: G1 reject 보관 → G2 더 나쁨 → G1 복구. 조상은 G1(≠G2)."""
+    g1, g2 = _plain(101), _plain(102)
+    rec, cut = _run_candidate_pool(
+        monkeypatch, images=[g1, g2],
+        # 1차는 낮지만 2차가 더 낮다 → 최선본은 G1
+        series_by_attempt=lambda a: {"consistency": 55 if a == 1 else 20,
+                                     "inconsistencies": []})
+    assert cut is not None, "구제 출고가 안 됐다"
+    gen_rows = [r for r in rec.runs if r["kind"] == "mannequin_generate"]
+    assert len(gen_rows) == 2, "두 번 생성해야 시나리오가 성립한다"
+    run_g1, run_g2 = gen_rows[0]["run_id"], gen_rows[1]["run_id"]
+    lin = cut["generation_lineage"]
+    assert lin["output_sha256"] == hashlib.sha256(g1).hexdigest(), "복구 이미지가 G1 이 아니다"
+    assert lin["generation_run_id"] == run_g1
+    assert lin["generation_run_id"] != run_g2, "다음 attempt 의 carrier 가 붙었다"
+
+
+def test_loop_exhausted_restores_image_and_carrier_together(monkeypatch):
+    """시나리오 B: G1 보관 → 다음 호출 실패로 루프 소진 → 이미지·carrier 둘 다 G1."""
+    g1 = _plain(111)
+    rec, cut = _run_candidate_pool(
+        monkeypatch, images=[g1], fail_from=1,
+        series_by_attempt=lambda a: {"consistency": 40, "inconsistencies": []})
+    assert cut is not None, "final_reject 를 손에 들고 빈손으로 끝났다"
+    gen_rows = [r for r in rec.runs if r["kind"] == "mannequin_generate"]
+    ok_rows = [r for r in gen_rows
+               if any(u["run_id"] == r["run_id"] and u["status"] == "succeeded"
+                      for u in rec.updates)]
+    assert len(ok_rows) == 1, "성공 호출은 G1 하나여야 한다"
+    lin = cut["generation_lineage"]
+    assert lin["output_sha256"] == hashlib.sha256(g1).hexdigest()
+    assert lin["generation_run_id"] == ok_rows[0]["run_id"]
+
+
+# ── carrier 를 모를 때: 행은 남기고 run 만 null ───────────────────────────────
+
+def test_unknown_carrier_still_produces_an_output_row(monkeypatch):
+    """성공한 run 은 있는데 carrier 를 못 잡은 경우 — 행은 남고 run 만 null 이다."""
+    _Recorder().install(monkeypatch)
+    runlog = gr.RunLogger(pool=_Pool(), r2=None, job_id="j", project_id="p",
+                          user_id="u", enabled=True)
+    run_id = asyncio.run(runlog.begin(kind="mannequin_generate", prompt="g",
+                                      candidate="A"))
+    asyncio.run(runlog.finish(run_id, image=b"carrier", candidate="A"))
+    assert runlog.has_recorded_success("A")
+    res = types.SimpleNamespace(image=b"post-processed", mime="image/png")
+    lin = mj._output_lineage(runlog, res, "A", {"hybridComposite": {"applied": True}})
+    assert lin is not None, "계보를 모른다고 행까지 버리면 조사할 방법이 없다"
+    assert lin["generation_run_id"] is None
+    assert lin["post_processed"] is True
+    assert lin["output_sha256"] == hashlib.sha256(b"post-processed").hexdigest()
+    assert lin["transformation"]["hybridComposite"]["applied"] is True
+
+
+def test_no_output_row_when_nothing_was_ever_recorded(monkeypatch):
+    """DB 기록이 통째로 실패했으면 이을 대상이 없다 — 행을 만들지 않는다."""
+    async def boom(conn, **kw):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(repo, "insert_generation_run", boom)
+    runlog = gr.RunLogger(pool=_Pool(), r2=None, job_id="j", project_id="p",
+                          user_id="u", enabled=True)
+    assert asyncio.run(runlog.begin(kind="mannequin_generate", prompt="g",
+                                    candidate="A")) is None
+    assert not runlog.has_recorded_success("A")
+    res = types.SimpleNamespace(image=b"x", mime="image/png")
+    assert mj._output_lineage(runlog, res, "A", None) is None
+
+
+def test_flag_off_produces_no_output_row():
+    runlog = gr.RunLogger(pool=_Pool(), r2=None, job_id="j", project_id="p",
+                          user_id="u", enabled=False)
+    assert not runlog.has_recorded_success("A")
+    res = types.SimpleNamespace(image=b"x", mime="image/png")
+    assert mj._output_lineage(runlog, res, "A", None) is None
+
+
+def test_null_run_id_output_row_is_written_as_nullable(monkeypatch):
+    """generation_run_id null 이 FK/JSON 문제 없이 그대로 들어간다."""
+    lin = {"generation_run_id": None, "output_sha256": "sha-x", "post_processed": True,
+           "transformation": {"hybridComposite": {"applied": True}}}
+    sink, _out = _finalize(monkeypatch, {"generation_lineage": lin})
+    params = [p for s, p in sink if s.startswith("insert into generation_outputs")][0]
+    assert params[0] is None and params[4] == "sha-x" and params[5] is True
+    json.dumps(params[6].obj if hasattr(params[6], "obj") else lin["transformation"])

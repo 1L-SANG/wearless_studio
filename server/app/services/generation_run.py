@@ -186,6 +186,17 @@ class RunLogger:
     def last_provider_sha(self, candidate: str | None = None) -> str | None:
         return self._last_sha.get(candidate) if self.enabled else None
 
+    def has_recorded_success(self, candidate: str | None = None) -> bool:
+        """이 후보에 **성공한 provider run 이 하나라도 기록됐는가**.
+
+        "계보를 모른다"와 "기록기가 아예 없다"를 구분하는 신호다. 전자는 행을 남겨야 한다
+        (사람이 보고 조사할 수 있게), 후자는 남길 것 자체가 없다 — 플래그 off 이거나 DB
+        기록이 통째로 실패한 상태다.
+        """
+        if not self.enabled:
+            return False
+        return candidate in self._last_run
+
     # ── 기록 ────────────────────────────────────────────────────────────────
     async def begin(self, *, kind: str, prompt: str, model: str | None = None,
                     candidate: str | None = None, attempt: int | None = None,
