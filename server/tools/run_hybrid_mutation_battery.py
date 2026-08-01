@@ -103,10 +103,13 @@ MUTANTS = [
      [("                if abs(s_val - c_val) > 2:", "                if False:"),
       ("                if rel > CONSTRUCTION_RATIO_TOL:", "                if False:")],
      f"{UNITS}", ["blocks_carrier_with_mismatched_construction"]),
-    ("HM12", "합성 실패의 needsReview 플래그 제거(자동통과 승격)", MJ,
-     [('    return {"applied": False, "needsReview": True, "failureReason": reason,',
-       '    return {"applied": False, "needsReview": False, "failureReason": reason,')],
-     f"{INTEG}", ["fails_closed", "needing_review"]),
+    # HM12 v2 — hard summary 의 needsReview 는 fail-closed raise(applied is False 키)
+    # 뒤의 장식 필드라 flip 이 semantically dead(SURVIVED 실측). 살아있는 경로 =
+    # component 부분실패의 soft needsReview 를 지워 auto_pass 승격시키는 변이.
+    ("HM12", "component 부분실패 needsReview 제거(자동통과 승격)", MJ,
+     [('    needs_review = bool(art.components_needing_review)',
+       '    needs_review = False')],
+     f"{INTEG}", ["components_needing_review_finalizes_as_review"]),
     # fix-loop v2 에서 추가된 게이트 — 슬랩 클리핑·커프스 보호도 battery 대상이다.
     ("HM13", "per-pixel 배정을 quad 클리핑으로 회귀(cost 상한 0)", WC,
      [("    MAX_ASSIGN_COST = 0.75", "    MAX_ASSIGN_COST = 0.0")],
