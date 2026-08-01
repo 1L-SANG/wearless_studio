@@ -26,10 +26,13 @@ from .agents import (
 )
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
+from .services import baseline as baseline_service
 from .services import input_qc, matching, retrieval
 from .auth import require_user
 from .db import get_conn
 from .models import (
+    ApprovedBaseline,
+    BaselineApproveRequest,
     Account,
     Asset,
     AssetCompleteRequest,
@@ -1043,6 +1046,83 @@ async def adjust_mannequin(
         status_code=410,
         detail={"code": "deprecated_endpoint",
                 "message": "마네킹 조정은 종료된 기능이에요. 핏 수정 후 재생성을 이용해 주세요."})
+
+
+@router.post(
+    "/projects/{project_id}/mannequins:approve",
+    response_model=ApprovedBaseline,
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins"],
+    summary="마네킹 컷 승인 (Approved Baseline)",
+)
+async def approve_mannequin(
+    request: Request,
+    project_id: str,
+    body: BaselineApproveRequest,
+    user_id: str = Depends(require_user),
+):
+    """선택한 마네킹 컷을 **승인**해 이 프로젝트의 Approved Baseline 으로 만듭니다.
+
+    - **Bearer Token**: 필수
+    - **Body**: `{ cutId }` — 목록에서 쓰는 `"A-3"` 형식 id.
+    - 승인은 **명시적 사용자 행위**입니다. 생성 성공만으로 baseline 이 바뀌지 않고,
+      새 승인이 있을 때만 기존 baseline 이 supersede 됩니다(같은 트랜잭션).
+    - 같은 컷을 다시 승인하면 아무것도 바꾸지 않고 기존 baseline 을 그대로 돌려줍니다
+      (`idempotent: true`).
+    - 검수 필요(`needs_review`) 결과도 승인할 수 있습니다 — 사람이 보고 누른 것이므로
+      감사 기록에 그 사실이 남습니다. 실패 결과는 애초에 저장되지 않습니다(fail-closed).
+    - **에지 케이스**: `404 Not Found` — 프로젝트·컷이 없거나 타 사용자 소유인 경우.
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        cut = await repo.get_mannequin_cut_for_approval(conn, user_id, project_id,
+                                                        body.cut_id)
+        if cut is None:
+            raise _not_found()   # 존재/소유를 구분해 알려주지 않는다
+        snapshots = baseline_service.build_profile_snapshots(cut)
+        invariants = {
+            **baseline_service.build_locked_invariants(cut),
+            "approvalReview": baseline_service.approval_review_state(cut),
+        }
+        try:
+            result = await repo.approve_mannequin_baseline(
+                conn, user_id=user_id, project_id=project_id, cut=cut,
+                locked_invariants=invariants,
+                mannequin_profile=snapshots["mannequin_profile"],
+                framing_profile=snapshots["framing_profile"],
+                background_profile=snapshots["background_profile"],
+                lighting_profile=snapshots["lighting_profile"])
+        except PermissionError:
+            raise _not_found()
+        await conn.commit()
+    b = result["baseline"]
+    return {
+        **b,
+        "cut_id": body.cut_id,
+        "superseded_baseline_id": result["superseded_id"],
+        "idempotent": result["idempotent"],
+    }
+
+
+@router.get(
+    "/projects/{project_id}/mannequins/baseline",
+    response_model=ApprovedBaseline | None,
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins"],
+    summary="현재 Approved Baseline 조회",
+)
+async def get_baseline(
+    request: Request, project_id: str, user_id: str = Depends(require_user)
+):
+    """현재 active baseline. 승인한 적이 없으면 `null` 입니다."""
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        row = await repo.get_active_baseline(conn, project_id)
+    if row is None:
+        return None
+    return {**row, "cut_id": row["cut_client_id"], "project_id": project_id}
 
 
 @router.post(

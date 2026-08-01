@@ -462,12 +462,15 @@ async def get_mannequin_edit_parent(
             await cur.execute(
                 """
                 select go.id::text as generation_output_id,
-                       go.generation_run_id::text as generation_run_id
+                       go.generation_run_id::text as generation_run_id,
+                       b.id::text as baseline_id
                 from mannequin_cuts mc
-                join generation_outputs go on go.mannequin_cut_id = mc.id
+                left join generation_outputs go on go.mannequin_cut_id = mc.id
+                left join approved_baselines b
+                  on b.baseline_cut_id = mc.id and b.superseded_at is null
                 where mc.project_id = %s
                   and mc.candidate || '-' || mc.version::text = %s
-                order by go.created_at desc
+                order by go.created_at desc nulls last
                 limit 1
                 """,
                 (project_id, parent["id"]),
@@ -478,15 +481,189 @@ async def get_mannequin_edit_parent(
             lineage = None
         await cur.execute("release savepoint edit_parent_lineage")
         merged = {**parent, **(lineage or {"generation_output_id": None,
-                                           "generation_run_id": None})}
+                                           "generation_run_id": None,
+                                           "baseline_id": None})}
         # ::text 캐스트가 정본이지만 반환 계층에서도 방어한다 — uuid.UUID 는 json 직렬화가
         # 안 되고(스냅샷은 jsonb 로 들어간다), 드라이버·쿼리 변경 한 번이면 다시 새어 든다.
         for k in ("mannequin_cut_id", "asset_id", "generation_output_id",
-                  "generation_run_id"):
+                  "generation_run_id", "baseline_id"):
             v = merged.get(k)
             if v is not None and not isinstance(v, str):
                 merged[k] = str(v)
         return merged
+
+
+async def get_mannequin_cut_for_approval(
+    conn: AsyncConnection, user_id: str, project_id: str, cut_id: str
+) -> dict | None:
+    """승인 대상 컷 1개 — **소유권까지 SQL 로 검증**한다.
+
+    cut_id 는 클라이언트가 쓰는 "A-3"(candidate-version) 형식이다(selected_mannequin_id 와
+    같은 표기). 다른 프로젝트·다른 사용자의 컷은 조인 조건에서 걸러지므로 None 이 되고,
+    라우트는 그것을 404 로 바꾼다 — 존재 여부를 노출하지 않는다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select mc.id::text as mannequin_cut_id,
+                   mc.candidate || '-' || mc.version::text as id,
+                   mc.asset_id::text as asset_id, mc.qc_scores,
+                   pd.id::text as product_id, pd.clothing_type,
+                   a.metadata as generation_metadata
+            from mannequin_cuts mc
+            join projects pr on pr.id = mc.project_id
+            join assets a on a.id = mc.asset_id and a.deleted_at is null
+            left join products pd on pd.project_id = mc.project_id
+            where mc.project_id = %s and pr.user_id = %s and pr.deleted_at is null
+              and mc.candidate || '-' || mc.version::text = %s
+            """,
+            (project_id, user_id, cut_id),
+        )
+        return await cur.fetchone()
+
+
+async def get_active_baseline(
+    conn: AsyncConnection, project_id: str
+) -> dict | None:
+    """현재 active baseline (superseded_at is null). 없으면 None."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select b.id::text as id, b.baseline_cut_id::text as baseline_cut_id,
+                   b.output_id::text as output_id,
+                   b.generation_run_id::text as generation_run_id,
+                   b.locked_invariants, b.approved_at,
+                   mc.candidate || '-' || mc.version::text as cut_client_id
+            from approved_baselines b
+            join mannequin_cuts mc on mc.id = b.baseline_cut_id
+            where b.project_id = %s and b.superseded_at is null
+            """,
+            (project_id,),
+        )
+        return await cur.fetchone()
+
+
+async def approve_mannequin_baseline(
+    conn: AsyncConnection,
+    *,
+    user_id: str,
+    project_id: str,
+    cut: dict,
+    locked_invariants: dict,
+    mannequin_profile: dict | None = None,
+    framing_profile: dict | None = None,
+    background_profile: dict | None = None,
+    lighting_profile: dict | None = None,
+) -> dict:
+    """컷을 승인해 active baseline 으로 만든다 — 한 tx, 하나만 active.
+
+    → {"baseline": {...}, "superseded_id": str|None, "idempotent": bool}
+
+    같은 컷을 다시 승인하면 **아무것도 바꾸지 않고** 기존 행을 돌려준다(멱등). 그렇지 않으면
+    승인이 눌릴 때마다 supersede 사슬이 늘어나고 approved_at 이 흔들린다.
+
+    동시 승인은 `for update` 로 직렬화하고, 그래도 뚫리면 partial unique index
+    (project 당 active 1개)가 DB 레벨에서 막는다 — 애플리케이션 락만으로는 워커·다중
+    인스턴스에서 성립하지 않는다.
+    """
+    async with conn.cursor() as cur:
+        # 프로젝트 행을 먼저 잠근다 — 같은 프로젝트의 동시 승인이 여기서 줄을 선다.
+        await cur.execute(
+            "select id from projects where id = %s and user_id = %s and deleted_at is null "
+            "for update",
+            (project_id, user_id),
+        )
+        if await cur.fetchone() is None:
+            raise PermissionError("project_not_owned")
+
+        await cur.execute(
+            "select id::text as id, baseline_cut_id::text as baseline_cut_id "
+            "from approved_baselines where project_id = %s and superseded_at is null",
+            (project_id,),
+        )
+        active = await cur.fetchone()
+        if active and active["baseline_cut_id"] == cut["mannequin_cut_id"]:
+            await cur.execute(
+                "insert into baseline_review_events (project_id, baseline_id, "
+                "mannequin_cut_id, output_id, actor_id, action, detail) "
+                "values (%s, %s, %s, null, %s, 'baseline_reapproved', %s)",
+                (project_id, active["id"], cut["mannequin_cut_id"], user_id,
+                 Json({"cutId": cut["id"]})),
+            )
+            await cur.execute(
+                "select id::text as id, project_id::text as project_id, "
+                "baseline_cut_id::text as baseline_cut_id, output_id::text as output_id, "
+                "generation_run_id::text as generation_run_id, locked_invariants, "
+                "approved_at, superseded_at from approved_baselines where id = %s",
+                (active["id"],),
+            )
+            return {"baseline": await cur.fetchone(), "superseded_id": None,
+                    "idempotent": True}
+
+        # 승인 대상 컷의 output/run — Phase 1 기록이 꺼져 있던 시기면 없다(정상, null).
+        await cur.execute(
+            "select id::text as id, generation_run_id::text as generation_run_id "
+            "from generation_outputs where mannequin_cut_id = %s "
+            "order by created_at desc limit 1",
+            (cut["mannequin_cut_id"],),
+        )
+        out = await cur.fetchone() or {}
+
+        superseded_id = None
+        if active:
+            await cur.execute(
+                "update approved_baselines set superseded_at = now() where id = %s",
+                (active["id"],),
+            )
+            superseded_id = active["id"]
+            await cur.execute(
+                "insert into baseline_review_events (project_id, baseline_id, "
+                "mannequin_cut_id, output_id, actor_id, action, detail) "
+                "values (%s, %s, null, null, %s, 'baseline_superseded', %s)",
+                (project_id, active["id"], user_id,
+                 Json({"replacedByCutId": cut["id"]})),
+            )
+
+        await cur.execute(
+            """
+            insert into approved_baselines
+              (project_id, product_id, baseline_cut_id, output_id, generation_run_id,
+               mannequin_profile_snapshot, framing_profile_snapshot,
+               background_profile_snapshot, lighting_profile_snapshot,
+               locked_invariants, qc_scores_snapshot, approved_by)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            returning id::text as id, project_id::text as project_id,
+                      baseline_cut_id::text as baseline_cut_id,
+                      output_id::text as output_id,
+                      generation_run_id::text as generation_run_id,
+                      locked_invariants, approved_at, superseded_at
+            """,
+            (project_id, cut.get("product_id"), cut["mannequin_cut_id"],
+             out.get("id"), out.get("generation_run_id"),
+             Json(mannequin_profile) if mannequin_profile is not None else None,
+             Json(framing_profile) if framing_profile is not None else None,
+             Json(background_profile) if background_profile is not None else None,
+             Json(lighting_profile) if lighting_profile is not None else None,
+             Json(locked_invariants),
+             Json(cut.get("qc_scores")) if cut.get("qc_scores") is not None else None,
+             user_id),
+        )
+        baseline = await cur.fetchone()
+        await cur.execute(
+            "insert into baseline_review_events (project_id, baseline_id, "
+            "mannequin_cut_id, output_id, actor_id, action, detail) "
+            "values (%s, %s, %s, %s, %s, 'baseline_approved', %s)",
+            (project_id, baseline["id"], cut["mannequin_cut_id"], out.get("id"),
+             user_id, Json({"cutId": cut["id"], "supersededId": superseded_id})),
+        )
+        # 승인은 선택을 **포함한다** — 기존 UI 는 selected_mannequin_id 만 읽으므로
+        # 여기서 함께 맞춰야 승인한 컷이 화면의 정본과 갈라지지 않는다. 역은 성립하지
+        # 않는다(선택은 승인이 아니다 — PATCH 는 baseline 을 만들지 않는다).
+        await cur.execute(
+            "update projects set selected_mannequin_id = %s where id = %s and user_id = %s",
+            (cut["id"], project_id, user_id),
+        )
+    return {"baseline": baseline, "superseded_id": superseded_id, "idempotent": False}
 
 
 async def list_series_reference_cuts(
@@ -1164,12 +1341,14 @@ async def finalize_mannequin_success(
                     await cur.execute(
                         "insert into generation_outputs (generation_run_id, project_id, "
                         "mannequin_cut_id, asset_id, output_sha256, post_processed, "
-                        "transformation) values (%s, %s, %s, %s, %s, %s, %s)",
+                        "transformation, parent_output_id, baseline_id) "
+                        "values (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                         (lineage.get("generation_run_id"), project_id, cut_row["id"],
                          c["asset_id"], lineage.get("output_sha256"),
                          bool(lineage.get("post_processed")),
                          Json(lineage.get("transformation"))
-                         if lineage.get("transformation") is not None else None),
+                         if lineage.get("transformation") is not None else None,
+                         lineage.get("parent_output_id"), lineage.get("baseline_id")),
                     )
                 except errors.DatabaseError as e:
                     await cur.execute("rollback to savepoint genout_insert")

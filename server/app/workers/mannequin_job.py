@@ -1212,7 +1212,7 @@ async def _apply_edits(
 
 
 async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, res, qc_scores,
-                    runlog=None, carrier_run_id=None):
+                    runlog=None, carrier_run_id=None, parent_lineage=None):
     """채택본을 R2 에 올리고 finalize 용 dict 를 만든다. 출고 지점은 여기 하나뿐이다."""
     if qc_scores is not None:
         qc_scores["outcome"] = score_outcome(s, qc_scores)
@@ -1241,11 +1241,12 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
         # 동일한 바이트"임이 고정된다. finalize 가 같은 tx 에서 generation_outputs 로 쓴다.
         # 봉투(MannequinCut §3.3)에는 나가지 않는다 — finalize 가 키를 명시 나열해 만든다.
         "generation_lineage": _output_lineage(runlog, res, candidate, qc_scores,
-                                              carrier_run_id),
+                                              carrier_run_id, parent_lineage),
     }
 
 
-def _output_lineage(runlog, res, candidate, qc_scores, carrier_run_id=None) -> dict | None:
+def _output_lineage(runlog, res, candidate, qc_scores, carrier_run_id=None,
+                    parent_lineage=None) -> dict | None:
     """채택본 → generation_outputs 행 재료. 기록기가 없으면 None(행 없음).
 
     조상이 null 이라고 행을 버리지 않는다. "계보를 모른다"는 것 자체가 기록할 사실이고,
@@ -1257,6 +1258,12 @@ def _output_lineage(runlog, res, candidate, qc_scores, carrier_run_id=None) -> d
     if runlog is None or not runlog.has_recorded_success(candidate):
         return None
     lineage = runlog.output_lineage(res.image, candidate, carrier_run_id=carrier_run_id)
+    # 편집 입력으로 쓴 이전 결과(대개 승인 baseline 의 output). generation_run_id 와는 다른
+    # 축이다 — 전자는 "이 결과를 만든 호출", 이건 "무엇을 편집했는가". 이전 job 의 것이라
+    # 워커가 명시로 받아야만 이어진다. legacy 컷이면 output 이 없어 null 이다(추정 금지).
+    pl = parent_lineage or {}
+    lineage["parent_output_id"] = pl.get("generation_output_id")
+    lineage["baseline_id"] = pl.get("baseline_id")
     hc = (qc_scores or {}).get("hybridComposite") if isinstance(qc_scores, dict) else None
     if isinstance(hc, dict):
         lineage["transformation"] = {"hybridComposite": {
@@ -1613,7 +1620,8 @@ async def _run_candidate(
             return await _save_cut(
                 s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
                 candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
-                runlog=runlog, carrier_run_id=carrier_run_id)
+                runlog=runlog, carrier_run_id=carrier_run_id,
+                parent_lineage=parent_lineage)
         # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
         # 정체성 게이트가 선점하면 축 QC/편집은 이 attempt에서 미실행 — 잘못된 옷을 편집하면
         # 그 정체성이 보존되므로 신규 생성(re-roll)이 우선한다(설계 결정 3).
@@ -1680,7 +1688,8 @@ async def _run_candidate(
         return await _save_cut(
             s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
             candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
-            runlog=runlog, carrier_run_id=carrier_run_id)
+            runlog=runlog, carrier_run_id=carrier_run_id,
+            parent_lineage=parent_lineage)
     return None  # 구제할 후보조차 없음 → 이 후보 드롭(부분 성공 허용)
 
 
@@ -1832,6 +1841,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                                 "asset_id": parent.get("asset_id"),
                                 "generation_output_id": parent.get("generation_output_id"),
                                 "generation_run_id": parent.get("generation_run_id"),
+                                "baseline_id": parent.get("baseline_id"),
                             }
                         else:
                             # 부모 컷을 못 읽으면 편집 자격도 없다 — depth 를 비워 metadata 가

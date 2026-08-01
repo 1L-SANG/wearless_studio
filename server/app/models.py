@@ -40,6 +40,26 @@ class Project(CamelModel):
     created_at: datetime
     updated_at: datetime
 
+class ApprovedBaseline(CamelModel):
+    """승인된 마네킹 결과. 생성 성공만으로는 절대 만들어지지 않는다 — 승인 API 만이 만든다."""
+
+    id: str
+    project_id: str
+    baseline_cut_id: str          # mannequin_cuts.id (uuid)
+    cut_id: str                   # 클라 표기 "A-3" — selected_mannequin_id 와 같은 형식
+    output_id: str | None         # Phase 1 기록 이전 컷이면 null
+    generation_run_id: str | None
+    locked_invariants: dict
+    approved_at: datetime
+    superseded_at: datetime | None = None
+    superseded_baseline_id: str | None = None
+    idempotent: bool = False      # 같은 컷 재승인 — 아무것도 바꾸지 않았다
+
+
+class BaselineApproveRequest(CamelModel):
+    cut_id: str
+
+
 class ProjectSummary(CamelModel):
     id: str
     title: str
