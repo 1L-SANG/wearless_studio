@@ -6,7 +6,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Button, Icon, IconButton, Modal } from '@/components/ui.jsx';
 import { thumbUrl } from '@/lib/imageCdn.js';
-import { createContinuationSlot } from '@/features/editor/reviewGate.js';
+import { createContinuationSlot, fallbackRequestUse } from '@/features/editor/reviewGate.js';
 import { CARE_COPY_LIBRARY, CARE_LABEL_SENTENCE, FEATURE_ITEMS_MAX, FEATURE_ITEMS_MIN, INFO_PRESET_TYPES, careFamilyFor } from '@/features/editor/presets/infoPresets.js';
 
 const inp = { width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid #e5e5e3', borderRadius: 8, fontSize: 14, background: '#fff', color: '#0e0d14' };
@@ -334,7 +334,8 @@ export function InfoBlockModal({ type, initialInfo, ctx, wardrobe, colorOpts, ed
   const slot = useRef(null);
   if (!slot.current) slot.current = createContinuationSlot();
   useEffect(() => () => slot.current.dispose(), []);
-  const requestUse = onRequestUse || ((im, use) => use(im));
+  // 게이트가 안 넘어오면 검수 대상은 **막는다**(조용히 우회하지 않는다).
+  const requestUse = onRequestUse || ((im, use) => fallbackRequestUse(im, use, 'InfoBlockModal'));
   const photoList = type === 'feature_icons' ? info.items : type === 'model_info' ? info.models : null;
   const setPhotoAt = (index, src) => setInfo((f) => (type === 'feature_icons'
     ? { ...f, items: f.items.map((x, j) => (j === index ? { ...x, src } : x)) }

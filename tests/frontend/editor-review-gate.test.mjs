@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 
-import { createContinuationSlot, createReviewGate, needsReviewBeforeUse }
+import { createContinuationSlot, createReviewGate, fallbackRequestUse, needsReviewBeforeUse }
   from '../../src/features/editor/reviewGate.js';
 
 const PLAIN = { id: 'w1', src: '/a.png' };                                  // 업로드·mode:new
@@ -411,7 +411,8 @@ test('sink: the photo slot is written only from a gated continuation or a clear'
 
 test('sink: the info modal receives the gate from the editor', () => {
   assert.match(editor, /onRequestUse=\{requestWardrobeUse\}/);
-  assert.match(infoModal, /const requestUse = onRequestUse \|\| \(\(im, use\) => use\(im\)\)/);
+  // 게이트가 안 넘어오면 통과가 아니라 차단이다(fail-closed).
+  assert.match(infoModal, /const requestUse = onRequestUse \|\| \(\(im, use\) => fallbackRequestUse\(/);
 });
 
 test('sink: the review dialog renders above the info modal', () => {
@@ -434,4 +435,49 @@ test('sink: the gate always records through the latest handler', () => {
   // ref 를 안 쓰면 게이트가 첫 렌더의 projectId·토스트를 영원히 붙들고 있게 된다.
   assert.match(editor, /record: \(im, decision, reason\) => recordReview\.current\(im, decision, reason\)/);
   assert.match(editor, /recordReview\.current = reviewVaryResult;/);
+});
+
+// ── 게이트 미연결 fail-closed (9/N item 1) ─────────────────────────────────
+
+const quiet = (fn) => {
+  const orig = console.error; const seen = [];
+  console.error = (...a) => seen.push(a.join(' '));
+  try { return [fn(), seen]; } finally { console.error = orig; }
+};
+
+test('an unwired form still uses images that need no review', () => {
+  const used = [];
+  const [blocked, errs] = quiet(() => fallbackRequestUse(PLAIN, (im) => used.push(im.id), 'X'));
+  assert.equal(blocked, false);
+  assert.deepEqual(used, ['w1']);
+  assert.deepEqual(errs, []);
+});
+
+test('an unwired form blocks an unreviewed image instead of using it', () => {
+  const used = [];
+  const [blocked, errs] = quiet(() => fallbackRequestUse(UNREVIEWED, (im) => used.push(im.id), 'X'));
+  assert.equal(blocked, true);
+  assert.deepEqual(used, []);                       // 조용한 우회 금지
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /onRequestUse/);
+});
+
+test('an unwired form blocks a rejected image too', () => {
+  const used = [];
+  const [blocked] = quiet(() => fallbackRequestUse(REJECTED, (im) => used.push(im.id), 'X'));
+  assert.equal(blocked, true);
+  assert.deepEqual(used, []);
+});
+
+test('an unwired form never assumes accepted', () => {
+  // accepted 는 실제로 accepted 인 경우에만 통과한다.
+  const used = [];
+  quiet(() => fallbackRequestUse(ACCEPTED, (im) => used.push(im.id), 'X'));
+  assert.deepEqual(used, ['w4']);
+});
+
+test('the editor always wires the gate into the info modal', () => {
+  assert.match(editor, /onRequestUse=\{requestWardrobeUse\}/);
+  assert.doesNotMatch(infoModal, /onRequestUse \|\| \(\(im, use\) => use\(im\)\)/);
+  assert.match(infoModal, /fallbackRequestUse\(im, use, 'InfoBlockModal'\)/);
 });

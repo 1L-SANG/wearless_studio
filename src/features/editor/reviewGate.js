@@ -89,3 +89,20 @@ export function createContinuationSlot() {
     get pendingTarget() { return token ? token.target : null; },
   };
 }
+
+/**
+ * 게이트가 연결되지 않은 곳에서 쓰는 fail-closed 대역.
+ *
+ * onRequestUse 를 안 넘긴 폼이 생기면 정책이 통째로 빠진 채 동작한다. 그때 "그냥 쓰기"로
+ * 흘리면 검수를 안 거친 컷이 상세페이지에 들어가고, 아무도 그 사실을 모른다. 그래서
+ * 검수가 필요 없는 이미지만 통과시키고 나머지는 **막는다** — accepted 로 가정하지 않는다.
+ */
+export function fallbackRequestUse(image, use, where = 'unknown') {
+  if (!needsReviewBeforeUse(image)) { use(image); return false; }
+  if (typeof console !== 'undefined' && console.error) {
+    console.error(
+      `[reviewGate] ${where}: onRequestUse 가 연결되지 않아 검수 대상 이미지를 차단했어요. ` +
+      '이 경로에 게이트를 연결해야 합니다.');
+  }
+  return true;   // 열지 못한 검수 = 사용 금지
+}
