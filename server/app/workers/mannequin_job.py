@@ -73,12 +73,13 @@ async def _runlog_begin(runlog, **kw) -> str | None:
         return None
 
 
-async def _runlog_finish(runlog, run_id, *, started=None, result=None, error=None) -> None:
+async def _runlog_finish(runlog, run_id, *, started=None, result=None, error=None,
+                         candidate=None) -> None:
     if runlog is None or run_id is None:
         return
     try:
         await runlog.finish(
-            run_id,
+            run_id, candidate=candidate,
             image=getattr(result, "image", None),
             usage=getattr(result, "usage", None),
             latency_ms=int((time.monotonic() - started) * 1000) if started else None,
@@ -426,19 +427,21 @@ async def _apply_axis_qc(
         runlog, kind="mannequin_axis_edit", prompt=instruction, model=model,
         candidate=candidate, attempt=edit_attempt,
         image_size=image_size or s.mannequin_image_size,
-        aspect_ratio=s.mannequin_aspect_ratio, fit_profile=fit_profile, settings=s)
+        aspect_ratio=s.mannequin_aspect_ratio, fit_profile=fit_profile, settings=s,
+        inputs=[("edit_source", InlineImage(res.mime, res.image), None, None)],
+        input_image=res.image)
     t0 = time.monotonic()
     try:
         edited = await gemini.generate_content_image(
             model, instruction, [InlineImage(res.mime, res.image)],
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except GeminiError as e:
-        await _runlog_finish(runlog, run_id, started=t0, error=e)
+        await _runlog_finish(runlog, run_id, started=t0, error=e, candidate=candidate)
         log.warning("axis_qc edit call failed for job %s: %r", job_id, e)
         await _emit_retry("edit_error", fired=True, failed=failed, edit_hash=edit_hash,
                           edit_attempt=edit_attempt)
         return res, True
-    await _runlog_finish(runlog, run_id, started=t0, result=edited)
+    await _runlog_finish(runlog, run_id, started=t0, result=edited, candidate=candidate)
     edited_hash = hashlib.sha256(edited.image).hexdigest()
     try:
         v2 = await _judge(edited)
@@ -757,21 +760,23 @@ async def _apply_bust_pass(
         runlog, kind="mannequin_bust_edit", prompt=prompt, model=bust_model,
         candidate=candidate, attempt=attempt,
         image_size=image_size or s.mannequin_image_size,
-        aspect_ratio=s.mannequin_aspect_ratio, settings=s)
+        aspect_ratio=s.mannequin_aspect_ratio, settings=s,
+        inputs=[("edit_source", InlineImage(res.mime, res.image), None, None)],
+        input_image=res.image)
     t0 = time.monotonic()
     try:
         out = await gemini.generate_content_image(
             bust_model, prompt, [InlineImage(res.mime, res.image)],
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except Exception as e:
-        await _runlog_finish(runlog, run_id, started=t0, error=e)
+        await _runlog_finish(runlog, run_id, started=t0, error=e, candidate=candidate)
         log.warning("bust pass failed for job %s (원본 유지): %r", job_id, e)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": "bust_pass",
             "outcome": "failed_open", "image_hash": before,
             "error_type": type(e).__name__, "error_message": str(e)[:200]})
         return res, True  # 실패해도 호출은 나갔다 — 예산은 소비됐다
-    await _runlog_finish(runlog, run_id, started=t0, result=out)
+    await _runlog_finish(runlog, run_id, started=t0, result=out, candidate=candidate)
     await _emit(pool, job_id, "step", {
         "candidate": candidate, "attempt": attempt, "status": "bust_pass",
         "outcome": "applied", "image_hash": before,
@@ -807,21 +812,23 @@ async def _apply_untuck_pass(
         runlog, kind="mannequin_untuck_edit", prompt=prompt, model=untuck_model,
         candidate=candidate, attempt=attempt,
         image_size=image_size or s.mannequin_image_size,
-        aspect_ratio=s.mannequin_aspect_ratio, settings=s)
+        aspect_ratio=s.mannequin_aspect_ratio, settings=s,
+        inputs=[("edit_source", InlineImage(res.mime, res.image), None, None)],
+        input_image=res.image)
     t0 = time.monotonic()
     try:
         out = await gemini.generate_content_image(
             untuck_model, prompt, [InlineImage(res.mime, res.image)],
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except Exception as e:
-        await _runlog_finish(runlog, run_id, started=t0, error=e)
+        await _runlog_finish(runlog, run_id, started=t0, error=e, candidate=candidate)
         log.warning("untuck pass failed for job %s (원본 유지): %r", job_id, e)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": "untuck_pass",
             "outcome": "failed_open", "image_hash": before,
             "error_type": type(e).__name__, "error_message": str(e)[:200]})
         return res, True  # 호출은 나갔다 — 예산 소비
-    await _runlog_finish(runlog, run_id, started=t0, result=out)
+    await _runlog_finish(runlog, run_id, started=t0, result=out, candidate=candidate)
     await _emit(pool, job_id, "step", {
         "candidate": candidate, "attempt": attempt, "status": "untuck_pass",
         "outcome": "applied", "image_hash": before,
@@ -1212,11 +1219,30 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
         "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
         "size": len(res.image), "width": w, "height": h,
         "candidate": candidate, "base_fit": base_fit, "qc_scores": qc_scores,
-        # 채택본을 **실제로 만든** 호출(편집이 회귀로 되돌려졌다면 그 이전 호출). finalize 가
-        # 같은 tx 에서 generation_outputs 로 연결한다. 기록 off/실패면 None → 연결 없음.
+        # 최종 채택본의 계보. `generation_run_id` 는 **마지막 provider 조상**이다 —
+        # deterministic 후처리(hybrid composite)가 바이트를 바꿔도 행이 사라지면 안 되기
+        # 때문. 후처리 없이 provider 응답 그대로면 post_processed=False 로 "그 응답과
+        # 동일한 바이트"임이 고정된다. finalize 가 같은 tx 에서 generation_outputs 로 쓴다.
         # 봉투(MannequinCut §3.3)에는 나가지 않는다 — finalize 가 키를 명시 나열해 만든다.
-        "generation_run_id": runlog.run_id_for_image(res.image) if runlog else None,
+        "generation_lineage": _output_lineage(runlog, res, candidate, qc_scores),
     }
+
+
+def _output_lineage(runlog, res, candidate, qc_scores) -> dict | None:
+    """채택본 → generation_outputs 행 재료. 기록 off/미기록이면 None(행 없음)."""
+    if runlog is None:
+        return None
+    lineage = runlog.output_lineage(res.image, candidate)
+    if lineage.get("generation_run_id") is None:
+        return None  # provider 조상 자체가 기록되지 않았다(플래그 off·기록 실패)
+    hc = (qc_scores or {}).get("hybridComposite") if isinstance(qc_scores, dict) else None
+    if isinstance(hc, dict):
+        lineage["transformation"] = {"hybridComposite": {
+            "applied": bool(hc.get("applied")),
+            "needsReview": bool(hc.get("needsReview")),
+            "pipelineVersion": hc.get("pipelineVersion"),
+        }}
+    return lineage
 
 
 async def _rollback_edits(
@@ -1287,8 +1313,14 @@ async def _run_candidate(
         # 상품 참조끼리는 역할 우선순위(Detail → Front → Back → Fit)로 정렬한다 — 매니페스트가
         # 슬롯별 권위를 선언하므로 번호와 실제 이미지가 같은 순서여야 그 문장이 유효하다.
         edit_refs = order_by_role(prod_refs)
-        images = [parent_cut_img, *(r.image for r in edit_refs)] + (
-            [match_img] if match_img else [])
+        # 스냅샷과 images 는 **같은 리스트에서** 파생한다 — 두 벌로 두면 프롬프트의
+        # "image 1 = 현재 컷" 계약과 기록이 조용히 어긋난다.
+        input_entries = [("parent_cut", parent_cut_img, None, None)]
+        input_entries += [("product_reference", r.image, r.asset_id, r.slot)
+                          for r in edit_refs]
+        if match_img:
+            input_entries.append(("matching_garment", match_img, None, None))
+        images = [e[1] for e in input_entries]
         base_prompt = render_adjust_prompt(
             adjust_directives, build_adjust_manifest(edit_refs, match_img is not None))
         prompt_version = ADJUST_PROMPT_VERSION
@@ -1306,7 +1338,13 @@ async def _run_candidate(
                 "pattern_risk": has_fine_pattern})
         generation_path = "fresh"
         # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
-        images = [base_img, *prod_imgs] + ([match_img] if match_img else []) + list(ref_imgs)
+        input_entries = [("base_mannequin", base_img, None, None)]
+        input_entries += [("product_reference", r.image, r.asset_id, r.slot)
+                          for r in prod_refs]
+        if match_img:
+            input_entries.append(("matching_garment", match_img, None, None))
+        input_entries += [("style_reference", im, None, None) for im in ref_imgs]
+        images = [e[1] for e in input_entries]
         ctx = mannequin.prompt_context(
             clothing_type=clothing_type, product_count=product_count,
             base_gender=base_gender, image_manifest=image_manifest, fit_profile=fit_profile,
@@ -1369,7 +1407,8 @@ async def _run_candidate(
                           else "mannequin_generate"),
             prompt=prompt, model=model, candidate=candidate, attempt=attempt,
             image_size=image_size, aspect_ratio=s.mannequin_aspect_ratio,
-            prompt_version=prompt_version, input_assets=manifest_refs,
+            prompt_version=prompt_version, inputs=input_entries,
+            input_image=(parent_cut_img if generation_path == "edit" else None),
             fit_profile=fit_profile, settings=s)
         t0 = time.monotonic()
         try:
@@ -1377,12 +1416,12 @@ async def _run_candidate(
                 model, prompt, images, image_size,
                 aspect_ratio=s.mannequin_aspect_ratio)
         except GeminiError as e:
-            await _runlog_finish(runlog, run_id, started=t0, error=e)
+            await _runlog_finish(runlog, run_id, started=t0, error=e, candidate=candidate)
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "model": model, "attempt": attempt,
                 "status": "error", "message": str(e)[:200]})
             continue
-        await _runlog_finish(runlog, run_id, started=t0, result=res)
+        await _runlog_finish(runlog, run_id, started=t0, result=res, candidate=candidate)
         verdict = qc.evaluate_mannequin_qc(res.image)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "model": model, "attempt": attempt, "status": "generated",

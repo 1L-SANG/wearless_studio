@@ -8,10 +8,14 @@ uuid 컬럼은 ::text 캐스트해 Pydantic str 필드와 맞춘다.
 
 import uuid
 
+import logging
+
 from psycopg import AsyncConnection, errors
 from psycopg.types.json import Json
 
 from .credits import allocate_fifo
+
+log = logging.getLogger("wearless.repo")
 
 
 class CreditError(Exception):
@@ -1114,21 +1118,33 @@ async def finalize_mannequin_success(
             # generation_outputs — 채택본 ↔ 그것을 만든 provider 호출 연결. 같은 tx·lease
             # 펜스 안에서 쓴다(별도 tx 면 lease 를 잃은 워커가 고아 행을 남긴다).
             # 플래그 off 면 run_id 가 없으므로 아무것도 쓰지 않는다.
-            run_id = c.get("generation_run_id")
-            if run_id and cut_row is not None:
+            lineage = c.get("generation_lineage")
+            if isinstance(lineage, dict) and cut_row is not None:
                 # savepoint 없이 실패하면 tx 전체가 abort 되어 **컷 저장이 통째로 날아간다**.
                 # 기록은 부가 기능이므로 실패는 이 지점에서만 되돌린다(migration 미적용 환경).
+                # 조용히 삼키지 않는다 — 어느 잡의 어떤 컷이 계보를 잃었는지 로그로 남긴다.
                 await cur.execute("savepoint genout_insert")
                 try:
                     await cur.execute(
                         "insert into generation_outputs (generation_run_id, project_id, "
-                        "mannequin_cut_id, asset_id) values (%s, %s, %s, %s)",
-                        (run_id, project_id, cut_row["id"], c["asset_id"]),
+                        "mannequin_cut_id, asset_id, output_sha256, post_processed, "
+                        "transformation) values (%s, %s, %s, %s, %s, %s, %s)",
+                        (lineage.get("generation_run_id"), project_id, cut_row["id"],
+                         c["asset_id"], lineage.get("output_sha256"),
+                         bool(lineage.get("post_processed")),
+                         Json(lineage.get("transformation"))
+                         if lineage.get("transformation") is not None else None),
                     )
-                except errors.DatabaseError:
+                except errors.DatabaseError as e:
                     await cur.execute("rollback to savepoint genout_insert")
-                else:
-                    await cur.execute("release savepoint genout_insert")
+                    log.warning(
+                        "generation_outputs insert failed — 컷은 정상 출고 "
+                        "(job=%s project=%s run=%s cut=%s error=%s)",
+                        job_id, project_id, lineage.get("generation_run_id"),
+                        cut_row["id"], type(e).__name__)
+                # rollback 후에도 savepoint 는 남아 있다 — 후보가 여러 개면 같은 이름이
+                # 겹쳐 쌓이므로 성공/실패 어느 쪽이든 반드시 release 한다.
+                await cur.execute("release savepoint genout_insert")
             cuts.append({  # MannequinCut shape (계약 §3.3) — /jobs·SSE done에서 그대로 직렬화
                 "id": f"{c['candidate']}-{version}",
                 "src": f"/v1/assets/{c['asset_id']}/file",  # 안정 앱 URL (만료 없음, §3). assetId 인코딩됨
@@ -1177,22 +1193,40 @@ async def insert_generation_run(
     prompt_sha256: str | None = None,
     prompt_r2_key: str | None = None,
     input_assets: list | None = None,
+    input_image_sha256: str | None = None,
+    parent_generation_run_id: str | None = None,
     fit_profile_snapshot: dict | None = None,
     settings_snapshot: dict | None = None,
 ) -> None:
-    """provider 호출 **직전** 기록(status='created'). 프롬프트 전문은 담지 않는다 — R2 키만."""
+    """provider 호출 **직전** 기록(status='created'). 프롬프트 전문은 담지 않는다 — R2 키만.
+
+    `parent_generation_run_id` 는 편집 run 이 어느 호출의 산출물을 입력으로 받았는가다.
+    최종 바이트 역참조만으로는 회귀 복구·동일 바이트 충돌에서 계보가 흔들린다.
+    """
     async with conn.cursor() as cur:
         await cur.execute(
             "insert into generation_runs (id, job_id, project_id, user_id, kind, candidate, "
             "attempt, status, model, image_size, aspect_ratio, prompt_version, prompt_sha256, "
-            "prompt_r2_key, input_assets, fit_profile_snapshot, settings_snapshot) "
-            "values (%s, %s, %s, %s, %s, %s, %s, 'created', %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "prompt_r2_key, input_assets, input_image_sha256, parent_generation_run_id, "
+            "fit_profile_snapshot, settings_snapshot) "
+            "values (%s, %s, %s, %s, %s, %s, %s, 'created', %s, %s, %s, %s, %s, %s, %s, %s, "
+            "%s, %s, %s)",
             (run_id, job_id, project_id, user_id, kind, candidate, attempt, model, image_size,
              aspect_ratio, prompt_version, prompt_sha256, prompt_r2_key,
              Json(input_assets) if input_assets is not None else None,
+             input_image_sha256, parent_generation_run_id,
              Json(fit_profile_snapshot) if fit_profile_snapshot is not None else None,
              Json(settings_snapshot) if settings_snapshot is not None else None),
         )
+
+
+async def update_generation_run_prompt_key(
+    conn: AsyncConnection, *, run_id: str, key: str
+) -> None:
+    """R2 업로드 성공 후 키만 채운다 — 행이 먼저 있으므로 고아 객체가 생기지 않는다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update generation_runs set prompt_r2_key = %s where id = %s", (key, run_id))
 
 
 async def update_generation_run(
