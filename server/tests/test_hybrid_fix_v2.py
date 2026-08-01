@@ -155,3 +155,63 @@ def test_build_panel_map_prefers_mask_derived_aspect_over_vision():
         carrier_inventory={**src_inv, "torso_aspect": src_inv["torso_aspect"] * 1.5})
     assert isinstance(pm3, CompositeFailure)
     assert pm3.reason == "geometry_carrier_mismatch"
+
+
+# ── US-3: 보호 영역 — 커프스 밴드·칼라 위·밑단 아래는 carrier 픽셀 보존 ──────────
+
+def _composited_g1():
+    model = extract_stripe_model(
+        render_signal("S1_blue_brown_fine", "illum"),
+        source_asset_id="fx", source_sha256="0" * 8, source_roi=(0, 0, 768, 768))
+    assert not isinstance(model, CompositeFailure)
+    cx = render_carrier("G1_regular", 0)
+    pm = build_panel_map(cx["image"], cx["landmarks"])
+    assert not isinstance(pm, CompositeFailure), pm
+    torso_h = np.ptp([p[1] for p in cx["torso_poly"]])
+    art = composite_stripe(cx["image"], pm, model,
+                           target_period_px=torso_h / 22.0, target_axis="horizontal")
+    assert not isinstance(art, CompositeFailure), art
+    return cx, art
+
+
+def test_cuff_band_keeps_carrier_pixels():
+    """소매 원위(손목) 8% 밴드는 커프스 구조 — 패턴을 칠하지 않고 carrier 를 보존한다."""
+    cx, art = _composited_g1()
+    h, w = cx["image"].shape[:2]
+    lm = cx["landmarks"]
+    for key in ("sleeve_l_poly", "sleeve_r_poly"):
+        side = "l" if "_l_" in key else "r"
+        poly = np.array(cx[key], np.float32)
+        # 원위 = sleeve_end landmark 에 가까운 두 꼭짓점 — "torso 중심에서 먼 쪽" 휴리스틱은
+        # 늘어진 소매에서 어깨쪽을 집는다(실측: 이 테스트의 1차 버전 결함).
+        wrist = np.array([lm[f"sleeve_{side}_end"][0] * w, lm[f"sleeve_{side}_end"][1] * h])
+        d = np.linalg.norm(poly - wrist, axis=1)
+        distal = np.argsort(d)[:2]
+        proximal = [i for i in range(4) if i not in distal]
+        # 근위 edge 중점→원위 edge 중점의 92%~100% 구간 밴드
+        p_mid = poly[proximal].mean(axis=0)
+        d_mid = poly[distal].mean(axis=0)
+        axis_v = d_mid - p_mid
+        band = np.array([
+            poly[distal[0]] - axis_v * 0.08, poly[distal[1]] - axis_v * 0.08,
+            poly[distal[1]], poly[distal[0]]], np.float32)
+        band_mask = np.zeros((h, w), np.uint8)
+        cv2.fillPoly(band_mask, [band.astype(np.int32)], 255)
+        band_mask = cv2.bitwise_and(band_mask, cx["garment_mask"])
+        band_mask = cv2.erode(band_mask, np.ones((5, 5), np.uint8))
+        n = np.count_nonzero(band_mask)
+        assert n > 100, f"{key}: 커프스 밴드 픽셀 {n} — 픽스처 전제 부족"
+        painted_in_band = np.count_nonzero(cv2.bitwise_and(art.painted, band_mask)) / n
+        assert painted_in_band <= 0.10, (
+            f"{key}: 커프스 밴드의 {painted_in_band:.1%} 가 칠해짐 — 커프스 구조 소실")
+
+
+def test_no_paint_above_collar_or_below_hem():
+    """해부학 y-경계 밖(칼라 위·밑단 아래)은 carrier 그대로 — 목/스커트 페인트 금지."""
+    cx, art = _composited_g1()
+    h = cx["image"].shape[0]
+    lm = cx["landmarks"]
+    shoulder_y = min(lm["shoulder_l"][1], lm["shoulder_r"][1]) * h
+    hem_y = max(lm["hem_l"][1], lm["hem_r"][1]) * h
+    assert np.count_nonzero(art.painted[:max(0, int(shoulder_y - h * 0.02))]) == 0
+    assert np.count_nonzero(art.painted[min(h, int(hem_y + h * 0.03)):]) == 0

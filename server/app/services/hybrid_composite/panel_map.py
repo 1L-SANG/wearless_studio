@@ -31,8 +31,11 @@ CONSTRUCTION_RATIO_TOL = 0.35
 @dataclass(frozen=True)
 class Panel:
     name: str            # torso | sleeve_l | sleeve_r | collar | placket | cuff_l | cuff_r
+    # sleeve panel 은 quad 가 근사 밴드(실제 손목보다 길 수 있음)라, 커프스 판정용으로
+    # 어깨점→소매끝 landmark 의 정확한 축 끝점을 함께 실어 보낸다.
     kind: str            # "stripe"(타일 합성) | "decal"(source 패치 warp)
     quad: np.ndarray     # (4,2) float32 — TL, TR, BR, BL (px)
+    axis_ends: tuple | None = None  # ((x,y) 근위, (x,y) 원위) — sleeve 만
 
 
 @dataclass(frozen=True)
@@ -256,7 +259,8 @@ def build_panel_map(
         if abs(_quad_convex_and_ccw_area(q)) < 16:
             continue
         panels.append(Panel(f"sleeve_{side}", "stripe",
-                            q if _quad_convex_and_ccw_area(q) > 0 else q[::-1].copy()))
+                            q if _quad_convex_and_ccw_area(q) > 0 else q[::-1].copy(),
+                            axis_ends=(tuple(map(float, top)), tuple(map(float, end)))))
 
     # construction 대조 — geometry carrier 가 원본과 같은 구조인가
     inv_metrics = {}

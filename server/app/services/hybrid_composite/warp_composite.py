@@ -118,7 +118,11 @@ def composite_stripe(
     best_cost = np.full(len(xs), np.inf)
     best_coord = np.zeros(len(xs))
     best_panel = np.full(len(xs), -1, np.int32)
+    cuff_zone = np.zeros(len(xs), bool)     # 소매 원위 밴드 — 어느 panel 이 이기든 보존
     MAX_ASSIGN_COST = 0.75  # panel 로컬 박스에서 이보다 먼 픽셀은 미배정(=carrier 유지)
+    CUFF_BAND_FRAC = 0.78   # 소매 길이축 원위 ~22% = 커프스 보호 밴드 — 넓고 기울어진
+    # 소매에선 폭·틸트 교차투영으로 커프스 픽셀의 t 가 0.77 까지 흩어진다(fixture 실측
+    # p5=0.772). 과차단의 비용은 carrier 유지(=원본 커프스 모습)라 낮다.
     # 0.5 는 좌측 소매(카메라 각도로 quad 오차 큼)를 미페인트로 남겼다 — mask 가 이미
     # 실루엣·해부학 y-경계로 제한하므로 상한 완화의 번짐 위험은 mask 가 흡수한다.
     for p_idx, panel in enumerate(panel_map.panels):
@@ -150,6 +154,33 @@ def composite_stripe(
         dv = np.maximum(np.maximum(-v, v - 1.0), 0.0)
         cost = np.hypot(du, dv)
         coord = lv if target_axis == "horizontal" else lu
+        if panel.name.startswith("sleeve"):
+            # 커프스 보호 밴드 — 소매 원위 10% 는 커프스 구조(단추·셔링·시접) 영역이라
+            # 패턴을 덧칠하면 구조가 소실된다. quad 로컬 uv 는 _quad() 코너 재정렬로
+            # 축 의미가 뒤집힐 수 있어(실측: 밴드 미적중), **이미지 공간 투영**으로 잰다:
+            # torso 중심에서 가까운 코너쌍 중점→먼 코너쌍 중점 축에 픽셀을 투영. 이 밴드는
+            # 어느 panel 이 배정 경쟁에서 이기든(torso 가 가로채는 실측 사례) 보존한다.
+            if panel.axis_ends is not None:
+                prox_mid = np.array(panel.axis_ends[0], np.float64)
+                dist_mid = np.array(panel.axis_ends[1], np.float64)
+            else:
+                torso_c = panel_map.panels[0].quad.mean(axis=0)
+                order = np.argsort(np.linalg.norm(q - torso_c, axis=1))
+                prox_mid = q[order[:2]].mean(axis=0)
+                dist_mid = q[order[2:]].mean(axis=0)
+            axis_vec = dist_mid - prox_mid
+            denom = float(axis_vec @ axis_vec)
+            if denom > 1e-6:
+                t_len = ((xs - prox_mid[0]) * axis_vec[0]
+                         + (ys - prox_mid[1]) * axis_vec[1]) / denom
+                perp = np.abs((xs - prox_mid[0]) * (-axis_vec[1])
+                              + (ys - prox_mid[1]) * axis_vec[0]) / np.sqrt(denom)
+                edge = np.roll(q, -1, axis=0) - q
+                halfw = float(np.sort(np.linalg.norm(edge, axis=1))[:2].mean()) / 2.0
+                # 마진 관대: vision 의 sleeve_end 는 실제 손목보다 안쪽일 수 있고(실측
+                # fixture 0.9L 모사), 과차단의 비용은 carrier 유지(=원본 커프스)라 낮다.
+                cuff_zone |= ((t_len > CUFF_BAND_FRAC) & (t_len < 1.25)
+                              & (perp < halfw * 1.45))
         sel = cost < best_cost
         best_cost[sel] = cost[sel]
         best_coord[sel] = coord[sel]
@@ -157,7 +188,7 @@ def composite_stripe(
         panel_metrics[panel.name] = {
             **{k: round(vv, 4) if isinstance(vv, float) else vv
                for k, vv in validity.items()}}
-    assigned = (best_panel >= 0) & (best_cost <= MAX_ASSIGN_COST)
+    assigned = (best_panel >= 0) & (best_cost <= MAX_ASSIGN_COST) & ~cuff_zone
     if not assigned.any():
         return CompositeFailure("panel_landmarks_invalid", "합성 가능한 stripe panel 이 없음")
     phase = (best_coord[assigned] / target_period_px * K) % K

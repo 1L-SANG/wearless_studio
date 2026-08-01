@@ -230,18 +230,27 @@ def verify_composite(
     *,
     target_period_px: float,
     target_axis: str,
+    painted_mask: np.ndarray | None = None,
 ) -> DeterministicQC:
-    """합성 결과 재측정 → typed critical. 실패는 기록이지 예외가 아니다(호출자가 라우팅)."""
+    """합성 결과 재측정 → typed critical. 실패는 기록이지 예외가 아니다(호출자가 라우팅).
+
+    painted_mask 가 오면 패널 측정 표본 = 합성이 **실제 칠한** 픽셀로 제한한다 —
+    보호 영역(커프스 밴드 등)은 설계상 미페인트라, mask 전체로 재면 그 밴드가
+    '대비 소실'로 오판된다(실측: 커프스 보호 도입 시 G4 sleeve_r 오탐).
+    """
     failures: list[dict] = []
     metrics: dict = {"per_panel": {}}
 
+    sample_mask = panel_map.garment_mask
+    if painted_mask is not None:
+        sample_mask = cv2.bitwise_and(sample_mask, painted_mask)
     for panel in panel_map.panels:
         if panel.kind != "stripe":
             continue
         pm, fs = _measure_panel_local(
             out_bgr, panel, model,
             target_period_px=target_period_px, target_axis=target_axis,
-            garment_mask=panel_map.garment_mask)
+            garment_mask=sample_mask)
         metrics["per_panel"][panel.name] = pm
         failures.extend(fs)
 

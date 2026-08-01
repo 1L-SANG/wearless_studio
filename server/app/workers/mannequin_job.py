@@ -1126,6 +1126,7 @@ async def _apply_hybrid_composite(
     # Stage 5 — deterministic QC (LLM 이 못 뒤집는 판정)
     qc = await asyncio.to_thread(
         hc_qc.verify_composite, art.image_bgr, carrier_bgr, pm, model,
+        painted_mask=art.painted,
         target_period_px=target_period_px, target_axis=garment_axis)
     qc_event_metrics = {k: v for k, v in qc.metrics.items() if k != "failure_details"}
     await emit("hybrid_deterministic_qc", passed=qc.passed,
