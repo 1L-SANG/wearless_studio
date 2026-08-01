@@ -7,6 +7,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,7 @@ from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import baseline as baseline_service
 from .services import edit_session as edit_service
+from .services import editor_vary as editor_vary_service
 from .services import input_qc, matching, retrieval
 from .auth import require_user
 from .db import get_conn
@@ -1457,6 +1459,12 @@ async def get_wardrobe(request: Request, project_id: str, user_id: str = Depends
     return wardrobe
 
 
+def _parse_editor_source_asset_id(src) -> str | None:
+    """`/v1/assets/{id}/file` 에서 asset id 추출. 워커의 _parse_source_asset_id 와 같은 규칙."""
+    m = re.search(r"/assets/([0-9a-fA-F-]{36})/file", str(src or ""))
+    return m.group(1) if m else None
+
+
 @router.post(
     "/projects/{project_id}/editor:generate-image",
     responses={
@@ -1538,10 +1546,84 @@ async def generate_editor_image(
                 conn, (body or {}).get("modelId") or (body or {}).get("model_id"))
             if license_row is not None:
                 await facemarket.verify_license(request.app, license_row)  # 실패=409
+        # ── Phase 3: 생성형 vary 만 세션을 만든다 ──
+        # mode:new 와 플래그 off 는 이 블록을 통째로 건너뛴다(payload 도 손대지 않는다).
+        vary_ctx = None
+        if (body or {}).get("mode") == "vary" and s.editor_vary_intent_qc != "off":
+            if s.generation_run_log == "off":
+                # 계보는 Generation Run 위에 세워진다. 몰래 켜지 않고 설정 오류로 막는다.
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "misconfigured_feature",
+                            "message": "편집 기록 설정이 완전하지 않아요."})
+            try:
+                changes = editor_vary_service.validate_changes((body or {}).get("changes"))
+            except editor_vary_service.VaryRequestError as e:
+                raise _bad_request(e.code, str(e))
+            src_asset_id = _parse_editor_source_asset_id(
+                ((body or {}).get("source") or {}).get("src"))
+            src_asset = (await repo.get_asset_for_user(conn, user_id, src_asset_id)
+                         if src_asset_id else None)
+            if src_asset is None or str(src_asset.get("project_id") or project_id) != project_id:
+                # 클라이언트가 보낸 src URL·id 를 정본으로 쓰지 않는다 — DB asset 이 정본이다.
+                raise _bad_request("source_asset_missing", "변형할 컷을 찾을 수 없어요.")
+            ref_bg_id = (body or {}).get("refBgAssetId")
+            if ref_bg_id and await repo.get_asset_for_user(
+                    conn, user_id, str(ref_bg_id)) is None:
+                raise _bad_request("ref_bg_missing", "배경 레퍼런스를 찾을 수 없어요.")
+            vary_ctx = {
+                "changes": changes,
+                "edit_type": editor_vary_service.edit_type_for(changes),
+                "scope": editor_vary_service.semantic_scope(changes),
+                "source_asset_id": src_asset["id"],
+                "ref_bg_asset_id": str(ref_bg_id) if ref_bg_id else None,
+            }
+            if scoped_key:
+                prior = await repo.get_job_by_idempotency_key(conn, user_id, scoped_key)
+                if prior is not None:
+                    existing = await repo.get_edit_session_by_job_id(conn, prior["id"])
+                    if existing is None:
+                        raise HTTPException(
+                            status_code=409,
+                            detail={"code": "job_in_progress",
+                                    "message": "이미 진행 중인 작업이 있어요."})
+                    prior_payload = prior.get("payload") or {}
+                    same = (existing["source_asset_id"] == vary_ctx["source_asset_id"]
+                            and existing["edit_type"] == vary_ctx["edit_type"]
+                            and (existing["requested_adjustments"] or {}).get("changes")
+                            == changes
+                            and prior_payload.get("mode") == "vary"
+                            and (prior_payload.get("refBgAssetId") or None)
+                            == vary_ctx["ref_bg_asset_id"])
+                    if not same:
+                        raise HTTPException(
+                            status_code=409,
+                            detail={"code": "idempotency_conflict",
+                                    "message": "같은 요청 키로 다른 편집을 보낼 수 없어요."})
+                    return {**prior, "editSessionId": existing["id"]}   # 부수효과 0
+
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="editor_image",
             payload=body, idempotency_key=scoped_key, credits_reserved=cost,
             metadata={"creditCostVersion": s.credit_cost_version})
+        if vary_ctx is not None and created:
+            # 계보는 source asset 에 output 이 **유일할 때만** 잇는다. 여러 개면 어느 쪽이
+            # 이 자산의 계보인지 모르는 상태라 하나를 고르는 건 추정이지 계보가 아니다.
+            link = await repo.get_unique_output_for_asset(
+                conn, vary_ctx["source_asset_id"])
+            session = await repo.create_editor_edit_session(
+                conn, project_id=project_id, user_id=user_id, job_id=job["id"],
+                source_asset_id=vary_ctx["source_asset_id"],
+                parent_output_id=link["output_id"], edit_type=vary_ctx["edit_type"],
+                changes=vary_ctx["changes"],
+                allowed_scope=vary_ctx["scope"],
+                locked_invariants={"scope": vary_ctx["scope"],
+                                   "lineageStatus": link["status"]},
+                request_snapshot={"refBgAssetId": vary_ctx["ref_bg_asset_id"],
+                                  "cutType": ((body or {}).get("source") or {}).get(
+                                      "cutType")})
+            await repo.update_job_payload_edit_session(conn, job["id"], session["id"])
+            vary_ctx["session_id"] = session["id"]
         if created:  # 신규 job만 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
             if await repo.reserve_credits(conn, user_id, cost) is None:
                 raise HTTPException(

@@ -7,6 +7,7 @@
 """
 
 import os
+from dataclasses import dataclass
 
 from ..config import Settings
 from .gemini_image import GeminiImageClient, InlineImage
@@ -72,6 +73,47 @@ def build_prompt(vary_spec: dict) -> str:
     )
 
 
+@dataclass(frozen=True)
+class PreparedVary:
+    """provider 에 **실제로 나갈** 요청. 계측은 이 객체에서 뜬다 — 기록용 프롬프트를 따로
+    재조립하면 그 순간부터 기록과 요청이 갈라진다(같은 문자열이라는 보장이 없다)."""
+
+    model: str
+    prompt: str
+    images: list           # [source] 또는 [source, ref_bg] — 순서가 계약이다
+    image_size: str
+    aspect_ratio: str
+    has_ref_bg: bool
+
+
+def prepare(
+    settings: Settings,
+    source_image: InlineImage,
+    changes: list,
+    cut_type: str | None,
+    *,
+    ref_bg: InlineImage | None = None,
+) -> PreparedVary:
+    """요청 조립만. 호출은 하지 않는다 — 계측이 호출 **전에** 스냅샷을 뜰 수 있어야 한다."""
+    return PreparedVary(
+        model=resolve_model(settings, "image_high"),
+        prompt=build_prompt({"changes": changes, "cutType": cut_type,
+                             "hasRefBg": ref_bg is not None}),
+        images=[source_image] if ref_bg is None else [source_image, ref_bg],
+        image_size=settings.mannequin_image_size,
+        aspect_ratio=settings.mannequin_aspect_ratio,
+        has_ref_bg=ref_bg is not None,
+    )
+
+
+async def execute(gemini: GeminiImageClient, prepared: PreparedVary):
+    """준비된 요청 1회 실행. 실패 시 GeminiError 전파(호출자가 job 실패 처리)."""
+    return await gemini.generate_content_image(
+        prepared.model, prepared.prompt, prepared.images, prepared.image_size,
+        aspect_ratio=prepared.aspect_ratio,
+    )
+
+
 async def generate(
     settings: Settings,
     gemini: GeminiImageClient,
@@ -81,13 +123,8 @@ async def generate(
     *,
     ref_bg: InlineImage | None = None,
 ) -> tuple[bytes, str]:
-    """변형 컷 1장 생성. 실패 시 GeminiError를 그대로 전파(호출자가 job 실패 처리).
+    """변형 컷 1장 생성 — 기존 호출자용 wrapper(바이트 단위로 동작 불변).
     ref_bg 는 배경 레퍼런스(첨부 2번) — 배경·조명·무드만 반영(ADR-0004)."""
-    model = resolve_model(settings, "image_high")
-    prompt = build_prompt({"changes": changes, "cutType": cut_type, "hasRefBg": ref_bg is not None})
-    images = [source_image] if ref_bg is None else [source_image, ref_bg]
-    res = await gemini.generate_content_image(
-        model, prompt, images, settings.mannequin_image_size,
-        aspect_ratio=settings.mannequin_aspect_ratio,
-    )
+    res = await execute(gemini, prepare(settings, source_image, changes, cut_type,
+                                        ref_bg=ref_bg))
     return res.image, res.mime

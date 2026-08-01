@@ -5,8 +5,10 @@ mannequin_adjust_job.py의 reserve→generate→finalize 패턴을 단일 이미
 """
 
 import asyncio
+import hashlib
 import logging
 import re
+import time
 import uuid
 from io import BytesIO
 
@@ -25,7 +27,9 @@ from ..agents import (
 from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
+from ..services.generation_run import RunLogger
 from ._common import emit_job_event as _emit
+from .mannequin_job import _runlog_begin, _runlog_finish
 
 log = logging.getLogger("wearless.editor_image_job")
 
@@ -50,6 +54,157 @@ def _parse_source_asset_id(src: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+def _provider_category(exc: BaseException) -> str:
+    """provider 실패 분류 — 원문은 남기지 않는다(URL·응답 본문이 들어 있다)."""
+    msg = str(exc)
+    name = type(exc).__name__
+    if "timeout" in msg.lower() or "Timeout" in name:
+        return "timeout"
+    m = re.search(r"\b([45]\d{2})\b", msg)
+    return f"http_{m.group(1)}" if m else "provider_error"
+
+
+async def _r2_cleanup(app, key: str) -> None:
+    """best-effort 삭제. 실패해도 진행하고, **키 원문은 로그에 남기지 않는다**."""
+    try:
+        await asyncio.to_thread(app.state.r2.delete, key)
+    except Exception as e:
+        log.warning("orphan R2 cleanup failed (error=%s)", type(e).__name__)
+
+
+async def _vary_preflight(app, job, *, session_id, src_asset, changes, fail):
+    """provider 호출 **전** 관문. 통과하면 컨텍스트, 아니면 None(이미 실패 종결).
+
+    여기서 막는 것은 전부 "한 번 요청하고 두 번 과금되는" 경로다: 종결된 세션 재진입,
+    다른 job 의 세션, source 가 바뀐 요청.
+    """
+    from ..services import editor_vary as ev
+
+    s, pool = app.state.settings, app.state.pool
+    job_id = job["id"]
+
+    async def _blocked(reason):
+        await _emit(pool, job_id, "step",
+                    {"status": "vary_preflight_blocked", "reason": reason})
+        await fail("이미 처리된 편집 요청이에요.", {"error": reason})
+        return None
+
+    if s.generation_run_log == "off":
+        return await _blocked("misconfigured_feature")
+    async with pool.connection() as conn:
+        session = await repo.get_edit_session(conn, session_id)
+    if session is None:
+        return await _blocked("edit_session_missing")
+    if session.get("job_id") not in (None, job_id):
+        return await _blocked("edit_session_job_mismatch")
+    if session.get("source_kind") != "editor_asset" or session.get("baseline_id"):
+        return await _blocked("edit_session_source_mismatch")
+    if session.get("source_asset_id") != src_asset["id"]:
+        return await _blocked("edit_session_source_mismatch")
+    if session.get("status") not in ("queued", "running"):
+        return await _blocked("edit_session_not_runnable")
+    try:
+        async with pool.connection() as conn:
+            await repo.update_edit_session(conn, session_id=session_id, status="running")
+            await conn.commit()
+    except repo.InvalidEditTransition:
+        return await _blocked("edit_session_not_runnable")
+    except Exception as e:
+        log.warning("vary preflight failed (job=%s error=%s)", job_id, type(e).__name__)
+        return await _blocked("edit_session_unavailable")
+    norm = ev.validate_changes(changes)
+    return {
+        "session_id": session_id, "changes": norm,
+        "edit_type": ev.edit_type_for(norm),
+        "semantic_scope": ev.semantic_scope(norm),
+        "entailed": ev.entailed_metrics(norm),
+        "parent_output_id": session.get("parent_output_id"),
+        "runlog": RunLogger(pool=pool, r2=app.state.r2, job_id=job_id,
+                            project_id=job["project_id"], user_id=job["user_id"],
+                            enabled=(s.generation_run_log == "shadow")),
+    }
+
+
+async def _vary_run_begin(app, job, prepared, ctx, *, src_asset, ref_bg_asset):
+    """provider 에 **실제로 나갈** prepared 객체에서 스냅샷을 뜬다(재조립 금지)."""
+    inputs = [("edit_source", prepared.images[0], src_asset["id"], None,
+               ctx.get("parent_output_id"))]
+    if prepared.has_ref_bg and len(prepared.images) > 1:
+        inputs.append(("style_reference", prepared.images[1],
+                       (ref_bg_asset or {}).get("id"), "background_reference"))
+    run_id = await _runlog_begin(
+        ctx["runlog"], kind="editor_vary", prompt=prepared.prompt,
+        model=prepared.model, candidate="A", attempt=1,
+        image_size=prepared.image_size, aspect_ratio=prepared.aspect_ratio,
+        inputs=inputs, input_image=prepared.images[0],
+        explicit_parent_generation_run_id=ctx.get("parent_run_id"),
+        settings=app.state.settings)
+    ctx["run_id"] = run_id
+    return run_id
+
+
+async def _vary_run_finish(app, job, run_id, ctx, *, started=None, result=None,
+                           error=None):
+    await _runlog_finish(ctx["runlog"], run_id, started=started, result=result,
+                         error=error, candidate="A")
+    if error is not None:
+        ctx["run_id"] = None
+
+
+async def _vary_qc(app, job, ctx, src_img, result, prepared):
+    """결과 1개당 Vision 1회 + 정량. 판정은 서버 정책이 만든다."""
+    from ..agents import edit_intent_vision
+    from ..services import edit_intent_qc
+
+    s, pool = app.state.settings, app.state.pool
+    observation, meta = None, None
+    try:
+        observation, meta = await edit_intent_vision.observe(
+            s, baseline=src_img, edited=InlineImage(result.mime, result.image),
+            edit_type=ctx["edit_type"], adjustments={},
+            allowed_scope={"allowed": ctx["semantic_scope"]["allowedObservations"],
+                           "forbidden": ctx["semantic_scope"]["forbiddenObservations"]},
+            source_refs=None)
+    except Exception as e:
+        meta = edit_intent_vision.failure_meta(e)
+        log.warning("editor vary vision failed (job=%s status=%s)",
+                    job["id"], meta["status"])
+    decision = await asyncio.to_thread(
+        edit_intent_qc.evaluate,
+        baseline_bgr=_decode_bgr(src_img.data), edited_bgr=_decode_bgr(result.image),
+        edit_type=ctx["edit_type"],
+        allowed_scope={"allowed": [], "forbidden": []},
+        target_ratio=None, vision=observation, require_vision=True,
+        semantic_scope=ctx["semantic_scope"], extra_entailed=ctx["entailed"])
+    decision["vision"] = {"observation": observation, "meta": meta}
+    await _emit(pool, job["id"], "step", {
+        "status": "edit_intent_qc", "decision": decision["decision"],
+        "unexpectedChanges": decision["unexpectedChanges"],
+        "lockedInvariantViolations": decision["lockedInvariantViolations"],
+        "requestedChangeSatisfied": decision["requestedChangeSatisfied"],
+        "visionStatus": (meta or {}).get("status", "not_called")})
+    return decision
+
+
+async def _vary_session_fail(app, ctx, *, reason, qc_result=None, status="failed"):
+    if not ctx:
+        return
+    try:
+        async with app.state.pool.connection() as conn:
+            await repo.update_edit_session(
+                conn, session_id=ctx["session_id"], status=status,
+                qc_result=qc_result or {"reason": reason})
+            await conn.commit()
+    except Exception as e:
+        log.warning("vary session finalize failed (error=%s)", type(e).__name__)
+
+
+def _decode_bgr(image_bytes: bytes):
+    import cv2
+    import numpy as np
+    return cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+
+
 async def run_editor_image_job(app, job: dict) -> None:
     s = app.state.settings
     pool = app.state.pool
@@ -62,6 +217,7 @@ async def run_editor_image_job(app, job: dict) -> None:
     example_warnings: list[dict] = []
     scene_qc_attempts: int | None = None  # bg 장소일치 QC 통과까지의 시도 수(관찰용, new 모드 bg만)
     garment_qc_metadata: dict | None = None  # new 모드만; vary 경로는 QC·메타 모두 무변경
+    vary_ctx: dict | None = None  # Phase 3 vary 세션 컨텍스트 — new/플래그 off 는 끝까지 None
 
     async def _fail(message: str, meta: dict):
         try:
@@ -129,12 +285,69 @@ async def run_editor_image_job(app, job: dict) -> None:
 
             cut_type = source.get("cutType")
             changes = payload.get("changes") or []
-            try:
-                image, mime = await cut_variator.generate(
-                    s, app.state.gemini, src_img, changes, cut_type, ref_bg=ref_bg_img)
-            except GeminiError as e:
-                await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
-                return
+            # ── Phase 3: 세션이 붙어 있을 때만 계측·판정 경로를 탄다 ──
+            # 플래그 off 는 session_id 가 없어 아래가 전부 no-op 이고, 호출도 저장도
+            # 기존과 바이트 단위로 같다.
+            vary_session_id = payload.get("editSessionId") if s.editor_vary_intent_qc != "off" else None
+            vary_ctx = None
+            if vary_session_id:
+                vary_ctx = await _vary_preflight(
+                    app, job, session_id=vary_session_id, src_asset=src_asset,
+                    changes=changes, fail=_fail)
+                if vary_ctx is None:
+                    return          # preflight 가 이미 실패 종결했다 — provider 호출 0
+            # 플래그 off 는 **기존 호출 그대로** 간다(generate wrapper). prepare/execute 는
+            # 계측이 필요한 Phase 3 경로에서만 쓴다 — 계측 때문에 legacy 호출 모양을
+            # 바꾸면 "완전 불변" 이 아니게 된다.
+            prepared = None
+            run_id = None
+            t0 = time.monotonic()
+            if vary_ctx is None:
+                try:
+                    image, mime = await cut_variator.generate(
+                        s, app.state.gemini, src_img, changes, cut_type,
+                        ref_bg=ref_bg_img)
+                except GeminiError as e:
+                    await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.",
+                                {"error": str(e)[:300]})
+                    return
+                res = None
+            else:
+                prepared = cut_variator.prepare(
+                    s, src_img, changes, cut_type, ref_bg=ref_bg_img)
+                run_id = await _vary_run_begin(app, job, prepared, vary_ctx,
+                                               src_asset=src_asset,
+                                               ref_bg_asset=ref_bg_asset)
+                try:
+                    res = await cut_variator.execute(app.state.gemini, prepared)
+                    image, mime = res.image, res.mime
+                except GeminiError as e:
+                    # 원문을 저장하지 않는다 — provider 메시지에는 URL·응답 본문이 있다.
+                    await _vary_run_finish(app, job, run_id, vary_ctx, started=t0,
+                                           error=e)
+                    await _vary_session_fail(app, vary_ctx, reason="provider_error")
+                    await _fail("컷 변형에 실패했어요. 다시 시도해 주세요.",
+                                {"error": "generation_failed",
+                                 "category": _provider_category(e)})
+                    return
+            if vary_ctx:
+                await _vary_run_finish(app, job, run_id, vary_ctx, started=t0,
+                                       result=res)
+                vary_ctx["decision"] = await _vary_qc(app, job, vary_ctx, src_img,
+                                                      res, prepared)
+                if (s.editor_vary_intent_qc == "enforce"
+                        and vary_ctx["decision"]["decision"] == "reject"):
+                    # R2 업로드 전에 끊는다 — 고아 객체를 만들지 않는 가장 싼 방법이다.
+                    await _vary_session_fail(app, vary_ctx, reason="edit_intent_rejected",
+                                             qc_result=vary_ctx["decision"],
+                                             status="reject")
+                    await _fail("요청한 변경이 반영되지 않았어요. 다시 시도해 주세요.",
+                                {"error": "edit_intent_rejected",
+                                 "editIntentQc": {
+                                     "decision": "reject",
+                                     "violations": vary_ctx["decision"][
+                                         "lockedInvariantViolations"]}})
+                    return
             group = None  # AG-07 결과는 misc 그룹 (계약 §6)
             cut_type = cut_type or "styling"  # cutType 미상 소스 → styling 가정(계약 §6)
 
@@ -474,18 +687,49 @@ async def run_editor_image_job(app, job: dict) -> None:
             success_metadata["garmentQc"] = garment_qc_metadata
         if example_warnings:
             success_metadata["warnings"] = example_warnings
-        async with pool.connection() as conn:
-            out = await repo.finalize_editor_image_success(
-                conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
-                project_id=project_id, image=image_row, group=group, cut_type=cut_type,
-                reserved=reserved, charge=charge,
-                metadata=success_metadata)
-            await conn.commit()
+        vary_finalize = None
+        if vary_ctx and vary_ctx.get("decision"):
+            d = vary_ctx["decision"]["decision"]
+            # shadow 는 저장 계약을 바꾸지 않는다 — reject 판정이어도 결과는 나가고 사람이
+            # 본다. 원래 decision 은 edit_qc_result 에 그대로 보존된다.
+            status = "pass" if d == "pass" else "review_required"
+            vary_finalize = {
+                "id": vary_ctx["session_id"], "status": status, "qc_status": status,
+                "qc_result": vary_ctx["decision"],
+                "lineage": {"generation_run_id": vary_ctx.get("run_id"),
+                            "parent_output_id": vary_ctx.get("parent_output_id"),
+                            "output_sha256": hashlib.sha256(image).hexdigest(),
+                            "transformation": {"editorVary": {
+                                "changes": vary_ctx["changes"],
+                                "editType": vary_ctx["edit_type"]}}},
+            }
+            success_metadata["editIntentQc"] = {
+                "decision": d, "status": status,
+                "editSessionId": vary_ctx["session_id"]}
+        try:
+            async with pool.connection() as conn:
+                out = await repo.finalize_editor_image_success(
+                    conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
+                    project_id=project_id, image=image_row, group=group, cut_type=cut_type,
+                    reserved=reserved, charge=charge,
+                    metadata=success_metadata, edit_session=vary_finalize)
+                await conn.commit()
+        except Exception as e:
+            # Phase 3 vary 는 계보 실패에 fail-open 하지 않는다 — 계보 없는 결과를 진열하면
+            # "어느 편집의 결과인지 모르는 컷"이 사용자에게 나간다. mode:new·flag-off 는
+            # 애초에 vary_finalize 가 None 이라 이 경로를 타지 않는다.
+            if vary_finalize is None:
+                raise
+            log.warning("editor vary finalize failed (job=%s error=%s)",
+                        job_id, type(e).__name__)
+            await _r2_cleanup(app, key)
+            await _vary_session_fail(app, vary_ctx, reason="finalize_failed",
+                                     status="failed")
+            await _fail("결과를 저장하지 못했어요. 다시 시도해 주세요.",
+                        {"error": "finalize_failed"})
+            return
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
-            try:
-                await asyncio.to_thread(app.state.r2.delete, key)
-            except Exception:
-                log.warning("orphan R2 cleanup failed: %s", key)
+            await _r2_cleanup(app, key)
         elif (s.facemarket_enabled and fm_face_injected and fm_license_row is not None
               and fm_license_row.get("unit_price") is not None
               and getattr(app.state, "fm_chain", None) is not None):

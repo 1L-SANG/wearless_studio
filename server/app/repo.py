@@ -745,7 +745,8 @@ async def get_edit_session_by_job_id(
             "select id::text as id, project_id::text as project_id, "
             "baseline_id::text as baseline_id, parent_output_id::text as parent_output_id, "
             "edit_type, requested_adjustments, locked_invariants, allowed_scope, status, "
-            "retry_count, output_id::text as output_id, edit_qc_result, "
+            "retry_count, output_id::text as output_id, edit_qc_result, source_kind, "
+            "source_asset_id::text as source_asset_id, "
             "job_id::text as job_id from edit_sessions where job_id = %s",
             (job_id,))
         return await cur.fetchone()
@@ -780,13 +781,81 @@ async def update_job_payload_edit_session(
             (Json({"editSessionId": session_id}), job_id))
 
 
+async def create_editor_edit_session(
+    conn: AsyncConnection,
+    *,
+    project_id: str,
+    user_id: str,
+    job_id: str | None,
+    source_asset_id: str,
+    parent_output_id: str | None,
+    edit_type: str,
+    changes: list,
+    allowed_scope: dict,
+    locked_invariants: dict,
+    request_snapshot: dict | None = None,
+) -> dict:
+    """에디터 자산 vary 세션. baseline 세션과 **다른 source_kind** 다.
+
+    baseline 용 create_edit_session 을 재사용하지 않는 이유: 그쪽은 baseline dict 를 받아
+    baseline_id·parent_output_id 를 그것에서 뽑는다. 여기 baseline 은 없고 정본은 자산이다 —
+    억지로 끼우면 "baseline 없는 baseline 편집" 같은 행이 만들어진다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into edit_sessions
+              (project_id, job_id, source_kind, source_asset_id, baseline_id,
+               parent_output_id, edit_type, requested_adjustments, locked_invariants,
+               allowed_scope, status, created_by)
+            values (%s, %s, 'editor_asset', %s, null, %s, %s, %s, %s, %s, 'queued', %s)
+            returning id::text as id, project_id::text as project_id,
+                      source_kind, source_asset_id::text as source_asset_id,
+                      baseline_id::text as baseline_id,
+                      parent_output_id::text as parent_output_id,
+                      edit_type, requested_adjustments, locked_invariants,
+                      allowed_scope, status, retry_count, created_at
+            """,
+            (project_id, job_id, source_asset_id, parent_output_id, edit_type,
+             Json({"changes": changes, "request": request_snapshot or {}}),
+             Json(locked_invariants), Json(allowed_scope), user_id),
+        )
+        return await cur.fetchone()
+
+
+async def get_unique_output_for_asset(
+    conn: AsyncConnection, asset_id: str
+) -> dict:
+    """자산 → 그 자산을 만든 output. **유일할 때만** 값을 준다.
+
+    → {"output_id": str|None, "generation_run_id": str|None, "status": str}
+      status: linked | none | ambiguous
+
+    여러 행이 걸리면 최신을 정본으로 삼지 않는다 — 어느 쪽이 이 자산의 계보인지 모르는
+    상태이고, 그때 하나를 고르면 그건 추정이지 계보가 아니다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, generation_run_id::text as generation_run_id "
+            "from generation_outputs where asset_id = %s limit 2",
+            (asset_id,))
+        rows = await cur.fetchall()
+    if not rows:
+        return {"output_id": None, "generation_run_id": None, "status": "none"}
+    if len(rows) > 1:
+        return {"output_id": None, "generation_run_id": None, "status": "ambiguous"}
+    return {"output_id": rows[0]["id"],
+            "generation_run_id": rows[0]["generation_run_id"], "status": "linked"}
+
+
 async def get_edit_session(conn: AsyncConnection, session_id: str) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
             "select id::text as id, project_id::text as project_id, "
             "baseline_id::text as baseline_id, parent_output_id::text as parent_output_id, "
             "edit_type, requested_adjustments, locked_invariants, allowed_scope, status, "
-            "retry_count, output_id::text as output_id, edit_qc_result "
+            "retry_count, output_id::text as output_id, edit_qc_result, source_kind, "
+            "source_asset_id::text as source_asset_id "
             "from edit_sessions where id = %s",
             (session_id,),
         )
@@ -2072,10 +2141,16 @@ async def finalize_editor_image_success(
     reserved: int,
     charge: int,
     metadata: dict,
+    edit_session: dict | None = None,   # Phase 3 vary 전용 {"id","status","qc_result","lineage"}
 ) -> dict | None:
     """성공 종결(원자·lease 펜스): 에셋 insert + wardrobe_images insert + 크레딧 confirm + job
     done. None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음. finalize_mannequin_adjust_success
-    와 동일 구조(AG-06/07 공용 종결, mannequin/detail_page finalize 미러)."""
+    와 동일 구조(AG-06/07 공용 종결, mannequin/detail_page finalize 미러).
+
+    `edit_session` 이 오면 Phase 3 vary 경로다 — generation_outputs·세션·wardrobe 를 **같은
+    tx** 에서 잇고, 그 기록이 실패하면 fail-open 하지 않는다(계보 없는 결과를 진열하면
+    "어느 편집의 결과인지 모르는 컷"이 사용자에게 나간다). mode:new·flag-off 는 인자가
+    없으므로 기존 경로 그대로다."""
     async with conn.cursor() as cur:
         await cur.execute(
             "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
@@ -2096,12 +2171,37 @@ async def finalize_editor_image_success(
             (project_id, group or "misc"),
         )
         sort_order = (await cur.fetchone())["v"]
+        qc_status = (edit_session or {}).get("qc_status")
         await cur.execute(
-            "insert into wardrobe_images (project_id, color_id, asset_id, ai, cut_type, sort_order) "
-            "values (%s, %s, %s, true, %s, %s) returning id::text as id",
-            (project_id, group, image["asset_id"], cut_type, sort_order),
+            "insert into wardrobe_images (project_id, color_id, asset_id, ai, cut_type, "
+            "sort_order, edit_session_id, qc_status) "
+            "values (%s, %s, %s, true, %s, %s, %s, %s) returning id::text as id",
+            (project_id, group, image["asset_id"], cut_type, sort_order,
+             (edit_session or {}).get("id"), qc_status),
         )
         wardrobe_id = (await cur.fetchone())["id"]
+        if edit_session is not None:
+            # 계보는 같은 tx 안에서, INSERT RETURNING 으로 받은 **그 output** 을 연결한다.
+            # "가장 최근 output" 재조회는 동시 생성에서 남의 결과를 붙인다.
+            lineage = edit_session.get("lineage") or {}
+            await cur.execute(
+                "insert into generation_outputs (generation_run_id, project_id, "
+                "mannequin_cut_id, asset_id, output_sha256, post_processed, "
+                "transformation, parent_output_id, baseline_id, edit_session_id) "
+                "values (%s, %s, null, %s, %s, false, %s, %s, null, %s) returning id",
+                (lineage.get("generation_run_id"), project_id, image["asset_id"],
+                 lineage.get("output_sha256"),
+                 Json(lineage["transformation"]) if lineage.get("transformation")
+                 else None,
+                 lineage.get("parent_output_id"), edit_session["id"]),
+            )
+            out_row = await cur.fetchone()
+            await update_edit_session(
+                conn, session_id=edit_session["id"], status=edit_session["status"],
+                qc_result=edit_session.get("qc_result"))
+            await cur.execute(
+                "update edit_sessions set output_id = %s where id = %s",
+                (out_row["id"] if out_row else None, edit_session["id"]))
         image_api = {  # WardrobeImage shape (계약 §3.6) — _wardrobe_image_api와 동일
             "id": wardrobe_id,
             "src": f"/v1/assets/{image['asset_id']}/file",
