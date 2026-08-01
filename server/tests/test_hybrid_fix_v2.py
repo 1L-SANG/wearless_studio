@@ -159,7 +159,7 @@ def test_build_panel_map_prefers_mask_derived_aspect_over_vision():
 
 # ── US-3: 보호 영역 — 커프스 밴드·칼라 위·밑단 아래는 carrier 픽셀 보존 ──────────
 
-def _composited_g1():
+def _composited_g1(full=False):
     model = extract_stripe_model(
         render_signal("S1_blue_brown_fine", "illum"),
         source_asset_id="fx", source_sha256="0" * 8, source_roi=(0, 0, 768, 768))
@@ -168,9 +168,12 @@ def _composited_g1():
     pm = build_panel_map(cx["image"], cx["landmarks"])
     assert not isinstance(pm, CompositeFailure), pm
     torso_h = np.ptp([p[1] for p in cx["torso_poly"]])
+    period = torso_h / 22.0
     art = composite_stripe(cx["image"], pm, model,
-                           target_period_px=torso_h / 22.0, target_axis="horizontal")
+                           target_period_px=period, target_axis="horizontal")
     assert not isinstance(art, CompositeFailure), art
+    if full:
+        return {"cx": cx, "pm": pm, "model": model, "period": period, "art": art}
     return cx, art
 
 
@@ -215,3 +218,41 @@ def test_no_paint_above_collar_or_below_hem():
     hem_y = max(lm["hem_l"][1], lm["hem_r"][1]) * h
     assert np.count_nonzero(art.painted[:max(0, int(shoulder_y - h * 0.02))]) == 0
     assert np.count_nonzero(art.painted[min(h, int(hem_y + h * 0.03)):]) == 0
+
+
+# ── US-5: 결정론 + composite-vs-carrier 비회귀 ────────────────────────────────
+
+def test_composite_pipeline_is_byte_deterministic():
+    """같은 입력 → 바이트 동일 출력 + 동일 QC. 재현 가능성은 유료 검증의 전제다."""
+    from app.services.hybrid_composite.deterministic_qc import verify_composite
+    a = _composited_g1(full=True)
+    b = _composited_g1(full=True)
+    assert np.array_equal(a["art"].image_bgr, b["art"].image_bgr)
+    assert np.array_equal(a["art"].painted, b["art"].painted)
+    qa = verify_composite(a["art"].image_bgr, a["cx"]["image"], a["pm"], a["model"],
+                          target_period_px=a["period"], target_axis="horizontal",
+                          painted_mask=a["art"].painted)
+    qb = verify_composite(b["art"].image_bgr, b["cx"]["image"], b["pm"], b["model"],
+                          target_period_px=b["period"], target_axis="horizontal",
+                          painted_mask=b["art"].painted)
+    assert qa.passed == qb.passed and qa.failures == qb.failures
+    assert qa.metrics == qb.metrics
+
+
+def test_degraded_composite_is_rejected_not_shipped():
+    """줄 신호를 잃은(=carrier 보다 나쁜) 합성은 deterministic QC 가 미출고 판정해야 한다."""
+    from app.services.hybrid_composite.deterministic_qc import verify_composite
+    r = _composited_g1(full=True)
+    qc_ok = verify_composite(r["art"].image_bgr, r["cx"]["image"], r["pm"], r["model"],
+                             target_period_px=r["period"], target_axis="horizontal",
+                             painted_mask=r["art"].painted)
+    assert qc_ok.passed, qc_ok.metrics["failure_details"]
+    degraded = r["art"].image_bgr.copy()
+    sel = r["art"].painted > 0
+    blurred = cv2.GaussianBlur(degraded, (0, 0), sigmaX=r["period"] * 1.5)
+    degraded[sel] = blurred[sel]
+    qc_bad = verify_composite(degraded, r["cx"]["image"], r["pm"], r["model"],
+                              target_period_px=r["period"], target_axis="horizontal",
+                              painted_mask=r["art"].painted)
+    assert not qc_bad.passed, "줄 소실 합성이 QC 를 통과 — carrier 보다 나쁜 출력이 출고된다"
+    assert "pattern_metric_failed" in qc_bad.failures
