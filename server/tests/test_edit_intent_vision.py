@@ -483,3 +483,43 @@ def test_qc_result_stores_normalised_observation_and_meta(monkeypatch):
     assert vision["meta"]["promptVersion"] == eiv.PROMPT_VERSION
     assert set(vision["observation"]) == set(eiv.OBSERVATION_FIELDS) | {
         "confidence", "uncertainFields", "evidence"}
+
+
+# ── 두 파이프라인의 요청 형식 (9/N — 실수집에서 발견) ──────────────────────
+
+def test_vary_changes_reach_the_prompt():
+    """`{"changes": [...]}` 를 못 알아보면 vary 요청이 프롬프트에 한 줄도 안 실린다."""
+    from app.agents.edit_intent_vision import build_prompt
+    p = build_prompt(edit_type="BACKGROUND_ONLY",
+                     adjustments={"changes": [{"type": "bg", "value": "밝은 스튜디오"}]},
+                     allowed_scope={"allowed": [], "forbidden": []})
+    assert "bg: 밝은 스튜디오" in p
+
+
+def test_mannequin_step_shape_still_works():
+    from app.agents.edit_intent_vision import build_prompt
+    p = build_prompt(edit_type="LENGTH_ONLY", adjustments={"length": -2},
+                     allowed_scope={"allowed": [], "forbidden": []})
+    assert "length -2 step" in p
+
+
+def test_vary_changes_do_not_crash_on_odd_shapes():
+    from app.agents.edit_intent_vision import _describe_adjustments
+    assert _describe_adjustments({"changes": [None, {}, {"type": "bg"}]}) == ["bg"]
+    assert _describe_adjustments({"changes": []}) == []
+    assert _describe_adjustments({}) == []
+    assert _describe_adjustments(None) == []
+
+
+def test_change_values_are_length_bounded_in_the_prompt():
+    from app.agents.edit_intent_vision import _describe_adjustments
+    out = _describe_adjustments({"changes": [{"type": "bg", "value": "가" * 500}]})
+    assert len(out[0]) <= 130
+
+
+def test_the_worker_passes_vary_changes_to_vision():
+    import inspect
+    from app.workers import editor_image_job
+    src = inspect.getsource(editor_image_job)
+    assert 'adjustments={"changes": ctx.get("changes") or []}' in src
+    assert "adjustments={}," not in src

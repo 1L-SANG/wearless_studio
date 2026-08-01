@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -64,6 +65,7 @@ PRECHECK = "select to_regclass('public.edit_sessions'), to_regclass('public.edit
 def main() -> int:
     ap = argparse.ArgumentParser(description="Phase 3 shadow 평가 리포트 (read-only)")
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL"))
+    ap.add_argument("--jsonl", help="shadow_collect 가 남긴 samples.jsonl (DB 없이 집계)")
     ap.add_argument("--limit", type=int, default=5000)
     ap.add_argument("--image-usd", type=float, default=0.0,
                     help="이미지 1회 단가(USD). 안 주면 비용은 0 으로 두고 호출 수만 센다.")
@@ -71,8 +73,30 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="원 JSON 출력")
     args = ap.parse_args()
 
+    if args.jsonl:
+        # 수집 하네스 산출물 직접 집계 — DB 를 세우지 않고도 분포를 볼 수 있게.
+        rows = []
+        with open(args.jsonl, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                r = json.loads(line)
+                for k in ("created_at", "completed_at"):
+                    if isinstance(r.get(k), (int, float)):
+                        r[k] = datetime.fromtimestamp(r[k])
+                r.setdefault("review_decision", None)
+                r.setdefault("has_pattern_or_logo", False)
+                rows.append(r)
+        out = report(rows, image_usd=args.image_usd, vision_usd=args.vision_usd)
+        if args.json:
+            print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
+        else:
+            _render(out)
+        return 0
+
     if not args.dsn:
-        print("DATABASE_URL 이 없어요. --dsn 으로 주세요.", file=sys.stderr)
+        print("DATABASE_URL 이 없어요. --dsn 또는 --jsonl 을 주세요.", file=sys.stderr)
         return 2
 
     import psycopg

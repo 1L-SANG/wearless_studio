@@ -1,0 +1,326 @@
+{
+  "total": 30,
+  "samplesByPipeline": {
+    "mannequin_edit": 0,
+    "editor_vary": 30
+  },
+  "pipelines": {
+    "mannequin_edit": {
+      "samples": 0,
+      "byEditType": {},
+      "byMachineDecision": {},
+      "byUserDecision": {},
+      "byVisionStatus": {},
+      "byPatternOrLogo": {},
+      "decisionRates": {
+        "n": 0,
+        "counts": {
+          "pass": 0,
+          "review_required": 0,
+          "reject": 0,
+          "failed": 0
+        },
+        "rates": {},
+        "sufficient": false
+      },
+      "userReview": {
+        "reviewRequired": 0,
+        "reviewed": 0,
+        "unreviewed": 0,
+        "counts": {
+          "accepted": 0,
+          "rejected": 0
+        },
+        "acceptedRate": null,
+        "sufficient": false
+      },
+      "confusion": {
+        "matrix": {
+          "pass": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "review_required": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "reject": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "failed": {
+            "accepted": 0,
+            "rejected": 0
+          }
+        },
+        "graded": 0,
+        "falsePassCandidates": 0,
+        "overReview": 0,
+        "sufficient": false
+      },
+      "metricDistributions": {},
+      "visionConfidence": {
+        "n": 0,
+        "sufficient": false
+      },
+      "violations": {
+        "n": 0,
+        "lockedInvariantViolations": {},
+        "unexpectedChanges": {}
+      },
+      "measurementVisionConflict": {
+        "considered": 0,
+        "conflicts": 0,
+        "rate": null,
+        "sufficient": false
+      },
+      "visionAvailability": {
+        "n": 0,
+        "counts": {},
+        "unavailableRate": null,
+        "sufficient": false
+      },
+      "latencySeconds": {
+        "n": 0,
+        "sufficient": false
+      },
+      "provider": {
+        "imageCalls": 0,
+        "visionCalls": 0,
+        "estimatedUsd": 0.0,
+        "unitPricesProvided": true
+      },
+      "verdict": {
+        "enforceReady": false,
+        "blockers": [
+          "표본 부족: 0 < 30",
+          "사람이 판단한 표본 부족: 0 < 30"
+        ],
+        "status": "insufficient_data"
+      }
+    },
+    "editor_vary": {
+      "samples": 30,
+      "byEditType": {
+        "BACKGROUND_ONLY": 6,
+        "CUSTOM_REVIEW_REQUIRED": 24
+      },
+      "byMachineDecision": {
+        "review_required": 30
+      },
+      "byUserDecision": {
+        "None": 30
+      },
+      "byVisionStatus": {
+        "ok": 30
+      },
+      "byPatternOrLogo": {
+        "False": 30
+      },
+      "decisionRates": {
+        "n": 30,
+        "counts": {
+          "pass": 0,
+          "review_required": 30,
+          "reject": 0,
+          "failed": 0
+        },
+        "rates": {
+          "pass": 0.0,
+          "review_required": 1.0,
+          "reject": 0.0,
+          "failed": 0.0
+        },
+        "sufficient": true
+      },
+      "userReview": {
+        "reviewRequired": 30,
+        "reviewed": 0,
+        "unreviewed": 30,
+        "counts": {
+          "accepted": 0,
+          "rejected": 0
+        },
+        "acceptedRate": null,
+        "sufficient": false
+      },
+      "confusion": {
+        "matrix": {
+          "pass": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "review_required": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "reject": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "failed": {
+            "accepted": 0,
+            "rejected": 0
+          }
+        },
+        "graded": 0,
+        "falsePassCandidates": 0,
+        "overReview": 0,
+        "sufficient": false
+      },
+      "metricDistributions": {
+        "bodyWidth": {
+          "n": 30,
+          "min": -0.5195,
+          "p05": -0.4525,
+          "p50": -0.0041,
+          "p95": 8.8214,
+          "max": 10.973,
+          "mean": 0.9499200000000001,
+          "sufficient": true
+        },
+        "centerX": {
+          "n": 30,
+          "min": -0.2844,
+          "p05": -0.273,
+          "p50": -0.0122,
+          "p95": 0.0448,
+          "max": 0.0459,
+          "mean": -0.05610333333333333,
+          "sufficient": true
+        },
+        "centerY": {
+          "n": 30,
+          "min": -0.0004,
+          "p05": 0.004,
+          "p50": 0.0084,
+          "p95": 0.0645,
+          "max": 0.0737,
+          "mean": 0.01627,
+          "sufficient": true
+        },
+        "cuffY": {
+          "n": 30,
+          "min": -0.241,
+          "p05": -0.1605,
+          "p50": 0.0151,
+          "p95": 0.3984,
+          "max": 0.4434,
+          "mean": 0.06595333333333334,
+          "sufficient": true
+        },
+        "hemY": {
+          "n": 30,
+          "min": 0.0084,
+          "p05": 0.0087,
+          "p50": 0.0133,
+          "p95": 0.0845,
+          "max": 0.0845,
+          "mean": 0.029903333333333334,
+          "sufficient": true
+        },
+        "shoulderWidth": {
+          "n": 30,
+          "min": -0.5811,
+          "p05": -0.487,
+          "p50": -0.0223,
+          "p95": 4.359,
+          "max": 7.5178,
+          "mean": 0.5607933333333334,
+          "sufficient": true
+        },
+        "subjectHeight": {
+          "n": 30,
+          "min": 0.0127,
+          "p05": 0.014,
+          "p50": 0.0208,
+          "p95": 0.1666,
+          "max": 0.1666,
+          "mean": 0.04556333333333333,
+          "sufficient": true
+        }
+      },
+      "visionConfidence": {
+        "n": 30,
+        "min": 0.8,
+        "p05": 0.8,
+        "p50": 0.9,
+        "p95": 0.95,
+        "max": 0.95,
+        "mean": 0.8733333333333333,
+        "sufficient": true
+      },
+      "violations": {
+        "n": 30,
+        "lockedInvariantViolations": {},
+        "unexpectedChanges": {
+          "shoulderWidth": {
+            "count": 6,
+            "rate": 0.2
+          },
+          "cuffY": {
+            "count": 6,
+            "rate": 0.2
+          },
+          "hemY": {
+            "count": 6,
+            "rate": 0.2
+          },
+          "centerY": {
+            "count": 3,
+            "rate": 0.1
+          },
+          "framing": {
+            "count": 3,
+            "rate": 0.1
+          },
+          "subjectHeight": {
+            "count": 3,
+            "rate": 0.1
+          },
+          "bodyWidth": {
+            "count": 2,
+            "rate": 0.06666666666666667
+          }
+        }
+      },
+      "measurementVisionConflict": {
+        "considered": 30,
+        "conflicts": 0,
+        "rate": 0.0,
+        "sufficient": true
+      },
+      "visionAvailability": {
+        "n": 30,
+        "counts": {
+          "ok": 30
+        },
+        "unavailableRate": 0.0,
+        "sufficient": true
+      },
+      "latencySeconds": {
+        "n": 30,
+        "min": 19.542544,
+        "p05": 19.548662,
+        "p50": 21.042771,
+        "p95": 48.042406,
+        "max": 50.882577,
+        "mean": 23.004593800000002,
+        "sufficient": true
+      },
+      "provider": {
+        "imageCalls": 30,
+        "visionCalls": 30,
+        "estimatedUsd": 4.59,
+        "unitPricesProvided": true
+      },
+      "verdict": {
+        "enforceReady": false,
+        "blockers": [
+          "사람이 판단한 표본 부족: 0 < 30"
+        ],
+        "status": "insufficient_data"
+      }
+    }
+  }
+}

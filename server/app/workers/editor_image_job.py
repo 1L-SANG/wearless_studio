@@ -195,7 +195,10 @@ async def _vary_qc(app, job, ctx, src_img, result, prepared):
     try:
         observation, meta = await edit_intent_vision.observe(
             s, baseline=src_img, edited=InlineImage(result.mime, result.image),
-            edit_type=ctx["edit_type"], adjustments={},
+            # vary 요청을 그대로 넘긴다 — 빈 dict 를 넘기면 Vision 이 "요청대로 됐는가"를
+            # 요청이 뭔지 모른 채 답한다.
+            edit_type=ctx["edit_type"],
+            adjustments={"changes": ctx.get("changes") or []},
             allowed_scope={"allowed": ctx["semantic_scope"]["allowedObservations"],
                            "forbidden": ctx["semantic_scope"]["forbiddenObservations"]},
             source_refs=None)

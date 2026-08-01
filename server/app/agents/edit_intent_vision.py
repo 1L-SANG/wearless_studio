@@ -57,11 +57,36 @@ def schema() -> dict:
     }
 
 
+def _describe_adjustments(adjustments) -> list[str]:
+    """요청을 사람 말로 — 두 파이프라인의 요청 형식이 다르다.
+
+    마네킹 편집은 `{axis: step}`(정수 스텝), 에디터 vary 는 `{"changes": [{type, value}]}`
+    다. 앞의 형식만 알아보면 vary 요청이 프롬프트에 **한 줄도 안 실린다** — 그러면
+    Vision 은 "요청대로 됐는가"를 요청이 뭔지 모른 채 답하게 된다.
+    """
+    if not adjustments:
+        return []
+    raw = adjustments.get("changes") if isinstance(adjustments, dict) else None
+    if isinstance(raw, list):
+        out = []
+        for c in raw:
+            if not isinstance(c, dict):
+                continue
+            ctype = str(c.get("type") or "").strip()
+            if not ctype:
+                continue
+            value = str(c.get("value") or "").strip()[:120]
+            out.append(f"{ctype}: {value}" if value else ctype)
+        return out
+    return [f"{k} {v:+d} step" for k, v in sorted(adjustments.items())
+            if isinstance(v, int) and not isinstance(v, bool) and v]
+
+
 def build_prompt(*, edit_type: str, adjustments: dict, allowed_scope: dict,
                  source_ref_count: int = 0) -> str:
     with open(_PROMPT_FILE, encoding="utf-8") as f:
         text = f.read()
-    changes = [f"{k} {v:+d} step" for k, v in sorted((adjustments or {}).items()) if v]
+    changes = _describe_adjustments(adjustments)
     source_note = (
         f"IMAGE 3..{2 + source_ref_count} = PRODUCT SOURCE PHOTOS — supporting evidence for"
         " what the garment actually looks like."
