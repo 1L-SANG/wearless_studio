@@ -39,6 +39,7 @@ from ..agents.mannequin_adjust import (
 from ..agents.gemini_image import GeminiError, GeminiImageResult, InlineImage
 from ..agents.model_routing import resolve_model
 from ..agents import hybrid_landmarks
+from ..agents import edit_intent_vision
 from ..agents.product_reference import ProductReference, order_by_role, select_pattern_sources
 from ..services.hybrid_composite import (
     deterministic_qc as hc_qc,
@@ -1753,6 +1754,16 @@ async def _run_baseline_edit(app, job: dict, *, fail) -> None:
                               {"error": "no_approved_baseline"})
         # superseded baseline 은 여기 오지 않는다(active 만 조회). 세션이 다른 baseline 을
         # 가리키면 그 사이 사용자가 정본을 바꾼 것이다 — 옛 정본을 편집하지 않는다.
+        if session_id and session is None:
+            return await fail("편집 요청 정보를 찾지 못했어요.",
+                              {"error": "edit_session_missing"})
+        if session and session.get("job_id") not in (None, job_id):
+            return await fail("편집 요청이 다른 작업에 연결돼 있어요.",
+                              {"error": "edit_session_job_mismatch"})
+        if session and session.get("status") not in ("queued", "running"):
+            # 이미 종결된 세션 — reclaim 으로 같은 잡이 다시 돌아도 provider 를 안 부른다.
+            return await fail("이미 처리된 편집 요청이에요.",
+                              {"error": "edit_session_not_runnable"})
         if session and session.get("baseline_id") != baseline["id"]:
             await _set_session("failed", qc_result={"reason": "baseline_superseded"})
             return await fail("승인 컷이 바뀌었어요. 다시 시도해 주세요.",
@@ -1821,9 +1832,31 @@ async def _run_baseline_edit(app, job: dict, *, fail) -> None:
         model = resolve_model(s, getattr(s, "mannequin_adjust_tier", "") or "image_high")
         runlog = RunLogger(pool=pool, r2=r2, job_id=job_id, project_id=project_id,
                            user_id=user_id, enabled=(s.generation_run_log == "shadow"))
-        await _set_session("running",
-                           model_snapshot={"model": model,
-                                           "imageSize": s.mannequin_image_size})
+        # preflight — 이 전이가 성공해야만 provider 를 부른다. 실패는 세 가지다:
+        # 세션 없음 / 이미 종결됨(워커 재진입·reclaim) / DB 장애. 어느 쪽이든 **호출하지
+        # 않는다** — 종결된 세션에 다시 호출하면 사용자는 한 번 요청하고 두 번 과금된다.
+        if session_id:
+            try:
+                async with pool.connection() as conn:
+                    await repo.update_edit_session(
+                        conn, session_id=session_id, status="running",
+                        model_snapshot={"model": model,
+                                        "imageSize": s.mannequin_image_size})
+                    await conn.commit()
+            except repo.InvalidEditTransition as e:
+                await _emit(pool, job_id, "step", {
+                    "status": "edit_preflight_blocked", "reason": "invalid_transition"})
+                log.warning("edit preflight blocked (job=%s session=%s error=%s)",
+                            job_id, session_id, type(e).__name__)
+                return await fail("이미 처리된 편집 요청이에요.",
+                                  {"error": "edit_session_not_runnable"})
+            except Exception as e:
+                await _emit(pool, job_id, "step", {
+                    "status": "edit_preflight_blocked", "reason": "session_update_failed"})
+                log.warning("edit preflight failed (job=%s error=%s)",
+                            job_id, type(e).__name__)
+                return await fail("편집을 시작하지 못했어요. 잠시 후 다시 시도해 주세요.",
+                                  {"error": "edit_session_unavailable"})
         # 프롬프트 객체는 Generation Run 이 이미 R2 에 올린다 — 같은 바이트를 두 번 올리지
         # 않고 그 키를 세션에 연결한다. 전문은 DB 에 넣지 않는다(해시만).
         first_prompt_sha = gr_prompt_sha(prompt)
@@ -1857,18 +1890,33 @@ async def _run_baseline_edit(app, job: dict, *, fail) -> None:
                 await _set_session_prompt(pool, session_id, first_prompt_sha,
                                           runlog, run_id)
 
+            # 의미 관찰 — **결과 1개당 1회**. 재시도하면 새 결과에 대해서만 다시 1회다.
+            # 실패는 삼키고 review 로 간다(장애만으로 reject·환불하지 않는다).
+            observation, vision_meta = None, None
+            try:
+                observation, vision_meta = await edit_intent_vision.observe(
+                    s, baseline=baseline_img,
+                    edited=InlineImage(result.mime, result.image),
+                    edit_type=edit_type, adjustments=adjustments, allowed_scope=scope,
+                    source_refs=[r.image for r in prod_refs[:2]])
+            except Exception as e:
+                vision_meta = edit_intent_vision.failure_meta(e)
+                log.warning("edit intent vision failed (job=%s status=%s)",
+                            job_id, vision_meta["status"])
             qc_result = await asyncio.to_thread(
                 edit_intent_qc.evaluate,
                 baseline_bgr=_decode_bgr(base_bytes),
                 edited_bgr=_decode_bgr(result.image),
                 edit_type=edit_type, allowed_scope=scope, target_ratio=target_ratio,
-                vision=None)
+                vision=observation, require_vision=True)
+            qc_result["vision"] = {"observation": observation, "meta": vision_meta}
             await _emit(pool, job_id, "step", {
                 "status": "edit_intent_qc", "attempt": attempt + 1,
                 "decision": qc_result["decision"],
                 "unexpectedChanges": qc_result["unexpectedChanges"],
                 "lockedInvariantViolations": qc_result["lockedInvariantViolations"],
-                "requestedChangeSatisfied": qc_result["requestedChangeSatisfied"]})
+                "requestedChangeSatisfied": qc_result["requestedChangeSatisfied"],
+                "visionStatus": (vision_meta or {}).get("status", "not_called")})
             if not edit_intent_qc.should_retry(qc_result, retry_count=retry_count):
                 break
             retry_count += 1

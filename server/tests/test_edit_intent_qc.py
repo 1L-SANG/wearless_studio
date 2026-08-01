@@ -177,27 +177,33 @@ def test_vision_observations_become_violations_by_policy_not_by_verdict():
     r = qc.evaluate(baseline_bgr=base, edited_bgr=edited,
                     edit_type="GARMENT_LENGTH_ONLY", allowed_scope=LENGTH_SCOPE,
                     target_ratio=-0.08,
-                    vision={"collarChanged": True, "requestedChangeApplied": True})
-    assert "collar" in r["lockedInvariantViolations"]
+                    vision={"collarChanged": True, "requestedChangeApplied": True,
+                            "confidence": 0.9, "uncertainFields": []})
+    assert "collarType" in r["lockedInvariantViolations"]
     assert r["decision"] == "reject"
 
 
 def test_vision_cannot_override_a_measured_failure_into_pass():
-    """LLM 이 "괜찮다"고 해도 측정이 아니라고 하면 통과하지 않는다."""
+    """LLM 이 "괜찮다"고 해도 측정이 아니라고 하면 통과하지 않는다 — 충돌은 사람이 본다."""
     base, edited = _scene(), _scene()
     r = qc.evaluate(baseline_bgr=base, edited_bgr=edited,
                     edit_type="GARMENT_LENGTH_ONLY", allowed_scope=LENGTH_SCOPE,
                     target_ratio=-0.08,
-                    vision={"requestedChangeApplied": True, "collarChanged": False})
-    assert r["decision"] == "reject"
+                    vision={"requestedChangeApplied": True, "collarChanged": False,
+                            "confidence": 0.9, "uncertainFields": []})
+    assert r["decision"] == "review_required"
+    assert r["checks"]["visionConflict"] is True
 
 
 def test_vision_can_catch_what_measurement_missed():
+    """측정은 "됐다", 관찰은 "안 보인다" — 어느 쪽도 자동으로 이기지 않는다."""
     r = qc.decide(edit_type="GARMENT_LENGTH_ONLY", allowed_scope=LENGTH_SCOPE,
                   target_ratio=-0.08,
                   metrics={"confidence": 0.9, "delta": {"hemY": -0.08}},
-                  vision={"requestedChangeApplied": False})
-    assert r["requestedChangeSatisfied"] is False and r["decision"] == "reject"
+                  vision={"requestedChangeApplied": False, "confidence": 0.9,
+                          "uncertainFields": []})
+    assert r["requestedChangeSatisfied"] is False
+    assert r["decision"] == "review_required" and r["checks"]["visionConflict"] is True
 
 
 def test_decision_has_no_free_form_llm_field():
@@ -206,7 +212,8 @@ def test_decision_has_no_free_form_llm_field():
     r = qc.evaluate(baseline_bgr=base, edited_bgr=edited,
                     edit_type="GARMENT_LENGTH_ONLY", allowed_scope=LENGTH_SCOPE,
                     target_ratio=-0.08,
-                    vision={"decision": "pass", "collarChanged": True})
+                    vision={"decision": "pass", "collarChanged": True,
+                            "confidence": 0.9, "uncertainFields": []})
     assert r["decision"] == "reject", "LLM 이 최종 판정을 만들었다"
 
 

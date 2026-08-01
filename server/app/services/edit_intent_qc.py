@@ -36,6 +36,40 @@ DRIFT_TOL = {
 BACKGROUND_DELTA_TOL = 6.0      # 배경 평균색 L*a*b* 유클리드 거리
 SILHOUETTE_IOU_MIN = 0.80       # 실루엣이 이보다 덜 겹치면 "같은 장면"이 아니다
 MIN_MEASURE_CONFIDENCE = 0.5
+# Vision 관찰 신뢰도 하한. 이보다 낮으면 "봤다"고 치지 않는다 — 낮은 확신의 false 는
+# "확인했고 안 바뀌었다"로 읽혀 잠긴 항목의 변경을 통과시킨다.
+MIN_VISION_CONFIDENCE = 0.5
+
+# edit type → 그 편집에서 **바뀌어도 되는** 관찰 필드. 여기 없는 필드가 True 면 위반이다.
+# 정량 축(allowed_scope)과 달리 이건 의미 축이라 따로 둔다 — "총장"은 측정 지표지만
+# "sleevesChanged" 는 관찰 항목이고, 둘의 이름 공간이 같지 않다.
+VISION_ALLOWED_CHANGES = {
+    "GARMENT_LENGTH_ONLY": (),
+    "SLEEVE_LENGTH_ONLY": ("sleevesChanged",),
+    "BODY_WIDTH_ONLY": (),
+    "SHOULDER_WIDTH_ONLY": (),
+    "TUCK_STATE_ONLY": (),
+    "MANNEQUIN_VOLUME_ONLY": (),
+    "BACKGROUND_ONLY": ("backgroundChanged", "lightingChanged"),
+    "LIGHTING_ONLY": ("lightingChanged",),
+    "CUSTOM_REVIEW_REQUIRED": (),
+}
+
+# 관찰 필드 → 위반 이름(잠금 항목). 판정 결과에 나가는 이름을 여기서 고정한다.
+_VISION_VIOLATION = {
+    "collarChanged": "collarType",
+    "sleevesChanged": "sleeveLength",
+    "buttonsChanged": "buttonCount",
+    "pocketsChanged": "pocketCount",
+    "patternChanged": "pattern",
+    "logoChanged": "logo",
+    "poseChanged": "pose",
+    "cameraChanged": "camera",
+    "framingChanged": "framing",
+    "backgroundChanged": "background",
+    "lightingChanged": "lighting",
+    "mannequinIdentityChanged": "mannequinIdentity",
+}
 
 # 축 이름 → 측정 키. 요청 축은 이 키의 변화로 검증하고, 나머지는 드리프트로 본다.
 # 요청 축이 **물리적으로 함께 움직이는** 지표. 밑단을 올리면 피사체 높이와 bbox 중심은
@@ -155,7 +189,8 @@ def measure(baseline_bgr, edited_bgr) -> dict:
 # ── 판정 (순수 정책) ─────────────────────────────────────────────────────────
 
 def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
-           metrics: dict, vision: dict | None = None) -> dict:
+           metrics: dict, vision: dict | None = None,
+           require_vision: bool = False) -> dict:
     """측정 + (선택) Vision 관찰 → decision. **LLM 이 아니라 여기가 정한다.**
 
     반환: {decision, requestedChangeSatisfied, requestedChangeMeasurements,
@@ -229,23 +264,39 @@ def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
             violations.append("garmentOrMannequin")
             instructions.append("Keep the garment and mannequin pixel-identical.")
 
-    # ③ Vision 관찰(있으면). **판정이 아니라 관찰이다** — 여기서 정책으로 환산한다.
-    if isinstance(vision, dict):
-        checks["vision"] = vision
-        for key in ("collar", "sleeves", "buttons", "pockets", "pattern", "logo"):
-            if vision.get(f"{key}Changed") is True:
-                unexpected.append(key)
-                violations.append(key)
-        for key in ("pose", "camera", "framing", "mannequinIdentity"):
-            if vision.get(f"{key}Changed") is True and key not in allowed:
-                violations.append(key)
-        if vision.get("requestedChangeApplied") is False and satisfied is not False:
-            # 측정이 못 잡은 미충족을 Vision 이 봤다 — 통과시키지 않는다
+    # ③ Vision 관찰. **판정이 아니라 관찰이다** — 여기서 정책으로 환산한다.
+    #    Vision 은 편집 경로에서 required 다: 정량 측정은 기하만 보고 카라·단추·패턴처럼
+    #    "픽셀은 비슷한데 상품이 달라진" 변화를 잡지 못한다. 그래서 관찰이 없으면 통과가
+    #    아니라 review 다(vision_required).
+    vision_ok = isinstance(vision, dict)
+    vision_conflict = False
+    checks["visionAvailable"] = vision_ok
+    if vision_ok:
+        vconf = float(vision.get("confidence") or 0.0)
+        checks["visionConfidence"] = vconf
+        checks["visionUncertainFields"] = list(vision.get("uncertainFields") or ())
+        allowed_changes = VISION_ALLOWED_CHANGES.get(edit_type, ())
+        trusted = vconf >= MIN_VISION_CONFIDENCE
+        checks["visionTrusted"] = trusted
+        if trusted:
+            for field, name in _VISION_VIOLATION.items():
+                if vision.get(field) is True and field not in allowed_changes:
+                    unexpected.append(name)
+                    violations.append(name)
+        applied = vision.get("requestedChangeApplied")
+        if applied is False and trusted:
+            if satisfied is True:
+                # 자를 대고 잰 값과 눈으로 본 것이 어긋난다. 어느 쪽도 자동으로 이기지
+                # 않는다 — 사람이 본다.
+                vision_conflict = True
             satisfied = False
             checks["requestedChange"] = False
             instructions.append("Requested change not visible; retry the edit.")
+        elif applied is True and satisfied is False and measurable:
+            vision_conflict = True     # 측정은 변화 없음, 관찰은 있음 — 같은 이유로 review
         if violations:
             instructions.append("Restore every locked element from the baseline.")
+    checks["visionConflict"] = vision_conflict
 
     unexpected = sorted(set(unexpected))
     violations = sorted(set(violations))
@@ -256,6 +307,12 @@ def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
         decision = "review_required"          # 자동 PASS 경로 자체가 없다
     elif violations:
         decision = "reject"                   # 잠근 것이 바뀌었다
+    elif vision_conflict:
+        decision = "review_required"          # 측정과 관찰이 어긋난다 — 자동 통과 금지
+    elif require_vision and not vision_ok:
+        decision = "review_required"          # 관찰이 필요한데 없다(장애·미호출)
+    elif require_vision and vision_ok and not checks.get("visionTrusted"):
+        decision = "review_required"          # 낮은 확신은 "봤다"가 아니다
     elif not measurable:
         decision = "review_required"          # 측정 불가는 성공이 아니다
     elif satisfied is False:
@@ -279,11 +336,13 @@ def decide(*, edit_type: str, allowed_scope: dict, target_ratio: float | None,
 
 
 def evaluate(*, baseline_bgr, edited_bgr, edit_type: str, allowed_scope: dict,
-             target_ratio: float | None, vision: dict | None = None) -> dict:
+             target_ratio: float | None, vision: dict | None = None,
+             require_vision: bool = False) -> dict:
     """측정 + 판정 한 번에. 워커가 쓰는 진입점."""
     metrics = measure(baseline_bgr, edited_bgr)
     result = decide(edit_type=edit_type, allowed_scope=allowed_scope,
-                    target_ratio=target_ratio, metrics=metrics, vision=vision)
+                    target_ratio=target_ratio, metrics=metrics, vision=vision,
+                    require_vision=require_vision)
     result["metrics"] = metrics
     return result
 
