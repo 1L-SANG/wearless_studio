@@ -389,6 +389,32 @@ def build_panel_map(
     hem_y = max(hl[1], hr[1])
     y_top = max(0, int(shoulder_y - h * 0.02))
     y_bot = min(h, int(hem_y + h * 0.03))
+    # 밑단 진실 = 캐리어 자신의 줄 에너지가 끝나는 행. bg_diff 는 흰 스커트를 전경으로
+    # 잡고, landmark hem 이 실제 셔츠 밑단보다 아래면 스커트 위에 사각 페인트 블록이 뜬다
+    # (blind visual 실측: '계단형 부유 블록'). 스커트/배경에는 줄 에너지가 없으므로
+    # 에너지 행 범위가 landmark 보다 타이트하면 그쪽을 쓴다.
+    # landmark hem 주변 지대는 컬럼별 정밀 판정 — landmark hem 이 실제 셔츠 밑단보다
+    # 아래면 bg_diff/stripe_energy mask 모두 민무늬 스커트 위에 페인트 블록을 띄운다
+    # (blind visual 실측: '계단형 부유 블록'). 판정은 mask_stripe_energy 를 쓰면 안 된다
+    # — close/fill 후 마스크라 좌우 언더레이어가 중앙 민무늬를 이어 붙인다(동어반복,
+    # 실측). **raw 고주파**(|L−blur(L)|)로 잰다: 줄 원단만 발화, 민무늬 스커트는 0.
+    hem_row = max(0, int(hem_y - h * 0.02))
+    if hem_row < y_bot:
+        lum = cv2.cvtColor(carrier_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        hf = np.abs(lum - cv2.GaussianBlur(lum, (0, 0), sigmaX=4.0))
+        zone_h = y_bot - hem_row
+        zone_cols = (hf[hem_row:y_bot] > 2.5).sum(axis=0) > zone_h * 0.10
+        if zone_cols.any():
+            # 다수결 필터 — 스커트 주름끈/시임은 HF 가 세로로 연속이라 컬럼 단독으로는
+            # 줄 원단과 구분이 안 된다(실측: 부유 블록 잔존). 줄 원단은 x 방향으로 밀집
+            # 발화하므로 이웃 다수결로 고립/협소 컬럼을 걸러낸다.
+            k = max(31, int(w * 0.015) | 1)
+            density = np.convolve(zone_cols.astype(np.float32),
+                                  np.ones(k, np.float32) / k, mode="same")
+            zone_cols = density > 0.55
+        _hem_zone = (hem_row, zone_cols)
+    else:
+        _hem_zone = None
     work[:y_top] = 0
     work[y_bot:] = 0
     # 프린지/홀 충전 — stripe-energy 기반 mask 는 줄 위상에 따라 톱니(소매 가장자리 미페인트
@@ -399,6 +425,9 @@ def build_panel_map(
     work = cv2.morphologyEx(work, cv2.MORPH_CLOSE, close_kernel)
     work[:y_top] = 0
     work[y_bot:] = 0
+    if _hem_zone is not None:
+        hz_row, hz_cols = _hem_zone
+        work[hz_row:y_bot][:, ~hz_cols] = 0
     band = max(3, int(min(h, w) * BOUNDARY_BAND_PX_FRAC))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (band * 2 + 1, band * 2 + 1))
     protected = cv2.erode(work, kernel)
