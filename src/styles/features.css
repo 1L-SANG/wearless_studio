@@ -1737,15 +1737,22 @@
 }
 .sb-deck.hot .sb-deck-header { background: rgba(143, 191, 238, .12); }
 
-.sb-stack-collapse, .sb-deck-collapse {
-  display: grid;
-  transition: grid-template-rows .5s var(--sb-ease), opacity .3s;
+/* 펼침/접힘은 레이아웃(높이)이 아니라 합성 전용 속성(opacity·transform)만 움직인다.
+   grid-template-rows 트랜지션은 매 프레임 전체 카드 재배치를 유발해 끊긴다. */
+.sb-stack-collapse, .sb-deck-collapse { display: block; }
+.sb-stack-collapse > div, .sb-deck-collapse > div { min-height: 0; }
+.sb-deck.open .sb-stack-collapse { display: none; }
+.sb-deck:not(.open) .sb-deck-collapse { display: none; }
+.sb-stack-collapse, .sb-deck.open .sb-deck-collapse {
+  animation: sb-reveal .26s var(--sb-ease) both;
+  will-change: opacity, transform;
 }
-.sb-stack-collapse { grid-template-rows: 1fr; opacity: 1; }
-.sb-deck.open .sb-stack-collapse { grid-template-rows: 0fr; opacity: 0; pointer-events: none; }
-.sb-deck-collapse { grid-template-rows: 0fr; }
-.sb-deck.open .sb-deck-collapse { grid-template-rows: 1fr; }
-.sb-stack-collapse > div, .sb-deck-collapse > div { min-height: 0; overflow: hidden; }
+@keyframes sb-reveal {
+  from { opacity: 0; transform: translate3d(0, 8px, 0); }
+  to { opacity: 1; transform: none; }
+}
+/* 접힌 데크는 레이아웃·페인트 격리 — 펼침 시 재배치 비용을 그 데크 안으로 가둔다. */
+.sb-deck { contain: layout paint; }
 
 .sb-stack-wrap { min-height: 286px; }
 .sb-stack {
@@ -2171,5 +2178,6 @@
 @media (prefers-reduced-motion: reduce) {
   .sb-stack-collapse, .sb-deck-collapse, .sb-stack-cut, .sb-cutcard, .sb-frame-box,
   .sb-deck-chevron, .sb-addzone-bar, .sb-addzone-plus { transition: none; }
+  .sb-stack-collapse, .sb-deck.open .sb-deck-collapse { animation: none; }
 }
 .sb-frame-unit { grid-column: span 2; }

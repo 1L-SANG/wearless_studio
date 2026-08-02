@@ -263,7 +263,7 @@ function StoryboardMedia({ block, index, total, gripDrag, onDuplicate, onDelete 
           <i>카드를 열어 다시 시도</i>
         </span>
       ) : (
-        <img src={block.thumb || block.ownImages?.[0]} alt="" />
+        <img src={block.thumb || block.ownImages?.[0]} alt="" loading="lazy" decoding="async" />
       )}
       <StoryboardCardActions gripDrag={gripDrag} onDuplicate={onDuplicate} onDelete={onDelete} />
     </>
@@ -372,7 +372,7 @@ function StoryboardStack({ group, total, onOpen }) {
         {previews.length ? previews.map((item, stackIndex) => (
           <span key={item.block.id} className="sb-stack-cut">
             {stackIndex === 0 && <span className="sb-canvas-number">{cutNumber(item.index, total)}</span>}
-            <img src={item.block.thumb || item.block.ownImages?.[0]} alt="" />
+            <img src={item.block.thumb || item.block.ownImages?.[0]} alt="" loading="lazy" decoding="async" />
           </span>
         )) : <span className="sb-stack-empty">＋ 컷 추가</span>}
         <span className="sb-stack-count">{group.items.length}컷</span>
