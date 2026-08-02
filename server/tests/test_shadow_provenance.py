@@ -149,7 +149,12 @@ def test_changes_may_be_an_empty_list(fresh):
 # ── manifest 가 같은 validator 를 쓴다 ────────────────────────────────────
 
 def _manifest(tmp_path, rows, name="s"):
-    p = tmp_path / f"{name}.jsonl"
+    """manifest 는 이제 실제 파일까지 대조한다 — 픽스처도 파일을 만들어야 한다."""
+    for i, r in enumerate(rows):
+        prov = r.get("provenance") or {}
+        if prov.get("outputSha256"):
+            (tmp_path / f"{r['id']}.png").write_bytes(b"x" + bytes([i]))
+    p = tmp_path / "samples.jsonl"
     p.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
     return SM.build(str(p), dataset_id="ds", invalid_reasons=[], image_usd=0,
                     vision_usd=0, collected_at="t", command=None)
@@ -217,7 +222,9 @@ def test_resume_refuses_a_changed_case_condition(fresh, tmp_path, field):
     p.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
     with pytest.raises(SystemExit) as e:
         SC._assert_resumable(p, load_settings())
-    assert field in str(e.value)
+    code = {"visionPromptSha256": "vision_prompt_mismatch",
+            "editType": "case_edit_type_mismatch"}[field]
+    assert code in str(e.value)
 
 
 def test_resume_accepts_normal_multi_case(fresh, tmp_path):

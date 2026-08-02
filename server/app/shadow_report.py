@@ -426,7 +426,8 @@ def _force_blocked(block: dict, reason: str, status: str = "blocked_by_manifest"
 
 
 def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
-           manifest: dict | None = None, quarantined: list | None = None) -> dict:
+           manifest: dict | None = None, quarantined: list | None = None,
+           extra_blocked_reasons: list | None = None) -> dict:
     """파이프라인 → edit type 순으로 **두 번** 쪼갠다.
 
     파이프라인만 나누면 BACKGROUND_ONLY 6건이 CUSTOM 24건에 묻혀 "editor_vary 30건"
@@ -458,6 +459,7 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
                                                            for q in quarantined)),
                                   "items": quarantined[:50]}
         blocked_reasons.update(f"label_{q.get('reason')}" for q in quarantined)
+    blocked_reasons.update(extra_blocked_reasons or ())
     if blocked_reasons:
         out["calibrationUsable"] = False
         out["calibrationBlockedReasons"] = sorted(blocked_reasons)
@@ -484,6 +486,10 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
         if invalid_manifest:
             _force_blocked(block, "manifest.validForCalibration=false — 이 데이터셋으로는 "
                                   "어떤 판정도 근거가 되지 않는다")
+        if extra_blocked_reasons:
+            _force_blocked(block, f"manifest 결합 불일치 {sorted(extra_blocked_reasons)} — "
+                                  "이 manifest 는 이 표본을 가리키지 않는다",
+                           status="blocked_by_binding")
         if quarantined:
             _force_blocked(block, f"라벨 결합 실패 {len(quarantined)}건 — 결합되지 않은 "
                                   "라벨이 있으면 커버리지를 신뢰할 수 없다",

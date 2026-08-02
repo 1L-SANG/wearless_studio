@@ -15,8 +15,10 @@ SELECT 만 한다. INSERT/UPDATE/DELETE/DDL 없음 — 세션 자체를 read onl
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import pathlib
 import sys
 from collections import Counter
 from datetime import datetime
@@ -99,7 +101,23 @@ def main() -> int:
         dataset_id = args.dataset_id or (manifest or {}).get("datasetId")
         quarantined = []
         blocked = False
-        if args.labels:
+        binding_reasons: list[str] = []
+        # manifest 는 "이 samples 파일"에 대한 진술이다. 다른 파일에 붙이면 그 진술은
+        # 아무 근거가 없다 — 라벨을 붙이기 **전에** 확인한다.
+        if manifest:
+            actual = hashlib.sha256(
+                pathlib.Path(args.jsonl).read_bytes()).hexdigest()
+            declared = manifest.get("rawSampleManifestSha256")
+            if declared and declared != actual:
+                binding_reasons.append("manifest_samples_mismatch")
+            m_ds = manifest.get("datasetId")
+            if args.dataset_id and m_ds and args.dataset_id != m_ds:
+                binding_reasons.append("manifest_dataset_id_mismatch")
+        if binding_reasons:
+            print(f"manifest 가 이 samples 파일을 가리키지 않아요: {binding_reasons}",
+                  file=sys.stderr)
+            blocked = True
+        if args.labels and not binding_reasons:
             if not dataset_id:
                 print("--labels 를 쓰려면 --dataset-id 또는 --manifest 가 필요해요.",
                       file=sys.stderr)
@@ -124,7 +142,8 @@ def main() -> int:
                       f"{dict(by_reason)}", file=sys.stderr)
                 blocked = True
         out = report(rows, image_usd=args.image_usd, vision_usd=args.vision_usd,
-                     manifest=manifest, quarantined=quarantined)
+                     manifest=manifest, quarantined=quarantined,
+                     extra_blocked_reasons=binding_reasons)
         if args.json:
             print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
         else:

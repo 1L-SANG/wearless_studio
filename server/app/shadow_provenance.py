@@ -86,12 +86,36 @@ def _row_problems(row) -> list[str]:
     return out
 
 
-def validate_dataset(rows, *, expected_cases: list[dict] | None = None) -> list[str]:
+def _expected_problems(row, expected: dict) -> list[str]:
+    """저장된 case fingerprint 를 현재 expected 와 **전 항목** 비교한다.
+
+    이름과 caseSetSha256 만 보던 게 문제였다. 그러면 row 가 하나뿐인 case 의
+    changes·editType·프롬프트 해시를 고쳐도 통과한다 — dataset 내부에서는 서로
+    비교할 상대가 없으니 "일관적"이기 때문이다. 현재 정의와 맞춰야 잡힌다.
+    """
+    c = case_of(row)
+    name = str(c.get("case"))
+    exp = expected.get(name)
+    if exp is None:
+        return [f"unknown_case:{name}"]
+    out = []
+    if c.get("editType") != exp.get("editType"):
+        out.append(f"case_edit_type_mismatch:{name}")
+    if canonical(c.get("changes")) != canonical(exp.get("changes")):
+        out.append(f"case_changes_mismatch:{name}")
+    if c.get("generationPromptSha256") != exp.get("generationPromptSha256"):
+        out.append(f"generation_prompt_mismatch:{name}")
+    if c.get("visionPromptSha256") != exp.get("visionPromptSha256"):
+        out.append(f"vision_prompt_mismatch:{name}")
+    return out
+
+
+def validate_dataset(rows, *, expected_cases: dict | list | None = None) -> list[str]:
     """데이터셋 전체의 문제 코드(정렬·중복 제거). 빈 목록이면 캘리브레이션에 쓸 수 있다.
 
-    expected_cases 는 `[{"case","editType","changes"}, …]` 형태의 현재 case 정의다.
-    주면 caseSetSha256 과 실제 case 이름 집합까지 맞춰 본다 — 안 주면 그 검사는
-    건너뛴다(추측해서 통과시키지 않고, 아예 안 본 것으로 둔다).
+    expected_cases 는 `{case: fingerprint}` 매핑이다(구버전 호환으로 리스트도 받되
+    그때는 이름 집합만 본다). 주지 않으면 현재 정의와의 비교는 하지 않는다 —
+    호출자가 "확인 못 함"을 별도 문제 코드로 남길 책임이 있다.
     """
     problems: set[str] = set()
     done = [r for r in rows if has_output(r)]
@@ -106,6 +130,7 @@ def validate_dataset(rows, *, expected_cases: list[dict] | None = None) -> list[
     if len(runs) > 1:
         problems.add("mixed_run_fingerprint")
 
+    # dataset 내부 일관성 — 같은 case 이름이 두 얼굴을 가지면 안 된다.
     by_case: dict[str, set] = {}
     for r in done:
         c = case_of(r)
@@ -115,12 +140,18 @@ def validate_dataset(rows, *, expected_cases: list[dict] | None = None) -> list[
             problems.add(f"inconsistent_case_fingerprint:{name}")
 
     if expected_cases is not None:
-        expected_names = {c["case"] for c in expected_cases}
-        for name in by_case:
-            if name not in expected_names:
-                problems.add(f"unknown_case:{name}")
-        expected_sha = sha256_hex(canonical(
-            sorted(expected_cases, key=lambda c: c["case"])))
+        expected = (expected_cases if isinstance(expected_cases, dict)
+                    else {c["case"]: c for c in expected_cases})
+        full = all(isinstance(v, dict) and "generationPromptSha256" in v
+                   for v in expected.values())
+        for r in done:
+            if full:
+                problems.update(_expected_problems(r, expected))
+            elif str(case_of(r).get("case")) not in expected:
+                problems.add(f"unknown_case:{case_of(r).get('case')}")
+        expected_sha = sha256_hex(canonical(sorted(
+            [{k: v[k] for k in ("case", "editType", "changes")}
+             for v in expected.values()], key=lambda c: c["case"])))
         for r in done:
             if run_of(r).get("caseSetSha256") != expected_sha:
                 problems.add("case_set_mismatch")
@@ -149,3 +180,41 @@ def case_index(rows) -> dict[str, dict]:
         c = case_of(r)
         out.setdefault(str(c.get("case")), c)
     return out
+
+
+# ── artifact 무결성 ─────────────────────────────────────────────────────────
+# manifest 가 PNG 존재만 보던 게 문제였다. 파일이 바뀌어도, source 가 달라도,
+# 해시가 hex 조차 아니어도 통과했다(마지막 건 _bundle_sha 에서 crash 했다).
+
+def artifact_problems(rows, *, dataset_dir, source_dir) -> list[str]:
+    """성공 row 의 실제 파일을 provenance 해시와 대조한다. → 문제 코드 목록."""
+    from .safe_paths import (SAFE_FILENAME, SAFE_ID, UnsafePath, file_sha256,
+                             is_sha256_hex, safe_resolve)
+
+    problems: set[str] = set()
+    for r in rows:
+        if not has_output(r):
+            continue                      # 실패 row 는 대조할 출력이 없다
+        prov = (r.get("provenance") or {})
+        for field in ("sourceSha256", "outputSha256"):
+            if not is_sha256_hex(prov.get(field)):
+                problems.add(f"invalid_sha_format:{field}")
+        try:
+            out = safe_resolve(dataset_dir, r.get("id"), SAFE_ID, suffix=".png")
+        except UnsafePath as e:
+            problems.add("output_artifact_missing" if "regular file" in str(e)
+                         else "unsafe_output_path")
+        else:
+            if is_sha256_hex(prov.get("outputSha256")) and \
+                    file_sha256(out) != prov["outputSha256"]:
+                problems.add("output_hash_mismatch")
+        try:
+            src = safe_resolve(source_dir, r.get("source"), SAFE_FILENAME)
+        except UnsafePath as e:
+            problems.add("source_artifact_missing" if "regular file" in str(e)
+                         else "unsafe_source_path")
+        else:
+            if is_sha256_hex(prov.get("sourceSha256")) and \
+                    file_sha256(src) != prov["sourceSha256"]:
+                problems.add("source_hash_mismatch")
+    return sorted(problems)

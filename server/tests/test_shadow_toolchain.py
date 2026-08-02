@@ -104,7 +104,9 @@ def test_resume_refuses_a_changed_generation_model(tmp_path):
     p.write_text(json.dumps({"id": "a", "output_id": "o", "provenance": pr}) + "\n")
     with pytest.raises(SystemExit) as e:
         COLLECT._assert_resumable(p)
-    assert "generationModel" in str(e.value)
+    # 스텁 prepared 라 프롬프트 해시부터 어긋난다 — 어느 쪽이든 fail-closed 다.
+    assert any(c in str(e.value) for c in
+               ("generation_prompt_mismatch", "mixed_run_fingerprint", "generationModel"))
 
 
 def test_resume_refuses_a_file_that_already_mixes_run_conditions(tmp_path):

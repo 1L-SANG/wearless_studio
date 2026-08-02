@@ -41,21 +41,15 @@ from app.agents import cut_variator, edit_intent_vision  # noqa: E402
 from app.agents.edit_intent_vision import PROMPT_VERSION as VISION_PROMPT_VERSION  # noqa: E402
 from app.agents.gemini_image import GeminiImageClient, InlineImage  # noqa: E402
 from app.config import load_settings  # noqa: E402
+from app import shadow_cases as scases  # noqa: E402
 from app import shadow_provenance as sp  # noqa: E402
 from app.services import edit_intent_qc, edit_qc_scope, editor_vary  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 EXAMPLES = REPO / "public" / "assets" / "fit-examples"
 
-# 수집 축 — edit type 별로 상한을 따로 둔다(한 축이 예산을 다 먹지 않게).
-VARY_CASES = [
-    ("bg_only", [{"type": "bg", "value": "밝은 스튜디오 배경"}]),
-    ("shot", [{"type": "shot", "value": "전신"}]),
-    ("direction", [{"type": "direction", "value": "측면"}]),
-    ("pose", [{"type": "pose", "value": "자연스러운 서 있는 자세"}]),
-    ("bg_and_shot", [{"type": "bg", "value": "회색 배경"}, {"type": "shot", "value": "상반신"}]),
-]
-
+# 수집 축 정의는 app.shadow_cases 가 정본이다 — manifest 도 같은 것을 읽는다.
+VARY_CASES = scases.VARY_CASES
 
 async def observe_and_decide(settings, *, baseline, edited, changes, timeout):
     """Vision 1회 + 정량 판정. 운영과 동일 계약(require_vision=True)."""
@@ -85,26 +79,16 @@ async def observe_and_decide(settings, *, baseline, edited, changes, timeout):
 
 
 # ── fingerprint ────────────────────────────────────────────────────────────
-# run-level 과 per-case 를 나눈다. 이걸 안 나눴던 게 직전 결함이다: generation
-# prompt 는 case 마다 다른 게 **정상**인데 run 동일성 키에 넣어 두니, 멀쩡한
-# multi-case 데이터셋이 "provenance 가 섞였다"고 거부됐다.
-#
-# run-level = 실험 조건(모델·템플릿·정책·case 집합·공통 설정). 이게 다르면 다른 실험이다.
-# per-case  = 그 조건 아래 case 마다 실제로 렌더링된 프롬프트. case 별로 달라야 정상이다.
+# run-level 과 per-case 를 나눈다. generation prompt 는 case 마다 다른 게 **정상**
+# 이므로 run 동일성 키에 넣으면 멀쩡한 multi-case 데이터셋이 거부된다.
+# 정의는 app.shadow_cases 에 있고 여기서는 얇게 위임만 한다.
 
-# 이 중 하나라도 달라지면 새 dataset 을 요구한다. codeCommit 은 여기 없다 —
-# 보조 근거일 뿐이라 스냅샷 비교를 대신할 수 없고, 대신하게 두면 dirty working tree
-# 에서 프롬프트만 바뀐 경우를 놓친다.
-RUN_FINGERPRINT_KEYS = sp.RUN_KEYS
-
-
-def _sha(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _canonical(obj) -> bytes:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=False).encode()
+normalized_cases = scases.normalized_cases
+case_set_sha256 = scases.case_set_sha256
+vision_prepared = scases.vision_prepared
+run_fingerprint = scases.run_fingerprint
+_sha = lambda data: sp.sha256_hex(data)          # noqa: E731 — 공통 helper 위임
+_canonical = sp.canonical
 
 
 def _code_commit() -> str | None:
@@ -113,58 +97,9 @@ def _code_commit() -> str | None:
     return r.stdout.strip() or None
 
 
-def normalized_cases(cases=None) -> list[dict]:
-    """case 정의의 정본 표현. 이름·edit type·정규화 changes 까지 포함한다."""
-    out = []
-    for name, changes in (cases if cases is not None else VARY_CASES):
-        out.append({"case": name,
-                    "editType": editor_vary.edit_type_for(changes),
-                    "changes": editor_vary.validate_changes(changes)})
-    return sorted(out, key=lambda c: c["case"])
-
-
-def case_set_sha256(cases=None) -> str:
-    """case 집합 전체의 해시 — 추가·삭제·변경 어느 쪽이든 값이 바뀐다."""
-    return _sha(_canonical(normalized_cases(cases)))
-
-
-def run_fingerprint(prepared, *, cases=None) -> dict:
-    """실험 조건 스냅샷. provider 를 부르지 않고 prepare 결과만으로 만든다."""
-    return {
-        "generationModel": prepared.model,
-        "generationTemplateSha256": cut_variator.template_sha256(),
-        "visionPromptTemplateVersion": VISION_PROMPT_VERSION,
-        "visionTemplateSha256": edit_intent_vision.template_sha256(),
-        "qcPolicyVersion": edit_qc_scope.QC_POLICY_VERSION,
-        "caseSetSha256": case_set_sha256(cases),
-        "imageSize": prepared.image_size,
-        "aspectRatio": getattr(prepared, "aspect_ratio", None),
-    }
-
-
-def vision_prepared(changes: list):
-    """이 case 의 Vision 요청을 provider 없이 만든다 — 실행과 같은 builder 다."""
-    scope = editor_vary.semantic_scope(changes)
-    return edit_intent_vision.prepare(
-        edit_type=editor_vary.edit_type_for(changes),
-        adjustments={"changes": changes},
-        allowed_scope=edit_qc_scope.vision_scope(scope))
-
-
 def case_fingerprint(prepared, *, case_name: str, changes: list) -> dict:
-    """이 case 가 **실제로** 어떤 프롬프트를 냈는지 — 생성과 Vision 둘 다.
-
-    Vision 템플릿 해시만 run 에 두면 build_prompt 로직·allowed scope·changes 렌더링이
-    바뀌어도 resume 이 통과한다(템플릿 파일은 그대로니까). 실제 렌더링 해시를 case 에
-    두면 그 변경이 반드시 걸린다.
-    """
-    return {
-        "case": case_name,
-        "editType": editor_vary.edit_type_for(changes),
-        "changes": editor_vary.validate_changes(changes),
-        "generationPromptSha256": _sha(prepared.prompt.encode()),
-        "visionPromptSha256": vision_prepared(changes).prompt_sha256,
-    }
+    return scases.case_fingerprint(None, case_name=case_name, changes=changes,
+                                   prepared=prepared)
 
 
 def _provenance(prepared, *, case_name: str, changes: list, attempt: int,
@@ -206,14 +141,9 @@ def _refuse(msg: str):
 
 def _prepare_only(settings, cases=None):
     """provider 를 부르지 않고 현재 조건을 계산한다 — prepare() 까지만 실행."""
-    src = _sources(1)[0]
-    img = InlineImage("image/jpeg", src.read_bytes())
-    cases = cases if cases is not None else VARY_CASES
-    per_case, run = {}, None
-    for name, changes in cases:
-        prep = cut_variator.prepare(settings, img, changes, None)
-        per_case[name] = case_fingerprint(prep, case_name=name, changes=changes)
-        run = run or run_fingerprint(prep, cases=cases)
+    prep = scases.generation_prepared(settings, VARY_CASES[0][1])
+    run = scases.run_fingerprint(prep, cases=cases)
+    per_case = scases.expected_case_fingerprints(settings, cases)
     return run, per_case
 
 
@@ -234,7 +164,9 @@ def _assert_resumable(samples_path: pathlib.Path, settings=None) -> None:
     if not [r for r in rows if sp.has_output(r)]:
         return                              # 성공 row 가 없으면 이어 모을 근거도 없다
 
-    problems = sp.validate_dataset(rows, expected_cases=normalized_cases())
+    problems = sp.validate_dataset(
+        rows, expected_cases=scases.expected_case_fingerprints(
+            settings or load_settings()))
     if problems:
         _refuse(f"기존 표본의 provenance 문제: {problems}.")
 
@@ -351,7 +283,8 @@ async def vision_backfill(args) -> int:
     # 조건이 다른데 backfill 하면 QC 결과는 새 조건, provenance 는 옛 조건을 가리켜
     # 무엇으로 잰 값인지 아무도 말할 수 없다. 미상 case 를 []로 바꿔 진행하는 것도
     # 금지다 — 그건 "요청이 뭔지 모른 채" 다시 재는 것이다.
-    problems = sp.validate_dataset(rows, expected_cases=normalized_cases())
+    problems = sp.validate_dataset(
+        rows, expected_cases=scases.expected_case_fingerprints(settings))
     if problems:
         _refuse(f"기존 표본의 provenance 문제: {problems}.")
 

@@ -19,7 +19,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app import shadow_cases as scases  # noqa: E402
 from app import shadow_provenance as sp  # noqa: E402
+from app.config import load_settings  # noqa: E402
 from app.agents.edit_intent_vision import PROMPT_VERSION  # noqa: E402
 from app.services.edit_qc_scope import QC_POLICY_VERSION  # noqa: E402
 
@@ -34,7 +36,8 @@ def _sha256_file(p: pathlib.Path) -> str:
 def _dataset_checksum(names, base: pathlib.Path) -> str:
     """이름 + 내용 — 파일이 바뀌면 체크섬도 바뀐다."""
     h = hashlib.sha256()
-    for name in sorted(set(names)):
+    # 실패 row 는 source 가 비어 있을 수 있다 — 없는 이름은 체크섬에 넣지 않는다.
+    for name in sorted({n for n in names if isinstance(n, str) and n}):
         h.update(name.encode())
         f = base / name
         if f.exists():
@@ -42,37 +45,32 @@ def _dataset_checksum(names, base: pathlib.Path) -> str:
     return h.hexdigest()
 
 
-def sp_cases():
-    """현재 case 정의 — 수집기와 같은 정본을 쓴다(없으면 None 으로 검사 생략)."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "_sc_cases", os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  "shadow_collect.py"))
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m.normalized_cases()
-
-
 def _bundle_sha(rows) -> str | None:
     """결과 이미지 묶음 전체의 해시 — 한 장만 바뀌어도 달라진다."""
+    from app.safe_paths import is_sha256_hex
     h = hashlib.sha256()
-    for r in sorted(rows, key=lambda x: str(x.get("id"))):
+    done = [r for r in rows if sp.has_output(r)]
+    for r in sorted(done, key=lambda x: str(x.get("id"))):
         o = (r.get("provenance") or {}).get("outputSha256")
-        if not o:
+        # 형식 검증을 먼저 한다 — bytes.fromhex 가 먼저 터지면 manifest 자체가
+        # 안 만들어지고, 그러면 "왜 못 쓰는지"도 알 수 없다.
+        if not is_sha256_hex(o):
             return None
         h.update(str(r.get("id")).encode()); h.update(bytes.fromhex(o))
-    return h.hexdigest() if rows else None
+    return h.hexdigest() if done else None
 
 
-def _raw_artifacts(rows, samples_path: str) -> dict:
+def _raw_artifacts(rows, samples_path: str, *, ok: bool = True) -> dict:
     base = pathlib.Path(samples_path).parent
-    present = sum(1 for r in rows if (base / f"{r.get('id')}.png").exists())
+    # 기대 수는 **성공 output row** 수다. 실패 row 를 세면 늘 부족해 보인다.
+    done = [r for r in rows if sp.has_output(r)]
+    present = sum(1 for r in done if (base / f"{r.get('id')}.png").is_file())
     return {"samplesJsonl": str(samples_path),
             "outputDir": str(base),
-            "outputImagesExpected": len(rows),
+            "outputImagesExpected": len(done),
             "outputImagesPresent": present,
-            "humanLabelingAvailable": present == len(rows) and all(
-                (r.get("provenance") or {}).get("outputSha256") for r in rows),
+            # provenance·artifact 문제가 하나라도 있으면 라벨링 대상이 아니다.
+            "humanLabelingAvailable": ok and present == len(done) and bool(done),
             "retention": ("로컬 보존. 이미지는 git 에 넣지 않는다(용량). 비운영 오브젝트 "
                           "스토리지로 옮기려면 사용자 승인이 필요하다."),
             "location": str(base)}
@@ -94,11 +92,17 @@ def build(samples_path: str, *, dataset_id: str, invalid_reasons: list[str],
     # 평면 필드를 봤고, 그래서 run/case 가 없는 legacy 도 run 이 섞인 dataset 도
     # validForCalibration=true 를 받았다. 검증과 기록이 다른 걸 보면 검증이 아니다.
     provs = [r.get("provenance") or {} for r in rows]
+    # case 정의를 못 읽으면 "검사 생략"이 아니라 **문제**다. 확인하지 못한 것을
+    # 통과로 세는 순간 manifest 는 아무것도 보증하지 않는다.
     try:
-        expected = sp_cases()
-    except Exception:                                   # noqa: BLE001
-        expected = None                                 # case 정의를 못 읽으면 안 본다
-    missing = sp.validate_dataset(rows, expected_cases=expected)
+        expected = scases.expected_case_fingerprints(load_settings())
+        missing = sp.validate_dataset(rows, expected_cases=expected)
+    except scases.CaseDefinitionError:
+        # 원문·경로·환경값은 싣지 않는다 — 코드만 남긴다.
+        missing = ["case_definition_unavailable"]
+    # 실제 파일까지 대조한다. 해시가 맞다고 적혀 있는 것과 맞는 것은 다른 일이다.
+    missing = sorted(set(missing) | set(sp.artifact_problems(
+        rows, dataset_dir=pathlib.Path(samples_path).parent, source_dir=src_dir)))
     unverified = bool(missing) or any(pr.get("provenanceUnverified") for pr in provs)
     models = sorted({sp.run_of(r).get("generationModel") for r in rows
                      if sp.has_output(r) and sp.run_of(r).get("generationModel")})
@@ -129,11 +133,12 @@ def build(samples_path: str, *, dataset_id: str, invalid_reasons: list[str],
                            "수집 시점의 값이 아니다. 수집 시점 값은 row.provenance 에만 있다."),
         "sourceDataset": {
             "path": "public/assets/fit-examples",
-            "files": len({r.get("source") for r in rows}),
+            "files": len({r.get("source") for r in rows
+                          if isinstance(r.get("source"), str)}),
             "sha256": _dataset_checksum([r.get("source") for r in rows], src_dir)},
         "rawSampleManifestSha256": hashlib.sha256(raw).hexdigest(),
         "outputBundleSha256": _bundle_sha(rows),
-        "rawArtifacts": _raw_artifacts(rows, samples_path),
+        "rawArtifacts": _raw_artifacts(rows, samples_path, ok=not missing),
         "collectorCommand": command,
         "humanLabels": {"labeled": 0, "path": None,
                         "note": "blinded audit 로만 채운다 — 수집기가 만들지 않는다."},

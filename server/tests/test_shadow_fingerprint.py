@@ -109,7 +109,7 @@ def test_a_changed_case_prompt_is_refused(env, tmp_path):
         "generationPromptSha256", "0" * 64))
     with pytest.raises(SystemExit) as e:
         SC._assert_resumable(_write(tmp_path, rows), env[0])
-    assert "generationPromptSha256" in str(e.value)
+    assert "generation_prompt_mismatch" in str(e.value)
 
 
 def test_a_removed_case_definition_is_refused(env, tmp_path):
@@ -125,7 +125,7 @@ def test_a_changed_case_definition_is_refused(env, tmp_path):
     rows[0]["provenance"]["case"]["changes"] = [{"type": "pose", "value": "다른 값"}]
     with pytest.raises(SystemExit) as e:
         SC._assert_resumable(_write(tmp_path, rows), env[0])
-    assert "case 정의가 바뀌었" in str(e.value)
+    assert "case_changes_mismatch" in str(e.value)
 
 
 def test_rows_without_fingerprints_are_refused(tmp_path):
