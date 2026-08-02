@@ -21,6 +21,9 @@ from app.services import edit_qc_scope, editor_vary
 
 SERVER = pathlib.Path(__file__).resolve().parents[1]
 
+# manifest 없는 리포트는 distribution_only 다(9/N) — 판정 로직 테스트는 신뢰 manifest 사용.
+TRUSTED = {"validForCalibration": True}
+
 
 def _load(name, rel):
     spec = importlib.util.spec_from_file_location(name, SERVER / rel)
@@ -317,7 +320,7 @@ def _sample_rows(n=3, **kw):
 
 
 def test_quarantine_blocks_the_whole_report():
-    out = sr.report(_sample_rows(3, human_label="fidelity_pass"),
+    out = sr.report(_sample_rows(3, human_label="fidelity_pass"), manifest=TRUSTED,
                     quarantined=[{"reason": "output_hash_mismatch"}])
     assert out["calibrationUsable"] is False
     assert out["calibrationBlockedReasons"] == ["label_output_hash_mismatch"]
@@ -329,7 +332,7 @@ def test_quarantine_blocks_the_whole_report():
 
 
 def test_quarantine_counts_are_reported_by_reason():
-    out = sr.report(_sample_rows(2), quarantined=[
+    out = sr.report(_sample_rows(2), manifest=TRUSTED, quarantined=[
         {"reason": "dataset_mismatch"}, {"reason": "dataset_mismatch"},
         {"reason": "policy_version_unsupported"}])
     assert out["labelQuarantine"]["byReason"] == {
@@ -337,7 +340,7 @@ def test_quarantine_counts_are_reported_by_reason():
 
 
 def test_clean_labels_keep_the_normal_calculation():
-    out = sr.report(_sample_rows(3, human_label="fidelity_fail"))
+    out = sr.report(_sample_rows(3, human_label="fidelity_fail"), manifest=TRUSTED)
     cal = out["pipelines"]["editor_vary"]["calibrationConfusion"]
     assert cal["graded"] == 3 and cal["falsePass"] == 3
     assert "labelQuarantine" not in out and out.get("calibrationUsable") is None

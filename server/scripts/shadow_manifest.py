@@ -33,38 +33,38 @@ def _sha256_file(p: pathlib.Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
-def _dataset_checksum(names, base: pathlib.Path) -> str:
-    """이름 + 내용 — 파일이 바뀌면 체크섬도 바뀐다."""
-    h = hashlib.sha256()
-    # 실패 row 는 source 가 비어 있을 수 있다 — 없는 이름은 체크섬에 넣지 않는다.
-    for name in sorted({n for n in names if isinstance(n, str) and n}):
-        h.update(name.encode())
-        f = base / name
-        if f.exists():
-            h.update(hashlib.sha256(f.read_bytes()).digest())
-    return h.hexdigest()
+# checksum 은 공통 helper 로 계산한다 — 경로를 직접 이어 붙이면 artifact_problems 가
+# 거부한 source 를 그 뒤에서 그냥 읽는다(실제로 /etc/hosts 를 1회 읽었다).
 
 
-def _bundle_sha(rows) -> str | None:
-    """결과 이미지 묶음 전체의 해시 — 한 장만 바뀌어도 달라진다."""
-    from app.safe_paths import is_sha256_hex
-    h = hashlib.sha256()
-    done = [r for r in rows if sp.has_output(r)]
-    for r in sorted(done, key=lambda x: str(x.get("id"))):
-        o = (r.get("provenance") or {}).get("outputSha256")
-        # 형식 검증을 먼저 한다 — bytes.fromhex 가 먼저 터지면 manifest 자체가
-        # 안 만들어지고, 그러면 "왜 못 쓰는지"도 알 수 없다.
-        if not is_sha256_hex(o):
-            return None
-        h.update(str(r.get("id")).encode()); h.update(bytes.fromhex(o))
-    return h.hexdigest() if done else None
+def _bundle_sha(rows, dataset_dir) -> str | None:
+    """결과 이미지 묶음의 해시 — **실제 파일**로 계산한다.
+
+    provenance 에 적힌 해시로 계산하면 "적힌 대로 계산한 값"일 뿐이라 파일이
+    바뀌어도 그대로다. report 가 나중에 이 값을 현재 파일과 대조하려면 파일 기준
+    이어야 한다.
+    """
+    return sp.output_bundle_sha256(rows, dataset_dir)
+
+
+def _present_count(done, base) -> int:
+    """존재 확인도 같은 safe resolver 로 — 여기만 직접 결합하면 그 틈이 경계다."""
+    from app.safe_paths import SAFE_ID, UnsafePath, safe_resolve
+    n = 0
+    for r in done:
+        try:
+            safe_resolve(base, r.get("id"), SAFE_ID, suffix=".png")
+        except UnsafePath:
+            continue
+        n += 1
+    return n
 
 
 def _raw_artifacts(rows, samples_path: str, *, ok: bool = True) -> dict:
     base = pathlib.Path(samples_path).parent
     # 기대 수는 **성공 output row** 수다. 실패 row 를 세면 늘 부족해 보인다.
     done = [r for r in rows if sp.has_output(r)]
-    present = sum(1 for r in done if (base / f"{r.get('id')}.png").is_file())
+    present = _present_count(done, base)
     return {"samplesJsonl": str(samples_path),
             "outputDir": str(base),
             "outputImagesExpected": len(done),
@@ -134,10 +134,12 @@ def build(samples_path: str, *, dataset_id: str, invalid_reasons: list[str],
         "sourceDataset": {
             "path": "public/assets/fit-examples",
             "files": len({r.get("source") for r in rows
-                          if isinstance(r.get("source"), str)}),
-            "sha256": _dataset_checksum([r.get("source") for r in rows], src_dir)},
+                          if sp.has_output(r) and isinstance(r.get("source"), str)}),
+            # 안전하게 못 읽으면 null 이다 — 일부만 넣은 체크섬은 무엇을 잰 값인지
+            # 말할 수 없다.
+            "sha256": sp.source_bundle_sha256(rows, src_dir)},
         "rawSampleManifestSha256": hashlib.sha256(raw).hexdigest(),
-        "outputBundleSha256": _bundle_sha(rows),
+        "outputBundleSha256": _bundle_sha(rows, pathlib.Path(samples_path).parent),
         "rawArtifacts": _raw_artifacts(rows, samples_path, ok=not missing),
         "collectorCommand": command,
         "humanLabels": {"labeled": 0, "path": None,

@@ -438,11 +438,16 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
     for r in rows:
         split[pipeline_of(r)].append(r)
 
-    out = {"total": len(rows),
+    out = {"reportKind": "calibration" if manifest is not None else "distribution_only",
+           "total": len(rows),
            "samplesByPipeline": {p: len(v) for p, v in split.items()},
            "unknownPipelineSamples": [r.get("id") for r in split["unknown"]][:50],
            "pipelines": {}}
     invalid_manifest = bool(manifest) and manifest.get("validForCalibration") is False
+    # manifest 없이 낸 리포트는 **분포**지 캘리브레이션 근거가 아니다. 무엇으로
+    # 만들어졌는지 증명하지 못한 표본으로 enforce 를 켤 수는 없다.
+    # (DB 분포 조회는 이 경로로 계속 숫자를 받는다 — 판정 플래그만 닫힌다.)
+    trustworthy = manifest is not None and not invalid_manifest
     # 차단 사유는 계열별로 합친다. 한쪽이 다른 쪽을 덮으면 "manifest 도 문제였다"는
     # 사실이 사라지고, 그러면 무엇부터 고쳐야 하는지 알 수 없다.
     blocked_reasons: set[str] = set()
@@ -460,6 +465,8 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
                                   "items": quarantined[:50]}
         blocked_reasons.update(f"label_{q.get('reason')}" for q in quarantined)
     blocked_reasons.update(extra_blocked_reasons or ())
+    if manifest is None:
+        blocked_reasons.add("manifest_absent")
     if blocked_reasons:
         out["calibrationUsable"] = False
         out["calibrationBlockedReasons"] = sorted(blocked_reasons)
@@ -483,13 +490,20 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
         block["verdict"] = _verdict(eligible_rows) if p != "unknown" else {
             "enforceReady": False, "status": "insufficient_data",
             "blockers": ["source_kind 미상 — 어느 파이프라인인지 모른다"]}
+        if manifest is None:
+            _force_blocked(block, "manifest 없음 — 이 리포트는 분포일 뿐 캘리브레이션 "
+                                  "근거가 아니다", status="distribution_only")
         if invalid_manifest:
             _force_blocked(block, "manifest.validForCalibration=false — 이 데이터셋으로는 "
                                   "어떤 판정도 근거가 되지 않는다")
         if extra_blocked_reasons:
-            _force_blocked(block, f"manifest 결합 불일치 {sorted(extra_blocked_reasons)} — "
-                                  "이 manifest 는 이 표본을 가리키지 않는다",
-                           status="blocked_by_binding")
+            artifact_ish = any(str(r).startswith(("output_", "source_", "unsafe_",
+                                                  "invalid_sha_format"))
+                               for r in extra_blocked_reasons)
+            _force_blocked(block, f"결합·아티팩트 불일치 {sorted(extra_blocked_reasons)} — "
+                                  "이 manifest 는 지금의 표본·파일을 가리키지 않는다",
+                           status=("blocked_by_artifacts" if artifact_ish
+                                   else "blocked_by_binding"))
         if quarantined:
             _force_blocked(block, f"라벨 결합 실패 {len(quarantined)}건 — 결합되지 않은 "
                                   "라벨이 있으면 커버리지를 신뢰할 수 없다",

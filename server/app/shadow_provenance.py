@@ -30,6 +30,11 @@ CASE_KEYS = ("case", "editType", "changes",
 # 성공 row 가 반드시 들고 있어야 하는 것.
 ROW_KEYS = ("sourceSha256", "outputSha256", "qcPolicyVersion", "run", "case")
 
+# 해시로 쓰이는 필드 — 64자리 소문자 hex 가 아니면 해시가 아니다.
+ROW_SHA_KEYS = ("sourceSha256", "outputSha256")
+RUN_SHA_KEYS = ("generationTemplateSha256", "visionTemplateSha256", "caseSetSha256")
+CASE_SHA_KEYS = ("generationPromptSha256", "visionPromptSha256")
+
 
 def canonical(obj) -> bytes:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"),
@@ -78,6 +83,20 @@ def _row_problems(row) -> list[str]:
     for k in RUN_KEYS:
         if prov.get("run") and run_of(row).get(k) in (None, ""):
             out.append(f"missing_run_field:{k}")
+    # 해시로 쓰이는 값은 전부 정확히 64자리 소문자 hex 여야 한다. 형식이 틀린 값은
+    # "다른 해시"가 아니라 **해시가 아니다** — 비교로 걸러지지 않으므로 여기서 잡는다.
+    from .safe_paths import is_sha256_hex
+    for k in ROW_SHA_KEYS:
+        if prov.get(k) is not None and not is_sha256_hex(prov.get(k)):
+            out.append(f"invalid_sha_format:{k}")
+    for k in RUN_SHA_KEYS:
+        v = run_of(row).get(k)
+        if prov.get("run") and v is not None and not is_sha256_hex(v):
+            out.append(f"invalid_sha_format:run.{k}")
+    for k in CASE_SHA_KEYS:
+        v = case_of(row).get(k)
+        if prov.get("case") and v is not None and not is_sha256_hex(v):
+            out.append(f"invalid_sha_format:case.{k}")
     for k in CASE_KEYS:
         if prov.get("case") and case_of(row).get(k) in (None, ""):
             # changes 는 빈 배열이 정상값이다("비슷한 컷") — 키 존재만 본다.
@@ -188,8 +207,8 @@ def case_index(rows) -> dict[str, dict]:
 
 def artifact_problems(rows, *, dataset_dir, source_dir) -> list[str]:
     """성공 row 의 실제 파일을 provenance 해시와 대조한다. → 문제 코드 목록."""
-    from .safe_paths import (SAFE_FILENAME, SAFE_ID, UnsafePath, file_sha256,
-                             is_sha256_hex, safe_resolve)
+    from .safe_paths import (SAFE_FILENAME, SAFE_ID, UnsafePath, UnsafePathReason,
+                             file_sha256, is_sha256_hex, safe_resolve)
 
     problems: set[str] = set()
     for r in rows:
@@ -199,22 +218,103 @@ def artifact_problems(rows, *, dataset_dir, source_dir) -> list[str]:
         for field in ("sourceSha256", "outputSha256"):
             if not is_sha256_hex(prov.get(field)):
                 problems.add(f"invalid_sha_format:{field}")
-        try:
-            out = safe_resolve(dataset_dir, r.get("id"), SAFE_ID, suffix=".png")
-        except UnsafePath as e:
-            problems.add("output_artifact_missing" if "regular file" in str(e)
-                         else "unsafe_output_path")
-        else:
-            if is_sha256_hex(prov.get("outputSha256")) and \
-                    file_sha256(out) != prov["outputSha256"]:
-                problems.add("output_hash_mismatch")
-        try:
-            src = safe_resolve(source_dir, r.get("source"), SAFE_FILENAME)
-        except UnsafePath as e:
-            problems.add("source_artifact_missing" if "regular file" in str(e)
-                         else "unsafe_source_path")
-        else:
-            if is_sha256_hex(prov.get("sourceSha256")) and \
-                    file_sha256(src) != prov["sourceSha256"]:
-                problems.add("source_hash_mismatch")
+        for kind, base, name, pattern, suffix in (
+                ("output", dataset_dir, r.get("id"), SAFE_ID, ".png"),
+                ("source", source_dir, r.get("source"), SAFE_FILENAME, None)):
+            try:
+                path = safe_resolve(base, name, pattern, suffix=suffix)
+            except UnsafePath as e:
+                # 사유는 enum 으로 온다 — 메시지를 다시 파싱하지 않는다.
+                problems.add(f"{kind}_artifact_missing"
+                             if e.reason is UnsafePathReason.NOT_REGULAR_FILE
+                             else f"unsafe_{kind}_path")
+                continue
+            field = "outputSha256" if kind == "output" else "sourceSha256"
+            if is_sha256_hex(prov.get(field)) and file_sha256(path) != prov[field]:
+                problems.add(f"{kind}_hash_mismatch")
     return sorted(problems)
+
+
+def _safe_bundle(items, base, pattern, *, suffix=None) -> str | None:
+    """이름 + 내용 해시. 경계 밖은 **읽지 않고**, 하나라도 못 읽으면 None 이다.
+
+    "일부만 넣은 체크섬"은 무엇을 잰 값인지 말할 수 없다 — 계산 불가는 null 로 둔다.
+    """
+    from .safe_paths import UnsafePath, file_sha256, safe_resolve
+
+    h = hashlib.sha256()
+    seen = 0
+    for name in sorted({n for n in items if isinstance(n, str) and n}):
+        try:
+            path = safe_resolve(base, name, pattern, suffix=suffix)
+        except UnsafePath:
+            return None
+        h.update(name.encode())
+        h.update(bytes.fromhex(file_sha256(path)))
+        seen += 1
+    return h.hexdigest() if seen else None
+
+
+def source_bundle_sha256(rows, source_dir) -> str | None:
+    """성공 row 의 source 파일 묶음 해시. 안전하게 못 읽으면 None."""
+    from .safe_paths import SAFE_FILENAME
+    return _safe_bundle([r.get("source") for r in rows if has_output(r)],
+                        source_dir, SAFE_FILENAME)
+
+
+def output_bundle_sha256(rows, dataset_dir) -> str | None:
+    """성공 row 의 결과 이미지 묶음 해시. 안전하게 못 읽으면 None."""
+    from .safe_paths import SAFE_ID
+    return _safe_bundle([r.get("id") for r in rows if has_output(r)],
+                        dataset_dir, SAFE_ID, suffix=".png")
+
+
+# ── manifest binding schema ────────────────────────────────────────────────
+# manifest 는 "이 표본·이 파일들"에 대한 진술이다. 진술에 필요한 필드가 비어 있으면
+# 비교가 통째로 생략되고, 그러면 아무 manifest 나 붙여도 통과한다. `{}` 조차도.
+
+MANIFEST_REQUIRED = ("datasetId", "rawSampleManifestSha256", "sourceDataset",
+                     "validForCalibration", "provenanceUnverified",
+                     "provenanceProblems")
+
+_DATASET_ID = None      # lazy — safe_paths 를 import 시점에 끌어오지 않는다
+
+
+def manifest_binding_problems(manifest, *, has_output_rows: bool = True) -> list[str]:
+    """manifest 자체의 형식 문제. 값 비교 이전에 **필드가 있는지**부터 본다."""
+    from .safe_paths import SAFE_FILENAME, is_sha256_hex
+
+    if manifest is None:
+        return ["manifest_absent"]
+    if not isinstance(manifest, dict):
+        return ["manifest_binding_invalid:manifest"]
+    out: list[str] = []
+    for field in MANIFEST_REQUIRED:
+        if field not in manifest:
+            out.append(f"manifest_binding_missing:{field}")
+    ds = manifest.get("datasetId")
+    if "datasetId" in manifest and not (isinstance(ds, str) and ds.strip()
+                                        and SAFE_FILENAME.match(ds)):
+        out.append("manifest_binding_invalid:datasetId")
+    if "rawSampleManifestSha256" in manifest and \
+            not is_sha256_hex(manifest.get("rawSampleManifestSha256")):
+        out.append("manifest_binding_invalid:rawSampleManifestSha256")
+    src = manifest.get("sourceDataset")
+    if "sourceDataset" in manifest:
+        if not isinstance(src, dict):
+            out.append("manifest_binding_invalid:sourceDataset")
+        elif not is_sha256_hex(src.get("sha256")):
+            out.append("manifest_binding_invalid:sourceDataset.sha256")
+    for field in ("validForCalibration", "provenanceUnverified"):
+        if field in manifest and not isinstance(manifest.get(field), bool):
+            out.append(f"manifest_binding_invalid:{field}")
+    if "provenanceProblems" in manifest and \
+            not isinstance(manifest.get("provenanceProblems"), list):
+        out.append("manifest_binding_invalid:provenanceProblems")
+    # 성공 output 이 있으면 그 묶음 해시도 진술의 일부여야 한다.
+    if has_output_rows:
+        if "outputBundleSha256" not in manifest:
+            out.append("manifest_binding_missing:outputBundleSha256")
+        elif not is_sha256_hex(manifest.get("outputBundleSha256")):
+            out.append("manifest_binding_invalid:outputBundleSha256")
+    return sorted(set(out))

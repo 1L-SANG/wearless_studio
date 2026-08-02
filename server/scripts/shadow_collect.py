@@ -83,12 +83,14 @@ async def observe_and_decide(settings, *, baseline, edited, changes, timeout):
 # 이므로 run 동일성 키에 넣으면 멀쩡한 multi-case 데이터셋이 거부된다.
 # 정의는 app.shadow_cases 에 있고 여기서는 얇게 위임만 한다.
 
+# 정본은 app.shadow_cases 다. 여기 남는 것은 **호출자가 있는** 이름뿐이다.
+#   vision_prepared  — backfill 이 case 별 Vision 요청을 만들 때 쓴다
+#   normalized_cases — resume/backfill 이 expected 를 만들 때 쓴다
+#   _sha             — provenance·이미지 해시(공통 helper 위임)
+# run_fingerprint·case_set_sha256·canonical 은 scases/sp 를 직접 부른다(별칭 없음).
 normalized_cases = scases.normalized_cases
-case_set_sha256 = scases.case_set_sha256
 vision_prepared = scases.vision_prepared
-run_fingerprint = scases.run_fingerprint
-_sha = lambda data: sp.sha256_hex(data)          # noqa: E731 — 공통 helper 위임
-_canonical = sp.canonical
+_sha = sp.sha256_hex
 
 
 def _code_commit() -> str | None:
@@ -115,7 +117,7 @@ def _provenance(prepared, *, case_name: str, changes: list, attempt: int,
     return {
         "sourceSha256": _sha(source_bytes),
         "outputSha256": _sha(output_bytes),
-        "run": run_fingerprint(prepared),
+        "run": scases.run_fingerprint(prepared),
         "case": case_fingerprint(prepared, case_name=case_name, changes=changes),
         # 편의를 위한 평면 사본 — 정본은 run/case 다.
         "generationModel": prepared.model,

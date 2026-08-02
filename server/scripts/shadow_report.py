@@ -26,6 +26,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import blinded_audit as ba  # noqa: E402
+from app import shadow_provenance as ba_sp  # noqa: E402
 from app.shadow_report import report  # noqa: E402
 
 # 필요한 컬럼만. edit_qc_result 는 판정 요약이라 provider 원문이 들어 있지 않다
@@ -102,19 +103,37 @@ def main() -> int:
         quarantined = []
         blocked = False
         binding_reasons: list[str] = []
-        # manifest 는 "이 samples 파일"에 대한 진술이다. 다른 파일에 붙이면 그 진술은
-        # 아무 근거가 없다 — 라벨을 붙이기 **전에** 확인한다.
-        if manifest:
-            actual = hashlib.sha256(
-                pathlib.Path(args.jsonl).read_bytes()).hexdigest()
-            declared = manifest.get("rawSampleManifestSha256")
-            if declared and declared != actual:
+        samples_file = pathlib.Path(args.jsonl).resolve()
+        dataset_dir = samples_file.parent
+        source_dir = (pathlib.Path(__file__).resolve().parents[2]
+                      / "public" / "assets" / "fit-examples")
+        has_out = any(ba_sp.has_output(r) for r in rows)
+
+        # manifest 는 "이 표본·이 파일들"에 대한 진술이다. 진술의 형식부터 본다 —
+        # 필드가 없으면 비교가 통째로 생략되고 아무 manifest 나 통과한다(`{}` 조차).
+        if manifest is not None:
+            binding_reasons += ba_sp.manifest_binding_problems(
+                manifest, has_output_rows=has_out)
+        if manifest is not None and not binding_reasons:
+            actual = hashlib.sha256(samples_file.read_bytes()).hexdigest()
+            if manifest.get("rawSampleManifestSha256") != actual:
                 binding_reasons.append("manifest_samples_mismatch")
             m_ds = manifest.get("datasetId")
-            if args.dataset_id and m_ds and args.dataset_id != m_ds:
+            if args.dataset_id and args.dataset_id != m_ds:
                 binding_reasons.append("manifest_dataset_id_mismatch")
+            # manifest 생성 시점이 아니라 **지금** 파일을 다시 잰다. 그 사이에
+            # 바뀐 것을 못 잡으면 manifest 는 과거에 대한 진술일 뿐이다.
+            binding_reasons += ba_sp.artifact_problems(
+                rows, dataset_dir=dataset_dir, source_dir=source_dir)
+            now_out = ba_sp.output_bundle_sha256(rows, dataset_dir)
+            if manifest.get("outputBundleSha256") != now_out:
+                binding_reasons.append("output_bundle_mismatch")
+            now_src = ba_sp.source_bundle_sha256(rows, source_dir)
+            if (manifest.get("sourceDataset") or {}).get("sha256") != now_src:
+                binding_reasons.append("source_bundle_mismatch")
+        binding_reasons = sorted(set(binding_reasons))
         if binding_reasons:
-            print(f"manifest 가 이 samples 파일을 가리키지 않아요: {binding_reasons}",
+            print(f"manifest 가 지금의 표본·파일을 가리키지 않아요: {binding_reasons}",
                   file=sys.stderr)
             blocked = True
         if args.labels and not binding_reasons:

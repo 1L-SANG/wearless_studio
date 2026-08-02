@@ -14,6 +14,11 @@ from app import shadow_report as sr
 
 T0 = datetime(2026, 8, 1, 0, 0, 0)
 
+# manifest 없는 리포트는 distribution_only 라 판정 플래그가 닫힌다(9/N 정책).
+# 판정 **로직** 을 보는 테스트는 신뢰 가능한 manifest 를 준 상태로 검사한다.
+TRUSTED = {"validForCalibration": True}
+
+
 
 def row(**kw):
     """기계 판정의 정본은 edit_qc_result.decision 이라, status 와 따로 준다."""
@@ -54,7 +59,7 @@ def test_pipeline_is_decided_by_source_not_edit_type():
 
 
 def test_an_empty_pipeline_reports_zero_not_a_crash():
-    out = sr.report([row(source_kind="editor_asset")])
+    out = sr.report([row(source_kind="editor_asset")], manifest=TRUSTED)
     assert out["pipelines"]["mannequin_edit"]["samples"] == 0
     assert out["pipelines"]["mannequin_edit"]["verdict"]["status"] == "insufficient_data"
 
@@ -81,14 +86,14 @@ def test_no_rows_yield_no_invented_numbers():
 def test_metric_distribution_reports_n_per_axis():
     rows = [row(edit_qc_result=qc(metrics={"delta": {"hemY": i / 100}}))
             for i in range(10)]
-    md = sr.report(rows)["pipelines"]["editor_vary"]["metricDistributions"]
+    md = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["metricDistributions"]
     assert md["hemY"]["n"] == 10 and md["hemY"]["sufficient"] is False
     assert md["hemY"]["min"] == 0.0 and md["hemY"]["max"] == pytest.approx(0.09)
 
 
 def test_booleans_are_not_counted_as_metric_values():
     rows = [row(edit_qc_result=qc(metrics={"delta": {"flag": True, "hemY": 0.1}}))]
-    md = sr.report(rows)["pipelines"]["editor_vary"]["metricDistributions"]
+    md = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["metricDistributions"]
     assert "flag" not in md and md["hemY"]["n"] == 1
 
 
@@ -96,20 +101,20 @@ def test_booleans_are_not_counted_as_metric_values():
 
 def test_machine_pass_rejected_by_a_human_is_a_false_pass_candidate():
     rows = [row(status="pass", review_decision="rejected")]
-    c = sr.report(rows)["pipelines"]["editor_vary"]["confusion"]
+    c = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["confusion"]
     assert c["falsePassCandidates"] == 1
     assert c["matrix"]["pass"]["rejected"] == 1
 
 
 def test_review_required_accepted_is_over_review_not_a_failure():
     rows = [row(status="review_required", review_decision="accepted")]
-    c = sr.report(rows)["pipelines"]["editor_vary"]["confusion"]
+    c = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["confusion"]
     assert c["overReview"] == 1 and c["falsePassCandidates"] == 0
 
 
 def test_unreviewed_rows_are_not_graded():
     rows = [row(status="review_required") for _ in range(4)]
-    p = sr.report(rows)["pipelines"]["editor_vary"]
+    p = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]
     assert p["confusion"]["graded"] == 0
     assert p["userReview"]["reviewRequired"] == 4 and p["userReview"]["unreviewed"] == 4
     assert p["userReview"]["acceptedRate"] is None
@@ -119,7 +124,7 @@ def test_accepted_rate_uses_only_decided_rows():
     rows = ([row(status="review_required", review_decision="accepted")] * 3
             + [row(status="review_required", review_decision="rejected")]
             + [row(status="review_required")] * 6)
-    u = sr.report(rows)["pipelines"]["editor_vary"]["userReview"]
+    u = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["userReview"]
     assert u["reviewed"] == 4 and u["acceptedRate"] == pytest.approx(0.75)
 
 
@@ -135,7 +140,7 @@ def test_missing_vision_is_unavailable_not_ok():
 def test_vision_unavailability_rate_counts_every_non_ok_status():
     rows = [row(edit_qc_result=qc(vision={"meta": {"status": s}}))
             for s in ("ok", "ok", "timeout", "provider_error")]
-    v = sr.report(rows)["pipelines"]["editor_vary"]["visionAvailability"]
+    v = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["visionAvailability"]
     assert v["unavailableRate"] == pytest.approx(0.5)
 
 
@@ -143,14 +148,14 @@ def test_measurement_vision_conflict_is_counted():
     rows = [row(edit_qc_result=qc(requestedChangeSatisfied=True,
                                   vision={"meta": {"status": "ok"},
                                           "observation": {"requestedChangeApplied": False}}))]
-    c = sr.report(rows)["pipelines"]["editor_vary"]["measurementVisionConflict"]
+    c = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["measurementVisionConflict"]
     assert c["conflicts"] == 1 and c["rate"] == 1.0
 
 
 def test_conflict_ignores_rows_without_usable_vision():
     rows = [row(edit_qc_result=qc(vision={"meta": {"status": "timeout"},
                                           "observation": {"requestedChangeApplied": False}}))]
-    c = sr.report(rows)["pipelines"]["editor_vary"]["measurementVisionConflict"]
+    c = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["measurementVisionConflict"]
     assert c["considered"] == 0 and c["rate"] is None
 
 
@@ -158,7 +163,7 @@ def test_null_observation_is_not_a_conflict():
     """bool|null 계약 — null 은 '모른다'지 '아니다'가 아니다."""
     rows = [row(edit_qc_result=qc(vision={"meta": {"status": "ok"},
                                           "observation": {"requestedChangeApplied": None}}))]
-    assert sr.report(rows)["pipelines"]["editor_vary"][
+    assert sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"][
         "measurementVisionConflict"]["conflicts"] == 0
 
 
@@ -168,7 +173,7 @@ def test_violations_are_counted_per_axis():
     rows = [row(edit_qc_result=qc(lockedInvariantViolations=["collarChanged"],
                                   unexpectedChanges=["hemY", "cuffY"])),
             row(edit_qc_result=qc(lockedInvariantViolations=["collarChanged"]))]
-    v = sr.report(rows)["pipelines"]["editor_vary"]["violations"]
+    v = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["violations"]
     assert v["lockedInvariantViolations"]["collarChanged"]["count"] == 2
     assert v["lockedInvariantViolations"]["collarChanged"]["rate"] == 1.0
     assert v["unexpectedChanges"]["hemY"]["count"] == 1
@@ -176,7 +181,7 @@ def test_violations_are_counted_per_axis():
 
 def test_cost_is_zero_until_unit_prices_are_given():
     rows = [row(vision_calls=0) for _ in range(3)]
-    prov = sr.report(rows)["pipelines"]["editor_vary"]["provider"]
+    prov = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["provider"]
     assert prov["estimatedUsd"] == 0.0 and prov["unitPricesProvided"] is False
     priced = sr.report(rows, image_usd=0.1)["pipelines"]["editor_vary"]["provider"]
     assert priced["estimatedUsd"] == pytest.approx(0.3)
@@ -185,7 +190,7 @@ def test_cost_is_zero_until_unit_prices_are_given():
 
 def test_latency_skips_unfinished_sessions():
     rows = [row(), row(completed_at=None)]
-    lat = sr.report(rows)["pipelines"]["editor_vary"]["latencySeconds"]
+    lat = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["latencySeconds"]
     assert lat["n"] == 1 and lat["p50"] == 12.0
 
 
@@ -199,7 +204,7 @@ def test_a_single_false_pass_blocks_enforce_even_with_many_samples():
     # readiness 기준은 blinded fidelity 라벨이다(운영 reviewDecision 아님).
     rows = _many(60, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
     rows += [row(edit_qc_result=qc(decision="pass"), human_label="fidelity_fail")]
-    v = sr.report(rows)["pipelines"]["editor_vary"]["verdict"]
+    v = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["verdict"]
     assert v["enforceReady"] is False and v["status"] == "shadow_only"
     assert any("false pass 1건" in b for b in v["blockers"])
 
@@ -209,20 +214,20 @@ def test_high_vision_unavailability_blocks_enforce():
                  edit_qc_result=qc(vision={"meta": {"status": "ok"}}))
     rows += _many(20, status="pass", review_decision="accepted",
                   edit_qc_result=qc(vision={"meta": {"status": "timeout"}}))
-    v = sr.report(rows)["pipelines"]["editor_vary"]["verdict"]
+    v = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["verdict"]
     assert v["enforceReady"] is False
     assert any("Vision 미가용률" in b for b in v["blockers"])
 
 
 def test_enforce_candidate_needs_both_sample_floors():
     rows = _many(60, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
-    v = sr.report(rows)["pipelines"]["editor_vary"]["verdict"]
+    v = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["verdict"]
     assert v["status"] == "enforce_candidate" and v["enforceReady"] is True
 
 
 def test_unreviewed_bulk_never_reaches_enforce_candidate():
     """사람이 아무도 안 본 데이터는 아무리 많아도 검증 표본이 아니다."""
-    v = sr.report(_many(500, edit_qc_result=qc(decision="pass")))[
+    v = sr.report(_many(500, edit_qc_result=qc(decision="pass")), manifest=TRUSTED)[
         "pipelines"]["editor_vary"]["verdict"]
     assert v["status"] == "insufficient_data"
 
@@ -295,7 +300,7 @@ def test_unknown_pipeline_is_reported_not_absorbed():
 def test_custom_review_required_is_excluded_from_enforce():
     rows = _many(60, edit_type="CUSTOM_REVIEW_REQUIRED", review_decision="accepted",
                  edit_qc_result=qc())
-    p = sr.report(rows)["pipelines"]["editor_vary"]
+    p = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]
     assert p["enforceEligibleSamples"] == 0
     detail = p["byEditTypeDetail"]["CUSTOM_REVIEW_REQUIRED"]
     assert detail["enforceEligible"] is False
@@ -306,7 +311,7 @@ def test_six_background_only_are_not_made_sufficient_by_custom_samples():
     """섞으면 30건처럼 보인다 — 그게 9/N 리포트가 착시를 준 지점이다."""
     rows = ([row(edit_type="BACKGROUND_ONLY") for _ in range(6)]
             + [row(edit_type="CUSTOM_REVIEW_REQUIRED") for _ in range(24)])
-    p = sr.report(rows)["pipelines"]["editor_vary"]
+    p = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]
     assert p["samples"] == 30
     assert p["enforceEligibleSamples"] == 6
     bg = p["byEditTypeDetail"]["BACKGROUND_ONLY"]
@@ -319,7 +324,7 @@ def test_each_edit_type_reports_its_own_metrics():
                 edit_qc_result=qc(metrics={"delta": {"hemY": 0.1}})),
             row(edit_type="CUSTOM_REVIEW_REQUIRED",
                 edit_qc_result=qc(metrics={"delta": {"hemY": 0.9}}))]
-    d = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"]
+    d = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["byEditTypeDetail"]
     assert d["BACKGROUND_ONLY"]["metricDistributions"]["hemY"]["max"] == 0.1
     assert d["CUSTOM_REVIEW_REQUIRED"]["metricDistributions"]["hemY"]["max"] == 0.9
 
@@ -327,7 +332,7 @@ def test_each_edit_type_reports_its_own_metrics():
 def test_pass_samples_without_labels_block_enforce():
     """라벨 없는 pass 는 false pass 0 이 아니라 미측정이다."""
     rows = _many(60, edit_qc_result=qc(decision="pass"))
-    v = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+    v = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["byEditTypeDetail"][
         "BACKGROUND_ONLY"]["verdict"]
     assert v["enforceReady"] is False
     assert any("human label" in b or "표본 부족" in b for b in v["blockers"])
@@ -336,7 +341,7 @@ def test_pass_samples_without_labels_block_enforce():
 def test_zero_pass_samples_cannot_be_enforce_ready():
     rows = _many(60, edit_qc_result=qc(decision="review_required"),
                  review_decision="accepted")
-    v = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+    v = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["byEditTypeDetail"][
         "BACKGROUND_ONLY"]["verdict"]
     assert v["enforceReady"] is False
     assert any("pass 표본 0건" in b for b in v["blockers"])
@@ -347,7 +352,7 @@ def test_human_label_coverage_counts_pass_samples_separately():
             + _many(2, edit_qc_result=qc(decision="pass"))
             + _many(5, edit_qc_result=qc(decision="review_required"),
                     review_decision="accepted"))
-    h = sr.report(rows)["pipelines"]["editor_vary"]["humanLabels"]
+    h = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["humanLabels"]
     assert h["passSamples"] == 5 and h["passLabeled"] == 3
     assert h["passCoverage"] == pytest.approx(0.6)
 
@@ -428,7 +433,7 @@ def test_pass_with_fidelity_fail_is_a_false_pass():
 def test_one_false_pass_blocks_enforce():
     rows = _bg(59, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
     rows += _bg(1, edit_qc_result=qc(decision="pass"), human_label="fidelity_fail")
-    v = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+    v = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["byEditTypeDetail"][
         "BACKGROUND_ONLY"]["verdict"]
     assert v["enforceReady"] is False
     assert any("false pass 1건" in b for b in v["blockers"])
@@ -436,14 +441,14 @@ def test_one_false_pass_blocks_enforce():
 
 def test_blinded_labels_count_toward_calibration_graded():
     rows = _bg(30, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
-    cal = sr.report(rows)["pipelines"]["editor_vary"]["calibrationConfusion"]
+    cal = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["calibrationConfusion"]
     assert cal["graded"] == 30 and cal["sufficient"] is True
 
 
 def test_production_review_decisions_alone_cannot_satisfy_readiness():
     """reviewDecision 30건은 사용자 행동이지 fidelity 측정이 아니다."""
     rows = _bg(30, edit_qc_result=qc(decision="pass"), review_decision="accepted")
-    p = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"]["BACKGROUND_ONLY"]
+    p = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["byEditTypeDetail"]["BACKGROUND_ONLY"]
     assert p["confusion"]["graded"] == 30          # 운영 표는 채워지지만
     assert p["calibrationConfusion"]["graded"] == 0   # 캘리브레이션 표는 비어 있다
     assert p["verdict"]["enforceReady"] is False
@@ -452,7 +457,7 @@ def test_production_review_decisions_alone_cannot_satisfy_readiness():
 
 def test_zero_pass_labels_means_unmeasured_not_zero():
     rows = _bg(30, edit_qc_result=qc(decision="pass"))
-    cal = sr.report(rows)["pipelines"]["editor_vary"]["calibrationConfusion"]
+    cal = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["calibrationConfusion"]
     assert cal["falsePass"] is None and cal["falsePassMeasured"] is False
     assert cal["matrix"]["pass"]["unlabeled"] == 30
 
@@ -476,7 +481,7 @@ def test_label_coverage_is_reported_per_decision():
 def test_custom_stays_excluded_from_enforce_even_when_fully_labeled():
     rows = [row(edit_type="CUSTOM_REVIEW_REQUIRED", edit_qc_result=qc(decision="pass"),
                 human_label="fidelity_pass") for _ in range(60)]
-    d = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+    d = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["byEditTypeDetail"][
         "CUSTOM_REVIEW_REQUIRED"]
     assert d["calibrationConfusion"]["graded"] == 60
     assert d["verdict"]["enforceReady"] is False
@@ -485,6 +490,6 @@ def test_custom_stays_excluded_from_enforce_even_when_fully_labeled():
 
 def test_a_fully_labeled_clean_background_only_set_reaches_enforce_candidate():
     rows = _bg(40, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
-    v = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+    v = sr.report(rows, manifest=TRUSTED)["pipelines"]["editor_vary"]["byEditTypeDetail"][
         "BACKGROUND_ONLY"]["verdict"]
     assert v["enforceReady"] is True and v["status"] == "enforce_candidate"

@@ -210,7 +210,9 @@ def test_a_bad_sha_format_is_a_problem_not_a_crash(dataset, bad):
     assert m["validForCalibration"] is False
     assert any(p.startswith("invalid_sha_format") or p.startswith("missing_row_field")
                for p in m["provenanceProblems"])
-    assert m["outputBundleSha256"] is None          # crash 대신 None
+    # bundle 은 실제 파일로 계산하므로 기록된 해시 형식과 무관하게 값이 나온다 —
+    # 중요한 건 crash 하지 않고 typed problem 이 남는다는 것.
+    assert m["outputBundleSha256"] is None or len(m["outputBundleSha256"]) == 64
 
 
 @pytest.mark.parametrize("bad_id", ["../../etc/hosts", "/etc/hosts", "a/b", "x\x00"])

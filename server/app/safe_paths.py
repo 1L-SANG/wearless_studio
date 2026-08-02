@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import enum
 import hashlib
 import pathlib
 import re
@@ -21,8 +22,26 @@ SAFE_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
+class UnsafePathReason(enum.Enum):
+    """거부 사유 — **기계가 분기하는 값**이다.
+
+    문자열 메시지를 다시 파싱해 분기하면 문구를 다듬는 순간 판정이 바뀐다.
+    실제로 shadow_provenance 가 `"regular file" in str(e)` 로 missing/unsafe 를
+    갈랐는데, 그건 메시지가 계약이라는 뜻이고 메시지는 계약이 될 수 없다.
+    """
+
+    INVALID_NAME = "invalid_name"
+    OUTSIDE_BASE = "outside_base"
+    NOT_REGULAR_FILE = "not_regular_file"
+
+
 class UnsafePath(Exception):
-    """허용 경계를 벗어난 요청."""
+    """허용 경계를 벗어난 요청. 표시 문구와 판정 사유를 분리해서 들고 다닌다."""
+
+    def __init__(self, reason: UnsafePathReason, message: str = "unsafe path"):
+        self.reason = reason
+        # 외부로 나가는 문구에는 경로도 내용도 담지 않는다 — 그 자체가 정보다.
+        super().__init__(message)
 
 
 def is_sha256_hex(value) -> bool:
@@ -32,11 +51,11 @@ def is_sha256_hex(value) -> bool:
 def safe_name(name, pattern) -> str:
     """이름 자체를 먼저 조인다 — 경로를 만들기 전에 막는 게 가장 확실하다."""
     if not isinstance(name, str) or "\x00" in name:
-        raise UnsafePath("bad name")
+        raise UnsafePath(UnsafePathReason.INVALID_NAME)
     if not pattern.match(name):
-        raise UnsafePath("bad name")
+        raise UnsafePath(UnsafePathReason.INVALID_NAME)
     if name in (".", "..") or "/" in name or "\\" in name:
-        raise UnsafePath("bad name")
+        raise UnsafePath(UnsafePathReason.INVALID_NAME)
     return name
 
 
@@ -52,9 +71,9 @@ def safe_resolve(base: pathlib.Path, name, pattern, *, suffix: str | None = None
     root = pathlib.Path(base).resolve(strict=False)
     target = (root / safe).resolve(strict=False)
     if target != root and root not in target.parents:
-        raise UnsafePath("outside base")
+        raise UnsafePath(UnsafePathReason.OUTSIDE_BASE)
     if not target.is_file():
-        raise UnsafePath("not a regular file")
+        raise UnsafePath(UnsafePathReason.NOT_REGULAR_FILE)
     return target
 
 

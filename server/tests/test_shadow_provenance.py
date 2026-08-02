@@ -20,6 +20,9 @@ from app.config import load_settings
 
 SERVER = pathlib.Path(__file__).resolve().parents[1]
 
+# manifest 없는 리포트는 distribution_only 다(9/N) — 판정 로직 테스트는 신뢰 manifest 사용.
+TRUSTED = {"validForCalibration": True}
+
 
 def _mod(name, rel):
     spec = importlib.util.spec_from_file_location(name, SERVER / rel)
@@ -297,7 +300,8 @@ def test_manifest_and_label_reasons_are_unioned():
 
 
 def test_duplicate_reasons_are_collapsed():
-    out = sr.report(_rows(), quarantined=[{"reason": "dataset_mismatch"}] * 3)
+    out = sr.report(_rows(), manifest=TRUSTED,
+                    quarantined=[{"reason": "dataset_mismatch"}] * 3)
     assert out["calibrationBlockedReasons"] == ["label_dataset_mismatch"]
 
 
