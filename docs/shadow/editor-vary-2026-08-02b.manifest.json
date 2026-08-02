@@ -1,0 +1,39 @@
+{
+  "datasetId": "shadow-editor-vary-2026-08-02b",
+  "collectedAt": "2026-08-02",
+  "validForCalibration": true,
+  "invalidReasons": [],
+  "samples": 30,
+  "pipelines": {
+    "editor_vary": 30,
+    "mannequin_edit": 0
+  },
+  "imageCallsAttempted": 30,
+  "visionCallsAttempted": 30,
+  "cost": {
+    "estimatedUsd": 4.59,
+    "assumed": true,
+    "unitPrices": {
+      "imageUsd": 0.15,
+      "visionUsd": 0.003
+    },
+    "note": "단가는 가정치다 — 실단가 미확인이라 이 금액을 근거로 쓰지 말 것."
+  },
+  "collectedByCommit": "10667d6df2ff47c68906bef71aba92f7740e947d",
+  "model": "gemini-3-pro-image",
+  "visionPromptVersion": "edit_intent_qc_v1",
+  "visionPromptSha256": "9266f46feb779e62e70120bdc1f4299b70a1c76d1ee0df53831ddebaebf2051d",
+  "qcPolicyVersion": "edit_qc_v1",
+  "sourceDataset": {
+    "path": "public/assets/fit-examples",
+    "files": 30,
+    "sha256": "18a3cb495afe553b955bbafdd79045b90a88332d4aecfbd976856dea54e1199f"
+  },
+  "rawSampleManifestSha256": "3aa01d85356bfb7ade478a3bb13316b749544d3c2bc780f53429f507ddee09b5",
+  "collectorCommand": "python scripts/shadow_collect.py --per-pipeline 30 --max-calls 30 --budget-usd 6.0",
+  "humanLabels": {
+    "labeled": 0,
+    "path": null,
+    "note": "blinded audit 로만 채운다 — 수집기가 만들지 않는다."
+  }
+}
