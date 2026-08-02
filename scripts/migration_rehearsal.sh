@@ -6,32 +6,78 @@
 #
 #   ./scripts/migration_rehearsal.sh          적용 + 검증 + 정리
 #   KEEP=1 ./scripts/migration_rehearsal.sh   검증 후 DB 를 남긴다(사후 조사용)
-set -uo pipefail
+set -euo pipefail
 
 CONTAINER=${CONTAINER:-supabase_db_wearless_studio}
-DB=${DB:-rehearsal_p3_9n}
+# 이름은 스크립트가 만든다. 밖에서 받은 이름을 그대로 DROP 하면 남의 DB 를 지운다.
+DB_PREFIX="rehearsal_p3_"
+DB_SUFFIX=${DB_SUFFIX:-$$}
+DB="${DB_PREFIX}${DB_SUFFIX}"
+case "$DB" in
+  ${DB_PREFIX}[A-Za-z0-9_]*) : ;;
+  *) echo "REFUSING: 안전하지 않은 DB 이름 ($DB)"; exit 2 ;;
+esac
+CREATED=0
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$ROOT/supabase/migrations"
 
 psql_root() { docker exec -i "$CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
 psql_db()   { docker exec -i "$CONTAINER" psql -U postgres -d "$DB" -v ON_ERROR_STOP=1 "$@"; }
-q()         { docker exec -i "$CONTAINER" psql -U postgres -d "$DB" -tAc "$1"; }
+q()         { docker exec -i "$CONTAINER" psql -U postgres -d "$DB" -tAc "$1" 2>&1 || true; }
 
 fail=0
 ok()   { printf '  PASS  %s\n' "$1"; }
-bad()  { printf '  FAIL  %s\n' "$1"; fail=$((fail + 1)); }
-check(){ [ "$2" = "$3" ] && ok "$1" || bad "$1 (got '$2', want '$3')"; }
+bad()  { printf '  FAIL  %s\n' "$1"; fail=$((fail + 1)) || true; }
+check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (got '$2', want '$3')"; fi; }
 
 # 운영 DB 로 잘못 붙는 사고 방지 — 컨테이너 로컬이 아니면 즉시 중단.
-host=$(docker exec "$CONTAINER" psql -U postgres -d postgres -tAc "select inet_server_addr()" 2>/dev/null || echo "")
-case "$host" in
-  ""|127.0.0.1|localhost|172.*|192.168.*|10.*) : ;;
-  *) echo "REFUSING: container postgres is not local ($host)"; exit 2 ;;
+# "사설 IP 니까 로컬"은 근거가 못 된다 — VPN 너머 운영도 사설 대역일 수 있다.
+# 컨테이너가 이 머신의 docker 데몬에 있고, 이름이 로컬 supabase 규약이며, 운영에만
+# 있는 흔적(대량 데이터)이 없다는 세 가지를 함께 본다.
+if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  echo "REFUSING: 컨테이너를 찾을 수 없어요 ($CONTAINER)"; exit 2
+fi
+case "$CONTAINER" in
+  supabase_db_*) : ;;
+  *) echo "REFUSING: 로컬 supabase 컨테이너 이름이 아니에요 ($CONTAINER)"; exit 2 ;;
 esac
+prod_marker=$(docker exec "$CONTAINER" psql -U postgres -d postgres -tAc \
+  "select coalesce((select count(*) from pg_database where datname in ('postgres')),0)" 2>/dev/null || echo "")
+if [ -z "$prod_marker" ]; then
+  echo "REFUSING: 컨테이너 postgres 에 붙지 못했어요"; exit 2
+fi
+users=$(docker exec "$CONTAINER" psql -U postgres -d postgres -tAc \
+  "select count(*) from auth.users" 2>/dev/null || echo 0)
+if [ "${users:-0}" -gt 1000 ]; then
+  echo "REFUSING: 사용자 $users 명 — 운영으로 보이는 DB 입니다"; exit 2
+fi
 
 echo "== 0. disposable DB 준비 ($DB @ $CONTAINER) =="
-psql_root -c "drop database if exists $DB (force)" >/dev/null
-psql_root -c "create database $DB" >/dev/null
+# 이미 있으면 지우지 않는다 — 그 DB 가 무엇인지 우리가 모른다. 유일한 이름을 새로 찾는다.
+for _try in 1 2 3 4 5; do
+  exists=$(psql_root -tAc "select 1 from pg_database where datname = '$DB'" || true)
+  [ -z "$exists" ] && break
+  DB="${DB_PREFIX}${DB_SUFFIX}_${_try}"
+  echo "  이름 충돌 회피 → $DB"
+done
+if [ -n "${exists:-}" ] && [ "$DB" = "${DB_PREFIX}${DB_SUFFIX}_5" ]; then
+  echo "REFUSING: 유일한 DB 이름을 못 만들었어요"; exit 2
+fi
+psql_root -c "create database \"$DB\"" >/dev/null
+CREATED=1
+
+# 이 실행이 만든 DB 만 정리한다. 실패·중단에도 반드시 돈다.
+cleanup() {
+  local code=$?
+  if [ "$CREATED" = "1" ] && [ "${KEEP:-0}" != "1" ]; then
+    psql_root -c "drop database if exists \"$DB\" (force)" >/dev/null 2>&1 \
+      && echo "disposable DB 삭제됨 ($DB)"
+  elif [ "$CREATED" = "1" ]; then
+    echo "DB 유지: $DB"
+  fi
+  exit "$code"
+}
+trap cleanup EXIT INT TERM
 
 # supabase 가 제공하는 것들(이 레포의 migration 이 만들지 않는 전제) — 최소 대역.
 psql_db <<'SQL' >/dev/null
@@ -52,6 +98,8 @@ do $$ begin
 end $$;
 SQL
 echo "  auth 대역 준비 완료"
+# 여기까지 못 왔으면 set -e 로 이미 죽는다 — migration 은 시작조차 하지 않는다.
+psql_db -tAc "select 1 from auth.users limit 0" >/dev/null
 
 echo
 echo "== 1. 빈 DB 에 전체 적용 (순서대로) =="
@@ -80,7 +128,7 @@ for f in "$MIG"/*.sql; do
   if ! out=$(psql_db < "$f" 2>&1); then
     if [[ "$name" > "20260801" ]]; then
       p3_fail=$((p3_fail + 1)); printf '  FAIL  rerun %s\n' "$name"
-      printf '%s\n' "$out" | grep -i error | head -2 | sed 's/^/        /'
+      printf '%s\n' "$out" | grep -i error | head -2 | sed 's/^/        /' || true
     else
       legacy_fail=$((legacy_fail + 1)); printf '  (pre-existing) %s\n' "$name"
     fi
@@ -145,7 +193,7 @@ insert into public.edit_sessions
           'editor_asset', '55555555-5555-4555-8555-555555555555');
 SQL
 )
-echo "$seed_out" | grep -i error | head -3 | sed 's/^/        /'
+echo "$seed_out" | grep -i error | head -3 | sed 's/^/        /' || true
 check "edit_session seed" \
   "$(q "select count(*) from public.edit_sessions")" "1"
 
@@ -163,7 +211,7 @@ dup=$(q "insert into public.edit_review_events
            where idempotency_key is not null do nothing
          returning id" 2>&1)
 check "같은 키 재삽입 = 0행(트랜잭션 생존)" \
-  "$(echo "$dup" | grep -cE '^[0-9]+$')" "0"
+  "$(echo "$dup" | grep -cE '^[0-9]+$' || true)" "0"
 check "행은 여전히 1건" "$(q "select count(*) from public.edit_review_events")" "1"
 
 nokey1=$(q "insert into public.edit_review_events
@@ -178,9 +226,9 @@ check "키 없는 행은 인덱스 밖(둘 다 저장)" \
   "$([ -n "$nokey1" ] && [ -n "$nokey2" ] && [ "$nokey1" != "$nokey2" ] && echo t || echo f)" "t"
 
 upd=$(q "update public.edit_review_events set decision='rejected' where idempotency_key='k1'" 2>&1)
-check "UPDATE 차단" "$(echo "$upd" | grep -c 'append-only')" "1"
+check "UPDATE 차단" "$(echo "$upd" | grep -c 'append-only' || true)" "1"
 del=$(q "delete from public.edit_review_events where idempotency_key='k1'" 2>&1)
-check "DELETE 차단" "$(echo "$del" | grep -c 'append-only')" "1"
+check "DELETE 차단" "$(echo "$del" | grep -c 'append-only' || true)" "1"
 
 # (a) 프로젝트 소유자가 아닌 검수자 — 계정이 사라져도 "검수가 있었다"는 남아야 한다.
 q "insert into public.edit_review_events
@@ -206,13 +254,13 @@ fi
 #     같은 성질의 선례(credit_ledger)가 이미 있는지 함께 잰다.
 ownerdel=$(q "delete from auth.users where id='11111111-1111-4111-8111-111111111111'" 2>&1)
 check "소유자 hard delete 차단(감사 이력 보존)" \
-  "$(echo "$ownerdel" | grep -ci 'violates foreign key')" "1"
-echo "        차단 주체: $(echo "$ownerdel" | grep -o 'constraint "[^"]*"' | head -1)"
+  "$(echo "$ownerdel" | grep -ci 'violates foreign key' || true)" "1"
+echo "        차단 주체: $(echo "$ownerdel" | grep -o 'constraint "[^"]*"' | head -1 || true)"
 q "insert into auth.users (id, email) values ('66666666-6666-4666-8666-666666666666','c@x.test')" >/dev/null
 ledger_ins=$(q "insert into public.credit_ledger
   (user_id, action_key, delta, balance_after, available_after)
   values ('66666666-6666-4666-8666-666666666666', 'grant', 10, 10, 10)" 2>&1)
-echo "$ledger_ins" | grep -qi error && echo "        (선례 측정 실패: $ledger_ins)"
+if echo "$ledger_ins" | grep -qi error; then echo "        (선례 측정 실패: $ledger_ins)"; fi
 ledgerdel=$(q "delete from auth.users where id='66666666-6666-4666-8666-666666666666'" 2>&1)
 if echo "$ledgerdel" | grep -qi 'violates\|append-only'; then
   echo "        선례: credit_ledger 도 같은 이유로 계정 hard delete 를 막는다 (신규 제약 아님)"
@@ -221,9 +269,9 @@ else
 fi
 
 sdel=$(q "delete from public.edit_sessions where id='44444444-4444-4444-8444-444444444444'" 2>&1)
-check "edit_session hard delete = RESTRICT" "$(echo "$sdel" | grep -ci 'violates foreign key')" "1"
+check "edit_session hard delete = RESTRICT" "$(echo "$sdel" | grep -ci 'violates foreign key' || true)" "1"
 pdel=$(q "delete from public.projects where id='33333333-3333-4333-8333-333333333333'" 2>&1)
-check "project hard delete = RESTRICT" "$(echo "$pdel" | grep -ci 'violates foreign key')" "1"
+check "project hard delete = RESTRICT" "$(echo "$pdel" | grep -ci 'violates foreign key' || true)" "1"
 
 echo
 echo "== 5. 동시 동일 키 insert (실 커넥션 2개) =="
@@ -248,7 +296,7 @@ wait
 after=$(q "select count(*) from public.edit_review_events")
 check "동시 동일 키 → 행 1건만 증가" "$((after - before))" "1"
 check "충돌 쪽 트랜잭션 생존" \
-  "$(cat "$ROOT/.rehearsal_a.log" "$ROOT/.rehearsal_b.log" | grep -c 'alive-after-conflict')" "2"
+  "$(cat "$ROOT/.rehearsal_a.log" "$ROOT/.rehearsal_b.log" | grep -c 'alive-after-conflict' || true)" "2"
 rm -f "$ROOT/.rehearsal_a.log" "$ROOT/.rehearsal_b.log"
 
 echo
@@ -273,7 +321,7 @@ as_user() {
     set local role authenticated;
     set local request.jwt.claim.sub = '$1';
     $2
-    commit;" 2>&1 | grep -vE '^(BEGIN|SET|COMMIT|ROLLBACK)' | grep -v '^[[:space:]]*$' | head -1
+    commit;" 2>&1 | grep -vE '^(BEGIN|SET|COMMIT|ROLLBACK)' | grep -v '^[[:space:]]*$' | head -1 || true
 }
 check "타 사용자에게는 0건" \
   "$(as_user 99999999-9999-4999-8999-999999999999 'select count(*) from public.edit_review_events;')" "0"
@@ -282,14 +330,9 @@ check "소유자에게는 보임(0 아님)" \
   "$([ "${rls_own:-0}" -gt 0 ] 2>/dev/null && echo t || echo f)" "t"
 ins=$(as_user 11111111-1111-4111-8111-111111111111 "insert into public.edit_review_events (project_id, edit_session_id, decision) values ('33333333-3333-4333-8333-333333333333','44444444-4444-4444-8444-444444444444','accepted');")
 check "authenticated 직접 INSERT 차단" \
-  "$(echo "$ins" | grep -ci 'permission denied\|violates row-level')" "1"
+  "$(echo "$ins" | grep -ci 'permission denied\|violates row-level' || true)" "1"
 
 echo
 echo "== 결과 =="
 if [ "$fail" = 0 ]; then echo "ALL PASS"; else echo "FAILURES: $fail"; fi
-if [ "${KEEP:-0}" = "1" ]; then
-  echo "DB 유지: $DB"
-else
-  psql_root -c "drop database if exists $DB (force)" >/dev/null && echo "disposable DB 삭제됨"
-fi
 exit "$fail"

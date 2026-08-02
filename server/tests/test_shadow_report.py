@@ -16,11 +16,13 @@ T0 = datetime(2026, 8, 1, 0, 0, 0)
 
 
 def row(**kw):
-    base = {"id": "s", "edit_type": "BACKGROUND_ONLY", "status": "pass",
+    """기계 판정의 정본은 edit_qc_result.decision 이라, status 와 따로 준다."""
+    status = kw.pop("status", "pass")
+    base = {"id": "s", "edit_type": "BACKGROUND_ONLY", "status": status,
             "source_kind": "editor_asset", "created_at": T0,
             "completed_at": T0 + timedelta(seconds=12), "output_id": "o",
-            "edit_qc_result": {}, "review_decision": None,
-            "has_pattern_or_logo": False}
+            "edit_qc_result": qc(decision=status), "review_decision": None,
+            "image_calls": 1, "vision_calls": 1}
     base.update(kw)
     return base
 
@@ -38,15 +40,17 @@ def qc(**kw):
 def test_pipelines_never_mix():
     rows = [row(source_kind="editor_asset"), row(source_kind="approved_baseline")]
     out = sr.report(rows)
-    assert out["samplesByPipeline"] == {"mannequin_edit": 1, "editor_vary": 1}
-    assert set(out["pipelines"]) == {"mannequin_edit", "editor_vary"}
+    assert out["samplesByPipeline"] == {"mannequin_edit": 1, "editor_vary": 1,
+                                        "unknown": 0}
+    assert set(out["pipelines"]) == {"mannequin_edit", "editor_vary", "unknown"}
 
 
 def test_pipeline_is_decided_by_source_not_edit_type():
     """같은 edit_type 이 두 파이프라인에 다 나온다 — source_kind 만 구분자다."""
     assert sr.pipeline_of(row(source_kind="editor_asset")) == "editor_vary"
     assert sr.pipeline_of(row(source_kind="approved_baseline")) == "mannequin_edit"
-    assert sr.pipeline_of(row(source_kind=None)) == "mannequin_edit"
+    assert sr.pipeline_of(row(source_kind=None)) == "unknown"
+    assert sr.pipeline_of(row(source_kind="bogus")) == "unknown"
 
 
 def test_an_empty_pipeline_reports_zero_not_a_crash():
@@ -171,7 +175,7 @@ def test_violations_are_counted_per_axis():
 
 
 def test_cost_is_zero_until_unit_prices_are_given():
-    rows = [row() for _ in range(3)]
+    rows = [row(vision_calls=0) for _ in range(3)]
     prov = sr.report(rows)["pipelines"]["editor_vary"]["provider"]
     assert prov["estimatedUsd"] == 0.0 and prov["unitPricesProvided"] is False
     priced = sr.report(rows, image_usd=0.1)["pipelines"]["editor_vary"]["provider"]
@@ -224,7 +228,8 @@ def test_unreviewed_bulk_never_reaches_enforce_candidate():
 
 def test_vision_unavailable_alone_blocks_enforce():
     """Vision 이 없으면 자동 통과 금지 — 표본이 아무리 많아도."""
-    v = sr.report(_many(80, status="pass", review_decision="accepted"))[
+    v = sr.report(_many(80, status="pass", review_decision="accepted",
+                        edit_qc_result=qc(decision="pass", vision={})))[
         "pipelines"]["editor_vary"]["verdict"]
     assert v["enforceReady"] is False
     assert any("Vision 미가용률" in b for b in v["blockers"])
@@ -253,3 +258,153 @@ def test_collection_never_selects_provider_raw():
 
 def test_collection_takes_latest_user_decision():
     assert "order by re.created_at desc, re.id desc" in _script()
+
+
+# ── 9/N 보정: 판정 정본·unknown·edit type·라벨 커버리지 ─────────────────────
+
+def test_machine_decision_comes_from_qc_not_workflow_status():
+    """status 를 판정으로 쓰면 provider 실패가 reject 로 둔갑한다."""
+    r = row(status="failed", edit_qc_result=qc(decision="pass"))
+    assert sr.machine_decision(r) == "pass"
+    assert sr.workflow_status(r) == "failed"
+
+
+def test_a_sample_without_output_is_failed_not_a_decision():
+    r = row(output_id=None, edit_qc_result={"error": "generation_failed"})
+    assert sr.machine_decision(r) == "failed"
+
+
+def test_an_unknown_decision_is_review_not_pass():
+    assert sr.machine_decision(row(edit_qc_result=qc(decision="weird"))) == "review_required"
+    assert sr.machine_decision(row(edit_qc_result={})) == "review_required"
+
+
+def test_review_and_review_required_normalize_together():
+    assert sr.machine_decision(row(edit_qc_result=qc(decision="review"))) == "review_required"
+
+
+def test_unknown_pipeline_is_reported_not_absorbed():
+    out = sr.report([row(source_kind=None, id="x1"), row(source_kind="editor_asset")])
+    assert out["samplesByPipeline"]["unknown"] == 1
+    assert out["samplesByPipeline"]["mannequin_edit"] == 0
+    assert "x1" in out["unknownPipelineSamples"]
+    assert out["pipelines"]["unknown"]["verdict"]["enforceReady"] is False
+
+
+def test_custom_review_required_is_excluded_from_enforce():
+    rows = _many(60, edit_type="CUSTOM_REVIEW_REQUIRED", review_decision="accepted",
+                 edit_qc_result=qc())
+    p = sr.report(rows)["pipelines"]["editor_vary"]
+    assert p["enforceEligibleSamples"] == 0
+    detail = p["byEditTypeDetail"]["CUSTOM_REVIEW_REQUIRED"]
+    assert detail["enforceEligible"] is False
+    assert any("자동 통과 대상이 아닌" in b for b in detail["verdict"]["blockers"])
+
+
+def test_six_background_only_are_not_made_sufficient_by_custom_samples():
+    """섞으면 30건처럼 보인다 — 그게 9/N 리포트가 착시를 준 지점이다."""
+    rows = ([row(edit_type="BACKGROUND_ONLY") for _ in range(6)]
+            + [row(edit_type="CUSTOM_REVIEW_REQUIRED") for _ in range(24)])
+    p = sr.report(rows)["pipelines"]["editor_vary"]
+    assert p["samples"] == 30
+    assert p["enforceEligibleSamples"] == 6
+    bg = p["byEditTypeDetail"]["BACKGROUND_ONLY"]
+    assert bg["samples"] == 6 and bg["decisionRates"]["sufficient"] is False
+    assert bg["verdict"]["status"] == "insufficient_data"
+
+
+def test_each_edit_type_reports_its_own_metrics():
+    rows = [row(edit_type="BACKGROUND_ONLY",
+                edit_qc_result=qc(metrics={"delta": {"hemY": 0.1}})),
+            row(edit_type="CUSTOM_REVIEW_REQUIRED",
+                edit_qc_result=qc(metrics={"delta": {"hemY": 0.9}}))]
+    d = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"]
+    assert d["BACKGROUND_ONLY"]["metricDistributions"]["hemY"]["max"] == 0.1
+    assert d["CUSTOM_REVIEW_REQUIRED"]["metricDistributions"]["hemY"]["max"] == 0.9
+
+
+def test_pass_samples_without_labels_block_enforce():
+    """라벨 없는 pass 는 false pass 0 이 아니라 미측정이다."""
+    rows = _many(60, edit_qc_result=qc(decision="pass"))
+    v = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+        "BACKGROUND_ONLY"]["verdict"]
+    assert v["enforceReady"] is False
+    assert any("human label" in b or "표본 부족" in b for b in v["blockers"])
+
+
+def test_zero_pass_samples_cannot_be_enforce_ready():
+    rows = _many(60, edit_qc_result=qc(decision="review_required"),
+                 review_decision="accepted")
+    v = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+        "BACKGROUND_ONLY"]["verdict"]
+    assert v["enforceReady"] is False
+    assert any("pass 표본 0건" in b for b in v["blockers"])
+
+
+def test_human_label_coverage_counts_pass_samples_separately():
+    rows = (_many(3, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
+            + _many(2, edit_qc_result=qc(decision="pass"))
+            + _many(5, edit_qc_result=qc(decision="review_required"),
+                    review_decision="accepted"))
+    h = sr.report(rows)["pipelines"]["editor_vary"]["humanLabels"]
+    assert h["passSamples"] == 5 and h["passLabeled"] == 3
+    assert h["passCoverage"] == pytest.approx(0.6)
+
+
+def test_provider_cost_uses_attempted_counters():
+    rows = [row(image_calls=2, vision_calls=3)]     # 재시도 포함
+    prov = sr.report(rows, image_usd=0.1, vision_usd=0.01)["pipelines"][
+        "editor_vary"]["provider"]
+    assert prov["imageCalls"] == 2 and prov["visionCalls"] == 3
+    assert prov["estimatedUsd"] == pytest.approx(0.23)
+
+
+def test_failed_samples_still_cost_money():
+    rows = [row(output_id=None, edit_qc_result={"error": "x"}, image_calls=1,
+                vision_calls=0)]
+    prov = sr.report(rows, image_usd=0.1)["pipelines"]["editor_vary"]["provider"]
+    assert prov["imageCalls"] == 1 and prov["estimatedUsd"] == pytest.approx(0.1)
+
+
+# ── pattern/logo 는 스키마가 없으면 unknown ────────────────────────────────
+
+@pytest.mark.parametrize("analysis", [
+    {}, {"clothingType": "top", "styleTags": ["basic"]},
+    {"materials": [{"name": "아크릴"}]},
+])
+def test_missing_pattern_schema_is_unknown_not_false(analysis):
+    assert sr.pattern_or_logo(row(analysis=analysis)) == "unknown"
+
+
+@pytest.mark.parametrize("value", [None, False, "", "none", "solid", [], {}])
+def test_empty_pattern_values_are_false(value):
+    assert sr.pattern_or_logo(row(analysis={"pattern": value})) == "false"
+
+
+@pytest.mark.parametrize("value", ["stripe", ["stripe"], {"type": "stripe"}, True])
+def test_structured_pattern_values_are_true(value):
+    assert sr.pattern_or_logo(row(analysis={"pattern": value})) == "true"
+
+
+def test_a_logo_asset_list_counts():
+    assert sr.pattern_or_logo(row(analysis={"logoAssets": ["a"]})) == "true"
+    assert sr.pattern_or_logo(row(analysis={"logoAssets": []})) == "false"
+
+
+def test_pattern_axis_shows_unknown_in_the_report():
+    out = sr.report([row(analysis={"clothingType": "top"}) for _ in range(3)])
+    assert out["pipelines"]["editor_vary"]["byPatternOrLogo"] == {"unknown": 3}
+
+
+# ── manifest 연결 ───────────────────────────────────────────────────────────
+
+def test_an_invalid_manifest_marks_the_whole_report_unusable():
+    out = sr.report([row()], manifest={"validForCalibration": False,
+                                       "invalidReasons": ["empty_allowed_scope"]})
+    assert out["calibrationUsable"] is False
+    assert out["calibrationBlockedReasons"] == ["empty_allowed_scope"]
+
+
+def test_a_valid_manifest_does_not_add_a_block_flag():
+    out = sr.report([row()], manifest={"validForCalibration": True})
+    assert "calibrationUsable" not in out

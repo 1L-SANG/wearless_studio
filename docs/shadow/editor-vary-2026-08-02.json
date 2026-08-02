@@ -322,5 +322,63 @@
         "status": "insufficient_data"
       }
     }
-  }
+  },
+  "manifest": {
+    "datasetId": "shadow-editor-vary-2026-08-02",
+    "collectedAt": "2026-08-02",
+    "validForCalibration": false,
+    "invalidReasons": [
+      "empty_allowed_scope",
+      "empty_forbidden_scope",
+      "collector_require_vision_mismatch"
+    ],
+    "invalidDetail": "수집기가 Vision 에 semantic_scope dict 를 그대로 넘겨(allowedObservations/forbiddenObservations) 프롬프트가 읽는 키(allowed/forbidden)와 어긋났다. 허용·금지 목록이 빈 채로 관찰이 수행됐다. 또 수집기는 require_vision=False, 운영 워커는 True 라 판정 경로도 달랐다. 따라서 이 표본으로는 임계값을 정할 수 없다.",
+    "supersededBy": null,
+    "keepReason": "실패한 실험도 감사 자산이다 — 무엇을 어떻게 틀렸는지의 증거로 보존한다.",
+    "samples": 30,
+    "pipelines": {
+      "editor_vary": 30,
+      "mannequin_edit": 0
+    },
+    "imageCallsAttempted": 35,
+    "imageCallsAttemptedDetail": "파일럿 5(언패킹 버그로 폐기, API 호출 후 실패) + 본 수집 30",
+    "visionCallsAttempted": 60,
+    "visionCallsAttemptedDetail": "초기 수집 30회는 호출 전 TypeError 로 실제 요청 0회, backfill 30회는 실제 요청. attempted 는 시도 기준으로 60.",
+    "visionCallsBilled": 30,
+    "cost": {
+      "estimatedUsd": 5.34,
+      "assumed": true,
+      "unitPrices": {
+        "imageUsd": 0.15,
+        "visionUsd": 0.003
+      },
+      "note": "단가는 **가정치**다 — 실단가 미확인이라 이 금액을 근거로 쓰지 말 것."
+    },
+    "collectedByCommit": "67c96e823b179c8bac4742a575bdf08c1c06fddd",
+    "model": "gemini-3-pro-image",
+    "imageSize": "2K",
+    "visionPromptVersion": "edit_intent_qc_v1",
+    "visionPromptSha256": "9266f46feb779e62e70120bdc1f4299b70a1c76d1ee0df53831ddebaebf2051d",
+    "qcPolicyVersion": "edit_qc_v1",
+    "sourceDataset": {
+      "path": "public/assets/fit-examples",
+      "files": 30,
+      "sha256": "18a3cb495afe553b955bbafdd79045b90a88332d4aecfbd976856dea54e1199f"
+    },
+    "rawSampleManifestSha256": "018c5e044813e08c76d3553595ef505f280049a721cd29573db93ef89941c756",
+    "collectorCommand": "python scripts/shadow_collect.py --per-pipeline 30 --max-calls 30 --budget-usd 5.0",
+    "collectorConfig": {
+      "requireVision": false,
+      "visionScopeKeys": "semantic_scope(원본)",
+      "qcAllowedScope": "semantic_scope(원본)",
+      "productionRequireVision": true,
+      "productionVisionScopeKeys": "allowed/forbidden"
+    }
+  },
+  "calibrationUsable": false,
+  "calibrationBlockedReasons": [
+    "empty_allowed_scope",
+    "empty_forbidden_scope",
+    "collector_require_vision_mismatch"
+  ]
 }

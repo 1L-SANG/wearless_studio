@@ -2,7 +2,7 @@
 
 승인 없이 돌리지 않는다. 승인 후에도 다음을 지킨다:
   · shadow 전용 — 판정 결과로 아무것도 막거나 지우지 않는다
-  · 운영 DB·운영 R2 무접촉. 행은 disposable DB 에, 이미지는 임시 디렉터리에
+  · 운영 DB·운영 R2 무접촉. 산출물은 파일뿐(행·이미지 모두 지정한 디렉터리)
   · 호출 상한(전체/파이프라인/edit type) + 비용 상한 + 요청 timeout
   · provider 원문 응답 미저장 — edit_qc_result 요약과 관찰 결과만
   · 입력은 레포에 들어 있는 예시 이미지만. 운영 사용자 데이터는 쓰지 않는다
@@ -11,9 +11,12 @@
 화면을 보고 눌러야 생기는 데이터고, 대신 눌러 주면 그 순간 캘리브레이션 근거가
 아니라 조작이 된다. 이 스크립트는 기계 쪽 분포만 채운다.
 
-    python scripts/shadow_collect.py --dsn postgres://…/rehearsal --dry-run
-    python scripts/shadow_collect.py --dsn postgres://…/rehearsal \
-        --per-pipeline 30 --budget-usd 12 --image-usd 0.15 --vision-usd 0.003
+    python scripts/shadow_collect.py --dry-run
+    python scripts/shadow_collect.py --per-pipeline 30 --budget-usd 12
+
+산출물은 **파일**이다(samples.jsonl + 결과 PNG). DB 에 쓰지 않는다 — 운영 DB 를
+건드릴 경로를 아예 만들지 않는 편이 "안 쓴다"는 약속보다 튼튼하다. 집계는
+shadow_report.py --jsonl 로 한다.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ import numpy as np  # noqa: E402
 from app.agents import cut_variator, edit_intent_vision  # noqa: E402
 from app.agents.gemini_image import GeminiImageClient, InlineImage  # noqa: E402
 from app.config import load_settings  # noqa: E402
-from app.services import edit_intent_qc, editor_vary  # noqa: E402
+from app.services import edit_intent_qc, edit_qc_scope, editor_vary  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 EXAMPLES = REPO / "public" / "assets" / "fit-examples"
@@ -50,11 +53,27 @@ VARY_CASES = [
 ]
 
 
-def _local_only(dsn: str) -> None:
-    """운영 DB 로 잘못 쓰는 사고를 시작 전에 막는다."""
-    bad = ("pooler.supabase.com", "amazonaws.com", "supabase.co")
-    if any(b in dsn for b in bad):
-        raise SystemExit(f"REFUSING: 운영으로 보이는 DSN 입니다 — {dsn.split('@')[-1][:40]}")
+async def observe_and_decide(settings, *, baseline, edited, changes, timeout):
+    """Vision 1회 + 정량 판정. 운영과 동일 계약(require_vision=True)."""
+    scope = editor_vary.semantic_scope(changes)
+    edit_type = editor_vary.edit_type_for(changes)
+    observation, meta, attempted = None, None, 1
+    try:
+        observation, meta = await asyncio.wait_for(edit_intent_vision.observe(
+            settings, baseline=baseline, edited=edited, edit_type=edit_type,
+            adjustments={"changes": changes},
+            allowed_scope=edit_qc_scope.vision_scope(scope),
+            source_refs=None), timeout)
+    except Exception as e:                                    # noqa: BLE001
+        meta = edit_intent_vision.failure_meta(e)
+    qc = edit_intent_qc.evaluate(
+        baseline_bgr=_bgr(baseline.data), edited_bgr=_bgr(edited.data),
+        edit_type=edit_type, allowed_scope=edit_qc_scope.qc_allowed_scope(),
+        target_ratio=None, vision=observation, require_vision=True,
+        semantic_scope=scope, extra_entailed=editor_vary.entailed_metrics(changes))
+    # 관찰 원문이 아니라 정규화 관찰 + 계측 메타만 남긴다.
+    qc["vision"] = {"observation": observation, "meta": meta}
+    return qc, edit_type, attempted
 
 
 def _sources(limit: int) -> list[pathlib.Path]:
@@ -71,7 +90,7 @@ def _bgr(data: bytes):
 
 
 async def _one_sample(settings, gemini, *, src_path, case_name, changes, timeout,
-                      out_dir, use_vision) -> dict:
+                      out_dir) -> dict:
     """표본 1건 = 생성 1회 + (선택) Vision 1회. 실패해도 행은 남긴다(실패도 데이터)."""
     raw = src_path.read_bytes()
     mime = "image/png" if src_path.suffix.lower() == ".png" else "image/jpeg"
@@ -101,29 +120,13 @@ async def _one_sample(settings, gemini, *, src_path, case_name, changes, timeout
     out_path.write_bytes(edited_bytes)
     row["output_id"] = str(uuid.uuid4())
 
-    vision = None
-    scope = editor_vary.semantic_scope(changes)
-    if use_vision:
-        row["vision_calls"] = 1
-        try:
-            obs, meta = await asyncio.wait_for(edit_intent_vision.observe(
-                settings, baseline=source, edited=InlineImage(edited_mime, edited_bytes),
-                edit_type=row["edit_type"], adjustments={"changes": changes},
-                allowed_scope=scope), timeout)
-            vision = {"observation": obs, "meta": meta}
-        except Exception as e:                                # noqa: BLE001
-            vision = {"meta": edit_intent_vision.failure_meta(e)}
-
-    qc = edit_intent_qc.evaluate(
-        baseline_bgr=_bgr(raw), edited_bgr=_bgr(edited_bytes),
-        edit_type=row["edit_type"], allowed_scope=scope, target_ratio=None,
-        vision=vision, require_vision=False, semantic_scope=scope,
-        extra_entailed=editor_vary.entailed_metrics(changes))
-    qc["vision"] = vision                        # 관찰 + 계측 메타(원문 아님)
+    qc, _et, vision_attempted = await observe_and_decide(
+        settings, baseline=source, edited=InlineImage(edited_mime, edited_bytes),
+        changes=changes, timeout=timeout)
+    row["vision_calls"] = vision_attempted
     row["edit_qc_result"] = qc
-    row["status"] = {"pass": "pass", "review": "review_required",
-                     "review_required": "review_required",
-                     "reject": "reject"}.get(str(qc.get("decision")), "review_required")
+    row["machine_decision"] = edit_qc_scope.machine_decision(qc, had_output=True)
+    row["status"] = row["machine_decision"]      # 워크플로 상태 == 판정 (수집기는 잡이 없다)
     row["completed_at"] = time.time()
     return row
 
@@ -153,28 +156,17 @@ async def vision_backfill(args) -> int:
             print(f"  [{n}] skip (파일 없음) {r['id'][:8]}")
             continue
         changes = case_changes.get(r["case"], [])
-        scope = editor_vary.semantic_scope(changes)
-        try:
-            obs, meta = await asyncio.wait_for(edit_intent_vision.observe(
-                settings, baseline=InlineImage("image/jpeg", src_path.read_bytes()),
-                edited=InlineImage("image/png", img_path.read_bytes()),
-                edit_type=r["edit_type"], adjustments={"changes": changes},
-                allowed_scope=scope), args.timeout)
-            vision = {"observation": obs, "meta": meta}
-            done += 1
-        except Exception as e:                                # noqa: BLE001
-            vision = {"meta": edit_intent_vision.failure_meta(e)}
-        r["vision_calls"] = 1
-        qc = edit_intent_qc.evaluate(
-            baseline_bgr=_bgr(src_path.read_bytes()), edited_bgr=_bgr(img_path.read_bytes()),
-            edit_type=r["edit_type"], allowed_scope=scope, target_ratio=None,
-            vision=vision, require_vision=False, semantic_scope=scope,
-            extra_entailed=editor_vary.entailed_metrics(changes))
-        qc["vision"] = vision
+        qc, _et, vision_attempted = await observe_and_decide(
+            settings, baseline=InlineImage("image/jpeg", src_path.read_bytes()),
+            edited=InlineImage("image/png", img_path.read_bytes()),
+            changes=changes, timeout=args.timeout)
+        r["vision_calls"] = r.get("vision_calls", 0) + vision_attempted
         r["edit_qc_result"] = qc
-        r["status"] = {"pass": "pass", "review": "review_required",
-                       "review_required": "review_required",
-                       "reject": "reject"}.get(str(qc.get("decision")), "review_required")
+        r["machine_decision"] = edit_qc_scope.machine_decision(qc, had_output=True)
+        r["status"] = r["machine_decision"]
+        if (qc.get("vision") or {}).get("meta", {}).get("status") == "ok":
+            done += 1
+        vision = qc["vision"]
         print(f"  [{n}/{len(todo)}] {r['case']:<12} {r['status']:<16} "
               f"vision={vision['meta'].get('status')}", flush=True)
 
@@ -193,7 +185,7 @@ async def run(args) -> int:
     out_dir = pathlib.Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    budget_per_sample = args.image_usd + (args.vision_usd if not args.no_vision else 0)
+    budget_per_sample = args.image_usd + args.vision_usd
     max_by_budget = (int(args.budget_usd / budget_per_sample)
                      if budget_per_sample > 0 else args.per_pipeline * len(VARY_CASES))
     per_case = max(1, args.per_pipeline // len(VARY_CASES))
@@ -212,9 +204,9 @@ async def run(args) -> int:
 
     est = len(plan) * budget_per_sample
     print(f"계획: {len(plan)}건 (case당 {per_case}), 이미지 {len(plan)}회, "
-          f"Vision {0 if args.no_vision else len(plan)}회, 추정 ${est:.2f}")
+          f"Vision {len(plan)}회, 추정 ${est:.2f}")
     print(f"입력: {EXAMPLES} (레포 예시 이미지, 운영 사용자 데이터 아님)")
-    print(f"출력: {out_dir} (R2 미사용)  DB: {args.dsn or '(미기록)'}")
+    print(f"출력: {out_dir} (파일 전용 — R2·DB 미사용)")
     if args.dry_run:
         print("dry-run — provider 호출 0")
         return 0
@@ -223,18 +215,18 @@ async def run(args) -> int:
     rows = []
     for n, (src, case_name, changes) in enumerate(plan, 1):
         row = await _one_sample(settings, gemini, src_path=src, case_name=case_name,
-                                changes=changes, timeout=args.timeout, out_dir=out_dir,
-                                use_vision=not args.no_vision)
+                                changes=changes, timeout=args.timeout, out_dir=out_dir)
         rows.append(row)
         print(f"  [{n}/{len(plan)}] {case_name:<12} {row['status']:<16} "
               f"{src.name[:28]}", flush=True)
         (out_dir / "samples.jsonl").open("a", encoding="utf-8").write(
             json.dumps(row, ensure_ascii=False, default=str) + "\n")
 
-    spent = sum(r["image_calls"] for r in rows) * args.image_usd + \
-        sum(r["vision_calls"] for r in rows) * args.vision_usd
-    print(f"\n완료: {len(rows)}건, 이미지 {sum(r['image_calls'] for r in rows)}회, "
-          f"Vision {sum(r['vision_calls'] for r in rows)}회, 추정 ${spent:.2f}")
+    img_attempted = sum(r.get("image_calls", 0) for r in rows)
+    vis_attempted = sum(r.get("vision_calls", 0) for r in rows)
+    spent = img_attempted * args.image_usd + vis_attempted * args.vision_usd
+    print(f"\n완료: {len(rows)}건, 이미지 시도 {img_attempted}회, "
+          f"Vision 시도 {vis_attempted}회, 추정 ${spent:.2f} (시도 기준 — 실패도 과금)")
     print("사람의 판단(accepted/rejected)은 비어 있습니다 — confusion matrix 는 "
           "사람이 실제로 검수한 뒤에만 채워집니다.")
     return 0
@@ -242,20 +234,16 @@ async def run(args) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Phase 3 shadow 표본 수집 (실 provider 호출)")
-    ap.add_argument("--dsn", help="disposable DB DSN (운영이면 거부). 없으면 파일만 기록")
     ap.add_argument("--per-pipeline", type=int, default=30)
     ap.add_argument("--max-calls", type=int, default=60, help="전체 생성 호출 상한")
     ap.add_argument("--budget-usd", type=float, default=12.0)
     ap.add_argument("--image-usd", type=float, default=0.15)
     ap.add_argument("--vision-usd", type=float, default=0.003)
     ap.add_argument("--timeout", type=float, default=180.0)
-    ap.add_argument("--no-vision", action="store_true")
     ap.add_argument("--out", default="/tmp/shadow-samples")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--vision-backfill", help="기존 samples.jsonl 에 Vision 만 다시 채운다")
     args = ap.parse_args()
-    if args.dsn:
-        _local_only(args.dsn)
     if args.vision_backfill:
         return asyncio.run(vision_backfill(args))
     return asyncio.run(run(args))

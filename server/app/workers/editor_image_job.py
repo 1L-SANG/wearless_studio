@@ -188,7 +188,7 @@ async def _vary_run_finish(app, job, run_id, ctx, *, started=None, result=None,
 async def _vary_qc(app, job, ctx, src_img, result, prepared):
     """결과 1개당 Vision 1회 + 정량. 판정은 서버 정책이 만든다."""
     from ..agents import edit_intent_vision
-    from ..services import edit_intent_qc
+    from ..services import edit_intent_qc, edit_qc_scope
 
     s, pool = app.state.settings, app.state.pool
     observation, meta = None, None
@@ -199,8 +199,9 @@ async def _vary_qc(app, job, ctx, src_img, result, prepared):
             # 요청이 뭔지 모른 채 답한다.
             edit_type=ctx["edit_type"],
             adjustments={"changes": ctx.get("changes") or []},
-            allowed_scope={"allowed": ctx["semantic_scope"]["allowedObservations"],
-                           "forbidden": ctx["semantic_scope"]["forbiddenObservations"]},
+            # 수집기와 **같은 helper** 로 변환한다 — 각자 조립하면 키 하나가 어긋난 채
+            # 조용히 빈 범위로 도는 사고가 또 난다(9/N 30건이 그렇게 무효가 됐다).
+            allowed_scope=edit_qc_scope.vision_scope(ctx["semantic_scope"]),
             source_refs=None)
     except Exception as e:
         meta = edit_intent_vision.failure_meta(e)
@@ -210,7 +211,7 @@ async def _vary_qc(app, job, ctx, src_img, result, prepared):
         edit_intent_qc.evaluate,
         baseline_bgr=_decode_bgr(src_img.data), edited_bgr=_decode_bgr(result.image),
         edit_type=ctx["edit_type"],
-        allowed_scope={"allowed": [], "forbidden": []},
+        allowed_scope=edit_qc_scope.qc_allowed_scope(),
         target_ratio=None, vision=observation, require_vision=True,
         semantic_scope=ctx["semantic_scope"], extra_entailed=ctx["entailed"])
     decision["vision"] = {"observation": observation, "meta": meta}

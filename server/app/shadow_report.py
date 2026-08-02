@@ -20,14 +20,78 @@ from collections import Counter, defaultdict
 # 이 밑으로는 분포를 말할 수 없다고 본다. 축별로 따로 적용한다.
 MIN_SAMPLES = 30
 
-PIPELINES = ("mannequin_edit", "editor_vary")
+PIPELINES = ("mannequin_edit", "editor_vary", "unknown")
+
+# 정책상 자동 통과 대상이 아닌 edit type — enforce 후보 계산에서 뺀다.
+# 여기 있는 표본을 섞으면 "review 율이 높다"가 정책 때문인지 품질 때문인지 못 가른다.
+NEVER_AUTO_PASS_TYPES = ("CUSTOM_REVIEW_REQUIRED",)
 DECISIONS = ("pass", "review_required", "reject", "failed")
 USER_DECISIONS = ("accepted", "rejected")
 
 
 def pipeline_of(row) -> str:
-    """source_kind 가 파이프라인을 가른다 — edit_type 은 두 쪽에 다 나온다."""
-    return "editor_vary" if row.get("source_kind") == "editor_asset" else "mannequin_edit"
+    """source_kind 가 파이프라인을 가른다 — edit_type 은 두 쪽에 다 나온다.
+
+    미상은 mannequin 으로 떨어뜨리지 않는다. 모르는 표본을 한쪽 분포에 섞으면 그
+    분포가 조용히 오염되고, 오염된 분포로 임계값을 정하면 그게 운영에 나간다.
+    """
+    kind = row.get("source_kind")
+    if kind == "editor_asset":
+        return "editor_vary"
+    if kind == "approved_baseline":
+        return "mannequin_edit"
+    return "unknown"
+
+
+def machine_decision(row) -> str:
+    """기계 판정의 정본은 edit_qc_result.decision 이다 — status 가 아니다.
+
+    status 는 워크플로 상태(잡이 어디까지 갔나)고, decision 은 결과 판정이다.
+    섞으면 provider 실패가 reject 로 둔갑해 false pass/reject 통계가 전부 틀어진다.
+    """
+    from app.services.edit_qc_scope import machine_decision as _md
+    return _md(row.get("edit_qc_result"), had_output=bool(row.get("output_id")))
+
+
+def workflow_status(row) -> str:
+    """잡/세션 상태. 판정과 **다른 축**으로만 집계한다."""
+    return str(row.get("status") or "unknown")
+
+
+# analyses.result 에 패턴·로고를 뜻하는 구조화 필드가 있으면 그것만 본다.
+# 문자열 검색(ILIKE '%pattern%')은 styleTags 같은 무관한 텍스트에 걸려 거짓 양성을 만든다.
+_PATTERN_KEYS = ("pattern", "patternType", "hasPattern")
+_LOGO_KEYS = ("logo", "hasLogo", "logoAssets", "graphics")
+_EMPTY_PATTERN_VALUES = {"none", "solid", "plain", "no", "false", ""}
+
+
+def pattern_or_logo(row) -> str:
+    """true | false | unknown.
+
+    현재 analyses.result 스키마에는 이 신호가 **없다**(clothingType·materials·styleTags…).
+    없는 걸 있다고 말하지 않는다 — 키가 아예 없으면 unknown 이다. false 로 적으면
+    "패턴 없는 표본 30건"이라는 존재하지 않는 사실이 리포트에 남는다.
+    """
+    src = row.get("analysis") if isinstance(row.get("analysis"), dict) else None
+    if src is None:
+        explicit = row.get("has_pattern_or_logo")
+        return "true" if explicit is True else (
+            "false" if explicit is False and row.get("pattern_source") == "structured"
+            else "unknown")
+    present = False
+    for key in (*_PATTERN_KEYS, *_LOGO_KEYS):
+        if key not in src:
+            continue
+        present = True
+        v = src[key]
+        if v is None or v is False:
+            continue
+        if isinstance(v, str) and v.strip().lower() in _EMPTY_PATTERN_VALUES:
+            continue
+        if isinstance(v, (list, tuple, dict)) and not v:
+            continue
+        return "true"
+    return "false" if present else "unknown"
 
 
 def _qc(row) -> dict:
@@ -101,7 +165,7 @@ def vision_confidence(rows) -> dict:
 
 
 def decision_rates(rows) -> dict:
-    counts = Counter(r.get("status") for r in rows)
+    counts = Counter(machine_decision(r) for r in rows)
     total = sum(counts[d] for d in DECISIONS)
     return {"n": total,
             "counts": {d: counts.get(d, 0) for d in DECISIONS},
@@ -111,7 +175,7 @@ def decision_rates(rows) -> dict:
 
 def user_review_rates(rows) -> dict:
     """검수가 필요했던 결과 중 사람이 실제로 판단한 비율."""
-    needed = [r for r in rows if r.get("status") == "review_required"]
+    needed = [r for r in rows if machine_decision(r) == "review_required"]
     decided = [r for r in needed if r.get("review_decision") in USER_DECISIONS]
     counts = Counter(r.get("review_decision") for r in decided)
     return {"reviewRequired": len(needed),
@@ -131,8 +195,9 @@ def confusion(rows) -> dict:
     cell: dict[str, Counter] = {d: Counter() for d in DECISIONS}
     for r in rows:
         ud = r.get("review_decision")
-        if ud in USER_DECISIONS and r.get("status") in cell:
-            cell[r["status"]][ud] += 1
+        d = machine_decision(r)
+        if ud in USER_DECISIONS and d in cell:
+            cell[d][ud] += 1
     matrix = {d: {u: cell[d].get(u, 0) for u in USER_DECISIONS} for d in DECISIONS}
     graded = sum(v for row in matrix.values() for v in row.values())
     return {"matrix": matrix,
@@ -206,10 +271,9 @@ def latency(rows) -> dict:
 
 def provider_cost(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0) -> dict:
     """호출 수와 **추정** 비용. 단가는 인자로 받는다 — 코드에 박아 두면 곧 거짓말이 된다."""
-    image_calls = sum(1 for r in rows if r.get("output_id") or r.get("status") in
-                      ("pass", "review_required", "reject"))
-    vision_calls = sum(1 for r in rows if vision_status(r) in
-                       ("ok", "timeout", "provider_error"))
+    # 시도 횟수를 그대로 센다 — 성공 여부로 역산하면 실패·재시도 비용이 빠진다.
+    image_calls = sum(int(r.get("image_calls") or 0) for r in rows)
+    vision_calls = sum(int(r.get("vision_calls") or 0) for r in rows)
     return {"imageCalls": image_calls, "visionCalls": vision_calls,
             "estimatedUsd": round(image_calls * image_usd + vision_calls * vision_usd, 4),
             "unitPricesProvided": bool(image_usd or vision_usd)}
@@ -221,55 +285,115 @@ def by_axis(rows, key) -> dict:
     return {str(k): counts[k] for k in sorted(counts, key=lambda x: (x is None, str(x)))}
 
 
-def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0) -> dict:
-    """파이프라인별로 **따로** 낸다. 합산 요약은 표본 수만 낸다(임계값 근거로 못 쓴다)."""
+def _axis_block(subset, *, image_usd, vision_usd) -> dict:
+    """한 묶음(파이프라인 또는 edit type)에 대한 지표 한 벌."""
+    return {
+        "samples": len(subset),
+        "byMachineDecision": by_axis(subset, machine_decision),
+        "byWorkflowStatus": by_axis(subset, workflow_status),
+        "byUserDecision": by_axis(subset, lambda r: r.get("review_decision")),
+        "byVisionStatus": by_axis(subset, vision_status),
+        "byPatternOrLogo": by_axis(subset, pattern_or_logo),
+        "decisionRates": decision_rates(subset),
+        "userReview": user_review_rates(subset),
+        "humanLabels": human_label_coverage(subset),
+        "confusion": confusion(subset),
+        "metricDistributions": metric_distributions(subset),
+        "visionConfidence": vision_confidence(subset),
+        "violations": violation_rates(subset),
+        "measurementVisionConflict": conflict_rate(subset),
+        "visionAvailability": vision_availability(subset),
+        "latencySeconds": latency(subset),
+        "provider": provider_cost(subset, image_usd=image_usd, vision_usd=vision_usd),
+    }
+
+
+def human_label_coverage(rows) -> dict:
+    """사람이 라벨한 비율 — **pass 표본**이 핵심이다.
+
+    false pass 는 기계가 통과시킨 것을 사람이 봐야만 드러난다. pass 표본에 라벨이
+    없으면 false pass 율은 0 이 아니라 **미측정**이다. 그 둘을 같게 취급하면
+    "false pass 0건"이라는 없는 근거로 enforce 를 켜게 된다.
+    """
+    passes = [r for r in rows if machine_decision(r) == "pass"]
+    labeled_pass = [r for r in passes if r.get("human_label") or r.get("review_decision")]
+    labeled_all = [r for r in rows if r.get("human_label") or r.get("review_decision")]
+    return {"passSamples": len(passes),
+            "passLabeled": len(labeled_pass),
+            "passCoverage": (len(labeled_pass) / len(passes)) if passes else None,
+            "labeledTotal": len(labeled_all),
+            "sufficient": _sufficient(len(labeled_pass))}
+
+
+def _verdict(rows, *, is_enforce_eligible: bool = True) -> dict:
+    """enforce 로 갈 수 있는지에 대한 **기계적** 판단. 사람의 승인을 대신하지 않는다."""
+    reasons = []
+    conf = confusion(rows)
+    dec = decision_rates(rows)
+    vis = vision_availability(rows)
+    hl = human_label_coverage(rows)
+
+    if not is_enforce_eligible:
+        reasons.append("정책상 자동 통과 대상이 아닌 edit type (enforce 후보 제외)")
+    if not _sufficient(dec["n"]):
+        reasons.append(f"표본 부족: {dec['n']} < {MIN_SAMPLES}")
+    if not conf["sufficient"]:
+        reasons.append(f"사람이 판단한 표본 부족: {conf['graded']} < {MIN_SAMPLES}")
+    # pass 표본에 사람 라벨이 없으면 false pass 는 '0건'이 아니라 '미측정'이다.
+    if hl["passSamples"] and not hl["sufficient"]:
+        reasons.append(f"pass 표본 human label 부족: {hl['passLabeled']}/{hl['passSamples']}")
+    if not hl["passSamples"]:
+        reasons.append("pass 표본 0건 — false pass 를 측정할 대상이 없다")
+    if conf["falsePassCandidates"] > 0:
+        reasons.append(f"기계 pass 를 사람이 거절한 사례 {conf['falsePassCandidates']}건")
+    if vis["unavailableRate"] is not None and vis["unavailableRate"] > 0.2:
+        reasons.append(f"Vision 미가용률 {vis['unavailableRate']:.0%}")
+
+    status = "insufficient_data" if (not dec["n"] or not conf["graded"]) else (
+        "enforce_candidate" if not reasons else "shadow_only")
+    return {"enforceReady": not reasons, "blockers": reasons, "status": status}
+
+
+def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
+           manifest: dict | None = None) -> dict:
+    """파이프라인 → edit type 순으로 **두 번** 쪼갠다.
+
+    파이프라인만 나누면 BACKGROUND_ONLY 6건이 CUSTOM 24건에 묻혀 "editor_vary 30건"
+    으로 보인다. 그 30건에는 정책상 애초에 통과할 수 없는 표본이 섞여 있어 임계값
+    근거가 못 된다.
+    """
     split: dict[str, list] = {p: [] for p in PIPELINES}
     for r in rows:
         split[pipeline_of(r)].append(r)
 
     out = {"total": len(rows),
            "samplesByPipeline": {p: len(v) for p, v in split.items()},
+           "unknownPipelineSamples": [r.get("id") for r in split["unknown"]][:50],
            "pipelines": {}}
+    if manifest is not None:
+        out["manifest"] = manifest
+        if manifest.get("validForCalibration") is False:
+            out["calibrationUsable"] = False
+            out["calibrationBlockedReasons"] = manifest.get("invalidReasons") or []
+
     for p, subset in split.items():
-        out["pipelines"][p] = {
-            "samples": len(subset),
-            "byEditType": by_axis(subset, lambda r: r.get("edit_type")),
-            "byMachineDecision": by_axis(subset, lambda r: r.get("status")),
-            "byUserDecision": by_axis(subset, lambda r: r.get("review_decision")),
-            "byVisionStatus": by_axis(subset, vision_status),
-            "byPatternOrLogo": by_axis(subset, lambda r: bool(r.get("has_pattern_or_logo"))),
-            "decisionRates": decision_rates(subset),
-            "userReview": user_review_rates(subset),
-            "confusion": confusion(subset),
-            "metricDistributions": metric_distributions(subset),
-            "visionConfidence": vision_confidence(subset),
-            "violations": violation_rates(subset),
-            "measurementVisionConflict": conflict_rate(subset),
-            "visionAvailability": vision_availability(subset),
-            "latencySeconds": latency(subset),
-            "provider": provider_cost(subset, image_usd=image_usd, vision_usd=vision_usd),
-            "verdict": _verdict(subset),
-        }
+        block = _axis_block(subset, image_usd=image_usd, vision_usd=vision_usd)
+        block["byEditType"] = by_axis(subset, lambda r: r.get("edit_type"))
+        by_type = {}
+        for etype in sorted({str(r.get("edit_type")) for r in subset}):
+            rows_t = [r for r in subset if str(r.get("edit_type")) == etype]
+            eligible = etype not in NEVER_AUTO_PASS_TYPES
+            tb = _axis_block(rows_t, image_usd=image_usd, vision_usd=vision_usd)
+            tb["enforceEligible"] = eligible
+            tb["verdict"] = _verdict(rows_t, is_enforce_eligible=eligible)
+            by_type[etype] = tb
+        block["byEditTypeDetail"] = by_type
+        # 파이프라인 판정은 enforce 후보 edit type 만 모아서 낸다.
+        eligible_rows = [r for r in subset
+                         if str(r.get("edit_type")) not in NEVER_AUTO_PASS_TYPES]
+        block["enforceEligibleSamples"] = len(eligible_rows)
+        block["verdict"] = _verdict(eligible_rows) if p != "unknown" else {
+            "enforceReady": False, "status": "insufficient_data",
+            "blockers": ["source_kind 미상 — 어느 파이프라인인지 모른다"]}
+        out["pipelines"][p] = block
     return out
-
-
-def _verdict(rows) -> dict:
-    """enforce 로 갈 수 있는지에 대한 **기계적** 판단. 사람의 승인을 대신하지 않는다."""
-    reasons = []
-    conf = confusion(rows)
-    dec = decision_rates(rows)
-    vis = vision_availability(rows)
-
-    if not _sufficient(dec["n"]):
-        reasons.append(f"표본 부족: {dec['n']} < {MIN_SAMPLES}")
-    if not conf["sufficient"]:
-        reasons.append(f"사람이 판단한 표본 부족: {conf['graded']} < {MIN_SAMPLES}")
-    if conf["falsePassCandidates"] > 0:
-        reasons.append(f"기계 pass 를 사람이 거절한 사례 {conf['falsePassCandidates']}건")
-    if vis["unavailableRate"] is not None and vis["unavailableRate"] > 0.2:
-        reasons.append(f"Vision 미가용률 {vis['unavailableRate']:.0%}")
-
-    return {"enforceReady": not reasons,
-            "blockers": reasons,
-            "status": "insufficient_data" if not dec["n"] or not conf["graded"]
-                      else ("enforce_candidate" if not reasons else "shadow_only")}
