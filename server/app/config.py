@@ -46,11 +46,16 @@ class Settings:
     # 깊은 추론을 돌려 수 초 낭비). off=미전송(모델 기본). 2026-07-07 속도 개선.
     analysis_thinking_level: str = "low"  # low | medium | high | off
     # AG-IC 입력 사진 동일성(셀러가 올린 사진들이 같은 옷인가 — input_consistency.py).
-    # off=미판정 | shadow=판정만 기록(프론트 무노출) | warn=프론트 경고 노출.
+    # off=미판정 | warn=프론트 경고 노출. 기본 warn.
     # **enforce 값이 없는 것은 의도**다: 이 판정은 어떤 잡도 막지 않는다. 오탐 1건의 비용
     # (멀쩡한 사진을 지우게 함)이 미탐 1건의 비용(어제와 동일)보다 크기 때문이다.
-    # 기본 shadow — 실데이터 분포를 먼저 쌓고 warn 은 별도 결정으로 켠다.
-    input_consistency: str = "shadow"  # off | shadow | warn
+    # **shadow(판정만 기록·무노출) 를 두지 않는 것도 의도**다(2026-08-02 오너 결정). shadow 의
+    # 값은 "사람이 로그를 읽고 임계·프롬프트를 고친다"는 후속 행동에서만 나오는데, LLM 판정은
+    # 그 기록으로 자동 학습되지 않는다. 읽을 사람이 정해지지 않은 기록은 호출 비용만 쓴다.
+    # 오탐 분포가 궁금하면 shadow 운영 대신 `scripts/ic_calibrate.py`(라벨 픽스처 오프라인
+    # 평가)를 쓴다 — 실셀러 트래픽을 태우지 않고 같은 답을 얻는다.
+    # 되돌리기: INPUT_CONSISTENCY=off (재배포 없이 env 만으로 즉시 무력화).
+    input_consistency: str = "warn"  # off | warn
     mannequin_tier: str = "image_high"  # AG-04 = Gemini 3 Pro (사용자 결정 — Flash 미사용)
     # 조정(:regenerate) 전용 tier. 조정과 초기 생성은 같은 워커·같은 프롬프트를 타서 env 하나로는
     # 분리가 안 된다. 빈 값이면 분기 없이 mannequin_tier 를 그대로 쓴다(기존 동작).
@@ -286,7 +291,7 @@ def load_settings() -> Settings:
             "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
         ),
         input_qc=_flag("INPUT_QC", "off", {"off", "shadow", "enforce"}),
-        input_consistency=_flag("INPUT_CONSISTENCY", "shadow", {"off", "shadow", "warn"}),
+        input_consistency=_flag("INPUT_CONSISTENCY", "warn", {"off", "warn"}),
         image_qc=_flag("IMAGE_QC", "off", {"off", "shadow", "enforce"}),
         # 기본값은 dataclass 선언과 **반드시 일치**해야 한다. 실행 경로는 load_settings 라
         # 여기가 정본이고, dataclass 만 고치면 테스트는 통과하는데 실서비스는 옛 값으로 돈다
