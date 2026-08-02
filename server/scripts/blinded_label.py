@@ -20,6 +20,7 @@ import http.server
 import json
 import os
 import pathlib
+import re
 import secrets
 import sys
 import urllib.parse
@@ -80,6 +81,48 @@ async function label(v){const it=items[i];
 document.addEventListener('keydown',e=>{if(e.key==='ArrowRight')next();if(e.key==='ArrowLeft')prev();});
 boot();
 </script>"""
+
+
+# sampleId 는 파일 이름이 된다. 최소 문자 집합으로 조여 경로가 될 여지를 없앤다.
+_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# source 는 예시 이미지 파일명이다. 디렉터리 구분자도 상위 참조도 필요 없다.
+_SAFE_SOURCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+class UnsafePath(Exception):
+    """허용 경계를 벗어난 요청. 파일 내용은 물론 경로도 응답에 싣지 않는다."""
+
+
+def _safe_name(name: str, pattern) -> str:
+    """이름 자체를 먼저 조인다 — 경로를 만들기 전에 막는 게 가장 확실하다."""
+    if not isinstance(name, str) or "\x00" in name:
+        raise UnsafePath("bad name")
+    if not pattern.match(name):
+        raise UnsafePath("bad name")
+    if name in (".", "..") or "/" in name or "\\" in name:
+        raise UnsafePath("bad name")
+    return name
+
+
+def safe_resolve(base: pathlib.Path, name: str, pattern) -> pathlib.Path:
+    """base 안의 일반 파일만 돌려준다. GET·POST 가 **같은** 함수를 쓴다.
+
+    한쪽만 검사하면 그쪽만 안전하다. 직전 구현이 그랬다 — GET 은 parents 를 봤지만
+    POST 의 SHA 재검증은 경로를 그냥 이어 붙였다.
+
+    resolve() 는 symlink 를 따라가므로, 링크로 밖을 가리켜도 실제 경로가 base 밖이면
+    걸린다. 존재 여부보다 **경계**를 먼저 본다.
+    """
+    safe = _safe_name(name, pattern)
+    root = base.resolve(strict=False)
+    if pattern is _SAFE_ID and not safe.endswith(".png"):
+        safe = f"{safe}.png"        # 결과 이미지는 <sampleId>.png 로 저장된다
+    target = (root / safe).resolve(strict=False)
+    if target != root and root not in target.parents:
+        raise UnsafePath("outside base")
+    if not target.is_file():
+        raise UnsafePath("not a regular file")
+    return target
 
 
 def _sha(p: pathlib.Path) -> str:
@@ -143,15 +186,22 @@ def serve(dataset_dir: pathlib.Path, reviewer_id: str, port: int, *,
                 return self._send(200, json.dumps(
                     {"items": items, "labeled": labeled}).encode())
             if path.startswith("/img/source/"):
-                name = urllib.parse.unquote(path[len("/img/source/"):])
-                f = (src_dir / name).resolve()
-                if src_dir.resolve() not in f.parents or not f.exists():
+                try:
+                    f = safe_resolve(src_dir,
+                                     urllib.parse.unquote(path[len("/img/source/"):]),
+                                     _SAFE_SOURCE)
+                except UnsafePath:
                     return self._send(404, b"{}")
                 return self._send(200, f.read_bytes(), "image/jpeg")
             if path.startswith("/img/result/"):
-                name = urllib.parse.unquote(path[len("/img/result/"):])
-                f = (dataset_dir / name).resolve()
-                if dataset_dir.resolve() not in f.parents or not f.exists():
+                raw = urllib.parse.unquote(path[len("/img/result/"):])
+                try:
+                    f = safe_resolve(dataset_dir,
+                                     raw[:-4] if raw.endswith(".png") else raw,
+                                     _SAFE_ID)
+                except UnsafePath:
+                    return self._send(404, b"{}")
+                if f.suffix != ".png":
                     return self._send(404, b"{}")
                 return self._send(200, f.read_bytes(), "image/png")
             return self._send(404, b"{}")
@@ -181,12 +231,17 @@ def serve(dataset_dir: pathlib.Path, reviewer_id: str, port: int, *,
             # 저장 직전 재검증 — 원본이든 결과든 파일이 바뀌었으면 그 라벨은
             # 화면에서 본 것과 다른 이미지에 대한 판단이 된다.
             prov = row.get("provenance") or {}
-            img = dataset_dir / f"{sid}.png"
-            src = src_dir / str(row.get("source") or "")
-            if not img.exists() or _sha(img) != prov.get("outputSha256"):
+            try:
+                img = safe_resolve(dataset_dir, sid, _SAFE_ID)
+                src = safe_resolve(src_dir, str(row.get("source") or ""), _SAFE_SOURCE)
+            except UnsafePath:
+                # 경계 밖은 읽지도 않는다 — 사유만 돌려주고 경로·내용은 싣지 않는다.
+                return self._send(400, json.dumps(
+                    {"ok": False, "error": "unsafe path"}).encode())
+            if _sha(img) != prov.get("outputSha256"):
                 return self._send(409, json.dumps(
                     {"ok": False, "error": "output sha mismatch"}).encode())
-            if not src.exists() or _sha(src) != prov.get("sourceSha256"):
+            if _sha(src) != prov.get("sourceSha256"):
                 return self._send(409, json.dumps(
                     {"ok": False, "error": "source sha mismatch"}).encode())
             try:

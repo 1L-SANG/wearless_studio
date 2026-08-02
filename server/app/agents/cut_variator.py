@@ -6,6 +6,7 @@
 이 generate()를 호출한다. changes=[] 는 '비슷한 컷 만들기'(계약 §6 VaryRequest).
 """
 
+import hashlib
 import os
 from dataclasses import dataclass
 
@@ -43,6 +44,17 @@ def _change_line(change: dict) -> str | None:
         return None
     label = _TYPE_LABEL.get(change.get("type"))
     return f"- Change the {label} to: {value}" if label else f"- Change: {value}"
+
+
+def template_sha256() -> str:
+    """생성 프롬프트 **템플릿**의 해시.
+
+    별도 버전 상수를 두면 템플릿을 고치고 상수를 안 올리는 순간 거짓말이 된다.
+    해시는 파일이 바뀌면 반드시 바뀌므로 그럴 여지가 없다. 이것이 정본이고,
+    "버전"이라는 이름은 쓰지 않는다 — 해시는 순서를 뜻하지 않기 때문이다.
+    """
+    with open(_TEMPLATE_FILE, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
 
 
 def build_prompt(vary_spec: dict) -> str:

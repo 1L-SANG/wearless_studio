@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import sys
+from collections import Counter
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -97,6 +98,7 @@ def main() -> int:
             manifest = json.loads(open(args.manifest, encoding="utf-8").read())
         dataset_id = args.dataset_id or (manifest or {}).get("datasetId")
         quarantined = []
+        blocked = False
         if args.labels:
             if not dataset_id:
                 print("--labels 를 쓰려면 --dataset-id 또는 --manifest 가 필요해요.",
@@ -104,25 +106,31 @@ def main() -> int:
                 return 2
             # 체인 검증 → 최신 라벨 → 결합. 어느 단계든 실패하면 멈춘다.
             # 계속 진행해서 "라벨 일부만 붙은" 리포트를 내면 커버리지가 거짓이 된다.
+            # 체인 손상은 파일을 믿을 수 없다는 뜻이라 리포트를 만들지 않는다.
             try:
                 records = ba.load_labels(args.labels)
-                eff = ba.effective_labels(records)
-                rows, quarantined = ba.apply_labels(rows, eff, dataset_id=dataset_id,
-                                                    strict=True)
             except ba.LabelChainError as e:
                 print(f"라벨 파일이 손상됐어요(append-only 체인 불일치): {e}",
                       file=sys.stderr)
                 return 4
-            except ValueError as e:
-                print(f"라벨을 표본에 붙일 수 없어요: {e}", file=sys.stderr)
-                return 5
+            eff = ba.effective_labels(records)
+            # 결합 실패는 사유를 세어 보여 줄 수 있다. 다만 그 리포트는 blocked 다 —
+            # 성한 라벨만 골라 붙이면 "일부만 붙은 정상 리포트"가 되어 더 위험하다.
+            rows, quarantined = ba.apply_labels(rows, eff, dataset_id=dataset_id,
+                                                strict=False)
+            if quarantined:
+                by_reason = Counter(q.get("reason") for q in quarantined)
+                print(f"라벨을 표본에 붙일 수 없어요 — 격리 {len(quarantined)}건: "
+                      f"{dict(by_reason)}", file=sys.stderr)
+                blocked = True
         out = report(rows, image_usd=args.image_usd, vision_usd=args.vision_usd,
                      manifest=manifest, quarantined=quarantined)
         if args.json:
             print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
         else:
             _render(out)
-        return 0
+        # 라벨 결합이 깨졌으면 리포트는 만들되 성공으로 끝내지 않는다.
+        return 5 if blocked else 0
 
     if not args.dsn:
         print("DATABASE_URL 이 없어요. --dsn 또는 --jsonl 을 주세요.", file=sys.stderr)

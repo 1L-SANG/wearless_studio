@@ -9,6 +9,7 @@
 적으면 잠긴 항목이 바뀌었는데도 통과한다.
 """
 
+import hashlib
 import json
 import os
 import time
@@ -70,6 +71,18 @@ def _clean_value(value) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(value.translate(_CONTROL_CHARS).split())[:120]
+
+
+def template_sha256() -> str:
+    """Vision 프롬프트 **템플릿** 해시. 실제 요청 프롬프트와는 다른 것이다 —
+    템플릿이 같아도 edit type·changes·scope 에 따라 렌더링 결과는 달라진다."""
+    with open(_PROMPT_FILE, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def prompt_sha256(prompt: str) -> str:
+    """provider 에 **실제로 나간** 프롬프트의 해시."""
+    return hashlib.sha256(prompt.encode()).hexdigest()
 
 
 def _describe_adjustments(adjustments) -> list[str]:
@@ -215,6 +228,10 @@ async def observe(
     meta = {
         "provider": provider,
         "promptVersion": PROMPT_VERSION,
+        # 템플릿과 **실제 나간 프롬프트**를 구분해 남긴다. 계측이 프롬프트를 다시
+        # 조립하면 그 순간부터 기록과 요청이 갈라진다 — 같은 builder 결과를 쓴다.
+        "templateSha256": template_sha256(),
+        "promptSha256": prompt_sha256(prompt),
         "latencyMs": int((time.perf_counter() - t0) * 1000),
         "imageCount": len(images),
         "status": "ok",

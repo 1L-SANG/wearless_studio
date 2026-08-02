@@ -35,25 +35,34 @@ class _Prepared:
     aspect_ratio = "2:3"
 
 
+CASE, CHANGES = COLLECT.VARY_CASES[0]
+VMETA = {"promptSha256": "v" * 64, "provider": "p", "status": "ok"}
+
+
+def prov(source_bytes=b"src", output_bytes=b"out"):
+    return COLLECT._provenance(_Prepared(), case_name=CASE, changes=CHANGES,
+                               attempt=1, source_bytes=source_bytes,
+                               output_bytes=output_bytes, vision_meta=VMETA)
+
+
 REQUIRED_PROVENANCE = ("sourceSha256", "outputSha256", "generationModel",
-                       "generationPromptSha256", "visionPromptSha256",
+                       "generationPromptSha256", "generationTemplateSha256",
+                       "visionPromptSha256", "visionTemplateSha256",
                        "qcPolicyVersion", "codeCommit", "imageSize",
-                       "aspectRatio", "callAttemptIndex")
+                       "aspectRatio", "callAttemptIndex", "run", "case")
 
 
 # ── 1. collector provenance ────────────────────────────────────────────────
 
 def test_a_fresh_row_carries_every_required_provenance_field():
     """사후 보정 없이 그 자리에서 라벨을 만들 수 있어야 한다."""
-    prov = COLLECT._provenance(_Prepared(), attempt=1, source_bytes=b"src",
-                               output_bytes=b"out")
-    missing = [k for k in REQUIRED_PROVENANCE if prov.get(k) is None]
-    assert missing == []
+    p = prov()
+    assert [k for k in REQUIRED_PROVENANCE if p.get(k) is None] == []
 
 
 def test_provenance_hashes_bind_the_actual_bytes():
-    a = COLLECT._provenance(_Prepared(), attempt=1, source_bytes=b"s1", output_bytes=b"o1")
-    b = COLLECT._provenance(_Prepared(), attempt=1, source_bytes=b"s1", output_bytes=b"o2")
+    a = prov(b"s1", b"o1")
+    b = prov(b"s1", b"o2")
     assert a["sourceSha256"] == b["sourceSha256"]
     assert a["outputSha256"] != b["outputSha256"]
 
@@ -61,8 +70,7 @@ def test_provenance_hashes_bind_the_actual_bytes():
 def test_a_fresh_row_can_be_labeled_without_post_hoc_fixup():
     row = {"id": "s1", "case": "bg_only", "source": "a.jpg",
            "edit_type": "BACKGROUND_ONLY", "output_id": "o1",
-           "provenance": COLLECT._provenance(_Prepared(), attempt=1,
-                                             source_bytes=b"src", output_bytes=b"out")}
+           "provenance": prov()}
     rec = ba.make_label(sample=row, label="fidelity_pass", reviewer_id="me",
                         dataset_id="ds", now=1.0)
     assert rec["outputSha256"] == row["provenance"]["outputSha256"]
@@ -72,7 +80,8 @@ def test_resume_is_defined_and_callable():
     """호출은 있는데 정의가 없어 --resume 가 NameError 로 죽던 회귀."""
     assert callable(COLLECT._assert_resumable)
     src = (SERVER / "scripts" / "shadow_collect.py").read_text(encoding="utf-8")
-    assert "def _assert_resumable" in src and "_assert_resumable(samples_path)" in src
+    assert "def _assert_resumable" in src
+    assert "_assert_resumable(samples_path, settings)" in src
 
 
 def test_resume_accepts_a_missing_file(tmp_path):
@@ -84,22 +93,24 @@ def test_resume_refuses_rows_without_provenance(tmp_path):
     p.write_text(json.dumps({"id": "a", "output_id": "o"}) + "\n")
     with pytest.raises(SystemExit) as e:
         COLLECT._assert_resumable(p)
-    assert "provenance" in str(e.value)
+    assert "fingerprint" in str(e.value)
 
 
-def test_resume_refuses_a_different_code_commit(tmp_path):
-    prov = COLLECT._provenance(_Prepared(), attempt=1, source_bytes=b"s", output_bytes=b"o")
-    prov["codeCommit"] = "0" * 40
+def test_resume_refuses_a_changed_generation_model(tmp_path):
+    """codeCommit 은 보조 근거로 내려갔다 — 스냅샷 비교가 정본이다."""
+    pr = prov()
+    pr["run"]["generationModel"] = "other-model"
     p = tmp_path / "samples.jsonl"
-    p.write_text(json.dumps({"id": "a", "output_id": "o", "provenance": prov}) + "\n")
+    p.write_text(json.dumps({"id": "a", "output_id": "o", "provenance": pr}) + "\n")
     with pytest.raises(SystemExit) as e:
         COLLECT._assert_resumable(p)
-    assert "codeCommit" in str(e.value)
+    assert "generationModel" in str(e.value)
 
 
-def test_resume_refuses_a_file_that_already_mixes_provenance(tmp_path):
-    base = COLLECT._provenance(_Prepared(), attempt=1, source_bytes=b"s", output_bytes=b"o")
-    other = {**base, "generationModel": "other-model"}
+def test_resume_refuses_a_file_that_already_mixes_run_conditions(tmp_path):
+    base = prov()
+    other = json.loads(json.dumps(base))
+    other["run"]["generationModel"] = "other-model"
     p = tmp_path / "samples.jsonl"
     p.write_text("".join(json.dumps({"id": i, "output_id": "o", "provenance": pr}) + "\n"
                          for i, pr in enumerate((base, other))))
@@ -163,18 +174,20 @@ def test_human_coverage_ignores_production_review_decisions():
     assert h2["passLabeled"] == 10
 
 
-def test_the_cli_wires_labels_through_verify_and_strict_apply():
+def test_the_cli_wires_labels_through_verify_and_a_blocked_report():
+    """strict=True 로 죽던 걸 blocked report 로 바꿨다 — quarantine 이 도달 가능해졌다."""
     src = REPORT_CLI.read_text(encoding="utf-8")
     for token in ("--labels", "--manifest", "--dataset-id",
                   "ba.load_labels(", "ba.effective_labels(",
-                  "strict=True", "manifest=manifest", "quarantined=quarantined"):
+                  "strict=False", "manifest=manifest", "quarantined=quarantined",
+                  "return 5 if blocked else 0"):
         assert token in src, token
 
 
 def test_the_cli_stops_on_a_broken_chain_or_binding():
     src = REPORT_CLI.read_text(encoding="utf-8")
     assert "except ba.LabelChainError" in src and "return 4" in src
-    assert "return 5" in src
+    assert "return 5 if blocked else 0" in src
 
 
 # ── 3. labeling tool ───────────────────────────────────────────────────────

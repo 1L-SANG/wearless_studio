@@ -409,7 +409,7 @@ def _verdict(rows, *, is_enforce_eligible: bool = True) -> dict:
             "basis": "calibration_confusion"}
 
 
-def _force_blocked(block: dict, reason: str) -> None:
+def _force_blocked(block: dict, reason: str, status: str = "blocked_by_manifest") -> None:
     """데이터셋이 무효면 그 안의 어떤 하위 판정도 통과일 수 없다.
 
     상위에만 표시하고 하위 verdict 를 그대로 두면, 누군가 edit type 블록만 보고
@@ -420,7 +420,7 @@ def _force_blocked(block: dict, reason: str) -> None:
         if not v:
             continue
         v["enforceReady"] = False
-        v["status"] = "blocked_by_manifest"
+        v["status"] = status
         if reason not in v["blockers"]:
             v["blockers"] = [reason, *v["blockers"]]
 
@@ -448,11 +448,16 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
             out["calibrationUsable"] = False
             out["calibrationBlockedReasons"] = manifest.get("invalidReasons") or []
     if quarantined:
-        # 격리된 라벨은 조용히 사라지면 안 된다 — 커버리지가 그만큼 거짓이 된다.
+        # 라벨 결합이 하나라도 실패하면 이 리포트는 캘리브레이션 입력이 될 수 없다.
+        # 일부만 붙인 채로 정상 리포트처럼 계속 가면 커버리지가 그만큼 거짓이 되고,
+        # 그 거짓 커버리지가 곧 readiness 로 간다.
         out["labelQuarantine"] = {"count": len(quarantined),
                                   "byReason": dict(Counter(q.get("reason")
                                                            for q in quarantined)),
                                   "items": quarantined[:50]}
+        out["calibrationUsable"] = False
+        out["calibrationBlockedReasons"] = sorted(
+            {f"label_{q.get('reason')}" for q in quarantined})
 
     for p, subset in split.items():
         block = _axis_block(subset, image_usd=image_usd, vision_usd=vision_usd)
@@ -476,5 +481,9 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
         if invalid_manifest:
             _force_blocked(block, "manifest.validForCalibration=false — 이 데이터셋으로는 "
                                   "어떤 판정도 근거가 되지 않는다")
+        if quarantined:
+            _force_blocked(block, f"라벨 결합 실패 {len(quarantined)}건 — 결합되지 않은 "
+                                  "라벨이 있으면 커버리지를 신뢰할 수 없다",
+                           status="blocked_by_labels")
         out["pipelines"][p] = block
     return out

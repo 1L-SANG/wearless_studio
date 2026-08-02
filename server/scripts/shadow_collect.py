@@ -79,15 +79,31 @@ async def observe_and_decide(settings, *, baseline, edited, changes, timeout):
     return qc, edit_type, attempted
 
 
-_PROMPT_FILE = pathlib.Path(__file__).resolve().parents[1] / "prompts" / "edit_intent_qc_v1.txt"
+# ── fingerprint ────────────────────────────────────────────────────────────
+# run-level 과 per-case 를 나눈다. 이걸 안 나눴던 게 직전 결함이다: generation
+# prompt 는 case 마다 다른 게 **정상**인데 run 동일성 키에 넣어 두니, 멀쩡한
+# multi-case 데이터셋이 "provenance 가 섞였다"고 거부됐다.
+#
+# run-level = 실험 조건(모델·템플릿·정책·case 집합·공통 설정). 이게 다르면 다른 실험이다.
+# per-case  = 그 조건 아래 case 마다 실제로 렌더링된 프롬프트. case 별로 달라야 정상이다.
 
-# resume 이 같은 조건인지 판단하는 기준. 이 다섯이 다르면 다른 실험이다.
-RESUME_KEYS = ("generationModel", "generationPromptSha256", "visionPromptSha256",
-               "qcPolicyVersion", "codeCommit")
+# 이 중 하나라도 달라지면 새 dataset 을 요구한다. codeCommit 은 여기 없다 —
+# 보조 근거일 뿐이라 스냅샷 비교를 대신할 수 없고, 대신하게 두면 dirty working tree
+# 에서 프롬프트만 바뀐 경우를 놓친다.
+RUN_FINGERPRINT_KEYS = (
+    "generationModel", "generationTemplateSha256",
+    "visionPromptTemplateVersion", "visionTemplateSha256",
+    "qcPolicyVersion", "caseSetSha256", "imageSize", "aspectRatio",
+)
 
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _canonical(obj) -> bytes:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False).encode()
 
 
 def _code_commit() -> str | None:
@@ -96,22 +112,70 @@ def _code_commit() -> str | None:
     return r.stdout.strip() or None
 
 
-def _provenance(prepared, *, attempt: int, source_bytes: bytes,
-                output_bytes: bytes) -> dict:
+def normalized_cases(cases=None) -> list[dict]:
+    """case 정의의 정본 표현. 이름·edit type·정규화 changes 까지 포함한다."""
+    out = []
+    for name, changes in (cases if cases is not None else VARY_CASES):
+        out.append({"case": name,
+                    "editType": editor_vary.edit_type_for(changes),
+                    "changes": editor_vary.validate_changes(changes)})
+    return sorted(out, key=lambda c: c["case"])
+
+
+def case_set_sha256(cases=None) -> str:
+    """case 집합 전체의 해시 — 추가·삭제·변경 어느 쪽이든 값이 바뀐다."""
+    return _sha(_canonical(normalized_cases(cases)))
+
+
+def run_fingerprint(prepared, *, cases=None) -> dict:
+    """실험 조건 스냅샷. provider 를 부르지 않고 prepare 결과만으로 만든다."""
+    return {
+        "generationModel": prepared.model,
+        "generationTemplateSha256": cut_variator.template_sha256(),
+        "visionPromptTemplateVersion": VISION_PROMPT_VERSION,
+        "visionTemplateSha256": edit_intent_vision.template_sha256(),
+        "qcPolicyVersion": edit_qc_scope.QC_POLICY_VERSION,
+        "caseSetSha256": case_set_sha256(cases),
+        "imageSize": prepared.image_size,
+        "aspectRatio": getattr(prepared, "aspect_ratio", None),
+    }
+
+
+def case_fingerprint(prepared, *, case_name: str, changes: list) -> dict:
+    """이 case 가 **실제로** 어떤 프롬프트를 냈는지."""
+    return {
+        "case": case_name,
+        "editType": editor_vary.edit_type_for(changes),
+        "changes": editor_vary.validate_changes(changes),
+        "generationPromptSha256": _sha(prepared.prompt.encode()),
+    }
+
+
+def _provenance(prepared, *, case_name: str, changes: list, attempt: int,
+                source_bytes: bytes, output_bytes: bytes,
+                vision_meta: dict | None = None) -> dict:
     """표본 1건이 **무엇으로** 만들어졌는지 그 자리에서 찍는다.
 
     나중에 기억으로 채우면 그건 provenance 가 아니라 추정이다. 모델이 바뀌었는지
     프롬프트가 바뀌었는지 모르는 표본은 다른 수집분과 합칠 수 없고, 합칠 수 없는
     데이터로 임계값을 정하면 그 임계값의 근거도 없다.
     """
+    vm = vision_meta or {}
     return {
         "sourceSha256": _sha(source_bytes),
         "outputSha256": _sha(output_bytes),
+        "run": run_fingerprint(prepared),
+        "case": case_fingerprint(prepared, case_name=case_name, changes=changes),
+        # 편의를 위한 평면 사본 — 정본은 run/case 다.
         "generationModel": prepared.model,
         "generationPromptSha256": _sha(prepared.prompt.encode()),
-        "generationPromptTemplateVersion": getattr(cut_variator, "PROMPT_VERSION", None),
-        "visionPromptVersion": VISION_PROMPT_VERSION,
-        "visionPromptSha256": _sha(_PROMPT_FILE.read_bytes()),
+        "generationTemplateSha256": cut_variator.template_sha256(),
+        "visionPromptTemplateVersion": VISION_PROMPT_VERSION,
+        "visionTemplateSha256": edit_intent_vision.template_sha256(),
+        # 실제 provider 로 나간 프롬프트의 해시(템플릿 해시가 아니다).
+        "visionPromptSha256": vm.get("promptSha256"),
+        "visionProvider": vm.get("provider"),
+        "visionStatus": vm.get("status"),
         "qcPolicyVersion": edit_qc_scope.QC_POLICY_VERSION,
         "codeCommit": _code_commit(),
         "imageSize": prepared.image_size,
@@ -120,35 +184,73 @@ def _provenance(prepared, *, attempt: int, source_bytes: bytes,
     }
 
 
-def _assert_resumable(samples_path: pathlib.Path) -> None:
-    """resume 은 **같은 조건**일 때만 허용한다.
+def _refuse(msg: str):
+    raise SystemExit(f"REFUSING: {msg} 새 --dataset-id 로 모으세요.")
 
-    모델이나 프롬프트나 코드가 바뀐 뒤 이어 붙이면 한 데이터셋 안에 서로 다른 실험이
-    섞이고, 그건 나중에 분리할 수 없다(어느 행이 어느 조건인지 표시가 없으므로).
+
+def _prepare_only(settings, cases=None):
+    """provider 를 부르지 않고 현재 조건을 계산한다 — prepare() 까지만 실행."""
+    src = _sources(1)[0]
+    img = InlineImage("image/jpeg", src.read_bytes())
+    cases = cases if cases is not None else VARY_CASES
+    per_case, run = {}, None
+    for name, changes in cases:
+        prep = cut_variator.prepare(settings, img, changes, None)
+        per_case[name] = case_fingerprint(prep, case_name=name, changes=changes)
+        run = run or run_fingerprint(prep, cases=cases)
+    return run, per_case
+
+
+def _assert_resumable(samples_path: pathlib.Path, settings=None) -> None:
+    """resume 은 **같은 실험 조건**일 때만 허용한다.
+
+    조건이 바뀐 뒤 이어 붙이면 한 데이터셋 안에 서로 다른 실험이 섞이고, 행마다
+    표시가 없으니 나중에 분리할 수 없다. 반대로 case 마다 프롬프트가 다른 것은
+    정상이므로 그걸로 거부하면 멀쩡한 데이터셋을 못 이어 모은다.
     """
     if not samples_path.exists():
         return
     rows = [json.loads(l) for l in samples_path.read_text(encoding="utf-8").splitlines()
             if l.strip()]
+    # 실패 row 는 출력이 없어 provenance 증거가 아니다.
     done = [r for r in rows if r.get("output_id")]
     if not done:
         return
-    seen = {tuple((r.get("provenance") or {}).get(k) for k in RESUME_KEYS) for r in done}
-    if len(seen) > 1:
-        raise SystemExit("REFUSING: 기존 파일에 이미 서로 다른 provenance 가 섞여 있어요.")
-    prev = dict(zip(RESUME_KEYS, seen.pop()))
-    if any(prev.get(k) is None for k in RESUME_KEYS):
-        raise SystemExit(
-            "REFUSING: 기존 표본에 provenance 가 없어 같은 조건인지 확인할 수 없어요. "
-            "새 --dataset-id 로 모으세요.")
-    now = {"visionPromptSha256": _sha(_PROMPT_FILE.read_bytes()),
-           "qcPolicyVersion": edit_qc_scope.QC_POLICY_VERSION,
-           "codeCommit": _code_commit()}
-    for k, v in now.items():
-        if prev.get(k) != v:
-            raise SystemExit(
-                f"REFUSING: resume 조건 불일치 ({k}: {prev.get(k)!r} != {v!r}) — "
-                "다른 코드/프롬프트로 모은 표본과 섞을 수 없어요. 새 --dataset-id 를 쓰세요.")
+    provs = [r.get("provenance") or {} for r in done]
+    if any(not p.get("run") or not p.get("case") for p in provs):
+        _refuse("기존 표본에 run/case fingerprint 가 없어 같은 조건인지 확인할 수 없어요.")
+
+    runs = {_canonical({k: p["run"].get(k) for k in RUN_FINGERPRINT_KEYS}) for p in provs}
+    if len(runs) > 1:
+        _refuse("기존 파일에 이미 서로 다른 실험 조건이 섞여 있어요.")
+    prev_run = json.loads(runs.pop())
+
+    now_run, now_cases = _prepare_only(settings or load_settings())
+    for k in RUN_FINGERPRINT_KEYS:
+        if prev_run.get(k) != now_run.get(k):
+            _refuse(f"실행 조건 불일치 ({k}: {prev_run.get(k)!r} != {now_run.get(k)!r}).")
+
+    prev_cases: dict[str, dict] = {}
+    for p in provs:
+        c = p["case"]
+        seen = prev_cases.setdefault(c["case"], c)
+        if seen.get("generationPromptSha256") != c.get("generationPromptSha256"):
+            _refuse(f"같은 case 안에서 프롬프트가 서로 달라요 ({c['case']}).")
+    for name, prev in prev_cases.items():
+        cur = now_cases.get(name)
+        if cur is None:
+            _refuse(f"기존 case 가 지금 정의에 없어요 ({name}).")
+        if prev.get("generationPromptSha256") != cur.get("generationPromptSha256"):
+            _refuse(f"case 프롬프트가 바뀌었어요 ({name}).")
+        if _canonical(prev.get("changes")) != _canonical(cur.get("changes")):
+            _refuse(f"case 정의가 바뀌었어요 ({name}).")
+
+    prev_commit = provs[0].get("codeCommit")
+    now_commit = _code_commit()
+    if prev_commit and now_commit and prev_commit != now_commit:
+        # 보조 근거다 — 스냅샷이 전부 같으면 커밋이 달라도 같은 실험으로 본다.
+        print(f"  주의: codeCommit 이 다릅니다 ({prev_commit[:8]} → {now_commit[:8]}). "
+              "모델·템플릿·프롬프트·정책은 모두 일치해 resume 을 허용합니다.")
 
 
 def _sources(limit: int) -> list[pathlib.Path]:
@@ -194,8 +296,6 @@ async def _one_sample(settings, gemini, *, src_path, case_name, changes, timeout
     out_path = out_dir / f"{row['id']}.png"
     out_path.write_bytes(edited_bytes)
     row["output_id"] = str(uuid.uuid4())
-    row["provenance"] = _provenance(prepared, attempt=1, source_bytes=raw,
-                                    output_bytes=edited_bytes)
 
     qc, _et, vision_attempted = await observe_and_decide(
         settings, baseline=source, edited=InlineImage(edited_mime, edited_bytes),
@@ -204,9 +304,12 @@ async def _one_sample(settings, gemini, *, src_path, case_name, changes, timeout
     row["edit_qc_result"] = qc
     row["machine_decision"] = edit_qc_scope.machine_decision(qc, had_output=True)
     row["status"] = row["machine_decision"]      # 워크플로 상태 == 판정 (수집기는 잡이 없다)
-    vmeta = (qc.get("vision") or {}).get("meta") or {}
-    row["provenance"]["visionProvider"] = vmeta.get("provider")
-    row["provenance"]["visionStatus"] = vmeta.get("status")
+    # provenance 는 QC 이후에 만든다 — 실제 나간 Vision 프롬프트 해시가 meta 에 있고,
+    # 그걸 다시 조립하면 기록과 요청이 갈라진다.
+    row["provenance"] = _provenance(
+        prepared, case_name=case_name, changes=changes, attempt=1,
+        source_bytes=raw, output_bytes=edited_bytes,
+        vision_meta=(qc.get("vision") or {}).get("meta") or {})
     row["completed_at"] = time.time()
     return row
 
@@ -232,13 +335,32 @@ async def vision_backfill(args) -> int:
         return 0
 
     case_changes = dict(VARY_CASES)
+    now_run, _now_cases = _prepare_only(settings)
+
+    # provider 를 부르기 **전에** 조건을 맞춰 본다. 조건이 다른데 backfill 하면 QC 결과는
+    # 새 조건, provenance 는 옛 조건을 가리키는 상태가 만들어지고 — 그 데이터는 무엇으로
+    # 잰 값인지 아무도 말할 수 없다. 안전한 기본은 거부하고 새 dataset 을 요구하는 것.
+    for r in todo:
+        prov = r.get("provenance") or {}
+        run = prov.get("run")
+        if not run:
+            _refuse(f"기존 표본에 run fingerprint 가 없어요 ({r.get('id')}).")
+        for k in ("visionTemplateSha256", "visionPromptTemplateVersion", "qcPolicyVersion"):
+            if run.get(k) != now_run.get(k):
+                _refuse(f"Vision/QC 조건 불일치 ({k}: {run.get(k)!r} != "
+                        f"{now_run.get(k)!r}) — backfill 로 덮을 수 없어요.")
+        img_path = out_dir / f"{r['id']}.png"
+        src_path = src_dir / str(r.get("source") or "")
+        if not img_path.exists() or _sha(img_path.read_bytes()) != prov.get("outputSha256"):
+            _refuse(f"결과 이미지가 바뀌었어요 ({r.get('id')}).")
+        if not src_path.exists() or _sha(src_path.read_bytes()) != prov.get("sourceSha256"):
+            _refuse(f"원본 이미지가 바뀌었어요 ({r.get('id')}).")
+    print(f"  조건·이미지 일치 확인 완료 — backfill 대상 {len(todo)}건")
+
     done = 0
     for n, r in enumerate(todo, 1):
         img_path = out_dir / f"{r['id']}.png"
         src_path = src_dir / r["source"]
-        if not img_path.exists() or not src_path.exists():
-            print(f"  [{n}] skip (파일 없음) {r['id'][:8]}")
-            continue
         changes = case_changes.get(r["case"], [])
         qc, _et, vision_attempted = await observe_and_decide(
             settings, baseline=InlineImage("image/jpeg", src_path.read_bytes()),
@@ -248,7 +370,18 @@ async def vision_backfill(args) -> int:
         r["edit_qc_result"] = qc
         r["machine_decision"] = edit_qc_scope.machine_decision(qc, had_output=True)
         r["status"] = r["machine_decision"]
-        if (qc.get("vision") or {}).get("meta", {}).get("status") == "ok":
+        vmeta = (qc.get("vision") or {}).get("meta") or {}
+        # QC 와 provenance 가 같은 실행을 가리키도록 함께 갱신하고, 덮어쓴 게 아니라
+        # **다시 잰 것**임을 lineage(visionBackfilledAt)로 남긴다.
+        prov = r["provenance"]
+        prov["visionBackfilledAt"] = time.time()
+        prov["visionProvider"] = vmeta.get("provider")
+        prov["visionStatus"] = vmeta.get("status")
+        prov["visionPromptTemplateVersion"] = now_run["visionPromptTemplateVersion"]
+        prov["visionTemplateSha256"] = now_run["visionTemplateSha256"]
+        prov["visionPromptSha256"] = vmeta.get("promptSha256")
+        prov["qcPolicyVersion"] = now_run["qcPolicyVersion"]
+        if vmeta.get("status") == "ok":
             done += 1
         vision = qc["vision"]
         print(f"  [{n}/{len(todo)}] {r['case']:<12} {r['status']:<16} "
@@ -275,7 +408,7 @@ async def run(args) -> int:
             raise SystemExit(
                 f"REFUSING: {out_dir} 가 비어 있지 않아요. --dataset-id 를 바꾸거나, "
                 "같은 조건으로 이어 모으려면 --resume 를 주세요.")
-        _assert_resumable(samples_path)
+        _assert_resumable(samples_path, settings)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     budget_per_sample = args.image_usd + args.vision_usd
