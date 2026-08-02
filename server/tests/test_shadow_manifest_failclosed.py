@@ -17,6 +17,7 @@ from app import safe_paths, shadow_cases as scases, shadow_provenance as sp
 from app.config import load_settings
 
 SERVER = pathlib.Path(__file__).resolve().parents[1]
+from app import shadow_verification as _sv  # noqa: E402
 SRC_DIR = SERVER.parent / "public" / "assets" / "fit-examples"
 
 
@@ -270,13 +271,9 @@ def test_a_dataset_with_no_output_rows_is_not_labelable(dataset):
 REPORT_CLI = SERVER / "scripts" / "shadow_report.py"
 
 
-def test_the_cli_compares_the_samples_hash_before_labels():
+def test_the_cli_verifies_before_binding_labels():
     src = REPORT_CLI.read_text(encoding="utf-8")
-    assert "rawSampleManifestSha256" in src
-    assert "manifest_samples_mismatch" in src
-    assert "manifest_dataset_id_mismatch" in src
-    # 결합 이전에 검증한다.
-    assert src.index("binding_reasons") < src.index("ba.load_labels(")
+    assert src.index("verify_manifest_for_report(") < src.index("ba.load_labels(")
     assert "if args.labels and not binding_reasons:" in src
 
 
@@ -302,12 +299,12 @@ def test_binding_and_label_reasons_are_unioned():
              "edit_type": "BACKGROUND_ONLY",
              "edit_qc_result": {"decision": "pass",
                                 "vision": {"meta": {"status": "ok"}}}}]
-    out = sr.report(rows, manifest={"validForCalibration": False,
-                                    "invalidReasons": ["provenance_unverified"]}, manifest_verified=True,
+    out = sr.report(rows, manifest_verification=_sv.unverified({'validForCalibration': False}, ["provenance_unverified"]),
                     quarantined=[{"reason": "dataset_mismatch"}],
                     extra_blocked_reasons=["manifest_samples_mismatch"])
-    assert out["calibrationBlockedReasons"] == [
-        "label_dataset_mismatch", "manifest_samples_mismatch", "provenance_unverified"]
+    # 상태 코드(manifest_unverified)도 함께 남는다 — 계열별 사유가 하나도 안 사라진다.
+    assert set(out["calibrationBlockedReasons"]) >= {
+        "label_dataset_mismatch", "manifest_samples_mismatch", "provenance_unverified"}
 
 
 def test_the_manifest_declares_the_hash_of_the_file_it_read(dataset):

@@ -14,6 +14,8 @@ from app import blinded_audit as ba
 from app import shadow_report as sr
 
 SERVER = pathlib.Path(__file__).resolve().parents[1]
+from _shadow_trusted import trusted as _trusted  # noqa: E402
+from app import shadow_verification as _sv  # noqa: E402
 
 
 def _load(name, rel):
@@ -143,8 +145,7 @@ def _rows(n, decision="pass", **kw):
 
 def test_an_invalid_manifest_forces_every_verdict_to_blocked():
     out = sr.report(_rows(60, human_label="fidelity_pass"),
-                    manifest={"validForCalibration": False,
-                              "invalidReasons": ["provenance_unverified"]}, manifest_verified=True)
+                    manifest_verification=_sv.unverified({'validForCalibration': False}, ["provenance_unverified"]),)
     ev = out["pipelines"]["editor_vary"]
     ready = [ev["verdict"]["enforceReady"]] + [
         t["verdict"]["enforceReady"] for t in ev["byEditTypeDetail"].values()]
@@ -155,12 +156,7 @@ def test_an_invalid_manifest_forces_every_verdict_to_blocked():
 
 def test_a_valid_manifest_leaves_verdicts_alone():
     out = sr.report(_rows(60, human_label="fidelity_pass"),
-                    manifest={"datasetId": "ds", "rawSampleManifestSha256": "a" * 64,
-              "outputBundleSha256": "b" * 64,
-              "sourceDataset": {"sha256": "c" * 64},
-              "validForCalibration": True, "provenanceUnverified": False,
-              "provenanceProblems": []},
-                    manifest_verified=True)
+                    manifest_verification=_trusted())
     v = out["pipelines"]["editor_vary"]["byEditTypeDetail"]["BACKGROUND_ONLY"]["verdict"]
     assert v["enforceReady"] is True
 

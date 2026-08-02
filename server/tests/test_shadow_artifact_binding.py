@@ -276,10 +276,13 @@ def test_output_bundle_is_only_required_when_outputs_exist():
         sp.manifest_binding_problems(m, has_output_rows=True)
 
 
-def test_the_cli_uses_manifest_is_not_none():
-    src = (SERVER / "scripts" / "shadow_report.py").read_text(encoding="utf-8")
-    assert "if manifest is not None:" in src
-    assert "if manifest:\n" not in src
+def test_a_non_dict_manifest_is_refused_by_the_verifier(tmp_path):
+    """`if manifest:` 로 판단하면 `{}` 가 falsy 라 검사 자체가 생략된다."""
+    from app import shadow_verification as _sv2
+    for bad in ({}, [1], "x", 42):
+        v = _sv2.verify_manifest_for_report(
+            manifest=bad, rows=[], samples_path=tmp_path / "n.jsonl")
+        assert not v.trusted
 
 
 # ── 3. report artifact 재검증 (실행) ──────────────────────────────────────
@@ -333,8 +336,7 @@ def test_a_changed_samples_file_is_blocked(ds):
 
 def test_artifacts_are_checked_before_labels_are_bound():
     src = (SERVER / "scripts" / "shadow_report.py").read_text(encoding="utf-8")
-    assert src.index("artifact_problems(") < src.index("ba.load_labels(")
-    assert "if args.labels and not binding_reasons:" in src
+    assert src.index("verify_manifest_for_report(") < src.index("ba.load_labels(")
 
 
 def test_the_blocked_status_names_artifacts():
@@ -343,8 +345,10 @@ def test_the_blocked_status_names_artifacts():
              "edit_type": "BACKGROUND_ONLY",
              "edit_qc_result": {"decision": "pass",
                                 "vision": {"meta": {"status": "ok"}}}}]
-    out = sr.report(rows, manifest={"validForCalibration": True},
-                    extra_blocked_reasons=["output_hash_mismatch"])
+    from app import shadow_verification as _sv2
+    out = sr.report(rows, manifest_verification=_sv2.unverified(
+        {"validForCalibration": True}, ["output_hash_mismatch"]),
+        extra_blocked_reasons=["output_hash_mismatch"])
     assert out["pipelines"]["editor_vary"]["verdict"]["status"] == "blocked_by_artifacts"
 
 

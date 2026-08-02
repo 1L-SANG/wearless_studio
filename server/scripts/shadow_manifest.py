@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import shadow_cases as scases  # noqa: E402
 from app import shadow_provenance as sp  # noqa: E402
+from app import shadow_verification as sv  # noqa: E402
 from app.config import load_settings  # noqa: E402
 from app.agents.edit_intent_vision import PROMPT_VERSION  # noqa: E402
 from app.services.edit_qc_scope import QC_POLICY_VERSION  # noqa: E402
@@ -66,7 +67,8 @@ def _raw_artifacts(rows, samples_path: str, *, ok: bool = True) -> dict:
             "location": str(base)}
 
 
-DEFAULT_SOURCE_DIR = ROOT / "public" / "assets" / "fit-examples"
+# 정본은 app.shadow_verification 한 곳 — 스크립트마다 두면 서로 다른 곳을 본다.
+DEFAULT_SOURCE_DIR = sv.DEFAULT_SOURCE_DIR
 
 
 def build(samples_path: str, *, dataset_id: str, invalid_reasons: list[str],

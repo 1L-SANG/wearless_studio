@@ -21,15 +21,8 @@ from app.services import edit_qc_scope, editor_vary
 
 SERVER = pathlib.Path(__file__).resolve().parents[1]
 
-# 실제 필수 스키마를 만족하는 manifest + **명시적 검증 결과**.
-# 불완전 dict(`{"validForCalibration": True}`)는 이제 trust 를 얻지 못한다 —
-# report() 가 manifest 존재만으로 calibration 을 신뢰하던 결함을 막았기 때문이다.
-TRUSTED_MANIFEST = {"datasetId": "ds", "rawSampleManifestSha256": "a" * 64,
-                    "outputBundleSha256": "b" * 64,
-                    "sourceDataset": {"sha256": "c" * 64},
-                    "validForCalibration": True, "provenanceUnverified": False,
-                    "provenanceProblems": []}
-TRUSTED = dict(TRUSTED_MANIFEST)   # 기존 호출부 호환 — 아래에서 verified 와 함께 쓴다
+# trusted 는 중앙 verifier 만 만든다 — 실제 파일·manifest 를 통과시킨 결과다.
+from _shadow_trusted import trusted as _trusted  # noqa: E402
 
 
 def _load(name, rel):
@@ -327,7 +320,7 @@ def _sample_rows(n=3, **kw):
 
 
 def test_quarantine_blocks_the_whole_report():
-    out = sr.report(_sample_rows(3, human_label="fidelity_pass"), manifest=TRUSTED, manifest_verified=True,
+    out = sr.report(_sample_rows(3, human_label="fidelity_pass"), manifest_verification=_trusted(),
                     quarantined=[{"reason": "output_hash_mismatch"}])
     assert out["calibrationUsable"] is False
     assert out["calibrationBlockedReasons"] == ["label_output_hash_mismatch"]
@@ -339,7 +332,7 @@ def test_quarantine_blocks_the_whole_report():
 
 
 def test_quarantine_counts_are_reported_by_reason():
-    out = sr.report(_sample_rows(2), manifest=TRUSTED, quarantined=[
+    out = sr.report(_sample_rows(2), manifest_verification=_trusted(), quarantined=[
         {"reason": "dataset_mismatch"}, {"reason": "dataset_mismatch"},
         {"reason": "policy_version_unsupported"}])
     assert out["labelQuarantine"]["byReason"] == {
@@ -347,7 +340,7 @@ def test_quarantine_counts_are_reported_by_reason():
 
 
 def test_clean_labels_keep_the_normal_calculation():
-    out = sr.report(_sample_rows(3, human_label="fidelity_fail"), manifest=TRUSTED, manifest_verified=True)
+    out = sr.report(_sample_rows(3, human_label="fidelity_fail"), manifest_verification=_trusted())
     cal = out["pipelines"]["editor_vary"]["calibrationConfusion"]
     assert cal["graded"] == 3 and cal["falsePass"] == 3
     assert "labelQuarantine" not in out and out.get("calibrationUsable") is None

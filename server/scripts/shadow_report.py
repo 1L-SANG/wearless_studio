@@ -26,7 +26,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import blinded_audit as ba  # noqa: E402
-from app import shadow_provenance as ba_sp  # noqa: E402
+from app import shadow_verification as sv  # noqa: E402
 from app.shadow_report import report  # noqa: E402
 
 # 필요한 컬럼만. edit_qc_result 는 판정 요약이라 provider 원문이 들어 있지 않다
@@ -63,9 +63,6 @@ QUERY_NO_EVENTS = QUERY.replace(
          where re.edit_session_id = es.id
          order by re.created_at desc, re.id desc
          limit 1)""", "null::text")
-
-DEFAULT_SOURCE_DIR = (pathlib.Path(__file__).resolve().parents[2]
-                      / "public" / "assets" / "fit-examples")
 
 PRECHECK = "select to_regclass('public.edit_sessions'), to_regclass('public.edit_review_events')"
 
@@ -121,46 +118,28 @@ def main() -> int:
                         manifest = parsed
                     else:
                         manifest_load_error = "manifest_not_object"
-        dataset_id = args.dataset_id or (manifest or {}).get("datasetId")
         quarantined = []
         blocked = False
         binding_reasons: list[str] = []
-        if manifest_load_error:
-            binding_reasons.append(manifest_load_error)
         samples_file = pathlib.Path(args.jsonl).resolve()
-        dataset_dir = samples_file.parent
-        # 운영 기본값은 레포 정본이다. 테스트가 임시 사본을 실제로 변조해 볼 수
-        # 있도록 주입만 허용한다(정본 파일을 건드리지 않기 위해).
+        # 운영 기본값은 정본 한 곳(shadow_verification.DEFAULT_SOURCE_DIR). 테스트가
+        # 사본을 실제로 변조해 볼 수 있도록 주입만 연다.
         source_dir = (pathlib.Path(args.source_dir).resolve() if args.source_dir
-                      else DEFAULT_SOURCE_DIR)
-        has_out = any(ba_sp.has_output(r) for r in rows)
+                      else sv.DEFAULT_SOURCE_DIR)
 
-        # manifest 는 "이 표본·이 파일들"에 대한 진술이다. 진술의 형식부터 본다 —
-        # 필드가 없으면 비교가 통째로 생략되고 아무 manifest 나 통과한다(`{}` 조차).
-        if manifest is not None:
-            binding_reasons += ba_sp.manifest_binding_problems(
-                manifest, has_output_rows=has_out)
-        if manifest is not None and not binding_reasons:
-            actual = hashlib.sha256(samples_file.read_bytes()).hexdigest()
-            if manifest.get("rawSampleManifestSha256") != actual:
-                binding_reasons.append("manifest_samples_mismatch")
-            m_ds = manifest.get("datasetId")
-            if args.dataset_id and args.dataset_id != m_ds:
-                binding_reasons.append("manifest_dataset_id_mismatch")
-            # manifest 생성 시점이 아니라 **지금** 파일을 다시 잰다. 그 사이에
-            # 바뀐 것을 못 잡으면 manifest 는 과거에 대한 진술일 뿐이다.
-            binding_reasons += ba_sp.artifact_problems(
-                rows, dataset_dir=dataset_dir, source_dir=source_dir)
-            now_out = ba_sp.output_bundle_sha256(rows, dataset_dir)
-            if manifest.get("outputBundleSha256") != now_out:
-                binding_reasons.append("output_bundle_mismatch")
-            now_src = ba_sp.source_bundle_sha256(rows, source_dir)
-            if (manifest.get("sourceDataset") or {}).get("sha256") != now_src:
-                binding_reasons.append("source_bundle_mismatch")
-        binding_reasons = sorted(set(binding_reasons))
+        if manifest_load_error:
+            verification = sv.unverified(None, [manifest_load_error])
+        else:
+            # 검사는 전부 중앙 verifier 안에서 순서대로 일어난다 — CLI 가 따로
+            # 조각조각 검사하면 그 조각이 곧 우회로가 된다.
+            verification = sv.verify_manifest_for_report(
+                manifest=manifest, rows=rows, samples_path=samples_file,
+                source_dir=source_dir, cli_dataset_id=args.dataset_id)
+        dataset_id = args.dataset_id or verification.dataset_id
+        binding_reasons = [] if verification.trusted else list(
+            verification.blocked_reasons)
         if binding_reasons:
-            print(f"manifest 가 지금의 표본·파일을 가리키지 않아요: {binding_reasons}",
-                  file=sys.stderr)
+            print(f"manifest 를 신뢰할 수 없어요: {binding_reasons}", file=sys.stderr)
             blocked = True
         if args.labels and not binding_reasons:
             if not dataset_id:
@@ -186,12 +165,10 @@ def main() -> int:
                 print(f"라벨을 표본에 붙일 수 없어요 — 격리 {len(quarantined)}건: "
                       f"{dict(by_reason)}", file=sys.stderr)
                 blocked = True
-        # 검증이 **실제로** 끝났을 때만 trust 를 넘긴다. 이 플래그가 유일한 통로다.
+        # 검증 **결과 객체** 를 넘긴다. manifest 와 boolean 을 따로 넘기던 시절에는
+        # 호출자가 True 만 붙이면 됐다.
         out = report(rows, image_usd=args.image_usd, vision_usd=args.vision_usd,
-                     manifest=manifest,
-                     manifest_verified=bool(manifest is not None and not binding_reasons),
-                     quarantined=quarantined,
-                     extra_blocked_reasons=binding_reasons)
+                     manifest_verification=verification, quarantined=quarantined)
         if args.json:
             print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
         else:

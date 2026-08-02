@@ -426,8 +426,7 @@ def _force_blocked(block: dict, reason: str, status: str = "blocked_by_manifest"
 
 
 def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
-           manifest: dict | None = None, manifest_verified: bool = False,
-           quarantined: list | None = None,
+           manifest_verification=None, quarantined: list | None = None,
            extra_blocked_reasons: list | None = None) -> dict:
     """파이프라인 → edit type 순으로 **두 번** 쪼갠다.
 
@@ -435,35 +434,37 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
     으로 보인다. 그 30건에는 정책상 애초에 통과할 수 없는 표본이 섞여 있어 임계값
     근거가 못 된다.
 
-    `manifest_verified` 는 **호출자가 스키마·binding·artifact 검증을 실제로 끝냈다**는
-    명시적 근거다. 이게 없으면 manifest 가 있어도 calibration 으로 치지 않는다 —
-    dict 하나 넘겨준 것을 신뢰의 증거로 삼으면 `{}` 로도 enforce 가 켜진다(그랬다).
-    trust 는 추론하는 게 아니라 전달받는 것이다.
+    trust 는 `manifest_verification` 하나로만 들어온다. boolean 이던 시절에는
+    호출자가 `{}` 에 True 를 붙여 enforce 를 켤 수 있었다 — boolean 은 "검증했다"는
+    주장이지 증거가 아니다. 이제 trusted 상태는 중앙 verifier 만 만들 수 있고,
+    그 결과가 manifest 를 **소유**하므로 다른 manifest 와 섞일 수도 없다.
     """
     split: dict[str, list] = {p: [] for p in PIPELINES}
     for r in rows:
         split[pipeline_of(r)].append(r)
 
-    invalid_manifest = isinstance(manifest, dict) and \
-        manifest.get("validForCalibration") is False
-    # calibration 후보가 되려면 세 가지가 다 있어야 한다: manifest 가 있고, 호출자가
-    # 검증을 끝냈고, 그 manifest 자신이 무효라고 말하지 않을 것.
-    trusted = manifest is not None and manifest_verified and not invalid_manifest
+    from . import shadow_verification as sv
+
+    verification = manifest_verification or sv.absent()
+    manifest = verification.manifest
+    # 상태 해석은 여기 한 번뿐이다. 같은 상태를 여러 if 문이 다시 읽으면 해석이 갈린다.
+    trusted = verification.trusted
+    # extra_blocked_reasons 가 있는데 trusted 로 남으면 "차단됐는데 신뢰됨"이라는
+    # 모순이 된다. 사유가 하나라도 있으면 calibration 이 아니다.
+    if extra_blocked_reasons:
+        trusted = False
     out = {"reportKind": "calibration" if trusted else "distribution_only",
-           "manifestTrust": ("trusted" if trusted else
-                             "absent" if manifest is None else
-                             "invalid" if invalid_manifest else "unverified"),
+           "manifestTrust": verification.state if trusted or not extra_blocked_reasons
+                            else "unverified",
            "total": len(rows),
            "samplesByPipeline": {p: len(v) for p, v in split.items()},
            "unknownPipelineSamples": [r.get("id") for r in split["unknown"]][:50],
            "pipelines": {}}
     # 차단 사유는 계열별로 합친다. 한쪽이 다른 쪽을 덮으면 "manifest 도 문제였다"는
     # 사실이 사라지고, 그러면 무엇부터 고쳐야 하는지 알 수 없다.
-    blocked_reasons: set[str] = set()
+    blocked_reasons: set[str] = set(verification.blocked_reasons)
     if manifest is not None:
         out["manifest"] = manifest
-        if invalid_manifest:
-            blocked_reasons.update(manifest.get("invalidReasons") or ["manifest_invalid"])
     if quarantined:
         # 라벨 결합이 하나라도 실패하면 이 리포트는 캘리브레이션 입력이 될 수 없다.
         # 일부만 붙인 채로 정상 리포트처럼 계속 가면 커버리지가 그만큼 거짓이 되고,
@@ -474,11 +475,6 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
                                   "items": quarantined[:50]}
         blocked_reasons.update(f"label_{q.get('reason')}" for q in quarantined)
     blocked_reasons.update(extra_blocked_reasons or ())
-    if manifest is None:
-        blocked_reasons.add("manifest_absent")
-    elif not manifest_verified:
-        # 검증을 안 거친 manifest 는 "있다"는 사실 말고 아무것도 증명하지 않는다.
-        blocked_reasons.add("manifest_unverified")
     if blocked_reasons:
         out["calibrationUsable"] = False
         out["calibrationBlockedReasons"] = sorted(blocked_reasons)
@@ -502,16 +498,18 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
         block["verdict"] = _verdict(eligible_rows) if p != "unknown" else {
             "enforceReady": False, "status": "insufficient_data",
             "blockers": ["source_kind 미상 — 어느 파이프라인인지 모른다"]}
-        if manifest is None:
-            _force_blocked(block, "manifest 없음 — 이 리포트는 분포일 뿐 캘리브레이션 "
-                                  "근거가 아니다", status="distribution_only")
-        elif not manifest_verified:
-            _force_blocked(block, "manifest 검증이 끝나지 않음 — 스키마·binding·artifact 를 "
-                                  "확인한 근거 없이는 캘리브레이션 근거가 아니다",
-                           status="blocked_by_manifest")
-        if invalid_manifest:
-            _force_blocked(block, "manifest.validForCalibration=false — 이 데이터셋으로는 "
-                                  "어떤 판정도 근거가 되지 않는다")
+        if not trusted:
+            # 상태별 문구만 다르고 결론은 같다: 이 리포트는 캘리브레이션 근거가 아니다.
+            _force_blocked(block, {
+                sv.ABSENT: "manifest 없음 — 이 리포트는 분포일 뿐이다",
+                sv.UNVERIFIED: "manifest 검증 미완 — 스키마·binding·artifact 를 통과한 "
+                               "근거가 없다",
+                sv.INVALID: "manifest.validForCalibration=false — 이 데이터셋으로는 "
+                            "어떤 판정도 근거가 되지 않는다",
+            }.get(verification.state, "manifest 를 신뢰할 수 없다"),
+                status={sv.ABSENT: "distribution_only",
+                        sv.INVALID: "blocked_by_manifest"}.get(
+                            verification.state, "blocked_by_manifest"))
         if extra_blocked_reasons:
             artifact_ish = any(str(r).startswith(("output_", "source_", "unsafe_",
                                                   "invalid_sha_format"))
@@ -523,7 +521,8 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
         if quarantined:
             _force_blocked(block, f"라벨 결합 실패 {len(quarantined)}건 — 결합되지 않은 "
                                   "라벨이 있으면 커버리지를 신뢰할 수 없다",
-                           status=("blocked_by_manifest_and_labels" if invalid_manifest
+                           status=("blocked_by_manifest_and_labels"
+                                   if verification.state in (sv.INVALID, sv.UNVERIFIED)
                                    else "blocked_by_labels"))
         out["pipelines"][p] = block
     return out
