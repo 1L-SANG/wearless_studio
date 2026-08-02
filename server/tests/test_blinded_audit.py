@@ -137,16 +137,17 @@ def test_coverage_is_none_when_there_are_no_pass_samples():
 
 def test_labeled_pass_samples_unblock_the_coverage_gate():
     from app import shadow_report as sr
+    from app import shadow_verification as _sv
     rows = [{"id": f"p{i}", "source_kind": "editor_asset", "output_id": "o",
              "edit_type": "BACKGROUND_ONLY", "image_calls": 1, "vision_calls": 1,
              "edit_qc_result": {"decision": "pass",
                                 "vision": {"meta": {"status": "ok"}}}}
             for i in range(40)]
-    before = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+    before = sr.report(_sv.distribution_dataset(rows))["pipelines"]["editor_vary"]["byEditTypeDetail"][
         "BACKGROUND_ONLY"]["verdict"]
     assert any("false pass 미측정" in b for b in before["blockers"])
     labeled = [{**r, "human_label": "fidelity_pass"} for r in rows]
-    after = sr.report(labeled)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+    after = sr.report(_sv.distribution_dataset(labeled))["pipelines"]["editor_vary"]["byEditTypeDetail"][
         "BACKGROUND_ONLY"]["humanLabels"]
     assert after["passLabeled"] == 40 and after["sufficient"] is True
 

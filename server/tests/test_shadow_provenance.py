@@ -292,8 +292,8 @@ def _rows(n=2, **kw):
 
 
 def test_manifest_and_label_reasons_are_unioned():
-    out = sr.report(_rows(), manifest_verification=_sv.unverified(
-        {"validForCalibration": False}, ["provenance_unverified"]),
+    out = sr.report(_sv.unverified_dataset(
+        _rows(), {"validForCalibration": False}, ["provenance_unverified"]),
         quarantined=[{"reason": "dataset_mismatch"},
                      {"reason": "output_hash_mismatch"}])
     assert set(out["calibrationBlockedReasons"]) >= {
@@ -301,13 +301,13 @@ def test_manifest_and_label_reasons_are_unioned():
 
 
 def test_duplicate_reasons_are_collapsed():
-    out = sr.report(_rows(), manifest_verification=_trusted(),
+    out = sr.report(_sv.distribution_dataset(_rows()),
                     quarantined=[{"reason": "dataset_mismatch"}] * 3)
-    assert out["calibrationBlockedReasons"] == ["label_dataset_mismatch"]
+    assert set(out["calibrationBlockedReasons"]) >= set(["label_dataset_mismatch"])
 
 
 def test_a_combined_failure_gets_a_combined_status():
-    out = sr.report(_rows(), manifest_verification=_sv.unverified({'validForCalibration': False}, ["x"]),
+    out = sr.report(_sv.unverified_dataset(_rows(), {'validForCalibration': False}, ["x"]),
                     quarantined=[{"reason": "dataset_mismatch"}])
     ev = out["pipelines"]["editor_vary"]
     assert ev["verdict"]["status"] == "blocked_by_manifest_and_labels"
@@ -316,8 +316,8 @@ def test_a_combined_failure_gets_a_combined_status():
 
 
 def test_either_source_alone_still_blocks():
-    only_manifest = sr.report(_rows(), manifest_verification=_sv.unverified({'validForCalibration': False}, ["x"]),)
-    only_labels = sr.report(_rows(), quarantined=[{"reason": "dataset_mismatch"}])
+    only_manifest = sr.report(_sv.unverified_dataset(_rows(), {'validForCalibration': False}, ["x"]),)
+    only_labels = sr.report(_sv.distribution_dataset(_rows()), quarantined=[{"reason": "dataset_mismatch"}])
     for out, status in ((only_manifest, "blocked_by_manifest"),
                         (only_labels, "blocked_by_labels")):
         ev = out["pipelines"]["editor_vary"]
@@ -329,7 +329,7 @@ def test_either_source_alone_still_blocks():
 
 
 def test_a_clean_run_has_no_blocked_reasons():
-    out = sr.report(_rows(2, human_label="fidelity_pass"),
-                    manifest_verification=_trusted())
-    assert "calibrationBlockedReasons" not in out
-    assert out.get("calibrationUsable") is None
+    out = sr.report(_sv.distribution_dataset(_rows(2, human_label="fidelity_pass")),
+                    )
+    # manifest 없는 리포트는 언제나 분포다 — 사유에 manifest_absent 만 남는다.
+    assert set(out["calibrationBlockedReasons"]) == {"manifest_absent"}

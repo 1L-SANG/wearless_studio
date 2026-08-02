@@ -17,6 +17,7 @@ import pytest
 from app import safe_paths, shadow_cases as scases, shadow_provenance as sp
 from app.config import load_settings
 from app.safe_paths import UnsafePath, UnsafePathReason
+from app import shadow_verification as _sv
 
 SERVER = pathlib.Path(__file__).resolve().parents[1]
 SRC_DIR = SERVER.parent / "public" / "assets" / "fit-examples"
@@ -336,7 +337,7 @@ def test_a_changed_samples_file_is_blocked(ds):
 
 def test_artifacts_are_checked_before_labels_are_bound():
     src = (SERVER / "scripts" / "shadow_report.py").read_text(encoding="utf-8")
-    assert src.index("verify_manifest_for_report(") < src.index("ba.load_labels(")
+    assert src.index("verify_dataset(") < src.index("ba.load_labels(")
 
 
 def test_the_blocked_status_names_artifacts():
@@ -346,8 +347,8 @@ def test_the_blocked_status_names_artifacts():
              "edit_qc_result": {"decision": "pass",
                                 "vision": {"meta": {"status": "ok"}}}}]
     from app import shadow_verification as _sv2
-    out = sr.report(rows, manifest_verification=_sv2.unverified(
-        {"validForCalibration": True}, ["output_hash_mismatch"]),
+    out = sr.report(_sv2.unverified_dataset(
+        rows, {"validForCalibration": True}, ["output_hash_mismatch"]),
         extra_blocked_reasons=["output_hash_mismatch"])
     assert out["pipelines"]["editor_vary"]["verdict"]["status"] == "blocked_by_artifacts"
 
@@ -357,7 +358,7 @@ def test_the_blocked_status_names_artifacts():
 def test_a_report_without_a_manifest_is_distribution_only(ds):
     from app import shadow_report as sr
     tmp, rows, _ = ds
-    out = sr.report(rows)
+    out = sr.report(_sv.distribution_dataset(rows))
     assert out["reportKind"] == "distribution_only"
     assert out["calibrationUsable"] is False
     assert "manifest_absent" in out["calibrationBlockedReasons"]
@@ -371,7 +372,7 @@ def test_distribution_numbers_survive_without_a_manifest(ds):
     """DB 분포 조회는 기존 계약대로 숫자를 계속 낸다 — 판정 플래그만 닫힌다."""
     from app import shadow_report as sr
     tmp, rows, _ = ds
-    out = sr.report(rows)
+    out = sr.report(_sv.distribution_dataset(rows))
     ev = out["pipelines"]["editor_vary"]
     assert ev["samples"] == len(rows)
     assert ev["decisionRates"]["n"] == len(rows)

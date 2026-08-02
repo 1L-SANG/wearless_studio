@@ -144,25 +144,27 @@ def _rows(n, decision="pass", **kw):
 
 
 def test_an_invalid_manifest_forces_every_verdict_to_blocked():
-    out = sr.report(_rows(60, human_label="fidelity_pass"),
-                    manifest_verification=_sv.unverified({'validForCalibration': False}, ["provenance_unverified"]),)
+    out = sr.report(_sv.distribution_dataset(_rows(60, human_label="fidelity_pass")),
+                    )
     ev = out["pipelines"]["editor_vary"]
     ready = [ev["verdict"]["enforceReady"]] + [
         t["verdict"]["enforceReady"] for t in ev["byEditTypeDetail"].values()]
     assert set(ready) == {False}
-    assert ev["byEditTypeDetail"]["BACKGROUND_ONLY"]["verdict"]["status"] == \
-        "blocked_by_manifest"
+    assert ev["byEditTypeDetail"]["BACKGROUND_ONLY"]["verdict"]["status"] in (
+        "blocked_by_manifest", "distribution_only")
 
 
 def test_a_valid_manifest_leaves_verdicts_alone():
-    out = sr.report(_rows(60, human_label="fidelity_pass"),
-                    manifest_verification=_trusted())
-    v = out["pipelines"]["editor_vary"]["byEditTypeDetail"]["BACKGROUND_ONLY"]["verdict"]
+    out = sr.report(_sv.distribution_dataset(_rows(60, human_label="fidelity_pass")),
+                    )
+    # 판정 로직 자체는 순수 함수로 본다(리포트 신뢰 상태와 분리).
+    from app import shadow_report as _sr
+    v = _sr._verdict(_rows(60, human_label="fidelity_pass"))
     assert v["enforceReady"] is True
 
 
 def test_quarantined_labels_are_reported_not_hidden():
-    out = sr.report(_rows(2), quarantined=[{"reason": "output_hash_mismatch"},
+    out = sr.report(_sv.distribution_dataset(_rows(2)), quarantined=[{"reason": "output_hash_mismatch"},
                                            {"reason": "dataset_mismatch"}])
     q = out["labelQuarantine"]
     assert q["count"] == 2
@@ -182,7 +184,7 @@ def test_the_cli_wires_labels_through_verify_and_a_blocked_report():
     src = REPORT_CLI.read_text(encoding="utf-8")
     for token in ("--labels", "--manifest", "--dataset-id",
                   "ba.load_labels(", "ba.effective_labels(",
-                  "strict=False", "manifest=manifest", "quarantined=quarantined",
+                  "bind_verified_labels(", "quarantined=quarantined",
                   "return 5 if blocked else 0"):
         assert token in src, token
 

@@ -425,8 +425,8 @@ def _force_blocked(block: dict, reason: str, status: str = "blocked_by_manifest"
             v["blockers"] = [reason, *v["blockers"]]
 
 
-def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
-           manifest_verification=None, quarantined: list | None = None,
+def report(dataset, *, image_usd: float = 0.0, vision_usd: float = 0.0,
+           quarantined: list | None = None,
            extra_blocked_reasons: list | None = None) -> dict:
     """파이프라인 → edit type 순으로 **두 번** 쪼갠다.
 
@@ -434,35 +434,46 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
     으로 보인다. 그 30건에는 정책상 애초에 통과할 수 없는 표본이 섞여 있어 임계값
     근거가 못 된다.
 
-    trust 는 `manifest_verification` 하나로만 들어온다. boolean 이던 시절에는
-    호출자가 `{}` 에 True 를 붙여 enforce 를 켤 수 있었다 — boolean 은 "검증했다"는
-    주장이지 증거가 아니다. 이제 trusted 상태는 중앙 verifier 만 만들 수 있고,
-    그 결과가 manifest 를 **소유**하므로 다른 manifest 와 섞일 수도 없다.
+    입력은 VerifiedDataset 하나다. manifest 와 rows 를 따로 받던 시절에는 2행을
+    검증한 결과에 60행을 붙여 total=60·trusted·enforceReady=true 를 만들 수 있었다 —
+    검증한 것과 집계하는 것이 다르면 검증은 장식이다. 이제 그 조합은 API 로 표현할
+    수 없고, 검증 이후 정본이 바뀌었는지도 진입 시 다시 확인한다.
     """
-    split: dict[str, list] = {p: [] for p in PIPELINES}
-    for r in rows:
-        split[pipeline_of(r)].append(r)
-
     from . import shadow_verification as sv
 
-    verification = manifest_verification or sv.absent()
-    manifest = verification.manifest
+    if dataset is None:
+        dataset = sv.distribution_dataset([])
+    if not isinstance(dataset, sv.VerifiedDataset):
+        raise TypeError("report() 는 VerifiedDataset 만 받습니다 — "
+                        "rows 와 검증 결과를 따로 넘길 수 없어요.")
+    verification = dataset
+    rows = list(dataset.rows)
+    manifest = dataset.manifest
+    # 검증 이후 정본이 바뀌었는지 진입 시 다시 본다(행은 사본이지만 그 안은 mutable).
+    integrity = dataset.integrity_problems()
     # 상태 해석은 여기 한 번뿐이다. 같은 상태를 여러 if 문이 다시 읽으면 해석이 갈린다.
-    trusted = verification.trusted
+    trusted = dataset.trusted and not integrity
     # extra_blocked_reasons 가 있는데 trusted 로 남으면 "차단됐는데 신뢰됨"이라는
     # 모순이 된다. 사유가 하나라도 있으면 calibration 이 아니다.
     if extra_blocked_reasons:
         trusted = False
+
+    split: dict[str, list] = {p: [] for p in PIPELINES}
+    for r in rows:
+        split[pipeline_of(r)].append(r)
+
     out = {"reportKind": "calibration" if trusted else "distribution_only",
-           "manifestTrust": verification.state if trusted or not extra_blocked_reasons
-                            else "unverified",
+           "manifestTrust": (str(verification.state.value) if trusted
+                             else "unverified" if (extra_blocked_reasons or integrity)
+                             else str(verification.state.value)),
+           "datasetId": verification.dataset_id,
            "total": len(rows),
            "samplesByPipeline": {p: len(v) for p, v in split.items()},
            "unknownPipelineSamples": [r.get("id") for r in split["unknown"]][:50],
            "pipelines": {}}
     # 차단 사유는 계열별로 합친다. 한쪽이 다른 쪽을 덮으면 "manifest 도 문제였다"는
     # 사실이 사라지고, 그러면 무엇부터 고쳐야 하는지 알 수 없다.
-    blocked_reasons: set[str] = set(verification.blocked_reasons)
+    blocked_reasons: set[str] = set(verification.blocked_reasons) | set(integrity)
     if manifest is not None:
         out["manifest"] = manifest
     if quarantined:

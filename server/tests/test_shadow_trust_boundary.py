@@ -54,9 +54,9 @@ def _ready(out):
         t["verdict"]["enforceReady"] for t in ev["byEditTypeDetail"].values()}
 
 
-# ── 1. report() trust 계약 (capability) ──────────────────────────────────
-# trust 는 boolean 이 아니라 **중앙 verifier 만 만들 수 있는 결과 객체**다.
-# 아래는 전부 실제 입력 → 출력 행동으로 확인한다.
+# ── 1. trust capability ──────────────────────────────────────────────────
+# A/B 결합·정본 변조·라벨 결합은 test_shadow_dataset_binding.py 가 담당한다.
+# 여기서는 상태 봉인과 기본값만 본다.
 
 @pytest.mark.parametrize("manifest", [
     {}, {"validForCalibration": True}, {"foo": "bar", "validForCalibration": True},
@@ -64,104 +64,41 @@ def _ready(out):
 ])
 def test_a_manifest_alone_never_grants_trust(manifest):
     """옛 boolean 시절에는 `{}` 에 True 만 붙이면 enforce 가 켜졌다."""
-    v = sv.unverified(manifest, ["manifest_binding_missing:datasetId"])
-    out = sr.report(rows(), manifest_verification=v)
+    ds = sv.unverified_dataset(rows(), manifest,
+                               ["manifest_binding_missing:datasetId"])
+    out = sr.report(ds)
     assert out["reportKind"] == "distribution_only"
     assert out["manifestTrust"] == "unverified"
     assert out["calibrationUsable"] is False
-    assert "manifest_unverified" in out["calibrationBlockedReasons"]
     assert _ready(out) == {False}
 
 
 def test_trusted_cannot_be_constructed_outside_the_verifier():
-    """봉인 — 이게 없으면 boolean 시절로 돌아간다."""
     with pytest.raises(ValueError) as e:
-        sv.ManifestVerification(state="trusted", manifest=dict(FULL_MANIFEST),
-                                artifacts_verified=True)
-    assert "verify_manifest_for_report" in str(e.value)
+        sv.VerifiedDataset(state=sv.TRUSTED, manifest=dict(FULL_MANIFEST),
+                           artifacts_verified=True)
+    assert "verify_dataset" in str(e.value)
 
 
 def test_trusted_cannot_carry_problems_or_skip_artifacts():
     for kw in ({"problems": ("x",)}, {"artifacts_verified": False}):
         with pytest.raises(ValueError):
-            sv.ManifestVerification(state="trusted", manifest={}, **kw)
+            sv.VerifiedDataset(state=sv.TRUSTED, manifest={}, **kw)
 
 
 def test_an_unknown_state_is_refused():
     with pytest.raises(ValueError):
-        sv.ManifestVerification(state="probably_fine")
+        sv.VerifiedDataset(state="probably_fine")
 
 
-def test_no_manifest_is_distribution_only():
-    out = sr.report(rows(), manifest_verification=sv.absent())
-    assert out["reportKind"] == "distribution_only"
-    assert out["manifestTrust"] == "absent"
-    assert "manifest_absent" in out["calibrationBlockedReasons"]
-    assert _ready(out) == {False}
-
-
-def test_a_missing_verification_defaults_to_absent():
-    """인자를 아예 안 주면 신뢰 없음이 기본이다."""
-    out = sr.report(rows())
+def test_a_missing_dataset_defaults_to_absent():
+    out = sr.report(None)
     assert out["manifestTrust"] == "absent" and _ready(out) == {False}
 
 
-def test_report_no_longer_accepts_a_manifest_or_boolean():
-    """두 인자를 따로 받으면 서로 다른 객체가 섞일 수 있다."""
-    for kw in ({"manifest": dict(FULL_MANIFEST)}, {"manifest_verified": True}):
-        with pytest.raises(TypeError):
-            sr.report(rows(), **kw)
-
-
-def test_extra_blocked_reasons_cannot_coexist_with_trust(live_verification):
-    """차단 사유가 있는데 trusted/calibration 으로 남으면 모순이다."""
-    v, _ds, _src, live_rows = live_verification
-    out = sr.report(live_rows, manifest_verification=v,
-                    extra_blocked_reasons=["manifest_binding_missing:datasetId"])
-    assert out["reportKind"] == "distribution_only"
-    assert out["manifestTrust"] != "trusted"
-    assert out["calibrationUsable"] is False
-    assert _ready(out) == {False}
-
-
-def test_only_a_verifier_result_reaches_calibration(live_verification):
-    v, _ds, _src, live_rows = live_verification
-    out = sr.report(live_rows, manifest_verification=v)
-    assert out["reportKind"] == "calibration"
-    assert out["manifestTrust"] == "trusted"
-    assert out.get("calibrationUsable") is None
-
-
-def test_a_verified_but_self_invalid_manifest_is_still_blocked(shadow_dataset):
-    built = shadow_dataset(n=2)
-    m = {**built["manifest"], "validForCalibration": False,
-         "invalidReasons": ["provenance_unverified"], "provenanceUnverified": True,
-         "provenanceProblems": ["x"]}
-    v = sv.verify_manifest_for_report(
-        manifest=m, rows=built["rows"], samples_path=built["dir"] / "samples.jsonl",
-        source_dir=built["source_dir"])
-    out = sr.report(built["rows"], manifest_verification=v)
-    assert out["manifestTrust"] == "invalid"
-    assert out["calibrationUsable"] is False
-    assert _ready(out) == {False}
-
-
-def test_distribution_numbers_are_unchanged_without_trust(live_verification):
-    v, _ds, _src, live_rows = live_verification
-    trusted = sr.report(live_rows, manifest_verification=v)
-    plain = sr.report(live_rows)
-    for out in (trusted, plain):
-        ev = out["pipelines"]["editor_vary"]
-        assert ev["samples"] == len(live_rows)
-        assert ev["decisionRates"]["n"] == len(live_rows)
-
-
-def test_graded_and_false_pass_survive_the_trust_gate(shadow_dataset):
-    built = shadow_dataset(n=2, mutate_rows=lambda rs: rs[0].__setitem__(
-        "human_label", "fidelity_fail"))
-    out = sr.report(built["rows"], manifest_verification=built["verification"])
-    cal = out["pipelines"]["editor_vary"]["calibrationConfusion"]
-    assert cal["graded"] == 2 and cal["falsePass"] == 1
+def test_report_refuses_loose_rows():
+    with pytest.raises(TypeError):
+        sr.report(rows())
 
 
 # ── 2. manifest 상태 모순 ─────────────────────────────────────────────────
@@ -246,7 +183,7 @@ def test_a_malformed_manifest_report_has_no_enforce_ready(tmp_path):
 def test_a_non_dict_manifest_never_reaches_get(tmp_path):
     """타입 확인 전에 .get() 을 부르면 AttributeError 가 사용자에게 나간다."""
     for bad in ([1], "x", 42, None):
-        v = sv.verify_manifest_for_report(
+        v = sv.verify_dataset(
             manifest=bad, rows=[], samples_path=tmp_path / "nope.jsonl")
         assert not v.trusted
         assert v.state in ("absent", "unverified")
@@ -346,7 +283,7 @@ def test_a_deleted_source_is_blocked(live):
 
 def test_artifacts_are_verified_before_labels():
     src = (SERVER / "scripts" / "shadow_report.py").read_text(encoding="utf-8")
-    assert src.index("verify_manifest_for_report(") < src.index("ba.load_labels(")
+    assert src.index("verify_dataset(") < src.index("ba.load_labels(")
 
 
 def test_no_file_outside_the_source_dir_is_read(live, monkeypatch):

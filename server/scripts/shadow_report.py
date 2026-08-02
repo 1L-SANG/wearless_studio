@@ -118,7 +118,6 @@ def main() -> int:
                         manifest = parsed
                     else:
                         manifest_load_error = "manifest_not_object"
-        quarantined = []
         blocked = False
         binding_reasons: list[str] = []
         samples_file = pathlib.Path(args.jsonl).resolve()
@@ -128,27 +127,26 @@ def main() -> int:
                       else sv.DEFAULT_SOURCE_DIR)
 
         if manifest_load_error:
-            verification = sv.unverified(None, [manifest_load_error])
+            dataset = sv.unverified_dataset(rows, None, [manifest_load_error])
         else:
             # 검사는 전부 중앙 verifier 안에서 순서대로 일어난다 — CLI 가 따로
-            # 조각조각 검사하면 그 조각이 곧 우회로가 된다.
-            verification = sv.verify_manifest_for_report(
+            # 조각조각 검사하면 그 조각이 곧 우회로가 된다. 반환값이 rows 까지
+            # 소유하므로 다른 표본과 섞일 수 없다.
+            dataset = sv.verify_dataset(
                 manifest=manifest, rows=rows, samples_path=samples_file,
                 source_dir=source_dir, cli_dataset_id=args.dataset_id)
-        dataset_id = args.dataset_id or verification.dataset_id
-        binding_reasons = [] if verification.trusted else list(
-            verification.blocked_reasons)
+        dataset_id = args.dataset_id or dataset.dataset_id
+        binding_reasons = [] if dataset.trusted else list(dataset.blocked_reasons)
         if binding_reasons:
             print(f"manifest 를 신뢰할 수 없어요: {binding_reasons}", file=sys.stderr)
             blocked = True
+
+        quarantined = []
         if args.labels and not binding_reasons:
             if not dataset_id:
                 print("--labels 를 쓰려면 --dataset-id 또는 --manifest 가 필요해요.",
                       file=sys.stderr)
                 return 2
-            # 체인 검증 → 최신 라벨 → 결합. 어느 단계든 실패하면 멈춘다.
-            # 계속 진행해서 "라벨 일부만 붙은" 리포트를 내면 커버리지가 거짓이 된다.
-            # 체인 손상은 파일을 믿을 수 없다는 뜻이라 리포트를 만들지 않는다.
             try:
                 records = ba.load_labels(args.labels)
             except ba.LabelChainError as e:
@@ -156,19 +154,21 @@ def main() -> int:
                       file=sys.stderr)
                 return 4
             eff = ba.effective_labels(records)
-            # 결합 실패는 사유를 세어 보여 줄 수 있다. 다만 그 리포트는 blocked 다 —
-            # 성한 라벨만 골라 붙이면 "일부만 붙은 정상 리포트"가 되어 더 위험하다.
-            rows, quarantined = ba.apply_labels(rows, eff, dataset_id=dataset_id,
-                                                strict=False)
+            # 라벨도 typed 변환이다 — 임의 rows 를 "라벨 결과"라고 주장해 넣을 수 없다.
+            try:
+                dataset, quarantined = sv.bind_verified_labels(
+                    dataset, eff, dataset_id=dataset_id)
+            except sv.LabelBindingError as e:
+                print(f"라벨 결합이 정본을 바꿨어요: {e}", file=sys.stderr)
+                return 5
             if quarantined:
                 by_reason = Counter(q.get("reason") for q in quarantined)
                 print(f"라벨을 표본에 붙일 수 없어요 — 격리 {len(quarantined)}건: "
                       f"{dict(by_reason)}", file=sys.stderr)
                 blocked = True
-        # 검증 **결과 객체** 를 넘긴다. manifest 와 boolean 을 따로 넘기던 시절에는
-        # 호출자가 True 만 붙이면 됐다.
-        out = report(rows, image_usd=args.image_usd, vision_usd=args.vision_usd,
-                     manifest_verification=verification, quarantined=quarantined)
+
+        out = report(dataset, image_usd=args.image_usd, vision_usd=args.vision_usd,
+                     quarantined=quarantined)
         if args.json:
             print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
         else:

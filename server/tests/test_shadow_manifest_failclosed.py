@@ -273,7 +273,7 @@ REPORT_CLI = SERVER / "scripts" / "shadow_report.py"
 
 def test_the_cli_verifies_before_binding_labels():
     src = REPORT_CLI.read_text(encoding="utf-8")
-    assert src.index("verify_manifest_for_report(") < src.index("ba.load_labels(")
+    assert src.index("verify_dataset(") < src.index("ba.load_labels(")
     assert "if args.labels and not binding_reasons:" in src
 
 
@@ -283,7 +283,7 @@ def test_a_binding_mismatch_blocks_every_verdict():
              "edit_type": "BACKGROUND_ONLY",
              "edit_qc_result": {"decision": "pass",
                                 "vision": {"meta": {"status": "ok"}}}}]
-    out = sr.report(rows, extra_blocked_reasons=["manifest_samples_mismatch"])
+    out = sr.report(_sv.distribution_dataset(rows), extra_blocked_reasons=["manifest_samples_mismatch"])
     ev = out["pipelines"]["editor_vary"]
     assert out["calibrationUsable"] is False
     assert "manifest_samples_mismatch" in out["calibrationBlockedReasons"]
@@ -299,7 +299,7 @@ def test_binding_and_label_reasons_are_unioned():
              "edit_type": "BACKGROUND_ONLY",
              "edit_qc_result": {"decision": "pass",
                                 "vision": {"meta": {"status": "ok"}}}}]
-    out = sr.report(rows, manifest_verification=_sv.unverified({'validForCalibration': False}, ["provenance_unverified"]),
+    out = sr.report(_sv.unverified_dataset(rows, {'validForCalibration': False}, ["provenance_unverified"]),
                     quarantined=[{"reason": "dataset_mismatch"}],
                     extra_blocked_reasons=["manifest_samples_mismatch"])
     # 상태 코드(manifest_unverified)도 함께 남는다 — 계열별 사유가 하나도 안 사라진다.

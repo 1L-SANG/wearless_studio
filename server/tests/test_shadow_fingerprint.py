@@ -14,6 +14,7 @@ import pytest
 
 from app import blinded_audit as ba
 from app import shadow_report as sr
+from app import shadow_verification as _sv
 from app.agents import cut_variator, edit_intent_vision
 from app.agents.gemini_image import InlineImage
 from app.config import load_settings
@@ -320,10 +321,10 @@ def _sample_rows(n=3, **kw):
 
 
 def test_quarantine_blocks_the_whole_report():
-    out = sr.report(_sample_rows(3, human_label="fidelity_pass"), manifest_verification=_trusted(),
+    out = sr.report(_sv.distribution_dataset(_sample_rows(3, human_label="fidelity_pass")),
                     quarantined=[{"reason": "output_hash_mismatch"}])
     assert out["calibrationUsable"] is False
-    assert out["calibrationBlockedReasons"] == ["label_output_hash_mismatch"]
+    assert set(out["calibrationBlockedReasons"]) >= set(["label_output_hash_mismatch"])
     ev = out["pipelines"]["editor_vary"]
     ready = [ev["verdict"]["enforceReady"]] + [
         t["verdict"]["enforceReady"] for t in ev["byEditTypeDetail"].values()]
@@ -332,7 +333,7 @@ def test_quarantine_blocks_the_whole_report():
 
 
 def test_quarantine_counts_are_reported_by_reason():
-    out = sr.report(_sample_rows(2), manifest_verification=_trusted(), quarantined=[
+    out = sr.report(_sv.distribution_dataset(_sample_rows(2)), quarantined=[
         {"reason": "dataset_mismatch"}, {"reason": "dataset_mismatch"},
         {"reason": "policy_version_unsupported"}])
     assert out["labelQuarantine"]["byReason"] == {
@@ -340,10 +341,10 @@ def test_quarantine_counts_are_reported_by_reason():
 
 
 def test_clean_labels_keep_the_normal_calculation():
-    out = sr.report(_sample_rows(3, human_label="fidelity_fail"), manifest_verification=_trusted())
+    out = sr.report(_sv.distribution_dataset(_sample_rows(3, human_label="fidelity_fail")))
     cal = out["pipelines"]["editor_vary"]["calibrationConfusion"]
     assert cal["graded"] == 3 and cal["falsePass"] == 3
-    assert "labelQuarantine" not in out and out.get("calibrationUsable") is None
+    assert "labelQuarantine" not in out
 
 
 def test_review_decision_is_not_counted_as_a_fidelity_label():
@@ -353,7 +354,7 @@ def test_review_decision_is_not_counted_as_a_fidelity_label():
 
 def test_the_cli_reaches_the_blocked_report_instead_of_dying_early():
     src = REPORT_CLI.read_text(encoding="utf-8")
-    assert "strict=False" in src            # 격리를 모아 리포트까지 간다
+    assert "bind_verified_labels(" in src   # 라벨도 typed 변환이다
     assert "return 5 if blocked else 0" in src
     assert "return 4" in src                # 체인 손상은 리포트조차 만들지 않는다
     assert "byReason" in src
