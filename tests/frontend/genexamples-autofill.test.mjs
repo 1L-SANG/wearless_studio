@@ -378,7 +378,9 @@ test('storyboard exposes honest retry copy and never labels assignment as an aut
 
 test('storyboard and editor both hydrate released set members into selectable galleries', () => {
   assert.match(storyboardSource, /appendSetOnly:\s*!inSpace && cut !== 'product'/);
-  assert.match(storyboardSource, /공간세트에서 사용된 컷/);
+  // 세트 예시는 구획 라벨 없이 일반 예시 뒤에 자연 배치된다(2026-07-31 오너 확정).
+  assert.doesNotMatch(storyboardSource, /공간세트에서 사용된 컷/);
+  assert.doesNotMatch(storyboardSource, /sb-ex-source-label/);
   assert.match(storyboardSource, /appendSetOnly:\s*cutType !== 'product'/);
   assert.match(editorSource, /withStoryboardSpaceSetExamples\(c\)/);
   assert.match(editorSource, /setCatalogs\(hydratedCatalogs\)/);
