@@ -1277,13 +1277,6 @@ export function Storyboard() {
       setOpenGroupKey(null);
       setBlocks(initBlocks); setCatalogs(hydratedCatalogs); setMatchClothing(m); setClothingType(p.clothingType || 'top');
       setExampleGender(resolvedGender); setHasDetailImage(productHasDetail);
-      // 보드 썸네일·참조 예시 썸네일을 유휴 시간에 미리 받아둔다 — 섹션을 펼치는 순간
-      // 네트워크·디코드 비용이 남지 않게(카드는 lazy 로딩이라 캐시에서 즉시 그려진다).
-      prewarmImages(initBlocks.flatMap((block) => [
-        block.thumb,
-        block.ownImages?.[0],
-        block.exampleId ? exampleThumbFor(hydratedCatalogs, block.exampleId, block.cutType) : null,
-      ]));
       if (normalized || assignment.changed || usePending) {
         const autoAssignmentOnly = assignment.assignedIds.length > 0
           && assignment.protectedIds.length === 0 && !normalized && !usePending;
@@ -1305,6 +1298,17 @@ export function Storyboard() {
       }
     })();
   }, [loadRetry]);
+  /* 보드 썸네일 선캐싱 — 트리거 ① 보드 내용이 확정/변경될 때마다(진입·컷 추가·예시 교체).
+     이미 데운 URL은 모듈 캐시가 걸러내므로 재실행이 중복 요청을 만들지 않는다. */
+  useEffect(() => {
+    if (!blocks || !catalogs) return undefined;
+    return prewarmImages(blocks.flatMap((block) => [
+      block.thumb,
+      block.ownImages?.[0],
+      block.exampleId ? exampleThumbFor(catalogs, block.exampleId, block.cutType) : null,
+    ]));
+  }, [blocks, catalogs]);
+
   // 콘티 편집 자동저장 — Editor 와 동일 패턴(1.5s debounce). generate 클릭 전 이탈해도 콘티 유실 없음.
   const saveTimer = useRef(null);
   const latestBlocks = useRef(null);
@@ -2066,6 +2070,14 @@ export function Storyboard() {
           <section
             key={group.key}
             className={'sb-deck' + (open ? ' open' : '') + (dragOverSec === groupSection.id ? ' hot' : '')}
+            onPointerEnter={() => {
+              if (open || !catalogs) return;   // 펼치기 직전 신호 — 아직 안 데운 것만 앞당겨 받는다
+              prewarmImages(group.items.flatMap(({ block }) => [
+                block.thumb,
+                block.ownImages?.[0],
+                block.exampleId ? exampleThumbFor(catalogs, block.exampleId, block.cutType) : null,
+              ]), { concurrency: 6 });
+            }}
           >
             <button
               type="button"
