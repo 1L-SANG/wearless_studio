@@ -20,6 +20,7 @@ import http.server
 import json
 import os
 import pathlib
+import secrets
 import sys
 import urllib.parse
 
@@ -41,6 +42,7 @@ button.pass{border-color:#16a34a;color:#166534}button.fail{border-color:#dc2626;
 </style>
 <div class=wrap>
 <h2>편집 결과 검수 (blinded)</h2>
+<script>const NONCE=%%NONCE%%;</script>
 <p class=muted>기계 판정은 보이지 않습니다. 원본과 결과를 보고 <b>같은 상품인가</b>만 판단해 주세요.</p>
 <div class=bar>
   <span id=prog></span><span class=muted id=req></span>
@@ -70,7 +72,8 @@ function render(){if(!items.length)return;const it=items[i];
 function next(){i=Math.min(items.length-1,i+1);render();}
 function prev(){i=Math.max(0,i-1);render();}
 async function label(v){const it=items[i];
-  const r=await fetch('/api/label',{method:'POST',headers:{'Content-Type':'application/json'},
+  const r=await fetch('/api/label',{method:'POST',
+    headers:{'Content-Type':'application/json','X-QA-Nonce':NONCE},
     body:JSON.stringify({sampleId:it.sampleId,label:v})});
   const d=await r.json();
   if(d.ok){done[it.sampleId]=v;next();}else{alert('저장 실패: '+d.error);}}
@@ -83,13 +86,34 @@ def _sha(p: pathlib.Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
-def serve(dataset_dir: pathlib.Path, reviewer_id: str, port: int) -> int:
+def _resolve_dataset_id(dataset_dir: pathlib.Path, explicit: str | None,
+                        manifest_path: str | None) -> str:
+    """디렉터리 이름으로 추정하지 않는다.
+
+    디렉터리는 옮기거나 이름을 바꿀 수 있고, 그 순간 라벨이 다른 데이터셋에 묶인다.
+    라벨은 (datasetId, sampleId) 로 결합되므로 이 값이 틀리면 전부 격리되거나 —
+    더 나쁘게 — 남의 데이터셋에 붙는다.
+    """
+    if explicit:
+        return explicit.strip()
+    mpath = pathlib.Path(manifest_path) if manifest_path else (
+        dataset_dir / "manifest.json")
+    if mpath.exists():
+        did = json.loads(mpath.read_text(encoding="utf-8")).get("datasetId")
+        if did:
+            return str(did)
+    raise SystemExit(
+        "datasetId 를 알 수 없어요. --dataset-id 로 주거나 --manifest 를 지정하세요 "
+        "(디렉터리 이름으로 추정하지 않습니다).")
+
+
+def serve(dataset_dir: pathlib.Path, reviewer_id: str, port: int, *,
+          dataset_id: str, nonce: str) -> int:
     samples_path = dataset_dir / "samples.jsonl"
     if not samples_path.exists():
         raise SystemExit(f"samples.jsonl 이 없어요: {samples_path}")
     rows = [json.loads(l) for l in samples_path.read_text(encoding="utf-8").splitlines()
             if l.strip()]
-    dataset_id = dataset_dir.name
     labels_path = dataset_dir / "labels.jsonl"
     src_dir = pathlib.Path(__file__).resolve().parents[2] / "public" / "assets" / "fit-examples"
     by_id = {str(r.get("id")): r for r in rows}
@@ -110,7 +134,8 @@ def serve(dataset_dir: pathlib.Path, reviewer_id: str, port: int) -> int:
         def do_GET(self):
             path = urllib.parse.urlparse(self.path).path
             if path == "/":
-                return self._send(200, PAGE.encode(), "text/html; charset=utf-8")
+                page = PAGE.replace("%%NONCE%%", json.dumps(nonce))
+                return self._send(200, page.encode(), "text/html; charset=utf-8")
             if path == "/api/items":
                 eff = ba.effective_labels(ba.load_labels(str(labels_path)))
                 labeled = {sid: v["label"] for (ds, sid), v in eff.items()
@@ -134,17 +159,36 @@ def serve(dataset_dir: pathlib.Path, reviewer_id: str, port: int) -> int:
         def do_POST(self):
             if urllib.parse.urlparse(self.path).path != "/api/label":
                 return self._send(404, b"{}")
+            # 로컬 서버라도 다른 페이지가 이 포트로 POST 를 쏠 수 있다(브라우저는
+            # 폼·fetch 로 cross-origin 요청을 보낸다). 세 겹으로 막는다:
+            # 프로세스마다 새로 만드는 nonce, Origin 검사, JSON content-type 강제.
+            if self.headers.get("X-QA-Nonce") != nonce:
+                return self._send(403, json.dumps({"ok": False, "error": "bad nonce"}).encode())
+            origin = self.headers.get("Origin")
+            if origin and origin not in (f"http://127.0.0.1:{port}",
+                                         f"http://localhost:{port}"):
+                return self._send(403, json.dumps({"ok": False, "error": "bad origin"}).encode())
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip()
+            if ctype != "application/json":
+                return self._send(415, json.dumps(
+                    {"ok": False, "error": "content-type must be application/json"}).encode())
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}")
             sid, lab = str(body.get("sampleId")), body.get("label")
             row = by_id.get(sid)
             if row is None:
                 return self._send(400, json.dumps({"ok": False, "error": "unknown sample"}).encode())
-            # 저장 직전 재검증 — 파일이 바뀌었으면 다른 이미지에 대한 판단이다.
+            # 저장 직전 재검증 — 원본이든 결과든 파일이 바뀌었으면 그 라벨은
+            # 화면에서 본 것과 다른 이미지에 대한 판단이 된다.
+            prov = row.get("provenance") or {}
             img = dataset_dir / f"{sid}.png"
-            if not img.exists() or _sha(img) != ba.output_sha256(row):
+            src = src_dir / str(row.get("source") or "")
+            if not img.exists() or _sha(img) != prov.get("outputSha256"):
                 return self._send(409, json.dumps(
                     {"ok": False, "error": "output sha mismatch"}).encode())
+            if not src.exists() or _sha(src) != prov.get("sourceSha256"):
+                return self._send(409, json.dumps(
+                    {"ok": False, "error": "source sha mismatch"}).encode())
             try:
                 rec = ba.make_label(sample=row, label=lab, reviewer_id=reviewer_id,
                                     dataset_id=dataset_id)
@@ -168,9 +212,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="blinded labeling (local only)")
     ap.add_argument("--dataset-dir", required=True)
     ap.add_argument("--reviewer-id", required=True)
+    ap.add_argument("--dataset-id", help="없으면 manifest.datasetId 를 읽는다")
+    ap.add_argument("--manifest", help="manifest.json 경로 (기본: <dataset-dir>/manifest.json)")
     ap.add_argument("--port", type=int, default=8799)
     a = ap.parse_args()
-    return serve(pathlib.Path(a.dataset_dir).resolve(), a.reviewer_id.strip(), a.port)
+    d = pathlib.Path(a.dataset_dir).resolve()
+    return serve(d, a.reviewer_id.strip(), a.port,
+                 dataset_id=_resolve_dataset_id(d, a.dataset_id, a.manifest),
+                 nonce=secrets.token_urlsafe(24))
 
 
 if __name__ == "__main__":

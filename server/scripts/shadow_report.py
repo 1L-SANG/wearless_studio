@@ -22,6 +22,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app import blinded_audit as ba  # noqa: E402
 from app.shadow_report import report  # noqa: E402
 
 # 필요한 컬럼만. edit_qc_result 는 판정 요약이라 provider 원문이 들어 있지 않다
@@ -66,6 +67,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Phase 3 shadow 평가 리포트 (read-only)")
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL"))
     ap.add_argument("--jsonl", help="shadow_collect 가 남긴 samples.jsonl (DB 없이 집계)")
+    ap.add_argument("--labels", help="blinded_label 이 남긴 labels.jsonl")
+    ap.add_argument("--manifest", help="데이터셋 manifest.json")
+    ap.add_argument("--dataset-id", help="라벨 결합 키. 없으면 manifest.datasetId 를 쓴다")
     ap.add_argument("--limit", type=int, default=5000)
     ap.add_argument("--image-usd", type=float, default=0.0,
                     help="이미지 1회 단가(USD). 안 주면 비용은 0 으로 두고 호출 수만 센다.")
@@ -88,7 +92,32 @@ def main() -> int:
                 r.setdefault("review_decision", None)
                 r.setdefault("has_pattern_or_logo", False)
                 rows.append(r)
-        out = report(rows, image_usd=args.image_usd, vision_usd=args.vision_usd)
+        manifest = None
+        if args.manifest:
+            manifest = json.loads(open(args.manifest, encoding="utf-8").read())
+        dataset_id = args.dataset_id or (manifest or {}).get("datasetId")
+        quarantined = []
+        if args.labels:
+            if not dataset_id:
+                print("--labels 를 쓰려면 --dataset-id 또는 --manifest 가 필요해요.",
+                      file=sys.stderr)
+                return 2
+            # 체인 검증 → 최신 라벨 → 결합. 어느 단계든 실패하면 멈춘다.
+            # 계속 진행해서 "라벨 일부만 붙은" 리포트를 내면 커버리지가 거짓이 된다.
+            try:
+                records = ba.load_labels(args.labels)
+                eff = ba.effective_labels(records)
+                rows, quarantined = ba.apply_labels(rows, eff, dataset_id=dataset_id,
+                                                    strict=True)
+            except ba.LabelChainError as e:
+                print(f"라벨 파일이 손상됐어요(append-only 체인 불일치): {e}",
+                      file=sys.stderr)
+                return 4
+            except ValueError as e:
+                print(f"라벨을 표본에 붙일 수 없어요: {e}", file=sys.stderr)
+                return 5
+        out = report(rows, image_usd=args.image_usd, vision_usd=args.vision_usd,
+                     manifest=manifest, quarantined=quarantined)
         if args.json:
             print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
         else:
@@ -129,6 +158,12 @@ def main() -> int:
 
 def _render(out) -> None:
     print(f"표본 {out['total']}건  ({out['samplesByPipeline']})")
+    if out.get("calibrationUsable") is False:
+        print(f"  ** 이 데이터셋은 캘리브레이션에 쓸 수 없어요: "
+              f"{out.get('calibrationBlockedReasons')}")
+    if out.get("labelQuarantine"):
+        q = out["labelQuarantine"]
+        print(f"  ** 격리된 라벨 {q['count']}건: {q['byReason']}")
     for name, p in out["pipelines"].items():
         print(f"\n{'=' * 62}\n{name}  —  {p['samples']}건")
         if not p["samples"]:
@@ -139,6 +174,9 @@ def _render(out) -> None:
         print(f"  사용자 판단    : {p['byUserDecision']}")
         print(f"  Vision 상태    : {p['byVisionStatus']}")
         print(f"  pattern/logo   : {p['byPatternOrLogo']}")
+        cal = p["calibrationConfusion"]
+        print(f"  calibration    : graded={cal['graded']} falsePass={cal['falsePass']} "
+              f"(measured={cal['falsePassMeasured']})")
         c = p["confusion"]
         print(f"  confusion      : {c['matrix']}  (판단된 표본 {c['graded']})")
         print(f"    false pass 후보 {c['falsePassCandidates']} / 과잉검수 {c['overReview']}")

@@ -23,9 +23,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import time
 import uuid
@@ -36,6 +38,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from app.agents import cut_variator, edit_intent_vision  # noqa: E402
+from app.agents.edit_intent_vision import PROMPT_VERSION as VISION_PROMPT_VERSION  # noqa: E402
 from app.agents.gemini_image import GeminiImageClient, InlineImage  # noqa: E402
 from app.config import load_settings  # noqa: E402
 from app.services import edit_intent_qc, edit_qc_scope, editor_vary  # noqa: E402
@@ -74,6 +77,78 @@ async def observe_and_decide(settings, *, baseline, edited, changes, timeout):
     # 관찰 원문이 아니라 정규화 관찰 + 계측 메타만 남긴다.
     qc["vision"] = {"observation": observation, "meta": meta}
     return qc, edit_type, attempted
+
+
+_PROMPT_FILE = pathlib.Path(__file__).resolve().parents[1] / "prompts" / "edit_intent_qc_v1.txt"
+
+# resume 이 같은 조건인지 판단하는 기준. 이 다섯이 다르면 다른 실험이다.
+RESUME_KEYS = ("generationModel", "generationPromptSha256", "visionPromptSha256",
+               "qcPolicyVersion", "codeCommit")
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _code_commit() -> str | None:
+    r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(REPO),
+                       capture_output=True, text=True)
+    return r.stdout.strip() or None
+
+
+def _provenance(prepared, *, attempt: int, source_bytes: bytes,
+                output_bytes: bytes) -> dict:
+    """표본 1건이 **무엇으로** 만들어졌는지 그 자리에서 찍는다.
+
+    나중에 기억으로 채우면 그건 provenance 가 아니라 추정이다. 모델이 바뀌었는지
+    프롬프트가 바뀌었는지 모르는 표본은 다른 수집분과 합칠 수 없고, 합칠 수 없는
+    데이터로 임계값을 정하면 그 임계값의 근거도 없다.
+    """
+    return {
+        "sourceSha256": _sha(source_bytes),
+        "outputSha256": _sha(output_bytes),
+        "generationModel": prepared.model,
+        "generationPromptSha256": _sha(prepared.prompt.encode()),
+        "generationPromptTemplateVersion": getattr(cut_variator, "PROMPT_VERSION", None),
+        "visionPromptVersion": VISION_PROMPT_VERSION,
+        "visionPromptSha256": _sha(_PROMPT_FILE.read_bytes()),
+        "qcPolicyVersion": edit_qc_scope.QC_POLICY_VERSION,
+        "codeCommit": _code_commit(),
+        "imageSize": prepared.image_size,
+        "aspectRatio": getattr(prepared, "aspect_ratio", None),
+        "callAttemptIndex": attempt,
+    }
+
+
+def _assert_resumable(samples_path: pathlib.Path) -> None:
+    """resume 은 **같은 조건**일 때만 허용한다.
+
+    모델이나 프롬프트나 코드가 바뀐 뒤 이어 붙이면 한 데이터셋 안에 서로 다른 실험이
+    섞이고, 그건 나중에 분리할 수 없다(어느 행이 어느 조건인지 표시가 없으므로).
+    """
+    if not samples_path.exists():
+        return
+    rows = [json.loads(l) for l in samples_path.read_text(encoding="utf-8").splitlines()
+            if l.strip()]
+    done = [r for r in rows if r.get("output_id")]
+    if not done:
+        return
+    seen = {tuple((r.get("provenance") or {}).get(k) for k in RESUME_KEYS) for r in done}
+    if len(seen) > 1:
+        raise SystemExit("REFUSING: 기존 파일에 이미 서로 다른 provenance 가 섞여 있어요.")
+    prev = dict(zip(RESUME_KEYS, seen.pop()))
+    if any(prev.get(k) is None for k in RESUME_KEYS):
+        raise SystemExit(
+            "REFUSING: 기존 표본에 provenance 가 없어 같은 조건인지 확인할 수 없어요. "
+            "새 --dataset-id 로 모으세요.")
+    now = {"visionPromptSha256": _sha(_PROMPT_FILE.read_bytes()),
+           "qcPolicyVersion": edit_qc_scope.QC_POLICY_VERSION,
+           "codeCommit": _code_commit()}
+    for k, v in now.items():
+        if prev.get(k) != v:
+            raise SystemExit(
+                f"REFUSING: resume 조건 불일치 ({k}: {prev.get(k)!r} != {v!r}) — "
+                "다른 코드/프롬프트로 모은 표본과 섞을 수 없어요. 새 --dataset-id 를 쓰세요.")
 
 
 def _sources(limit: int) -> list[pathlib.Path]:
@@ -119,6 +194,8 @@ async def _one_sample(settings, gemini, *, src_path, case_name, changes, timeout
     out_path = out_dir / f"{row['id']}.png"
     out_path.write_bytes(edited_bytes)
     row["output_id"] = str(uuid.uuid4())
+    row["provenance"] = _provenance(prepared, attempt=1, source_bytes=raw,
+                                    output_bytes=edited_bytes)
 
     qc, _et, vision_attempted = await observe_and_decide(
         settings, baseline=source, edited=InlineImage(edited_mime, edited_bytes),
@@ -127,6 +204,9 @@ async def _one_sample(settings, gemini, *, src_path, case_name, changes, timeout
     row["edit_qc_result"] = qc
     row["machine_decision"] = edit_qc_scope.machine_decision(qc, had_output=True)
     row["status"] = row["machine_decision"]      # 워크플로 상태 == 판정 (수집기는 잡이 없다)
+    vmeta = (qc.get("vision") or {}).get("meta") or {}
+    row["provenance"]["visionProvider"] = vmeta.get("provider")
+    row["provenance"]["visionStatus"] = vmeta.get("status")
     row["completed_at"] = time.time()
     return row
 
@@ -139,8 +219,12 @@ async def vision_backfill(args) -> int:
     """
     settings = load_settings()
     src_dir = EXAMPLES
-    out_dir = pathlib.Path(args.out)
-    rows = [json.loads(l) for l in open(args.vision_backfill, encoding="utf-8") if l.strip()]
+    # 결과 PNG 는 samples.jsonl 옆에 있다. --out 을 다시 조합하면 dataset 디렉터리가
+    # 빠져 "파일 없음"으로 전부 skip 된다.
+    samples_file = pathlib.Path(args.vision_backfill).resolve()
+    out_dir = samples_file.parent
+    rows = [json.loads(l) for l in samples_file.read_text(encoding="utf-8").splitlines()
+            if l.strip()]
     todo = [r for r in rows if r.get("output_id")][:args.max_calls]
     print(f"backfill 대상 {len(todo)}건 (이미지 생성 0회, Vision {len(todo)}회, "
           f"추정 ${len(todo) * args.vision_usd:.2f})")

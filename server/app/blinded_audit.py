@@ -149,7 +149,11 @@ def append_label(path: str, record: dict) -> dict:
         fcntl.flock(fd, fcntl.LOCK_EX)
         with os.fdopen(os.dup(fd), "r", encoding="utf-8") as fh:
             lines = [l for l in fh.read().splitlines() if l.strip()]
-        prev = json.loads(lines[-1])["eventHash"] if lines else GENESIS
+        # 잠금 안에서 기존 체인을 통째로 검증한다. 밖에서 검증하면 그 사이에 파일이
+        # 바뀔 수 있고, 그러면 깨진 체인 위에 새 행을 얹게 된다.
+        existing = [json.loads(l) for l in lines]
+        verify_chain(existing)
+        prev = existing[-1]["eventHash"] if existing else GENESIS
         rec = dict(record)
         rec["eventId"] = rec.get("eventId") or hashlib.sha256(
             _canonical([rec, prev, len(lines)])).hexdigest()[:32]

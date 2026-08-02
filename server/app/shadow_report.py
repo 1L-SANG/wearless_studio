@@ -364,9 +364,11 @@ def human_label_coverage(rows) -> dict:
     없으면 false pass 율은 0 이 아니라 **미측정**이다. 그 둘을 같게 취급하면
     "false pass 0건"이라는 없는 근거로 enforce 를 켜게 된다.
     """
+    # review_decision 은 사용자 행동이지 fidelity 측정이 아니다. 여기 섞으면
+    # "라벨 30건"이라는 잘못된 커버리지가 만들어지고 그게 곧 readiness 로 간다.
     passes = [r for r in rows if machine_decision(r) == "pass"]
-    labeled_pass = [r for r in passes if r.get("human_label") or r.get("review_decision")]
-    labeled_all = [r for r in rows if r.get("human_label") or r.get("review_decision")]
+    labeled_pass = [r for r in passes if r.get("human_label")]
+    labeled_all = [r for r in rows if r.get("human_label")]
     return {"passSamples": len(passes),
             "passLabeled": len(labeled_pass),
             "passCoverage": (len(labeled_pass) / len(passes)) if passes else None,
@@ -407,8 +409,24 @@ def _verdict(rows, *, is_enforce_eligible: bool = True) -> dict:
             "basis": "calibration_confusion"}
 
 
+def _force_blocked(block: dict, reason: str) -> None:
+    """데이터셋이 무효면 그 안의 어떤 하위 판정도 통과일 수 없다.
+
+    상위에만 표시하고 하위 verdict 를 그대로 두면, 누군가 edit type 블록만 보고
+    enforce_candidate 를 읽어 간다. 무효는 전파돼야 한다.
+    """
+    for v in (block.get("verdict"), *(t.get("verdict") for t in
+                                      (block.get("byEditTypeDetail") or {}).values())):
+        if not v:
+            continue
+        v["enforceReady"] = False
+        v["status"] = "blocked_by_manifest"
+        if reason not in v["blockers"]:
+            v["blockers"] = [reason, *v["blockers"]]
+
+
 def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
-           manifest: dict | None = None) -> dict:
+           manifest: dict | None = None, quarantined: list | None = None) -> dict:
     """파이프라인 → edit type 순으로 **두 번** 쪼갠다.
 
     파이프라인만 나누면 BACKGROUND_ONLY 6건이 CUSTOM 24건에 묻혀 "editor_vary 30건"
@@ -423,11 +441,18 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
            "samplesByPipeline": {p: len(v) for p, v in split.items()},
            "unknownPipelineSamples": [r.get("id") for r in split["unknown"]][:50],
            "pipelines": {}}
+    invalid_manifest = bool(manifest) and manifest.get("validForCalibration") is False
     if manifest is not None:
         out["manifest"] = manifest
-        if manifest.get("validForCalibration") is False:
+        if invalid_manifest:
             out["calibrationUsable"] = False
             out["calibrationBlockedReasons"] = manifest.get("invalidReasons") or []
+    if quarantined:
+        # 격리된 라벨은 조용히 사라지면 안 된다 — 커버리지가 그만큼 거짓이 된다.
+        out["labelQuarantine"] = {"count": len(quarantined),
+                                  "byReason": dict(Counter(q.get("reason")
+                                                           for q in quarantined)),
+                                  "items": quarantined[:50]}
 
     for p, subset in split.items():
         block = _axis_block(subset, image_usd=image_usd, vision_usd=vision_usd)
@@ -448,5 +473,8 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
         block["verdict"] = _verdict(eligible_rows) if p != "unknown" else {
             "enforceReady": False, "status": "insufficient_data",
             "blockers": ["source_kind 미상 — 어느 파이프라인인지 모른다"]}
+        if invalid_manifest:
+            _force_blocked(block, "manifest.validForCalibration=false — 이 데이터셋으로는 "
+                                  "어떤 판정도 근거가 되지 않는다")
         out["pipelines"][p] = block
     return out
