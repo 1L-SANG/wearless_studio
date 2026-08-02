@@ -75,12 +75,6 @@
     },
     {
       "cutType": "product",
-      "shot": "ghost",
-      "clothingType": "bottom",
-      "gender": null
-    },
-    {
-      "cutType": "product",
       "shot": "detail",
       "clothingType": "bottom",
       "gender": null
