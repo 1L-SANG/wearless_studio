@@ -1,0 +1,379 @@
+{
+  "startedAt": 1785635012.476285,
+  "finishedAt": 1785635070.880749,
+  "commit": "10fe4a2bd06ad9bc9b2a5808a18f73381a5ea6d5",
+  "browser": "Chrome/150.0.7871.187",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+  "viewport": {
+    "default": "1200x999",
+    "narrowTested": "390x780"
+  },
+  "harnessUrl": "http://localhost:5173/qa-review-gate.html",
+  "totals": {
+    "automated": 43,
+    "automatedPass": 43,
+    "manualUnverified": 2
+  },
+  "scenarios": [
+    {
+      "scenarioId": "A1",
+      "name": "plain 즉시 삽입",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "A2",
+      "name": "pass 즉시 삽입",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "A3",
+      "name": "accepted 즉시 삽입·API 0",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "A4",
+      "name": "미검수 → 비교 모달·삽입 0",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": "docs/shadow/qa-02-review-dialog.png"
+    },
+    {
+      "scenarioId": "A5",
+      "name": "모달에 원본+결과 2장",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "A6",
+      "name": "닫기 = 반영 0",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "A7",
+      "name": "rejected 도 모달 재표시",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "A8",
+      "name": "rejected→accepted 후 삽입",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "A9",
+      "name": "배지가 확인함으로 갱신",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": "docs/shadow/qa-01-wardrobe-badges.png"
+    },
+    {
+      "scenarioId": "F1",
+      "name": "기록 실패 → 삽입 0·모달 유지",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "F2",
+      "name": "재시도 성공 → 삽입 1",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "F3",
+      "name": "기록 중 버튼 비활성",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "F4",
+      "name": "중복 클릭 → API 1회·삽입 1회",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B1",
+      "name": "FeatureIconsForm 슬롯 3개",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B2",
+      "name": "PhotoPicker 열림",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B3",
+      "name": "미검수 → 폼 미반영",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B4",
+      "name": "검수 모달이 폼 위에",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B5",
+      "name": "승인 후 슬롯 0에만 반영",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B6",
+      "name": "rejected 도 모달",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B7",
+      "name": "마지막 슬롯 반영",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B8",
+      "name": "기록 실패 → 폼 미반영",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B9",
+      "name": "닫기 = 반영 0",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B10",
+      "name": "검수 중 폼 닫힘 → 반영 0·크래시 없음",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B11",
+      "name": "ModelInfoForm 슬롯 렌더",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B12",
+      "name": "모델: 미검수 미반영",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "B13",
+      "name": "모델: 승인 후 반영",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "C1",
+      "name": "pendingSlot 도 게이트 통과",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "C2",
+      "name": "승인 후 목적 보존(SLOT)",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "C3",
+      "name": "일반 캔버스 경로",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "C4",
+      "name": "기록 중 오버레이가 뒤 클릭 차단",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "C5",
+      "name": "첫 승인만 삽입",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "C6",
+      "name": "다음 검수 모달",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "C7",
+      "name": "취소 후 삽입 없음",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "D1",
+      "name": "sourceSrc 누락 fallback",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "D2",
+      "name": "결과 이미지 1장 렌더",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "D3",
+      "name": "긴 사유에도 가로 스크롤 없음",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": "docs/shadow/qa-03-long-reasons.png"
+    },
+    {
+      "scenarioId": "D4",
+      "name": "위반/변경 목록 표시",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "D5",
+      "name": "깨진 이미지에도 모달 유지",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "D6",
+      "name": "390px 가로 스크롤 없음",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": "docs/shadow/qa-04-narrow-390.png"
+    },
+    {
+      "scenarioId": "D7",
+      "name": "비교 2열 유지",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "195.25px 195.25px",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "D8",
+      "name": "좁은 화면에서도 두 이미지 보임",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "D9",
+      "name": "모달 버튼 focus 가능",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "D10",
+      "name": "ESC 로 모달 닫힘",
+      "kind": "automated",
+      "result": "pass",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "M1",
+      "name": "색약 사용자가 배지 3종을 구분하는가",
+      "kind": "manual",
+      "result": "fail",
+      "detail": "색 외에 아이콘·텍스트가 함께 있으나 실사용자 확인 필요",
+      "screenshot": null
+    },
+    {
+      "scenarioId": "M2",
+      "name": "스크린리더 낭독 순서",
+      "kind": "manual",
+      "result": "fail",
+      "detail": "미검증 — 모달에 role/aria 미지정",
+      "screenshot": null
+    }
+  ]
+}

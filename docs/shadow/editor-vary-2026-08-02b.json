@@ -67,6 +67,43 @@
         "overReview": 0,
         "sufficient": false
       },
+      "calibrationConfusion": {
+        "matrix": {
+          "pass": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "review_required": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "reject": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "failed": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          }
+        },
+        "graded": 0,
+        "labelCoverageByDecision": {
+          "pass": null,
+          "review_required": null,
+          "reject": null,
+          "failed": null
+        },
+        "falsePass": null,
+        "falsePassMeasured": false,
+        "passConfirmed": 0,
+        "overReviewCandidates": 0,
+        "falseRejectCandidates": 0,
+        "sufficient": false
+      },
       "metricDistributions": {},
       "visionConfidence": {
         "n": 0,
@@ -106,10 +143,11 @@
         "enforceReady": false,
         "blockers": [
           "표본 부족: 0 < 30",
-          "사람이 판단한 표본 부족: 0 < 30",
+          "blinded 라벨 표본 부족: 0 < 30",
           "pass 표본 0건 — false pass 를 측정할 대상이 없다"
         ],
-        "status": "insufficient_data"
+        "status": "insufficient_data",
+        "basis": "calibration_confusion"
       }
     },
     "editor_vary": {
@@ -187,6 +225,43 @@
         "graded": 0,
         "falsePassCandidates": 0,
         "overReview": 0,
+        "sufficient": false
+      },
+      "calibrationConfusion": {
+        "matrix": {
+          "pass": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "review_required": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 15
+          },
+          "reject": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 15
+          },
+          "failed": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          }
+        },
+        "graded": 0,
+        "labelCoverageByDecision": {
+          "pass": null,
+          "review_required": 0.0,
+          "reject": 0.0,
+          "failed": null
+        },
+        "falsePass": null,
+        "falsePassMeasured": false,
+        "passConfirmed": 0,
+        "overReviewCandidates": 0,
+        "falseRejectCandidates": 0,
         "sufficient": false
       },
       "metricDistributions": {
@@ -452,6 +527,43 @@
             "overReview": 0,
             "sufficient": false
           },
+          "calibrationConfusion": {
+            "matrix": {
+              "pass": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 0
+              },
+              "review_required": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 6
+              },
+              "reject": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 0
+              },
+              "failed": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 0
+              }
+            },
+            "graded": 0,
+            "labelCoverageByDecision": {
+              "pass": null,
+              "review_required": 0.0,
+              "reject": null,
+              "failed": null
+            },
+            "falsePass": null,
+            "falsePassMeasured": false,
+            "passConfirmed": 0,
+            "overReviewCandidates": 0,
+            "falseRejectCandidates": 0,
+            "sufficient": false
+          },
           "metricDistributions": {
             "bodyWidth": {
               "n": 6,
@@ -583,10 +695,11 @@
             "enforceReady": false,
             "blockers": [
               "표본 부족: 6 < 30",
-              "사람이 판단한 표본 부족: 0 < 30",
+              "blinded 라벨 표본 부족: 0 < 30",
               "pass 표본 0건 — false pass 를 측정할 대상이 없다"
             ],
-            "status": "insufficient_data"
+            "status": "insufficient_data",
+            "basis": "calibration_confusion"
           }
         },
         "CUSTOM_REVIEW_REQUIRED": {
@@ -664,6 +777,43 @@
             "graded": 0,
             "falsePassCandidates": 0,
             "overReview": 0,
+            "sufficient": false
+          },
+          "calibrationConfusion": {
+            "matrix": {
+              "pass": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 0
+              },
+              "review_required": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 9
+              },
+              "reject": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 15
+              },
+              "failed": {
+                "fidelity_pass": 0,
+                "fidelity_fail": 0,
+                "unlabeled": 0
+              }
+            },
+            "graded": 0,
+            "labelCoverageByDecision": {
+              "pass": null,
+              "review_required": 0.0,
+              "reject": 0.0,
+              "failed": null
+            },
+            "falsePass": null,
+            "falsePassMeasured": false,
+            "passConfirmed": 0,
+            "overReviewCandidates": 0,
+            "falseRejectCandidates": 0,
             "sufficient": false
           },
           "metricDistributions": {
@@ -847,10 +997,11 @@
             "blockers": [
               "정책상 자동 통과 대상이 아닌 edit type (enforce 후보 제외)",
               "표본 부족: 24 < 30",
-              "사람이 판단한 표본 부족: 0 < 30",
+              "blinded 라벨 표본 부족: 0 < 30",
               "pass 표본 0건 — false pass 를 측정할 대상이 없다"
             ],
-            "status": "insufficient_data"
+            "status": "insufficient_data",
+            "basis": "calibration_confusion"
           }
         }
       },
@@ -859,10 +1010,11 @@
         "enforceReady": false,
         "blockers": [
           "표본 부족: 6 < 30",
-          "사람이 판단한 표본 부족: 0 < 30",
+          "blinded 라벨 표본 부족: 0 < 30",
           "pass 표본 0건 — false pass 를 측정할 대상이 없다"
         ],
-        "status": "insufficient_data"
+        "status": "insufficient_data",
+        "basis": "calibration_confusion"
       }
     },
     "unknown": {
@@ -923,6 +1075,43 @@
         "graded": 0,
         "falsePassCandidates": 0,
         "overReview": 0,
+        "sufficient": false
+      },
+      "calibrationConfusion": {
+        "matrix": {
+          "pass": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "review_required": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "reject": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          },
+          "failed": {
+            "fidelity_pass": 0,
+            "fidelity_fail": 0,
+            "unlabeled": 0
+          }
+        },
+        "graded": 0,
+        "labelCoverageByDecision": {
+          "pass": null,
+          "review_required": null,
+          "reject": null,
+          "failed": null
+        },
+        "falsePass": null,
+        "falsePassMeasured": false,
+        "passConfirmed": 0,
+        "overReviewCandidates": 0,
+        "falseRejectCandidates": 0,
         "sufficient": false
       },
       "metricDistributions": {},

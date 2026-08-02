@@ -9,19 +9,41 @@
 set -euo pipefail
 
 CONTAINER=${CONTAINER:-supabase_db_wearless_studio}
-# 이름은 스크립트가 만든다. 밖에서 받은 이름을 그대로 DROP 하면 남의 DB 를 지운다.
+# 이름은 **스크립트가** 만든다. 밖에서 받은 이름을 그대로 DROP 하면 남의 DB 를 지운다.
+# 기본값은 외부 입력을 아예 안 받는다 — uuidgen 이 없으면 커널 난수로 만든다.
 DB_PREFIX="rehearsal_p3_"
-DB_SUFFIX=${DB_SUFFIX:-$$}
+_rand() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr 'A-Z-' 'a-z_'
+  else
+    LC_ALL=C tr -dc 'a-f0-9' < /dev/urandom | head -c 24
+  fi
+}
+# REHEARSAL_DB_SUFFIX 는 디버깅용 override 다. glob 이 아니라 **완전 정규식**으로 조인다
+# (case 패턴은 `abc; DROP` 같은 문자열도 통과시킬 수 있다).
+if [ -n "${REHEARSAL_DB_SUFFIX:-}" ]; then
+  if ! printf '%s' "$REHEARSAL_DB_SUFFIX" | grep -Eq '^[A-Za-z0-9_]+$'; then
+    echo "REFUSING: DB suffix 는 ^[A-Za-z0-9_]+$ 만 허용해요"; exit 2
+  fi
+  DB_SUFFIX="$REHEARSAL_DB_SUFFIX"
+else
+  DB_SUFFIX="$(_rand)"
+fi
 DB="${DB_PREFIX}${DB_SUFFIX}"
-case "$DB" in
-  ${DB_PREFIX}[A-Za-z0-9_]*) : ;;
-  *) echo "REFUSING: 안전하지 않은 DB 이름 ($DB)"; exit 2 ;;
-esac
+if ! printf '%s' "$DB" | grep -Eq "^${DB_PREFIX}[A-Za-z0-9_]+$"; then
+  echo "REFUSING: 안전하지 않은 DB 이름"; exit 2
+fi
 CREATED=0
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$ROOT/supabase/migrations"
 
-psql_root() { docker exec -i "$CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
+# 식별자·리터럴은 psql 변수로 넘긴다. :"db" 는 식별자 인용, :'db' 는 리터럴 인용이라
+# 셸 문자열을 SQL 에 이어 붙일 일이 없다.
+psql_root() { docker exec -i "$CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+                -v db="$DB" "$@"; }
+# -c 는 psql 변수 보간을 하지 않는다. 식별자를 다루는 문장은 stdin 으로 넣는다.
+psql_root_sql() { printf '%s\n' "$1" | docker exec -i "$CONTAINER" psql -U postgres \
+                    -d postgres -v ON_ERROR_STOP=1 -v db="$DB" -tA; }
 psql_db()   { docker exec -i "$CONTAINER" psql -U postgres -d "$DB" -v ON_ERROR_STOP=1 "$@"; }
 q()         { docker exec -i "$CONTAINER" psql -U postgres -d "$DB" -tAc "$1" 2>&1 || true; }
 
@@ -55,22 +77,22 @@ fi
 echo "== 0. disposable DB 준비 ($DB @ $CONTAINER) =="
 # 이미 있으면 지우지 않는다 — 그 DB 가 무엇인지 우리가 모른다. 유일한 이름을 새로 찾는다.
 for _try in 1 2 3 4 5; do
-  exists=$(psql_root -tAc "select 1 from pg_database where datname = '$DB'" || true)
+  exists=$(psql_root_sql "select 1 from pg_database where datname = :'db';" || true)
   [ -z "$exists" ] && break
-  DB="${DB_PREFIX}${DB_SUFFIX}_${_try}"
-  echo "  이름 충돌 회피 → $DB"
+  DB="${DB_PREFIX}$(_rand)"
+  echo "  이름 충돌 회피 → 새 이름 생성"
 done
-if [ -n "${exists:-}" ] && [ "$DB" = "${DB_PREFIX}${DB_SUFFIX}_5" ]; then
+if [ -n "${exists:-}" ]; then
   echo "REFUSING: 유일한 DB 이름을 못 만들었어요"; exit 2
 fi
-psql_root -c "create database \"$DB\"" >/dev/null
+psql_root_sql 'create database :"db";' >/dev/null
 CREATED=1
 
 # 이 실행이 만든 DB 만 정리한다. 실패·중단에도 반드시 돈다.
 cleanup() {
   local code=$?
   if [ "$CREATED" = "1" ] && [ "${KEEP:-0}" != "1" ]; then
-    psql_root -c "drop database if exists \"$DB\" (force)" >/dev/null 2>&1 \
+    psql_root_sql 'drop database if exists :"db" (force);' >/dev/null 2>&1 \
       && echo "disposable DB 삭제됨 ($DB)"
   elif [ "$CREATED" = "1" ]; then
     echo "DB 유지: $DB"

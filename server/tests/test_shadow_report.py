@@ -196,11 +196,12 @@ def _many(n, **kw):
 
 
 def test_a_single_false_pass_blocks_enforce_even_with_many_samples():
-    rows = _many(60, status="pass", review_decision="accepted", edit_qc_result=qc())
-    rows += [row(status="pass", review_decision="rejected", edit_qc_result=qc())]
+    # readiness 기준은 blinded fidelity 라벨이다(운영 reviewDecision 아님).
+    rows = _many(60, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
+    rows += [row(edit_qc_result=qc(decision="pass"), human_label="fidelity_fail")]
     v = sr.report(rows)["pipelines"]["editor_vary"]["verdict"]
     assert v["enforceReady"] is False and v["status"] == "shadow_only"
-    assert any("거절한 사례" in b for b in v["blockers"])
+    assert any("false pass 1건" in b for b in v["blockers"])
 
 
 def test_high_vision_unavailability_blocks_enforce():
@@ -214,21 +215,21 @@ def test_high_vision_unavailability_blocks_enforce():
 
 
 def test_enforce_candidate_needs_both_sample_floors():
-    rows = _many(60, status="pass", review_decision="accepted", edit_qc_result=qc())
+    rows = _many(60, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
     v = sr.report(rows)["pipelines"]["editor_vary"]["verdict"]
     assert v["status"] == "enforce_candidate" and v["enforceReady"] is True
 
 
 def test_unreviewed_bulk_never_reaches_enforce_candidate():
     """사람이 아무도 안 본 데이터는 아무리 많아도 검증 표본이 아니다."""
-    v = sr.report(_many(500, status="pass", edit_qc_result=qc()))[
+    v = sr.report(_many(500, edit_qc_result=qc(decision="pass")))[
         "pipelines"]["editor_vary"]["verdict"]
     assert v["status"] == "insufficient_data"
 
 
 def test_vision_unavailable_alone_blocks_enforce():
     """Vision 이 없으면 자동 통과 금지 — 표본이 아무리 많아도."""
-    v = sr.report(_many(80, status="pass", review_decision="accepted",
+    v = sr.report(_many(80, human_label="fidelity_pass",
                         edit_qc_result=qc(decision="pass", vision={})))[
         "pipelines"]["editor_vary"]["verdict"]
     assert v["enforceReady"] is False
@@ -408,3 +409,82 @@ def test_an_invalid_manifest_marks_the_whole_report_unusable():
 def test_a_valid_manifest_does_not_add_a_block_flag():
     out = sr.report([row()], manifest={"validForCalibration": True})
     assert "calibrationUsable" not in out
+
+
+# ── calibration confusion (9/N 최종 보정) ──────────────────────────────────
+# 운영 reviewDecision(사용자 행동)과 blinded fidelity 라벨(측정값)을 섞지 않는다.
+
+def _bg(n, **kw):
+    return [row(edit_type="BACKGROUND_ONLY", **kw) for _ in range(n)]
+
+
+def test_pass_with_fidelity_fail_is_a_false_pass():
+    rows = [row(edit_qc_result=qc(decision="pass"), human_label="fidelity_fail")]
+    cal = sr.calibration_confusion(rows)
+    assert cal["falsePass"] == 1 and cal["falsePassMeasured"] is True
+    assert cal["matrix"]["pass"]["fidelity_fail"] == 1
+
+
+def test_one_false_pass_blocks_enforce():
+    rows = _bg(59, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
+    rows += _bg(1, edit_qc_result=qc(decision="pass"), human_label="fidelity_fail")
+    v = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+        "BACKGROUND_ONLY"]["verdict"]
+    assert v["enforceReady"] is False
+    assert any("false pass 1건" in b for b in v["blockers"])
+
+
+def test_blinded_labels_count_toward_calibration_graded():
+    rows = _bg(30, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
+    cal = sr.report(rows)["pipelines"]["editor_vary"]["calibrationConfusion"]
+    assert cal["graded"] == 30 and cal["sufficient"] is True
+
+
+def test_production_review_decisions_alone_cannot_satisfy_readiness():
+    """reviewDecision 30건은 사용자 행동이지 fidelity 측정이 아니다."""
+    rows = _bg(30, edit_qc_result=qc(decision="pass"), review_decision="accepted")
+    p = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"]["BACKGROUND_ONLY"]
+    assert p["confusion"]["graded"] == 30          # 운영 표는 채워지지만
+    assert p["calibrationConfusion"]["graded"] == 0   # 캘리브레이션 표는 비어 있다
+    assert p["verdict"]["enforceReady"] is False
+    assert p["verdict"]["basis"] == "calibration_confusion"
+
+
+def test_zero_pass_labels_means_unmeasured_not_zero():
+    rows = _bg(30, edit_qc_result=qc(decision="pass"))
+    cal = sr.report(rows)["pipelines"]["editor_vary"]["calibrationConfusion"]
+    assert cal["falsePass"] is None and cal["falsePassMeasured"] is False
+    assert cal["matrix"]["pass"]["unlabeled"] == 30
+
+
+def test_over_review_and_false_reject_candidates_are_counted():
+    rows = [row(edit_qc_result=qc(decision="review_required"), human_label="fidelity_pass"),
+            row(edit_qc_result=qc(decision="reject"), human_label="fidelity_pass")]
+    cal = sr.calibration_confusion(rows)
+    assert cal["overReviewCandidates"] == 1 and cal["falseRejectCandidates"] == 1
+
+
+def test_label_coverage_is_reported_per_decision():
+    rows = (_bg(2, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
+            + _bg(2, edit_qc_result=qc(decision="pass"))
+            + _bg(1, edit_qc_result=qc(decision="reject")))
+    cov = sr.calibration_confusion(rows)["labelCoverageByDecision"]
+    assert cov["pass"] == pytest.approx(0.5) and cov["reject"] == 0.0
+    assert cov["failed"] is None
+
+
+def test_custom_stays_excluded_from_enforce_even_when_fully_labeled():
+    rows = [row(edit_type="CUSTOM_REVIEW_REQUIRED", edit_qc_result=qc(decision="pass"),
+                human_label="fidelity_pass") for _ in range(60)]
+    d = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+        "CUSTOM_REVIEW_REQUIRED"]
+    assert d["calibrationConfusion"]["graded"] == 60
+    assert d["verdict"]["enforceReady"] is False
+    assert any("자동 통과 대상이 아닌" in b for b in d["verdict"]["blockers"])
+
+
+def test_a_fully_labeled_clean_background_only_set_reaches_enforce_candidate():
+    rows = _bg(40, edit_qc_result=qc(decision="pass"), human_label="fidelity_pass")
+    v = sr.report(rows)["pipelines"]["editor_vary"]["byEditTypeDetail"][
+        "BACKGROUND_ONLY"]["verdict"]
+    assert v["enforceReady"] is True and v["status"] == "enforce_candidate"

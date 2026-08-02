@@ -28,6 +28,10 @@ NEVER_AUTO_PASS_TYPES = ("CUSTOM_REVIEW_REQUIRED",)
 DECISIONS = ("pass", "review_required", "reject", "failed")
 USER_DECISIONS = ("accepted", "rejected")
 
+# 캘리브레이션 라벨. 운영 사용자 판단(accepted/rejected)과 **다른 축**이다.
+# 전자는 "사람이 봤을 때 상품이 그대로인가"(측정값), 후자는 "이 사람이 쓰기로 했나"(행동).
+FIDELITY_LABELS = ("fidelity_pass", "fidelity_fail")
+
 
 def pipeline_of(row) -> str:
     """source_kind 가 파이프라인을 가른다 — edit_type 은 두 쪽에 다 나온다.
@@ -207,6 +211,50 @@ def confusion(rows) -> dict:
             "sufficient": _sufficient(graded)}
 
 
+def calibration_confusion(rows) -> dict:
+    """machine 판정 × **blinded fidelity 라벨**.
+
+    운영 reviewDecision 으로 이 표를 채우면 안 된다. 그건 사용자가 쓰기로 했는가지
+    상품이 그대로인가가 아니고, 애초에 review_required 결과에만 존재한다 —
+    pass 를 라벨할 방법이 없으니 false pass 는 영원히 0 으로 보인다.
+
+    falsePass 는 measured 일 때만 숫자다. pass 표본에 라벨이 하나도 없으면
+    0 이 아니라 **unmeasured** 로 말한다.
+    """
+    cell: dict[str, Counter] = {d: Counter() for d in DECISIONS}
+    unlabeled: Counter = Counter()
+    for r in rows:
+        d = machine_decision(r)
+        if d not in cell:
+            continue
+        lab = r.get("human_label")
+        if lab in FIDELITY_LABELS:
+            cell[d][lab] += 1
+        else:
+            unlabeled[d] += 1
+    matrix = {d: {**{f: cell[d].get(f, 0) for f in FIDELITY_LABELS},
+                  "unlabeled": unlabeled.get(d, 0)} for d in DECISIONS}
+    graded = sum(cell[d].get(f, 0) for d in DECISIONS for f in FIDELITY_LABELS)
+    pass_labeled = sum(cell["pass"].get(f, 0) for f in FIDELITY_LABELS)
+    coverage = {d: (sum(cell[d].get(f, 0) for f in FIDELITY_LABELS)
+                    / (sum(cell[d].get(f, 0) for f in FIDELITY_LABELS)
+                       + unlabeled.get(d, 0)))
+                if (sum(cell[d].get(f, 0) for f in FIDELITY_LABELS)
+                    + unlabeled.get(d, 0)) else None
+                for d in DECISIONS}
+    return {
+        "matrix": matrix,
+        "graded": graded,
+        "labelCoverageByDecision": coverage,
+        "falsePass": cell["pass"].get("fidelity_fail", 0) if pass_labeled else None,
+        "falsePassMeasured": bool(pass_labeled),
+        "passConfirmed": cell["pass"].get("fidelity_pass", 0),
+        "overReviewCandidates": cell["review_required"].get("fidelity_pass", 0),
+        "falseRejectCandidates": cell["reject"].get("fidelity_pass", 0),
+        "sufficient": _sufficient(graded),
+    }
+
+
 def violation_rates(rows) -> dict:
     """locked invariant 위반이 무엇 때문에 몇 번 잡혔나."""
     counts: Counter = Counter()
@@ -297,7 +345,8 @@ def _axis_block(subset, *, image_usd, vision_usd) -> dict:
         "decisionRates": decision_rates(subset),
         "userReview": user_review_rates(subset),
         "humanLabels": human_label_coverage(subset),
-        "confusion": confusion(subset),
+        "confusion": confusion(subset),                       # 운영 사용자 행동 (별도 유지)
+        "calibrationConfusion": calibration_confusion(subset),  # readiness 는 이걸 쓴다
         "metricDistributions": metric_distributions(subset),
         "visionConfidence": vision_confidence(subset),
         "violations": violation_rates(subset),
@@ -326,32 +375,36 @@ def human_label_coverage(rows) -> dict:
 
 
 def _verdict(rows, *, is_enforce_eligible: bool = True) -> dict:
-    """enforce 로 갈 수 있는지에 대한 **기계적** 판단. 사람의 승인을 대신하지 않는다."""
+    """enforce 로 갈 수 있는지에 대한 **기계적** 판단. 사람의 승인을 대신하지 않는다.
+
+    근거는 calibration confusion(blinded fidelity 라벨)이다. 운영 reviewDecision 은
+    사용자 행동이라 여기 쓰지 않는다 — 그걸로는 false pass 를 잴 수 없다.
+    """
     reasons = []
-    conf = confusion(rows)
+    cal = calibration_confusion(rows)
     dec = decision_rates(rows)
     vis = vision_availability(rows)
-    hl = human_label_coverage(rows)
 
     if not is_enforce_eligible:
         reasons.append("정책상 자동 통과 대상이 아닌 edit type (enforce 후보 제외)")
     if not _sufficient(dec["n"]):
         reasons.append(f"표본 부족: {dec['n']} < {MIN_SAMPLES}")
-    if not conf["sufficient"]:
-        reasons.append(f"사람이 판단한 표본 부족: {conf['graded']} < {MIN_SAMPLES}")
-    # pass 표본에 사람 라벨이 없으면 false pass 는 '0건'이 아니라 '미측정'이다.
-    if hl["passSamples"] and not hl["sufficient"]:
-        reasons.append(f"pass 표본 human label 부족: {hl['passLabeled']}/{hl['passSamples']}")
-    if not hl["passSamples"]:
+    if not cal["sufficient"]:
+        reasons.append(f"blinded 라벨 표본 부족: {cal['graded']} < {MIN_SAMPLES}")
+    pass_n = dec["counts"].get("pass", 0)
+    if not pass_n:
         reasons.append("pass 표본 0건 — false pass 를 측정할 대상이 없다")
-    if conf["falsePassCandidates"] > 0:
-        reasons.append(f"기계 pass 를 사람이 거절한 사례 {conf['falsePassCandidates']}건")
+    elif not cal["falsePassMeasured"]:
+        reasons.append(f"pass 표본 {pass_n}건에 blinded 라벨 0건 — false pass 미측정")
+    elif cal["falsePass"]:
+        reasons.append(f"false pass {cal['falsePass']}건 (사람이 fidelity_fail 판정)")
     if vis["unavailableRate"] is not None and vis["unavailableRate"] > 0.2:
         reasons.append(f"Vision 미가용률 {vis['unavailableRate']:.0%}")
 
-    status = "insufficient_data" if (not dec["n"] or not conf["graded"]) else (
+    status = "insufficient_data" if (not dec["n"] or not cal["graded"]) else (
         "enforce_candidate" if not reasons else "shadow_only")
-    return {"enforceReady": not reasons, "blockers": reasons, "status": status}
+    return {"enforceReady": not reasons, "blockers": reasons, "status": status,
+            "basis": "calibration_confusion"}
 
 
 def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,

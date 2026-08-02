@@ -16,6 +16,7 @@ append-only: 마음이 바뀌면 새 행이다. 유효 라벨은 가장 최근 �
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -23,15 +24,29 @@ import time
 
 LABELS = ("fidelity_pass", "fidelity_fail")
 POLICY_VERSION = "blinded_audit_v1"
+ALLOWED_POLICY_VERSIONS = ("blinded_audit_v1",)
+
+# 이 artifact 는 **로컬 캘리브레이션 감사 기록**이다. 운영 승인 이력이 아니다.
+# reviewer 는 인증된 신원이 아니라 사람이 입력한 식별자다 — manifest 에 그 사실을 적는다.
+REVIEWER_SCHEME = "local_self_declared"
+ARTIFACT_KIND = "local_calibration_audit"
 
 # 라벨러가 보면 안 되는 것들. 기계 판정과 그 근거는 전부 가린다.
 _BLINDED_FIELDS = ("machine_decision", "status", "edit_qc_result", "decision",
                    "review_decision", "human_label")
 
 
+# 화면에 나갈 수 있는 키는 이것뿐이다. 화이트리스트라 새 필드가 실수로 새지 않는다.
+_PRESENTABLE = ("sampleId", "requestedChanges", "sourceImage", "resultImage", "editType")
+
+
 def presentation(sample: dict) -> dict:
-    """라벨러에게 보여줄 것만 남긴다 — 판정과 근거는 빼고 이미지와 요청만."""
-    return {
+    """라벨러에게 보여줄 것만 남긴다 — 판정과 근거는 빼고 이미지와 요청만.
+
+    만드는 자리에서 바로 검증한다. "만든 뒤에 검사하기"로 두면 검사를 안 부르는
+    호출자가 하나 생기는 순간 판정이 새고, 그 라벨은 기계 판단의 복사본이 된다.
+    """
+    view = {
         "sampleId": sample.get("id"),
         "requestedChanges": sample.get("case"),
         "sourceImage": sample.get("source"),
@@ -39,6 +54,11 @@ def presentation(sample: dict) -> dict:
         # editType 은 요청 종류라 라벨러가 "무엇을 요청했는지" 알아야 판단할 수 있다.
         "editType": sample.get("edit_type"),
     }
+    extra = set(view) - set(_PRESENTABLE)
+    if extra:
+        raise ValueError(f"제시 화면에 허용되지 않은 필드: {sorted(extra)}")
+    assert_blinded(view)
+    return view
 
 
 def assert_blinded(view: dict) -> None:
@@ -48,45 +68,103 @@ def assert_blinded(view: dict) -> None:
         raise ValueError(f"blinded 위반 — 라벨러에게 판정이 노출됨: {sorted(leaked)}")
 
 
-def sample_sha256(sample: dict, image_bytes: bytes | None = None) -> str:
-    """표본 동일성 — 같은 이미지·같은 요청에 붙은 라벨인지 나중에 확인할 수 있게."""
-    h = hashlib.sha256()
-    h.update(str(sample.get("id") or "").encode())
-    h.update(str(sample.get("case") or "").encode())
-    h.update(str(sample.get("source") or "").encode())
-    if image_bytes:
-        h.update(hashlib.sha256(image_bytes).digest())
-    return h.hexdigest()
+def _canonical(obj) -> bytes:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False).encode()
 
 
-def make_label(*, sample: dict, label: str, reviewer: str, dataset_id: str,
-               output_sha256: str | None = None, note: str | None = None,
-               now: float | None = None) -> dict:
+def sample_sha256(sample: dict) -> str:
+    """표본 동일성 — 요청 JSON + source SHA + output SHA 를 전부 묶는다.
+
+    id 만으로 묶으면 같은 id 에 다른 이미지가 붙어도 못 알아챈다. 라벨은 "이 이미지
+    쌍에 대한 판단"이므로 이미지가 바뀌면 다른 표본이다.
+    """
+    prov = sample.get("provenance") or {}
+    return hashlib.sha256(_canonical({
+        "id": sample.get("id"),
+        "case": sample.get("case"),
+        "editType": sample.get("edit_type"),
+        "source": sample.get("source"),
+        "sourceSha256": prov.get("sourceSha256"),
+        "outputSha256": prov.get("outputSha256"),
+    })).hexdigest()
+
+
+def output_sha256(sample: dict) -> str | None:
+    return (sample.get("provenance") or {}).get("outputSha256")
+
+
+def make_label(*, sample: dict, label: str, reviewer_id: str, dataset_id: str,
+               note: str | None = None, now: float | None = None) -> dict:
+    """라벨은 **무엇에 대한 판단인지** 못 박아야 한다. 하나라도 비면 만들지 않는다."""
     if label not in LABELS:
         raise ValueError(f"label 은 {LABELS} 중 하나여야 해요: {label!r}")
-    if not reviewer or not str(reviewer).strip():
-        raise ValueError("reviewer 가 필요해요 — 누가 판단했는지 없으면 감사가 안 된다")
+    if not reviewer_id or not str(reviewer_id).strip():
+        raise ValueError("reviewer_id 가 필요해요 — 누가 판단했는지 없으면 감사가 안 된다")
+    if not dataset_id or not str(dataset_id).strip():
+        raise ValueError("datasetId 가 필요해요 — 라벨은 데이터셋에 묶인다")
+    if not sample.get("id"):
+        raise ValueError("sampleId 가 없어요")
+    out_sha = output_sha256(sample)
+    if not out_sha:
+        # 결과 이미지 해시가 없으면 "무엇을 보고 판단했는지"를 나중에 증명할 수 없다.
+        raise ValueError("outputSha256 이 없어요 — 이 표본은 라벨할 수 없습니다")
     return {
-        "datasetId": dataset_id,
-        "sampleId": sample.get("id"),
+        "datasetId": str(dataset_id).strip(),
+        "sampleId": sample["id"],
         "sampleSha256": sample_sha256(sample),
-        "outputSha256": output_sha256,
+        "outputSha256": out_sha,
         "label": label,
-        "reviewer": str(reviewer).strip(),
+        "reviewerId": str(reviewer_id).strip(),
+        "reviewerScheme": REVIEWER_SCHEME,
+        "artifactKind": ARTIFACT_KIND,
         "note": (str(note)[:500] if note else None),
         "policyVersion": POLICY_VERSION,
         "labeledAt": now if now is not None else time.time(),
     }
 
 
+class LabelChainError(Exception):
+    """해시 체인이 깨졌다 — 중간 행이 고쳐졌거나 지워졌거나 순서가 바뀌었다."""
+
+
+GENESIS = "0" * 64
+
+
+def _event_hash(record: dict, previous: str) -> str:
+    body = {k: v for k, v in record.items() if k not in ("eventHash",)}
+    body["previousEventHash"] = previous
+    return hashlib.sha256(_canonical(body)).hexdigest()
+
+
 def append_label(path: str, record: dict) -> dict:
-    """append-only. 기존 행을 고치지 않는다 — 판단 변경도 새 행이다."""
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-    return record
+    """append-only + 해시 체인.
+
+    append-only 는 "우리가 안 고친다"는 약속으로는 부족하다. 앞 행의 해시를 물고
+    가면 중간을 고치거나 지우거나 순서를 바꾼 순간 뒤 전부가 안 맞는다.
+    파일 잠금은 두 프로세스가 같은 꼬리에 각자 이어 붙이는 것을 막는다.
+    """
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        with os.fdopen(os.dup(fd), "r", encoding="utf-8") as fh:
+            lines = [l for l in fh.read().splitlines() if l.strip()]
+        prev = json.loads(lines[-1])["eventHash"] if lines else GENESIS
+        rec = dict(record)
+        rec["eventId"] = rec.get("eventId") or hashlib.sha256(
+            _canonical([rec, prev, len(lines)])).hexdigest()[:32]
+        rec["previousEventHash"] = prev
+        rec["eventHash"] = _event_hash(rec, prev)
+        os.lseek(fd, 0, os.SEEK_END)
+        os.write(fd, (json.dumps(rec, ensure_ascii=False, default=str) + "\n").encode())
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+    return rec
 
 
-def load_labels(path: str) -> list[dict]:
+def load_labels(path: str, *, verify: bool = True) -> list[dict]:
+    """읽을 때 체인을 통째로 검증한다 — 깨진 파일을 조용히 쓰지 않는다."""
     if not os.path.exists(path):
         return []
     out = []
@@ -95,46 +173,101 @@ def load_labels(path: str) -> list[dict]:
             line = line.strip()
             if line:
                 out.append(json.loads(line))
+    if verify:
+        verify_chain(out)
     return out
 
 
+def verify_chain(records) -> None:
+    prev = GENESIS
+    seen = set()
+    for i, r in enumerate(records):
+        eid = r.get("eventId")
+        if not eid:
+            raise LabelChainError(f"{i}번 행에 eventId 가 없어요")
+        if eid in seen:
+            raise LabelChainError(f"eventId 중복: {eid}")
+        seen.add(eid)
+        if r.get("previousEventHash") != prev:
+            raise LabelChainError(
+                f"{i}번 행에서 체인이 끊겼어요 — 중간 행이 수정·삭제·재정렬됐습니다")
+        expected = _event_hash(r, prev)
+        if r.get("eventHash") != expected:
+            raise LabelChainError(f"{i}번 행의 내용이 기록된 해시와 달라요")
+        prev = r["eventHash"]
+
+
 def effective_labels(records) -> dict:
-    """sampleId → 최신 라벨. 이전 판단도 history 로 함께 돌려준다."""
-    by_sample: dict[str, list] = {}
+    """(datasetId, sampleId) → 최신 라벨.
+
+    sampleId 만으로 묶으면 다른 데이터셋의 같은 id 라벨이 섞인다. 데이터셋이 다르면
+    이미지도 프롬프트도 다르므로 그건 다른 표본에 대한 판단이다.
+    """
+    by_key: dict[tuple, list] = {}
     for r in records:
-        by_sample.setdefault(str(r.get("sampleId")), []).append(r)
+        by_key.setdefault((str(r.get("datasetId")), str(r.get("sampleId"))), []).append(r)
     out = {}
-    for sid, rs in by_sample.items():
+    for key, rs in by_key.items():
         ordered = sorted(rs, key=lambda x: (x.get("labeledAt") or 0))
-        out[sid] = {"label": ordered[-1].get("label"),
-                    "reviewer": ordered[-1].get("reviewer"),
-                    "labeledAt": ordered[-1].get("labeledAt"),
-                    "policyVersion": ordered[-1].get("policyVersion"),
+        last = ordered[-1]
+        out[key] = {"label": last.get("label"),
+                    "reviewerId": last.get("reviewerId"),
+                    "labeledAt": last.get("labeledAt"),
+                    "policyVersion": last.get("policyVersion"),
+                    "sampleSha256": last.get("sampleSha256"),
+                    "outputSha256": last.get("outputSha256"),
                     "changed": len({r.get("label") for r in ordered}) > 1,
-                    "history": [{"label": r.get("label"), "reviewer": r.get("reviewer"),
+                    "history": [{"label": r.get("label"), "reviewerId": r.get("reviewerId"),
                                  "labeledAt": r.get("labeledAt")} for r in ordered]}
     return out
 
 
-def apply_labels(rows, labels: dict) -> list[dict]:
-    """표본에 사람 라벨을 붙인다(집계 입력용). 기계 판정은 건드리지 않는다."""
-    out = []
-    for r in rows:
-        lab = labels.get(str(r.get("id")))
-        out.append({**r, "human_label": lab["label"]} if lab else dict(r))
-    return out
+def apply_labels(rows, labels: dict, *, dataset_id: str,
+                 strict: bool = True) -> tuple[list[dict], list[dict]]:
+    """라벨을 표본에 붙인다 — **묶임이 맞을 때만**. → (rows, quarantined)
+
+    데이터셋·표본 해시·출력 해시·정책 버전이 하나라도 어긋나면 조용히 무시하지 않고
+    격리한다. 조용히 버리면 "라벨 30건 붙였다"는 잘못된 커버리지가 남는다.
+    """
+    by_id = {str(r.get("id")): r for r in rows}
+    quarantined = []
+    applied: dict[str, str] = {}
+    for (ds, sid), lab in labels.items():
+        reason = None
+        row = by_id.get(sid)
+        if ds != dataset_id:
+            reason = "dataset_mismatch"
+        elif row is None:
+            reason = "sample_not_found"
+        elif lab.get("policyVersion") not in ALLOWED_POLICY_VERSIONS:
+            reason = "policy_version_unsupported"
+        elif lab.get("sampleSha256") != sample_sha256(row):
+            reason = "sample_hash_mismatch"
+        elif lab.get("outputSha256") != output_sha256(row):
+            reason = "output_hash_mismatch"
+        if reason:
+            quarantined.append({"datasetId": ds, "sampleId": sid, "reason": reason})
+            continue
+        applied[sid] = lab["label"]
+    if strict and quarantined:
+        raise ValueError(f"라벨 결합 실패 {len(quarantined)}건: "
+                         f"{sorted({q['reason'] for q in quarantined})}")
+    out = [{**r, "human_label": applied[str(r.get("id"))]}
+           if str(r.get("id")) in applied else dict(r) for r in rows]
+    return out, quarantined
 
 
 def coverage(rows, labels: dict) -> dict:
     """어디에 라벨이 붙었는지 — 특히 pass 표본. 여기가 비면 enforce 는 불가다."""
     from app.shadow_report import machine_decision
     total = len(rows)
+    ids = {sid for (_ds, sid) in labels}
     by_decision: dict[str, dict] = {}
     for r in rows:
         d = machine_decision(r)
         slot = by_decision.setdefault(d, {"samples": 0, "labeled": 0})
         slot["samples"] += 1
-        if str(r.get("id")) in labels:
+        if str(r.get("id")) in ids:
             slot["labeled"] += 1
     return {"samples": total, "labeled": sum(v["labeled"] for v in by_decision.values()),
             "byMachineDecision": by_decision,

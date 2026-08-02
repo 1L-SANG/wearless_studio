@@ -1,8 +1,10 @@
 {
   "datasetId": "shadow-editor-vary-2026-08-02b",
   "collectedAt": "2026-08-02",
-  "validForCalibration": true,
-  "invalidReasons": [],
+  "validForCalibration": false,
+  "invalidReasons": [
+    "provenance_unverified"
+  ],
   "samples": 30,
   "pipelines": {
     "editor_vary": 30,
@@ -19,17 +21,36 @@
     },
     "note": "단가는 가정치다 — 실단가 미확인이라 이 금액을 근거로 쓰지 말 것."
   },
-  "collectedByCommit": "10667d6df2ff47c68906bef71aba92f7740e947d",
-  "model": "gemini-3-pro-image",
-  "visionPromptVersion": "edit_intent_qc_v1",
-  "visionPromptSha256": "9266f46feb779e62e70120bdc1f4299b70a1c76d1ee0df53831ddebaebf2051d",
-  "qcPolicyVersion": "edit_qc_v1",
+  "manifestGeneratedByCommit": "10fe4a2bd06ad9bc9b2a5808a18f73381a5ea6d5",
+  "model": null,
+  "provenanceUnverified": true,
+  "provenanceMissingFields": [
+    "codeCommit",
+    "generationModel",
+    "generationPromptSha256",
+    "qcPolicyVersion",
+    "visionPromptSha256"
+  ],
+  "visionPromptVersionAtManifestTime": "edit_intent_qc_v1",
+  "visionPromptSha256AtManifestTime": "9266f46feb779e62e70120bdc1f4299b70a1c76d1ee0df53831ddebaebf2051d",
+  "qcPolicyVersionAtManifestTime": "edit_qc_v1",
+  "provenanceNote": "…AtManifestTime 값은 manifest 생성 시점의 코드 상태이지 수집 시점의 값이 아니다. 수집 시점 값은 row.provenance 에만 있다.",
   "sourceDataset": {
     "path": "public/assets/fit-examples",
     "files": 30,
     "sha256": "18a3cb495afe553b955bbafdd79045b90a88332d4aecfbd976856dea54e1199f"
   },
-  "rawSampleManifestSha256": "3aa01d85356bfb7ade478a3bb13316b749544d3c2bc780f53429f507ddee09b5",
+  "rawSampleManifestSha256": "e5e4e173a14b1779109149541088ab1ee6ae60e797be7d6ed048b5943babd34a",
+  "outputBundleSha256": "e59cc0afeef969dd432ab2858c388696c900e22bc5ee31252602d03898210a9e",
+  "rawArtifacts": {
+    "samplesJsonl": "/Users/nojeong-un/.claude/jobs/90a4f63c/tmp/shadow2/samples.jsonl",
+    "outputDir": "/Users/nojeong-un/.claude/jobs/90a4f63c/tmp/shadow2",
+    "outputImagesExpected": 30,
+    "outputImagesPresent": 30,
+    "humanLabelingAvailable": true,
+    "retention": "로컬 보존. 이미지는 git 에 넣지 않는다(용량). 비운영 오브젝트 스토리지로 옮기려면 사용자 승인이 필요하다.",
+    "location": "/Users/nojeong-un/.claude/jobs/90a4f63c/tmp/shadow2"
+  },
   "collectorCommand": "python scripts/shadow_collect.py --per-pipeline 30 --max-calls 30 --budget-usd 6.0",
   "humanLabels": {
     "labeled": 0,

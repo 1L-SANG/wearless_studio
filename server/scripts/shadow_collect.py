@@ -182,7 +182,16 @@ async def run(args) -> int:
     settings = load_settings()
     if not getattr(settings, "gemini_api_key", None):
         raise SystemExit("GEMINI_API_KEY 가 없어요.")
-    out_dir = pathlib.Path(args.out)
+    # 데이터셋마다 디렉터리를 나눈다. 같은 파일에 다른 run 을 이어 붙이면 모델·커밋·
+    # 프롬프트가 다른 표본이 한 데이터셋으로 섞이고, 그건 나중에 분리할 수 없다.
+    out_dir = pathlib.Path(args.out) / args.dataset_id
+    samples_path = out_dir / "samples.jsonl"
+    if out_dir.exists() and any(out_dir.iterdir()):
+        if not args.resume:
+            raise SystemExit(
+                f"REFUSING: {out_dir} 가 비어 있지 않아요. --dataset-id 를 바꾸거나, "
+                "같은 조건으로 이어 모으려면 --resume 를 주세요.")
+        _assert_resumable(samples_path)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     budget_per_sample = args.image_usd + args.vision_usd
@@ -219,7 +228,7 @@ async def run(args) -> int:
         rows.append(row)
         print(f"  [{n}/{len(plan)}] {case_name:<12} {row['status']:<16} "
               f"{src.name[:28]}", flush=True)
-        (out_dir / "samples.jsonl").open("a", encoding="utf-8").write(
+        samples_path.open("a", encoding="utf-8").write(
             json.dumps(row, ensure_ascii=False, default=str) + "\n")
 
     img_attempted = sum(r.get("image_calls", 0) for r in rows)
@@ -241,6 +250,10 @@ def main() -> int:
     ap.add_argument("--vision-usd", type=float, default=0.003)
     ap.add_argument("--timeout", type=float, default=180.0)
     ap.add_argument("--out", default="/tmp/shadow-samples")
+    ap.add_argument("--dataset-id", required=True,
+                    help="데이터셋 식별자 — 출력 디렉터리이자 라벨 결합 키")
+    ap.add_argument("--resume", action="store_true",
+                    help="같은 provenance 일 때만 이어서 수집")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--vision-backfill", help="기존 samples.jsonl 에 Vision 만 다시 채운다")
     args = ap.parse_args()
