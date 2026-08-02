@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import time
+from dataclasses import dataclass
 
 from ..config import Settings
 from .gemini_image import InlineImage
@@ -208,10 +209,33 @@ def validate(raw: dict) -> dict:
     return out
 
 
+@dataclass(frozen=True)
+class PreparedVision:
+    """provider 에 나갈 Vision 요청. 계측은 이 객체에서 뜬다 — 기록용으로 다시
+    조립하면 그 순간부터 기록과 요청이 갈라진다(같은 문자열이라는 보장이 없다)."""
+
+    prompt: str
+    prompt_sha256: str
+    template_sha256: str
+    prompt_version: str
+
+
+def prepare(*, edit_type: str, adjustments: dict, allowed_scope: dict,
+            source_ref_count: int = 0) -> PreparedVision:
+    """provider 를 부르지 않고 요청만 만든다. resume·backfill 검증이 이걸 쓴다."""
+    prompt = build_prompt(edit_type=edit_type, adjustments=adjustments,
+                          allowed_scope=allowed_scope,
+                          source_ref_count=source_ref_count)
+    return PreparedVision(prompt=prompt, prompt_sha256=prompt_sha256(prompt),
+                          template_sha256=template_sha256(),
+                          prompt_version=PROMPT_VERSION)
+
+
 async def observe(
     settings: Settings, *, baseline: InlineImage, edited: InlineImage,
     edit_type: str, adjustments: dict, allowed_scope: dict,
     source_refs: list[InlineImage] | None = None,
+    prepared: "PreparedVision | None" = None,
 ) -> tuple[dict, dict]:
     """→ (정규화 관찰, 계측 메타). 실패는 VisionError — 호출자가 review 로 처리한다.
 
@@ -220,8 +244,10 @@ async def observe(
     """
     refs = list(source_refs or ())
     images = [baseline, edited, *refs]
-    prompt = build_prompt(edit_type=edit_type, adjustments=adjustments,
-                          allowed_scope=allowed_scope, source_ref_count=len(refs))
+    prep = prepared or prepare(edit_type=edit_type, adjustments=adjustments,
+                               allowed_scope=allowed_scope,
+                               source_ref_count=len(refs))
+    prompt = prep.prompt
     t0 = time.perf_counter()
     raw, provider = await analyze_with_fallback(settings, prompt, images, schema())
     observation = validate(raw)
@@ -230,8 +256,8 @@ async def observe(
         "promptVersion": PROMPT_VERSION,
         # 템플릿과 **실제 나간 프롬프트**를 구분해 남긴다. 계측이 프롬프트를 다시
         # 조립하면 그 순간부터 기록과 요청이 갈라진다 — 같은 builder 결과를 쓴다.
-        "templateSha256": template_sha256(),
-        "promptSha256": prompt_sha256(prompt),
+        "templateSha256": prep.template_sha256,
+        "promptSha256": prep.prompt_sha256,
         "latencyMs": int((time.perf_counter() - t0) * 1000),
         "imageCount": len(images),
         "status": "ok",
@@ -239,10 +265,24 @@ async def observe(
     return observation, meta
 
 
-def failure_meta(exc: BaseException) -> dict:
-    """실패 계측 — **원문을 남기지 않는다**. provider 응답에는 URL·본문이 들어 있다."""
+# 실패 meta 에 실을 수 있는 키. 화이트리스트라 새 필드가 실수로 새지 않는다.
+FAILURE_META_KEYS = ("provider", "promptVersion", "templateSha256", "promptSha256",
+                     "latencyMs", "status", "errorType")
+
+
+def failure_meta(exc: BaseException,
+                 prepared: "PreparedVision | None" = None) -> dict:
+    """실패 계측 — **원문을 남기지 않는다**. provider 응답에는 URL·본문이 들어 있다.
+
+    다만 "무엇을 물었는가"(프롬프트 해시)는 남긴다. 실패 표본의 provenance 가 비면
+    나중에 그 실패가 어떤 조건에서 났는지 아무도 말할 수 없다. 해시는 내용을
+    복원하지 못하므로 유출이 아니다.
+    """
     name = type(exc).__name__
     category = "timeout" if "Timeout" in name or "timeout" in str(exc).lower() else (
         "provider_error" if isinstance(exc, VisionError) else "unexpected_error")
-    return {"provider": None, "promptVersion": PROMPT_VERSION, "latencyMs": None,
-            "status": category, "errorType": name}
+    return {"provider": None,
+            "promptVersion": prepared.prompt_version if prepared else PROMPT_VERSION,
+            "templateSha256": prepared.template_sha256 if prepared else None,
+            "promptSha256": prepared.prompt_sha256 if prepared else None,
+            "latencyMs": None, "status": category, "errorType": name}

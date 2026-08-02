@@ -100,7 +100,8 @@ def test_a_changed_run_condition_is_refused(env, tmp_path, key, value):
                                      for r in rs])
     with pytest.raises(SystemExit) as e:
         SC._assert_resumable(_write(tmp_path, rows), env[0])
-    assert key in str(e.value)
+    # 공통 validator 가 먼저 잡으면 문제 코드로, 아니면 필드 이름으로 나온다.
+    assert key in str(e.value) or "case_set_mismatch" in str(e.value)
 
 
 def test_a_changed_case_prompt_is_refused(env, tmp_path):
@@ -108,7 +109,7 @@ def test_a_changed_case_prompt_is_refused(env, tmp_path):
         "generationPromptSha256", "0" * 64))
     with pytest.raises(SystemExit) as e:
         SC._assert_resumable(_write(tmp_path, rows), env[0])
-    assert "프롬프트가 바뀌었" in str(e.value)
+    assert "generationPromptSha256" in str(e.value)
 
 
 def test_a_removed_case_definition_is_refused(env, tmp_path):
@@ -116,7 +117,7 @@ def test_a_removed_case_definition_is_refused(env, tmp_path):
     rows[0]["provenance"]["case"]["case"] = "gone-case"
     with pytest.raises(SystemExit) as e:
         SC._assert_resumable(_write(tmp_path, rows), env[0])
-    assert "지금 정의에 없어요" in str(e.value)
+    assert "unknown_case:gone-case" in str(e.value)
 
 
 def test_a_changed_case_definition_is_refused(env, tmp_path):
@@ -132,7 +133,7 @@ def test_rows_without_fingerprints_are_refused(tmp_path):
     p.write_text(json.dumps({"id": "a", "output_id": "o"}) + "\n")
     with pytest.raises(SystemExit) as e:
         SC._assert_resumable(p)
-    assert "fingerprint" in str(e.value)
+    assert "missing_provenance" in str(e.value)
 
 
 def test_failed_rows_are_not_provenance_evidence(env, tmp_path):
@@ -155,7 +156,7 @@ def test_mixed_run_conditions_in_one_file_are_refused(env, tmp_path):
     rows[1]["provenance"]["run"]["generationModel"] = "other"
     with pytest.raises(SystemExit) as e:
         SC._assert_resumable(_write(tmp_path, rows), env[0])
-    assert "섞여" in str(e.value)
+    assert "mixed_run_fingerprint" in str(e.value)
 
 
 def test_prepare_only_makes_no_provider_call(env, monkeypatch):
@@ -199,8 +200,10 @@ def test_provenance_records_the_rendered_prompt_not_the_template(env):
 def test_observe_meta_carries_the_prompt_hash_from_the_same_builder():
     import inspect
     src = inspect.getsource(edit_intent_vision.observe)
-    assert '"promptSha256": prompt_sha256(prompt)' in src
-    assert '"templateSha256": template_sha256()' in src
+    # prepare 결과를 그대로 쓴다 — 기록용으로 다시 조립하지 않는다.
+    assert '"promptSha256": prep.prompt_sha256' in src
+    assert '"templateSha256": prep.template_sha256' in src
+    assert "prompt = prep.prompt" in src
 
 
 def test_backfill_refuses_mismatched_conditions_before_calling_the_provider():

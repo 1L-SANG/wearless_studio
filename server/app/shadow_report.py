@@ -442,11 +442,13 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
            "unknownPipelineSamples": [r.get("id") for r in split["unknown"]][:50],
            "pipelines": {}}
     invalid_manifest = bool(manifest) and manifest.get("validForCalibration") is False
+    # 차단 사유는 계열별로 합친다. 한쪽이 다른 쪽을 덮으면 "manifest 도 문제였다"는
+    # 사실이 사라지고, 그러면 무엇부터 고쳐야 하는지 알 수 없다.
+    blocked_reasons: set[str] = set()
     if manifest is not None:
         out["manifest"] = manifest
         if invalid_manifest:
-            out["calibrationUsable"] = False
-            out["calibrationBlockedReasons"] = manifest.get("invalidReasons") or []
+            blocked_reasons.update(manifest.get("invalidReasons") or ["manifest_invalid"])
     if quarantined:
         # 라벨 결합이 하나라도 실패하면 이 리포트는 캘리브레이션 입력이 될 수 없다.
         # 일부만 붙인 채로 정상 리포트처럼 계속 가면 커버리지가 그만큼 거짓이 되고,
@@ -455,9 +457,10 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
                                   "byReason": dict(Counter(q.get("reason")
                                                            for q in quarantined)),
                                   "items": quarantined[:50]}
+        blocked_reasons.update(f"label_{q.get('reason')}" for q in quarantined)
+    if blocked_reasons:
         out["calibrationUsable"] = False
-        out["calibrationBlockedReasons"] = sorted(
-            {f"label_{q.get('reason')}" for q in quarantined})
+        out["calibrationBlockedReasons"] = sorted(blocked_reasons)
 
     for p, subset in split.items():
         block = _axis_block(subset, image_usd=image_usd, vision_usd=vision_usd)
@@ -484,6 +487,7 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
         if quarantined:
             _force_blocked(block, f"라벨 결합 실패 {len(quarantined)}건 — 결합되지 않은 "
                                   "라벨이 있으면 커버리지를 신뢰할 수 없다",
-                           status="blocked_by_labels")
+                           status=("blocked_by_manifest_and_labels" if invalid_manifest
+                                   else "blocked_by_labels"))
         out["pipelines"][p] = block
     return out

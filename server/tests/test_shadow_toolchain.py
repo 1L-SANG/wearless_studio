@@ -93,7 +93,7 @@ def test_resume_refuses_rows_without_provenance(tmp_path):
     p.write_text(json.dumps({"id": "a", "output_id": "o"}) + "\n")
     with pytest.raises(SystemExit) as e:
         COLLECT._assert_resumable(p)
-    assert "fingerprint" in str(e.value)
+    assert "missing_provenance" in str(e.value)
 
 
 def test_resume_refuses_a_changed_generation_model(tmp_path):
@@ -116,7 +116,7 @@ def test_resume_refuses_a_file_that_already_mixes_run_conditions(tmp_path):
                          for i, pr in enumerate((base, other))))
     with pytest.raises(SystemExit) as e:
         COLLECT._assert_resumable(p)
-    assert "섞여" in str(e.value)
+    assert "mixed_run_fingerprint" in str(e.value)
 
 
 def test_backfill_finds_images_next_to_the_samples_file():

@@ -41,6 +41,7 @@ from app.agents import cut_variator, edit_intent_vision  # noqa: E402
 from app.agents.edit_intent_vision import PROMPT_VERSION as VISION_PROMPT_VERSION  # noqa: E402
 from app.agents.gemini_image import GeminiImageClient, InlineImage  # noqa: E402
 from app.config import load_settings  # noqa: E402
+from app import shadow_provenance as sp  # noqa: E402
 from app.services import edit_intent_qc, edit_qc_scope, editor_vary  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -61,14 +62,18 @@ async def observe_and_decide(settings, *, baseline, edited, changes, timeout):
     scope = editor_vary.semantic_scope(changes)
     edit_type = editor_vary.edit_type_for(changes)
     observation, meta, attempted = None, None, 1
+    prep = edit_intent_vision.prepare(
+        edit_type=edit_type, adjustments={"changes": changes},
+        allowed_scope=edit_qc_scope.vision_scope(scope))
     try:
         observation, meta = await asyncio.wait_for(edit_intent_vision.observe(
             settings, baseline=baseline, edited=edited, edit_type=edit_type,
             adjustments={"changes": changes},
             allowed_scope=edit_qc_scope.vision_scope(scope),
-            source_refs=None), timeout)
+            source_refs=None, prepared=prep), timeout)
     except Exception as e:                                    # noqa: BLE001
-        meta = edit_intent_vision.failure_meta(e)
+        # 실패해도 "무엇을 물었는가"는 남는다 — 같은 prepared 의 해시다.
+        meta = edit_intent_vision.failure_meta(e, prep)
     qc = edit_intent_qc.evaluate(
         baseline_bgr=_bgr(baseline.data), edited_bgr=_bgr(edited.data),
         edit_type=edit_type, allowed_scope=edit_qc_scope.qc_allowed_scope(),
@@ -90,11 +95,7 @@ async def observe_and_decide(settings, *, baseline, edited, changes, timeout):
 # 이 중 하나라도 달라지면 새 dataset 을 요구한다. codeCommit 은 여기 없다 —
 # 보조 근거일 뿐이라 스냅샷 비교를 대신할 수 없고, 대신하게 두면 dirty working tree
 # 에서 프롬프트만 바뀐 경우를 놓친다.
-RUN_FINGERPRINT_KEYS = (
-    "generationModel", "generationTemplateSha256",
-    "visionPromptTemplateVersion", "visionTemplateSha256",
-    "qcPolicyVersion", "caseSetSha256", "imageSize", "aspectRatio",
-)
+RUN_FINGERPRINT_KEYS = sp.RUN_KEYS
 
 
 def _sha(data: bytes) -> str:
@@ -141,13 +142,28 @@ def run_fingerprint(prepared, *, cases=None) -> dict:
     }
 
 
+def vision_prepared(changes: list):
+    """이 case 의 Vision 요청을 provider 없이 만든다 — 실행과 같은 builder 다."""
+    scope = editor_vary.semantic_scope(changes)
+    return edit_intent_vision.prepare(
+        edit_type=editor_vary.edit_type_for(changes),
+        adjustments={"changes": changes},
+        allowed_scope=edit_qc_scope.vision_scope(scope))
+
+
 def case_fingerprint(prepared, *, case_name: str, changes: list) -> dict:
-    """이 case 가 **실제로** 어떤 프롬프트를 냈는지."""
+    """이 case 가 **실제로** 어떤 프롬프트를 냈는지 — 생성과 Vision 둘 다.
+
+    Vision 템플릿 해시만 run 에 두면 build_prompt 로직·allowed scope·changes 렌더링이
+    바뀌어도 resume 이 통과한다(템플릿 파일은 그대로니까). 실제 렌더링 해시를 case 에
+    두면 그 변경이 반드시 걸린다.
+    """
     return {
         "case": case_name,
         "editType": editor_vary.edit_type_for(changes),
         "changes": editor_vary.validate_changes(changes),
         "generationPromptSha256": _sha(prepared.prompt.encode()),
+        "visionPromptSha256": vision_prepared(changes).prompt_sha256,
     }
 
 
@@ -207,45 +223,39 @@ def _assert_resumable(samples_path: pathlib.Path, settings=None) -> None:
     조건이 바뀐 뒤 이어 붙이면 한 데이터셋 안에 서로 다른 실험이 섞이고, 행마다
     표시가 없으니 나중에 분리할 수 없다. 반대로 case 마다 프롬프트가 다른 것은
     정상이므로 그걸로 거부하면 멀쩡한 데이터셋을 못 이어 모은다.
+
+    검사는 manifest 와 **같은 validator** 를 쓴다 — 두 곳이 다른 구조를 보면
+    한쪽만 통과하는 데이터가 생기고 그게 곧 오염이다.
     """
     if not samples_path.exists():
         return
     rows = [json.loads(l) for l in samples_path.read_text(encoding="utf-8").splitlines()
             if l.strip()]
-    # 실패 row 는 출력이 없어 provenance 증거가 아니다.
-    done = [r for r in rows if r.get("output_id")]
-    if not done:
-        return
-    provs = [r.get("provenance") or {} for r in done]
-    if any(not p.get("run") or not p.get("case") for p in provs):
-        _refuse("기존 표본에 run/case fingerprint 가 없어 같은 조건인지 확인할 수 없어요.")
+    if not [r for r in rows if sp.has_output(r)]:
+        return                              # 성공 row 가 없으면 이어 모을 근거도 없다
 
-    runs = {_canonical({k: p["run"].get(k) for k in RUN_FINGERPRINT_KEYS}) for p in provs}
-    if len(runs) > 1:
-        _refuse("기존 파일에 이미 서로 다른 실험 조건이 섞여 있어요.")
-    prev_run = json.loads(runs.pop())
+    problems = sp.validate_dataset(rows, expected_cases=normalized_cases())
+    if problems:
+        _refuse(f"기존 표본의 provenance 문제: {problems}.")
 
     now_run, now_cases = _prepare_only(settings or load_settings())
-    for k in RUN_FINGERPRINT_KEYS:
+    prev_run = sp.dataset_run_fingerprint(rows) or {}
+    for k in sp.RUN_KEYS:
         if prev_run.get(k) != now_run.get(k):
             _refuse(f"실행 조건 불일치 ({k}: {prev_run.get(k)!r} != {now_run.get(k)!r}).")
 
-    prev_cases: dict[str, dict] = {}
-    for p in provs:
-        c = p["case"]
-        seen = prev_cases.setdefault(c["case"], c)
-        if seen.get("generationPromptSha256") != c.get("generationPromptSha256"):
-            _refuse(f"같은 case 안에서 프롬프트가 서로 달라요 ({c['case']}).")
-    for name, prev in prev_cases.items():
+    for name, prev in sp.case_index(rows).items():
         cur = now_cases.get(name)
         if cur is None:
             _refuse(f"기존 case 가 지금 정의에 없어요 ({name}).")
-        if prev.get("generationPromptSha256") != cur.get("generationPromptSha256"):
-            _refuse(f"case 프롬프트가 바뀌었어요 ({name}).")
-        if _canonical(prev.get("changes")) != _canonical(cur.get("changes")):
+        for k in ("generationPromptSha256", "visionPromptSha256", "editType"):
+            if prev.get(k) != cur.get(k):
+                _refuse(f"case 조건이 바뀌었어요 ({name}.{k}).")
+        if sp.canonical(prev.get("changes")) != sp.canonical(cur.get("changes")):
             _refuse(f"case 정의가 바뀌었어요 ({name}).")
 
-    prev_commit = provs[0].get("codeCommit")
+    done = [r for r in rows if sp.has_output(r)]
+    prev_commit = (done[0].get("provenance") or {}).get("codeCommit")
     now_commit = _code_commit()
     if prev_commit and now_commit and prev_commit != now_commit:
         # 보조 근거다 — 스냅샷이 전부 같으면 커밋이 달라도 같은 실험으로 본다.
@@ -335,33 +345,49 @@ async def vision_backfill(args) -> int:
         return 0
 
     case_changes = dict(VARY_CASES)
-    now_run, _now_cases = _prepare_only(settings)
+    now_run, now_cases = _prepare_only(settings)
 
-    # provider 를 부르기 **전에** 조건을 맞춰 본다. 조건이 다른데 backfill 하면 QC 결과는
-    # 새 조건, provenance 는 옛 조건을 가리키는 상태가 만들어지고 — 그 데이터는 무엇으로
-    # 잰 값인지 아무도 말할 수 없다. 안전한 기본은 거부하고 새 dataset 을 요구하는 것.
+    # provider 를 부르기 **전에** resume 과 **같은 validator** 로 조건을 맞춰 본다.
+    # 조건이 다른데 backfill 하면 QC 결과는 새 조건, provenance 는 옛 조건을 가리켜
+    # 무엇으로 잰 값인지 아무도 말할 수 없다. 미상 case 를 []로 바꿔 진행하는 것도
+    # 금지다 — 그건 "요청이 뭔지 모른 채" 다시 재는 것이다.
+    problems = sp.validate_dataset(rows, expected_cases=normalized_cases())
+    if problems:
+        _refuse(f"기존 표본의 provenance 문제: {problems}.")
+
+    prev_run = sp.dataset_run_fingerprint(rows) or {}
+    for k in sp.RUN_KEYS:
+        if prev_run.get(k) != now_run.get(k):
+            _refuse(f"실행 조건 불일치 ({k}: {prev_run.get(k)!r} != {now_run.get(k)!r}) — "
+                    "backfill 로 덮을 수 없어요.")
+
     for r in todo:
         prov = r.get("provenance") or {}
-        run = prov.get("run")
-        if not run:
-            _refuse(f"기존 표본에 run fingerprint 가 없어요 ({r.get('id')}).")
-        for k in ("visionTemplateSha256", "visionPromptTemplateVersion", "qcPolicyVersion"):
-            if run.get(k) != now_run.get(k):
-                _refuse(f"Vision/QC 조건 불일치 ({k}: {run.get(k)!r} != "
-                        f"{now_run.get(k)!r}) — backfill 로 덮을 수 없어요.")
+        name = str((prov.get("case") or {}).get("case"))
+        cur = now_cases.get(name)
+        if cur is None:
+            _refuse(f"기존 case 가 지금 정의에 없어요 ({name}).")
+        if name not in case_changes:
+            _refuse(f"case 이름을 현재 정의에서 찾을 수 없어요 ({name}).")
+        prev_case = prov.get("case") or {}
+        for k in ("editType", "generationPromptSha256", "visionPromptSha256"):
+            if prev_case.get(k) != cur.get(k):
+                _refuse(f"case 조건이 바뀌었어요 ({name}.{k}).")
+        if sp.canonical(prev_case.get("changes")) != sp.canonical(cur.get("changes")):
+            _refuse(f"case 정의가 바뀌었어요 ({name}).")
         img_path = out_dir / f"{r['id']}.png"
         src_path = src_dir / str(r.get("source") or "")
         if not img_path.exists() or _sha(img_path.read_bytes()) != prov.get("outputSha256"):
             _refuse(f"결과 이미지가 바뀌었어요 ({r.get('id')}).")
         if not src_path.exists() or _sha(src_path.read_bytes()) != prov.get("sourceSha256"):
             _refuse(f"원본 이미지가 바뀌었어요 ({r.get('id')}).")
-    print(f"  조건·이미지 일치 확인 완료 — backfill 대상 {len(todo)}건")
+    print(f"  조건·case·이미지 일치 확인 완료 — backfill 대상 {len(todo)}건")
 
     done = 0
     for n, r in enumerate(todo, 1):
         img_path = out_dir / f"{r['id']}.png"
         src_path = src_dir / r["source"]
-        changes = case_changes.get(r["case"], [])
+        changes = case_changes[str((r["provenance"]["case"]).get("case"))]
         qc, _et, vision_attempted = await observe_and_decide(
             settings, baseline=InlineImage("image/jpeg", src_path.read_bytes()),
             edited=InlineImage("image/png", img_path.read_bytes()),

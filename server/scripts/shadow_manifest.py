@@ -19,6 +19,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app import shadow_provenance as sp  # noqa: E402
 from app.agents.edit_intent_vision import PROMPT_VERSION  # noqa: E402
 from app.services.edit_qc_scope import QC_POLICY_VERSION  # noqa: E402
 
@@ -39,6 +40,17 @@ def _dataset_checksum(names, base: pathlib.Path) -> str:
         if f.exists():
             h.update(hashlib.sha256(f.read_bytes()).digest())
     return h.hexdigest()
+
+
+def sp_cases():
+    """현재 case 정의 — 수집기와 같은 정본을 쓴다(없으면 None 으로 검사 생략)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_sc_cases", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "shadow_collect.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m.normalized_cases()
 
 
 def _bundle_sha(rows) -> str | None:
@@ -78,12 +90,18 @@ def build(samples_path: str, *, dataset_id: str, invalid_reasons: list[str],
                             capture_output=True, text=True).stdout.strip()
     # 누락값을 추측하지 않는다. row 가 증명하지 못하면 null 이고, 그러면 이 데이터셋은
     # 캘리브레이션에 못 쓴다 — 무엇으로 만들어졌는지 모르는 표본이기 때문이다.
-    required = ("generationModel", "generationPromptSha256", "visionPromptSha256",
-                "qcPolicyVersion", "codeCommit", "sourceSha256", "outputSha256")
+    # 수집기가 기록하는 정본 구조를 **그대로** 검사한다. 예전에는 manifest 만 옛
+    # 평면 필드를 봤고, 그래서 run/case 가 없는 legacy 도 run 이 섞인 dataset 도
+    # validForCalibration=true 를 받았다. 검증과 기록이 다른 걸 보면 검증이 아니다.
     provs = [r.get("provenance") or {} for r in rows]
-    missing = sorted({k for k in required for pr in provs if not pr.get(k)})
+    try:
+        expected = sp_cases()
+    except Exception:                                   # noqa: BLE001
+        expected = None                                 # case 정의를 못 읽으면 안 본다
+    missing = sp.validate_dataset(rows, expected_cases=expected)
     unverified = bool(missing) or any(pr.get("provenanceUnverified") for pr in provs)
-    models = sorted({pr.get("generationModel") for pr in provs if pr.get("generationModel")})
+    models = sorted({sp.run_of(r).get("generationModel") for r in rows
+                     if sp.has_output(r) and sp.run_of(r).get("generationModel")})
     if unverified and "provenance_unverified" not in invalid_reasons:
         invalid_reasons = [*invalid_reasons, "provenance_unverified"]
     return {
@@ -103,7 +121,7 @@ def build(samples_path: str, *, dataset_id: str, invalid_reasons: list[str],
         "manifestGeneratedByCommit": commit,
         "model": (models[0] if len(models) == 1 else (models or None)),
         "provenanceUnverified": unverified,
-        "provenanceMissingFields": missing,
+        "provenanceProblems": missing,
         "visionPromptVersionAtManifestTime": PROMPT_VERSION,
         "visionPromptSha256AtManifestTime": _sha256_file(PROMPT_FILE),
         "qcPolicyVersionAtManifestTime": QC_POLICY_VERSION,
