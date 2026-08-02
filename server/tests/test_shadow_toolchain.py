@@ -144,7 +144,7 @@ def _rows(n, decision="pass", **kw):
 def test_an_invalid_manifest_forces_every_verdict_to_blocked():
     out = sr.report(_rows(60, human_label="fidelity_pass"),
                     manifest={"validForCalibration": False,
-                              "invalidReasons": ["provenance_unverified"]})
+                              "invalidReasons": ["provenance_unverified"]}, manifest_verified=True)
     ev = out["pipelines"]["editor_vary"]
     ready = [ev["verdict"]["enforceReady"]] + [
         t["verdict"]["enforceReady"] for t in ev["byEditTypeDetail"].values()]
@@ -155,7 +155,12 @@ def test_an_invalid_manifest_forces_every_verdict_to_blocked():
 
 def test_a_valid_manifest_leaves_verdicts_alone():
     out = sr.report(_rows(60, human_label="fidelity_pass"),
-                    manifest={"validForCalibration": True})
+                    manifest={"datasetId": "ds", "rawSampleManifestSha256": "a" * 64,
+              "outputBundleSha256": "b" * 64,
+              "sourceDataset": {"sha256": "c" * 64},
+              "validForCalibration": True, "provenanceUnverified": False,
+              "provenanceProblems": []},
+                    manifest_verified=True)
     v = out["pipelines"]["editor_vary"]["byEditTypeDetail"]["BACKGROUND_ONLY"]["verdict"]
     assert v["enforceReady"] is True
 

@@ -8,7 +8,11 @@
 그래서 구조와 검사를 여기 한 곳에 둔다. 문제는 **코드 목록**으로 돌려준다 —
 "왜 못 쓰는가"가 manifest·리포트·CLI 어디서든 같은 말로 나와야 하기 때문이다.
 
-이 모듈은 파일·네트워크에 손대지 않는다. 순수 검증이다.
+책임은 세 갈래다. 섞이면 "순수 모듈"이라는 거짓 문서가 남는다(실제로 남아 있었다).
+  1) provenance **구조** 검증 — 순수. 파일도 네트워크도 건드리지 않는다.
+  2) artifact **파일** 검증/번들 해시 — 디스크를 읽는다(safe_paths 경유).
+  3) manifest **binding** 검증 — 순수. manifest 딕셔너리 자체만 본다.
+네트워크는 어느 갈래도 쓰지 않는다.
 """
 
 from __future__ import annotations
@@ -277,9 +281,6 @@ MANIFEST_REQUIRED = ("datasetId", "rawSampleManifestSha256", "sourceDataset",
                      "validForCalibration", "provenanceUnverified",
                      "provenanceProblems")
 
-_DATASET_ID = None      # lazy — safe_paths 를 import 시점에 끌어오지 않는다
-
-
 def manifest_binding_problems(manifest, *, has_output_rows: bool = True) -> list[str]:
     """manifest 자체의 형식 문제. 값 비교 이전에 **필드가 있는지**부터 본다."""
     from .safe_paths import SAFE_FILENAME, is_sha256_hex
@@ -311,6 +312,16 @@ def manifest_binding_problems(manifest, *, has_output_rows: bool = True) -> list
     if "provenanceProblems" in manifest and \
             not isinstance(manifest.get("provenanceProblems"), list):
         out.append("manifest_binding_invalid:provenanceProblems")
+    # 필드끼리 모순되면 그 manifest 는 자기 자신을 반박한다. "쓸 수 있다"고 하면서
+    # 동시에 "검증 못 했다"거나 "문제가 있다"고 적혀 있으면 어느 쪽도 믿을 수 없다.
+    if manifest.get("validForCalibration") is True:
+        contradictions = (
+            manifest.get("provenanceUnverified") is True,
+            bool(manifest.get("provenanceProblems")),
+            bool(manifest.get("invalidReasons")),
+        )
+        if any(contradictions):
+            out.append("manifest_binding_invalid:calibration_state")
     # 성공 output 이 있으면 그 묶음 해시도 진술의 일부여야 한다.
     if has_output_rows:
         if "outputBundleSha256" not in manifest:

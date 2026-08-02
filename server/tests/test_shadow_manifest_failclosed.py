@@ -303,7 +303,7 @@ def test_binding_and_label_reasons_are_unioned():
              "edit_qc_result": {"decision": "pass",
                                 "vision": {"meta": {"status": "ok"}}}}]
     out = sr.report(rows, manifest={"validForCalibration": False,
-                                    "invalidReasons": ["provenance_unverified"]},
+                                    "invalidReasons": ["provenance_unverified"]}, manifest_verified=True,
                     quarantined=[{"reason": "dataset_mismatch"}],
                     extra_blocked_reasons=["manifest_samples_mismatch"])
     assert out["calibrationBlockedReasons"] == [

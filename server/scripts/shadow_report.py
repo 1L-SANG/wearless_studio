@@ -64,6 +64,9 @@ QUERY_NO_EVENTS = QUERY.replace(
          order by re.created_at desc, re.id desc
          limit 1)""", "null::text")
 
+DEFAULT_SOURCE_DIR = (pathlib.Path(__file__).resolve().parents[2]
+                      / "public" / "assets" / "fit-examples")
+
 PRECHECK = "select to_regclass('public.edit_sessions'), to_regclass('public.edit_review_events')"
 
 
@@ -74,6 +77,9 @@ def main() -> int:
     ap.add_argument("--labels", help="blinded_label 이 남긴 labels.jsonl")
     ap.add_argument("--manifest", help="데이터셋 manifest.json")
     ap.add_argument("--dataset-id", help="라벨 결합 키. 없으면 manifest.datasetId 를 쓴다")
+    ap.add_argument("--source-dir",
+                    help="원본 이미지 디렉터리(기본: public/assets/fit-examples). "
+                         "테스트가 사본을 쓸 때만 지정한다.")
     ap.add_argument("--limit", type=int, default=5000)
     ap.add_argument("--image-usd", type=float, default=0.0,
                     help="이미지 1회 단가(USD). 안 주면 비용은 0 으로 두고 호출 수만 센다.")
@@ -97,16 +103,36 @@ def main() -> int:
                 r.setdefault("has_pattern_or_logo", False)
                 rows.append(r)
         manifest = None
+        manifest_load_error = None
         if args.manifest:
-            manifest = json.loads(open(args.manifest, encoding="utf-8").read())
+            # 읽기·파싱·타입 확인이 전부 실패할 수 있다. 어느 쪽이든 traceback 을
+            # 사용자에게 던지지 않는다 — 원문에는 로컬 절대 경로가 들어 있다.
+            try:
+                raw_manifest = pathlib.Path(args.manifest).read_text(encoding="utf-8")
+            except OSError:
+                manifest_load_error = "manifest_unreadable"
+            else:
+                try:
+                    parsed = json.loads(raw_manifest)
+                except ValueError:
+                    manifest_load_error = "manifest_not_json"
+                else:
+                    if isinstance(parsed, dict):
+                        manifest = parsed
+                    else:
+                        manifest_load_error = "manifest_not_object"
         dataset_id = args.dataset_id or (manifest or {}).get("datasetId")
         quarantined = []
         blocked = False
         binding_reasons: list[str] = []
+        if manifest_load_error:
+            binding_reasons.append(manifest_load_error)
         samples_file = pathlib.Path(args.jsonl).resolve()
         dataset_dir = samples_file.parent
-        source_dir = (pathlib.Path(__file__).resolve().parents[2]
-                      / "public" / "assets" / "fit-examples")
+        # 운영 기본값은 레포 정본이다. 테스트가 임시 사본을 실제로 변조해 볼 수
+        # 있도록 주입만 허용한다(정본 파일을 건드리지 않기 위해).
+        source_dir = (pathlib.Path(args.source_dir).resolve() if args.source_dir
+                      else DEFAULT_SOURCE_DIR)
         has_out = any(ba_sp.has_output(r) for r in rows)
 
         # manifest 는 "이 표본·이 파일들"에 대한 진술이다. 진술의 형식부터 본다 —
@@ -160,8 +186,11 @@ def main() -> int:
                 print(f"라벨을 표본에 붙일 수 없어요 — 격리 {len(quarantined)}건: "
                       f"{dict(by_reason)}", file=sys.stderr)
                 blocked = True
+        # 검증이 **실제로** 끝났을 때만 trust 를 넘긴다. 이 플래그가 유일한 통로다.
         out = report(rows, image_usd=args.image_usd, vision_usd=args.vision_usd,
-                     manifest=manifest, quarantined=quarantined,
+                     manifest=manifest,
+                     manifest_verified=bool(manifest is not None and not binding_reasons),
+                     quarantined=quarantined,
                      extra_blocked_reasons=binding_reasons)
         if args.json:
             print(json.dumps(out, indent=2, ensure_ascii=False, default=str))

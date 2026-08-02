@@ -20,8 +20,15 @@ from app.config import load_settings
 
 SERVER = pathlib.Path(__file__).resolve().parents[1]
 
-# manifest 없는 리포트는 distribution_only 다(9/N) — 판정 로직 테스트는 신뢰 manifest 사용.
-TRUSTED = {"validForCalibration": True}
+# 실제 필수 스키마를 만족하는 manifest + **명시적 검증 결과**.
+# 불완전 dict(`{"validForCalibration": True}`)는 이제 trust 를 얻지 못한다 —
+# report() 가 manifest 존재만으로 calibration 을 신뢰하던 결함을 막았기 때문이다.
+TRUSTED_MANIFEST = {"datasetId": "ds", "rawSampleManifestSha256": "a" * 64,
+                    "outputBundleSha256": "b" * 64,
+                    "sourceDataset": {"sha256": "c" * 64},
+                    "validForCalibration": True, "provenanceUnverified": False,
+                    "provenanceProblems": []}
+TRUSTED = dict(TRUSTED_MANIFEST)   # 기존 호출부 호환 — 아래에서 verified 와 함께 쓴다
 
 
 def _mod(name, rel):
@@ -292,7 +299,7 @@ def _rows(n=2, **kw):
 
 def test_manifest_and_label_reasons_are_unioned():
     out = sr.report(_rows(), manifest={"validForCalibration": False,
-                                       "invalidReasons": ["provenance_unverified"]},
+                                       "invalidReasons": ["provenance_unverified"]}, manifest_verified=True,
                     quarantined=[{"reason": "dataset_mismatch"},
                                  {"reason": "output_hash_mismatch"}])
     assert out["calibrationBlockedReasons"] == [
@@ -300,14 +307,14 @@ def test_manifest_and_label_reasons_are_unioned():
 
 
 def test_duplicate_reasons_are_collapsed():
-    out = sr.report(_rows(), manifest=TRUSTED,
+    out = sr.report(_rows(), manifest=TRUSTED, manifest_verified=True,
                     quarantined=[{"reason": "dataset_mismatch"}] * 3)
     assert out["calibrationBlockedReasons"] == ["label_dataset_mismatch"]
 
 
 def test_a_combined_failure_gets_a_combined_status():
     out = sr.report(_rows(), manifest={"validForCalibration": False,
-                                       "invalidReasons": ["x"]},
+                                       "invalidReasons": ["x"]}, manifest_verified=True,
                     quarantined=[{"reason": "dataset_mismatch"}])
     ev = out["pipelines"]["editor_vary"]
     assert ev["verdict"]["status"] == "blocked_by_manifest_and_labels"
@@ -317,7 +324,7 @@ def test_a_combined_failure_gets_a_combined_status():
 
 def test_either_source_alone_still_blocks():
     only_manifest = sr.report(_rows(), manifest={"validForCalibration": False,
-                                                 "invalidReasons": ["x"]})
+                                                 "invalidReasons": ["x"]}, manifest_verified=True)
     only_labels = sr.report(_rows(), quarantined=[{"reason": "dataset_mismatch"}])
     for out, status in ((only_manifest, "blocked_by_manifest"),
                         (only_labels, "blocked_by_labels")):
@@ -331,6 +338,11 @@ def test_either_source_alone_still_blocks():
 
 def test_a_clean_run_has_no_blocked_reasons():
     out = sr.report(_rows(2, human_label="fidelity_pass"),
-                    manifest={"validForCalibration": True})
+                    manifest={"datasetId": "ds", "rawSampleManifestSha256": "a" * 64,
+              "outputBundleSha256": "b" * 64,
+              "sourceDataset": {"sha256": "c" * 64},
+              "validForCalibration": True, "provenanceUnverified": False,
+              "provenanceProblems": []},
+                    manifest_verified=True)
     assert "calibrationBlockedReasons" not in out
     assert out.get("calibrationUsable") is None

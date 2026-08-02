@@ -426,28 +426,37 @@ def _force_blocked(block: dict, reason: str, status: str = "blocked_by_manifest"
 
 
 def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
-           manifest: dict | None = None, quarantined: list | None = None,
+           manifest: dict | None = None, manifest_verified: bool = False,
+           quarantined: list | None = None,
            extra_blocked_reasons: list | None = None) -> dict:
     """파이프라인 → edit type 순으로 **두 번** 쪼갠다.
 
     파이프라인만 나누면 BACKGROUND_ONLY 6건이 CUSTOM 24건에 묻혀 "editor_vary 30건"
     으로 보인다. 그 30건에는 정책상 애초에 통과할 수 없는 표본이 섞여 있어 임계값
     근거가 못 된다.
+
+    `manifest_verified` 는 **호출자가 스키마·binding·artifact 검증을 실제로 끝냈다**는
+    명시적 근거다. 이게 없으면 manifest 가 있어도 calibration 으로 치지 않는다 —
+    dict 하나 넘겨준 것을 신뢰의 증거로 삼으면 `{}` 로도 enforce 가 켜진다(그랬다).
+    trust 는 추론하는 게 아니라 전달받는 것이다.
     """
     split: dict[str, list] = {p: [] for p in PIPELINES}
     for r in rows:
         split[pipeline_of(r)].append(r)
 
-    out = {"reportKind": "calibration" if manifest is not None else "distribution_only",
+    invalid_manifest = isinstance(manifest, dict) and \
+        manifest.get("validForCalibration") is False
+    # calibration 후보가 되려면 세 가지가 다 있어야 한다: manifest 가 있고, 호출자가
+    # 검증을 끝냈고, 그 manifest 자신이 무효라고 말하지 않을 것.
+    trusted = manifest is not None and manifest_verified and not invalid_manifest
+    out = {"reportKind": "calibration" if trusted else "distribution_only",
+           "manifestTrust": ("trusted" if trusted else
+                             "absent" if manifest is None else
+                             "invalid" if invalid_manifest else "unverified"),
            "total": len(rows),
            "samplesByPipeline": {p: len(v) for p, v in split.items()},
            "unknownPipelineSamples": [r.get("id") for r in split["unknown"]][:50],
            "pipelines": {}}
-    invalid_manifest = bool(manifest) and manifest.get("validForCalibration") is False
-    # manifest 없이 낸 리포트는 **분포**지 캘리브레이션 근거가 아니다. 무엇으로
-    # 만들어졌는지 증명하지 못한 표본으로 enforce 를 켤 수는 없다.
-    # (DB 분포 조회는 이 경로로 계속 숫자를 받는다 — 판정 플래그만 닫힌다.)
-    trustworthy = manifest is not None and not invalid_manifest
     # 차단 사유는 계열별로 합친다. 한쪽이 다른 쪽을 덮으면 "manifest 도 문제였다"는
     # 사실이 사라지고, 그러면 무엇부터 고쳐야 하는지 알 수 없다.
     blocked_reasons: set[str] = set()
@@ -467,6 +476,9 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
     blocked_reasons.update(extra_blocked_reasons or ())
     if manifest is None:
         blocked_reasons.add("manifest_absent")
+    elif not manifest_verified:
+        # 검증을 안 거친 manifest 는 "있다"는 사실 말고 아무것도 증명하지 않는다.
+        blocked_reasons.add("manifest_unverified")
     if blocked_reasons:
         out["calibrationUsable"] = False
         out["calibrationBlockedReasons"] = sorted(blocked_reasons)
@@ -493,6 +505,10 @@ def report(rows, *, image_usd: float = 0.0, vision_usd: float = 0.0,
         if manifest is None:
             _force_blocked(block, "manifest 없음 — 이 리포트는 분포일 뿐 캘리브레이션 "
                                   "근거가 아니다", status="distribution_only")
+        elif not manifest_verified:
+            _force_blocked(block, "manifest 검증이 끝나지 않음 — 스키마·binding·artifact 를 "
+                                  "확인한 근거 없이는 캘리브레이션 근거가 아니다",
+                           status="blocked_by_manifest")
         if invalid_manifest:
             _force_blocked(block, "manifest.validForCalibration=false — 이 데이터셋으로는 "
                                   "어떤 판정도 근거가 되지 않는다")

@@ -37,16 +37,6 @@ def _sha256_file(p: pathlib.Path) -> str:
 # 거부한 source 를 그 뒤에서 그냥 읽는다(실제로 /etc/hosts 를 1회 읽었다).
 
 
-def _bundle_sha(rows, dataset_dir) -> str | None:
-    """결과 이미지 묶음의 해시 — **실제 파일**로 계산한다.
-
-    provenance 에 적힌 해시로 계산하면 "적힌 대로 계산한 값"일 뿐이라 파일이
-    바뀌어도 그대로다. report 가 나중에 이 값을 현재 파일과 대조하려면 파일 기준
-    이어야 한다.
-    """
-    return sp.output_bundle_sha256(rows, dataset_dir)
-
-
 def _present_count(done, base) -> int:
     """존재 확인도 같은 safe resolver 로 — 여기만 직접 결합하면 그 틈이 경계다."""
     from app.safe_paths import SAFE_ID, UnsafePath, safe_resolve
@@ -76,12 +66,16 @@ def _raw_artifacts(rows, samples_path: str, *, ok: bool = True) -> dict:
             "location": str(base)}
 
 
+DEFAULT_SOURCE_DIR = ROOT / "public" / "assets" / "fit-examples"
+
+
 def build(samples_path: str, *, dataset_id: str, invalid_reasons: list[str],
           image_usd: float, vision_usd: float, collected_at: str,
-          command: str | None) -> dict:
+          command: str | None, source_dir=None) -> dict:
     raw = pathlib.Path(samples_path).read_bytes()
     rows = [json.loads(l) for l in raw.decode().splitlines() if l.strip()]
-    src_dir = ROOT / "public" / "assets" / "fit-examples"
+    # 운영 기본값은 레포 정본. 테스트가 사본을 실제로 변조해 볼 수 있게 주입만 연다.
+    src_dir = pathlib.Path(source_dir) if source_dir else DEFAULT_SOURCE_DIR
     img = sum(int(r.get("image_calls") or 0) for r in rows)
     vis = sum(int(r.get("vision_calls") or 0) for r in rows)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
@@ -139,7 +133,10 @@ def build(samples_path: str, *, dataset_id: str, invalid_reasons: list[str],
             # 말할 수 없다.
             "sha256": sp.source_bundle_sha256(rows, src_dir)},
         "rawSampleManifestSha256": hashlib.sha256(raw).hexdigest(),
-        "outputBundleSha256": _bundle_sha(rows, pathlib.Path(samples_path).parent),
+        # 번들은 **실제 파일**로 계산한다 — provenance 에 적힌 값으로 계산하면
+        # 파일이 바뀌어도 같은 해시가 나와 대조가 의미를 잃는다.
+        "outputBundleSha256": sp.output_bundle_sha256(
+            rows, pathlib.Path(samples_path).parent),
         "rawArtifacts": _raw_artifacts(rows, samples_path, ok=not missing),
         "collectorCommand": command,
         "humanLabels": {"labeled": 0, "path": None,
@@ -156,11 +153,13 @@ def main() -> int:
     ap.add_argument("--image-usd", type=float, default=0.15)
     ap.add_argument("--vision-usd", type=float, default=0.003)
     ap.add_argument("--command")
+    ap.add_argument("--source-dir")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     m = build(a.samples, dataset_id=a.dataset_id, invalid_reasons=a.invalid,
               image_usd=a.image_usd, vision_usd=a.vision_usd,
-              collected_at=a.collected_at, command=a.command)
+              collected_at=a.collected_at, command=a.command,
+              source_dir=a.source_dir)
     pathlib.Path(a.out).write_text(json.dumps(m, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps({k: m[k] for k in ("datasetId", "samples", "validForCalibration",
                                         "imageCallsAttempted", "visionCallsAttempted")},
