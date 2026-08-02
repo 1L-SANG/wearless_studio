@@ -53,6 +53,7 @@ import {
 } from '@/lib/storyboardSpaceSets.js';
 import { normalizePlaceType } from '@/lib/storyboardEntryPlacement.js';
 import { renderGroups } from '@/lib/storyboardRenderGroups.js';
+import { prewarmImages } from '@/lib/imagePrewarm.js';
 
 
 const COLOR_HEX = {
@@ -1276,6 +1277,13 @@ export function Storyboard() {
       setOpenGroupKey(null);
       setBlocks(initBlocks); setCatalogs(hydratedCatalogs); setMatchClothing(m); setClothingType(p.clothingType || 'top');
       setExampleGender(resolvedGender); setHasDetailImage(productHasDetail);
+      // 보드 썸네일·참조 예시 썸네일을 유휴 시간에 미리 받아둔다 — 섹션을 펼치는 순간
+      // 네트워크·디코드 비용이 남지 않게(카드는 lazy 로딩이라 캐시에서 즉시 그려진다).
+      prewarmImages(initBlocks.flatMap((block) => [
+        block.thumb,
+        block.ownImages?.[0],
+        block.exampleId ? exampleThumbFor(hydratedCatalogs, block.exampleId, block.cutType) : null,
+      ]));
       if (normalized || assignment.changed || usePending) {
         const autoAssignmentOnly = assignment.assignedIds.length > 0
           && assignment.protectedIds.length === 0 && !normalized && !usePending;
