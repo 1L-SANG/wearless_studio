@@ -1,44 +1,83 @@
 {
   "schemaVersion": 1,
   "combinations": [
-    { "cutType": "styling", "shot": "full", "clothingType": "top", "gender": "women" },
-    { "cutType": "styling", "shot": "medium", "clothingType": "top", "gender": "women" },
-    { "cutType": "styling", "shot": "full", "clothingType": "top", "gender": "men" },
-    { "cutType": "styling", "shot": "medium", "clothingType": "top", "gender": "men" },
-    { "cutType": "styling", "shot": "full", "clothingType": "bottom", "gender": "women" },
-    { "cutType": "styling", "shot": "medium", "clothingType": "bottom", "gender": "women" },
-    { "cutType": "styling", "shot": "full", "clothingType": "bottom", "gender": "men" },
-    { "cutType": "styling", "shot": "medium", "clothingType": "bottom", "gender": "men" },
-    { "cutType": "styling", "shot": "full", "clothingType": "outer", "gender": "women" },
-    { "cutType": "styling", "shot": "medium", "clothingType": "outer", "gender": "women" },
-    { "cutType": "styling", "shot": "full", "clothingType": "outer", "gender": "men" },
-    { "cutType": "styling", "shot": "medium", "clothingType": "outer", "gender": "men" },
-    { "cutType": "styling", "shot": "full", "clothingType": "dress", "gender": "women" },
-    { "cutType": "styling", "shot": "medium", "clothingType": "dress", "gender": "women" },
-
-    { "cutType": "horizon", "shot": "full", "clothingType": "top", "gender": "women" },
-    { "cutType": "horizon", "shot": "medium", "clothingType": "top", "gender": "women" },
-    { "cutType": "horizon", "shot": "full", "clothingType": "top", "gender": "men" },
-    { "cutType": "horizon", "shot": "medium", "clothingType": "top", "gender": "men" },
-    { "cutType": "horizon", "shot": "full", "clothingType": "bottom", "gender": "women" },
-    { "cutType": "horizon", "shot": "medium", "clothingType": "bottom", "gender": "women" },
-    { "cutType": "horizon", "shot": "full", "clothingType": "bottom", "gender": "men" },
-    { "cutType": "horizon", "shot": "medium", "clothingType": "bottom", "gender": "men" },
-    { "cutType": "horizon", "shot": "full", "clothingType": "outer", "gender": "women" },
-    { "cutType": "horizon", "shot": "medium", "clothingType": "outer", "gender": "women" },
-    { "cutType": "horizon", "shot": "full", "clothingType": "outer", "gender": "men" },
-    { "cutType": "horizon", "shot": "medium", "clothingType": "outer", "gender": "men" },
-    { "cutType": "horizon", "shot": "full", "clothingType": "dress", "gender": "women" },
-    { "cutType": "horizon", "shot": "medium", "clothingType": "dress", "gender": "women" },
-
-    { "cutType": "mirror", "shot": "full", "clothingType": "top", "gender": "women" },
-    { "cutType": "mirror", "shot": "medium", "clothingType": "top", "gender": "women" },
-    { "cutType": "mirror", "shot": "medium", "clothingType": "top", "gender": "men" },
-    { "cutType": "mirror", "shot": "full", "clothingType": "bottom", "gender": "women" },
-
-    { "cutType": "product", "shot": "ghost", "clothingType": "top", "gender": null },
-    { "cutType": "product", "shot": "detail", "clothingType": "top", "gender": null },
-    { "cutType": "product", "shot": "ghost", "clothingType": "bottom", "gender": null },
-    { "cutType": "product", "shot": "detail", "clothingType": "bottom", "gender": null }
+    {
+      "cutType": "styling",
+      "shot": "full",
+      "clothingType": "outer",
+      "gender": "women"
+    },
+    {
+      "cutType": "styling",
+      "shot": "medium",
+      "clothingType": "outer",
+      "gender": "women"
+    },
+    {
+      "cutType": "styling",
+      "shot": "full",
+      "clothingType": "outer",
+      "gender": "men"
+    },
+    {
+      "cutType": "styling",
+      "shot": "medium",
+      "clothingType": "outer",
+      "gender": "men"
+    },
+    {
+      "cutType": "styling",
+      "shot": "full",
+      "clothingType": "dress",
+      "gender": "women"
+    },
+    {
+      "cutType": "styling",
+      "shot": "medium",
+      "clothingType": "dress",
+      "gender": "women"
+    },
+    {
+      "cutType": "horizon",
+      "shot": "medium",
+      "clothingType": "top",
+      "gender": "women"
+    },
+    {
+      "cutType": "horizon",
+      "shot": "medium",
+      "clothingType": "bottom",
+      "gender": "women"
+    },
+    {
+      "cutType": "horizon",
+      "shot": "medium",
+      "clothingType": "outer",
+      "gender": "women"
+    },
+    {
+      "cutType": "horizon",
+      "shot": "medium",
+      "clothingType": "dress",
+      "gender": "women"
+    },
+    {
+      "cutType": "product",
+      "shot": "ghost",
+      "clothingType": "top",
+      "gender": null
+    },
+    {
+      "cutType": "product",
+      "shot": "detail",
+      "clothingType": "top",
+      "gender": null
+    },
+    {
+      "cutType": "product",
+      "shot": "detail",
+      "clothingType": "bottom",
+      "gender": null
+    }
   ]
 }
