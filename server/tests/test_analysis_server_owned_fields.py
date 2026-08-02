@@ -69,10 +69,23 @@ def test_no_carry_when_no_previous_analysis():
 
 
 def test_previous_lookup_skipped_when_nothing_missing():
-    """전 키가 있으면 이전 payload 조회 자체를 안 한다 — 저장 경로에 불필요한 쿼리 금지."""
+    """전 키가 있으면 이전 payload 조회 자체를 안 한다 — 저장 경로에 불필요한 쿼리 금지.
+
+    payload 를 _SERVER_OWNED_ANALYSIS_KEYS 에서 만든다: 키를 추가할 때 이 테스트가
+    '한 키만 든 payload' 를 계속 보내면 실제 클라가 전문을 보내는데도 실패한다.
+    현행 클라는 값이 없을 때 null 로라도 키를 실어 보낸다(httpAdapter analyzeProduct).
+    """
+    full = {k: None for k in repo._SERVER_OWNED_ANALYSIS_KEYS}
     conn = _Conn({"sourceMirrored": True})
-    asyncio.run(repo.save_analysis(conn, "p1", {"sourceMirrored": False}))
+    asyncio.run(repo.save_analysis(conn, "p1", full))
     assert all("select" not in sql.lower() for sql, _ in conn.calls)
+
+
+def test_previous_lookup_happens_when_a_key_is_missing():
+    """반대 방향 — 키가 빠졌으면 반드시 이전 payload 를 읽어 이월해야 한다."""
+    conn = _Conn({"sourceMirrored": True})
+    asyncio.run(repo.save_analysis(conn, "p1", {"fit": "regular"}))
+    assert any("select" in sql.lower() for sql, _ in conn.calls)
 
 
 @pytest.mark.parametrize("junk", ["false", 0, None, "true", 1])

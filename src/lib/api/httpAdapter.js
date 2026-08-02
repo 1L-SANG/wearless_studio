@@ -312,6 +312,9 @@ export const httpAdapter = {
       // 비어 보인다 — 서버는 distribute 로 내려주는데 클라가 버리고 있었다.
       customCategory: ai.customCategory ?? null,
       sellingPoints: [],  // 셀러는 빈 상태로 시작 — AI 제안(aiSuggestedPoints)은 폼이 자동으로 채운다
+      // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드 + mismatch 일 때만 내려오고, 그 외엔 없다.
+      // 이 목록은 화이트리스트다 — 여기 없는 키는 조용히 버려진다.
+      inputConsistency: ai.inputConsistency ?? null,
     };
     // 실측은 AI 미산출 → 기본 shape(defaultAnalysisShape)이 이미 value:null (사용자 직접 입력, PRD §6.5).
     // 매칭 의류 후보 시드 — 서버 matching_items 실 후보(top-N 기본 선택, mock 계약 §6 동일 shape).
