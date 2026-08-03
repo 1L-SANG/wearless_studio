@@ -319,6 +319,14 @@
 .fm-empty { width: 100%; height: 130px; display: grid; place-items: center; background: var(--bg-2); color: var(--fg-3); }
 .fm-verified { position: absolute; top: 8px; left: 8px; display: inline-flex; align-items: center; gap: 2px;
   font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: var(--r-pill); background: var(--accent-success); color: #fff; line-height: 1.5; }
+/* AI(가상) 모델 카드 — 사진만 두고 이름을 우측 하단에 흰 글씨로 얹는다 (2026-08-01 사용자 결정).
+   사진이 밝아도 읽히도록 아래쪽에 옅은 그라데이션을 깔고 글자에 그림자를 준다. */
+.ai-model img { height: 150px; }
+.ai-model::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 52px;
+  background: linear-gradient(to top, rgba(0,0,0,.42), rgba(0,0,0,0)); pointer-events: none; }
+.ai-name { position: absolute; right: 9px; bottom: 7px; z-index: 1; display: inline-flex; align-items: center; gap: 3px;
+  font-size: 12.5px; font-weight: 600; color: #fff; letter-spacing: .01em;
+  text-shadow: 0 1px 3px rgba(0,0,0,.55); pointer-events: none; }
 .fm-meta { padding: 8px 10px; }
 .fm-name { font-size: 12.5px; font-weight: 600; color: var(--fg-1); display: flex; align-items: center; justify-content: space-between; gap: 4px; }
 .fm-price { font-size: 12px; font-weight: 500; color: var(--fg-2); margin-top: 3px; }
