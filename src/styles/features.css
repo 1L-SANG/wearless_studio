@@ -296,8 +296,19 @@
 .sp-add { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; color: var(--fg-2);
   background: transparent; border: 1px dashed var(--ring-strong); border-radius: var(--r-pill); padding: 8px 15px; cursor: pointer; transition: all .14s; }
 .sp-add:hover { color: var(--fg-1); border-color: var(--fg-3); }
+/* 눌러서 수정 — 칩 전체가 클릭 대상. 호버 틴트는 inset 그림자로 깔아 4색 glow 테두리를 덮지 않는다 */
+.sp-chip.editable { cursor: pointer; }
+.sp-chip.editable:hover { box-shadow: inset 0 0 0 999px rgba(34,42,53,.07); }
+.sp-chip.editable:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 2px; }
 .sp-chip.draft { background: #fff; box-shadow: 0 0 0 1px var(--ring); padding: 7px 14px; animation: none; }
-.sp-chip.draft .sp-draft-input { border: 0; outline: 0; background: transparent; font-size: 14px; font-weight: 500; color: var(--fg-1); width: 11ch; }
+/* 입력 폭 = 실제 글자 폭. data-value 를 같은 폰트로 숨겨 렌더한 ::after 가 그리드 칸 폭을
+   정하고 input 이 그 칸을 채운다 — 글자 수 추정(chWidth)은 영문 대문자·이모지·전각문자에서
+   폭이 모자라 앞글자가 밀렸다. 아주 긴 문구는 max-width 에서 멈추고 내부 스크롤로 넘긴다. */
+.sp-draft-fit { display: inline-grid; max-width: min(320px, 100%); }
+.sp-draft-fit::after { content: attr(data-value) ' '; grid-area: 1 / 1; visibility: hidden;
+  white-space: pre; font: inherit; padding-right: 2px; }   /* 2px = 캐럿·반올림 여유(1px 잘림 방지) */
+.sp-draft-fit > .sp-draft-input { grid-area: 1 / 1; width: 100%; min-width: 4ch; }
+.sp-chip.draft .sp-draft-input { border: 0; outline: 0; background: transparent; font-size: 14px; font-weight: 500; color: var(--fg-1); }
 .sp-chip.draft .sp-draft-input::placeholder { color: var(--fg-3); font-weight: 400; }
 .model-grid { display: flex; gap: 12px; flex-wrap: wrap; }
 .model-card { width: 110px; border-radius: var(--r-4); overflow: hidden; background: #fff; box-shadow: 0 0 0 1px var(--ring);
