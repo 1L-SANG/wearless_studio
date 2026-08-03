@@ -49,12 +49,13 @@ const httpAdapterSource = readFileSync(
 );
 
 test('owner declarations gate frontend combinations', () => {
-  // 2026-08-01 구세대 정리 재적용: 플랫 공개 조합 = 신작 스타일링(아우터·원피스) + 호리존 미디움 4종(여) + 제품(상·하의).
+  // 2026-08-03 개별컷 보강: 플랫 공개 조합 = 스타일링(상의·하의·아우터·원피스) + 호리존 미디움 4종(여) + 제품(상·하의).
   // 닫힌 조합의 갤러리는 세트 멤버(setOnly 우회)로 유지되고, 재생성 발행 시 다시 열린다.
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'medium', clothingType: 'outer', gender: 'men' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'dress', gender: 'women' }), true);
-  assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' }), false);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'medium', clothingType: 'bottom', gender: 'men' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'top', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'women' }), false);
   assert.equal(isGenerationCombinationPublic({ cutType: 'product', shot: 'detail', clothingType: 'bottom', gender: 'women' }), true);
