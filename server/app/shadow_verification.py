@@ -7,9 +7,10 @@
 이제 verifier 가 rows 까지 소유해 돌려주고, report 는 그 capability 하나만 받는다.
 `report(rows_b, verification_a)` 같은 조합은 **API 로 표현할 수 없다**.
 
-라벨은 검증 뒤에 정상적으로 붙는 데이터라 전체 행 해시로 막으면 안 된다. 그래서
-"라벨이 건드려도 되는 필드"와 "calibration 입력 정본"을 나누고, 후자만 digest 로
-묶어 report 진입 시 다시 확인한다.
+봉인은 **행 전체**에 건다. 필드 whitelist 로 묶었더니 목록 밖 필드(human_label·
+review_decision·analysis…)를 trusted 상태에서 그냥 고칠 수 있었고, 나중에 생길
+필드는 영원히 무방비였다. 라벨이 붙으면 digest 도 달라지는 게 맞다 — 그때는 typed
+bind 가 새 capability 를 만들며 다시 봉인한다.
 """
 
 from __future__ import annotations
@@ -38,16 +39,11 @@ UNVERIFIED = ManifestState.UNVERIFIED
 INVALID = ManifestState.INVALID
 TRUSTED = ManifestState.TRUSTED
 
-# calibration 입력의 정본. 라벨이 붙어도 이 값들은 바뀌면 안 된다 — 바뀌면 그건
-# 다른 표본이고, 검증은 그 다른 표본에 대해 이뤄진 적이 없다.
-PROTECTED_FIELDS = ("id", "output_id", "source", "source_kind", "edit_type",
-                    "case", "provenance", "edit_qc_result", "image_calls",
-                    "vision_calls", "created_at", "completed_at", "status",
-                    "machine_decision")
-
 # 라벨 결합이 **추가**할 수 있는 필드. 이 밖의 키를 넣거나 기존 값을 바꾸면 거부한다.
+# 선언만 있고 절대 기록되지 않는 필드는 두지 않는다 — blinded label 계약에 있는
+# note 만 남긴다(evidence 는 그 계약에 없다).
 LABEL_FIELDS = ("human_label", "label_reviewer_id", "label_reviewed_at",
-                "label_policy_version", "label_evidence", "label_note")
+                "label_policy_version", "label_note")
 
 # trusted 를 봉인하는 토큰. 이 모듈 밖에서는 얻을 수 없다.
 _TRUST_TOKEN = object()
@@ -59,15 +55,25 @@ def _canonical(obj) -> bytes:
                       default=str).encode()
 
 
-def protected_digest(rows) -> str:
-    """calibration 입력 정본만 뽑아 만든 해시.
+def rows_digest(rows) -> str:
+    """**행 전체**의 해시. 필드 whitelist 에 기대지 않는다.
 
-    전체 행을 해시하면 라벨 한 줄 붙는 순간 달라져 정상 흐름이 막힌다. 반대로 아무
-    것도 안 묶으면 rows 를 통째로 바꿔치기할 수 있다. 그 사이가 이 목록이다.
+    직전 구현은 일부 필드만 해시했다. 그래서 human_label·review_decision·
+    has_pattern_or_logo·analysis 같은 리포트 입력을 trusted 상태에서 그냥 고칠 수
+    있었고, 목록에 없는 **미래 필드**는 영원히 무방비였다.
+
+    라벨이 붙으면 digest 도 달라지는 게 맞다 — 그때는 typed bind 가 새 capability 를
+    만들며 **다시 봉인**한다. digest 에서 라벨을 영구 제외하는 게 아니라, 전환마다
+    새로 찍는다.
     """
-    body = sorted(({k: r.get(k) for k in PROTECTED_FIELDS if k in r} for r in rows),
-                  key=lambda d: str(d.get("id")))
+    body = sorted((dict(r) for r in rows), key=lambda d: str(d.get("id")))
     return hashlib.sha256(_canonical(body)).hexdigest()
+
+
+def rows_with_label_fields(rows) -> list[str]:
+    """typed bind 전에 라벨이 박혀 있는 행 — 그건 검증된 라벨이 아니다."""
+    return [str(r.get("id")) for r in rows
+            if any(k in r for k in LABEL_FIELDS)]
 
 
 def _freeze(rows) -> tuple:
@@ -89,7 +95,7 @@ class VerifiedDataset:
     manifest: dict | None = None
     problems: tuple = ()
     samples_sha256: str | None = None
-    protected_digest: str | None = None
+    rows_digest: str | None = None
     artifacts_verified: bool = False
     dataset_id: str | None = None
     labels_bound: bool = False
@@ -120,12 +126,18 @@ class VerifiedDataset:
         return sorted(set(base) | set(self.problems))
 
     def integrity_problems(self) -> list[str]:
-        """report 진입 시 재확인 — 검증 이후 정본 필드가 바뀌었는지."""
-        if self.protected_digest is None:
-            return []
-        if protected_digest(self.rows) != self.protected_digest:
-            return ["verified_rows_tampered"]
-        return []
+        """report 진입 시 재확인 — 검증 이후 행이 하나라도 달라졌는지.
+
+        추가·변경·삭제를 모두 잡는다. 필드 목록에 기대지 않으므로 나중에 생기는
+        리포트 입력도 자동으로 보호된다.
+        """
+        out = []
+        if self.rows_digest is not None and rows_digest(self.rows) != self.rows_digest:
+            out.append("verified_rows_tampered")
+        if not self.labels_bound and rows_with_label_fields(self.rows):
+            # typed bind 를 거치지 않은 라벨은 누가 넣었는지 증명할 수 없다.
+            out.append("unbound_label_fields")
+        return out
 
 
 def distribution_dataset(rows) -> VerifiedDataset:
@@ -133,14 +145,18 @@ def distribution_dataset(rows) -> VerifiedDataset:
 
     절대 trusted 가 되지 않는다 — 숫자는 그대로 나가되 판정 플래그는 닫힌다.
     """
-    return VerifiedDataset(state=ABSENT, rows=_freeze(rows))
+    frozen = _freeze(rows)
+    # 분포용도 자기 행의 일관성은 지킨다 — 소유한 것이 바뀌면 그것도 사실이 아니다.
+    return VerifiedDataset(state=ABSENT, rows=frozen, rows_digest=rows_digest(frozen))
 
 
 def unverified_dataset(rows, manifest, problems, *, samples_sha256=None,
                        dataset_id=None, artifacts_verified=False) -> VerifiedDataset:
-    return VerifiedDataset(state=UNVERIFIED, rows=_freeze(rows), manifest=manifest,
+    frozen = _freeze(rows)
+    return VerifiedDataset(state=UNVERIFIED, rows=frozen, manifest=manifest,
                            problems=tuple(sorted({str(p) for p in problems})),
                            samples_sha256=samples_sha256,
+                           rows_digest=rows_digest(frozen),
                            artifacts_verified=artifacts_verified,
                            dataset_id=dataset_id)
 
@@ -171,7 +187,7 @@ def verify_dataset(*, manifest, rows, samples_path, dataset_dir=None,
       8) manifest 자신의 validForCalibration
     """
     if manifest is None:
-        return VerifiedDataset(state=ABSENT, rows=_freeze(rows))
+        return distribution_dataset(rows)
     if not isinstance(manifest, dict):
         return unverified_dataset(rows, None, ["manifest_not_object"])
 
@@ -207,49 +223,60 @@ def verify_dataset(*, manifest, rows, samples_path, dataset_dir=None,
             sp.source_bundle_sha256(rows, source_dir):
         problems.append("source_bundle_mismatch")
 
+    # typed bind 를 거치지 않은 라벨이 raw 에 박혀 있으면, 그건 누가 언제 넣었는지
+    # 증명할 수 없는 값이다 — 검증된 표본으로 칠 수 없다.
+    prelabeled = rows_with_label_fields(rows)
+    if prelabeled:
+        problems.append("raw_rows_contain_label_fields")
     problems = sorted(set(problems))
     frozen = _freeze(rows)
-    digest = protected_digest(frozen)
+    digest = rows_digest(frozen)
     if problems:
         return VerifiedDataset(state=UNVERIFIED, rows=frozen, manifest=manifest,
                                problems=tuple(problems), samples_sha256=samples_sha,
-                               protected_digest=digest,
+                               rows_digest=digest,
                                artifacts_verified=not artifact, dataset_id=dataset_id)
     if manifest.get("validForCalibration") is False:
         # 검증은 끝났지만 manifest 자신이 "쓸 수 없다"고 말한다 — 그건 존중한다.
         return VerifiedDataset(
             state=INVALID, rows=frozen, manifest=manifest,
             problems=tuple(manifest.get("invalidReasons") or ("manifest_invalid",)),
-            samples_sha256=samples_sha, protected_digest=digest,
+            samples_sha256=samples_sha, rows_digest=digest,
             artifacts_verified=True, dataset_id=dataset_id)
     return VerifiedDataset(state=TRUSTED, rows=frozen, manifest=manifest, problems=(),
-                           samples_sha256=samples_sha, protected_digest=digest,
+                           samples_sha256=samples_sha, rows_digest=digest,
                            artifacts_verified=True, dataset_id=dataset_id,
                            _token=_TRUST_TOKEN)
 
-
-# 이전 이름 — CLI·테스트가 함께 옮겨 갔다. 호출자 없으면 다음 정리에서 지운다.
-verify_manifest_for_report = verify_dataset
 
 
 class LabelBindingError(Exception):
     """라벨이 정본을 건드렸거나 결합이 성립하지 않는다."""
 
 
-def bind_verified_labels(dataset: VerifiedDataset, effective_labels: dict, *,
-                         dataset_id: str) -> tuple[VerifiedDataset, list[dict]]:
+def bind_verified_labels(dataset: VerifiedDataset,
+                         effective_labels: dict) -> tuple[VerifiedDataset, list[dict]]:
     """검증된 데이터셋에 사람 라벨을 붙인다 → (새 dataset, 격리 목록).
 
-    라벨은 **추가**만 한다. 정본 필드를 하나라도 건드리면 그건 라벨이 아니라 다른
-    표본을 만들어 낸 것이고, 그 표본은 검증된 적이 없다. 호출자가 임의의 rows 를
-    "라벨 결과"라고 주장해 밀어 넣을 수 있는 통로를 두지 않는다.
+    dataset_id 는 인자로 받지 않는다. 호출자가 정할 수 있으면 다른 데이터셋의 라벨을
+    그대로 붙일 수 있고(실제로 evil-ds 라벨이 quarantine 0 으로 통과했다), 그 순간
+    "이 표본에 대한 판단"이라는 전제가 사라진다. 정본은 dataset.dataset_id 뿐이다.
+
+    라벨은 **추가**만 한다. 붙인 뒤 새 행 전체로 digest 를 다시 봉인하므로, 이후
+    어떤 필드를 고쳐도 report 진입에서 걸린다.
     """
     from . import blinded_audit as ba
 
-    rows = [dict(r) for r in dataset.rows]
+    dataset_id = dataset.dataset_id
+    if not dataset_id:
+        # 무엇에 대한 라벨인지 말할 수 없으면 붙이지 않는다.
+        raise LabelBindingError("dataset 에 datasetId 가 없어 라벨을 결합할 수 없어요.")
+
+    import copy
+
+    rows = [copy.deepcopy(r) for r in dataset.rows]
     by_id = {str(r.get("id")): r for r in rows}
     quarantined: list[dict] = []
-    applied = 0
     for (ds, sid), lab in (effective_labels or {}).items():
         reason = None
         row = by_id.get(sid)
@@ -273,15 +300,21 @@ def bind_verified_labels(dataset: VerifiedDataset, effective_labels: dict, *,
             row["label_reviewed_at"] = lab["labeledAt"]
         if lab.get("policyVersion"):
             row["label_policy_version"] = lab["policyVersion"]
-        applied += 1
+        if lab.get("note"):
+            # blinded label 계약의 정규화된 note 만 옮긴다(길이는 make_label 이 이미 제한).
+            row["label_note"] = lab["note"]
 
-    # 붙인 결과가 정본을 건드리지 않았는지 스스로 확인한다.
-    if dataset.protected_digest and protected_digest(rows) != dataset.protected_digest:
-        raise LabelBindingError("라벨 결합이 calibration 입력 정본을 바꿨어요.")
+    # 붙인 결과가 허용 범위를 벗어나지 않았는지 스스로 확인한다.
+    # 수동 protected whitelist가 아니라 라벨 필드를 제외한 전체 행을 비교한다.
+    # 그래야 미래에 새 리포트 필드가 생겨도 자동으로 보호된다.
     for before, after in zip(dataset.rows, rows):
         extra = set(after) - set(before) - set(LABEL_FIELDS)
         if extra:
             raise LabelBindingError(f"라벨이 허용되지 않은 필드를 추가했어요: {sorted(extra)}")
+        before_body = {k: v for k, v in before.items() if k not in LABEL_FIELDS}
+        after_body = {k: v for k, v in after.items() if k not in LABEL_FIELDS}
+        if before_body != after_body:
+            raise LabelBindingError("라벨 결합이 라벨 외 행 데이터를 바꿨어요.")
 
     state = dataset.state
     token = _TRUST_TOKEN if state is TRUSTED else None
@@ -292,5 +325,8 @@ def bind_verified_labels(dataset: VerifiedDataset, effective_labels: dict, *,
         token = None
         problems = tuple(sorted(set(problems) |
                                 {f"label_{q['reason']}" for q in quarantined}))
-    return replace(dataset, state=state, rows=tuple(rows), problems=problems,
-                   labels_bound=True, _token=token), quarantined
+    frozen = tuple(rows)
+    # 전환마다 **다시** 봉인한다 — 라벨을 digest 에서 영구 제외하지 않는다.
+    return replace(dataset, state=state, rows=frozen, problems=problems,
+                   rows_digest=rows_digest(frozen), labels_bound=True,
+                   _token=token), quarantined

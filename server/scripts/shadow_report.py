@@ -156,8 +156,7 @@ def main() -> int:
             eff = ba.effective_labels(records)
             # 라벨도 typed 변환이다 — 임의 rows 를 "라벨 결과"라고 주장해 넣을 수 없다.
             try:
-                dataset, quarantined = sv.bind_verified_labels(
-                    dataset, eff, dataset_id=dataset_id)
+                dataset, quarantined = sv.bind_verified_labels(dataset, eff)
             except sv.LabelBindingError as e:
                 print(f"라벨 결합이 정본을 바꿨어요: {e}", file=sys.stderr)
                 return 5
@@ -200,7 +199,9 @@ def main() -> int:
                         (args.limit,))
             rows = cur.fetchall()
 
-    out = report(rows, image_usd=args.image_usd, vision_usd=args.vision_usd)
+    # DB 조회는 검증 대상이 아니라 분포다 — 명시적 factory 로 감싼다.
+    out = report(sv.distribution_dataset(rows), image_usd=args.image_usd,
+                 vision_usd=args.vision_usd)
     if args.json:
         print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
         return 0

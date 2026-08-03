@@ -281,7 +281,7 @@ def test_a_non_dict_manifest_is_refused_by_the_verifier(tmp_path):
     """`if manifest:` 로 판단하면 `{}` 가 falsy 라 검사 자체가 생략된다."""
     from app import shadow_verification as _sv2
     for bad in ({}, [1], "x", 42):
-        v = _sv2.verify_manifest_for_report(
+        v = _sv2.verify_dataset(
             manifest=bad, rows=[], samples_path=tmp_path / "n.jsonl")
         assert not v.trusted
 

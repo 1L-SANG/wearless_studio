@@ -329,7 +329,6 @@ def test_either_source_alone_still_blocks():
 
 
 def test_a_clean_run_has_no_blocked_reasons():
-    out = sr.report(_sv.distribution_dataset(_rows(2, human_label="fidelity_pass")),
-                    )
+    out = sr.report(_sv.distribution_dataset(_rows(2)))
     # manifest 없는 리포트는 언제나 분포다 — 사유에 manifest_absent 만 남는다.
     assert set(out["calibrationBlockedReasons"]) == {"manifest_absent"}

@@ -220,6 +220,7 @@ def effective_labels(records) -> dict:
                     "policyVersion": last.get("policyVersion"),
                     "sampleSha256": last.get("sampleSha256"),
                     "outputSha256": last.get("outputSha256"),
+                    "note": last.get("note"),
                     "changed": len({r.get("label") for r in ordered}) > 1,
                     "history": [{"label": r.get("label"), "reviewerId": r.get("reviewerId"),
                                  "labeledAt": r.get("labeledAt")} for r in ordered]}

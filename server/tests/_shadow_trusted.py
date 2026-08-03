@@ -54,7 +54,6 @@ def build_trusted(n: int = 2, *, dataset_id: str = "ds"):
                      "source": origin.name, "source_kind": "editor_asset",
                      "edit_type": SC.editor_vary.edit_type_for(ch),
                      "image_calls": 1, "vision_calls": 1,
-                     "human_label": "fidelity_pass",
                      "edit_qc_result": {"decision": "pass",
                                         "vision": {"meta": {"status": "ok"}}},
                      "provenance": SC._provenance(
@@ -68,7 +67,7 @@ def build_trusted(n: int = 2, *, dataset_id: str = "ds"):
                         invalid_reasons=[], image_usd=0, vision_usd=0,
                         collected_at="t", command=None, source_dir=src_dir)
     (ds / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False))
-    verification = sv.verify_manifest_for_report(
+    verification = sv.verify_dataset(
         manifest=manifest, rows=rows, samples_path=ds / "samples.jsonl",
         source_dir=src_dir)
     return verification, ds, src_dir, rows, manifest

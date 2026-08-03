@@ -169,7 +169,7 @@ def shadow_dataset(tmp_path):
     SC, SM = _shadow_modules()
     origin_dir = _SERVER.parent / "public" / "assets" / "fit-examples"
 
-    def build(n=2, *, mutate_rows=None, dataset_id="ds"):
+    def build(n=2, *, mutate_rows=None, dataset_id="ds", label_all=None):
         src_dir = tmp_path / "sources"
         src_dir.mkdir(exist_ok=True)
         origin = sorted(origin_dir.glob("*.jpg"))[0]
@@ -188,7 +188,6 @@ def shadow_dataset(tmp_path):
                          "source": origin.name, "source_kind": "editor_asset",
                          "edit_type": SC.editor_vary.edit_type_for(ch),
                          "image_calls": 1, "vision_calls": 1,
-                         "human_label": "fidelity_pass",
                          "edit_qc_result": {"decision": "pass",
                                             "vision": {"meta": {"status": "ok"}}},
                          "provenance": SC._provenance(
@@ -204,11 +203,21 @@ def shadow_dataset(tmp_path):
                             invalid_reasons=[], image_usd=0, vision_usd=0,
                             collected_at="t", command=None, source_dir=src_dir)
         (ds / "manifest.json").write_text(_json.dumps(manifest, ensure_ascii=False))
-        verification = sv.verify_manifest_for_report(
+        verification = sv.verify_dataset(
             manifest=manifest, rows=rows, samples_path=ds / "samples.jsonl",
             source_dir=src_dir)
+        # 라벨은 raw row 에 심지 않는다 — typed bind 만이 검증된 라벨을 만든다.
+        labeled = None
+        if label_all:
+            from app import blinded_audit as ba
+            eff = {(dataset_id, str(r["id"])): ba.make_label(
+                sample=r, label=(label_all if isinstance(label_all, str)
+                                 else "fidelity_pass"),
+                reviewer_id="t", dataset_id=dataset_id, now=1.0)
+                for r in verification.rows}
+            labeled, _q = sv.bind_verified_labels(verification, eff)
         return {"dir": ds, "source_dir": src_dir, "rows": rows,
                 "manifest": manifest, "verification": verification,
-                "source_name": origin.name}
+                "labeled": labeled, "source_name": origin.name}
 
     return build

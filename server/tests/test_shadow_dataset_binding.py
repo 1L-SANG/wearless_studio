@@ -81,12 +81,14 @@ def test_in_place_tampering_of_a_protected_field_is_detected(shadow_dataset,
     assert _ready(out) == {False}
 
 
-def test_adding_a_label_field_does_not_trip_the_digest(shadow_dataset):
-    """라벨은 검증 뒤에 정상적으로 붙는 데이터다 — 전체 해시로 막으면 안 된다."""
+def test_adding_a_label_field_without_binding_is_blocked(shadow_dataset):
+    """typed bind 밖에서 붙은 라벨은 출처를 증명할 수 없다."""
     built = shadow_dataset(n=2)
     ds = built["verification"]
     ds.rows[0]["human_label"] = "fidelity_pass"
-    assert sr.report(ds)["reportKind"] == "calibration"
+    out = sr.report(ds)
+    assert out["reportKind"] == "distribution_only"
+    assert "verified_rows_tampered" in out["calibrationBlockedReasons"]
 
 
 def test_the_original_row_list_can_change_without_effect(shadow_dataset):
@@ -107,7 +109,7 @@ def _labels_for(rows, dataset_id="ds", label="fidelity_pass"):
 def test_binding_labels_keeps_the_dataset_trusted(shadow_dataset):
     built = shadow_dataset(n=2)
     ds = built["verification"]
-    bound, q = sv.bind_verified_labels(ds, _labels_for(ds.rows), dataset_id="ds")
+    bound, q = sv.bind_verified_labels(ds, _labels_for(ds.rows))
     assert not q and bound.trusted and bound.labels_bound
     out = sr.report(bound)
     assert out["reportKind"] == "calibration"
@@ -117,19 +119,17 @@ def test_binding_labels_keeps_the_dataset_trusted(shadow_dataset):
 def test_binding_only_adds_allowed_fields(shadow_dataset):
     built = shadow_dataset(n=2)
     ds = built["verification"]
-    bound, _ = sv.bind_verified_labels(ds, _labels_for(ds.rows), dataset_id="ds")
+    bound, _ = sv.bind_verified_labels(ds, _labels_for(ds.rows))
     for before, after in zip(ds.rows, bound.rows):
         assert set(after) - set(before) <= set(sv.LABEL_FIELDS)
-        for k in sv.PROTECTED_FIELDS:
-            if k in before:
-                assert after[k] == before[k]
+        assert {k: v for k, v in after.items() if k not in sv.LABEL_FIELDS} == before
 
 
 def test_a_mismatched_dataset_id_quarantines_and_blocks(shadow_dataset):
     built = shadow_dataset(n=2)
     ds = built["verification"]
     labels = _labels_for(ds.rows, dataset_id="other")
-    bound, q = sv.bind_verified_labels(ds, labels, dataset_id="ds")
+    bound, q = sv.bind_verified_labels(ds, labels)
     assert [x["reason"] for x in q] == ["dataset_mismatch"] * 2
     assert not bound.trusted
     out = sr.report(bound, quarantined=q)
@@ -142,7 +142,7 @@ def test_a_tampered_label_hash_is_quarantined(shadow_dataset):
     labels = _labels_for(ds.rows)
     for k in labels:
         labels[k] = {**labels[k], "outputSha256": "f" * 64}
-    bound, q = sv.bind_verified_labels(ds, labels, dataset_id="ds")
+    bound, q = sv.bind_verified_labels(ds, labels)
     assert {x["reason"] for x in q} == {"output_hash_mismatch"}
     assert not bound.trusted
 
@@ -154,7 +154,7 @@ def test_labels_cannot_smuggle_arbitrary_rows(shadow_dataset):
     # bind 는 dataset.rows 만 다룬다 — 외부 rows 를 받을 인자가 없다.
     import inspect
     sig = inspect.signature(sv.bind_verified_labels)
-    assert list(sig.parameters) == ["dataset", "effective_labels", "dataset_id"]
+    assert list(sig.parameters) == ["dataset", "effective_labels"]
 
 
 def test_binding_refuses_to_change_protected_fields(shadow_dataset, monkeypatch):
@@ -162,6 +162,7 @@ def test_binding_refuses_to_change_protected_fields(shadow_dataset, monkeypatch)
     ds = built["verification"]
     from app import blinded_audit as ba
 
+    labels = _labels_for(ds.rows)
     real = ba.sample_sha256
 
     def sneaky(row):
@@ -170,7 +171,7 @@ def test_binding_refuses_to_change_protected_fields(shadow_dataset, monkeypatch)
 
     monkeypatch.setattr(ba, "sample_sha256", sneaky)
     with pytest.raises(sv.LabelBindingError):
-        sv.bind_verified_labels(ds, _labels_for(ds.rows), dataset_id="ds")
+        sv.bind_verified_labels(ds, labels)
 
 
 # ── 4. distribution 경로 ─────────────────────────────────────────────────
@@ -193,9 +194,13 @@ def test_distribution_numbers_are_intact():
 
 
 def test_graded_and_false_pass_survive(shadow_dataset):
-    built = shadow_dataset(n=2, mutate_rows=lambda rs: rs[0].__setitem__(
-        "human_label", "fidelity_fail"))
-    out = sr.report(built["verification"])
+    built = shadow_dataset(n=2)
+    labels = _labels_for(built["verification"].rows)
+    first = next(iter(labels))
+    labels[first] = {**labels[first], "label": "fidelity_fail"}
+    bound, q = sv.bind_verified_labels(built["verification"], labels)
+    assert not q
+    out = sr.report(bound)
     cal = out["pipelines"]["editor_vary"]["calibrationConfusion"]
     assert cal["graded"] == 2 and cal["falsePass"] == 1
 
