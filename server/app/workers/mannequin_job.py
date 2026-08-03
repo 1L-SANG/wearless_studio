@@ -46,6 +46,7 @@ from ..services.hybrid_composite import (
     panel_map as hc_panel,
     source_validation as hc_source,
     stripe_model as hc_stripe,
+    texture_projection as hc_projection,
     warp_composite as hc_warp,
 )
 from ..services.hybrid_composite.types import (
@@ -60,6 +61,10 @@ from ..agents.prompts import (
 )
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime, genrun_prompt_key
 from ..services import edit_intent_qc, qc
+from ..services.garment_profile import build_garment_profile, select_pipeline_policy
+from ..services.qc_decision import decide as decide_structured_qc
+from ..services.qc_result import assemble_qc_result
+from ..services.quantitative_fidelity_qc import run as run_quantitative_fidelity_qc
 from ..services import edit_session as edit_service
 from ..services.generation_run import RunLogger, prompt_sha256 as gr_prompt_sha
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
@@ -319,6 +324,55 @@ def effective_image_size(s, product: dict | None, analysis: dict | None) -> str:
     if upgrade in (None, "", "OFF"):
         return s.mannequin_image_size
     return upgrade if mannequin.has_fine_pattern(product, analysis) else s.mannequin_image_size
+
+
+_IMAGE_SIZE_RANK = {"1K": 1, "2K": 2, "4K": 4}
+
+
+def _generation_pipeline_policy(s, product_truth: dict | None) -> dict | None:
+    """승인 truth가 있고 structured pipeline이 켜진 잡만 비용/위험 정책을 적용한다."""
+    if getattr(s, "mannequin_structured_qc", "off") == "off" or not product_truth:
+        return None
+    return select_pipeline_policy(build_garment_profile(product_truth))
+
+
+def _policy_image_size(base_size: str, policy: dict | None, *, fine_pattern: bool) -> str:
+    """정책 해상도를 적용하되 미세 패턴용 명시적 상향 설정은 절대 낮추지 않는다."""
+    if not policy:
+        return base_size
+    requested = str(policy.get("resolution") or base_size).upper()
+    if requested not in _IMAGE_SIZE_RANK:
+        return base_size
+    base = str(base_size or "").upper()
+    if fine_pattern and _IMAGE_SIZE_RANK.get(base, 0) > _IMAGE_SIZE_RANK[requested]:
+        return base
+    return requested
+
+
+def _select_policy_candidate(s, candidates: list[dict]) -> dict | None:
+    """고정 정책으로 후보 하나를 고른다. 자유 추론이나 마지막 결과 우선은 사용하지 않는다."""
+    if not candidates:
+        return None
+    decision_rank = {"reject": 0, "review": 1, "pass": 2}
+    outcome_rank = {"regenerate": 0, "needs_review": 1, "auto_pass": 2}
+
+    def ranks(candidate):
+        scores = candidate.get("qc_scores") if isinstance(candidate, dict) else None
+        structured = scores.get("structuredQC") if isinstance(scores, dict) else None
+        return (
+            decision_rank.get((structured or {}).get("overallDecision"), -1),
+            outcome_rank.get((scores or {}).get("outcome"), -1),
+        )
+
+    best = candidates[0]
+    for candidate in candidates[1:]:
+        if ranks(candidate) > ranks(best):
+            best = candidate
+            continue
+        if ranks(candidate) == ranks(best) and _is_better_candidate(
+                s, candidate.get("qc_scores"), best.get("qc_scores")):
+            best = candidate
+    return best
 
 
 _PATTERN_SAFE_TIER = "image_high"
@@ -657,6 +711,85 @@ def merge_qc_scores(p2, series, *, salvaged: bool = False, thresholds: tuple | N
     return out
 
 
+def _attach_structured_qc(s, qc_scores: dict | None, product_truth: dict | None,
+                          quantitative_checks: list[dict] | None = None) -> dict:
+    """구형 A-D snapshot을 새 단일책임 check/policy 계약으로 투영한다.
+
+    정량 Color/Pattern check가 실제로 실행되지 않은 항목은 unavailable이다. 없는 측정을 높은
+    legacy 점수로 꾸미지 않는다. shadow에서는 관측만, enforce에서는 reject 저장을 막는다.
+    """
+    legacy = dict(qc_scores or {})
+    profile = build_garment_profile(product_truth or {})
+    policy = select_pipeline_policy(profile)
+    checks = []
+    mapping = {
+        "physical_naturalness": "composition",
+        "image_quality": "image_quality",
+        "product_fidelity": "garment_structure",
+        "series_consistency": "style_consistency",
+    }
+    critical = list(legacy.get("critical_errors") or [])
+    for old, name in mapping.items():
+        value = legacy.get(old)
+        if value is None:
+            checks.append({"check": name, "status": "unavailable", "score": None})
+        else:
+            score = max(0.0, min(1.0, float(value) / 100.0))
+            checks.append({"check": name,
+                           "status": "pass" if score >= 0.75 else "fail",
+                           "score": score,
+                           **({"criticalErrors": critical}
+                              if name == "garment_structure" and critical else {})})
+    measured = {c.get("check"): c for c in (quantitative_checks or [])}
+    checks.append(measured.get("color_fidelity") or
+                  {"check": "color_fidelity", "status": "unavailable", "score": None})
+    if "pattern_fidelity" in policy["modules"]:
+        hc = legacy.get("hybridComposite") if isinstance(legacy, dict) else None
+        if measured.get("pattern_fidelity"):
+            checks.append(measured["pattern_fidelity"])
+        elif isinstance(hc, dict) and hc.get("deterministicPassed"):
+            checks.append({"check": "pattern_fidelity", "status": "pass", "score": 1.0})
+        elif isinstance(hc, dict) and hc.get("applied") is False:
+            checks.append({"check": "pattern_fidelity", "status": "fail", "score": 0.0,
+                           "criticalErrors": [hc.get("failureReason") or "pattern_fidelity_failed"]})
+        else:
+            checks.append({"check": "pattern_fidelity", "status": "unavailable", "score": None})
+    # 보호 자산/복잡 구조/소재는 Product Truth가 모듈을 선택했다는 사실 자체를 결과에 남긴다.
+    # 전용 ROI 또는 측정값이 아직 없는데 legacy product_fidelity 점수로 PASS를 꾸미면 로고와
+    # 레이스를 일반 상품 점수로 자동 승인하게 된다. 측정 불가는 실패가 아니라 사용자 review다.
+    for specialized in ("protected_detail", "advanced_structure", "material"):
+        if specialized in policy["modules"] and specialized not in measured:
+            checks.append({
+                "check": specialized,
+                "status": "unavailable",
+                "score": None,
+                "warnings": [f"specialized_qc_unavailable:{specialized}"],
+            })
+        elif specialized in measured:
+            checks.append(measured[specialized])
+    decision = decide_structured_qc(
+        checks, policy_version=policy["policyVersion"],
+        auto_approval=policy["autoApproval"])
+    structured = assemble_qc_result(
+        generation_output_id=None,
+        truth_package_id=(product_truth or {}).get("id"), checks=checks,
+        decision=decision, policy_version=policy["policyVersion"])
+    structured["pipelineLane"] = policy["lane"]
+    structured["pipelinePolicy"] = policy
+    return {**legacy, "structuredQC": structured,
+            "outcome": (legacy.get("outcome") if decision["overallDecision"] == "pass"
+                        else "needs_review")}
+
+
+def _apply_structured_outcome(qc_scores: dict) -> None:
+    """새 policy는 legacy 점수를 승격하지 않고 review/reject만 강등한다."""
+    structured = qc_scores.get("structuredQC")
+    if (isinstance(structured, dict)
+            and structured.get("overallDecision") != "pass"
+            and qc_scores.get("outcome") == "auto_pass"):
+        qc_scores["outcome"] = "needs_review"
+
+
 # 축별 재생성 지시 — 점수만 낮고 텍스트 사유가 없을 때의 폴백. 같은 프롬프트로 다시 만들면
 # 같은 결과가 나오므로, 최소한 "무엇이 부족했는지"는 전달해야 재시도가 의미를 갖는다.
 _AXIS_FEEDBACK = {
@@ -885,13 +1018,16 @@ def _raise_if_hybrid_failed_closed(summary: dict | None) -> None:
 async def _delete_uploaded_candidate_keys(r2, candidates: list[dict]) -> None:
     """이미 업로드된 후보를 best-effort 삭제한다. 실패 종결 전 orphan 방지용."""
     for c in candidates:
-        key = c.get("key") if isinstance(c, dict) else None
-        if not key:
+        if not isinstance(c, dict):
             continue
-        try:
-            await asyncio.to_thread(r2.delete, key)
-        except Exception:
-            log.warning("orphan R2 cleanup failed: %s", key)
+        keys = [c.get("key")]
+        keys.extend(d.get("key") for d in (c.get("qc_debug_assets") or [])
+                    if isinstance(d, dict))
+        for key in filter(None, keys):
+            try:
+                await asyncio.to_thread(r2.delete, key)
+            except Exception:
+                log.warning("orphan R2 cleanup failed: %s", key)
 
 
 async def _fail_closed_hybrid_job_if_needed(r2, fail, passed: list[dict], meta: dict | None) -> bool:
@@ -1046,6 +1182,31 @@ async def _apply_hybrid_composite(
         (max(car_lm["shoulder_r"][0], car_lm["hem_r"][0])
          - min(car_lm["shoulder_l"][0], car_lm["hem_l"][0])) * cw)
     target_period_px = float(t_torso_span / max(repeats_on_torso, 1e-6))
+    projection_mode = getattr(s, "mannequin_texture_projection_2d", "off")
+    projection_summary = None
+    if projection_mode != "off":
+        pattern_type = (
+            ((analysis or {}).get("pattern") or {}).get("type")
+            if isinstance((analysis or {}).get("pattern"), dict)
+            else (analysis or {}).get("patternType") or (analysis or {}).get("pattern")
+        ) or (product or {}).get("pattern") or "stripe"
+        projection_plan = hc_projection.plan_periodic_projection(
+            pattern_type=str(pattern_type),
+            source_period_px=front_period_px,
+            source_span_px=torso_span_src,
+            target_span_px=t_torso_span,
+            target_axis=garment_axis,
+            source_model_confidence=float(anchor_corr if anchor_corr is not None else model.confidence),
+        )
+        projection_summary = projection_plan.summary()
+        await emit("hybrid_texture_projection_plan", mode=projection_mode, **projection_summary)
+        if projection_mode == "enforce" and not projection_plan.ok:
+            return await fail(
+                "pattern_metric_failed",
+                f"texture projection unsafe: {projection_plan.reason}",
+                textureProjection=projection_summary)
+        if projection_plan.ok and projection_plan.target_period_px is not None:
+            target_period_px = projection_plan.target_period_px
     await emit("hybrid_scale_anchor", garment_axis=garment_axis,
                detail_photo_axis=model.axis,
                front_period_px=round(front_period_px, 2),
@@ -1118,6 +1279,7 @@ async def _apply_hybrid_composite(
         },
         "targetPeriodPx": round(target_period_px, 2),
         "targetAxis": garment_axis,
+        **({"textureProjection": projection_summary} if projection_summary else {}),
         "sourceCoverage": round(art.source_coverage, 4),
         "panelMetrics": art.panel_metrics,
         "deterministicMetrics": qc_event_metrics,
@@ -1214,10 +1376,32 @@ async def _apply_edits(
 
 
 async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, res, qc_scores,
-                    runlog=None, carrier_run_id=None, parent_lineage=None):
+                    runlog=None, carrier_run_id=None, parent_lineage=None, product_truth=None,
+                    source_image=None, base_image=None):
     """채택본을 R2 에 올리고 finalize 용 dict 를 만든다. 출고 지점은 여기 하나뿐이다."""
+    debug_overlays = []
+    if getattr(s, "mannequin_structured_qc", "off") != "off":
+        quantitative_checks = None
+        if source_image is not None and base_image is not None:
+            pattern = ((product_truth or {}).get("patternSpec") or
+                       (product_truth or {}).get("pattern_spec") or {}).get("type", "unknown")
+            quantitative_checks = await asyncio.to_thread(
+                run_quantitative_fidelity_qc,
+                source_bytes=source_image.data, base_bytes=base_image.data,
+                output_bytes=res.image, pattern_type=pattern, include_debug_bytes=True)
+            for check in quantitative_checks:
+                overlay = check.pop("_debugOverlayPng", None)
+                if overlay:
+                    debug_overlays.append((check.get("check") or "qc", overlay,
+                                           check.get("debugOverlaySha256")))
+        qc_scores = _attach_structured_qc(
+            s, qc_scores, product_truth, quantitative_checks=quantitative_checks)
+        if (s.mannequin_structured_qc == "enforce"
+                and qc_scores["structuredQC"]["overallDecision"] == "reject"):
+            raise ValueError("structured_qc_rejected")
     if qc_scores is not None:
         qc_scores["outcome"] = score_outcome(s, qc_scores)
+        _apply_structured_outcome(qc_scores)
         hc = qc_scores.get("hybridComposite")
         if isinstance(hc, dict):
             # deterministic 판정과 LLM 판정의 우선순위를 출고 지점 한 곳에서 강제한다:
@@ -1240,6 +1424,30 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
     asset_id = str(uuid.uuid4())
     key = ai_key(user_id, project_id, job_id, asset_id, ext)
     await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime, cache=IMMUTABLE_CACHE)
+    debug_assets = []
+    for check_name, overlay, overlay_sha in debug_overlays:
+        debug_asset_id = str(uuid.uuid4())
+        debug_key = ai_key(user_id, project_id, job_id, debug_asset_id, "png")
+        try:
+            await asyncio.to_thread(
+                r2.put_bytes, debug_key, overlay, "image/png", cache=IMMUTABLE_CACHE)
+        except Exception as exc:
+            log.warning("QC debug overlay upload failed job=%s check=%s error_type=%s",
+                        job_id, check_name, type(exc).__name__)
+            continue
+        dw, dh = _image_dims(overlay)
+        debug_assets.append({
+            "asset_id": debug_asset_id, "bucket": s.r2_bucket, "key": debug_key,
+            "mime": "image/png", "size": len(overlay), "width": dw, "height": dh,
+            "check": check_name, "sha256": overlay_sha,
+        })
+    structured = (qc_scores or {}).get("structuredQC") if isinstance(qc_scores, dict) else None
+    if isinstance(structured, dict) and debug_assets:
+        structured["debugAssets"] = [
+            {"assetId": item["asset_id"], "check": item["check"],
+             "sha256": item["sha256"], "src": f"/v1/assets/{item['asset_id']}/file"}
+            for item in debug_assets
+        ]
     w, h = _image_dims(res.image)
     return {
         "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
@@ -1252,6 +1460,7 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
         # 봉투(MannequinCut §3.3)에는 나가지 않는다 — finalize 가 키를 명시 나열해 만든다.
         "generation_lineage": _output_lineage(runlog, res, candidate, qc_scores,
                                               carrier_run_id, parent_lineage),
+        "qc_debug_assets": debug_assets,
     }
 
 
@@ -1335,7 +1544,7 @@ async def _run_candidate(
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
     adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
-    parent_lineage=None, runlog=None,
+    parent_lineage=None, runlog=None, product_truth=None, pipeline_policy=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None.
 
@@ -1349,8 +1558,10 @@ async def _run_candidate(
     prod_imgs = [r.image for r in prod_refs]
     # 미세 패턴 상품은 해상도를 올린다. **편집 패스(축 교정·2패스)도 같은 값**을 써야 한다 —
     # 편집이 기본 해상도로 다시 렌더하면 어렵게 올린 4K 가 그 자리에서 깎인다.
-    image_size = effective_image_size(s, product, analysis)
     has_fine_pattern = mannequin.has_fine_pattern(product, analysis)
+    image_size = _policy_image_size(
+        effective_image_size(s, product, analysis), pipeline_policy,
+        fine_pattern=has_fine_pattern)
     if generation_path == "edit" and parent_cut_img is not None and adjust_directives:
         # 편집 프롬프트의 image 1 계약: 현재 컷이 반드시 첫 장이고, 상품 정체성 앵커가 뒤따른다.
         # 상품 참조끼리는 역할 우선순위(Detail → Front → Back → Fit)로 정렬한다 — 매니페스트가
@@ -1398,6 +1609,7 @@ async def _run_candidate(
         base_prompt = render_mannequin_prompt(
             template, ctx, product, analysis,
             seller_canon=s.seller_text_canonicalize, knowledge=s.retrieval_knowledge,
+            product_truth=product_truth,
         )
         if ref_imgs:  # 레퍼런스 첨부 시에만 오염 가드를 프롬프트 말미에 강조(look-only)
             base_prompt = f"{base_prompt}\n\n{_STYLE_REF_GUARD}"
@@ -1634,7 +1846,8 @@ async def _run_candidate(
                 s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
                 candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
                 runlog=runlog, carrier_run_id=carrier_run_id,
-                parent_lineage=parent_lineage)
+                parent_lineage=parent_lineage, product_truth=product_truth,
+                source_image=(prod_refs[0].image if prod_refs else None), base_image=base_img)
         # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
         # 정체성 게이트가 선점하면 축 QC/편집은 이 attempt에서 미실행 — 잘못된 옷을 편집하면
         # 그 정체성이 보존되므로 신규 생성(re-roll)이 우선한다(설계 결정 3).
@@ -1702,7 +1915,8 @@ async def _run_candidate(
             s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
             candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
             runlog=runlog, carrier_run_id=carrier_run_id,
-            parent_lineage=parent_lineage)
+            parent_lineage=parent_lineage, product_truth=product_truth,
+            source_image=(prod_refs[0].image if prod_refs else None), base_image=base_img)
     return None  # 구제할 후보조차 없음 → 이 후보 드롭(부분 성공 허용)
 
 
@@ -1831,7 +2045,8 @@ async def _run_baseline_edit(app, job: dict, *, fail) -> None:
                                    allowed_scope=scope, locked_invariants=locks)
         model = resolve_model(s, getattr(s, "mannequin_adjust_tier", "") or "image_high")
         runlog = RunLogger(pool=pool, r2=r2, job_id=job_id, project_id=project_id,
-                           user_id=user_id, enabled=(s.generation_run_log == "shadow"))
+                           user_id=user_id, enabled=(s.generation_run_log == "shadow"),
+                           truth_package_id=baseline.get("truth_package_id"))
         # preflight — 이 전이가 성공해야만 provider 를 부른다. 실패는 세 가지다:
         # 세션 없음 / 이미 종결됨(워커 재진입·reclaim) / DB 장애. 어느 쪽이든 **호출하지
         # 않는다** — 종결된 세션에 다시 호출하면 사용자는 한 번 요청하고 두 번 과금된다.
@@ -2026,6 +2241,8 @@ async def run_mannequin_job(app, job: dict) -> None:
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
     lease_token = job["lease_token"]
     reserved = job.get("credits_reserved") or 0
+    payload = job.get("payload") or {}
+    truth_package_id = payload.get("truthPackageId")
     settle_key = f"credit:job:{job_id}:settle"
 
     async def _fail(message: str, meta: dict):
@@ -2043,11 +2260,35 @@ async def run_mannequin_job(app, job: dict) -> None:
             and s.mannequin_edit_intent_qc != "off"):
         return await _run_baseline_edit(app, job, fail=_fail)
 
+    uploaded_candidates = []
     try:
         # 1) 입력 로드
+        truth_error = None
         async with pool.connection() as conn:
             product = await repo.get_product(conn, project_id) or {}
             analysis = await repo.get_analysis(conn, project_id) or {}
+            truth_row = (await repo.get_product_truth(
+                conn, project_id, truth_id=truth_package_id) if truth_package_id else None)
+            if truth_package_id and (
+                truth_row is None or truth_row.get("status") != "approved"
+            ):
+                truth_error = ("승인된 상품 정보가 변경됐어요. 다시 확인해 주세요.",
+                               {"error": "truth_not_current"})
+            if s.enable_product_truth == "enforce" and truth_row is None:
+                truth_error = ("승인된 상품 정보가 필요해요.",
+                               {"error": "approved_truth_required"})
+            product_truth = None
+            if truth_row:
+                product_truth = {
+                    "id": truth_row["id"], "version": truth_row["version"],
+                    "status": truth_row["status"],
+                    "garmentSpec": truth_row.get("garment_spec") or {},
+                    "colorSpec": truth_row.get("color_spec") or {},
+                    "patternSpec": truth_row.get("pattern_spec") or {},
+                    "protectedDetails": truth_row.get("protected_details") or {},
+                    "sourceFingerprint": truth_row.get("source_fingerprint"),
+                }
+            pipeline_policy = _generation_pipeline_policy(s, product_truth)
             product_clothing_type = (
                 product.get("clothing_type")
                 or product.get("clothingType")
@@ -2061,7 +2302,23 @@ async def run_mannequin_job(app, job: dict) -> None:
             base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)
                           if base_asset_id else None)
             prod_assets = []
-            for slot, aid in mannequin.base_color_images(product):
+            truth_role_to_slot = {
+                "FRONT": "Front", "BACK": "Back", "FIT": "Fit",
+                "DETAIL": "Detail", "FABRIC_MACRO": "Detail", "LOGO": "Detail",
+                "PRINT": "Detail", "EMBROIDERY": "Detail", "COLLAR": "Detail",
+                "SLEEVE": "Detail", "CUFF": "Detail", "BUTTON": "Detail",
+                "POCKET": "Detail", "CARE_LABEL": "Detail",
+            }
+            truth_inputs = [
+                (truth_role_to_slot.get(a.get("role"), "Detail"), a.get("asset_id"))
+                for a in ((truth_row or {}).get("source_assets") or []) if a.get("asset_id")
+            ]
+            source_inputs = truth_inputs or mannequin.base_color_images(product)
+            seen_assets = set()
+            for slot, aid in source_inputs:
+                if aid in seen_assets:
+                    continue
+                seen_assets.add(aid)
                 a = await repo.get_asset_for_user(conn, user_id, aid)
                 if a:
                     a["slot"] = slot  # Front/Back/Detail/Fit — 매니페스트 라벨용
@@ -2072,6 +2329,10 @@ async def run_mannequin_job(app, job: dict) -> None:
                 m_aid = await repo.get_matching_item_asset(conn, match_id)
                 if m_aid:
                     match_asset = await repo.get_asset_for_user(conn, user_id, m_aid)
+
+        if truth_error:
+            await _fail(*truth_error)
+            return
 
         if base_asset is None:
             await _fail("마네킹 베이스가 설정되지 않았어요. 잠시 후 다시 시도해 주세요.",
@@ -2247,7 +2508,8 @@ async def run_mannequin_job(app, job: dict) -> None:
         # 기록 실패는 삼켜진다(생성 경로 불변).
         runlog = RunLogger(
             pool=pool, r2=app.state.r2, job_id=job_id, project_id=project_id,
-            user_id=user_id, enabled=(s.generation_run_log == "shadow"))
+            user_id=user_id, enabled=(s.generation_run_log == "shadow"),
+            truth_package_id=truth_package_id)
 
         async def _cand(letter, base_fit, profile):
             nonlocal _done, hybrid_fail_closed_meta
@@ -2261,7 +2523,8 @@ async def run_mannequin_job(app, job: dict) -> None:
                     fit_profile_source=fit_profile_source, ref_imgs=ref_imgs,
                     generation_path=generation_path, parent_cut_img=parent_cut_img,
                     adjust_directives=adjust_directives, parent_lineage=parent_lineage,
-                    runlog=runlog)
+                    runlog=runlog, product_truth=product_truth,
+                    pipeline_policy=pipeline_policy)
             except _HybridCompositeFailClosed as e:
                 hybrid_fail_closed_meta = {
                     "error": "hybrid_composite_failed_closed",
@@ -2281,9 +2544,13 @@ async def run_mannequin_job(app, job: dict) -> None:
             return r
 
         hybrid_fail_closed_meta = None
+        candidate_count = max(1, min(2, int(
+            (pipeline_policy or {}).get("candidateCount") or 1)))
         progress_task = asyncio.create_task(_tick_generation_progress())
         try:
-            results = [await _cand("A", legacy_base_fit, fit_profile)]
+            results = []
+            for letter in ("A", "B")[:candidate_count]:
+                results.append(await _cand(letter, legacy_base_fit, fit_profile))
         finally:
             _generation_done.set()
             progress_task.cancel()
@@ -2292,12 +2559,25 @@ async def run_mannequin_job(app, job: dict) -> None:
         passed = [r for r in results if isinstance(r, dict)]
 
         if await _fail_closed_hybrid_job_if_needed(
-                app.state.r2, _fail, passed, hybrid_fail_closed_meta):
+                app.state.r2, _fail, passed,
+                hybrid_fail_closed_meta if not passed else None):
             return
 
         if not passed:
             await _fail("마네킹컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": "all_candidates_failed"})
             return
+        if pipeline_policy and len(passed) > 1:
+            selected = _select_policy_candidate(s, passed)
+            discarded = [candidate for candidate in passed if candidate is not selected]
+            await _delete_uploaded_candidate_keys(app.state.r2, discarded)
+            passed = [selected]
+            await _emit(pool, job_id, "step", {
+                "status": "pipeline_candidate_selected",
+                "lane": pipeline_policy["lane"],
+                "candidateCount": candidate_count,
+                "selectedCandidate": selected.get("candidate"),
+            })
+        uploaded_candidates = passed
         await _emit(pool, job_id, "progress", {"progress": 85, "phase": "finalizing"})
 
         cut_generation_metadata = {
@@ -2310,6 +2590,8 @@ async def run_mannequin_job(app, job: dict) -> None:
             "promptVersion": (ADJUST_PROMPT_VERSION if generation_path == "edit"
                               else s.mannequin_prompt_version),
         }
+        if pipeline_policy:
+            cut_generation_metadata["pipelinePolicy"] = pipeline_policy
         for candidate_result in passed:
             md = dict(cut_generation_metadata)
             qs = candidate_result.get("qc_scores")
@@ -2343,5 +2625,7 @@ async def run_mannequin_job(app, job: dict) -> None:
             await conn.commit()
         if out is None:  # lease 상실(복구) → 결과 폐기 + 방금 저장한 R2 객체 best-effort 정리
             await _delete_uploaded_candidate_keys(app.state.r2, passed)
+        uploaded_candidates = []
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
+        await _delete_uploaded_candidate_keys(app.state.r2, uploaded_candidates)
         await _fail("생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})

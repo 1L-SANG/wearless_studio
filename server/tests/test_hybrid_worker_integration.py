@@ -246,6 +246,23 @@ def test_composite_applies_end_to_end_and_freezes_generation_after_completion(mo
     assert sm["source_asset_id"] == "detail"
 
 
+def test_level2_projection_shadow_runs_inside_real_composite_and_is_persisted(monkeypatch):
+    _oplog, calls, _r2, emits = _run_job(
+        monkeypatch,
+        settings_kw={"mannequin_texture_projection_2d": "shadow"},
+    )
+    plan_event = next(
+        payload for _event, payload in emits
+        if payload.get("status") == "hybrid_texture_projection_plan"
+    )
+    assert plan_event["mode"] == "shadow"
+    assert plan_event["ok"] is True
+    cut = calls["success"][0]["candidates"][0]
+    persisted = cut["qc_scores"]["hybridComposite"]["textureProjection"]
+    assert persisted["ok"] is True
+    assert persisted["version"] == "texture_projection_2d_v1"
+
+
 def test_unsupported_pattern_fails_closed_before_save_or_success_finalize(monkeypatch):
     check_png = _png(np.tile(render_negative("N2_gingham_check"), (2, 2, 1))[:1536, :1536])
     oplog, calls, r2_saved, emits = _run_job(monkeypatch, detail_png=check_png)

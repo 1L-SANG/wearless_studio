@@ -7,7 +7,7 @@ FastAPI는 기본적으로 response_model을 alias(camelCase)로 직렬화한다
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 ProjectStatus = Literal["draft", "generating", "done"]
@@ -49,6 +49,7 @@ class ApprovedBaseline(CamelModel):
     cut_id: str                   # 클라 표기 "A-3" — selected_mannequin_id 와 같은 형식
     output_id: str | None         # Phase 1 기록 이전 컷이면 null
     generation_run_id: str | None
+    truth_package_id: str | None = None
     locked_invariants: dict
     approved_at: datetime
     superseded_at: datetime | None = None
@@ -105,6 +106,25 @@ class UploadUrlResponse(CamelModel):
     expires_at: datetime
 
 
+class ExportOptions(CamelModel):
+    format: Literal["long_png", "zip"] = "long_png"
+    width: int = 1200
+    background: str = "#ffffff"
+
+
+class ExportRequest(CamelModel):
+    # 하위 호환 입력. 서버는 저장된 editor_blocks를 정본으로 다시 읽으며 이 값을 렌더링하지 않는다.
+    snapshot: dict = Field(default_factory=dict)
+    snapshot_hash: str
+    body: dict = Field(default_factory=dict)
+    options: ExportOptions = Field(default_factory=ExportOptions)
+
+
+class ExportJobResponse(CamelModel):
+    job_id: str
+    export_id: str
+
+
 class AssetCompleteRequest(CamelModel):
     """POST /v1/assets/{id}/complete (§3 3단계). 키 재유도용 컨텍스트."""
 
@@ -153,6 +173,51 @@ class ProductPatch(CamelModel):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field}는 null일 수 없습니다.")
         return self
+
+
+class ProductTruthAssetView(CamelModel):
+    id: str | None = None
+    asset_id: str
+    role: str
+    view: str | None = None
+    color_id: str | None = None
+    part: str | None = None
+    sort_order: int = 0
+    checksum: str | None = None
+    width: int | None = None
+    height: int | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class ProductTruthView(CamelModel):
+    id: str
+    project_id: str
+    product_id: str | None = None
+    version: int
+    status: str
+    schema_version: str
+    garment_spec: dict = Field(default_factory=dict)
+    color_spec: dict = Field(default_factory=dict)
+    pattern_spec: dict = Field(default_factory=dict)
+    protected_details: dict = Field(default_factory=dict)
+    source_evidence: dict = Field(default_factory=dict)
+    uncertain_fields: list = Field(default_factory=list)
+    garment_profile: dict | None = None
+    analysis_confidence: float | None = None
+    source_fingerprint: str
+    source_assets: list[ProductTruthAssetView] = Field(default_factory=list)
+    validation_issues: list[dict] = Field(default_factory=list)
+    created_at: datetime | None = None
+    approved_at: datetime | None = None
+    rejected_at: datetime | None = None
+
+
+class ProductTruthPatch(CamelModel):
+    garment_spec: dict | None = None
+    color_spec: dict | None = None
+    pattern_spec: dict | None = None
+    protected_details: dict | None = None
+    uncertain_fields: list | None = None
 
 
 class ProjectPatch(CamelModel):

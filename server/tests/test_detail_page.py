@@ -362,7 +362,7 @@ def test_run_detail_page_job_partial_success(monkeypatch):
 
     async def fake_sb(conn, pid):
         return [{"id": "b1", "source": "ai", "cutType": "styling"},
-                {"id": "b2", "source": "ai", "cutType": "product"}]
+                {"id": "b2", "source": "ai", "cutType": "horizon"}]
 
     async def fake_prod(conn, pid):
         return {"colors": [{"isBase": True, "images": [
@@ -572,19 +572,28 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
         "zero-front", "green-front", "base-detail", "base-front", "base-detail",
     ]
     assert captured["generated_block_ids"] == [
-        "valid-fit", "cross-color-detail", "same-color-detail",
+        "valid-fit", "cross-color-detail",
     ]
     assert [result["blockId"] for result in captured["cut_results"]] == [
         "valid-fit", "cross-color-detail", "same-color-detail",
     ]
+    same_color_result = next(
+        result for result in captured["cut_results"] if result["blockId"] == "same-color-detail"
+    )
+    assert same_color_result["imageUrl"] == "/v1/assets/base-detail/file"
     assert "PRODUCT — detail close-up" in captured["manifests"]["cross-color-detail"]
     assert "DETAIL COLORWAY TRANSFER" in captured["prompts"]["cross-color-detail"]
     assert "Target color: 그린 (#3f7a4f)" in captured["prompts"]["cross-color-detail"]
-    assert "DETAIL COLORWAY TRANSFER" not in captured["prompts"]["same-color-detail"]
-    assert "잘못 저장된 색상" not in captured["prompts"]["same-color-detail"]
     assert len(captured["manifests"]["cross-color-detail"].splitlines()) == 2
     assert captured["manifests"]["valid-fit"] == "1. PRODUCT — front view of the garment"
-    assert captured["charge"] == 3
+    assert captured["charge"] == 2
+    assert captured["metadata"]["rawImageProvenance"] == [{
+        "blockId": "same-color-detail",
+        "source": "raw_image",
+        "assetId": "base-detail",
+        "slot": "Detail",
+        "imageUrl": "/v1/assets/base-detail/file",
+    }]
 
 
 def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(monkeypatch):
@@ -1020,6 +1029,7 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
 
     def fake_assemble(saved_storyboard, cut_results, copy_results, product, copywriting):
         captured["assembled_storyboard"] = saved_storyboard
+        captured["cut_results"] = cut_results
         return []
 
     async def fake_finalize(conn, **kw):
@@ -1051,8 +1061,9 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
     assert captured["person"]["manifest"].splitlines()[1].startswith("2. MODEL — frontal close-up")
     assert captured["person"]["manifest"].splitlines()[2].startswith("3. MODEL SHEET — a 2x2 grid")
     assert captured["person"]["manifest"].splitlines()[3] == "4. PRODUCT — front view of the garment"
-    assert captured["product"]["data"] == ["k/man", "k/a1"]
-    assert "MODEL" not in captured["product"]["manifest"]
+    assert "product" not in captured  # 상품 단독 정면은 원본 asset을 그대로 사용한다.
+    assert next(r for r in captured["cut_results"] if r["blockId"] == "product")["imageUrl"] \
+        == "/v1/assets/a1/file"
     assert captured["assembled_storyboard"] is not storyboard
     assert [block["id"] for block in captured["assembled_storyboard"]] == ["person", "product"]
     assert [block["contentRole"] for block in captured["assembled_storyboard"]] == [
@@ -1287,16 +1298,22 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     monkeypatch.setattr(dpj, "_emit", fake_emit)
 
     asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=1)))  # ai 블록 1개 × 단가 1
-    assert captured["charge"] == 1
+    assert captured["charge"] == 0
     assert captured["copy_kwargs"]["content_role"] == "detail"
     assert captured["copy_kwargs"]["section_role"] == "product"
     assert "block_kind" not in captured["copy_kwargs"]
-    assert captured["cut_spec"]["cutType"] == "product"
-    assert captured["cut_spec"]["shot"] == "detail"
+    assert "cut_spec" not in captured
     assert captured["storyboard"][0]["sectionRole"] == "product"
     assert captured["storyboard"][0]["cutType"] == "product"
     assert captured["storyboard"][0]["shot"] == "detail"
     assert captured["copy_results"] == [{"blockId": "b1", "texts": [{"role": "body", "text": "원본 카피"}]}]
+    assert captured["metadata"]["rawImageProvenance"] == [{
+        "blockId": "b1",
+        "source": "raw_image",
+        "assetId": "d1",
+        "slot": "Detail",
+        "imageUrl": "/v1/assets/d1/file",
+    }]
 
 
 def test_detail_passthrough_ships_the_sellers_original_without_generating(monkeypatch):

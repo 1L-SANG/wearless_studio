@@ -321,6 +321,11 @@ export const api = {
   // 에디터 상태 영속화 (계약 §6) — 저장 버튼·자동 저장이 호출. 세션 내 재진입 시 편집 유지.
   async saveEditorBlocks(_projectId, blocks) { await wait(200); DB.editorBlocks = clone(blocks); touch(); },
   async getWardrobe(/* projectId */) { await wait(160); return clone(DB.wardrobe); },
+  async getProductTruth() { return null; },
+  async draftProductTruth() { return null; },
+  async updateProductTruth() { return null; },
+  async approveProductTruth() { return null; },
+  async rejectProductTruth() { return null; },
   // §7 과도기 브리지 — http 모드 generateDetailPage가 실생성 결과를 mock 소유 상태(에디터 블록·의류탭)에 주입.
   // 콘티·에디터 저장이 서버로 넘어가면(Phase 7) 제거된다.
   async commitGeneratedDetailPage(_projectId, { editorBlocks, wardrobe } = {}) {

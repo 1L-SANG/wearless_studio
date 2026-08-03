@@ -112,6 +112,9 @@ class Settings:
     # 폐기·삭제됐다(2026-08-01, 폐기 이름은 test_deploy_manifest_qc_flags.RETIRED_FLAGS 참조).
     # 같은 이름을 재사용하지 않는다 — env 잔재가 남은 배포에서 옛 의미로 켜지는 사고 방지.
     mannequin_hybrid_composite: str = "off"  # off | on
+    # limited Level-2 texture projection plan. off=기존 hybrid target period 사용,
+    # shadow=계획/신뢰도 이벤트만 기록, enforce=저신뢰 projection 은 deterministic 합성 실패 처리.
+    mannequin_texture_projection_2d: str = "off"  # off | shadow | enforce
     # untuck 2패스 — 상의 밑단을 하의 허리밴드 밖으로 빼는 전용 편집. 프롬프트 5회 강화와
     # QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). QC 검출이 불안정해 게이트로 쓰지
     # 않고 매칭 하의가 붙는 top/outer 잡마다 1회 돈다(이미 빠져 있으면 무변경 반환 지시).
@@ -122,6 +125,11 @@ class Settings:
     # migration(20260801000000_generation_runs) 미적용 환경에서 켜도 안전하다 — insert 가
     # 실패하고 기록만 비는 것으로 끝난다.
     generation_run_log: str = "off"  # off | shadow
+    # Product Truth revision rollout. shadow=승인 revision이 있으면 snapshot/계보에 사용하되
+    # 없거나 stale이어도 기존 생성을 유지, enforce=승인+현재 fingerprint가 아니면 생성 차단.
+    enable_product_truth: str = "off"  # off | shadow | enforce
+    # 구조화 QC/정책 DAG rollout. shadow=결과 저장만, enforce=review/reject가 자동 완료를 차단.
+    mannequin_structured_qc: str = "off"  # off | shadow | enforce
     # Phase 3 baseline 편집 — 신규 :edit 엔드포인트와 Edit Intent QC 의 rollout.
     #   off     : :edit 는 503(미노출), 편집 잡도 생기지 않는다. 기존 동작 완전 불변.
     #   shadow  : :edit 노출 + QC 판정을 **기록만** 한다. 출고 계약은 기존과 동일 —
@@ -136,6 +144,8 @@ class Settings:
     #   shadow  : 세션·기록·QC 판정을 남기되 저장 계약은 기존과 동일(결과는 review 표시)
     #   enforce : pass 저장 / review_required 저장+표시 / reject 미저장·환불
     editor_vary_intent_qc: str = "off"  # off | shadow | enforce
+    # Phase 9 deterministic export. off by default: route is hidden until schema + UI rollout land.
+    export_backend: str = "off"  # off | on
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
@@ -285,12 +295,19 @@ def load_settings() -> Settings:
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
         mannequin_bust_pass=_bust_pass(),
         mannequin_hybrid_composite=_flag("MANNEQUIN_HYBRID_COMPOSITE", "off", {"off", "on"}),
+        mannequin_texture_projection_2d=_flag(
+            "MANNEQUIN_TEXTURE_PROJECTION_2D", "off", {"off", "shadow", "enforce"}),
         mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
         generation_run_log=_flag("GENERATION_RUN_LOG", "off", {"off", "shadow"}),
+        enable_product_truth=_flag(
+            "ENABLE_PRODUCT_TRUTH", "off", {"off", "shadow", "enforce"}),
+        mannequin_structured_qc=_flag(
+            "MANNEQUIN_STRUCTURED_QC", "off", {"off", "shadow", "enforce"}),
         mannequin_edit_intent_qc=_flag(
             "MANNEQUIN_EDIT_INTENT_QC", "off", {"off", "shadow", "enforce"}),
         editor_vary_intent_qc=_flag(
             "EDITOR_VARY_INTENT_QC", "off", {"off", "shadow", "enforce"}),
+        export_backend=_flag("EXPORT_BACKEND", "off", {"off", "on"}),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),

@@ -209,6 +209,8 @@ export function ProductInput() {
   const [analysisReady, setAnalysisReady] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [analysisProjectId, setAnalysisProjectId] = useState(null);
+  const [productTruth, setProductTruth] = useState(null);
+  const [truthBusy, setTruthBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드일 때만 내려온다(shadow/off 면 undefined).
   // 업로드 순간이 아니라 **생성으로 넘어가는 버튼**에서 한 번 띄운다 — 사진을 고르는 도중에
@@ -234,6 +236,10 @@ export function ProductInput() {
   const goToMannequin = async (opts) => {
     const force = opts?.force === true;   // null·이벤트 객체로 불려도 안전하게
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
+    if (productTruth && productTruth.status !== 'approved') {
+      toast.push('상품 사실 검토를 승인한 뒤 마네킹 생성을 시작해 주세요.', { icon: 'alertTri' });
+      return;
+    }
     // 다른 옷이 섞였을 수 있다는 경고 — 생성에 들어가기 직전 한 번만. 확인하면 그대로 진행한다
     // (차단이 아니다. 판정이 틀렸을 때 셀러가 갇히면 경고가 없느니만 못하다).
     if (inputConsistency && !consistencyAck && !force) {
@@ -417,6 +423,10 @@ export function ProductInput() {
       if (!enteredName) {
         await api.saveProduct(pid, { name: finalName });
       }
+      if (pid && api.getProductTruth) {
+        const truth = await api.getProductTruth(pid).catch(() => null);
+        setProductTruth(truth);
+      }
       // 즉시 전환하지 않는다 — 대기 연출이 잔여 단계를 빠르게 완주한 뒤 onFinished 에서 전환.
       setAnalysisReady(true);
     } catch (e) {
@@ -568,6 +578,46 @@ export function ProductInput() {
       )}
       {phase === 'done' && (
         <div className="pi-reveal">
+          {productTruth && (
+            <section className="surface" aria-label="상품 사실 검토" style={{ marginBottom: 16 }}>
+              <h3>상품 사실 검토</h3>
+              <p className="hint">
+                AI가 읽은 상품 종류·색상·패턴·단추·주머니·보호 디테일입니다. 승인된 내용만
+                이미지 생성과 품질 검사 기준으로 사용됩니다.
+              </p>
+              <p>
+                {(productTruth.garmentSpec?.subcategory || productTruth.garmentSpec?.category || '의류')}
+                {' · '}{productTruth.patternSpec?.type || '패턴 미확인'}
+                {' · 단추 '}{productTruth.garmentSpec?.buttonCount ?? '미확인'}
+                {' · 주머니 '}{productTruth.garmentSpec?.pocketCount ?? '미확인'}
+              </p>
+              {(productTruth.validationIssues || []).length > 0 && (
+                <ul>
+                  {productTruth.validationIssues.map((issue) => (
+                    <li key={issue.code}>{issue.message}</li>
+                  ))}
+                </ul>
+              )}
+              {productTruth.status === 'approved' ? (
+                <p className="hint">승인됨 · 이 revision이 생성 기준으로 고정됩니다.</p>
+              ) : (
+                <Button
+                  variant="secondary"
+                  disabled={truthBusy || (productTruth.validationIssues || []).some((i) => i.severity === 'error')}
+                  onClick={async () => {
+                    setTruthBusy(true);
+                    try {
+                      const approved = await api.approveProductTruth(analysisProjectId, productTruth.id);
+                      setProductTruth(approved);
+                      toast.push('상품 사실을 승인했어요.', { icon: 'check' });
+                    } catch (error) {
+                      toast.push(error?.message || '상품 사실을 승인하지 못했어요.', { icon: 'alertTri' });
+                    } finally { setTruthBusy(false); }
+                  }}
+                >{truthBusy ? '승인 중…' : '상품 사실 승인'}</Button>
+              )}
+            </section>
+          )}
           <AnalysisForm inline analysis={analysis} catalogs={catalogs}
             onChange={(patch) => {
               // 후보 목록은 서버 소유 — 추천 갱신 패치뿐 아니라 선택 토글 응답도

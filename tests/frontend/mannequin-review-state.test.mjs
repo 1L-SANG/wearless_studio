@@ -89,6 +89,27 @@ test('needs_review outcome shows visible review but allows storyboard entry', ()
   assert.match(state.description, /선명도/);
 });
 
+test('structured QC warnings and failed checks are shown as concrete review reasons', () => {
+  const state = classifyMannequinReview({
+    id: 'structured-review',
+    qcScores: {
+      outcome: 'needs_review',
+      structuredQC: {
+        overallDecision: 'review',
+        warnings: ['qc_unavailable:color_fidelity', 'manual_review_required',
+          'specialized_qc_unavailable:material'],
+        checks: [{ check: 'pattern_fidelity', status: 'fail', score: 0.2 }],
+      },
+    },
+  });
+
+  assert.equal(state.visibleReview, true);
+  assert.match(state.description, /상품 색상/);
+  assert.match(state.description, /사용자 확인/);
+  assert.match(state.description, /체크·스트라이프/);
+  assert.match(state.description, /레이스·시스루/);
+});
+
 test('applied hybrid with review components is a visible review cut', () => {
   const state = classifyMannequinReview({
     id: 'applied-review',

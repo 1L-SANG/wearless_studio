@@ -24,6 +24,7 @@ from ..agents import (
     page_assembler,
     space_set_assets,
 )
+from ..agents import page_source_assets
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
@@ -149,11 +150,12 @@ async def _gen_cuts(app, job, prepared, product, analysis):
         # 생성 호출도 그만큼 줄어든다. 여기서 하는 이유: gather 순서가 곧 블록 순서라
         # 나중에 합치면 컷 배열이 어긋난다.
         if passthrough is not None:
+            passthrough_id = passthrough.get("id") or passthrough.get("asset_id")
             await _emit(app.state.pool, job_id, "step",
                         {"blockId": b.get("id"), "status": "cut_passthrough",
-                         "assetId": passthrough["id"]})
+                         "assetId": passthrough_id})
             return (
-                {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{passthrough['id']}/file",
+                {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{passthrough_id}/file",
                  "width": passthrough.get("width"), "height": passthrough.get("height")},
                 None,          # 새 asset 을 만들지 않는다 — 이미 존재하는 셀러 자산이다
                 False, None, [],
@@ -465,24 +467,6 @@ async def run_detail_page_job(app, job: dict) -> None:
             def _is_detail(block: dict) -> bool:
                 return block.get("cutType") == "product" and block.get("shot") == "detail"
 
-            # 미세 패턴 상품의 디테일 컷은 셀러 원본을 그대로 쓴다 → 생성 스킵.
-            # 왜: 원단 매크로(줄 하나가 파란 실 2가닥 + 베이지 1가닥)는 전신·근접 어느 쪽이든
-            # 생성 해상도로 재현이 안 된다(2026-08-01 측정: 4K 에서도 한 주기 14px → 요소당 2.3px).
-            # 원본이 있는데 다시 그리면 있던 정보를 버리는 셈이고, 체크·스트라이프는 그 원단이
-            # 곧 상품 정체성이라 셀러가 가장 먼저 알아본다. 무지는 생성도 잘 되므로 대상이 아니다.
-            # 타색(그 색상에 Detail 원본이 없어 색 전환이 필요한 경우)은 원본이 없으니 기존 생성.
-            fine_pattern = mannequin.has_fine_pattern(product, analysis)
-
-            def _detail_passthrough(block: dict, asset_key) -> dict | None:
-                if not (fine_pattern and _is_detail(block)):
-                    return None
-                if detail_color_transfers.get(asset_key):   # 타색 전환 = 그 색 원본이 없다
-                    return None
-                for asset in color_assets.get(asset_key, []):
-                    if asset.get("slot") == "Detail":
-                        return asset
-                return None
-
             for b in ai_blocks:
                 ckey = _color_key(b)
                 asset_key = (ckey, _is_detail(b))
@@ -496,6 +480,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                         a = await repo.get_asset_for_user(conn, user_id, aid)
                         if a:
                             a["slot"] = slot
+                            a.setdefault("asset_id", aid)
                             rows.append(a)
                     color_assets[asset_key] = rows
                     detail_color_transfers[asset_key] = transfer
@@ -853,7 +838,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                     product_images,
                     space_set_plate,
                     space_binding is not None and space_set_plate is not None,
-                    _detail_passthrough(b, asset_key),
+                    page_source_assets.select_source_asset(
+                        b, color_assets.get(asset_key, []),
+                        color_transfer=detail_color_transfers.get(asset_key)),
                 )
             )
 
@@ -862,6 +849,11 @@ async def run_detail_page_job(app, job: dict) -> None:
                                                "aiCuts": len(ai_blocks)})
 
         # 2) 컷 생성 (부분 성공)
+        raw_image_provenance = [
+            page_source_assets.raw_image_provenance(item[0], item[7])
+            for item in prepared
+            if len(item) > 7 and item[7] is not None
+        ]
         cut_results, cut_assets, face_cuts, garment_qcs, garment_warnings = await _gen_cuts(
             app, job, prepared, product, analysis)
         example_warnings.extend(garment_warnings)
@@ -915,6 +907,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         }
         if garment_qcs:
             success_metadata["garmentQc"] = garment_qcs
+        if raw_image_provenance:
+            success_metadata["rawImageProvenance"] = raw_image_provenance
         if example_warnings:
             success_metadata["warnings"] = example_warnings
         async with pool.connection() as conn:

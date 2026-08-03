@@ -18,6 +18,15 @@ const REASON_COPY = {
   fit_changed: '상품 핏이 의도와 다르게 보일 수 있어요.',
   body_changed: '마네킹 체형이나 자세가 어색할 수 있어요.',
   composition_changed: '컷 구성이 기존 버전과 달라졌어요.',
+  composition: '마네킹 위치·크롭·여백을 확인해 주세요.',
+  garment_structure: '카라·소매·단추·주머니 등 의류 구조를 확인해 주세요.',
+  color_fidelity: '원본과 상품 색상이 일치하는지 확인해 주세요.',
+  pattern_fidelity: '체크·스트라이프의 방향·간격·반복 주기를 확인해 주세요.',
+  style_consistency: '마네킹·카메라·조명·배경의 시리즈 일관성을 확인해 주세요.',
+  protected_detail: '로고·프린팅·자수 등 보호 디테일을 확인해 주세요.',
+  advanced_structure: '복잡한 의류 구조는 자동 승인하지 않고 직접 확인해야 해요.',
+  material: '레이스·시스루·스팽글 등 복잡 소재의 질감을 직접 확인해 주세요.',
+  manual_review_required: '복잡 소재 또는 구조 상품이라 사용자 확인이 필요해요.',
   all_edits: '보정 결과가 품질 기준을 낮춰 원본 생성본으로 되돌렸어요.',
   bust_only: '가슴 볼륨 보정 결과만 되돌렸어요.',
   budget_exhausted: '검토 예산이 끝나 마지막 후보를 남겼어요.',
@@ -58,6 +67,10 @@ function reasonKeys(qc) {
   const hybrid = qc.hybridComposite && typeof qc.hybridComposite === 'object'
     ? qc.hybridComposite
     : null;
+  const structured = qc.structuredQC && typeof qc.structuredQC === 'object'
+    ? qc.structuredQC
+    : null;
+  const structuredChecks = Array.isArray(structured?.checks) ? structured.checks : [];
   return dedupe([
     ...(Array.isArray(qc.componentsNeedingReview) ? qc.componentsNeedingReview : []),
     ...(Array.isArray(qc.needsReview) ? qc.needsReview : []),
@@ -67,6 +80,11 @@ function reasonKeys(qc) {
     ...(Array.isArray(qc.series_inconsistencies) ? ['series_consistency'] : []),
     ...(Array.isArray(hybrid?.componentsNeedingReview) ? hybrid.componentsNeedingReview : []),
     ...(Array.isArray(hybrid?.needsReview) ? hybrid.needsReview : []),
+    ...(Array.isArray(structured?.criticalErrors) ? structured.criticalErrors : []),
+    ...(Array.isArray(structured?.warnings) ? structured.warnings : []),
+    ...structuredChecks
+      .filter((check) => ['fail', 'unavailable', 'error', 'timeout'].includes(check?.status))
+      .map((check) => check?.check),
     ...(hybrid?.needsReview === true && !hybrid?.failureReason ? ['hybridComposite'] : []),
     hybrid?.failureReason,
     hybrid?.reason,
@@ -76,7 +94,16 @@ function reasonKeys(qc) {
 }
 
 export function reviewReasonCopy(reason) {
-  return REASON_COPY[String(reason)] || '품질 검토가 필요한 항목이 있어요.';
+  const key = String(reason);
+  if (key.startsWith('qc_unavailable:')) {
+    const check = key.slice('qc_unavailable:'.length);
+    return `${REASON_COPY[check] || '자동 품질 검사를 완료하지 못했어요.'} 자동 판정 대신 직접 확인해 주세요.`;
+  }
+  if (key.startsWith('specialized_qc_unavailable:')) {
+    const check = key.slice('specialized_qc_unavailable:'.length);
+    return `${REASON_COPY[check] || '전문 품질 검사 결과를 확인할 수 없어요.'} 자동 승인하지 않았어요.`;
+  }
+  return REASON_COPY[key] || '품질 검토가 필요한 항목이 있어요.';
 }
 
 export function mannequinReviewBlocksStoryboard(cut) {

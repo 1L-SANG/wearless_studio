@@ -190,6 +190,31 @@ def build_mirrored_source_block(analysis: dict) -> str:
     )
 
 
+def build_product_truth_block(truth: dict | None) -> str:
+    """승인 Product Truth의 보호 facts만 간결하게 렌더링한다.
+
+    임의 draft/analysis가 이 블록을 가장하지 못하도록 worker가 승인 revision만 넘긴다.
+    """
+    if not truth or truth.get("status") != "approved":
+        return ""
+    garment = truth.get("garmentSpec") or truth.get("garment_spec") or {}
+    color = truth.get("colorSpec") or truth.get("color_spec") or {}
+    pattern = truth.get("patternSpec") or truth.get("pattern_spec") or {}
+    protected = truth.get("protectedDetails") or truth.get("protected_details") or {}
+    lines = [
+        f"- Truth revision: {_sanitize(truth.get('id'))} v{int(truth.get('version') or 0)}",
+        f"- Garment structure: {_sanitize(garment)}",
+        f"- Color specification (Lab reference): {_sanitize(color)}",
+        f"- Pattern specification: {_sanitize(pattern)}",
+        f"- Protected details (must not change): {_sanitize(protected)}",
+    ]
+    return (
+        "APPROVED PRODUCT TRUTH (authoritative; use the attached assets as evidence and never "
+        "invent, recolor, mirror, add, remove, or borrow protected product details):\n"
+        + "\n".join(lines)
+    )
+
+
 def render_mannequin_prompt(
     template: str,
     ctx: MannequinPromptContext,
@@ -197,6 +222,7 @@ def render_mannequin_prompt(
     analysis: dict,
     seller_canon: str = "off",
     knowledge: str = "off",
+    product_truth: dict | None = None,
 ) -> str:
     """템플릿 ${토큰} 치환 + 분석 정보 자동 주입."""
     outerwear_inner_token = "${outerwearInnerLine}"
@@ -221,7 +247,8 @@ def render_mannequin_prompt(
         product, analysis, seller_canon, knowledge, include_legacy_fit=fit_profile is None
     )
     mirror_block = build_mirrored_source_block(analysis)
-    blocks = [text, fit_block, product_block, mirror_block]
+    truth_block = build_product_truth_block(product_truth)
+    blocks = [text, fit_block, truth_block, product_block, mirror_block]
     return "\n\n".join(block for block in blocks if block)
 
 

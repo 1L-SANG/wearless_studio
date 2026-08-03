@@ -400,6 +400,7 @@ export function Editor() {
   const [blockFocused, setBlockFocused] = useState(false);
   const [download, setDownload] = useState(false);
   const [dlFormat, setDlFormat] = useState('long');
+  const [exporting, setExporting] = useState(false);
   const [backWarn, setBackWarn] = useState(false);
   const [genDot, setGenDot] = useState('none');
   const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
@@ -890,6 +891,43 @@ export function Editor() {
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
   const save = async () => { await api.saveEditorBlocks(projectId, blocks); toast.push('저장했어요', { icon: 'check' }); };
+  const exportDetailPage = async () => {
+    if (exporting) return;
+    const current = latestBlocks.current || blocks;
+    if (!current?.length) {
+      toast.push('내보낼 상세페이지가 없어요.');
+      return;
+    }
+    setExporting(true);
+    try {
+      await api.saveEditorBlocks(projectId, current);
+      const format = dlFormat === 'zip' ? 'zip' : 'long_png';
+      if (typeof api.exportProject !== 'function') {
+        await api.download(projectId, dlFormat);
+        toast.push('다운로드를 시작했어요', { icon: 'download' });
+        setDownload(false);
+        return;
+      }
+      const out = await api.exportProject(projectId, {
+        snapshot: { editorBlocks: current },
+        body: { title: productName },
+        options: { format, width: format === 'zip' ? 1200 : 1600 },
+      });
+      if (!out?.src) throw new Error('내보내기 파일 주소를 받지 못했어요.');
+      const a = document.createElement('a');
+      a.href = out.src;
+      a.download = out.filename || (format === 'zip' ? 'wearless-export.zip' : 'wearless-export.png');
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setDownload(false);
+      toast.push('다운로드를 시작했어요', { icon: 'download' });
+    } catch (e) {
+      toast.push(e?.message || '내보내기에 실패했어요. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setExporting(false);
+    }
+  };
   // 이탈 직전 플러시 — 인라인 편집 중 텍스트는 blur/언마운트에 기대지 않고
   // DOM 에서 직접 읽어 합쳐 저장한다. (프로그램적 내비게이션은 blur 가 없고,
   // blur 가 있어도 언마운트 배치에선 setState 커밋이 보장되지 않는 두 구멍 커버)
@@ -1329,8 +1367,10 @@ export function Editor() {
               })}
             </div>
             <div className="dl-foot">
-              <Button variant="quiet" onClick={() => setDownload(false)}>취소</Button>
-              <Button variant="primary" icon="download" onClick={() => { setDownload(false); toast.push('다운로드를 시작했어요', { icon: 'download' }); }}>다운로드</Button>
+              <Button variant="quiet" disabled={exporting} onClick={() => setDownload(false)}>취소</Button>
+              <Button variant="primary" icon="download" disabled={exporting} onClick={exportDetailPage}>
+                {exporting ? '내보내는 중…' : '다운로드'}
+              </Button>
             </div>
           </div>
         </Modal>

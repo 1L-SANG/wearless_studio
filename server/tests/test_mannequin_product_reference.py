@@ -336,8 +336,9 @@ def test_compatible_parent_edit_depth_still_returns_depth_only():
 
 def _run_worker_fallback(monkeypatch, *, parent, mode="regenerate", snapshot=..., axes=("fit",),
                          match_id=None, r2_fail=False, parent_lookup_raises=False,
-                         product_name="티"):
-    calls = {"run": [], "emits": []}
+                         product_name="티", truth_row=None, candidate_scores=None,
+                         settings_kw=None):
+    calls = {"run": [], "emits": [], "deleted": [], "finalized": []}
     analysis = {"targetGenders": ["women"], "fit": "regular", "fitProfile": PROFILE}
     if match_id is not None:
         analysis["matchSelections"] = [{"role": "main", "clothingId": match_id}]
@@ -348,6 +349,9 @@ def _run_worker_fallback(monkeypatch, *, parent, mode="regenerate", snapshot=...
 
     async def get_analysis(conn, project_id):
         return dict(analysis)
+
+    async def get_product_truth(conn, project_id, truth_id=None):
+        return truth_row
 
     async def get_asset_for_user(conn, user_id, asset_id):
         return {"bw": {"id": "bw", "mime_type": "image/png", "r2_key": "bw.png"},
@@ -365,11 +369,14 @@ def _run_worker_fallback(monkeypatch, *, parent, mode="regenerate", snapshot=...
 
     async def fake_run_candidate(**kwargs):
         calls["run"].append(kwargs)
-        return {"asset_id": "a", "bucket": "b", "key": "k", "mime": "image/png", "size": 3,
+        return {"asset_id": "a", "bucket": "b", "key": f"k-{kwargs['candidate']}",
+                "mime": "image/png", "size": 3,
                 "width": 1, "height": 1, "candidate": kwargs["candidate"],
-                "base_fit": kwargs["base_fit"]}
+                "base_fit": kwargs["base_fit"],
+                "qc_scores": (candidate_scores or {}).get(kwargs["candidate"])}
 
     async def finalize_success(conn, **kwargs):
+        calls["finalized"].append(kwargs)
         return {"cuts": kwargs["candidates"], "available": 7}
 
     async def finalize_failure(conn, **kwargs):
@@ -388,7 +395,11 @@ def _run_worker_fallback(monkeypatch, *, parent, mode="regenerate", snapshot=...
         def put_bytes(self, key, data, mime, cache=None):
             return None
 
+        def delete(self, key):
+            calls["deleted"].append(key)
+
     for name, fn in (("get_product", get_product), ("get_analysis", get_analysis),
+                     ("get_product_truth", get_product_truth),
                      ("get_asset_for_user", get_asset_for_user),
                      ("get_matching_item_asset", get_matching_item_asset),
                      ("get_mannequin_edit_parent", get_edit_parent),
@@ -398,15 +409,19 @@ def _run_worker_fallback(monkeypatch, *, parent, mode="regenerate", snapshot=...
     monkeypatch.setattr(mj, "_run_candidate", fake_run_candidate)
     monkeypatch.setattr(mj, "_emit", fake_emit)
 
+    settings_kw = dict(settings_kw or {})
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=make_settings(base_mannequin_women_asset_id="bw",
                                base_mannequin_men_asset_id="bm", r2_bucket="bucket",
-                               mannequin_prompt_version="fresh_v1"),
+                               mannequin_prompt_version="fresh_v1", **settings_kw),
         pool=_FakePool(), r2=_R2(), gemini=None))
     if snapshot is ...:
         snapshot = {"version": 1, "profile": PROFILE, "adjustedAxes": list(axes)}
+    payload = {"mode": mode, "fitProfileSnapshot": snapshot}
+    if truth_row:
+        payload["truthPackageId"] = truth_row["id"]
     job = {"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:t",
-           "credits_reserved": 2, "payload": {"mode": mode, "fitProfileSnapshot": snapshot}}
+           "credits_reserved": 2, "payload": payload}
     asyncio.run(mj.run_mannequin_job(app, job))
     return calls
 
@@ -511,3 +526,33 @@ def test_initial_generation_is_not_reported_as_fallback(monkeypatch):
     calls = _run_worker_fallback(monkeypatch, parent=_parent(), mode="generate")
     assert calls["run"][0]["generation_path"] == "fresh"
     assert _fallback_events(calls) == []
+
+
+def test_guarded_truth_runs_two_candidates_and_finalizes_only_policy_winner(monkeypatch):
+    truth = {
+        "id": "truth-1", "version": 1, "status": "approved",
+        "garment_spec": {"category": "shirt"},
+        "color_spec": {}, "pattern_spec": {"type": "check"},
+        "protected_details": {}, "source_fingerprint": "sha",
+    }
+    scores = {
+        "A": {"structuredQC": {"overallDecision": "review"},
+              "outcome": "needs_review", "product_fidelity": 95,
+              "physical_naturalness": 95, "image_quality": 95},
+        "B": {"structuredQC": {"overallDecision": "pass"},
+              "outcome": "auto_pass", "product_fidelity": 80,
+              "physical_naturalness": 80, "image_quality": 80},
+    }
+    calls = _run_worker_fallback(
+        monkeypatch, parent=None, mode="generate", truth_row=truth,
+        candidate_scores=scores,
+        settings_kw={"mannequin_structured_qc": "shadow"})
+
+    assert [call["candidate"] for call in calls["run"]] == ["A", "B"]
+    assert all(call["pipeline_policy"]["lane"] == "GUARDED" for call in calls["run"])
+    assert calls["deleted"] == ["k-A"]
+    assert [c["candidate"] for c in calls["finalized"][0]["candidates"]] == ["B"]
+    selected = [payload for event, payload in calls["emits"]
+                if event == "step" and payload.get("status") == "pipeline_candidate_selected"]
+    assert selected == [{"status": "pipeline_candidate_selected", "lane": "GUARDED",
+                         "candidateCount": 2, "selectedCandidate": "B"}]

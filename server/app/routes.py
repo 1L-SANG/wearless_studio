@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -30,7 +31,9 @@ from .agents.vision_llm import VisionError
 from .services import baseline as baseline_service
 from .services import edit_session as edit_service
 from .services import editor_vary as editor_vary_service
+from .services import export_render
 from .services import input_qc, matching, retrieval
+from .services import product_truth as product_truth_service
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -44,11 +47,15 @@ from .models import (
     CreditHistoryEntry,
     CreditSource,
     ErrorResponse,
+    ExportJobResponse,
+    ExportRequest,
     JobView,
     MannequinCut,
     PricingPlan,
     Product,
     ProductPatch,
+    ProductTruthPatch,
+    ProductTruthView,
     Project,
     ProjectPatch,
     ProjectSummary,
@@ -73,6 +80,48 @@ COMMON_RESPONSES = {
     403: {"model": ErrorResponse, "description": "권한 없음 (타 사용자의 리소스 접근 시도 등)"},
     404: {"model": ErrorResponse, "description": "리소스를 찾을 수 없음"},
 }
+
+
+def _truth_domain(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    return {
+        "id": row.get("id"), "projectId": row.get("project_id"),
+        "productId": row.get("product_id"), "version": row.get("version"),
+        "status": row.get("status"), "schemaVersion": row.get("schema_version"),
+        "garmentSpec": row.get("garment_spec") or {}, "colorSpec": row.get("color_spec") or {},
+        "patternSpec": row.get("pattern_spec") or {},
+        "protectedDetails": row.get("protected_details") or {},
+        "sourceEvidence": row.get("source_evidence") or {},
+        "uncertainFields": row.get("uncertain_fields") or [],
+        "garmentProfile": row.get("garment_profile"),
+        "analysisConfidence": row.get("analysis_confidence"),
+        "sourceFingerprint": row.get("source_fingerprint"),
+        "sourceAssets": [
+            {"id": a.get("id"), "assetId": a.get("asset_id"), "role": a.get("role"),
+             "view": a.get("view"), "colorId": a.get("color_id"), "part": a.get("part"),
+             "sortOrder": a.get("sort_order", 0), "checksum": a.get("checksum"),
+             "width": a.get("width"), "height": a.get("height"),
+             "metadata": a.get("metadata") or {}}
+            for a in (row.get("source_assets") or [])
+        ],
+        "createdAt": row.get("created_at"), "approvedAt": row.get("approved_at"),
+        "rejectedAt": row.get("rejected_at"),
+    }
+
+
+def _product_asset_ids(product: dict) -> list[str]:
+    return [str(i.get("id") or i.get("assetId"))
+            for c in (product.get("colors") or []) for i in (c.get("images") or [])
+            if i.get("id") or i.get("assetId")]
+
+
+async def _truth_inputs(conn, *, project_id: str, user_id: str, product: dict | None = None):
+    product = product or await repo.get_product(conn, project_id) or {}
+    analysis = await repo.get_analysis(conn, project_id) or {}
+    evidence = await repo.list_product_truth_asset_evidence(
+        conn, user_id, _product_asset_ids(product))
+    return product, analysis, evidence
 
 
 
@@ -165,6 +214,10 @@ async def _fit_profile_snapshot(
 
 def _bad_request(code: str, message: str) -> HTTPException:
     return HTTPException(status_code=400, detail={"code": code, "message": message})
+
+
+def _canonical_hash(value) -> str:
+    return hashlib.sha256(export_render.canonical_bytes(value or {})).hexdigest()
 
 
 def _require_bg_examples_enabled(request: Request, value) -> None:
@@ -622,6 +675,136 @@ async def get_analysis(
     return {"projectId": project_id, **(payload or {})}
 
 
+# ---------- Product Truth revisions ----------
+
+
+@router.get(
+    "/projects/{project_id}/product-truth",
+    response_model=ProductTruthView,
+    responses={**COMMON_RESPONSES},
+    tags=["Product Truth"],
+    summary="현재 Product Truth revision 조회",
+)
+async def get_product_truth(
+    request: Request, project_id: str,
+    status: str | None = Query(None, pattern="^(draft|approved|superseded|rejected)$"),
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        row = await repo.get_product_truth(conn, project_id, status=status)
+    if row is None:
+        raise _not_found()
+    domain = _truth_domain(row)
+    domain["validationIssues"] = [i.as_dict() for i in product_truth_service.validation_issues(domain)]
+    return domain
+
+
+@router.post(
+    "/projects/{project_id}/product-truth:draft",
+    response_model=ProductTruthView,
+    responses={**COMMON_RESPONSES}, tags=["Product Truth"],
+    summary="현재 상품/분석으로 Product Truth draft 생성",
+)
+async def draft_product_truth(
+    request: Request, project_id: str, user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product, analysis, evidence = await _truth_inputs(
+            conn, project_id=project_id, user_id=user_id)
+        draft = product_truth_service.build_truth_draft(product, analysis, evidence)
+        draft["garmentProfile"] = product_truth_service.garment_profile(draft)
+        row = await repo.save_product_truth_draft(
+            conn, project_id=project_id, user_id=user_id, draft=draft)
+        await conn.commit()
+    domain = _truth_domain(row)
+    domain["validationIssues"] = [i.as_dict() for i in product_truth_service.validation_issues(domain)]
+    return domain
+
+
+@router.patch(
+    "/projects/{project_id}/product-truth/{truth_id}",
+    response_model=ProductTruthView,
+    responses={**COMMON_RESPONSES}, tags=["Product Truth"],
+    summary="Product Truth draft 수정",
+)
+async def patch_product_truth(
+    request: Request, project_id: str, truth_id: str, patch: ProductTruthPatch,
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        row = await repo.patch_product_truth_draft(
+            conn, project_id=project_id, truth_id=truth_id, user_id=user_id,
+            patch=patch.model_dump(exclude_unset=True))
+        if row is None:
+            raise HTTPException(status_code=409, detail={"code": "truth_not_editable",
+                                                        "message": "승인된 Product Truth는 수정할 수 없어요."})
+        await conn.commit()
+    domain = _truth_domain(row)
+    domain["validationIssues"] = [i.as_dict() for i in product_truth_service.validation_issues(domain)]
+    return domain
+
+
+@router.post(
+    "/projects/{project_id}/product-truth/{truth_id}:approve",
+    response_model=ProductTruthView,
+    responses={**COMMON_RESPONSES}, tags=["Product Truth"],
+    summary="Product Truth draft 승인",
+)
+async def approve_product_truth(
+    request: Request, project_id: str, truth_id: str,
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        current = await repo.get_product_truth(conn, project_id, truth_id=truth_id)
+        domain = _truth_domain(current)
+        try:
+            approved = product_truth_service.approve_snapshot(domain or {}, actor_id=user_id)
+        except product_truth_service.ProductTruthError as e:
+            raise HTTPException(status_code=409, detail={"code": e.code, "message": str(e)})
+        row = await repo.approve_product_truth(
+            conn, project_id=project_id, truth_id=truth_id, user_id=user_id,
+            garment_profile=approved["garmentProfile"])
+        if row is None:
+            raise HTTPException(status_code=409, detail={"code": "truth_not_editable",
+                                                        "message": "승인 가능한 draft가 아니에요."})
+        await conn.commit()
+    out = _truth_domain(row)
+    out["validationIssues"] = [i.as_dict() for i in product_truth_service.validation_issues(out)]
+    return out
+
+
+@router.post(
+    "/projects/{project_id}/product-truth/{truth_id}:reject",
+    response_model=ProductTruthView,
+    responses={**COMMON_RESPONSES}, tags=["Product Truth"],
+    summary="Product Truth draft 거절",
+)
+async def reject_product_truth(
+    request: Request, project_id: str, truth_id: str,
+    user_id: str = Depends(require_user),
+):
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        row = await repo.reject_product_truth(
+            conn, project_id=project_id, truth_id=truth_id, user_id=user_id)
+        if row is None:
+            raise HTTPException(status_code=409, detail={"code": "truth_not_editable",
+                                                        "message": "거절 가능한 draft가 아니에요."})
+        await conn.commit()
+    out = _truth_domain(row)
+    out["validationIssues"] = [i.as_dict() for i in product_truth_service.validation_issues(out)]
+    return out
+
+
 @router.post(
     "/projects/{project_id}/wash-care:draft",
     responses={**COMMON_RESPONSES, 502: {"model": ErrorResponse}},
@@ -982,15 +1165,31 @@ async def generate_mannequins(
         # blocking으로 직렬화되어 프로젝트당 active job 1개만 생성되고 나머지는 합류한다(§6).
         # 합류(created=False)는 게이트·예약 없이 기존 job 반환 → 동시 재시도/입력검증으로 막지 않음.
         # 합류 시 기존 job payload 가 정본 — 아래 스냅샷은 신규 job 에만 실린다.
+        product = await repo.get_product(conn, project_id) or {}
+        truth_id = None
+        if request.app.state.settings.enable_product_truth != "off":
+            product, analysis, evidence = await _truth_inputs(
+                conn, project_id=project_id, user_id=user_id, product=product)
+            approved_truth = await repo.get_product_truth(conn, project_id, status="approved")
+            domain = _truth_domain(approved_truth)
+            fingerprint = product_truth_service.source_fingerprint(product, analysis, evidence)
+            try:
+                product_truth_service.assert_approved_for_generation(
+                    domain, current_fingerprint=fingerprint)
+                truth_id = domain["id"]
+            except product_truth_service.ProductTruthError as e:
+                if request.app.state.settings.enable_product_truth == "enforce":
+                    raise HTTPException(status_code=409, detail={"code": e.code, "message": str(e)})
+                logger.info("product truth shadow miss project=%s reason=%s", project_id, e.code)
         snapshot = await _fit_profile_snapshot(conn, project_id, None)
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
-            payload={"mode": "generate", "fitProfileSnapshot": snapshot}, idempotency_key=scoped_key,
+            payload={"mode": "generate", "fitProfileSnapshot": snapshot,
+                     "truthPackageId": truth_id}, idempotency_key=scoped_key,
             credits_reserved=cost,
             metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
-            product = await repo.get_product(conn, project_id)
-            if not mannequin.has_base_front(product or {}):  # A-6: 정면 사진 필수
+            if not mannequin.has_base_front(product):  # A-6: 정면 사진 필수
                 raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")
             if await repo.reserve_credits(conn, user_id, cost) is None:
                 raise HTTPException(
@@ -1285,15 +1484,32 @@ async def regenerate_mannequins(
             body.get("fitProfile"),
             validate_matching_fit=True,
         )
+        # 기존 fit 계약 검증이 Product Truth/스토리지 조회보다 먼저 실패해야 한다. 이 순서는
+        # 잘못된 matchingFit 요청이 추가 조회·job 생성·크레딧 예약으로 진행되지 않는 API 계약이다.
+        product = await repo.get_product(conn, project_id) or {}
+        truth_id = None
+        if request.app.state.settings.enable_product_truth != "off":
+            product, analysis, evidence = await _truth_inputs(
+                conn, project_id=project_id, user_id=user_id, product=product)
+            approved_truth = await repo.get_product_truth(conn, project_id, status="approved")
+            domain = _truth_domain(approved_truth)
+            try:
+                product_truth_service.assert_approved_for_generation(
+                    domain,
+                    current_fingerprint=product_truth_service.source_fingerprint(
+                        product, analysis, evidence))
+                truth_id = domain["id"]
+            except product_truth_service.ProductTruthError as e:
+                if request.app.state.settings.enable_product_truth == "enforce":
+                    raise HTTPException(status_code=409, detail={"code": e.code, "message": str(e)})
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload={"mode": "regenerate", "fitProfile": body.get("fitProfile"),
-                     "fitProfileSnapshot": snapshot},
+                     "fitProfileSnapshot": snapshot, "truthPackageId": truth_id},
             idempotency_key=scoped_key, credits_reserved=cost,
             metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
-            product = await repo.get_product(conn, project_id)
-            if not mannequin.has_base_front(product or {}):  # 정면 사진 필수(generate 동일)
+            if not mannequin.has_base_front(product):  # 정면 사진 필수(generate 동일)
                 raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")
             if await repo.reserve_credits(conn, user_id, cost) is None:
                 raise HTTPException(
@@ -1750,6 +1966,99 @@ async def generate_detail_page(
         await conn.commit()
     _wake_dispatcher(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
+
+
+@router.post(
+    "/projects/{project_id}/export",
+    response_model=ExportJobResponse,
+    responses={
+        **COMMON_RESPONSES,
+        202: {"description": "에디터 내보내기 작업이 대기열에 진입했습니다."},
+        400: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
+    tags=["Editor"],
+    summary="에디터 스냅샷 내보내기 작업 시작 (Phase 9)",
+)
+async def export_project(
+    request: Request,
+    project_id: str,
+    body: ExportRequest,
+    user_id: str = Depends(require_user),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    if getattr(request.app.state.settings, "export_backend", "off") != "on":
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "export_disabled", "message": "내보내기가 아직 활성화되지 않았어요."},
+        )
+    if not idempotency_key:
+        raise _bad_request("missing_idempotency_key", "내보내기 요청 키가 필요해요.")
+    options = body.options.model_dump(by_alias=True)
+    # 클라이언트 snapshot은 hash 계산 편의를 위한 하위 호환 필드일 뿐 렌더 입력이 아니다.
+    # 저장된 blocks+revision을 한 statement로 읽어 TOCTOU와 임의 asset URL 주입을 막는다.
+    request_body = {"snapshotHash": body.snapshot_hash, "body": body.body, "options": options}
+    body_hash = _canonical_hash(request_body)
+    scoped_key = f"{project_id}:export:{idempotency_key}"
+    export_id = str(uuid.uuid4())
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        prior = await repo.get_job_by_idempotency_key(conn, user_id, scoped_key)
+        if prior is not None:
+            if (prior.get("payload") or {}).get("requestBodyHash") != body_hash:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "idempotency_conflict",
+                            "message": "같은 요청 키로 다른 내보내기를 보낼 수 없어요."},
+                )
+            existing_export = await repo.get_export_by_job(conn, prior["id"])
+            return JSONResponse(
+                status_code=202,
+                content={"jobId": prior["id"],
+                         "exportId": (existing_export or {}).get("id")
+                         or (prior.get("payload") or {}).get("exportId")},
+            )
+        server_snapshot = await repo.get_editor_snapshot(conn, user_id, project_id)
+        if server_snapshot is None:
+            raise _not_found()
+        snapshot = {"editorBlocks": server_snapshot["blocks"]}
+        if not snapshot["editorBlocks"]:
+            raise _bad_request("empty_export", "내보내기할 상세페이지가 비어 있어요.")
+        try:
+            export_render.verify_snapshot_hash(snapshot, body.snapshot_hash)
+        except export_render.ExportRenderError as exc:
+            raise _bad_request(exc.code, exc.message) from exc
+        payload = {
+            "exportId": export_id,
+            "snapshot": snapshot,
+            "snapshotRevision": server_snapshot["revision"],
+            "snapshotHash": body.snapshot_hash,
+            "body": body.body,
+            "options": options,
+            "requestBodyHash": body_hash,
+        }
+        job, created = await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="export",
+            payload=payload, idempotency_key=scoped_key, credits_reserved=0,
+            metadata={"requestBodyHash": body_hash})
+        if not created:
+            existing_export = await repo.get_export_by_job(conn, job["id"])
+            await conn.commit()
+            return JSONResponse(
+                status_code=202,
+                content={"jobId": job["id"],
+                         "exportId": (existing_export or {}).get("id")
+                         or (job.get("payload") or {}).get("exportId")},
+            )
+        await repo.create_export_record(
+            conn, export_id=export_id, project_id=project_id, job_id=job["id"],
+            fmt=("zip" if options.get("format") == "zip" else "long"),
+            snapshot_hash=body.snapshot_hash, options=options,
+            snapshot_revision=server_snapshot["revision"])
+        await conn.commit()
+    _wake_dispatcher(request)
+    return JSONResponse(status_code=202, content={"jobId": job["id"], "exportId": export_id})
 
 
 @router.get(

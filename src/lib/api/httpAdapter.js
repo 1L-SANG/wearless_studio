@@ -57,6 +57,22 @@ export function newIdempotencyKey() {
     : `rv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+function canonicalStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((k) => (
+      `${JSON.stringify(k)}:${canonicalStringify(value[k])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+async function sha256Hex(value) {
+  const bytes = new TextEncoder().encode(canonicalStringify(value ?? {}));
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export async function http(path, { method = 'GET', body, idempotencyKey } = {}) {
   let data;
   try {
@@ -374,6 +390,20 @@ export const httpAdapter = {
   async saveEditorBlocks(projectId, blocks) {
     await http(`/v1/projects/${projectId}/editor-blocks`, { method: 'PUT', body: blocks });
   },
+  async exportProject(projectId, { snapshot, body = {}, options = {}, onProgress, key } = {}) {
+    const snapshotHash = await sha256Hex(snapshot || {});
+    const res = await http(`/v1/projects/${projectId}/export`, {
+      method: 'POST',
+      body: { snapshot: snapshot || {}, snapshotHash, body, options },
+      idempotencyKey: key || newIdempotencyKey(),
+    });
+    const result = await pollJob(res.jobId, {
+      onProgress,
+      timeoutMs: 120000,
+      timeoutMessage: '내보내기가 지연되고 있어요. 잠시 후 다시 시도해 주세요.',
+    });
+    return { ...result, jobId: res.jobId, exportId: res.exportId || result?.exportId };
+  },
   // AG-06 컷 + AG-02/03 카피 → M-02 조립. 완료 재호출은 서버가 기존 결과 반환(무차감).
   async generateDetailPage(projectId, { onProgress } = {}) {
     const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
@@ -437,6 +467,22 @@ export const httpAdapter = {
     }
     analysisCache = { projectId, analysis: savedAnalysis };
     return savedAnalysis;
+  },
+  async getProductTruth(projectId, status) {
+    const query = status ? `?status=${encodeURIComponent(status)}` : '';
+    return http(`/v1/projects/${projectId}/product-truth${query}`);
+  },
+  async draftProductTruth(projectId) {
+    return http(`/v1/projects/${projectId}/product-truth:draft`, { method: 'POST' });
+  },
+  async updateProductTruth(projectId, truthId, patch) {
+    return http(`/v1/projects/${projectId}/product-truth/${truthId}`, { method: 'PATCH', body: patch });
+  },
+  async approveProductTruth(projectId, truthId) {
+    return http(`/v1/projects/${projectId}/product-truth/${truthId}:approve`, { method: 'POST' });
+  },
+  async rejectProductTruth(projectId, truthId) {
+    return http(`/v1/projects/${projectId}/product-truth/${truthId}:reject`, { method: 'POST' });
   },
   // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.
   async getAnalysis(projectId) {

@@ -27,3 +27,8 @@ from .types import (  # noqa: F401
     CompositeSuccess,
     StripeModel,
 )
+from .texture_projection import (  # noqa: F401
+    PROJECTION_VERSION,
+    ProjectionPlan,
+    plan_periodic_projection,
+)

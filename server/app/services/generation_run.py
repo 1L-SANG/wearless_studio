@@ -37,6 +37,8 @@ SETTINGS_ALLOWLIST: tuple[str, ...] = (
     "mannequin_axis_qc",
     "mannequin_qc_enabled",
     "mannequin_hybrid_composite",
+    "enable_product_truth",
+    "mannequin_structured_qc",
     "image_qc",
     "garment_qc_mode",
     "qc_score_auto_pass",
@@ -160,13 +162,14 @@ class RunLogger:
     """
 
     def __init__(self, *, pool, r2, job_id: str, project_id: str, user_id: str,
-                 enabled: bool = False):
+                 enabled: bool = False, truth_package_id: str | None = None):
         self.pool = pool
         self.r2 = r2
         self.job_id = job_id
         self.project_id = project_id
         self.user_id = user_id
         self.enabled = bool(enabled)
+        self.truth_package_id = truth_package_id
         self._by_image: dict[tuple[str | None, str], str] = {}
         self._last_run: dict[str | None, str] = {}      # candidate → 마지막 provider run
         self._last_sha: dict[str | None, str] = {}      # candidate → 그 run 의 산출 바이트 sha
@@ -231,6 +234,7 @@ class RunLogger:
                     input_assets=input_snapshot(inputs) if inputs else None,
                     input_image_sha256=in_sha,
                     parent_generation_run_id=parent,
+                    truth_package_id=self.truth_package_id,
                     fit_profile_snapshot=fit_profile,
                     settings_snapshot=settings_snapshot(settings) if settings is not None else None)
                 await conn.commit()

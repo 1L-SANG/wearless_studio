@@ -15,6 +15,7 @@ from .. import repo
 from ..agents import feature_extractor, input_consistency, mannequin, product_analyst
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
+from ..services import product_truth as product_truth_service
 from ._common import emit_job_event as _emit  # 공용 헬퍼(mannequin_job과 공유). 테스트가 이 이름을 monkeypatch
 
 log = logging.getLogger("wearless.analyze_job")
@@ -176,6 +177,14 @@ async def run_analyze_job(app, job: dict) -> None:
                           "promptVersion": "v1",
                           # shadow 캘리브레이션의 유일한 기록처 — 여기가 비면 분포를 못 쌓는다.
                           **({"inputConsistency": consistency} if consistency else {})})
+            # 분석 성공과 같은 트랜잭션에서 draft를 갱신한다. 사용자가 승인한 revision은
+            # 건드리지 않고 repo가 프로젝트당 열린 draft만 갱신하므로, 분석 결과와 검수 화면이
+            # 서로 다른 상품 사실을 보게 되는 창이 생기지 않는다.
+            if out is not None and getattr(s, "enable_product_truth", "off") != "off":
+                draft = product_truth_service.build_truth_draft(product, analysis_payload, assets)
+                draft["garmentProfile"] = product_truth_service.garment_profile(draft)
+                await repo.save_product_truth_draft(
+                    conn, project_id=project_id, user_id=user_id, draft=draft)
             await conn.commit()
         if out is None:  # lease 상실(복구·재클레임) → 결과 폐기
             log.warning("analyze job %s lost lease", job_id)

@@ -29,6 +29,7 @@ MIME_EXT = {
     "image/webp": "webp",
     "image/gif": "gif",
     "image/avif": "avif",
+    "application/zip": "zip",
 }
 
 
@@ -44,6 +45,11 @@ def upload_key(user_id: str, project_id: str, asset_id: str, ext: str) -> str:
 def ai_key(user_id: str, project_id: str, job_id: str, asset_id: str, ext: str) -> str:
     """AI 생성 자산 키 (§3). 서버사이드 저장(put_bytes)용."""
     return f"users/{user_id}/projects/{project_id}/ai/{job_id}/{asset_id}.{ext}"
+
+
+def export_key(user_id: str, project_id: str, job_id: str, asset_id: str, ext: str) -> str:
+    """결정론적 export 산출물 키. provider 산출물이 아니므로 ai/와 분리한다."""
+    return f"users/{user_id}/projects/{project_id}/exports/{job_id}/{asset_id}.{ext}"
 
 
 def genrun_prompt_key(user_id: str, project_id: str, job_id: str, run_id: str) -> str:
