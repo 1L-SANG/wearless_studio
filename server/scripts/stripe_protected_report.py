@@ -90,7 +90,10 @@ GATES = {
     "direction_error_max": (None, 0.10),
     "color_delta_e00_max": (None, 16.0),
     "outside_drift_frac": (None, 0.01),
-    "seam_edge_ratio": (None, 0.50),
+    "seam_ramp_excess": (None, 1.6),
+    "seam_grad_norm": (None, 0.35),
+    "boundary_chroma_severe_frac": (None, 0.02),
+    "drape_local_amp_p2": (0.30, None),
     "boundary_chroma_de00": (None, 14.0),
     "drape_amp_ratio": (0.55, None),
     "drape_corr": (0.0, None),
@@ -98,7 +101,10 @@ GATES = {
 
 # 임계의 출처를 리포트에 함께 싣는다 — 숫자만 보면 캘리브레이션된 것처럼 읽힌다.
 GATE_BASIS = {
-    "seam_edge_ratio": "정상 합성 6종 실측 0.096 / 계단은 1.0",
+    "seam_ramp_excess": "정상 0.822 / 계단 2.0~6.67 (위치별)",
+    "seam_grad_norm": "정상 0.097~0.099 / 계단 0.5 (진폭·위치 무관)",
+    "boundary_chroma_severe_frac": "정상 0.0 (6종) / 국소 단절 시 발화",
+    "drape_local_amp_p2": "정상 0.395~0.462 / 타일 미만 평탄화 0.082",
     "boundary_chroma_de00": "정상 2.95~9.31 / 주입 불연속 중앙값 23",
     "drape_amp_ratio": "정상 최악 타일 0.757~0.981 / 45% 평탄화 0.39",
     "drape_corr": "정상 0.298 이상 / 접힘 반전 -0.84 (0 은 방향 판정선)",

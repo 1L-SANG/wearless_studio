@@ -1882,6 +1882,13 @@ async def _apply_hybrid_composite(
             exists = bool((src_inv or {}).get(part) or (car_inv or {}).get(part))
             if part == "placket" and truth_protected.get("buttonCount"):
                 exists = True
+            # **검증을 통과한** 박스가 한쪽에만 있으면 그것도 존재 근거로 본다. 둘 중
+            # 하나다: 진짜 있는 부위인데 반대편 geometry 가 없거나(검증 불가), 모델이
+            # 4점·범위 검증까지 통과하는 박스를 지어냈거나(신뢰 불가). 어느 쪽이든 닫는다.
+            # 981e95b 가 잡던 경우이고, 오거절을 걱정해 뺐다가 되살린다 — 멀쩡한 민소매에서
+            # 완전 유효한 카라 박스가 나올 확률보다 진짜 카라를 놓칠 확률이 크다.
+            if key in src_boxes_norm or key in car_boxes_norm:
+                exists = True
             if exists and (key not in src_boxes_norm or key not in car_boxes_norm):
                 missing_boxes.append(key)
         missing_boxes = sorted(missing_boxes)

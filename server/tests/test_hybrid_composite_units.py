@@ -1184,7 +1184,7 @@ def test_low_amplitude_alpha_step_is_caught_regardless_of_height():
     """0.65 진폭 한 픽셀 계단 — 레벨·절대기울기 임계는 둘 다 놓쳤다."""
     cx, pm, art, period = _v6_shaped_case()
     qc = _qc_of(art, cx, pm, period, alpha=(art.painted > 0).astype(np.float32) * 0.65)
-    assert "interface_seam" in qc.failures, qc.metrics.get("seam_edge_ratio")
+    assert "interface_seam" in qc.failures, qc.metrics.get("seam_ramp_excess")
 
 
 def test_chroma_shifts_arranged_to_cancel_within_tiles_are_caught():
@@ -1227,3 +1227,102 @@ def test_unmeasurable_drape_is_not_treated_as_pass():
     out = _drape_preservation(np.zeros((40, 40, 3), np.uint8),
                               np.zeros((40, 40, 3), np.uint8), tiny)
     assert out == {"drape_measurable": False}
+
+
+# ── 3차 자체 공격: 요약 통계를 피해 가는 경로 ─────────────────────────────────
+
+def test_painted_thinner_than_the_feather_band_is_unmeasurable_not_pass():
+    """얇은 띠만 칠하면 전이를 정의할 깊이가 없다 — 통과로 눕히면 게이트를 비껴간다."""
+    from app.services.hybrid_composite.deterministic_qc import _interface_seam
+    cx, pm, art, _period = _v6_shaped_case()
+    thin = np.zeros_like(art.painted)
+    thin[300:308, :] = 255
+    thin &= (pm.garment_mask > 0).astype(np.uint8) * 255
+    out = _interface_seam((thin > 0).astype(np.float32), thin, pm.garment_mask, 40)
+    assert out["seam_measurable"] is False
+    assert out["seam_reason"] == "no_interior_depth"
+
+
+def test_damage_smaller_than_a_drape_tile_is_still_caught():
+    """타일 평균에 희석되는 크기의 평탄화도 국소 진폭비가 잡는다."""
+    from app.services.hybrid_composite.color import lab_to_bgr
+    from app.services.hybrid_composite.deterministic_qc import DRAPE_SIGMA_FRAC
+    cx, pm, art, period = _v6_shaped_case()
+    g = pm.garment_mask > 0
+    lab = bgr_to_lab(art.image_bgr)
+    sigma = max(3.0, min(art.image_bgr.shape[:2]) * DRAPE_SIGMA_FRAC)
+    low = cv2.GaussianBlur(lab[..., 0], (0, 0), sigmaX=sigma)
+    patch = np.zeros_like(g)
+    patch[400:600, 300:500] = True
+    lab[..., 0] = np.where(g & patch, lab[..., 0] - low + float(np.median(low[g])),
+                           lab[..., 0])
+    qc = _qc_of(art, cx, pm, period, img=lab_to_bgr(lab))
+    assert "drape_lost" in qc.failures, qc.metrics.get("drape_local_amp_p2")
+
+
+def test_interior_colour_shift_is_owned_by_the_pattern_gate_not_the_boundary_gate():
+    """경계가 아닌 안쪽 색 이동은 경계 연속성 문제가 아니다 — 패턴 색 게이트가 잡는다.
+
+    두 게이트의 소관을 분명히 해 둔다. 경계 게이트가 이걸 못 잡는 것은 구멍이 아니라
+    정의다 — 인접한 미페인트 기준이 없는 곳에는 '불연속' 이 성립하지 않는다.
+    """
+    from app.services.hybrid_composite.color import lab_to_bgr
+    cx, pm, art, period = _v6_shaped_case()
+    lab = bgr_to_lab(art.image_bgr)
+    deep = cv2.erode(art.painted, np.ones((61, 61), np.uint8)) > 0
+    lab[..., 1][(art.painted > 0) & deep] += 45.0
+    qc = _qc_of(art, cx, pm, period, img=lab_to_bgr(lab))
+    assert not qc.passed
+    assert "pattern_metric_failed" in qc.failures
+    assert qc.metrics["color_delta_e00_max"] > 16.0
+
+
+# ── 4차: 계단을 밴드 안쪽으로 옮기는 회피 ─────────────────────────────────────
+# 경계 표본을 한 거리로 고정하면 계단을 한 픽셀만 옮겨도 표본이 alpha 0 만 잡는다.
+# 위치 비율(ramp excess)은 깊이 들어갈수록 둔해지므로, 진폭·위치 모두에 무관한
+# **정규화 기울기**를 함께 쓴다: 균일 페더는 어디서나 1/band, 계단은 그 지점에서 1.
+
+@pytest.mark.parametrize("shift", [0.0, 2.0, 4.0, 6.0, 9.0])
+def test_hard_step_is_caught_wherever_it_sits_inside_the_band(shift):
+    cx, pm, art, period = _v6_shaped_case()
+    dist = cv2.distanceTransform(art.painted, cv2.DIST_L2, 3)
+    stepped = np.where((art.painted > 0) & (dist > shift), 1.0, 0.0).astype(np.float32)
+    qc = _qc_of(art, cx, pm, period, alpha=stepped)
+    assert "interface_seam" in qc.failures, (shift, qc.metrics.get("seam_grad_norm"))
+
+
+def test_normalized_gradient_separates_feather_from_step_by_a_wide_margin():
+    """정상 0.097~0.099 vs 계단 0.5 — 진폭에도 위치에도 흔들리지 않는 형태여야 한다."""
+    from app.services.hybrid_composite.deterministic_qc import (
+        SEAM_GRAD_NORM_MAX, _interface_seam)
+    cx, pm, art, _period = _v6_shaped_case()
+    band = int(max(3, pm.metrics.get("boundary_band_px", 4)))
+    healthy = _interface_seam(art.alpha, art.painted, pm.garment_mask, band)
+    assert healthy["seam_grad_norm"] < SEAM_GRAD_NORM_MAX / 2.0, healthy
+    low_step = _interface_seam((art.painted > 0).astype(np.float32) * 0.65,
+                               art.painted, pm.garment_mask, band)
+    assert low_step["seam_grad_norm"] > SEAM_GRAD_NORM_MAX or \
+        low_step["seam_ramp_excess"] > 1.6, low_step
+
+
+def test_boundary_luminance_step_is_recorded_but_not_gated():
+    """정상 4.06~24.12 로 손상(31.4)과 겹친다 — 분리되지 않는 지표는 판정에 쓰지 않는다.
+
+    몸통(painted)과 커프(미페인트)는 원래 밝기가 다르다. 게이트로 걸면 정상 합성
+    6종 중 2종이 오거절된다. 기록은 남겨 이후 실사진으로 재캘리브레이션할 수 있게 한다.
+    """
+    cx, pm, art, period = _v6_shaped_case()
+    qc = _qc_of(art, cx, pm, period)
+    assert "boundary_l_step_p95" in qc.metrics
+    assert qc.passed, qc.metrics.get("failure_details")
+
+
+def test_validated_single_side_box_is_evidence_the_part_exists():
+    """한쪽에만 있어도 4점·범위 검증을 통과한 박스는 존재 근거다 — 어느 쪽이든 닫는다."""
+    from app.agents.hybrid_landmarks import box_rejection_reason
+    valid = [[0.36, 0.02], [0.64, 0.02], [0.64, 0.12], [0.36, 0.12]]
+    assert box_rejection_reason(valid) is None
+    src_boxes, car_boxes = {"collar_box": valid}, {}
+    exists = ("collar_box" in src_boxes) or ("collar_box" in car_boxes)
+    assert exists, "검증 통과 박스가 한쪽에 있으면 그 부위는 존재로 본다"
+    assert "collar_box" not in car_boxes, "반대편 geometry 부재 → 검증 불가 → fail-closed"
