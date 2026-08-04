@@ -103,6 +103,18 @@ test('mannequin screen has a separate AI partial-edit panel wired to the limited
   assert.match(mannequinSource, /selectedReviewState\.hardBlocked/);
 });
 
+test('mannequin confirm CTA records the selected cut as the baseline before storyboard navigation', () => {
+  const approveIndex = mannequinSource.indexOf('await api.approveMannequin(projectId, latestSelected.id);');
+  const navigateIndex = mannequinSource.indexOf("navigate('/create/storyboard');");
+  assert.notEqual(approveIndex, -1);
+  assert.notEqual(navigateIndex, -1);
+  assert.ok(approveIndex < navigateIndex);
+  assert.match(
+    mannequinSource,
+    /catch \{[^]*선택한 이미지를 기준으로 확정하지 못했어요[^]*\}/,
+  );
+});
+
 test('limited edit failures are translated to seller-actionable messages', () => {
   assert.equal(
     mannequinEditFailureMessage({ code: 'no_approved_baseline' }),

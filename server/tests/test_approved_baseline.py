@@ -25,6 +25,10 @@ MIGRATION = (
     "/Users/nojeong-un/devs/wearless_studio/supabase/migrations/"
     "20260801020000_approved_baselines.sql"
 )
+QC_LINK_MIGRATION = (
+    "/Users/nojeong-un/devs/wearless_studio/supabase/migrations/"
+    "20260804000000_baseline_qc_result_link.sql"
+)
 
 
 # ── fake DB: 실행된 SQL 을 그대로 붙잡아 계약을 검사한다 ─────────────────────
@@ -60,6 +64,8 @@ class _Cur:
                     "output_id": (self.state.get("cut_output") or {}).get("id"),
                     "generation_run_id": (self.state.get("cut_output") or {}).get(
                         "generation_run_id"),
+                    "baseline_qc_result_id": (self.state.get("cut_output") or {}).get(
+                        "baseline_qc_result_id"),
                     "locked_invariants": {}, "approved_at": "t", "superseded_at": None}
         return None
 
@@ -106,6 +112,20 @@ def test_first_approval_creates_active_baseline():
     assert params[3] == "out-1"          # output_id — 승인 컷의 output
     assert params[4] == "run-1"          # generation_run_id
     assert out["baseline"]["output_id"] == "out-1"
+
+
+def test_approval_links_the_latest_structured_qc_result_for_the_approved_output():
+    st, out = _approve({"cut_output": {
+        "id": "out-1",
+        "generation_run_id": "run-1",
+        "truth_package_id": "truth-1",
+        "baseline_qc_result_id": "qc-1",
+    }})
+    sql, params = _sql_of(st, "insert into approved_baselines")[0]
+    assert "baseline_qc_result_id" in sql
+    assert params[5] == "truth-1"
+    assert params[6] == "qc-1"
+    assert out["baseline"]["baseline_qc_result_id"] == "qc-1"
 
 
 def test_approval_locks_the_project_row_first():
@@ -205,6 +225,14 @@ def test_migration_keeps_unbuilt_entities_nullable_without_fk():
     assert re.search(r"baseline_qc_result_id uuid,\s", sql)
     assert "references public.product_truth" not in sql
     assert "qc_scores_snapshot jsonb" in sql, "QC 테이블이 없는 동안의 판정 보존 수단"
+
+
+def test_followup_migration_links_approved_baselines_to_structured_qc_results():
+    sql = open(QC_LINK_MIGRATION, encoding="utf-8").read().lower()
+    assert "approved_baselines_baseline_qc_result_id_fkey" in sql
+    assert "foreign key (baseline_qc_result_id) references public.qc_results (id)" in sql
+    assert "on delete set null" in sql
+    assert "approved_baselines_qc_result_idx" in sql
 
 
 def test_migration_scopes_rls_by_project_ownership():
@@ -685,3 +713,12 @@ def test_baseline_id_is_null_when_the_edited_cut_is_not_the_baseline():
         {"generation_output_id": "out-other", "baseline_id": None})
     assert lin["parent_output_id"] == "out-other"
     assert lin["baseline_id"] is None
+
+
+def test_active_baseline_query_loads_the_cut_asset_in_the_same_statement():
+    """후속 착용컷의 Identity Lock 은 baseline id 와 이미지 자산을 같은 snapshot 에서 읽는다."""
+    src = inspect_source(repo.get_active_baseline).lower()
+    assert "join mannequin_cuts mc on mc.id = b.baseline_cut_id" in src
+    assert "join assets a on a.id = mc.asset_id and a.deleted_at is null" in src
+    assert "mc.asset_id::text as asset_id" in src
+    assert "a.r2_bucket" in src and "a.r2_key" in src and "a.mime_type" in src

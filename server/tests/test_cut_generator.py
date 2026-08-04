@@ -155,7 +155,7 @@ def test_build_prompt_respects_given_manifest():
     product = {"name": "니트", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
     manifest = cg.build_manifest([{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1)
     p = cg.build_prompt({"cutType": "styling"}, product, manifest=manifest)
-    assert "worn on a mannequin" in p and "MATCH" in p and "MOOD" in p
+    assert "APPROVED FRONT BASELINE" in p and "MATCH" in p and "MOOD" in p
 
 
 def test_pose_medium_prompt_generates_full_frame_before_deterministic_crop():
@@ -311,8 +311,9 @@ def test_build_manifest_places_exact_model_labels_after_mannequin():
     manifest = cg.build_manifest(
         [{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1,
         has_model_face=True, has_model_sheet=True)
-    assert manifest.splitlines() == [
-        "1. PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)",
+    lines = manifest.splitlines()
+    assert lines[0].startswith("1. APPROVED FRONT BASELINE — garment identity anchor only")
+    assert lines[1:] == [
         "2. MODEL — frontal close-up of the model (identity ground truth; do NOT copy this image's pose, framing, or clothing)",
         "3. MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single person (identity reference only). Do NOT copy the grid layout, framing, poses, or clothing; the output must be one single normal photograph, never a grid",
         "4. PRODUCT — front view of the garment",
@@ -393,6 +394,24 @@ def test_build_prompt_matching_fit_requires_bottom_on_screen(matching_profile, m
     assert "- fit:" in p3   # 나머지 축은 유지
 
 
+def test_manifest_labels_approved_baseline_as_identity_anchor_not_product_truth():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}, {"slot": "Back"}],
+        has_mannequin=True,
+        has_match=False,
+        mood_count=0,
+    )
+
+    lines = manifest.splitlines()
+    assert lines[0].startswith("1. APPROVED FRONT BASELINE")
+    assert "garment identity anchor only" in lines[0]
+    assert "Use the PRODUCT originals as ground truth" in lines[0]
+    assert "Never copy this anchor's pose, camera, crop, background or lighting" in lines[0]
+    assert "PRODUCT — the garment worn on a mannequin" not in manifest
+    assert "PRODUCT — front view of the garment" in manifest
+    assert "PRODUCT — back view of the garment" in manifest
+
+
 # ── FaceMarket 라이선스 얼굴 주입 (FM-31) ────────────────────────────────────
 PRODUCT_TOP = {"name": "니트", "clothing_type": "top",
                "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
@@ -432,7 +451,7 @@ def test_build_manifest_places_face_after_garment_truth_before_mood():
                           mood_count=1, has_face=True)
     lines = m.split("\n")
     assert len(lines) == 5
-    assert "mannequin" in lines[0] and lines[0].startswith("1.")
+    assert "APPROVED FRONT BASELINE" in lines[0] and lines[0].startswith("1.")
     assert "front view of the garment" in lines[1]
     assert lines[2].startswith("3. MATCH")
     assert lines[3].startswith("4. MODEL FACE")

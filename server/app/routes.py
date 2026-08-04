@@ -1961,11 +1961,33 @@ async def generate_detail_page(
             return JSONResponse({"data": existing, "credits": (account or {}).get("credits", 0)})
         storyboard = await repo.get_storyboard(conn, project_id)
         _require_bg_examples_enabled(request, storyboard)
+        canonical_storyboard = content_roles.canonicalize_storyboard(storyboard)
+        # 착용 후속컷의 Identity Lock 정본은 사용자가 승인한 front baseline 하나뿐이다.
+        # selected_mannequin_id 는 단순 UI 선택 포인터라 승인 이력이 아니며, 그것을 조용히
+        # 앵커로 쓰면 사용자가 검토하지 않은 컷이 전 상세페이지의 의류 정체성을 지배한다.
+        worn_types = {"styling", "horizon", "mirror"}
+        needs_anchor = any(
+            isinstance(b, dict)
+            and b.get("source") == "ai"
+            and (b.get("cutType") or b.get("cut_type")) in worn_types
+            for b in canonical_storyboard
+        )
+        baseline_id = None
+        if needs_anchor:
+            baseline = await repo.get_active_baseline(conn, project_id)
+            if baseline is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "no_approved_baseline",
+                            "message": "정면 마네킹 이미지를 먼저 확정해 주세요."},
+                )
+            baseline_id = baseline["id"]
         ai_count = sum(1 for b in storyboard if isinstance(b, dict) and b.get("source") == "ai")
         cost = ai_count * s.credit_cost_storyboard_per_cut
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="detail_page",
-            payload={"mode": "generate"}, idempotency_key=scoped_key, credits_reserved=cost,
+            payload={"mode": "generate", "baselineId": baseline_id},
+            idempotency_key=scoped_key, credits_reserved=cost,
             # perCutCost = 예약 시점 컷당 단가 스냅샷 — 워커 정산의 단일 기준(실행 시점 설정
             # 변경·콘티 재저장으로 인한 블록 수 변동과 무관하게 견적 가격을 고정).
             metadata={"creditCostVersion": s.credit_cost_version,

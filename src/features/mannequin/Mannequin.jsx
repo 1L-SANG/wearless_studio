@@ -1433,9 +1433,12 @@ export function Mannequin() {
       if (latestReviewState.visibleReview) {
         pushToast('검토가 필요한 버전으로 진행해요. 상세페이지 생성 전 이미지를 다시 확인해 주세요.', { icon: 'alertTri' });
       }
+      // 이 CTA가 Identity Lock의 명시적 승인 행위다. 단순 selectedMannequinId 저장은 UI 선택일
+      // 뿐 승인 이력이 아니므로, 서버가 baseline을 기록한 뒤에만 후속 착용컷 단계로 이동한다.
+      await api.approveMannequin(projectId, latestSelected.id);
       navigate('/create/storyboard');
     } catch {
-      pushToast('사진 양을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertTri' });
+      pushToast('선택한 이미지를 기준으로 확정하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertTri' });
     } finally {
       setBusy(false);
     }

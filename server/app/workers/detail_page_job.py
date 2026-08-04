@@ -37,6 +37,16 @@ _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 # 제한을 감안해 무제한이 아닌 소폭 동시성(429 시 이 값을 낮춘다).
 _GEN_CONCURRENCY = 3
 _WORN_CUT_TYPES = ("styling", "horizon", "mirror")
+_BASELINE_FAILURES = {
+    "no_approved_baseline": "정면 마네킹 이미지를 먼저 확정해 주세요.",
+    "baseline_changed": "승인된 기준 이미지가 바뀌었어요. 상세페이지 생성을 다시 시작해 주세요.",
+    "baseline_asset_missing": "승인된 기준 이미지를 불러오지 못했어요. 다시 확정해 주세요.",
+}
+
+
+def _cut_type(block: dict) -> str | None:
+    value = block.get("cutType") or block.get("cut_type")
+    return str(value) if value is not None else None
 
 
 def _dims(data: bytes):
@@ -289,7 +299,11 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{asset_id}/file",
                  "width": w, "height": h},
                 {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
-                 "size": len(img), "width": w, "height": h},
+                 "size": len(img), "width": w, "height": h,
+                 "metadata": ({"anchorBaselineId": (job.get("payload") or {}).get("baselineId"),
+                               "anchorRole": "approved_front_baseline"}
+                              if (job.get("payload") or {}).get("baselineId")
+                              and _cut_type(b) in _WORN_CUT_TYPES else {})},
                 has_face,
                 garment_qc,
                 garment_warnings,
@@ -378,7 +392,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             log.exception("detail_page finalize_failure error for job %s", job_id)
 
     try:
-        # 1) 입력 로드 — 옷 레퍼런스 = (있으면) 선택 마네킹컷(핏·기장 기준, ADR-0004)
+        # 1) 입력 로드 — 옷 레퍼런스 = 승인된 front baseline(Identity Lock)
         #    + 블록 색상별 상품 슬롯 이미지 + 모든 착용컷의 매칭 의류 + 무드 레퍼런스
         async with pool.connection() as conn:
             project = await repo.get_project(conn, user_id, project_id) or {}
@@ -416,6 +430,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 for b in storyboard
                 if isinstance(b, dict) and b.get("source") == "ai"
             ]
+            requested_baseline_id = (job.get("payload") or {}).get("baselineId")
             # StoryboardBlock에는 modelId가 없다(계약 §3.4). 상세페이지의 프로젝트 단위 선택값은
             # Analysis.selectedModelId가 정본이며, 아래 prep에서 저장 블록을 바꾸지 않고 런타임 주입한다.
             selected_model_id = analysis.get("selectedModelId") or analysis.get("selected_model_id")
@@ -449,13 +464,36 @@ async def run_detail_page_job(app, job: dict) -> None:
             else:
                 notice_ctx = None
 
+            # 새 라우트가 만든 착용컷 job 은 baselineId 를 반드시 스냅샷한다. 실행 사이에 사용자가
+            # 다른 컷을 승인하면 옛 앵커로 생성하지 않고 provider 호출 전에 실패한다. payload 가
+            # 없는 것은 migration 이전에 이미 큐에 있던 legacy job 뿐이라 기존 선택 포인터 경로를
+            # 유지한다(새 요청은 이 폴백에 도달하지 않는다).
             mannequin_asset = None
-            sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
-            if sel:
-                for c in await repo.list_mannequin_cuts(conn, user_id, project_id):
-                    if f"{c.get('candidate')}-{c.get('version')}" == sel and c.get("asset_id"):
-                        mannequin_asset = await repo.get_asset_for_user(conn, user_id, str(c["asset_id"]))
-                        break
+            anchor_baseline_id = None
+            if requested_baseline_id:
+                active_baseline = await repo.get_active_baseline(conn, project_id)
+                if active_baseline is None:
+                    raise ValueError("no_approved_baseline")
+                if active_baseline["id"] != requested_baseline_id:
+                    raise ValueError("baseline_changed")
+                mannequin_asset = {
+                    "id": active_baseline.get("asset_id"),
+                    "asset_id": active_baseline.get("asset_id"),
+                    "r2_bucket": active_baseline.get("r2_bucket"),
+                    "r2_key": active_baseline.get("r2_key"),
+                    "mime_type": active_baseline.get("mime_type"),
+                }
+                if not all(mannequin_asset.get(k) for k in ("asset_id", "r2_key", "mime_type")):
+                    raise ValueError("baseline_asset_missing")
+                anchor_baseline_id = active_baseline["id"]
+            else:
+                sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
+                if sel:
+                    for c in await repo.list_mannequin_cuts(conn, user_id, project_id):
+                        if f"{c.get('candidate')}-{c.get('version')}" == sel and c.get("asset_id"):
+                            mannequin_asset = await repo.get_asset_for_user(
+                                conn, user_id, str(c["asset_id"]))
+                            break
             color_assets: dict = {}   # (colorId, detail 여부) → [asset(slot 포함)] — 블록 간 재사용
             detail_color_transfers: dict = {}  # 위 키 → 타색 Detail의 목표색 전환 정보|None
             match_assets: dict = {}   # matchingItemId → asset|None
@@ -485,7 +523,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                     color_assets[asset_key] = rows
                     detail_color_transfers[asset_key] = transfer
                 mids = b.get("matchIds") or []
-                if mids and b.get("cutType") in _WORN_CUT_TYPES and str(mids[0]) not in match_assets:
+                if mids and _cut_type(b) in _WORN_CUT_TYPES and str(mids[0]) not in match_assets:
                     m_aid = await repo.get_matching_item_asset(conn, str(mids[0]))
                     match_assets[str(mids[0])] = (
                         await repo.get_asset_for_user(conn, user_id, m_aid) if m_aid else None)
@@ -515,7 +553,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         _model_cache: dict[str, list[InlineImage] | None] = {}
 
         async def _model_images(spec: dict | None) -> list[InlineImage]:
-            if not spec or spec.get("cutType") not in ("styling", "horizon", "mirror"):
+            if not spec or _cut_type(spec) not in _WORN_CUT_TYPES:
                 return []
             model_id = spec.get("modelId")
             if not model_id:
@@ -616,17 +654,18 @@ async def run_detail_page_job(app, job: dict) -> None:
                 normalized = None  # generate()가 블록 단위 실패로 처리하는 기존 경로 유지
             asset_key = (_color_key(b), _is_detail(b))
             prods = color_assets.get(asset_key, [])
+            is_worn_cut = normalized is not None and normalized.get("cutType") in _WORN_CUT_TYPES
             if detail_color_transfers.get(asset_key):
                 cut_spec["_detailColorTransfer"] = detail_color_transfers[asset_key]
             # 옷 근거(상품 사진 또는 마네킹컷)가 없으면 생성 불가 — 무드/매칭만으로 진행하면
             # 모델이 레퍼런스 속 옷을 지어내거나 베낀다(ADR-0004 정확성 최우선). 스킵 표식.
             # 얼굴은 이 가드 **뒤에서만** 붙는다 — 여기 얼굴을 넣으면 images 가 비지 않아
             # _gen_cuts 의 `if not images` 스킵이 무력화되고 옷 근거 0으로 생성이 돌아간다.
-            if mannequin_asset is None and not prods:
+            if (mannequin_asset is None or not is_worn_cut) and not prods:
                 prepared.append((cut_spec, [], "", False, [], None, False))
                 continue
             mids = b.get("matchIds") or []
-            match_a = match_assets.get(str(mids[0])) if mids and b.get("cutType") in _WORN_CUT_TYPES else None
+            match_a = match_assets.get(str(mids[0])) if mids and _cut_type(b) in _WORN_CUT_TYPES else None
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
             # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·거울샷 기본(폰이 가림)·
             # 뒷모습·머리가 프레임 밖인 샷은 제외(cut_generator.wants_face 가 단일 규칙).
@@ -679,7 +718,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                         _fallback_warned = True
             imgs = []
             product_images = []
-            if mannequin_asset is not None:
+            if mannequin_asset is not None and is_worn_cut:
                 imgs.append(await _img(mannequin_asset))
             imgs.extend(model_images)
             for a in prods:
@@ -820,7 +859,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                                     imgs.append(example_img)
                                 example_scope = scope
             manifest = cut_generator.build_manifest(
-                prods, has_mannequin=mannequin_asset is not None,
+                prods, has_mannequin=mannequin_asset is not None and is_worn_cut,
                 has_match=match_a is not None, mood_count=len(moods),
                 has_model_face=len(model_images) == 2, has_model_sheet=len(model_images) == 2,
                 has_face=face_slot,
@@ -905,6 +944,8 @@ async def run_detail_page_job(app, job: dict) -> None:
             "creditCostVersion": s.credit_cost_version,
             "generatedCuts": len(cut_assets),
         }
+        if anchor_baseline_id:
+            success_metadata["anchorBaselineId"] = anchor_baseline_id
         if garment_qcs:
             success_metadata["garmentQc"] = garment_qcs
         if raw_image_provenance:
@@ -949,22 +990,29 @@ async def run_detail_page_job(app, job: dict) -> None:
                     except Exception:
                         log.warning("facemarket settlement hook failed for job %s", job_id)
     except Exception as e:
-        error = str(e)[:300]
         is_space_set_error = isinstance(e, space_set_assets.SpaceSetBindingError)
+        code = (
+            e.code
+            if is_space_set_error
+            else e.args[0]
+            if isinstance(e, ValueError)
+            and e.args
+            and isinstance(e.args[0], str)
+            and e.args[0] in _BASELINE_FAILURES
+            else "genexample_bg_disabled"
+            if isinstance(e, ValueError) and e.args[:1] == ("genexample_bg_disabled",)
+            else "generation_failed"
+        )
         await _fail(
             (
                 e.message
                 if is_space_set_error
+                else _BASELINE_FAILURES[code]
+                if code in _BASELINE_FAILURES
                 else "배경만 생성예시는 현재 사용할 수 없어요. 콘티에서 해당 예시를 제거해 주세요."
-                if error == "genexample_bg_disabled"
+                if code == "genexample_bg_disabled"
                 else "상세페이지 생성에 실패했어요. 다시 시도해 주세요."
             ),
-            {"error": error},
-            code=(
-                e.code
-                if is_space_set_error
-                else "genexample_bg_disabled"
-                if error == "genexample_bg_disabled"
-                else "generation_failed"
-            ),
+            {"error": code},
+            code=code,
         )

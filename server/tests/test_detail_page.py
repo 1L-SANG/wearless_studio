@@ -38,9 +38,13 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
         seen["reserved"] = amount
         return 100
 
+    async def fake_baseline(conn, pid):
+        return {"id": "base-default"}
+
     monkeypatch.setattr(routes.repo, "get_project", fake_gp)
     monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
     monkeypatch.setattr(routes.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(routes.repo, "get_active_baseline", fake_baseline)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
     patch_route_db(monkeypatch, routes)
@@ -53,6 +57,88 @@ def test_detail_creates_job_and_reserves(client, make_token, monkeypatch):
     # 예약 시점 단가 스냅샷 — 워커 정산의 단일 기준(정산 불변식)
     assert seen["metadata"]["perCutCost"] == 1
     assert seen["metadata"]["aiCount"] == 2
+
+
+def test_detail_worn_ai_blocks_require_an_approved_baseline_before_job_or_credit(
+    client, make_token, monkeypatch,
+):
+    calls = {"baseline": 0, "create_job": 0, "reserve": 0}
+
+    async def fake_gp(conn, uid, pid):
+        return {"id": pid}
+
+    async def fake_eb(conn, pid):
+        return []
+
+    async def fake_sb(conn, pid):
+        # 저장 payload 가 snake_case 여도 착용컷으로 인식해야 한다.
+        return [{"id": "fit-1", "source": "ai", "cut_type": "styling"}]
+
+    async def fake_baseline(conn, pid):
+        calls["baseline"] += 1
+        return None
+
+    async def fake_create_job(conn, **kw):
+        calls["create_job"] += 1
+        return {"id": "job-dp-1"}, True
+
+    async def fake_reserve(conn, uid, amount):
+        calls["reserve"] += 1
+        return 100
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(routes.repo, "get_active_baseline", fake_baseline)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.post("/v1/projects/p1/detail-page:generate", headers=auth_headers(make_token))
+
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "no_approved_baseline"
+    assert calls == {"baseline": 1, "create_job": 0, "reserve": 0}
+
+
+def test_detail_snapshots_the_active_baseline_id_on_new_worn_jobs(
+    client, make_token, monkeypatch,
+):
+    seen = {}
+
+    async def fake_gp(conn, uid, pid):
+        return {"id": pid}
+
+    async def fake_eb(conn, pid):
+        return []
+
+    async def fake_sb(conn, pid):
+        return [{"id": "fit-1", "source": "ai", "cutType": "styling"}]
+
+    async def fake_baseline(conn, pid):
+        return {"id": "base-1"}
+
+    async def fake_create_job(conn, **kw):
+        seen.update(kw)
+        return {"id": "job-dp-1"}, True
+
+    async def fake_reserve(conn, uid, amount):
+        seen["reserved"] = amount
+        return 100
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
+    monkeypatch.setattr(routes.repo, "get_editor_blocks", fake_eb)
+    monkeypatch.setattr(routes.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(routes.repo, "get_active_baseline", fake_baseline)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.post("/v1/projects/p1/detail-page:generate", headers=auth_headers(make_token))
+
+    assert res.status_code == 202, res.text
+    assert seen["payload"] == {"mode": "generate", "baselineId": "base-1"}
+    assert seen["reserved"] == 1
 
 
 def test_detail_rejects_saved_bg_example_before_job_or_credit(
@@ -160,11 +246,12 @@ def _app(settings):
     return types.SimpleNamespace(state=st)
 
 
-def _job(reserved=2, per_cut=1):
+def _job(reserved=2, per_cut=1, payload=None):
     # 라우트 예약 규칙 미러: reserved = ai 블록 수 × per_cut, metadata.perCutCost = 예약 시점
     # 단가 스냅샷(워커 정산의 단일 기준 — 실행 시점 설정·콘티 변동과 무관).
     return {"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:tok",
-            "credits_reserved": reserved, "metadata": {"perCutCost": per_cut}}
+            "credits_reserved": reserved, "metadata": {"perCutCost": per_cut},
+            "payload": payload or {}}
 
 
 def _settings(**overrides):
@@ -354,6 +441,187 @@ def test_gen_cuts_detail_reaches_gemini_with_loaded_detail_manifest(monkeypatch)
     assert garment_qcs == [] and warnings == []
 
 
+def test_gen_cuts_records_anchor_metadata_only_for_worn_alias_blocks(monkeypatch):
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+    app = _app(_settings())
+    app.state.gemini = _RecordingGemini()
+    image = dpj.InlineImage("image/png", b"front")
+
+    _, worn_assets, *_ = asyncio.run(dpj._gen_cuts(
+        app,
+        _job(reserved=1, payload={"baselineId": "base-1"}),
+        [(
+            {"id": "fit-1", "cut_type": "styling"},
+            [image],
+            dpj.cut_generator.build_manifest(
+                [{"slot": "Front"}], has_mannequin=True, has_match=False, mood_count=0),
+            False,
+            [image],
+        )],
+        {"name": "셔츠", "clothingType": "top"},
+        {},
+    ))
+
+    _, product_assets, *_ = asyncio.run(dpj._gen_cuts(
+        app,
+        _job(reserved=1, payload={"baselineId": "base-1"}),
+        [(
+            {"id": "product-1", "cutType": "product", "shot": "ghost"},
+            [image],
+            dpj.cut_generator.build_manifest(
+                [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0),
+            False,
+            [image],
+        )],
+        {"name": "셔츠", "clothingType": "top"},
+        {},
+    ))
+
+    assert worn_assets[0]["metadata"] == {
+        "anchorBaselineId": "base-1",
+        "anchorRole": "approved_front_baseline",
+    }
+    assert product_assets[0]["metadata"] == {}
+
+
+def test_run_detail_page_job_uses_approved_baseline_as_first_worn_reference(monkeypatch):
+    captured = {}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [{
+            "id": "fit-1",
+            "source": "ai",
+            "contentRole": "fit",
+            "cutType": "styling",
+            "shot": "full",
+        }]
+
+    async def fake_prod(conn, pid):
+        return {"clothingType": "top", "colors": [{
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product-front"}],
+        }]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_baseline(conn, pid):
+        return {
+            "id": "base-1",
+            "asset_id": "baseline-asset",
+            "r2_bucket": "b",
+            "r2_key": "k/baseline",
+            "mime_type": "image/png",
+        }
+
+    async def fake_asset(conn, uid, aid):
+        assert aid == "product-front"
+        return {"id": aid, "mime_type": "image/png", "r2_key": "k/product-front"}
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
+        captured["image_data"] = [image.data for image in images]
+        captured["manifest"] = manifest
+        captured["prompt"] = dpj.cut_generator.build_prompt(
+            cut_spec, product, analysis=analysis, manifest=manifest)
+        return b"IMG", "image/png"
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
+        return [{"id": "page", "kind": "benefit", "elements": []}]
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    class KeyR2:
+        def get_bytes(self, key):
+            return key.encode()
+
+        def put_bytes(self, key, data, mime, cache=None):
+            return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_active_baseline", fake_baseline)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=KeyR2())
+    asyncio.run(dpj.run_detail_page_job(
+        app, worker_job(payload={"baselineId": "base-1"}, credits_reserved=1)))
+
+    assert captured["image_data"][:2] == [b"k/baseline", b"k/product-front"]
+    assert captured["manifest"].splitlines()[0].startswith("1. APPROVED FRONT BASELINE")
+    assert "garment identity anchor only" in captured["manifest"]
+    assert "front view of the garment" in captured["manifest"]
+    assert captured["cut_assets"][0]["metadata"] == {
+        "anchorBaselineId": "base-1",
+        "anchorRole": "approved_front_baseline",
+    }
+    assert captured["metadata"]["anchorBaselineId"] == "base-1"
+
+
+def test_run_detail_page_job_fails_before_generation_when_baseline_changed(monkeypatch):
+    captured = {"generate": 0}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [{"id": "fit-1", "source": "ai", "cutType": "styling"}]
+
+    async def fake_prod(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "product-front"}]}]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_baseline(conn, pid):
+        return {
+            "id": "base-new",
+            "asset_id": "baseline-asset",
+            "r2_bucket": "b",
+            "r2_key": "k/baseline",
+            "mime_type": "image/png",
+        }
+
+    async def fake_gen(*_args, **_kwargs):
+        captured["generate"] += 1
+        return b"IMG", "image/png"
+
+    async def fake_failure(conn, **kw):
+        captured["failure"] = kw
+        return {"status": "failed"}
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_active_baseline", fake_baseline)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
+
+    asyncio.run(dpj.run_detail_page_job(
+        _app(_settings()), _job(reserved=1, payload={"baselineId": "base-old"})))
+
+    assert captured["generate"] == 0
+    assert captured["failure"]["code"] == "baseline_changed"
+    assert captured["failure"]["metadata"] == {"error": "baseline_changed"}
+
+
 def test_run_detail_page_job_partial_success(monkeypatch):
     captured = {}
 
@@ -410,6 +678,146 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     assert captured["charge"] == 1              # 성공 컷 1개 × per_cut(1) — 실패 컷 미차감
     assert len(captured["cut_assets"]) == 1
     assert len(captured["cut_results"]) == 1     # b1만
+
+
+def test_run_detail_page_job_uses_approved_baseline_as_the_worn_cut_identity_anchor(
+    monkeypatch,
+):
+    captured = {"loaded_asset_ids": []}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [{"id": "fit-1", "source": "ai", "cutType": "styling", "shot": "full"}]
+
+    async def fake_prod(conn, pid):
+        return {"clothingType": "top", "colors": [{
+            "id": "base-color", "isBase": True,
+            "images": [{"slot": "Front", "id": "product-front"}],
+        }]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_baseline(conn, pid):
+        return {
+            "id": "baseline-1",
+            "asset_id": "baseline-asset",
+            "r2_bucket": "public",
+            "r2_key": "k/baseline",
+            "mime_type": "image/png",
+        }
+
+    async def fake_asset(conn, uid, aid):
+        captured["loaded_asset_ids"].append(aid)
+        return {"asset_id": aid, "mime_type": "image/png", "r2_key": f"k/{aid}"}
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
+        captured["image_data"] = [image.data for image in images]
+        captured["manifest"] = manifest
+        captured["prompt"] = dpj.cut_generator.build_prompt(
+            cut_spec, product, analysis=analysis, manifest=manifest)
+        return b"IMG", "image/png"
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
+        return []
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    class KeyR2:
+        def get_bytes(self, key):
+            return key.encode()
+
+        def put_bytes(self, key, data, mime, cache=None):
+            return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_active_baseline", fake_baseline)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=KeyR2())
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job({"mode": "generate", "baselineId": "baseline-1"}, credits_reserved=1),
+    ))
+
+    assert captured["loaded_asset_ids"] == ["product-front"]
+    assert captured["image_data"] == [b"k/baseline", b"k/product-front"]
+    assert "APPROVED FRONT BASELINE" in captured["manifest"]
+    assert "APPROVED FRONT BASELINE" in captured["prompt"]
+    assert captured["metadata"]["anchorBaselineId"] == "baseline-1"
+    assert captured["cut_assets"][0]["metadata"]["anchorBaselineId"] == "baseline-1"
+
+
+def test_run_detail_page_job_blocks_stale_baseline_before_generation(monkeypatch):
+    captured = {"generate": 0, "failure": None}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [{"id": "fit-1", "source": "ai", "cutType": "styling"}]
+
+    async def fake_prod(conn, pid):
+        return {"clothingType": "top", "colors": [{
+            "id": "base-color", "isBase": True,
+            "images": [{"slot": "Front", "id": "product-front"}],
+        }]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_baseline(conn, pid):
+        return {
+            "id": "baseline-new",
+            "asset_id": "baseline-asset",
+            "r2_bucket": "public",
+            "r2_key": "k/baseline",
+            "mime_type": "image/png",
+        }
+
+    async def fake_gen(*_args, **_kwargs):
+        captured["generate"] += 1
+        return b"IMG", "image/png"
+
+    async def fake_failure(conn, **kw):
+        captured["failure"] = kw
+        return {"ok": True}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_active_baseline", fake_baseline)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job({"mode": "generate", "baselineId": "baseline-old"}, credits_reserved=1),
+    ))
+
+    assert captured["generate"] == 0
+    assert captured["failure"]["code"] == "baseline_changed"
+    assert captured["failure"]["metadata"] == {"error": "baseline_changed"}
 
 
 def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
@@ -490,6 +898,164 @@ def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
     assert captured["image_data"] == [b"k/product-1", b"k/matching-asset"]
     assert "MATCHING — the user-selected coordinating garment" in captured["manifest"]
     assert "- matching bottom" in captured["prompt"]
+
+
+def test_run_detail_page_job_rejects_changed_baseline_before_generation(monkeypatch):
+    captured = {}
+    calls = {"generate": 0}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [{"id": "fit-1", "source": "ai", "cutType": "styling"}]
+
+    async def fake_prod(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "product-1"}]}]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_baseline(conn, pid):
+        return {
+            "id": "base-new",
+            "asset_id": "asset-new",
+            "r2_bucket": "b",
+            "r2_key": "k/base-new",
+            "mime_type": "image/png",
+        }
+
+    async def fake_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
+
+    async def fake_gen(*_args, **_kwargs):
+        calls["generate"] += 1
+        raise AssertionError("baseline mismatch must stop before provider")
+
+    async def fake_failure(conn, **kw):
+        captured.update(kw)
+        return {"status": "failed"}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_active_baseline", fake_baseline)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job({"mode": "generate", "baselineId": "base-old"}, credits_reserved=1),
+    ))
+
+    assert calls["generate"] == 0
+    assert captured["code"] == "baseline_changed"
+    assert captured["metadata"] == {"error": "baseline_changed"}
+
+
+def test_run_detail_page_job_uses_approved_baseline_only_for_worn_cuts(monkeypatch):
+    captured = {"generate_calls": []}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [
+            {"id": "styling-1", "source": "ai", "cutType": "styling", "shot": "full"},
+            {"id": "product-1", "source": "ai", "cutType": "product", "shot": "overview"},
+        ]
+
+    async def fake_prod(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "product-front"}]}]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_baseline(conn, pid):
+        return {
+            "id": "base-1",
+            "asset_id": "baseline-asset",
+            "r2_bucket": "b",
+            "r2_key": "k/baseline",
+            "mime_type": "image/png",
+        }
+
+    async def fake_asset(conn, uid, aid):
+        return {
+            "id": aid,
+            "asset_id": aid,
+            "mime_type": "image/png",
+            "r2_key": f"k/{aid}",
+        }
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
+        captured["generate_calls"].append({
+            "blockId": cut_spec["id"],
+            "image_data": [image.data for image in images],
+            "manifest": manifest,
+        })
+        return f"IMG-{cut_spec['id']}".encode(), "image/png"
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
+        captured["cut_results"] = cut_results
+        return []
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    class KeyR2:
+        def get_bytes(self, key):
+            return key.encode()
+
+        def put_bytes(self, key, data, mime, cache=None):
+            return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_active_baseline", fake_baseline)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=KeyR2())
+    asyncio.run(dpj.run_detail_page_job(
+        app,
+        worker_job({"mode": "generate", "baselineId": "base-1"}, credits_reserved=2),
+    ))
+
+    # product 컷은 원본 패스스루라 provider 를 부르지 않는다. baseline 은 착용컷 호출에만 들어간다.
+    assert [call["blockId"] for call in captured["generate_calls"]] == ["styling-1"]
+    assert captured["generate_calls"][0]["image_data"] == [b"k/baseline", b"k/product-front"]
+    assert "APPROVED FRONT BASELINE" in captured["generate_calls"][0]["manifest"]
+    assert captured["metadata"]["anchorBaselineId"] == "base-1"
+    assert captured["cut_assets"][0]["metadata"] == {
+        "anchorBaselineId": "base-1",
+        "anchorRole": "approved_front_baseline",
+    }
+
+
+def test_finalize_detail_page_success_persists_cut_asset_metadata():
+    """상세페이지 컷별 anchor/provenance metadata 는 asset row 에 저장되어야 한다."""
+    import inspect
+
+    src = inspect.getsource(dpj.repo.finalize_detail_page_success)
+    assert "metadata) " in src
+    assert "Json(c.get(\"metadata\") or {})" in src
 
 
 def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_strict(monkeypatch):
@@ -1057,7 +1623,9 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
     assert captured["person"]["data"] == [
         "k/man", "seed/models/mB/face_front.webp", "seed/models/mB/grid_sedcard.png", "k/a1",
     ]
-    assert captured["person"]["manifest"].splitlines()[0].startswith("1. PRODUCT — the garment worn")
+    assert captured["person"]["manifest"].splitlines()[0].startswith(
+        "1. APPROVED FRONT BASELINE — garment identity anchor only"
+    )
     assert captured["person"]["manifest"].splitlines()[1].startswith("2. MODEL — frontal close-up")
     assert captured["person"]["manifest"].splitlines()[2].startswith("3. MODEL SHEET — a 2x2 grid")
     assert captured["person"]["manifest"].splitlines()[3] == "4. PRODUCT — front view of the garment"

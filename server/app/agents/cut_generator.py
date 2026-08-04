@@ -718,7 +718,12 @@ _SLOT_LABEL = {
 }
 # 마네킹/매칭 첨부 라벨 — render_cut_prompt 의 매칭 핏 가드가 매니페스트에서 이 문구로
 # "하의가 화면에 있는가"를 판별하므로 상수로 공유(문구 드리프트 방지).
-_MANNEQUIN_LABEL = "PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)"
+_MANNEQUIN_LABEL = (
+    "APPROVED FRONT BASELINE — garment identity anchor only: preserve its silhouette, length, "
+    "construction and fit. Use the PRODUCT originals as ground truth for color, pattern, logo, "
+    "texture and the requested side/back view. Never copy this anchor's pose, camera, crop, "
+    "background or lighting"
+)
 _MODEL_LABEL = "MODEL — frontal close-up of the model (identity ground truth; do NOT copy this image's pose, framing, or clothing)"
 _MODEL_SHEET_LABEL = "MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single person (identity reference only). Do NOT copy the grid layout, framing, poses, or clothing; the output must be one single normal photograph, never a grid"
 _MATCH_LABEL = "MATCHING — the user-selected coordinating garment worn in the same outfit"

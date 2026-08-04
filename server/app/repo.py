@@ -735,7 +735,12 @@ async def get_mannequin_cut_for_approval(
 async def get_active_baseline(
     conn: AsyncConnection, project_id: str
 ) -> dict | None:
-    """현재 active baseline (superseded_at is null). 없으면 None."""
+    """현재 active baseline (superseded_at is null). 없으면 None.
+
+    ``asset_*`` 필드는 후속 착용컷의 Identity Lock 입력이다. 승인 행과 실제 컷 자산을 한
+    statement 에서 읽어 baseline id 와 이미지가 서로 다른 시점의 값으로 갈리는 것을 막는다.
+    API response model 은 추가 필드를 노출하지 않고, 워커만 소비한다.
+    """
     async with conn.cursor() as cur:
         await cur.execute(
             """
@@ -743,10 +748,14 @@ async def get_active_baseline(
                    b.output_id::text as output_id,
                    b.generation_run_id::text as generation_run_id,
                    b.truth_package_id::text as truth_package_id,
+                   b.baseline_qc_result_id::text as baseline_qc_result_id,
                    b.locked_invariants, b.approved_at,
-                   mc.candidate || '-' || mc.version::text as cut_client_id
+                   mc.candidate || '-' || mc.version::text as cut_client_id,
+                   mc.asset_id::text as asset_id,
+                   a.r2_bucket, a.r2_key, a.mime_type
             from approved_baselines b
             join mannequin_cuts mc on mc.id = b.baseline_cut_id
+            join assets a on a.id = mc.asset_id and a.deleted_at is null
             where b.project_id = %s and b.superseded_at is null
             """,
             (project_id,),
@@ -809,6 +818,7 @@ async def approve_mannequin_baseline(
                 "baseline_cut_id::text as baseline_cut_id, output_id::text as output_id, "
                 "generation_run_id::text as generation_run_id, locked_invariants, "
                 "truth_package_id::text as truth_package_id, "
+                "baseline_qc_result_id::text as baseline_qc_result_id, "
                 "approved_at, superseded_at from approved_baselines where id = %s",
                 (active["id"],),
             )
@@ -818,7 +828,11 @@ async def approve_mannequin_baseline(
         # 승인 대상 컷의 output/run — Phase 1 기록이 꺼져 있던 시기면 없다(정상, null).
         await cur.execute(
             "select go.id::text as id, go.generation_run_id::text as generation_run_id, "
-            "gr.truth_package_id::text as truth_package_id "
+            "gr.truth_package_id::text as truth_package_id, "
+            "(select qr.id::text from qc_results qr "
+            " where qr.generation_output_id = go.id "
+            "    or (qr.generation_output_id is null and qr.cut_id = go.mannequin_cut_id) "
+            " order by qr.created_at desc limit 1) as baseline_qc_result_id "
             "from generation_outputs go left join generation_runs gr on gr.id=go.generation_run_id "
             "where go.mannequin_cut_id = %s "
             "order by created_at desc limit 1",
@@ -845,21 +859,23 @@ async def approve_mannequin_baseline(
             """
             insert into approved_baselines
               (project_id, product_id, baseline_cut_id, output_id, generation_run_id,
-               truth_package_id,
+               truth_package_id, baseline_qc_result_id,
                mannequin_profile_snapshot, framing_profile_snapshot,
                background_profile_snapshot, lighting_profile_snapshot,
                locked_invariants, qc_scores_snapshot, approved_by)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             returning id::text as id, project_id::text as project_id,
                       baseline_cut_id::text as baseline_cut_id,
                       output_id::text as output_id,
                       generation_run_id::text as generation_run_id,
                       truth_package_id::text as truth_package_id,
+                      baseline_qc_result_id::text as baseline_qc_result_id,
                       locked_invariants, approved_at, superseded_at
             """,
             (project_id, cut.get("product_id"), cut["mannequin_cut_id"],
              out.get("id"), out.get("generation_run_id"),
              out.get("truth_package_id"),
+             out.get("baseline_qc_result_id"),
              Json(mannequin_profile) if mannequin_profile is not None else None,
              Json(framing_profile) if framing_profile is not None else None,
              Json(background_profile) if background_profile is not None else None,
@@ -2582,10 +2598,12 @@ async def finalize_detail_page_success(
         for c in cut_assets:  # 컷 이미지 asset 행 (editor_blocks 가 /v1/assets/{id}/file 로 참조)
             await cur.execute(
                 "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
-                "r2_key, mime_type, byte_size, width, height) "
-                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s) on conflict (id) do nothing",
+                "r2_key, mime_type, byte_size, width, height, metadata) "
+                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s) "
+                "on conflict (id) do nothing",
                 (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
-                 c.get("size"), c.get("width"), c.get("height")),
+                 c.get("size"), c.get("width"), c.get("height"),
+                 Json(c.get("metadata") or {})),
             )
         await cur.execute(
             "update projects set editor_blocks = %s, status = 'done' where id = %s",
