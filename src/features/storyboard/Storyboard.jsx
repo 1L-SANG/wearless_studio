@@ -8,6 +8,7 @@
    UnderlineTabs/ColorDots/MoodGuide/hexFor are exported for the editor.
    ============================================================= */
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
@@ -32,7 +33,9 @@ import {
 } from '@/lib/storyboardTaxonomy.js';
 import {
   assignGenerationExamples,
+  generationExampleImageSources,
   isGenerationCombinationPublic,
+  paginateGenerationGalleryItems,
   selectGenerationExamples,
   storedExampleConditionStatus,
 } from '@/lib/generationExamples.js';
@@ -54,6 +57,7 @@ import {
 import { normalizePlaceType } from '@/lib/storyboardEntryPlacement.js';
 import { renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
+import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
 
 
 const COLOR_HEX = {
@@ -274,8 +278,15 @@ function StoryboardCardActions({ gripDrag, onDuplicate, onDelete, onNudge, canNu
   );
 }
 
-function StoryboardMedia({ block, index, total, gripDrag, onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown }) {
+function StoryboardMedia({ block, catalogs, index, total, gripDrag, onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown }) {
   const missing = block.source !== 'mine' && !block.exampleId;
+  const example = block.exampleId
+    ? (catalogs?.genExamples || []).find((item) => item.id === block.exampleId)
+    : null;
+  const image = example ? generationExampleImageSources(example) : null;
+  const src = block.source === 'mine'
+    ? (block.thumb || block.ownImages?.[0])
+    : (image?.src || block.thumb);
   return (
     <>
       <span className="sb-canvas-number">{cutNumber(index, total)}</span>
@@ -286,7 +297,7 @@ function StoryboardMedia({ block, index, total, gripDrag, onDuplicate, onDelete,
           <i>카드를 열어 다시 시도</i>
         </span>
       ) : (
-        <img src={block.thumb || block.ownImages?.[0]} alt="" loading="lazy" decoding="async" />
+        <img src={src} srcSet={image?.srcSet} alt="" loading="lazy" decoding="async" />
       )}
       <StoryboardCardActions
         gripDrag={gripDrag} onDuplicate={onDuplicate} onDelete={onDelete}
@@ -319,6 +330,7 @@ function StoryboardCard({
       >
         <StoryboardMedia
           block={block}
+          catalogs={catalogs}
           index={index}
           total={total}
           gripDrag={gripDrag}
@@ -367,6 +379,7 @@ function StoryboardFrame({
             >
               <StoryboardMedia
                 block={item.block}
+                catalogs={catalogs}
                 index={item.index}
                 total={total}
                 gripDrag={dragFor(item.block.id)}
@@ -394,17 +407,24 @@ function StoryboardFrame({
   );
 }
 
-function StoryboardStack({ group, total, onOpen }) {
+function StoryboardStack({ group, total, catalogs, onOpen }) {
   const previews = group.items.slice(0, 3);
   return (
     <div className="sb-stack-wrap">
       <button type="button" className={'sb-stack' + (previews.length ? '' : ' empty')} onClick={onOpen}>
-        {previews.length ? previews.map((item, stackIndex) => (
-          <span key={item.block.id} className="sb-stack-cut">
-            {stackIndex === 0 && <span className="sb-canvas-number">{cutNumber(item.index, total)}</span>}
-            <img src={item.block.thumb || item.block.ownImages?.[0]} alt="" loading="lazy" decoding="async" />
-          </span>
-        )) : <span className="sb-stack-empty">＋ 컷 추가</span>}
+        {previews.length ? previews.map((item, stackIndex) => {
+          const example = item.block.exampleId
+            ? (catalogs?.genExamples || []).find((candidate) => candidate.id === item.block.exampleId)
+            : null;
+          const image = example ? generationExampleImageSources(example) : null;
+          return (
+            <span key={item.block.id} className="sb-stack-cut">
+              {stackIndex === 0 && <span className="sb-canvas-number">{cutNumber(item.index, total)}</span>}
+              <img src={image?.src || item.block.thumb || item.block.ownImages?.[0]}
+                srcSet={image?.srcSet} alt="" loading="lazy" decoding="async" />
+            </span>
+          );
+        }) : <span className="sb-stack-empty">＋ 컷 추가</span>}
         <span className="sb-stack-count">{group.items.length}컷</span>
       </button>
     </div>
@@ -583,7 +603,7 @@ function SpaceMemberStrip({ set, siblings, currentId }) {
         ))}
       </div>
       <div className="sb-space-strip-copy">
-        <strong>{set.setType === 'styling' ? '📍' : set.setType ? '↻' : '•'} {set.name}</strong>
+        <strong>{set.setType === 'styling' ? '📍' : set.setType ? '↻' : '•'} {spaceSetDisplayName(set)}</strong>
         <span>{summary}</span>
         <small>세트 변경은 보드의 띠에서</small>
       </div>
@@ -594,6 +614,32 @@ function SpaceMemberStrip({ set, siblings, currentId }) {
 function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType }) {
   const replacing = mode === 'replace';
   const spaceSets = storyboardSpaceSetsFor({ gender, clothingType });
+  const [preview, setPreview] = useState(null);
+  const previewTimer = useRef(null);
+  useEffect(() => () => clearTimeout(previewTimer.current), []);
+  const closePreview = () => {
+    clearTimeout(previewTimer.current);
+    setPreview(null);
+  };
+  const openPreview = (set, anchor, delay = 200) => {
+    clearTimeout(previewTimer.current);
+    previewTimer.current = setTimeout(() => {
+      const rect = anchor.getBoundingClientRect();
+      const width = 292;
+      const height = 58 + Math.ceil(set.members.length / 3) * 116;
+      const gap = 12;
+      const leftSide = rect.left - width - gap;
+      const rightSide = rect.right + gap;
+      const left = leftSide >= 8
+        ? leftSide
+        : Math.min(Math.max(8, rightSide), window.innerWidth - width - 8);
+      const top = Math.min(
+        Math.max(8, rect.top),
+        Math.max(8, window.innerHeight - height - 8),
+      );
+      setPreview({ set, left, top, width });
+    }, delay);
+  };
   return (
     <div className="surface inspector sb-set-picker">
       <div className="sb-set-picker-head">
@@ -607,8 +653,14 @@ function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType 
       </div>
       <div className="sb-set-grid">
         {spaceSets.map((set) => (
-          <button key={set.id} type="button" className={`sb-set-card tone-${set.tone}`} onClick={() => onChoose(set)}>
-            <span className="sb-set-polaroids" aria-hidden="true">
+          <button key={set.id} type="button" className={`sb-set-card tone-${set.tone}`}
+            onMouseEnter={(event) => openPreview(set, event.currentTarget)}
+            onMouseLeave={closePreview}
+            onFocus={(event) => openPreview(set, event.currentTarget, 0)}
+            onBlur={closePreview}
+            onClick={() => onChoose(set)}>
+            <span className="sb-set-polaroids" aria-hidden="true"
+              style={{ '--set-member-count': set.members.length }}>
               {set.members.map((member, index) => (
                 <span key={member.exampleId || `${member.direction}:${member.shot}:${index}`} className={`sb-set-polaroid p${index + 1}`}>
                   {member.thumb
@@ -617,13 +669,29 @@ function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType 
                 </span>
               ))}
             </span>
-            <strong>{set.name}</strong>
+            <strong>{spaceSetDisplayName(set)}</strong>
             <small>{set.compositionLabel}</small>
           </button>
         ))}
         {!spaceSets.length && <div className="sb-set-empty">이 상품에 맞는 촬영 세트를 준비 중이에요.</div>}
       </div>
       {error && <div className="sb-save-error">{error}</div>}
+      {preview && createPortal(
+        <div className="sb-set-preview" role="tooltip"
+          style={{ left: preview.left, top: preview.top, width: preview.width }}>
+          <strong>{spaceSetDisplayName(preview.set)}</strong>
+          <span>{preview.set.compositionLabel}</span>
+          <div className="sb-set-preview-grid">
+            {preview.set.members.map((member, index) => (
+              <figure key={member.exampleId || index}>
+                {member.thumb ? <img src={member.thumb} alt="" /> : <span />}
+                <figcaption>{index + 1}번째 컷</figcaption>
+              </figure>
+            ))}
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
@@ -635,7 +703,7 @@ function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType 
    · 내 사진(refImages) = '+ 타일'로 갤러리에 통합 — 점선 테두리·배지, 분위기(조명·색감)만 참고
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onCycleExample, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false, onUseMine = null }) {
+export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false, onUseMine = null }) {
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
@@ -669,13 +737,30 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
     (example.variants || []).includes('pose')
     && poseExampleDirectionCompatible(example, { cutType: example.cutType || cut, direction })
   )) : examples;
-  const cycle = () => {
-    if (cycleExamples.length <= 1) return;
-    const current = cycleExamples.findIndex((example) => example.id === exampleId);
-    const next = cycleExamples[(current + 1 + cycleExamples.length) % cycleExamples.length];
-    if (onCycleExample) Promise.resolve(onCycleExample(next.id)).catch(() => {});
-    else onExampleChange?.(next.id);
+  const galleryRef = useRef(null);
+  const previousRefCount = useRef(refs.length);
+  const pendingUploadScroll = useRef(false);
+  const [galleryPage, setGalleryPage] = useState(0);
+  const galleryPageCount = Math.max(1, Math.ceil((examples.length + refs.length) / 5));
+  const scrollToGalleryPage = (page, behavior = 'smooth') => {
+    const targetPage = Math.max(0, Math.min(page, galleryPageCount - 1));
+    const element = galleryRef.current?.querySelectorAll('.sb-expage')[targetPage];
+    if (element) galleryRef.current.scrollTo({ left: element.offsetLeft, behavior });
+    setGalleryPage(targetPage);
   };
+  useEffect(() => {
+    scrollToGalleryPage(0, 'auto');
+  }, [cut, shotVal, clothingType, gender, inSpace, direction]);
+  useEffect(() => {
+    if (refs.length > previousRefCount.current && pendingUploadScroll.current) {
+      requestAnimationFrame(() => scrollToGalleryPage(galleryPageCount - 1));
+      pendingUploadScroll.current = false;
+    }
+    previousRefCount.current = refs.length;
+  }, [refs.length, galleryPageCount]);
+  useEffect(() => {
+    if (galleryPage >= galleryPageCount) scrollToGalleryPage(galleryPageCount - 1, 'auto');
+  }, [galleryPage, galleryPageCount]);
   const selectFirstAvailable = () => {
     const available = inSpace ? cycleExamples : examples;
     if (available[0]) onExampleChange?.(available[0].id);
@@ -686,6 +771,111 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   const poseDirectionReason = (example) => {
     const label = { front: '정면', back: '뒷면', side: '사이드' }[example?.direction] || '다른 방향';
     return `이 예시의 포즈는 ${label} 전용이에요`;
+  };
+  const renderExampleCell = (example) => {
+    const on = exampleId === example.id;
+    const variants = Array.isArray(example.variants) ? example.variants : [];
+    const poseCompatible = poseExampleDirectionCompatible(example, {
+      cutType: example.cutType || cut,
+      direction,
+    });
+    const poseDisabled = !variants.includes('pose') || !poseCompatible;
+    const poseDisabledReason = !variants.includes('pose')
+      ? unavailableReason('pose') : poseDirectionReason(example);
+    const inSpaceDisabled = inSpace && poseDisabled;
+    const scopeChoices = !onRefScopeChange || cut === 'product' ? null
+      : inSpace ? [{ v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason }]
+        : [
+          { v: 'all', l: '전부', disabled: !variants.includes('all') },
+          ...(BG_EXAMPLES_ENABLED
+            ? [{ v: 'bg', l: '배경만', disabled: !variants.includes('bg') }]
+            : []),
+          { v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason },
+        ];
+    const pick = (scope) => {
+      if (!onExampleChange || !variants.includes(scope)) return;
+      if (scope === 'pose' && !poseCompatible) return;
+      onExampleChange(example.id);
+      if (onRefScopeChange) onRefScopeChange(scope);
+    };
+    const defaultScope = cut === 'product' || moodOnly ? 'all'
+      : inSpace ? 'pose'
+        : variants.includes(refScope || 'all')
+          && ((refScope || 'all') !== 'pose' || poseCompatible)
+          ? (refScope || 'all') : 'all';
+    return (
+      <button key={example.id} type="button" disabled={inSpaceDisabled}
+        title={inSpaceDisabled ? poseDisabledReason : undefined}
+        className={`sb-excell${on ? ' sel' : ''}${inSpaceDisabled ? ' unavailable' : ''}`}
+        onClick={() => pick(defaultScope)}>
+        <ExampleThumb example={example} />
+        {on && <span className="ck"><Icon name="check" size={11} /></span>}
+        {on && scopeChoices && <span className="sb-exscope">{SCOPE_LABELS[refScope || 'all'] || '전부'}</span>}
+        {scopeChoices && (
+          <span className="sb-exov">
+            <span className="sb-exov-t">레퍼런스 범위</span>
+            <span className="sb-exov-b">
+              {scopeChoices.map((choice) => (
+                <span key={choice.v} role="button" tabIndex={choice.disabled ? -1 : 0}
+                  aria-disabled={choice.disabled || undefined}
+                  title={choice.disabled ? (choice.reason || unavailableReason(choice.v)) : undefined}
+                  className={`sb-exov-btn${on && (refScope || 'all') === choice.v ? ' on' : ''}${choice.disabled ? ' unavailable' : ''}`}
+                  onClick={(event) => { event.stopPropagation(); if (!choice.disabled) pick(choice.v); }}
+                  onKeyDown={(event) => {
+                    if (!choice.disabled && (event.key === 'Enter' || event.key === ' ')) {
+                      event.preventDefault(); event.stopPropagation(); pick(choice.v);
+                    }
+                  }}>
+                  {choice.l}
+                </span>
+              ))}
+            </span>
+          </span>
+        )}
+      </button>
+    );
+  };
+  const exampleCells = examples.map(renderExampleCell);
+  const refCells = refs.map((ref, index) => (
+    <span className={`sb-excell up${onUseMine ? ' usable' : ''}`} key={`user:${index}`}
+      title={onUseMine ? '누르면 이 컷을 이 사진으로 바꿔요' : '분위기(조명·색감)만 참고해요. 옷과 모델은 바뀌지 않아요.'}
+      onClick={onUseMine ? () => onUseMine(ref) : undefined}
+      onKeyDown={onUseMine ? (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onUseMine(ref);
+        }
+      } : undefined}
+      role={onUseMine ? 'button' : undefined}
+      tabIndex={onUseMine ? 0 : undefined}>
+      <img src={ref?.url || ref} alt="" /><span className="upb">내 사진</span>
+      <button type="button" className="rm" aria-label="내 이미지 삭제"
+        onClick={(event) => {
+          event.stopPropagation();
+          if (onRefsChange) onRefsChange(refs.filter((_, itemIndex) => itemIndex !== index));
+        }}><Icon name="x" size={11} /></button>
+    </span>
+  ));
+  const galleryItems = [...exampleCells, ...refCells];
+  const galleryPages = paginateGenerationGalleryItems(galleryItems);
+  const uploadReference = async () => {
+    if (!onRefsChange) return;
+    const picked = await (onPickRef
+      ? onPickRef()
+      : api.pickRefImage(useAppStore.getState().projectId));
+    if (!picked) return;
+    pendingUploadScroll.current = true;
+    onRefsChange([...refs, picked]);
+  };
+  const updateGalleryPageFromScroll = () => {
+    const pages = [...(galleryRef.current?.querySelectorAll('.sb-expage') || [])];
+    if (!pages.length) return;
+    const left = galleryRef.current.scrollLeft;
+    let closest = 0;
+    pages.forEach((page, index) => {
+      if (Math.abs(page.offsetLeft - left) < Math.abs(pages[closest].offsetLeft - left)) closest = index;
+    });
+    setGalleryPage(closest);
   };
   return (
     <div className="insp-sec">
@@ -721,118 +911,56 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           )}
         </div>
       )}
-      {exampleId && inSpace && (
-        <div className={`sb-current-example${selectedStatus !== 'valid' ? ' has-error' : ''}`}>
-          <div className="sb-current-title">현재 선택</div>
-          {selectedExample ? (
-            <>
-              <div className="sb-current-thumb">
-                <ExampleThumb example={selectedExample} />
-              </div>
-              {selectedStatus === 'changed' && <div className="sb-example-error">조건이 바뀌어 예시를 다시 골라주세요</div>}
-            </>
-          ) : <div className="sb-example-error">저장된 예시를 불러오지 못했어요</div>}
-          {selectedStatus !== 'valid' && examples.length > 0 && (
-            <button type="button" className="sb-example-retry" onClick={selectFirstAvailable}>다시 선택</button>
-          )}
-          <button type="button" className="sb-cycle-example" disabled={cycleExamples.length <= 1}
-            title={cycleExamples.length <= 1 ? '이 조건에는 다른 예시가 없어요' : undefined}
-            onClick={cycle}>다른 예시 보기</button>
-        </div>
-      )}
-      <div className={`sb-exgrid${moodOnly ? ' moodonly' : ''}`}>
-        {examples.length === 0 && (
-          <div className="sb-exempty">
-            {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
-              ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
-            <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
-          </div>
+      <div className={`sb-exgallery${moodOnly ? ' moodonly' : ''}`}
+        role="region" aria-label="생성예시 갤러리" tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowLeft') {
+            event.preventDefault(); scrollToGalleryPage(galleryPage - 1);
+          } else if (event.key === 'ArrowRight') {
+            event.preventDefault(); scrollToGalleryPage(galleryPage + 1);
+          }
+        }}>
+        {galleryPageCount > 1 && (
+          <button type="button" className="sb-expage-hit prev" aria-label="이전 예시 페이지"
+            disabled={galleryPage === 0} onClick={() => scrollToGalleryPage(galleryPage - 1)}>‹</button>
         )}
-        {examples.map((e) => {
-          const on = exampleId === e.id;
-          const variants = Array.isArray(e.variants) ? e.variants : [];
-          const poseCompatible = poseExampleDirectionCompatible(e, { cutType: e.cutType || cut, direction });
-          const poseDisabled = !variants.includes('pose') || !poseCompatible;
-          const poseDisabledReason = !variants.includes('pose')
-            ? unavailableReason('pose') : poseDirectionReason(e);
-          const inSpaceDisabled = inSpace && poseDisabled;
-          // 레퍼런스 범위 — 호버 오버레이에서 선택. 시리즈 안은 호환되는 '포즈만'으로 고정.
-          const scopeChoices = !onRefScopeChange || cut === 'product' ? null
-            : inSpace ? [{ v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason }]
-              : [
-                { v: 'all', l: '전부', disabled: !variants.includes('all') },
-                ...(BG_EXAMPLES_ENABLED
-                  ? [{ v: 'bg', l: '배경만', disabled: !variants.includes('bg') }]
-                  : []),
-                { v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason },
-              ];
-          const pick = (scope) => {
-            if (!onExampleChange) return;
-            if (!variants.includes(scope)) return;
-            if (scope === 'pose' && !poseCompatible) return;
-            onExampleChange(e.id);
-            if (onRefScopeChange) onRefScopeChange(scope);
-          };
-          const defaultScope = cut === 'product' || moodOnly ? 'all'
-            : inSpace ? 'pose'
-              : variants.includes(refScope || 'all')
-                && ((refScope || 'all') !== 'pose' || poseCompatible)
-                ? (refScope || 'all') : 'all';
-          return (
-            <React.Fragment key={e.id}>
-              <button type="button" disabled={inSpaceDisabled}
-                title={inSpaceDisabled ? poseDisabledReason : undefined}
-                className={`sb-excell${on ? ' sel' : ''}${inSpaceDisabled ? ' unavailable' : ''}`}
-                onClick={() => pick(defaultScope)}>
-                <ExampleThumb example={e} />
-                {on && <span className="ck"><Icon name="check" size={11} /></span>}
-                {on && scopeChoices && <span className="sb-exscope">{SCOPE_LABELS[refScope || 'all'] || '전부'}</span>}
-                {scopeChoices && (
-                  /* 오버레이 배경 클릭은 셀 기본 선택으로 통과(기존 클릭 선택 유지) — 버튼 클릭만 범위 지정 */
-                  <span className="sb-exov">
-                    <span className="sb-exov-t">레퍼런스 범위</span>
-                    <span className="sb-exov-b">
-                      {scopeChoices.map((c) => (
-                        <span key={c.v} role="button" tabIndex={c.disabled ? -1 : 0}
-                          aria-disabled={c.disabled || undefined}
-                          title={c.disabled ? (c.reason || unavailableReason(c.v)) : undefined}
-                          className={`sb-exov-btn${on && (refScope || 'all') === c.v ? ' on' : ''}${c.disabled ? ' unavailable' : ''}`}
-                          onClick={(ev) => { ev.stopPropagation(); if (!c.disabled) pick(c.v); }}
-                          onKeyDown={(ev) => { if (!c.disabled && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); ev.stopPropagation(); pick(c.v); } }}>
-                          {c.l}
-                        </span>
-                      ))}
-                    </span>
-                  </span>
-                )}
-              </button>
-            </React.Fragment>
-          );
-        })}
-        {refs.map((r, i) => (
-          <span className={`sb-excell up${onUseMine ? ' usable' : ''}`} key={'u' + i}
-            title={onUseMine ? '누르면 이 컷을 이 사진으로 바꿔요' : '분위기(조명·색감)만 참고해요. 옷과 모델은 바뀌지 않아요.'}
-            onClick={onUseMine ? () => onUseMine(r) : undefined}
-            onKeyDown={onUseMine ? (event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                onUseMine(r);
-              }
-            } : undefined}
-            role={onUseMine ? 'button' : undefined}
-            tabIndex={onUseMine ? 0 : undefined}>
-            <img src={r?.url || r} alt="" /><span className="upb">내 사진</span>
-            <button type="button" className="rm" onClick={(ev) => { ev.stopPropagation(); onRefsChange && onRefsChange(refs.filter((_, j) => j !== i)); }}><Icon name="x" size={11} /></button>
-          </span>
-        ))}
-        {onRefsChange && (
-          <button type="button" className="sb-excell uptile" onClick={async () => {
-            // 업로드({assetId,url}) — objectURL 이 아니라 서버 asset 이어야 생성에 실제 첨부된다(refAssetIds).
-            const picked = await (onPickRef ? onPickRef() : api.pickRefImage(useAppStore.getState().projectId));
-            if (picked) onRefsChange([...refs, picked]); // 취소(null)면 무시
+        <div ref={galleryRef} className="sb-exgrid"
+          onScroll={updateGalleryPageFromScroll}
+          onWheel={(event) => {
+            if (galleryPageCount <= 1 || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+            event.preventDefault();
+            scrollToGalleryPage(galleryPage + (event.deltaY > 0 ? 1 : -1));
           }}>
-            <span className="plus">+</span>내 사진
-          </button>
+          {galleryPages.map((pageItems, pageIndex) => (
+            <div className="sb-expage" key={`page:${pageIndex}`}>
+              {pageItems}
+              {!galleryItems.length && (
+                <div className="sb-exempty">
+                  {isGenerationCombinationPublic({ cutType: cut, shot: shotVal, clothingType, gender })
+                    ? '이 조건의 생성예시를 불러오지 못했어요' : '이 조건은 아직 서비스에 공개되지 않았어요'}
+                  <button type="button" onClick={() => globalThis.location?.reload()}>다시 시도</button>
+                </div>
+              )}
+              <button type="button" className="sb-excell uptile" disabled={!onRefsChange}
+                title={!onRefsChange ? '현재 변경을 먼저 완료해주세요' : undefined}
+                onClick={uploadReference}>
+                <span className="plus">+</span>내 이미지 추가
+              </button>
+            </div>
+          ))}
+        </div>
+        {galleryPageCount > 1 && (
+          <button type="button" className="sb-expage-hit next" aria-label="다음 예시 페이지"
+            disabled={galleryPage === galleryPageCount - 1} onClick={() => scrollToGalleryPage(galleryPage + 1)}>›</button>
+        )}
+        {galleryPageCount > 1 && (
+          <div className="sb-expages" aria-label={`${galleryPageCount}페이지 중 ${galleryPage + 1}페이지`}>
+            {galleryPages.map((_page, index) => (
+              <button type="button" key={index} className={index === galleryPage ? 'on' : ''}
+                aria-label={`${index + 1}페이지`} aria-current={index === galleryPage ? 'page' : undefined}
+                onClick={() => scrollToGalleryPage(index)} />
+            ))}
+          </div>
         )}
       </div>
       {/* 레퍼런스 범위 (P5 확정, 전부|포즈만|배경만) — 같은 공간 묶음은 포즈 고정, 제품 생성 레시피는 범위 개념 없음 */}
@@ -1003,7 +1131,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       setPendingSaving(false);
     }
   };
-  const onGenerationExampleChange = (exampleId) => onChange((current) => {
+  const generationExamplePatch = (current, exampleId) => {
     const changes = {
       exampleId,
       baseThumb: current.baseThumb ?? current.thumb,
@@ -1011,12 +1139,19 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       refScope: current.spaceGroupId ? 'pose' : (current.refScope || 'all'),
     };
     return referenceFeedbackPatch(current, changes, catalogs);
-  });
-  const onCycleGenerationExample = (exampleId) => onAtomicChange(referenceFeedbackPatch(block, {
-    exampleId,
-    exampleSelectionOrigin: 'user',
-    refScope: block.spaceGroupId ? 'pose' : (block.refScope || 'all'),
-  }, catalogs), { retryAtomic: true });
+  };
+  const onGenerationExampleChange = (exampleId) => {
+    if (block.spaceGroupId) {
+      return onAtomicChange(referenceFeedbackPatch(block, {
+        exampleId,
+        baseThumb: block.baseThumb ?? block.thumb,
+        exampleSelectionOrigin: exampleId ? 'user' : null,
+        refScope: 'pose',
+      }, catalogs), { retryAtomic: true }).catch(() => {});
+    }
+    onChange((current) => generationExamplePatch(current, exampleId));
+    return undefined;
+  };
   const onDirectionChange = (direction) => onChange((current) => {
     if (!current.exampleId) return { direction };
     if (!current.spaceGroupId && current.refScope !== 'pose') return { direction };
@@ -1116,7 +1251,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             shotOptions={isProduct ? productShotOptions : null}
             onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}
             exampleId={block.exampleId || null}
-            onExampleChange={onGenerationExampleChange} onCycleExample={onCycleGenerationExample}
+            onExampleChange={onGenerationExampleChange}
             refScope={block.refScope || 'all'} onRefScopeChange={(value) => onChange((current) => referenceFeedbackPatch(current, {
               refScope: value,
               exampleSelectionOrigin: current.exampleId ? 'user' : null,
@@ -1243,6 +1378,7 @@ export function Storyboard() {
   const [saveError, setSaveError] = useState(null);
   const [pendingSectionMove, setPendingSectionMove] = useState(null);
   const [atomicSaving, setAtomicSaving] = useState(false);
+  const [inspectorTop, setInspectorTop] = useState(70);
   const atomicSavingRef = useRef(false);
   const atomicRetryRef = useRef(null);
   const directSaveSnapshots = useRef(new WeakSet());
@@ -1250,12 +1386,46 @@ export function Storyboard() {
   const snapRef = useRef(null);
   const newSeq = useRef(0);
   const cardRefs = useRef(new Map());
+  const setPickerScrollY = useRef(null);
   const toast = useToast();
   // 카피라이팅 토글 = 플로우 선택값 (store → patchProject 동기화, ADR-0002)
   const projectId = useAppStore((s) => s.projectId);
   const copyOn = useAppStore((s) => s.copywriting);
   const setCopyOn = useAppStore((s) => s.setCopywriting);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
+
+  useLayoutEffect(() => {
+    const observed = new Set();
+    const measure = () => {
+      const topnav = document.querySelector('.topnav');
+      const ribbon = document.querySelector('.job-ribbon');
+      const height = (topnav?.getBoundingClientRect().height || 0)
+        + (ribbon?.getBoundingClientRect().height || 0);
+      setInspectorTop(Math.round(height) + 10);
+      [topnav, ribbon].filter(Boolean).forEach((element) => {
+        if (observed.has(element)) return;
+        observed.add(element);
+        resizeObserver.observe(element);
+      });
+    };
+    const resizeObserver = new ResizeObserver(measure);
+    const mutationObserver = new MutationObserver(measure);
+    const shell = document.querySelector('.app-shell');
+    if (shell) mutationObserver.observe(shell, { childList: true });
+    window.addEventListener('resize', measure);
+    measure();
+    return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (setPickerScrollY.current == null) return;
+    window.scrollTo({ top: setPickerScrollY.current, behavior: 'instant' });
+    setPickerScrollY.current = null;
+  }, [setPicker]);
 
   useEffect(() => {
     (async () => {
@@ -1332,9 +1502,12 @@ export function Storyboard() {
   useEffect(() => {
     if (!blocks || !catalogs) return undefined;
     return prewarmImages(blocks.flatMap((block) => [
-      block.thumb,
+      block.exampleId
+        ? generationExampleImageSources(
+          (catalogs.genExamples || []).find((example) => example.id === block.exampleId),
+        ).prewarm
+        : block.thumb,
       block.ownImages?.[0],
-      block.exampleId ? exampleThumbFor(catalogs, block.exampleId, block.cutType) : null,
     ]));
   }, [blocks, catalogs]);
 
@@ -1813,6 +1986,7 @@ export function Storyboard() {
     setBlocks((bs) => patchSection(bs, sec.id, { sectionLayout: v, sectionCustom: true }));
   };
   const openSetPicker = (picker) => {
+    setPickerScrollY.current = window.scrollY;
     setSetPickerError(null);
     setSetPicker(picker);
     setSplitOpen(true);
@@ -2091,7 +2265,7 @@ export function Storyboard() {
     }
     const byName = new Map();
     for (const groupId of order) {
-      const name = inferStoryboardSpaceSet(groupId).name;
+      const name = spaceSetDisplayName(inferStoryboardSpaceSet(groupId));
       if (!byName.has(name)) byName.set(name, []);
       byName.get(name).push(groupId);
     }
@@ -2110,7 +2284,7 @@ export function Storyboard() {
       : place === 'nature' ? 'nature'
         : place === 'studio' ? 'studio' : 'other';
     const seq = traySeqLabels.get(unit.spaceGroupId);
-    const name = set.name + (seq ? ' ' + seq : '');
+    const name = spaceSetDisplayName(set) + (seq ? ' ' + seq : '');
     const label = set.setType === 'horizon-rotation' || set.setType === 'horizon-sequence'
       ? '↻ ' + name + ' · ' + unit.items.length + '컷'
       : '📍 ' + name + ' · ' + unit.items.length + '컷';
@@ -2179,9 +2353,12 @@ export function Storyboard() {
             onPointerEnter={() => {
               if (open || !catalogs) return;   // 펼치기 직전 신호 — 아직 안 데운 것만 앞당겨 받는다
               prewarmImages(group.items.flatMap(({ block }) => [
-                block.thumb,
+                block.exampleId
+                  ? generationExampleImageSources(
+                    (catalogs.genExamples || []).find((example) => example.id === block.exampleId),
+                  ).prewarm
+                  : block.thumb,
                 block.ownImages?.[0],
-                block.exampleId ? exampleThumbFor(catalogs, block.exampleId, block.cutType) : null,
               ]), { concurrency: 6 });
             }}
           >
@@ -2198,7 +2375,8 @@ export function Storyboard() {
             </button>
             <div className="sb-stack-collapse">
               <div>
-                <StoryboardStack group={group} total={blocks.length} onOpen={() => openRenderGroup(group.key)} />
+                <StoryboardStack group={group} total={blocks.length} catalogs={catalogs}
+                  onOpen={() => openRenderGroup(group.key)} />
               </div>
             </div>
             <div className="sb-deck-collapse">
@@ -2261,7 +2439,8 @@ export function Storyboard() {
     }} />;
 
   const body = (
-    <div className={'sb-canvas-shell' + (splitOpen ? ' inspector-open' : '')}>
+    <div className={'sb-canvas-shell' + (splitOpen ? ' inspector-open' : '')}
+      style={{ '--sb-inspector-top': `${inspectorTop}px` }}>
       <div className="sb-canvas-main" onClick={() => setInsertMenuKey(null)}>
         {list}
         <button className="mine-add-solo" onClick={() => addMineBlock()}>

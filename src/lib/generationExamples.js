@@ -32,6 +32,33 @@ const byRankThenId = (left, right) => (
   || compareText(String(left.id), String(right.id))
 );
 
+/** 릴리스 계약의 thumb/all 경로 규칙으로 보드 카드용 1x/2x 소스를 만든다. */
+export function generationExampleImageSources(example) {
+  const thumb = typeof example?.thumb === 'string' ? example.thumb : '';
+  const releasedAll = thumb.replace(
+    /\/thumb\/([^/?]+)\.webp(?=([?#]|$))/,
+    '/all/$1.png',
+  );
+  const full = typeof example?.assetUrl === 'string' && example.assetUrl
+    ? example.assetUrl
+    : (releasedAll !== thumb ? releasedAll : '');
+  return {
+    src: thumb || full,
+    srcSet: thumb && full ? `${thumb} 1x, ${full} 2x` : undefined,
+    prewarm: full || thumb,
+  };
+}
+
+export function paginateGenerationGalleryItems(items, pageSize = 5) {
+  const source = Array.isArray(items) ? items : [];
+  const size = Math.max(1, Number(pageSize) || 5);
+  const pages = [];
+  for (let index = 0; index < source.length; index += size) {
+    pages.push(source.slice(index, index + size));
+  }
+  return pages.length ? pages : [[]];
+}
+
 function isPublishedAll(example) {
   return Array.isArray(example?.variants) && example.variants.includes('all');
 }

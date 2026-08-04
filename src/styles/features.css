@@ -832,17 +832,20 @@
 .sb-set-card:hover { transform: translateY(-2px); box-shadow: var(--elev-lift); }
 .sb-set-card strong { width: 100%; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .sb-set-card small { color: var(--fg-3); font-size: 10px; }
-.sb-set-polaroids { position: relative; display: block; width: 100%; height: 86px; margin-bottom: 6px; }
-.sb-set-polaroid { position: absolute; left: 15%; top: 6px; width: 50px; height: 68px; padding: 4px 4px 10px;
+.sb-set-polaroids { position: relative; display: flex; align-items: flex-start; justify-content: center; gap: 2px;
+  width: 100%; height: 86px; margin-bottom: 6px; padding: 0 3px; overflow: hidden; }
+.sb-set-polaroid { position: relative; left: auto; top: 6px;
+  width: 50px; min-width: 0; max-width: 50px; height: 68px; flex: 1 1 50px; padding: 4px 4px 10px;
   border-radius: var(--r-2); background: var(--bg-1); box-shadow: 0 2px 7px var(--ring-strong); transform: rotate(-5deg); }
 .sb-set-polaroid::before { content: ''; position: absolute; inset: 4px 4px 10px; border-radius: var(--r-2);
   background: color-mix(in srgb, var(--space-tone) 62%, var(--bg-1)); }
 .sb-set-polaroid img { position: absolute; z-index: 2; inset: 4px 4px 10px; width: calc(100% - 8px);
   height: calc(100% - 14px); border-radius: var(--r-2); object-fit: cover; }
-.sb-set-polaroid.p2 { left: 38%; top: 9px; transform: rotate(3deg); }
-.sb-set-polaroid.p3 { left: 58%; top: 13px; transform: rotate(7deg); }
-.sb-set-polaroid.p4 { left: 68%; top: 7px; transform: rotate(-2deg); }
-.sb-set-polaroid.p5 { left: 76%; top: 12px; transform: rotate(5deg); }
+.sb-set-polaroid.p2 { left: auto; top: 9px; transform: rotate(3deg); }
+.sb-set-polaroid.p3 { left: auto; top: 13px; transform: rotate(7deg); }
+.sb-set-polaroid.p4 { left: auto; top: 7px; transform: rotate(-2deg); }
+.sb-set-polaroid.p5 { left: auto; top: 12px; transform: rotate(5deg); }
+.sb-set-polaroid.p6 { left: auto; top: 8px; transform: rotate(-4deg); }
 .sb-set-polaroid .figure { position: absolute; z-index: 1; left: 50%; top: 15px; width: 12px; height: 38px;
   border-radius: var(--r-pill); background: color-mix(in srgb, var(--fg-1) 65%, transparent); transform: translateX(-50%); }
 .sb-set-polaroid .figure::before { content: ''; position: absolute; left: 2px; top: -8px; width: 8px; height: 8px; border-radius: 50%; background: inherit; }
@@ -852,6 +855,19 @@
 .sb-set-empty { grid-column: 1 / -1; padding: 24px 12px; border-radius: var(--r-4); background: var(--bg-2);
   color: var(--fg-2); font-size: 12px; text-align: center; }
 .sb-set-picker .sb-save-error { margin: 12px 0 0; }
+.sb-set-preview {
+  position: fixed; z-index: 70; padding: 12px; border-radius: 10px; background: #fff;
+  box-shadow: var(--sb-pop-shadow, 0 14px 34px rgba(23, 25, 31, .16)); pointer-events: none;
+  color: var(--fg-1); font-family: var(--font-body);
+}
+.sb-set-preview > strong { display: block; font-size: 13px; }
+.sb-set-preview > span { display: block; margin-top: 2px; color: var(--fg-3); font-size: 10.5px; }
+.sb-set-preview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin-top: 9px; }
+.sb-set-preview figure { min-width: 0; margin: 0; }
+.sb-set-preview figure > img, .sb-set-preview figure > span {
+  display: block; width: 100%; aspect-ratio: 3 / 4; border-radius: 7px; background: var(--bg-2); object-fit: cover;
+}
+.sb-set-preview figcaption { margin-top: 3px; color: var(--fg-3); font-size: 9.5px; text-align: center; }
 
 /* underline tab navigation — sliding indicator */
 .utabs { display: flex; gap: 4px; box-shadow: inset 0 -1px 0 0 var(--ring); position: relative; }
@@ -945,7 +961,7 @@
 .insp-col .inspector { position: sticky; top: 0; }
 
 /* document-flow bottom action bar */
-.sb-page { padding-bottom: 24px; }
+.sb-page { padding-bottom: 24px; overflow-x: clip; }
 .sb-page.is-atomic-saving .sb-cards,
 .sb-page.is-atomic-saving .inspector,
 .sb-page.is-atomic-saving .sb-actionbar { pointer-events: none; }
@@ -1556,24 +1572,37 @@
   max-width: 920px; padding: 10px 12px; border-radius: 8px; background: var(--bg-2); color: var(--accent-error, #d92d20); font-size: 12px; }
 .sb-pending-recipe { padding: 10px; border-radius: 10px; background: var(--bg-2); }
 
-/* 3×3 고정 뷰포트 + 좌우 스크롤 — 세로로 늘어나지 않고 열 단위로 옆으로 이어진다.
-   일반 예시와 세트 예시는 구획 없이 한 흐름(세트 예시가 뒤에 자연 배치). */
+/* 한 페이지 = 콘텐츠 5칸 + 우하단 업로드 1칸. 페이지 자체가 스냅되어 휠·버튼·점이 같은 위치를 가리킨다. */
+.sb-exgallery { position: relative; outline: none; }
+.sb-exgallery:focus-visible { border-radius: 10px; box-shadow: 0 0 0 2px var(--link); }
+.sb-exgallery.moodonly { opacity: .55; }
 .sb-exgrid {
-  display: grid; grid-auto-flow: column;
-  grid-template-rows: repeat(3, auto);
-  grid-auto-columns: calc((100% - 16px) / 3);
-  gap: 8px; transition: opacity .15s;
+  display: flex; gap: 10px; transition: opacity .15s;
   overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
-  scroll-snap-type: x mandatory; padding-bottom: 6px;
+  scroll-snap-type: x mandatory; scrollbar-width: none;
 }
-.sb-exgrid::-webkit-scrollbar { height: 6px; }
-.sb-exgrid::-webkit-scrollbar-thumb { background: var(--ring); border-radius: 99px; }
-.sb-exgrid > * { scroll-snap-align: start; }
-.sb-exgrid.moodonly { opacity: .55; }
+.sb-exgrid::-webkit-scrollbar { display: none; }
+.sb-expage {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, auto);
+  flex: 0 0 100%; min-width: 0; gap: 8px; scroll-snap-align: start; scroll-snap-stop: always;
+}
+.sb-expage .sb-excell.uptile { grid-column: 3; grid-row: 2; }
 .sb-exempty {
-  grid-row: 1 / -1; min-width: 100%; min-height: 76px; display: flex; flex-direction: column; gap: 7px; align-items: center; justify-content: center;
+  grid-column: 1 / 3; grid-row: 1 / 3; min-width: 0; min-height: 76px; display: flex; flex-direction: column; gap: 7px; align-items: center; justify-content: center;
   padding: 14px; border-radius: 8px; background: var(--bg-2); color: var(--fg-2); font-size: 12px; text-align: center;
 }
+.sb-expage-hit {
+  position: absolute; z-index: 4; top: 0; bottom: 22px; width: 28px; border: 0; padding: 0;
+  background: rgba(255, 255, 255, .8); color: var(--fg-2); font-size: 24px; cursor: pointer;
+  opacity: .25; transition: opacity .15s, background .15s;
+}
+.sb-expage-hit:hover, .sb-expage-hit:focus-visible { opacity: 1; background: rgba(255, 255, 255, .96); }
+.sb-expage-hit:disabled { opacity: 0; pointer-events: none; }
+.sb-expage-hit.prev { left: -10px; border-radius: 10px 0 0 10px; }
+.sb-expage-hit.next { right: -10px; border-radius: 0 10px 10px 0; }
+.sb-expages { display: flex; justify-content: center; gap: 6px; min-height: 16px; padding-top: 8px; }
+.sb-expages button { width: 7px; height: 7px; border: 0; border-radius: 99px; padding: 0; background: var(--ring-strong); cursor: pointer; }
+.sb-expages button.on { width: 18px; background: var(--fg-2); }
 .sb-excell {
   position: relative; aspect-ratio: 3 / 4; border-radius: 8px; overflow: hidden; padding: 0;
   border: 2px solid transparent; background: var(--bg-2); cursor: pointer; appearance: none; display: block;
@@ -1600,6 +1629,7 @@
 }
 .sb-excell.uptile .plus { font-size: 20px; color: var(--fg-3); line-height: 1; }
 .sb-excell.uptile:hover { border-color: var(--fg-2); }
+.sb-excell.uptile:disabled { opacity: .5; cursor: not-allowed; }
 .sb-excell:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
 
 .sb-exnote { margin-top: 9px; font-size: 12px; color: var(--fg-2); background: var(--bg-2); border-radius: 8px; padding: 8px 11px; }
@@ -1686,6 +1716,7 @@
   --sb-card-shadow: 0 1px 2px rgba(23, 25, 31, .08), 0 6px 18px rgba(23, 25, 31, .07);
   --sb-pop-shadow: 0 2px 6px rgba(23, 25, 31, .1), 0 14px 34px rgba(23, 25, 31, .13);
   --sb-ease: cubic-bezier(.2, .8, .2, 1);
+  --sb-card-w: 200px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 22px;
@@ -1695,7 +1726,10 @@
   align-items: start;
   transition: grid-template-columns .3s var(--sb-ease);
 }
-.sb-canvas-shell.inspector-open { grid-template-columns: minmax(0, 1fr) 360px; }
+.sb-canvas-shell.inspector-open {
+  --sb-card-w: clamp(136px, calc((100vw - 486px) / 3), 184px);
+  grid-template-columns: minmax(0, 1fr) 360px;
+}
 .sb-canvas-main { min-width: 0; }
 .sb-canvas-board { display: flex; flex-direction: column; gap: 10px; min-width: 0; color: var(--sb-ink); }
 
@@ -1833,7 +1867,7 @@
    auto-fill 이라 인스펙터가 열려 보드가 좁아지면 열 수가 저절로 줄어든다. */
 .sb-canvas-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, 200px);
+  grid-template-columns: repeat(auto-fill, var(--sb-card-w));
   justify-content: flex-start;
   gap: 14px 18px;
   align-items: start;
@@ -2140,7 +2174,7 @@
   white-space: nowrap;
 }
 .sb-tray-more > span button:hover { background: #f4f4f6; }
-.sb-tray-grid { display: grid; grid-template-columns: repeat(auto-fill, 200px); justify-content: flex-start; gap: 14px 18px; }
+.sb-tray-grid { display: grid; grid-template-columns: repeat(auto-fill, var(--sb-card-w)); justify-content: flex-start; gap: 14px 18px; }
 
 .sb-frame { grid-column: span 2; position: relative; min-width: 0; }
 .sb-frame-box {
@@ -2179,12 +2213,16 @@
 .sb-frame-captions .sb-caption-color { display: none; }
 
 .sb-canvas-shell .insp-col {
-  max-height: calc(100vh - 120px);
+  position: sticky;
+  top: var(--sb-inspector-top, 70px);
+  max-width: 100%;
+  max-height: calc(100vh - var(--sb-inspector-top, 70px) - 10px);
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 4px;
   scrollbar-width: thin;
 }
-.sb-canvas-shell .insp-col .inspector { position: sticky; top: 0; }
+.sb-canvas-shell .insp-col .inspector { position: static; max-width: 100%; }
 
 @media (max-width: 900px) {
   .sb-canvas-shell.inspector-open { grid-template-columns: 1fr; }
