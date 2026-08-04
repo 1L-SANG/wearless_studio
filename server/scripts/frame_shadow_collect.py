@@ -607,8 +607,13 @@ async def _generate_sample(*, api: Api, worker: InlineWorker, run_dir: Path,
     source_bytes = prepared["sourceBytes"]
     inline_secret = os.getenv("FRAME_CALIBRATION_INLINE_SECRET") or None
     headers = {INLINE_CALIBRATION_HEADER: inline_secret} if inline_secret else None
+    endpoint = (
+        f"/v1/projects/{project_id}/mannequins:generate" if rep == 0
+        else f"/v1/projects/{project_id}/mannequins:regenerate"
+    )
     gen = api.call(
-        "POST", f"/v1/projects/{project_id}/mannequins:generate", headers=headers
+        "POST", endpoint, headers=headers,
+        **({"json": {}} if rep > 0 else {}),
     )
     job_id = gen["jobId"]
     if inline_secret:

@@ -1217,7 +1217,8 @@ def test_collect_one_uses_http_truth_and_inline_generation_without_dispatcher(mo
     ]
 
 
-def test_prepare_arm_once_then_generate_each_rep(monkeypatch, tmp_path):
+def test_prepare_arm_once_then_generate_first_rep_and_regenerate_later_reps(
+        monkeypatch, tmp_path):
     collect = _load("frame_collect_prepare_once", "scripts/frame_shadow_collect.py")
     source = tmp_path / "front.jpg"
     source.write_bytes(b"source-image")
@@ -1255,7 +1256,16 @@ def test_prepare_arm_once_then_generate_each_rep(monkeypatch, tmp_path):
             if path.endswith("/product-truth/truth-1:approve"):
                 return {"status": "approved"}
             if path.endswith("/mannequins:generate"):
-                return {"jobId": f"job-{sum(1 for c in calls if c[1].endswith('/mannequins:generate'))}"}
+                if len([c for c in calls if c[1].endswith("/mannequins:generate")]) > 1:
+                    return {"data": [{"src": "/v1/assets/cached/file"}], "credits": 10}
+                return {"jobId": "job-generate"}
+            if path.endswith("/mannequins:regenerate"):
+                regen_count = len([
+                    c for c in calls if c[1].endswith("/mannequins:regenerate")
+                ])
+                return {
+                    "jobId": f"job-regenerate-{regen_count}",
+                }
             raise AssertionError(path)
 
         def poll_job(self, job_id, timeout_s=0):
@@ -1313,7 +1323,13 @@ def test_prepare_arm_once_then_generate_each_rep(monkeypatch, tmp_path):
     assert len([c for c in calls if c[1] == "/v1/projects"]) == 1
     assert len([c for c in calls if c[1].endswith("/analyze")]) == 1
     assert len([c for c in calls if c[1].endswith("/product-truth:draft")]) == 1
-    assert len([c for c in calls if c[1].endswith("/mannequins:generate")]) == 3
+    assert [c for c in calls if c[1].endswith("mannequins:generate")] == [
+        ("POST", "/v1/projects/project-1/mannequins:generate"),
+    ]
+    assert [c for c in calls if c[1].endswith("mannequins:regenerate")] == [
+        ("POST", "/v1/projects/project-1/mannequins:regenerate"),
+        ("POST", "/v1/projects/project-1/mannequins:regenerate"),
+    ]
     assert calls.count(("CLAIM", "analysis-job")) == 1
 
 
