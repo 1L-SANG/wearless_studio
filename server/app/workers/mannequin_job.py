@@ -1868,14 +1868,20 @@ async def _apply_hybrid_composite(
     # 멀쩡해 보여도 보호 부위 충실도를 검증할 수 없으면 자동 pass 는 금지다.
     if mode == "enforce":
         # 보호 부위 존재 판단을 has_collar/has_placket 하나에 걸면, 그 신호를 주는 모델이
-        # 같은 호출에서 박스도 생략할 때 검사 자체가 사라진다(순환 신뢰). source·carrier
-        # 어느 쪽의 inventory 든, 혹은 어느 쪽이 박스를 하나라도 줬다면 그 부위는 존재하는
-        # 것으로 보고 양쪽 geometry 를 요구한다.
+        # 같은 호출에서 박스도 생략할 때 검사 자체가 사라진다(순환 신뢰). 그래서 두 호출의
+        # inventory 를 합집합으로 보고, 가능하면 **승인된 Product Truth** 를 함께 쓴다 —
+        # 사용자가 확인한 근거라 모델과 독립이다. 단추가 보호 대상이면 플래킷은 존재한다.
+        # 반대로 "한쪽이 박스를 줬다" 는 존재 근거로 쓰지 않는다: 민소매·풀오버에서 모델이
+        # 박스 하나를 헛짚으면 그 자체가 하드 요구로 바뀌어 오거절이 된다.
+        truth_protected = {}
+        if isinstance(product_truth, dict) and product_truth.get("status") == "approved":
+            truth_protected = product_truth.get("protectedDetails") or {}
         missing_boxes = []
         for part in ("collar", "placket"):
             key = f"{part}_box"
-            exists = ((src_inv or {}).get(part) or (car_inv or {}).get(part)
-                      or key in src_boxes_norm or key in car_boxes_norm)
+            exists = bool((src_inv or {}).get(part) or (car_inv or {}).get(part))
+            if part == "placket" and truth_protected.get("buttonCount"):
+                exists = True
             if exists and (key not in src_boxes_norm or key not in car_boxes_norm):
                 missing_boxes.append(key)
         missing_boxes = sorted(missing_boxes)

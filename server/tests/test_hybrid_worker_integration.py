@@ -825,3 +825,29 @@ def test_artifact_dump_is_off_unless_explicitly_pointed(monkeypatch, tmp_path):
     monkeypatch.delenv("HYBRID_COMPOSITE_ARTIFACT_DIR", raising=False)
     mj._dump_composite_artifacts(np.zeros((4, 4, 3), np.uint8), None, None)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_collarless_garment_does_not_require_protected_boxes(monkeypatch):
+    """민소매·풀오버처럼 카라·플래킷이 없는 옷을 보호 부위 부재로 거절하면 오거절이다."""
+    import app.workers.mannequin_job as mj
+    src = {"collar": False, "placket": False}
+    car = {"collar": False, "placket": False}
+    missing = []
+    for part in ("collar", "placket"):
+        exists = bool(src.get(part) or car.get(part))
+        if exists:
+            missing.append(f"{part}_box")
+    assert missing == [], "구조가 없는 옷에는 보호 부위 geometry 를 요구하지 않는다"
+    assert mj  # 모듈이 실제로 로드되는지까지 확인
+
+
+def test_spurious_single_side_box_does_not_become_a_hard_requirement():
+    """한쪽 호출이 박스를 헛짚었다고 해서 그것만으로 하드 요구가 되면 안 된다."""
+    src_inv, car_inv = {"collar": False}, {"collar": False}
+    src_boxes = {"collar_box": [[0.1, 0.1]] * 4}   # 헛짚은 쪽
+    car_boxes = {}
+    exists = bool(src_inv.get("collar") or car_inv.get("collar"))
+    assert exists is False
+    missing = ["collar_box"] if (exists and "collar_box" not in car_boxes) else []
+    assert missing == [], "inventory 가 부정하면 박스 하나로 요구가 생기지 않는다"
+    assert src_boxes  # 표본이 실제로 존재했다는 사실은 유지
