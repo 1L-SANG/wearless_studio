@@ -71,7 +71,7 @@ def _verdict(fit_ok=True, len_ok=True, identity=True, visible=True):
 
 
 def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=None,
-         profile=PROFILE, image_qc="off", p2=None, **settings_kw):
+         profile=PROFILE, image_qc="off", p2=None, pillow_qc=None, **settings_kw):
     """_run_candidate 를 실제 경로로 실행. verdicts=판정 fake 가 순서대로 돌려줄 값(or 예외)."""
     emits = []
 
@@ -87,6 +87,13 @@ def _run(monkeypatch, *, mode, verdicts, guard=False, max_attempts=2, gemini=Non
         return v
 
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
+    # 이 파일은 axis 오케스트레이션 계약을 검증한다. 1px 바이트 더미는
+    # Pillow에서 decode_failed 이므로, severe composition 게이트와 혼합하지 않게
+    # 생성 사전 QC를 명시적 pass 픽스처로 고정한다.
+    fixed_pillow_qc = pillow_qc or mannequin_job.qc.QcResult(
+        "pass", [], {"width": 1024, "height": 1536, "aspect": 0.667})
+    monkeypatch.setattr(
+        mannequin_job.qc, "evaluate_mannequin_qc", lambda _data: fixed_pillow_qc)
     monkeypatch.setattr(mannequin_fit_qc, "verdict", fake_verdict)
     if guard:
         monkeypatch.setattr(mannequin_job, "_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY", True)
@@ -317,6 +324,32 @@ def test_identity_reject_with_budget_left_still_rerolls(monkeypatch):
             "image_quality": None, "series_consistency": None, "critical_errors": []})
     assert len(g.calls) == 2                                   # 1회차는 re-roll
     assert _events(emits, "qc_salvaged")[0]["attempt"] == 2     # 2회차(마지막)에서만 구제
+
+
+def test_extreme_headless_crop_is_never_saved_or_salvaged(monkeypatch):
+    """실 QA 컷의 deterministic 신호가 Vision pass/needs_review 점수보다 선행한다."""
+    severe = mannequin_job.qc.QcResult(
+        "retry",
+        ["full_body_crop"],
+        {"width": 1024, "height": 1536, "aspect": 0.667,
+         "bboxTop": 0.252, "bboxBottom": 1.0, "bboxHeight": 0.748},
+    )
+    result, g, r2, emits = _run(
+        monkeypatch,
+        mode="off",
+        guard=True,
+        max_attempts=1,
+        verdicts=[],
+        image_qc="enforce",
+        pillow_qc=severe,
+        p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 78, "physical_naturalness": 76,
+            "image_quality": 82, "series_consistency": None, "critical_errors": []},
+    )
+    assert len(g.calls) == 1
+    assert result is None
+    assert r2.puts == []
+    assert _events(emits, "qc_salvaged") == []
 
 
 def test_axis_qc_never_unshadows_pillow_gate():

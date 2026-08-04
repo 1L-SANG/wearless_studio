@@ -175,6 +175,14 @@ def test_scored_prompt_lists_tuck_as_critical():
     assert "DECLARED FIT" not in p
 
 
+def test_scored_prompt_lists_missing_head_or_required_full_body_as_critical():
+    """상품 유사성 점수가 높아도 마네킹 머리·발·필수 전신 구도 누락은 출고 불가다."""
+    p = iq.build_prompt(2, scored=True)
+    assert "mannequin head" in p
+    assert "required full body" in p
+    assert "must not ship" in p
+
+
 def test_scored_prompt_lists_pattern_scale_as_critical():
     """미세 줄무늬가 굵은 띠로 단순화되는 건 "다른 원단"이다 — 치명오류 어휘에 있어야 잡힌다.
 

@@ -866,20 +866,62 @@ def final_decision(s, scores: dict | None) -> str:
     return "retry" if score_outcome(s, scores) == "regenerate" else "ship"
 
 
-def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
+_SEVERE_CROP_TOP = 0.22
+_SEVERE_CROP_BOTTOM = 0.80
+_SEVERE_CROP_HEIGHT = 0.65
+
+
+def _severe_pillow_reject(reasons, metrics) -> bool:
+    """재현성 높은 composition 붕괴만 게이트한다.
+
+    Pillow QC 전체를 enforce 했다가 흰 발·호리존을
+    `missing_lower_body`로 잘못 보고 전 상품을 차단한 전례가 있다. 따라서 그
+    신호 단독은 여전히 shadow로 두고, decode/종횡비 실패와 머리·전신이
+    눈에 띄게 잘린 극단 bbox만 출고 전에 막는다.
+    """
+    reason_set = {str(r) for r in (reasons or ())}
+    if "decode_failed" in reason_set:
+        return True
+    if "bad_aspect_ratio" in reason_set:
+        width = metrics.get("width") if isinstance(metrics, dict) else None
+        height = metrics.get("height") if isinstance(metrics, dict) else None
+        # provider 출력 크기의 유효한 이미지에서만 종횡비를 하드 게이트한다.
+        # 1px 더미·파손 이미지는 별도 신호(too_small/decode)의 못이다.
+        if (isinstance(width, (int, float)) and isinstance(height, (int, float))
+                and min(width, height) >= qc.MIN_SIDE):
+            return True
+    if "full_body_crop" not in reason_set or not isinstance(metrics, dict):
+        return False
+    top = metrics.get("bboxTop")
+    bottom = metrics.get("bboxBottom")
+    height = metrics.get("bboxHeight")
+    return bool(
+        (isinstance(top, (int, float)) and top >= _SEVERE_CROP_TOP)
+        or (isinstance(bottom, (int, float)) and bottom <= _SEVERE_CROP_BOTTOM)
+        or (isinstance(height, (int, float)) and height <= _SEVERE_CROP_HEIGHT)
+    )
+
+
+def gate_decision(
+    s,
+    pillow_verdict_str: str,
+    p2,
+    *,
+    pillow_reasons=None,
+    pillow_metrics=None,
+) -> tuple[bool, bool]:
     """생성 컷 게이팅 결정 (순수) → (pillow_reject, p2_reject).
 
-    - Pillow QC(휴리스틱): **재캘리브 전까지 코드에서 강제 shadow** — 실측 분포에서
-      missing_lower_body 오탐이 상수(다리가 있어도 bboxBottom 0.93 에서 오탐, pass율 0%)라,
-      MANNEQUIN_QC_ENABLED=true 인 어떤 배포/체크아웃이 큐를 클레임하든 전 생성이 죽는
-      사고가 된다(2026-07-12 prod 실사고 — 공유 DB 를 폴링하던 QC=true env 프로세스가
-      사용자 잡을 가로채 전멸). services/qc.py 임계 재캘리브 후 이 가드를 되살릴 것.
+    - Pillow QC(휴리스틱): 전체 강제는 여전히 금지한다. 과거 `missing_lower_body`
+      오탐으로 pass율 0%가 된 전례가 있기 때문이다. 다만 2026-08-04 실 QA의
+      headless 컷(bboxTop=0.252)처럼 재현성 높은 severe composition 신호는
+      allowlist+극단 임계로 enforce한다. 중간 신호와 `missing_lower_body` 단독은 shadow다.
     - AG-P2(vision 동일성): image_qc=='enforce' 且 p2.verdict=='retry' → reject.
       off/shadow 는 게이트 안 함(항상 통과 — 기존 동작 불변). p2 없음(키미설정·판정실패)도 통과.
     """
-    pillow_reject = False  # 강제 shadow — s.mannequin_qc_enabled 는 재캘리브 전까지 게이트에 미사용
     if s.image_qc != "enforce":
-        return pillow_reject, False  # off/shadow 는 항상 통과 — 기존 동작 불변
+        return False, False  # off/shadow 는 항상 통과
+    pillow_reject = _severe_pillow_reject(pillow_reasons, pillow_metrics)
     # 점수 신호가 있으면 그쪽이 정본(3분기). 없으면 기존 이진 verdict 로 폴백한다 —
     # 미채점 응답에서 게이트가 통째로 풀리지 않게.
     if isinstance(p2, dict) and (p2.get("critical_errors") or any(
@@ -1846,12 +1888,16 @@ async def _run_candidate(
                     "error": type(e).__name__, "message": str(e)[:200]})
         # **사전 게이트** — 잘못된 옷을 axis/bust 편집하면 그 정체성이 보존되므로, 편집 전에
         # 한 번 거른다. 최종 출고 판정은 여기가 아니라 아래 final_decision 하나가 내린다.
-        pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
+        pillow_reject, p2_reject = gate_decision(
+            s, verdict.verdict, p2,
+            pillow_reasons=verdict.reasons,
+            pillow_metrics=verdict.metrics,
+        )
         salvaged = False
         restored_carrier = None   # 구제 복구 시에만 채워진다(복구본의 원래 carrier)
         reprocess = True          # 구제본이 이미 편집·D축을 거쳤으면 False 로 내린다
         salvaged_series = None
-        if p2_reject:
+        if p2_reject and not pillow_reject:
             # reject 후보를 점수와 함께 보관 — 예산 소진 시 "마지막 시도"가 아니라 **최선본**을
             # 구제하기 위해서다. 1차 70점 / 2차 20점인데 20점을 내보내면 재시도가 손해가 된다.
             # 두 번째 요소는 **항상 merge 된 shape** 으로 통일한다. 경로마다 p2(verdict·

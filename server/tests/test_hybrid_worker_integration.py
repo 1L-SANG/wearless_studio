@@ -162,6 +162,25 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
                      ("finalize_mannequin_failure", finalize_failure)):
         monkeypatch.setattr(repo, name, fn)
     monkeypatch.setattr(mj, "_emit", fake_emit)
+    # This suite owns the hybrid-composite stages. Keep its synthetic carrier
+    # independent from the worker's separate composition gate so a crop-fixture
+    # change cannot prevent the hybrid pipeline under test from running.
+    monkeypatch.setattr(
+        mj.qc,
+        "evaluate_mannequin_qc",
+        lambda _data: mj.qc.QcResult(
+            "pass",
+            [],
+            {
+                "width": 1024,
+                "height": 1536,
+                "aspect": 0.667,
+                "bboxTop": 0.08,
+                "bboxBottom": 0.95,
+                "bboxHeight": 0.87,
+            },
+        ),
+    )
     monkeypatch.setattr(mj.hybrid_landmarks, "extract_geometry", fake_geometry)
     if p2_verdict is not None:
         seq = list(p2_verdict) if isinstance(p2_verdict, list) else [p2_verdict]
