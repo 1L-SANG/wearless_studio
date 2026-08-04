@@ -1884,21 +1884,23 @@
   font-size: 10px;
   font-weight: 700;
 }
+/* 액션 5개(드래그·앞으로·뒤로·복제·삭제)가 200px 카드 폭에 들어가도록 크기·간격을 줄였다. */
 .sb-canvas-actions {
   position: absolute;
   z-index: 5;
   right: 6px;
   top: 6px;
   display: flex;
-  gap: 5px;
+  gap: 4px;
   opacity: 0;
   transition: opacity .18s;
 }
+.sb-canvas-actions button:disabled { opacity: .35; cursor: default; box-shadow: none; }
 .sb-cutcard:hover .sb-canvas-actions, .sb-cutcard:focus-within .sb-canvas-actions,
 .sb-frame-half:hover .sb-canvas-actions, .sb-frame-half:focus-within .sb-canvas-actions { opacity: 1; }
 .sb-canvas-actions button, .sb-canvas-grip {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   border: 0;

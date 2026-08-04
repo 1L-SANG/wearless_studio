@@ -358,3 +358,21 @@ test('dragging a member out keeps its content and keeps the remaining set intact
   assert.equal(remainingRun.kind, 'space');
   assert.deepEqual(remainingRun.items.map((item) => item.id), ['a']);
 });
+
+/* 위/아래 한 칸 이동(nudgeBlock)의 인덱스 보정 계약.
+   moveBlockWithSpaceMembership 은 targetIndex 를 '원본 배열 기준'으로 받아 자기 자신이 빠진
+   만큼 스스로 보정한다. 따라서 아래로 한 칸은 to+1, 위로 한 칸은 to 를 넘겨야 한다.
+   이 계약이 깨지면 버튼이 두 칸씩 뛰거나 제자리에 머문다. */
+test('한 칸 이동 — 아래는 to+1, 위는 to 를 넘긴다', () => {
+  const board = ['a', 'b', 'c', 'd'].map((id) => ({ id, sectionId: 's1' }));
+  const ids = (list) => list.map((block) => block.id);
+  const at = (id) => board.findIndex((block) => block.id === id);
+
+  // b 를 아래로 한 칸: to = at(b)+1 = 2 → idx = to + 1 = 3
+  assert.deepEqual(ids(moveBlockWithSpaceMembership(board, 'b', 3)), ['a', 'c', 'b', 'd']);
+  // c 를 위로 한 칸: to = at(c)-1 = 1 → idx = to = 1
+  assert.deepEqual(ids(moveBlockWithSpaceMembership(board, 'c', 1)), ['a', 'c', 'b', 'd']);
+  // 경계: 첫 카드를 아래로, 마지막 카드를 위로
+  assert.deepEqual(ids(moveBlockWithSpaceMembership(board, 'a', at('a') + 2)), ['b', 'a', 'c', 'd']);
+  assert.deepEqual(ids(moveBlockWithSpaceMembership(board, 'd', at('d') - 1)), ['a', 'b', 'd', 'c']);
+});

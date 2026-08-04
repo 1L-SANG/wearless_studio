@@ -251,17 +251,30 @@ function StoryboardCaption({ block, catalogs, colorOpts, matchClothing, clothing
   );
 }
 
-function StoryboardCardActions({ gripDrag, onDuplicate, onDelete }) {
+function StoryboardCardActions({ gripDrag, onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown }) {
   return (
     <span className="sb-canvas-actions" onClick={(event) => event.stopPropagation()}>
       <span className="sb-canvas-grip" title="드래그로 순서 변경" {...gripDrag} aria-label="드래그로 순서 변경">⠿</span>
+      {/* 드래그를 못 쓰는 경우(키보드 조작 포함)의 순서 변경 수단 — 드래그와 규칙이 같다. */}
+      {onNudge && (
+        <button
+          type="button" title="앞으로 한 칸" aria-label="앞으로 한 칸 이동"
+          disabled={!canNudgeUp} onClick={() => onNudge(-1)}
+        >◂</button>
+      )}
+      {onNudge && (
+        <button
+          type="button" title="뒤로 한 칸" aria-label="뒤로 한 칸 이동"
+          disabled={!canNudgeDown} onClick={() => onNudge(1)}
+        >▸</button>
+      )}
       <button type="button" title="복제" aria-label="복제" onClick={onDuplicate}>⧉</button>
       <button type="button" title="삭제" aria-label="삭제" onClick={onDelete}>✕</button>
     </span>
   );
 }
 
-function StoryboardMedia({ block, index, total, gripDrag, onDuplicate, onDelete }) {
+function StoryboardMedia({ block, index, total, gripDrag, onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown }) {
   const missing = block.source !== 'mine' && !block.exampleId;
   return (
     <>
@@ -275,7 +288,10 @@ function StoryboardMedia({ block, index, total, gripDrag, onDuplicate, onDelete 
       ) : (
         <img src={block.thumb || block.ownImages?.[0]} alt="" loading="lazy" decoding="async" />
       )}
-      <StoryboardCardActions gripDrag={gripDrag} onDuplicate={onDuplicate} onDelete={onDelete} />
+      <StoryboardCardActions
+        gripDrag={gripDrag} onDuplicate={onDuplicate} onDelete={onDelete}
+        onNudge={onNudge} canNudgeUp={canNudgeUp} canNudgeDown={canNudgeDown}
+      />
     </>
   );
 }
@@ -283,6 +299,7 @@ function StoryboardMedia({ block, index, total, gripDrag, onDuplicate, onDelete 
 function StoryboardCard({
   item, total, catalogs, colorOpts, matchClothing, clothingType,
   selected, locked, gripDrag, onSelect, onDuplicate, onDelete, addControl,
+  onNudge, canNudgeUp, canNudgeDown,
 }) {
   const { block, index } = item;
   const missing = block.source !== 'mine' && !block.exampleId;
@@ -307,6 +324,9 @@ function StoryboardCard({
           gripDrag={gripDrag}
           onDuplicate={onDuplicate}
           onDelete={onDelete}
+          onNudge={onNudge}
+          canNudgeUp={canNudgeUp}
+          canNudgeDown={canNudgeDown}
         />
       </div>
       <StoryboardCaption
@@ -1704,6 +1724,12 @@ export function Storyboard() {
       return;
     }   // 내 이미지를 새 블록으로 삽입
     const id = e.dataTransfer.getData('text/blk') || dragId; setDragId(null); if (!id) return;
+    applySingleMove({ id, idx, targetSid, targetRole, targetSpaceGroupId, targetGroupKey });
+  };
+
+  /* 단일 블록 이동의 공통 경로 — 드래그(onDropAt)와 위/아래 버튼(nudgeBlock)이 함께 쓴다.
+     그룹 제한·섹션 이동 시 예시 재선택·세트 소속 승계 규칙이 두 경로에서 동일해야 한다. */
+  const applySingleMove = ({ id, idx, targetSid, targetRole = null, targetSpaceGroupId = null, targetGroupKey = null }) => {
     const moving = blocks.find((block) => block.id === id);
     if (moving && targetGroupKey && renderKeyForBlockId(id) !== targetGroupKey) {
       toast.push('같은 그룹 안에서만 순서를 바꿀 수 있어요');
@@ -1742,6 +1768,27 @@ export function Storyboard() {
     });
     if (needsPoseReselection) toast.push('이 공간에 맞는 포즈 예시를 다시 골라주세요');
   };
+
+  /* 위/아래 한 칸 이동 — 드래그를 쓸 수 없는 경우(키보드 조작 포함)의 순서 변경 수단.
+     이웃 블록의 섹션·세트를 목적지로 삼아 applySingleMove 에 위임하므로 규칙이 드래그와 같다. */
+  const nudgeBlock = (id, delta) => {
+    const from = blocks.findIndex((block) => block.id === id);
+    if (from < 0) return;
+    const to = from + delta;
+    if (to < 0 || to >= blocks.length) return;
+    const neighbor = blocks[to];
+    // moveBlockWithSpaceMembership 은 targetIndex 를 '원본 배열 기준'으로 받아 자기 자신이
+    // 빠진 만큼 스스로 보정한다(storyboardSpaceSets.js:101). 아래로 한 칸은 to+1 이어야 한다.
+    applySingleMove({
+      id,
+      idx: delta > 0 ? to + 1 : to,
+      targetSid: neighbor.sectionId,
+      targetRole: neighbor.sectionRole || null,
+      targetSpaceGroupId: neighbor.spaceGroupId || null,
+      targetGroupKey: renderKeyForBlockId(neighbor.id),
+    });
+  };
+
   const insertMineAt = (idx, src, targetSid, targetRole = null) => {
     const nb = mineBlock(src, (newSeq.current += 1));
     // normalizeRows — 행 한가운데 끼어들면 그 행 계약을 해제 (드래그 이동과 동일 규칙)
@@ -2001,6 +2048,9 @@ export function Storyboard() {
 
     const item = unit.items[0];
     const block = item.block;
+    // 이동 가능 범위는 자기가 속한 렌더 그룹 안 — 그룹 밖으로 나가는 이동은 드래그와 동일하게 막힌다.
+    const groupPos = group ? group.items.findIndex((entry) => entry.block.id === block.id) : -1;
+    const inGroup = groupPos >= 0;
     return (
       <div
         key={block.id}
@@ -2021,6 +2071,9 @@ export function Storyboard() {
           onDuplicate={() => duplicate(block.id)}
           onDelete={() => remove(block.id)}
           addControl={addControl}
+          onNudge={inGroup ? ((delta) => nudgeBlock(block.id, delta)) : undefined}
+          canNudgeUp={inGroup && groupPos > 0}
+          canNudgeDown={inGroup && groupPos < group.items.length - 1}
         />
       </div>
     );
