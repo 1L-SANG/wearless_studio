@@ -1534,12 +1534,11 @@ export function Mannequin() {
 
       <MannequinEditPanel
         open={aiEditOpen}
+        option={aiEditOption}
+        selectedKind={aiEditKind}
+        selectedStep={aiEditStep}
         busy={busy}
-        blocked={!selected || selectedReviewState.hardBlocked}
-        selectedVersion={selected?.version}
-        kind={aiEditKind}
-        step={aiEditStep}
-        progress={progress}
+        disabled={!selected || selectedReviewState.hardBlocked}
         error={aiEditError}
         onOpen={() => {
           setAiEditError('');
@@ -1550,13 +1549,13 @@ export function Mannequin() {
           setAiEditStep(null);
           setAiEditError('');
         }}
-        onKindChange={(nextKind) => {
+        onSelectKind={(nextKind) => {
           setAiEditKind(nextKind);
           setAiEditStep(null);
           setAiEditError('');
           aiEditReplayRef.current = null;
         }}
-        onStepChange={(nextStep) => {
+        onSelectStep={(nextStep) => {
           setAiEditStep(nextStep);
           setAiEditError('');
           aiEditReplayRef.current = null;
