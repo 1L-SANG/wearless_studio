@@ -358,7 +358,7 @@ test('storyboard preserves an in-space pose across shot changes and remains atom
   assert.match(shotHandler, /exampleSelectionOrigin: current\.exampleId \? 'user' : null/);
   const selectedStatus = storyboardSource.slice(
     storyboardSource.indexOf('const selectedStatus ='),
-    storyboardSource.indexOf('const cycleExamples ='),
+    storyboardSource.indexOf('const galleryRef ='),
   );
   assert.doesNotMatch(selectedStatus, /selectedExample\.shot !== shotVal/);
   assert.match(storyboardSource, /await onAtomicChange\(changes, \{ pickerOwnsError: true \}\)/);
@@ -376,8 +376,9 @@ test('storyboard exposes honest retry copy and never labels assignment as an aut
   assert.doesNotMatch(storyboardSource, /AI 자동 포즈/);
 });
 
-test('storyboard and editor both hydrate released set members into selectable galleries', () => {
-  assert.match(storyboardSource, /appendSetOnly:\s*!inSpace && cut !== 'product'/);
+test('storyboard keeps released set members available for generation without an in-space gallery', () => {
+  assert.match(storyboardSource, /shouldRenderGenerationExampleGuide\(block\) \{\s*return !block\?\.spaceGroupId;/);
+  assert.doesNotMatch(storyboardSource, /inSpace/);
   // 세트 예시는 구획 라벨 없이 일반 예시 뒤에 자연 배치된다(2026-07-31 오너 확정).
   assert.doesNotMatch(storyboardSource, /공간세트에서 사용된 컷/);
   assert.doesNotMatch(storyboardSource, /sb-ex-source-label/);

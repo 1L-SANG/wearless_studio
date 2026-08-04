@@ -713,27 +713,17 @@ function MineImageTab({ images = [], onImagesChange, onChoose, onPickImage }) {
   );
 }
 
-function SpaceMemberStrip({ set, siblings, currentId }) {
-  if (!set) return null;
-  const summary = set.setType === 'horizon-rotation'
-    ? `${siblings.length}컷으로 정면·옆면·뒷면을 이어 봐요`
-    : set.setType === 'horizon-sequence'
-      ? `${siblings.length}컷의 호리존 연속 예시예요`
-      : `${siblings.length}컷이 같은 공간에서 이어져요`;
+function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet }) {
+  const siblingIndex = siblings.findIndex((sibling) => sibling.id === block.id);
+  const ordinal = Number.isInteger(block.spaceSetMemberOrder)
+    ? block.spaceSetMemberOrder
+    : siblingIndex + 1;
   return (
-    <div className={`sb-space-strip tone-${set.tone}`}>
-      <div className="sb-space-strip-thumbs" aria-hidden="true">
-        {siblings.map((sibling) => (
-          <span key={sibling.id} className={sibling.id === currentId ? 'current' : ''}>
-            <img src={sibling.thumb} alt="" />
-          </span>
-        ))}
+    <div className={`sb-space-inspector-context tone-${set?.tone || 'neutral'}`}>
+      <div className="sb-space-inspector-copy">
+        <strong>{spaceSetDisplayName(set)} · {ordinal}번째 컷</strong>
       </div>
-      <div className="sb-space-strip-copy">
-        <strong>{set.setType === 'styling' ? '📍' : set.setType ? '↻' : '•'} {spaceSetDisplayName(set)}</strong>
-        <span>{summary}</span>
-        <small>장소 세트 변경은 보드에서</small>
-      </div>
+      <button type="button" className="sb-space-set-change" onClick={onChangeSet}>장소 세트 변경</button>
     </div>
   );
 }
@@ -828,13 +818,17 @@ function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType 
 }
 
 
+export function shouldRenderGenerationExampleGuide(block) {
+  return !block?.spaceGroupId;
+}
+
 /* 분위기 예시 — 갤러리가 주인공 (B+C안 확정, ADR-0004):
    · 샷 종류 = 갤러리 헤더 세그먼트 (설정과 같은 shot 필드를 바꾼다)
    · 생성예시 셀 선택 = 촬영 연출만 참고 — 예시 속 옷·신발·액세서리는 제외하고 exampleId로 생성 입력에 포함
    · 내 사진(refImages) = 샷 종류의 '내 이미지' 탭에서 업로드·선택
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false, onUseMine = null }) {
+export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onUseMine = null }) {
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
@@ -843,13 +837,11 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
     shot: shotVal,
     clothingType,
     gender,
-    spaceGroupId: inSpace ? 'inspector' : null,
     direction,
-    includeSetOnly: inSpace,
-    appendSetOnly: !inSpace && cut !== 'product',
-  }), [catalogs.genExamples, cut, shotVal, clothingType, gender, inSpace, direction]);
+    appendSetOnly: cut !== 'product',
+  }), [catalogs.genExamples, cut, shotVal, clothingType, gender, direction]);
   const selectedExample = (catalogs.genExamples || []).find((example) => example.id === exampleId) || null;
-  const moodOnly = !inSpace && (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
+  const moodOnly = (cut === 'styling' || cut === 'horizon') && !!direction && direction !== 'front';
   const conditionStatus = !exampleId ? null : storedExampleConditionStatus(selectedExample, {
     cutType: cut, clothingType, gender,
   });
@@ -859,15 +851,8 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
       direction,
     });
   const selectedStatus = conditionStatus === 'valid'
-    && (
-      (inSpace && !selectedPoseCompatible)
-      || (!inSpace && refScope === 'pose' && !selectedPoseCompatible)
-    )
+    && refScope === 'pose' && !selectedPoseCompatible
     ? 'changed' : conditionStatus;
-  const cycleExamples = inSpace ? examples.filter((example) => (
-    (example.variants || []).includes('pose')
-    && poseExampleDirectionCompatible(example, { cutType: example.cutType || cut, direction })
-  )) : examples;
   const galleryRef = useRef(null);
   const [galleryPage, setGalleryPage] = useState(0);
   const [mineTab, setMineTab] = useState(false);
@@ -880,20 +865,12 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   };
   useEffect(() => {
     scrollToGalleryPage(0, 'auto');
-  }, [cut, shotVal, clothingType, gender, inSpace, direction]);
+  }, [cut, shotVal, clothingType, gender, direction]);
   useEffect(() => {
     if (galleryPage >= galleryPageCount) scrollToGalleryPage(galleryPageCount - 1, 'auto');
   }, [galleryPage, galleryPageCount]);
   const selectFirstAvailable = () => {
-    const available = inSpace ? cycleExamples : examples;
-    if (available[0]) onExampleChange?.(available[0].id);
-  };
-  const unavailableReason = (scope) => scope === 'pose'
-    ? '이 예시는 아직 포즈 전용 자산이 없어요'
-    : '이 예시는 아직 배경 전용 자산이 없어요';
-  const poseDirectionReason = (example) => {
-    const label = { front: '정면', back: '뒷면', side: '사이드' }[example?.direction] || '다른 방향';
-    return `이 예시의 포즈는 ${label} 전용이에요`;
+    if (examples[0]) onExampleChange?.(examples[0].id);
   };
   const renderExampleCell = (example) => {
     const on = exampleId === example.id;
@@ -902,33 +879,26 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
       cutType: example.cutType || cut,
       direction,
     });
-    const poseDisabled = !variants.includes('pose') || !poseCompatible;
-    const poseDisabledReason = !variants.includes('pose')
-      ? unavailableReason('pose') : poseDirectionReason(example);
-    const inSpaceDisabled = inSpace && poseDisabled;
     const pick = (scope) => {
       if (!onExampleChange || !variants.includes(scope)) return;
       if (scope === 'pose' && !poseCompatible) return;
       onExampleChange(example.id, scope);
-      if (onRefScopeChange) onRefScopeChange(scope);
     };
     const defaultScope = cut === 'product' || moodOnly ? 'all'
-      : inSpace ? 'pose'
-        : variants.includes(refScope || 'all')
-          && ((refScope || 'all') !== 'pose' || poseCompatible)
-          ? (refScope || 'all') : 'all';
+      : variants.includes(refScope || 'all')
+        && ((refScope || 'all') !== 'pose' || poseCompatible)
+        ? (refScope || 'all') : 'all';
     return (
-      <button key={example.id} type="button" disabled={inSpaceDisabled}
-        draggable={Boolean(onExampleDrag && !inSpaceDisabled)}
+      <button key={example.id} type="button"
+        draggable={Boolean(onExampleDrag)}
         onDragStart={(event) => {
-          if (!onExampleDrag || inSpaceDisabled) return;
+          if (!onExampleDrag) return;
           event.dataTransfer.effectAllowed = 'copy';
           event.dataTransfer.setData('text/example-id', example.id);
           onExampleDrag(example.id);
         }}
         onDragEnd={() => onExampleDrag?.(null)}
-        title={inSpaceDisabled ? poseDisabledReason : undefined}
-        className={`sb-excell${on ? ' sel' : ''}${inSpaceDisabled ? ' unavailable' : ''}`}
+        className={`sb-excell${on ? ' sel' : ''}`}
         onClick={() => pick(defaultScope)}>
         <ExampleThumb example={example} />
         {on && <span className="ck"><Icon name="check" size={11} /></span>}
@@ -957,9 +927,8 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   };
   return (
     <div className="insp-sec">
-      {/* 같은 공간 묶음 안에서는 배경 기준이 묶음에 있으므로 예시는 '포즈 예시'로 강등 (P5 확정) */}
       <div className="sb-exhead">
-        <label className="lbl">{cut === 'product' ? '생성 예시' : inSpace ? '포즈 예시' : '분위기 예시'}</label>
+        <label className="lbl">{cut === 'product' ? '생성 예시' : '분위기 예시'}</label>
         {onShotChange
           ? <ShotSegment options={(cut === 'styling' || cut === 'horizon') ? [
             ...shotOpts, { ...MINE_SHOT_OPTION, disabled: !onRefsChange || !onUseMine },
@@ -975,10 +944,8 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
                 shot: candidateShot,
                 clothingType,
                 gender,
-                spaceGroupId: inSpace ? 'inspector' : null,
                 direction,
-                includeSetOnly: inSpace,
-                appendSetOnly: !inSpace,
+                appendSetOnly: true,
               },
             ).length > 0 : null} />
           : <span className="sb-exhint">내 사진은 이 프로젝트에서만</span>}
@@ -987,10 +954,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
         <MineImageTab images={refs} onImagesChange={onRefsChange} onChoose={onUseMine}
           onPickImage={pickReference} />
       ) : <>
-      {inSpace && cut !== 'product' && (
-        <div className="sb-exnote-blue">아래 생성예시의 포즈만 이용하여 변경할 수 있습니다</div>
-      )}
-      {exampleId && !inSpace && selectedStatus !== 'valid' && (
+      {exampleId && selectedStatus !== 'valid' && (
         <div className="sb-current-example has-error">
           <div className="sb-example-error">{selectedExample ? '조건이 바뀌어 예시를 다시 골라주세요' : '저장된 예시를 불러오지 못했어요'}</div>
           {examples.length > 0 && (
@@ -1048,7 +1012,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   );
 }
 
-function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, onChange, onAtomicChange, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onAddMine, onExampleDrag }) {
+function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, onChange, onAtomicChange, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onChangeSpaceSet, onAddMine, onExampleDrag }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -1090,6 +1054,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const isProduct = block.cutType === 'product';
   const isMirror = block.cutType === 'mirror';
   const isDetail = block.contentRole === CONTENT_ROLES.DETAIL;
+  const shouldRenderGenerationExamples = shouldRenderGenerationExampleGuide(block);
   const effectiveSectionRole = requestedRecipe?.sectionRole || block.sectionRole;
   const pendingInSpace = !!block.spaceGroupId && !requestedRecipe;
   const productShotOptions = catalogs.productShotTypes
@@ -1251,7 +1216,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const outerClosureState = closureOptions.some((option) => option.value === block.outerClosureState) ? block.outerClosureState : 'open';
   return (
     <div className="surface inspector">
-      {isMine ? (
+      {isMine && !block.spaceGroupId ? (
         <>
           <div className="sb-exhead">
             <label className="lbl">샷 종류</label>
@@ -1264,8 +1229,9 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             onPickImage={() => api.pickAnyImage()} onChoose={(src) => onChange({ thumb: src?.url || src })} />
         </>
       ) : <>
-      {spaceContext && (
-        <SpaceMemberStrip set={spaceContext.set} siblings={spaceContext.siblings} currentId={block.id} />
+      {block.spaceGroupId && (
+        <SpaceSetInspectorHeader set={spaceContext?.set} siblings={spaceContext?.siblings || []}
+          block={block} onChangeSet={onChangeSpaceSet} />
       )}
       {!block.cutType ? (
         <>
@@ -1292,13 +1258,15 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             setPendingRecipe(null);
             onCancelRequestedRecipe?.();
           }}>섹션 이동 취소</button>}
-          <MoodGuide catalogs={catalogs} cut={pendingRecipe.cutType}
-            direction={pendingRecipe.cutType === 'mirror' ? null : block.direction} shot={pendingRecipe.shot}
-            shotOptions={pendingRecipe.cutType === 'product' ? productShotOptions : null}
-            onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot }))}
-            clothingType={clothingType} gender={exampleGender}
-            exampleId={pendingChoice} onExampleChange={commitPendingRecipe} onExampleDrag={onExampleDrag}
-            refScope={pendingInSpace ? 'pose' : 'all'} inSpace={pendingInSpace} />
+          {shouldRenderGenerationExamples && (
+            <MoodGuide catalogs={catalogs} cut={pendingRecipe.cutType}
+              direction={pendingRecipe.cutType === 'mirror' ? null : block.direction} shot={pendingRecipe.shot}
+              shotOptions={pendingRecipe.cutType === 'product' ? productShotOptions : null}
+              onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot }))}
+              clothingType={clothingType} gender={exampleGender}
+              exampleId={pendingChoice} onExampleChange={commitPendingRecipe} onExampleDrag={onExampleDrag}
+              refScope={pendingInSpace ? 'pose' : 'all'} />
+          )}
           {pendingError && <div className="sb-save-error">{pendingError}
             <button type="button" disabled={!pendingChoice || pendingSaving}
               onClick={() => commitPendingRecipe(pendingChoice)}>다시 시도</button>
@@ -1306,25 +1274,27 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </div>
       ) : (
         <>
-          <MoodGuide onUseMine={(ref) => onChange({
-            source: 'mine', title: '내 이미지', cutType: null, contentRole: CONTENT_ROLES.CUSTOM,
-            ownImages: [ref?.url || ref], thumb: ref?.url || ref,
-            exampleId: null, exampleSelectionOrigin: null, refScope: null,
-            refImages: [], refAssetIds: [],
-            spaceGroupId: null, spaceVariation: null,
-          })} catalogs={catalogs} cut={block.cutType}
-            direction={block.direction} shot={block.shot}
-            shotOptions={isProduct ? productShotOptions : null}
-            onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}
-            exampleId={block.exampleId || null}
-            onExampleChange={onGenerationExampleChange}
-            onExampleDrag={onExampleDrag}
-            refScope={block.refScope || 'all'} inSpace={!!block.spaceGroupId}
-            refs={(block.refImages || []).map((value, index) => ({ url: value?.url || value, assetId: value?.assetId || (block.refAssetIds || [])[index] }))}
-            onRefsChange={(references) => onChange({
-              refImages: references.map((value) => value?.url || value),
-              refAssetIds: references.map((value) => value?.assetId).filter(Boolean),
-            })} />
+          {shouldRenderGenerationExamples && (
+            <MoodGuide onUseMine={(ref) => onChange({
+              source: 'mine', title: '내 이미지', cutType: null, contentRole: CONTENT_ROLES.CUSTOM,
+              ownImages: [ref?.url || ref], thumb: ref?.url || ref,
+              exampleId: null, exampleSelectionOrigin: null, refScope: null,
+              refImages: [], refAssetIds: [],
+              spaceGroupId: null, spaceVariation: null,
+            })} catalogs={catalogs} cut={block.cutType}
+              direction={block.direction} shot={block.shot}
+              shotOptions={isProduct ? productShotOptions : null}
+              onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}
+              exampleId={block.exampleId || null}
+              onExampleChange={onGenerationExampleChange}
+              onExampleDrag={onExampleDrag}
+              refScope={block.refScope || 'all'}
+              refs={(block.refImages || []).map((value, index) => ({ url: value?.url || value, assetId: value?.assetId || (block.refAssetIds || [])[index] }))}
+              onRefsChange={(references) => onChange({
+                refImages: references.map((value) => value?.url || value),
+                refAssetIds: references.map((value) => value?.assetId).filter(Boolean),
+              })} />
+          )}
         </>
       )}
 
@@ -2467,6 +2437,9 @@ export function Storyboard() {
     onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
     spaceContext={selectedSpaceContext}
+    onChangeSpaceSet={() => {
+      if (selected?.spaceGroupId) openSetPicker({ mode: 'replace', spaceGroupId: selected.spaceGroupId });
+    }}
     onAddMine={addMineBlock}
     onExampleDrag={(value) => {
       setDragExampleId(value);

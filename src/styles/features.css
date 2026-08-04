@@ -779,28 +779,18 @@
 .insp-sec > .lbl { margin-bottom: 9px; }
 .insp-tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
 
-.sb-space-strip { position: relative; display: grid; grid-template-columns: auto 1fr;
-  align-items: center; gap: 10px; margin: -8px -8px 18px; padding: 10px; border-radius: var(--r-5);
+.sb-space-inspector-context { display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin: -4px 0 14px; padding: 10px 11px; border-radius: var(--r-5);
   background: color-mix(in srgb, var(--space-tone) 18%, var(--bg-1));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone) 58%, var(--ring)); }
-.sb-space-strip-thumbs { display: flex; align-items: center; min-width: 56px; padding-left: 3px; }
-.sb-space-strip-thumbs span { width: 30px; height: 40px; overflow: hidden; margin-left: -9px; border-radius: var(--r-3);
-  background: var(--bg-2); box-shadow: 0 0 0 2px var(--bg-1), var(--elev-soft); transform: rotate(-3deg); }
-.sb-space-strip-thumbs span:first-child { margin-left: 0; }
-.sb-space-strip-thumbs span:nth-child(2n) { transform: rotate(3deg); }
-.sb-space-strip-thumbs span.current { z-index: 2; box-shadow: 0 0 0 2px var(--fg-1), var(--elev-soft); }
-.sb-space-strip-thumbs img { width: 100%; height: 100%; object-fit: cover; }
-.sb-space-strip-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--fg-2); }
-.sb-space-strip-copy strong { color: var(--fg-1); font-size: 12.5px; }
-.sb-space-strip-copy small { color: var(--fg-3); }
+.sb-space-inspector-copy { min-width: 0; }
+.sb-space-inspector-copy strong { color: var(--fg-1); font-size: 12.5px; }
+.sb-space-set-change { flex: none; border: 0; border-radius: var(--r-pill); padding: 6px 8px;
+  background: var(--bg-1); box-shadow: inset 0 0 0 1px var(--ring-strong); color: var(--fg-2);
+  font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.sb-space-set-change:hover, .sb-space-set-change:focus-visible { color: var(--fg-1); box-shadow: inset 0 0 0 1px var(--fg-2); }
 .sb-cut-label-row { display: flex; align-items: center; justify-content: space-between; }
 .sb-cut-label-row > .lbl { margin: 0; }
-.sb-space-more { position: relative; align-self: start; }
-.sb-space-more summary { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
-  color: var(--fg-1); background: var(--bg-1); box-shadow: 0 0 0 1px var(--ring-strong); list-style: none; }
-.sb-space-more summary::-webkit-details-marker { display: none; }
-.sb-space-more button { position: absolute; z-index: 5; top: 34px; right: 0; width: 130px; padding: 9px; border: 0;
-  border-radius: var(--r-4); background: var(--bg-1); box-shadow: var(--elev-lift); color: var(--accent-error); font-size: 12px; cursor: pointer; }
 .sb-cut-locked .utabs { opacity: .72; }
 .sb-cut-locked .utab.on { opacity: 1; color: var(--fg-1); }
 .sb-lock-note { display: flex; align-items: center; gap: 5px; margin-top: 7px; color: var(--fg-3); font-size: 11px; }
@@ -1655,9 +1645,6 @@
   font-size: 12px; font-weight: 600; color: var(--fg-2); cursor: pointer; }
 .insp-cancel-new:hover { color: var(--accent-error, #d92d20); }
 
-/* 세트 컷 — 포즈만 안내 (파란 포인트) */
-.sb-exnote-blue { font-size: 11.5px; color: var(--link); margin: 9px 0 11px; line-height: 1.5; }
-
 /* 매칭 의류 인라인 편집 — 인스펙터 안 고정 높이(3열 x 약 2줄), 토글로 열고 닫음 */
 .sb-match-inline { margin-top: 8px; border: 1px solid var(--ring); border-radius: var(--r-4);
   padding: 8px; max-height: 216px; overflow-y: auto; background: var(--bg-1); }
@@ -1665,7 +1652,7 @@
 .insp-detail-btn.open { box-shadow: inset 0 0 0 1.5px var(--ring-strong); }
 
 /* 공간 관련 컴포넌트 공통 톤 = 포인트 컬러 (오너 확정: 톤별 색 대신 연한 포인트 컬러) */
-.sb-space-strip, .sb-set-card { --space-tone: var(--link); }
+.sb-space-inspector-context, .sb-set-card { --space-tone: var(--link); }
 
 /* 내 사진 셀 — 클릭하면 현재 컷을 그 사진으로 교체 */
 .sb-excell.up.usable { cursor: pointer; }
