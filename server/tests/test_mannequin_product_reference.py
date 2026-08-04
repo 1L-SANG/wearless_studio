@@ -180,6 +180,19 @@ def test_pattern_product_keeps_high_tier_even_when_adjust_tier_is_light(monkeypa
     assert rendered[0]["image_size"] == "4K"
 
 
+def test_qa_cap_keeps_pattern_edit_provider_request_at_1k(monkeypatch):
+    refs = [_ref("Detail", "d", b"detail")]
+    gemini, emits, _d = _edit_candidate(
+        monkeypatch, refs=refs, product={"name": "스트라이프 셔츠"},
+        settings_kw={"mannequin_pattern_image_size": "4K",
+                     "mannequin_image_size": "1K",
+                     "mannequin_image_size_cap": "1K"})
+
+    assert gemini.calls[0]["size"] == "1K"
+    rendered = [p for e, p in emits if e == "step" and p.get("status") == "prompt_rendered"]
+    assert rendered[0]["image_size"] == "1K"
+
+
 def test_plain_product_still_honours_light_adjust_tier(monkeypatch):
     """무지 상품은 기존 동작 그대로 — 가드가 조정 tier 분기 자체를 없애면 안 된다."""
     refs = [_ref("Front", "f", b"front")]

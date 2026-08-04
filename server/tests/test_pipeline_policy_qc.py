@@ -95,6 +95,25 @@ def test_policy_resolution_applies_but_does_not_downgrade_fine_pattern_override(
     assert _policy_image_size("2K", None, fine_pattern=False) == "2K"
 
 
+def test_qa_image_size_cap_wins_over_policy_and_fine_pattern_upgrades():
+    guarded = {"resolution": "2K"}
+    assert _policy_image_size(
+        "4K", guarded, fine_pattern=True, cap="1K") == "1K"
+    assert _policy_image_size(
+        "4K", None, fine_pattern=True, cap="2K") == "2K"
+    assert _policy_image_size(
+        "1K", guarded, fine_pattern=False, cap="off") == "2K"
+
+
+def test_image_size_cap_is_loaded_fail_safe(monkeypatch):
+    from app.config import load_settings
+
+    monkeypatch.setenv("MANNEQUIN_IMAGE_SIZE_CAP", "1k")
+    assert load_settings().mannequin_image_size_cap == "1K"
+    monkeypatch.setenv("MANNEQUIN_IMAGE_SIZE_CAP", "unexpected")
+    assert load_settings().mannequin_image_size_cap == "off"
+
+
 def test_policy_candidate_selection_prefers_decision_then_deterministic_score():
     settings = make_settings()
     review = {"candidate": "A", "qc_scores": {

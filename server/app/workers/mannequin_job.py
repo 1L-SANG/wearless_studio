@@ -336,17 +336,28 @@ def _generation_pipeline_policy(s, product_truth: dict | None) -> dict | None:
     return select_pipeline_policy(build_garment_profile(product_truth))
 
 
-def _policy_image_size(base_size: str, policy: dict | None, *, fine_pattern: bool) -> str:
-    """정책 해상도를 적용하되 미세 패턴용 명시적 상향 설정은 절대 낮추지 않는다."""
-    if not policy:
-        return base_size
-    requested = str(policy.get("resolution") or base_size).upper()
-    if requested not in _IMAGE_SIZE_RANK:
-        return base_size
+def _policy_image_size(
+    base_size: str,
+    policy: dict | None,
+    *,
+    fine_pattern: bool,
+    cap: str = "off",
+) -> str:
+    """정책·미세패턴 해상도를 정한 뒤 명시적 QA 비용 상한을 마지막에 적용한다."""
     base = str(base_size or "").upper()
-    if fine_pattern and _IMAGE_SIZE_RANK.get(base, 0) > _IMAGE_SIZE_RANK[requested]:
-        return base
-    return requested
+    resolved = base
+    if policy:
+        requested = str(policy.get("resolution") or base).upper()
+        if requested in _IMAGE_SIZE_RANK:
+            resolved = requested
+            if fine_pattern and _IMAGE_SIZE_RANK.get(base, 0) > _IMAGE_SIZE_RANK[requested]:
+                resolved = base
+
+    normalized_cap = str(cap or "off").upper()
+    if normalized_cap in _IMAGE_SIZE_RANK:
+        if _IMAGE_SIZE_RANK.get(resolved, 0) > _IMAGE_SIZE_RANK[normalized_cap]:
+            return normalized_cap
+    return resolved
 
 
 def _select_policy_candidate(s, candidates: list[dict]) -> dict | None:
@@ -1561,7 +1572,8 @@ async def _run_candidate(
     has_fine_pattern = mannequin.has_fine_pattern(product, analysis)
     image_size = _policy_image_size(
         effective_image_size(s, product, analysis), pipeline_policy,
-        fine_pattern=has_fine_pattern)
+        fine_pattern=has_fine_pattern,
+        cap=getattr(s, "mannequin_image_size_cap", "off"))
     if generation_path == "edit" and parent_cut_img is not None and adjust_directives:
         # 편집 프롬프트의 image 1 계약: 현재 컷이 반드시 첫 장이고, 상품 정체성 앵커가 뒤따른다.
         # 상품 참조끼리는 역할 우선순위(Detail → Front → Back → Fit)로 정렬한다 — 매니페스트가

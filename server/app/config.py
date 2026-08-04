@@ -57,6 +57,9 @@ class Settings:
     # 조정 흐름에서만 다른 모델을 시험할 때 쓴다 — 초기 생성 품질을 건드리지 않고 비교한다.
     mannequin_adjust_tier: str = ""  # "" | image_light | image_high
     mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
+    # QA·비용 제한용 상한. off면 정책/미세패턴 승급을 허용하고, 1K/2K면 어떤 승급도
+    # 이 값을 넘지 못한다. 기본 off라 운영 동작은 기존과 동일하다.
+    mannequin_image_size_cap: str = "off"  # off | 1K | 2K | 4K
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
     mannequin_aspect_ratio: str = "2:3"
     mannequin_max_attempts: int = 2  # QC 게이팅 시 재시도 상한 (shadow면 실질 1회)
@@ -223,6 +226,11 @@ def _image_size() -> str:
     return v if v in {"1K", "2K", "4K"} else "1K"
 
 
+def _image_size_cap() -> str:
+    v = os.getenv("MANNEQUIN_IMAGE_SIZE_CAP", "off").upper()
+    return v if v in {"1K", "2K", "4K"} else "off"
+
+
 def _mannequin_tier() -> str:
     t = os.getenv("MANNEQUIN_TIER", "image_high")
     return t if t in {"image_light", "image_high"} else "image_high"
@@ -287,6 +295,7 @@ def load_settings() -> Settings:
         mannequin_tier=_mannequin_tier(),
         mannequin_adjust_tier=_mannequin_adjust_tier(),
         mannequin_image_size=_image_size(),
+        mannequin_image_size_cap=_image_size_cap(),
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
         mannequin_max_attempts=int(os.getenv("MANNEQUIN_MAX_ATTEMPTS", "2")),
         bg_scene_qc_attempts=int(os.getenv("BG_SCENE_QC_ATTEMPTS", "3")),
