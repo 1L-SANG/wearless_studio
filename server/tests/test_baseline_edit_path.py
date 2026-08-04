@@ -61,7 +61,8 @@ SESSION = {"id": "sess-1", "baseline_id": "base-1", "allowed_scope": None,
 
 
 def _run(monkeypatch, *, baseline=BASELINE, session=SESSION, parent_is_baseline=True,
-         r2_fail=False, qc_decision=None, enforce=True, edited=None, cut_row=True):
+         r2_fail=False, qc_decision=None, enforce=True, edited=None, cut_row=True,
+         edit_type="GARMENT_LENGTH_ONLY", adjustments=None):
     """편집 잡 1회 실행 → 관찰 dict."""
     seen = {"gemini": [], "runs": [], "sessions": [], "saved": [], "failed": [],
             "success": []}
@@ -163,8 +164,8 @@ def _run(monkeypatch, *, baseline=BASELINE, session=SESSION, parent_is_baseline=
         settings=settings, pool=_Pool(), r2=_R2(), gemini=_Gemini()))
     job = {"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "t",
            "credits_reserved": 2,
-           "payload": {"mode": "edit", "editType": "GARMENT_LENGTH_ONLY",
-                       "adjustments": {"garmentLengthStep": -1},
+           "payload": {"mode": "edit", "editType": edit_type,
+                       "adjustments": adjustments or {"garmentLengthStep": -1},
                        "editSessionId": "sess-1", "baselineId": "base-1"}}
     asyncio.run(mj.run_mannequin_job(app, job))
     return seen
@@ -205,6 +206,21 @@ def test_prompt_states_it_is_a_limited_edit_and_lists_locks(monkeypatch):
     assert "LIMITED EDIT" in prompt and "not a regeneration" in prompt
     assert "MUST NOT CHANGE" in prompt and "GARMENT_LENGTH_ONLY" in prompt
     assert "IMAGE 1" in prompt
+
+
+@pytest.mark.parametrize(("edit_type", "adjustments", "expected"), [
+    ("GARMENT_LENGTH_ONLY", {"garmentLengthStep": -2}, "make the garment visibly shorter"),
+    ("SLEEVE_LENGTH_ONLY", {"sleeveLengthStep": 1}, "make both sleeves visibly longer"),
+    ("BODY_WIDTH_ONLY", {"bodyWidthStep": 2}, "make the garment body visibly roomier"),
+    ("SHOULDER_WIDTH_ONLY", {"shoulderWidthStep": -1}, "make the garment shoulders visibly narrower"),
+    ("TUCK_STATE_ONLY", {"tuckStateStep": 1}, "tuck the garment in"),
+    ("MANNEQUIN_VOLUME_ONLY", {"mannequinVolumeStep": -1}, "make the mannequin volume visibly slimmer"),
+])
+def test_prompt_translates_steps_into_unambiguous_visual_directions(
+        monkeypatch, edit_type, adjustments, expected):
+    seen = _run(monkeypatch, qc_decision="pass", edit_type=edit_type,
+                adjustments=adjustments)
+    assert expected in seen["gemini"][0]["prompt"]
 
 
 # ── 실패 계약: fresh fallback 금지 ───────────────────────────────────────────

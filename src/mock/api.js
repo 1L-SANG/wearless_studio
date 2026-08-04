@@ -39,6 +39,14 @@ const makeMannequinCut = (version) => ({
   isSelected: true,
   createdAt: new Date().toISOString(),
 });
+let mannequinBaseline = null;
+const mannequinEditReplay = new Map();
+
+function typedError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
 
 /* 진행 중인 유료 job 레지스트리 — 같은 job 의 중복 시작 요청(StrictMode 이중
    실행, 생성 중 이탈 후 재진입)은 새 작업을 만들지 않고 기존 job 에 합류시켜
@@ -74,6 +82,8 @@ export const api = {
   // 진행 중이던 이전 프로젝트의 job 에 새 프로젝트가 합류하지 않도록 레지스트리도 비운다.
   async createProject() {
     reseedDraft();
+    mannequinBaseline = null;
+    mannequinEditReplay.clear();
     inflight.mannequins = null; inflight.detailPage = null;
     await wait(80); return clone(DB.project);
   },
@@ -231,6 +241,42 @@ export const api = {
     touch();
     return clone(selected);
   },
+  async getMannequinBaseline(/* projectId */) {
+    await wait(80);
+    return mannequinBaseline ? clone(mannequinBaseline) : null;
+  },
+  async approveMannequin(_projectId, cutId) {
+    await wait(90);
+    const cut = DB.mannequins.find((m) => m.id === cutId);
+    if (!cut) throw typedError('cut_not_found', '승인할 마네킹컷을 찾지 못했어요.');
+    if (mannequinBaseline?.cutId === cutId) {
+      return clone({ ...mannequinBaseline, idempotent: true });
+    }
+    mannequinBaseline = {
+      id: uid('base'),
+      projectId: DB.project.id,
+      baselineCutId: cut.id,
+      cutId: cut.id,
+      outputId: cut.outputId || null,
+      generationRunId: cut.generationRunId || null,
+      lockedInvariants: {
+        mannequinIdentity: true,
+        pose: true,
+        camera: true,
+        framing: true,
+        garmentCategory: true,
+        pattern: true,
+        logo: true,
+        collarType: true,
+        buttonCount: true,
+        pocketCount: true,
+      },
+      approvedAt: new Date().toISOString(),
+      supersededAt: null,
+      idempotent: false,
+    };
+    return clone(mannequinBaseline);
+  },
   // 최초 진입 시 단일 v0 컷을 생성한다. 크레딧: mannequinGenerate (계약 §6).
   // 진행 중에 다시 호출되면(이중 mount·재진입) 기존 job 에 합류한다 — 1회만 차감.
   // 이미 컷이 있으면(완료 후 재호출) 재실행·재차감 없이 기존 결과를 반환한다.
@@ -269,6 +315,69 @@ export const api = {
     syncSelectedCut(next.id);
     touch();
     return { data: cutsEnvelope(), credits: spend(CREDIT_COSTS.mannequinGenerate) };
+  },
+  async editMannequin(
+    _projectId,
+    { editType, adjustments = {}, baselineId, onProgress, idempotencyKey } = {},
+  ) {
+    if (!mannequinBaseline) {
+      throw typedError('no_approved_baseline', '먼저 마네킹 컷을 승인해 주세요.');
+    }
+    if (baselineId && baselineId !== mannequinBaseline.id) {
+      throw typedError('baseline_changed', '승인 기준이 바뀌었어요.');
+    }
+    const signature = JSON.stringify({
+      baselineId: mannequinBaseline.id,
+      editType,
+      adjustments,
+    });
+    if (idempotencyKey && mannequinEditReplay.has(idempotencyKey)) {
+      const replay = mannequinEditReplay.get(idempotencyKey);
+      if (replay.signature !== signature) {
+        throw typedError('idempotency_conflict', '같은 요청 키로 다른 편집을 보낼 수 없어요.');
+      }
+      await wait(80);
+      onProgress && onProgress(100);
+      return clone(replay.response);
+    }
+
+    await runJob({ duration: 2200, onProgress });
+    const prevMax = DB.mannequins.reduce((max, cut) => Math.max(max, Number(cut.version) || 0), -1);
+    const next = {
+      ...makeMannequinCut(prevMax + 1),
+      parentCutId: mannequinBaseline.cutId,
+      editType,
+      requestedAdjustments: clone(adjustments),
+      qcScores: {
+        outcome: 'needs_review',
+        componentsNeedingReview: ['manual_review_required'],
+        editIntentQc: {
+          decision: 'review_required',
+          requestedChangeSatisfied: true,
+          unexpectedChanges: [],
+          lockedInvariantViolations: [],
+        },
+      },
+    };
+    DB.mannequins = DB.mannequins.map((m) => ({ ...m, isSelected: false }));
+    DB.mannequins.push(next);
+    syncSelectedCut(next.id);
+    touch();
+    const response = {
+      data: cutsEnvelope(),
+      credits: spend(CREDIT_COSTS.mannequinGenerate),
+      editSession: {
+        id: uid('edit'),
+        baselineId: mannequinBaseline.id,
+        parentOutputId: mannequinBaseline.outputId || null,
+        editType,
+        requestedAdjustments: clone(adjustments),
+        status: 'review_required',
+        jobId: uid('job'),
+      },
+    };
+    if (idempotencyKey) mannequinEditReplay.set(idempotencyKey, { signature, response: clone(response) });
+    return clone(response);
   },
 
   /* ---- storyboard (PRD §8) ---- */

@@ -62,6 +62,7 @@ class EditRequest(CamelModel):
 
     edit_type: str
     adjustments: dict = {}
+    baseline_id: str | None = None
 
 
 class EditSessionView(CamelModel):

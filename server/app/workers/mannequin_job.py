@@ -2341,6 +2341,33 @@ async def _set_session_prompt(pool, session_id, sha, runlog, run_id) -> None:
         log.warning("edit session prompt link failed (session=%s error=%s)",
                     session_id, type(e).__name__)
 
+def _edit_direction_instruction(edit_type: str, adjustments: dict) -> str:
+    """상대 step 을 이미지 모델이 오해하지 않는 시각적 방향 문장으로 바꾼다."""
+    field_by_type = {
+        "GARMENT_LENGTH_ONLY": "garmentLengthStep",
+        "SLEEVE_LENGTH_ONLY": "sleeveLengthStep",
+        "BODY_WIDTH_ONLY": "bodyWidthStep",
+        "SHOULDER_WIDTH_ONLY": "shoulderWidthStep",
+        "TUCK_STATE_ONLY": "tuckStateStep",
+        "MANNEQUIN_VOLUME_ONLY": "mannequinVolumeStep",
+    }
+    step = int(adjustments.get(field_by_type.get(edit_type, ""), 0) or 0)
+    strength = "substantially" if abs(step) == 2 else "slightly"
+    if edit_type == "GARMENT_LENGTH_ONLY":
+        return f"{strength} make the garment visibly {'longer' if step > 0 else 'shorter'}"
+    if edit_type == "SLEEVE_LENGTH_ONLY":
+        return f"{strength} make both sleeves visibly {'longer' if step > 0 else 'shorter'}"
+    if edit_type == "BODY_WIDTH_ONLY":
+        return f"{strength} make the garment body visibly {'roomier' if step > 0 else 'slimmer'}"
+    if edit_type == "SHOULDER_WIDTH_ONLY":
+        return f"{strength} make the garment shoulders visibly {'wider' if step > 0 else 'narrower'}"
+    if edit_type == "TUCK_STATE_ONLY":
+        return "tuck the garment in" if step > 0 else "untuck the garment and let the hem hang naturally"
+    if edit_type == "MANNEQUIN_VOLUME_ONLY":
+        return f"{strength} make the mannequin volume visibly {'fuller' if step > 0 else 'slimmer'}"
+    return "apply only the requested bounded adjustment"
+
+
 def build_edit_prompt(*, edit_type: str, adjustments: dict, allowed_scope: dict,
                       locked_invariants: dict) -> str:
     """제한 편집 지시. **전체 재생성이 아니라는 것**을 문장으로 못박는다.
@@ -2356,6 +2383,7 @@ def build_edit_prompt(*, edit_type: str, adjustments: dict, allowed_scope: dict,
         "not a regeneration. Return the same photograph with ONLY the requested change.",
         f"EDIT TYPE: {edit_type}",
         f"REQUESTED CHANGE: {', '.join(changes) or '(see edit type)'}",
+        f"VISUAL DIRECTION: {_edit_direction_instruction(edit_type, adjustments)}.",
         f"MAY CHANGE: {allowed}",
         f"MUST NOT CHANGE: {forbidden}",
         "Keep the mannequin identity, pose, camera angle, framing, crop, background and",

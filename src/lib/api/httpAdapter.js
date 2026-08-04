@@ -566,6 +566,37 @@ export const httpAdapter = {
     if (!projectId) return [];
     return http(`/v1/projects/${projectId}/mannequins`);
   },
+  async getMannequinBaseline(projectId) {
+    if (!projectId) return null;
+    return http(`/v1/projects/${projectId}/mannequins/baseline`);
+  },
+  async approveMannequin(projectId, cutId) {
+    return http(`/v1/projects/${projectId}/mannequins:approve`, {
+      method: 'POST', body: { cutId },
+    });
+  },
+  async editMannequin(
+    projectId,
+    { editType, adjustments, baselineId, onProgress, idempotencyKey } = {},
+  ) {
+    const session = await http(`/v1/projects/${projectId}/mannequins:edit`, {
+      method: 'POST',
+      body: { editType, adjustments, baselineId },
+      idempotencyKey: idempotencyKey || newIdempotencyKey(),
+    });
+    const result = await pollJob(session.jobId, {
+      onProgress,
+      timeoutMs: LONG_IMAGE_JOB_TIMEOUT_MS,
+      timeoutMessage: MANNEQUIN_ADJUST_JOB_TIMEOUT_MESSAGE,
+    });
+    const cuts = await http(`/v1/projects/${projectId}/mannequins`);
+    return {
+      data: { cuts },
+      credits: result.credits,
+      creditsCharged: result.creditsCharged,
+      editSession: session,
+    };
+  },
   // 최초 A/B 후보 생성 — 202{jobId}→폴링, 또는 완료 존재 시 200{data,credits}(무차감 재호출).
   // 크레딧: mannequinGenerate. 진행 중 재호출은 서버가 활성 job 에 합류(1회만 차감).
   async generateMannequins(projectId, { onProgress } = {}) {

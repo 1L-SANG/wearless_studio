@@ -110,6 +110,24 @@ test('structured QC warnings and failed checks are shown as concrete review reas
   assert.match(state.description, /레이스·시스루/);
 });
 
+test('an unavailable structured check is explained once even when warning and check rows overlap', () => {
+  const state = classifyMannequinReview({
+    id: 'unavailable-review',
+    qcScores: {
+      outcome: 'needs_review',
+      structuredQC: {
+        warnings: ['qc_unavailable:composition'],
+        checks: [{ check: 'composition', status: 'unavailable', score: null }],
+      },
+    },
+  });
+
+  assert.equal(
+    state.description.match(/마네킹 위치·크롭·여백을 확인해 주세요\./g)?.length,
+    1,
+  );
+});
+
 test('applied hybrid with review components is a visible review cut', () => {
   const state = classifyMannequinReview({
     id: 'applied-review',

@@ -64,7 +64,7 @@ def edit_client(client, monkeypatch):
 
 
 def _wire(monkeypatch, *, prior_job=None, prior_session=None, active_job=None,
-          created=True, seen=None):
+          baseline=None, created=True, seen=None):
     seen = seen if seen is not None else {}
     seen.setdefault("created_sessions", [])
     seen.setdefault("reserved", [])
@@ -74,7 +74,7 @@ def _wire(monkeypatch, *, prior_job=None, prior_session=None, active_job=None,
         return {"id": project_id}
 
     async def get_active_baseline(conn, project_id):
-        return BASELINE_ROW
+        return baseline or BASELINE_ROW
 
     async def by_key(conn, user_id, key):
         return prior_job
@@ -129,6 +129,59 @@ def test_new_request_creates_exactly_one_session_and_reserves_once(edit_client,
     assert len(seen["created_sessions"]) == 1
     assert seen["reserved"] == [2] or len(seen["reserved"]) == 1
     assert len(seen["payload_writes"]) == 1
+
+
+def test_new_edit_request_wakes_the_local_dispatcher(edit_client, make_token, monkeypatch):
+    """승인·예약 뒤 큐를 즉시 깨워 사용자가 편집 시작을 기다리지 않게 한다."""
+    class _Dispatcher:
+        woken = 0
+
+        def wake(self):
+            self.woken += 1
+
+    dispatcher = _Dispatcher()
+    edit_client.app.state.dispatcher = dispatcher
+    _wire(monkeypatch)
+
+    r = _post(edit_client, make_token)
+
+    assert r.status_code == 200, r.text
+    assert dispatcher.woken == 1
+
+
+def test_expected_baseline_mismatch_is_rejected_before_side_effects(edit_client,
+                                                                    make_token,
+                                                                    monkeypatch):
+    seen = _wire(monkeypatch)
+    r = _post(edit_client, make_token,
+              {"editType": "GARMENT_LENGTH_ONLY",
+               "adjustments": {"garmentLengthStep": -1},
+               "baselineId": "base-stale"})
+
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "baseline_changed"
+    assert seen["created_sessions"] == []
+    assert seen["reserved"] == []
+    assert seen["payload_writes"] == []
+
+
+def test_same_key_replay_survives_later_active_baseline_change(edit_client,
+                                                               make_token,
+                                                               monkeypatch):
+    """재시도는 기존 세션 조회여야 한다 — 다른 탭의 이후 승인 때문에 새 요청처럼 막지 않는다."""
+    stale_session = {**SESSION_ROW, "baseline_id": "base-old"}
+    seen = _wire(monkeypatch, prior_job={"id": "job-1"},
+                 prior_session=stale_session,
+                 baseline={**BASELINE_ROW, "id": "base-new"})
+    r = _post(edit_client, make_token,
+              {"editType": "GARMENT_LENGTH_ONLY",
+               "adjustments": {"garmentLengthStep": -1},
+               "baselineId": "base-old"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == "sess-1"
+    assert seen["created_sessions"] == []
+    assert seen["reserved"] == []
 
 
 def test_same_key_retry_returns_the_same_session_with_no_side_effects(edit_client,

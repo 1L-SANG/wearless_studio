@@ -193,6 +193,37 @@
 
 /* --- 확인 카드 (이미지 바로 아래) · 이 컴포넌트 글씨 굵기는 한 단계 낮춤 --- */
 .fit-ask { max-width: 460px; margin: 22px auto 0; background: var(--bg-1); border-radius: var(--r-6); box-shadow: var(--elev-card); padding: 16px 17px; }
+.fit-ai-edit-entry, .fit-ai-edit-panel { width: min(460px, 100%); box-sizing: border-box; margin: 18px auto 0; border-radius: var(--r-6); background: var(--bg-1); box-shadow: var(--elev-card); }
+.fit-ai-edit-entry { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px 14px; padding: 14px 16px; }
+.fit-ai-edit-entry > div { min-width: 0; }
+.fit-ai-edit-entry b, .fit-ai-edit-entry span { display: block; }
+.fit-ai-edit-entry b { color: var(--fg-1); font-size: 13.5px; font-weight: 750; }
+.fit-ai-edit-entry span { margin-top: 3px; color: var(--fg-3); font-size: 11.5px; line-height: 1.45; }
+.fit-ai-edit-entry > button { border: 1.5px solid color-mix(in srgb, var(--link) 45%, var(--ring)); border-radius: var(--r-4); padding: 9px 11px; background: color-mix(in srgb, var(--link) 7%, var(--bg-1)); color: var(--link); font: inherit; font-size: 11.5px; font-weight: 750; cursor: pointer; }
+.fit-ai-edit-entry > button:hover:not(:disabled) { background: color-mix(in srgb, var(--link) 13%, var(--bg-1)); }
+.fit-ai-edit-entry > button:disabled { cursor: not-allowed; opacity: .48; }
+.fit-ai-edit-entry small { grid-column: 1 / -1; color: #851919; font-size: 10.5px; line-height: 1.4; }
+.fit-ai-edit-panel { padding: 16px 17px; box-shadow: var(--elev-card), inset 0 0 0 1px color-mix(in srgb, var(--link) 20%, transparent); }
+.fit-ai-edit-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
+.fit-ai-edit-head b, .fit-ai-edit-head span { display: block; }
+.fit-ai-edit-head b { color: var(--fg-1); font-size: 15px; font-weight: 800; }
+.fit-ai-edit-head span { margin-top: 3px; color: var(--fg-3); font-size: 11.5px; line-height: 1.4; }
+.fit-ai-edit-close { flex: none; width: 28px; height: 28px; border: 0; border-radius: 50%; background: var(--bg-2); color: var(--fg-2); font-size: 20px; line-height: 1; cursor: pointer; }
+.fit-ai-edit-close:disabled { cursor: wait; opacity: .5; }
+.fit-ai-edit-field { min-width: 0; margin: 0 0 13px; padding: 0; border: 0; }
+.fit-ai-edit-field legend { margin-bottom: 7px; color: var(--fg-2); font-size: 11.5px; font-weight: 750; }
+.fit-ai-edit-options, .fit-ai-edit-strengths { display: grid; gap: 7px; }
+.fit-ai-edit-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.fit-ai-edit-strengths { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fit-ai-edit-options button, .fit-ai-edit-strengths button { min-height: 38px; border: 1.5px solid var(--ring-strong); border-radius: var(--r-4); padding: 7px 8px; background: var(--bg-1); color: var(--fg-1); font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
+.fit-ai-edit-options button:hover:not(:disabled), .fit-ai-edit-strengths button:hover:not(:disabled) { border-color: var(--link); color: var(--link); }
+.fit-ai-edit-options button.on, .fit-ai-edit-strengths button.on { border-color: var(--link); background: color-mix(in srgb, var(--link) 9%, var(--bg-1)); color: var(--link); box-shadow: inset 0 0 0 1px var(--link); }
+.fit-ai-edit-field:disabled button { cursor: wait; opacity: .6; }
+.fit-ai-edit-locks { margin: 0 0 13px; border-radius: var(--r-4); padding: 9px 10px; background: var(--bg-2); color: var(--fg-3); font-size: 10.5px; line-height: 1.5; }
+.fit-ai-edit-error { margin: 0 0 12px; border-radius: var(--r-4); padding: 9px 10px; background: #fff1f1; color: #851919; font-size: 11.5px; line-height: 1.45; box-shadow: inset 0 0 0 1px #efb3b3; }
+.fit-ai-edit-progress { margin: 0 0 12px; color: var(--fg-2); font-size: 11.5px; }
+.fit-ai-edit-progress > div { height: 5px; margin-top: 7px; overflow: hidden; border-radius: var(--r-pill); background: var(--bg-3); }
+.fit-ai-edit-progress i { display: block; height: 100%; border-radius: inherit; background: var(--link); transition: width .2s ease; }
 .fit-regenerate-failure { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; border-radius: var(--r-5); padding: 11px 12px;
   background: #fff1f1; box-shadow: inset 0 0 0 1px #efb3b3; color: #851919; }
 .fit-regenerate-failure b { font-size: 13px; font-weight: 800; }
@@ -242,6 +273,8 @@
   .fit-ex-col { width: 300px; max-height: none; }
   .fit-ex-track { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
   .fit-ex-track .fit-tile { width: 150px; }
+  .fit-ai-edit-entry { grid-template-columns: 1fr; }
+  .fit-ai-edit-entry > button { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

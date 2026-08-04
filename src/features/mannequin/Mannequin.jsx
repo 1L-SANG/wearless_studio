@@ -10,7 +10,7 @@
    ============================================================= */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api } from '@/lib/api/index.js';
+import { api, newIdempotencyKey } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
@@ -38,6 +38,11 @@ import {
   mannequinReviewBlocksStoryboard,
   mannequinVersionAriaLabel,
 } from './reviewState.js';
+import {
+  MANNEQUIN_EDIT_OPTIONS,
+  mannequinEditFailureMessage,
+  runMannequinEdit,
+} from './mannequinEdit.js';
 import './Mannequin.css';
 
 const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
@@ -637,6 +642,97 @@ function ExampleTiles({ axisKey, category, gender, values, onPick }) {
   );
 }
 
+function MannequinEditPanel({
+  open,
+  option,
+  selectedKind,
+  selectedStep,
+  error,
+  busy,
+  disabled,
+  onOpen,
+  onClose,
+  onSelectKind,
+  onSelectStep,
+  onSubmit,
+}) {
+  const stepChoices = option ? [
+    { step: -2, label: `많이 ${option.negativeLabel}` },
+    { step: -1, label: `조금 ${option.negativeLabel}` },
+    { step: 1, label: `조금 ${option.positiveLabel}` },
+    { step: 2, label: `많이 ${option.positiveLabel}` },
+  ] : [];
+
+  if (!open) {
+    return (
+      <div className="fit-ai-edit-entry">
+        <div>
+          <b>현재 사진을 AI로 부분 수정</b>
+          <span>옷 길이·소매·폭처럼 한 항목만 바꿔 새 버전으로 저장해요.</span>
+        </div>
+        <button type="button" onClick={onOpen} disabled={busy || disabled}>AI 부분 수정</button>
+        {disabled && <small>품질 차단된 버전은 기준 컷으로 승인할 수 없어요. 다른 버전을 선택해 주세요.</small>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fit-ai-edit-panel" aria-label="AI 부분 수정">
+      <div className="fit-ai-edit-head">
+        <div>
+          <b>AI 부분 수정</b>
+          <span>현재 컷은 보존하고, 승인된 현재 이미지를 기준으로 한 항목만 수정해요.</span>
+        </div>
+        <button type="button" className="fit-ai-edit-close" onClick={onClose} disabled={busy} aria-label="AI 부분 수정 닫기">×</button>
+      </div>
+      <fieldset className="fit-ai-edit-field" disabled={busy}>
+        <legend>수정 항목</legend>
+        <div className="fit-ai-edit-options" role="listbox" aria-label="수정 항목">
+          {MANNEQUIN_EDIT_OPTIONS.map((item) => (
+            <button
+              type="button"
+              key={item.id}
+              className={item.id === selectedKind ? 'on' : ''}
+              aria-selected={item.id === selectedKind}
+              onClick={() => onSelectKind(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      <fieldset className="fit-ai-edit-field" disabled={busy}>
+        <legend>{option?.label || '선택 항목'} 수정 강도</legend>
+        <div className="fit-ai-edit-strengths" role="group" aria-label={`${option?.label || '선택 항목'} 수정 강도`}>
+          {stepChoices.map((choice) => (
+            <button
+              type="button"
+              key={choice.step}
+              className={choice.step === selectedStep ? 'on' : ''}
+              aria-pressed={choice.step === selectedStep}
+              onClick={() => onSelectStep(choice.step)}
+            >
+              {choice.label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      <p className="fit-ai-edit-locks">잠금: 마네킹·포즈·카메라·패턴·로고·카라·단추·주머니는 유지해야 해요.</p>
+      {error && <p className="fit-ai-edit-error" role="alert">{error}</p>}
+      <Button
+        variant="primary"
+        size="lg"
+        block
+        disabled={busy || disabled || selectedStep == null}
+        onClick={onSubmit}
+      >
+        {busy ? 'AI 부분 수정 중…' : `부분 수정 실행 · ${CREDIT_COSTS.mannequinGenerate} 크레딧`}
+      </Button>
+      <p className="fit-ai-edit-progress">자동 통과가 아니면 새 버전은 “검토”로 표시돼요. 원본 컷은 삭제되지 않아요.</p>
+    </div>
+  );
+}
+
 export function Mannequin() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -656,9 +752,14 @@ export function Mannequin() {
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
   const [reviewAcknowledgedCutId, setReviewAcknowledgedCutId] = useState(null);
+  const [aiEditOpen, setAiEditOpen] = useState(false);
+  const [aiEditKind, setAiEditKind] = useState(MANNEQUIN_EDIT_OPTIONS[0]?.id || '');
+  const [aiEditStep, setAiEditStep] = useState(null);
+  const [aiEditError, setAiEditError] = useState('');
   const submittingRef = useRef(false);   // 결제(재생성) 이중 제출 방지 — busy 반영 전 연타 차단
   const cutsRef = useRef(cuts);
   const selectedRef = useRef(null);
+  const aiEditReplayRef = useRef(null);
   const regenerateRunRef = useRef(0);
   const regenerateProgressRef = useRef(0);
   const regenerateBaselineRef = useRef(null);
@@ -827,6 +928,8 @@ export function Mannequin() {
   const selectedCutId = selected?.id || selectedId;
   const selectedReviewState = useMemo(() => classifyMannequinReview(selected), [selected]);
   const selectedReviewAcknowledged = mannequinReviewAcknowledgedForCut(selected, reviewAcknowledgedCutId);
+  const aiEditOption = MANNEQUIN_EDIT_OPTIONS.find((option) => option.id === aiEditKind)
+    || MANNEQUIN_EDIT_OPTIONS[0];
   selectedRef.current = selected;
   const loadingProgress = mannequinJob?.status === 'running'
     && (!projectId || mannequinJob.projectId === projectId)
@@ -874,6 +977,10 @@ export function Mannequin() {
     if (busy) return;
     setCuts((prev) => prev.map((cut) => ({ ...cut, isSelected: cut.id === cutId })));
     selectMannequin(cutId);
+    setAiEditOpen(false);
+    setAiEditStep(null);
+    setAiEditError('');
+    aiEditReplayRef.current = null;
   };
 
   // draft + 사용자가 고른 값으로 재생성용 FitProfile v2 구성.
@@ -1148,6 +1255,7 @@ export function Mannequin() {
     setRegenerateFailure(null);
     setBusy(true);
     setProgress(0);
+    regenerateProgressRef.current = 0;
     setRegenerateListReady(false);
     setRegenerateImageReady(false);
     setRegenerateState('generating');
@@ -1156,6 +1264,94 @@ export function Mannequin() {
       await runGenerationAttempts(runId, profile);
     } catch {
       failGeneration(runId);
+    }
+  };
+
+  const handleAiEditSubmit = async () => {
+    if (submittingRef.current || busy || !selected?.id || !aiEditOption || !aiEditStep) return;
+    if (selectedReviewState.hardBlocked) {
+      pushToast('차단된 버전은 기준 컷으로 승인할 수 없어요. 다른 버전을 선택해 주세요.', { icon: 'alertTri' });
+      return;
+    }
+    const signature = `${selected.id}:${aiEditKind}:${aiEditStep}`;
+    const idempotencyKey = aiEditReplayRef.current?.signature === signature
+      ? aiEditReplayRef.current.key
+      : newIdempotencyKey();
+    aiEditReplayRef.current = { signature, key: idempotencyKey };
+
+    submittingRef.current = true;
+    const runId = regenerateRunRef.current + 1;
+    regenerateRunRef.current = runId;
+    regenerateBaselineRef.current = cutBaseline(cutsRef.current);
+    knownLandedListRef.current = null;
+    clearWaitCopyTimers();
+    clearArrivalTimers();
+    setArrival(null);
+    setAiEditError('');
+    setRegenerateFailure(null);
+    setBusy(true);
+    setProgress(0);
+    regenerateProgressRef.current = 0;
+    setRegenerateListReady(false);
+    setRegenerateImageReady(false);
+    setRegenerateState('generating');
+    startWaitCopyClock(runId);
+
+    try {
+      const response = await runMannequinEdit({
+        api,
+        projectId,
+        cutId: selected.id,
+        kind: aiEditKind,
+        step: aiEditStep,
+        idempotencyKey,
+        onProgress: (next) => {
+          if (!runIsCurrent(runId)) return;
+          const realProgress = Math.max(0, Math.min(100, Number(next) || 0));
+          regenerateProgressRef.current = realProgress;
+          setProgress(realProgress);
+        },
+      });
+      if (!runIsCurrent(runId)) return;
+      syncCredits(response.credits);
+      const baseline = regenerateBaselineRef.current;
+      let list = extractCuts(response.data);
+      let newCut = newestCutSince(list, baseline);
+      if (!newCut) {
+        setRegenerateState('load-retry');
+        list = extractCuts(await api.getMannequins(projectId));
+        if (!runIsCurrent(runId)) return;
+        newCut = newestCutSince(list, baseline);
+      }
+      if (!newCut) throw new Error('새로 생성된 마네킹컷을 아직 찾지 못했어요.');
+      knownLandedListRef.current = list;
+      setRegenerateState('loading');
+      setRegenerateListReady(true);
+      await decodeCutImage(thumbUrl(cutImage(newCut), 720));
+      if (!runIsCurrent(runId)) return;
+      setRegenerateImageReady(true);
+      setAiEditOpen(false);
+      setAiEditStep(null);
+      aiEditReplayRef.current = null;
+      completeRegeneration(runId, list, newCut, fitProfileDraft);
+    } catch (error) {
+      if (!runIsCurrent(runId)) return;
+      const message = mannequinEditFailureMessage(error);
+      // 네트워크 단절·브라우저 decode 실패처럼 서버 반영 여부가 모호한 경우에는 같은 키를
+      // 유지해 재시도가 기존 세션을 재조회하게 한다. 명시적 서버 실패는 새 요청으로 다시
+      // 시도할 수 있어야 하므로 키를 폐기한다.
+      if (error?.code && !['api_network', 'auth_session_network', 'browser_offline'].includes(error.code)) {
+        aiEditReplayRef.current = null;
+      }
+      clearWaitCopyTimers();
+      setRegenerateState('idle');
+      setRegenerateListReady(false);
+      setRegenerateImageReady(false);
+      setProgress(0);
+      setAiEditError(message);
+      setBusy(false);
+      submittingRef.current = false;
+      pushToast(message, { icon: 'alertTri' });
     }
   };
 
@@ -1335,6 +1531,38 @@ export function Mannequin() {
           </div>
         )}
       </div>
+
+      <MannequinEditPanel
+        open={aiEditOpen}
+        busy={busy}
+        blocked={!selected || selectedReviewState.hardBlocked}
+        selectedVersion={selected?.version}
+        kind={aiEditKind}
+        step={aiEditStep}
+        progress={progress}
+        error={aiEditError}
+        onOpen={() => {
+          setAiEditError('');
+          setAiEditOpen(true);
+        }}
+        onClose={() => {
+          setAiEditOpen(false);
+          setAiEditStep(null);
+          setAiEditError('');
+        }}
+        onKindChange={(nextKind) => {
+          setAiEditKind(nextKind);
+          setAiEditStep(null);
+          setAiEditError('');
+          aiEditReplayRef.current = null;
+        }}
+        onStepChange={(nextStep) => {
+          setAiEditStep(nextStep);
+          setAiEditError('');
+          aiEditReplayRef.current = null;
+        }}
+        onSubmit={handleAiEditSubmit}
+      />
 
       <div className="fit-ask">
         {regenerateFailure && (

@@ -1317,8 +1317,6 @@ async def edit_mannequin(
                 status_code=409,
                 detail={"code": "no_approved_baseline",
                         "message": "먼저 마네킹 컷을 승인해 주세요."})
-        locks = edit_service.locked_invariants_for_edit(
-            baseline.get("locked_invariants"), edit_type)
         # ── 멱등·충돌을 **만들기 전에** 판정한다 ──
         # create_job 은 "같은 키 재시도"와 "다른 활성 job 합류"를 둘 다 created=False 로
         # 돌려준다. 그걸 구분하지 않고 진행하면 두 경우 모두 새 세션이 생기고 남의 job
@@ -1332,15 +1330,23 @@ async def edit_mannequin(
                         status_code=409,
                         detail={"code": "job_in_progress",
                                 "message": "이미 진행 중인 작업이 있어요."})
+                expected_baseline_id = body.baseline_id or baseline["id"]
                 same = (existing["edit_type"] == edit_type
                         and (existing["requested_adjustments"] or {}) == adjustments
-                        and existing["baseline_id"] == baseline["id"])
+                        and existing["baseline_id"] == expected_baseline_id)
                 if not same:
                     raise HTTPException(
                         status_code=409,
                         detail={"code": "idempotency_conflict",
                                 "message": "같은 요청 키로 다른 편집을 보낼 수 없어요."})
                 return {**existing, "job_id": prior["id"]}   # 부수효과 0
+        if body.baseline_id and body.baseline_id != baseline["id"]:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "baseline_changed",
+                        "message": "승인 기준이 바뀌었어요. 현재 컷을 다시 선택해 주세요."})
+        locks = edit_service.locked_invariants_for_edit(
+            baseline.get("locked_invariants"), edit_type)
         active = await repo.get_active_job(conn, user_id, project_id, "mannequin")
         if active is not None:
             raise HTTPException(
@@ -1370,6 +1376,7 @@ async def edit_mannequin(
             locked_invariants=locks, allowed_scope=scope)
         await repo.update_job_payload_edit_session(conn, job["id"], session["id"])
         await conn.commit()
+    _wake_dispatcher(request)
     return {**session, "job_id": job["id"]}
 
 

@@ -71,6 +71,10 @@ function reasonKeys(qc) {
     ? qc.structuredQC
     : null;
   const structuredChecks = Array.isArray(structured?.checks) ? structured.checks : [];
+  const structuredWarnings = Array.isArray(structured?.warnings) ? structured.warnings : [];
+  const warnedUnavailableChecks = new Set(structuredWarnings
+    .filter((warning) => String(warning).startsWith('qc_unavailable:'))
+    .map((warning) => String(warning).slice('qc_unavailable:'.length)));
   return dedupe([
     ...(Array.isArray(qc.componentsNeedingReview) ? qc.componentsNeedingReview : []),
     ...(Array.isArray(qc.needsReview) ? qc.needsReview : []),
@@ -81,9 +85,10 @@ function reasonKeys(qc) {
     ...(Array.isArray(hybrid?.componentsNeedingReview) ? hybrid.componentsNeedingReview : []),
     ...(Array.isArray(hybrid?.needsReview) ? hybrid.needsReview : []),
     ...(Array.isArray(structured?.criticalErrors) ? structured.criticalErrors : []),
-    ...(Array.isArray(structured?.warnings) ? structured.warnings : []),
+    ...structuredWarnings,
     ...structuredChecks
       .filter((check) => ['fail', 'unavailable', 'error', 'timeout'].includes(check?.status))
+      .filter((check) => !warnedUnavailableChecks.has(String(check?.check || '')))
       .map((check) => check?.check),
     ...(hybrid?.needsReview === true && !hybrid?.failureReason ? ['hybridComposite'] : []),
     hybrid?.failureReason,
