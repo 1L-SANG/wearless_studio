@@ -2042,45 +2042,56 @@
 }
 .sb-ghost-card:hover, .sb-ghost-card:focus-visible { border-color: var(--sb-ink-3); color: var(--sb-ink-2); }
 
-/* 세트 묶음 = 색 박스 대신 편집 디자인의 '키커 라인'(작은 라벨 + 헤어라인)으로 표시.
-   전폭을 차지하고 내부 열을 바깥 그리드와 동일 규격으로 맞춰 카드 크기·정렬이 흐트러지지 않는다. */
+/* 세트 묶음(2안 확정) = 채움 없는 얇은 울타리. 라벨·버튼은 프레임 태그(.sb-frame-tag)와
+   같은 필 토큰으로 위 테두리에 걸쳐, 묶음 경계가 명확하면서 색 채움 없이 조용하다. */
 .sb-tray {
   --tray-ink: var(--sb-ink-2);
   grid-column: 1 / -1;
   position: relative;
   display: grid;
   grid-template-columns: 1fr;
-  row-gap: 10px;
   min-width: 0;
-  padding: 4px 0 6px;
+  margin-top: 8px;
+  padding: 18px 14px 14px;
+  border: 1px solid var(--sb-hair-2);
+  border-radius: 14px;
 }
 .sb-tray-head {
+  position: absolute;
+  z-index: 6;
+  left: 12px;
+  right: 10px;
+  top: -10px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-  padding: 0 2px 7px;
-  border-bottom: 1px solid var(--sb-hair);
   color: var(--tray-ink);
   font-size: 10.5px;
   font-weight: 700;
-  letter-spacing: .02em;
   cursor: grab;
+}
+.sb-tray-head strong {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--sb-hair);
 }
 .sb-tray-head:active { cursor: grabbing; }
 .sb-tray-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-tray-swap, .sb-tray-more summary {
-  padding: 2px 6px;
+  padding: 2px 9px;
   border: 0;
-  border-radius: 6px;
-  background: none;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--sb-hair);
   color: inherit;
   font-size: 10.5px;
   font-weight: 600;
   cursor: pointer;
 }
 .sb-tray-swap { margin-left: auto; }
-.sb-tray-swap:hover, .sb-tray-more summary:hover { background: rgba(0, 0, 0, .06); }
+.sb-tray-swap:hover, .sb-tray-more summary:hover { background: #f4f4f6; }
 .sb-tray-more { position: relative; }
 .sb-tray-more summary { list-style: none; font-size: 12px; }
 .sb-tray-more summary::-webkit-details-marker { display: none; }
