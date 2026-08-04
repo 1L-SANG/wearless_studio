@@ -434,6 +434,42 @@ def _extract_axis_candidate(
     widest = max(range(len(runs)), key=lambda i: runs[i][1])
     ordered = runs[widest:] + runs[:widest]
     colors = tuple(run_color(st, ln) for st, ln in ordered)
+
+    # --- chroma 재앵커: strip 접합은 strip 폭(≈W/12) 안의 줄 기울기 때문에 얇은 run 의
+    # ab 를 lateral smear 로 뭉갠다(실측: raw 라인 b* -5~+7 → 접합 후 ±2). L 대비는 커서
+    # 살아남지만 chroma 는 죽는다. 복원: 같은 strip 모집단의 raw 암픽셀에서 두 chroma
+    # 계열(bluest/warmest)을 재고, 라인 run 들의 ab 를 그 범위로 **순서 보존 affine 매핑**
+    # 한다. 접합 값의 상대 순서는 보존되므로(실측 확인) 계열 배정이 뒤집히지 않고, ground
+    # run 은 건드리지 않는다. 색 발명이 아니라 같은 소스에서의 측정 복원 — 완전 정렬
+    # (합성 fixture)에선 raw 스프레드 ≤ 접합 스프레드라 no-op.
+    if len(colors) >= 3:
+        pix = np.concatenate([st.reshape(-1, 3) for st in strips], axis=0)
+        dark = pix[:, 0] < np.percentile(pix[:, 0], 25.0)
+        if int(dark.sum()) >= 200:
+            a_dark, b_dark = pix[dark, 1], pix[dark, 2]
+            lo_m = b_dark < np.percentile(b_dark, 15.0)
+            hi_m = b_dark > np.percentile(b_dark, 85.0)
+            fam_lo = (float(np.median(a_dark[lo_m])), float(np.median(b_dark[lo_m])))
+            fam_hi = (float(np.median(a_dark[hi_m])), float(np.median(b_dark[hi_m])))
+            line_runs = ordered[1:]
+            lb = [run_color(st_, ln_)[2] for st_, ln_ in line_runs]
+            la = [run_color(st_, ln_)[1] for st_, ln_ in line_runs]
+            b0, b1 = min(lb), max(lb)
+            a0, a1 = min(la), max(la)
+            if b1 - b0 > 0.15 and (fam_hi[1] - fam_lo[1]) > (b1 - b0):
+                for st_, ln_ in line_runs:
+                    idx = np.arange(st_, st_ + ln_) % K
+                    t_b = (folded[idx, 2] - b0) / (b1 - b0)
+                    folded[idx, 2] = fam_lo[1] + np.clip(t_b, -0.25, 1.25) * (fam_hi[1] - fam_lo[1])
+                    # a-매핑은 family 간 a·b 가 공단조일 때만 유효 — b-백분위로 뽑은
+                    # 끝점을 a 에 재사용하므로, 순서가 어긋난 팔레트(마젠타/옐로그린류)
+                    # 에선 a 가 반대 family 로 회전한다(final-code 리뷰 M1). 순서 불일치
+                    # 시 a 는 접합값 유지(보수적).
+                    a_monotone = (fam_hi[0] - fam_lo[0]) * (a1 - a0) > 0
+                    if a1 - a0 > 0.1 and a_monotone:
+                        t_a = (folded[idx, 1] - a0) / (a1 - a0)
+                        folded[idx, 1] = fam_lo[0] + np.clip(t_a, -0.25, 1.25) * (fam_hi[0] - fam_lo[0])
+                colors = tuple(run_color(st_, ln_) for st_, ln_ in ordered)
     widths = tuple(ln / K for _st, ln in ordered)
     folded = np.roll(folded, -ordered[0][0], axis=0)
     amplitude = 0.0

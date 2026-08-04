@@ -479,7 +479,7 @@ async def patch_product_truth_draft(
 
 async def approve_product_truth(
     conn: AsyncConnection, *, project_id: str, truth_id: str, user_id: str,
-    garment_profile: dict,
+    garment_profile: dict, source_fingerprint: str,
 ) -> dict | None:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -492,7 +492,8 @@ async def approve_product_truth(
             "where project_id=%s and status='approved'", (project_id,))
         await cur.execute(
             "update product_truth_packages set status='approved', approved_by=%s, approved_at=now(), "
-            "garment_profile=%s where id=%s returning id", (user_id, Json(garment_profile), truth_id))
+            "garment_profile=%s, source_fingerprint=%s where id=%s returning id",
+            (user_id, Json(garment_profile), source_fingerprint, truth_id))
         await cur.execute(
             "insert into product_truth_review_events "
             "(project_id, truth_package_id, actor_id, action, detail) "

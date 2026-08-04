@@ -289,6 +289,42 @@ def source_fingerprint(product: Mapping, analysis: Mapping | None = None,
     return _sha(payload)
 
 
+def assert_source_assets_current(
+    truth: Mapping,
+    product: Mapping,
+    asset_rows: Iterable[dict] | Mapping[str, dict] | None = None,
+) -> None:
+    """승인 직전 draft와 현재 상품이 같은 원본 자산을 가리키는지 검증한다.
+
+    분석 완료 뒤 프론트가 상품명·실측·분석 필드를 저장하는 것은 원본 교체가 아니다. 이
+    동기화 때문에 draft fingerprint가 달라질 수 있으므로 승인 시 fingerprint는 새로 봉인할
+    수 있다. 단 asset id·역할·view·checksum·크기가 하나라도 달라졌다면 오래된 draft를 새
+    원본에 승인하면 안 되므로 ``truth_stale``로 막는다.
+    """
+
+    def signature(items: Iterable[Mapping]) -> list[tuple]:
+        out = []
+        for item in items or []:
+            asset_id = item.get("assetId") or item.get("asset_id")
+            out.append((
+                str(asset_id or ""),
+                str(item.get("role") or "").strip().upper(),
+                str(item.get("view") or "").strip().upper(),
+                item.get("checksum"),
+                item.get("width"),
+                item.get("height"),
+            ))
+        return sorted(out)
+
+    sealed = truth.get("sourceAssets") or truth.get("source_assets") or []
+    current = source_assets(product, asset_rows)
+    if signature(sealed) != signature(current):
+        raise ProductTruthError(
+            "truth_stale",
+            "상품 원본 이미지가 바뀌어 Product Truth를 다시 생성하고 승인해야 합니다.",
+        )
+
+
 def garment_spec(product: Mapping, analysis: Mapping | None = None) -> dict:
     analysis = analysis or {}
     text = _flatten_text(product, analysis)

@@ -767,11 +767,18 @@ async def approve_product_truth(
         domain = _truth_domain(current)
         try:
             approved = product_truth_service.approve_snapshot(domain or {}, actor_id=user_id)
+            product, analysis, evidence = await _truth_inputs(
+                conn, project_id=project_id, user_id=user_id)
+            product_truth_service.assert_source_assets_current(
+                domain or {}, product, evidence)
+            approval_fingerprint = product_truth_service.source_fingerprint(
+                product, analysis, evidence)
         except product_truth_service.ProductTruthError as e:
             raise HTTPException(status_code=409, detail={"code": e.code, "message": str(e)})
         row = await repo.approve_product_truth(
             conn, project_id=project_id, truth_id=truth_id, user_id=user_id,
-            garment_profile=approved["garmentProfile"])
+            garment_profile=approved["garmentProfile"],
+            source_fingerprint=approval_fingerprint)
         if row is None:
             raise HTTPException(status_code=409, detail={"code": "truth_not_editable",
                                                         "message": "승인 가능한 draft가 아니에요."})

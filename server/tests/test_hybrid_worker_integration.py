@@ -403,6 +403,11 @@ def test_worker_carries_detail_slot_all_the_way_into_the_composite(monkeypatch):
     assert hc["sourceAssets"]["detail"] == {
         "assetId": "detail", "sha256": detail_sha,
         "roi": hc["sourceAssets"]["detail"]["roi"]}
-    assert hc["stripeModel"]["source_asset_id"] == "detail"
+    # Detail 은 항상 입력 gate·구조 모델의 정본으로 소비된다. 팔레트는 front 가 구조
+    # 완전 일치일 때 정본이 될 수 있고(hybrid_palette_source 이벤트로 기록), 그 경우
+    # stripeModel provenance 는 front 로 남는다 — 어느 쪽이든 이벤트와 일치해야 한다.
     ev = next(p for _e, p in emits if p.get("status") == "hybrid_stripe_model")
     assert ev["source_asset_id"] == "detail"
+    swapped = any(p.get("status") == "hybrid_palette_source" for _e, p in emits)
+    expect_src = "front" if swapped else "detail"
+    assert hc["stripeModel"]["source_asset_id"] == expect_src

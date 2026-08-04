@@ -157,6 +157,40 @@ def test_source_fingerprint_changes_when_source_checksum_or_analysis_changes():
     assert pt.source_fingerprint(p, a, ASSETS) == fp1
 
 
+def test_approval_can_refresh_fingerprint_only_while_source_assets_are_unchanged():
+    """분석 직후 프론트가 상품 메타를 동기화해도 같은 사진이면 승인을 막지 않는다.
+
+    반대로 사진 id/checksum/역할이 바뀐 draft를 새 fingerprint로 재봉인하면 오래된 사실을
+    새 원본에 승인하는 꼴이므로 반드시 stale로 거부한다.
+    """
+    product = _product()
+    draft = pt.build_truth_draft(product, _analysis(), ASSETS)
+
+    # 상품명·실측 같은 비자산 메타가 분석 완료 직후 동기화된 경우는 같은 source authority다.
+    synced = _product(name="사용자가 확정한 상품명")
+    synced["measurements"] = [{"name": "총장", "value": 70}]
+    pt.assert_source_assets_current(draft, synced, ASSETS)
+
+    changed = _product()
+    changed["colors"][0]["images"][0]["id"] = (
+        "00000000-0000-0000-0000-000000000099"
+    )
+    with pytest.raises(pt.ProductTruthError) as stale:
+        pt.assert_source_assets_current(draft, changed, ASSETS)
+    assert stale.value.code == "truth_stale"
+
+    changed_checksum = {
+        **ASSETS,
+        "00000000-0000-0000-0000-000000000003": {
+            **ASSETS["00000000-0000-0000-0000-000000000003"],
+            "checksum": "replaced-detail-sha",
+        },
+    }
+    with pytest.raises(pt.ProductTruthError) as stale_checksum:
+        pt.assert_source_assets_current(draft, product, changed_checksum)
+    assert stale_checksum.value.code == "truth_stale"
+
+
 def test_validation_requires_front_and_pattern_evidence():
     missing_front = _product()
     missing_front["colors"][0]["images"] = [im for im in missing_front["colors"][0]["images"]

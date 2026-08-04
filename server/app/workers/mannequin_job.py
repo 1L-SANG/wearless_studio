@@ -1167,13 +1167,50 @@ async def _apply_hybrid_composite(
         source_asset_id=front_ref.asset_id, source_sha256=front_sha_early,
         source_roi=(fx0, fy0, fx1, fy1))
     anchor_corr = None
-    if not isinstance(front_model, CompositeFailure) and (
-            len(front_model.color_sequence_lab) == len(model.color_sequence_lab)
-            and max(abs(a - b) / max(b, 1e-6) for a, b in
-                    zip(front_model.line_width_ratios, model.line_width_ratios)) <= 0.6):
+    front_scan_ok = (not isinstance(front_model, CompositeFailure)
+                     and front_model.confidence >= 0.5)
+    # 주기(스케일 진실)와 팔레트는 별개 판단이다. front 줌에서 잔줄이 2색으로 퇴화해도
+    # (선폭 2.7px 해상 한계 실측) scan 의 **주기**는 패치 합의라 신뢰 가능(20.6 vs
+    # guided 하모닉 45 — 2.2×). 주기를 guided 에 맡기면 출력 줄 간격이 실물의 ~3배로
+    # 성겨지고, QC 는 target 자기일관만 재서 그 스케일 오류를 못 잡는다.
+    if front_scan_ok:
         garment_axis = front_model.axis
         front_period_px = float(front_model.period_px)
         anchor_corr = round(front_model.confidence, 3)
+        # 색 팔레트의 정본 = front-scan 모델 — 단, **구조 완전 일치**(색 수 동일 + 폭 비
+        # 60% 이내)일 때만. 그늘 착용 Detail 은 chroma 가 퇴색된다(실측: beige warm b*
+        # 소실 → 민트-그린). 구조 대조 통과 시에만 교체하므로 바꿔치기는 불가능하다.
+        if (len(front_model.color_sequence_lab) == len(model.color_sequence_lab)
+                and max(abs(a - b) / max(b, 1e-6) for a, b in
+                        zip(front_model.line_width_ratios,
+                            model.line_width_ratios)) <= 0.6):
+            await emit("hybrid_palette_source", chosen="front_scan",
+                       detail_colors=len(model.color_sequence_lab),
+                       front_colors=len(front_model.color_sequence_lab))
+            model = front_model
+        else:
+            # 구조가 퇴화(front 줌에서 잔줄 미해상)해도 **ground 색**은 양쪽 모두 최광폭
+            # run 이라 대응이 확실하다. 그늘 Detail 의 조명 캐스트(민트 방향 ab 편이)를
+            # front ground 와의 Δab 로 전 팔레트에 가산 보정 — 상대 색 구조는 Detail 것
+            # 그대로, 절대 캐스트만 flat-lay 자연광으로 옮긴다. 색 발명 없음.
+            import dataclasses as _dc
+            d_ab = np.array(model.ground_color_lab[1:], np.float32)
+            f_ab = np.array(front_model.ground_color_lab[1:], np.float32)
+            delta = np.clip(f_ab - d_ab, -15.0, 15.0)
+            if float(np.abs(delta).max()) >= 1.0:
+                prof = model.period_profile_lab.copy()
+                prof[:, 1:] += delta
+                model = _dc.replace(
+                    model,
+                    period_profile_lab=prof,
+                    ground_color_lab=(model.ground_color_lab[0],
+                                      float(d_ab[0] + delta[0]), float(d_ab[1] + delta[1])),
+                    color_sequence_lab=tuple(
+                        (c[0], float(c[1] + delta[0]), float(c[2] + delta[1]))
+                        for c in model.color_sequence_lab),
+                )
+                await emit("hybrid_palette_source", chosen="detail_plus_front_ground_cast",
+                           delta_a=round(float(delta[0]), 2), delta_b=round(float(delta[1]), 2))
     else:
         anchor = await asyncio.to_thread(hc_stripe.find_period_guided, torso_crop, model)
         if anchor is None:
@@ -1218,12 +1255,98 @@ async def _apply_hybrid_composite(
                 textureProjection=projection_summary)
         if projection_plan.ok and projection_plan.target_period_px is not None:
             target_period_px = projection_plan.target_period_px
+    if target_period_px < 6.0:
+        # 선폭이 1px 대로 떨어지는 피치 — line 단위 합성·검증이 물리적으로 성립하지 않는
+        # 영역이다(sub-Nyquist). 평균색 블렌드 합성 모드가 구현되기 전까지 typed 거부가
+        # 정직한 동작이다. 성긴 가짜 스케일로 출력하는 것이 최악(같은 상품 아님).
+        return await fail("pattern_metric_failed",
+                          f"target pitch {target_period_px:.1f}px — line 합성 하한(6px) 미만, "
+                          "sub-Nyquist 블렌드 모드 미구현",
+                          **({"textureProjection": projection_summary}
+                             if projection_summary else {}))
     await emit("hybrid_scale_anchor", garment_axis=garment_axis,
                detail_photo_axis=model.axis,
                front_period_px=round(front_period_px, 2),
                anchor_corr=round(anchor_corr, 3),
                repeats_on_torso=round(repeats_on_torso, 2),
                target_period_px=round(target_period_px, 2))
+
+    # construction 비교 입력 보강 — 양쪽 실루엣 mask 에서 같은 연산자로 aspect 유도.
+    # vision landmark 지터가 live 에서 torso_aspect 상대오차 0.80 오판을 만들었다(QA).
+    # stripe 상품은 양쪽 다 줄무늬 에너지 mask 가 성립한다(source=실물 줄, carrier=생성 줄).
+    def _aspect_via_energy(img, lm):
+        ih, iw = img.shape[:2]
+        quad = np.array([[lm["shoulder_l"][0] * iw, lm["shoulder_l"][1] * ih],
+                         [lm["shoulder_r"][0] * iw, lm["shoulder_r"][1] * ih],
+                         [lm["hem_r"][0] * iw, lm["hem_r"][1] * ih],
+                         [lm["hem_l"][0] * iw, lm["hem_l"][1] * ih]], np.float32)
+        m = hc_panel.mask_stripe_energy(img, [quad])
+        return hc_panel.mask_aspect_from_silhouette(m)
+
+    try:
+        src_aspect_mask = await asyncio.to_thread(_aspect_via_energy, front_bgr, src_lm)
+        car_aspect_mask = await asyncio.to_thread(_aspect_via_energy, carrier_bgr, car_lm)
+    except Exception:
+        src_aspect_mask = car_aspect_mask = None
+    # 포즈 불변량 — **줄무늬 수**. mask-aspect 는 소매 포즈(펼침 vs 내림)에 오염된다
+    # (실측: 같은 셔츠 flat-lay↔착장 1.76×). 줄은 원단에 붙어 있어 torso 를 가로지르는
+    # 반복 수는 포즈·줌·뷰와 무관하다. carrier 의 자체 줄 주기를 재서 source 반복 수와
+    # 대조한다 — 이것이 v6(회색 핀스트라이프 = pitch 자체가 다른 재해석)를 잡는 검사다.
+    car_repeats = None
+    try:
+        cy0 = int(min(car_lm["shoulder_l"][1], car_lm["shoulder_r"][1]) * ch)
+        cy1 = int(max(car_lm["hem_l"][1], car_lm["hem_r"][1]) * ch)
+        cx0 = int(min(car_lm["shoulder_l"][0], car_lm["hem_l"][0]) * cw)
+        cx1 = int(max(car_lm["shoulder_r"][0], car_lm["hem_r"][0]) * cw)
+        crop_c = carrier_bgr[max(0, cy0):cy1, max(0, cx0):cx1]
+        # 줄무늬는 원단 전역 신호, 플래킷 단추는 중앙 국소 신호다 — 무지 fixture 에서
+        # 단추 7개가 주기(repeats 4.0)로 오인돼 오차단한 실측. 중앙 20% 를 제외한
+        # 좌/우 반쪽이 **둘 다** 의류 스케일에서 유효하고 주기가 15% 내로 합치할 때만
+        # carrier 에 줄무늬가 있다고 인정한다.
+        cw_c = crop_c.shape[1]
+        halves = [crop_c[:, :int(cw_c * 0.40)], crop_c[:, int(cw_c * 0.60):]]
+        periods = []
+        for half in halves:
+            if min(half.shape[:2]) < 64:
+                break
+            hx = await asyncio.to_thread(hc_stripe.measure_axes, half)
+            ax_h = hx.get(garment_axis)
+            if (ax_h is None or not ax_h.period_px or ax_h.strength < 0.3
+                    or not hx.get(f"{garment_axis}_valid")):
+                break
+            periods.append(float(ax_h.period_px))
+        if (len(periods) == 2
+                and abs(periods[0] - periods[1]) / max(periods) <= 0.15):
+            car_span = (cy1 - cy0) if garment_axis == "horizontal" else (cx1 - cx0)
+            cand = car_span / (sum(periods) / 2)
+            if cand >= 4.0:  # 저주파 주름(반복 1~3회) 배제
+                car_repeats = cand
+    except Exception:
+        car_repeats = None
+    if car_repeats:
+        rel = abs(car_repeats - repeats_on_torso) / max(repeats_on_torso, 1e-6)
+        await emit("hybrid_repeat_invariant",
+                   source_repeats=round(repeats_on_torso, 1),
+                   carrier_repeats=round(car_repeats, 1), rel_err=round(rel, 3))
+        if rel > 0.40:
+            summary = _hc_fail_summary(
+                "geometry_carrier_mismatch",
+                f"torso 줄 수 불변량 위반: source {repeats_on_torso:.1f} vs "
+                f"carrier {car_repeats:.1f} (rel {rel:.2f} > 0.40)")
+            await emit("hybrid_composite_completed", outcome="geometry_carrier_mismatch",
+                       detail=summary["failureDetail"])
+            return res, summary
+        # 줄 수 불변량이 성립하면 aspect(포즈 오염) 비교는 생략 — 관측만 남긴다
+        src_inv = {**(src_inv or {}), "torso_aspect_mask": None}
+        car_inv = {**(car_inv or {}), "torso_aspect_mask": None}
+    elif src_aspect_mask and car_aspect_mask:
+        src_inv = {**(src_inv or {}), "torso_aspect_mask": src_aspect_mask}
+        car_inv = {**(car_inv or {}), "torso_aspect_mask": car_aspect_mask}
+        await emit("hybrid_geometry_anchor",
+                   source_aspect_mask=round(src_aspect_mask, 3),
+                   carrier_aspect_mask=round(car_aspect_mask, 3),
+                   source_aspect_vision=(src_inv or {}).get("torso_aspect"),
+                   carrier_aspect_vision=(car_inv or {}).get("torso_aspect"))
 
     # Stage 3 — panel map (+ construction 대조)
     pm = await asyncio.to_thread(
@@ -1255,6 +1378,7 @@ async def _apply_hybrid_composite(
     # Stage 5 — deterministic QC (LLM 이 못 뒤집는 판정)
     qc = await asyncio.to_thread(
         hc_qc.verify_composite, art.image_bgr, carrier_bgr, pm, model,
+        painted_mask=art.painted,
         target_period_px=target_period_px, target_axis=garment_axis)
     qc_event_metrics = {k: v for k, v in qc.metrics.items() if k != "failure_details"}
     await emit("hybrid_deterministic_qc", passed=qc.passed,

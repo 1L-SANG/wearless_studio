@@ -31,8 +31,11 @@ CONSTRUCTION_RATIO_TOL = 0.35
 @dataclass(frozen=True)
 class Panel:
     name: str            # torso | sleeve_l | sleeve_r | collar | placket | cuff_l | cuff_r
+    # sleeve panel 은 quad 가 근사 밴드(실제 손목보다 길 수 있음)라, 커프스 판정용으로
+    # 어깨점→소매끝 landmark 의 정확한 축 끝점을 함께 실어 보낸다.
     kind: str            # "stripe"(타일 합성) | "decal"(source 패치 warp)
     quad: np.ndarray     # (4,2) float32 — TL, TR, BR, BL (px)
+    axis_ends: tuple | None = None  # ((x,y) 근위, (x,y) 원위) — sleeve 만
 
 
 @dataclass(frozen=True)
@@ -77,7 +80,10 @@ def mask_bg_diff(carrier_bgr: np.ndarray, panel_polys: list[np.ndarray]) -> np.n
     poly_mask = np.zeros((h, w), np.uint8)
     for p in panel_polys:
         cv2.fillPoly(poly_mask, [p.astype(np.int32)], 255)
-    poly_dilated = cv2.dilate(poly_mask, kernel, iterations=6)
+    # 이웃 확장은 이미지 크기에 비례 — 고정 6회(≈12px)는 밑단 플레어·소매 밖 실루엣을
+    # 잘라 다시 quad 근방 슬랩으로 만든다.
+    poly_dilated = cv2.dilate(poly_mask, kernel,
+                              iterations=max(6, int(min(h, w) * 0.14 / 4)))
     return cv2.bitwise_and(fg, poly_dilated)
 
 
@@ -119,6 +125,35 @@ def mask_stripe_energy(carrier_bgr: np.ndarray, panel_polys: list[np.ndarray]) -
     for i in overlap_ids:
         keep[labels == i] = 255
     return keep
+
+
+def mask_aspect_from_silhouette(mask: np.ndarray) -> float | None:
+    """실루엣 mask 에서 torso aspect(H/W) 유도 — vision landmark 지터와 무관한 결정론 측정.
+
+    live 실패(torso_aspect 상대오차 0.80)의 원인은 vision 이 hem/shoulder 를 흔들리게
+    잡는 것이었다. 같은 **측정 연산자**를 source/carrier 양쪽 mask 에 적용하면 뷰 차이만
+    남고 landmark 잡음은 사라진다. W = mask bbox 중간대(35~75%)의 행 폭 중앙값(소매
+    시작부·밑단 플레어 회피), H = bbox 높이.
+    """
+    ys, xs = np.nonzero(mask)
+    if len(ys) < 100:
+        return None
+    y0, y1 = int(ys.min()), int(ys.max())
+    h = y1 - y0
+    if h < 20:
+        return None
+    b0, b1 = y0 + int(h * 0.35), y0 + int(h * 0.75)
+    widths = []
+    for y in range(b0, b1 + 1):
+        row = np.nonzero(mask[y])[0]
+        if len(row):
+            widths.append(int(row.max() - row.min()) + 1)
+    if len(widths) < 10:
+        return None
+    w_med = float(np.median(widths))
+    if w_med < 10:
+        return None
+    return float(h / w_med)
 
 
 def _panel_texture_energy(carrier_bgr: np.ndarray, poly_mask: np.ndarray) -> float:
@@ -224,7 +259,8 @@ def build_panel_map(
         if abs(_quad_convex_and_ccw_area(q)) < 16:
             continue
         panels.append(Panel(f"sleeve_{side}", "stripe",
-                            q if _quad_convex_and_ccw_area(q) > 0 else q[::-1].copy()))
+                            q if _quad_convex_and_ccw_area(q) > 0 else q[::-1].copy(),
+                            axis_ends=(tuple(map(float, top)), tuple(map(float, end)))))
 
     # construction 대조 — geometry carrier 가 원본과 같은 구조인가
     inv_metrics = {}
@@ -248,6 +284,32 @@ def build_panel_map(
                 inv_metrics[k] = {"source": s_val, "carrier": c_val}
         for k in CONSTRUCTION_RATIO_KEYS:
             s_val, c_val = source_inventory.get(k), carrier_inventory.get(k)
+            if k == "torso_aspect":
+                s_m = source_inventory.get("torso_aspect_mask")
+                c_m = carrier_inventory.get("torso_aspect_mask")
+                if ("torso_aspect_mask" in source_inventory
+                        and "torso_aspect_mask" in carrier_inventory
+                        and s_m is None and c_m is None):
+                    # 워커의 명시 신호: 줄 수 불변량이 정체성을 이미 보증했으니 aspect
+                    # 비교를 생략하라(키 존재 + None). 이걸 generic vision 쌍 하드
+                    # 게이트로 떨어뜨리면 교차-포즈 지터 오차단(rel 0.80 실측)이
+                    # happy path 에서 재발한다 — final-code 리뷰 H1.
+                    inv_metrics[k] = {"skipped_by_repeat_invariant": True}
+                    continue
+                if isinstance(s_m, (int, float)) and isinstance(c_m, (int, float)):
+                    # 같은 측정 연산자(mask 유도)끼리의 비교가 정본 — vision 지터 배제.
+                    # 관용도 넓힌다(0.60): 이 제품의 기능 자체가 핏/기장 **조정**이라
+                    # aspect 변화는 요청된 결과일 수 있다(G-계열 실측: regular↔boxy↔long
+                    # 전부 45% 이내). 여기서 막을 것은 물리적으로 다른 물체(드레스↔크롭)뿐.
+                    # 패턴 정체성은 별도 deterministic gate 가 지킨다.
+                    # 교차-포즈 aspect 는 hard gate 로 불건전 — 같은 셔츠가 flat-lay↔착장
+                    # 에서 1.75~1.76× 로 측정된다(2회 실측, D7). mask 쌍이 있으면 vision
+                    # 쌍 비교를 대체하되 **관측 지표로만** 남긴다. 정체성 차단은
+                    # 줄 수 불변량(워커) + Stage-5 패턴 QC + construction 카운트 소관.
+                    inv_metrics[k] = {"source_mask": round(float(s_m), 3),
+                                      "carrier_mask": round(float(c_m), 3),
+                                      "observational_only": True}
+                    continue
             if isinstance(s_val, (int, float)) and isinstance(c_val, (int, float)) and s_val > 0:
                 rel = abs(c_val - s_val) / s_val
                 inv_metrics[k] = {"source": s_val, "carrier": c_val, "rel_err": round(rel, 3)}
@@ -325,7 +387,56 @@ def build_panel_map(
              "texture_energy_p95": round(texture_p95, 3),
              "strategy": strategy_used})
 
-    work = cv2.bitwise_and(garment, poly_mask)  # 패턴 대상 = mask ∩ panel 합집합
+    # 패턴 대상 = **실루엣 mask 자체**. quad 는 방향/워프 힌트일 뿐이다 — mask 를 quad 로
+    # 자르면 실루엣이 아무리 정확해도 출력이 사각 슬랩이 된다(aed4e94 QA FAIL 결함 #5 뿌리).
+    work = garment.copy()
+    # 해부학적 y-경계 — 에너지 mask 는 사람 모델이 없어 목/머리(칼라 위)와 스커트(밑단
+    # 아래)로 번진다(실캐리어 실측: 목까지 줄무늬 + 밑단 드립). 어깨선 위와 밑단 아래는
+    # 셔츠가 존재할 수 없는 영역이므로 landmark y-경계로 클립한다. y 좌표는 landmark 중
+    # 가장 안정적인 성분이다(지터는 주로 폭 방향).
+    shoulder_y = min(sl[1], sr[1])
+    hem_y = max(hl[1], hr[1])
+    y_top = max(0, int(shoulder_y - h * 0.02))
+    y_bot = min(h, int(hem_y + h * 0.03))
+    # 밑단 진실 = 캐리어 자신의 줄 에너지가 끝나는 행. bg_diff 는 흰 스커트를 전경으로
+    # 잡고, landmark hem 이 실제 셔츠 밑단보다 아래면 스커트 위에 사각 페인트 블록이 뜬다
+    # (blind visual 실측: '계단형 부유 블록'). 스커트/배경에는 줄 에너지가 없으므로
+    # 에너지 행 범위가 landmark 보다 타이트하면 그쪽을 쓴다.
+    # landmark hem 주변 지대는 컬럼별 정밀 판정 — landmark hem 이 실제 셔츠 밑단보다
+    # 아래면 bg_diff/stripe_energy mask 모두 민무늬 스커트 위에 페인트 블록을 띄운다
+    # (blind visual 실측: '계단형 부유 블록'). 판정은 mask_stripe_energy 를 쓰면 안 된다
+    # — close/fill 후 마스크라 좌우 언더레이어가 중앙 민무늬를 이어 붙인다(동어반복,
+    # 실측). **raw 고주파**(|L−blur(L)|)로 잰다: 줄 원단만 발화, 민무늬 스커트는 0.
+    hem_row = max(0, int(hem_y - h * 0.02))
+    if hem_row < y_bot:
+        lum = cv2.cvtColor(carrier_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        hf = np.abs(lum - cv2.GaussianBlur(lum, (0, 0), sigmaX=4.0))
+        zone_h = y_bot - hem_row
+        zone_cols = (hf[hem_row:y_bot] > 2.5).sum(axis=0) > zone_h * 0.10
+        if zone_cols.any():
+            # 다수결 필터 — 스커트 주름끈/시임은 HF 가 세로로 연속이라 컬럼 단독으로는
+            # 줄 원단과 구분이 안 된다(실측: 부유 블록 잔존). 줄 원단은 x 방향으로 밀집
+            # 발화하므로 이웃 다수결로 고립/협소 컬럼을 걸러낸다.
+            k = max(31, int(w * 0.015) | 1)
+            density = np.convolve(zone_cols.astype(np.float32),
+                                  np.ones(k, np.float32) / k, mode="same")
+            zone_cols = density > 0.55
+        _hem_zone = (hem_row, zone_cols)
+    else:
+        _hem_zone = None
+    work[:y_top] = 0
+    work[y_bot:] = 0
+    # 프린지/홀 충전 — stripe-energy 기반 mask 는 줄 위상에 따라 톱니(소매 가장자리 미페인트
+    # 띠)와 그늘 홀(어깨 그림자 패치)을 남긴다(실캐리어 paint-map 실측). close 는 mask 내부
+    # 간극만 잇고 실루엣 밖(배경엔 mask 픽셀이 없음)으로는 못 자란다. y-경계는 재적용.
+    ck = max(15, int(min(h, w) * 0.02) | 1)
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ck, ck))
+    work = cv2.morphologyEx(work, cv2.MORPH_CLOSE, close_kernel)
+    work[:y_top] = 0
+    work[y_bot:] = 0
+    if _hem_zone is not None:
+        hz_row, hz_cols = _hem_zone
+        work[hz_row:y_bot][:, ~hz_cols] = 0
     band = max(3, int(min(h, w) * BOUNDARY_BAND_PX_FRAC))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (band * 2 + 1, band * 2 + 1))
     protected = cv2.erode(work, kernel)

@@ -95,6 +95,85 @@ def test_get_job_returns_typed_failure_without_raw_metadata(client, make_token, 
     assert "metadata" not in body
 
 
+def test_product_truth_approval_reseals_current_fingerprint_after_product_sync(
+    client, make_token, monkeypatch
+):
+    """analyze 직후 상품 메타 저장이 draft를 즉시 stale로 만들면 안 된다."""
+    asset_id = "00000000-0000-0000-0000-000000000001"
+    product = {
+        "id": "prod-1",
+        "project_id": "p1",
+        "name": "확정 상품명",
+        "clothing_type": "top",
+        "colors": [{
+            "id": "base", "isBase": True, "name": "ivory",
+            "images": [{"id": asset_id, "slot": "Front", "label": "Front"}],
+        }],
+        "measurements": [{"name": "총장", "value": 70}],
+        "measurements_unknown": False,
+    }
+    analysis = {"subCategory": "shirt", "fit": "regular", "styleTags": ["plain"]}
+    evidence = [{
+        "id": asset_id, "checksum": "front-sha", "width": 1200, "height": 1600,
+        "mime_type": "image/jpeg", "source": "upload",
+    }]
+    draft = routes.product_truth_service.build_truth_draft(product, analysis, evidence)
+    old_fingerprint = "draft-before-product-sync"
+    source_rows = [{
+        "id": "truth-asset-1", "asset_id": item["assetId"], "role": item["role"],
+        "view": item["view"], "color_id": item["colorId"], "part": item["part"],
+        "sort_order": item["sortOrder"], "checksum": item["checksum"],
+        "width": item["width"], "height": item["height"], "metadata": item["metadata"],
+    } for item in draft["sourceAssets"]]
+    row = {
+        "id": "truth-1", "project_id": "p1", "product_id": "prod-1",
+        "version": 1, "status": "draft", "schema_version": draft["schemaVersion"],
+        "garment_spec": draft["garmentSpec"], "color_spec": draft["colorSpec"],
+        "pattern_spec": draft["patternSpec"],
+        "protected_details": draft["protectedDetails"],
+        "source_evidence": draft["sourceEvidence"],
+        "uncertain_fields": [], "garment_profile": None,
+        "analysis_confidence": None, "source_fingerprint": old_fingerprint,
+        "source_assets": source_rows, "created_at": None, "approved_at": None,
+        "rejected_at": None,
+    }
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_get_truth(conn, project_id, *, truth_id=None, status=None):
+        return row
+
+    async def fake_truth_inputs(conn, *, project_id, user_id, product=None):
+        return product_sync, analysis, evidence
+
+    product_sync = dict(product)
+
+    async def fake_approve(conn, **kwargs):
+        seen.update(kwargs)
+        return {
+            **row, "status": "approved", "garment_profile": kwargs["garment_profile"],
+            "source_fingerprint": kwargs["source_fingerprint"],
+        }
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product_truth", fake_get_truth)
+    monkeypatch.setattr(routes, "_truth_inputs", fake_truth_inputs)
+    monkeypatch.setattr(routes.repo, "approve_product_truth", fake_approve)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.post(
+        "/v1/projects/p1/product-truth/truth-1:approve",
+        headers=_auth(make_token),
+    )
+
+    assert res.status_code == 200, res.text
+    expected = routes.product_truth_service.source_fingerprint(product_sync, analysis, evidence)
+    assert seen["source_fingerprint"] == expected
+    assert seen["source_fingerprint"] != old_fingerprint
+
+
 def test_save_analysis_forces_dress_to_women(client, make_token, monkeypatch):
     seen = {}
 
