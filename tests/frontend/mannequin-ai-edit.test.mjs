@@ -133,7 +133,7 @@ test('mannequin screen has a separate AI partial-edit panel wired to the limited
 test('mannequin confirm CTA records the selected cut as the baseline before storyboard navigation', () => {
   const approveIndex = mannequinSource.indexOf('const approvedBaseline = await api.approveMannequin(projectId, latestSelected.id);');
   const storeIndex = mannequinSource.indexOf('setActiveBaseline(approvedBaseline || null);', approveIndex);
-  const navigateIndex = mannequinSource.indexOf("navigate('/create/storyboard');");
+  const navigateIndex = mannequinSource.indexOf("navigate('/create/storyboard');", approveIndex);
   assert.notEqual(approveIndex, -1);
   assert.notEqual(storeIndex, -1);
   assert.notEqual(navigateIndex, -1);
@@ -174,6 +174,19 @@ test('downgrade decisions save original hero and safe metadata through the exist
   assert.match(mannequinSource, /sourceCutId/);
   assert.match(mannequinSource, /aiUsageLabel:\s*'fit_reference'/);
   assert.match(mannequinSource, /AI 생성 · 핏 참고용/);
+});
+
+test('failed deterministic composite offers only original hero or regeneration', () => {
+  const failureIndex = mannequinSource.indexOf('className="fit-regenerate-failure"');
+  assert.ok(failureIndex > -1, 'persistent failure panel is missing');
+  const failureBlock = mannequinSource.slice(failureIndex, failureIndex + 2200);
+
+  assert.match(failureBlock, /원본 실사 hero 사용/);
+  assert.match(failureBlock, /다시 생성/);
+  assert.match(failureBlock, /chooseFailedProjectionOriginalHero/);
+  assert.match(failureBlock, /retryGeneration/);
+  assert.doesNotMatch(failureBlock, /핏 참고/);
+  assert.doesNotMatch(failureBlock, /chooseAiFitReferenceOnly/);
 });
 
 test('downgrade-required cuts cannot reach storyboard until a downgrade choice succeeds', () => {

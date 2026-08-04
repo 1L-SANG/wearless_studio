@@ -23,9 +23,10 @@ CONSTRUCTION_COUNT_KEYS = ("visible_buttons",)
 CONSTRUCTION_BOOL_KEYS = ("collar", "placket", "cuffs")
 CONSTRUCTION_RATIO_KEYS = ("torso_aspect", "sleeve_len_ratio")
 # 정규화 비율 상대 오차 허용. flat-lay 정면 ↔ 3/4 착장뷰 교차 비교의 노이즈 플로어를
-# 같은 셔츠 쌍으로 실측(2026-08-01, vision 3회: 6.4%/25%/29% — 시점 폭 압축 + landmark 지터).
-# 진짜 구조 불일치(기장/폭 다른 옷)는 50%+ 로 갈라져 0.35 에서도 차단된다(단위테스트 ×1.5).
-CONSTRUCTION_RATIO_TOL = 0.35
+# 같은 셔츠 쌍으로 실측했다. 초기 3회는 6.4%/25%/29%였지만 실제 4K 생성에서는
+# sleeve foreshortening이 35.0~35.6%까지 반복됐다(2026-08-04). 40%는 이 실측 상한을
+# 포함하면서 진짜 구조 불일치(기장/폭 다른 옷, 42~50%+)는 계속 차단한다.
+CONSTRUCTION_RATIO_TOL = 0.40
 
 
 @dataclass(frozen=True)
@@ -312,11 +313,20 @@ def build_panel_map(
                     continue
             if isinstance(s_val, (int, float)) and isinstance(c_val, (int, float)) and s_val > 0:
                 rel = abs(c_val - s_val) / s_val
-                inv_metrics[k] = {"source": s_val, "carrier": c_val, "rel_err": round(rel, 3)}
-                if rel > CONSTRUCTION_RATIO_TOL:
+                # Decision precision must match the persisted metric.  Otherwise a
+                # value such as 0.35032 is rendered as `0.35 > 0.35` and rejects a
+                # carrier at the documented boundary because of invisible float
+                # noise (observed on the real 4K stripe sample).
+                rel_for_decision = round(rel, 3)
+                inv_metrics[k] = {
+                    "source": s_val,
+                    "carrier": c_val,
+                    "rel_err": rel_for_decision,
+                }
+                if rel_for_decision > CONSTRUCTION_RATIO_TOL:
                     return CompositeFailure(
                         "geometry_carrier_mismatch",
-                        f"{k} 상대 오차 {rel:.2f} > {CONSTRUCTION_RATIO_TOL}",
+                        f"{k} 상대 오차 {rel_for_decision:.3f} > {CONSTRUCTION_RATIO_TOL}",
                         {"source": s_val, "carrier": c_val})
 
     polys = [p.quad for p in panels]

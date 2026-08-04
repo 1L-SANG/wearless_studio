@@ -72,6 +72,16 @@ def test_fine_pattern_detection_uses_structured_product_truth_before_text_fallba
     )
 
 
+def test_approved_stripe_is_high_resolution_even_when_fine_pattern_flag_is_false():
+    """STRIPE type 자체가 4K 계약이다; 분석기의 finePattern 오판이 해상도를 낮추면 안 된다."""
+    approved_stripe_truth = {
+        "status": "approved",
+        "patternSpec": {"type": "STRIPE", "finePattern": False},
+    }
+
+    assert mannequin.has_fine_pattern({}, {}, approved_stripe_truth)
+
+
 def test_fine_pattern_detection_uses_structured_analysis_before_legacy_text():
     """승인 Product Truth가 없으면 analysis patternSpec이 레거시 텍스트보다 먼저 적용된다."""
     assert not mannequin.has_fine_pattern(

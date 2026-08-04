@@ -30,7 +30,13 @@ from hybrid_stripe_fixtures import (
 )
 from app.services.hybrid_composite.color import bgr_to_lab, ciede2000
 from app.services.hybrid_composite.deterministic_qc import verify_composite
-from app.services.hybrid_composite.panel_map import build_panel_map, mask_bg_diff, mask_grabcut
+from app.services.hybrid_composite.panel_map import (
+    Panel,
+    PanelMap,
+    build_panel_map,
+    mask_bg_diff,
+    mask_grabcut,
+)
 from app.services.hybrid_composite.source_validation import validate_stripe_source
 from app.services.hybrid_composite.stripe_model import extract_stripe_model
 from app.services.hybrid_composite.types import COMPOSITE_FAILURE_REASONS, CompositeFailure
@@ -412,6 +418,7 @@ def test_deterministic_qc_exposes_projection_completion_metrics():
         target_period_px=period_t,
         target_axis="horizontal",
         painted_mask=art.painted,
+        coverage_mask=art.coverage_scope,
     )
     assert qc.passed, qc.metrics["failure_details"]
     for key in (
@@ -454,6 +461,41 @@ def test_shadow_observation_can_return_low_coverage_artifact_without_relaxing_de
         painted_mask=observed.painted,
     )
     assert "mask_coverage" in qc.metrics
+
+
+def test_intentionally_preserved_cuff_band_is_not_counted_as_missing_source_coverage():
+    """Cuffs stay carrier-owned by design and therefore are outside the projection coverage scope."""
+    model = _model()
+    assert not isinstance(model, CompositeFailure)
+    h, w = 240, 100
+    carrier = np.full((h, w, 3), 210, np.uint8)
+    garment = np.zeros((h, w), np.uint8)
+    garment[20:221, 25:76] = 255
+    panel = Panel(
+        "sleeve_l",
+        "stripe",
+        np.array([[25, 20], [75, 20], [75, 220], [25, 220]], np.float32),
+        axis_ends=((50.0, 20.0), (50.0, 220.0)),
+    )
+    panel_map = PanelMap(
+        garment_mask=garment,
+        protected=garment.copy(),
+        boundary=np.zeros_like(garment),
+        panels=(panel,),
+        confidence=1.0,
+        strategy="fixture",
+    )
+
+    artifact = composite_stripe(
+        carrier,
+        panel_map,
+        model,
+        target_period_px=12.0,
+        target_axis="vertical",
+    )
+
+    assert not isinstance(artifact, CompositeFailure), artifact
+    assert artifact.source_coverage >= 0.90
 
 
 def test_warp_rejects_flipped_quad():

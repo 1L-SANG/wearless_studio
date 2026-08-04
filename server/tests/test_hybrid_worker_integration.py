@@ -676,15 +676,16 @@ def test_deterministic_pass_suppresses_llm_retry_and_records_it(monkeypatch):
         "deterministic 통과 + LLM regenerate → 자동통과 미화도, 재생성도 아닌 needs_review")
 
 
-def test_applied_composite_with_components_needing_review_finalizes_as_review(monkeypatch):
-    _oplog, calls, _r2, _emits = _run_job(monkeypatch, carrier_component_box=True)
-    assert calls["failure"] == []
-    assert len(calls["success"]) == 1
-    cut = calls["success"][0]["candidates"][0]
-    hc = cut["qc_scores"]["hybridComposite"]
-    assert hc["applied"] is True
-    assert hc["componentsNeedingReview"] == ["collar_box"]
-    assert cut["qc_scores"]["outcome"] == "needs_review"
+def test_enforce_composite_with_unprotected_component_fails_before_save(monkeypatch):
+    _oplog, calls, r2_saved, emits = _run_job(monkeypatch, carrier_component_box=True)
+
+    assert calls["success"] == []
+    assert len(calls["failure"]) == 1
+    assert r2_saved == {}
+    assert calls["failure"][0]["metadata"]["failureReason"] == "protected_component_missing"
+    completed = next(p for _e, p in emits if p.get("status") == "hybrid_composite_completed")
+    assert completed["outcome"] == "protected_component_missing"
+    assert completed["fail_closed"] is True
 
 
 def test_composite_failure_cannot_be_overridden_by_llm_auto_pass(monkeypatch):

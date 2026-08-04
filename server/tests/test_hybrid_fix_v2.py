@@ -157,6 +157,47 @@ def test_build_panel_map_prefers_mask_derived_aspect_over_vision():
     assert pm3.reason == "geometry_carrier_mismatch"
 
 
+def test_construction_ratio_boundary_uses_reported_precision():
+    """A displayed 0.35 must not be rejected as `0.35 > 0.35` by hidden float noise."""
+    cx = render_carrier("G1_regular", 0)
+    base = dict(cx["construction_inventory"])
+    source = {**base, "sleeve_len_ratio": 1.55}
+    carrier = {**base, "sleeve_len_ratio": 1.007}
+
+    panel_map = build_panel_map(
+        cx["image"],
+        cx["landmarks"],
+        source_inventory=source,
+        carrier_inventory=carrier,
+    )
+
+    assert not isinstance(panel_map, CompositeFailure), getattr(panel_map, "detail", None)
+
+
+def test_sleeve_ratio_live_view_tolerance_still_rejects_structural_mismatch():
+    """Flat-lay↔3/4 sleeve foreshortening may reach 40%; larger structure drift stays closed."""
+    cx = render_carrier("G1_regular", 0)
+    base = dict(cx["construction_inventory"])
+    source = {**base, "sleeve_len_ratio": 1.55}
+
+    within = build_panel_map(
+        cx["image"],
+        cx["landmarks"],
+        source_inventory=source,
+        carrier_inventory={**base, "sleeve_len_ratio": 1.55 * 0.60},
+    )
+    outside = build_panel_map(
+        cx["image"],
+        cx["landmarks"],
+        source_inventory=source,
+        carrier_inventory={**base, "sleeve_len_ratio": 1.55 * 0.58},
+    )
+
+    assert not isinstance(within, CompositeFailure), getattr(within, "detail", None)
+    assert isinstance(outside, CompositeFailure)
+    assert outside.reason == "geometry_carrier_mismatch"
+
+
 # ── US-3: 보호 영역 — 커프스 밴드·칼라 위·밑단 아래는 carrier 픽셀 보존 ──────────
 
 def _composited_g1(full=False):

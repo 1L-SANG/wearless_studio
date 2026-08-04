@@ -25,6 +25,7 @@ COMPOSITE_FAILURE_REASONS = frozenset({
     "geometry_carrier_mismatch",    # carrier 의 구조(칼라·단추·비율)가 원본과 다름
     "warp_invalid",                 # negative Jacobian / triangle flip / 과도 stretch
     "source_coverage_low",          # protected 내부의 source-derived 비율 미달
+    "protected_component_missing", # 칼라·플래킷 등 보호 부위 source decal 부재
     "pattern_metric_failed",        # 합성 결과 재측정이 source 모델과 불일치
     "protected_region_drift",       # 보호 영역 밖 픽셀이 carrier 에서 이탈
 })

@@ -246,6 +246,11 @@
 .fit-regenerate-failure b { font-size: 13px; font-weight: 800; }
 .fit-regenerate-failure span { font-size: 12px; line-height: 1.45; }
 .fit-regenerate-failure small { font-size: 11px; line-height: 1.4; color: #6f2727; }
+.fit-regenerate-failure-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 7px; }
+.fit-regenerate-failure-actions button, .fit-original-hero-fallback { min-height: 38px; border: 1px solid #d58d8d; border-radius: var(--r-4); padding: 8px 10px; background: #fff; color: #781b1b; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; }
+.fit-regenerate-failure-actions button:hover:not(:disabled), .fit-original-hero-fallback:hover:not(:disabled) { border-color: #9f3030; background: #fff8f8; }
+.fit-regenerate-failure-actions button:disabled, .fit-original-hero-fallback:disabled { cursor: wait; opacity: .55; }
+.fit-original-hero-fallback { display: block; margin: 0 auto 18px; }
 .fit-doner { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 7px; margin-bottom: 13px; }
 .fit-chip { display: inline-flex; align-items: center; height: fit-content; gap: 6px; font-size: 12px; font-weight: 600; color: var(--link); background: color-mix(in srgb, var(--link) 9%, var(--bg-1)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--link) 30%, transparent); border-radius: var(--r-pill); padding: 5px 6px 5px 11px; }
 .fit-chip.ghost { color: var(--fg-3); background: transparent; box-shadow: inset 0 0 0 1px var(--ring-strong); padding: 5px 11px; }

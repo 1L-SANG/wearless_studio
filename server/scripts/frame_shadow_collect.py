@@ -167,7 +167,7 @@ def _arm_rows(arms: list[dict], reps: int) -> list[tuple[dict, int]]:
     return out
 
 
-def _expected_run(settings) -> dict:
+def _expected_run(settings, *, image_size: str | None = None) -> dict:
     prompt_body = load_prompt_template(settings)
     vision_prompt = Path(mannequin_frame_vision._PROMPT_FILE).read_text(encoding="utf-8")
     model = getattr(settings, "model_image_high", None) or \
@@ -179,7 +179,7 @@ def _expected_run(settings) -> dict:
         frame_vision_prompt_version=mannequin_frame_vision.PROMPT_VERSION,
         frame_vision_prompt=vision_prompt,
         code_commit=_git_sha(),
-        image_size=settings.mannequin_image_size,
+        image_size=image_size or settings.mannequin_image_size,
         image_size_cap=settings.mannequin_image_size_cap,
         aspect_ratio=settings.mannequin_aspect_ratio,
         frame_qc_mode=settings.mannequin_frame_qc,
@@ -484,6 +484,7 @@ def _projection_smoke_summary(events: list[dict], *, strict: bool = True) -> dic
             and deterministic_summary["passed"]
             and completed is not None
             and completed.get("outcome") in {"applied", "would_apply"}
+            and completed.get("needs_review") is not True
         ),
         "hybrid": ({
             "mode": started.get("mode"),
@@ -799,6 +800,10 @@ def main() -> int:
         "--projection-smoke", action="store_true",
         help="run one hybrid/projection shadow sample; never calibration-eligible",
     )
+    smoke_modes.add_argument(
+        "--projection-enforce-smoke", action="store_true",
+        help="run one 4K fine-pattern sample through the real fail-closed apply gate",
+    )
     ap.add_argument("--prepare-test-truth", action="store_true",
                     help="future test-data-only Product Truth setup; guarded and default off")
     ap.add_argument("--actor-id", help="required with --prepare-test-truth")
@@ -810,7 +815,11 @@ def main() -> int:
     samples_path = run_dir / "samples.jsonl"
 
     settings = load_settings()
-    if args.projection_smoke:
+    if args.projection_enforce_smoke:
+        problems = fc.projection_enforce_smoke_env_preflight(
+            os.environ, require_inline=args.execute
+        )
+    elif args.projection_smoke:
         problems = fc.projection_smoke_env_preflight(
             os.environ, require_inline=args.execute
         )
@@ -824,16 +833,21 @@ def main() -> int:
     if args.execute or source_manifest:
         problems.extend(_validate_execute_manifest(arms, minimum_arms=1))
         problems.extend(_validate_collection_shape(
-            arms, reps=args.reps, smoke=args.smoke or args.projection_smoke
+            arms, reps=args.reps,
+            smoke=args.smoke or args.projection_smoke or args.projection_enforce_smoke,
         ))
-        if args.projection_smoke:
+        if args.projection_smoke or args.projection_enforce_smoke:
             problems.extend(_validate_projection_smoke_shape(arms, reps=args.reps))
     if problems:
         _write_preflight_failure(run_dir, dataset_id, sorted(set(problems)))
         print(f"REFUSING frame collection: {sorted(set(problems))}")
         return 2
 
-    expected_run = _expected_run(settings)
+    expected_run = _expected_run(
+        settings,
+        image_size=(settings.mannequin_pattern_image_size
+                    if args.projection_enforce_smoke else None),
+    )
     if args.resume:
         try:
             fc.assert_resumable(samples_path, expected_run=expected_run)
@@ -850,21 +864,27 @@ def main() -> int:
     rows = asyncio.run(_execute_collection(
         api_base=args.api, run_dir=run_dir, dataset_id=dataset_id,
         arms=arms, reps=args.reps, expected_run=expected_run,
-        existing_rows=existing_rows, projection_smoke=args.projection_smoke))
+        existing_rows=existing_rows,
+        projection_smoke=args.projection_smoke or args.projection_enforce_smoke))
     manifest = fc.manifest_for_rows(dataset_id=dataset_id, rows=rows)
     row_provenance_valid = manifest["validForCalibration"]
     manifest["purpose"] = (
-        "projection_smoke" if args.projection_smoke
+        "projection_enforce_smoke" if args.projection_enforce_smoke
+        else "projection_smoke" if args.projection_smoke
         else "smoke" if args.smoke else "calibration"
     )
-    manifest["smokeOnly"] = bool(args.smoke or args.projection_smoke)
-    if args.smoke or args.projection_smoke:
+    manifest["smokeOnly"] = bool(
+        args.smoke or args.projection_smoke or args.projection_enforce_smoke
+    )
+    if args.smoke or args.projection_smoke or args.projection_enforce_smoke:
         manifest["validForCalibration"] = False
         manifest["calibrationEligibilityProblems"] = [
-            "projection_smoke_only" if args.projection_smoke else "smoke_only"
+            "projection_enforce_smoke_only" if args.projection_enforce_smoke
+            else "projection_smoke_only" if args.projection_smoke else "smoke_only"
         ]
     projection_wiring_passed = True
-    if args.projection_smoke:
+    projection_quality_passed = True
+    if args.projection_smoke or args.projection_enforce_smoke:
         projection_rows = [
             (row.get("provenance") or {}).get("projectionSmoke") or {}
             for row in rows
@@ -872,16 +892,21 @@ def main() -> int:
         projection_wiring_passed = bool(projection_rows) and all(
             row.get("wiringPassed") is True for row in projection_rows
         )
+        projection_quality_passed = bool(projection_rows) and all(
+            row.get("qualityPassed") is True for row in projection_rows
+        )
         manifest["projectionSmoke"] = {
             "wiringPassed": projection_wiring_passed,
-            "qualityPassed": bool(projection_rows) and all(
-                row.get("qualityPassed") is True for row in projection_rows
-            ),
+            "qualityPassed": projection_quality_passed,
             "sampleCount": len(projection_rows),
         }
     (run_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"collected samples={len(rows)} provider_image_calls={sum(r['imageCallsAttempted'] for r in rows)}")
+    if args.projection_enforce_smoke:
+        return 0 if (row_provenance_valid
+                     and projection_wiring_passed
+                     and projection_quality_passed) else 6
     if args.projection_smoke:
         return 0 if row_provenance_valid and projection_wiring_passed else 6
     return 0 if (row_provenance_valid and args.smoke) or manifest["validForCalibration"] else 5

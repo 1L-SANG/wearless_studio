@@ -136,6 +136,33 @@ def test_projection_smoke_preflight_requires_shadow_projection_runtime():
         )
 
 
+def test_projection_enforce_smoke_preflight_requires_4k_fine_pattern_runtime():
+    env = _projection_smoke_env()
+    env.update({
+        "MANNEQUIN_IMAGE_SIZE_CAP": "off",
+        "MANNEQUIN_PATTERN_IMAGE_SIZE": "4K",
+        "MANNEQUIN_HYBRID_COMPOSITE": "enforce",
+        "MANNEQUIN_TEXTURE_PROJECTION_2D": "enforce",
+    })
+    assert fc.projection_enforce_smoke_env_preflight(
+        env, require_inline=True,
+    ) == []
+
+    cases = {
+        "MANNEQUIN_IMAGE_SIZE": ("2K", "image_size_not_1k"),
+        "MANNEQUIN_IMAGE_SIZE_CAP": ("1K", "image_size_cap_not_off"),
+        "MANNEQUIN_PATTERN_IMAGE_SIZE": ("2K", "pattern_image_size_not_4k"),
+        "MANNEQUIN_HYBRID_COMPOSITE": ("shadow", "hybrid_composite_not_enforce"),
+        "MANNEQUIN_TEXTURE_PROJECTION_2D": ("shadow", "texture_projection_not_enforce"),
+    }
+    for key, (bad_value, expected_problem) in cases.items():
+        broken = dict(env)
+        broken[key] = bad_value
+        assert expected_problem in fc.projection_enforce_smoke_env_preflight(
+            broken, require_inline=True,
+        )
+
+
 def test_projection_smoke_shape_requires_exactly_one_arm_and_rep():
     collect = _load("frame_collect_projection_shape", "scripts/frame_shadow_collect.py")
     one = [{"arm": "stripe"}]
@@ -182,6 +209,34 @@ def test_projection_smoke_summary_is_bounded_and_reports_quality():
         "outside_drift_frac": 0.0,
     }
     assert "secret" not in json.dumps(summary)
+
+
+def test_projection_smoke_summary_rejects_review_only_composite():
+    collect = _load("frame_collect_projection_review", "scripts/frame_shadow_collect.py")
+    summary = collect._projection_smoke_summary([
+        {"status": "hybrid_composite_started", "mode": "enforce"},
+        {
+            "status": "hybrid_texture_projection_plan",
+            "mode": "enforce",
+            "ok": True,
+        },
+        {
+            "status": "hybrid_deterministic_qc",
+            "passed": True,
+            "failures": [],
+            "metrics": {"outside_drift_frac": 0.0},
+        },
+        {
+            "status": "hybrid_composite_completed",
+            "outcome": "applied",
+            "mode": "enforce",
+            "needs_review": True,
+            "coverage": 1.0,
+        },
+    ])
+
+    assert summary["wiringPassed"] is True
+    assert summary["qualityPassed"] is False
 
 
 def test_projection_smoke_summary_fails_when_projection_never_runs():

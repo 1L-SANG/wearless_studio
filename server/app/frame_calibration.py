@@ -133,6 +133,33 @@ def projection_smoke_env_preflight(
     return problems
 
 
+def projection_enforce_smoke_env_preflight(
+    env: dict | None = None, *, require_inline: bool = False
+) -> list[str]:
+    """Fail closed unless one paid sample exercises the real 4K apply gate.
+
+    The common Frame preflight still owns the one-call/no-edit/no-extra-candidate
+    isolation.  Its historical 1K cap and disabled composite requirements are
+    normalized only for that common check, then the actual runtime is validated
+    against the fine-pattern production contract below.
+    """
+    env = env or os.environ
+    common_env = dict(env)
+    common_env["MANNEQUIN_IMAGE_SIZE_CAP"] = "1K"
+    common_env["MANNEQUIN_HYBRID_COMPOSITE"] = "off"
+    common_env["MANNEQUIN_TEXTURE_PROJECTION_2D"] = "off"
+    problems = env_preflight(common_env, require_inline=require_inline)
+    if str(env.get("MANNEQUIN_IMAGE_SIZE_CAP", "")).lower() != "off":
+        problems.append("image_size_cap_not_off")
+    if str(env.get("MANNEQUIN_PATTERN_IMAGE_SIZE", "")).upper() != "4K":
+        problems.append("pattern_image_size_not_4k")
+    if str(env.get("MANNEQUIN_HYBRID_COMPOSITE", "")).lower() != "enforce":
+        problems.append("hybrid_composite_not_enforce")
+    if str(env.get("MANNEQUIN_TEXTURE_PROJECTION_2D", "")).lower() != "enforce":
+        problems.append("texture_projection_not_enforce")
+    return problems
+
+
 def run_fingerprint(*, generation_model: str, generation_prompt_version: str,
                     generation_prompt: str | bytes,
                     frame_vision_prompt_version: str,

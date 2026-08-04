@@ -87,8 +87,8 @@ def test_private_qc_fingerprint_fixture_tracks_only_inputs():
     assert fixture["bundleId"] == "stripe_heic_private_qc"
     assert fixture["bundleHashAlgorithm"] == "designated-private-qc-bundle-v1"
     assert fixture["expectedBundleSha256"] == EXPECTED_BUNDLE_SHA256
-    assert fixture["imageSize"] == "1K"
-    assert fixture["imageSizeCap"] == "1K"
+    assert fixture["imageSize"] == "4K"
+    assert fixture["imageSizeCap"] == "off"
     assert [entry["slot"] for entry in fixture["slots"]] == list(EXPECTED_SLOTS)
     assert len(fixture["slots"]) == 3
     assert {"provider", "model", "prompt", "apiKey"}.isdisjoint(fixture)

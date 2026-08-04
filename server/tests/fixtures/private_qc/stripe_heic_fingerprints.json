@@ -3,8 +3,8 @@
   "bundleId": "stripe_heic_private_qc",
   "bundleHashAlgorithm": "designated-private-qc-bundle-v1",
   "expectedBundleSha256": "67e09ca5c1ae6a195c73416d41e77b5aca4f30dae6f19d1d1a618d0cd6768a4c",
-  "imageSize": "1K",
-  "imageSizeCap": "1K",
+  "imageSize": "4K",
+  "imageSizeCap": "off",
   "slots": [
     {
       "slot": "Front",

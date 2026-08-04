@@ -236,6 +236,7 @@ def verify_composite(
     target_period_px: float,
     target_axis: str,
     painted_mask: np.ndarray | None = None,
+    coverage_mask: np.ndarray | None = None,
 ) -> DeterministicQC:
     """합성 결과 재측정 → typed critical. 실패는 기록이지 예외가 아니다(호출자가 라우팅).
 
@@ -297,7 +298,11 @@ def verify_composite(
         metrics["color_delta_e00_max"] = round(max(color_des), 2)
         metrics["color_delta_e00_median"] = round(float(np.median(color_des)), 2)
     if painted_mask is not None:
-        garment = panel_map.garment_mask > 0
+        garment = (
+            coverage_mask > 0
+            if coverage_mask is not None
+            else panel_map.garment_mask > 0
+        )
         metrics["mask_coverage"] = round(
             float(((painted_mask > 0) & garment).sum()) / max(1, int(garment.sum())), 4)
 

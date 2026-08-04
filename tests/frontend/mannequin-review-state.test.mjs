@@ -427,4 +427,27 @@ test('hybrid failed-closed error produces a persistent typed failure notice', ()
   assert.match(notice.description, /마네킹 구조 기준/);
   assert.match(notice.note, /저장하지 않았고/);
   assert.match(notice.note, /크레딧도 차감되지 않았어요/);
+  assert.deepEqual(notice.actions, ['product_hero', 'regenerate']);
+});
+
+test('generic regenerate failure offers regeneration only', () => {
+  const notice = mannequinRegenerateFailureNotice({
+    code: 'provider_failed',
+    message: '새 버전을 만들지 못했어요.',
+  });
+
+  assert.deepEqual(notice.actions, ['regenerate']);
+});
+
+test('missing protected components explains why the generated candidate was blocked', () => {
+  const notice = mannequinRegenerateFailureNotice({
+    code: 'hybrid_composite_failed_closed',
+    details: {
+      failureReason: 'protected_component_missing',
+      hybridComposite: { failureReason: 'protected_component_missing' },
+    },
+  });
+
+  assert.match(notice.description, /카라·앞여밈/);
+  assert.deepEqual(notice.actions, ['product_hero', 'regenerate']);
 });

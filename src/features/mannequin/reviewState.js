@@ -41,6 +41,7 @@ const REASON_COPY = {
   budget_exhausted: '검토 예산이 끝나 마지막 후보를 남겼어요.',
   loop_exhausted: '자동 재생성 한도에 도달해 마지막 후보를 남겼어요.',
   geometry_carrier_mismatch: '마네킹 구조 기준과 합성 결과가 맞지 않아 이 버전은 사용할 수 없어요.',
+  protected_component_missing: '카라·앞여밈 등 보호 부위를 원본대로 복원하지 못해 이 버전은 사용할 수 없어요.',
 };
 
 const dedupe = (items) => [...new Set(items.filter(Boolean).map(String))];
@@ -242,6 +243,7 @@ export function mannequinRegenerateFailureNotice(error) {
       description: reviewReasonCopy(reason),
       note: '새 버전은 저장하지 않았고, 크레딧도 차감되지 않았어요.',
       reason,
+      actions: ['product_hero', 'regenerate'],
     };
   }
 
@@ -251,6 +253,7 @@ export function mannequinRegenerateFailureNotice(error) {
     description: error?.message || '마네킹 재생성에 실패했어요. 다시 시도해 주세요.',
     note: '',
     reason,
+    actions: ['regenerate'],
   };
 }
 

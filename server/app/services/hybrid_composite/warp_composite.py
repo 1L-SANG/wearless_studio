@@ -29,6 +29,7 @@ class CompositeArtifacts:
     image_bgr: np.ndarray
     alpha: np.ndarray                # 최종 합성 가중치 (0~1)
     painted: np.ndarray              # source-derived 픽셀 (0/255)
+    coverage_scope: np.ndarray       # source-derived 여야 하는 투영 가능 core (0/255)
     panel_metrics: dict
     components_needing_review: tuple
     source_coverage: float
@@ -270,6 +271,14 @@ def composite_stripe(
     for name, tgt in component_boxes.items():
         cv2.fillPoly(comp_masks, [np.asarray(tgt, np.int32)], 255)
     core = protected_sel & (comp_masks == 0)
+    # Cuff bands are deliberately carrier-owned so buttons, seams and gathering
+    # are not painted over.  They must not be counted as missing source coverage
+    # when Vision omitted an explicit cuff component box.  The prior denominator
+    # made a perfectly painted long sleeve report ~0.78 coverage solely because
+    # its intentional 22% cuff preserve band stayed unpainted.
+    preserved_structure = np.zeros((h, w), bool)
+    preserved_structure[ys[cuff_zone], xs[cuff_zone]] = True
+    core &= ~preserved_structure
     coverage = float((painted[core] > 0).mean()) if core.any() else 0.0
     if coverage < MIN_SOURCE_COVERAGE and not allow_low_source_coverage:
         return CompositeFailure(
@@ -279,6 +288,7 @@ def composite_stripe(
 
     return CompositeArtifacts(
         image_bgr=out_bgr, alpha=alpha, painted=painted,
+        coverage_scope=core.astype(np.uint8) * 255,
         panel_metrics=panel_metrics,
         components_needing_review=tuple(components_review),
         source_coverage=coverage,

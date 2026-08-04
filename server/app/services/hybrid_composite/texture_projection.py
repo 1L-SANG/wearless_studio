@@ -98,7 +98,13 @@ def plan_periodic_projection(
             "sourceRepeats": round(repeats, 3),
         })
     scale = target_period / float(source_period_px)
-    if scale < 1.0 / MAX_SCALE_CHANGE or scale > MAX_SCALE_CHANGE:
+    # Upscaling and downsampling are not symmetric risks.  Enlarging beyond the
+    # captured source resolution invents edge detail, so it remains capped.
+    # Downsampling is already guarded by MIN_TARGET_PERIOD_PX and is a normal
+    # consequence of a closer product photo feeding a full-body carrier.  A
+    # symmetric lower bound rejected the real 4K stripe sample at scale 0.32
+    # even though its target period was still resolvable.
+    if scale > MAX_SCALE_CHANGE:
         return _fail("projection_scale_out_of_bounds", target_axis=axis, metrics={
             "projectionScale": round(scale, 4),
             "maxScaleChange": MAX_SCALE_CHANGE,

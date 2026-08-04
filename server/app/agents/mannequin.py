@@ -48,6 +48,8 @@ _REPEATING_PATTERN_TYPES = {
     "herringbone", "dot", "polka", "windowpane", "pattern", "스트라이프", "줄무늬",
     "체크", "깅엄", "타탄", "격자", "도트", "물방울", "잔무늬", "패턴",
 }
+_STRIPE_PATTERN_TYPES = {"stripe", "pinstripe", "스트라이프", "줄무늬", "핀스트라이프"}
+_STRIPE_PATTERN_TOKENS = tuple(_STRIPE_PATTERN_TYPES)
 
 
 def _truthy_bool(v) -> bool | None:
@@ -92,14 +94,19 @@ def _structured_fine_pattern_risk(src: dict | None) -> bool | None:
     if pattern_type in _SOLID_PATTERN_TYPES:
         return False
 
-    fine = _truthy_bool(_get_any(spec, "finePattern", "fine_pattern"))
-    if fine is not None:
-        return fine
-
+    # Runtime contract: every declared repeating pattern is high-resolution risk.
+    # `finePattern` is an analysis observation, not permission to downgrade a STRIPE
+    # product to the ordinary 1K path.  The 2026-08-04 goldenset shirt was approved
+    # as STRIPE + finePattern=false and consequently rendered at 1K; deterministic
+    # projection then failed because the target period contained too few pixels.
     if pattern_type in _REPEATING_PATTERN_TYPES:
         return True
     if pattern_type and any(tok in pattern_type for tok in _REPEATING_PATTERN_TYPES):
         return True
+
+    fine = _truthy_bool(_get_any(spec, "finePattern", "fine_pattern"))
+    if fine is not None:
+        return fine
     return None
 
 
@@ -158,6 +165,50 @@ def has_fine_pattern(
     다르다고 느끼는 컷이 나가므로 **넓게 잡는 쪽**이 맞다.
     """
     return resolve_fine_pattern_risk(product, analysis, product_truth)
+
+
+def has_stripe_pattern(
+    product: dict | None,
+    analysis: dict | None,
+    product_truth: dict | None = None,
+) -> bool:
+    """4K 비용 승격 대상인 스트라이프인가.
+
+    체크 등 다른 반복 패턴도 보호/QC 대상으로는 남지만, 4K 생성은 승인된 STRIPE 계열에만
+    허용한다. 승인 Product Truth가 있으면 stale 상품명보다 우선한다.
+    """
+    for src, authoritative in (
+        (product_truth, isinstance(product_truth, dict)
+         and product_truth.get("status") == "approved"),
+        (analysis, False),
+    ):
+        if src is product_truth and not authoritative:
+            continue
+        spec = _pattern_spec(src)
+        if not spec:
+            continue
+        pattern_type = str(
+            spec.get("type") or spec.get("patternType") or ""
+        ).strip().lower()
+        if pattern_type:
+            is_stripe = (
+                pattern_type in _STRIPE_PATTERN_TYPES
+                or any(token in pattern_type for token in _STRIPE_PATTERN_TYPES)
+            )
+            return is_stripe
+
+    parts = []
+    for src in (product or {}), (analysis or {}):
+        for key in ("name", "suggestedName", "customCategory", "subCategory"):
+            value = src.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+        for key in ("sellingPoints", "aiSuggestedPoints", "styleTags"):
+            value = src.get(key)
+            if isinstance(value, list):
+                parts.extend(item for item in value if isinstance(item, str))
+    blob = " ".join(parts).lower()
+    return any(token in blob for token in _STRIPE_PATTERN_TOKENS)
 
 
 def generation_spec(analysis: dict) -> dict | None:

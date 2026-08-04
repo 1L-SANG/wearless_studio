@@ -76,6 +76,11 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # (untuck·bust)와 예산을 공유해서 재시도 전에 소진된다 — 실제로 그래서 가슴 2패스가
   # 한 번도 출고되지 않았다. 5 는 그 실측에서 나온 값이고, 상한이지 매번 쓰는 횟수가 아니다.
   MANNEQUIN_MAX_ATTEMPTS: "5"
+  # 일반 상품은 1K, Product Truth가 STRIPE 계열로 판정한 상품만 4K로
+  # 승급한다. CAP=1K는 승급을 다시 낮추므로 사용하지 않는다.
+  MANNEQUIN_IMAGE_SIZE: 1K
+  MANNEQUIN_IMAGE_SIZE_CAP: "off"
+  MANNEQUIN_PATTERN_IMAGE_SIZE: 4K
   # 단일 목적 편집 패스 2종. 전부 fail-open(편집 실패 = 편집 전 컷 그대로 출고)이고,
   # 편집이 등급을 떨어뜨리면 편집 전으로 되돌린다(qc_edit_regression_margin=10, 판정 노이즈
   # ±30 을 감안한 마진). 여기 없으면 config 기본 off 로 떨어져 조용히 안 돈다.
@@ -91,9 +96,9 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   MANNEQUIN_STRUCTURED_QC: shadow
   MANNEQUIN_EDIT_INTENT_QC: shadow
   EDITOR_VARY_INTENT_QC: shadow
-  MANNEQUIN_HYBRID_COMPOSITE: shadow
-  # Projection 2D shadow 는 관측 전용이다. 아직 품질-ready gate 가 아니므로 enforce 금지.
-  MANNEQUIN_TEXTURE_PROJECTION_2D: shadow
+  MANNEQUIN_HYBRID_COMPOSITE: enforce
+  # deterministic QC pass에서만 합성본을 적용하고, 실패 carrier는 후보로 저장하지 않는다.
+  MANNEQUIN_TEXTURE_PROJECTION_2D: enforce
   # AG-01 분석 provider 모델 — config.py 기본(gemini-2.5-pro) 오버라이드. AI Studio 유효 id 여야 함
   # (구값 'gemini-3-pro' 는 미존재 → Gemini 404 로 분석 실패했음). OpenAI 키 미설정이라 gemini 가 유일 provider.
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview

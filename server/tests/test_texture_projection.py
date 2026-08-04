@@ -74,6 +74,36 @@ def test_projection_rejects_micro_period_on_target():
     assert plan.reason == "target_period_too_small"
 
 
+def test_projection_allows_source_downsampling_when_target_period_is_resolvable():
+    """Downsampling is protected by the target-period floor; a symmetric scale cap is incorrect."""
+    plan = plan_periodic_projection(
+        pattern_type="stripe",
+        source_period_px=40,
+        source_span_px=400,
+        target_span_px=128,
+        target_axis="vertical",
+        source_model_confidence=0.9,
+    )
+
+    assert plan.ok is True
+    assert plan.target_period_px == pytest.approx(12.8)
+    assert plan.metrics["projectionScale"] == pytest.approx(0.32)
+
+
+def test_projection_still_rejects_excessive_upscaling():
+    plan = plan_periodic_projection(
+        pattern_type="stripe",
+        source_period_px=10,
+        source_span_px=100,
+        target_span_px=400,
+        target_axis="vertical",
+        source_model_confidence=0.9,
+    )
+
+    assert plan.ok is False
+    assert plan.reason == "projection_scale_out_of_bounds"
+
+
 def test_projection_low_confidence_is_visible_not_silent_pass():
     plan = plan_periodic_projection(
         pattern_type="stripe",

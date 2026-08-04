@@ -1189,6 +1189,16 @@ def test_effective_image_size_upgrades_only_pattern_products():
     assert effective_image_size(s, {"name": "스트라이프 셔츠"}, {}, solid_truth) == "2K"
     stripe_truth = {"status": "approved", "patternSpec": {"type": "STRIPE", "finePattern": True}}
     assert effective_image_size(s, {"name": "무지 티셔츠"}, {}, stripe_truth) == "4K"
+    stripe_truth_not_fine = {
+        "status": "approved",
+        "patternSpec": {"type": "STRIPE", "finePattern": False},
+    }
+    assert effective_image_size(s, {"name": "무지 티셔츠"}, {}, stripe_truth_not_fine) == "4K"
+    check_truth = {
+        "status": "approved",
+        "patternSpec": {"type": "CHECK", "finePattern": True},
+    }
+    assert effective_image_size(s, {"name": "체크 셔츠"}, {}, check_truth) == "2K"
 
 
 def test_tier_for_job_splits_adjust_from_initial_generation():

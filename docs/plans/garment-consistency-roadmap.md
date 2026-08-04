@@ -164,6 +164,18 @@ source originals + approved Product Truth + canonical Mannequin Profile
 Preserve this order. Do not move texture projection before Pre-Frame QC, and do not skip Final Frame QC after
 edits or projection.
 
+## Activated Output Contract (2026-08-04)
+
+- Ordinary and non-stripe products generate at `1K`.
+- Approved `STRIPE` / `PINSTRIPE` products generate at `4K`; check/plaid and other patterns do not receive the
+  4K cost upgrade. They remain protected/QC risks.
+- `MANNEQUIN_IMAGE_SIZE_CAP=off`; the old global 1K cap is not a production safeguard.
+- Deterministic texture projection is applied only after deterministic QC passes.
+- Enforce mode also requires protected collar/placket source components. A periodic/color metric pass cannot
+  override missing protected components.
+- Failed projection creates no usable candidate. The seller is offered only an original-photo hero or a fresh
+  regeneration request.
+
 ## Reproducible Commands
 
 Verified module tests:
@@ -246,11 +258,15 @@ evidence above is complete.
 
 ## Verification Snapshot
 
-- Backend targeted hybrid/Product Truth/QC suite: `101 passed`.
-- Backend full suite: `2421 passed, 1 skipped, 96 deselected, 1 warning`.
-- Frontend suite: `217 passed, 0 failed`.
+- Backend full suite: `2435 passed, 1 skipped, 96 deselected, 1 warning`.
+- Frontend suite: `220 passed, 0 failed`.
 - Build: pass.
 - Browser E2E: latest-code persisted-project/editor/mannequin re-entry pass; no paid provider action.
 - Actual Gemini 1K stripe smoke: run with designated `스트라이프셔츠_*.heic` set.
 - Frame 5×3 calibration: 15 independent 1K outputs; critical Frame violation 0; human labels 0.
-- Stripe projection quality evidence: wiring proven, quality failed at 1K fine stripe; synthetic fixtures remain insufficient for enforce.
+- Actual Gemini 4K stripe projection: provider/input wiring and deterministic pattern metrics passed, but visual
+  audit rejected the result because collar/placket protection was missing and the torso projection boundary was
+  visible. That observation added the `protected_component_missing` fail-closed gate; no accepted AI stripe
+  candidate is claimed.
+- Local visual report:
+  `server/ab_out/frame_lock/stripe-projection-enforce-4k-20260804-v6/report.html`.

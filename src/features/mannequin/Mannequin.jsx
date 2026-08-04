@@ -240,6 +240,32 @@ async function saveMannequinDowngradeDecision(projectId, product, selectedCut, c
   return nextStoryboard;
 }
 
+async function saveFailedProjectionProductHeroDecision(projectId, product, failureReason) {
+  const imageSrc = originalProductImage(product);
+  if (!imageSrc) throw new Error('원본 상품 이미지를 찾지 못했어요.');
+  const decision = {
+    type: 'product_hero',
+    sourceCutId: null,
+    failureReason: failureReason || null,
+    decidedAt: new Date().toISOString(),
+  };
+  const storyboard = await api.getStoryboard(projectId);
+  const blocks = Array.isArray(storyboard) ? storyboard : [];
+  const heroIndex = blocks.findIndex((block) => block?.source !== 'mine'
+    && block?.sectionRole === 'benefit'
+    && block?.contentRole === 'hero');
+  const fallbackIndex = blocks.findIndex((block) => block?.sectionRole === 'benefit');
+  const targetIndex = heroIndex >= 0 ? heroIndex : fallbackIndex >= 0 ? fallbackIndex : 0;
+  const baseBlock = blocks[targetIndex] || { id: `product-hero-fallback-${projectId}` };
+  const nextStoryboard = blocks.length
+    ? blocks.map((block, index) => (
+      index === targetIndex ? productHeroStoryboardBlock(block, imageSrc, product, decision) : block
+    ))
+    : [productHeroStoryboardBlock(baseBlock, imageSrc, product, decision)];
+  await api.saveStoryboard(projectId, nextStoryboard, { autoAssignment: false });
+  return nextStoryboard;
+}
+
 const REGENERATE_ATTEMPTS = 3;
 const LOAD_ATTEMPTS = 3;
 const GENERATION_RETRY_DELAYS = [0, 700, 1400];
@@ -528,7 +554,7 @@ function MannequinLoading({ progress, category }) {
   );
 }
 
-function MannequinError({ message, onRetry }) {
+function MannequinError({ message, onRetry, onUseOriginalHero, originalHeroBusy = false }) {
   return (
     <div className="wizard">
       <PageHead title="마네킹컷 생성" sub="입력한 상품 사진을 기준으로 다시 시도할 수 있어요." />
@@ -538,6 +564,16 @@ function MannequinError({ message, onRetry }) {
           desc={message || '생성 서버에 일시적인 문제가 발생했어요.'}
           onRetry={onRetry}
         />
+        {onUseOriginalHero && (
+          <button
+            type="button"
+            className="fit-original-hero-fallback"
+            disabled={originalHeroBusy}
+            onClick={onUseOriginalHero}
+          >
+            {originalHeroBusy ? '원본 대표컷 저장 중…' : '원본 실사 hero 사용'}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -934,6 +970,7 @@ export function Mannequin() {
   const [downgradeChoice, setDowngradeChoice] = useState(null);
   const [persistedDowngradeChoices, setPersistedDowngradeChoices] = useState({});
   const [downgradeChoiceBusy, setDowngradeChoiceBusy] = useState(false);
+  const [failureActionBusy, setFailureActionBusy] = useState(false);
   const [downgradeChoiceError, setDowngradeChoiceError] = useState('');
   const [aiEditOpen, setAiEditOpen] = useState(false);
   const [aiEditKind, setAiEditKind] = useState(MANNEQUIN_EDIT_OPTIONS[0]?.id || '');
@@ -1224,6 +1261,24 @@ export function Mannequin() {
       pushToast(message, { icon: 'alertTri' });
     } finally {
       setDowngradeChoiceBusy(false);
+    }
+  };
+
+  const chooseFailedProjectionOriginalHero = async () => {
+    if (!projectId || failureActionBusy) return;
+    setFailureActionBusy(true);
+    try {
+      await saveFailedProjectionProductHeroDecision(
+        projectId,
+        product,
+        regenerateFailure?.reason || 'generation_failed',
+      );
+      pushToast('실패한 AI 컷 대신 원본 상품 이미지를 대표컷으로 저장했어요.', { icon: 'check' });
+      navigate('/create/storyboard');
+    } catch (error) {
+      pushToast(error?.message || '원본 상품 이미지를 대표컷으로 저장하지 못했어요.', { icon: 'alertTri' });
+    } finally {
+      setFailureActionBusy(false);
     }
   };
 
@@ -1747,7 +1802,7 @@ export function Mannequin() {
         : runningWaitStep >= 0 ? `${waitLabels[runningWaitStep]} 중` : '';
 
   if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={loadingProgress} category={fitProfileDraft?.category} /></>;
-  if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} onRetry={loadMannequins} /></>;
+  if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} onRetry={loadMannequins} onUseOriginalHero={originalProductImageSrc ? chooseFailedProjectionOriginalHero : null} originalHeroBusy={failureActionBusy} /></>;
 
   const modes = catalogs?.composeModes || [];
 
@@ -1832,6 +1887,22 @@ export function Mannequin() {
             <b>{regenerateFailure.title}</b>
             <span>{regenerateFailure.description}</span>
             {regenerateFailure.note && <small>{regenerateFailure.note}</small>}
+            <div className="fit-regenerate-failure-actions">
+              {regenerateFailure.actions?.includes('product_hero') && originalProductImageSrc && (
+                <button
+                  type="button"
+                  onClick={chooseFailedProjectionOriginalHero}
+                  disabled={failureActionBusy || busy}
+                >
+                  {failureActionBusy ? '원본 대표컷 저장 중…' : '원본 실사 hero 사용'}
+                </button>
+              )}
+              {regenerateFailure.actions?.includes('regenerate') && (
+                <button type="button" onClick={retryGeneration} disabled={failureActionBusy || busy}>
+                  다시 생성
+                </button>
+              )}
+            </div>
           </div>
         )}
         {/* 확인 항목 칩 — 완료 전에도 모든 스텝을 고스트로 표시해 공간을 미리 확보(버튼 밀림 방지) */}

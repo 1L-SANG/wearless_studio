@@ -377,7 +377,7 @@ def effective_image_size(
     analysis: dict | None,
     product_truth: dict | None = None,
 ) -> str:
-    """이 잡이 쓸 출력 해상도 (순수). 미세 패턴 상품만 승급한다.
+    """이 잡이 쓸 출력 해상도 (순수). 스트라이프 상품만 승급한다.
 
     2K 실측(2026-08-01, 스트라이프 셔츠): 줄 주기 8.9px → 한 주기를 이루는 요소(색 선·흰 간격)당
     2px 남짓이라 두 색 줄이 한 색으로 뭉개졌다. 해상도가 곧 재현 한계인 축이라 프롬프트로는
@@ -388,7 +388,7 @@ def effective_image_size(
         return s.mannequin_image_size
     return (
         upgrade
-        if mannequin.has_fine_pattern(product, analysis, product_truth)
+        if mannequin.has_stripe_pattern(product, analysis, product_truth)
         else s.mannequin_image_size
     )
 
@@ -410,12 +410,18 @@ def _policy_image_size(
     fine_pattern: bool,
     cap: str = "off",
 ) -> str:
-    """정책·미세패턴 해상도를 정한 뒤 명시적 QA 비용 상한을 마지막에 적용한다."""
+    """상품 패턴 계약으로 정한 해상도에 정책 하향·QA 상한만 적용한다.
+
+    기본 값은 일반 1K, stripe 4K의 정본이다. Recipe가 일반 상품을
+    2K/4K로 올리면 비용 계약이 깨지므로 상향은 허용하지 않는다. 반대로
+    저비용 Recipe의 하향은 허용하되 stripe 4K는 보호한다.
+    """
     base = str(base_size or "").upper()
     resolved = base
     if policy:
         requested = str(policy.get("resolution") or base).upper()
-        if requested in _IMAGE_SIZE_RANK:
+        if (requested in _IMAGE_SIZE_RANK
+                and _IMAGE_SIZE_RANK[requested] <= _IMAGE_SIZE_RANK.get(base, 0)):
             resolved = requested
             if fine_pattern and _IMAGE_SIZE_RANK.get(base, 0) > _IMAGE_SIZE_RANK[requested]:
                 resolved = base
@@ -1774,11 +1780,23 @@ async def _apply_hybrid_composite(
                panel_metrics=art.panel_metrics,
                components_needing_review=list(art.components_needing_review),
                **art.metrics)
+    if mode == "enforce" and art.components_needing_review:
+        # Protected construction assets are not optional review hints in enforce
+        # mode.  The real 4K stripe run lacked collar/placket source decals and
+        # produced a rectangular texture slab that periodic/color QC still rated
+        # as perfect.  Never persist or expose such a candidate as usable.
+        missing = sorted(art.components_needing_review)
+        return await fail(
+            "protected_component_missing",
+            "protected source decal unavailable: " + ", ".join(missing),
+            componentsNeedingReview=missing,
+        )
 
     # Stage 5 — deterministic QC (LLM 이 못 뒤집는 판정)
     qc = await asyncio.to_thread(
         hc_qc.verify_composite, art.image_bgr, carrier_bgr, pm, model,
         painted_mask=art.painted,
+        coverage_mask=art.coverage_scope,
         target_period_px=target_period_px, target_axis=garment_axis)
     qc_event_metrics = {k: v for k, v in qc.metrics.items() if k != "failure_details"}
     await emit("hybrid_deterministic_qc", passed=qc.passed,

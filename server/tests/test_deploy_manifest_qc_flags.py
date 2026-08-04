@@ -46,9 +46,15 @@ SAFE_ROLLOUT_VALUES = {
     "MANNEQUIN_STRUCTURED_QC": "shadow",
     "MANNEQUIN_EDIT_INTENT_QC": "shadow",
     "EDITOR_VARY_INTENT_QC": "shadow",
-    "MANNEQUIN_HYBRID_COMPOSITE": "shadow",
-    "MANNEQUIN_TEXTURE_PROJECTION_2D": "shadow",
+    "MANNEQUIN_HYBRID_COMPOSITE": "enforce",
+    "MANNEQUIN_TEXTURE_PROJECTION_2D": "enforce",
     "MANNEQUIN_FRAME_QC": "shadow",
+}
+
+IMAGE_SIZE_POLICY = {
+    "MANNEQUIN_IMAGE_SIZE": "1K",
+    "MANNEQUIN_IMAGE_SIZE_CAP": "off",
+    "MANNEQUIN_PATTERN_IMAGE_SIZE": "4K",
 }
 
 # 폐기된 flag — manifest 에 다시 나타나면 안 된다. 구 generative fabric pass 는 blind visual
@@ -85,6 +91,25 @@ def test_rollout_flags_are_declared_in_env_example(env_example_vars):
     """예제 env 도 rollout 값을 명시해야 한다 — 로컬/문서 기본값이 off 로 퇴행하면 안 된다."""
     missing = [name for name in SAFE_ROLLOUT_VALUES if name not in env_example_vars]
     assert not missing, f".env.example 에 rollout 플래그 미선언: {missing}"
+
+
+@pytest.mark.parametrize("env_name,expected", IMAGE_SIZE_POLICY.items())
+def test_manifest_declares_general_1k_and_fine_pattern_4k_policy(
+    env_name, expected, manifest_vars,
+):
+    """일반 상품은 1K, 스트라이프 등 미세 패턴은 4K로 실제 배포한다.
+
+    CAP=1K 잔재는 패턴 4K 승급을 provider 호출 직전에 다시 낮추므로,
+    세 값을 하나의 배포 계약으로 고정한다.
+    """
+    assert str(manifest_vars.get(env_name)) == expected
+
+
+@pytest.mark.parametrize("env_name,expected", IMAGE_SIZE_POLICY.items())
+def test_env_example_declares_general_1k_and_fine_pattern_4k_policy(
+    env_name, expected, env_example_vars,
+):
+    assert env_example_vars.get(env_name) == expected
 
 
 @pytest.mark.parametrize("env_name,expected", SAFE_ROLLOUT_VALUES.items())
