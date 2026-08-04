@@ -148,6 +148,26 @@
 .slot-well .slot-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .slot-well .tile, .slot-well .tile.add { width: 100%; height: auto; aspect-ratio: 3 / 4; }
 .tile.add.sm { gap: 0; }
+.tile.upload-placeholder { isolation: isolate; background: #F3F5F6; cursor: wait; }
+.tile.upload-placeholder:hover { box-shadow: 0 0 0 1px var(--ring); }
+.upload-placeholder-logo { position: relative; z-index: 2; display: block; width: 52%; aspect-ratio: 1;
+  background: #707985; opacity: .22;
+  -webkit-mask-image: url(/assets/brand/logo.svg); mask-image: url(/assets/brand/logo.svg);
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-size: contain; mask-size: contain; }
+.tile.upload-placeholder::after { position: absolute; z-index: 1; top: -20%; bottom: -20%; left: -65%; width: 42%; content: "";
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.62), transparent);
+  transform: translateX(-140%) rotate(8deg); animation: upload-placeholder-shimmer .8s ease-in-out infinite; }
+@keyframes upload-placeholder-shimmer {
+  50% { transform: translateX(510%) rotate(8deg); }
+  100% { transform: translateX(-140%) rotate(8deg); }
+}
+/* 변환 중에만 흐려진다 — :disabled 로 잡으면 슬롯이 꽉 찼을 때(room 0)도 같이 흐려진다 */
+.tile.add.is-busy { opacity: .5; cursor: wait; }
+@media (prefers-reduced-motion: reduce) {
+  .tile.upload-placeholder::after { animation: none; opacity: 0; }
+}
 @media (max-width: 720px) { .slot-wells { grid-template-columns: 1fr; } }
 .measure-grid { display: flex; flex-wrap: wrap; gap: 14px; }
 /* "실측 모름" checkbox below the measurement grid */
