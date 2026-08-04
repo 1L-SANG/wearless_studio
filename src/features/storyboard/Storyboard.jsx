@@ -448,6 +448,7 @@ function StoryboardCard({
             canNudgeUp={canNudgeUp}
             canNudgeDown={canNudgeDown}
           />
+          {selected && <SelectionRing />}
         </CardDragSurface>
         {addControl}
       </div>
@@ -488,6 +489,7 @@ function StoryboardFrame({
                   onDuplicate={() => onDuplicate(item.block.id)}
                   onDelete={() => onDelete(item.block.id)}
                 />
+                {item.block.id === selectedId && <SelectionRing />}
               </CardDragSurface>
             );
           })}
@@ -528,7 +530,6 @@ function StoryboardStack({ group, total, catalogs, onOpen }) {
             </span>
           );
         }) : <span className="sb-stack-empty">＋ 컷 추가</span>}
-        <span className="sb-stack-count">{group.items.length}컷</span>
       </button>
     </div>
   );
@@ -1048,7 +1049,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   );
 }
 
-function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, onChange, onAtomicChange, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onDissolveSpaceSet, onAddMine, onImgDrag, onExampleDrag }) {
+function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, onChange, onAtomicChange, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onAddMine, onImgDrag, onExampleDrag }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -1271,13 +1272,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       ) : (
         <>
       <div className={`insp-sec${spaceContext ? ' sb-cut-locked' : ''}`}>
-        <div className="sb-cut-label-row"><label className="lbl">컷 종류</label>
-          {spaceContext && (
-            <details className="sb-space-more">
-              <summary aria-label="촬영 세트 메뉴">⋯</summary>
-              <button type="button" onClick={onDissolveSpaceSet}>세트 전체 풀기</button>
-            </details>
-          )}</div>
+        <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
         <UnderlineTabs
           options={spaceContext ? cutTypeOptions.map((option) => ({
             ...option, disabled: true, disabledReason: '촬영 세트를 푼 뒤 바꿀 수 있어요',
@@ -1285,13 +1280,12 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           value={pendingRecipe?.cutType || block.cutType}
           onChange={spaceContext ? () => {} : onCutTypeChange} />
         {spaceContext && (
-          <div className="sb-lock-note"><Icon name="lock" size={13} />세트에 묶인 동안 고정돼요. 풀려면 위의 ⋯ 메뉴를 여세요.</div>
+          <div className="sb-lock-note"><Icon name="lock" size={13} />세트에 묶인 동안 고정돼요.</div>
         )}
       </div>
 
       {pendingRecipe ? (
         <div className="sb-pending-recipe">
-          <div className="insp-note"><Icon name="info" size={14} />새 컷의 예시를 먼저 골라주세요. 선택하면 컷·샷·예시가 함께 바뀌어요.</div>
           {requestedRecipe && <button type="button" className="insp-cancel-new" onClick={() => {
             setPendingRecipe(null);
             onCancelRequestedRecipe?.();
@@ -2191,7 +2185,6 @@ export function Storyboard() {
       setSaveError('변경 내용을 저장하지 못했어요');
     }
   };
-  const dissolveSelectedSpaceSet = () => dissolveSpaceGroup(selected?.spaceGroupId);
   const locked = false;
   const boardGroups = renderGroups(blocks);
   const sections = deriveFixedSections(blocks);
@@ -2436,11 +2429,7 @@ export function Storyboard() {
       </div>
       {boardGroups.map((group) => {
         const open = openGroupKeys.includes(group.key);
-        const range = group.items.length
-          ? String(group.items[0].index).padStart(2, '0') + '–'
-            + String(group.items[group.items.length - 1].index).padStart(2, '0')
-            + ' / ' + blocks.length
-          : '0컷';
+        const range = cutRangeLabel(group.items);
         const groupSection = sectionForGroup(group);
         return (
           <section
@@ -2518,7 +2507,7 @@ export function Storyboard() {
   ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage}
     onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
-    spaceContext={selectedSpaceContext} onDissolveSpaceSet={dissolveSelectedSpaceSet}
+    spaceContext={selectedSpaceContext}
     onAddMine={addMineBlock}
     onImgDrag={(v) => { setDragMine(v); if (v == null) { setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null); } }}
     onExampleDrag={(value) => {
