@@ -175,8 +175,21 @@ def classify_parent_edit(
     # 아예 없음"과 "지금 요청과 안 맞음"은 대응이 달라서(전자는 새 기준 컷 필요) 나눠 센다.
     if not isinstance(metadata, dict) or not metadata or "editDepth" not in metadata:
         return None, "legacy_parent"
-    if (metadata.get("profileCategory") != category
-            or metadata.get("profileGender") != gender):
+    recorded_category = metadata.get("profileCategory")
+    recorded_gender = metadata.get("profileGender")
+    # 최초 생성 컷은 예전 메타데이터 계약상 profileCategory/profileGender 가 null 이었다.
+    # 같은 프로젝트의 그 첫 컷에 사용자가 처음으로 bounded fit 조정을 요청한 경우까지
+    # incompatible 로 보면, 부모 이미지를 버리고 fresh 생성해 색·패턴·구조를 다시 상상한다.
+    # 허용 범위는 딱 그 legacy 경계뿐이다: fresh depth=0 이고 두 값이 **모두** null 인 컷.
+    # 한쪽만 없거나 이미 편집된 컷은 호환성을 증명할 수 없으므로 기존처럼 거부한다.
+    unprofiled_initial = (
+        metadata.get("generationPath") == "fresh"
+        and metadata.get("editDepth") == 0
+        and recorded_category is None
+        and recorded_gender is None
+    )
+    if not unprofiled_initial and (
+            recorded_category != category or recorded_gender != gender):
         return None, "incompatible_parent"
     if metadata.get("matchItemId") != match_item_id:
         return None, "incompatible_parent"
@@ -1504,7 +1517,7 @@ async def _apply_hybrid_composite(
 async def _apply_edits(
     *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_refs, match_img,
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
-    image_size=None, has_fine_pattern=False, runlog=None,
+    image_size=None, has_fine_pattern=False, runlog=None, allow_automatic_passes=True,
 ):
     """채택본에 편집(축 교정 → 가슴 2패스)을 적용하고, 바뀌었으면 재판정·회귀 시 되돌린다.
 
@@ -1522,13 +1535,17 @@ async def _apply_edits(
     prod_imgs = [r.image for r in prod_refs]
     pre_hash = hashlib.sha256(res.image).hexdigest()
     pre_res, pre_p2 = res, p2
-    # untuck — 편집 체인 **맨 앞**. 밑단 위치(구도)가 먼저 확정돼야 축 QC 가 실제 밑단을 보고
-    # 판정하고(특히 length 축), 볼륨·원단 편집이 최종 구도 위에서 이뤄진다.
-    res, untuck_spent = await _apply_untuck_pass(
-        pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-        res=res, match_img=match_img, calls_spent=calls_spent,
-        clothing_type=clothing_type, image_size=image_size, runlog=runlog)
-    calls_spent += untuck_spent
+    # bounded parent edit 는 이미 한 번의 제한 편집으로 요청 축을 반영했다. 그 뒤 untuck/bust
+    # 같은 전역 생성형 패스를 또 돌리면 잠근 색·패턴·카라까지 재해석된다. 자동 패스는 fresh
+    # 결과에만 허용하고, bounded edit 에서는 선언된 축 QC/교정만 남긴다.
+    if allow_automatic_passes:
+        # untuck — 편집 체인 **맨 앞**. 밑단 위치(구도)가 먼저 확정돼야 축 QC 가 실제 밑단을
+        # 보고(특히 length 축), 볼륨 편집이 최종 구도 위에서 이뤄진다.
+        res, untuck_spent = await _apply_untuck_pass(
+            pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+            res=res, match_img=match_img, calls_spent=calls_spent,
+            clothing_type=clothing_type, image_size=image_size, runlog=runlog)
+        calls_spent += untuck_spent
     # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
     # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
     res, axis_spent = await _apply_axis_qc(
@@ -1538,12 +1555,13 @@ async def _apply_edits(
         image_size=image_size, runlog=runlog)
     calls_spent += axis_spent
     post_axis_res = res
-    # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
-    res, bust_spent = await _apply_bust_pass(
-        pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-        base_gender=base_gender, res=res, calls_spent=calls_spent,
-        clothing_type=clothing_type, image_size=image_size, runlog=runlog)
-    calls_spent += bust_spent
+    if allow_automatic_passes:
+        # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
+        res, bust_spent = await _apply_bust_pass(
+            pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+            base_gender=base_gender, res=res, calls_spent=calls_spent,
+            clothing_type=clothing_type, image_size=image_size, runlog=runlog)
+        calls_spent += bust_spent
     # (2026-08-01) 원단 패턴 2패스는 제거됐다 — whole-image generative 재생성으로는 잔줄
     # 패턴 동일성을 증명할 수 없었고(실측 blind visual 3/3 FAIL), 패턴 동일성은 이제
     # geometry 편집이 모두 끝난 뒤 deterministic hybrid composite 가 담당한다.
@@ -1729,6 +1747,15 @@ async def _rollback_edits(
             "candidate": candidate, "attempt": attempt, "status": "edit_reverted",
             "reason": reason, "from": score_outcome(s, post_p2), "to": score_outcome(s, p2)})
         return res, p2
+
+    # critical 은 점수 변동이 아니라 출고 금지 계약이다. 최종 편집본에서 새 색상·패턴·로고
+    # 손상이 확인됐는데 같은 확률적 Vision에 중간본을 다시 물어 구조하면, 실제 QA처럼 두 번째
+    # 판정이 우연히 pass 를 내서 이미 확인된 다른 옷을 출고할 수 있다. 신규 critical 은 즉시
+    # 마지막 안전본으로 돌아가며 추가 판정 호출을 하지 않는다.
+    pre_critical = (pre_p2 or {}).get("critical_errors") if isinstance(pre_p2, dict) else None
+    post_critical = (post_p2 or {}).get("critical_errors") if isinstance(post_p2, dict) else None
+    if post_critical and not pre_critical:
+        return await _revert_to(pre_res, pre_p2, "critical_identity_regression")
 
     if not (axis_changed and bust_changed and post_axis_res is not None and prod_imgs):
         return await _revert_to(pre_res, pre_p2, "all_edits")
@@ -2001,7 +2028,8 @@ async def _run_candidate(
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
                 base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, enabled=reprocess, image_size=image_size,
-                has_fine_pattern=has_fine_pattern, runlog=runlog)
+                has_fine_pattern=has_fine_pattern, runlog=runlog,
+                allow_automatic_passes=generation_path == "fresh")
             # deterministic hybrid composite — 모든 generative geometry edit 뒤, 저장 앞.
             # 이 지점 이후 출고까지 image-generation/edit 호출은 0회다.
             hybrid_info = None
@@ -2177,7 +2205,8 @@ async def _run_candidate(
                 prod_refs=prod_refs, match_img=match_img, fit_profile=fit_profile,
                 profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, image_size=image_size,
-                has_fine_pattern=has_fine_pattern, runlog=runlog)
+                has_fine_pattern=has_fine_pattern, runlog=runlog,
+                allow_automatic_passes=generation_path == "fresh")
             # 구제 경로도 같은 규율 — geometry edit 뒤에는 반드시 composite 를 거친다.
             # high-risk 패턴이 구제라는 이유로 생성 결과 그대로 나가면 안 된다.
             carrier_run_id = runlog.run_id_for_image(res.image, candidate) if runlog else None
@@ -2886,8 +2915,12 @@ async def run_mannequin_job(app, job: dict) -> None:
             "generationPath": generation_path,
             "editDepth": (parent_edit_depth + 1) if generation_path == "edit" else 0,
             "parentCutId": parent_cut_id if generation_path == "edit" else None,
-            "profileCategory": fit_profile.get("category") if isinstance(fit_profile, dict) else None,
-            "profileGender": fit_profile.get("gender") if isinstance(fit_profile, dict) else None,
+            # 최초 생성도 다음 bounded adjustment 의 부모가 될 수 있어야 한다. 명시 프로필이
+            # 없는 정상 fresh 컷을 null/null 로 쓰면 첫 조정이 incompatible 로 오판된다.
+            "profileCategory": (fit_profile.get("category")
+                                if isinstance(fit_profile, dict) else clothing_type),
+            "profileGender": (fit_profile.get("gender")
+                              if isinstance(fit_profile, dict) else gender),
             "matchItemId": resolved_match_id,
             "promptVersion": (ADJUST_PROMPT_VERSION if generation_path == "edit"
                               else s.mannequin_prompt_version),

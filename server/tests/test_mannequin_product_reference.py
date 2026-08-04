@@ -314,6 +314,13 @@ def _parent(**overrides):
          "incompatible_parent"),
         ("incompatible_gender", _parent(profileGender="men"), PROFILE, None,
          "incompatible_parent"),
+        ("missing_category_only", _parent(profileCategory=None), PROFILE, None,
+         "incompatible_parent"),
+        ("missing_gender_only", _parent(profileGender=None), PROFILE, None,
+         "incompatible_parent"),
+        ("unprofiled_after_first_edit",
+         _parent(profileCategory=None, profileGender=None, editDepth=1), PROFILE, None,
+         "incompatible_parent"),
         ("incompatible_match", _parent(matchItemId="other"), PROFILE, "match-1",
          "incompatible_parent"),
         ("edit_depth_cap", _parent(editDepth=2), PROFILE, None, "edit_depth_cap"),
@@ -339,6 +346,18 @@ def test_classify_parent_edit_returns_typed_reasons(case, parent, profile, match
 def test_classify_parent_edit_returns_depth_when_eligible():
     assert mj.classify_parent_edit(_parent(editDepth=1), PROFILE, None) == (1, None)
     assert mj.classify_parent_edit(_parent(editDepth=0), PROFILE, None) == (0, None)
+
+
+def test_first_unprofiled_cut_is_eligible_for_bounded_fit_adjustment():
+    """최초 컷에 명시 fit profile 이 없었어도 같은 프로젝트의 첫 조정은 편집이어야 한다.
+
+    실 QA 재현(2026-08-04): v1 은 ``profileCategory/profileGender=null`` 로 저장됐고,
+    사용자가 fit=over/length=long 만 바꿨는데 부모가 incompatible 로 분류되어 v2 가 fresh
+    생성됐다. 그 결과 색·패턴·카라·커프스까지 다른 옷으로 재해석됐다.
+    """
+    parent = _parent(profileCategory=None, profileGender=None, editDepth=0)
+
+    assert mj.classify_parent_edit(parent, PROFILE, None) == (0, None)
 
 
 def test_compatible_parent_edit_depth_still_returns_depth_only():
@@ -492,6 +511,39 @@ def test_eligible_edit_emits_no_fallback_event(monkeypatch):
     assert _fallback_events(calls) == []
 
 
+def test_first_unprofiled_cut_uses_parent_edit_in_worker(monkeypatch):
+    parent = _parent(profileCategory=None, profileGender=None, editDepth=0)
+    calls = _run_worker_fallback(monkeypatch, parent=parent)
+
+    assert calls["run"][0]["generation_path"] == "edit"
+    assert calls["run"][0]["parent_cut_img"].data == b"parent-cut"
+    assert _fallback_events(calls) == []
+
+
+def test_bounded_adjustment_does_not_run_global_untuck_or_bust_passes(monkeypatch):
+    """핏/총장 편집 뒤 전역 후처리를 돌리면 잠근 색·패턴까지 다시 생성된다."""
+    calls = {"untuck": 0, "bust": 0}
+
+    async def forbidden_untuck(**kwargs):
+        calls["untuck"] += 1
+        return kwargs["res"], False
+
+    async def forbidden_bust(**kwargs):
+        calls["bust"] += 1
+        return kwargs["res"], False
+
+    monkeypatch.setattr(mj, "_apply_untuck_pass", forbidden_untuck)
+    monkeypatch.setattr(mj, "_apply_bust_pass", forbidden_bust)
+    _edit_candidate(
+        monkeypatch,
+        refs=[_ref("Front", "front")],
+        product={"name": "스트라이프 셔츠"},
+        settings_kw={"mannequin_untuck_pass": "on", "mannequin_bust_pass": "on"},
+    )
+
+    assert calls == {"untuck": 0, "bust": 0}
+
+
 def test_candidate_with_edit_path_but_empty_inputs_reports_instead_of_silently_freshing(
         monkeypatch):
     """편집 자격을 받고도 입력이 비어 오면 조용히 fresh 로 눕지 않고 사실을 남긴다.
@@ -539,6 +591,19 @@ def test_initial_generation_is_not_reported_as_fallback(monkeypatch):
     calls = _run_worker_fallback(monkeypatch, parent=_parent(), mode="generate")
     assert calls["run"][0]["generation_path"] == "fresh"
     assert _fallback_events(calls) == []
+
+
+def test_initial_generation_persists_parent_compatibility_without_explicit_fit_profile(
+        monkeypatch):
+    """새 fresh 컷도 다음 bounded adjustment 에 바로 쓸 category/gender를 기록한다."""
+    snapshot = {"version": 1, "profile": None, "adjustedAxes": []}
+    calls = _run_worker_fallback(
+        monkeypatch, parent=None, mode="generate", snapshot=snapshot)
+
+    metadata = calls["finalized"][0]["candidates"][0]["generation_metadata"]
+    assert metadata["generationPath"] == "fresh"
+    assert metadata["profileCategory"] == "top"
+    assert metadata["profileGender"] == "women"
 
 
 def test_guarded_truth_runs_two_candidates_and_finalizes_only_policy_winner(monkeypatch):

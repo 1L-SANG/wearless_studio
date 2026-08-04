@@ -797,7 +797,7 @@ def test_new_critical_error_reverts_even_without_pre_scores():
     assert edit_regressed(s, no_scores, _p2c(10)) is False
 
 
-def test_rollback_keeps_axis_fix_when_only_bust_regressed(monkeypatch):
+def test_rollback_keeps_axis_fix_when_only_bust_score_regressed(monkeypatch):
     """두 편집이 다 돌았고 bust 만 망쳤으면 axis 교정은 살린다.
 
     한 덩어리로 되돌리면 핏을 제대로 고친 axis 결과까지 같이 버린다(codex 8차 MEDIUM).
@@ -806,7 +806,7 @@ def test_rollback_keeps_axis_fix_when_only_bust_regressed(monkeypatch):
     import test_mannequin_axis_qc as harness
 
     # 1: 생성 직후(양호) → 2: 두 편집 후(치명오류) → 3: axis 까지만(양호)
-    seq = [_p2c(90), _p2c(30, critical=["garment shape broken"]), _p2c(88)]
+    seq = [_p2c(90), _p2c(30), _p2c(88)]
     n = {"i": 0}
 
     async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
@@ -831,6 +831,42 @@ def test_rollback_keeps_axis_fix_when_only_bust_regressed(monkeypatch):
     assert result["qc_scores"]["product_fidelity"] == 88
     reverted = [p for _t, p in emits if p.get("status") == "edit_reverted"]
     assert reverted and reverted[-1]["reason"] == "bust_only"
+
+
+def test_new_identity_critical_after_edits_cannot_be_rescued_by_a_second_judge(monkeypatch):
+    """새 치명 오류가 확인된 편집 체인은 확률적인 중간본 재판정으로 구조하면 안 된다.
+
+    실 QA 재현: 최종 재판정이 ``garment color changed`` 를 잡았지만, untuck 중간본을 같은
+    Vision에 다시 물었더니 pass가 나와 그 갈색 손상본이 저장됐다. critical은 점수가 아니라
+    출고 금지 계약이므로 편집 전 마지막 통과본으로 즉시 돌아가야 한다.
+    """
+    import test_mannequin_axis_qc as harness
+
+    seq = [
+        _p2c(90),
+        _p2c(55, critical=["garment color changed"]),
+        _p2c(95),  # 이 판정까지 호출되면 확률적 구조 경로가 다시 열린 것
+    ]
+    n = {"i": 0}
+
+    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
+        n["i"] += 1
+        return seq[min(n["i"] - 1, len(seq) - 1)]
+
+    async def fake_axis(**kw):
+        return types.SimpleNamespace(mime=kw["res"].mime, image=b"untuck-or-axis-drift"), True
+
+    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
+    result, _g, r2, emits = harness._run(
+        monkeypatch, mode="enforce", guard=True, max_attempts=3, verdicts=[],
+        image_qc="shadow", mannequin_bust_pass="on")
+
+    assert r2.puts[-1][1] == harness._PNG_1PX
+    assert result["qc_scores"]["product_fidelity"] == 90
+    assert n["i"] == 2, "치명 오류 뒤 같은 편집 중간본을 다시 심사하면 안 된다"
+    reverted = [p for _t, p in emits if p.get("status") == "edit_reverted"]
+    assert reverted[-1]["reason"] == "critical_identity_regression"
 
 
 def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
@@ -861,7 +897,7 @@ def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
     assert saved == harness._PNG_1PX, f"편집 전 원본이 아니다: {saved!r}"
     assert _r["qc_scores"]["product_fidelity"] == 90, "편집 전 점수가 아니다"
     ev = [p for _t, p in emits if p.get("status") == "edit_reverted"][-1]
-    assert ev["reason"] == "all_edits"
+    assert ev["reason"] == "critical_identity_regression"
     assert (ev["from"], ev["to"]) == ("regenerate", "auto_pass")
 
 
@@ -902,7 +938,8 @@ def test_failed_bust_does_not_fake_a_second_checkpoint(monkeypatch):
 
     assert r2.puts[-1][1] != b"axis-broke-it", "손상본이 가짜 중간본 분기로 출고됐다"
     assert n["i"] == 2, f"판정이 {n['i']}회 — 같은 이미지를 다시 판정했다"
-    assert [p for _t, p in emits if p.get("status") == "edit_reverted"][-1]["reason"] == "all_edits"
+    assert ([p for _t, p in emits if p.get("status") == "edit_reverted"][-1]["reason"]
+            == "critical_identity_regression")
 
 
 def test_generation_failure_still_salvages_accumulated_candidate(monkeypatch):
