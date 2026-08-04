@@ -107,8 +107,11 @@ class Settings:
     # off | shadow(판정·이벤트만) | enforce(편집 재시도 발화). enforce는 코드 레벨 가드
     # (_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY)가 풀리기 전까지 shadow로 강등(G9 규율).
     mannequin_axis_qc: str = "off"
+    # canonical base 대비 pose/camera/framing/view-family 고정. enforce는 wrong-view를 최대
+    # 1회 재생성한 뒤 fail-closed하며, 관찰 불가는 review로 남긴다.
+    mannequin_frame_qc: str = "enforce"  # off | shadow | enforce
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
-    mannequin_prompt_version: str = "v1"
+    mannequin_prompt_version: str = "frame_lock_v2"
     # 여성 기본 가슴 볼륨 2패스 (2026-07-30 스파이크). 생성된 컷에 "가슴만 바꿔라"를 단독 과제로
     # 한 번 더 돌린다 — 1패스만으로는 모델이 몸을 표준으로 정규화해 반영되지 않는다.
     # off | on. 기본 off, 실물 확인 후 on. 켜면 여성 컷당 이미지 호출이 1→2회.
@@ -306,7 +309,7 @@ def load_settings() -> Settings:
         bg_scene_qc_attempts=int(os.getenv("BG_SCENE_QC_ATTEMPTS", "3")),
         mannequin_qc_enabled=(os.getenv("MANNEQUIN_QC_ENABLED", "false").lower() == "true"),
         mannequin_prompt_file=os.getenv("MANNEQUIN_PROMPT_FILE") or None,
-        mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
+        mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "frame_lock_v2"),
         mannequin_bust_pass=_bust_pass(),
         mannequin_hybrid_composite=_flag("MANNEQUIN_HYBRID_COMPOSITE", "off", {"off", "on"}),
         mannequin_texture_projection_2d=_flag(
@@ -317,6 +320,8 @@ def load_settings() -> Settings:
             "ENABLE_PRODUCT_TRUTH", "off", {"off", "shadow", "enforce"}),
         mannequin_structured_qc=_flag(
             "MANNEQUIN_STRUCTURED_QC", "off", {"off", "shadow", "enforce"}),
+        mannequin_frame_qc=_flag(
+            "MANNEQUIN_FRAME_QC", "enforce", {"off", "shadow", "enforce"}),
         mannequin_edit_intent_qc=_flag(
             "MANNEQUIN_EDIT_INTENT_QC", "off", {"off", "shadow", "enforce"}),
         editor_vary_intent_qc=_flag(

@@ -11,6 +11,7 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 </input images>
 
 <instruction>
+- IMAGE 1 IS THE IMMUTABLE CANVAS. This task is an image edit, not a regeneration and not a new composition. Preserve every pixel-level scene decision outside the clothing area as closely as the image model allows.
 - Dress the BASE MANNEQUIN (image 1) in the seller's garment so it looks physically and naturally worn (gender: women, garment: top).
 - Faithfully reproduce the garment's identity from the attached views together with the PRODUCT CONTEXT at the very bottom: exact color, pattern, fabric, construction, seams, neckline, trims, hardware, and any logo or print. Fit, length, cut, and silhouette are governed separately by the precedence rule below.
 - Fit and proportion precedence, axis by axis: each declared FIT PROFILE axis overrides conflicting visual evidence for that axis; for every undeclared axis, use the FIT view reference photo (if attached), then the default impression from the other product photos.
@@ -25,9 +26,9 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 </instruction>
 
 <output format>
-- Output ONE brand-new, FULLY OPAQUE, photorealistic e-commerce studio PHOTOGRAPH of the SAME mannequin from image 1, now solidly wearing the garment(s).
+- Output ONE edited, FULLY OPAQUE, photorealistic e-commerce studio image using IMAGE 1 as the immutable canvas, with the SAME mannequin now solidly wearing the garment(s). This is not a new composition.
 - The mannequin and garments must be solid and opaque — NEVER translucent, faded, washed-out, or ghosted, and NOT a see-through overlay of any input photo.
-- Keep the SAME mannequin body and shape, the SAME pose, the SAME camera framing, and the SAME plain studio background as image 1. Body shape includes the mannequin's bust and hip volume: reproduce them exactly as they appear in image 1 and let the garment drape over that volume. Do NOT slim, flatten, or normalize the torso toward a standard retail mannequin silhouette. Observable target: where image 1 has a full bust or wide hips, the dressed result shows the corresponding projection and width through the fabric rather than a flat front or a straight side line.
+- Keep the SAME mannequin body and shape, the SAME pose, body yaw, three-quarter versus frontal view, left-versus-right body orientation, camera position, camera framing, crop, subject scale, margins, plain studio background, lighting and shadow as IMAGE 1. Do not rotate the mannequin toward a frontal view or mirror its orientation. Body shape includes the mannequin's bust and hip volume: reproduce them exactly as they appear in image 1 and let the garment drape over that volume. Do NOT slim, flatten, or normalize the torso toward a standard retail mannequin silhouette. Observable target: where image 1 has a full bust or wide hips, the dressed result shows the corresponding projection and width through the fabric rather than a flat front or a straight side line.
 - The BASE MANNEQUIN is barefoot; keep both feet barefoot and do not add footwear.
 - FULL BODY in frame, from the top of the head down to the feet — nothing cropped. Portrait orientation.
 - Output EXACTLY ONE image — no grid, no collage, no multiple views, no panels, no text, and no human skin, face, or hair.
@@ -41,7 +42,7 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 - No part of the matching bottom's waistband, drawstring or fastening is drawn over the main product.
 - A repeating pattern keeps the product's own repeat spacing, stripe widths and background colour — never simplified into fewer, thicker bands or inverted into a coloured ground.
 - When the main product is a bottom, the matching top never hides the product's waistband, closure or belt loops.
-- You are ONLY changing what the mannequin wears — never its head, body, pose, camera framing, or background.
+- You are ONLY changing pixels needed to dress the mannequin — never its head, body, pose, body yaw, view family, left/right orientation, camera, framing, crop, margins, background, lighting, or shadow.
 </critical rules>
 
 

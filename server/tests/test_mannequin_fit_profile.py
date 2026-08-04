@@ -728,7 +728,8 @@ def test_prompt_golden_top_women_slim_long():
         template, ctx,
         product={"name": "테스트 반팔 티셔츠", "clothing_type": "top"},
         analysis={"clothingType": "top", "targetGenders": ["women"]})
-    golden = Path("tests/golden/mannequin_generate_top_women_slim_long.txt").read_text(encoding="utf-8")
+    golden = Path("tests/golden/mannequin_generate_top_women_slim_long.txt").read_text(
+        encoding="utf-8").removesuffix("\n")
     assert prompt == golden
 
 

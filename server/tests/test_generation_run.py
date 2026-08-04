@@ -284,7 +284,7 @@ def test_snapshot_order_matches_the_bytes_actually_sent(monkeypatch):
     assert [a["sha256"] for a in row["input_assets"]] == seen["shas"]
     roles = [a["role"] for a in row["input_assets"]]
     assert roles == ["base_mannequin", "product_reference", "product_reference",
-                     "matching_garment", "style_reference"]
+                     "matching_garment"]
 
 
 def test_adjust_edit_snapshots_the_parent_cut_first(monkeypatch):

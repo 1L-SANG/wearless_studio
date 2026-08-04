@@ -26,6 +26,7 @@ from ..agents import (
     image_qc,
     mannequin,
     mannequin_bust,
+    mannequin_frame_vision,
     mannequin_fit_qc,
     mannequin_series_qc,
     mannequin_untuck,
@@ -60,7 +61,7 @@ from ..agents.prompts import (
     render_mannequin_prompt,
 )
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime, genrun_prompt_key
-from ..services import edit_intent_qc, qc
+from ..services import edit_intent_qc, mannequin_frame_qc, qc
 from ..services.garment_profile import build_garment_profile, select_pipeline_policy
 from ..services.qc_decision import decide as decide_structured_qc
 from ..services.qc_result import assemble_qc_result
@@ -236,14 +237,13 @@ def _build_manifest(prod_assets: list[dict], has_match: bool, clothing_type: str
     return "\n".join(lines)
 
 
-# 검색 증강 Phase 3 (retrieval_upgrade_prd FR-C): 유사한 '성공 스튜디오 컷'을 STYLE REFERENCE 로
-# 첨부해 컷 간 톤·조명·프레이밍·마감 일관성을 끌어올린다. 최대 리스크 = 레퍼런스의 '다른 옷'이
-# 결과에 새는 오염 → 아래 가드로 look-only 를 강하게 못박고, image_qc(①동일성)로 계측한다.
+# 레거시 검색 증강 가드. Frame Lock 이후 STYLE REFERENCE 는 생성 provider 입력에 넣지 않는다.
+# canonical Mannequin Profile 이 pose/camera/framing/crop/background/lighting/shadow 를 단독
+# 소유한다. 이 문자열은 과거 저장 프롬프트 해석과 방어적 테스트를 위해 남긴다.
 _STYLE_REF_GUARD = (
-    "STYLE REFERENCE images (labeled in the manifest) are provided ONLY as examples of the target "
-    "studio look — lighting, background tone, camera framing and finish. They show DIFFERENT garments. "
-    "NEVER copy any garment, color, pattern, print, logo, or detail from a STYLE REFERENCE; the garment "
-    "identity comes exclusively from the product photos and the PRODUCT CONTEXT."
+    "STYLE REFERENCE data may be used only before generation to help select a canonical Mannequin "
+    "Profile. It has no authority over the generated image. Garment rendering finish comes from the "
+    "product photos; the selected Mannequin Profile is the sole frame authority."
 )
 _REF_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
 
@@ -251,8 +251,8 @@ _REF_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "web
 def _ref_manifest_lines(start_index: int, n: int) -> str:
     """images 끝에 붙는 STYLE REFERENCE 슬롯의 매니페스트 라벨(고정 문자열 — 셀러 데이터 미포함)."""
     return "\n".join(
-        f"{start_index + i}. STYLE REFERENCE — target studio look ONLY "
-        "(a DIFFERENT garment; never copy its garment)"
+        f"{start_index + i}. STYLE REFERENCE — garment rendering finish metadata ONLY "
+        "(not a provider image; a DIFFERENT garment)"
         for i in range(n)
     )
 
@@ -697,6 +697,33 @@ async def _apply_series_qc(*, app, pool, s, job_id, project_id, candidate, attem
             "candidate": candidate, "attempt": attempt, "status": "series_qc",
             "seriesQc": out, "referenceCount": len(refs)})
     return out
+
+
+async def _apply_frame_qc(*, pool, s, job_id, candidate, attempt, phase,
+                          canonical, res):
+    """Canonical base와 생성 결과를 비교한다. Vision은 관찰, 서비스 정책은 판정만 담당한다."""
+    metrics = await asyncio.to_thread(
+        mannequin_frame_qc.measure, canonical.data, res.image)
+    observation = None
+    meta = None
+    try:
+        observation, meta = await mannequin_frame_vision.observe(
+            s, canonical=canonical, candidate=InlineImage(res.mime, res.image))
+    except Exception as exc:
+        # 관찰 불가를 pass로 눕히지 않는다. 정책이 review로 바꾸며 원문은 남기지 않는다.
+        meta = mannequin_frame_vision.failure_meta(exc)
+        log.warning("frame_qc unavailable job=%s phase=%s error_type=%s",
+                    job_id, phase, type(exc).__name__)
+    result = mannequin_frame_qc.decide(metrics, observation)
+    result = {**result, "phase": phase, "visionMeta": meta,
+              "mode": getattr(s, "mannequin_frame_qc", "off")}
+    await _emit(pool, job_id, "step", {
+        "candidate": candidate, "attempt": attempt, "status": "frame_qc",
+        "phase": phase, "decision": result["decision"],
+        "criticalErrors": result["criticalErrors"], "warnings": result["warnings"],
+        "checks": result["checks"], "visionMeta": meta,
+    })
+    return result
 
 
 def merge_qc_scores(p2, series, *, salvaged: bool = False, thresholds: tuple | None = None) -> dict | None:
@@ -1597,6 +1624,10 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
         if isinstance(eq, dict) and eq.get("decision") != "pass" \
                 and qc_scores["outcome"] == "auto_pass":
             qc_scores["outcome"] = "needs_review"
+        fq = qc_scores.get("frameLockQc")
+        if isinstance(fq, dict) and fq.get("mode") == "enforce" \
+                and fq.get("decision") != "pass" and qc_scores["outcome"] == "auto_pass":
+            qc_scores["outcome"] = "needs_review"
     ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
     asset_id = str(uuid.uuid4())
     key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -1777,7 +1808,6 @@ async def _run_candidate(
                           for r in prod_refs]
         if match_img:
             input_entries.append(("matching_garment", match_img, None, None))
-        input_entries += [("style_reference", im, None, None) for im in ref_imgs]
         images = [e[1] for e in input_entries]
         ctx = mannequin.prompt_context(
             clothing_type=clothing_type, product_count=product_count,
@@ -1789,8 +1819,6 @@ async def _run_candidate(
             seller_canon=s.seller_text_canonicalize, knowledge=s.retrieval_knowledge,
             product_truth=product_truth,
         )
-        if ref_imgs:  # 레퍼런스 첨부 시에만 오염 가드를 프롬프트 말미에 강조(look-only)
-            base_prompt = f"{base_prompt}\n\n{_STYLE_REF_GUARD}"
         prompt_version = s.mannequin_prompt_version
         # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
         # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
@@ -1808,6 +1836,7 @@ async def _run_candidate(
     # 저장 shape 이 계약(QcScores)을 벗어나지 않게. 네 번째는 이벤트·correctionPrompt 용.
     pre_reject: CandidateSnapshot | None = None
     final_reject: CandidateSnapshot | None = None
+    frame_retry_used = False
     # 이미지 모델 호출 예산은 한 통이다 — 생성·axis 편집·bust 2패스가 전부 여기서 나간다.
     # 호출 **직전**에 소비하고, 재생성 여부는 남은 잔량으로만 판단한다.
     calls_spent = 0
@@ -1866,11 +1895,40 @@ async def _run_candidate(
             # metrics 도 남긴다 — shadow 재캘리브(임계 튜닝)의 실측 근거. verdict/reasons 만으론
             # 왜 걸렸는지(bboxBottom·aspect·하단비율) 모른다.
             "qc": {"verdict": verdict.verdict, "reasons": verdict.reasons, "metrics": verdict.metrics}})
+        # Frame Lock의 첫 번째 게이트. canonical base가 아닌 정면/반대 방향/크롭 결과 위에
+        # axis·bust·projection 비용을 쓰지 않는다. 조정 edit는 parent 컷이 별도 정본이며
+        # edit-intent QC가 있으므로 fresh 생성에만 적용한다.
+        pre_frame = None
+        frame_mode = getattr(s, "mannequin_frame_qc", "off")
+        if generation_path == "fresh" and frame_mode != "off":
+            pre_frame = await _apply_frame_qc(
+                pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+                phase="pre", canonical=base_img, res=res)
+            if pre_frame["decision"] == "reject" and frame_mode == "enforce":
+                if not frame_retry_used and has_budget_for_retry(
+                        s, calls_spent=calls_spent):
+                    frame_retry_used = True
+                    instructions = pre_frame.get("regenerationInstructions") or [
+                        "Match IMAGE 1 pose, body yaw, view family and camera exactly."]
+                    feedback = (
+                        "CORRECTION (FRAME LOCK — highest priority): "
+                        + " ".join(instructions))
+                    await _emit(pool, job_id, "step", {
+                        "candidate": candidate, "attempt": attempt,
+                        "status": "frame_retry", "outcome": "retry_once",
+                        "criticalErrors": pre_frame["criticalErrors"]})
+                    continue
+                await _emit(pool, job_id, "step", {
+                    "candidate": candidate, "attempt": attempt,
+                    "status": "frame_rejected", "phase": "pre",
+                    "outcome": "hard_stop",
+                    "criticalErrors": pre_frame["criticalErrors"]})
+                return None
         # AG-P2 이미지 동일성 검수 — shadow(로그만)·enforce(게이트) 시 판정. off면 skip.
         # vision 실패(키미설정 등)는 삼켜 p2=None → 게이트 미적용(생성 자체 안 막음).
         # STYLE REFERENCE 첨부 시 오염(다른 옷 유출)을 반드시 계측 — image_qc=off 여도 최소 shadow 로
         # 승격해 동일성 판정을 기록한다(게이팅 아님 — enforce 만 reject, gate_decision). off↔측정 결합.
-        eff_image_qc = s.image_qc if s.image_qc != "off" else ("shadow" if ref_imgs else "off")
+        eff_image_qc = s.image_qc
         p2 = None
         if eff_image_qc in ("shadow", "enforce") and prod_imgs:
             try:
@@ -1932,6 +1990,11 @@ async def _run_candidate(
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
                     "reason": "budget_exhausted", "outcome": score_outcome(s, salvaged_scores)})
         if not pillow_reject and not p2_reject:
+            # 후처리 회귀 시 돌아갈 수 있는, Pre-Frame QC 직후의 안전 스냅샷.
+            pre_frame_res = res
+            pre_frame_p2 = p2
+            pre_frame_carrier = (
+                runlog.run_id_for_image(res.image, candidate) if runlog else None)
             res, p2, calls_spent = await _apply_edits(
                 pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
                 attempt=attempt, model=model, res=res, p2=p2, prod_refs=prod_refs,
@@ -1971,6 +2034,45 @@ async def _run_candidate(
                     except Exception as e:
                         log.warning("post-composite image_qc failed for job %s: %r",
                                     job_id, e)
+            # Frame Lock의 두 번째 게이트. 편집·합성이 포즈/카메라를 흔들면, Pre에서 이미
+            # 통과한 provider 원본으로 롤백한다. 롤백할 안전본이 없으면 저장하지 않는다.
+            final_frame = ({**pre_frame, "phase": "final", "reusedPre": True}
+                           if pre_frame is not None else None)
+            if (generation_path == "fresh" and frame_mode != "off"
+                    and res.image != pre_frame_res.image):
+                final_frame = await _apply_frame_qc(
+                    pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+                    phase="final", canonical=base_img, res=res)
+                if final_frame["decision"] == "reject" and frame_mode == "enforce":
+                    if pre_frame and pre_frame["decision"] == "pass":
+                        await _emit(pool, job_id, "step", {
+                            "candidate": candidate, "attempt": attempt,
+                            "status": "frame_qc_rollback", "from": "post_processed",
+                            "to": "pre_frame_pass",
+                            "criticalErrors": final_frame["criticalErrors"]})
+                        res, p2 = pre_frame_res, pre_frame_p2
+                        carrier_run_id = pre_frame_carrier
+                        hybrid_info = None
+                        final_frame = {**pre_frame, "phase": "final", "rolledBack": True}
+                    elif not frame_retry_used and has_budget_for_retry(
+                            s, calls_spent=calls_spent):
+                        frame_retry_used = True
+                        feedback = (
+                            "CORRECTION (FRAME LOCK — highest priority): "
+                            + " ".join(final_frame.get("regenerationInstructions") or [
+                                "Match IMAGE 1 pose, body yaw, view family and camera exactly."]))
+                        await _emit(pool, job_id, "step", {
+                            "candidate": candidate, "attempt": attempt,
+                            "status": "frame_retry", "outcome": "retry_once",
+                            "criticalErrors": final_frame["criticalErrors"]})
+                        continue
+                    else:
+                        await _emit(pool, job_id, "step", {
+                            "candidate": candidate, "attempt": attempt,
+                            "status": "frame_rejected", "phase": "final",
+                            "outcome": "hard_stop",
+                            "criticalErrors": final_frame["criticalErrors"]})
+                        return None
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
             series = (
@@ -1984,6 +2086,8 @@ async def _run_candidate(
             qc_scores = merge_qc_scores(
                 p2, series, salvaged=salvaged,
                 thresholds=(s.qc_score_auto_pass, s.qc_score_review))
+            if final_frame is not None:
+                qc_scores = {**(qc_scores or {}), "frameLockQc": final_frame}
             if hybrid_info is not None:
                 qc_scores = {**(qc_scores or {}), "hybridComposite": hybrid_info}
             budget_left = has_budget_for_retry(s, calls_spent=calls_spent)
@@ -2665,22 +2769,10 @@ async def run_mannequin_job(app, job: dict) -> None:
                 # 패턴 위험도와 함께 집계 — 고위험 상품의 silent fresh 가 가장 아픈 경우다.
                 "pattern_risk": mannequin.has_fine_pattern(product, analysis)})
 
-        # Fresh 생성에만 유사 성공 컷을 STYLE REFERENCE 로 첨부한다. Edit 입력은 v2 계약의
-        # [parent, products..., match?] 정확한 순서를 유지해야 하므로 검색 자체를 건너뛴다.
-        ref_imgs, ref_ids = [], []
-        if generation_path == "fresh":
-            ref_imgs, ref_ids = await _load_style_refs(
-                app, s, prod_imgs=prod_imgs,
-                clothing_type=(product.get("clothing_type") or product.get("clothingType")),
-                gender=gender)
-            if ref_imgs:
-                next_i = 2 + len(prod_assets) + (1 if match_img else 0)
-                manifest = manifest + "\n" + _ref_manifest_lines(next_i, len(ref_imgs))
-                # 이벤트는 잡 소유자에게 전달되므로 타 프로젝트 UUID 는 opaque 해시만 노출한다.
-                log.info("job %s style_refs_attached ids=%s", job_id, ref_ids)
-                opaque = [hashlib.sha1(i.encode("utf-8")).hexdigest()[:12] for i in ref_ids]
-                await _emit(pool, job_id, "step", {
-                    "status": "style_refs_attached", "ref_hashes": opaque, "n": len(ref_imgs)})
+        # Frame Lock: canonical base 와 시각 정본이 경쟁하지 않도록 STYLE REFERENCE 를 생성
+        # provider 입력에서 제거한다. 검색 인프라는 향후 profile 사전 선택용으로만 남기며,
+        # 이 호출에서는 base + product originals + optional match 만 보낸다.
+        ref_imgs = []
         legacy_base_fit = analysis.get("fit") or "regular"
         await _emit(pool, job_id, "progress", {"progress": 35, "phase": "generating"})
 
