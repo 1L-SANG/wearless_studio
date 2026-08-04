@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from datetime import UTC, datetime
+
 import pytest
 
 from app.services import product_truth as pt
@@ -188,6 +190,17 @@ def test_approve_snapshot_is_immutable_copy_and_adds_garment_profile():
     assert approved["garmentProfile"]["patternType"] == "STRIPE"
     assert "FINE_PATTERN" in approved["garmentProfile"]["riskFlags"]
     assert approved["garmentProfile"]["materialRisk"] == "HIGH"
+
+
+def test_approve_snapshot_accepts_database_datetime_fields():
+    """라우트가 DB row를 domain으로 바꿀 때 datetime을 유지해도 승인이 500이면 안 된다."""
+    draft = pt.build_truth_draft(_product(), _analysis(), ASSETS)
+    draft["createdAt"] = datetime(2026, 8, 4, 3, 2, 57, tzinfo=UTC)
+
+    approved = pt.approve_snapshot(draft, actor_id="user-1")
+
+    assert approved["createdAt"] == "2026-08-04T03:02:57+00:00"
+    assert approved["status"] == "approved"
 
 
 def test_generation_gate_requires_approved_and_current_truth():

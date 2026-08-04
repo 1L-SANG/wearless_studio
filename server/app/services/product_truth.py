@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Iterable, Mapping
 
 SCHEMA_VERSION = "product_truth_v1"
@@ -94,8 +95,23 @@ class TruthValidationIssue:
         return {"code": self.code, "severity": self.severity, "message": self.message}
 
 
+def _canon_default(value):
+    # psycopg는 timestamptz를 datetime으로 돌려준다. Product Truth 승인 스냅샷은
+    # DB row를 그대로 불변 복사하므로 날짜만 ISO 8601로 정규화하고, 모르는 타입은
+    # 계속 실패시켜 계약 밖 값이 조용히 문자열로 눕지 않게 한다.
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def _canon(value) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_canon_default,
+    )
 
 
 def _sha(value) -> str:
