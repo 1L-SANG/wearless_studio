@@ -59,6 +59,7 @@ import { normalizePlaceType } from '@/lib/storyboardEntryPlacement.js';
 import { renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
+import { generationExampleSelectionPatch } from '@/lib/storyboardExampleSelection.js';
 
 
 const COLOR_HEX = {
@@ -203,6 +204,43 @@ const REF_SCOPE_META = Object.freeze({
 const CARD_DRAG_THRESHOLD_PX = 6;
 
 const cutNumber = (index, total) => String(index).padStart(2, '0') + '/' + String(total).padStart(2, '0');
+const cutRangeLabel = (items) => {
+  if (!items?.length) return '컷 없음';
+  const first = items[0].index;
+  const last = items[items.length - 1].index;
+  return first === last ? `${first}번째 컷` : `${first}번째 ~ ${last}번째 컷`;
+};
+
+function SelectionRing() {
+  return <span className="sb-selection-ring" aria-hidden="true"><i /><i /><i /><i /></span>;
+}
+
+function StoryboardInsertControl({ inTray, active, onDragOver, onDrop, onAdd }) {
+  const controlRef = useRef(null);
+  const [placement, setPlacement] = useState('end');
+  useLayoutEffect(() => {
+    const control = controlRef.current;
+    const unit = control?.closest('.sb-grid-unit');
+    const grid = unit?.parentElement;
+    if (!unit || !grid) return undefined;
+    const measure = () => {
+      const next = unit.nextElementSibling;
+      const nextIsUnit = next?.classList.contains('sb-grid-unit');
+      setPlacement(nextIsUnit && Math.abs(next.offsetTop - unit.offsetTop) < 2 ? 'row' : 'end');
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(grid);
+    measure();
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <span ref={controlRef}
+      className={`sb-addzone ${placement}${inTray ? ' in-tray' : ''}${active ? ' drop-on' : ''}`}
+      onDragOver={onDragOver} onDrop={onDrop}>
+      <button type="button" className="sb-addzone-plus" aria-label="이 위치에 컷 추가" onClick={onAdd}>＋</button>
+    </span>
+  );
+}
 
 function cardLabels(block, catalogs) {
   const isProduct = block.cutType === 'product';
@@ -850,7 +888,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
     const pick = (scope) => {
       if (!onExampleChange || !variants.includes(scope)) return;
       if (scope === 'pose' && !poseCompatible) return;
-      onExampleChange(example.id);
+      onExampleChange(example.id, scope);
       if (onRefScopeChange) onRefScopeChange(scope);
     };
     const defaultScope = cut === 'product' || moodOnly ? 'all'
@@ -1164,25 +1202,34 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       setPendingSaving(false);
     }
   };
-  const generationExamplePatch = (current, exampleId) => {
-    const changes = {
-      exampleId,
-      baseThumb: current.baseThumb ?? current.thumb,
-      exampleSelectionOrigin: exampleId ? 'user' : null,
-      refScope: current.spaceGroupId ? 'pose' : (current.refScope || 'all'),
+  const generationExamplePatch = (current, example, scope) => {
+    const selected = generationExampleSelectionPatch(current, example, {
+      clothingType,
+      defaultColorId: (isDetail ? detailColorOpts : colorOpts)[0]?.id,
+      refScope: scope,
+    });
+    return {
+      changes: referenceFeedbackPatch(current, {
+        ...selected.patch,
+        baseThumb: current.baseThumb ?? current.thumb,
+      }, catalogs),
+      settingsReset: selected.settingsReset,
     };
-    return referenceFeedbackPatch(current, changes, catalogs);
   };
-  const onGenerationExampleChange = (exampleId) => {
+  const onGenerationExampleChange = (exampleId, scope) => {
+    const example = (catalogs.genExamples || []).find((item) => item.id === exampleId);
+    if (!example) return undefined;
     if (block.spaceGroupId) {
-      return onAtomicChange(referenceFeedbackPatch(block, {
-        exampleId,
-        baseThumb: block.baseThumb ?? block.thumb,
-        exampleSelectionOrigin: exampleId ? 'user' : null,
-        refScope: 'pose',
-      }, catalogs), { retryAtomic: true }).catch(() => {});
+      const selected = generationExamplePatch(block, example, scope);
+      return onAtomicChange(selected.changes, {
+        retryAtomic: true,
+        undoLabel: selected.settingsReset ? '예시·설정 초기화' : '참조',
+      }).catch(() => {});
     }
-    onChange((current) => generationExamplePatch(current, exampleId));
+    const selected = generationExamplePatch(block, example, scope);
+    onChange(selected.changes, {
+      undoLabel: selected.settingsReset ? '예시·설정 초기화' : '참조',
+    });
     return undefined;
   };
   const onDirectionChange = (direction) => onChange((current) => {
@@ -1274,10 +1321,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             exampleId={block.exampleId || null}
             onExampleChange={onGenerationExampleChange}
             onExampleDrag={onExampleDrag}
-            refScope={block.refScope || 'all'} onRefScopeChange={(value) => onChange((current) => referenceFeedbackPatch(current, {
-              refScope: value,
-              exampleSelectionOrigin: current.exampleId ? 'user' : null,
-            }, catalogs))} inSpace={!!block.spaceGroupId}
+            refScope={block.refScope || 'all'} inSpace={!!block.spaceGroupId}
             refs={(block.refImages || []).map((value, index) => ({ url: value?.url || value, assetId: value?.assetId || (block.refAssetIds || [])[index] }))}
             onRefsChange={(references) => onChange({
               refImages: references.map((value) => value?.url || value),
@@ -1384,6 +1428,7 @@ export function Storyboard() {
   const saveRetryOptions = useRef({});
   const undoEntryRef = useRef(null);
   const undoTimerRef = useRef(null);
+  const undoHoveredRef = useRef(false);
   const newSeq = useRef(0);
   const cardRefs = useRef(new Map());
   const setPickerScrollY = useRef(null);
@@ -2168,8 +2213,9 @@ export function Storyboard() {
     const lineOn = dragOver === idx && dragOverSec === section.id
       && dragOverSpaceGroupId === targetSpaceGroupId;
     return (
-      <span
-        className={'sb-addzone' + (targetSpaceGroupId ? ' in-tray' : '') + (lineOn ? ' drop-on' : '')}
+      <StoryboardInsertControl
+        inTray={!!targetSpaceGroupId}
+        active={lineOn}
         onDragOver={(event) => {
           if (!(dragId || dragMine || dragExampleId || dragSpaceGroupId) || !canAcceptDrag) return;
           event.preventDefault();
@@ -2179,17 +2225,11 @@ export function Storyboard() {
           setDragOverSpaceGroupId(targetSpaceGroupId);
         }}
         onDrop={onDropAt(idx, section.id, section.role, targetSpaceGroupId, group.key)}
-      >
-        <button
-          type="button"
-          className="sb-addzone-plus"
-          aria-label="이 위치에 컷 추가"
-          onClick={(event) => {
+        onAdd={(event) => {
             event.stopPropagation();
             addBlock(idx, section.id, section.role, targetSpaceGroupId, group.key);
           }}
-        >＋</button>
-      </span>
+      />
     );
   };
 
@@ -2466,7 +2506,7 @@ export function Storyboard() {
       gender={exampleGender} clothingType={clothingType}
       onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
   ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage}
-    onChange={(p) => patch(selectedId, p)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} requestedRecipe={pendingSectionMove}
+    onChange={(p, options) => patch(selectedId, p, options)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
     spaceContext={selectedSpaceContext} onDissolveSpaceSet={dissolveSelectedSpaceSet}
     onAddMine={addMineBlock}

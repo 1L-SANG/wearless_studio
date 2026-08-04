@@ -1,4 +1,8 @@
-import { storyboardSpaceSetsFor } from './storyboardSpaceSetCatalog.js';
+import {
+  spaceSetIdFromGroupId,
+  storyboardSpaceSetById,
+  storyboardSpaceSetsFor,
+} from './storyboardSpaceSetCatalog.js';
 
 const PLACE_TYPE_GROUPS = {
   cafe: ['cafe', 'mixed-cafe', 'cafe-garden-entrance'],
@@ -105,6 +109,46 @@ export function entryStylingMembers(set) {
     if (right >= 0) return [ordered[left], ordered[right]];
   }
   return ordered.slice(0, 2);
+}
+
+/* 2컷 진입 규칙이 도입되기 전에 mock 메모리에 만들어진 자동 스타일링 세트는
+   Vite HMR 뒤에도 3멤버 그대로 남는다. 사용자가 고른 세트/멤버는 건드리지 않고,
+   발행 카탈로그와 정확히 일치하는 자동 run만 현재 진입 멤버로 축소한다. */
+export function migrateLegacyEntryStylingRuns(blocks) {
+  if (!Array.isArray(blocks) || blocks.length === 0) return { blocks, changed: false };
+  const next = [];
+  let changed = false;
+
+  for (let index = 0; index < blocks.length;) {
+    const groupId = blocks[index]?.spaceGroupId;
+    if (!groupId) {
+      next.push(blocks[index]);
+      index += 1;
+      continue;
+    }
+    let end = index + 1;
+    while (end < blocks.length && blocks[end]?.spaceGroupId === groupId) end += 1;
+    const run = blocks.slice(index, end);
+    const set = storyboardSpaceSetById(spaceSetIdFromGroupId(groupId));
+    const expected = set?.setType === 'styling' ? entryStylingMembers(set) : null;
+    const catalogOrders = new Set((set?.members || []).map((member) => member.order));
+    const isUntouchedLegacyRun = expected
+      && run.length > expected.length
+      && run.every((block) => (
+        block.setSelectionOrigin === 'auto'
+        && block.exampleSelectionOrigin === 'auto'
+        && catalogOrders.has(block.spaceSetMemberOrder)
+      ));
+    if (isUntouchedLegacyRun) {
+      const expectedOrders = new Set(expected.map((member) => member.order));
+      next.push(...run.filter((block) => expectedOrders.has(block.spaceSetMemberOrder)));
+      changed = true;
+    } else {
+      next.push(...run);
+    }
+    index = end;
+  }
+  return { blocks: changed ? next : blocks, changed };
 }
 
 export function pickEntrySets({

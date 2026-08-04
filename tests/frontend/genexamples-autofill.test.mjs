@@ -362,7 +362,7 @@ test('storyboard preserves an in-space pose across shot changes and remains atom
   );
   assert.doesNotMatch(selectedStatus, /selectedExample\.shot !== shotVal/);
   assert.match(storyboardSource, /await onAtomicChange\(changes, \{ pickerOwnsError: true \}\)/);
-  assert.match(storyboardSource, /\}, catalogs\), \{ retryAtomic: true \}\)/);
+  assert.match(storyboardSource, /retryAtomic: true,[^}]*undoLabel:/);
   assert.match(storyboardSource, /latestBlocks\.current !== atomicRetry\.previous/);
   assert.match(storyboardSource, /const copy = \{ \.\.\.withoutLayoutRow\(bs\[i\]\), id: uid\('blk'\) \}/);
   assert.match(storyboardSource, /새 섹션에 맞는 컷 예시를 먼저 골라주세요/);
