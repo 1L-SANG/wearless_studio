@@ -213,7 +213,7 @@ export function ProductInput() {
   const [truthBusy, setTruthBusy] = useState(false);
   const [truthDirty, setTruthDirty] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드일 때만 내려온다(shadow/off 면 undefined).
+  // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드일 때만 내려온다(off 면 undefined).
   // 업로드 순간이 아니라 **생성으로 넘어가는 버튼**에서 한 번 띄운다 — 사진을 고르는 도중에
   // 끼어들면 아직 다 올리지도 않은 셀러를 방해한다.
   const [inputConsistency, setInputConsistency] = useState(null);

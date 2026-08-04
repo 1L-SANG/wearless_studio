@@ -132,7 +132,7 @@ async def run_analyze_job(app, job: dict) -> None:
             points, feature_provider = feature_res
             if points:  # 전용 에이전트 결과가 있으면 교체, 비면 AG-01 것 유지
                 distributed["analysis"]["aiSuggestedPoints"] = points
-        # AG-IC — shadow 는 기록만, warn 만 프론트로 나간다. 예외·None 은 조용히 미판정.
+        # AG-IC — 예외·None 은 조용히 미판정(분석 자체는 정상 종결). 판정 실패가 분석을 막지 않는다.
         consistency = None
         if isinstance(consistency_res, BaseException):
             log.warning("AG-IC input consistency failed for job %s: %r", job_id, consistency_res)
@@ -147,7 +147,7 @@ async def run_analyze_job(app, job: dict) -> None:
                                                "featureProvider": feature_provider})
 
         analysis_payload = distributed["analysis"]
-        # warn + mismatch 일 때만 내보낸다. shadow 는 로그·metadata 에만 남아 분포를 쌓는다.
+        # warn + mismatch 일 때만 내보낸다(off 면 애초에 판정을 돌리지 않는다).
         #
         # **저장분(analyses.payload)에 넣는다.** 처음엔 "이번 업로드 묶음에 대한 관찰이라 상품
         # 분석의 소유가 아니다"라며 job 결과에만 실었는데, 그러면 분석을 막 끝낸 탭에서만
@@ -175,7 +175,7 @@ async def run_analyze_job(app, job: dict) -> None:
                 analysis_payload=analysis_payload, result={"data": result_data},
                 metadata={"provider": provider, "featureProvider": feature_provider,
                           "promptVersion": "v1",
-                          # shadow 캘리브레이션의 유일한 기록처 — 여기가 비면 분포를 못 쌓는다.
+                          # 판정 원문 보존처(match 도 포함) — 사후에 오탐률을 되짚을 때 유일한 근거.
                           **({"inputConsistency": consistency} if consistency else {})})
             # 분석 성공과 같은 트랜잭션에서 draft를 갱신한다. 사용자가 승인한 revision은
             # 건드리지 않고 repo가 프로젝트당 열린 draft만 갱신하므로, 분석 결과와 검수 화면이

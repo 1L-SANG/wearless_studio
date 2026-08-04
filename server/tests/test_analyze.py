@@ -323,11 +323,12 @@ def _run(captured_settings):
     asyncio.run(analyze_job.run_analyze_job(app, worker_job()))
 
 
-def test_input_consistency_shadow_records_but_does_not_reach_frontend(monkeypatch):
+def test_input_consistency_warn_records_verdict_in_metadata(monkeypatch):
+    """판정 원문은 metadata 에 남는다 — 사후에 오탐률을 되짚을 유일한 근거다.
+    (shadow 모드를 두지 않기로 한 이상, 이 기록처가 없으면 어떤 사후 검증도 불가능하다.)"""
     captured = _ic_harness(monkeypatch, _MISMATCH)
-    _run(make_settings(gemini_api_key="g-x", input_consistency="shadow"))
-    assert "inputConsistency" not in captured["result"]["data"]     # 프론트 무노출
-    assert captured["metadata"]["inputConsistency"] == _MISMATCH    # 분포는 쌓인다
+    _run(make_settings(gemini_api_key="g-x", input_consistency="warn"))
+    assert captured["metadata"]["inputConsistency"] == _MISMATCH
 
 
 def test_input_consistency_warn_surfaces_mismatch(monkeypatch):
@@ -344,10 +345,13 @@ def test_input_consistency_warn_persists_into_saved_analysis(monkeypatch):
     assert captured["analysis_payload"]["inputConsistency"] == _MISMATCH
 
 
-def test_input_consistency_shadow_does_not_persist(monkeypatch):
-    """shadow 가 저장분에 들어가면 GET /analysis 로 프론트에 새어 모달이 뜬다."""
-    captured = _ic_harness(monkeypatch, _MISMATCH)
-    _run(make_settings(gemini_api_key="g-x", input_consistency="shadow"))
+def test_input_consistency_match_is_recorded_but_never_persisted(monkeypatch):
+    """match 는 기록만 되고 저장분에 들어가면 안 된다 — 저장분에 들어가는 순간
+    GET /analysis 로 프론트에 새어 멀쩡한 업로드에 모달이 뜬다."""
+    match = {"verdict": "match", "confidence": 0.9, "offending": []}
+    captured = _ic_harness(monkeypatch, match)
+    _run(make_settings(gemini_api_key="g-x", input_consistency="warn"))
+    assert captured["metadata"]["inputConsistency"] == match
     assert "inputConsistency" not in captured["analysis_payload"]
 
 

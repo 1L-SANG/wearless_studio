@@ -169,6 +169,8 @@ def test_config_flag_is_wired_into_load_settings(monkeypatch):
     monkeypatch.setenv("INPUT_CONSISTENCY", "off")
     assert load_settings().input_consistency == "off"
     monkeypatch.setenv("INPUT_CONSISTENCY", "enforce")   # 존재하지 않는 값
-    assert load_settings().input_consistency == "shadow"
+    assert load_settings().input_consistency == "warn"
+    monkeypatch.setenv("INPUT_CONSISTENCY", "shadow")    # 폐지된 값(2026-08-02) → 기본으로 강등
+    assert load_settings().input_consistency == "warn"
     monkeypatch.delenv("INPUT_CONSISTENCY")
-    assert load_settings().input_consistency == "shadow"  # 기본값 = dataclass 선언과 일치
+    assert load_settings().input_consistency == "warn"   # 기본값 = dataclass 선언과 일치
