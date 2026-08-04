@@ -19,6 +19,7 @@ from app import repo
 from app.agents.gemini_image import InlineImage
 from app.agents.mannequin_adjust import build_adjust_directives, build_adjust_manifest
 from app.agents.product_reference import ProductReference, order_by_role
+from app.services import product_truth as pt
 from app.workers import mannequin_job as mj
 from conftest import make_settings
 
@@ -374,16 +375,25 @@ def _run_worker_fallback(monkeypatch, *, parent, mode="regenerate", snapshot=...
     analysis = {"targetGenders": ["women"], "fit": "regular", "fitProfile": PROFILE}
     if match_id is not None:
         analysis["matchSelections"] = [{"role": "main", "clothingId": match_id}]
+    product = {"name": product_name, "clothing_type": "top",
+               "colors": [{"isBase": True, "images": [{"id": "prod", "slot": "Front"}]}]}
+    evidence = {"prod": {"id": "prod", "checksum": "prod-sha", "width": 1, "height": 1,
+                         "mime_type": "image/png", "source": "upload"}}
+    if truth_row and truth_row.get("source_fingerprint") == "current":
+        truth_row = {**truth_row, "source_fingerprint": pt.source_fingerprint(
+            product, analysis, evidence)}
 
     async def get_product(conn, project_id):
-        return {"name": product_name, "clothing_type": "top",
-                "colors": [{"isBase": True, "images": [{"id": "prod", "slot": "Front"}]}]}
+        return product
 
     async def get_analysis(conn, project_id):
         return dict(analysis)
 
     async def get_product_truth(conn, project_id, truth_id=None):
         return truth_row
+
+    async def list_product_truth_asset_evidence(conn, user_id, asset_ids):
+        return [evidence[asset_id] for asset_id in asset_ids if asset_id in evidence]
 
     async def get_asset_for_user(conn, user_id, asset_id):
         return {"bw": {"id": "bw", "mime_type": "image/png", "r2_key": "bw.png"},
@@ -432,6 +442,7 @@ def _run_worker_fallback(monkeypatch, *, parent, mode="regenerate", snapshot=...
 
     for name, fn in (("get_product", get_product), ("get_analysis", get_analysis),
                      ("get_product_truth", get_product_truth),
+                     ("list_product_truth_asset_evidence", list_product_truth_asset_evidence),
                      ("get_asset_for_user", get_asset_for_user),
                      ("get_matching_item_asset", get_matching_item_asset),
                      ("get_mannequin_edit_parent", get_edit_parent),
@@ -611,7 +622,7 @@ def test_guarded_truth_runs_two_candidates_and_finalizes_only_policy_winner(monk
         "id": "truth-1", "version": 1, "status": "approved",
         "garment_spec": {"category": "shirt"},
         "color_spec": {}, "pattern_spec": {"type": "check"},
-        "protected_details": {}, "source_fingerprint": "sha",
+        "protected_details": {}, "source_fingerprint": "current",
     }
     scores = {
         "A": {"structuredQC": {"overallDecision": "review"},
@@ -634,3 +645,120 @@ def test_guarded_truth_runs_two_candidates_and_finalizes_only_policy_winner(monk
                 if event == "step" and payload.get("status") == "pipeline_candidate_selected"]
     assert selected == [{"status": "pipeline_candidate_selected", "lane": "GUARDED",
                          "candidateCount": 2, "selectedCandidate": "B"}]
+
+
+def test_worker_rejects_stale_queued_truth_before_storage_or_provider(monkeypatch):
+    calls = {"asset": 0, "r2": 0, "provider": 0, "failure": []}
+    product = {"id": "prod-1", "project_id": "p1", "name": "셔츠", "clothing_type": "top",
+               "colors": [{"id": "base", "isBase": True, "images": [
+                   {"id": "prod-front", "slot": "Front", "label": "Front"}]}]}
+    analysis = {"buttonCount": 4}
+    evidence = {"prod-front": {"id": "prod-front", "checksum": "current-sha",
+                               "width": 1000, "height": 1200,
+                               "mime_type": "image/png", "source": "upload"}}
+    truth = pt.build_truth_draft(product, analysis, evidence)
+    approved = pt.approve_snapshot(truth)
+    stale_fingerprint = pt.source_fingerprint(
+        product, {**analysis, "buttonCount": 5}, evidence)
+    assert stale_fingerprint != approved["sourceFingerprint"]
+    truth_row = {
+        "id": "truth-1", "version": 1, "status": "approved",
+        "garment_spec": approved["garmentSpec"],
+        "color_spec": approved["colorSpec"],
+        "pattern_spec": approved["patternSpec"],
+        "protected_details": approved["protectedDetails"],
+        "source_fingerprint": stale_fingerprint,
+        "source_assets": [{"asset_id": "prod-front", "role": "FRONT", "view": "Front"}],
+    }
+
+    async def get_product(conn, project_id):
+        return product
+
+    async def get_analysis(conn, project_id):
+        return analysis
+
+    async def get_product_truth(conn, project_id, truth_id=None):
+        return truth_row
+
+    async def list_evidence(conn, user_id, asset_ids):
+        assert asset_ids == ["prod-front"]
+        return [evidence["prod-front"]]
+
+    async def get_asset_for_user(conn, user_id, asset_id):
+        calls["asset"] += 1
+        raise AssertionError("asset lookup must happen after truth freshness preflight")
+
+    async def finalize_failure(conn, **kwargs):
+        calls["failure"].append(kwargs)
+        return None
+
+    async def forbidden_provider(**kwargs):
+        calls["provider"] += 1
+        raise AssertionError("provider must not run for stale truth")
+
+    class _R2:
+        def get_bytes(self, key):
+            calls["r2"] += 1
+            raise AssertionError("R2 must not run for stale truth")
+
+    for name, fn in (
+        ("get_product", get_product),
+        ("get_analysis", get_analysis),
+        ("get_product_truth", get_product_truth),
+        ("list_product_truth_asset_evidence", list_evidence),
+        ("get_asset_for_user", get_asset_for_user),
+        ("finalize_mannequin_failure", finalize_failure),
+    ):
+        monkeypatch.setattr(repo, name, fn)
+    monkeypatch.setattr(mj, "_run_candidate", forbidden_provider)
+    app = types.SimpleNamespace(state=types.SimpleNamespace(
+        settings=make_settings(base_mannequin_women_asset_id="bw",
+                               base_mannequin_men_asset_id="bm",
+                               enable_product_truth="shadow"),
+        pool=_FakePool(), r2=_R2(), gemini=None))
+    job = {"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:t",
+           "credits_reserved": 2, "payload": {"mode": "generate",
+                                              "truthPackageId": "truth-1"}}
+
+    asyncio.run(mj.run_mannequin_job(app, job))
+
+    assert calls["asset"] == calls["r2"] == calls["provider"] == 0
+    assert len(calls["failure"]) == 1
+    failure = calls["failure"][0]
+    assert failure["reserved"] == 2
+    assert failure["metadata"]["error"] == "truth_stale"
+
+
+def test_structured_qc_uses_detail_for_pattern_and_front_for_color_semantics(monkeypatch):
+    calls = []
+
+    def fake_run_quantitative(**kwargs):
+        calls.append(kwargs)
+        return [{"check": "color_fidelity", "status": "pass", "score": 0.9},
+                {"check": "pattern_fidelity", "status": "pass", "score": 0.9}]
+
+    class _R2:
+        def put_bytes(self, key, data, mime, cache=None):
+            return None
+
+    monkeypatch.setattr(mj, "run_quantitative_fidelity_qc", fake_run_quantitative)
+    res = types.SimpleNamespace(image=_PNG_1PX, mime="image/png")
+    detail = _ref("Detail", "detail", b"detail-bytes")
+    front = _ref("Front", "front", b"front-bytes")
+
+    out = asyncio.run(mj._save_cut(
+        s=make_settings(r2_bucket="bucket", mannequin_structured_qc="shadow"),
+        r2=_R2(), user_id="u1", project_id="p1", job_id="j1", candidate="A",
+        base_fit="regular", res=res, qc_scores={},
+        product_truth={"id": "truth-1", "status": "approved",
+                       "patternSpec": {"type": "STRIPE"}},
+        pattern_sources=[front, detail], color_source=front,
+        base_image=InlineImage("image/png", b"base-bytes")))
+
+    assert [call["source_bytes"] for call in calls] == [b"front-bytes", b"detail-bytes"]
+    assert all(call["base_bytes"] == b"base-bytes" for call in calls)
+    structured = out["qc_scores"]["structuredQC"]
+    assert structured["sourceSemantics"]["patternSource"] == {
+        "slot": "Detail", "assetId": "detail"}
+    assert structured["sourceSemantics"]["colorSource"] == {
+        "slot": "Front", "assetId": "front"}

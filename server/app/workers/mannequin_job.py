@@ -62,6 +62,7 @@ from ..agents.prompts import (
 )
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime, genrun_prompt_key
 from ..services import edit_intent_qc, mannequin_frame_qc, qc
+from ..services import product_truth as product_truth_service
 from ..services.garment_profile import build_garment_profile, select_pipeline_policy
 from ..services.qc_decision import decide as decide_structured_qc
 from ..services.qc_result import assemble_qc_result
@@ -248,6 +249,30 @@ def _build_manifest(prod_assets: list[dict], has_match: bool, clothing_type: str
         else:
             lines.append(f"{i}. matching BOTTOM garment — also dress the mannequin in this, coordinated with the top")
     return "\n".join(lines)
+
+
+def _product_asset_ids(product: dict) -> list[str]:
+    return [
+        str(i.get("id") or i.get("assetId"))
+        for c in (product.get("colors") or [])
+        for i in (c.get("images") or [])
+        if i.get("id") or i.get("assetId")
+    ]
+
+
+def _truth_domain(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    return {
+        "id": row.get("id"),
+        "version": row.get("version"),
+        "status": row.get("status"),
+        "garmentSpec": row.get("garment_spec") or {},
+        "colorSpec": row.get("color_spec") or {},
+        "patternSpec": row.get("pattern_spec") or {},
+        "protectedDetails": row.get("protected_details") or {},
+        "sourceFingerprint": row.get("source_fingerprint"),
+    }
 
 
 # 레거시 검색 증강 가드. Frame Lock 이후 STYLE REFERENCE 는 생성 provider 입력에 넣지 않는다.
@@ -863,6 +888,72 @@ def _attach_structured_qc(s, qc_scores: dict | None, product_truth: dict | None,
     return {**legacy, "structuredQC": structured,
             "outcome": (legacy.get("outcome") if decision["overallDecision"] == "pass"
                         else "needs_review")}
+
+
+def _source_ref_payload(ref: ProductReference | None) -> dict | None:
+    if ref is None:
+        return None
+    return {"slot": ref.slot, "assetId": ref.asset_id}
+
+
+def _select_color_source(refs: list[ProductReference]) -> ProductReference | None:
+    for slot in ("Front", "Detail", "Back", "Fit"):
+        for ref in refs:
+            if ref.slot == slot:
+                return ref
+    return refs[0] if refs else None
+
+
+def _merge_quantitative_checks(
+    *,
+    color_source: ProductReference | None,
+    pattern_source: ProductReference | None,
+    legacy_source_image: InlineImage | None,
+    base_image: InlineImage,
+    output_bytes: bytes,
+    pattern_type: str,
+) -> tuple[list[dict], dict]:
+    """Run quantitative QC with explicit source authority.
+
+    Color and pattern can have different canonical sources: Front is usually the color/whole-garment
+    reference, while Detail is authoritative for repeat spacing and high-frequency pattern structure.
+    """
+    if color_source is None:
+        color_source = pattern_source
+    if pattern_source is None:
+        pattern_source = color_source
+    if color_source is None and pattern_source is None and legacy_source_image is not None:
+        checks = run_quantitative_fidelity_qc(
+            source_bytes=legacy_source_image.data, base_bytes=base_image.data,
+            output_bytes=output_bytes, pattern_type=pattern_type, include_debug_bytes=True)
+        return checks, {"patternSource": None, "colorSource": None}
+    if color_source is None or pattern_source is None:
+        return [], {
+            "patternSource": _source_ref_payload(pattern_source),
+            "colorSource": _source_ref_payload(color_source),
+        }
+    if color_source.asset_id == pattern_source.asset_id:
+        checks = run_quantitative_fidelity_qc(
+            source_bytes=pattern_source.image.data, base_bytes=base_image.data,
+            output_bytes=output_bytes, pattern_type=pattern_type, include_debug_bytes=True)
+        return checks, {
+            "patternSource": _source_ref_payload(pattern_source),
+            "colorSource": _source_ref_payload(color_source),
+        }
+
+    color_checks = run_quantitative_fidelity_qc(
+        source_bytes=color_source.image.data, base_bytes=base_image.data,
+        output_bytes=output_bytes, pattern_type=pattern_type, include_debug_bytes=False)
+    pattern_checks = run_quantitative_fidelity_qc(
+        source_bytes=pattern_source.image.data, base_bytes=base_image.data,
+        output_bytes=output_bytes, pattern_type=pattern_type, include_debug_bytes=True)
+    color = next((c for c in color_checks if c.get("check") == "color_fidelity"), None)
+    pattern = next((c for c in pattern_checks if c.get("check") == "pattern_fidelity"), None)
+    checks = [c for c in (color, pattern) if c is not None]
+    return checks, {
+        "patternSource": _source_ref_payload(pattern_source),
+        "colorSource": _source_ref_payload(color_source),
+    }
 
 
 def _apply_structured_outcome(qc_scores: dict) -> None:
@@ -1849,18 +1940,28 @@ async def _apply_edits(
 
 async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, res, qc_scores,
                     runlog=None, carrier_run_id=None, parent_lineage=None, product_truth=None,
-                    source_image=None, base_image=None):
+                    source_image=None, pattern_sources=None, color_source=None, base_image=None):
     """채택본을 R2 에 올리고 finalize 용 dict 를 만든다. 출고 지점은 여기 하나뿐이다."""
     debug_overlays = []
     if getattr(s, "mannequin_structured_qc", "off") != "off":
         quantitative_checks = None
-        if source_image is not None and base_image is not None:
+        source_semantics = None
+        if base_image is not None and (source_image is not None or pattern_sources):
             pattern = ((product_truth or {}).get("patternSpec") or
                        (product_truth or {}).get("pattern_spec") or {}).get("type", "unknown")
-            quantitative_checks = await asyncio.to_thread(
-                run_quantitative_fidelity_qc,
-                source_bytes=source_image.data, base_bytes=base_image.data,
-                output_bytes=res.image, pattern_type=pattern, include_debug_bytes=True)
+            selected_pattern = None
+            if pattern_sources:
+                selected = select_pattern_sources(tuple(pattern_sources), limit=1)
+                selected_pattern = selected[0] if selected else None
+            quantitative_checks, source_semantics = await asyncio.to_thread(
+                _merge_quantitative_checks,
+                color_source=color_source,
+                pattern_source=selected_pattern,
+                legacy_source_image=source_image,
+                base_image=base_image,
+                output_bytes=res.image,
+                pattern_type=pattern,
+            )
             for check in quantitative_checks:
                 overlay = check.pop("_debugOverlayPng", None)
                 if overlay:
@@ -1868,6 +1969,8 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
                                            check.get("debugOverlaySha256")))
         qc_scores = _attach_structured_qc(
             s, qc_scores, product_truth, quantitative_checks=quantitative_checks)
+        if source_semantics is not None:
+            qc_scores["structuredQC"]["sourceSemantics"] = source_semantics
         if (s.mannequin_structured_qc == "enforce"
                 and qc_scores["structuredQC"]["overallDecision"] == "reject"):
             raise ValueError("structured_qc_rejected")
@@ -2497,7 +2600,8 @@ async def _run_candidate(
                 candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
                 runlog=runlog, carrier_run_id=carrier_run_id,
                 parent_lineage=parent_lineage, product_truth=product_truth,
-                source_image=(prod_refs[0].image if prod_refs else None), base_image=base_img)
+                pattern_sources=prod_refs, color_source=_select_color_source(prod_refs),
+                base_image=base_img)
         # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
         # 정체성 게이트가 선점하면 축 QC/편집은 이 attempt에서 미실행 — 잘못된 옷을 편집하면
         # 그 정체성이 보존되므로 신규 생성(re-roll)이 우선한다(설계 결정 3).
@@ -2609,7 +2713,8 @@ async def _run_candidate(
             candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
             runlog=runlog, carrier_run_id=carrier_run_id,
             parent_lineage=parent_lineage, product_truth=product_truth,
-            source_image=(prod_refs[0].image if prod_refs else None), base_image=base_img)
+            pattern_sources=prod_refs, color_source=_select_color_source(prod_refs),
+            base_image=base_img)
     return None  # 구제할 후보조차 없음 → 이 후보 드롭(부분 성공 허용)
 
 
@@ -2998,58 +3103,62 @@ async def run_mannequin_job(app, job: dict) -> None:
             if s.enable_product_truth == "enforce" and truth_row is None:
                 truth_error = ("승인된 상품 정보가 필요해요.",
                                {"error": "approved_truth_required"})
-            product_truth = None
-            if truth_row:
-                product_truth = {
-                    "id": truth_row["id"], "version": truth_row["version"],
-                    "status": truth_row["status"],
-                    "garmentSpec": truth_row.get("garment_spec") or {},
-                    "colorSpec": truth_row.get("color_spec") or {},
-                    "patternSpec": truth_row.get("pattern_spec") or {},
-                    "protectedDetails": truth_row.get("protected_details") or {},
-                    "sourceFingerprint": truth_row.get("source_fingerprint"),
-                }
+            product_truth = _truth_domain(truth_row)
+            if product_truth and truth_error is None:
+                evidence = await repo.list_product_truth_asset_evidence(
+                    conn, user_id, _product_asset_ids(product))
+                current_fingerprint = product_truth_service.source_fingerprint(
+                    product, analysis, evidence)
+                try:
+                    product_truth_service.assert_approved_for_generation(
+                        product_truth, current_fingerprint=current_fingerprint)
+                except product_truth_service.ProductTruthError as e:
+                    truth_error = (
+                        "승인된 상품 정보가 변경됐어요. 다시 확인해 주세요.",
+                        {"error": e.code},
+                    )
             pipeline_policy = _generation_pipeline_policy(s, product_truth)
-            product_clothing_type = (
-                product.get("clothing_type")
-                or product.get("clothingType")
-                or "top"
-            )
-            gender = mannequin.select_base_gender(
-                analysis, product_clothing_type
-            )
-            base_asset_id = (s.base_mannequin_men_asset_id if gender == "men"
-                             else s.base_mannequin_women_asset_id)
-            base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)
-                          if base_asset_id else None)
-            prod_assets = []
-            truth_role_to_slot = {
-                "FRONT": "Front", "BACK": "Back", "FIT": "Fit",
-                "DETAIL": "Detail", "FABRIC_MACRO": "Detail", "LOGO": "Detail",
-                "PRINT": "Detail", "EMBROIDERY": "Detail", "COLLAR": "Detail",
-                "SLEEVE": "Detail", "CUFF": "Detail", "BUTTON": "Detail",
-                "POCKET": "Detail", "CARE_LABEL": "Detail",
-            }
-            truth_inputs = [
-                (truth_role_to_slot.get(a.get("role"), "Detail"), a.get("asset_id"))
-                for a in ((truth_row or {}).get("source_assets") or []) if a.get("asset_id")
-            ]
-            source_inputs = truth_inputs or mannequin.base_color_images(product)
-            seen_assets = set()
-            for slot, aid in source_inputs:
-                if aid in seen_assets:
-                    continue
-                seen_assets.add(aid)
-                a = await repo.get_asset_for_user(conn, user_id, aid)
-                if a:
-                    a["slot"] = slot  # Front/Back/Detail/Fit — 매니페스트 라벨용
-                    prod_assets.append(a)
-            match_asset = None
-            match_id = mannequin.main_match_item_id(analysis)
-            if match_id:
-                m_aid = await repo.get_matching_item_asset(conn, match_id)
-                if m_aid:
-                    match_asset = await repo.get_asset_for_user(conn, user_id, m_aid)
+            if truth_error is None:
+                product_clothing_type = (
+                    product.get("clothing_type")
+                    or product.get("clothingType")
+                    or "top"
+                )
+                gender = mannequin.select_base_gender(
+                    analysis, product_clothing_type
+                )
+                base_asset_id = (s.base_mannequin_men_asset_id if gender == "men"
+                                 else s.base_mannequin_women_asset_id)
+                base_asset = (await repo.get_asset_for_user(conn, user_id, base_asset_id)
+                              if base_asset_id else None)
+                prod_assets = []
+                truth_role_to_slot = {
+                    "FRONT": "Front", "BACK": "Back", "FIT": "Fit",
+                    "DETAIL": "Detail", "FABRIC_MACRO": "Detail", "LOGO": "Detail",
+                    "PRINT": "Detail", "EMBROIDERY": "Detail", "COLLAR": "Detail",
+                    "SLEEVE": "Detail", "CUFF": "Detail", "BUTTON": "Detail",
+                    "POCKET": "Detail", "CARE_LABEL": "Detail",
+                }
+                truth_inputs = [
+                    (truth_role_to_slot.get(a.get("role"), "Detail"), a.get("asset_id"))
+                    for a in ((truth_row or {}).get("source_assets") or []) if a.get("asset_id")
+                ]
+                source_inputs = truth_inputs or mannequin.base_color_images(product)
+                seen_assets = set()
+                for slot, aid in source_inputs:
+                    if aid in seen_assets:
+                        continue
+                    seen_assets.add(aid)
+                    a = await repo.get_asset_for_user(conn, user_id, aid)
+                    if a:
+                        a["slot"] = slot  # Front/Back/Detail/Fit — 매니페스트 라벨용
+                        prod_assets.append(a)
+                match_asset = None
+                match_id = mannequin.main_match_item_id(analysis)
+                if match_id:
+                    m_aid = await repo.get_matching_item_asset(conn, match_id)
+                    if m_aid:
+                        match_asset = await repo.get_asset_for_user(conn, user_id, m_aid)
 
         if truth_error:
             await _fail(*truth_error)
