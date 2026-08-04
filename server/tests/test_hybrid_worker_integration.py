@@ -24,6 +24,7 @@ import pytest
 
 from app import repo
 from app.agents import hybrid_landmarks
+from app.services import product_truth as pt
 from app.workers import mannequin_job as mj
 from conftest import make_settings
 from hybrid_stripe_fixtures import render_carrier, render_negative, render_signal
@@ -97,6 +98,25 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
     detail_png = detail_png if detail_png is not None else source_png
     cx = render_carrier("G1_regular", 0)
     carrier_png = _png(cx["image"])
+    product_images = [{"id": "front", "slot": "Front"}, {"id": "back", "slot": "Back"}]
+    if include_detail:
+        product_images.append({"id": "detail", "slot": "Detail"})
+    product = {"name": product_name, "clothing_type": "top",
+               "colors": [{"isBase": True, "images": product_images}]}
+    analysis = {"targetGenders": ["women"], "fit": "regular"}
+    if analysis_pattern is not None:
+        analysis["pattern"] = {"type": analysis_pattern}
+    evidence = {
+        "front": {"id": "front", "checksum": hashlib.sha256(source_png).hexdigest(),
+                  "width": 1536, "height": 1536, "mime_type": "image/png",
+                  "source": "upload"},
+        "back": {"id": "back", "checksum": hashlib.sha256(source_png).hexdigest(),
+                 "width": 1536, "height": 1536, "mime_type": "image/png",
+                 "source": "upload"},
+        "detail": {"id": "detail", "checksum": hashlib.sha256(detail_png).hexdigest(),
+                   "width": 1536, "height": 1536, "mime_type": "image/png",
+                   "source": "upload"},
+    }
 
     class _Gemini:
         async def generate_content_image(self, model, prompt, images, size,
@@ -125,17 +145,10 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
         return raw
 
     async def get_product(conn, project_id):
-        images = [{"id": "front", "slot": "Front"}, {"id": "back", "slot": "Back"}]
-        if include_detail:
-            images.append({"id": "detail", "slot": "Detail"})
-        return {"name": product_name, "clothing_type": "top",
-                "colors": [{"isBase": True, "images": images}]}
+        return product
 
     async def get_analysis(conn, project_id):
-        out = {"targetGenders": ["women"], "fit": "regular"}
-        if analysis_pattern is not None:
-            out["pattern"] = {"type": analysis_pattern}
-        return out
+        return dict(analysis)
 
     async def get_product_truth(conn, project_id, truth_id=None):
         if truth_pattern is None:
@@ -151,8 +164,11 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
             "color_spec": {},
             "pattern_spec": pattern_spec,
             "protected_details": {},
-            "source_fingerprint": {},
+            "source_fingerprint": pt.source_fingerprint(product, analysis, evidence),
         }
+
+    async def list_product_truth_asset_evidence(conn, user_id, asset_ids):
+        return [evidence[asset_id] for asset_id in asset_ids if asset_id in evidence]
 
     async def get_asset_for_user(conn, user_id, asset_id):
         return {
@@ -180,6 +196,7 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
     for name, fn in (("get_product", get_product), ("get_analysis", get_analysis),
                      ("get_asset_for_user", get_asset_for_user),
                      ("get_product_truth", get_product_truth),
+                     ("list_product_truth_asset_evidence", list_product_truth_asset_evidence),
                      ("get_matching_item_asset", get_matching_item_asset),
                      ("finalize_mannequin_success", finalize_success),
                      ("finalize_mannequin_failure", finalize_failure)):

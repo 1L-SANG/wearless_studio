@@ -45,6 +45,33 @@ def _white_solid() -> Image.Image:
     return _figure(fill=(233, 231, 229), outline=(205, 203, 201))
 
 
+def _colored_top_with_white_lower_body() -> Image.Image:
+    """유색 상의 + 흰 마네킹 하체인 실제 1K Frame Lock 표본의 대비 분포."""
+    w, h = 700, 1050
+    img = Image.new("RGB", (w, h), BG_WHITE)
+    d = ImageDraw.Draw(img)
+    d.ellipse(
+        [int(w * 0.44), int(h * 0.06), int(w * 0.56), int(h * 0.17)],
+        fill=(233, 231, 229),
+        outline=(205, 203, 201),
+        width=6,
+    )
+    # 진한 상의가 전체 이미지를 고대비 레짐으로 밀어 올린다.
+    d.rectangle(
+        [int(w * 0.37), int(h * 0.16), int(w * 0.63), int(h * 0.55)],
+        fill=(150, 35, 45),
+    )
+    # 하체는 배경과 가까운 흰 마네킹이라 윤곽·음영만 전경이다.
+    for left, right in ((0.42, 0.49), (0.51, 0.58)):
+        d.rectangle(
+            [int(w * left), int(h * 0.54), int(w * right), int(h * 0.93)],
+            fill=(233, 231, 229),
+            outline=(205, 203, 201),
+            width=6,
+        )
+    return img
+
+
 def _blend_bg(img: Image.Image, alpha: float) -> Image.Image:
     bg = Image.new("RGB", img.size, BG_WHITE)
     return Image.blend(bg, img, alpha)
@@ -63,6 +90,16 @@ def test_white_ghost_caught():
 
 def test_colored_solid_passes():
     r = qc.evaluate_mannequin_qc(_png(_figure()))
+    assert r.verdict == "pass", r.reasons
+    assert r.metrics["lowerBodyContrastRegime"] == "normal"
+
+
+def test_colored_top_does_not_raise_lower_body_threshold_for_white_legs():
+    """하체 대비 레짐은 상의 색이 아니라 하단 영역 자체로 결정해야 한다."""
+    r = qc.evaluate_mannequin_qc(_png(_colored_top_with_white_lower_body()))
+    assert r.metrics["bboxBottom"] >= 0.90
+    assert r.metrics["strongFgRatio"] >= qc.STRONG_FG_MIN_RATIO
+    assert r.metrics["lowerBodyContrastRegime"] == "low"
     assert r.verdict == "pass", r.reasons
 
 

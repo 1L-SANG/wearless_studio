@@ -19,6 +19,7 @@ BBOX_BOTTOM_MIN = 0.86  # 전경 하단이 이보다 아래
 BBOX_HEIGHT_MIN = 0.72  # 전경 높이 비율
 LOWER_BODY_MIN_RATIO = 0.012  # 하단 12% 영역의 전경 비율 (일반 레짐)
 LOWER_BODY_MIN_RATIO_LOW = 0.0001  # 〃 저대비 레짐 — 흰 발/흰 바닥 정상(≈0.0002~0.0004)과 소실(=0) 사이
+LOWER_BODY_STRONG_CONTRAST_RATIO = 0.001  # 하단 자체가 고대비일 때만 일반 레짐(1K 정상 흰 발≈0.0001)
 # 유령 판정 2-레짐 (실측: 흰옷 정상 fg≈0.010/strong≈0.0002 · 흰 유령 fg≈0.0001 · 유색 유령 fg≈0.06/strong≈0.000):
 #  - 저대비 레짐(fg < NORMAL_CONTRAST_FG_RATIO — 화이트·아이보리 의류/호리존): strong 검사를 건너뛰고
 #    FG_SOLID_MIN_RATIO 미달만 유령으로 본다. 흰옷 정상을 차단하지 않기 위함(모노톤 스와치 실존).
@@ -92,11 +93,20 @@ def evaluate_mannequin_qc(generated_bytes: bytes) -> QcResult:
     if t > h * BBOX_TOP_MAX or b < h * BBOX_BOTTOM_MIN or (b - t) < h * BBOX_HEIGHT_MIN:
         reasons.append("full_body_crop")
 
-    # 하단 12% 전경 존재(발/다리) — 크롭·유령 양쪽 탐지. 임계는 레짐 연동(흰 발·흰 바닥 대응)
+    # 하단 12% 전경 존재(발/다리) — 크롭·유령 양쪽 탐지.
+    # 레짐은 이미지 전체가 아니라 하단 자체의 대비로 고른다. 유색 상의가 global fg를
+    # 높여도 흰 마네킹 다리·발은 저대비이기 때문이다(2026-08-04 1K 표본 6/15 오탐).
     normal_contrast = fg_count >= total * NORMAL_CONTRAST_FG_RATIO
-    lower_min = LOWER_BODY_MIN_RATIO if normal_contrast else LOWER_BODY_MIN_RATIO_LOW
     lower = fg.crop((0, int(h * 0.88), w, h))
-    if lower.histogram()[-1] < total * lower_min:
+    lower_strong = strong.crop((0, int(h * 0.88), w, h))
+    lower_count = lower.histogram()[-1]
+    lower_strong_count = lower_strong.histogram()[-1]
+    lower_normal_contrast = lower_strong_count >= total * LOWER_BODY_STRONG_CONTRAST_RATIO
+    lower_min = LOWER_BODY_MIN_RATIO if lower_normal_contrast else LOWER_BODY_MIN_RATIO_LOW
+    metrics["lowerBodyFgRatio"] = round(lower_count / total, 5)
+    metrics["lowerBodyStrongFgRatio"] = round(lower_strong_count / total, 5)
+    metrics["lowerBodyContrastRegime"] = "normal" if lower_normal_contrast else "low"
+    if lower_count < total * lower_min:
         reasons.append("missing_lower_body")
 
     # 유령(일반 레짐만): 전경 질량은 있는데 확실한 전경이 없으면 옅게 번진 것.
