@@ -126,6 +126,8 @@ def test_approval_links_the_latest_structured_qc_result_for_the_approved_output(
     assert params[5] == "truth-1"
     assert params[6] == "qc-1"
     assert out["baseline"]["baseline_qc_result_id"] == "qc-1"
+    output_lookup = [s for s, _p in st["sql"] if "from generation_outputs go" in s][0]
+    assert "order by go.created_at desc" in output_lookup
 
 
 def test_approval_locks_the_project_row_first():

@@ -835,7 +835,7 @@ async def approve_mannequin_baseline(
             " order by qr.created_at desc limit 1) as baseline_qc_result_id "
             "from generation_outputs go left join generation_runs gr on gr.id=go.generation_run_id "
             "where go.mannequin_cut_id = %s "
-            "order by created_at desc limit 1",
+            "order by go.created_at desc limit 1",
             (cut["mannequin_cut_id"],),
         )
         out = await cur.fetchone() or {}
