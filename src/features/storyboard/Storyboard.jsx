@@ -128,10 +128,6 @@ const withoutLayoutRow = (block) => {
   return single;
 };
 
-const SCOPE_LABELS = { all: '전부', bg: '배경만', pose: '포즈만' };
-// 서버 게이트와 함께 켠다. dev에서는 검증용으로 열고 production은 명시적 Vite 플래그로 공개한다.
-const BG_EXAMPLES_ENABLED = Boolean(import.meta.env?.DEV)
-  || import.meta.env?.VITE_GENEXAMPLE_BG_ENABLED === 'true';
 const WORN_CUT_TYPES = new Set(['styling', 'horizon', 'mirror']);
 const FIT_ROLE_BY_CUT_TYPE = Object.freeze({
   styling: CONTENT_ROLES.COORDINATION,
@@ -320,7 +316,7 @@ function StoryboardMedia({ block, catalogs, index, total, onDuplicate, onDelete,
       {block.source === 'mine' && <span className="sb-mine-badge">내 사진</span>}
       {missing ? (
         <span className="sb-missing-body">
-          생성예시를 배정하지<br />못했어요
+          <span className="upload-placeholder-logo" aria-hidden="true" />
           <i>카드를 열어 다시 시도</i>
         </span>
       ) : (
@@ -395,23 +391,26 @@ function StoryboardCard({
   const missing = block.source !== 'mine' && !block.exampleId;
   return (
     <div className={'sb-canvas-card' + (locked ? ' locked' : '')}>
-      <CardDragSurface
-        className={'sb-cutcard' + (selected ? ' selected' : '') + (missing ? ' missing' : '')}
-        dragProps={cardDrag}
-        onSelect={onSelect}
-      >
-        <StoryboardMedia
-          block={block}
-          catalogs={catalogs}
-          index={index}
-          total={total}
-          onDuplicate={onDuplicate}
-          onDelete={onDelete}
-          onNudge={onNudge}
-          canNudgeUp={canNudgeUp}
-          canNudgeDown={canNudgeDown}
-        />
-      </CardDragSurface>
+      <div className="sb-card-media">
+        <CardDragSurface
+          className={'sb-cutcard' + (selected ? ' selected' : '') + (missing ? ' missing' : '')}
+          dragProps={cardDrag}
+          onSelect={onSelect}
+        >
+          <StoryboardMedia
+            block={block}
+            catalogs={catalogs}
+            index={index}
+            total={total}
+            onDuplicate={onDuplicate}
+            onDelete={onDelete}
+            onNudge={onNudge}
+            canNudgeUp={canNudgeUp}
+            canNudgeDown={canNudgeDown}
+          />
+        </CardDragSurface>
+        {addControl}
+      </div>
       <StoryboardCaption
         block={block}
         catalogs={catalogs}
@@ -419,7 +418,6 @@ function StoryboardCard({
         matchClothing={matchClothing}
         clothingType={clothingType}
       />
-      {addControl}
     </div>
   );
 }
@@ -430,28 +428,31 @@ function StoryboardFrame({
 }) {
   return (
     <div className="sb-frame">
-      <span className="sb-frame-tag">한 프레임 구성 · 2컷</span>
-      <div className="sb-frame-box">
-        {items.map((item) => {
-          const missing = item.block.source !== 'mine' && !item.block.exampleId;
-          return (
-            <CardDragSurface
-              key={item.block.id}
-              className={'sb-frame-half' + (item.block.id === selectedId ? ' selected' : '') + (missing ? ' missing' : '') + (locked && item.block.id !== selectedId ? ' locked' : '')}
-              dragProps={dragFor(item.block.id)}
-              onSelect={() => onSelect(item.block.id)}
-            >
-              <StoryboardMedia
-                block={item.block}
-                catalogs={catalogs}
-                index={item.index}
-                total={total}
-                onDuplicate={() => onDuplicate(item.block.id)}
-                onDelete={() => onDelete(item.block.id)}
-              />
-            </CardDragSurface>
-          );
-        })}
+      <div className="sb-frame-media">
+        <span className="sb-frame-tag">한 프레임 구성 · 2컷</span>
+        <div className="sb-frame-box">
+          {items.map((item) => {
+            const missing = item.block.source !== 'mine' && !item.block.exampleId;
+            return (
+              <CardDragSurface
+                key={item.block.id}
+                className={'sb-frame-half' + (item.block.id === selectedId ? ' selected' : '') + (missing ? ' missing' : '') + (locked && item.block.id !== selectedId ? ' locked' : '')}
+                dragProps={dragFor(item.block.id)}
+                onSelect={() => onSelect(item.block.id)}
+              >
+                <StoryboardMedia
+                  block={item.block}
+                  catalogs={catalogs}
+                  index={item.index}
+                  total={total}
+                  onDuplicate={() => onDuplicate(item.block.id)}
+                  onDelete={() => onDelete(item.block.id)}
+                />
+              </CardDragSurface>
+            );
+          })}
+        </div>
+        {addControl}
       </div>
       <div className="sb-frame-captions">
         {items.map((item) => (
@@ -465,7 +466,6 @@ function StoryboardFrame({
           />
         ))}
       </div>
-      {addControl}
     </div>
   );
 }
@@ -846,15 +846,6 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
     const poseDisabledReason = !variants.includes('pose')
       ? unavailableReason('pose') : poseDirectionReason(example);
     const inSpaceDisabled = inSpace && poseDisabled;
-    const scopeChoices = !onRefScopeChange || cut === 'product' ? null
-      : inSpace ? [{ v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason }]
-        : [
-          { v: 'all', l: '전부', disabled: !variants.includes('all') },
-          ...(BG_EXAMPLES_ENABLED
-            ? [{ v: 'bg', l: '배경만', disabled: !variants.includes('bg') }]
-            : []),
-          { v: 'pose', l: '포즈만', disabled: poseDisabled, reason: poseDisabledReason },
-        ];
     const pick = (scope) => {
       if (!onExampleChange || !variants.includes(scope)) return;
       if (scope === 'pose' && !poseCompatible) return;
@@ -881,28 +872,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
         onClick={() => pick(defaultScope)}>
         <ExampleThumb example={example} />
         {on && <span className="ck"><Icon name="check" size={11} /></span>}
-        {on && scopeChoices && <span className="sb-exscope">{SCOPE_LABELS[refScope || 'all'] || '전부'}</span>}
-        {scopeChoices && (
-          <span className="sb-exov">
-            <span className="sb-exov-t">레퍼런스 범위</span>
-            <span className="sb-exov-b">
-              {scopeChoices.map((choice) => (
-                <span key={choice.v} role="button" tabIndex={choice.disabled ? -1 : 0}
-                  aria-disabled={choice.disabled || undefined}
-                  title={choice.disabled ? (choice.reason || unavailableReason(choice.v)) : undefined}
-                  className={`sb-exov-btn${on && (refScope || 'all') === choice.v ? ' on' : ''}${choice.disabled ? ' unavailable' : ''}`}
-                  onClick={(event) => { event.stopPropagation(); if (!choice.disabled) pick(choice.v); }}
-                  onKeyDown={(event) => {
-                    if (!choice.disabled && (event.key === 'Enter' || event.key === ' ')) {
-                      event.preventDefault(); event.stopPropagation(); pick(choice.v);
-                    }
-                  }}>
-                  {choice.l}
-                </span>
-              ))}
-            </span>
-          </span>
-        )}
+        {/* MVP 이후 재도입 — 포즈 탭 형태 검토. refScope 필드와 선택 기본값 로직은 유지한다. */}
       </button>
     );
   };
@@ -1034,13 +1004,6 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           </div>
         )}
       </div>
-      {/* 레퍼런스 범위 (P5 확정, 전부|포즈만|배경만) — 같은 공간 묶음은 포즈 고정, 제품 생성 레시피는 범위 개념 없음 */}
-      {exampleId && !inSpace && cut !== 'product' && refScope === 'pose' && (
-        <div className="sb-exnote">포즈의 좌우와 비대칭을 그대로 따르고, 프레이밍은 현재 샷을 따라요.</div>
-      )}
-      {exampleId && !inSpace && cut !== 'product' && refScope === 'bg' && (
-        <div className="sb-exnote">배경·분위기만 참고해요. 포즈는 이 옷과 장소에 어울리게 새로 잡혀요.</div>
-      )}
     </div>
   );
 }
@@ -2210,7 +2173,6 @@ export function Storyboard() {
         }}
         onDrop={onDropAt(idx, section.id, section.role, targetSpaceGroupId, group.key)}
       >
-        <span className="sb-addzone-bar" />
         <button
           type="button"
           className="sb-addzone-plus"
@@ -2436,7 +2398,7 @@ export function Storyboard() {
               aria-expanded={open}
               onClick={() => toggleRenderGroup(group.key)}
             >
-              <span className="sb-deck-chevron">▾</span>
+              <span className="sb-deck-chevron" aria-hidden="true"><Icon name="chevDown" size={18} /></span>
               <span className="sb-deck-index">{group.title}</span>
               <span className="sb-deck-label">{group.label}</span>
               <span className="sb-deck-range">{range}</span>
