@@ -83,6 +83,30 @@ export function normalizePlaceType(raw, setType) {
   return NORMALIZED_PLACE_TYPES.get(raw) || raw;
 }
 
+export function hasFullAndMediumMembers(set) {
+  return !!set?.members?.some((member) => member.shot === 'full')
+    && set.members.some((member) => member.shot === 'medium');
+}
+
+export function entryStylingMembers(set) {
+  const ordered = [...(set?.members || [])].sort((left, right) => left.order - right.order);
+  if (ordered.length <= 2) return ordered;
+
+  if (hasFullAndMediumMembers(set)) {
+    const full = ordered.find((member) => member.shot === 'full');
+    const medium = ordered.find((member) => member.shot === 'medium');
+    return ordered.filter((member) => member === full || member === medium);
+  }
+
+  for (let left = 0; left < ordered.length - 1; left += 1) {
+    const right = ordered.findIndex((member, index) => (
+      index > left && member.direction !== ordered[left].direction
+    ));
+    if (right >= 0) return [ordered[left], ordered[right]];
+  }
+  return ordered.slice(0, 2);
+}
+
 export function pickEntrySets({
   gender,
   clothingType,
@@ -102,7 +126,9 @@ export function pickEntrySets({
       !selectedIds.has(set.id)
       && !selectedPlaces.has(normalizePlaceType(set.placeType, set.setType))
     ));
-    const selected = seededPick(candidates, `${seedProjectId}:entry:styling:${index}`);
+    const preferred = candidates.filter(hasFullAndMediumMembers);
+    const selectionPool = preferred.length ? preferred : candidates;
+    const selected = seededPick(selectionPool, `${seedProjectId}:entry:styling:${index}`);
     stylingSets.push(selected);
     if (selected) {
       selectedIds.add(selected.id);

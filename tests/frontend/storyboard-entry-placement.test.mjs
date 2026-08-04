@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
 import {
+  entryStylingMembers,
   hashSeed,
+  hasFullAndMediumMembers,
   normalizePlaceType,
   pickEntrySets,
   seededPick,
@@ -99,6 +101,55 @@ test('styling sets use distinct normalized place types in basic and extended mod
   assert.equal(normalizePlaceType('future-place', 'styling'), 'future-place');
 });
 
+test('entry styling sets seed exactly one full and one medium member in catalog order', () => {
+  for (const [mode, seedContext, expectedSetCount] of [
+    ['basic', context('two-cut-basic', 'top', 'women'), 2],
+    ['extended', context('two-cut-extended', 'bottom', 'women'), 3],
+  ]) {
+    const seeded = defaultStoryboard(baseColors, mode, seedContext);
+    const groups = new Map();
+    for (const block of seeded.filter((item) => item.spaceGroupId && item.cutType === 'styling')) {
+      if (!groups.has(block.spaceGroupId)) groups.set(block.spaceGroupId, []);
+      groups.get(block.spaceGroupId).push(block);
+    }
+    assert.equal(groups.size, expectedSetCount);
+    for (const members of groups.values()) {
+      assert.equal(members.length, 2);
+      assert.deepEqual(new Set(members.map((member) => member.shot)), new Set(['full', 'medium']));
+      assert.ok(members[0].spaceSetMemberOrder < members[1].spaceSetMemberOrder);
+    }
+  }
+});
+
+test('all-full styling sets still seed two members and prefer different directions', () => {
+  const allFullSet = {
+    members: [
+      { order: 1, shot: 'full', direction: 'front', exampleId: 'front-a' },
+      { order: 2, shot: 'full', direction: 'front', exampleId: 'front-b' },
+      { order: 3, shot: 'full', direction: 'back', exampleId: 'back' },
+    ],
+  };
+  assert.deepEqual(
+    entryStylingMembers(allFullSet).map((member) => member.exampleId),
+    ['front-a', 'back'],
+  );
+  assert.deepEqual(
+    entryStylingMembers({ members: allFullSet.members.slice(0, 2) }).map((member) => member.exampleId),
+    ['front-a', 'front-b'],
+  );
+});
+
+test('women bottom soft preference falls back to all-full sets to preserve a fourth place', () => {
+  const picked = pickEntrySets({
+    gender: 'women', clothingType: 'bottom', projectId: 'soft-place-fallback', stylingCount: 4,
+  }).stylingSets;
+  const places = picked.map((set) => normalizePlaceType(set.placeType, set.setType));
+  assert.equal(picked.filter(Boolean).length, 4);
+  assert.equal(new Set(places).size, 4);
+  assert.equal(picked.filter(hasFullAndMediumMembers).length, 3);
+  assert.equal(picked.some((set) => !hasFullAndMediumMembers(set)), true);
+});
+
 test('category filters stay server-consistent for styling and horizon pools', () => {
   const supported = [
     ['women', 'top'], ['women', 'bottom'], ['women', 'outer'], ['women', 'dress'],
@@ -191,13 +242,13 @@ test('multi-color basic and extended seeds follow product and studio repetition 
 
 test('cut counts include normal ranges and a forced one-slot styling fallback', () => {
   const basic = defaultStoryboard(baseColors, 'basic', context('counts', 'top', 'women'));
-  assert.equal(basic.length, 14);
+  assert.equal(basic.length, 12);
   // 확장형 기대치는 실제 추첨(pickEntrySets)에서 유도 — 카탈로그가 자라도 테스트가 낡지 않게.
   for (const [pid, clothing, gender] of [
     ['counts-a', 'bottom', 'women'], ['counts-b', 'bottom', 'men'], ['counts-c', 'top', 'women'],
   ]) {
     const picked = pickEntrySets({ gender, clothingType: clothing, projectId: pid, stylingCount: 3 });
-    const stylingCuts = picked.stylingSets.reduce((s, set) => s + (set ? set.members.length : 2), 0);
+    const stylingCuts = picked.stylingSets.reduce((s, set) => s + (set ? entryStylingMembers(set).length : 2), 0);
     const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
     assert.equal(
       defaultStoryboard(baseColors, 'extended', context(pid, clothing, gender)).length,
@@ -212,7 +263,7 @@ test('cut counts include normal ranges and a forced one-slot styling fallback', 
     gender: 'women', clothingType: 'forced-single', projectId: 'fallback', stylingCount: 2,
   });
   const fallback = defaultStoryboard(baseColors, 'basic', forced);
-  const fStyling = fPicked.stylingSets.reduce((s, set) => s + (set ? set.members.length : 2), 0);
+  const fStyling = fPicked.stylingSets.reduce((s, set) => s + (set ? entryStylingMembers(set).length : 2), 0);
   const fHorizon = fPicked.rotationSet?.members.length ?? 3;
   assert.equal(fallback.length, 2 + fStyling + fHorizon + 1 + 2);
   assert.equal(
@@ -221,7 +272,7 @@ test('cut counts include normal ranges and a forced one-slot styling fallback', 
   );
 });
 
-test('every seeded space group keeps the complete catalog member run', () => {
+test('seeded styling groups keep two entry members while horizon groups stay complete', () => {
   const seeded = defaultStoryboard(baseColors, 'extended', context('atomic', 'outer', 'women'));
   const groups = new Map();
   seeded.forEach((block, index) => {
@@ -232,8 +283,9 @@ test('every seeded space group keeps the complete catalog member run', () => {
 
   for (const [groupId, members] of groups) {
     const set = storyboardSpaceSetById(spaceSetIdFromGroupId(groupId));
-    assert.equal(members.length, set.members.length);
-    assert.deepEqual(members.map(({ block }) => block.spaceSetMemberOrder), set.members.map((member) => member.order));
+    const expectedMembers = set.setType === 'styling' ? entryStylingMembers(set) : set.members;
+    assert.equal(members.length, expectedMembers.length);
+    assert.deepEqual(members.map(({ block }) => block.spaceSetMemberOrder), expectedMembers.map((member) => member.order));
     assert.equal(members.at(-1).index - members[0].index + 1, members.length);
     assert.ok(members.every(({ block }) => (
       block.exampleSelectionOrigin === 'auto'

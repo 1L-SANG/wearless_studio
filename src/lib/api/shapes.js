@@ -26,7 +26,7 @@ import { ensureSections } from '../sections.js';
 import { exampleSelectionFingerprintFields } from '../generationExamples.js';
 import { genderForClothingType } from '../productGender.js';
 import { spaceSetGroupId } from '../storyboardSpaceSetCatalog.js';
-import { pickEntrySets } from '../storyboardEntryPlacement.js';
+import { entryStylingMembers, pickEntrySets } from '../storyboardEntryPlacement.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
@@ -47,7 +47,8 @@ const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) 
 function setMemberBlocks(set, colorId, contentRole) {
   if (!set) return [];
   const groupId = spaceSetGroupId(set.id, uid('sg'));
-  return set.members.map((member) => sb(
+  const members = set.setType === 'styling' ? entryStylingMembers(set) : set.members;
+  return members.map((member) => sb(
     SECTION_ROLES.FIT,
     contentRole,
     member.cutType,

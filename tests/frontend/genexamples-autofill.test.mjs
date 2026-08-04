@@ -7,7 +7,7 @@ import {
   storedExampleConditionStatus,
 } from '../../src/lib/generationExamples.js';
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
-import { pickEntrySets } from '../../src/lib/storyboardEntryPlacement.js';
+import { entryStylingMembers, pickEntrySets } from '../../src/lib/storyboardEntryPlacement.js';
 import {
   genderForClothingType,
   normalizeTargetGendersForClothingType,
@@ -300,8 +300,8 @@ test('every supported gender and clothing category seeds styling and horizon set
     const horizonMembers = setMembers.filter((item) => item.cutType === 'horizon');
 
     // 회전 세트는 별도 세트 범위로 성별 내 모든 지원 의류에 배치된다.
-    assert.equal(basic.length, 14, `${gender}/${clothingType} basic`);
-    assert.equal(stylingMembers.length, 6, `${gender}/${clothingType} styling members`);
+    assert.equal(basic.length, 12, `${gender}/${clothingType} basic`);
+    assert.equal(stylingMembers.length, 4, `${gender}/${clothingType} styling members`);
     assert.equal(horizonMembers.length, 3, `${gender}/${clothingType} rotation members`);
     assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 3);
     assert.ok(spaceSetIdFromGroupId(setMembers[0].spaceGroupId));
@@ -317,7 +317,7 @@ test('every supported gender and clothing category seeds styling and horizon set
       gender, clothingType, projectId: context.projectId, stylingCount: 3,
     });
     const stylingCuts = picked.stylingSets
-      .reduce((sum, set) => sum + (set ? set.members.length : 2), 0);
+      .reduce((sum, set) => sum + (set ? entryStylingMembers(set).length : 2), 0);
     const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
     assert.equal(
       defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
