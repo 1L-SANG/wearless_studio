@@ -213,31 +213,40 @@ function StoryboardCaption({ block, catalogs, colorOpts, matchClothing, clothing
 
   return (
     <div className="sb-canvas-caption">
-      <span className="sb-caption-values">
-        {block.cutType !== 'mirror' && (
-          <span className={directionDiffers ? 'sb-val-changed' : undefined}>{direction}</span>
-        )}
-        {block.cutType !== 'mirror' && <span aria-hidden="true"> · </span>}
-        <span className={shotDiffers ? 'sb-val-changed' : undefined}>{shot}</span>
-        {showClosure && <span title="아우터 열림 정도"> · {closure}</span>}
+      <span className="sb-caption-line">
+        <span className="sb-caption-values">
+          {block.cutType !== 'mirror' && (
+            <span className={directionDiffers ? 'sb-val-changed' : undefined}>{direction}</span>
+          )}
+          {block.cutType !== 'mirror' && <span aria-hidden="true"> · </span>}
+          <span className={shotDiffers ? 'sb-val-changed' : undefined}>{shot}</span>
+          {showClosure && <span title="아우터 열림 정도"> · {closure}</span>}
+        </span>
       </span>
-      {colors.map((color) => (
-        <span key={color.id} className="sb-caption-dot" style={{ background: color.hex }} title={color.label} />
-      ))}
-      {!isProduct && match?.thumb && (
-        <span className="sb-match-chip" title="매칭 의류 착용">
-          <img src={match.thumb} alt="" /><span>매칭</span>
-        </span>
-      )}
-      {referenceThumb && (
-        <span className={'sb-ref-chip ' + scopeMeta.className}>
-          <img src={referenceThumb} alt="" /><span>{scopeMeta.label}</span>
-          <span className="sb-ref-pop">
-            <img src={referenceThumb} alt="" />
-            <b>{scopeMeta.copy}</b>
+      <span className="sb-caption-line sb-caption-meta">
+        {colors.map((color) => (
+          <span key={color.id} className="sb-caption-dot" style={{ background: color.hex }} title={color.label} />
+        ))}
+        {colors.length > 0 && (
+          <span className="sb-caption-color" title={colors.map((color) => color.label).join(', ')}>
+            {colors[0].label}{colors.length > 1 ? ` 외 ${colors.length - 1}` : ''}
           </span>
-        </span>
-      )}
+        )}
+        {!isProduct && match?.thumb && (
+          <span className="sb-match-chip" title="매칭 의류 착용">
+            <img src={match.thumb} alt="" /><span>매칭</span>
+          </span>
+        )}
+        {referenceThumb && (
+          <span className={'sb-ref-chip ' + scopeMeta.className}>
+            <img src={referenceThumb} alt="" /><span>{scopeMeta.label}</span>
+            <span className="sb-ref-pop">
+              <img src={referenceThumb} alt="" />
+              <b>{scopeMeta.copy}</b>
+            </span>
+          </span>
+        )}
+      </span>
     </div>
   );
 }

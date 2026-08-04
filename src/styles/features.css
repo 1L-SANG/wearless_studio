@@ -1930,14 +1930,24 @@
 }
 .sb-missing-body i { display: block; color: var(--sb-accent-ink); font-size: 11px; font-style: normal; }
 
+/* 캡션 2줄 — 1줄: 방향·샷(+열림), 2줄: 색상 이름·매칭·참조. 200px 카드에서 잘리지 않게. */
 .sb-canvas-caption {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
   padding: 7px 3px 0;
   color: var(--sb-ink-2);
   font-size: 11px;
+}
+.sb-caption-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sb-caption-meta { flex-wrap: wrap; row-gap: 4px; }
+.sb-caption-color {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sb-ink-3);
 }
 .sb-canvas-caption.mine { color: var(--sb-ink-3); font-weight: 600; }
 .sb-caption-values { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2162,6 +2172,9 @@
 .sb-frame-captions { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
 .sb-frame-captions .sb-canvas-caption { min-width: 0; }
 .sb-frame-captions .sb-match-chip { display: none; }
+/* 프레임 반쪽은 폭이 절반(≈99px) — 색상 이름 텍스트는 빼고 점만 남겨 넘침을 막는다.
+   전체 색상 이름은 점의 title(툴팁)로 계속 확인할 수 있다. */
+.sb-frame-captions .sb-caption-color { display: none; }
 
 .sb-canvas-shell .insp-col {
   max-height: calc(100vh - 120px);
