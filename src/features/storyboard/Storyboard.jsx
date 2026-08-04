@@ -202,6 +202,7 @@ const REF_SCOPE_META = Object.freeze({
 });
 
 const CARD_DRAG_THRESHOLD_PX = 6;
+const UNDO_WINDOW_MS = 10_000;
 
 const cutNumber = (index, total) => String(index).padStart(2, '0') + '/' + String(total).padStart(2, '0');
 const cutRangeLabel = (items) => {
@@ -1622,27 +1623,36 @@ export function Storyboard() {
     undoEntryRef.current = null;
     setUndoEntry(null);
   };
+  const scheduleUndoDismiss = (entry, delay = UNDO_WINDOW_MS) => {
+    clearTimeout(undoTimerRef.current);
+    entry.remainingMs = delay;
+    if (undoHoveredRef.current) {
+      entry.deadline = null;
+      return;
+    }
+    entry.deadline = Date.now() + delay;
+    undoTimerRef.current = setTimeout(() => {
+      if (undoEntryRef.current === entry) dismissUndo();
+    }, delay);
+  };
   const showUndo = (previous, next, { blockId, label = '설정' } = {}) => {
     if (!previous || !next || previous === next) return;
     const now = Date.now();
     const active = undoEntryRef.current;
-    const merged = active && active.blockId === blockId && now - active.updatedAt <= 3000;
-    const before = merged ? active.before : [...previous];
-    const labels = merged ? [...new Set([...active.labels, label])] : [label];
-    const count = changedBlockCount(before, next);
-    const message = count > 1
-      ? `${count}컷 변경됨`
-      : `${labels.includes('설정') || labels.length > 2 ? '설정' : labels.join('·')} 변경됨`;
-    const entry = { before, after: next, blockId, labels, updatedAt: now, message };
+    const before = active ? active.before : [...previous];
+    const labels = active ? [...new Set([...active.labels, label])] : [label];
+    const operationCount = (active?.operationCount || 0) + 1;
+    const changedCuts = changedBlockCount(before, next);
+    const resetNotice = labels.includes('예시·설정 초기화');
+    const message = resetNotice
+      ? `생성예시를 바꾸며 방향·색상 등 설정을 초기화했어요 · ${operationCount}건`
+      : `${operationCount}건 변경됨${changedCuts > 1 ? ` · ${changedCuts}컷` : ''}`;
+    const entry = {
+      before, after: next, blockId, labels, operationCount, updatedAt: now, message,
+    };
     undoEntryRef.current = entry;
     setUndoEntry(entry);
-    clearTimeout(undoTimerRef.current);
-    undoTimerRef.current = setTimeout(() => {
-      if (undoEntryRef.current === entry) {
-        undoEntryRef.current = null;
-        setUndoEntry(null);
-      }
-    }, 5000);
+    scheduleUndoDismiss(entry);
   };
   const clearUndoForSnapshot = (snapshot) => {
     if (undoEntryRef.current?.after === snapshot) dismissUndo();
@@ -1654,7 +1664,7 @@ export function Storyboard() {
     dismissUndo();
     toast.push('변경을 되돌렸어요', { icon: 'undo' });
   };
-  const patch = (id, changes) => {
+  const patch = (id, changes, { undoLabel = null } = {}) => {
     if (atomicSavingRef.current) return;
     const previous = blocks;
     const current = previous.find((block) => block.id === id);
@@ -1672,9 +1682,9 @@ export function Storyboard() {
     // 내부 생성 레시피가 복구돼 placeholder가 생성 대상이 되면 레이아웃 배타 규칙을 다시 적용한다.
     if (applied && 'cutType' in applied && applied.cutType && !current.cutType) next = normalizeBoard(next);
     setBlocks(next);
-    showUndo(previous, next, { blockId: id, label: undoLabelForPatch(applied) });
+    showUndo(previous, next, { blockId: id, label: undoLabel || undoLabelForPatch(applied) });
   };
-  const atomicPatch = async (id, changes, { retryAtomic = false, pickerOwnsError = false } = {}) => {
+  const atomicPatch = async (id, changes, { retryAtomic = false, pickerOwnsError = false, undoLabel = null } = {}) => {
     if (atomicSavingRef.current) throw new Error('storyboard_atomic_save_in_progress');
     atomicSavingRef.current = true;
     setAtomicSaving(true);
@@ -1700,7 +1710,7 @@ export function Storyboard() {
     const next = normalizeBoard(staged.map((block) => (
       block.id === id ? { ...block, ...changes } : block
     )));
-    showUndo(previous, next, { blockId: id, label: undoLabelForPatch(changes) });
+    showUndo(previous, next, { blockId: id, label: undoLabel || undoLabelForPatch(changes) });
     directSaveSnapshots.current.add(next);
     setBlocks(next);
     try {
@@ -2590,9 +2600,24 @@ export function Storyboard() {
       {doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
       {undoEntry && (
-        <div className="sb-undo-bar" role="status" aria-live="polite">
+        <div className="sb-undo-bar" role="status" aria-live="polite"
+          onMouseEnter={() => {
+            undoHoveredRef.current = true;
+            const entry = undoEntryRef.current;
+            if (!entry) return;
+            entry.remainingMs = entry.deadline == null
+              ? (entry.remainingMs || UNDO_WINDOW_MS)
+              : Math.max(1, entry.deadline - Date.now());
+            entry.deadline = null;
+            clearTimeout(undoTimerRef.current);
+          }}
+          onMouseLeave={() => {
+            undoHoveredRef.current = false;
+            const entry = undoEntryRef.current;
+            if (entry) scheduleUndoDismiss(entry, entry.remainingMs || UNDO_WINDOW_MS);
+          }}>
           <span>{undoEntry.message}</span>
-          <button type="button" onClick={undoLatest}><Icon name="undo" size={15} />되돌리기</button>
+          <button type="button" onClick={undoLatest}><Icon name="undo" size={15} />{undoEntry.operationCount}건 되돌리기</button>
         </div>
       )}
       {saveError && <div className="sb-save-error">{saveError}

@@ -1964,6 +1964,7 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, .15);
   color: var(--sb-ink-2);
   font-size: 12px;
+  cursor: pointer;
 }
 .sb-canvas-actions button:focus-visible { outline: 2px solid var(--focus); }
 
