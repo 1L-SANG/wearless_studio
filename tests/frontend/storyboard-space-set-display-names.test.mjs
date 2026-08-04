@@ -11,6 +11,7 @@ test('every released shooting set has a code-free Korean display name', () => {
     assert.match(displayName, /[가-힣]/, set.id);
     assert.doesNotMatch(displayName, /[A-Za-z0-9_]/, set.id);
     assert.notEqual(displayName, set.name, `raw catalog name leaked for ${set.id}`);
+    assert.ok([...displayName].length <= 11, `${set.id}: ${displayName}`);
   }
 });
 
@@ -23,5 +24,5 @@ test('an unmapped set falls back by place without exposing its id or internal na
   };
   assert.equal(spaceSetDisplayName(unknown), '도시적인 건물 외벽');
   assert.doesNotMatch(spaceSetDisplayName(unknown), /cream|26667|PASS/i);
-  assert.equal(spaceSetDisplayName({ id: 'unknown' }), '실내 촬영 세트');
+  assert.equal(spaceSetDisplayName({ id: 'unknown' }), '실내 촬영 장소');
 });

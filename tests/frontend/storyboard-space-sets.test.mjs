@@ -422,6 +422,20 @@ test('dragging a member out keeps its content and keeps the remaining set intact
   assert.deepEqual(remainingRun.items.map((item) => item.id), ['a']);
 });
 
+test('moving a converted middle member after its run keeps the remaining tray contiguous', () => {
+  const source = [
+    block('a', { spaceGroupId: groupA, refScope: 'pose' }),
+    block('b', { spaceGroupId: groupA, refScope: 'pose', source: 'mine' }),
+    block('c', { spaceGroupId: groupA, refScope: 'pose' }),
+    block('outside'),
+  ];
+  const moved = moveBlockWithSpaceMembership(source, 'b', 3);
+  assert.deepEqual(moved.map((item) => item.id), ['a', 'c', 'b', 'outside']);
+  assert.equal(moved[2].spaceGroupId, undefined);
+  const run = groupConsecutiveSpaceRuns(moved).find((group) => group.spaceGroupId === groupA);
+  assert.deepEqual(run.items.map((item) => item.id), ['a', 'c']);
+});
+
 /* 위/아래 한 칸 이동(nudgeBlock)의 인덱스 보정 계약.
    moveBlockWithSpaceMembership 은 targetIndex 를 '원본 배열 기준'으로 받아 자기 자신이 빠진
    만큼 스스로 보정한다. 따라서 아래로 한 칸은 to+1, 위로 한 칸은 to 를 넘겨야 한다.

@@ -49,9 +49,9 @@ export function generationExampleImageSources(example) {
   };
 }
 
-export function paginateGenerationGalleryItems(items, pageSize = 5) {
+export function paginateGenerationGalleryItems(items, pageSize = 6) {
   const source = Array.isArray(items) ? items : [];
-  const size = Math.max(1, Number(pageSize) || 5);
+  const size = Math.max(1, Number(pageSize) || 6);
   const pages = [];
   for (let index = 0; index < source.length; index += size) {
     pages.push(source.slice(index, index + size));
