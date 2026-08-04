@@ -80,6 +80,30 @@ const sbStable = (v) => JSON.stringify(v, (k, val) =>
   (val && typeof val === 'object' && !Array.isArray(val))
     ? Object.keys(val).sort().reduce((o, key) => { o[key] = val[key]; return o; }, {})
     : val);
+
+const undoLabelForPatch = (patch) => {
+  const keys = new Set(Object.keys(patch || {}));
+  const labels = [];
+  if (keys.has('colorId') || keys.has('colorIds')) labels.push('색상');
+  if (keys.has('shot')) labels.push('샷');
+  if (keys.has('direction')) labels.push('방향');
+  if (keys.has('exampleId') || keys.has('refScope')) labels.push('참조');
+  if (keys.has('matchIds')) labels.push('매칭 의류');
+  if (keys.has('outerClosureState')) labels.push('아우터 열림');
+  if (keys.has('source') || keys.has('ownImages')) labels.push('이미지');
+  return labels.length === 1 ? labels[0] : '설정';
+};
+
+const changedBlockCount = (before, after) => {
+  const beforeById = new Map((before || []).map((block) => [block.id, block]));
+  const afterById = new Map((after || []).map((block) => [block.id, block]));
+  const ids = new Set([...beforeById.keys(), ...afterById.keys()]);
+  let count = 0;
+  for (const id of ids) {
+    if (sbStable(beforeById.get(id)) !== sbStable(afterById.get(id))) count += 1;
+  }
+  return count;
+};
 function sbSaveNow(pid, getSnap, options = {}) {
   const run = sbSaveChain.catch(() => {}).then(() => {
     const snap = getSnap();
@@ -174,10 +198,12 @@ function referenceFeedbackPatch(block, changes, catalogs) {
 }
 
 const REF_SCOPE_META = Object.freeze({
-  all: { label: '전부', className: 'all', copy: '이 예시의 연출 전체 참고' },
-  pose: { label: '포즈', className: 'pose', copy: '이 예시의 포즈만 참고' },
-  bg: { label: '배경', className: 'bg', copy: '이 예시의 배경만 참고' },
+  all: { label: '전체 참조', className: 'all', copy: '이 예시의 연출 전체를 참고했어요' },
+  pose: { label: '포즈 변경됨', className: 'pose', copy: '이 예시의 포즈를 참고했어요' },
+  bg: { label: '배경 변경됨', className: 'bg', copy: '이 예시의 배경을 참고했어요' },
 });
+
+const CARD_DRAG_THRESHOLD_PX = 6;
 
 const cutNumber = (index, total) => String(index).padStart(2, '0') + '/' + String(total).padStart(2, '0');
 
@@ -242,8 +268,8 @@ function StoryboardCaption({ block, catalogs, colorOpts, matchClothing, clothing
           </span>
         )}
         {referenceThumb && (
-          <span className={'sb-ref-chip ' + scopeMeta.className}>
-            <img src={referenceThumb} alt="" /><span>{scopeMeta.label}</span>
+          <span className={'sb-ref-chip ' + scopeMeta.className} tabIndex={0} title={scopeMeta.copy}>
+            <span>{scopeMeta.label}</span>
             <span className="sb-ref-pop">
               <img src={referenceThumb} alt="" />
               <b>{scopeMeta.copy}</b>
@@ -255,30 +281,31 @@ function StoryboardCaption({ block, catalogs, colorOpts, matchClothing, clothing
   );
 }
 
-function StoryboardCardActions({ gripDrag, onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown }) {
+function StoryboardCardActions({ onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown }) {
   return (
-    <span className="sb-canvas-actions" onClick={(event) => event.stopPropagation()}>
-      <span className="sb-canvas-grip" title="드래그로 순서 변경" {...gripDrag} aria-label="드래그로 순서 변경">⠿</span>
+    <span className="sb-canvas-actions" onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}>
       {/* 드래그를 못 쓰는 경우(키보드 조작 포함)의 순서 변경 수단 — 드래그와 규칙이 같다. */}
       {onNudge && (
         <button
           type="button" title="앞으로 한 칸" aria-label="앞으로 한 칸 이동"
           disabled={!canNudgeUp} onClick={() => onNudge(-1)}
-        >◂</button>
+        ><Icon name="chevLeft" size={16} /></button>
       )}
       {onNudge && (
         <button
           type="button" title="뒤로 한 칸" aria-label="뒤로 한 칸 이동"
           disabled={!canNudgeDown} onClick={() => onNudge(1)}
-        >▸</button>
+        ><Icon name="chevRight" size={16} /></button>
       )}
-      <button type="button" title="복제" aria-label="복제" onClick={onDuplicate}>⧉</button>
-      <button type="button" title="삭제" aria-label="삭제" onClick={onDelete}>✕</button>
+      <button type="button" title="컷 복제" aria-label="컷 복제" onClick={onDuplicate}><Icon name="copy" size={15} /></button>
+      <button type="button" title="컷 삭제" aria-label="컷 삭제" onClick={onDelete}><Icon name="x" size={15} /></button>
     </span>
   );
 }
 
-function StoryboardMedia({ block, catalogs, index, total, gripDrag, onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown }) {
+function StoryboardMedia({ block, catalogs, index, total, onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown }) {
   const missing = block.source !== 'mine' && !block.exampleId;
   const example = block.exampleId
     ? (catalogs?.genExamples || []).find((item) => item.id === block.exampleId)
@@ -300,47 +327,91 @@ function StoryboardMedia({ block, catalogs, index, total, gripDrag, onDuplicate,
         <img src={src} srcSet={image?.srcSet} alt="" loading="lazy" decoding="async" />
       )}
       <StoryboardCardActions
-        gripDrag={gripDrag} onDuplicate={onDuplicate} onDelete={onDelete}
+        onDuplicate={onDuplicate} onDelete={onDelete}
         onNudge={onNudge} canNudgeUp={canNudgeUp} canNudgeDown={canNudgeDown}
       />
     </>
   );
 }
 
+function CardDragSurface({ className, dragProps, onSelect, children }) {
+  const pointerStart = useRef(null);
+  const movedBeyondClick = useRef(false);
+  const onPointerDown = (event) => {
+    if (event.button !== 0) return;
+    pointerStart.current = { x: event.clientX, y: event.clientY };
+    movedBeyondClick.current = false;
+  };
+  const onPointerMove = (event) => {
+    if (!pointerStart.current || movedBeyondClick.current) return;
+    const dx = event.clientX - pointerStart.current.x;
+    const dy = event.clientY - pointerStart.current.y;
+    if (Math.hypot(dx, dy) >= CARD_DRAG_THRESHOLD_PX) movedBeyondClick.current = true;
+  };
+  return (
+    <div
+      className={className}
+      role="button"
+      tabIndex={0}
+      draggable={dragProps?.draggable}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerCancel={() => { pointerStart.current = null; }}
+      onDragStart={(event) => {
+        movedBeyondClick.current = true;
+        dragProps?.onDragStart?.(event);
+      }}
+      onDragEnd={(event) => {
+        pointerStart.current = null;
+        dragProps?.onDragEnd?.(event);
+      }}
+      onClick={(event) => {
+        pointerStart.current = null;
+        if (movedBeyondClick.current) {
+          movedBeyondClick.current = false;
+          event.preventDefault();
+          return;
+        }
+        onSelect();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function StoryboardCard({
   item, total, catalogs, colorOpts, matchClothing, clothingType,
-  selected, locked, gripDrag, onSelect, onDuplicate, onDelete, addControl,
+  selected, locked, cardDrag, onSelect, onDuplicate, onDelete, addControl,
   onNudge, canNudgeUp, canNudgeDown,
 }) {
   const { block, index } = item;
   const missing = block.source !== 'mine' && !block.exampleId;
   return (
     <div className={'sb-canvas-card' + (locked ? ' locked' : '')}>
-      <div
+      <CardDragSurface
         className={'sb-cutcard' + (selected ? ' selected' : '') + (missing ? ' missing' : '')}
-        role="button"
-        tabIndex={0}
-        onClick={onSelect}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            onSelect();
-          }
-        }}
+        dragProps={cardDrag}
+        onSelect={onSelect}
       >
         <StoryboardMedia
           block={block}
           catalogs={catalogs}
           index={index}
           total={total}
-          gripDrag={gripDrag}
           onDuplicate={onDuplicate}
           onDelete={onDelete}
           onNudge={onNudge}
           canNudgeUp={canNudgeUp}
           canNudgeDown={canNudgeDown}
         />
-      </div>
+      </CardDragSurface>
       <StoryboardCaption
         block={block}
         catalogs={catalogs}
@@ -364,29 +435,21 @@ function StoryboardFrame({
         {items.map((item) => {
           const missing = item.block.source !== 'mine' && !item.block.exampleId;
           return (
-            <div
+            <CardDragSurface
               key={item.block.id}
               className={'sb-frame-half' + (item.block.id === selectedId ? ' selected' : '') + (missing ? ' missing' : '') + (locked && item.block.id !== selectedId ? ' locked' : '')}
-              role="button"
-              tabIndex={0}
-              onClick={() => onSelect(item.block.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  onSelect(item.block.id);
-                }
-              }}
+              dragProps={dragFor(item.block.id)}
+              onSelect={() => onSelect(item.block.id)}
             >
               <StoryboardMedia
                 block={item.block}
                 catalogs={catalogs}
                 index={item.index}
                 total={total}
-                gripDrag={dragFor(item.block.id)}
                 onDuplicate={() => onDuplicate(item.block.id)}
                 onDelete={() => onDelete(item.block.id)}
               />
-            </div>
+            </CardDragSurface>
           );
         })}
       </div>
@@ -703,7 +766,7 @@ function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType 
    · 내 사진(refImages) = '+ 타일'로 갤러리에 통합 — 점선 테두리·배지, 분위기(조명·색감)만 참고
    · 카드가 사이드/뒷면이어도 선택한 예시의 전체 연출을 참고하되, 카드의 촬영 방향은 유지
    refs/exampleId 는 제어형 — 콘티는 블록이, 에디터 AI 패널은 패널 상태가 소유 (계약 §3.4/§6). */
-export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false, onUseMine = null }) {
+export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOptions = null, clothingType = 'top', gender = null, exampleId, onExampleChange, onExampleDrag = null, refs = [], onRefsChange, onPickRef, refScope = 'all', onRefScopeChange, inSpace = false, onUseMine = null }) {
   const shotOpts = shotOptions || (cut === 'product' ? catalogs.productShotTypes
     : catalogs.shotTypes);
   const shotVal = shotOpts.some((s) => s.value === shot) ? shot : shotOpts[0].value;
@@ -805,6 +868,14 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           ? (refScope || 'all') : 'all';
     return (
       <button key={example.id} type="button" disabled={inSpaceDisabled}
+        draggable={Boolean(onExampleDrag && !inSpaceDisabled)}
+        onDragStart={(event) => {
+          if (!onExampleDrag || inSpaceDisabled) return;
+          event.dataTransfer.effectAllowed = 'copy';
+          event.dataTransfer.setData('text/example-id', example.id);
+          onExampleDrag(example.id);
+        }}
+        onDragEnd={() => onExampleDrag?.(null)}
         title={inSpaceDisabled ? poseDisabledReason : undefined}
         className={`sb-excell${on ? ' sel' : ''}${inSpaceDisabled ? ' unavailable' : ''}`}
         onClick={() => pick(defaultScope)}>
@@ -974,8 +1045,7 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   );
 }
 
-function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, mode, onMode, onChange, onAtomicChange, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onDissolveSpaceSet, onDuplicate, onDelete, dirty, warn, onDone, onRevert, onAddMine, onImgDrag, onCancelNew, isNew }) {
-  const doneRef = useRef(null);
+function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, exampleGender, hasDetailImage, onChange, onAtomicChange, requestedRecipe, onCancelRequestedRecipe, matchClothing, spaceContext, onDissolveSpaceSet, onAddMine, onImgDrag, onExampleDrag }) {
   const [matchOpen, setMatchOpen] = useState(false);
   const [pendingRecipe, setPendingRecipe] = useState(null);
   const [pendingChoice, setPendingChoice] = useState(null);
@@ -989,7 +1059,6 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       ? { cutType: requestedRecipe.cutType, shot: requestedRecipe.shot } : null);
     setPendingChoice(null); setPendingError(null); setPendingSaving(false);
   }, [block?.id, requestedRecipe?.blockId, requestedRecipe?.cutType, requestedRecipe?.shot]);
-  useEffect(() => { if (warn && doneRef.current) doneRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, [warn]);
 
   if (!block) return (
     <div className="surface inspector empty-insp">
@@ -1183,21 +1252,9 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
       {spaceContext && (
         <SpaceMemberStrip set={spaceContext.set} siblings={spaceContext.siblings} currentId={block.id} />
       )}
-      {isNew && (
-        <div className="insp-newmeta">
-          <span>추가 위치: {sectionTitle(block.sectionRole)} · 생성 시 크레딧 {catalogs.creditCosts?.storyboardPerCut ?? 1}</span>
-          <button className="insp-cancel-new" onClick={onCancelNew}><Icon name="trash" size={13} />이 블록 취소</button>
-        </div>
-      )}
-
       {!block.cutType ? (
         <>
           <div className="insp-empty-hint"><Icon name="info" size={15} />이 이미지의 생성 설정을 준비하지 못했어요. 블록을 취소하고 다시 추가해주세요.</div>
-          {/* 새 컷 컨텍스트 — 어디에 추가되는지·비용, 그리고 흔적 없는 취소 (P6) */}
-          <div className="insp-newmeta">
-            <span>{block.sectionTitle ? `추가 위치: ${block.sectionTitle}` : '새 컷'} · 생성 시 크레딧 {catalogs.creditCosts?.storyboardPerCut ?? 1}</span>
-            {onCancelNew && <button className="insp-cancel-new" onClick={onCancelNew}><Icon name="trash" size={13} />이 블록 취소</button>}
-          </div>
         </>
       ) : (
         <>
@@ -1232,7 +1289,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             shotOptions={pendingRecipe.cutType === 'product' ? productShotOptions : null}
             onShotChange={(shot) => setPendingRecipe((current) => ({ ...current, shot }))}
             clothingType={clothingType} gender={exampleGender}
-            exampleId={pendingChoice} onExampleChange={commitPendingRecipe}
+            exampleId={pendingChoice} onExampleChange={commitPendingRecipe} onExampleDrag={onExampleDrag}
             refScope={pendingInSpace ? 'pose' : 'all'} inSpace={pendingInSpace} />
           {pendingError && <div className="sb-save-error">{pendingError}
             <button type="button" disabled={!pendingChoice || pendingSaving}
@@ -1252,6 +1309,7 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
             onShotChange={onShotChange} clothingType={clothingType} gender={exampleGender}
             exampleId={block.exampleId || null}
             onExampleChange={onGenerationExampleChange}
+            onExampleDrag={onExampleDrag}
             refScope={block.refScope || 'all'} onRefScopeChange={(value) => onChange((current) => referenceFeedbackPatch(current, {
               refScope: value,
               exampleSelectionOrigin: current.exampleId ? 'user' : null,
@@ -1319,31 +1377,10 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </>
       )}
 
-      {/* 추가 옵션 — 이미지별 얼굴 노출 / 앵글 (PRD 6.8, 9.x). mirror 레시피는 얼굴 기본 '폰으로 가림', 앵글 없음 (ADR-0004) */}
-      <details className="insp-extra">
-        <summary><Icon name="chevDown" size={15} />추가 옵션</summary>
-        <div className="insp-sec" style={{ marginTop: 12 }}><label className="lbl">모델 얼굴</label>
-          <Chips options={isMirror
-            ? [{ value: 'hide', label: '폰으로 가림' }, { value: 'show', label: '노출' }]
-            : [{ value: 'same', label: '동일' }, { value: 'show', label: '노출' }, { value: 'hide', label: '비노출' }]}
-            value={isMirror ? (block.faceExposure === 'show' ? 'show' : 'hide') : (block.faceExposure || 'same')}
-            onChange={(v) => onChange({ faceExposure: v })} /></div>
-        {!isMirror && <div className="insp-sec"><label className="lbl">앵글</label>
-          <Chips options={[{ value: 'same', label: '동일' }, { value: 'low', label: '로우' }, { value: 'high', label: '하이' }]}
-            value={block.angle || 'same'} onChange={(v) => onChange({ angle: v })} /></div>}
-      </details>
+      {/* 추가 옵션(얼굴 노출·앵글)은 필드와 생성 로직을 유지하고 MVP 이후 재도입한다. */}
         </>
       )}
 
-      <div ref={doneRef}>
-        {warn && <div className="insp-warn">수정 완료를 먼저 눌러주세요</div>}
-        {dirty && (
-          <div className="insp-done-row">
-            <button className="insp-revert" onClick={onRevert}><Icon name="undo" size={16} />원래대로</button>
-            <button className="insp-done pulse" onClick={onDone}><Icon name="check" size={16} />수정 완료</button>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -1360,30 +1397,29 @@ export function Storyboard() {
   const [hasDetailImage, setHasDetailImage] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [splitOpen, setSplitOpen] = useState(false); // 한 번이라도 카드를 열면 좌/우 분할 유지
-  const [mode, setMode] = useState('props');
-  const [dirty, setDirty] = useState(false);
   const [dragId, setDragId] = useState(null);
   const [dragSpaceGroupId, setDragSpaceGroupId] = useState(null);
   const [dragOver, setDragOver] = useState(null);
   const [dragOverSec, setDragOverSec] = useState(null); // 호버 중인 드롭 대상 섹션 — 하이라이트와 드롭이 같은 신호를 쓴다
   const [dragOverSpaceGroupId, setDragOverSpaceGroupId] = useState(null);
   const [dragMine, setDragMine] = useState(null);
+  const [dragExampleId, setDragExampleId] = useState(null);
   const [setPicker, setSetPicker] = useState(null);
   const [setPickerError, setSetPickerError] = useState(null);
   const [openGroupKeys, setOpenGroupKeys] = useState([]); // 펼쳐 둔 렌더 그룹들 (다중 허용 · UI 전용)
-  const [insertMenuKey, setInsertMenuKey] = useState(null);
-  const [warn, setWarn] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [loadRetry, setLoadRetry] = useState(0);
   const [saveError, setSaveError] = useState(null);
   const [pendingSectionMove, setPendingSectionMove] = useState(null);
   const [atomicSaving, setAtomicSaving] = useState(false);
+  const [undoEntry, setUndoEntry] = useState(null);
   const [inspectorTop, setInspectorTop] = useState(70);
   const atomicSavingRef = useRef(false);
   const atomicRetryRef = useRef(null);
   const directSaveSnapshots = useRef(new WeakSet());
   const saveRetryOptions = useRef({});
-  const snapRef = useRef(null);
+  const undoEntryRef = useRef(null);
+  const undoTimerRef = useRef(null);
   const newSeq = useRef(0);
   const cardRefs = useRef(new Map());
   const setPickerScrollY = useRef(null);
@@ -1393,6 +1429,8 @@ export function Storyboard() {
   const copyOn = useAppStore((s) => s.copywriting);
   const setCopyOn = useAppStore((s) => s.setCopywriting);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
+
+  useEffect(() => () => clearTimeout(undoTimerRef.current), []);
 
   useLayoutEffect(() => {
     const observed = new Set();
@@ -1515,7 +1553,6 @@ export function Storyboard() {
   const saveTimer = useRef(null);
   const latestBlocks = useRef(null);
   const pidRef = useRef(null);   // 이 인스턴스가 로드한 프로젝트 — 플러시가 스토어의 "현재" id(새 프로젝트로 바뀌었을 수 있음)를 쓰지 않게 고정
-  const pendingRowRestore = useRef(null);   // 새 블록 삽입이 가른 행 { blockId, rowId, memberIds } — 취소 시 복원용
   const saveNow = (pid) => sbSaveNow(pid, () => latestBlocks.current);
   useLayoutEffect(() => {
     latestBlocks.current = blocks;
@@ -1571,28 +1608,62 @@ export function Storyboard() {
   if (!blocks || !catalogs) return <div className="wizard wide">{doneBlocked && <DoneGuardModal />}<div className="surface"><Skeleton h={400} /></div></div>;
 
   const selected = blocks.find((b) => b.id === selectedId);
-  const isMineSel = selected && selected.source === 'mine';
+  const dismissUndo = () => {
+    clearTimeout(undoTimerRef.current);
+    undoEntryRef.current = null;
+    setUndoEntry(null);
+  };
+  const showUndo = (previous, next, { blockId, label = '설정' } = {}) => {
+    if (!previous || !next || previous === next) return;
+    const now = Date.now();
+    const active = undoEntryRef.current;
+    const merged = active && active.blockId === blockId && now - active.updatedAt <= 3000;
+    const before = merged ? active.before : [...previous];
+    const labels = merged ? [...new Set([...active.labels, label])] : [label];
+    const count = changedBlockCount(before, next);
+    const message = count > 1
+      ? `${count}컷 변경됨`
+      : `${labels.includes('설정') || labels.length > 2 ? '설정' : labels.join('·')} 변경됨`;
+    const entry = { before, after: next, blockId, labels, updatedAt: now, message };
+    undoEntryRef.current = entry;
+    setUndoEntry(entry);
+    clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => {
+      if (undoEntryRef.current === entry) {
+        undoEntryRef.current = null;
+        setUndoEntry(null);
+      }
+    }, 5000);
+  };
+  const clearUndoForSnapshot = (snapshot) => {
+    if (undoEntryRef.current?.after === snapshot) dismissUndo();
+  };
+  const undoLatest = () => {
+    const entry = undoEntryRef.current;
+    if (!entry) return;
+    setBlocks(entry.before);
+    dismissUndo();
+    toast.push('변경을 되돌렸어요', { icon: 'undo' });
+  };
   const patch = (id, changes) => {
     if (atomicSavingRef.current) return;
-    setBlocks((bs) => {
-      const current = bs.find((b) => b.id === id);
-      const p = typeof changes === 'function' ? changes(current) : changes;
-      const oldRowId = current?.layoutRowId;
-      return bs.map((b) => {
-        if (b.id === id) {
-          const updated = { ...b, ...p };
-          return p.source === 'mine' ? withoutLayoutRow(updated) : updated;
-        }
-        // 내 이미지로 전환한 컷은 행에 남을 수 없으므로 기존 행도 함께 해제한다.
-        return p.source === 'mine' && oldRowId && b.layoutRowId === oldRowId ? withoutLayoutRow(b) : b;
-      });
+    const previous = blocks;
+    const current = previous.find((block) => block.id === id);
+    if (!current) return;
+    const applied = typeof changes === 'function' ? changes(current) : changes;
+    const oldRowId = current.layoutRowId;
+    let next = previous.map((block) => {
+      if (block.id === id) {
+        const updated = { ...block, ...applied };
+        return applied.source === 'mine' ? withoutLayoutRow(updated) : updated;
+      }
+      // 내 이미지로 전환한 컷은 행에 남을 수 없으므로 기존 행도 함께 해제한다.
+      return applied.source === 'mine' && oldRowId && block.layoutRowId === oldRowId ? withoutLayoutRow(block) : block;
     });
     // 내부 생성 레시피가 복구돼 placeholder가 생성 대상이 되면 레이아웃 배타 규칙을 다시 적용한다.
-    const cur0 = blocks.find((x) => x.id === id);
-    const applied = typeof changes === 'function' ? changes(cur0) : changes;
-    if (applied && 'cutType' in applied && applied.cutType && cur0 && !cur0.cutType) setBlocks((bs) => normalizeBoard(bs));
-    const b = cur0;
-    if (!b || b.source !== 'mine' || typeof changes === 'function' || ('source' in changes)) setDirty(true);
+    if (applied && 'cutType' in applied && applied.cutType && !current.cutType) next = normalizeBoard(next);
+    setBlocks(next);
+    showUndo(previous, next, { blockId: id, label: undoLabelForPatch(applied) });
   };
   const atomicPatch = async (id, changes, { retryAtomic = false, pickerOwnsError = false } = {}) => {
     if (atomicSavingRef.current) throw new Error('storyboard_atomic_save_in_progress');
@@ -1620,6 +1691,7 @@ export function Storyboard() {
     const next = normalizeBoard(staged.map((block) => (
       block.id === id ? { ...block, ...changes } : block
     )));
+    showUndo(previous, next, { blockId: id, label: undoLabelForPatch(changes) });
     directSaveSnapshots.current.add(next);
     setBlocks(next);
     try {
@@ -1628,12 +1700,12 @@ export function Storyboard() {
       atomicRetryRef.current = null;
       saveRetryOptions.current = {};
       setSaveError(null);
-      setDirty(true);
     } catch (error) {
       if (sbPending.get(projectId) === next) sbPending.delete(projectId);
       atomicRetryRef.current = retryAtomic ? { previous, next } : null;
       directSaveSnapshots.current.add(previous);
       setBlocks(previous);
+      clearUndoForSnapshot(next);
       saveRetryOptions.current = {};
       if (!pickerOwnsError) setSaveError('변경 내용을 저장하지 못했어요');
       throw error;
@@ -1642,7 +1714,7 @@ export function Storyboard() {
       setAtomicSaving(false);
     }
   };
-  const atomicBoardChange = async (buildNext, { nextSelectedId = null } = {}) => {
+  const atomicBoardChange = async (buildNext, { nextSelectedId = null, undoBlockId = null, undoLabel = '설정' } = {}) => {
     if (atomicSavingRef.current) throw new Error('storyboard_atomic_save_in_progress');
     atomicSavingRef.current = true;
     setAtomicSaving(true);
@@ -1650,6 +1722,7 @@ export function Storyboard() {
     const previous = blocks;
     const built = buildNext(previous);
     const next = normalizeBoard(built);
+    showUndo(previous, next, { blockId: undoBlockId || nextSelectedId || 'multi', label: undoLabel });
     directSaveSnapshots.current.add(next);
     setBlocks(next);
     try {
@@ -1657,12 +1730,8 @@ export function Storyboard() {
       atomicRetryRef.current = null;
       saveRetryOptions.current = {};
       setSaveError(null);
-      setDirty(true);
       if (nextSelectedId) {
-        const target = next.find((block) => block.id === nextSelectedId);
-        snapRef.current = target ? { ...target } : null;
         setSelectedId(nextSelectedId);
-        setMode('props');
         setSplitOpen(true);
       }
       return next;
@@ -1671,6 +1740,7 @@ export function Storyboard() {
       atomicRetryRef.current = { previous, next };
       directSaveSnapshots.current.add(previous);
       setBlocks(previous);
+      clearUndoForSnapshot(next);
       saveRetryOptions.current = {};
       throw error;
     } finally {
@@ -1678,45 +1748,29 @@ export function Storyboard() {
       setAtomicSaving(false);
     }
   };
+  const finishEdit = () => { setPendingSectionMove(null); setSelectedId(null); };
   const selectCard = (id) => {
     if (atomicSavingRef.current) return;
     setSetPicker(null); setSetPickerError(null);
     if (selectedId === id) { finishEdit(); return; }      // click again → deselect
-    const cur = blocks.find((b) => b.id === selectedId);
-    const curLocked = selectedId && dirty && cur && cur.source !== 'mine';   // 내 이미지는 잠그지 않음
-    if (curLocked) { setWarn(true); return; }
     setPendingSectionMove(null);
-    const target = blocks.find((b) => b.id === id);
-    snapRef.current = target ? { ...target } : null;
-    setSelectedId(id); setMode('props'); setDirty(false); setWarn(false); setSplitOpen(true);
+    setSelectedId(id); setSplitOpen(true);
   };
-  const finishEdit = () => { pendingRowRestore.current = null; setPendingSectionMove(null); setSelectedId(null); setMode('props'); setDirty(false); setWarn(false); snapRef.current = null; };
-  const revertEdit = () => {
-    if (snapRef.current) {
-      const snap = snapRef.current;
-      // 구조 필드(섹션·공간)는 현재값 유지 — 편집 중 이동 후 '원래대로'가 옛 소속을 되살려
-      // 같은 섹션 id가 비연속으로 쪼개지는 것 방지. 되돌림은 인스펙터 소유 필드만.
-      setBlocks((bs) => normalizeBoard(bs.map((b) => b.id === snap.id ? {
-        ...snap,
-        sectionId: b.sectionId, sectionTitle: b.sectionTitle, sectionLayout: b.sectionLayout,
-        sectionRole: b.sectionRole, taxonomyVersion: b.taxonomyVersion,
-        sectionCustom: b.sectionCustom, spaceGroupId: b.spaceGroupId, spaceVariation: b.spaceVariation,
-        layoutRowId: b.layoutRowId, layoutRowVersion: b.layoutRowVersion,
-      } : b)));
-    }
-    setSelectedId(null); setMode('props'); setDirty(false); setWarn(false); snapRef.current = null;
+  const duplicate = (id) => {
+    dismissUndo();
+    setBlocks((bs) => {
+      const i = bs.findIndex((b) => b.id === id); if (i < 0) return bs;
+      const group = dragGroupFor(bs, id);
+      const copy = { ...withoutLayoutRow(bs[i]), id: uid('blk') };
+      const n = [...bs];
+      // 행 안에 복제본을 끼워 넣어 기존 행의 연속성을 깨지 않도록 행 바로 뒤에 단일 컷으로 둔다.
+      n.splice((group?.indexes[group.indexes.length - 1] ?? i) + 1, 0, copy);
+      // 컷 수가 변한 섹션의 레이아웃 위생 — 삽입·이동 경로와 동일 규칙 (예: 2컷 twoColumn 에 복제 → 강등/재배치)
+      return normalizeBoard(n);
+    });
   };
-  const duplicate = (id) => setBlocks((bs) => {
-    const i = bs.findIndex((b) => b.id === id); if (i < 0) return bs;
-    const group = dragGroupFor(bs, id);
-    const copy = { ...withoutLayoutRow(bs[i]), id: uid('blk') };
-    const n = [...bs];
-    // 행 안에 복제본을 끼워 넣어 기존 행의 연속성을 깨지 않도록 행 바로 뒤에 단일 컷으로 둔다.
-    n.splice((group?.indexes[group.indexes.length - 1] ?? i) + 1, 0, copy);
-    // 컷 수가 변한 섹션의 레이아웃 위생 — 삽입·이동 경로와 동일 규칙 (예: 2컷 twoColumn 에 복제 → 강등/재배치)
-    return normalizeBoard(n);
-  });
   const remove = (id) => {
+    dismissUndo();
     const idx = blocks.findIndex((b) => b.id === id); const removed = blocks[idx];
     const rowId = removed?.layoutRowId;
     const undoBlock = removed ? withoutLayoutRow(removed) : removed;
@@ -1751,11 +1805,32 @@ export function Storyboard() {
     }) });
   };
   // 이동 후 adoptSection — 섹션 경계를 넘으면 이웃 섹션을 채택하고 대상 섹션을 '직접 구성' 처리
-  const addBlock = async (idx, targetSid, targetRole = null, targetSpaceGroupId = null, targetRenderGroupKey = null) => {
-    newSeq.current += 1;
+  const addBlock = async (idx, targetSid, targetRole = null, targetSpaceGroupId = null, targetRenderGroupKey = null, droppedExampleId = null) => {
+    dismissUndo();
     const targetHost = blocks.find((b) => b.sectionId === targetSid);
     const host = targetHost || (!targetRole ? blocks[Math.max(0, Math.min(idx - 1, blocks.length - 1))] : null);
     const sectionRole = targetRole || host?.sectionRole || SECTION_ROLES.BENEFIT;
+    const droppedExample = droppedExampleId
+      ? (catalogs.genExamples || []).find((example) => example.id === droppedExampleId)
+      : null;
+    if (droppedExampleId && !droppedExample) {
+      toast.push('이 생성예시를 찾지 못했어요');
+      return;
+    }
+    const droppedCutType = droppedExample?.cutType;
+    if (droppedCutType && !cutTypeOptionsForSection(sectionRole).some((option) => option.value === droppedCutType)) {
+      toast.push('이 섹션에는 해당 생성예시를 추가할 수 없어요');
+      return;
+    }
+    if (targetSpaceGroupId && droppedExample && (!(droppedExample.variants || []).includes('pose')
+      || !poseExampleDirectionCompatible(droppedExample, {
+        cutType: droppedCutType,
+        direction: droppedExample.direction,
+      }))) {
+      toast.push('이 촬영 세트에는 포즈 참조가 가능한 예시만 넣을 수 있어요');
+      return;
+    }
+    newSeq.current += 1;
     // 역할 칩 없이도 모든 내부 생성법을 계속 추가할 수 있게, 삽입 지점과
     // 가장 가까운 같은 섹션의 AI 이미지가 쓰는 생성법을 물려받는다.
     const isAdjacentCandidate = (block) => block
@@ -1774,13 +1849,19 @@ export function Storyboard() {
           : null;
     const firstPurpose = renderPurpose || adjacent?.contentRole || defaultContentRoleForSection(sectionRole);
     const purposePatch = blockPatchForContentRole(null, firstPurpose, { clothingType });
+    const insertionRecipe = droppedExample ? {
+      ...purposePatch,
+      cutType: droppedCutType || purposePatch.cutType,
+      direction: droppedExample.direction ?? purposePatch.direction,
+      shot: droppedExample.shot || purposePatch.shot,
+    } : purposePatch;
     const initialColorOpts = firstPurpose === CONTENT_ROLES.DETAIL ? detailColorOpts : colorOpts;
     // 내부 역할은 현재 섹션의 안전한 기본값으로 시작하고, normalizeBoard가
     // 핵심 장점 첫 카드의 hero 여부를 실제 카드 순서에 맞춰 다시 확정한다.
     const nb = { id: uid('blk'), sectionRole, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION, colorId: initialColorOpts[0]?.id || 'col1',
       pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
-      ...purposePatch,
-      thumb: Placeholder.photo('new' + Date.now(), purposePatch.cutType === 'product' ? 'product' : purposePatch.cutType === 'horizon' ? 'horizon' : 'styling', 240, 320), poseThumb: Placeholder.pose('stand'), poseLabel: 'AI 자동' };
+      ...insertionRecipe,
+      thumb: Placeholder.photo('new' + Date.now(), insertionRecipe.cutType === 'product' ? 'product' : insertionRecipe.cutType === 'horizon' ? 'horizon' : 'styling', 240, 320), poseThumb: Placeholder.pose('stand'), poseLabel: 'AI 자동' };
     const m = [...blocks]; m.splice(idx, 0, nb);
       let out = adoptSection(m, nb.id, targetSid, sectionRole);             // 이웃/명시된 섹션 소속으로 삽입
       // 빈 보드 등 이웃이 없으면 기본 섹션 부여 — 무소속(unsupported state) 블록 방지
@@ -1800,17 +1881,22 @@ export function Storyboard() {
           ? { ...b, spaceGroupId: g.spaceGroupId, spaceVariation: g.spaceVariation ?? 'subtle', refScope: 'pose' } : b));
       }
       out = normalizeBoard(out);   // 행 한가운데 삽입·컷 수 변경에 따른 강등 등 공통 위생 (삽입 경로 공통 규칙)
-      // 취소-복원 = 삽입 전 배열 통짜 보관 — 행 id 뿐 아니라 레이아웃 강등·소속까지 원상 복구.
-      // "삽입 직후 상태 그대로"일 때만 유효(이후 어떤 조작이든 snapshot identity 가 바뀌어 자동 무효화).
-    const assignment = assignGenerationExamples(out, {
-      catalog: catalogs.genExamples,
-      product: { clothingType },
-      gender: exampleGender,
-      onlyBlockIds: [nb.id],
-    });
-    const next = assignment.blocks;
-    pendingRowRestore.current = { blockId: nb.id, preInsert: blocks, snapshot: next };
-    snapRef.current = { ...next.find((b) => b.id === nb.id) };             // '원래대로' 스냅샷은 소속 부여 후 기준 (섹션 유실 방지)
+    const next = droppedExample
+      ? out.map((block) => block.id === nb.id ? {
+        ...block,
+        ...referenceFeedbackPatch(block, {
+          exampleId: droppedExample.id,
+          baseThumb: block.baseThumb ?? block.thumb,
+          exampleSelectionOrigin: 'user',
+          refScope: targetSpaceGroupId ? 'pose' : 'all',
+        }, catalogs),
+      } : block)
+      : assignGenerationExamples(out, {
+        catalog: catalogs.genExamples,
+        product: { clothingType },
+        gender: exampleGender,
+        onlyBlockIds: [nb.id],
+      }).blocks;
     directSaveSnapshots.current.add(next);
     setBlocks(next);
     saveRetryOptions.current = {};
@@ -1821,8 +1907,8 @@ export function Storyboard() {
     } catch {
       setSaveError('변경 내용을 저장하지 못했어요');
     }
-    setSelectedId(nb.id); setMode('props'); setDirty(false); setWarn(false); setSplitOpen(true);
-    toast.push('블록을 추가했어요', { icon: 'plus' });
+    setSelectedId(nb.id); setSplitOpen(true);
+    toast.push(droppedExample ? '생성예시를 새 컷으로 추가했어요' : '블록을 추가했어요', { icon: 'plus' });
   };
   const mineBlock = (src, n) => ({
     id: uid('blk'), sectionRole: SECTION_ROLES.BENEFIT, contentRole: CONTENT_ROLES.CUSTOM, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
@@ -1831,6 +1917,7 @@ export function Storyboard() {
     poseThumb: Placeholder.pose('stand'), poseLabel: '-',
   });
   const addMineBlock = async (idx) => {
+    dismissUndo();
     const src = await api.pickAnyImage();
     const nb = mineBlock(src, (newSeq.current += 1));
     // adoptSection — 화면(즉시)과 재진입(ensureSections 상속)이 같은 소속이 되도록 삽입 시점에 확정
@@ -1839,11 +1926,12 @@ export function Storyboard() {
       const adopted = adoptSection(m, nb.id);
       return adopted.find((b) => b.id === nb.id)?.sectionId ? adopted : ensureSections(adopted);
     });
-    setSelectedId(nb.id); setMode('props'); setDirty(false); setSplitOpen(true);
+    setSelectedId(nb.id); setSplitOpen(true);
     toast.push('내 이미지 블록을 추가했어요', { icon: 'plus' });
   };
   // drag-to-reorder blocks (with drop indicator)
   const onDragStart = (id) => (e) => {
+    dismissUndo();
     e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/blk', id);
     // 고스트 = 그립 점이 아니라 블록 카드 전체 — 잡은 지점 기준 오프셋 유지
     const node = cardRefs.current.get(id);
@@ -1867,6 +1955,7 @@ export function Storyboard() {
     e.preventDefault();
     e.stopPropagation();
     const img = e.dataTransfer.getData('text/mineimg') || dragMine;
+    const exampleId = e.dataTransfer.getData('text/example-id') || dragExampleId;
     const draggedGroup = e.dataTransfer.getData('text/space-group') || dragSpaceGroupId;
     setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null);
     if (draggedGroup) {
@@ -1896,6 +1985,11 @@ export function Storyboard() {
       insertMineAt(idx, img, targetSid, targetRole);
       return;
     }   // 내 이미지를 새 블록으로 삽입
+    if (exampleId) {
+      setDragExampleId(null);
+      addBlock(idx, targetSid, targetRole, targetSpaceGroupId, targetGroupKey, exampleId);
+      return;
+    }
     const id = e.dataTransfer.getData('text/blk') || dragId; setDragId(null); if (!id) return;
     applySingleMove({ id, idx, targetSid, targetRole, targetSpaceGroupId, targetGroupKey });
   };
@@ -1904,28 +1998,40 @@ export function Storyboard() {
      그룹 제한·섹션 이동 시 예시 재선택·세트 소속 승계 규칙이 두 경로에서 동일해야 한다. */
   const applySingleMove = ({ id, idx, targetSid, targetRole = null, targetSpaceGroupId = null, targetGroupKey = null }) => {
     const moving = blocks.find((block) => block.id === id);
-    if (moving && targetGroupKey && renderKeyForBlockId(id) !== targetGroupKey) {
-      toast.push('같은 그룹 안에서만 순서를 바꿀 수 있어요');
-      return;
-    }
+    const currentGroupKey = moving ? renderKeyForBlockId(id) : null;
+    const crossedRenderGroup = !!targetGroupKey && currentGroupKey !== targetGroupKey;
+    // 다른 섹션으로 옮길 때는 사용자가 어느 드롭라인을 가리켰든 그 섹션의 맨 뒤가 목적지다.
+    // 같은 섹션 안에서는 가리킨 위치를 그대로 써 세밀한 재정렬을 유지한다.
+    const targetGroupEnd = crossedRenderGroup
+      ? (renderGroups(blocks).find((group) => group.key === targetGroupKey)?.items.at(-1)?.index ?? idx)
+      : null;
+    const targetSectionEnd = targetGroupEnd ?? (targetSid && moving?.sectionId !== targetSid
+      ? blocks.reduce((end, block, index) => block.sectionId === targetSid ? index + 1 : end, idx)
+      : idx);
+    const targetContentRole = targetGroupKey === 'studio' ? CONTENT_ROLES.FIT
+      : targetGroupKey === 'styling' ? CONTENT_ROLES.COORDINATION
+        : targetGroupKey === 'product' ? CONTENT_ROLES.PRODUCT_OVERVIEW
+          : targetGroupKey === 'hooking' ? CONTENT_ROLES.BENEFIT : null;
+    const renderGroupRecipe = crossedRenderGroup && moving?.source !== 'mine' && targetContentRole
+      ? blockPatchForContentRole(moving, targetContentRole, { clothingType })
+      : null;
     const cutAllowed = !targetRole || moving?.source === 'mine'
       || cutTypeOptionsForSection(targetRole).some((option) => option.value === moving?.cutType);
-    if (moving && !cutAllowed) {
-      const targetContentRole = defaultContentRoleForSection(targetRole);
-      const targetRecipe = blockPatchForContentRole(moving, targetContentRole, { clothingType });
+    if (moving && (!cutAllowed || (renderGroupRecipe && renderGroupRecipe.cutType !== moving.cutType))) {
+      const fallbackRole = targetContentRole || defaultContentRoleForSection(targetRole);
+      const targetRecipe = renderGroupRecipe || blockPatchForContentRole(moving, fallbackRole, { clothingType });
       setPendingSectionMove({
-        blockId: id, index: idx, targetSid, targetRole,
+        blockId: id, index: targetSectionEnd, targetSid, targetRole,
         cutType: targetRecipe.cutType, shot: targetRecipe.shot, sectionRole: targetRole,
       });
-      snapRef.current = { ...moving };
-      setSelectedId(id); setMode('props'); setDirty(false); setWarn(false); setSplitOpen(true);
+      setSelectedId(id); setSplitOpen(true);
       toast.push('새 섹션에 맞는 컷 예시를 먼저 골라주세요');
       return;
     }
     const needsPoseReselection = !!targetSpaceGroupId && moving?.spaceGroupId !== targetSpaceGroupId
       && !blockHasCompatiblePoseExample(moving, catalogs);
     setBlocks((current) => {
-      const moved = moveBlockWithSpaceMembership(current, id, idx, {
+      const moved = moveBlockWithSpaceMembership(current, id, targetSectionEnd, {
         targetSpaceGroupId,
         isPoseCompatible: (block) => blockHasCompatiblePoseExample(block, catalogs),
       });
@@ -2046,7 +2152,6 @@ export function Storyboard() {
         }, { nextSelectedId: memberIds[0] });
       }
       setSetPicker(null);
-      setDirty(false);
       toast.push(setPicker.mode === 'replace' ? '촬영 세트를 변경했어요' : '촬영 세트를 추가했어요', { icon: 'plus' });
     } catch {
       setSetPickerError('촬영 세트를 저장하지 못했어요. 다시 시도해주세요.');
@@ -2056,19 +2161,16 @@ export function Storyboard() {
     if (!spaceGroupId) return;
     try {
       await atomicBoardChange((current) => dissolveSpaceSet(current, spaceGroupId));
-      setDirty(false);
       toast.push('촬영 세트를 풀었어요');
     } catch {
       setSaveError('변경 내용을 저장하지 못했어요');
     }
   };
   const dissolveSelectedSpaceSet = () => dissolveSpaceGroup(selected?.spaceGroupId);
-  const locked = !!selectedId && dirty && !isMineSel;
+  const locked = false;
   const boardGroups = renderGroups(blocks);
   const sections = deriveFixedSections(blocks);
-  const draggedBlock = dragId ? blocks.find((block) => block.id === dragId) : null;
   const draggedSpaceBlock = dragSpaceGroupId ? blocks.find((block) => block.spaceGroupId === dragSpaceGroupId) : null;
-  const draggedBlockGroupKey = draggedBlock ? renderKeyForBlockId(draggedBlock.id) : null;
   const draggedSpaceGroupKey = draggedSpaceBlock ? renderKeyForBlockId(draggedSpaceBlock.id) : null;
 
   const sectionForGroup = (group) => {
@@ -2091,10 +2193,7 @@ export function Storyboard() {
 
   const insertControl = (idx, group, targetSpaceGroupId = null) => {
     const section = sectionForGroup(group);
-    const menuKey = group.key + ':' + idx + ':' + (targetSpaceGroupId || 'single');
-    const menuOpen = insertMenuKey === menuKey;
-    const canAcceptDrag = (!draggedBlockGroupKey || draggedBlockGroupKey === group.key)
-      && (!draggedSpaceGroupKey || draggedSpaceGroupKey === group.key)
+    const canAcceptDrag = (!draggedSpaceGroupKey || draggedSpaceGroupKey === group.key)
       && !(dragSpaceGroupId && targetSpaceGroupId);
     const lineOn = dragOver === idx && dragOverSec === section.id
       && dragOverSpaceGroupId === targetSpaceGroupId;
@@ -2102,7 +2201,7 @@ export function Storyboard() {
       <span
         className={'sb-addzone' + (targetSpaceGroupId ? ' in-tray' : '') + (lineOn ? ' drop-on' : '')}
         onDragOver={(event) => {
-          if (!(dragId || dragMine || dragSpaceGroupId) || !canAcceptDrag) return;
+          if (!(dragId || dragMine || dragExampleId || dragSpaceGroupId) || !canAcceptDrag) return;
           event.preventDefault();
           event.stopPropagation();
           setDragOver(idx);
@@ -2116,40 +2215,11 @@ export function Storyboard() {
           type="button"
           className="sb-addzone-plus"
           aria-label="이 위치에 컷 추가"
-          aria-expanded={menuOpen}
           onClick={(event) => {
             event.stopPropagation();
-            setInsertMenuKey((current) => current === menuKey ? null : menuKey);
+            addBlock(idx, section.id, section.role, targetSpaceGroupId, group.key);
           }}
         >＋</button>
-        {menuOpen && (
-          <span className="sb-add-pop" onClick={(event) => event.stopPropagation()}>
-            {targetSpaceGroupId ? (
-              <button type="button" onClick={() => {
-                setInsertMenuKey(null);
-                addBlock(idx, section.id, section.role, targetSpaceGroupId, group.key);
-              }}>＋ 이 공간에 컷 추가</button>
-            ) : (
-              <>
-                <button type="button" onClick={() => {
-                  setInsertMenuKey(null);
-                  addBlock(idx, section.id, section.role, null, group.key);
-                }}>＋ 개별 컷</button>
-                {section.role !== SECTION_ROLES.PRODUCT && (
-                  <button type="button" onClick={() => {
-                    setInsertMenuKey(null);
-                    openSetPicker({
-                      mode: 'add',
-                      index: idx,
-                      targetSid: section.id,
-                      targetRole: section.role,
-                    });
-                  }}>＋ 촬영 세트</button>
-                )}
-              </>
-            )}
-          </span>
-        )}
       </span>
     );
   };
@@ -2240,7 +2310,7 @@ export function Storyboard() {
           clothingType={clothingType}
           selected={block.id === selectedId}
           locked={locked && block.id !== selectedId}
-          gripDrag={{ draggable: true, onDragStart: onDragStart(block.id), onDragEnd }}
+          cardDrag={{ draggable: true, onDragStart: onDragStart(block.id), onDragEnd }}
           onSelect={() => selectCard(block.id)}
           onDuplicate={() => duplicate(block.id)}
           onDelete={() => remove(block.id)}
@@ -2278,6 +2348,7 @@ export function Storyboard() {
   })();
 
   const renderTray = (unit, group) => {
+    const traySection = sectionForGroup(group);
     const set = inferStoryboardSpaceSet(unit.spaceGroupId);
     const place = normalizePlaceType(set.placeType, set.setType);
     const placeClass = place === 'cafe' ? 'cafe'
@@ -2299,15 +2370,8 @@ export function Storyboard() {
           <strong>{label}</strong>
           <button type="button" className="sb-tray-swap" onClick={(event) => {
             event.stopPropagation();
-            if (locked) {
-              setWarn(true);
-              return;
-            }
             const first = unit.items[0].block;
-            snapRef.current = { ...first };
             setSelectedId(first.id);
-            setMode('props');
-            setDirty(false);
             openSetPicker({ mode: 'replace', spaceGroupId: unit.spaceGroupId });
           }}>촬영 세트 변경</button>
           <details className="sb-tray-more" onClick={(event) => event.stopPropagation()}>
@@ -2319,6 +2383,10 @@ export function Storyboard() {
         </div>
         <div className="sb-tray-grid">
           {frameUnits(unit.items).map((trayUnit) => renderUnit(trayUnit, group, unit.spaceGroupId))}
+          <button type="button" className="sb-ghost-card sb-tray-add"
+            onClick={() => addBlock(unit.items[unit.items.length - 1].index, traySection.id, traySection.role, unit.spaceGroupId, group.key)}>
+            ＋ 컷 추가
+          </button>
         </div>
       </div>
     );
@@ -2381,7 +2449,7 @@ export function Storyboard() {
             </div>
             <div className="sb-deck-collapse">
               <div>
-                {layoutControlForGroup(group)}
+                {/* 레이아웃 설정 UI는 MVP 이후 재도입한다. sectionLayout 로직과 저장 필드는 유지한다. */}
                 <div className="sb-canvas-grid">
                   {canvasUnits(group.items).map((unit) => (
                     unit.kind === 'tray' ? renderTray(unit, group) : renderUnit(unit, group)
@@ -2419,29 +2487,26 @@ export function Storyboard() {
     <SpaceSetGallery mode={setPicker.mode} error={setPickerError} onChoose={chooseSpaceSet}
       gender={exampleGender} clothingType={clothingType}
       onClose={() => { setSetPicker(null); setSetPickerError(null); }} />
-  ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage} mode={mode} onMode={setMode}
+  ) : <Inspector key={selectedId} block={selected} catalogs={catalogs} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} exampleGender={exampleGender} hasDetailImage={hasDetailImage}
     onChange={(p) => patch(selectedId, p)} onAtomicChange={(p, options) => atomicPatch(selectedId, p, options)} requestedRecipe={pendingSectionMove}
     onCancelRequestedRecipe={() => setPendingSectionMove(null)} matchClothing={matchClothing}
     spaceContext={selectedSpaceContext} onDissolveSpaceSet={dissolveSelectedSpaceSet}
-    onDuplicate={() => duplicate(selectedId)} onDelete={() => remove(selectedId)}
-    dirty={dirty && !isMineSel} warn={warn} onDone={finishEdit} onRevert={revertEdit} onAddMine={addMineBlock}
-    isNew={pendingRowRestore.current?.blockId === selectedId}
+    onAddMine={addMineBlock}
     onImgDrag={(v) => { setDragMine(v); if (v == null) { setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null); } }}
-    onCancelNew={() => {
-      // 취소 = 삽입 전 상태로: 블록 제거 + 이 삽입이 갈랐던 행 복원 (normalizeRows 가 인접성 재검증)
-      const id = selectedId;
-      const restore = pendingRowRestore.current; pendingRowRestore.current = null;
-      // 스테일 방지: 삽입 이후 보드가 조금이라도 바뀌었으면(배치 재적용·드래그 등) 낡은 행 구성을 복원하지 않는다
-      const valid = restore && restore.blockId === id && latestBlocks.current === restore.snapshot;
-      setBlocks((bs) => valid ? restore.preInsert : normalizeBoard(bs.filter((b) => b.id !== id)));
-      finishEdit();
-      toast.push('블록을 취소했어요');
-    }} />;
+    onExampleDrag={(value) => {
+      setDragExampleId(value);
+      if (value == null) { setDragOver(null); setDragOverSec(null); setDragOverSpaceGroupId(null); }
+    }}
+    />;
 
+  const cutCount = blocks.length;
   const body = (
     <div className={'sb-canvas-shell' + (splitOpen ? ' inspector-open' : '')}
       style={{ '--sb-inspector-top': `${inspectorTop}px` }}>
-      <div className="sb-canvas-main" onClick={() => setInsertMenuKey(null)}>
+      <div className="sb-canvas-main">
+        <div className="sb-count-head">
+          구성컷: <strong>{cutCount}</strong>개
+        </div>
         {list}
         <button className="mine-add-solo" onClick={() => addMineBlock()}>
           <Icon name="upload" size={17} />내 이미지 업로드
@@ -2450,7 +2515,6 @@ export function Storyboard() {
       {splitOpen && <div className="insp-col">{inspector}</div>}
     </div>
   );
-  const cutCount = blocks.length;
   // 크레딧은 AI 생성 컷에만 — 내 이미지 블록은 생성 작업이 없어 제외 (계약 §6)
   const aiCount = blocks.filter((b) => b.source !== 'mine').length;
   const mineCount = cutCount - aiCount;
@@ -2479,7 +2543,7 @@ export function Storyboard() {
       await sbSaveNow(projectId, () => atomicRetry.next);
       atomicRetryRef.current = null;
       setSaveError(null);
-      setDirty(true);
+      showUndo(atomicRetry.previous, atomicRetry.next, { blockId: 'retry', label: '설정' });
     } catch {
       if (sbPending.get(projectId) === atomicRetry.next) sbPending.delete(projectId);
       directSaveSnapshots.current.add(atomicRetry.previous);
@@ -2507,12 +2571,15 @@ export function Storyboard() {
       onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>
       {doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
+      {undoEntry && (
+        <div className="sb-undo-bar" role="status" aria-live="polite">
+          <span>{undoEntry.message}</span>
+          <button type="button" onClick={undoLatest}><Icon name="undo" size={15} />되돌리기</button>
+        </div>
+      )}
       {saveError && <div className="sb-save-error">{saveError}
         <button type="button" onClick={retryFailedSave}>다시 시도</button>
       </div>}
-      <div className={`sb-count-head${splitOpen ? ' is-split' : ''}`}>
-        구성컷: <strong>{cutCount}개</strong>
-      </div>
       {body}
 
       {/* document-flow bottom action bar */}
