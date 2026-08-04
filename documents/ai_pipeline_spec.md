@@ -73,7 +73,7 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
 
 ```
 info     상품·분석·콘티 데이터 수집/검증 (비AI)
-prep     블록별 프롬프트·에셋 준비, selectedMannequinId 컷 + 가상모델 face_front·세드카드 그리드 로드 (비AI, 모델 레퍼런스 계약은 ai_agent_modules §3 AG-06)
+prep     블록별 프롬프트·에셋 준비, selectedMannequinId 컷 + 가상모델 face_front·세드카드 그리드·body_front 로드 (비AI, 모델 레퍼런스 계약은 ai_agent_modules §3 AG-06)
 cuts     AG-06 cut-generator — source='ai' 블록별 1콜. 워커는 각 블록의 내부
          cutType(styling/horizon/product/mirror)으로 생성 방법을 정하고 병렬 처리한다.
          source='mine' 블록은 ownImages 그대로(에이전트 호출 없음).

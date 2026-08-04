@@ -1,11 +1,18 @@
 import asyncio
+import inspect
 
 import app.routes as routes
+from app import repo
 from app.workers import analyze_job
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
 
 
 # ---------- 라우트 ----------
+
+def test_create_job_does_not_infer_a_partial_index_predicate():
+    source = inspect.getsource(repo.create_job)
+    assert "on conflict do nothing" in source
+    assert "on conflict (project_id, kind)" not in source
 
 def test_analyze_route_404_for_unknown_project(client, make_token, monkeypatch):
     async def fake_get_project(conn, uid, pid):

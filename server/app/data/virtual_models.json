@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "Virtual model identity assets. Contract: ai_agent_modules §3 AG-06 — face_front(원본 앵커) + grid_sedcard(v2 2x2 통짜) 기본 첨부, 시트 4뷰는 QC 실패 폴백 전용(body_front).",
+    "description": "Virtual model identity assets. Contract: ai_agent_modules §3 AG-06 — face_front(원본 앵커) + grid_sedcard(v2 2x2 통짜) + body_front(체형 기준) 기본 첨부, 나머지 시트 3뷰는 QC 폴백 전용.",
     "source": "spike facepack v2 + public/models 원본 앵커"
   },
   "models": {
@@ -112,6 +112,80 @@
           "key": "seed/models/mC/body_back.png",
           "url": "https://images.wearless.kr/seed/models/mC/body_back.png",
           "mime": "image/jpeg"
+        }
+      }
+    },
+    "mD": {
+      "gender": "men",
+      "name": "수혁",
+      "thumb": "/models/men/m3.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mD/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mD/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mD/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mD/grid_sedcard.png",
+          "mime": "image/png"
+        },
+        "three_quarter": {
+          "key": "seed/models/mD/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mD/three_quarter.png",
+          "mime": "image/png"
+        },
+        "profile": {
+          "key": "seed/models/mD/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mD/profile.png",
+          "mime": "image/png"
+        },
+        "body_front": {
+          "key": "seed/models/mD/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mD/body_front.png",
+          "mime": "image/png"
+        },
+        "body_back": {
+          "key": "seed/models/mD/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mD/body_back.png",
+          "mime": "image/png"
+        }
+      }
+    },
+    "mE": {
+      "gender": "women",
+      "name": "지안",
+      "thumb": "/models/women/w2.webp",
+      "views": {
+        "face_front": {
+          "key": "seed/models/mE/face_front.webp",
+          "url": "https://images.wearless.kr/seed/models/mE/face_front.webp",
+          "mime": "image/webp"
+        },
+        "grid_sedcard": {
+          "key": "seed/models/mE/grid_sedcard.png",
+          "url": "https://images.wearless.kr/seed/models/mE/grid_sedcard.png",
+          "mime": "image/png"
+        },
+        "three_quarter": {
+          "key": "seed/models/mE/three_quarter.png",
+          "url": "https://images.wearless.kr/seed/models/mE/three_quarter.png",
+          "mime": "image/png"
+        },
+        "profile": {
+          "key": "seed/models/mE/profile.png",
+          "url": "https://images.wearless.kr/seed/models/mE/profile.png",
+          "mime": "image/png"
+        },
+        "body_front": {
+          "key": "seed/models/mE/body_front.png",
+          "url": "https://images.wearless.kr/seed/models/mE/body_front.png",
+          "mime": "image/png"
+        },
+        "body_back": {
+          "key": "seed/models/mE/body_back.png",
+          "url": "https://images.wearless.kr/seed/models/mE/body_back.png",
+          "mime": "image/png"
         }
       }
     }

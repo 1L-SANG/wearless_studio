@@ -626,11 +626,10 @@ async def create_job(
                     insert into jobs (user_id, project_id, kind, status, payload, idempotency_key,
                                       credits_reserved, metadata)
                     values (%s, %s, %s, 'pending', %s, %s, %s, %s)
-                    on conflict (project_id, kind)
-                      where status in ('pending', 'running')
-                        and kind not in ('editor_image', 'personalization_generation',
-                                         'personalization_purge')
-                      do nothing
+                    -- 충돌 대상을 특정하면 partial-index predicate가 조금만 바뀌어도
+                    -- 모든 kind의 INSERT가 500으로 깨진다. 실제 충돌 행은 아래에서
+                    -- idempotency_key 또는 활성 project/kind로 다시 조회하므로 target 없이 막는다.
+                    on conflict do nothing
                     returning {_JOB_COLS}
                     """,
                     (user_id, project_id, kind, Json(payload), idempotency_key, credits_reserved,

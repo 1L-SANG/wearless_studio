@@ -2,7 +2,7 @@
 
 계약: ai_agent_modules §3 AG-06 '가상모델 아이덴티티 레퍼런스 계약' —
   face_front = 원본 베이스컷(생성물 재주입 금지), grid_sedcard = v2 통짜 2x2 그리드,
-  나머지 4뷰(시트)는 QC 폴백 전용 보관.
+  body_front = 체형 기준으로 기본 첨부, 나머지 3뷰(시트)는 QC 폴백 전용 보관.
 소스: public/models/{gender}/{sid}.webp(앵커) + spike/runs/facepack-{sid}v2-*/(v2 팩).
 산출: R2 seed/models/{modelId}/{view}.{ext} + server/app/data/virtual_models.json (파일 기반
   manifest — example_assets.json 패턴, DB 테이블 없음).
@@ -40,13 +40,21 @@ from app.r2 import R2Client  # noqa: E402
 MANIFEST = ROOT / "server/app/data/virtual_models.json"
 _IMMUTABLE = "public, max-age=31536000, immutable"
 _MAX_EDGE = "1536"  # v2 팩 자산 리샘플 상한 — 아이덴티티 참조엔 충분, 첨부 페이로드 절감
-_PACK_MIME = "image/jpeg"  # v2 팩의 .png 파일명과 달리 실제 바이트는 JPEG
+_PACK_MIME = "image/jpeg"  # 기존 v2 팩의 .png 파일명과 달리 실제 바이트는 JPEG
 
 # 프론트 모델 ID(src/mock/db.js AI_MODELS) ↔ 스파이크 소스 ID 매핑
 MODELS = {
-    "mA": {"sid": "w1", "gender": "women", "name": "모델 A"},
-    "mB": {"sid": "m1", "gender": "men", "name": "모델 B"},
-    "mC": {"sid": "m2", "gender": "men", "name": "모델 C"},
+    "mA": {"sid": "w1", "gender": "women", "name": "Mia"},
+    "mB": {"sid": "m1", "gender": "men", "name": "Leo"},
+    "mC": {"sid": "m2", "gender": "men", "name": "도윤"},
+    "mD": {
+        "sid": "m3", "gender": "men", "name": "수혁", "pack_mime": "image/png",
+        "anchor": "m3-face.webp",
+    },
+    "mE": {
+        "sid": "w2", "gender": "women", "name": "지안", "pack_mime": "image/png",
+        "anchor": "w2-face.webp",
+    },
 }
 # 팩 크롭 파일명 → manifest 뷰 키 (계약의 시트 낱장 4뷰)
 PACK_VIEWS = {
@@ -88,8 +96,8 @@ def main() -> None:
         "_meta": {
             "description": (
                 "Virtual model identity assets. Contract: ai_agent_modules §3 AG-06 — "
-                "face_front(원본 앵커) + grid_sedcard(v2 2x2 통짜) 기본 첨부, "
-                "시트 4뷰는 QC 실패 폴백 전용(body_front)."
+                "face_front(원본 앵커) + grid_sedcard(v2 2x2 통짜) + "
+                "body_front(체형 기준) 기본 첨부, 나머지 시트 3뷰는 QC 폴백 전용."
             ),
             "source": "spike facepack v2 + public/models 원본 앵커",
         },
@@ -99,8 +107,10 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         for model_id, m in MODELS.items():
             views: dict = {}
+            pack_mime = m.get("pack_mime", _PACK_MIME)
             # face_front = 원본 베이스컷 그대로 (리샘플·재인코딩 없음 — 앵커 보존)
-            anchor = ROOT / f"public/models/{m['gender']}/{m['sid']}.webp"
+            anchor_name = m.get("anchor", f"{m['sid']}.webp")
+            anchor = ROOT / "public/models" / m["gender"] / anchor_name
             key = f"seed/models/{model_id}/face_front.webp"
             fresh = _put_if_changed(r2, key, anchor.read_bytes(), "image/webp")
             uploaded, skipped = uploaded + fresh, skipped + (not fresh)
@@ -110,19 +120,19 @@ def main() -> None:
             dst = Path(tmp) / f"{model_id}-grid_sedcard.png"
             data = _resample(pack.parent / "grid-sedcard.png", dst)
             key = f"seed/models/{model_id}/grid_sedcard.png"
-            fresh = _put_if_changed(r2, key, data, _PACK_MIME)
+            fresh = _put_if_changed(r2, key, data, pack_mime)
             uploaded, skipped = uploaded + fresh, skipped + (not fresh)
             views["grid_sedcard"] = {
-                "key": key, "url": r2.public_url(key), "mime": _PACK_MIME,
+                "key": key, "url": r2.public_url(key), "mime": pack_mime,
             }
             # 시트 4뷰 = v2 팩 크롭 리샘플(max 1536px) 후 업로드
             for fname, view in PACK_VIEWS.items():
                 dst = Path(tmp) / f"{model_id}-{view}.png"
                 data = _resample(pack / fname, dst)
                 key = f"seed/models/{model_id}/{view}.png"
-                fresh = _put_if_changed(r2, key, data, _PACK_MIME)
+                fresh = _put_if_changed(r2, key, data, pack_mime)
                 uploaded, skipped = uploaded + fresh, skipped + (not fresh)
-                views[view] = {"key": key, "url": r2.public_url(key), "mime": _PACK_MIME}
+                views[view] = {"key": key, "url": r2.public_url(key), "mime": pack_mime}
             manifest["models"][model_id] = {
                 "gender": m["gender"], "name": m["name"],
                 "thumb": f"/models/{m['gender']}/{m['sid']}.webp",  # 프론트 public 경로(기존)
