@@ -124,6 +124,22 @@ def test_complex_material_words_are_persisted_for_pipeline_policy():
     assert truth["sourceEvidence"]["roles"] == ["BACK", "FABRIC_MACRO", "FRONT"]
 
 
+def test_visible_counts_become_protected_facts_and_invalid_counts_block_approval():
+    truth = pt.build_truth_draft(
+        _product(name="기본 셔츠"),
+        _analysis(buttonCount=7, pocketCount=1, styleTags=[]),
+        ASSETS,
+    )
+    assert truth["protectedDetails"]["buttonCount"] is True
+    assert truth["protectedDetails"]["pocketCount"] is True
+
+    truth["garmentSpec"]["buttonCount"] = -1
+    errors = {i.code for i in pt.validation_issues(truth) if i.severity == "error"}
+    assert "invalid_buttonCount" in errors
+    with pytest.raises(pt.ProductTruthError):
+        pt.approve_snapshot(truth)
+
+
 def test_source_fingerprint_changes_when_source_checksum_or_analysis_changes():
     p = _product()
     a = _analysis()

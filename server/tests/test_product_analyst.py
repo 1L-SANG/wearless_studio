@@ -8,6 +8,7 @@ def test_validate_keeps_valid_enums():
         "aiSuggestedPoints": ["포근한 골지"], "suggestedName": "소프트 니트",
         "swatchSuggestions": [{"colorGroupId": "c1", "swatchId": "ivory"}],
         "styleTags": ["basic", "minimal"],
+        "buttonCount": 7, "pocketCount": 1,
     }
     v = pa.validate(raw)
     assert v["clothingType"] == "top"
@@ -16,6 +17,27 @@ def test_validate_keeps_valid_enums():
     assert v["materials"] == [{"name": "울", "ratio": 80}]
     assert v["swatchSuggestions"] == [{"colorGroupId": "c1", "swatchId": "ivory"}]
     assert v["styleTags"] == ["basic", "minimal"]
+    assert v["buttonCount"] == 7
+    assert v["pocketCount"] == 1
+
+
+def test_structure_counts_flow_schema_validate_and_distribute():
+    schema = pa.analysis_schema()
+    for key in ("buttonCount", "pocketCount"):
+        assert schema["properties"][key] == {"type": ["integer", "null"]}
+        assert key in schema["required"]
+
+    valid = pa.validate({"buttonCount": 7, "pocketCount": 0})
+    assert valid["buttonCount"] == 7
+    assert valid["pocketCount"] == 0
+    analysis = pa.distribute(valid)["analysis"]
+    assert analysis["buttonCount"] == 7
+    assert analysis["pocketCount"] == 0
+
+    for bad in (True, -1, 31, 2.5, "7", {}, []):
+        assert pa.validate({"buttonCount": bad})["buttonCount"] is None
+    for bad in (True, -1, 13, 1.5, "1", {}, []):
+        assert pa.validate({"pocketCount": bad})["pocketCount"] is None
 
 
 def test_validate_drops_out_of_enum():
@@ -119,7 +141,7 @@ def test_build_prompt_declares_source_mirrored():
     """
     p = pa.build_prompt({"name": "소프트 니트", "clothing_type": "top"})
     assert "shot in a mirror" in p          # 판정 규칙
-    assert "styleTags, sourceMirrored." in p  # 반환 키 나열
+    assert "styleTags, buttonCount, pocketCount, sourceMirrored." in p  # 반환 키 나열
 
 
 def test_validate_never_includes_measurements():

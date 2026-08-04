@@ -656,8 +656,9 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
       <div className="surface">
         <div className="sec-title" style={{ marginBottom: 6 }}>매칭 의류</div>
         <div className="sec-sub" style={{ marginBottom: 16 }}>핏·코디 이미지 생성에 쓰여요 · 메인 최대 2개</div>
-        <div className="model-grid">
-          {a.matchClothing.map((m) => (
+        {(a.matchClothing || []).length ? (
+          <div className="model-grid">
+            {a.matchClothing.map((m) => (
             <div key={m.id} className={`model-card${m.selected ? ' on' : ''}`} style={{ width: 110 }}
               onClick={() => toggleMatch(m.id)}>
               <img src={m.thumb} alt={m.name} style={{ height: 130 }} />
@@ -665,8 +666,21 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               {m.id === subMatchId && <span className="match-role sub">서브</span>}
               <div className="nm">{m.name}{m.selected && <Icon name="check" size={13} className="star" />}</div>
             </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-inline" role="status">
+            <p className="hint">
+              {a.matchClothingLoadFailed
+                ? '매칭 의류를 불러오지 못했어요.'
+                : '선택 가능한 매칭 의류가 아직 없어요.'}
+            </p>
+            <Button variant="secondary" size="sm"
+              onClick={() => onChange({ styleTags: [...(a.styleTags || [])] })}>
+              매칭 의류 다시 불러오기
+            </Button>
+          </div>
+        )}
       </div>
     </>
   );

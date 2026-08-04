@@ -342,6 +342,8 @@ export const httpAdapter = {
       // AI 가 추측한 자유 명칭("후드 집업" 등). 여기서 빠지면 분석 직후 폼의 주관식 pill 이
       // 비어 보인다 — 서버는 distribute 로 내려주는데 클라가 버리고 있었다.
       customCategory: ai.customCategory ?? null,
+      buttonCount: ai.buttonCount ?? null,
+      pocketCount: ai.pocketCount ?? null,
       sellingPoints: [],  // 셀러는 빈 상태로 시작 — AI 제안(aiSuggestedPoints)은 폼이 자동으로 채운다
       // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드 + mismatch 일 때만 내려오고, 그 외엔 없다.
       // 이 목록은 화이트리스트다 — 여기 없는 키는 조용히 버려진다.
@@ -353,7 +355,11 @@ export const httpAdapter = {
     // 비어 보인다(과거 mock base 시절엔 가짜 목이 채워줬음). 실패는 비치명 — 빈 목록 유지.
     try {
       merged.matchClothing = await recommendMatchHttp(projectId, merged, []);
-    } catch { /* 후보 조회 실패 — 분석 자체는 진행 */ }
+      merged.matchClothingLoadFailed = false;
+    } catch {
+      // 분석은 살리되 빈 배열을 정상 결과처럼 숨기지 않는다. 화면에서 재시도 버튼을 보여준다.
+      merged.matchClothingLoadFailed = true;
+    }
     analysisCache = { projectId, analysis: merged };   // US-4: full-payload 머지 + 매칭 선택 이월 seed(프로젝트 스코프)
     return merged;
   },
@@ -486,7 +492,17 @@ export const httpAdapter = {
   },
   // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.
   async getAnalysis(projectId) {
-    return http(`/v1/projects/${projectId}/analysis`);
+    const saved = await http(`/v1/projects/${projectId}/analysis`);
+    if (projectId && saved?.clothingType && !(saved.matchClothing || []).length) {
+      try {
+        saved.matchClothing = await recommendMatchHttp(projectId, saved, []);
+        saved.matchClothingLoadFailed = false;
+      } catch {
+        saved.matchClothingLoadFailed = true;
+      }
+    }
+    analysisCache = { projectId, analysis: saved };
+    return saved;
   },
   // 세탁 관리법 AI 초안 (동기·무과금) — 서버가 상품 종류·소재로 짧은 문구 생성. bare string 반환(mock 동일).
   // projectId 없으면(비로그인) 서버 project 가 없으니 클라 기본 문구로 폴백.

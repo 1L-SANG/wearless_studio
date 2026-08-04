@@ -211,6 +211,7 @@ export function ProductInput() {
   const [analysisProjectId, setAnalysisProjectId] = useState(null);
   const [productTruth, setProductTruth] = useState(null);
   const [truthBusy, setTruthBusy] = useState(false);
+  const [truthDirty, setTruthDirty] = useState(false);
   const [expanded, setExpanded] = useState(false);
   // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드일 때만 내려온다(shadow/off 면 undefined).
   // 업로드 순간이 아니라 **생성으로 넘어가는 버튼**에서 한 번 띄운다 — 사진을 고르는 도중에
@@ -221,6 +222,32 @@ export function ProductInput() {
   const { session, loading: authLoading, openLogin } = useAuth();
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
+
+  const editTruthCount = (field, raw, maximum) => {
+    const parsed = raw === '' ? null : Math.max(0, Math.min(maximum, Number(raw)));
+    setProductTruth((current) => current ? {
+      ...current,
+      garmentSpec: { ...(current.garmentSpec || {}), [field]: parsed },
+      protectedDetails: { ...(current.protectedDetails || {}), [field]: parsed != null && parsed > 0 },
+    } : current);
+    setTruthDirty(true);
+  };
+
+  const saveTruthEdits = async () => {
+    if (!productTruth || productTruth.status !== 'draft') return;
+    setTruthBusy(true);
+    try {
+      const saved = await api.updateProductTruth(analysisProjectId, productTruth.id, {
+        garmentSpec: productTruth.garmentSpec || {},
+        protectedDetails: productTruth.protectedDetails || {},
+      });
+      setProductTruth(saved);
+      setTruthDirty(false);
+      toast.push('수정한 상품 사실을 저장했어요.', { icon: 'check' });
+    } catch (error) {
+      toast.push(error?.message || '상품 사실 수정 내용을 저장하지 못했어요.', { icon: 'alertTri' });
+    } finally { setTruthBusy(false); }
+  };
 
   // 분석 CTA — 마네킹부터는 로그인 필요. 서버 분석을 마친 로그인 사용자는 바로 이동한다.
   // 로컬 분석 결과는 먼저 IndexedDB 에 보관한다. 미로그인이면 로그인 모달을 띄우고, 이미
@@ -591,6 +618,24 @@ export function ProductInput() {
                 {' · 단추 '}{productTruth.garmentSpec?.buttonCount ?? '미확인'}
                 {' · 주머니 '}{productTruth.garmentSpec?.pocketCount ?? '미확인'}
               </p>
+              {productTruth.status === 'draft' && (
+                <div className="measure-grid" style={{ margin: '12px 0' }}>
+                  <label className="measure-cell">
+                    <span className="lbl">단추 수</span>
+                    <input className="field" type="number" min="0" max="30"
+                      placeholder="미확인"
+                      value={productTruth.garmentSpec?.buttonCount ?? ''}
+                      onChange={(e) => editTruthCount('buttonCount', e.target.value, 30)} />
+                  </label>
+                  <label className="measure-cell">
+                    <span className="lbl">주머니 수</span>
+                    <input className="field" type="number" min="0" max="12"
+                      placeholder="미확인"
+                      value={productTruth.garmentSpec?.pocketCount ?? ''}
+                      onChange={(e) => editTruthCount('pocketCount', e.target.value, 12)} />
+                  </label>
+                </div>
+              )}
               {(productTruth.validationIssues || []).length > 0 && (
                 <ul>
                   {productTruth.validationIssues.map((issue) => (
@@ -601,20 +646,28 @@ export function ProductInput() {
               {productTruth.status === 'approved' ? (
                 <p className="hint">승인됨 · 이 revision이 생성 기준으로 고정됩니다.</p>
               ) : (
-                <Button
-                  variant="secondary"
-                  disabled={truthBusy || (productTruth.validationIssues || []).some((i) => i.severity === 'error')}
-                  onClick={async () => {
-                    setTruthBusy(true);
-                    try {
-                      const approved = await api.approveProductTruth(analysisProjectId, productTruth.id);
-                      setProductTruth(approved);
-                      toast.push('상품 사실을 승인했어요.', { icon: 'check' });
-                    } catch (error) {
-                      toast.push(error?.message || '상품 사실을 승인하지 못했어요.', { icon: 'alertTri' });
-                    } finally { setTruthBusy(false); }
-                  }}
-                >{truthBusy ? '승인 중…' : '상품 사실 승인'}</Button>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {truthDirty && (
+                    <Button variant="secondary" disabled={truthBusy} onClick={saveTruthEdits}>
+                      {truthBusy ? '저장 중…' : '수정 저장'}
+                    </Button>
+                  )}
+                  <Button
+                    variant="secondary"
+                    disabled={truthBusy || truthDirty || (productTruth.validationIssues || []).some((i) => i.severity === 'error')}
+                    onClick={async () => {
+                      setTruthBusy(true);
+                      try {
+                        const approved = await api.approveProductTruth(analysisProjectId, productTruth.id);
+                        setProductTruth(approved);
+                        setTruthDirty(false);
+                        toast.push('상품 사실을 승인했어요.', { icon: 'check' });
+                      } catch (error) {
+                        toast.push(error?.message || '상품 사실을 승인하지 못했어요.', { icon: 'alertTri' });
+                      } finally { setTruthBusy(false); }
+                    }}
+                  >{truthDirty ? '수정 저장 후 승인' : (truthBusy ? '승인 중…' : '상품 사실 승인')}</Button>
+                </div>
               )}
             </section>
           )}

@@ -366,8 +366,16 @@ def protected_details(product: Mapping, analysis: Mapping | None = None) -> dict
         "graphicPrint": bool((analysis or {}).get("graphicPrint")) or _has_any(text, _PRINT_WORDS),
         "embroidery": bool((analysis or {}).get("embroidery")) or _has_any(text, _EMBROIDERY_WORDS),
         "pattern": pat in {"CHECK", "STRIPE"},
-        "buttonCount": _has_any(text, _BUTTON_WORDS),
-        "pocketCount": _has_any(text, _POCKET_WORDS),
+        "buttonCount": (
+            isinstance((analysis or {}).get("buttonCount"), int)
+            and not isinstance((analysis or {}).get("buttonCount"), bool)
+            and (analysis or {}).get("buttonCount") > 0
+        ) or _has_any(text, _BUTTON_WORDS),
+        "pocketCount": (
+            isinstance((analysis or {}).get("pocketCount"), int)
+            and not isinstance((analysis or {}).get("pocketCount"), bool)
+            and (analysis or {}).get("pocketCount") > 0
+        ) or _has_any(text, _POCKET_WORDS),
     }
 
 
@@ -431,6 +439,14 @@ def garment_profile(truth: Mapping) -> dict:
 def validation_issues(truth: Mapping) -> list[TruthValidationIssue]:
     roles = {a.get("role") for a in (truth.get("sourceAssets") or [])}
     issues: list[TruthValidationIssue] = []
+    garment = truth.get("garmentSpec") or {}
+    for field, maximum, label in (("buttonCount", 30, "단추"), ("pocketCount", 12, "주머니")):
+        value = garment.get(field)
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= maximum
+        ):
+            issues.append(TruthValidationIssue(
+                f"invalid_{field}", "error", f"{label} 수는 0~{maximum} 사이 정수로 입력해 주세요."))
     if "FRONT" not in roles:
         issues.append(TruthValidationIssue(
             "missing_front_asset", "error", "기준 정면 원본이 없어 Product Truth 를 승인할 수 없습니다."))
