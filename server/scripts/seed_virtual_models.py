@@ -40,13 +40,21 @@ from app.r2 import R2Client  # noqa: E402
 MANIFEST = ROOT / "server/app/data/virtual_models.json"
 _IMMUTABLE = "public, max-age=31536000, immutable"
 _MAX_EDGE = "1536"  # v2 팩 자산 리샘플 상한 — 아이덴티티 참조엔 충분, 첨부 페이로드 절감
-_PACK_MIME = "image/jpeg"  # v2 팩의 .png 파일명과 달리 실제 바이트는 JPEG
+_PACK_MIME = "image/jpeg"  # 기존 v2 팩의 .png 파일명과 달리 실제 바이트는 JPEG
 
 # 프론트 모델 ID(src/mock/db.js AI_MODELS) ↔ 스파이크 소스 ID 매핑
 MODELS = {
-    "mA": {"sid": "w1", "gender": "women", "name": "모델 A"},
-    "mB": {"sid": "m1", "gender": "men", "name": "모델 B"},
-    "mC": {"sid": "m2", "gender": "men", "name": "모델 C"},
+    "mA": {"sid": "w1", "gender": "women", "name": "Mia"},
+    "mB": {"sid": "m1", "gender": "men", "name": "Leo"},
+    "mC": {"sid": "m2", "gender": "men", "name": "도윤"},
+    "mD": {
+        "sid": "m3", "gender": "men", "name": "수혁", "pack_mime": "image/png",
+        "anchor": "m3-face.webp",
+    },
+    "mE": {
+        "sid": "w2", "gender": "women", "name": "지안", "pack_mime": "image/png",
+        "anchor": "w2-face.webp",
+    },
 }
 # 팩 크롭 파일명 → manifest 뷰 키 (계약의 시트 낱장 4뷰)
 PACK_VIEWS = {
@@ -99,8 +107,10 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         for model_id, m in MODELS.items():
             views: dict = {}
+            pack_mime = m.get("pack_mime", _PACK_MIME)
             # face_front = 원본 베이스컷 그대로 (리샘플·재인코딩 없음 — 앵커 보존)
-            anchor = ROOT / f"public/models/{m['gender']}/{m['sid']}.webp"
+            anchor_name = m.get("anchor", f"{m['sid']}.webp")
+            anchor = ROOT / "public/models" / m["gender"] / anchor_name
             key = f"seed/models/{model_id}/face_front.webp"
             fresh = _put_if_changed(r2, key, anchor.read_bytes(), "image/webp")
             uploaded, skipped = uploaded + fresh, skipped + (not fresh)
@@ -110,19 +120,19 @@ def main() -> None:
             dst = Path(tmp) / f"{model_id}-grid_sedcard.png"
             data = _resample(pack.parent / "grid-sedcard.png", dst)
             key = f"seed/models/{model_id}/grid_sedcard.png"
-            fresh = _put_if_changed(r2, key, data, _PACK_MIME)
+            fresh = _put_if_changed(r2, key, data, pack_mime)
             uploaded, skipped = uploaded + fresh, skipped + (not fresh)
             views["grid_sedcard"] = {
-                "key": key, "url": r2.public_url(key), "mime": _PACK_MIME,
+                "key": key, "url": r2.public_url(key), "mime": pack_mime,
             }
             # 시트 4뷰 = v2 팩 크롭 리샘플(max 1536px) 후 업로드
             for fname, view in PACK_VIEWS.items():
                 dst = Path(tmp) / f"{model_id}-{view}.png"
                 data = _resample(pack / fname, dst)
                 key = f"seed/models/{model_id}/{view}.png"
-                fresh = _put_if_changed(r2, key, data, _PACK_MIME)
+                fresh = _put_if_changed(r2, key, data, pack_mime)
                 uploaded, skipped = uploaded + fresh, skipped + (not fresh)
-                views[view] = {"key": key, "url": r2.public_url(key), "mime": _PACK_MIME}
+                views[view] = {"key": key, "url": r2.public_url(key), "mime": pack_mime}
             manifest["models"][model_id] = {
                 "gender": m["gender"], "name": m["name"],
                 "thumb": f"/models/{m['gender']}/{m['sid']}.webp",  # 프론트 public 경로(기존)

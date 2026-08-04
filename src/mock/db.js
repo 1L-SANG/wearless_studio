@@ -185,6 +185,8 @@ const models = [
   { id: 'mA', name: 'Mia', gender: 'women', thumb: '/models/women/w1.webp', recommended: true },
   { id: 'mB', name: 'Leo', gender: 'men', thumb: '/models/men/m1.webp', recommended: false },
   { id: 'mC', name: '도윤', gender: 'men', thumb: '/models/men/m2.webp', recommended: false },
+  { id: 'mD', name: '수혁', gender: 'men', thumb: '/models/men/m3.webp', recommended: false },
+  { id: 'mE', name: '지안', gender: 'women', thumb: '/models/women/w2.webp', recommended: false },
 ];
 const matchClothing = toLegacyMatchClothing(recommendMatchingItems({
   clothingType: 'top',
