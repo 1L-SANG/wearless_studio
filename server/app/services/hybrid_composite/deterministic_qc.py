@@ -36,14 +36,22 @@ OUTSIDE_DRIFT_MAX_FRAC = 0.01  # mask 밖 ΔE76>10 픽셀 허용 비율
 # 즉 painted 영역의 내부 경계는 어느 검사에도 걸리지 않아 v6 의 '직사각형 판'이 모든
 # 수치를 통과했다(period 0.0005, coverage 1.0, outside drift 0). 아래가 그 구멍이다.
 DIRECTION_ERROR_MAX = 0.10     # 직교축 주기 강도가 목표축보다 이만큼 세면 줄 방향 오류
-SEAM_HARD_EDGE_MAX = 0.25      # painted 내부 경계에서 alpha 가 계단인 픽셀 허용 비율
-BOUNDARY_CHROMA_DE_MAX = 10.0  # painted↔인접 unpainted 밴드 ΔE00 (L 정렬 후 chroma)
-DRAPE_CORR_MIN = 0.60          # carrier↔output 저주파 L 상관 하한 (의류 내부)
+SEAM_EDGE_RATIO_MAX = 0.50     # 경계 alpha / 내부 alpha — 1 에 가까우면 전이 없는 계단
+DRAPE_TILES = 4                # 드레이프는 타일별로 재고 최악 타일로 판정한다
+# painted↔인접 unpainted 국소 ΔE00 의 p90. 정상 합성 6종 실측 2.95~9.31 이 하한 근거이고,
+# 주입한 ±35 불연속은 중앙값 23 으로 이 위에 크게 뜬다. 14 는 그 사이다.
+BOUNDARY_CHROMA_DE_MAX = 14.0
+# 상관은 **게이트로 쓰지 않는다**. 정상 합성의 최악 타일 상관이 0.298~0.686 으로 흩어져
+# 손상본과 분리되지 않는다(실측 6종). 대신 진폭비로 판정한다 — 정상 최악 타일 0.757~0.981,
+# 45% 평탄화 0.28 로 명확히 갈린다. 상관은 관측 지표로만 남긴다.
+DRAPE_AMP_MIN_OBSERVED_HEALTHY = 0.757
+# 상관은 **0 을 기준으로만** 쓴다. 정상 합성의 최악 타일 상관이 0.298~0.686 으로 흩어져
+# "얼마나 닮았나" 는 판정 근거가 못 되지만, 음의 상관(접힘이 뒤집힘)은 정상 분포와 겹치지
+# 않는다. 즉 이 게이트가 잡는 것은 '덜 닮음' 이 아니라 '반대로 감' 이다.
+DRAPE_CORR_MIN = 0.0
 STRICT_PANEL_MIN_FRAC = 0.20   # 칠한 픽셀의 이 비율 이상을 가진 패널은 strict 필수
 DRAPE_SIGMA_FRAC = 0.03        # 드레이프 측정용 저주파 척도 (짧은 변 대비)
 DRAPE_AMP_MIN = 0.55           # 저주파 진폭비 하한 — 상관은 모양만 보므로 진폭을 따로 잰다
-SEAM_MIN_RAMP_PX = 3.0         # 이보다 짧은 전이는 계단으로 본다 (|∇alpha| > 1/3)
-BOUNDARY_CHROMA_TILES = 6      # 경계 색차를 타일별로 재고 최댓값을 쓴다 (상쇄 방지)
 
 
 @dataclass(frozen=True)
@@ -240,107 +248,117 @@ def _measure_panel_local(
     return pm, failures
 
 
-def _interface_seam(alpha, painted, garment_mask) -> dict:
-    """painted 영역의 **내부** 경계에서 alpha 가 계단인지 경사인지.
+def _interface_seam(alpha, painted, garment_mask, band_px: float) -> dict:
+    """painted 내부 경계에서 alpha 전이가 **몇 픽셀에 걸치는가**.
 
-    panel assign-cost 등고선은 이미지 공간에서 직선이라, 여기서 alpha 가 1픽셀에
-    1→0 으로 떨어지면 결과가 '붙여넣은 직사각형 판' 으로 보인다. 기존 검사는 panel
-    가장자리 15% 를 잘라내고 재기 때문에 이 구간을 구조적으로 보지 못했다 — 그래서
-    결함 위치를 자르지 않고 경계 **위에서** 잰다.
+    레벨 임계(alpha>0.98)도, 절대 기울기 임계도 진폭에 휘둘린다 — 0.65→0 한 픽셀 계단이
+    "완만" 으로 분류됐다(독립 검수 실증). 전이의 급격도는 진폭과 무관해야 하므로,
+    경계에서의 alpha 를 안쪽 깊은 곳의 alpha 로 **정규화**해서 본다. 제대로 페더하면
+    경계(d≈1)의 alpha 는 안쪽의 1/band 수준이고, 계단이면 두 값이 같다 — 진폭이
+    0.65 든 1.0 이든 비율은 1 이 된다.
     """
     if alpha is None or painted is None:
         return {}
-    kern = np.ones((3, 3), np.uint8)
-    rim = (garment_mask > 0) & (painted > 0) & (cv2.erode(painted, kern) == 0)
-    n = int(rim.sum())
-    if n < 50:
+    band = max(2.0, float(band_px))
+    dist = cv2.distanceTransform(painted, cv2.DIST_L2, 3)
+    inside = (garment_mask > 0) & (painted > 0)
+    edge = inside & (dist <= 1.5)
+    deep = inside & (dist >= band * 0.8) & (dist <= band * 2.5)
+    if int(edge.sum()) < 50 or int(deep.sum()) < 50:
         return {}
-    # 레벨 임계(alpha > 0.98)는 0.98→0 계단을 '부드럽다' 로 분류한다. 전이의 급격도는
-    # **기울기**로 재야 한다 — N 픽셀에 걸쳐 페더하면 |∇alpha| ≈ 1/N 이므로, 임계를
-    # 1/SEAM_MIN_RAMP_PX 로 두면 "몇 픽셀 만에 떨어지는가" 를 직접 판정한다.
-    gx = cv2.Sobel(alpha.astype(np.float32), cv2.CV_32F, 1, 0, ksize=3) / 8.0
-    gy = cv2.Sobel(alpha.astype(np.float32), cv2.CV_32F, 0, 1, ksize=3) / 8.0
-    grad = np.hypot(gx, gy)[rim]
-    hard = float((grad > (1.0 / SEAM_MIN_RAMP_PX)).mean())
-    return {"seam_px": n, "seam_hard_edge_frac": round(hard, 4),
-            "seam_grad_p95": round(float(np.percentile(grad, 95)), 4)}
+    a_edge = float(np.median(alpha[edge]))
+    a_deep = float(np.median(alpha[deep]))
+    if a_deep < 1e-3:
+        return {}
+    ratio = a_edge / a_deep
+    return {"seam_px": int(edge.sum()),
+            "seam_edge_ratio": round(ratio, 4),
+            "seam_alpha_edge": round(a_edge, 4),
+            "seam_alpha_deep": round(a_deep, 4)}
 
 
 def _boundary_chroma(out_bgr, painted, garment_mask, band_px: int) -> dict:
-    """경계 안쪽(painted)과 바깥쪽(같은 의류의 unpainted)의 색 연속성.
+    """경계를 사이에 둔 **국소** 색 연속성.
 
-    painted 를 자기 source 모델과만 비교하면 '몸통은 그늘색, 커프는 스튜디오색'인
-    상태가 만점을 받는다(v6). 인접한 carrier 와 직접 비교해야 한 벌로 보이는지 알 수 있다.
-    두 밴드는 높이가 달라 음영(L)이 다르므로 L 은 맞추고 chroma 만 본다.
+    영역 중앙값 하나로 재면 +Δ 와 -Δ 가 상쇄한다. 타일로 쪼개도 타일 **안에서** 상쇄되게
+    배치하면 다시 숨는다(독립 검수 실증: 실제 median ΔE00 23 인데 3.46 으로 보고). 그래서
+    영역 통계 대신 **픽셀별 국소 비교**를 하고 상위 백분위를 본다 — 상쇄될 통계량이 없다.
     """
     if painted is None:
         return {}
     k = max(3, int(band_px) | 1)
     kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-    inner = (cv2.erode(painted, kern) == 0) & (painted > 0) & (garment_mask > 0)
-    outer = (cv2.dilate(painted, kern) > 0) & (painted == 0) & (garment_mask > 0)
-    if inner.sum() < 50 or outer.sum() < 50:
+    inner = ((cv2.erode(painted, kern) == 0) & (painted > 0) & (garment_mask > 0))
+    outer = ((cv2.dilate(painted, kern) > 0) & (painted == 0) & (garment_mask > 0))
+    if int(inner.sum()) < 50 or int(outer.sum()) < 50:
         return {}
-    lab = bgr_to_lab(out_bgr)
-    # 전역 중앙값 하나로 재면 +Δ 와 -Δ 가 서로 상쇄돼 양쪽 다 어긋난 경계가 만점을 받는다
-    # (Codex 실증: 반씩 ±35 로 갈라도 8.97 로 통과). 경계를 타일로 쪼개 **최댓값**을 본다.
-    h, w = lab.shape[:2]
-    tiles = max(2, int(BOUNDARY_CHROMA_TILES))
-    ys = np.linspace(0, h, tiles + 1, dtype=int)
-    xs = np.linspace(0, w, tiles + 1, dtype=int)
-    des = []
-    for i in range(tiles):
-        for j in range(tiles):
-            sl = (slice(ys[i], ys[i + 1]), slice(xs[j], xs[j + 1]))
-            ti, to = inner[sl], outer[sl]
-            if ti.sum() < 30 or to.sum() < 30:
-                continue
-            a = np.median(lab[sl][ti], axis=0)
-            b = np.median(lab[sl][to], axis=0)
-            des.append(float(ciede2000(a, np.array([a[0], b[1], b[2]], np.float64))))
-    if not des:
-        a = np.median(lab[inner], axis=0)
-        b = np.median(lab[outer], axis=0)
-        des = [float(ciede2000(a, np.array([a[0], b[1], b[2]], np.float64)))]
-    return {"boundary_chroma_de00": round(max(des), 2),
+    lab = bgr_to_lab(out_bgr).astype(np.float32)
+    win = max(5, int(band_px) * 3 | 1)
+
+    def _local_mean(mask):
+        m = mask.astype(np.float32)
+        num = cv2.boxFilter(lab * m[..., None], -1, (win, win), normalize=False)
+        den = cv2.boxFilter(m, -1, (win, win), normalize=False)
+        return num, den
+
+    n_in, d_in = _local_mean(inner)
+    n_out, d_out = _local_mean(outer)
+    valid = (d_in > 20) & (d_out > 20) & inner
+    if int(valid.sum()) < 50:
+        return {}
+    a = n_in[valid] / d_in[valid][:, None]
+    b = n_out[valid] / d_out[valid][:, None]
+    b_l_matched = np.stack([a[:, 0], b[:, 1], b[:, 2]], axis=1)   # L 은 맞추고 chroma 만
+    des = np.asarray([float(ciede2000(a[i], b_l_matched[i])) for i in range(len(a))])
+    return {"boundary_chroma_de00": round(float(np.percentile(des, 90)), 2),
             "boundary_chroma_de00_median": round(float(np.median(des)), 2),
-            "boundary_chroma_tiles": len(des),
+            "boundary_chroma_samples": int(valid.sum()),
             "boundary_inner_px": int(inner.sum()),
             "boundary_outer_px": int(outer.sum())}
 
 
 def _drape_preservation(out_bgr, carrier_bgr, garment_mask) -> dict:
-    """carrier 의 주름·접힘 음영이 합성 후에도 남아 있는가.
+    """carrier 의 주름·접힘 음영이 합성 후에도 남아 있는가 — **국소 최악값**으로.
 
-    패턴 지표는 L 을 두 번 정규화해 없애므로, 음영이 사라질수록 오히려 점수가 좋아진다.
-    의류 **내부**에서 carrier 와 저주파 L 을 직접 비교해 그 역전을 막는다.
+    전역 상관/진폭은 국소 손상을 희석한다: 좌측 45% 만 평평하게 눌러도 전역 지표는
+    통과했다(독립 검수 실증). 의류를 타일로 나눠 타일별 진폭비·상관을 재고 최악 타일로
+    판정한다. 표본이 모자라면 통과가 아니라 **측정 불가**로 남긴다.
     """
     h, w = out_bgr.shape[:2]
     sigma = max(3.0, float(min(h, w)) * DRAPE_SIGMA_FRAC)
-    # 저주파를 이미지 전체에서 뽑으면 실루엣 경계에서 배경 휘도가 섞여 들어와, 의류
-    # 내부를 완전히 평평하게 눌러도 진폭이 0.63 아래로 안 내려간다(실측). 경계를 blur
-    # 반경만큼 침식해 **내부만** 표본으로 쓴다.
+    # 저주파를 이미지 전체에서 뽑으면 실루엣 경계에서 배경 휘도가 섞여, 의류 내부를
+    # 완전히 눌러도 진폭이 안 내려간다(실측 하한 0.63). 경계를 blur 반경만큼 침식한다.
     k = int(max(3, sigma * 2)) | 1
     interior = cv2.erode(garment_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
     sel = interior > 0
     if int(sel.sum()) < 500:
-        sel = garment_mask > 0
-    if int(sel.sum()) < 500:
-        return {}
-    lo = cv2.GaussianBlur(cv2.cvtColor(out_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32),
-                          (0, 0), sigmaX=sigma)[sel]
-    lc = cv2.GaussianBlur(cv2.cvtColor(carrier_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32),
-                          (0, 0), sigmaX=sigma)[sel]
-    lo_sd, lc_sd = float(lo.std()), float(lc.std())
-    if lc_sd < 1e-3:
-        # carrier 자체에 음영이 없으면 보존 여부를 물을 수 없다 — 측정 불가로 남긴다.
         return {"drape_measurable": False}
-    # 상관은 **모양**만 본다. 접힘을 통째로 눌러 평평하게 만들어도 남은 미세 구조가
-    # 같은 방향이면 0.8 이 나온다(Codex 실증). 진폭비를 함께 봐야 '평면화' 를 잡는다.
-    amp = lo_sd / lc_sd
-    corr = float(np.corrcoef(lo, lc)[0, 1]) if lo_sd >= 1e-3 else 0.0
-    return {"drape_corr": round(corr, 4), "drape_amp_ratio": round(amp, 4),
-            "drape_measurable": True}
+    lo_f = cv2.GaussianBlur(
+        cv2.cvtColor(out_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32), (0, 0), sigmaX=sigma)
+    lc_f = cv2.GaussianBlur(
+        cv2.cvtColor(carrier_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32), (0, 0), sigmaX=sigma)
+    tiles = max(2, int(DRAPE_TILES))
+    ys = np.linspace(0, h, tiles + 1, dtype=int)
+    xs = np.linspace(0, w, tiles + 1, dtype=int)
+    amps, corrs = [], []
+    for i in range(tiles):
+        for j in range(tiles):
+            sl = (slice(ys[i], ys[i + 1]), slice(xs[j], xs[j + 1]))
+            m = sel[sl]
+            if int(m.sum()) < 200:
+                continue
+            a, b = lo_f[sl][m], lc_f[sl][m]
+            b_sd = float(b.std())
+            if b_sd < 0.5:      # carrier 가 그 타일에서 평탄하면 물어볼 것이 없다
+                continue
+            amps.append(float(a.std()) / b_sd)
+            corrs.append(float(np.corrcoef(a, b)[0, 1]) if float(a.std()) >= 1e-3 else 0.0)
+    if not amps:
+        return {"drape_measurable": False}
+    return {"drape_measurable": True, "drape_tiles": len(amps),
+            "drape_amp_ratio": round(min(amps), 4),
+            "drape_corr": round(min(corrs), 4),
+            "drape_amp_ratio_median": round(float(np.median(amps)), 4)}
 
 
 def verify_composite(
@@ -452,15 +470,14 @@ def verify_composite(
         metrics["coverage_excluded_frac"] = round(
             float(full_n - int(garment.sum())) / full_n, 4)
 
-    seam = _interface_seam(alpha, painted_mask, panel_map.garment_mask)
+    band = int(max(3, panel_map.metrics.get("boundary_band_px", 4)))
+    seam = _interface_seam(alpha, painted_mask, panel_map.garment_mask, band)
     metrics.update(seam)
-    if seam.get("seam_hard_edge_frac", 0.0) > SEAM_HARD_EDGE_MAX:
+    if seam.get("seam_edge_ratio", 0.0) > SEAM_EDGE_RATIO_MAX:
         failures.append({
             "code": "interface_seam",
-            "detail": (f"painted 내부 경계의 {seam['seam_hard_edge_frac']:.0%} 가 계단 "
-                       f"(> {SEAM_HARD_EDGE_MAX:.0%}) — 직선 이음매로 보인다")})
-
-    band = int(max(3, panel_map.metrics.get("boundary_band_px", 4)))
+            "detail": (f"경계 alpha 가 내부의 {seam['seam_edge_ratio']:.0%} 수준 "
+                       f"(> {SEAM_EDGE_RATIO_MAX:.0%}) — 전이 없이 계단으로 떨어진다")})
     chroma = _boundary_chroma(out_bgr, painted_mask, panel_map.garment_mask, band)
     metrics.update(chroma)
     if chroma.get("boundary_chroma_de00", 0.0) > BOUNDARY_CHROMA_DE_MAX:
@@ -474,17 +491,17 @@ def verify_composite(
     if drape.get("drape_measurable") is False:
         failures.append({"code": "drape_lost",
                          "detail": "carrier 음영이 없어 드레이프 보존을 검증할 수 없음"})
-    elif "drape_corr" in drape:
+    elif "drape_amp_ratio" in drape:
         if drape["drape_corr"] < DRAPE_CORR_MIN:
             failures.append({
                 "code": "drape_lost",
-                "detail": (f"carrier 대비 저주파 L 상관 {drape['drape_corr']:.2f} "
-                           f"< {DRAPE_CORR_MIN} — 접힘 모양이 어긋났다")})
+                "detail": (f"최악 타일 저주파 상관 {drape['drape_corr']:.2f} "
+                           f"< {DRAPE_CORR_MIN} — 접힘 음영이 뒤집혔다")})
         if drape["drape_amp_ratio"] < DRAPE_AMP_MIN:
             failures.append({
                 "code": "drape_lost",
                 "detail": (f"저주파 진폭비 {drape['drape_amp_ratio']:.2f} "
-                           f"< {DRAPE_AMP_MIN} — 주름이 눌려 평면화됐다")})
+                           f"< {DRAPE_AMP_MIN} — 최악 타일에서 주름이 눌려 평면화됐다")})
 
     outside = panel_map.garment_mask == 0
     if outside.any():

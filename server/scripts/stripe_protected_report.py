@@ -78,7 +78,8 @@ def _metric_rows(metrics: dict, gates: dict) -> str:
         rows.append(
             f"<tr><td><code>{html.escape(str(key))}</code></td>"
             f"<td>{html.escape(str(value))}</td>"
-            f"<td>{html.escape(str(gate)) if gate else '—'}</td>"
+            f"<td>{html.escape(str(gate)) if gate else '—'}"
+            f"<br><span class='note'>{html.escape(GATE_BASIS.get(key, '근거 미기록 — 잠정'))}</span></td>"
             f'<td class="{cls}">{verdict}</td></tr>')
     return "\n".join(rows) or '<tr><td colspan="4">지표 없음</td></tr>'
 
@@ -89,9 +90,20 @@ GATES = {
     "direction_error_max": (None, 0.10),
     "color_delta_e00_max": (None, 16.0),
     "outside_drift_frac": (None, 0.01),
-    "seam_hard_edge_frac": (None, 0.25),
-    "boundary_chroma_de00": (None, 10.0),
-    "drape_corr": (0.60, None),
+    "seam_edge_ratio": (None, 0.50),
+    "boundary_chroma_de00": (None, 14.0),
+    "drape_amp_ratio": (0.55, None),
+    "drape_corr": (0.0, None),
+}
+
+# 임계의 출처를 리포트에 함께 싣는다 — 숫자만 보면 캘리브레이션된 것처럼 읽힌다.
+GATE_BASIS = {
+    "seam_edge_ratio": "정상 합성 6종 실측 0.096 / 계단은 1.0",
+    "boundary_chroma_de00": "정상 2.95~9.31 / 주입 불연속 중앙값 23",
+    "drape_amp_ratio": "정상 최악 타일 0.757~0.981 / 45% 평탄화 0.39",
+    "drape_corr": "정상 0.298 이상 / 접힘 반전 -0.84 (0 은 방향 판정선)",
+    "period_rel_err_max": "합성 fixture 집계 게이트",
+    "outside_drift_frac": "설계상 0 — mask 밖은 carrier 와 동일해야 한다",
 }
 
 

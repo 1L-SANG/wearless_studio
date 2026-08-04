@@ -1141,3 +1141,89 @@ def test_legitimate_view_plus_fit_variation_is_not_rejected():
     assert not isinstance(pm, CompositeFailure), getattr(pm, "detail", None)
     # 그래도 v6 붕괴(3.58배)는 계속 차단된다
     assert isinstance(_panels_with(1.353, 1.353 * 3.58), CompositeFailure)
+
+
+def test_merge_prefers_a_valid_box_from_either_call():
+    """한쪽 호출의 깨진 박스가 다른 쪽 정상 박스를 막으면 보호 부위 공급이 스스로 끊긴다."""
+    good = [[0.36, 0.02], [0.64, 0.02], [0.64, 0.12], [0.36, 0.12]]
+    broken = [[0.36, 0.02], [0.64, 0.02]]          # list 이지만 2점 — validator 가 버린다
+    merged, err = merge_geometry_pair(
+        _landmark_response(collar_box=broken), _landmark_response(collar_box=good))
+    assert err is None
+    assert merged["collar_box"] == good
+    _lm, inv, verr = validate_geometry(merged, aspect_hw=1.5)
+    assert verr is None and "collar_box" in inv["component_boxes"]
+
+
+def test_merge_drops_the_key_when_neither_call_is_valid():
+    merged, err = merge_geometry_pair(
+        _landmark_response(collar_box=[[0.1, 0.1]]),
+        _landmark_response(collar_box="nope"))
+    assert err is None
+    assert "collar_box" not in merged
+
+
+# ── 독립 검수 2회차가 구성한 공격 4종 (전부 정상본은 통과해야 한다) ─────────────
+# 임계를 만지는 대신 측정 방식을 바꿔 닫았다. 정상 합성 6종 실측이 임계의 근거다.
+
+def _qc_of(art, cx, pm, period, *, img=None, alpha=None):
+    return verify_composite(
+        img if img is not None else art.image_bgr, cx["image"], pm, _model(),
+        target_period_px=period, target_axis="horizontal",
+        painted_mask=art.painted, coverage_mask=art.coverage_scope,
+        alpha=alpha if alpha is not None else art.alpha)
+
+
+def test_healthy_composite_clears_every_new_gate():
+    cx, pm, art, period = _v6_shaped_case()
+    qc = _qc_of(art, cx, pm, period)
+    assert qc.passed, qc.metrics.get("failure_details")
+
+
+def test_low_amplitude_alpha_step_is_caught_regardless_of_height():
+    """0.65 진폭 한 픽셀 계단 — 레벨·절대기울기 임계는 둘 다 놓쳤다."""
+    cx, pm, art, period = _v6_shaped_case()
+    qc = _qc_of(art, cx, pm, period, alpha=(art.painted > 0).astype(np.float32) * 0.65)
+    assert "interface_seam" in qc.failures, qc.metrics.get("seam_edge_ratio")
+
+
+def test_chroma_shifts_arranged_to_cancel_within_tiles_are_caught():
+    """타일 안에서 상쇄되도록 배치해도 국소 비교는 속지 않는다."""
+    from app.services.hybrid_composite.color import lab_to_bgr
+    cx, pm, art, period = _v6_shaped_case()
+    lab = bgr_to_lab(art.image_bgr)
+    sel = art.painted > 0
+    yy, xx = np.mgrid[0:lab.shape[0], 0:lab.shape[1]]
+    chk = ((yy // 23 + xx // 23) % 2 == 0)
+    lab[..., 1][sel & chk] += 35.0
+    lab[..., 1][sel & ~chk] -= 35.0
+    qc = _qc_of(art, cx, pm, period, img=lab_to_bgr(lab))
+    assert "boundary_chroma_discontinuity" in qc.failures, \
+        qc.metrics.get("boundary_chroma_de00")
+
+
+def test_partial_region_flattening_is_caught_by_worst_tile():
+    """왼쪽 45% 만 눌러도 전역 지표는 통과했다 — 최악 타일로 본다."""
+    from app.services.hybrid_composite.color import lab_to_bgr
+    from app.services.hybrid_composite.deterministic_qc import DRAPE_SIGMA_FRAC
+    cx, pm, art, period = _v6_shaped_case()
+    g = pm.garment_mask > 0
+    lab = bgr_to_lab(art.image_bgr)
+    sigma = max(3.0, min(art.image_bgr.shape[:2]) * DRAPE_SIGMA_FRAC)
+    low = cv2.GaussianBlur(lab[..., 0], (0, 0), sigmaX=sigma)
+    left = np.zeros_like(g)
+    left[:, : int(lab.shape[1] * 0.45)] = True
+    lab[..., 0] = np.where(g & left, lab[..., 0] - low + float(np.median(low[g])),
+                           lab[..., 0])
+    qc = _qc_of(art, cx, pm, period, img=lab_to_bgr(lab))
+    assert "drape_lost" in qc.failures, qc.metrics.get("drape_amp_ratio")
+
+
+def test_unmeasurable_drape_is_not_treated_as_pass():
+    """표본 부족은 통과가 아니다 — 검증할 수 없으면 닫는다."""
+    from app.services.hybrid_composite.deterministic_qc import _drape_preservation
+    tiny = np.zeros((40, 40), np.uint8)
+    tiny[18:22, 18:22] = 255
+    out = _drape_preservation(np.zeros((40, 40, 3), np.uint8),
+                              np.zeros((40, 40, 3), np.uint8), tiny)
+    assert out == {"drape_measurable": False}

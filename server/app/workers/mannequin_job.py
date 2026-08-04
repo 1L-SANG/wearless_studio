@@ -1867,10 +1867,18 @@ async def _apply_hybrid_composite(
     # components_needing_review 가 비어 enforce 가 통과한다 — carrier 가 우연히
     # 멀쩡해 보여도 보호 부위 충실도를 검증할 수 없으면 자동 pass 는 금지다.
     if mode == "enforce":
-        missing_boxes = sorted(
-            f"{part}_box" for part in ("collar", "placket")
-            if (src_inv or {}).get(part) and (
-                f"{part}_box" not in src_boxes_norm or f"{part}_box" not in car_boxes_norm))
+        # 보호 부위 존재 판단을 has_collar/has_placket 하나에 걸면, 그 신호를 주는 모델이
+        # 같은 호출에서 박스도 생략할 때 검사 자체가 사라진다(순환 신뢰). source·carrier
+        # 어느 쪽의 inventory 든, 혹은 어느 쪽이 박스를 하나라도 줬다면 그 부위는 존재하는
+        # 것으로 보고 양쪽 geometry 를 요구한다.
+        missing_boxes = []
+        for part in ("collar", "placket"):
+            key = f"{part}_box"
+            exists = ((src_inv or {}).get(part) or (car_inv or {}).get(part)
+                      or key in src_boxes_norm or key in car_boxes_norm)
+            if exists and (key not in src_boxes_norm or key not in car_boxes_norm):
+                missing_boxes.append(key)
+        missing_boxes = sorted(missing_boxes)
         if missing_boxes:
             await emit("hybrid_composite_completed", mode=mode, fail_closed=True,
                        outcome="protected_component_missing",

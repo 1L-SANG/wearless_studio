@@ -98,9 +98,16 @@ def merge_geometry_pair(
             merged[key] = va if ok_a else vb
         else:
             merged.pop(key, None)
+    # 두 호출 중 **검증을 통과하는** 박스를 고른다. 예전에는 a 의 값이 list 이기만 하면
+    # 이겼는데, a 가 형식이 깨진 list 면(예: 2점) b 의 멀쩡한 박스를 막고 결국 validator
+    # 에서 함께 버려졌다 — 보호 부위 공급을 스스로 끊는 경로였다.
     for key in ("collar_box", "placket_box"):
-        if not isinstance(merged.get(key), list) and isinstance(b.get(key), list):
-            merged[key] = b[key]
+        for candidate in (a.get(key), b.get(key)):
+            if box_rejection_reason(candidate) is None:
+                merged[key] = candidate
+                break
+        else:
+            merged.pop(key, None)
     counts = [int(x.get("visible_button_count") or 0) for x in (a, b)]
     merged["visible_button_count"] = int(round(sum(counts) / 2))
     merged["confidence"] = min(float(a.get("confidence") or 0),
