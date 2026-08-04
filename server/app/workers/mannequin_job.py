@@ -9,6 +9,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
+import pathlib
 import time
 import uuid
 from typing import NamedTuple
@@ -1354,6 +1356,39 @@ async def _fail_closed_hybrid_job_if_needed(r2, fail, passed: list[dict], meta: 
     return True
 
 
+def _dump_composite_artifacts(carrier_bgr, pm, art, source_bgr=None) -> None:
+    """QA 전용 중간 산출물 덤프 — 환경변수가 가리킬 때만 쓴다 (기본 비활성).
+
+    합성이 왜 그렇게 보이는지는 최종 이미지만으로 판단할 수 없다. 마스크·페인트·alpha 를
+    같이 봐야 이음매가 어디서 생겼는지 알 수 있어서, 리포트가 소비할 수 있게 남긴다.
+    운영 경로에는 영향이 없고, 실패해도 잡을 죽이지 않는다.
+    """
+    out = os.getenv("HYBRID_COMPOSITE_ARTIFACT_DIR")
+    if not out:
+        return
+    try:
+        import cv2 as _cv2
+        d = pathlib.Path(out)
+        d.mkdir(parents=True, exist_ok=True)
+        planes = {"carrier": carrier_bgr}
+        if source_bgr is not None:
+            planes["source_front"] = source_bgr
+        if pm is not None:
+            planes.update({"garment_mask": pm.garment_mask,
+                           "protected": pm.protected,
+                           "boundary": pm.boundary})
+        if art is not None and not isinstance(art, CompositeFailure):
+            planes.update({"composite": art.image_bgr,
+                           "painted": art.painted,
+                           "coverage_scope": art.coverage_scope,
+                           "alpha": (art.alpha * 255).astype("uint8")})
+        for name, plane in planes.items():
+            if plane is not None:
+                _cv2.imwrite(str(d / f"{name}.png"), plane)
+    except Exception as exc:               # QA 보조 기능이 출고 경로를 막으면 안 된다
+        log.warning("composite artifact dump skipped: %r", exc)
+
+
 async def _emit_landmark_geometry(emit, *, source: tuple, carrier: tuple) -> None:
     """component box 가 어느 단계에서 사라졌는지 남긴다 (호출 A/B → merge).
 
@@ -1818,6 +1853,7 @@ async def _apply_hybrid_composite(
         component_boxes=car_boxes, source_bgr=front_bgr,
         source_component_boxes=src_boxes,
         allow_low_source_coverage=(mode == "shadow"))
+    _dump_composite_artifacts(carrier_bgr, pm, art, source_bgr=front_bgr)
     if isinstance(art, CompositeFailure):
         await emit("hybrid_warp_composite", ok=False, reason=art.reason,
                    detail=art.detail[:200], metrics=art.metrics)
@@ -1826,6 +1862,23 @@ async def _apply_hybrid_composite(
                panel_metrics=art.panel_metrics,
                components_needing_review=list(art.components_needing_review),
                **art.metrics)
+    # 보호 부위가 **없는 것으로 취급돼** 검사 자체를 건너뛰는 우회로를 먼저 닫는다.
+    # component 루프는 carrier box 만 순회하므로, vision 이 양쪽 다 생략하면
+    # components_needing_review 가 비어 enforce 가 통과한다 — carrier 가 우연히
+    # 멀쩡해 보여도 보호 부위 충실도를 검증할 수 없으면 자동 pass 는 금지다.
+    if mode == "enforce":
+        missing_boxes = sorted(
+            f"{part}_box" for part in ("collar", "placket")
+            if (src_inv or {}).get(part) and (
+                f"{part}_box" not in src_boxes_norm or f"{part}_box" not in car_boxes_norm))
+        if missing_boxes:
+            await emit("hybrid_composite_completed", mode=mode, fail_closed=True,
+                       outcome="protected_component_missing",
+                       detail="protected geometry unavailable: " + ", ".join(missing_boxes))
+            return await fail(
+                "protected_component_missing",
+                "protected geometry unavailable: " + ", ".join(missing_boxes),
+                componentsNeedingReview=missing_boxes)
     if mode == "enforce" and art.components_needing_review:
         # Protected construction assets are not optional review hints in enforce
         # mode.  The real 4K stripe run lacked collar/placket source decals and

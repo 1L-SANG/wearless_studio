@@ -1079,3 +1079,65 @@ def test_component_review_reasons_distinguish_branches():
                             source_bgr=np.full((400, 400, 3), 200, np.uint8),
                             source_component_boxes={"collar": tiny})
     assert art2.component_review_reasons["collar"].startswith("short_side")
+
+
+# ── Codex 검수 P1 보정 회귀 ────────────────────────────────────────────────────
+# 독립 검수가 구성해 통과시킨 false-pass 세 가지를 각각 닫는다.
+
+def test_opposing_chroma_shifts_no_longer_cancel_out():
+    """경계 반쪽은 +Δ, 반쪽은 -Δ 로 갈라도 전역 중앙값이 상쇄해 통과하던 경로."""
+    from app.services.hybrid_composite.color import lab_to_bgr
+    cx, pm, art, period = _v6_shaped_case()
+    lab = bgr_to_lab(art.image_bgr)
+    sel = art.painted > 0
+    h = lab.shape[0]
+    top = np.zeros_like(sel); top[: h // 2] = True
+    lab[..., 1][sel & top] += 35.0
+    lab[..., 1][sel & ~top] -= 35.0
+    split = lab_to_bgr(lab)
+    qc = verify_composite(split, cx["image"], pm, _model(),
+                          target_period_px=period, target_axis="horizontal",
+                          painted_mask=art.painted, coverage_mask=art.coverage_scope,
+                          alpha=art.alpha)
+    assert "boundary_chroma_discontinuity" in qc.failures, qc.metrics.get("boundary_chroma_de00")
+
+
+def test_alpha_step_just_below_one_is_still_a_hard_seam():
+    """레벨 임계(>0.98)를 쓰면 0.98→0 계단이 '부드럽다' 로 분류됐다 — 기울기로 잰다."""
+    cx, pm, art, period = _v6_shaped_case()
+    stepped = (art.painted > 0).astype(np.float32) * 0.98   # 계단인데 0.98
+    qc = verify_composite(art.image_bgr, cx["image"], pm, _model(),
+                          target_period_px=period, target_axis="horizontal",
+                          painted_mask=art.painted, coverage_mask=art.coverage_scope,
+                          alpha=stepped)
+    assert "interface_seam" in qc.failures, qc.metrics.get("seam_hard_edge_frac")
+
+
+def test_flattened_drape_amplitude_is_caught_even_when_correlation_holds():
+    """접힘을 눌러 평평하게 만들어도 상관은 0.8 대로 남는다 — 진폭비로 잡는다."""
+    from app.services.hybrid_composite.color import lab_to_bgr
+    from app.services.hybrid_composite.deterministic_qc import DRAPE_SIGMA_FRAC
+    cx, pm, art, period = _v6_shaped_case()
+    sel = pm.garment_mask > 0
+    lab = bgr_to_lab(art.image_bgr)
+    sigma = max(3.0, min(art.image_bgr.shape[:2]) * DRAPE_SIGMA_FRAC)
+    low = cv2.GaussianBlur(lab[..., 0], (0, 0), sigmaX=sigma)
+    med = float(np.median(low[sel]))
+    squashed = med + (low - med) * 0.15          # 모양은 그대로, 진폭만 15%
+    lab[..., 0] = np.where(sel, lab[..., 0] - low + squashed, lab[..., 0])
+    qc = verify_composite(lab_to_bgr(lab), cx["image"], pm, _model(),
+                          target_period_px=period, target_axis="horizontal",
+                          painted_mask=art.painted, coverage_mask=art.coverage_scope,
+                          alpha=art.alpha)
+    assert "drape_lost" in qc.failures, (qc.metrics.get("drape_corr"),
+                                         qc.metrics.get("drape_amp_ratio"))
+
+
+def test_legitimate_view_plus_fit_variation_is_not_rejected():
+    """문서화된 뷰차 1.76배 × 핏 변형 1.45배 = 2.552배는 정당한 조합이다."""
+    from app.services.hybrid_composite.panel_map import MAX_TORSO_ASPECT_RATIO
+    assert MAX_TORSO_ASPECT_RATIO > 1.76 * 1.45
+    pm = _panels_with(1.353, 1.353 * 1.76 * 1.45)
+    assert not isinstance(pm, CompositeFailure), getattr(pm, "detail", None)
+    # 그래도 v6 붕괴(3.58배)는 계속 차단된다
+    assert isinstance(_panels_with(1.353, 1.353 * 3.58), CompositeFailure)

@@ -12,6 +12,7 @@ fake Gemini 가 synthetic carrier 를 돌려주면, 진짜 소스검증→추출
 """
 
 import asyncio
+import json
 import base64
 import contextlib
 import dataclasses
@@ -55,6 +56,10 @@ SOURCE_GEOM_RAW = {
     "hem_l": [0.25, 0.96], "hem_r": [0.75, 0.96],
     "has_collar": True, "has_placket": True, "has_cuffs": True,
     "visible_button_count": 7,
+    # 보호 부위 geometry 는 검증 가능한 상품의 정상 응답이다. 없으면 카라·플래킷 충실도를
+    # 검증할 방법이 없어 enforce 는 fail-closed 해야 하고, 그 경로는 별도 테스트가 덮는다.
+    "collar_box": [[0.36, 0.02], [0.64, 0.02], [0.64, 0.12], [0.36, 0.12]],
+    "placket_box": [[0.46, 0.10], [0.54, 0.10], [0.54, 0.92], [0.46, 0.92]],
 }
 
 
@@ -67,6 +72,8 @@ def _carrier_geom_raw(cx) -> dict:
         "sleeve_l_end": lm["sleeve_l_end"], "sleeve_r_end": lm["sleeve_r_end"],
         "has_collar": True, "has_placket": True, "has_cuffs": True,
         "visible_button_count": 7,
+        "collar_box": [[0.36, 0.02], [0.64, 0.02], [0.64, 0.12], [0.36, 0.12]],
+        "placket_box": [[0.46, 0.10], [0.54, 0.10], [0.54, 0.92], [0.46, 0.92]],
     }
 
 
@@ -86,7 +93,8 @@ class _Pool:
 
 def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name="스트라이프 셔츠",
              settings_kw=None, p2_verdict=None, source_png=None,
-             carrier_component_box=False, truth_pattern=None,
+             carrier_component_box=False, source_component_box=True,
+             truth_pattern=None,
              truth_fine_pattern=None, analysis_pattern=None):
     """워커 전체 실행. → (oplog, calls, r2_saved, emits)"""
     oplog: list[tuple] = []          # ("gen",) | ("evt", status) — 순서가 곧 증거
@@ -137,7 +145,11 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
     async def fake_geometry(settings, image):
         # source(front)와 carrier 를 바이트로 구분 — vision 은 좌표만 준다는 계약의 fake
         if image.data == source_png:
-            return SOURCE_GEOM_RAW
+            raw = dict(SOURCE_GEOM_RAW)
+            if not source_component_box:
+                raw.pop("collar_box", None)
+                raw.pop("placket_box", None)
+            return raw
         raw = _carrier_geom_raw(cx)
         if carrier_component_box:
             raw["collar_box"] = [[0.45, 0.16], [0.55, 0.16],
@@ -677,7 +689,7 @@ def test_deterministic_pass_suppresses_llm_retry_and_records_it(monkeypatch):
 
 
 def test_enforce_composite_with_unprotected_component_fails_before_save(monkeypatch):
-    _oplog, calls, r2_saved, emits = _run_job(monkeypatch, carrier_component_box=True)
+    _oplog, calls, r2_saved, emits = _run_job(monkeypatch, carrier_component_box=True, source_component_box=False)
 
     assert calls["success"] == []
     assert len(calls["failure"]) == 1
@@ -753,3 +765,63 @@ def test_worker_carries_detail_slot_all_the_way_into_the_composite(monkeypatch):
     swapped = any(p.get("status") == "hybrid_palette_source" for _e, p in emits)
     expect_src = "front" if swapped else "detail"
     assert hc["stripeModel"]["source_asset_id"] == expect_src
+
+
+# ── D-5: landmark 관측 ─────────────────────────────────────────────────────────
+# component box 가 사라진 단계를 구분할 수 없어 protected_component_missing 을 보고도
+# vision 미반환·병합 손실·validator 거부 중 무엇인지 알 수 없었다.
+
+def _landmark_events(emits):
+    return [p for _e, p in emits if p.get("status") == "hybrid_landmark_geometry"]
+
+
+def test_landmark_geometry_event_records_each_stage(monkeypatch):
+    _oplog, _calls, _r2, emits = _run_job(monkeypatch, carrier_component_box=True, source_component_box=False)
+    evs = _landmark_events(emits)
+    assert evs, "landmark 관측 이벤트가 없으면 실패를 진단할 수 없다"
+    ev = evs[0]
+    for side in ("source", "carrier"):
+        assert {"call_a", "call_b", "merged"} <= set(ev[side]), side
+    # carrier 는 collar_box 를 받았고 source 는 안 받았다 — 그 차이가 이벤트에 보여야 한다
+    assert ev["carrier"]["merged"]["collar_box"]["present"] is True
+    assert ev["source"]["merged"]["collar_box"]["present"] is False
+    assert ev["source"]["merged"]["collar_box"]["rejected"] == "absent"
+
+
+def test_landmark_event_distinguishes_absent_from_malformed(monkeypatch):
+    """vision 이 안 준 것과 형식이 틀려 버려진 것은 다른 사유로 남아야 한다."""
+    import app.workers.mannequin_job as mj
+    from app.agents.hybrid_landmarks import component_observation
+    absent = component_observation({})
+    malformed = component_observation({
+        "collar_box": [[45.0, 16.0], [55.0, 16.0], [55.0, 20.0], [45.0, 20.0]]})
+    assert absent["collar_box"]["rejected"] == "absent"
+    assert malformed["collar_box"]["rejected"] == "coord_out_of_unit_range"
+    assert mj.hybrid_landmarks.PROMPT_VERSION
+
+
+def test_landmark_event_carries_no_urls_tokens_or_raw_response(monkeypatch):
+    _oplog, _calls, _r2, emits = _run_job(monkeypatch, carrier_component_box=True, source_component_box=False)
+    blob = json.dumps(_landmark_events(emits), ensure_ascii=False)
+    for forbidden in ("http://", "https://", "Bearer", "token", "garment_visible",
+                      "You are a garment geometry annotator"):
+        assert forbidden not in blob, f"관측 payload 에 {forbidden} 이 새면 안 된다"
+
+
+def test_hybrid_failure_persists_nothing_and_uploads_nothing(monkeypatch):
+    """실패한 합성은 R2·output·cut 어디에도 남지 않는다."""
+    _oplog, calls, r2_saved, _emits = _run_job(monkeypatch, carrier_component_box=True, source_component_box=False)
+    assert r2_saved == {}, "실패인데 R2 객체가 남으면 고아가 된다"
+    assert calls["success"] == [], "실패인데 성공 콜백이 돌면 output/cut 이 생긴다"
+    assert len(calls["failure"]) == 1
+    meta = calls["failure"][0]["metadata"]
+    assert meta["failureReason"] == "protected_component_missing"
+    assert "baselineId" not in meta, "실패본이 baseline 에 연결되면 안 된다"
+
+
+def test_artifact_dump_is_off_unless_explicitly_pointed(monkeypatch, tmp_path):
+    """QA 덤프는 기본 비활성 — 운영 경로에서 디스크에 쓰지 않는다."""
+    import app.workers.mannequin_job as mj
+    monkeypatch.delenv("HYBRID_COMPOSITE_ARTIFACT_DIR", raising=False)
+    mj._dump_composite_artifacts(np.zeros((4, 4, 3), np.uint8), None, None)
+    assert list(tmp_path.iterdir()) == []

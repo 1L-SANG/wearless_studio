@@ -27,10 +27,13 @@ CONSTRUCTION_RATIO_KEYS = ("torso_aspect", "sleeve_len_ratio")
 # sleeve foreshortening이 35.0~35.6%까지 반복됐다(2026-08-04). 40%는 이 실측 상한을
 # 포함하면서 진짜 구조 불일치(기장/폭 다른 옷, 42~50%+)는 계속 차단한다.
 CONSTRUCTION_RATIO_TOL = 0.40
-# torso mask 종횡비의 source/carrier 배율 상한. 같은 셔츠가 flat-lay↔착장 3/4 뷰에서
-# 1.75~1.76배로 측정된 실측(2회, D7)이 하한 근거이고, 실패한 4K 표본은 3.58배였다.
-# 그 사이에서 같은 옷을 살리고 mask 붕괴만 닫는 값으로 2.5배를 쓴다.
-MAX_TORSO_ASPECT_RATIO = 2.5
+# torso mask 종횡비의 source/carrier 배율 상한 — mask 붕괴만 닫는 위생 게이트다.
+# 정당한 최악 조합을 먼저 계산한다: 같은 셔츠의 flat-lay↔착장 3/4 뷰 차이 1.76배(실측
+# 2회, D7) × 이 제품이 기능으로 허용하는 핏·기장 변형 1.45배 = 2.552배. 2.5 로 두면
+# 그 조합이 오거절되므로(검수 실증) 그 위로 올린다. 실패한 4K 표본은 3.58배였으므로
+# 3.0 은 정당한 조합을 살리면서 mask 붕괴는 계속 차단한다. 여유가 좁다는 사실 자체가
+# 이 게이트를 실사진 분포로 재캘리브레이션해야 하는 이유다.
+MAX_TORSO_ASPECT_RATIO = 3.0
 
 
 @dataclass(frozen=True)
