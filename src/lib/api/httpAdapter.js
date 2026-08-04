@@ -204,7 +204,11 @@ async function fetchMatchCandidates(projectId, analysis) {
     || (await http(`/v1/projects/${projectId}/product`))?.clothingType || 'top';
   const qs = new URLSearchParams();
   qs.set('clothingType', clothingType);
-  (analysis?.targetGenders || []).forEach((g) => qs.append('gender', g));
+  // 성별은 화면의 칩(단일 선택)과 같은 값 하나만 보낸다 — 둘을 보내면 서버 필터가 남녀를 모두
+  // 통과시켜 "성별 상관없이 다 뜨는" 증상이 된다. 서버 validate 도 단일화하지만, 이미 저장된
+  // 옛 분석(성별 2개)까지 화면과 일치시키려면 조회 시점에도 첫 값만 쓴다 (2026-07-31).
+  const gender = (analysis?.targetGenders || [])[0];
+  if (gender) qs.append('gender', gender);
   (analysis?.styleTags || []).forEach((t) => qs.append('styleTags', t));
   return http(`/v1/projects/${projectId}/analysis/match-candidates?${qs.toString()}`);
 }

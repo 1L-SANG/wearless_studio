@@ -162,13 +162,15 @@ def _order(settings: Settings) -> list[str]:
 
 async def analyze_with_fallback(
     settings: Settings, prompt: str, images: list[InlineImage], schema: dict,
-    thinking_level: str | None = None,
+    thinking_level: str | None = None, models: dict[str, str] | None = None,
 ) -> tuple[dict, str]:
     """순서대로 provider 시도 → (파싱된 raw dict, 사용한 provider). 전부 실패 시 VisionError.
 
     키 미설정 provider 는 skip. 각 provider 는 timeout(analysis_timeout_seconds) 상한;
     실패/비순응/타임아웃이면 다음으로 폴백. `images` 는 bytes(InlineImage).
-    thinking_level 은 콜별 오버라이드(미지정 시 settings.analysis_thinking_level)."""
+    thinking_level 은 콜별 오버라이드(미지정 시 settings.analysis_thinking_level).
+    models 는 provider 별 모델 오버라이드({'gemini': 'gemini-3.6-flash'}) — 에이전트별 tier
+    분기용(AG-08). 미지정 provider 는 settings 의 정본 모델을 그대로 쓴다."""
     timeout = settings.analysis_timeout_seconds
     attempts: list[str] = []
     last_error: Exception | None = None
@@ -177,8 +179,9 @@ async def analyze_with_fallback(
         if not key_of(settings):
             attempts.append(f"{name}:no_key")
             continue
+        model = (models or {}).get(name) or model_of(settings)
         try:
-            raw = await call(settings, model_of(settings), prompt, images, schema, timeout,
+            raw = await call(settings, model, prompt, images, schema, timeout,
                              thinking_level=thinking_level)
             if attempts:
                 logger.info("vision_llm fallback used", extra={"provider": name, "prior": attempts})

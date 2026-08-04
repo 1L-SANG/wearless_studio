@@ -39,6 +39,9 @@ class Settings:
     openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
     model_text_gemini: str = "gemini-3.5-flash"  # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1)
+    # AG-08 특징 발굴만 상위 tier 로 분기 (2026-08-01 사용자 결정 — 마네킹 regenerate tier 분기와 같은 패턴).
+    # 분류(AG-01)는 결정성·속도 우선이라 정본 tier 유지. 미설정이면 model_text_gemini 로 폴백.
+    model_text_gemini_features: str = "gemini-3.6-flash"
     analysis_model_order: str = "gemini,gpt"  # 폴백 순서(기본=Gemini-first, 2026-07-02 결정). 'gpt,gemini' 등
     analysis_spike: str = "off"  # off | on — 동기 관측 하니스(임시). production 은 job
     analysis_timeout_seconds: float = 60.0  # provider 1콜 상한(폴백 트리거)
@@ -251,6 +254,8 @@ def load_settings() -> Settings:
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.5-flash"),
+        model_text_gemini_features=os.getenv(
+            "MODEL_ROUTING_TEXT_GEMINI_FEATURES", "gemini-3.6-flash"),
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),
         analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
         analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "60")),
