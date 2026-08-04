@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "Virtual model identity assets. Contract: ai_agent_modules §3 AG-06 — face_front(원본 앵커) + grid_sedcard(v2 2x2 통짜) 기본 첨부, 시트 4뷰는 QC 실패 폴백 전용(body_front).",
+    "description": "Virtual model identity assets. Contract: ai_agent_modules §3 AG-06 — face_front(원본 앵커) + grid_sedcard(v2 2x2 통짜) + body_front(체형 기준) 기본 첨부, 나머지 시트 3뷰는 QC 폴백 전용.",
     "source": "spike facepack v2 + public/models 원본 앵커"
   },
   "models": {

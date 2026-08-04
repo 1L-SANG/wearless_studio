@@ -1009,6 +1009,7 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
         return (
             {"key": "seed/models/mB/face_front.webp", "mime": "image/webp"},
             {"key": "seed/models/mB/grid_sedcard.png", "mime": "image/jpeg"},
+            {"key": "seed/models/mB/body_front.png", "mime": "image/jpeg"},
         )
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
@@ -1045,12 +1046,14 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
 
     assert captured["person"]["spec"]["modelId"] == "mB"
     assert captured["person"]["data"] == [
-        "k/man", "seed/models/mB/face_front.webp", "seed/models/mB/grid_sedcard.png", "k/a1",
+        "k/man", "seed/models/mB/face_front.webp", "seed/models/mB/grid_sedcard.png",
+        "seed/models/mB/body_front.png", "k/a1",
     ]
     assert captured["person"]["manifest"].splitlines()[0].startswith("1. PRODUCT — the garment worn")
     assert captured["person"]["manifest"].splitlines()[1].startswith("2. MODEL — frontal close-up")
     assert captured["person"]["manifest"].splitlines()[2].startswith("3. MODEL SHEET — a 2x2 grid")
-    assert captured["person"]["manifest"].splitlines()[3] == "4. PRODUCT — front view of the garment"
+    assert captured["person"]["manifest"].splitlines()[3].startswith("4. MODEL BODY — full-body frontal")
+    assert captured["person"]["manifest"].splitlines()[4] == "5. PRODUCT — front view of the garment"
     assert captured["product"]["data"] == ["k/man", "k/a1"]
     assert "MODEL" not in captured["product"]["manifest"]
     assert captured["assembled_storyboard"] is not storyboard

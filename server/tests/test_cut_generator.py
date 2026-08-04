@@ -310,14 +310,15 @@ def test_horizon_sequence_without_plate_does_not_claim_one_shared_location():
 def test_build_manifest_places_exact_model_labels_after_mannequin():
     manifest = cg.build_manifest(
         [{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1,
-        has_model_face=True, has_model_sheet=True)
+        has_model_face=True, has_model_sheet=True, has_model_body=True)
     assert manifest.splitlines() == [
         "1. PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)",
         "2. MODEL — frontal close-up of the model (identity ground truth; do NOT copy this image's pose, framing, or clothing)",
         "3. MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single person (identity reference only). Do NOT copy the grid layout, framing, poses, or clothing; the output must be one single normal photograph, never a grid",
-        "4. PRODUCT — front view of the garment",
-        "5. MATCHING — the user-selected coordinating garment worn in the same outfit",
-        "6. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)",
+        "4. MODEL BODY — full-body frontal reference of the SAME person (body-proportion ground truth only). Preserve this person's height impression, shoulder width, torso and limb proportions, and natural build; do NOT copy the reference clothing, background, pose, shoes or framing",
+        "5. PRODUCT — front view of the garment",
+        "6. MATCHING — the user-selected coordinating garment worn in the same outfit",
+        "7. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)",
     ]
 
 

@@ -491,13 +491,14 @@ def test_normalize_unknown_cut_raises():
         cut.normalize_spec({"cutType": "daily"})  # ADR-0003에서 폐기된 토큰
 
 
-def test_virtual_model_loader_resolves_c_pair_and_excludes_product(tmp_path, monkeypatch, caplog):
+def test_virtual_model_loader_resolves_c_pack_and_excludes_product(tmp_path, monkeypatch, caplog):
     manifest_path = tmp_path / "virtual_models.json"
     manifest_path.write_text(json.dumps({
         "models": {
             "mA": {"views": {
                 "face_front": {"key": "seed/mA/face.webp", "mime": "image/webp"},
                 "grid_sedcard": {"key": "seed/mA/grid.png", "mime": "image/jpeg"},
+                "body_front": {"key": "seed/mA/body.png", "mime": "image/jpeg"},
             }},
         },
     }), encoding="utf-8")
@@ -509,6 +510,7 @@ def test_virtual_model_loader_resolves_c_pair_and_excludes_product(tmp_path, mon
         assert cut.resolve_virtual_model_assets(person) == (
             {"key": "seed/mA/face.webp", "mime": "image/webp", "bucket": "public"},
             {"key": "seed/mA/grid.png", "mime": "image/jpeg", "bucket": "public"},
+            {"key": "seed/mA/body.png", "mime": "image/jpeg", "bucket": "public"},
         )
         product = cut.normalize_spec({"cutType": "product", "modelId": "mA"})
         assert cut.resolve_virtual_model_assets(product) is None

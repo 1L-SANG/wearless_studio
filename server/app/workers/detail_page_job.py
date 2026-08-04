@@ -525,7 +525,7 @@ async def run_detail_page_job(app, job: dict) -> None:
         async def _img(a: dict) -> InlineImage:
             return await _r2_img(a["r2_key"], a["mime_type"])
 
-        # C방식 두 장은 원자적인 한 쌍이다. 하나라도 manifest/R2 로드에 실패하면 둘 다 빼고
+        # C방식 세 장은 원자적인 한 묶음이다. 하나라도 manifest/R2 로드에 실패하면 모두 빼고
         # 기존 옷 레퍼런스만으로 계속 생성한다(상세페이지 부분 실패 정책과 같은 fail-open).
         _model_cache: dict[str, list[InlineImage] | None] = {}
 
@@ -649,7 +649,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 컷당 아이덴티티 소스 1개(codex [P1]) — 셋 중 하나만 컷에 들어간다:
             #  REAL    실존 모델 그리드(비공개 face 버킷) — 단일 라이선스 얼굴 미첨부
             #  LEGACY  라이선스 단일 얼굴(비공개) — 어떤 그리드도 미첨부
-            #  VIRTUAL 가상모델 그리드(공개 버킷) — 라이선스 불요
+            #  VIRTUAL 가상모델 얼굴·시트·체형 묶음(공개 버킷) — 라이선스 불요
             # face_slot=단일 얼굴 슬롯(LEGACY만). has_identity=검증 얼굴이 실제 담기는 컷(REAL·LEGACY)
             # → face_cuts·검증 배지 근거. 세 소스가 한 컷에 겹치지 않아 인물 혼합·이중주입이 없다.
             if source == "REAL":
@@ -837,7 +837,8 @@ async def run_detail_page_job(app, job: dict) -> None:
             manifest = cut_generator.build_manifest(
                 prods, has_mannequin=mannequin_asset is not None,
                 has_match=match_a is not None, mood_count=len(moods),
-                has_model_face=len(model_images) == 2, has_model_sheet=len(model_images) == 2,
+                has_model_face=len(model_images) >= 1, has_model_sheet=len(model_images) >= 2,
+                has_model_body=len(model_images) >= 3,
                 has_face=face_slot,
                 example_scope=example_scope,
                 example_is_product=normalized is not None and normalized["cutType"] == "product",

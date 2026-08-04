@@ -2,7 +2,7 @@
 
 계약: ai_agent_modules §3 AG-06 '가상모델 아이덴티티 레퍼런스 계약' —
   face_front = 원본 베이스컷(생성물 재주입 금지), grid_sedcard = v2 통짜 2x2 그리드,
-  나머지 4뷰(시트)는 QC 폴백 전용 보관.
+  body_front = 체형 기준으로 기본 첨부, 나머지 3뷰(시트)는 QC 폴백 전용 보관.
 소스: public/models/{gender}/{sid}.webp(앵커) + spike/runs/facepack-{sid}v2-*/(v2 팩).
 산출: R2 seed/models/{modelId}/{view}.{ext} + server/app/data/virtual_models.json (파일 기반
   manifest — example_assets.json 패턴, DB 테이블 없음).
@@ -96,8 +96,8 @@ def main() -> None:
         "_meta": {
             "description": (
                 "Virtual model identity assets. Contract: ai_agent_modules §3 AG-06 — "
-                "face_front(원본 앵커) + grid_sedcard(v2 2x2 통짜) 기본 첨부, "
-                "시트 4뷰는 QC 실패 폴백 전용(body_front)."
+                "face_front(원본 앵커) + grid_sedcard(v2 2x2 통짜) + "
+                "body_front(체형 기준) 기본 첨부, 나머지 시트 3뷰는 QC 폴백 전용."
             ),
             "source": "spike facepack v2 + public/models 원본 앵커",
         },

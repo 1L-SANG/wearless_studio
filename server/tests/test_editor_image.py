@@ -819,7 +819,7 @@ def test_run_editor_image_job_new_attaches_mood_refs(monkeypatch):
     assert "front view of the garment" in captured["manifest"]
 
 
-def test_run_editor_image_job_new_attaches_c_model_pair_and_excludes_product(monkeypatch):
+def test_run_editor_image_job_new_attaches_c_model_pack_and_excludes_product(monkeypatch):
     captured = []
 
     class TrackingR2:
@@ -851,6 +851,7 @@ def test_run_editor_image_job_new_attaches_c_model_pair_and_excludes_product(mon
         return (
             {"key": "seed/models/mA/face_front.webp", "mime": "image/webp"},
             {"key": "seed/models/mA/grid_sedcard.png", "mime": "image/jpeg"},
+            {"key": "seed/models/mA/body_front.png", "mime": "image/jpeg"},
         )
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
@@ -885,15 +886,18 @@ def test_run_editor_image_job_new_attaches_c_model_pair_and_excludes_product(mon
 
     assert captured[0]["spec"]["modelId"] == "mA"
     assert captured[0]["data"] == [
-        "seed/models/mA/face_front.webp", "seed/models/mA/grid_sedcard.png", "k/a1",
+        "seed/models/mA/face_front.webp", "seed/models/mA/grid_sedcard.png",
+        "seed/models/mA/body_front.png", "k/a1",
     ]
     assert captured[0]["manifest"].splitlines()[0].startswith("1. MODEL — frontal close-up")
     assert captured[0]["manifest"].splitlines()[1].startswith("2. MODEL SHEET — a 2x2 grid")
-    assert captured[0]["manifest"].splitlines()[2] == "3. PRODUCT — front view of the garment"
+    assert captured[0]["manifest"].splitlines()[2].startswith("3. MODEL BODY — full-body frontal")
+    assert captured[0]["manifest"].splitlines()[3] == "4. PRODUCT — front view of the garment"
     assert captured[1]["data"] == ["k/a1"]
     assert "MODEL" not in captured[1]["manifest"]
     assert r2.reads == [
-        "seed/models/mA/face_front.webp", "seed/models/mA/grid_sedcard.png", "k/a1", "k/a1",
+        "seed/models/mA/face_front.webp", "seed/models/mA/grid_sedcard.png",
+        "seed/models/mA/body_front.png", "k/a1", "k/a1",
     ]
 
 
@@ -925,6 +929,7 @@ def test_run_editor_image_job_model_r2_failure_falls_back_to_product(monkeypatch
         return (
             {"key": "seed/models/mA/face_front.webp", "mime": "image/webp"},
             {"key": "seed/models/mA/grid_sedcard.png", "mime": "image/jpeg"},
+            {"key": "seed/models/mA/body_front.png", "mime": "image/jpeg"},
         )
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
