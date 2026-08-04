@@ -2079,15 +2079,41 @@ export function Storyboard() {
     );
   };
 
+  /* 같은 촬영 세트를 보드에서 두 번 이상 쓰면 헤더 문자열이 완전히 같아져 구분이 안 된다.
+     보드 등장 순서대로 ①②… 를 붙인다(한 번만 쓴 세트는 그대로 둔다). */
+  const traySeqLabels = (() => {
+    const order = [];
+    const seen = new Set();
+    for (const block of blocks) {
+      if (!block.spaceGroupId || seen.has(block.spaceGroupId)) continue;
+      seen.add(block.spaceGroupId);
+      order.push(block.spaceGroupId);
+    }
+    const byName = new Map();
+    for (const groupId of order) {
+      const name = inferStoryboardSpaceSet(groupId).name;
+      if (!byName.has(name)) byName.set(name, []);
+      byName.get(name).push(groupId);
+    }
+    const labels = new Map();
+    for (const groupIds of byName.values()) {
+      if (groupIds.length < 2) continue;
+      groupIds.forEach((groupId, i) => labels.set(groupId, String.fromCharCode(0x2460 + Math.min(i, 19))));
+    }
+    return labels;
+  })();
+
   const renderTray = (unit, group) => {
     const set = inferStoryboardSpaceSet(unit.spaceGroupId);
     const place = normalizePlaceType(set.placeType, set.setType);
     const placeClass = place === 'cafe' ? 'cafe'
       : place === 'nature' ? 'nature'
         : place === 'studio' ? 'studio' : 'other';
+    const seq = traySeqLabels.get(unit.spaceGroupId);
+    const name = set.name + (seq ? ' ' + seq : '');
     const label = set.setType === 'horizon-rotation' || set.setType === 'horizon-sequence'
-      ? '↻ ' + set.name + ' · ' + unit.items.length + '컷'
-      : '📍 ' + set.name + ' · ' + unit.items.length + '컷';
+      ? '↻ ' + name + ' · ' + unit.items.length + '컷'
+      : '📍 ' + name + ' · ' + unit.items.length + '컷';
     return (
       <div key={'tray:' + unit.spaceGroupId} className={'sb-tray place-' + placeClass}>
         <div
