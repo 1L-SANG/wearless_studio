@@ -1206,7 +1206,7 @@ export function Storyboard() {
   const [dragMine, setDragMine] = useState(null);
   const [setPicker, setSetPicker] = useState(null);
   const [setPickerError, setSetPickerError] = useState(null);
-  const [openGroupKey, setOpenGroupKey] = useState(null); // 한 번에 하나만 펼치는 렌더 그룹 (UI 전용)
+  const [openGroupKeys, setOpenGroupKeys] = useState([]); // 펼쳐 둔 렌더 그룹들 (다중 허용 · UI 전용)
   const [insertMenuKey, setInsertMenuKey] = useState(null);
   const [warn, setWarn] = useState(false);
   const [loadError, setLoadError] = useState(null);
@@ -1274,7 +1274,7 @@ export function Storyboard() {
         gender: resolvedGender,
       });
       const initBlocks = assignment.blocks;
-      setOpenGroupKey(null);
+      setOpenGroupKeys([]);
       setBlocks(initBlocks); setCatalogs(hydratedCatalogs); setMatchClothing(m); setClothingType(p.clothingType || 'top');
       setExampleGender(resolvedGender); setHasDetailImage(productHasDetail);
       if (normalized || assignment.changed || usePending) {
@@ -1744,7 +1744,13 @@ export function Storyboard() {
     toast.push('내 이미지를 블록으로 넣었어요', { icon: 'plus' });
   };
   /* 렌더 그룹 아코디언 (UI 전용) */
-  const toggleRenderGroup = (key) => setOpenGroupKey((current) => current === key ? null : key);
+  // 다중 열기 — 한 섹션을 펼쳐도 이미 펼친 섹션은 그대로 둔다(생성 전 전체 점검 동선).
+  const toggleRenderGroup = (key) => setOpenGroupKeys((current) => (
+    current.includes(key) ? current.filter((k) => k !== key) : [...current, key]
+  ));
+  const openRenderGroup = (key) => setOpenGroupKeys((current) => (
+    current.includes(key) ? current : [...current, key]
+  ));
   /* 섹션 레이아웃 변경 — 멤버 전체 patch + 직접 구성 표시 */
   const setSecLayout = (sec, v) => {
     // 활성 칩도 다시 적용할 수 있어야 layoutRowId 없는 레거시 보드를 명시적으로 마이그레이션할 수 있다.
@@ -2056,10 +2062,22 @@ export function Storyboard() {
     );
   };
 
+  const allGroupKeys = boardGroups.map((group) => group.key);
+  const allOpen = allGroupKeys.length > 0 && allGroupKeys.every((key) => openGroupKeys.includes(key));
+
   const list = (
     <div className="sb-canvas-board">
+      <div className="sb-board-tools">
+        <button
+          type="button"
+          className="sb-board-tool"
+          onClick={() => setOpenGroupKeys(allOpen ? [] : allGroupKeys)}
+        >
+          {allOpen ? '전체 접기' : '전체 펼치기'}
+        </button>
+      </div>
       {boardGroups.map((group) => {
-        const open = openGroupKey === group.key;
+        const open = openGroupKeys.includes(group.key);
         const range = group.items.length
           ? String(group.items[0].index).padStart(2, '0') + '–'
             + String(group.items[group.items.length - 1].index).padStart(2, '0')
@@ -2092,7 +2110,7 @@ export function Storyboard() {
             </button>
             <div className="sb-stack-collapse">
               <div>
-                <StoryboardStack group={group} total={blocks.length} onOpen={() => setOpenGroupKey(group.key)} />
+                <StoryboardStack group={group} total={blocks.length} onOpen={() => openRenderGroup(group.key)} />
               </div>
             </div>
             <div className="sb-deck-collapse">

@@ -1797,6 +1797,19 @@
 }
 .sb-stack-empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; }
 
+/* 보드 상단 도구줄 — 전체 펼치기/접기. 섹션 칩과 같은 pill 언어를 쓴다. */
+.sb-board-tools { display: flex; justify-content: flex-end; padding: 0 10px 6px; }
+.sb-board-tool {
+  border: 1px solid var(--sb-hair);
+  border-radius: 999px;
+  padding: 4px 12px;
+  background: #fff;
+  color: var(--sb-ink-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.sb-board-tool:hover { border-color: var(--sb-hair-2); background: #f7f7f8; }
+
 .sb-group-layout {
   display: flex;
   align-items: center;
