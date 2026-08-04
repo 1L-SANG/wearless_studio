@@ -47,3 +47,20 @@ test('seller can correct Product Truth pattern before approval', () => {
   assert.match(productInput, /editTruthFinePattern\(e\.target\.checked\)/);
   assert.match(productInput, /패턴이 미확인 상태라 패턴 보호를 보수적으로 켭니다/);
 });
+
+test('existing project hydration restores Product Truth without starting analysis', () => {
+  const hydrationStart = productInput.indexOf('// cold input 은 라우트 계층이 stale flow 를 먼저 비운다.');
+  const hydrationEnd = productInput.indexOf('}, [loadAttempt]);', hydrationStart);
+  assert.notEqual(hydrationStart, -1);
+  assert.notEqual(hydrationEnd, -1);
+
+  const hydration = productInput.slice(hydrationStart, hydrationEnd);
+  assert.match(
+    hydration,
+    /editingProjectId && api\.getProductTruth\s*\?\s*api\.getProductTruth\(editingProjectId\)\.catch\(\(error\) =>/,
+  );
+  assert.match(hydration, /if \(error\?\.status === 404\) return null/);
+  assert.match(hydration, /throw error/);
+  assert.match(hydration, /setProductTruth\(existingProductTruth \|\| null\)/);
+  assert.doesNotMatch(hydration, /api\.analyzeProduct/);
+});

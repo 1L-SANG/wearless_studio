@@ -393,10 +393,16 @@ export function ProductInput() {
       // 현재 project 를 읽고, project 가 없으면 null 계약의 클라이언트 시드 템플릿을 쓴다.
       const { projectId: currentProjectId, projectPersisted } = useAppStore.getState();
       const editingProjectId = projectPersisted && currentProjectId ? currentProjectId : null;
-      const [p, c, existingAnalysis] = await Promise.all([
+      const [p, c, existingAnalysis, existingProductTruth] = await Promise.all([
         api.getProduct(editingProjectId),
         api.getCatalogs(),
         editingProjectId ? api.getAnalysis(editingProjectId) : Promise.resolve(null),
+        editingProjectId && api.getProductTruth
+          ? api.getProductTruth(editingProjectId).catch((error) => {
+            if (error?.status === 404) return null;
+            throw error;
+          })
+          : Promise.resolve(null),
       ]);
       if (!alive) return;
       setCatalogs(c);
@@ -412,6 +418,10 @@ export function ProductInput() {
         // 사라져 그대로 통과한다(분석 직후 탭에서는 멀쩡히 뜨므로 재현이 헷갈린다).
         setInputConsistency(existingAnalysis.inputConsistency || null);
         setAnalysisProjectId(editingProjectId);
+        // Product Truth는 분석 직후뿐 아니라 기존 프로젝트 재진입에서도 같은 revision을 보여준다.
+        // legacy 프로젝트(행 없음=404)는 null로 유지한다. DB/네트워크 오류는 바깥 로드 오류로
+        // 올려 사용자가 재시도하게 한다. 승인 사실을 숨긴 채 다음 단계로 보내면 안 된다.
+        setProductTruth(existingProductTruth || null);
         setPhase('done');
         return;
       }
