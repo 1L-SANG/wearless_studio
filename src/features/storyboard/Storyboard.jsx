@@ -52,6 +52,7 @@ import {
   insertSpaceSet,
   moveBlockWithSpaceMembership,
   moveSpaceSetRun,
+  nextSpaceSetMemberReservation,
   replaceSpaceSetRun,
 } from '@/lib/storyboardSpaceSets.js';
 import { normalizePlaceType } from '@/lib/storyboardEntryPlacement.js';
@@ -1768,8 +1769,12 @@ export function Storyboard() {
     }) });
   };
   // 이동 후 adoptSection — 섹션 경계를 넘으면 이웃 섹션을 채택하고 대상 섹션을 '직접 구성' 처리
-  const addBlock = async (idx, targetSid, targetRole = null, targetSpaceGroupId = null, targetRenderGroupKey = null, droppedExampleId = null) => {
+  const addBlock = async (idx, targetSid, targetRole = null, targetSpaceGroupId = null, targetRenderGroupKey = null, requestedExample = null) => {
     dismissUndo();
+    const reservation = requestedExample && typeof requestedExample === 'object'
+      ? requestedExample : null;
+    const reservedSpaceMember = reservation?.member || null;
+    const droppedExampleId = reservedSpaceMember?.exampleId || requestedExample;
     const targetHost = blocks.find((b) => b.sectionId === targetSid);
     const host = targetHost || (!targetRole ? blocks[Math.max(0, Math.min(idx - 1, blocks.length - 1))] : null);
     const sectionRole = targetRole || host?.sectionRole || SECTION_ROLES.BENEFIT;
@@ -1853,6 +1858,7 @@ export function Storyboard() {
           exampleSelectionOrigin: 'user',
           refScope: targetSpaceGroupId ? 'pose' : 'all',
         }, catalogs),
+        ...(reservation?.blockPatch || {}),
       } : block)
       : assignGenerationExamples(out, {
         catalog: catalogs.genExamples,
@@ -1871,7 +1877,8 @@ export function Storyboard() {
       setSaveError('변경 내용을 저장하지 못했어요');
     }
     setSelectedId(nb.id); setSplitOpen(true);
-    toast.push(droppedExample ? '생성예시를 새 컷으로 추가했어요' : '블록을 추가했어요', { icon: 'plus' });
+    toast.push(reservedSpaceMember ? '준비된 컷을 추가했어요'
+      : droppedExample ? '생성예시를 새 컷으로 추가했어요' : '블록을 추가했어요', { icon: 'plus' });
   };
   const mineBlock = (src, n) => ({
     id: uid('blk'), sectionRole: SECTION_ROLES.BENEFIT, contentRole: CONTENT_ROLES.CUSTOM, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
@@ -2321,6 +2328,8 @@ export function Storyboard() {
     const label = set.setType === 'horizon-rotation' || set.setType === 'horizon-sequence'
       ? '↻ ' + name + ' · ' + unit.items.length + '컷'
       : '📍 ' + name + ' · ' + unit.items.length + '컷';
+    const reservation = nextSpaceSetMemberReservation(set, unit.items.map((item) => item.block));
+    const nextMember = reservation?.member || null;
     return (
       <div key={'tray:' + unit.spaceGroupId} className={'sb-tray place-' + placeClass}>
         <div
@@ -2345,9 +2354,16 @@ export function Storyboard() {
         </div>
         <div className="sb-tray-grid">
           {frameUnits(unit.items).map((trayUnit) => renderUnit(trayUnit, group, unit.spaceGroupId))}
-          <button type="button" className="sb-ghost-card sb-tray-add"
-            onClick={() => addBlock(unit.items[unit.items.length - 1].index, traySection.id, traySection.role, unit.spaceGroupId, group.key)}>
-            ＋ 컷 추가
+          <button type="button" className={'sb-ghost-card sb-tray-add' + (nextMember ? ' reserved' : '')}
+            aria-label={nextMember ? '준비된 다음 컷 추가' : '새 컷 추가'}
+            onClick={() => addBlock(unit.items[unit.items.length - 1].index, traySection.id, traySection.role, unit.spaceGroupId, group.key, reservation)}>
+            {nextMember ? (
+              <>
+                <img className="sb-tray-add-preview" src={nextMember.thumb || nextMember.thumbUrl}
+                  alt="" loading="lazy" decoding="async" />
+                <span className="sb-tray-add-label"><b>＋</b><span>이 컷 추가</span></span>
+              </>
+            ) : '＋ 컷 추가'}
           </button>
         </div>
       </div>

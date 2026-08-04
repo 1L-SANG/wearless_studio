@@ -7,6 +7,7 @@ import {
   dissolveSpaceSet,
   groupConsecutiveSpaceRuns,
   moveBlockWithSpaceMembership,
+  nextSpaceSetMemberReservation,
   replaceSpaceSetRun,
 } from '../../src/lib/storyboardSpaceSets.js';
 import {
@@ -334,6 +335,68 @@ test('creating released members preserves exact ordered example choices as user 
     { exampleId: 'exact-full', origin: 'user', setOrigin: 'user', thumb: 'full.webp', order: 1, variation: 'subtle' },
     { exampleId: 'exact-medium', origin: 'user', setOrigin: 'user', thumb: 'medium.webp', order: 2, variation: 'subtle' },
   ]);
+});
+
+test('a styling tray exposes its reserved member, then returns to general add when exhausted', () => {
+  const set = {
+    members: [
+      { exampleId: 'full', order: 1, cutType: 'styling', shot: 'full', direction: 'front' },
+      { exampleId: 'spare', order: 2, cutType: 'styling', shot: 'full', direction: 'side' },
+      { exampleId: 'medium', order: 3, cutType: 'styling', shot: 'medium', direction: 'front' },
+    ],
+  };
+  const current = [
+    block('full', { exampleId: 'full', spaceSetMemberOrder: 1, spaceGroupId: groupA, refScope: 'pose' }),
+    block('medium', { exampleId: 'medium', spaceSetMemberOrder: 3, spaceGroupId: groupA, refScope: 'pose' }),
+  ];
+  const reservation = nextSpaceSetMemberReservation(set, current);
+  const reserved = reservation.member;
+  assert.equal(reserved.exampleId, 'spare');
+  assert.deepEqual(reservation.blockPatch, {
+    spaceGroupId: groupA,
+    spaceVariation: 'subtle',
+    refScope: 'pose',
+    spaceSetMemberOrder: 2,
+    setSelectionOrigin: 'user',
+  });
+
+  const added = [...current, block('spare', {
+    exampleId: reserved.exampleId,
+    ...reservation.blockPatch,
+  })];
+  assert.equal(added.at(-1).spaceGroupId, groupA);
+  assert.equal(added.at(-1).refScope, 'pose');
+  assert.equal(nextSpaceSetMemberReservation(set, added), null);
+});
+
+test('reserved-member lookup uses member order even after its example is changed', () => {
+  const set = {
+    members: [
+      { exampleId: 'first', order: 1 },
+      { exampleId: 'second', order: 2 },
+      { exampleId: 'third', order: 3 },
+    ],
+  };
+  const current = [
+    block('changed-first', { exampleId: 'custom', spaceSetMemberOrder: 1 }),
+    block('third', { exampleId: 'third', spaceSetMemberOrder: 3 }),
+  ];
+  assert.equal(nextSpaceSetMemberReservation(set, current).member.exampleId, 'second');
+});
+
+test('styling trays preview the reserved thumbnail and keep plain add after exhaustion', () => {
+  const storyboardSource = readFileSync(
+    new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const cssSource = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
+  assert.match(storyboardSource, /nextSpaceSetMemberReservation\(set, unit\.items\.map/);
+  assert.match(storyboardSource, /addBlock\([^\n]+group\.key, reservation\)/);
+  assert.match(storyboardSource, /\.\.\.\(reservation\?\.blockPatch \|\| \{\}\)/);
+  assert.match(storyboardSource, /className="sb-tray-add-preview"/);
+  assert.match(storyboardSource, /nextMember \? \([\s\S]*이 컷 추가[\s\S]*\) : '＋ 컷 추가'/);
+  assert.match(cssSource, /\.sb-tray-add-preview[\s\S]*opacity: \.3/);
+  assert.match(cssSource, /prefers-reduced-motion: reduce[\s\S]*\.sb-tray-add-preview/);
 });
 
 test('unknown or pre-release group ids are not inferred as a shooting set', () => {
