@@ -1816,14 +1816,16 @@
 }
 .sb-group-layout button.on { border-color: var(--sb-accent); color: var(--sb-accent-ink); background: #f2f7fc; }
 
+/* 카드 폭을 스택(200px)과 동일하게 고정 — 펼쳐도 이미지가 커지지 않는다(크기 연속성).
+   auto-fill 이라 인스펙터가 열려 보드가 좁아지면 열 수가 저절로 줄어든다. */
 .sb-canvas-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, 200px);
+  justify-content: flex-start;
   gap: 14px 18px;
   align-items: start;
   padding: 6px 10px 18px;
 }
-.sb-canvas-shell.inspector-open .sb-canvas-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .sb-grid-unit, .sb-canvas-card { position: relative; min-width: 0; }
 .sb-grid-unit.dragging { opacity: .4; }
 .sb-canvas-card.locked, .sb-frame-half.locked { opacity: .48; }
@@ -2040,32 +2042,29 @@
 }
 .sb-ghost-card:hover, .sb-ghost-card:focus-visible { border-color: var(--sb-ink-3); color: var(--sb-ink-2); }
 
+/* 세트 묶음 = 색 박스 대신 편집 디자인의 '키커 라인'(작은 라벨 + 헤어라인)으로 표시.
+   전폭을 차지하고 내부 열을 바깥 그리드와 동일 규격으로 맞춰 카드 크기·정렬이 흐트러지지 않는다. */
 .sb-tray {
-  --tray-tint: #f3f0fa;
-  --tray-ink: #6b5bb8;
-  grid-column: span 3;
+  --tray-ink: var(--sb-ink-2);
+  grid-column: 1 / -1;
   position: relative;
   display: grid;
   grid-template-columns: 1fr;
+  row-gap: 10px;
   min-width: 0;
-  padding: 26px 10px 10px;
-  border-radius: 12px;
-  background: linear-gradient(180deg, var(--tray-tint), color-mix(in srgb, var(--tray-tint) 35%, #fff));
+  padding: 4px 0 6px;
 }
-.sb-tray.place-nature { --tray-tint: #eef4ee; --tray-ink: #4e7d55; }
-.sb-tray.place-studio { --tray-tint: #f0f3f6; --tray-ink: #5a6b7c; }
 .sb-tray-head {
-  position: absolute;
-  z-index: 3;
-  left: 12px;
-  right: 8px;
-  top: 5px;
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  padding: 0 2px 7px;
+  border-bottom: 1px solid var(--sb-hair);
   color: var(--tray-ink);
   font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
   cursor: grab;
 }
 .sb-tray-head:active { cursor: grabbing; }
@@ -2105,7 +2104,7 @@
   white-space: nowrap;
 }
 .sb-tray-more > span button:hover { background: #f4f4f6; }
-.sb-tray-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 18px; }
+.sb-tray-grid { display: grid; grid-template-columns: repeat(auto-fill, 200px); justify-content: flex-start; gap: 14px 18px; }
 
 .sb-frame { grid-column: span 2; position: relative; min-width: 0; }
 .sb-frame-box {
