@@ -31,6 +31,16 @@ LINE_PRESENCE_MIN_CONTRAST = 0.5   # 기대 대비 실측 색 대비가 이 비�
 MIN_ALIGN_CORR = 0.55          # 기대 프로파일과 실측 fold 의 정렬 상관 하한
 OUTSIDE_DRIFT_DELTA_E = 10.0   # carrier 보존 판정 ΔE76 임계
 OUTSIDE_DRIFT_MAX_FRAC = 0.01  # mask 밖 ΔE76>10 픽셀 허용 비율
+# ── 계면·연속성·드레이프 ──────────────────────────────────────────────────────
+# 기존 지표는 panel **내부**의 패턴 통계와 실루엣 **바깥**의 보존만 쟀다. 그 사이 구간,
+# 즉 painted 영역의 내부 경계는 어느 검사에도 걸리지 않아 v6 의 '직사각형 판'이 모든
+# 수치를 통과했다(period 0.0005, coverage 1.0, outside drift 0). 아래가 그 구멍이다.
+DIRECTION_ERROR_MAX = 0.10     # 직교축 주기 강도가 목표축보다 이만큼 세면 줄 방향 오류
+SEAM_HARD_EDGE_MAX = 0.25      # painted 내부 경계에서 alpha 가 계단인 픽셀 허용 비율
+BOUNDARY_CHROMA_DE_MAX = 10.0  # painted↔인접 unpainted 밴드 ΔE00 (L 정렬 후 chroma)
+DRAPE_CORR_MIN = 0.60          # carrier↔output 저주파 L 상관 하한 (의류 내부)
+STRICT_PANEL_MIN_FRAC = 0.20   # 칠한 픽셀의 이 비율 이상을 가진 패널은 strict 필수
+DRAPE_SIGMA_FRAC = 0.03        # 드레이프 측정용 저주파 척도 (짧은 변 대비)
 
 
 @dataclass(frozen=True)
@@ -227,6 +237,69 @@ def _measure_panel_local(
     return pm, failures
 
 
+def _interface_seam(alpha, painted, garment_mask) -> dict:
+    """painted 영역의 **내부** 경계에서 alpha 가 계단인지 경사인지.
+
+    panel assign-cost 등고선은 이미지 공간에서 직선이라, 여기서 alpha 가 1픽셀에
+    1→0 으로 떨어지면 결과가 '붙여넣은 직사각형 판' 으로 보인다. 기존 검사는 panel
+    가장자리 15% 를 잘라내고 재기 때문에 이 구간을 구조적으로 보지 못했다 — 그래서
+    결함 위치를 자르지 않고 경계 **위에서** 잰다.
+    """
+    if alpha is None or painted is None:
+        return {}
+    kern = np.ones((3, 3), np.uint8)
+    rim = (garment_mask > 0) & (painted > 0) & (cv2.erode(painted, kern) == 0)
+    n = int(rim.sum())
+    if n < 50:
+        return {}
+    hard = float((alpha[rim] > 0.98).mean())
+    return {"seam_px": n, "seam_hard_edge_frac": round(hard, 4)}
+
+
+def _boundary_chroma(out_bgr, painted, garment_mask, band_px: int) -> dict:
+    """경계 안쪽(painted)과 바깥쪽(같은 의류의 unpainted)의 색 연속성.
+
+    painted 를 자기 source 모델과만 비교하면 '몸통은 그늘색, 커프는 스튜디오색'인
+    상태가 만점을 받는다(v6). 인접한 carrier 와 직접 비교해야 한 벌로 보이는지 알 수 있다.
+    두 밴드는 높이가 달라 음영(L)이 다르므로 L 은 맞추고 chroma 만 본다.
+    """
+    if painted is None:
+        return {}
+    k = max(3, int(band_px) | 1)
+    kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    inner = (cv2.erode(painted, kern) == 0) & (painted > 0) & (garment_mask > 0)
+    outer = (cv2.dilate(painted, kern) > 0) & (painted == 0) & (garment_mask > 0)
+    if inner.sum() < 50 or outer.sum() < 50:
+        return {}
+    lab = bgr_to_lab(out_bgr)
+    a = np.median(lab[inner], axis=0)
+    b = np.median(lab[outer], axis=0)
+    de = float(ciede2000(a, np.array([a[0], b[1], b[2]], np.float64)))
+    return {"boundary_chroma_de00": round(de, 2),
+            "boundary_inner_px": int(inner.sum()),
+            "boundary_outer_px": int(outer.sum())}
+
+
+def _drape_preservation(out_bgr, carrier_bgr, garment_mask) -> dict:
+    """carrier 의 주름·접힘 음영이 합성 후에도 남아 있는가.
+
+    패턴 지표는 L 을 두 번 정규화해 없애므로, 음영이 사라질수록 오히려 점수가 좋아진다.
+    의류 **내부**에서 carrier 와 저주파 L 을 직접 비교해 그 역전을 막는다.
+    """
+    sel = garment_mask > 0
+    if int(sel.sum()) < 500:
+        return {}
+    h, w = out_bgr.shape[:2]
+    sigma = max(3.0, float(min(h, w)) * DRAPE_SIGMA_FRAC)
+    lo = cv2.GaussianBlur(cv2.cvtColor(out_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32),
+                          (0, 0), sigmaX=sigma)[sel]
+    lc = cv2.GaussianBlur(cv2.cvtColor(carrier_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32),
+                          (0, 0), sigmaX=sigma)[sel]
+    if float(lo.std()) < 1e-3 or float(lc.std()) < 1e-3:
+        return {}
+    return {"drape_corr": round(float(np.corrcoef(lo, lc)[0, 1]), 4)}
+
+
 def verify_composite(
     out_bgr: np.ndarray,
     carrier_bgr: np.ndarray,
@@ -237,6 +310,7 @@ def verify_composite(
     target_axis: str,
     painted_mask: np.ndarray | None = None,
     coverage_mask: np.ndarray | None = None,
+    alpha: np.ndarray | None = None,
 ) -> DeterministicQC:
     """합성 결과 재측정 → typed critical. 실패는 기록이지 예외가 아니다(호출자가 라우팅).
 
@@ -267,6 +341,21 @@ def verify_composite(
     if not strict_ok:
         failures.append({"code": "pattern_metric_failed",
                          "detail": "strict 순도로 검증된 패널이 0개 — 측정 성립 불가"})
+    elif painted_mask is not None:
+        # "한 패널만 strict 면 통과" 는 넓은 몸통이 advisory 로 강등돼도 좁은 소매 하나로
+        # 전체가 통과하는 구멍이다. 칠한 픽셀의 상당 지분을 가진 패널은 반드시 실측돼야 한다.
+        total_painted = max(1, int((painted_mask > 0).sum()))
+        for panel in panel_map.panels:
+            if panel.kind != "stripe" or panel.name in strict_ok:
+                continue
+            quad = np.zeros(painted_mask.shape[:2], np.uint8)
+            cv2.fillPoly(quad, [panel.quad.astype(np.int32)], 255)
+            share = float(((quad > 0) & (painted_mask > 0)).sum()) / total_painted
+            if share >= STRICT_PANEL_MIN_FRAC:
+                failures.append({
+                    "code": "pattern_metric_failed", "panel": panel.name,
+                    "detail": (f"칠한 면적의 {share:.0%} 를 차지하는 패널이 strict 미검증 "
+                               f"(>= {STRICT_PANEL_MIN_FRAC:.0%})")})
     period_errs = [
         float(m["repeat_period_rel_err"])
         for m in metrics["per_panel"].values()
@@ -293,7 +382,12 @@ def verify_composite(
     if repeat_errs:
         metrics["repeat_count_rel_err_max"] = round(max(repeat_errs), 4)
     if direction_errs:
-        metrics["direction_error_max"] = round(max(direction_errs), 4)
+        worst_dir = max(direction_errs)
+        metrics["direction_error_max"] = round(worst_dir, 4)
+        # 기록만 하고 어떤 상수와도 비교하지 않던 지표 — 줄 방향이 틀려도 통과했다.
+        if worst_dir > DIRECTION_ERROR_MAX:
+            failures.append({"code": "pattern_metric_failed",
+                             "detail": f"줄 방향 오차 {worst_dir:.3f} > {DIRECTION_ERROR_MAX}"})
     if color_des:
         metrics["color_delta_e00_max"] = round(max(color_des), 2)
         metrics["color_delta_e00_median"] = round(float(np.median(color_des)), 2)
@@ -305,6 +399,40 @@ def verify_composite(
         )
         metrics["mask_coverage"] = round(
             float(((painted_mask > 0) & garment).sum()) / max(1, int(garment.sum())), 4)
+        # coverage=1.0 은 "칠하려던 곳은 다 칠했다" 는 동어반복이다 — 분모가 feather 밴드·
+        # component·커프를 이미 뺀 core 이기 때문. 의류 전체 대비 실제 도포율과 제외 비율을
+        # 함께 남겨야 그 1.0 이 품질 보증으로 오독되지 않는다.
+        full = panel_map.garment_mask > 0
+        full_n = max(1, int(full.sum()))
+        metrics["garment_coverage"] = round(
+            float(((painted_mask > 0) & full).sum()) / full_n, 4)
+        metrics["coverage_excluded_frac"] = round(
+            float(full_n - int(garment.sum())) / full_n, 4)
+
+    seam = _interface_seam(alpha, painted_mask, panel_map.garment_mask)
+    metrics.update(seam)
+    if seam.get("seam_hard_edge_frac", 0.0) > SEAM_HARD_EDGE_MAX:
+        failures.append({
+            "code": "interface_seam",
+            "detail": (f"painted 내부 경계의 {seam['seam_hard_edge_frac']:.0%} 가 계단 "
+                       f"(> {SEAM_HARD_EDGE_MAX:.0%}) — 직선 이음매로 보인다")})
+
+    band = int(max(3, panel_map.metrics.get("boundary_band_px", 4)))
+    chroma = _boundary_chroma(out_bgr, painted_mask, panel_map.garment_mask, band)
+    metrics.update(chroma)
+    if chroma.get("boundary_chroma_de00", 0.0) > BOUNDARY_CHROMA_DE_MAX:
+        failures.append({
+            "code": "boundary_chroma_discontinuity",
+            "detail": (f"경계 양쪽 chroma ΔE00 {chroma['boundary_chroma_de00']:.1f} "
+                       f"> {BOUNDARY_CHROMA_DE_MAX} — 한 벌로 보이지 않는다")})
+
+    drape = _drape_preservation(out_bgr, carrier_bgr, panel_map.garment_mask)
+    metrics.update(drape)
+    if "drape_corr" in drape and drape["drape_corr"] < DRAPE_CORR_MIN:
+        failures.append({
+            "code": "drape_lost",
+            "detail": (f"carrier 대비 저주파 L 상관 {drape['drape_corr']:.2f} "
+                       f"< {DRAPE_CORR_MIN} — 주름·음영이 평면화됐다")})
 
     outside = panel_map.garment_mask == 0
     if outside.any():

@@ -1354,6 +1354,28 @@ async def _fail_closed_hybrid_job_if_needed(r2, fail, passed: list[dict], meta: 
     return True
 
 
+async def _emit_landmark_geometry(emit, *, source: tuple, carrier: tuple) -> None:
+    """component box 가 어느 단계에서 사라졌는지 남긴다 (호출 A/B → merge).
+
+    관측이 없으면 `protected_component_missing` 을 보고도 vision 미반환·병합 손실·
+    validator 거부를 구분할 수 없다. 정규화 좌표와 거부 사유만 싣는다 — 응답 원문·
+    URL·토큰·프롬프트는 넣지 않는다.
+    """
+    payload = {}
+    for side, (call_a, call_b, merged) in (("source", source), ("carrier", carrier)):
+        payload[side] = {
+            "call_a": hybrid_landmarks.component_observation(call_a),
+            "call_b": hybrid_landmarks.component_observation(call_b),
+            "merged": hybrid_landmarks.component_observation(merged),
+            "confidence": (merged or {}).get("confidence"),
+            "has_collar": bool((merged or {}).get("has_collar")),
+            "has_placket": bool((merged or {}).get("has_placket")),
+            "has_cuffs": bool((merged or {}).get("has_cuffs")),
+        }
+    await emit("hybrid_landmark_geometry",
+               prompt_version=hybrid_landmarks.PROMPT_VERSION, **payload)
+
+
 async def _apply_hybrid_composite(
     *, pool, s, job_id, candidate, attempt, res, prod_refs, product, analysis,
     has_fine_pattern, product_truth=None,
@@ -1518,16 +1540,23 @@ async def _apply_hybrid_composite(
     try:
         # 이중 호출 합의 — vision landmark 지터가 결과를 run 마다 굴리는 것을 실측으로
         # 확인(zero-cost 평가). 좌표는 평균, 불일치는 typed 실패.
+        # 호출별 원시 응답을 따로 붙든다 — 병합·검증 단계에서 component box 가 사라져도
+        # 어느 단계에서 사라졌는지 이벤트로 남길 수 있어야 한다(관측 없이는 "vision 미반환"
+        # 과 "validator 제거" 가 구분되지 않아 실패를 진단할 수 없었다).
+        src_call_a = await hybrid_landmarks.extract_geometry(s, front_ref.image)
+        src_call_b = await hybrid_landmarks.extract_geometry(s, front_ref.image)
         src_raw = hybrid_landmarks.merge_geometry_pair(
-            await hybrid_landmarks.extract_geometry(s, front_ref.image),
-            await hybrid_landmarks.extract_geometry(s, front_ref.image),
-            allow_source_jitter=True)
+            src_call_a, src_call_b, allow_source_jitter=True)
         car_img = InlineImage(res.mime, res.image)
-        car_raw = hybrid_landmarks.merge_geometry_pair(
-            await hybrid_landmarks.extract_geometry(s, car_img),
-            await hybrid_landmarks.extract_geometry(s, car_img))
+        car_call_a = await hybrid_landmarks.extract_geometry(s, car_img)
+        car_call_b = await hybrid_landmarks.extract_geometry(s, car_img)
+        car_raw = hybrid_landmarks.merge_geometry_pair(car_call_a, car_call_b)
     except Exception as e:
         return await fail("panel_landmarks_invalid", f"기하 추출 실패: {type(e).__name__}")
+    await _emit_landmark_geometry(
+        emit,
+        source=(src_call_a, src_call_b, src_raw[0]),
+        carrier=(car_call_a, car_call_b, car_raw[0]))
     if src_raw[1] is not None:
         return await fail("panel_landmarks_invalid", f"source: {src_raw[1]}")
     if car_raw[1] is not None:
@@ -1541,8 +1570,25 @@ async def _apply_hybrid_composite(
         car_raw, aspect_hw=carrier_bgr.shape[0] / carrier_bgr.shape[1])
     if car_err:
         return await fail("panel_landmarks_invalid", f"carrier: {car_err}")
-    src_boxes = (src_inv or {}).pop("component_boxes", {})
-    car_boxes = (car_inv or {}).pop("component_boxes", {})
+    # 정규화 → 픽셀. validate_geometry 는 0..1 을 돌려주고 warp_composite 는 픽셀을
+    # 가정한다. source 와 carrier 는 크기가 다르므로 각자의 해상도로 따로 환산한다.
+    src_boxes_norm = (src_inv or {}).pop("component_boxes", {})
+    car_boxes_norm = (car_inv or {}).pop("component_boxes", {})
+    src_boxes = hybrid_landmarks.boxes_to_pixels(
+        src_boxes_norm, width=front_bgr.shape[1], height=front_bgr.shape[0])
+    car_boxes = hybrid_landmarks.boxes_to_pixels(
+        car_boxes_norm, width=carrier_bgr.shape[1], height=carrier_bgr.shape[0])
+    await emit("hybrid_landmark_validated",
+               source_components=sorted(src_boxes_norm),
+               carrier_components=sorted(car_boxes_norm),
+               source_size=[front_bgr.shape[1], front_bgr.shape[0]],
+               carrier_size=[carrier_bgr.shape[1], carrier_bgr.shape[0]],
+               source_visible_buttons=(src_inv or {}).get("visible_buttons"),
+               carrier_visible_buttons=(car_inv or {}).get("visible_buttons"),
+               source_torso_aspect=(src_inv or {}).get("torso_aspect"),
+               carrier_torso_aspect=(car_inv or {}).get("torso_aspect"),
+               source_sleeve_len_ratio=(src_inv or {}).get("sleeve_len_ratio"),
+               carrier_sleeve_len_ratio=(car_inv or {}).get("sleeve_len_ratio"))
 
     # scale anchor — source Front torso 에서 **의류 기준 줄 방향과** 단위 반복 수를 잰다.
     # Detail 근접컷은 원단을 눕혀 찍는 경우가 흔해서(실측: 세로 줄 셔츠의 Detail 이 수평 밴드)
@@ -1797,6 +1843,7 @@ async def _apply_hybrid_composite(
         hc_qc.verify_composite, art.image_bgr, carrier_bgr, pm, model,
         painted_mask=art.painted,
         coverage_mask=art.coverage_scope,
+        alpha=art.alpha,
         target_period_px=target_period_px, target_axis=garment_axis)
     qc_event_metrics = {k: v for k, v in qc.metrics.items() if k != "failure_details"}
     await emit("hybrid_deterministic_qc", passed=qc.passed,

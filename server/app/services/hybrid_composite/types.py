@@ -26,6 +26,10 @@ COMPOSITE_FAILURE_REASONS = frozenset({
     "warp_invalid",                 # negative Jacobian / triangle flip / 과도 stretch
     "source_coverage_low",          # protected 내부의 source-derived 비율 미달
     "protected_component_missing", # 칼라·플래킷 등 보호 부위 source decal 부재
+    "chroma_cast_excessive",        # source/carrier chroma 차가 같은 옷으로 설명 불가
+    "interface_seam",               # painted 내부 경계가 계단 — 직선 이음매로 드러남
+    "boundary_chroma_discontinuity",  # 경계 양쪽 색이 한 벌로 보이지 않음
+    "drape_lost",                   # carrier 의 주름·음영이 평면화됨
     "pattern_metric_failed",        # 합성 결과 재측정이 source 모델과 불일치
     "protected_region_drift",       # 보호 영역 밖 픽셀이 carrier 에서 이탈
 })

@@ -451,3 +451,49 @@ test('missing protected components explains why the generated candidate was bloc
   assert.match(notice.description, /카라·앞여밈/);
   assert.deepEqual(notice.actions, ['product_hero', 'regenerate']);
 });
+
+// ── §F: 하드 실패 UI 계약 ──────────────────────────────────────────────────────
+// 카라·플래킷이 복원되지 않은 합성은 usable candidate 가 아니다. 실패 화면은 원본
+// 실사 Hero 와 재생성만 제공하고, '핏 참고용' 우회로는 노출되지 않아야 한다.
+
+test('hard composite failure offers exactly product_hero and regenerate', () => {
+  const notice = mannequinRegenerateFailureNotice({
+    code: 'hybrid_composite_failed_closed',
+    details: { failureReason: 'protected_component_missing' },
+  });
+  assert.equal(notice.level, 'blocked');
+  assert.deepEqual(notice.actions, ['product_hero', 'regenerate']);
+  assert.ok(!notice.actions.includes('fit_reference'),
+    '핏 참고용은 하드 실패의 우회로가 될 수 없다');
+});
+
+test('hard composite failure states that nothing was saved or charged', () => {
+  const notice = mannequinRegenerateFailureNotice({
+    code: 'hybrid_composite_failed_closed',
+    details: { failureReason: 'interface_seam' },
+  });
+  assert.match(notice.note, /저장하지 않았고/);
+  assert.match(notice.note, /차감되지 않았어요/);
+});
+
+test('hard failure notice carries no generated image reference', () => {
+  const notice = mannequinRegenerateFailureNotice({
+    code: 'hybrid_composite_failed_closed',
+    details: { failureReason: 'protected_component_missing', imageUrl: 'https://x/y.png' },
+  });
+  const serialized = JSON.stringify(notice);
+  assert.ok(!serialized.includes('http'), '실패 카드에 생성 이미지가 실리면 안 된다');
+  assert.ok(!('imageUrl' in notice));
+});
+
+test('new composite failure reasons all render as blocked with the same two actions', () => {
+  for (const reason of ['interface_seam', 'boundary_chroma_discontinuity',
+    'drape_lost', 'chroma_cast_excessive', 'geometry_carrier_mismatch']) {
+    const notice = mannequinRegenerateFailureNotice({
+      code: 'hybrid_composite_failed_closed',
+      details: { failureReason: reason },
+    });
+    assert.equal(notice.level, 'blocked', reason);
+    assert.deepEqual(notice.actions, ['product_hero', 'regenerate'], reason);
+  }
+});

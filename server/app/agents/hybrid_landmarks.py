@@ -33,6 +33,7 @@ GEOMETRY_SCHEMA = {
     "additionalProperties": False,
 }
 
+PROMPT_VERSION = "hybrid_landmarks_v1"
 PROMPT = """You are a garment geometry annotator. Look at the single attached image of a shirt
 (either a flat product photo or a mannequin wearing it) and return NORMALIZED coordinates
 (x, y in 0..1 relative to image width/height) for these garment landmarks:
@@ -196,3 +197,64 @@ def validate_geometry(
     if sleeve_len_ratio is not None:
         inventory["sleeve_len_ratio"] = round(sleeve_len_ratio, 3)
     return lm, {**inventory, "component_boxes": boxes}, None
+
+
+BOX_KEYS: tuple[str, ...] = ("collar_box", "placket_box")
+
+
+def box_rejection_reason(v) -> str | None:
+    """`validate_geometry.box()` 와 **같은 술어**로 거부 사유만 돌려준다 (관측 전용).
+
+    수용 가능하면 None. box() 는 실패를 조용히 건너뛰므로(키 미생성) 그 경로에서
+    "vision 이 안 줬다" 와 "형식이 틀려 버려졌다" 를 구분할 방법이 없었다. 사유를
+    따로 계산해 이벤트로 남긴다 — 술어가 갈라지지 않게 조건 순서를 box() 와 맞춘다.
+    """
+    if v is None:
+        return "absent"
+    if not isinstance(v, list):
+        return "not_a_list"
+    if len(v) != 4:
+        return f"point_count_{len(v)}"
+    for p in v:
+        if not isinstance(p, list) or len(p) != 2:
+            return "point_not_xy_pair"
+        for x in p:
+            if not isinstance(x, (int, float)):
+                return "coord_not_number"
+            if not 0.0 <= x <= 1.0:
+                return "coord_out_of_unit_range"
+    return None
+
+
+def component_observation(raw: dict | None) -> dict:
+    """component box 관측 요약. 정규화 좌표·존재 여부·거부 사유만 — 응답 원문은 넣지 않는다."""
+    raw = raw or {}
+    out: dict = {}
+    for key in BOX_KEYS:
+        reason = box_rejection_reason(raw.get(key))
+        entry: dict = {"present": reason is None}
+        if reason is not None:
+            entry["rejected"] = reason
+        else:
+            entry["box"] = [[round(float(x), 4), round(float(y), 4)]
+                            for x, y in raw[key]]
+        out[key] = entry
+    return out
+
+
+def boxes_to_pixels(boxes: dict | None, *, width: int, height: int) -> dict:
+    """정규화 [0,1] component box → 픽셀 좌표.
+
+    `validate_geometry` 는 계약상 정규화 좌표를 돌려주고(PROMPT 도 `0..1` 을 지시한다),
+    소비 측 `warp_composite` 는 픽셀을 가정한다. 이 환산이 빠지면 source quad 의 변
+    길이가 항상 1.0 이하라 `MIN_DECAL_RES_PX` 게이트가 무조건 발화하고, carrier quad 는
+    int 절삭으로 원점의 퇴화 폴리곤이 된다 — 어떤 입력에서도 collar/placket 이
+    `protected_component_missing` 으로 떨어진 2026-08-04 실 4K 실패의 근본 원인이다.
+    source 와 carrier 는 크기가 다르므로 각자의 (width, height) 로 따로 환산한다.
+    """
+    if not boxes:
+        return {}
+    return {
+        name: [[float(x) * width, float(y) * height] for x, y in box]
+        for name, box in boxes.items()
+    }

@@ -8,6 +8,7 @@ mask−quad 영역도 패턴이 칠해짐을 요구한다(현행 코드에서 RE
 
 import numpy as np
 import cv2
+import pytest
 
 from hybrid_stripe_fixtures import render_carrier, render_signal, GEOMETRIES
 from app.services.hybrid_composite.panel_map import build_panel_map
@@ -139,14 +140,24 @@ def test_build_panel_map_prefers_mask_derived_aspect_over_vision():
     assert not isinstance(pm, CompositeFailure), (
         f"mask 유도값이 일치하는데 vision 왜곡으로 차단됨: {getattr(pm,'detail',None)}")
 
-    # mask 쌍은 관측 전용(D7 — 교차-포즈 hard gate 불건전, 같은 셔츠 1.75× 실측 2회).
-    # 극단값이어도 mask 쌍 자체는 차단하지 않는다 — 차단은 줄 수 불변량·패턴 QC 소관.
+    # mask 쌍은 좁은 상대오차 hard gate 를 걸지 않는다(D7 — 교차-포즈 비교는 불건전하고,
+    # 같은 셔츠가 1.75× 로 측정된 실측이 2회 있다). 핏/기장 조정은 제품 기능이므로 그
+    # 범위는 통과해야 한다. 다만 순수 관측으로 두면 mask 붕괴가 그대로 새어나가므로,
+    # 물리적으로 설명되지 않는 배율에서만 닫는 위생 게이트를 둔다.
     pm2 = build_panel_map(
         cx["image"], cx["landmarks"],
         source_inventory={**src_inv, "torso_aspect_mask": a_mask},
         carrier_inventory={**src_inv, "torso_aspect_mask": a_mask * 1.8})
     assert not isinstance(pm2, CompositeFailure), getattr(pm2, "detail", None)
-    assert pm2.metrics["torso_aspect"]["observational_only"] is True
+    assert pm2.metrics["torso_aspect"]["mask_aspect_ratio"] == pytest.approx(1.8, abs=0.01)
+
+    # v6 실측(3.58×)은 mask 붕괴다 — 이제 차단된다.
+    pm_collapsed = build_panel_map(
+        cx["image"], cx["landmarks"],
+        source_inventory={**src_inv, "torso_aspect_mask": a_mask},
+        carrier_inventory={**src_inv, "torso_aspect_mask": a_mask * 3.58})
+    assert isinstance(pm_collapsed, CompositeFailure)
+    assert pm_collapsed.reason == "geometry_carrier_mismatch"
 
     # vision 쌍 폴백(Codex fixpoint 계약)은 불변 — mask 쌍이 없으면 0.35 로 차단 유지
     pm3 = build_panel_map(

@@ -27,6 +27,10 @@ CONSTRUCTION_RATIO_KEYS = ("torso_aspect", "sleeve_len_ratio")
 # sleeve foreshortening이 35.0~35.6%까지 반복됐다(2026-08-04). 40%는 이 실측 상한을
 # 포함하면서 진짜 구조 불일치(기장/폭 다른 옷, 42~50%+)는 계속 차단한다.
 CONSTRUCTION_RATIO_TOL = 0.40
+# torso mask 종횡비의 source/carrier 배율 상한. 같은 셔츠가 flat-lay↔착장 3/4 뷰에서
+# 1.75~1.76배로 측정된 실측(2회, D7)이 하한 근거이고, 실패한 4K 표본은 3.58배였다.
+# 그 사이에서 같은 옷을 살리고 mask 붕괴만 닫는 값으로 2.5배를 쓴다.
+MAX_TORSO_ASPECT_RATIO = 2.5
 
 
 @dataclass(frozen=True)
@@ -307,9 +311,24 @@ def build_panel_map(
                     # 에서 1.75~1.76× 로 측정된다(2회 실측, D7). mask 쌍이 있으면 vision
                     # 쌍 비교를 대체하되 **관측 지표로만** 남긴다. 정체성 차단은
                     # 줄 수 불변량(워커) + Stage-5 패턴 QC + construction 카운트 소관.
+                    # 다만 **관측만** 하고 끝내면 mask 가 망가진 carrier 도 그대로 통과한다
+                    # (v6 실측: source 1.353 vs carrier 4.841 = 3.58배). 같은 셔츠의
+                    # flat-lay↔착장 차이는 실측 1.75~1.76배였으므로, 그 위에 여유를 둔
+                    # 배율에서만 닫는다. 좁은 상대오차(0.40) 하드게이트로 되돌리는 것이
+                    # 아니라 — 그건 핏 조정이라는 제품 기능 자체를 막는다 — 물리적으로
+                    # 설명되지 않는 mask 붕괴만 걸러내는 위생 게이트다.
+                    ratio = (max(float(s_m), float(c_m))
+                             / max(min(float(s_m), float(c_m)), 1e-6))
                     inv_metrics[k] = {"source_mask": round(float(s_m), 3),
                                       "carrier_mask": round(float(c_m), 3),
-                                      "observational_only": True}
+                                      "mask_aspect_ratio": round(ratio, 3)}
+                    if ratio > MAX_TORSO_ASPECT_RATIO:
+                        return CompositeFailure(
+                            "geometry_carrier_mismatch",
+                            f"torso mask 종횡비 {ratio:.2f}배 > {MAX_TORSO_ASPECT_RATIO}배",
+                            {"source_mask": round(float(s_m), 3),
+                             "carrier_mask": round(float(c_m), 3),
+                             "mask_aspect_ratio": round(ratio, 3)})
                     continue
             if isinstance(s_val, (int, float)) and isinstance(c_val, (int, float)) and s_val > 0:
                 rel = abs(c_val - s_val) / s_val
