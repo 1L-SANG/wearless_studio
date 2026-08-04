@@ -91,7 +91,7 @@ test('the storyboard undo window groups every active change, pauses on hover, an
 });
 
 test('owner cleanup keeps one place dissolve action and removes obsolete inspector copy and stack counts', () => {
-  assert.equal((storyboardSource.match(/촬영 장소 묶음 풀기/g) || []).length, 1);
+  assert.equal((storyboardSource.match(/장소 세트 묶음 풀기/g) || []).length, 1);
   assert.doesNotMatch(storyboardSource, /새 컷의 예시를 먼저 골라주세요/);
   assert.doesNotMatch(storyboardSource, /sb-stack-count/);
   assert.match(storyboardSource, /cutRangeLabel\(group\.items\)/);
@@ -101,7 +101,7 @@ test('shooting place picker uses column-aware larger previews and no tray place 
   assert.match(storyboardSource, /const width = 316/);
   assert.match(storyboardSource, /itemIndex % 2 === 0 \? leftSide : rightSide/);
   assert.doesNotMatch(storyboardSource, /<strong>\{label\}<\/strong>|traySeqLabels|normalizePlaceType/);
-  assert.match(storyboardSource, /className="sb-tray-swap"[^]*촬영 장소 변경/);
+  assert.match(storyboardSource, /className="sb-tray-swap"[^]*장소 세트 변경/);
 });
 
 test('gallery controls sit below a full-width grid and hover uses compositor properties', () => {

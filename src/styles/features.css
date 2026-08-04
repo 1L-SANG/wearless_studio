@@ -1589,8 +1589,10 @@
   padding: 14px; border-radius: 8px; background: var(--bg-2); color: var(--fg-2); font-size: 12px; text-align: center;
 }
 .sb-excontrols { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 26px; padding-top: 8px; }
-.sb-expage-hit { display: grid; place-items: center; width: 26px; height: 22px; border: 1px solid var(--ring-strong); border-radius: 999px;
-  padding: 0; background: #fff; color: var(--fg-1); font-size: 18px; line-height: 1; cursor: pointer; opacity: .82; transition: opacity .15s; }
+/* 넘김 버튼 — 눈에 띄되 과하지 않게: 크기 소폭 확대 + 테두리 한 단계 진하게. */
+.sb-expage-hit { display: grid; place-items: center; width: 32px; height: 26px; border: 1.5px solid var(--fg-3); border-radius: 999px;
+  padding: 0; background: #fff; color: var(--fg-1); font-size: 20px; line-height: 1; cursor: pointer; opacity: .9; transition: opacity .15s, border-color .15s; }
+.sb-expage-hit:hover, .sb-expage-hit:focus-visible { border-color: var(--fg-2); }
 .sb-expage-hit:hover, .sb-expage-hit:focus-visible { opacity: 1; }
 .sb-expage-hit:disabled { opacity: .28; cursor: default; }
 .sb-expages { display: flex; justify-content: center; gap: 6px; min-height: 7px; }

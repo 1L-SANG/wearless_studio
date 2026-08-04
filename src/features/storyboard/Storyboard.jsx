@@ -732,7 +732,7 @@ function SpaceMemberStrip({ set, siblings, currentId }) {
       <div className="sb-space-strip-copy">
         <strong>{set.setType === 'styling' ? '📍' : set.setType ? '↻' : '•'} {spaceSetDisplayName(set)}</strong>
         <span>{summary}</span>
-        <small>촬영 장소 변경은 보드에서</small>
+        <small>장소 세트 변경은 보드에서</small>
       </div>
     </div>
   );
@@ -775,12 +775,12 @@ function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType 
     <div className="surface inspector sb-set-picker">
       <div className="sb-set-picker-head">
         <div>
-          <div className="sec-title">{replacing ? '촬영 장소 변경' : '촬영 장소 추가'}</div>
+          <div className="sec-title">{replacing ? '장소 세트 변경' : '장소 세트 추가'}</div>
           <p>{replacing
             ? '고르면 공간과 구성 컷 전체가 한 번에 바뀌어요.'
-            : '촬영 장소 카드 하나에 공간과 어울리는 컷 구성이 함께 들어 있어요.'}</p>
+            : '장소 세트 카드 하나에 공간과 어울리는 컷 구성이 함께 들어 있어요.'}</p>
         </div>
-        <button type="button" className="sb-set-picker-close" onClick={onClose} aria-label="촬영 장소 갤러리 닫기"><Icon name="x" size={16} /></button>
+        <button type="button" className="sb-set-picker-close" onClick={onClose} aria-label="장소 세트 갤러리 닫기"><Icon name="x" size={16} /></button>
       </div>
       <div className="sb-set-grid">
         {spaceSets.map((set) => (
@@ -804,7 +804,7 @@ function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType 
             <small>{set.compositionLabel}</small>
           </button>
         ))}
-        {!spaceSets.length && <div className="sb-set-empty">이 상품에 맞는 촬영 장소를 준비 중이에요.</div>}
+        {!spaceSets.length && <div className="sb-set-empty">이 상품에 맞는 장소 세트를 준비 중이에요.</div>}
       </div>
       {error && <div className="sb-save-error">{error}</div>}
       {preview && createPortal(
@@ -1277,12 +1277,12 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         <div className="sb-cut-label-row"><label className="lbl">컷 종류</label></div>
         <UnderlineTabs
           options={spaceContext ? cutTypeOptions.map((option) => ({
-            ...option, disabled: true, disabledReason: '촬영 장소 묶음을 푼 뒤 바꿀 수 있어요',
+            ...option, disabled: true, disabledReason: '장소 세트 묶음을 푼 뒤 바꿀 수 있어요',
           })) : cutTypeOptions}
           value={pendingRecipe?.cutType || block.cutType}
           onChange={spaceContext ? () => {} : onCutTypeChange} />
         {spaceContext && (
-          <div className="sb-lock-note"><Icon name="lock" size={13} />촬영 장소로 묶인 동안 고정돼요.</div>
+          <div className="sb-lock-note"><Icon name="lock" size={13} />장소 세트로 묶인 동안 고정돼요.</div>
         )}
       </div>
 
@@ -1853,7 +1853,7 @@ export function Storyboard() {
         cutType: droppedCutType,
         direction: droppedExample.direction,
       }))) {
-      toast.push('이 촬영 장소에는 포즈 참조가 가능한 예시만 넣을 수 있어요');
+      toast.push('이 장소 세트에는 포즈 참조가 가능한 예시만 넣을 수 있어요');
       return;
     }
     newSeq.current += 1;
@@ -1997,7 +1997,7 @@ export function Storyboard() {
       const memberIds = new Set(members.map((member) => member.id));
       const allAllowed = !targetRole || members.every((block) => cutTypeOptionsForSection(targetRole)
         .some((option) => option.value === block.cutType));
-      if (!allAllowed) { toast.push('이 섹션에는 촬영 장소 구성을 그대로 옮길 수 없어요'); return; }
+      if (!allAllowed) { toast.push('이 섹션에는 장소 세트 구성을 그대로 옮길 수 없어요'); return; }
       setBlocks((current) => {
         let moved = moveSpaceSetRun(current, draggedGroup, idx);
         for (const member of members) moved = adoptSection(moved, member.id, targetSid, targetRole);
@@ -2164,16 +2164,16 @@ export function Storyboard() {
         }, { nextSelectedId: memberIds[0] });
       }
       setSetPicker(null);
-      toast.push(setPicker.mode === 'replace' ? '촬영 장소를 변경했어요' : '촬영 장소를 추가했어요', { icon: 'plus' });
+      toast.push(setPicker.mode === 'replace' ? '장소 세트를 변경했어요' : '장소 세트를 추가했어요', { icon: 'plus' });
     } catch {
-      setSetPickerError('촬영 장소를 저장하지 못했어요. 다시 시도해주세요.');
+      setSetPickerError('장소 세트를 저장하지 못했어요. 다시 시도해주세요.');
     }
   };
   const dissolveSpaceGroup = async (spaceGroupId) => {
     if (!spaceGroupId) return;
     try {
       await atomicBoardChange((current) => dissolveSpaceSet(current, spaceGroupId));
-      toast.push('촬영 장소 묶음을 풀었어요');
+      toast.push('장소 세트 묶음을 풀었어요');
     } catch {
       setSaveError('변경 내용을 저장하지 못했어요');
     }
@@ -2346,11 +2346,11 @@ export function Storyboard() {
             const first = unit.items[0].block;
             setSelectedId(first.id);
             openSetPicker({ mode: 'replace', spaceGroupId: unit.spaceGroupId });
-          }}>촬영 장소 변경</button>
+          }}>장소 세트 변경</button>
           <details className="sb-tray-more" onClick={(event) => event.stopPropagation()}>
-            <summary aria-label="촬영 장소 메뉴">⋯</summary>
+            <summary aria-label="장소 세트 메뉴">⋯</summary>
             <span>
-              <button type="button" onClick={() => dissolveSpaceGroup(unit.spaceGroupId)}>촬영 장소 묶음 풀기</button>
+              <button type="button" onClick={() => dissolveSpaceGroup(unit.spaceGroupId)}>장소 세트 묶음 풀기</button>
             </span>
           </details>
         </div>

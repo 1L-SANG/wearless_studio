@@ -86,7 +86,7 @@ const FALLBACK_BY_PLACE = Object.freeze({
 export function spaceSetDisplayName(set) {
   return SPACE_SET_DISPLAY_NAMES[set?.id]
     || FALLBACK_BY_PLACE[set?.placeType]
-    || (set?.setType?.startsWith('horizon') ? '밝은 호리존' : '실내 촬영 장소');
+    || (set?.setType?.startsWith('horizon') ? '밝은 호리존' : '실내 장소 세트');
 }
 
 export function mappedSpaceSetCount() {

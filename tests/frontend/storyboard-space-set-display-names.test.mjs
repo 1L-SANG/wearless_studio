@@ -24,5 +24,5 @@ test('an unmapped set falls back by place without exposing its id or internal na
   };
   assert.equal(spaceSetDisplayName(unknown), '도시적인 건물 외벽');
   assert.doesNotMatch(spaceSetDisplayName(unknown), /cream|26667|PASS/i);
-  assert.equal(spaceSetDisplayName({ id: 'unknown' }), '실내 촬영 장소');
+  assert.equal(spaceSetDisplayName({ id: 'unknown' }), '실내 장소 세트');
 });
