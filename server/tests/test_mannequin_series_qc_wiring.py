@@ -1184,6 +1184,12 @@ def test_effective_image_size_upgrades_only_pattern_products():
     legacy = types.SimpleNamespace(mannequin_image_size="1K")
     assert effective_image_size(legacy, *striped) == "1K"
 
+    # 승인 Product Truth 가 stale 텍스트보다 우선한다.
+    solid_truth = {"status": "approved", "patternSpec": {"type": "SOLID", "finePattern": False}}
+    assert effective_image_size(s, {"name": "스트라이프 셔츠"}, {}, solid_truth) == "2K"
+    stripe_truth = {"status": "approved", "patternSpec": {"type": "STRIPE", "finePattern": True}}
+    assert effective_image_size(s, {"name": "무지 티셔츠"}, {}, stripe_truth) == "4K"
+
 
 def test_tier_for_job_splits_adjust_from_initial_generation():
     """조정만 다른 모델로 보낼 수 있어야 한다 — 둘은 같은 워커를 타서 env 하나로는 못 가른다.

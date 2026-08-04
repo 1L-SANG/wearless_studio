@@ -65,6 +65,13 @@ class EditRequest(CamelModel):
     baseline_id: str | None = None
 
 
+class RegenerateRequest(CamelModel):
+    """핏 재생성 요청. baseline_id 는 승인 정본을 identity anchor 로 쓸 때만 보낸다."""
+
+    fit_profile: dict | None = None
+    baseline_id: str | None = None
+
+
 class EditSessionView(CamelModel):
     id: str
     project_id: str

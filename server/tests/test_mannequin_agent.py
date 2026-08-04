@@ -42,3 +42,43 @@ def test_fine_pattern_detection_reads_seller_and_ai_text():
     # 무지·단색은 승급하지 않는다 — 재현할 고주파가 없다
     assert not mannequin.has_fine_pattern({"name": "무지 반팔 티셔츠"}, {"sellingPoints": ["코튼 100%"]})
     assert not mannequin.has_fine_pattern(None, None)
+
+
+def test_fine_pattern_detection_prefers_approved_product_truth_over_stale_text():
+    """승인된 Product Truth가 무지라고 확정하면 오래된 텍스트 토큰은 패턴 리스크를 강제하지 못한다."""
+    approved_solid_truth = {
+        "status": "approved",
+        "patternSpec": {"type": "solid", "finePattern": False},
+    }
+
+    assert not mannequin.has_fine_pattern(
+        {"name": "잔스트라이프 셔츠"},
+        {"sellingPoints": ["멀티 스트라이프"]},
+        approved_solid_truth,
+    )
+
+
+def test_fine_pattern_detection_uses_structured_product_truth_before_text_fallback():
+    """승인된 Product Truth의 patternSpec/finePattern은 텍스트가 비어 있어도 패턴 리스크 정본이다."""
+    approved_stripe_truth = {
+        "status": "approved",
+        "pattern_spec": {"type": "STRIPE", "fine_pattern": True},
+    }
+
+    assert mannequin.has_fine_pattern(
+        {"name": "기본 셔츠"},
+        {"sellingPoints": ["코튼 100%"]},
+        approved_stripe_truth,
+    )
+
+
+def test_fine_pattern_detection_uses_structured_analysis_before_legacy_text():
+    """승인 Product Truth가 없으면 analysis patternSpec이 레거시 텍스트보다 먼저 적용된다."""
+    assert not mannequin.has_fine_pattern(
+        {"name": "잔스트라이프 셔츠"},
+        {"patternSpec": {"type": "SOLID", "finePattern": False}},
+    )
+    assert mannequin.has_fine_pattern(
+        {"name": "기본 셔츠"},
+        {"pattern_spec": {"type": "check"}},
+    )

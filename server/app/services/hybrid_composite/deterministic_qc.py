@@ -113,6 +113,7 @@ def _measure_panel_local(
         purity = None
     lab = bgr_to_lab(local)
     mean_axis = 1 if target_axis == "horizontal" else 0
+    other_mean_axis = 0 if mean_axis == 1 else 1
     span = local.shape[0] if target_axis == "horizontal" else local.shape[1]
     pm: dict = {"local_size": [local.shape[1], local.shape[0]], "supersample": ss,
                 "expected_repeats": round(span / target_period_px, 2),
@@ -122,6 +123,7 @@ def _measure_panel_local(
     # 1) 주기 — 실측 autocorr vs 목표
     det = _detrended_profile(lab[..., 0], axis=mean_axis)
     ax = _autocorr_period(det)
+    orth = _autocorr_period(_detrended_profile(lab[..., 0], axis=other_mean_axis))
     if ax.period_px is None or ax.strength < 0.15:
         if strict:
             failures.append({"code": "pattern_metric_failed", "panel": panel.name,
@@ -133,6 +135,9 @@ def _measure_panel_local(
     pm["measured_period_px"] = round(float(ax.period_px), 2)
     pm["repeat_period_rel_err"] = round(rep_err, 4)
     pm["measured_repeats"] = round(span / float(ax.period_px), 2)
+    pm["direction_error"] = round(max(0.0, float(orth.strength - ax.strength)), 4)
+    pm["direction_target_strength"] = round(float(ax.strength), 4)
+    pm["direction_orthogonal_strength"] = round(float(orth.strength), 4)
     if rep_err > REPEAT_COUNT_TOL and strict:
         failures.append({"code": "pattern_metric_failed", "panel": panel.name,
                          "detail": f"주기 오차 {rep_err:.3f} > {REPEAT_COUNT_TOL}"})
@@ -261,6 +266,40 @@ def verify_composite(
     if not strict_ok:
         failures.append({"code": "pattern_metric_failed",
                          "detail": "strict 순도로 검증된 패널이 0개 — 측정 성립 불가"})
+    period_errs = [
+        float(m["repeat_period_rel_err"])
+        for m in metrics["per_panel"].values()
+        if "repeat_period_rel_err" in m
+    ]
+    repeat_errs = [
+        abs(float(m["measured_repeats"]) - float(m["expected_repeats"]))
+        / max(float(m["expected_repeats"]), 1e-6)
+        for m in metrics["per_panel"].values()
+        if "measured_repeats" in m and "expected_repeats" in m
+    ]
+    direction_errs = [
+        float(m["direction_error"])
+        for m in metrics["per_panel"].values()
+        if "direction_error" in m
+    ]
+    color_des = [
+        float(de)
+        for m in metrics["per_panel"].values()
+        for de in m.get("color_delta_e00", [])
+    ]
+    if period_errs:
+        metrics["period_rel_err_max"] = round(max(period_errs), 4)
+    if repeat_errs:
+        metrics["repeat_count_rel_err_max"] = round(max(repeat_errs), 4)
+    if direction_errs:
+        metrics["direction_error_max"] = round(max(direction_errs), 4)
+    if color_des:
+        metrics["color_delta_e00_max"] = round(max(color_des), 2)
+        metrics["color_delta_e00_median"] = round(float(np.median(color_des)), 2)
+    if painted_mask is not None:
+        garment = panel_map.garment_mask > 0
+        metrics["mask_coverage"] = round(
+            float(((painted_mask > 0) & garment).sum()) / max(1, int(garment.sum())), 4)
 
     outside = panel_map.garment_mask == 0
     if outside.any():

@@ -60,9 +60,15 @@ async def extract_geometry(settings, image: InlineImage) -> dict:
 
 
 AGREEMENT_MAX_DELTA = 0.06  # 두 호출의 같은 landmark 가 이보다 벌어지면 불일치(정규화 좌표)
+SOURCE_AGREEMENT_SOFT_MAX_DELTA = 0.14
 
 
-def merge_geometry_pair(a: dict, b: dict) -> tuple[dict | None, str | None]:
+def merge_geometry_pair(
+    a: dict,
+    b: dict,
+    *,
+    allow_source_jitter: bool = False,
+) -> tuple[dict | None, str | None]:
     """vision 이중 호출 합의 — 좌표는 중앙값(평균), 불일치는 typed 실패 사유로.
 
     zero-cost 평가 실측(2026-08-01): 같은 이미지에 대한 호출 간 landmark 지터가 결과를
@@ -74,14 +80,18 @@ def merge_geometry_pair(a: dict, b: dict) -> tuple[dict | None, str | None]:
     if not (a.get("garment_visible") and b.get("garment_visible")):
         return None, "의류 미검출(이중 호출 불일치)"
     merged = dict(a)
+    agreement_warnings = {}
     for key in ("shoulder_l", "shoulder_r", "hem_l", "hem_r",
                 "sleeve_l_end", "sleeve_r_end"):
         va, vb = a.get(key), b.get(key)
         ok_a = isinstance(va, list) and len(va) == 2
         ok_b = isinstance(vb, list) and len(vb) == 2
         if ok_a and ok_b:
-            if max(abs(va[0] - vb[0]), abs(va[1] - vb[1])) > AGREEMENT_MAX_DELTA:
-                return None, f"landmark 불일치: {key}"
+            delta = max(abs(va[0] - vb[0]), abs(va[1] - vb[1]))
+            if delta > AGREEMENT_MAX_DELTA:
+                if not allow_source_jitter or delta > SOURCE_AGREEMENT_SOFT_MAX_DELTA:
+                    return None, f"landmark 불일치: {key}"
+                agreement_warnings[key] = round(float(delta), 4)
             merged[key] = [(va[0] + vb[0]) / 2, (va[1] + vb[1]) / 2]
         elif ok_a or ok_b:
             merged[key] = va if ok_a else vb
@@ -96,6 +106,8 @@ def merge_geometry_pair(a: dict, b: dict) -> tuple[dict | None, str | None]:
                                float(b.get("confidence") or 0))
     for key in ("has_collar", "has_placket", "has_cuffs"):
         merged[key] = bool(a.get(key)) or bool(b.get(key))
+    if agreement_warnings:
+        merged["_agreement_warnings"] = agreement_warnings
     return merged, None
 
 

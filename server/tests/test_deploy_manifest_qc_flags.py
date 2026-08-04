@@ -18,16 +18,38 @@ import yaml
 from app.config import load_settings
 
 MANIFEST = pathlib.Path(__file__).resolve().parents[2] / "copilot/api/manifest.yml"
+ENV_EXAMPLE = pathlib.Path(__file__).resolve().parents[1] / ".env.example"
 
 # (매니페스트 변수명, Settings 속성명) — 값이 로더를 통과해 살아남아야 하는 플래그.
 QC_FLAGS = [
     ("IMAGE_QC", "image_qc"),
     ("MANNEQUIN_AXIS_QC", "mannequin_axis_qc"),
+    ("MANNEQUIN_FRAME_QC", "mannequin_frame_qc"),
     ("MANNEQUIN_QC_ENABLED", "mannequin_qc_enabled"),
     # 편집 패스 2종도 같은 사고 경로다 — 미선언이면 config 기본 off 로 조용히 안 돈다.
     ("MANNEQUIN_UNTUCK_PASS", "mannequin_untuck_pass"),
     ("MANNEQUIN_BUST_PASS", "mannequin_bust_pass"),
+    # 완료된 data/QC/edit/texture rollout 플래그. 기본값 의존은 prod 에서 무측정/off 로
+    # 조용히 퇴행하는 경로라 deploy/example 둘 다 명시한다.
+    ("GENERATION_RUN_LOG", "generation_run_log"),
+    ("ENABLE_PRODUCT_TRUTH", "enable_product_truth"),
+    ("MANNEQUIN_STRUCTURED_QC", "mannequin_structured_qc"),
+    ("MANNEQUIN_EDIT_INTENT_QC", "mannequin_edit_intent_qc"),
+    ("EDITOR_VARY_INTENT_QC", "editor_vary_intent_qc"),
+    ("MANNEQUIN_HYBRID_COMPOSITE", "mannequin_hybrid_composite"),
+    ("MANNEQUIN_TEXTURE_PROJECTION_2D", "mannequin_texture_projection_2d"),
 ]
+
+SAFE_ROLLOUT_VALUES = {
+    "GENERATION_RUN_LOG": "shadow",
+    "ENABLE_PRODUCT_TRUTH": "enforce",
+    "MANNEQUIN_STRUCTURED_QC": "shadow",
+    "MANNEQUIN_EDIT_INTENT_QC": "shadow",
+    "EDITOR_VARY_INTENT_QC": "shadow",
+    "MANNEQUIN_HYBRID_COMPOSITE": "shadow",
+    "MANNEQUIN_TEXTURE_PROJECTION_2D": "shadow",
+    "MANNEQUIN_FRAME_QC": "shadow",
+}
 
 # 폐기된 flag — manifest 에 다시 나타나면 안 된다. 구 generative fabric pass 는 blind visual
 # 3/3 FAIL 로 코드째 삭제됐다(2026-08-01, hybrid composite 로 대체). env 잔재로 재선언되면
@@ -41,10 +63,40 @@ def manifest_vars() -> dict:
     return doc.get("variables") or {}
 
 
+@pytest.fixture(scope="module")
+def env_example_vars() -> dict:
+    values = {}
+    for line in ENV_EXAMPLE.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        name, raw = stripped.split("=", 1)
+        values[name] = raw.split("#", 1)[0].strip()
+    return values
+
+
 def test_qc_flags_are_declared(manifest_vars):
     """QC 플래그는 매니페스트에 명시돼야 한다 — 기본값 의존이 무측정 사고의 원인이었다."""
     missing = [name for name, _ in QC_FLAGS if name not in manifest_vars]
     assert not missing, f"매니페스트에 QC 플래그 미선언: {missing}"
+
+
+def test_rollout_flags_are_declared_in_env_example(env_example_vars):
+    """예제 env 도 rollout 값을 명시해야 한다 — 로컬/문서 기본값이 off 로 퇴행하면 안 된다."""
+    missing = [name for name in SAFE_ROLLOUT_VALUES if name not in env_example_vars]
+    assert not missing, f".env.example 에 rollout 플래그 미선언: {missing}"
+
+
+@pytest.mark.parametrize("env_name,expected", SAFE_ROLLOUT_VALUES.items())
+def test_manifest_uses_safe_rollout_values(env_name, expected, manifest_vars):
+    """프로덕션 배포값은 캘리브레이션이 끝난 축만 enforce, 나머지는 관측 shadow 로 고정한다."""
+    assert str(manifest_vars.get(env_name)) == expected
+
+
+@pytest.mark.parametrize("env_name,expected", SAFE_ROLLOUT_VALUES.items())
+def test_env_example_uses_safe_rollout_values(env_name, expected, env_example_vars):
+    """예제 env 는 배포 계약과 같은 safe rollout 모드를 보여준다."""
+    assert env_example_vars.get(env_name) == expected
 
 
 def test_retired_flags_are_not_declared(manifest_vars):

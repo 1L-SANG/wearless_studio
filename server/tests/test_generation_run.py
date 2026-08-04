@@ -483,8 +483,70 @@ def test_worker_records_hybrid_transformation_metadata(monkeypatch):
     hybrid = {"applied": True, "needsReview": False, "pipelineVersion": "hc-v1"}
     _rec, _p, _d, calls = _run_job(monkeypatch, settings_kw=SHADOW, hybrid_summary=hybrid)
     lin = calls["success"][0]["candidates"][0]["generation_lineage"]
-    assert lin["transformation"]["hybridComposite"] == {
-        "applied": True, "needsReview": False, "pipelineVersion": "hc-v1"}
+    hc = lin["transformation"]["hybridComposite"]
+    assert hc == {
+        "applied": True, "wouldApply": False, "needsReview": False,
+        "failClosed": False, "deterministicPassed": False,
+        "pipelineVersion": "hc-v1"}
+
+
+def test_worker_records_shadow_hybrid_safe_transformation_metadata(monkeypatch):
+    hybrid = {
+        "mode": "shadow", "applied": False, "wouldApply": True,
+        "needsReview": False, "failClosed": False, "deterministicPassed": True,
+        "pipelineVersion": "hc-v1", "carrierSha256": "c" * 64,
+        "outputSha256": "o" * 64, "targetAxis": "vertical",
+        "targetPeriodPx": 12.25, "sourceCoverage": 0.97,
+        "versions": {"pipeline": "hc-v1", "qc": "qc-v1"},
+        "sourceAssets": {
+            "detail": {"assetId": "detail", "sha256": "d" * 64, "roi": [1, 2, 3, 4]},
+        },
+        "textureProjection": {"version": "texture_projection_2d_v1", "ok": True},
+        "deterministicMetrics": {
+            "period_rel_err_max": 0.03,
+            "repeat_count_rel_err_max": 0.04,
+            "direction_error_max": 1.25,
+            "color_delta_e00_max": 4.5,
+            "color_delta_e00_median": 2.2,
+            "mask_coverage": 0.91,
+            "outside_drift_frac": 0,
+            "outside_mean_de76": 0.0,
+            "outside_ssim": 1.0,
+            "prompt": "must-not-persist",
+            "url": "https://example.test/token",
+            "bytes": b"raw",
+        },
+    }
+    _rec, _p, _d, calls = _run_job(monkeypatch, settings_kw=SHADOW, hybrid_summary=hybrid)
+    lin = calls["success"][0]["candidates"][0]["generation_lineage"]
+    hc = lin["transformation"]["hybridComposite"]
+    assert hc == {
+        "mode": "shadow", "applied": False, "wouldApply": True,
+        "needsReview": False, "failClosed": False, "deterministicPassed": True,
+        "pipelineVersion": "hc-v1", "carrierSha256": "c" * 64,
+        "outputSha256": "o" * 64, "targetAxis": "vertical",
+        "targetPeriodPx": 12.25, "sourceCoverage": 0.97,
+        "versions": {"pipeline": "hc-v1", "qc": "qc-v1"},
+        "sourceAssets": {
+            "detail": {"assetId": "detail", "sha256": "d" * 64, "roi": [1, 2, 3, 4]},
+        },
+        "textureProjection": {"version": "texture_projection_2d_v1", "ok": True},
+        "deterministicMetrics": {
+            "period_rel_err_max": 0.03,
+            "repeat_count_rel_err_max": 0.04,
+            "direction_error_max": 1.25,
+            "color_delta_e00_max": 4.5,
+            "color_delta_e00_median": 2.2,
+            "mask_coverage": 0.91,
+            "outside_drift_frac": 0,
+            "outside_mean_de76": 0.0,
+            "outside_ssim": 1.0,
+        },
+    }
+    flat = json.dumps(hc, sort_keys=True)
+    assert "must-not-persist" not in flat
+    assert "token" not in flat
+    assert "raw" not in flat
 
 
 # ── 프롬프트: DB 에 전문 없음 / R2 와 해시 일치 / 고아 없음 ────────────────────

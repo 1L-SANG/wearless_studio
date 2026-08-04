@@ -1,6 +1,15 @@
 const OUTCOME_AUTO_PASS = 'auto_pass';
 const OUTCOME_NEEDS_REVIEW = 'needs_review';
 const OUTCOME_REGENERATE = 'regenerate';
+const DOWNGRADE_CHOICES = new Set(['product_hero', 'fit_reference']);
+const TEXTURE_PROJECTION_REASONS = new Set([
+  'unsupported_pattern',
+  'projection_geometry_invalid',
+  'projection_scale_out_of_bounds',
+  'projection_low_confidence',
+  'pattern_metric_failed',
+  'pattern_fidelity_failed',
+]);
 
 const REASON_COPY = {
   product_fidelity: '상품 색상·패턴·로고 재현을 확인해 주세요.',
@@ -62,11 +71,20 @@ function hasReviewComponent(qc) {
   return false;
 }
 
-function reasonKeys(qc) {
-  if (!qc || typeof qc !== 'object') return [];
-  const hybrid = qc.hybridComposite && typeof qc.hybridComposite === 'object'
+function effectiveHybridComposite(qc) {
+  const hybrid = qc?.hybridComposite && typeof qc.hybridComposite === 'object'
     ? qc.hybridComposite
     : null;
+  return hybrid?.mode === 'shadow' ? null : hybrid;
+}
+
+function reasonKeys(qc) {
+  if (!qc || typeof qc !== 'object') return [];
+  const hybrid = effectiveHybridComposite(qc);
+  const rawTextureProjection = hybrid?.textureProjection && typeof hybrid.textureProjection === 'object'
+    ? hybrid.textureProjection
+    : null;
+  const textureProjection = rawTextureProjection?.mode === 'shadow' ? null : rawTextureProjection;
   const structured = qc.structuredQC && typeof qc.structuredQC === 'object'
     ? qc.structuredQC
     : null;
@@ -93,9 +111,20 @@ function reasonKeys(qc) {
     ...(hybrid?.needsReview === true && !hybrid?.failureReason ? ['hybridComposite'] : []),
     hybrid?.failureReason,
     hybrid?.reason,
+    textureProjection?.reason,
     qc.failureReason,
     qc.reason,
   ]);
+}
+
+function hasPatternFidelityFailure(qc) {
+  if (!qc || typeof qc !== 'object') return false;
+  const structured = qc.structuredQC && typeof qc.structuredQC === 'object'
+    ? qc.structuredQC
+    : null;
+  return Array.isArray(structured?.checks) && structured.checks.some((check) => (
+    check?.check === 'pattern_fidelity' && String(check?.status || '') === 'fail'
+  ));
 }
 
 export function reviewReasonCopy(reason) {
@@ -120,9 +149,58 @@ export function mannequinReviewAcknowledgedForCut(cut, acknowledgedCutId) {
   return String(cut.id) === String(acknowledgedCutId || '');
 }
 
-export function mannequinCanEnterStoryboard(cut, acknowledgedCutId) {
+export function mannequinDowngradeChoiceSucceededForCut(cut, downgradeChoice) {
+  if (!cut?.id || !downgradeChoice || typeof downgradeChoice !== 'object') return false;
+  return String(cut.id) === String(downgradeChoice.cutId || '')
+    && DOWNGRADE_CHOICES.has(String(downgradeChoice.choice || ''))
+    && downgradeChoice.status !== 'error';
+}
+
+export function mannequinDowngradeChoicesFromStoryboard(blocks) {
+  const choices = {};
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const decision = block?.downgradeDecision;
+    const cutId = String(decision?.sourceCutId || '');
+    const choice = String(decision?.type || '');
+    if (!cutId || !DOWNGRADE_CHOICES.has(choice)) continue;
+    const candidate = {
+      cutId,
+      choice,
+      status: 'saved',
+      decidedAt: decision?.decidedAt || null,
+    };
+    const current = choices[cutId];
+    if (!current || String(candidate.decidedAt || '') >= String(current.decidedAt || '')) {
+      choices[cutId] = candidate;
+    }
+  }
+  return choices;
+}
+
+export function mannequinRequiresDowngradeChoice(cut) {
+  const qc = reviewEnvelope(cut);
+  if (!qc) return false;
+  const hybrid = effectiveHybridComposite(qc);
+  const rawTextureProjection = hybrid?.textureProjection && typeof hybrid.textureProjection === 'object'
+    ? hybrid.textureProjection
+    : null;
+  const textureProjection = rawTextureProjection?.mode === 'shadow' ? null : rawTextureProjection;
+  const reasons = reasonKeys(qc);
+  const patternFailed = hasPatternFidelityFailure(qc)
+    || reasons.includes('pattern_metric_failed')
+    || reasons.includes('pattern_fidelity_failed');
+  const projectionFailed = textureProjection?.ok === false
+    || TEXTURE_PROJECTION_REASONS.has(String(textureProjection?.reason || ''))
+    || reasons.some((reason) => TEXTURE_PROJECTION_REASONS.has(String(reason)));
+  return patternFailed || projectionFailed;
+}
+
+export function mannequinCanEnterStoryboard(cut, acknowledgedCutId, downgradeChoice = null) {
   const reviewState = classifyMannequinReview(cut);
   if (reviewState.hardBlocked) return false;
+  if (mannequinRequiresDowngradeChoice(cut)) {
+    return mannequinDowngradeChoiceSucceededForCut(cut, downgradeChoice);
+  }
   if (reviewState.visibleReview) return mannequinReviewAcknowledgedForCut(cut, acknowledgedCutId);
   return true;
 }
@@ -191,9 +269,7 @@ export function classifyMannequinReview(cut) {
   }
 
   const outcome = String(qc.outcome || cut?.outcome || '').trim();
-  const hybrid = qc.hybridComposite && typeof qc.hybridComposite === 'object'
-    ? qc.hybridComposite
-    : null;
+  const hybrid = effectiveHybridComposite(qc);
   const applied = hybrid?.applied ?? qc.applied ?? cut?.applied;
   const hasNestedHybrid = hybrid != null;
   const hybridFailed = applied === false && (

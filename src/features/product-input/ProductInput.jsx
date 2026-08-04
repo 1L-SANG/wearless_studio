@@ -27,6 +27,36 @@ import {
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 
+const TRUTH_PATTERN_TYPES = ['UNKNOWN', 'SOLID', 'STRIPE', 'CHECK', 'PLAID', 'PRINT', 'OTHER'];
+const ALWAYS_FINE_PATTERN_TYPES = new Set(['UNKNOWN', 'STRIPE', 'CHECK', 'PLAID']);
+const NEVER_FINE_PATTERN_TYPES = new Set(['SOLID']);
+const USER_TOGGLE_FINE_PATTERN_TYPES = new Set(['PRINT', 'OTHER']);
+
+function normalizeTruthPatternSpec(patternSpec = {}) {
+  const type = String(patternSpec.type || 'UNKNOWN').toUpperCase();
+  const safeType = TRUTH_PATTERN_TYPES.includes(type) ? type : 'OTHER';
+  let finePattern = Boolean(patternSpec.finePattern);
+  if (ALWAYS_FINE_PATTERN_TYPES.has(safeType)) finePattern = true;
+  if (NEVER_FINE_PATTERN_TYPES.has(safeType)) finePattern = false;
+  return { ...patternSpec, type: safeType, finePattern };
+}
+
+function patternProtectionForSpec(patternSpec = {}) {
+  return Boolean(normalizeTruthPatternSpec(patternSpec).finePattern);
+}
+
+function patternLabel(type) {
+  return {
+    UNKNOWN: '패턴 미확인',
+    SOLID: '무지',
+    STRIPE: '스트라이프',
+    CHECK: '체크',
+    PLAID: '플래드',
+    PRINT: '프린트',
+    OTHER: '기타 패턴',
+  }[String(type || 'UNKNOWN').toUpperCase()] || '패턴 미확인';
+}
+
 function ColorSwatchPicker({ swatchColors, value, onChange }) {
   return (
     <div className="color-pick">
@@ -233,13 +263,52 @@ export function ProductInput() {
     setTruthDirty(true);
   };
 
+  const editTruthPatternType = (rawType) => {
+    const nextPattern = normalizeTruthPatternSpec({
+      ...(productTruth?.patternSpec || {}),
+      type: rawType,
+    });
+    setProductTruth((current) => current ? {
+      ...current,
+      patternSpec: nextPattern,
+      protectedDetails: {
+        ...(current.protectedDetails || {}),
+        pattern: patternProtectionForSpec(nextPattern),
+      },
+    } : current);
+    setTruthDirty(true);
+  };
+
+  const editTruthFinePattern = (checked) => {
+    setProductTruth((current) => {
+      if (!current) return current;
+      const currentPattern = normalizeTruthPatternSpec(current.patternSpec || {});
+      if (!USER_TOGGLE_FINE_PATTERN_TYPES.has(currentPattern.type)) return current;
+      const nextPattern = { ...currentPattern, finePattern: Boolean(checked) };
+      return {
+        ...current,
+        patternSpec: nextPattern,
+        protectedDetails: {
+          ...(current.protectedDetails || {}),
+          pattern: patternProtectionForSpec(nextPattern),
+        },
+      };
+    });
+    setTruthDirty(true);
+  };
+
   const saveTruthEdits = async () => {
     if (!productTruth || productTruth.status !== 'draft') return;
     setTruthBusy(true);
     try {
+      const patternSpec = normalizeTruthPatternSpec(productTruth.patternSpec || {});
       const saved = await api.updateProductTruth(analysisProjectId, productTruth.id, {
         garmentSpec: productTruth.garmentSpec || {},
-        protectedDetails: productTruth.protectedDetails || {},
+        patternSpec,
+        protectedDetails: {
+          ...(productTruth.protectedDetails || {}),
+          pattern: patternProtectionForSpec(patternSpec),
+        },
       });
       setProductTruth(saved);
       setTruthDirty(false);
@@ -614,27 +683,58 @@ export function ProductInput() {
               </p>
               <p>
                 {(productTruth.garmentSpec?.subcategory || productTruth.garmentSpec?.category || '의류')}
-                {' · '}{productTruth.patternSpec?.type || '패턴 미확인'}
+                {' · '}{patternLabel(productTruth.patternSpec?.type)}
                 {' · 단추 '}{productTruth.garmentSpec?.buttonCount ?? '미확인'}
                 {' · 주머니 '}{productTruth.garmentSpec?.pocketCount ?? '미확인'}
               </p>
+              {normalizeTruthPatternSpec(productTruth.patternSpec || {}).type === 'UNKNOWN' && (
+                <p className="hint" role="status">
+                  패턴이 미확인 상태라 패턴 보호를 보수적으로 켭니다. 무지 상품이면 ‘무지’로 바꿔 주세요.
+                </p>
+              )}
               {productTruth.status === 'draft' && (
-                <div className="measure-grid" style={{ margin: '12px 0' }}>
-                  <label className="measure-cell">
-                    <span className="lbl">단추 수</span>
-                    <input className="field" type="number" min="0" max="30"
-                      placeholder="미확인"
-                      value={productTruth.garmentSpec?.buttonCount ?? ''}
-                      onChange={(e) => editTruthCount('buttonCount', e.target.value, 30)} />
-                  </label>
-                  <label className="measure-cell">
-                    <span className="lbl">주머니 수</span>
-                    <input className="field" type="number" min="0" max="12"
-                      placeholder="미확인"
-                      value={productTruth.garmentSpec?.pocketCount ?? ''}
-                      onChange={(e) => editTruthCount('pocketCount', e.target.value, 12)} />
-                  </label>
-                </div>
+                <>
+                  <div className="measure-grid" style={{ margin: '12px 0' }}>
+                    <label className="measure-cell">
+                      <span className="lbl">패턴 종류</span>
+                      <select className="field"
+                        value={normalizeTruthPatternSpec(productTruth.patternSpec || {}).type}
+                        onChange={(e) => editTruthPatternType(e.target.value)}>
+                        {TRUTH_PATTERN_TYPES.map((type) => (
+                          <option key={type} value={type}>{patternLabel(type)}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="measure-cell">
+                      <span className="lbl">세밀 패턴 보호</span>
+                      <label className="hint" style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}>
+                        <input
+                          type="checkbox"
+                          checked={normalizeTruthPatternSpec(productTruth.patternSpec || {}).finePattern}
+                          disabled={!USER_TOGGLE_FINE_PATTERN_TYPES.has(
+                            normalizeTruthPatternSpec(productTruth.patternSpec || {}).type)}
+                          onChange={(e) => editTruthFinePattern(e.target.checked)} />
+                        <span>
+                          스트라이프·체크·플래드는 항상 보호, 무지는 항상 해제됩니다.
+                        </span>
+                      </label>
+                    </label>
+                    <label className="measure-cell">
+                      <span className="lbl">단추 수</span>
+                      <input className="field" type="number" min="0" max="30"
+                        placeholder="미확인"
+                        value={productTruth.garmentSpec?.buttonCount ?? ''}
+                        onChange={(e) => editTruthCount('buttonCount', e.target.value, 30)} />
+                    </label>
+                    <label className="measure-cell">
+                      <span className="lbl">주머니 수</span>
+                      <input className="field" type="number" min="0" max="12"
+                        placeholder="미확인"
+                        value={productTruth.garmentSpec?.pocketCount ?? ''}
+                        onChange={(e) => editTruthCount('pocketCount', e.target.value, 12)} />
+                    </label>
+                  </div>
+                </>
               )}
               {(productTruth.validationIssues || []).length > 0 && (
                 <ul>

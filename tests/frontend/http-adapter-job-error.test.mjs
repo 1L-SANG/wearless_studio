@@ -44,6 +44,7 @@ test('jobErrorFromStatus preserves message and attaches typed failure contract',
   assert.equal(error.message, '마네킹컷 생성에 실패했어요.');
   assert.equal(error.code, 'hybrid_composite_failed_closed');
   assert.equal(error.details.error, 'hybrid_composite_failed_closed');
+  assert.equal(error.terminalJobFailure, true);
   assert.equal(
     error.details.hybridComposite.failureReason,
     'geometry_carrier_mismatch',
@@ -54,6 +55,7 @@ test('jobErrorFromStatus keeps legacy jobs compatible', () => {
   const error = jobErrorFromStatus({ status: 'error' });
 
   assert.equal(error.message, '작업에 실패했어요.');
+  assert.equal(error.terminalJobFailure, true);
   assert.equal('code' in error, false);
   assert.equal('details' in error, false);
 });

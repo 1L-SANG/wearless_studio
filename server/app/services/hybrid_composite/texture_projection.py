@@ -5,9 +5,13 @@ small question before warp/composite: "If the source garment shows N repeats acr
 the same garment span, what period should the carrier use, and is that projection
 safe enough to apply?"
 
-The intentionally narrow scope is shirts/simple periodic patterns.  Unsupported or
-low-confidence cases return a fail-closed plan so the caller can keep the legacy
-path in shadow mode, or reject the deterministic composite in enforce mode.
+The intentionally narrow MVP scope is regular stripes.  Checks/plaids/gingham/
+tartan need a different two-axis lattice model and are explicitly unsupported
+until that renderer exists. Unsupported or low-confidence cases return a
+fail-closed plan so the caller can keep the legacy path in shadow mode, or reject
+the deterministic composite in enforce mode.
+
+texture_project을 굳이 MVP라는 이유로 뺼 이유가 있을까?
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ from dataclasses import dataclass
 
 PROJECTION_VERSION = "texture_projection_2d_v1"
 
-SUPPORTED_PATTERN_TYPES = frozenset({"stripe", "stripes", "check", "plaid", "gingham", "tartan"})
+SUPPORTED_PATTERN_TYPES = frozenset({"stripe", "stripes"})
 MIN_SOURCE_REPEATS = 4.0
 MIN_TARGET_PERIOD_PX = 6.0
 MAX_SCALE_CHANGE = 3.0

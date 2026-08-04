@@ -1,8 +1,10 @@
 import asyncio
 
 import app.routes as routes
+from app.main import create_app
 from app.workers import analyze_job
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
+from fastapi.testclient import TestClient
 
 
 # ---------- 라우트 ----------
@@ -50,6 +52,79 @@ def test_analyze_route_idempotent_join(client, make_token, monkeypatch):
                       headers={**auth_headers(make_token), "Idempotency-Key": "k1"})
     assert res.status_code == 202
     assert res.json()["jobId"] == "existing-job"
+
+
+def test_analyze_route_atomically_preclaims_local_calibration_job(
+        keypair, make_token, monkeypatch):
+    private_key, public_key = keypair
+    del private_key
+    app = create_app(make_settings(
+        app_env="dev",
+        job_dispatcher_enabled=False,
+        frame_calibration_inline_jobs=True,
+        frame_calibration_inline_secret="test-frame-secret",
+    ))
+    app.state.jwt_key_resolver = lambda token: public_key
+    client = TestClient(app)
+    seen = {}
+
+    async def fake_get_project(conn, uid, pid):
+        return {"id": pid}
+
+    async def fake_create_job(conn, **kw):
+        seen["created"] = kw
+        return {"id": "job-analyze-1"}, True
+
+    async def fake_preclaim(conn, *, job_id, lease_token):
+        seen["preclaim"] = (job_id, lease_token)
+        return {"id": job_id, "lease_token": lease_token, "status": "running"}
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    monkeypatch.setattr(routes.repo, "preclaim_job_for_inline_execution", fake_preclaim)
+    patch_route_db(monkeypatch, routes)
+    res = client.post(
+        "/v1/projects/p1/analyze",
+        headers={
+            **auth_headers(make_token),
+            "X-Wearless-Frame-Calibration": "test-frame-secret",
+        },
+    )
+
+    assert res.status_code == 202, res.text
+    assert res.json()["jobId"] == "job-analyze-1"
+    assert res.json()["leaseToken"].startswith("frame-calibration:")
+    assert seen["preclaim"] == ("job-analyze-1", res.json()["leaseToken"])
+    assert seen["created"]["kind"] == "analyze"
+
+
+def test_analyze_route_rejects_invalid_local_calibration_secret_before_db(
+        keypair, make_token, monkeypatch):
+    private_key, public_key = keypair
+    del private_key
+    app = create_app(make_settings(
+        app_env="dev",
+        job_dispatcher_enabled=False,
+        frame_calibration_inline_jobs=True,
+        frame_calibration_inline_secret="test-frame-secret",
+    ))
+    app.state.jwt_key_resolver = lambda token: public_key
+    client = TestClient(app)
+
+    async def must_not_get_project(*args, **kwargs):
+        raise AssertionError("invalid calibration secret must fail before DB access")
+
+    monkeypatch.setattr(routes.repo, "get_project", must_not_get_project)
+    res = client.post(
+        "/v1/projects/p1/analyze",
+        headers={
+            **auth_headers(make_token),
+            "X-Wearless-Frame-Calibration": "wrong-secret",
+        },
+    )
+
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "frame_calibration_inline_forbidden"
 
 
 def test_analyze_spike_disabled_by_default(client, make_token):

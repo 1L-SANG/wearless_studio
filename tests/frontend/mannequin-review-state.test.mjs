@@ -5,12 +5,58 @@ import {
   classifyMannequinReview,
   isNonRetryableMannequinRegenerateError,
   mannequinCanEnterStoryboard,
+  mannequinDowngradeChoicesFromStoryboard,
   mannequinRegenerateFailureNotice,
+  mannequinRequiresDowngradeChoice,
+  mannequinDowngradeChoiceSucceededForCut,
   mannequinReviewAcknowledgedForCut,
   mannequinReviewBlocksStoryboard,
   mannequinVersionAriaLabel,
   reviewReasonCopy,
 } from '../../src/features/mannequin/reviewState.js';
+
+test('saved downgrade decisions hydrate per cut after reload', () => {
+  const choices = mannequinDowngradeChoicesFromStoryboard([
+    {
+      id: 'hero',
+      downgradeDecision: {
+        type: 'product_hero',
+        sourceCutId: 'cut-1',
+        decidedAt: '2026-08-04T00:00:00.000Z',
+      },
+    },
+    {
+      id: 'fit',
+      downgradeDecision: {
+        type: 'fit_reference',
+        sourceCutId: 'cut-2',
+        decidedAt: '2026-08-04T01:00:00.000Z',
+      },
+    },
+    {
+      id: 'stale',
+      downgradeDecision: {
+        type: 'unsupported',
+        sourceCutId: 'cut-3',
+        decidedAt: '2026-08-04T02:00:00.000Z',
+      },
+    },
+  ]);
+
+  assert.deepEqual(choices['cut-1'], {
+    cutId: 'cut-1',
+    choice: 'product_hero',
+    status: 'saved',
+    decidedAt: '2026-08-04T00:00:00.000Z',
+  });
+  assert.deepEqual(choices['cut-2'], {
+    cutId: 'cut-2',
+    choice: 'fit_reference',
+    status: 'saved',
+    decidedAt: '2026-08-04T01:00:00.000Z',
+  });
+  assert.equal(choices['cut-3'], undefined);
+});
 
 test('cut without qc is normal and does not block storyboard entry', () => {
   const state = classifyMannequinReview({ id: 'old-good', version: 1 });
@@ -232,6 +278,120 @@ test('storyboard entry acknowledgement is scoped to the exact selected cut', () 
   assert.equal(mannequinCanEnterStoryboard(hardBlocked, 'blocked-v7'), false);
   assert.equal(mannequinCanEnterStoryboard(passed, null), true);
   assert.equal(mannequinCanEnterStoryboard(legacyNormal, null), true);
+});
+
+test('pattern fidelity failures require an explicit downgrade choice before storyboard entry', () => {
+  const cut = {
+    id: 'stripe-v3',
+    qcScores: {
+      outcome: 'needs_review',
+      structuredQC: {
+        checks: [{ check: 'pattern_fidelity', status: 'fail', score: 0.18 }],
+      },
+    },
+  };
+
+  assert.equal(mannequinRequiresDowngradeChoice(cut), true);
+  assert.equal(mannequinCanEnterStoryboard(cut, 'stripe-v3'), false);
+  assert.equal(mannequinCanEnterStoryboard(cut, 'stripe-v3', { cutId: 'stripe-v3', choice: 'fit_reference' }), true);
+  assert.equal(mannequinDowngradeChoiceSucceededForCut(cut, { cutId: 'stripe-v3', choice: 'product_hero' }), true);
+  assert.equal(mannequinDowngradeChoiceSucceededForCut(cut, { cutId: 'other', choice: 'product_hero' }), false);
+});
+
+test('unsupported or failed 2d texture projection requires downgrade choice even when visible review is acknowledged', () => {
+  const cut = {
+    id: 'projection-v4',
+    qcScores: {
+      outcome: 'needs_review',
+      hybridComposite: {
+        applied: true,
+        needsReview: true,
+        textureProjection: {
+          ok: false,
+          reason: 'unsupported_pattern',
+        },
+      },
+    },
+  };
+
+  assert.equal(mannequinRequiresDowngradeChoice(cut), true);
+  assert.equal(mannequinCanEnterStoryboard(cut, 'projection-v4'), false);
+  assert.equal(mannequinCanEnterStoryboard(cut, 'projection-v4', { cutId: 'projection-v4', choice: 'fit_reference' }), true);
+});
+
+test('shadow hybrid metadata is observability only and never changes review or downgrade state', () => {
+  const cut = {
+    id: 'shadow-v5',
+    version: 5,
+    qcScores: {
+      outcome: 'auto_pass',
+      hybridComposite: {
+        mode: 'shadow',
+        applied: false,
+        needsReview: true,
+        failureReason: 'unsupported_pattern',
+        textureProjection: {
+          ok: false,
+          reason: 'projection_low_confidence',
+        },
+      },
+    },
+  };
+  const state = classifyMannequinReview(cut);
+
+  assert.equal(state.level, 'passed');
+  assert.equal(state.hardBlocked, false);
+  assert.equal(state.visibleReview, false);
+  assert.equal(state.badge, '통과');
+  assert.equal(mannequinRequiresDowngradeChoice(cut), false);
+  assert.equal(mannequinCanEnterStoryboard(cut, null), true);
+  assert.equal(mannequinVersionAriaLabel(cut), '버전 5 선택, 품질 통과');
+});
+
+test('shadow texture projection telemetry does not create a downgrade inside enforced hybrid', () => {
+  const cut = {
+    id: 'projection-shadow-v1',
+    qcScores: {
+      outcome: 'auto_pass',
+      hybridComposite: {
+        mode: 'enforce',
+        applied: true,
+        deterministicPassed: true,
+        textureProjection: {
+          mode: 'shadow',
+          ok: false,
+          reason: 'projection_low_confidence',
+        },
+      },
+    },
+  };
+
+  assert.equal(mannequinRequiresDowngradeChoice(cut), false);
+  assert.equal(mannequinCanEnterStoryboard(cut, null), true);
+  assert.deepEqual(classifyMannequinReview(cut).reasons, []);
+});
+
+test('structured pattern failure still requires downgrade even when hybrid shadow metadata is ignored', () => {
+  const cut = {
+    id: 'shadow-structured-v6',
+    qcScores: {
+      outcome: 'needs_review',
+      hybridComposite: {
+        mode: 'shadow',
+        applied: false,
+        needsReview: true,
+        failureReason: 'unsupported_pattern',
+      },
+      structuredQC: {
+        checks: [{ check: 'pattern_fidelity', status: 'fail', score: 0.1 }],
+      },
+    },
+  };
+
+  assert.equal(classifyMannequinReview(cut).hardBlocked, false);
+  assert.equal(mannequinRequiresDowngradeChoice(cut), true);
+  assert.equal(mannequinCanEnterStoryboard(cut, 'shadow-structured-v6'), false);
+  assert.equal(mannequinCanEnterStoryboard(cut, 'shadow-structured-v6', { cutId: 'shadow-structured-v6', choice: 'product_hero' }), true);
 });
 
 test('hybrid failed-closed regenerate error is non-retryable', () => {

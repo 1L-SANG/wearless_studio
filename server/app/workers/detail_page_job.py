@@ -6,8 +6,10 @@
 """
 
 import asyncio
+import hashlib
 import json
 import logging
+import time
 import uuid
 from io import BytesIO
 
@@ -28,7 +30,9 @@ from ..agents import page_source_assets
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
+from ..services.generation_run import RunLogger
 from ._common import emit_job_event as _emit
+from .mannequin_job import _runlog_begin, _runlog_finish
 
 log = logging.getLogger("wearless.detail_page_job")
 
@@ -180,8 +184,73 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 generate_kwargs = {"analysis": analysis, "manifest": manifest}
                 if has_face:
                     generate_kwargs["has_face"] = True
-                img, mime = await cut_generator.generate(
-                    s, gemini, b, product, images, **generate_kwargs)
+                payload = job.get("payload") or {}
+                is_worn_anchor = bool(payload.get("baselineId")) and _cut_type(b) in _WORN_CUT_TYPES
+                generation_lineage_by_sha: dict[str, dict] = {}
+                runlog = RunLogger(
+                    pool=app.state.pool,
+                    r2=r2,
+                    job_id=job_id,
+                    project_id=project_id,
+                    user_id=user_id,
+                    enabled=(is_worn_anchor and s.generation_run_log == "shadow"),
+                )
+
+                async def _generate_once() -> tuple[bytes, str]:
+                    if not is_worn_anchor or s.generation_run_log != "shadow":
+                        return await cut_generator.generate(
+                            s, gemini, b, product, images, **generate_kwargs)
+                    prepared_cut = cut_generator.prepare(
+                        s, b, product, images, **generate_kwargs)
+                    started = time.monotonic()
+                    run_id = await _runlog_begin(
+                        runlog,
+                        kind="detail_page_worn",
+                        prompt=prepared_cut.prompt,
+                        model=prepared_cut.model,
+                        candidate="A",
+                        attempt=len(generation_lineage_by_sha) + 1,
+                        image_size=prepared_cut.image_size,
+                        aspect_ratio=prepared_cut.aspect_ratio,
+                        inputs=[
+                            (
+                                "approved_baseline",
+                                prepared_cut.images[0] if prepared_cut.images else None,
+                                None,
+                                "approved_front_baseline",
+                                payload.get("baselineOutputId"),
+                            )
+                        ],
+                        input_image=prepared_cut.images[0] if prepared_cut.images else None,
+                        explicit_parent_generation_run_id=payload.get(
+                            "baselineGenerationRunId"),
+                        settings=s,
+                    )
+                    try:
+                        res = await cut_generator.execute(s, gemini, prepared_cut)
+                    except Exception as e:
+                        await _runlog_finish(
+                            runlog, run_id, started=started, error=e, candidate="A")
+                        raise
+                    await _runlog_finish(
+                        runlog, run_id, started=started, result=res, candidate="A")
+                    output_sha = hashlib.sha256(res.image).hexdigest()
+                    generation_lineage_by_sha[output_sha] = {
+                        "generation_run_id": run_id,
+                        "parent_output_id": payload.get("baselineOutputId"),
+                        "baseline_id": payload.get("baselineId"),
+                        "output_sha256": output_sha,
+                        "transformation": {
+                            "detailPageCut": {
+                                "blockId": b.get("id"),
+                                "cutType": _cut_type(b),
+                                "anchorRole": "approved_front_baseline",
+                            }
+                        },
+                    }
+                    return res.image, res.mime
+
+                img, mime = await _generate_once()
             except Exception as e:  # GeminiError·ValueError 포함 — 실패 컷 = 빈 슬롯, 미차감(부분 성공)
                 log.warning("AG-06 cut failed for job %s block %s: %r", job_id, b.get("id"), e)
                 await _emit(app.state.pool, job_id, "step",
@@ -239,8 +308,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                         return None
                     attempt += 1
                     try:
-                        img, mime = await cut_generator.generate(
-                            s, gemini, b, product, images, **generate_kwargs)
+                        img, mime = await _generate_once()
                     except Exception as e:
                         log.warning("AG-06 scene retry generate failed job %s block %s: %r",
                                     job_id, b.get("id"), e)
@@ -250,8 +318,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             candidate_scene_warnings = []
 
             async def _generate_candidate():
-                candidate_img, candidate_mime = await cut_generator.generate(
-                    s, gemini, b, product, images, **generate_kwargs)
+                candidate_img, candidate_mime = await _generate_once()
                 if plate is None:
                     return InlineImage(candidate_mime, candidate_img)
 
@@ -275,8 +342,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                     if candidate_attempt >= max(1, s.bg_scene_qc_attempts):
                         raise RuntimeError("candidate scene mismatch")
                     candidate_attempt += 1
-                    candidate_img, candidate_mime = await cut_generator.generate(
-                        s, gemini, b, product, images, **generate_kwargs)
+                    candidate_img, candidate_mime = await _generate_once()
                 return InlineImage(candidate_mime, candidate_img)
 
             chosen, garment_qc, garment_warnings = await image_qc.best_of(
@@ -293,6 +359,23 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
             await asyncio.to_thread(r2.put_bytes, key, img, mime, cache=IMMUTABLE_CACHE)
             w, h = _dims(img)
+            generation_output = None
+            if is_worn_anchor:
+                generation_output = generation_lineage_by_sha.get(
+                    hashlib.sha256(img).hexdigest()
+                ) or {
+                    "generation_run_id": None,
+                    "parent_output_id": payload.get("baselineOutputId"),
+                    "baseline_id": payload.get("baselineId"),
+                    "output_sha256": hashlib.sha256(img).hexdigest(),
+                    "transformation": {
+                        "detailPageCut": {
+                            "blockId": b.get("id"),
+                            "cutType": _cut_type(b),
+                            "anchorRole": "approved_front_baseline",
+                        }
+                    },
+                }
             return (
                 # width/height 는 조립(M-02)이 요소 박스를 **이미지 비율대로** 잡는 근거다.
                 # 없으면 page_assembler 가 기본 비율로 폴백한다(생성 실패·구 데이터 안전).
@@ -300,10 +383,10 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                  "width": w, "height": h},
                 {"asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": mime,
                  "size": len(img), "width": w, "height": h,
-                 "metadata": ({"anchorBaselineId": (job.get("payload") or {}).get("baselineId"),
+                 "generation_output": generation_output,
+                 "metadata": ({"anchorBaselineId": payload.get("baselineId"),
                                "anchorRole": "approved_front_baseline"}
-                              if (job.get("payload") or {}).get("baselineId")
-                              and _cut_type(b) in _WORN_CUT_TYPES else {})},
+                              if is_worn_anchor else {})},
                 has_face,
                 garment_qc,
                 garment_warnings,
@@ -486,6 +569,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                 if not all(mannequin_asset.get(k) for k in ("asset_id", "r2_key", "mime_type")):
                     raise ValueError("baseline_asset_missing")
                 anchor_baseline_id = active_baseline["id"]
+                job.setdefault("payload", {})["baselineOutputId"] = active_baseline.get("output_id")
+                job.setdefault("payload", {})["baselineGenerationRunId"] = active_baseline.get(
+                    "generation_run_id")
             else:
                 sel = project.get("selected_mannequin_id") or project.get("selectedMannequinId")
                 if sel:

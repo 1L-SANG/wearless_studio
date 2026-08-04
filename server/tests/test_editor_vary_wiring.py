@@ -127,6 +127,15 @@ def _wire_route(monkeypatch, *, flag="enforce", genlog="shadow", prior_job=None,
         return {"id": aid, "project_id": "p1", "mime_type": "image/png",
                 "r2_key": "k"} if asset else None
 
+    async def get_product(conn, pid):
+        return {"clothingType": "top"}
+
+    async def get_analysis(conn, pid):
+        return {}
+
+    async def get_baseline(conn, pid):
+        return {"id": "base-1"}
+
     async def by_key(conn, uid, key):
         return prior_job
 
@@ -135,7 +144,7 @@ def _wire_route(monkeypatch, *, flag="enforce", genlog="shadow", prior_job=None,
 
     async def unique_out(conn, aid):
         return unique_output or {"output_id": None, "generation_run_id": None,
-                                 "status": "none"}
+                                 "baseline_id": None, "status": "none"}
 
     async def create_job(conn, **kw):
         return {"id": "job-new", "payload": kw.get("payload")}, True
@@ -151,7 +160,10 @@ def _wire_route(monkeypatch, *, flag="enforce", genlog="shadow", prior_job=None,
     async def patch_payload(conn, jid, sid):
         seen["payload_writes"].append((jid, sid))
 
-    for name, fn in (("get_project", get_project), ("get_asset_for_user", get_asset),
+    for name, fn in (("get_project", get_project), ("get_product", get_product),
+                     ("get_analysis", get_analysis),
+                     ("get_active_baseline", get_baseline),
+                     ("get_asset_for_user", get_asset),
                      ("get_job_by_idempotency_key", by_key),
                      ("get_edit_session_by_job_id", by_job),
                      ("get_unique_output_for_asset", unique_out),
@@ -214,6 +226,36 @@ def test_enabled_vary_creates_one_session(vary_client, make_token, monkeypatch):
     assert kw["edit_type"] == "BACKGROUND_ONLY"
     assert kw["allowed_scope"]["allowedObservations"]
     assert len(seen["payload_writes"]) == 1
+
+
+def test_vary_session_snapshots_source_baseline_when_asset_lineage_is_unique(
+    vary_client, make_token, monkeypatch,
+):
+    seen = _wire_route(
+        monkeypatch,
+        unique_output={
+            "output_id": "out-src",
+            "generation_run_id": "run-src",
+            "baseline_id": "base-src",
+            "status": "linked",
+        },
+    )
+    _settings(vary_client, monkeypatch, editor_vary_intent_qc="enforce",
+              generation_run_log="shadow")
+    r = _post(
+        vary_client,
+        make_token,
+        body={"mode": "vary",
+              "source": {"src": SRC, "sourceGenerationRunId": "client-run"},
+              "sourceGenerationRunId": "client-run",
+              "changes": [{"type": "bg", "value": "studio"}]},
+    )
+    assert r.status_code in (200, 202), r.text
+    session = seen["sessions"][0]
+    assert session["parent_output_id"] == "out-src"
+    assert session["locked_invariants"]["sourceGenerationRunId"] == "run-src"
+    assert session["locked_invariants"]["sourceBaselineId"] == "base-src"
+    assert session["locked_invariants"]["lineageStatus"] == "linked"
 
 
 def test_generation_log_off_is_a_misconfiguration(vary_client, make_token, monkeypatch):
@@ -285,6 +327,7 @@ def test_parent_output_is_linked_only_when_unique(vary_client, make_token, monke
               generation_run_log="shadow")
     _post(vary_client, make_token)
     assert seen["sessions"][0]["parent_output_id"] == "out-1"
+    assert seen["sessions"][0]["locked_invariants"]["sourceGenerationRunId"] == "run-1"
 
 
 def test_ambiguous_source_lineage_stays_null(vary_client, make_token, monkeypatch):
@@ -329,13 +372,15 @@ class _OutConn:
 
 @pytest.mark.parametrize("rows,status,out_id", [
     ([], "none", None),
-    ([{"id": "o1", "generation_run_id": "r1"}], "linked", "o1"),
+    ([{"id": "o1", "generation_run_id": "r1", "baseline_id": "b1"}], "linked", "o1"),
     ([{"id": "o1", "generation_run_id": "r1"},
       {"id": "o2", "generation_run_id": "r2"}], "ambiguous", None),
 ])
 def test_unique_output_lookup(rows, status, out_id):
     got = asyncio.run(repo.get_unique_output_for_asset(_OutConn(rows), "a1"))
     assert got["status"] == status and got["output_id"] == out_id
+    if status == "linked":
+        assert got["baseline_id"] == "b1"
 
 
 # ── finalize 계보 ───────────────────────────────────────────────────────────
@@ -384,7 +429,7 @@ class _FinConn:
         return _FinCur(self.sink, self.fail_output)
 
 
-def _finalize(monkeypatch, *, edit_session=None, fail_output=False):
+def _finalize(monkeypatch, *, edit_session=None, generation_output=None, fail_output=False):
     async def consume(conn, **kw):
         return 3
 
@@ -396,7 +441,7 @@ def _finalize(monkeypatch, *, edit_session=None, fail_output=False):
         image={"asset_id": "a-new", "bucket": "b", "key": "k", "mime": "image/png",
                "size": 1, "width": 2, "height": 3},
         group=None, cut_type="styling", reserved=1, charge=1, metadata={},
-        edit_session=edit_session))
+        edit_session=edit_session, generation_output=generation_output))
     return sink, out
 
 
@@ -424,7 +469,37 @@ def test_generation_output_has_editor_vary_shape(monkeypatch):
     assert params[2] == "a-new"            # 생성 asset
     assert params[3] == "sha-x"            # 최종 SHA
     assert params[5] == "out-src"          # parent output
-    assert params[6] == "sess-1"           # edit session
+    assert params[6] is None               # editor_asset vary 는 baseline 없음
+    assert params[7] == "sess-1"           # edit session
+
+
+def test_generation_output_preserves_editor_vary_source_baseline(monkeypatch):
+    session = {**SESSION_FIN, "lineage": {**SESSION_FIN["lineage"], "baseline_id": "base-src"}}
+    sink, _ = _finalize(monkeypatch, edit_session=session)
+    _sql, params = [(s, p) for s, p in sink
+                    if s.startswith("insert into generation_outputs")][0]
+    assert params[6] == "base-src"
+    assert params[7] == "sess-1"
+
+
+def test_generation_output_can_record_editor_new_worn_baseline_lineage(monkeypatch):
+    lineage = {
+        "generation_run_id": "run-new",
+        "parent_output_id": "out-base",
+        "baseline_id": "base-1",
+        "output_sha256": "sha-new",
+        "transformation": {"editorNew": {"cutType": "horizon"}},
+    }
+    sink, _ = _finalize(monkeypatch, generation_output=lineage)
+    sql, params = [(s, p) for s, p in sink
+                   if s.startswith("insert into generation_outputs")][0]
+    assert "baseline_id" in sql and "edit_session_id" in sql
+    assert params[0] == "run-new"
+    assert params[2] == "a-new"
+    assert params[3] == "sha-new"
+    assert params[5] == "out-base"
+    assert params[6] == "base-1"
+    assert params[7] is None
 
 
 def test_session_is_linked_to_the_returned_output(monkeypatch):
@@ -493,6 +568,20 @@ def test_preflight_passes_for_a_healthy_session(monkeypatch):
     ctx, seen = _preflight(monkeypatch, session=OK_SESSION)
     assert ctx and ctx["edit_type"] == "BACKGROUND_ONLY"
     assert seen["failed"] == []
+
+
+def test_preflight_hydrates_parent_run_from_locked_session_snapshot(monkeypatch):
+    ctx, seen = _preflight(
+        monkeypatch,
+        session={
+            **OK_SESSION,
+            "parent_output_id": "out-src",
+            "locked_invariants": {"sourceGenerationRunId": "run-src"},
+        },
+    )
+    assert seen["failed"] == []
+    assert ctx["parent_output_id"] == "out-src"
+    assert ctx["parent_run_id"] == "run-src"
 
 
 @pytest.mark.parametrize("patch,reason", [

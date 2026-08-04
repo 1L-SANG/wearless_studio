@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from functools import lru_cache
 from urllib.parse import urlsplit
 
@@ -38,6 +39,19 @@ log = logging.getLogger("wearless.cut_generator")
 CUT_TYPES = ("styling", "horizon", "product", "mirror")
 _PERSON_SHOTS = ("full", "medium")
 _PRODUCT_SHOTS = ("ghost", "detail")
+
+
+@dataclass(frozen=True)
+class PreparedCut:
+    """provider 에 실제로 나갈 AG-06 요청. Generation Run 계측은 이 객체에서 뜬다."""
+
+    model: str
+    prompt: str
+    images: list[InlineImage]
+    image_size: str
+    aspect_ratio: str
+    crop_pose_medium: bool
+    clothing_type: str
 _DIRECTIONS = ("front", "side", "back")
 _WORN_CUTS = ("styling", "horizon", "mirror")
 _OUTER_CLOSURE_STATES = ("open", "partial", "closed")
@@ -851,6 +865,60 @@ def build_prompt(
         load_cut_template(), spec, product, analysis or {}, clothing_type, manifest, has_face)
 
 
+def prepare(
+    settings: Settings,
+    cut_spec: dict,
+    product: dict,
+    images: list[InlineImage],
+    *,
+    analysis: dict | None = None,
+    manifest: str | None = None,
+    has_face: bool = False,
+) -> PreparedCut:
+    """AG-06 요청 조립만. 호출은 하지 않는다 — 계측이 호출 전 스냅샷을 뜰 수 있어야 한다."""
+    model = resolve_model(settings, "image_high")
+    clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+    spec = normalize_spec(cut_spec, clothing_type=clothing_type)
+    crop_pose_medium = (
+        spec["refScope"] == "pose"
+        and spec["shot"] == "medium"
+        and not spec.get("spaceGroupId")
+    )
+    prompt = build_prompt(cut_spec, product, analysis=analysis, manifest=manifest, has_face=has_face)
+    return PreparedCut(
+        model=model,
+        prompt=prompt,
+        images=images,
+        image_size=settings.mannequin_image_size,
+        aspect_ratio=settings.mannequin_aspect_ratio,
+        crop_pose_medium=crop_pose_medium,
+        clothing_type=clothing_type,
+    )
+
+
+async def execute(
+    settings: Settings,
+    gemini: GeminiImageClient,
+    prepared: PreparedCut,
+):
+    """준비된 AG-06 요청 1회 실행. pose-medium crop 은 기존 generate wrapper와 동일하게 적용."""
+    res = await gemini.generate_content_image(
+        prepared.model, prepared.prompt, prepared.images, prepared.image_size,
+        aspect_ratio=prepared.aspect_ratio,
+    )
+    if prepared.crop_pose_medium:
+        image, mime = await pose_crop.crop_pose_medium(
+            settings, res.image, res.mime, prepared.clothing_type
+        )
+        return type(res)(
+            image=image,
+            mime=mime,
+            latency_ms=getattr(res, "latency_ms", None),
+            usage=getattr(res, "usage", None),
+        )
+    return res
+
+
 async def generate(
     settings: Settings,
     gemini: GeminiImageClient,
@@ -862,27 +930,10 @@ async def generate(
     manifest: str | None = None,
     has_face: bool = False,
 ) -> tuple[bytes, str]:
-    """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
-    스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
-    (거울샷 등 신규 컷이 엉뚱한 컷으로 대체 렌더되는 회귀 방지).
-
-    has_face=True 는 '호출자가 images 에 라이선스 얼굴을 매니페스트와 같은 자리
-    (옷 근거 뒤·무드 앞)로 넣었다'는 뜻이다 — 첨부와 어긋나면 라벨이 밀린다."""
-    model = resolve_model(settings, "image_high")
-    clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
-    spec = normalize_spec(cut_spec, clothing_type=clothing_type)
-    crop_pose_medium = (
-        spec["refScope"] == "pose"
-        and spec["shot"] == "medium"
-        and not spec.get("spaceGroupId")
-    )
-    prompt = build_prompt(cut_spec, product, analysis=analysis, manifest=manifest, has_face=has_face)
-    res = await gemini.generate_content_image(
-        model, prompt, images, settings.mannequin_image_size,
-        aspect_ratio=settings.mannequin_aspect_ratio,
-    )
-    if crop_pose_medium:
-        return await pose_crop.crop_pose_medium(
-            settings, res.image, res.mime, clothing_type
-        )
+    """컷 1개 생성 — 기존 호출자용 wrapper(바이트 단위 동작 유지).
+    실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리). 스펙 위반은 ValueError."""
+    prepared = prepare(
+        settings, cut_spec, product, images,
+        analysis=analysis, manifest=manifest, has_face=has_face)
+    res = await execute(settings, gemini, prepared)
     return res.image, res.mime

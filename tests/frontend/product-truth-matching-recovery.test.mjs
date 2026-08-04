@@ -33,7 +33,17 @@ test('seller must save corrected button and pocket facts before approval', () =>
   assert.match(productInput, /editTruthCount\('buttonCount', e\.target\.value, 30\)/);
   assert.match(productInput, /editTruthCount\('pocketCount', e\.target\.value, 12\)/);
   assert.match(productInput, /garmentSpec:\s*productTruth\.garmentSpec \|\| \{\}/);
-  assert.match(productInput, /protectedDetails:\s*productTruth\.protectedDetails \|\| \{\}/);
+  assert.match(productInput, /patternSpec,/);
+  assert.match(productInput, /pattern:\s*patternProtectionForSpec\(patternSpec\)/);
   assert.match(productInput, /disabled=\{truthBusy \|\| truthDirty \|\|/);
   assert.match(productInput, /수정 저장 후 승인/);
+});
+
+test('seller can correct Product Truth pattern before approval', () => {
+  assert.match(productInput, /const TRUTH_PATTERN_TYPES = \['UNKNOWN', 'SOLID', 'STRIPE', 'CHECK', 'PLAID', 'PRINT', 'OTHER'\]/);
+  assert.match(productInput, /ALWAYS_FINE_PATTERN_TYPES = new Set\(\['UNKNOWN', 'STRIPE', 'CHECK', 'PLAID'\]\)/);
+  assert.match(productInput, /NEVER_FINE_PATTERN_TYPES = new Set\(\['SOLID'\]\)/);
+  assert.match(productInput, /editTruthPatternType\(e\.target\.value\)/);
+  assert.match(productInput, /editTruthFinePattern\(e\.target\.checked\)/);
+  assert.match(productInput, /패턴이 미확인 상태라 패턴 보호를 보수적으로 켭니다/);
 });

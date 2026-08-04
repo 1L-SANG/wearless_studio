@@ -10,6 +10,7 @@ quantitative_gates(Master Goal)의 controlled-set 판정이 여기서 강제된�
 fixture manifest 에 필수 class 가 하나라도 빠지면 집계 gate 는 통과할 수 없다.
 """
 
+import dataclasses
 import json
 
 import numpy as np
@@ -34,11 +35,29 @@ from app.services.hybrid_composite.source_validation import validate_stripe_sour
 from app.services.hybrid_composite.stripe_model import extract_stripe_model
 from app.services.hybrid_composite.types import COMPOSITE_FAILURE_REASONS, CompositeFailure
 from app.services.hybrid_composite.warp_composite import composite_stripe
+from app.agents.hybrid_landmarks import merge_geometry_pair, validate_geometry
 
 
 def _rgb_to_lab(rgb):
     arr = np.array([[list(rgb)[::-1]]], np.uint8)
     return bgr_to_lab(arr)[0, 0]
+
+
+def _landmark_response(**overrides):
+    row = {
+        "garment_visible": True,
+        "shoulder_l": [0.30, 0.20],
+        "shoulder_r": [0.70, 0.20],
+        "hem_l": [0.32, 0.70],
+        "hem_r": [0.68, 0.70],
+        "has_collar": True,
+        "has_placket": True,
+        "has_cuffs": True,
+        "visible_button_count": 6,
+        "confidence": 0.82,
+    }
+    row.update(overrides)
+    return row
 
 
 # ── manifest 무결성 ────────────────────────────────────────────────────────────
@@ -66,6 +85,34 @@ def test_fixture_manifest_matches_generator_and_covers_required_classes():
     for case in on_disk["extractor_cases"] + on_disk["carrier_cases"]:
         assert case["rights"].startswith("synthetic"), case["id"]
         assert "oracle_author" in case
+
+
+def test_source_landmark_merge_allows_bounded_front_photo_jitter():
+    """실 HEIC front 에서 source shoulder 좌표가 6% 초과 흔들린 재현을 soft 합의로 통과."""
+    a = _landmark_response(shoulder_l=[0.25, 0.20], confidence=0.80)
+    b = _landmark_response(shoulder_l=[0.34, 0.20], confidence=0.79)
+
+    strict, strict_err = merge_geometry_pair(a, b)
+    assert strict is None
+    assert strict_err == "landmark 불일치: shoulder_l"
+
+    merged, err = merge_geometry_pair(a, b, allow_source_jitter=True)
+    assert err is None
+    assert merged["shoulder_l"] == pytest.approx([0.295, 0.20])
+    assert merged["_agreement_warnings"] == {"shoulder_l": pytest.approx(0.09)}
+    _, inventory, validation_err = validate_geometry(merged, aspect_hw=1.5)
+    assert validation_err is None
+    assert inventory["collar"] is True
+
+
+def test_source_landmark_merge_still_rejects_severe_disagreement():
+    """soft 합의는 source 지터 완충이지 다른 기하를 통과시키는 우회로가 아니다."""
+    a = _landmark_response(shoulder_l=[0.18, 0.20])
+    b = _landmark_response(shoulder_l=[0.39, 0.20])
+
+    merged, err = merge_geometry_pair(a, b, allow_source_jitter=True)
+    assert merged is None
+    assert err == "landmark 불일치: shoulder_l"
 
 
 # ── CIEDE2000 — Sharma 2005 공개 검증 벡터 ──────────────────────────────────────
@@ -343,6 +390,70 @@ def test_composite_and_qc_gates_hold_on_all_carrier_fixtures():
     assert stretch_bad == 0, "stretch 1% 초과 panel 존재"
     assert np.median(drifts) <= 0.01 and np.percentile(drifts, 95) <= 0.03
     assert min(ssims) >= 0.98, f"mask 밖 SSIM gate 위반: {min(ssims):.4f}"
+
+
+def test_composite_preserves_pixels_outside_mask_before_encoding():
+    """PNG 인코딩 전 ndarray 기준 mask 밖은 carrier 와 정확히 같아야 한다."""
+    model = _model()
+    cx, pm, period_t, art = _run_full("G1_regular", 0, model)
+    assert not isinstance(art, CompositeFailure)
+    outside = pm.garment_mask == 0
+    assert np.array_equal(art.image_bgr[outside], cx["image"][outside])
+    assert np.count_nonzero(art.image_bgr[outside] != cx["image"][outside]) == 0
+
+
+def test_deterministic_qc_exposes_projection_completion_metrics():
+    """Phase 1 활성화 판단용 정량값은 worker 밖에서도 읽을 수 있어야 한다."""
+    model = _model()
+    cx, pm, period_t, art = _run_full("G1_regular", 0, model)
+    assert not isinstance(art, CompositeFailure)
+    qc = verify_composite(
+        art.image_bgr, cx["image"], pm, model,
+        target_period_px=period_t,
+        target_axis="horizontal",
+        painted_mask=art.painted,
+    )
+    assert qc.passed, qc.metrics["failure_details"]
+    for key in (
+        "period_rel_err_max",
+        "repeat_count_rel_err_max",
+        "direction_error_max",
+        "color_delta_e00_max",
+        "color_delta_e00_median",
+        "mask_coverage",
+        "outside_drift_frac",
+    ):
+        assert key in qc.metrics, key
+    assert qc.metrics["mask_coverage"] == pytest.approx(art.source_coverage, abs=0.02)
+    assert qc.metrics["outside_drift_frac"] == 0.0
+
+
+def test_shadow_observation_can_return_low_coverage_artifact_without_relaxing_default_gate():
+    """coverage 부족은 enforce 기본 gate 에선 실패, shadow 관측에선 QC metric 산출까지 간다."""
+    model = _model()
+    cx, pm, period_t, _art = _run_full("G1_regular", 0, model)
+    wide_protected = np.full_like(pm.protected, 255)
+    low_cov_pm = dataclasses.replace(pm, protected=wide_protected)
+
+    strict = composite_stripe(
+        cx["image"], low_cov_pm, model,
+        target_period_px=period_t, target_axis="horizontal")
+    assert isinstance(strict, CompositeFailure)
+    assert strict.reason == "source_coverage_low"
+
+    observed = composite_stripe(
+        cx["image"], low_cov_pm, model,
+        target_period_px=period_t, target_axis="horizontal",
+        allow_low_source_coverage=True)
+    assert not isinstance(observed, CompositeFailure)
+    assert observed.source_coverage < 0.90
+    qc = verify_composite(
+        observed.image_bgr, cx["image"], low_cov_pm, model,
+        target_period_px=period_t,
+        target_axis="horizontal",
+        painted_mask=observed.painted,
+    )
+    assert "mask_coverage" in qc.metrics
 
 
 def test_warp_rejects_flipped_quad():

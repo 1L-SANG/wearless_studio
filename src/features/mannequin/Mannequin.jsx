@@ -33,9 +33,12 @@ import {
   classifyMannequinReview,
   isNonRetryableMannequinRegenerateError,
   mannequinCanEnterStoryboard,
+  mannequinDowngradeChoicesFromStoryboard,
+  mannequinDowngradeChoiceSucceededForCut,
   mannequinRegenerateFailureNotice,
   mannequinReviewAcknowledgedForCut,
   mannequinReviewBlocksStoryboard,
+  mannequinRequiresDowngradeChoice,
   mannequinVersionAriaLabel,
 } from './reviewState.js';
 import {
@@ -43,6 +46,7 @@ import {
   mannequinEditFailureMessage,
   runMannequinEdit,
 } from './mannequinEdit.js';
+import { nextRegenerateIdempotencyKey } from './mannequinRegenerate.js';
 import './Mannequin.css';
 
 const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
@@ -118,6 +122,122 @@ function extractCuts(envelope) {
   if (Array.isArray(envelope?.cuts)) return envelope.cuts;
   if (Array.isArray(envelope?.data?.cuts)) return envelope.data.cuts;
   return [];
+}
+
+function originalProductImage(product) {
+  const colors = Array.isArray(product?.colors) ? product.colors : [];
+  const preferredColor = colors.find((color) => color.isBase || color.isMain) || colors[0] || null;
+  const preferredImages = Array.isArray(preferredColor?.images) ? preferredColor.images : [];
+  const allImages = colors.flatMap((color) => Array.isArray(color.images) ? color.images : []);
+  return preferredImages.find((image) => image?.slot === 'Front' && image?.src)?.src
+    || preferredImages.find((image) => image?.src)?.src
+    || allImages.find((image) => image?.slot === 'Front' && image?.src)?.src
+    || allImages.find((image) => image?.src)?.src
+    || '';
+}
+
+function productHeroStoryboardBlock(block, imageSrc, product, decision) {
+  return {
+    ...block,
+    sectionRole: block?.sectionRole || 'benefit',
+    contentRole: 'custom',
+    title: '원본 상품 이미지',
+    source: 'mine',
+    cutType: null,
+    colorId: block?.colorId || product?.colors?.find((color) => color.isBase || color.isMain)?.id || product?.colors?.[0]?.id || 'col1',
+    ownImages: [imageSrc],
+    thumb: imageSrc,
+    pose: 'auto',
+    matchIds: [],
+    faceExposure: 'same',
+    angle: 'same',
+    refImages: [],
+    refAssetIds: [],
+    poseLabel: '-',
+    exampleId: null,
+    exampleSelectionOrigin: null,
+    setSelectionOrigin: null,
+    spaceGroupId: null,
+    spaceVariation: null,
+    baseThumb: null,
+    downgradeDecision: decision,
+  };
+}
+
+function aiFitReferenceStoryboardBlock(block, selectedCut, product, decision) {
+  const imageSrc = cutImage(selectedCut);
+  if (!imageSrc) throw new Error('선택한 AI 컷 이미지를 찾지 못했어요.');
+  return {
+    ...block,
+    sectionRole: 'fit',
+    contentRole: 'custom',
+    title: 'AI 생성 · 핏 참고용',
+    source: 'mine',
+    cutType: null,
+    colorId: block?.colorId || product?.colors?.find((color) => color.isBase || color.isMain)?.id || product?.colors?.[0]?.id || 'col1',
+    ownImages: [imageSrc],
+    thumb: imageSrc,
+    pose: 'auto',
+    matchIds: [],
+    faceExposure: 'same',
+    angle: 'same',
+    refImages: [],
+    refAssetIds: [],
+    poseLabel: '-',
+    aiUsageLabel: 'fit_reference',
+    sourceCutId: selectedCut.id,
+    downgradeDecision: decision,
+  };
+}
+
+async function saveMannequinDowngradeDecision(projectId, product, selectedCut, choice) {
+  const imageSrc = originalProductImage(product);
+  if (!imageSrc) throw new Error('원본 상품 이미지를 찾지 못했어요.');
+  if (!selectedCut?.id) throw new Error('선택한 AI 컷을 찾지 못했어요.');
+  if (!['product_hero', 'fit_reference'].includes(choice)) throw new Error('지원하지 않는 패턴 보존 선택입니다.');
+  const decision = {
+    type: choice,
+    sourceCutId: selectedCut.id,
+    decidedAt: new Date().toISOString(),
+  };
+  const storyboard = await api.getStoryboard(projectId);
+  const blocks = Array.isArray(storyboard) ? storyboard : [];
+  const heroIndex = blocks.findIndex((block) => block?.source !== 'mine'
+    && block?.sectionRole === 'benefit'
+    && block?.contentRole === 'hero');
+  const fallbackIndex = blocks.findIndex((block) => block?.sectionRole === 'benefit');
+  const targetIndex = heroIndex >= 0 ? heroIndex : fallbackIndex >= 0 ? fallbackIndex : 0;
+  const existingFitReferenceIndex = blocks.findIndex((block) => (
+    block?.source === 'mine'
+      && block?.aiUsageLabel === 'fit_reference'
+      && String(block?.sourceCutId || '') === String(selectedCut.id)
+  ));
+  const baseBlock = blocks[targetIndex] || { id: `product-hero-${selectedCut.id}` };
+  let nextStoryboard = blocks.length
+    ? blocks.map((block, index) => (
+      index === targetIndex ? productHeroStoryboardBlock(block, imageSrc, product, decision) : block
+    ))
+    : [productHeroStoryboardBlock(baseBlock, imageSrc, product, decision)];
+
+  const fitReferenceBase = existingFitReferenceIndex >= 0
+    ? blocks[existingFitReferenceIndex]
+    : { id: `ai-fit-reference-${selectedCut.id}` };
+  const fitReferenceBlock = aiFitReferenceStoryboardBlock(fitReferenceBase, selectedCut, product, decision);
+  if (existingFitReferenceIndex >= 0) {
+    nextStoryboard = nextStoryboard.map((block, index) => (
+      index === existingFitReferenceIndex ? fitReferenceBlock : block
+    ));
+  } else {
+    const insertAfter = nextStoryboard.findIndex((block) => block?.sectionRole === 'fit');
+    const insertAt = insertAfter >= 0 ? insertAfter : nextStoryboard.length;
+    nextStoryboard = [
+      ...nextStoryboard.slice(0, insertAt),
+      fitReferenceBlock,
+      ...nextStoryboard.slice(insertAt),
+    ];
+  }
+  await api.saveStoryboard(projectId, nextStoryboard, { autoAssignment: false });
+  return nextStoryboard;
 }
 
 const REGENERATE_ATTEMPTS = 3;
@@ -615,6 +735,63 @@ function MineColumn({
   );
 }
 
+function PatternDowngradeChoice({
+  required,
+  originalProductImage: originalProductImageSrc,
+  selectedAiImage,
+  selectedChoice,
+  busy,
+  error,
+  onUseOriginalHero,
+  onKeepAiAsFitReference,
+}) {
+  if (!required) return null;
+  return (
+    <div className="fit-downgrade-choice" role="group" aria-label="패턴 보존 선택">
+      <div className="fit-downgrade-head">
+        <b>패턴 정확도가 낮아 자동으로 상세페이지 대표컷에 쓰지 않아요.</b>
+        <span>원본 상품 이미지와 선택한 AI 컷을 비교한 뒤 사용 방식을 명시적으로 골라주세요.</span>
+      </div>
+      <div className="fit-downgrade-compare">
+        <figure>
+          {originalProductImageSrc
+            ? <img src={thumbUrl(originalProductImageSrc, 360)} alt="원본 상품 이미지" decoding="async" />
+            : <div className="busy-tile">원본 상품 이미지 없음</div>}
+          <figcaption>원본 상품 이미지</figcaption>
+        </figure>
+        <figure>
+          {selectedAiImage
+            ? <img src={thumbUrl(selectedAiImage, 360)} alt="선택한 AI 컷" decoding="async" />
+            : <div className="busy-tile">선택한 AI 컷 없음</div>}
+          <figcaption>선택한 AI 컷 <span>AI 생성 · 핏 참고용</span></figcaption>
+        </figure>
+      </div>
+      <div className="fit-downgrade-actions">
+        <button
+          type="button"
+          className={selectedChoice === 'product_hero' ? 'on' : ''}
+          disabled={busy || !originalProductImageSrc}
+          onClick={onUseOriginalHero}
+        >
+          원본 상품 이미지를 대표컷으로 사용
+        </button>
+        <button
+          type="button"
+          className={selectedChoice === 'fit_reference' ? 'on' : ''}
+          disabled={busy}
+          onClick={onKeepAiAsFitReference}
+        >
+          AI 컷은 핏 참고용으로만 유지
+        </button>
+      </div>
+      <p className="fit-downgrade-note">
+        선택이 저장되기 전에는 다음 단계로 이동할 수 없어요. 자동 강등은 하지 않습니다.
+      </p>
+      {error && <p className="fit-downgrade-error" role="alert">{error}</p>}
+    </div>
+  );
+}
+
 // 예시 타일 버튼들(참고용). 이미지 없으면 텍스트 타일로 폴백.
 function ExampleTiles({ axisKey, category, gender, values, onPick }) {
   return (
@@ -747,11 +924,17 @@ export function Mannequin() {
   const [regenerateFailure, setRegenerateFailure] = useState(null);
   const [waitCopyBand, setWaitCopyBand] = useState(0);
   const [arrival, setArrival] = useState(null);
+  const [product, setProduct] = useState(null);
+  const [activeBaseline, setActiveBaseline] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
   const [reviewAcknowledgedCutId, setReviewAcknowledgedCutId] = useState(null);
+  const [downgradeChoice, setDowngradeChoice] = useState(null);
+  const [persistedDowngradeChoices, setPersistedDowngradeChoices] = useState({});
+  const [downgradeChoiceBusy, setDowngradeChoiceBusy] = useState(false);
+  const [downgradeChoiceError, setDowngradeChoiceError] = useState('');
   const [aiEditOpen, setAiEditOpen] = useState(false);
   const [aiEditKind, setAiEditKind] = useState(MANNEQUIN_EDIT_OPTIONS[0]?.id || '');
   const [aiEditStep, setAiEditStep] = useState(null);
@@ -840,13 +1023,17 @@ export function Mannequin() {
       if (loadRunRef.current !== runId) return;
       pid = useAppStore.getState().projectId;
       if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
-      const [nextProduct, nextAnalysis, nextCatalogs] = await Promise.all([
+      const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard, nextBaseline] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
         api.getCatalogs(),
+        api.getStoryboard(pid).catch(() => []),
+        api.getMannequinBaseline(pid).catch(() => null),
       ]);
       if (loadRunRef.current !== runId) return;
       setProgress(generationProgressFor(pid));
+      setProduct(nextProduct);
+      setActiveBaseline(nextBaseline || null);
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
@@ -880,6 +1067,11 @@ export function Mannequin() {
       const selectedCut = list.find((cut) => cut.id === storedSel)
         || list.find((cut) => cut.isSelected)
         || list.at(-1);
+      const hydratedDowngradeChoices = mannequinDowngradeChoicesFromStoryboard(nextStoryboard);
+      setPersistedDowngradeChoices(hydratedDowngradeChoices);
+      setDowngradeChoice(
+        selectedCut ? hydratedDowngradeChoices[String(selectedCut.id)] || null : null,
+      );
       if (selectedCut && useAppStore.getState().selectedMannequinId !== selectedCut.id) {
         selectMannequin(selectedCut.id);
       }
@@ -928,6 +1120,11 @@ export function Mannequin() {
   const selectedCutId = selected?.id || selectedId;
   const selectedReviewState = useMemo(() => classifyMannequinReview(selected), [selected]);
   const selectedReviewAcknowledged = mannequinReviewAcknowledgedForCut(selected, reviewAcknowledgedCutId);
+  const downgradeChoiceRequired = mannequinRequiresDowngradeChoice(selected);
+  const downgradeChoiceSucceeded = mannequinDowngradeChoiceSucceededForCut(selected, downgradeChoice);
+  const selectedDowngradeChoice = downgradeChoiceSucceeded ? downgradeChoice.choice : null;
+  const originalProductImageSrc = originalProductImage(product);
+  const selectedAiImage = cutImage(selected);
   const aiEditOption = MANNEQUIN_EDIT_OPTIONS.find((option) => option.id === aiEditKind)
     || MANNEQUIN_EDIT_OPTIONS[0];
   selectedRef.current = selected;
@@ -977,10 +1174,57 @@ export function Mannequin() {
     if (busy) return;
     setCuts((prev) => prev.map((cut) => ({ ...cut, isSelected: cut.id === cutId })));
     selectMannequin(cutId);
+    setReviewAcknowledgedCutId(null);
+    setDowngradeChoice(persistedDowngradeChoices[String(cutId)] || null);
+    setDowngradeChoiceError('');
     setAiEditOpen(false);
     setAiEditStep(null);
     setAiEditError('');
     aiEditReplayRef.current = null;
+  };
+
+  const chooseOriginalProductHero = async () => {
+    if (!projectId || !selected?.id || downgradeChoiceBusy) return;
+    setDowngradeChoiceBusy(true);
+    setDowngradeChoiceError('');
+    try {
+      const storyboard = await saveMannequinDowngradeDecision(
+        projectId, product, selected, 'product_hero',
+      );
+      const choices = mannequinDowngradeChoicesFromStoryboard(storyboard);
+      setPersistedDowngradeChoices(choices);
+      setDowngradeChoice(choices[String(selected.id)] || null);
+      pushToast('원본 상품 이미지를 상세페이지 대표컷으로 저장했어요.', { icon: 'check' });
+    } catch (error) {
+      const message = error?.message || '원본 상품 이미지를 대표컷으로 저장하지 못했어요.';
+      setDowngradeChoice(null);
+      setDowngradeChoiceError(message);
+      pushToast(message, { icon: 'alertTri' });
+    } finally {
+      setDowngradeChoiceBusy(false);
+    }
+  };
+
+  const chooseAiFitReferenceOnly = async () => {
+    if (!projectId || !selected?.id || downgradeChoiceBusy) return;
+    setDowngradeChoiceBusy(true);
+    setDowngradeChoiceError('');
+    try {
+      const storyboard = await saveMannequinDowngradeDecision(
+        projectId, product, selected, 'fit_reference',
+      );
+      const choices = mannequinDowngradeChoicesFromStoryboard(storyboard);
+      setPersistedDowngradeChoices(choices);
+      setDowngradeChoice(choices[String(selected.id)] || null);
+      pushToast('원본 대표컷과 AI 핏 참고 컷을 상세페이지 구성에 저장했어요.', { icon: 'check' });
+    } catch (error) {
+      const message = error?.message || 'AI 핏 참고 선택을 저장하지 못했어요.';
+      setDowngradeChoice(null);
+      setDowngradeChoiceError(message);
+      pushToast(message, { icon: 'alertTri' });
+    } finally {
+      setDowngradeChoiceBusy(false);
+    }
   };
 
   // draft + 사용자가 고른 값으로 재생성용 FitProfile v2 구성.
@@ -1173,7 +1417,8 @@ export function Mannequin() {
     }
   };
 
-  const runGenerationAttempts = async (runId, profile) => {
+  const runGenerationAttempts = async (runId, profile, initialIdempotencyKey) => {
+    let idempotencyKey = initialIdempotencyKey;
     for (let attempt = 0; attempt < REGENERATE_ATTEMPTS; attempt += 1) {
       if (attempt > 0) {
         setRegenerateState('generation-retry');
@@ -1190,6 +1435,8 @@ export function Mannequin() {
       try {
         response = await api.regenerateMannequin(projectId, {
           fitProfile: profile,   // matchingFit 포함 — garment_ref 로 저장, 재생성에 반영
+          baselineId: activeBaseline?.id || null,
+          idempotencyKey,
           onProgress: (next) => {
             if (!runIsCurrent(runId)) return;
             const realProgress = Math.max(0, Math.min(100, Number(next) || 0));
@@ -1224,7 +1471,13 @@ export function Mannequin() {
           return;
         }
 
-        // 실패한 생성은 서버가 크레딧 예약을 해제하므로, 동일 조정의 자동 재시도는 크레딧에 안전하다.
+        // 네트워크/timeout처럼 서버 접수 여부를 모르는 실패는 같은 키로 replay한다. 반대로
+        // 종결 error job은 같은 키가 영원히 그 실패를 가리키므로 다음 provider 시도만 새 키를 쓴다.
+        idempotencyKey = nextRegenerateIdempotencyKey(
+          idempotencyKey,
+          error,
+          newIdempotencyKey,
+        );
         continue;
       }
 
@@ -1260,8 +1513,9 @@ export function Mannequin() {
     setRegenerateImageReady(false);
     setRegenerateState('generating');
     startWaitCopyClock(runId);
+    const regenerateIdempotencyKey = newIdempotencyKey();
     try {
-      await runGenerationAttempts(runId, profile);
+      await runGenerationAttempts(runId, profile, regenerateIdempotencyKey);
     } catch {
       failGeneration(runId);
     }
@@ -1390,14 +1644,16 @@ export function Mannequin() {
   };
 
   const onCta = async () => {
-    if (!allDone || busy) return;
+    if (!allDone || busy || downgradeChoiceBusy) return;
     if (regenerateState === 'load-exhausted') { retryLoad(); return; }
     if (needsRegen) { regenerate(); return; }
-    if (!mannequinCanEnterStoryboard(selected, reviewAcknowledgedCutId)) {
+    if (!mannequinCanEnterStoryboard(selected, reviewAcknowledgedCutId, downgradeChoice)) {
       pushToast(
         selectedReviewState.hardBlocked
           ? selectedReviewState.description || '이 버전은 상세페이지에 사용할 수 없어요. 다른 버전을 선택해 주세요.'
-          : '검토 내용을 확인한 뒤 상세페이지로 진행해 주세요.',
+          : downgradeChoiceRequired
+            ? '패턴 보존 선택을 완료한 뒤 상세페이지로 진행해 주세요.'
+            : '검토 내용을 확인한 뒤 상세페이지로 진행해 주세요.',
         { icon: 'alertTri' },
       );
       return;
@@ -1421,11 +1677,14 @@ export function Mannequin() {
       await setComposeMode(composeMode);
       const latestSelected = selectedRef.current;
       const latestReviewState = classifyMannequinReview(latestSelected);
-      if (!mannequinCanEnterStoryboard(latestSelected, reviewAcknowledgedCutId)) {
+      if (!mannequinCanEnterStoryboard(latestSelected, reviewAcknowledgedCutId, downgradeChoice)) {
         pushToast(
           mannequinReviewBlocksStoryboard(latestSelected)
             ? latestReviewState.description || '이 버전은 상세페이지에 사용할 수 없어요. 다른 버전을 선택해 주세요.'
-            : '검토 내용을 확인한 뒤 상세페이지로 진행해 주세요.',
+            : mannequinRequiresDowngradeChoice(latestSelected)
+              && !mannequinDowngradeChoiceSucceededForCut(latestSelected, downgradeChoice)
+              ? '패턴 보존 선택을 완료한 뒤 상세페이지로 진행해 주세요.'
+              : '검토 내용을 확인한 뒤 상세페이지로 진행해 주세요.',
           { icon: 'alertTri' },
         );
         return;
@@ -1435,7 +1694,8 @@ export function Mannequin() {
       }
       // 이 CTA가 Identity Lock의 명시적 승인 행위다. 단순 selectedMannequinId 저장은 UI 선택일
       // 뿐 승인 이력이 아니므로, 서버가 baseline을 기록한 뒤에만 후속 착용컷 단계로 이동한다.
-      await api.approveMannequin(projectId, latestSelected.id);
+      const approvedBaseline = await api.approveMannequin(projectId, latestSelected.id);
+      setActiveBaseline(approvedBaseline || null);
       navigate('/create/storyboard');
     } catch {
       pushToast('선택한 이미지를 기준으로 확정하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertTri' });
@@ -1641,7 +1901,17 @@ export function Mannequin() {
                 );
               })}
             </div>
-            {selectedReviewState.visibleReview && (
+            <PatternDowngradeChoice
+              required={downgradeChoiceRequired}
+              originalProductImage={originalProductImageSrc}
+              selectedAiImage={selectedAiImage}
+              selectedChoice={selectedDowngradeChoice}
+              busy={busy || downgradeChoiceBusy}
+              error={downgradeChoiceError}
+              onUseOriginalHero={chooseOriginalProductHero}
+              onKeepAiAsFitReference={chooseAiFitReferenceOnly}
+            />
+            {selectedReviewState.visibleReview && !downgradeChoiceRequired && (
               <label className="fit-review-ack">
                 <input
                   type="checkbox"
@@ -1657,12 +1927,14 @@ export function Mannequin() {
               size="lg"
               block
               iconRight="arrowRight"
-              disabled={busy || !mannequinCanEnterStoryboard(selected, reviewAcknowledgedCutId)}
+              disabled={busy || !mannequinCanEnterStoryboard(selected, reviewAcknowledgedCutId, downgradeChoice)}
               onClick={onCta}
             >
               {selectedReviewState.hardBlocked
                 ? '다른 버전을 선택해 주세요'
-                : selectedReviewState.visibleReview && !selectedReviewAcknowledged
+                : downgradeChoiceRequired && !downgradeChoiceSucceeded
+                  ? '패턴 보존 선택 후 만들기'
+                : selectedReviewState.visibleReview && !downgradeChoiceRequired && !selectedReviewAcknowledged
                   ? '검토 확인 후 만들기'
                   : '이 사진 양으로 만들기'}
             </Button>

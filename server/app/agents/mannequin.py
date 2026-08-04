@@ -42,14 +42,95 @@ _FINE_PATTERN_TOKENS = (
 )
 
 
-def has_fine_pattern(product: dict | None, analysis: dict | None) -> bool:
-    """미세 반복 패턴 상품인가 — 셀러·AI 가 쓴 텍스트에서 찾는다(순수).
+_SOLID_PATTERN_TYPES = {"solid", "plain", "none", "no_pattern", "무지", "단색"}
+_REPEATING_PATTERN_TYPES = {
+    "stripe", "pinstripe", "check", "gingham", "tartan", "plaid", "houndstooth",
+    "herringbone", "dot", "polka", "windowpane", "pattern", "스트라이프", "줄무늬",
+    "체크", "깅엄", "타탄", "격자", "도트", "물방울", "잔무늬", "패턴",
+}
 
-    분석 payload 에 패턴 전용 필드가 없어서 이름·특징(sellingPoints)·카테고리를 훑는다.
-    실측 예: 스트라이프 셔츠의 sellingPoints = ["멀티 스트라이프", "세미 크롭 기장"].
-    과탐(무지인데 4K)은 비용만 더 쓰고 결과는 같지만, 미탐(패턴인데 2K)은 셀러가 원단이
-    다르다고 느끼는 컷이 나가므로 **넓게 잡는 쪽**이 맞다.
+
+def _truthy_bool(v) -> bool | None:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)) and v in (0, 1):
+        return bool(v)
+    if isinstance(v, str):
+        norm = v.strip().lower()
+        if norm in {"true", "yes", "y", "1"}:
+            return True
+        if norm in {"false", "no", "n", "0"}:
+            return False
+    return None
+
+
+def _pattern_spec(src: dict | None) -> dict | None:
+    if not isinstance(src, dict):
+        return None
+    spec = src.get("patternSpec") or src.get("pattern_spec")
+    return spec if isinstance(spec, dict) else None
+
+
+def _get_any(src: dict, *keys: str):
+    for key in keys:
+        if key in src:
+            return src[key]
+    return None
+
+
+def _structured_fine_pattern_risk(src: dict | None) -> bool | None:
+    """구조화 pattern spec이 있으면 미세/반복 패턴 리스크를 결정한다.
+
+    SOLID/PLAIN/NONE 은 명시적 no-risk 정본이다. 그 외 반복 패턴 type은 finePattern 값이
+    빠진 옛 payload에서도 보수적으로 risk로 본다. finePattern이 명시돼 있으면 그 값을 따른다.
     """
+    spec = _pattern_spec(src)
+    if not spec:
+        return None
+
+    pattern_type = str(spec.get("type") or spec.get("patternType") or "").strip().lower()
+    if pattern_type in _SOLID_PATTERN_TYPES:
+        return False
+
+    fine = _truthy_bool(_get_any(spec, "finePattern", "fine_pattern"))
+    if fine is not None:
+        return fine
+
+    if pattern_type in _REPEATING_PATTERN_TYPES:
+        return True
+    if pattern_type and any(tok in pattern_type for tok in _REPEATING_PATTERN_TYPES):
+        return True
+    return None
+
+
+def resolve_fine_pattern_risk(
+    product: dict | None,
+    analysis: dict | None,
+    product_truth: dict | None = None,
+) -> bool:
+    """미세/반복 패턴 리스크 정본 해석.
+
+    우선순위:
+    1. 승인 Product Truth patternSpec / pattern_spec
+    2. analysis 의 구조화 patternSpec / pattern_spec
+    3. 레거시 seller/AI 텍스트 토큰
+
+    승인 Product Truth가 SOLID 라고 말하면 stale 상품명·selling point 텍스트가 패턴을 강제할
+    수 없다. Product Truth가 없을 때의 기존 텍스트 기반 동작은 유지한다.
+    """
+    if isinstance(product_truth, dict) and product_truth.get("status") == "approved":
+        truth_risk = _structured_fine_pattern_risk(product_truth)
+        if truth_risk is not None:
+            return truth_risk
+
+    analysis_risk = _structured_fine_pattern_risk(analysis)
+    if analysis_risk is not None:
+        return analysis_risk
+
+    return _legacy_text_fine_pattern_risk(product, analysis)
+
+
+def _legacy_text_fine_pattern_risk(product: dict | None, analysis: dict | None) -> bool:
     parts = []
     for src in (product or {}), (analysis or {}):
         for key in ("name", "suggestedName", "customCategory", "subCategory"):
@@ -62,6 +143,21 @@ def has_fine_pattern(product: dict | None, analysis: dict | None) -> bool:
                 parts.extend(x for x in v if isinstance(x, str))
     blob = " ".join(parts).lower()
     return any(tok.lower() in blob for tok in _FINE_PATTERN_TOKENS)
+
+
+def has_fine_pattern(
+    product: dict | None,
+    analysis: dict | None,
+    product_truth: dict | None = None,
+) -> bool:
+    """미세 반복 패턴 상품인가 — 구조화 정본을 우선하고 레거시 텍스트로 폴백한다(순수).
+
+    분석 payload 에 패턴 전용 필드가 없어서 이름·특징(sellingPoints)·카테고리를 훑는다.
+    실측 예: 스트라이프 셔츠의 sellingPoints = ["멀티 스트라이프", "세미 크롭 기장"].
+    과탐(무지인데 4K)은 비용만 더 쓰고 결과는 같지만, 미탐(패턴인데 2K)은 셀러가 원단이
+    다르다고 느끼는 컷이 나가므로 **넓게 잡는 쪽**이 맞다.
+    """
+    return resolve_fine_pattern_risk(product, analysis, product_truth)
 
 
 def generation_spec(analysis: dict) -> dict | None:

@@ -107,9 +107,9 @@ class Settings:
     # off | shadow(판정·이벤트만) | enforce(편집 재시도 발화). enforce는 코드 레벨 가드
     # (_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY)가 풀리기 전까지 shadow로 강등(G9 규율).
     mannequin_axis_qc: str = "off"
-    # canonical base 대비 pose/camera/framing/view-family 고정. enforce는 wrong-view를 최대
-    # 1회 재생성한 뒤 fail-closed하며, 관찰 불가는 review로 남긴다.
-    mannequin_frame_qc: str = "enforce"  # off | shadow | enforce
+    # canonical base 대비 pose/camera/framing/view-family 고정. enforce는 readiness guard가
+    # 풀린 뒤에만 wrong-view를 최대 1회 재생성한 뒤 fail-closed한다. 실측 전 기본은 shadow.
+    mannequin_frame_qc: str = "shadow"  # off | shadow | enforce
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
     mannequin_prompt_version: str = "frame_lock_v2"
     # 여성 기본 가슴 볼륨 2패스 (2026-07-30 스파이크). 생성된 컷에 "가슴만 바꿔라"를 단독 과제로
@@ -122,7 +122,7 @@ class Settings:
     # 구 원단 2패스 env 플래그(whole-image generative 재생성)는 blind visual 3/3 FAIL 로
     # 폐기·삭제됐다(2026-08-01, 폐기 이름은 test_deploy_manifest_qc_flags.RETIRED_FLAGS 참조).
     # 같은 이름을 재사용하지 않는다 — env 잔재가 남은 배포에서 옛 의미로 켜지는 사고 방지.
-    mannequin_hybrid_composite: str = "off"  # off | on
+    mannequin_hybrid_composite: str = "off"  # off | shadow | enforce (legacy on => enforce)
     # limited Level-2 texture projection plan. off=기존 hybrid target period 사용,
     # shadow=계획/신뢰도 이벤트만 기록, enforce=저신뢰 projection 은 deterministic 합성 실패 처리.
     mannequin_texture_projection_2d: str = "off"  # off | shadow | enforce
@@ -160,6 +160,10 @@ class Settings:
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
+    # 공유 DB를 쓰는 dev 캘리브레이션에서만 route tx 안에서 job을 선점한다.
+    # secret과 함께 켜야 하며 prod/일반 API 동작에는 관여하지 않는다.
+    frame_calibration_inline_jobs: bool = False
+    frame_calibration_inline_secret: str | None = None
     job_poll_interval_seconds: float = 3.0
     job_lease_timeout_seconds: int = 900
     job_worker_id: str = "web"
@@ -256,6 +260,18 @@ def _flag(env: str, default: str, allowed: set[str]) -> str:
     return v if v in allowed else default
 
 
+def _hybrid_composite_mode() -> str:
+    """deterministic hybrid composite rollout mode.
+
+    `on` was the original fail-closed flag. Keep it as an alias for `enforce`
+    so old deploy envs do not silently change behavior.
+    """
+    v = (os.getenv("MANNEQUIN_HYBRID_COMPOSITE", "off") or "off").strip().lower()
+    if v == "on":
+        return "enforce"
+    return v if v in {"off", "shadow", "enforce"} else "off"
+
+
 def load_settings() -> Settings:
     app_env = os.getenv("APP_ENV", "dev")
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
@@ -311,7 +327,7 @@ def load_settings() -> Settings:
         mannequin_prompt_file=os.getenv("MANNEQUIN_PROMPT_FILE") or None,
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "frame_lock_v2"),
         mannequin_bust_pass=_bust_pass(),
-        mannequin_hybrid_composite=_flag("MANNEQUIN_HYBRID_COMPOSITE", "off", {"off", "on"}),
+        mannequin_hybrid_composite=_hybrid_composite_mode(),
         mannequin_texture_projection_2d=_flag(
             "MANNEQUIN_TEXTURE_PROJECTION_2D", "off", {"off", "shadow", "enforce"}),
         mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
@@ -321,7 +337,7 @@ def load_settings() -> Settings:
         mannequin_structured_qc=_flag(
             "MANNEQUIN_STRUCTURED_QC", "off", {"off", "shadow", "enforce"}),
         mannequin_frame_qc=_flag(
-            "MANNEQUIN_FRAME_QC", "enforce", {"off", "shadow", "enforce"}),
+            "MANNEQUIN_FRAME_QC", "shadow", {"off", "shadow", "enforce"}),
         mannequin_edit_intent_qc=_flag(
             "MANNEQUIN_EDIT_INTENT_QC", "off", {"off", "shadow", "enforce"}),
         editor_vary_intent_qc=_flag(
@@ -330,6 +346,12 @@ def load_settings() -> Settings:
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
+        frame_calibration_inline_jobs=(
+            os.getenv("FRAME_CALIBRATION_INLINE_JOBS", "false").lower() == "true"
+        ),
+        frame_calibration_inline_secret=(
+            os.getenv("FRAME_CALIBRATION_INLINE_SECRET") or None
+        ),
         job_poll_interval_seconds=float(os.getenv("JOB_POLL_INTERVAL_SECONDS", "3")),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),

@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import hashlib
 import types
 
 import app.routes as routes
@@ -518,6 +519,8 @@ def test_run_detail_page_job_uses_approved_baseline_as_first_worn_reference(monk
             "r2_bucket": "b",
             "r2_key": "k/baseline",
             "mime_type": "image/png",
+            "output_id": "out-base",
+            "generation_run_id": "run-base",
         }
 
     async def fake_asset(conn, uid, aid):
@@ -571,7 +574,141 @@ def test_run_detail_page_job_uses_approved_baseline_as_first_worn_reference(monk
         "anchorBaselineId": "base-1",
         "anchorRole": "approved_front_baseline",
     }
+    lineage = captured["cut_assets"][0]["generation_output"]
+    assert lineage["parent_output_id"] == "out-base"
+    assert lineage["baseline_id"] == "base-1"
+    assert lineage["output_sha256"]
+    assert lineage["transformation"]["detailPageCut"]["blockId"] == "fit-1"
     assert captured["metadata"]["anchorBaselineId"] == "base-1"
+
+
+def test_run_detail_page_job_shadow_worn_records_new_run_separate_from_baseline(monkeypatch):
+    captured = {"generate_calls": 0}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [{
+            "id": "fit-1",
+            "source": "ai",
+            "contentRole": "fit",
+            "cutType": "styling",
+            "shot": "full",
+        }]
+
+    async def fake_prod(conn, pid):
+        return {"clothingType": "top", "colors": [{
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product-front"}],
+        }]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_baseline(conn, pid):
+        return {
+            "id": "base-1",
+            "asset_id": "baseline-asset",
+            "r2_bucket": "b",
+            "r2_key": "k/baseline",
+            "mime_type": "image/png",
+            "output_id": "out-base",
+            "generation_run_id": "run-base",
+        }
+
+    async def fake_asset(conn, uid, aid):
+        assert aid == "product-front"
+        return {"id": aid, "mime_type": "image/png", "r2_key": "k/product-front"}
+
+    async def fake_generate(*_args, **_kwargs):
+        captured["generate_calls"] += 1
+        return b"WRONG", "image/png"
+
+    def fake_prepare(settings, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
+        captured["prepared_images"] = images
+        captured["prepared_manifest"] = manifest
+        return types.SimpleNamespace(
+            model="gemini-test",
+            prompt="prompt",
+            images=images,
+            image_size=settings.mannequin_image_size,
+            aspect_ratio=settings.mannequin_aspect_ratio,
+            crop_pose_medium=False,
+        )
+
+    async def fake_execute(settings, gemini, prepared):
+        return types.SimpleNamespace(
+            image=b"NEWIMG",
+            mime="image/png",
+            usage={"totalTokens": 1},
+        )
+
+    async def fake_best_of(settings, product_images, initial, generate_candidate):
+        return initial, None, []
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
+        return [{"id": "page", "kind": "benefit", "elements": []}]
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    async def fake_runlog_begin(*_args, **kwargs):
+        captured["runlog_begin"] = kwargs
+        return "run-detail-new"
+
+    async def fake_runlog_finish(*_args, **kwargs):
+        captured["runlog_finish"] = kwargs
+        return None
+
+    class KeyR2:
+        def get_bytes(self, key):
+            return key.encode()
+
+        def put_bytes(self, key, data, mime, cache=None):
+            captured["uploaded"] = data
+            return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_active_baseline", fake_baseline)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_generate)
+    monkeypatch.setattr(dpj.cut_generator, "prepare", fake_prepare)
+    monkeypatch.setattr(dpj.cut_generator, "execute", fake_execute)
+    monkeypatch.setattr(dpj.image_qc, "best_of", fake_best_of)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_runlog_begin", fake_runlog_begin)
+    monkeypatch.setattr(dpj, "_runlog_finish", fake_runlog_finish)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b", generation_run_log="shadow"),
+        r2=KeyR2(),
+    )
+    asyncio.run(dpj.run_detail_page_job(
+        app, worker_job(payload={"baselineId": "base-1"}, credits_reserved=1)))
+
+    assert captured["generate_calls"] == 0
+    assert captured["prepared_images"][0].data == b"k/baseline"
+    assert captured["uploaded"] == b"NEWIMG"
+    assert captured["runlog_begin"]["explicit_parent_generation_run_id"] == "run-base"
+    assert captured["runlog_begin"]["inputs"][0][0] == "approved_baseline"
+    assert captured["runlog_finish"]["result"].image == b"NEWIMG"
+    lineage = captured["cut_assets"][0]["generation_output"]
+    assert lineage["generation_run_id"] == "run-detail-new"
+    assert lineage["generation_run_id"] != "run-base"
+    assert lineage["parent_output_id"] == "out-base"
+    assert lineage["baseline_id"] == "base-1"
+    assert lineage["output_sha256"] == hashlib.sha256(b"NEWIMG").hexdigest()
+    assert lineage["transformation"]["detailPageCut"]["anchorRole"] == "approved_front_baseline"
 
 
 def test_run_detail_page_job_fails_before_generation_when_baseline_changed(monkeypatch):
@@ -1056,6 +1193,8 @@ def test_finalize_detail_page_success_persists_cut_asset_metadata():
     src = inspect.getsource(dpj.repo.finalize_detail_page_success)
     assert "metadata) " in src
     assert "Json(c.get(\"metadata\") or {})" in src
+    assert "insert into generation_outputs" in src
+    assert "c.get(\"generation_output\")" in src
 
 
 def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_strict(monkeypatch):

@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import re
+import secrets
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -59,6 +60,7 @@ from .models import (
     Project,
     ProjectPatch,
     ProjectSummary,
+    RegenerateRequest,
     RefundRequestBody,
     TopupPurchaseBody,
     UploadUrlRequest,
@@ -149,6 +151,59 @@ def _wake_dispatcher(request: Request) -> None:
     dispatcher = getattr(request.app.state, "dispatcher", None)
     if dispatcher is not None:
         dispatcher.wake()
+
+
+def _frame_calibration_inline_requested(
+    request: Request, supplied_secret: str | None
+) -> bool:
+    """dev 전용 캘리브레이션 preclaim 인증. 실패 사유는 동일 코드로 축약한다."""
+    if supplied_secret is None:
+        return False
+    s = request.app.state.settings
+    host = request.client.host if request.client is not None else ""
+    expected = s.frame_calibration_inline_secret or ""
+    allowed = (
+        s.app_env == "dev"
+        and s.frame_calibration_inline_jobs
+        and not s.job_dispatcher_enabled
+        and host in {"127.0.0.1", "::1", "testclient"}
+        and 8 <= len(supplied_secret) <= 256
+        and bool(expected)
+        and secrets.compare_digest(supplied_secret, expected)
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "frame_calibration_inline_forbidden",
+                "message": "로컬 캘리브레이션 실행 권한이 없어요.",
+            },
+        )
+    return True
+
+
+async def _preclaim_frame_calibration_job(conn, *, job: dict, created: bool) -> dict:
+    if not created:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "frame_calibration_inline_conflict",
+                "message": "다른 활성 작업이 있어 캘리브레이션 작업을 선점할 수 없어요.",
+            },
+        )
+    lease_token = f"frame-calibration:{uuid.uuid4()}"
+    claimed = await repo.preclaim_job_for_inline_execution(
+        conn, job_id=job["id"], lease_token=lease_token
+    )
+    if claimed is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "frame_calibration_inline_conflict",
+                "message": "캘리브레이션 작업 선점에 실패했어요.",
+            },
+        )
+    return claimed
 
 
 async def _fit_profile_snapshot(
@@ -859,6 +914,9 @@ async def analyze_product(
     project_id: str,
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    frame_calibration_secret: str | None = Header(
+        None, alias="X-Wearless-Frame-Calibration"
+    ),
 ):
     """업로드된 상품 사진으로 AI 분석(색·핏·소재·스타일 등)을 수행하는 비동기 작업을 요청합니다.
 
@@ -867,18 +925,27 @@ async def analyze_product(
     - **멱등성**: 진행 중 동일 작업이 있으면 새로 띄우지 않고 기존 `jobId`로 합류합니다
       (더블클릭 시 LLM 2회 호출 방지). 완료된 분석은 재호출 시 재분석(무과금)됩니다.
     """
+    inline = _frame_calibration_inline_requested(request, frame_calibration_secret)
     scoped_key = f"{project_id}:analyze:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         # 무과금 → 예약/게이트 없이 job 생성(멱등/활성 합류는 create_job 이 원자 처리).
-        job, _created = await repo.create_job(
+        job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="analyze",
             payload={"mode": "analyze"}, idempotency_key=scoped_key,
             credits_reserved=0, metadata={})
+        if inline:
+            job = await _preclaim_frame_calibration_job(
+                conn, job=job, created=created
+            )
         await conn.commit()
-    _wake_dispatcher(request)
-    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+    if not inline:
+        _wake_dispatcher(request)
+    content = {"jobId": job["id"]}
+    if inline:
+        content["leaseToken"] = job["lease_token"]
+    return JSONResponse(status_code=202, content=content)
 
 
 @router.post(
@@ -1143,6 +1210,9 @@ async def generate_mannequins(
     project_id: str,
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    frame_calibration_secret: str | None = Header(
+        None, alias="X-Wearless-Frame-Calibration"
+    ),
 ):
     """지정된 프로젝트의 상품 이미지를 기반으로 AI 마네킹 합성 컷(후보군 A, B)을 생성하는 비동기 작업을 요청합니다.
 
@@ -1154,6 +1224,7 @@ async def generate_mannequins(
       3. **크레딧 차감 (402)**: 마네킹 생성에 필요한 크레딧(설정값, 기본 2)이 없으면 `402 Payment Required` 예외가 발생합니다.
       4. **입력 조건 (400)**: 기준 색상의 정면(Front) 사진 에셋이 아직 등록되지 않은 경우 `missing_front_photo` 에러가 발생합니다.
     """
+    inline = _frame_calibration_inline_requested(request, frame_calibration_secret)
     cost = request.app.state.settings.credit_cost_mannequin_generate
     # Idempotency-Key는 project:kind로 스코프 — 다른 프로젝트/종류에서 키 재사용 시 오인 방지
     scoped_key = f"{project_id}:mannequin:{idempotency_key}" if idempotency_key else None
@@ -1202,9 +1273,17 @@ async def generate_mannequins(
                 raise HTTPException(
                     status_code=402,
                     detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
+        if inline:
+            job = await _preclaim_frame_calibration_job(
+                conn, job=job, created=created
+            )
         await conn.commit()
-    _wake_dispatcher(request)
-    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+    if not inline:
+        _wake_dispatcher(request)
+    content = {"jobId": job["id"]}
+    if inline:
+        content["leaseToken"] = job["lease_token"]
+    return JSONResponse(status_code=202, content=content)
 
 
 @router.get(
@@ -1472,9 +1551,12 @@ async def get_baseline(
 async def regenerate_mannequins(
     request: Request,
     project_id: str,
-    body: dict = Body(default={}),
+    body: RegenerateRequest = Body(default_factory=RegenerateRequest),
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    frame_calibration_secret: str | None = Header(
+        None, alias="X-Wearless-Frame-Calibration"
+    ),
 ):
     """조정된 fit-profile 을 반영해 마네킹 후보를 **새 버전으로 재생성**합니다.
 
@@ -1485,8 +1567,10 @@ async def regenerate_mannequins(
       만든다(finalize 가 candidate 별 `max(version)+1` 로 append). 크레딧은 generate 와 동일.
     - **에지 케이스**: `400 missing_front_photo`(정면 사진 없음), `402 insufficient_credits`(크레딧 부족).
     """
+    inline = _frame_calibration_inline_requested(request, frame_calibration_secret)
     cost = request.app.state.settings.credit_cost_mannequin_generate
     scoped_key = f"{project_id}:mannequin_regenerate:{idempotency_key}" if idempotency_key else None
+    requested_baseline_id = body.baseline_id
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -1495,9 +1579,39 @@ async def regenerate_mannequins(
         snapshot = await _fit_profile_snapshot(
             conn,
             project_id,
-            body.get("fitProfile"),
+            body.fit_profile,
             validate_matching_fit=True,
         )
+        baseline = None
+        if requested_baseline_id:
+            baseline = await repo.get_active_baseline(conn, project_id)
+            if baseline is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "no_approved_baseline",
+                            "message": "먼저 마네킹 컷을 승인해 주세요."})
+            if baseline["id"] != requested_baseline_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "baseline_changed",
+                            "message": "승인 기준이 바뀌었어요. 현재 컷을 다시 선택해 주세요."})
+        if scoped_key:
+            prior = await repo.get_job_by_idempotency_key(conn, user_id, scoped_key)
+            if prior is not None:
+                prior_payload = prior.get("payload") or {}
+                same = (
+                    prior_payload.get("mode") == "regenerate"
+                    and
+                    prior_payload.get("baselineId") == requested_baseline_id
+                    and (prior_payload.get("fitProfileSnapshot") or {}) == snapshot
+                )
+                if not same:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "idempotency_conflict",
+                                "message": "같은 요청 키로 다른 재생성을 보낼 수 없어요."})
+                await conn.commit()
+                return JSONResponse(status_code=202, content={"jobId": prior["id"]})
         # 기존 fit 계약 검증이 Product Truth/스토리지 조회보다 먼저 실패해야 한다. 이 순서는
         # 잘못된 matchingFit 요청이 추가 조회·job 생성·크레딧 예약으로 진행되지 않는 API 계약이다.
         product = await repo.get_product(conn, project_id) or {}
@@ -1516,12 +1630,41 @@ async def regenerate_mannequins(
             except product_truth_service.ProductTruthError as e:
                 if request.app.state.settings.enable_product_truth == "enforce":
                     raise HTTPException(status_code=409, detail={"code": e.code, "message": str(e)})
+        job_payload = {
+            "mode": "regenerate",
+            "fitProfile": body.fit_profile,
+            "fitProfileSnapshot": snapshot,
+            "truthPackageId": truth_id,
+            "baselineId": requested_baseline_id,
+        }
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
-            payload={"mode": "regenerate", "fitProfile": body.get("fitProfile"),
-                     "fitProfileSnapshot": snapshot, "truthPackageId": truth_id},
+            payload=job_payload,
             idempotency_key=scoped_key, credits_reserved=cost,
-            metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
+            metadata={
+                "creditCostVersion": request.app.state.settings.credit_cost_version,
+                **({"anchorBaselineId": baseline["id"],
+                    "anchorRole": "approved_front_baseline"} if baseline else {}),
+            })
+        if not created:
+            active_payload = job.get("payload") or {}
+            same_active_request = all(
+                active_payload.get(key) == job_payload.get(key)
+                for key in (
+                    "mode",
+                    "baselineId",
+                    "fitProfileSnapshot",
+                    "truthPackageId",
+                )
+            )
+            if not same_active_request:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "job_in_progress",
+                        "message": "다른 마네킹 생성 작업이 진행 중이에요. 완료 후 다시 시도해 주세요.",
+                    },
+                )
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
             if not mannequin.has_base_front(product):  # 정면 사진 필수(generate 동일)
                 raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")
@@ -1533,15 +1676,23 @@ async def regenerate_mannequins(
             # generation_spec(analysis) 이 이를 읽어 재생성 컷에 반영한다(mannequin_job.py:205,
             # agents/mannequin.generation_spec = analysis["fitProfile"]). save_analysis 는 REPLACE 라
             # 저장된 analysis 가 있을 때만 full payload 에 머지한다(빈 {}에 넣어 다른 필드 유실 방지).
-            fit_profile = body.get("fitProfile")
+            fit_profile = body.fit_profile
             if fit_profile:
                 analysis = await repo.get_analysis(conn, project_id)
                 if analysis:
                     analysis["fitProfile"] = fit_profile
                     await repo.save_analysis(conn, project_id, analysis)
+        if inline:
+            job = await _preclaim_frame_calibration_job(
+                conn, job=job, created=created
+            )
         await conn.commit()
-    _wake_dispatcher(request)
-    return JSONResponse(status_code=202, content={"jobId": job["id"]})
+    if not inline:
+        _wake_dispatcher(request)
+    content = {"jobId": job["id"]}
+    if inline:
+        content["leaseToken"] = job["lease_token"]
+    return JSONResponse(status_code=202, content=content)
 
 
 # ---------- 콘티/에디터/상세페이지 (PL-4) ----------
@@ -1831,6 +1982,40 @@ async def generate_editor_image(
                 conn, (body or {}).get("modelId") or (body or {}).get("model_id"))
             if license_row is not None:
                 await facemarket.verify_license(request.app, license_row)  # 실패=409
+        # 에디터 새 착용컷도 후속 view/상세페이지와 같은 Identity Lock 을 쓴다.
+        # product/detail 컷은 실제 상품 원본 기반이라 baseline 이 필요 없다. 착용컷만
+        # job·credit 전에 active approved baseline 을 요구하고, 실행 시점 재검증용 id 를
+        # payload 에 snapshot 한다.
+        job_payload = dict(body or {})
+        job_metadata = {"creditCostVersion": s.credit_cost_version}
+        if job_payload.get("mode") == "new" and job_payload.get("cutType") in cut_generator.CUT_TYPES:
+            product = await repo.get_product(conn, project_id) or {}
+            analysis = await repo.get_analysis(conn, project_id) or {}
+            clothing_type = (
+                product.get("clothingType")
+                or product.get("clothing_type")
+                or "top"
+            )
+            try:
+                normalized_new = cut_generator.normalize_spec(
+                    content_roles.canonicalize_storyboard_block(job_payload),
+                    clothing_type=clothing_type,
+                )
+            except ValueError:
+                normalized_new = None
+            if normalized_new and normalized_new.get("cutType") in {"styling", "horizon", "mirror"}:
+                baseline = await repo.get_active_baseline(conn, project_id)
+                if baseline is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "no_approved_baseline",
+                                "message": "정면 마네킹 이미지를 먼저 확정해 주세요."},
+                    )
+                job_payload["baselineId"] = baseline["id"]
+                job_metadata.update({
+                    "anchorBaselineId": baseline["id"],
+                    "anchorRole": "approved_front_baseline",
+                })
         # ── Phase 3: 생성형 vary 만 세션을 만든다 ──
         # mode:new 와 플래그 off 는 이 블록을 통째로 건너뛴다(payload 도 손대지 않는다).
         vary_ctx = None
@@ -1894,8 +2079,8 @@ async def generate_editor_image(
 
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="editor_image",
-            payload=body, idempotency_key=scoped_key, credits_reserved=cost,
-            metadata={"creditCostVersion": s.credit_cost_version})
+            payload=job_payload, idempotency_key=scoped_key, credits_reserved=cost,
+            metadata=job_metadata)
         if vary_ctx is not None and created:
             # 계보는 source asset 에 output 이 **유일할 때만** 잇는다. 여러 개면 어느 쪽이
             # 이 자산의 계보인지 모르는 상태라 하나를 고르는 건 추정이지 계보가 아니다.
@@ -1908,7 +2093,9 @@ async def generate_editor_image(
                 changes=vary_ctx["changes"],
                 allowed_scope=vary_ctx["scope"],
                 locked_invariants={"scope": vary_ctx["scope"],
-                                   "lineageStatus": link["status"]},
+                                   "lineageStatus": link["status"],
+                                   "sourceGenerationRunId": link.get("generation_run_id"),
+                                   "sourceBaselineId": link.get("baseline_id")},
                 request_snapshot={"refBgAssetId": vary_ctx["ref_bg_asset_id"],
                                   "cutType": ((body or {}).get("source") or {}).get(
                                       "cutType")})

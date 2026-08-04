@@ -1,3 +1,5 @@
+import pytest
+
 from app.services.hybrid_composite.texture_projection import plan_periodic_projection
 
 
@@ -30,9 +32,24 @@ def test_projection_rejects_unsupported_pattern_without_guessing():
     assert plan.target_period_px is None
 
 
+@pytest.mark.parametrize("pattern_type", ["check", "plaid", "gingham", "tartan"])
+def test_projection_mvp_rejects_two_axis_patterns_as_unsupported(pattern_type):
+    plan = plan_periodic_projection(
+        pattern_type=pattern_type,
+        source_period_px=20,
+        source_span_px=200,
+        target_span_px=300,
+        target_axis="vertical",
+        source_model_confidence=0.9,
+    )
+    assert plan.ok is False
+    assert plan.reason == "unsupported_pattern"
+    assert plan.metrics["patternType"] == pattern_type
+
+
 def test_projection_rejects_low_source_repeat_count():
     plan = plan_periodic_projection(
-        pattern_type="check",
+        pattern_type="stripe",
         source_period_px=80,
         source_span_px=200,
         target_span_px=240,

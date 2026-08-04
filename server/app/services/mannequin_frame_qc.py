@@ -6,7 +6,7 @@ import numpy as np
 from . import edit_intent_qc
 from . import qc as pillow_qc
 
-MIN_MEASUREMENT_CONFIDENCE = 0.60
+MIN_MEASUREMENT_CONFIDENCE = edit_intent_qc.MIN_MEASURE_CONFIDENCE
 MIN_VISION_CONFIDENCE = 0.65
 CENTER_X_MAX = 0.12
 CENTER_Y_MAX = 0.10

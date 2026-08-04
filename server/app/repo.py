@@ -1062,16 +1062,20 @@ async def get_unique_output_for_asset(
     """
     async with conn.cursor() as cur:
         await cur.execute(
-            "select id::text as id, generation_run_id::text as generation_run_id "
+            "select id::text as id, generation_run_id::text as generation_run_id, "
+            "baseline_id::text as baseline_id "
             "from generation_outputs where asset_id = %s limit 2",
             (asset_id,))
         rows = await cur.fetchall()
     if not rows:
-        return {"output_id": None, "generation_run_id": None, "status": "none"}
+        return {"output_id": None, "generation_run_id": None, "baseline_id": None,
+                "status": "none"}
     if len(rows) > 1:
-        return {"output_id": None, "generation_run_id": None, "status": "ambiguous"}
+        return {"output_id": None, "generation_run_id": None, "baseline_id": None,
+                "status": "ambiguous"}
     return {"output_id": rows[0]["id"],
-            "generation_run_id": rows[0]["generation_run_id"], "status": "linked"}
+            "generation_run_id": rows[0]["generation_run_id"],
+            "baseline_id": rows[0].get("baseline_id"), "status": "linked"}
 
 
 async def record_edit_review(
@@ -1726,6 +1730,40 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
             returning {_JOB_COLS}, locked_by as lease_token
             """,
             (list(kinds), lease_token),
+        )
+        return await cur.fetchone()
+
+
+async def preclaim_job_for_inline_execution(
+    conn: AsyncConnection, *, job_id: str, lease_token: str
+) -> dict | None:
+    """현재 route tx가 만든 pending job을 commit 전에 로컬 캘리브레이션에 귀속한다.
+
+    INSERT와 이 UPDATE가 같은 트랜잭션이므로 외부 dispatcher에는 pending 상태가 한 번도
+    보이지 않는다. 일반 요청은 이 함수를 호출하지 않으며 기존 claim_next_job 계약은 불변이다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""
+            update jobs set status = 'running', locked_by = %s, locked_at = now(),
+              started_at = coalesce(started_at, now()), progress = greatest(progress, 5)
+            where id = %s and status = 'pending'
+            returning {_JOB_COLS}, locked_by as lease_token
+            """,
+            (lease_token, job_id),
+        )
+        return await cur.fetchone()
+
+
+async def get_owned_running_job(
+    conn: AsyncConnection, *, job_id: str, lease_token: str
+) -> dict | None:
+    """이미 선점된 job을 lease로 조회한다. 상태 변경이나 lease 교체는 하지 않는다."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select {_JOB_COLS}, locked_by as lease_token from jobs "
+            "where id = %s and status = 'running' and locked_by = %s",
+            (job_id, lease_token),
         )
         return await cur.fetchone()
 
@@ -2605,6 +2643,24 @@ async def finalize_detail_page_success(
                  c.get("size"), c.get("width"), c.get("height"),
                  Json(c.get("metadata") or {})),
             )
+            lineage = c.get("generation_output") or {}
+            if lineage:
+                await cur.execute(
+                    "insert into generation_outputs (generation_run_id, project_id, "
+                    "mannequin_cut_id, asset_id, output_sha256, post_processed, "
+                    "transformation, parent_output_id, baseline_id, edit_session_id) "
+                    "values (%s, %s, null, %s, %s, false, %s, %s, %s, null)",
+                    (
+                        lineage.get("generation_run_id"),
+                        project_id,
+                        c["asset_id"],
+                        lineage.get("output_sha256"),
+                        Json(lineage["transformation"]) if lineage.get("transformation")
+                        else None,
+                        lineage.get("parent_output_id"),
+                        lineage.get("baseline_id"),
+                    ),
+                )
         await cur.execute(
             "update projects set editor_blocks = %s, status = 'done' where id = %s",
             (Json(editor_blocks), project_id),
@@ -2769,15 +2825,17 @@ async def finalize_editor_image_success(
     charge: int,
     metadata: dict,
     edit_session: dict | None = None,   # Phase 3 vary 전용 {"id","status","qc_result","lineage"}
+    generation_output: dict | None = None,  # mode:new/detail worn lineage, edit_session 없이 output만 연결
 ) -> dict | None:
     """성공 종결(원자·lease 펜스): 에셋 insert + wardrobe_images insert + 크레딧 confirm + job
     done. None = lease 상실(복구·재클레임) → 아무것도 쓰지 않음. finalize_mannequin_adjust_success
     와 동일 구조(AG-06/07 공용 종결, mannequin/detail_page finalize 미러).
 
-    `edit_session` 이 오면 Phase 3 vary 경로다 — generation_outputs·세션·wardrobe 를 **같은
-    tx** 에서 잇고, 그 기록이 실패하면 fail-open 하지 않는다(계보 없는 결과를 진열하면
-    "어느 편집의 결과인지 모르는 컷"이 사용자에게 나간다). mode:new·flag-off 는 인자가
-    없으므로 기존 경로 그대로다."""
+    `edit_session` 이 오면 Phase 3 vary 경로다. `generation_output` 이 오면 mode:new worn
+    또는 다른 단건 생성 경로의 provider lineage 다. 둘 다 generation_outputs 를 **같은 tx**
+    에서 잇고, 그 기록이 실패하면 fail-open 하지 않는다(계보 없는 결과를 진열하면
+    "어느 호출/앵커의 결과인지 모르는 컷"이 사용자에게 나간다). 인자가 없으면 기존
+    legacy/mode:new product 경로 그대로다."""
     async with conn.cursor() as cur:
         await cur.execute(
             "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
@@ -2807,22 +2865,26 @@ async def finalize_editor_image_success(
              (edit_session or {}).get("id"), qc_status),
         )
         wardrobe_id = (await cur.fetchone())["id"]
-        if edit_session is not None:
+        output_lineage = generation_output or ((edit_session or {}).get("lineage") if edit_session else None)
+        out_row = None
+        if output_lineage is not None:
             # 계보는 같은 tx 안에서, INSERT RETURNING 으로 받은 **그 output** 을 연결한다.
             # "가장 최근 output" 재조회는 동시 생성에서 남의 결과를 붙인다.
-            lineage = edit_session.get("lineage") or {}
+            lineage = output_lineage
             await cur.execute(
                 "insert into generation_outputs (generation_run_id, project_id, "
                 "mannequin_cut_id, asset_id, output_sha256, post_processed, "
                 "transformation, parent_output_id, baseline_id, edit_session_id) "
-                "values (%s, %s, null, %s, %s, false, %s, %s, null, %s) returning id",
+                "values (%s, %s, null, %s, %s, false, %s, %s, %s, %s) returning id",
                 (lineage.get("generation_run_id"), project_id, image["asset_id"],
                  lineage.get("output_sha256"),
                  Json(lineage["transformation"]) if lineage.get("transformation")
                  else None,
-                 lineage.get("parent_output_id"), edit_session["id"]),
+                 lineage.get("parent_output_id"), lineage.get("baseline_id"),
+                 (edit_session or {}).get("id")),
             )
             out_row = await cur.fetchone()
+        if edit_session is not None:
             await update_edit_session(
                 conn, session_id=edit_session["id"], status=edit_session["status"],
                 qc_result=edit_session.get("qc_result"))

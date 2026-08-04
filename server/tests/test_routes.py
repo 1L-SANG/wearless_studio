@@ -95,6 +95,235 @@ def test_get_job_returns_typed_failure_without_raw_metadata(client, make_token, 
     assert "metadata" not in body
 
 
+def test_regenerate_with_requested_baseline_rejects_missing_baseline_before_job(
+    client, make_token, monkeypatch
+):
+    seen = {"create": 0, "reserve": 0}
+
+    async def get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def get_analysis(conn, project_id):
+        return {"fitProfile": {"version": 2, "category": "top", "gender": "women"}}
+
+    async def get_active_baseline(conn, project_id):
+        return None
+
+    async def create_job(conn, **kw):
+        seen["create"] += 1
+        return {"id": "job-1", "payload": kw["payload"]}, True
+
+    async def reserve_credits(conn, user_id, cost):
+        seen["reserve"] += 1
+        return {"ok": True}
+
+    for name, fn in (
+        ("get_project", get_project),
+        ("get_analysis", get_analysis),
+        ("get_active_baseline", get_active_baseline),
+        ("create_job", create_job),
+        ("reserve_credits", reserve_credits),
+    ):
+        monkeypatch.setattr(routes.repo, name, fn)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.post(
+        "/v1/projects/p1/mannequins:regenerate",
+        headers={**_auth(make_token), "Idempotency-Key": "regen-1"},
+        json={"fitProfile": {"version": 2}, "baselineId": "base-1"},
+    )
+
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "no_approved_baseline"
+    assert seen == {"create": 0, "reserve": 0}
+
+
+def test_regenerate_idempotency_conflict_checks_baseline_and_profile_before_side_effects(
+    client, make_token, monkeypatch
+):
+    seen = {"product": 0, "create": 0, "reserve": 0}
+
+    async def get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def get_analysis(conn, project_id):
+        return {"fitProfile": {"version": 2, "category": "top", "gender": "women"}}
+
+    async def get_active_baseline(conn, project_id):
+        return {"id": "base-1"}
+
+    async def get_job_by_idempotency_key(conn, user_id, key):
+        return {
+            "id": "job-old",
+            "payload": {
+                "baselineId": "base-other",
+                "fitProfileSnapshot": {
+                    "profile": {"version": 2, "category": "top", "gender": "women"},
+                    "adjustedAxes": [],
+                },
+            },
+        }
+
+    async def get_product(conn, project_id):
+        seen["product"] += 1
+        return {}
+
+    async def create_job(conn, **kw):
+        seen["create"] += 1
+        return {"id": "job-1", "payload": kw["payload"]}, True
+
+    async def reserve_credits(conn, user_id, cost):
+        seen["reserve"] += 1
+        return {"ok": True}
+
+    for name, fn in (
+        ("get_project", get_project),
+        ("get_analysis", get_analysis),
+        ("get_active_baseline", get_active_baseline),
+        ("get_job_by_idempotency_key", get_job_by_idempotency_key),
+        ("get_product", get_product),
+        ("create_job", create_job),
+        ("reserve_credits", reserve_credits),
+    ):
+        monkeypatch.setattr(routes.repo, name, fn)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.post(
+        "/v1/projects/p1/mannequins:regenerate",
+        headers={**_auth(make_token), "Idempotency-Key": "regen-1"},
+        json={"fitProfile": {"version": 2}, "baselineId": "base-1"},
+    )
+
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "idempotency_conflict"
+    assert seen == {"product": 0, "create": 0, "reserve": 0}
+
+
+def test_regenerate_idempotency_conflict_rejects_different_profile_before_side_effects(
+    client, make_token, monkeypatch
+):
+    seen = {"product": 0, "create": 0, "reserve": 0}
+
+    async def get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def get_analysis(conn, project_id):
+        return {"fitProfile": {"version": 2, "category": "top", "gender": "women"}}
+
+    async def get_active_baseline(conn, project_id):
+        return {"id": "base-1"}
+
+    async def get_job_by_idempotency_key(conn, user_id, key):
+        return {
+            "id": "job-old",
+            "payload": {
+                "baselineId": "base-1",
+                "fitProfileSnapshot": {
+                    "profile": {"version": 2, "category": "top", "gender": "women",
+                                "axes": {"bodyWidth": 2}},
+                    "adjustedAxes": ["bodyWidth"],
+                },
+            },
+        }
+
+    async def get_product(conn, project_id):
+        seen["product"] += 1
+        return {}
+
+    async def create_job(conn, **kw):
+        seen["create"] += 1
+        return {"id": "job-1", "payload": kw["payload"]}, True
+
+    async def reserve_credits(conn, user_id, cost):
+        seen["reserve"] += 1
+        return {"ok": True}
+
+    for name, fn in (
+        ("get_project", get_project),
+        ("get_analysis", get_analysis),
+        ("get_active_baseline", get_active_baseline),
+        ("get_job_by_idempotency_key", get_job_by_idempotency_key),
+        ("get_product", get_product),
+        ("create_job", create_job),
+        ("reserve_credits", reserve_credits),
+    ):
+        monkeypatch.setattr(routes.repo, name, fn)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.post(
+        "/v1/projects/p1/mannequins:regenerate",
+        headers={**_auth(make_token), "Idempotency-Key": "regen-1"},
+        json={"fitProfile": {"version": 2}, "baselineId": "base-1"},
+    )
+
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "idempotency_conflict"
+    assert seen == {"product": 0, "create": 0, "reserve": 0}
+
+
+def test_regenerate_rejects_joining_an_active_job_with_different_anchor(
+    client, make_token, monkeypatch
+):
+    seen = {"create": 0, "reserve": 0}
+
+    async def get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def get_analysis(conn, project_id):
+        return {"fitProfile": {"version": 2, "category": "top", "gender": "women"}}
+
+    async def get_active_baseline(conn, project_id):
+        return {"id": "base-1"}
+
+    async def get_job_by_idempotency_key(conn, user_id, key):
+        return None
+
+    async def get_product(conn, project_id):
+        return {
+            "colors": [
+                {"isBase": True, "images": [{"id": "asset-front", "slot": "Front"}]}
+            ]
+        }
+
+    async def create_job(conn, **kw):
+        seen["create"] += 1
+        return {
+            "id": "job-active",
+            "payload": {
+                "mode": "regenerate",
+                "baselineId": "base-other",
+                "fitProfileSnapshot": kw["payload"]["fitProfileSnapshot"],
+                "truthPackageId": kw["payload"]["truthPackageId"],
+            },
+        }, False
+
+    async def reserve_credits(conn, user_id, cost):
+        seen["reserve"] += 1
+        return {"ok": True}
+
+    for name, fn in (
+        ("get_project", get_project),
+        ("get_analysis", get_analysis),
+        ("get_active_baseline", get_active_baseline),
+        ("get_job_by_idempotency_key", get_job_by_idempotency_key),
+        ("get_product", get_product),
+        ("create_job", create_job),
+        ("reserve_credits", reserve_credits),
+    ):
+        monkeypatch.setattr(routes.repo, name, fn)
+    patch_route_db(monkeypatch, routes)
+
+    res = client.post(
+        "/v1/projects/p1/mannequins:regenerate",
+        headers={**_auth(make_token), "Idempotency-Key": "regen-new"},
+        json={"fitProfile": {"version": 2}, "baselineId": "base-1"},
+    )
+
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "job_in_progress"
+    assert seen == {"create": 1, "reserve": 0}
+
+
 def test_product_truth_approval_reseals_current_fingerprint_after_product_sync(
     client, make_token, monkeypatch
 ):

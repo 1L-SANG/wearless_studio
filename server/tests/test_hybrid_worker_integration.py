@@ -7,13 +7,14 @@ fake Gemini 가 synthetic carrier 를 돌려주면, 진짜 소스검증→추출
 핵심 계약(스파이가 잠근다):
   · `hybrid_composite_completed` 이후 저장·finalize 까지 image-generation 호출 증가 0
   · stage event 순서 단조 증가
-  · 합성 실패 = typed needs_review, old/fresh fallback 0회
+  · 합성 실패 = shadow 에서는 typed needs_review, enforce 에서는 fail-closed, old/fresh fallback 0회
   · deterministic 판정은 LLM QC 로 뒤집을 수 없음 (양방향)
 """
 
 import asyncio
 import base64
 import contextlib
+import dataclasses
 import hashlib
 import types
 
@@ -84,7 +85,8 @@ class _Pool:
 
 def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name="스트라이프 셔츠",
              settings_kw=None, p2_verdict=None, source_png=None,
-             carrier_component_box=False):
+             carrier_component_box=False, truth_pattern=None,
+             truth_fine_pattern=None, analysis_pattern=None):
     """워커 전체 실행. → (oplog, calls, r2_saved, emits)"""
     oplog: list[tuple] = []          # ("gen",) | ("evt", status) — 순서가 곧 증거
     emits: list[tuple] = []
@@ -130,7 +132,27 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
                 "colors": [{"isBase": True, "images": images}]}
 
     async def get_analysis(conn, project_id):
-        return {"targetGenders": ["women"], "fit": "regular"}
+        out = {"targetGenders": ["women"], "fit": "regular"}
+        if analysis_pattern is not None:
+            out["pattern"] = {"type": analysis_pattern}
+        return out
+
+    async def get_product_truth(conn, project_id, truth_id=None):
+        if truth_pattern is None:
+            return None
+        pattern_spec = {"type": truth_pattern}
+        if truth_fine_pattern is not None:
+            pattern_spec["finePattern"] = truth_fine_pattern
+        return {
+            "id": truth_id or "truth-1",
+            "version": 1,
+            "status": "approved",
+            "garment_spec": {},
+            "color_spec": {},
+            "pattern_spec": pattern_spec,
+            "protected_details": {},
+            "source_fingerprint": {},
+        }
 
     async def get_asset_for_user(conn, user_id, asset_id):
         return {
@@ -157,6 +179,7 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
 
     for name, fn in (("get_product", get_product), ("get_analysis", get_analysis),
                      ("get_asset_for_user", get_asset_for_user),
+                     ("get_product_truth", get_product_truth),
                      ("get_matching_item_asset", get_matching_item_asset),
                      ("finalize_mannequin_success", finalize_success),
                      ("finalize_mannequin_failure", finalize_failure)):
@@ -198,8 +221,9 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
     settings = make_settings(**kw)
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=settings, pool=_Pool(), r2=_R2(), gemini=_Gemini()))
+    payload = {"truthPackageId": "truth-1"} if truth_pattern is not None else {}
     job = {"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:t",
-           "credits_reserved": 2, "payload": {}}
+           "credits_reserved": 2, "payload": payload}
     asyncio.run(mj.run_mannequin_job(app, job))
     return oplog, calls, r2_saved, emits
 
@@ -265,6 +289,30 @@ def test_composite_applies_end_to_end_and_freezes_generation_after_completion(mo
     assert sm["source_asset_id"] == "detail"
 
 
+def test_shadow_composite_runs_but_preserves_carrier_bytes(monkeypatch):
+    _oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch, settings_kw={"mannequin_hybrid_composite": "shadow"})
+    assert calls["failure"] == [] and len(calls["success"]) == 1
+
+    completed = next(p for e, p in emits if p.get("status") == "hybrid_composite_completed")
+    assert completed["mode"] == "shadow"
+    assert completed["outcome"] == "would_apply"
+
+    cut = calls["success"][0]["candidates"][0]
+    hc = cut["qc_scores"]["hybridComposite"]
+    carrier_sha = hc["carrierSha256"]
+    assert hc["mode"] == "shadow"
+    assert hc["applied"] is False
+    assert hc["wouldApply"] is True
+    assert hc["deterministicPassed"] is True
+    assert hc["failClosed"] is False
+    assert hashlib.sha256(r2_saved["data"]).hexdigest() == carrier_sha
+    assert hc["outputSha256"] != carrier_sha
+    assert cut["qc_scores"]["outcome"] == "auto_pass"
+    assert cut["generation_metadata"]["generationPath"] == "fresh"
+    assert "hybridComposite" not in cut["generation_metadata"]
+
+
 def test_level2_projection_shadow_runs_inside_real_composite_and_is_persisted(monkeypatch):
     _oplog, calls, _r2, emits = _run_job(
         monkeypatch,
@@ -279,7 +327,264 @@ def test_level2_projection_shadow_runs_inside_real_composite_and_is_persisted(mo
     cut = calls["success"][0]["candidates"][0]
     persisted = cut["qc_scores"]["hybridComposite"]["textureProjection"]
     assert persisted["ok"] is True
+    assert persisted["mode"] == "shadow"
     assert persisted["version"] == "texture_projection_2d_v1"
+
+
+def test_approved_regular_stripe_enters_projection_when_fine_pattern_is_false(monkeypatch):
+    _oplog, calls, _r2, emits = _run_job(
+        monkeypatch,
+        truth_pattern="stripe",
+        truth_fine_pattern=False,
+        settings_kw={
+            "mannequin_hybrid_composite": "shadow",
+            "mannequin_texture_projection_2d": "shadow",
+        },
+    )
+
+    assert calls["failure"] == []
+    assert calls["success"]
+    statuses = _statuses(emits)
+    assert "hybrid_composite_started" in statuses
+    assert "hybrid_texture_projection_plan" in statuses
+    persisted = calls["success"][0]["candidates"][0]["qc_scores"]["hybridComposite"]
+    assert persisted["textureProjection"]["ok"] is True
+
+
+def test_detail_model_failure_falls_back_to_front_stripe_source(monkeypatch):
+    """실 HEIC 묶음 재현: Detail ROI scan 은 실패해도 Front 에서 stripe model 이 성립하면 진행한다."""
+    blank_detail = _png(np.full((1536, 1536, 3), 242, np.uint8))
+    _oplog, calls, _r2, emits = _run_job(
+        monkeypatch,
+        detail_png=blank_detail,
+        truth_pattern="stripe",
+        truth_fine_pattern=False,
+        settings_kw={
+            "mannequin_hybrid_composite": "shadow",
+            "mannequin_texture_projection_2d": "shadow",
+        },
+    )
+
+    assert calls["failure"] == []
+    assert calls["success"]
+    model_event = next(
+        payload for _event, payload in emits
+        if payload.get("status") == "hybrid_stripe_model"
+    )
+    assert model_event["source_asset_id"] == "front"
+    plan_event = next(
+        payload for _event, payload in emits
+        if payload.get("status") == "hybrid_texture_projection_plan"
+    )
+    assert plan_event["ok"] is True
+
+
+@pytest.mark.parametrize("pattern_type", ["solid", "unknown"])
+def test_non_projectable_truth_with_no_fine_pattern_skips_hybrid(monkeypatch, pattern_type):
+    _oplog, calls, _r2, emits = _run_job(
+        monkeypatch,
+        truth_pattern=pattern_type,
+        truth_fine_pattern=False,
+        settings_kw={
+            "mannequin_hybrid_composite": "shadow",
+            "mannequin_texture_projection_2d": "shadow",
+        },
+    )
+
+    assert calls["failure"] == []
+    assert calls["success"]
+    statuses = _statuses(emits)
+    assert "hybrid_composite_started" not in statuses
+    assert "hybrid_texture_projection_plan" not in statuses
+    qc_scores = calls["success"][0]["candidates"][0]["qc_scores"]
+    assert qc_scores is None or "hybridComposite" not in qc_scores
+
+
+def test_projection_shadow_plan_failure_does_not_fail_closed_outer_enforce(monkeypatch):
+    original = mj.hc_projection.plan_periodic_projection
+
+    def unsafe_shadow_plan(**kwargs):
+        plan = original(**kwargs)
+        return dataclasses.replace(plan, ok=False, reason="projection_low_confidence")
+
+    monkeypatch.setattr(
+        mj.hc_projection,
+        "plan_periodic_projection",
+        unsafe_shadow_plan,
+    )
+    _oplog, calls, _r2, emits = _run_job(
+        monkeypatch,
+        settings_kw={
+            "mannequin_hybrid_composite": "enforce",
+            "mannequin_texture_projection_2d": "shadow",
+        },
+    )
+
+    assert calls["failure"] == []
+    assert len(calls["success"]) == 1
+    plan_event = next(
+        payload for _event, payload in emits
+        if payload.get("status") == "hybrid_texture_projection_plan"
+    )
+    assert plan_event["mode"] == "shadow"
+    assert plan_event["ok"] is False
+    persisted = calls["success"][0]["candidates"][0]["qc_scores"]["hybridComposite"]
+    assert persisted["applied"] is True
+    assert persisted["textureProjection"]["mode"] == "shadow"
+    assert persisted["textureProjection"]["ok"] is False
+
+
+def test_projection_shadow_subpixel_target_runs_warp_and_qc_for_metrics(monkeypatch):
+    """1K 실측: target pitch 2~6px 는 shadow 에서 조기 중단하지 않고 QC 지표까지 남긴다."""
+    original_extract = mj.hc_stripe.extract_stripe_model_scan
+
+    def tiny_period_model(*args, **kwargs):
+        model = original_extract(*args, **kwargs)
+        if isinstance(model, mj.CompositeFailure):
+            return model
+        return dataclasses.replace(model, period_px=5.0)
+
+    monkeypatch.setattr(mj.hc_stripe, "extract_stripe_model_scan", tiny_period_model)
+
+    _oplog, calls, _r2, emits = _run_job(
+        monkeypatch,
+        settings_kw={
+            "mannequin_hybrid_composite": "shadow",
+            "mannequin_texture_projection_2d": "shadow",
+        },
+    )
+
+    assert calls["failure"] == []
+    assert calls["success"]
+    statuses = _statuses(emits)
+    assert "hybrid_texture_projection_plan" in statuses
+    assert "hybrid_warp_composite" in statuses
+    assert "hybrid_deterministic_qc" in statuses
+    plan_event = next(
+        payload for _event, payload in emits
+        if payload.get("status") == "hybrid_texture_projection_plan"
+    )
+    assert plan_event["reason"] == "target_period_too_small"
+
+
+def test_projection_uses_approved_product_truth_pattern_before_analysis_default(monkeypatch):
+    _oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch,
+        truth_pattern="check",
+        analysis_pattern="stripe",
+        settings_kw={
+            "mannequin_hybrid_composite": "shadow",
+            "mannequin_texture_projection_2d": "shadow",
+        },
+    )
+
+    plan_event = next(
+        payload for _event, payload in emits
+        if payload.get("status") == "hybrid_texture_projection_plan"
+    )
+    assert plan_event["ok"] is False
+    assert plan_event["reason"] == "unsupported_pattern"
+    assert plan_event["metrics"]["patternType"] == "check"
+
+    completed = next(p for _e, p in emits if p.get("status") == "hybrid_composite_completed")
+    assert completed["mode"] == "shadow"
+    assert completed["fail_closed"] is False
+    assert calls["failure"] == []
+    cut = calls["success"][0]["candidates"][0]
+    assert cut["qc_scores"]["hybridComposite"]["failClosed"] is False
+    assert cut["qc_scores"]["hybridComposite"]["textureProjection"]["reason"] == "unsupported_pattern"
+    assert cut["qc_scores"]["outcome"] == "auto_pass"
+    assert hashlib.sha256(r2_saved["data"]).hexdigest() == \
+        cut["qc_scores"]["hybridComposite"]["carrierSha256"]
+
+
+def test_explicit_check_truth_never_enters_legacy_stripe_renderer_when_projection_is_off(
+        monkeypatch):
+    _oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch,
+        truth_pattern="check",
+        analysis_pattern="stripe",
+        settings_kw={
+            "mannequin_hybrid_composite": "shadow",
+            "mannequin_texture_projection_2d": "off",
+        },
+    )
+    assert calls["failure"] == []
+    assert calls["success"]
+    completed = next(p for _e, p in emits if p.get("status") == "hybrid_composite_completed")
+    assert completed["outcome"] == "unsupported_pattern"
+    assert not any(p.get("status") == "hybrid_source_validated" for _e, p in emits)
+    cut = calls["success"][0]["candidates"][0]
+    assert cut["qc_scores"]["hybridComposite"]["failureReason"] == "unsupported_pattern"
+    assert hashlib.sha256(r2_saved["data"]).hexdigest() == \
+        cut["qc_scores"]["hybridComposite"]["carrierSha256"]
+
+
+def test_explicit_check_truth_fails_closed_before_stripe_renderer_in_enforce(monkeypatch):
+    _oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch,
+        truth_pattern="check",
+        analysis_pattern="stripe",
+        settings_kw={
+            "mannequin_hybrid_composite": "enforce",
+            "mannequin_texture_projection_2d": "off",
+        },
+    )
+    assert calls["success"] == []
+    assert r2_saved == {}
+    assert calls["failure"][0]["metadata"]["failureReason"] == "unsupported_pattern"
+    assert not any(p.get("status") == "hybrid_source_validated" for _e, p in emits)
+
+
+def test_shadow_composite_failure_finalizes_review_without_replacing_carrier(monkeypatch):
+    check_png = _png(np.tile(render_negative("N2_gingham_check"), (2, 2, 1))[:1536, :1536])
+    _oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch, detail_png=check_png,
+        settings_kw={"mannequin_hybrid_composite": "shadow"})
+    assert calls["failure"] == []
+    assert len(calls["success"]) == 1
+    assert r2_saved
+
+    completed = next(p for e, p in emits if p.get("status") == "hybrid_composite_completed")
+    assert completed["mode"] == "shadow"
+    assert completed["fail_closed"] is False
+    assert completed["outcome"] == "unsupported_pattern"
+
+    cut = calls["success"][0]["candidates"][0]
+    hc = cut["qc_scores"]["hybridComposite"]
+    assert hc["mode"] == "shadow"
+    assert hc["applied"] is False
+    assert hc["wouldApply"] is False
+    assert hc["needsReview"] is True
+    assert hc["failClosed"] is False
+    assert hc["failureReason"] == "unsupported_pattern"
+    assert cut["qc_scores"]["outcome"] == "auto_pass"
+    assert cut["generation_metadata"]["generationPath"] == "fresh"
+
+
+def test_shadow_composite_does_not_suppress_llm_retry(monkeypatch):
+    retry = {
+        "verdict": "retry", "mismatches": [], "correctionPrompt": "try again",
+        "product_fidelity": 20, "physical_naturalness": 95, "image_quality": 95,
+        "series_consistency": None, "critical_errors": [],
+    }
+    passed = {**retry, "verdict": "pass", "correctionPrompt": None, "product_fidelity": 95}
+    oplog, calls, _r2_saved, emits = _run_job(
+        monkeypatch,
+        settings_kw={
+            "mannequin_hybrid_composite": "shadow",
+            "image_qc": "enforce",
+            "mannequin_max_attempts": 2,
+        },
+        p2_verdict=[retry, passed],
+    )
+
+    assert calls["failure"] == []
+    assert len(calls["success"]) == 1
+    assert sum(1 for op in oplog if op[0] == "gen") == 2
+    assert not any(payload.get("status") == "hybrid_llm_retry_suppressed"
+                   for event, payload in emits if event == "step")
+    assert calls["success"][0]["candidates"][0]["qc_scores"]["outcome"] == "auto_pass"
 
 
 def test_unsupported_pattern_fails_closed_before_save_or_success_finalize(monkeypatch):

@@ -61,6 +61,10 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # (2026-07-14 사용자 결정). 판정 실패는 fail-open — 생성을 절대 막지 않음. 발화율·판정
   # 정확도는 axis_qc/axis_retry 이벤트로 관측, 골드셋 캘리브는 켠 상태로 병행.
   MANNEQUIN_AXIS_QC: enforce
+  # Frame Lock은 canonical mannequin 대비 pose/camera/framing/view-family를 계측한다.
+  # 아직 1K 실 Gemini 캘리브레이션 전이므로 shadow만 허용한다. enforce는 코드 readiness guard도
+  # shadow로 강등한다 — 잘못된 임계로 전 생성 차단하는 사고를 막는다.
+  MANNEQUIN_FRAME_QC: shadow
   # AG-P2 의류 동일성 QC(색·패턴·로고·프린트가 원본과 같은 옷인가).
   # 2026-07-31 shadow → enforce. 위 주석이 요구하던 "실측 분포 캘리브레이션"을 마쳤다:
   # 임계를 실측으로 교정(90/75 는 통과율 0% 였다), 판정자 변별력 하니스, 거짓양성 육안 점검
@@ -77,10 +81,19 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # ±30 을 감안한 마진). 여기 없으면 config 기본 off 로 떨어져 조용히 안 돈다.
   # (2026-08-01) 구 원단 2패스 플래그(whole-image 원단 재생성)는 blind visual 3/3 FAIL 로
   # 코드째 삭제됐다(폐기 이름은 test_deploy_manifest_qc_flags.RETIRED_FLAGS 가 재선언을 막는다).
-  # 후속 deterministic composite(MANNEQUIN_HYBRID_COMPOSITE)는 별도 검증 완료 전까지
-  # prod manifest 에 선언하지 않는다(기본 off).
   MANNEQUIN_UNTUCK_PASS: "on"   # 상의·아우터를 하의 밖으로 — QC 탐지가 불안정해 무조건 실행
   MANNEQUIN_BUST_PASS: "on"     # 가슴 볼륨(배수 1.3). 하의 상품엔 코드에서 미적용
+  # 완료된 data/QC/edit/texture 경로는 prod 에서 조용히 기본 off 로 떨어지지 않도록 명시한다.
+  # Product Truth 는 migration 검증 완료로 enforce. 나머지는 실 트래픽 관측·캘리브 전까지 shadow:
+  # 기록/판정만 남기고 생성·저장·후보 선택을 막지 않는다.
+  GENERATION_RUN_LOG: shadow
+  ENABLE_PRODUCT_TRUTH: enforce
+  MANNEQUIN_STRUCTURED_QC: shadow
+  MANNEQUIN_EDIT_INTENT_QC: shadow
+  EDITOR_VARY_INTENT_QC: shadow
+  MANNEQUIN_HYBRID_COMPOSITE: shadow
+  # Projection 2D shadow 는 관측 전용이다. 아직 품질-ready gate 가 아니므로 enforce 금지.
+  MANNEQUIN_TEXTURE_PROJECTION_2D: shadow
   # AG-01 분석 provider 모델 — config.py 기본(gemini-2.5-pro) 오버라이드. AI Studio 유효 id 여야 함
   # (구값 'gemini-3-pro' 는 미존재 → Gemini 404 로 분석 실패했음). OpenAI 키 미설정이라 gemini 가 유일 provider.
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview

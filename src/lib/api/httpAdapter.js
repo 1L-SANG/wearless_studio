@@ -150,6 +150,7 @@ export function jobErrorFromStatus(job, fallbackMessage = '작업에 실패했�
   const error = new Error(job?.errorMessage || fallbackMessage);
   if (job?.errorCode) error.code = job.errorCode;
   if (job?.errorDetails != null) error.details = job.errorDetails;
+  error.terminalJobFailure = true;
   return error;
 }
 
@@ -626,9 +627,11 @@ export const httpAdapter = {
   },
   // fit-profile 재생성 — 완료 캐시 없이 매 호출이 새 A/B 버전을 만든다(서버 :regenerate, finalize 가 max(version)+1).
   // 크레딧: mannequinGenerate. generate 미러(202 job → 폴링). 재생성은 캐시 200 경로가 없어 항상 job.
-  async regenerateMannequin(projectId, { fitProfile, onProgress } = {}) {
+  async regenerateMannequin(projectId, { fitProfile, baselineId, onProgress, idempotencyKey } = {}) {
     const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {
-      method: 'POST', body: { fitProfile },
+      method: 'POST',
+      body: { fitProfile, ...(baselineId ? { baselineId } : {}) },
+      idempotencyKey: idempotencyKey || newIdempotencyKey(),
     });
     if (res.data) return { data: res.data, credits: res.credits };
     const result = await pollJob(res.jobId, {

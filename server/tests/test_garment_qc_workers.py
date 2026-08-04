@@ -22,6 +22,8 @@ class _CapturingR2:
         self.saved = []
 
     def get_bytes(self, key):
+        if key == "k/base":
+            return b"BASE"
         return b"PRODUCT"
 
     def put_bytes(self, key, data, mime, cache=None):
@@ -164,6 +166,16 @@ def _run_editor(
     async def fake_asset(conn, user_id, asset_id):
         return {"id": asset_id, "r2_key": f"k/{asset_id}", "mime_type": "image/png"}
 
+    async def fake_active_baseline(conn, project_id):
+        return {
+            "id": "base-1",
+            "asset_id": "asset-base",
+            "r2_key": "k/base",
+            "mime_type": "image/png",
+            "output_id": "out-base",
+            "generation_run_id": "run-base",
+        }
+
     async def fake_generate(settings, gemini, spec, product, images, **kwargs):
         generated_inputs.append([image.data for image in images])
         events.append("generate")
@@ -188,6 +200,7 @@ def _run_editor(
     monkeypatch.setattr(eij.repo, "get_product", fake_product)
     monkeypatch.setattr(eij.repo, "get_analysis", fake_analysis)
     monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(eij.repo, "get_active_baseline", fake_active_baseline)
     monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
     monkeypatch.setattr(eij, "_emit", fake_emit)
@@ -210,6 +223,7 @@ def _run_editor(
         "cutType": "product",
         "direction": "front",
         "shot": "ghost",
+        "baselineId": "base-1",
     }
     if bg:
         payload.update({

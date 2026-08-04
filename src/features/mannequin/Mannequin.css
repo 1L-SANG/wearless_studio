@@ -144,6 +144,23 @@
   font-size: 12.5px; font-weight: 700; color: var(--fg-1); cursor: pointer; }
 .fit-review-ack input { width: 16px; height: 16px; accent-color: var(--link); cursor: pointer; }
 .fit-review-ack input:disabled, .fit-review-ack input:disabled + span { cursor: wait; opacity: .62; }
+.fit-downgrade-choice { width: min(100%, 520px); margin: 0 auto 14px; border-radius: var(--r-6); padding: 14px;
+  background: #fff8e8; box-shadow: inset 0 0 0 1px #ead29a; color: #5f4100; box-sizing: border-box; }
+.fit-downgrade-head { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.fit-downgrade-head b { font-size: 13px; font-weight: 850; }
+.fit-downgrade-head span, .fit-downgrade-note { font-size: 11.5px; line-height: 1.45; }
+.fit-downgrade-compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.fit-downgrade-compare figure { margin: 0; border-radius: var(--r-5); overflow: hidden; background: rgba(255,255,255,.72); box-shadow: inset 0 0 0 1px rgba(95,65,0,.14); }
+.fit-downgrade-compare img, .fit-downgrade-compare .busy-tile { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; }
+.fit-downgrade-compare figcaption { padding: 7px 8px; font-size: 11.5px; font-weight: 800; text-align: center; }
+.fit-downgrade-compare figcaption span { display: block; margin-top: 2px; font-size: 10.5px; color: var(--fg-3); }
+.fit-downgrade-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.fit-downgrade-actions button { border: 1px solid #d7b96b; border-radius: var(--r-4); padding: 9px 10px; background: #fff; color: #5f4100;
+  font-size: 12px; font-weight: 800; cursor: pointer; }
+.fit-downgrade-actions button.on { border-color: var(--link); color: var(--link); box-shadow: 0 0 0 1px var(--link); }
+.fit-downgrade-actions button:disabled { cursor: wait; opacity: .58; }
+.fit-downgrade-note { margin: 10px 0 0; }
+.fit-downgrade-error { margin: 8px 0 0; color: #a11d1d; font-size: 11.5px; font-weight: 800; }
 .fit-strip { display: flex; gap: 8px; margin-top: 12px; max-width: 100%; overflow-x: auto; padding: 2px; }
 .fit-ver { position: relative; flex: none; width: 52px; aspect-ratio: 3 / 4; border: 0; padding: 0; border-radius: var(--r-4); overflow: hidden; cursor: pointer; background: var(--bg-2); box-shadow: 0 0 0 1px var(--ring); transition: box-shadow .14s, transform .14s; }
 .fit-ver:hover { box-shadow: 0 0 0 1px var(--ring-strong); transform: translateY(-1px); }

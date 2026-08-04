@@ -117,7 +117,7 @@ class Api:
 
 
 class InlineWorker:
-    """마네킹 job 을 **로컬 워커 인프로세스**로 실행하는 러너.
+    """검증 job 을 **현재 체크아웃의 로컬 워커 인프로세스**로 실행하는 러너.
 
     왜: 공유 Supabase DB 를 폴링하는 다른 dispatcher(로컬 3초 폴러·구버전 prod)가
     job 을 가로채면 검증 대상 코드가 실행되지 않는다(실측: prod 는 QC enabled 라
@@ -150,7 +150,7 @@ class InlineWorker:
         import uuid as _uuid
 
         from app import repo as _repo
-        from app.workers.mannequin_job import run_mannequin_job
+        from app.workers.dispatcher import _WORKERS
 
         lease = f"smoke-inline:{_uuid.uuid4()}"
         async with self.pool.connection() as conn:
@@ -168,7 +168,28 @@ class InlineWorker:
             await conn.commit()
         if job is None:
             return "stolen"
-        await run_mannequin_job(self.app, job)
+        worker = _WORKERS.get(job.get("kind"))
+        if worker is None:
+            raise RuntimeError("inline_worker_kind_unsupported")
+        await worker(self.app, job)
+        return "claimed"
+
+    async def run_preclaimed(self, job_id: str, lease_token: str) -> str:
+        """route tx 안에서 선점된 job을 lease 교체 없이 현재 코드로 실행한다."""
+        from app import repo as _repo
+        from app.workers.dispatcher import _WORKERS
+
+        async with self.pool.connection() as conn:
+            job = await _repo.get_owned_running_job(
+                conn, job_id=job_id, lease_token=lease_token
+            )
+            await conn.commit()
+        if job is None:
+            return "not_owned"
+        worker = _WORKERS.get(job.get("kind"))
+        if worker is None:
+            raise RuntimeError("inline_worker_kind_unsupported")
+        await worker(self.app, job)
         return "claimed"
 
 

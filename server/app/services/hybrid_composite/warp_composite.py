@@ -92,6 +92,7 @@ def composite_stripe(
     component_boxes: dict | None = None,     # {"collar": {...}} — carrier 쪽 component quad
     source_bgr: np.ndarray | None = None,    # decal 용 source(Front) 이미지
     source_component_boxes: dict | None = None,
+    allow_low_source_coverage: bool = False,
 ) -> CompositeArtifacts | CompositeFailure:
     """stripe panel 합성 + component decal + shading transfer + feather blend."""
     h, w = carrier_bgr.shape[:2]
@@ -270,7 +271,7 @@ def composite_stripe(
         cv2.fillPoly(comp_masks, [np.asarray(tgt, np.int32)], 255)
     core = protected_sel & (comp_masks == 0)
     coverage = float((painted[core] > 0).mean()) if core.any() else 0.0
-    if coverage < MIN_SOURCE_COVERAGE:
+    if coverage < MIN_SOURCE_COVERAGE and not allow_low_source_coverage:
         return CompositeFailure(
             "source_coverage_low",
             f"protected source-derived {coverage:.3f} < {MIN_SOURCE_COVERAGE}",

@@ -8,6 +8,7 @@ import {
   mannequinEditFailureMessage,
   runMannequinEdit,
 } from '../../src/features/mannequin/mannequinEdit.js';
+import { nextRegenerateIdempotencyKey } from '../../src/features/mannequin/mannequinRegenerate.js';
 
 const httpAdapterSource = readFileSync(
   new URL('../../src/lib/api/httpAdapter.js', import.meta.url),
@@ -37,6 +38,32 @@ test('HTTP mode exposes baseline approval and polls a limited edit into the full
   assert.match(httpAdapterSource, /body: \{ editType, adjustments, baselineId \}/);
   assert.match(httpAdapterSource, /pollJob\(session\.jobId/);
   assert.match(httpAdapterSource, /const cuts = await http\(`\/v1\/projects\/\$\{projectId\}\/mannequins`\)/);
+});
+
+test('HTTP regenerate accepts an optional approved baseline anchor and idempotency key', () => {
+  assert.match(httpAdapterSource, /async regenerateMannequin\(projectId, \{ fitProfile, baselineId, onProgress, idempotencyKey \} = \{\}\)/);
+  assert.match(httpAdapterSource, /mannequins:regenerate[^]*body: \{ fitProfile, \.\.\.\(baselineId \? \{ baselineId \} : \{\}\) \}/);
+  assert.match(httpAdapterSource, /mannequins:regenerate[^]*idempotencyKey: idempotencyKey \|\| newIdempotencyKey\(\)/);
+});
+
+test('regenerate retries reuse ambiguous request keys and rotate after a terminal failed job', () => {
+  const minted = [];
+  const makeKey = () => {
+    const key = `key-${minted.length + 1}`;
+    minted.push(key);
+    return key;
+  };
+
+  assert.equal(
+    nextRegenerateIdempotencyKey('key-0', { code: 'api_network' }, makeKey),
+    'key-0',
+  );
+  assert.deepEqual(minted, []);
+  assert.equal(
+    nextRegenerateIdempotencyKey('key-0', { terminalJobFailure: true }, makeKey),
+    'key-1',
+  );
+  assert.deepEqual(minted, ['key-1']);
 });
 
 test('AI adjustment explicitly approves the selected cut before editing that baseline', async () => {
@@ -104,15 +131,56 @@ test('mannequin screen has a separate AI partial-edit panel wired to the limited
 });
 
 test('mannequin confirm CTA records the selected cut as the baseline before storyboard navigation', () => {
-  const approveIndex = mannequinSource.indexOf('await api.approveMannequin(projectId, latestSelected.id);');
+  const approveIndex = mannequinSource.indexOf('const approvedBaseline = await api.approveMannequin(projectId, latestSelected.id);');
+  const storeIndex = mannequinSource.indexOf('setActiveBaseline(approvedBaseline || null);', approveIndex);
   const navigateIndex = mannequinSource.indexOf("navigate('/create/storyboard');");
   assert.notEqual(approveIndex, -1);
+  assert.notEqual(storeIndex, -1);
   assert.notEqual(navigateIndex, -1);
-  assert.ok(approveIndex < navigateIndex);
+  assert.ok(approveIndex < storeIndex);
+  assert.ok(storeIndex < navigateIndex);
   assert.match(
     mannequinSource,
     /catch \{[^]*선택한 이미지를 기준으로 확정하지 못했어요[^]*\}/,
   );
+});
+
+test('mannequin regenerate sends the active approved baseline when one is loaded', () => {
+  assert.match(mannequinSource, /const \[activeBaseline, setActiveBaseline\] = useState\(null\)/);
+  assert.match(mannequinSource, /api\.getMannequinBaseline\(pid\)\.catch\(\(\) => null\)/);
+  assert.match(mannequinSource, /setActiveBaseline\(nextBaseline \|\| null\)/);
+  assert.match(mannequinSource, /api\.regenerateMannequin\(projectId, \{[^]*baselineId: activeBaseline\?\.id \|\| null/);
+  assert.match(mannequinSource, /const regenerateIdempotencyKey = newIdempotencyKey\(\)/);
+  assert.match(mannequinSource, /runGenerationAttempts\(runId, profile, regenerateIdempotencyKey\)/);
+});
+
+test('pattern downgrade UI compares original product image and selected AI before final navigation', () => {
+  assert.match(mannequinSource, /PatternDowngradeChoice/);
+  assert.match(mannequinSource, /originalProductImage/);
+  assert.match(mannequinSource, /selectedAiImage/);
+  assert.match(mannequinSource, /원본 상품 이미지/);
+  assert.match(mannequinSource, /선택한 AI 컷/);
+});
+
+test('downgrade decisions save original hero and safe metadata through the existing storyboard API', () => {
+  const helperIndex = mannequinSource.indexOf('async function saveMannequinDowngradeDecision');
+  const getStoryboardIndex = mannequinSource.indexOf('await api.getStoryboard(projectId)', helperIndex);
+  const saveStoryboardIndex = mannequinSource.indexOf('await api.saveStoryboard(projectId, nextStoryboard', helperIndex);
+
+  assert.ok(helperIndex > -1, 'durable downgrade helper is missing');
+  assert.ok(getStoryboardIndex > helperIndex, 'helper must load the storyboard through the existing API');
+  assert.ok(saveStoryboardIndex > getStoryboardIndex, 'helper must save the modified storyboard');
+  assert.match(mannequinSource, /downgradeDecision/);
+  assert.match(mannequinSource, /sourceCutId/);
+  assert.match(mannequinSource, /aiUsageLabel:\s*'fit_reference'/);
+  assert.match(mannequinSource, /AI 생성 · 핏 참고용/);
+});
+
+test('downgrade-required cuts cannot reach storyboard until a downgrade choice succeeds', () => {
+  assert.match(mannequinSource, /mannequinRequiresDowngradeChoice\(selected\)/);
+  assert.match(mannequinSource, /mannequinDowngradeChoiceSucceededForCut\(latestSelected, downgradeChoice\)/);
+  assert.match(mannequinSource, /disabled=\{busy \|\| !mannequinCanEnterStoryboard\(selected, reviewAcknowledgedCutId, downgradeChoice\)\}/);
+  assert.doesNotMatch(mannequinSource, /const chooseAiFitReferenceOnly = \(\) => \{[^]*setDowngradeChoice\(\{ cutId: selected\.id, choice: 'fit_reference'/);
 });
 
 test('limited edit failures are translated to seller-actionable messages', () => {

@@ -56,6 +56,10 @@ INPUT_ROLES = (
     "matching_garment",    # 매칭 하의/상의
     "style_reference",     # 스타일 참조(look-only)
     "edit_source",         # axis/bust/untuck 편집 대상 = 직전 provider 산출물
+    "approved_baseline",   # 에디터/후속컷의 승인 front anchor
+    "model_reference",     # 에디터 AG-06 virtual/real model identity reference
+    "pose_reference",      # 에디터 AG-06 pose control reference
+    "scene_canvas",        # 에디터 AG-06 background scene plate
 )
 
 # provider 실패를 DB 에 남길 때 쓰는 코드. 여기 없는 값은 전부 "unknown" 이다 —
