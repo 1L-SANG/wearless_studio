@@ -53,6 +53,7 @@ from ..services.hybrid_composite import (
     texture_projection as hc_projection,
     warp_composite as hc_warp,
     carrier_preflight as hc_preflight,
+    scale_anchor as hc_scale,
     protected_components as hc_protected,
 )
 from ..services.hybrid_composite.types import (
@@ -1904,10 +1905,7 @@ async def _apply_hybrid_composite(
     # Front(의류 전체가 보이는 사진)의 torso 측정이 정본이다. 1D 프로파일 모델은 방향과
     # 무관하므로 축만 Front 기준으로 바꿔 끼운다.
     fh, fw = front_bgr.shape[:2]
-    fy0 = int(min(src_lm["shoulder_l"][1], src_lm["shoulder_r"][1]) * fh)
-    fy1 = int(max(src_lm["hem_l"][1], src_lm["hem_r"][1]) * fh)
-    fx0 = int(min(src_lm["shoulder_l"][0], src_lm["hem_l"][0]) * fw)
-    fx1 = int(max(src_lm["shoulder_r"][0], src_lm["hem_r"][0]) * fw)
+    fx0, fy0, fx1, fy1 = hc_scale.source_torso_roi(src_lm, width=fw, height=fh)
     torso_crop = front_bgr[max(0, fy0):fy1, max(0, fx0):fx1]
     # 스케일 앵커 = Front torso 에서의 **scan 재추출 + Detail 모델과의 구조 대조**.
     # guided 상관 탐색은 sub-line lag 에 잠겼다(실측: 15px/corr 0.54 vs scan 21px/4색 일치).
@@ -1970,16 +1968,14 @@ async def _apply_hybrid_composite(
                 frontScan=(front_model.reason if isinstance(front_model, CompositeFailure)
                            else {"n_colors": len(front_model.color_sequence_lab)}))
         garment_axis, front_period_px, anchor_corr = anchor
-    torso_span_src = (fy1 - fy0) if garment_axis == "horizontal" else (fx1 - fx0)
+    torso_span_src = hc_scale.torso_span((fx0, fy0, fx1, fy1), garment_axis=garment_axis)
     repeats_on_torso = torso_span_src / front_period_px
     ch, cw = carrier_bgr.shape[:2]
-    t_torso_span = (
-        (max(car_lm["hem_l"][1], car_lm["hem_r"][1])
-         - min(car_lm["shoulder_l"][1], car_lm["shoulder_r"][1])) * ch
-        if garment_axis == "horizontal" else
-        (max(car_lm["shoulder_r"][0], car_lm["hem_r"][0])
-         - min(car_lm["shoulder_l"][0], car_lm["hem_l"][0])) * cw)
-    target_period_px = float(t_torso_span / max(repeats_on_torso, 1e-6))
+    t_torso_span = hc_scale.carrier_torso_span(
+        car_lm, width=cw, height=ch, garment_axis=garment_axis)
+    target_period_px = hc_scale.target_period_px(
+        source_period_px=front_period_px, source_span_px=torso_span_src,
+        target_span_px=t_torso_span)
     projection_mode = getattr(s, "mannequin_texture_projection_2d", "off")
     projection_summary = None
     if projection_mode != "off":
@@ -2031,14 +2027,7 @@ async def _apply_hybrid_composite(
     # construction 비교 입력 보강 — 양쪽 실루엣 mask 에서 같은 연산자로 aspect 유도.
     # vision landmark 지터가 live 에서 torso_aspect 상대오차 0.80 오판을 만들었다(QA).
     # stripe 상품은 양쪽 다 줄무늬 에너지 mask 가 성립한다(source=실물 줄, carrier=생성 줄).
-    def _aspect_via_energy(img, lm):
-        ih, iw = img.shape[:2]
-        quad = np.array([[lm["shoulder_l"][0] * iw, lm["shoulder_l"][1] * ih],
-                         [lm["shoulder_r"][0] * iw, lm["shoulder_r"][1] * ih],
-                         [lm["hem_r"][0] * iw, lm["hem_r"][1] * ih],
-                         [lm["hem_l"][0] * iw, lm["hem_l"][1] * ih]], np.float32)
-        m = hc_panel.mask_stripe_energy(img, [quad])
-        return hc_panel.mask_aspect_from_silhouette(m)
+    _aspect_via_energy = hc_scale.aspect_via_stripe_energy
 
     try:
         src_aspect_mask = await asyncio.to_thread(_aspect_via_energy, front_bgr, src_lm)
