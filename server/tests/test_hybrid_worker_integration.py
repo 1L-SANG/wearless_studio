@@ -1044,6 +1044,72 @@ def test_bad_carrier_retries_generation_once_before_projection(monkeypatch):
     assert _statuses(emits).count("hybrid_warp_composite") == 1
 
 
+def test_ratio_only_preflight_continue_allows_projection_when_flag_on(monkeypatch):
+    """cap-like carrier 실루엣은 1회 한정 soft-continue 해서 합성까지 진행한다."""
+    oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch,
+        settings_kw={
+            "hybrid_stripe_allow_ratio_only_preflight_continue": True,
+            "mannequin_max_attempts": 1,
+        },
+        carrier_vision=[_carrier_observation(shirtSilhouette="cape")],
+    )
+
+    assert calls["failure"] == [] and calls["success"]
+    assert r2_saved != {}
+    assert sum(1 for op in oplog if op[0] == "gen") == 1
+    assert _statuses(emits).count("hybrid_carrier_retry") == 0
+    assert _statuses(emits).count("hybrid_warp_composite") == 1
+    preflight = next(payload for event, payload in emits
+                     if event == "step" and payload.get("status") == "hybrid_carrier_preflight")
+    assert preflight["passed"] is True
+    assert preflight["decision"] == "pass"
+    assert preflight["vision_status"] == "ok"
+
+
+def test_ratio_only_preflight_continue_blocks_on_additional_failure(monkeypatch):
+    """cap 코드와 hem 불일치가 동시에 있으면 soft-continue는 허용되지 않는다."""
+    oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch,
+        settings_kw={
+            "hybrid_stripe_allow_ratio_only_preflight_continue": True,
+            "mannequin_max_attempts": 1,
+        },
+        carrier_vision=[_carrier_observation(shirtSilhouette="cape", hemPlausible=False)],
+    )
+
+    assert sum(1 for op in oplog if op[0] == "gen") == 1
+    assert _statuses(emits).count("hybrid_carrier_retry") == 0
+    assert "hybrid_warp_composite" not in _statuses(emits)
+    assert calls["success"] == []
+    assert len(calls["failure"]) == 1
+    assert r2_saved == {}
+    assert calls["failure"][0]["metadata"]["failureReason"] == "carrier_preflight_rejected"
+
+
+def test_ratio_only_preflight_continue_blocks_uncertain_critical_observation(monkeypatch):
+    """cap-like 실패라도 critical 필드 불확실성이 있으면 soft-continue를 막아야 한다."""
+    oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch,
+        settings_kw={
+            "hybrid_stripe_allow_ratio_only_preflight_continue": True,
+            "mannequin_max_attempts": 1,
+        },
+        carrier_vision=[_carrier_observation(
+            shirtSilhouette="cape",
+            uncertainFields=["matchingGarmentPresent", "mannequinFramePreserved"],
+        )],
+    )
+
+    assert sum(1 for op in oplog if op[0] == "gen") == 1
+    assert _statuses(emits).count("hybrid_carrier_retry") == 0
+    assert "hybrid_warp_composite" not in _statuses(emits)
+    assert calls["success"] == []
+    assert len(calls["failure"]) == 1
+    assert r2_saved == {}
+    assert calls["failure"][0]["metadata"]["failureReason"] == "carrier_preflight_rejected"
+
+
 def test_second_bad_carrier_fails_closed_without_projection_or_storage(monkeypatch):
     bad = _carrier_observation(shirtSilhouette="slab", lowerBodyPresent=False)
 

@@ -226,6 +226,61 @@ def _image_dims(data: bytes) -> tuple[int | None, int | None]:
         return None, None
 
 
+def _carrier_preflight_can_soft_continue(
+    preflight: hc_preflight.CarrierPreflightResult,
+    *,
+    settings,
+    carrier_preflight_meta: dict | None,
+    carrier_preflight_observation: dict | None,
+) -> tuple[bool, str | None]:
+    """carrier_silhouette_cape 단독 실패만 제한적으로 예외 통과한다.
+
+    정책 변경이 아니라 기존 경로를 local-조건으로만 보수적 완화하는 통로다.
+    """
+    if not getattr(settings, "hybrid_stripe_allow_ratio_only_preflight_continue", False):
+        return False, None
+
+    # strict gate: 단독 코드만 허용. reason/코드 둘 다 하나만 존재해야 한다.
+    codes = [reason.code for reason in preflight.reasons if getattr(reason, "code", None)]
+    if len(codes) != 1 or codes[0] != "carrier_silhouette_cape":
+        return False, None
+
+    # 하위 의존계약이 이미 검증하지 못한 상태면 통과시키지 않는다.
+    status = str((carrier_preflight_meta or {}).get("status") or "").lower()
+    if status and status != "ok":
+        return False, None
+
+    observation = dict(carrier_preflight_observation or {})
+    required_true = (
+        "mannequinFramePreserved",
+        "garmentCategoryMatches",
+        "sleevesPlausible",
+        "hemPlausible",
+    )
+    for key in required_true:
+        if observation.get(key) is False:
+            return False, None
+
+    # 하의가 있어야 하거나, 하의 기준 판정이 결측 상태라도 실패 확정 전환은 피한다.
+    if observation.get("lowerBodyPresent") is False:
+        return False, None
+
+    uncertain_fields = set(str(x) for x in (observation.get("uncertainFields") or []))
+    critical_uncertain = {
+        "mannequinFramePreserved",
+        "garmentCategoryMatches",
+        "sleevesPlausible",
+        "hemPlausible",
+        "lowerBodyPresent",
+    }
+    if uncertain_fields.intersection(critical_uncertain):
+        return False, None
+
+    # carrier_silhouette_cape 비정상에서의 4k 완화는 projection 결과를 강제 pass 로 해석하지
+    # 않고 최종 단계 리뷰 필수로 남긴다.
+    return True, "ratio_only_soft_candidate"
+
+
 # 첨부 이미지 슬롯 → 모델용 라벨. prompt ${imageManifest} 가 이 목록을 받는다.
 _SLOT_LABEL = {
     "Front": "front view of the garment",
@@ -1774,10 +1829,27 @@ async def _apply_hybrid_composite(
     preflight_summary = preflight.summary()
     if carrier_preflight_meta:
         preflight_summary["visionMeta"] = carrier_preflight_meta
+
+    soft_continue, soft_reason = False, None
+    if not preflight.passed:
+        soft_continue, soft_reason = _carrier_preflight_can_soft_continue(
+            preflight,
+            settings=s,
+            carrier_preflight_meta=carrier_preflight_meta,
+            carrier_preflight_observation=carrier_preflight_observation,
+        )
+        if soft_continue:
+            preflight_summary["carrierPreflightOriginalDecision"] = preflight.decision
+            preflight_summary["carrierPreflightContinued"] = True
+            preflight_summary["carrierPreflightContinueReason"] = soft_reason
+            preflight_summary["requiresFinalReview"] = True
+
+    if not soft_continue:
+        preflight_summary["carrierPreflightOriginalDecision"] = preflight.decision
     await emit(
         "hybrid_carrier_preflight",
-        passed=preflight.passed,
-        decision=preflight.decision,
+        passed=preflight.passed or soft_continue,
+        decision="pass" if soft_continue else preflight.decision,
         reasons=[reason.code for reason in preflight.reasons],
         policy_version=preflight.policy_version,
         vision_status=(carrier_preflight_meta or {}).get("status"),
@@ -1787,7 +1859,7 @@ async def _apply_hybrid_composite(
         carrier_preflight_inputs=preflight_inputs,
         carrier_preflight_summary=preflight_summary,
     )
-    if not preflight.passed:
+    if not preflight.passed and not soft_continue:
         return await fail(
             "carrier_preflight_rejected",
             "; ".join(reason.code for reason in preflight.reasons)[:200],

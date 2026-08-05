@@ -123,6 +123,9 @@ class Settings:
     # 폐기·삭제됐다(2026-08-01, 폐기 이름은 test_deploy_manifest_qc_flags.RETIRED_FLAGS 참조).
     # 같은 이름을 재사용하지 않는다 — env 잔재가 남은 배포에서 옛 의미로 켜지는 사고 방지.
     mannequin_hybrid_composite: str = "off"  # off | shadow | enforce (legacy on => enforce)
+    # carrier preflight에서 cape 류 실루엣 결함은 1회 한정으로 허용한다.
+    # 허용되더라도 후단 QC/저장에서 반드시 review 표시를 강제해 사용자 가시성 유지.
+    hybrid_stripe_allow_ratio_only_preflight_continue: bool = False
     # limited Level-2 texture projection plan. off=기존 hybrid target period 사용,
     # shadow=계획/신뢰도 이벤트만 기록, enforce=저신뢰 projection 은 deterministic 합성 실패 처리.
     mannequin_texture_projection_2d: str = "off"  # off | shadow | enforce
@@ -328,6 +331,9 @@ def load_settings() -> Settings:
         mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "frame_lock_v2"),
         mannequin_bust_pass=_bust_pass(),
         mannequin_hybrid_composite=_hybrid_composite_mode(),
+        hybrid_stripe_allow_ratio_only_preflight_continue=(
+            os.getenv("HYBRID_STRIPE_ALLOW_RATIO_ONLY_PREFLIGHT_CONTINUE", "false").lower() == "true"
+        ),
         mannequin_texture_projection_2d=_flag(
             "MANNEQUIN_TEXTURE_PROJECTION_2D", "off", {"off", "shadow", "enforce"}),
         mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
