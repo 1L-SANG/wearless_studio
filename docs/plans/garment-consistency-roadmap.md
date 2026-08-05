@@ -270,3 +270,54 @@ evidence above is complete.
   candidate is claimed.
 - Local visual report:
   `server/ab_out/frame_lock/stripe-projection-enforce-4k-20260804-v6/report.html`.
+
+## 2026-08-05 offline replay 도입과 부위 방향 구제
+
+검증 기준 갱신: implementation HEAD `677af1f` (Phase A `eed870c` + Phase B `677af1f`),
+main `5580961` (불변).
+
+두 가지 사실을 분리해 기록한다 — 하나로 뭉치면 "패턴 복원이 불가능하다" 는 잘못된 결론이 된다.
+
+1. **v1 projection 은 스트라이프 디테일을 복원했지만 육안 거절됐다.** 색 순서·잔줄 밀도·반복
+   정보는 실제로 살아났고, 거절 사유는 panel/component 경계의 블록 아티팩트였다. 즉
+   실현 가능성의 증거이지 출고 가능한 산출물이 아니다.
+2. **가장 최근 실 4K 실행은 projection 에 도달하지 못했다.** carrier preflight 가 cape 형태
+   실루엣을 저장 이전에 차단했다. 따라서 그 실행은 합성 품질에 대해 아무것도 말하지 않는다.
+
+### Phase A — offline replay (완료)
+
+- `server/scripts/replay_stripe_projection.py`, `server/tests/test_replay_stripe_projection.py`
+- 프로덕션 함수만 호출한다. 테스트가 AST 로 import 를 파싱해 worker·DB·R2·vision 유입을
+  차단하고, 합성 상수를 replay 가 재정의하지 않는지(복제 구현 방지) 확인한다.
+- provider·DB·R2·credit·output·baseline 접근 0. 같은 입력 두 번 실행 시 output/metrics 해시 동일.
+- 워커가 `geometry.json`(검증 landmark·inventory·component box·목표 주기·stripe model)을
+  아티팩트와 함께 남긴다 → **이후 실행은 정확히 replay 가능**.
+
+### Phase B — 부위 방향 구제 (완료, 육안 미검증)
+
+replay 가 무비용으로 짚어낸 결함: 현재 코드에서 collar 가
+`component_pattern_axis_unmeasurable` 로 거절되어 enforce 가 출고를 통째로 막았다.
+
+원인은 통계가 아니라 기하다 — 칼라 박스에는 좌·우 잎과 스탠드가 서로 다른 각도로 들어오고,
+전역 구조 텐서가 이를 평균내 일관성 `0.140` (하한 0.16) 이 됐다. 방향 모드로 나누면 같은
+픽셀이 `0.747 / 0.830 / 0.744` (33° / 87° / 2°) 로 전부 측정된다. **임계는 움직이지 않았다.**
+
+설계 원칙(회귀 3회를 거쳐 확정): **정밀도 단계는 더 잘할 수 없을 때 이전 동작으로 물러나야
+한다. 거절만 늘릴 수 있다면 그것은 개선이 아니다.**
+- 박스 전체로 축이 잡히면 그대로 사용, 안 잡힐 때만 방향 분할로 구제
+- fabric mask 는 소유·거절에 관여하지 않고 chroma 이상치(라벨) 배제만 — 불확실하면 박스 전체
+- seam 은 합성기의 실제 내부 feather 폭을 기준으로 측정(실루엣 밴드 기준은 오판)
+
+replay 결과: 부위 거절 0, `seam_ramp_excess 0.90`, `seam_grad_norm 0.086`,
+`boundary_chroma 2.56`, `drape 0.896 / local 0.651`, `outside_drift 0.0`,
+`period_rel_err 0.0008`. 남은 실패는 **기존** 패널 strict 게이트(소매 purity 0.592/0.882).
+
+### 아직 통과하지 못한 것
+
+**육안 게이트.** 이 데이터셋은 워커가 geometry 를 남기기 전에 만들어져 landmark 를 mask 에서
+복원해야 하는데, 그 충실도가 painted IoU `0.7136` 에 그친다. mask IoU `0.977` 은 안심시키지만
+틀린 기준이다 — garment mask 는 어깨·밑단 y 로 클립되어 소매 끝 오차에 둔감한 반면 panel quad 는
+민감하다. 따라서 이 replay 로 Phase B 의 시각적 개선·악화를 **판정하지 않는다**.
+
+**결론: Phase D(실 4K)는 닫힌 상태를 유지한다.** 다음 실 실행이 `geometry.json` 을 남기면
+진짜 landmark 로 replay 할 수 있고, 그때 비로소 육안 게이트가 의미를 갖는다.
