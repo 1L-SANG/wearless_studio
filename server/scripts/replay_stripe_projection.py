@@ -44,6 +44,10 @@ GEOMETRY_SCHEMA = "stripe_replay_geometry_v1"
 # 복원 landmark 로 다시 만든 mask 가 캡처본과 이만큼은 겹쳐야 replay 를 신뢰할 수 있다.
 # 미달이면 조용히 다른 그림을 합성하는 것이므로 통과시키지 않는다.
 MIN_MASK_RECONSTRUCTION_IOU = 0.90
+# painted 는 panel quad(소매 끝 landmark 포함)에 민감해서 mask 보다 훨씬 엄격한 증거다.
+# 다만 합성기 자체를 바꾸면 painted 도 정당하게 달라지므로, 이 값은 "복원 기하가
+# 캡처와 같은 그림을 만드는가" 의 하한으로만 쓰고 낮으면 시각 판단을 보류시킨다.
+MIN_PAINTED_RECONSTRUCTION_IOU = 0.70
 CROP_SIZE = 260          # 200% crop 의 원본 픽셀 변 (2배 확대해 표시)
 
 
@@ -186,6 +190,7 @@ def run_projection(carrier: np.ndarray, source: np.ndarray, geo: dict) -> dict:
         art.image_bgr, carrier, pm, model,
         painted_mask=art.painted, coverage_mask=art.coverage_scope, alpha=art.alpha,
         component_scale_metrics=art.metrics.get("cross_surface_scale"),
+        inner_feather_px=art.metrics.get("inner_feather_px"),
         component_boxes=car_boxes,
         target_period_px=target_period_px, target_axis=axis)
     return {"stage": "qc", "panel_map": pm, "artifacts": art, "qc": qc,
@@ -193,8 +198,14 @@ def run_projection(carrier: np.ndarray, source: np.ndarray, geo: dict) -> dict:
             "component_review_reasons": dict(art.component_review_reasons)}
 
 
-def verify_reconstruction(pm, dataset: Path) -> dict:
-    """복원 landmark 로 만든 mask 가 캡처본과 실제로 같은지 — 아니면 replay 는 무효다."""
+def verify_reconstruction(pm, dataset: Path, painted=None) -> dict:
+    """복원 landmark 가 캡처 당시 기하를 실제로 되살렸는지.
+
+    mask IoU 만으로는 부족하다 — garment mask 는 어깨/밑단 y 로 클립되어 만들어져서
+    소매 끝 landmark 가 틀려도 거의 그대로 나온다. 그런데 panel quad 는 그 소매 끝에
+    민감해서, mask 가 0.98 로 겹쳐도 페인트 결과는 전혀 다른 그림이 될 수 있다(실측:
+    몸통에 동심원 모아레, 소매에 블록). 그래서 캡처된 painted 와도 대조한다.
+    """
     captured = dataset / "garment_mask.png"
     if not captured.exists():
         return {"checked": False}
@@ -202,11 +213,23 @@ def verify_reconstruction(pm, dataset: Path) -> dict:
     if ref is None or ref.shape != pm.garment_mask.shape:
         return {"checked": False}
     a, b = ref > 0, pm.garment_mask > 0
-    union = int((a | b).sum())
-    iou = float((a & b).sum()) / max(1, union)
-    return {"checked": True, "mask_iou": round(iou, 4),
-            "ok": iou >= MIN_MASK_RECONSTRUCTION_IOU,
-            "threshold": MIN_MASK_RECONSTRUCTION_IOU}
+    iou = float((a & b).sum()) / max(1, int((a | b).sum()))
+    out = {"checked": True, "mask_iou": round(iou, 4),
+           "threshold": MIN_MASK_RECONSTRUCTION_IOU}
+    painted_iou = None
+    ref_painted_path = dataset / "painted.png"
+    if painted is not None and ref_painted_path.exists():
+        rp = cv2.imread(str(ref_painted_path), cv2.IMREAD_GRAYSCALE)
+        if rp is not None and rp.shape == painted.shape:
+            c, d = rp > 0, painted > 0
+            painted_iou = float((c & d).sum()) / max(1, int((c | d).sum()))
+            out["painted_iou"] = round(painted_iou, 4)
+    out["ok"] = (iou >= MIN_MASK_RECONSTRUCTION_IOU
+                 and (painted_iou is None
+                      or painted_iou >= MIN_PAINTED_RECONSTRUCTION_IOU))
+    if painted_iou is not None:
+        out["painted_threshold"] = MIN_PAINTED_RECONSTRUCTION_IOU
+    return out
 
 
 # ── 리포트 ────────────────────────────────────────────────────────────────────
@@ -373,7 +396,11 @@ def cmd_replay(args) -> int:
 
     result = run_projection(carrier, source, geo)
     pm = result.get("panel_map")
-    recon = verify_reconstruction(pm, dataset) if pm is not None else {"checked": False}
+    recon = (verify_reconstruction(
+                 pm, dataset,
+                 painted=(result.get("artifacts").painted
+                          if result.get("artifacts") is not None else None))
+             if pm is not None else {"checked": False})
 
     art = result.get("artifacts")
     qc = result.get("qc")

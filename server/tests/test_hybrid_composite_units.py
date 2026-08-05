@@ -1389,3 +1389,95 @@ def test_validated_single_side_box_is_evidence_the_part_exists():
     exists = ("collar_box" in src_boxes) or ("collar_box" in car_boxes)
     assert exists, "검증 통과 박스가 한쪽에 있으면 그 부위는 존재로 본다"
     assert "collar_box" not in car_boxes, "반대편 geometry 부재 → 검증 불가 → fail-closed"
+
+
+# ── Phase B: 부위 소유와 방향 구제 ─────────────────────────────────────────────
+# 칼라 박스에는 좌·우 잎과 스탠드가 서로 다른 각도로 들어온다. 박스 전체에 구조 텐서를
+# 한 번 걸면 방향이 상쇄돼 일관성이 임계 아래로 떨어지고(실 4K 자산 실측 0.140 < 0.16)
+# 부위 전체가 측정 불가로 거절돼 출고가 막혔다. 방향 모드로 나누면 0.747/0.830/0.744 다.
+
+def _striped_patch(size, angle_deg, period=14.0, base=(190, 190, 185)):
+    """주어진 각도의 줄무늬 패치 — 방향 분할 검증용."""
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    rad = np.radians(angle_deg)
+    phase = (xx * np.cos(rad) + yy * np.sin(rad)) / period * 2 * np.pi
+    wave = (np.sin(phase) * 0.5 + 0.5)
+    img = np.zeros((size, size, 3), np.uint8)
+    for c in range(3):
+        img[..., c] = np.clip(base[c] - wave * 55.0, 0, 255).astype(np.uint8)
+    return img
+
+
+def test_orientation_split_rescues_a_box_with_two_fabric_angles():
+    """한 박스에 각도가 둘이면 전역 텐서로는 못 재고, 모드별로는 잰다."""
+    from app.services.hybrid_composite.color import bgr_to_lab as _to_lab
+    from app.services.hybrid_composite.warp_composite import (
+        _component_fabric_mask, _component_orientation_regions,
+        MIN_COMPONENT_AXIS_COHERENCE)
+    patch = _striped_patch(320, 10.0)
+    patch[:, 160:] = _striped_patch(320, 80.0)[:, 160:]      # 오른쪽 절반만 다른 각도
+    lab = _to_lab(patch).astype(np.float32)
+    fabric = _component_fabric_mask(lab)
+    regions = _component_orientation_regions(lab, fabric)
+    assert len(regions) >= 2, f"각도가 둘인데 모드가 {len(regions)}개"
+    for r in regions:
+        assert r["coherence"] > MIN_COMPONENT_AXIS_COHERENCE, r
+
+
+def test_whole_box_measurement_wins_when_it_succeeds():
+    """방향 분할은 구제 경로다 — 잘 되던 측정을 대체하면 기존 부위의 주기가 흔들린다."""
+    from app.services.hybrid_composite.warp_composite import (
+        _component_decal_regions, _component_pattern_geometry)
+    src = _striped_patch(400, 0.0)
+    sq = np.array([[60., 60.], [340., 60.], [340., 340.], [60., 340.]], np.float32)
+    single = _component_pattern_geometry(src, sq, _model())
+    plan = _component_decal_regions(src, sq, _model())
+    if single is not None:
+        assert len(plan) == 1, "박스 전체로 재졌는데 분할이 끼어들었다"
+        assert plan[0]["source_period_px"] == single["source_period_px"]
+
+
+def test_fabric_mask_never_shrinks_below_the_box_when_uncertain():
+    """확신 없이 좁히면 이전 동작보다 나쁜 결과가 된다 — 하한은 박스 전체다."""
+    from app.services.hybrid_composite.color import bgr_to_lab as _to_lab
+    from app.services.hybrid_composite.warp_composite import _component_fabric_mask
+    solid = np.full((200, 200, 3), (40, 60, 200), np.uint8)
+    mask = _component_fabric_mask(_to_lab(solid).astype(np.float32))
+    assert mask is not None and (mask > 0).all(), "단색 부위를 좁히면 안 된다"
+
+
+def test_fabric_mask_does_not_require_texture():
+    """무지 칼라·솔리드 커프도 정상 부위다 — 줄무늬를 조건으로 걸면 그 옷을 거절한다."""
+    from app.services.hybrid_composite.color import bgr_to_lab as _to_lab
+    from app.services.hybrid_composite.warp_composite import _component_fabric_mask
+    for colour in ((230, 228, 225), (40, 60, 200), (12, 12, 12)):
+        mask = _component_fabric_mask(
+            _to_lab(np.full((160, 160, 3), colour, np.uint8)).astype(np.float32))
+        assert mask is not None and (mask > 0).mean() == 1.0, colour
+
+
+def test_fabric_mask_excludes_a_chroma_outlier_label():
+    """브랜드 라벨의 글자 경계가 방향 일관성을 무너뜨리므로 측정에서 뺀다."""
+    from app.services.hybrid_composite.color import bgr_to_lab as _to_lab
+    from app.services.hybrid_composite.warp_composite import _component_fabric_mask
+    patch = _striped_patch(240, 0.0)
+    patch[100:130, 90:150] = (40, 40, 200)          # 붉은 라벨
+    mask = _component_fabric_mask(_to_lab(patch).astype(np.float32))
+    assert mask is not None
+    assert (mask[105:125, 95:145] > 0).mean() < 0.5, "라벨이 원단으로 남았다"
+    assert (mask > 0).mean() > 0.7, "라벨을 빼면서 원단까지 깎였다"
+
+
+def test_component_paint_stays_inside_the_box_and_garment():
+    """박스 밖·의류 밖으로는 한 픽셀도 나가지 않는다."""
+    model, cx, pm, carrier_collar, period = _collar_case()
+    src = np.full((400, 400, 3), (40, 60, 200), np.uint8)
+    art = composite_stripe(cx["image"], pm, model,
+                           target_period_px=period, target_axis="horizontal",
+                           component_boxes={"collar": carrier_collar},
+                           source_bgr=src,
+                           source_component_boxes={"collar": _q(0, 0, 300, 300)})
+    assert not isinstance(art, CompositeFailure), art
+    outside = pm.garment_mask == 0
+    assert not (art.painted[outside] > 0).any(), "의류 밖에 페인트가 나갔다"
+    assert np.array_equal(art.image_bgr[outside], cx["image"][outside])

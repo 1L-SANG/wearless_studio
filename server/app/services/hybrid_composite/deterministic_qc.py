@@ -666,6 +666,7 @@ def verify_composite(
     coverage_mask: np.ndarray | None = None,
     alpha: np.ndarray | None = None,
     component_scale_metrics: dict | None = None,
+    inner_feather_px: float | None = None,
     component_boxes: dict | None = None,
 ) -> DeterministicQC:
     """합성 결과 재측정 → typed critical. 실패는 기록이지 예외가 아니다(호출자가 라우팅).
@@ -844,7 +845,13 @@ def verify_composite(
                 })
 
     band = int(max(3, panel_map.metrics.get("boundary_band_px", 4)))
-    seam = _interface_seam(alpha, painted_mask, panel_map.garment_mask, band)
+    # 계면 전이의 기준 폭은 합성기가 실제로 쓴 내부 feather 폭이다. 실루엣 밴드로
+    # 재면, 얇은 부위 영역에 일부러 좁게 먹인 ramp 가 "계단" 으로 오판된다 — 기준이
+    # 틀린 것이지 합성이 계단인 것이 아니다(진폭·위치 무관 지표는 정상을 가리킨다).
+    seam_band = float(inner_feather_px) if inner_feather_px else float(band)
+    seam = _interface_seam(alpha, painted_mask, panel_map.garment_mask, seam_band)
+    if inner_feather_px:
+        seam["seam_band_px"] = round(float(inner_feather_px), 2)
     metrics.update(seam)
     if seam.get("seam_measurable") is False:
         failures.append({"code": "interface_seam",

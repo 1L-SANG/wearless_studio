@@ -45,6 +45,19 @@ MAX_CHROMA_CAST = 18.0
 SHADING_SIGMA_MIN_FRAC = 0.018
 SHADING_SIGMA_MAX_FRAC = 0.08
 MIN_COMPONENT_AXIS_COHERENCE = 0.16
+# component 박스 안에서 원단만 골라내는 기준. 라벨·자수는 원단과 chroma 가 크게 달라
+# 중앙값에서 이만큼 벗어나며, 그 글자 경계가 방향 일관성을 깨뜨린다.
+COMPONENT_CHROMA_OUTLIER_MADS = 6.0
+# 박스 대비 원단이 이 비율도 안 되면 그 박스는 부위를 가리키고 있지 않다고 본다.
+COMPONENT_MIN_FABRIC_FRACTION = 0.12
+# chroma 이상치가 이 비율을 넘으면 이물이 아니라 원단 고유의 색 구조로 본다.
+COMPONENT_MAX_OUTLIER_FRACTION = 0.35
+# 한 component 안에서 허용하는 방향 모드 수. 칼라는 좌/우 잎으로 둘, 커프는 하나가
+# 보통이다. 셋을 넘기면 그것은 부위가 아니라 잡음이다.
+MAX_COMPONENT_ORIENTATION_MODES = 3
+# 방향 영역들이 부위 target mask 의 이만큼도 못 덮으면 부위를 소유했다고 볼 수 없다.
+COMPONENT_MIN_REGION_COVERAGE = 0.45
+ORIENTATION_MODE_TOLERANCE_RAD = 0.45   # 2θ 공간 — 실각도 ~13°
 MAX_COMPONENT_PROFILE_FIT = 30.0
 
 
@@ -149,14 +162,22 @@ def _expected_component_profile(model: StripeModel, K: int) -> np.ndarray:
     return src[i0] * (1 - frac) + src[i1] * frac
 
 
-def _profile_along_unit(lab: np.ndarray, unit: np.ndarray) -> np.ndarray | None:
-    """Arbitrary stripe-normal 1D profile from a central component interior."""
+def _profile_along_unit(lab: np.ndarray, unit: np.ndarray,
+                        restrict: np.ndarray | None = None) -> np.ndarray | None:
+    """Arbitrary stripe-normal 1D profile from a central component interior.
+
+    `restrict` 는 방향이 하나로 모이는 영역만 남기기 위한 것이다. 칼라처럼 한 박스
+    안에 서로 다른 각도의 원단이 있으면, 전체를 한 프로파일로 접을 때 두 방향이
+    겹쳐 주기가 사라진다.
+    """
     h, w = lab.shape[:2]
     if min(h, w) < 18:
         return None
     yy, xx = np.indices((h, w), dtype=np.float32)
     margin = max(2, int(round(min(h, w) * 0.08)))
     valid = (xx >= margin) & (xx < w - margin) & (yy >= margin) & (yy < h - margin)
+    if restrict is not None:
+        valid &= restrict > 0
     t = xx * float(unit[0]) + yy * float(unit[1])
     p = -xx * float(unit[1]) + yy * float(unit[0])
     # End caps of a diagonal rectangle have very little support and inject border edges.
@@ -211,8 +232,170 @@ def _fit_component_period(
     return best[1], best[0]
 
 
+def _component_fabric_mask(local_lab: np.ndarray) -> np.ndarray | None:
+    """component quad 안에서 **원단이 아닌 이물**만 뺀다 (component-local 좌표계).
+
+    브랜드 라벨·자수는 원단과 chroma 가 크게 다르고, 그 글자 경계는 방향이 제각각이라
+    구조 텐서의 방향 일관성을 무너뜨린다 — 실제 4K 자산에서 collar 가 축 측정 불가로
+    거절돼 출고가 막혔다.
+
+    판정은 **chroma 이상치 하나**로만 한다. 휘도로 원단을 정의하려던 첫 시도는 줄무늬
+    자체가 휘도 편차라 줄의 한쪽 위상을 통째로 잘라냈고, 그 결과 합성 fixture 의
+    정상 component 들이 오히려 측정 불가가 됐다. 그리고 이 mask 는 **측정 가중치**로만
+    쓰고 소유·거절 판단에는 쓰지 않는다 — 확신이 없을 때 박스 전체로 돌아가는 것이
+    이 함수가 이전 동작보다 나쁜 결과를 만들지 않는 유일한 보장이다.
+    """
+    h, w = local_lab.shape[:2]
+    if min(h, w) < 12:
+        return None
+    full = np.full((h, w), 255, np.uint8)
+    ab = local_lab[..., 1:3]
+    med = np.median(ab.reshape(-1, 2), axis=0)
+    dev = np.linalg.norm(ab - med, axis=-1)
+    mad = float(np.median(np.abs(dev - np.median(dev)))) or 1.0
+    tol = max(8.0, float(np.median(dev)) + COMPONENT_CHROMA_OUTLIER_MADS * mad)
+    keep = dev < tol
+    if float(keep.mean()) < 1.0 - COMPONENT_MAX_OUTLIER_FRACTION:
+        # 이상치가 이만큼 많으면 그것은 이물이 아니라 원단의 색 구조다 — 손대지 않는다.
+        return full
+    mask = (keep.astype(np.uint8)) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE,
+                            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+    return mask if int((mask > 0).sum()) >= h * w * COMPONENT_MIN_FABRIC_FRACTION else full
+
+
+def _component_orientation_regions(lab: np.ndarray, fabric: np.ndarray) -> list[dict]:
+    """component 안에서 **방향이 같은 원단 영역**들로 나눈다.
+
+    칼라는 좌우 잎이 서로 다른 각도로 재단되고 스탠드로 이어져 있어, 연결 성분으로는
+    갈라지지 않는다. 박스 전체에 구조 텐서를 한 번 걸면 두 방향이 상쇄돼 일관성이
+    임계 아래로 떨어지고(실측 0.140 < 0.16) 부위 전체가 측정 불가로 거절된다 —
+    임계를 낮추는 것은 잘못된 처방이다. 방향이 실제로 둘이면 둘로 나눠 각자의 축으로
+    재는 것이 맞다.
+    """
+    h, w = lab.shape[:2]
+    sel = fabric > 0
+    if int(sel.sum()) < 256:
+        return []
+    gxx = np.zeros((h, w), np.float32)
+    gxy = np.zeros((h, w), np.float32)
+    gyy = np.zeros((h, w), np.float32)
+    for channel in range(3):
+        plane = lab[..., channel]
+        scale = max(float(np.std(plane)), 1.0)
+        gx = cv2.Sobel(plane, cv2.CV_32F, 1, 0, ksize=3) / scale
+        gy = cv2.Sobel(plane, cv2.CV_32F, 0, 1, ksize=3) / scale
+        gxx += gx * gx
+        gxy += gx * gy
+        gyy += gy * gy
+    win = max(9, int(min(h, w) * 0.06) | 1)
+    gxx = cv2.boxFilter(gxx, -1, (win, win))
+    gxy = cv2.boxFilter(gxy, -1, (win, win))
+    gyy = cv2.boxFilter(gyy, -1, (win, win))
+    # 국소 주축 각도(줄 법선). 2θ 로 다루면 180° 주기가 자연스럽게 접힌다.
+    theta2 = np.arctan2(2.0 * gxy, gxx - gyy)
+    trace = gxx + gyy
+    diff = np.hypot(gxx - gyy, 2.0 * gxy)
+    local_coh = np.where(trace > 1e-9, diff / np.maximum(trace, 1e-9), 0.0)
+    strong = sel & (local_coh > MIN_COMPONENT_AXIS_COHERENCE)
+    if int(strong.sum()) < 256:
+        return []
+    ang = theta2[strong]
+    weights = local_coh[strong]
+    bins = 36
+    hist = np.zeros(bins, np.float64)
+    idx = ((ang + np.pi) / (2 * np.pi) * bins).astype(np.int32) % bins
+    np.add.at(hist, idx, weights)
+    hist = cv2.GaussianBlur(hist.reshape(-1, 1).astype(np.float32), (1, 5), 0).ravel()
+
+    regions: list[dict] = []
+    used = np.zeros_like(strong)
+    for _ in range(MAX_COMPONENT_ORIENTATION_MODES):
+        peak = int(np.argmax(hist))
+        if hist[peak] <= 0:
+            break
+        centre = (peak + 0.5) / bins * 2 * np.pi - np.pi
+        delta = np.abs(np.angle(np.exp(1j * (theta2 - centre))))
+        mode = strong & (~used) & (delta < ORIENTATION_MODE_TOLERANCE_RAD)
+        hist[max(0, peak - 3):peak + 4] = 0.0
+        area = int(mode.sum())
+        if area < max(256, int(h * w * COMPONENT_MIN_FABRIC_FRACTION * 0.5)):
+            continue
+        mask = cv2.morphologyEx((mode.astype(np.uint8)) * 255, cv2.MORPH_CLOSE,
+                                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+        used |= mask > 0
+        coh = float(np.average(local_coh[mode], weights=None))
+        # 모드 내부의 평균 각도로 법선을 만든다(원형 평균 — 2θ 공간에서 평균 후 반각).
+        mean2 = np.angle(np.mean(np.exp(1j * theta2[mode])))
+        unit = np.array([np.cos(mean2 / 2.0), np.sin(mean2 / 2.0)], np.float32)
+        regions.append({"mask": mask, "unit": unit, "coherence": coh, "area": area})
+    return regions
+
+
+def _component_source_geometry(sq, rect, local_unit, local_period, coherence,
+                               fit_error, fabric, local_size) -> dict | None:
+    """component-local 축·주기를 source 픽셀 공간으로 되돌린다 (단일·영역 공용)."""
+    bw, bh = local_size
+    H_to_source = cv2.getPerspectiveTransform(rect, sq)
+    center_local = np.array([[bw / 2.0, bh / 2.0]], np.float32)
+    step_local = center_local + np.asarray(local_unit, np.float32)[None, :] * float(local_period)
+    mapped = _apply_homography(H_to_source, np.concatenate([center_local, step_local]))
+    source_vec = mapped[1] - mapped[0]
+    source_period = float(np.linalg.norm(source_vec))
+    if not np.isfinite(source_period) or source_period < 1.0:
+        return None
+    return {
+        "source_axis_unit": (source_vec / source_period).astype(np.float32),
+        "source_period_px": source_period,
+        "axis_coherence": coherence,
+        "profile_fit_error": fit_error,
+        "source_fabric_mask": fabric,
+        "local_size": (bw, bh),
+    }
+
+
+def _component_decal_regions(
+    source_bgr: np.ndarray, sq: np.ndarray, model: StripeModel,
+) -> list[dict]:
+    """component 를 방향이 일정한 영역들로 나눠 각각의 source 기하를 낸다.
+
+    칼라는 좌·우 잎과 스탠드가 서로 다른 각도라 박스 전체로는 축을 못 잰다(실측
+    일관성 0.140 < 0.16). 모드별로 나누면 0.747 / 0.830 / 0.744 로 전부 측정된다 —
+    부위를 통째로 포기하거나 임계를 낮추는 대신, 실제로 방향이 여럿이라는 사실을
+    그대로 다룬다.
+    """
+    bw = int(max(np.linalg.norm(sq[1] - sq[0]), np.linalg.norm(sq[2] - sq[3]))) + 1
+    bh = int(max(np.linalg.norm(sq[3] - sq[0]), np.linalg.norm(sq[2] - sq[1]))) + 1
+    if min(bw, bh) < MIN_DECAL_SHORT_SIDE_PX:
+        return []
+    rect = np.float32([[0, 0], [bw - 1, 0], [bw - 1, bh - 1], [0, bh - 1]])
+    local = cv2.warpPerspective(
+        source_bgr, cv2.getPerspectiveTransform(sq, rect), (bw, bh),
+        flags=cv2.INTER_CUBIC)
+    lab = bgr_to_lab(local).astype(np.float32)
+    fabric = _component_fabric_mask(lab)
+    if fabric is None:
+        return []
+    # 박스 전체로 축이 잡히면 그것을 쓴다. 방향 분할은 **측정 불가를 구제하는**
+    # 수단이지 잘 되던 측정을 대체하는 수단이 아니다 — 대체하게 두면 이미 통과하던
+    # 부위들의 주기 오차가 미세하게 움직여 허용치를 넘는다(실측: 0.126 > 0.12).
+    single = _component_pattern_geometry(source_bgr, sq, model)
+    if single is not None:
+        return [single]
+    # 여기 왔다는 것은 박스 전체로는 방향이 안 잡힌다는 뜻이다. 칼라처럼 한 박스에
+    # 서로 다른 각도의 원단이 섞이면 전역 텐서가 상쇄돼 그렇게 된다(실측 일관성
+    # 0.140 < 0.16). 모드별로 나누면 0.747 / 0.830 / 0.744 로 전부 측정된다.
+    out = []
+    for region in _component_orientation_regions(lab, fabric):
+        geometry = _component_pattern_geometry(source_bgr, sq, model, region=region)
+        if geometry is not None:
+            out.append(geometry)
+    return out
+
+
 def _component_pattern_geometry(
     source_bgr: np.ndarray, sq: np.ndarray, model: StripeModel,
+    region: dict | None = None,
 ) -> dict | None:
     """Detect the component's own stripe normal and period; do not inherit torso angle.
 
@@ -228,9 +411,28 @@ def _component_pattern_geometry(
     H_to_local = cv2.getPerspectiveTransform(sq, rect)
     local = cv2.warpPerspective(source_bgr, H_to_local, (bw, bh), flags=cv2.INTER_CUBIC)
     lab = bgr_to_lab(local).astype(np.float32)
+    if region is not None:
+        # 방향 모드가 이미 정해진 경우 — 그 영역 안에서만 프로파일을 접는다.
+        fabric = region["mask"]
+        local_unit = np.asarray(region["unit"], np.float32)
+        coherence = float(region["coherence"])
+        profile = _profile_along_unit(lab, local_unit, restrict=fabric)
+        if profile is None:
+            return None
+        fit = _fit_component_period(profile, model,
+                                    expected_period_px=float(model.period_px))
+        if fit is None:
+            return None
+        local_period, fit_error = fit
+        return _component_source_geometry(
+            sq, rect, local_unit, local_period, coherence, fit_error, fabric, (bw, bh))
+    fabric = _component_fabric_mask(lab)
+    if fabric is None:
+        return None
     margin = max(2, int(round(min(bh, bw) * 0.10)))
     core = lab[margin:bh - margin, margin:bw - margin]
-    if min(core.shape[:2]) < 12:
+    core_fabric = fabric[margin:bh - margin, margin:bw - margin] > 0
+    if min(core.shape[:2]) < 12 or core_fabric.sum() < 64:
         return None
     tensors = np.zeros((2, 2), np.float64)
     for channel in range(3):
@@ -241,6 +443,8 @@ def _component_pattern_geometry(
         mag = np.hypot(gx, gy)
         cap = max(float(np.percentile(mag, 92)), 1e-6)
         weight = np.minimum(1.0, cap / np.maximum(mag, 1e-6))
+        # 배경·라벨은 방향 정보가 아니라 잡음이다 — 텐서에서 제외한다.
+        weight = weight * core_fabric
         tensors += np.array([
             [float(np.sum(weight * gx * gx)), float(np.sum(weight * gx * gy))],
             [float(np.sum(weight * gx * gy)), float(np.sum(weight * gy * gy))],
@@ -273,6 +477,8 @@ def _component_pattern_geometry(
         "source_period_px": source_period,
         "axis_coherence": coherence,
         "profile_fit_error": fit_error,
+        "source_fabric_mask": fabric,      # component-local — 페인팅도 이 안에서만
+        "local_size": (bw, bh),
     }
 
 
@@ -524,8 +730,8 @@ def composite_stripe(
                 "target_period_px": round(float(target_period_px), 2),
             }
             continue
-        component_geometry = _component_pattern_geometry(source_bgr, sq, model)
-        if component_geometry is None:
+        region_geoms = _component_decal_regions(source_bgr, sq, model)
+        if not region_geoms:
             painted[comp_mask > 0] = 0
             components_review.append(name)
             component_reasons[name] = "component_pattern_axis_unmeasurable"
@@ -536,105 +742,107 @@ def composite_stripe(
             }
             continue
         Hc = cv2.getPerspectiveTransform(sq, tq)
-        projected = _component_period_under_homography(
-            Hc,
-            sq.mean(axis=0),
-            component_geometry["source_axis_unit"],
-            float(component_geometry["source_period_px"]),
-        )
-        if projected is None:
-            painted[comp_mask > 0] = 0
-            components_review.append(name)
-            component_reasons[name] = "period_unmeasurable"
-            cross_surface_components[name] = {
-                "scale_measurable": False,
-                "reason": "period_unmeasurable",
-                "target_period_px": round(float(target_period_px), 2),
-            }
-            continue
-        projected_period, target_axis_unit = projected
-        scale = float(projected_period) / float(target_period_px)
-        if not np.isfinite(scale) or scale <= 0 or scale > MAX_DECAL_SCALE_RESAMPLE:
-            painted[comp_mask > 0] = 0
-            components_review.append(name)
-            component_reasons[name] = "scale_resample_unsupported"
-            cross_surface_components[name] = {
-                "scale_measurable": False,
-                "reason": "scale_resample_unsupported",
-                "source_projected_period_px": round(float(projected_period), 2),
-                "target_period_px": round(float(target_period_px), 2),
-                "scale_resample_factor": round(float(scale), 4) if np.isfinite(scale) else None,
-            }
-            continue
         Hinv = np.linalg.inv(Hc)
-        gx, gy = np.meshgrid(np.arange(w, dtype=np.float32),
-                             np.arange(h, dtype=np.float32))
-        ones = np.ones(gx.size, dtype=np.float32)
-        dst = np.stack([gx.ravel(), gy.ravel(), ones], axis=0)
-        src = Hinv @ dst
-        map_x = (src[0] / np.maximum(src[2], 1e-9)).reshape(h, w).astype(np.float32)
-        map_y = (src[1] / np.maximum(src[2], 1e-9)).reshape(h, w).astype(np.float32)
-        map_x, map_y = _scale_decal_source_coords(
-            map_x, map_y, sq, scale, component_geometry["source_axis_unit"])
-        in_bounds = (
-            (map_x >= 0) & (map_x <= source_bgr.shape[1] - 1)
-            & (map_y >= 0) & (map_y <= source_bgr.shape[0] - 1)
-        )
-        out_frac = float((sel & ~in_bounds).sum()) / max(1, int(sel.sum()))
-        if out_frac > 0.05:
-            painted[sel] = 0
+        gx_grid, gy_grid = np.meshgrid(np.arange(w, dtype=np.float32),
+                                       np.arange(h, dtype=np.float32))
+        ones = np.ones(gx_grid.size, dtype=np.float32)
+        dst_grid = np.stack([gx_grid.ravel(), gy_grid.ravel(), ones], axis=0)
+        src_grid = Hinv @ dst_grid
+        base_x = (src_grid[0] / np.maximum(src_grid[2], 1e-9)).reshape(h, w).astype(np.float32)
+        base_y = (src_grid[1] / np.maximum(src_grid[2], 1e-9)).reshape(h, w).astype(np.float32)
+
+        painted_union = np.zeros_like(sel)
+        region_reports: list[dict] = []
+        region_reason = None
+        for geometry in region_geoms:
+            projected = _component_period_under_homography(
+                Hc, sq.mean(axis=0), geometry["source_axis_unit"],
+                float(geometry["source_period_px"]))
+            if projected is None:
+                region_reason = region_reason or "period_unmeasurable"
+                continue
+            projected_period, target_axis_unit = projected
+            scale = float(projected_period) / float(target_period_px)
+            if not np.isfinite(scale) or scale <= 0 or scale > MAX_DECAL_SCALE_RESAMPLE:
+                region_reason = region_reason or "scale_resample_unsupported"
+                continue
+            bw_l, bh_l = geometry["local_size"]
+            rect_l = np.float32([[0, 0], [bw_l - 1, 0], [bw_l - 1, bh_l - 1], [0, bh_l - 1]])
+            region_t = cv2.warpPerspective(
+                geometry["source_fabric_mask"],
+                cv2.getPerspectiveTransform(rect_l, tq), (w, h), flags=cv2.INTER_NEAREST)
+            sel_r = sel & (region_t > 0) & (~painted_union)
+            if int(sel_r.sum()) < 64:
+                continue
+            map_x, map_y = _scale_decal_source_coords(
+                base_x.copy(), base_y.copy(), sq, scale, geometry["source_axis_unit"])
+            in_bounds = (
+                (map_x >= 0) & (map_x <= source_bgr.shape[1] - 1)
+                & (map_y >= 0) & (map_y <= source_bgr.shape[0] - 1))
+            out_frac = float((sel_r & ~in_bounds).sum()) / max(1, int(sel_r.sum()))
+            if out_frac > 0.05:
+                region_reason = region_reason or "scale_resample_out_of_source"
+                continue
+            decal_bgr = cv2.remap(
+                source_bgr, map_x, map_y, interpolation=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REFLECT_101)
+            decal_lab = bgr_to_lab(decal_bgr)
+            pattern_lab[sel_r] = decal_lab[sel_r]
+            painted[sel_r] = 255
+            painted_union |= sel_r
+            target_coord = float(np.dot(tq.mean(axis=0), target_axis_unit))
+            source_coord = float(np.dot(sq.mean(axis=0), geometry["source_axis_unit"]))
+            phase_delta = ((target_coord / float(target_period_px))
+                           - (source_coord / max(float(geometry["source_period_px"]), 1e-6))) % 1.0
+            phase_delta = min(float(phase_delta), 1.0 - float(phase_delta))
+            comp_lab = decal_lab[sel_r]
+            car_lab = carrier_lab[sel_r]
+            region_reports.append({
+                "px": int(sel_r.sum()),
+                "source_projected_period_px": round(float(projected_period), 2),
+                "scale_resample_factor": round(float(scale), 4),
+                "source_component_period_px": round(float(geometry["source_period_px"]), 2),
+                "source_pattern_axis_unit": [round(float(x), 5)
+                                             for x in geometry["source_axis_unit"]],
+                "target_pattern_axis_unit": [round(float(x), 5) for x in target_axis_unit],
+                "component_axis_coherence": round(float(geometry["axis_coherence"]), 4),
+                "component_profile_fit_error": round(float(geometry["profile_fit_error"]), 3),
+                "phase_delta_period_frac": round(float(phase_delta), 4),
+                "component_chroma_delta_ab": round(float(np.linalg.norm(
+                    np.median(comp_lab[:, 1:3], axis=0)
+                    - np.median(car_lab[:, 1:3], axis=0))), 2),
+                "out_of_source_frac": round(out_frac, 4),
+            })
+
+        # 부위 안에서 실제로 칠하지 못한 픽셀은 carrier 가 계속 소유한다 — 박스를
+        # 통째로 칠하지 않는 것이 사각 판을 없애는 핵심이다.
+        painted[sel & ~painted_union] = 0
+        covered = float(int(painted_union.sum())) / max(1, int(sel.sum()))
+        if not region_reports or covered < COMPONENT_MIN_REGION_COVERAGE:
+            painted[comp_mask > 0] = 0
             components_review.append(name)
-            component_reasons[name] = "scale_resample_out_of_source"
+            component_reasons[name] = region_reason or "component_shape_insufficient"
             cross_surface_components[name] = {
                 "scale_measurable": False,
-                "reason": "scale_resample_out_of_source",
-                "source_projected_period_px": round(float(projected_period), 2),
+                "reason": component_reasons[name],
+                "region_coverage": round(covered, 4),
+                "regions": len(region_reports),
                 "target_period_px": round(float(target_period_px), 2),
-                "scale_resample_factor": round(float(scale), 4),
-                "out_of_source_frac": round(out_frac, 4),
             }
             continue
-        decal_bgr = cv2.remap(
-            source_bgr, map_x, map_y, interpolation=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_REFLECT_101)
-        decal_lab = bgr_to_lab(decal_bgr)
-        pattern_lab[sel] = decal_lab[sel]
-        painted[sel] = 255
-        center_t = tq.mean(axis=0)
-        center_s = sq.mean(axis=0)
-        target_coord = float(np.dot(center_t, target_axis_unit))
-        source_coord = float(np.dot(
-            center_s, component_geometry["source_axis_unit"]))
-        phase_delta = (
-            (target_coord / float(target_period_px))
-            - (source_coord / max(
-                float(component_geometry["source_period_px"]), 1e-6))
-        ) % 1.0
-        phase_delta = min(float(phase_delta), 1.0 - float(phase_delta))
-        comp_lab = decal_lab[sel]
-        car_lab = carrier_lab[sel]
-        chroma_delta = float(np.linalg.norm(
-            np.median(comp_lab[:, 1:3], axis=0) - np.median(car_lab[:, 1:3], axis=0)))
+        # 여러 방향 영역의 판정은 **가장 나쁜 영역**으로 대표한다 — 평균은 한 잎의
+        # 실패를 다른 잎이 가려준다.
+        worst = max(region_reports, key=lambda r: abs(r["scale_resample_factor"] - 1.0))
         cross_surface_components[name] = {
             "scale_measurable": True,
-            "source_projected_period_px": round(float(projected_period), 2),
             "target_period_px": round(float(target_period_px), 2),
-            "scale_resample_factor": round(float(scale), 4),
-            "source_component_period_px": round(
-                float(component_geometry["source_period_px"]), 2),
-            "source_pattern_axis_unit": [round(float(x), 5) for x in
-                                         component_geometry["source_axis_unit"]],
-            "target_pattern_axis_unit": [round(float(x), 5) for x in target_axis_unit],
-            "component_axis_coherence": round(
-                float(component_geometry["axis_coherence"]), 4),
-            "component_profile_fit_error": round(
-                float(component_geometry["profile_fit_error"]), 3),
-            # Actual final period/width are measured by deterministic_qc from the
-            # post-shading, post-feather output. Never report zeros by construction.
             "target_quad": [[round(float(x), 3), round(float(y), 3)] for x, y in tq],
-            "phase_delta_period_frac": round(float(phase_delta), 4),
-            "component_chroma_delta_ab": round(chroma_delta, 2),
-            "out_of_source_frac": round(out_frac, 4),
+            "regions": len(region_reports),
+            "region_coverage": round(covered, 4),
+            "orientation_modes": [
+                {"px": r["px"], "coherence": r["component_axis_coherence"],
+                 "axis": r["source_pattern_axis_unit"]} for r in region_reports],
+            **{k: v for k, v in worst.items() if k != "px"},
         }
 
     # ── shading transfer — carrier 의 저주파 luminance 만 ─────────────────────────

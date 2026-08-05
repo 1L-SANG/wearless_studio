@@ -2005,6 +2005,7 @@ async def _apply_hybrid_composite(
         coverage_mask=art.coverage_scope,
         alpha=art.alpha,
         component_scale_metrics=art.metrics.get("cross_surface_scale"),
+        inner_feather_px=art.metrics.get("inner_feather_px"),
         component_boxes=car_boxes,
         target_period_px=target_period_px, target_axis=garment_axis)
     qc_event_metrics = {k: v for k, v in qc.metrics.items() if k != "failure_details"}
