@@ -3,6 +3,25 @@
 상태: Accepted
 결정일: 2026-07-17
 
+## 2026-08-05 후속 결정 — 콘티보드는 네 섹션을 정본으로 쓴다
+
+콘티보드 전면 개편에서 확정한 `후킹 → 스타일링 → 스튜디오 → 의류 확인`을 화면 전용 묶음이 아니라 저장·서버 생성까지 공유하는 공식 섹션으로 승격한다. 아래의 기존 세 섹션 결정은 이 후속 결정으로 대체한다.
+
+| sectionRole | 화면 라벨 | 포함하는 내부 사진 목적 | 허용 cutType |
+|---|---|---|---|
+| `hooking` | 후킹 | `hero`, `benefit` | `styling`, `horizon` |
+| `styling` | 스타일링 | `coordination`, `realWear` | `styling`, `mirror` |
+| `studio` | 스튜디오 | `fit` | `horizon` |
+| `product` | 의류 확인 | `productOverview`, `detail` | `product` |
+
+새 저장본은 `taxonomyVersion: 3`을 쓴다. v2의 `sectionRole='benefit'`은 `hooking`으로, `sectionRole='fit'`은 `cutType='horizon'`이거나 `contentRole='fit'`이면 `studio`, 나머지는 `styling`으로 읽을 때 자동 승격한다. `product`는 그대로 유지한다. 이 변환은 기존 프로젝트의 카드 순서와 이미지를 보존하며, 새 네 섹션의 순서로 다시 묶을 때 낡은 `sectionId`와 행 배치만 재구성한다.
+
+`contentRole`은 계속 사용자에게 노출하지 않는 내부 사진 목적이다. 같은 장소 묶음은 `styling` 또는 `studio` 안의 `spaceGroupId`로 유지하며 별도 섹션을 만들지 않는다.
+
+---
+
+## 이전 결정 기록 — 3섹션 taxonomyVersion 2 (대체됨)
+
 상세페이지를 조사한 결과, 사진의 촬영 장소나 생성 방식보다 **고객에게 무엇을 설명하는지**가 페이지 순서를 더 안정적으로 설명했다. 따라서 사용자가 보는 콘티보드는 다음 세 섹션을 기준 분류로 쓴다.
 
 1. `benefit` — 핵심 장점

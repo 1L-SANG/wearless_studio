@@ -7,6 +7,7 @@ import {
   dissolveSpaceSet,
   groupConsecutiveSpaceRuns,
   moveBlockWithSpaceMembership,
+  nextSpaceSetMemberReservation,
   replaceSpaceSetRun,
 } from '../../src/lib/storyboardSpaceSets.js';
 import {
@@ -336,6 +337,68 @@ test('creating released members preserves exact ordered example choices as user 
   ]);
 });
 
+test('a styling tray exposes its reserved member, then returns to general add when exhausted', () => {
+  const set = {
+    members: [
+      { exampleId: 'full', order: 1, cutType: 'styling', shot: 'full', direction: 'front' },
+      { exampleId: 'spare', order: 2, cutType: 'styling', shot: 'full', direction: 'side' },
+      { exampleId: 'medium', order: 3, cutType: 'styling', shot: 'medium', direction: 'front' },
+    ],
+  };
+  const current = [
+    block('full', { exampleId: 'full', spaceSetMemberOrder: 1, spaceGroupId: groupA, refScope: 'pose' }),
+    block('medium', { exampleId: 'medium', spaceSetMemberOrder: 3, spaceGroupId: groupA, refScope: 'pose' }),
+  ];
+  const reservation = nextSpaceSetMemberReservation(set, current);
+  const reserved = reservation.member;
+  assert.equal(reserved.exampleId, 'spare');
+  assert.deepEqual(reservation.blockPatch, {
+    spaceGroupId: groupA,
+    spaceVariation: 'subtle',
+    refScope: 'pose',
+    spaceSetMemberOrder: 2,
+    setSelectionOrigin: 'user',
+  });
+
+  const added = [...current, block('spare', {
+    exampleId: reserved.exampleId,
+    ...reservation.blockPatch,
+  })];
+  assert.equal(added.at(-1).spaceGroupId, groupA);
+  assert.equal(added.at(-1).refScope, 'pose');
+  assert.equal(nextSpaceSetMemberReservation(set, added), null);
+});
+
+test('reserved-member lookup uses member order even after its example is changed', () => {
+  const set = {
+    members: [
+      { exampleId: 'first', order: 1 },
+      { exampleId: 'second', order: 2 },
+      { exampleId: 'third', order: 3 },
+    ],
+  };
+  const current = [
+    block('changed-first', { exampleId: 'custom', spaceSetMemberOrder: 1 }),
+    block('third', { exampleId: 'third', spaceSetMemberOrder: 3 }),
+  ];
+  assert.equal(nextSpaceSetMemberReservation(set, current).member.exampleId, 'second');
+});
+
+test('styling trays preview the reserved thumbnail and keep plain add after exhaustion', () => {
+  const storyboardSource = readFileSync(
+    new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const cssSource = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
+  assert.match(storyboardSource, /nextSpaceSetMemberReservation\(set, unit\.items\.map/);
+  assert.match(storyboardSource, /addBlock\([^\n]+group\.key, reservation\)/);
+  assert.match(storyboardSource, /\.\.\.\(reservation\?\.blockPatch \|\| \{\}\)/);
+  assert.match(storyboardSource, /className="sb-tray-add-preview"/);
+  assert.match(storyboardSource, /nextMember \? \([\s\S]*이 컷 추가[\s\S]*\) : '＋ 컷 추가'/);
+  assert.match(cssSource, /\.sb-tray-add-preview[\s\S]*opacity: \.3/);
+  assert.match(cssSource, /prefers-reduced-motion: reduce[\s\S]*\.sb-tray-add-preview/);
+});
+
 test('unknown or pre-release group ids are not inferred as a shooting set', () => {
   assert.equal(inferStoryboardSpaceSet('ssg1__removed-release-id__instance'), null);
   assert.equal(inferStoryboardSpaceSet('sgset__removed-release-id__legacy'), null);
@@ -357,4 +420,36 @@ test('dragging a member out keeps its content and keeps the remaining set intact
     .find((group) => group.spaceGroupId === groupA);
   assert.equal(remainingRun.kind, 'space');
   assert.deepEqual(remainingRun.items.map((item) => item.id), ['a']);
+});
+
+test('moving a converted middle member after its run keeps the remaining tray contiguous', () => {
+  const source = [
+    block('a', { spaceGroupId: groupA, refScope: 'pose' }),
+    block('b', { spaceGroupId: groupA, refScope: 'pose', source: 'mine' }),
+    block('c', { spaceGroupId: groupA, refScope: 'pose' }),
+    block('outside'),
+  ];
+  const moved = moveBlockWithSpaceMembership(source, 'b', 3);
+  assert.deepEqual(moved.map((item) => item.id), ['a', 'c', 'b', 'outside']);
+  assert.equal(moved[2].spaceGroupId, undefined);
+  const run = groupConsecutiveSpaceRuns(moved).find((group) => group.spaceGroupId === groupA);
+  assert.deepEqual(run.items.map((item) => item.id), ['a', 'c']);
+});
+
+/* 위/아래 한 칸 이동(nudgeBlock)의 인덱스 보정 계약.
+   moveBlockWithSpaceMembership 은 targetIndex 를 '원본 배열 기준'으로 받아 자기 자신이 빠진
+   만큼 스스로 보정한다. 따라서 아래로 한 칸은 to+1, 위로 한 칸은 to 를 넘겨야 한다.
+   이 계약이 깨지면 버튼이 두 칸씩 뛰거나 제자리에 머문다. */
+test('한 칸 이동 — 아래는 to+1, 위는 to 를 넘긴다', () => {
+  const board = ['a', 'b', 'c', 'd'].map((id) => ({ id, sectionId: 's1' }));
+  const ids = (list) => list.map((block) => block.id);
+  const at = (id) => board.findIndex((block) => block.id === id);
+
+  // b 를 아래로 한 칸: to = at(b)+1 = 2 → idx = to + 1 = 3
+  assert.deepEqual(ids(moveBlockWithSpaceMembership(board, 'b', 3)), ['a', 'c', 'b', 'd']);
+  // c 를 위로 한 칸: to = at(c)-1 = 1 → idx = to = 1
+  assert.deepEqual(ids(moveBlockWithSpaceMembership(board, 'c', 1)), ['a', 'c', 'b', 'd']);
+  // 경계: 첫 카드를 아래로, 마지막 카드를 위로
+  assert.deepEqual(ids(moveBlockWithSpaceMembership(board, 'a', at('a') + 2)), ['b', 'a', 'c', 'd']);
+  assert.deepEqual(ids(moveBlockWithSpaceMembership(board, 'd', at('d') - 1)), ['a', 'b', 'd', 'c']);
 });

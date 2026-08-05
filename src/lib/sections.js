@@ -2,8 +2,8 @@
    lib/sections — 콘티보드 섹션 파생 유틸 (2026-07 역할 중심 개편)
    섹션은 별도 엔티티가 아니라 블록 필드(sectionId/Title/Layout)의
    "연속 run"으로만 존재한다 — 저장 계약(blocks: list)은 그대로.
-   사용자 섹션은 핵심 장점/핏·코디/제품 확인 3개다. 같은 장소 정보는
-   핏·코디 안의 배지일 뿐 별도 섹션을 만들지 않는다.
+   사용자 섹션은 후킹/스타일링/스튜디오/의류 확인 4개다. 같은 장소 정보는
+   해당 촬영 섹션 안의 배지일 뿐 별도 섹션을 만들지 않는다.
    ============================================================= */
 import { uid } from './ids.js';
 import {
@@ -22,17 +22,18 @@ import {
 } from './storyboardTaxonomy.js';
 
 const SECTION_ORDER = new Map([
-  [SECTION_ROLES.BENEFIT, 0],
-  [SECTION_ROLES.FIT, 1],
-  [SECTION_ROLES.PRODUCT, 2],
+  [SECTION_ROLES.HOOKING, 0],
+  [SECTION_ROLES.STYLING, 1],
+  [SECTION_ROLES.STUDIO, 2],
+  [SECTION_ROLES.PRODUCT, 3],
 ]);
 
-/* v2 역할의 공개 파생 함수. source='mine'은 이웃 섹션을 상속한다. */
+/* v3 역할의 공개 파생 함수. source='mine'은 이웃 섹션을 상속한다. */
 function sectionKeyOf(b) { return inferSectionRole(b); }
 export const titleForKey = (key) => sectionTitle(key);
 
-/* ensureSections(blocks) — v2 역할·레시피를 검증하고 섹션을 부여한다.
-   유효한 v2 저장분은 기존 sectionId/레이아웃을 존중한다. 필수 역할이 없거나
+/* ensureSections(blocks) — v3 역할·레시피를 검증하고 섹션을 부여한다.
+   유효한 v3 저장분은 기존 sectionId/레이아웃을 존중한다. 필수 역할이 없거나
    유효하지 않은 입력은 cutType 기반 방어 정규화를 거쳐 정본 순서로 묶고,
    충돌 가능한 섹션 행/레이아웃은 stack으로 초기화한다. */
 export function ensureSections(blocks, { hasDetailImage = null } = {}) {
@@ -61,7 +62,7 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
     }
     b.taxonomyVersion = STORYBOARD_TAXONOMY_VERSION;
     b.title = b.source === 'mine' ? '내 이미지' : contentTitle(b.contentRole);
-    // EditorBlock의 kind=sectionRole 동치 외의 kind 토큰은 v2에 속하지 않는다.
+    // EditorBlock의 kind=sectionRole 동치 외의 kind 토큰은 v3에 속하지 않는다.
     if (!isSectionRole(b.kind)) delete b.kind;
     if (needsNormalization) {
       delete b.sectionId;
@@ -81,7 +82,7 @@ export function ensureSections(blocks, { hasDetailImage = null } = {}) {
   }
   let nextRole = null;
   for (let i = out.length - 1; i >= 0; i -= 1) {
-    if (!isSectionRole(out[i].sectionRole)) out[i].sectionRole = nextRole || SECTION_ROLES.BENEFIT;
+    if (!isSectionRole(out[i].sectionRole)) out[i].sectionRole = nextRole || SECTION_ROLES.HOOKING;
     if (isSectionRole(out[i].sectionRole)) nextRole = out[i].sectionRole;
   }
 
@@ -186,7 +187,10 @@ export function adoptSection(blocks, movedId, targetSid, targetRole = null) {
       const rowVersion = host.layoutRowVersion || b.layoutRowVersion;
       const recipePatch = b.source === 'mine'
         ? {}
-        : normalizedRecipePatch(b, defaultContentRoleForSection(host.sectionRole));
+        : normalizedRecipePatch(
+          { ...b, sectionRole: host.sectionRole },
+          defaultContentRoleForSection(host.sectionRole),
+        );
       const recipeChanged = b.source !== 'mine' && (
         b.cutType !== recipePatch.cutType
         || b.direction !== recipePatch.direction

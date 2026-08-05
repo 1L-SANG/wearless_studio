@@ -40,7 +40,7 @@ export function Generating() {
   const [pid, setPid] = useState(null);
   const [blocked, setBlocked] = useState(null);   // 409 라이선스 차단 메시지(한국어) — 장면⑤
   const [receipt, setReceipt] = useState(null);   // 온체인 정산 영수증 — 장면③
-  const composition = ['핵심 장점', '핏·코디', '제품 확인'];
+  const composition = ['후킹', '스타일링', '스튜디오', '의류 확인'];
 
   useEffect(() => {
     preloadEditor();

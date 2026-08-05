@@ -19,12 +19,12 @@ const clearSpace = (block) => {
 };
 
 function roleForSetMember(sectionRole, cutType, previousRole) {
-  if (sectionRole === 'fit') {
-    if (cutType === 'horizon') return 'fit';
+  if (sectionRole === 'styling') {
     if (cutType === 'mirror') return 'realWear';
     return 'coordination';
   }
-  if (sectionRole === 'benefit' && ['hero', 'benefit'].includes(previousRole)) return previousRole;
+  if (sectionRole === 'studio') return 'fit';
+  if (sectionRole === 'hooking' && ['hero', 'benefit'].includes(previousRole)) return previousRole;
   return previousRole;
 }
 
@@ -49,6 +49,34 @@ export function groupConsecutiveSpaceRuns(items, getBlock = defaultBlock) {
     index = end;
   }
   return groups;
+}
+
+export function nextUnusedSpaceSetMember(set, blocks) {
+  if (!set?.members?.length) return null;
+  const usedExampleIds = new Set((blocks || []).map((block) => block.exampleId).filter(Boolean));
+  const usedOrders = new Set((blocks || []).map((block) => block.spaceSetMemberOrder).filter(Number.isFinite));
+  return [...set.members]
+    .sort((left, right) => left.order - right.order)
+    .find((member) => (
+      !usedExampleIds.has(member.exampleId)
+      && !usedOrders.has(member.order)
+    )) || null;
+}
+
+export function nextSpaceSetMemberReservation(set, blocks) {
+  const member = nextUnusedSpaceSetMember(set, blocks);
+  if (!member) return null;
+  const host = (blocks || []).find((block) => block.spaceGroupId) || blocks?.[0] || {};
+  return {
+    member,
+    blockPatch: {
+      spaceGroupId: host.spaceGroupId,
+      spaceVariation: host.spaceVariation || set.spaceVariation || 'subtle',
+      refScope: 'pose',
+      spaceSetMemberOrder: member.order,
+      setSelectionOrigin: host.setSelectionOrigin || 'user',
+    },
+  };
 }
 
 export function dissolveSingletonSpaceRuns(blocks) {

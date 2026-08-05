@@ -7,7 +7,7 @@ import {
   storedExampleConditionStatus,
 } from '../../src/lib/generationExamples.js';
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
-import { pickEntrySets } from '../../src/lib/storyboardEntryPlacement.js';
+import { entryStylingMembers, pickEntrySets } from '../../src/lib/storyboardEntryPlacement.js';
 import {
   genderForClothingType,
   normalizeTargetGendersForClothingType,
@@ -304,8 +304,8 @@ test('every supported gender and clothing category seeds styling and horizon set
     const horizonMembers = setMembers.filter((item) => item.cutType === 'horizon');
 
     // 회전 세트는 별도 세트 범위로 성별 내 모든 지원 의류에 배치된다.
-    assert.equal(basic.length, 14, `${gender}/${clothingType} basic`);
-    assert.equal(stylingMembers.length, 6, `${gender}/${clothingType} styling members`);
+    assert.equal(basic.length, 12, `${gender}/${clothingType} basic`);
+    assert.equal(stylingMembers.length, 4, `${gender}/${clothingType} styling members`);
     assert.equal(horizonMembers.length, 3, `${gender}/${clothingType} rotation members`);
     assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 3);
     assert.ok(spaceSetIdFromGroupId(setMembers[0].spaceGroupId));
@@ -321,7 +321,7 @@ test('every supported gender and clothing category seeds styling and horizon set
       gender, clothingType, projectId: context.projectId, stylingCount: 3,
     });
     const stylingCuts = picked.stylingSets
-      .reduce((sum, set) => sum + (set ? set.members.length : 2), 0);
+      .reduce((sum, set) => sum + (set ? entryStylingMembers(set).length : 2), 0);
     const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
     assert.equal(
       defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
@@ -362,11 +362,11 @@ test('storyboard preserves an in-space pose across shot changes and remains atom
   assert.match(shotHandler, /exampleSelectionOrigin: current\.exampleId \? 'user' : null/);
   const selectedStatus = storyboardSource.slice(
     storyboardSource.indexOf('const selectedStatus ='),
-    storyboardSource.indexOf('const cycleExamples ='),
+    storyboardSource.indexOf('const galleryRef ='),
   );
   assert.doesNotMatch(selectedStatus, /selectedExample\.shot !== shotVal/);
   assert.match(storyboardSource, /await onAtomicChange\(changes, \{ pickerOwnsError: true \}\)/);
-  assert.match(storyboardSource, /\}, catalogs\), \{ retryAtomic: true \}\)/);
+  assert.match(storyboardSource, /retryAtomic: true,[^}]*undoLabel:/);
   assert.match(storyboardSource, /latestBlocks\.current !== atomicRetry\.previous/);
   assert.match(storyboardSource, /const copy = \{ \.\.\.withoutLayoutRow\(bs\[i\]\), id: uid\('blk'\) \}/);
   assert.match(storyboardSource, /새 섹션에 맞는 컷 예시를 먼저 골라주세요/);
@@ -380,8 +380,9 @@ test('storyboard exposes honest retry copy and never labels assignment as an aut
   assert.doesNotMatch(storyboardSource, /AI 자동 포즈/);
 });
 
-test('storyboard and editor both hydrate released set members into selectable galleries', () => {
-  assert.match(storyboardSource, /appendSetOnly:\s*!inSpace && cut !== 'product'/);
+test('storyboard keeps released set members available for generation without an in-space gallery', () => {
+  assert.match(storyboardSource, /shouldRenderGenerationExampleGuide\(block\) \{\s*return !block\?\.spaceGroupId;/);
+  assert.doesNotMatch(storyboardSource, /inSpace/);
   // 세트 예시는 구획 라벨 없이 일반 예시 뒤에 자연 배치된다(2026-07-31 오너 확정).
   assert.doesNotMatch(storyboardSource, /공간세트에서 사용된 컷/);
   assert.doesNotMatch(storyboardSource, /sb-ex-source-label/);

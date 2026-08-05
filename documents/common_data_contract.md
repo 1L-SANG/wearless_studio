@@ -149,7 +149,7 @@ MannequinCut {
 ```ts
 StoryboardBlock {
   id: string
-  taxonomyVersion: 2               // 콘티 분류 스키마 버전. 다른 버전의 읽기 호환은 제공하지 않음
+  taxonomyVersion: 3               // 공식 4섹션 분류. v2 저장본은 읽을 때 자동 승격
   sectionId: string                // 연속된 같은 섹션 블록이 공유하는 id
   sectionRole: StoryboardSectionRole
   sectionTitle?: string            // @deprecated 전환기 표시 캐시. sectionRole에서 다시 계산
@@ -185,14 +185,14 @@ StoryboardBlock {
 
 불변식:
 
-- 자동 콘티의 섹션 순서는 `benefit → fit → product`다. `구매 정보`와 `같은 장소`는 섹션을 만들지 않는다.
-- `hero|benefit`은 `benefit`, `coordination|fit|realWear`는 `fit`, `productOverview|detail`은 `product` 섹션에 속한다. `custom`은 사용자가 놓은 섹션을 따른다.
-- AI 카드의 `contentRole`은 사용자 입력값이 아니다. `benefit`은 카드 순서, `fit`은 선택한 `cutType`, `product`는 선택한 `shot`으로 자동 배정한다. `benefit` 섹션의 첫 AI 카드만 `hero`다. 이동·복제·삭제·순서 변경·컷·샷 변경·되돌리기와 서버 저장에서 다시 정규화한다.
+- 자동 콘티의 섹션 순서는 `hooking → styling → studio → product`다. `구매 정보`와 `같은 장소`는 섹션을 만들지 않는다.
+- `hero|benefit`은 `hooking`, `coordination|realWear`는 `styling`, `fit`은 `studio`, `productOverview|detail`은 `product` 섹션에 속한다. `custom`은 사용자가 놓은 섹션을 따른다.
+- AI 카드의 `contentRole`은 사용자 입력값이 아니다. `hooking`은 카드 순서, `styling|studio`는 섹션과 `cutType`, `product`는 선택한 `shot`으로 자동 배정한다. `hooking` 섹션의 첫 AI 카드만 `hero`다. 이동·복제·삭제·순서 변경·컷·샷 변경·되돌리기와 서버 저장에서 다시 정규화한다.
 - `source='mine'`은 `cutType=null`, `contentRole='custom'`이다. 현재 UI에서 내 이미지는 AI 사진 목적을 다시 고르지 않으며, 어느 큰 섹션에 놓였는지는 `sectionRole`로 따로 저장한다. 내 이미지는 컷 종류가 아니다.
-- `cutType`은 생성 레시피 값이지만 콘티 인스펙터에서 컷 종류로 직접 고른다. `benefit`은 `styling | horizon`, `fit`은 `styling | horizon | mirror`만 허용한다. `product`는 `cutType='product'`로 고정하고 `ghost | detail` 샷을 고른다. 컷 종류는 섹션이나 상단 탭으로 쓰지 않는다.
+- `cutType`은 생성 레시피 값이지만 콘티 인스펙터에서 컷 종류로 직접 고른다. `hooking`은 `styling | horizon`, `styling`은 `styling | mirror`, `studio`는 `horizon`만 허용한다. `product`는 `cutType='product'`로 고정하고 `ghost | detail` 샷을 고른다.
 - 생성예시 갤러리는 서로 다른 `cutType`을 섞지 않는다. 현재 카드의 `cutType`과 샷·성별·적용 의류 종류가 정확히 맞는 예시만 최대 6장 보여준다. 예시 선택이 `cutType`을 바꾸지는 않는다.
 - `contentRole='detail'`은 상품 전체 색상 중 `ImageAsset.slot='Detail'` 입력이 하나 이상 있으면 유효하다. 목표 `colorId`에 Detail이 없으면 기준색, 그다음 Detail 보유 첫 색상의 사진을 구조·재질 근거로 쓰고 색만 목표 색상군으로 전환한다.
-- `taxonomyVersion: 2`만 저장한다. 레거시 블록 매핑은 제공하지 않으며, v2 입력의 역할 누락은 `source='mine'`과 `cutType` 규칙으로만 방어적으로 정규화한다.
+- `taxonomyVersion: 3`만 새로 저장한다. v2의 `benefit`은 `hooking`, `fit`은 `cutType='horizon'`이거나 `contentRole='fit'`이면 `studio`, 그 외에는 `styling`으로 읽을 때 자동 승격한다.
 - `sectionTitle`과 `title`은 현재 구현의 전환기 캐시일 뿐 기준 데이터가 아니다. 읽을 때 enum 라벨로 덮어쓰며, 후속 정리에서 저장 shape에서 제거한다.
 - 공개된 정상 조합의 `source='ai'` 블록은 자동 배정 뒤 `exampleId`가 사실상 필수다. 같은 공간의 pose·방향 호환 자산이 0장인 예외에는 미배정 상태와 오류 안내를 유지하며 `all`로 강등하지 않는다.
 - 자동 배정은 `exampleSelectionOrigin='auto'`, 직접 선택·다른 예시 보기·참고 범위 변경·샷/컷 변경 확정은 `'user'`로 저장한다. `exampleId`가 있는데 이 필드가 없는 과거 저장분은 사용자 선택으로 간주해 `'user'`로 정규화한다.
@@ -204,11 +204,11 @@ StoryboardBlock {
 
 | contentRole | sectionRole | cutType | 허용 shot·direction |
 |---|---|---|---|
-| `hero` | `benefit` | `styling` 또는 `horizon` | 사람용 ShotType · front/back/side |
-| `benefit` | `benefit` | `styling` 또는 `horizon` | 사람용 ShotType · front/back/side |
-| `coordination` | `fit` | `styling` | 사람용 ShotType · front/back/side |
-| `fit` | `fit` | `horizon` | 사람용 ShotType · front/back/side |
-| `realWear` | `fit` | `mirror` | full/medium · direction=null |
+| `hero` | `hooking` | `styling` 또는 `horizon` | 사람용 ShotType · front/back/side |
+| `benefit` | `hooking` | `styling` 또는 `horizon` | 사람용 ShotType · front/back/side |
+| `coordination` | `styling` | `styling` | 사람용 ShotType · front/back/side |
+| `fit` | `studio` | `horizon` | 사람용 ShotType · front/back/side |
+| `realWear` | `styling` | `mirror` | full/medium · direction=null |
 | `productOverview` | `product` | `product` | ghost · front/back |
 | `detail` | `product` | `product` | detail · front/back · 상품 전체 중 Detail 입력 필수 |
 | `custom` | 현재 놓인 섹션 | `null` | 직접 업로드한 내 이미지. AI 생성 옵션 없음 |
@@ -336,7 +336,7 @@ GenJob {
   composition: StoryboardSectionRole[]
 }
 // mock/legacy step key: info | prep | styling | horizon | product | copy | assemble
-// 화면 라벨은 styling='핵심 장점', horizon='핏·코디', product='제품 확인'으로 보여준다.
+// 화면은 공식 섹션 순서인 후킹→스타일링→스튜디오→의류 확인으로 보여준다.
 // HTTP 어댑터는 현재 onProgress만 전달한다. onStep 체크리스트 실배선은 TODO다.
 
 Account { name: string, avatar: string, credits: number, plan: PlanTier }
@@ -356,9 +356,9 @@ Account { name: string, avatar: string, credits: number, plan: PlanTier }
 | Gender | `women` `men` | 여자/남자 | |
 | Fit | `slim` `regular` `semi_over` `over` | 슬림핏/정핏/세미오버/오버핏 | |
 | ComposeMode | `basic` `extended` | 기본형/확장형 | 같은 섹션 구조에서 사진 수만 다름. 이 두 값 외에는 읽기·쓰기 모두 거부 |
-| **StoryboardSectionRole** | `benefit` `fit` `product` | 핵심 장점/핏·코디/제품 확인 | 사용자에게 보이는 섹션, 순서 고정 (ADR-0005) |
-| **ContentRole** | `hero` `benefit` `coordination` `fit` `realWear` `productOverview` `detail` `custom` | 첫 장면/핵심 장점/코디 활용/핏 확인/실제 착용 느낌/제품 전체/디테일/직접 구성 | 콘티에서는 비노출 자동값. 핵심 장점은 순서, 핏·코디는 컷, 제품 확인은 샷으로 파생. 에디터 새 이미지 추가에서는 현행 목적 선택값 (ADR-0005) |
-| **CutType** | `styling` `horizon` `product` `mirror` | 스타일링컷/호리존컷/제품컷/거울샷 | 생성 레시피 값. 콘티 인스펙터에서 섹션별 허용 컷을 직접 선택하지만 사용자 섹션·상단 탭으로 쓰지 않음 (ADR-0003~0005) |
+| **StoryboardSectionRole** | `hooking` `styling` `studio` `product` | 후킹/스타일링/스튜디오/의류 확인 | 사용자에게 보이는 공식 4섹션, 순서 고정 (ADR-0005) |
+| **ContentRole** | `hero` `benefit` `coordination` `fit` `realWear` `productOverview` `detail` `custom` | 첫 장면/핵심 장점/코디 활용/핏 확인/실제 착용 느낌/제품 전체/디테일/직접 구성 | 콘티에서는 비노출 자동값. 후킹은 순서, 스타일링·스튜디오는 섹션과 컷, 의류 확인은 샷으로 파생. 에디터 새 이미지 추가에서는 현행 목적 선택값 (ADR-0005) |
+| **CutType** | `styling` `horizon` `product` `mirror` | 스타일링컷/호리존컷/제품컷/거울샷 | 생성 레시피 값. 후킹은 styling/horizon, 스타일링은 styling/mirror, 스튜디오는 horizon, 의류 확인은 product만 허용 (ADR-0003~0005) |
 | **BlockSource** | `ai` `mine` | AI 생성/내 이미지 | ★ 신설 — '내 이미지'는 컷 종류가 아님 |
 | AutoBlockKind | `size` `care` `ai-notice` | 사이즈/세탁/AI 생성 안내 | 2026-06-09 결정 유지 |
 | EditorInfoType | `materials` `options` `shipping_returns` `required_notice` `benefit_copy` `fit_copy` `model_info` `fabric_properties` `color_description` `brand_story` `faq` `reviews` `related_products` `promotion` `social` `header` `fit_guide` `size_matrix` | 에디터의 구매 정보·문구·선택 콘텐츠 | `kind='info'`일 때 사용. AutoBlockKind 3종과 겹치지 않음. ★ `header`(타이포 상품명 헤더)·`fit_guide`(핏 도식 비교)·`size_matrix`(키×몸무게 추천 사이즈)는 2026-07-29 상세페이지 분석에서 승격 (§3.5.1) |
@@ -468,8 +468,8 @@ GenerationExample {
 | `generateMannequins(projectId, { onProgress })` | | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · 페이지 최초 진입 시 자동 호출 |
 | `adjustMannequin(projectId, { baseId, fitAdjust?, lengthAdjust?, matchAdjust?, onProgress })` | enum 값만 | ~~`{ data: MannequinCut, credits }`~~ | **@deprecated (2026-07)** — fitProfile 재생성으로 통합, 페이지에서 미호출 (`mannequinAdjust`=0). 서버 `:adjust`는 항상 **410 Gone**(잡 미생성) |
 | `regenerateMannequin(projectId, { fitProfile, onProgress })` | 확인 스텝에서 확정한 FitProfile(축+matchCut) | `{ data: MannequinCut[], credits }` | `mannequinGenerate` · fitProfile을 analysis에 영속 후 새 버전 생성·자동 선택 (구 `regenerateMannequins` 대체) |
-| `getStoryboard(projectId)` | | `StoryboardBlock[]` | 저장된 v2 배열을 반환. 화면은 working copy를 만들기 전에 허용 컷·샷과 내부 역할을 검증하고, 핵심 장점은 순서, 핏·코디는 컷, 제품 확인은 샷으로 자동 정규화 |
-| `saveStoryboard(projectId, blocks)` | | `StoryboardBlock[]` | 생성 CTA 시 반드시 호출. taxonomyVersion=2만 저장 |
+| `getStoryboard(projectId)` | | `StoryboardBlock[]` | 저장된 배열을 반환. 화면은 working copy를 만들기 전에 v2를 v3 공식 4섹션으로 승격하고 허용 컷·샷과 내부 역할을 정규화 |
+| `saveStoryboard(projectId, blocks)` | | `StoryboardBlock[]` | 생성 CTA 시 반드시 호출. taxonomyVersion=3만 저장 |
 | `generateDetailPage(projectId, { onProgress, onStep })` | | `{ data: EditorBlock[], credits }` | `storyboardPerCut × source='ai'인 블록 수` — 내 이미지 블록은 생성 작업이 없어 차감 제외 |
 | `getEditorBlocks(projectId)` | | `EditorBlock[]` | |
 | `saveEditorBlocks(projectId, blocks)` | | `void` | 구현됨 — 저장 버튼 + 1.5s 디바운스 자동 저장 + 이탈 시 플러시 |
