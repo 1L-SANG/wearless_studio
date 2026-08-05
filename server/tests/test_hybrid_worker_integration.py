@@ -898,11 +898,27 @@ def test_artifact_geometry_captures_the_exact_carrier_preflight_contract(
 
     geometry = json.loads((tmp_path / "geometry.json").read_text())
     assert geometry["schema"] == "stripe_replay_geometry_v2"
+    carrier = cv2.imread(str(tmp_path / "carrier.png"))
+    source = cv2.imread(str(tmp_path / "source_front.png"))
+    assert geometry["carrier_size"] == [carrier.shape[1], carrier.shape[0]]
+    assert geometry["source_size"] == [source.shape[1], source.shape[0]]
+    assert geometry["source_landmarks"] == {
+        key: SOURCE_GEOM_RAW[key]
+        for key in ("shoulder_l", "shoulder_r", "hem_l", "hem_r")
+    }
+    assert geometry["source_component_boxes_norm"] == {
+        key: SOURCE_GEOM_RAW[key]
+        for key in ("collar_box", "placket_box", "cuff_l_box", "cuff_r_box")
+    }
+    assert set(geometry["source_inventory"]["component_box_sources"].values()) == {
+        "vision_explicit"
+    }
     inputs = geometry["carrier_preflight_inputs"]
     assert inputs["canonical_evidence"]["expected_lower"] is True
     assert inputs["require_vision"] is True
     assert inputs["vision_observations"]["mannequinFramePreserved"] is True
     assert geometry["carrier_preflight_summary"]["decision"] == "PASS"
+    assert geometry["protected_component_contract"]["status"] == "PASS"
     serialized = json.dumps(geometry, ensure_ascii=False)
     for forbidden in ("http://", "https://", "Bearer", "token"):
         assert forbidden not in serialized
@@ -925,9 +941,44 @@ def test_early_protected_failure_still_captures_paid_carrier_for_replay(
     assert geometry["schema"] == "stripe_replay_geometry_v2"
     assert geometry["capture_stage"] == "failed"
     assert geometry["failure_reason"] == "protected_component_missing"
+    carrier = cv2.imread(str(tmp_path / "carrier.png"))
+    source = cv2.imread(str(tmp_path / "source_front.png"))
+    assert geometry["carrier_size"] == [carrier.shape[1], carrier.shape[0]]
+    assert geometry["source_size"] == [source.shape[1], source.shape[0]]
+    assert geometry["source_landmarks"] == {
+        key: SOURCE_GEOM_RAW[key]
+        for key in ("shoulder_l", "shoulder_r", "hem_l", "hem_r")
+    }
+    assert geometry["source_component_boxes_norm"] == {
+        key: SOURCE_GEOM_RAW[key]
+        for key in ("cuff_l_box", "cuff_r_box")
+    }
+    assert geometry["source_inventory"]["component_box_sources"] == {
+        "cuff_l_box": "vision_explicit",
+        "cuff_r_box": "vision_explicit",
+    }
+    assert geometry["carrier_preflight_inputs"]["require_vision"] is True
     assert geometry["carrier_preflight_summary"]["decision"] == "PASS"
     assert geometry["protected_component_contract"]["status"] == "MISSING"
+    assert {
+        item["component"] for item in geometry["protected_component_contract"]["missing"]
+    } == {"collar", "placket"}
     assert geometry["source_landmarks"] and geometry["carrier_landmarks"]
+
+
+def test_artifact_dump_failure_never_fails_the_production_job(monkeypatch, tmp_path):
+    """QA 보조 파일 쓰기 실패는 생성·QC·출고 경로와 독립이어야 한다."""
+    monkeypatch.setenv("HYBRID_COMPOSITE_ARTIFACT_DIR", str(tmp_path))
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("synthetic_artifact_write_failure")
+
+    monkeypatch.setattr(cv2, "imwrite", fail_write)
+    _oplog, calls, r2_saved, _emits = _run_job(monkeypatch)
+
+    assert calls["failure"] == []
+    assert len(calls["success"]) == 1
+    assert r2_saved, "artifact failure must not suppress the accepted output"
 
 
 def test_missing_optional_cuff_boxes_use_the_shared_deterministic_fallback(monkeypatch):

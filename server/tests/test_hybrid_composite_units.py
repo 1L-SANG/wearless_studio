@@ -1277,6 +1277,116 @@ def test_cuff_fallback_does_not_invent_geometry_without_endpoint_or_inventory():
         lm, inv, aspect_hw=1.5)["component_boxes"] == {}
 
 
+def test_cuff_fallback_rejects_short_or_degenerate_sleeve_vector():
+    """짧은 sleeve는 geometry를 신뢰할 수 없다 — 유도하지 않고 downstream이 fail-closed."""
+    raw = _landmark_response(
+        sleeve_l_end=[0.29, 0.24],  # shoulder_l=[0.30,0.20] 에서 거의 안 벗어남
+        sleeve_r_end=[0.71, 0.24],
+    )
+    lm, inv, err = validate_geometry(raw, aspect_hw=1.5)
+    assert err is None
+    derived = derive_cuff_boxes_from_sleeve_landmarks(lm, inv, aspect_hw=1.5)
+    assert not any(k.startswith("cuff_") for k in derived["component_boxes"])
+
+
+def test_cuff_fallback_derives_visible_side_only_when_one_endpoint_present():
+    """한쪽 sleeve endpoint만 있으면 그 쪽만 유도한다."""
+    raw = _landmark_response(
+        sleeve_l_end=[0.12, 0.72],
+        # sleeve_r_end 없음 — 잘려서 안 보이거나 vision 이 안 줬거나
+    )
+    lm, inv, err = validate_geometry(raw, aspect_hw=1.5)
+    assert err is None
+    derived = derive_cuff_boxes_from_sleeve_landmarks(lm, inv, aspect_hw=1.5)
+    assert "cuff_l_box" in derived["component_boxes"]
+    assert "cuff_r_box" not in derived["component_boxes"]
+    assert derived["component_box_sources"]["cuff_l_box"] == CUFF_GEOMETRY_VERSION
+    assert box_rejection_reason(derived["component_boxes"]["cuff_l_box"]) is None
+
+
+def test_cuff_fallback_rejects_heavily_clipped_geometry():
+    """이미지 가장자리를 크게 벗어나는 cuff는 신뢰할 수 없다."""
+    raw = _landmark_response(
+        sleeve_l_end=[-0.05, 0.90],   # 왼쪽 끝이 이미지 밖으로 벗어남
+        sleeve_r_end=[1.05, 0.90],    # 오른쪽 끝도 이미지 밖
+    )
+    lm, inv, err = validate_geometry(raw, aspect_hw=1.5)
+    assert err is None
+    derived = derive_cuff_boxes_from_sleeve_landmarks(lm, inv, aspect_hw=1.5)
+    # 심한 clipping이면 유도하지 않아야 한다
+    assert not any(k.startswith("cuff_") for k in derived["component_boxes"])
+
+
+@pytest.mark.parametrize("aspect_hw", [1.0, 1.333, 1.5, 2.0])
+def test_cuff_fallback_produces_valid_boxes_across_aspect_ratios(aspect_hw):
+    """source와 carrier가 서로 다른 종횡비여도 정규화 quad가 유효해야 한다."""
+    raw = _landmark_response(
+        sleeve_l_end=[0.12, 0.72],
+        sleeve_r_end=[0.88, 0.72],
+    )
+    lm, inv, err = validate_geometry(raw, aspect_hw=aspect_hw)
+    assert err is None
+    derived = derive_cuff_boxes_from_sleeve_landmarks(lm, inv, aspect_hw=aspect_hw)
+    for key in ("cuff_l_box", "cuff_r_box"):
+        box = derived["component_boxes"].get(key)
+        assert box is not None, f"{key} was not derived at aspect {aspect_hw}"
+        assert box_rejection_reason(box) is None, f"{key} at aspect {aspect_hw}"
+        for pt in box:
+            assert 0.0 <= pt[0] <= 1.0 and 0.0 <= pt[1] <= 1.0
+
+
+def test_derived_cuff_boxes_make_protected_component_contract_pass():
+    """유도 box가 protected component contract를 실제 PASS로 연결해야 한다."""
+    from app.services.hybrid_composite.protected_components import (
+        evaluate_protected_components,
+        ProtectedComponentStatus,
+    )
+    truth = {
+        "status": "approved",
+        "garmentSpec": {"buttonCount": 6, "collarType": None, "cuffType": None},
+        "protectedDetails": {"buttonCount": True},
+    }
+    raw = _landmark_response(
+        sleeve_l_end=[0.12, 0.72],
+        sleeve_r_end=[0.88, 0.72],
+        collar_box=[[0.36, 0.02], [0.64, 0.02], [0.64, 0.12], [0.36, 0.12]],
+        placket_box=[[0.48, 0.14], [0.52, 0.14], [0.52, 0.68], [0.48, 0.68]],
+    )
+    lm, inv, err = validate_geometry(raw, aspect_hw=1.5)
+    assert err is None
+    enriched = derive_cuff_boxes_from_sleeve_landmarks(lm, inv, aspect_hw=1.5)
+    assert {"cuff_l_box", "cuff_r_box"} <= set(enriched["component_boxes"])
+
+    result = evaluate_protected_components(
+        truth,
+        source_inventory=enriched,
+        carrier_inventory=enriched,  # 같은 geometry를 양쪽에 공급
+    )
+    assert result.status == ProtectedComponentStatus.PASS, (
+        f"contract status={result.status.value} missing={result.missing}"
+    )
+
+
+def test_derived_cuff_provenance_is_recorded_in_box_sources():
+    """유도 box와 explicit box의 provenance가 구분되어 artifact에 기록된다."""
+    explicit = [[0.04, 0.62], [0.20, 0.62], [0.20, 0.76], [0.04, 0.76]]
+    raw = _landmark_response(
+        sleeve_l_end=[0.12, 0.72],
+        sleeve_r_end=[0.88, 0.72],
+        cuff_l_box=explicit,
+    )
+    lm, inv, err = validate_geometry(raw, aspect_hw=1.5)
+    assert err is None
+    derived = derive_cuff_boxes_from_sleeve_landmarks(lm, inv, aspect_hw=1.5)
+    sources = derived["component_box_sources"]
+    assert sources["cuff_l_box"] == "vision_explicit"
+    assert sources["cuff_r_box"] == CUFF_GEOMETRY_VERSION
+    # collar/placket도 vision_explicit로 남아야 한다
+    for key in ("collar_box", "placket_box"):
+        if key in inv["component_boxes"]:
+            assert sources.get(key) == "vision_explicit"
+
+
 # ── 독립 검수 2회차가 구성한 공격 4종 (전부 정상본은 통과해야 한다) ─────────────
 # 임계를 만지는 대신 측정 방식을 바꿔 닫았다. 정상 합성 6종 실측이 임계의 근거다.
 
