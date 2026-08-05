@@ -896,8 +896,16 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
   useEffect(() => {
     if (galleryPage >= galleryPageCount) scrollToGalleryPage(galleryPageCount - 1, 'auto');
   }, [galleryPage, galleryPageCount]);
+  const poseDirectionReason = (example) => {
+    const label = { front: '정면', back: '뒷면', side: '사이드' }[example?.direction] || '다른 방향';
+    return `이 예시의 포즈는 ${label} 전용이에요`;
+  };
   const selectFirstAvailable = () => {
-    if (examples[0]) onExampleChange?.(examples[0].id);
+    const first = refScope === 'pose'
+      ? examples.find((example) => (example.variants || []).includes('pose')
+        && poseExampleDirectionCompatible(example, { cutType: example.cutType || cut, direction }))
+      : examples[0];
+    if (first) onExampleChange?.(first.id, refScope);
   };
   const renderExampleCell = (example) => {
     const on = exampleId === example.id;
@@ -906,12 +914,17 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
       cutType: example.cutType || cut,
       direction,
     });
+    const poseRequired = refScope === 'pose';
+    const poseUnavailable = poseRequired && (!variants.includes('pose') || !poseCompatible);
+    const poseUnavailableReason = !variants.includes('pose')
+      ? '이 예시는 아직 포즈 전용 자산이 없어요'
+      : poseDirectionReason(example);
     const pick = (scope) => {
       if (!onExampleChange || !variants.includes(scope)) return;
       if (scope === 'pose' && !poseCompatible) return;
       onExampleChange(example.id, scope);
     };
-    const defaultScope = cut === 'product' || moodOnly ? 'all'
+    const defaultScope = cut === 'product' || (moodOnly && !poseRequired) ? 'all'
       : variants.includes(refScope || 'all')
         && ((refScope || 'all') !== 'pose' || poseCompatible)
         ? (refScope || 'all') : 'all';
@@ -925,7 +938,9 @@ export function MoodGuide({ catalogs, cut, direction, shot, onShotChange, shotOp
           onExampleDrag(example.id);
         }}
         onDragEnd={() => onExampleDrag?.(null)}
-        className={`sb-excell${on ? ' sel' : ''}`}
+        disabled={poseUnavailable}
+        title={poseUnavailable ? poseUnavailableReason : undefined}
+        className={`sb-excell${on ? ' sel' : ''}${poseUnavailable ? ' unavailable' : ''}`}
         onClick={() => pick(defaultScope)}>
         <ExampleThumb example={example} />
         {on && <span className="ck"><Icon name="check" size={11} /></span>}

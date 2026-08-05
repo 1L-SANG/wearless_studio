@@ -265,10 +265,14 @@ export function AnalysisSkeleton() {
 // AI(가상) 모델 — 서버 레지스트리(server/app/data/virtual_models.json)와 동기 유지.
 // 컷 생성(AG-06)이 이 id('mA'…)로 아이덴티티 자산을 해석하고, 라이선스 게이트는
 // 비-UUID id를 no-op 처리한다(과금 없음). 실제 모델(FaceMarket)과 탭으로 구분 표시.
+// 이름은 인물 외형에 맞춘다(2026-08-01 사용자 결정): 서양인 = 짧은 영문 이름,
+// 동양인 = 짧은 한국어 이름. 'mA'… id 는 서버 자산 키라 그대로 두고 표시명만 바꾼다.
 const AI_MODELS = [
-  { id: 'mA', displayName: '모델 A', gender: 'women', thumb: '/models/women/w1.webp' },
-  { id: 'mB', displayName: '모델 B', gender: 'men', thumb: '/models/men/m1.webp' },
-  { id: 'mC', displayName: '모델 C', gender: 'men', thumb: '/models/men/m2.webp' },
+  { id: 'mA', displayName: 'Mia', gender: 'women', thumb: '/models/women/w1.webp' },
+  { id: 'mB', displayName: 'Leo', gender: 'men', thumb: '/models/men/m1.webp' },
+  { id: 'mC', displayName: '도윤', gender: 'men', thumb: '/models/men/m2.webp' },
+  { id: 'mD', displayName: '수혁', gender: 'men', thumb: '/models/men/m3.webp' },
+  { id: 'mE', displayName: '지안', gender: 'women', thumb: '/models/women/w2.webp' },
 ];
 
 export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
@@ -583,34 +587,24 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
             : '검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.'}
         </div>
         {modelTab === 'ai' ? (
-          /* 남녀 그룹 구분(2026-07-21 사용자 결정) — 상품 대상 성별과 같은 그룹을 먼저 보여준다 */
-          (a.targetGenders?.[0] === 'men' ? ['men', 'women'] : ['women', 'men']).map((g) => {
-            const group = AI_MODELS.filter((m) => m.gender === g);
-            if (!group.length) return null;
-            return (
-              <div key={g} style={{ marginBottom: 14 }}>
-                <div className="lbl" style={{ fontSize: 12.5, color: 'var(--fg-2)', marginBottom: 8 }}>
-                  {g === 'women' ? '여성 모델' : '남성 모델'}
-                </div>
-                <div className="model-grid">
-                  {group.map((m) => {
-                    const on = a.selectedModelId === m.id;
-                    return (
-                      <div key={m.id} className={`model-card fm-model${on ? ' on' : ''}`}
-                        onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
-                        <img src={m.thumb} alt={m.displayName} />
-                        <span className="fm-verified">AI</span>
-                        <div className="fm-meta">
-                          <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
-                          <div className="fm-price">무료</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })
+          /* 성별 칩과 같은 성별만 노출(2026-08-01 사용자 결정) — 칩 미선택이면 전체.
+             이름은 사진 위 우측 하단에 흰 글씨로 얹는다(별도 메타 줄 없음). */
+          <div className="model-grid">
+            {AI_MODELS
+              .filter((m) => !a.targetGenders?.[0] || m.gender === a.targetGenders[0])
+              .map((m) => {
+                const on = a.selectedModelId === m.id;
+                return (
+                  <div key={m.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
+                    onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
+                    <img src={m.thumb} alt={m.displayName} />
+                    <span className="ai-name">
+                      {m.displayName}{on && <Icon name="check" size={12} />}
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
         ) : modelsLoading ? (
           <div className="hint">검증 모델을 불러오는 중이에요…</div>
         ) : models.length === 0 ? (

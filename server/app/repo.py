@@ -271,7 +271,10 @@ async def save_product(
 
 # AG-01 이 파생하고 셀러가 편집하지 않는 서버 소유 필드. 저장은 REPLACE 라 클라가 모르는
 # 키는 한 번의 저장으로 사라진다 — 구버전 클라·부분 payload 에서도 살아남게 여기서 보존한다.
-_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored",)
+# inputConsistency: 셀러가 분석 폼을 한 번 수정하면 REPLACE 로 경고가 사라져, 생성 직전
+# 게이트가 조용히 없어진다(사라지는 경고 = 없는 경고). 재분석 때는 finalize 가 payload 를
+# 통째로 갈아끼우므로 낡은 판정이 남지 않는다.
+_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored", "inputConsistency")
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
@@ -623,11 +626,10 @@ async def create_job(
                     insert into jobs (user_id, project_id, kind, status, payload, idempotency_key,
                                       credits_reserved, metadata)
                     values (%s, %s, %s, 'pending', %s, %s, %s, %s)
-                    on conflict (project_id, kind)
-                      where status in ('pending', 'running')
-                        and kind not in ('editor_image', 'personalization_generation',
-                                         'personalization_purge')
-                      do nothing
+                    -- 충돌 대상을 특정하면 partial-index predicate가 조금만 바뀌어도
+                    -- 모든 kind의 INSERT가 500으로 깨진다. 실제 충돌 행은 아래에서
+                    -- idempotency_key 또는 활성 project/kind로 다시 조회하므로 target 없이 막는다.
+                    on conflict do nothing
                     returning {_JOB_COLS}
                     """,
                     (user_id, project_id, kind, Json(payload), idempotency_key, credits_reserved,

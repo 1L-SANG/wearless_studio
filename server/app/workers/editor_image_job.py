@@ -226,7 +226,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                                 {"error": "license_rejected", "modelId": str(selected_model_id)})
                     return
 
-            # NewCutRequest.modelId가 이 경로의 정본. C방식 두 장을 원자적으로 로드하며,
+            # NewCutRequest.modelId가 이 경로의 정본. 가상모델 C방식 세 장을 원자적으로 로드하며,
             # 모르는 modelId/manifest/R2 실패는 모델 참조만 빼고 기존 상품 참조로 계속한다
             # (단, REAL 은 라이선스 소비 대상이라 자산 로드 실패 시 계속하지 않고 잡 실패).
             model_images: list[InlineImage] = []
@@ -268,7 +268,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 for a in mood_rows
             ]
             images = [*model_images, *product_images, *mood_images]
-            # 순서 = 매니페스트: MODEL 2장? → 상품 슬롯들 → 무드
+            # 순서 = 매니페스트: 가상 MODEL 3장 또는 실존 MODEL 2장 → 상품 슬롯들 → 무드
             example_scope = None
             example_id = normalized.get("exampleId")
             pose_overrides_example = (
@@ -353,7 +353,8 @@ async def run_editor_image_job(app, job: dict) -> None:
 
             manifest = cut_generator.build_manifest(
                 assets, has_mannequin=False, has_match=False, mood_count=len(mood_rows),
-                has_model_face=len(model_images) == 2, has_model_sheet=len(model_images) == 2,
+                has_model_face=len(model_images) >= 1, has_model_sheet=len(model_images) >= 2,
+                has_model_body=len(model_images) >= 3,
                 example_scope=example_scope,
                 example_is_product=normalized["cutType"] == "product")
             try:

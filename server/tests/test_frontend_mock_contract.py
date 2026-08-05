@@ -34,6 +34,41 @@ def test_mock_analysis_starts_with_ai_keyword_suggestions_only():
         assert not re.search(r"[.!?。]|(합니다|습니다|해요|있어요|가능)$", point)
 
 
+def test_virtual_model_catalogs_and_public_assets_stay_in_sync():
+    manifest = json.loads(
+        (REPO_ROOT / "server/app/data/virtual_models.json").read_text(encoding="utf-8")
+    )
+    analysis_source = (
+        REPO_ROOT / "src/features/analysis/AnalysisForm.jsx"
+    ).read_text(encoding="utf-8")
+    mock_source = MOCK_DB.read_text(encoding="utf-8")
+    expected = {
+        "mA": ("Mia", "women", "w1"),
+        "mB": ("Leo", "men", "m1"),
+        "mC": ("도윤", "men", "m2"),
+        "mD": ("수혁", "men", "m3"),
+        "mE": ("지안", "women", "w2"),
+    }
+
+    assert set(manifest["models"]) == set(expected)
+    for model_id, (name, gender, sid) in expected.items():
+        model = manifest["models"][model_id]
+        thumb = f"/models/{gender}/{sid}.webp"
+        assert (model["name"], model["gender"], model["thumb"]) == (name, gender, thumb)
+        assert f"id: '{model_id}'" in analysis_source
+        assert f"displayName: '{name}'" in analysis_source
+        assert f"id: '{model_id}'" in mock_source
+        assert f"name: '{name}'" in mock_source
+        assert (REPO_ROOT / f"public/models/{gender}/{sid}.webp").is_file()
+        assert set(model["views"]) == {
+            "face_front", "grid_sedcard", "three_quarter", "profile",
+            "body_front", "body_back",
+        }
+
+    assert (REPO_ROOT / "public/models/men/m3-face.webp").is_file()
+    assert (REPO_ROOT / "public/models/women/w2-face.webp").is_file()
+
+
 def test_dev_generation_example_catalog_matches_server_registry_v2():
     catalog = json.loads(
         (REPO_ROOT / "src/data/genExamples.json").read_text(encoding="utf-8")

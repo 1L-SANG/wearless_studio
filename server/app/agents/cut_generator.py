@@ -315,7 +315,7 @@ def resolve_effective_model_id(
     """상세페이지 착용컷에 붙일 '유효' 가상모델 id (인물 일관성 — AG-06). **순수 함수.**
 
     호출자는 identity source == 'VIRTUAL' 일 때만 쓴다(REAL/LEGACY 는 얼굴을 별도 경로로 붙이므로
-    폴백하면 인물이 이중 첨부된다). VIRTUAL 인데 선택 id 가 가상 registry(mA/mB/mC) 밖이면
+    폴백하면 인물이 이중 첨부된다). VIRTUAL 인데 선택 id 가 가상 registry(mA…mE) 밖이면
     (예: facemarket off 상태의 실존 UUID) `resolve_virtual_model_assets` 가 None 을 반환해
     참조가 0장이 되고 컷마다 인물이 랜덤이 된다. 그 경우 결정적 폴백으로 전 컷 동일 인물 보장.
 
@@ -361,8 +361,8 @@ def needs_identity_fallback(*, cut_type, has_model_images: bool, face_slot: bool
     return cut_type in _WORN_CUTS and not has_model_images and not face_slot
 
 
-def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, str]] | None:
-    """정규화된 사람컷 spec의 C방식 자산(face_front, grid_sedcard)을 계약 순서로 반환.
+def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], ...] | None:
+    """정규화된 사람컷 spec의 C방식 자산(face_front, grid_sedcard, body_front)을 반환.
 
     product 컷·modelId 미지정은 정상적인 미첨부다. 알 수 없는 modelId나 불완전한 manifest는
     경고 후 미첨부로 폴백하며, R2 바이트 로드 실패는 각 워커가 같은 방식으로 처리한다.
@@ -383,7 +383,7 @@ def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, 
     if not isinstance(views, dict):
         views = {}
     resolved: list[dict[str, str]] = []
-    for view_name in ("face_front", "grid_sedcard"):
+    for view_name in ("face_front", "grid_sedcard", "body_front"):
         view = views.get(view_name)
         key = view.get("key") if isinstance(view, dict) else None
         mime = view.get("mime") if isinstance(view, dict) else None
@@ -394,7 +394,7 @@ def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, 
                 model_id, view_name)
             return None
         resolved.append({"key": key, "mime": mime, "bucket": "public"})
-    return resolved[0], resolved[1]
+    return tuple(resolved)
 
 
 def resolve_example_asset(
@@ -721,8 +721,9 @@ _SLOT_LABEL = {
 _MANNEQUIN_LABEL = "PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)"
 _MODEL_LABEL = "MODEL — frontal close-up of the model (identity ground truth; do NOT copy this image's pose, framing, or clothing)"
 _MODEL_SHEET_LABEL = "MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single person (identity reference only). Do NOT copy the grid layout, framing, poses, or clothing; the output must be one single normal photograph, never a grid"
+_MODEL_BODY_LABEL = "MODEL BODY — full-body frontal reference of the SAME person (body-proportion ground truth only). Preserve this person's height impression, shoulder width, torso and limb proportions, and natural build; do NOT copy the reference clothing, background, pose, shoes or framing"
 _MATCH_LABEL = "MATCHING — the user-selected coordinating garment worn in the same outfit"
-# FaceMarket 라이선스 얼굴 첨부 라벨(FM-31). 위 두 라벨의 부분문자열이 되면 matchCut 가드가
+# FaceMarket 라이선스 얼굴 첨부 라벨(FM-31). 위 모델 라벨의 부분문자열이 되면 matchCut 가드가
 # 오발해 없는 하의를 지시하므로 'mannequin'·_MATCH_LABEL 문구를 섞지 않는다.
 _FACE_LABEL = ("MODEL FACE — the licensed model's face reference: reproduce THIS person's "
                "facial identity (never copy their clothing, background or framing)")
@@ -735,12 +736,12 @@ _SPACE_SET_PLATE_LABEL = "SPACE SET PLATE"
 def build_manifest(
     prod_assets: list[dict], *, has_mannequin: bool, has_match: bool,
     mood_count: int, has_model_face: bool = False, has_model_sheet: bool = False,
-    has_face: bool = False, example_scope: str | None = None,
+    has_model_body: bool = False, has_face: bool = False, example_scope: str | None = None,
     example_is_product: bool = False, has_space_set_plate: bool = False,
 ) -> str:
     """첨부 이미지와 동일 순서의 역할 목록.
 
-    순서: mannequin?, virtual-model face+sheet?, *product, match?, licensed-face?,
+    순서: mannequin?, virtual-model face+sheet+body?, *product, match?, licensed-face?,
     *mood, example?. pose의 상대 순서는 PRODUCT → MATCHING → POSE CONTROL로 고정한다.
     라이선스 얼굴은 옷 근거 뒤에 두며, 호출자는 정체성 충돌을 막기 위해
     licensed-face와 virtual-model 참조를 동시에 켜지 않는다.
@@ -755,6 +756,9 @@ def build_manifest(
         i += 1
     if has_model_sheet:
         lines.append(f"{i}. {_MODEL_SHEET_LABEL}")
+        i += 1
+    if has_model_body:
+        lines.append(f"{i}. {_MODEL_BODY_LABEL}")
         i += 1
     for a in prod_assets:
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'PRODUCT — view of the garment')}")
