@@ -2,8 +2,11 @@ import cv2
 import numpy as np
 import pytest
 
-from app.services.hybrid_composite.color import bgr_to_lab
-from app.services.hybrid_composite.deterministic_qc import verify_composite
+from app.services.hybrid_composite.color import bgr_to_lab, lab_to_bgr
+from app.services.hybrid_composite.deterministic_qc import (
+    _component_output_scale,
+    verify_composite,
+)
 from app.services.hybrid_composite.panel_map import Panel, PanelMap
 from app.services.hybrid_composite.stripe_model import _autocorr_period, _detrended_profile
 from app.services.hybrid_composite.types import CompositeFailure, StripeModel
@@ -46,6 +49,53 @@ def _stripe_model(period=20):
         source_sha256="0" * 64,
         source_roi=(0, 0, period, period),
     )
+
+
+def _fine_multicolor_model():
+    ratios = np.asarray([0.676, 0.123, 0.084, 0.117], np.float64)
+    colors = np.asarray([
+        [82.0, 0.0, 6.0],
+        [70.0, -7.0, -12.0],
+        [66.0, 4.0, 12.0],
+        [77.0, 1.0, 4.0],
+    ], np.float32)
+    K = 192
+    phase = (np.arange(K, dtype=np.float64) + 0.5) / K
+    run = np.searchsorted(np.cumsum(ratios), phase, side="right")
+    profile = colors[np.minimum(run, len(colors) - 1)]
+    return StripeModel(
+        axis="vertical",
+        period_px=30.0,
+        period_profile_lab=profile,
+        ground_color_lab=tuple(colors[0]),
+        color_sequence_lab=tuple(map(tuple, colors)),
+        line_width_ratios=tuple(ratios),
+        n_periods_used=12,
+        confidence=0.95,
+        source_asset_id="synthetic-fine",
+        source_sha256="1" * 64,
+        source_roi=(0, 0, K, K),
+    )
+
+
+def _render_irregular_component(model, *, period, size=320, unit=(0.82, 0.57)):
+    u = np.asarray(unit, np.float64)
+    u /= np.linalg.norm(u)
+    yy, xx = np.indices((size, size), dtype=np.float64)
+    K = len(model.period_profile_lab)
+    phase = np.mod((xx * u[0] + yy * u[1]) / float(period), 1.0) * K
+    i0 = np.floor(phase).astype(np.int64) % K
+    i1 = (i0 + 1) % K
+    frac = (phase - i0)[..., None]
+    lab = (model.period_profile_lab[i0] * (1.0 - frac)
+           + model.period_profile_lab[i1] * frac).astype(np.float32)
+    # final-output evidence includes smooth carrier illumination but no extra pattern.
+    lab[..., 0] += (5.0 * np.sin(yy / 73.0) + 3.0 * np.cos(xx / 91.0)).astype(np.float32)
+    mask = np.zeros((size, size), np.uint8)
+    cv2.fillPoly(mask, [np.asarray([
+        [35, 78], [270, 32], [302, 150], [248, 286], [72, 260], [18, 170],
+    ], np.int32)], 255)
+    return lab_to_bgr(lab), mask, u
 
 
 def _carrier_panel_map():
@@ -178,7 +228,199 @@ def test_component_decal_already_at_shared_scale_records_healthy_metrics():
     assert placket["scale_measurable"] is True
     assert placket["source_projected_period_px"] == pytest.approx(20.0, abs=1.5)
     assert placket["scale_resample_factor"] == pytest.approx(1.0, abs=0.08)
+    assert placket["component_texture_source"] == "source_component_homography"
     assert _measure_horizontal_period(art.image_bgr, target_box) == pytest.approx(20.0, rel=0.12)
+
+    # Separately cut cloth need not share torso phase when the component is projected
+    # exactly once. It must still prove common period and stripe-run widths in final pixels.
+    planned = {**art.metrics["cross_surface_scale"], "components": {
+        "placket": {**placket, "phase_error_p95": 0.49},
+    }}
+    qc = verify_composite(
+        art.image_bgr,
+        carrier,
+        panel_map,
+        model,
+        target_period_px=20.0,
+        target_axis="horizontal",
+        painted_mask=art.painted,
+        coverage_mask=art.coverage_scope,
+        alpha=art.alpha,
+        component_scale_metrics=planned,
+        component_region_masks=art.component_region_masks,
+        component_boxes={"placket": target_box.tolist()},
+    )
+    measured = qc.metrics["cross_surface_scale"]["components"]["placket"]
+    assert measured["phase_policy"] == "not_applicable_single_projection"
+    assert measured["period_measurement"] == "phase_guided_final_pixels_homography_hint"
+    assert measured["period_rel_err"] <= 0.12
+    assert not any(
+        f.get("panel") == "placket" for f in qc.metrics["failure_details"]
+    ), qc.metrics["failure_details"]
+
+
+def test_component_scale_normalization_never_tiles_a_nonperiodic_label():
+    """원단 주기를 맞춘다고 source 라벨/단추 좌표를 반복 복제하면 안 된다."""
+    model = _stripe_model(period=20)
+    carrier, panel_map = _carrier_panel_map()
+    source_bgr = _stripe_source(period=20, size=400)
+    source_box, target_box = _component_boxes(source_size=320, target_height=160)
+    # Source label and its direct-homography target location.  The old raw-coordinate
+    # period wrap repeated this red block all along the component.
+    source_bgr[145:205, 135:235] = (20, 30, 220)
+    carrier[132:162, 100:132] = (20, 30, 220)
+
+    art = composite_stripe(
+        carrier,
+        panel_map,
+        model,
+        target_period_px=20.0,
+        target_axis="horizontal",
+        component_boxes={"collar": target_box.tolist()},
+        source_bgr=source_bgr,
+        source_component_boxes={"collar": source_box.tolist()},
+    )
+    assert not isinstance(art, CompositeFailure), art
+
+    red = ((art.image_bgr[..., 2].astype(np.int16)
+            - art.image_bgr[..., 1].astype(np.int16)) > 70)
+    label = np.zeros(red.shape, bool)
+    label[132:162, 100:132] = True
+    component = np.zeros(red.shape, np.uint8)
+    cv2.fillPoly(component, [target_box.astype(np.int32)], 255)
+    assert float(red[label].mean()) >= 0.75
+    assert int((red & (component > 0) & ~label).sum()) < 40
+
+
+def test_multi_orientation_component_is_verified_region_by_region():
+    """칼라 잎처럼 축이 다른 영역을 합쳐 한 축으로 재면 정상 합성도 측정 불가가 된다."""
+    model = _stripe_model(period=20)
+    carrier, panel_map = _carrier_panel_map()
+    source_bgr = _stripe_source_at_angle(period=20, size=400, normal=(1.0, 0.0))
+    source_bgr[:, 200:] = _stripe_source_at_angle(
+        period=20, size=400, normal=(0.0, 1.0))[:, 200:]
+    source_box = np.array(
+        [[40, 40], [360, 40], [360, 360], [40, 360]], np.float32)
+    target_box = np.array(
+        [[52, 70], [188, 70], [188, 245], [52, 245]], np.float32)
+
+    art = composite_stripe(
+        carrier,
+        panel_map,
+        model,
+        target_period_px=20.0,
+        target_axis="horizontal",
+        component_boxes={"collar": target_box.tolist()},
+        source_bgr=source_bgr,
+        source_component_boxes={"collar": source_box.tolist()},
+    )
+    assert not isinstance(art, CompositeFailure), art
+    planned = art.metrics["cross_surface_scale"]["components"]["collar"]
+    assert len(planned["region_metrics"]) >= 2, planned
+    assert len(art.component_region_masks["collar"]) == len(planned["region_metrics"])
+
+    qc = verify_composite(
+        art.image_bgr,
+        carrier,
+        panel_map,
+        model,
+        target_period_px=20.0,
+        target_axis="horizontal",
+        painted_mask=art.painted,
+        coverage_mask=art.coverage_scope,
+        alpha=art.alpha,
+        component_scale_metrics=art.metrics["cross_surface_scale"],
+        component_region_masks=art.component_region_masks,
+        component_boxes={"collar": target_box.tolist()},
+    )
+    measured = qc.metrics["cross_surface_scale"]["components"]["collar"]
+    assert measured["scale_measurable"] is True, measured
+    assert all(r["scale_measurable"] for r in measured["region_metrics"]), measured
+    assert not any(
+        f.get("panel") == "collar" for f in qc.metrics["failure_details"]
+    ), qc.metrics["failure_details"]
+
+
+def test_final_pixel_period_fit_handles_fine_multicolor_irregular_component():
+    """10.7px 다색 반복을 정수축으로 접어 9/12px harmonic으로 오독하지 않는다."""
+    model = _fine_multicolor_model()
+    target = 10.67
+    out, mask, unit = _render_irregular_component(model, period=target)
+    quad = np.asarray([[10, 10], [309, 10], [309, 309], [10, 309]], np.float32)
+
+    measured = _component_output_scale(
+        out, quad, model,
+        target_period_px=target,
+        target_axis="vertical",
+        target_axis_unit=unit,
+        painted_mask=mask,
+        alpha=(mask > 0).astype(np.float32),
+        evidence_mask=mask,
+    )
+
+    assert measured["scale_measurable"] is True, measured
+    assert measured["period_measurement"] == "phase_guided_final_pixels"
+    assert measured["period_rel_err"] <= 0.03, measured
+
+
+def test_final_pixel_period_fit_does_not_bless_a_wrong_encoded_period():
+    model = _fine_multicolor_model()
+    target = 10.67
+    out, mask, unit = _render_irregular_component(model, period=8.5)
+    quad = np.asarray([[10, 10], [309, 10], [309, 309], [10, 309]], np.float32)
+
+    measured = _component_output_scale(
+        out, quad, model,
+        target_period_px=target,
+        target_axis="vertical",
+        target_axis_unit=unit,
+        painted_mask=mask,
+        alpha=(mask > 0).astype(np.float32),
+        evidence_mask=mask,
+    )
+
+    assert measured["scale_measurable"] is True, measured
+    assert measured["period_rel_err"] > 0.12, measured
+
+
+def test_component_phase_mapping_is_anchored_and_qc_gated():
+    """주기만 맞고 위상이 반 주기 밀린 decal은 다른 원단 조각처럼 보여야 한다."""
+    model = _stripe_model(period=20)
+    carrier, panel_map = _carrier_panel_map()
+    source_bgr = np.roll(_stripe_source(period=20, size=400), 9, axis=0)
+    source_box, target_box = _component_boxes(source_size=320, target_height=160)
+    art = composite_stripe(
+        carrier,
+        panel_map,
+        model,
+        target_period_px=20.0,
+        target_axis="horizontal",
+        component_boxes={"collar": target_box.tolist()},
+        source_bgr=source_bgr,
+        source_component_boxes={"collar": source_box.tolist()},
+    )
+    assert not isinstance(art, CompositeFailure), art
+    planned = art.metrics["cross_surface_scale"]["components"]["collar"]
+    assert planned["phase_error_p95"] <= 0.12, planned
+
+    bad = {**art.metrics["cross_surface_scale"], "components": {
+        "collar": {**planned, "phase_error_p95": 0.45},
+    }}
+    qc = verify_composite(
+        art.image_bgr,
+        carrier,
+        panel_map,
+        model,
+        target_period_px=20.0,
+        target_axis="horizontal",
+        painted_mask=art.painted,
+        coverage_mask=art.coverage_scope,
+        alpha=art.alpha,
+        component_scale_metrics=bad,
+        component_boxes={"collar": target_box.tolist()},
+    )
+    assert "pattern_metric_failed" in qc.failures
+    assert any("phase" in f["detail"] for f in qc.metrics["failure_details"])
 
 
 def test_deterministic_qc_fails_closed_when_component_scale_is_unmeasurable():

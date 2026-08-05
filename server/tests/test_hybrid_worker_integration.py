@@ -100,6 +100,7 @@ class _Pool:
 def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name="스트라이프 셔츠",
              settings_kw=None, p2_verdict=None, source_png=None,
              carrier_component_box=False, source_component_box=True,
+             omit_cuff_boxes=False,
              truth_pattern=None,
              truth_fine_pattern=None, analysis_pattern=None,
              carrier_vision=None, truth_approved=True, frame_results=None):
@@ -156,8 +157,17 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
             if not source_component_box:
                 raw.pop("collar_box", None)
                 raw.pop("placket_box", None)
+            if omit_cuff_boxes:
+                raw.pop("cuff_l_box", None)
+                raw.pop("cuff_r_box", None)
+                # Carrier fixture와 같은 물리 sleeve/torso 비율(~0.53).
+                raw["sleeve_l_end"] = [0.05, 0.49]
+                raw["sleeve_r_end"] = [0.95, 0.49]
             return raw
         raw = _carrier_geom_raw(cx)
+        if omit_cuff_boxes:
+            raw.pop("cuff_l_box", None)
+            raw.pop("cuff_r_box", None)
         if carrier_component_box:
             raw["collar_box"] = [[0.45, 0.16], [0.55, 0.16],
                                  [0.55, 0.20], [0.45, 0.20]]
@@ -878,6 +888,76 @@ def test_artifact_dump_is_off_unless_explicitly_pointed(monkeypatch, tmp_path):
     monkeypatch.delenv("HYBRID_COMPOSITE_ARTIFACT_DIR", raising=False)
     mj._dump_composite_artifacts(np.zeros((4, 4, 3), np.uint8), None, None)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_artifact_geometry_captures_the_exact_carrier_preflight_contract(
+        monkeypatch, tmp_path):
+    """다음 replay가 production preflight를 우회하지 않도록 입력과 판정을 함께 남긴다."""
+    monkeypatch.setenv("HYBRID_COMPOSITE_ARTIFACT_DIR", str(tmp_path))
+    _run_job(monkeypatch)
+
+    geometry = json.loads((tmp_path / "geometry.json").read_text())
+    assert geometry["schema"] == "stripe_replay_geometry_v2"
+    inputs = geometry["carrier_preflight_inputs"]
+    assert inputs["canonical_evidence"]["expected_lower"] is True
+    assert inputs["require_vision"] is True
+    assert inputs["vision_observations"]["mannequinFramePreserved"] is True
+    assert geometry["carrier_preflight_summary"]["decision"] == "PASS"
+    serialized = json.dumps(geometry, ensure_ascii=False)
+    for forbidden in ("http://", "https://", "Bearer", "token"):
+        assert forbidden not in serialized
+
+
+def test_early_protected_failure_still_captures_paid_carrier_for_replay(
+        monkeypatch, tmp_path):
+    """Stage 4 전 실패여도 carrier/source/정확한 gate 상태를 잃으면 안 된다."""
+    monkeypatch.setenv("HYBRID_COMPOSITE_ARTIFACT_DIR", str(tmp_path))
+    _oplog, calls, _r2, _emits = _run_job(
+        monkeypatch,
+        carrier_component_box=True,
+        source_component_box=False,
+    )
+
+    assert calls["failure"][0]["metadata"]["failureReason"] == "protected_component_missing"
+    assert (tmp_path / "carrier.png").exists()
+    assert (tmp_path / "source_front.png").exists()
+    geometry = json.loads((tmp_path / "geometry.json").read_text())
+    assert geometry["schema"] == "stripe_replay_geometry_v2"
+    assert geometry["capture_stage"] == "failed"
+    assert geometry["failure_reason"] == "protected_component_missing"
+    assert geometry["carrier_preflight_summary"]["decision"] == "PASS"
+    assert geometry["protected_component_contract"]["status"] == "MISSING"
+    assert geometry["source_landmarks"] and geometry["carrier_landmarks"]
+
+
+def test_missing_optional_cuff_boxes_use_the_shared_deterministic_fallback(monkeypatch):
+    """양쪽 끝점이 있으면 Product Truth 보호 계약은 유지한 채 cuffs를 공급한다."""
+    _oplog, calls, _r2, emits = _run_job(monkeypatch, omit_cuff_boxes=True)
+
+    protected_rows = [
+        payload for _event, payload in emits
+        if payload.get("status") == "hybrid_protected_contract"
+    ]
+    assert protected_rows, {
+        "statuses": [payload.get("status") for _event, payload in emits],
+        "failures": calls["failure"],
+    }
+    protected = protected_rows[0]
+    assert protected["contract_status"] == "PASS"
+    assert "cuffs" in protected["available"]
+    validated = next(
+        payload for _event, payload in emits
+        if payload.get("status") == "hybrid_landmark_validated"
+    )
+    for side in ("source", "carrier"):
+        sources = validated[f"{side}_component_box_sources"]
+        assert sources["cuff_l_box"] == hybrid_landmarks.CUFF_GEOMETRY_VERSION
+        assert sources["cuff_r_box"] == hybrid_landmarks.CUFF_GEOMETRY_VERSION
+    assert not (
+        calls["failure"]
+        and calls["failure"][0]["metadata"].get("failureReason")
+        == "protected_component_missing"
+    )
 
 
 def _carrier_observation(**overrides):

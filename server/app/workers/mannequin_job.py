@@ -1476,6 +1476,38 @@ async def _apply_hybrid_composite(
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": status, **payload})
 
+    artifact_state = {
+        "carrier": None,
+        "source": None,
+        "panel_map": None,
+        "artifacts": None,
+        "geometry": {
+            "schema": "stripe_replay_geometry_v2",
+            "mode": mode,
+            "pipeline_version": HC_PIPELINE_VERSION,
+            "capture_stage": "started",
+        },
+    }
+
+    def capture_artifacts(stage: str, **geometry) -> None:
+        """Persist the latest exact replay state, including pre-warp failures.
+
+        A paid carrier can fail at landmarks/preflight/protected-contract before
+        ``composite_stripe`` exists.  Capturing only Stage 4 made that carrier
+        impossible to debug or replay and forced another provider call.  This
+        helper overwrites one bounded snapshot after each deterministic gate;
+        it is a no-op unless the explicit QA artifact directory is configured.
+        """
+        artifact_state["geometry"].update(geometry)
+        artifact_state["geometry"]["capture_stage"] = stage
+        _dump_composite_artifacts(
+            artifact_state["carrier"],
+            artifact_state["panel_map"],
+            artifact_state["artifacts"],
+            source_bgr=artifact_state["source"],
+            geometry=artifact_state["geometry"],
+        )
+
     await emit("hybrid_composite_started", pattern_risk=has_fine_pattern,
                projection_eligible=projection_eligible, mode=mode,
                pipeline_version=HC_PIPELINE_VERSION)
@@ -1483,6 +1515,12 @@ async def _apply_hybrid_composite(
     async def fail(reason, detail="", **extra):
         extra.setdefault("carrierSha256", hashlib.sha256(res.image).hexdigest())
         summary = _hc_fail_summary(reason, detail, mode=mode, **extra)
+        if artifact_state["carrier"] is not None:
+            capture_artifacts(
+                "failed",
+                failure_reason=reason,
+                failure_detail=str(detail)[:200],
+            )
         await emit("hybrid_composite_completed", outcome=reason, mode=mode,
                    fail_closed=summary["failClosed"], detail=detail[:200])
         return res, summary
@@ -1533,6 +1571,15 @@ async def _apply_hybrid_composite(
         return await fail("reference_insufficient", f"디코드 실패: {e}")
 
     front_sha_early = hashlib.sha256(front_ref.image.data).hexdigest()
+    artifact_state["carrier"] = carrier_bgr
+    artifact_state["source"] = front_bgr
+    capture_artifacts(
+        "decoded",
+        carrier_size=[int(carrier_bgr.shape[1]), int(carrier_bgr.shape[0])],
+        source_size=[int(front_bgr.shape[1]), int(front_bgr.shape[0])],
+        carrier_sha256=hashlib.sha256(res.image).hexdigest(),
+        source_sha256=front_sha_early,
+    )
     # Stage 1/2 — 입력 gate + stripe model. Detail 우선, 실패 시 Front/Back fallback.
     model = None
     model_ref = None
@@ -1644,6 +1691,19 @@ async def _apply_hybrid_composite(
         car_raw, aspect_hw=carrier_bgr.shape[0] / carrier_bgr.shape[1])
     if car_err:
         return await fail("panel_landmarks_invalid", f"carrier: {car_err}")
+    # Vision의 optional cuff box가 빠져도 has_cuffs + 같은 쪽 shoulder/end가 있으면
+    # 정규화 좌표에서 결정론적으로 유도한다. Product Truth/양쪽 inventory 요구는 그대로라
+    # 끝점까지 없는 경우에는 기존처럼 protected contract가 fail-closed 한다.
+    src_inv = hybrid_landmarks.derive_cuff_boxes_from_sleeve_landmarks(
+        src_lm,
+        src_inv,
+        aspect_hw=front_bgr.shape[0] / front_bgr.shape[1],
+    )
+    car_inv = hybrid_landmarks.derive_cuff_boxes_from_sleeve_landmarks(
+        car_lm,
+        car_inv,
+        aspect_hw=carrier_bgr.shape[0] / carrier_bgr.shape[1],
+    )
     # 정규화 → 픽셀. validate_geometry 는 0..1 을 돌려주고 warp_composite 는 픽셀을
     # 가정한다. source 와 carrier 는 크기가 다르므로 각자의 해상도로 따로 환산한다.
     src_boxes_norm = (src_inv or {}).pop("component_boxes", {})
@@ -1655,6 +1715,8 @@ async def _apply_hybrid_composite(
     await emit("hybrid_landmark_validated",
                source_components=sorted(src_boxes_norm),
                carrier_components=sorted(car_boxes_norm),
+               source_component_box_sources=(src_inv or {}).get("component_box_sources") or {},
+               carrier_component_box_sources=(car_inv or {}).get("component_box_sources") or {},
                source_size=[front_bgr.shape[1], front_bgr.shape[0]],
                carrier_size=[carrier_bgr.shape[1], carrier_bgr.shape[0]],
                source_visible_buttons=(src_inv or {}).get("visible_buttons"),
@@ -1663,6 +1725,15 @@ async def _apply_hybrid_composite(
                carrier_torso_aspect=(car_inv or {}).get("torso_aspect"),
                source_sleeve_len_ratio=(src_inv or {}).get("sleeve_len_ratio"),
                carrier_sleeve_len_ratio=(car_inv or {}).get("sleeve_len_ratio"))
+    capture_artifacts(
+        "landmarks_validated",
+        source_landmarks=src_lm,
+        carrier_landmarks=car_lm,
+        source_inventory=src_inv,
+        carrier_inventory=car_inv,
+        source_component_boxes_norm=src_boxes_norm,
+        carrier_component_boxes_norm=car_boxes_norm,
+    )
 
     # Projection은 나쁜 carrier를 고치는 단계가 아니다. 셔츠 실루엣·밑단·소매·하의·
     # 매칭 의류·canonical frame이 먼저 모두 성립해야만 비싼 warp를 시작한다.
@@ -1671,22 +1742,34 @@ async def _apply_hybrid_composite(
     observed_categories = ["top"]
     if (carrier_preflight_observation or {}).get("lowerBodyPresent") is True:
         observed_categories.append("pants")
-    preflight = hc_preflight.preflight_carrier_quality(
-        carrier_evidence={"garment_categories": observed_categories},
-        canonical_evidence={
+    # preflight policy가 실제로 읽는 normalized observation만 보존한다. evidence 자유문은
+    # 판정에 쓰이지 않고 URL/token 같은 provider 원문을 QA artifact에 다시 흘릴 수 있어
+    # 캡처 대상에서 제외한다.
+    preflight_vision = {
+        key: value for key, value in (carrier_preflight_observation or {}).items()
+        if key != "evidence"
+    }
+    preflight_inputs = {
+        "carrier_evidence": {"garment_categories": observed_categories},
+        "canonical_evidence": {
             "expected_categories": ["top", "pants"],
             "expected_lower": True,
         },
-        matching_evidence={
+        "matching_evidence": {
             "matched": ((carrier_preflight_observation or {}).get(
                 "matchingGarmentPresent") if matching_expected else True),
         },
-        landmarks={**(car_lm or {}), "confidence": (car_raw or {}).get("confidence")},
-        carrier_inventory={**car_contract_inv, "garment_categories": observed_categories},
-        canonical_inventory=src_contract_inv,
-        vision_observations=carrier_preflight_observation,
-        require_vision=mode == "enforce",
-        matching_expected=matching_expected,
+        "landmarks": {
+            **(car_lm or {}), "confidence": (car_raw or {}).get("confidence")},
+        "carrier_inventory": {
+            **car_contract_inv, "garment_categories": observed_categories},
+        "canonical_inventory": src_contract_inv,
+        "vision_observations": preflight_vision,
+        "require_vision": mode == "enforce",
+        "matching_expected": matching_expected,
+    }
+    preflight = hc_preflight.preflight_carrier_quality(
+        **preflight_inputs,
     )
     preflight_summary = preflight.summary()
     if carrier_preflight_meta:
@@ -1698,6 +1781,11 @@ async def _apply_hybrid_composite(
         reasons=[reason.code for reason in preflight.reasons],
         policy_version=preflight.policy_version,
         vision_status=(carrier_preflight_meta or {}).get("status"),
+    )
+    capture_artifacts(
+        "carrier_preflight",
+        carrier_preflight_inputs=preflight_inputs,
+        carrier_preflight_summary=preflight_summary,
     )
     if not preflight.passed:
         return await fail(
@@ -1721,6 +1809,10 @@ async def _apply_hybrid_composite(
         available=list(protected.available_components),
         missing=[item.component for item in protected.missing],
         review_reasons=list(protected.review_reasons),
+    )
+    capture_artifacts(
+        "protected_contract",
+        protected_component_contract=protected_summary,
     )
     if mode == "enforce" and protected.status != hc_protected.ProtectedComponentStatus.PASS:
         detail = ", ".join(
@@ -1951,6 +2043,7 @@ async def _apply_hybrid_composite(
         await emit("hybrid_panel_map", ok=False, reason=pm.reason, detail=pm.detail[:200],
                    metrics=pm.metrics)
         return await fail(pm.reason, pm.detail, constructionMetrics=pm.metrics)
+    artifact_state["panel_map"] = pm
     await emit("hybrid_panel_map", ok=True, confidence=round(pm.confidence, 3),
                strategy=pm.strategy, panels=[p.name for p in pm.panels],
                metrics=pm.metrics)
@@ -1962,22 +2055,13 @@ async def _apply_hybrid_composite(
         component_boxes=car_boxes, source_bgr=front_bgr,
         source_component_boxes=src_boxes,
         allow_low_source_coverage=(mode == "shadow"))
-    _dump_composite_artifacts(
-        carrier_bgr, pm, art, source_bgr=front_bgr,
-        geometry={
-            "schema": "stripe_replay_geometry_v1",
-            "carrier_landmarks": car_lm,
-            "source_inventory": src_inv,
-            "carrier_inventory": car_inv,
-            "source_component_boxes_norm": src_boxes_norm,
-            "carrier_component_boxes_norm": car_boxes_norm,
-            "carrier_size": [int(carrier_bgr.shape[1]), int(carrier_bgr.shape[0])],
-            "source_size": [int(front_bgr.shape[1]), int(front_bgr.shape[0])],
-            "target_period_px": float(target_period_px),
-            "garment_axis": garment_axis,
-            "stripe_model": model.summary(),
-            "mode": mode,
-        })
+    artifact_state["artifacts"] = art
+    capture_artifacts(
+        "warp_composite",
+        target_period_px=float(target_period_px),
+        garment_axis=garment_axis,
+        stripe_model=model.summary(),
+    )
     if isinstance(art, CompositeFailure):
         await emit("hybrid_warp_composite", ok=False, reason=art.reason,
                    detail=art.detail[:200], metrics=art.metrics)
@@ -2005,6 +2089,7 @@ async def _apply_hybrid_composite(
         coverage_mask=art.coverage_scope,
         alpha=art.alpha,
         component_scale_metrics=art.metrics.get("cross_surface_scale"),
+        component_region_masks=art.component_region_masks,
         inner_feather_px=art.metrics.get("inner_feather_px"),
         component_boxes=car_boxes,
         target_period_px=target_period_px, target_axis=garment_axis)

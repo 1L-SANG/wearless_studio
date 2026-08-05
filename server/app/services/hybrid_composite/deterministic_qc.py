@@ -29,6 +29,12 @@ from .types import QC_VERSION, StripeModel
 REPEAT_COUNT_TOL = 0.15        # panel 주기 상대 오차 상한 (live gate 와 동일)
 CROSS_SURFACE_PERIOD_TOL = 0.12
 CROSS_SURFACE_STRIPE_WIDTH_TOL = 0.15
+# component source 중심을 anchor 로 한 실제 remap 위상 오차. period 허용치와 같은
+# 12%를 쓴다 — 이보다 크면 한 주기 안에서 색 순서가 눈에 띄게 밀리거나 reflection으로
+# 진행 방향이 뒤집힌 것이다.
+CROSS_SURFACE_PHASE_TOL = 0.12
+MIN_COMPONENT_PIXEL_PHASE_CORR = 0.03
+MAX_COMPONENT_PHASE_SAMPLES = 8_000
 # run 대표색 ΔE00 의 per-run 하드 상한. 집계 gate(median ≤6 / P95 ≤10)는 controlled fixture
 # 테스트가 전 셋에 대해 강제한다 — 여기 per-run 컷은 색 정체성 파괴(순서 뒤바뀜 ≈ ΔE 40,
 # 다른 색으로 대체)를 잡는 안전망이고, 좁은 소매의 2차 리샘플 측정 스미어(실측 ~10-12)를
@@ -137,6 +143,197 @@ def _masked_profile(values: np.ndarray, valid: np.ndarray, axis: int) -> np.ndar
     return out
 
 
+def _phase_guided_pixel_period(
+    local_lab: np.ndarray,
+    valid: np.ndarray,
+    coordinate: np.ndarray,
+    model: StripeModel,
+    *,
+    target_period_px: float,
+    period_hint_px: float | None = None,
+) -> dict | None:
+    """Fit the physical repeat directly against final component pixels.
+
+    A collar/cuff evidence mask is irregular and often rotated.  Collapsing it into a
+    one-dimensional integer-bin profile first aliases a 10.7px four-colour repeat into
+    the neighbouring 9px/12px harmonic.  This fit keeps every final-output pixel in its
+    continuous component-axis coordinate, removes only low-frequency illumination, and
+    compares it with the approved Product Truth profile. A one-shot source-component
+    homography may additionally provide its independently measured projected period as a
+    search hint. The hint never becomes the answer: the returned period still comes from
+    final pixels. Periodic-profile synthesis provides no hint, so a wrong encoded repeat
+    remains discoverable outside the policy band and fails the unchanged 12% gate.
+    """
+    if local_lab.ndim != 3 or local_lab.shape[-1] != 3:
+        return None
+    indexes = np.flatnonzero(valid)
+    if indexes.size < 256:
+        return None
+    if indexes.size > MAX_COMPONENT_PHASE_SAMPLES:
+        indexes = indexes[np.linspace(
+            0, indexes.size - 1, MAX_COMPONENT_PHASE_SAMPLES, dtype=np.int64)]
+
+    values = local_lab.reshape(-1, 3)[indexes].astype(np.float64)
+    coords = coordinate.ravel()[indexes].astype(np.float64)
+    sigma = max(float(target_period_px) * 2.0, 8.0)
+    low = np.stack([
+        cv2.GaussianBlur(local_lab[..., channel].astype(np.float32), (0, 0), sigmaX=sigma)
+        for channel in range(3)
+    ], axis=-1).reshape(-1, 3)[indexes]
+    observed = values - low
+    observed -= observed.mean(axis=0, keepdims=True)
+    observed_norm = np.linalg.norm(observed, axis=0)
+
+    expected = np.asarray(model.period_profile_lab, np.float64).copy()
+    if expected.ndim != 2 or expected.shape[0] < 4 or expected.shape[1] != 3:
+        return None
+    expected -= expected.mean(axis=0, keepdims=True)
+    expected_std = expected.std(axis=0)
+    usable = (expected_std >= 0.35) & (observed_norm >= 1e-6)
+    if not np.any(usable):
+        return None
+    weights = np.where(usable, expected_std, 0.0)
+    weights /= max(float(weights.sum()), 1e-9)
+
+    K = len(expected)
+    best: tuple[float, float, float] | None = None
+
+    def search(periods: np.ndarray, shifts: np.ndarray) -> None:
+        nonlocal best
+        for period in periods:
+            base_phase = coords / period
+            for shift in shifts:
+                phase = np.mod(base_phase + shift, 1.0) * K
+                i0 = np.floor(phase).astype(np.int64) % K
+                i1 = (i0 + 1) % K
+                frac = (phase - i0)[:, None]
+                reference = expected[i0] * (1.0 - frac) + expected[i1] * frac
+                reference -= reference.mean(axis=0, keepdims=True)
+                denom = observed_norm * np.linalg.norm(reference, axis=0)
+                corr = np.divide(
+                    np.sum(observed * reference, axis=0),
+                    denom,
+                    out=np.zeros(3, np.float64),
+                    where=denom > 1e-9,
+                )
+                score = float(np.dot(weights, corr))
+                candidate = (score, float(period), float(shift))
+                if (best is None or score > best[0] + 1e-9
+                        or (abs(score - best[0]) <= 1e-9
+                            and abs(period - target_period_px)
+                            < abs(best[1] - target_period_px))):
+                    best = candidate
+
+    hint = None
+    if period_hint_px is not None:
+        candidate_hint = float(period_hint_px)
+        if np.isfinite(candidate_hint) and candidate_hint >= 4.0:
+            hint = candidate_hint
+    search_center = hint if hint is not None else float(target_period_px)
+    # Periodic-profile output must be searched outside the acceptance band. Restricting
+    # it made an actually encoded 8.5px repeat (target 10.7px) alias to 11.4px and pass.
+    # A direct homography is different: source period + Jacobian independently establish
+    # its physical projection. Narrowing around that projection prevents a short cuff from
+    # selecting the adjacent ground-colour harmonic, while candidates are still scored
+    # exclusively against final output pixels.
+    if hint is None:
+        search_lo = max(4.0, search_center * 0.60)
+        search_hi = search_center * 1.45
+    else:
+        search_lo = max(4.0, search_center * 0.88)
+        search_hi = search_center * 1.12
+    coarse_step = max(0.25, search_center / 48.0)
+    coarse = np.arange(
+        search_lo,
+        search_hi + coarse_step * 0.5,
+        coarse_step,
+        dtype=np.float64,
+    )
+    anchors = [float(target_period_px)]
+    if hint is not None:
+        anchors.append(hint)
+    anchors = [value for value in anchors if search_lo <= value <= search_hi]
+    search(np.unique(np.append(coarse, anchors)),
+           np.arange(16, dtype=np.float64) / 16.0)
+    if best is not None:
+        fine_step = max(0.125, search_center / 96.0)
+        fine = np.arange(
+            max(search_lo, best[1] - coarse_step),
+            min(search_hi, best[1] + coarse_step) + fine_step * 0.5,
+            fine_step,
+            dtype=np.float64,
+        )
+        search(np.unique(np.append(fine, anchors)),
+               np.arange(32, dtype=np.float64) / 32.0)
+    if best is None or best[0] < MIN_COMPONENT_PIXEL_PHASE_CORR:
+        return None
+    return {
+        "period_px": best[1],
+        "correlation": best[0],
+        "phase_shift": best[2],
+    }
+
+
+def _ordered_profile_boundaries(
+    gradient: np.ndarray,
+    expected_boundaries: np.ndarray,
+    expected_runs: np.ndarray,
+    *,
+    radius: int,
+) -> np.ndarray | None:
+    """Choose one cyclic, ordered edge per approved run boundary.
+
+    Fine four-colour stripes can have adjacent boundaries less than one encoded pixel
+    apart.  In the supersampled folded profile their search windows overlap, so four
+    independent ``argmax`` calls can all select the same strong blue edge and then report
+    an impossible boundary order.  This small dynamic program keeps the same local search
+    radius but requires the selected edges to retain cyclic order.  It is still output
+    evidence: a flat or wrong profile is rejected earlier by the pixel-phase/profile fit.
+    """
+    K = int(len(gradient))
+    if K < 8 or not len(expected_boundaries):
+        return None
+    peak = max(float(np.max(gradient)), 1e-9)
+    offsets = np.arange(-radius, radius + 1, dtype=np.float64)
+    candidates = [float(boundary) + offsets for boundary in expected_boundaries]
+    scores = [
+        gradient[np.rint(values).astype(np.int64) % K] / peak
+        - 0.03 * np.abs(values - float(boundary)) / max(radius, 1)
+        for values, boundary in zip(candidates, expected_boundaries)
+    ]
+    min_gaps = np.maximum(1.0, expected_runs * K * 0.15)
+    best_total = -np.inf
+    best_path: list[float] | None = None
+
+    for first_idx, first_pos in enumerate(candidates[0]):
+        states: dict[int, tuple[float, list[float]]] = {
+            first_idx: (float(scores[0][first_idx]), [float(first_pos)])
+        }
+        for boundary_idx in range(1, len(candidates)):
+            next_states: dict[int, tuple[float, list[float]]] = {}
+            min_gap = float(min_gaps[boundary_idx - 1])
+            for current_idx, current_pos in enumerate(candidates[boundary_idx]):
+                chosen = None
+                for prev_score, prev_path in states.values():
+                    if float(current_pos) < prev_path[-1] + min_gap:
+                        continue
+                    total = prev_score + float(scores[boundary_idx][current_idx])
+                    if chosen is None or total > chosen[0]:
+                        chosen = (total, prev_path + [float(current_pos)])
+                if chosen is not None:
+                    next_states[current_idx] = chosen
+            states = next_states
+            if not states:
+                break
+        for total, path in states.values():
+            if path[-1] > path[0] + K - float(min_gaps[-1]):
+                continue
+            if total > best_total:
+                best_total = total
+                best_path = path
+    return np.asarray(best_path, np.float64) if best_path is not None else None
+
+
 def _component_output_scale(
     out_bgr: np.ndarray,
     quad,
@@ -147,6 +344,8 @@ def _component_output_scale(
     target_axis_unit=None,
     painted_mask: np.ndarray | None = None,
     alpha: np.ndarray | None = None,
+    evidence_mask: np.ndarray | None = None,
+    period_hint_px: float | None = None,
 ) -> dict:
     """Remeasure period and run widths from the final blended component pixels.
 
@@ -162,6 +361,7 @@ def _component_output_scale(
     if min(bw, bh) < 18:
         return {"scale_measurable": False, "reason": "component_output_too_small"}
     prof = None
+    pixel_period_fit = None
     if target_axis_unit is not None:
         unit = np.asarray(target_axis_unit, np.float64)
         norm = float(np.linalg.norm(unit))
@@ -188,6 +388,9 @@ def _component_output_scale(
                 if painted_mask is not None:
                     painted_local = painted_mask[y0:y1, x0:x1] > 0
                     valid &= painted_local
+                if evidence_mask is not None:
+                    evidence_local = evidence_mask[y0:y1, x0:x1] > 0
+                    valid &= evidence_local
                 if alpha is not None:
                     alpha_local = alpha[y0:y1, x0:x1]
                     source_core = valid & (alpha_local >= 0.80)
@@ -220,6 +423,10 @@ def _component_output_scale(
                                     idx[~good], idx[good], prof[good, channel])
                             lo_trim, hi_trim = int(n * 0.08), int(n * 0.92)
                             prof = prof[lo_trim:hi_trim]
+                            pixel_period_fit = _phase_guided_pixel_period(
+                                lab, valid, t, model,
+                                target_period_px=target_period_px,
+                                period_hint_px=period_hint_px)
                         else:
                             prof = None
     if prof is None:
@@ -252,7 +459,10 @@ def _component_output_scale(
     # Guided scale fit against the approved physical profile. Blind autocorrelation on a
     # 2–4 repeat collar/cuff often chooses the wide-ground harmonic (e.g. 35px for a 30px
     # four-color repeat). Evaluate candidate periods by full Lab profile fit instead.
-    candidates = np.arange(float(lo), float(hi) + 0.001, 0.5)
+    if pixel_period_fit is not None:
+        candidates = np.asarray([pixel_period_fit["period_px"]], np.float64)
+    else:
+        candidates = np.arange(float(lo), float(hi) + 0.001, 0.5)
     best = None
     for candidate_period in candidates:
         Kc = max(64, _fold_samples(candidate_period))
@@ -286,18 +496,10 @@ def _component_output_scale(
     smooth = cv2.GaussianBlur(measured.astype(np.float32), (1, 5), 0.8)
     gradient = np.linalg.norm(smooth - np.roll(smooth, 1, axis=0), axis=1)
     radius = max(2, int(round(K * 0.08)))
-    observed_boundaries = []
-    for boundary in boundaries:
-        center = int(round(boundary)) % K
-        offsets = np.arange(-radius, radius + 1)
-        indexes = (center + offsets) % K
-        best_local = int(np.argmax(gradient[indexes]))
-        observed_boundaries.append(float(boundary + offsets[best_local]))
-    observed_boundaries = np.asarray(observed_boundaries, np.float64)
-    # Keep the cyclic order while permitting the first boundary to sit just below zero.
-    for idx in range(1, len(observed_boundaries)):
-        while observed_boundaries[idx] <= observed_boundaries[idx - 1]:
-            observed_boundaries[idx] += K
+    observed_boundaries = _ordered_profile_boundaries(
+        gradient, boundaries, expected_runs, radius=radius)
+    if observed_boundaries is None:
+        return {"scale_measurable": False, "reason": "component_boundary_order_invalid"}
     observed_runs = np.diff(np.concatenate([
         observed_boundaries, [observed_boundaries[0] + K]
     ])) / K
@@ -310,6 +512,15 @@ def _component_output_scale(
     return {
         "scale_measurable": True,
         "final_period_px": round(measured_period, 2),
+        "period_measurement": (
+            ("phase_guided_final_pixels_homography_hint"
+             if period_hint_px is not None
+             else "phase_guided_final_pixels") if pixel_period_fit is not None
+            else "axis_profile_fold"
+        ),
+        **({
+            "pixel_phase_correlation": round(float(pixel_period_fit["correlation"]), 4),
+        } if pixel_period_fit is not None else {}),
         "period_signal_strength": round(strength, 4),
         "period_rel_err": round(
             abs(measured_period - target_period_px) / max(target_period_px, 1e-6), 4),
@@ -666,6 +877,7 @@ def verify_composite(
     coverage_mask: np.ndarray | None = None,
     alpha: np.ndarray | None = None,
     component_scale_metrics: dict | None = None,
+    component_region_masks: dict | None = None,
     inner_feather_px: float | None = None,
     component_boxes: dict | None = None,
 ) -> DeterministicQC:
@@ -783,7 +995,13 @@ def verify_composite(
         # Copy before enriching so QA metadata remains a snapshot, not a mutation of the
         # PanelMap object shared with other checks.
         cross = {**cross, "components": {
-            name: dict(value) for name, value in (cross.get("components") or {}).items()
+            name: {
+                **dict(value),
+                "region_metrics": [
+                    dict(region) for region in (value.get("region_metrics") or [])
+                ],
+            }
+            for name, value in (cross.get("components") or {}).items()
         }}
         metrics["cross_surface_scale"] = cross
         for name, cm in (cross.get("components") or {}).items():
@@ -800,13 +1018,62 @@ def verify_composite(
             target_quad = cm.get("target_quad")
             if target_quad is None and component_boxes:
                 target_quad = component_boxes.get(name)
-            if target_quad is not None:
+            planned_regions = cm.get("region_metrics") or []
+            masks = (component_region_masks or {}).get(name) or ()
+            if planned_regions and len(masks) == len(planned_regions):
+                measured_regions = []
+                for idx, (region, region_mask) in enumerate(zip(planned_regions, masks)):
+                    direct_homography = (
+                        region.get("component_texture_source")
+                        == "source_component_homography"
+                    )
+                    measured = _component_output_scale(
+                        out_bgr, target_quad, model,
+                        target_period_px=target_period_px, target_axis=target_axis,
+                        target_axis_unit=region.get("target_pattern_axis_unit"),
+                        painted_mask=painted_mask, alpha=alpha,
+                        evidence_mask=region_mask,
+                        period_hint_px=(
+                            region.get("source_projected_period_px")
+                            if direct_homography else None
+                        ))
+                    merged = {**region, **measured, "region_index": idx}
+                    measured_regions.append(merged)
+                cm["region_metrics"] = measured_regions
+                cm["scale_measurable"] = all(
+                    region.get("scale_measurable", False)
+                    for region in measured_regions)
+                if cm["scale_measurable"]:
+                    worst_period = max(measured_regions, key=lambda r: float(
+                        r.get("period_rel_err", 1.0)))
+                    worst_width = max(measured_regions, key=lambda r: float(
+                        r.get("stripe_width_error_px", 1e9)))
+                    cm.update({
+                        "final_period_px": worst_period.get("final_period_px"),
+                        "period_measurement": worst_period.get("period_measurement"),
+                        "period_rel_err": worst_period.get("period_rel_err"),
+                        "stripe_width_rel_err": worst_width.get("stripe_width_rel_err"),
+                        "stripe_width_error_px": worst_width.get("stripe_width_error_px"),
+                    })
+                else:
+                    bad = next(region for region in measured_regions
+                               if not region.get("scale_measurable", False))
+                    cm["reason"] = f"region_{bad['region_index']}_{bad.get('reason', 'unknown')}"
+            elif target_quad is not None:
+                direct_homography = (
+                    cm.get("component_texture_source")
+                    == "source_component_homography"
+                )
                 measured = _component_output_scale(
                     out_bgr, target_quad, model,
                     target_period_px=target_period_px, target_axis=target_axis,
                     target_axis_unit=cm.get("target_pattern_axis_unit"),
                     painted_mask=painted_mask,
-                    alpha=alpha)
+                    alpha=alpha,
+                    period_hint_px=(
+                        cm.get("source_projected_period_px")
+                        if direct_homography else None
+                    ))
                 cm.update(measured)
             elif "final_period_px" not in cm:
                 cm.update({"scale_measurable": False,
@@ -820,6 +1087,27 @@ def verify_composite(
                     ),
                 })
                 continue
+            direct_homography = (
+                cm.get("component_texture_source")
+                == "source_component_homography"
+            )
+            if direct_homography:
+                # One source component is projected once, without wrapping. It cannot
+                # reverse the colour sequence or tile a label/button, and its global phase
+                # may legitimately differ from the separately cut torso fabric. Final
+                # period and stripe-run width checks below remain mandatory.
+                cm["phase_policy"] = "not_applicable_single_projection"
+            else:
+                cm["phase_policy"] = "required_periodic_resample"
+                phase_err = float(cm.get("phase_error_p95", 0.0))
+                if phase_err > CROSS_SURFACE_PHASE_TOL:
+                    failures.append({
+                        "code": "pattern_metric_failed", "panel": name,
+                        "detail": (
+                            f"{name} component phase error {phase_err:.3f} "
+                            f"> {CROSS_SURFACE_PHASE_TOL}"
+                        ),
+                    })
             period_err = float(cm.get("period_rel_err", 1.0))
             width_err = float(cm.get("stripe_width_rel_err", 1.0))
             width_err_px = float(cm.get(

@@ -1042,6 +1042,113 @@ def test_generate_sample_uses_route_preclaimed_mannequin_lease(monkeypatch, tmp_
     assert ("RUN_PRECLAIMED", "mannequin-job", "frame-calibration:lease") in calls
 
 
+def test_projection_enforce_failure_is_recorded_without_output_or_raw_error(
+        monkeypatch, tmp_path):
+    """실패한 유료 smoke도 traceback으로 유실하지 않고 비사용 row로 남긴다."""
+    collect = _load("frame_collect_failed_projection", "scripts/frame_shadow_collect.py")
+    source = tmp_path / "front.jpg"
+    source.write_bytes(b"source")
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    for name in ("carrier.png", "source_front.png", "geometry.json"):
+        (artifact_dir / name).write_bytes(b"captured")
+    monkeypatch.setenv("HYBRID_COMPOSITE_ARTIFACT_DIR", str(artifact_dir))
+    monkeypatch.setenv("FRAME_CALIBRATION_INLINE_SECRET", "test-frame-secret")
+    events = [
+        {"status": "prompt_rendered"},
+        {"status": "hybrid_composite_started", "mode": "enforce",
+         "pipeline_version": "hybrid_stripe_composite_v2"},
+        {"status": "hybrid_carrier_preflight", "decision": "PASS", "passed": True},
+        {"status": "hybrid_protected_contract", "contract_status": "MISSING",
+         "missing": ["cuffs"]},
+        {"status": "hybrid_composite_completed", "mode": "enforce",
+         "outcome": "protected_component_missing", "fail_closed": True},
+    ]
+
+    class Api:
+        def call(self, method, path, **kw):
+            return {"jobId": "job-1", "leaseToken": "lease-1"}
+
+        def poll_job(self, job_id, timeout_s=0):
+            return {
+                "status": "error",
+                "errorCode": "hybrid_composite_failed_closed",
+                "errorMessage": "secret https://signed.invalid/?token=private",
+                "errorDetails": {
+                    "failureReason": "protected_component_missing",
+                    "detail": "secret Bearer token",
+                },
+            }
+
+    class Worker:
+        async def run_preclaimed(self, job_id, lease_token):
+            return "claimed"
+
+        async def job_events(self, job_id):
+            return events
+
+    row = __import__("asyncio").run(collect._generate_sample(
+        api=Api(), worker=Worker(), run_dir=tmp_path / "dataset",
+        dataset_id="ds",
+        prepared={
+            "arm": {"arm": "stripe", "name": "stripe", "targetGender": "women"},
+            "projectId": "project-1",
+            "sourcePath": source,
+            "sourceBytes": b"source",
+        },
+        rep=0,
+        expected_run=_run(),
+        projection_smoke=True,
+        projection_enforce_smoke=True,
+    ))
+
+    assert row["status"] == "failed"
+    assert row["jobId"] == "job-1"
+    assert row["failureCode"] == "hybrid_composite_failed_closed"
+    assert row["failureReason"] == "protected_component_missing"
+    assert row["imageCallsAttempted"] == 1
+    assert row["artifactCapture"]["available"] is True
+    assert row["projectionSmoke"]["qualityPassed"] is False
+    assert "outputImage" not in row and "outputSha256" not in row
+    serialized = json.dumps(row)
+    for forbidden in ("signed.invalid", "private", "Bearer", "token"):
+        assert forbidden not in serialized
+
+
+def test_non_projection_failure_keeps_the_original_strict_behavior(monkeypatch, tmp_path):
+    collect = _load("frame_collect_failed_regular", "scripts/frame_shadow_collect.py")
+    source = tmp_path / "front.jpg"
+    source.write_bytes(b"source")
+
+    class Api:
+        def call(self, method, path, **kw):
+            return {"jobId": "job-1"}
+
+        def poll_job(self, job_id, timeout_s=0):
+            return {"status": "error"}
+
+    class Worker:
+        async def claim_and_run(self, job_id):
+            return "claimed"
+
+        async def job_events(self, job_id):
+            return [{"status": "prompt_rendered"}]
+
+    with pytest.raises(RuntimeError, match="mannequin_generation_failed"):
+        __import__("asyncio").run(collect._generate_sample(
+            api=Api(), worker=Worker(), run_dir=tmp_path / "dataset",
+            dataset_id="ds",
+            prepared={
+                "arm": {"arm": "regular", "targetGender": "women"},
+                "projectId": "project-1",
+                "sourcePath": source,
+                "sourceBytes": b"source",
+            },
+            rep=0,
+            expected_run=_run(),
+        ))
+
+
 def test_repo_inline_preclaim_and_owned_lookup_keep_the_same_lease():
     executed = []
 

@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,6 +50,11 @@ PROJECTION_METRIC_KEYS = {
     "color_delta_e00_max", "color_delta_e00_median", "mask_coverage",
     "outside_drift_frac", "outside_mean_de76", "outside_ssim",
 }
+_SAFE_REASON_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+_ARTIFACT_FILES = (
+    "carrier.png", "source_front.png", "geometry.json", "composite.png",
+    "garment_mask.png", "painted.png", "coverage_scope.png", "alpha.png",
+)
 
 
 class _UploadImage:
@@ -505,6 +511,89 @@ def _projection_smoke_summary(events: list[dict], *, strict: bool = True) -> dic
     return summary
 
 
+def _safe_reason(value, fallback: str) -> str:
+    """Keep only typed reason codes; never serialize provider error prose."""
+    text = str(value or "").strip().lower()
+    return text if _SAFE_REASON_RE.fullmatch(text) else fallback
+
+
+def _artifact_capture_summary() -> dict:
+    """Report capture availability without exposing the local artifact path."""
+    raw = os.getenv("HYBRID_COMPOSITE_ARTIFACT_DIR")
+    if not raw:
+        return {"configured": False, "available": False, "files": []}
+    root = Path(raw)
+    files = [name for name in _ARTIFACT_FILES if (root / name).is_file()]
+    return {
+        "configured": True,
+        "available": {"carrier.png", "source_front.png", "geometry.json"} <= set(files),
+        "files": files,
+    }
+
+
+def _failed_projection_sample(
+    *, dataset_id: str, prepared: dict, rep: int, job_id: str,
+    completed: dict, events: list[dict], expected_run: dict,
+    image_calls: int,
+) -> dict:
+    """Bounded record for an expected fail-closed projection smoke outcome.
+
+    It deliberately has no output image/hash and therefore can never become a
+    calibration row.  Keeping the failed paid attempt still proves call count,
+    fail-closed behavior, and whether exact replay artifacts survived.
+    """
+    details = completed.get("errorDetails")
+    details = details if isinstance(details, dict) else {}
+    hybrid = details.get("hybridComposite")
+    hybrid = hybrid if isinstance(hybrid, dict) else {}
+    completion = next(
+        (step for step in reversed(events)
+         if step.get("status") == "hybrid_composite_completed"),
+        {},
+    )
+    failure_code = _safe_reason(
+        completed.get("errorCode") or details.get("error"),
+        "mannequin_generation_failed",
+    )
+    failure_reason = _safe_reason(
+        details.get("failureReason") or hybrid.get("failureReason")
+        or completion.get("outcome"),
+        "projection_failed_closed",
+    )
+    arm = prepared["arm"]
+    source_path = prepared["sourcePath"]
+    source_images = prepared.get("sourceImages") or []
+    provenance = {
+        "sourceSha256": fc.sha256_hex(prepared["sourceBytes"]),
+        "run": dict(expected_run),
+        "projectionSmoke": _projection_smoke_summary(events, strict=False),
+    }
+    if prepared.get("sourceImageProvenance"):
+        provenance["sourceImages"] = prepared["sourceImageProvenance"]
+    return {
+        "id": fc.make_sample_id(
+            arm=arm["arm"], project_id=prepared["projectId"], rep=rep),
+        "datasetId": dataset_id,
+        "arm": arm["arm"],
+        "projectId": prepared["projectId"],
+        "jobId": str(job_id),
+        "rep": int(rep),
+        "status": "failed",
+        "sourceImage": (
+            source_path.name if len(source_images) <= 1
+            else f"{arm['arm']}_source_bundle"
+        ),
+        "sourceProjectName": arm.get("name"),
+        "testProject": True,
+        "failureCode": failure_code,
+        "failureReason": failure_reason,
+        "imageCallsAttempted": int(image_calls),
+        "artifactCapture": _artifact_capture_summary(),
+        "provenance": provenance,
+        "projectionSmoke": provenance["projectionSmoke"],
+    }
+
+
 async def _job_event_payloads(worker: InlineWorker, job_id: str) -> list[dict]:
     if hasattr(worker, "job_events"):
         return await worker.job_events(job_id)
@@ -600,7 +689,8 @@ async def _prepare_arm(*, api: Api, arm: dict, worker: InlineWorker | None = Non
 async def _generate_sample(*, api: Api, worker: InlineWorker, run_dir: Path,
                            dataset_id: str, prepared: dict, rep: int,
                            expected_run: dict,
-                           projection_smoke: bool = False) -> dict:
+                           projection_smoke: bool = False,
+                           projection_enforce_smoke: bool = False) -> dict:
     """Generate one rep for a prepared test arm."""
     arm = prepared["arm"]
     project_id = prepared["projectId"]
@@ -627,9 +717,20 @@ async def _generate_sample(*, api: Api, worker: InlineWorker, run_dir: Path,
     if who != "claimed":
         raise RuntimeError("mannequin_job_not_inline_claimed")
     completed = api.poll_job(job_id, timeout_s=420)
-    if completed.get("status") != "done":
-        raise RuntimeError("mannequin_generation_failed")
     events = await _job_event_payloads(worker, job_id)
+    if completed.get("status") != "done":
+        if projection_enforce_smoke:
+            return _failed_projection_sample(
+                dataset_id=dataset_id,
+                prepared=prepared,
+                rep=rep,
+                job_id=job_id,
+                completed=completed,
+                events=events,
+                expected_run=expected_run,
+                image_calls=_image_calls_attempted(completed, events),
+            )
+        raise RuntimeError("mannequin_generation_failed")
     image_calls = _image_calls_attempted(completed, events)
     if image_calls != 1:
         raise RuntimeError(f"image_calls_not_one:{image_calls}")
@@ -746,7 +847,8 @@ async def _collect_one(*, api: Api, worker: InlineWorker, run_dir: Path,
 async def _execute_collection(*, api_base: str, run_dir: Path, dataset_id: str,
                               arms: list[dict], reps: int, expected_run: dict,
                               existing_rows: list[dict] | None = None,
-                              projection_smoke: bool = False) -> list[dict]:
+                              projection_smoke: bool = False,
+                              projection_enforce_smoke: bool = False) -> list[dict]:
     token = ensure_smoke_session()
     api = Api(api_base, token)
     worker = InlineWorker()
@@ -771,7 +873,8 @@ async def _execute_collection(*, api_base: str, run_dir: Path, dataset_id: str,
                 row = await _generate_sample(
                     api=api, worker=worker, run_dir=run_dir, dataset_id=dataset_id,
                     prepared=prepared, rep=rep, expected_run=expected_run,
-                    projection_smoke=projection_smoke)
+                    projection_smoke=projection_smoke,
+                    projection_enforce_smoke=projection_enforce_smoke)
                 rows.append(row)
                 existing_ids.add(row["id"])
                 existing_slots.add((row.get("arm"), row.get("rep")))
@@ -865,7 +968,8 @@ def main() -> int:
         api_base=args.api, run_dir=run_dir, dataset_id=dataset_id,
         arms=arms, reps=args.reps, expected_run=expected_run,
         existing_rows=existing_rows,
-        projection_smoke=args.projection_smoke or args.projection_enforce_smoke))
+        projection_smoke=args.projection_smoke or args.projection_enforce_smoke,
+        projection_enforce_smoke=args.projection_enforce_smoke))
     manifest = fc.manifest_for_rows(dataset_id=dataset_id, rows=rows)
     row_provenance_valid = manifest["validForCalibration"]
     manifest["purpose"] = (
@@ -886,7 +990,8 @@ def main() -> int:
     projection_quality_passed = True
     if args.projection_smoke or args.projection_enforce_smoke:
         projection_rows = [
-            (row.get("provenance") or {}).get("projectionSmoke") or {}
+            row.get("projectionSmoke")
+            or (row.get("provenance") or {}).get("projectionSmoke") or {}
             for row in rows
         ]
         projection_wiring_passed = bool(projection_rows) and all(
@@ -900,6 +1005,14 @@ def main() -> int:
             "qualityPassed": projection_quality_passed,
             "sampleCount": len(projection_rows),
         }
+    failed_rows = [row for row in rows if row.get("status") == "failed"]
+    if failed_rows:
+        reasons: dict[str, int] = {}
+        for row in failed_rows:
+            reason = _safe_reason(row.get("failureReason"), "projection_failed_closed")
+            reasons[reason] = reasons.get(reason, 0) + 1
+        manifest["failedSampleCount"] = len(failed_rows)
+        manifest["failureReasons"] = reasons
     (run_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"collected samples={len(rows)} provider_image_calls={sum(r['imageCallsAttempted'] for r in rows)}")

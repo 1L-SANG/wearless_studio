@@ -55,6 +55,7 @@ Only annotate the MAIN shirt. Points must be inside the image (0..1). If a landm
 visible, omit that optional field. Set garment_visible=false if there is no shirt."""
 
 MIN_GEOMETRY_CONFIDENCE = 0.55
+CUFF_GEOMETRY_VERSION = "cuff_from_sleeve_landmarks_v1"
 
 
 async def extract_geometry(settings, image: InlineImage) -> dict:
@@ -204,10 +205,99 @@ def validate_geometry(
         "cuffs": bool(raw.get("has_cuffs")),
         "visible_buttons": int(raw.get("visible_button_count") or 0),
         "torso_aspect": round(torso_h / ((shoulder_w + hem_w) / 2), 3),
+        "component_box_sources": {
+            key: "vision_explicit" for key in boxes
+        },
     }
     if sleeve_len_ratio is not None:
         inventory["sleeve_len_ratio"] = round(sleeve_len_ratio, 3)
     return lm, {**inventory, "component_boxes": boxes}, None
+
+
+def derive_cuff_boxes_from_sleeve_landmarks(
+    landmarks: dict | None,
+    inventory: dict | None,
+    *,
+    aspect_hw: float = 1.0,
+) -> dict:
+    """Fill omitted cuff quads from validated shoulder→sleeve-end geometry.
+
+    The geometry model sometimes reports ``has_cuffs=true`` and reliable sleeve
+    endpoints while omitting the optional cuff boxes.  Dropping the cuff contract
+    would let a protected construction detail disappear; inventing a generic box
+    would be just as unsafe.  This deterministic fallback therefore runs only when
+    the validated inventory says cuffs are visible and a same-side shoulder/end
+    vector exists.  Existing Vision boxes always win.
+
+    Coordinates stay normalized.  Calculations use physical image coordinates
+    (``y * H/W``), so portrait and square source images produce the same geometry.
+    Degenerate, very short, or heavily clipped rectangles are not returned; the
+    downstream protected-component contract then continues to fail closed.
+    """
+    result = dict(inventory or {})
+    boxes = dict(result.get("component_boxes") or {})
+    sources = dict(result.get("component_box_sources") or {})
+    result["component_boxes"] = boxes
+    result["component_box_sources"] = sources
+    if not result.get("cuffs") or not isinstance(landmarks, dict):
+        return result
+    if not isinstance(aspect_hw, (int, float)) or aspect_hw <= 0:
+        return result
+
+    import math
+
+    def polygon_area(points: list[list[float]]) -> float:
+        return abs(sum(
+            points[i][0] * points[(i + 1) % len(points)][1]
+            - points[(i + 1) % len(points)][0] * points[i][1]
+            for i in range(len(points))
+        )) * 0.5
+
+    for side in ("l", "r"):
+        key = f"cuff_{side}_box"
+        if key in boxes:
+            sources.setdefault(key, "vision_explicit")
+            continue
+        shoulder = landmarks.get(f"shoulder_{side}")
+        end = landmarks.get(f"sleeve_{side}_end")
+        if not (
+            isinstance(shoulder, list) and len(shoulder) == 2
+            and isinstance(end, list) and len(end) == 2
+        ):
+            continue
+
+        sx, sy = float(shoulder[0]), float(shoulder[1]) * aspect_hw
+        ex, ey = float(end[0]), float(end[1]) * aspect_hw
+        dx, dy = ex - sx, ey - sy
+        sleeve_len = math.hypot(dx, dy)
+        if sleeve_len < 0.10:
+            continue
+        ux, uy = dx / sleeve_len, dy / sleeve_len
+        nx, ny = -uy, ux
+        cuff_depth = min(max(sleeve_len * 0.16, 0.035), 0.12)
+        cuff_half_width = min(max(sleeve_len * 0.11, 0.022), 0.075)
+        px, py = ex - ux * cuff_depth, ey - uy * cuff_depth
+        physical = [
+            [px - nx * cuff_half_width, py - ny * cuff_half_width],
+            [px + nx * cuff_half_width, py + ny * cuff_half_width],
+            [ex + nx * cuff_half_width, ey + ny * cuff_half_width],
+            [ex - nx * cuff_half_width, ey - ny * cuff_half_width],
+        ]
+        normalized = [[x, y / aspect_hw] for x, y in physical]
+        # Small edge contact is normal; large clipping means the endpoint is not
+        # trustworthy enough to manufacture a protected-region contract.
+        if any(x < -0.025 or x > 1.025 or y < -0.025 or y > 1.025
+               for x, y in normalized):
+            continue
+        clipped = [[min(1.0, max(0.0, x)), min(1.0, max(0.0, y))]
+                   for x, y in normalized]
+        original_area = polygon_area(normalized)
+        clipped_area = polygon_area(clipped)
+        if original_area < 0.00025 or clipped_area / max(original_area, 1e-9) < 0.70:
+            continue
+        boxes[key] = clipped
+        sources[key] = CUFF_GEOMETRY_VERSION
+    return result
 
 
 BOX_KEYS: tuple[str, ...] = (

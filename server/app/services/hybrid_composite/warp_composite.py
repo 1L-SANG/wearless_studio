@@ -57,6 +57,10 @@ COMPONENT_MAX_OUTLIER_FRACTION = 0.35
 MAX_COMPONENT_ORIENTATION_MODES = 3
 # 방향 영역들이 부위 target mask 의 이만큼도 못 덮으면 부위를 소유했다고 볼 수 없다.
 COMPONENT_MIN_REGION_COVERAGE = 0.45
+# Homography 자체가 이미 공통 물리 주기 허용 범위 안이면 source component를 한 번만
+# 투영한다. 이 경로는 라벨·단추·봉제선을 실제 source에서 보존하면서 반복 복제를 만들지
+# 않는다. 범위를 벗어난 경우에만 periodic fabric profile로 scale을 정규화한다.
+DIRECT_COMPONENT_SCALE_TOL = 0.12
 ORIENTATION_MODE_TOLERANCE_RAD = 0.45   # 2θ 공간 — 실각도 ~13°
 MAX_COMPONENT_PROFILE_FIT = 30.0
 
@@ -71,6 +75,10 @@ class CompositeArtifacts:
     components_needing_review: tuple
     component_review_reasons: dict
     source_coverage: float
+    # component 별 방향 영역의 실제 target 소유 mask. JSON 메타데이터가 아니라
+    # 같은 프로세스의 deterministic QC 에만 전달한다. 여러 각도의 칼라를 다시
+    # 한 박스로 합쳐 재측정하면 구제한 방향이 상쇄되기 때문이다.
+    component_region_masks: dict = field(default_factory=dict)
     version: str = WARP_VERSION
     metrics: dict = field(default_factory=dict)
 
@@ -332,6 +340,64 @@ def _component_orientation_regions(lab: np.ndarray, fabric: np.ndarray) -> list[
     return regions
 
 
+def _aligned_component_fabric_mask(
+    lab: np.ndarray,
+    fabric: np.ndarray,
+    local_unit: np.ndarray,
+) -> np.ndarray:
+    """Keep periodic fabric while leaving labels/buttons to the carrier.
+
+    A source component box contains both repeatable cloth and non-periodic construction
+    assets.  Repeating raw source coordinates to normalize stripe scale also repeated a
+    Paprika label and button edges across the collar.  Chroma outlier rejection removes
+    the obvious label; local orientation support removes low-coherence button/edge pixels.
+    If orientation support is too sparse, the chroma-safe fabric mask is the conservative
+    fallback — raw component pixels are never tiled.
+    """
+    sel = fabric > 0
+    if int(sel.sum()) < 256:
+        return fabric
+    h, w = sel.shape
+    gxx = np.zeros((h, w), np.float32)
+    gxy = np.zeros((h, w), np.float32)
+    gyy = np.zeros((h, w), np.float32)
+    for channel in range(3):
+        plane = lab[..., channel]
+        scale = max(float(np.std(plane)), 1.0)
+        gx = cv2.Sobel(plane, cv2.CV_32F, 1, 0, ksize=3) / scale
+        gy = cv2.Sobel(plane, cv2.CV_32F, 0, 1, ksize=3) / scale
+        gxx += gx * gx
+        gxy += gx * gy
+        gyy += gy * gy
+    win = max(9, int(min(h, w) * 0.06) | 1)
+    gxx = cv2.boxFilter(gxx, -1, (win, win))
+    gxy = cv2.boxFilter(gxy, -1, (win, win))
+    gyy = cv2.boxFilter(gyy, -1, (win, win))
+    theta2 = np.arctan2(2.0 * gxy, gxx - gyy)
+    trace = gxx + gyy
+    coherence = np.where(
+        trace > 1e-9,
+        np.hypot(gxx - gyy, 2.0 * gxy) / np.maximum(trace, 1e-9),
+        0.0,
+    )
+    unit = np.asarray(local_unit, np.float64)
+    unit /= max(float(np.linalg.norm(unit)), 1e-9)
+    expected2 = 2.0 * float(np.arctan2(unit[1], unit[0]))
+    delta = np.abs(np.angle(np.exp(1j * (theta2 - expected2))))
+    support = (sel & (coherence > MIN_COMPONENT_AXIS_COHERENCE * 0.75)
+               & (delta < ORIENTATION_MODE_TOLERANCE_RAD))
+    mask = cv2.morphologyEx(
+        support.astype(np.uint8) * 255,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+    )
+    # A confident stripe should cover most chroma-safe fabric.  Sparse support means the
+    # local tensor was inconclusive, not that the remaining cloth may be deleted.
+    if int((mask > 0).sum()) < int(sel.sum() * 0.45):
+        return fabric
+    return cv2.bitwise_and(mask, fabric)
+
+
 def _component_source_geometry(sq, rect, local_unit, local_period, coherence,
                                fit_error, fabric, local_size) -> dict | None:
     """component-local 축·주기를 source 픽셀 공간으로 되돌린다 (단일·영역 공용)."""
@@ -472,12 +538,13 @@ def _component_pattern_geometry(
     if not np.isfinite(source_period) or source_period < 1.0:
         return None
     source_unit = source_vec / source_period
+    periodic_fabric = _aligned_component_fabric_mask(lab, fabric, local_unit)
     return {
         "source_axis_unit": source_unit.astype(np.float32),
         "source_period_px": source_period,
         "axis_coherence": coherence,
         "profile_fit_error": fit_error,
-        "source_fabric_mask": fabric,      # component-local — 페인팅도 이 안에서만
+        "source_fabric_mask": periodic_fabric,
         "local_size": (bw, bh),
     }
 
@@ -517,18 +584,19 @@ def _component_period_under_homography(
 
 
 def _scale_decal_source_coords(
-    map_x: np.ndarray, map_y: np.ndarray, sq: np.ndarray, scale: float,
-    source_axis_unit: np.ndarray,
+    map_x: np.ndarray, map_y: np.ndarray, sq: np.ndarray,
+    source_axis_unit: np.ndarray, source_period_px: float, *,
+    target_x: np.ndarray, target_y: np.ndarray,
+    target_quad: np.ndarray, target_axis_unit: np.ndarray,
+    target_period_px: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """target→source map 의 stripe 진행축만 component 내부에서 재표본한다.
 
-    단순히 중심에서 좌표를 ``scale`` 배 하면 긴 placket/cuff가 source 이미지 경계를
-    벗어난다. OpenCV border reflection에 맡기면 셔츠 바깥 배경까지 component 안으로
-    접혀 들어올 수 있다. 진행축 좌표를 **source component quad 범위 안에서** triangle
-    reflection해 패턴의 연속 표본은 확보하되, 직교축(구조 폭)은 건드리지 않는다.
+    긴 placket/cuff를 raw source 좌표로 늘리면 이미지 경계를 벗어나거나 라벨·단추가
+    반복된다. target의 연속 위상을 source의 동치 주기 좌표로 옮기되 직교축(구조 폭)은
+    건드리지 않는다. 실제 색은 이 좌표로 raw 이미지를 읽지 않고 승인된 주기 profile에서
+    얻는다.
     """
-    if abs(scale - 1.0) < 1e-6:
-        return map_x, map_y
     center = sq.mean(axis=0).astype(np.float32)
     unit = np.asarray(source_axis_unit, np.float32)
     axis_len = float(np.linalg.norm(unit))
@@ -537,18 +605,83 @@ def _scale_decal_source_coords(
     unit = (unit / axis_len).astype(np.float32)
     dx = map_x - center[0]
     dy = map_y - center[1]
-    along = dx * unit[0] + dy * unit[1]
+    perp_unit = np.array([-unit[1], unit[0]], np.float32)
+    perpendicular = dx * perp_unit[0] + dy * perp_unit[1]
     half_extent = float(np.max(np.abs((sq - center) @ unit)))
     if half_extent < 1e-6:
         return map_x, map_y
-    scaled = along * float(scale)
-    # reflect into [-half_extent, +half_extent] without ever sampling beyond the
-    # approved source component. This is the vectorized BORDER_REFLECT_101 analogue.
-    span = 2.0 * half_extent
-    folded = np.mod(scaled + half_extent, 2.0 * span)
-    reflected = np.where(folded <= span, folded, 2.0 * span - folded) - half_extent
-    delta = reflected - along
-    return map_x + delta * unit[0], map_y + delta * unit[1]
+    target_unit = np.asarray(target_axis_unit, np.float32)
+    target_unit /= max(float(np.linalg.norm(target_unit)), 1e-9)
+    target_center = np.asarray(target_quad, np.float32).mean(axis=0)
+    # target image 에서 한 주기 이동하면 source 에서도 정확히 한 주기 이동한다.
+    # homography 중심의 단일 scale 을 전체 component 에 곱하면 원근이 큰 칼라 끝에서
+    # 위상이 반 주기까지 틀어졌다. target 위상장을 직접 source 주기 좌표로 옮기면
+    # 진행 방향·색 순서·공통 물리 주기가 전 영역에서 보존된다.
+    target_along = ((target_x - target_center[0]) * target_unit[0]
+                    + (target_y - target_center[1]) * target_unit[1])
+    scaled = target_along * (float(source_period_px) / max(float(target_period_px), 1e-9))
+    period = float(source_period_px)
+    if not np.isfinite(period) or period < 1.0:
+        return map_x, map_y
+    # triangle reflection 은 좌표 진행 방향을 매번 뒤집는다. 흑백 두 줄은 우연히
+    # 그럴듯하지만 다색 sequence 는 파랑→베이지 순서가 반전되고, 한 component 안에서
+    # 위상 오차가 반 주기까지 벌어졌다(실 replay p95≈0.49). 원단은 주기 신호이므로
+    # **정수 주기만** 빼서 approved source 범위 안의 동치 좌표를 고른다. 정수 주기 이동은
+    # 색 순서와 진행 방향을 보존한다.
+    k_min = np.ceil((scaled - half_extent) / period)
+    k_max = np.floor((scaled + half_extent) / period)
+    feasible = k_min <= k_max
+    nearest = np.rint(scaled / period)
+    k = np.clip(nearest, k_min, k_max)
+    wrapped = np.where(feasible, scaled - k * period, np.clip(scaled, -half_extent, half_extent))
+    return (
+        center[0] + wrapped * unit[0] + perpendicular * perp_unit[0],
+        center[1] + wrapped * unit[1] + perpendicular * perp_unit[1],
+    )
+
+
+def _component_phase_mapping_error(
+    map_x: np.ndarray,
+    map_y: np.ndarray,
+    selection: np.ndarray,
+    *,
+    source_quad: np.ndarray,
+    target_quad: np.ndarray,
+    source_axis_unit: np.ndarray,
+    source_period_px: float,
+    target_axis_unit: np.ndarray,
+    target_period_px: float,
+) -> dict:
+    """source 중심 위상을 보존한 채 component 진행축의 위상 오차를 잰다.
+
+    몸통과 칼라는 재단 방향이 다를 수 있으므로 전역 좌표의 위상을 억지로 같게
+    만들지 않는다. 대신 source component 중심의 실제 위상을 anchor 로 잡고, target
+    방향으로 한 주기 이동했을 때 source sampling 도 정확히 한 주기 이동하는지 본다.
+    주기만 맞지만 triangle reflection 등으로 색 순서가 중간에 뒤집히는 경우가 여기서
+    드러난다.
+    """
+    if int(selection.sum()) < 64:
+        return {"phase_measurable": False, "phase_reason": "phase_region_too_small"}
+    su = np.asarray(source_axis_unit, np.float64)
+    tu = np.asarray(target_axis_unit, np.float64)
+    su /= max(float(np.linalg.norm(su)), 1e-9)
+    tu /= max(float(np.linalg.norm(tu)), 1e-9)
+    sc = np.asarray(source_quad, np.float64).mean(axis=0)
+    tc = np.asarray(target_quad, np.float64).mean(axis=0)
+    yy, xx = np.indices(selection.shape, dtype=np.float64)
+    source_phase = (
+        (map_x - sc[0]) * su[0] + (map_y - sc[1]) * su[1]
+    ) / max(float(source_period_px), 1e-9)
+    target_phase = (
+        (xx - tc[0]) * tu[0] + (yy - tc[1]) * tu[1]
+    ) / max(float(target_period_px), 1e-9)
+    wrapped = np.mod(source_phase - target_phase + 0.5, 1.0) - 0.5
+    error = np.abs(wrapped[selection])
+    return {
+        "phase_measurable": True,
+        "phase_error_median": round(float(np.median(error)), 4),
+        "phase_error_p95": round(float(np.percentile(error, 95)), 4),
+    }
 
 
 def composite_stripe(
@@ -682,6 +815,7 @@ def composite_stripe(
     components_review = []
     component_reasons: dict = {}
     cross_surface_components: dict = {}
+    component_region_masks: dict[str, tuple[np.ndarray, ...]] = {}
     component_boxes = component_boxes or {}
     source_component_boxes = source_component_boxes or {}
     for name, tgt in component_boxes.items():
@@ -753,6 +887,7 @@ def composite_stripe(
 
         painted_union = np.zeros_like(sel)
         region_reports: list[dict] = []
+        region_masks: list[np.ndarray] = []
         region_reason = None
         for geometry in region_geoms:
             projected = _component_period_under_homography(
@@ -766,16 +901,40 @@ def composite_stripe(
             if not np.isfinite(scale) or scale <= 0 or scale > MAX_DECAL_SCALE_RESAMPLE:
                 region_reason = region_reason or "scale_resample_unsupported"
                 continue
-            bw_l, bh_l = geometry["local_size"]
-            rect_l = np.float32([[0, 0], [bw_l - 1, 0], [bw_l - 1, bh_l - 1], [0, bh_l - 1]])
-            region_t = cv2.warpPerspective(
-                geometry["source_fabric_mask"],
-                cv2.getPerspectiveTransform(rect_l, tq), (w, h), flags=cv2.INTER_NEAREST)
-            sel_r = sel & (region_t > 0) & (~painted_union)
+            direct_structure = (
+                len(region_geoms) == 1
+                and abs(scale - 1.0) <= DIRECT_COMPONENT_SCALE_TOL
+            )
+            if direct_structure:
+                # 이미 같은 물리 scale이면 raw component를 **한 번만** homography 한다.
+                # 좌표 wrap이 없으므로 source의 라벨·단추가 반복되지 않는다.
+                sel_r = sel & (~painted_union)
+                map_x, map_y = base_x.copy(), base_y.copy()
+            else:
+                bw_l, bh_l = geometry["local_size"]
+                rect_l = np.float32([
+                    [0, 0], [bw_l - 1, 0], [bw_l - 1, bh_l - 1], [0, bh_l - 1]])
+                region_t = cv2.warpPerspective(
+                    geometry["source_fabric_mask"],
+                    cv2.getPerspectiveTransform(rect_l, tq), (w, h),
+                    flags=cv2.INTER_NEAREST)
+                sel_r = sel & (region_t > 0) & (~painted_union)
+                map_x, map_y = _scale_decal_source_coords(
+                    base_x.copy(), base_y.copy(), sq,
+                    geometry["source_axis_unit"],
+                    float(geometry["source_period_px"]),
+                    target_x=gx_grid, target_y=gy_grid, target_quad=tq,
+                    target_axis_unit=target_axis_unit,
+                    target_period_px=float(target_period_px))
             if int(sel_r.sum()) < 64:
                 continue
-            map_x, map_y = _scale_decal_source_coords(
-                base_x.copy(), base_y.copy(), sq, scale, geometry["source_axis_unit"])
+            phase_metrics = _component_phase_mapping_error(
+                map_x, map_y, sel_r,
+                source_quad=sq, target_quad=tq,
+                source_axis_unit=geometry["source_axis_unit"],
+                source_period_px=float(geometry["source_period_px"]),
+                target_axis_unit=target_axis_unit,
+                target_period_px=float(target_period_px))
             in_bounds = (
                 (map_x >= 0) & (map_x <= source_bgr.shape[1] - 1)
                 & (map_y >= 0) & (map_y <= source_bgr.shape[0] - 1))
@@ -783,19 +942,39 @@ def composite_stripe(
             if out_frac > 0.05:
                 region_reason = region_reason or "scale_resample_out_of_source"
                 continue
-            decal_bgr = cv2.remap(
-                source_bgr, map_x, map_y, interpolation=cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_REFLECT_101)
-            decal_lab = bgr_to_lab(decal_bgr)
-            pattern_lab[sel_r] = decal_lab[sel_r]
+            if direct_structure:
+                component_bgr = cv2.remap(
+                    source_bgr, map_x, map_y, interpolation=cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_CONSTANT)
+                component_lab = bgr_to_lab(component_bgr)
+                texture_source = "source_component_homography"
+            else:
+                # Only the periodic Product Truth profile is repeatable. Raw component
+                # pixels contain labels/buttons/seams; wrapping them produced the visible
+                # mosaic. Non-periodic holes stay owned by the carrier.
+                su = np.asarray(geometry["source_axis_unit"], np.float32)
+                su /= max(float(np.linalg.norm(su)), 1e-9)
+                sc = sq.mean(axis=0).astype(np.float32)
+                source_along = ((map_x - sc[0]) * su[0] + (map_y - sc[1]) * su[1])
+                component_phase = np.mod(
+                    source_along / max(float(geometry["source_period_px"]), 1e-9),
+                    1.0) * K
+                ci0 = np.floor(component_phase).astype(np.int32) % K
+                ci1 = (ci0 + 1) % K
+                cfrac = (
+                    component_phase - np.floor(component_phase))[..., None].astype(np.float32)
+                component_lab = profile[ci0] * (1.0 - cfrac) + profile[ci1] * cfrac
+                texture_source = "stripe_model_period_profile"
+            pattern_lab[sel_r] = component_lab[sel_r]
             painted[sel_r] = 255
             painted_union |= sel_r
+            region_masks.append(sel_r.astype(np.uint8) * 255)
             target_coord = float(np.dot(tq.mean(axis=0), target_axis_unit))
             source_coord = float(np.dot(sq.mean(axis=0), geometry["source_axis_unit"]))
             phase_delta = ((target_coord / float(target_period_px))
                            - (source_coord / max(float(geometry["source_period_px"]), 1e-6))) % 1.0
             phase_delta = min(float(phase_delta), 1.0 - float(phase_delta))
-            comp_lab = decal_lab[sel_r]
+            comp_lab = component_lab[sel_r]
             car_lab = carrier_lab[sel_r]
             region_reports.append({
                 "px": int(sel_r.sum()),
@@ -807,7 +986,9 @@ def composite_stripe(
                 "target_pattern_axis_unit": [round(float(x), 5) for x in target_axis_unit],
                 "component_axis_coherence": round(float(geometry["axis_coherence"]), 4),
                 "component_profile_fit_error": round(float(geometry["profile_fit_error"]), 3),
+                "component_texture_source": texture_source,
                 "phase_delta_period_frac": round(float(phase_delta), 4),
+                **phase_metrics,
                 "component_chroma_delta_ab": round(float(np.linalg.norm(
                     np.median(comp_lab[:, 1:3], axis=0)
                     - np.median(car_lab[:, 1:3], axis=0))), 2),
@@ -833,6 +1014,10 @@ def composite_stripe(
         # 여러 방향 영역의 판정은 **가장 나쁜 영역**으로 대표한다 — 평균은 한 잎의
         # 실패를 다른 잎이 가려준다.
         worst = max(region_reports, key=lambda r: abs(r["scale_resample_factor"] - 1.0))
+        worst_phase = max(
+            (float(r.get("phase_error_p95", 1.0)) for r in region_reports),
+            default=1.0)
+        component_region_masks[name] = tuple(region_masks)
         cross_surface_components[name] = {
             "scale_measurable": True,
             "target_period_px": round(float(target_period_px), 2),
@@ -842,7 +1027,9 @@ def composite_stripe(
             "orientation_modes": [
                 {"px": r["px"], "coherence": r["component_axis_coherence"],
                  "axis": r["source_pattern_axis_unit"]} for r in region_reports],
+            "region_metrics": [dict(r) for r in region_reports],
             **{k: v for k, v in worst.items() if k != "px"},
+            "phase_error_p95": round(worst_phase, 4),
         }
 
     # ── shading transfer — carrier 의 저주파 luminance 만 ─────────────────────────
@@ -960,6 +1147,7 @@ def composite_stripe(
         components_needing_review=tuple(components_review),
         component_review_reasons=dict(component_reasons),
         source_coverage=coverage,
+        component_region_masks=component_region_masks,
         metrics={"target_period_px": round(float(target_period_px), 2),
                  "target_axis": target_axis, "shading_sigma": round(sigma, 1),
                  "chroma_cast_ab": list(chroma_cast),

@@ -11,9 +11,9 @@ import numpy as np
 # 알고리즘 버전 — 결과 metadata/event 에 기록된다. 수식·임계 변경 시 반드시 올린다.
 EXTRACTOR_VERSION = "stripe_extractor_v1"
 PANEL_MAP_VERSION = "panel_map_v1"
-WARP_VERSION = "warp_composite_v1"
-QC_VERSION = "hybrid_deterministic_qc_v1"
-PIPELINE_VERSION = "hybrid_stripe_composite_v1"
+WARP_VERSION = "warp_composite_v2"
+QC_VERSION = "hybrid_deterministic_qc_v2"
+PIPELINE_VERSION = "hybrid_stripe_composite_v2"
 
 # typed failure — failure_contract 의 최소 어휘. 자유 문자열 금지(오타 하나로 집계가 갈린다).
 COMPOSITE_FAILURE_REASONS = frozenset({

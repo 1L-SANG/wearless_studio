@@ -35,12 +35,14 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.hybrid_composite import deterministic_qc as hc_qc  # noqa: E402
+from app.services.hybrid_composite import carrier_preflight as hc_preflight  # noqa: E402
 from app.services.hybrid_composite import panel_map as hc_panel  # noqa: E402
 from app.services.hybrid_composite import warp_composite as hc_warp  # noqa: E402
 from app.services.hybrid_composite import stripe_model as hc_stripe  # noqa: E402
 from app.services.hybrid_composite.types import CompositeFailure  # noqa: E402
 
-GEOMETRY_SCHEMA = "stripe_replay_geometry_v1"
+GEOMETRY_SCHEMA = "stripe_replay_geometry_v2"
+LEGACY_GEOMETRY_SCHEMAS = frozenset({"stripe_replay_geometry_v1"})
 # 복원 landmark 로 다시 만든 mask 가 캡처본과 이만큼은 겹쳐야 replay 를 신뢰할 수 있다.
 # 미달이면 조용히 다른 그림을 합성하는 것이므로 통과시키지 않는다.
 MIN_MASK_RECONSTRUCTION_IOU = 0.90
@@ -116,16 +118,20 @@ def load_geometry(dataset: Path, carrier: np.ndarray) -> tuple[dict, dict]:
             "워커가 HYBRID_COMPOSITE_ARTIFACT_DIR 로 남긴 데이터셋을 쓰거나 "
             "`capture` 서브커맨드로 먼저 만들어라.")
     geo = json.loads(path.read_text())
-    if geo.get("schema") != GEOMETRY_SCHEMA:
+    if geo.get("schema") not in {GEOMETRY_SCHEMA, *LEGACY_GEOMETRY_SCHEMAS}:
         raise SystemExit(f"알 수 없는 geometry schema: {geo.get('schema')!r}")
-    provenance = {"landmarks": "captured"}
+    provenance = {
+        "landmarks": "captured",
+        "carrier_preflight": (
+            "captured" if geo.get("carrier_preflight_inputs") else "missing"),
+    }
     if not geo.get("carrier_landmarks"):
         mask_path = dataset / "garment_mask.png"
         if not mask_path.exists():
             raise SystemExit("landmark 도 garment_mask.png 도 없어 replay 불가")
         mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
         geo["carrier_landmarks"] = _landmarks_from_mask(mask)
-        provenance = {"landmarks": "reconstructed_from_mask"}
+        provenance["landmarks"] = "reconstructed_from_mask"
     return geo, provenance
 
 
@@ -133,6 +139,45 @@ def load_geometry(dataset: Path, carrier: np.ndarray) -> tuple[dict, dict]:
 
 def run_projection(carrier: np.ndarray, source: np.ndarray, geo: dict) -> dict:
     """워커(`_apply_hybrid_composite`)와 동일한 순서·인자로 프로덕션 함수를 호출한다."""
+    preflight_inputs = geo.get("carrier_preflight_inputs")
+    if not isinstance(preflight_inputs, dict):
+        if not geo.get("_diagnostic_allow_missing_preflight"):
+            return {
+                "stage": "carrier_preflight",
+                "failure": "preflight_evidence_missing",
+                "detail": "captured carrier preflight inputs are required for a production replay",
+            }
+        preflight_summary = {
+            "decision": "BYPASSED",
+            "diagnosticOnly": True,
+            "reason": "legacy artifact has no captured preflight inputs",
+        }
+    else:
+        preflight = hc_preflight.preflight_carrier_quality(**preflight_inputs)
+        preflight_summary = preflight.summary()
+        captured_summary = geo.get("carrier_preflight_summary") or {}
+        captured_decision = captured_summary.get("decision")
+        if captured_decision and captured_decision != preflight.decision:
+            return {
+                "stage": "carrier_preflight",
+                "failure": "preflight_snapshot_mismatch",
+                "detail": (
+                    "captured carrier preflight decision does not match replayed policy"),
+                "metrics": {
+                    "capturedDecision": captured_decision,
+                    "replayedDecision": preflight.decision,
+                },
+                "carrier_preflight": preflight_summary,
+            }
+        if not preflight.passed:
+            return {
+                "stage": "carrier_preflight",
+                "failure": "carrier_preflight_rejected",
+                "detail": "; ".join(reason.code for reason in preflight.reasons),
+                "metrics": preflight_summary,
+                "carrier_preflight": preflight_summary,
+            }
+
     src_inv = geo.get("source_inventory") or {}
     car_inv = geo.get("carrier_inventory") or {}
     car_lm = geo["carrier_landmarks"]
@@ -190,10 +235,12 @@ def run_projection(carrier: np.ndarray, source: np.ndarray, geo: dict) -> dict:
         art.image_bgr, carrier, pm, model,
         painted_mask=art.painted, coverage_mask=art.coverage_scope, alpha=art.alpha,
         component_scale_metrics=art.metrics.get("cross_surface_scale"),
+        component_region_masks=art.component_region_masks,
         inner_feather_px=art.metrics.get("inner_feather_px"),
         component_boxes=car_boxes,
         target_period_px=target_period_px, target_axis=axis)
     return {"stage": "qc", "panel_map": pm, "artifacts": art, "qc": qc,
+            "carrier_preflight": preflight_summary,
             "components_needing_review": list(art.components_needing_review),
             "component_review_reasons": dict(art.component_review_reasons)}
 
@@ -224,12 +271,59 @@ def verify_reconstruction(pm, dataset: Path, painted=None) -> dict:
             c, d = rp > 0, painted > 0
             painted_iou = float((c & d).sum()) / max(1, int((c | d).sum()))
             out["painted_iou"] = round(painted_iou, 4)
-    out["ok"] = (iou >= MIN_MASK_RECONSTRUCTION_IOU
-                 and (painted_iou is None
-                      or painted_iou >= MIN_PAINTED_RECONSTRUCTION_IOU))
+    # 이것은 캡처된 코드 경로를 다시 실행할 수 있는지의 최소 안전성만 판정한다.
+    # 복원 landmark 는 같은 mask 를 만들더라도 실제 panel quad 가 다를 수 있으므로
+    # 여기서 육안 A/B 신뢰성을 주장하지 않는다.
+    out["execution_replay_ok"] = iou >= MIN_MASK_RECONSTRUCTION_IOU
     if painted_iou is not None:
         out["painted_threshold"] = MIN_PAINTED_RECONSTRUCTION_IOU
     return out
+
+
+def classify_replay_reliability(recon: dict, provenance: dict) -> dict:
+    """실행 회귀와 육안 판정 가능성을 명시적으로 분리한다."""
+    execution_ok = (
+        bool(recon.get("execution_replay_ok"))
+        if recon.get("checked") else True
+    )
+    captured = provenance.get("landmarks") == "captured"
+    preflight_captured = provenance.get("carrier_preflight") == "captured"
+    if not execution_ok:
+        visual_reason = "reconstruction_mismatch"
+    elif not preflight_captured:
+        visual_reason = "carrier_preflight_not_captured"
+    elif not captured:
+        visual_reason = "landmarks_reconstructed"
+    else:
+        visual_reason = "captured_geometry"
+    return {
+        "execution_replay_ok": execution_ok,
+        "production_gate_replayable": execution_ok and preflight_captured,
+        "visual_replay_reliable": execution_ok and captured and preflight_captured,
+        "visual_replay_reason": visual_reason,
+    }
+
+
+def _safe_failure_details(result: dict, qc) -> list[dict]:
+    """자동 비교에 필요한 실패 사유만 bounded JSON 으로 남긴다."""
+    raw = list(qc.metrics.get("failure_details", [])) if qc is not None else []
+    if not raw and result.get("failure"):
+        raw = [{
+            "code": result.get("failure"),
+            "detail": result.get("detail", ""),
+        }]
+    safe = []
+    for item in raw[:64]:
+        if not isinstance(item, dict):
+            continue
+        row = {}
+        for key in ("code", "panel", "detail"):
+            value = item.get(key)
+            if value is not None:
+                row[key] = str(value)[:500]
+        if row:
+            safe.append(row)
+    return safe
 
 
 # ── 리포트 ────────────────────────────────────────────────────────────────────
@@ -314,12 +408,17 @@ def build_report(*, dataset: Path, carrier, source, result: dict, geo: dict,
                 f'{_fig("carrier", _embed(before, 420))}'
                 f'{_fig("composite", _embed(after, 420))}</div></div>')
 
+    reliability = classify_replay_reliability(recon, provenance)
+    production_gate_passed = bool(
+        qc is not None and qc.passed and reliability["production_gate_replayable"])
     if qc is not None:
         rows = "".join(
             f"<tr><td><code>{html.escape(str(k))}</code></td><td>{html.escape(str(v))}</td></tr>"
             for k, v in sorted(qc.metrics.items()) if not isinstance(v, (dict, list)))
-        verdict = "통과" if qc.passed else "거절"
+        verdict = "통과" if production_gate_passed else "차단"
         fails = ", ".join(qc.failures) or "—"
+        if not reliability["production_gate_replayable"]:
+            fails = "preflight_evidence_missing"
         details = "".join(
             f"<li>{html.escape(str(d.get('detail', '')))}</li>"
             for d in qc.metrics.get("failure_details", []))
@@ -329,12 +428,22 @@ def build_report(*, dataset: Path, carrier, source, result: dict, geo: dict,
 
     recon_note = ""
     if provenance.get("landmarks") == "reconstructed_from_mask":
-        ok = recon.get("ok")
         recon_note = (
             f'<div class="warn"><strong>landmark 복원본으로 replay함</strong> — '
             f'이 데이터셋은 워커가 geometry 를 남기기 전에 만들어졌다. 캡처 mask 와의 '
             f'IoU {recon.get("mask_iou", "—")} '
-            f'(하한 {recon.get("threshold")}) → {"신뢰 가능" if ok else "신뢰 불가"}.</div>')
+            f'(하한 {recon.get("threshold")}), painted IoU '
+            f'{recon.get("painted_iou", "—")}. 실행 회귀: '
+            f'{"가능" if reliability["execution_replay_ok"] else "불가"}; '
+            f'<strong>육안 통과 판정: 불가</strong> '
+            f'({reliability["visual_replay_reason"]}).</div>')
+    preflight_note = ""
+    if not reliability["production_gate_replayable"]:
+        preflight_note = (
+            '<div class="warn"><strong>production gate replay 불가</strong> — '
+            '이 legacy dataset에는 projection 전 carrier preflight 입력이 캡처되지 않았다. '
+            '아래 composite는 합성기 진단용일 뿐 저장·출고·유료 호출 승인 근거가 아니다.'
+            '</div>')
 
     hash_rows = "".join(
         f"<tr><td>{html.escape(k)}</td><td><code>{html.escape(str(v))}</code></td></tr>"
@@ -365,11 +474,12 @@ def build_report(*, dataset: Path, carrier, source, result: dict, geo: dict,
  ul{{margin:6px 0 0 18px}}
 </style>
 <h1>Stripe Projection — offline replay</h1>
-<p><span class="v {'pass' if (qc and qc.passed) else 'fail'}">deterministic QC: {verdict}</span>
+<p><span class="v {'pass' if production_gate_passed else 'fail'}">production replay gate: {verdict}</span>
  &nbsp; 실패 사유: <code>{html.escape(str(fails))}</code></p>
 <p style="color:#666;font-size:13px">provider 호출 0 · DB 0 · R2 0 · credit 0 —
  파일만 읽고 프로덕션 합성 함수를 그대로 호출한다.</p>
 {recon_note}
+{preflight_note}
 
 <h2>단계별 산출물</h2>
 <div class="grid">{''.join(stage_figs)}</div>
@@ -393,6 +503,10 @@ def cmd_replay(args) -> int:
     carrier = _read_image(dataset / "carrier.png")
     source = _read_image(dataset / "source_front.png")
     geo, provenance = load_geometry(dataset, carrier)
+    allow_missing_preflight = bool(
+        getattr(args, "allow_missing_preflight", False))
+    if allow_missing_preflight:
+        geo["_diagnostic_allow_missing_preflight"] = True
 
     result = run_projection(carrier, source, geo)
     pm = result.get("panel_map")
@@ -404,6 +518,7 @@ def cmd_replay(args) -> int:
 
     art = result.get("artifacts")
     qc = result.get("qc")
+    reliability = classify_replay_reliability(recon, provenance)
     out = Path(args.out or dataset)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -420,12 +535,15 @@ def cmd_replay(args) -> int:
         "failure": result.get("failure"),
         "qc_passed": bool(qc.passed) if qc is not None else False,
         "qc_failures": list(qc.failures) if qc is not None else [],
+        "failure_details": _safe_failure_details(result, qc),
         "metrics": ({k: v for k, v in qc.metrics.items() if k != "failure_details"}
                     if qc is not None else result.get("metrics", {})),
         "components_needing_review": result.get("components_needing_review", []),
         "component_review_reasons": result.get("component_review_reasons", {}),
         "landmark_provenance": provenance,
         "mask_reconstruction": recon,
+        "replay_reliability": reliability,
+        "carrier_preflight": result.get("carrier_preflight"),
     }
     hashes["metrics_sha256"] = _sha256(
         json.dumps(metrics["metrics"], sort_keys=True, default=str).encode())
@@ -441,12 +559,24 @@ def cmd_replay(args) -> int:
     print(f"output_sha256={hashes.get('output_sha256', '—')}")
     print(f"metrics_sha256={hashes['metrics_sha256']}")
     if recon.get("checked"):
-        print(f"mask_reconstruction_iou={recon.get('mask_iou')} ok={recon.get('ok')}")
+        print("mask_reconstruction_iou="
+              f"{recon.get('mask_iou')} execution_ok="
+              f"{reliability['execution_replay_ok']} visual_reliable="
+              f"{reliability['visual_replay_reliable']}")
     print(f"report={out / 'replay_report.html'}")
-    if recon.get("checked") and not recon.get("ok"):
+    if not reliability["execution_replay_ok"]:
         print("복원 landmark 의 mask 충실도 미달 — 이 replay 결과는 신뢰할 수 없다.",
               file=sys.stderr)
         return 2
+    if (not reliability["production_gate_replayable"]
+            and not allow_missing_preflight):
+        print("carrier preflight 캡처 증거 없음 — production gate replay 불가.",
+              file=sys.stderr)
+        return 4
+    if not metrics["qc_passed"] and not getattr(args, "allow_qc_fail", False):
+        print("deterministic QC 실패 — 유료 호출 전 gate 를 통과하지 못했다.",
+              file=sys.stderr)
+        return 3
     return 0
 
 
@@ -456,6 +586,12 @@ def main(argv=None) -> int:
     rp = sub.add_parser("replay", help="캡처 자산으로 합성을 다시 실행")
     rp.add_argument("dataset", help="carrier.png/source_front.png/geometry.json 디렉터리")
     rp.add_argument("--out", default=None)
+    rp.add_argument(
+        "--allow-qc-fail", action="store_true",
+        help="진단용 리포트만 만들고 QC 실패를 exit 0으로 허용 (gate 용도 금지)")
+    rp.add_argument(
+        "--allow-missing-preflight", action="store_true",
+        help="legacy artifact compositor 진단만 허용 (production gate 용도 금지)")
     rp.set_defaults(fn=cmd_replay)
     args = ap.parse_args(argv)
     return args.fn(args)

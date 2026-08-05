@@ -43,11 +43,13 @@ from app.services.hybrid_composite.stripe_model import extract_stripe_model
 from app.services.hybrid_composite.types import COMPOSITE_FAILURE_REASONS, CompositeFailure
 from app.services.hybrid_composite.warp_composite import composite_stripe
 from app.agents.hybrid_landmarks import (
+    CUFF_GEOMETRY_VERSION,
     GEOMETRY_SCHEMA,
     PROMPT_VERSION,
     box_rejection_reason,
     boxes_to_pixels,
     component_observation,
+    derive_cuff_boxes_from_sleeve_landmarks,
     merge_geometry_pair,
     validate_geometry,
 )
@@ -1224,6 +1226,55 @@ def test_cuff_boxes_are_schema_versioned_merged_and_validated_for_projection():
     assert verr is None
     assert inv["component_boxes"]["cuff_l_box"] == left
     assert inv["component_boxes"]["cuff_r_box"] == right
+
+
+def test_missing_cuff_boxes_are_derived_from_validated_sleeve_endpoints():
+    """실 4K 재현: has_cuffs와 끝점은 있지만 optional box만 빠진 응답을 구제한다."""
+    raw = _landmark_response(
+        sleeve_l_end=[0.12, 0.72],
+        sleeve_r_end=[0.88, 0.72],
+    )
+    lm, inv, err = validate_geometry(raw, aspect_hw=1.5)
+    assert err is None
+    assert not any(key.startswith("cuff_") for key in inv["component_boxes"])
+
+    derived = derive_cuff_boxes_from_sleeve_landmarks(lm, inv, aspect_hw=1.5)
+
+    assert {"cuff_l_box", "cuff_r_box"} <= set(derived["component_boxes"])
+    assert set(derived["component_box_sources"].values()) == {CUFF_GEOMETRY_VERSION}
+    for box in derived["component_boxes"].values():
+        assert box_rejection_reason(box) is None
+
+
+def test_explicit_cuff_box_wins_over_deterministic_fallback():
+    explicit = [[0.04, 0.62], [0.20, 0.62], [0.20, 0.76], [0.04, 0.76]]
+    raw = _landmark_response(
+        sleeve_l_end=[0.12, 0.72],
+        sleeve_r_end=[0.88, 0.72],
+        cuff_l_box=explicit,
+    )
+    lm, inv, err = validate_geometry(raw, aspect_hw=1.5)
+    assert err is None
+
+    derived = derive_cuff_boxes_from_sleeve_landmarks(lm, inv, aspect_hw=1.5)
+
+    assert derived["component_boxes"]["cuff_l_box"] == explicit
+    assert derived["component_box_sources"]["cuff_l_box"] == "vision_explicit"
+    assert derived["component_box_sources"]["cuff_r_box"] == CUFF_GEOMETRY_VERSION
+
+
+def test_cuff_fallback_does_not_invent_geometry_without_endpoint_or_inventory():
+    raw = _landmark_response(has_cuffs=False, sleeve_l_end=[0.12, 0.72])
+    lm, inv, err = validate_geometry(raw, aspect_hw=1.5)
+    assert err is None
+    assert derive_cuff_boxes_from_sleeve_landmarks(
+        lm, inv, aspect_hw=1.5)["component_boxes"] == {}
+
+    raw = _landmark_response(has_cuffs=True)
+    lm, inv, err = validate_geometry(raw, aspect_hw=1.5)
+    assert err is None
+    assert derive_cuff_boxes_from_sleeve_landmarks(
+        lm, inv, aspect_hw=1.5)["component_boxes"] == {}
 
 
 # ── 독립 검수 2회차가 구성한 공격 4종 (전부 정상본은 통과해야 한다) ─────────────

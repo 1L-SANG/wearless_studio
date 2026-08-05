@@ -10,6 +10,7 @@ import inspect
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -80,6 +81,27 @@ def _write_dataset(tmp_path: Path, *, landmarks=None, mask=None) -> Path:
         "garment_axis": "horizontal",
         "stripe_model": {"source_roi": [0, 0, cx["image"].shape[1], cx["image"].shape[0]]},
         "mode": "enforce",
+        "carrier_preflight_inputs": {
+            "carrier_evidence": {"garment_categories": ["top"]},
+            "canonical_evidence": {"expected_categories": ["top"]},
+            "matching_evidence": {"matched": True},
+            "landmarks": (landmarks or {
+                "shoulder_l": [0.28, 0.18], "shoulder_r": [0.72, 0.18],
+                "hem_l": [0.30, 0.72], "hem_r": [0.70, 0.72],
+                "confidence": 0.9,
+            }),
+            "carrier_inventory": {
+                "collar": True, "placket": True, "cuffs": True,
+                "garment_categories": ["top"],
+            },
+            "canonical_inventory": {
+                "collar": True, "placket": True, "cuffs": True,
+                "garment_categories": ["top"],
+            },
+            "vision_observations": {},
+            "require_vision": False,
+            "matching_expected": False,
+        },
     }
     (d / "geometry.json").write_text(json.dumps(geo))
     return d
@@ -136,6 +158,51 @@ def test_reconstruction_without_a_mask_is_a_hard_stop(tmp_path):
     assert "replay 불가" in str(e.value)
 
 
+def test_production_replay_requires_captured_carrier_preflight(tmp_path, monkeypatch):
+    lm = {"shoulder_l": [0.28, 0.18], "shoulder_r": [0.72, 0.18],
+          "hem_l": [0.30, 0.72], "hem_r": [0.70, 0.72]}
+    d = _write_dataset(tmp_path, landmarks=lm)
+    geo, _ = replay.load_geometry(d, np.zeros((4, 4, 3), np.uint8))
+    geo.pop("carrier_preflight_inputs")
+    called = False
+
+    def should_not_extract(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("preflight 전에 stripe extraction을 호출하면 안 된다")
+
+    monkeypatch.setattr(replay.hc_stripe, "extract_stripe_model_scan", should_not_extract)
+    result = replay.run_projection(np.zeros((32, 32, 3), np.uint8),
+                                   np.zeros((32, 32, 3), np.uint8), geo)
+    assert result["stage"] == "carrier_preflight"
+    assert result["failure"] == "preflight_evidence_missing"
+    assert called is False
+
+
+def test_replayed_carrier_preflight_rejects_before_projection(tmp_path, monkeypatch):
+    lm = {"shoulder_l": [0.28, 0.18], "shoulder_r": [0.72, 0.18],
+          "hem_l": [0.30, 0.72], "hem_r": [0.70, 0.72]}
+    d = _write_dataset(tmp_path, landmarks=lm)
+    geo, _ = replay.load_geometry(d, np.zeros((4, 4, 3), np.uint8))
+    inputs = geo["carrier_preflight_inputs"]
+    inputs["canonical_evidence"] = {
+        "expected_categories": ["top", "pants"], "expected_lower": True}
+    called = False
+
+    def should_not_extract(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("거절 carrier에 projection을 호출하면 안 된다")
+
+    monkeypatch.setattr(replay.hc_stripe, "extract_stripe_model_scan", should_not_extract)
+    result = replay.run_projection(np.zeros((32, 32, 3), np.uint8),
+                                   np.zeros((32, 32, 3), np.uint8), geo)
+    assert result["stage"] == "carrier_preflight"
+    assert result["failure"] == "carrier_preflight_rejected"
+    assert "expected_lower_missing" in result["detail"]
+    assert called is False
+
+
 # ── 복원 충실도 게이트 ────────────────────────────────────────────────────────
 
 class _FakePanelMap:
@@ -152,13 +219,36 @@ def test_reconstruction_fidelity_is_verified_against_the_captured_mask(tmp_path)
     cv2.imwrite(str(d / "garment_mask.png"), mask)
 
     same = replay.verify_reconstruction(_FakePanelMap(mask.copy()), d)
-    assert same["checked"] and same["ok"] and same["mask_iou"] == 1.0
+    assert same["checked"] and same["execution_replay_ok"]
+    assert same["mask_iou"] == 1.0
 
     shifted = np.zeros_like(mask)
     shifted[100:300, 150:290] = 255          # 절반쯤 어긋난 mask
     poor = replay.verify_reconstruction(_FakePanelMap(shifted), d)
-    assert poor["checked"] and not poor["ok"], poor
+    assert poor["checked"] and not poor["execution_replay_ok"], poor
     assert poor["mask_iou"] < replay.MIN_MASK_RECONSTRUCTION_IOU
+
+
+def test_reconstructed_geometry_is_never_marked_visual_reliable(tmp_path):
+    """코드 경로 replay 가능과 육안 A/B 가능은 다른 계약이다."""
+    import cv2
+    mask = np.zeros((240, 180), np.uint8)
+    mask[30:210, 30:150] = 255
+    d = tmp_path / "ds"
+    d.mkdir()
+    cv2.imwrite(str(d / "garment_mask.png"), mask)
+    cv2.imwrite(str(d / "painted.png"), mask)
+
+    recon = replay.verify_reconstruction(_FakePanelMap(mask.copy()), d, painted=mask.copy())
+    reliability = replay.classify_replay_reliability(
+        recon, {
+            "landmarks": "reconstructed_from_mask",
+            "carrier_preflight": "captured",
+        })
+
+    assert reliability["execution_replay_ok"] is True
+    assert reliability["visual_replay_reliable"] is False
+    assert reliability["visual_replay_reason"] == "landmarks_reconstructed"
 
 
 def test_missing_captured_mask_reports_unchecked(tmp_path):
@@ -219,12 +309,40 @@ def test_replay_writes_report_metrics_and_no_other_side_effects(tmp_path):
         dataset = str(d)
     _Args.out = str(out)
     code = replay.cmd_replay(_Args())
-    assert code in (0, 2)
+    assert code in (0, 2, 3)
     assert (out / "replay_report.html").exists()
     metrics = json.loads((out / "replay_metrics.json").read_text())
     assert "hashes" in metrics and "landmark_provenance" in metrics
     produced = {p.name for p in out.iterdir()}
     assert produced <= {"replay_report.html", "replay_metrics.json", "replay_composite.png"}
+
+
+def test_qc_failure_is_a_nonzero_gate_and_keeps_failure_details(tmp_path, monkeypatch):
+    """리포트를 썼다는 사실이 QC 통과로 오인되면 유료 호출 gate가 열린다."""
+    lm = {"shoulder_l": [0.28, 0.18], "shoulder_r": [0.72, 0.18],
+          "hem_l": [0.30, 0.72], "hem_r": [0.70, 0.72]}
+    d = _write_dataset(tmp_path, landmarks=lm)
+    out = tmp_path / "out"
+    failure_details = [{
+        "code": "pattern_metric_failed",
+        "panel": "collar_box",
+        "detail": "component phase error 0.454 > 0.12",
+    }]
+    qc = SimpleNamespace(
+        passed=False,
+        failures=("pattern_metric_failed",),
+        metrics={"failure_details": failure_details},
+    )
+    monkeypatch.setattr(replay, "run_projection", lambda *_: {"stage": "qc", "qc": qc})
+
+    args = SimpleNamespace(dataset=str(d), out=str(out), allow_qc_fail=False)
+    assert replay.cmd_replay(args) == 3
+    saved = json.loads((out / "replay_metrics.json").read_text())
+    assert saved["failure_details"] == failure_details
+
+    args.out = str(tmp_path / "diagnostic")
+    args.allow_qc_fail = True
+    assert replay.cmd_replay(args) == 0
 
 
 def test_report_embeds_images_without_urls_or_tokens(tmp_path):
