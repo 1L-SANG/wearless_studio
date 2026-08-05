@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from .. import image_usage
 from ..config import Settings
 
 
@@ -107,6 +108,11 @@ class GeminiImageClient:
         data = res.json()
         parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
         image_parts = [p for p in parts if (p.get("inlineData") or {}).get("data")]
+        # 200 이면 이미지가 없어도 요금은 나간다 — 채택 여부·QC 결과와 무관하게 여기서 기록한다.
+        image_usage.record(
+            model=model, image_size=image_size, usage=data.get("usageMetadata"),
+            latency_ms=latency_ms, has_image=bool(image_parts),
+        )
         if not image_parts:
             text = " ".join(p.get("text", "") for p in parts).strip()[:300]
             raise GeminiError(f"응답에 이미지 없음. 텍스트: {text or '(없음)'}")

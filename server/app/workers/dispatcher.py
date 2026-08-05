@@ -9,7 +9,7 @@ import asyncio
 import logging
 import time
 
-from .. import repo
+from .. import image_usage, repo
 from .analyze_job import run_analyze_job
 from .detail_page_job import run_detail_page_job
 from .editor_image_job import run_editor_image_job
@@ -88,7 +88,12 @@ class JobDispatcher:
                 if worker is None:  # _KINDS 로 claim 을 걸러도 방어(설정 오류 대비)
                     log.error("no worker for job kind=%s (job %s)", job["kind"], job["id"])
                     continue
-                await worker(self.app, job)
+                # 이 잡이 도는 동안 일어난 이미지 호출에 job·user·kind 를 붙인다
+                # (워커 시그니처를 바꾸지 않고 실비를 잡별로 귀속시키는 유일한 지점).
+                with image_usage.job_scope(
+                    job_id=job["id"], user_id=job.get("user_id"), stage=job["kind"]
+                ):
+                    await worker(self.app, job)
             except asyncio.CancelledError:
                 raise
             except Exception:

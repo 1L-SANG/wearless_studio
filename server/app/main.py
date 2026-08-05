@@ -18,6 +18,7 @@ from .agents.gemini_image import GeminiImageClient
 from .auth import jwks_key_resolver, require_user
 from .config import Settings, load_settings
 from .db import create_pool
+from . import image_usage
 from .r2 import R2Client
 from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher
@@ -134,6 +135,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.gemini = (
         GeminiImageClient(settings) if settings.gemini_api_key else None
     )
+    # 이미지 실비 계측 — 풀이 없으면(테스트·DB 미설정) 자동으로 로그 전용이 된다.
+    image_usage.configure(pool=pool, persist=settings.image_usage_persist)
     app.state.dispatcher = None
     app.state.jwt_key_resolver = (
         jwks_key_resolver(settings.jwks_url) if settings.jwks_url else None
