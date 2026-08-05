@@ -713,16 +713,55 @@ function MineImageTab({ images = [], onImagesChange, onChoose, onPickImage }) {
   );
 }
 
+function SpaceSetCard({
+  set,
+  interactive = true,
+  currentCutOrdinal = null,
+  onChoose,
+  onPreviewOpen,
+  onPreviewClose,
+}) {
+  const content = (
+    <>
+      <span className="sb-set-polaroids" aria-hidden="true"
+        style={{ '--set-member-count': set?.members?.length || 0 }}>
+        {(set?.members || []).map((member, index) => (
+          <span key={member.exampleId || `${member.direction}:${member.shot}:${index}`} className={`sb-set-polaroid p${index + 1}`}>
+            {member.thumb
+              ? <img src={member.thumb} alt="" />
+              : <span className={member.shot === 'medium' ? 'figure medium' : 'figure'} />}
+          </span>
+        ))}
+      </span>
+      <strong>{spaceSetDisplayName(set)}</strong>
+      <small>{set?.compositionLabel}</small>
+      {Number.isInteger(currentCutOrdinal) && (
+        <span className="sb-set-current-cut">현재 선택 · {currentCutOrdinal}번째 컷</span>
+      )}
+    </>
+  );
+  const className = `sb-set-card ${interactive ? 'is-interactive' : 'is-static'} tone-${set?.tone || 'neutral'}`;
+  if (!interactive) return <div className={className}>{content}</div>;
+  return (
+    <button type="button" className={className}
+      onMouseEnter={(event) => onPreviewOpen?.(set, event.currentTarget)}
+      onMouseLeave={onPreviewClose}
+      onFocus={(event) => onPreviewOpen?.(set, event.currentTarget, 0)}
+      onBlur={onPreviewClose}
+      onClick={() => onChoose?.(set)}>
+      {content}
+    </button>
+  );
+}
+
 function SpaceSetInspectorHeader({ set, siblings, block, onChangeSet }) {
   const siblingIndex = siblings.findIndex((sibling) => sibling.id === block.id);
   const ordinal = Number.isInteger(block.spaceSetMemberOrder)
     ? block.spaceSetMemberOrder
     : siblingIndex + 1;
   return (
-    <div className={`sb-space-inspector-context tone-${set?.tone || 'neutral'}`}>
-      <div className="sb-space-inspector-copy">
-        <strong>{spaceSetDisplayName(set)} · {ordinal}번째 컷</strong>
-      </div>
+    <div className="sb-space-inspector-context">
+      <SpaceSetCard set={set} interactive={false} currentCutOrdinal={ordinal} />
       <button type="button" className="sb-space-set-change" onClick={onChangeSet}>장소 세트 변경</button>
     </div>
   );
@@ -774,25 +813,8 @@ function SpaceSetGallery({ mode, error, onChoose, onClose, gender, clothingType 
       </div>
       <div className="sb-set-grid">
         {spaceSets.map((set) => (
-          <button key={set.id} type="button" className={`sb-set-card tone-${set.tone}`}
-            onMouseEnter={(event) => openPreview(set, event.currentTarget)}
-            onMouseLeave={closePreview}
-            onFocus={(event) => openPreview(set, event.currentTarget, 0)}
-            onBlur={closePreview}
-            onClick={() => onChoose(set)}>
-            <span className="sb-set-polaroids" aria-hidden="true"
-              style={{ '--set-member-count': set.members.length }}>
-              {set.members.map((member, index) => (
-                <span key={member.exampleId || `${member.direction}:${member.shot}:${index}`} className={`sb-set-polaroid p${index + 1}`}>
-                  {member.thumb
-                    ? <img src={member.thumb} alt="" />
-                    : <span className={member.shot === 'medium' ? 'figure medium' : 'figure'} />}
-                </span>
-              ))}
-            </span>
-            <strong>{spaceSetDisplayName(set)}</strong>
-            <small>{set.compositionLabel}</small>
-          </button>
+          <SpaceSetCard key={set.id} set={set} onChoose={onChoose}
+            onPreviewOpen={openPreview} onPreviewClose={closePreview} />
         ))}
         {!spaceSets.length && <div className="sb-set-empty">이 상품에 맞는 장소 세트를 준비 중이에요.</div>}
       </div>
@@ -1516,14 +1538,19 @@ export function Storyboard() {
      이미 데운 URL은 모듈 캐시가 걸러내므로 재실행이 중복 요청을 만들지 않는다. */
   useEffect(() => {
     if (!blocks || !catalogs) return undefined;
-    return prewarmImages(blocks.flatMap((block) => [
+    const blockImages = blocks.flatMap((block) => [
       block.exampleId
         ? generationExampleImageSources(
           (catalogs.genExamples || []).find((example) => example.id === block.exampleId),
         ).prewarm
         : block.thumb,
       block.ownImages?.[0],
-    ]));
+    ]);
+    const spaceSetThumbs = blocks.flatMap((block) => (
+      inferStoryboardSpaceSet(block.spaceGroupId)?.members
+        .map((member) => member.thumb || member.thumbUrl) || []
+    ));
+    return prewarmImages([...blockImages, ...spaceSetThumbs]);
   }, [blocks, catalogs]);
 
   // 콘티 편집 자동저장 — Editor 와 동일 패턴(1.5s debounce). generate 클릭 전 이탈해도 콘티 유실 없음.

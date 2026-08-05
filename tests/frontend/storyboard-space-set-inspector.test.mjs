@@ -12,6 +12,10 @@ const inspectorSource = storyboardSource.slice(
   storyboardSource.indexOf('function Inspector('),
   storyboardSource.indexOf('export function Storyboard()'),
 );
+const spaceSetCardSource = storyboardSource.slice(
+  storyboardSource.indexOf('function SpaceSetCard('),
+  storyboardSource.indexOf('function SpaceSetInspectorHeader('),
+);
 const spaceSetHeaderSource = storyboardSource.slice(
   storyboardSource.indexOf('function SpaceSetInspectorHeader('),
   storyboardSource.indexOf('function SpaceSetGallery('),
@@ -32,12 +36,32 @@ test('selecting a regular block keeps the generation gallery, shot tabs, and my-
   assert.match(storyboardSource, /MINE_SHOT_OPTION = Object\.freeze\(\{ value: 'mine', label: '내 이미지' \}\)/);
 });
 
-test('the space-set inspector header uses the display name rather than an internal set code', () => {
+test('selecting a space-set block renders the shared card with its display name', () => {
   const set = {
     id: 'set-style-women-dress-cafe-garden-attrangs-160544-root03',
     placeType: 'cafe-shop-interior',
   };
   assert.equal(spaceSetDisplayName(set), '볕 드는 카페 정원');
-  assert.match(spaceSetHeaderSource, /spaceSetDisplayName\(set\)\} · \{ordinal\}번째 컷/);
-  assert.doesNotMatch(spaceSetHeaderSource, /set\.id|spaceGroupId/);
+  assert.match(spaceSetHeaderSource, /<SpaceSetCard set=\{set\} interactive=\{false\} currentCutOrdinal=\{ordinal\} \/>/);
+  assert.match(spaceSetCardSource, /<strong>\{spaceSetDisplayName\(set\)\}<\/strong>/);
+  assert.doesNotMatch(spaceSetCardSource, /<strong>\{set\.(?:id|name)\}/);
+});
+
+test('the current space-set card shows which member cut is selected', () => {
+  assert.match(spaceSetCardSource, /현재 선택 · \{currentCutOrdinal\}번째 컷/);
+  assert.match(spaceSetHeaderSource, /currentCutOrdinal=\{ordinal\}/);
+});
+
+test('the inspector space-set card and its thumbnails have no replacement click handler', () => {
+  const staticVariantSource = spaceSetCardSource.slice(
+    spaceSetCardSource.indexOf('if (!interactive)'),
+    spaceSetCardSource.indexOf('return (', spaceSetCardSource.indexOf('if (!interactive)')),
+  );
+  const thumbnailSource = spaceSetCardSource.slice(
+    spaceSetCardSource.indexOf('<span className="sb-set-polaroids"'),
+    spaceSetCardSource.indexOf('<strong>{spaceSetDisplayName(set)}</strong>'),
+  );
+  assert.match(staticVariantSource, /return <div className=\{className\}>\{content\}<\/div>/);
+  assert.doesNotMatch(staticVariantSource, /onClick|onKeyDown/);
+  assert.doesNotMatch(thumbnailSource, /onClick|onKeyDown/);
 });

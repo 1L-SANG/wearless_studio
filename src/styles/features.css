@@ -779,13 +779,10 @@
 .insp-sec > .lbl { margin-bottom: 9px; }
 .insp-tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
 
-.sb-space-inspector-context { display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; margin: -4px 0 14px; padding: 10px 11px; border-radius: var(--r-5);
-  background: color-mix(in srgb, var(--space-tone) 18%, var(--bg-1));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone) 58%, var(--ring)); }
-.sb-space-inspector-copy { min-width: 0; }
-.sb-space-inspector-copy strong { color: var(--fg-1); font-size: 12.5px; }
-.sb-space-set-change { flex: none; border: 0; border-radius: var(--r-pill); padding: 6px 8px;
+.sb-space-inspector-context { display: flex; flex-direction: column; align-items: stretch;
+  gap: 10px; margin: -4px 0 14px; }
+.sb-space-inspector-context .sb-set-card { width: 100%; box-sizing: border-box; padding: 12px; }
+.sb-space-set-change { flex: none; align-self: flex-end; border: 0; border-radius: var(--r-pill); padding: 6px 8px;
   background: var(--bg-1); box-shadow: inset 0 0 0 1px var(--ring-strong); color: var(--fg-2);
   font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
 .sb-space-set-change:hover, .sb-space-set-change:focus-visible { color: var(--fg-1); box-shadow: inset 0 0 0 1px var(--fg-2); }
@@ -809,10 +806,13 @@
 .sb-set-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .sb-set-card { position: relative; display: flex; min-width: 0; flex-direction: column;
   align-items: flex-start; gap: 2px; padding: 10px; border: 0; border-radius: var(--r-5); background: var(--bg-1);
-  box-shadow: 0 0 0 1px var(--ring-strong); color: var(--fg-1); text-align: left; cursor: pointer; transition: transform .14s, box-shadow .14s; }
-.sb-set-card:hover { transform: translateY(-2px); box-shadow: var(--elev-lift); }
+  box-shadow: 0 0 0 1px var(--ring-strong); color: var(--fg-1); text-align: left; cursor: default; }
+.sb-set-card.is-interactive { cursor: pointer; transition: transform .14s, box-shadow .14s; }
+.sb-set-card.is-interactive:hover { transform: translateY(-2px); box-shadow: var(--elev-lift); }
 .sb-set-card strong { width: 100%; font-size: 12px; white-space: nowrap; }
 .sb-set-card small { color: var(--fg-3); font-size: 10px; }
+.sb-set-current-cut { width: 100%; margin-top: 7px; padding-top: 8px; border-top: 1px solid var(--ring);
+  color: var(--fg-2); font-size: 11px; font-weight: 700; }
 .sb-set-polaroids { position: relative; display: flex; align-items: flex-start; justify-content: center; gap: 2px;
   width: 100%; height: 86px; margin-bottom: 6px; padding: 0 3px; overflow: hidden; }
 .sb-set-polaroid { position: relative; left: auto; top: 6px;
@@ -1651,8 +1651,8 @@
 .sb-match-inline .match-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 0; }
 .insp-detail-btn.open { box-shadow: inset 0 0 0 1.5px var(--ring-strong); }
 
-/* 공간 관련 컴포넌트 공통 톤 = 포인트 컬러 (오너 확정: 톤별 색 대신 연한 포인트 컬러) */
-.sb-space-inspector-context, .sb-set-card { --space-tone: var(--link); }
+/* 공간 세트 카드 공통 톤 = 포인트 컬러 (오너 확정: 톤별 색 대신 연한 포인트 컬러) */
+.sb-set-card { --space-tone: var(--link); }
 
 /* 내 사진 셀 — 클릭하면 현재 컷을 그 사진으로 교체 */
 .sb-excell.up.usable { cursor: pointer; }
