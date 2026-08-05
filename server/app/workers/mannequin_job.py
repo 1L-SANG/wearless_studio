@@ -1385,12 +1385,18 @@ async def _fail_closed_hybrid_job_if_needed(r2, fail, passed: list[dict], meta: 
     return True
 
 
-def _dump_composite_artifacts(carrier_bgr, pm, art, source_bgr=None) -> None:
+def _dump_composite_artifacts(carrier_bgr, pm, art, source_bgr=None,
+                              geometry=None) -> None:
     """QA 전용 중간 산출물 덤프 — 환경변수가 가리킬 때만 쓴다 (기본 비활성).
 
     합성이 왜 그렇게 보이는지는 최종 이미지만으로 판단할 수 없다. 마스크·페인트·alpha 를
     같이 봐야 이음매가 어디서 생겼는지 알 수 있어서, 리포트가 소비할 수 있게 남긴다.
     운영 경로에는 영향이 없고, 실패해도 잡을 죽이지 않는다.
+
+    `geometry` 를 함께 남기는 이유는 재현이다. 검증된 landmark·inventory·component box·
+    목표 주기가 없으면 같은 carrier 를 다시 합성할 수 없어, 합성기를 고칠 때마다 유료
+    호출이 필요해진다. 좌표는 정규화 값이라 그 자체로 식별정보가 아니며, URL·토큰·
+    프롬프트 원문은 넣지 않는다.
     """
     out = os.getenv("HYBRID_COMPOSITE_ARTIFACT_DIR")
     if not out:
@@ -1414,6 +1420,9 @@ def _dump_composite_artifacts(carrier_bgr, pm, art, source_bgr=None) -> None:
         for name, plane in planes.items():
             if plane is not None:
                 _cv2.imwrite(str(d / f"{name}.png"), plane)
+        if geometry is not None:
+            (d / "geometry.json").write_text(
+                json.dumps(geometry, ensure_ascii=False, indent=1, sort_keys=True))
     except Exception as exc:               # QA 보조 기능이 출고 경로를 막으면 안 된다
         log.warning("composite artifact dump skipped: %r", exc)
 
@@ -1953,7 +1962,22 @@ async def _apply_hybrid_composite(
         component_boxes=car_boxes, source_bgr=front_bgr,
         source_component_boxes=src_boxes,
         allow_low_source_coverage=(mode == "shadow"))
-    _dump_composite_artifacts(carrier_bgr, pm, art, source_bgr=front_bgr)
+    _dump_composite_artifacts(
+        carrier_bgr, pm, art, source_bgr=front_bgr,
+        geometry={
+            "schema": "stripe_replay_geometry_v1",
+            "carrier_landmarks": car_lm,
+            "source_inventory": src_inv,
+            "carrier_inventory": car_inv,
+            "source_component_boxes_norm": src_boxes_norm,
+            "carrier_component_boxes_norm": car_boxes_norm,
+            "carrier_size": [int(carrier_bgr.shape[1]), int(carrier_bgr.shape[0])],
+            "source_size": [int(front_bgr.shape[1]), int(front_bgr.shape[0])],
+            "target_period_px": float(target_period_px),
+            "garment_axis": garment_axis,
+            "stripe_model": model.summary(),
+            "mode": mode,
+        })
     if isinstance(art, CompositeFailure):
         await emit("hybrid_warp_composite", ok=False, reason=art.reason,
                    detail=art.detail[:200], metrics=art.metrics)
