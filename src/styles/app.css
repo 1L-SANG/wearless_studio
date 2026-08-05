@@ -321,6 +321,23 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .modal { width: 100%; max-width: 460px; background: #fff; border-radius: var(--r-6); box-shadow: var(--elev-lift);
   padding: 26px; animation: pop .18s cubic-bezier(.2,.7,.3,1); }
 .modal.wide { max-width: 540px; }
+.modal.narrow { max-width: 400px; padding: 20px; }
+.modal.narrow h3 { font-size: 17px; }
+.modal.narrow p { font-size: 13px; margin-top: 6px; }
+/* 앵커 모드 — 모달을 누른 요소 바로 위/아래에 붙인다. 위치는 Modal 이 인라인 style 로 계산하므로
+   여기서는 오버레이의 중앙 정렬만 해제한다(padding 은 유지하면 fixed 자식과 겹쳐 계산되지 않는다). */
+.overlay.anchored { display: block; padding: 0; }
+/* 프로스티드 글래스 판 — merged-card 와 같은 레시피(반투명 흰 그라디언트 + 배경 블러 + 베벨). */
+.modal.glass {
+  background: linear-gradient(180deg, rgba(255,255,255,.72) 0%, rgba(255,255,255,.86) 100%);
+  -webkit-backdrop-filter: blur(34px) saturate(150%); backdrop-filter: blur(34px) saturate(150%);
+  box-shadow:
+    0 0 0 1px rgba(34,42,53,.12),
+    0 24px 60px -14px rgba(0,0,0,.3),
+    inset 0 2px 0 rgba(255,255,255,1),
+    inset 0 0 0 1px rgba(255,255,255,.7),
+    inset 0 -28px 70px -30px rgba(255,255,255,.9);
+}
 @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.98); } }
 .modal h3 { font-family: var(--font-display); font-size: 20px; letter-spacing: .2px; color: var(--fg-1); }
 .modal p { font-size: 14.5px; color: var(--fg-2); margin-top: 10px; line-height: 1.55; }

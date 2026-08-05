@@ -83,7 +83,7 @@ Wearless Studio의 파운데이션 AI는 **Gemini 이미지 생성 모델**이�
 
 | ID | 요구사항 | 우선순위 |
 |---|---|---|
-| FR-A1 | **v1 = 결정적 styleTags 친화도 랭킹.** AG-01의 `styleTags`(현재 폐기 — `ai_agent_modules.md:142`)를 되살려, `matching_items.style_tags`(스키마 기존 존재 — `supabase/migrations/20260612090000_init.sql:161`)와의 친화도 점수로 후보 랭킹. 친화도 맵은 운영자 큐레이션 정적 테이블(64개 닫힌 카탈로그) | P0 |
+| FR-A1 | **v1 = 결정적 styleTags 친화도 랭킹.** AG-01의 `styleTags`(현재 폐기 — `ai_agent_modules.md:142`)를 되살려, `matching_items.style_tags`(스키마 기존 존재 — `supabase/migrations/20260612090000_init.sql:161`)와의 친화도 점수로 후보 랭킹. 친화도 맵은 운영자 큐레이션 정적 테이블(60개 닫힌 카탈로그) | P0 |
 | FR-A2 | 보완타입·성별 하드 프리필터는 **불변** (`matching.py:17-22` 로직 승계). 벡터든 태그든 랭킹은 프리필터 통과 풀 내부에서만 | P0 |
 | FR-A3 | 출력 shape = 현행 `recommend()`와 동일(`MatchingItem[]`) — 라우트 `server/app/routes.py:454-484` 계약 무변경 | P0 |
 | FR-A4 | ~~v2 벡터 챌린저~~ **보류 (임베딩 0 결정, 2026-07-04)** — 태그 친화도 v1로 충분 판단. 재진입 시 챌린저 규율 유지 | 보류 |

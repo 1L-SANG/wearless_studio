@@ -46,10 +46,16 @@ export function resolveMainMatchingItem(analysis) {
 
 export function matchingFitDefinition(item, gender) {
   if (typeof item?.id !== 'string') return null;
+  // 내 옷(custom)은 매칭 조정 스텝을 띄우지 않는다 — 올린 실물을 그대로 입힌다
+  // (D11, 2026-08-05 오너 · 서버 matching.fit_category 미러).
+  if (item.isCustom) return null;
   const fitCategory = item.fitCategory;
   const axisKey = MATCHING_AXIS[fitCategory];
   if (!axisKey) return null;
-  const values = axesFor(fitCategory, gender)?.[axisKey] || [];
+  const axisGender = fitCategory === 'skirt' && axisKey === 'silhouette' && gender === 'men'
+    ? 'women'
+    : gender;
+  const values = axesFor(fitCategory, axisGender)?.[axisKey] || [];
   if (!values.length) return null;
   return { clothingId: item.id, fitCategory, axisKey, values };
 }

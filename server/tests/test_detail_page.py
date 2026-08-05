@@ -415,7 +415,7 @@ def test_run_detail_page_job_partial_success(monkeypatch):
 
 
 def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
-    captured = {"loaded_asset_ids": []}
+    captured = {"matching_item_ids": [], "loaded_asset_ids": []}
 
     async def fake_gp(conn, uid, pid):
         return {"copywriting": False}
@@ -424,7 +424,7 @@ def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
         return [{
             "id": "fit-with-match", "source": "ai", "sectionRole": "fit",
             "contentRole": "fit", "cutType": "horizon", "shot": "medium",
-            "colorId": "col1", "matchIds": ["match-1"],
+            "colorId": "col1", "matchIds": ["match-1", "match-2"],
         }]
 
     async def fake_prod(conn, pid):
@@ -439,9 +439,10 @@ def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
             "axes": {"fit": "regular", "length": None}, "matchCut": "wide",
         }}
 
-    async def fake_matching_asset(conn, matching_item_id):
-        captured["matching_item_id"] = matching_item_id
-        return "matching-asset"
+    async def fake_matching_asset(conn, matching_item_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
+        captured["matching_item_ids"].append(matching_item_id)
+        return f"{matching_item_id}-asset"
 
     async def fake_asset(conn, uid, aid):
         captured["loaded_asset_ids"].append(aid)
@@ -486,12 +487,101 @@ def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=KeyR2())
     asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
 
-    assert captured["matching_item_id"] == "match-1"
-    assert captured["loaded_asset_ids"] == ["product-1", "matching-asset"]
+    assert captured["matching_item_ids"] == ["match-1", "match-2"]
+    assert captured["loaded_asset_ids"] == [
+        "product-1", "match-1-asset", "match-2-asset",
+    ]
     assert captured["cut_spec"]["cutType"] == "horizon"
-    assert captured["image_data"] == [b"k/product-1", b"k/matching-asset"]
-    assert "MATCHING — the user-selected coordinating garment" in captured["manifest"]
+    assert captured["image_data"] == [
+        b"k/product-1", b"k/match-1-asset", b"k/match-2-asset",
+    ]
+    assert captured["manifest"].count(
+        "MATCHING — the user-selected coordinating garment"
+    ) == 2
     assert "- matching bottom" in captured["prompt"]
+
+
+def test_run_detail_page_job_fails_cut_when_any_matching_asset_is_missing(monkeypatch):
+    captured = {
+        "matching_item_ids": [],
+        "loaded_asset_ids": [],
+        "generate_calls": 0,
+    }
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [{
+            "id": "fit-with-missing-match",
+            "source": "ai",
+            "sectionRole": "fit",
+            "contentRole": "fit",
+            "cutType": "horizon",
+            "shot": "medium",
+            "colorId": "col1",
+            "matchIds": ["match-1", "match-2"],
+        }]
+
+    async def fake_prod(conn, pid):
+        return {"clothingType": "top", "colors": [{
+            "id": "col1",
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product-1"}],
+        }]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_matching_asset(conn, matching_item_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
+        captured["matching_item_ids"].append(matching_item_id)
+        return f"{matching_item_id}-asset"
+
+    async def fake_asset(conn, uid, aid):
+        captured["loaded_asset_ids"].append(aid)
+        if aid == "match-2-asset":
+            return None
+        return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
+
+    async def forbidden_generate(*args, **kwargs):
+        captured["generate_calls"] += 1
+        raise AssertionError("a partially resolved matching outfit must not be generated")
+
+    async def fake_failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return {"available": 99}
+
+    async def forbidden_success(conn, **kwargs):
+        raise AssertionError("all-cuts-failed path must not finalize success")
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_matching_item_asset", fake_matching_asset)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", forbidden_generate)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_failure", fake_failure)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", forbidden_success)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    assert captured["matching_item_ids"] == ["match-1", "match-2"]
+    assert captured["loaded_asset_ids"] == [
+        "product-1", "match-1-asset", "match-2-asset",
+    ]
+    assert captured["generate_calls"] == 0
+    assert captured["failure"]["code"] == "all_cuts_failed"
+    assert captured["failure"]["metadata"] == {
+        "error": "all_cuts_failed",
+        "requestedCuts": 1,
+    }
 
 
 def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_strict(monkeypatch):
@@ -764,6 +854,8 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
             "exampleId": "ss_all_example",
             "refScope": "all",
             "pose": "auto",
+            # 서버 전용 필드를 저장 payload가 위조해도 resolver 판정을 덮지 못해야 한다.
+            "_referenceDirectionCompatible": True,
         },
         {
             "id": "mine",
@@ -859,6 +951,7 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
             "source": "space-set",
             "exampleId": block["exampleId"],
             "scope": scope,
+            "directionCompatible": scope != "all",
             "asset": {
                 "key": "pose-drag" if scope == "pose" else "all-example"
             },
@@ -959,6 +1052,12 @@ def test_run_detail_page_job_attaches_set_plate_and_set_or_flat_pose(monkeypatch
     assert "EXAMPLE REFERENCE (scope: all)" in (
         captured["cuts"]["standalone-all"]["manifest"]
     )
+    assert "source ONLY of scene, lighting, capture tone" in (
+        captured["cuts"]["standalone-all"]["manifest"]
+    )
+    assert captured["cuts"]["standalone-all"]["cutSpec"][
+        "_referenceDirectionCompatible"
+    ] is False
     for block_id in ("set-1", "set-2"):
         assert (
             captured["cuts"][block_id]["cutSpec"]["spaceVariation"]
@@ -1006,6 +1105,7 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
         return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
 
     def fake_model_refs(spec, *, require_full_body=False):
+        assert require_full_body is True
         if spec["cutType"] == "product":
             return None
         assert require_full_body is True
@@ -1056,6 +1156,7 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
     assert captured["person"]["manifest"].splitlines()[2].startswith("3. MODEL FULL BODY —")
     assert captured["person"]["manifest"].splitlines()[3] == "4. PRODUCT — front view of the garment"
     assert captured["product"]["data"] == ["k/a1"]
+    assert "mannequin" not in captured["product"]["manifest"].lower()
     assert "MODEL" not in captured["product"]["manifest"]
     assert captured["assembled_storyboard"] is not storyboard
     assert [block["id"] for block in captured["assembled_storyboard"]] == ["person", "product"]

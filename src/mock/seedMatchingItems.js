@@ -1,7 +1,7 @@
 /* =============================================================
    mock/seedMatchingItems.js — Supabase-ready matching clothing seed.
    AUTO-GENERATED from outputs/coor_matching/generated_v2 by
-   .scratch/gen-matching.mjs (women+men × top+bottom = 64 items).
+   .scratch/gen-matching.mjs (women+men × top+bottom = 60 items (4벌 제거 2026-08-05)).
    colorBrightness: 100(밝음)→0(어두움), 색상 정렬용.
    imageUrl/thumbnailUrl 는 R2 공개 URL(https://images.wearless.kr/seed/matching/...). 배포·클론에서 정상 표시.
    원본 업로드/갱신: cd server && python -m scripts.seed_matching.
@@ -11,7 +11,7 @@
 export const seedMatchingItems = [
   {
     "id": "match_women_top_01",
-    "name": "화이트 헨리넥 티셔츠",
+    "name": "화이트 헨리넥 반팔 티셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "헨리넥 티셔츠",
@@ -31,7 +31,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_02",
-    "name": "화이트 티셔츠",
+    "name": "스트라이프 긴팔 티셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "티셔츠",
@@ -52,7 +52,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_03",
-    "name": "화이트 티셔츠",
+    "name": "화이트 반팔 티셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "티셔츠",
@@ -72,7 +72,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_04",
-    "name": "화이트 셔츠",
+    "name": "화이트 긴팔 셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "셔츠",
@@ -92,7 +92,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_05",
-    "name": "블루체크 셔츠",
+    "name": "다크 체크 반팔 셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "셔츠",
@@ -114,7 +114,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_06",
-    "name": "멜란지그레이 헨리넥 티셔츠",
+    "name": "그레이 헨리넥 반팔 티셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "헨리넥 티셔츠",
@@ -134,7 +134,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_07",
-    "name": "차콜그레이 티셔츠",
+    "name": "차콜 포켓 반팔 티셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "티셔츠",
@@ -154,7 +154,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_08",
-    "name": "블루그레이 티셔츠",
+    "name": "블루그레이 반팔 티셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "티셔츠",
@@ -174,7 +174,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_09",
-    "name": "샌드그레이 티셔츠",
+    "name": "그레이 오버핏 반팔 티셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "티셔츠",
@@ -194,7 +194,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_10",
-    "name": "라이트그레이 폴로셔츠",
+    "name": "라이트그레이 반팔 폴로셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "폴로셔츠",
@@ -214,7 +214,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_11",
-    "name": "블랙 티셔츠",
+    "name": "블랙 반팔 티셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "티셔츠",
@@ -233,28 +233,8 @@ export const seedMatchingItems = [
     "sortOrder": 111
   },
   {
-    "id": "match_women_top_12",
-    "name": "화이트 슬리브리스",
-    "clothingType": "top",
-    "gender": "women",
-    "category": "슬리브리스",
-    "colorName": "화이트",
-    "colorGroup": "white",
-    "colorBrightness": 100,
-    "styleTags": [
-      "basic",
-      "daily"
-    ],
-    "fit": "regular",
-    "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_top_12.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_12.png",
-    "isActive": true,
-    "sortOrder": 112
-  },
-  {
     "id": "match_women_top_13",
-    "name": "아이보리 니트",
+    "name": "아이보리 반팔 니트",
     "clothingType": "top",
     "gender": "women",
     "category": "니트",
@@ -274,7 +254,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_14",
-    "name": "블랙 슬리브리스",
+    "name": "블랙 스트랩 슬리브리스",
     "clothingType": "top",
     "gender": "women",
     "category": "슬리브리스",
@@ -294,7 +274,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_15",
-    "name": "블랙 블라우스",
+    "name": "블랙 버튼 반팔 블라우스",
     "clothingType": "top",
     "gender": "women",
     "category": "블라우스",
@@ -315,7 +295,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_top_16",
-    "name": "화이트 셔츠",
+    "name": "화이트 반팔 셔츠",
     "clothingType": "top",
     "gender": "women",
     "category": "셔츠",
@@ -332,28 +312,6 @@ export const seedMatchingItems = [
     "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_top_16.png",
     "isActive": true,
     "sortOrder": 116
-  },
-  {
-    "id": "match_women_bottom_01",
-    "name": "워시드블루 쇼츠",
-    "clothingType": "bottom",
-    "gender": "women",
-    "category": "쇼츠",
-    "colorName": "워시드블루",
-    "colorGroup": "blue",
-    "colorBrightness": 44,
-    "styleTags": [
-      "basic",
-      "daily",
-      "워시드",
-      "컷오프"
-    ],
-    "fit": "regular",
-    "length": "short",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_women_bottom_01.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_women_bottom_01.png",
-    "isActive": true,
-    "sortOrder": 201
   },
   {
     "id": "match_women_bottom_02",
@@ -377,7 +335,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_03",
-    "name": "워시드블루 데님팬츠",
+    "name": "블루 데님팬츠",
     "clothingType": "bottom",
     "gender": "women",
     "category": "데님팬츠",
@@ -398,7 +356,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_04",
-    "name": "블루 쇼츠",
+    "name": "블루 데님 버뮤다쇼츠",
     "clothingType": "bottom",
     "gender": "women",
     "category": "쇼츠",
@@ -419,7 +377,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_05",
-    "name": "그레이 트라우저",
+    "name": "그레이 와이드 슬랙스",
     "clothingType": "bottom",
     "gender": "women",
     "category": "트라우저",
@@ -439,7 +397,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_06",
-    "name": "워시드그레이 데님팬츠",
+    "name": "그레이 데님팬츠",
     "clothingType": "bottom",
     "gender": "women",
     "category": "데님팬츠",
@@ -460,7 +418,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_07",
-    "name": "라이트그레이 팬츠",
+    "name": "라이트그레이 와이드 팬츠",
     "clothingType": "bottom",
     "gender": "women",
     "category": "팬츠",
@@ -480,7 +438,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_08",
-    "name": "블랙 스웨트팬츠",
+    "name": "블랙 조거팬츠",
     "clothingType": "bottom",
     "gender": "women",
     "category": "스웨트팬츠",
@@ -500,7 +458,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_09",
-    "name": "블랙 트라우저",
+    "name": "블랙 와이드 슬랙스",
     "clothingType": "bottom",
     "gender": "women",
     "category": "트라우저",
@@ -521,7 +479,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_10",
-    "name": "워시드블랙 데님팬츠",
+    "name": "블랙 데님팬츠",
     "clothingType": "bottom",
     "gender": "women",
     "category": "데님팬츠",
@@ -562,7 +520,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_12",
-    "name": "블랙 스커트",
+    "name": "블랙 랩 미니스커트",
     "clothingType": "bottom",
     "gender": "women",
     "category": "스커트",
@@ -583,7 +541,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_13",
-    "name": "블랙 팬츠",
+    "name": "다크그레이 와이드 팬츠",
     "clothingType": "bottom",
     "gender": "women",
     "category": "팬츠",
@@ -605,7 +563,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_14",
-    "name": "아이보리 스커트",
+    "name": "아이보리 롱 스커트",
     "clothingType": "bottom",
     "gender": "women",
     "category": "스커트",
@@ -626,7 +584,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_15",
-    "name": "그레이 스커트",
+    "name": "그레이 플리츠 미니스커트",
     "clothingType": "bottom",
     "gender": "women",
     "category": "스커트",
@@ -648,7 +606,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_women_bottom_16",
-    "name": "블랙 스커트",
+    "name": "블랙 플리츠 롱 스커트",
     "clothingType": "bottom",
     "gender": "women",
     "category": "스커트",
@@ -691,7 +649,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_02",
-    "name": "화이트 티셔츠",
+    "name": "화이트 긴팔 티셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "티셔츠",
@@ -711,7 +669,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_03",
-    "name": "화이트 티셔츠",
+    "name": "화이트 포켓 반팔 티셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "티셔츠",
@@ -732,7 +690,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_04",
-    "name": "화이트 티셔츠",
+    "name": "화이트 반팔 티셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "티셔츠",
@@ -752,7 +710,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_05",
-    "name": "화이트 셔츠",
+    "name": "화이트 반팔 셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "셔츠",
@@ -772,7 +730,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_06",
-    "name": "브라운 폴로셔츠",
+    "name": "브라운 반팔 폴로셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "폴로셔츠",
@@ -792,7 +750,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_07",
-    "name": "블루 폴로셔츠",
+    "name": "블루 스트라이프 반팔 폴로셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "폴로셔츠",
@@ -813,7 +771,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_08",
-    "name": "라이트그레이 헨리넥 티셔츠",
+    "name": "라이트그레이 헨리넥 반팔 티셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "헨리넥 티셔츠",
@@ -833,29 +791,8 @@ export const seedMatchingItems = [
     "sortOrder": 308
   },
   {
-    "id": "match_men_top_09",
-    "name": "멜란지그레이 헨리넥 티셔츠",
-    "clothingType": "top",
-    "gender": "men",
-    "category": "헨리넥 티셔츠",
-    "colorName": "멜란지그레이",
-    "colorGroup": "gray",
-    "colorBrightness": 64,
-    "styleTags": [
-      "basic",
-      "daily",
-      "원 포켓"
-    ],
-    "fit": "regular",
-    "length": "regular",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_top_09.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_top_09.png",
-    "isActive": true,
-    "sortOrder": 309
-  },
-  {
     "id": "match_men_top_10",
-    "name": "멜란지그레이 티셔츠",
+    "name": "라이트그레이 링거 반팔 티셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "티셔츠",
@@ -876,7 +813,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_11",
-    "name": "그레이 폴로셔츠",
+    "name": "다크 반팔 폴로셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "폴로셔츠",
@@ -917,7 +854,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_13",
-    "name": "블랙 헨리넥 티셔츠",
+    "name": "블랙 헨리넥 반팔 티셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "헨리넥 티셔츠",
@@ -938,7 +875,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_14",
-    "name": "블랙 티셔츠",
+    "name": "블랙 긴팔 티셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "티셔츠",
@@ -958,7 +895,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_15",
-    "name": "블랙 티셔츠",
+    "name": "블랙 포켓 반팔 티셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "티셔츠",
@@ -978,7 +915,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_top_16",
-    "name": "블랙 티셔츠",
+    "name": "블랙 반팔 티셔츠",
     "clothingType": "top",
     "gender": "men",
     "category": "티셔츠",
@@ -1018,7 +955,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_02",
-    "name": "샌드베이지 버뮤다쇼츠",
+    "name": "아이보리 버뮤다쇼츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "버뮤다쇼츠",
@@ -1038,7 +975,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_03",
-    "name": "베이지 쇼츠",
+    "name": "베이지 밴딩 쇼츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "쇼츠",
@@ -1058,7 +995,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_04",
-    "name": "워시드카키 팬츠",
+    "name": "카키 데님팬츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "팬츠",
@@ -1081,7 +1018,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_05",
-    "name": "아이스블루 데님팬츠",
+    "name": "라이트블루 데님팬츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "데님팬츠",
@@ -1102,7 +1039,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_06",
-    "name": "워시드블루 데님팬츠",
+    "name": "블루 와이드 데님팬츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "데님팬츠",
@@ -1144,7 +1081,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_08",
-    "name": "네이비 쇼츠",
+    "name": "네이비 버뮤다쇼츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "쇼츠",
@@ -1164,7 +1101,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_09",
-    "name": "차콜그레이 팬츠",
+    "name": "차콜 와이드 팬츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "팬츠",
@@ -1184,7 +1121,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_10",
-    "name": "그레이 팬츠",
+    "name": "그레이 와이드 팬츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "팬츠",
@@ -1205,7 +1142,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_11",
-    "name": "워시드그레이 데님팬츠",
+    "name": "그레이 와이드 데님팬츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "데님팬츠",
@@ -1227,7 +1164,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_12",
-    "name": "블랙 팬츠",
+    "name": "블랙 스트레이트 팬츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "팬츠",
@@ -1247,7 +1184,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_13",
-    "name": "워시드블랙 팬츠",
+    "name": "블랙 데님팬츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "팬츠",
@@ -1292,7 +1229,7 @@ export const seedMatchingItems = [
   },
   {
     "id": "match_men_bottom_15",
-    "name": "블랙 쇼츠",
+    "name": "블랙 드로스트링 쇼츠",
     "clothingType": "bottom",
     "gender": "men",
     "category": "쇼츠",
@@ -1310,26 +1247,6 @@ export const seedMatchingItems = [
     "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_15.png",
     "isActive": true,
     "sortOrder": 415
-  },
-  {
-    "id": "match_men_bottom_16",
-    "name": "블랙 쇼츠",
-    "clothingType": "bottom",
-    "gender": "men",
-    "category": "쇼츠",
-    "colorName": "블랙",
-    "colorGroup": "black",
-    "colorBrightness": 0,
-    "styleTags": [
-      "basic",
-      "daily"
-    ],
-    "fit": "regular",
-    "length": "short",
-    "imageUrl": "https://images.wearless.kr/seed/matching/match_men_bottom_16.png",
-    "thumbnailUrl": "https://images.wearless.kr/seed/matching/thumb/match_men_bottom_16.png",
-    "isActive": true,
-    "sortOrder": 416
   }
 ];
 

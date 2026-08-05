@@ -21,6 +21,8 @@ import {
   matchingFitFromProfile,
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
+import { reconcileMatchCompatibility } from '@/lib/api/matchingItems.js';
+import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
 import { resolveSelectedModelId } from './modelSelection.js';
 import { applySellingPointEdit } from './sellingPoints.js';
 
@@ -276,7 +278,270 @@ const AI_MODELS = [
   { id: 'mE', displayName: '지안', gender: 'women', thumb: '/models/women/w2.webp' },
 ];
 
-export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
+const expectedMatchingType = (clothingType) => {
+  if (clothingType === 'dress') return null;
+  return clothingType === 'bottom' ? 'top' : 'bottom';
+};
+
+const CUSTOM_MATCH_IMAGE_OPTIONS = Object.freeze({
+  maxEdge: 1600,
+  minEdge: 400,
+  forceJpeg: true,
+  timeoutMs: 10000,
+});
+
+function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
+  const [phase, setPhase] = useState('idle');
+  const [files, setFiles] = useState([]);
+  const [error, setError] = useState('');
+  const [doneItem, setDoneItem] = useState(null);
+  const [dragIndex, setDragIndex] = useState(null);
+  const controllerRef = useRef(new AbortController());
+  const previewUrlsRef = useRef(new Set());
+  const aliveRef = useRef(true);
+
+  // setup 에서 aliveRef 를 반드시 되살린다. StrictMode(개발)는 마운트 직후 effect 를
+  // 실행→정리→재실행하는데, 정리에서 false 로 내린 값을 되돌리지 않으면 **모달이 열리자마자
+  // 죽은 상태**가 된다. 그러면 addFiles 의 `if (!aliveRef.current) return` 가 항상 걸려
+  // phase 가 'preparing' 에 갇히고, 예외도 네트워크 요청도 없이 스피너만 돈다
+  // (2026-08-05 오너 재현: "한참 로딩·콘솔 깨끗·서버 요청 0건").
+  useEffect(() => {
+    aliveRef.current = true;
+    const controller = controllerRef.current;
+    const previews = previewUrlsRef.current;
+    return () => {
+      aliveRef.current = false;
+      controller.abort();
+      previews.forEach((url) => URL.revokeObjectURL(url));
+      previews.clear();
+    };
+  }, []);
+
+  const renewController = () => {
+    controllerRef.current.abort();
+    controllerRef.current = new AbortController();
+    return controllerRef.current;
+  };
+  const releasePreview = (entry) => {
+    if (!entry?.preview) return;
+    URL.revokeObjectURL(entry.preview);
+    previewUrlsRef.current.delete(entry.preview);
+  };
+  const toEntry = (file) => {
+    const preview = URL.createObjectURL(file);
+    previewUrlsRef.current.add(preview);
+    return { id: `${Date.now()}-${Math.random()}`, file, preview };
+  };
+  const addFiles = async (fileList) => {
+    if (phase === 'preparing' || phase === 'uploading' || phase === 'analyzing') return;
+    const controller = renewController();
+    const room = 4 - files.length;
+    const picked = [...fileList].filter(looksLikeImageFile).slice(0, room);
+    if (!picked.length) {
+      setError('JPG, PNG 또는 HEIC 사진을 선택해주세요.');
+      return;
+    }
+    setPhase('preparing');
+    try {
+      const prepared = await toUploadableImages(
+        picked, CUSTOM_MATCH_IMAGE_OPTIONS, { signal: controller.signal },
+      );
+      if (!aliveRef.current || controller.signal.aborted) return;
+      if (prepared.files.length) {
+        setFiles((current) => [...current, ...prepared.files.map(toEntry)]);
+        setPhase('picking');
+      } else {
+        setPhase('error');
+      }
+      setError(prepared.failed.length
+        ? `${prepared.failed.length}장은 불러오지 못했어요. 다른 사진으로 다시 시도해 주세요.`
+        : '');
+    } catch (prepareError) {
+      if (prepareError?.name === 'AbortError' || !aliveRef.current) return;
+      setError(prepareError?.message || '사진을 준비하지 못했어요. 잠시 후 다시 시도해 주세요.');
+      setPhase('error');
+    }
+  };
+  const replaceFile = async (index, file) => {
+    if (!looksLikeImageFile(file)) {
+      setError('JPG, PNG 또는 HEIC 사진을 선택해주세요.');
+      return;
+    }
+    const controller = renewController();
+    setPhase('preparing');
+    try {
+      const prepared = await toUploadableImages(
+        [file], CUSTOM_MATCH_IMAGE_OPTIONS, { signal: controller.signal },
+      );
+      if (!aliveRef.current || controller.signal.aborted) return;
+      if (!prepared.files.length) {
+        setError('사진을 불러오지 못했어요. 다른 사진으로 다시 시도해 주세요.');
+        setPhase('picking');
+        return;
+      }
+      setFiles((current) => current.map((entry, itemIndex) => {
+        if (itemIndex !== index) return entry;
+        releasePreview(entry);
+        return toEntry(prepared.files[0]);
+      }));
+      setError('');
+      setPhase('picking');
+    } catch (prepareError) {
+      if (prepareError?.name === 'AbortError' || !aliveRef.current) return;
+      setError(prepareError?.message || '사진을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
+      setPhase('picking');
+    }
+  };
+  const removeFile = (index) => {
+    renewController();
+    setFiles((current) => {
+      releasePreview(current[index]);
+      const next = current.filter((_, itemIndex) => itemIndex !== index);
+      setPhase(next.length ? 'picking' : 'idle');
+      return next;
+    });
+  };
+  const moveFile = (from, to) => {
+    if (from === to || from < 0 || to < 0 || from >= files.length || to >= files.length) return;
+    renewController();
+    setFiles((current) => {
+      const next = [...current];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  };
+  const clearFiles = () => {
+    renewController();
+    files.forEach(releasePreview);
+    setFiles([]);
+    setError('');
+    setPhase('idle');
+  };
+  const requestClose = () => {
+    controllerRef.current.abort();
+    onClose();
+  };
+  const submit = async () => {
+    if (!files.length || phase === 'uploading' || phase === 'analyzing') return;
+    const controller = renewController();
+    setError('');
+    setPhase('uploading');
+    try {
+      const uploaded = await Promise.all(files.map(({ file }) => api.uploadPhoto(
+        projectId,
+        {
+          filename: file.name,
+          mime: file.type,
+          blob: file,
+          purpose: 'custom_match_source',
+        },
+        { signal: controller.signal },
+      )));
+      if (!aliveRef.current || controller.signal.aborted) return;
+      setPhase('analyzing');
+      const result = await api.addCustomMatchItem(
+        projectId,
+        { assetIds: uploaded.map((asset) => asset.assetId) },
+        { signal: controller.signal },
+      );
+      if (!aliveRef.current || controller.signal.aborted) return;
+      onApply(result.analysis);
+      setDoneItem(result.item);
+      setPhase('done');
+      setTimeout(() => { if (aliveRef.current) requestClose(); }, 500);
+    } catch (uploadError) {
+      if (uploadError?.name === 'AbortError' || !aliveRef.current) return;
+      setError(uploadError?.message || '옷을 추가하지 못했어요. 다시 시도해 주세요.');
+      setPhase('error');
+    }
+  };
+
+  const busy = phase === 'preparing' || phase === 'uploading' || phase === 'analyzing';
+  return (
+    <Modal onClose={requestClose} narrow anchorRect={anchorRect} glass>
+      <div className="custom-match-modal">
+        <div className="custom-match-modal-head">
+          <div>
+            <h3>내 매칭 의류 추가</h3>
+            <p>같은 옷 사진을 최대 4장 올려주세요. 1장만으로도 추가할 수 있어요.</p>
+          </div>
+          <button className="custom-match-close" onClick={requestClose} aria-label="닫기">
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+
+        {/* 상품 입력 페이지의 다중 업로드와 같은 타일 문법(.slot-tiles/.tile/.tile.add) — 사진 타일 +
+            점선 추가 타일이 한 줄에 서고, 그리드 어디에 떨궈도 파일이 추가된다. */}
+        <div className="slot-tiles custom-match-tiles"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }}>
+          {files.map((entry, index) => (
+            <div className="tile custom-match-tile" key={entry.id} draggable={!busy && phase !== 'done'}
+              onDragStart={() => setDragIndex(index)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault(); event.stopPropagation();
+                moveFile(dragIndex, index); setDragIndex(null);
+              }}>
+              <img src={entry.preview} alt={`${index + 1}번 옷 사진`} />
+              <span className="custom-match-order">{index + 1}</span>
+              {!busy && phase !== 'done' && (
+                <>
+                  <button className="rm" onClick={() => removeFile(index)}
+                    aria-label={`${index + 1}번 사진 삭제`}>
+                    <Icon name="x" size={13} />
+                  </button>
+                  <div className="custom-match-preview-actions">
+                    <button onClick={() => moveFile(index, index - 1)} disabled={index === 0}>앞으로</button>
+                    <label>교체<input type="file" accept="image/*,.heic,.heif,.hif"
+                      onChange={(event) => { if (event.target.files[0]) replaceFile(index, event.target.files[0]); event.target.value = ''; }} /></label>
+                    <button onClick={() => moveFile(index, index + 1)} disabled={index === files.length - 1}>뒤로</button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+          {!busy && phase !== 'done' && files.length < 4 && (
+            <label className="tile add custom-match-add-tile">
+              <Icon name="plus" size={26} className="add-ico" />
+              <span className="add-cap">사진 추가<small>JPG/PNG/HEIC · 최소 400px</small></span>
+              <input type="file" accept="image/*,.heic,.heif,.hif" multiple
+                onChange={(event) => { addFiles(event.target.files); event.target.value = ''; }} />
+            </label>
+          )}
+        </div>
+
+        {busy && (
+          <div className="custom-match-status"><Icon name="loader" className="spin" size={18} />
+            {phase === 'preparing' ? '사진을 가볍게 준비하는 중이에요…' : '옷을 확인하는 중이에요…'}
+          </div>
+        )}
+        {phase === 'done' && (
+          <div className="custom-match-status success"><Icon name="check" size={18} />{doneItem?.name || '내 옷'}을 추가했어요.</div>
+        )}
+        {error && <div className="custom-match-error">{error}</div>}
+
+        {phase === 'picking' && (
+          <div className="custom-match-modal-actions">
+            <span>1번 사진이 타일 썸네일로 보여요.</span>
+            <Button variant="primary" onClick={submit}>사진 선택 완료</Button>
+          </div>
+        )}
+        {phase === 'error' && (
+          <div className="custom-match-modal-actions">
+            <span />
+            <Button variant="ghost" onClick={clearFiles}>다른 사진 고르기</Button>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+export function AnalysisForm({
+  inline, analysis, catalogs, onChange, onNext, projectId = null, onAnalysisReplace,
+}) {
   const a = analysis;
   const toast = useToast();
   const [washing, setWashing] = useState(false);
@@ -298,6 +563,10 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [detailFor, setDetailFor] = useState(null); // 상세 모달 대상 모델 카드
+  const [customMatchOpen, setCustomMatchOpen] = useState(false);
+  // 누른 '의류 추가하기' 타일의 화면상 위치 — 모달을 그 바로 위에 띄운다(Modal anchorRect).
+  const [customMatchAnchor, setCustomMatchAnchor] = useState(null);
+  const [customMatchDeleting, setCustomMatchDeleting] = useState(false);
   // AI 모델 / 실제 모델 탭 (2026-07-21 사용자 결정). 초기 탭은 현재 선택이 속한 쪽.
   const [modelTab, setModelTab] = useState(() =>
     (a.selectedModelId && !AI_MODELS.some((m) => m.id === a.selectedModelId)) ? 'real' : 'ai');
@@ -309,6 +578,16 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
       .finally(() => { if (alive) setModelsLoading(false); });
     return () => { alive = false; };
   }, []);
+
+  useEffect(() => {
+    const normalized = normalizeTargetGendersForClothingType(
+      a.clothingType,
+      a.targetGenders,
+    );
+    if (a.targetGenders?.length !== 1 || a.targetGenders[0] !== normalized[0]) {
+      onChange({ targetGenders: normalized });
+    }
+  }, [a.clothingType, a.targetGenders, onChange]);
 
   // AI 추천 특징은 일단 강제로 칩에 채워둔다 (사용자가 지우면 빠짐). 최대 5개.
   useEffect(() => {
@@ -333,6 +612,35 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     }
   }, [models, modelsLoading, a.selectedModelId, a.targetGenders, onChange]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
+  const applyAnalysisReplacement = useCallback((nextAnalysis) => {
+    if (!nextAnalysis) return;
+    if (onAnalysisReplace) onAnalysisReplace(nextAnalysis);
+    else onChange(nextAnalysis);
+  }, [onAnalysisReplace, onChange]);
+  const closeCustomMatchModal = useCallback(async () => {
+    setCustomMatchOpen(false);
+    try {
+      const actual = await api.refreshMatchClothing(projectId);
+      applyAnalysisReplacement(actual);
+    } catch (refreshError) {
+      toast.push(refreshError?.message || '매칭 의류 상태를 다시 불러오지 못했어요.', { icon: 'alertTri' });
+    }
+  }, [applyAnalysisReplacement, projectId, toast]);
+  const removeCustomMatch = useCallback(async () => {
+    if (customMatchDeleting) return;
+    setCustomMatchDeleting(true);
+    try {
+      const result = await api.removeCustomMatchItem(projectId);
+      applyAnalysisReplacement(result.analysis);
+    } catch (removeError) {
+      toast.push(removeError?.message || '내 옷을 지우지 못했어요.', { icon: 'alertTri' });
+      try {
+        applyAnalysisReplacement(await api.refreshMatchClothing(projectId));
+      } catch { /* 원래 삭제 오류를 사용자에게 유지 */ }
+    } finally {
+      setCustomMatchDeleting(false);
+    }
+  }, [applyAnalysisReplacement, customMatchDeleting, projectId, toast]);
 
   const commitSp = () => {
     const t = spDraft.trim();
@@ -368,6 +676,12 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const selMatch = (a.matchClothing || []).filter((c) => c.selected).sort((x, y) => (x.selOrder || 0) - (y.selOrder || 0));
   const mainMatchId = selMatch[0]?.id;
   const subMatchId = selMatch[1]?.id;
+  const isMatchCompatible = (item, clothingType = a.clothingType) => {
+    const expectedType = expectedMatchingType(clothingType);
+    return expectedType !== null
+      && item.isCompatible !== false
+      && (item.clothingType == null || item.clothingType === expectedType);
+  };
   const withMatchSelection = (matchClothing) => {
     const category = fitProfileCategory(a.clothingType, a.subCategory) || 'top';
     const gender = genderForClothingType(a.clothingType, a.targetGenders);
@@ -403,6 +717,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const toggleMatch = (id) => {
     const cur = a.matchClothing;
     const item = cur.find((c) => c.id === id);
+    if (!item || !isMatchCompatible(item)) return;
     if (item.selected) {
       const next = cur.map((c) => c.id === id ? { ...c, selected: false, selOrder: undefined } : c);
       onChange(withMatchSelection(next));
@@ -460,12 +775,16 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     } };
   };
   // subCategory 는 영문 토큰, 실측 key 는 MeasurementKey — 라벨은 catalogs 에서 파생 (계약 §4)
-  const changeType = (t) => onChange(withFitProfile({
-    clothingType: t,
-    subCategory: (catalogs.subCategories[t] || [])[0]?.value ?? null,
-    targetGenders: normalizeTargetGendersForClothingType(t, a.targetGenders),
-    measurements: (catalogs.measurementSchema[t] || []).map((k) => ({ key: k, value: null, unit: 'cm' })),
-  }));
+  const changeType = (t) => {
+    const matchClothing = reconcileMatchCompatibility(a.matchClothing, t);
+    onChange(withFitProfile({
+      clothingType: t,
+      subCategory: (catalogs.subCategories[t] || [])[0]?.value ?? null,
+      targetGenders: normalizeTargetGendersForClothingType(t, a.targetGenders),
+      measurements: (catalogs.measurementSchema[t] || []).map((k) => ({ key: k, value: null, unit: 'cm' })),
+      matchClothing,
+    }));
+  };
   const setMeasure = (key, value) => onChange({ measurements: (a.measurements || []).map((m) => m.key === key ? { ...m, value: value === '' ? null : Number(value) } : m) });
   const typeLabel = catalogs.clothingTypes.find((t) => t.value === a.clothingType)?.label;
   const fitOpts = fitOptsOf(a).opts;
@@ -505,6 +824,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
               } /></div>
           <div className="field-row"><label className="lbl">대상 성별</label>
             <Chips options={genderOptions} value={a.targetGenders?.[0] || null}
+              allowDeselect={false}
               onChange={(v) => onChange(withFitProfile({
                 targetGenders: normalizeTargetGendersForClothingType(
                   a.clothingType,
@@ -720,21 +1040,58 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
       </div>
 
       {/* 6. match clothing — full width */}
-      <div className="surface">
+      {expectedMatchingType(a.clothingType) && <div className="surface">
         <div className="sec-title" style={{ marginBottom: 6 }}>매칭 의류</div>
         <div className="sec-sub" style={{ marginBottom: 16 }}>핏·코디 이미지 생성에 쓰여요 · 메인 최대 2개</div>
-        <div className="model-grid">
-          {a.matchClothing.map((m) => (
-            <div key={m.id} className={`model-card${m.selected ? ' on' : ''}`} style={{ width: 110 }}
-              onClick={() => toggleMatch(m.id)}>
-              <img src={m.thumb} alt={m.name} style={{ height: 130 }} />
-              {m.id === mainMatchId && <span className="match-role main">메인</span>}
-              {m.id === subMatchId && <span className="match-role sub">서브</span>}
-              <div className="nm">{m.name}{m.selected && <Icon name="check" size={13} className="star" />}</div>
-            </div>
-          ))}
+        <div className="model-grid custom-match-grid">
+          {a.matchClothing.map((m) => {
+            const compatible = isMatchCompatible(m);
+            return (
+              <div key={m.id}
+                className={`model-card custom-match-card${m.selected ? ' on' : ''}${compatible ? '' : ' incompatible'}`}
+                onClick={() => toggleMatch(m.id)}>
+                <img src={m.thumb} alt={m.name} />
+                {m.isCustom && <span className="custom-match-badge">내 옷</span>}
+                {m.isCustom && (
+                  <button className="custom-match-delete" disabled={customMatchDeleting}
+                    aria-label="내 옷 삭제"
+                    onClick={(event) => { event.stopPropagation(); removeCustomMatch(); }}>
+                    <Icon name={customMatchDeleting ? 'loader' : 'x'}
+                      className={customMatchDeleting ? 'spin' : ''} size={14} />
+                  </button>
+                )}
+                {m.id === mainMatchId && <span className="match-role main">메인</span>}
+                {m.id === subMatchId && <span className="match-role sub">서브</span>}
+                <div className="nm">
+                  <span>{m.name}{!compatible && <small>현재 상품과 종류가 맞지 않아요</small>}</span>
+                  {m.selected && <Icon name="check" size={13} className="star" />}
+                </div>
+              </div>
+            );
+          })}
+          {!a.matchClothing.some((item) => item.isCustom) && (
+            <button className="model-card custom-match-add"
+              onClick={(event) => {
+                setCustomMatchAnchor(event.currentTarget.getBoundingClientRect());
+                setCustomMatchOpen(true);
+              }}>
+              <span className="custom-match-add-art">
+                <Icon name={expectedMatchingType(a.clothingType) === 'top' ? 'shirt' : 'pants'}
+                  size={52} stroke={1.4} />
+              </span>
+              <span className="nm">의류 추가하기</span>
+            </button>
+          )}
         </div>
-      </div>
+        {customMatchOpen && (
+          <CustomMatchUploadModal
+            projectId={projectId}
+            anchorRect={customMatchAnchor}
+            onApply={applyAnalysisReplacement}
+            onClose={closeCustomMatchModal}
+          />
+        )}
+      </div>}
     </>
   );
 
@@ -778,6 +1135,8 @@ export function Analysis({ onNext }) {
   if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState desc="분석 서버에 일시적인 문제가 발생했어요." onRetry={run} /></div></div>;
 
   return <AnalysisForm analysis={analysis} catalogs={catalogs}
+    projectId={useAppStore.getState().projectId}
+    onAnalysisReplace={setAnalysis}
     onChange={(patch) => {
       const refreshMatch = isMatchRecommendationPatch(patch);
       if (isGenerationRelevantAnalysisPatch(patch)) {

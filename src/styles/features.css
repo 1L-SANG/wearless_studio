@@ -343,6 +343,58 @@
 .match-role.main { background: #0e0d14; color: #fff; }
 .match-role.sub { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring); }
 
+/* 프로젝트 전용 매칭 의류 — 15개 큐레이션 + 추가/내 옷 1칸 */
+.custom-match-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); }
+.custom-match-card, .custom-match-add { width: 100%; min-width: 0; border: 0; padding: 0; text-align: left; }
+.custom-match-card.incompatible { cursor: default; background: var(--bg-2); }
+.custom-match-card.incompatible img { filter: grayscale(1); opacity: .45; }
+.custom-match-card.incompatible:hover { box-shadow: 0 0 0 1px var(--ring); }
+.custom-match-card .nm > span { min-width: 0; }
+.custom-match-card .nm small { display: block; color: var(--accent-error); font-size: 10px; line-height: 1.35; margin-top: 3px; }
+.custom-match-badge { position: absolute; z-index: 2; top: 8px; left: 8px; padding: 3px 8px; border-radius: var(--r-pill); background: var(--fg-1); color: var(--bg-1); font-size: 10px; font-weight: 600; }
+.custom-match-delete { position: absolute; z-index: 3; top: 6px; right: 6px; width: 26px; height: 26px; border: 0; border-radius: var(--r-pill); background: var(--glass-bg); color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring); display: grid; place-items: center; cursor: pointer; }
+.custom-match-card .match-role { top: auto; right: 7px; bottom: 39px; }
+/* 추가 타일은 큐레이션 카드와 같은 해부구조(이미지 영역 130px + 이름 줄)를 쓴다 —
+   라벨이 옆 15장의 이름과 같은 baseline 에 서고, 아이콘은 이미지 영역 한가운데에 크게. */
+.custom-match-add { display: block; background: #fff; color: var(--fg-3); }
+.custom-match-add-art { display: grid; place-items: center; height: 130px; background: #F3F5F6;
+  background-image: url("data:image/svg+xml,%3csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3e%3crect x='1' y='1' width='calc(100%25 - 2px)' height='calc(100%25 - 2px)' fill='none' stroke='%23c6cad0' stroke-width='1.5' stroke-dasharray='7 6'/%3e%3c/svg%3e");
+  color: #9aa1aa; transition: color .14s, background-color .14s; }
+.custom-match-add .nm { font-size: 12.5px; font-weight: 500; padding: 8px 10px; color: var(--fg-2); }
+.custom-match-add:hover .custom-match-add-art { color: var(--fg-1); background-color: #EDF0F2; }
+.custom-match-add:hover .nm { color: var(--fg-1); }
+
+.custom-match-modal { display: flex; flex-direction: column; gap: 14px; }
+.custom-match-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.custom-match-modal-head p { margin-top: 5px; }
+.custom-match-close { border: 0; background: transparent; color: var(--fg-2); cursor: pointer; padding: 4px; }
+.custom-match-tiles { gap: 8px; }
+.custom-match-tiles input { display: none; }
+/* 400px 모달 안에서 3장이 한 줄, 4장째가 아래로 — 사진 4장이 두 줄을 넘지 않는다. */
+.custom-match-tiles .tile { width: 112px; height: 146px; background: #fff; }
+.custom-match-tile > img { width: 100%; height: 100%; object-fit: contain; background: #F7F8F9; }
+.custom-match-tile[draggable="true"] { cursor: grab; }
+.custom-match-tile:active { cursor: grabbing; }
+.custom-match-order { position: absolute; z-index: 2; top: 6px; left: 6px; width: 22px; height: 22px; border-radius: var(--r-pill); background: var(--fg-1); color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 600; }
+/* 사진 위 하단 글래스 바 — 순서 바꾸기·교체. 삭제는 우상단 .rm (입력 페이지와 같은 자리). */
+.custom-match-preview-actions { position: absolute; z-index: 2; left: 6px; right: 6px; bottom: 6px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; border-radius: var(--r-3); overflow: hidden;
+  background: rgba(34,42,53,.14); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+.custom-match-preview-actions button, .custom-match-preview-actions label { border: 0; background: rgba(255,255,255,.92); color: var(--fg-1); font-size: 9.5px; font-weight: 500; padding: 6px 1px; text-align: center; cursor: pointer; letter-spacing: -.2px; }
+.custom-match-preview-actions button:hover:not(:disabled), .custom-match-preview-actions label:hover { background: #fff; }
+.custom-match-preview-actions button:disabled { color: var(--fg-3); cursor: default; }
+/* .tile 이 display:grid 라 자동 행이 늘어나 아이콘과 설명이 벌어진다 — 이 타일만 내용 기준 중앙 정렬. */
+.custom-match-add-tile { align-content: center; gap: 10px; }
+.custom-match-add-tile .add-ico { color: var(--fg-3); }
+.custom-match-add-tile:hover .add-ico { color: var(--fg-1); }
+.custom-match-status { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--fg-2); font-size: 13px; }
+.custom-match-status.success { color: var(--accent-success); }
+.custom-match-error { padding: 12px; border-radius: var(--r-4); background: var(--bg-2); color: var(--accent-error); font-size: 13px; line-height: 1.5; }
+.custom-match-modal-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.custom-match-modal-actions > span { color: var(--fg-3); font-size: 11px; }
+@media (max-width: 1000px) { .custom-match-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .custom-match-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .custom-match-previews { grid-template-columns: 1fr; } }
+
 /* FaceMarket 검증 모델 카드 — 커버 + 검증 배지 + 이름/단가. 라이선스 비활성은 비활성화(회색) */
 .fm-model.disabled { cursor: not-allowed; }
 .fm-model.disabled img, .fm-model.disabled .fm-empty { filter: grayscale(1); opacity: .55; }

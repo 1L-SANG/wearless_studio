@@ -607,6 +607,16 @@ async def run_detail_page_job(app, job: dict) -> None:
             def _is_detail(block: dict) -> bool:
                 return block.get("cutType") == "product" and block.get("shot") == "detail"
 
+            def _matching_ids(block: dict) -> list[str]:
+                # normalize_spec 과 같은 최대 2개 계약을 입력 로드 단계에도 적용한다.
+                # 블록 순서를 그대로 보존해야 manifest/image 위치 계약이 흔들리지 않는다.
+                return [
+                    str(match_id)
+                    for match_id in (
+                        block.get("matchIds") or block.get("match_ids") or []
+                    )
+                ][:2]
+
             # 미세 패턴 상품의 디테일 컷은 셀러 원본을 그대로 쓴다 → 생성 스킵.
             # 왜: 원단 매크로(줄 하나가 파란 실 2가닥 + 베이지 1가닥)는 전신·근접 어느 쪽이든
             # 생성 해상도로 재현이 안 된다(2026-08-01 측정: 4K 에서도 한 주기 14px → 요소당 2.3px).
@@ -641,11 +651,18 @@ async def run_detail_page_job(app, job: dict) -> None:
                             rows.append(a)
                     color_assets[asset_key] = rows
                     detail_color_transfers[asset_key] = transfer
-                mids = b.get("matchIds") or []
-                if mids and b.get("cutType") in _WORN_CUT_TYPES and str(mids[0]) not in match_assets:
-                    m_aid = await repo.get_matching_item_asset(conn, str(mids[0]))
-                    match_assets[str(mids[0])] = (
-                        await repo.get_asset_for_user(conn, user_id, m_aid) if m_aid else None)
+                if b.get("cutType") in _WORN_CUT_TYPES:
+                    for matching_id in _matching_ids(b):
+                        if matching_id in match_assets:
+                            continue
+                        m_aid = await repo.get_matching_item_asset(
+                            conn, matching_id, user_id, project_id
+                        )
+                        match_assets[matching_id] = (
+                            await repo.get_asset_for_user(conn, user_id, m_aid)
+                            if m_aid
+                            else None
+                        )
                 for rid in (b.get("refAssetIds") or [])[:3]:
                     if str(rid) not in mood_assets:
                         mood_assets[str(rid)] = await repo.get_asset_for_user(conn, user_id, str(rid))
@@ -797,12 +814,30 @@ async def run_detail_page_job(app, job: dict) -> None:
             if cut_mannequin_asset is None and not prods:
                 prepared.append((cut_spec, [], "", False, [], None, False))
                 continue
-            mids = b.get("matchIds") or []
-            match_a = (
-                match_assets.get(str(mids[0]))
-                if mids and is_worn_cut
-                else None
-            )
+            mids = normalized.get("matchIds", []) if is_worn_cut else []
+            matching_assets = [match_assets.get(matching_id) for matching_id in mids]
+            if mids and any(asset is None for asset in matching_assets):
+                # 사용자가 확정한 매칭 의류는 전부 한 벌의 진실 근거다. 일부만 붙여 생성하면
+                # 선택하지 않은 기본 의류로 나머지를 채우므로, 이 컷만 빈 슬롯으로 닫는다.
+                log.warning(
+                    "AG-06 matching asset unavailable — cut fail-closed job %s block %s",
+                    job_id,
+                    b.get("id"),
+                )
+                prepared.append((cut_spec, [], "", False, [], None, False))
+                continue
+            try:
+                matching_images = [await _img(asset) for asset in matching_assets]
+            except Exception as e:
+                # 메타데이터는 있어도 실제 R2 객체가 없으면 동일하게 부분 첨부하지 않는다.
+                log.warning(
+                    "AG-06 matching image unavailable — cut fail-closed job %s block %s: %r",
+                    job_id,
+                    b.get("id"),
+                    e,
+                )
+                prepared.append((cut_spec, [], "", False, [], None, False))
+                continue
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
             # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·거울샷 기본(폰이 가림)·
             # 뒷모습·머리가 프레임 밖인 샷은 제외(cut_generator.wants_face 가 단일 규칙).
@@ -872,8 +907,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 product_image = await _img(a)
                 imgs.append(product_image)
                 product_images.append(product_image)
-            if match_a is not None:
-                imgs.append(await _img(match_a))
+            imgs.extend(matching_images)
             if face_slot:
                 # 비공개 r2_face 바이트(LEGACY 단일 얼굴) — _img()(공개 버킷 하드코딩) 를 태우지 않는다.
                 imgs.append(face_ref["image"])
@@ -1023,7 +1057,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                 attached_mood_count = len(mood_images)
             manifest = cut_generator.build_manifest(
                 prods, has_mannequin=cut_mannequin_asset is not None,
-                has_match=match_a is not None,
+                has_match=bool(matching_images), matching_count=len(matching_images),
+                matching_custom=[matching_id.startswith("custom_") for matching_id in mids],
                 mood_count=attached_mood_count,
                 has_model_face=len(model_images) == 2,
                 has_model_sheet=len(model_images) == 2 and not model_has_full_body,

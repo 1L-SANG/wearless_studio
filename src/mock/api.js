@@ -14,18 +14,26 @@
    ============================================================= */
 import { DB, reseedDraft, buildEditorBlocksFromStoryboard, buildStoryboard } from '@/mock/db.js';
 import { Placeholder } from '@/mock/placeholders.js';
-import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
+import {
+  addCustomMatchToAnalysis,
+  getComplementaryMatchingType,
+  recommendLegacyMatchClothing,
+  removeCustomMatchFromAnalysis,
+} from '@/mock/matchingRecommendation.js';
 import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
-import { migrateLegacyEntryStylingRuns } from '@/lib/storyboardEntryPlacement.js';
+import {
+  applyOpeningRow, hasOpeningRow, migrateLegacyEntryStylingRuns,
+} from '@/lib/storyboardEntryPlacement.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const touch = () => { DB.project.updatedAt = new Date().toISOString(); };
 const spend = (n) => { DB.account.credits = Math.max(0, DB.account.credits - n); return DB.account.credits; };
 const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
+const customMatchUploads = new Map();
 const cutsEnvelope = () => ({ cuts: clone(DB.mannequins) });
 const syncSelectedCut = (cutId) => {
   const selected = DB.mannequins.find((m) => m.id === cutId) || DB.mannequins[0] || null;
@@ -90,11 +98,13 @@ export const api = {
     if ('fitProfile' in patch) DB.analysis.fitProfile = clone(patch.fitProfile);
     // 사진 양 변경 시, 사용자가 콘티를 손대기 전이면 기본 콘티를 새 모드로 재구성 (PRD §7.7)
     if (modeChanged && !DB.storyboardDirty) {
-      DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors, {
+      const keepOpeningRow = hasOpeningRow(DB.storyboard);
+      const seeded = buildStoryboard(DB.project.composeMode, DB.product.colors, {
         projectId: DB.project.id,
         clothingType: DB.product.clothingType,
         targetGenders: DB.analysis.targetGenders,
       });
+      DB.storyboard = keepOpeningRow ? applyOpeningRow(seeded) : seeded;
     }
     return clone(DB.project);
   },
@@ -157,6 +167,19 @@ export const api = {
     await wait(120);
     return { id: uid('img'), src: URL.createObjectURL(file) };
   },
+  async uploadPhoto(
+    _projectId,
+    { filename, mime, blob, purpose = 'upload' },
+    { signal } = {},
+  ) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    await wait(40);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const assetId = uid('asset');
+    const url = URL.createObjectURL(blob);
+    customMatchUploads.set(assetId, { filename, mime, blob, purpose, url });
+    return { assetId, url };
+  },
 
   /* ---- AI analysis (PRD §6) — 30s-feel progress, can fail ---- */
   async analyzeProduct(_projectId, { onProgress, forceError = false } = {}) {
@@ -196,7 +219,11 @@ export const api = {
         return { ...m, selected: !!p.selected, selOrder: p.selected ? p.selOrder : undefined };
       });
       // selOrder 정규화 — 머지로 생길 수 있는 중복/초과를 1..matchClothingMax 로 재부여
-      const ranked = merged.filter((m) => m.selected)
+      const expectedType = getComplementaryMatchingType(DB.analysis.clothingType);
+      const ranked = merged.filter((m) => m.selected
+          && m.isCompatible !== false
+          && expectedType !== null
+          && (m.clothingType == null || m.clothingType === expectedType))
         .sort((a, b) => (a.selOrder || 99) - (b.selOrder || 99))
         .slice(0, LIMITS.matchClothingMax);
       const orderById = new Map(ranked.map((m, i) => [m.id, i + 1]));
@@ -220,6 +247,65 @@ export const api = {
   async getMatchClothing(/* projectId */) {
     await wait(120);
     return clone((DB.analysis?.matchClothing?.length ? DB.analysis.matchClothing : DB.matchClothing));
+  },
+  async addCustomMatchItem(_projectId, { assetIds }, { signal } = {}) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    if ((DB.analysis.matchClothing || []).some((item) => item.isCustom)) {
+      const error = new Error('이미 내 옷이 있어요. 지우고 다시 올려주세요.');
+      error.code = 'custom_match_item_exists';
+      error.status = 409;
+      throw error;
+    }
+    const uploads = (assetIds || []).map((id) => customMatchUploads.get(id)).filter(Boolean);
+    if (uploads.length !== assetIds.length || uploads.length < 1 || uploads.length > 4) {
+      const error = new Error('업로드한 사진을 찾을 수 없어요.');
+      error.code = 'not_found';
+      error.status = 404;
+      throw error;
+    }
+    await wait(120);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const expectedType = getComplementaryMatchingType(DB.analysis.clothingType);
+    const filename = uploads[0].filename?.toLowerCase() || '';
+    const filenameType = filename.includes('bottom') ? 'bottom' : filename.includes('top') ? 'top' : expectedType;
+    const clothingType = filenameType === expectedType ? filenameType : expectedType;
+    const category = clothingType === 'top' ? '티셔츠' : '팬츠';
+    const item = {
+      id: uid('custom'),
+      name: clothingType === 'top' ? '커스텀 상의' : '커스텀 하의',
+      thumb: uploads[0].url,
+      imageUrl: uploads[0].url,
+      thumbnailUrl: uploads[0].url,
+      gender: 'unisex',
+      clothingType,
+      category,
+      fit: 'regular',
+      length: clothingType === 'top' ? 'regular' : 'full',
+      fitCategory: clothingType === 'top' ? 'top' : 'pants',
+      isCustom: true,
+      isCompatible: true,
+      selected: false,
+    };
+    const result = addCustomMatchToAnalysis(DB.analysis, item);
+    DB.analysis.matchClothing = result.analysis.matchClothing;
+    return clone({ item: result.item, analysis: DB.analysis });
+  },
+  async removeCustomMatchItem(/* projectId */) {
+    await wait(80);
+    const analysis = removeCustomMatchFromAnalysis(DB.analysis);
+    DB.analysis.matchClothing = analysis.matchClothing;
+    if (analysis.fitProfile) DB.analysis.fitProfile = analysis.fitProfile;
+    return { analysis: clone(DB.analysis) };
+  },
+  async refreshMatchClothing(/* projectId */) {
+    DB.analysis.matchClothing = recommendLegacyMatchClothing({
+      clothingType: DB.analysis.clothingType,
+      targetGenders: DB.analysis.targetGenders,
+      styleTags: DB.analysis.styleTags,
+      current: DB.analysis.matchClothing,
+      defaultSelection: false,
+    });
+    return clone(DB.analysis);
   },
   async getMannequins(/* projectId */) {
     await wait(140);
