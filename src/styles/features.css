@@ -977,6 +977,49 @@
 
 /* document-flow bottom action bar */
 .sb-page { padding-bottom: 24px; }
+/* 로딩 중에도 실제 솔로 콘티와 같은 프레임을 먼저 잡는다. 모든 면은 흰색+hairline이며 shimmer가 없다. */
+.sb-loading-page { min-height: calc(100vh - 60px); }
+.sb-loading-count { min-height: 20px; }
+.sb-loading-count-mark { width: 54px; height: 18px; border: 1px solid var(--ring); border-radius: var(--r-pill); background: var(--bg-1); }
+.sb-loading-preview { box-shadow: var(--elev-card), 0 0 0 1px var(--ring); }
+.sb-loading-preview-head { width: 78px; height: 24px; border: 1px solid var(--ring); border-radius: var(--r-4); background: var(--bg-1); margin-bottom: 9px; }
+.sb-loading-preview-page { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; padding: 4px; border: 1px solid var(--ring); border-radius: var(--r-4); background: var(--bg-1); }
+.sb-loading-preview-page > span { aspect-ratio: 3 / 4; border: 1px solid var(--ring); border-radius: var(--r-3); background: var(--bg-1); }
+.sb-loading-board { display: flex; flex-direction: column; gap: 10px; box-shadow: var(--elev-card), 0 0 0 1px var(--ring); }
+.sb-loading-section { min-height: 130px; display: flex; align-items: center; gap: 18px; padding: 12px 14px; border: 1px solid var(--ring); border-radius: var(--r-5); background: var(--bg-1); }
+.sb-loading-section-media { width: 128px; height: 104px; flex: none; border: 1px solid var(--ring); border-radius: var(--r-5); background: var(--bg-1); }
+.sb-loading-section-copy { width: min(210px, 45%); height: 38px; border: 1px solid var(--ring); border-radius: var(--r-4); background: var(--bg-1); }
+.sb-loading-upload { height: 46px; margin-top: 14px; border: 1px solid var(--ring); border-radius: var(--r-5); background: var(--bg-1); }
+.sb-ab-inner.sb-loading-actions { background: var(--bg-1); box-shadow: var(--elev-card), 0 0 0 1px var(--ring); }
+.sb-loading-actions > span { display: block; height: 42px; border: 1px solid var(--ring); border-radius: var(--r-4); background: var(--bg-1); }
+.sb-loading-action-back { width: 72px; }
+.sb-loading-action-count { width: 148px; margin-left: auto; }
+.sb-loading-action-copy { width: 150px; }
+.sb-loading-action-go { width: 236px; }
+@media (max-width: 900px) { .sb-loading-action-count { display: none; } }
+@media (max-width: 640px) {
+  .sb-loading-actions { flex-wrap: wrap; }
+  .sb-loading-action-copy { margin-left: auto; }
+  .sb-loading-action-go { flex: 1 0 100%; width: auto; }
+}
+/* 제목은 로딩 프레임과 동일하게 유지하고, 데이터가 채워지는 콘티 영역만 짧고 얕게 스태거한다. */
+.fx-pagefade .sb-page.sb-content-enter > .sb-count-head,
+.fx-pagefade .sb-page.sb-content-enter > .storyboard-solo-layout,
+.fx-pagefade .sb-page.sb-content-enter > .storyboard-layout,
+.fx-pagefade .sb-page.sb-content-enter > .sb-actionbar {
+  animation: sbContentIn .38s cubic-bezier(.16, 1, .3, 1) both;
+}
+.fx-pagefade .sb-page.sb-content-enter > .sb-count-head { animation-delay: .06s; }
+.fx-pagefade .sb-page.sb-content-enter > .storyboard-solo-layout,
+.fx-pagefade .sb-page.sb-content-enter > .storyboard-layout { animation-delay: .12s; }
+.fx-pagefade .sb-page.sb-content-enter > .sb-actionbar { animation-delay: .18s; }
+@keyframes sbContentIn { from { opacity: 0; transform: translateY(10px); } }
+@media (prefers-reduced-motion: reduce) {
+  .fx-pagefade .sb-page.sb-content-enter > .sb-count-head,
+  .fx-pagefade .sb-page.sb-content-enter > .storyboard-solo-layout,
+  .fx-pagefade .sb-page.sb-content-enter > .storyboard-layout,
+  .fx-pagefade .sb-page.sb-content-enter > .sb-actionbar { animation: none; }
+}
 .sb-page.is-atomic-saving .sb-cards,
 .sb-page.is-atomic-saving .inspector,
 .sb-page.is-atomic-saving .sb-preview-rail,

@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
 import {
+  applyOpeningRow,
   hashSeed,
+  hasOpeningRow,
   normalizePlaceType,
   pickEntrySets,
   seededPick,
@@ -79,6 +81,23 @@ test('seeded boards round-trip as defaults and mode changes re-seed only the mat
     ? { ...block, setSelectionOrigin: 'user' }
     : block);
   assert.equal(isDefaultStoryboardForMode(relabeled, baseColors, 'basic', seedContext), true);
+});
+
+test('entry placement combines the untouched opening seed into one medium two-column row', () => {
+  const seeded = defaultStoryboard(baseColors, 'basic', context('opening-row'));
+  assert.deepEqual(seeded.slice(0, 2).map((block) => block.shot), ['full', 'medium']);
+
+  const placed = applyOpeningRow(seeded);
+  const [hero, benefit] = placed;
+  assert.equal(hasOpeningRow(placed), true);
+  assert.deepEqual([hero.shot, benefit.shot], ['medium', 'medium']);
+  assert.equal(hero.sectionId, benefit.sectionId);
+  assert.equal(hero.sectionLayout, 'twoColumn');
+  assert.equal(benefit.sectionLayout, 'twoColumn');
+  assert.equal(hero.layoutRowId, benefit.layoutRowId);
+  assert.equal(hero.layoutRowVersion, 1);
+  assert.equal(benefit.layoutRowVersion, 1);
+  assert.equal(isDefaultStoryboardForMode(placed, baseColors, 'basic', context('opening-row')), true);
 });
 
 test('styling sets use distinct normalized place types in basic and extended modes', () => {

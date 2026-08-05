@@ -19,6 +19,7 @@ import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import { defaultStoryboard } from '@/lib/api/shapes.js';
+import { applyOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { ensureSections, rowSizeFor } from '@/lib/sections.js';
@@ -291,9 +292,21 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const n = chunk.length;
     const w = Math.floor((880 - (n - 1) * 20) / n);
     const els = chunk.map((rb, c) => IMG(60 + c * (w + 20), 50, w, 500, generatedImageFor(rb, w, 500), 12, rb.cutType || undefined));
+    const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
+    if (copywriting && hero) {
+      els.push(T(60, 582, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
+        size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14',
+      }));
+      const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
+      if (subtitle) {
+        els.push(T(60, 650, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
+          size: 18, color: '#6b6b73',
+        }));
+      }
+    }
     blocks.push({
       id: uid('b'), name: rowLayout.name, kind: rowLayout.kind,
-      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', h: 600, elements: els,
+      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', elements: els,
     });
   };
 
@@ -422,11 +435,11 @@ function buildDraft() {
   const mannequins = [];
 
   /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004) ---- */
-  const storyboard = buildStoryboard(project.composeMode, product.colors, {
+  const storyboard = applyOpeningRow(buildStoryboard(project.composeMode, product.colors, {
     projectId: project.id,
     clothingType: product.clothingType,
     targetGenders: analysis.targetGenders,
-  });
+  }));
 
   /* ---- Editor blocks: 5 prefilled demo + auto info blocks (PRD §10.14) ----
      (직접 /editor 진입용 데모. 생성 플로우는 generateDetailPage 가

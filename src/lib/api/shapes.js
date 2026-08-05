@@ -26,7 +26,7 @@ import { ensureSections } from '../sections.js';
 import { exampleSelectionFingerprintFields } from '../generationExamples.js';
 import { genderForClothingType } from '../productGender.js';
 import { spaceSetGroupId } from '../storyboardSpaceSetCatalog.js';
-import { pickEntrySets } from '../storyboardEntryPlacement.js';
+import { applyOpeningRow, pickEntrySets } from '../storyboardEntryPlacement.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
@@ -249,8 +249,10 @@ export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
   if (!Array.isArray(blocks) || !blocks.length) return false;
   // v2 계약을 충족하지 않는 보드는 기본 시드로 간주해 교체하지 않는다.
   if (blocks.some((block) => block.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION)) return false;
-  return storyboardTemplateFingerprint(blocks)
-    === storyboardTemplateFingerprint(defaultStoryboard(colors, mode, product));
+  const seeded = defaultStoryboard(colors, mode, product);
+  const fingerprint = storyboardTemplateFingerprint(blocks);
+  return fingerprint === storyboardTemplateFingerprint(seeded)
+    || fingerprint === storyboardTemplateFingerprint(applyOpeningRow(seeded));
 }
 
 // analyzeProduct 의 shape 뼈대 — AnalysisForm 이 무가드로 읽는 필드 전부 포함(계약 §6).

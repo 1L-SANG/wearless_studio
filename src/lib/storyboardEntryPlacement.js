@@ -1,5 +1,48 @@
 import { storyboardSpaceSetsFor } from './storyboardSpaceSetCatalog.js';
 
+const OPENING_LAYOUT = 'twoColumn';
+
+function isOpeningPair(first, second) {
+  return first?.source !== 'mine'
+    && second?.source !== 'mine'
+    && first?.sectionRole === 'benefit'
+    && second?.sectionRole === 'benefit'
+    && first?.contentRole === 'hero'
+    && second?.contentRole === 'benefit'
+    && first?.sectionId
+    && first.sectionId === second.sectionId;
+}
+
+// 신규 콘티의 진입 배치 단계에서만 호출한다. 기본 시드 빌더는 그대로 두고,
+// 오프닝 두 낱장을 기존 영속 행 계약(section/layout/row id)에 맞춰 한 행으로 묶는다.
+export function applyOpeningRow(blocks) {
+  if (!Array.isArray(blocks) || !isOpeningPair(blocks[0], blocks[1])) return blocks;
+  const first = blocks[0];
+  const second = blocks[1];
+  const layoutRowId = first.layoutRowId && first.layoutRowId === second.layoutRowId
+    ? first.layoutRowId
+    : `row__opening__${first.sectionId}`;
+  const opening = [first, second].map((block) => ({
+    ...block,
+    shot: 'medium',
+    sectionLayout: OPENING_LAYOUT,
+    layoutRowId,
+    layoutRowVersion: 1,
+  }));
+  return [...opening, ...blocks.slice(2)];
+}
+
+export function hasOpeningRow(blocks) {
+  const [first, second] = blocks || [];
+  return isOpeningPair(first, second)
+    && first.shot === 'medium'
+    && second.shot === 'medium'
+    && first.sectionLayout === OPENING_LAYOUT
+    && second.sectionLayout === OPENING_LAYOUT
+    && first.layoutRowId
+    && first.layoutRowId === second.layoutRowId;
+}
+
 const PLACE_TYPE_GROUPS = {
   cafe: ['cafe', 'mixed-cafe', 'cafe-garden-entrance'],
   home: ['home/living', 'living', 'indoor-home', 'bright-lived-in-home', 'bright-interior'],
