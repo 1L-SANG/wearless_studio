@@ -69,13 +69,13 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
 
 ### PL-4 상세페이지 생성 — `generateDetailPage(projectId)` ★핵심
 
-입력은 전부 서버 상태에서 읽는다: 저장된 `storyboard` + `project(copywriting, selectedMannequinId)` + `product`/`analysis`. 클라이언트가 들고 있는 값을 믿지 않는다 (frontend_state_model §5). 워커는 생성 전에 콘티를 `taxonomyVersion: 2`로 정규화하며, `contentRole`을 우선하고 예전 `kind`·`cutType`은 빠진 역할을 복원할 때만 읽는다.
+입력은 전부 서버 상태에서 읽는다: 저장된 `storyboard` + `project(copywriting, selectedMannequinId)` + `product`/`analysis`. 클라이언트가 들고 있는 값을 믿지 않는다 (frontend_state_model §5). 워커는 생성 전에 콘티를 `taxonomyVersion: 2`로 정규화하며, `contentRole`을 우선하고 예전 `kind`·`cutType`은 빠진 역할을 복원할 때만 읽는다. `selectedMannequinId`의 마네킹컷은 기준색으로 만든 자산이므로 기준색 착용컷에만 첨부하고, 다른 색을 고른 블록은 그 색상의 셀러 상품 사진을 색상 정본으로 쓴다.
 
 ```
 info     상품·분석·콘티 데이터 수집/검증 (비AI)
-prep     블록별 프롬프트·에셋 준비, selectedMannequinId 컷 + 가상모델 face_front·세드카드 그리드·body_front 로드 (비AI, 모델 레퍼런스 계약은 ai_agent_modules §3 AG-06)
-cuts     AG-06 cut-generator — source='ai' 블록별 1콜. 워커는 각 블록의 내부
-         cutType(styling/horizon/product/mirror)으로 생성 방법을 정하고 병렬 처리한다.
+prep     블록별 프롬프트·에셋 준비, selectedMannequinId 컷 + 가상모델 face_front·body_front 원자 쌍 로드 (비AI, 모델 레퍼런스 계약은 ai_agent_modules §3 AG-06)
+cuts     AG-06 cut-generator — source='ai' 블록별 1콜. 워커는 styling/horizon/product
+         세 계열로 컴파일하고, mirror는 styling의 mirrorSelfie 하위 방식으로 병렬 처리한다.
          source='mine' 블록은 ownImages 그대로(에이전트 호출 없음).
 copy     copywriting=true면: 카피 대상 블록별 AG-02 → 묶음 AG-03 검수(revise 채택)
 assemble M-02 page-assembler — 컷+카피+실측 → EditorBlock[] + 자동 블록 3종 (비AI)
@@ -92,7 +92,7 @@ done     project.status='done' · { data: EditorBlock[], credits }
   plate를 함께 사용한다. 임의 그룹 값은 거부한다. 현재 운영 R2에는 개별
   생성예시와 `space-sets-20260730-v1` 촬영 세트가 발행돼 있다.
 - **멱등**: status='generating' 재호출 → 합류, status='done' 재호출 → 기존 결과 반환 (계약 §6).
-- [P1 훅] AG-P2 image-qc 게이트 (styling/horizon/product/mirror 각 AG-06 컷 출력 직후, correctionPrompt 주입 재시도; 상한 초과 실패 컷은 부분 실패 정책으로 빈 슬롯).
+- **독립 이미지 QC**: AG-06 각 컷 뒤 `CUT_OUTPUT_QC_MODE=shadow`이면 상품 동일성(텍스트·로고 포함), 사용자 의도, 인체·원근, 광원·그림자·주름을 독립 판정해 metadata에 저장한다. 모든 컷 뒤 `PAGE_OUTPUT_QC_MODE=shadow`이면 같은 SKU·색상·모델·매칭·이너와 세트별 공간 연속성을 검사한다. 둘 다 기본값은 `off`이며 현재는 생성·저장·과금·재시도에 영향을 주지 않는다. 자동 교정 재시도와 HOLD는 골든셋 보정 뒤 별도 enforce 단계에서 연다.
 
 ### PL-5 / PL-6 에디터 새 이미지·현재 이미지 수정 — `generateImage(projectId, req)`
 
@@ -103,7 +103,7 @@ PL-6 (mode:'vary'): VaryRequest 검증 → AG-07 1콜 → WardrobeImage('misc' �
 - 단건 job(수 초). 동시 다발 호출 허용 — 에디터 UI가 로딩 셀·busy 점으로 표현(기존 동작).
 - 원본 이미지는 항상 보존, 결과는 의류 탭에 추가 (PRD §10.8).
 - `mode:'new'`의 생성예시는 PL-4와 같은 레지스트리 v2 적용성·발행 variant 검증과 범위별 원본 첨부 규칙을 사용한다. 부적합/미발행 예시는 해당 참고만 생략하고 job metadata에 경고를 남긴다.
-- [P1 훅] AG-P2 image-qc 게이트 (AG-06/AG-07 출력 직후, correctionPrompt 주입 재시도).
+- `mode:'new'`의 AG-06 결과는 PL-4와 같은 독립 컷 QC를 `shadow`로 실행할 수 있다. `mode:'vary'`(AG-07)는 아직 새 QC 범위 밖이다. shadow 판정은 결과를 차단하거나 재생성하지 않는다.
 
 ---
 
@@ -161,6 +161,6 @@ PIPELINE_CUT_CONCURRENCY=3                          # PL-4 그룹 내 병렬 상
 
 1. **모델 배정은 잠정** — tier별 비용·품질 로그(모듈 정의서 §6-5)를 근거로 재배정. 특히 내부 `product` 레시피와 변형 작업의 Pro 유지 여부.
 2. **환불·재시도 정책 미정** (PRD §12.2) — 차감 후 실패 보상, 품질 불만 재생성 정책.
-3. **이미지 동일성 검수** — QC Phase 1(Pillow 픽셀·고스트/크롭 휴리스틱)은 **라이브이나 SHADOW 모드**(게이트 미적용 — 실패해도 차단하지 않음). AG-P2 의미적 동일성 검수(이미지가 입력 상품과 같은 옷인지 판정)는 **설계만, 미구현** — 훅 위치(AG-04/05/06/07 출력 직후), retry 시 correctionPrompt 주입 루프(ai_agent_modules §5). 판정 기준·재시도 상한·크레딧 정책 설계 후 P1 투입.
+3. **이미지 동일성 검수** — AG-06 컷 단위와 상세페이지/공간 세트 단위 독립 비전 QC는 `off|shadow`로 구현됐다. 상품 색·구조·소재·무늬·부자재·텍스트·로고, 모델, 사용자 방향·샷·포즈, 인체·원근·광원·그림자·주름을 판정한다. 아직 실제 좋은/나쁜 골든셋 보정과 오탐률 측정 전이므로 기본 `off`이고, shadow도 실패를 차단하지 않는다. 남은 일은 실데이터 보정 후 enforce·교정 재시도·HOLD·크레딧 정책을 확정하는 것이다(ADR-0010).
 4. **기본형·확장형 생성 품질 검증** — composeMode별 콘티 시드는 구현됐다. 남은 검증은 상의·하의·아우터·원피스 각 10상품에서 기본형과 확장형이 같은 세 섹션을 유지하면서 필요한 사진 수와 다양성을 만드는지 확인하는 것이다.
 5. **분위기 예시 시드** — 운영자 데이터 입력 예정(에이전트 아님). 시드 스키마는 `MatchingItem` 패턴(구조적 에셋 경로)을 따른다.

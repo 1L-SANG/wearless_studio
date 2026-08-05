@@ -316,14 +316,15 @@ def test_gen_cuts_detail_requires_loaded_detail_manifest(monkeypatch):
     manifest = dpj.cut_generator.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0)
 
-    cut_results, cut_assets, face_cuts, garment_qcs, warnings = asyncio.run(dpj._gen_cuts(
+    (cut_results, cut_assets, face_cuts, garment_qcs,
+     cut_qcs, page_qc, warnings) = asyncio.run(dpj._gen_cuts(
         app, _job(reserved=1), [(spec, images, manifest, False, images)],
         {"name": "니트", "clothingType": "top"}, {},
     ))
 
     assert app.state.gemini.calls == 0
     assert cut_results == [] and cut_assets == [] and face_cuts == 0
-    assert garment_qcs == [] and warnings == []
+    assert garment_qcs == [] and cut_qcs == [] and page_qc is None and warnings == []
 
 
 def test_gen_cuts_detail_reaches_gemini_with_loaded_detail_manifest(monkeypatch):
@@ -343,7 +344,8 @@ def test_gen_cuts_detail_reaches_gemini_with_loaded_detail_manifest(monkeypatch)
         has_mannequin=False, has_match=False, mood_count=0,
     )
 
-    cut_results, cut_assets, face_cuts, garment_qcs, warnings = asyncio.run(dpj._gen_cuts(
+    (cut_results, cut_assets, face_cuts, garment_qcs,
+     cut_qcs, page_qc, warnings) = asyncio.run(dpj._gen_cuts(
         app, _job(reserved=1), [(spec, images, manifest, False, images)],
         {"name": "니트", "clothingType": "top"}, {},
     ))
@@ -351,7 +353,7 @@ def test_gen_cuts_detail_reaches_gemini_with_loaded_detail_manifest(monkeypatch)
     assert app.state.gemini.calls == 1
     assert len(cut_results) == len(cut_assets) == 1
     assert face_cuts == 0
-    assert garment_qcs == [] and warnings == []
+    assert garment_qcs == [] and cut_qcs == [] and page_qc is None and warnings == []
 
 
 def test_run_detail_page_job_partial_success(monkeypatch):
@@ -1003,12 +1005,12 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
 
-    def fake_model_refs(spec):
+    def fake_model_refs(spec, *, require_full_body=False):
         if spec["cutType"] == "product":
             return None
+        assert require_full_body is True
         return (
             {"key": "seed/models/mB/face_front.webp", "mime": "image/webp"},
-            {"key": "seed/models/mB/grid_sedcard.png", "mime": "image/jpeg"},
             {"key": "seed/models/mB/body_front.png", "mime": "image/jpeg"},
         )
 
@@ -1046,15 +1048,14 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
 
     assert captured["person"]["spec"]["modelId"] == "mB"
     assert captured["person"]["data"] == [
-        "k/man", "seed/models/mB/face_front.webp", "seed/models/mB/grid_sedcard.png",
+        "k/man", "seed/models/mB/face_front.webp",
         "seed/models/mB/body_front.png", "k/a1",
     ]
     assert captured["person"]["manifest"].splitlines()[0].startswith("1. PRODUCT — the garment worn")
-    assert captured["person"]["manifest"].splitlines()[1].startswith("2. MODEL — frontal close-up")
-    assert captured["person"]["manifest"].splitlines()[2].startswith("3. MODEL SHEET — a 2x2 grid")
-    assert captured["person"]["manifest"].splitlines()[3].startswith("4. MODEL BODY — full-body frontal")
-    assert captured["person"]["manifest"].splitlines()[4] == "5. PRODUCT — front view of the garment"
-    assert captured["product"]["data"] == ["k/man", "k/a1"]
+    assert captured["person"]["manifest"].splitlines()[1].startswith("2. MODEL FACE —")
+    assert captured["person"]["manifest"].splitlines()[2].startswith("3. MODEL FULL BODY —")
+    assert captured["person"]["manifest"].splitlines()[3] == "4. PRODUCT — front view of the garment"
+    assert captured["product"]["data"] == ["k/a1"]
     assert "MODEL" not in captured["product"]["manifest"]
     assert captured["assembled_storyboard"] is not storyboard
     assert [block["id"] for block in captured["assembled_storyboard"]] == ["person", "product"]
@@ -1321,7 +1322,8 @@ def test_detail_passthrough_ships_the_sellers_original_without_generating(monkey
     images = [dpj.InlineImage("image/png", b"front")]
     original = {"id": "asset-detail-1", "width": 3000, "height": 4000, "slot": "Detail"}
 
-    cut_results, cut_assets, face_cuts, garment_qcs, warnings = asyncio.run(dpj._gen_cuts(
+    (cut_results, cut_assets, face_cuts, garment_qcs,
+     cut_qcs, page_qc, warnings) = asyncio.run(dpj._gen_cuts(
         app, _job(reserved=1),
         [(spec, images, "manifest", False, images, None, False, original)],
         {"name": "스트라이프 셔츠", "clothingType": "top"}, {},
@@ -1334,4 +1336,5 @@ def test_detail_passthrough_ships_the_sellers_original_without_generating(monkey
         "width": 3000, "height": 4000,
     }]
     assert cut_assets == [], "새 asset 을 만들지 않는다 — 과금 단위에 들어가면 안 된다"
-    assert face_cuts == 0 and garment_qcs == [] and warnings == []
+    assert face_cuts == 0 and garment_qcs == [] and cut_qcs == []
+    assert page_qc is None and warnings == []

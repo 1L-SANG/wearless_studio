@@ -845,12 +845,12 @@ def test_run_editor_image_job_new_attaches_c_model_pack_and_excludes_product(mon
     async def fake_get_analysis(conn, pid):
         return {}
 
-    def fake_model_refs(spec):
+    def fake_model_refs(spec, *, require_full_body=False):
         if spec["cutType"] == "product":
             return None
+        assert require_full_body is True
         return (
             {"key": "seed/models/mA/face_front.webp", "mime": "image/webp"},
-            {"key": "seed/models/mA/grid_sedcard.png", "mime": "image/jpeg"},
             {"key": "seed/models/mA/body_front.png", "mime": "image/jpeg"},
         )
 
@@ -886,18 +886,15 @@ def test_run_editor_image_job_new_attaches_c_model_pack_and_excludes_product(mon
 
     assert captured[0]["spec"]["modelId"] == "mA"
     assert captured[0]["data"] == [
-        "seed/models/mA/face_front.webp", "seed/models/mA/grid_sedcard.png",
-        "seed/models/mA/body_front.png", "k/a1",
+        "seed/models/mA/face_front.webp", "seed/models/mA/body_front.png", "k/a1",
     ]
-    assert captured[0]["manifest"].splitlines()[0].startswith("1. MODEL — frontal close-up")
-    assert captured[0]["manifest"].splitlines()[1].startswith("2. MODEL SHEET — a 2x2 grid")
-    assert captured[0]["manifest"].splitlines()[2].startswith("3. MODEL BODY — full-body frontal")
-    assert captured[0]["manifest"].splitlines()[3] == "4. PRODUCT — front view of the garment"
+    assert captured[0]["manifest"].splitlines()[0].startswith("1. MODEL FACE —")
+    assert captured[0]["manifest"].splitlines()[1].startswith("2. MODEL FULL BODY —")
+    assert captured[0]["manifest"].splitlines()[2] == "3. PRODUCT — front view of the garment"
     assert captured[1]["data"] == ["k/a1"]
     assert "MODEL" not in captured[1]["manifest"]
     assert r2.reads == [
-        "seed/models/mA/face_front.webp", "seed/models/mA/grid_sedcard.png",
-        "seed/models/mA/body_front.png", "k/a1", "k/a1",
+        "seed/models/mA/face_front.webp", "seed/models/mA/body_front.png", "k/a1", "k/a1",
     ]
 
 

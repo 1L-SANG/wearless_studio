@@ -103,6 +103,10 @@ class Settings:
     # bestof=불일치 시 원본 입력에서 후보를 더 생성해 첫 pass 또는 picker 최선을 채택.
     garment_qc_mode: str = "bestof"  # off | shadow | bestof
     garment_qc_extra_candidates: int = 2
+    # 최종 컷·페이지 독립 QC v1. 먼저 shadow로 실제 통과/실패 표본을 보정한 뒤에만
+    # 출고 차단 모드를 별도 결정한다. 현재 허용값은 off | shadow이며 기본 off라 추가 비용 0.
+    cut_output_qc_mode: str = "off"  # off | shadow
+    page_output_qc_mode: str = "off"  # off | shadow
     # P1 축 인지 QC(선언 핏 축 반영 판정 + 실패 시 편집 교정 1회 — fidelity §G·§H).
     # off | shadow(판정·이벤트만) | enforce(편집 재시도 발화). enforce는 코드 레벨 가드
     # (_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY)가 풀리기 전까지 shadow로 강등(G9 규율).
@@ -313,6 +317,8 @@ def load_settings() -> Settings:
         garment_qc_mode=_flag(
             "GARMENT_QC_MODE", "bestof", {"off", "shadow", "bestof"}),
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),
+        cut_output_qc_mode=_flag("CUT_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
+        page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
         detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),

@@ -510,6 +510,9 @@ def test_virtual_model_loader_resolves_c_pack_and_excludes_product(tmp_path, mon
         assert cut.resolve_virtual_model_assets(person) == (
             {"key": "seed/mA/face.webp", "mime": "image/webp", "bucket": "public"},
             {"key": "seed/mA/grid.png", "mime": "image/jpeg", "bucket": "public"},
+        )
+        assert cut.resolve_virtual_model_assets(person, require_full_body=True) == (
+            {"key": "seed/mA/face.webp", "mime": "image/webp", "bucket": "public"},
             {"key": "seed/mA/body.png", "mime": "image/jpeg", "bucket": "public"},
         )
         product = cut.normalize_spec({"cutType": "product", "modelId": "mA"})
@@ -653,6 +656,7 @@ def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path
                 "applicableClothingTypes": ["top", "outer"],
                 "cutType": "styling", "shot": "full", "gender": "women",
                 "direction": "side",
+                "faceVisibility": "hidden",
             },
             "product": {
                 "all": "releases/r1/all/product.png",
@@ -675,6 +679,7 @@ def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path
         assert assets["v2"]["applicableClothingTypes"] == ["top", "outer"]
         assert assets["v2"]["thumb"].endswith("v2.webp")
         assert assets["v2"]["direction"] == "side"
+        assert assets["v2"]["faceVisibility"] == "hidden"
         assert "direction" in assets["product"] and assets["product"]["direction"] is None
         assert "gender" in assets["product"] and assets["product"]["gender"] is None
         assert assets["legacy-string"] == {"all": "legacy/all.png"}

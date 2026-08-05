@@ -195,6 +195,7 @@ def test_rejected_falls_back_to_virtual_model_pack_for_consistency(monkeypatch):
 
     assert face_r2.gets == []                       # 무라이선스 실 얼굴 미사용(컴플라이언스)
     assert captured["license_notice"] is None       # 검증 배지 없음(실 얼굴 아님)
-    # 착용컷 b1: 상품 1장 + mB 모델 기준 3장 = 4 (참조 0장 → 랜덤을 막는 결정적 인물·체형)
-    assert captured["calls"] and captured["calls"][0]["n_images"] == 4
-    assert "MODEL BODY —" in captured["calls"][0]["manifest"]
+    # 착용컷 b1: 상품 1장 + mB 얼굴·전신 기준 2장 = 3
+    # (참조 0장 → 랜덤을 막는 결정적 인물·체형)
+    assert captured["calls"] and captured["calls"][0]["n_images"] == 3
+    assert "MODEL FULL BODY —" in captured["calls"][0]["manifest"]

@@ -95,9 +95,10 @@ def main() -> None:
     manifest: dict = {
         "_meta": {
             "description": (
-                "Virtual model identity assets. Contract: ai_agent_modules §3 AG-06 — "
-                "face_front(원본 앵커) + grid_sedcard(v2 2x2 통짜) + "
-                "body_front(체형 기준) 기본 첨부, 나머지 시트 3뷰는 QC 폴백 전용."
+                "Virtual model identity assets. Worn-cut contract: face_front "
+                "(facial identity only) + body_front (full-body proportions only) as one "
+                "atomic pair. grid_sedcard remains a legacy face-continuity/QC asset and "
+                "is never body authority."
             ),
             "source": "spike facepack v2 + public/models 원본 앵커",
         },

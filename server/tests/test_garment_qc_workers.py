@@ -258,7 +258,7 @@ def test_detail_worker_garment_bestof_modes(
         picked=picked,
         picker_error=picker_error,
     )
-    cut_results, _assets, _faces, garment_qcs, warnings = result
+    cut_results, _assets, _faces, garment_qcs, cut_qcs, page_qc, warnings = result
 
     assert len(cut_results) == 1
     assert len(generated_inputs) == generate_count
@@ -267,6 +267,8 @@ def test_detail_worker_garment_bestof_modes(
     assert calls["verdict"] == len(verdicts)
     assert calls["picker"] == (1 if mode == "bestof" and verdicts and all(
         verdict == "retry" for verdict in verdicts) else 0)
+    assert cut_qcs == []
+    assert page_qc is None
     if mode == "off":
         assert garment_qcs == []
     else:
@@ -361,7 +363,7 @@ def test_bg_scene_rejected_extra_candidate_never_reaches_garment_or_picker_pool(
     ]
     assert r2.saved[-1][0] == b"IMG1"
     if worker == "detail":
-        warnings = output[4]
+        warnings = output[6]
     else:
         warnings = output["metadata"]["warnings"]
     assert any(warning["code"] == "garment_qc_candidate_generation_failed"
@@ -375,12 +377,14 @@ def test_detail_mannequin_only_fails_open_without_self_comparison(monkeypatch):
         verdicts=[],
         product_reference=False,
     )
-    _cuts, _assets, _faces, garment_qcs, warnings = result
+    _cuts, _assets, _faces, garment_qcs, cut_qcs, page_qc, warnings = result
 
     assert generated_inputs == [[b"MANNEQUIN"]]
     assert calls == {"verdict": 0, "picker": 0}
     assert r2.saved[-1][0] == b"IMG1"
     assert garment_qcs == []
+    assert cut_qcs == []
+    assert page_qc is None
     assert [warning["code"] for warning in warnings] == [
         "garment_qc_product_reference_unavailable",
     ]
