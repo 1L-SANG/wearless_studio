@@ -1,12 +1,17 @@
-import { storyboardSpaceSetsFor } from './storyboardSpaceSetCatalog.js';
+import {
+  spaceSetIdFromGroupId,
+  storyboardSpaceSetById,
+  storyboardSpaceSetsFor,
+} from './storyboardSpaceSetCatalog.js';
+import { SECTION_ROLES } from './storyboardTaxonomy.js';
 
 const OPENING_LAYOUT = 'twoColumn';
 
 function isOpeningPair(first, second) {
   return first?.source !== 'mine'
     && second?.source !== 'mine'
-    && first?.sectionRole === 'benefit'
-    && second?.sectionRole === 'benefit'
+    && first?.sectionRole === SECTION_ROLES.HOOKING
+    && second?.sectionRole === SECTION_ROLES.HOOKING
     && first?.contentRole === 'hero'
     && second?.contentRole === 'benefit'
     && first?.sectionId
@@ -126,6 +131,70 @@ export function normalizePlaceType(raw, setType) {
   return NORMALIZED_PLACE_TYPES.get(raw) || raw;
 }
 
+export function hasFullAndMediumMembers(set) {
+  return !!set?.members?.some((member) => member.shot === 'full')
+    && set.members.some((member) => member.shot === 'medium');
+}
+
+export function entryStylingMembers(set) {
+  const ordered = [...(set?.members || [])].sort((left, right) => left.order - right.order);
+  if (ordered.length <= 2) return ordered;
+
+  if (hasFullAndMediumMembers(set)) {
+    const full = ordered.find((member) => member.shot === 'full');
+    const medium = ordered.find((member) => member.shot === 'medium');
+    return ordered.filter((member) => member === full || member === medium);
+  }
+
+  for (let left = 0; left < ordered.length - 1; left += 1) {
+    const right = ordered.findIndex((member, index) => (
+      index > left && member.direction !== ordered[left].direction
+    ));
+    if (right >= 0) return [ordered[left], ordered[right]];
+  }
+  return ordered.slice(0, 2);
+}
+
+/* 2컷 진입 규칙이 도입되기 전에 mock 메모리에 만들어진 자동 스타일링 세트는
+   Vite HMR 뒤에도 3멤버 그대로 남는다. 사용자가 고른 세트/멤버는 건드리지 않고,
+   발행 카탈로그와 정확히 일치하는 자동 run만 현재 진입 멤버로 축소한다. */
+export function migrateLegacyEntryStylingRuns(blocks) {
+  if (!Array.isArray(blocks) || blocks.length === 0) return { blocks, changed: false };
+  const next = [];
+  let changed = false;
+
+  for (let index = 0; index < blocks.length;) {
+    const groupId = blocks[index]?.spaceGroupId;
+    if (!groupId) {
+      next.push(blocks[index]);
+      index += 1;
+      continue;
+    }
+    let end = index + 1;
+    while (end < blocks.length && blocks[end]?.spaceGroupId === groupId) end += 1;
+    const run = blocks.slice(index, end);
+    const set = storyboardSpaceSetById(spaceSetIdFromGroupId(groupId));
+    const expected = set?.setType === 'styling' ? entryStylingMembers(set) : null;
+    const catalogOrders = new Set((set?.members || []).map((member) => member.order));
+    const isUntouchedLegacyRun = expected
+      && run.length > expected.length
+      && run.every((block) => (
+        block.setSelectionOrigin === 'auto'
+        && block.exampleSelectionOrigin === 'auto'
+        && catalogOrders.has(block.spaceSetMemberOrder)
+      ));
+    if (isUntouchedLegacyRun) {
+      const expectedOrders = new Set(expected.map((member) => member.order));
+      next.push(...run.filter((block) => expectedOrders.has(block.spaceSetMemberOrder)));
+      changed = true;
+    } else {
+      next.push(...run);
+    }
+    index = end;
+  }
+  return { blocks: changed ? next : blocks, changed };
+}
+
 export function pickEntrySets({
   gender,
   clothingType,
@@ -145,7 +214,9 @@ export function pickEntrySets({
       !selectedIds.has(set.id)
       && !selectedPlaces.has(normalizePlaceType(set.placeType, set.setType))
     ));
-    const selected = seededPick(candidates, `${seedProjectId}:entry:styling:${index}`);
+    const preferred = candidates.filter(hasFullAndMediumMembers);
+    const selectionPool = preferred.length ? preferred : candidates;
+    const selected = seededPick(selectionPool, `${seedProjectId}:entry:styling:${index}`);
     stylingSets.push(selected);
     if (selected) {
       selectedIds.add(selected.id);

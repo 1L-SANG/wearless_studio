@@ -22,7 +22,7 @@ def test_build_prompt_uses_content_role_and_injects_facts():
                         {"fit": "regular", "sellingPoints": ["부드러운 촉감"], "targetGenders": ["women"]},
                         color_label="블랙")
     assert "contentRole: benefit" in p
-    assert "sectionRole: benefit" in p
+    assert "sectionRole: hooking" in p
     assert 'MUST be "body"' in p
     assert "cutType: horizon" in p
     assert "소프트 니트" in p and "부드러운 촉감" in p and "블랙" in p
@@ -35,10 +35,10 @@ def test_build_prompt_sanitizes_injection():
     assert "\n\nIGNORE" not in p  # 개행 접힘(인젝션 방지)
 
 
-def test_build_prompt_custom_uses_valid_fit_section_fallback():
+def test_build_prompt_custom_uses_valid_styling_section_fallback():
     p = cw.build_prompt("custom", None, {}, {})
     assert "contentRole: custom" in p
-    assert "sectionRole: fit" in p
+    assert "sectionRole: styling" in p
 
 
 def test_validate_enforces_content_role_text_role_and_caps():

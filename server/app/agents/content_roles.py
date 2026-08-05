@@ -16,7 +16,8 @@ CONTENT_ROLES = (
     "detail",
     "custom",
 )
-SECTION_ROLES = ("benefit", "fit", "product")
+SECTION_ROLES = ("hooking", "styling", "studio", "product")
+_LEGACY_SECTION_ROLES = ("benefit", "fit")
 
 CONTENT_ROLE_NAMES = {
     "hero": "첫 장면",
@@ -30,11 +31,11 @@ CONTENT_ROLE_NAMES = {
 }
 
 _CONTENT_ROLE_TO_SECTION_ROLE = {
-    "hero": "benefit",
-    "benefit": "benefit",
-    "coordination": "fit",
-    "fit": "fit",
-    "realWear": "fit",
+    "hero": "hooking",
+    "benefit": "hooking",
+    "coordination": "styling",
+    "fit": "studio",
+    "realWear": "styling",
     "productOverview": "product",
     "detail": "product",
 }
@@ -138,10 +139,19 @@ def resolve_section_role(block: dict | None, content_role: str | None = None) ->
     role = block.get("sectionRole") or block.get("section_role")
     if role in SECTION_ROLES:
         return role
+    if role == "benefit":
+        return "hooking"
+    if role == "fit":
+        return "studio" if (
+            (block.get("cutType") or block.get("cut_type")) == "horizon"
+            or (content_role or block.get("contentRole") or block.get("content_role")) == "fit"
+        ) else "styling"
     # EditorBlock stores the same section-role value in kind.
     kind = block.get("kind")
     if kind in SECTION_ROLES:
         return kind
+    if kind in _LEGACY_SECTION_ROLES:
+        return resolve_section_role({**block, "sectionRole": kind}, content_role)
     inferred = _CONTENT_ROLE_TO_SECTION_ROLE.get(content_role or resolve_content_role(block))
     if inferred:
         return inferred
@@ -162,9 +172,9 @@ def canonicalize_storyboard_block(block: dict, *, for_storage: bool = False) -> 
         return block
 
     out = dict(block)
-    # taxonomy v2가 정규화 결과의 정본이다. StoryboardBlock 저장 shape에는
+    # taxonomy v3가 정규화 결과의 정본이다. StoryboardBlock 저장 shape에는
     # kind가 없으며, 비저장 경로에서도 EditorBlock의 sectionRole 동치만 남긴다.
-    out["taxonomyVersion"] = 2
+    out["taxonomyVersion"] = 3
     out.pop("taxonomy_version", None)
     if for_storage or out.get("kind") not in SECTION_ROLES:
         out.pop("kind", None)
@@ -248,18 +258,23 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
     Python's sort is stable, so the user's order inside each section is kept.
     Custom blocks without a section inherit their neighboring section;
     malformed non-dictionary entries remain at the end. The first AI image in
-    the benefit section is the only ``hero``; later hero values are demoted to
+    the hooking section is the only ``hero``; later hero values are demoted to
     ``benefit``. AI custom/missing roles use the section's safe default.
     """
-    defaults = {"benefit": "hero", "fit": "coordination", "product": "productOverview"}
+    defaults = {
+        "hooking": "hero",
+        "styling": "coordination",
+        "studio": "fit",
+        "product": "productOverview",
+    }
 
     def canonicalize_for_storyboard(block):
         if not isinstance(block, dict):
             return block
         candidate = dict(block)
         declared_section = candidate.get("sectionRole") or candidate.get("section_role")
-        if declared_section not in SECTION_ROLES and candidate.get("kind") in SECTION_ROLES:
-            declared_section = candidate["kind"]
+        if declared_section not in SECTION_ROLES:
+            declared_section = resolve_section_role(candidate)
 
         # Storyboard-list 계약에서는 화면의 유효한 섹션이 정본이다. 단일 블록
         # 헬퍼의 defensive explicit-role 우선 규칙은 에디터 등 다른 소비처를
@@ -268,6 +283,13 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
             role = resolve_content_role(candidate)
             if role == "custom" or _CONTENT_ROLE_TO_SECTION_ROLE.get(role) != declared_section:
                 role = defaults[declared_section]
+            requested_cut_type = candidate.get("cutType") or candidate.get("cut_type")
+            if declared_section == "styling":
+                role = "realWear" if requested_cut_type == "mirror" else "coordination"
+                candidate["cutType"] = "mirror" if requested_cut_type == "mirror" else "styling"
+            elif declared_section == "studio":
+                role = "fit"
+                candidate["cutType"] = "horizon"
             candidate["sectionRole"] = declared_section
             candidate["contentRole"] = role
 
@@ -292,7 +314,7 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
 
     canonical = [canonicalize_for_storyboard(block) for block in (blocks or [])]
     # Custom/mine cards without a semantic section inherit the preceding
-    # section; leading cards inherit the next valid section (or benefit when
+    # section; leading cards inherit the next valid section (or hooking when
     # the board has no section at all). This mirrors frontend normalization.
     previous_role = None
     for block in canonical:
@@ -307,10 +329,10 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
         if not isinstance(block, dict):
             continue
         if block.get("sectionRole") not in SECTION_ROLES:
-            block["sectionRole"] = next_role or "benefit"
+            block["sectionRole"] = next_role or "hooking"
         next_role = block["sectionRole"]
 
-    section_order = {"benefit": 0, "fit": 1, "product": 2}
+    section_order = {"hooking": 0, "styling": 1, "studio": 2, "product": 3}
     ordered = sorted(
         canonical,
         key=lambda block: section_order.get(block.get("sectionRole"), 3)
@@ -328,7 +350,7 @@ def canonicalize_storyboard(blocks: list, *, for_storage: bool = False) -> list:
         role = block.get("contentRole")
         if role == "custom" or _CONTENT_ROLE_TO_SECTION_ROLE.get(role) != section_role:
             role = defaults.get(section_role, "hero")
-        if section_role == "benefit":
+        if section_role == "hooking":
             if not hero_assigned:
                 role = "hero"
                 hero_assigned = True

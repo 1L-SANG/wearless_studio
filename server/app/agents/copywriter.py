@@ -95,8 +95,8 @@ def build_prompt(
     }
     role = resolve_content_role(role_block)
     # EditorBlock 조립과 같은 폴백을 써서 프롬프트의 sectionRole도 항상
-    # 계약값(benefit|fit|product) 중 하나가 되게 한다.
-    section = resolve_section_role(role_block, role) or "fit"
+    # 계약값(hooking|styling|studio|product) 중 하나가 되게 한다.
+    section = resolve_section_role(role_block, role) or "styling"
     required_text_role = _TEXT_ROLE_BY_CONTENT_ROLE[role]
     with open(_PROMPT_FILE, encoding="utf-8") as f:
         template = f.read()

@@ -26,7 +26,7 @@ import { ensureSections } from '../sections.js';
 import { exampleSelectionFingerprintFields } from '../generationExamples.js';
 import { genderForClothingType } from '../productGender.js';
 import { spaceSetGroupId } from '../storyboardSpaceSetCatalog.js';
-import { applyOpeningRow, pickEntrySets } from '../storyboardEntryPlacement.js';
+import { applyOpeningRow, entryStylingMembers, pickEntrySets } from '../storyboardEntryPlacement.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
@@ -44,11 +44,12 @@ const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) 
   ...(extra || {}),
 });
 
-function setMemberBlocks(set, colorId, contentRole) {
+function setMemberBlocks(set, colorId, sectionRole, contentRole) {
   if (!set) return [];
   const groupId = spaceSetGroupId(set.id, uid('sg'));
-  return set.members.map((member) => sb(
-    SECTION_ROLES.FIT,
+  const members = set.setType === 'styling' ? entryStylingMembers(set) : set.members;
+  return members.map((member) => sb(
+    sectionRole,
     contentRole,
     member.cutType,
     member.direction,
@@ -70,20 +71,20 @@ function setMemberBlocks(set, colorId, contentRole) {
 function stylingFallback(colorId, clothingType) {
   return [
     sb(
-      SECTION_ROLES.FIT,
+      SECTION_ROLES.STYLING,
       CONTENT_ROLES.COORDINATION,
       'styling',
       clothingType === 'bottom' ? 'back' : 'front',
       'full',
       colorId,
     ),
-    sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', colorId),
+    sb(SECTION_ROLES.STYLING, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', colorId),
   ];
 }
 
 function horizonRotationFallback(colorId) {
   return ['front', 'side', 'back'].map((direction) => sb(
-    SECTION_ROLES.FIT,
+    SECTION_ROLES.STUDIO,
     CONTENT_ROLES.FIT,
     'horizon',
     direction,
@@ -95,7 +96,7 @@ function horizonRotationFallback(colorId) {
 function realWearBlock(colorId, gender, clothingType) {
   if (gender === 'women') {
     return sb(
-      SECTION_ROLES.FIT,
+      SECTION_ROLES.STYLING,
       CONTENT_ROLES.REAL_WEAR,
       'mirror',
       null,
@@ -105,7 +106,7 @@ function realWearBlock(colorId, gender, clothingType) {
     );
   }
   return sb(
-    SECTION_ROLES.FIT,
+    SECTION_ROLES.STYLING,
     CONTENT_ROLES.COORDINATION,
     'styling',
     clothingType === 'bottom' ? 'back' : 'front',
@@ -130,29 +131,29 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
     stylingCount: mode === 'extended' ? 3 : 2,
   });
   const blocks = [
-    sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.HERO, 'styling', 'front', 'full', base),
-    sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.BENEFIT, 'horizon', 'front', 'medium', base),
+    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.HERO, 'styling', 'front', 'full', base),
+    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.BENEFIT, 'horizon', 'front', 'medium', base),
   ];
 
   for (const set of stylingSets) {
     blocks.push(...(set
-      ? setMemberBlocks(set, base, CONTENT_ROLES.COORDINATION)
+      ? setMemberBlocks(set, base, SECTION_ROLES.STYLING, CONTENT_ROLES.COORDINATION)
       : stylingFallback(base, clothingType)));
   }
 
   if (mode === 'extended') {
+    blocks.push(realWearBlock(base, gender, clothingType));
     const horizonSet = sequenceSet || rotationSet;
     blocks.push(...(horizonSet
-      ? setMemberBlocks(horizonSet, base, CONTENT_ROLES.FIT)
+      ? setMemberBlocks(horizonSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
       : horizonRotationFallback(base)));
-    blocks.push(realWearBlock(base, gender, clothingType));
 
     const additionalColors = list.slice(1, 4);
     for (const color of additionalColors) {
       blocks.push(
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'full', color.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', color.id),
+        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
+        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'full', color.id),
+        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', color.id),
       );
     }
 
@@ -182,10 +183,10 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
       );
     }
   } else {
-    blocks.push(...(rotationSet
-      ? setMemberBlocks(rotationSet, base, CONTENT_ROLES.FIT)
-      : horizonRotationFallback(base)));
     blocks.push(realWearBlock(base, gender, clothingType));
+    blocks.push(...(rotationSet
+      ? setMemberBlocks(rotationSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
+      : horizonRotationFallback(base)));
     blocks.push(
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
     );
@@ -247,7 +248,7 @@ function storyboardTemplateFingerprint(blocks) {
 
 export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
   if (!Array.isArray(blocks) || !blocks.length) return false;
-  // v2 계약을 충족하지 않는 보드는 기본 시드로 간주해 교체하지 않는다.
+  // 현재 역할 분류 계약을 충족하지 않는 보드는 기본 시드로 간주해 교체하지 않는다.
   if (blocks.some((block) => block.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION)) return false;
   const seeded = defaultStoryboard(colors, mode, product);
   const fingerprint = storyboardTemplateFingerprint(blocks);
