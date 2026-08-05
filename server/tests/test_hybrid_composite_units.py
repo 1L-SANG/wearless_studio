@@ -43,6 +43,8 @@ from app.services.hybrid_composite.stripe_model import extract_stripe_model
 from app.services.hybrid_composite.types import COMPOSITE_FAILURE_REASONS, CompositeFailure
 from app.services.hybrid_composite.warp_composite import composite_stripe
 from app.agents.hybrid_landmarks import (
+    GEOMETRY_SCHEMA,
+    PROMPT_VERSION,
     box_rejection_reason,
     boxes_to_pixels,
     component_observation,
@@ -614,10 +616,12 @@ def _collar_case():
 
 
 def test_decal_component_with_pixel_source_box_is_not_flagged():
-    """source decal 이 실제 픽셀 좌표로 오면 warp 경로가 살아 있어야 한다."""
+    """패턴이 검출되는 pixel source decal 은 실제 warp 경로를 타야 한다."""
     model, cx, pm, carrier_collar, period = _collar_case()
-    src = np.full((400, 400, 3), (40, 60, 200), np.uint8)
-    src_collar = [[100.0, 100.0], [300.0, 100.0], [300.0, 300.0], [100.0, 300.0]]
+    src = render_signal("S1_blue_brown_fine", "illum")
+    h, w = src.shape[:2]
+    src_collar = [[w * 0.15, h * 0.15], [w * 0.85, h * 0.15],
+                  [w * 0.85, h * 0.85], [w * 0.15, h * 0.85]]
     art = composite_stripe(cx["image"], pm, model,
                            target_period_px=period, target_axis="horizontal",
                            component_boxes={"collar": carrier_collar},
@@ -626,6 +630,24 @@ def test_decal_component_with_pixel_source_box_is_not_flagged():
     assert not isinstance(art, CompositeFailure), art
     assert art.components_needing_review == (), \
         "source decal 이 충분한 해상도로 주어지면 검수 대상이 아니다"
+
+
+def test_uniform_pixel_source_box_is_not_false_evidence_of_protected_pattern():
+    """좌표·해상도만 맞고 줄무늬가 없는 crop 은 보호 부위 근거가 아니다."""
+    model, cx, pm, carrier_collar, period = _collar_case()
+    src = np.full((400, 400, 3), (40, 60, 200), np.uint8)
+    src_collar = [[100.0, 100.0], [300.0, 100.0],
+                  [300.0, 300.0], [100.0, 300.0]]
+    art = composite_stripe(
+        cx["image"], pm, model,
+        target_period_px=period, target_axis="horizontal",
+        component_boxes={"collar": carrier_collar},
+        source_bgr=src,
+        source_component_boxes={"collar": src_collar},
+    )
+    assert not isinstance(art, CompositeFailure), art
+    assert art.components_needing_review == ("collar",)
+    assert art.component_review_reasons["collar"] == "component_pattern_axis_unmeasurable"
 
 
 def test_normalized_source_box_never_reaches_the_decal_path():
@@ -655,12 +677,13 @@ def test_boxes_to_pixels_scales_each_image_independently():
 
 
 def test_normalized_boxes_after_conversion_clear_the_resolution_gate():
-    """실제 배선(정규화 → 환산 → 합성)에서 collar 가 검수 대상이 되지 않아야 한다."""
+    """실제 배선(정규화 → 환산 → 합성)이 패턴 source 로 끝까지 이어져야 한다."""
     model, cx, pm, carrier_collar, period = _collar_case()
-    src = np.full((400, 400, 3), (40, 60, 200), np.uint8)
+    src = render_signal("S1_blue_brown_fine", "illum")
+    src_h, src_w = src.shape[:2]
     converted = boxes_to_pixels(
         {"collar": [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]]},
-        width=400, height=400)
+        width=src_w, height=src_h)
     art = composite_stripe(cx["image"], pm, model,
                            target_period_px=period, target_axis="horizontal",
                            component_boxes={"collar": carrier_collar},
@@ -1081,6 +1104,27 @@ def test_component_review_reasons_distinguish_branches():
     assert art2.component_review_reasons["collar"].startswith("short_side")
 
 
+def test_component_box_outside_garment_is_unmeasurable_without_nan_metrics():
+    """유효한 quad라도 garment mask와 교집합이 없으면 decal 측정 성공이 아니다."""
+    model, cx, pm, _carrier_collar, period = _collar_case()
+    src = np.full((400, 400, 3), 200, np.uint8)
+    source_box = _q(50, 50, 250, 250)
+    target_outside = _q(2, 2, 82, 82)
+    art = composite_stripe(
+        cx["image"], pm, model,
+        target_period_px=period, target_axis="horizontal",
+        component_boxes={"collar": target_outside},
+        source_bgr=src,
+        source_component_boxes={"collar": source_box},
+    )
+    assert not isinstance(art, CompositeFailure), art
+    assert art.component_review_reasons["collar"] == "target_mask_insufficient"
+    metric = art.metrics["cross_surface_scale"]["components"]["collar"]
+    assert metric["scale_measurable"] is False
+    assert metric["target_mask_px"] < 2304
+    assert "nan" not in json.dumps(art.metrics).lower()
+
+
 # ── Codex 검수 P1 보정 회귀 ────────────────────────────────────────────────────
 # 독립 검수가 구성해 통과시킨 false-pass 세 가지를 각각 닫는다.
 
@@ -1161,6 +1205,25 @@ def test_merge_drops_the_key_when_neither_call_is_valid():
         _landmark_response(collar_box="nope"))
     assert err is None
     assert "collar_box" not in merged
+
+
+def test_cuff_boxes_are_schema_versioned_merged_and_validated_for_projection():
+    left = [[0.06, 0.68], [0.20, 0.68], [0.20, 0.82], [0.06, 0.82]]
+    right = [[0.80, 0.68], [0.94, 0.68], [0.94, 0.82], [0.80, 0.82]]
+    assert PROMPT_VERSION == "hybrid_landmarks_v2"
+    assert "cuff_l_box" in GEOMETRY_SCHEMA["properties"]
+    assert "cuff_r_box" in GEOMETRY_SCHEMA["properties"]
+    merged, err = merge_geometry_pair(
+        _landmark_response(cuff_l_box=left),
+        _landmark_response(cuff_r_box=right),
+    )
+    assert err is None
+    assert merged["cuff_l_box"] == left
+    assert merged["cuff_r_box"] == right
+    _lm, inv, verr = validate_geometry(merged, aspect_hw=1.5)
+    assert verr is None
+    assert inv["component_boxes"]["cuff_l_box"] == left
+    assert inv["component_boxes"]["cuff_r_box"] == right
 
 
 # ── 독립 검수 2회차가 구성한 공격 4종 (전부 정상본은 통과해야 한다) ─────────────

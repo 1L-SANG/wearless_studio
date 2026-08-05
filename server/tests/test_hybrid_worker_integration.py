@@ -58,8 +58,10 @@ SOURCE_GEOM_RAW = {
     "visible_button_count": 7,
     # 보호 부위 geometry 는 검증 가능한 상품의 정상 응답이다. 없으면 카라·플래킷 충실도를
     # 검증할 방법이 없어 enforce 는 fail-closed 해야 하고, 그 경로는 별도 테스트가 덮는다.
-    "collar_box": [[0.36, 0.02], [0.64, 0.02], [0.64, 0.12], [0.36, 0.12]],
-    "placket_box": [[0.46, 0.10], [0.54, 0.10], [0.54, 0.92], [0.46, 0.92]],
+    "collar_box": [[0.41, 0.02], [0.59, 0.02], [0.59, 0.20], [0.41, 0.20]],
+    "placket_box": [[0.48, 0.10], [0.52, 0.10], [0.52, 0.92], [0.48, 0.92]],
+    "cuff_l_box": [[0.05, 0.74], [0.22, 0.74], [0.22, 0.92], [0.05, 0.92]],
+    "cuff_r_box": [[0.78, 0.74], [0.95, 0.74], [0.95, 0.92], [0.78, 0.92]],
 }
 
 
@@ -72,8 +74,12 @@ def _carrier_geom_raw(cx) -> dict:
         "sleeve_l_end": lm["sleeve_l_end"], "sleeve_r_end": lm["sleeve_r_end"],
         "has_collar": True, "has_placket": True, "has_cuffs": True,
         "visible_button_count": 7,
-        "collar_box": [[0.36, 0.02], [0.64, 0.02], [0.64, 0.12], [0.36, 0.12]],
-        "placket_box": [[0.46, 0.10], [0.54, 0.10], [0.54, 0.92], [0.46, 0.92]],
+        # Carrier fixture의 실제 셔츠 영역(shoulder y=.16, hem y=.68)에 맞춘 box.
+        # 과거 0.02~0.12/0.10~0.92 값은 배경·하의를 component로 주는 거짓 fixture였다.
+        "collar_box": [[0.42, 0.14], [0.58, 0.14], [0.58, 0.24], [0.42, 0.24]],
+        "placket_box": [[0.485, 0.18], [0.515, 0.18], [0.515, 0.66], [0.485, 0.66]],
+        "cuff_l_box": [[0.14, 0.38], [0.27, 0.38], [0.27, 0.48], [0.14, 0.48]],
+        "cuff_r_box": [[0.73, 0.38], [0.86, 0.38], [0.86, 0.48], [0.73, 0.48]],
     }
 
 
@@ -95,7 +101,8 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
              settings_kw=None, p2_verdict=None, source_png=None,
              carrier_component_box=False, source_component_box=True,
              truth_pattern=None,
-             truth_fine_pattern=None, analysis_pattern=None):
+             truth_fine_pattern=None, analysis_pattern=None,
+             carrier_vision=None, truth_approved=True, frame_results=None):
     """워커 전체 실행. → (oplog, calls, r2_saved, emits)"""
     oplog: list[tuple] = []          # ("gen",) | ("evt", status) — 순서가 곧 증거
     emits: list[tuple] = []
@@ -163,16 +170,16 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
         return dict(analysis)
 
     async def get_product_truth(conn, project_id, truth_id=None):
-        if truth_pattern is None:
+        if not truth_approved:
             return None
-        pattern_spec = {"type": truth_pattern}
+        pattern_spec = {"type": truth_pattern} if truth_pattern is not None else {}
         if truth_fine_pattern is not None:
             pattern_spec["finePattern"] = truth_fine_pattern
         return {
             "id": truth_id or "truth-1",
             "version": 1,
             "status": "approved",
-            "garment_spec": {},
+            "garment_spec": {"collarType": "point", "buttonCount": 7},
             "color_spec": {},
             "pattern_spec": pattern_spec,
             "protected_details": {},
@@ -234,6 +241,53 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
         ),
     )
     monkeypatch.setattr(mj.hybrid_landmarks, "extract_geometry", fake_geometry)
+    clean_carrier_vision = {
+        "shirtSilhouette": "shirt",
+        "hemPlausible": True,
+        "sleevesPlausible": True,
+        "lowerBodyPresent": True,
+        "matchingGarmentPresent": None,
+        "mannequinFramePreserved": True,
+        "garmentCategoryMatches": True,
+        "confidence": 0.95,
+        "uncertainFields": ["matchingGarmentPresent"],
+        "evidence": ["full body and plausible shirt are visible"],
+    }
+    carrier_seq = (list(carrier_vision) if isinstance(carrier_vision, list)
+                   else [carrier_vision or clean_carrier_vision])
+    carrier_state = {"n": 0}
+
+    async def fake_carrier_vision(settings, **kwargs):
+        value = carrier_seq[min(carrier_state["n"], len(carrier_seq) - 1)]
+        carrier_state["n"] += 1
+        if isinstance(value, BaseException):
+            raise value
+        return dict(value), {
+            "provider": "fake", "promptVersion": "test", "status": "ok",
+            "imageCount": 2 + len(kwargs.get("product_sources") or []),
+        }
+
+    monkeypatch.setattr(mj.carrier_preflight_vision, "observe", fake_carrier_vision)
+
+    if frame_results is not None:
+        monkeypatch.setattr(mj, "_MANNEQUIN_FRAME_QC_ENFORCEMENT_READY", True)
+        frame_seq = list(frame_results)
+        frame_state = {"n": 0}
+
+        async def fake_frame_qc(**_kwargs):
+            value = frame_seq[min(frame_state["n"], len(frame_seq) - 1)]
+            frame_state["n"] += 1
+            return dict(value)
+
+        monkeypatch.setattr(mj, "_apply_frame_qc", fake_frame_qc)
+
+    if p2_verdict is None:
+        p2_verdict = {
+            "verdict": "pass", "mismatches": [], "correctionPrompt": None,
+            "product_fidelity": 95, "physical_naturalness": 95,
+            "image_quality": 95, "series_consistency": None,
+            "critical_errors": [],
+        }
     if p2_verdict is not None:
         seq = list(p2_verdict) if isinstance(p2_verdict, list) else [p2_verdict]
         state = {"n": 0}
@@ -250,7 +304,7 @@ def _run_job(monkeypatch, *, detail_png=None, include_detail=True, product_name=
     settings = make_settings(**kw)
     app = types.SimpleNamespace(state=types.SimpleNamespace(
         settings=settings, pool=_Pool(), r2=_R2(), gemini=_Gemini()))
-    payload = {"truthPackageId": "truth-1"} if truth_pattern is not None else {}
+    payload = {"truthPackageId": "truth-1"} if truth_approved else {}
     job = {"id": "j1", "user_id": "u1", "project_id": "p1", "lease_token": "u1:t",
            "credits_reserved": 2, "payload": payload}
     asyncio.run(mj.run_mannequin_job(app, job))
@@ -664,12 +718,11 @@ def test_flag_off_runs_legacy_path_untouched(monkeypatch):
     assert calls["success"], "off 면 기존 경로 그대로 성공해야 한다"
 
 
-def test_deterministic_pass_suppresses_llm_retry_and_records_it(monkeypatch):
-    """LLM 이 regenerate 라 해도 deterministic 통과 컷은 재생성하지 않는다 — 보조 신호 계약.
+def test_deterministic_pass_cannot_suppress_post_projection_vision_rejection(monkeypatch):
+    """결정론 QC 통과만으로 육안상 실패한 합성본을 저장할 수 없다.
 
-    사전(identity) 게이트는 **합성 전** geometry 단계의 정당한 re-roll 이므로 여기 대상이
-    아니다 — 그래서 1차 판정(사전 게이트)은 pass, 합성 후 rescore 만 regenerate 를 주는
-    시퀀스로 구성한다.
+    1차(identity) Vision은 pass, 합성 후 Vision만 reject인 시퀀스다. 자동 재생성은
+    추가하지 않되 후보를 fail-closed 하므로 비용 상한과 3중 게이트를 동시에 지킨다.
     """
     good_p2 = {"verdict": "pass", "product_fidelity": 95, "physical_naturalness": 95,
                "image_quality": 95, "critical_errors": [], "mismatches": [],
@@ -677,15 +730,15 @@ def test_deterministic_pass_suppresses_llm_retry_and_records_it(monkeypatch):
     bad_p2 = {"verdict": "retry", "product_fidelity": 20, "physical_naturalness": 20,
               "image_quality": 20, "critical_errors": [], "mismatches": [],
               "correctionPrompt": ""}
-    oplog, calls, _r2, emits = _run_job(
+    oplog, calls, r2_saved, emits = _run_job(
         monkeypatch, settings_kw={"image_qc": "enforce", "qc_score_auto_pass": 80,
                                   "qc_score_review": 65},
         p2_verdict=[good_p2, bad_p2])
     assert sum(1 for op in oplog if op[0] == "gen") == 1, "낮은 LLM 점수가 재생성을 태움"
-    assert "hybrid_llm_retry_suppressed" in _statuses(emits)
-    cut = calls["success"][0]["candidates"][0]
-    assert cut["qc_scores"]["outcome"] == "needs_review", (
-        "deterministic 통과 + LLM regenerate → 자동통과 미화도, 재생성도 아닌 needs_review")
+    assert "hybrid_deterministic_qc" in _statuses(emits)
+    assert calls["success"] == [] and len(calls["failure"]) == 1
+    assert r2_saved == {}
+    assert calls["failure"][0]["metadata"]["failureReason"] == "vision_qc_rejected"
 
 
 def test_enforce_composite_with_unprotected_component_fails_before_save(monkeypatch):
@@ -825,6 +878,98 @@ def test_artifact_dump_is_off_unless_explicitly_pointed(monkeypatch, tmp_path):
     monkeypatch.delenv("HYBRID_COMPOSITE_ARTIFACT_DIR", raising=False)
     mj._dump_composite_artifacts(np.zeros((4, 4, 3), np.uint8), None, None)
     assert list(tmp_path.iterdir()) == []
+
+
+def _carrier_observation(**overrides):
+    row = {
+        "shirtSilhouette": "shirt",
+        "hemPlausible": True,
+        "sleevesPlausible": True,
+        "lowerBodyPresent": True,
+        "matchingGarmentPresent": None,
+        "mannequinFramePreserved": True,
+        "garmentCategoryMatches": True,
+        "confidence": 0.95,
+        "uncertainFields": ["matchingGarmentPresent"],
+        "evidence": [],
+    }
+    row.update(overrides)
+    return row
+
+
+def test_bad_carrier_retries_generation_once_before_projection(monkeypatch):
+    bad = _carrier_observation(shirtSilhouette="cape")
+    good = _carrier_observation()
+
+    oplog, calls, _r2, emits = _run_job(
+        monkeypatch,
+        settings_kw={"mannequin_max_attempts": 2},
+        carrier_vision=[bad, good],
+    )
+
+    assert calls["failure"] == [] and calls["success"]
+    assert sum(1 for op in oplog if op[0] == "gen") == 2
+    assert _statuses(emits).count("hybrid_carrier_retry") == 1
+    assert _statuses(emits).count("hybrid_warp_composite") == 1
+
+
+def test_second_bad_carrier_fails_closed_without_projection_or_storage(monkeypatch):
+    bad = _carrier_observation(shirtSilhouette="slab", lowerBodyPresent=False)
+
+    oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch,
+        settings_kw={"mannequin_max_attempts": 3},
+        carrier_vision=[bad, bad, _carrier_observation()],
+    )
+
+    assert sum(1 for op in oplog if op[0] == "gen") == 2
+    assert _statuses(emits).count("hybrid_carrier_retry") == 1
+    assert "hybrid_warp_composite" not in _statuses(emits)
+    assert calls["success"] == [] and len(calls["failure"]) == 1
+    assert r2_saved == {}
+    assert calls["failure"][0]["metadata"]["failureReason"] == "carrier_preflight_rejected"
+
+
+def test_enforce_requires_post_projection_vision_pass_before_storage(monkeypatch):
+    visual_reject = {
+        "verdict": "retry", "mismatches": ["shirt silhouette changed"],
+        "correctionPrompt": "regenerate carrier", "product_fidelity": 20,
+        "physical_naturalness": 20, "image_quality": 30,
+        "series_consistency": None, "critical_errors": ["garment shape altered"],
+    }
+
+    _oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch,
+        settings_kw={"image_qc": "off", "mannequin_max_attempts": 1},
+        p2_verdict=visual_reject,
+    )
+
+    assert "hybrid_deterministic_qc" in _statuses(emits)
+    assert calls["success"] == [] and len(calls["failure"]) == 1
+    assert r2_saved == {}
+    assert calls["failure"][0]["metadata"]["failureReason"] == "vision_qc_rejected"
+
+
+def test_projection_cannot_rollback_to_unprotected_carrier_after_final_frame_reject(monkeypatch):
+    frame_pass = {
+        "decision": "pass", "criticalErrors": [], "warnings": [],
+        "checks": {}, "metrics": {}, "regenerationInstructions": [],
+    }
+    frame_reject = {
+        "decision": "reject", "criticalErrors": ["severe_yaw"], "warnings": [],
+        "checks": {}, "metrics": {}, "regenerationInstructions": [],
+    }
+    _oplog, calls, r2_saved, emits = _run_job(
+        monkeypatch,
+        settings_kw={"mannequin_frame_qc": "enforce", "mannequin_max_attempts": 1},
+        frame_results=[frame_pass, frame_reject],
+    )
+
+    assert "hybrid_deterministic_qc" in _statuses(emits)
+    assert calls["success"] == [] and len(calls["failure"]) == 1
+    assert r2_saved == {}
+    assert calls["failure"][0]["metadata"]["failureReason"] == "final_frame_qc_rejected"
+    assert "frame_qc_rollback" not in _statuses(emits)
 
 
 def test_collarless_garment_does_not_require_protected_boxes(monkeypatch):

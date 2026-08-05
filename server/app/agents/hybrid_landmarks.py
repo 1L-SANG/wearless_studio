@@ -21,6 +21,8 @@ GEOMETRY_SCHEMA = {
         "sleeve_r_end": {"type": "array", "items": {"type": "number"}},
         "collar_box": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
         "placket_box": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+        "cuff_l_box": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+        "cuff_r_box": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
         "has_collar": {"type": "boolean"},
         "has_placket": {"type": "boolean"},
         "has_cuffs": {"type": "boolean"},
@@ -33,7 +35,7 @@ GEOMETRY_SCHEMA = {
     "additionalProperties": False,
 }
 
-PROMPT_VERSION = "hybrid_landmarks_v1"
+PROMPT_VERSION = "hybrid_landmarks_v2"
 PROMPT = """You are a garment geometry annotator. Look at the single attached image of a shirt
 (either a flat product photo or a mannequin wearing it) and return NORMALIZED coordinates
 (x, y in 0..1 relative to image width/height) for these garment landmarks:
@@ -43,6 +45,8 @@ PROMPT = """You are a garment geometry annotator. Look at the single attached im
 - sleeve_l_end / sleeve_r_end: the far end (cuff) of each sleeve, if a sleeve is visible.
 - collar_box: 4 corner points [TL, TR, BR, BL] tightly around the collar, if present.
 - placket_box: 4 corner points [TL, TR, BR, BL] around the front button placket, if present.
+- cuff_l_box / cuff_r_box: 4 corner points [TL, TR, BR, BL] around each visible cuff.
+  left/right are IMAGE coordinates (left = smaller x), not the wearer's anatomical side.
 - has_collar / has_placket / has_cuffs: whether each construction element is visible.
 - visible_button_count: how many buttons you can actually count on the front placket.
 - confidence: 0..1 — how confident you are in these coordinates overall.
@@ -101,7 +105,7 @@ def merge_geometry_pair(
     # 두 호출 중 **검증을 통과하는** 박스를 고른다. 예전에는 a 의 값이 list 이기만 하면
     # 이겼는데, a 가 형식이 깨진 list 면(예: 2점) b 의 멀쩡한 박스를 막고 결국 validator
     # 에서 함께 버려졌다 — 보호 부위 공급을 스스로 끊는 경로였다.
-    for key in ("collar_box", "placket_box"):
+    for key in ("collar_box", "placket_box", "cuff_l_box", "cuff_r_box"):
         for candidate in (a.get(key), b.get(key)):
             if box_rejection_reason(candidate) is None:
                 merged[key] = candidate
@@ -170,7 +174,7 @@ def validate_geometry(
         return None
 
     boxes = {}
-    for name in ("collar_box", "placket_box"):
+    for name in ("collar_box", "placket_box", "cuff_l_box", "cuff_r_box"):
         b = box(name)
         if b:
             boxes[name] = b
@@ -206,7 +210,9 @@ def validate_geometry(
     return lm, {**inventory, "component_boxes": boxes}, None
 
 
-BOX_KEYS: tuple[str, ...] = ("collar_box", "placket_box")
+BOX_KEYS: tuple[str, ...] = (
+    "collar_box", "placket_box", "cuff_l_box", "cuff_r_box",
+)
 
 
 def box_rejection_reason(v) -> str | None:

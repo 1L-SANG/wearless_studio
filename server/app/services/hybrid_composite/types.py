@@ -32,6 +32,11 @@ COMPOSITE_FAILURE_REASONS = frozenset({
     "drape_lost",                   # carrier 의 주름·음영이 평면화됨
     "pattern_metric_failed",        # 합성 결과 재측정이 source 모델과 불일치
     "protected_region_drift",       # 보호 영역 밖 픽셀이 carrier 에서 이탈
+    "carrier_preflight_rejected",  # projection 전 carrier 구조/하의/프레임 부적격
+    "vision_qc_rejected",          # deterministic 통과 후 Vision fidelity 불합격
+    "vision_qc_unavailable",       # enforce 출고 전 Vision 관찰 불가
+    "final_frame_qc_rejected",     # projection 뒤 canonical frame 회귀 — 원본 rollback 금지
+    "final_qc_rejected",           # 결정론+Vision 이후 통합 출고 정책 불합격
 })
 
 

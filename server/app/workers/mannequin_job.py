@@ -26,6 +26,7 @@ log = logging.getLogger("wearless.mannequin_job")
 from .. import repo
 from ..agents import (
     image_qc,
+    carrier_preflight_vision,
     mannequin,
     mannequin_bust,
     mannequin_frame_vision,
@@ -51,6 +52,8 @@ from ..services.hybrid_composite import (
     stripe_model as hc_stripe,
     texture_projection as hc_projection,
     warp_composite as hc_warp,
+    carrier_preflight as hc_preflight,
+    protected_components as hc_protected,
 )
 from ..services.hybrid_composite.types import (
     PIPELINE_VERSION as HC_PIPELINE_VERSION,
@@ -1332,6 +1335,32 @@ def _declared_pattern_type(product: dict | None, analysis: dict | None,
     return aliases.get(kind, kind)
 
 
+def _hybrid_vision_qc_passed(s, result: dict | None) -> bool:
+    """Hybrid enforce 출고의 Vision 최소 계약. 결정론 통과를 승격 신호로 쓰지 않는다."""
+    if not isinstance(result, dict) or result.get("verdict") != "pass":
+        return False
+    if result.get("critical_errors"):
+        return False
+    floor = int(getattr(s, "qc_score_review", 65))
+    for key in ("product_fidelity", "physical_naturalness", "image_quality"):
+        value = result.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < floor:
+            return False
+    return True
+
+
+def _hybrid_vision_qc_summary(result: dict | None) -> dict:
+    result = result or {}
+    return {
+        "verdict": result.get("verdict"),
+        "productFidelity": result.get("product_fidelity"),
+        "physicalNaturalness": result.get("physical_naturalness"),
+        "imageQuality": result.get("image_quality"),
+        "criticalErrors": list(result.get("critical_errors") or [])[:6],
+        "mismatches": list(result.get("mismatches") or [])[:6],
+    }
+
+
 async def _delete_uploaded_candidate_keys(r2, candidates: list[dict]) -> None:
     """이미 업로드된 후보를 best-effort 삭제한다. 실패 종결 전 orphan 방지용."""
     for c in candidates:
@@ -1413,7 +1442,8 @@ async def _emit_landmark_geometry(emit, *, source: tuple, carrier: tuple) -> Non
 
 async def _apply_hybrid_composite(
     *, pool, s, job_id, candidate, attempt, res, prod_refs, product, analysis,
-    has_fine_pattern, product_truth=None,
+    has_fine_pattern, product_truth=None, carrier_preflight_observation=None,
+    carrier_preflight_meta=None, matching_expected=False,
 ):
     """deterministic hybrid stripe composite. → (선택 결과, hybrid 요약 dict|None).
 
@@ -1624,6 +1654,76 @@ async def _apply_hybrid_composite(
                carrier_torso_aspect=(car_inv or {}).get("torso_aspect"),
                source_sleeve_len_ratio=(src_inv or {}).get("sleeve_len_ratio"),
                carrier_sleeve_len_ratio=(car_inv or {}).get("sleeve_len_ratio"))
+
+    # Projection은 나쁜 carrier를 고치는 단계가 아니다. 셔츠 실루엣·밑단·소매·하의·
+    # 매칭 의류·canonical frame이 먼저 모두 성립해야만 비싼 warp를 시작한다.
+    src_contract_inv = {**(src_inv or {}), "component_boxes": src_boxes_norm}
+    car_contract_inv = {**(car_inv or {}), "component_boxes": car_boxes_norm}
+    observed_categories = ["top"]
+    if (carrier_preflight_observation or {}).get("lowerBodyPresent") is True:
+        observed_categories.append("pants")
+    preflight = hc_preflight.preflight_carrier_quality(
+        carrier_evidence={"garment_categories": observed_categories},
+        canonical_evidence={
+            "expected_categories": ["top", "pants"],
+            "expected_lower": True,
+        },
+        matching_evidence={
+            "matched": ((carrier_preflight_observation or {}).get(
+                "matchingGarmentPresent") if matching_expected else True),
+        },
+        landmarks={**(car_lm or {}), "confidence": (car_raw or {}).get("confidence")},
+        carrier_inventory={**car_contract_inv, "garment_categories": observed_categories},
+        canonical_inventory=src_contract_inv,
+        vision_observations=carrier_preflight_observation,
+        require_vision=mode == "enforce",
+        matching_expected=matching_expected,
+    )
+    preflight_summary = preflight.summary()
+    if carrier_preflight_meta:
+        preflight_summary["visionMeta"] = carrier_preflight_meta
+    await emit(
+        "hybrid_carrier_preflight",
+        passed=preflight.passed,
+        decision=preflight.decision,
+        reasons=[reason.code for reason in preflight.reasons],
+        policy_version=preflight.policy_version,
+        vision_status=(carrier_preflight_meta or {}).get("status"),
+    )
+    if not preflight.passed:
+        return await fail(
+            "carrier_preflight_rejected",
+            "; ".join(reason.code for reason in preflight.reasons)[:200],
+            carrierPreflight=preflight_summary,
+        )
+
+    # Product Truth가 보호 부위 존재의 정본이다. geometry inventory/box는 양쪽에 실제
+    # 투영 가능한 좌표가 있는지 검증하는 보조 증거일 뿐, 혼자 존재 사실을 만들 수 없다.
+    protected = hc_protected.evaluate_protected_components(
+        product_truth,
+        source_inventory=src_contract_inv,
+        carrier_inventory=car_contract_inv,
+    )
+    protected_summary = protected.as_dict()
+    await emit(
+        "hybrid_protected_contract",
+        contract_status=protected.status.value,
+        required=list(protected.required_components),
+        available=list(protected.available_components),
+        missing=[item.component for item in protected.missing],
+        review_reasons=list(protected.review_reasons),
+    )
+    if mode == "enforce" and protected.status != hc_protected.ProtectedComponentStatus.PASS:
+        detail = ", ".join(
+            [f"{item.component}:{item.reason}" for item in protected.missing]
+            + list(protected.review_reasons)
+        ) or "protected component contract unavailable"
+        return await fail(
+            "protected_component_missing",
+            detail,
+            protectedComponentContract=protected_summary,
+            componentsNeedingReview=[item.component for item in protected.missing],
+        )
 
     # scale anchor — source Front torso 에서 **의류 기준 줄 방향과** 단위 반복 수를 잰다.
     # Detail 근접컷은 원단을 눕혀 찍는 경우가 흔해서(실측: 세로 줄 셔츠의 Detail 이 수평 밴드)
@@ -1862,44 +1962,6 @@ async def _apply_hybrid_composite(
                panel_metrics=art.panel_metrics,
                components_needing_review=list(art.components_needing_review),
                **art.metrics)
-    # 보호 부위가 **없는 것으로 취급돼** 검사 자체를 건너뛰는 우회로를 먼저 닫는다.
-    # component 루프는 carrier box 만 순회하므로, vision 이 양쪽 다 생략하면
-    # components_needing_review 가 비어 enforce 가 통과한다 — carrier 가 우연히
-    # 멀쩡해 보여도 보호 부위 충실도를 검증할 수 없으면 자동 pass 는 금지다.
-    if mode == "enforce":
-        # 보호 부위 존재 판단을 has_collar/has_placket 하나에 걸면, 그 신호를 주는 모델이
-        # 같은 호출에서 박스도 생략할 때 검사 자체가 사라진다(순환 신뢰). 그래서 두 호출의
-        # inventory 를 합집합으로 보고, 가능하면 **승인된 Product Truth** 를 함께 쓴다 —
-        # 사용자가 확인한 근거라 모델과 독립이다. 단추가 보호 대상이면 플래킷은 존재한다.
-        # 반대로 "한쪽이 박스를 줬다" 는 존재 근거로 쓰지 않는다: 민소매·풀오버에서 모델이
-        # 박스 하나를 헛짚으면 그 자체가 하드 요구로 바뀌어 오거절이 된다.
-        truth_protected = {}
-        if isinstance(product_truth, dict) and product_truth.get("status") == "approved":
-            truth_protected = product_truth.get("protectedDetails") or {}
-        missing_boxes = []
-        for part in ("collar", "placket"):
-            key = f"{part}_box"
-            exists = bool((src_inv or {}).get(part) or (car_inv or {}).get(part))
-            if part == "placket" and truth_protected.get("buttonCount"):
-                exists = True
-            # **검증을 통과한** 박스가 한쪽에만 있으면 그것도 존재 근거로 본다. 둘 중
-            # 하나다: 진짜 있는 부위인데 반대편 geometry 가 없거나(검증 불가), 모델이
-            # 4점·범위 검증까지 통과하는 박스를 지어냈거나(신뢰 불가). 어느 쪽이든 닫는다.
-            # 981e95b 가 잡던 경우이고, 오거절을 걱정해 뺐다가 되살린다 — 멀쩡한 민소매에서
-            # 완전 유효한 카라 박스가 나올 확률보다 진짜 카라를 놓칠 확률이 크다.
-            if key in src_boxes_norm or key in car_boxes_norm:
-                exists = True
-            if exists and (key not in src_boxes_norm or key not in car_boxes_norm):
-                missing_boxes.append(key)
-        missing_boxes = sorted(missing_boxes)
-        if missing_boxes:
-            await emit("hybrid_composite_completed", mode=mode, fail_closed=True,
-                       outcome="protected_component_missing",
-                       detail="protected geometry unavailable: " + ", ".join(missing_boxes))
-            return await fail(
-                "protected_component_missing",
-                "protected geometry unavailable: " + ", ".join(missing_boxes),
-                componentsNeedingReview=missing_boxes)
     if mode == "enforce" and art.components_needing_review:
         # Protected construction assets are not optional review hints in enforce
         # mode.  The real 4K stripe run lacked collar/placket source decals and
@@ -1918,6 +1980,8 @@ async def _apply_hybrid_composite(
         painted_mask=art.painted,
         coverage_mask=art.coverage_scope,
         alpha=art.alpha,
+        component_scale_metrics=art.metrics.get("cross_surface_scale"),
+        component_boxes=car_boxes,
         target_period_px=target_period_px, target_axis=garment_axis)
     qc_event_metrics = {k: v for k, v in qc.metrics.items() if k != "failure_details"}
     await emit("hybrid_deterministic_qc", passed=qc.passed,
@@ -1959,6 +2023,8 @@ async def _apply_hybrid_composite(
         "needsReview": needs_review,
         "componentsNeedingReview": list(art.components_needing_review),
         "deterministicPassed": True,
+        "carrierPreflight": preflight_summary,
+        "protectedComponentContract": protected_summary,
         "pipelineVersion": HC_PIPELINE_VERSION,
         "versions": {"pipeline": HC_PIPELINE_VERSION,
                      "extractor": model.extractor_version, "panelMap": pm.version,
@@ -2118,15 +2184,11 @@ async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, 
         _apply_structured_outcome(qc_scores)
         hc = qc_scores.get("hybridComposite")
         if isinstance(hc, dict):
-            # deterministic 판정과 LLM 판정의 우선순위를 출고 지점 한 곳에서 강제한다:
-            #  · 합성 실패/부분실패(needsReview) → auto_pass 로 나갈 수 없다(강등만, 승격 없음)
-            #  · deterministic 통과 → LLM 의 regenerate 가 정상 출고를 막지 못하되,
-            #    자동통과로 미화하지도 않는다 → needs_review 로 사람에게 보인다
+            # Hybrid는 deterministic + Vision 둘 다 통과해야 이 지점에 도달한다. 합성 실패나
+            # review 신호를 auto-pass로 올리지는 않으며, deterministic 통과만으로 regenerate를
+            # needs-review로 완화하던 과거 우회는 제거했다.
             if (hc.get("mode") != "shadow" and hc.get("needsReview")
                     and qc_scores["outcome"] == "auto_pass"):
-                qc_scores["outcome"] = "needs_review"
-            if (hc.get("mode") != "shadow" and hc.get("deterministicPassed")
-                    and qc_scores["outcome"] == "regenerate"):
                 qc_scores["outcome"] = "needs_review"
         # Edit Intent QC 도 같은 규율: **강등만, 승격 없음**. 4축 점수 신호가 없으면
         # score_outcome 은 auto_pass 로 눕히는데(설계상 옳다 — 미채점을 실패로 보지 않는다),
@@ -2429,6 +2491,7 @@ async def _run_candidate(
     pre_reject: CandidateSnapshot | None = None
     final_reject: CandidateSnapshot | None = None
     frame_retry_used = False
+    carrier_retry_used = False
     # 이미지 모델 호출 예산은 한 통이다 — 생성·axis 편집·bust 2패스가 전부 여기서 나간다.
     # 호출 **직전**에 소비하고, 재생성 여부는 남은 잔량으로만 판단한다.
     calls_spent = 0
@@ -2599,9 +2662,12 @@ async def _run_candidate(
                 allow_automatic_passes=generation_path == "fresh",
                 reserved_frame_retry=(
                     generation_path == "fresh"
-                    and frame_mode == "enforce"
-                    and not frame_retry_used
                     and reprocess
+                    and (
+                        (frame_mode == "enforce" and not frame_retry_used)
+                        or (_hybrid_composite_mode(s) == "enforce"
+                            and not carrier_retry_used)
+                    )
                 ))
             # deterministic hybrid composite — 모든 generative geometry edit 뒤, 저장 앞.
             # 이 지점 이후 출고까지 image-generation/edit 호출은 0회다.
@@ -2615,15 +2681,74 @@ async def _run_candidate(
                 runlog.run_id_for_image(res.image, candidate) if (runlog and reprocess)
                 else restored_carrier)
             if reprocess:
+                carrier_observation = None
+                carrier_observation_meta = None
+                declared_pattern = _declared_pattern_type(product, analysis, product_truth)
+                needs_projection_preflight = (
+                    _hybrid_composite_mode(s) != "off"
+                    and (has_fine_pattern
+                         or declared_pattern in hc_projection.SUPPORTED_PATTERN_TYPES)
+                )
+                if needs_projection_preflight:
+                    try:
+                        carrier_observation, carrier_observation_meta = (
+                            await carrier_preflight_vision.observe(
+                                s,
+                                canonical=base_img,
+                                product_sources=prod_imgs,
+                                matching_garment=match_img,
+                                candidate=InlineImage(res.mime, res.image),
+                            )
+                        )
+                    except Exception as exc:
+                        carrier_observation_meta = carrier_preflight_vision.failure_meta(
+                            exc,
+                            image_count=2 + min(3, len(prod_imgs)) + (1 if match_img else 0),
+                        )
+                    await _emit(pool, job_id, "step", {
+                        "candidate": candidate,
+                        "attempt": attempt,
+                        "status": "hybrid_carrier_vision",
+                        "visionStatus": (carrier_observation_meta or {}).get("status"),
+                        "promptVersion": (carrier_observation_meta or {}).get("promptVersion"),
+                        "confidence": (carrier_observation or {}).get("confidence"),
+                        "uncertainFields": (carrier_observation or {}).get(
+                            "uncertainFields", []),
+                    })
                 res, hybrid_info = await _apply_hybrid_composite(
                     pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
                     res=res, prod_refs=prod_refs, product=product, analysis=analysis,
-                    has_fine_pattern=has_fine_pattern, product_truth=product_truth)
+                    has_fine_pattern=has_fine_pattern, product_truth=product_truth,
+                    carrier_preflight_observation=carrier_observation,
+                    carrier_preflight_meta=carrier_observation_meta,
+                    matching_expected=match_img is not None)
+                if (hybrid_info and hybrid_info.get("failClosed")
+                        and hybrid_info.get("failureReason") == "carrier_preflight_rejected"):
+                    if not carrier_retry_used and calls_spent < s.mannequin_max_attempts:
+                        carrier_retry_used = True
+                        reasons = [
+                            item.get("code") for item in
+                            ((hybrid_info.get("carrierPreflight") or {}).get("reasons") or [])
+                            if isinstance(item, dict) and item.get("code")
+                        ]
+                        feedback = (
+                            "CORRECTION (CARRIER PREFLIGHT — highest priority): "
+                            "Preserve IMAGE 1 full-body mannequin frame. Render a plausible shirt "
+                            "with correct side seams, hem and sleeves, and keep the required lower "
+                            "or matching garment visible. Defects: " + ", ".join(reasons[:6])
+                        )
+                        await _emit(pool, job_id, "step", {
+                            "candidate": candidate,
+                            "attempt": attempt,
+                            "status": "hybrid_carrier_retry",
+                            "outcome": "retry_once",
+                            "reasons": reasons[:6],
+                        })
+                        continue
                 _raise_if_hybrid_failed_closed(hybrid_info)
-                if (hybrid_info and hybrid_info.get("applied")
-                        and isinstance(p2, dict) and prod_imgs):
-                    # 보조 신호 — 출고본(합성본)에 대한 기존 QC 재판정(analyze 호출, 생성 아님).
-                    # deterministic 판정을 뒤집을 수 없다(아래 retry 억제·outcome 강등 참조).
+                if hybrid_info and hybrid_info.get("applied") and prod_imgs:
+                    # Enforce 합성은 결정론 QC만으로 출고할 수 없다. 원본 대비 Vision fidelity가
+                    # 명시적으로 pass해야 하며, unavailable/retry/저점수는 저장 전 fail-closed다.
                     try:
                         p2 = await image_qc.verdict(
                             s, prod_imgs, InlineImage(res.mime, res.image), scored=True,
@@ -2633,8 +2758,33 @@ async def _run_candidate(
                             "status": "image_qc_rescored", "imageQc": p2,
                             "subject": "hybrid_composite"})
                     except Exception as e:
-                        log.warning("post-composite image_qc failed for job %s: %r",
-                                    job_id, e)
+                        if hybrid_info.get("mode") == "enforce":
+                            raise _HybridCompositeFailClosed(_hc_fail_summary(
+                                "vision_qc_unavailable",
+                                f"post-projection Vision QC unavailable: {type(e).__name__}",
+                                mode="enforce",
+                                deterministicPassed=True,
+                                carrierPreflight=hybrid_info.get("carrierPreflight"),
+                                protectedComponentContract=hybrid_info.get(
+                                    "protectedComponentContract"),
+                            )) from e
+                        log.warning("post-composite image_qc unavailable for job %s: %s",
+                                    job_id, type(e).__name__)
+                    if hybrid_info.get("mode") == "enforce":
+                        vision_summary = _hybrid_vision_qc_summary(p2)
+                        hybrid_info["visionQc"] = vision_summary
+                        hybrid_info["visionPassed"] = _hybrid_vision_qc_passed(s, p2)
+                        if not hybrid_info["visionPassed"]:
+                            raise _HybridCompositeFailClosed(_hc_fail_summary(
+                                "vision_qc_rejected",
+                                "post-projection Vision QC did not pass",
+                                mode="enforce",
+                                deterministicPassed=True,
+                                carrierPreflight=hybrid_info.get("carrierPreflight"),
+                                protectedComponentContract=hybrid_info.get(
+                                    "protectedComponentContract"),
+                                visionQc=vision_summary,
+                            ))
             # Frame Lock의 두 번째 게이트. 편집·합성이 포즈/카메라를 흔들면, Pre에서 이미
             # 통과한 provider 원본으로 롤백한다. 롤백할 안전본이 없으면 저장하지 않는다.
             final_frame = ({**pre_frame, "phase": "final", "reusedPre": True}
@@ -2645,6 +2795,22 @@ async def _run_candidate(
                     pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
                     phase="final", canonical=base_img, res=res)
                 if final_frame["decision"] == "reject" and frame_mode == "enforce":
+                    if hybrid_info and hybrid_info.get("mode") == "enforce":
+                        # Texture Lock 을 통과한 결과가 Frame Lock 에서 깨졌다면, 투영 전
+                        # carrier 로 되돌려 저장할 수 없다. 그것은 합성 성공처럼 보이는
+                        # 미보호 결과를 출고하는 우회다. 이 후보 전체를 fail-closed 한다.
+                        raise _HybridCompositeFailClosed(_hc_fail_summary(
+                            "final_frame_qc_rejected",
+                            "post-projection image regressed canonical mannequin frame",
+                            mode="enforce",
+                            deterministicPassed=True,
+                            visionPassed=bool(hybrid_info.get("visionPassed")),
+                            frameQc={
+                                "decision": final_frame.get("decision"),
+                                "criticalErrors": list(
+                                    final_frame.get("criticalErrors") or [])[:8],
+                            },
+                        ))
                     if pre_frame and pre_frame["decision"] == "pass":
                         await _emit(pool, job_id, "step", {
                             "candidate": candidate, "attempt": attempt,
@@ -2693,23 +2859,10 @@ async def _run_candidate(
             if hybrid_info is not None:
                 qc_scores = {**(qc_scores or {}), "hybridComposite": hybrid_info}
             budget_left = has_budget_for_retry(s, calls_spent=calls_spent)
-            # deterministic 합성이 통과한 컷은 LLM 점수의 retry 로 재생성하지 않는다 —
-            # 기존 QC 는 보조 신호다(같은 이미지에 3회 중 2회 pass 를 주던 판정으로
-            # 결정론적으로 옳은 패턴을 다시 뽑으면 비용만 태운다). outcome 강등은
-            # _save_cut 에서 수행되므로 판정 기록은 남는다.
-            deterministic_ok = bool(
-                hybrid_info
-                and hybrid_info.get("mode") != "shadow"
-                and hybrid_info.get("deterministicPassed")
-            )
-            if deterministic_ok and final_decision(s, qc_scores) == "retry":
-                await _emit(pool, job_id, "step", {
-                    "candidate": candidate, "attempt": attempt,
-                    "status": "hybrid_llm_retry_suppressed",
-                    "outcome": score_outcome(s, qc_scores)})
+            hybrid_enforce = bool(
+                hybrid_info and hybrid_info.get("mode") == "enforce")
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
-            if (final_decision(s, qc_scores) == "retry" and budget_left and not salvaged
-                    and not deterministic_ok):
+            if final_decision(s, qc_scores) == "retry" and budget_left and not salvaged:
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "final_qc_reject",
                     "outcome": score_outcome(s, qc_scores),
@@ -2721,12 +2874,22 @@ async def _run_candidate(
                         res, qc_scores, series, p2, carrier_run_id)
                 feedback = _build_retry_feedback(qc_scores, series, p2)
                 continue
+            if final_decision(s, qc_scores) == "retry" and hybrid_enforce:
+                raise _HybridCompositeFailClosed(_hc_fail_summary(
+                    "final_qc_rejected",
+                    "final combined QC rejected the projected result",
+                    mode="enforce",
+                    deterministicPassed=bool(hybrid_info.get("deterministicPassed")),
+                    visionPassed=bool(hybrid_info.get("visionPassed")),
+                    visionQc=hybrid_info.get("visionQc"),
+                    carrierPreflight=hybrid_info.get("carrierPreflight"),
+                    protectedComponentContract=hybrid_info.get(
+                        "protectedComponentContract"),
+                ))
             # 예산 소진인데 최종 판정이 retry 라면 최선본으로 되돌려 구제 출고한다.
             # **final_reject 만** 쓴다 — pre_reject 는 편집·재판정·D축을 안 거친 원본이라
             # 그대로 저장하면 검증 안 된 이미지가 출고된다(codex HIGH).
-            # deterministic 통과 컷은 구제(salvage) 표기 대상이 아니다 — LLM retry 억제와
-            # 같은 이유. 그대로 저장 경로로 떨어진다.
-            if final_decision(s, qc_scores) == "retry" and not salvaged and not deterministic_ok:
+            if final_decision(s, qc_scores) == "retry" and not salvaged:
                 if final_reject and _is_better_candidate(
                         s, final_reject.qc_scores, qc_scores):
                     res, qc_scores, _series, _p2, carrier_run_id = final_reject
@@ -2769,6 +2932,26 @@ async def _run_candidate(
     # 걸린 후보(final_reject)를 손에 들고도 셀러가 빈손이 된다(codex 9차 HIGH — 마지막
     # 생성 실패 시 재현). 구제 규율은 예산 소진 경로와 같다: **final_reject 만** 쓴다.
     if final_reject or pre_reject:
+        declared_pattern = _declared_pattern_type(product, analysis, product_truth)
+        hybrid_required = (
+            _hybrid_composite_mode(s) == "enforce"
+            and (has_fine_pattern
+                 or declared_pattern in hc_projection.SUPPORTED_PATTERN_TYPES)
+        )
+        if hybrid_required:
+            # Projection 대상은 "최선의 거절본"도 출고 후보가 아니다. 일반 생성의 오래된
+            # loop-exhausted salvage 는 낮은 QC 점수 이미지를 review 로 내보내기 위한
+            # 장치였지만, 패턴 projection enforce 계약에서는 carrier/preflight,
+            # deterministic QC, post-projection Vision QC 셋 중 하나라도 명시적으로 통과하지
+            # 못한 바이트를 저장하면 안 된다. 특히 pre_reject 를 다시 편집·합성하는 아래
+            # 분기는 carrier Vision 관찰과 최종 Vision QC 없이 저장될 수 있었다.
+            raise _HybridCompositeFailClosed(_hc_fail_summary(
+                "final_qc_rejected",
+                "projection candidate loop exhausted without a fully verified output",
+                mode="enforce",
+                deterministicPassed=False,
+                visionPassed=False,
+            ))
         if final_reject:
             # 이미 편집·D축까지 끝난 출고 준비본 — 다시 태우지 않는다.
             res, qc_scores, series, p2, carrier_run_id = final_reject
@@ -2816,6 +2999,19 @@ async def _run_candidate(
                     attempt=s.mannequin_max_attempts, phase="final",
                     canonical=base_img, res=res)
                 if final_frame["decision"] == "reject" and frame_mode == "enforce":
+                    if salvage_hybrid and salvage_hybrid.get("mode") == "enforce":
+                        raise _HybridCompositeFailClosed(_hc_fail_summary(
+                            "final_frame_qc_rejected",
+                            "salvaged post-projection image regressed canonical mannequin frame",
+                            mode="enforce",
+                            deterministicPassed=True,
+                            visionPassed=bool(salvage_hybrid.get("visionPassed")),
+                            frameQc={
+                                "decision": final_frame.get("decision"),
+                                "criticalErrors": list(
+                                    final_frame.get("criticalErrors") or [])[:8],
+                            },
+                        ))
                     if isinstance(pre_frame, dict) and pre_frame.get("decision") == "pass":
                         await _emit(pool, job_id, "step", {
                             "candidate": candidate, "attempt": s.mannequin_max_attempts,

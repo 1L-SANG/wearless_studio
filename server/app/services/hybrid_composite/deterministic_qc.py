@@ -18,10 +18,17 @@ import cv2
 import numpy as np
 
 from .color import bgr_to_lab, ciede2000, delta_e76
-from .stripe_model import _autocorr_period, _detrended_profile, _fold_profile, _fold_samples
+from .stripe_model import (
+    _autocorr_period,
+    _detrended_profile,
+    _fold_profile,
+    _fold_samples,
+)
 from .types import QC_VERSION, StripeModel
 
 REPEAT_COUNT_TOL = 0.15        # panel 주기 상대 오차 상한 (live gate 와 동일)
+CROSS_SURFACE_PERIOD_TOL = 0.12
+CROSS_SURFACE_STRIPE_WIDTH_TOL = 0.15
 # run 대표색 ΔE00 의 per-run 하드 상한. 집계 gate(median ≤6 / P95 ≤10)는 controlled fixture
 # 테스트가 전 셋에 대해 강제한다 — 여기 per-run 컷은 색 정체성 파괴(순서 뒤바뀜 ≈ ΔE 40,
 # 다른 색으로 대체)를 잡는 안전망이고, 좁은 소매의 2차 리샘플 측정 스미어(실측 ~10-12)를
@@ -106,9 +113,218 @@ def _expected_profile(model: StripeModel, K: int) -> np.ndarray:
     return (src[i0] * (1 - frac) + src[i1] * frac).astype(np.float64)
 
 
+def _masked_profile(values: np.ndarray, valid: np.ndarray, axis: int) -> np.ndarray:
+    """Mask-aware axis mean; fully excluded samples are filled from valid neighbours."""
+    weights = valid.astype(np.float64)
+    if values.ndim == 3:
+        sums = (values * weights[..., None]).sum(axis=axis)
+        counts = weights.sum(axis=axis)[..., None]
+    else:
+        sums = (values * weights).sum(axis=axis)
+        counts = weights.sum(axis=axis)
+    out = sums / np.maximum(counts, 1.0)
+    empty = np.squeeze(counts, axis=-1) <= 0 if values.ndim == 3 else counts <= 0
+    if np.any(empty):
+        good = np.flatnonzero(~empty)
+        bad = np.flatnonzero(empty)
+        if not len(good):
+            return out
+        if values.ndim == 3:
+            for channel in range(out.shape[1]):
+                out[bad, channel] = np.interp(bad, good, out[good, channel])
+        else:
+            out[bad] = np.interp(bad, good, out[good])
+    return out
+
+
+def _component_output_scale(
+    out_bgr: np.ndarray,
+    quad,
+    model: StripeModel,
+    *,
+    target_period_px: float,
+    target_axis: str,
+    target_axis_unit=None,
+    painted_mask: np.ndarray | None = None,
+    alpha: np.ndarray | None = None,
+) -> dict:
+    """Remeasure period and run widths from the final blended component pixels.
+
+    Planned warp factors are not QC evidence. This function samples the encoded output
+    surface itself, after shading and feathering, so a resampler regression cannot report
+    zero error by construction.
+    """
+    q = np.asarray(quad, np.float32)
+    if q.shape != (4, 2):
+        return {"scale_measurable": False, "reason": "target_quad_invalid"}
+    bw = int(max(np.linalg.norm(q[1] - q[0]), np.linalg.norm(q[2] - q[3]))) + 1
+    bh = int(max(np.linalg.norm(q[3] - q[0]), np.linalg.norm(q[2] - q[1]))) + 1
+    if min(bw, bh) < 18:
+        return {"scale_measurable": False, "reason": "component_output_too_small"}
+    prof = None
+    if target_axis_unit is not None:
+        unit = np.asarray(target_axis_unit, np.float64)
+        norm = float(np.linalg.norm(unit))
+        if unit.shape == (2,) and np.isfinite(unit).all() and norm > 1e-6:
+            unit /= norm
+            x0, y0 = np.floor(q.min(axis=0)).astype(int)
+            x1, y1 = np.ceil(q.max(axis=0)).astype(int) + 1
+            x0, y0 = max(0, x0), max(0, y0)
+            x1, y1 = min(out_bgr.shape[1], x1), min(out_bgr.shape[0], y1)
+            crop = out_bgr[y0:y1, x0:x1]
+            if min(crop.shape[:2]) >= 18:
+                local_q = q - np.array([x0, y0], np.float32)
+                valid = np.zeros(crop.shape[:2], np.uint8)
+                cv2.fillPoly(valid, [local_q.astype(np.int32)], 255)
+                erosion = max(2, int(round(min(crop.shape[:2]) * 0.08)))
+                valid = cv2.erode(valid, np.ones((erosion, erosion), np.uint8)) > 0
+                # The approved component quad is an observation envelope, not proof that
+                # every pixel in its bounding polygon belongs to the garment.  Cuffs in a
+                # 3/4 view routinely contain 40–60% background.  Sampling the whole quad
+                # made the verifier measure the carrier/background harmonic (36px in the
+                # production-sized regression fixture) instead of the 30px projected
+                # cloth.  Restrict evidence to pixels actually painted by the compositor;
+                # prefer the source-dominant alpha core when it remains measurable.
+                if painted_mask is not None:
+                    painted_local = painted_mask[y0:y1, x0:x1] > 0
+                    valid &= painted_local
+                if alpha is not None:
+                    alpha_local = alpha[y0:y1, x0:x1]
+                    source_core = valid & (alpha_local >= 0.80)
+                    if int(source_core.sum()) >= 256:
+                        valid = source_core
+                yy, xx = np.indices(crop.shape[:2], dtype=np.float64)
+                t = xx * unit[0] + yy * unit[1]
+                p = -xx * unit[1] + yy * unit[0]
+                if int(valid.sum()) >= 256:
+                    pv = p[valid]
+                    plo, phi = np.percentile(pv, [12, 88])
+                    valid &= (p >= plo) & (p <= phi)
+                    tv = t[valid]
+                    if tv.size >= 256:
+                        t0 = int(np.floor(tv.min()))
+                        bins = np.floor(tv - t0).astype(np.int32)
+                        n = int(bins.max()) + 1
+                        counts = np.bincount(bins, minlength=n).astype(np.float64)
+                        lab = bgr_to_lab(crop).astype(np.float64)
+                        prof = np.stack([
+                            np.bincount(bins, weights=lab[..., c][valid], minlength=n)
+                            for c in range(3)
+                        ], axis=1) / np.maximum(counts[:, None], 1.0)
+                        good = counts >= max(
+                            3.0, float(np.percentile(counts[counts > 0], 35)) * 0.35)
+                        if int(good.sum()) >= 32:
+                            idx = np.arange(n)
+                            for channel in range(3):
+                                prof[~good, channel] = np.interp(
+                                    idx[~good], idx[good], prof[good, channel])
+                            lo_trim, hi_trim = int(n * 0.08), int(n * 0.92)
+                            prof = prof[lo_trim:hi_trim]
+                        else:
+                            prof = None
+    if prof is None:
+        span = bh if target_axis == "horizontal" else bw
+        if span < max(32, target_period_px * 1.8):
+            return {"scale_measurable": False, "reason": "component_output_too_small"}
+        rect = np.float32([[0, 0], [bw - 1, 0], [bw - 1, bh - 1], [0, bh - 1]])
+        H = cv2.getPerspectiveTransform(q, rect)
+        local = cv2.warpPerspective(out_bgr, H, (bw, bh), flags=cv2.INTER_CUBIC)
+        mx, my = max(2, int(bw * 0.10)), max(2, int(bh * 0.10))
+        local = local[my:bh - my, mx:bw - mx]
+        if min(local.shape[:2]) < 16:
+            return {"scale_measurable": False, "reason": "component_interior_too_small"}
+        lab = bgr_to_lab(local).astype(np.float64)
+        mean_axis = 1 if target_axis == "horizontal" else 0
+        prof = lab.mean(axis=mean_axis)
+    if len(prof) < max(32, target_period_px * 1.8):
+        return {"scale_measurable": False, "reason": "component_profile_too_short"}
+    signal = np.sqrt(((prof - np.median(prof, axis=0)) ** 2).sum(axis=-1))
+    sigma = max(len(signal) / 8.0, 8.0)
+    signal = signal - cv2.GaussianBlur(
+        signal.reshape(-1, 1), (0, 0), sigmaX=sigma).ravel()
+    # This is a verification search around the torso physical scale, not a blind
+    # extractor. A distant harmonic must not win merely because a short cuff has only
+    # three repeats. Wider errors are correctly reported against the search boundary.
+    lo = max(4, int(round(target_period_px * 0.82)))
+    hi = min(len(signal) // 2, int(round(target_period_px * 1.18)))
+    if hi <= lo or float(np.dot(signal, signal)) < 1e-6:
+        return {"scale_measurable": False, "reason": "component_period_unmeasurable"}
+    # Guided scale fit against the approved physical profile. Blind autocorrelation on a
+    # 2–4 repeat collar/cuff often chooses the wide-ground harmonic (e.g. 35px for a 30px
+    # four-color repeat). Evaluate candidate periods by full Lab profile fit instead.
+    candidates = np.arange(float(lo), float(hi) + 0.001, 0.5)
+    best = None
+    for candidate_period in candidates:
+        Kc = max(64, _fold_samples(candidate_period))
+        folded_c, consistency = _fold_profile(prof, candidate_period, Kc)
+        expected_c = _expected_profile(model, Kc)
+        for shift in range(Kc):
+            candidate = np.roll(folded_c, -shift, axis=0).astype(np.float64)
+            candidate += np.median(expected_c - candidate, axis=0)
+            cost = float(np.mean(np.linalg.norm(candidate - expected_c, axis=1)))
+            score = cost + max(0.0, 0.5 - float(consistency)) * 10.0
+            if best is None or score < best[0]:
+                best = (score, float(candidate_period), folded_c, expected_c,
+                        int(shift), cost, float(consistency))
+    if best is None:
+        return {"scale_measurable": False, "reason": "component_period_unmeasurable"}
+    _score, measured_period, folded, expected, best_shift, best_cost, consistency = best
+    strength = max(0.0, min(1.0, consistency))
+    if best_cost > 30.0:
+        return {"scale_measurable": False, "reason": "component_profile_low_confidence"}
+
+    K = len(expected)
+    measured = np.roll(folded, -best_shift, axis=0).astype(np.float64)
+    measured += np.median(expected - measured, axis=0)
+    # Measure physical run widths from final-output boundary positions. Nearest-color
+    # counts collapse pastel blue/beige; FWHM merges adjacent colored runs. The approved
+    # model already defines the boundary sequence, so after phase alignment each expected
+    # boundary searches only its local ±8% window in the measured Lab gradient.
+    expected_runs = np.asarray(model.line_width_ratios, np.float64)
+    expected_runs = expected_runs / max(float(expected_runs.sum()), 1e-9)
+    boundaries = np.concatenate([[0.0], np.cumsum(expected_runs)[:-1]]) * K
+    smooth = cv2.GaussianBlur(measured.astype(np.float32), (1, 5), 0.8)
+    gradient = np.linalg.norm(smooth - np.roll(smooth, 1, axis=0), axis=1)
+    radius = max(2, int(round(K * 0.08)))
+    observed_boundaries = []
+    for boundary in boundaries:
+        center = int(round(boundary)) % K
+        offsets = np.arange(-radius, radius + 1)
+        indexes = (center + offsets) % K
+        best_local = int(np.argmax(gradient[indexes]))
+        observed_boundaries.append(float(boundary + offsets[best_local]))
+    observed_boundaries = np.asarray(observed_boundaries, np.float64)
+    # Keep the cyclic order while permitting the first boundary to sit just below zero.
+    for idx in range(1, len(observed_boundaries)):
+        while observed_boundaries[idx] <= observed_boundaries[idx - 1]:
+            observed_boundaries[idx] += K
+    observed_runs = np.diff(np.concatenate([
+        observed_boundaries, [observed_boundaries[0] + K]
+    ])) / K
+    if (not np.isfinite(observed_runs).all() or np.any(observed_runs <= 0)
+            or abs(float(observed_runs.sum()) - 1.0) > 0.02):
+        return {"scale_measurable": False, "reason": "component_boundary_order_invalid"}
+    width_abs = float(np.max(np.abs(observed_runs - expected_runs)))
+    width_err = float(np.max(
+        np.abs(observed_runs - expected_runs) / np.maximum(expected_runs, 0.03)))
+    return {
+        "scale_measurable": True,
+        "final_period_px": round(measured_period, 2),
+        "period_signal_strength": round(strength, 4),
+        "period_rel_err": round(
+            abs(measured_period - target_period_px) / max(target_period_px, 1e-6), 4),
+        "expected_stripe_run_widths": [round(float(x), 4) for x in expected_runs],
+        "observed_stripe_run_widths": [round(float(x), 4) for x in observed_runs],
+        "stripe_width_rel_err": round(float(width_err), 4),
+        "stripe_width_error_px": round(float(width_abs * target_period_px), 3),
+        "profile_fit_error": round(best_cost, 3),
+    }
+
+
 def _measure_panel_local(
     out_bgr: np.ndarray, panel, model: StripeModel, *,
     target_period_px: float, target_axis: str, garment_mask: np.ndarray | None = None,
+    exclude_mask: np.ndarray | None = None,
 ) -> tuple[dict, list[dict]]:
     """panel 을 로컬 공간으로 역워프해 guided 검증. → (metrics, failures)."""
     failures: list[dict] = []
@@ -125,9 +341,13 @@ def _measure_panel_local(
     Hinv = cv2.getPerspectiveTransform(q, dst_rect)
     local = cv2.warpPerspective(out_bgr, Hinv, (bw2, bh2), flags=cv2.INTER_CUBIC)
     local_mask = None
+    local_exclude = None
     if garment_mask is not None:
         local_mask = cv2.warpPerspective(garment_mask, Hinv, (bw2, bh2),
                                          flags=cv2.INTER_NEAREST)
+    if exclude_mask is not None:
+        local_exclude = cv2.warpPerspective(exclude_mask, Hinv, (bw2, bh2),
+                                            flags=cv2.INTER_NEAREST)
     # 경계 feather·이웃 panel 오염을 피해 내부만
     mx, my = int(bw2 * 0.15), int(bh2 * 0.15)
     local = local[my:bh2 - my, mx:bw2 - mx]
@@ -155,9 +375,20 @@ def _measure_panel_local(
                 "strict": strict}
 
     # 1) 주기 — 실측 autocorr vs 목표
-    det = _detrended_profile(lab[..., 0], axis=mean_axis)
+    valid = ((lm_in > 0) if local_mask is not None
+             else np.ones(lab.shape[:2], dtype=bool))
+    if local_exclude is not None:
+        ex_in = local_exclude[my:bh2 - my, mx:bw2 - mx]
+        valid &= ex_in == 0
+    prof_lab = _masked_profile(lab, valid, mean_axis)
+    det = prof_lab[:, 0].astype(np.float64)
+    det -= cv2.GaussianBlur(
+        det.reshape(-1, 1), (0, 0), sigmaX=max(len(det) / 8.0, 8.0)).ravel()
     ax = _autocorr_period(det)
-    orth = _autocorr_period(_detrended_profile(lab[..., 0], axis=other_mean_axis))
+    orth_l = _masked_profile(lab[..., 0], valid, other_mean_axis).astype(np.float64)
+    orth_l -= cv2.GaussianBlur(
+        orth_l.reshape(-1, 1), (0, 0), sigmaX=max(len(orth_l) / 8.0, 8.0)).ravel()
+    orth = _autocorr_period(orth_l)
     if ax.period_px is None or ax.strength < 0.15:
         if strict:
             failures.append({"code": "pattern_metric_failed", "panel": panel.name,
@@ -177,7 +408,7 @@ def _measure_panel_local(
                          "detail": f"주기 오차 {rep_err:.3f} > {REPEAT_COUNT_TOL}"})
 
     # 2) 프로파일 fold + 기대 프로파일과 원형 정렬
-    prof = lab.mean(axis=mean_axis)
+    prof = prof_lab
     L = prof[:, 0]
     low = cv2.GaussianBlur(L.reshape(-1, 1), (0, 0),
                            sigmaX=max(target_period_px * 2.0, 16.0)).ravel()
@@ -434,6 +665,8 @@ def verify_composite(
     painted_mask: np.ndarray | None = None,
     coverage_mask: np.ndarray | None = None,
     alpha: np.ndarray | None = None,
+    component_scale_metrics: dict | None = None,
+    component_boxes: dict | None = None,
 ) -> DeterministicQC:
     """합성 결과 재측정 → typed critical. 실패는 기록이지 예외가 아니다(호출자가 라우팅).
 
@@ -447,13 +680,22 @@ def verify_composite(
     sample_mask = panel_map.garment_mask
     if painted_mask is not None:
         sample_mask = cv2.bitwise_and(sample_mask, painted_mask)
+    component_mask = None
+    if component_boxes:
+        component_mask = np.zeros(sample_mask.shape[:2], np.uint8)
+        for quad in component_boxes.values():
+            q = np.asarray(quad, np.float32)
+            if q.shape == (4, 2):
+                cv2.fillPoly(component_mask, [q.astype(np.int32)], 255)
+        # Torso/sleeve model QC and decal QC have separate authorities. Mixing decal
+        # pixels into the torso fold made collar area change the measured body colors.
     for panel in panel_map.panels:
         if panel.kind != "stripe":
             continue
         pm, fs = _measure_panel_local(
             out_bgr, panel, model,
             target_period_px=target_period_px, target_axis=target_axis,
-            garment_mask=sample_mask)
+            garment_mask=sample_mask, exclude_mask=component_mask)
         metrics["per_panel"][panel.name] = pm
         failures.extend(fs)
 
@@ -531,6 +773,75 @@ def verify_composite(
             float(((painted_mask > 0) & full).sum()) / full_n, 4)
         metrics["coverage_excluded_frac"] = round(
             float(full_n - int(garment.sum())) / full_n, 4)
+
+    cross_input = component_scale_metrics or panel_map.metrics.get("cross_surface_scale")
+    if cross_input:
+        cross = cross_input
+        if "components" not in cross:
+            cross = {"components": cross_input}
+        # Copy before enriching so QA metadata remains a snapshot, not a mutation of the
+        # PanelMap object shared with other checks.
+        cross = {**cross, "components": {
+            name: dict(value) for name, value in (cross.get("components") or {}).items()
+        }}
+        metrics["cross_surface_scale"] = cross
+        for name, cm in (cross.get("components") or {}).items():
+            if not cm.get("scale_measurable", False):
+                failures.append({
+                    "code": "pattern_metric_failed",
+                    "panel": name,
+                    "detail": (
+                        f"{name} component stripe scale unmeasurable "
+                        f"({cm.get('reason', 'unknown')})"
+                    ),
+                })
+                continue
+            target_quad = cm.get("target_quad")
+            if target_quad is None and component_boxes:
+                target_quad = component_boxes.get(name)
+            if target_quad is not None:
+                measured = _component_output_scale(
+                    out_bgr, target_quad, model,
+                    target_period_px=target_period_px, target_axis=target_axis,
+                    target_axis_unit=cm.get("target_pattern_axis_unit"),
+                    painted_mask=painted_mask,
+                    alpha=alpha)
+                cm.update(measured)
+            elif "final_period_px" not in cm:
+                cm.update({"scale_measurable": False,
+                           "reason": "final_output_geometry_missing"})
+            if not cm.get("scale_measurable", False):
+                failures.append({
+                    "code": "pattern_metric_failed", "panel": name,
+                    "detail": (
+                        f"{name} final component stripe scale unmeasurable "
+                        f"({cm.get('reason', 'unknown')})"
+                    ),
+                })
+                continue
+            period_err = float(cm.get("period_rel_err", 1.0))
+            width_err = float(cm.get("stripe_width_rel_err", 1.0))
+            width_err_px = float(cm.get(
+                "stripe_width_error_px", width_err * target_period_px))
+            width_tol_px = max(2.5, CROSS_SURFACE_STRIPE_WIDTH_TOL * target_period_px)
+            if period_err > CROSS_SURFACE_PERIOD_TOL:
+                failures.append({
+                    "code": "pattern_metric_failed",
+                    "panel": name,
+                    "detail": (
+                        f"{name} component period error {period_err:.3f} "
+                        f"> {CROSS_SURFACE_PERIOD_TOL}"
+                    ),
+                })
+            if width_err_px > width_tol_px:
+                failures.append({
+                    "code": "pattern_metric_failed",
+                    "panel": name,
+                    "detail": (
+                        f"{name} component stripe-width error {width_err_px:.2f}px "
+                        f"> {width_tol_px:.2f}px (relative={width_err:.3f})"
+                    ),
+                })
 
     band = int(max(3, panel_map.metrics.get("boundary_band_px", 4)))
     seam = _interface_seam(alpha, painted_mask, panel_map.garment_mask, band)
