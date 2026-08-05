@@ -29,20 +29,42 @@ def test_replay_module_imports_no_io_surfaces():
 
     문자열 검색이 아니라 import 구문을 파싱한다 — 주석이나 docstring 에 이름이
     등장하는 것과 실제로 끌어오는 것은 다르다.
+
+    무비용인 것은 **replay 경로**다. `capture` 는 landmark 를 다시 뜨기 위해 Vision 을
+    부르는 별개 서브커맨드이므로 provider 를 끌어와도 된다 — 단 그 import 가 `capture`
+    함수 안에 갇혀 있어야 하고, 모듈을 그냥 import 하는 것만으로는 provider 가 딸려오지
+    않아야 한다. 그래서 모듈 전체가 아니라 **스코프별로** 판정한다.
     """
     import ast
     tree = ast.parse(Path(replay.__file__).read_text())
-    imported = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imported.update(a.name for a in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imported.add(node.module)
     banned = ("mannequin_job", "psycopg", "boto3", "asyncpg", "vision_llm",
               "gemini_image", "r2", "repo")
-    for mod in imported:
-        for bad in banned:
-            assert bad not in mod, f"replay 가 {mod} 를 import 하면 무비용이 아니다"
+
+    def names(node):
+        if isinstance(node, ast.Import):
+            return [a.name for a in node.names]
+        if isinstance(node, ast.ImportFrom) and node.module:
+            return [node.module]
+        return []
+
+    capture_fns = {n for n in ast.walk(tree)
+                   if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and n.name.startswith("cmd_capture")}
+    assert capture_fns, "capture 진입점을 못 찾았다 — 스코프 판정이 무의미해진다"
+    inside_capture = {id(n) for fn in capture_fns for n in ast.walk(fn)}
+
+    for node in ast.walk(tree):
+        for mod in names(node):
+            for bad in banned:
+                if bad not in mod:
+                    continue
+                assert id(node) in inside_capture, (
+                    f"replay 경로가 {mod} 를 import 하면 무비용이 아니다")
+    # capture 밖(모듈 최상위)에는 provider import 가 하나도 없어야 한다.
+    for node in tree.body:
+        for mod in names(node):
+            assert not any(bad in mod for bad in banned), (
+                f"모듈 최상위 {mod} import — 그냥 import 만 해도 비용 면이 열린다")
 
 
 def test_replay_uses_production_entry_points():

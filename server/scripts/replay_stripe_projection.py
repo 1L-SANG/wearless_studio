@@ -38,6 +38,7 @@ from app.services.hybrid_composite import deterministic_qc as hc_qc  # noqa: E40
 from app.services.hybrid_composite import carrier_preflight as hc_preflight  # noqa: E402
 from app.services.hybrid_composite import panel_map as hc_panel  # noqa: E402
 from app.services.hybrid_composite import warp_composite as hc_warp  # noqa: E402
+from app.services.hybrid_composite import scale_anchor as hc_scale  # noqa: E402
 from app.services.hybrid_composite import stripe_model as hc_stripe  # noqa: E402
 from app.services.hybrid_composite.types import CompositeFailure  # noqa: E402
 
@@ -188,9 +189,17 @@ def run_projection(carrier: np.ndarray, source: np.ndarray, geo: dict) -> dict:
     src_boxes = _boxes_to_pixels(geo.get("source_component_boxes_norm"),
                                  width=sw, height=sh)
 
-    roi = geo.get("stripe_model", {}).get("source_roi")
+    # ROI 와 목표 주기는 캡처값을 요구하지 않는다 — 워커와 **같은 공용 함수**로 여기서
+    # 유도한다. 캡처를 요구하면 landmark 만 있고 앵커가 없는 데이터셋(프로바이더 오류로
+    # 중간에 죽은 실행)을 영영 replay 할 수 없다.
+    src_lm = geo.get("source_landmarks")
+    roi = (geo.get("stripe_model", {}) or {}).get("source_roi")
+    if not roi and src_lm:
+        roi = hc_scale.source_torso_roi(src_lm, width=sw, height=sh)
     if not roi:
-        raise SystemExit("geometry 에 stripe_model.source_roi 가 없음")
+        raise SystemExit(
+            "source_roi 도 source_landmarks 도 없어 패턴 소스를 정할 수 없다 — "
+            "`capture` 를 먼저 실행하라")
     # 워커와 **같은 함수·같은 인자 형태**: scan 변형에 미리 잘라낸 crop 을 넘긴다.
     # 여기서 다른 진입점을 쓰면 replay 가 통과해도 프로덕션은 다르게 동작한다.
     x0, y0, x1, y1 = (int(v) for v in roi)
@@ -209,8 +218,15 @@ def run_projection(carrier: np.ndarray, source: np.ndarray, geo: dict) -> dict:
         return {"stage": "panel_map", "failure": pm.reason, "detail": pm.detail,
                 "metrics": pm.metrics}
 
-    target_period_px = float(geo["target_period_px"])
-    axis = geo["garment_axis"]
+    axis = geo.get("garment_axis") or model.axis
+    target_period_px = geo.get("target_period_px")
+    if not target_period_px:
+        span_src = hc_scale.torso_span(tuple(int(v) for v in roi), garment_axis=axis)
+        span_tgt = hc_scale.carrier_torso_span(car_lm, width=cw, height=ch, garment_axis=axis)
+        target_period_px = hc_scale.target_period_px(
+            source_period_px=float(model.period_px), source_span_px=span_src,
+            target_span_px=span_tgt)
+    target_period_px = float(target_period_px)
     art = hc_warp.composite_stripe(
         carrier, pm, model,
         target_period_px=target_period_px, target_axis=axis,
@@ -580,6 +596,106 @@ def cmd_replay(args) -> int:
     return 0
 
 
+def cmd_capture(args) -> int:
+    """저장된 carrier/source 로 **landmark 기하만** 다시 뽑아 geometry.json 을 완성한다.
+
+    4K 생성은 이미 값을 치렀고 결과가 디스크에 있다. 그 뒤 Vision landmark 호출이
+    프로바이더 오류로 죽으면 geometry 가 비어 replay 가 불가능해지는데, 그 하나 때문에
+    4K 를 다시 사는 것은 낭비다. 여기서는 **이미지 생성 호출을 하지 않는다** — 워커와
+    같은 Vision 진입점만 같은 횟수(측당 2회 합의)로 호출한다.
+    """
+    import asyncio
+
+    from app.agents import hybrid_landmarks as hl
+    from app.agents.gemini_image import InlineImage
+    from app.config import load_settings
+    from scripts._env import load_env
+
+    load_env()
+    settings = load_settings()
+    dataset = Path(args.dataset)
+    carrier_path, source_path = dataset / "carrier.png", dataset / "source_front.png"
+    carrier, source = _read_image(carrier_path), _read_image(source_path)
+
+    async def geom(img_bytes: bytes, *, allow_jitter: bool, attempts: int = 3):
+        """이중 호출 합의. 실패하면 제한 횟수만큼 다시 시도한다.
+
+        **capture 도구에만** 있는 재시도다. 프로덕션 합의 규칙은 그대로 두는 것이 맞다 —
+        평면 촬영본의 접힌 소매 끝은 호출마다 흔들리는데(실측: shoulder_r, sleeve_l_end),
+        그 지터로 이미 값을 치른 4K carrier 를 못 쓰게 되는 것이 아까울 뿐이지, 합의
+        기준 자체를 느슨하게 할 이유는 아니다.
+        """
+        image = InlineImage("image/png", img_bytes)
+        last = (None, "시도 없음")
+        for _ in range(max(1, attempts)):
+            a = await hl.extract_geometry(settings, image)
+            b = await hl.extract_geometry(settings, image)
+            last = hl.merge_geometry_pair(a, b, allow_source_jitter=allow_jitter)
+            if last[1] is None:
+                return last
+        return last
+
+    async def run():
+        src_raw = await geom(source_path.read_bytes(), allow_jitter=True)
+        car_raw = await geom(carrier_path.read_bytes(), allow_jitter=False)
+        return src_raw, car_raw
+
+    src_raw, car_raw = asyncio.run(run())
+    for name, raw in (("source", src_raw), ("carrier", car_raw)):
+        if raw[1] is not None:
+            print(f"{name} 기하 합의 실패: {raw[1]}", file=sys.stderr)
+            return 2
+    src_lm, src_inv, src_err = hl.validate_geometry(
+        src_raw[0], aspect_hw=source.shape[0] / source.shape[1])
+    car_lm, car_inv, car_err = hl.validate_geometry(
+        car_raw[0], aspect_hw=carrier.shape[0] / carrier.shape[1])
+    if src_err or car_err:
+        print(f"검증 실패 source={src_err} carrier={car_err}", file=sys.stderr)
+        return 2
+    # 워커와 같은 결정적 cuff 유도. 이게 빠져 있어서 replay 가 프로덕션보다 엄격했다 —
+    # Vision 이 source 의 cuff box 만 빠뜨리면(실측) replay 는 `source_box_absent` 로
+    # 막는데 프로덕션은 shoulder→sleeve_end 에서 유도해 통과한다. 게이트 완화가 아니라
+    # 프로덕션 함수를 그대로 부르는 것이다.
+    src_inv = hl.derive_cuff_boxes_from_sleeve_landmarks(
+        src_lm, src_inv, aspect_hw=source.shape[0] / source.shape[1])
+    car_inv = hl.derive_cuff_boxes_from_sleeve_landmarks(
+        car_lm, car_inv, aspect_hw=carrier.shape[0] / carrier.shape[1])
+    src_boxes = (src_inv or {}).pop("component_boxes", {})
+    car_boxes = (car_inv or {}).pop("component_boxes", {})
+    # 워커와 **같은 측정 연산자**로 mask 유도 종횡비를 채운다. 이게 없으면 panel_map 이
+    # vision 쌍 비교로 떨어지는데, 그 값은 호출마다 흔들려 같은 셔츠를 오판한다.
+    try:
+        src_inv["torso_aspect_mask"] = hc_scale.aspect_via_stripe_energy(source, src_lm)
+        car_inv["torso_aspect_mask"] = hc_scale.aspect_via_stripe_energy(carrier, car_lm)
+    except Exception as exc:
+        print(f"mask 종횡비 계산 생략: {type(exc).__name__}", file=sys.stderr)
+
+    existing = {}
+    path = dataset / "geometry.json"
+    if path.exists():
+        existing = json.loads(path.read_text())
+    geo = {
+        **existing,
+        "schema": GEOMETRY_SCHEMA,
+        "capture_stage": "offline_landmark_recapture",
+        "carrier_landmarks": car_lm,
+        "source_landmarks": src_lm,
+        "source_inventory": src_inv,
+        "carrier_inventory": car_inv,
+        "source_component_boxes_norm": src_boxes,
+        "carrier_component_boxes_norm": car_boxes,
+        "carrier_size": [int(carrier.shape[1]), int(carrier.shape[0])],
+        "source_size": [int(source.shape[1]), int(source.shape[0])],
+        "landmark_prompt_version": hl.PROMPT_VERSION,
+    }
+    path.write_text(json.dumps(geo, ensure_ascii=False, indent=1, sort_keys=True))
+    print(f"geometry.json 갱신 — source boxes={sorted(src_boxes)} "
+          f"carrier boxes={sorted(car_boxes)}")
+    print("주의: stripe_model.source_roi / target_period_px 는 여기서 만들지 않는다 — "
+          "replay 가 source 에서 직접 재추출한다.")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -593,6 +709,10 @@ def main(argv=None) -> int:
         "--allow-missing-preflight", action="store_true",
         help="legacy artifact compositor 진단만 허용 (production gate 용도 금지)")
     rp.set_defaults(fn=cmd_replay)
+    cp = sub.add_parser(
+        "capture", help="저장된 carrier/source 로 landmark 기하만 재추출 (Vision 호출, 생성 없음)")
+    cp.add_argument("dataset")
+    cp.set_defaults(fn=cmd_capture)
     args = ap.parse_args(argv)
     return args.fn(args)
 
