@@ -16,9 +16,9 @@ PRODUCT = {
 
 def _storyboard():
     return [
-        {"id": "blk1", "sectionRole": "benefit", "contentRole": "hero", "source": "ai", "cutType": "styling", "colorId": "col1"},
-        {"id": "blk2", "sectionRole": "benefit", "contentRole": "benefit", "source": "ai", "cutType": "horizon", "colorId": "col1"},
-        {"id": "blk3", "sectionRole": "fit", "contentRole": "coordination", "source": "ai", "cutType": "styling", "colorId": "col1"},
+        {"id": "blk1", "sectionRole": "hooking", "contentRole": "hero", "source": "ai", "cutType": "styling", "colorId": "col1"},
+        {"id": "blk2", "sectionRole": "hooking", "contentRole": "benefit", "source": "ai", "cutType": "horizon", "colorId": "col1"},
+        {"id": "blk3", "sectionRole": "styling", "contentRole": "coordination", "source": "ai", "cutType": "styling", "colorId": "col1"},
     ]
 
 
@@ -29,7 +29,7 @@ def test_ai_block_maps_to_image_element_with_cut_result_url():
     blocks = assemble(storyboard, cut_results, [], PRODUCT, False)
 
     block = blocks[0]
-    assert block["kind"] == "fit"
+    assert block["kind"] == "styling"
     assert block["contentRole"] == "coordination"
     assert block["name"] == "코디 활용"
     # dims 미제공 → 기본 세로비(2:3) 폴백. 블록은 이미지+여백을 담는다.
@@ -114,19 +114,19 @@ def test_body_copy_sits_near_image_bottom_inside_block():
 
 # ── source='mine' 블록 ───────────────────────────────────────────────────────
 def test_mine_block_uses_own_images_not_cut_results():
-    storyboard = [{"id": "blk9", "sectionRole": "fit", "source": "mine", "ownImages": ["https://cdn.example.com/own.png"]}]
+    storyboard = [{"id": "blk9", "sectionRole": "styling", "source": "mine", "ownImages": ["https://cdn.example.com/own.png"]}]
     blocks = assemble(storyboard, [], [], PRODUCT, False)
 
     block = blocks[0]
     assert block["name"] == "내 이미지"
-    assert block["kind"] == "fit"
+    assert block["kind"] == "styling"
     assert block["contentRole"] == "custom"
     assert len(block["elements"]) == 1
     assert block["elements"][0]["src"] == "https://cdn.example.com/own.png"
 
 
 def test_mine_block_with_no_own_images_has_no_elements():
-    storyboard = [{"id": "blk9", "sectionRole": "fit", "source": "mine", "ownImages": []}]
+    storyboard = [{"id": "blk9", "sectionRole": "styling", "source": "mine", "ownImages": []}]
     blocks = assemble(storyboard, [], [], PRODUCT, False)
     assert blocks[0]["elements"] == []
 
@@ -145,7 +145,7 @@ def test_explicit_detail_role_sets_editor_identity():
 def test_cut_type_inference_maps_mirror_to_real_wear():
     storyboard = [{"id": "mirror", "source": "ai", "cutType": "mirror"}]
     block = assemble(storyboard, [], [], PRODUCT, False)[0]
-    assert block["kind"] == "fit"
+    assert block["kind"] == "styling"
     assert block["contentRole"] == "realWear"
     assert block["name"] == "실제 착용 느낌"
 
@@ -324,12 +324,12 @@ def test_copywriting_on_places_headline_and_selling_text():
 
 def test_copywriting_places_body_for_non_hero_content_roles():
     storyboard = [{
-        "id": "fit-1", "sectionRole": "fit", "contentRole": "fit",
+        "id": "fit-1", "sectionRole": "studio", "contentRole": "fit",
         "source": "ai", "cutType": "horizon",
     }]
     copy_results = [{"blockId": "fit-1", "texts": [{"role": "body", "text": "실루엣을 확인해보세요"}]}]
     block = assemble(storyboard, [], copy_results, PRODUCT, True)[0]
-    assert block["kind"] == "fit"
+    assert block["kind"] == "studio"
     assert block["contentRole"] == "fit"
     assert block["elements"][1]["text"] == "실루엣을 확인해보세요"
 
@@ -351,6 +351,54 @@ def test_copywriting_on_but_no_matching_copy_result_omits_text():
     storyboard = [_storyboard()[0]]  # hero block, no copy_results entry
     blocks = assemble(storyboard, [], [], PRODUCT, True)
     assert len(blocks[0]["elements"]) == 1  # image only, no headline injected
+
+
+# ── 영속 행 조립 + 오프닝 카피 ───────────────────────────────────────────────
+def test_two_column_opening_row_merges_and_keeps_copy_below_images():
+    storyboard = [
+        {
+            "id": "opening-style", "sectionRole": "benefit", "contentRole": "hero",
+            "source": "ai", "cutType": "styling", "shot": "medium",
+            "sectionId": "opening", "sectionLayout": "twoColumn", "layoutRowId": "row-opening",
+        },
+        {
+            "id": "opening-horizon", "sectionRole": "benefit", "contentRole": "benefit",
+            "source": "ai", "cutType": "horizon", "shot": "medium",
+            "sectionId": "opening", "sectionLayout": "twoColumn", "layoutRowId": "row-opening",
+        },
+    ]
+    cut_results = [
+        {"blockId": "opening-style", "imageUrl": "https://cdn.example.com/style.png"},
+        {"blockId": "opening-horizon", "imageUrl": "https://cdn.example.com/horizon.png"},
+    ]
+    copy_results = [
+        {"blockId": "opening-style", "texts": [{"role": "headline", "text": "겨울을 부드럽게"}]},
+        {"blockId": "opening-horizon", "texts": [{"role": "body", "text": "골지 짜임의 포인트"}]},
+    ]
+
+    blocks = assemble(storyboard, cut_results, copy_results, PRODUCT, True)
+
+    assert len(blocks) == 4  # 오프닝 행 1 + 자동 블록 3
+    opening = blocks[0]
+    assert opening["name"] == "2단 구성"
+    assert opening["kind"] == "twocol"
+    images = [element for element in opening["elements"] if element["type"] == "image"]
+    assert [(image["x"], image["y"], image["w"], image["h"]) for image in images] == [
+        (60, 50, 430, 500),
+        (510, 50, 430, 500),
+    ]
+    assert [image["cutType"] for image in images] == ["styling", "horizon"]
+
+    headline, subtitle = [
+        element for element in opening["elements"] if element["type"] == "text"
+    ]
+    assert (headline["x"], headline["y"], headline["w"], headline["h"]) == (60, 582, 880, 56)
+    assert headline["text"] == "겨울을 부드럽게"
+    assert headline["style"]["size"] == 40 and headline["style"]["weight"] == 600
+    assert (subtitle["x"], subtitle["y"], subtitle["w"], subtitle["h"]) == (60, 650, 880, 34)
+    assert subtitle["text"] == "골지 짜임의 포인트"
+    assert subtitle["style"] == {"size": 18, "color": "#6b6b73"}
+    assert headline["y"] >= max(image["y"] + image["h"] for image in images)
 
 
 # ── 빈 슬롯 폴백 (컷 생성 실패) ───────────────────────────────────────────────

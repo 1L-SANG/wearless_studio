@@ -696,12 +696,12 @@ def test_run_detail_page_job_attaches_resolved_examples_with_scoped_manifest(mon
             "exampleId": "ex_wrong_clothing", "clothingType": "top", "refScope": "all",
         },
         {
-            "code": "example_variant_unpublished", "blockId": "unpublished",
-            "exampleId": "ex_without_bg", "clothingType": "top", "refScope": "bg",
-        },
-        {
             "code": "pose_direction_incompatible", "blockId": "direction-mismatch",
             "exampleId": "ex_back_pose", "direction": "front",
+        },
+        {
+            "code": "example_variant_unpublished", "blockId": "unpublished",
+            "exampleId": "ex_without_bg", "clothingType": "top", "refScope": "bg",
         },
     ]
     assert "direction-mismatch" not in captured  # preflight에서 빈 슬롯, 생성 호출 0회

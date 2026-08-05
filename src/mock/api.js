@@ -19,6 +19,7 @@ import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
+import { migrateLegacyEntryStylingRuns } from '@/lib/storyboardEntryPlacement.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -272,7 +273,12 @@ export const api = {
   },
 
   /* ---- storyboard (PRD §8) ---- */
-  async getStoryboard(/* projectId */) { await wait(160); return clone(DB.storyboard); },
+  async getStoryboard(/* projectId */) {
+    await wait(160);
+    const migrated = migrateLegacyEntryStylingRuns(DB.storyboard);
+    if (migrated.changed) DB.storyboard = migrated.blocks;
+    return clone(DB.storyboard);
+  },
   async saveStoryboard(_projectId, blocks, { autoAssignment = false } = {}) {
     await wait(150);
     DB.storyboard = clone(blocks);

@@ -19,12 +19,12 @@ const clearSpace = (block) => {
 };
 
 function roleForSetMember(sectionRole, cutType, previousRole) {
-  if (sectionRole === 'fit') {
-    if (cutType === 'horizon') return 'fit';
+  if (sectionRole === 'styling') {
     if (cutType === 'mirror') return 'realWear';
     return 'coordination';
   }
-  if (sectionRole === 'benefit' && ['hero', 'benefit'].includes(previousRole)) return previousRole;
+  if (sectionRole === 'studio') return 'fit';
+  if (sectionRole === 'hooking' && ['hero', 'benefit'].includes(previousRole)) return previousRole;
   return previousRole;
 }
 
@@ -49,6 +49,34 @@ export function groupConsecutiveSpaceRuns(items, getBlock = defaultBlock) {
     index = end;
   }
   return groups;
+}
+
+export function nextUnusedSpaceSetMember(set, blocks) {
+  if (!set?.members?.length) return null;
+  const usedExampleIds = new Set((blocks || []).map((block) => block.exampleId).filter(Boolean));
+  const usedOrders = new Set((blocks || []).map((block) => block.spaceSetMemberOrder).filter(Number.isFinite));
+  return [...set.members]
+    .sort((left, right) => left.order - right.order)
+    .find((member) => (
+      !usedExampleIds.has(member.exampleId)
+      && !usedOrders.has(member.order)
+    )) || null;
+}
+
+export function nextSpaceSetMemberReservation(set, blocks) {
+  const member = nextUnusedSpaceSetMember(set, blocks);
+  if (!member) return null;
+  const host = (blocks || []).find((block) => block.spaceGroupId) || blocks?.[0] || {};
+  return {
+    member,
+    blockPatch: {
+      spaceGroupId: host.spaceGroupId,
+      spaceVariation: host.spaceVariation || set.spaceVariation || 'subtle',
+      refScope: 'pose',
+      spaceSetMemberOrder: member.order,
+      setSelectionOrigin: host.setSelectionOrigin || 'user',
+    },
+  };
 }
 
 export function dissolveSingletonSpaceRuns(blocks) {
@@ -149,6 +177,12 @@ export function createSpaceSetMembers(set, template, {
       spaceSetMemberOrder: member.order || index + 1,
       pose: 'auto',
       poseLabel: 'AI 자동',
+      // `내 사진`은 사용자가 그 블록에 직접 붙인 장면 참고다. 다른 공간 세트를
+      // 선택하거나 교체할 때 이전 블록의 사진을 새 멤버로 암묵 복사하면, 발행된
+      // 세트 plate/예시와 경쟁하는 숨은 입력이 된다. 세트 선택은 새 촬영 결정을
+      // 만드는 동작이므로 명시적으로 비운다.
+      refImages: [],
+      refAssetIds: [],
     });
     return member.cutType === 'product'
       ? { ...base, matchIds: [], faceExposure: null, outerClosureState: null }

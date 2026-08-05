@@ -48,6 +48,7 @@ function MannequinJobRibbon() {
 export function ChromeLayout() {
   const { session } = useAuth();
   const { pathname } = useLocation();
+  const storyboardOwnsEntrance = pathname === '/create/storyboard';
   const loadAccount = useAppStore((s) => s.loadAccount);
   const loadCatalogs = useAppStore((s) => s.loadCatalogs);
 
@@ -66,8 +67,8 @@ export function ChromeLayout() {
       </div>
       <TopNav />
       <MannequinJobRibbon />
-      {/* key=pathname: 라우트 이동마다 리마운트되어 page-enter 애니메이션이 항상 처음부터 재생 */}
-      <div className="app-main page-enter" key={pathname}>
+      {/* 콘티는 데이터 준비 후 자체 진입 모션을 재생해 스켈레톤과 이중 애니메이션되지 않게 한다. */}
+      <div className={`app-main${storyboardOwnsEntrance ? '' : ' page-enter'}`} key={pathname}>
         <Outlet />
       </div>
     </div>
