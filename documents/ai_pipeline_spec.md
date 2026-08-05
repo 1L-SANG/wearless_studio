@@ -69,7 +69,7 @@ prep(기준 색상 이미지·분석 속성·매칭 하의 이미지·fitProfile
 
 ### PL-4 상세페이지 생성 — `generateDetailPage(projectId)` ★핵심
 
-입력은 전부 서버 상태에서 읽는다: 저장된 `storyboard` + `project(copywriting, selectedMannequinId)` + `product`/`analysis`. 클라이언트가 들고 있는 값을 믿지 않는다 (frontend_state_model §5). 워커는 생성 전에 콘티를 `taxonomyVersion: 2`로 정규화하며, `contentRole`을 우선하고 예전 `kind`·`cutType`은 빠진 역할을 복원할 때만 읽는다.
+입력은 전부 서버 상태에서 읽는다: 저장된 `storyboard` + `project(copywriting, selectedMannequinId)` + `product`/`analysis`. 클라이언트가 들고 있는 값을 믿지 않는다 (frontend_state_model §5). 워커는 생성 전에 콘티를 공식 네 섹션의 `taxonomyVersion: 3`으로 정규화하며, `contentRole`을 우선하고 예전 `kind`·`cutType`은 빠진 역할을 복원하거나 v2 저장본을 승격할 때만 읽는다.
 
 ```
 info     상품·분석·콘티 데이터 수집/검증 (비AI)
@@ -81,7 +81,7 @@ copy     copywriting=true면: 카피 대상 블록별 AG-02 → 묶음 AG-03 검
 assemble M-02 page-assembler — 컷+카피+실측 → EditorBlock[] + 자동 블록 3종 (비AI)
 done     project.status='done' · { data: EditorBlock[], credits }
 ```
-- **진행 표시**: HTTP 경로는 현재 `inputs_loaded → cuts → copy → done`의 수치 진행률만 전달한다. mock 체크리스트는 호환용 key(info/prep/styling/horizon/product/copy/assemble)를 유지하지만 화면 라벨은 `핵심 장점 이미지 생성 / 핏·코디 이미지 생성 / 제품 확인 이미지 생성`으로 보여준다. 내부 key 이름을 사용자 분류로 해석하지 않는다. HTTP의 단계 체크리스트 실배선은 TODO다.
+- **진행 표시**: HTTP 경로는 현재 `inputs_loaded → cuts → copy → done`의 수치 진행률만 전달한다. mock 체크리스트는 호환용 key(info/prep/styling/horizon/product/copy/assemble)를 유지하지만 화면 라벨은 `후킹 / 스타일링 / 스튜디오 / 의류 확인`의 공식 네 섹션을 따른다. HTTP의 단계 체크리스트 실배선은 TODO다.
 - **크레딧**: `storyboardPerCut × ai 블록 수` (내 이미지 제외 — 계약 §6). 컷 단위 실패는 해당 컷 미차감.
 - **부분 실패 정책**: 일부 컷만 실패하면 그 자리만 빈 슬롯으로 조립하고, 성공한 컷만 과금한다. AI 컷이 전부 실패하면 빈 상세페이지를 완료 처리하지 않고 `all_cuts_failed`로 작업을 실패시키며 예약 크레딧을 해제한다. 일부 실패 컷은 에디터 의류 탭에서 다시 만들 수 있다(PL-5).
 - **생성예시·촬영 세트 레지스트리**: `exampleId`의 현재 상품 종류가
@@ -162,5 +162,5 @@ PIPELINE_CUT_CONCURRENCY=3                          # PL-4 그룹 내 병렬 상
 1. **모델 배정은 잠정** — tier별 비용·품질 로그(모듈 정의서 §6-5)를 근거로 재배정. 특히 내부 `product` 레시피와 변형 작업의 Pro 유지 여부.
 2. **환불·재시도 정책 미정** (PRD §12.2) — 차감 후 실패 보상, 품질 불만 재생성 정책.
 3. **이미지 동일성 검수** — QC Phase 1(Pillow 픽셀·고스트/크롭 휴리스틱)은 **라이브이나 SHADOW 모드**(게이트 미적용 — 실패해도 차단하지 않음). AG-P2 의미적 동일성 검수(이미지가 입력 상품과 같은 옷인지 판정)는 **설계만, 미구현** — 훅 위치(AG-04/05/06/07 출력 직후), retry 시 correctionPrompt 주입 루프(ai_agent_modules §5). 판정 기준·재시도 상한·크레딧 정책 설계 후 P1 투입.
-4. **기본형·확장형 생성 품질 검증** — composeMode별 콘티 시드는 구현됐다. 남은 검증은 상의·하의·아우터·원피스 각 10상품에서 기본형과 확장형이 같은 세 섹션을 유지하면서 필요한 사진 수와 다양성을 만드는지 확인하는 것이다.
+4. **기본형·확장형 생성 품질 검증** — composeMode별 콘티 시드는 구현됐다. 남은 검증은 상의·하의·아우터·원피스 각 10상품에서 기본형과 확장형이 같은 네 섹션을 유지하면서 필요한 사진 수와 다양성을 만드는지 확인하는 것이다.
 5. **분위기 예시 시드** — 운영자 데이터 입력 예정(에이전트 아님). 시드 스키마는 `MatchingItem` 패턴(구조적 에셋 경로)을 따른다.

@@ -44,8 +44,10 @@ export function generationExampleImageSources(example) {
     : (releasedAll !== thumb ? releasedAll : '');
   return {
     src: thumb || full,
-    srcSet: thumb && full ? `${thumb} 1x, ${full} 2x` : undefined,
-    prewarm: full || thumb,
+    // 보드 카드는 작은 슬롯이므로 원본 PNG를 2x 후보로 내려받지 않는다.
+    // 전용 2x WebP가 생기기 전까지 릴리스 썸네일 하나만 사용한다.
+    srcSet: undefined,
+    prewarm: thumb || full,
   };
 }
 

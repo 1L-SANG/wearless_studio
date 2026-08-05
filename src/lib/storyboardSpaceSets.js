@@ -19,12 +19,12 @@ const clearSpace = (block) => {
 };
 
 function roleForSetMember(sectionRole, cutType, previousRole) {
-  if (sectionRole === 'fit') {
-    if (cutType === 'horizon') return 'fit';
+  if (sectionRole === 'styling') {
     if (cutType === 'mirror') return 'realWear';
     return 'coordination';
   }
-  if (sectionRole === 'benefit' && ['hero', 'benefit'].includes(previousRole)) return previousRole;
+  if (sectionRole === 'studio') return 'fit';
+  if (sectionRole === 'hooking' && ['hero', 'benefit'].includes(previousRole)) return previousRole;
   return previousRole;
 }
 

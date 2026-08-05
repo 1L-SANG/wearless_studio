@@ -57,20 +57,20 @@ for (const mode of ["basic", "extended"]) {
             assert.ok(groups.every((group) => group.items.length > 0));
             assert.ok(
                 groups[0].items.every(
-                    ({ block }) => block.sectionRole === "benefit",
+                    ({ block }) => block.sectionRole === "hooking",
                 ),
             );
             assert.ok(
                 groups[1].items.every(
                     ({ block }) =>
-                        block.sectionRole === "fit" &&
+                        block.sectionRole === "styling" &&
                         block.cutType !== "horizon",
                 ),
             );
             assert.ok(
                 groups[2].items.every(
                     ({ block }) =>
-                        block.sectionRole === "fit" &&
+                        block.sectionRole === "studio" &&
                         block.cutType === "horizon",
                 ),
             );

@@ -283,7 +283,7 @@ def assemble(
         bg = "#f5f5f5" if i % 2 else "#ffffff"
 
         if b.get("source") == "mine":
-            section_role = resolve_section_role(b) or "fit"
+            section_role = resolve_section_role(b) or "styling"
             own_images = (b.get("ownImages") or [])[:1]
             els = [
                 _image_el(i, j, 60, 50, 880, 560, src, 12)
@@ -297,7 +297,7 @@ def assemble(
             continue
 
         content_role = resolve_content_role(b)
-        section_role = resolve_section_role(b, content_role) or "fit"
+        section_role = resolve_section_role(b, content_role) or "styling"
         name = CONTENT_ROLE_NAMES[content_role]
         cut_type = b.get("cutType") or None
         meta = cut_meta_by_block.get(b.get("id")) or {}

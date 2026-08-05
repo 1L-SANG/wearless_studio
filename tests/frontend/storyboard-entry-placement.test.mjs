@@ -193,8 +193,8 @@ test('women receive a mirror, men receive the styling fallback, unknown defaults
   const women = defaultStoryboard(baseColors, 'basic', context('women', 'bottom', 'women'));
   const men = defaultStoryboard(baseColors, 'basic', context('men', 'bottom', 'men'));
   const unknown = defaultStoryboard(baseColors, 'basic', context('unknown', 'bottom', null));
-  const standaloneFitStyling = (blocks) => blocks.filter((block) => (
-    block.sectionRole === 'fit'
+  const standaloneStyling = (blocks) => blocks.filter((block) => (
+    block.sectionRole === 'styling'
     && block.cutType === 'styling'
     && block.shot === 'full'
     && !block.spaceGroupId
@@ -203,7 +203,7 @@ test('women receive a mirror, men receive the styling fallback, unknown defaults
   assert.equal(women.filter((block) => block.cutType === 'mirror').length, 1);
   assert.equal(women.find((block) => block.cutType === 'mirror').faceExposure, 'hide');
   assert.equal(men.some((block) => block.cutType === 'mirror'), false);
-  assert.equal(standaloneFitStyling(men).at(-1).direction, 'back');
+  assert.equal(standaloneStyling(men).at(-1).direction, 'back');
   // 성별 미상은 서버(select_base_gender)와 동일하게 women 기본 — 세트·거울 모두 정상 배치.
   assert.equal(unknown.filter((block) => block.cutType === 'mirror').length, 1);
   assert.equal(unknown.some((block) => block.spaceGroupId), true);

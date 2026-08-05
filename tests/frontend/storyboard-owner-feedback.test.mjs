@@ -12,7 +12,7 @@ const featureStyles = readFileSync(new URL('../../src/styles/features.css', impo
 
 test('replacing a generation example resets per-cut settings but preserves its structural recipe', () => {
   const block = {
-    id: 'cut-1', sectionRole: 'fit', contentRole: 'coordination',
+    id: 'cut-1', sectionRole: 'styling', contentRole: 'coordination',
     cutType: 'styling', shot: 'medium', direction: 'back', colorId: 'red',
     exampleId: 'old', refScope: 'all', pose: 'walk', poseLabel: '걷기', angle: 'high',
     matchIds: ['pants'], refImages: ['mine.png'], refAssetIds: ['asset-1'],
@@ -30,7 +30,7 @@ test('replacing a generation example resets per-cut settings but preserves its s
     shot: block.shot,
     ...result.patch,
   }, {
-    sectionRole: 'fit', contentRole: 'coordination', cutType: 'styling', shot: 'medium',
+    sectionRole: 'styling', contentRole: 'coordination', cutType: 'styling', shot: 'medium',
     exampleId: 'new', exampleSelectionOrigin: 'user', refScope: 'pose',
     direction: 'front', colorId: 'base', colorIds: [], pose: 'auto', poseLabel: 'AI 자동',
     angle: 'same', matchIds: [], refImages: [], refAssetIds: [], faceExposure: 'same',
@@ -122,6 +122,23 @@ test('my images live only in the shot tab flow', () => {
   assert.doesNotMatch(storyboardSource, /MINE_SHOT_OPTION, disabled: inSpace/);
   assert.doesNotMatch(storyboardSource, /if \(isMine\) \{\s*return/);
   assert.match(storyboardSource, /applied\.source === 'mine' && current\.spaceGroupId[^]*moveBlockWithSpaceMembership\(next, id, spaceRun\.end\)/);
+});
+
+test('uploading from the my-image tab commits the chosen image instead of saving an AI reference first', () => {
+  const mineTab = storyboardSource.slice(
+    storyboardSource.indexOf('function MineImageTab'),
+    storyboardSource.indexOf('function SpaceSetCard'),
+  );
+  assert.match(mineTab, /if \(onChoose\)[^]*onChoose\(picked\);[^]*return;[^]*onImagesChange/);
+});
+
+test('a place-set member must be dissolved before it can cross official sections', () => {
+  const moveHandler = storyboardSource.slice(
+    storyboardSource.indexOf('const applySingleMove'),
+    storyboardSource.indexOf('const nudgeBlock'),
+  );
+  assert.match(moveHandler, /moving\?\.spaceGroupId && crossedRenderGroup[^]*장소 세트 묶음을 푼 뒤 다른 섹션으로 옮겨주세요/);
+  assert.match(storyboardSource, /draggedSetMemberGroupKey[^]*draggedSetMemberGroupKey === group\.key/);
 });
 
 test('between-cut controls are centered only in a measured same-row gap', () => {

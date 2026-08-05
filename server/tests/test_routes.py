@@ -169,7 +169,7 @@ def test_save_storyboard_persists_canonical_blocks(client, make_token, monkeypat
     assert [block["id"] for block in seen["blocks"]] == ["b3", "b2", "b1"]
     hero, mine, detail = seen["blocks"]
     assert (hero["sectionRole"], hero["cutType"], hero["shot"]) == (
-        "benefit", "styling", "full",
+        "hooking", "styling", "full",
     )
     assert (detail["contentRole"], detail["sectionRole"], detail["cutType"], detail["shot"]) == (
         "detail", "product", "product", "detail",

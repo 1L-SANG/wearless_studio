@@ -2,7 +2,7 @@
    features/storyboard — ⑤ 콘티보드 (PRD §8)
    blocks 는 "서버 상태의 working copy" 패턴: 진입 시 fetch → 로컬 편집
    → 생성 CTA 에서 saveStoryboard 로 한 번에 저장 (frontend_state_model §4).
-   사용자는 sectionRole(핵심 장점/핏·코디/제품 확인), 컷 종류와 생성예시를 다룬다.
+   사용자는 sectionRole(후킹/스타일링/스튜디오/의류 확인), 컷 종류와 생성예시를 다룬다.
    contentRole은 섹션·카드 위치·선택한 컷에서 정하는 내부 생성값이다.
    카피라이팅 토글은 store(copywriting) → patchProject 동기화.
    UnderlineTabs/ColorDots/MoodGuide/hexFor are exported for the editor.
@@ -59,6 +59,7 @@ import { renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
 import { generationExampleSelectionPatch } from '@/lib/storyboardExampleSelection.js';
+import { mineImageUrl, normalizeMineImages, promoteMineImage } from '@/lib/storyboardMineImages.js';
 
 
 const COLOR_HEX = {
@@ -130,7 +131,7 @@ const withoutLayoutRow = (block) => {
 };
 
 const WORN_CUT_TYPES = new Set(['styling', 'horizon', 'mirror']);
-const FIT_ROLE_BY_CUT_TYPE = Object.freeze({
+const WORN_ROLE_BY_CUT_TYPE = Object.freeze({
   styling: CONTENT_ROLES.COORDINATION,
   horizon: CONTENT_ROLES.FIT,
   mirror: CONTENT_ROLES.REAL_WEAR,
@@ -676,6 +677,10 @@ function MineImageTab({ images = [], onImagesChange, onChoose, onPickImage }) {
   const upload = async () => {
     const picked = await onPickImage?.();
     if (!picked) return;
+    if (onChoose) {
+      onChoose(picked);
+      return;
+    }
     onImagesChange?.([...images, picked]);
   };
   return (
@@ -1136,13 +1141,14 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
     const current = block;
     const nextRole = pendingRecipe.cutType === 'product'
       ? (pendingRecipe.shot === 'detail' ? CONTENT_ROLES.DETAIL : CONTENT_ROLES.PRODUCT_OVERVIEW)
-      : effectiveSectionRole === SECTION_ROLES.FIT
-        ? FIT_ROLE_BY_CUT_TYPE[pendingRecipe.cutType]
+      : [SECTION_ROLES.STYLING, SECTION_ROLES.STUDIO].includes(effectiveSectionRole)
+        ? WORN_ROLE_BY_CUT_TYPE[pendingRecipe.cutType]
         : [CONTENT_ROLES.HERO, CONTENT_ROLES.BENEFIT].includes(current.contentRole)
           ? current.contentRole : defaultContentRoleForSection(effectiveSectionRole);
     const recipePatch = normalizedRecipePatch({
       ...current,
       source: 'ai',
+      sectionRole: effectiveSectionRole,
       cutType: pendingRecipe.cutType,
       shot: pendingRecipe.shot,
     }, nextRole, { hasDetailImage });
@@ -1247,8 +1253,14 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
               isOptionPublished={(value) => value === 'mine'} />
           </div>
           <MineImageTab images={block.ownImages || []}
-            onImagesChange={(images) => onChange({ ownImages: images, thumb: images[0] || block.thumb })}
-            onPickImage={() => api.pickAnyImage()} onChoose={(src) => onChange({ thumb: src?.url || src })} />
+            onImagesChange={(images) => {
+              const nextImages = normalizeMineImages(images);
+              onChange({ ownImages: nextImages, thumb: nextImages[0] || null });
+            }}
+            onPickImage={() => api.pickAnyImage()} onChoose={(selectedImage) => {
+              const nextImages = promoteMineImage(block.ownImages, selectedImage);
+              onChange({ ownImages: nextImages, thumb: nextImages[0] || null });
+            }} />
         </>
       ) : <>
       {block.spaceGroupId && (
@@ -1832,7 +1844,7 @@ export function Storyboard() {
     const droppedExampleId = reservedSpaceMember?.exampleId || requestedExample;
     const targetHost = blocks.find((b) => b.sectionId === targetSid);
     const host = targetHost || (!targetRole ? blocks[Math.max(0, Math.min(idx - 1, blocks.length - 1))] : null);
-    const sectionRole = targetRole || host?.sectionRole || SECTION_ROLES.BENEFIT;
+    const sectionRole = targetRole || host?.sectionRole || SECTION_ROLES.HOOKING;
     const droppedExample = droppedExampleId
       ? (catalogs.genExamples || []).find((example) => example.id === droppedExampleId)
       : null;
@@ -1936,7 +1948,7 @@ export function Storyboard() {
       : droppedExample ? '생성예시를 새 컷으로 추가했어요' : '블록을 추가했어요', { icon: 'plus' });
   };
   const mineBlock = (src, n) => ({
-    id: uid('blk'), sectionRole: SECTION_ROLES.BENEFIT, contentRole: CONTENT_ROLES.CUSTOM, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
+    id: uid('blk'), sectionRole: SECTION_ROLES.HOOKING, contentRole: CONTENT_ROLES.CUSTOM, taxonomyVersion: STORYBOARD_TAXONOMY_VERSION,
     title: '내 이미지', source: 'mine', cutType: null, colorId: colorOpts[0]?.id || 'col1',
     ownImages: [src], thumb: src, pose: 'auto', matchIds: [], faceExposure: 'same', angle: 'same', refImages: [], refAssetIds: [],
     poseThumb: Placeholder.pose('stand'), poseLabel: '-',
@@ -2019,6 +2031,10 @@ export function Storyboard() {
     const moving = blocks.find((block) => block.id === id);
     const currentGroupKey = moving ? renderKeyForBlockId(id) : null;
     const crossedRenderGroup = !!targetGroupKey && currentGroupKey !== targetGroupKey;
+    if (moving?.spaceGroupId && crossedRenderGroup) {
+      toast.push('장소 세트 묶음을 푼 뒤 다른 섹션으로 옮겨주세요');
+      return;
+    }
     // 다른 섹션으로 옮길 때는 사용자가 어느 드롭라인을 가리켰든 그 섹션의 맨 뒤가 목적지다.
     // 같은 섹션 안에서는 가리킨 위치를 그대로 써 세밀한 재정렬을 유지한다.
     const targetGroupEnd = crossedRenderGroup
@@ -2180,6 +2196,8 @@ export function Storyboard() {
   const sections = deriveFixedSections(blocks);
   const draggedSpaceBlock = dragSpaceGroupId ? blocks.find((block) => block.spaceGroupId === dragSpaceGroupId) : null;
   const draggedSpaceGroupKey = draggedSpaceBlock ? renderKeyForBlockId(draggedSpaceBlock.id) : null;
+  const draggedBlock = dragId ? blocks.find((block) => block.id === dragId) : null;
+  const draggedSetMemberGroupKey = draggedBlock?.spaceGroupId ? renderKeyForBlockId(draggedBlock.id) : null;
 
   const sectionForGroup = (group) => {
     const sectionId = group.items[0]?.block.sectionId;
@@ -2187,9 +2205,12 @@ export function Storyboard() {
       const exact = sections.find((section) => section.id === sectionId);
       if (exact) return exact;
     }
-    const role = group.key === 'hooking'
-      ? SECTION_ROLES.BENEFIT
-      : group.key === 'product' ? SECTION_ROLES.PRODUCT : SECTION_ROLES.FIT;
+    const role = {
+      hooking: SECTION_ROLES.HOOKING,
+      styling: SECTION_ROLES.STYLING,
+      studio: SECTION_ROLES.STUDIO,
+      product: SECTION_ROLES.PRODUCT,
+    }[group.key];
     return sections.find((section) => section.role === role) || {
       id: 'empty:' + role,
       role,
@@ -2202,6 +2223,7 @@ export function Storyboard() {
   const insertControl = (idx, group, targetSpaceGroupId = null) => {
     const section = sectionForGroup(group);
     const canAcceptDrag = (!draggedSpaceGroupKey || draggedSpaceGroupKey === group.key)
+      && (!draggedSetMemberGroupKey || draggedSetMemberGroupKey === group.key)
       && !(dragSpaceGroupId && targetSpaceGroupId);
     const lineOn = dragOver === idx && dragOverSec === section.id
       && dragOverSpaceGroupId === targetSpaceGroupId;
