@@ -14,7 +14,7 @@ import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, IconButton, Button, Chips, EmptyState, Skeleton, Toggle, useToast } from '@/components/ui.jsx';
+import { Icon, IconButton, Button, Chips, EmptyState, Toggle, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { ensureSections, deriveSections, adoptSection, patchSection, normalizeRows, normalizeBoard } from '@/lib/sections.js';
 import {
@@ -55,6 +55,19 @@ import {
   nextSpaceSetMemberReservation,
   replaceSpaceSetRun,
 } from '@/lib/storyboardSpaceSets.js';
+import {
+  consumeStoryboardEntry,
+  loadStoryboardEntry,
+  peekStoryboardEntry,
+  shouldRenderStoryboardLoadingFrame,
+} from './storyboardEntryPrefetch.js';
+import {
+  sbLastSaved,
+  sbPending,
+  sbSaveIdle,
+  sbSaveNow,
+  sbStable,
+} from './storyboardPersistence.js';
 import { renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
@@ -68,20 +81,6 @@ const COLOR_HEX = {
   '블랙': '#15141a', '아이보리': '#f3eee1', '화이트': '#ffffff', '베이지': '#d8c4a3',
 };
 export const hexFor = (c) => COLOR_HEX[c.swatchId] || COLOR_HEX[c.name] || '#d8d6dc';
-
-/* 콘티 저장 직렬 체인 — 모듈 스코프: 컴포넌트 수명(빠른 이탈→재진입의 구·신 인스턴스)과
-   프로젝트 경계를 넘어 전 저장의 순서를 보장한다. 늦게 도착한 옛 PUT이 최신을 덮어쓸 수 없다.
-   lastSaved 는 프로젝트별 — 다른 프로젝트의 참조와 비교되는 오판 방지. */
-let sbSaveChain = Promise.resolve();
-const sbLastSaved = new Map();   // projectId → 마지막 "성공" 저장 blocks 참조
-const sbPending = new Map();     // projectId → "실패"한 저장 스냅샷 — 다음 진입이 서버 대신 이걸 복원해 유실 방지
-const sbSaveIdle = () => sbSaveChain.catch(() => {});   // 대기 중 저장이 모두 끝날 때까지 (로드 전 호출)
-// 키 순서 무관 안정 직렬화 — 서버 왕복(JSONB 등)이 키 순서를 바꿔도 내용 동등성이 유지되게.
-// 순진한 JSON.stringify 비교는 같은 내용을 다르다고 판정해 복구 가능한 편집분을 잘못 폐기한다.
-const sbStable = (v) => JSON.stringify(v, (k, val) =>
-  (val && typeof val === 'object' && !Array.isArray(val))
-    ? Object.keys(val).sort().reduce((o, key) => { o[key] = val[key]; return o; }, {})
-    : val);
 
 const undoLabelForPatch = (patch) => {
   const keys = new Set(Object.keys(patch || {}));
@@ -106,25 +105,6 @@ const changedBlockCount = (before, after) => {
   }
   return count;
 };
-function sbSaveNow(pid, getSnap, options = {}) {
-  const run = sbSaveChain.catch(() => {}).then(() => {
-    const snap = getSnap();
-    if (!pid || !snap) return;
-    if (sbLastSaved.get(pid) === snap) {
-      // 마지막 '성공' 저장본과 동일 참조 = 사용자가 그 상태로 되돌린 것(예: 블록 취소의 통짜 복원).
-      // 이때 남아 있는 실패 보류분(sbPending)은 낡은 스냅샷 — 지우지 않으면 재진입 시 취소한 블록이 부활한다.
-      sbPending.delete(pid);
-      return;
-    }
-    return api.saveStoryboard(pid, snap, options).then(
-      () => { sbLastSaved.set(pid, snap); sbPending.delete(pid); },
-      (err) => { sbPending.set(pid, snap); throw err; },   // 실패 = 완료 아님 — 스냅샷 보관 후 전파
-    );
-  });
-  sbSaveChain = run.catch(() => {});   // 체인은 실패해도 살아있게, 실패는 호출자에 전파
-  return run;
-}
-
 const withoutLayoutRow = (block) => {
   const { layoutRowId: _layoutRowId, ...single } = block;
   return single;
@@ -1411,16 +1391,112 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   );
 }
 
+function StoryboardLoadingFrame({ doneBlocked }) {
+  return (
+    <div className="wizard wide sb-page sb-loading-page" aria-busy="true" aria-label="콘티보드를 불러오는 중이에요">
+      {doneBlocked && <DoneGuardModal />}
+      <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
+      <div className="sb-count-head sb-loading-count" aria-hidden="true">
+        <span className="sb-loading-count-mark" />
+      </div>
+      <div className="storyboard-solo-layout sb-loading-layout" aria-hidden="true">
+        <aside className="sb-preview-rail sb-loading-preview">
+          <div className="sb-loading-preview-head" />
+          <div className="sb-loading-preview-page">
+            {Array.from({ length: 6 }, (_, index) => <span key={index} />)}
+          </div>
+        </aside>
+        <div className="sb-solo">
+          <div className="sb-cards sb-loading-board">
+            {Array.from({ length: 3 }, (_, index) => (
+              <div className="sb-loading-section" key={index}>
+                <span className="sb-loading-section-media" />
+                <span className="sb-loading-section-copy" />
+              </div>
+            ))}
+          </div>
+          <div className="sb-loading-upload" />
+        </div>
+      </div>
+      <div className="sb-actionbar" aria-hidden="true">
+        <div className="sb-ab-inner sb-loading-actions">
+          <span className="sb-loading-action-back" />
+          <span className="sb-loading-action-count" />
+          <span className="sb-loading-action-copy" />
+          <span className="sb-loading-action-go" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, analysis], sourceBlocks = board) {
+  const p = product;
+  const a = analysis;
+  const hydratedCatalogs = withStoryboardSpaceSetExamples(rawCatalogs);
+  const hasDetailImage = hasDetailSource(p);
+  const exampleGender = exampleGenderFromAnalysis(
+    a,
+    hydratedCatalogs,
+    p.clothingType,
+  );
+  const normalizedBlocks = ensureSections(sourceBlocks, { hasDetailImage }).map((block) => ({
+    ...block,
+    ...referenceFeedbackPatch(block, {}, hydratedCatalogs),
+  }));
+  const normalized = sbStable(normalizedBlocks) !== sbStable(sourceBlocks);
+  const assignment = assignGenerationExamples(normalizedBlocks, {
+    catalog: hydratedCatalogs.genExamples,
+    product: p,
+    gender: exampleGender,
+  });
+  const allColorOpts = (p.colors || []).map((color) => ({
+    id: color.id,
+    label: color.name || '색상',
+    hex: hexFor(color),
+  }));
+  const colorOpts = allColorOpts.filter((_option, index) => (
+    (p.colors[index].images || []).length || p.colors[index].isBase
+  ));
+  const fallbackColor = [{ id: 'col1', label: '기본', hex: '#15141a' }];
+
+  return {
+    blocks: assignment.blocks,
+    catalogs: hydratedCatalogs,
+    matchClothing,
+    clothingType: p.clothingType || 'top',
+    exampleGender,
+    hasDetailImage,
+    colorOpts: colorOpts.length ? colorOpts : fallbackColor,
+    detailColorOpts: allColorOpts.length ? allColorOpts : fallbackColor,
+    normalized,
+    assignment,
+  };
+}
+
 export function Storyboard() {
   const navigate = useNavigate();
-  const [blocks, setBlocks] = useState(null);
-  const [catalogs, setCatalogs] = useState(null);
-  const [matchClothing, setMatchClothing] = useState(null);
-  const [colorOpts, setColorOpts] = useState([]);
-  const [detailColorOpts, setDetailColorOpts] = useState([]);
-  const [clothingType, setClothingType] = useState('top'); // 샷 필터 아이콘·예시 크롭용 (상의=위/하의=아래)
-  const [exampleGender, setExampleGender] = useState(null);
-  const [hasDetailImage, setHasDetailImage] = useState(false);
+  const initialEntryRef = useRef(undefined);
+  if (initialEntryRef.current === undefined) {
+    const initialProjectId = useAppStore.getState().projectId;
+    const prefetched = initialProjectId && !sbPending.has(initialProjectId)
+      ? peekStoryboardEntry(initialProjectId)
+      : null;
+    initialEntryRef.current = prefetched ? {
+      projectId: initialProjectId,
+      raw: prefetched,
+      prepared: prepareStoryboardEntry(prefetched),
+    } : null;
+  }
+  const initialEntry = initialEntryRef.current?.prepared;
+  const [blocks, setBlocks] = useState(() => initialEntry?.blocks || null);
+  const [catalogs, setCatalogs] = useState(() => initialEntry?.catalogs || null);
+  const [matchClothing, setMatchClothing] = useState(() => initialEntry?.matchClothing || null);
+  const [colorOpts, setColorOpts] = useState(() => initialEntry?.colorOpts || []);
+  const [detailColorOpts, setDetailColorOpts] = useState(() => initialEntry?.detailColorOpts || []);
+  const [clothingType, setClothingType] = useState(() => initialEntry?.clothingType || 'top'); // 샷 필터 아이콘·예시 크롭용 (상의=위/하의=아래)
+  const [exampleGender, setExampleGender] = useState(() => initialEntry?.exampleGender || null);
+  const [hasDetailImage, setHasDetailImage] = useState(() => initialEntry?.hasDetailImage || false);
   const [selectedId, setSelectedId] = useState(null);
   const [splitOpen, setSplitOpen] = useState(false); // 한 번이라도 카드를 열면 좌/우 분할 유지
   const [dragId, setDragId] = useState(null);
@@ -1495,67 +1571,59 @@ export function Storyboard() {
     (async () => {
       try {
         setLoadError(null);
-      await useAppStore.getState().loadProject();
-      const pid = useAppStore.getState().projectId;
-      if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
-      pidRef.current = pid;   // 이 인스턴스의 저장 대상 고정 (프로젝트 경계)
-      await sbSaveIdle();     // 직전 인스턴스의 비행 중 저장(이탈 플러시)이 착지한 뒤에 읽는다 — 스테일 로드 방지
-      const [b, c, m, p, a] = await Promise.all([
-        api.getStoryboard(pid), api.getCatalogs(), api.getMatchClothing(pid),
-        api.getProduct(pid), api.getAnalysis(pid),
-      ]);
-      const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
-      // 직전 이탈 저장 실패분 복원 — 단, "서버가 우리가 마지막으로 알던 상태 그대로"일 때만.
-      // 서버가 변했다면 다른 탭/기기의 더 새로운 저장이므로 보관분을 폐기하고 서버본을 따른다(침묵 덮어쓰기 금지).
-      let pending = sbPending.get(pid);
-      const baseline = sbLastSaved.get(pid);
-      // 1순위: 보관분이 서버와 내용 동일 = '실패'로 기록됐지만 실제로 착지했던 저장(응답 유실).
-      //        기준선 일치 여부와 무관하게 최우선 정리 — 안 하면 불필요한 복원·재저장 루프에 빠진다.
-      if (pending && sbStable(b) === sbStable(pending)) { sbPending.delete(pid); pending = null; }
-      const serverUnchanged = baseline != null && sbStable(b) === sbStable(baseline);
-      const usePending = !!pending && serverUnchanged;
-      if (pending && !usePending) {
-        // 진짜 충돌(서버가 보관분·기준선과 다른 제3의 내용) — 폐기하되 침묵하지 않는다
-        sbPending.delete(pid);
-        toast.push('다른 곳에서 저장된 최신 콘티를 불러왔어요 — 이전에 저장 못 한 변경은 반영되지 않았어요');
-      }
-      if (!usePending) sbLastSaved.set(pid, b);   // 이번 로드의 서버 상태를 기준선으로 기록
-      const sourceBlocks = usePending ? pending : b;
-      const productHasDetail = hasDetailSource(p);
-      const resolvedGender = exampleGenderFromAnalysis(
-        a,
-        hydratedCatalogs,
-        p.clothingType,
-      );
-      const normalizedBlocks = (ensureSections(sourceBlocks, { hasDetailImage: productHasDetail }).map((block) => ({
-        ...block, ...referenceFeedbackPatch(block, {}, hydratedCatalogs),
-      })));
-      const normalized = sbStable(normalizedBlocks) !== sbStable(sourceBlocks);
-      const assignment = assignGenerationExamples(normalizedBlocks, {
-        catalog: hydratedCatalogs.genExamples,
-        product: p,
-        gender: resolvedGender,
-      });
-      const initBlocks = assignment.blocks;
-      setOpenGroupKeys([]);
-      setBlocks(initBlocks); setCatalogs(hydratedCatalogs); setMatchClothing(m); setClothingType(p.clothingType || 'top');
-      setExampleGender(resolvedGender); setHasDetailImage(productHasDetail);
-      if (normalized || assignment.changed || usePending) {
-        const autoAssignmentOnly = assignment.assignedIds.length > 0
-          && assignment.protectedIds.length === 0 && !normalized && !usePending;
-        try {
-          await sbSaveNow(pid, () => initBlocks, { autoAssignment: autoAssignmentOnly });
-          saveRetryOptions.current = {};
-          setSaveError(null);
-        } catch {
-          saveRetryOptions.current = { autoAssignment: autoAssignmentOnly };
-          setSaveError('변경 내용을 저장하지 못했어요');
+        await useAppStore.getState().loadProject();
+        const pid = useAppStore.getState().projectId;
+        if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
+        pidRef.current = pid;   // 이 인스턴스의 저장 대상 고정 (프로젝트 경계)
+        await sbSaveIdle();     // 직전 인스턴스의 비행 중 저장(이탈 플러시)이 착지한 뒤에 읽는다 — 스테일 로드 방지
+        const entry = await consumeStoryboardEntry(pid) || await loadStoryboardEntry(pid);
+        const [board] = entry;
+
+        // 직전 이탈 저장 실패분 복원 — 단, "서버가 우리가 마지막으로 알던 상태 그대로"일 때만.
+        // 서버가 변했다면 다른 탭/기기의 더 새로운 저장이므로 보관분을 폐기하고 서버본을 따른다(침묵 덮어쓰기 금지).
+        let pending = sbPending.get(pid);
+        const baseline = sbLastSaved.get(pid);
+        // 1순위: 보관분이 서버와 내용 동일 = '실패'로 기록됐지만 실제로 착지했던 저장(응답 유실).
+        //        기준선 일치 여부와 무관하게 최우선 정리 — 안 하면 불필요한 복원·재저장 루프에 빠진다.
+        if (pending && sbStable(board) === sbStable(pending)) { sbPending.delete(pid); pending = null; }
+        const serverUnchanged = baseline != null && sbStable(board) === sbStable(baseline);
+        const usePending = !!pending && serverUnchanged;
+        if (pending && !usePending) {
+          // 진짜 충돌(서버가 보관분·기준선과 다른 제3의 내용) — 폐기하되 침묵하지 않는다
+          sbPending.delete(pid);
+          toast.push('다른 곳에서 저장된 최신 콘티를 불러왔어요 — 이전에 저장 못 한 변경은 반영되지 않았어요');
         }
-      }
-      const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexFor(col) }));
-      const opts = allColorOpts.filter((_option, index) => (p.colors[index].images || []).length || p.colors[index].isBase);
-      setDetailColorOpts(allColorOpts.length ? allColorOpts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
-      setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
+        if (!usePending) sbLastSaved.set(pid, board);   // 이번 로드의 서버 상태를 기준선으로 기록
+        const reuseInitialEntry = !usePending
+          && initialEntryRef.current?.projectId === pid
+          && initialEntryRef.current?.raw === entry;
+        const prepared = reuseInitialEntry
+          ? initialEntryRef.current.prepared
+          : prepareStoryboardEntry(entry, usePending ? pending : board);
+        const initBlocks = prepared.blocks;
+        setOpenGroupKeys([]);
+        if (!reuseInitialEntry) {
+          setBlocks(initBlocks);
+          setCatalogs(prepared.catalogs);
+          setMatchClothing(prepared.matchClothing);
+          setClothingType(prepared.clothingType);
+          setExampleGender(prepared.exampleGender);
+          setHasDetailImage(prepared.hasDetailImage);
+          setDetailColorOpts(prepared.detailColorOpts);
+          setColorOpts(prepared.colorOpts);
+        }
+        if (prepared.normalized || prepared.assignment.changed || usePending) {
+          const autoAssignmentOnly = prepared.assignment.assignedIds.length > 0
+            && prepared.assignment.protectedIds.length === 0 && !prepared.normalized && !usePending;
+          try {
+            await sbSaveNow(pid, () => initBlocks, { autoAssignment: autoAssignmentOnly });
+            saveRetryOptions.current = {};
+            setSaveError(null);
+          } catch {
+            saveRetryOptions.current = { autoAssignment: autoAssignmentOnly };
+            setSaveError('변경 내용을 저장하지 못했어요');
+          }
+        }
       } catch {
         setLoadError('생성예시 카탈로그를 불러오지 못했어요');
       }
@@ -1636,7 +1704,7 @@ export function Storyboard() {
       <button type="button" className="btn btn-primary" onClick={() => setLoadRetry((value) => value + 1)}>다시 시도</button>
     </div></div>
   );
-  if (!blocks || !catalogs) return <div className="wizard wide">{doneBlocked && <DoneGuardModal />}<div className="surface"><Skeleton h={400} /></div></div>;
+  if (shouldRenderStoryboardLoadingFrame(blocks, catalogs)) return <StoryboardLoadingFrame doneBlocked={doneBlocked} />;
 
   const selected = blocks.find((b) => b.id === selectedId);
   const dismissUndo = () => {
@@ -2574,7 +2642,7 @@ export function Storyboard() {
     navigate('/create/generating');
   };
   return (
-    <div className={`wizard wide sb-page${atomicSaving ? ' is-atomic-saving' : ''}`}
+    <div className={`wizard wide sb-page sb-content-enter${atomicSaving ? ' is-atomic-saving' : ''}`}
       aria-busy={atomicSaving || undefined}
       onClickCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
       onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>

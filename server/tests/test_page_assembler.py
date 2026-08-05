@@ -353,6 +353,54 @@ def test_copywriting_on_but_no_matching_copy_result_omits_text():
     assert len(blocks[0]["elements"]) == 1  # image only, no headline injected
 
 
+# ── 영속 행 조립 + 오프닝 카피 ───────────────────────────────────────────────
+def test_two_column_opening_row_merges_and_keeps_copy_below_images():
+    storyboard = [
+        {
+            "id": "opening-style", "sectionRole": "benefit", "contentRole": "hero",
+            "source": "ai", "cutType": "styling", "shot": "medium",
+            "sectionId": "opening", "sectionLayout": "twoColumn", "layoutRowId": "row-opening",
+        },
+        {
+            "id": "opening-horizon", "sectionRole": "benefit", "contentRole": "benefit",
+            "source": "ai", "cutType": "horizon", "shot": "medium",
+            "sectionId": "opening", "sectionLayout": "twoColumn", "layoutRowId": "row-opening",
+        },
+    ]
+    cut_results = [
+        {"blockId": "opening-style", "imageUrl": "https://cdn.example.com/style.png"},
+        {"blockId": "opening-horizon", "imageUrl": "https://cdn.example.com/horizon.png"},
+    ]
+    copy_results = [
+        {"blockId": "opening-style", "texts": [{"role": "headline", "text": "겨울을 부드럽게"}]},
+        {"blockId": "opening-horizon", "texts": [{"role": "body", "text": "골지 짜임의 포인트"}]},
+    ]
+
+    blocks = assemble(storyboard, cut_results, copy_results, PRODUCT, True)
+
+    assert len(blocks) == 4  # 오프닝 행 1 + 자동 블록 3
+    opening = blocks[0]
+    assert opening["name"] == "2단 구성"
+    assert opening["kind"] == "twocol"
+    images = [element for element in opening["elements"] if element["type"] == "image"]
+    assert [(image["x"], image["y"], image["w"], image["h"]) for image in images] == [
+        (60, 50, 430, 500),
+        (510, 50, 430, 500),
+    ]
+    assert [image["cutType"] for image in images] == ["styling", "horizon"]
+
+    headline, subtitle = [
+        element for element in opening["elements"] if element["type"] == "text"
+    ]
+    assert (headline["x"], headline["y"], headline["w"], headline["h"]) == (60, 582, 880, 56)
+    assert headline["text"] == "겨울을 부드럽게"
+    assert headline["style"]["size"] == 40 and headline["style"]["weight"] == 600
+    assert (subtitle["x"], subtitle["y"], subtitle["w"], subtitle["h"]) == (60, 650, 880, 34)
+    assert subtitle["text"] == "골지 짜임의 포인트"
+    assert subtitle["style"] == {"size": 18, "color": "#6b6b73"}
+    assert headline["y"] >= max(image["y"] + image["h"] for image in images)
+
+
 # ── 빈 슬롯 폴백 (컷 생성 실패) ───────────────────────────────────────────────
 def test_missing_cut_result_renders_empty_slot_without_crash():
     storyboard = [_storyboard()[0]]  # blk1, no cut_results entry for it

@@ -337,6 +337,38 @@ test('creating released members preserves exact ordered example choices as user 
   ]);
 });
 
+test('creating or replacing a space set never inherits block-local mood photos', () => {
+  const set = {
+    id: 'released',
+    spaceVariation: 'subtle',
+    members: [
+      { exampleId: 'exact-full', order: 1, cutType: 'styling', shot: 'full', direction: 'front' },
+      { exampleId: 'exact-medium', order: 2, cutType: 'styling', shot: 'medium', direction: 'side' },
+    ],
+  };
+  const template = block('template', {
+    refImages: [{ url: 'template-mood.webp', assetId: 'template-mood' }],
+    refAssetIds: ['template-mood'],
+  });
+  const previousMembers = [
+    block('old-1', { refImages: ['old-1.webp'], refAssetIds: ['old-1'] }),
+    block('old-2', { refImages: ['old-2.webp'], refAssetIds: ['old-2'] }),
+  ];
+
+  const inserted = createSpaceSetMembers(set, template, {
+    spaceGroupId: 'ssg1__released__1',
+  });
+  const replaced = createSpaceSetMembers(set, template, {
+    spaceGroupId: 'ssg1__released__2',
+    previousMembers,
+  });
+
+  for (const member of [...inserted, ...replaced]) {
+    assert.deepEqual(member.refImages, []);
+    assert.deepEqual(member.refAssetIds, []);
+  }
+});
+
 test('a styling tray exposes its reserved member, then returns to general add when exhausted', () => {
   const set = {
     members: [
