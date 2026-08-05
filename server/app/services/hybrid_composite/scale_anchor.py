@@ -70,8 +70,15 @@ def aspect_via_stripe_energy(image: np.ndarray, landmarks: Mapping) -> float | N
     # 그대로 재고 있었다 — 그래서 마네킹 맨다리까지 한 성분으로 딸려 들어와, 높이는
     # 전신이고 중간대 폭은 다리인 값이 나왔다(실측: 셔츠가 이미지의 26% 인데 mask bbox
     # 는 89%, 종횡비 4.90). 어깨 위·밑단 아래는 셔츠가 존재할 수 없는 영역이다.
-    top = max(0, int((min(landmarks["shoulder_l"][1], landmarks["shoulder_r"][1]) - 0.02) * ih))
-    bottom = min(ih, int((max(landmarks["hem_l"][1], landmarks["hem_r"][1]) + 0.03) * ih))
+    shoulder_y = min(landmarks["shoulder_l"][1], landmarks["shoulder_r"][1])
+    hem_y = max(landmarks["hem_l"][1], landmarks["hem_r"][1])
+    # 패딩이 아니라 **원 몸통 span** 으로 가드한다. 패딩된 밴드 두께로 재면 어깨와 밑단이
+    # 겹친 붕괴 기하에서도 밴드가 늘 이미지의 5% 라 가드가 발화하지 않고, 패딩 안에
+    # 우연히 걸린 픽셀로 무의미한 종횡비를 지어낸다(실측 0.244).
+    if (hem_y - shoulder_y) * ih < 16:
+        return None
+    top = max(0, int((shoulder_y - 0.02) * ih))
+    bottom = min(ih, int((hem_y + 0.03) * ih))
     if bottom - top < 8:
         return None
     clipped = np.zeros_like(mask)

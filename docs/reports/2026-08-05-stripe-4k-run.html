@@ -41,10 +41,12 @@ figcaption{font-size:13px;color:#6b7280;margin-top:7px}
 
 <div class="box warn">
 <b>상태 요약.</b> 승인하신 4K 실행을 돌렸습니다. carrier(마네킹 착장컷)는 <b>정상 생성</b>됐고,
-QC가 막던 <b>두 개의 측정 결함을 실측으로 찾아 고쳤습니다.</b> 파이프라인은 이제
-<code>panel_map</code>·<code>carrier_preflight</code> 를 지나갑니다. 남은 한 개 블로커는 코드가
-아니라 <b>원본 사진의 커프 프레이밍</b>입니다 — 아래 4절.
-Codex 독립 검증 전이므로 "최종 검증 완료"·"기능 완성"으로 쓰지 않습니다.
+QC가 막던 <b>두 개의 측정 결함을 실측으로 찾아 고쳤습니다.</b> 파이프라인은 이제 <code>panel_map</code> 을 지나갑니다.
+남은 한 개 블로커는 코드가 아니라 <b>원본 사진의 커프 프레이밍</b>입니다 — 아래 4절.
+<br><b>정확히 하자면</b> <code>carrier_preflight</code> 는 통과한 것이 아니라
+<code>--allow-missing-preflight</code> 로 <b>우회</b>했습니다. 이 데이터셋에 preflight 증거가
+캡처돼 있지 않기 때문이며, replay 지표에도 <code>production_gate_replayable: false</code> 로
+기록돼 있습니다. 이 실행은 preflight 에 대해 아무것도 증명하지 않습니다.
 </div>
 
 <h2>1. 이번 실행이 답한 질문</h2>
@@ -144,9 +146,48 @@ carrier에 존재하는 모든 보호 부위(커프 포함)에 대해 원본 공
 <p>추천은 <b>A</b>입니다. 재촬영 비용이 낮고, B는 "옷이 똑같이 나와야 한다"는 이번 작업의 목적과
 정면으로 부딪힙니다.</p>
 
-<h2>6. 아직 안 한 것 / 위험</h2>
+<h2>6. 자체 리뷰에서 나온 것</h2>
+<p>Codex 사용량 소진으로 독립 검증 대신 <b>제가 제 변경을 적대적으로 리뷰</b>했습니다.
+찾은 것을 그대로 씁니다.</p>
+<table>
+<tr><th>등급</th><th>발견</th><th>조치</th></tr>
+<tr><td class="tag bad">높음</td>
+    <td><code>scale_anchor.py</code> 테스트 0건. 게이트 판정을 거절→통과로 뒤집은 수정인데
+        클립을 지워도 전체 스위트가 green 이었음. 세션 초반에 기록한 실수와 같은 유형
+        (아무 테스트도 그 심볼을 안 건드려서 못 잡음).</td>
+    <td class="tag fix">테스트 9건 추가</td></tr>
+<tr><td class="tag bad">높음</td>
+    <td>그 테스트가 <b>제 코드의 결함을 잡음</b>. 가드 <code>bottom - top &lt; 8</code> 은
+        무용지물 — 패딩(0.05×높이)만으로 밴드가 늘 그보다 두꺼워, 어깨=밑단인 붕괴 기하에서도
+        발화하지 않고 패딩에 우연히 걸린 픽셀로 종횡비 <code>0.244</code> 를 지어냈음.</td>
+    <td class="tag fix">원 몸통 span 으로 가드 교체</td></tr>
+<tr><td class="tag open">중간</td>
+    <td>측정 실패가 <b>조용한 통과</b>가 됨. 워커는 예외 시 양쪽을 <code>None</code> 으로 두는데,
+        <code>panel_map</code> 은 "양쪽 키 존재 + 둘 다 None" 을 <b>의도적 skip 신호</b>로 읽음.
+        둘이 구분되지 않음.</td>
+    <td>미수정 — 아래 설명</td></tr>
+<tr><td class="tag open">중간</td>
+    <td>한쪽만 측정 실패하면 skip 조건에 안 걸리고, 문서상 신뢰할 수 없다고 적힌
+        <b>vision 쌍 비교로 조용히 되돌아감</b>(상대오차 0.80 실측 경로).</td>
+    <td>미수정 — 아래 설명</td></tr>
+<tr><td class="tag open">낮음</td>
+    <td>클립이 높이를 landmark 에 다시 묶음. <code>mask_aspect_from_silhouette</code> 의
+        명시 취지는 "landmark 지터와 무관한 결정론 측정"인데 그 취지를 일부 되돌림.
+        다만 hem 지터 0.02 는 span 0.26 에서 약 8% 오차로, 이 경로가 원래 고치려던
+        상대오차 0.80 보다 훨씬 작음.</td>
+    <td>수용, 명시 기록</td></tr>
+</table>
+<div class="box warn"><b>중간 2건을 제가 고치지 않은 이유.</b> 둘 다 고치는 방향이
+<b>정책 결정</b>이라서입니다. fail-open 을 fail-closed 로 바꾸면 지금 돌고 있는 잡이 새로 막히고,
+skip 으로 통일하면 게이트가 느슨해집니다. 어느 쪽이든 제가 임의로 정할 것이 아니라
+결정하실 사항입니다. 다만 <b>지금은 측정 실패와 의도적 생략이 로그에서도 구분되지 않아</b>,
+어느 쪽이 얼마나 일어나는지조차 셀 수 없다는 점은 짚어둡니다.</div>
+
+<h2>7. 아직 안 한 것 / 위험</h2>
 <ul>
-<li><b>Codex 독립 검증 미실행.</b> 그전까지 완료로 부르지 않습니다.</li>
+<li><b>독립 검증 없음.</b> Codex 사용량 소진으로 6절의 자체 리뷰가 유일한 검토입니다.
+제가 제 코드를 본 것이라 같은 맹점을 공유합니다 — 특히 "무엇을 재는가"를 여러 번 틀렸던
+이번 작업에서는 그 한계가 큽니다. 완료로 부르지 않습니다.</li>
 <li><b>육안 최종 판정 불가.</b> 합성이 커프 게이트에서 멈춰 최종 4K 합성본이 없습니다.</li>
 <li><b>거절 carrier 저장은 아직 이번 실행 한정.</b> 상시 저장은 미구현 — 무비용이며 다음 작업 후보입니다.</li>
 <li><b><code>MAX_CAPE_HEM_TO_SHOULDER</code> 재캘리브 미완.</b> 알려진 정상 carrier가 1.337로 게이트
@@ -154,7 +195,7 @@ carrier에 존재하는 모든 보호 부위(커프 포함)에 대해 원본 공
 <li>이번 종횡비 수정은 실 자산 1건에서 검증됐습니다. 다른 상품 분포는 미확인입니다.</li>
 </ul>
 
-<h2>7. 준수 사항</h2>
+<h2>8. 준수 사항</h2>
 <p>main 불변(merge·rebase·reset·checkout·push·PR 없음). 보호 dirty 파일
 (<code>server/uv.lock</code>, <code>src/App.jsx</code>, <code>.context/</code>) 미수정 — 해시 확인.
 운영 DB·migration 변경 없음. 자격증명 미출력. 유료 이미지 호출 1회(승인 범위).
