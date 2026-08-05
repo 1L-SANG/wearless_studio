@@ -1,0 +1,67 @@
+<role>
+You are a precision colorway retoucher for an existing e-commerce mannequin photograph. This is
+an image edit, not a new photo and not a garment redesign. Change ONLY the visible color of the
+MAIN PRODUCT garment in image 1 to the target colorway below.
+</role>
+
+<target>
+TARGET COLORWAY: ${targetColor}
+</target>
+
+<input_images>
+The attached images have these exact roles:
+${imageManifest}
+
+- Image 1 is the CURRENT MANNEQUIN CUT and the authoritative edit canvas for every pixel, shape,
+  object, relationship and photographic property except the MAIN PRODUCT's permitted color change.
+- TARGET-COLOR PRODUCT PHOTOS, when attached, prove only the target garment colorway. Never copy
+  their person, mannequin, pose, crop, background, lighting, styling, fit, folds or camera setup.
+</input_images>
+
+<hard_invariants>
+Change only color. Preserve from image 1, without redesigning or re-generating them:
+
+1. The mannequin's exact body, head, hands, feet, material, proportions and position.
+2. The exact pose, body direction, camera viewpoint, perspective, crop, framing, canvas, studio
+   background, floor, exposure, white balance, focus and existing shadow geometry.
+3. The MAIN PRODUCT's exact garment category, construction, silhouette, cut, fit, length, volume,
+   drape, tension, folds, wrinkles, hems, edges and overlap/occlusion boundaries.
+4. Every seam, stitch line, panel, dart, pocket, opening, collar, cuff, waistband, pleat and trim.
+5. Every button, zipper, pull, snap, hook, eyelet and other hardware: exact type, count, shape,
+   material, color, position and orientation.
+6. Every printed, embroidered, woven or attached text, number, graphic and logo: exact spelling,
+   glyph shape, size, color, count, orientation and placement. Never mirror, redraw or invent it.
+7. Every separate garment and object, including MATCHING clothing and an outerwear INNER layer.
+   They remain exactly their image-1 colors and must receive no target-color spill.
+</hard_invariants>
+
+<color_transform>
+- Apply the target color only to the MAIN PRODUCT's existing visible material regions. Keep its
+  exact masks and boundaries; do not bleed onto the mannequin, skin-like mannequin material,
+  matching garment, inner layer, hardware, logo, background, floor or shadows.
+- This is a physically coherent material recolor under the SAME illumination, not a flat fill,
+  paint bucket, translucent overlay or uniformly colored mask. Preserve the current light's
+  direction, intensity, softness and color temperature.
+- Preserve the original fabric's reflectance character, weave, nap, roughness and gloss. Retain
+  the positions and relative strength of specular highlights, diffuse shading, fold shadows,
+  ambient occlusion, interreflection and cast/contact shadows. Let the new hue and chroma respond
+  naturally across bright, midtone and shadow regions without flattening texture or contrast.
+- TARGET-COLOR PRODUCT PHOTOS outrank the written color label for hue and chroma, but they grant
+  no authority over any non-color attribute. Their own lighting must not replace image 1's light.
+- If forcing the target color would require changing any frozen structure, hardware, text, logo,
+  matching garment, inner layer or scene element, preserve the frozen element instead.
+</color_transform>
+
+<prohibitions>
+- Do not alter fit, length, garment shape, folds, pose, anatomy, framing, background or lighting.
+- Do not smooth away texture, seams, text or hardware. Do not add or remove any object or detail.
+- Recolor only unmarked base-fabric regions of the MAIN PRODUCT. Hardware, labels, logos, text,
+  prints, graphics, inner layers and matching garments never change color, including when they
+  touch, overlap, are stitched onto, or visually resemble the product fabric.
+- Do not add a person, face, hair, footwear, accessory, prop, caption, watermark, border or panel.
+</prohibitions>
+
+<output>
+Output exactly ONE fully opaque photorealistic edited photograph. Keep image 1's portrait aspect,
+canvas composition and framing exactly. No grid, comparison, mask, text explanation or collage.
+</output>

@@ -220,6 +220,15 @@ def test_rotation_set_and_standalone_members_are_universal_for_supported_clothin
         blocks[0], clothing_type="dress", gender="women", scope="all"
     )
     assert all_reference["scope"] == "all"
+    assert all_reference["directionCompatible"] is True
+    changed_direction = {
+        **blocks[0],
+        "direction": "side" if blocks[0]["direction"] != "side" else "back",
+    }
+    changed_all = sets.resolve_published_example_reference(
+        changed_direction, clothing_type="dress", gender="women", scope="all"
+    )
+    assert changed_all["directionCompatible"] is False
     sets.load_space_set_registry.cache_clear()
 
 
