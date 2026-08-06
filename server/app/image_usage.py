@@ -63,7 +63,7 @@ def record(*, model: str, image_size: str, usage: dict | None, latency_ms: int,
            has_image: bool = True) -> None:
     """호출 1건 기록. 동기 함수 — 호출자를 절대 기다리게 하지 않는다."""
     try:
-        cost = estimate_cost(model, image_size, usage)
+        cost = estimate_cost(model, image_size, usage, has_image=has_image)
         ctx = _ctx.get()
         log.info(
             "image_usage model=%s size=%s stage=%s job=%s in_tok=%d out_img_tok=%d "
@@ -81,6 +81,23 @@ def record(*, model: str, image_size: str, usage: dict | None, latency_ms: int,
         task.add_done_callback(_tasks.discard)
     except Exception:  # 계측 실패가 생성을 깨뜨리지 않게
         log.exception("image_usage record failed (ignored)")
+
+
+async def drain(timeout_seconds: float = 5.0) -> None:
+    """종료 전에 아직 DB에 쓰는 계측 태스크를 제한 시간 동안 회수한다."""
+    pending = set(_tasks)
+    if not pending:
+        return
+    done, pending = await asyncio.wait(pending, timeout=max(timeout_seconds, 0))
+    if pending:
+        log.warning("image_usage drain timed out; cancelling %d insert(s)", len(pending))
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+    # 완료 태스크의 예외는 _insert가 자체 처리하지만, 향후 구현이 바뀌어도 회수한다.
+    if done:
+        await asyncio.gather(*done, return_exceptions=True)
+    _tasks.difference_update(done | pending)
 
 
 async def _insert(ctx: JobContext, model: str, image_size: str, cost, latency_ms: int,

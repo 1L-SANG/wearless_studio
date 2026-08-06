@@ -4,6 +4,7 @@
 앵커로 박아 둔다. 계측 쪽은 "어떤 실패도 생성을 막지 않는다"가 핵심 계약이라 그것만 본다.
 """
 
+import asyncio
 import logging
 
 import pytest
@@ -66,6 +67,31 @@ def test_usage_without_modality_split_treats_candidates_as_image():
     cost = estimate_cost(PRO, "1K", {"promptTokenCount": 0, "candidatesTokenCount": 1120})
     assert cost.source == "usage"
     assert cost.usd == pytest.approx(0.1344, abs=1e-4)
+
+
+def test_text_only_response_without_split_does_not_count_image_tokens():
+    cost = estimate_cost(
+        PRO, "1K", {"promptTokenCount": 10, "candidatesTokenCount": 80},
+        has_image=False,
+    )
+    assert cost.source == "usage"
+    assert cost.output_image_tokens == 0
+    assert cost.output_text_tokens == 80
+    assert cost.usd == pytest.approx((10 * 2 + 80 * 12) / 1_000_000)
+
+
+def test_explicit_image_tokens_are_kept_even_when_no_inline_image_was_delivered():
+    cost = estimate_cost(PRO, "1K", _usage(prompt=10, image=1120), has_image=False)
+    assert cost.source == "usage"
+    assert cost.output_image_tokens == 1120
+    assert cost.usd is not None
+
+
+def test_no_image_and_no_usage_is_unknown_not_full_image_table_price():
+    cost = estimate_cost(PRO, "4K", None, has_image=False)
+    assert cost.source == "unavailable_no_image"
+    assert cost.usd is None
+    assert cost.output_image_tokens == 0
 
 
 def test_candidates_beyond_the_modality_split_are_billed_as_text():
@@ -132,3 +158,22 @@ def test_job_scope_attaches_context_and_restores():
             inner = image_usage._ctx.get()
             assert inner.job_id == "job-1" and inner.stage == "cut_generate"
     assert image_usage._ctx.get().job_id is None
+
+
+def test_drain_waits_for_pending_usage_tasks():
+    finished = []
+
+    async def scenario():
+        async def insert():
+            await asyncio.sleep(0)
+            finished.append(True)
+
+        task = asyncio.create_task(insert())
+        image_usage._tasks.add(task)
+        task.add_done_callback(image_usage._tasks.discard)
+        await image_usage.drain(timeout_seconds=1)
+        assert task.done()
+
+    asyncio.run(scenario())
+    assert finished == [True]
+    assert not image_usage._tasks

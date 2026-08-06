@@ -57,7 +57,7 @@ class ImageCost:
     output_text_tokens: int
     output_image_tokens: int
     usd: float | None      # 단가표에 없는 모델이면 None (토큰만 기록)
-    source: str            # usage | table | unknown_model
+    source: str            # usage | table | unknown_model | unavailable_no_image
 
 
 def _modality_split(details: list | None) -> dict[str, int]:
@@ -68,12 +68,20 @@ def _modality_split(details: list | None) -> dict[str, int]:
             continue
         modality = str(row.get("modality") or "").upper()
         count = row.get("tokenCount")
-        if modality and isinstance(count, int):
+        if (modality and isinstance(count, int) and not isinstance(count, bool)
+                and count > 0):
             out[modality] = out.get(modality, 0) + count
     return out
 
 
-def estimate_cost(model: str, image_size: str, usage: dict | None) -> ImageCost:
+def _tokens(value) -> int:
+    """API의 깨진/부분 usage 값은 0으로 취급하되 음수·bool은 받지 않는다."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def estimate_cost(
+    model: str, image_size: str, usage: dict | None, *, has_image: bool = True,
+) -> ImageCost:
     """이 호출 1회의 실비. 실패해도 예외를 던지지 않는다 — 계측이 생성을 막으면 안 된다."""
     price = PRICES.get(model)
     prompt_tokens = 0
@@ -82,10 +90,10 @@ def estimate_cost(model: str, image_size: str, usage: dict | None) -> ImageCost:
     source = "table"
 
     if isinstance(usage, dict):
-        prompt_tokens = usage.get("promptTokenCount") or 0
-        candidates = usage.get("candidatesTokenCount") or 0
+        prompt_tokens = _tokens(usage.get("promptTokenCount"))
+        candidates = _tokens(usage.get("candidatesTokenCount"))
         # 사고(thinking) 토큰은 candidates 에 안 잡히는 경우가 있어 따로 더한다 — 텍스트 단가.
-        thoughts = usage.get("thoughtsTokenCount") or 0
+        thoughts = _tokens(usage.get("thoughtsTokenCount"))
         split = _modality_split(usage.get("candidatesTokensDetails"))
         if split:
             image_out = split.get("IMAGE", 0)
@@ -94,14 +102,21 @@ def estimate_cost(model: str, image_size: str, usage: dict | None) -> ImageCost:
             listed = sum(split.values())
             text_out = (sum(v for k, v in split.items() if k != "IMAGE")
                         + max(candidates - listed, 0) + thoughts)
-        elif candidates:
-            # 모달리티 분해가 없으면 candidates 를 전부 이미지로 본다(상한 쪽으로 안전).
+        elif candidates and has_image:
+            # 이미지가 실제 도착했고 모달리티 분해만 없으면 candidates 를 이미지로 본다.
             image_out = candidates
             text_out = thoughts
-        if prompt_tokens or image_out:
+        else:
+            # 텍스트만 온 200 응답의 candidates 를 이미지 토큰으로 오인하지 않는다.
+            text_out = candidates + thoughts
+        if prompt_tokens or image_out or text_out:
             source = "usage"
 
     if source != "usage":
+        # 이미지가 오지 않았고 usage 도 없으면 실제 과금액은 알 수 없다. 요청 해상도의
+        # 장당 이미지 가격을 억지로 붙이면 텍스트-only/깨진 200을 정상 이미지로 계산한다.
+        if not has_image:
+            return ImageCost(0, 0, 0, None, "unavailable_no_image")
         if price is None:
             return ImageCost(0, 0, 0, None, "unknown_model")
         image_out = price.image_output_tokens.get(image_size.upper(), 0)

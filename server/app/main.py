@@ -101,6 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if dispatcher is not None:
             await dispatcher.stop()
         if pool is not None:
+            await image_usage.drain(timeout_seconds=5.0)
             await pool.close()
 
     docs_url = "/docs" if settings.app_env == "dev" else None
