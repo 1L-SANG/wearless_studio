@@ -188,6 +188,11 @@ class Settings:
     fm_face_qc_enabled: bool = False
     fm_face_qc_threshold: float = 0.363  # OpenCV SFace 권장 코사인 동일인 기준선(캘리브 전 잠정)
     fm_face_qc_dir: str | None = None    # SFace/YuNet onnx 디렉터리. None이면 app/data/face_models
+    # ---- 이미지 실비 계측(내부용) ----
+    # false 면 image_usage_events 적재를 끄고 로그만 남긴다(마이그레이션 적용 전 임시 대응).
+    image_usage_persist: bool = True
+    # 리포트의 원화 환산 기준. 회계용이 아니라 감각용 — 실제 청구는 달러다.
+    image_usage_krw_per_usd: float = 1400.0
 
 
 def _bust_pass() -> str:
@@ -293,6 +298,8 @@ def load_settings() -> Settings:
         retrieval_refimages=_flag("RETRIEVAL_REFIMAGES", "off", {"off", "on"}),
         ref_images_topk=int(os.getenv("REF_IMAGES_TOPK", "2")),
         embed_image_model=os.getenv("EMBED_IMAGE_MODEL", "google/siglip-base-patch16-224"),
+        image_usage_persist=(os.getenv("IMAGE_USAGE_PERSIST", "true").lower() == "true"),
+        image_usage_krw_per_usd=float(os.getenv("IMAGE_USAGE_KRW_PER_USD", "1400")),
         embed_image_dim=int(os.getenv("EMBED_IMAGE_DIM", "768")),
         embed_text_model=os.getenv("EMBED_TEXT_MODEL", "BAAI/bge-m3"),
         embed_text_dim=int(os.getenv("EMBED_TEXT_DIM", "1024")),
