@@ -10,8 +10,18 @@ import types
 import pytest
 
 from app.agents import mannequin_series_qc
+from app.services.qc import QcResult
 from app.workers import mannequin_job
 from conftest import make_settings
+
+
+@pytest.fixture(autouse=True)
+def _isolate_series_qc_from_pixel_qc(monkeypatch):
+    """이 파일의 가짜 바이트는 시리즈 배선만 검증하고 픽셀 QC는 별도 테스트한다."""
+    monkeypatch.setattr(
+        mannequin_job.qc, "evaluate_mannequin_qc", lambda _data: QcResult("pass"))
+    monkeypatch.setattr(
+        mannequin_job.qc, "evaluate_canvas_alpha_qc", lambda _data: QcResult("pass"))
 
 
 class _Conn:

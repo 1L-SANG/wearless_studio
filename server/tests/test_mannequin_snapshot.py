@@ -218,9 +218,9 @@ def test_worker_malformed_snapshot_falls_back_to_fresh_generation(monkeypatch):
 # ---------- 관측 이벤트 (prompt_rendered 해시) ----------
 
 _PNG_1PX = bytes.fromhex(
-    "89504e470d0a1a0a0000000d494844520000000100000001080600000"
-    "01f15c4890000000d49444154789c626001000000ffff030000060005"
-    "57bfabd40000000049454e44ae426082")
+    "89504e470d0a1a0a0000000d4948445200000002000000020802000000"
+    "fdd49a730000001349444154789c63fcffff3f0303031303180000240603"
+    "015da24e880000000049454e44ae426082")
 
 
 def test_run_candidate_emits_prompt_rendered_hashes(monkeypatch):
