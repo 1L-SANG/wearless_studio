@@ -32,7 +32,8 @@ P2 — fabric realism: let the re-tailored areas drape with natural fabric physi
 </priorities>
 
 <output_format>
-- Output EXACTLY ONE photorealistic, FULLY OPAQUE studio photograph — the edited version of image 1.
+- Output EXACTLY ONE photorealistic studio photograph — the edited version of image 1. Keep the output canvas and background free of alpha or accidental transparency.
+- Preserve each garment's evidenced optical behavior exactly: an opaque garment stays opaque, while real sheerness, mesh, lace, crochet or open knit stays only as transparent or open as the current cut and its reference photos. Never turn a garment or mannequin into a faded or ghosted overlay.
 - Same framing as image 1: FULL BODY, head to feet, nothing cropped, portrait orientation.
 - No grid, no collage, no side-by-side, no text, no panels.
 </output_format>

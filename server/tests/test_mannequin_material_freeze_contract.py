@@ -69,3 +69,13 @@ def test_every_fit_axis_instruction_includes_material_freeze_tail_once() -> None
 
     assert instruction.endswith(mannequin_fit_qc.EDIT_TAIL)
     assert instruction.count("Preserve the garment's evidenced material identity") == 1
+
+
+def test_live_adjust_prompt_preserves_optical_behavior_without_alpha_canvas() -> None:
+    prompt = _prompt("mannequin_adjust_v2.txt").lower()
+
+    assert "output canvas and background free of alpha" in prompt
+    for evidence in ("opaque garment", "sheerness", "mesh", "lace", "crochet", "open knit"):
+        assert evidence in prompt
+    assert "current cut and its reference photos" in prompt
+    assert "faded or ghosted overlay" in prompt

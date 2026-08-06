@@ -127,6 +127,23 @@ def test_all_transparent_attempts_drop_candidate_without_r2_salvage(monkeypatch)
     assert [event["status"] for event in emits].count("canvas_alpha_rejected") == 2
 
 
+def test_initial_decode_failure_is_rerolled_and_never_saved(monkeypatch):
+    result, gemini, r2, emits = _run_initial(
+        monkeypatch,
+        outputs=[b"not-an-image", b"opaque"],
+        verdicts=[
+            QcResult("retry", ["decode_failed"], {}),
+            QcResult("pass", [], {}),
+        ],
+    )
+
+    assert result is not None
+    assert len(gemini.calls) == 2
+    assert r2.puts[0][1] == b"opaque"
+    rejected = [event for event in emits if event.get("status") == "canvas_decode_rejected"]
+    assert rejected and rejected[0]["reason"] == "decode_failed"
+
+
 def test_rgb_sheer_appearance_passes_worker_gate_without_reroll(monkeypatch):
     rgb_sheer = _rgb_sheer_png()
     result, gemini, r2, emits = _run_initial(
@@ -190,3 +207,57 @@ def test_transparent_final_edit_is_reverted_to_pre_edit_output(monkeypatch):
     assert spent == 1
     reverted = [event for event in events if event.get("status") == "edit_reverted"]
     assert reverted and reverted[0]["reason"] == "transparent_canvas"
+
+
+def test_undecodable_final_edit_is_reverted_to_pre_edit_output(monkeypatch):
+    events = []
+    before = types.SimpleNamespace(image=b"opaque-before", mime="image/png")
+    broken = types.SimpleNamespace(image=b"not-an-image", mime="image/png")
+
+    async def fake_emit(pool, job_id, event_type, payload):
+        events.append(dict(payload))
+
+    async def unchanged(**kwargs):
+        return kwargs["res"], False
+
+    async def broken_bust(**kwargs):
+        return broken, True
+
+    monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
+    monkeypatch.setattr(mannequin_job, "_apply_untuck_pass", unchanged)
+    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", unchanged)
+    monkeypatch.setattr(mannequin_job, "_apply_bust_pass", broken_bust)
+    monkeypatch.setattr(mannequin_job, "_apply_fabric_pass", unchanged)
+    monkeypatch.setattr(
+        mannequin_job.qc,
+        "evaluate_canvas_alpha_qc",
+        lambda data: (
+            QcResult("retry", ["decode_failed"], {})
+            if data == broken.image
+            else QcResult("pass")
+        ),
+    )
+
+    selected, p2, spent = asyncio.run(mannequin_job._apply_edits(
+        pool=object(),
+        gemini=object(),
+        s=types.SimpleNamespace(),
+        job_id="j1",
+        candidate="A",
+        attempt=1,
+        model="model",
+        res=before,
+        p2={"product_fidelity": 90},
+        prod_imgs=[],
+        match_img=None,
+        fit_profile=None,
+        profile_hash="hash",
+        base_gender="women",
+        calls_spent=0,
+    ))
+
+    assert selected is before
+    assert p2 == {"product_fidelity": 90}
+    assert spent == 1
+    reverted = [event for event in events if event.get("status") == "edit_reverted"]
+    assert reverted and reverted[0]["reason"] == "decode_failed"

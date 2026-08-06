@@ -792,14 +792,19 @@ async def _apply_edits(
         res=res, prod_imgs=prod_imgs, calls_spent=calls_spent,
         has_fine_pattern=has_fine_pattern, image_size=image_size)
     calls_spent += fabric_spent
-    # 편집 체인의 최종 출고본은 불투명 캔버스여야 한다. 실제 alpha가 있으면
-    # 광범위 품질 게이트를 켜지 않고 편집 전 이미지로 돌린다. 시스루 원단의
-    # RGB 비침은 불투명 픽셀이므로 이 검사에 걸리지 않는다.
+    # 편집 체인의 최종 출고본은 디코드 가능하고 불투명한 캔버스여야 한다. 깨진
+    # 이미지나 실제 alpha가 있으면 광범위 품질 게이트를 켜지 않고 편집 전 이미지로
+    # 돌린다. 시스루 원단의 RGB 비침은 불투명 픽셀이므로 이 검사에 걸리지 않는다.
     canvas_qc = qc.evaluate_canvas_alpha_qc(res.image)
-    if "transparent_canvas" in canvas_qc.reasons:
+    canvas_reason = next(
+        (reason for reason in ("decode_failed", "transparent_canvas")
+         if reason in canvas_qc.reasons),
+        None,
+    )
+    if canvas_reason:
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt,
-            "status": "edit_reverted", "reason": "transparent_canvas",
+            "status": "edit_reverted", "reason": canvas_reason,
             "from_image_hash": hashlib.sha256(res.image).hexdigest(),
             "to_image_hash": pre_hash,
             "qc": {
@@ -987,12 +992,20 @@ async def _run_candidate(
             # metrics 도 남긴다 — shadow 재캘리브(임계 튜닝)의 실측 근거. verdict/reasons 만으론
             # 왜 걸렸는지(bboxBottom·aspect·하단비율) 모른다.
             "qc": {"verdict": verdict.verdict, "reasons": verdict.reasons, "metrics": verdict.metrics}})
-        # 출력 캔버스의 실제 alpha는 출고 불가다. 기존 Pillow 크롭·유령
-        # 휴리스틱은 계속 shadow로 두되, 이 한 사유만 모드와 무관하게 먼저 거절한다.
-        if "transparent_canvas" in verdict.reasons:
+        # 디코드 불가 이미지와 실제 alpha 캔버스는 출고 불가다. 기존 Pillow 크롭·유령
+        # 휴리스틱은 계속 shadow로 두되, 이 두 사유만 모드와 무관하게 먼저 거절한다.
+        canvas_reason = next(
+            (reason for reason in ("decode_failed", "transparent_canvas")
+             if reason in verdict.reasons),
+            None,
+        )
+        if canvas_reason:
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "model": model, "attempt": attempt,
-                "status": "canvas_alpha_rejected", "qc": {
+                "status": ("canvas_decode_rejected" if canvas_reason == "decode_failed"
+                           else "canvas_alpha_rejected"),
+                "reason": canvas_reason,
+                "qc": {
                     "verdict": verdict.verdict,
                     "reasons": verdict.reasons,
                     "metrics": verdict.metrics,
