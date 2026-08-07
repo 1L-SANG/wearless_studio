@@ -195,7 +195,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
   // 2×2 angle "wells" — all four angles at a glance, images stack inside each
   const wellSlot = (s) => (
     <div className="slot-well" key={s}>
-      <div className="slot-well-head"><span className="swh-label">{slotLabel(s)}{s === 'Front' && <span className="req-star">*</span>}</span></div>
+      <div className="slot-well-head"><span className="swh-label">{slotLabel(s)}{(s === 'Front' || s === 'Back') && <span className="req-star">*</span>}</span></div>
       {tiles(s, true)}
     </div>
   );
@@ -383,11 +383,12 @@ export function ProductInput() {
           })),
         };
         setProduct(restored);
-        // 분석 결과 복원 → 분석 폼(done)으로 바로. 단 정면 사진이 추출 실패로 빠졌으면 입력
-        // 단계로 둬서 '정면 필수' 검증이 재업로드를 강제하게 한다(검증 우회 방지).
-        // 정면 판정은 product 메타데이터가 아니라 실제 저장된 photo blob(photos[]) 기준 — 더 안전.
-        const restoredHasFront = (draft.photos || []).some((p) => p.slot === 'Front');
-        if (draft.analysis && restoredHasFront) { setAnalysis(draft.analysis); setPhase('done'); }
+        // 분석 결과 복원 → 분석 폼(done)으로 바로. 단 필수 사진(앞면·뒷면)이 추출 실패로
+        // 빠졌으면 입력 단계로 둬서 필수 검증이 재업로드를 강제하게 한다(검증 우회 방지).
+        // 판정은 product 메타데이터가 아니라 실제 저장된 photo blob(photos[]) 기준 — 더 안전.
+        const restoredHasRequired = (draft.photos || []).some((p) => p.slot === 'Front')
+          && (draft.photos || []).some((p) => p.slot === 'Back');
+        if (draft.analysis && restoredHasRequired) { setAnalysis(draft.analysis); setPhase('done'); }
         return;
       }
 
@@ -418,9 +419,12 @@ export function ProductInput() {
   const addColor = () => setProduct((p) => p.colors.length >= 3 ? p : ({ ...p, colors: [...p.colors, { id: uid('col'), name: '', isBase: false, images: [] }] }));
   const removeColor = (colorId) => setProduct((p) => ({ ...p, colors: p.colors.filter((c) => c.id !== colorId) }));
 
-  const hasFront = product.colors.some((c) => c.images.some((im) => im.slot === 'Front'));
+  // 필수 판정은 기준 색상 기준 — AI가 소비하는 것이 기준 색상 이미지라서(스펙 §4).
+  const baseColor = product.colors.find((c) => c.isBase) || product.colors[0];
+  const hasFront = !!baseColor?.images.some((im) => im.slot === 'Front');
+  const hasBack = !!baseColor?.images.some((im) => im.slot === 'Back');
   const hasName = !!(product.name && product.name.trim());
-  const canDone = hasFront && phase === 'input' && !authLoading;
+  const canDone = hasFront && hasBack && phase === 'input' && !authLoading;
   const locked = phase !== 'input';
 
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
@@ -495,7 +499,7 @@ export function ProductInput() {
           <span className="pill pill-soft">{imgCount}장</span>
         </div>
       </div>
-      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16 }}>각도별로 한 장 이상 올리면 더 정확한 상세페이지가 만들어져요. 앞면은 필수예요.</div>
+      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16 }}>각도별로 한 장 이상 올리면 더 정확한 상세페이지가 만들어져요. 앞면·뒷면은 필수예요 — 뒷면이 없으면 뒷모습 컷을 만들 수 없어요.</div>
       {product.colors.map((c) => (
         <ColorImageGroup key={c.id} group={c} catalogs={catalogs} swatchColors={catalogs.swatchColors}
           onAddFiles={(slot, metas) => addImageFiles(c.id, slot, metas)} onRemove={(id) => removeImage(c.id, id)}
@@ -600,8 +604,8 @@ export function ProductInput() {
           <WizardCTA>
             <Button variant="primary" size="lg" icon="check" disabled={!canDone} onClick={submit}>AI 분석하기</Button>
           </WizardCTA>
-          {!hasFront && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>앞면 이미지를 1장 이상 올리면 입력을 완료할 수 있어요.</p>}
-          {hasFront && authLoading && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>로그인 상태를 확인하고 있어요.</p>}
+          {!(hasFront && hasBack) && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>앞면·뒷면 이미지를 각 1장 이상 올리면 입력을 완료할 수 있어요.</p>}
+          {hasFront && hasBack && authLoading && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>로그인 상태를 확인하고 있어요.</p>}
         </>
       )}
 
