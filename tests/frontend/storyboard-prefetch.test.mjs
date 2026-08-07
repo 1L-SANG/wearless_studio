@@ -19,6 +19,10 @@ const productInputSource = readFileSync(
   new URL('../../src/features/product-input/ProductInput.jsx', import.meta.url),
   'utf8',
 );
+const saveRoutingSource = readFileSync(
+  new URL('../../src/features/product-input/saveRouting.js', import.meta.url),
+  'utf8',
+);
 
 test('repeated mannequin warm-ups share one project request', async () => {
   const cache = createStoryboardEntryPrefetchCache({ ttlMs: 1_000 });
@@ -35,11 +39,31 @@ test('repeated mannequin warm-ups share one project request', async () => {
   assert.equal(loads, 1);
   assert.equal(idleWaits, 1);
   assert.equal(cache.peek('project-1'), data);
+  // 트리거는 project id 만으로는 이르다 — 콘티 시드가 읽는 필드가 전부 저장된 뒤인
+  // phase==='done' 까지 함께 게이트해야 한다 (그렇지 않으면 submit() 시작 시점의
+  // analysisProjectId 만으로 미저장 상태를 캐시해 버린다).
   assert.match(
     productInputSource,
-    /storyboardPrefetchProjectRef\.current === analysisProjectId[\s\S]*?prefetchStoryboardEntry\(analysisProjectId\)/,
+    /if \(!analysisProjectId \|\| phase !== 'done'\) return;[\s\S]*?storyboardPrefetchProjectRef\.current === analysisProjectId[\s\S]*?prefetchStoryboardEntry\(analysisProjectId\)/,
   );
+  assert.match(productInputSource, /\}, \[analysisProjectId, phase\]\);/);
   assert.doesNotMatch(mannequinSource, /warmStoryboardEntry/);
+});
+
+test('edits that touch the storyboard seed invalidate the warmed prefetch', () => {
+  // 시드가 읽는 필드(colors·clothingType·targetGenders) 목록이 실제로 이 세 키를 담고 있어야
+  // 한다 — 목록이 비거나 다른 키로 바뀌면 이 어서션이 깨져 드리프트를 잡아낸다.
+  assert.match(
+    saveRoutingSource,
+    /STORYBOARD_SEED_PATCH_KEYS = new Set\(\[['"]colors['"], ['"]clothingType['"], ['"]targetGenders['"]\]\)/,
+  );
+  // persistAnalysisEdit — 이 화면의 모든 분석 편집 저장이 지나는 단일 퍼널 — 이 그 키 집합을
+  // 실제로 검사해 invalidateStoryboardEntryPrefetch 를 호출해야 한다. UI 핸들러 각각이 아니라
+  // 이 퍼널 한 곳에 있어야 향후 편집 경로가 무효화를 빠뜨릴 수 없다.
+  assert.match(
+    saveRoutingSource,
+    /export async function persistAnalysisEdit\(api, projectId, patch\) \{[\s\S]*?STORYBOARD_SEED_PATCH_KEYS\.has\(key\)\)\) \{\s*\n\s*invalidateStoryboardEntryPrefetch\(projectId\);/,
+  );
 });
 
 test('a ready cache hit initializes content and skips the loading-frame branch', async () => {

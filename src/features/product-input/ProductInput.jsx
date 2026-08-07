@@ -276,13 +276,17 @@ export function ProductInput() {
   const latestAnalysisPatchRef = useRef({});
   const storyboardPrefetchProjectRef = useRef(null);
 
-  // 분석 결과를 사용자가 검토하는 동안 다음 화면(콘티)을 미리 데운다 — 서버 project 가 있을 때만.
+  // 분석 결과를 사용자가 검토하는 동안 다음 화면(콘티)을 미리 데운다. analysisProjectId 는
+  // submit() 시작 시점(사진 업로드·저장·분석보다 먼저)에 이미 잡히므로 그것만으로는 이르다 —
+  // 콘티 시드가 읽는 필드(colors·clothingType·targetGenders)가 전부 서버에 반영된 뒤인
+  // phase==='done'(기존 프로젝트 재진입·초안 동기화·최초 분석 완료 세 경로 모두 이 시점엔
+  // 관련 저장이 끝나 있다)까지 함께 기다린다.
   useEffect(() => {
-    if (!analysisProjectId) return;
+    if (!analysisProjectId || phase !== 'done') return;
     if (storyboardPrefetchProjectRef.current === analysisProjectId) return;
     storyboardPrefetchProjectRef.current = analysisProjectId;
     void prefetchStoryboardEntry(analysisProjectId);
-  }, [analysisProjectId]);
+  }, [analysisProjectId, phase]);
   // force: 경고 모달에서 '계속 진행'을 누른 경로. setState 는 비동기라 ack 상태를 기다릴 수
   // 없어 인자로 넘긴다. onNext 콜백이 이벤트 객체를 넘겨도 force 는 undefined 라 안전하다.
   const goToMannequin = async (opts) => {

@@ -1,3 +1,9 @@
+import { invalidateStoryboardEntryPrefetch } from '../storyboard/storyboardEntryPrefetch.js';
+
+// 콘티 시드(httpAdapter.getStoryboard → shapes.defaultStoryboard)가 실제로 읽는 필드.
+// 이 중 하나라도 이 화면에서 다시 저장되면, 이미 데워둔 콘티 프리페치는 스테일해진다.
+const STORYBOARD_SEED_PATCH_KEYS = new Set(['colors', 'clothingType', 'targetGenders']);
+
 const PRODUCT_PATCH_KEYS = new Set([
   'name',
   'clothingType',
@@ -57,6 +63,11 @@ export function mergeLatestFailedAnalysisPatch(currentFailedPatch, failedPatch, 
 export async function persistAnalysisEdit(api, projectId, patch) {
   const { productPatch } = splitAnalysisEditPatch(patch);
   const saved = {};
+  // sbSaveNow(storyboardPersistence.js)와 같은 원칙 — 저장이 착지하기 전에 먼저 무효화해,
+  // 진행 중인 저장과 레이스하는 프리페치가 곧 스테일해질 값을 캐시해 버리지 않게 한다.
+  if (projectId && Object.keys(patch || {}).some((key) => STORYBOARD_SEED_PATCH_KEYS.has(key))) {
+    invalidateStoryboardEntryPrefetch(projectId);
+  }
   if (projectId && hasPatchFields(productPatch)) {
     saved.product = await api.saveProduct(projectId, productPatch);
   }
