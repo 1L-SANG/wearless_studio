@@ -51,7 +51,7 @@ jobs:
         steps:
             - uses: actions/checkout@v5
 
-            - uses: pnpm/action-setup@v4
+            - uses: pnpm/action-setup@v6
               with:
                   version: 11
             - uses: actions/setup-node@v5
@@ -62,7 +62,7 @@ jobs:
 
             # tests/frontend/storyboard-opening-row.test.mjs 는 목 조립기와 서버
             # page_assembler 의 결과를 대조하므로 server/.venv 가 필요하다.
-            - uses: astral-sh/setup-uv@v5
+            - uses: astral-sh/setup-uv@v9
             - name: 조립 정본 대조용 서버 파이썬 환경
               working-directory: server
               run: uv sync --frozen
