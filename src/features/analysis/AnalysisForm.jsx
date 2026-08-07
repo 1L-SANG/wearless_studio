@@ -22,6 +22,7 @@ import {
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
 import { resolveSelectedModelId } from './modelSelection.js';
+import { applySellingPointEdit } from './sellingPoints.js';
 
 // 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
 // Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
@@ -286,6 +287,9 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const [ccFocus, setCcFocus] = useState(false);
   useEffect(() => { setCcDraft(a.customCategory || ''); }, [a.customCategory]);
   const [spAdding, setSpAdding] = useState(false);
+  // 칩을 눌러 그 자리에서 문구를 고친다 (2026-08-03 사용자 결정) — AI가 뽑아준 특징도 손댈 수 있게.
+  const [spEditIdx, setSpEditIdx] = useState(null);
+  const [spEditDraft, setSpEditDraft] = useState('');
   const [editMatIdx, setEditMatIdx] = useState(null);
   const matTotal = (a.materials || []).reduce((s, m) => s + (Number(m.ratio) || 0), 0);
   const matOver = matTotal > 100;
@@ -336,6 +340,29 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     onChange({ sellingPoints: [...a.sellingPoints, t] });
     setSpDraft(''); setSpAdding(false);
   };
+
+  // 편집 대상 인덱스를 ref 로도 들고 있는다 — blur 핸들러가 "지금 열린 편집이 내 것인가"를
+  // 즉시(리렌더 전에) 판단해야 한다. 아래 mousedown 커밋과 짝이다.
+  const spEditIdxRef = useRef(null);
+  const startEditSp = (i) => { spEditIdxRef.current = i; setSpEditIdx(i); setSpEditDraft(a.sellingPoints[i] || ''); };
+  const cancelEditSp = () => { spEditIdxRef.current = null; setSpEditIdx(null); setSpEditDraft(''); };
+  // Enter 로 확정하면 이어서 blur 도 오는데, 인덱스를 먼저 비워 두 번 반영되지 않게 한다.
+  // confirmed=false(포커스 이탈)일 때 빈 문구는 삭제가 아니라 취소다: blur 로 목록이 줄면
+  // 그 직후 도착하는 click 의 인덱스가 밀려 엉뚱한 칩이 열린다(실측 확인).
+  const commitSpEdit = (confirmed) => {
+    if (spEditIdx === null) return;
+    const patch = applySellingPointEdit({
+      sellingPoints: a.sellingPoints,
+      aiSuggestedPoints: a.aiSuggestedPoints,
+      index: spEditIdx,
+      text: spEditDraft,
+      allowDelete: confirmed,
+    });
+    cancelEditSp();
+    if (patch) onChange(patch);
+  };
+  // 한글 IME 조합 중의 Enter 는 글자 확정용이다 — 칩 확정까지 하면 "수정"을 치다가 창이 닫힌다.
+  const isComposing = (e) => e.nativeEvent?.isComposing === true;
 
   const subCats = catalogs.subCategories[a.clothingType] || [];
   const selMatch = (a.matchClothing || []).filter((c) => c.selected).sort((x, y) => (x.selOrder || 0) - (y.selOrder || 0));
@@ -554,20 +581,66 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
           <div className="sec-sub">상세페이지에서 가장 강조될 핵심 포인트예요. 최대 5개까지 넣을 수 있어요.</div></div>
           <span className="pill pill-soft">{a.sellingPoints.length}/5개</span></div>
         <div className="sp-chipwrap">
+          {/* 칩을 누르면 그 자리에서 문구를 고친다. Enter 확정(비우고 Enter = 삭제), Esc 취소,
+              포커스 이탈은 고친 문구만 저장. 입력 폭은 .sp-draft-fit 이 글자 폭 그대로 잡는다 —
+              글자 수 추정으로는 영문 대문자·이모지·전각문자에서 앞글자가 밀렸다(실측). */}
           {a.sellingPoints.map((p, i) => (
-            <span className={`sp-chip${aiSet.has(p) ? ' ai' : ''}`} key={i}>
-              {aiSet.has(p) && <span className="sp-ai-tag">AI 제안</span>}
-              {p}
-              <button className="sp-chip-x" onClick={() => onChange({ sellingPoints: a.sellingPoints.filter((_, j) => j !== i), aiSuggestedPoints: (a.aiSuggestedPoints || []).filter((x) => x !== p) })}><Icon name="x" size={12} /></button>
-            </span>
+            spEditIdx === i ? (
+              <span className="sp-chip draft" key={i}>
+                {/* 비워도 폭은 원래 문구만큼 유지 — 편집 중 칩이 쪼그라들며 옆 칩들이 밀리지 않게 */}
+                <span className="sp-draft-fit" data-value={spEditDraft || p}>
+                  <input className="sp-draft-input" autoFocus value={spEditDraft} maxLength={40} size={1}
+                    aria-label="특징 문구 수정"
+                    onChange={(e) => setSpEditDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (isComposing(e)) return;
+                      if (e.key === 'Enter') commitSpEdit(true); else if (e.key === 'Escape') cancelEditSp();
+                    }}
+                    /* 다른 칩을 눌러 옮겨간 blur 는 그쪽 mousedown 이 이미 커밋했다 — 여기서 또
+                       처리하면 갓 열린 편집창을 닫아버린다. 내 편집이 아직 열려 있을 때만 커밋. */
+                    onBlur={() => { if (spEditIdxRef.current === i) commitSpEdit(false); }} />
+                </span>
+              </span>
+            ) : (
+              <span className={`sp-chip editable${aiSet.has(p) ? ' ai' : ''}`} key={i}
+                /* click 이 아니라 mousedown 에서 연다: blur 커밋이 먼저 일어나면 칩 폭이 바뀌어
+                   레이아웃이 밀리고, mouseup 이 다른 요소에서 끝나 click 자체가 사라진다(실측). */
+                onMouseDown={(e) => {
+                  // preventDefault 필수: mousedown 의 기본 동작이 이 span(tabIndex=0)을 포커스하는데,
+                  // 그 사이 span 은 입력창으로 교체돼 포커스가 body 로 떨어지고 → 갓 열린 입력창이
+                  // blur 되어 즉시 닫힌다(실측: JS 이벤트로는 재현 안 되고 실제 클릭에서만 발생).
+                  e.preventDefault();
+                  if (spEditIdxRef.current !== null && spEditIdxRef.current !== i) commitSpEdit(false);
+                  startEditSp(i);
+                }}
+                title="눌러서 수정"
+                role="button" tabIndex={0}
+                onKeyDown={(e) => {
+                  // 안쪽 삭제 버튼의 Enter/Space 가 여기까지 올라오면 삭제 대신 편집이 열린다.
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEditSp(i); }
+                }}>
+                {aiSet.has(p) && <span className="sp-ai-tag">AI 제안</span>}
+                {p}
+                <button className="sp-chip-x" aria-label={`${p} 삭제`}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); onChange({ sellingPoints: a.sellingPoints.filter((_, j) => j !== i), aiSuggestedPoints: (a.aiSuggestedPoints || []).filter((x) => x !== p) }); }}><Icon name="x" size={12} /></button>
+              </span>
+            )
           ))}
           {a.sellingPoints.length < 5 && (
             spAdding ? (
               <span className="sp-chip draft">
-                <input className="sp-draft-input" autoFocus placeholder="특징 입력 후 Enter" value={spDraft}
-                  onChange={(e) => setSpDraft(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') commitSp(); else if (e.key === 'Escape') { setSpAdding(false); setSpDraft(''); } }}
-                  onBlur={commitSp} />
+                <span className="sp-draft-fit" data-value={spDraft || '특징 입력 후 Enter'}>
+                  <input className="sp-draft-input" autoFocus placeholder="특징 입력 후 Enter" value={spDraft}
+                    maxLength={40} size={1} aria-label="새 특징 문구"
+                    onChange={(e) => setSpDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (isComposing(e)) return;
+                      if (e.key === 'Enter') commitSp(); else if (e.key === 'Escape') { setSpAdding(false); setSpDraft(''); }
+                    }}
+                    onBlur={commitSp} />
+                </span>
               </span>
             ) : (
               <button className="sp-add" onClick={() => setSpAdding(true)}><Icon name="plus" size={14} />추가하기</button>

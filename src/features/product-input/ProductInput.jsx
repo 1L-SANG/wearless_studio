@@ -23,6 +23,7 @@ import {
   persistAnalysisEdit,
   splitAnalysisEditPatch,
 } from './saveRouting.js';
+import { getPendingTileCount, PENDING_TILE_DELAY_MS } from './pendingTiles.js';
 
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
@@ -83,14 +84,30 @@ function MetaCap({ im }) {
 }
 
 // add target that ALSO accepts drag-drop + click-to-pick (keeps original .tile.add / .up-empty styles)
-function AddDrop({ className, slot, room, onAddFiles, children }) {
+function AddDrop({ className, slot, room, onAddFiles, onPendingChange, children }) {
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);   // HEIC 변환 중 — 큰 사진은 1~2초 걸린다
   const inputRef = useRef(null);
+  const pendingTimerRef = useRef(null);
+  const mountedRef = useRef(true);
   const toast = useToast();
   const disabled = room <= 0 || busy;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearTimeout(pendingTimerRef.current);
+    };
+  }, []);
   const take = async (fileList) => {
+    const pendingCount = getPendingTileCount(fileList.length, room);
     setBusy(true);
+    clearTimeout(pendingTimerRef.current);
+    if (pendingCount) {
+      pendingTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) onPendingChange(slot, pendingCount);
+      }, PENDING_TILE_DELAY_MS);
+    }
     try {
       const { metas, failed } = await filesToMetas(fileList, room);
       if (metas.length) onAddFiles(slot, metas);
@@ -99,11 +116,15 @@ function AddDrop({ className, slot, room, onAddFiles, children }) {
           { icon: 'alertTri' });
       }
     } finally {
-      setBusy(false);
+      clearTimeout(pendingTimerRef.current);
+      if (mountedRef.current) {
+        onPendingChange(slot, 0);
+        setBusy(false);
+      }
     }
   };
   return (
-    <button type="button" className={`${className}${over ? ' over' : ''}`} disabled={disabled}
+    <button type="button" className={`${className}${over ? ' over' : ''}${busy ? ' is-busy' : ''}`} disabled={disabled}
       onClick={() => inputRef.current && inputRef.current.click()}
       onDragOver={(e) => { e.preventDefault(); if (!disabled) setOver(true); }}
       onDragLeave={() => setOver(false)}
@@ -116,9 +137,27 @@ function AddDrop({ className, slot, room, onAddFiles, children }) {
   );
 }
 
+function PendingTile({ small }) {
+  return (
+    <div className={`tile upload-placeholder${small ? ' sm' : ''}`} aria-hidden="true">
+      <span className="upload-placeholder-logo" />
+    </div>
+  );
+}
+
 function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, onRename, onRemoveGroup, onPickColor }) {
   const base = group.isBase;
   const used = group.images.length;
+  const [pendingBySlot, setPendingBySlot] = useState({});
+  const setSlotPending = (slot, count) => {
+    setPendingBySlot((current) => {
+      if (count) return { ...current, [slot]: count };
+      if (!current[slot]) return current;
+      const next = { ...current };
+      delete next[slot];
+      return next;
+    });
+  };
   const chosen = (swatchColors || []).find((s) => s.id === group.swatchId);
   // color indicator (dot + label); gray "색상 미정" until a swatch is picked
   const colorInd = (
@@ -131,6 +170,8 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
   const MAX = 6;
   const tiles = (s, small) => {
     const imgs = group.images.filter((im) => im.slot === s);
+    const room = MAX - used;
+    const pendingCount = getPendingTileCount(pendingBySlot[s], room);
     return (
       <div className="slot-tiles">
         {imgs.map((im) => (
@@ -140,7 +181,11 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
             <MetaCap im={im} />
           </div>
         ))}
-        <AddDrop className={`tile add${small ? ' sm' : ''}`} slot={s} room={MAX - used} onAddFiles={onAddFiles}>
+        {Array.from({ length: pendingCount }, (_, index) => (
+          <PendingTile key={`${s}-pending-${index}`} small={small} />
+        ))}
+        <AddDrop className={`tile add${small ? ' sm' : ''}`} slot={s} room={room}
+          onAddFiles={onAddFiles} onPendingChange={setSlotPending}>
           <span className="add-ico"><Icon name="imagePlus" size={small ? 24 : 26} /></span>
           <span className="add-cap"><span>이미지를</span><span>업로드해주세요</span></span>
         </AddDrop>
@@ -182,7 +227,11 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
               <MetaCap im={im} />
             </div>
           ))}
-          <AddDrop className="tile add" slot="Front" room={3 - used} onAddFiles={onAddFiles}>
+          {Array.from({ length: getPendingTileCount(pendingBySlot.Front, 3 - used) }, (_, index) => (
+            <PendingTile key={`Front-pending-${index}`} />
+          ))}
+          <AddDrop className="tile add" slot="Front" room={3 - used}
+            onAddFiles={onAddFiles} onPendingChange={setSlotPending}>
             <Icon name="plus" size={16} />{used === 0 ? '정면 필수' : '추가'}
           </AddDrop>
         </div>
