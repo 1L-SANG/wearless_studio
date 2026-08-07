@@ -440,7 +440,6 @@ export const useAppStore = create((set, get) => ({
         }
         if (job.status === 'error') {
           patch({ status: 'error', errorMessage: job.errorMessage || '상세페이지 생성에 실패했어요.' });
-          clearDetailPageJobMarker();
           return;
         }
         if (Date.now() > deadline) {
@@ -455,11 +454,9 @@ export const useAppStore = create((set, get) => ({
       // 장면⑤ — 얼굴 라이선스 차단(409): 블로킹 패널로 명확히 멈춘다(재생성 재차단 신호)
       if (e?.status === 409) {
         patch({ status: 'blocked', errorMessage: e.message || '이 모델의 얼굴 라이선스를 사용할 수 없어요.' });
-        clearDetailPageJobMarker();
         return;
       }
       patch({ status: 'error', errorMessage: e?.message || '상세페이지 생성에 실패했어요.' });
-      if (e?.status >= 400 && e.status < 500) clearDetailPageJobMarker();
     } finally {
       if (alive()) detailJobLoopProjectId = null;
     }

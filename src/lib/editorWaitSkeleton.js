@@ -84,14 +84,35 @@ export function fillGenBlocks(blocks, job) {
 /* 완료 병합 — 셀러가 만진 레이아웃·텍스트가 정본. 서버 조립본에서 가져오는 것만:
    ① 안정 /file src(프리뷰 presigned 1h 대체) ② 셀러 미편집 카피의 최종본
    ③ AI 고지 블록(라이선스 문구는 컴플라이언스라 서버본으로 통째 교체). */
+const sourceIdsOf = (block) => new Set((block?.elements || [])
+  .map((el) => el?.sourceBlockId)
+  .filter(Boolean));
+
+const noticeBlock = (block) => (block?.elements || []).some(
+  (el) => el.type === 'license-verify'
+    || (el.type === 'text' && typeof el.text === 'string' && el.text.startsWith('본 상세페이지')));
+
+/* 로컬 스켈레톤이 서버 완성본의 구조를 전부 대표할 때만 로컬 기준 병합이 안전하다.
+   콘티 조회 실패·mock/server 행 규칙 차이로 서버 컷 하나라도 로컬에 없으면, 로컬본을 PUT할 때
+   그 컷이 영구 삭제된다. 그런 불일치에서는 셀러 편집보다 서버 생성물 보존을 우선한다. */
+export function canSafelyMergeServerBlocks(blocks, serverBlocks) {
+  const local = blocks || [];
+  const localSources = new Set(local.flatMap((block) => [...sourceIdsOf(block)]));
+  return (serverBlocks || []).every((serverBlock) => {
+    if (noticeBlock(serverBlock)) return true;
+    const serverSources = [...sourceIdsOf(serverBlock)];
+    if (serverSources.length) return serverSources.every((id) => localSources.has(id));
+    return local.some((block) => block?.id === serverBlock?.id
+      || (serverBlock?.kind && block?.kind === serverBlock.kind));
+  });
+}
+
 export function mergeServerBlocks(blocks, serverBlocks) {
+  if (!canSafelyMergeServerBlocks(blocks, serverBlocks)) return serverBlocks || [];
   const srcById = {}; const copyById = {};
   let serverNotice = null;
-  const isNotice = (b) => (b.elements || []).some(
-    (el) => el.type === 'license-verify'
-      || (el.type === 'text' && typeof el.text === 'string' && el.text.startsWith('본 상세페이지')));
   for (const b of serverBlocks || []) {
-    if (isNotice(b)) serverNotice = b;
+    if (noticeBlock(b)) serverNotice = b;
     for (const el of (b.elements || [])) {
       if (el.type === 'image' && el.sourceBlockId && el.src) srcById[el.sourceBlockId] = el.src;
       if (el.type === 'text' && el.sourceBlockId && el.copyRole) {
@@ -115,7 +136,7 @@ export function mergeServerBlocks(blocks, serverBlocks) {
     }),
   }));
   if (serverNotice) {
-    const i = out.findIndex(isNotice);
+    const i = out.findIndex(noticeBlock);
     if (i >= 0) out[i] = serverNotice; else out.push(serverNotice);
   }
   return out;

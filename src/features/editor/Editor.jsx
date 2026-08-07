@@ -14,7 +14,7 @@ import QRCode from 'qrcode';
 import { api, isMockMode } from '@/lib/api/index.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
-import { alignSkeletonToServer, decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
+import { alignSkeletonToServer, canSafelyMergeServerBlocks, decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
 import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '@/lib/editorWaitDraft.js';
 import { listModels } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
@@ -560,10 +560,18 @@ export function Editor() {
       try {
         const server = await getFinalEditorBlocks(projectId);
         if (cancelled) return;
+        let restoredServerLayout = false;
         // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
         // 저장 요청 도중 사용자가 한 번 더 편집했다면 최신 ref로 다시 합쳐 저장하여 덮어쓰지 않는다.
         for (;;) {
-          const merged = expandBlockHeights(mergeServerBlocks(latestBlocks.current || [], server));
+          const current = latestBlocks.current || [];
+          restoredServerLayout ||= !canSafelyMergeServerBlocks(current, server);
+          let merged = mergeServerBlocks(current, server);
+          if (needsDefaultTemplate(merged)) {
+            const ctx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis, colorOpts, fmModels });
+            merged = applyInfoTemplate(merged, ctx).blocks;
+          }
+          merged = expandBlockHeights(merged);
           latestBlocks.current = merged;
           setBlocksState(merged);
           await api.saveEditorBlocks(projectId, merged);
@@ -574,7 +582,9 @@ export function Editor() {
         pendingGenerationDraft.current = false;
         genActiveRef.current = false;
         setGenActive(false);
-        toast.push('상세페이지가 완성됐어요 — 편집 내용까지 저장했어요', { icon: 'check' });
+        toast.push(restoredServerLayout
+          ? '일부 대기 화면을 복원할 수 없어 서버 완성본을 안전하게 불러왔어요'
+          : '상세페이지가 완성됐어요 — 편집 내용까지 저장했어요', { icon: 'check' });
         if (dpJob.jobId) {
           const r = await tryGetReceipt(dpJob.jobId);
           if (!cancelled && r) setGenReceipt(r);
@@ -1020,6 +1030,14 @@ export function Editor() {
     }
     if (bs) api.saveEditorBlocks(projectId, bs);
   };
+  const discardGenerationAndReturnToStoryboard = () => {
+    clearTimeout(saveTimer.current);
+    clearEditorWaitDraft(projectId);
+    pendingGenerationDraft.current = false;
+    genActiveRef.current = false;
+    useAppStore.getState().resetDetailPageJob();
+    navigate('/create/storyboard');
+  };
   /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
 
   /* ---- react-moveable → Element {x,y,w,h,rotate}.
@@ -1275,7 +1293,8 @@ export function Editor() {
       </div>
 
       {/* 생성 진행 리본 — 에디터 통합 대기. 같은 캔버스에서 편집하며 기다린다. */}
-      {(genActive || (dpJob.projectId === projectId && dpJob.status === 'error')) && (
+      {((genActive && dpJob.status !== 'blocked')
+          || (dpJob.projectId === projectId && dpJob.status === 'error')) && (
         <div className={`ed-genbar${genFailed ? ' error' : ''}`} role="status" aria-live="polite">
           <Icon name={genFailed ? 'alertTri' : 'loader'} size={14}
             className={genFailed ? '' : 'spin'} />
@@ -1304,7 +1323,7 @@ export function Editor() {
                     setGenActive(true);
                   }}>다시 시도</Button>
                 )}
-                <Button size="sm" variant="ghost" onClick={() => { flushExit(); navigate('/create/storyboard'); }}>콘티로</Button>
+                <Button size="sm" variant="ghost" onClick={discardGenerationAndReturnToStoryboard}>콘티로</Button>
               </>
             ) : (
               <>
@@ -1327,9 +1346,7 @@ export function Editor() {
             <div className="fm-blocked-icon"><Icon name="alertCircle" size={28} /></div>
             <p className="fm-blocked-msg">{dpJob.errorMessage}</p>
             <p className="fm-blocked-hint">다른 모델을 선택하거나 라이선스 상태를 확인한 뒤 다시 시도해 주세요.</p>
-            <Button variant="primary" block onClick={() => {
-              useAppStore.getState().resetDetailPageJob(); navigate('/create/storyboard');
-            }}>콘티로 돌아가기</Button>
+            <Button variant="primary" block onClick={discardGenerationAndReturnToStoryboard}>콘티로 돌아가기</Button>
           </div>
         </div>
       )}
