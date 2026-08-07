@@ -1568,8 +1568,14 @@ async def _apply_hybrid_composite(
                projection_eligible=projection_eligible, mode=mode,
                pipeline_version=HC_PIPELINE_VERSION)
 
+    # The carrier's ENCODED bytes, hashed once. Placed after the two early returns
+    # above so a job that never enters the composite path still hashes nothing, and
+    # before `fail` so every path from here on reuses this digest instead of taking
+    # its own over a buffer that can be tens of megabytes.
+    carrier_sha_early = hashlib.sha256(res.image).hexdigest()
+
     async def fail(reason, detail="", **extra):
-        extra.setdefault("carrierSha256", hashlib.sha256(res.image).hexdigest())
+        extra.setdefault("carrierSha256", carrier_sha_early)
         summary = _hc_fail_summary(reason, detail, mode=mode, **extra)
         if artifact_state["carrier"] is not None:
             capture_artifacts(
@@ -1633,7 +1639,7 @@ async def _apply_hybrid_composite(
         "decoded",
         carrier_size=[int(carrier_bgr.shape[1]), int(carrier_bgr.shape[0])],
         source_size=[int(front_bgr.shape[1]), int(front_bgr.shape[0])],
-        carrier_sha256=hashlib.sha256(res.image).hexdigest(),
+        carrier_sha256=carrier_sha_early,
         source_sha256=front_sha_early,
     )
     # Stage 1/2 — 입력 gate + stripe model. Detail 우선, 실패 시 Front/Back fallback.
@@ -2096,6 +2102,24 @@ async def _apply_hybrid_composite(
                    source_aspect_vision=(src_inv or {}).get("torso_aspect"),
                    carrier_aspect_vision=(car_inv or {}).get("torso_aspect"))
 
+    # 관측 전용 — carrier 형태 충실도. panel map 은 mask 분기가 잡히면 construction
+    # 상대오차를 아예 평가하지 않는다(mask 쌍이면 3.0× 위생 게이트에서 early return,
+    # repeat 불변량이면 건너뜀). 그래서 construction 허용치를 크게 넘긴 carrier 가 조용히
+    # 통과한다. 여기서는 두 값을 **둘 다** 재서 불일치를 기록만 한다 — 어떤 판정도 바꾸지
+    # 않는다. 실패해도 잡을 막지 않는다. 관측값은 최종 nested metadata 로만 남긴다 —
+    # 이벤트를 새로 발화하면 관측 전용이라던 변경이 이벤트 스트림을 바꾸게 된다.
+    shape_observation = None
+    try:
+        shape_observation = hc_preflight.observe_carrier_shape_fidelity(
+            source_inventory=src_inv, carrier_inventory=car_inv,
+            mask_hygiene_ratio_threshold=hc_panel.MAX_TORSO_ASPECT_RATIO,
+            construction_ratio_tolerance=hc_panel.CONSTRUCTION_RATIO_TOL,
+            source_torso_aspect_mask_measured=src_aspect_mask,
+            carrier_torso_aspect_mask_measured=car_aspect_mask,
+        )
+    except Exception:
+        shape_observation = None
+
     # Stage 3 — panel map (+ construction 대조)
     pm = await asyncio.to_thread(
         hc_panel.build_panel_map, carrier_bgr, car_lm,
@@ -2171,6 +2195,7 @@ async def _apply_hybrid_composite(
     out_bytes = png.tobytes()
     needs_review = bool(art.components_needing_review)
     front_sha = front_sha_early
+    carrier_sha256 = carrier_sha_early
     source_assets = {
         "pattern": {
             "slot": model_ref.slot,
@@ -2209,8 +2234,43 @@ async def _apply_hybrid_composite(
         "panelMetrics": art.panel_metrics,
         "deterministicMetrics": qc_event_metrics,
         "outputSha256": hashlib.sha256(out_bytes).hexdigest(),
-        "carrierSha256": hashlib.sha256(res.image).hexdigest(),
+        "carrierSha256": carrier_sha256,
     }
+    # nested observation key — no schema change, no public whitelist change, and a
+    # serialisation problem must never cost us the finished output. The lineage half
+    # reuses hashes and ids the worker already holds: nothing is recomputed from
+    # decoded pixels and no identifier is invented to fill a gap.
+    try:
+        lineage = hc_preflight.CarrierObservationLineage(
+            carrier_sha256=carrier_sha256,
+            carrier_sha_algorithm=hc_preflight.SHA_ALGORITHM,
+            carrier_sha_basis=hc_preflight.SHA_BASIS_ENCODED_MEMORY,
+            carrier_sha_source=hc_preflight.SHA_SOURCE_CARRIER_RESULT,
+            source_sha256=front_sha,
+            source_sha_algorithm=hc_preflight.SHA_ALGORITHM,
+            # we hash the asset's encoded bytes ourselves; the asset id below says
+            # which asset they came from, but no store hands us a stored digest
+            source_sha_basis=hc_preflight.SHA_BASIS_ENCODED_MEMORY,
+            source_sha_source=hc_preflight.SHA_SOURCE_FRONT_ASSET_BYTES,
+            source_path_or_id=getattr(front_ref, "asset_id", None),
+            # job id and generation run id are not the same identity, so the run
+            # field stays null rather than borrowing this value
+            job_id=str(job_id) if job_id is not None else None,
+            job_id_source=hc_preflight.ID_SOURCE_WORKER_JOB_ID,
+            candidate_id=str(candidate) if candidate is not None else None,
+            candidate_id_source=hc_preflight.ID_SOURCE_WORKER_CANDIDATE,
+            attempt_number=attempt if isinstance(attempt, int) else None,
+            attempt_number_source=hc_preflight.ID_SOURCE_WORKER_ATTEMPT,
+            source_asset_id=getattr(front_ref, "asset_id", None),
+            source_product_truth_id=((product_truth or {}).get("id") or None),
+            pattern_type=declared_pattern_type,
+            image_resolution=f"{carrier_bgr.shape[1]}x{carrier_bgr.shape[0]}",
+            generation_mode=mode,
+        )
+        summary["carrierShapeFidelity"] = hc_preflight.build_carrier_shape_metadata(
+            shape_observation, lineage)
+    except Exception:
+        pass
     await emit("hybrid_composite_completed",
                outcome="applied" if mode == "enforce" else "would_apply",
                mode=mode,
