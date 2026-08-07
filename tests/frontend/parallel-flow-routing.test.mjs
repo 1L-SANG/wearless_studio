@@ -74,3 +74,26 @@ test('a running job no longer yanks the user onto the mannequin screen', () => {
   assert.doesNotMatch(shellSource, /mannequinJob\?\.status === 'running'/);
   assert.match(shellSource, /resumePath \|\| '\/create\/storyboard'/);
 });
+
+test('the library "새로 만들기" is no longer hijacked by another project\'s running job', () => {
+  // Task 6 wires the storyboard to fire generation on entry — from that point a job can
+  // be running while the user is still on /create/storyboard, and this hijack would have
+  // bounced a fresh "새로 만들기" click straight into /create/mannequin, past goToMannequin's
+  // own validation gate.
+  assert.doesNotMatch(librarySource, /mannequinJob/);
+  assert.doesNotMatch(librarySource, /navigate\('\/create\/mannequin'\)/);
+  assert.match(librarySource, /const onNew = async \(\) => \{/);
+});
+
+test('the mannequin CTA cannot mistake a failed storyboard fetch for zero AI cuts', () => {
+  // getStoryboard 실패를 [] 로 뭉개면 "AI 컷 0장"과 "조회 실패"가 구분되지 않아, 크레딧
+  // 소비 직전 CTA 가 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다. null 로 남겨 구분한다.
+  assert.doesNotMatch(mannequinSource, /getStoryboard\(pid\)\.catch\(\(\) => \[\]\)/);
+  assert.match(mannequinSource, /getStoryboard\(pid\)\.catch\(\(\) => null\)/);
+  assert.match(
+    mannequinSource,
+    /setAiCutCount\(Array\.isArray\(nextStoryboard\) \? nextStoryboard\.filter\(\(b\) => b\.source !== 'mine'\)\.length : null\)/,
+  );
+  // 미확정일 땐 기존 관용구(em dash)로 표시 — 계산된 숫자(특히 0)를 보여주지 않는다.
+  assert.match(mannequinSource, /aiCutCount == null \? '—' : aiCutCount \* /);
+});

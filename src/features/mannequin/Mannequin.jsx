@@ -595,7 +595,7 @@ export function Mannequin() {
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
-  const [aiCutCount, setAiCutCount] = useState(0);
+  const [aiCutCount, setAiCutCount] = useState(null);   // null = 아직 모름(로딩 중·조회 실패) — 0 과 구분
   const submittingRef = useRef(false);   // 결제(재생성) 이중 제출 방지 — busy 반영 전 연타 차단
   const cutsRef = useRef(cuts);
   const selectedRef = useRef(null);
@@ -677,17 +677,20 @@ export function Mannequin() {
       if (loadRunRef.current !== runId) return;
       pid = useAppStore.getState().projectId;
       if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
+      // getStoryboard 실패는 이 화면 자체를 막지 않는다(비치명) — 대신 null 로 남겨
+      // "콘티가 AI 컷 0장" 과 "조회 자체를 못 함" 을 구분한다. 구분 안 하면 CTA 가
+      // 크레딧 소비 직전에 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다.
       const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
         api.getCatalogs(),
-        api.getStoryboard(pid).catch(() => []),
+        api.getStoryboard(pid).catch(() => null),
       ]);
       if (loadRunRef.current !== runId) return;
       setProgress(generationProgressFor(pid));
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
-      setAiCutCount((nextStoryboard || []).filter((b) => b.source !== 'mine').length);
+      setAiCutCount(Array.isArray(nextStoryboard) ? nextStoryboard.filter((b) => b.source !== 'mine').length : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
       setFitProfileDraft(draft);
@@ -1272,7 +1275,9 @@ export function Mannequin() {
         ) : (
           <div className="fit-final">
             <Button variant="primary" size="lg" block iconRight="arrowRight" disabled={busy} onClick={onCta}>
-              상세페이지 생성하기 · {aiCutCount * (catalogs?.creditCosts?.storyboardPerCut ?? 1)} 크레딧
+              {/* 콘티 조회 실패로 aiCutCount 를 모를 때 '0 크레딧'(=무료로 읽힘)을 보여주지 않는다 —
+                  기존 관용구(em dash '—')로 미확정을 표시한다. 실제 과금은 서버가 저장된 콘티로 재계산. */}
+              상세페이지 생성하기 · {aiCutCount == null ? '—' : aiCutCount * (catalogs?.creditCosts?.storyboardPerCut ?? 1)} 크레딧
             </Button>
           </div>
         )}
