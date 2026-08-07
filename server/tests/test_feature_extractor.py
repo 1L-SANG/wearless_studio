@@ -48,7 +48,7 @@ def test_build_prompt_injects_guide_and_manifest():
     p = fx.build_prompt({"clothing_type": "top"}, slots=["Front", "Detail"])
     assert "${observationGuide}" not in p and "${imageManifest}" not in p
     assert "핀턱(pintuck)" in p                      # 가이드 주입
-    assert "2. DETAIL close-up" in p                 # 매니페스트 순서·역할
+    assert "2. front-side DETAIL close-up" in p      # 매니페스트 순서·역할 (2026-08-07 개편 라벨)
     assert "focus that guide row): top" in p         # 셀러 종류 힌트
     # slot 없으면 매니페스트 생략 (스모크 등 직접 호출 호환)
     assert "IMAGE MANIFEST" not in fx.build_prompt({})

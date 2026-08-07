@@ -947,6 +947,25 @@ def test_render_product_detail_is_grounded_and_has_no_person_lines():
     assert "Face handling" not in p
 
 
+# ---------- 슬롯 계약 (2026-08-07 개편: Fit 폐기 · BackDetail 신설) ----------
+
+
+def test_slot_order_backdetail_last_no_fit():
+    from app.agents.mannequin import _SLOT_ORDER
+    assert _SLOT_ORDER == {"Front": 0, "Back": 1, "Detail": 2, "BackDetail": 3}
+
+
+def test_slot_labels_have_backdetail_and_no_fit():
+    from app.agents import feature_extractor
+    from app.workers import mannequin_job
+    for labels in (cut._SLOT_LABEL, feature_extractor._SLOT_LABEL,
+                   mannequin_job._SLOT_LABEL):
+        assert "BackDetail" in labels
+        assert "Fit" not in labels
+    # 뒷면 전용 못박기 — 스펙 §6 (앞면 배치 금지 문구)
+    assert "never place it on the front" in cut._SLOT_LABEL["BackDetail"]
+
+
 @pytest.mark.parametrize("state, phrase, inner_phrase", [
     ("open", "FULLY OPEN", "naturally visible through the open front"),
     ("partial", "PARTIALLY OPEN", "partially visible through the open portion"),

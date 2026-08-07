@@ -48,7 +48,7 @@ def test_build_prompt_product_detail_uses_detail_slot():
         {"slot": "Front", "id": "a1"}, {"slot": "Detail", "id": "a2"},
     ]}]}
     prompt = cg.build_prompt({"cutType": "product", "shot": "detail"}, product)
-    assert "detail close-up of the garment" in prompt
+    assert "front-side detail close-up of the garment" in prompt
     assert "tight product-only close-up" in prompt
 
 
@@ -71,7 +71,7 @@ def test_build_prompt_product_detail_uses_other_color_detail_with_color_transfer
     assert transfer == {
         "targetName": "그린", "targetHex": "#3f7a4f", "referenceName": "레드",
     }
-    assert "PRODUCT — detail close-up" in prompt
+    assert "PRODUCT — front-side detail close-up" in prompt
     assert "DETAIL COLORWAY TRANSFER" in prompt
     assert "Target color: 그린 (#3f7a4f)" in prompt
     assert "fabric structure, shape, and material exactly" in prompt
@@ -94,7 +94,7 @@ def test_build_prompt_product_detail_same_color_has_no_color_transfer():
 
     assert images == [("Front", "green-front"), ("Detail", "green-detail")]
     assert transfer is None
-    assert "PRODUCT — detail close-up" in prompt
+    assert "PRODUCT — front-side detail close-up" in prompt
     assert "DETAIL COLORWAY TRANSFER" not in prompt
 
 

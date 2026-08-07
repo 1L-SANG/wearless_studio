@@ -892,11 +892,15 @@ def detail_reference_images(
 
 
 # 첨부 이미지 역할 라벨 — 전부 고정 문구(셀러 데이터 미포함, 프롬프트 인젝션 방지)
+# Detail=앞면 디테일(값 재사용, 2026-08-07 개편) · BackDetail=뒷면 디테일(뒷면 전용 못박기)
 _SLOT_LABEL = {
     "Front": "PRODUCT — front view of the garment",
     "Back": "PRODUCT — back view of the garment",
-    "Detail": "PRODUCT — detail close-up of the garment (texture, stitching, print)",
-    "Fit": "PRODUCT — fit reference, the garment worn on a person (true length & drape)",
+    "Detail": ("PRODUCT — front-side detail close-up of the garment (texture, stitching, "
+               "print; may also show fabric or trims whose location is not side-specific)"),
+    "BackDetail": ("PRODUCT — back-side detail close-up of the garment (back neck, back "
+                   "yoke, back pocket). This detail exists on the back side only — "
+                   "never place it on the front"),
 }
 # 마네킹/매칭 첨부 라벨 — render_cut_prompt 의 매칭 핏 가드가 매니페스트에서 이 문구로
 # "하의가 화면에 있는가"를 판별하므로 상수로 공유(문구 드리프트 방지).

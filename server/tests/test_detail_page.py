@@ -579,7 +579,7 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
     assert [result["blockId"] for result in captured["cut_results"]] == [
         "valid-fit", "cross-color-detail", "same-color-detail",
     ]
-    assert "PRODUCT — detail close-up" in captured["manifests"]["cross-color-detail"]
+    assert "PRODUCT — front-side detail close-up" in captured["manifests"]["cross-color-detail"]
     assert "DETAIL COLORWAY TRANSFER" in captured["prompts"]["cross-color-detail"]
     assert "Target color: 그린 (#3f7a4f)" in captured["prompts"]["cross-color-detail"]
     assert "DETAIL COLORWAY TRANSFER" not in captured["prompts"]["same-color-detail"]

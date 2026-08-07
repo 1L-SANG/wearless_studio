@@ -78,7 +78,7 @@ async def run_analyze_job(app, job: dict) -> None:
             log.exception("analyze finalize_failure error for job %s", job_id)
 
     try:
-        # 1) 입력 로드 — 기준 색상 이미지 asset (마네킹과 동일 소스). slot(Front/Back/Detail/Fit)은
+        # 1) 입력 로드 — 기준 색상 이미지 asset (마네킹과 동일 소스). slot(Front/Back/Detail/BackDetail)은
         #    AG-08 관찰 가이드용으로 보존한다(디테일 컷 집중 지시 — 2026-07-13).
         async with pool.connection() as conn:
             product = await repo.get_product(conn, project_id) or {}

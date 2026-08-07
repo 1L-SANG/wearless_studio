@@ -110,8 +110,9 @@ def _image_dims(data: bytes) -> tuple[int | None, int | None]:
 _SLOT_LABEL = {
     "Front": "front view of the garment",
     "Back": "back view of the garment",
-    "Detail": "detail close-up of the garment (texture, stitching, trims, print)",
-    "Fit": "fit reference — the garment worn on a real person (true length & how it sits)",
+    "Detail": "front-side detail close-up of the garment (texture, stitching, trims, print)",
+    "BackDetail": ("back-side detail close-up of the garment (a back-only feature — "
+                   "back neck, yoke, back pocket)"),
 }
 
 
@@ -1206,7 +1207,7 @@ async def run_mannequin_job(app, job: dict) -> None:
             for slot, aid in mannequin.base_color_images(product):
                 a = await repo.get_asset_for_user(conn, user_id, aid)
                 if a:
-                    a["slot"] = slot  # Front/Back/Detail/Fit — 매니페스트 라벨용
+                    a["slot"] = slot  # Front/Back/Detail/BackDetail — 매니페스트 라벨용
                     prod_assets.append(a)
             match_asset = None
             match_id = mannequin.main_match_item_id(analysis)
