@@ -414,7 +414,17 @@ import { ComposeModePicker } from './ComposeModePicker.jsx';
 
 ```jsx
   // 사진 양이 바뀌면 콘티를 다시 읽는다 — 손대지 않은 기본 시드만 새 모드로 재시드된다(어댑터 규칙).
-  const onComposeModeChange = () => {
+  // 단, 재조회 전에 보류 중인 자동저장(1.5s 디바운스)부터 플러시한다 — generate 와 동일 패턴.
+  // 안 그러면 그 창 안의 편집이 재조회로 덮여쓰이고, 서버가 아직 못 본 편집이라 재시드 판정도
+  // 틀어질 수 있다. 플러시 자체가 실패하면 재조회하지 않는다 — 실패한 편집을 덮어쓰는 경로가 된다.
+  const onComposeModeChange = async () => {
+    try {
+      await saveNow(projectId);
+    } catch {
+      setSaveError('변경 내용을 저장하지 못했어요');
+      return;
+    }
+    setSaveError(null);
     invalidateStoryboardEntryPrefetch(projectId);
     setLoadRetry((n) => n + 1);
   };
