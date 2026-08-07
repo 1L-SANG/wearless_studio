@@ -196,6 +196,14 @@ class SpaceSetReleaseResult:
     warnings: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class UploadReceipt:
+    """실제 업로드가 끝났다는 증거. 이것 없이는 적용할 수 없다."""
+
+    release_id: str
+    uploaded_keys: frozenset[str]
+
+
 def _read_json(path: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -1659,8 +1667,8 @@ def upload_release(
     *,
     execute: bool,
     r2_client=None,
-) -> None:
-    """업로드 목록을 출력하고 execute일 때만 기존 R2 client로 실제 쓴다."""
+) -> UploadReceipt | None:
+    """업로드 목록을 출력하고 실제 쓰기가 끝나면 적용용 영수증을 돌려준다."""
     ordered = sorted(result.assets, key=lambda asset: asset.r2_key)
     print(f"UPLOAD {'EXECUTE' if execute else 'DRY-RUN'}: {len(ordered)} objects")
     for asset in ordered:
@@ -1688,6 +1696,10 @@ def upload_release(
             asset.mime,
             cache="public, max-age=31536000, immutable",
         )
+    return UploadReceipt(
+        release_id=result.release_id,
+        uploaded_keys=frozenset(asset.r2_key for asset in ordered),
+    )
 
 
 def _applied_release_id(path: Path) -> str | None:
@@ -2240,14 +2252,58 @@ def _restore_bytes(path: Path, previous: bytes | None) -> None:
         temp_path.unlink(missing_ok=True)
 
 
-def apply_release(result: SpaceSetReleaseResult) -> None:
-    """전용 JSON 두 개를 적용하고 두 번째 실패 시 첫 번째도 되돌린다."""
+def _assert_receipt_covers_release(
+    result: SpaceSetReleaseResult,
+    receipt: UploadReceipt,
+    registry: dict,
+) -> None:
+    """영수증이 이번 릴리스와 그 명단이 참조하는 모든 자산을 덮는지 검사한다."""
+    if receipt.release_id != result.release_id:
+        raise RuntimeError(
+            "업로드 영수증이 다른 릴리스의 것입니다: "
+            f"receipt={receipt.release_id} staged={result.release_id}"
+        )
+    staged_keys = {asset.r2_key for asset in result.assets}
+    missing = staged_keys - receipt.uploaded_keys
+    if missing:
+        raise RuntimeError(
+            f"업로드되지 않은 자산이 {len(missing)}개 있습니다: {sorted(missing)[:5]}"
+        )
+
+    prefix = f"{R2_PREFIX}/{result.release_id}/"
+    referenced: set[str] = set()
+    for space_set in registry["sets"]:
+        plate = space_set["representativePlate"]
+        if plate is not None:
+            referenced.add(plate["key"])
+        for member in space_set["members"]:
+            referenced.add(member["all"]["key"])
+            referenced.add(member["pose"]["key"])
+            release_root = member["all"]["key"].rsplit("/all/", 1)[0]
+            referenced.add(f'{release_root}/thumb/{member["exampleId"]}.webp')
+    unbacked = {
+        key
+        for key in referenced
+        if key.startswith(prefix) and key not in receipt.uploaded_keys
+    }
+    if unbacked:
+        raise RuntimeError(
+            f"명단이 올리지 않은 키를 참조합니다: {sorted(unbacked)[:5]}"
+        )
+
+
+def apply_release(
+    result: SpaceSetReleaseResult,
+    receipt: UploadReceipt,
+) -> None:
+    """업로드 증거를 확인한 뒤 JSON 두 개를 적용하고 실패 시 되돌린다."""
     for target in (DEFAULT_FRONTEND_CATALOG_PATH, DEFAULT_SERVER_REGISTRY_PATH):
         if _applied_release_id(target) == result.release_id:
             raise FileExistsError(
                 f"같은 releaseId가 이미 적용되어 덮어쓰기를 거부합니다: {target}"
             )
     merged_frontend, merged_registry = _merged_catalogs(result)
+    _assert_receipt_covers_release(result, receipt, merged_registry)
     merge_dir = Path(tempfile.mkdtemp(prefix=".space-set-registry-merge."))
     merged_frontend_path = merge_dir / "storyboardSpaceSets.json"
     merged_path = merge_dir / "space_set_assets.json"
@@ -2377,10 +2433,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FRONTEND CATALOG: {result.frontend_catalog_path}")
         print(f"SERVER REGISTRY: {result.server_registry_path}")
         print(f"AUDIT: {result.audit_path}")
+        receipt = None
         if args.upload:
-            upload_release(result, execute=args.execute)
+            receipt = upload_release(result, execute=args.execute)
         if args.apply:
-            apply_release(result)
+            if receipt is None:
+                raise RuntimeError("업로드 영수증이 없어 적용할 수 없습니다")
+            apply_release(result, receipt)
             print(f"APPLIED: {DEFAULT_FRONTEND_CATALOG_PATH}")
             print(f"APPLIED: {DEFAULT_SERVER_REGISTRY_PATH}")
         return 0

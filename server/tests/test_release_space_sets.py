@@ -1,6 +1,7 @@
 import hashlib
 import json
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,18 @@ from tools import release_space_sets as release
 
 RELEASE_ID = "2026-07-30-space-set-test"
 PUBLIC_BASE = "https://images.example.test"
+
+
+def _receipt(result, *, release_id=None, uploaded_keys=None):
+    keys = (
+        frozenset(asset.r2_key for asset in result.assets)
+        if uploaded_keys is None
+        else frozenset(uploaded_keys)
+    )
+    return release.UploadReceipt(
+        release_id=release_id or result.release_id,
+        uploaded_keys=keys,
+    )
 
 
 def _hash(path: Path) -> str:
@@ -605,11 +618,79 @@ def test_staging_and_apply_refuse_same_release_overwrite(tmp_path, monkeypatch):
     server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
     monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
-    release.apply_release(result)
+    receipt = _receipt(result)
+    release.apply_release(result, receipt)
     assert frontend_target.is_file()
     assert server_target.is_file()
     with pytest.raises(FileExistsError):
+        release.apply_release(result, receipt)
+
+
+def test_apply_requires_upload_receipt_even_when_called_directly(tmp_path):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+
+    with pytest.raises(TypeError):
         release.apply_release(result)
+
+
+def test_apply_rejects_receipt_from_a_different_release(tmp_path, monkeypatch):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    monkeypatch.setattr(
+        release,
+        "DEFAULT_FRONTEND_CATALOG_PATH",
+        tmp_path / "live" / "storyboardSpaceSets.json",
+    )
+    monkeypatch.setattr(
+        release,
+        "DEFAULT_SERVER_REGISTRY_PATH",
+        tmp_path / "live" / "space_set_assets.json",
+    )
+
+    with pytest.raises(RuntimeError, match="다른 릴리스의 것"):
+        release.apply_release(
+            result,
+            _receipt(result, release_id="different-release"),
+        )
+
+
+def test_apply_rejects_catalog_key_missing_from_upload_receipt(tmp_path, monkeypatch):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    thumb = next(asset for asset in result.assets if asset.variant == "thumb")
+    incomplete_result = replace(
+        result,
+        assets=tuple(asset for asset in result.assets if asset != thumb),
+    )
+    monkeypatch.setattr(
+        release,
+        "DEFAULT_FRONTEND_CATALOG_PATH",
+        tmp_path / "live" / "storyboardSpaceSets.json",
+    )
+    monkeypatch.setattr(
+        release,
+        "DEFAULT_SERVER_REGISTRY_PATH",
+        tmp_path / "live" / "space_set_assets.json",
+    )
+
+    with pytest.raises(RuntimeError, match="명단이 올리지 않은 키를 참조"):
+        release.apply_release(incomplete_result, _receipt(incomplete_result))
 
 
 def test_sealed_stage_is_reused_and_tampering_is_rejected(tmp_path):
@@ -799,7 +880,7 @@ def _assert_apply_rejected_without_mutation(
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
     with pytest.raises(RuntimeError, match=match):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
     assert server_target.read_bytes() == server_before
 
@@ -840,7 +921,7 @@ def test_apply_rolls_back_frontend_when_server_copy_fails(tmp_path, monkeypatch)
 
     monkeypatch.setattr(release, "_atomic_copy", fail_second_copy)
     with pytest.raises(OSError, match="injected"):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
     assert server_target.read_bytes() == server_before
 
@@ -868,7 +949,7 @@ def test_apply_preserves_old_sets_in_frontend_and_server_in_the_same_order(
     monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
-    release.apply_release(result)
+    release.apply_release(result, _receipt(result))
 
     applied_frontend = json.loads(frontend_target.read_text(encoding="utf-8"))
     applied_server = json.loads(server_target.read_text(encoding="utf-8"))
@@ -914,7 +995,7 @@ def test_apply_rejects_malformed_old_frontend_before_mutation(
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
     with pytest.raises(RuntimeError, match="프론트 계약"):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
     assert server_target.read_bytes() == server_before
 
@@ -1135,7 +1216,7 @@ def test_apply_rejects_old_and_new_release_base_url_mismatch(
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
     with pytest.raises(RuntimeError, match="기존 공간 세트 서버.*baseUrl"):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
     assert server_target.read_bytes() == server_before
 
@@ -1176,7 +1257,7 @@ def test_apply_rejects_existing_frontend_server_set_order_mismatch(
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
     with pytest.raises(RuntimeError, match="setId 순서"):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
     assert server_target.read_bytes() == server_before
 
@@ -1208,7 +1289,7 @@ def test_apply_rejects_changed_definition_for_existing_set_id_before_mutation(
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
     with pytest.raises(RuntimeError, match="동일 setId의 정의 변경"):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
 
 
@@ -1238,7 +1319,7 @@ def test_apply_rejects_malformed_preserved_registry_before_mutation(
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
     with pytest.raises(RuntimeError, match="런타임 계약"):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
 
 
@@ -1268,7 +1349,7 @@ def test_apply_rejects_example_id_collision_with_preserved_set(
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
     with pytest.raises(RuntimeError, match="example_id_invalid"):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
 
 
@@ -1295,7 +1376,7 @@ def test_cli_apply_requires_execute_upload_and_upload_happens_first(
     monkeypatch.setattr(
         release,
         "apply_release",
-        lambda _result: events.append("apply"),
+        lambda _result, _receipt: events.append("apply"),
     )
     code = release.main([
         "--from-stage",
@@ -1308,10 +1389,15 @@ def test_cli_apply_requires_execute_upload_and_upload_happens_first(
     assert events == ["upload"]
 
     events.clear()
+
+    def successful_upload(result, **_kwargs):
+        events.append("upload")
+        return _receipt(result)
+
     monkeypatch.setattr(
         release,
         "upload_release",
-        lambda *_args, **_kwargs: events.append("upload"),
+        successful_upload,
     )
     assert release.main([
         "--from-stage",
@@ -1334,15 +1420,20 @@ def test_cli_can_execute_and_apply_the_exact_previously_sealed_stage(
         output_dir=tmp_path / "staged",
     )
     events = []
+
+    def successful_upload(result, **_kwargs):
+        events.append(("upload", result.output_dir))
+        return _receipt(result)
+
     monkeypatch.setattr(
         release,
         "upload_release",
-        lambda result, **_kwargs: events.append(("upload", result.output_dir)),
+        successful_upload,
     )
     monkeypatch.setattr(
         release,
         "apply_release",
-        lambda result: events.append(("apply", result.output_dir)),
+        lambda result, _receipt: events.append(("apply", result.output_dir)),
     )
 
     assert release.main([
@@ -1404,7 +1495,7 @@ def test_upload_is_dry_run_by_default_and_execute_refuses_existing_prefix(
             self.puts.append((args, kwargs))
 
     dry_client = FakeR2()
-    release.upload_release(result, execute=False, r2_client=dry_client)
+    assert release.upload_release(result, execute=False, r2_client=dry_client) is None
     assert dry_client.listed == []
     assert dry_client.puts == []
     assert "UPLOAD DRY-RUN" in capsys.readouterr().out
@@ -1415,6 +1506,7 @@ def test_upload_is_dry_run_by_default_and_execute_refuses_existing_prefix(
     assert blocked_client.puts == []
 
     live_client = FakeR2()
-    release.upload_release(result, execute=True, r2_client=live_client)
+    receipt = release.upload_release(result, execute=True, r2_client=live_client)
     assert live_client.listed == [f"{release.R2_PREFIX}/{RELEASE_ID}/"]
     assert len(live_client.puts) == len(result.assets)
+    assert receipt == _receipt(result)
