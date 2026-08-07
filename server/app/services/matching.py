@@ -33,7 +33,12 @@ def fit_category(item: dict) -> str | None:
     tops: return ``"top"`` (2026-08-01, WS2) — 하의 상품의 매칭 상의는 length 축으로 조정된다.
     상의가 상품(바지)의 허리를 가리는 문제의 조정 수단이라, 여기서 None 을 돌려주면 프론트
     매칭 조정 스텝이 구조적으로 뜰 수 없다(matchingFit.js MATCHING_AXIS 미러).
+
+    custom(셀러가 올린 내 옷): 항상 ``None`` (D11, 2026-08-05 오너). 실물 사진을 올린 것이라
+    실루엣·기장을 바꾸면 올린 옷과 다른 옷이 나온다 — 마네킹 화면에 매칭 조정 스텝을 띄우지 않는다.
     """
+    if item.get("owner_user_id") or item.get("is_custom"):
+        return None
     if item.get("clothing_type") == "top":
         return "top"
     if item.get("clothing_type") != "bottom":

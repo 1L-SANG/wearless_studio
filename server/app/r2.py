@@ -46,6 +46,11 @@ def ai_key(user_id: str, project_id: str, job_id: str, asset_id: str, ext: str) 
     return f"users/{user_id}/projects/{project_id}/ai/{job_id}/{asset_id}.{ext}"
 
 
+def derived_key(user_id: str, project_id: str, asset_id: str, ext: str) -> str:
+    """Deterministic server-derived assets such as a custom garment contact sheet."""
+    return f"users/{user_id}/projects/{project_id}/derived/{asset_id}.{ext}"
+
+
 def face_key(model_id: str, license_id: str, ext: str) -> str:
     """FaceMarket 얼굴 라이선스 이미지의 비공개 R2 키. 서버에서만 유도(클라 신뢰 금지).
     게이트 라우트만 스트림 → 공개 URL 미노출. license_id(uuid) = 추측 불가."""

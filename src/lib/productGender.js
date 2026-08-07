@@ -12,5 +12,6 @@ export function genderForClothingType(clothingType, targetGenders) {
 // 매칭 의류는 남녀 전부가 뜬다(2026-07-31 사용자 결정: 칩과 매칭을 일치시킨다).
 export function normalizeTargetGendersForClothingType(clothingType, targetGenders) {
   if (clothingType === 'dress') return ['women'];
-  return Array.isArray(targetGenders) ? targetGenders.slice(0, 1) : [];
+  const first = Array.isArray(targetGenders) ? targetGenders.find(Boolean) : null;
+  return [first || 'women'];
 }

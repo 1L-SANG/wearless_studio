@@ -116,7 +116,10 @@ _SLOT_LABEL = {
 }
 
 
-def _build_manifest(prod_assets: list[dict], has_match: bool, clothing_type: str | None = None) -> str:
+def _build_manifest(
+    prod_assets: list[dict], has_match: bool, clothing_type: str | None = None,
+    match_is_custom: bool = False,
+) -> str:
     """images=[base, *prod(slot순), match]와 동일 순서의 역할 목록 (모델이 어느 이미지가 무엇인지 알게).
     내용은 전부 고정 라벨(_SLOT_LABEL 룩업) — 셀러 데이터를 직접 끼우지 않는다(프롬프트 인젝션 방지).
     의류 종류는 sanitize된 ${clothingType}·PRODUCT CONTEXT로 따로 전달되므로 여기엔 넣지 않는다.
@@ -130,10 +133,17 @@ def _build_manifest(prod_assets: list[dict], has_match: bool, clothing_type: str
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'view of the garment')}")
         i += 1
     if has_match:
+        custom_guard = (
+            " — a 2x2 contact sheet showing 1-4 views of ONE SAME matching garment; "
+            "treat all occupied cells as evidence for that single garment; empty neutral cells "
+            "mean no photo, not a white garment or another product; dress one garment only; "
+            "the output must be one normal photograph, never a collage or grid"
+            if match_is_custom else ""
+        )
         if str(clothing_type or "").lower() == "bottom":
-            lines.append(f"{i}. matching TOP garment — also dress the mannequin in this, worn short so the PRODUCT bottom stays fully visible")
+            lines.append(f"{i}. matching TOP garment — also dress the mannequin in this, worn short so the PRODUCT bottom stays fully visible{custom_guard}")
         else:
-            lines.append(f"{i}. matching BOTTOM garment — also dress the mannequin in this, coordinated with the top")
+            lines.append(f"{i}. matching BOTTOM garment — also dress the mannequin in this, coordinated with the top{custom_guard}")
     return "\n".join(lines)
 
 
@@ -1212,7 +1222,9 @@ async def run_mannequin_job(app, job: dict) -> None:
             match_asset = None
             match_id = mannequin.main_match_item_id(analysis)
             if match_id:
-                m_aid = await repo.get_matching_item_asset(conn, match_id)
+                m_aid = await repo.get_matching_item_asset(
+                    conn, match_id, user_id, project_id
+                )
                 if m_aid:
                     match_asset = await repo.get_asset_for_user(conn, user_id, m_aid)
 
@@ -1241,7 +1253,13 @@ async def run_mannequin_job(app, job: dict) -> None:
         #    함께 떠서 혼란(버전 스트립에 2개) + 재생성마다 2컷씩 쌓이던 문제.
         #    크레딧 단가(2/잡)는 잡 기준이라 불변. 다양화는 핏 조정→재생성 루프가 담당.
         clothing_type = product.get("clothing_type") or "상의"
-        manifest = _build_manifest(prod_assets, match_img is not None, clothing_type)
+        # 커스텀 매칭(셀러가 올린 내 옷)은 2x2 그리드 1장이라 "여러 벌"로 오해되면 콜라주가
+        # 나온다. fresh 경로 매니페스트에만 전용 라벨을 붙인다 — edit 경로는 build_adjust_manifest
+        # 가 따로 쓰고, 내 옷은 애초에 핏 조정 스텝을 열지 않는다(D11).
+        manifest = _build_manifest(
+            prod_assets, match_img is not None, clothing_type,
+            match_is_custom=bool(match_img is not None and str(match_id).startswith("custom_")),
+        )
         # fit profile 은 잡 생성 시점 스냅샷이 정본(payload.fitProfileSnapshot — fidelity 설계 D3).
         # 워커가 최신 analysis 를 재독하면 잡 생성↔실행 사이의 저장 경합으로 다른 프로필이
         # 조용히 쓰일 수 있다(무음 유실). 키가 없는 legacy 잡과 malformed 스냅샷은 analysis 폴백.

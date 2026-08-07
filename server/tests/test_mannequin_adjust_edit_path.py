@@ -121,7 +121,9 @@ def _run_worker(
         }
         return mapping.get(asset_id)
 
-    async def get_matching_item_asset(conn, item_id):
+    # 커스텀 매칭 도입으로 소유권(user_id·project_id) 인자가 붙었다 — 큐레이션과 남의
+    # 커스텀을 같은 조회로 받지 않기 위한 것이라, 스텁도 같은 시그니처를 받아야 한다.
+    async def get_matching_item_asset(conn, item_id, user_id, project_id):
         return "match-asset" if item_id == current_match_id else None
 
     async def get_edit_parent(conn, user_id, project_id):

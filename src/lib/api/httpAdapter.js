@@ -7,6 +7,10 @@
 import { supabase } from '@/lib/supabase.js';
 import { LIMITS } from '@/lib/limits.js';
 import { defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
+import { toMatchItem } from '@/lib/api/matchingItems.js';
+import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
+
+export { toMatchItem } from '@/lib/api/matchingItems.js';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const LONG_IMAGE_JOB_TIMEOUT_MS = 15 * 60 * 1000;
@@ -51,7 +55,7 @@ function absolutizeAssetUrls(v) {
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
-export async function http(path, { method = 'GET', body } = {}) {
+export async function http(path, { method = 'GET', body, signal } = {}) {
   let data;
   try {
     ({ data } = await supabase.auth.getSession());
@@ -89,8 +93,10 @@ export async function http(path, { method = 'GET', body } = {}) {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
   } catch (cause) {
+    if (cause?.name === 'AbortError') throw cause;
     throw networkError(
       'api_network',
       '서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
@@ -116,6 +122,7 @@ export async function http(path, { method = 'GET', body } = {}) {
     if (code) err.code = code;
     throw err;
   }
+  if (res.status === 204) return null;
   return absolutizeAssetUrls(await res.json());
 }
 
@@ -136,7 +143,14 @@ async function pollJob(
     }
     if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
     if (job.status === 'error') throw new Error(job.errorMessage || '작업에 실패했어요.');
-    if (Date.now() - start > timeoutMs) throw new Error(timeoutMessage);
+    if (Date.now() - start > timeoutMs) {
+      // 타임아웃은 **실패가 아니다** — 화면이 기다리기를 그만둔 것뿐이고 서버 잡은 계속 돈다.
+      // 호출부가 "실패 처리"와 구분할 수 있게 code 를 붙인다(2026-08-07: 이 구분이 없어서
+      // 정상 진행 중인 생성이 실패 토스트 + 콘티보드 복귀로 처리됐다).
+      const err = new Error(timeoutMessage);
+      err.code = 'job_timeout';
+      throw err;
+    }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 }
@@ -144,9 +158,13 @@ async function pollJob(
 // 사진 1장 업로드 — presigned URL 3콜(발급→R2 PUT→complete). {assetId, url} 반환.
 // 로그인 후 draft 동기화(draftSync)도 이 함수를 재사용 (단일 업로드 계약, 서버 §3).
 // 서명 PUT은 Bearer 안 씀(서명 자체가 인증).
-export async function uploadPhoto(projectId, { filename, mime, blob }) {
+export async function uploadPhoto(
+  projectId,
+  { filename, mime, blob, purpose = 'upload' },
+  { signal } = {},
+) {
   const { assetId, uploadUrl } = await http('/v1/assets/upload-url', {
-    method: 'POST', body: { filename, mime, size: blob.size, projectId },
+    method: 'POST', body: { filename, mime, size: blob.size, projectId, purpose }, signal,
   });
   if (isBrowserOffline()) {
     throw networkError(
@@ -157,8 +175,11 @@ export async function uploadPhoto(projectId, { filename, mime, blob }) {
   }
   let put;
   try {
-    put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mime }, body: blob });
+    put = await fetch(uploadUrl, {
+      method: 'PUT', headers: { 'Content-Type': mime }, body: blob, signal,
+    });
   } catch (cause) {
+    if (cause?.name === 'AbortError') throw cause;
     throw networkError(
       'photo_upload_network',
       '사진 업로드 서버에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.',
@@ -173,7 +194,7 @@ export async function uploadPhoto(projectId, { filename, mime, blob }) {
     throw error;
   }
   const asset = await http(`/v1/assets/${assetId}/complete`, {
-    method: 'POST', body: { projectId, mime, filename },
+    method: 'POST', body: { projectId, mime, filename, purpose }, signal,
   });
   return { assetId, url: asset.url };
 }
@@ -213,25 +234,17 @@ async function fetchMatchCandidates(projectId, analysis) {
   return http(`/v1/projects/${projectId}/analysis/match-candidates?${qs.toString()}`);
 }
 
-// match-candidate → 레거시 matchClothing 아이템. selOrder 있으면 selected(계약 §6 shape 단일 소스).
-const toMatchItem = (it, selOrder) => ({
-  id: it.id, name: it.name, gender: it.gender,
-  thumb: it.thumb, imageUrl: it.imageUrl, thumbnailUrl: it.thumbnailUrl,
-  clothingType: it.clothingType ?? null,
-  category: it.category ?? null,
-  fit: it.fit ?? null,
-  length: it.length ?? null,
-  fitCategory: it.fitCategory ?? null,
-  selected: selOrder != null, ...(selOrder != null ? { selOrder } : {}),
-});
-
 // 추천 재계산(로그인·서버 project): 이전 선택을 유효 범위에서 유지, 없으면 상위 N 기본 선택(mock 계약 동일).
-async function recommendMatchHttp(projectId, analysis, current) {
+async function recommendMatchHttp(projectId, analysis, current, { defaultSelection = true } = {}) {
   const items = await fetchMatchCandidates(projectId, analysis);
   const prev = (current || []).filter((m) => m.selected)
     .sort((a, b) => (a.selOrder || 0) - (b.selOrder || 0)).map((m) => m.id);
-  const valid = prev.filter((id) => items.some((it) => it.id === id)).slice(0, LIMITS.matchClothingMax);
-  const chosen = valid.length ? valid : items.slice(0, LIMITS.matchClothingMax).map((it) => it.id);
+  const selectable = items.filter((it) => it.isCompatible !== false);
+  const valid = prev.filter((id) => selectable.some((it) => it.id === id)).slice(0, LIMITS.matchClothingMax);
+  const fallback = defaultSelection
+    ? selectable.filter((item) => item.isCustom !== true).slice(0, LIMITS.matchClothingMax)
+    : [];
+  const chosen = valid.length ? valid : fallback.map((it) => it.id);
   return items.map((it) => {
     const idx = chosen.indexOf(it.id);
     return toMatchItem(it, idx >= 0 ? idx + 1 : null);
@@ -239,14 +252,20 @@ async function recommendMatchHttp(projectId, analysis, current) {
 }
 
 // 선택 토글 머지 — id 단위 selected/selOrder 반영 후 1..max 재부여(mock 정규화와 동일 규칙).
-function mergeMatchSelection(currentMatch, matchPatch) {
+function mergeMatchSelection(currentMatch, matchPatch, clothingType) {
+  const expectedType = clothingType === 'dress'
+    ? null
+    : (clothingType === 'bottom' ? 'top' : 'bottom');
   const patchById = new Map(matchPatch.map((m) => [m.id, m]));
   const merged = (currentMatch || []).map((m) => {
     const p = patchById.get(m.id);
     if (!p) return m;
     return { ...m, selected: !!p.selected, selOrder: p.selected ? p.selOrder : undefined };
   });
-  const ranked = merged.filter((m) => m.selected)
+  const ranked = merged.filter((m) => m.selected
+      && m.isCompatible !== false
+      && expectedType !== null
+      && (m.clothingType == null || m.clothingType === expectedType))
     .sort((a, b) => (a.selOrder || 99) - (b.selOrder || 99)).slice(0, LIMITS.matchClothingMax);
   const orderById = new Map(ranked.map((m, i) => [m.id, i + 1]));
   return merged.map((m) => orderById.has(m.id)
@@ -255,6 +274,7 @@ function mergeMatchSelection(currentMatch, matchPatch) {
 }
 
 export const httpAdapter = {
+  uploadPhoto,
   // 상품 사진(blob)을 R2에 업로드하고 images[].id 를 **서버 asset id 로 치환**한다.
   // 서버(mannequin.base_color_images·분석 워커)는 colors[].images[].id 를 asset id 로 링크하므로,
   // 로컬 uid('img') 를 그대로 두면 서버가 사진을 못 찾는다(no_product_images). src 도 R2 URL 로 갱신.
@@ -350,9 +370,13 @@ export const httpAdapter = {
       // 이전 모드의 기본 시드 그대로일 때만 사진 양 변경을 반영한다.
       // 사용자가 옵션·순서·레이아웃 중 하나라도 바꾼 콘티는 교체하지 않는다.
       if (!isDefaultStoryboardForMode(saved, colors, previousMode, storyboardContext)) return saved;
+      const seeded = defaultStoryboard(colors, mode, storyboardContext);
+      // 구형 저장 보드는 사진 양을 바꿔도 기존 세로 오프닝을 유지한다. 신규 행 표식이
+      // 있는 프로젝트만 새 모드에서도 같은 오프닝 행을 이어가 기존 프로젝트를 재시드하지 않는다.
+      return hasOpeningRow(saved) ? applyOpeningRow(seeded) : seeded;
     }
     // 첫 진입/재시드는 화면의 자동 예시 배정 뒤 한 번만 PUT한다.
-    return defaultStoryboard(colors, mode, storyboardContext);
+    return applyOpeningRow(defaultStoryboard(colors, mode, storyboardContext));
   },
   async saveStoryboard(projectId, blocks, _options = {}) {
     return http(`/v1/projects/${projectId}/storyboard`, { method: 'PUT', body: blocks });
@@ -369,7 +393,10 @@ export const httpAdapter = {
     if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(202 아님) — 새 잡 없음
     const result = await pollJob(res.jobId, {
       onProgress,
-      timeoutMs: 300000,
+      // 15분. 정상 생성 실측이 242~285초인데 상한이 300초였다 — 여유가 15초뿐이라
+      // 조금만 느려도 화면이 먼저 포기했다(2026-08-05 실측). 서버 lease 복구가 900초라
+      // 그 사이 죽었다 되살아난 잡까지 화면이 지켜볼 수 있게 같은 값으로 맞춘다.
+      timeoutMs: 900000,
       timeoutMessage: '상세페이지 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.',
     });
     // jobId 를 함께 반환 — 완료 후 정산 영수증(GET /jobs/{jobId}/settlement, payment_id=job:{jobId})을 조회한다.
@@ -411,7 +438,9 @@ export const httpAdapter = {
       base.matchClothing = await recommendMatchHttp(projectId, base, base.matchClothing);
     }
     if (Array.isArray(matchPatch)) {
-      base.matchClothing = mergeMatchSelection(base.matchClothing || [], matchPatch);
+      base.matchClothing = mergeMatchSelection(
+        base.matchClothing || [], matchPatch, base.clothingType,
+      );
     }
     // 서버 PATCH 는 REPLACE — full base(analyze 가 seed 한 캐시)일 때만 지속한다. 예외: 하이드레이션이
     // 서버 저장분이 비었음을 증명한 경우(serverEmpty)는 유실될 상위 상태가 없으므로 delta 라도 지속한다
@@ -452,7 +481,35 @@ export const httpAdapter = {
     if (cached?.matchClothing?.length) return cached.matchClothing;
     if (!projectId) return [];
     const items = await fetchMatchCandidates(projectId, cached);
-    return items.map((it, i) => toMatchItem(it, i < LIMITS.matchClothingMax ? i + 1 : null));
+    const defaultIds = items.filter((it) => it.isCompatible !== false && it.isCustom !== true)
+      .slice(0, LIMITS.matchClothingMax).map((it) => it.id);
+    return items.map((it) => {
+      const index = defaultIds.indexOf(it.id);
+      return toMatchItem(it, index >= 0 ? index + 1 : null);
+    });
+  },
+  async addCustomMatchItem(projectId, { assetIds }, { signal } = {}) {
+    const result = await http(`/v1/projects/${projectId}/analysis/custom-match-item`, {
+      method: 'POST', body: { assetIds }, signal,
+    });
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    analysisCache = { projectId, analysis: result.analysis };
+    return result;
+  },
+  async removeCustomMatchItem(projectId) {
+    await http(`/v1/projects/${projectId}/analysis/custom-match-item`, { method: 'DELETE' });
+    const analysis = await http(`/v1/projects/${projectId}/analysis`);
+    analysisCache = { projectId, analysis };
+    return { analysis };
+  },
+  async refreshMatchClothing(projectId) {
+    const saved = await http(`/v1/projects/${projectId}/analysis`);
+    const matchClothing = await recommendMatchHttp(
+      projectId, saved, saved.matchClothing || [], { defaultSelection: false },
+    );
+    const analysis = { ...saved, matchClothing };
+    analysisCache = { projectId, analysis };
+    return analysis;
   },
   async getAccount() {
     return http('/v1/me/account');

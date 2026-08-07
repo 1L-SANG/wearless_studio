@@ -147,6 +147,11 @@ async def run_editor_image_job(app, job: dict) -> None:
             requested_color_id = new_payload.get("colorId")
             is_detail = new_payload.get("cutType") == "product" and new_payload.get("shot") == "detail"
             detail_direction = "back" if new_payload.get("direction") == "back" else "front"
+            matching_ids = (
+                [str(match_id) for match_id in (new_payload.get("matchIds") or [])][:2]
+                if new_payload.get("cutType") in _WORN_CUT_TYPES
+                else []
+            )
             async with pool.connection() as conn:
                 project = await repo.get_project(conn, user_id, project_id) or {}
                 product = await repo.get_product(conn, project_id) or {}
@@ -187,6 +192,21 @@ async def run_editor_image_job(app, job: dict) -> None:
                     if a:
                         a["slot"] = slot  # 매니페스트 역할 라벨용
                         assets.append(a)
+                # 저장된 storyboard block의 선택 순서를 그대로 유지한다. 카탈로그
+                # item 해결과 소유 asset 해결을 모두 통과해야 하며, 두 장 중 하나라도
+                # 없으면 일부 코디만 임의로 생성하지 않고 아래에서 단건 잡을 실패시킨다.
+                matching_assets = []
+                for matching_id in matching_ids:
+                    matching_asset_id = await repo.get_matching_item_asset(
+                        conn, matching_id, user_id, project_id
+                    )
+                    matching_assets.append(
+                        await repo.get_asset_for_user(
+                            conn, user_id, matching_asset_id
+                        )
+                        if matching_asset_id
+                        else None
+                    )
                 # 무드 레퍼런스(refAssetIds) — 분위기(조명·색감)만 참고, 최대 3장 (ADR-0004)
                 mood_rows = []
                 for rid in [str(r) for r in (new_payload.get("refAssetIds") or [])][:3]:
@@ -215,17 +235,24 @@ async def run_editor_image_job(app, job: dict) -> None:
                     await _fail("기준 색상 이미지를 찾을 수 없어요. 다시 시도해 주세요.",
                                 {"error": "no_base_color_images"})
                 return
+            if any(asset is None for asset in matching_assets):
+                await _fail(
+                    "선택한 매칭 의류를 불러오지 못했어요. 다시 시도해 주세요.",
+                    {"error": "matching_asset_unavailable", "matchIds": matching_ids},
+                )
+                return
             # 컷 계약 필드 통과(ADR-0004) — mirror·얼굴·포즈·생성예시까지 서버 정규화에 맡긴다.
             # 촬영 세트는 콘티보드 전용이며 에디터의 독립 새 이미지에는 그룹을 전달하지 않는다.
-            # 에디터 새 이미지 패널은 아직 매칭 의류를 고르는 UI·payload를 제공하지 않으므로
-            # matchIds를 의도적으로 제외한다.
+            # 매칭 의류는 저장 block payload의 선택을 그대로 승계하되,
+            # canonicalize_storyboard_block이 product 컷에서는 구조적으로 비운다.
             # colorId는 목표 색상이며, 디테일만 위 정책에 따라 타색 근거가 추가될 수 있다.
             cut_spec = {
                 k: new_payload.get(k)
                 for k in ("contentRole", "cutType", "direction", "shot", "faceExposure", "pose",
                           "outerClosureState", "exampleId", "modelId", "model_id",
-                          "colorId", "refScope")
+                          "colorId", "matchIds", "refScope")
             }
+            cut_spec["matchIds"] = matching_ids
             if detail_color_transfer:
                 cut_spec["_detailColorTransfer"] = detail_color_transfer
             clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
@@ -342,10 +369,32 @@ async def run_editor_image_job(app, job: dict) -> None:
                     app.state.r2.get_bytes, a["r2_key"]))
                 for a in assets
             ]
+            try:
+                matching_images = [
+                    InlineImage(
+                        asset["mime_type"],
+                        await asyncio.to_thread(
+                            app.state.r2.get_bytes, asset["r2_key"]
+                        ),
+                    )
+                    for asset in matching_assets
+                ]
+            except Exception as e:
+                # DB row는 있어도 R2 객체 중 하나가 없으면 선택 세트 전체를 무효로 한다.
+                await _fail(
+                    "선택한 매칭 의류를 불러오지 못했어요. 다시 시도해 주세요.",
+                    {
+                        "error": "matching_asset_unavailable",
+                        "matchIds": matching_ids,
+                        "detail": repr(e)[:200],
+                    },
+                )
+                return
             images = [
                 *mannequin_images,
                 *model_images,
                 *product_images,
+                *matching_images,
             ]
             # 순서 = 매니페스트: 기준색 MANNEQUIN? → MODEL 2장? → 상품 슬롯들
             # → 선택 MATCHING 최대 2장 → 무드? → 예시.
@@ -449,7 +498,9 @@ async def run_editor_image_job(app, job: dict) -> None:
 
             manifest = cut_generator.build_manifest(
                 assets, has_mannequin=cut_mannequin_asset is not None,
-                has_match=False,
+                has_match=bool(matching_images),
+                matching_count=len(matching_images),
+                matching_custom=[matching_id.startswith("custom_") for matching_id in matching_ids],
                 mood_count=attached_mood_count,
                 has_model_face=len(model_images) == 2,
                 has_model_sheet=len(model_images) == 2 and not model_has_full_body,

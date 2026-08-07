@@ -319,6 +319,7 @@ def test_run_editor_image_job_new_uses_standalone_set_member(
         return {
             "exampleId": block["exampleId"],
             "scope": scope,
+            "directionCompatible": scope != "all",
             "asset": {"key": f"{scope}-asset"},
         }
 
@@ -388,6 +389,8 @@ def test_run_editor_image_job_new_uses_standalone_set_member(
     assert captured["images"][-1] == f"{scope}-asset".encode()
     if scope == "all":
         assert "EXAMPLE REFERENCE (scope: all)" in captured["manifest"]
+        assert "source ONLY of scene, lighting, capture tone" in captured["manifest"]
+        assert captured["cut_spec"]["_referenceDirectionCompatible"] is False
     else:
         assert "POSE CONTROL" in captured["manifest"]
     assert captured["cut_spec"]["refScope"] == scope
@@ -866,7 +869,295 @@ def test_run_editor_image_job_new_attaches_mood_refs(monkeypatch):
     assert "front view of the garment" in captured["manifest"]
 
 
-def test_run_editor_image_job_new_attaches_c_model_pack_and_excludes_product(monkeypatch):
+@pytest.mark.parametrize("cut_type", ["styling", "horizon", "mirror"])
+def test_run_editor_image_job_new_attaches_all_matching_garments_in_order(
+    monkeypatch, cut_type
+):
+    captured = {"matching_item_ids": [], "loaded_asset_ids": []}
+
+    class KeyR2:
+        def get_bytes(self, key):
+            return key.encode()
+
+        def put_bytes(self, key, data, mime, cache=None):
+            return None
+
+    async def fake_get_product(conn, pid):
+        return {"clothingType": "top", "colors": [{
+            "id": "col1",
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product-1"}],
+        }]}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_matching_asset(conn, matching_item_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
+        captured["matching_item_ids"].append(matching_item_id)
+        return f"{matching_item_id}-asset"
+
+    async def fake_get_asset(conn, uid, aid):
+        captured["loaded_asset_ids"].append(aid)
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    def fake_model_refs(spec, *, require_full_body=False):
+        assert require_full_body is True
+        return (
+            {"key": "model/face.webp", "mime": "image/webp"},
+            {"key": "model/body.png", "mime": "image/png"},
+        )
+
+    async def fake_example(settings, example_id, scope="all", clothing_type=None):
+        assert example_id == "ex-editor-match"
+        return eij.InlineImage("image/png", b"EXAMPLE")
+
+    async def fake_gen(
+        settings, gemini, cut_spec, product, images, *,
+        analysis=None, manifest=None, **_kwargs
+    ):
+        captured["cut_spec"] = cut_spec
+        captured["image_data"] = [image.data for image in images]
+        captured["manifest"] = manifest
+        return b"MATCHED", "image/png"
+
+    async def fake_finalize(conn, **kw):
+        captured["finalize"] = kw
+        return {"id": "w-matched"}
+
+    async def fake_emit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_matching_item_asset", fake_matching_asset)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "resolve_virtual_model_assets", fake_model_refs)
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
+    monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+    payload = {
+        "mode": "new",
+        "colorId": "col1",
+        "cutType": cut_type,
+        "shot": "full",
+        "modelId": "m-editor",
+        "matchIds": ["match-1", "match-2", "ignored-third"],
+        "exampleId": "ex-editor-match",
+        "refScope": "all",
+    }
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b"), r2=KeyR2()
+    )
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert captured["matching_item_ids"] == ["match-1", "match-2"]
+    assert captured["loaded_asset_ids"] == [
+        "product-1", "match-1-asset", "match-2-asset",
+    ]
+    assert captured["cut_spec"]["cutType"] == cut_type
+    assert captured["cut_spec"]["matchIds"] == ["match-1", "match-2"]
+    assert captured["image_data"] == [
+        b"model/face.webp",
+        b"model/body.png",
+        b"k/product-1",
+        b"k/match-1-asset",
+        b"k/match-2-asset",
+        b"EXAMPLE",
+    ]
+    manifest_lines = captured["manifest"].splitlines()
+    assert len(manifest_lines) == len(captured["image_data"])
+    assert manifest_lines[0].startswith("1. MODEL FACE —")
+    assert manifest_lines[1].startswith("2. MODEL FULL BODY —")
+    assert manifest_lines[2] == "3. PRODUCT — front view of the garment"
+    assert manifest_lines[3].startswith("4. MATCHING —")
+    assert manifest_lines[4].startswith("5. MATCHING —")
+    assert manifest_lines[5].startswith("6. EXAMPLE REFERENCE (scope: all)")
+
+
+def test_run_editor_image_job_new_matching_asset_metadata_missing_fails_closed(
+    monkeypatch,
+):
+    captured = {
+        "matching_item_ids": [],
+        "loaded_asset_ids": [],
+        "generate_calls": 0,
+    }
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product-1"}],
+        }]}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_matching_asset(conn, matching_item_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
+        captured["matching_item_ids"].append(matching_item_id)
+        return f"{matching_item_id}-asset"
+
+    async def fake_get_asset(conn, uid, aid):
+        captured["loaded_asset_ids"].append(aid)
+        if aid == "match-2-asset":
+            return None
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def forbidden_generate(*_args, **_kwargs):
+        captured["generate_calls"] += 1
+        raise AssertionError("a partial matching outfit must never be generated")
+
+    async def fake_failure(conn, **kw):
+        captured["failure"] = kw
+        return True
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_matching_item_asset", fake_matching_asset)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "generate", forbidden_generate)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+
+    payload = {
+        "mode": "new",
+        "cutType": "styling",
+        "matchIds": ["match-1", "match-2"],
+    }
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert captured["matching_item_ids"] == ["match-1", "match-2"]
+    assert captured["loaded_asset_ids"] == [
+        "product-1", "match-1-asset", "match-2-asset",
+    ]
+    assert captured["generate_calls"] == 0
+    assert captured["failure"]["metadata"] == {
+        "error": "matching_asset_unavailable",
+        "matchIds": ["match-1", "match-2"],
+    }
+
+
+def test_run_editor_image_job_new_matching_r2_missing_fails_closed(monkeypatch):
+    captured = {"generate_calls": 0}
+
+    class MissingMatchingR2:
+        def __init__(self):
+            self.reads = []
+
+        def get_bytes(self, key):
+            self.reads.append(key)
+            if key == "k/match-2-asset":
+                raise RuntimeError("missing matching object")
+            return key.encode()
+
+        def put_bytes(self, key, data, mime, cache=None):
+            return None
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product-1"}],
+        }]}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_matching_asset(conn, matching_item_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
+        return f"{matching_item_id}-asset"
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def forbidden_generate(*_args, **_kwargs):
+        captured["generate_calls"] += 1
+        raise AssertionError("a partial matching outfit must never be generated")
+
+    async def fake_failure(conn, **kw):
+        captured["failure"] = kw
+        return True
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_matching_item_asset", fake_matching_asset)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "generate", forbidden_generate)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+
+    r2 = MissingMatchingR2()
+    payload = {
+        "mode": "new",
+        "cutType": "mirror",
+        "matchIds": ["match-1", "match-2"],
+    }
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b"), r2=r2
+    )
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert r2.reads == [
+        "k/product-1", "k/match-1-asset", "k/match-2-asset",
+    ]
+    assert captured["generate_calls"] == 0
+    assert captured["failure"]["metadata"]["error"] == "matching_asset_unavailable"
+    assert captured["failure"]["metadata"]["matchIds"] == ["match-1", "match-2"]
+
+
+def test_run_editor_image_job_new_product_cut_ignores_matching_ids(monkeypatch):
+    captured = {}
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product-1"}],
+        }]}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def forbidden_matching_asset(*_args, **_kwargs):
+        raise AssertionError("product cuts must not resolve matching garments")
+
+    async def fake_gen(
+        settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None
+    ):
+        captured["cut_spec"] = cut_spec
+        captured["image_count"] = len(images)
+        captured["manifest"] = manifest
+        return b"PRODUCT", "image/png"
+
+    async def fake_finalize(conn, **kw):
+        return {"id": "w-product"}
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.repo, "get_matching_item_asset", forbidden_matching_asset)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+
+    payload = {
+        "mode": "new",
+        "cutType": "product",
+        "shot": "ghost",
+        "matchIds": ["stale-match-1", "stale-match-2"],
+    }
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert captured["cut_spec"]["matchIds"] == []
+    assert captured["image_count"] == 1
+    assert "MATCHING" not in captured["manifest"]
+
+
+def test_run_editor_image_job_new_attaches_c_model_pair_and_excludes_product(monkeypatch):
     captured = []
 
     class TrackingR2:
@@ -893,12 +1184,13 @@ def test_run_editor_image_job_new_attaches_c_model_pack_and_excludes_product(mon
         return {}
 
     def fake_model_refs(spec, *, require_full_body=False):
+        assert require_full_body is True
         if spec["cutType"] == "product":
             return None
         assert require_full_body is True
         return (
             {"key": "seed/models/mA/face_front.webp", "mime": "image/webp"},
-            {"key": "seed/models/mA/body_front.png", "mime": "image/jpeg"},
+            {"key": "seed/models/mA/body_front.png", "mime": "image/png"},
         )
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
@@ -950,8 +1242,8 @@ def test_run_editor_image_job_model_r2_failure_falls_back_to_product(monkeypatch
 
     class FailingModelR2:
         def get_bytes(self, key):
-            if key == "seed/models/mA/grid_sedcard.png":
-                raise RuntimeError("sheet unavailable")
+            if key == "seed/models/mA/body_front.png":
+                raise RuntimeError("full-body reference unavailable")
             return key.encode()
 
         def put_bytes(self, key, data, mime, cache=None):
@@ -969,11 +1261,11 @@ def test_run_editor_image_job_model_r2_failure_falls_back_to_product(monkeypatch
     async def fake_get_analysis(conn, pid):
         return {}
 
-    def fake_model_refs(spec):
+    def fake_model_refs(spec, *, require_full_body=False):
+        assert require_full_body is True
         return (
             {"key": "seed/models/mA/face_front.webp", "mime": "image/webp"},
-            {"key": "seed/models/mA/grid_sedcard.png", "mime": "image/jpeg"},
-            {"key": "seed/models/mA/body_front.png", "mime": "image/jpeg"},
+            {"key": "seed/models/mA/body_front.png", "mime": "image/png"},
         )
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
@@ -1224,9 +1516,9 @@ def test_bg_scene_qc_unavailable_fails_open_with_warning(monkeypatch):
     assert not fail
 
 
-def test_bg_example_load_failure_fails_closed(monkeypatch):
-    """플레이트 로드 실패는 무음 강등이 아니라 명확한 실패다(2026-07-20 실측 — 강등이
-    '참고 안 된 bg 컷'을 조용히 만들었다)."""
+@pytest.mark.parametrize("scope", ["all", "pose", "bg"])
+def test_selected_example_load_failure_fails_closed(monkeypatch, scope):
+    """선택한 예시 로드 실패는 무음 강등이나 무드 대체 없이 명확히 실패한다."""
     gen_calls, ok, fail = [], {}, {}
     _bg_qc_setup(monkeypatch, gen_calls=gen_calls, finalize_ok=ok, finalize_fail=fail, verdicts=[])
 
@@ -1234,9 +1526,11 @@ def test_bg_example_load_failure_fails_closed(monkeypatch):
         return None
 
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example_none)
+    monkeypatch.setattr(eij.cut_generator, "pose_direction_compatible", lambda *_args: True)
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
-    asyncio.run(eij.run_editor_image_job(app, worker_job(_bg_payload())))
+    payload = {**_bg_payload(), "exampleId": f"ex_{scope}", "refScope": scope}
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
     assert not gen_calls                              # 생성 호출 자체가 없어야 한다
     assert not ok
     assert fail["metadata"]["error"] == "example_asset_unavailable"
-    assert fail["metadata"]["refScope"] == "bg"
+    assert fail["metadata"]["refScope"] == scope

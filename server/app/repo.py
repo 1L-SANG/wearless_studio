@@ -190,6 +190,7 @@ async def create_asset(
     mime: str,
     size: int | None,
     original_filename: str | None,
+    metadata: dict | None = None,
 ) -> dict:
     """업로드 검증 후 asset 행 확정. complete 재호출(멱등)이면 기존 행 반환."""
     cols = "id::text as id, r2_key, mime_type, byte_size"
@@ -198,12 +199,15 @@ async def create_asset(
             f"""
             insert into assets
               (id, user_id, project_id, source, visibility, r2_bucket, r2_key,
-               mime_type, byte_size, original_filename)
-            values (%s, %s, %s, %s, 'private', %s, %s, %s, %s, %s)
+               mime_type, byte_size, original_filename, metadata)
+            values (%s, %s, %s, %s, 'private', %s, %s, %s, %s, %s, %s)
             on conflict (id) do nothing
             returning {cols}
             """,
-            (asset_id, user_id, project_id, source, bucket, key, mime, size, original_filename),
+            (
+                asset_id, user_id, project_id, source, bucket, key, mime, size,
+                original_filename, Json(metadata or {}),
+            ),
         )
         row = await cur.fetchone()
         if row is None:  # 이미 존재 → 소유권 확인하며 재조회
@@ -358,38 +362,51 @@ async def get_asset_public(conn: AsyncConnection, asset_id: str) -> dict | None:
         return await cur.fetchone()
 
 
-async def get_matching_item_asset(conn: AsyncConnection, item_id: str) -> str | None:
-    """매칭의류(하의) 이미지 asset id — 활성 항목만. 운영자 시드 데이터(matching_items)."""
+async def get_matching_item_asset(
+    conn: AsyncConnection, item_id: str, user_id: str, project_id: str
+) -> str | None:
+    """활성 매칭의류 asset id. 큐레이션 또는 현재 사용자·프로젝트 custom만 허용."""
     async with conn.cursor() as cur:
         await cur.execute(
             "select image_asset_id::text as asset_id from matching_items "
-            "where id = %s and is_active",
-            (item_id,),
+            "where id = %s and is_active "
+            "and (owner_user_id is null or (owner_user_id = %s and project_id = %s))",
+            (item_id, user_id, project_id),
         )
         row = await cur.fetchone()
     return row["asset_id"] if row else None
 
 
-async def get_matching_item_metadata(conn: AsyncConnection, item_id: str) -> dict | None:
+async def get_matching_item_metadata(
+    conn: AsyncConnection, item_id: str, user_id: str, project_id: str
+) -> dict | None:
     """활성 매칭의류의 핏 카테고리 판정용 구조화 메타데이터."""
     async with conn.cursor() as cur:
         await cur.execute(
-            "select clothing_type, category, length from matching_items "
-            "where id = %s and is_active",
-            (item_id,),
+            # owner_user_id 도 같이 — matching.fit_category 가 custom 이면 조정 축을 닫는다(D11).
+            "select clothing_type, category, length, owner_user_id::text as owner_user_id "
+            "from matching_items "
+            "where id = %s and is_active "
+            "and (owner_user_id is null or (owner_user_id = %s and project_id = %s))",
+            (item_id, user_id, project_id),
         )
         return await cur.fetchone()
 
 
-async def list_active_matching_items(conn: AsyncConnection) -> list[dict]:
-    """활성 매칭의류 + 본/썸네일 R2 키 (URL은 라우트가 r2로 변환). 운영자 시드(무소유)."""
+async def list_active_matching_items(
+    conn: AsyncConnection, user_id: str, project_id: str
+) -> list[dict]:
+    """큐레이션 public arm + 현재 사용자·프로젝트 custom private arm."""
     async with conn.cursor() as cur:
         await cur.execute(
             """
             select mi.id, mi.name, mi.clothing_type, mi.gender, mi.category,
                    mi.color_name, mi.color_group, mi.style_tags, mi.fit, mi.length,
                    mi.color_brightness, mi.sort_order, mi.is_active,
-                   img.r2_key as image_key, thb.r2_key as thumb_key
+                   false as is_custom,
+                   img.id::text as image_asset_id, img.r2_key as image_key,
+                   thb.id::text as thumbnail_asset_id, thb.r2_key as thumb_key,
+                   img.r2_bucket as image_bucket, thb.r2_bucket as thumb_bucket
             from matching_items mi
             -- 썸네일은 표시 필수 → seed/public 자산만 inner join (비-seed·비공개·삭제 키 노출 차단,
             -- limit 정확도 보장). 본 이미지는 동일 조건 left join(선택).
@@ -397,8 +414,217 @@ async def list_active_matching_items(conn: AsyncConnection) -> list[dict]:
               and thb.source = 'seed' and thb.visibility = 'public' and thb.deleted_at is null
             left join assets img on img.id = mi.image_asset_id
               and img.source = 'seed' and img.visibility = 'public' and img.deleted_at is null
-            where mi.is_active
+            where mi.is_active and mi.owner_user_id is null and mi.project_id is null
+
+            union all
+
+            select mi.id, mi.name, mi.clothing_type, mi.gender, mi.category,
+                   mi.color_name, mi.color_group, mi.style_tags, mi.fit, mi.length,
+                   mi.color_brightness, mi.sort_order, mi.is_active,
+                   true as is_custom,
+                   img.id::text as image_asset_id, img.r2_key as image_key,
+                   thb.id::text as thumbnail_asset_id, thb.r2_key as thumb_key,
+                   img.r2_bucket as image_bucket, thb.r2_bucket as thumb_bucket
+            from matching_items mi
+            join projects p on p.id = mi.project_id
+              and p.user_id = %s and p.deleted_at is null
+            join assets thb on thb.id = mi.thumbnail_asset_id
+              and thb.user_id = mi.owner_user_id and thb.project_id = mi.project_id
+              and thb.source = 'upload' and thb.visibility = 'private' and thb.deleted_at is null
+            join assets img on img.id = mi.image_asset_id
+              and img.user_id = mi.owner_user_id and img.project_id = mi.project_id
+              and img.source = 'derived' and img.visibility = 'private' and img.deleted_at is null
+            where mi.is_active and mi.owner_user_id = %s and mi.project_id = %s
             """,
+            (user_id, user_id, project_id),
+        )
+        return await cur.fetchall()
+
+
+async def get_uploaded_assets_for_project(
+    conn: AsyncConnection, user_id: str, project_id: str, asset_ids: list[str]
+) -> list[dict]:
+    """Resolve all custom-match sources in caller order using the endpoint's four hard gates."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select a.id::text as id, a.r2_bucket, a.r2_key, a.mime_type,
+                   a.byte_size, requested.ord
+            from unnest(%s::uuid[]) with ordinality as requested(id, ord)
+            join assets a on a.id = requested.id
+              and a.user_id = %s and a.project_id = %s
+              and a.source = 'upload' and a.deleted_at is null
+            order by requested.ord
+            """,
+            (asset_ids, user_id, project_id),
+        )
+        return await cur.fetchall()
+
+
+async def lock_custom_match_project(
+    conn: AsyncConnection, user_id: str, project_id: str
+) -> bool:
+    """Serialize custom add/delete for a project with one shared lock order."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from projects where id = %s and user_id = %s "
+            "and deleted_at is null for update",
+            (project_id, user_id),
+        )
+        return await cur.fetchone() is not None
+
+
+async def get_custom_matching_item(
+    conn: AsyncConnection, user_id: str, project_id: str
+) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select mi.id, mi.name, mi.clothing_type, mi.gender, mi.category,
+                   mi.color_name, mi.color_group, mi.style_tags, mi.fit, mi.length,
+                   mi.color_brightness, mi.sort_order, mi.is_active,
+                   true as is_custom,
+                   img.id::text as image_asset_id, img.r2_key as image_key,
+                   img.r2_bucket as image_bucket, img.metadata as image_metadata,
+                   thb.id::text as thumbnail_asset_id, thb.r2_key as thumb_key,
+                   thb.r2_bucket as thumb_bucket
+            from matching_items mi
+            join assets img on img.id = mi.image_asset_id and img.deleted_at is null
+            join assets thb on thb.id = mi.thumbnail_asset_id and thb.deleted_at is null
+            where mi.owner_user_id = %s and mi.project_id = %s and mi.is_active
+            """,
+            (user_id, project_id),
+        )
+        return await cur.fetchone()
+
+
+async def find_custom_grid_asset(
+    conn: AsyncConnection, user_id: str, project_id: str, checksum: str
+) -> dict | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id::text as id, r2_bucket, r2_key, mime_type, metadata "
+            "from assets where user_id = %s and project_id = %s and source = 'derived' "
+            "and checksum = %s and metadata->>'purpose' = 'custom_match_grid' "
+            "and deleted_at is null limit 1",
+            (user_id, project_id, checksum),
+        )
+        return await cur.fetchone()
+
+
+async def insert_custom_grid_asset(
+    conn: AsyncConnection, *, asset_id: str, user_id: str, project_id: str,
+    bucket: str, key: str, size: int, checksum: str, source_asset_ids: list[str],
+) -> dict:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into assets
+              (id, user_id, project_id, source, visibility, r2_bucket, r2_key,
+               mime_type, byte_size, width, height, checksum, metadata)
+            values (%s, %s, %s, 'derived', 'private', %s, %s,
+                    'image/jpeg', %s, 1600, 1600, %s, %s)
+            on conflict (id) do update set
+              deleted_at = null,
+              r2_bucket = excluded.r2_bucket,
+              r2_key = excluded.r2_key,
+              byte_size = excluded.byte_size,
+              checksum = excluded.checksum,
+              metadata = excluded.metadata
+            where assets.user_id = excluded.user_id
+              and assets.project_id = excluded.project_id
+            returning id::text as id, r2_bucket, r2_key, mime_type, metadata
+            """,
+            (
+                asset_id, user_id, project_id, bucket, key, size, checksum,
+                Json({"purpose": "custom_match_grid", "sourceAssetIds": source_asset_ids}),
+            ),
+        )
+        return await cur.fetchone()
+
+
+async def set_custom_match_source_order(
+    conn: AsyncConnection, user_id: str, project_id: str, asset_ids: list[str]
+) -> None:
+    async with conn.cursor() as cur:
+        for order, asset_id in enumerate(asset_ids, start=1):
+            await cur.execute(
+                "update assets set metadata = metadata || %s::jsonb "
+                "where id = %s and user_id = %s and project_id = %s "
+                "and source = 'upload' and deleted_at is null",
+                (
+                    Json({"purpose": "custom_match_source", "order": order}),
+                    asset_id, user_id, project_id,
+                ),
+            )
+
+
+async def insert_custom_matching_item(
+    conn: AsyncConnection, *, user_id: str, project_id: str, metadata: dict,
+    image_asset_id: str, thumbnail_asset_id: str,
+) -> str:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into matching_items
+              (id, owner_user_id, project_id, name, clothing_type, gender, category,
+               color_name, color_group, style_tags, fit, length, color_brightness,
+               sort_order, image_asset_id, thumbnail_asset_id)
+            values ('custom_' || gen_random_uuid(), %s, %s, %s, %s, 'unisex', %s,
+                    %s, %s, '[]'::jsonb, 'regular', %s, 50, 0, %s, %s)
+            returning id
+            """,
+            (
+                user_id, project_id, metadata["name"], metadata["clothingType"],
+                metadata["category"], metadata["colorName"], metadata["colorGroup"],
+                metadata["length"], image_asset_id, thumbnail_asset_id,
+            ),
+        )
+        return (await cur.fetchone())["id"]
+
+
+async def delete_custom_matching_item(
+    conn: AsyncConnection, user_id: str, project_id: str
+) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "delete from matching_items where owner_user_id = %s and project_id = %s",
+            (user_id, project_id),
+        )
+
+
+async def soft_delete_unreferenced_custom_assets(
+    conn: AsyncConnection, user_id: str, project_id: str, asset_ids: list[str]
+) -> list[dict]:
+    """Soft-delete custom source/grid assets only when no known product or FK consumer uses them."""
+    if not asset_ids:
+        return []
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update assets a set deleted_at = now()
+            where a.id = any(%s::uuid[]) and a.user_id = %s and a.project_id = %s
+              and a.metadata->>'purpose' in ('custom_match_source', 'custom_match_grid')
+              and not exists (select 1 from matching_items mi
+                              where mi.image_asset_id = a.id or mi.thumbnail_asset_id = a.id)
+              and not exists (select 1 from mannequin_cuts mc where mc.asset_id = a.id)
+              and not exists (select 1 from wardrobe_images wi where wi.asset_id = a.id)
+              and not exists (select 1 from exports e where e.asset_id = a.id)
+              and not exists (select 1 from projects pr where pr.cover_asset_id = a.id)
+              and not exists (select 1 from profiles pf where pf.avatar_asset_id = a.id)
+              and not exists (
+                select 1 from products prod
+                cross join lateral jsonb_array_elements(
+                  case when jsonb_typeof(prod.colors) = 'array' then prod.colors else '[]'::jsonb end
+                ) color
+                cross join lateral jsonb_array_elements(
+                  case when jsonb_typeof(color->'images') = 'array' then color->'images' else '[]'::jsonb end
+                ) image
+                where image->>'id' = a.id::text
+              )
+            returning a.id::text as id, a.r2_bucket, a.r2_key
+            """,
+            (asset_ids, user_id, project_id),
         )
         return await cur.fetchall()
 

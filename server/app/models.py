@@ -6,8 +6,9 @@ FastAPI는 기본적으로 response_model을 alias(camelCase)로 직렬화한다
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 ProjectStatus = Literal["draft", "generating", "done"]
@@ -72,6 +73,20 @@ class AssetCompleteRequest(CamelModel):
     project_id: str
     mime: str
     filename: str | None = None
+    purpose: str = "upload"
+
+
+class CustomMatchItemRequest(CamelModel):
+    """POST /analysis/custom-match-item — one garment represented by 1-4 uploads."""
+
+    asset_ids: list[UUID] = Field(min_length=1, max_length=4)
+
+    @field_validator("asset_ids")
+    @classmethod
+    def asset_ids_must_be_unique(cls, value: list[UUID]) -> list[UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("assetIds must not contain duplicates")
+        return value
 
 
 class Asset(CamelModel):
