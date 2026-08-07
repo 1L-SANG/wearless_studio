@@ -56,6 +56,7 @@ from ..services.hybrid_composite import (
     scale_anchor as hc_scale,
     protected_components as hc_protected,
     source_texture_context as hc_source_ctx,
+    source_texture_qa as hc_source_qa,
 )
 from ..services.hybrid_composite.types import (
     PIPELINE_VERSION as HC_PIPELINE_VERSION,
@@ -1510,7 +1511,7 @@ async def _apply_hybrid_composite(
     *, pool, s, job_id, candidate, attempt, res, prod_refs, product, analysis,
     has_fine_pattern, product_truth=None, carrier_preflight_observation=None,
     carrier_preflight_meta=None, matching_expected=False,
-    source_texture_cache=None,
+    source_texture_cache=None, lease_token=None,
 ):
     """deterministic hybrid stripe composite. → (선택 결과, hybrid 요약 dict|None).
 
@@ -1539,6 +1540,40 @@ async def _apply_hybrid_composite(
     async def emit(status, **payload):
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "attempt": attempt, "status": status, **payload})
+
+    # Diagnostic provenance for this one candidate/attempt, filled in as the source
+    # reading and the projection resolve. The existing dump writes flat filenames,
+    # so candidate B overwrote candidate A and an investigation lost the exact ROIs
+    # behind a 30.0px / 15.0px split. This collects the same facts under a path that
+    # carries job, candidate and attempt, and is written on both exits below.
+    qa_provenance = {"job_id": job_id, "candidate": candidate, "attempt": attempt}
+    qa_written = {"context": False, "provenance": False, "error": None}
+
+    def qa_record(**fields):
+        qa_provenance.update(fields)
+
+    def qa_flush():
+        """Write the evidence. Best-effort — never raises into the pipeline."""
+        root = os.getenv("HYBRID_COMPOSITE_ARTIFACT_DIR")
+        if not root:
+            return
+        try:
+            leaf = hc_source_qa.candidate_dir(root, job_id, candidate, attempt, lease_token)
+            err = hc_source_qa.write_json(
+                leaf / "source_texture" / "provenance.json",
+                hc_source_qa.provenance_payload(lease_token=lease_token, **qa_provenance))
+            qa_written["provenance"] = err is None
+            qa_written["error"] = err
+            context = source_texture_cache.context()
+            ctx_err = hc_source_qa.write_json(
+                hc_source_qa.context_dir(root, job_id, lease_token) / "source_texture_context.json",
+                hc_source_qa.context_payload(context, source_texture_cache,
+                                             job_id=job_id, lease_token=lease_token))
+            qa_written["context"] = ctx_err is None
+            qa_written["error"] = qa_written["error"] or ctx_err
+        except Exception as exc:                 # evidence must not cost a candidate
+            qa_written["error"] = repr(exc)[:300]
+            log.warning("source texture QA flush skipped: %r", exc)
 
     artifact_state = {
         "carrier": None,
@@ -1583,6 +1618,9 @@ async def _apply_hybrid_composite(
     carrier_sha_early = hashlib.sha256(res.image).hexdigest()
 
     async def fail(reason, detail="", **extra):
+        qa_record(failure_reason=reason, failure_detail=str(detail)[:200],
+                  carrier_sha256=carrier_sha_early)
+        qa_flush()
         extra.setdefault("carrierSha256", carrier_sha_early)
         summary = _hc_fail_summary(reason, detail, mode=mode, **extra)
         if artifact_state["carrier"] is not None:
@@ -2034,18 +2072,40 @@ async def _apply_hybrid_composite(
     repeats_on_torso = torso_span_src / front_period_px
     # Close the run-level record so every candidate can be checked against the same
     # reading. Observation only — no decision below reads it.
+    period_source = (hc_source_ctx.PERIOD_FROM_FRONT_SCAN if front_scan_ok
+                     else hc_source_ctx.PERIOD_FROM_GUIDED)
     source_texture_cache.record_period(
         source_torso_roi=(fx0, fy0, fx1, fy1), garment_axis=garment_axis,
         source_period_px=front_period_px,
-        source_period_source=(hc_source_ctx.PERIOD_FROM_FRONT_SCAN if front_scan_ok
-                              else hc_source_ctx.PERIOD_FROM_GUIDED),
+        source_period_source=period_source,
         source_model_confidence=anchor_corr, torso_span_px=torso_span_src)
+    # Which measurement actually answered, and what the other one said — read off
+    # values the run already holds. Nothing is measured again to record this.
+    _scan_failed = isinstance(front_model, CompositeFailure)
+    _guided = src_period.get("guided_anchor")
+    qa_record(
+        source_roi=(fx0, fy0, fx1, fy1), source_period_px=front_period_px,
+        source_period_source=period_source, source_model_confidence=anchor_corr,
+        source_torso_span_px=torso_span_src, source_sha256=front_sha_early,
+        carrier_sha256=carrier_sha_early,
+        scan={"attempted": True, "success": not _scan_failed,
+              "periodPx": None if _scan_failed else float(front_model.period_px),
+              "confidence": None if _scan_failed else float(front_model.confidence),
+              "axis": None if _scan_failed else front_model.axis,
+              "failureReason": front_model.reason if _scan_failed else None},
+        guided={"attempted": _guided is not None or not front_scan_ok,
+                "selectedPeriodPx": _guided[1] if _guided else None,
+                "selectedScore": _guided[2] if _guided else None,
+                "candidates": None})
     ch, cw = carrier_bgr.shape[:2]
     t_torso_span = hc_scale.carrier_torso_span(
         car_lm, width=cw, height=ch, garment_axis=garment_axis)
     target_period_px = hc_scale.target_period_px(
         source_period_px=front_period_px, source_span_px=torso_span_src,
         target_span_px=t_torso_span)
+    # candidate-dependent, deliberately named apart from the source-only trio above
+    qa_record(carrier_target_span_px=t_torso_span, repeat_count=repeats_on_torso,
+              target_period_px=target_period_px)
     projection_mode = getattr(s, "mannequin_texture_projection_2d", "off")
     projection_summary = None
     if projection_mode != "off":
@@ -2071,6 +2131,9 @@ async def _apply_hybrid_composite(
             source_model_confidence=float(anchor_corr if anchor_corr is not None else model.confidence),
         )
         projection_summary = {**projection_plan.summary(), "mode": projection_mode}
+        qa_record(projection_decision="ok" if projection_plan.ok else projection_plan.reason,
+                  projection_confidence=projection_plan.confidence,
+                  projection_metrics=projection_plan.metrics)
         await emit("hybrid_texture_projection_plan", **projection_summary)
         if not projection_plan.ok and projection_mode == "enforce":
             return await fail(
@@ -2343,6 +2406,8 @@ async def _apply_hybrid_composite(
                components_needing_review=list(art.components_needing_review),
                coverage=round(art.source_coverage, 4),
                output_hash=summary["outputSha256"][:12])
+    qa_record(projection_decision=qa_provenance.get("projection_decision") or "applied")
+    qa_flush()
     if mode == "shadow":
         return res, summary
     new_res = GeminiImageResult(
@@ -2673,7 +2738,7 @@ async def _run_candidate(
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
     parent_lineage=None, runlog=None, product_truth=None, pipeline_policy=None,
     anchor_baseline_id=None, anchor_baseline=None, anchor_baseline_img=None,
-    source_texture_cache=None,
+    source_texture_cache=None, lease_token=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None.
 
@@ -3018,7 +3083,7 @@ async def _run_candidate(
                     carrier_preflight_observation=carrier_observation,
                     carrier_preflight_meta=carrier_observation_meta,
                     matching_expected=match_img is not None,
-                    source_texture_cache=source_texture_cache)
+                    source_texture_cache=source_texture_cache, lease_token=lease_token)
                 if (hybrid_info and hybrid_info.get("failClosed")
                         and hybrid_info.get("failureReason") == "carrier_preflight_rejected"):
                     if not carrier_retry_used and calls_spent < s.mannequin_max_attempts:
@@ -3286,7 +3351,7 @@ async def _run_candidate(
                 attempt=s.mannequin_max_attempts, res=res, prod_refs=prod_refs,
                 product=product, analysis=analysis, has_fine_pattern=has_fine_pattern,
                 product_truth=product_truth,
-                source_texture_cache=source_texture_cache)
+                source_texture_cache=source_texture_cache, lease_token=lease_token)
             final_frame = ({**pre_frame, "phase": "final", "reusedPre": True}
                            if isinstance(pre_frame, dict) else None)
             frame_mode = _effective_frame_qc_mode(s)
@@ -4006,7 +4071,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                     anchor_baseline_id=requested_anchor_baseline_id,
                     anchor_baseline=anchor_baseline,
                     anchor_baseline_img=anchor_baseline_img,
-                    source_texture_cache=source_texture_cache)
+                    source_texture_cache=source_texture_cache, lease_token=lease_token)
             except _AnchorBaselineUnavailable as e:
                 anchor_fail = e
                 r = None
