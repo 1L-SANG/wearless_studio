@@ -143,3 +143,13 @@ class R2Client:
             Params={"Bucket": self._bucket, "Key": key},
             ExpiresIn=3600,
         )
+
+    def preview_url(self, key: str, expires: int = 3600) -> str:
+        """생성 중 프리뷰 전용 — public 도메인 설정과 무관하게 **항상 만료 있는** 서명 GET.
+        cut_done 이벤트 페이로드는 job_events 에 영구히 남으므로, public_url(영구 공개 URL
+        가능)을 실으면 bearer URL 이 원장에 축적된다(codex 리뷰 F3). 잡 상한 15분 ≪ 1h."""
+        return self._s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self._bucket, "Key": key},
+            ExpiresIn=expires,
+        )

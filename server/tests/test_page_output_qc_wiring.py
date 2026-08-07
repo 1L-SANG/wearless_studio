@@ -15,6 +15,13 @@ class _RecordingR2:
     def put_bytes(self, key, data, mime, cache=None):
         self.saved.append(data)
 
+    def public_url(self, key):
+        # 실제 R2.public_url 미러 — cut_done previewUrl(editor_wait_dev_spec §2-1)
+        return f"https://r2.test/{key}"
+
+    def preview_url(self, key, expires=3600):
+        return f"https://r2.test/{key}"
+
     def delete(self, key):
         return None
 

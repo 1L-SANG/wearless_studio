@@ -141,6 +141,13 @@ class _FakeR2:
     def put_bytes(self, key, data, mime, cache=None):
         return None
 
+    def public_url(self, key):
+        # 실제 R2.public_url 미러 — cut_done previewUrl 근거(editor_wait_dev_spec §2-1)
+        return f"https://r2.test/{key}"
+
+    def preview_url(self, key, expires=3600):
+        return f"https://r2.test/{key}"
+
 
 class _FakeGemini:
     pass
@@ -298,8 +305,12 @@ def test_production_space_set_scene_qc_outage_fails_cut_closed(monkeypatch):
     )
 
     assert result[:3] == ([], [], 0)
+    # 새 이벤트 계약(editor_wait_dev_spec §2-1): 생성 시작(cut_start)과 컷 단위 progress 가
+    # 실패 컷에도 둘러싼다 — 대기 화면이 "그리다 실패"를 정직하게 그리는 근거.
     assert events == [
-        ("step", {"blockId": "set-cut", "status": "cut_failed"})
+        ("step", {"blockId": "set-cut", "status": "cut_start"}),
+        ("step", {"blockId": "set-cut", "status": "cut_failed"}),
+        ("progress", {"progress": 80, "phase": "cut", "done": 1, "total": 1}),
     ]
 
 
@@ -987,6 +998,12 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
         def delete(self, key):
             return None
 
+        def public_url(self, key):
+            return f"https://r2.test/{key}"
+
+        def preview_url(self, key, expires=3600):
+            return f"https://r2.test/{key}"
+
     async def fake_gp(conn, uid, pid):
         return {"copywriting": False, "selected_mannequin_id": "A-1"}
 
@@ -1338,3 +1355,136 @@ def test_detail_passthrough_ships_the_sellers_original_without_generating(monkey
     assert cut_assets == [], "새 asset 을 만들지 않는다 — 과금 단위에 들어가면 안 된다"
     assert face_cuts == 0 and garment_qcs == [] and cut_qcs == []
     assert page_qc is None and warnings == []
+
+
+def test_run_detail_page_job_emits_copy_first_then_cut_events(monkeypatch):
+    """에디터 대기 계약(editor_wait_dev_spec §2-1) — 이벤트 순서와 페이로드.
+
+    ① copy_ready(검수 통과본)는 모든 컷 이벤트보다 앞: 셀러가 컷을 기다리는 동안
+       문구를 다듬는 전제. ② cut_done 은 previewUrl(1h presigned)+width/height 를 싣는다
+       (asset 행은 finalize 전이라 /file 은 404 — DB 무변경 원칙). ③ 컷 1개 종결마다
+       progress(phase=cut, 20→80)가 나간다 — 체크포인트 정지 화면 방지."""
+    events = []
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": True}
+
+    async def fake_sb(conn, pid):
+        return [
+            {"id": "b1", "source": "ai", "sectionRole": "styling",
+             "contentRole": "hero", "cutType": "styling"},
+            {"id": "b2", "source": "ai", "sectionRole": "product",
+             "contentRole": "detail", "cutType": "horizon"},
+        ]
+
+    async def fake_prod(conn, pid):
+        return {"colors": [{"isBase": True, "images": [
+            {"slot": "Front", "id": "a1"}, {"slot": "Detail", "id": "d1"},
+        ]}]}
+
+    async def fake_analysis(conn, pid):
+        return {"sellingPoints": [], "materials": []}
+
+    async def fake_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, **_kw):
+        return b"IMGDATA", "image/png"
+
+    async def fake_copy(settings, **kw):
+        return [{"role": "headline" if kw.get("content_role") == "hero" else "body",
+                 "text": "카피"}]
+
+    async def fake_review(settings, items, confirmed):
+        return []  # 전건 pass
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
+        return [{"id": "b0", "elements": []}]
+
+    async def fake_finalize(conn, **kw):
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        events.append((et, payload))
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.copywriter, "generate", fake_copy)
+    monkeypatch.setattr(dpj.copy_qc, "review", fake_review)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    asyncio.run(dpj.run_detail_page_job(_app(_settings()), _job(reserved=2)))
+
+    kinds = [(et, p.get("status") or p.get("phase")) for et, p in events]
+    # ① 카피가 컷보다 앞 — copy_ready 전부가 첫 cut_* 이벤트보다 먼저다
+    first_cut = next(i for i, k in enumerate(kinds) if str(k[1]).startswith("cut"))
+    copy_idx = [i for i, k in enumerate(kinds) if k[1] == "copy_ready"]
+    assert copy_idx and max(copy_idx) < first_cut
+    assert ("progress", "copy") in kinds
+    # ② cut_done 페이로드 — previewUrl(presigned 미러)+치수
+    dones = [p for et, p in events if et == "step" and p.get("status") == "cut_done"]
+    assert {d["blockId"] for d in dones} == {"b1", "b2"}
+    for d in dones:
+        assert d["previewUrl"].startswith("https://r2.test/")
+        # 치수는 미상일 수 있다(assembler 가 2:3 폴백) — 키 존재만 계약
+        assert "width" in d and "height" in d
+    # ③ 컷 단위 progress — 2컷이면 50, 80 (20+60×n/2)
+    cut_prog = [p["progress"] for et, p in events
+                if et == "progress" and p.get("phase") == "cut"]
+    assert cut_prog == [50, 80]
+    # ④ cut_start 는 컷마다 1회
+    starts = [p for et, p in events if et == "step" and p.get("status") == "cut_start"]
+    assert {s["blockId"] for s in starts} == {"b1", "b2"}
+    # ⑤ 조립 국면 전환 이벤트
+    assert ("progress", "assemble") in kinds
+
+
+def test_assembler_wires_source_block_id_and_copy_role():
+    """editor_wait_dev_spec §2-3 — 대기 화면 컷 채움·셀러 카피 오버라이드의 매칭 키."""
+    storyboard = [{"id": "sb1", "source": "ai", "sectionRole": "styling",
+                   "contentRole": "hero", "cutType": "styling"}]
+    cut_results = [{"blockId": "sb1", "imageUrl": "/v1/assets/x/file", "width": 880, "height": 1320}]
+    copy_results = [{"blockId": "sb1", "texts": [{"role": "headline", "text": "헤드라인"}]}]
+    blocks = dpj.page_assembler.assemble(storyboard, cut_results, copy_results, {}, True)
+    hero = blocks[0]
+    img = next(e for e in hero["elements"] if e["type"] == "image")
+    txt = next(e for e in hero["elements"] if e["type"] == "text")
+    assert img["sourceBlockId"] == "sb1"
+    assert txt["sourceBlockId"] == "sb1" and txt["copyRole"] == "headline"
+
+
+def test_job_events_poll_returns_json_with_after_cursor(client, make_token, monkeypatch):
+    """?poll=1 — SSE 대신 1회 JSON 폴링(editor_wait_dev_spec §2-2).
+    EventSource 는 Bearer 헤더를 못 실으므로 대기 화면은 이 분기로 이벤트를 받는다."""
+    async def fake_get_job(conn, uid, jid):
+        return {"id": jid, "status": "running"}
+
+    seen = {}
+
+    async def fake_list(conn, uid, jid, after):
+        seen["after"] = after
+        return [
+            {"id": 4, "event_type": "step",
+             "payload": {"blockId": "b1", "status": "cut_done",
+                         "previewUrl": "https://r2.test/k", "width": 880, "height": 1320}},
+            {"id": 5, "event_type": "progress",
+             "payload": {"progress": 50, "phase": "cut", "done": 1, "total": 2}},
+        ]
+
+    monkeypatch.setattr(routes.repo, "get_job", fake_get_job)
+    monkeypatch.setattr(routes.repo, "list_job_events", fake_list)
+    patch_route_db(monkeypatch, routes)
+    res = client.get("/v1/jobs/j1/events?poll=1&after=3", headers=auth_headers(make_token))
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("application/json")
+    assert seen["after"] == 3
+    body = res.json()
+    assert [e["id"] for e in body["events"]] == [4, 5]
+    assert body["events"][0]["type"] == "step"
+    assert body["events"][0]["payload"]["previewUrl"] == "https://r2.test/k"

@@ -1475,6 +1475,7 @@ async def job_events(
     user_id: str = Depends(require_user),
     last_event_id: str | None = Header(None, alias="Last-Event-ID"),
     after: int = Query(0),
+    poll: int = Query(0),
 ):
     """지정된 백그라운드 작업의 상태 변경이나 진행 이벤트 로그를 실시간 Server-Sent Events (SSE) 형식으로 스트리밍합니다.
 
@@ -1488,6 +1489,14 @@ async def job_events(
         if await repo.get_job(conn, user_id, job_id) is None:
             raise HTTPException(
                 status_code=404, detail={"code": "not_found", "message": "작업을 찾을 수 없습니다."})
+    # ?poll=1 — SSE 대신 1회 JSON 조회(editor_wait_dev_spec §2-2). EventSource 는 Bearer
+    # 헤더를 못 실으므로 프론트는 마네킹과 동일하게 폴링으로 통일한다. after 커서 재사용.
+    if poll:
+        async with get_conn(request) as conn:
+            events = await repo.list_job_events(conn, user_id, job_id, after)
+        return JSONResponse({"events": [
+            {"id": e["id"], "type": e["event_type"], "payload": e["payload"]} for e in events
+        ]})
     start = int(last_event_id) if (last_event_id is not None and last_event_id.isdigit()) else after
     pool = request.app.state.pool
 
