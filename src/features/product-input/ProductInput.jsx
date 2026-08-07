@@ -313,12 +313,8 @@ export function ProductInput() {
         }
       }
       if (analysisSaveErrorRef.current) throw analysisSaveErrorRef.current;
-      // 이벤트 시점에만 읽어 분석 편집마다 ProductInput 전체가 다시 렌더되지 않게 한다.
-      const routeState = useAppStore.getState().generationRelevantEditsDirty
-        ? { refreshForEdits: true }
-        : undefined;
       if (session && analysisProjectId) {
-        navigate('/create/mannequin', { state: routeState });
+        navigate('/create/mannequin');
         return;
       }
       const { failed } = await saveProductDraft(product, analysis);
@@ -330,7 +326,7 @@ export function ProductInput() {
         useAppStore.getState().adoptProject(projectId);
         setAnalysisProjectId(projectId);
         await clearDraft().catch(() => {});
-        navigate('/create/mannequin', { state: routeState });
+        navigate('/create/mannequin');
         return;
       }
       openLogin('/create/mannequin');

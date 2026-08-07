@@ -10,7 +10,7 @@
    설계·규칙: documents/mannequin_ui_direction.md · 목업 documents/mockups/mannequin-ui-matching.html
    ============================================================= */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
@@ -580,7 +580,6 @@ function ExampleTiles({ axisKey, category, gender, values, onPick }) {
 
 export function Mannequin() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [phase, setPhase] = useState('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [progress, setProgress] = useState(0);
@@ -1083,17 +1082,15 @@ export function Mannequin() {
   };
 
   useEffect(() => {
-    if (phase !== 'ready' || location.state?.refreshForEdits !== true
-        || refreshForEditsHandledRef.current) return;
+    if (phase !== 'ready' || refreshForEditsHandledRef.current) return;
+    if (!useAppStore.getState().generationRelevantEditsDirty) return;
     refreshForEditsHandledRef.current = true;
-    // 먼저 history state 를 소비해 back/refresh/StrictMode 에서 유료 요청이 재발화하지 않게 한다.
-    navigate(location.pathname, { replace: true, state: null });
+    // 먼저 플래그를 소비해 back/refresh/StrictMode 에서 유료 요청이 재발화하지 않게 한다.
+    useAppStore.getState().clearGenerationRelevantEdits();
     if (initialCutsExistedRef.current) {
       regenerate();
     }
-    // 기존 컷이면 regenerate 호출 직후, 최초 생성이면 그 생성이 편집값을 이미 반영한 뒤 clear.
-    useAppStore.getState().clearGenerationRelevantEdits();
-  }, [location.pathname, location.state, navigate, phase]);
+  }, [phase]);
 
   const retryGeneration = () => regenerate(regenerateProfileRef.current || buildFitProfile());
 
