@@ -307,8 +307,15 @@ export const useAppStore = create((set, get) => ({
   },
   /** 백엔드 sync(비로그인 draft) 결과의 projectId 반영 — 로그인 복귀 후 RootRedirect 가 호출. */
   setProjectId(projectId) { set({ projectId }); persistFlow(get()); },
-  /** 로그인 복귀 draft sync 등에서 서버 project 를 현재 진행 프로젝트로 채택(영속 포함). */
-  adoptProject(projectId) {
+  /** 로그인 복귀 draft sync 등에서 서버 project 를 현재 진행 프로젝트로 채택(영속 포함).
+     preserveGenerationDirty: 서버 project 가 아직 없던(projectId===null) 지금까지의 작업이
+     막 서버 신원을 얻을 뿐인 경로에서만 true 로 넘긴다 — 게스트가 분석을 편집(플래그 true)한 뒤
+     세션이 생겨 draft sync 로 처음 project 를 갖는 경우가 그렇다. 그건 '다른 작업으로 전환'이
+     아니라 같은 작업의 연속이라 재생성 신호를 지우면 안 된다. 보관함에서 다른 project 를 열거나
+     /editor/:id 로 직접 들어오는 경로는 실제로 '다른 작업'을 여는 것이므로 이 옵션을 넘기지
+     않는다 — 기본값(false)대로 계속 초기화해, 그 신호가 무관한 project 로 새지 않게 한다.
+     이미 다른 project 로 작업 중이었으면(projectId!==null) true 를 넘겨도 그대로 초기화한다. */
+  adoptProject(projectId, { preserveGenerationDirty = false } = {}) {
     // 다른 프로젝트 채택 = 프로젝트 경계 전환 — 이전 상세페이지 폴링 루프를 무효화해
     // stale 루프가 초기화된 슬라이스를 나중에 덮지 않게 한다(codex F5).
     if (get().projectId !== projectId) {
@@ -324,7 +331,9 @@ export const useAppStore = create((set, get) => ({
         projectPersisted: true,
         mannequinJob: initialMannequinJob(),
         detailPageJob: initialDetailPageJob(),
-        generationRelevantEditsDirty: false,
+        generationRelevantEditsDirty: preserveGenerationDirty && s.projectId === null
+          ? s.generationRelevantEditsDirty
+          : false,
       }));
     persistFlow(get());
   },

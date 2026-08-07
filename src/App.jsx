@@ -233,7 +233,8 @@ function RootRedirect() {
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('sync_timeout')), DRAFT_SYNC_TIMEOUT_MS));
         const { projectId } = await Promise.race([syncDraftToBackend(draft), timeout]);
         if (!alive) return;
-        useAppStore.getState().adoptProject(projectId);   // 마네킹이 이 project 로 진행(+영속)
+        // 같은 이유로 재생성 신호를 보존 — 로그인 복귀 draft sync 도 동일한 '신원 획득' 경로.
+        useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });   // 마네킹이 이 project 로 진행(+영속)
         await clearDraft().catch(() => {});
         setDest('/create/mannequin'); setPhase('done');
       } catch {

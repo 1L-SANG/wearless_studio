@@ -323,7 +323,9 @@ export function ProductInput() {
         const draft = await loadDraft();
         if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
         const { projectId } = await syncDraftToBackend(draft);
-        useAppStore.getState().adoptProject(projectId);
+        // 게스트로 편집(재생성 신호 dirty)한 뒤 세션이 생겨 여기서 처음 project 를 얻는 경로 —
+        // '다른 작업으로 전환'이 아니라 같은 작업이 신원을 얻는 것뿐이라 신호를 지우면 안 된다.
+        useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
         setAnalysisProjectId(projectId);
         await clearDraft().catch(() => {});
         navigate('/create/mannequin');
