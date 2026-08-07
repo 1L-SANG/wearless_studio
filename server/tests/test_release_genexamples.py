@@ -481,7 +481,13 @@ def test_apply_copies_only_staged_json_to_configured_repo_targets(tmp_path, monk
     monkeypatch.setattr(release, "DEFAULT_REGISTRY_PATH", registry_target)
     monkeypatch.setattr(release, "DEFAULT_CATALOG_PATH", catalog_target)
 
-    release.apply_release(result)
+    # 업로드가 끝났다는 증거로만 적용된다. 실제 스테이징 산출물이 강화된 전체 스키마
+    # 검증(_validate_release_documents)을 그대로 통과하는지도 여기서 함께 지켜진다.
+    receipt = release.UploadReceipt(
+        release_id=result.release_id,
+        uploaded_keys=frozenset(asset.r2_key for asset in result.assets),
+    )
+    release.apply_release(result, receipt)
 
     assert registry_target.read_bytes() == result.registry_path.read_bytes()
     assert catalog_target.read_bytes() == result.catalog_path.read_bytes()
@@ -555,8 +561,34 @@ def _valid_registry(base="https://images.example.test", release_id="rel-01"):
     }
 
 
+def _catalog_item(example_id="ex_a", base="https://images.example.test", **over):
+    item = {
+        "id": example_id,
+        "thumb": f"{base}/thumb/{example_id}.webp",
+        "cutType": "styling",
+        "gender": "women",
+        "clothingType": "top",
+        "applicableClothingTypes": ["top"],
+        "shot": "full",
+        "direction": "front",
+        "mood": None,
+        "detailSubject": None,
+        "presentationMethod": None,
+        "rank": 1,
+        "variants": ["all"],
+    }
+    item.update(over)
+    return item
+
+
 def _valid_catalog(base="https://images.example.test"):
-    return [{"id": "ex_a", "thumb": f"{base}/thumb/ex_a.webp"}]
+    return [_catalog_item(base=base)]
+
+
+def _receipt(release_id="rel-01", keys=()):
+    return release.UploadReceipt(
+        release_id=release_id, uploaded_keys=frozenset(keys)
+    )
 
 
 def test_apply_requires_upload_execute_in_the_same_run(capsys):
@@ -569,7 +601,7 @@ def test_apply_requires_upload_execute_in_the_same_run(capsys):
 
 
 def test_validate_rejects_catalog_registry_id_mismatch():
-    catalog = _valid_catalog() + [{"id": "ex_ghost", "thumb": "https://images.example.test/thumb/ex_ghost.webp"}]
+    catalog = _valid_catalog() + [_catalog_item("ex_ghost")]
     with pytest.raises(RuntimeError, match="프론트·서버 목록이 다릅니다"):
         release._validate_release_documents(catalog, _valid_registry(), label="테스트")
 
@@ -582,7 +614,7 @@ def test_validate_rejects_thumb_url_mismatch_between_files():
 
 
 def test_validate_rejects_thumb_outside_registry_base():
-    catalog = [{"id": "ex_a", "thumb": "https://other.example.test/thumb/ex_a.webp"}]
+    catalog = [_catalog_item(base="https://other.example.test")]
     with pytest.raises(RuntimeError, match="base_mismatch"):
         release._validate_release_documents(catalog, _valid_registry(), label="테스트")
 
@@ -604,7 +636,7 @@ def test_apply_refuses_and_leaves_files_untouched_when_new_pair_disagrees(tmp_pa
     """적용 도중이 아니라 적용 전에 멈춰야 한다 — 반쯤 바뀐 상태가 가장 위험하다."""
     catalog_path = tmp_path / "genExamples.json"
     registry_path = tmp_path / "example_assets.json"
-    bad_catalog = _valid_catalog() + [{"id": "ex_missing", "thumb": "https://images.example.test/thumb/ex_missing.webp"}]
+    bad_catalog = _valid_catalog() + [_catalog_item("ex_missing")]
     catalog_path.write_text(json.dumps(bad_catalog), encoding="utf-8")
     registry_path.write_text(json.dumps(_valid_registry()), encoding="utf-8")
 
@@ -622,7 +654,7 @@ def test_apply_refuses_and_leaves_files_untouched_when_new_pair_disagrees(tmp_pa
         assets=(), warnings=(),
     )
     with pytest.raises(RuntimeError):
-        release.apply_release(result)
+        release.apply_release(result, _receipt())
     assert (live_catalog.read_bytes(), live_registry.read_bytes()) == before
 
 
@@ -634,7 +666,7 @@ def test_apply_rolls_back_catalog_when_registry_copy_fails(tmp_path, monkeypatch
 
     live_catalog = tmp_path / "live_genExamples.json"
     live_registry = tmp_path / "live_example_assets.json"
-    old_catalog = [{"id": "ex_a", "thumb": "https://images.example.test/thumb/ex_a.webp"}]
+    old_catalog = _valid_catalog()
     live_catalog.write_text(json.dumps(old_catalog), encoding="utf-8")
     live_registry.write_text(json.dumps(_valid_registry()), encoding="utf-8")
     monkeypatch.setattr(release, "DEFAULT_CATALOG_PATH", live_catalog)
@@ -655,5 +687,83 @@ def test_apply_rolls_back_catalog_when_registry_copy_fails(tmp_path, monkeypatch
         assets=(), warnings=(),
     )
     with pytest.raises(OSError):
-        release.apply_release(result)
+        release.apply_release(result, _receipt())
     assert live_catalog.read_bytes() == before   # 프론트가 되돌아왔다
+
+
+# ── codex 리뷰 반영 (2026-08-04) ────────────────────────────────────────────
+# 지적 1: --apply 게이트가 CLI 인자 검사뿐이라 apply_release() 직접 호출로 우회 가능
+# 지적 2: 적용 전 검증이 id·thumb 중심의 얕은 검사
+
+
+def test_apply_release_requires_an_upload_receipt_even_when_called_directly(tmp_path):
+    """CLI 를 거치지 않는 호출 경로에서도 업로드 증거 없이는 적용되지 않는다."""
+    result = release.ReleaseResult(
+        release_id="rel-01", output_dir=tmp_path,
+        registry_path=tmp_path / "r.json", catalog_path=tmp_path / "c.json",
+        assets=(), warnings=(),
+    )
+    with pytest.raises(TypeError):
+        release.apply_release(result)          # 영수증 인자 자체가 필수
+
+
+def test_apply_rejects_receipt_from_a_different_release(tmp_path, monkeypatch):
+    catalog_path = tmp_path / "c.json"
+    registry_path = tmp_path / "r.json"
+    catalog_path.write_text(json.dumps(_valid_catalog()), encoding="utf-8")
+    registry_path.write_text(json.dumps(_valid_registry()), encoding="utf-8")
+    monkeypatch.setattr(release, "DEFAULT_CATALOG_PATH", tmp_path / "live_c.json")
+    monkeypatch.setattr(release, "DEFAULT_REGISTRY_PATH", tmp_path / "live_r.json")
+    result = release.ReleaseResult(
+        release_id="rel-01", output_dir=tmp_path,
+        registry_path=registry_path, catalog_path=catalog_path,
+        assets=(), warnings=(),
+    )
+    with pytest.raises(RuntimeError, match="다른 릴리스의 것"):
+        release.apply_release(result, _receipt(release_id="rel-02"))
+
+
+def test_apply_rejects_when_catalog_references_an_unuploaded_key(tmp_path, monkeypatch):
+    """2026-08-02 사고의 정확한 형태 — 명단이 가리키는 실물이 안 올라간 경우."""
+    base = "https://images.example.test"
+    key = f"{release.R2_PREFIX}/rel-01/all/ex_a.png"
+    registry = _valid_registry()
+    registry["assets"]["ex_a"]["all"] = f"{base}/{key}"
+    catalog_path = tmp_path / "c.json"
+    registry_path = tmp_path / "r.json"
+    catalog_path.write_text(json.dumps(_valid_catalog()), encoding="utf-8")
+    registry_path.write_text(json.dumps(registry), encoding="utf-8")
+    monkeypatch.setattr(release, "DEFAULT_CATALOG_PATH", tmp_path / "live_c.json")
+    monkeypatch.setattr(release, "DEFAULT_REGISTRY_PATH", tmp_path / "live_r.json")
+    result = release.ReleaseResult(
+        release_id="rel-01", output_dir=tmp_path,
+        registry_path=registry_path, catalog_path=catalog_path,
+        assets=(), warnings=(),
+    )
+    with pytest.raises(RuntimeError, match="올리지 않은 키를 참조"):
+        release.apply_release(result, _receipt())     # 영수증에 그 키가 없다
+
+
+def test_upload_release_returns_no_receipt_on_dry_run(tmp_path):
+    result = release.ReleaseResult(
+        release_id="rel-01", output_dir=tmp_path,
+        registry_path=tmp_path / "r.json", catalog_path=tmp_path / "c.json",
+        assets=(), warnings=(),
+    )
+    assert release.upload_release(result, execute=False) is None
+
+
+@pytest.mark.parametrize("drop", ["cutType", "shot", "clothingType", "rank", "variants"])
+def test_validate_rejects_catalog_item_missing_a_classification_field(drop):
+    """id·thumb 만 보던 얕은 검사로는 통과하던 문서를 잡는다."""
+    item = _catalog_item()
+    del item[drop]
+    with pytest.raises(RuntimeError, match="필드가 계약과 다릅니다"):
+        release._validate_catalog_document([item], label="테스트")
+
+
+def test_validate_rejects_registry_asset_without_all_or_thumb():
+    registry = _valid_registry()
+    del registry["assets"]["ex_a"]["all"]
+    with pytest.raises(RuntimeError, match="variant_missing"):
+        release._validate_registry_document(registry, label="테스트")
