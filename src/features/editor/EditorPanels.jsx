@@ -13,6 +13,7 @@ import {
   allAiContentTemplates,
   blockPatchForContentRole,
 } from '@/lib/storyboardTaxonomy.js';
+import { detailDirectionFromExample } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 
 function PanelHead({ title, sub }) {
@@ -345,7 +346,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
     // 서버가 BackDetail 사진을 근거로 쓴다(2026-08-07 오너 결정).
     if (isDetail) {
       const example = (catalogs.genExamples || []).find((item) => item.id === value);
-      setDir(example?.direction === 'back' ? 'back' : 'front');
+      setDir(detailDirectionFromExample(example));
     }
   };
   return (

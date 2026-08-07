@@ -71,7 +71,7 @@ import {
 import { renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
-import { generationExampleSelectionPatch } from '@/lib/storyboardExampleSelection.js';
+import { detailDirectionFromExample, generationExampleSelectionPatch } from '@/lib/storyboardExampleSelection.js';
 import { mineImageUrl, normalizeMineImages, promoteMineImage } from '@/lib/storyboardMineImages.js';
 
 
@@ -1167,6 +1167,10 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           ? current.outerClosureState : 'open')
         : null,
       ...(pendingRecipe.cutType === 'product' ? { matchIds: [], faceExposure: null } : {}),
+      // 샷 전환 확정도 공통 규칙 적용 — 뒷면 고스트→디테일 전환 시 이전 back 이
+      // 숨은 상태로 남아 BackDetail 근거로 새어 나가는 것을 막는다(Codex 리뷰 P1).
+      ...(pendingRecipe.cutType === 'product' && pendingRecipe.shot === 'detail'
+        ? { direction: detailDirectionFromExample(example) } : {}),
     }, catalogs);
     setPendingChoice(exampleId);
     setPendingSaving(true);
