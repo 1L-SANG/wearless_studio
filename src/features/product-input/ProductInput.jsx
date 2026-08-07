@@ -11,7 +11,7 @@ import { uid } from '@/lib/ids.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
-import { toUploadableImages } from '@/lib/imageTranscode.js';
+import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
 import { syncDraftToBackend } from '@/lib/draftSync.js';
 import { Icon, Button, IconButton, ErrorState, Skeleton, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
@@ -51,16 +51,11 @@ function ColorSwatchPicker({ swatchColors, value, onChange }) {
   );
 }
 
-// 확장자 폴백 — iOS/일부 브라우저는 HEIC 에 File.type 을 빈 문자열로 준다. type 만 믿고
-// 거르면 아이폰 사진이 선택 단계에서 조용히 사라진다(정확한 판별은 매직바이트가 한다).
-const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif|heic|heif|hif)$/i;
-const looksLikeImage = (f) => (f.type ? f.type.startsWith('image/') : IMAGE_EXT.test(f.name || ''));
-
 // build file metas from a FileList (drag-drop / picker), capping to the room left.
 // HEIC(아이폰 기본 포맷)는 여기서 JPEG 로 바꾼다 — 이 objectURL 이 미리보기·draft·업로드에
 // 그대로 흘러가므로(다운스트림이 fetch(src).blob() 으로 복원) 변환 지점은 여기 한 곳이면 된다.
 const filesToMetas = async (fileList, room) => {
-  const picked = [...fileList].filter(looksLikeImage).slice(0, Math.max(0, room));
+  const picked = [...fileList].filter(looksLikeImageFile).slice(0, Math.max(0, room));
   if (!picked.length) return { metas: [], failed: [] };
   const { files, failed } = await toUploadableImages(picked);
   return {
@@ -618,6 +613,8 @@ export function ProductInput() {
       {phase === 'done' && (
         <div className="pi-reveal">
           <AnalysisForm inline analysis={analysis} catalogs={catalogs}
+            projectId={analysisProjectId}
+            onAnalysisReplace={setAnalysis}
             onChange={(patch) => {
               // 후보 목록은 서버 소유 — 추천 갱신 패치뿐 아니라 선택 토글 응답도
               // 서버 머지 결과로 동기화해 묵은 후보가 로컬에 남지 않게 한다.

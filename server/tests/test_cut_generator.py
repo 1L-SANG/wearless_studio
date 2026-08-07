@@ -26,6 +26,8 @@ def test_build_prompt_substitutes_image_manifest():
     p = cg.build_prompt({"cutType": "styling", "direction": "front", "shot": "full"}, product)
     assert "${imageManifest}" not in p
     assert "front view of the garment" in p and "back view of the garment" in p
+    assert "CUT PLAN AUTHORITY" in p
+    assert "recipe=styling/lifestyle" in p
 
 
 def test_build_prompt_manifest_fallback_no_images():
@@ -182,7 +184,7 @@ def test_pose_medium_prompt_keeps_requested_crop_authoritative():
     assert "medium framing:" in all_prompt
 
 
-def test_generate_applies_medium_crop_only_to_pose_scope(monkeypatch):
+def test_generate_applies_medium_crop_only_to_bottom_pose_scope(monkeypatch):
     calls = []
 
     class FakeGemini:
@@ -205,6 +207,11 @@ def test_generate_applies_medium_crop_only_to_pose_scope(monkeypatch):
         {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "pose"},
         product, [], manifest=pose_manifest,
     ))
+    top_pose_result = asyncio.run(cg.generate(
+        settings, FakeGemini(),
+        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "pose"},
+        {**product, "clothingType": "top"}, [], manifest=pose_manifest,
+    ))
     all_result = asyncio.run(cg.generate(
         settings, FakeGemini(),
         {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "all"},
@@ -225,10 +232,203 @@ def test_generate_applies_medium_crop_only_to_pose_scope(monkeypatch):
     ))
 
     assert pose_result == (b"CROPPED", "image/png")
+    assert top_pose_result == (b"FULL", "image/png")
     assert all_result == (b"FULL", "image/png")
     assert bg_result == (b"FULL", "image/png")
     assert pose_full_result == (b"FULL", "image/png")
     assert calls == [(b"FULL", "image/png", "bottom")]
+
+
+def test_all_scope_explicit_pose_and_direction_override_example():
+    product = {"name": "니트", "clothingType": "top", "colors": [{"isBase": True, "images": [
+        {"slot": "Front", "id": "a1"},
+    ]}]}
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all",
+    )
+    prompt = cg.build_prompt(
+        {
+            "cutType": "styling", "direction": "back", "shot": "full",
+            "pose": "one hand on hip", "refScope": "all", "exampleId": "ex-any",
+        },
+        product, manifest=manifest,
+    )
+    assert "USER POSE OVERRIDE" in prompt
+    assert "explicit pose in the current CUT SPEC" in prompt
+    assert "USER DIRECTION OVERRIDE" in prompt
+    assert "direction (back)" in prompt
+    assert "POSE FROM EXAMPLE" not in prompt
+
+
+def test_all_scope_changed_direction_removes_example_pose_and_camera(monkeypatch):
+    monkeypatch.setattr(
+        cg,
+        "load_example_asset_registry",
+        lambda: (None, {"front-example": {
+            "all": "unused.png", "cutType": "styling", "direction": "front",
+        }}),
+    )
+    product = {"name": "니트", "clothingType": "top", "colors": [{
+        "isBase": True, "images": [{"slot": "Front", "id": "a1"}],
+    }]}
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all", reference_direction_compatible=False,
+    )
+
+    prompt = cg.build_prompt(
+        {
+            "cutType": "styling", "direction": "side", "shot": "full",
+            "pose": "auto", "refScope": "all", "exampleId": "front-example",
+        },
+        product,
+        manifest=manifest,
+    )
+
+    assert "DIRECTION-CHANGED STYLING/MIRROR SCENE TRANSFER" in prompt
+    assert "STYLING/MIRROR ART-DIRECTION TRANSFER" not in prompt
+    assert "Do NOT copy or preserve the example person's pose" in prompt
+    assert "reframe the same pose" not in prompt
+    assert "which example supplied the composition, camera" not in prompt
+    assert "Face visibility is part of this scope's composition" not in prompt
+    assert "POSE FROM EXAMPLE" not in prompt
+    assert "reference: captureTone, light, scene" in prompt
+    assert "reference: camera" not in prompt
+    assert "source ONLY of scene, lighting, capture tone" in manifest
+    assert "source of background, lighting, mood, pose" not in manifest
+
+
+def test_all_scope_hidden_reference_hides_face_when_direction_matches(monkeypatch):
+    monkeypatch.setattr(
+        cg,
+        "load_example_asset_registry",
+        lambda: (None, {"hidden-front": {
+            "all": "unused.png",
+            "cutType": "styling",
+            "direction": "front",
+            "faceVisibility": "hidden",
+        }}),
+    )
+
+    prompt = cg.build_prompt(
+        {
+            "cutType": "styling",
+            "direction": "front",
+            "shot": "full",
+            "refScope": "all",
+            "exampleId": "hidden-front",
+        },
+        PRODUCT_TOP,
+    )
+
+    assert "Face handling: match the reference's hidden-face composition" in prompt
+    assert "no eyes, nose, or mouth may be visible" in prompt
+    assert "Face handling: neutral and natural; keep the face unobtrusive" not in prompt
+
+
+def test_all_scope_explicit_show_wins_over_hidden_reference(monkeypatch):
+    monkeypatch.setattr(
+        cg,
+        "load_example_asset_registry",
+        lambda: (None, {"hidden-front": {
+            "all": "unused.png",
+            "cutType": "styling",
+            "direction": "front",
+            "faceVisibility": "hidden",
+        }}),
+    )
+
+    prompt = cg.build_prompt(
+        {
+            "cutType": "styling",
+            "direction": "front",
+            "shot": "full",
+            "faceExposure": "show",
+            "refScope": "all",
+            "exampleId": "hidden-front",
+        },
+        PRODUCT_TOP,
+    )
+
+    assert "Face handling: the model's face may be visible" in prompt
+    assert "Face handling: match the reference's hidden-face composition" not in prompt
+
+
+def test_all_scope_hidden_reference_does_not_hide_face_when_direction_changes(monkeypatch):
+    monkeypatch.setattr(
+        cg,
+        "load_example_asset_registry",
+        lambda: (None, {"hidden-front": {
+            "all": "unused.png",
+            "cutType": "styling",
+            "direction": "front",
+            "faceVisibility": "hidden",
+        }}),
+    )
+
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}],
+        has_mannequin=False,
+        has_match=False,
+        mood_count=0,
+        example_scope="all",
+        reference_direction_compatible=False,
+    )
+    prompt = cg.build_prompt(
+        {
+            "cutType": "styling",
+            "direction": "side",
+            "shot": "full",
+            "refScope": "all",
+            "exampleId": "hidden-front",
+        },
+        PRODUCT_TOP,
+        manifest=manifest,
+    )
+
+    assert "DIRECTION-CHANGED STYLING/MIRROR SCENE TRANSFER" in prompt
+    assert "Face handling: neutral and natural; keep the face unobtrusive" in prompt
+    assert "Face handling: match the reference's hidden-face composition" not in prompt
+
+
+def test_horizon_changed_direction_uses_scene_only_reference_section():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="all", reference_direction_compatible=False,
+    )
+    prompt = cg.build_prompt(
+        {
+            "cutType": "horizon", "direction": "back", "shot": "full",
+            "refScope": "all", "exampleId": "ss_front",
+            "_referenceDirectionCompatible": False,
+        },
+        {"name": "셔츠", "clothingType": "top", "colors": [{
+            "isBase": True, "images": [{"slot": "Front", "id": "a1"}],
+        }]},
+        manifest=manifest,
+    )
+
+    assert "DIRECTION-CHANGED HORIZON SCENE TRANSFER" in prompt
+    assert "HORIZON STUDIO:" not in prompt
+    assert "Follow the attached EXAMPLE REFERENCE's framing" not in prompt
+    assert "reference: captureTone, light, scene" in prompt
+    assert "reference: camera" not in prompt
+
+
+def test_mirror_bg_includes_reflection_mechanics():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}], has_mannequin=False, has_match=False,
+        mood_count=0, example_scope="bg",
+    )
+    prompt = cg.build_prompt(
+        {"cutType": "mirror", "shot": "full", "refScope": "bg", "exampleId": "ex-bg"},
+        {"name": "니트", "clothingType": "top", "colors": []},
+        manifest=manifest,
+    )
+    assert "EDIT TASK — INSERT A MODEL" in prompt
+    assert "MIRROR-CUT MECHANICS" in prompt
+    assert "physically correct mirror reflection" in prompt
 
 
 def test_space_set_medium_is_independent_camera_result_not_full_crop(monkeypatch):
@@ -319,6 +519,90 @@ def test_build_manifest_places_exact_virtual_model_labels_after_mannequin():
         "4. PRODUCT — front view of the garment",
         "5. MATCHING — the user-selected coordinating garment worn in the same outfit",
         "6. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)",
+    ]
+
+
+def test_build_manifest_does_not_disguise_face_grid_as_full_body():
+    manifest = cg.build_manifest(
+        [], has_mannequin=False, has_match=False, mood_count=0,
+        has_model_face=True, has_model_sheet=True,
+    )
+
+    assert "MODEL FULL BODY" not in manifest
+    assert "MODEL — frontal close-up" in manifest
+    assert "MODEL SHEET — a 2x2 grid of four studio portraits" in manifest
+    assert manifest.count("ZERO authority over body shape or proportions") == 2
+
+
+def test_virtual_model_full_body_resolution_is_atomic(monkeypatch):
+    monkeypatch.setattr(cg, "load_virtual_model_registry", lambda: {
+        "complete": {"views": {
+            "face_front": {"key": "face", "mime": "image/png"},
+            "grid_sedcard": {"key": "face-grid", "mime": "image/png"},
+            "body_front": {"key": "body", "mime": "image/png"},
+        }},
+        "face-only": {"views": {
+            "face_front": {"key": "face", "mime": "image/png"},
+            "grid_sedcard": {"key": "face-grid", "mime": "image/png"},
+        }},
+        "body-only": {"views": {
+            "body_front": {"key": "body", "mime": "image/png"},
+        }},
+    })
+
+    assert cg.resolve_virtual_model_assets(
+        {"cutType": "styling", "modelId": "complete"}, require_full_body=True,
+    ) == (
+        {"key": "face", "mime": "image/png", "bucket": "public"},
+        {"key": "body", "mime": "image/png", "bucket": "public"},
+    )
+    assert cg.resolve_virtual_model_assets(
+        {"cutType": "styling", "modelId": "face-only"}, require_full_body=True,
+    ) is None
+    assert cg.resolve_virtual_model_assets(
+        {"cutType": "styling", "modelId": "body-only"}, require_full_body=True,
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "manifest_kwargs",
+    [
+        {"example_scope": "all"},
+        {"example_scope": "all", "reference_direction_compatible": False},
+        {"example_scope": "all", "example_is_product": True},
+        {"example_scope": "pose"},
+        {"example_scope": "pose", "has_space_set_plate": True},
+        {"example_scope": "bg"},
+    ],
+)
+def test_generation_examples_have_zero_face_and_body_authority(manifest_kwargs):
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}],
+        has_mannequin=False,
+        has_match=False,
+        mood_count=0,
+        **manifest_kwargs,
+    )
+
+    assert "ZERO authority over facial identity or facial features" in manifest
+    assert "ZERO authority over body morphology: height, head-to-body ratio" in manifest
+    assert "shoulder width and build, torso length and build, waist shape" in manifest
+    assert "pelvis and hip width, or limb proportions" in manifest
+
+
+def test_build_manifest_emits_one_label_per_attached_matching_garment():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}],
+        has_mannequin=False,
+        has_match=True,
+        matching_count=2,
+        mood_count=0,
+    )
+
+    assert manifest.splitlines() == [
+        "1. PRODUCT — front view of the garment",
+        "2. MATCHING — the user-selected coordinating garment worn in the same outfit",
+        "3. MATCHING — the user-selected coordinating garment worn in the same outfit",
     ]
 
 
@@ -462,13 +746,100 @@ def test_build_prompt_with_face_injects_identity_and_overrides_face_line():
                                  mood_count=0, has_face=True)
     p = cg.build_prompt({"cutType": "styling", "shot": "full"}, PRODUCT_TOP,
                         manifest=manifest, has_face=True)
-    assert "MODEL FACE IDENTITY CONTINUITY" in p       # [[FACE_REF]] 정체성 지시
+    assert "MODEL FACE IDENTITY CONTINUITY" in p       # [[IDENTITY_REF]] 정체성 지시
+    assert "LICENSED MODEL FACE" in p                  # [[FACE_REF]] 라이선스 지시
     assert "recognizably that same individual" in p
     assert "the real person in the MODEL FACE reference" in p   # [[FACE:licensed]]
     assert "keep the face unobtrusive" not in p        # FACE:same 오버라이드됨
     assert "${" not in p and "[[" not in p             # 토큰·마커 유출 없음
     # 옷 근거가 여전히 최우선 — 얼굴이 옷 지시를 밀어내지 않는다
     assert "GARMENT FIDELITY" in p and "the references win" in p
+
+
+def test_virtual_model_manifest_injects_generic_identity_without_licensed_claims():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}],
+        has_mannequin=False,
+        has_match=False,
+        mood_count=0,
+        has_model_face=True,
+        has_model_full_body=True,
+    )
+
+    p = cg.build_prompt(
+        {"cutType": "styling", "shot": "full", "direction": "front"},
+        PRODUCT_TOP,
+        manifest=manifest,
+        has_face=False,
+    )
+
+    assert "MODEL FACE IDENTITY CONTINUITY" in p
+    assert "MODEL FULL-BODY CONTINUITY" in p
+    assert "All attached face-identity references depict the SAME one model" in p
+    assert "MODEL FACE and MODEL FULL BODY depict the SAME selected model" in p
+    assert "Treat them as one atomic pair" in p
+    assert "sole authority for the selected model's underlying build" in p
+    assert "height, head-to-body ratio" in p
+    assert "shoulder width and slope" in p
+    assert "torso length and build" in p
+    assert "waist, pelvis and hip width" in p
+    assert "arm length and leg" in p
+    assert "real, identity-verified person whose face is licensed" not in p
+    assert "Face handling: the model is the real person" not in p
+
+
+def test_product_cut_never_injects_identity_even_if_manifest_is_malformed():
+    manifest = cg.build_manifest(
+        [{"slot": "Front"}],
+        has_mannequin=False,
+        has_match=False,
+        mood_count=0,
+        has_model_face=True,
+        has_model_sheet=True,
+        has_face=True,
+    )
+
+    p = cg.build_prompt(
+        {"cutType": "product", "shot": "ghost", "direction": "front"},
+        PRODUCT_TOP,
+        manifest=manifest,
+        has_face=True,
+    )
+
+    assert "MODEL IDENTITY CONTINUITY" not in p
+    assert "LICENSED MODEL FACE" not in p
+    assert "Face handling: the model is the real person" not in p
+
+
+def test_hidden_back_cut_keeps_generic_identity_without_revealing_face():
+    manifest = cg.build_manifest(
+        [{"slot": "Back"}],
+        has_mannequin=False,
+        has_match=False,
+        mood_count=0,
+        has_model_face=True,
+        has_model_sheet=True,
+    )
+
+    p = cg.build_prompt(
+        {
+            "cutType": "styling",
+            "shot": "full",
+            "direction": "back",
+            "faceExposure": "hide",
+        },
+        PRODUCT_TOP,
+        manifest=manifest,
+        has_face=False,
+    )
+
+    assert "MODEL FACE IDENTITY CONTINUITY" in p
+    assert "MODEL FULL-BODY CONTINUITY" not in p
+    assert "KEEP the face hidden" in p
+    assert "Camera angle: from behind" in p
+    assert "Face handling: frame or turn the head so the face is not identifiable" in p
+    assert "LICENSED MODEL FACE" not in p
+    assert "keep their face in frame, visible and recognizable" not in p
 
 
 def test_build_prompt_face_ignored_on_cuts_that_hide_the_face():
@@ -490,6 +861,68 @@ def test_build_prompt_without_face_is_unchanged_from_legacy():
     assert "licensed" not in p
     assert "Face handling: neutral and natural; keep the face unobtrusive." in p  # FACE:same 유지
     assert "${" not in p and "[[" not in p
+
+
+def test_build_prompt_accepts_optional_server_directing_profile():
+    profile = {
+        "directionMode": "exact",
+        "poseDynamics": "natural_asymmetry",
+        "capture": "phone_snapshot",
+        "light": "reference_integrated",
+    }
+    p = cg.build_prompt(
+        {"cutType": "styling", "shot": "full", "direction": "front"},
+        PRODUCT_TOP,
+        directing_profile=profile,
+    )
+
+    assert "SERVER DIRECTING PROFILE" in p
+    assert "ordinary phone snapshot" in p
+    assert "believable human asymmetry" in p
+    assert "seller PRODUCT/MANNEQUIN references are the sole truth" in p
+    assert p.index("SERVER DIRECTING PROFILE") < p.index("PRODUCT CONTEXT")
+
+
+def test_build_prompt_user_direction_and_named_pose_override_profile():
+    p = cg.build_prompt(
+        {
+            "cutType": "styling",
+            "shot": "full",
+            "direction": "back",
+            "pose": "one hand on hip",
+            "_referenceDirectionCompatible": False,
+        },
+        PRODUCT_TOP,
+        directing_profile={
+            "directionMode": "exact",
+            "poseDynamics": "reference_kinematics",
+            "capture": "phone_snapshot",
+        },
+    )
+
+    assert "Direction relationship: RETARGET to the requested back view" in p
+    assert "reference's visible balance" not in p
+    assert "Pose: one hand on hip" in p
+
+
+def test_generate_forwards_directing_profile_to_rendered_prompt():
+    class FakeGemini:
+        async def generate_content_image(self, model, prompt, images, image_size, aspect_ratio):
+            assert "SERVER DIRECTING PROFILE" in prompt
+            assert "ordinary phone snapshot" in prompt
+            return SimpleNamespace(image=b"PROFILE", mime="image/png")
+
+    result = asyncio.run(
+        cg.generate(
+            make_settings(gemini_api_key="x"),
+            FakeGemini(),
+            {"cutType": "styling", "shot": "full", "direction": "front"},
+            PRODUCT_TOP,
+            [],
+            directing_profile={"capture": "phone_snapshot"},
+        )
+    )
+    assert result == (b"PROFILE", "image/png")
 
 
 def test_face_ref_token_always_substituted_on_every_path():

@@ -5,14 +5,16 @@
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
+from psycopg import errors
 
 from . import facemarket, repo
 from .agents import (
@@ -26,7 +28,7 @@ from .agents import (
 )
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
-from .services import input_qc, matching, retrieval
+from .services import garment_grid, input_qc, matching, retrieval
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -35,6 +37,7 @@ from .models import (
     AssetCompleteRequest,
     CreditHistoryEntry,
     CreditSource,
+    CustomMatchItemRequest,
     ErrorResponse,
     JobView,
     MannequinCut,
@@ -49,7 +52,7 @@ from .models import (
     UploadUrlRequest,
     UploadUrlResponse,
 )
-from .r2 import IMMUTABLE_CACHE, R2Client, ext_for_mime, upload_key
+from .r2 import IMMUTABLE_CACHE, R2Client, derived_key, ext_for_mime, upload_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1")
@@ -96,6 +99,7 @@ def _wake_dispatcher(request: Request) -> None:
 
 async def _fit_profile_snapshot(
     conn,
+    user_id: str,
     project_id: str,
     requested: dict | None,
     *,
@@ -130,7 +134,9 @@ async def _fit_profile_snapshot(
         )
     item_metadata = None
     if main_match_id and (match_cut is not None or matching_id_valid):
-        item_metadata = await repo.get_matching_item_metadata(conn, main_match_id)
+        item_metadata = await repo.get_matching_item_metadata(
+            conn, main_match_id, user_id, project_id
+        )
     authoritative_fit_category = matching.fit_category(item_metadata or {})
     if matching_fit:
         matching_category_valid = (
@@ -148,7 +154,9 @@ async def _fit_profile_snapshot(
         profile = {k: v for k, v in profile.items() if k != "matchCut"}
     if profile and (profile.get("matchCut") is not None or profile.get("matchingFit") is not None):
         has_match = bool(
-            main_match_id and await repo.get_matching_item_asset(conn, main_match_id)
+            main_match_id and await repo.get_matching_item_asset(
+                conn, main_match_id, user_id, project_id
+            )
         )
         if not has_match:
             profile = {k: v for k, v in profile.items() if k not in ("matchCut", "matchingFit")}
@@ -157,6 +165,95 @@ async def _fit_profile_snapshot(
 
 def _bad_request(code: str, message: str) -> HTTPException:
     return HTTPException(status_code=400, detail={"code": code, "message": message})
+
+
+def _custom_match_error(status: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status, detail={"code": code, "message": message})
+
+
+def _custom_match_metadata(expected_type: str) -> dict:
+    """AI 없이 채우는 커스텀 매칭의류 메타데이터 (D10).
+
+    아는 것만 쓴다 — 종류는 슬롯이 정본이고, 나머지는 '모른다'는 뜻의 중립값이다.
+    category 를 큐레이션 어휘(팬츠·스커트…) 중 하나로 지어내면 matching.fit_category 가
+    잘못된 핏 어휘를 열어 준다. 그래서 닫힌 어휘에 없는 '커스텀'을 쓴다.
+    """
+    return {
+        "name": "내 상의" if expected_type == "top" else "내 하의",
+        "clothingType": expected_type,
+        "category": "커스텀",
+        "length": "regular",
+        "colorName": "커스텀",
+        "colorGroup": "gray",
+    }
+
+
+def _matching_item_to_api(r2: R2Client, item: dict, *, compatible: bool = True) -> dict:
+    return {
+        "id": item["id"],
+        "name": item["name"],
+        "gender": item["gender"],
+        "thumb": r2.public_url(item["thumb_key"]),
+        "imageUrl": r2.public_url(item["image_key"]) if item.get("image_key") else None,
+        "thumbnailUrl": r2.public_url(item["thumb_key"]),
+        "clothingType": item.get("clothing_type"),
+        "category": item.get("category"),
+        "fit": item.get("fit"),
+        "length": item.get("length"),
+        "fitCategory": matching.fit_category(item),
+        "selected": False,
+        "isCustom": bool(item.get("is_custom")),
+        "isCompatible": compatible,
+    }
+
+
+def _analysis_with_added_custom(payload: dict, item: dict) -> dict:
+    existing = [m for m in (payload.get("matchClothing") or []) if m.get("id") != item["id"]]
+    return {**payload, "matchClothing": [{**item, "selected": False}, *existing]}
+
+
+def _analysis_without_custom(payload: dict, item_id: str) -> dict:
+    remaining = [m for m in (payload.get("matchClothing") or []) if m.get("id") != item_id]
+    selected = sorted(
+        (m for m in remaining if m.get("selected")),
+        key=lambda m: m.get("selOrder") or 99,
+    )[:2]
+    order_by_id = {m.get("id"): index for index, m in enumerate(selected, start=1)}
+    normalized = []
+    for item in remaining:
+        if item.get("id") in order_by_id:
+            normalized.append({**item, "selected": True, "selOrder": order_by_id[item["id"]]})
+        else:
+            cleaned = {**item, "selected": False}
+            cleaned.pop("selOrder", None)
+            normalized.append(cleaned)
+
+    next_payload = {**payload, "matchClothing": normalized}
+    fit_profile = payload.get("fitProfile")
+    matching_fit = fit_profile.get("matchingFit") if isinstance(fit_profile, dict) else None
+    if isinstance(matching_fit, dict) and matching_fit.get("clothingId") == item_id:
+        next_fit_profile = {**fit_profile}
+        next_fit_profile.pop("matchingFit", None)
+        next_payload["fitProfile"] = next_fit_profile
+    return next_payload
+
+
+async def _cleanup_custom_match_r2(r2: R2Client, assets: list[dict]) -> None:
+    """Best-effort asynchronous cleanup; retry each key without changing the committed DB result."""
+    for asset in assets:
+        for attempt in range(3):
+            try:
+                await asyncio.to_thread(r2.delete, asset["r2_key"])
+                break
+            except Exception:
+                if attempt == 2:
+                    logger.warning(
+                        "custom_match_r2_cleanup_failed",
+                        extra={"asset_id": asset.get("id")},
+                        exc_info=True,
+                    )
+                else:
+                    await asyncio.sleep(0.25 * (attempt + 1))
 
 
 def _require_bg_examples_enabled(request: Request, value) -> None:
@@ -756,33 +853,210 @@ async def match_candidates(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        items = await repo.list_active_matching_items(conn)
+        items = await repo.list_active_matching_items(conn, user_id, project_id)
     genders = (
         ["women"]
         if clothingType == "dress"
         else [g.strip() for part in gender for g in part.split(",") if g.strip()]
     )
     product_tags = [t.strip() for part in styleTags for t in part.split(",") if t.strip()]
+    custom_items = [item for item in items if item.get("is_custom")]
+    curated_items = [item for item in items if not item.get("is_custom")]
+    if matching.complementary_type(clothingType) is None:
+        return JSONResponse([])
     if request.app.state.settings.retrieval_matching == "tags" and product_tags:
         ranked = retrieval.recommend_v1(
-            items, clothingType, genders, product_tags, style_affinity.affinity_map(), limit)
+            curated_items, clothingType, genders, product_tags, style_affinity.affinity_map(), limit)
     else:
-        ranked = matching.recommend(items, clothingType, genders, limit)
+        ranked = matching.recommend(curated_items, clothingType, genders, limit)
+    expected_type = matching.complementary_type(clothingType)
+    ordered = [
+        (item, item.get("clothing_type") == expected_type) for item in custom_items
+    ] + [(item, True) for item in ranked]
     return JSONResponse([
-        {
-            "id": i["id"], "name": i["name"], "gender": i["gender"],
-            "thumb": r2.public_url(i["thumb_key"]),
-            "imageUrl": r2.public_url(i["image_key"]) if i.get("image_key") else None,
-            "thumbnailUrl": r2.public_url(i["thumb_key"]),
-            "clothingType": i.get("clothing_type"),
-            "category": i.get("category"),
-            "fit": i.get("fit"),
-            "length": i.get("length"),
-            "fitCategory": matching.fit_category(i),
-            "selected": False,
-        }
-        for i in ranked if i.get("thumb_key")
+        _matching_item_to_api(r2, item, compatible=compatible)
+        for item, compatible in ordered if item.get("thumb_key")
     ])
+
+
+@router.post(
+    "/projects/{project_id}/analysis/custom-match-item",
+    responses={**COMMON_RESPONSES, 400: {"model": ErrorResponse},
+               409: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    tags=["Analysis"],
+    summary="프로젝트 전용 매칭 의류 추가",
+)
+async def add_custom_match_item(
+    request: Request,
+    project_id: str,
+    body: CustomMatchItemRequest,
+    user_id: str = Depends(require_user),
+):
+    asset_ids = [str(asset_id) for asset_id in body.asset_ids]
+    r2 = _r2(request)
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        if await repo.get_custom_matching_item(conn, user_id, project_id):
+            # DELETE가 먼저 프로젝트 잠금을 잡았다면 완료를 기다린 뒤 다시 확인한다.
+            # 평상시 중복 POST도 이 지점에서 막아 불필요한 AI 호출은 하지 않는다.
+            if not await repo.lock_custom_match_project(conn, user_id, project_id):
+                raise _not_found()
+            if await repo.get_custom_matching_item(conn, user_id, project_id):
+                raise _custom_match_error(
+                    409, "custom_match_item_exists", "이미 내 옷이 있어요. 지우고 다시 올려주세요."
+                )
+        assets = await repo.get_uploaded_assets_for_project(
+            conn, user_id, project_id, asset_ids
+        )
+        product = await repo.get_product(conn, project_id) or {}
+    if len(assets) != len(asset_ids):
+        raise _not_found()
+
+    try:
+        source_bytes = await asyncio.gather(*[
+            asyncio.to_thread(r2.get_bytes, asset["r2_key"]) for asset in assets
+        ])
+    except Exception as exc:
+        raise _custom_match_error(
+            503,
+            "custom_match_storage_unavailable",
+            "사진을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+        ) from exc
+
+    qc_results = await asyncio.gather(*[
+        asyncio.to_thread(input_qc.evaluate_input_qc, raw) for raw in source_bytes
+    ])
+    for qc in qc_results:
+        if qc.verdict == "reject":
+            raise _custom_match_error(400, "input_quality", input_qc.input_qc_message(qc))
+
+    product_type = product.get("clothing_type") or product.get("clothingType")
+    expected_type = matching.complementary_type(product_type)
+    if expected_type is None:
+        raise _custom_match_error(
+            400, "wrong_garment_type", "매칭 의류로 쓸 수 있는 건 상의 또는 하의예요."
+        )
+    # D10(2026-08-05 오너) — 업로드 대기시간을 줄이려고 AI 메타데이터 추론을 뺐다. 종류는 슬롯이
+    # 곧 정본이다(하의 슬롯에 올리면 하의). 추측으로 카테고리·기장을 지어내지 않으므로
+    # matching.fit_category 는 하의 커스텀에 대해 None 을 돌려주고 핏 조정 스텝이 뜨지 않는다 —
+    # 셀러가 올린 실물은 '있는 그대로' 입히는 게 맞다는 판단. 상의는 length 축만 그대로 산다.
+    inferred = _custom_match_metadata(expected_type)
+
+    try:
+        grid_bytes = await asyncio.to_thread(garment_grid.compose_garment_grid, source_bytes)
+    except Exception as exc:
+        raise _custom_match_error(
+            503,
+            "custom_match_storage_unavailable",
+            "사진 합성본을 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
+        ) from exc
+    checksum = hashlib.sha256(grid_bytes).hexdigest()
+    async with get_conn(request) as conn:
+        existing_grid = await repo.find_custom_grid_asset(
+            conn, user_id, project_id, checksum
+        )
+    if existing_grid:
+        grid_asset_id = existing_grid["id"]
+        grid_key = existing_grid["r2_key"]
+        grid_is_new = False
+    else:
+        grid_asset_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL, f"wearless:custom-match-grid:{user_id}:{project_id}:{checksum}"
+        ))
+        grid_key = derived_key(user_id, project_id, grid_asset_id, "jpg")
+        grid_is_new = True
+        try:
+            await asyncio.to_thread(r2.put_bytes, grid_key, grid_bytes, "image/jpeg")
+        except Exception as exc:
+            raise _custom_match_error(
+                503,
+                "custom_match_storage_unavailable",
+                "사진 합성본을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
+            ) from exc
+
+    try:
+        async with get_conn(request) as conn:
+            if not await repo.lock_custom_match_project(conn, user_id, project_id):
+                raise _not_found()
+            if await repo.get_custom_matching_item(conn, user_id, project_id):
+                raise _custom_match_error(
+                    409, "custom_match_item_exists", "이미 내 옷이 있어요. 지우고 다시 올려주세요."
+                )
+            await repo.set_custom_match_source_order(conn, user_id, project_id, asset_ids)
+            if grid_is_new:
+                await repo.insert_custom_grid_asset(
+                    conn,
+                    asset_id=grid_asset_id,
+                    user_id=user_id,
+                    project_id=project_id,
+                    bucket=request.app.state.settings.r2_bucket,
+                    key=grid_key,
+                    size=len(grid_bytes),
+                    checksum=checksum,
+                    source_asset_ids=asset_ids,
+                )
+            await repo.insert_custom_matching_item(
+                conn,
+                user_id=user_id,
+                project_id=project_id,
+                metadata=inferred,
+                image_asset_id=grid_asset_id,
+                thumbnail_asset_id=asset_ids[0],
+            )
+            row = await repo.get_custom_matching_item(conn, user_id, project_id)
+            item = _matching_item_to_api(r2, row, compatible=True)
+            payload = _analysis_with_added_custom(
+                await repo.get_analysis(conn, project_id) or {}, item
+            )
+            saved = await repo.save_analysis(conn, project_id, payload)
+            await conn.commit()
+    except errors.UniqueViolation as exc:
+        raise _custom_match_error(
+            409, "custom_match_item_exists", "이미 내 옷이 있어요. 지우고 다시 올려주세요."
+        ) from exc
+    return {
+        "item": item,
+        "analysis": {"projectId": saved["project_id"], **(saved["payload"] or {})},
+    }
+
+
+@router.delete(
+    "/projects/{project_id}/analysis/custom-match-item",
+    status_code=204,
+    responses={**COMMON_RESPONSES, 204: {"description": "삭제 완료 또는 이미 없음"}},
+    tags=["Analysis"],
+    summary="프로젝트 전용 매칭 의류 삭제",
+)
+async def remove_custom_match_item(
+    request: Request,
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user),
+):
+    cleanup_assets: list[dict] = []
+    async with get_conn(request) as conn:
+        if not await repo.lock_custom_match_project(conn, user_id, project_id):
+            raise _not_found()
+        item = await repo.get_custom_matching_item(conn, user_id, project_id)
+        if item:
+            source_asset_ids = list((item.get("image_metadata") or {}).get("sourceAssetIds") or [])
+            asset_ids = list(dict.fromkeys([
+                item.get("image_asset_id"), item.get("thumbnail_asset_id"), *source_asset_ids,
+            ]))
+            asset_ids = [asset_id for asset_id in asset_ids if asset_id]
+            payload = _analysis_without_custom(
+                await repo.get_analysis(conn, project_id) or {}, item["id"]
+            )
+            await repo.delete_custom_matching_item(conn, user_id, project_id)
+            await repo.save_analysis(conn, project_id, payload)
+            cleanup_assets = await repo.soft_delete_unreferenced_custom_assets(
+                conn, user_id, project_id, asset_ids
+            )
+        await conn.commit()
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_custom_match_r2, _r2(request), cleanup_assets)
+    return Response(status_code=204)
 
 
 # ---------- 자산 업로드 (§3 presigned + finalize) ----------
@@ -870,7 +1144,7 @@ async def complete_upload(
         # 인프라 에러면 iqc=None으로 두고 정상 등록 — enforce 거부는 '실제 품질 불합격'에만.
         try:
             raw = await asyncio.to_thread(r2.get_bytes, key)  # 네트워크 → 스레드 격리
-            iqc = input_qc.evaluate_input_qc(raw)
+            iqc = await asyncio.to_thread(input_qc.evaluate_input_qc, raw)
         except Exception:
             logger.warning(
                 "input_qc_fetch_failed",
@@ -898,6 +1172,7 @@ async def complete_upload(
             mime=meta["mime"] or body.mime,
             size=meta["size"],
             original_filename=body.filename,
+            metadata={"purpose": body.purpose},
         )
         await conn.commit()
     return {
@@ -974,7 +1249,7 @@ async def generate_mannequins(
         # blocking으로 직렬화되어 프로젝트당 active job 1개만 생성되고 나머지는 합류한다(§6).
         # 합류(created=False)는 게이트·예약 없이 기존 job 반환 → 동시 재시도/입력검증으로 막지 않음.
         # 합류 시 기존 job payload 가 정본 — 아래 스냅샷은 신규 job 에만 실린다.
-        snapshot = await _fit_profile_snapshot(conn, project_id, None)
+        snapshot = await _fit_profile_snapshot(conn, user_id, project_id, None)
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload={"mode": "generate", "fitProfileSnapshot": snapshot}, idempotency_key=scoped_key,
@@ -1081,6 +1356,7 @@ async def regenerate_mannequins(
         # 스냅샷 = 잡 시점 effective profile + 서버 산출 adjustedAxes (fidelity 설계 D3·§E-2).
         snapshot = await _fit_profile_snapshot(
             conn,
+            user_id,
             project_id,
             body.get("fitProfile"),
             validate_matching_fit=True,

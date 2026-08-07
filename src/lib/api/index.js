@@ -27,6 +27,10 @@ const PUBLIC_INPUT = [
   'analyzeProduct',
   'getAnalysis',
   'saveAnalysis',
+  'uploadPhoto',
+  'addCustomMatchItem',
+  'removeCustomMatchItem',
+  'refreshMatchClothing',
 ];
 
 function buildHttpApi() {

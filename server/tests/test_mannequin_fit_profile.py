@@ -274,6 +274,7 @@ def test_mannequin_worker_runs_dual_candidates(monkeypatch):
         "targetGenders": ["men"],
         "fit": "regular",
         "fitProfile": profile,
+        "matchSelections": [{"clothingId": "deleted-neutral-id", "role": "main"}],
     }
     calls = {"run": [], "success": [], "failure": []}
 
@@ -285,6 +286,12 @@ def test_mannequin_worker_runs_dual_candidates(monkeypatch):
 
     async def get_asset_for_user(conn, user_id, asset_id):
         return {"id": asset_id, "mime_type": "image/png", "r2_key": f"{asset_id}.png"}
+
+    async def get_matching_item_asset(conn, item_id, user_id, project_id):
+        assert (item_id, user_id, project_id) == (
+            "deleted-neutral-id", "user-1", "project-1",
+        )
+        return None
 
     async def finalize_success(conn, **kwargs):
         calls["success"].append(kwargs)
@@ -315,6 +322,7 @@ def test_mannequin_worker_runs_dual_candidates(monkeypatch):
         ("get_product", get_product),
         ("get_analysis", get_analysis),
         ("get_asset_for_user", get_asset_for_user),
+        ("get_matching_item_asset", get_matching_item_asset),
         ("finalize_mannequin_success", finalize_success),
         ("finalize_mannequin_failure", finalize_failure),
     ]:
@@ -351,6 +359,9 @@ def test_mannequin_worker_runs_dual_candidates(monkeypatch):
     assert only["base_fit"] == "regular"
     assert only["fit_profile"] == profile
     assert only["base_gender"] == "men"
+    assert only["match_img"] is None
+    assert "matching TOP" not in only["image_manifest"]
+    assert "matching BOTTOM" not in only["image_manifest"]
     assert len(calls["success"]) == 1
     assert calls["success"][0]["charge"] == 2
     assert [c["candidate"] for c in calls["success"][0]["candidates"]] == ["A"]
@@ -573,6 +584,29 @@ def test_normalize_v2_matching_fit_pants_and_skirt():
         "axes": {"silhouette": "mermaid"},
     }
 
+    male_skirt = normalize_fit_profile({
+        "category": "top", "gender": "men", "source": "seller", "version": 2,
+        "axes": {"fit": "regular"},
+        "matchingFit": {
+            "clothingId": "custom-skirt", "fitCategory": "skirt",
+            "axes": {"silhouette": "a_line"},
+        },
+    })
+    assert male_skirt["matchingFit"] == {
+        "clothingId": "custom-skirt", "fitCategory": "skirt",
+        "axes": {"silhouette": "a_line"},
+    }
+
+    # 주상품 남성 skirt/dress 축은 계속 비어 있고 매칭 skirt에만 fallback이 적용된다.
+    assert normalize_fit_profile({
+        "category": "skirt", "gender": "men", "source": "seller", "version": 2,
+        "axes": {"silhouette": "a_line"},
+    })["axes"] == {}
+    assert normalize_fit_profile({
+        "category": "dress", "gender": "men", "source": "seller", "version": 2,
+        "axes": {"silhouette": "a_line"},
+    })["axes"] == {}
+
 
 def test_normalize_v2_drops_whole_matching_fit_for_invalid_vocab_or_schema():
     invalid_matching_fits = [
@@ -634,6 +668,19 @@ def test_build_fit_profile_block_renders_fixed_skirt_matching_line():
         "and full outline visible."
     ) in block
     assert "never-render-this-id" not in block
+
+
+def test_build_fit_profile_block_renders_male_custom_skirt_with_neutral_vocabulary():
+    block = build_fit_profile_block({
+        "category": "top", "gender": "men", "source": "seller", "version": 2,
+        "axes": {"fit": "regular"},
+        "matchingFit": {
+            "clothingId": "custom-skirt", "fitCategory": "skirt",
+            "axes": {"silhouette": "a_line"},
+        },
+    })
+    assert "matching skirt silhouette" in block
+    assert "fitted at the waist then flares out steadily to a wide hem" in block
 
 
 def test_build_fit_profile_block_renders_v2_pants_in_matching_bottom_style():

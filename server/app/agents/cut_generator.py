@@ -918,6 +918,13 @@ _MODEL_FULL_BODY_LABEL = ("MODEL FULL BODY — full-body proportion authority fo
                           "and leg proportions; ZERO authority over facial identity, facial "
                           "features, hair, pose, framing or clothing")
 _MATCH_LABEL = "MATCHING — the user-selected coordinating garment worn in the same outfit"
+_CUSTOM_MATCH_LABEL = (
+    _MATCH_LABEL
+    + " — a 2x2 contact sheet showing 1-4 views of ONE SAME matching garment; "
+      "treat all occupied cells as evidence for that single garment; empty neutral cells mean "
+      "no photo, not a white garment or another product; dress one garment only; never reproduce "
+      "the contact sheet; output one normal photograph, never a collage or grid"
+)
 # FaceMarket 라이선스 얼굴 첨부 라벨(FM-31). 위 두 라벨의 부분문자열이 되면 matchCut 가드가
 # 오발해 없는 하의를 지시하므로 'mannequin'·_MATCH_LABEL 문구를 섞지 않는다.
 _FACE_LABEL = ("MODEL FACE — the licensed model's face reference: reproduce THIS person's "
@@ -936,7 +943,8 @@ _EXAMPLE_PERSON_AUTHORITY_DENIAL = (
 
 def build_manifest(
     prod_assets: list[dict], *, has_mannequin: bool, has_match: bool,
-    mood_count: int,
+    mood_count: int, matching_count: int | None = None,
+    matching_custom: list[bool] | None = None,
     has_model_face: bool = False, has_model_sheet: bool = False,
     has_model_full_body: bool = False,
     has_face: bool = False, example_scope: str | None = None,
@@ -946,7 +954,7 @@ def build_manifest(
     """첨부 이미지와 동일 순서의 역할 목록.
 
     순서: mannequin?, virtual-model face+full-body? 또는 legacy face+sheet?, *product,
-    match?, licensed-face?, *mood, example?. 가상모델의 권한 순서는 MANNEQUIN →
+    *matching, licensed-face?, *mood, example?. 가상모델의 권한 순서는 MANNEQUIN →
     MODEL FACE → MODEL FULL BODY로 고정한다. pose의 상대 순서는 PRODUCT → MATCHING →
     POSE CONTROL로 고정한다.
     라이선스 얼굴은 옷 근거 뒤에 두며, 호출자는 정체성 충돌을 막기 위해
@@ -956,6 +964,8 @@ def build_manifest(
     얼굴 연속성 자산 전용이다. 실제 전신 자산이 있을 때만 ``has_model_full_body``를
     사용한다. 둘을 동시에 선언하면 같은 위치에 상충하는 권한이 생기므로 거부한다.
 
+    ``matching_count`` 미지정 시 기존 ``has_match`` 불리언을 그대로 0/1장으로 해석한다.
+    실제 첨부 수를 아는 호출자는 count를 넘겨 여러 MATCHING 위치를 선언할 수 있다.
     """
     if has_model_sheet and has_model_full_body:
         raise ValueError("conflicting_model_body_authority")
@@ -980,8 +990,15 @@ def build_manifest(
     for a in prod_assets:
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'PRODUCT — view of the garment')}")
         i += 1
-    if has_match:
-        lines.append(f"{i}. {_MATCH_LABEL}")
+    resolved_matching_count = (
+        matching_count if matching_count is not None else int(has_match)
+    )
+    custom_flags = matching_custom or []
+    for matching_index in range(resolved_matching_count):
+        label = _CUSTOM_MATCH_LABEL if (
+            matching_index < len(custom_flags) and custom_flags[matching_index]
+        ) else _MATCH_LABEL
+        lines.append(f"{i}. {label}")
         i += 1
     if has_face:
         lines.append(f"{i}. {_FACE_LABEL}")

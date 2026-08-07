@@ -215,7 +215,8 @@ def _normalize_matching_fit(raw, gender: str) -> dict | None:
             or not isinstance(raw_axes, dict) or set(raw_axes) != {axis}:
         return None
     value = raw_axes.get(axis)
-    if not _axis_entry(fit_category, axis, gender, value):
+    entry_gender = "women" if fit_category == "skirt" and axis == "silhouette" and gender == "men" else gender
+    if not _axis_entry(fit_category, axis, entry_gender, value):
         return None
     return {
         "clothingId": clothing_id,
@@ -338,8 +339,9 @@ def build_fit_profile_block(profile: dict | None, adjusted_axes: tuple | list = 
         if matching_fit:
             match_category = matching_fit["fitCategory"]
             match_axis = _MATCHING_FIT_AXIS[match_category]
+            match_gender = "women" if match_category == "skirt" and gender == "men" else gender
             line = _render_matching_axis_line(
-                match_category, match_axis, gender, matching_fit["axes"][match_axis])
+                match_category, match_axis, match_gender, matching_fit["axes"][match_axis])
             if line:
                 lines.append(line)
     elif version == 1:
