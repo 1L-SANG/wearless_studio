@@ -169,13 +169,9 @@ def test_pose_medium_prompt_keeps_requested_crop_authoritative():
         mood_count=0, example_scope="pose",
     )
 
-    top_pose_prompt = cg.build_prompt(
+    pose_prompt = cg.build_prompt(
         {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "pose"},
         product, manifest=pose_manifest,
-    )
-    bottom_pose_prompt = cg.build_prompt(
-        {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "pose"},
-        {**product, "clothingType": "bottom"}, manifest=pose_manifest,
     )
     all_prompt = cg.build_prompt(
         {"cutType": "styling", "direction": "front", "shot": "medium", "refScope": "all"},
