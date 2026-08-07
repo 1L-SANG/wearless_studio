@@ -138,7 +138,10 @@ async def _gen_cuts(app, job, prepared, product, analysis):
     같은 경로(빈 슬롯) — 조용한 styling 대체 렌더는 하지 않는다(ADR-0004)."""
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
-    sem = asyncio.Semaphore(_GEN_CONCURRENCY)
+    # 동시성: 설정값(0=제한 없음 → 컷 수만큼). 구 상수 3은 429 실측 없는 보수적 추정이라
+    # 오너 결정(2026-08-03)으로 전부 병렬 + 제출 간격(stagger) + 429 백오프가 기본이 됐다.
+    _limit = getattr(s, "detail_cut_concurrency", 0) or max(1, len(prepared))
+    sem = asyncio.Semaphore(_limit)
     page_input_unavailable = object()
     clothing_type = (
         product.get("clothing_type") or product.get("clothingType") or "top"
@@ -162,7 +165,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             "productTruthIndexes": product_truth_indexes,
         }
 
-    async def _one(item):
+    async def _one_impl(item):
         """컷 1개 생성+저장. 실패(빈 슬롯)면 None. 각 블록 독립이라 동시 실행 가능."""
         b, images, manifest, has_face, product_images = item[:5]
         space_set_plate = item[5] if len(item) > 5 else None
@@ -205,6 +208,10 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 await _emit(app.state.pool, job_id, "step",
                             {"blockId": b.get("id"), "status": "cut_failed"})
                 return None
+            # 대기 화면의 "지금 그리는 중" 표시 근거 — 세마포어를 잡은 뒤에 쏴야
+            # 큐 대기 중인 컷이 전부 '생성 중'으로 보이지 않는다(editor_wait_dev_spec §2-1).
+            await _emit(app.state.pool, job_id, "step",
+                        {"blockId": b.get("id"), "status": "cut_start"})
             try:
                 generate_kwargs = {"analysis": analysis, "manifest": manifest}
                 if has_face:
@@ -352,6 +359,12 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
             await asyncio.to_thread(r2.put_bytes, key, img, mime, cache=IMMUTABLE_CACHE)
             w, h = _dims(img)
+            # 대기 화면 프리뷰 — asset 행은 finalize에서만 생기므로 /file 경로는 아직 404다.
+            # 항상 만료 있는 서명 URL(preview_url)을 이벤트에 실어 보낸다(잡 상한 15분 ≪ 1h,
+            # DB 무변경 · public 도메인 배포에서도 영구 URL이 이벤트 원장에 남지 않게 — codex F3).
+            await _emit(app.state.pool, job_id, "step",
+                        {"blockId": b.get("id"), "status": "cut_done",
+                         "previewUrl": r2.preview_url(key), "width": w, "height": h})
             return (
                 # width/height 는 조립(M-02)이 요소 박스를 **이미지 비율대로** 잡는 근거다.
                 # 없으면 page_assembler 가 기본 비율로 폴백한다(생성 실패·구 데이터 안전).
@@ -366,10 +379,27 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 chosen if s.page_output_qc_mode == "shadow" else None,
             )
 
+    # 컷 1개가 끝날 때마다(성공·실패 무관) 진행 이벤트 — 대기 화면의 정직한 진행 근거.
+    # 10분 잡에서 65%에 몇 분씩 멈춰 보이던 체크포인트 방식을 대체한다(editor_wait_dev_spec §2-1).
+    _done_counter = {"n": 0}
+    _total_cuts = max(1, len(prepared))
+    _stagger_s = max(0, getattr(s, "detail_cut_stagger_ms", 0)) / 1000
+
+    async def _one(idx, item):
+        # 제출 간격 — i번째 컷을 i×간격 뒤에 시작해 순간 버스트를 평탄화한다(전부 병렬의 안전판).
+        if idx and _stagger_s:
+            await asyncio.sleep(idx * _stagger_s)
+        r = await _one_impl(item)
+        _done_counter["n"] += 1
+        await _emit(app.state.pool, job_id, "progress",
+                    {"progress": 20 + round(60 * _done_counter["n"] / _total_cuts),
+                     "phase": "cut", "done": _done_counter["n"], "total": _total_cuts})
+        return r
+
     # gather 는 입력 순서를 보존 — 콘티 블록 순서대로 컷을 배열한다.
     cut_results, cut_assets, face_cuts = [], [], 0
     garment_qcs, cut_qcs, garment_warnings = [], [], []
-    outcomes = await asyncio.gather(*[_one(item) for item in prepared])
+    outcomes = await asyncio.gather(*[_one(i, item) for i, item in enumerate(prepared)])
     for r in outcomes:
         if r:
             cut_results.append(r[0])
@@ -1098,7 +1128,20 @@ async def run_detail_page_job(app, job: dict) -> None:
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
                                                "aiCuts": len(ai_blocks)})
 
-        # 2) 컷 생성 (부분 성공)
+        # 2) 카피(선택) + 검수 — **컷보다 먼저**. 카피는 컷 이미지를 입력으로 쓰지 않아
+        # (copywriter.generate: product·analysis·role만) 순서를 당길 수 있고, 셀러는 컷을
+        # 기다리는 몇 분 동안 문구를 다듬을 수 있다(editor_wait_dev_spec §2-1).
+        copy_results = []
+        if copywriting:
+            await _emit(pool, job_id, "progress", {"progress": 18, "phase": "copy",
+                                                   "blocks": len(ai_blocks)})
+            copy_results = await _gen_copy(app, job, ai_blocks, product, analysis)
+            for cr in copy_results:  # 검수(AG-03) 통과본만 내보낸다 — 선emit 후revise 금지
+                await _emit(pool, job_id, "step",
+                            {"blockId": cr.get("blockId"), "status": "copy_ready",
+                             "texts": cr.get("texts")})
+
+        # 3) 컷 생성 (부분 성공) — 컷 단위 progress(20→80)는 _gen_cuts 안에서 emit
         (
             cut_results,
             cut_assets,
@@ -1109,8 +1152,6 @@ async def run_detail_page_job(app, job: dict) -> None:
             garment_warnings,
         ) = await _gen_cuts(app, job, prepared, product, analysis)
         example_warnings.extend(garment_warnings)
-        await _emit(pool, job_id, "progress", {"progress": 65, "phase": "cuts",
-                                               "generated": len(cut_assets)})
         # 판정 기준은 **컷이 하나라도 나왔는가**(cut_results)다. cut_assets 로 보면 전 블록이
         # 원본 패스스루인 상세페이지가 "전멸"로 오인된다 — 그 경우 컷은 멀쩡히 있다.
         if ai_blocks and not cut_results:
@@ -1123,9 +1164,8 @@ async def run_detail_page_job(app, job: dict) -> None:
             )
             return
 
-        # 3) 카피(선택) + 검수
-        copy_results = await _gen_copy(app, job, ai_blocks, product, analysis) if copywriting else []
-        await _emit(pool, job_id, "progress", {"progress": 85, "phase": "copy"})
+        await _emit(pool, job_id, "progress", {"progress": 85, "phase": "assemble",
+                                               "generated": len(cut_assets)})
 
         # 4) 조립(M-02) — 실패 컷은 빈 슬롯으로.
         # AI 고지 분기는 **얼굴이 실제로 들어간 컷이 성공했을 때만**(face_cuts > 0) —

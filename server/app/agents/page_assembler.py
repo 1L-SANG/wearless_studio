@@ -23,20 +23,31 @@ def _el_id(i: int, j: int) -> str:
     return f"b{i}e{j}"
 
 
-def _text_el(block_i: int, el_j: int, x, y, w, h, text: str, style: dict | None = None) -> dict:
-    """mock T(x,y,w,h,text,style) 포팅 — id만 결정적으로 대체."""
-    return {
+def _text_el(block_i: int, el_j: int, x, y, w, h, text: str, style: dict | None = None,
+             source_block_id=None, copy_role=None) -> dict:
+    """mock T(x,y,w,h,text,style) 포팅 — id만 결정적으로 대체.
+    sourceBlockId+copyRole = 셀러가 대기 화면에서 고친 카피를 로드 시점에
+    되살리는 매칭 키(editor_wait_dev_spec §4 — 셀러 편집이 항상 이긴다)."""
+    el = {
         "id": _el_id(block_i, el_j),
         "type": "text",
         "x": x, "y": y, "w": w, "h": h,
         "text": text,
         "style": style or {},
     }
+    if source_block_id:
+        el["sourceBlockId"] = source_block_id
+    if copy_role:
+        el["copyRole"] = copy_role
+    return el
 
 
-def _image_el(block_i: int, el_j: int, x, y, w, h, src, radius=None, cut_type=None) -> dict:
+def _image_el(block_i: int, el_j: int, x, y, w, h, src, radius=None, cut_type=None,
+              source_block_id=None) -> dict:
     """mock IMG(x,y,w,h,src,radius,cutType) 포팅 — id만 결정적으로 대체.
-    src=None 은 계약 §3.5 Element(image) 의 '빈 슬롯' 표현."""
+    src=None 은 계약 §3.5 Element(image) 의 '빈 슬롯' 표현.
+    sourceBlockId = 콘티 블록 id (editor_wait_dev_spec §2-3 — 대기 화면 컷 채움과
+    셀러 카피 오버라이드의 매칭 키. 추가 필드라 기존 저장 계약과 호환)."""
     el = {
         "id": _el_id(block_i, el_j),
         "type": "image",
@@ -44,6 +55,8 @@ def _image_el(block_i: int, el_j: int, x, y, w, h, src, radius=None, cut_type=No
         "src": src,
         "radius": radius if radius is not None else 8,
     }
+    if source_block_id:
+        el["sourceBlockId"] = source_block_id
     if cut_type:
         el["cutType"] = cut_type
     return el
@@ -311,7 +324,8 @@ def assemble(
         meta = cut_meta_by_block.get(b.get("id")) or {}
         src = meta.get("imageUrl")  # 없으면 None → 빈 슬롯 (생성 실패해도 크래시 안 함)
         img_w, img_h = _image_box(meta.get("width"), meta.get("height"))
-        els = [_image_el(block_i, 0, _IMG_X, _IMG_Y, img_w, img_h, src, 12, cut_type)]
+        els = [_image_el(block_i, 0, _IMG_X, _IMG_Y, img_w, img_h, src, 12, cut_type,
+                          source_block_id=b.get("id"))]
         el_j = 1
 
         if copywriting:
@@ -320,14 +334,16 @@ def assemble(
                 headline = _text_for_role(texts, "headline")
                 if headline:
                     els.append(_text_el(block_i, el_j, 120, 110, 600, 80, headline,
-                                         {"size": 40, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"}))
+                                         {"size": 40, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"},
+                                         source_block_id=b.get("id"), copy_role="headline"))
                     el_j += 1
             else:
                 body = _text_for_role(texts, "body")
                 if body:
                     # 이미지 하단 근처(구 레이아웃의 시각 관계) — 이미지 높이에서 유도한다.
                     els.append(_text_el(block_i, el_j, 120, _IMG_Y + img_h - _BODY_INSET_B, 760, 40, body,
-                                         {"size": 18, "color": "#4a4a45"}))
+                                         {"size": 18, "color": "#4a4a45"},
+                                         source_block_id=b.get("id"), copy_role="body"))
                     el_j += 1
 
         editor_block = {
@@ -355,6 +371,7 @@ def assemble(
                 meta.get("imageUrl"),
                 12,
                 row_block.get("cutType") or None,
+                source_block_id=row_block.get("id"),
             ))
 
         if copywriting:
@@ -366,6 +383,7 @@ def assemble(
                     els.append(_text_el(
                         block_i, len(els), 60, 582, 880, 56, headline,
                         {"size": 40, "weight": 600, "font": "Cal Sans", "color": "#0e0d14"},
+                        source_block_id=hero.get("id"), copy_role="headline",
                     ))
                 subtitle_block = next((row_block for row_block in chunk
                                        if resolve_content_role(row_block) == "benefit"), None)
@@ -377,6 +395,8 @@ def assemble(
                     els.append(_text_el(
                         block_i, len(els), 60, 650, 880, 34, subtitle,
                         {"size": 18, "color": "#6b6b73"},
+                        source_block_id=subtitle_block.get("id") if subtitle_block else None,
+                        copy_role="body",
                     ))
 
         blocks.append({

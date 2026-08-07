@@ -2409,3 +2409,151 @@
   .sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within) + .sb-grid-unit .sb-frame-box { transform: none; }
 }
 .sb-frame-unit { grid-column: span 2; }
+
+/* =============================================================
+   에디터 대기 (editor_wait_dev_spec §3) — /create/generating
+   에디터 모양의 대기 화면: 리본 + 공정 원장 + 캔버스(스켈레톤→실채움) + 미니맵.
+   빈 자리 = 입력 페이지 HEIC 자리표시와 같은 언어(회색+로고, shimmer 는 생성 중에만).
+   ============================================================= */
+.ew { display: flex; flex-direction: column; min-height: calc(100dvh - var(--nav-h, 64px)); }
+.ew-ribbon { display: flex; align-items: center; gap: 12px; padding: 10px 18px; flex-wrap: wrap;
+  background: rgba(45,127,196,.08); border-bottom: 1px solid rgba(45,127,196,.2); }
+.ew-ribbon.done { background: rgba(59,125,94,.08); border-bottom-color: rgba(59,125,94,.22); }
+.ew-ribbon.fail { background: rgba(180,70,85,.07); border-bottom-color: rgba(180,70,85,.25); }
+.ew-ribbon-msg { font-size: 13px; font-weight: 600; letter-spacing: -.015em; }
+.ew-ribbon-msg b { font-variant-numeric: tabular-nums; }
+.ew-ribbon-track { flex: 0 1 220px; min-width: 90px; height: 3px; border-radius: 2px;
+  background: rgba(45,127,196,.18); overflow: hidden; }
+.ew-ribbon-track i { display: block; height: 100%; background: #2d7fc4; transition: width .6s ease; }
+.ew-ribbon.done .ew-ribbon-track i { background: #3b7d5e; }
+.ew-ribbon.fail .ew-ribbon-track i { background: #b44655; }
+.ew-ribbon-eta { font-size: 11.5px; color: var(--fg-2b, #6b7280); font-variant-numeric: tabular-nums; }
+.ew-ribbon-side { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ew-reassure { font-size: 12.5px; color: var(--fg-2b, #6b7280); letter-spacing: -.012em; }
+.ew-notify { border: 1px solid var(--ring); background: #fff; border-radius: 999px;
+  font: inherit; font-size: 12px; font-weight: 600; padding: 6px 12px; cursor: pointer; }
+.ew-notify:hover { box-shadow: var(--elev-card); }
+.ew-notify-on { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #3b7d5e; font-weight: 600; }
+
+.ew-body { flex: 1; display: grid; grid-template-columns: 260px 1fr 170px; min-height: 0; }
+.ew-left, .ew-right { padding: 16px 16px 28px; }
+.ew-left { border-right: 1px solid var(--ring); }
+.ew-right { border-left: 1px solid var(--ring); }
+.ew-panel-h { font-size: 13px; font-weight: 700; letter-spacing: -.02em; margin-bottom: 4px; }
+.ew-panel-sub { font-size: 11.5px; color: var(--fg-2b, #6b7280); line-height: 1.6; margin: 0 0 14px; }
+.ew-lrow { position: relative; display: grid; grid-template-columns: 20px 1fr auto; gap: 9px;
+  align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--ring); }
+.ew-lrow .n { font-size: 10px; color: var(--fg-3, #b4b4b4); font-variant-numeric: tabular-nums; }
+.ew-lrow .l { font-size: 12.5px; letter-spacing: -.015em; color: var(--fg-3, #b4b4b4); }
+.ew-lrow .t { font-size: 10.5px; color: var(--fg-3, #b4b4b4); font-variant-numeric: tabular-nums; }
+.ew-lrow.done .l { color: var(--fg-1, #0e0d14); }
+.ew-lrow.done .n, .ew-lrow.done .t { color: var(--fg-2b, #6b7280); }
+.ew-lrow.live { background: rgba(45,127,196,.08); margin: 0 -9px; padding-left: 9px; padding-right: 9px; border-radius: 4px; }
+.ew-lrow.live::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: #2d7fc4; }
+.ew-lrow.live .l { color: var(--fg-1, #0e0d14); font-weight: 600; }
+.ew-lrow.live .n, .ew-lrow.live .t { color: #2d7fc4; }
+.ew-hint { margin-top: 16px; padding: 11px 12px; background: var(--bg-2, #f5f5f5); border-radius: 9px;
+  font-size: 11.5px; line-height: 1.65; color: var(--fg-2b, #6b7280); letter-spacing: -.01em; }
+.ew-hint b { color: var(--fg-1, #0e0d14); }
+
+.ew-canvas { overflow-y: auto; background: #ededf1; padding: 24px 0 56px; }
+.ew-canvas-loading { display: flex; justify-content: center; padding-top: 80px; }
+.ew-page { width: min(400px, 92%); margin: 0 auto; }
+.ew-block { position: relative; margin-bottom: 6px; border-radius: 2px; overflow: hidden; }
+
+/* 빈 자리 = 입력 페이지 자리표시 언어(회색 #F3F5F6 + 흐린 로고). shimmer 는 생성 중에만. */
+.ew-imgslot { position: absolute; overflow: hidden; background: #f3f5f6; }
+.ew-imgslot img { width: 100%; height: 100%; object-fit: cover; display: block;
+  animation: ew-fadein .5s ease; }
+@keyframes ew-fadein { from { opacity: 0; transform: scale(1.04); } }
+.ew-imgslot:not(.on) { cursor: not-allowed; }
+.ew-logo { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 34%; max-width: 52px; aspect-ratio: 1; background: #707985; opacity: .22;
+  -webkit-mask: url(/assets/brand/logo.svg) center/contain no-repeat;
+  mask: url(/assets/brand/logo.svg) center/contain no-repeat; }
+.ew-imgslot.live { box-shadow: 0 0 0 1.5px #2d7fc4 inset; }
+.ew-shim { position: absolute; top: -20%; bottom: -20%; left: -65%; width: 42%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.62), transparent);
+  transform: translateX(-140%) rotate(8deg); animation: upload-placeholder-shimmer 1.4s ease-in-out infinite; }
+.ew-livetag { position: absolute; left: 5px; top: 5px; font-size: 8.5px; font-weight: 700;
+  letter-spacing: .04em; padding: 2px 6px; border-radius: 3px; background: #2d7fc4; color: #fff; }
+.ew-imgslot.failed { background: #f0e5e7; }
+.ew-failnote { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 3px; text-align: center; font-size: 10.5px; font-weight: 600;
+  color: #8e4a55; padding: 8px; line-height: 1.5; }
+.ew-failnote small { font-weight: 400; font-size: 9.5px; opacity: .8; }
+@keyframes ew-lockshake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+.ew-shake { animation: ew-lockshake .26s ease-in-out; }
+
+.ew-text { position: absolute; overflow: hidden; line-height: 1.35; letter-spacing: -.02em; }
+.ew-text.editable { cursor: text; border-radius: 3px; outline: none; }
+.ew-text.editable:hover { box-shadow: 0 0 0 1.5px rgba(14,13,20,.35); }
+.ew-text.editable:focus { box-shadow: 0 0 0 2px #2d7fc4; background: rgba(255,255,255,.75); }
+
+.ew-mini-h { font-size: 11px; color: var(--fg-2b, #6b7280); margin-bottom: 9px; }
+.ew-mini { display: flex; flex-direction: column; gap: 3px; }
+.ew-mini-row { display: flex; gap: 3px; }
+.ew-mini-row i { flex: 1; border-radius: 1px; background: #e4e4ea; transition: background .4s; }
+.ew-mini-row i.txt { background: #f0f0f3; }
+.ew-mini-row i.on { background: #9ba8c4; }
+.ew-mini-row i.live { background: #2d7fc4; }
+.ew-mini-row i.failed { background: #d9aeb5; }
+.ew-count { margin-top: 12px; display: flex; justify-content: space-between; font-size: 11px;
+  color: var(--fg-2b, #6b7280); font-variant-numeric: tabular-nums; }
+.ew-count b { color: var(--fg-1, #0e0d14); font-weight: 600; }
+
+@media (max-width: 860px) {
+  .ew-body { grid-template-columns: 1fr; }
+  .ew-left { border-right: 0; border-bottom: 1px solid var(--ring); }
+  .ew-right { display: none; }
+  .ew-ribbon-side { margin-left: 0; width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ew-shim, .ew-imgslot img { animation: none !important; }
+}
+
+/* ── 에디터 통합 대기(editor_wait_dev_spec v2) — 생성 리본·대기 타일·오버레이 ── */
+.ed-genbar { display: flex; align-items: center; gap: 11px; padding: 8px 16px; flex-wrap: wrap;
+  background: rgba(45,127,196,.08); border-bottom: 1px solid rgba(45,127,196,.2); }
+.ed-genbar.error { background: rgba(180,70,85,.07); border-bottom-color: rgba(180,70,85,.25); }
+.ed-genbar-msg { font-size: 12.5px; font-weight: 600; letter-spacing: -.015em; }
+.ed-genbar-msg b { font-variant-numeric: tabular-nums; }
+.ed-genbar-track { flex: 0 1 200px; min-width: 80px; height: 3px; border-radius: 2px;
+  background: rgba(45,127,196,.18); overflow: hidden; }
+.ed-genbar-track i { display: block; height: 100%; background: #2d7fc4; transition: width .6s ease; }
+.ed-genbar-side { margin-left: auto; display: flex; align-items: center; gap: 9px; }
+.ed-genbar-hint { font-size: 11.5px; color: var(--fg-2b, #6b7280); letter-spacing: -.012em; }
+.ed-genbar-notify { border: 1px solid var(--ring); background: #fff; border-radius: 999px;
+  font: inherit; font-size: 11.5px; font-weight: 600; padding: 5px 11px; cursor: pointer; }
+.ed-genbar-on { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: #3b7d5e; font-weight: 600; }
+
+/* 대기 타일 — 캔버스 좌표계(1000폭) 안이라 글자 크기는 캔버스 기준 px */
+.ed-genwait { background: #f3f5f6 !important; overflow: hidden; }
+.ed-genwait-logo { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 22%; max-width: 120px; aspect-ratio: 1; background: #707985; opacity: .2;
+  -webkit-mask: url(/assets/brand/logo.svg) center/contain no-repeat;
+  mask: url(/assets/brand/logo.svg) center/contain no-repeat; }
+.ed-genwait-ex { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  opacity: 0; filter: blur(4px) saturate(.5); transition: opacity .25s; }
+.ed-genwait:hover .ed-genwait-ex { opacity: .5; }
+.ed-genwait.live { box-shadow: 0 0 0 3px #2d7fc4 inset; }
+.ed-genwait-shim { position: absolute; top: -20%; bottom: -20%; left: -65%; width: 42%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent);
+  transform: translateX(-140%) rotate(8deg); animation: upload-placeholder-shimmer 1.5s ease-in-out infinite; }
+.ed-genwait-tag { position: absolute; left: 14px; top: 14px; font-size: 22px; font-weight: 700;
+  letter-spacing: .02em; padding: 4px 14px; border-radius: 6px; background: #2d7fc4; color: #fff; }
+.ed-genwait-hint { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 18px;
+  font-size: 22px; color: #fff; letter-spacing: -.01em; text-align: center;
+  background: linear-gradient(180deg, transparent, rgba(14,13,20,.55));
+  opacity: 0; transform: translateY(6px); transition: opacity .22s, transform .22s; }
+.ed-genwait:hover .ed-genwait-hint { opacity: 1; transform: none; }
+.ed-genwait.failed { background: #f0e5e7 !important; }
+.ed-genwait-fail { position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px; text-align: center;
+  font-size: 26px; font-weight: 600; color: #8e4a55; line-height: 1.5; }
+.ed-genwait-fail small { font-weight: 400; font-size: 20px; opacity: .8; }
+
+.ed-genoverlay { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center;
+  justify-content: center; background: rgba(14,13,20,.4); backdrop-filter: blur(3px); padding: 24px; }
+.ed-genoverlay .surface { max-width: 420px; width: 100%; }
+@media (prefers-reduced-motion: reduce) { .ed-genwait-shim { animation: none !important; } }

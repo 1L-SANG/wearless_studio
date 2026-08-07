@@ -49,6 +49,13 @@ class FakeR2:
     def delete(self, key):
         return None
 
+    def public_url(self, key):
+        # 실제 R2.public_url 미러 — cut_done 이벤트의 previewUrl 근거(editor_wait_dev_spec §2-1)
+        return f"https://r2.test/{key}"
+
+    def preview_url(self, key, expires=3600):
+        return f"https://r2.test/{key}"
+
 
 class FakeGemini:
     pass
@@ -84,6 +91,7 @@ def keypair():
 def make_settings(**overrides) -> Settings:
     base = dict(
         app_env="prod",
+        detail_cut_stagger_ms=0,  # 테스트는 제출 간격 없이(실시간 sleep 방지) — 운영 기본은 3000
         supabase_url="https://example.supabase.co",
         jwks_url="https://example.supabase.co/auth/v1/.well-known/jwks.json",
         jwt_audience=AUDIENCE,

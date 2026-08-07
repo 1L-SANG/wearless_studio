@@ -912,7 +912,9 @@ async def claim_next_job(conn: AsyncConnection, kinds: tuple[str, ...], worker_i
 
 async def set_job_progress(conn: AsyncConnection, job_id: str, progress: int):
     async with conn.cursor() as cur:
-        await cur.execute("update jobs set progress = %s where id = %s", (progress, job_id))
+        # 단조 증가 — 병렬 컷 emit 의 도착 순서가 섞여도 폴링 progress 가 후퇴하지 않는다(codex F1).
+        await cur.execute(
+            "update jobs set progress = greatest(progress, %s) where id = %s", (progress, job_id))
 
 
 async def recover_stale_leases(conn: AsyncConnection, lease_timeout_seconds: int) -> list[dict]:
@@ -979,6 +981,11 @@ async def list_unsettled_errored_jobs(conn: AsyncConnection) -> list[dict]:
 
 async def append_job_event(conn: AsyncConnection, job_id: str, event_type: str, payload: dict):
     async with conn.cursor() as cur:
+        # 잡 단위 advisory xact lock — 병렬 워커 emit 들의 **커밋 순서를 id 순서와 일치**시킨다.
+        # identity id는 insert 시점에 배정되므로, 락 없이는 큰 id 가 먼저 커밋된 사이 폴러가
+        # after 커서를 전진시켜 미커밋 작은 id 이벤트를 영구히 건너뛴다(codex 리뷰 F1 —
+        # cut_done 누락으로 대기 화면 슬롯이 안 채워짐). xact lock 이라 커밋 시 자동 해제.
+        await cur.execute("select pg_advisory_xact_lock(hashtext(%s))", (job_id,))
         await cur.execute(
             "insert into job_events (job_id, event_type, payload) values (%s, %s, %s)",
             (job_id, event_type, Json(payload)),

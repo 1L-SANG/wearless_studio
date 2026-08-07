@@ -32,6 +32,8 @@ const clone = (x) => JSON.parse(JSON.stringify(x));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const touch = () => { DB.project.updatedAt = new Date().toISOString(); };
 const spend = (n) => { DB.account.credits = Math.max(0, DB.account.credits - n); return DB.account.credits; };
+// 에디터 대기 이벤트 시뮬 상태 (startDetailPage) — 페이지 새로고침 = 모듈 재실행 = 초기화(재데모 가능)
+let ewSim = null;
 const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
 const customMatchUploads = new Map();
 const cutsEnvelope = () => ({ cuts: clone(DB.mannequins) });
@@ -379,6 +381,70 @@ export const api = {
      크레딧: storyboardPerCut × AI 컷 수 — 내 이미지 블록은 생성 작업이 없어 제외.
      진행 중 재호출은 기존 job 에 합류한다 — 1회만 생성·차감.
      이미 완료(status='done')면 재생성·재차감 없이 기존 결과를 반환한다. */
+  /* 에디터 대기(editor_wait_dev_spec §3) — mock 이벤트 시뮬. 서버와 같은 이벤트 계약
+     (copy_ready → cut_start/cut_done 롤링 → progress → done)을 흘려 대기 화면을 실데모한다.
+     핵심 트릭: 최종 에디터 블록을 **먼저** 조립해 거기서 이미지 src·카피 텍스트를 뽑아
+     이벤트로 내보낸다 → 대기 중 채워지는 내용과 완성본이 정확히 일치한다. */
+  async startDetailPage(_projectId) {
+    if (DB.project.status === 'done') {
+      return { data: clone(DB.editorBlocks), credits: DB.account.credits };  // 완료 재호출(멱등)
+    }
+    if (ewSim && ewSim.status === 'running') return { jobId: ewSim.jobId };  // 중복 시작 합류
+    DB.project.status = 'generating'; touch();
+    ewSim = { jobId: uid('job'), events: [], nextId: 1, status: 'running', progress: 0, result: null };
+    const push = (type, payload) => {
+      ewSim.events.push({ id: ewSim.nextId++, type, payload });
+      if (type === 'progress') ewSim.progress = payload.progress;
+    };
+    (async () => {
+      const blocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting);
+      const imgs = []; const copies = new Map();
+      for (const b of blocks) {
+        for (const el of (b.elements || [])) {
+          if (el.type === 'image' && el.sourceBlockId && el.src) imgs.push(el);
+          if (el.type === 'text' && el.sourceBlockId && el.copyRole) {
+            const list = copies.get(el.sourceBlockId) || [];
+            list.push({ role: el.copyRole, text: el.text });
+            copies.set(el.sourceBlockId, list);
+          }
+        }
+      }
+      push('progress', { progress: 15, phase: 'inputs_loaded' });
+      await wait(2000);   // 빈 뼈대(회색+로고 슬롯)를 충분히 보여준다 — "여기가 채워질 자리"
+
+      if (DB.project.copywriting && copies.size) {
+        push('progress', { progress: 18, phase: 'copy' });
+        for (const [bid, texts] of copies) { await wait(600); push('step', { blockId: bid, status: 'copy_ready', texts }); }
+      }
+      const total = Math.max(1, imgs.length);
+      let done = 0; let next = 0;
+      // 3개 창구 롤링 — 순서 무작위 도착의 실감을 내되 데모 총 소요는 ~10초대
+      await Promise.all(Array.from({ length: Math.min(3, total) }, () => (async () => {
+        while (next < imgs.length) {
+          const el = imgs[next++];
+          push('step', { blockId: el.sourceBlockId, status: 'cut_start' });
+          await wait(2400 + Math.random() * 2200);
+          push('step', { blockId: el.sourceBlockId, status: 'cut_done', previewUrl: el.src, width: 880, height: 1320 });
+          done += 1;
+          push('progress', { progress: 20 + Math.round(60 * done / total), phase: 'cut', done, total });
+        }
+      })()));
+      push('progress', { progress: 85, phase: 'assemble' });
+      await wait(700);
+      DB.editorBlocks = blocks; DB.project.status = 'done'; touch();
+      const aiCuts = DB.storyboard.filter((b) => b.source !== 'mine').length;
+      ewSim.result = { data: clone(blocks), credits: spend(CREDIT_COSTS.storyboardPerCut * aiCuts) };
+      ewSim.progress = 100; ewSim.status = 'done';
+    })();
+    return { jobId: ewSim.jobId };
+  },
+  async getJob(jobId) {
+    return { id: jobId, status: ewSim?.status || 'done', progress: ewSim?.progress ?? 100,
+      result: ewSim?.result || null, errorMessage: null };
+  },
+  async getJobEvents(_jobId, after = 0) {
+    return { events: (ewSim?.events || []).filter((e) => e.id > after) };
+  },
   async generateDetailPage(_projectId, { onProgress, onStep } = {}) {
     if (DB.project.status === 'done') {
       await wait(160);

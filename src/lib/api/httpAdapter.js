@@ -402,6 +402,23 @@ export const httpAdapter = {
     // jobId 를 함께 반환 — 완료 후 정산 영수증(GET /jobs/{jobId}/settlement, payment_id=job:{jobId})을 조회한다.
     return { data: result.data, credits: result.credits, jobId: res.jobId };
   },
+  /* ---- 에디터 대기 배관 (editor_wait_dev_spec §3) ----
+     generateDetailPage(위)는 시작+완주를 한 호출로 묶는다. 대기 화면은 진행 이벤트를
+     같이 소비해야 하므로 시작만 하는 start + 잡/이벤트 폴링을 분리한다. 폴링 주기·수명은
+     store(startDetailPageGeneration)가 소유 — 화면을 떠나도 생성 추적이 살아있게. */
+  async startDetailPage(projectId) {
+    const res = await http(`/v1/projects/${projectId}/detail-page:generate`, { method: 'POST' });
+    // 완료 재호출(202 아님) — 새 잡 없이 기존 결과 반환(무차감·멱등)
+    if (res.data) return { data: res.data, credits: res.credits };
+    return { jobId: res.jobId };
+  },
+  async getJob(jobId) {
+    return http(`/v1/jobs/${jobId}`);
+  },
+  // ?poll=1 — SSE 대신 1회 JSON(EventSource 는 Bearer 헤더 불가). after = 마지막 이벤트 id 커서.
+  async getJobEvents(jobId, after = 0) {
+    return http(`/v1/jobs/${jobId}/events?poll=1&after=${after}`);
+  },
   // 프로젝트 단건 조회 (계약 §6) — {id,status,title,composeMode,copywriting,
   // selectedMannequinId,adjustCount,createdAt,updatedAt}. projectId 필수:
   // store.loadProject 가 argless 로 부르던 과거 경로(mock 가짜 project 오염 → 404)는

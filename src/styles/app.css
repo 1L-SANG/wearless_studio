@@ -128,6 +128,10 @@ input, textarea, select { font-family: inherit; }
 .profile-item:hover { background: var(--bg-2); }
 
 /* ---- route-persistent generation status ---- */
+/* 리본이 여러 개면 위아래로 쌓이고, 3개를 넘으면 스택 안에서 스크롤(2026-08-03 오너 지시).
+   현재는 최대 2종(마네킹+상세페이지)이지만 다중 생성 대기열이 생겨도 규칙이 이미 준비됨. */
+.job-ribbon-stack { position: sticky; top: 60px; z-index: 35; max-height: 140px; overflow-y: auto; }
+.job-ribbon-stack .job-ribbon { position: static; top: auto; }
 .job-ribbon {
   position: sticky; top: 60px; z-index: 35;
   display: flex; align-items: center; justify-content: space-between; gap: 18px;
