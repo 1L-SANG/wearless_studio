@@ -3,7 +3,7 @@ from pathlib import Path
 
 MIGRATION = (
     Path(__file__).resolve().parents[2]
-    / "supabase/migrations/20260805000000_custom_matching_items.sql"
+    / "supabase/migrations/20260807000000_custom_matching_items.sql"
 )
 
 
