@@ -15,6 +15,10 @@ const mannequinSource = readFileSync(
   new URL('../../src/features/mannequin/Mannequin.jsx', import.meta.url),
   'utf8',
 );
+const productInputSource = readFileSync(
+  new URL('../../src/features/product-input/ProductInput.jsx', import.meta.url),
+  'utf8',
+);
 
 test('repeated mannequin warm-ups share one project request', async () => {
   const cache = createStoryboardEntryPrefetchCache({ ttlMs: 1_000 });
@@ -32,11 +36,10 @@ test('repeated mannequin warm-ups share one project request', async () => {
   assert.equal(idleWaits, 1);
   assert.equal(cache.peek('project-1'), data);
   assert.match(
-    mannequinSource,
-    /storyboardPrefetchProjectRef\.current === projectId[\s\S]*?prefetchStoryboardEntry\(projectId, sbSaveIdle\)/,
+    productInputSource,
+    /storyboardPrefetchProjectRef\.current === analysisProjectId[\s\S]*?prefetchStoryboardEntry\(analysisProjectId\)/,
   );
-  assert.match(mannequinSource, /const keepStep = \(key\) => \{ warmStoryboardEntry\(\)/);
-  assert.match(mannequinSource, /const changeStep = \(key\) => \{ warmStoryboardEntry\(\)/);
+  assert.doesNotMatch(mannequinSource, /warmStoryboardEntry/);
 });
 
 test('a ready cache hit initializes content and skips the loading-frame branch', async () => {

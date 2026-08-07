@@ -30,11 +30,6 @@ import {
   cutsExistedBeforeInitialGeneration,
 } from './initialGenerationSession.js';
 import {
-  invalidateStoryboardEntryPrefetch,
-  prefetchStoryboardEntry,
-} from '@/features/storyboard/storyboardEntryPrefetch.js';
-import { sbSaveIdle } from '@/features/storyboard/storyboardPersistence.js';
-import {
   generationProgressFor,
   requestMannequinGeneration,
   updateMannequinJob,
@@ -625,7 +620,6 @@ export function Mannequin() {
   const loadRunRef = useRef(0);
   const initialCutsExistedRef = useRef(false);
   const refreshForEditsHandledRef = useRef(false);
-  const storyboardPrefetchProjectRef = useRef(null);
 
   const clearWaitCopyTimers = () => {
     waitCopyTimersRef.current.forEach(clearTimeout);
@@ -804,14 +798,9 @@ export function Mannequin() {
   const changingStep = cur && stepState[cur.key]?.mode === 'changing' ? cur : null;
   const needsRegen = changedSteps.length > 0;
 
-  const warmStoryboardEntry = () => {
-    if (!projectId || storyboardPrefetchProjectRef.current === projectId) return;
-    storyboardPrefetchProjectRef.current = projectId;
-    void prefetchStoryboardEntry(projectId, sbSaveIdle);
-  };
   const setStep = (key, patch) => setStepState((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
-  const keepStep = (key) => { warmStoryboardEntry(); setStep(key, { mode: 'keep', pick: null, pickLb: null }); };
-  const changeStep = (key) => { warmStoryboardEntry(); setStep(key, { mode: 'changing' }); };
+  const keepStep = (key) => { setStep(key, { mode: 'keep', pick: null, pickLb: null }); };
+  const changeStep = (key) => { setStep(key, { mode: 'changing' }); };
   const cancelStep = (key) => setStep(key, { mode: 'pending' });
   const pickStep = (key, value, label) => setStep(key, { mode: 'picked', pick: value, pickLb: label });
   const editStep = (key) => setStep(key, { mode: 'changing', pick: null, pickLb: null });
@@ -1071,8 +1060,6 @@ export function Mannequin() {
 
   const regenerate = async (profileOverride = null) => {
     if (submittingRef.current) return;   // 연타 + 모든 자동 재시도 구간의 이중 재생성·이중 차감 방지
-    invalidateStoryboardEntryPrefetch(projectId);
-    storyboardPrefetchProjectRef.current = null;
     submittingRef.current = true;
     const runId = regenerateRunRef.current + 1;
     regenerateRunRef.current = runId;
@@ -1138,8 +1125,6 @@ export function Mannequin() {
     // 안내 후 이동을 허용 — 선택 마네킹컷 이미지가 1번 참조(진실)로 여전히 전달된다.
     const profile = buildFitProfile();
     if (JSON.stringify(profile) !== JSON.stringify(analysis?.fitProfile)) {
-      invalidateStoryboardEntryPrefetch(projectId);
-      storyboardPrefetchProjectRef.current = null;
       setBusy(true);
       try {
         await api.saveAnalysis(projectId, { fitProfile: profile });

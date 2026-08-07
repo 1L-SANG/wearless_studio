@@ -24,6 +24,7 @@ import {
   splitAnalysisEditPatch,
 } from './saveRouting.js';
 import { getPendingTileCount, PENDING_TILE_DELAY_MS } from './pendingTiles.js';
+import { prefetchStoryboardEntry } from '@/features/storyboard/storyboardEntryPrefetch.js';
 
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
@@ -273,6 +274,15 @@ export function ProductInput() {
   const analysisSaveErrorRef = useRef(null);
   const failedAnalysisPatchRef = useRef(null);
   const latestAnalysisPatchRef = useRef({});
+  const storyboardPrefetchProjectRef = useRef(null);
+
+  // 분석 결과를 사용자가 검토하는 동안 다음 화면(콘티)을 미리 데운다 — 서버 project 가 있을 때만.
+  useEffect(() => {
+    if (!analysisProjectId) return;
+    if (storyboardPrefetchProjectRef.current === analysisProjectId) return;
+    storyboardPrefetchProjectRef.current = analysisProjectId;
+    void prefetchStoryboardEntry(analysisProjectId);
+  }, [analysisProjectId]);
   // force: 경고 모달에서 '계속 진행'을 누른 경로. setState 는 비동기라 ack 상태를 기다릴 수
   // 없어 인자로 넘긴다. onNext 콜백이 이벤트 객체를 넘겨도 force 는 undefined 라 안전하다.
   const goToMannequin = async (opts) => {
