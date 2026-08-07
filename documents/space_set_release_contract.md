@@ -28,8 +28,6 @@
     "setType": "styling", // styling | horizon-rotation | horizon-sequence
     "gender": "women",
     "applicableClothingTypes": ["top"],
-    // 선택 필드. 생략하면 applicableClothingTypes와 같다.
-    "setApplicableClothingTypes": ["top"],
     "placeType": "cafe-shop-interior",
     "tone": "daily-snapshot",
     "compositionLabel": "풀 1 + 미디움 2",
@@ -144,11 +142,12 @@ fail-closed로 거부한다.
 - 정식 계약 이전에 만든 승인 자산은 실제 프롬프트가 남아 있지만 당시 모델
   이름이 기록되지 않은 경우 `model: "legacy-model-not-recorded"`로 사실대로
   표시한다. 추정 모델명을 적지 않으며, 신규 생성 자산에는 이 값을 쓸 수 없다.
-- Codex 내장 이미지 생성으로 새 자산을 만들었지만 실행 환경이 실제 모델명을
+- Codex 내장 imagegen으로 새 자산을 만들었지만 실행 환경이 실제 모델명을
   노출하지 않은 경우에는
   `model: "codex-built-in-imagegen-model-not-exposed"`로 사실대로 기록한다.
-  이는 생성 경로는 확인되지만 세부 모델명만 비공개인 경우이며, 생성 기록
-  자체가 없는 과거 자산의 `legacy-model-not-recorded`와 구분한다.
+  이는 **신규 생성 경로는 확인되지만 세부 모델명만 비공개인 경우**이며,
+  생성 당시 기록 자체가 없는 과거 자산의
+  `legacy-model-not-recorded`와 혼용하지 않는다.
 - `thumb`는 선택 입력이다. 있으면 위 공통 필드와
   `derivedFrom: "all"`을 갖고, 릴리스 도구의 고정 파라미터로 만든 바이트와
   정확히 같아야 한다. 없으면 릴리스 도구가 생성한다.
@@ -166,8 +165,8 @@ fail-closed로 거부한다.
   스테이징해 바꿔치기하지 않는다.
 
 `horizon-sequence`는 알아볼 만한 단일 장소를 공유하지 않는 스튜디오 연속
-예시일 수 있다. 이 유형만 `platePolicy: "not-required"`와
-`representativePlate: null`을 함께 쓸 수 있다. `styling`과
+예시이므로 `platePolicy: "not-required"`와
+`representativePlate: null`을 함께 써야 한다. `styling`과
 `horizon-rotation`은 대표 plate가 필수다.
 
 ## 3. QC
@@ -220,15 +219,9 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
 3. `styling` 세트 멤버는 모두 styling, 호리존 세트 멤버는 모두 horizon이다.
    착용 샷은 `full|medium`, 방향은 `front|side|back`만 허용한다. 공간 세트의
    멤버 레시피는 생성 시점을 명확히 고정해야 하므로 null 방향은 발행하지 않는다.
-4. `applicableClothingTypes`는 낱장 `all` 이미지의 적용 범위이며 비어
-   있지 않고 중복이 없다. 복수 적용은 ADR-0006에 따라
-   `[top, outer]` 또는 `[outer, top]`인 styling/horizon **풀샷 전용
-   세트**, 또는 성별이 지원하는 전 의류 범위를 정확히 선언한
-   `horizon-rotation`에만 허용한다.
-   `setApplicableClothingTypes`는 선택적인 세트 배치·포즈 범위이며,
-   생략하면 앞 필드와 같다. 두 값이 다를 수 있는 것은
-   `horizon-rotation`뿐이고 여성은 `[top,bottom,outer,dress]`, 남성은
-   `[top,bottom,outer]`의 정해진 순서와 전체 범위를 사용한다.
+4. `applicableClothingTypes`는 비어 있지 않고 중복이 없다. 복수 적용은
+   ADR-0006에 따라 `[top, outer]` 또는 `[outer, top]`인
+   styling/horizon **풀샷 전용 세트**에만 허용한다.
 5. 모든 해시·픽셀 크기·실제 이미지 형식·확장자가 manifest와 일치한다.
 6. 자산 key는 이 releaseId의 불변 R2 루트 밖을 가리킬 수 없다.
 7. 같은 releaseId의 스테이징 경로와 R2 prefix는 덮어쓰지 않는다. 수정은 새
@@ -241,21 +234,16 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
    `--upload --execute`가 모두 있어야 하며, 업로드가 성공한 뒤에만
    실행한다.
 9. 후속 릴리스는 **delta manifest**로 적용할 수 있다. 적용 시 프론트
-   카탈로그와 서버 레지스트리 모두 새 릴리스 세트를 먼저 두고, 새 릴리스에
-   없는 기존 세트를 기존 순서 그대로 보존한다. 두 파일의 setId 순서와
-   정의·릴리스 메타데이터가 서로 다르거나 두 파일 중 하나만 존재하면
-   변경 전에 fail-closed로 거부한다. 기존과 새 릴리스에 같은 setId가 있으면
-   프론트·서버 양쪽 정의가 바이트 수준으로 동일한 경우만 허용하며, 하나라도
-   바뀌면 새 setId를 요구한다. 보존 세트와 신규 세트 사이의 exampleId
-   충돌도 전체 적용을 거부한다.
-   단, 이미지·레시피·ID·URL·key·해시는 그대로 두고
-   `applicableClothingTypes`/`setApplicableClothingTypes`를 기존 범위의
-   상위집합으로 넓히는 **소비 라우팅 메타데이터 개정**은 예외다. 이 개정은
-   R2 발행물을 교체하지 않고 프론트·서버 카탈로그를 한 코드 변경에서 함께
-   갱신하며, 런타임 검증과 갤러리 필터가 같은 범위를 읽는 테스트를
-   동반한다. 범위 축소나 다른 필드 변경은 계속 새 setId가 필요하다.
-   기존 공간 세트 릴리스 CLI의 same-ID 병합은 이 코드 메타데이터 개정
-   경로가 아니므로 계속 바이트 동일 정의만 허용한다.
+   카탈로그와 서버 레지스트리 모두 새 릴리스 세트를 먼저 manifest 순서로
+   두고, 새 릴리스에 없는 기존 세트를 그 뒤에 기존 순서 그대로 보존한다.
+   따라서 두 파일의 병합된 setId 순서는 항상 같아야 한다. 기존 두 파일 중
+   하나만 없거나, 기존 프론트가 잘못된 형식이거나, 두 파일의 setId
+   순서·정의 또는 `schemaVersion|releaseId|releasedAt|baseUrl` 메타데이터가
+   서로 다르면 변경 전에 fail-closed로 거부한다.
+   기존과 새 릴리스에 같은 setId가 있으면 프론트·서버 양쪽 정의가 각각
+   바이트 수준으로 동일한 경우만 허용하며, 하나라도 바뀌면 새 setId를
+   요구한다. 보존 세트와 신규 세트 사이의 exampleId 충돌도 전체 적용을
+   거부한다.
 10. 프론트·서버 두 정식 파일은 한 적용 단위다. 첫 파일 교체 뒤 두 번째
     파일 교체가 실패하면 첫 파일을 이전 바이트로 되돌린다. 적용 전 기존
     서버 레지스트리 검증·병합도 모두 끝내므로 병합 오류는 정식 파일을
@@ -273,9 +261,8 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
   가지며, 대표 plate는 `{url}`, 각 멤버에는 정확한 `exampleId`와
   `allUrl|thumbUrl`이 들어간다.
 - `space_set_assets.json`: 서버 공간 세트 레지스트리. 최상위 형식은
-  `{schemaVersion, releaseId, releasedAt, baseUrl, placeTypes, sets: []}`다.
-  `placeTypes`는 §1.1 정본에서 생성한 런타임 허용값이며, 대표 plate와 멤버별
-  `all|pose`는 URL 문자열이 아니라
+  `{schemaVersion, releaseId, releasedAt, baseUrl, sets: []}`다. 대표 plate와
+  멤버별 `all|pose`는 URL 문자열이 아니라
   `{key, sha256, width, height, mime}`로 기록한다. 서버는 `baseUrl+key`로
   실제 URL을 해석한다. `sets`는 manifest 순서를 보존하는 배열이다.
 - `space_set_release_audit.json`: 릴리스 검증에 사용한 세트별 QC receipt와
@@ -287,16 +274,9 @@ QC 필드가 없거나 `false`인 자산은 “나중에 확인할 후보”이�
 - `assets/thumb/*.webp`: 결정적으로 파생된 썸네일.
 
 `--apply`는 실제 업로드와 같은 실행에서 성공한 뒤 새 릴리스와 검증된 기존
-세트를 동일 순서로 병합한 두 JSON을 각각
+세트를 동일 순서로 병합한 두 JSON만 각각
 `src/data/storyboardSpaceSets.json`,
-`server/app/data/space_set_assets.json`에 원자적으로 복사한다. 기존
-`genExamples.json`과 `example_assets.json`은 읽거나 쓰지 않는다.
-
-## 7. 운영 릴리스 이력
-
-### 2026-07-31 ZARA 호리존 시퀀스
-
-- 릴리스 ID: `space-sets-20260731-zara-v1`
-- 사용자 승인 D5~D9 5세트·25멤버만 발행했다. D10 세트와 Cut 1~4는 공간 세트 카탈로그에 포함하지 않았고, Cut 5의 낱장 발행은 개별 생성예시 계약에서 별도로 관리한다.
-- delta 적용으로 기존 60세트를 보존해 프론트·서버 정식 카탈로그를 **65세트·212멤버**로 함께 갱신했다.
-- 각 멤버의 `all`·`pose`와 결정적 `thumb`을 합쳐 R2 객체는 총 **75개**다. 업로드 후 원격 key와 파일 크기를 전수 대조해 누락·추가·불일치가 모두 0임을 확인했다.
+`server/app/data/space_set_assets.json`에 원자적으로 복사한다. 첫 파일
+교체 뒤 두 번째 파일 교체가 실패하면 두 파일 모두 이전 바이트로
+되돌린다. 기존 `genExamples.json`과 `example_assets.json`은 읽거나 쓰지
+않는다.

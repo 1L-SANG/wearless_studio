@@ -534,3 +534,126 @@ def test_cli_synthetic_fixture_end_to_end_staging_and_upload_dry_run(tmp_path, c
     assert "/all/" in output_text
     assert "/pose/" in output_text
     assert "/thumb/" in output_text
+
+
+# ── 적용(apply) 가드 ─────────────────────────────────────────────────────────
+# 2026-08-02 사고: 판정 문서만 보고 명단을 갈아끼웠는데 그 사이 R2 실물이 지워져
+# 화면에 깨진 썸네일 12칸이 남았다. 아래 테스트들은 "적용 전에 멈추는가"를 고정한다.
+
+
+def _valid_registry(base="https://images.example.test", release_id="rel-01"):
+    return {
+        "_meta": {
+            "schemaVersion": 2,
+            "releaseId": release_id,
+            "releasedAt": "2026-08-02T00:00:00Z",
+            "defaultBaseUrl": base,
+        },
+        "assets": {
+            "ex_a": {"all": f"{base}/all/ex_a.png", "thumb": f"{base}/thumb/ex_a.webp"},
+        },
+    }
+
+
+def _valid_catalog(base="https://images.example.test"):
+    return [{"id": "ex_a", "thumb": f"{base}/thumb/ex_a.webp"}]
+
+
+def test_apply_requires_upload_execute_in_the_same_run(capsys):
+    """사진을 올리지 않고 명단만 바꾸는 순서를 CLI 단에서 막는다."""
+    assert release.main(["m.json", "assets", "--apply"]) == 2
+    assert "--upload --execute" in capsys.readouterr().err
+    # dry-run 업로드만으로도 안 된다 — 실제로 올라간 뒤여야 한다.
+    assert release.main(["m.json", "assets", "--apply", "--upload"]) == 2
+    assert "--upload --execute" in capsys.readouterr().err
+
+
+def test_validate_rejects_catalog_registry_id_mismatch():
+    catalog = _valid_catalog() + [{"id": "ex_ghost", "thumb": "https://images.example.test/thumb/ex_ghost.webp"}]
+    with pytest.raises(RuntimeError, match="프론트·서버 목록이 다릅니다"):
+        release._validate_release_documents(catalog, _valid_registry(), label="테스트")
+
+
+def test_validate_rejects_thumb_url_mismatch_between_files():
+    registry = _valid_registry()
+    registry["assets"]["ex_a"]["thumb"] = "https://images.example.test/thumb/ex_other.webp"
+    with pytest.raises(RuntimeError, match="url_mismatch"):
+        release._validate_release_documents(_valid_catalog(), registry, label="테스트")
+
+
+def test_validate_rejects_thumb_outside_registry_base():
+    catalog = [{"id": "ex_a", "thumb": "https://other.example.test/thumb/ex_a.webp"}]
+    with pytest.raises(RuntimeError, match="base_mismatch"):
+        release._validate_release_documents(catalog, _valid_registry(), label="테스트")
+
+
+def test_validate_rejects_malformed_registry_metadata():
+    registry = _valid_registry()
+    del registry["_meta"]["releasedAt"]
+    with pytest.raises(RuntimeError, match="metadata_invalid"):
+        release._validate_release_documents(_valid_catalog(), registry, label="테스트")
+
+
+def test_validate_rejects_duplicate_catalog_ids():
+    catalog = _valid_catalog() * 2
+    with pytest.raises(RuntimeError, match="중복"):
+        release._validate_catalog_document(catalog, label="테스트")
+
+
+def test_apply_refuses_and_leaves_files_untouched_when_new_pair_disagrees(tmp_path, monkeypatch):
+    """적용 도중이 아니라 적용 전에 멈춰야 한다 — 반쯤 바뀐 상태가 가장 위험하다."""
+    catalog_path = tmp_path / "genExamples.json"
+    registry_path = tmp_path / "example_assets.json"
+    bad_catalog = _valid_catalog() + [{"id": "ex_missing", "thumb": "https://images.example.test/thumb/ex_missing.webp"}]
+    catalog_path.write_text(json.dumps(bad_catalog), encoding="utf-8")
+    registry_path.write_text(json.dumps(_valid_registry()), encoding="utf-8")
+
+    live_catalog = tmp_path / "live_genExamples.json"
+    live_registry = tmp_path / "live_example_assets.json"
+    live_catalog.write_text(json.dumps(_valid_catalog()), encoding="utf-8")
+    live_registry.write_text(json.dumps(_valid_registry()), encoding="utf-8")
+    monkeypatch.setattr(release, "DEFAULT_CATALOG_PATH", live_catalog)
+    monkeypatch.setattr(release, "DEFAULT_REGISTRY_PATH", live_registry)
+
+    before = (live_catalog.read_bytes(), live_registry.read_bytes())
+    result = release.ReleaseResult(
+        release_id="rel-01", output_dir=tmp_path,
+        registry_path=registry_path, catalog_path=catalog_path,
+        assets=(), warnings=(),
+    )
+    with pytest.raises(RuntimeError):
+        release.apply_release(result)
+    assert (live_catalog.read_bytes(), live_registry.read_bytes()) == before
+
+
+def test_apply_rolls_back_catalog_when_registry_copy_fails(tmp_path, monkeypatch):
+    catalog_path = tmp_path / "genExamples.json"
+    registry_path = tmp_path / "example_assets.json"
+    catalog_path.write_text(json.dumps(_valid_catalog()), encoding="utf-8")
+    registry_path.write_text(json.dumps(_valid_registry()), encoding="utf-8")
+
+    live_catalog = tmp_path / "live_genExamples.json"
+    live_registry = tmp_path / "live_example_assets.json"
+    old_catalog = [{"id": "ex_a", "thumb": "https://images.example.test/thumb/ex_a.webp"}]
+    live_catalog.write_text(json.dumps(old_catalog), encoding="utf-8")
+    live_registry.write_text(json.dumps(_valid_registry()), encoding="utf-8")
+    monkeypatch.setattr(release, "DEFAULT_CATALOG_PATH", live_catalog)
+    monkeypatch.setattr(release, "DEFAULT_REGISTRY_PATH", live_registry)
+
+    before = live_catalog.read_bytes()
+    real_copy = release._atomic_copy
+
+    def flaky(source, destination):
+        if destination == live_registry:
+            raise OSError("디스크 오류")
+        return real_copy(source, destination)
+
+    monkeypatch.setattr(release, "_atomic_copy", flaky)
+    result = release.ReleaseResult(
+        release_id="rel-01", output_dir=tmp_path,
+        registry_path=registry_path, catalog_path=catalog_path,
+        assets=(), warnings=(),
+    )
+    with pytest.raises(OSError):
+        release.apply_release(result)
+    assert live_catalog.read_bytes() == before   # 프론트가 되돌아왔다

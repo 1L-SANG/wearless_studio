@@ -96,6 +96,17 @@ def _read_json(path: Path) -> dict:
     return value
 
 
+def _read_json_any(path: Path) -> object:
+    """카탈로그·레지스트리 읽기용. `_read_json` 은 manifest 전용이라 최상위 dict 를
+    강제하는데, 프론트 카탈로그는 평면 리스트라 그 함수를 쓸 수 없다."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise RuntimeError(f"파일을 읽을 수 없습니다: {path} ({exc})") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"JSON 이 올바르지 않습니다: {path} ({exc})") from exc
+
+
 def _coverage_key(value: dict) -> tuple[str, str, str, str | None]:
     cut_type = value.get("cutType")
     return (
@@ -711,10 +722,141 @@ def upload_release(result: ReleaseResult, *, execute: bool, r2_client=None) -> N
         )
 
 
+_REGISTRY_META_FIELDS = {
+    "schemaVersion",
+    "releaseId",
+    "releasedAt",
+    "defaultBaseUrl",
+}
+
+
+def _validate_catalog_document(value: object, *, label: str) -> list[dict]:
+    """프론트 카탈로그(genExamples.json)가 계약 형식인지. 아니면 RuntimeError.
+
+    카탈로그는 `_meta` 없는 **평면 리스트**다(레지스트리와 형식이 다르다 — 이 비대칭은
+    프론트가 목록만 소비하기 때문이고, 릴리스 메타데이터의 단일 정본은 레지스트리다).
+    """
+    if not isinstance(value, list) or not value:
+        raise RuntimeError(f"{label} 형식이 프론트 계약과 다릅니다: document_invalid")
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise RuntimeError(f"{label} {index}번 항목이 객체가 아닙니다: item_invalid")
+        example_id = item.get("id")
+        if not isinstance(example_id, str) or not example_id:
+            raise RuntimeError(f"{label} {index}번 항목 id 가 없습니다: id_invalid")
+        if example_id in seen:
+            raise RuntimeError(f"{label} id 가 중복입니다: {example_id}")
+        seen.add(example_id)
+        thumb = item.get("thumb")
+        if not isinstance(thumb, str) or not thumb.startswith("http"):
+            raise RuntimeError(f"{label} {example_id} thumb 가 URL 이 아닙니다: thumb_invalid")
+    return list(value)
+
+
+def _validate_registry_document(value: object, *, label: str) -> dict:
+    """서버 레지스트리(example_assets.json)가 계약 형식인지. 아니면 RuntimeError."""
+    if not isinstance(value, dict) or set(value) != {"_meta", "assets"}:
+        raise RuntimeError(f"{label} 형식이 릴리스 계약과 다릅니다: document_invalid")
+    meta = value.get("_meta")
+    if (
+        not isinstance(meta, dict)
+        or set(meta) != _REGISTRY_META_FIELDS
+        or not isinstance(meta.get("schemaVersion"), int)
+        or isinstance(meta.get("schemaVersion"), bool)
+        or not isinstance(meta.get("releaseId"), str)
+        or not meta.get("releaseId")
+        or not _iso_datetime(meta.get("releasedAt"))
+        or not isinstance(meta.get("defaultBaseUrl"), str)
+        or not meta["defaultBaseUrl"].startswith("http")
+    ):
+        raise RuntimeError(f"{label} 메타데이터가 계약과 다릅니다: metadata_invalid")
+    assets = value.get("assets")
+    if not isinstance(assets, dict) or not assets:
+        raise RuntimeError(f"{label} assets 가 비었거나 객체가 아닙니다: assets_invalid")
+    for example_id, record in assets.items():
+        if not isinstance(record, dict):
+            raise RuntimeError(f"{label} {example_id} 자산이 객체가 아닙니다: asset_invalid")
+        for variant, url in record.items():
+            if variant in {"all", "thumb", "pose", "bg"} and (
+                not isinstance(url, str) or not url.startswith("http")
+            ):
+                raise RuntimeError(
+                    f"{label} {example_id}.{variant} 가 URL 이 아닙니다: url_invalid"
+                )
+    return value
+
+
+def _validate_catalog_registry_pair(
+    catalog: list[dict], registry: dict, *, label: str
+) -> None:
+    """두 파일이 같은 사실을 말하는지. 한쪽만 갱신되는 사고를 적용 전에 잡는다.
+
+    2026-08-02 사고: 판정 문서를 그대로 옮긴 명단이 창고 실제와 어긋나 깨진 썸네일이
+    남았다. 두 파일이 서로를 검증하면 최소한 '한쪽만 바뀐' 부류는 적용 전에 걸린다.
+    """
+    catalog_ids = {item["id"] for item in catalog}
+    registry_ids = set(registry["assets"])
+    if catalog_ids != registry_ids:
+        only_catalog = sorted(catalog_ids - registry_ids)[:5]
+        only_registry = sorted(registry_ids - catalog_ids)[:5]
+        raise RuntimeError(
+            f"{label} 프론트·서버 목록이 다릅니다: "
+            f"catalog_only={only_catalog} registry_only={only_registry}"
+        )
+    base = registry["_meta"]["defaultBaseUrl"].rstrip("/")
+    for item in catalog:
+        example_id = item["id"]
+        thumb = item["thumb"]
+        if not thumb.startswith(f"{base}/"):
+            raise RuntimeError(
+                f"{label} {example_id} thumb 가 레지스트리 baseUrl 과 다릅니다: base_mismatch"
+            )
+        registry_thumb = registry["assets"][example_id].get("thumb")
+        if registry_thumb != thumb:
+            raise RuntimeError(
+                f"{label} {example_id} thumb 가 프론트·서버에서 다릅니다: url_mismatch"
+            )
+
+
+def _validate_release_documents(
+    catalog_value: object, registry_value: object, *, label: str
+) -> None:
+    catalog = _validate_catalog_document(catalog_value, label=f"{label} 프론트 카탈로그")
+    registry = _validate_registry_document(registry_value, label=f"{label} 서버 레지스트리")
+    _validate_catalog_registry_pair(catalog, registry, label=label)
+
+
 def apply_release(result: ReleaseResult) -> None:
-    """검증·스테이징이 끝난 두 JSON만 저장소 정식 위치에 원자 교체한다."""
-    _atomic_copy(result.registry_path, DEFAULT_REGISTRY_PATH)
+    """검증·스테이징이 끝난 두 JSON만 저장소 정식 위치에 원자 교체한다.
+
+    **덮어쓰기 전에 신·구 문서를 모두 검증한다(fail-closed).** 어느 하나라도 계약과
+    다르면 아무것도 건드리지 않고 멈춘다 — 반쯤 적용된 상태가 가장 위험하기 때문이다.
+    서버 교체가 실패하면 프론트를 원래대로 되돌린다.
+    """
+    new_catalog = _read_json_any(result.catalog_path)
+    new_registry = _read_json_any(result.registry_path)
+    _validate_release_documents(new_catalog, new_registry, label="새 생성예시 릴리스")
+
+    if DEFAULT_CATALOG_PATH.exists() and DEFAULT_REGISTRY_PATH.exists():
+        _validate_release_documents(
+            _read_json_any(DEFAULT_CATALOG_PATH),
+            _read_json_any(DEFAULT_REGISTRY_PATH),
+            label="기존 생성예시 배포본",
+        )
+
+    previous_catalog = (
+        DEFAULT_CATALOG_PATH.read_bytes() if DEFAULT_CATALOG_PATH.exists() else None
+    )
     _atomic_copy(result.catalog_path, DEFAULT_CATALOG_PATH)
+    try:
+        _atomic_copy(result.registry_path, DEFAULT_REGISTRY_PATH)
+    except Exception:
+        if previous_catalog is None:
+            DEFAULT_CATALOG_PATH.unlink(missing_ok=True)
+        else:
+            DEFAULT_CATALOG_PATH.write_bytes(previous_catalog)
+        raise
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -737,6 +879,15 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.execute and not args.upload:
         print("ERROR: --execute는 --upload와 함께만 사용할 수 있습니다", file=sys.stderr)
+        return 2
+    # 사진을 창고에 올리지 않은 채 명단만 바꾸면, 명단에는 있는데 실물이 없는 항목이
+    # 생겨 화면에 깨진 썸네일로 남는다(2026-08-02 실제 사고). 공간 세트 도구와 같은
+    # 규율을 적용한다 — 적용은 같은 실행의 업로드가 성공한 뒤에만.
+    if args.apply and not (args.upload and args.execute):
+        print(
+            "ERROR: --apply는 같은 실행의 --upload --execute가 성공한 뒤에만 사용할 수 있습니다",
+            file=sys.stderr,
+        )
         return 2
     try:
         result = stage_release(
