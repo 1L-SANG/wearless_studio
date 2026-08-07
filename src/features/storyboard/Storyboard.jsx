@@ -1079,8 +1079,8 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const shouldRenderGenerationExamples = shouldRenderGenerationExampleGuide(block);
   const effectiveSectionRole = requestedRecipe?.sectionRole || block.sectionRole;
   const pendingInSpace = !!block.spaceGroupId && !requestedRecipe;
-  const productShotOptions = catalogs.productShotTypes
-    .filter((option) => hasDetailImage || option.value !== 'detail');
+  // 디테일 샷 상시 제공(2026-08-07 개편) — 디테일 사진이 없어도 서버가 원본 구조 확대로 생성
+  const productShotOptions = catalogs.productShotTypes;
   const hasSelectableExamples = (cutType, shot) => selectGenerationExamples(
     catalogs.genExamples,
     {

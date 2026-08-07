@@ -323,3 +323,25 @@ test('HTTP and mock entry paths pass project ids and share the default builder',
   assert.match(mockDbSource, /projectId: project\.id/);
   assert.match(mockDbSource, /return defaultStoryboard\(colors, mode, context\)/);
 });
+
+// ---------- 2026-08-07 슬롯 개편: 디테일 컷 상시 제공 ----------
+
+test('기본 콘티는 디테일 사진이 없어도 디테일 컷을 포함한다', () => {
+  const colors = [{ id: 'col1', isBase: true, images: [
+    { slot: 'Front', id: 'f1' }, { slot: 'Back', id: 'b1' },
+  ] }];
+  const basic = defaultStoryboard(colors, 'basic', { clothingType: 'top', projectId: 'p-detail' });
+  assert.ok(basic.some((b) => b.cutType === 'product' && b.shot === 'detail'));
+  const extended = defaultStoryboard(colors, 'extended', { clothingType: 'top', projectId: 'p-detail' });
+  assert.ok(extended.some((b) => b.cutType === 'product' && b.shot === 'detail'));
+});
+
+test('디테일 블록의 색상은 앞면 디테일 보유 색을 우선한다', () => {
+  const colors = [
+    { id: 'col1', isBase: true, images: [{ slot: 'Front', id: 'f1' }, { slot: 'Back', id: 'b1' }] },
+    { id: 'col2', images: [{ slot: 'Detail', id: 'd2' }] },
+  ];
+  const blocks = defaultStoryboard(colors, 'basic', { clothingType: 'top', projectId: 'p-detail2' });
+  const detail = blocks.find((b) => b.cutType === 'product' && b.shot === 'detail');
+  assert.equal(detail.colorId, 'col2');
+});
