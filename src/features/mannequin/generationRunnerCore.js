@@ -29,7 +29,23 @@ export function createMannequinGenerationRunner({
           progress: next,
           errorMessage: '',
         }),
-      }).finally(() => {
+      }).then(
+        // 성공/실패 모두 여기서 종결 상태를 알린다 — 콘티 화면(리본)은 진행 중 알림만 받고
+        // 그 이후를 스스로 확인할 방법이 없다(백그라운드 발사엔 .then() 이 없다). 러너가
+        // 잡의 생애주기를 끝까지 책임져야 두 호출자(콘티·마네킹) 모두 결과를 공유받는다.
+        (result) => {
+          onJobChange(projectId, { status: 'idle', progress: 100, errorMessage: '' });
+          return result;
+        },
+        (error) => {
+          onJobChange(projectId, {
+            status: 'error',
+            progress: readProgress(projectId),
+            errorMessage: error?.message || '마네킹컷 생성에 실패했어요.',
+          });
+          throw error;
+        },
+      ).finally(() => {
         if (inflightProjectId === projectId) {
           inflight = null;
           inflightProjectId = null;

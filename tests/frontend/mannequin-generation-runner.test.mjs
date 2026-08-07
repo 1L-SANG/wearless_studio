@@ -48,6 +48,8 @@ test('a settled run lets the next request fire again', async () => {
 });
 
 test('progress callbacks and the initial patch reach the job sink', async () => {
+  // emit() must fire while the run is still in flight (before the settle handler queues its
+  // own job patch) — otherwise the assertions below race the terminal-status microtask below.
   let emit;
   const { runner, jobs } = harness({
     generate: (pid, { onProgress }) => {
@@ -56,10 +58,22 @@ test('progress callbacks and the initial patch reach the job sink', async () => 
     },
   });
 
-  await runner.request('p1');
+  const pending = runner.request('p1');
   emit(42);
+  await pending;
   assert.deepEqual(jobs[0], { pid: 'p1', status: 'running', progress: 0, errorMessage: '' });
   assert.deepEqual(jobs[1], { pid: 'p1', status: 'running', progress: 42, errorMessage: '' });
+});
+
+// 백그라운드 발사(콘티)는 결과를 .then() 하지 않는다 — 러너가 종결 상태를 스스로 알리지
+// 않으면 리본은 성공/실패를 영영 모른다. 두 테스트가 그 종결 보고를 고정한다.
+test('a successful run reports a terminal idle status so a caller who never awaits still sees completion', async () => {
+  const { runner, jobs } = harness({
+    generate: async () => ({ data: [{ id: 'm1' }], credits: 3 }),
+  });
+
+  await runner.request('p1');
+  assert.deepEqual(jobs.at(-1), { pid: 'p1', status: 'idle', progress: 100, errorMessage: '' });
 });
 
 test('a rejected run clears the in-flight slot', async () => {
@@ -72,6 +86,17 @@ test('a rejected run clears the in-flight slot', async () => {
   assert.equal(runner.isRunning('p1'), false);
   await assert.rejects(runner.request('p1'), /generation failed/);
   assert.equal(calls, 2);
+});
+
+test('a rejected run reports a terminal error status carrying the failure message', async () => {
+  const { runner, jobs } = harness({
+    generate: async () => { throw new Error('generation failed'); },
+  });
+
+  await assert.rejects(runner.request('p1'), /generation failed/);
+  assert.deepEqual(jobs.at(-1), {
+    pid: 'p1', status: 'error', progress: 0, errorMessage: 'generation failed',
+  });
 });
 
 test('a missing project id never calls generate', async () => {
