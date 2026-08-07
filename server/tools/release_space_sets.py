@@ -47,10 +47,6 @@ _SHOTS = {"full", "medium"}
 _DIRECTIONS = {"front", "side", "back"}
 _SPACE_VARIATIONS = {"subtle", "fixed"}
 _PLATE_POLICIES = {"required", "not-required"}
-_SET_SCOPE_BY_GENDER = {
-    "women": ["top", "bottom", "outer", "dress"],
-    "men": ["top", "bottom", "outer"],
-}
 _QC_GATES = {
     "sameSpace",
     "sourceSimilarity",
@@ -95,7 +91,6 @@ _SET_FIELDS = {
     "setType",
     "gender",
     "applicableClothingTypes",
-    "setApplicableClothingTypes",
     "placeType",
     "tone",
     "compositionLabel",
@@ -124,6 +119,48 @@ _ASSET_FIELDS = {
     "promptLineage",
     "reviewedProvenanceException",
     "derivedFrom",
+}
+_FRONTEND_SET_FIELDS = {
+    "setId",
+    "id",
+    "name",
+    "setType",
+    "gender",
+    "applicableClothingTypes",
+    "placeType",
+    "place",
+    "tone",
+    "compositionLabel",
+    "spaceVariation",
+    "platePolicy",
+    "representativePlate",
+    "members",
+}
+_FRONTEND_MEMBER_FIELDS = {
+    "exampleId",
+    "order",
+    "cutType",
+    "shot",
+    "direction",
+    "allUrl",
+    "thumbUrl",
+}
+_PUBLISHED_SET_FIELDS = _SET_FIELDS - {"qc"}
+_PUBLISHED_MEMBER_FIELDS = {
+    "exampleId",
+    "order",
+    "cutType",
+    "shot",
+    "direction",
+    "all",
+    "pose",
+}
+_PUBLISHED_ASSET_FIELDS = {"key", "sha256", "width", "height", "mime"}
+_MIME_BY_SUFFIX = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
 }
 
 
@@ -157,6 +194,14 @@ class SpaceSetReleaseResult:
     audit_path: Path
     assets: tuple[AssetFile, ...]
     warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class UploadReceipt:
+    """실제 업로드가 끝났다는 증거. 이것 없이는 적용할 수 없다."""
+
+    release_id: str
+    uploaded_keys: frozenset[str]
 
 
 def _read_json(path: Path) -> dict:
@@ -620,51 +665,9 @@ def validate_manifest(
                 violations.append(
                     f"{prefix} 남성 원피스 적용 범위는 지원하지 않습니다"
                 )
-            if len(applicable) > 1:
-                shared_top_outer = set(applicable) == {"top", "outer"}
-                universal_rotation = (
-                    space_set.get("setType") == "horizon-rotation"
-                    and applicable
-                    == _SET_SCOPE_BY_GENDER.get(space_set.get("gender"))
-                )
-                if not shared_top_outer and not universal_rotation:
-                    violations.append(
-                        f"{prefix} 복수 적용 범위는 검토된 [top,outer] 또는 "
-                        "성별 전 의류 horizon-rotation만 허용합니다"
-                    )
-        set_applicable = space_set.get(
-            "setApplicableClothingTypes", applicable
-        )
-        if not isinstance(set_applicable, list) or not set_applicable:
-            violations.append(
-                f"{prefix}.setApplicableClothingTypes는 비어 있지 않은 배열이어야 합니다"
-            )
-            set_applicable = []
-        else:
-            if any(value not in _CLOTHING_TYPES for value in set_applicable):
+            if len(applicable) > 1 and set(applicable) != {"top", "outer"}:
                 violations.append(
-                    f"{prefix}.setApplicableClothingTypes에 허용되지 않은 값이 있습니다"
-                )
-            if len(set_applicable) != len(set(set_applicable)):
-                violations.append(
-                    f"{prefix}.setApplicableClothingTypes에 중복이 있습니다"
-                )
-            if space_set.get("gender") == "men" and "dress" in set_applicable:
-                violations.append(
-                    f"{prefix} 남성 원피스 세트 적용 범위는 지원하지 않습니다"
-                )
-            if (
-                "setApplicableClothingTypes" in space_set
-                and set_applicable != applicable
-                and (
-                    set_type != "horizon-rotation"
-                    or set_applicable
-                    != _SET_SCOPE_BY_GENDER.get(space_set.get("gender"))
-                )
-            ):
-                violations.append(
-                    f"{prefix} 별도 세트 적용 범위는 회전 세트의 성별 전 의류 "
-                    "목록에만 허용합니다"
+                    f"{prefix} 복수 적용 범위는 검토된 [top,outer]만 허용합니다"
                 )
 
         if space_set.get("spaceVariation") not in _SPACE_VARIATIONS:
@@ -674,6 +677,10 @@ def validate_manifest(
         plate_policy = space_set.get("platePolicy")
         if plate_policy not in _PLATE_POLICIES:
             violations.append(f"{prefix}.platePolicy는 required|not-required여야 합니다")
+        if set_type == "horizon-sequence" and plate_policy != "not-required":
+            violations.append(
+                f"{prefix} horizon-sequence는 platePolicy=not-required여야 합니다"
+            )
         representative_plate = space_set.get("representativePlate")
         if plate_policy == "not-required":
             if set_type != "horizon-sequence":
@@ -815,7 +822,7 @@ def validate_manifest(
 
         if len(applicable) > 1 and any(shot != "full" for shot in member_shots):
             violations.append(
-                f"{prefix} 공용 세트는 모든 멤버가 full이어야 합니다"
+                f"{prefix} [top,outer] 공용 세트는 모든 멤버가 full이어야 합니다"
             )
         if set_type == "horizon-rotation" and (
             len(members) != 3
@@ -1174,10 +1181,6 @@ def stage_release(
                 "spaceVariation": space_set["spaceVariation"],
                 "platePolicy": space_set["platePolicy"],
             }
-            if "setApplicableClothingTypes" in space_set:
-                common_set["setApplicableClothingTypes"] = (
-                    space_set["setApplicableClothingTypes"]
-                )
             frontend_sets.append({
                 **common_set,
                 "id": set_id,
@@ -1664,8 +1667,8 @@ def upload_release(
     *,
     execute: bool,
     r2_client=None,
-) -> None:
-    """업로드 목록을 출력하고 execute일 때만 기존 R2 client로 실제 쓴다."""
+) -> UploadReceipt | None:
+    """업로드 목록을 출력하고 실제 쓰기가 끝나면 적용용 영수증을 돌려준다."""
     ordered = sorted(result.assets, key=lambda asset: asset.r2_key)
     print(f"UPLOAD {'EXECUTE' if execute else 'DRY-RUN'}: {len(ordered)} objects")
     for asset in ordered:
@@ -1693,6 +1696,10 @@ def upload_release(
             asset.mime,
             cache="public, max-age=31536000, immutable",
         )
+    return UploadReceipt(
+        release_id=result.release_id,
+        uploaded_keys=frozenset(asset.r2_key for asset in ordered),
+    )
 
 
 def _applied_release_id(path: Path) -> str | None:
@@ -1721,6 +1728,211 @@ def _read_server_registry(path: Path) -> dict | None:
     return value
 
 
+def _frontend_url_matches(
+    value: object,
+    *,
+    base_url: str,
+    variant: str,
+    owner_id: str,
+) -> bool:
+    if not isinstance(value, str):
+        return False
+    parsed = urlsplit(value)
+    expected_base = urlsplit(base_url)
+    if (
+        parsed.scheme != expected_base.scheme
+        or parsed.netloc != expected_base.netloc
+        or parsed.query
+        or parsed.fragment
+    ):
+        return False
+    relative = parsed.path.lstrip("/")
+    prefix = f"{R2_PREFIX}/"
+    parts = relative[len(prefix) :].split("/") if relative.startswith(prefix) else []
+    return (
+        len(parts) == 3
+        and _valid_space_set_id(parts[0])
+        and parts[1] == variant
+        and Path(parts[2]).name == parts[2]
+        and Path(parts[2]).stem == owner_id
+        and Path(parts[2]).suffix.lower()
+        in ({".webp"} if variant == "thumb" else {".png", ".jpg", ".jpeg", ".webp"})
+    )
+
+
+def _validate_frontend_catalog(value: object, *, label: str) -> None:
+    violations: list[str] = []
+    if not isinstance(value, dict) or set(value) != {"_meta", "sets"}:
+        raise RuntimeError(f"{label} 형식이 프론트 계약과 다릅니다: document_invalid")
+    meta = value.get("_meta")
+    sets = value.get("sets")
+    if (
+        not isinstance(meta, dict)
+        or set(meta) != {
+            "schemaVersion",
+            "releaseId",
+            "releasedAt",
+            "defaultBaseUrl",
+        }
+        or not isinstance(meta.get("schemaVersion"), int)
+        or isinstance(meta.get("schemaVersion"), bool)
+        or meta["schemaVersion"] != 1
+        or not isinstance(sets, list)
+    ):
+        raise RuntimeError(f"{label} 형식이 프론트 계약과 다릅니다: metadata_invalid")
+    release_id = meta.get("releaseId")
+    if sets and not _valid_space_set_id(release_id):
+        violations.append("release_id_invalid")
+    if not _iso_datetime(meta.get("releasedAt")):
+        violations.append("released_at_invalid")
+    try:
+        base_url = _normalized_public_base(meta.get("defaultBaseUrl"))
+    except (AttributeError, TypeError, SpaceSetReleaseValidationError):
+        violations.append("base_url_invalid")
+        base_url = ""
+
+    set_ids: set[str] = set()
+    example_ids: set[str] = set()
+    for set_index, space_set in enumerate(sets):
+        if (
+            not isinstance(space_set, dict)
+            or set(space_set) != _FRONTEND_SET_FIELDS
+        ):
+            violations.append(f"sets[{set_index}]_fields_invalid")
+            continue
+        set_id = space_set.get("setId")
+        if (
+            not _valid_space_set_id(set_id)
+            or space_set.get("id") != set_id
+            or set_id in set_ids
+        ):
+            violations.append(f"sets[{set_index}]_set_id_invalid")
+            continue
+        set_ids.add(set_id)
+        for field in ("name", "tone", "compositionLabel"):
+            if (
+                not isinstance(space_set.get(field), str)
+                or not space_set[field].strip()
+            ):
+                violations.append(f"sets[{set_index}]_{field}_invalid")
+        set_type = space_set.get("setType")
+        gender = space_set.get("gender")
+        applicable = space_set.get("applicableClothingTypes")
+        if set_type not in _SET_TYPES:
+            violations.append(f"sets[{set_index}]_set_type_invalid")
+        if gender not in _GENDERS:
+            violations.append(f"sets[{set_index}]_gender_invalid")
+        if (
+            not isinstance(applicable, list)
+            or not applicable
+            or any(not isinstance(item, str) for item in applicable)
+            or len(applicable) != len(set(applicable))
+            or any(item not in _CLOTHING_TYPES for item in applicable)
+            or (gender == "men" and "dress" in applicable)
+            or (
+                len(applicable) > 1
+                and set(applicable) != {"top", "outer"}
+            )
+        ):
+            violations.append(f"sets[{set_index}]_applicability_invalid")
+            applicable = []
+        if space_set.get("spaceVariation") not in _SPACE_VARIATIONS:
+            violations.append(f"sets[{set_index}]_space_variation_invalid")
+        if (
+            space_set.get("placeType") not in _PLACE_TYPES
+            or space_set.get("place") != space_set.get("placeType")
+        ):
+            violations.append(f"sets[{set_index}]_place_type_invalid")
+        plate_policy = space_set.get("platePolicy")
+        plate = space_set.get("representativePlate")
+        if plate_policy == "required" and set_type != "horizon-sequence":
+            if (
+                not isinstance(plate, dict)
+                or set(plate) != {"url"}
+                or not _frontend_url_matches(
+                    plate.get("url"),
+                    base_url=base_url,
+                    variant="plate",
+                    owner_id=set_id,
+                )
+            ):
+                violations.append(f"sets[{set_index}]_plate_invalid")
+        elif (
+            plate_policy != "not-required"
+            or set_type != "horizon-sequence"
+            or plate is not None
+        ):
+            violations.append(f"sets[{set_index}]_plate_policy_invalid")
+        members = space_set.get("members")
+        if not isinstance(members, list) or not 2 <= len(members) <= 5:
+            violations.append(f"sets[{set_index}]_members_invalid")
+            continue
+        for expected_order, member in enumerate(members, start=1):
+            member_label = f"sets[{set_index}].members[{expected_order - 1}]"
+            if (
+                not isinstance(member, dict)
+                or set(member) != _FRONTEND_MEMBER_FIELDS
+            ):
+                violations.append(f"{member_label}_fields_invalid")
+                continue
+            example_id = member.get("exampleId")
+            if (
+                not _valid_space_set_id(example_id, example=True)
+                or example_id in example_ids
+            ):
+                violations.append(f"{member_label}_example_id_invalid")
+                continue
+            example_ids.add(example_id)
+            if (
+                not isinstance(member.get("order"), int)
+                or isinstance(member.get("order"), bool)
+                or member["order"] != expected_order
+            ):
+                violations.append(f"{member_label}_order_invalid")
+            expected_cut_type = "styling" if set_type == "styling" else "horizon"
+            if (
+                member.get("cutType") not in _CUT_TYPES
+                or member.get("cutType") != expected_cut_type
+                or member.get("shot") not in _SHOTS
+                or member.get("direction") not in _DIRECTIONS
+            ):
+                violations.append(f"{member_label}_recipe_invalid")
+            if not _frontend_url_matches(
+                member.get("allUrl"),
+                base_url=base_url,
+                variant="all",
+                owner_id=example_id,
+            ) or not _frontend_url_matches(
+                member.get("thumbUrl"),
+                base_url=base_url,
+                variant="thumb",
+                owner_id=example_id,
+            ):
+                violations.append(f"{member_label}_asset_url_invalid")
+        if set_type == "horizon-rotation" and [
+            (
+                member.get("shot"),
+                member.get("direction"),
+            )
+            for member in members
+            if isinstance(member, dict)
+        ] != [
+            ("full", "front"),
+            ("full", "side"),
+            ("full", "back"),
+        ]:
+            violations.append(f"sets[{set_index}]_rotation_recipe_invalid")
+        if len(applicable) > 1 and any(
+            not isinstance(member, dict) or member.get("shot") != "full"
+            for member in members
+        ):
+            violations.append(f"sets[{set_index}]_shared_recipe_invalid")
+    if violations:
+        raise RuntimeError(
+            f"{label} 형식이 프론트 계약과 다릅니다: " + ", ".join(violations)
+        )
+
+
 def _read_frontend_catalog(path: Path) -> dict | None:
     if not path.is_file():
         return None
@@ -1730,11 +1942,137 @@ def _read_frontend_catalog(path: Path) -> dict | None:
         raise RuntimeError(
             f"기존 공간 세트 프론트 카탈로그를 읽을 수 없습니다: {path}"
         ) from exc
-    if not isinstance(value, dict):
-        raise RuntimeError(
-            f"기존 공간 세트 프론트 카탈로그 형식이 올바르지 않습니다: {path}"
-        )
+    _validate_frontend_catalog(
+        value,
+        label=f"기존 공간 세트 프론트 카탈로그: {path}",
+    )
     return value
+
+
+def _published_asset_release_id(
+    asset: object,
+    *,
+    variant: str,
+    owner_id: str,
+    label: str,
+    violations: list[str],
+    seen_keys: set[str],
+) -> str | None:
+    if not isinstance(asset, dict) or set(asset) != _PUBLISHED_ASSET_FIELDS:
+        violations.append(f"{label}_fields_invalid")
+        return None
+    key = asset.get("key")
+    if not isinstance(key, str):
+        violations.append(f"{label}_key_invalid")
+        return None
+    relative = key[len(f"{R2_PREFIX}/") :] if key.startswith(
+        f"{R2_PREFIX}/"
+    ) else ""
+    parts = relative.split("/")
+    filename = parts[2] if len(parts) == 3 else ""
+    suffix = Path(filename).suffix.lower()
+    release_id = parts[0] if len(parts) == 3 else None
+    if (
+        len(parts) != 3
+        or not _valid_space_set_id(release_id)
+        or parts[1] != variant
+        or Path(filename).name != filename
+        or Path(filename).stem != owner_id
+        or suffix not in _MIME_BY_SUFFIX
+    ):
+        violations.append(f"{label}_key_invalid")
+    elif asset.get("mime") != _MIME_BY_SUFFIX[suffix]:
+        violations.append(f"{label}_mime_invalid")
+    if variant == "pose" and (
+        suffix != ".png" or asset.get("mime") != "image/png"
+    ):
+        violations.append(f"{label}_pose_format_invalid")
+    if key in seen_keys:
+        violations.append(f"{label}_key_duplicate")
+    seen_keys.add(key)
+    return release_id
+
+
+def _validate_published_registry(value: object, *, label: str) -> None:
+    violations: list[str] = []
+    # placeTypes 는 런타임 계약(app/agents/space_set_assets.py)이 요구하는 필드다.
+    # 이 가드가 delta 경로에 들어오기 전에 main 에서 추가돼, 정확 일치 검사에 빠져 있으면
+    # 정상 레지스트리를 metadata_invalid 로 오거부한다.
+    if not isinstance(value, dict) or set(value) != {
+        "schemaVersion",
+        "releaseId",
+        "releasedAt",
+        "baseUrl",
+        "placeTypes",
+        "sets",
+    }:
+        raise RuntimeError(f"{label} 형식이 릴리스 계약과 다릅니다: metadata_invalid")
+    if (
+        not isinstance(value.get("schemaVersion"), int)
+        or isinstance(value.get("schemaVersion"), bool)
+        or value["schemaVersion"] != 1
+        or not _valid_space_set_id(value.get("releaseId"))
+        or not _iso_datetime(value.get("releasedAt"))
+        or not isinstance(value.get("baseUrl"), str)
+        or not isinstance(value.get("sets"), list)
+    ):
+        violations.append("metadata_invalid")
+
+    seen_keys: set[str] = set()
+    for set_index, space_set in enumerate(value.get("sets") or []):
+        set_label = f"sets[{set_index}]"
+        if (
+            not isinstance(space_set, dict)
+            or set(space_set) != _PUBLISHED_SET_FIELDS
+        ):
+            violations.append(f"{set_label}_fields_invalid")
+            continue
+        set_id = space_set.get("setId")
+        release_ids: set[str] = set()
+        plate = space_set.get("representativePlate")
+        if plate is not None:
+            release_id = _published_asset_release_id(
+                plate,
+                variant="plate",
+                owner_id=set_id,
+                label=f"{set_label}.representativePlate",
+                violations=violations,
+                seen_keys=seen_keys,
+            )
+            if release_id is not None:
+                release_ids.add(release_id)
+        for member_index, member in enumerate(space_set.get("members") or []):
+            member_label = f"{set_label}.members[{member_index}]"
+            if (
+                not isinstance(member, dict)
+                or set(member) != _PUBLISHED_MEMBER_FIELDS
+            ):
+                violations.append(f"{member_label}_fields_invalid")
+                continue
+            if (
+                not isinstance(member.get("order"), int)
+                or isinstance(member.get("order"), bool)
+                or member["order"] != member_index + 1
+            ):
+                violations.append(f"{member_label}_order_invalid")
+            example_id = member.get("exampleId")
+            for variant in ("all", "pose"):
+                release_id = _published_asset_release_id(
+                    member.get(variant),
+                    variant=variant,
+                    owner_id=example_id,
+                    label=f"{member_label}.{variant}",
+                    violations=violations,
+                    seen_keys=seen_keys,
+                )
+                if release_id is not None:
+                    release_ids.add(release_id)
+        if len(release_ids) != 1:
+            violations.append(f"{set_label}_release_root_invalid")
+    if violations:
+        raise RuntimeError(
+            f"{label} 형식이 릴리스 계약과 다릅니다: " + ", ".join(violations)
+        )
 
 
 def _validate_runtime_registry(value: object, *, label: str) -> None:
@@ -1746,34 +2084,34 @@ def _validate_runtime_registry(value: object, *, label: str) -> None:
         validate_space_set_registry_document(value)
     except ValueError as exc:
         raise RuntimeError(f"{label} 형식이 런타임 계약과 다릅니다: {exc}") from exc
+    _validate_published_registry(value, label=label)
 
 
-def _validate_catalog_pair(frontend: object, registry: object, *, label: str) -> None:
-    if not isinstance(frontend, dict) or set(frontend) != {"_meta", "sets"}:
-        raise RuntimeError(f"{label} 프론트 카탈로그 형식이 올바르지 않습니다")
-    meta = frontend.get("_meta")
-    frontend_sets = frontend.get("sets")
-    if (
-        not isinstance(meta, dict)
-        or meta.get("schemaVersion") != 1
-        or not isinstance(frontend_sets, list)
-    ):
-        raise RuntimeError(f"{label} 프론트 카탈로그 메타데이터가 올바르지 않습니다")
-
+def _validate_catalog_pair(frontend: dict, registry: dict, *, label: str) -> None:
+    _validate_frontend_catalog(frontend, label=f"{label} 프론트 카탈로그")
     _validate_runtime_registry(registry, label=f"{label} 서버 레지스트리")
-    assert isinstance(registry, dict)
+    frontend_meta = frontend["_meta"]
     if (
-        meta.get("releaseId") != registry.get("releaseId")
-        or meta.get("releasedAt") != registry.get("releasedAt")
-        or meta.get("defaultBaseUrl") != registry.get("baseUrl")
+        frontend_meta["schemaVersion"] != registry["schemaVersion"]
+        or frontend_meta["releaseId"] != registry["releaseId"]
+        or frontend_meta["releasedAt"] != registry["releasedAt"]
     ):
         raise RuntimeError(f"{label} 프론트·서버 릴리스 메타데이터가 다릅니다")
+    frontend_base = frontend["_meta"]["defaultBaseUrl"]
+    server_base = registry.get("baseUrl")
+    if (
+        not isinstance(server_base, str)
+        or frontend_base != server_base
+    ):
+        raise RuntimeError(f"{label} 프론트·서버 baseUrl이 다릅니다")
+    frontend_sets = frontend["sets"]
+    server_sets = registry["sets"]
+    frontend_ids = [item["setId"] for item in frontend_sets]
+    server_ids = [item["setId"] for item in server_sets]
+    if frontend_ids != server_ids:
+        raise RuntimeError(f"{label} 프론트·서버 setId 순서가 다릅니다")
 
-    server_sets = registry.get("sets")
-    if not isinstance(server_sets, list) or len(frontend_sets) != len(server_sets):
-        raise RuntimeError(f"{label} 프론트·서버 세트 수가 다릅니다")
-
-    common_set_fields = (
+    common_fields = (
         "setId",
         "name",
         "setType",
@@ -1785,72 +2123,52 @@ def _validate_catalog_pair(frontend: object, registry: object, *, label: str) ->
         "spaceVariation",
         "platePolicy",
     )
-    common_member_fields = ("exampleId", "order", "cutType", "shot", "direction")
-    base_url = registry.get("baseUrl")
+    recipe_fields = ("exampleId", "order", "cutType", "shot", "direction")
     for frontend_set, server_set in zip(frontend_sets, server_sets):
-        if not isinstance(frontend_set, dict) or not isinstance(server_set, dict):
-            raise RuntimeError(f"{label} 세트 형식이 올바르지 않습니다")
-        set_id = server_set.get("setId")
-        if frontend_set.get("id") != set_id or frontend_set.get("place") != server_set.get(
-            "placeType"
+        set_id = server_set["setId"]
+        if any(
+            frontend_set.get(field) != server_set.get(field)
+            for field in common_fields
         ):
-            raise RuntimeError(f"{label} 프론트 세트 식별자가 다릅니다: {set_id}")
-        if any(frontend_set.get(field) != server_set.get(field) for field in common_set_fields):
-            raise RuntimeError(f"{label} 프론트·서버 세트 정의가 다릅니다: {set_id}")
-        frontend_scope = frontend_set.get(
-            "setApplicableClothingTypes", frontend_set.get("applicableClothingTypes")
-        )
-        server_scope = server_set.get(
-            "setApplicableClothingTypes", server_set.get("applicableClothingTypes")
-        )
-        if frontend_scope != server_scope:
-            raise RuntimeError(f"{label} 프론트·서버 세트 적용 범위가 다릅니다: {set_id}")
-
-        server_plate = server_set.get("representativePlate")
-        frontend_plate = frontend_set.get("representativePlate")
+            raise RuntimeError(f"{label} 세트 정의가 프론트·서버에서 다릅니다: {set_id}")
+        server_plate = server_set["representativePlate"]
+        frontend_plate = frontend_set["representativePlate"]
         expected_plate_url = (
-            _public_url(base_url, server_plate["key"])
-            if isinstance(server_plate, dict)
+            _public_url(server_base, server_plate["key"])
+            if server_plate is not None
             else None
         )
-        actual_plate_url = (
-            frontend_plate.get("url") if isinstance(frontend_plate, dict) else None
-        )
-        if actual_plate_url != expected_plate_url:
-            raise RuntimeError(f"{label} 프론트·서버 대표 배경이 다릅니다: {set_id}")
-
-        frontend_members = frontend_set.get("members")
-        server_members = server_set.get("members")
         if (
-            not isinstance(frontend_members, list)
-            or not isinstance(server_members, list)
-            or len(frontend_members) != len(server_members)
-        ):
-            raise RuntimeError(f"{label} 프론트·서버 멤버 수가 다릅니다: {set_id}")
+            frontend_plate.get("url")
+            if isinstance(frontend_plate, dict)
+            else None
+        ) != expected_plate_url:
+            raise RuntimeError(f"{label} plate 정의가 프론트·서버에서 다릅니다: {set_id}")
+        frontend_members = frontend_set["members"]
+        server_members = server_set["members"]
+        if len(frontend_members) != len(server_members):
+            raise RuntimeError(f"{label} 멤버 수가 프론트·서버에서 다릅니다: {set_id}")
         for frontend_member, server_member in zip(frontend_members, server_members):
-            if not isinstance(frontend_member, dict) or not isinstance(server_member, dict):
-                raise RuntimeError(f"{label} 멤버 형식이 올바르지 않습니다: {set_id}")
-            example_id = server_member.get("exampleId")
+            example_id = server_member["exampleId"]
             if any(
                 frontend_member.get(field) != server_member.get(field)
-                for field in common_member_fields
+                for field in recipe_fields
             ):
                 raise RuntimeError(
-                    f"{label} 프론트·서버 멤버 정의가 다릅니다: {example_id}"
+                    f"{label} 멤버 정의가 프론트·서버에서 다릅니다: {example_id}"
                 )
-            all_asset = server_member.get("all")
-            if not isinstance(all_asset, dict):
-                raise RuntimeError(f"{label} 서버 all 자산이 없습니다: {example_id}")
-            all_key = all_asset.get("key")
-            release_root = all_key.rsplit("/all/", 1)[0] if isinstance(all_key, str) else ""
-            expected_thumb_key = f"{release_root}/thumb/{example_id}.webp"
+            expected_all_url = _public_url(server_base, server_member["all"]["key"])
+            release_root = server_member["all"]["key"].rsplit("/all/", 1)[0]
+            expected_thumb_url = _public_url(
+                server_base,
+                f"{release_root}/thumb/{example_id}.webp",
+            )
             if (
-                frontend_member.get("allUrl") != _public_url(base_url, all_key)
-                or frontend_member.get("thumbUrl")
-                != _public_url(base_url, expected_thumb_key)
+                frontend_member.get("allUrl") != expected_all_url
+                or frontend_member.get("thumbUrl") != expected_thumb_url
             ):
                 raise RuntimeError(
-                    f"{label} 프론트·서버 멤버 자산이 다릅니다: {example_id}"
+                    f"{label} 멤버 자산 URL이 프론트·서버에서 다릅니다: {example_id}"
                 )
 
 
@@ -1866,39 +2184,43 @@ def _merged_catalogs(result: SpaceSetReleaseResult) -> tuple[dict, dict]:
         raise RuntimeError(
             "기존 공간 세트 프론트·서버 파일 중 하나만 존재해 병합을 거부합니다"
         )
-    _validate_catalog_pair(current_frontend, current_registry, label="기존 공간 세트")
+    _validate_catalog_pair(
+        current_frontend,
+        current_registry,
+        label="기존 공간 세트",
+    )
 
     current_base = current_registry.get("baseUrl")
     next_base = next_registry.get("baseUrl")
-    if current_base and next_base and current_base.rstrip("/") != next_base.rstrip("/"):
+    if current_base and next_base and current_base != next_base:
         raise RuntimeError(
             "기존 공간 세트 서버 레지스트리와 새 릴리스의 baseUrl이 다릅니다"
         )
 
+    next_sets = next_registry["sets"]
+    next_by_id = {item["setId"]: item for item in next_sets}
     next_frontend_sets = next_frontend["sets"]
-    next_server_sets = next_registry["sets"]
     next_frontend_by_id = {item["setId"]: item for item in next_frontend_sets}
-    next_server_by_id = {item["setId"]: item for item in next_server_sets}
     preserved_frontend: list[dict] = []
-    preserved_server: list[dict] = []
-    for existing_frontend, existing_server in zip(
-        current_frontend["sets"], current_registry["sets"]
+    preserved_registry: list[dict] = []
+    for existing_frontend, existing_registry in zip(
+        current_frontend["sets"],
+        current_registry["sets"],
     ):
-        set_id = existing_server["setId"]
+        set_id = existing_registry["setId"]
         frontend_replacement = next_frontend_by_id.get(set_id)
-        server_replacement = next_server_by_id.get(set_id)
-        if frontend_replacement is None and server_replacement is None:
+        registry_replacement = next_by_id.get(set_id)
+        if frontend_replacement is None and registry_replacement is None:
             preserved_frontend.append(existing_frontend)
-            preserved_server.append(existing_server)
+            preserved_registry.append(existing_registry)
         elif (
             frontend_replacement != existing_frontend
-            or server_replacement != existing_server
+            or registry_replacement != existing_registry
         ):
             raise RuntimeError(
                 f"동일 setId의 정의 변경을 거부합니다: {set_id}. "
                 "새 세트는 새 setId로 발행하세요"
             )
-
     merged_frontend = {
         **next_frontend,
         "sets": [*next_frontend_sets, *preserved_frontend],
@@ -1906,9 +2228,13 @@ def _merged_catalogs(result: SpaceSetReleaseResult) -> tuple[dict, dict]:
     merged_registry = {
         **next_registry,
         "baseUrl": next_base or current_base,
-        "sets": [*next_server_sets, *preserved_server],
+        "sets": [*next_sets, *preserved_registry],
     }
-    _validate_catalog_pair(merged_frontend, merged_registry, label="병합된 공간 세트")
+    _validate_catalog_pair(
+        merged_frontend,
+        merged_registry,
+        label="병합된 공간 세트",
+    )
     return merged_frontend, merged_registry
 
 
@@ -1926,14 +2252,58 @@ def _restore_bytes(path: Path, previous: bytes | None) -> None:
         temp_path.unlink(missing_ok=True)
 
 
-def apply_release(result: SpaceSetReleaseResult) -> None:
-    """전용 JSON 두 개를 적용하고 두 번째 실패 시 첫 번째도 되돌린다."""
+def _assert_receipt_covers_release(
+    result: SpaceSetReleaseResult,
+    receipt: UploadReceipt,
+    registry: dict,
+) -> None:
+    """영수증이 이번 릴리스와 그 명단이 참조하는 모든 자산을 덮는지 검사한다."""
+    if receipt.release_id != result.release_id:
+        raise RuntimeError(
+            "업로드 영수증이 다른 릴리스의 것입니다: "
+            f"receipt={receipt.release_id} staged={result.release_id}"
+        )
+    staged_keys = {asset.r2_key for asset in result.assets}
+    missing = staged_keys - receipt.uploaded_keys
+    if missing:
+        raise RuntimeError(
+            f"업로드되지 않은 자산이 {len(missing)}개 있습니다: {sorted(missing)[:5]}"
+        )
+
+    prefix = f"{R2_PREFIX}/{result.release_id}/"
+    referenced: set[str] = set()
+    for space_set in registry["sets"]:
+        plate = space_set["representativePlate"]
+        if plate is not None:
+            referenced.add(plate["key"])
+        for member in space_set["members"]:
+            referenced.add(member["all"]["key"])
+            referenced.add(member["pose"]["key"])
+            release_root = member["all"]["key"].rsplit("/all/", 1)[0]
+            referenced.add(f'{release_root}/thumb/{member["exampleId"]}.webp')
+    unbacked = {
+        key
+        for key in referenced
+        if key.startswith(prefix) and key not in receipt.uploaded_keys
+    }
+    if unbacked:
+        raise RuntimeError(
+            f"명단이 올리지 않은 키를 참조합니다: {sorted(unbacked)[:5]}"
+        )
+
+
+def apply_release(
+    result: SpaceSetReleaseResult,
+    receipt: UploadReceipt,
+) -> None:
+    """업로드 증거를 확인한 뒤 JSON 두 개를 적용하고 실패 시 되돌린다."""
     for target in (DEFAULT_FRONTEND_CATALOG_PATH, DEFAULT_SERVER_REGISTRY_PATH):
         if _applied_release_id(target) == result.release_id:
             raise FileExistsError(
                 f"같은 releaseId가 이미 적용되어 덮어쓰기를 거부합니다: {target}"
             )
     merged_frontend, merged_registry = _merged_catalogs(result)
+    _assert_receipt_covers_release(result, receipt, merged_registry)
     merge_dir = Path(tempfile.mkdtemp(prefix=".space-set-registry-merge."))
     merged_frontend_path = merge_dir / "storyboardSpaceSets.json"
     merged_path = merge_dir / "space_set_assets.json"
@@ -2063,10 +2433,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FRONTEND CATALOG: {result.frontend_catalog_path}")
         print(f"SERVER REGISTRY: {result.server_registry_path}")
         print(f"AUDIT: {result.audit_path}")
+        receipt = None
         if args.upload:
-            upload_release(result, execute=args.execute)
+            receipt = upload_release(result, execute=args.execute)
         if args.apply:
-            apply_release(result)
+            if receipt is None:
+                raise RuntimeError("업로드 영수증이 없어 적용할 수 없습니다")
+            apply_release(result, receipt)
             print(f"APPLIED: {DEFAULT_FRONTEND_CATALOG_PATH}")
             print(f"APPLIED: {DEFAULT_SERVER_REGISTRY_PATH}")
         return 0
