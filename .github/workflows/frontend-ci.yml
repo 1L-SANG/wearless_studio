@@ -1,0 +1,72 @@
+name: frontend-ci
+
+# 프론트 배포는 Vercel 담당(별개). 이 워크플로는 머지 전에 테스트·빌드만 검증한다.
+# paths 목록이 push/pull_request 에 중복인 것은 의도적 — GitHub Actions 는 YAML 앵커를 지원하지 않는다.
+on:
+    push:
+        branches: [main]
+        paths:
+            - "src/**"
+            - "tests/frontend/**"
+            - "index.html"
+            - "package.json"
+            - "pnpm-lock.yaml"
+            - "vite.config.js"
+            # 조립 정본 대조 테스트가 서버 page_assembler 를 직접 실행한다.
+            - "server/app/agents/**"
+            - "server/pyproject.toml"
+            - "server/uv.lock"
+            - ".github/workflows/frontend-ci.yml"
+    pull_request:
+        branches: [main]
+        paths:
+            - "src/**"
+            - "tests/frontend/**"
+            - "index.html"
+            - "package.json"
+            - "pnpm-lock.yaml"
+            - "vite.config.js"
+            - "server/app/agents/**"
+            - "server/pyproject.toml"
+            - "server/uv.lock"
+            - ".github/workflows/frontend-ci.yml"
+    workflow_dispatch: {} # 수동 실행 버튼
+
+concurrency:
+    group: frontend-ci-${{ github.ref }}
+    cancel-in-progress: true # 배포가 아니므로 오래된 실행은 취소해도 안전
+
+permissions:
+    contents: read
+
+env:
+    # pnpm 11 은 빌드 스크립트가 미승인된 의존성(esbuild)을 만나면 install 을 실패시킨다.
+    # 승인 파일(pnpm-workspace.yaml)은 .gitignore 대상이라 CI 체크아웃엔 없다.
+    # esbuild 는 플랫폼별 바이너리 패키지로 동작해 postinstall 없이도 빌드된다.
+    PNPM_CONFIG_STRICT_DEP_BUILDS: "false"
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+
+            - uses: pnpm/action-setup@v6
+              with:
+                  version: 11
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: 24
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+
+            # tests/frontend/storyboard-opening-row.test.mjs 는 목 조립기와 서버
+            # page_assembler 의 결과를 대조하므로 server/.venv 가 필요하다.
+            # setup-uv 는 v9 이동 태그를 아직 안 내서 정확한 버전으로 고정한다.
+            - uses: astral-sh/setup-uv@v9.0.0
+            - name: 조립 정본 대조용 서버 파이썬 환경
+              working-directory: server
+              run: uv sync --frozen
+
+            - run: pnpm test:frontend
+            - run: pnpm build
