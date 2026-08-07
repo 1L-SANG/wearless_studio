@@ -1327,8 +1327,9 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </>
       )}
 
-      {/* 방향 — mirror 생성 레시피는 방향 개념 없음 (ADR-0004) */}
-      {!isMirror && !isDetail && (
+      {/* 방향 — mirror 생성 레시피는 방향 개념 없음 (ADR-0004).
+          디테일 컷도 방향을 고른다(2026-08-07 개편 — 뒷면 디테일은 BackDetail 사진을 근거로). */}
+      {!isMirror && (
         <div className="insp-sec" style={{ marginBottom: 12 }}><label className="lbl">방향</label>
           <Chips options={isProduct ? catalogs.productDirections : catalogs.directions}
             value={(isProduct ? catalogs.productDirections : catalogs.directions).some((d) => d.value === block.direction) ? block.direction : 'front'}

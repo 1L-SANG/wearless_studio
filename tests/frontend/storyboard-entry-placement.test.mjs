@@ -345,3 +345,16 @@ test('디테일 블록의 색상은 앞면 디테일 보유 색을 우선한다'
   const detail = blocks.find((b) => b.cutType === 'product' && b.shot === 'detail');
   assert.equal(detail.colorId, 'col2');
 });
+
+test('개편 전(디테일 없음→ghost 대체) 기본 시드도 무수정 기본값으로 인정한다', () => {
+  const colors = [{ id: 'col1', isBase: true, images: [
+    { slot: 'Front', id: 'f1' }, { slot: 'Back', id: 'b1' },
+  ] }];
+  const ctx = { clothingType: 'top', projectId: 'p-legacy' };
+  for (const mode of ['basic', 'extended']) {
+    const legacySeed = defaultStoryboard(colors, mode, ctx, { legacyDetailGhostFallback: true });
+    assert.ok(!legacySeed.some((b) => b.shot === 'detail'), '레거시 시드엔 디테일 블록이 없어야 전제 성립');
+    assert.equal(isDefaultStoryboardForMode(legacySeed, colors, mode, ctx), true,
+      `${mode}: 레거시 기본 시드가 사용자 편집본으로 오인되면 사진 양 변경이 무시된다`);
+  }
+});

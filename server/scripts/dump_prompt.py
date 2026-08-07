@@ -84,7 +84,7 @@ FIXTURES: dict[str, dict] = {
                 "source": "seller", "version": 1,
             },
         },
-        "slots": ["Front", "Detail", "Fit"],
+        "slots": ["Front", "Detail", "BackDetail"],
         "has_match": False,
         "adjusted_axes": ("fit",),
         "seller_canon": "off",

@@ -17,11 +17,11 @@ INPUT_CONSISTENCY=warn 을 켜지 않는다.
         Detail_1.jpg
       ok-hoodie/
         Front.png
-        Fit.png
+        BackDetail.png
       bad-mixed-jacket/             # 'bad' 로 시작·포함 = 일부러 다른 옷을 섞은 케이스
         Front.jpg
         Back.jpg                    # ← 이게 다른 옷
-파일명 앞부분이 슬롯(Front/Back/Detail/Fit)이고, Front 가 레퍼런스다. 대소문자 무관.
+파일명 앞부분이 슬롯(Front/Back/Detail/BackDetail)이고, Front 가 레퍼런스다. 대소문자 무관.
 """
 
 import asyncio
@@ -36,7 +36,7 @@ from app.agents.gemini_image import InlineImage               # noqa: E402
 from app.config import load_settings                          # noqa: E402
 from app.workers.analyze_job import shrink_for_vision         # noqa: E402
 
-_SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "Fit": 3}
+_SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "BackDetail": 3}
 _MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 
 

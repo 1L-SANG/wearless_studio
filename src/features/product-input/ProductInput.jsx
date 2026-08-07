@@ -385,9 +385,14 @@ export function ProductInput() {
         setProduct(restored);
         // 분석 결과 복원 → 분석 폼(done)으로 바로. 단 필수 사진(앞면·뒷면)이 추출 실패로
         // 빠졌으면 입력 단계로 둬서 필수 검증이 재업로드를 강제하게 한다(검증 우회 방지).
-        // 판정은 product 메타데이터가 아니라 실제 저장된 photo blob(photos[]) 기준 — 더 안전.
-        const restoredHasRequired = (draft.photos || []).some((p) => p.slot === 'Front')
-          && (draft.photos || []).some((p) => p.slot === 'Back');
+        // 판정은 product 메타데이터가 아니라 실제 저장된 photo blob(photos[]) 기준이고,
+        // 입력 게이트와 동일하게 **기준 색상**의 사진만 인정한다 — 추가 색상 Front 가
+        // 기준 색상 Front 유실을 가리면 안 된다 (2026-08-07 Codex 리뷰 P2).
+        const draftColors = draft.product?.colors || [];
+        const draftBase = draftColors.find((c) => c.isBase) || draftColors[0];
+        const restoredHasRequired = !!draftBase
+          && (draft.photos || []).some((p) => p.colorId === draftBase.id && p.slot === 'Front')
+          && (draft.photos || []).some((p) => p.colorId === draftBase.id && p.slot === 'Back');
         if (draft.analysis && restoredHasRequired) { setAnalysis(draft.analysis); setPhase('done'); }
         return;
       }

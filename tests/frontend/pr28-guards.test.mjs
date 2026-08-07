@@ -172,3 +172,14 @@ test('pose example direction gate matches worn directions and mirror recipe', ()
     { cutType: 'mirror', direction: null },
   ), false);
 });
+
+test('상품 전체 컷(뒷면)을 디테일로 바꾸면 뒷면 방향이 보존된다', async () => {
+  const { blockPatchForContentRole, CONTENT_ROLES } = await import('../../src/lib/storyboardTaxonomy.js');
+  const backOverview = { cutType: 'product', direction: 'back', shot: 'ghost' };
+  const patch = blockPatchForContentRole(backOverview, CONTENT_ROLES.DETAIL);
+  assert.equal(patch.direction, 'back');
+  assert.equal(patch.shot, 'detail');
+  // 유효하지 않은 방향은 템플릿 기본으로
+  const wornSide = { cutType: 'styling', direction: 'side', shot: 'full' };
+  assert.equal(blockPatchForContentRole(wornSide, CONTENT_ROLES.DETAIL).direction, 'front');
+});

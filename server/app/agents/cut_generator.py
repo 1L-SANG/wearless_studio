@@ -743,7 +743,9 @@ def render_cut_prompt(
         outer_closure_line = "\n".join((need("OUTER_CLOSURE:guard"), need(f"OUTER_CLOSURE:{closure}")))
     detail_color_transfer_line = ""
     transfer = spec.get("_detailColorTransfer")
-    if cut == "product" and shot == "detail" and transfer:
+    # 구조 확대 모드에선 억제 — 빌린 타색 디테일 자산이 로드되지 못해 zoom 으로 떨어졌는데
+    # "첨부된 타색 디테일을 참고하라"는 전환 지시만 남으면 존재하지 않는 첨부를 전제하게 된다.
+    if cut == "product" and shot == "detail" and transfer and not detail_mode_zoom:
         target = transfer["targetName"]
         if transfer.get("targetHex"):
             target += f" ({transfer['targetHex']})"

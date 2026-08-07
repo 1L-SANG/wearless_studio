@@ -362,7 +362,8 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
-          {!isMirror && !isDetail && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
+          {/* 디테일 컷도 방향 선택 — 뒷면 디테일 사진(BackDetail)을 근거로 쓰려면 back 을 보내야 한다 */}
+          {!isMirror && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
 
           <div className="insp-divider" />
 

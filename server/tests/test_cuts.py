@@ -983,6 +983,21 @@ def test_detail_cut_front_zoom_mode_with_front_original_only():
     assert "fine fabric weave" in p                  # 저해상 확대 금지 지시
 
 
+def test_detail_cut_zoom_mode_suppresses_color_transfer_line():
+    # 타색 디테일 자산이 유실돼 zoom 으로 떨어졌으면, 존재하지 않는 첨부를 전제하는
+    # 색전환 지시를 넣지 않는다 (2026-08-07 Codex 리뷰 P2).
+    spec = cut.normalize_spec({"cutType": "product", "shot": "detail"})
+    spec["_detailColorTransfer"] = {"targetName": "그린", "targetHex": None, "referenceName": "레드"}
+    manifest = f"1. {cut._SLOT_LABEL['Front']}"
+    p = cut.render_cut_prompt(cut.load_cut_template(), spec, {}, {}, "top", manifest)
+    assert "structural element" in p                 # zoom 모드
+    assert "DETAIL COLORWAY TRANSFER" not in p       # 전환 지시 억제
+    # 정밀 모드(타색 디테일이 실제 첨부됨)에서는 그대로 나간다
+    manifest_ok = f"1. {cut._SLOT_LABEL['Front']}\n2. {cut._SLOT_LABEL['Detail']}"
+    p_ok = cut.render_cut_prompt(cut.load_cut_template(), spec, {}, {}, "top", manifest_ok)
+    assert "DETAIL COLORWAY TRANSFER" in p_ok
+
+
 # ---------- 슬롯 계약 (2026-08-07 개편: Fit 폐기 · BackDetail 신설) ----------
 
 
