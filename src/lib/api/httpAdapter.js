@@ -136,7 +136,14 @@ async function pollJob(
     }
     if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
     if (job.status === 'error') throw new Error(job.errorMessage || '작업에 실패했어요.');
-    if (Date.now() - start > timeoutMs) throw new Error(timeoutMessage);
+    if (Date.now() - start > timeoutMs) {
+      // 타임아웃은 **실패가 아니다** — 화면이 기다리기를 그만둔 것뿐이고 서버 잡은 계속 돈다.
+      // 호출부가 "실패 처리"와 구분할 수 있게 code 를 붙인다(2026-08-07: 이 구분이 없어서
+      // 정상 진행 중인 생성이 실패 토스트 + 콘티보드 복귀로 처리됐다).
+      const err = new Error(timeoutMessage);
+      err.code = 'job_timeout';
+      throw err;
+    }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 }
@@ -369,7 +376,10 @@ export const httpAdapter = {
     if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(202 아님) — 새 잡 없음
     const result = await pollJob(res.jobId, {
       onProgress,
-      timeoutMs: 300000,
+      // 15분. 정상 생성 실측이 242~285초인데 상한이 300초였다 — 여유가 15초뿐이라
+      // 조금만 느려도 화면이 먼저 포기했다(2026-08-05 실측). 서버 lease 복구가 900초라
+      // 그 사이 죽었다 되살아난 잡까지 화면이 지켜볼 수 있게 같은 값으로 맞춘다.
+      timeoutMs: 900000,
       timeoutMessage: '상세페이지 생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.',
     });
     // jobId 를 함께 반환 — 완료 후 정산 영수증(GET /jobs/{jobId}/settlement, payment_id=job:{jobId})을 조회한다.

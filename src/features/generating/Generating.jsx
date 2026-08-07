@@ -40,6 +40,7 @@ export function Generating() {
   const [pid, setPid] = useState(null);
   const [blocked, setBlocked] = useState(null);   // 409 라이선스 차단 메시지(한국어) — 장면⑤
   const [receipt, setReceipt] = useState(null);   // 온체인 정산 영수증 — 장면③
+  const [stillRunning, setStillRunning] = useState(false);  // 대기 상한 초과 — 서버는 계속 도는 중
   const composition = ['후킹', '스타일링', '스튜디오', '의류 확인'];
 
   useEffect(() => {
@@ -67,6 +68,10 @@ export function Generating() {
         if (cancelled) return;
         // 장면⑤ — 얼굴 라이선스 차단(409): 되돌리지 않고 블로킹 패널로 명확히 멈춘다(재생성 재차단 신호).
         if (e?.status === 409) { setBlocked(e.message || '이 모델의 얼굴 라이선스를 사용할 수 없어요.'); return; }
+        // 대기 상한 초과는 **실패가 아니다** — 서버 잡은 계속 돌고 결과도 저장된다. 콘티로
+        // 되돌리면 사용자는 "실패했다"고 읽고 다시 누르는데, 서버는 같은 활성 잡에 합류시켜
+        // 또 기다리다 또 튕긴다(2026-08-05 실측 사고). 되돌리지 말고 상태를 정직하게 알린다.
+        if (e?.code === 'job_timeout') { setStillRunning(true); return; }
         // 그 외 전체 실패(실서버) — done 오염 없이 콘티로 되돌린다. 실패 컷은 미차감 (계약 §6)
         toast.push(e?.message || '상세페이지 생성에 실패했어요. 다시 시도해 주세요.', { icon: 'x' });
         navigate('/create/storyboard', { replace: true });
@@ -108,6 +113,33 @@ export function Generating() {
           <p className="fm-blocked-msg">{blocked}</p>
           <p className="fm-blocked-hint">다른 모델을 선택하거나 라이선스 상태를 확인한 뒤 다시 시도해 주세요.</p>
           <Button variant="primary" block onClick={() => navigate('/create/storyboard', { replace: true })}>콘티로 돌아가기</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // 대기 상한 초과 — 실패 화면이 아니다. 서버는 계속 만들고 있고 결과도 저장된다.
+  // "다시 시도" 버튼을 두지 않는 것은 의도다: 활성 잡이 있으면 서버가 같은 잡에 합류시키므로
+  // 다시 눌러도 새로 만들어지지 않는다. 확인만 다시 하게 한다.
+  if (stillRunning) {
+    return (
+      <div className="wizard narrow">
+        <PageHead title="아직 만들고 있어요" sub="화면만 기다리기를 멈췄고, 생성은 계속 진행 중이에요." />
+        <div className="surface fm-blocked">
+          <div className="fm-blocked-icon"><Icon name="clock" size={28} /></div>
+          <p className="fm-blocked-msg">
+            평소보다 오래 걸리고 있어요. 완성되면 보관함에 그대로 저장돼요.
+          </p>
+          <p className="fm-blocked-hint">
+            지금 다시 눌러도 새로 만들어지지 않아요 — 만들고 있던 그 작업을 이어서 기다립니다.
+            잠시 뒤 아래 버튼으로 확인해 주세요.
+          </p>
+          <Button variant="primary" block onClick={() => navigate(`/editor/${pid}`)}>
+            완성됐는지 확인하기
+          </Button>
+          <Button variant="ghost" block onClick={() => navigate('/create/storyboard', { replace: true })}>
+            콘티로 돌아가기
+          </Button>
         </div>
       </div>
     );
