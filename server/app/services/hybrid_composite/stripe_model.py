@@ -24,6 +24,11 @@ from .types import CompositeFailure, StripeModel
 MIN_PERIODICITY = 0.25       # 주 축 autocorr peak 최소 강도
 CHECK_AXIS_RATIO = 0.60      # 부 축/주 축 강도 비가 이 이상이고 부 축에도 주기가 있으면 체크로 판정
 PERIOD_CONSENSUS_TOL = 0.15  # autocorr vs FFT 주기 상대 오차 허용
+
+#: 같은 ROI 안의 패치들이 "같은 주기"로 묶이는 상대 오차. 값은 스캔이 원래 쓰던 0.15
+#: 그대로이고, 이름만 붙였다 — 바깥(멀티 ROI) 합의가 같은 기준을 **재사용**해야지
+#: 두 번째 사본을 만들면 안 되기 때문이다.
+PATCH_PERIOD_AGREEMENT_TOL = 0.15
 MIN_PERIODS_IN_ROI = 8       # ROI 안 최소 반복 수 (미달 = 근거 부족)
 MIN_PERIOD_PX = 4.0          # 이보다 짧은 주기는 JPEG/직조 노이즈로 간주
 RUN_EDGE_DELTA_E = 5.0       # run 경계로 인정할 윈도우 간 ΔE00
@@ -255,7 +260,7 @@ def _runs_from_folded(folded: np.ndarray) -> list[tuple[int, int]]:
 
 
 def find_period_guided(
-    roi_bgr: np.ndarray, model: StripeModel,
+    roi_bgr: np.ndarray, model: StripeModel, *, collect: list | None = None,
 ) -> tuple[str, float, float] | None:
     """Front(의류 전체 사진)에서 **모델-guided** 로 줄 방향·주기를 찾는다.
 
@@ -265,6 +270,11 @@ def find_period_guided(
     (실측: 세로 잔줄 셔츠 Front 에서 anchor 실패). 우리는 이미 Detail 에서 패턴의
     **모양**을 알고 있으므로, Front 에서는 후보 주기마다 접어 모델 프로파일과의 원형
     상관이 최대가 되는 스케일만 찾으면 된다 — Stage 5 guided QC 와 같은 철학이다.
+
+    `collect` 를 주면 이 **한 번의** 탐색에서 이미 계산되는 후보 표를 그대로 받아간다
+    (주기·점수·autocorr peak 여부·기반 peak·배수). 승자만 돌려주고 나머지를 버리면
+    "30 은 15 의 2배 후보였다"는 사실이 사라져 하모닉 오선택을 사후에 증명할 수 없다.
+    관측 전용이다 — 후보 생성·점수식·선택 규칙은 그대로고 재계산도 하지 않는다.
     """
     lab = bgr_to_lab(roi_bgr)
     L = lab[..., 0]
@@ -286,6 +296,14 @@ def find_period_guided(
         # sub-line lag 대비 — 각 후보의 2·3배도 시도한다
         periods = sorted({round(float(c) * m, 1) for c in cand for m in (1, 2, 3)
                           if 4 <= c * m <= n // 6})
+        # 어느 peak 의 몇 배였는지. 같은 주기를 여러 (peak, 배수) 가 만들 수 있어
+        # 전부 남긴다 — 위에서 set 이 뭉갠 유일한 정보가 이것이다.
+        origins: dict = {}
+        for c in cand:
+            for m in (1, 2, 3):
+                if 4 <= c * m <= n // 6:
+                    origins.setdefault(round(float(c) * m, 1), []).append(
+                        {"basePeakPx": float(c), "multiplier": m})
         prof = lab.mean(axis=axis)
         L1 = prof[:, 0]
         low = cv2.GaussianBlur(L1.reshape(-1, 1), (0, 0), sigmaX=16.0).ravel()
@@ -308,6 +326,19 @@ def find_period_guided(
                 continue
             corr = np.fft.irfft(np.fft.rfft(a) * np.conj(np.fft.rfft(b)), n=K)
             score = float(corr.max() / (na * nb))
+            if collect is not None:
+                origin = origins.get(period) or [{"basePeakPx": None, "multiplier": None}]
+                collect.append({
+                    "axis": axis_name,
+                    "periodPx": float(period),
+                    "score": score,
+                    # a multiplier candidate is not itself an autocorrelation peak;
+                    # that distinction is what the 15 / 30 / 45 question turns on
+                    "autocorrelationPeak": any(o["multiplier"] == 1 for o in origin),
+                    "basePeakPx": origin[0]["basePeakPx"],
+                    "multiplier": origin[0]["multiplier"],
+                    "origins": origin,
+                })
             if best is None or score > best[2]:
                 best = (axis_name, float(period), score)
     if best is None or best[2] < 0.5:
@@ -615,7 +646,8 @@ def extract_stripe_model_scan(
         group = [m2 for m2 in candidates
                  if m2.axis == m.axis
                  and len(m2.color_sequence_lab) == len(m.color_sequence_lab)
-                 and abs(m2.period_px - m.period_px) / m.period_px <= 0.15]
+                 and abs(m2.period_px - m.period_px) / m.period_px
+                 <= PATCH_PERIOD_AGREEMENT_TOL]
         groups.append(group)
     eligible = [g for g in groups
                 if len(g) >= max(3, int(np.ceil(0.3 * len(candidates))))]

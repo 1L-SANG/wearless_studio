@@ -32,6 +32,9 @@ PROVENANCE_SCHEMA = "source_texture_candidate_provenance_v1"
 #: the scorer a second time or changing the detector — both out of scope here, and
 #: the second run would be new CV work rather than an observation of the real one.
 GUIDED_CANDIDATES_UNAVAILABLE = "current_runtime_does_not_expose_candidate_scores"
+#: The scan answered, so the guided search never ran. An empty table here means
+#: "not asked", not "asked and found nothing".
+GUIDED_NOT_ATTEMPTED = "guided_search_not_attempted_scan_answered"
 
 
 #: What makes one worker execution distinct from the next one for the same job.
@@ -156,6 +159,10 @@ def provenance_payload(**fields) -> dict:
     guided.setdefault("candidates", None)
     if guided.get("candidates") is None:
         guided["candidatesMissingReason"] = GUIDED_CANDIDATES_UNAVAILABLE
+    elif not guided["candidates"] and not guided.get("attempted"):
+        # an empty table because the search never ran is not the same as a search
+        # that ran and found nothing
+        guided["candidatesMissingReason"] = GUIDED_NOT_ATTEMPTED
     scope, scope_type = execution_scope(fields.get("lease_token"))
     return {
         "schema": PROVENANCE_SCHEMA,
@@ -206,6 +213,13 @@ def provenance_payload(**fields) -> dict:
             "candidatesMissingReason": guided.get("candidatesMissingReason"),
         },
 
+        # The multi-ROI reading runs beside the production one and never replaces
+        # it: `sourcePeriodPx` above is still what the projection used.
+        "shadowMultiRoi": _shadow_block(fields.get("shadow_multi_roi")),
+        "legacyVsShadow": _compare(fields.get("source_period_px"),
+                                   fields.get("source_period_source"),
+                                   fields.get("shadow_multi_roi")),
+
         "failureReason": fields.get("failure_reason"),
         "failureDetail": fields.get("failure_detail"),
 
@@ -230,3 +244,37 @@ def _list_or(value):
 
 def _null_or(value):
     return None if value is None else str(value)
+
+
+def _shadow_block(resolution) -> dict | None:
+    """The resolver's own record, verbatim, or null when it did not run."""
+    if resolution is None:
+        return None
+    return resolution.as_dict() if hasattr(resolution, "as_dict") else dict(resolution)
+
+
+def _compare(legacy_period, legacy_source, resolution) -> dict:
+    """Legacy against shadow. Reports the gap; resolves nothing.
+
+    `agreementWithinExistingTolerance` reuses the scan's own patch-agreement
+    tolerance rather than inventing a second notion of "close enough".
+    """
+    from .stripe_model import PATCH_PERIOD_AGREEMENT_TOL
+
+    shadow_period = getattr(resolution, "selected_period_px", None)
+    shadow_status = getattr(resolution, "status", None)
+    both = isinstance(legacy_period, (int, float)) and isinstance(shadow_period, (int, float))
+    rel = (abs(float(shadow_period) - float(legacy_period)) / float(legacy_period)
+           if both and float(legacy_period) else None)
+    return {
+        "legacy": {"periodPx": _round(legacy_period, 4), "source": legacy_source},
+        "shadow": {"status": shadow_status, "periodPx": _round(shadow_period, 4)},
+        "comparison": {
+            "bothAvailable": both,
+            "relativeDifference": _round(rel),
+            "agreementWithinExistingTolerance": (
+                bool(rel <= PATCH_PERIOD_AGREEMENT_TOL) if rel is not None else None),
+            "tolerance": PATCH_PERIOD_AGREEMENT_TOL,
+        },
+        "authority": "legacy",
+    }

@@ -6,6 +6,7 @@ Flash·승격 없음) 생성 → QC(기본 shadow: 판정 로그만, 게이팅 �
 """
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
@@ -57,6 +58,7 @@ from ..services.hybrid_composite import (
     protected_components as hc_protected,
     source_texture_context as hc_source_ctx,
     source_texture_qa as hc_source_qa,
+    source_texture_resolver as hc_resolver,
 )
 from ..services.hybrid_composite.types import (
     PIPELINE_VERSION as HC_PIPELINE_VERSION,
@@ -2005,10 +2007,36 @@ async def _apply_hybrid_composite(
         scan_ok = (not isinstance(scanned, CompositeFailure)
                    and scanned.confidence >= 0.5)
         # the guided fallback is only measured when the scan cannot answer — the
-        # same condition the branch below uses, so this adds no work
-        guided = (None if scan_ok else
-                  await asyncio.to_thread(hc_stripe.find_period_guided, torso_crop, model))
+        # same condition the branch below uses, so this adds no work. `collect`
+        # takes the candidate table out of that single search; it is not a re-run.
+        guided_candidates: list = []
+        guided = (None if scan_ok else await asyncio.to_thread(
+            functools.partial(hc_stripe.find_period_guided, torso_crop, model,
+                              collect=guided_candidates)))
+
+        # Shadow: the same scan primitive over concentric insets of this crop, to
+        # see whether the reading survives where the boundary was drawn. Records
+        # only — the production period below is untouched by it.
+        shadow = None
+        try:
+            family = hc_resolver.build_roi_family(
+                (fx0, fy0, fx1, fy1), width=fw, height=fh,
+                placket_box=(src_geometry.get("merged") or {}).get("placket_box"))
+
+            def _scan_roi(spec):
+                sx0, sy0, sx1, sy1 = spec.bounds
+                return hc_stripe.extract_stripe_model_scan(
+                    front_bgr[sy0:sy1, sx0:sx1],
+                    source_asset_id=front_ref.asset_id, source_sha256=front_sha_early,
+                    source_roi=spec.bounds)
+
+            shadow = await asyncio.to_thread(hc_resolver.resolve, family, _scan_roi)
+        except Exception as exc:            # a shadow measurement cannot cost a job
+            log.warning("multi-ROI shadow resolve skipped: %r", exc)
+
         return {"front_model": scanned, "guided_anchor": guided,
+                "guided_candidates": guided_candidates,
+                "shadow_multi_roi": shadow,
                 "source_torso_roi": (fx0, fy0, fx1, fy1)}
 
     src_period, src_period_reused = await source_texture_cache.get(
@@ -2096,7 +2124,8 @@ async def _apply_hybrid_composite(
         guided={"attempted": _guided is not None or not front_scan_ok,
                 "selectedPeriodPx": _guided[1] if _guided else None,
                 "selectedScore": _guided[2] if _guided else None,
-                "candidates": None})
+                "candidates": src_period.get("guided_candidates")},
+        shadow_multi_roi=src_period.get("shadow_multi_roi"))
     ch, cw = carrier_bgr.shape[:2]
     t_torso_span = hc_scale.carrier_torso_span(
         car_lm, width=cw, height=ch, garment_axis=garment_axis)
