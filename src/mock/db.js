@@ -19,6 +19,7 @@ import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import { defaultStoryboard } from '@/lib/api/shapes.js';
+import { applyOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { ensureSections, rowSizeFor } from '@/lib/sections.js';
@@ -123,8 +124,8 @@ const catalogs = {
   ],
   // 사진 양 — 두 방식은 섹션 순서가 같고 사진 수만 다르다.
   composeModes: [
-    { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로 필요한 사진만', count: '13', flow: ['핵심 장점', '핏·코디', '제품 확인'] },
-    { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '14~33', flow: ['핵심 장점', '핏·코디', '제품 확인'] },
+    { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로 필요한 사진만', count: '13', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
+    { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '14~33', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
   ],
   poses: [
     { id: 'auto', label: 'AI 자동', auto: true }, { id: 'stand', label: '서기', thumb: P.pose('stand') },
@@ -185,6 +186,8 @@ const models = [
   { id: 'mA', name: 'Mia', gender: 'women', thumb: '/models/women/w1.webp', recommended: true },
   { id: 'mB', name: 'Leo', gender: 'men', thumb: '/models/men/m1.webp', recommended: false },
   { id: 'mC', name: '도윤', gender: 'men', thumb: '/models/men/m2.webp', recommended: false },
+  { id: 'mD', name: '수혁', gender: 'men', thumb: '/models/men/m3.webp', recommended: false },
+  { id: 'mE', name: '지안', gender: 'women', thumb: '/models/women/w2.webp', recommended: false },
 ];
 const matchClothing = toLegacyMatchClothing(recommendMatchingItems({
   clothingType: 'top',
@@ -269,11 +272,11 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const bg = blocks.length % 2 ? '#f5f5f5' : '#ffffff';
     if (b.source === 'mine') {
       const els = (b.ownImages || []).slice(0, 1).map((src) => IMG(60, 50, 880, 560, src, 12));
-      blocks.push({ id: uid('b'), name: '내 이미지', kind: inferSectionRole(b) || SECTION_ROLES.FIT, contentRole: CONTENT_ROLES.CUSTOM, bg, h: 660, elements: els });
+      blocks.push({ id: uid('b'), name: '내 이미지', kind: inferSectionRole(b) || SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.CUSTOM, bg, h: 660, elements: els });
       return;
     }
     const contentRole = inferContentRole(b);
-    const sectionRole = inferSectionRole(b) || SECTION_ROLES.FIT;
+    const sectionRole = inferSectionRole(b) || SECTION_ROLES.STYLING;
     const name = contentTitle(contentRole);
     const els = [IMG(60, 50, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined)];
     if (copywriting && contentRole === CONTENT_ROLES.HERO) {
@@ -289,9 +292,21 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const n = chunk.length;
     const w = Math.floor((880 - (n - 1) * 20) / n);
     const els = chunk.map((rb, c) => IMG(60 + c * (w + 20), 50, w, 500, generatedImageFor(rb, w, 500), 12, rb.cutType || undefined));
+    const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
+    if (copywriting && hero) {
+      els.push(T(60, 582, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
+        size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14',
+      }));
+      const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
+      if (subtitle) {
+        els.push(T(60, 650, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
+          size: 18, color: '#6b6b73',
+        }));
+      }
+    }
     blocks.push({
       id: uid('b'), name: rowLayout.name, kind: rowLayout.kind,
-      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', h: 600, elements: els,
+      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', elements: els,
     });
   };
 
@@ -420,38 +435,38 @@ function buildDraft() {
   const mannequins = [];
 
   /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004) ---- */
-  const storyboard = buildStoryboard(project.composeMode, product.colors, {
+  const storyboard = applyOpeningRow(buildStoryboard(project.composeMode, product.colors, {
     projectId: project.id,
     clothingType: product.clothingType,
     targetGenders: analysis.targetGenders,
-  });
+  }));
 
   /* ---- Editor blocks: 5 prefilled demo + auto info blocks (PRD §10.14) ----
      (직접 /editor 진입용 데모. 생성 플로우는 generateDetailPage 가
      buildEditorBlocksFromStoryboard 로 대체한다.) ---- */
   const editorBlocks = [
     {
-      id: uid('b'), name: '첫 장면', kind: SECTION_ROLES.BENEFIT, contentRole: CONTENT_ROLES.HERO, bg: '#ffffff', elements: [
+      id: uid('b'), name: '첫 장면', kind: SECTION_ROLES.HOOKING, contentRole: CONTENT_ROLES.HERO, bg: '#ffffff', elements: [
         IMG(60, 50, 880, 560, P.photo('ed_hook', 'horizon', 880, 560), 12, 'horizon'),
         T(120, 110, 600, 80, '겨울을 부드럽게, 골지 니트', { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
         T(120, 200, 520, 40, '하루 종일 편안한 데일리 니트', { size: 20, color: '#0e0d14' }),
       ],
     },
     {
-      id: uid('b'), name: '핵심 장점', kind: SECTION_ROLES.BENEFIT, contentRole: CONTENT_ROLES.BENEFIT, bg: '#f5f5f5', elements: [
+      id: uid('b'), name: '핵심 장점', kind: SECTION_ROLES.HOOKING, contentRole: CONTENT_ROLES.BENEFIT, bg: '#f5f5f5', elements: [
         IMG(60, 50, 420, 540, P.detail('ed_sell', 420, 540), 12, 'product'),
         T(540, 150, 380, 40, '부드러운 촉감', { size: 28, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
         T(540, 210, 380, 80, '코튼 혼방으로 자연스럽게 떨어지는 결, 피부에 닿는 감촉이 부담 없습니다.', { size: 17, color: '#4a4a45' }),
       ],
     },
     {
-      id: uid('b'), name: '코디 활용', kind: SECTION_ROLES.FIT, contentRole: CONTENT_ROLES.COORDINATION, bg: '#ffffff', elements: [
+      id: uid('b'), name: '코디 활용', kind: SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.COORDINATION, bg: '#ffffff', elements: [
         IMG(60, 50, 430, 580, P.photo('ed_st1', 'styling', 430, 580), 12, 'styling'),
         IMG(510, 50, 430, 580, P.photo('ed_st2', 'styling', 430, 580), 12, 'styling'),
       ],
     },
     {
-      id: uid('b'), name: '핏 확인', kind: SECTION_ROLES.FIT, contentRole: CONTENT_ROLES.FIT, bg: '#ffffff', elements: [
+      id: uid('b'), name: '핏 확인', kind: SECTION_ROLES.STUDIO, contentRole: CONTENT_ROLES.FIT, bg: '#ffffff', elements: [
         IMG(280, 50, 440, 590, P.photo('ed_hz', 'horizon', 440, 590), 12, 'horizon'),
       ],
     },

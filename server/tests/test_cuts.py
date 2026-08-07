@@ -62,7 +62,7 @@ def test_canonical_content_role_wins_conflicting_recipe():
     })
 
     assert block["contentRole"] == "hero"
-    assert block["sectionRole"] == "benefit"
+    assert block["sectionRole"] == "hooking"
     assert block["cutType"] == "styling"
     assert block["direction"] == "back"
     assert block["shot"] == "full"
@@ -90,16 +90,16 @@ def test_canonical_ignores_retired_kind_and_infers_from_cut_type():
         "detail", "product", "product", "detail",
     )
     assert (fit["contentRole"], fit["sectionRole"], fit["cutType"]) == (
-        "fit", "fit", "horizon",
+        "fit", "studio", "horizon",
     )
     assert (fit["direction"], fit["shot"]) == ("side", "medium")
-    assert retired["taxonomyVersion"] == 2
+    assert retired["taxonomyVersion"] == 3
     assert "kind" not in retired
 
     stored = content_roles.canonicalize_storyboard_block({
         "kind": "hook", "cutType": "product", "shot": "detail",
     }, for_storage=True)
-    assert stored["taxonomyVersion"] == 2
+    assert stored["taxonomyVersion"] == 3
     assert "kind" not in stored
 
 
@@ -122,10 +122,10 @@ def test_canonical_mine_and_custom_blocks_do_not_invent_ai_recipe():
 
     assert mine["contentRole"] == "custom"
     assert mine["cutType"] is None
-    assert mine["taxonomyVersion"] == 2
+    assert mine["taxonomyVersion"] == 3
     assert mine["ownImages"] == ["asset-1"]
     assert custom["contentRole"] == "custom"
-    assert custom["sectionRole"] == "benefit"
+    assert custom["sectionRole"] == "hooking"
     assert (custom["cutType"], custom["direction"], custom["shot"]) == (
         "styling", "side", "full",
     )
@@ -168,7 +168,7 @@ def test_canonical_storyboard_list_returns_normalized_copies():
     assert "contentRole" not in raw[0]  # 호출자의 원본 저장본을 제자리에서 바꾸지 않는다.
 
 
-def test_canonical_storyboard_stably_orders_the_three_sections():
+def test_canonical_storyboard_stably_orders_the_four_sections():
     normalized = content_roles.canonicalize_storyboard([
         {"id": "product-1", "source": "ai", "contentRole": "productOverview"},
         {"id": "fit-1", "source": "ai", "contentRole": "fit"},
@@ -179,9 +179,9 @@ def test_canonical_storyboard_stably_orders_the_three_sections():
     ])
 
     assert [block["id"] for block in normalized] == [
-        "benefit-1", "benefit-2", "fit-1", "fit-2", "custom", "product-1",
+        "benefit-1", "benefit-2", "fit-2", "custom", "fit-1", "product-1",
     ]
-    assert normalized[4]["sectionRole"] == "fit"  # 앞 이웃 섹션을 상속해 원래 위치를 지킨다.
+    assert normalized[3]["sectionRole"] == "styling"  # 앞 이웃 섹션을 상속해 원래 위치를 지킨다.
 
 
 def test_canonical_storyboard_assigns_hidden_roles_and_only_one_hero():
@@ -228,10 +228,25 @@ def test_canonical_storyboard_section_wins_stale_internal_role_and_recipe():
     ]
     assert (
         normalized[0]["sectionRole"], normalized[0]["contentRole"], normalized[0]["cutType"]
-    ) == ("benefit", "hero", "horizon")
+    ) == ("hooking", "hero", "horizon")
     assert (
         normalized[1]["sectionRole"], normalized[1]["contentRole"], normalized[1]["cutType"]
     ) == ("product", "productOverview", "product")
+
+
+def test_canonical_storyboard_studio_section_rejects_styling_recipe():
+    normalized = content_roles.canonicalize_storyboard([{
+        "id": "studio-with-styling-recipe", "source": "ai", "sectionRole": "studio",
+        "contentRole": "coordination", "cutType": "styling", "direction": "side", "shot": "medium",
+        "exampleId": "old-example", "thumb": "example.png", "baseThumb": "base.png",
+    }])
+
+    block = normalized[0]
+    assert (block["sectionRole"], block["contentRole"], block["cutType"]) == (
+        "studio", "fit", "horizon",
+    )
+    assert block["exampleId"] is None
+    assert block["thumb"] == "base.png"
 
 
 def test_canonical_storyboard_keeps_example_when_auto_role_changes_but_selected_cut_does_not():
@@ -255,7 +270,7 @@ def test_canonical_selected_fit_cut_realigns_hidden_role():
     })
 
     assert (normalized["sectionRole"], normalized["contentRole"], normalized["cutType"]) == (
-        "fit", "coordination", "styling",
+        "styling", "coordination", "styling",
     )
     assert (normalized["direction"], normalized["shot"]) == ("side", "medium")
 
@@ -491,13 +506,14 @@ def test_normalize_unknown_cut_raises():
         cut.normalize_spec({"cutType": "daily"})  # ADR-0003에서 폐기된 토큰
 
 
-def test_virtual_model_loader_resolves_c_pair_and_excludes_product(tmp_path, monkeypatch, caplog):
+def test_virtual_model_loader_resolves_c_pack_and_excludes_product(tmp_path, monkeypatch, caplog):
     manifest_path = tmp_path / "virtual_models.json"
     manifest_path.write_text(json.dumps({
         "models": {
             "mA": {"views": {
                 "face_front": {"key": "seed/mA/face.webp", "mime": "image/webp"},
                 "grid_sedcard": {"key": "seed/mA/grid.png", "mime": "image/jpeg"},
+                "body_front": {"key": "seed/mA/body.png", "mime": "image/jpeg"},
             }},
         },
     }), encoding="utf-8")
@@ -509,6 +525,10 @@ def test_virtual_model_loader_resolves_c_pair_and_excludes_product(tmp_path, mon
         assert cut.resolve_virtual_model_assets(person) == (
             {"key": "seed/mA/face.webp", "mime": "image/webp", "bucket": "public"},
             {"key": "seed/mA/grid.png", "mime": "image/jpeg", "bucket": "public"},
+        )
+        assert cut.resolve_virtual_model_assets(person, require_full_body=True) == (
+            {"key": "seed/mA/face.webp", "mime": "image/webp", "bucket": "public"},
+            {"key": "seed/mA/body.png", "mime": "image/jpeg", "bucket": "public"},
         )
         product = cut.normalize_spec({"cutType": "product", "modelId": "mA"})
         assert cut.resolve_virtual_model_assets(product) is None
@@ -651,6 +671,7 @@ def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path
                 "applicableClothingTypes": ["top", "outer"],
                 "cutType": "styling", "shot": "full", "gender": "women",
                 "direction": "side",
+                "faceVisibility": "hidden",
             },
             "product": {
                 "all": "releases/r1/all/product.png",
@@ -673,6 +694,7 @@ def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path
         assert assets["v2"]["applicableClothingTypes"] == ["top", "outer"]
         assert assets["v2"]["thumb"].endswith("v2.webp")
         assert assets["v2"]["direction"] == "side"
+        assert assets["v2"]["faceVisibility"] == "hidden"
         assert "direction" in assets["product"] and assets["product"]["direction"] is None
         assert "gender" in assets["product"] and assets["product"]["gender"] is None
         assert assets["legacy-string"] == {"all": "legacy/all.png"}

@@ -4,7 +4,11 @@ import { readFileSync } from 'node:fs';
 
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
 import {
+  applyOpeningRow,
+  entryStylingMembers,
   hashSeed,
+  hasFullAndMediumMembers,
+  hasOpeningRow,
   normalizePlaceType,
   pickEntrySets,
   seededPick,
@@ -81,6 +85,23 @@ test('seeded boards round-trip as defaults and mode changes re-seed only the mat
   assert.equal(isDefaultStoryboardForMode(relabeled, baseColors, 'basic', seedContext), true);
 });
 
+test('entry placement combines the untouched opening seed into one medium two-column row', () => {
+  const seeded = defaultStoryboard(baseColors, 'basic', context('opening-row'));
+  assert.deepEqual(seeded.slice(0, 2).map((block) => block.shot), ['full', 'medium']);
+
+  const placed = applyOpeningRow(seeded);
+  const [hero, benefit] = placed;
+  assert.equal(hasOpeningRow(placed), true);
+  assert.deepEqual([hero.shot, benefit.shot], ['medium', 'medium']);
+  assert.equal(hero.sectionId, benefit.sectionId);
+  assert.equal(hero.sectionLayout, 'twoColumn');
+  assert.equal(benefit.sectionLayout, 'twoColumn');
+  assert.equal(hero.layoutRowId, benefit.layoutRowId);
+  assert.equal(hero.layoutRowVersion, 1);
+  assert.equal(benefit.layoutRowVersion, 1);
+  assert.equal(isDefaultStoryboardForMode(placed, baseColors, 'basic', context('opening-row')), true);
+});
+
 test('styling sets use distinct normalized place types in basic and extended modes', () => {
   const basic = pickEntrySets({
     gender: 'women', clothingType: 'top', projectId: 'places-basic', stylingCount: 2,
@@ -97,6 +118,55 @@ test('styling sets use distinct normalized place types in basic and extended mod
   assert.equal(normalizePlaceType('mixed-cafe', 'styling'), 'cafe');
   assert.equal(normalizePlaceType('anything', 'horizon-rotation'), 'studio');
   assert.equal(normalizePlaceType('future-place', 'styling'), 'future-place');
+});
+
+test('entry styling sets seed exactly one full and one medium member in catalog order', () => {
+  for (const [mode, seedContext, expectedSetCount] of [
+    ['basic', context('two-cut-basic', 'top', 'women'), 2],
+    ['extended', context('two-cut-extended', 'bottom', 'women'), 3],
+  ]) {
+    const seeded = defaultStoryboard(baseColors, mode, seedContext);
+    const groups = new Map();
+    for (const block of seeded.filter((item) => item.spaceGroupId && item.cutType === 'styling')) {
+      if (!groups.has(block.spaceGroupId)) groups.set(block.spaceGroupId, []);
+      groups.get(block.spaceGroupId).push(block);
+    }
+    assert.equal(groups.size, expectedSetCount);
+    for (const members of groups.values()) {
+      assert.equal(members.length, 2);
+      assert.deepEqual(new Set(members.map((member) => member.shot)), new Set(['full', 'medium']));
+      assert.ok(members[0].spaceSetMemberOrder < members[1].spaceSetMemberOrder);
+    }
+  }
+});
+
+test('all-full styling sets still seed two members and prefer different directions', () => {
+  const allFullSet = {
+    members: [
+      { order: 1, shot: 'full', direction: 'front', exampleId: 'front-a' },
+      { order: 2, shot: 'full', direction: 'front', exampleId: 'front-b' },
+      { order: 3, shot: 'full', direction: 'back', exampleId: 'back' },
+    ],
+  };
+  assert.deepEqual(
+    entryStylingMembers(allFullSet).map((member) => member.exampleId),
+    ['front-a', 'back'],
+  );
+  assert.deepEqual(
+    entryStylingMembers({ members: allFullSet.members.slice(0, 2) }).map((member) => member.exampleId),
+    ['front-a', 'front-b'],
+  );
+});
+
+test('women bottom soft preference falls back to all-full sets to preserve a fourth place', () => {
+  const picked = pickEntrySets({
+    gender: 'women', clothingType: 'bottom', projectId: 'soft-place-fallback', stylingCount: 4,
+  }).stylingSets;
+  const places = picked.map((set) => normalizePlaceType(set.placeType, set.setType));
+  assert.equal(picked.filter(Boolean).length, 4);
+  assert.equal(new Set(places).size, 4);
+  assert.equal(picked.filter(hasFullAndMediumMembers).length, 3);
+  assert.equal(picked.some((set) => !hasFullAndMediumMembers(set)), true);
 });
 
 test('category filters stay server-consistent for styling and horizon pools', () => {
@@ -142,8 +212,8 @@ test('women receive a mirror, men receive the styling fallback, unknown defaults
   const women = defaultStoryboard(baseColors, 'basic', context('women', 'bottom', 'women'));
   const men = defaultStoryboard(baseColors, 'basic', context('men', 'bottom', 'men'));
   const unknown = defaultStoryboard(baseColors, 'basic', context('unknown', 'bottom', null));
-  const standaloneFitStyling = (blocks) => blocks.filter((block) => (
-    block.sectionRole === 'fit'
+  const standaloneStyling = (blocks) => blocks.filter((block) => (
+    block.sectionRole === 'styling'
     && block.cutType === 'styling'
     && block.shot === 'full'
     && !block.spaceGroupId
@@ -152,7 +222,7 @@ test('women receive a mirror, men receive the styling fallback, unknown defaults
   assert.equal(women.filter((block) => block.cutType === 'mirror').length, 1);
   assert.equal(women.find((block) => block.cutType === 'mirror').faceExposure, 'hide');
   assert.equal(men.some((block) => block.cutType === 'mirror'), false);
-  assert.equal(standaloneFitStyling(men).at(-1).direction, 'back');
+  assert.equal(standaloneStyling(men).at(-1).direction, 'back');
   // 성별 미상은 서버(select_base_gender)와 동일하게 women 기본 — 세트·거울 모두 정상 배치.
   assert.equal(unknown.filter((block) => block.cutType === 'mirror').length, 1);
   assert.equal(unknown.some((block) => block.spaceGroupId), true);
@@ -191,30 +261,37 @@ test('multi-color basic and extended seeds follow product and studio repetition 
 
 test('cut counts include normal ranges and a forced one-slot styling fallback', () => {
   const basic = defaultStoryboard(baseColors, 'basic', context('counts', 'top', 'women'));
-  assert.equal(basic.length, 14);
-  // 확장형: 하의는 카테고리별 시퀀스, 상의는 전 의류 회전 세트를 사용한다.
-  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-a', 'bottom', 'women')).length, 20);
-  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-b', 'bottom', 'men')).length, 21);
-  assert.equal(defaultStoryboard(baseColors, 'extended', context('counts-c', 'top', 'women')).length, 19);
-
-  const oneStylingSet = storyboardSpaceSetsFor({ gender: 'women', clothingType: 'top' })[0];
-  const originalIncludes = Array.prototype.includes;
-  Array.prototype.includes = function mockedIncludes(value, ...rest) {
-    if (value === 'forced-single') return this === oneStylingSet.setApplicableClothingTypes;
-    return originalIncludes.call(this, value, ...rest);
-  };
-  try {
-    const fallback = defaultStoryboard(baseColors, 'basic', context('fallback', 'forced-single', 'women'));
-    assert.equal(fallback.length, 13);
-    // 스타일링 세트 1개만 — 호리존은 의류 메타 불일치로 낱장 트리오 폴백(그룹 없음).
-    assert.equal(new Set(fallback.filter((block) => block.spaceGroupId)
-      .map((block) => block.spaceGroupId)).size, 1);
-  } finally {
-    Array.prototype.includes = originalIncludes;
+  assert.equal(basic.length, 12);
+  // 확장형 기대치는 실제 추첨(pickEntrySets)에서 유도 — 카탈로그가 자라도 테스트가 낡지 않게.
+  for (const [pid, clothing, gender] of [
+    ['counts-a', 'bottom', 'women'], ['counts-b', 'bottom', 'men'], ['counts-c', 'top', 'women'],
+  ]) {
+    const picked = pickEntrySets({ gender, clothingType: clothing, projectId: pid, stylingCount: 3 });
+    const stylingCuts = picked.stylingSets.reduce((s, set) => s + (set ? entryStylingMembers(set).length : 2), 0);
+    const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
+    assert.equal(
+      defaultStoryboard(baseColors, 'extended', context(pid, clothing, gender)).length,
+      2 + stylingCuts + horizonCuts + 1 + 4,
+      `${gender}/${clothing} extended`,
+    );
   }
+
+  // 미지의 의류(후보 0)에서도 시드는 추첨 결과와 정확히 정합하며 낱장 폴백으로 채운다(fail-closed).
+  const forced = context('fallback', 'forced-single', 'women');
+  const fPicked = pickEntrySets({
+    gender: 'women', clothingType: 'forced-single', projectId: 'fallback', stylingCount: 2,
+  });
+  const fallback = defaultStoryboard(baseColors, 'basic', forced);
+  const fStyling = fPicked.stylingSets.reduce((s, set) => s + (set ? entryStylingMembers(set).length : 2), 0);
+  const fHorizon = fPicked.rotationSet?.members.length ?? 3;
+  assert.equal(fallback.length, 2 + fStyling + fHorizon + 1 + 2);
+  assert.equal(
+    new Set(fallback.filter((block) => block.spaceGroupId).map((block) => block.spaceGroupId)).size,
+    fPicked.stylingSets.filter(Boolean).length + (fPicked.rotationSet ? 1 : 0),
+  );
 });
 
-test('every seeded space group keeps the complete catalog member run', () => {
+test('seeded styling groups keep two entry members while horizon groups stay complete', () => {
   const seeded = defaultStoryboard(baseColors, 'extended', context('atomic', 'outer', 'women'));
   const groups = new Map();
   seeded.forEach((block, index) => {
@@ -225,8 +302,9 @@ test('every seeded space group keeps the complete catalog member run', () => {
 
   for (const [groupId, members] of groups) {
     const set = storyboardSpaceSetById(spaceSetIdFromGroupId(groupId));
-    assert.equal(members.length, set.members.length);
-    assert.deepEqual(members.map(({ block }) => block.spaceSetMemberOrder), set.members.map((member) => member.order));
+    const expectedMembers = set.setType === 'styling' ? entryStylingMembers(set) : set.members;
+    assert.equal(members.length, expectedMembers.length);
+    assert.deepEqual(members.map(({ block }) => block.spaceSetMemberOrder), expectedMembers.map((member) => member.order));
     assert.equal(members.at(-1).index - members[0].index + 1, members.length);
     assert.ok(members.every(({ block }) => (
       block.exampleSelectionOrigin === 'auto'

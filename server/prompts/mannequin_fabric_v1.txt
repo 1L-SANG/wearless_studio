@@ -14,8 +14,10 @@ untouched.
   threads sitting together, then a gap, then a single tan line, then a gap. Reproduce the group
   as separate lines of their own colours. Merging a group into one thicker line of one colour is
   the single most common way this edit fails.
-- Weave texture visible in the close-up: the fabric should read as woven cloth with fine threads,
-  not as a flat printed band.
+- Material structure visible in the close-up. Preserve the evidenced substrate instead of forcing
+  every garment to read as woven cloth: fine threads for woven fabric, yarn loops and openings for
+  knit/crochet/mesh/lace, and the same light transmission for sheer or open fabric. The corrected
+  pattern must follow that structure rather than becoming a flat printed band.
 </what to fix>
 
 <what must not change>
@@ -26,6 +28,11 @@ untouched.
 - Garment construction: collar, plackets, buttons, pockets, seams, cuffs and their positions.
 - Whether the garment is tucked or untucked, and every other garment in the photo.
 - The overall colour cast of the photo.
+- The garment's material identity and physical evidence. Never turn sheer, mesh, lace, crochet or
+  open knit into opaque woven cloth or a flat print. Preserve evidenced weave/yarn openings,
+  crinkle, edge thickness and layer stacking, roughness versus gloss, light transmission, and the
+  pose-linked folds, compression and self-shadow already visible. Change only the surface pattern
+  and ground colour described above.
 </what must not change>
 
 <how to read the references>

@@ -35,6 +35,47 @@ class QcResult:
     metrics: dict = field(default_factory=dict)
 
 
+def evaluate_canvas_alpha_qc(generated_bytes: bytes) -> QcResult:
+    """출력 캔버스에 실제 투명 픽셀이 있는지만 검사한다.
+
+    시스템의 마네킹·스튜디오 이미지는 파일 캔버스 전체가 불투명이어야 한다.
+    시스루·메시·레이스 원단의 비침은 배경과 섬유가 섞여 보이는 RGB 색과
+    빛으로 이미 합성된 모습이어야 하며, 의류 픽셀 자체의 alpha를 낮추어서는 안 된다.
+
+    alpha 채널이 있어도 모든 픽셀이 255면 실제 투명도는 없으므로 통과한다.
+    """
+    try:
+        img = Image.open(BytesIO(generated_bytes))
+        img.load()
+    except Exception:
+        return QcResult("retry", ["decode_failed"])
+
+    w, h = img.size
+    has_alpha_source = "A" in img.getbands() or "transparency" in img.info
+    metrics = {
+        "width": w,
+        "height": h,
+        "hasAlphaSource": has_alpha_source,
+        "alphaMin": 255,
+        "transparentPixelCount": 0,
+        "transparentPixelRatio": 0.0,
+    }
+    if not has_alpha_source:
+        return QcResult("pass", metrics=metrics)
+
+    alpha = img.convert("RGBA").getchannel("A")
+    histogram = alpha.histogram()
+    transparent_count = sum(histogram[:255])
+    alpha_min = next((value for value, count in enumerate(histogram) if count), 255)
+    metrics.update({
+        "alphaMin": alpha_min,
+        "transparentPixelCount": transparent_count,
+        "transparentPixelRatio": round(transparent_count / (w * h), 6),
+    })
+    reasons = ["transparent_canvas"] if transparent_count else []
+    return QcResult("retry" if reasons else "pass", reasons, metrics)
+
+
 def _bg_color(img: Image.Image) -> tuple[int, int, int]:
     w, h = img.size
     b = max(2, min(w, h) // 50)
@@ -52,6 +93,9 @@ def _bg_color(img: Image.Image) -> tuple[int, int, int]:
 
 
 def evaluate_mannequin_qc(generated_bytes: bytes) -> QcResult:
+    alpha_result = evaluate_canvas_alpha_qc(generated_bytes)
+    if "transparent_canvas" in alpha_result.reasons:
+        return alpha_result
     try:
         img = Image.open(BytesIO(generated_bytes)).convert("RGB")
     except Exception:
@@ -116,6 +160,10 @@ def format_qc_feedback(result: QcResult) -> str:
         "bad_aspect_ratio": "Output a portrait image matching the base photo's aspect ratio.",
         "too_small": "Output a high-resolution image.",
         "decode_failed": "Output a valid photographic image.",
+        "transparent_canvas": (
+            "Return a fully opaque image canvas (alpha 255 everywhere). "
+            "Show sheer fabric through RGB color and light blending only, never transparent pixels."
+        ),
     }
     seen = [hints[r] for r in result.reasons if r in hints]
     if not seen:

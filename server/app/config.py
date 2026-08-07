@@ -48,6 +48,17 @@ class Settings:
     # Gemini thinking 수준 — 분석은 분류·추출 작업이라 low로 충분(미지정 시 모델 기본이
     # 깊은 추론을 돌려 수 초 낭비). off=미전송(모델 기본). 2026-07-07 속도 개선.
     analysis_thinking_level: str = "low"  # low | medium | high | off
+    # AG-IC 입력 사진 동일성(셀러가 올린 사진들이 같은 옷인가 — input_consistency.py).
+    # off=미판정 | warn=프론트 경고 노출. 기본 warn.
+    # **enforce 값이 없는 것은 의도**다: 이 판정은 어떤 잡도 막지 않는다. 오탐 1건의 비용
+    # (멀쩡한 사진을 지우게 함)이 미탐 1건의 비용(어제와 동일)보다 크기 때문이다.
+    # **shadow(판정만 기록·무노출) 를 두지 않는 것도 의도**다(2026-08-02 오너 결정). shadow 의
+    # 값은 "사람이 로그를 읽고 임계·프롬프트를 고친다"는 후속 행동에서만 나오는데, LLM 판정은
+    # 그 기록으로 자동 학습되지 않는다. 읽을 사람이 정해지지 않은 기록은 호출 비용만 쓴다.
+    # 오탐 분포가 궁금하면 shadow 운영 대신 `scripts/ic_calibrate.py`(라벨 픽스처 오프라인
+    # 평가)를 쓴다 — 실셀러 트래픽을 태우지 않고 같은 답을 얻는다.
+    # 되돌리기: INPUT_CONSISTENCY=off (재배포 없이 env 만으로 즉시 무력화).
+    input_consistency: str = "warn"  # off | warn
     mannequin_tier: str = "image_high"  # AG-04 = Gemini 3 Pro (사용자 결정 — Flash 미사용)
     # 조정(:regenerate) 전용 tier. 조정과 초기 생성은 같은 워커·같은 프롬프트를 타서 env 하나로는
     # 분리가 안 된다. 빈 값이면 분기 없이 mannequin_tier 를 그대로 쓴다(기존 동작).
@@ -92,6 +103,10 @@ class Settings:
     # bestof=불일치 시 원본 입력에서 후보를 더 생성해 첫 pass 또는 picker 최선을 채택.
     garment_qc_mode: str = "bestof"  # off | shadow | bestof
     garment_qc_extra_candidates: int = 2
+    # 최종 컷·페이지 독립 QC v1. 먼저 shadow로 실제 통과/실패 표본을 보정한 뒤에만
+    # 출고 차단 모드를 별도 결정한다. 현재 허용값은 off | shadow이며 기본 off라 추가 비용 0.
+    cut_output_qc_mode: str = "off"  # off | shadow
+    page_output_qc_mode: str = "off"  # off | shadow
     # P1 축 인지 QC(선언 핏 축 반영 판정 + 실패 시 편집 교정 1회 — fidelity §G·§H).
     # off | shadow(판정·이벤트만) | enforce(편집 재시도 발화). enforce는 코드 레벨 가드
     # (_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY)가 풀리기 전까지 shadow로 강등(G9 규율).
@@ -173,6 +188,11 @@ class Settings:
     fm_face_qc_enabled: bool = False
     fm_face_qc_threshold: float = 0.363  # OpenCV SFace 권장 코사인 동일인 기준선(캘리브 전 잠정)
     fm_face_qc_dir: str | None = None    # SFace/YuNet onnx 디렉터리. None이면 app/data/face_models
+    # ---- 이미지 실비 계측(내부용) ----
+    # false 면 image_usage_events 적재를 끄고 로그만 남긴다(마이그레이션 적용 전 임시 대응).
+    image_usage_persist: bool = True
+    # 리포트의 원화 환산 기준. 회계용이 아니라 감각용 — 실제 청구는 달러다.
+    image_usage_krw_per_usd: float = 1400.0
 
 
 def _bust_pass() -> str:
@@ -278,6 +298,8 @@ def load_settings() -> Settings:
         retrieval_refimages=_flag("RETRIEVAL_REFIMAGES", "off", {"off", "on"}),
         ref_images_topk=int(os.getenv("REF_IMAGES_TOPK", "2")),
         embed_image_model=os.getenv("EMBED_IMAGE_MODEL", "google/siglip-base-patch16-224"),
+        image_usage_persist=(os.getenv("IMAGE_USAGE_PERSIST", "true").lower() == "true"),
+        image_usage_krw_per_usd=float(os.getenv("IMAGE_USAGE_KRW_PER_USD", "1400")),
         embed_image_dim=int(os.getenv("EMBED_IMAGE_DIM", "768")),
         embed_text_model=os.getenv("EMBED_TEXT_MODEL", "BAAI/bge-m3"),
         embed_text_dim=int(os.getenv("EMBED_TEXT_DIM", "1024")),
@@ -285,6 +307,7 @@ def load_settings() -> Settings:
             "SELLER_TEXT_CANONICALIZE", "off", {"off", "shadow", "enforce"}
         ),
         input_qc=_flag("INPUT_QC", "off", {"off", "shadow", "enforce"}),
+        input_consistency=_flag("INPUT_CONSISTENCY", "warn", {"off", "warn"}),
         image_qc=_flag("IMAGE_QC", "off", {"off", "shadow", "enforce"}),
         # 기본값은 dataclass 선언과 **반드시 일치**해야 한다. 실행 경로는 load_settings 라
         # 여기가 정본이고, dataclass 만 고치면 테스트는 통과하는데 실서비스는 옛 값으로 돈다
@@ -301,6 +324,8 @@ def load_settings() -> Settings:
         garment_qc_mode=_flag(
             "GARMENT_QC_MODE", "bestof", {"off", "shadow", "bestof"}),
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),
+        cut_output_qc_mode=_flag("CUT_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
+        page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
         detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),

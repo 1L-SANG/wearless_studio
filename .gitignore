@@ -86,3 +86,6 @@ server/app/data/face_models/*.onnx
 
 # 구매 자료(전자책·프롬프트 팩) — 저작권. 로컬 전용.
 insight/
+
+# 로컬 워크트리(에이전트 작업용) — 커밋 금지
+.worktrees/

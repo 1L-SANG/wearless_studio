@@ -201,7 +201,7 @@ def test_worker_legacy_job_without_snapshot_falls_back_to_analysis(monkeypatch):
     assert only["fit_profile_source"] == "legacy_analysis_fallback"
 
 
-def test_worker_malformed_snapshot_fails_loudly(monkeypatch):
+def test_worker_malformed_snapshot_falls_back_to_fresh_generation(monkeypatch):
     calls = {"success": [], "failure": [], "emits": [], "run": []}
     app, job = _wire_worker(
         monkeypatch,
@@ -209,16 +209,18 @@ def test_worker_malformed_snapshot_fails_loudly(monkeypatch):
         payload={"mode": "regenerate", "fitProfileSnapshot": {"version": 2, "profile": "??"}},
         calls=calls)
     asyncio.run(mannequin_job.run_mannequin_job(app, job))
-    assert calls["run"] == []
-    assert calls["failure"] and calls["failure"][0]["metadata"]["error"] == "invalid_fit_profile_snapshot"
+    assert calls["failure"] == []
+    assert len(calls["run"]) == 1
+    assert calls["run"][0]["generation_path"] == "fresh"
+    assert calls["run"][0]["fit_profile_source"] == "invalid_snapshot_fallback"
 
 
 # ---------- 관측 이벤트 (prompt_rendered 해시) ----------
 
 _PNG_1PX = bytes.fromhex(
-    "89504e470d0a1a0a0000000d494844520000000100000001080600000"
-    "01f15c4890000000d49444154789c626001000000ffff030000060005"
-    "57bfabd40000000049454e44ae426082")
+    "89504e470d0a1a0a0000000d4948445200000002000000020802000000"
+    "fdd49a730000001349444154789c63fcffff3f0303031303180000240603"
+    "015da24e880000000049454e44ae426082")
 
 
 def test_run_candidate_emits_prompt_rendered_hashes(monkeypatch):
@@ -256,5 +258,7 @@ def test_run_candidate_emits_prompt_rendered_hashes(monkeypatch):
     ev = rendered[0]
     assert len(ev["profile_hash"]) == 64 and len(ev["prompt_hash"]) == 64
     assert ev["input_source"] == "payload_snapshot" and ev["attempt"] == 1
+    assert ev["generation_path"] == "fresh"
+    assert ev["prompt_version"] == settings.mannequin_prompt_version
     # 원문 미포함(다이제스트만) — 이벤트 payload 에 프로필/프롬프트 문자열이 없어야 함
     assert "slim" not in str(ev) and "FIT PROFILE" not in str(ev)

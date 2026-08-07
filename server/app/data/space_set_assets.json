@@ -1,8 +1,5 @@
 {
   "baseUrl": "https://images.wearless.kr",
-  "releaseId": "space-sets-20260730-v1",
-  "releasedAt": "2026-07-30T06:00:29.811365+00:00",
-  "schemaVersion": 1,
   "placeTypes": [
     "atelier-interior",
     "building-interior",
@@ -19,7 +16,964 @@
     "urban-building-exterior",
     "waterfront"
   ],
+  "releaseId": "space-sets-20260731-zara-v1",
+  "releasedAt": "2026-07-31T10:21:14.109552+00:00",
+  "schemaVersion": 1,
   "sets": [
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀 1 + 미디움 4",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_05_women_top_draped_01.png",
+            "mime": "image/png",
+            "sha256": "aeb206a5de53c0f35cf538e9e5bd04473e40d5cddfe45a837e3501af5bad5623",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_05_women_top_draped_01",
+          "order": 1,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_05_women_top_draped_01.png",
+            "mime": "image/png",
+            "sha256": "c902d92e726a0ad28bdacb765606b5d817edb7cfd6759dbe2866a15b40bf5465",
+            "width": 1086
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_05_women_top_draped_02.png",
+            "mime": "image/png",
+            "sha256": "86cfca9c1e29477298c813c87679b2ca3f452dce50b7f6be3c274b74508c3b22",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_05_women_top_draped_02",
+          "order": 2,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_05_women_top_draped_02.png",
+            "mime": "image/png",
+            "sha256": "fc6b605d292c852a40cc0cfba32f11de38dde64e0cae988474019e0413fd13a0",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_05_women_top_draped_03.png",
+            "mime": "image/png",
+            "sha256": "9cd7449d8d3709fc204b2ab98ec618dd488be98af76246470c413fb309479bb7",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_05_women_top_draped_03",
+          "order": 3,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_05_women_top_draped_03.png",
+            "mime": "image/png",
+            "sha256": "5a6a07d98d67af47854fb46571cfd02a88fe9be48336832d8ae10927766fa334",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_05_women_top_draped_04.png",
+            "mime": "image/png",
+            "sha256": "87967684c575728e7340fa3b989de5081cfdad92b4e2d4dd70ea4a660a180614",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_05_women_top_draped_04",
+          "order": 4,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_05_women_top_draped_04.png",
+            "mime": "image/png",
+            "sha256": "ca333e19a23765db9454271ba066ce39f583b11a6bf4aacd895067ab52f8f2da",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_05_women_top_draped_05.png",
+            "mime": "image/png",
+            "sha256": "d10c7a89c25118f27190297d24b283cdfd42ce7faa731f468d57701b4b6337fd",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_05_women_top_draped_05",
+          "order": 5,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_05_women_top_draped_05.png",
+            "mime": "image/png",
+            "sha256": "7d0a4ad73648951261cee916e48efc3d2b189f7635c92a4ff3f4220b68bab188",
+            "width": 1086
+          },
+          "shot": "medium"
+        }
+      ],
+      "name": "D5 · 여성 드레이프 셔츠",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-05-women-top-draped",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "미디움 5",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_06_women_top_linen_01.png",
+            "mime": "image/png",
+            "sha256": "a474167a4ad6b53e1e14f7fc066dc35dc43cb7918b0de4d6fcea6ec43ea1121b",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_01",
+          "order": 1,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_06_women_top_linen_01.png",
+            "mime": "image/png",
+            "sha256": "fa20a6810627bf00b283f541b69ff7cb4935cdaa9331b5ed2dba4f88ca6028bc",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_06_women_top_linen_02.png",
+            "mime": "image/png",
+            "sha256": "980debaf5538b07cea775bbf59a843ee17ddc2e30ef2c23357b4698708323d39",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_02",
+          "order": 2,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_06_women_top_linen_02.png",
+            "mime": "image/png",
+            "sha256": "e6f72edb9e9d637ea8bbfc3564a817bada1ebeadf0499f917b94d3cb595305bd",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_06_women_top_linen_03.png",
+            "mime": "image/png",
+            "sha256": "9a7a3bb831c032c82520b498d593ca6298575469441d04ebdfaa1c18fbd1d3e5",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_03",
+          "order": 3,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_06_women_top_linen_03.png",
+            "mime": "image/png",
+            "sha256": "f6a41446b84b4cfbab6b1c7df5b66167f38006b4c83dc7a114a58b10df8bf75d",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_06_women_top_linen_04.png",
+            "mime": "image/png",
+            "sha256": "27ba21f04dd01c41cb055051c4913ea72e8c37b9080d858c791cad14242f665a",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_04",
+          "order": 4,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_06_women_top_linen_04.png",
+            "mime": "image/png",
+            "sha256": "e2b48ee9d1708db7f3712e9311d00a79823d9495579483d497326ed6789027a5",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_06_women_top_linen_05.png",
+            "mime": "image/png",
+            "sha256": "ab89135b6d0386dafbdc6d0691b82e5ae5e0d03cc90c2781c9e3f13b5360c261",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_06_women_top_linen_05",
+          "order": 5,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_06_women_top_linen_05.png",
+            "mime": "image/png",
+            "sha256": "59e3ee999a0140197b66a64bfa336a910c7ee95da411c2292144982898c29f72",
+            "width": 1086
+          },
+          "shot": "medium"
+        }
+      ],
+      "name": "D6 · 여성 리넨 셔츠",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-06-women-top-linen",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀 1 + 미디움 4",
+      "gender": "men",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_07_men_top_pleated_01.png",
+            "mime": "image/png",
+            "sha256": "52b086982958a583e89f026d0b8bc26b9c3d50cce553cbab363381f488fd8f4e",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_07_men_top_pleated_01",
+          "order": 1,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_07_men_top_pleated_01.png",
+            "mime": "image/png",
+            "sha256": "5afc2f747f257c5f1fb44e8b53902d82556273f9714cd08de3265f78c16b0883",
+            "width": 1086
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_07_men_top_pleated_02.png",
+            "mime": "image/png",
+            "sha256": "60eaf2e241de518f086312a5a6889e25565cf48246f46eb2986add891f60b49a",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_07_men_top_pleated_02",
+          "order": 2,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_07_men_top_pleated_02.png",
+            "mime": "image/png",
+            "sha256": "a5aa31e19e245fccf1898ecfd6ab7b2b3caa1c902d93c2c031d277ef055fbd02",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_07_men_top_pleated_03.png",
+            "mime": "image/png",
+            "sha256": "660abc48c162346eb93700c223a00c7be459bac2d123eb23dea57d1c6a31dc73",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_07_men_top_pleated_03",
+          "order": 3,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_07_men_top_pleated_03.png",
+            "mime": "image/png",
+            "sha256": "3a2ea08379205907462d2ed3039023054b382c7f33ec5eae14fed965a274eb94",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_07_men_top_pleated_04.png",
+            "mime": "image/png",
+            "sha256": "d018a151aa4055848b1358a78a94eb0e2f2cc7311d57b8a33335ee8e10a83a78",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_07_men_top_pleated_04",
+          "order": 4,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_07_men_top_pleated_04.png",
+            "mime": "image/png",
+            "sha256": "68da136e6cb23cfcf41c98a754d6a5e939846cdb74bc67b08ffccfdbc078fa8e",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_07_men_top_pleated_05.png",
+            "mime": "image/png",
+            "sha256": "4362d81eba98cc2ee7cbd412deeeebc6fc3f4ad17b78fb609c3318e4588f0c6a",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_07_men_top_pleated_05",
+          "order": 5,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_07_men_top_pleated_05.png",
+            "mime": "image/png",
+            "sha256": "87bb6b0128aa72edd5a4012e1d7ab1bb0b51ebd03e398f2844cad2e25711a031",
+            "width": 1086
+          },
+          "shot": "medium"
+        }
+      ],
+      "name": "D7 · 남성 플리츠 셔츠",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-07-men-top-pleated",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "top"
+      ],
+      "compositionLabel": "풀 1 + 미디움 4",
+      "gender": "men",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_08_men_top_textured_01.png",
+            "mime": "image/png",
+            "sha256": "1b410b2086600014192a7ddad13b7a362b67e4aacfd40cbe6cc180d15fa90fb9",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_08_men_top_textured_01",
+          "order": 1,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_08_men_top_textured_01.png",
+            "mime": "image/png",
+            "sha256": "eb4fb35a113930b03a5e227bb780eaaa2433ca80e376c0d1e752532b8c67521b",
+            "width": 1086
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_08_men_top_textured_02.png",
+            "mime": "image/png",
+            "sha256": "56ce38b570bee2ae5685e9ba293b5c718f9923fab02f3b360fe248c116b57694",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_08_men_top_textured_02",
+          "order": 2,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_08_men_top_textured_02.png",
+            "mime": "image/png",
+            "sha256": "e343eb95d664808a1de53be7052fc50f7ebc28f5ee1eca2b68ec23fd5bf5f96d",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_08_men_top_textured_03.png",
+            "mime": "image/png",
+            "sha256": "296f3104a59b5ab47d3e69671c6a294c4c1fab692402fa3ed4a9da0607f474d2",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_08_men_top_textured_03",
+          "order": 3,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_08_men_top_textured_03.png",
+            "mime": "image/png",
+            "sha256": "192231288602831d61ffdf2cf60eff11b415b8e01c03fcc3910d1883f5e857b3",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_08_men_top_textured_04.png",
+            "mime": "image/png",
+            "sha256": "154d7887ce0a488d2e0732eb059598c6ccc397ecdc35aff88fb1d9939d14d005",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_08_men_top_textured_04",
+          "order": 4,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_08_men_top_textured_04.png",
+            "mime": "image/png",
+            "sha256": "4ec3b02ba5a719efec2dd1c3513c2896a804b0971f11d77d1a44e8faad6cfe62",
+            "width": 1086
+          },
+          "shot": "medium"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_08_men_top_textured_05.png",
+            "mime": "image/png",
+            "sha256": "99f3f42282a75f04866592f8adb351ff368794a9da77c5d832b8be59afa5ec70",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_08_men_top_textured_05",
+          "order": 5,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_08_men_top_textured_05.png",
+            "mime": "image/png",
+            "sha256": "4d0eea0cee6cab7b14ad7319f823437f4449e7d4778f0f31b468b1591b9a8b6d",
+            "width": 1086
+          },
+          "shot": "medium"
+        }
+      ],
+      "name": "D8 · 남성 텍스처 셔츠",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-08-men-top-textured",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "dress"
+      ],
+      "compositionLabel": "풀 4 + 미디움 1",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_09_women_dress_knit_01.png",
+            "mime": "image/png",
+            "sha256": "38b935ed5b089c92ae5072d81287aa8856dc6dcc00bfd7de3a33290b1701e4ce",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_09_women_dress_knit_01",
+          "order": 1,
+          "pose": {
+            "height": 1447,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_09_women_dress_knit_01.png",
+            "mime": "image/png",
+            "sha256": "09fb585e222c8e3958876d9b40d79e5c76274ce9fb66a936d26abb7d1fe367ae",
+            "width": 1087
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_09_women_dress_knit_02.png",
+            "mime": "image/png",
+            "sha256": "9008af1bc29a77650d7bfe94f92af0c2f29408c79dd753d440a2020196b78b65",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_09_women_dress_knit_02",
+          "order": 2,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_09_women_dress_knit_02.png",
+            "mime": "image/png",
+            "sha256": "a892dd21926cb1595239e20ed0adbf4ff3917834155c3e72a64a7dadefc7ea65",
+            "width": 1086
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_09_women_dress_knit_03.png",
+            "mime": "image/png",
+            "sha256": "2b3911f8308e8e0b135a699e98be87fd28e455b0dc921669ce94463413b94298",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "side",
+          "exampleId": "ss_horizon_sequence_09_women_dress_knit_03",
+          "order": 3,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_09_women_dress_knit_03.png",
+            "mime": "image/png",
+            "sha256": "bf051fd532f6dc1a3cb0c1bce77b9f880cb4fec161d41445b83d8e5bc27babfc",
+            "width": 1086
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_09_women_dress_knit_04.png",
+            "mime": "image/png",
+            "sha256": "5a5a0f43c157e5184d80b58b244c6eb71a0fe9da33896e8517a18bf9ab1fec4b",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "back",
+          "exampleId": "ss_horizon_sequence_09_women_dress_knit_04",
+          "order": 4,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_09_women_dress_knit_04.png",
+            "mime": "image/png",
+            "sha256": "90f0422c6d7036966074520f3e7af1dea80758075eaf2d307ce752d0623d1723",
+            "width": 1086
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/all/ss_horizon_sequence_09_women_dress_knit_05.png",
+            "mime": "image/png",
+            "sha256": "0c08742e8eb238ba7206bdb33706f55ec798816acf058276aaa2069386820d31",
+            "width": 1024
+          },
+          "cutType": "horizon",
+          "direction": "front",
+          "exampleId": "ss_horizon_sequence_09_women_dress_knit_05",
+          "order": 5,
+          "pose": {
+            "height": 1448,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-zara-v1/pose/ss_horizon_sequence_09_women_dress_knit_05.png",
+            "mime": "image/png",
+            "sha256": "8abb27bec3a93a114cabcd3ac6ec7808d5709553137cd46aee55389027c26dff",
+            "width": 1086
+          },
+          "shot": "medium"
+        }
+      ],
+      "name": "D9 · 여성 니트 원피스",
+      "placeType": "horizon-studio",
+      "platePolicy": "not-required",
+      "representativePlate": null,
+      "setId": "horizon-sequence-09-women-dress-knit",
+      "setType": "horizon-sequence",
+      "spaceVariation": "fixed",
+      "tone": "catalog-studio"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_rainy_storefront_kclub_140072876_01.png",
+            "mime": "image/png",
+            "sha256": "3f93d45f71d7e655e66b17f7518ce12722e5a9588befdc86057ae27d9c5c32b1",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_rainy_storefront_kclub_140072876_01",
+          "order": 1,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_rainy_storefront_kclub_140072876_01.png",
+            "mime": "image/png",
+            "sha256": "49b2d2a14deaf54fae30427fc50e25d97fdfed7e86bc12f7ea2fc811c1cee9db",
+            "width": 1024
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_rainy_storefront_kclub_140072876_02.png",
+            "mime": "image/png",
+            "sha256": "df561f189eea71999fa50fb2983b27f93308486090ec4e581c8f37797888a04a",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "side",
+          "exampleId": "ss_set_women_bottom_rainy_storefront_kclub_140072876_02",
+          "order": 2,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_rainy_storefront_kclub_140072876_02.png",
+            "mime": "image/png",
+            "sha256": "2b547f0f7c99939a688d8223aa342d46708f3c530dcc72ec4994367b412efdc3",
+            "width": 1024
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_rainy_storefront_kclub_140072876_03.png",
+            "mime": "image/png",
+            "sha256": "3d4ccfa1e77a892e3bc8d6fbee5836346cbcaac9536271bcc50e59bd253f78c2",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_rainy_storefront_kclub_140072876_03",
+          "order": 3,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_rainy_storefront_kclub_140072876_03.png",
+            "mime": "image/png",
+            "sha256": "e9672f79b36b1acf79891e05c413b07af74f10a3eef26fc6501b8e35c7d67533",
+            "width": 1024
+          },
+          "shot": "medium"
+        }
+      ],
+      "name": "비 오는 상점 앞의 우산 산책 스냅",
+      "placeType": "storefront-street",
+      "platePolicy": "required",
+      "representativePlate": {
+        "height": 1536,
+        "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/plate/set-women-bottom-rainy-storefront-kclub-140072876.png",
+        "mime": "image/png",
+        "sha256": "cde5bc956559840ffe93023dd60412cab2ddb9a74fa66b8697885cf9c68485b5",
+        "width": 1024
+      },
+      "setId": "set-women-bottom-rainy-storefront-kclub-140072876",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_urban_ggsing_140741411_01.png",
+            "mime": "image/png",
+            "sha256": "16ed5799e54af90525b243c8fc568afc4a9d02de06e2e6bed20ff6b6db902e54",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_urban_ggsing_140741411_01",
+          "order": 1,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_urban_ggsing_140741411_01.png",
+            "mime": "image/png",
+            "sha256": "feefec9de3675ad2d88fa68ecbebe290d27e23e8d70eafa4002cd7b396d01a32",
+            "width": 1024
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_urban_ggsing_140741411_02.png",
+            "mime": "image/png",
+            "sha256": "869d5f8ff171d69753eb875fd8bb1bd23c5de25baa2a65dccc965da0ebeea7ac",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_urban_ggsing_140741411_02",
+          "order": 2,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_urban_ggsing_140741411_02.png",
+            "mime": "image/png",
+            "sha256": "01931856a8e500c55fb89a56544800554b359160c5848e71158e981469ccd327",
+            "width": 1024
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_urban_ggsing_140741411_03.png",
+            "mime": "image/png",
+            "sha256": "382f597b793678fd8591a47478f5616e37500c9eb2574a1b2de90ff7489b42c4",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_urban_ggsing_140741411_03",
+          "order": 3,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_urban_ggsing_140741411_03.png",
+            "mime": "image/png",
+            "sha256": "0aa21d4668d22e981f1beba01c8a1216a89a1530d0f953b97d62f453e5efc8ca",
+            "width": 1024
+          },
+          "shot": "medium"
+        }
+      ],
+      "name": "낡은 상가 앞의 가벼운 거리 스냅",
+      "placeType": "storefront-street",
+      "platePolicy": "required",
+      "representativePlate": {
+        "height": 1536,
+        "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/plate/set-women-bottom-urban-ggsing-140741411.png",
+        "mime": "image/png",
+        "sha256": "87c77d03be630f7244e04dc89485f1f56fd8e501e003bb965a643eb5e4e919e5",
+        "width": 1024
+      },
+      "setId": "set-women-bottom-urban-ggsing-140741411",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_home_petrichoor_162619101_01.png",
+            "mime": "image/png",
+            "sha256": "3a255e711b1568cec9a17e2668d72425501d560a6c510a56a4c28449096c7760",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_home_petrichoor_162619101_01",
+          "order": 1,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_home_petrichoor_162619101_01.png",
+            "mime": "image/png",
+            "sha256": "76d794771a3e9267a8642f75421a580ab61f64a98b75fe86a2b7d0de7ecb36cf",
+            "width": 1024
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_home_petrichoor_162619101_02.png",
+            "mime": "image/png",
+            "sha256": "9de153afc1df9f6f407b5452d6a431043e0a6371310101c96771ac2b053b993c",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "side",
+          "exampleId": "ss_set_women_bottom_home_petrichoor_162619101_02",
+          "order": 2,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_home_petrichoor_162619101_02.png",
+            "mime": "image/png",
+            "sha256": "fae1b53147c2594c1227544be4d62f0813aecf66b41a20c4e1cdedfe7ab06f4d",
+            "width": 1024
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_home_petrichoor_162619101_03.png",
+            "mime": "image/png",
+            "sha256": "607daed59a0beae92a78485c8a329e63ad4c869937bb6496489863897778be58",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_home_petrichoor_162619101_03",
+          "order": 3,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_home_petrichoor_162619101_03.png",
+            "mime": "image/png",
+            "sha256": "67123ab0548b15a4310e15e8b885c26c2d6247c478c8bd4383f6151aeb671b8f",
+            "width": 1024
+          },
+          "shot": "medium"
+        }
+      ],
+      "name": "작은 집 안의 따뜻한 생활 스냅",
+      "placeType": "home-interior",
+      "platePolicy": "required",
+      "representativePlate": {
+        "height": 1536,
+        "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/plate/set-women-bottom-home-petrichoor-162619101.png",
+        "mime": "image/png",
+        "sha256": "d89fc804efe443b1d518dda793c655259a3ba85da3f78484eea8cce0ccf2cb26",
+        "width": 1024
+      },
+      "setId": "set-women-bottom-home-petrichoor-162619101",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
+    {
+      "applicableClothingTypes": [
+        "bottom"
+      ],
+      "compositionLabel": "풀샷 2장 + 미디움샷 1장",
+      "gender": "women",
+      "members": [
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_beach_nissome_133330805_01.png",
+            "mime": "image/png",
+            "sha256": "19f7a20a0355bfd484bf787f6ef05d89c7491a56c965f917c92b4c939fe098a6",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_beach_nissome_133330805_01",
+          "order": 1,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_beach_nissome_133330805_01.png",
+            "mime": "image/png",
+            "sha256": "f1d9e87d2485e161aa94ac65a9d45f6ba785bbb3c8a95dc4e59e674ad8a4b6e4",
+            "width": 1024
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_beach_nissome_133330805_02.png",
+            "mime": "image/png",
+            "sha256": "7561090ea0845982369f674c6e74067c3864ffa7bd28f9a16f07d2e4a4e010f2",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "back",
+          "exampleId": "ss_set_women_bottom_beach_nissome_133330805_02",
+          "order": 2,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_beach_nissome_133330805_02.png",
+            "mime": "image/png",
+            "sha256": "80a965f046f9256d3bd9c78bfee2a49c120f1c830c0e63b6bad2a592c8c5cf22",
+            "width": 1024
+          },
+          "shot": "full"
+        },
+        {
+          "all": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/all/ss_set_women_bottom_beach_nissome_133330805_03.png",
+            "mime": "image/png",
+            "sha256": "3bc6462747dbf823db127250bed492a2bbb0dc7f79778cfdb638fb4fb2111321",
+            "width": 1024
+          },
+          "cutType": "styling",
+          "direction": "front",
+          "exampleId": "ss_set_women_bottom_beach_nissome_133330805_03",
+          "order": 3,
+          "pose": {
+            "height": 1536,
+            "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/pose/ss_set_women_bottom_beach_nissome_133330805_03.png",
+            "mime": "image/png",
+            "sha256": "d2520962a1b48e330f21e812b55b6a2cd97a125c17e5a9043e37eb48b51e0239",
+            "width": 1024
+          },
+          "shot": "medium"
+        }
+      ],
+      "name": "맑은 해변의 한낮 여행 스냅",
+      "placeType": "waterfront",
+      "platePolicy": "required",
+      "representativePlate": {
+        "height": 1536,
+        "key": "seed/genexamples/space-sets/v1/releases/space-sets-20260731-women-bottom-v1/plate/set-women-bottom-beach-nissome-133330805.png",
+        "mime": "image/png",
+        "sha256": "383322e5b4e4d6ffce2101b6cda8e08c35fb603ee686b176a2b9be972007a043",
+        "width": 1024
+      },
+      "setId": "set-women-bottom-beach-nissome-133330805",
+      "setType": "styling",
+      "spaceVariation": "subtle",
+      "tone": "source-matched"
+    },
     {
       "applicableClothingTypes": [
         "dress"
@@ -4327,12 +5281,6 @@
         "outer",
         "dress"
       ],
-      "setApplicableClothingTypes": [
-        "top",
-        "bottom",
-        "outer",
-        "dress"
-      ],
       "compositionLabel": "정면 · 사이드 · 뒷면",
       "gender": "women",
       "members": [
@@ -4410,6 +5358,12 @@
         "sha256": "dc42e09eb2cdf5aba56f16941f9fbc72725642ffe3dc2ff5626a8956f278f587",
         "width": 1086
       },
+      "setApplicableClothingTypes": [
+        "top",
+        "bottom",
+        "outer",
+        "dress"
+      ],
       "setId": "set_horizon_women_bottom_threetimes_7563033280596_prod01",
       "setType": "horizon-rotation",
       "spaceVariation": "fixed",
@@ -4417,11 +5371,6 @@
     },
     {
       "applicableClothingTypes": [
-        "top",
-        "bottom",
-        "outer"
-      ],
-      "setApplicableClothingTypes": [
         "top",
         "bottom",
         "outer"
@@ -4503,6 +5452,11 @@
         "sha256": "b60da12632621899e2d5e81120b703018faff03ef19522fc6324fa04553f0d3e",
         "width": 1086
       },
+      "setApplicableClothingTypes": [
+        "top",
+        "bottom",
+        "outer"
+      ],
       "setId": "set_horizon_men_bottom_hatchingroom_2161_prod01",
       "setType": "horizon-rotation",
       "spaceVariation": "fixed",

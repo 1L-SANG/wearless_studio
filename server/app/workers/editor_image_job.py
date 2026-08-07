@@ -16,6 +16,8 @@ from .. import facemarket, repo
 from ..agents import (
     content_roles,
     cut_generator,
+    cut_output_qc,
+    cut_plan,
     cut_variator,
     identity_source,
     image_qc,
@@ -31,6 +33,7 @@ log = logging.getLogger("wearless.editor_image_job")
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 _ASSET_FILE_RE = re.compile(r"/v1/assets/([^/]+)/file")
+_WORN_CUT_TYPES = ("styling", "horizon", "mirror")
 
 
 def _image_dims(data: bytes) -> tuple[int | None, int | None]:
@@ -62,6 +65,7 @@ async def run_editor_image_job(app, job: dict) -> None:
     example_warnings: list[dict] = []
     scene_qc_attempts: int | None = None  # bg 장소일치 QC 통과까지의 시도 수(관찰용, new 모드 bg만)
     garment_qc_metadata: dict | None = None  # new 모드만; vary 경로는 QC·메타 모두 무변경
+    cut_qc_metadata: dict | None = None  # new 모드 shadow 관측 결과; 생성 선택에는 영향 없음
 
     async def _fail(message: str, meta: dict):
         try:
@@ -143,10 +147,31 @@ async def run_editor_image_job(app, job: dict) -> None:
             requested_color_id = new_payload.get("colorId")
             is_detail = new_payload.get("cutType") == "product" and new_payload.get("shot") == "detail"
             async with pool.connection() as conn:
+                project = await repo.get_project(conn, user_id, project_id) or {}
                 product = await repo.get_product(conn, project_id) or {}
                 # analysis 도 로드 — 프롬프트 ground truth(소재·강조특징)와 확정 fitProfile
                 # 텍스트 제약이 detail_page 경로와 동일하게 반영되도록(컷 파이프라인 계약 정합).
                 analysis = await repo.get_analysis(conn, project_id) or {}
+                mannequin_asset = None
+                selected_mannequin_id = (
+                    project.get("selected_mannequin_id")
+                    or project.get("selectedMannequinId")
+                )
+                if selected_mannequin_id:
+                    for candidate in await repo.list_mannequin_cuts(
+                        conn, user_id, project_id
+                    ):
+                        candidate_id = (
+                            f"{candidate.get('candidate')}-{candidate.get('version')}"
+                        )
+                        if (
+                            candidate_id == selected_mannequin_id
+                            and candidate.get("asset_id")
+                        ):
+                            mannequin_asset = await repo.get_asset_for_user(
+                                conn, user_id, str(candidate["asset_id"])
+                            )
+                            break
                 # 일반 컷은 선택 색상을 엄격히 쓴다. 디테일만 목표 색상에 Detail이 없을 때
                 # 기준색→첫 Detail 보유 색상의 근거를 붙이고 프롬프트에 색 전환을 명시한다.
                 if is_detail:
@@ -186,8 +211,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 컷 계약 필드 통과(ADR-0004) — mirror·얼굴·포즈·생성예시까지 서버 정규화에 맡긴다.
             # 촬영 세트는 콘티보드 전용이며 에디터의 독립 새 이미지에는 그룹을 전달하지 않는다.
             # 에디터 새 이미지 패널은 아직 매칭 의류를 고르는 UI·payload를 제공하지 않으므로
-            # matchIds를 의도적으로 제외한다. 후속 배선 시에는 상세페이지와 같은 정책으로
-            # styling·horizon·mirror에만 MATCHING을 첨부하고 product에는 적용하지 않는다.
+            # matchIds를 의도적으로 제외한다.
             # colorId는 목표 색상이며, 디테일만 위 정책에 따라 타색 근거가 추가될 수 있다.
             cut_spec = {
                 k: new_payload.get(k)
@@ -203,6 +227,26 @@ async def run_editor_image_job(app, job: dict) -> None:
             except ValueError:
                 await _fail("컷 설정이 올바르지 않아요. 다시 시도해 주세요.", {"error": "invalid_spec"})
                 return
+
+            colors = product.get("colors") or []
+            base_color = next(
+                (color for color in colors if color.get("isBase")),
+                colors[0] if colors else None,
+            )
+            base_color_id = (
+                str(base_color.get("id"))
+                if base_color is not None and base_color.get("id") is not None
+                else None
+            )
+            uses_base_color = requested_color_id is None or (
+                base_color_id is not None
+                and str(requested_color_id) == base_color_id
+            )
+            cut_mannequin_asset = (
+                mannequin_asset
+                if normalized["cutType"] in _WORN_CUT_TYPES and uses_base_color
+                else None
+            )
 
             # 아이덴티티 소스 1회 결정(detail_page 와 동일 계약, codex [P1]) — 실존 모델(UUID)은
             # REAL 로 비공개 자산을 첨부하고, 라이선스 실패면 조용한 폴백 없이 잡 실패(라우트 409
@@ -230,9 +274,23 @@ async def run_editor_image_job(app, job: dict) -> None:
             # 모르는 modelId/manifest/R2 실패는 모델 참조만 빼고 기존 상품 참조로 계속한다
             # (단, REAL 은 라이선스 소비 대상이라 자산 로드 실패 시 계속하지 않고 잡 실패).
             model_images: list[InlineImage] = []
+            model_has_full_body = False
             try:
-                model_refs = (real_refs if real_refs is not None
-                              else cut_generator.resolve_virtual_model_assets(normalized))
+                # PRODUCT 컷은 사람 없는 상품 단독 이미지다. REAL refs는 가상모델 resolver와 달리
+                # 자체 cutType 가드가 없으므로 여기서 먼저 차단해야 얼굴 2장과 라이선스 정산이 안 붙는다.
+                if normalized["cutType"] == "product":
+                    model_refs = None
+                else:
+                    model_refs = (
+                        real_refs
+                        if real_refs is not None
+                        else cut_generator.resolve_virtual_model_assets(
+                            normalized, require_full_body=True
+                        )
+                    )
+                    model_has_full_body = (
+                        real_refs is None and model_refs is not None
+                    )
                 if model_refs is not None:
                     # 버킷 인지 — 실존 모델 그리드(bucket='face')는 비공개 r2_face 에서 로드해
                     # 공개 버킷으로 얼굴 키가 새지 않게 한다(가상 모델은 bucket='public').
@@ -256,19 +314,36 @@ async def run_editor_image_job(app, job: dict) -> None:
                     "continuing without model references: %r",
                     job_id, normalized.get("modelId"), e)
                 model_images = []
-            fm_face_injected = fm_source == "REAL" and len(model_images) == 2
+                model_has_full_body = False
+            fm_face_injected = (
+                fm_source == "REAL"
+                and normalized["cutType"] != "product"
+                and len(model_images) == 2
+            )
+            mannequin_images = (
+                [InlineImage(
+                    cut_mannequin_asset["mime_type"],
+                    await asyncio.to_thread(
+                        app.state.r2.get_bytes, cut_mannequin_asset["r2_key"]
+                    ),
+                )]
+                if cut_mannequin_asset is not None
+                else []
+            )
             product_images = [
                 InlineImage(a["mime_type"], await asyncio.to_thread(
                     app.state.r2.get_bytes, a["r2_key"]))
                 for a in assets
             ]
-            mood_images = [
-                InlineImage(a["mime_type"], await asyncio.to_thread(
-                    app.state.r2.get_bytes, a["r2_key"]))
-                for a in mood_rows
+            images = [
+                *mannequin_images,
+                *model_images,
+                *product_images,
             ]
-            images = [*model_images, *product_images, *mood_images]
-            # 순서 = 매니페스트: MODEL 2장? → 상품 슬롯들 → 무드
+            # 순서 = 매니페스트: 기준색 MANNEQUIN? → MODEL 2장? → 상품 슬롯들
+            # → 선택 MATCHING 최대 2장 → 무드? → 예시.
+            # 무드는 resolved all/bg 장면이 없을 때만 아래 고정 위치에 삽입한다.
+            scene_suffix_start = len(images)
             example_scope = None
             example_id = normalized.get("exampleId")
             pose_overrides_example = (
@@ -287,6 +362,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                                 ),
                                 scope=scope,
                             )
+                        )
+                        cut_spec["_referenceDirectionCompatible"] = example_reference.get(
+                            "directionCompatible", True
                         )
                         example_image = await space_set_assets.load_space_set_image(
                             s,
@@ -334,8 +412,9 @@ async def run_editor_image_job(app, job: dict) -> None:
                     else:
                         example_image = await cut_generator.load_example_image(
                             s, example_id, scope=scope, clothing_type=clothing_type)
-                        if example_image is None and scope in ("pose", "bg"):
-                            # 전용 자산 없이 pose/bg를 생성하면 "참고한 척"이 된다 — 무음 강등 금지
+                        if example_image is None and scope in ("all", "pose", "bg"):
+                            # 사용자가 고른 예시 없이 생성하면 "참고한 척"이 된다 — 무음 강등 금지.
+                            # all도 무드 사진으로 조용히 대체될 수 있으므로 pose/bg와 동일하게 닫는다.
                             # (2026-07-20 실측: 이 강등이 bg 실패의 실제 원인 일부였다. ADR-0009 §2)
                             await _fail("예시 자산을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
                                         {"error": "example_asset_unavailable",
@@ -349,17 +428,42 @@ async def run_editor_image_job(app, job: dict) -> None:
                     else:
                         images.append(example_image)
                     example_scope = scope
+            authoritative_scene = example_scope in ("all", "bg")
+            attached_mood_count = 0
+            if not authoritative_scene:
+                mood_images = [
+                    InlineImage(a["mime_type"], await asyncio.to_thread(
+                        app.state.r2.get_bytes, a["r2_key"]))
+                    for a in mood_rows
+                ]
+                images[scene_suffix_start:scene_suffix_start] = mood_images
+                attached_mood_count = len(mood_images)
             await _emit(pool, job_id, "progress", {"progress": 20, "phase": "inputs_loaded"})
 
             manifest = cut_generator.build_manifest(
-                assets, has_mannequin=False, has_match=False, mood_count=len(mood_rows),
-                has_model_face=len(model_images) == 2, has_model_sheet=len(model_images) == 2,
+                assets, has_mannequin=cut_mannequin_asset is not None,
+                has_match=False,
+                mood_count=attached_mood_count,
+                has_model_face=len(model_images) == 2,
+                has_model_sheet=len(model_images) == 2 and not model_has_full_body,
+                has_model_full_body=(
+                    len(model_images) == 2 and model_has_full_body
+                ),
                 example_scope=example_scope,
-                example_is_product=normalized["cutType"] == "product")
+                example_is_product=normalized["cutType"] == "product",
+                reference_direction_compatible=cut_generator.apply_reference_compatibility(
+                    cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
+                )["_referenceDirectionCompatible"])
+            generate_kwargs = {"analysis": analysis, "manifest": manifest}
+            # REAL identity pair는 manifest에서 MODEL/MODEL SHEET로 표시된다. 얼굴이 실제로
+            # 보이는 컷이면 단일 MODEL FACE와 같은 강한 identity 계약을 켠다. 뒷면·얼굴가림은
+            # pair를 컷 간 인물 연속성 앵커로만 유지하고 얼굴 노출을 강제하지 않는다.
+            if fm_face_injected and cut_generator.wants_face(cut_spec, clothing_type):
+                generate_kwargs["has_face"] = True
             try:
                 image, mime = await cut_generator.generate(
                     s, app.state.gemini, cut_spec, product, images,
-                    analysis=analysis, manifest=manifest)
+                    **generate_kwargs)
             except ValueError as e:
                 if str(e) == "detail_reference_required":
                     await _fail(
@@ -402,7 +506,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     try:
                         image, mime = await cut_generator.generate(
                             s, app.state.gemini, cut_spec, product, images,
-                            analysis=analysis, manifest=manifest)
+                            **generate_kwargs)
                     except (GeminiError, ValueError) as e:
                         await _fail("컷 생성에 실패했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
                         return
@@ -411,7 +515,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             async def _generate_candidate():
                 candidate_image, candidate_mime = await cut_generator.generate(
                     s, app.state.gemini, cut_spec, product, images,
-                    analysis=analysis, manifest=manifest)
+                    **generate_kwargs)
                 if scene_plate is None:
                     return InlineImage(candidate_mime, candidate_image)
 
@@ -433,7 +537,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                     candidate_attempt += 1
                     candidate_image, candidate_mime = await cut_generator.generate(
                         s, app.state.gemini, cut_spec, product, images,
-                        analysis=analysis, manifest=manifest)
+                        **generate_kwargs)
                 return InlineImage(candidate_mime, candidate_image)
 
             chosen, garment_qc_metadata, garment_warnings = await image_qc.best_of(
@@ -444,6 +548,27 @@ async def run_editor_image_job(app, job: dict) -> None:
             )
             image, mime = chosen.data, chosen.mime
             example_warnings.extend(garment_warnings)
+            if s.cut_output_qc_mode == "shadow":
+                try:
+                    plan = cut_plan.compile_cut_plan(
+                        cut_generator.apply_reference_compatibility(normalized),
+                        clothing_type,
+                        fit_profile=(analysis or {}).get("fitProfile"),
+                    )
+                    qc_references = cut_output_qc.references_from_manifest(
+                        manifest, images
+                    )
+                    cut_qc_metadata = await cut_output_qc.verdict(
+                        s, plan, qc_references, chosen
+                    )
+                except Exception as e:
+                    # shadow는 관측 전용이다. QC 불능을 기록하되 선택된 이미지는 그대로 저장한다.
+                    log.warning(
+                        "AG-06 editor cut output QC unavailable job %s: %r — shadow only",
+                        job_id,
+                        e,
+                    )
+                    example_warnings.append({"code": "cut_output_qc_unavailable"})
             group = normalized["colorId"] or None
             cut_type = normalized["cutType"]
 
@@ -472,6 +597,8 @@ async def run_editor_image_job(app, job: dict) -> None:
             success_metadata["sceneQc"] = {"attempts": scene_qc_attempts}
         if garment_qc_metadata is not None:
             success_metadata["garmentQc"] = garment_qc_metadata
+        if cut_qc_metadata is not None:
+            success_metadata["cutQc"] = cut_qc_metadata
         if example_warnings:
             success_metadata["warnings"] = example_warnings
         async with pool.connection() as conn:

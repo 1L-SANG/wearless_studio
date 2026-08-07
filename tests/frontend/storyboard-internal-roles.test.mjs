@@ -8,7 +8,22 @@ import {
   cutTypeOptionsForSection,
   normalizedRecipePatch,
 } from '../../src/lib/storyboardTaxonomy.js';
-import { adoptSection } from '../../src/lib/sections.js';
+import { adoptSection, ensureSections } from '../../src/lib/sections.js';
+
+test('taxonomy v2 projects migrate to the four official sections without losing cards', () => {
+  const migrated = ensureSections([
+    { id: 'hero', source: 'ai', taxonomyVersion: 2, sectionRole: 'benefit', contentRole: 'hero', cutType: 'styling' },
+    { id: 'daily', source: 'ai', taxonomyVersion: 2, sectionRole: 'fit', contentRole: 'coordination', cutType: 'styling' },
+    { id: 'studio', source: 'ai', taxonomyVersion: 2, sectionRole: 'fit', contentRole: 'fit', cutType: 'horizon' },
+    { id: 'product', source: 'ai', taxonomyVersion: 2, sectionRole: 'product', contentRole: 'productOverview', cutType: 'product' },
+  ]);
+
+  assert.deepEqual(migrated.map((block) => block.id), ['hero', 'daily', 'studio', 'product']);
+  assert.deepEqual(migrated.map((block) => block.sectionRole), [
+    'hooking', 'styling', 'studio', 'product',
+  ]);
+  assert.ok(migrated.every((block) => block.taxonomyVersion === STORYBOARD_TAXONOMY_VERSION));
+});
 
 test('the first AI image in benefit is the only internally assigned hero', () => {
   const baseThumb = 'https://example.com/original.png';
@@ -36,25 +51,28 @@ test('the first AI image in benefit is the only internally assigned hero', () =>
   assert.equal(normalized[2].cutType, 'styling');
 });
 
-test('the inspector offers cut types by section without exposing content roles', () => {
-  assert.deepEqual(cutTypeOptionsForSection('benefit').map((option) => option.value), [
+test('the inspector offers cut types by the four official sections without exposing content roles', () => {
+  assert.deepEqual(cutTypeOptionsForSection('hooking').map((option) => option.value), [
     'styling', 'horizon',
   ]);
-  assert.deepEqual(cutTypeOptionsForSection('fit').map((option) => option.value), [
-    'styling', 'horizon', 'mirror',
+  assert.deepEqual(cutTypeOptionsForSection('styling').map((option) => option.value), [
+    'styling', 'mirror',
+  ]);
+  assert.deepEqual(cutTypeOptionsForSection('studio').map((option) => option.value), [
+    'horizon',
   ]);
   assert.deepEqual(cutTypeOptionsForSection('product').map((option) => option.value), [
     'product',
   ]);
 });
 
-test('a selected fit cut realigns the hidden role instead of being overwritten by it', () => {
+test('a selected worn cut realigns the hidden role instead of being overwritten by it', () => {
   const mirror = normalizedRecipePatch({
-    source: 'ai', sectionRole: 'fit', contentRole: 'coordination',
+    source: 'ai', sectionRole: 'styling', contentRole: 'coordination',
     cutType: 'mirror', shot: 'medium', faceExposure: 'same',
   }, CONTENT_ROLES.COORDINATION);
   const styling = normalizedRecipePatch({
-    source: 'ai', sectionRole: 'fit', contentRole: 'fit',
+    source: 'ai', sectionRole: 'studio', contentRole: 'fit',
     cutType: 'styling', direction: 'side', shot: 'medium',
   }, CONTENT_ROLES.FIT);
 
@@ -64,14 +82,15 @@ test('a selected fit cut realigns the hidden role instead of being overwritten b
   );
   assert.deepEqual(
     [styling.contentRole, styling.cutType, styling.direction, styling.shot],
-    [CONTENT_ROLES.COORDINATION, 'styling', 'side', 'medium'],
+    [CONTENT_ROLES.FIT, 'horizon', 'side', 'medium'],
   );
 });
 
 test('AI cards with no usable role receive the safe internal role for their section', () => {
   const normalized = assignInternalContentRoles([
-    { id: 'benefit', source: 'ai', sectionRole: 'benefit', contentRole: 'custom' },
-    { id: 'fit', source: 'ai', sectionRole: 'fit', contentRole: 'custom' },
+    { id: 'hooking', source: 'ai', sectionRole: 'hooking', contentRole: 'custom' },
+    { id: 'styling', source: 'ai', sectionRole: 'styling', contentRole: 'custom' },
+    { id: 'studio', source: 'ai', sectionRole: 'studio', contentRole: 'custom' },
     { id: 'product', source: 'ai', sectionRole: 'product' },
   ]);
 
@@ -80,6 +99,7 @@ test('AI cards with no usable role receive the safe internal role for their sect
     [
       [CONTENT_ROLES.HERO, 'styling', STORYBOARD_TAXONOMY_VERSION],
       [CONTENT_ROLES.COORDINATION, 'styling', STORYBOARD_TAXONOMY_VERSION],
+      [CONTENT_ROLES.FIT, 'horizon', STORYBOARD_TAXONOMY_VERSION],
       [CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', STORYBOARD_TAXONOMY_VERSION],
     ],
   );
@@ -88,12 +108,12 @@ test('AI cards with no usable role receive the safe internal role for their sect
 test('a valid internal composition is returned unchanged', () => {
   const blocks = [
     {
-      id: 'hero', source: 'ai', sectionRole: 'benefit', contentRole: 'hero',
-      title: '첫 장면', cutType: 'styling', direction: 'front', shot: 'full', taxonomyVersion: 2,
+      id: 'hero', source: 'ai', sectionRole: 'hooking', contentRole: 'hero',
+      title: '첫 장면', cutType: 'styling', direction: 'front', shot: 'full', faceExposure: 'same', taxonomyVersion: 3,
     },
     {
-      id: 'fit', source: 'ai', sectionRole: 'fit', contentRole: 'fit',
-      title: '핏 확인', cutType: 'horizon', direction: 'front', shot: 'full', taxonomyVersion: 2,
+      id: 'fit', source: 'ai', sectionRole: 'studio', contentRole: 'fit',
+      title: '핏 확인', cutType: 'horizon', direction: 'front', shot: 'full', faceExposure: 'same', taxonomyVersion: 3,
     },
   ];
 
@@ -117,17 +137,17 @@ test('an internally normalized product image drops worn-only settings', () => {
 
 test('section moves retain compatible examples and clear all example metadata only when the recipe must change', () => {
   const compatible = {
-    id: 'moving', source: 'ai', sectionId: 'benefit-section', sectionRole: 'benefit',
+    id: 'moving', source: 'ai', sectionId: 'hooking-section', sectionRole: 'hooking',
     contentRole: 'hero', cutType: 'styling', direction: 'front', shot: 'full',
     exampleId: 'example-1', exampleSelectionOrigin: 'auto',
     thumb: 'example.png', baseThumb: 'base.png',
   };
-  const fitHost = {
-    id: 'fit-host', source: 'ai', sectionId: 'fit-section', sectionRole: 'fit',
-    contentRole: 'fit', cutType: 'horizon', direction: 'front', shot: 'full',
-    sectionTitle: '핏·코디', sectionLayout: 'stack',
+  const stylingHost = {
+    id: 'styling-host', source: 'ai', sectionId: 'styling-section', sectionRole: 'styling',
+    contentRole: 'coordination', cutType: 'styling', direction: 'front', shot: 'full',
+    sectionTitle: '스타일링', sectionLayout: 'stack',
   };
-  const retained = adoptSection([compatible, fitHost], 'moving', 'fit-section', 'fit');
+  const retained = adoptSection([compatible, stylingHost], 'moving', 'styling-section', 'styling');
   assert.equal(retained[0].exampleId, 'example-1');
   assert.equal(retained[0].exampleSelectionOrigin, 'auto');
   assert.equal(retained[0].thumb, 'example.png');
@@ -136,7 +156,7 @@ test('section moves retain compatible examples and clear all example metadata on
     ...compatible, cutType: 'product', shot: 'ghost', contentRole: 'productOverview',
     sectionRole: 'product', sectionId: 'product-section',
   };
-  const cleared = adoptSection([product, fitHost], 'moving', 'fit-section', 'fit');
+  const cleared = adoptSection([product, stylingHost], 'moving', 'styling-section', 'styling');
   assert.equal(cleared[0].exampleId, null);
   assert.equal(cleared[0].exampleSelectionOrigin, null);
   assert.equal(cleared[0].thumb, 'base.png');

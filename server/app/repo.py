@@ -271,7 +271,10 @@ async def save_product(
 
 # AG-01 이 파생하고 셀러가 편집하지 않는 서버 소유 필드. 저장은 REPLACE 라 클라가 모르는
 # 키는 한 번의 저장으로 사라진다 — 구버전 클라·부분 payload 에서도 살아남게 여기서 보존한다.
-_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored",)
+# inputConsistency: 셀러가 분석 폼을 한 번 수정하면 REPLACE 로 경고가 사라져, 생성 직전
+# 게이트가 조용히 없어진다(사라지는 경고 = 없는 경고). 재분석 때는 finalize 가 payload 를
+# 통째로 갈아끼우므로 낡은 판정이 남지 않는다.
+_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored", "inputConsistency")
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:
@@ -417,6 +420,33 @@ async def list_mannequin_cuts(conn: AsyncConnection, user_id: str, project_id: s
             (project_id, user_id),
         )
         return await cur.fetchall()
+
+
+async def get_mannequin_edit_parent(
+    conn: AsyncConnection, user_id: str, project_id: str
+) -> dict | None:
+    """조정 편집의 부모 컷. 프로젝트 선택 컷을 우선하고, 없으면 최신 컷을 반환한다.
+
+    생성 메타데이터는 외부 MannequinCut 계약에 노출하지 않고 컷의 asset JSONB 에서 워커만
+    읽는다. 선택 포인터가 오래되어 실제 컷을 가리키지 않으면 최신 컷으로 자연스럽게 폴백한다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select mc.candidate || '-' || mc.version::text as id,
+                   a.r2_key, a.mime_type, a.metadata as generation_metadata
+            from mannequin_cuts mc
+            join projects pr on pr.id = mc.project_id
+            join assets a on a.id = mc.asset_id and a.deleted_at is null
+            where mc.project_id = %s and pr.user_id = %s and pr.deleted_at is null
+            order by (pr.selected_mannequin_id =
+                      mc.candidate || '-' || mc.version::text) desc,
+                     mc.version desc, mc.candidate
+            limit 1
+            """,
+            (project_id, user_id),
+        )
+        return await cur.fetchone()
 
 
 async def list_series_reference_cuts(
@@ -596,11 +626,10 @@ async def create_job(
                     insert into jobs (user_id, project_id, kind, status, payload, idempotency_key,
                                       credits_reserved, metadata)
                     values (%s, %s, %s, 'pending', %s, %s, %s, %s)
-                    on conflict (project_id, kind)
-                      where status in ('pending', 'running')
-                        and kind not in ('editor_image', 'personalization_generation',
-                                         'personalization_purge')
-                      do nothing
+                    -- 충돌 대상을 특정하면 partial-index predicate가 조금만 바뀌어도
+                    -- 모든 kind의 INSERT가 500으로 깨진다. 실제 충돌 행은 아래에서
+                    -- idempotency_key 또는 활성 project/kind로 다시 조회하므로 target 없이 막는다.
+                    on conflict do nothing
                     returning {_JOB_COLS}
                     """,
                     (user_id, project_id, kind, Json(payload), idempotency_key, credits_reserved,
@@ -975,10 +1004,11 @@ async def finalize_mannequin_success(
         for c in candidates:
             await cur.execute(
                 "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "
-                "r2_key, mime_type, byte_size, width, height) "
-                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s)",
+                "r2_key, mime_type, byte_size, width, height, metadata) "
+                "values (%s, %s, %s, 'ai', 'private', %s, %s, %s, %s, %s, %s, %s)",
                 (c["asset_id"], user_id, project_id, c["bucket"], c["key"], c["mime"],
-                 c.get("size"), c.get("width"), c.get("height")),
+                 c.get("size"), c.get("width"), c.get("height"),
+                 Json(c.get("generation_metadata") or {})),
             )
             await cur.execute(
                 "select coalesce(max(version), 0) + 1 as v from mannequin_cuts "

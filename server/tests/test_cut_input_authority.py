@@ -1,0 +1,645 @@
+import asyncio
+
+from app.workers import detail_page_job as dpj
+from app.workers import editor_image_job as eij
+from conftest import FakeR2, fake_worker_app, make_settings, worker_job
+
+
+class _TrackingR2(FakeR2):
+    def __init__(self):
+        self.reads = []
+
+    def get_bytes(self, key):
+        self.reads.append(key)
+        return key.encode()
+
+
+def _patch_detail_terminal(monkeypatch, captured):
+    async def fake_gen_cuts(app, job, prepared, product, analysis):
+        captured["prepared"] = prepared
+        results = [
+            {"blockId": item[0]["id"], "imageUrl": f"/{item[0]['id']}"}
+            for item in prepared
+            if item[1]
+        ]
+        assets = [{"key": f"out/{item['blockId']}"} for item in results]
+        return results, assets, 0, [], [], None, []
+
+    def fake_assemble(*_args, **_kwargs):
+        return []
+
+    async def fake_finalize(conn, **kwargs):
+        captured["finalize"] = kwargs
+        return {"editor_blocks": [], "available": 99}
+
+    async def fake_emit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(dpj, "_gen_cuts", fake_gen_cuts)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+
+def _prepared_by_id(captured):
+    return {item[0]["id"]: item for item in captured["prepared"]}
+
+
+def test_detail_product_prunes_mannequin_model_matching_and_owned_mood(monkeypatch):
+    captured = {}
+
+    async def fake_project(conn, uid, pid):
+        return {"copywriting": False, "selected_mannequin_id": "candidate-1"}
+
+    async def fake_storyboard(conn, pid):
+        return [{
+            "id": "product",
+            "source": "ai",
+            "cutType": "product",
+            "shot": "ghost",
+            "matchIds": ["match-1"],
+            "refAssetIds": ["mood"],
+            "exampleId": "example-all",
+            "refScope": "all",
+        }]
+
+    async def fake_product(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "product"}]}]}
+
+    async def fake_analysis(conn, pid):
+        return {"selectedModelId": "mA"}
+
+    async def fake_mannequins(conn, uid, pid):
+        return [{"candidate": "candidate", "version": "1", "asset_id": "mannequin"}]
+
+    async def fake_asset(conn, uid, asset_id):
+        return {"id": asset_id, "r2_key": f"k/{asset_id}", "mime_type": "image/png"}
+
+    async def fail_matching(*_args, **_kwargs):
+        raise AssertionError("product cut must not resolve matching input")
+
+    def fail_model(*_args, **_kwargs):
+        raise AssertionError("product cut must not resolve virtual model input")
+
+    async def fake_example(settings, example_id, scope="all", clothing_type=None):
+        return dpj.InlineImage("image/png", b"example:all")
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "list_mannequin_cuts", fake_mannequins)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.repo, "get_matching_item_asset", fail_matching)
+    monkeypatch.setattr(dpj.cut_generator, "resolve_virtual_model_assets", fail_model)
+    monkeypatch.setattr(dpj.cut_generator, "example_asset_status", lambda *_args: "available")
+    monkeypatch.setattr(dpj.cut_generator, "load_example_image", fake_example)
+    _patch_detail_terminal(monkeypatch, captured)
+
+    r2 = _TrackingR2()
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b", detailpage_fallback_model_id=""),
+        r2=r2,
+    )
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    item = _prepared_by_id(captured)["product"]
+    assert [image.data for image in item[1]] == [b"k/product", b"example:all"]
+    assert item[2].splitlines() == [
+        "1. PRODUCT — front view of the garment",
+        "2. EXAMPLE REFERENCE (scope: all) — source of background, lighting, mood, "
+        "framing and composition; never copy its garments, shoes, accessories, person, "
+        "model identity or pose; the example has ZERO authority over facial identity or "
+        "facial features, and ZERO authority over body morphology: height, head-to-body "
+        "ratio, shoulder width and build, torso length and build, waist shape, pelvis and "
+        "hip width, or limb proportions",
+    ]
+    assert r2.reads == ["k/product"]
+
+
+def test_detail_non_base_color_prunes_base_color_mannequin(monkeypatch):
+    captured = {}
+
+    async def fake_project(conn, uid, pid):
+        return {"copywriting": False, "selected_mannequin_id": "A-1"}
+
+    async def fake_storyboard(conn, pid):
+        common = {
+            "source": "ai", "cutType": "styling", "shot": "full",
+            "direction": "front", "faceExposure": "same",
+        }
+        return [
+            {**common, "id": "base", "colorId": "base-color"},
+            {**common, "id": "other", "colorId": "other-color"},
+        ]
+
+    async def fake_product(conn, pid):
+        return {
+            "clothingType": "top",
+            "colors": [
+                {"id": "base-color", "isBase": True,
+                 "images": [{"slot": "Front", "id": "base-product"}]},
+                {"id": "other-color", "isBase": False,
+                 "images": [{"slot": "Front", "id": "other-product"}]},
+            ],
+        }
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_mannequins(conn, uid, pid):
+        return [{"candidate": "A", "version": 1, "asset_id": "mannequin"}]
+
+    async def fake_asset(conn, uid, asset_id):
+        return {"id": asset_id, "r2_key": f"k/{asset_id}", "mime_type": "image/png"}
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "list_mannequin_cuts", fake_mannequins)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    _patch_detail_terminal(monkeypatch, captured)
+
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b"),
+        r2=_TrackingR2(),
+    )
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
+
+    prepared = _prepared_by_id(captured)
+    assert [image.data for image in prepared["base"][1]] == [
+        b"k/mannequin", b"k/base-product",
+    ]
+    assert [image.data for image in prepared["other"][1]] == [b"k/other-product"]
+    assert "mannequin" in prepared["base"][2].lower()
+    assert "mannequin" not in prepared["other"][2].lower()
+
+
+def test_detail_prunes_mood_for_all_and_bg_but_keeps_pose_order(monkeypatch):
+    captured = {}
+    blocks = [
+        {"id": scope, "source": "ai", "cutType": "styling", "shot": "full",
+         "refAssetIds": ["mood"], "exampleId": f"example-{scope}", "refScope": scope}
+        for scope in ("all", "bg", "pose")
+    ]
+
+    async def fake_project(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_storyboard(conn, pid):
+        return blocks
+
+    async def fake_product(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "product"}]}]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_asset(conn, uid, asset_id):
+        return {"id": asset_id, "r2_key": f"k/{asset_id}", "mime_type": "image/png"}
+
+    async def fake_example(settings, example_id, scope="all", clothing_type=None):
+        return dpj.InlineImage("image/png", f"example:{scope}".encode())
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "example_asset_status", lambda *_args: "available")
+    monkeypatch.setattr(dpj.cut_generator, "pose_direction_compatible", lambda *_args: True)
+    monkeypatch.setattr(dpj.cut_generator, "load_example_image", fake_example)
+    _patch_detail_terminal(monkeypatch, captured)
+
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b", genexample_bg_enabled=True),
+        r2=_TrackingR2(),
+    )
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=3)))
+
+    prepared = _prepared_by_id(captured)
+    assert [image.data for image in prepared["all"][1]] == [b"k/product", b"example:all"]
+    assert [image.data for image in prepared["bg"][1]] == [b"example:bg", b"k/product"]
+    assert [image.data for image in prepared["pose"][1]] == [
+        b"k/product", b"k/mood", b"example:pose",
+    ]
+    assert "MOOD —" not in prepared["all"][2]
+    assert "MOOD —" not in prepared["bg"][2]
+    assert prepared["pose"][2].count("MOOD —") == 1
+
+
+def test_detail_space_binding_prunes_mood_with_or_without_plate(monkeypatch):
+    captured = {}
+    blocks = [
+        {"id": "with-plate", "source": "ai", "cutType": "styling", "shot": "full",
+         "refAssetIds": ["mood"], "exampleId": "pose-1", "spaceGroupId": "group-1"},
+        {"id": "without-plate", "source": "ai", "cutType": "horizon", "shot": "full",
+         "refAssetIds": ["mood"], "exampleId": "pose-2", "spaceGroupId": "group-2"},
+    ]
+
+    async def fake_project(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_storyboard(conn, pid):
+        return blocks
+
+    async def fake_product(conn, pid):
+        return {"colors": [{"isBase": True, "images": [{"slot": "Front", "id": "product"}]}]}
+
+    async def fake_analysis(conn, pid):
+        return {"targetGenders": ["women"]}
+
+    async def fake_asset(conn, uid, asset_id):
+        return {"id": asset_id, "r2_key": f"k/{asset_id}", "mime_type": "image/png"}
+
+    def fake_bind(storyboard, *, clothing_type, gender):
+        out = {}
+        for block in storyboard[:2]:
+            has_plate = block["id"] == "with-plate"
+            out[id(block)] = {
+                "set": {
+                    "setId": block["id"],
+                    "spaceVariation": "subtle",
+                    "representativePlate": {"key": "plate"} if has_plate else None,
+                },
+                "poseReference": {
+                    "source": "space-set",
+                    "exampleId": block["exampleId"],
+                    "asset": {"key": block["exampleId"]},
+                },
+            }
+        return out
+
+    async def fake_set_image(settings, asset, *, role):
+        return dpj.InlineImage("image/png", asset["key"].encode())
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.space_set_assets, "parse_space_set_group_id", lambda *_args: None)
+    monkeypatch.setattr(dpj.space_set_assets, "bind_storyboard_space_sets", fake_bind)
+    monkeypatch.setattr(dpj.space_set_assets, "load_space_set_image", fake_set_image)
+    _patch_detail_terminal(monkeypatch, captured)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=_TrackingR2())
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
+
+    prepared = _prepared_by_id(captured)
+    assert [image.data for image in prepared["with-plate"][1]] == [
+        b"k/product", b"plate", b"pose-1",
+    ]
+    assert [image.data for image in prepared["without-plate"][1]] == [
+        b"k/product", b"pose-2",
+    ]
+    assert "MOOD —" not in prepared["with-plate"][2]
+    assert "MOOD —" not in prepared["without-plate"][2]
+
+
+def test_detail_selected_all_example_load_failure_fails_closed(monkeypatch):
+    captured = {}
+
+    async def fake_project(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_storyboard(conn, pid):
+        return [{
+            "id": "all-missing",
+            "source": "ai",
+            "cutType": "styling",
+            "shot": "full",
+            "refAssetIds": ["mood"],
+            "exampleId": "example-all",
+            "refScope": "all",
+        }]
+
+    async def fake_product(conn, pid):
+        return {
+            "clothingType": "top",
+            "colors": [{
+                "isBase": True,
+                "images": [{"slot": "Front", "id": "product"}],
+            }],
+        }
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_asset(conn, uid, asset_id):
+        return {"id": asset_id, "r2_key": f"k/{asset_id}", "mime_type": "image/png"}
+
+    async def fake_example_none(settings, example_id, scope="all", clothing_type=None):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_project)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_storyboard)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_product)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "example_asset_status", lambda *_args: "available")
+    monkeypatch.setattr(dpj.cut_generator, "load_example_image", fake_example_none)
+    _patch_detail_terminal(monkeypatch, captured)
+
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b"),
+        r2=_TrackingR2(),
+    )
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=1)))
+
+    item = _prepared_by_id(captured)["all-missing"]
+    assert item[1] == []
+    assert "MOOD —" not in item[2]
+
+
+def _patch_editor_common(monkeypatch, captured):
+    async def fake_product(conn, pid):
+        return {"clothingType": "top", "colors": [{
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product"}],
+        }]}
+
+    async def fake_analysis(conn, pid):
+        return {"targetGenders": ["women"]}
+
+    async def fake_asset(conn, uid, asset_id):
+        return {"id": asset_id, "r2_key": f"k/{asset_id}", "mime_type": "image/png"}
+
+    async def fake_generate(
+        settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None,
+        has_face=False,
+    ):
+        captured.setdefault("generations", []).append({
+            "cutType": cut_spec["cutType"],
+            "scope": cut_spec.get("refScope"),
+            "images": [image.data for image in images],
+            "manifest": manifest,
+            "hasFace": has_face,
+        })
+        return b"OUTPUT", "image/png"
+
+    async def fake_best_of(settings, product_images, initial, generate_candidate):
+        return initial, None, []
+
+    async def fake_scene(*_args, **_kwargs):
+        return {"verdict": "pass", "mismatches": [], "correctionPrompt": None}
+
+    async def fake_finalize(conn, **kwargs):
+        return {"id": "wardrobe"}
+
+    async def fake_emit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
+    monkeypatch.setattr(eij.image_qc, "best_of", fake_best_of)
+    monkeypatch.setattr(eij.image_qc, "scene_verdict", fake_scene)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+
+def _patch_editor_selected_mannequin(monkeypatch):
+    async def fake_project(conn, uid, pid):
+        return {"selected_mannequin_id": "A-1"}
+
+    async def fake_mannequins(conn, uid, pid):
+        return [{"candidate": "A", "version": 1, "asset_id": "mannequin"}]
+
+    monkeypatch.setattr(eij.repo, "get_project", fake_project)
+    monkeypatch.setattr(eij.repo, "list_mannequin_cuts", fake_mannequins)
+
+
+def test_editor_base_color_worn_cut_puts_selected_mannequin_first(monkeypatch):
+    captured = {}
+    _patch_editor_common(monkeypatch, captured)
+    _patch_editor_selected_mannequin(monkeypatch)
+
+    async def fake_product(conn, pid):
+        return {
+            "clothingType": "top",
+            "colors": [{
+                "id": "base",
+                "isBase": True,
+                "images": [{"slot": "Front", "id": "product"}],
+            }],
+        }
+
+    def fake_model_refs(spec, *, require_full_body=False):
+        assert require_full_body is True
+        return (
+            {"key": "model-face", "mime": "image/png"},
+            {"key": "model-body", "mime": "image/png"},
+        )
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_product)
+    monkeypatch.setattr(eij.cut_generator, "resolve_virtual_model_assets", fake_model_refs)
+
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b"), r2=_TrackingR2()
+    )
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new",
+        "cutType": "styling",
+        "shot": "full",
+        "colorId": "base",
+        "modelId": "mA",
+    })))
+
+    generated = captured["generations"][0]
+    assert generated["images"] == [
+        b"k/mannequin", b"model-face", b"model-body", b"k/product",
+    ]
+    lines = generated["manifest"].splitlines()
+    assert "garment worn on a mannequin" in lines[0]
+    assert lines[1].startswith("2. MODEL FACE —")
+    assert lines[2].startswith("3. MODEL FULL BODY —")
+    assert lines[3] == "4. PRODUCT — front view of the garment"
+
+
+def test_editor_excludes_selected_mannequin_from_product_and_non_base_color(monkeypatch):
+    captured = {}
+    _patch_editor_common(monkeypatch, captured)
+    _patch_editor_selected_mannequin(monkeypatch)
+
+    async def fake_product(conn, pid):
+        return {
+            "clothingType": "top",
+            "colors": [
+                {"id": "base", "isBase": True,
+                 "images": [{"slot": "Front", "id": "base-product"}]},
+                {"id": "other", "isBase": False,
+                 "images": [{"slot": "Front", "id": "other-product"}]},
+            ],
+        }
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_product)
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b"), r2=_TrackingR2()
+    )
+
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new", "cutType": "product", "shot": "ghost", "colorId": "base",
+    })))
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new", "cutType": "styling", "shot": "full", "colorId": "other",
+    })))
+
+    product_cut, other_color_cut = captured["generations"]
+    assert product_cut["images"] == [b"k/base-product"]
+    assert other_color_cut["images"] == [b"k/other-product"]
+    assert "mannequin" not in product_cut["manifest"].lower()
+    assert "mannequin" not in other_color_cut["manifest"].lower()
+
+
+def test_editor_selected_mannequin_r2_failure_does_not_fall_back(monkeypatch):
+    captured = {}
+    _patch_editor_common(monkeypatch, captured)
+    _patch_editor_selected_mannequin(monkeypatch)
+
+    class FailingMannequinR2(_TrackingR2):
+        def get_bytes(self, key):
+            if key == "k/mannequin":
+                raise RuntimeError("selected mannequin unavailable")
+            return super().get_bytes(key)
+
+    async def fake_failure(conn, **kwargs):
+        captured["failure"] = kwargs
+        return True
+
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b"), r2=FailingMannequinR2()
+    )
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new", "cutType": "styling", "shot": "full",
+    })))
+
+    assert captured.get("generations") is None
+    assert "selected mannequin unavailable" in captured["failure"]["metadata"]["error"]
+
+
+def test_editor_prunes_mood_for_all_and_bg_but_keeps_pose_order(monkeypatch):
+    captured = {}
+    _patch_editor_common(monkeypatch, captured)
+
+    async def fake_example(settings, example_id, scope="all", clothing_type=None):
+        return eij.InlineImage("image/png", f"example:{scope}".encode())
+
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
+    monkeypatch.setattr(eij.cut_generator, "pose_direction_compatible", lambda *_args: True)
+    monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=_TrackingR2())
+    for scope in ("all", "bg", "pose"):
+        asyncio.run(eij.run_editor_image_job(app, worker_job({
+            "mode": "new",
+            "cutType": "styling",
+            "shot": "full",
+            "refAssetIds": ["mood"],
+            "exampleId": f"example-{scope}",
+            "refScope": scope,
+        })))
+
+    all_cut, bg_cut, pose_cut = captured["generations"]
+    assert all_cut["images"] == [b"k/product", b"example:all"]
+    assert bg_cut["images"] == [b"example:bg", b"k/product"]
+    assert pose_cut["images"] == [b"k/product", b"k/mood", b"example:pose"]
+    assert "MOOD —" not in all_cut["manifest"]
+    assert "MOOD —" not in bg_cut["manifest"]
+    assert pose_cut["manifest"].count("MOOD —") == 1
+
+
+def test_editor_real_product_prunes_identity_and_never_sets_settlement_flag(monkeypatch):
+    captured = {"settlements": 0}
+    _patch_editor_common(monkeypatch, captured)
+    model_id = "11111111-1111-1111-1111-111111111111"
+
+    async def fake_real_refs(conn, selected_model_id):
+        assert selected_model_id == model_id
+        return [
+            {"key": "face-front", "mime": "image/png", "bucket": "face"},
+            {"key": "face-sheet", "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_license(conn, selected_model_id):
+        return {"id": "license", "model_id": selected_model_id, "status": "active", "unit_price": 10}
+
+    async def fake_example(settings, example_id, scope="all", clothing_type=None):
+        return eij.InlineImage("image/png", b"example:all")
+
+    async def fake_settlement(*_args, **_kwargs):
+        captured["settlements"] += 1
+
+    monkeypatch.setattr(eij.identity_source, "resolve_real_model_assets", fake_real_refs)
+    monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_license)
+    monkeypatch.setattr(eij.facemarket, "record_license_settlement", fake_settlement)
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
+    monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
+
+    public_r2 = _TrackingR2()
+    face_r2 = _TrackingR2()
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True),
+        r2=public_r2,
+    )
+    app.state.r2_face = face_r2
+    app.state.fm_chain = object()
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new",
+        "cutType": "product",
+        "shot": "ghost",
+        "modelId": model_id,
+        "refAssetIds": ["mood"],
+        "exampleId": "example-all",
+        "refScope": "all",
+    })))
+
+    generated = captured["generations"][0]
+    assert generated["images"] == [b"k/product", b"example:all"]
+    assert "MODEL" not in generated["manifest"]
+    assert "MODEL FACE" not in generated["manifest"]
+    assert "MOOD —" not in generated["manifest"]
+    assert face_r2.reads == []
+    assert captured["settlements"] == 0
+
+
+def test_editor_real_visible_worn_cut_enables_identity_contract(monkeypatch):
+    captured = {"settlements": 0}
+    _patch_editor_common(monkeypatch, captured)
+    model_id = "11111111-1111-1111-1111-111111111111"
+
+    async def fake_real_refs(conn, selected_model_id):
+        return [
+            {"key": "face-front", "mime": "image/png", "bucket": "face"},
+            {"key": "face-sheet", "mime": "image/png", "bucket": "face"},
+        ]
+
+    async def fake_license(conn, selected_model_id):
+        return {"id": "license", "model_id": selected_model_id, "status": "active", "unit_price": 10}
+
+    monkeypatch.setattr(eij.identity_source, "resolve_real_model_assets", fake_real_refs)
+    monkeypatch.setattr(eij.facemarket, "resolve_model_license", fake_license)
+
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b", facemarket_enabled=True),
+        r2=_TrackingR2(),
+    )
+    app.state.r2_face = _TrackingR2()
+    asyncio.run(eij.run_editor_image_job(app, worker_job({
+        "mode": "new",
+        "cutType": "styling",
+        "shot": "full",
+        "direction": "front",
+        "faceExposure": "show",
+        "modelId": model_id,
+    })))
+
+    generated = captured["generations"][0]
+    assert generated["images"][:2] == [b"face-front", b"face-sheet"]
+    assert generated["hasFace"] is True
+    assert "MODEL — frontal close-up" in generated["manifest"]
+    assert "MODEL SHEET" in generated["manifest"]
+    assert "MODEL FULL BODY" not in generated["manifest"]

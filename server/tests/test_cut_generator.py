@@ -158,7 +158,7 @@ def test_build_prompt_respects_given_manifest():
     assert "worn on a mannequin" in p and "MATCH" in p and "MOOD" in p
 
 
-def test_pose_medium_prompt_generates_full_frame_before_deterministic_crop():
+def test_pose_medium_prompt_keeps_requested_crop_authoritative():
     product = {"name": "니트", "colors": [{"isBase": True, "images": [
         {"slot": "Front", "id": "a1"},
     ]}]}
@@ -176,8 +176,9 @@ def test_pose_medium_prompt_generates_full_frame_before_deterministic_crop():
         product,
     )
 
-    assert "full body from head to feet" in pose_prompt
-    assert "medium framing:" not in pose_prompt
+    assert "For a medium shot, preserve every pose landmark still visible" in pose_prompt
+    assert "hidden lower-body landmarks do not control the crop" in pose_prompt
+    assert "medium framing:" in pose_prompt
     assert "medium framing:" in all_prompt
 
 
@@ -307,14 +308,14 @@ def test_horizon_sequence_without_plate_does_not_claim_one_shared_location():
     assert "PUBLISHED SPACE-SET LOCATION" not in prompt
 
 
-def test_build_manifest_places_exact_model_labels_after_mannequin():
+def test_build_manifest_places_exact_virtual_model_labels_after_mannequin():
     manifest = cg.build_manifest(
         [{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1,
-        has_model_face=True, has_model_sheet=True)
+        has_model_face=True, has_model_full_body=True)
     assert manifest.splitlines() == [
         "1. PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)",
-        "2. MODEL — frontal close-up of the model (identity ground truth; do NOT copy this image's pose, framing, or clothing)",
-        "3. MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single person (identity reference only). Do NOT copy the grid layout, framing, poses, or clothing; the output must be one single normal photograph, never a grid",
+        "2. MODEL FACE — facial identity authority for the selected model ONLY: preserve facial identity and facial features; ZERO authority over height, head-to-body ratio, shoulders, torso, waist, pelvis, limb proportions, body shape, pose, framing or clothing",
+        "3. MODEL FULL BODY — full-body proportion authority for the selected model ONLY: preserve height, head-to-body ratio, shoulder width and slope, torso length and build, waist, pelvis and hip width, and arm and leg proportions; ZERO authority over facial identity, facial features, hair, pose, framing or clothing",
         "4. PRODUCT — front view of the garment",
         "5. MATCHING — the user-selected coordinating garment worn in the same outfit",
         "6. MOOD — reference for lighting/color/ambience ONLY (never copy its garment, person or framing)",
@@ -461,7 +462,7 @@ def test_build_prompt_with_face_injects_identity_and_overrides_face_line():
                                  mood_count=0, has_face=True)
     p = cg.build_prompt({"cutType": "styling", "shot": "full"}, PRODUCT_TOP,
                         manifest=manifest, has_face=True)
-    assert "MODEL IDENTITY" in p                       # [[FACE_REF]] 정체성 지시
+    assert "MODEL FACE IDENTITY CONTINUITY" in p       # [[FACE_REF]] 정체성 지시
     assert "recognizably that same individual" in p
     assert "the real person in the MODEL FACE reference" in p   # [[FACE:licensed]]
     assert "keep the face unobtrusive" not in p        # FACE:same 오버라이드됨

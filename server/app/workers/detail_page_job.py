@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import uuid
@@ -19,9 +20,12 @@ from ..agents import (
     copy_qc,
     copywriter,
     cut_generator,
+    cut_output_qc,
+    cut_plan,
     image_qc,
     mannequin,
     page_assembler,
+    page_output_qc,
     space_set_assets,
 )
 from ..agents.gemini_image import InlineImage
@@ -127,7 +131,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
     """준비된 블록별
     (block, images, manifest, has_face, product_images,
     space_set_plate, strict_space_scene_qc)로 AG-06 컷 생성
-    → (cut_results, cut_assets, face_cuts, garment_qcs, garment_warnings).
+    → (cut_results, cut_assets, face_cuts, garment_qcs, cut_qcs, page_qc, warnings).
     face_cuts = 라이선스 얼굴이 실제로 들어가고
     **성공까지 한** 컷 수 — AI 고지 문구 분기의 사실 근거(주입 0건이면 기본 문구).
     실패 컷은 건너뛴다(빈 슬롯은 assemble 이 처리) — 부분 성공. 스펙 위반(unknown cutType)도
@@ -135,6 +139,28 @@ async def _gen_cuts(app, job, prepared, product, analysis):
     s, gemini, r2 = app.state.settings, app.state.gemini, app.state.r2
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
     sem = asyncio.Semaphore(_GEN_CONCURRENCY)
+    page_input_unavailable = object()
+    clothing_type = (
+        product.get("clothing_type") or product.get("clothingType") or "top"
+    )
+
+    def _page_plan_item(item, output_index, product_truth_indexes) -> dict:
+        block = item[0]
+        normalized = cut_generator.normalize_spec(
+            block, clothing_type=clothing_type
+        )
+        return {
+            "outputIndex": output_index,
+            "blockId": str(block.get("id")),
+            "targetColor": normalized.get("colorId") or "base",
+            "clothingType": clothing_type,
+            "cutType": normalized["cutType"],
+            "outerClosureState": normalized.get("outerClosureState"),
+            "modelId": normalized.get("modelId"),
+            "matchingIds": normalized.get("matchIds") or [],
+            "spaceGroupId": normalized.get("spaceGroupId"),
+            "productTruthIndexes": product_truth_indexes,
+        }
 
     async def _one(item):
         """컷 1개 생성+저장. 실패(빈 슬롯)면 None. 각 블록 독립이라 동시 실행 가능."""
@@ -149,6 +175,21 @@ async def _gen_cuts(app, job, prepared, product, analysis):
         # 생성 호출도 그만큼 줄어든다. 여기서 하는 이유: gather 순서가 곧 블록 순서라
         # 나중에 합치면 컷 배열이 어긋난다.
         if passthrough is not None:
+            page_item = None
+            passthrough_warnings = []
+            if s.page_output_qc_mode == "shadow":
+                try:
+                    page_item = InlineImage(
+                        passthrough["mime_type"],
+                        await asyncio.to_thread(r2.get_bytes, passthrough["r2_key"]),
+                    )
+                except Exception as e:
+                    log.warning(
+                        "AG-06 page QC passthrough input unavailable job %s block %s: %r",
+                        job_id, b.get("id"), e,
+                    )
+                    page_item = page_input_unavailable
+                    passthrough_warnings.append({"code": "page_output_qc_input_unavailable"})
             await _emit(app.state.pool, job_id, "step",
                         {"blockId": b.get("id"), "status": "cut_passthrough",
                          "assetId": passthrough["id"]})
@@ -156,7 +197,7 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                 {"blockId": b.get("id"), "imageUrl": f"/v1/assets/{passthrough['id']}/file",
                  "width": passthrough.get("width"), "height": passthrough.get("height")},
                 None,          # 새 asset 을 만들지 않는다 — 이미 존재하는 셀러 자산이다
-                False, None, [],
+                False, None, None, passthrough_warnings, page_item,
             )
         async with sem:
             if not images:  # 옷 근거(상품/마네킹) 없음 — 무드만으로는 동일성 보장 불가, 생성하지 않는다
@@ -276,6 +317,36 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             img, mime = chosen.data, chosen.mime
             garment_warnings = [*candidate_scene_warnings, *garment_warnings]
 
+            cut_qc = None
+            if s.cut_output_qc_mode == "shadow":
+                try:
+                    normalized_spec = cut_generator.normalize_spec(
+                        b, clothing_type=clothing_type
+                    )
+                    normalized_spec = cut_generator.apply_reference_compatibility(
+                        normalized_spec
+                    )
+                    plan = cut_plan.compile_cut_plan(
+                        normalized_spec,
+                        clothing_type,
+                        fit_profile=(analysis or {}).get("fitProfile"),
+                    )
+                    qc_references = cut_output_qc.references_from_manifest(
+                        manifest, images
+                    )
+                    cut_qc = await cut_output_qc.verdict(
+                        s, plan, qc_references, chosen
+                    )
+                except Exception as e:
+                    # shadow는 관측 전용이다. plan/manifest/provider 오류가 성공 이미지를 막지 않는다.
+                    log.warning(
+                        "AG-06 cut output QC unavailable job %s block %s: %r — shadow only",
+                        job_id,
+                        b.get("id"),
+                        e,
+                    )
+                    garment_warnings.append({"code": "cut_output_qc_unavailable"})
+
             ext = ext_for_mime(mime) or _EXT_FALLBACK.get(mime, "png")
             asset_id = str(uuid.uuid4())
             key = ai_key(user_id, project_id, job_id, asset_id, ext)
@@ -290,13 +361,16 @@ async def _gen_cuts(app, job, prepared, product, analysis):
                  "size": len(img), "width": w, "height": h},
                 has_face,
                 garment_qc,
+                cut_qc,
                 garment_warnings,
+                chosen if s.page_output_qc_mode == "shadow" else None,
             )
 
     # gather 는 입력 순서를 보존 — 콘티 블록 순서대로 컷을 배열한다.
     cut_results, cut_assets, face_cuts = [], [], 0
-    garment_qcs, garment_warnings = [], []
-    for r in await asyncio.gather(*[_one(item) for item in prepared]):
+    garment_qcs, cut_qcs, garment_warnings = [], [], []
+    outcomes = await asyncio.gather(*[_one(item) for item in prepared])
+    for r in outcomes:
         if r:
             cut_results.append(r[0])
             # 패스스루는 새 asset 이 없다(None). 이 목록의 길이가 **과금 단위**라 여기 넣으면
@@ -306,9 +380,60 @@ async def _gen_cuts(app, job, prepared, product, analysis):
             face_cuts += 1 if r[2] else 0
             if r[3] is not None:
                 garment_qcs.append({"blockId": r[0]["blockId"], **r[3]})
+            if r[4] is not None:
+                cut_qcs.append({"blockId": r[0]["blockId"], **r[4]})
             garment_warnings.extend(
-                {"blockId": r[0]["blockId"], **warning} for warning in r[4])
-    return cut_results, cut_assets, face_cuts, garment_qcs, garment_warnings
+                {"blockId": r[0]["blockId"], **warning} for warning in r[5])
+
+    page_qc = None
+    if s.page_output_qc_mode == "shadow" and prepared:
+        # 원본 패스스루를 읽지 못한 경우에는 출력 자체가 빠진 것이 아니라 QC 입력만 없는 상태다.
+        # 이를 completeness 실패로 오인시키지 않고 이번 page QC만 건너뛴다.
+        passthrough_input_unavailable = any(
+            r is not None and r[6] is page_input_unavailable for r in outcomes
+        )
+        if not passthrough_input_unavailable:
+            try:
+                product_truth_refs = []
+                product_truth_index_by_hash = {}
+                product_truth_indexes = []
+                for item in prepared:
+                    indexes = []
+                    for image in item[4] if len(item) > 4 else []:
+                        digest = hashlib.sha256(image.data).digest()
+                        index = product_truth_index_by_hash.get(digest)
+                        if (
+                            index is None
+                            and len(product_truth_refs) < page_output_qc.MAX_PRODUCT_REFS
+                        ):
+                            index = len(product_truth_refs)
+                            product_truth_index_by_hash[digest] = index
+                            product_truth_refs.append(image)
+                        if index is not None and index not in indexes:
+                            indexes.append(index)
+                    product_truth_indexes.append(indexes)
+
+                page_plan = [
+                    _page_plan_item(
+                        item, output_index, product_truth_indexes[output_index]
+                    )
+                    for output_index, item in enumerate(prepared)
+                ]
+                # 실패 컷은 같은 outputIndex 자리에 None으로 남긴다. page_output_qc가 계획 대비
+                # 누락을 completeness 실패로 판정하며, 뒤 컷이 앞으로 당겨져 잘못 매핑되지 않는다.
+                page_images = [r[6] if r is not None else None for r in outcomes]
+                page_qc = await page_output_qc.judge(
+                    s, page_plan, page_images, product_truth_refs=product_truth_refs,
+                )
+            except Exception as e:
+                # shadow는 관측 전용이다. 매핑·정규화·provider의 예기치 않은 오류도 저장·정산을
+                # 막아서는 안 된다.
+                log.warning("AG-06 page output QC unavailable job %s: %r — shadow only", job_id, e)
+                garment_warnings.append({"code": "page_output_qc_unavailable"})
+    return (
+        cut_results, cut_assets, face_cuts, garment_qcs, cut_qcs, page_qc,
+        garment_warnings,
+    )
 
 
 async def _gen_copy(app, job, ai_blocks, product, analysis):
@@ -462,6 +587,23 @@ async def run_detail_page_job(app, job: dict) -> None:
                 value = block.get("colorId")
                 return None if value is None else str(value)
 
+            colors = product.get("colors") or []
+            base_color = next(
+                (color for color in colors if color.get("isBase")),
+                colors[0] if colors else None,
+            )
+            base_color_id = (
+                str(base_color.get("id"))
+                if base_color is not None and base_color.get("id") is not None
+                else None
+            )
+
+            def _uses_base_color(block: dict) -> bool:
+                color_id = _color_key(block)
+                return color_id is None or (
+                    base_color_id is not None and color_id == base_color_id
+                )
+
             def _is_detail(block: dict) -> bool:
                 return block.get("cutType") == "product" and block.get("shot") == "detail"
 
@@ -525,8 +667,8 @@ async def run_detail_page_job(app, job: dict) -> None:
         async def _img(a: dict) -> InlineImage:
             return await _r2_img(a["r2_key"], a["mime_type"])
 
-        # C방식 두 장은 원자적인 한 쌍이다. 하나라도 manifest/R2 로드에 실패하면 둘 다 빼고
-        # 기존 옷 레퍼런스만으로 계속 생성한다(상세페이지 부분 실패 정책과 같은 fail-open).
+        # 가상모델 얼굴+전신은 원자적인 한 쌍이다. 하나라도 manifest/R2 로드에 실패하면
+        # 둘 다 빼고 기존 옷 레퍼런스만으로 계속 생성한다(상세페이지 부분 실패 정책과 같은 fail-open).
         _model_cache: dict[str, list[InlineImage] | None] = {}
 
         async def _model_images(spec: dict | None) -> list[InlineImage]:
@@ -537,7 +679,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                 return []
             if model_id not in _model_cache:
                 try:
-                    refs = cut_generator.resolve_virtual_model_assets(spec)
+                    refs = cut_generator.resolve_virtual_model_assets(
+                        spec, require_full_body=True
+                    )
                     if refs is not None:
                         _model_cache[model_id] = [
                             await _r2_img(ref["key"], ref["mime"]) for ref in refs
@@ -598,6 +742,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 저장/클라이언트가 런타임 전용 지시를 주입하지 못하게 매번 실제 선택 결과로 재구성한다.
             cut_spec.pop("_detailColorTransfer", None)
             cut_spec.pop("_spaceSetContinuity", None)
+            cut_spec.pop("_referenceDirectionCompatible", None)
             if space_binding is not None:
                 # 공간 세트의 pose/범위/변주 강도는 저장 payload가 아니라 발행 레지스트리가
                 # 정본이다. 오래된 값이나 우회 클라이언트가 전용 pose·plate 계약을 바꾸지 못한다.
@@ -629,6 +774,18 @@ async def run_detail_page_job(app, job: dict) -> None:
                 normalized = cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
             except ValueError:
                 normalized = None  # generate()가 블록 단위 실패로 처리하는 기존 경로 유지
+            is_product_cut = normalized is not None and normalized["cutType"] == "product"
+            is_worn_cut = normalized is not None and normalized["cutType"] in _WORN_CUT_TYPES
+            # PRODUCT 컷은 사람 없는 상품 단독 이미지다. 프로젝트에 선택 마네킹이 있어도 이 컷의
+            # 옷 근거로 승격하지 않는다 — 상품 사진이 없으면 사람 이미지만으로 생성하지 않고 스킵한다.
+            # 선택 마네킹컷은 기준색 상품 사진으로 만든 결과라 색상 메타가 따로 없다.
+            # 사용자가 콘티에서 다른 색을 골랐을 때까지 붙이면 기준색 마네킹 픽셀과 목표색
+            # 상품 픽셀이 충돌한다. 사용자 색상을 확실히 우선하도록 기준색 착용컷에만 쓴다.
+            cut_mannequin_asset = (
+                mannequin_asset
+                if not is_product_cut and _uses_base_color(b)
+                else None
+            )
             asset_key = (_color_key(b), _is_detail(b))
             prods = color_assets.get(asset_key, [])
             if detail_color_transfers.get(asset_key):
@@ -637,22 +794,34 @@ async def run_detail_page_job(app, job: dict) -> None:
             # 모델이 레퍼런스 속 옷을 지어내거나 베낀다(ADR-0004 정확성 최우선). 스킵 표식.
             # 얼굴은 이 가드 **뒤에서만** 붙는다 — 여기 얼굴을 넣으면 images 가 비지 않아
             # _gen_cuts 의 `if not images` 스킵이 무력화되고 옷 근거 0으로 생성이 돌아간다.
-            if mannequin_asset is None and not prods:
+            if cut_mannequin_asset is None and not prods:
                 prepared.append((cut_spec, [], "", False, [], None, False))
                 continue
             mids = b.get("matchIds") or []
-            match_a = match_assets.get(str(mids[0])) if mids and b.get("cutType") in _WORN_CUT_TYPES else None
+            match_a = (
+                match_assets.get(str(mids[0]))
+                if mids and is_worn_cut
+                else None
+            )
             moods = [mood_assets[str(r)] for r in (b.get("refAssetIds") or [])[:3] if mood_assets.get(str(r))]
             # 얼굴이 실제로 담기는 컷에만 첨부 — product(사람 금지)·거울샷 기본(폰이 가림)·
             # 뒷모습·머리가 프레임 밖인 샷은 제외(cut_generator.wants_face 가 단일 규칙).
             wants = cut_generator.wants_face(cut_spec, clothing_type)
+            # MODEL FULL BODY는 진짜 전신 자산을 붙인 VIRTUAL 경로에만 선언한다.
+            # REAL의 두 번째 이미지는 얼굴 시트이므로 체형 근거로 위장하지 않는다.
+            model_has_full_body = False
             # 컷당 아이덴티티 소스 1개(codex [P1]) — 셋 중 하나만 컷에 들어간다:
             #  REAL    실존 모델 그리드(비공개 face 버킷) — 단일 라이선스 얼굴 미첨부
             #  LEGACY  라이선스 단일 얼굴(비공개) — 어떤 그리드도 미첨부
-            #  VIRTUAL 가상모델 그리드(공개 버킷) — 라이선스 불요
+            #  VIRTUAL 가상모델 얼굴·시트·체형 묶음(공개 버킷) — 라이선스 불요
             # face_slot=단일 얼굴 슬롯(LEGACY만). has_identity=검증 얼굴이 실제 담기는 컷(REAL·LEGACY)
             # → face_cuts·검증 배지 근거. 세 소스가 한 컷에 겹치지 않아 인물 혼합·이중주입이 없다.
-            if source == "REAL":
+            if not is_worn_cut:
+                # 상품컷에는 REAL/VIRTUAL 그리드와 LEGACY 단일 얼굴을 모두 구조적으로 차단한다.
+                model_images = []
+                has_identity = False
+                face_slot = False
+            elif source == "REAL":
                 # 실존 모델 그리드는 얼굴 노출과 무관하게 모든 착용컷에 identity 앵커로 붙인다(A4).
                 # wants(얼굴 노출)로만 게이트하면 mirror/back 이 참조 0장 → 그 컷만 인물 랜덤이 된다
                 # (REAL 은 VIRTUAL 과 달리 mB 폴백도 없음). 배지(has_identity)만 wants 로 준다.
@@ -667,6 +836,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 face_slot = wants
             elif source == "VIRTUAL":
                 model_images = await _model_images(normalized)
+                model_has_full_body = len(model_images) == 2
                 has_identity = False
                 face_slot = False
             else:  # NONE / REJECTED — 얼굴 없이 생성
@@ -686,6 +856,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 if _fb_id and _fb_id in _virtual_ids:
                     model_images = await _model_images(
                         {"cutType": normalized["cutType"], "modelId": _fb_id})
+                    model_has_full_body = len(model_images) == 2
                     if model_images and not _fallback_warned:
                         log.warning(
                             "AG-06 worn cut identity empty (source=%s model=%s) → deterministic %s "
@@ -694,8 +865,8 @@ async def run_detail_page_job(app, job: dict) -> None:
                         _fallback_warned = True
             imgs = []
             product_images = []
-            if mannequin_asset is not None:
-                imgs.append(await _img(mannequin_asset))
+            if cut_mannequin_asset is not None:
+                imgs.append(await _img(cut_mannequin_asset))
             imgs.extend(model_images)
             for a in prods:
                 product_image = await _img(a)
@@ -706,8 +877,9 @@ async def run_detail_page_job(app, job: dict) -> None:
             if face_slot:
                 # 비공개 r2_face 바이트(LEGACY 단일 얼굴) — _img()(공개 버킷 하드코딩) 를 태우지 않는다.
                 imgs.append(face_ref["image"])
-            for a in moods:
-                imgs.append(await _img(a))
+            # 무드는 장면 자산보다 앞에 와야 하지만, all/bg/대표 plate가 장면·조명을 소유하면
+            # 아예 첨부하지 않는다. 예시를 해석한 뒤 이 위치에 필요한 경우에만 삽입한다.
+            scene_suffix_start = len(imgs)
             example_scope = None
             space_set_plate = None
             has_space_set_plate = False
@@ -771,6 +943,9 @@ async def run_detail_page_job(app, job: dict) -> None:
                                 scope=scope,
                             )
                         )
+                        cut_spec["_referenceDirectionCompatible"] = example_reference.get(
+                            "directionCompatible", True
+                        )
                         cache_key = (
                             f"space-set:{example_reference['exampleId']}:{scope}"
                         )
@@ -819,9 +994,10 @@ async def run_detail_page_job(app, job: dict) -> None:
                                 _example_cache[cache_key] = await cut_generator.load_example_image(
                                     s, example_id, scope=scope, clothing_type=clothing_type)
                             example_img = _example_cache[cache_key]
-                            if example_img is None and scope in ("pose", "bg"):
-                                # 전용 자산 로드 실패 — 무음 강등 대신 이 컷만 빈 슬롯(ADR-0009 §2,
-                                # 2026-07-20 실측: 강등이 '참고 안 된 bg 컷'을 조용히 만들었다)
+                            if example_img is None and scope in ("all", "pose", "bg"):
+                                # 사용자가 고른 예시 자산 로드 실패 — 무음 강등 대신 이 컷만 빈 슬롯
+                                # (ADR-0009 §2). all도 계속 생성하면 예시를 참고한 것처럼 보이면서
+                                # 무드 사진으로 장면이 바뀔 수 있으므로 pose/bg와 똑같이 닫는다.
                                 log.warning("AG-06 %s example unavailable — cut fail-closed job %s block %s",
                                             scope, job_id, b.get("id"))
                                 prepared.append((cut_spec, [], "", False, [], None, False))
@@ -834,14 +1010,31 @@ async def run_detail_page_job(app, job: dict) -> None:
                                 else:
                                     imgs.append(example_img)
                                 example_scope = scope
+            # 정식 공간 세트는 대표 plate가 없는 회전/호리존 세트도 자체 장면 계약을 가진다.
+            # 저장 payload에 남은 수동 무드가 세트 컷 사이로 새지 않게 binding 자체를 장면
+            # 소유권으로 본다. 대표 plate 유무는 배경 이미지 첨부 여부일 뿐 권한이 아니다.
+            authoritative_scene = (
+                example_scope in ("all", "bg") or space_binding is not None
+            )
+            attached_mood_count = 0
+            if not authoritative_scene:
+                mood_images = [await _img(a) for a in moods]
+                imgs[scene_suffix_start:scene_suffix_start] = mood_images
+                attached_mood_count = len(mood_images)
             manifest = cut_generator.build_manifest(
-                prods, has_mannequin=mannequin_asset is not None,
-                has_match=match_a is not None, mood_count=len(moods),
-                has_model_face=len(model_images) == 2, has_model_sheet=len(model_images) == 2,
+                prods, has_mannequin=cut_mannequin_asset is not None,
+                has_match=match_a is not None,
+                mood_count=attached_mood_count,
+                has_model_face=len(model_images) == 2,
+                has_model_sheet=len(model_images) == 2 and not model_has_full_body,
+                has_model_full_body=model_has_full_body,
                 has_face=face_slot,
                 example_scope=example_scope,
                 example_is_product=normalized is not None and normalized["cutType"] == "product",
-                has_space_set_plate=has_space_set_plate)
+                has_space_set_plate=has_space_set_plate,
+                reference_direction_compatible=cut_generator.apply_reference_compatibility(
+                    cut_generator.normalize_spec(cut_spec, clothing_type=clothing_type)
+                )["_referenceDirectionCompatible"])
             # 4번째 = has_identity: 검증 얼굴(REAL 그리드·LEGACY 단일)이 실제 담긴 컷 → face_cuts 계수·
             # generate has_face·검증 배지 근거. VIRTUAL 그리드는 검증 얼굴이 아니므로 False.
             prepared.append(
@@ -862,8 +1055,15 @@ async def run_detail_page_job(app, job: dict) -> None:
                                                "aiCuts": len(ai_blocks)})
 
         # 2) 컷 생성 (부분 성공)
-        cut_results, cut_assets, face_cuts, garment_qcs, garment_warnings = await _gen_cuts(
-            app, job, prepared, product, analysis)
+        (
+            cut_results,
+            cut_assets,
+            face_cuts,
+            garment_qcs,
+            cut_qcs,
+            page_qc,
+            garment_warnings,
+        ) = await _gen_cuts(app, job, prepared, product, analysis)
         example_warnings.extend(garment_warnings)
         await _emit(pool, job_id, "progress", {"progress": 65, "phase": "cuts",
                                                "generated": len(cut_assets)})
@@ -915,6 +1115,10 @@ async def run_detail_page_job(app, job: dict) -> None:
         }
         if garment_qcs:
             success_metadata["garmentQc"] = garment_qcs
+        if cut_qcs:
+            success_metadata["cutQc"] = cut_qcs
+        if page_qc is not None:
+            success_metadata["pageQc"] = page_qc
         if example_warnings:
             success_metadata["warnings"] = example_warnings
         async with pool.connection() as conn:

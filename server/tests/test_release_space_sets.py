@@ -709,6 +709,72 @@ def _empty_server_registry(release_id="old-release") -> dict:
     }
 
 
+def _empty_frontend_catalog(release_id="old-release") -> dict:
+    return {
+        "_meta": {
+            "schemaVersion": 1,
+            "releaseId": release_id,
+            "releasedAt": "2026-07-29T00:00:00Z",
+            "defaultBaseUrl": PUBLIC_BASE,
+        },
+        "sets": [],
+    }
+
+
+def _old_catalog_pair(
+    result,
+    *,
+    set_id="set_old_women_top_01",
+    release_id="old-space-release",
+    keep_example_ids=False,
+) -> tuple[dict, dict]:
+    frontend = json.loads(result.frontend_catalog_path.read_text(encoding="utf-8"))
+    registry = json.loads(result.server_registry_path.read_text(encoding="utf-8"))
+    frontend_set = deepcopy(frontend["sets"][0])
+    server_set = deepcopy(registry["sets"][0])
+    original_set_id = server_set["setId"]
+    frontend_set["setId"] = frontend_set["id"] = set_id
+    server_set["setId"] = set_id
+    if server_set["representativePlate"] is not None:
+        server_set["representativePlate"]["key"] = (
+            server_set["representativePlate"]["key"]
+            .replace(RELEASE_ID, release_id)
+            .replace(original_set_id, set_id)
+        )
+        frontend_set["representativePlate"]["url"] = release._public_url(
+            PUBLIC_BASE, server_set["representativePlate"]["key"]
+        )
+    for index, (frontend_member, server_member) in enumerate(
+        zip(frontend_set["members"], server_set["members"]), start=1
+    ):
+        original_example_id = server_member["exampleId"]
+        example_id = (
+            original_example_id
+            if keep_example_ids
+            else f"ss_{set_id}_{index:02d}"
+        )
+        frontend_member["exampleId"] = example_id
+        server_member["exampleId"] = example_id
+        for variant in ("all", "pose"):
+            server_member[variant]["key"] = (
+                server_member[variant]["key"]
+                .replace(RELEASE_ID, release_id)
+                .replace(original_example_id, example_id)
+            )
+        frontend_member["allUrl"] = release._public_url(
+            PUBLIC_BASE, server_member["all"]["key"]
+        )
+        all_root = server_member["all"]["key"].rsplit("/all/", 1)[0]
+        frontend_member["thumbUrl"] = release._public_url(
+            PUBLIC_BASE, f"{all_root}/thumb/{example_id}.webp"
+        )
+    old_frontend = _empty_frontend_catalog(release_id)
+    old_frontend["sets"] = [frontend_set]
+    old_registry = _empty_server_registry(release_id)
+    old_registry["sets"] = [server_set]
+    return old_frontend, old_registry
+
+
 def test_apply_rolls_back_frontend_when_server_copy_fails(tmp_path, monkeypatch):
     manifest_path, root, _manifest = _fixture(tmp_path)
     result = release.stage_release(
@@ -722,7 +788,7 @@ def test_apply_rolls_back_frontend_when_server_copy_fails(tmp_path, monkeypatch)
     frontend_target.parent.mkdir(parents=True)
     server_target.parent.mkdir(parents=True)
     frontend_target.write_text(
-        json.dumps({"_meta": {"releaseId": "old-release"}, "sets": []}),
+        json.dumps(_empty_frontend_catalog()),
         encoding="utf-8",
     )
     server_target.write_text(
@@ -750,7 +816,7 @@ def test_apply_rolls_back_frontend_when_server_copy_fails(tmp_path, monkeypatch)
     assert server_target.read_bytes() == server_before
 
 
-def test_apply_preserves_server_only_old_sets_but_frontend_is_current_only(
+def test_apply_preserves_old_sets_in_frontend_and_server_in_the_same_order(
     tmp_path, monkeypatch
 ):
     manifest_path, root, _manifest = _fixture(tmp_path)
@@ -760,28 +826,18 @@ def test_apply_preserves_server_only_old_sets_but_frontend_is_current_only(
         public_base_url=PUBLIC_BASE,
         output_dir=tmp_path / "staged",
     )
+    next_frontend = json.loads(result.frontend_catalog_path.read_text(encoding="utf-8"))
     next_server = json.loads(result.server_registry_path.read_text(encoding="utf-8"))
-    old_set = deepcopy(next_server["sets"][0])
-    old_set["setId"] = "set_old_women_top_01"
     old_release_id = "old-space-release"
-    old_set["representativePlate"]["key"] = old_set["representativePlate"]["key"].replace(
-        RELEASE_ID,
-        old_release_id,
+    old_frontend, old_registry = _old_catalog_pair(
+        result, release_id=old_release_id
     )
-    for index, member in enumerate(old_set["members"], start=1):
-        member["exampleId"] = f"ss_set_old_women_top_01_{index:02d}"
-        for variant in ("all", "pose"):
-            member[variant]["key"] = member[variant]["key"].replace(
-                RELEASE_ID,
-                old_release_id,
-            )
-    old_registry = _empty_server_registry(old_release_id)
-    old_registry["sets"] = [old_set]
 
     frontend_target = tmp_path / "repo" / "src" / "data" / "storyboardSpaceSets.json"
     server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
     frontend_target.parent.mkdir(parents=True)
     server_target.parent.mkdir(parents=True)
+    frontend_target.write_text(json.dumps(old_frontend), encoding="utf-8")
     server_target.write_text(json.dumps(old_registry), encoding="utf-8")
     monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
@@ -791,11 +847,15 @@ def test_apply_preserves_server_only_old_sets_but_frontend_is_current_only(
     applied_frontend = json.loads(frontend_target.read_text(encoding="utf-8"))
     applied_server = json.loads(server_target.read_text(encoding="utf-8"))
     assert [item["setId"] for item in applied_frontend["sets"]] == [
-        next_server["sets"][0]["setId"]
+        next_frontend["sets"][0]["setId"],
+        "set_old_women_top_01",
     ]
     assert [item["setId"] for item in applied_server["sets"]] == [
         next_server["sets"][0]["setId"],
         "set_old_women_top_01",
+    ]
+    assert [item["setId"] for item in applied_frontend["sets"]] == [
+        item["setId"] for item in applied_server["sets"]
     ]
     assert old_release_id in applied_server["sets"][1]["representativePlate"]["key"]
 
@@ -810,17 +870,19 @@ def test_apply_rejects_changed_definition_for_existing_set_id_before_mutation(
         public_base_url=PUBLIC_BASE,
         output_dir=tmp_path / "staged",
     )
-    old_registry = json.loads(result.server_registry_path.read_text(encoding="utf-8"))
-    old_registry["releaseId"] = "old-release"
+    old_frontend, old_registry = _old_catalog_pair(
+        result,
+        set_id=_manifest["sets"][0]["setId"],
+        release_id="old-release",
+        keep_example_ids=True,
+    )
+    old_frontend["sets"][0]["name"] = "같은 ID의 다른 정의"
     old_registry["sets"][0]["name"] = "같은 ID의 다른 정의"
     frontend_target = tmp_path / "repo" / "src" / "data" / "storyboardSpaceSets.json"
     server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
     frontend_target.parent.mkdir(parents=True)
     server_target.parent.mkdir(parents=True)
-    frontend_target.write_text(
-        json.dumps({"_meta": {"releaseId": "old-release"}, "sets": []}),
-        encoding="utf-8",
-    )
+    frontend_target.write_text(json.dumps(old_frontend), encoding="utf-8")
     server_target.write_text(json.dumps(old_registry), encoding="utf-8")
     frontend_before = frontend_target.read_bytes()
     monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)
@@ -841,17 +903,13 @@ def test_apply_rejects_malformed_preserved_registry_before_mutation(
         public_base_url=PUBLIC_BASE,
         output_dir=tmp_path / "staged",
     )
-    malformed = json.loads(result.server_registry_path.read_text(encoding="utf-8"))
-    malformed["releaseId"] = "old-release"
+    old_frontend, malformed = _old_catalog_pair(result, release_id="old-release")
     malformed["sets"][0]["members"][0]["pose"].pop("mime")
     frontend_target = tmp_path / "repo" / "src" / "data" / "storyboardSpaceSets.json"
     server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
     frontend_target.parent.mkdir(parents=True)
     server_target.parent.mkdir(parents=True)
-    frontend_target.write_text(
-        json.dumps({"_meta": {"releaseId": "old-release"}, "sets": []}),
-        encoding="utf-8",
-    )
+    frontend_target.write_text(json.dumps(old_frontend), encoding="utf-8")
     server_target.write_text(json.dumps(malformed), encoding="utf-8")
     frontend_before = frontend_target.read_bytes()
     monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)
@@ -872,17 +930,16 @@ def test_apply_rejects_example_id_collision_with_preserved_set(
         public_base_url=PUBLIC_BASE,
         output_dir=tmp_path / "staged",
     )
-    current = json.loads(result.server_registry_path.read_text(encoding="utf-8"))
-    current["releaseId"] = "old-release"
-    current["sets"][0]["setId"] = "set_old_women_top_01"
+    old_frontend, current = _old_catalog_pair(
+        result,
+        release_id="old-release",
+        keep_example_ids=True,
+    )
     frontend_target = tmp_path / "repo" / "src" / "data" / "storyboardSpaceSets.json"
     server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
     frontend_target.parent.mkdir(parents=True)
     server_target.parent.mkdir(parents=True)
-    frontend_target.write_text(
-        json.dumps({"_meta": {"releaseId": "old-release"}, "sets": []}),
-        encoding="utf-8",
-    )
+    frontend_target.write_text(json.dumps(old_frontend), encoding="utf-8")
     server_target.write_text(json.dumps(current), encoding="utf-8")
     frontend_before = frontend_target.read_bytes()
     monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)

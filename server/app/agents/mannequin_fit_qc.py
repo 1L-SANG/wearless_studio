@@ -21,6 +21,11 @@ _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "mannequin_fit_qc_v1.txt")
 EDIT_TAIL = (
     " Change NOTHING else — keep the same garment color, fabric, buttons, lapels and details, "
     "the same mannequin, pose, camera framing, plain background, and bare feet. "
+    "Preserve the garment's evidenced material identity and physical response: sheer/mesh/lace/"
+    "crochet/open-knit transmission and openings, weave or yarn structure, crinkle, edge thickness "
+    "and layering, roughness versus gloss, and pose-linked asymmetric folds, compression and "
+    "self-shadow. Do not flatten, smooth, regularize or make the fabric more opaque; redistribute "
+    "folds only where physically required by the requested fit-axis correction. "
     "Output ONE photorealistic image."
 )
 

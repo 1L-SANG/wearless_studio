@@ -20,6 +20,13 @@ def _png(img: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+def _rgba_png(img: Image.Image, *, background_alpha: int = 255) -> bytes:
+    rgba = img.convert("RGBA")
+    alpha = Image.new("L", rgba.size, background_alpha)
+    rgba.putalpha(alpha)
+    return _png(rgba)
+
+
 def _figure(
     size=(700, 1050),
     bg=BG_WHITE,
@@ -88,3 +95,55 @@ def test_bad_aspect_caught():
     r = qc.evaluate_mannequin_qc(_png(_figure(size=(900, 900))))
     assert r.verdict == "retry"
     assert "bad_aspect_ratio" in r.reasons
+
+
+def test_rgb_canvas_with_sheer_looking_color_passes_alpha_check():
+    """시스루 표현은 RGB 색으로 배경과 섞여 보여도 픽셀 자체는 불투명이다."""
+    img = _figure(fill=(228, 224, 222), outline=(180, 176, 174))
+    r = qc.evaluate_canvas_alpha_qc(_png(img))
+    assert r.verdict == "pass"
+    assert r.metrics["hasAlphaSource"] is False
+
+
+def test_opaque_rgba_canvas_passes_alpha_check():
+    r = qc.evaluate_canvas_alpha_qc(_rgba_png(_figure(), background_alpha=255))
+    assert r.verdict == "pass"
+    assert r.metrics["hasAlphaSource"] is True
+    assert r.metrics["transparentPixelCount"] == 0
+
+
+def test_transparent_background_is_rejected_even_when_subject_is_opaque():
+    img = _figure().convert("RGBA")
+    alpha = Image.new("L", img.size, 0)
+    d = ImageDraw.Draw(alpha)
+    w, h = img.size
+    d.rectangle([int(w * 0.40), int(h * 0.06), int(w * 0.60), int(h * 0.97)], fill=255)
+    img.putalpha(alpha)
+
+    r = qc.evaluate_canvas_alpha_qc(_png(img))
+    assert r.verdict == "retry"
+    assert r.reasons == ["transparent_canvas"]
+    assert r.metrics["transparentPixelCount"] > 0
+    assert r.metrics["alphaMin"] == 0
+
+
+def test_semitransparent_garment_pixels_are_rejected_not_mistaken_for_sheerness():
+    """Native garment sheerness must already be composited into RGB, never encoded as alpha."""
+    img = _figure().convert("RGBA")
+    alpha = Image.new("L", img.size, 255)
+    d = ImageDraw.Draw(alpha)
+    w, h = img.size
+    d.rectangle([int(w * 0.40), int(h * 0.25), int(w * 0.60), int(h * 0.60)], fill=160)
+    img.putalpha(alpha)
+
+    r = qc.evaluate_canvas_alpha_qc(_png(img))
+    assert r.verdict == "retry"
+    assert r.reasons == ["transparent_canvas"]
+
+
+def test_full_mannequin_qc_reports_transparent_canvas_before_rgb_flattening():
+    img = _figure().convert("RGBA")
+    img.putalpha(Image.new("L", img.size, 128))
+    r = qc.evaluate_mannequin_qc(_png(img))
+    assert r.verdict == "retry"
+    assert r.reasons == ["transparent_canvas"]

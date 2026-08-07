@@ -7,7 +7,7 @@ import {
   storedExampleConditionStatus,
 } from '../../src/lib/generationExamples.js';
 import { defaultStoryboard, isDefaultStoryboardForMode } from '../../src/lib/api/shapes.js';
-import { pickEntrySets } from '../../src/lib/storyboardEntryPlacement.js';
+import { entryStylingMembers, pickEntrySets } from '../../src/lib/storyboardEntryPlacement.js';
 import {
   genderForClothingType,
   normalizeTargetGendersForClothingType,
@@ -21,7 +21,7 @@ import {
 
 const example = (id, extra = {}) => ({
   id, thumb: `https://images.test/${id}.webp`, rank: 1, cutType: 'styling', shot: 'full',
-  gender: 'women', direction: 'front', mood: 'daily', applicableClothingTypes: ['top'],
+  gender: 'women', direction: 'front', mood: 'daily', applicableClothingTypes: ['outer'],
   variants: ['all'], ...extra,
 });
 const block = (id, extra = {}) => ({
@@ -29,10 +29,10 @@ const block = (id, extra = {}) => ({
   sectionId: 'section-a', sectionLayout: 'twoColumn', layoutRowId: 'row-a',
   spaceGroupId: null, thumb: `placeholder:${id}`, matchIds: ['ignored'], ...extra,
 });
-const product = { clothingType: 'top' };
+const product = { clothingType: 'outer' };
 const releasedStylingSet = storyboardSpaceSetsFor({
   gender: 'women',
-  clothingType: 'top',
+  clothingType: 'outer',
 }).find((set) => set.setType === 'styling');
 const releasedSpaceGroupId = spaceSetGroupId(releasedStylingSet.id, 'autofill-test');
 const storyboardSource = readFileSync(
@@ -49,13 +49,15 @@ const httpAdapterSource = readFileSync(
 );
 
 test('owner declarations gate frontend combinations', () => {
-  assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' }), true);
+  // 2026-08-03 개별컷 보강: 플랫 공개 조합 = 스타일링(상의·하의·아우터·원피스) + 호리존 미디움 4종(여) + 제품(상·하의).
+  // 닫힌 조합의 갤러리는 세트 멤버(setOnly 우회)로 유지되고, 재생성 발행 시 다시 열린다.
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'medium', clothingType: 'outer', gender: 'men' }), true);
   assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'dress', gender: 'women' }), true);
-  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'women' }), true);
-  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'outer', gender: 'men' }), true);
-  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'men' }), false);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'styling', shot: 'medium', clothingType: 'bottom', gender: 'men' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'medium', clothingType: 'top', gender: 'women' }), true);
+  assert.equal(isGenerationCombinationPublic({ cutType: 'horizon', shot: 'full', clothingType: 'dress', gender: 'women' }), false);
   assert.equal(isGenerationCombinationPublic({ cutType: 'product', shot: 'detail', clothingType: 'bottom', gender: 'women' }), true);
 });
 
@@ -67,10 +69,12 @@ test('eligibility uses cut, shot, clothing, gender and all publication, not dire
     example('pose-only', { variants: ['pose'] }),
   ];
   assert.deepEqual(selectGenerationExamples(catalog, {
-    cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women',
+    cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
     direction: 'back', matchIds: ['ignored'],
   }).map((item) => item.id), ['front-ok', 'back-ok']);
-  const products = [example('product-ok', { cutType: 'product', shot: 'ghost', gender: null, mood: null })];
+  const products = [example('product-ok', {
+    cutType: 'product', shot: 'ghost', gender: null, mood: null, applicableClothingTypes: ['top'],
+  })];
   assert.equal(selectGenerationExamples(products, {
     cutType: 'product', shot: 'ghost', clothingType: 'top', gender: 'women',
   })[0].id, 'product-ok');
@@ -82,7 +86,7 @@ test('space-set-only examples stay out of the default selector and autofill pool
     example('set-member', { setOnly: true, variants: ['all', 'pose'], spaceSetId: 'released-set' }),
   ];
   const selected = selectGenerationExamples(catalog, {
-    cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women',
+    cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
   });
   assert.deepEqual(selected.map((item) => item.id), ['generic']);
   const assigned = assignGenerationExamples([block('new')], { catalog, product, gender: 'women' });
@@ -111,7 +115,7 @@ test('generic gallery appends all matching set members after up to six ordinary 
   const selected = selectGenerationExamples(catalog, {
     cutType: 'styling',
     shot: 'full',
-    clothingType: 'top',
+    clothingType: 'outer',
     gender: 'women',
     appendSetOnly: true,
   });
@@ -144,14 +148,14 @@ test('space-set-only poses enter only the in-space compatible pose pool', () => 
   const generic = selectGenerationExamples(catalog, {
     cutType: 'styling',
     shot: 'full',
-    clothingType: 'top',
+    clothingType: 'outer',
     gender: 'women',
   });
   assert.deepEqual(generic.map((item) => item.id), ['generic-back']);
   const inSpace = selectGenerationExamples(catalog, {
     cutType: 'styling',
     shot: 'full',
-    clothingType: 'top',
+    clothingType: 'outer',
     gender: 'women',
     spaceGroupId: 'ssg1__set__instance',
     direction: 'back',
@@ -167,7 +171,7 @@ test('gallery mood round-robin supplies the quality top three and six cards cycl
     example('b2', { mood: 'b', rank: 2 }), example('b3', { mood: 'b', rank: 3 }),
   ];
   assert.deepEqual(selectGenerationExamples(catalog, {
-    cutType: 'styling', shot: 'full', clothingType: 'top', gender: 'women',
+    cutType: 'styling', shot: 'full', clothingType: 'outer', gender: 'women',
   }).map((item) => item.id), ['a1', 'b1', 'a2', 'b2', 'a3', 'b3']);
   const result = assignGenerationExamples(Array.from({ length: 6 }, (_, i) => block(`b${i}`)), {
     catalog, product, gender: 'women',
@@ -257,8 +261,8 @@ test('same-space autofill also stays flat-only even when matching released set p
 
 test('stored selections ignore shot/direction drift, while cut/product conditions still matter', () => {
   const stored = example('stored');
-  assert.equal(storedExampleConditionStatus(stored, { cutType: 'styling', shot: 'medium', direction: 'back', clothingType: 'top', gender: 'women' }), 'valid');
-  assert.equal(storedExampleConditionStatus(stored, { cutType: 'horizon', clothingType: 'top', gender: 'women' }), 'changed');
+  assert.equal(storedExampleConditionStatus(stored, { cutType: 'styling', shot: 'medium', direction: 'back', clothingType: 'outer', gender: 'women' }), 'valid');
+  assert.equal(storedExampleConditionStatus(stored, { cutType: 'horizon', clothingType: 'outer', gender: 'women' }), 'changed');
 });
 
 test('auto examples are fingerprint-neutral and auto saves are mock-dirty neutral', () => {
@@ -300,8 +304,8 @@ test('every supported gender and clothing category seeds styling and horizon set
     const horizonMembers = setMembers.filter((item) => item.cutType === 'horizon');
 
     // 회전 세트는 별도 세트 범위로 성별 내 모든 지원 의류에 배치된다.
-    assert.equal(basic.length, 14, `${gender}/${clothingType} basic`);
-    assert.equal(stylingMembers.length, 6, `${gender}/${clothingType} styling members`);
+    assert.equal(basic.length, 12, `${gender}/${clothingType} basic`);
+    assert.equal(stylingMembers.length, 4, `${gender}/${clothingType} styling members`);
     assert.equal(horizonMembers.length, 3, `${gender}/${clothingType} rotation members`);
     assert.equal(new Set(setMembers.map((item) => item.spaceGroupId)).size, 3);
     assert.ok(spaceSetIdFromGroupId(setMembers[0].spaceGroupId));
@@ -317,7 +321,7 @@ test('every supported gender and clothing category seeds styling and horizon set
       gender, clothingType, projectId: context.projectId, stylingCount: 3,
     });
     const stylingCuts = picked.stylingSets
-      .reduce((sum, set) => sum + (set ? set.members.length : 2), 0);
+      .reduce((sum, set) => sum + (set ? entryStylingMembers(set).length : 2), 0);
     const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
     assert.equal(
       defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
@@ -358,11 +362,11 @@ test('storyboard preserves an in-space pose across shot changes and remains atom
   assert.match(shotHandler, /exampleSelectionOrigin: current\.exampleId \? 'user' : null/);
   const selectedStatus = storyboardSource.slice(
     storyboardSource.indexOf('const selectedStatus ='),
-    storyboardSource.indexOf('const cycleExamples ='),
+    storyboardSource.indexOf('const galleryRef ='),
   );
   assert.doesNotMatch(selectedStatus, /selectedExample\.shot !== shotVal/);
   assert.match(storyboardSource, /await onAtomicChange\(changes, \{ pickerOwnsError: true \}\)/);
-  assert.match(storyboardSource, /\}, catalogs\), \{ retryAtomic: true \}\)/);
+  assert.match(storyboardSource, /retryAtomic: true,[^}]*undoLabel:/);
   assert.match(storyboardSource, /latestBlocks\.current !== atomicRetry\.previous/);
   assert.match(storyboardSource, /const copy = \{ \.\.\.withoutLayoutRow\(bs\[i\]\), id: uid\('blk'\) \}/);
   assert.match(storyboardSource, /새 섹션에 맞는 컷 예시를 먼저 골라주세요/);
@@ -376,9 +380,12 @@ test('storyboard exposes honest retry copy and never labels assignment as an aut
   assert.doesNotMatch(storyboardSource, /AI 자동 포즈/);
 });
 
-test('storyboard and editor both hydrate released set members into selectable galleries', () => {
-  assert.match(storyboardSource, /appendSetOnly:\s*!inSpace && cut !== 'product'/);
-  assert.match(storyboardSource, /공간세트에서 사용된 컷/);
+test('storyboard keeps released set members available for generation without an in-space gallery', () => {
+  assert.match(storyboardSource, /shouldRenderGenerationExampleGuide\(block\) \{\s*return !block\?\.spaceGroupId;/);
+  assert.doesNotMatch(storyboardSource, /inSpace/);
+  // 세트 예시는 구획 라벨 없이 일반 예시 뒤에 자연 배치된다(2026-07-31 오너 확정).
+  assert.doesNotMatch(storyboardSource, /공간세트에서 사용된 컷/);
+  assert.doesNotMatch(storyboardSource, /sb-ex-source-label/);
   assert.match(storyboardSource, /appendSetOnly:\s*cutType !== 'product'/);
   assert.match(editorSource, /withStoryboardSpaceSetExamples\(c\)/);
   assert.match(editorSource, /setCatalogs\(hydratedCatalogs\)/);
