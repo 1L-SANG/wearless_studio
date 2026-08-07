@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import { api } from '@/lib/api/index.js';
 import { resetAnalysisCache } from '@/lib/api/httpAdapter.js';
 import { clearDraft } from '@/lib/draftStore.js';
+import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
 
 const mode = import.meta.env.VITE_API_MODE ?? 'mock';
 const normalizeComposeMode = (value) => value === 'extended' ? 'extended' : 'basic';
@@ -91,8 +92,16 @@ const initialDetailPageJob = () => ({
   startedAt: 0,
 });
 
+function restoredDetailPageJob(projectId) {
+  if (mode !== 'http') return initialDetailPageJob();
+  const saved = loadDetailPageJobMarker();
+  if (!saved || saved.projectId !== projectId) return initialDetailPageJob();
+  return { ...initialDetailPageJob(), ...saved, status: 'running' };
+}
+
 // 재시작·새 제작 시 이전 폴링 루프를 무효화하는 세대 토큰(모듈 스코프).
 let detailJobSeq = 0;
+let detailJobLoopProjectId = null;
 
 /* 완료 브라우저 알림 — 폴링과 같은 곳(store)에서 발화해야 셀러가 다른 화면·다른 탭에
    가 있어도 울린다(대기 화면 컴포넌트 수명에 묶으면 이탈 시 무음 — codex 리뷰 F7).
@@ -152,6 +161,8 @@ let flowValidationInflight = null;
 // 오래 걸린 이전 요청이 나중에 도착해 최신 선택을 덮지 않게 한다.
 let composeModePatchChain = Promise.resolve();
 
+const persistedFlow = loadPersistedFlow();
+
 export const useAppStore = create((set, get) => ({
   /* ---- account / catalogs (서버 상태의 전역 캐시 — loaded once) ---- */
   account: null,
@@ -182,9 +193,9 @@ export const useAppStore = create((set, get) => ({
 
   /* ---- current project + flow selections ---- */
   ...initialFlow,
-  ...loadPersistedFlow(),   // http: 이탈/새로고침 전 진행 프로젝트 복원 → '이어서' 재개
+  ...persistedFlow,   // http: 이탈/새로고침 전 진행 프로젝트 복원 → '이어서' 재개
   mannequinJob: initialMannequinJob(),
-  detailPageJob: initialDetailPageJob(),
+  detailPageJob: restoredDetailPageJob(persistedFlow.projectId),
   // 명시적 '새 제작' 횟수 — ProductInput 을 이 값으로 key 해서, 같은 /create/input 라우트에서
   // 새 제작해도 컴포넌트를 remount(폼·복원상태 초기화)한다. loadProject·retry 의 projectId
   // 변경에는 바뀌지 않아 일반 흐름엔 영향 없음.
@@ -199,6 +210,8 @@ export const useAppStore = create((set, get) => ({
     ensureProjectInflight = null;   // 새 제작 시작 — 이전 플로우의 in-flight 생성과 분리
     detailJobSeq += 1;              // 이전 프로젝트의 상세페이지 폴링 루프 무효화(codex F5 —
                                     // stale 루프가 새 플로우의 detailPageJob 을 덮지 않게)
+    detailJobLoopProjectId = null;
+    clearDetailPageJobMarker();
     resetAnalysisCache();           // 이전 프로젝트의 analysis/매칭 캐시 해제 (F1)
     await clearDraft().catch(() => {});
     // http: 서버 POST 이연(빈 보관함 행 방지) — projectId 없이 시작, 생성은 ensureProject.
@@ -270,6 +283,7 @@ export const useAppStore = create((set, get) => ({
         }
         flowValidated = true;
         set({ ...initialFlow, generationRelevantEditsDirty: false });
+        clearDetailPageJobMarker();
         persistFlow(get());
         return null;
       })().finally(() => {
@@ -297,7 +311,11 @@ export const useAppStore = create((set, get) => ({
   adoptProject(projectId) {
     // 다른 프로젝트 채택 = 프로젝트 경계 전환 — 이전 상세페이지 폴링 루프를 무효화해
     // stale 루프가 초기화된 슬라이스를 나중에 덮지 않게 한다(codex F5).
-    if (get().projectId !== projectId) detailJobSeq += 1;
+    if (get().projectId !== projectId) {
+      detailJobSeq += 1;
+      detailJobLoopProjectId = null;
+      clearDetailPageJobMarker();
+    }
     set((s) => (s.projectId === projectId
       ? { projectPersisted: true }
       : {
@@ -352,13 +370,27 @@ export const useAppStore = create((set, get) => ({
   async startDetailPageGeneration(projectId) {
     const cur = get().detailPageJob;
     // 같은 프로젝트 생성이 이미 돌고 있으면 합류(마운트 중복·StrictMode 이중 실행 가드)
-    if (cur.status === 'running' && cur.projectId === projectId) return;
+    if (cur.status === 'running' && cur.projectId === projectId
+        && detailJobLoopProjectId === projectId) return;
     const seq = ++detailJobSeq;
     const alive = () => detailJobSeq === seq;
-    const patch = (p) => { if (alive()) set((s) => ({ detailPageJob: { ...s.detailPageJob, ...p } })); };
-    set({ detailPageJob: { ...initialDetailPageJob(), status: 'running', projectId, startedAt: Date.now() } });
+    const patch = (p) => {
+      if (!alive()) return;
+      set((s) => ({ detailPageJob: { ...s.detailPageJob, ...p } }));
+      if (get().detailPageJob.status === 'running') saveDetailPageJobMarker(get().detailPageJob);
+    };
+    const recovering = cur.projectId === projectId && Boolean(cur.jobId)
+      && (cur.status === 'running' || cur.status === 'error');
+    const running = recovering
+      ? { ...cur, status: 'running', errorMessage: '' }
+      : { ...initialDetailPageJob(), status: 'running', projectId, startedAt: Date.now() };
+    detailJobLoopProjectId = projectId;
+    set({ detailPageJob: running });
+    saveDetailPageJobMarker(running);
     try {
-      const res = await api.startDetailPage(projectId);
+      // 새로고침 복원은 저장된 jobId를 직접 다시 폴링한다. jobId가 브라우저에 기록되기 전
+      // 새로고침된 아주 짧은 구간만 POST를 재호출하며, 서버가 활성 잡에 멱등 합류시킨다.
+      const res = running.jobId ? { jobId: running.jobId } : await api.startDetailPage(projectId);
       if (!alive()) return;
       if (res.legacy) {
         // mock — 이벤트 배관 없이 기존 완주 흐름(진행바만). editor_wait_dev_spec §1 비범위.
@@ -368,19 +400,21 @@ export const useAppStore = create((set, get) => ({
         if (!alive()) return;
         get().syncCredits(out.credits);
         patch({ status: 'done', jobId: out.jobId || null, progress: 100 });
+        clearDetailPageJobMarker();
         notifyDetailPageDone();
         return;
       }
       if (res.data) {   // 완료 재호출(멱등) — 새 잡 없음
         get().syncCredits(res.credits);
         patch({ status: 'done', progress: 100 });
+        clearDetailPageJobMarker();
         return;   // 재호출은 즉시 완료 — 새 생성이 아니므로 알림 없음
       }
       patch({ jobId: res.jobId });
       let after = 0;
       // 15분 — 정상 실측 242~285초 + 서버 lease 복구(900초) 동안 화면이 먼저 포기하지 않게
       // (httpAdapter.generateDetailPage 의 timeoutMs 와 같은 근거).
-      const deadline = Date.now() + 900000;
+      const deadline = (running.startedAt || Date.now()) + 900000;
       for (;;) {
         if (!alive()) return;
         const [job, ev] = await Promise.all([
@@ -400,11 +434,13 @@ export const useAppStore = create((set, get) => ({
         if (job.status === 'done') {
           get().syncCredits(job.result?.credits);
           patch({ status: 'done', progress: 100 });
+          clearDetailPageJobMarker();
           notifyDetailPageDone();
           return;
         }
         if (job.status === 'error') {
           patch({ status: 'error', errorMessage: job.errorMessage || '상세페이지 생성에 실패했어요.' });
+          clearDetailPageJobMarker();
           return;
         }
         if (Date.now() > deadline) {
@@ -419,14 +455,20 @@ export const useAppStore = create((set, get) => ({
       // 장면⑤ — 얼굴 라이선스 차단(409): 블로킹 패널로 명확히 멈춘다(재생성 재차단 신호)
       if (e?.status === 409) {
         patch({ status: 'blocked', errorMessage: e.message || '이 모델의 얼굴 라이선스를 사용할 수 없어요.' });
+        clearDetailPageJobMarker();
         return;
       }
       patch({ status: 'error', errorMessage: e?.message || '상세페이지 생성에 실패했어요.' });
+      if (e?.status >= 400 && e.status < 500) clearDetailPageJobMarker();
+    } finally {
+      if (alive()) detailJobLoopProjectId = null;
     }
   },
   /** 재시도·이탈 정리용 — 진행 중 루프를 무효화하고 초기 상태로. */
   resetDetailPageJob() {
     detailJobSeq += 1;
+    detailJobLoopProjectId = null;
+    clearDetailPageJobMarker();
     set({ detailPageJob: initialDetailPageJob() });
   },
 }));

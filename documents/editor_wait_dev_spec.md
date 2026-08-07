@@ -93,8 +93,9 @@ EditorBlock의 **요소(element)**에 추적 필드 추가(추가 필드만, 기
   `cut_done`=이미지 / `cut_failed`=차분한 실패 타일("이 컷은 만들지 못했어요 · 크레딧 미차감",
   재시도 버튼 **없음**(v2)). 잠긴 자리 클릭=튕김 애니. 호버=콘티 예시 살짝(선택: exampleId
   썸네일이 카탈로그에 있을 때만) + "생성 중 · 아직 편집할 수 없어요".
-- **카피 편집**: `copy_ready` 도착한 텍스트 el을 contenteditable로. 편집분은
-  `localStorage['ew-copy-{pid}'] = {sbId:{role:text}}` 디바운스 저장.
+- **생성 중 편집**: `copy_ready` 도착한 텍스트 el을 contenteditable로. 문구·배치·추가 요소를
+  `localStorage['ew-draft-{pid}']` 임시 작업본으로 디바운스 저장한다. 생성 중에는 미완성 blocks를
+  서버 완성본 자리에 PUT하지 않는다.
 - **레이아웃**: 상단 리본(스피너·n/N·잔여 추정·"창 닫아도 계속"·[완료되면 알림 받기]) +
   좌 공정 원장(진행 이벤트 phase로 구동, 단계별 경과 표시) + 중앙 캔버스(1000좌표→화면 스케일)
   + 우 미니맵(진행 지도, v1은 표시 전용). 실패·차단(409)·정산영수증(FaceMarket) 장면은
@@ -106,10 +107,9 @@ EditorBlock의 **요소(element)**에 추적 필드 추가(추가 필드만, 기
 
 ## 4. 셀러 편집 승리 — `src/features/editor/Editor.jsx`
 
-블록 로드 직후(`:440` withH 시점) 1회 적용:
-`ew-copy-{pid}`가 있으면 각 텍스트 el을 `sourceBlockId`+`copyRole`로 매칭해 text 교체 →
-스토리지 키 삭제 → setBlocks. 매칭 실패(구 데이터·필드 없음)는 조용히 무시.
-서버는 셀러 편집을 모른 채 조립하고, **클라이언트가 로드 시점에 오버라이드**하는 v1 전략.
+블록 로드 직후 임시 작업본(`ew-draft-{pid}`)이 있으면 캔버스 전체를 복원한다. 완료 이벤트 뒤에는
+서버 조립본의 안정 이미지 URL·미편집 카피·AI 고지를 임시 작업본에 병합하고, 병합본의 서버 저장이
+성공한 뒤에만 임시 키를 삭제한다. **셀러 편집이 항상 이긴다.**
 
 ## 5. 전역 리본 — `src/features/shell/ChromeLayout.jsx`
 
@@ -122,7 +122,8 @@ store `detailPageJob`이 running/error이고 현재 경로가 `/create/generatin
 - 서버: pytest 전체 통과. 프론트: `npx vite build` 통과.
 - 수동 스모크(mock): 콘티→생성 진입 시 스켈레톤 즉시 표시→완주→에디터 진입.
 - 수동 스모크(http, dev 서버): 컷 도착 순서 무작위 확인, 카피 편집→에디터 반영,
-  다른 페이지 이동 시 리본 표시, 새로고침 시 이벤트 재수신(after=0 재생)으로 복원.
+  다른 페이지 이동 시 리본 표시, 새로고침 시 저장된 jobId로 재연결하고 이벤트를 after=0부터
+  재수신해 복원.
 
 ## 6.5 Codex 리뷰 반영 (2026-08-03)
 
@@ -136,8 +137,8 @@ store `detailPageJob`이 running/error이고 현재 경로가 `/create/generatin
   hero 외 전 역할 body 카피 슬롯 보강. (도달 경로: 기본 콘티+카피 ON — 핏·디테일 카피가
   copy_ready 수신에도 표시 불가였음)
 - F5 stale 폴링 루프 → `beginProject`/`adoptProject`에서 `detailJobSeq` 무효화.
-- F6 카피 유실 3경로 → 대기 화면 재진입 시 localStorage 복원 + 빈 문자열도 명시적 편집으로 적용
-  + Editor 키 삭제를 적용 성공 이후로 이동.
+- F6 편집 유실 3경로 → 대기 화면 재진입 시 문구·배치 전체를 localStorage 임시 작업본에서 복원
+  + 서버 완성본 병합·저장 성공 이후에만 키 삭제.
 - F7a 완료 알림 → store done 시점 발화로 이동(화면 이탈 시에도 울림).
 - F8 리본 겹침 → `.job-ribbon-stack` 컨테이너가 sticky 소유, Storyboard 인스펙터는 스택 높이 측정.
 

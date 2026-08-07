@@ -15,6 +15,7 @@ import { api, isMockMode } from '@/lib/api/index.js';
 import { getJobSettlement } from '@/lib/api/facemarket.js';
 import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
 import { alignSkeletonToServer, decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
+import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '@/lib/editorWaitDraft.js';
 import { listModels } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
@@ -48,35 +49,19 @@ async function tryGetReceipt(jobId) {
 }
 const wonFmt = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
 
-/* 에디터 대기 화면에서 셀러가 고친 카피를 로드 시점에 1회 적용 — "셀러 편집이 항상 이긴다"
-   (editor_wait_dev_spec §4). 매칭 키 = 텍스트 요소의 sourceBlockId+copyRole(조립기가 부착).
-   조립(M-02)은 셀러 편집을 모른 채 원본 카피로 완성되므로, 여기서 로컬 임시 저장분을 덮는다.
-   적용 후 즉시 키 삭제 — 이후 재진입은 저장된 blocks 가 단일 소스. 매칭 실패(구 데이터·필드
-   없음)는 조용히 무시하고 원문 유지. */
-function applyEditorWaitCopyOverrides(projectId, blocks) {
-  let raw = null;
-  try { raw = localStorage.getItem(`ew-copy-${projectId}`); } catch { return blocks; }
-  if (!raw) return blocks;
-  let overrides;
-  try { overrides = JSON.parse(raw); } catch { overrides = null; }
-  if (!overrides || typeof overrides !== 'object') {
-    // 파손 저장분 — 반복 적용 시도를 막기 위해 여기서만 제거
-    try { localStorage.removeItem(`ew-copy-${projectId}`); } catch { /* 무시 */ }
-    return blocks;
+async function getFinalEditorBlocks(projectId) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const blocks = await api.getEditorBlocks(projectId);
+      if (!Array.isArray(blocks)) throw new Error('완성된 상세페이지 형식이 올바르지 않아요.');
+      return blocks;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 800));
+    }
   }
-  const applied = blocks.map((b) => ({
-    ...b,
-    elements: (b.elements || []).map((el) => {
-      const next = el?.type === 'text' && el.sourceBlockId && el.copyRole
-        ? overrides[el.sourceBlockId]?.[el.copyRole] : null;
-      // 빈 문자열도 명시적 편집이다(셀러가 카피를 지운 것) — trim 가드 금지(codex F6).
-      return typeof next === 'string' && next !== el.text
-        ? { ...el, text: next } : el;
-    }),
-  }));
-  // 적용이 성공적으로 끝난 뒤에만 키 삭제 — 파싱·적용 중 실패하면 키가 남아 재진입 시 재적용(codex F6).
-  try { localStorage.removeItem(`ew-copy-${projectId}`); } catch { /* 무시 */ }
-  return applied;
+  throw lastError || new Error('완성된 상세페이지를 불러오지 못했어요.');
 }
 
 /* 라이선스 검증 배지 QR (제안서 step03 "& DID 서명 첨부") — 라이선스가 잠긴 상세페이지의
@@ -422,6 +407,7 @@ export function Editor() {
   // 보관함 클릭 등) 언마운트가 effect 보다 먼저라 ref 가 한 단계 묵게 되어
   // 마지막 편집이 유실되던 구멍의 수정.
   const latestBlocks = useRef(null);
+  const pendingGenerationDraft = useRef(false);
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
     const next = expandBlockHeights(typeof u === 'function' ? u(prev) : u);
     latestBlocks.current = next;
@@ -456,7 +442,10 @@ export function Editor() {
      잡 수명·이벤트는 store.detailPageJob 소유, 여기는 구독·채움·완료 병합만. ---- */
   const dpJob = useAppStore((s) => s.detailPageJob);
   const [genActive, setGenActive] = useState(false);
+  const genActiveRef = useRef(false);
   const genMergedRef = useRef(false);
+  const [genFinalizeError, setGenFinalizeError] = useState('');
+  const [genFinalizeAttempt, setGenFinalizeAttempt] = useState(0);
   const [genReceipt, setGenReceipt] = useState(null);
   const [genNotif, setGenNotif] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
@@ -490,7 +479,16 @@ export function Editor() {
   const fromHistory = useRef(false);
   const lastPush = useRef(0);
 
+  useEffect(() => { genActiveRef.current = genActive; }, [genActive]);
+
   useEffect(() => {
+    const enteringJob = useAppStore.getState().detailPageJob;
+    const savedDraft = loadEditorWaitDraft(projectId);
+    const resumingGeneration = Boolean(enteringJob.projectId === projectId
+      && (enteringJob.status === 'running'
+        || (enteringJob.status === 'error' && enteringJob.jobId && savedDraft)));
+    if (resumingGeneration) useAppStore.getState().startDetailPageGeneration(projectId);
+    pendingGenerationDraft.current = Boolean(savedDraft);
     // 에디터는 앱 크롬 밖에서 열린다 — account 는 store 캐시를 직접 로드 (단일 소스)
     Promise.all([api.getEditorBlocks(projectId), api.getWardrobe(projectId), api.getCatalogs(), useAppStore.getState().loadAccount(), api.getProduct(projectId),
       // 실존 모델 카탈로그 — mock 모드는 서버가 없으니 스킵, 실패는 null(AIPanel 이 가상모델 폴백)
@@ -507,7 +505,7 @@ export function Editor() {
         // 생성 직후 기본 문서(옛 자동 size/care 블록만 있고 info 블록 없음)면
         // 기본 정보 템플릿을 자동으로 구성한다 — 수동 '템플릿 추가' 버튼 대체(2026-07-29 결정).
         const dj = useAppStore.getState().detailPageJob;
-        const genMode = dj.status === 'running' && dj.projectId === projectId;
+        const genMode = resumingGeneration || (dj.status === 'running' && dj.projectId === projectId);
         if (genMode) {
           // 생성 중 진입 — 저장된 blocks(구 데모 시드·빈 값) 대신 콘티 스켈레톤이 캔버스가 된다.
           // 컷·카피는 store 이벤트가 채우고, 완료 시 mergeServerBlocks 로 같은 화면에서 확정.
@@ -519,15 +517,19 @@ export function Editor() {
               if (ex?.thumb) exThumb[blk.id] = ex.thumb;
             }
           }
-          withH = decorateGenBlocks(
+          const skeleton = decorateGenBlocks(
             alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], p, cw), cw), dj, exThumb);
+          // 생성 중 임시 작업본은 서버 완성본과 분리한다. 재진입 시 문구뿐 아니라 배치·추가 요소도
+          // 그대로 복원하고, 이후 재수신되는 생성 이벤트가 새 이미지/카피만 채운다.
+          withH = savedDraft || skeleton;
+          genActiveRef.current = true;
           setGenActive(true);
         } else if (needsDefaultTemplate(withH)) {
           const ctx = buildInfoCtx({ productName: p.name || '', clothingType: p.clothingType || 'top', catalogs: hydratedCatalogs, product: p, analysis: an, colorOpts: opts, fmModels: fm });
           withH = applyInfoTemplate(withH, ctx).blocks;
           toast.push('기본 정보 템플릿으로 구성했어요 — 사이즈·케어·고시 내용을 채워주세요', { icon: 'check' });
         }
-        if (!genMode) withH = applyEditorWaitCopyOverrides(projectId, withH);
+        if (!genMode && savedDraft) withH = mergeServerBlocks(savedDraft, withH);
         setBlocks(withH); setWardrobe(w); setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         setClothingType(p.clothingType || 'top');
@@ -552,21 +554,40 @@ export function Editor() {
   useEffect(() => {
     if (!genActive || dpJob.status !== 'done' || genMergedRef.current) return;
     genMergedRef.current = true;
+    setGenFinalizeError('');
     let cancelled = false;
     (async () => {
-      const server = await api.getEditorBlocks(projectId).catch(() => null);
-      if (cancelled) return;
-      setBlocks((bs) => (bs && server ? mergeServerBlocks(bs, server) : bs));
-      setGenActive(false);
-      toast.push('상세페이지가 완성됐어요 — 이제 저장할 수 있어요', { icon: 'check' });
-      if (dpJob.jobId) {
-        const r = await tryGetReceipt(dpJob.jobId);
-        if (!cancelled && r) setGenReceipt(r);
+      try {
+        const server = await getFinalEditorBlocks(projectId);
+        if (cancelled) return;
+        // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
+        // 저장 요청 도중 사용자가 한 번 더 편집했다면 최신 ref로 다시 합쳐 저장하여 덮어쓰지 않는다.
+        for (;;) {
+          const merged = expandBlockHeights(mergeServerBlocks(latestBlocks.current || [], server));
+          latestBlocks.current = merged;
+          setBlocksState(merged);
+          await api.saveEditorBlocks(projectId, merged);
+          if (cancelled) return;
+          if (latestBlocks.current === merged) break;
+        }
+        clearEditorWaitDraft(projectId);
+        pendingGenerationDraft.current = false;
+        genActiveRef.current = false;
+        setGenActive(false);
+        toast.push('상세페이지가 완성됐어요 — 편집 내용까지 저장했어요', { icon: 'check' });
+        if (dpJob.jobId) {
+          const r = await tryGetReceipt(dpJob.jobId);
+          if (!cancelled && r) setGenReceipt(r);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        genMergedRef.current = false;
+        setGenFinalizeError(error?.message || '완성본을 불러오지 못했어요.');
       }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [genActive, dpJob.status]);
+  }, [genActive, dpJob.status, genFinalizeAttempt]);
 
   // history (rapid bursts within 350ms coalesce)
   useEffect(() => {
@@ -578,18 +599,34 @@ export function Editor() {
     lastPush.current = now; prevBlocks.current = blocks;
   }, [blocks]);
 
-  // 자동 저장 — 변경 1.5s 디바운스 + 이탈 시 플러시 (frontend_state_model §8 P1-6).
-  // 첫 로드 직후 1회는 방금 불러온 동일 데이터 재기록이라 무해.
+  // 자동 저장 — 생성 중에는 브라우저 임시 작업본, 완료 뒤에는 서버 완성본으로 분리한다.
+  // 이 구분이 서버 조립 완료와 미완성 스켈레톤 PUT의 덮어쓰기 경합을 막는다.
   const saveTimer = useRef(null);
   useEffect(() => {
     if (blocks == null) return;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { api.saveEditorBlocks(projectId, latestBlocks.current); }, 1500);
-  }, [blocks]);
+    if (genActive) {
+      saveTimer.current = setTimeout(() => {
+        saveEditorWaitDraft(projectId, latestBlocks.current);
+        pendingGenerationDraft.current = true;
+      }, 300);
+      return;
+    }
+    saveTimer.current = setTimeout(() => {
+      api.saveEditorBlocks(projectId, latestBlocks.current).then(() => {
+        if (pendingGenerationDraft.current) {
+          clearEditorWaitDraft(projectId);
+          pendingGenerationDraft.current = false;
+        }
+      }).catch(() => {});
+    }, 1500);
+  }, [blocks, genActive, projectId]);
   useEffect(() => () => {
     clearTimeout(saveTimer.current);
-    if (latestBlocks.current) api.saveEditorBlocks(projectId, latestBlocks.current);
-  }, []);
+    if (!latestBlocks.current) return;
+    if (genActiveRef.current) saveEditorWaitDraft(projectId, latestBlocks.current);
+    else api.saveEditorBlocks(projectId, latestBlocks.current);
+  }, [projectId]);
 
   // delete key removes selection
   useEffect(() => {
@@ -947,16 +984,23 @@ export function Editor() {
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
   const save = async () => {
-    if (genActive) { toast.push('생성이 끝나면 저장할 수 있어요 — 편집 내용은 화면에 유지돼요'); return; }
-    await api.saveEditorBlocks(projectId, blocks); toast.push('저장했어요', { icon: 'check' });
+    if (genActive) {
+      saveEditorWaitDraft(projectId, latestBlocks.current || blocks);
+      pendingGenerationDraft.current = true;
+      toast.push('생성 중 작업을 임시 저장했어요 — 나갔다 와도 이어서 볼 수 있어요');
+      return;
+    }
+    await api.saveEditorBlocks(projectId, blocks);
+    if (pendingGenerationDraft.current) {
+      clearEditorWaitDraft(projectId);
+      pendingGenerationDraft.current = false;
+    }
+    toast.push('저장했어요', { icon: 'check' });
   };
   // 이탈 직전 플러시 — 인라인 편집 중 텍스트는 blur/언마운트에 기대지 않고
   // DOM 에서 직접 읽어 합쳐 저장한다. (프로그램적 내비게이션은 blur 가 없고,
   // blur 가 있어도 언마운트 배치에선 setState 커밋이 보장되지 않는 두 구멍 커버)
   const flushExit = () => {
-    // 생성 중 이탈 — 서버 blocks 는 아직 finalize 전이라 PUT 하면 조립이 덮거나 스켈레톤이
-    // 반쪽 저장된다. 이탈해도 잡은 store 가 계속 돌고, 완료 후 재진입은 정상 로드.
-    if (genActive) { clearTimeout(saveTimer.current); return; }
     let bs = latestBlocks.current;
     if (editEl && wrapRef.current && bs) {
       const node = wrapRef.current.querySelector(`[data-elid="${editEl}"]`);
@@ -967,6 +1011,13 @@ export function Editor() {
       }
     }
     clearTimeout(saveTimer.current);
+    // 생성 중 이탈 — 미완성 화면은 서버 완성본 자리에 PUT하지 않고 브라우저 임시 작업본으로
+    // 저장한다. 진행 잡은 store/서버가 계속 돌며 재진입 때 이 작업본 위로 이벤트를 재생한다.
+    if (genActive) {
+      if (bs) saveEditorWaitDraft(projectId, bs);
+      pendingGenerationDraft.current = Boolean(bs);
+      return;
+    }
     if (bs) api.saveEditorBlocks(projectId, bs);
   };
   /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
@@ -1185,6 +1236,8 @@ export function Editor() {
       return { ...b, elements: b.elements.map((e) => (pos[e.id] != null ? { ...e, [k]: pos[e.id] } : e)) };
     }));
   };
+  const genFailed = dpJob.status === 'error' || Boolean(genFinalizeError);
+  const genFailureMessage = genFinalizeError || dpJob.errorMessage || '생성을 끝내지 못했어요';
 
   return (
     <div className="editor">
@@ -1223,27 +1276,34 @@ export function Editor() {
 
       {/* 생성 진행 리본 — 에디터 통합 대기. 같은 캔버스에서 편집하며 기다린다. */}
       {(genActive || (dpJob.projectId === projectId && dpJob.status === 'error')) && (
-        <div className={`ed-genbar${dpJob.status === 'error' ? ' error' : ''}`} role="status" aria-live="polite">
-          <Icon name={dpJob.status === 'error' ? 'alertTri' : 'loader'} size={14}
-            className={dpJob.status === 'error' ? '' : 'spin'} />
+        <div className={`ed-genbar${genFailed ? ' error' : ''}`} role="status" aria-live="polite">
+          <Icon name={genFailed ? 'alertTri' : 'loader'} size={14}
+            className={genFailed ? '' : 'spin'} />
           <span className="ed-genbar-msg">
-            {dpJob.status === 'error' ? (dpJob.errorMessage || '생성을 끝내지 못했어요')
+            {genFailed ? genFailureMessage
               : dpJob.cutsTotal
                 ? <>사진을 만들어 채우는 중 · <b>{dpJob.cutsDone}/{dpJob.cutsTotal}</b>컷</>
                 : '상세페이지를 만들고 있어요'}
           </span>
-          {dpJob.status !== 'error' && (
+          {!genFailed && (
             <span className="ed-genbar-track" aria-hidden="true"><i style={{ width: `${dpJob.progress}%` }} /></span>
           )}
           <span className="ed-genbar-side">
-            {dpJob.status === 'error' ? (
+            {genFailed ? (
               <>
-                <Button size="sm" variant="primary" onClick={() => {
-                  genMergedRef.current = false;
-                  useAppStore.getState().resetDetailPageJob();
-                  useAppStore.getState().startDetailPageGeneration(projectId);
-                  setGenActive(true);
-                }}>다시 시도</Button>
+                {genFinalizeError ? (
+                  <Button size="sm" variant="primary" onClick={() => setGenFinalizeAttempt((n) => n + 1)}>
+                    완성본 다시 불러오기
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="primary" onClick={() => {
+                    genMergedRef.current = false;
+                    useAppStore.getState().resetDetailPageJob();
+                    useAppStore.getState().startDetailPageGeneration(projectId);
+                    genActiveRef.current = true;
+                    setGenActive(true);
+                  }}>다시 시도</Button>
+                )}
                 <Button size="sm" variant="ghost" onClick={() => { flushExit(); navigate('/create/storyboard'); }}>콘티로</Button>
               </>
             ) : (

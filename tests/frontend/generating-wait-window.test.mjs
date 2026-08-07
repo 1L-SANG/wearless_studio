@@ -1,82 +1,99 @@
-/**
- * 생성 대기 창(2026-08-07) — 화면이 서버보다 먼저 포기하지 않게 하는 계약.
- *
- * 배경(2026-08-05 실측 사고): 정상 생성이 242~285초인데 화면 상한이 300초였다. 여유가
- * 15초뿐이라 조금만 느려도 화면이 먼저 포기했고, 그때 "실패" 토스트를 띄우고 콘티보드로
- * 되돌렸다. 서버 잡은 계속 돌아 완성·차감까지 했으므로 사용자에겐 "실패했는데 크레딧은
- * 나갔다"로 보였다. 게다가 다시 누르면 서버가 같은 활성 잡에 합류시켜 또 기다리다 또 튕겼다.
- *
- * 이 파일은 그 두 가지가 되돌아오지 않게 잠근다: ① 대기 상한 ② 타임아웃 ≠ 실패.
- * 모듈이 `@/` alias 를 쓰므로 기존 프론트 테스트와 같이 소스 텍스트로 검증한다.
- */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import {
+  clearDetailPageJobMarker,
+  loadDetailPageJobMarker,
+  saveDetailPageJobMarker,
+} from '../../src/lib/detailPageJobPersistence.js';
+import {
+  clearEditorWaitDraft,
+  loadEditorWaitDraft,
+  saveEditorWaitDraft,
+} from '../../src/lib/editorWaitDraft.js';
+import { fillGenBlocks } from '../../src/lib/editorWaitSkeleton.js';
 
 const httpAdapter = readFileSync(
   new URL('../../src/lib/api/httpAdapter.js', import.meta.url),
+  'utf8',
+);
+const store = readFileSync(
+  new URL('../../src/store/useAppStore.js', import.meta.url),
   'utf8',
 );
 const generating = readFileSync(
   new URL('../../src/features/generating/Generating.jsx', import.meta.url),
   'utf8',
 );
+const editor = readFileSync(
+  new URL('../../src/features/editor/Editor.jsx', import.meta.url),
+  'utf8',
+);
 
-test('상세페이지 대기 상한은 15분 — 서버 lease 복구(900초)와 같은 창', () => {
+function memoryStorage() {
+  const values = new Map();
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+}
+
+test('상세페이지 대기 상한은 서버 lease 복구와 같은 15분이다', () => {
   const call = httpAdapter.slice(httpAdapter.indexOf('async generateDetailPage'));
   const body = call.slice(0, call.indexOf('async getProject'));
   assert.match(body, /timeoutMs: 900000/);
+  assert.match(store, /\+ 900000/);
   assert.doesNotMatch(body, /timeoutMs: 300000/);
 });
 
-test('타임아웃은 code=job_timeout 으로 실패와 구분된다', () => {
-  const poll = httpAdapter.slice(
-    httpAdapter.indexOf('async function pollJob'),
-    httpAdapter.indexOf('export async function uploadPhoto'),
+test('진행 중 job 표식은 새로고침 뒤 같은 jobId로 복원하고 완료 시 지운다', () => {
+  const storage = memoryStorage();
+  const job = { projectId: 'p1', jobId: 'j1', startedAt: 1234 };
+  saveDetailPageJobMarker(job, storage);
+  assert.deepEqual(loadDetailPageJobMarker(storage), job);
+  clearDetailPageJobMarker(storage);
+  assert.equal(loadDetailPageJobMarker(storage), null);
+});
+
+test('생성 중 임시 작업본은 문구 삭제와 배치 변경을 함께 보존한다', () => {
+  const storage = memoryStorage();
+  const blocks = [{
+    id: 'b1', h: 800,
+    elements: [{ id: 't1', type: 'text', text: '', x: 321, y: 456, w: 200, h: 40 }],
+  }];
+  saveEditorWaitDraft('p1', blocks, storage);
+  assert.deepEqual(loadEditorWaitDraft('p1', storage), blocks);
+  clearEditorWaitDraft('p1', storage);
+  assert.equal(loadEditorWaitDraft('p1', storage), null);
+});
+
+test('재수신한 생성 이벤트는 자동 이미지 URL만 갱신하고 사용자 교체 이미지는 지킨다', () => {
+  const job = { cuts: { sb1: { url: 'new-preview' } }, copy: {}, live: [], failedCuts: [] };
+  const auto = [{ id: 'b1', elements: [{
+    id: 'i1', type: 'image', sourceBlockId: 'sb1', src: 'old-preview', genAutoSrc: 'old-preview',
+  }] }];
+  assert.equal(fillGenBlocks(auto, job)[0].elements[0].src, 'new-preview');
+
+  const replaced = [{ id: 'b1', elements: [{
+    id: 'i1', type: 'image', sourceBlockId: 'sb1', src: 'seller-image', genAutoSrc: 'old-preview',
+  }] }];
+  assert.equal(fillGenBlocks(replaced, job)[0].elements[0].src, 'seller-image');
+});
+
+test('생성 진입 화면은 잡을 시작하고 에디터로 바로 보내며 콘티로 되돌리지 않는다', () => {
+  const start = generating.indexOf('startDetailPageGeneration(pid)');
+  const openEditor = generating.indexOf('navigate(`/editor/${pid}`');
+  assert.ok(start > 0 && openEditor > start);
+  assert.doesNotMatch(generating, /navigate\('\/create\/storyboard'/);
+});
+
+test('생성 중 자동 저장은 서버 완성본 대신 임시 작업본을 사용한다', () => {
+  const autoSave = editor.slice(
+    editor.indexOf('// 자동 저장 — 생성 중에는'),
+    editor.indexOf('// delete key removes selection'),
   );
-  // 상한 초과 분기에서 code 를 붙여 던진다 — 붙이지 않으면 호출부가 일반 실패와 못 가른다.
-  assert.match(poll, /Date\.now\(\) - start > timeoutMs/);
-  assert.match(poll, /err\.code = 'job_timeout'/);
-});
-
-test('타임아웃이면 콘티보드로 되돌리지 않는다', () => {
-  const idx = generating.indexOf("e?.code === 'job_timeout'");
-  assert.ok(idx > 0, 'job_timeout 분기가 있어야 한다');
-
-  // 그 분기는 setStillRunning 으로 끝나고 navigate 를 타지 않아야 한다.
-  const branch = generating.slice(idx, generating.indexOf('\n', generating.indexOf('return;', idx)));
-  assert.match(branch, /setStillRunning\(true\)/);
-  assert.doesNotMatch(branch, /navigate\(/);
-
-  // navigate('/create/storyboard') 되돌림은 job_timeout 분기 **뒤에** 남아 있어야 한다
-  // (그 외 진짜 실패는 기존대로 콘티로 되돌린다).
-  const fallback = generating.indexOf("navigate('/create/storyboard', { replace: true })", idx);
-  assert.ok(fallback > idx, '일반 실패 되돌림은 유지되어야 한다');
-});
-
-test('대기 화면은 재시도 버튼을 두지 않는다 — 다시 눌러도 같은 잡에 합류할 뿐', () => {
-  const start = generating.indexOf('if (stillRunning)');
-  // '장면③' 은 위쪽 useState 주석에도 있으므로 패널 시작점 **뒤에서** 찾는다.
-  const panel = generating.slice(start, generating.indexOf('if (receipt)', start));
-  assert.ok(panel.length > 0, 'stillRunning 패널이 있어야 한다');
-  assert.match(panel, /완성됐는지 확인하기/);
-  assert.doesNotMatch(panel, /다시 시도|재시도|다시 생성/);
-});
-
-test('확인 버튼은 done 을 서버에 물어본 뒤에만 에디터로 보낸다', () => {
-  // 미완성 프로젝트로 에디터에 들어가면 editor-blocks 가 [] 이고, 에디터 자동 저장이
-  // 1.5초 뒤 그 [] 를 PUT 한다(blocks==null 가드는 [] 를 못 막고, 이탈 플러시도 [] 가
-  // truthy 라 나간다). 그 사이 생성이 끝나면 완성본이 지워진다.
-  const start = generating.indexOf('if (stillRunning)');
-  const panel = generating.slice(start, generating.indexOf('if (receipt)', start));
-  // 패널 안에서 에디터로 **직접** navigate 하면 안 된다.
-  assert.doesNotMatch(panel, /navigate\(`\/editor\//);
-
-  const checker = generating.slice(
-    generating.indexOf('const checkDone'),
-    generating.indexOf('if (stillRunning)'),
-  );
-  assert.match(checker, /await api\.getProject\(pid\)/);
-  assert.match(checker, /status === 'done'/);
-  assert.match(checker, /navigate\(`\/editor\/\$\{pid\}`\)/);
+  assert.match(autoSave, /if \(genActive\)/);
+  assert.match(autoSave, /saveEditorWaitDraft\(projectId, latestBlocks\.current\)/);
+  assert.match(autoSave, /api\.saveEditorBlocks\(projectId, latestBlocks\.current\)/);
 });

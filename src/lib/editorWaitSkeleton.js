@@ -39,7 +39,7 @@ export function decorateGenBlocks(blocks, job, exThumbById) {
     elements: (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
         const cut = job.cuts[el.sourceBlockId];
-        if (cut?.url) return { ...el, src: cut.url };
+        if (cut?.url) return { ...el, src: cut.url, genAutoSrc: cut.url };
         // src 를 반드시 비운다 — mock 빌더는 자리마다 placeholder src 를 미리 넣는데,
         // 그대로 두면 "이미 다 채워진 에디터"로 보여 생성 서사가 사라진다(2026-08-03 데모 피드백).
         // 진짜 이미지는 cut_done 이벤트가 채운다.
@@ -61,11 +61,12 @@ export function fillGenBlocks(blocks, job) {
   return (blocks || []).map((b) => ({
     ...b,
     elements: (b.elements || []).map((el) => {
-      if (el.type === 'image' && el.sourceBlockId && !el.src && el.genPending) {
+      if (el.type === 'image' && el.sourceBlockId
+          && ((!el.src && el.genPending) || ('genAutoSrc' in el && el.src === el.genAutoSrc))) {
         const cut = job.cuts[el.sourceBlockId];
         if (cut?.url) {
           const { genPending, genExample, ...rest } = el;
-          return { ...rest, src: cut.url };
+          return { ...rest, src: cut.url, genAutoSrc: cut.url };
         }
         const st = cutStateOf(job, el.sourceBlockId);
         return st === el.genPending ? el : { ...el, genPending: st };
@@ -102,7 +103,7 @@ export function mergeServerBlocks(blocks, serverBlocks) {
     ...b,
     elements: (b.elements || []).map((el) => {
       if (el.type === 'image' && el.sourceBlockId) {
-        const { genPending, genExample, ...rest } = el;
+        const { genPending, genExample, genAutoSrc, ...rest } = el;
         return { ...rest, src: srcById[el.sourceBlockId] || rest.src || null };
       }
       if (el.type === 'text' && el.copyRole && el.sourceBlockId) {

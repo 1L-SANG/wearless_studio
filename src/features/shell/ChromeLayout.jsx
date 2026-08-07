@@ -53,6 +53,14 @@ function DetailPageJobRibbon() {
   const { pathname } = useLocation();
   const job = useAppStore((s) => s.detailPageJob);
 
+  // 새로고침으로 store 메모리의 폴링 루프만 사라진 경우, 저장된 jobId로 같은 작업을 재추적한다.
+  // 이미 루프가 살아 있으면 startDetailPageGeneration 내부 가드가 아무 일도 하지 않는다.
+  useEffect(() => {
+    if (job?.status === 'running' && job.projectId) {
+      useAppStore.getState().startDetailPageGeneration(job.projectId);
+    }
+  }, [job?.projectId, job?.status]);
+
   if (!job || job.status === 'idle' || job.status === 'done' || job.status === 'blocked') return null;
   if (pathname.startsWith('/create/generating')) return null;
 
