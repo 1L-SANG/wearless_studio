@@ -12,6 +12,7 @@ import pytest
 from app.agents import mannequin_series_qc
 from app.workers import mannequin_job
 from conftest import make_settings
+from tests.conftest import make_image_budget_gate
 
 
 class _Conn:
@@ -744,7 +745,12 @@ def test_last_attempt_generation_not_blocked_by_unused_edit_reservation(monkeypa
     """쓰지도 않을 편집분을 예약해 안전한 재생성을 막으면 안 된다(과소 사용).
 
     예약형에서는 max=4·attempt=3·편집 0 일 때 next_cost=2 라 4회차 생성이 막혔다.
-    실소비만 세면 3콜 뒤 잔량 1 이 남아 4회차가 돈다.
+    실소비만 세면 잔량이 남는 동안 계속 돈다.
+
+    상한은 이제 max_attempts 가 아니라 **job 당 이미지 예산**이다: 생성은 BASE 1 +
+    FULL_REGENERATION 1 = 2회까지고, 편집을 한 번도 안 썼다고 해서 3회차 생성이 생기지는
+    않는다. 이 테스트가 지키는 성질(안 쓸 편집분을 미리 예약해 생성을 막지 않는다)은
+    그대로다 — 예약 없이 남은 생성 슬롯을 끝까지 쓴다.
     """
     import test_mannequin_axis_qc as harness
 
@@ -761,7 +767,7 @@ def test_last_attempt_generation_not_blocked_by_unused_edit_reservation(monkeypa
         p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
             "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
             "series_consistency": None, "critical_errors": []})
-    assert len(g.calls) == 4, f"생성 {len(g.calls)}회 — 남은 예산을 안 썼다"
+    assert len(g.calls) == 2, f"생성 {len(g.calls)}회 — 남은 생성 슬롯을 안 썼다"
 
 
 def test_comparator_uses_series_when_both_candidates_have_it():
@@ -1045,6 +1051,7 @@ def test_real_axis_qc_respects_shared_budget(monkeypatch):
         calls["n"] = 0
         res = types.SimpleNamespace(mime="image/png", image=b"orig")
         out, spent = await mannequin_job._apply_axis_qc(
+            budget=make_image_budget_gate(),
             pool=_FakePool(), gemini=_G(), s=make_settings(
                 mannequin_axis_qc="enforce", mannequin_max_attempts=3),
             job_id="j1", candidate="A", attempt=1, model="m", res=res,
@@ -1114,28 +1121,37 @@ def test_loop_terminates_when_every_attempt_rejects(monkeypatch):
     """전 attempt 가 D축 거절이어도 루프는 max_attempts 에서 끝난다 — 무한 루프 방지.
 
     `continue` 경로가 예산 조건을 잘못 읽으면 생성 콜이 무한히 늘 수 있다. 상한을 못박는다.
+
+    상한은 job 당 이미지 예산이 준다 — 생성 슬롯은 BASE 1 + FULL_REGENERATION 1 뿐이라
+    max_attempts 를 3 으로 둬도 2회에서 멈춘다.
     """
     result, g, r2, emits = _run_loop(
         monkeypatch, max_attempts=3,
         series_scores=[{"consistency": 10, "inconsistencies": ["다름"]}] * 3)
-    assert len(g.calls) == 3, f"생성 콜 {len(g.calls)}회 — max_attempts(3) 를 넘었다"
+    assert len(g.calls) == 2, f"생성 콜 {len(g.calls)}회 — 이미지 예산(생성 2슬롯)을 넘었다"
     assert len(r2.puts) == 1                      # 마지막 1건만 저장
     assert result is not None                      # 구제 출고
     assert result["qc_scores"]["salvaged"] is True
     rejects = [p for _t, p in emits if p.get("status") == "final_qc_reject"]
-    assert len(rejects) == 2                       # 1·2회차만 거절, 3회차는 구제
+    # 두 생성 모두 거절되고, 구제는 루프가 끝난 뒤 마지막 후보로 이뤄진다. 예산 이전에는
+    # 3회차가 루프 안에서 구제돼 거절이 2건이었다 — 건수는 같고 이유가 달라졌다.
+    assert len(rejects) == 2
 
 
 def test_feedback_reaches_every_subsequent_attempt(monkeypatch):
-    """거절 사유가 다음 attempt 프롬프트에 계속 실린다 — 중간에 끊기면 재생성이 무의미해진다."""
+    """거절 사유가 다음 attempt 프롬프트에 실린다 — 안 실리면 재생성이 무의미해진다.
+
+    이미지 예산이 생성을 2회로 묶으므로 "다음"은 한 번뿐이다. 사유가 그 한 번에
+    실리는지가 이 테스트의 전부이고, 3회차가 사라진 것은 예산의 결과지 배선의 회귀가
+    아니다.
+    """
     _r, g, _r2, _e = _run_loop(
         monkeypatch, max_attempts=3,
         series_scores=[{"consistency": 10, "inconsistencies": ["배경 어두움"]},
                        {"consistency": 12, "inconsistencies": ["여백 다름"]},
                        {"consistency": 99, "inconsistencies": []}])
+    assert len(g.calls) == 2, "생성 슬롯은 2개다"
     assert "배경 어두움" in g.calls[1]["prompt"]
-    assert "여백 다름" in g.calls[2]["prompt"]     # 2회차 사유가 3회차로
-    assert "배경 어두움" not in g.calls[2]["prompt"]  # 낡은 사유는 갈아탄다
 
 
 # 고아 객체 계약은 test_low_series_score_actually_rerolls_and_stores_once 의
@@ -1279,6 +1295,7 @@ def test_untuck_pass_gate_and_single_task_call():
     match = mj.InlineImage("image/png", b"bottom")
 
     out, spent = asyncio.run(mj._apply_untuck_pass(
+        budget=make_image_budget_gate(),
         pool=None, gemini=_Gemini(), s=s, job_id="j1", candidate="A", attempt=1,
         res=res, match_img=match, calls_spent=0, clothing_type="top", image_size="4K"))
 

@@ -222,3 +222,57 @@ def shadow_dataset(tmp_path):
                 "labeled": labeled, "source_name": origin.name}
 
     return build
+
+
+# ---- image provider budget -------------------------------------------------------
+# The mannequin worker refuses to call an image provider without a reservation, and the
+# real reservation is a lease-fenced compare-and-swap on the job row. Worker tests drive
+# the code with fake pools that cannot serve SQL, so without a stand-in every generation
+# would be denied and every worker test would be testing denial.
+#
+# This is an in-memory job row implementing the SAME predicate, keyed by job id so a test
+# that runs two candidates sees one shared budget — which is the behaviour under test.
+# The predicate itself is verified against the real statement in test_image_budget.py.
+
+@pytest.fixture(autouse=True)
+def in_memory_image_budget(monkeypatch):
+    from app.services import image_budget
+    from app.workers import mannequin_job
+
+    rows: dict = {}
+
+    async def fake_reserve(pool, *, job_id, lease_token, request, operation,
+                           candidate=None, attempt=None):
+        budget = rows.get(job_id)
+        decision = image_budget.plan(budget, request=request, operation=operation,
+                                     candidate=candidate, attempt=attempt)
+        if decision.allowed:
+            rows[job_id] = decision.budget_after
+        return decision
+
+    monkeypatch.setattr(mannequin_job, "_reserve_image_call_via_repo", fake_reserve)
+    return rows
+
+
+def make_image_budget_gate(job_id="budget-test-job", lease_token="worker:lease"):
+    """A gate over an in-memory job row, for tests that drive one edit pass directly.
+
+    The pass refuses to call a provider without a reservation, so a unit test of the pass
+    has to say which budget it is spending — the same as the worker does.
+    """
+    from app.services import image_budget
+    from app.workers import mannequin_job
+
+    state: dict = {}
+
+    async def reserve(*, job_id, lease_token, request, operation,
+                      candidate=None, attempt=None):
+        decision = image_budget.plan(state.get(job_id), request=request,
+                                     operation=operation, candidate=candidate,
+                                     attempt=attempt)
+        if decision.allowed:
+            state[job_id] = decision.budget_after
+        return decision
+
+    return mannequin_job._ImageBudgetGate(
+        reserve_fn=reserve, job_id=job_id, lease_token=lease_token)

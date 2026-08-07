@@ -30,6 +30,7 @@ from app.agents.product_reference import ProductReference
 from app.services import generation_run as gr
 from app.workers import mannequin_job as mj
 from conftest import make_settings
+from tests.conftest import make_image_budget_gate
 
 SNAP_PROFILE = {"category": "top", "gender": "women", "source": "seller",
                 "axes": {"fit": "slim"}, "version": 1}
@@ -354,7 +355,8 @@ def test_edit_passes_snapshot_their_edit_source_and_parent(monkeypatch, pass_nam
     res = types.SimpleNamespace(image=src, mime="image/png")
     fn = mj._apply_bust_pass if pass_name == "bust" else mj._apply_untuck_pass
     kw = dict(pool=_Pool(), gemini=_Gemini(), s=settings, job_id="j1", candidate="A",
-              attempt=1, res=res, calls_spent=0, clothing_type="top", runlog=runlog)
+              attempt=1, res=res, calls_spent=0, clothing_type="top", runlog=runlog,
+              budget=make_image_budget_gate())
     if pass_name == "bust":
         kw["base_gender"] = "women"
     else:

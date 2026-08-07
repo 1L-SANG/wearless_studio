@@ -14,6 +14,7 @@ from app.services import edit_intent_qc
 from app.services import mannequin_frame_qc as frame_qc
 from app.workers import mannequin_job
 from conftest import make_settings
+from tests.conftest import make_image_budget_gate
 
 
 def _metrics(**over):
@@ -304,6 +305,7 @@ def test_reserved_frame_retry_budget_blocks_axis_edit_call(monkeypatch):
     s = make_settings(mannequin_axis_qc="enforce", mannequin_max_attempts=2)
 
     out, spent = asyncio.run(mannequin_job._apply_axis_qc(
+        budget=make_image_budget_gate(),
         pool=None, gemini=gemini, s=s, job_id="j1", candidate="A", attempt=1,
         model="m", res=res, prod_imgs=[InlineImage("image/png", b"front")],
         match_img=None,

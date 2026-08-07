@@ -71,7 +71,7 @@ from ..agents.prompts import (
     render_mannequin_prompt,
 )
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime, genrun_prompt_key
-from ..services import edit_intent_qc, mannequin_frame_qc, qc
+from ..services import edit_intent_qc, image_budget, mannequin_frame_qc, qc
 from ..services import product_truth as product_truth_service
 from ..services.garment_profile import build_garment_profile, select_pipeline_policy
 from ..services.qc_decision import decide as decide_structured_qc
@@ -569,10 +569,83 @@ def tier_for_job(s, job: dict | None, *, has_fine_pattern: bool = False) -> str:
     return _guard_pattern_tier(s.mannequin_tier, has_fine_pattern)
 
 
+class _ImageBudgetGate:
+    """The one place a job's image-producing provider calls are counted.
+
+    `calls_spent` used to do this, but it was a local in `_run_candidate`, so candidate B
+    started from zero and so did a restarted worker — job da98aa2a spent 10 provider calls
+    that way. This gate is created once per job and its count lives on the job row.
+
+    `reserve_fn` is the seam: production binds it to `repo.reserve_image_call`, which does
+    the lease-fenced compare-and-swap. Tests bind an in-memory store implementing the same
+    predicate, so the rule can be exercised without a database.
+    """
+
+    def __init__(self, *, reserve_fn, job_id, lease_token, emit=None):
+        self._reserve = reserve_fn
+        self.job_id = job_id
+        self.lease_token = lease_token
+        self._emit = emit
+
+    async def reserve(self, *, request, operation, candidate=None, attempt=None):
+        """→ BudgetDecision. Never raises: an exhausted budget is not a job failure."""
+        try:
+            decision = await self._reserve(
+                job_id=self.job_id, lease_token=self.lease_token, request=request,
+                operation=operation, candidate=candidate, attempt=attempt)
+        except Exception as exc:                       # storage unreachable
+            # Deny. Allowing the call would mean spending the user's money with no record
+            # that it was spent, which is the leak this gate exists to close.
+            log.warning("image budget reservation failed for job %s: %r", self.job_id, exc)
+            decision = image_budget.BudgetDecision(
+                False, reason=image_budget.REASON_CONTENTION)
+        if self._emit is not None:
+            try:
+                await self._emit({"status": "image_budget", "candidate": candidate,
+                                  "attempt": attempt, "operation": operation,
+                                  **decision.as_event()})
+            except Exception:                          # observability cannot cost a call
+                pass
+        return decision
+
+
+async def _require_image_slot(budget, **kwargs):
+    """Gate every image-producing provider call. A missing gate denies.
+
+    Defaulting to "allow" would leave exactly the hole this patch closes: any new call
+    site that forgot to thread the gate would spend uncounted money. Callers that legally
+    have no gate do not call a provider at all.
+    """
+    if budget is None:
+        return image_budget.BudgetDecision(
+            False, reason=image_budget.REASON_LEASE_NOT_OWNED)
+    return await budget.reserve(**kwargs)
+
+
+def _budget_denied_event(decision, *, candidate, attempt, status):
+    return {"candidate": candidate, "attempt": attempt, "status": status,
+            "outcome": "budget_exhausted", "reason": decision.reason,
+            "exhausted": decision.exhausted}
+
+
+async def _reserve_image_call_via_repo(pool, **kwargs):
+    """Production binding for the gate — one short transaction per reservation."""
+    async with pool.connection() as conn:
+        decision = await repo.reserve_image_call(conn, **kwargs)
+        await conn.commit()
+    return decision
+
+
+def build_image_budget_gate(*, pool, job_id, lease_token, emit=None):
+    return _ImageBudgetGate(
+        reserve_fn=functools.partial(_reserve_image_call_via_repo, pool),
+        job_id=job_id, lease_token=lease_token, emit=emit)
+
+
 async def _apply_axis_qc(
     *, pool, gemini, s, job_id, candidate, attempt, model, res,
     prod_imgs, match_img, fit_profile, profile_hash, calls_spent, image_size=None,
-    runlog=None, reserved_calls: int = 0,
+    runlog=None, reserved_calls: int = 0, budget=None,
 ):
     """생성 채택본에 축 QC 판정 + (enforce 시) 편집 교정 1회. → (선택 결과, 편집콜 소비 여부).
 
@@ -645,6 +718,15 @@ async def _apply_axis_qc(
         await _emit_retry("budget_exhausted", failed=failed, edit_hash=edit_hash)
         return res, False
     edit_attempt = attempt + 1
+    # 축 교정·untuck·bust 는 **한 슬롯**을 나눠 쓴다. 먼저 쓴 쪽이 가져가고 나머지는
+    # provider 를 부르지 않는다 — 각자 슬롯을 주면 편집만으로 예산이 3을 넘는다.
+    reservation = await _require_image_slot(
+        budget, request=image_budget.REQUEST_TARGETED_CORRECTION,
+        operation="axis_edit", candidate=candidate, attempt=edit_attempt)
+    if not reservation.allowed:
+        await _emit_retry("budget_exhausted", failed=failed, edit_hash=edit_hash,
+                          edit_attempt=edit_attempt)
+        return res, False
     run_id = await _runlog_begin(
         runlog, kind="mannequin_axis_edit", prompt=instruction, model=model,
         candidate=candidate, attempt=edit_attempt,
@@ -1169,6 +1251,7 @@ def gate_decision(
 async def _apply_bust_pass(
     *, pool, gemini, s, job_id, candidate, attempt, base_gender, res, calls_spent,
     clothing_type=None, image_size=None, runlog=None, reserved_calls: int = 0,
+    budget=None,
 ):
     """여성 기본 가슴 볼륨 2패스. → (선택 결과, 편집콜 소비 여부).
 
@@ -1194,6 +1277,15 @@ async def _apply_bust_pass(
             "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
         return res, False
     before = hashlib.sha256(res.image).hexdigest()[:12]
+    reservation = await _require_image_slot(
+        budget, request=image_budget.REQUEST_TARGETED_CORRECTION,
+        operation="bust_edit", candidate=candidate, attempt=attempt)
+    if not reservation.allowed:
+        await _emit(pool, job_id, "step", {
+            **_budget_denied_event(reservation, candidate=candidate, attempt=attempt,
+                                   status="bust_pass"),
+            "image_hash": before})
+        return res, False
     prompt = mannequin_bust.build_prompt(load_bust_prompt_template())
     bust_model = resolve_model(s, "image_high")  # Flash 는 거부·미반영으로 탈락 — 티어 고정
     run_id = await _runlog_begin(
@@ -1227,6 +1319,7 @@ async def _apply_bust_pass(
 async def _apply_untuck_pass(
     *, pool, gemini, s, job_id, candidate, attempt, res, match_img, calls_spent,
     clothing_type=None, image_size=None, runlog=None, reserved_calls: int = 0,
+    budget=None,
 ):
     """상의 밑단을 하의 밖으로 빼는 untuck 2패스. → (선택 결과, 편집콜 소비 여부).
 
@@ -1247,6 +1340,15 @@ async def _apply_untuck_pass(
             "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
         return res, False
     before = hashlib.sha256(res.image).hexdigest()[:12]
+    reservation = await _require_image_slot(
+        budget, request=image_budget.REQUEST_TARGETED_CORRECTION,
+        operation="untuck_edit", candidate=candidate, attempt=attempt)
+    if not reservation.allowed:
+        await _emit(pool, job_id, "step", {
+            **_budget_denied_event(reservation, candidate=candidate, attempt=attempt,
+                                   status="untuck_pass"),
+            "image_hash": before})
+        return res, False
     prompt = mannequin_untuck.build_prompt(load_untuck_prompt_template())
     untuck_model = resolve_model(s, "image_high")
     run_id = await _runlog_begin(
@@ -2449,7 +2551,7 @@ async def _apply_edits(
     *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_refs, match_img,
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
     image_size=None, has_fine_pattern=False, runlog=None, allow_automatic_passes=True,
-    reserved_frame_retry: bool = False,
+    reserved_frame_retry: bool = False, budget=None,
 ):
     """채택본에 편집(축 교정 → 가슴 2패스)을 적용하고, 바뀌었으면 재판정·회귀 시 되돌린다.
 
@@ -2478,7 +2580,7 @@ async def _apply_edits(
             pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
             res=res, match_img=match_img, calls_spent=calls_spent,
             clothing_type=clothing_type, image_size=image_size, runlog=runlog,
-            reserved_calls=reserved_calls)
+            reserved_calls=reserved_calls, budget=budget)
         calls_spent += untuck_spent
     # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
     # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
@@ -2486,7 +2588,7 @@ async def _apply_edits(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
         model=model, res=res, prod_imgs=prod_imgs, match_img=match_img,
         fit_profile=fit_profile, profile_hash=profile_hash, calls_spent=calls_spent,
-        image_size=image_size, runlog=runlog, reserved_calls=reserved_calls)
+        image_size=image_size, runlog=runlog, reserved_calls=reserved_calls, budget=budget)
     calls_spent += axis_spent
     post_axis_res = res
     if allow_automatic_passes:
@@ -2495,7 +2597,7 @@ async def _apply_edits(
             pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
             base_gender=base_gender, res=res, calls_spent=calls_spent,
             clothing_type=clothing_type, image_size=image_size, runlog=runlog,
-            reserved_calls=reserved_calls)
+            reserved_calls=reserved_calls, budget=budget)
         calls_spent += bust_spent
     # (2026-08-01) 원단 패턴 2패스는 제거됐다 — whole-image generative 재생성으로는 잔줄
     # 패턴 동일성을 증명할 수 없었고(실측 blind visual 3/3 FAIL), 패턴 동일성은 이제
@@ -2767,7 +2869,7 @@ async def _run_candidate(
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
     parent_lineage=None, runlog=None, product_truth=None, pipeline_policy=None,
     anchor_baseline_id=None, anchor_baseline=None, anchor_baseline_img=None,
-    source_texture_cache=None, lease_token=None,
+    source_texture_cache=None, lease_token=None, budget=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None.
 
@@ -2777,6 +2879,13 @@ async def _run_candidate(
     s = app.state.settings
     pool, r2, gemini = app.state.pool, app.state.r2, app.state.gemini
     job_id, user_id, project_id = job["id"], job["user_id"], job["project_id"]
+    if budget is None:
+        # The caller normally hands one down so both candidates share an object, but the
+        # object is only a binding — the count itself lives on the job row, so a candidate
+        # that builds its own still sees what the other one spent.
+        budget = build_image_budget_gate(
+            pool=pool, job_id=job_id, lease_token=job.get("lease_token"),
+            emit=lambda payload: _emit(pool, job_id, "step", payload))
     prod_refs = tuple(prod_refs)
     prod_imgs = [r.image for r in prod_refs]
     # 미세 패턴 상품은 해상도를 올린다. **편집 패스(축 교정·2패스)도 같은 값**을 써야 한다 —
@@ -2892,6 +3001,18 @@ async def _run_candidate(
             # 보므로 **현재는 도달 불가**다(Pillow QC 가 코드상 강제 shadow 라 그 경로도 죽어
             # 있다). 테스트로 못 잡는 건 커버리지 누락이 아니라 이게 백스톱이기 때문이다 —
             # Pillow enforce 를 되살리면 그 경로가 여기로 떨어진다.
+            break
+        # 이 job 이 이미지를 하나라도 만들었으면 BASE 는 없어졌고, 이 호출은 정의상
+        # **재생성**이다(후보 B 의 첫 생성도 마찬가지 — 후보는 슬롯을 새로 만들지 않는다).
+        # 예약이 거부되면 provider 를 부르지 않고 루프를 끝낸다: 지금까지 만든 결과는
+        # 그대로 살아 있고, 예산 소진은 실패가 아니다.
+        reservation = await _require_image_slot(
+            budget, request=image_budget.REQUEST_GENERATION,
+            operation=("adjust_edit" if generation_path == "edit" else "generate"),
+            candidate=candidate, attempt=attempt)
+        if not reservation.allowed:
+            await _emit(pool, job_id, "step", _budget_denied_event(
+                reservation, candidate=candidate, attempt=attempt, status="generate"))
             break
         prompt = f"{feedback}\n\n{base_prompt}" if feedback else base_prompt
         # 관측성(fidelity 설계 D3): 이 attempt 가 실제 쓰는 프로필·프롬프트의 다이제스트만 남긴다
@@ -3050,6 +3171,7 @@ async def _run_candidate(
                 clothing_type=clothing_type, enabled=reprocess, image_size=image_size,
                 has_fine_pattern=has_fine_pattern, runlog=runlog,
                 allow_automatic_passes=generation_path == "fresh",
+                budget=budget,
                 reserved_frame_retry=(
                     generation_path == "fresh"
                     and reprocess
@@ -3367,6 +3489,7 @@ async def _run_candidate(
                 clothing_type=clothing_type, image_size=image_size,
                 has_fine_pattern=has_fine_pattern, runlog=runlog,
                 allow_automatic_passes=generation_path == "fresh",
+                budget=budget,
                 reserved_frame_retry=(
                     generation_path == "fresh"
                     and _effective_frame_qc_mode(s) == "enforce"
@@ -3604,7 +3727,24 @@ async def _run_baseline_edit(app, job: dict, *, fail) -> None:
         result = None
         qc_result = None
         retry_count = 0
+        # 이 job 도 같은 통을 쓴다. baseline 편집은 기존 이미지를 고치는 bounded edit 이므로
+        # TARGETED 슬롯이고, 재시도 1회는 같은 슬롯을 다시 요구하다 거부된다.
+        budget = build_image_budget_gate(
+            pool=pool, job_id=job_id, lease_token=lease_token,
+            emit=lambda payload: _emit(pool, job_id, "step", payload))
         for attempt in range(2):        # 최초 1회 + 정책이 허용할 때만 재시도 1회
+            reservation = await _require_image_slot(
+                budget, request=image_budget.REQUEST_TARGETED_CORRECTION,
+                operation="baseline_edit", candidate="A", attempt=attempt + 1)
+            if not reservation.allowed:
+                await _emit(pool, job_id, "step", _budget_denied_event(
+                    reservation, candidate="A", attempt=attempt + 1,
+                    status="baseline_edit"))
+                if result is not None:
+                    break               # 이미 만든 결과는 지키고 재시도만 포기한다
+                await _set_session("failed", qc_result={"reason": "image_budget_exhausted"})
+                return await fail("이미지 편집 예산을 모두 사용했어요.",
+                                  {"error": "image_budget_exhausted"})
             run_id = await _runlog_begin(
                 runlog, kind="mannequin_baseline_edit", prompt=prompt, model=model,
                 candidate="A", attempt=attempt + 1, image_size=s.mannequin_image_size,
@@ -4082,6 +4222,12 @@ async def run_mannequin_job(app, job: dict) -> None:
         # between candidate A and candidate B, so measuring it twice only gave the
         # two candidates different answers about the same photo.
         source_texture_cache = hc_source_ctx.SourceTextureContextCache()
+        # ONE budget for the whole job. Candidates A and B share it, and so does a worker
+        # that reclaims this job after a restart, because the count lives on the job row
+        # rather than in this frame.
+        image_call_budget = build_image_budget_gate(
+            pool=pool, job_id=job_id, lease_token=lease_token,
+            emit=lambda payload: _emit(pool, job_id, "step", payload))
 
         async def _cand(letter, base_fit, profile):
             nonlocal _done, hybrid_fail_closed_meta, anchor_fail
@@ -4100,7 +4246,8 @@ async def run_mannequin_job(app, job: dict) -> None:
                     anchor_baseline_id=requested_anchor_baseline_id,
                     anchor_baseline=anchor_baseline,
                     anchor_baseline_img=anchor_baseline_img,
-                    source_texture_cache=source_texture_cache, lease_token=lease_token)
+                    source_texture_cache=source_texture_cache, lease_token=lease_token,
+                    budget=image_call_budget)
             except _AnchorBaselineUnavailable as e:
                 anchor_fail = e
                 r = None

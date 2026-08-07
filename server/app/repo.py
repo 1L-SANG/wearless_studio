@@ -1772,6 +1772,81 @@ async def get_owned_running_job(
 # 개별 종결 헬퍼를 따로 두면 워커가 여러 tx로 쪼개 락이 풀린 사이 복구가 끼어들 수 있다(§5).
 
 
+#: image 예산 CAS 재시도 상한. 경합은 같은 job 의 워커 수만큼만 생기므로 몇 회면 충분하고,
+#: 무한 재시도는 마지막 슬롯을 두고 도는 라이브락이 된다.
+_IMAGE_BUDGET_CAS_ATTEMPTS = 5
+
+
+async def reserve_image_call(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    request: str,
+    operation: str,
+    candidate: str | None = None,
+    attempt: int | None = None,
+) -> "image_budget.BudgetDecision":
+    """provider 이미지 호출 슬롯 1개를 **원자적으로** 예약한다. → BudgetDecision.
+
+    원자성의 근거는 단 하나다: 한 행에 대한 **단일 조건부 UPDATE**. WHERE 에 lease 소유와
+    직전에 읽은 seq 를 함께 걸어 compare-and-swap 으로 만든다. 마지막 슬롯을 두 워커가
+    노리면 먼저 커밋한 쪽이 seq 를 올리고, 뒤따른 UPDATE 는 READ COMMITTED 재평가에서
+    seq 불일치로 0행이 되어 다시 계획한다 — 그때는 예산이 비어 있으므로 거부된다.
+
+    lease 를 잃은 워커는 `locked_by` 조건에서 먼저 걸러지므로 provider 를 부르지 못한다.
+    lease token 자체는 예산의 정체성이 아니다 — 예산은 job 수명, lease 는 예약 권한이다.
+    """
+    from .services import image_budget
+
+    for _ in range(_IMAGE_BUDGET_CAS_ATTEMPTS):
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select metadata, locked_by from jobs where id = %s", (job_id,))
+            row = await cur.fetchone()
+        if row is None or row["locked_by"] != lease_token:
+            return image_budget.BudgetDecision(
+                False, reason=image_budget.REASON_LEASE_NOT_OWNED)
+        current = (row["metadata"] or {}).get(image_budget.METADATA_KEY)
+        decision = image_budget.plan(
+            current, request=request, operation=operation,
+            candidate=candidate, attempt=attempt)
+        if not decision.allowed:
+            # 거부는 행을 건드리지 않는다 — 예산은 그대로다
+            return decision
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""
+                update jobs
+                   set metadata = jsonb_set(coalesce(metadata, '{{}}'::jsonb),
+                                            '{{{image_budget.METADATA_KEY}}}', %s::jsonb, true)
+                 where id = %s
+                   and locked_by = %s
+                   and coalesce((metadata->%s->>'seq')::int, 0) = %s
+                returning metadata->%s as budget
+                """,
+                (Json(decision.budget_after), job_id, lease_token,
+                 image_budget.METADATA_KEY, decision.budget_before["seq"],
+                 image_budget.METADATA_KEY),
+            )
+            written = await cur.fetchone()
+        if written is not None:
+            return decision
+        # CAS 실패 = 그 사이 누군가 예약했다. 다시 읽고 남은 슬롯으로 계획한다.
+    return image_budget.BudgetDecision(False, reason=image_budget.REASON_CONTENTION)
+
+
+async def read_image_budget(conn: AsyncConnection, *, job_id: str) -> dict:
+    """관측용 read-only 조회 — 예약하지 않는다."""
+    from .services import image_budget
+
+    async with conn.cursor() as cur:
+        await cur.execute("select metadata from jobs where id = %s", (job_id,))
+        row = await cur.fetchone()
+    return image_budget.normalise((row["metadata"] or {}).get(image_budget.METADATA_KEY)
+                                  if row else None)
+
+
 async def set_job_progress(conn: AsyncConnection, job_id: str, progress: int):
     async with conn.cursor() as cur:
         await cur.execute("update jobs set progress = %s where id = %s", (progress, job_id))
