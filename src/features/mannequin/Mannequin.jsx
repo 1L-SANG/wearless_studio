@@ -3,9 +3,10 @@
    가운데 큰 컷(내 옷 = 매칭 하의까지 입은 모습) → 아래 '확인 카드'.
    축(핏·기장·… + 매칭 의류 핏)을 하나씩 순차 확인 — '조정하기' 하면 이미지 옆에
    예시가 세로로 떠서 비교하며 고른다(방식 1). 매칭 하의도 컷에 보이므로 조정 시 재생성(유료).
-   전부 확인되면 카드가 '사진 양'(기본형/확장형) 선택으로 전환 → 이 사진 양으로 만들기.
-   - 변경 0건 → 사진 양 선택 후 다음 단계 / 변경 ≥1건 → 수정 반영 재생성(새 버전 히스토리).
-   컷 목록은 서버 상태, 선택 컷·사진 양은 store + patchProject 동기화.
+   전부 확인되면 카드가 CTA('이 핏으로 진행하기')로 전환 → 콘티 이동. 사진 양(기본형/확장형)
+   선택은 콘티 상단으로 이동했다(콘티가 그 시드의 컷 수를 정하므로) — features/storyboard/ComposeModePicker.jsx.
+   - 변경 0건 → 다음 단계(콘티) 이동 / 변경 ≥1건 → 수정 반영 재생성(새 버전 히스토리).
+   컷 목록은 서버 상태, 선택 컷은 store + patchProject 동기화.
    설계·규칙: documents/mannequin_ui_direction.md · 목업 documents/mockups/mannequin-ui-matching.html
    ============================================================= */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -618,8 +619,6 @@ export function Mannequin() {
   const projectId = useAppStore((s) => s.projectId);
   const selectedId = useAppStore((s) => s.selectedMannequinId);
   const selectMannequin = useAppStore((s) => s.selectMannequin);
-  const composeMode = useAppStore((s) => s.composeMode);
-  const setComposeMode = useAppStore((s) => s.setComposeMode);
   const syncCredits = useAppStore((s) => s.syncCredits);
   const mannequinJob = useAppStore((s) => s.mannequinJob);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
@@ -1151,16 +1150,7 @@ export function Mannequin() {
         setBusy(false);
       }
     }
-    // 최신 사진 양이 서버에 저장된 뒤 콘티를 읽어야 첫 시드도 올바른 모드로 만들어진다.
-    setBusy(true);
-    try {
-      await setComposeMode(composeMode);
-      navigate('/create/storyboard');
-    } catch {
-      pushToast('사진 양을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertTri' });
-    } finally {
-      setBusy(false);
-    }
+    navigate('/create/storyboard');
   };
 
   const regenerateActive = REGENERATE_ACTIVE_STATES.has(regenerateState);
@@ -1207,8 +1197,6 @@ export function Mannequin() {
 
   if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={loadingProgress} category={fitProfileDraft?.category} /></>;
   if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} onRetry={loadMannequins} /></>;
-
-  const modes = catalogs?.composeModes || [];
 
   return (
     <div className="wizard wide fit-page">
@@ -1297,37 +1285,8 @@ export function Mannequin() {
           </div>
         ) : (
           <div className="fit-final">
-            <div className="fit-q">사진 양을 선택해주세요.</div>
-            <div className="fit-cmp2">
-              {modes.map((m) => {
-                const on = composeMode === m.value;
-                return (
-                  <button
-                    type="button"
-                    key={m.value}
-                    className={`fit-cmp${on ? ' on' : ''}`}
-                    aria-pressed={on}
-                    onClick={() => {
-                      if (!on) {
-                        invalidateStoryboardEntryPrefetch(projectId);
-                        storyboardPrefetchProjectRef.current = null;
-                      }
-                      setComposeMode(m.value)
-                        .then(() => { if (!on) warmStoryboardEntry(); })
-                        .catch(() => {
-                          pushToast('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.', { icon: 'alertTri' });
-                        });
-                    }}
-                  >
-                    <b>{m.label}</b>
-                    <span>{m.desc}</span>
-                    {m.count && <em>예상 {m.count}컷</em>}
-                  </button>
-                );
-              })}
-            </div>
             <Button variant="primary" size="lg" block iconRight="arrowRight" disabled={busy} onClick={onCta}>
-              이 사진 양으로 만들기
+              이 핏으로 진행하기
             </Button>
           </div>
         )}

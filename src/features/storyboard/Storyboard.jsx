@@ -16,6 +16,7 @@ import { Placeholder } from '@/mock/placeholders.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Chips, EmptyState, Toggle, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import { ComposeModePicker } from './ComposeModePicker.jsx';
 import { ensureSections, deriveSections, adoptSection, patchSection, normalizeRows, normalizeBoard } from '@/lib/sections.js';
 import {
   CONTENT_ROLES,
@@ -57,6 +58,7 @@ import {
 } from '@/lib/storyboardSpaceSets.js';
 import {
   consumeStoryboardEntry,
+  invalidateStoryboardEntryPrefetch,
   loadStoryboardEntry,
   peekStoryboardEntry,
   shouldRenderStoryboardLoadingFrame,
@@ -2638,6 +2640,14 @@ export function Storyboard() {
       setAtomicSaving(false);
     }
   };
+  // 사진 양이 바뀌면 콘티를 다시 읽는다 — 손대지 않은 기본 시드만 새 모드로 재시드된다(어댑터 규칙).
+  const onComposeModeChange = () => {
+    invalidateStoryboardEntryPrefetch(projectId);
+    setLoadRetry((n) => n + 1);
+  };
+  const onComposeModeError = () => {
+    toast.push('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.');
+  };
   const generate = async () => {
     // 방어: UI disabled 와 별개로 함수 자체도 게이트 — 다른 호출 경로가 생겨도 미설정 블록 생성 불가
     if (blocks.length === 0) return;
@@ -2655,6 +2665,11 @@ export function Storyboard() {
       onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>
       {doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
+      <ComposeModePicker
+        modes={catalogs?.composeModes || []}
+        onModeChange={onComposeModeChange}
+        onError={onComposeModeError}
+      />
       {undoEntry && (
         <div className="sb-undo-bar" role="status" aria-live="polite"
           onMouseEnter={() => {
