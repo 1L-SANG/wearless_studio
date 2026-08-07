@@ -17,7 +17,9 @@
 - 테스트는 `node --test` 로 돌아가므로 테스트 대상 모듈은 **`@/` 별칭도 `import.meta.env` 도 쓰지 않는 순수 모듈**이어야 한다. 저장소의 기존 패턴 = 순수 코어(`*Core.js` / `*Cache.js`) + 배선 래퍼(api·store 를 import). 예: `src/features/storyboard/storyboardEntryPrefetchCache.js` ↔ `storyboardEntryPrefetch.js`
 - JSX 단위의 배선 사실(라우트 목적지 등)은 저장소 관례대로 **소스 텍스트 정규식 단언**으로 검증한다. 예: `tests/frontend/storyboard-prefetch.test.mjs:34-39`
 - 전체 테스트: `pnpm test:frontend` · 단일 파일: `node --test tests/frontend/<name>.test.mjs`
-- worktree 에는 `node_modules` 가 없다. 첫 작업 전 `pnpm install` 1회.
+- **베이스라인이 green 이 아니다.** `origin/main` @ 4482b9f 에서 `tests/frontend/storyboard-opening-row.test.mjs:83` "mock and server assemblers emit the same opening-row block structure" 1건이 이미 실패한다(`ERR_INVALID_ARG_TYPE` at `:118`). 이 계획의 범위 밖(레거시 mock 어댑터)이므로 **고치지 않는다.** 각 태스크의 "전체 테스트" 기대치는 *이 1건 외 전부 PASS · 실패 총계가 1을 넘지 않음* 이다. 실패가 2건 이상이면 그 태스크가 무언가를 깼다는 뜻이다.
+- 실패 개수 확인: `pnpm test:frontend 2>&1 | grep '^ℹ fail'`
+- worktree 환경은 이미 준비돼 있다 — `pnpm install` 완료, `pnpm-workspace.yaml`(gitignore 대상)에 `allowBuilds: esbuild: true` 설정됨. `pnpm build` 는 통과한다.
 - 주석·UI 문구는 한국어, 코드·커밋 메시지는 영어(저장소 관례).
 
 ---
@@ -279,7 +281,7 @@ Expected: 성공. 실패하면 대개 `Mannequin.jsx` 에 남은 미사용 impor
 - [ ] **Step 8: 전체 테스트**
 
 Run: `pnpm test:frontend`
-Expected: 기존 테스트 전부 PASS + 신규 5개 PASS
+Expected: 신규 5개 PASS · 실패 총계 1 (베이스라인 storyboard-opening-row 뿐)
 
 - [ ] **Step 9: 커밋**
 
@@ -436,7 +438,7 @@ import { ComposeModePicker } from './ComposeModePicker.jsx';
 - [ ] **Step 5: 빌드 + 테스트**
 
 Run: `pnpm build && pnpm test:frontend`
-Expected: 빌드 성공, 테스트 전부 PASS
+Expected: 빌드 성공 · 실패 총계 1 (베이스라인 뿐)
 
 - [ ] **Step 6: 커밋**
 
@@ -544,7 +546,7 @@ Expected: PASS (5 tests)
 - [ ] **Step 6: 빌드 + 전체 테스트**
 
 Run: `pnpm build && pnpm test:frontend`
-Expected: 전부 PASS
+Expected: 실패 총계 1 (베이스라인 뿐)
 
 - [ ] **Step 7: 커밋**
 
@@ -627,7 +629,7 @@ Expected: PASS (1 test)
 - [ ] **Step 5: 빌드 + 전체 테스트**
 
 Run: `pnpm build && pnpm test:frontend`
-Expected: 전부 PASS
+Expected: 실패 총계 1 (베이스라인 뿐)
 
 - [ ] **Step 6: 커밋**
 
@@ -912,7 +914,7 @@ Expected: PASS (전부)
 - [ ] **Step 13: 빌드 + 전체 테스트**
 
 Run: `pnpm build && pnpm test:frontend`
-Expected: 전부 PASS
+Expected: 실패 총계 1 (베이스라인 뿐)
 
 - [ ] **Step 14: 커밋**
 
@@ -984,7 +986,7 @@ Expected: PASS
 - [ ] **Step 5: 빌드 + 전체 테스트**
 
 Run: `pnpm build && pnpm test:frontend`
-Expected: 전부 PASS
+Expected: 실패 총계 1 (베이스라인 뿐)
 
 - [ ] **Step 6: 커밋**
 
@@ -1112,7 +1114,7 @@ Expected: PASS
 - [ ] **Step 6: 빌드 + 전체 테스트**
 
 Run: `pnpm build && pnpm test:frontend`
-Expected: 전부 PASS
+Expected: 실패 총계 1 (베이스라인 뿐)
 
 - [ ] **Step 7: 커밋**
 
