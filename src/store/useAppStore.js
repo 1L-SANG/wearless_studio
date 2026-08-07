@@ -72,6 +72,74 @@ const initialMannequinJob = () => ({
   errorMessage: '',
 });
 
+/* 상세페이지 생성 잡 — 에디터 대기 화면의 단일 소스(editor_wait_dev_spec §3).
+   mannequinJob 과 달리 폴링 수명도 store 가 소유한다: 화면을 떠나도 추적이 살아있어야
+   전역 리본·"창 닫아도 계속"이 말이 아니라 사실이 된다. */
+const initialDetailPageJob = () => ({
+  status: 'idle',   // idle | running | done | blocked | error
+  jobId: null,
+  projectId: null,
+  progress: 0,
+  phase: null,      // inputs_loaded | copy | cut | assemble
+  cutsDone: 0,
+  cutsTotal: 0,
+  cuts: {},         // sourceBlockId → { url, width, height } (previewUrl=1h presigned)
+  live: [],         // 지금 생성 중인 sourceBlockId[] (cut_start~종결 사이)
+  failedCuts: [],   // 실패 컷 sourceBlockId[] (빈 슬롯·미차감)
+  copy: {},         // sourceBlockId → texts[{role,text}] (AG-03 통과본)
+  errorMessage: '',
+  startedAt: 0,
+});
+
+// 재시작·새 제작 시 이전 폴링 루프를 무효화하는 세대 토큰(모듈 스코프).
+let detailJobSeq = 0;
+
+/* 완료 브라우저 알림 — 폴링과 같은 곳(store)에서 발화해야 셀러가 다른 화면·다른 탭에
+   가 있어도 울린다(대기 화면 컴포넌트 수명에 묶으면 이탈 시 무음 — codex 리뷰 F7).
+   권한 요청은 대기 화면의 [완료되면 알림 받기] 버튼이 담당, 여기는 발화만. */
+function notifyDetailPageDone() {
+  try {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
+      new Notification('상세페이지가 완성됐어요', { body: '돌아와서 순서와 카피를 다듬어 보세요.' });
+    }
+  } catch { /* 알림 실패는 생성 결과에 영향 없음 */ }
+}
+
+/* 이벤트 → 잡 상태 반영 (순수 함수). 이벤트는 append-only 원장이라 재수신(after=0 재생)에도
+   같은 결과로 수렴한다 — 새로고침 복원의 근거. */
+function applyDetailJobEvents(job, events) {
+  const next = { ...job, cuts: { ...job.cuts }, copy: { ...job.copy } };
+  const live = new Set(next.live);
+  const failed = new Set(next.failedCuts);
+  for (const e of events) {
+    const p = e?.payload || {};
+    if (e?.type === 'progress') {
+      next.progress = Math.max(next.progress, p.progress || 0);
+      if (p.phase) next.phase = p.phase;
+      if (p.phase === 'cut') {
+        next.cutsDone = p.done ?? next.cutsDone;
+        next.cutsTotal = p.total ?? next.cutsTotal;
+      }
+    } else if (e?.type === 'step' && p.blockId) {
+      if (p.status === 'cut_start') live.add(p.blockId);
+      if (p.status === 'cut_done') {
+        live.delete(p.blockId);
+        next.cuts[p.blockId] = { url: p.previewUrl, width: p.width, height: p.height };
+      }
+      if (p.status === 'cut_passthrough') {
+        live.delete(p.blockId);
+        // 셀러 원본 재사용 — asset 행이 이미 있어 안정 /file 경로가 즉시 유효
+        next.cuts[p.blockId] = { url: p.assetId ? `/v1/assets/${p.assetId}/file` : null };
+      }
+      if (p.status === 'cut_failed') { live.delete(p.blockId); failed.add(p.blockId); }
+      if (p.status === 'copy_ready') next.copy[p.blockId] = p.texts || [];
+    }
+  }
+  next.live = [...live];
+  next.failedCuts = [...failed];
+  return next;
+}
+
 // ensureProject 동시 호출 합류용 — in-flight Promise 를 모듈 스코프에 보관해 더블클릭/재시도가
 // createProject 를 중복 호출(보관함 행 중복 생성)하지 않게 한다(코드리뷰 반영).
 let ensureProjectInflight = null;
@@ -116,6 +184,7 @@ export const useAppStore = create((set, get) => ({
   ...initialFlow,
   ...loadPersistedFlow(),   // http: 이탈/새로고침 전 진행 프로젝트 복원 → '이어서' 재개
   mannequinJob: initialMannequinJob(),
+  detailPageJob: initialDetailPageJob(),
   // 명시적 '새 제작' 횟수 — ProductInput 을 이 값으로 key 해서, 같은 /create/input 라우트에서
   // 새 제작해도 컴포넌트를 remount(폼·복원상태 초기화)한다. loadProject·retry 의 projectId
   // 변경에는 바뀌지 않아 일반 흐름엔 영향 없음.
@@ -128,6 +197,8 @@ export const useAppStore = create((set, get) => ({
      을 올려 ProductInput 을 remount(폼 초기화)한다. */
   async beginProject() {
     ensureProjectInflight = null;   // 새 제작 시작 — 이전 플로우의 in-flight 생성과 분리
+    detailJobSeq += 1;              // 이전 프로젝트의 상세페이지 폴링 루프 무효화(codex F5 —
+                                    // stale 루프가 새 플로우의 detailPageJob 을 덮지 않게)
     resetAnalysisCache();           // 이전 프로젝트의 analysis/매칭 캐시 해제 (F1)
     await clearDraft().catch(() => {});
     // http: 서버 POST 이연(빈 보관함 행 방지) — projectId 없이 시작, 생성은 ensureProject.
@@ -137,6 +208,7 @@ export const useAppStore = create((set, get) => ({
       set({
         ...initialFlow,
         mannequinJob: initialMannequinJob(),
+        detailPageJob: initialDetailPageJob(),
         projectGeneration: get().projectGeneration + 1,
         generationRelevantEditsDirty: false,
       });
@@ -145,6 +217,7 @@ export const useAppStore = create((set, get) => ({
       set({
         ...initialFlow,
         mannequinJob: initialMannequinJob(),
+        detailPageJob: initialDetailPageJob(),
         projectId: project.id,
         projectPersisted: true,
         projectGeneration: get().projectGeneration + 1,
@@ -222,6 +295,9 @@ export const useAppStore = create((set, get) => ({
   setProjectId(projectId) { set({ projectId }); persistFlow(get()); },
   /** 로그인 복귀 draft sync 등에서 서버 project 를 현재 진행 프로젝트로 채택(영속 포함). */
   adoptProject(projectId) {
+    // 다른 프로젝트 채택 = 프로젝트 경계 전환 — 이전 상세페이지 폴링 루프를 무효화해
+    // stale 루프가 초기화된 슬라이스를 나중에 덮지 않게 한다(codex F5).
+    if (get().projectId !== projectId) detailJobSeq += 1;
     set((s) => (s.projectId === projectId
       ? { projectPersisted: true }
       : {
@@ -229,6 +305,7 @@ export const useAppStore = create((set, get) => ({
         projectId,
         projectPersisted: true,
         mannequinJob: initialMannequinJob(),
+        detailPageJob: initialDetailPageJob(),
         generationRelevantEditsDirty: false,
       }));
     persistFlow(get());
@@ -267,6 +344,90 @@ export const useAppStore = create((set, get) => ({
   setAdjustCount(adjustCount) { set({ adjustCount }); persistFlow(get()); },
   setMannequinJob(patch) {
     set((s) => ({ mannequinJob: { ...s.mannequinJob, ...patch } }));
+  },
+
+  /* ---- 상세페이지 생성 잡 (editor_wait_dev_spec §3) ----
+     시작·폴링·이벤트 소비를 store 가 소유한다. 대기 화면(Generating)은 구독만 하고,
+     셀러가 다른 화면으로 떠나도 루프는 계속 돌아 전역 리본이 진행을 보여준다. */
+  async startDetailPageGeneration(projectId) {
+    const cur = get().detailPageJob;
+    // 같은 프로젝트 생성이 이미 돌고 있으면 합류(마운트 중복·StrictMode 이중 실행 가드)
+    if (cur.status === 'running' && cur.projectId === projectId) return;
+    const seq = ++detailJobSeq;
+    const alive = () => detailJobSeq === seq;
+    const patch = (p) => { if (alive()) set((s) => ({ detailPageJob: { ...s.detailPageJob, ...p } })); };
+    set({ detailPageJob: { ...initialDetailPageJob(), status: 'running', projectId, startedAt: Date.now() } });
+    try {
+      const res = await api.startDetailPage(projectId);
+      if (!alive()) return;
+      if (res.legacy) {
+        // mock — 이벤트 배관 없이 기존 완주 흐름(진행바만). editor_wait_dev_spec §1 비범위.
+        const out = await api.generateDetailPage(projectId, {
+          onProgress: (p) => patch({ progress: p }),
+        });
+        if (!alive()) return;
+        get().syncCredits(out.credits);
+        patch({ status: 'done', jobId: out.jobId || null, progress: 100 });
+        notifyDetailPageDone();
+        return;
+      }
+      if (res.data) {   // 완료 재호출(멱등) — 새 잡 없음
+        get().syncCredits(res.credits);
+        patch({ status: 'done', progress: 100 });
+        return;   // 재호출은 즉시 완료 — 새 생성이 아니므로 알림 없음
+      }
+      patch({ jobId: res.jobId });
+      let after = 0;
+      // 15분 — 정상 실측 242~285초 + 서버 lease 복구(900초) 동안 화면이 먼저 포기하지 않게
+      // (httpAdapter.generateDetailPage 의 timeoutMs 와 같은 근거).
+      const deadline = Date.now() + 900000;
+      for (;;) {
+        if (!alive()) return;
+        const [job, ev] = await Promise.all([
+          api.getJob(res.jobId),
+          // 이벤트는 보조 신호 — 일시 실패해도 잡 폴링은 계속(다음 턴에 after 재시도)
+          api.getJobEvents(res.jobId, after).catch(() => ({ events: [] })),
+        ]);
+        if (!alive()) return;
+        const events = ev?.events || [];
+        if (events.length) {
+          after = events[events.length - 1].id;
+          set((s) => ({ detailPageJob: applyDetailJobEvents(s.detailPageJob, events) }));
+        }
+        if (typeof job.progress === 'number') {
+          patch({ progress: Math.max(get().detailPageJob.progress, job.progress) });
+        }
+        if (job.status === 'done') {
+          get().syncCredits(job.result?.credits);
+          patch({ status: 'done', progress: 100 });
+          notifyDetailPageDone();
+          return;
+        }
+        if (job.status === 'error') {
+          patch({ status: 'error', errorMessage: job.errorMessage || '상세페이지 생성에 실패했어요.' });
+          return;
+        }
+        if (Date.now() > deadline) {
+          // 타임아웃은 실패가 아니다 — 화면이 기다리기를 그만둔 것(서버 잡은 계속 돈다)
+          patch({ status: 'error', errorMessage: '생성이 예상보다 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요.' });
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    } catch (e) {
+      if (!alive()) return;
+      // 장면⑤ — 얼굴 라이선스 차단(409): 블로킹 패널로 명확히 멈춘다(재생성 재차단 신호)
+      if (e?.status === 409) {
+        patch({ status: 'blocked', errorMessage: e.message || '이 모델의 얼굴 라이선스를 사용할 수 없어요.' });
+        return;
+      }
+      patch({ status: 'error', errorMessage: e?.message || '상세페이지 생성에 실패했어요.' });
+    }
+  },
+  /** 재시도·이탈 정리용 — 진행 중 루프를 무효화하고 초기 상태로. */
+  resetDetailPageJob() {
+    detailJobSeq += 1;
+    set({ detailPageJob: initialDetailPageJob() });
   },
 }));
 

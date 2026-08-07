@@ -1538,7 +1538,8 @@ export function Storyboard() {
     const observed = new Set();
     const measure = () => {
       const topnav = document.querySelector('.topnav');
-      const ribbon = document.querySelector('.job-ribbon');
+      // 리본이 복수(마네킹+상세페이지)일 수 있어 스택 전체 높이를 잰다(codex F8)
+      const ribbon = document.querySelector('.job-ribbon-stack') || document.querySelector('.job-ribbon');
       const height = (topnav?.getBoundingClientRect().height || 0)
         + (ribbon?.getBoundingClientRect().height || 0);
       setInspectorTop(Math.round(height) + 10);

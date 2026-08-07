@@ -31,7 +31,7 @@ import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
 import { syncDraftToBackend } from '@/lib/draftSync.js';
-import { api } from '@/lib/api/index.js';
+import { api, isMockMode } from '@/lib/api/index.js';
 import { listMyModels } from '@/lib/api/facemarket.js';
 import { ErrorState } from '@/components/ui.jsx';
 import { shouldAdoptRouteProject } from '@/lib/projectRoute.js';
@@ -39,6 +39,9 @@ import { shouldAdoptRouteProject } from '@/lib/projectRoute.js';
 /* 보호 라우트 — 세션 없으면 공개 입력 페이지로. 입력은 공개라 리다이렉트 루프 없음. */
 function RequireAuth() {
   const { session, loading } = useAuth();
+  // mock 데모 샌드박스 — 로그인 없이 전 플로우 확인(주소창 직접 진입 포함).
+  // mock api 는 토큰을 쓰지 않으므로 세션 부재가 기능에 영향 없다. http 모드는 기존 가드 유지.
+  if (isMockMode) return <Outlet />;
   if (loading) return <div className="route-loading">불러오는 중이에요</div>;
   if (!session) return <Navigate to="/create/input" replace />;
   return <Outlet />;
@@ -56,7 +59,21 @@ function RequireProject() {
 
   useEffect(() => { flowRouteSeenThisSession = true; }, []);
 
-  if (!projectPersisted || !projectId) return <Navigate to="/create/input" replace />;
+  // mock 데모 관례 — 주소창에 /create/storyboard·/create/generating 을 직접 쳐도
+  // 시드 프로젝트를 만들어 통과시킨다(입력부터 걷지 않고 바로 확인). http 모드는 기존 가드 유지.
+  useEffect(() => {
+    if (!isMockMode || (projectId && projectPersisted)) return;
+    let cancelled = false;
+    api.createProject().then((p) => {
+      if (!cancelled) useAppStore.setState({ projectId: p.id, projectPersisted: true });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectId, projectPersisted]);
+
+  if (!projectPersisted || !projectId) {
+    if (isMockMode) return <div className="route-loading">데모 프로젝트 준비 중이에요</div>;
+    return <Navigate to="/create/input" replace />;
+  }
   return <Outlet />;
 }
 

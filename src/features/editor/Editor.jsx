@@ -12,6 +12,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
 import { api, isMockMode } from '@/lib/api/index.js';
+import { getJobSettlement } from '@/lib/api/facemarket.js';
+import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
+import { alignSkeletonToServer, decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
 import { listModels } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
@@ -31,6 +34,50 @@ const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font
 /* 스냅 엔진 상시 on (Phase 1 정식 승격) — react-moveable 내장 snap(elementGuidelines + 캔버스 센티넬).
    DEV 게이트 제거: prod 배포에서도 동작. 옛 커스텀 snapX 는 삭제됨. */
 const SNAP_SPIKE = true;
+
+// FaceMarket 정산 영수증(장면③) — 404 = '정산 없음' 확정 신호라 즉시 종료(비 FM 경로 지연 방지).
+async function tryGetReceipt(jobId) {
+  for (let i = 0; i < 3; i++) {
+    try { return await getJobSettlement(jobId); }
+    catch (e) {
+      if (e?.status === 404) return null;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+  return null;
+}
+const wonFmt = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
+
+/* 에디터 대기 화면에서 셀러가 고친 카피를 로드 시점에 1회 적용 — "셀러 편집이 항상 이긴다"
+   (editor_wait_dev_spec §4). 매칭 키 = 텍스트 요소의 sourceBlockId+copyRole(조립기가 부착).
+   조립(M-02)은 셀러 편집을 모른 채 원본 카피로 완성되므로, 여기서 로컬 임시 저장분을 덮는다.
+   적용 후 즉시 키 삭제 — 이후 재진입은 저장된 blocks 가 단일 소스. 매칭 실패(구 데이터·필드
+   없음)는 조용히 무시하고 원문 유지. */
+function applyEditorWaitCopyOverrides(projectId, blocks) {
+  let raw = null;
+  try { raw = localStorage.getItem(`ew-copy-${projectId}`); } catch { return blocks; }
+  if (!raw) return blocks;
+  let overrides;
+  try { overrides = JSON.parse(raw); } catch { overrides = null; }
+  if (!overrides || typeof overrides !== 'object') {
+    // 파손 저장분 — 반복 적용 시도를 막기 위해 여기서만 제거
+    try { localStorage.removeItem(`ew-copy-${projectId}`); } catch { /* 무시 */ }
+    return blocks;
+  }
+  const applied = blocks.map((b) => ({
+    ...b,
+    elements: (b.elements || []).map((el) => {
+      const next = el?.type === 'text' && el.sourceBlockId && el.copyRole
+        ? overrides[el.sourceBlockId]?.[el.copyRole] : null;
+      // 빈 문자열도 명시적 편집이다(셀러가 카피를 지운 것) — trim 가드 금지(codex F6).
+      return typeof next === 'string' && next !== el.text
+        ? { ...el, text: next } : el;
+    }),
+  }));
+  // 적용이 성공적으로 끝난 뒤에만 키 삭제 — 파싱·적용 중 실패하면 키가 남아 재진입 시 재적용(codex F6).
+  try { localStorage.removeItem(`ew-copy-${projectId}`); } catch { /* 무시 */ }
+  return applied;
+}
 
 /* 라이선스 검증 배지 QR (제안서 step03 "& DID 서명 첨부") — 라이선스가 잠긴 상세페이지의
    ai-notice 블록에만 백엔드가 넣는 'license-verify' 요소를 렌더한다. QR 내용은 스캔 대상이
@@ -84,6 +131,23 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   const common = { ref, 'data-elid': el.id, onPointerDown: pick, onClick: (e) => e.stopPropagation() };
 
   if (el.type === 'image') {
+    if (!el.src && el.genPending) {
+      // 생성 대기/진행/실패 타일 — 입력 페이지 자리표시 언어(회색+로고). 선택·조작 불가
+      // (이미지 내용 잠금), 호버 시 콘티에서 고른 예시가 잠깐 비친다(상시 노출 금지 결정).
+      return (
+        <div data-elid={el.id} className={`el el-slot ed-genwait ${el.genPending}`}
+          style={{ ...base, borderRadius: el.radius, cursor: 'not-allowed' }}
+          onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+          {el.genExample && <img className="ed-genwait-ex" src={el.genExample} alt="" draggable={false} />}
+          <span className="ed-genwait-logo" aria-hidden="true" />
+          {el.genPending === 'live' && <span className="ed-genwait-shim" aria-hidden="true" />}
+          {el.genPending === 'live' && <span className="ed-genwait-tag">생성 중</span>}
+          {el.genPending === 'failed'
+            ? <span className="ed-genwait-fail">이 컷은 만들지 못했어요<br /><small>크레딧 미차감</small></span>
+            : <span className="ed-genwait-hint">{el.genExample ? '콘티 예시 · ' : ''}생성 중 · 아직 편집할 수 없어요</span>}
+        </div>
+      );
+    }
     if (!el.src) {
       const inv = 1 / (scale || 1);
       // 빈 슬롯도 radius 를 따른다 — 특징 포인트의 원형 사진 슬롯이 원으로 보이게
@@ -388,6 +452,14 @@ export function Editor() {
   // 블록 강조 표시 여부 — 캔버스 빈 곳을 클릭하면 꺼진다. selBlock 자체는 삽입 대상으로 계속 쓰므로 건드리지 않는다.
   const [blockFocused, setBlockFocused] = useState(false);
   const [download, setDownload] = useState(false);
+  /* ---- 에디터 통합 대기(editor_wait_dev_spec v2) — 생성이 도는 동안 같은 캔버스에서 편집.
+     잡 수명·이벤트는 store.detailPageJob 소유, 여기는 구독·채움·완료 병합만. ---- */
+  const dpJob = useAppStore((s) => s.detailPageJob);
+  const [genActive, setGenActive] = useState(false);
+  const genMergedRef = useRef(false);
+  const [genReceipt, setGenReceipt] = useState(null);
+  const [genNotif, setGenNotif] = useState(
+    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
   const [dlFormat, setDlFormat] = useState('long');
   const [backWarn, setBackWarn] = useState(false);
   const [genDot, setGenDot] = useState('none');
@@ -424,19 +496,38 @@ export function Editor() {
       // 실존 모델 카탈로그 — mock 모드는 서버가 없으니 스킵, 실패는 null(AIPanel 이 가상모델 폴백)
       isMockMode ? Promise.resolve(null) : listModels().catch(() => null),
       // 분석 컨텍스트 — 정보 블록 프리필·추천 배지 전용(실패해도 에디터는 뜬다)
-      api.getAnalysis(projectId).catch(() => null)])
-      .then(([b, w, c, _a, p, fm, an]) => {
+      api.getAnalysis(projectId).catch(() => null),
+      // 생성 중 진입이면 스켈레톤·예시 썸네일의 근거(콘티) — 실패해도 에디터는 뜬다
+      api.getStoryboard(projectId).catch(() => [])])
+      .then(([b, w, c, _a, p, fm, an, sb]) => {
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
         const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
         const opts = allColorOpts.filter((_option, index) => (p.colors[index].images || []).length || p.colors[index].isBase);
         // 생성 직후 기본 문서(옛 자동 size/care 블록만 있고 info 블록 없음)면
         // 기본 정보 템플릿을 자동으로 구성한다 — 수동 '템플릿 추가' 버튼 대체(2026-07-29 결정).
-        if (needsDefaultTemplate(withH)) {
+        const dj = useAppStore.getState().detailPageJob;
+        const genMode = dj.status === 'running' && dj.projectId === projectId;
+        if (genMode) {
+          // 생성 중 진입 — 저장된 blocks(구 데모 시드·빈 값) 대신 콘티 스켈레톤이 캔버스가 된다.
+          // 컷·카피는 store 이벤트가 채우고, 완료 시 mergeServerBlocks 로 같은 화면에서 확정.
+          const cw = useAppStore.getState().copywriting;
+          const exThumb = {};
+          for (const blk of sb || []) {
+            if (blk?.exampleId) {
+              const ex = (hydratedCatalogs?.genExamples || []).find((g) => g.id === blk.exampleId);
+              if (ex?.thumb) exThumb[blk.id] = ex.thumb;
+            }
+          }
+          withH = decorateGenBlocks(
+            alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], p, cw), cw), dj, exThumb);
+          setGenActive(true);
+        } else if (needsDefaultTemplate(withH)) {
           const ctx = buildInfoCtx({ productName: p.name || '', clothingType: p.clothingType || 'top', catalogs: hydratedCatalogs, product: p, analysis: an, colorOpts: opts, fmModels: fm });
           withH = applyInfoTemplate(withH, ctx).blocks;
           toast.push('기본 정보 템플릿으로 구성했어요 — 사이즈·케어·고시 내용을 채워주세요', { icon: 'check' });
         }
+        if (!genMode) withH = applyEditorWaitCopyOverrides(projectId, withH);
         setBlocks(withH); setWardrobe(w); setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         setClothingType(p.clothingType || 'top');
@@ -446,6 +537,36 @@ export function Editor() {
         setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
       });
   }, []);
+
+  /* 생성 이벤트 → 캔버스 채움. 셀러가 손댄 것(src 있는 슬롯·genAutoText 와 달라진 텍스트)은
+     fillGenBlocks 가 건드리지 않는다(셀러 편집 승리). history 는 쌓지 않는다(자동 채움은
+     되돌리기 대상이 아님 — setBlocks 는 명시 액션에서만 push). */
+  useEffect(() => {
+    if (!genActive) return;
+    setBlocks((bs) => (bs ? fillGenBlocks(bs, dpJob) : bs));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [genActive, dpJob.cuts, dpJob.copy, dpJob.live, dpJob.failedCuts]);
+
+  /* 완료 — 화면 전환 없이 같은 캔버스에서 확정(오너 결정 #4): 서버 조립본에서 안정 src·
+     미편집 카피·AI 고지만 병합하고 저장을 연다. FaceMarket 영수증은 있으면 모달로. */
+  useEffect(() => {
+    if (!genActive || dpJob.status !== 'done' || genMergedRef.current) return;
+    genMergedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      const server = await api.getEditorBlocks(projectId).catch(() => null);
+      if (cancelled) return;
+      setBlocks((bs) => (bs && server ? mergeServerBlocks(bs, server) : bs));
+      setGenActive(false);
+      toast.push('상세페이지가 완성됐어요 — 이제 저장할 수 있어요', { icon: 'check' });
+      if (dpJob.jobId) {
+        const r = await tryGetReceipt(dpJob.jobId);
+        if (!cancelled && r) setGenReceipt(r);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [genActive, dpJob.status]);
 
   // history (rapid bursts within 350ms coalesce)
   useEffect(() => {
@@ -825,11 +946,17 @@ export function Editor() {
   };
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
-  const save = async () => { await api.saveEditorBlocks(projectId, blocks); toast.push('저장했어요', { icon: 'check' }); };
+  const save = async () => {
+    if (genActive) { toast.push('생성이 끝나면 저장할 수 있어요 — 편집 내용은 화면에 유지돼요'); return; }
+    await api.saveEditorBlocks(projectId, blocks); toast.push('저장했어요', { icon: 'check' });
+  };
   // 이탈 직전 플러시 — 인라인 편집 중 텍스트는 blur/언마운트에 기대지 않고
   // DOM 에서 직접 읽어 합쳐 저장한다. (프로그램적 내비게이션은 blur 가 없고,
   // blur 가 있어도 언마운트 배치에선 setState 커밋이 보장되지 않는 두 구멍 커버)
   const flushExit = () => {
+    // 생성 중 이탈 — 서버 blocks 는 아직 finalize 전이라 PUT 하면 조립이 덮거나 스켈레톤이
+    // 반쪽 저장된다. 이탈해도 잡은 store 가 계속 돌고, 완료 후 재진입은 정상 로드.
+    if (genActive) { clearTimeout(saveTimer.current); return; }
     let bs = latestBlocks.current;
     if (editEl && wrapRef.current && bs) {
       const node = wrapRef.current.querySelector(`[data-elid="${editEl}"]`);
@@ -1089,9 +1216,80 @@ export function Editor() {
           </button>
           <Button variant="ghost" size="sm" icon="eye" onClick={() => setPreview(true)}>미리보기</Button>
           <Button variant="ghost" size="sm" icon="save" onClick={save}>저장</Button>
-          <Button variant="primary" size="sm" icon="download" onClick={() => setDownload(true)}>다운로드</Button>
+          <Button variant="primary" size="sm" icon="download" disabled={genActive}
+            onClick={() => setDownload(true)}>{genActive ? '생성 중…' : '다운로드'}</Button>
         </div>
       </div>
+
+      {/* 생성 진행 리본 — 에디터 통합 대기. 같은 캔버스에서 편집하며 기다린다. */}
+      {(genActive || (dpJob.projectId === projectId && dpJob.status === 'error')) && (
+        <div className={`ed-genbar${dpJob.status === 'error' ? ' error' : ''}`} role="status" aria-live="polite">
+          <Icon name={dpJob.status === 'error' ? 'alertTri' : 'loader'} size={14}
+            className={dpJob.status === 'error' ? '' : 'spin'} />
+          <span className="ed-genbar-msg">
+            {dpJob.status === 'error' ? (dpJob.errorMessage || '생성을 끝내지 못했어요')
+              : dpJob.cutsTotal
+                ? <>사진을 만들어 채우는 중 · <b>{dpJob.cutsDone}/{dpJob.cutsTotal}</b>컷</>
+                : '상세페이지를 만들고 있어요'}
+          </span>
+          {dpJob.status !== 'error' && (
+            <span className="ed-genbar-track" aria-hidden="true"><i style={{ width: `${dpJob.progress}%` }} /></span>
+          )}
+          <span className="ed-genbar-side">
+            {dpJob.status === 'error' ? (
+              <>
+                <Button size="sm" variant="primary" onClick={() => {
+                  genMergedRef.current = false;
+                  useAppStore.getState().resetDetailPageJob();
+                  useAppStore.getState().startDetailPageGeneration(projectId);
+                  setGenActive(true);
+                }}>다시 시도</Button>
+                <Button size="sm" variant="ghost" onClick={() => { flushExit(); navigate('/create/storyboard'); }}>콘티로</Button>
+              </>
+            ) : (
+              <>
+                <span className="ed-genbar-hint">지금도 문구·배치를 고칠 수 있어요 · 창을 닫아도 계속 만들어져요</span>
+                {genNotif === 'default' && (
+                  <button type="button" className="ed-genbar-notify"
+                    onClick={async () => setGenNotif(await Notification.requestPermission())}>완료되면 알림 받기</button>
+                )}
+                {genNotif === 'granted' && <span className="ed-genbar-on"><Icon name="check" size={11} />알림 켜짐</span>}
+              </>
+            )}
+          </span>
+        </div>
+      )}
+
+      {/* FaceMarket 차단(409) — 생성이 라이선스 게이트에서 멈춤 */}
+      {dpJob.projectId === projectId && dpJob.status === 'blocked' && (
+        <div className="ed-genoverlay">
+          <div className="surface fm-blocked">
+            <div className="fm-blocked-icon"><Icon name="alertCircle" size={28} /></div>
+            <p className="fm-blocked-msg">{dpJob.errorMessage}</p>
+            <p className="fm-blocked-hint">다른 모델을 선택하거나 라이선스 상태를 확인한 뒤 다시 시도해 주세요.</p>
+            <Button variant="primary" block onClick={() => {
+              useAppStore.getState().resetDetailPageJob(); navigate('/create/storyboard');
+            }}>콘티로 돌아가기</Button>
+          </div>
+        </div>
+      )}
+      {/* FaceMarket 온체인 정산 영수증(장면③) — 완료 병합 후 모달로 */}
+      {genReceipt && (
+        <div className="ed-genoverlay" onClick={() => setGenReceipt(null)}>
+          <div className="surface fm-receipt" onClick={(e) => e.stopPropagation()}>
+            <div className="fm-receipt-head">
+              <span className="fm-receipt-badge"><Icon name="check" size={13} />정산 완료</span>
+              <span className="fm-receipt-total">{wonFmt(genReceipt.totalAmount)}</span>
+            </div>
+            <div className="fm-split">
+              <div className="fm-split-row"><span>모델 정산</span><span>{wonFmt(genReceipt.modelAmount)}</span></div>
+              <div className="fm-split-row"><span>플랫폼</span><span>{wonFmt(genReceipt.platformAmount)}</span></div>
+              <div className="fm-split-row"><span>운영</span><span>{wonFmt(genReceipt.opsAmount)}</span></div>
+            </div>
+            <Button variant="primary" block onClick={() => setGenReceipt(null)}>확인하고 편집 계속하기</Button>
+          </div>
+        </div>
+      )}
 
       {/* body */}
       <div className="ed-body" style={{ '--lcol': '320px', '--rcol': rightHidden ? '0px' : '208px' }}>

@@ -278,12 +278,14 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const contentRole = inferContentRole(b);
     const sectionRole = inferSectionRole(b) || SECTION_ROLES.STYLING;
     const name = contentTitle(contentRole);
-    const els = [IMG(60, 50, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined)];
+    // sourceBlockId/copyRole = 서버 조립기와 같은 추적 필드(editor_wait_dev_spec §2-3) —
+    // 에디터 대기 화면의 컷 채움·셀러 카피 오버라이드 매칭 키. mock-서버 패리티 유지.
+    const els = [Object.assign(IMG(60, 50, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined), { sourceBlockId: b.id })];
     if (copywriting && contentRole === CONTENT_ROLES.HERO) {
-      els.push(T(120, 110, 600, 80, `${product.name || '상품'}와 함께하는 하루`, { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }));
+      els.push(Object.assign(T(120, 110, 600, 80, `${product.name || '상품'}와 함께하는 하루`, { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }), { sourceBlockId: b.id, copyRole: 'headline' }));
     }
     if (copywriting && contentRole === CONTENT_ROLES.BENEFIT) {
-      els.push(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 18, color: '#4a4a45' }));
+      els.push(Object.assign(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 18, color: '#4a4a45' }), { sourceBlockId: b.id, copyRole: 'body' }));
     }
     blocks.push({ id: uid('b'), name, kind: sectionRole, contentRole, bg, h: 660, elements: els });
   };
@@ -291,17 +293,20 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const rowLayout = ROW_LAYOUTS[layout];
     const n = chunk.length;
     const w = Math.floor((880 - (n - 1) * 20) / n);
-    const els = chunk.map((rb, c) => IMG(60 + c * (w + 20), 50, w, 500, generatedImageFor(rb, w, 500), 12, rb.cutType || undefined));
+    const els = chunk.map((rb, c) => Object.assign(
+      IMG(60 + c * (w + 20), 50, w, 500, generatedImageFor(rb, w, 500), 12, rb.cutType || undefined),
+      { sourceBlockId: rb.id },
+    ));
     const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
     if (copywriting && hero) {
-      els.push(T(60, 582, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
+      els.push(Object.assign(T(60, 582, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
         size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14',
-      }));
+      }), { sourceBlockId: hero.id, copyRole: 'headline' }));
       const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
       if (subtitle) {
-        els.push(T(60, 650, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
+        els.push(Object.assign(T(60, 650, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
           size: 18, color: '#6b6b73',
-        }));
+        }), { sourceBlockId: subtitle.id, copyRole: 'body' }));
       }
     }
     blocks.push({
