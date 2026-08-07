@@ -62,7 +62,8 @@ jobs:
 
             # tests/frontend/storyboard-opening-row.test.mjs 는 목 조립기와 서버
             # page_assembler 의 결과를 대조하므로 server/.venv 가 필요하다.
-            - uses: astral-sh/setup-uv@v9
+            # setup-uv 는 v9 이동 태그를 아직 안 내서 정확한 버전으로 고정한다.
+            - uses: astral-sh/setup-uv@v9.0.0
             - name: 조립 정본 대조용 서버 파이썬 환경
               working-directory: server
               run: uv sync --frozen
