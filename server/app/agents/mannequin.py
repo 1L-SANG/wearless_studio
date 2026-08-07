@@ -8,7 +8,8 @@
 from .prompts import MannequinPromptContext
 
 # 기준 색상 이미지 정렬 순서 (common_data_contract §4 AngleSlot)
-_SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "Fit": 3}
+# 2026-08-07 개편: Fit 폐기(실사용 0건), BackDetail 신설 — 기존 3종 순서는 불변(재현성).
+_SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "BackDetail": 3}
 
 
 def select_base_gender(
@@ -81,7 +82,7 @@ def effective_fit_profile(analysis: dict, has_match_image: bool) -> dict | None:
 
 def base_color_images(product: dict) -> list[tuple[str, str]]:
     """기준 색상(ColorGroup.isBase, 없으면 colors[0]) 이미지의 (slot, asset_id) 목록 (slot 순서).
-    slot ∈ Front/Back/Detail/Fit. Front 필수는 입력 검증에서 거른다(나머지는 선택)."""
+    slot ∈ Front/Back/Detail/BackDetail. Front·Back 필수는 입력 검증에서 거른다(나머지는 선택)."""
     colors = product.get("colors") or []
     base = next((c for c in colors if c.get("isBase")), colors[0] if colors else None)
     if not base:

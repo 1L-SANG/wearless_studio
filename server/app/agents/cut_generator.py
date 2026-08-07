@@ -562,10 +562,20 @@ def render_cut_prompt(
     """
     sec = _sections(template)
     cut, shot = spec["cutType"], spec["shot"]
-    if cut == "product" and shot == "detail" and _SLOT_LABEL["Detail"] not in image_manifest:
-        # 메타데이터에 Detail 슬롯이 있어도 실제 자산 로드가 실패하면 manifest에
-        # 이 라벨이 없다. 멀리 찍은 사진만으로 세부를 지어내지 않고 해당 컷만 실패시킨다.
-        raise ValueError("detail_reference_required")
+    # 디테일 컷 2모드 판정(2026-08-07 스펙 §5) — 근거는 컷 방향과 같은 쪽만 인정한다.
+    # 방향 디테일 라벨 有 → 정밀 모드(SHOT:detail). 없고 같은 방향 원본 라벨만 有 →
+    # 구조 확대 모드(SHOT:detail_zoom — 원본에서 확인되는 구조 요소만 확대, 원단 조직 발명 금지).
+    # 둘 다 없으면 자산 로드가 통째로 실패한 것 — 지어내지 않고 해당 컷만 실패시킨다.
+    detail_mode_zoom = False
+    if cut == "product" and shot == "detail":
+        _detail_label = _SLOT_LABEL["BackDetail" if spec["direction"] == "back" else "Detail"]
+        _original_label = _SLOT_LABEL["Back" if spec["direction"] == "back" else "Front"]
+        if _detail_label in image_manifest:
+            pass
+        elif _original_label in image_manifest:
+            detail_mode_zoom = True
+        else:
+            raise ValueError("detail_reference_required")
     is_bottom = _is_bottom(clothing_type)
     # identity pair(가상/실존 모델)와 FaceMarket 라이선스 얼굴은 모두
     # 매니페스트에 실제 라벨이 있을 때만 지시한다. has_face 불리언만 믿으면
@@ -590,7 +600,7 @@ def render_cut_prompt(
             raise ValueError(f"프롬프트 템플릿에 섹션이 없습니다: [[{key}]]")
         return sec[key]
 
-    shot_key = shot
+    shot_key = "detail_zoom" if detail_mode_zoom else shot
     if cut == "mirror":
         face_line = need("FACE:hide_mirror") if spec["faceExposure"] != "show" else need("FACE:show")
         direction_line = ""
@@ -733,7 +743,9 @@ def render_cut_prompt(
         outer_closure_line = "\n".join((need("OUTER_CLOSURE:guard"), need(f"OUTER_CLOSURE:{closure}")))
     detail_color_transfer_line = ""
     transfer = spec.get("_detailColorTransfer")
-    if cut == "product" and shot == "detail" and transfer:
+    # 구조 확대 모드에선 억제 — 빌린 타색 디테일 자산이 로드되지 못해 zoom 으로 떨어졌는데
+    # "첨부된 타색 디테일을 참고하라"는 전환 지시만 남으면 존재하지 않는 첨부를 전제하게 된다.
+    if cut == "product" and shot == "detail" and transfer and not detail_mode_zoom:
         target = transfer["targetName"]
         if transfer.get("targetHex"):
             target += f" ({transfer['targetHex']})"
@@ -846,36 +858,45 @@ def _color_prompt_meta(color: dict | None, fallback_name: str | None) -> tuple[s
 
 
 def detail_reference_images(
-    product: dict, color_id: str | None,
+    product: dict, color_id: str | None, direction: str = "front",
 ) -> tuple[list[tuple[str, str]], dict | None]:
     """디테일 컷의 상품 근거와 필요 시 타색→목표색 전환 정보를 고른다.
 
-    목표 색상에 Detail이 있으면 그 색상의 기존 이미지 목록을 그대로 쓴다. color_id가
-    None일 때만 기준색으로 폴백한다. 명시된 색상이 실존하지 않으면 타색 Detail로
-    생성하지 않도록 invalid_color로 실패한다. 목표 색상은 있으나 Detail만 없으면 목표 색상
-    일반 이미지는 유지하면서 기준색, 그 다음 전체 색상 순서로 첫 Detail을 덧붙인다.
+    컷 방향의 디테일 슬롯만 근거로 쓴다(2026-08-07 스펙 §5): front→Detail, back→BackDetail.
+    우선순위는 목표색 같은 방향 디테일 → 타색 같은 방향 디테일(색전환 메타 동반) →
+    목표색 원본만(구조 확대 모드 — 렌더 단계가 매니페스트로 판정). 반대 방향 디테일은
+    어느 단계에서도 첨부하지 않는다(백넥 자수를 앞가슴에 그리는 사고 차단).
+
+    color_id가 None일 때만 기준색으로 폴백한다. 명시된 색상이 실존하지 않으면 타색 디테일로
+    생성하지 않도록 invalid_color로 실패한다 — 기존 계약 유지.
     일반 컷의 :func:`color_images` 엄격 선택 규칙은 바꾸지 않는다.
     """
+    detail_slot = "BackDetail" if direction == "back" else "Detail"
+    opposite_slot = "Detail" if detail_slot == "BackDetail" else "BackDetail"
     colors = product.get("colors") or []
     target_color = _color_by_id(colors, color_id)
     if color_id is not None and target_color is None:
         raise ValueError("invalid_color")
-    target_images = _color_image_pairs(target_color)
-    if any(slot == "Detail" for slot, _asset_id in target_images):
+    # 반대 방향 디테일은 같은 색이어도 첨부하지 않는다 — 두 디테일이 함께 붙으면
+    # "detail close-up reference" 지시가 어느 쪽을 가리키는지 모호해진다(§5 금지열).
+    target_images = [
+        pair for pair in _color_image_pairs(target_color) if pair[0] != opposite_slot
+    ]
+    if any(slot == detail_slot for slot, _asset_id in target_images):
         return target_images, None
 
     base = _base_color(colors)
     candidates = ([base] if base is not None else []) + [color for color in colors if color is not base]
     reference_color = next(
         (color for color in candidates
-         if any(slot == "Detail" for slot, _asset_id in _color_image_pairs(color))),
+         if any(slot == detail_slot for slot, _asset_id in _color_image_pairs(color))),
         None,
     )
     if reference_color is None:
         return target_images, None
 
     reference_details = [
-        pair for pair in _color_image_pairs(reference_color) if pair[0] == "Detail"
+        pair for pair in _color_image_pairs(reference_color) if pair[0] == detail_slot
     ]
     target_name, target_hex = _color_prompt_meta(
         target_color, None if color_id is None else str(color_id),
@@ -892,11 +913,15 @@ def detail_reference_images(
 
 
 # 첨부 이미지 역할 라벨 — 전부 고정 문구(셀러 데이터 미포함, 프롬프트 인젝션 방지)
+# Detail=앞면 디테일(값 재사용, 2026-08-07 개편) · BackDetail=뒷면 디테일(뒷면 전용 못박기)
 _SLOT_LABEL = {
     "Front": "PRODUCT — front view of the garment",
     "Back": "PRODUCT — back view of the garment",
-    "Detail": "PRODUCT — detail close-up of the garment (texture, stitching, print)",
-    "Fit": "PRODUCT — fit reference, the garment worn on a person (true length & drape)",
+    "Detail": ("PRODUCT — front-side detail close-up of the garment (texture, stitching, "
+               "print; may also show fabric or trims whose location is not side-specific)"),
+    "BackDetail": ("PRODUCT — back-side detail close-up of the garment (back neck, back "
+                   "yoke, back pocket). This detail exists on the back side only — "
+                   "never place it on the front"),
 }
 # 마네킹/매칭 첨부 라벨 — render_cut_prompt 의 매칭 핏 가드가 매니페스트에서 이 문구로
 # "하의가 화면에 있는가"를 판별하므로 상수로 공유(문구 드리프트 방지).
@@ -1089,7 +1114,8 @@ def build_prompt(
         spec = {**spec, "shot": "full"}
     if manifest is None:
         if spec["cutType"] == "product" and spec["shot"] == "detail":
-            selected_images, transfer = detail_reference_images(product, spec["colorId"])
+            selected_images, transfer = detail_reference_images(
+                product, spec["colorId"], direction=spec["direction"])
             spec["_detailColorTransfer"] = transfer
         else:
             selected_images = color_images(product, spec["colorId"])

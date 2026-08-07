@@ -304,14 +304,18 @@ def test_production_space_set_scene_qc_outage_fails_cut_closed(monkeypatch):
 
 
 def test_gen_cuts_detail_requires_loaded_detail_manifest(monkeypatch):
-    """상품 메타데이터가 아니라 워커가 실제 첨부한 Detail 자산으로 게이트한다."""
+    """상품 메타데이터가 아니라 워커가 실제 첨부한 자산으로 게이트한다.
+
+    2026-08-07 개편: 같은 방향 원본이 있으면 구조 확대 모드로 생성하므로,
+    게이트가 막는 경우는 '컷 방향 근거(디테일도 원본도)가 전무'할 때다 —
+    뒷면 디테일 컷에 앞면 자산만 로드된 상황으로 검증한다."""
     async def fake_emit(pool, job_id, et, payload):
         return None
 
     monkeypatch.setattr(dpj, "_emit", fake_emit)
     app = _app(_settings())
     app.state.gemini = _RecordingGemini()
-    spec = {"id": "detail-1", "cutType": "product", "shot": "detail"}
+    spec = {"id": "detail-1", "cutType": "product", "shot": "detail", "direction": "back"}
     images = [dpj.InlineImage("image/png", b"front")]
     manifest = dpj.cut_generator.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0)
@@ -501,6 +505,73 @@ def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
     assert "- matching bottom" in captured["prompt"]
 
 
+def test_run_detail_page_job_separates_detail_manifests_by_direction(monkeypatch):
+    """앞·뒤 디테일 블록(같은 색)은 각자 방향의 디테일만 첨부한다 — 캐시 키에 방향 포함 검증."""
+    captured = {"manifests": {}}
+
+    async def fake_gp(conn, uid, pid):
+        return {"copywriting": False}
+
+    async def fake_sb(conn, pid):
+        return [
+            {"id": "front-detail", "source": "ai", "sectionRole": "product",
+             "contentRole": "detail", "cutType": "product", "shot": "detail",
+             "direction": "front", "colorId": "base"},
+            {"id": "back-detail", "source": "ai", "sectionRole": "product",
+             "contentRole": "detail", "cutType": "product", "shot": "detail",
+             "direction": "back", "colorId": "base"},
+        ]
+
+    async def fake_prod(conn, pid):
+        return {"colors": [
+            {"id": "base", "name": "레드", "swatchId": "red", "isBase": True, "images": [
+                {"slot": "Front", "id": "base-front"},
+                {"slot": "Back", "id": "base-back"},
+                {"slot": "Detail", "id": "base-detail"},
+                {"slot": "BackDetail", "id": "base-backdetail"},
+            ]},
+        ]}
+
+    async def fake_analysis(conn, pid):
+        return {}
+
+    async def fake_asset(conn, uid, aid):
+        return {"mime_type": "image/png", "r2_key": f"k/{aid}"}
+
+    async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None, **_kw):
+        captured["manifests"][cut_spec["id"]] = manifest
+        return b"IMG", "image/png"
+
+    def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
+        return []
+
+    async def fake_finalize(conn, **kw):
+        return {"editor_blocks": kw["editor_blocks"], "available": 99}
+
+    async def fake_emit(pool, job_id, et, payload):
+        return None
+
+    monkeypatch.setattr(dpj.repo, "get_project", fake_gp)
+    monkeypatch.setattr(dpj.repo, "get_storyboard", fake_sb)
+    monkeypatch.setattr(dpj.repo, "get_product", fake_prod)
+    monkeypatch.setattr(dpj.repo, "get_analysis", fake_analysis)
+    monkeypatch.setattr(dpj.repo, "get_asset_for_user", fake_asset)
+    monkeypatch.setattr(dpj.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(dpj.page_assembler, "assemble", fake_assemble)
+    monkeypatch.setattr(dpj.repo, "finalize_detail_page_success", fake_finalize)
+    monkeypatch.setattr(dpj, "_emit", fake_emit)
+
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(dpj.run_detail_page_job(app, worker_job(credits_reserved=2)))
+
+    front_manifest = captured["manifests"]["front-detail"]
+    back_manifest = captured["manifests"]["back-detail"]
+    assert "front-side detail close-up" in front_manifest
+    assert "back-side detail close-up" not in front_manifest
+    assert "back-side detail close-up" in back_manifest
+    assert "front-side detail close-up" not in back_manifest
+
+
 def test_run_detail_page_job_fails_cut_when_any_matching_asset_is_missing(monkeypatch):
     captured = {
         "matching_item_ids": [],
@@ -669,7 +740,7 @@ def test_run_detail_page_job_uses_other_color_detail_and_keeps_normal_color_stri
     assert [result["blockId"] for result in captured["cut_results"]] == [
         "valid-fit", "cross-color-detail", "same-color-detail",
     ]
-    assert "PRODUCT — detail close-up" in captured["manifests"]["cross-color-detail"]
+    assert "PRODUCT — front-side detail close-up" in captured["manifests"]["cross-color-detail"]
     assert "DETAIL COLORWAY TRANSFER" in captured["prompts"]["cross-color-detail"]
     assert "Target color: 그린 (#3f7a4f)" in captured["prompts"]["cross-color-detail"]
     assert "DETAIL COLORWAY TRANSFER" not in captured["prompts"]["same-color-detail"]

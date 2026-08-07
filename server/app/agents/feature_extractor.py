@@ -77,8 +77,10 @@ def _schema() -> dict:
 _SLOT_LABEL = {
     "Front": "front view",
     "Back": "back view",
-    "Detail": "DETAIL close-up — inspect this one hardest (texture, stitching, trims, prints)",
-    "Fit": "worn-fit reference (silhouette & length as worn)",
+    "Detail": ("front-side DETAIL close-up — inspect this one hardest "
+               "(texture, stitching, trims, prints)"),
+    "BackDetail": ("back-side DETAIL close-up — a back-only feature (back neck, yoke, "
+                   "back pocket); never attribute it to the front"),
 }
 
 
@@ -130,7 +132,7 @@ def validate(raw: dict) -> list[str]:
 async def extract(settings: Settings, product: dict, images: list[InlineImage],
                   slots: list[str] | None = None) -> tuple[list[str], str]:
     """특징 발굴 1콜 → (개조식 특징 ≤2, provider). 실패는 VisionError로 전파(호출측 폴백).
-    slots(Front/Back/Detail/Fit)는 images와 같은 순서 — 디테일 컷 집중 관찰 지시에 쓰인다."""
+    slots(Front/Back/Detail/BackDetail)는 images와 같은 순서 — 디테일 컷 집중 관찰 지시에 쓰인다."""
     models = {"gemini": settings.model_text_gemini_features} if settings.model_text_gemini_features else None
     raw, provider = await analyze_with_fallback(
         settings, build_prompt(product or {}, slots), images, _schema(),

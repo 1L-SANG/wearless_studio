@@ -36,13 +36,24 @@ def test_build_prompt_manifest_fallback_no_images():
     assert "product photos" in p.lower()
 
 
-def test_build_prompt_product_detail_requires_detail_slot_across_all_colors():
+def test_build_prompt_product_detail_falls_back_to_original_zoom_mode():
+    # 2026-08-07 개편: 디테일 사진이 없어도 같은 방향 원본이 있으면 구조 확대 모드로 생성한다.
     product = {"name": "니트", "colors": [
         {"id": "base", "isBase": True, "images": [{"slot": "Front", "id": "a1"}]},
         {"id": "other", "images": [{"slot": "Back", "id": "a2"}]},
     ]}
+    prompt = cg.build_prompt({"cutType": "product", "shot": "detail"}, product)
+    assert "structural element" in prompt            # SHOT:detail_zoom
+
+
+def test_build_prompt_product_detail_requires_same_side_evidence():
+    # 방향 근거(같은 쪽 디테일도 원본도)가 전무하면 그 컷만 실패한다 — 지어내지 않는다.
+    product = {"name": "니트", "colors": [
+        {"id": "base", "isBase": True, "images": [{"slot": "Front", "id": "a1"}]},
+    ]}
     with pytest.raises(ValueError, match="detail_reference_required"):
-        cg.build_prompt({"cutType": "product", "shot": "detail"}, product)
+        cg.build_prompt(
+            {"cutType": "product", "shot": "detail", "direction": "back"}, product)
 
 
 def test_build_prompt_product_detail_uses_detail_slot():
@@ -50,7 +61,7 @@ def test_build_prompt_product_detail_uses_detail_slot():
         {"slot": "Front", "id": "a1"}, {"slot": "Detail", "id": "a2"},
     ]}]}
     prompt = cg.build_prompt({"cutType": "product", "shot": "detail"}, product)
-    assert "detail close-up of the garment" in prompt
+    assert "front-side detail close-up of the garment" in prompt
     assert "tight product-only close-up" in prompt
 
 
@@ -73,7 +84,7 @@ def test_build_prompt_product_detail_uses_other_color_detail_with_color_transfer
     assert transfer == {
         "targetName": "그린", "targetHex": "#3f7a4f", "referenceName": "레드",
     }
-    assert "PRODUCT — detail close-up" in prompt
+    assert "PRODUCT — front-side detail close-up" in prompt
     assert "DETAIL COLORWAY TRANSFER" in prompt
     assert "Target color: 그린 (#3f7a4f)" in prompt
     assert "fabric structure, shape, and material exactly" in prompt
@@ -96,7 +107,7 @@ def test_build_prompt_product_detail_same_color_has_no_color_transfer():
 
     assert images == [("Front", "green-front"), ("Detail", "green-detail")]
     assert transfer is None
-    assert "PRODUCT — detail close-up" in prompt
+    assert "PRODUCT — front-side detail close-up" in prompt
     assert "DETAIL COLORWAY TRANSFER" not in prompt
 
 
@@ -136,6 +147,79 @@ def test_detail_reference_images_prefers_base_then_first_detail_color():
     product["colors"][1]["images"] = []
     images, _transfer = cg.detail_reference_images(product, "target")
     assert images == [("Front", "target-front"), ("Detail", "first-detail")]
+
+
+# ---------- detail_reference_images 방향 인지 (2026-08-07 스펙 §5 매트릭스) ----------
+
+
+def test_detail_refs_back_direction_prefers_same_color_backdetail():
+    p = {"colors": [{"id": "base", "isBase": True, "images": [
+        {"slot": "Front", "id": "f1"}, {"slot": "Back", "id": "b1"},
+        {"slot": "Detail", "id": "d1"}, {"slot": "BackDetail", "id": "bd1"},
+    ]}]}
+    images, transfer = cg.detail_reference_images(p, None, direction="back")
+    assert ("BackDetail", "bd1") in images
+    assert transfer is None
+
+
+def test_detail_refs_back_direction_borrows_backdetail_from_other_color_only():
+    # 목표색엔 BackDetail 없음 → 타색 BackDetail을 색전환으로 빌린다. 타색 Detail(앞면)은 금지.
+    p = {"colors": [
+        {"id": "base", "name": "베이스", "isBase": True, "images": [
+            {"slot": "Front", "id": "bf"}, {"slot": "Detail", "id": "bd-front"},
+            {"slot": "BackDetail", "id": "bd-back"}]},
+        {"id": "red", "name": "레드", "images": [
+            {"slot": "Front", "id": "rf"}, {"slot": "Back", "id": "rb"}]},
+    ]}
+    images, transfer = cg.detail_reference_images(p, "red", direction="back")
+    assert ("BackDetail", "bd-back") in images
+    assert ("Detail", "bd-front") not in images
+    assert transfer is not None            # 타색 근거 → 색전환 메타 필수
+
+
+def test_detail_refs_back_direction_falls_back_to_originals_when_no_backdetail():
+    # 어느 색에도 BackDetail 없음 → 목표색 원본만 반환(구조 확대 모드는 렌더 단계 판정).
+    # 반대 방향(Detail)은 근거로 빌리지 않는다 — 스펙 §5 금지열.
+    p = {"colors": [{"id": "base", "isBase": True, "images": [
+        {"slot": "Front", "id": "f1"}, {"slot": "Back", "id": "b1"},
+        {"slot": "Detail", "id": "d1"}]}]}
+    images, transfer = cg.detail_reference_images(p, None, direction="back")
+    assert not any(s == "BackDetail" for s, _ in images)
+    assert transfer is None
+    # 목표색 이미지 목록은 그대로 유지된다 (전 슬롯 — 첨부 순서 계약 불변)
+    assert ("Back", "b1") in images
+
+
+def test_detail_refs_front_direction_never_borrows_backdetail():
+    p = {"colors": [
+        {"id": "base", "isBase": True, "images": [
+            {"slot": "Front", "id": "f1"}, {"slot": "BackDetail", "id": "bd1"}]},
+    ]}
+    images, transfer = cg.detail_reference_images(p, None, direction="front")
+    # 앞면 방향에 앞면 디테일 없음 + 빌릴 타색도 없음 → 원본 폴백, 색전환 없음
+    assert transfer is None
+
+
+def test_detail_refs_excludes_opposite_side_detail_even_same_color():
+    # 같은 색에 앞·뒤 디테일이 다 있어도 컷 방향의 것만 첨부 — 지시 대상 모호성 제거
+    p = {"colors": [{"id": "base", "isBase": True, "images": [
+        {"slot": "Front", "id": "f1"}, {"slot": "Back", "id": "b1"},
+        {"slot": "Detail", "id": "d1"}, {"slot": "BackDetail", "id": "bd1"},
+    ]}]}
+    front_images, _ = cg.detail_reference_images(p, None, direction="front")
+    assert ("Detail", "d1") in front_images
+    assert not any(s == "BackDetail" for s, _ in front_images)
+    back_images, _ = cg.detail_reference_images(p, None, direction="back")
+    assert ("BackDetail", "bd1") in back_images
+    assert not any(s == "Detail" for s, _ in back_images)
+
+
+def test_detail_refs_default_direction_is_front_backward_compat():
+    # 기존 호출부(위치 인자 2개)와 동일 동작 — direction 미지정 = front
+    p = {"colors": [{"id": "base", "isBase": True,
+                     "images": [{"slot": "Detail", "id": "d1"}]}]}
+    images, _ = cg.detail_reference_images(p, None)
+    assert ("Detail", "d1") in images
 
 
 def test_build_prompt_unknown_cut_type_raises():

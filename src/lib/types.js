@@ -44,7 +44,10 @@ export const OuterClosureState = Object.freeze({ OPEN: 'open', PARTIAL: 'partial
 export const ProjectStatus = Object.freeze({ DRAFT: 'draft', GENERATING: 'generating', DONE: 'done' });
 export const JobStatus = Object.freeze({ IDLE: 'idle', RUNNING: 'running', DONE: 'done', ERROR: 'error' });
 export const ElementType = Object.freeze({ IMAGE: 'image', TEXT: 'text', SHAPE: 'shape', LINE: 'line' });
-export const AngleSlot = Object.freeze({ FRONT: 'Front', BACK: 'Back', DETAIL: 'Detail', FIT: 'Fit' });
+/* 2026-08-07 개편: Fit 폐기(실사용 0건), 디테일을 앞/뒤로 분화.
+   DETAIL_FRONT 값이 'Detail'인 것은 의도 — 기존 저장 데이터 88장을 마이그레이션 없이
+   앞면 디테일로 재해석한다 (specs/2026-08-07-image-slot-taxonomy-design.md §D1). */
+export const AngleSlot = Object.freeze({ FRONT: 'Front', BACK: 'Back', DETAIL_FRONT: 'Detail', DETAIL_BACK: 'BackDetail' });
 /** @deprecated 핏 프로필(FitProfile)로 대체. P2에서 UI/API 소비 제거 전까지 유지. */
 export const AdjustFit = Object.freeze({ SLIMMER: 'slimmer', LOOSER: 'looser' });
 /** @deprecated 핏 프로필(FitProfile)로 대체. P2에서 UI/API 소비 제거 전까지 유지. */

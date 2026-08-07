@@ -71,7 +71,7 @@ import {
 import { renderGroups } from '@/lib/storyboardRenderGroups.js';
 import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
-import { generationExampleSelectionPatch } from '@/lib/storyboardExampleSelection.js';
+import { detailDirectionFromExample, generationExampleSelectionPatch } from '@/lib/storyboardExampleSelection.js';
 import { mineImageUrl, normalizeMineImages, promoteMineImage } from '@/lib/storyboardMineImages.js';
 
 
@@ -1079,8 +1079,8 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
   const shouldRenderGenerationExamples = shouldRenderGenerationExampleGuide(block);
   const effectiveSectionRole = requestedRecipe?.sectionRole || block.sectionRole;
   const pendingInSpace = !!block.spaceGroupId && !requestedRecipe;
-  const productShotOptions = catalogs.productShotTypes
-    .filter((option) => hasDetailImage || option.value !== 'detail');
+  // 디테일 샷 상시 제공(2026-08-07 개편) — 디테일 사진이 없어도 서버가 원본 구조 확대로 생성
+  const productShotOptions = catalogs.productShotTypes;
   const hasSelectableExamples = (cutType, shot) => selectGenerationExamples(
     catalogs.genExamples,
     {
@@ -1167,6 +1167,10 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
           ? current.outerClosureState : 'open')
         : null,
       ...(pendingRecipe.cutType === 'product' ? { matchIds: [], faceExposure: null } : {}),
+      // 샷 전환 확정도 공통 규칙 적용 — 뒷면 고스트→디테일 전환 시 이전 back 이
+      // 숨은 상태로 남아 BackDetail 근거로 새어 나가는 것을 막는다(Codex 리뷰 P1).
+      ...(pendingRecipe.cutType === 'product' && pendingRecipe.shot === 'detail'
+        ? { direction: detailDirectionFromExample(example) } : {}),
     }, catalogs);
     setPendingChoice(exampleId);
     setPendingSaving(true);
@@ -1327,7 +1331,9 @@ function Inspector({ block, catalogs, colorOpts, detailColorOpts, clothingType, 
         </>
       )}
 
-      {/* 방향 — mirror 생성 레시피는 방향 개념 없음 (ADR-0004) */}
+      {/* 방향 — mirror 생성 레시피는 방향 개념 없음 (ADR-0004).
+          디테일 컷도 숨김 — 방향은 셀러가 고르지 않고 선택한 생성예시의 direction 라벨이
+          내부적으로 결정한다(2026-08-07 오너 결정, generationExampleSelectionPatch). */}
       {!isMirror && !isDetail && (
         <div className="insp-sec" style={{ marginBottom: 12 }}><label className="lbl">방향</label>
           <Chips options={isProduct ? catalogs.productDirections : catalogs.directions}

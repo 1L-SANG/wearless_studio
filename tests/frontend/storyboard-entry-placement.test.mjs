@@ -323,3 +323,40 @@ test('HTTP and mock entry paths pass project ids and share the default builder',
   assert.match(mockDbSource, /projectId: project\.id/);
   assert.match(mockDbSource, /return defaultStoryboard\(colors, mode, context\)/);
 });
+
+// ---------- 2026-08-07 슬롯 개편: 디테일 컷 상시 제공 ----------
+
+test('기본 콘티는 디테일 사진이 없어도 디테일 컷을 포함한다', () => {
+  const colors = [{ id: 'col1', isBase: true, images: [
+    { slot: 'Front', id: 'f1' }, { slot: 'Back', id: 'b1' },
+  ] }];
+  const basic = defaultStoryboard(colors, 'basic', { clothingType: 'top', projectId: 'p-detail' });
+  assert.ok(basic.some((b) => b.cutType === 'product' && b.shot === 'detail'));
+  const extended = defaultStoryboard(colors, 'extended', { clothingType: 'top', projectId: 'p-detail' });
+  assert.ok(extended.some((b) => b.cutType === 'product' && b.shot === 'detail'));
+});
+
+test('디테일 블록의 색상은 앞면 디테일 보유 색을 우선한다', () => {
+  const colors = [
+    { id: 'col1', isBase: true, images: [{ slot: 'Front', id: 'f1' }, { slot: 'Back', id: 'b1' }] },
+    { id: 'col2', images: [{ slot: 'Detail', id: 'd2' }] },
+  ];
+  const blocks = defaultStoryboard(colors, 'basic', { clothingType: 'top', projectId: 'p-detail2' });
+  const detail = blocks.find((b) => b.cutType === 'product' && b.shot === 'detail');
+  assert.equal(detail.colorId, 'col2');
+});
+
+test('디테일 예시 선택이 방향을 내부 결정한다 — back 라벨 예시=back, 미기재=front', async () => {
+  const { generationExampleSelectionPatch } = await import('../../src/lib/storyboardExampleSelection.js');
+  const detailBlock = { cutType: 'product', shot: 'detail', direction: 'front' };
+  // back 라벨 예시 → 첫 선택에도 back 전송
+  const picked = generationExampleSelectionPatch(detailBlock, { id: 'ex-bd', direction: 'back' });
+  assert.equal(picked.patch.direction, 'back');
+  // 미기재 예시로 교체 → 이전 back 이 남지 않고 front 로 확정
+  const backBlock = { cutType: 'product', shot: 'detail', direction: 'back', exampleId: 'ex-bd' };
+  const swapped = generationExampleSelectionPatch(backBlock, { id: 'ex-fd' });
+  assert.equal(swapped.patch.direction, 'front');
+  // 디테일이 아닌 컷은 기존 규칙 유지(첫 선택은 방향 미변경)
+  const worn = { cutType: 'styling', shot: 'full', direction: 'side' };
+  assert.equal('direction' in generationExampleSelectionPatch(worn, { id: 'ex-w' }).patch, false);
+});

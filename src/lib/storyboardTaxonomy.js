@@ -107,10 +107,11 @@ export const CONTENT_TEMPLATES = Object.freeze([
   {
     value: CONTENT_ROLES.DETAIL,
     label: '디테일',
-    description: '업로드한 디테일 사진에서 확인되는 부분만 가까이 보여줘요.',
+    // 2026-08-07 개편: 디테일 사진이 없어도 앞뒤 원본의 확인 가능한 부분을 확대해 생성한다
+    // (서버 구조 확대 모드) — requiresDetailImage 게이트 폐기, 디테일 컷 상시 제공.
+    description: '디테일 사진이 있으면 그대로, 없으면 앞뒤 사진에서 보이는 부분을 확대해요.',
     sectionRole: SECTION_ROLES.PRODUCT,
     cutType: 'product', direction: 'front', shot: 'detail', faceExposure: null,
-    requiresDetailImage: true,
   },
   {
     value: CONTENT_ROLES.CUSTOM,
@@ -141,7 +142,7 @@ export const isSectionRole = (role) => VALID_SECTION_ROLES.has(role);
 export const isContentRole = (role) => VALID_CONTENT_ROLES.has(role);
 export const sectionRoleForContentRole = (role) => contentTemplate(role).sectionRole;
 export const defaultContentRoleForSection = (sectionRole) =>
-  contentTemplatesForSection(sectionRole, { hasDetailImage: false })[0]?.value || CONTENT_ROLES.CUSTOM;
+  contentTemplatesForSection(sectionRole)[0]?.value || CONTENT_ROLES.CUSTOM;
 
 export function poseExampleDirectionCompatible(example, { cutType, direction }) {
   if (!example || !['styling', 'horizon', 'mirror'].includes(cutType)) return false;
@@ -153,15 +154,16 @@ export function poseExampleDirectionCompatible(example, { cutType, direction }) 
     && example.direction === direction;
 }
 
-export function contentTemplatesForSection(sectionRole, { hasDetailImage = true } = {}) {
-  return CONTENT_TEMPLATES.filter((template) => template.sectionRole === sectionRole
-    && (!template.requiresDetailImage || hasDetailImage));
+/* 디테일 역할도 항상 포함 — 2026-08-07 개편(구조 확대 모드)으로 디테일 사진 유무는
+   생성 방식만 가르고 제공 여부를 가르지 않는다. 호출부가 남긴 { hasDetailImage } 옵션은
+   무시된다(호환 목적, 점진 제거). */
+export function contentTemplatesForSection(sectionRole) {
+  return CONTENT_TEMPLATES.filter((template) => template.sectionRole === sectionRole);
 }
 
-export function allAiContentTemplates({ hasDetailImage = true, includeHero = true } = {}) {
+export function allAiContentTemplates({ includeHero = true } = {}) {
   return CONTENT_TEMPLATES.filter((template) => template.cutType
-    && (includeHero || template.value !== CONTENT_ROLES.HERO)
-    && (!template.requiresDetailImage || hasDetailImage));
+    && (includeHero || template.value !== CONTENT_ROLES.HERO));
 }
 
 export function inferSectionRole(block) {
@@ -228,7 +230,7 @@ export function blockPatchForContentRole(block, role, { clothingType = 'top' } =
 /* 저장본을 읽을 때 사진 목적과 비노출 생성 레시피가 어긋나지 않게 맞춘다.
    방향·샷이 새 목적에서도 유효하면 사용자의 기존 선택을 보존하고, 유효하지
    않은 값만 목적의 기본값으로 되돌린다. */
-export function normalizedRecipePatch(block, role, { hasDetailImage = null } = {}) {
+export function normalizedRecipePatch(block, role) {
   if (block?.source === 'mine') {
     return { contentRole: CONTENT_ROLES.CUSTOM, title: '내 이미지', cutType: null };
   }
@@ -247,11 +249,6 @@ export function normalizedRecipePatch(block, role, { hasDetailImage = null } = {
     && block?.cutType === 'product') {
     nextRole = block?.shot === 'detail' ? CONTENT_ROLES.DETAIL : CONTENT_ROLES.PRODUCT_OVERVIEW;
   }
-  if (nextRole === CONTENT_ROLES.DETAIL
-    && hasDetailImage === false) {
-    nextRole = CONTENT_ROLES.PRODUCT_OVERVIEW;
-  }
-
   const template = contentTemplate(nextRole);
   if (!template.cutType) {
     if (block?.cutType === 'mirror') {

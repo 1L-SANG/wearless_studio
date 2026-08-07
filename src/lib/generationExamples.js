@@ -1,5 +1,6 @@
 import publicCombinationTable from '../../data/genexamples_public_combinations.json' with { type: 'json' };
 import { poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
+import { detailDirectionFromExample } from './storyboardExampleSelection.js';
 
 const PUBLIC_COMBINATIONS = Object.freeze(publicCombinationTable.combinations.map(Object.freeze));
 const PUBLIC_KEYS = new Set(PUBLIC_COMBINATIONS.map((combination) => combinationKey(combination)));
@@ -207,6 +208,9 @@ export function assignGenerationExamples(blocks, { catalog, product, gender, onl
       refScope: block.spaceGroupId ? 'pose' : 'all',
       baseThumb: block.baseThumb ?? block.thumb ?? null,
       thumb: example.thumb,
+      // 디테일 컷 방향은 예시 라벨이 내부 결정(미기재=front) — 자동 배정도 동일 규칙
+      ...(block.cutType === 'product' && block.shot === 'detail'
+        ? { direction: detailDirectionFromExample(example) } : {}),
     };
   });
   return { blocks: changed ? next : blocks, changed, assignedIds, protectedIds, missingIds };

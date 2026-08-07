@@ -146,6 +146,7 @@ async def run_editor_image_job(app, job: dict) -> None:
             new_payload = content_roles.canonicalize_storyboard_block(payload)
             requested_color_id = new_payload.get("colorId")
             is_detail = new_payload.get("cutType") == "product" and new_payload.get("shot") == "detail"
+            detail_direction = "back" if new_payload.get("direction") == "back" else "front"
             matching_ids = (
                 [str(match_id) for match_id in (new_payload.get("matchIds") or [])][:2]
                 if new_payload.get("cutType") in _WORN_CUT_TYPES
@@ -181,7 +182,7 @@ async def run_editor_image_job(app, job: dict) -> None:
                 # 기준색→첫 Detail 보유 색상의 근거를 붙이고 프롬프트에 색 전환을 명시한다.
                 if is_detail:
                     image_refs, detail_color_transfer = cut_generator.detail_reference_images(
-                        product, requested_color_id)
+                        product, requested_color_id, direction=detail_direction)
                 else:
                     image_refs = cut_generator.color_images(product, requested_color_id)
                     detail_color_transfer = None
@@ -212,7 +213,13 @@ async def run_editor_image_job(app, job: dict) -> None:
                     ma = await repo.get_asset_for_user(conn, user_id, rid)  # 소유 검증 겸함
                     if ma:
                         mood_rows.append(ma)
-            if is_detail and not any(asset.get("slot") == "Detail" for asset in assets):
+            # 방향 근거(같은 쪽 디테일 또는 원본)가 전무할 때만 사전 실패 — 원본만 있으면
+            # 렌더가 구조 확대 모드로 처리한다(2026-08-07 스펙 §5).
+            _detail_slot = "BackDetail" if detail_direction == "back" else "Detail"
+            _original_slot = "Back" if detail_direction == "back" else "Front"
+            if is_detail and not any(
+                asset.get("slot") in (_detail_slot, _original_slot) for asset in assets
+            ):
                 await _fail(
                     "디테일 참고 사진을 찾을 수 없어 디테일샷을 만들 수 없어요.",
                     {"error": "detail_reference_required", "colorId": requested_color_id},

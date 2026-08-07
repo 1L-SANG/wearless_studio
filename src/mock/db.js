@@ -93,8 +93,9 @@ const catalogs = {
   outerClosureStates: [
     { value: 'open', label: '전체 열림' }, { value: 'partial', label: '부분 열림' }, { value: 'closed', label: '전체 닫힘' },
   ],
-  angleSlots: ['Front', 'Back', 'Detail', 'Fit'],
-  angleLabels: { Front: '앞면 이미지', Back: '뒷면 이미지', Detail: '디테일 이미지', Fit: '착용 이미지' },
+  // 2026-08-07 개편: Fit 폐기(실사용 0건) → 뒷면 디테일 신설. Detail 값=앞면 디테일(재해석).
+  angleSlots: ['Front', 'Back', 'Detail', 'BackDetail'],
+  angleLabels: { Front: '앞면', Back: '뒷면', Detail: '앞면 디테일', BackDetail: '뒷면 디테일' },
   // measurement schema per clothing type (PRD §6.5) — key는 영문 토큰 (계약 §4)
   measurementSchema: {
     top: ['totalLength', 'shoulderWidth', 'chestWidth', 'sleeveLength'],
@@ -394,7 +395,7 @@ function buildDraft() {
           { id: uid('img'), slot: 'Front', label: 'Front', src: P.photo('c1f', 'horizon', 300, 400) },
           { id: uid('img'), slot: 'Back', label: 'Back', src: P.photo('c1b', 'horizon', 300, 400) },
           { id: uid('img'), slot: 'Detail', label: 'Detail', src: P.detail('c1d', 300, 400) },
-          { id: uid('img'), slot: 'Fit', label: 'Fit', src: P.photo('c1fit', 'styling', 300, 400) },
+          { id: uid('img'), slot: 'BackDetail', label: 'BackDetail', src: P.detail('c1bd', 300, 400) },
         ],
       },
       {
