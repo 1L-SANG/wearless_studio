@@ -97,3 +97,10 @@ test('the mannequin CTA cannot mistake a failed storyboard fetch for zero AI cut
   // 미확정일 땐 기존 관용구(em dash)로 표시 — 계산된 숫자(특히 0)를 보여주지 않는다.
   assert.match(mannequinSource, /aiCutCount == null \? '—' : aiCutCount \* /);
 });
+
+test('the storyboard fires mannequin generation as it loads', () => {
+  assert.match(storyboardSource, /import \{ requestMannequinGeneration \} from '@\/features\/mannequin\/generationRunner\.js'/);
+  // 발사는 보드 로드를 막지 않는다 — await 하면 병렬화가 사라진다.
+  assert.match(storyboardSource, /void requestMannequinGeneration\(pid\)\.catch\(\(\) => \{\}\)/);
+  assert.doesNotMatch(storyboardSource, /await requestMannequinGeneration/);
+});
