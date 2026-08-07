@@ -947,6 +947,42 @@ def test_render_product_detail_is_grounded_and_has_no_person_lines():
     assert "Face handling" not in p
 
 
+# ---------- 디테일 컷 2모드 (2026-08-07 스펙 §5: 정밀 / 구조 확대) ----------
+
+
+def test_detail_cut_back_uses_backdetail_label_gate():
+    # 매니페스트에 BackDetail 라벨이 있으면 정밀 모드 문구가 실린다
+    manifest = f"1. {cut._SLOT_LABEL['Back']}\n2. {cut._SLOT_LABEL['BackDetail']}"
+    p = _render({"cutType": "product", "shot": "detail", "direction": "back"},
+                manifest=manifest)
+    assert "detail close-up reference" in p          # SHOT:detail 정밀 모드
+    assert "structural element" not in p             # 구조 모드 아님
+    assert "Show the back side" in p                 # DIR:back_product 방향 지시
+
+
+def test_detail_cut_back_falls_to_zoom_mode_with_back_original_only():
+    manifest = f"1. {cut._SLOT_LABEL['Front']}\n2. {cut._SLOT_LABEL['Back']}"
+    p = _render({"cutType": "product", "shot": "detail", "direction": "back"},
+                manifest=manifest)
+    assert "structural element" in p                 # SHOT:detail_zoom
+    assert "do NOT invent" in p
+
+
+def test_detail_cut_back_fails_without_back_side_evidence():
+    # 앞면 디테일만 있어도 뒷면 컷 근거가 아니다 — 스펙 §5 금지열
+    manifest = f"1. {cut._SLOT_LABEL['Front']}\n2. {cut._SLOT_LABEL['Detail']}"
+    with pytest.raises(ValueError, match="detail_reference_required"):
+        _render({"cutType": "product", "shot": "detail", "direction": "back"},
+                manifest=manifest)
+
+
+def test_detail_cut_front_zoom_mode_with_front_original_only():
+    manifest = f"1. {cut._SLOT_LABEL['Front']}"
+    p = _render({"cutType": "product", "shot": "detail"}, manifest=manifest)
+    assert "structural element" in p
+    assert "fine fabric weave" in p                  # 저해상 확대 금지 지시
+
+
 # ---------- 슬롯 계약 (2026-08-07 개편: Fit 폐기 · BackDetail 신설) ----------
 
 

@@ -562,10 +562,20 @@ def render_cut_prompt(
     """
     sec = _sections(template)
     cut, shot = spec["cutType"], spec["shot"]
-    if cut == "product" and shot == "detail" and _SLOT_LABEL["Detail"] not in image_manifest:
-        # 메타데이터에 Detail 슬롯이 있어도 실제 자산 로드가 실패하면 manifest에
-        # 이 라벨이 없다. 멀리 찍은 사진만으로 세부를 지어내지 않고 해당 컷만 실패시킨다.
-        raise ValueError("detail_reference_required")
+    # 디테일 컷 2모드 판정(2026-08-07 스펙 §5) — 근거는 컷 방향과 같은 쪽만 인정한다.
+    # 방향 디테일 라벨 有 → 정밀 모드(SHOT:detail). 없고 같은 방향 원본 라벨만 有 →
+    # 구조 확대 모드(SHOT:detail_zoom — 원본에서 확인되는 구조 요소만 확대, 원단 조직 발명 금지).
+    # 둘 다 없으면 자산 로드가 통째로 실패한 것 — 지어내지 않고 해당 컷만 실패시킨다.
+    detail_mode_zoom = False
+    if cut == "product" and shot == "detail":
+        _detail_label = _SLOT_LABEL["BackDetail" if spec["direction"] == "back" else "Detail"]
+        _original_label = _SLOT_LABEL["Back" if spec["direction"] == "back" else "Front"]
+        if _detail_label in image_manifest:
+            pass
+        elif _original_label in image_manifest:
+            detail_mode_zoom = True
+        else:
+            raise ValueError("detail_reference_required")
     is_bottom = _is_bottom(clothing_type)
     # identity pair(가상/실존 모델)와 FaceMarket 라이선스 얼굴은 모두
     # 매니페스트에 실제 라벨이 있을 때만 지시한다. has_face 불리언만 믿으면
@@ -590,7 +600,7 @@ def render_cut_prompt(
             raise ValueError(f"프롬프트 템플릿에 섹션이 없습니다: [[{key}]]")
         return sec[key]
 
-    shot_key = shot
+    shot_key = "detail_zoom" if detail_mode_zoom else shot
     if cut == "mirror":
         face_line = need("FACE:hide_mirror") if spec["faceExposure"] != "show" else need("FACE:show")
         direction_line = ""
@@ -1080,7 +1090,8 @@ def build_prompt(
         spec = {**spec, "shot": "full"}
     if manifest is None:
         if spec["cutType"] == "product" and spec["shot"] == "detail":
-            selected_images, transfer = detail_reference_images(product, spec["colorId"])
+            selected_images, transfer = detail_reference_images(
+                product, spec["colorId"], direction=spec["direction"])
             spec["_detailColorTransfer"] = transfer
         else:
             selected_images = color_images(product, spec["colorId"])

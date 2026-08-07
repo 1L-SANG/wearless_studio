@@ -34,13 +34,24 @@ def test_build_prompt_manifest_fallback_no_images():
     assert "product photos" in p.lower()
 
 
-def test_build_prompt_product_detail_requires_detail_slot_across_all_colors():
+def test_build_prompt_product_detail_falls_back_to_original_zoom_mode():
+    # 2026-08-07 개편: 디테일 사진이 없어도 같은 방향 원본이 있으면 구조 확대 모드로 생성한다.
     product = {"name": "니트", "colors": [
         {"id": "base", "isBase": True, "images": [{"slot": "Front", "id": "a1"}]},
         {"id": "other", "images": [{"slot": "Back", "id": "a2"}]},
     ]}
+    prompt = cg.build_prompt({"cutType": "product", "shot": "detail"}, product)
+    assert "structural element" in prompt            # SHOT:detail_zoom
+
+
+def test_build_prompt_product_detail_requires_same_side_evidence():
+    # 방향 근거(같은 쪽 디테일도 원본도)가 전무하면 그 컷만 실패한다 — 지어내지 않는다.
+    product = {"name": "니트", "colors": [
+        {"id": "base", "isBase": True, "images": [{"slot": "Front", "id": "a1"}]},
+    ]}
     with pytest.raises(ValueError, match="detail_reference_required"):
-        cg.build_prompt({"cutType": "product", "shot": "detail"}, product)
+        cg.build_prompt(
+            {"cutType": "product", "shot": "detail", "direction": "back"}, product)
 
 
 def test_build_prompt_product_detail_uses_detail_slot():

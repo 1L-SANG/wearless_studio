@@ -109,9 +109,15 @@ For tops, outerwear and dresses, give this medium shot its own camera setup — 
 than a full-body setup, lens slightly higher (around upper-chest height) — so it reads as a
 purpose-shot garment cut, not a crop of a wider photo
 [[SHOT:ghost]]no visible person; show the complete garment. Default presentation: ghost-mannequin volume, preserving a worn three-dimensional shape. If an EXAMPLE REFERENCE is attached and shows a laid-flat, top-down presentation, follow that example's presentation and framing instead. Garment truth still comes only from PRODUCT references; never copy clothing, shoes, accessories, logos, or branding from the example
-[[SHOT:detail]]a tight product-only close-up of ONE clearly visible detail from the attached PRODUCT
-image labeled "detail close-up" (fabric surface, stitching, pocket, or real closure). Reproduce only
-what that reference visibly proves; never invent lining, hardware, seams, texture, or hidden construction
+[[SHOT:detail]]a tight product-only close-up of ONE clearly visible detail from the attached
+PRODUCT detail close-up reference (fabric surface, stitching, pocket, or real closure).
+Reproduce only what that reference visibly proves; never invent lining, hardware, seams,
+texture, or hidden construction
+[[SHOT:detail_zoom]]a tight product-only close-up of ONE structural element clearly visible in
+the attached full-garment PRODUCT reference for the requested side (collar, placket buttons,
+pocket, hem, or a visible seam line). Zoom into that element only. At this reference resolution
+fine fabric weave, embroidery threads and small prints cannot be verified — do NOT invent or
+sharpen them; pick an element whose shape the reference clearly proves
 
 [[DETAIL_COLOR_TRANSFER]]DETAIL COLORWAY TRANSFER — REQUIRED EXCEPTION TO GARMENT COLOR FIDELITY:
 - The attached PRODUCT detail close-up is from a different colorway (${referenceColor}); use it only as

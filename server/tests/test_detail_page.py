@@ -304,14 +304,18 @@ def test_production_space_set_scene_qc_outage_fails_cut_closed(monkeypatch):
 
 
 def test_gen_cuts_detail_requires_loaded_detail_manifest(monkeypatch):
-    """상품 메타데이터가 아니라 워커가 실제 첨부한 Detail 자산으로 게이트한다."""
+    """상품 메타데이터가 아니라 워커가 실제 첨부한 자산으로 게이트한다.
+
+    2026-08-07 개편: 같은 방향 원본이 있으면 구조 확대 모드로 생성하므로,
+    게이트가 막는 경우는 '컷 방향 근거(디테일도 원본도)가 전무'할 때다 —
+    뒷면 디테일 컷에 앞면 자산만 로드된 상황으로 검증한다."""
     async def fake_emit(pool, job_id, et, payload):
         return None
 
     monkeypatch.setattr(dpj, "_emit", fake_emit)
     app = _app(_settings())
     app.state.gemini = _RecordingGemini()
-    spec = {"id": "detail-1", "cutType": "product", "shot": "detail"}
+    spec = {"id": "detail-1", "cutType": "product", "shot": "detail", "direction": "back"}
     images = [dpj.InlineImage("image/png", b"front")]
     manifest = dpj.cut_generator.build_manifest(
         [{"slot": "Front"}], has_mannequin=False, has_match=False, mood_count=0)
