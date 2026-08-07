@@ -220,10 +220,10 @@ function RootRedirect() {
     sessionStorage.removeItem('wl_postLogin');
     let alive = true;
     (async () => {
-      const wantsMannequin = target === '/create/mannequin';
-      if (!session) { setDest(wantsMannequin ? '/create/input' : target); setPhase('done'); return; }
+      const wantsStoryboard = target === '/create/storyboard';
+      if (!session) { setDest(wantsStoryboard ? '/create/input' : target); setPhase('done'); return; }
       const mode = import.meta.env.VITE_API_MODE ?? 'mock';
-      if (!(wantsMannequin && mode === 'http' && hasPendingDraft())) {
+      if (!(wantsStoryboard && mode === 'http' && hasPendingDraft())) {
         setDest(target); setPhase('done'); return;
       }
       setPhase('syncing');
@@ -234,9 +234,9 @@ function RootRedirect() {
         const { projectId } = await Promise.race([syncDraftToBackend(draft), timeout]);
         if (!alive) return;
         // 같은 이유로 재생성 신호를 보존 — 로그인 복귀 draft sync 도 동일한 '신원 획득' 경로.
-        useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });   // 마네킹이 이 project 로 진행(+영속)
+        useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });   // 콘티가 이 project 로 진행(+영속)
         await clearDraft().catch(() => {});
-        setDest('/create/mannequin'); setPhase('done');
+        setDest('/create/storyboard'); setPhase('done');
       } catch {
         if (!alive) return;
         setDest('/create/input'); setPhase('done');   // 실패/지연 — draft 복원 + 재시도(입력에서)

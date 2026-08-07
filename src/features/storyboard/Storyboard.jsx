@@ -2658,15 +2658,15 @@ export function Storyboard() {
   const onComposeModeError = () => {
     toast.push('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.');
   };
-  const generate = async () => {
+  const goToMannequin = async () => {
     // 방어: UI disabled 와 별개로 함수 자체도 게이트 — 다른 호출 경로가 생겨도 미설정 블록 생성 불가
     if (blocks.length === 0) return;
     if (blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType))) { toast.push('생성 설정을 준비하지 못한 이미지가 있어요'); return; }
-    // 생성 입력은 서버가 저장된 콘티에서 읽는다 — CTA 에서 반드시 저장 (frontend_state_model §5).
+    // 생성 입력은 서버가 저장된 콘티에서 읽는다 — 다음 단계로 넘기기 전에 반드시 저장.
     // 같은 직렬 체인 경유: 비행 중 자동저장 뒤에 줄서서 최신 스냅샷이 마지막에 반영됨을 보장.
     // 실패는 throw 로 전파돼 기존처럼 네비게이션이 중단된다.
     await saveNow(projectId);
-    navigate('/create/generating');
+    navigate('/create/mannequin');
   };
   return (
     <div className={`wizard wide sb-page sb-content-enter${atomicSaving ? ' is-atomic-saving' : ''}`}
@@ -2709,18 +2709,21 @@ export function Storyboard() {
       {/* document-flow bottom action bar */}
       <div className="sb-actionbar">
         <div className="sb-ab-inner">
-          <button className="btn btn-ghost" onClick={() => navigate('/create/mannequin')}><Icon name="arrowLeft" size={17} />이전</button>
-          <div className="sb-ab-count">AI 생성 {aiCount}컷 · 셀러 사진 {mineCount}컷</div>
+          <button className="btn btn-ghost" onClick={() => navigate('/create/input')}><Icon name="arrowLeft" size={17} />이전</button>
+          <div className="sb-ab-count">
+            AI 생성 {aiCount}컷 · 셀러 사진 {mineCount}컷
+            <span className="sb-ab-cost"> · 생성 시 {aiCount * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧</span>
+          </div>
           <div className="sb-ab-copy">
             <Toggle on={copyOn} onChange={setCopyOn} />
             <div><div className="sec-title" style={{ fontSize: 14 }}>카피라이팅 {copyOn ? 'ON' : 'OFF'}</div>
               <div className="hint" style={{ marginTop: 1 }}>AI가 카피를 자동으로 넣어요</div></div>
           </div>
-          <button className="btn btn-primary btn-lg sb-ab-go btn-glowring" onClick={generate}
+          <button className="btn btn-primary btn-lg sb-ab-go btn-glowring" onClick={goToMannequin}
             disabled={blocks.length === 0 || blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType))}
             title={blocks.length === 0 ? '컷을 1개 이상 구성해주세요'
               : blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType)) ? '생성 설정을 준비하지 못한 이미지가 있어요' : undefined}>
-            <Icon name="sparkles" size={18} />상세페이지 생성하기 <Icon name="arrowRight" size={17} /> {aiCount * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧
+            다음 · 마네킹컷 확인하기 <Icon name="arrowRight" size={17} />
           </button>
         </div>
       </div>

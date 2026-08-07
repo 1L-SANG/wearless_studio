@@ -289,7 +289,7 @@ export function ProductInput() {
   }, [analysisProjectId, phase]);
   // force: 경고 모달에서 '계속 진행'을 누른 경로. setState 는 비동기라 ack 상태를 기다릴 수
   // 없어 인자로 넘긴다. onNext 콜백이 이벤트 객체를 넘겨도 force 는 undefined 라 안전하다.
-  const goToMannequin = async (opts) => {
+  const goToStoryboard = async (opts) => {
     const force = opts?.force === true;   // null·이벤트 객체로 불려도 안전하게
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
     // 다른 옷이 섞였을 수 있다는 경고 — 생성에 들어가기 직전 한 번만. 확인하면 그대로 진행한다
@@ -314,7 +314,7 @@ export function ProductInput() {
       }
       if (analysisSaveErrorRef.current) throw analysisSaveErrorRef.current;
       if (session && analysisProjectId) {
-        navigate('/create/mannequin');
+        navigate('/create/storyboard');
         return;
       }
       const { failed } = await saveProductDraft(product, analysis);
@@ -328,10 +328,10 @@ export function ProductInput() {
         useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
         setAnalysisProjectId(projectId);
         await clearDraft().catch(() => {});
-        navigate('/create/mannequin');
+        navigate('/create/storyboard');
         return;
       }
-      openLogin('/create/mannequin');
+      openLogin('/create/storyboard');
     } catch (error) {
       toast.push(error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     } finally {
@@ -572,7 +572,7 @@ export function ProductInput() {
             <Button variant="ghost" onClick={() => {
               setConsistencyAck(true);
               setConsistencyOpen(false);
-              goToMannequin({ force: true });
+              goToStoryboard({ force: true });
             }}>이대로 진행</Button>
             {/* 사진을 고치러 가는 쪽이 기본 행동 — 분석 결과는 그대로 두고 입력만 펼친다 */}
             <Button variant="primary" onClick={() => {
@@ -671,7 +671,7 @@ export function ProductInput() {
                   toast.push(error?.message || '분석 수정 내용을 저장하지 못했어요.', { icon: 'alertTri' });
                 });
             }}
-            onNext={goToMannequin} />
+            onNext={goToStoryboard} />
         </div>
       )}
     </div>

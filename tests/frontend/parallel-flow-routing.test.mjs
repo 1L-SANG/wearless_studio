@@ -9,6 +9,8 @@ const productInputSource = read('../../src/features/product-input/ProductInput.j
 const storeSource = read('../../src/store/useAppStore.js');
 const appSource = read('../../src/App.jsx');
 const librarySource = read('../../src/features/library/Library.jsx');
+const storyboardSource = read('../../src/features/storyboard/Storyboard.jsx');
+const shellSource = read('../../src/features/shell/shell.jsx');
 
 test('the regeneration signal travels in the store, not in router state', () => {
   // 입력 → 콘티 → 마네킹 사이에 화면이 하나 끼면 route state 는 증발한다.
@@ -42,4 +44,33 @@ test('adoptProject preserves the dirty flag only when acquiring identity for the
   // 계속 초기화해야 한다 — 그렇지 않으면 무관한 project 로 신호가 샌다.
   assert.match(librarySource, /adoptProject\(it\.id\)/);
   assert.doesNotMatch(librarySource, /preserveGenerationDirty/);
+});
+
+test('the input CTA now opens the storyboard', () => {
+  assert.match(productInputSource, /const goToStoryboard = async \(opts\) =>/);
+  assert.doesNotMatch(productInputSource, /navigate\('\/create\/mannequin'/);
+  assert.match(productInputSource, /openLogin\('\/create\/storyboard'\)/);
+});
+
+test('login return lands on the storyboard', () => {
+  assert.match(appSource, /const wantsStoryboard = target === '\/create\/storyboard'/);
+  assert.match(appSource, /setDest\('\/create\/storyboard'\)/);
+});
+
+test('the storyboard hands off to the mannequin, and back to input', () => {
+  assert.match(storyboardSource, /const goToMannequin = async \(\) => \{/);
+  assert.match(storyboardSource, /await saveNow\(projectId\);\s*\n\s*navigate\('\/create\/mannequin'\)/);
+  assert.match(storyboardSource, /이전<\/button>/);
+  assert.match(storyboardSource, /navigate\('\/create\/input'\)/);
+  assert.doesNotMatch(storyboardSource, /navigate\('\/create\/generating'\)/);
+});
+
+test('the mannequin is the last stop before generation', () => {
+  assert.match(mannequinSource, /navigate\('\/create\/generating'\)/);
+  assert.doesNotMatch(mannequinSource, /navigate\('\/create\/storyboard'\)/);
+});
+
+test('a running job no longer yanks the user onto the mannequin screen', () => {
+  assert.doesNotMatch(shellSource, /mannequinJob\?\.status === 'running'/);
+  assert.match(shellSource, /resumePath \|\| '\/create\/storyboard'/);
 });
