@@ -114,18 +114,13 @@ function realWearBlock(colorId, gender, clothingType) {
   );
 }
 
-/* internal.legacyDetailGhostFallback — 2026-08-07 개편 전 규칙 재현 전용(지문 비교):
-   디테일 사진이 없으면 디테일 블록 대신 ghost 블록을 시드하던 옛 기본 구성. 새 시드에는 쓰지 않는다. */
-export function defaultStoryboard(colors, mode = 'basic', context = {}, internal = {}) {
+export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   if (mode !== 'basic' && mode !== 'extended') throw new Error('invalid_compose_mode');
   const list = Array.isArray(colors) && colors.length ? colors : [{ id: 'col1', isBase: true }];
   const base = (list.find((c) => c.isBase) || list[0]).id;
   // 기본 구성 디테일 블록은 앞면 방향 — 앞면 디테일(Detail) 보유 색을 우선, 없으면 기준색
   // (서버가 원본 구조 확대로 폴백, 2026-08-07 개편).
   const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
-  // 레거시 재현: 옛 규칙은 디테일 사진이 없으면 디테일 블록을 시드하지 않았다.
-  const legacyGhostInsteadOfDetail = !!internal.legacyDetailGhostFallback
-    && !list.some((color) => (color.images || []).some((image) => image.slot === 'Detail'));
   const clothingType = context.clothingType || 'top';
   // 서버(select_base_gender)와 동일 의미론: 남성 단독일 때만 men, 혼합·미상은 women.
   const gender = genderForClothingType(clothingType, context.targetGenders);
@@ -176,15 +171,10 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}, internal
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base),
     );
-    blocks.push(...(legacyGhostInsteadOfDetail
-      ? [
-        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
-        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base),
-      ]
-      : [
-        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
-        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
-      ]));
+    blocks.push(
+      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
+      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
+    );
   } else {
     blocks.push(realWearBlock(base, gender, clothingType));
     blocks.push(...(rotationSet
@@ -203,9 +193,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}, internal
         color.id,
       ));
     }
-    blocks.push(legacyGhostInsteadOfDetail
-      ? sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base)
-      : sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor));
+    blocks.push(sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor));
   }
   return ensureSections(blocks);
 }
@@ -255,13 +243,10 @@ export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
   if (blocks.some((block) => block.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION)) return false;
   const seeded = defaultStoryboard(colors, mode, product);
   const fingerprint = storyboardTemplateFingerprint(blocks);
-  if (fingerprint === storyboardTemplateFingerprint(seeded)
-    || fingerprint === storyboardTemplateFingerprint(applyOpeningRow(seeded))) return true;
-  // 2026-08-07 개편 전에 시드된 무수정 기본 콘티(디테일 없음→ghost 대체 규칙)도 기본값으로
-  // 인정한다 — 이걸 빼면 기존 프로젝트가 사진 양을 바꿔도 옛 콘티가 그대로 남는다.
-  const legacySeeded = defaultStoryboard(colors, mode, product, { legacyDetailGhostFallback: true });
-  return fingerprint === storyboardTemplateFingerprint(legacySeeded)
-    || fingerprint === storyboardTemplateFingerprint(applyOpeningRow(legacySeeded));
+  // 2026-08-07 개편 전 기본 시드(디테일 없음→ghost 대체)는 지문이 어긋나 "편집본"으로
+  // 남는다 — 기존 프로젝트가 전부 테스트용이라 마이그레이션하지 않기로 함(오너 결정).
+  return fingerprint === storyboardTemplateFingerprint(seeded)
+    || fingerprint === storyboardTemplateFingerprint(applyOpeningRow(seeded));
 }
 
 // analyzeProduct 의 shape 뼈대 — AnalysisForm 이 무가드로 읽는 필드 전부 포함(계약 §6).

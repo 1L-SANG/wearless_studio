@@ -341,6 +341,12 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const selectExample = (value) => {
     setExampleId(value);
     if (!value) setRefScope('all');
+    // 디테일 컷의 방향은 예시에 내재 — 뒷면 디테일 예시를 고르면 back 을 내부 전송해
+    // 서버가 BackDetail 사진을 근거로 쓴다(2026-08-07 오너 결정).
+    if (isDetail) {
+      const example = (catalogs.genExamples || []).find((item) => item.id === value);
+      setDir(example?.direction === 'back' ? 'back' : 'front');
+    }
   };
   return (
     <div>
@@ -362,8 +368,8 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
-          {/* 디테일 컷도 방향 선택 — 뒷면 디테일 사진(BackDetail)을 근거로 쓰려면 back 을 보내야 한다 */}
-          {!isMirror && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
+          {/* 디테일 컷은 방향 UI 없음 — 선택한 생성예시의 direction 라벨이 내부 결정 (selectExample) */}
+          {!isMirror && !isDetail && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
 
           <div className="insp-divider" />
 

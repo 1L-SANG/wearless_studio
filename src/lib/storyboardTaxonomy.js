@@ -207,18 +207,12 @@ export function blockPatchForContentRole(block, role, { clothingType = 'top' } =
     };
   }
   const worn = template.cutType === 'styling' || template.cutType === 'horizon' || template.cutType === 'mirror';
-  // 새 목적에서도 유효한 기존 방향은 보존한다 — 뒷면 전체 컷을 디테일로 바꾸면 뒷면 디테일이
-  // 되는 게 자연스럽다(normalizedRecipePatch 의 보존 원칙과 동일, 2026-08-07 개편).
-  const validDirections = template.cutType === 'product' ? PRODUCT_DIRECTIONS
-    : (template.cutType === 'styling' || template.cutType === 'horizon') ? WORN_DIRECTIONS : null;
-  const keptDirection = block && validDirections?.has(block.direction)
-    ? block.direction : template.direction;
   return {
     source: 'ai',
     contentRole: template.value,
     title: template.label,
     cutType: template.cutType,
-    direction: keptDirection,
+    direction: template.direction,
     shot: template.shot,
     faceExposure: template.faceExposure,
     pose: 'auto',

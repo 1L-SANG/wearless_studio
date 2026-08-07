@@ -207,6 +207,9 @@ export function assignGenerationExamples(blocks, { catalog, product, gender, onl
       refScope: block.spaceGroupId ? 'pose' : 'all',
       baseThumb: block.baseThumb ?? block.thumb ?? null,
       thumb: example.thumb,
+      // 디테일 컷 방향은 예시 라벨이 내부 결정(미기재=front) — 자동 배정도 동일 규칙
+      ...(block.cutType === 'product' && block.shot === 'detail'
+        ? { direction: example.direction === 'back' ? 'back' : 'front' } : {}),
     };
   });
   return { blocks: changed ? next : blocks, changed, assignedIds, protectedIds, missingIds };
