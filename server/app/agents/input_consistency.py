@@ -28,11 +28,12 @@ _SLOT_NOTE = {
     "Front": "front view of the garment",
     "Back": "BACK view — it is normal for this to look different from the front: "
             "no front print, no buttons or zip, a different neckline shape",
-    "Detail": "DETAIL close-up at a much higher magnification — it may show only a "
-              "small part such as a care label, a button, a zip, or the cuff, and may "
-              "not show the garment's overall shape at all",
-    "Fit": "worn-fit photo — a person is wearing the garment, so skin, hair, background "
-           "and folds are expected, and the colour may shift under different lighting",
+    "Detail": "front-side DETAIL close-up at a much higher magnification — it may show "
+              "only a small part such as a care label, a button, a zip, or the cuff, and "
+              "may not show the garment's overall shape at all",
+    "BackDetail": "back-side DETAIL close-up at a much higher magnification — it may show "
+                  "only a small back-side part such as a back neck label, a yoke seam, or "
+                  "a back pocket, and it is normal that no front feature is visible",
 }
 
 # 1:1 비교는 판정 하나에 사진 2장뿐이라 medium 을 써도 콜당 비용·지연이 작다. low 에서는

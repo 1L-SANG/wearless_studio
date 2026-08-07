@@ -111,9 +111,9 @@ ANALYSIS_PROMPT_VERSION=v1
 | 항목 | 소스 | 규칙 |
 |---|---|---|
 | 상품명 | `products.name` | 있으면 PRODUCT CONTEXT 블록으로 전달(§4.2). sanitize(개행·제어문자 제거, ≤200자) — 마네킹 `_sanitize` 재사용. |
-| 기준 색상 이미지 | `colors[isBase].images` | **전 슬롯**, slot 순서(Front→Back→Detail→Fit). `ImageAsset.id` = assets row id → R2 bytes 로드. |
+| 기준 색상 이미지 | `colors[isBase].images` | **전 슬롯**, slot 순서(Front→Back→Detail→BackDetail). `ImageAsset.id` = assets row id → R2 bytes 로드. |
 | 추가 색상 이미지 | `colors[!isBase].images` | 그룹당 전부(slot은 'Front' 고정 — 계약 §3.1). swatchSuggestions 판단용. |
-| 이미지 매니페스트 | 워커 생성 | 첨부 순서와 1:1. 라벨은 **고정 문자열 룩업만** 사용(셀러 데이터 미삽입 — 인젝션 방지, 마네킹 `_build_manifest` 원칙). colorGroupId는 sanitize 후 포함. **slot 토큰은 화이트리스트(AngleSlot 4종) 강제 — 밖이면 Front로 정규화**: colors jsonb는 클라 패스스루라 slot도 클라 제어 값이고, 매니페스트에 원문 삽입되므로 인젝션 벡터다 (Codex 지적 2026-07-03). |
+| 이미지 매니페스트 | 워커 생성 | 첨부 순서와 1:1. 라벨은 **고정 문자열 룩업만** 사용(셀러 데이터 미삽입 — 인젝션 방지, 마네킹 `_build_manifest` 원칙). colorGroupId는 sanitize 후 포함. **slot 토큰은 화이트리스트(AngleSlot 4종: Front/Back/Detail/BackDetail) 강제 — 라벨 룩업 미스는 고정 일반 문구(`product view`)로 폴백(원문 미삽입)**: colors jsonb는 클라 패스스루라 slot도 클라 제어 값이고, 매니페스트에 원문 삽입되므로 인젝션 벡터다 (Codex 지적 2026-07-03). |
 
 매니페스트 포맷 (첨부 이미지 순서와 정확히 일치):
 
@@ -124,7 +124,7 @@ IMAGE MANIFEST (the attached images follow in this exact order):
 3. [additional color group id=col_c3d4 | Front] front view — alternate colorway of the same garment
 ```
 
-슬롯 라벨 룩업(고정): Front=`front view of the garment` · Back=`back view of the garment` · Detail=`detail close-up of the garment (texture, stitching, trims, print)` · Fit=`fit reference — the garment worn on a real person (true length & how it sits)`.
+슬롯 라벨 룩업(고정, 2026-08-07 개편): Front=`front view` · Back=`back view` · Detail=`front-side DETAIL close-up — inspect this one hardest (texture, stitching, trims, prints)` · BackDetail=`back-side DETAIL close-up — a back-only feature (back neck, yoke, back pocket); never attribute it to the front`.
 
 ### 3.2 AG-01 raw 출력 — JSON Schema (구조화 강제)
 
