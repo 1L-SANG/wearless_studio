@@ -55,6 +55,7 @@ from ..services.hybrid_composite import (
     carrier_preflight as hc_preflight,
     scale_anchor as hc_scale,
     protected_components as hc_protected,
+    source_texture_context as hc_source_ctx,
 )
 from ..services.hybrid_composite.types import (
     PIPELINE_VERSION as HC_PIPELINE_VERSION,
@@ -1509,6 +1510,7 @@ async def _apply_hybrid_composite(
     *, pool, s, job_id, candidate, attempt, res, prod_refs, product, analysis,
     has_fine_pattern, product_truth=None, carrier_preflight_observation=None,
     carrier_preflight_meta=None, matching_expected=False,
+    source_texture_cache=None,
 ):
     """deterministic hybrid stripe composite. → (선택 결과, hybrid 요약 dict|None).
 
@@ -1527,6 +1529,12 @@ async def _apply_hybrid_composite(
         # 전역 fine-pattern 의미를 넓히지 않는다. 승인된 regular stripe만 이 별도
         # projection 적격성으로 들어오며 SOLID/UNKNOWN은 기존처럼 건너뛴다.
         return res, None
+
+    # The production worker owns one cache for the whole run. A missing cache means
+    # a caller outside that path (a direct unit test); give it a private one so the
+    # old per-call behaviour still holds there rather than crashing.
+    if source_texture_cache is None:
+        source_texture_cache = hc_source_ctx.SourceTextureContextCache()
 
     async def emit(status, **payload):
         await _emit(pool, job_id, "step", {
@@ -1720,16 +1728,38 @@ async def _apply_hybrid_composite(
     await emit("hybrid_stripe_model", ok=True, source_slot=model_ref.slot, **model.summary())
 
     # Stage 3 준비 — source/carrier 기하 (vision 은 좌표만, 판정은 코드)
+    # The source half of this pair is a property of the product photo, not of the
+    # carrier, but it used to be re-read for every candidate and attempt. Two Vision
+    # calls on the same photo disagree enough to move the source torso ROI, and the
+    # ROI moves the measured stripe period — production logged 30.0px for candidate A
+    # and 15.0px for candidate B from one source SHA. Read it once per run and hand
+    # the same answer to every candidate. The carrier half below is per candidate and
+    # stays exactly where it was.
+    async def _read_source_geometry():
+        try:
+            call_a = await hybrid_landmarks.extract_geometry(s, front_ref.image)
+            call_b = await hybrid_landmarks.extract_geometry(s, front_ref.image)
+        except Exception as exc:
+            return {"failure": f"기하 추출 실패: {type(exc).__name__}"}
+        merged, merge_err = hybrid_landmarks.merge_geometry_pair(
+            call_a, call_b, allow_source_jitter=True)
+        return {"call_a": call_a, "call_b": call_b, "merged": merged,
+                "merge_error": merge_err, "failure": None,
+                "source_sha256": front_sha_early}
+
+    src_geometry, src_geometry_reused = await source_texture_cache.get(
+        hc_source_ctx.SLOT_SOURCE_GEOMETRY, _read_source_geometry)
+    if src_geometry.get("failure"):
+        return await fail("panel_landmarks_invalid", src_geometry["failure"])
+    src_call_a, src_call_b = src_geometry["call_a"], src_geometry["call_b"]
+
     try:
         # 이중 호출 합의 — vision landmark 지터가 결과를 run 마다 굴리는 것을 실측으로
         # 확인(zero-cost 평가). 좌표는 평균, 불일치는 typed 실패.
         # 호출별 원시 응답을 따로 붙든다 — 병합·검증 단계에서 component box 가 사라져도
         # 어느 단계에서 사라졌는지 이벤트로 남길 수 있어야 한다(관측 없이는 "vision 미반환"
         # 과 "validator 제거" 가 구분되지 않아 실패를 진단할 수 없었다).
-        src_call_a = await hybrid_landmarks.extract_geometry(s, front_ref.image)
-        src_call_b = await hybrid_landmarks.extract_geometry(s, front_ref.image)
-        src_raw = hybrid_landmarks.merge_geometry_pair(
-            src_call_a, src_call_b, allow_source_jitter=True)
+        src_raw = (src_geometry["merged"], src_geometry["merge_error"])
         car_img = InlineImage(res.mime, res.image)
         car_call_a = await hybrid_landmarks.extract_geometry(s, car_img)
         car_call_b = await hybrid_landmarks.extract_geometry(s, car_img)
@@ -1768,6 +1798,14 @@ async def _apply_hybrid_composite(
     )
     # 정규화 → 픽셀. validate_geometry 는 0..1 을 돌려주고 warp_composite 는 픽셀을
     # 가정한다. source 와 carrier 는 크기가 다르므로 각자의 해상도로 따로 환산한다.
+    source_texture_cache.record_source(
+        source_sha256=front_sha_early, source_landmarks=src_lm,
+        source_inventory=src_inv,
+        source_component_boxes_norm=(src_inv or {}).get("component_boxes") or {},
+        pattern_model_slot=model_ref.slot, pattern_model_asset_id=model_ref.asset_id,
+        pattern_model_sha256=model_sha, pattern_model_roi=model_roi,
+        detail_validation_ok=(detail_validation is not None
+                              and not isinstance(detail_validation, CompositeFailure)))
     src_boxes_norm = (src_inv or {}).pop("component_boxes", {})
     car_boxes_norm = (car_inv or {}).pop("component_boxes", {})
     src_boxes = hybrid_landmarks.boxes_to_pixels(
@@ -1916,10 +1954,28 @@ async def _apply_hybrid_composite(
     # 스케일 앵커 = Front torso 에서의 **scan 재추출 + Detail 모델과의 구조 대조**.
     # guided 상관 탐색은 sub-line lag 에 잠겼다(실측: 15px/corr 0.54 vs scan 21px/4색 일치).
     # 두 사진에서 독립 추출한 모델의 색 수·폭 비가 일치하면 그 주기는 신뢰할 수 있다.
-    front_model = await asyncio.to_thread(
-        hc_stripe.extract_stripe_model_scan, torso_crop,
-        source_asset_id=front_ref.asset_id, source_sha256=front_sha_early,
-        source_roi=(fx0, fy0, fx1, fy1))
+    # Both readings below are functions of the source photo alone, and the ROI they
+    # use now comes from the run-level landmark reading, so every candidate would
+    # recompute the identical answer. Memoise the two expensive measurements; the
+    # branch that chooses between them is left exactly as it was, and still runs per
+    # candidate so its palette events keep their candidate/attempt scope.
+    async def _read_source_period():
+        scanned = await asyncio.to_thread(
+            hc_stripe.extract_stripe_model_scan, torso_crop,
+            source_asset_id=front_ref.asset_id, source_sha256=front_sha_early,
+            source_roi=(fx0, fy0, fx1, fy1))
+        scan_ok = (not isinstance(scanned, CompositeFailure)
+                   and scanned.confidence >= 0.5)
+        # the guided fallback is only measured when the scan cannot answer — the
+        # same condition the branch below uses, so this adds no work
+        guided = (None if scan_ok else
+                  await asyncio.to_thread(hc_stripe.find_period_guided, torso_crop, model))
+        return {"front_model": scanned, "guided_anchor": guided,
+                "source_torso_roi": (fx0, fy0, fx1, fy1)}
+
+    src_period, src_period_reused = await source_texture_cache.get(
+        hc_source_ctx.SLOT_SOURCE_PERIOD, _read_source_period)
+    front_model = src_period["front_model"]
     anchor_corr = None
     front_scan_ok = (not isinstance(front_model, CompositeFailure)
                      and front_model.confidence >= 0.5)
@@ -1966,7 +2022,7 @@ async def _apply_hybrid_composite(
                 await emit("hybrid_palette_source", chosen="detail_plus_front_ground_cast",
                            delta_a=round(float(delta[0]), 2), delta_b=round(float(delta[1]), 2))
     else:
-        anchor = await asyncio.to_thread(hc_stripe.find_period_guided, torso_crop, model)
+        anchor = src_period["guided_anchor"]
         if anchor is None:
             return await fail(
                 "stripe_model_low_confidence",
@@ -1976,6 +2032,14 @@ async def _apply_hybrid_composite(
         garment_axis, front_period_px, anchor_corr = anchor
     torso_span_src = hc_scale.torso_span((fx0, fy0, fx1, fy1), garment_axis=garment_axis)
     repeats_on_torso = torso_span_src / front_period_px
+    # Close the run-level record so every candidate can be checked against the same
+    # reading. Observation only — no decision below reads it.
+    source_texture_cache.record_period(
+        source_torso_roi=(fx0, fy0, fx1, fy1), garment_axis=garment_axis,
+        source_period_px=front_period_px,
+        source_period_source=(hc_source_ctx.PERIOD_FROM_FRONT_SCAN if front_scan_ok
+                              else hc_source_ctx.PERIOD_FROM_GUIDED),
+        source_model_confidence=anchor_corr, torso_span_px=torso_span_src)
     ch, cw = carrier_bgr.shape[:2]
     t_torso_span = hc_scale.carrier_torso_span(
         car_lm, width=cw, height=ch, garment_axis=garment_axis)
@@ -2609,6 +2673,7 @@ async def _run_candidate(
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
     parent_lineage=None, runlog=None, product_truth=None, pipeline_policy=None,
     anchor_baseline_id=None, anchor_baseline=None, anchor_baseline_img=None,
+    source_texture_cache=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None.
 
@@ -2952,7 +3017,8 @@ async def _run_candidate(
                     has_fine_pattern=has_fine_pattern, product_truth=product_truth,
                     carrier_preflight_observation=carrier_observation,
                     carrier_preflight_meta=carrier_observation_meta,
-                    matching_expected=match_img is not None)
+                    matching_expected=match_img is not None,
+                    source_texture_cache=source_texture_cache)
                 if (hybrid_info and hybrid_info.get("failClosed")
                         and hybrid_info.get("failureReason") == "carrier_preflight_rejected"):
                     if not carrier_retry_used and calls_spent < s.mannequin_max_attempts:
@@ -3219,7 +3285,8 @@ async def _run_candidate(
                 pool=pool, s=s, job_id=job_id, candidate=candidate,
                 attempt=s.mannequin_max_attempts, res=res, prod_refs=prod_refs,
                 product=product, analysis=analysis, has_fine_pattern=has_fine_pattern,
-                product_truth=product_truth)
+                product_truth=product_truth,
+                source_texture_cache=source_texture_cache)
             final_frame = ({**pre_frame, "phase": "final", "reusedPre": True}
                            if isinstance(pre_frame, dict) else None)
             frame_mode = _effective_frame_qc_mode(s)
@@ -3917,6 +3984,10 @@ async def run_mannequin_job(app, job: dict) -> None:
             user_id=user_id, enabled=(s.generation_run_log == "shadow"),
             truth_package_id=truth_package_id)
         anchor_fail = None
+        # One source reading for the whole run. The source garment does not change
+        # between candidate A and candidate B, so measuring it twice only gave the
+        # two candidates different answers about the same photo.
+        source_texture_cache = hc_source_ctx.SourceTextureContextCache()
 
         async def _cand(letter, base_fit, profile):
             nonlocal _done, hybrid_fail_closed_meta, anchor_fail
@@ -3934,7 +4005,8 @@ async def run_mannequin_job(app, job: dict) -> None:
                     pipeline_policy=pipeline_policy,
                     anchor_baseline_id=requested_anchor_baseline_id,
                     anchor_baseline=anchor_baseline,
-                    anchor_baseline_img=anchor_baseline_img)
+                    anchor_baseline_img=anchor_baseline_img,
+                    source_texture_cache=source_texture_cache)
             except _AnchorBaselineUnavailable as e:
                 anchor_fail = e
                 r = None
