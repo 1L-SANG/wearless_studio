@@ -206,26 +206,27 @@ export function Checklist({ items }) {
   );
 }
 
-/* anchorRect: 모달을 화면 중앙이 아니라 **누른 요소 바로 위**에 띄운다(DOMRect, viewport 기준).
+/* anchorRect: 모달을 화면 중앙이 아니라 **누른 요소 자리에 겹쳐** 띄운다(DOMRect, viewport 기준).
    아래로 스크롤해서 누른 버튼이 화면 아래쪽에 있는데 모달이 중앙/상단에 뜨면 시선이 튄다
    (2026-08-05 매칭 의류 업로드). 위 공간이 모자라면 아래로 뒤집고, 남는 높이만큼만 쓴다.
    glass: 프로스티드 판. */
 const ANCHOR_EDGE = 16;        // 화면 가장자리 최소 여백
-const ANCHOR_GAP = 10;         // 앵커 요소와의 간격
+const ANCHOR_GAP = 10;         // 아래로 뒤집힐 때 앵커 요소와의 간격
 const ANCHOR_MAX_H = 520;      // 모달 높이 상한
 const ANCHOR_WIDTH = 400;      // .modal.narrow 폭 — 좌측 클램프 계산용
 const ANCHOR_MIN_ABOVE = 260;  // 위가 이보다 좁으면 아래로 뒤집는다
 
-/* 앵커 요소(누른 타일) **바로 위에, 오른쪽 끝을 맞춰** 띄운다 — 화면 중앙 정렬을 쓰지 않는다.
-   중앙 정렬은 눌린 자리에서 멀고, 세로 중앙 정렬은 그리드를 덮어 가린다(2026-08-05 오너 스케치). */
+/* 모달의 **아래 끝을 앵커 타일의 아래 끝에 맞추고, 오른쪽 끝도 맞춘다** — 타일을 덮으면서
+   위로 펼쳐진다(오너 스케치: 매칭 의류 첫 줄에 오버레이). 타일 '위'에 띄우면 그리드보다
+   한참 높아서 시선이 뜬다는 피드백(2026-08-05)으로 위 여백 방식에서 이렇게 바꿨다. */
 function anchoredStyle(rect) {
   if (!rect || typeof window === 'undefined') return undefined;
   const maxH = Math.min(ANCHOR_MAX_H, window.innerHeight - ANCHOR_EDGE * 2);
   const style = { position: 'fixed', overflowY: 'auto' };
 
-  const spaceAbove = rect.top - ANCHOR_GAP - ANCHOR_EDGE;
+  const spaceAbove = rect.bottom - ANCHOR_EDGE;   // 화면 위 여백 ~ 타일 아래 끝
   if (spaceAbove >= ANCHOR_MIN_ABOVE) {
-    style.bottom = `${Math.round(window.innerHeight - rect.top + ANCHOR_GAP)}px`;
+    style.bottom = `${Math.round(window.innerHeight - rect.bottom)}px`;
     style.maxHeight = `${Math.round(Math.min(maxH, spaceAbove))}px`;
   } else {
     style.top = `${Math.round(rect.bottom + ANCHOR_GAP)}px`;
