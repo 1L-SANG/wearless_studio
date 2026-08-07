@@ -41,6 +41,7 @@ export function Generating() {
   const [blocked, setBlocked] = useState(null);   // 409 라이선스 차단 메시지(한국어) — 장면⑤
   const [receipt, setReceipt] = useState(null);   // 온체인 정산 영수증 — 장면③
   const [stillRunning, setStillRunning] = useState(false);  // 대기 상한 초과 — 서버는 계속 도는 중
+  const [checking, setChecking] = useState(false);          // '완성됐는지 확인하기' 진행 중
   const composition = ['후킹', '스타일링', '스튜디오', '의류 확인'];
 
   useEffect(() => {
@@ -118,6 +119,25 @@ export function Generating() {
     );
   }
 
+  // 완성 여부를 **서버에 물어본 뒤에만** 에디터로 보낸다. 아직이면 그 자리에 머문다.
+  // 미완성 프로젝트로 에디터에 들어가면 editor-blocks 가 빈 배열이고, 에디터의 자동 저장이
+  // 1.5초 뒤 그 빈 배열을 PUT 해버린다(`Editor.jsx` 의 blocks==null 가드는 [] 를 막지 못하고,
+  // 이탈 플러시도 [] 가 truthy 라 그대로 나간다). 그 사이 생성이 끝나면 만들어진 상세페이지가
+  // 지워진다. 기존에는 status==='done' 경로로만 에디터에 들어갔기에 없던 위험이다.
+  const checkDone = async () => {
+    if (checking || !pid) return;
+    setChecking(true);
+    try {
+      const project = await api.getProject(pid);
+      if (project?.status === 'done') { navigate(`/editor/${pid}`); return; }
+      toast.push('아직 만들고 있어요. 조금 뒤에 다시 확인해 주세요.', { icon: 'clock' });
+    } catch {
+      toast.push('상태를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'x' });
+    } finally {
+      setChecking(false);
+    }
+  };
+
   // 대기 상한 초과 — 실패 화면이 아니다. 서버는 계속 만들고 있고 결과도 저장된다.
   // "다시 시도" 버튼을 두지 않는 것은 의도다: 활성 잡이 있으면 서버가 같은 잡에 합류시키므로
   // 다시 눌러도 새로 만들어지지 않는다. 확인만 다시 하게 한다.
@@ -134,8 +154,8 @@ export function Generating() {
             지금 다시 눌러도 새로 만들어지지 않아요 — 만들고 있던 그 작업을 이어서 기다립니다.
             잠시 뒤 아래 버튼으로 확인해 주세요.
           </p>
-          <Button variant="primary" block onClick={() => navigate(`/editor/${pid}`)}>
-            완성됐는지 확인하기
+          <Button variant="primary" block disabled={checking} onClick={checkDone}>
+            {checking ? '확인하는 중이에요…' : '완성됐는지 확인하기'}
           </Button>
           <Button variant="ghost" block onClick={() => navigate('/create/storyboard', { replace: true })}>
             콘티로 돌아가기

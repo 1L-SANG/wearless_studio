@@ -62,3 +62,21 @@ test('대기 화면은 재시도 버튼을 두지 않는다 — 다시 눌러도
   assert.match(panel, /완성됐는지 확인하기/);
   assert.doesNotMatch(panel, /다시 시도|재시도|다시 생성/);
 });
+
+test('확인 버튼은 done 을 서버에 물어본 뒤에만 에디터로 보낸다', () => {
+  // 미완성 프로젝트로 에디터에 들어가면 editor-blocks 가 [] 이고, 에디터 자동 저장이
+  // 1.5초 뒤 그 [] 를 PUT 한다(blocks==null 가드는 [] 를 못 막고, 이탈 플러시도 [] 가
+  // truthy 라 나간다). 그 사이 생성이 끝나면 완성본이 지워진다.
+  const start = generating.indexOf('if (stillRunning)');
+  const panel = generating.slice(start, generating.indexOf('if (receipt)', start));
+  // 패널 안에서 에디터로 **직접** navigate 하면 안 된다.
+  assert.doesNotMatch(panel, /navigate\(`\/editor\//);
+
+  const checker = generating.slice(
+    generating.indexOf('const checkDone'),
+    generating.indexOf('if (stillRunning)'),
+  );
+  assert.match(checker, /await api\.getProject\(pid\)/);
+  assert.match(checker, /status === 'done'/);
+  assert.match(checker, /navigate\(`\/editor\/\$\{pid\}`\)/);
+});
