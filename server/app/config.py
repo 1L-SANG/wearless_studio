@@ -189,10 +189,28 @@ class Settings:
     fm_face_qc_threshold: float = 0.363  # OpenCV SFace 권장 코사인 동일인 기준선(캘리브 전 잠정)
     fm_face_qc_dir: str | None = None    # SFace/YuNet onnx 디렉터리. None이면 app/data/face_models
     # ---- 이미지 실비 계측(내부용) ----
-    # false 면 image_usage_events 적재를 끄고 로그만 남긴다(마이그레이션 적용 전 임시 대응).
-    image_usage_persist: bool = True
+    # false 면 image_usage_events 적재를 끄고 로그만 남긴다.
+    # **기본값은 app_env 가 정한다**(load_settings → _image_usage_persist): production 만 on.
+    # 개발자가 리포트용 운영 접속 문자열을 로컬 .env 의 DATABASE_URL 에 붙여넣는 실수가
+    # 실제로 가능한데, 그러면 로컬 실험 비용이 운영 원장에 섞여 리포트 총액이 조용히 부푼다
+    # (잡 단위 집계는 job_id is not null 로 걸러지지만 총액·모델별·일자별은 안 걸러진다).
+    # 로컬에서 일부러 쌓아 보려면 IMAGE_USAGE_PERSIST=true 로 명시적으로 켠다.
+    image_usage_persist: bool = False
     # 리포트의 원화 환산 기준. 회계용이 아니라 감각용 — 실제 청구는 달러다.
     image_usage_krw_per_usd: float = 1400.0
+
+
+def _image_usage_persist(app_env: str) -> bool:
+    """운영 원장에 쓰는 것은 운영 배포뿐. 다른 환경은 명시적으로 켜야 한다.
+
+    APP_ENV=production 은 copilot/api/manifest.yml 이 배포 컨테이너에만 넣는다. 로컬·CI 는
+    dev 라 기본 off 이고, 로컬 DB 에 일부러 쌓아 보고 싶으면 IMAGE_USAGE_PERSIST=true 로
+    켠다(끄는 것도 =false 로 명시 가능 — 환경변수가 있으면 그것이 언제나 우선).
+    """
+    raw = os.getenv("IMAGE_USAGE_PERSIST")
+    if raw is not None:
+        return raw.strip().lower() == "true"
+    return app_env == "production"
 
 
 def _bust_pass() -> str:
@@ -298,7 +316,7 @@ def load_settings() -> Settings:
         retrieval_refimages=_flag("RETRIEVAL_REFIMAGES", "off", {"off", "on"}),
         ref_images_topk=int(os.getenv("REF_IMAGES_TOPK", "2")),
         embed_image_model=os.getenv("EMBED_IMAGE_MODEL", "google/siglip-base-patch16-224"),
-        image_usage_persist=(os.getenv("IMAGE_USAGE_PERSIST", "true").lower() == "true"),
+        image_usage_persist=_image_usage_persist(app_env),
         image_usage_krw_per_usd=float(os.getenv("IMAGE_USAGE_KRW_PER_USD", "1400")),
         embed_image_dim=int(os.getenv("EMBED_IMAGE_DIM", "768")),
         embed_text_model=os.getenv("EMBED_TEXT_MODEL", "BAAI/bge-m3"),
