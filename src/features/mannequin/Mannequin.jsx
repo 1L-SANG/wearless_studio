@@ -27,13 +27,17 @@ import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.j
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
-  markInitialGenerationRequested,
 } from './initialGenerationSession.js';
 import {
   invalidateStoryboardEntryPrefetch,
   prefetchStoryboardEntry,
 } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import { sbSaveIdle } from '@/features/storyboard/storyboardPersistence.js';
+import {
+  generationProgressFor,
+  requestMannequinGeneration,
+  updateMannequinJob,
+} from './generationRunner.js';
 import './Mannequin.css';
 
 const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
@@ -186,49 +190,6 @@ function decodeCutImage(src) {
       );
     }
   });
-}
-
-let mannequinGenerationInflight = null;
-let mannequinGenerationProjectId = null;
-
-function updateMannequinJob(pid, patch) {
-  const { projectId, setMannequinJob } = useAppStore.getState();
-  if (projectId !== pid) return;
-  setMannequinJob({ projectId: pid, ...patch });
-}
-
-function generationProgressFor(pid) {
-  const job = useAppStore.getState().mannequinJob;
-  return job?.projectId === pid ? Number(job.progress) || 0 : 0;
-}
-
-function requestMannequinGeneration(pid) {
-  if (mannequinGenerationInflight && mannequinGenerationProjectId === pid) {
-    return mannequinGenerationInflight;
-  }
-
-  updateMannequinJob(pid, {
-    status: 'running',
-    progress: generationProgressFor(pid),
-    errorMessage: '',
-  });
-
-  mannequinGenerationProjectId = pid;
-  markInitialGenerationRequested(pid);
-  mannequinGenerationInflight = api.generateMannequins(pid, {
-    onProgress: (next) => updateMannequinJob(pid, {
-      status: 'running',
-      progress: next,
-      errorMessage: '',
-    }),
-  }).finally(() => {
-    if (mannequinGenerationProjectId === pid) {
-      mannequinGenerationInflight = null;
-      mannequinGenerationProjectId = null;
-    }
-  });
-
-  return mannequinGenerationInflight;
 }
 
 /* 대기 인포그래픽 — 의류가 주인공인 롱 시퀀스 (마네킹·퍼센트 없음, 방향서 §로딩 v2.2).
