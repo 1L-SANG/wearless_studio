@@ -846,36 +846,40 @@ def _color_prompt_meta(color: dict | None, fallback_name: str | None) -> tuple[s
 
 
 def detail_reference_images(
-    product: dict, color_id: str | None,
+    product: dict, color_id: str | None, direction: str = "front",
 ) -> tuple[list[tuple[str, str]], dict | None]:
     """디테일 컷의 상품 근거와 필요 시 타색→목표색 전환 정보를 고른다.
 
-    목표 색상에 Detail이 있으면 그 색상의 기존 이미지 목록을 그대로 쓴다. color_id가
-    None일 때만 기준색으로 폴백한다. 명시된 색상이 실존하지 않으면 타색 Detail로
-    생성하지 않도록 invalid_color로 실패한다. 목표 색상은 있으나 Detail만 없으면 목표 색상
-    일반 이미지는 유지하면서 기준색, 그 다음 전체 색상 순서로 첫 Detail을 덧붙인다.
+    컷 방향의 디테일 슬롯만 근거로 쓴다(2026-08-07 스펙 §5): front→Detail, back→BackDetail.
+    우선순위는 목표색 같은 방향 디테일 → 타색 같은 방향 디테일(색전환 메타 동반) →
+    목표색 원본만(구조 확대 모드 — 렌더 단계가 매니페스트로 판정). 반대 방향 디테일은
+    어느 단계에서도 첨부하지 않는다(백넥 자수를 앞가슴에 그리는 사고 차단).
+
+    color_id가 None일 때만 기준색으로 폴백한다. 명시된 색상이 실존하지 않으면 타색 디테일로
+    생성하지 않도록 invalid_color로 실패한다 — 기존 계약 유지.
     일반 컷의 :func:`color_images` 엄격 선택 규칙은 바꾸지 않는다.
     """
+    detail_slot = "BackDetail" if direction == "back" else "Detail"
     colors = product.get("colors") or []
     target_color = _color_by_id(colors, color_id)
     if color_id is not None and target_color is None:
         raise ValueError("invalid_color")
     target_images = _color_image_pairs(target_color)
-    if any(slot == "Detail" for slot, _asset_id in target_images):
+    if any(slot == detail_slot for slot, _asset_id in target_images):
         return target_images, None
 
     base = _base_color(colors)
     candidates = ([base] if base is not None else []) + [color for color in colors if color is not base]
     reference_color = next(
         (color for color in candidates
-         if any(slot == "Detail" for slot, _asset_id in _color_image_pairs(color))),
+         if any(slot == detail_slot for slot, _asset_id in _color_image_pairs(color))),
         None,
     )
     if reference_color is None:
         return target_images, None
 
     reference_details = [
-        pair for pair in _color_image_pairs(reference_color) if pair[0] == "Detail"
+        pair for pair in _color_image_pairs(reference_color) if pair[0] == detail_slot
     ]
     target_name, target_hex = _color_prompt_meta(
         target_color, None if color_id is None else str(color_id),

@@ -136,6 +136,65 @@ def test_detail_reference_images_prefers_base_then_first_detail_color():
     assert images == [("Front", "target-front"), ("Detail", "first-detail")]
 
 
+# ---------- detail_reference_images 방향 인지 (2026-08-07 스펙 §5 매트릭스) ----------
+
+
+def test_detail_refs_back_direction_prefers_same_color_backdetail():
+    p = {"colors": [{"id": "base", "isBase": True, "images": [
+        {"slot": "Front", "id": "f1"}, {"slot": "Back", "id": "b1"},
+        {"slot": "Detail", "id": "d1"}, {"slot": "BackDetail", "id": "bd1"},
+    ]}]}
+    images, transfer = cg.detail_reference_images(p, None, direction="back")
+    assert ("BackDetail", "bd1") in images
+    assert transfer is None
+
+
+def test_detail_refs_back_direction_borrows_backdetail_from_other_color_only():
+    # 목표색엔 BackDetail 없음 → 타색 BackDetail을 색전환으로 빌린다. 타색 Detail(앞면)은 금지.
+    p = {"colors": [
+        {"id": "base", "name": "베이스", "isBase": True, "images": [
+            {"slot": "Front", "id": "bf"}, {"slot": "Detail", "id": "bd-front"},
+            {"slot": "BackDetail", "id": "bd-back"}]},
+        {"id": "red", "name": "레드", "images": [
+            {"slot": "Front", "id": "rf"}, {"slot": "Back", "id": "rb"}]},
+    ]}
+    images, transfer = cg.detail_reference_images(p, "red", direction="back")
+    assert ("BackDetail", "bd-back") in images
+    assert ("Detail", "bd-front") not in images
+    assert transfer is not None            # 타색 근거 → 색전환 메타 필수
+
+
+def test_detail_refs_back_direction_falls_back_to_originals_when_no_backdetail():
+    # 어느 색에도 BackDetail 없음 → 목표색 원본만 반환(구조 확대 모드는 렌더 단계 판정).
+    # 반대 방향(Detail)은 근거로 빌리지 않는다 — 스펙 §5 금지열.
+    p = {"colors": [{"id": "base", "isBase": True, "images": [
+        {"slot": "Front", "id": "f1"}, {"slot": "Back", "id": "b1"},
+        {"slot": "Detail", "id": "d1"}]}]}
+    images, transfer = cg.detail_reference_images(p, None, direction="back")
+    assert not any(s == "BackDetail" for s, _ in images)
+    assert transfer is None
+    # 목표색 이미지 목록은 그대로 유지된다 (전 슬롯 — 첨부 순서 계약 불변)
+    assert ("Back", "b1") in images
+
+
+def test_detail_refs_front_direction_never_borrows_backdetail():
+    p = {"colors": [
+        {"id": "base", "isBase": True, "images": [
+            {"slot": "Front", "id": "f1"}, {"slot": "BackDetail", "id": "bd1"}]},
+    ]}
+    images, transfer = cg.detail_reference_images(p, None, direction="front")
+    # 앞면 방향에 앞면 디테일 없음 + 빌릴 타색도 없음 → 원본 폴백, 색전환 없음
+    assert transfer is None
+
+
+def test_detail_refs_default_direction_is_front_backward_compat():
+    # 기존 호출부(위치 인자 2개)와 동일 동작 — direction 미지정 = front
+    p = {"colors": [{"id": "base", "isBase": True,
+                     "images": [{"slot": "Detail", "id": "d1"}]}]}
+    images, _ = cg.detail_reference_images(p, None)
+    assert ("Detail", "d1") in images
+
+
 def test_build_prompt_unknown_cut_type_raises():
     # 회귀 방지: 미상 cutType(예: 폐기 토큰 'daily')을 styling 으로 조용히 대체 렌더하지 않는다 —
     # 병렬 백엔드 머지에서 mirror 가 styling 으로 무음 폴백되던 사고의 재발 금지.
