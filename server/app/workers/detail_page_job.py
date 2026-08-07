@@ -607,6 +607,12 @@ async def run_detail_page_job(app, job: dict) -> None:
             def _is_detail(block: dict) -> bool:
                 return block.get("cutType") == "product" and block.get("shot") == "detail"
 
+            def _detail_direction(block: dict) -> str | None:
+                """디테일 블록의 근거 방향 — 캐시 키·첨부 선택·패스스루가 공유한다(§5)."""
+                if not _is_detail(block):
+                    return None
+                return "back" if block.get("direction") == "back" else "front"
+
             # 미세 패턴 상품의 디테일 컷은 셀러 원본을 그대로 쓴다 → 생성 스킵.
             # 왜: 원단 매크로(줄 하나가 파란 실 2가닥 + 베이지 1가닥)는 전신·근접 어느 쪽이든
             # 생성 해상도로 재현이 안 된다(2026-08-01 측정: 4K 에서도 한 주기 14px → 요소당 2.3px).
@@ -620,18 +626,21 @@ async def run_detail_page_job(app, job: dict) -> None:
                     return None
                 if detail_color_transfers.get(asset_key):   # 타색 전환 = 그 색 원본이 없다
                     return None
+                _slot = "BackDetail" if _detail_direction(block) == "back" else "Detail"
                 for asset in color_assets.get(asset_key, []):
-                    if asset.get("slot") == "Detail":
+                    if asset.get("slot") == _slot:
                         return asset
                 return None
 
             for b in ai_blocks:
                 ckey = _color_key(b)
-                asset_key = (ckey, _is_detail(b))
+                # 디테일은 방향까지 키에 — 앞·뒤 디테일 블록이 같은 색이어도 첨부가 다르다(§5)
+                asset_key = (ckey, _is_detail(b), _detail_direction(b))
                 if asset_key not in color_assets:
                     rows = []
                     if asset_key[1]:
-                        image_refs, transfer = cut_generator.detail_reference_images(product, ckey)
+                        image_refs, transfer = cut_generator.detail_reference_images(
+                            product, ckey, direction=asset_key[2])
                     else:
                         image_refs, transfer = cut_generator.color_images(product, ckey), None
                     for slot, aid in image_refs:
@@ -786,7 +795,7 @@ async def run_detail_page_job(app, job: dict) -> None:
                 if not is_product_cut and _uses_base_color(b)
                 else None
             )
-            asset_key = (_color_key(b), _is_detail(b))
+            asset_key = (_color_key(b), _is_detail(b), _detail_direction(b))
             prods = color_assets.get(asset_key, [])
             if detail_color_transfers.get(asset_key):
                 cut_spec["_detailColorTransfer"] = detail_color_transfers[asset_key]

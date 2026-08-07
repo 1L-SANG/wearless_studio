@@ -669,6 +669,47 @@ def test_run_editor_image_job_new_detail_without_color_id_uses_base_detail(monke
     assert captured["charge"] == 1
 
 
+def test_run_editor_image_job_new_back_detail_uses_back_side_reference(monkeypatch):
+    """뒷면 디테일 블록은 BackDetail을 첨부하고 앞면 Detail은 근거로 쓰지 않는다 (2026-08-07 §5)."""
+    captured = {"asset_ids": [], "generated": False}
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{"id": "col1", "isBase": True, "images": [
+            {"slot": "Front", "id": "a1"}, {"slot": "Back", "id": "a2"},
+            {"slot": "Detail", "id": "d1"}, {"slot": "BackDetail", "id": "bd1"},
+        ]}]}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_get_asset(conn, uid, aid):
+        captured["asset_ids"].append(aid)
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def fake_gen(*args, **kwargs):
+        captured["generated"] = True
+        captured["cut_spec"] = args[2]
+        return b"DETAIL", "image/png"
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"id": "w-back-detail"}
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+
+    payload = {"mode": "new", "cutType": "product", "shot": "detail", "direction": "back"}
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert captured["generated"] is True
+    assert "bd1" in captured["asset_ids"]
+    assert "d1" not in captured["asset_ids"], "반대 방향 디테일은 첨부 금지"
+
+
 def test_run_editor_image_job_new_unknown_detail_color_fails_closed(monkeypatch):
     captured = {"asset_ids": [], "generated": False}
 
@@ -711,15 +752,20 @@ def test_run_editor_image_job_new_unknown_detail_color_fails_closed(monkeypatch)
 
 
 def test_run_editor_image_job_new_detail_requires_resolved_detail_asset(monkeypatch):
+    """방향 근거(같은 쪽 디테일·원본)가 전부 로드 불가면 생성하지 않고 실패한다.
+
+    2026-08-07 개편: 같은 쪽 원본이 로드되면 구조 확대 모드로 진행하므로,
+    fail-closed 는 '뒷면 컷인데 뒷면 자산이 하나도 해석 안 됨' 상황으로 검증한다."""
     captured = {"generated": False}
 
     async def fake_get_product(conn, pid):
         return {"colors": [{"id": "col2", "isBase": True, "images": [
-            {"slot": "Front", "id": "a2"}, {"slot": "Detail", "id": "d2"},
+            {"slot": "Front", "id": "a2"}, {"slot": "Back", "id": "b2"},
+            {"slot": "BackDetail", "id": "bd2"},
         ]}]}
 
     async def fake_get_asset(conn, uid, aid):
-        if aid == "d2":
+        if aid in ("b2", "bd2"):
             return None  # 메타데이터만 있고 실제 소유 자산이 없는 경우
         return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
 
@@ -740,7 +786,8 @@ def test_run_editor_image_job_new_detail_requires_resolved_detail_asset(monkeypa
     monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_finalize_failure)
 
-    payload = {"mode": "new", "colorId": "col2", "cutType": "product", "shot": "detail"}
+    payload = {"mode": "new", "colorId": "col2", "cutType": "product",
+               "shot": "detail", "direction": "back"}
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 

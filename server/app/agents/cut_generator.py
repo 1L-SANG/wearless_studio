@@ -870,11 +870,16 @@ def detail_reference_images(
     일반 컷의 :func:`color_images` 엄격 선택 규칙은 바꾸지 않는다.
     """
     detail_slot = "BackDetail" if direction == "back" else "Detail"
+    opposite_slot = "Detail" if detail_slot == "BackDetail" else "BackDetail"
     colors = product.get("colors") or []
     target_color = _color_by_id(colors, color_id)
     if color_id is not None and target_color is None:
         raise ValueError("invalid_color")
-    target_images = _color_image_pairs(target_color)
+    # 반대 방향 디테일은 같은 색이어도 첨부하지 않는다 — 두 디테일이 함께 붙으면
+    # "detail close-up reference" 지시가 어느 쪽을 가리키는지 모호해진다(§5 금지열).
+    target_images = [
+        pair for pair in _color_image_pairs(target_color) if pair[0] != opposite_slot
+    ]
     if any(slot == detail_slot for slot, _asset_id in target_images):
         return target_images, None
 

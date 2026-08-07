@@ -198,6 +198,20 @@ def test_detail_refs_front_direction_never_borrows_backdetail():
     assert transfer is None
 
 
+def test_detail_refs_excludes_opposite_side_detail_even_same_color():
+    # 같은 색에 앞·뒤 디테일이 다 있어도 컷 방향의 것만 첨부 — 지시 대상 모호성 제거
+    p = {"colors": [{"id": "base", "isBase": True, "images": [
+        {"slot": "Front", "id": "f1"}, {"slot": "Back", "id": "b1"},
+        {"slot": "Detail", "id": "d1"}, {"slot": "BackDetail", "id": "bd1"},
+    ]}]}
+    front_images, _ = cg.detail_reference_images(p, None, direction="front")
+    assert ("Detail", "d1") in front_images
+    assert not any(s == "BackDetail" for s, _ in front_images)
+    back_images, _ = cg.detail_reference_images(p, None, direction="back")
+    assert ("BackDetail", "bd1") in back_images
+    assert not any(s == "Detail" for s, _ in back_images)
+
+
 def test_detail_refs_default_direction_is_front_backward_compat():
     # 기존 호출부(위치 인자 2개)와 동일 동작 — direction 미지정 = front
     p = {"colors": [{"id": "base", "isBase": True,
