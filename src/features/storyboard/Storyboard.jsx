@@ -46,6 +46,7 @@ import {
   storyboardSpaceSetsFor,
   withStoryboardSpaceSetExamples,
 } from '@/lib/storyboardSpaceSetCatalog.js';
+import { stripStaleSpaceSetBindings } from '@/lib/storyboardSpaceSetStaleness.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import {
   dissolveSpaceSet,
@@ -1444,15 +1445,25 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
   const a = analysis;
   const hydratedCatalogs = withStoryboardSpaceSetExamples(rawCatalogs);
   const hasDetailImage = hasDetailSource(p);
+  const clothingType = p.clothingType || 'top';
   const exampleGender = exampleGenderFromAnalysis(
     a,
     hydratedCatalogs,
     p.clothingType,
   );
-  const normalizedBlocks = ensureSections(sourceBlocks, { hasDetailImage }).map((block) => ({
+  const sectionedBlocks = ensureSections(sourceBlocks, { hasDetailImage }).map((block) => ({
     ...block,
     ...referenceFeedbackPatch(block, {}, hydratedCatalogs),
   }));
+  // 서버(mannequin.select_base_gender)와 같은 규칙으로 판정한 성별 — 저장된 카드가 물고 있는
+  // 공간 세트 바인딩이 "지금의 분석" 기준으로 여전히 저장 가능한지 서버와 같은 눈으로 본다.
+  // 입력에서 성별·의류 종류를 바꾼 뒤 콘티로 오면(이전 버튼 재배치), 안 맞는 세트가 낀 카드가
+  // 매 저장마다 space_set_gender_mismatch 등으로 400 나던 것을 — 여기서 바인딩만 떼어 되돌린다.
+  const boundGender = genderForClothingType(clothingType, a?.targetGenders);
+  const normalizedBlocks = stripStaleSpaceSetBindings(sectionedBlocks, {
+    gender: boundGender,
+    clothingType,
+  });
   const normalized = sbStable(normalizedBlocks) !== sbStable(sourceBlocks);
   const assignment = assignGenerationExamples(normalizedBlocks, {
     catalog: hydratedCatalogs.genExamples,
@@ -1473,7 +1484,7 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
     blocks: assignment.blocks,
     catalogs: hydratedCatalogs,
     matchClothing,
-    clothingType: p.clothingType || 'top',
+    clothingType,
     exampleGender,
     hasDetailImage,
     colorOpts: colorOpts.length ? colorOpts : fallbackColor,
@@ -2666,8 +2677,15 @@ export function Storyboard() {
     if (blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType))) { toast.push('생성 설정을 준비하지 못한 이미지가 있어요'); return; }
     // 생성 입력은 서버가 저장된 콘티에서 읽는다 — 다음 단계로 넘기기 전에 반드시 저장.
     // 같은 직렬 체인 경유: 비행 중 자동저장 뒤에 줄서서 최신 스냅샷이 마지막에 반영됨을 보장.
-    // 실패는 throw 로 전파돼 기존처럼 네비게이션이 중단된다.
-    await saveNow(projectId);
+    try {
+      await saveNow(projectId);
+    } catch (error) {
+      // http() 는 서버 에러 봉투의 한국어 message 를 그대로 실어 throw 한다(계약 §6) — 있으면
+      // "다른 세트를 골라주세요" 처럼 원인을 알려주는 그 메시지를 그대로 보여주고, 없을 때만
+      // 기존 범용 문구로 폴백한다. 과거엔 여기서 실패가 조용히 삼켜져 '다음'을 눌러도 반응이 없었다.
+      setSaveError(error?.message || '변경 내용을 저장하지 못했어요');
+      return;
+    }
     navigate('/create/mannequin');
   };
   return (
