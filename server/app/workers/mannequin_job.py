@@ -45,6 +45,7 @@ from ..agents.gemini_image import GeminiError, GeminiImageResult, InlineImage
 from ..agents.model_routing import resolve_model
 from ..agents import hybrid_landmarks
 from ..agents import edit_intent_vision
+from ..agents import vision_llm
 from ..agents.product_reference import ProductReference, order_by_role, select_pattern_sources
 from ..services.hybrid_composite import (
     deterministic_qc as hc_qc,
@@ -1882,7 +1883,10 @@ async def _apply_hybrid_composite(
             call_a = await hybrid_landmarks.extract_geometry(s, front_ref.image)
             call_b = await hybrid_landmarks.extract_geometry(s, front_ref.image)
         except Exception as exc:
-            return {"failure": f"기하 추출 실패: {type(exc).__name__}"}
+            # 클래스 이름만 남기면 provider 장애인지 우리 요청 문제인지 사후에 못 가른다
+            # (2026-08-04~07 landmark 실패 9건이 전부 그래서 분류 불능이었다). 원문·URL 은
+            # 여전히 싣지 않고 provider·status·category 만 남긴다.
+            return {"failure": f"기하 추출 실패: {vision_llm.failure_summary(exc)}"}
         merged, merge_err = hybrid_landmarks.merge_geometry_pair(
             call_a, call_b, allow_source_jitter=True)
         return {"call_a": call_a, "call_b": call_b, "merged": merged,
@@ -1907,7 +1911,8 @@ async def _apply_hybrid_composite(
         car_call_b = await hybrid_landmarks.extract_geometry(s, car_img)
         car_raw = hybrid_landmarks.merge_geometry_pair(car_call_a, car_call_b)
     except Exception as e:
-        return await fail("panel_landmarks_invalid", f"기하 추출 실패: {type(e).__name__}")
+        return await fail("panel_landmarks_invalid",
+                          f"기하 추출 실패: {vision_llm.failure_summary(e)}")
     await _emit_landmark_geometry(
         emit,
         source=(src_call_a, src_call_b, src_raw[0]),
