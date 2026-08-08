@@ -123,6 +123,9 @@ def _wire_worker(monkeypatch, *, analysis, payload, calls):
         calls["failure"].append(kw)
         return True
 
+    async def is_job_cancelled(conn, job_id):
+        return False
+
     async def fake_emit(pool, job_id, event_type, p):
         calls["emits"].append((event_type, dict(p)))
 
@@ -134,6 +137,7 @@ def _wire_worker(monkeypatch, *, analysis, payload, calls):
 
     for name, fn in [("get_product", get_product), ("get_analysis", get_analysis),
                      ("get_asset_for_user", get_asset_for_user),
+                     ("is_job_cancelled", is_job_cancelled),
                      ("finalize_mannequin_success", finalize_success),
                      ("finalize_mannequin_failure", finalize_failure)]:
         monkeypatch.setattr(mannequin_job.repo, name, fn)

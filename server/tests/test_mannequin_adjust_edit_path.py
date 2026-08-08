@@ -152,6 +152,9 @@ def _run_worker(
         calls["failure"].append(kwargs)
         return True
 
+    async def is_job_cancelled(conn, job_id):
+        return False
+
     async def fake_emit(pool, job_id, event_type, payload):
         calls["emits"].append((event_type, dict(payload)))
 
@@ -161,6 +164,7 @@ def _run_worker(
         ("get_asset_for_user", get_asset_for_user),
         ("get_matching_item_asset", get_matching_item_asset),
         ("get_mannequin_edit_parent", get_edit_parent),
+        ("is_job_cancelled", is_job_cancelled),
         ("finalize_mannequin_success", finalize_success),
         ("finalize_mannequin_failure", finalize_failure),
     ):

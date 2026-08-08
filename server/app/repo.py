@@ -797,6 +797,18 @@ async def get_job(conn: AsyncConnection, user_id: str, job_id: str) -> dict | No
         return await cur.fetchone()
 
 
+async def is_job_cancelled(conn: AsyncConnection, job_id: str) -> bool:
+    """워커의 협조적 취소 확인용 경량 scalar 조회."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select exists (select 1 from jobs where id = %s and status = 'cancelled') "
+            "as cancelled",
+            (job_id,),
+        )
+        row = await cur.fetchone()
+    return bool(row and row["cancelled"])
+
+
 async def create_job(
     conn: AsyncConnection,
     *,
@@ -1162,6 +1174,81 @@ async def _consume_buckets(
             (running, new_reserved, user_id),
         )
     return running - new_reserved
+
+
+async def cancel_active_mannequin_job(
+    conn: AsyncConnection,
+    user_id: str,
+    project_id: str,
+) -> int | None:
+    """활성 마네킹 job을 취소하고 예약액을 환불 없이 확정 차감한다.
+
+    jobs 행을 먼저 FOR UPDATE해 워커 finalize와 직렬화한다. 반환값은 차감 뒤 가용
+    크레딧이며, 활성 job이 없으면 None이다. 호출자가 같은 tx를 commit해야 한다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id::text as id, credits_reserved
+            from jobs
+            where user_id = %s and project_id = %s and kind = 'mannequin'
+              and status in ('pending', 'running')
+            order by created_at desc
+            limit 1
+            for update
+            """,
+            (user_id, project_id),
+        )
+        job = await cur.fetchone()
+    if job is None:
+        return None
+
+    job_id = job["id"]
+    charge = job["credits_reserved"]
+    metadata = {"reason": "user_cancelled"}
+    available = await _consume_buckets(
+        conn,
+        user_id=user_id,
+        project_id=project_id,
+        job_id=job_id,
+        reserved=charge,
+        charge=charge,
+        action_key="mannequinGenerate",
+        metadata=metadata,
+    )
+    # 성공 정산은 버킷별 키를 써야 credit_sources와 account가 함께 맞는다. 동시에 기존
+    # 워커 failure/recovery가 확인하는 base settle key도 0원 guard로 남겨 release를 차단한다.
+    await _settle_credits(
+        conn,
+        user_id=user_id,
+        project_id=project_id,
+        job_id=job_id,
+        reserved=0,
+        charge=0,
+        action_key="mannequinGenerate",
+        settle_key=f"credit:job:{job_id}:settle",
+        metadata=metadata,
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set status = 'cancelled', credits_charged = %s, "
+            "locked_by = null, locked_at = null, finished_at = now() "
+            "where id = %s and status in ('pending', 'running')",
+            (charge, job_id),
+        )
+        # jobs 행을 먼저 잠근 종결 tx에서 append_job_event의 advisory lock을 뒤늦게 잡으면,
+        # advisory→jobs 순서인 진행률 emit과 교착될 수 있다. done/error finalize처럼 종결
+        # 이벤트를 직접 같은 tx에 넣는다. 앞선 비종결 progress가 늦게 커밋돼도 cancelled가
+        # 폴링/SSE의 정본 종결 신호라 누락된 중간 진행률은 의미가 없다.
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) "
+            "values (%s, 'cancelled', %s)",
+            (job_id, Json({
+                "code": "job_cancelled",
+                "message": "사용자가 마네킹 생성을 취소했어요.",
+            })),
+        )
+    return available
 
 
 async def _finalize_job_failure(

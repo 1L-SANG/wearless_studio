@@ -32,6 +32,18 @@ const clone = (x) => JSON.parse(JSON.stringify(x));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const touch = () => { DB.project.updatedAt = new Date().toISOString(); };
 const spend = (n) => { DB.account.credits = Math.max(0, DB.account.credits - n); return DB.account.credits; };
+const jobCancelledError = () => {
+  const error = new Error('마네킹컷 생성이 취소됐어요.');
+  error.code = 'job_cancelled';
+  return error;
+};
+const settleMockMannequinCharge = (job) => {
+  if (!job.creditsSettled) {
+    job.creditsSettled = true;
+    job.credits = spend(CREDIT_COSTS.mannequinGenerate);
+  }
+  return job.credits;
+};
 // 에디터 대기 이벤트 시뮬 상태 (startDetailPage) — 페이지 새로고침 = 모듈 재실행 = 초기화(재데모 가능)
 let ewSim = null;
 const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
@@ -59,22 +71,39 @@ function joinable(slot, start) {
   if (!inflight[slot]) {
     const listeners = [];
     const job = { listeners };
-    job.promise = start(listeners).finally(() => { if (inflight[slot] === job) inflight[slot] = null; });
+    job.promise = start(listeners, job).finally(() => { if (inflight[slot] === job) inflight[slot] = null; });
     inflight[slot] = job;
   }
   return inflight[slot];
 }
 
 // generic long-running job: ticks progress 0..100, resolves with result
-function runJob({ duration = 2600, onProgress, result, stall = false }) {
-  return new Promise((resolve) => {
+function runJob({ duration = 2600, onProgress, result, stall = false, cancellableJob }) {
+  return new Promise((resolve, reject) => {
     const start = performance.now();
-    const id = setInterval(() => {
+    let id = null;
+    const cancel = () => {
+      if (id != null) clearInterval(id);
+      if (cancellableJob?.cancel === cancel) cancellableJob.cancel = null;
+      reject(jobCancelledError());
+    };
+    if (cancellableJob) {
+      cancellableJob.cancel = cancel;
+      if (cancellableJob.cancelled) {
+        cancel();
+        return;
+      }
+    }
+    id = setInterval(() => {
       const elapsed = performance.now() - start;
       let pct = Math.min(100, Math.round((elapsed / duration) * 100));
       if (stall && pct >= 95 && elapsed < duration + 1200) pct = 95; // PRD §7.2 stall at 95%
       onProgress && onProgress(pct);
-      if (pct >= 100) { clearInterval(id); resolve(typeof result === 'function' ? result() : result); }
+      if (pct >= 100) {
+        clearInterval(id);
+        if (cancellableJob?.cancel === cancel) cancellableJob.cancel = null;
+        resolve(typeof result === 'function' ? result() : result);
+      }
     }, 60);
   });
 }
@@ -330,20 +359,36 @@ export const api = {
       syncSelectedCut(DB.project.selectedMannequinId);
       return { data: cutsEnvelope(), credits: DB.account.credits };
     }
-    const job = joinable('mannequins', (listeners) => (async () => {
+    const job = joinable('mannequins', (listeners, activeJob) => (async () => {
       const ownerId = DB.project.id;   // job 도중 새 프로젝트로 리시드되면 결과를 버린다
       // 실서버 체감(25~60s)에 근접시켜 로딩 시퀀스(인트로 3.5s+루프)가 보이게 한다
-      await runJob({ duration: 9000, stall: true, onProgress: (p) => listeners.forEach((f) => f(p)) });
+      await runJob({
+        duration: 9000,
+        stall: true,
+        onProgress: (p) => listeners.forEach((f) => f(p)),
+        cancellableJob: activeJob,
+      });
+      if (activeJob.cancelled) throw jobCancelledError();
       if (DB.project.id !== ownerId) return { data: { cuts: [] }, credits: DB.account.credits };
       if (!DB.mannequins.length) {
         DB.mannequins.push(makeMannequinCut(0));
         syncSelectedCut(DB.mannequins[0].id);
       }
       touch();
-      return { data: cutsEnvelope(), credits: spend(CREDIT_COSTS.mannequinGenerate) };
+      return { data: cutsEnvelope(), credits: settleMockMannequinCharge(activeJob) };
     })());
     if (onProgress) job.listeners.push(onProgress);
     return job.promise;
+  },
+  async cancelMannequinGeneration(/* projectId */) {
+    const job = inflight.mannequins;
+    if (!job || job.cancelled) {
+      return { cancelled: false, credits: DB.account.credits };
+    }
+    job.cancelled = true;
+    const credits = settleMockMannequinCharge(job);
+    job.cancel?.();
+    return { cancelled: true, credits };
   },
   async regenerateMannequin(_projectId, { fitProfile, onProgress } = {}) {
     await runJob({ duration: 2200, onProgress });
