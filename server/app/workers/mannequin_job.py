@@ -582,11 +582,35 @@ class _ImageBudgetGate:
     predicate, so the rule can be exercised without a database.
     """
 
-    def __init__(self, *, reserve_fn, job_id, lease_token, emit=None):
+    def __init__(self, *, reserve_fn, job_id, lease_token, emit=None, read_fn=None):
         self._reserve = reserve_fn
+        self._read = read_fn
         self.job_id = job_id
         self.lease_token = lease_token
         self._emit = emit
+        #: last budget this gate saw, so the retry decision costs no round trip. `None`
+        #: until the first reservation — a worker that reclaimed the job mid-flight has
+        #: to read the row instead of assuming an empty budget.
+        self._last = None
+
+    async def generation_available(self) -> bool:
+        """Is another GENERATION still possible? Reserves nothing, consumes nothing.
+
+        Peeking by reserving-and-rolling-back would be a second authority over the same
+        counter and would spend a slot for a call that never happens. The persisted row is
+        the authority; this only reads it, and only when this gate has not already seen it.
+        """
+        budget = self._last
+        if budget is None and self._read is not None:
+            try:
+                budget = await self._read(job_id=self.job_id)
+            except Exception as exc:                    # storage unreachable
+                # Answer "no". That routes the caller to salvage the candidate it already
+                # has, which costs nothing; answering "yes" would burn a provider call on
+                # a budget we could not verify.
+                log.warning("image budget peek failed for job %s: %r", self.job_id, exc)
+                return False
+        return image_budget.generation_available(budget)
 
     async def reserve(self, *, request, operation, candidate=None, attempt=None):
         """→ BudgetDecision. Never raises: an exhausted budget is not a job failure."""
@@ -600,6 +624,8 @@ class _ImageBudgetGate:
             log.warning("image budget reservation failed for job %s: %r", self.job_id, exc)
             decision = image_budget.BudgetDecision(
                 False, reason=image_budget.REASON_CONTENTION)
+        # remember what the row now holds, so the retry decision needs no extra read
+        self._last = decision.budget_after or decision.budget_before or self._last
         if self._emit is not None:
             try:
                 await self._emit({"status": "image_budget", "candidate": candidate,
@@ -637,10 +663,33 @@ async def _reserve_image_call_via_repo(pool, **kwargs):
     return decision
 
 
+async def _read_image_budget_via_repo(pool, *, job_id):
+    """Read-only binding — no reservation, no write."""
+    async with pool.connection() as conn:
+        return await repo.read_image_budget(conn, job_id=job_id)
+
+
 def build_image_budget_gate(*, pool, job_id, lease_token, emit=None):
     return _ImageBudgetGate(
         reserve_fn=functools.partial(_reserve_image_call_via_repo, pool),
+        read_fn=functools.partial(_read_image_budget_via_repo, pool),
         job_id=job_id, lease_token=lease_token, emit=emit)
+
+
+async def _can_retry_generation(budget, *, legacy_allows: bool) -> bool:
+    """The one answer to "may we generate another image?".
+
+    Both authorities have to agree. The attempt/control-flow limit still paces a run, but
+    the persistent per-job budget decides whether a provider call is possible at all — and
+    it is the one that survives a worker restart, where the attempt counter starts over.
+    """
+    if not legacy_allows:
+        return False
+    if budget is None:
+        # No gate means no reservation is possible, so no generation is either. Callers
+        # that legitimately have no gate do not reach a provider.
+        return False
+    return await budget.generation_available()
 
 
 async def _apply_axis_qc(
@@ -3076,8 +3125,8 @@ async def _run_candidate(
                 pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
                 phase="pre", canonical=base_img, res=res)
             if pre_frame["decision"] == "reject" and frame_mode == "enforce":
-                if _has_frame_retry_budget(
-                        s, calls_spent=calls_spent, frame_retry_used=frame_retry_used):
+                if await _can_retry_generation(budget, legacy_allows=_has_frame_retry_budget(
+                        s, calls_spent=calls_spent, frame_retry_used=frame_retry_used)):
                     frame_retry_used = True
                     instructions = pre_frame.get("regenerationInstructions") or [
                         "Match IMAGE 1 pose, body yaw, view family and camera exactly."]
@@ -3138,7 +3187,12 @@ async def _run_candidate(
                 pre_reject = CandidateSnapshot(
                     res, pre_scores, None, p2,
                     runlog.run_id_for_image(res.image, candidate) if runlog else None)
-            if not has_budget_for_retry(s, calls_spent=calls_spent):
+            # Both authorities, not just the attempt counter. Asking `mannequin_max_attempts`
+            # alone said "a third generation is available" while the persistent budget had
+            # already spent BASE and FULL_REGENERATION, so this branch was skipped and the
+            # candidate went unsalvaged (job 75c375da).
+            if not await _can_retry_generation(
+                    budget, legacy_allows=has_budget_for_retry(s, calls_spent=calls_spent)):
                 # 재생성 여력이 없으면 여기서 끝이다. attempt 번호가 아니라 **남은 호출**로
                 # 판단해야 한다 — 편집이 예산을 먹은 상태에서 attempt 만 보면 상한을 넘긴다
                 # (codex 2026-07-31 7차 HIGH: max=4 에 5콜 경로).
@@ -3339,9 +3393,10 @@ async def _run_candidate(
                         carrier_run_id = pre_frame_carrier
                         hybrid_info = None
                         final_frame = {**pre_frame, "phase": "final", "rolledBack": True}
-                    elif _has_frame_retry_budget(
-                            s, calls_spent=calls_spent,
-                            frame_retry_used=frame_retry_used):
+                    elif await _can_retry_generation(
+                            budget, legacy_allows=_has_frame_retry_budget(
+                                s, calls_spent=calls_spent,
+                                frame_retry_used=frame_retry_used)):
                         frame_retry_used = True
                         feedback = (
                             "CORRECTION (FRAME LOCK — highest priority): "
@@ -3376,7 +3431,8 @@ async def _run_candidate(
                 qc_scores = {**(qc_scores or {}), "frameLockQc": final_frame}
             if hybrid_info is not None:
                 qc_scores = {**(qc_scores or {}), "hybridComposite": hybrid_info}
-            budget_left = has_budget_for_retry(s, calls_spent=calls_spent)
+            budget_left = await _can_retry_generation(
+                budget, legacy_allows=has_budget_for_retry(s, calls_spent=calls_spent))
             hybrid_enforce = bool(
                 hybrid_info and hybrid_info.get("mode") == "enforce")
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.

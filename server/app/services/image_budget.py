@@ -102,6 +102,24 @@ def remaining(budget: Mapping) -> int:
     return max(0, MAX_TOTAL - b["total"])
 
 
+def generation_available(budget: Any) -> bool:
+    """Could another image still be GENERATED for this job? Read-only — reserves nothing.
+
+    The worker decides "retry or salvage the best rejected candidate" before it asks for a
+    slot, and that decision used to consult `mannequin_max_attempts` alone. With the budget
+    at three and MANNEQUIN_MAX_ATTEMPTS at five the two disagreed: job 75c375da believed a
+    third generation was available, skipped the salvage branch, and only then had the
+    reservation denied — so the loop broke without ever taking the salvage path.
+
+    Only the two generation slots count. A free TARGETED_CORRECTION slot does not make a
+    generation possible; borrowing it would break `FULL_REGENERATION <= 1`.
+    """
+    b = normalise(budget)
+    if b["total"] >= MAX_TOTAL:
+        return False
+    return any(b["used"][slot] < SLOT_LIMITS[slot] for slot in GENERATION_SLOT_ORDER)
+
+
 @dataclass(frozen=True)
 class BudgetDecision:
     """What the caller gets. Never an exception — an exhausted budget is not a failure."""

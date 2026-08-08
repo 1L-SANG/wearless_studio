@@ -1133,9 +1133,14 @@ def test_loop_terminates_when_every_attempt_rejects(monkeypatch):
     assert result is not None                      # 구제 출고
     assert result["qc_scores"]["salvaged"] is True
     rejects = [p for _t, p in emits if p.get("status") == "final_qc_reject"]
-    # 두 생성 모두 거절되고, 구제는 루프가 끝난 뒤 마지막 후보로 이뤄진다. 예산 이전에는
-    # 3회차가 루프 안에서 구제돼 거절이 2건이었다 — 건수는 같고 이유가 달라졌다.
-    assert len(rejects) == 2
+    # 1회차만 거절로 남는다. 2회차는 **생성 슬롯이 남아 있지 않다는 것을 그 자리에서 알고**
+    # 재시도를 기다리는 대신 구제로 빠진다 — retry 권한이 attempt 카운터가 아니라 영속
+    # 예산과 일치하게 된 결과다. 예산만 있고 이 일치가 없던 동안에는 2회차도 거절로 남고
+    # 후보가 루프 밖에서야 구제됐다.
+    assert len(rejects) == 1
+    salvaged_events = [p for _t, p in emits if p.get("status") == "qc_salvaged"]
+    assert len(salvaged_events) == 1
+    assert salvaged_events[0]["reason"] == "budget_exhausted"
 
 
 def test_feedback_reaches_every_subsequent_attempt(monkeypatch):
