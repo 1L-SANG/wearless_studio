@@ -226,6 +226,10 @@
 .ap-step.done .ap-dot::after { content: "✓"; color: #fff; font-weight: 800; }
 .ap-bar { height: 4px; border-radius: 99px; background: #ececef; margin-top: 14px; overflow: hidden; }
 .ap-bar i { display: block; height: 100%; border-radius: 99px; background: var(--fg-1); transition: width .5s ease; }
+/* 확정 버튼 옆 안내 — 버튼의 금액이 "지금 나가는 돈"이라면 이 문구는 "다시 나갈 수 있는 돈"이다. */
+.af-cta-note { flex: 1 1 300px; min-width: 0; margin-right: 2px; text-align: left;
+  font-size: 12.5px; line-height: 1.5; color: var(--fg-3); }
+
 .af-inline-head { display: flex; align-items: center; gap: 11px; margin: 30px 0 10px; padding-top: 22px; box-shadow: 0 -1px 0 0 var(--ring); }
 .af-inline-head > svg { color: var(--fg-1); flex: none; margin-top: 2px; }
 .af-head-badge { width: 30px; height: 30px; border-radius: var(--r-4); background: var(--glass-bg);

@@ -199,8 +199,10 @@ input, textarea, select { font-family: inherit; }
 .field-row + .field-row { margin-top: 22px; }
 
 /* sticky footer CTA bar inside wizard */
-.wizard-cta { position: sticky; bottom: 0; margin-top: 26px; display: flex; justify-content: flex-end; gap: 10px;
-  padding: 16px 0 6px; }
+/* flex-wrap: CTA 옆에 안내 문구가 붙는 경우가 있어 좁은 폭에서 버튼을 밀지 않고 줄을 바꾼다.
+   버튼만 있는 기존 사용처는 넘칠 일이 없어 동작이 그대로다. */
+.wizard-cta { position: sticky; bottom: 0; margin-top: 26px; display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: flex-end; gap: 10px; padding: 16px 0 6px; }
 .wizard-cta::before { content: ''; position: absolute; inset: -24px -40px 0; z-index: -1;
   background: linear-gradient(180deg, rgba(244,244,246,0), var(--canvas) 60%); pointer-events: none; }
 
