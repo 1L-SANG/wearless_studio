@@ -15,6 +15,12 @@ import { api } from '@/lib/api/index.js';
 import { resetAnalysisCache } from '@/lib/api/httpAdapter.js';
 import { clearDraft } from '@/lib/draftStore.js';
 import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
+import {
+  adoptGenerationRelevantEdits,
+  clearGenerationRelevantEdits as clearGenerationRelevantEditsSession,
+  markGenerationRelevantEdits as markGenerationRelevantEditsSession,
+  readGenerationRelevantEdits,
+} from '@/features/mannequin/generationRelevantEditsSession.js';
 
 const mode = import.meta.env.VITE_API_MODE ?? 'mock';
 const normalizeComposeMode = (value) => value === 'extended' ? 'extended' : 'basic';
@@ -200,7 +206,7 @@ export const useAppStore = create((set, get) => ({
   // 새 제작해도 컴포넌트를 remount(폼·복원상태 초기화)한다. loadProject·retry 의 projectId
   // 변경에는 바뀌지 않아 일반 흐름엔 영향 없음.
   projectGeneration: 0,
-  generationRelevantEditsDirty: false,
+  generationRelevantEditsDirty: readGenerationRelevantEdits(persistedFlow.projectId),
 
   /** 새 제작 진입 — 서버 project 생성은 보류한다(AI 분석 시 ensureProject 가 생성).
      '상세페이지 제작'/'새 상세페이지' 클릭만으로 보관함에 빈 프로젝트가 생기던 버그 방지.
@@ -250,7 +256,9 @@ export const useAppStore = create((set, get) => ({
     ensureProjectInflight = (async () => {
       try {
         const project = await api.createProject();
-        set({ projectId: project.id, projectPersisted: true });
+        const preserveDirty = get().projectId === null && get().generationRelevantEditsDirty;
+        const generationRelevantEditsDirty = adoptGenerationRelevantEdits(project.id, { preserveDirty });
+        set({ projectId: project.id, projectPersisted: true, generationRelevantEditsDirty });
         persistFlow(get());   // 서버 project 생성 — 재개 대상으로 영속
         return project.id;
       } finally {
@@ -282,6 +290,7 @@ export const useAppStore = create((set, get) => ({
           if (error?.status !== 404) return pid;
         }
         flowValidated = true;
+        clearGenerationRelevantEditsSession(pid);
         set({ ...initialFlow, generationRelevantEditsDirty: false });
         clearDetailPageJobMarker();
         persistFlow(get());
@@ -302,13 +311,27 @@ export const useAppStore = create((set, get) => ({
       composeMode: normalizeComposeMode(p.composeMode),
       copywriting: p.copywriting,
       adjustCount: p.adjustCount,
+      generationRelevantEditsDirty: readGenerationRelevantEdits(p.id),
     });
     return p.id;
   },
   /** 백엔드 sync(비로그인 draft) 결과의 projectId 반영 — 로그인 복귀 후 RootRedirect 가 호출. */
-  setProjectId(projectId) { set({ projectId }); persistFlow(get()); },
-  /** 로그인 복귀 draft sync 등에서 서버 project 를 현재 진행 프로젝트로 채택(영속 포함). */
-  adoptProject(projectId) {
+  setProjectId(projectId) {
+    const generationRelevantEditsDirty = get().projectId === projectId
+      ? get().generationRelevantEditsDirty
+      : readGenerationRelevantEdits(projectId);
+    set({ projectId, generationRelevantEditsDirty });
+    persistFlow(get());
+  },
+  /** 로그인 복귀 draft sync 등에서 서버 project 를 현재 진행 프로젝트로 채택(영속 포함).
+     preserveGenerationDirty: 서버 project 가 아직 없던(projectId===null) 지금까지의 작업이
+     막 서버 신원을 얻을 뿐인 경로에서만 true 로 넘긴다 — 게스트가 분석을 편집(플래그 true)한 뒤
+     세션이 생겨 draft sync 로 처음 project 를 갖는 경우가 그렇다. 그건 '다른 작업으로 전환'이
+     아니라 같은 작업의 연속이라 재생성 신호를 지우면 안 된다. 보관함에서 다른 project 를 열거나
+     /editor/:id 로 직접 들어오는 경로는 실제로 '다른 작업'을 여는 것이므로 이 옵션을 넘기지
+     않는다. 기본값(false)은 대상 project의 sessionStorage 신호만 읽어, 이전 project의 신호가
+     새지 않게 한다. 이미 다른 project 로 작업 중이면 true 를 넘겨도 보존하지 않는다. */
+  adoptProject(projectId, { preserveGenerationDirty = false } = {}) {
     // 다른 프로젝트 채택 = 프로젝트 경계 전환 — 이전 상세페이지 폴링 루프를 무효화해
     // stale 루프가 초기화된 슬라이스를 나중에 덮지 않게 한다(codex F5).
     if (get().projectId !== projectId) {
@@ -316,16 +339,23 @@ export const useAppStore = create((set, get) => ({
       detailJobLoopProjectId = null;
       clearDetailPageJobMarker();
     }
-    set((s) => (s.projectId === projectId
-      ? { projectPersisted: true }
-      : {
-        ...initialFlow,
-        projectId,
-        projectPersisted: true,
-        mannequinJob: initialMannequinJob(),
-        detailPageJob: initialDetailPageJob(),
-        generationRelevantEditsDirty: false,
-      }));
+    const current = get();
+    if (current.projectId === projectId) {
+      set({ projectPersisted: true });
+      persistFlow(get());
+      return;
+    }
+    const preserveDirty = preserveGenerationDirty && current.projectId === null
+      && current.generationRelevantEditsDirty;
+    const generationRelevantEditsDirty = adoptGenerationRelevantEdits(projectId, { preserveDirty });
+    set({
+      ...initialFlow,
+      projectId,
+      projectPersisted: true,
+      mannequinJob: initialMannequinJob(),
+      detailPageJob: initialDetailPageJob(),
+      generationRelevantEditsDirty,
+    });
     persistFlow(get());
   },
   /** 상세페이지 제작 플로우에서 현재 머문 경로 기록 — '이어서 작업' 재개 목표(ResumeTracker 가 호출). */
@@ -335,8 +365,14 @@ export const useAppStore = create((set, get) => ({
     persistFlow(get());
   },
 
-  markGenerationRelevantEdits() { set({ generationRelevantEditsDirty: true }); },
-  clearGenerationRelevantEdits() { set({ generationRelevantEditsDirty: false }); },
+  markGenerationRelevantEdits() {
+    set({ generationRelevantEditsDirty: markGenerationRelevantEditsSession(get().projectId) });
+  },
+  clearGenerationRelevantEdits(projectId = get().projectId, expectedRevision) {
+    const cleared = clearGenerationRelevantEditsSession(projectId, expectedRevision);
+    if (cleared && get().projectId === projectId) set({ generationRelevantEditsDirty: false });
+    return cleared;
+  },
 
   selectMannequin(id) {
     set({ selectedMannequinId: id });

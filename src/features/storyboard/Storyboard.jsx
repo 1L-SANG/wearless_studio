@@ -16,6 +16,7 @@ import { Placeholder } from '@/mock/placeholders.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Icon, IconButton, Button, Chips, EmptyState, Toggle, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import { ComposeModePicker } from './ComposeModePicker.jsx';
 import { ensureSections, deriveSections, adoptSection, patchSection, normalizeRows, normalizeBoard } from '@/lib/sections.js';
 import {
   CONTENT_ROLES,
@@ -45,6 +46,8 @@ import {
   storyboardSpaceSetsFor,
   withStoryboardSpaceSetExamples,
 } from '@/lib/storyboardSpaceSetCatalog.js';
+import { stripStaleSpaceSetBindings } from '@/lib/storyboardSpaceSetStaleness.js';
+import { stripStaleExampleSelections } from '@/lib/storyboardExampleStaleness.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import {
   dissolveSpaceSet,
@@ -57,6 +60,7 @@ import {
 } from '@/lib/storyboardSpaceSets.js';
 import {
   consumeStoryboardEntry,
+  invalidateStoryboardEntryPrefetch,
   loadStoryboardEntry,
   peekStoryboardEntry,
   shouldRenderStoryboardLoadingFrame,
@@ -73,6 +77,8 @@ import { prewarmImages } from '@/lib/imagePrewarm.js';
 import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
 import { detailDirectionFromExample, generationExampleSelectionPatch } from '@/lib/storyboardExampleSelection.js';
 import { mineImageUrl, normalizeMineImages, promoteMineImage } from '@/lib/storyboardMineImages.js';
+import { requestMannequinGeneration } from '@/features/mannequin/generationRunner.js';
+import { waitForAnalysisEditSave } from '@/features/product-input/saveRouting.js';
 
 
 const COLOR_HEX = {
@@ -1441,17 +1447,53 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
   const a = analysis;
   const hydratedCatalogs = withStoryboardSpaceSetExamples(rawCatalogs);
   const hasDetailImage = hasDetailSource(p);
+  const clothingType = p.clothingType || 'top';
   const exampleGender = exampleGenderFromAnalysis(
     a,
     hydratedCatalogs,
     p.clothingType,
   );
-  const normalizedBlocks = ensureSections(sourceBlocks, { hasDetailImage }).map((block) => ({
+  const sectionedBlocks = ensureSections(sourceBlocks, { hasDetailImage }).map((block) => ({
     ...block,
     ...referenceFeedbackPatch(block, {}, hydratedCatalogs),
   }));
+  // 서버(mannequin.select_base_gender)와 같은 규칙으로 판정한 성별 — 저장된 카드가 물고 있는
+  // 공간 세트 바인딩이 "지금의 분석" 기준으로 여전히 저장 가능한지 서버와 같은 눈으로 본다.
+  // 입력에서 성별·의류 종류를 바꾼 뒤 콘티로 오면(이전 버튼 재배치), 안 맞는 세트가 낀 카드가
+  // 매 저장마다 space_set_gender_mismatch 등으로 400 나던 것을 — 여기서 바인딩만 떼어 되돌린다.
+  const boundGender = genderForClothingType(clothingType, a?.targetGenders);
+  const spaceSetRepairedBlocks = stripStaleSpaceSetBindings(sectionedBlocks, {
+    gender: boundGender,
+    clothingType,
+  });
+  // 서버가 저장 시 도는 두 번째(상호 배타) 검증 — spaceGroupId 로 안 묶인 낱개 예시(일반
+  // 생성예시든, 세트 단품을 참고용으로 고른 것이든)의 성별/의류 종류/컷 종류를 같은 카탈로그
+  // 로 본다. 같은 이유로 매 저장마다 example_gender_mismatch 등 400 나던 카드를 여기서 되돌린다.
+  const normalizedBlocks = stripStaleExampleSelections(spaceSetRepairedBlocks, hydratedCatalogs.genExamples, {
+    gender: boundGender,
+    clothingType,
+  });
   const normalized = sbStable(normalizedBlocks) !== sbStable(sourceBlocks);
-  const assignment = assignGenerationExamples(normalizedBlocks, {
+  // 방금 바인딩/예시를 뗀 카드만 boundGender(서버가 실제로 검증하는 성별)로 먼저 채운다.
+  // 일반 자동배정(exampleGender, 바로 아래)은 실존 모델 픽처럼 targetGenders 와 일부러
+  // 갈릴 수 있는 신호까지 우선한다 — 그 신호로 되채우면 방금 뗀 카드가 다시 같은 이유로
+  // 낡아 저장이 또 400 날 수 있어, 이 카드들만은 서버가 볼 값을 그대로 쓴다. 두 참조를
+  // index 별로 비교해 이번에 뗀 카드만 골라낸다(strip 함수는 안 바뀐 블록을 원본 참조 그대로
+  // 돌려주므로 참조 비교만으로 충분하다).
+  const repairedIds = normalizedBlocks
+    .filter((block, index) => block !== sectionedBlocks[index])
+    .map((block) => block.id);
+  const repairedAssignment = repairedIds.length
+    ? assignGenerationExamples(normalizedBlocks, {
+      catalog: hydratedCatalogs.genExamples,
+      product: p,
+      gender: boundGender,
+      onlyBlockIds: repairedIds,
+    })
+    : { blocks: normalizedBlocks };
+  // 나머지(원래부터 비어 있던 카드 등)는 기존 그대로 exampleGender 로 채운다 — 방금 boundGender
+  // 로 채운 카드는 이미 exampleId+origin='auto' 를 갖고 있어 이 호출이 다시 건드리지 않는다.
+  const assignment = assignGenerationExamples(repairedAssignment.blocks, {
     catalog: hydratedCatalogs.genExamples,
     product: p,
     gender: exampleGender,
@@ -1470,7 +1512,7 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
     blocks: assignment.blocks,
     catalogs: hydratedCatalogs,
     matchClothing,
-    clothingType: p.clothingType || 'top',
+    clothingType,
     exampleGender,
     hasDetailImage,
     colorOpts: colorOpts.length ? colorOpts : fallbackColor,
@@ -1582,6 +1624,13 @@ export function Storyboard() {
         const pid = useAppStore.getState().projectId;
         if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
         pidRef.current = pid;   // 이 인스턴스의 저장 대상 고정 (프로젝트 경계)
+        // ProductInput의 이탈 cleanup이 마지막 색상 PATCH를 막 시작했을 수 있다. 같은 project의
+        // 저장만 기다린 뒤 생성/콘티 GET을 시작해, 빠른 브라우저 뒤로가기에서도 옛 색을 읽지 않는다.
+        await waitForAnalysisEditSave(pid);
+        // 마네킹컷 생성은 오래 걸린다 — 사용자가 콘티를 짜는 동안 백그라운드로 돌린다.
+        // await 하지 않는다: 보드 로드가 생성 완료를 기다리면 병렬화가 사라진다. 실패는 리본과
+        // 마네킹 화면이 각각 보고하므로 여기선 삼킨다. 중복 호출은 러너와 서버가 함께 흡수한다.
+        void requestMannequinGeneration(pid).catch(() => {});
         await sbSaveIdle();     // 직전 인스턴스의 비행 중 저장(이탈 플러시)이 착지한 뒤에 읽는다 — 스테일 로드 방지
         const entry = await consumeStoryboardEntry(pid) || await loadStoryboardEntry(pid);
         const [board] = entry;
@@ -2591,9 +2640,6 @@ export function Storyboard() {
     <div className={'sb-canvas-shell' + (splitOpen ? ' inspector-open' : '')}
       style={{ '--sb-inspector-top': `${inspectorTop}px` }}>
       <div className="sb-canvas-main">
-        <div className="sb-count-head">
-          구성컷: <strong>{cutCount}</strong>개
-        </div>
         {list}
       </div>
       {splitOpen && <div className="insp-col">{inspector}</div>}
@@ -2638,15 +2684,40 @@ export function Storyboard() {
       setAtomicSaving(false);
     }
   };
-  const generate = async () => {
+  // 사진 양이 바뀌면 콘티를 다시 읽는다 — 손대지 않은 기본 시드만 새 모드로 재시드된다(어댑터 규칙).
+  // 단, 재조회 전에 보류 중인 자동저장(1.5s 디바운스)부터 플러시한다 — generate 와 동일 패턴.
+  // 안 그러면 그 창 안의 편집이 재조회로 덮여쓰이고, 서버가 아직 못 본 편집이라 재시드 판정도
+  // 틀어질 수 있다. 플러시 자체가 실패하면 재조회하지 않는다 — 실패한 편집을 덮어쓰는 경로가 된다.
+  const onComposeModeChange = async () => {
+    try {
+      await saveNow(projectId);
+    } catch {
+      setSaveError('변경 내용을 저장하지 못했어요');
+      return;
+    }
+    setSaveError(null);
+    invalidateStoryboardEntryPrefetch(projectId);
+    setLoadRetry((n) => n + 1);
+  };
+  const onComposeModeError = () => {
+    toast.push('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.');
+  };
+  const goToMannequin = async () => {
     // 방어: UI disabled 와 별개로 함수 자체도 게이트 — 다른 호출 경로가 생겨도 미설정 블록 생성 불가
     if (blocks.length === 0) return;
     if (blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType))) { toast.push('생성 설정을 준비하지 못한 이미지가 있어요'); return; }
-    // 생성 입력은 서버가 저장된 콘티에서 읽는다 — CTA 에서 반드시 저장 (frontend_state_model §5).
+    // 생성 입력은 서버가 저장된 콘티에서 읽는다 — 다음 단계로 넘기기 전에 반드시 저장.
     // 같은 직렬 체인 경유: 비행 중 자동저장 뒤에 줄서서 최신 스냅샷이 마지막에 반영됨을 보장.
-    // 실패는 throw 로 전파돼 기존처럼 네비게이션이 중단된다.
-    await saveNow(projectId);
-    navigate('/create/generating');
+    try {
+      await saveNow(projectId);
+    } catch (error) {
+      // http() 는 서버 에러 봉투의 한국어 message 를 그대로 실어 throw 한다(계약 §6) — 있으면
+      // "다른 세트를 골라주세요" 처럼 원인을 알려주는 그 메시지를 그대로 보여주고, 없을 때만
+      // 기존 범용 문구로 폴백한다. 과거엔 여기서 실패가 조용히 삼켜져 '다음'을 눌러도 반응이 없었다.
+      setSaveError(error?.message || '변경 내용을 저장하지 못했어요');
+      return;
+    }
+    navigate('/create/mannequin');
   };
   return (
     <div className={`wizard wide sb-page sb-content-enter${atomicSaving ? ' is-atomic-saving' : ''}`}
@@ -2655,6 +2726,15 @@ export function Storyboard() {
       onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>
       {doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
+      {/* 페이지 직계 자식이어야 진입 스태거(.sb-content-enter > .sb-count-head)가 걸린다. */}
+      <div className="sb-count-head">
+        구성컷: <strong>{cutCount}</strong>개
+      </div>
+      <ComposeModePicker
+        modes={catalogs?.composeModes || []}
+        onModeChange={onComposeModeChange}
+        onError={onComposeModeError}
+      />
       {undoEntry && (
         <div className="sb-undo-bar" role="status" aria-live="polite"
           onMouseEnter={() => {
@@ -2684,18 +2764,21 @@ export function Storyboard() {
       {/* document-flow bottom action bar */}
       <div className="sb-actionbar">
         <div className="sb-ab-inner">
-          <button className="btn btn-ghost" onClick={() => navigate('/create/mannequin')}><Icon name="arrowLeft" size={17} />이전</button>
-          <div className="sb-ab-count">AI 생성 {aiCount}컷 · 셀러 사진 {mineCount}컷</div>
+          <button className="btn btn-ghost" onClick={() => navigate('/create/input')}><Icon name="arrowLeft" size={17} />이전</button>
+          <div className="sb-ab-count">
+            AI 생성 {aiCount}컷 · 셀러 사진 {mineCount}컷
+            <span className="sb-ab-cost"> · 생성 시 {aiCount * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧</span>
+          </div>
           <div className="sb-ab-copy">
             <Toggle on={copyOn} onChange={setCopyOn} />
             <div><div className="sec-title" style={{ fontSize: 14 }}>카피라이팅 {copyOn ? 'ON' : 'OFF'}</div>
               <div className="hint" style={{ marginTop: 1 }}>AI가 카피를 자동으로 넣어요</div></div>
           </div>
-          <button className="btn btn-primary btn-lg sb-ab-go btn-glowring" onClick={generate}
+          <button className="btn btn-primary btn-lg sb-ab-go btn-glowring" onClick={goToMannequin}
             disabled={blocks.length === 0 || blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType))}
             title={blocks.length === 0 ? '컷을 1개 이상 구성해주세요'
               : blocks.some((b) => b.source !== 'mine' && (!b.contentRole || !b.cutType)) ? '생성 설정을 준비하지 못한 이미지가 있어요' : undefined}>
-            <Icon name="sparkles" size={18} />상세페이지 생성하기 <Icon name="arrowRight" size={17} /> {aiCount * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧
+            다음 · 마네킹컷 확인하기 <Icon name="arrowRight" size={17} />
           </button>
         </div>
       </div>

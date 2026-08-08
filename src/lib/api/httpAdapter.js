@@ -55,7 +55,7 @@ function absolutizeAssetUrls(v) {
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
-export async function http(path, { method = 'GET', body, signal } = {}) {
+export async function http(path, { method = 'GET', body, signal, headers: requestHeaders } = {}) {
   let data;
   try {
     ({ data } = await supabase.auth.getSession());
@@ -91,6 +91,7 @@ export async function http(path, { method = 'GET', body, signal } = {}) {
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(requestHeaders || {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
@@ -142,7 +143,11 @@ async function pollJob(
       onProgress && onProgress(job.progress);
     }
     if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
-    if (job.status === 'error') throw new Error(job.errorMessage || '작업에 실패했어요.');
+    if (job.status === 'error') {
+      const error = new Error(job.errorMessage || '작업에 실패했어요.');
+      error.code = 'job_failed';
+      throw error;
+    }
     if (Date.now() - start > timeoutMs) {
       // 타임아웃은 **실패가 아니다** — 화면이 기다리기를 그만둔 것뿐이고 서버 잡은 계속 돈다.
       // 호출부가 "실패 처리"와 구분할 수 있게 code 를 붙인다(2026-08-07: 이 구분이 없어서
@@ -569,9 +574,16 @@ export const httpAdapter = {
   },
   // 최초 A/B 후보 생성 — 202{jobId}→폴링, 또는 완료 존재 시 200{data,credits}(무차감 재호출).
   // 크레딧: mannequinGenerate. 진행 중 재호출은 서버가 활성 job 에 합류(1회만 차감).
-  async generateMannequins(projectId, { onProgress } = {}) {
+  //
+  // onJobStarted: **서버가 202 로 답해 실제 job 이 생겼을 때만** 1회 호출한다. 200 캐시 경로에선
+  // 부르지 않는다. 두 갈래를 구분할 수 있는 곳은 여기뿐이고(반환 형태 {data,credits} 는 동일하고
+  // 폴링이 끝난 뒤라 늦다), 호출부는 이 신호로만 "생성이 시작됐다" 를 판단해야 한다 —
+  // 시작하지도 않은 생성을 진행 중이라 알리거나(리본) 최초 생성의 소유권을 주장하면
+  // (initialGenerationSession 플래그) 유료 재생성 게이트가 조용히 무력화된다.
+  async generateMannequins(projectId, { onProgress, onJobStarted } = {}) {
     const res = await http(`/v1/projects/${projectId}/mannequins:generate`, { method: 'POST' });
-    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시)
+    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시) — job 없음
+    onJobStarted?.(res.jobId);
     // 마네킹 A/B 합성은 무거운 image job — 폴링 상한을 넉넉히(짧으면 정상 job 완료 전 실패 토스트).
     const result = await pollJob(res.jobId, {
       onProgress,
@@ -596,9 +608,11 @@ export const httpAdapter = {
   },
   // fit-profile 재생성 — 완료 캐시 없이 매 호출이 새 A/B 버전을 만든다(서버 :regenerate, finalize 가 max(version)+1).
   // 크레딧: mannequinGenerate. generate 미러(202 job → 폴링). 재생성은 캐시 200 경로가 없어 항상 job.
-  async regenerateMannequin(projectId, { fitProfile, onProgress } = {}) {
+  async regenerateMannequin(projectId, { fitProfile, onProgress, idempotencyKey } = {}) {
     const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {
-      method: 'POST', body: { fitProfile },
+      method: 'POST',
+      body: { fitProfile },
+      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
     });
     if (res.data) return { data: res.data, credits: res.credits };
     const result = await pollJob(res.jobId, {

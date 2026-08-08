@@ -202,17 +202,6 @@
 .fit-fmsg b { color: var(--fg-1); font-weight: 700; }
 .fit-cta-progress { margin-bottom: 12px; }
 
-/* 상세페이지 사진 양 선택 (기본형 / 확장형) — 라벨 한 단계 크게·한 단계 얇게 */
-.fit-cmp2 { display: flex; gap: 8px; margin-bottom: 13px; }
-.fit-cmp { position: relative; flex: 1; border: 2px solid var(--ring-strong); background: var(--bg-1); border-radius: var(--r-5); padding: 13px 8px; cursor: pointer; text-align: center; color: var(--fg-1); font: inherit; transition: border-color .12s, background .12s; }
-.fit-cmp:hover { border-color: var(--link); }
-.fit-cmp.on { border-color: var(--link); background: color-mix(in srgb, var(--link) 8%, var(--bg-1)); }
-.fit-cmp.off { opacity: .5; cursor: not-allowed; }
-.fit-cmp b { display: block; font-size: 15px; font-weight: 600; }
-.fit-cmp span { display: block; font-size: 11px; color: var(--fg-2); margin-top: 3px; }
-.fit-cmp em { display: block; font-style: normal; font-size: 11px; font-weight: 700; color: var(--link); margin-top: 6px; }
-.fit-cmp-off { display: block; font-size: 10px; color: var(--fg-3); margin-top: 5px; }
-
 @media (max-width: 720px) {
   .fit-stage.comparing { flex-direction: column; align-items: center; gap: 14px; }
   .fit-stage.comparing .fit-mine-col { width: 300px; }

@@ -9,6 +9,8 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
+import { generationWorkWarningKind } from '@/lib/generationWorkWarning.js';
+import { CREDIT_COSTS } from '@/lib/limits.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
 import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
@@ -17,13 +19,20 @@ import { Icon, Button, IconButton, ErrorState, Skeleton, Modal, useToast } from 
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 import {
+  createTrailingPatchScheduler,
   hasPatchFields,
+  mergeColorMetadataWithPersistedImages,
   mergeLatestFailedAnalysisPatch,
   mergeProductOwnedAnalysisFields,
   persistAnalysisEdit,
+  registerAnalysisEditSave,
   splitAnalysisEditPatch,
 } from './saveRouting.js';
 import { getPendingTileCount, PENDING_TILE_DELAY_MS } from './pendingTiles.js';
+import {
+  invalidateStoryboardEntryPrefetch,
+  prefetchStoryboardEntry,
+} from '@/features/storyboard/storyboardEntryPrefetch.js';
 
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
@@ -260,6 +269,9 @@ export function ProductInput() {
   const [inputConsistency, setInputConsistency] = useState(null);
   const [consistencyAck, setConsistencyAck] = useState(false);   // '계속 진행' 누른 뒤 재차 막지 않는다
   const [consistencyOpen, setConsistencyOpen] = useState(false);
+  // 성별·의류 종류 등 생성 관련 필드를 바꾸면 콘티/마네킹의 기존 작업이 무효화된다 — 적용을
+  // 보류하고 대가를 먼저 보여준다. 확정 전엔 화면·서버 어느 쪽에도 반영하지 않는다(취소=무해).
+  const [pendingRelevantPatch, setPendingRelevantPatch] = useState(null);
   const { session, loading: authLoading, openLogin } = useAuth();
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
@@ -273,9 +285,61 @@ export function ProductInput() {
   const analysisSaveErrorRef = useRef(null);
   const failedAnalysisPatchRef = useRef(null);
   const latestAnalysisPatchRef = useRef({});
+  const persistedColorsRef = useRef([]);
+  const analysisPatchQueueRef = useRef(null);
+  const colorSaveSchedulerRef = useRef(null);
+  const storyboardPrefetchProjectRef = useRef(null);
+  const mannequinWorkCheckProjectRef = useRef(null);
+  if (!colorSaveSchedulerRef.current) {
+    colorSaveSchedulerRef.current = createTrailingPatchScheduler({
+      commit: (patch) => analysisPatchQueueRef.current?.(patch),
+    });
+  }
+
+  // 콘티 이동은 아래에서 명시적으로 flush한다. 브라우저 뒤로가기처럼 cleanup을 기다릴 수 없는
+  // 이탈도 보류 저장을 시작하고, 콘티 쪽 프로젝트별 저장 barrier가 성공한 PATCH와 GET을 직렬화한다.
+  useEffect(() => () => colorSaveSchedulerRef.current?.flush(), []);
+  // 마네킹 컷이 이미 만들어져 있는가 — 성별·의류 종류를 바꾸는 경고를 띄울지 판정하는 신호.
+  // 콘티(getStoryboard)는 저장분이 없으면 화면이 매번 기본 시드를 만들어 돌려주므로("보드가
+  // 있다"가 늘 참이 되어 못 쓴다) — 실제로 셀러/시스템이 만든, 유료 산출물인 마네킹 컷의 존재로
+  // 판정한다. 이 흐름(입력→콘티→마네킹)에서 컷은 콘티 진입 시 백그라운드로 생성되므로, 컷이
+  // 있다는 것은 곧 콘티(따라서 그 안의 세트 선택)도 이미 거쳤다는 뜻 — 두 비용을 함께 경고해도 된다.
+  const hasExistingGenerationWorkRef = useRef(false);
+  // 컷이 아직 0장이어도 "이 프로젝트의 마네킹 생성이 지금 돌고 있다"면 같은 경고 대상이다 —
+  // job 이 끝나면 방금 바꾼 값이 아니라 옛 선택으로 만든 유료 컷이 도착하고, 마네킹 화면의
+  // dirty 플래그가 그걸 또 한 번 유료로 다시 만든다(두 번 과금). 완료를 기다렸다가 컷의 존재로
+  // 판정하면 이미 늦으므로, 진행률처럼 시시각각 바뀌는 이 신호는 ref 가 아니라 store 구독으로
+  // 읽는다 — 리렌더를 타야 이 화면에 머무는 동안의 실제 상태 변화(러너가 job 시작을 알리거나
+  // 완료로 정리되는 순간)를 놓치지 않는다. status/projectId 만 구독해 progress 틱마다
+  // 리렌더하지 않는다(불필요한 리렌더 방지).
+  const mannequinJobStatus = useAppStore((s) => s.mannequinJob.status);
+  const mannequinJobProjectId = useAppStore((s) => s.mannequinJob.projectId);
+
+  // 분석 결과를 사용자가 검토하는 동안 다음 화면(콘티)을 미리 데운다. analysisProjectId 는
+  // submit() 시작 시점(사진 업로드·저장·분석보다 먼저)에 이미 잡히므로 그것만으로는 이르다 —
+  // 콘티 시드가 읽는 필드(colors·clothingType·targetGenders)가 전부 서버에 반영된 뒤인
+  // phase==='done'(기존 프로젝트 재진입·초안 동기화·최초 분석 완료 세 경로 모두 이 시점엔
+  // 관련 저장이 끝나 있다)까지 함께 기다린다.
+  useEffect(() => {
+    if (!analysisProjectId || phase !== 'done') return;
+    if (storyboardPrefetchProjectRef.current === analysisProjectId) return;
+    storyboardPrefetchProjectRef.current = analysisProjectId;
+    void prefetchStoryboardEntry(analysisProjectId);
+  }, [analysisProjectId, phase]);
+
+  useEffect(() => {
+    if (!analysisProjectId || phase !== 'done') return;
+    if (mannequinWorkCheckProjectRef.current === analysisProjectId) return;
+    mannequinWorkCheckProjectRef.current = analysisProjectId;
+    let alive = true;
+    api.getMannequins(analysisProjectId).then((cuts) => {
+      if (alive) hasExistingGenerationWorkRef.current = (cuts || []).length > 0;
+    }).catch(() => { /* 조회 실패는 경고를 생략한다 — 방해가 안전보다 나쁘다 */ });
+    return () => { alive = false; };
+  }, [analysisProjectId, phase]);
   // force: 경고 모달에서 '계속 진행'을 누른 경로. setState 는 비동기라 ack 상태를 기다릴 수
   // 없어 인자로 넘긴다. onNext 콜백이 이벤트 객체를 넘겨도 force 는 undefined 라 안전하다.
-  const goToMannequin = async (opts) => {
+  const goToStoryboard = async (opts) => {
     const force = opts?.force === true;   // null·이벤트 객체로 불려도 안전하게
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
     // 다른 옷이 섞였을 수 있다는 경고 — 생성에 들어가기 직전 한 번만. 확인하면 그대로 진행한다
@@ -286,6 +350,7 @@ export function ProductInput() {
     }
     redirectingRef.current = true;
     try {
+      colorSaveSchedulerRef.current.flush();
       // 직전 입력 이벤트의 PATCH가 getAnalysis보다 늦게 도착하는 레이스를 막는다. 모든 분석 저장을
       // 입력 순서대로 직렬화하고, 확정은 현재 큐까지만 기다린 뒤 이동/재생성을 시작한다.
       await analysisSaveChainRef.current;
@@ -299,12 +364,8 @@ export function ProductInput() {
         }
       }
       if (analysisSaveErrorRef.current) throw analysisSaveErrorRef.current;
-      // 이벤트 시점에만 읽어 분석 편집마다 ProductInput 전체가 다시 렌더되지 않게 한다.
-      const routeState = useAppStore.getState().generationRelevantEditsDirty
-        ? { refreshForEdits: true }
-        : undefined;
       if (session && analysisProjectId) {
-        navigate('/create/mannequin', { state: routeState });
+        navigate('/create/storyboard');
         return;
       }
       const { failed } = await saveProductDraft(product, analysis);
@@ -313,18 +374,86 @@ export function ProductInput() {
         const draft = await loadDraft();
         if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
         const { projectId } = await syncDraftToBackend(draft);
-        useAppStore.getState().adoptProject(projectId);
+        // 게스트로 편집(재생성 신호 dirty)한 뒤 세션이 생겨 여기서 처음 project 를 얻는 경로 —
+        // '다른 작업으로 전환'이 아니라 같은 작업이 신원을 얻는 것뿐이라 신호를 지우면 안 된다.
+        useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
         setAnalysisProjectId(projectId);
         await clearDraft().catch(() => {});
-        navigate('/create/mannequin', { state: routeState });
+        navigate('/create/storyboard');
         return;
       }
-      openLogin('/create/mannequin');
+      openLogin('/create/storyboard');
     } catch (error) {
       toast.push(error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     } finally {
       redirectingRef.current = false;
     }
+  };
+
+  const queueAnalysisPatch = (patch) => {
+    // 후보 목록은 서버 소유 — 추천 갱신 패치뿐 아니라 선택 토글 응답도
+    // 서버 머지 결과로 동기화해 묵은 후보가 로컬에 남지 않게 한다.
+    const syncMatch = isMatchRecommendationPatch(patch) || 'matchClothing' in patch;
+    latestAnalysisPatchRef.current = { ...latestAnalysisPatchRef.current, ...patch };
+    if (failedAnalysisPatchRef.current) {
+      failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
+        failedAnalysisPatchRef.current,
+        patch,
+        latestAnalysisPatchRef.current,
+      );
+    }
+    analysisSaveChainRef.current = analysisSaveChainRef.current
+      .then(() => persistAnalysisEdit(api, analysisProjectId, patch))
+      .then(({ analysis: savedAnalysis, product: savedProduct }) => {
+        if (!failedAnalysisPatchRef.current) analysisSaveErrorRef.current = null;
+        if ('colors' in patch) persistedColorsRef.current = savedProduct?.colors || patch.colors;
+        if (!savedAnalysis) return;
+        if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: savedAnalysis.matchClothing }));
+      })
+      .catch((error) => {
+        failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
+          failedAnalysisPatchRef.current,
+          patch,
+          latestAnalysisPatchRef.current,
+        );
+        analysisSaveErrorRef.current = error;
+        toast.push(error?.message || '분석 수정 내용을 저장하지 못했어요.', { icon: 'alertTri' });
+      });
+    registerAnalysisEditSave(analysisProjectId, analysisSaveChainRef.current);
+  };
+  analysisPatchQueueRef.current = queueAnalysisPatch;
+
+  // 분석 폼의 편집 하나를 실제로 화면·서버에 반영한다. 생성 관련 필드(성별·의류 종류 등)를
+  // 바꿀 때 기존 작업이 있으면 이 함수를 곧장 부르지 않고 경고 모달의 확정을 거친다 — 취소하면
+  // 아예 호출되지 않으므로 화면·서버 어디에도 흔적이 남지 않는다.
+  const applyAnalysisPatch = (patch) => {
+    if (isGenerationRelevantAnalysisPatch(patch)) {
+      useAppStore.getState().markGenerationRelevantEdits();
+    }
+    const { productPatch } = splitAnalysisEditPatch(patch);
+    setProduct((p) => (hasPatchFields(productPatch) ? { ...p, ...productPatch } : p));
+    setAnalysis((a) => ({ ...a, ...patch }));
+    queueAnalysisPatch(patch);
+  };
+
+  // 'cuts' = 컷이 이미 있음(다시 만들어야 함) · 'running' = 컷은 없지만 이 프로젝트의 생성이
+  // 지금 돌고 있음(끝나면 방금 바꾼 값이 아니라 옛 선택으로 완성됨) · 'none' = 잃을 게 없음.
+  const generationWorkKind = generationWorkWarningKind({
+    cutsExist: hasExistingGenerationWorkRef.current,
+    jobStatus: mannequinJobStatus,
+    jobProjectId: mannequinJobProjectId,
+    projectId: analysisProjectId,
+  });
+
+  // 생성 관련 필드 편집 요청 — 기존 작업(마네킹 컷이 있거나, 지금 생성이 도는 중)이 있으면
+  // 바로 적용하지 않고 대가를 먼저 보여준다. 없으면(새 프로젝트의 첫 분석 검토) 잃을 게
+  // 없으니 그대로 적용해 방해하지 않는다.
+  const onAnalysisFormChange = (patch) => {
+    if (isGenerationRelevantAnalysisPatch(patch) && generationWorkKind !== 'none') {
+      setPendingRelevantPatch(patch);
+      return;
+    }
+    applyAnalysisPatch(patch);
   };
 
   useEffect(() => {
@@ -342,6 +471,7 @@ export function ProductInput() {
       ]);
       if (!alive) return;
       setCatalogs(c);
+      persistedColorsRef.current = p.colors || [];
 
       // 같은 탭에서 마네킹/후속 단계로 갔다가 input 으로 돌아온 경우에는 현재 프로젝트를
       // 편집한다. cold input 은 라우트 계층이 먼저 beginProject 해서 여기까지 stale id가 오지 않는다.
@@ -377,6 +507,7 @@ export function ProductInput() {
             images: (col.images || []).map((im) => ({ ...im, src: urlById[im.id] || im.src })),
           })),
         };
+        persistedColorsRef.current = restored.colors || [];
         setProduct(restored);
         // 분석 결과 복원 → 분석 폼(done)으로 바로. 단 필수 사진(앞면·뒷면)이 추출 실패로
         // 빠졌으면 입력 단계로 둬서 필수 검증이 재업로드를 강제하게 한다(검증 우회 방지).
@@ -414,10 +545,32 @@ export function ProductInput() {
   // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
   const addImageFiles = (colorId, slot, metas) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: [...c.images, ...metas.map((m) => ({ id: uid('img'), slot, label: slot, ...m }))] } : c) }));
   const removeImage = (colorId, imgId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: c.images.filter((im) => im.id !== imgId) } : c) }));
-  const renameColor = (colorId, name) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, name } : c) }));
-  const setColor = (colorId, swatchId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, swatchId } : c) }));
-  const addColor = () => setProduct((p) => p.colors.length >= 3 ? p : ({ ...p, colors: [...p.colors, { id: uid('col'), name: '', isBase: false, images: [] }] }));
-  const removeColor = (colorId) => setProduct((p) => ({ ...p, colors: p.colors.filter((c) => c.id !== colorId) }));
+  const editColors = (change) => {
+    const colors = change(product.colors);
+    if (colors === product.colors) return;
+    setProduct((p) => ({ ...p, colors }));
+    if (phase === 'done') {
+      setAnalysis((a) => ({ ...a, colors }));
+      const persistedColors = mergeColorMetadataWithPersistedImages(
+        persistedColorsRef.current,
+        colors,
+      );
+      // 저장 타이머보다 먼저 캐시를 닫아, 브라우저 뒤로가기가 묵은 콘티 시드를 즉시 읽지 않게 한다.
+      if (analysisProjectId) invalidateStoryboardEntryPrefetch(analysisProjectId);
+      // 스와치 연타는 화면에 즉시 보이되, 마지막 colors 패치 하나만 기존 저장 큐로 보낸다.
+      colorSaveSchedulerRef.current.schedule({ colors: persistedColors });
+    }
+  };
+  const renameColor = (colorId, name) => editColors((colors) => (
+    colors.map((c) => c.id === colorId ? { ...c, name } : c)
+  ));
+  const setColor = (colorId, swatchId) => editColors((colors) => (
+    colors.map((c) => c.id === colorId ? { ...c, swatchId } : c)
+  ));
+  const addColor = () => editColors((colors) => colors.length >= 3
+    ? colors
+    : [...colors, { id: uid('col'), name: '', isBase: false, images: [] }]);
+  const removeColor = (colorId) => editColors((colors) => colors.filter((c) => c.id !== colorId));
 
   // 필수 판정은 기준 색상 기준 — AI가 소비하는 것이 기준 색상 이미지라서(스펙 §4).
   const baseColor = product.colors.find((c) => c.isBase) || product.colors[0];
@@ -459,6 +612,7 @@ export function ProductInput() {
         name: finalName,
         ...analyzedProductPatch,
       };
+      persistedColorsRef.current = nextProduct.colors || [];
       setProduct(nextProduct);
       if (hasPatchFields(analyzedProductPatch)) {
         await api.saveProduct(pid, analyzedProductPatch);
@@ -560,7 +714,7 @@ export function ProductInput() {
             <Button variant="ghost" onClick={() => {
               setConsistencyAck(true);
               setConsistencyOpen(false);
-              goToMannequin({ force: true });
+              goToStoryboard({ force: true });
             }}>이대로 진행</Button>
             {/* 사진을 고치러 가는 쪽이 기본 행동 — 분석 결과는 그대로 두고 입력만 펼친다 */}
             <Button variant="primary" onClick={() => {
@@ -624,43 +778,32 @@ export function ProductInput() {
           <AnalysisForm inline analysis={analysis} catalogs={catalogs}
             projectId={analysisProjectId}
             onAnalysisReplace={setAnalysis}
-            onChange={(patch) => {
-              // 후보 목록은 서버 소유 — 추천 갱신 패치뿐 아니라 선택 토글 응답도
-              // 서버 머지 결과로 동기화해 묵은 후보가 로컬에 남지 않게 한다.
-              const syncMatch = isMatchRecommendationPatch(patch) || 'matchClothing' in patch;
-              if (isGenerationRelevantAnalysisPatch(patch)) {
-                useAppStore.getState().markGenerationRelevantEdits();
-              }
-              const { productPatch } = splitAnalysisEditPatch(patch);
-              setProduct((p) => (hasPatchFields(productPatch) ? { ...p, ...productPatch } : p));
-              setAnalysis((a) => ({ ...a, ...patch }));
-              latestAnalysisPatchRef.current = { ...latestAnalysisPatchRef.current, ...patch };
-              if (failedAnalysisPatchRef.current) {
-                failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
-                  failedAnalysisPatchRef.current,
-                  patch,
-                  latestAnalysisPatchRef.current,
-                );
-              }
-              analysisSaveChainRef.current = analysisSaveChainRef.current
-                .then(() => persistAnalysisEdit(api, analysisProjectId, patch))
-                .then(({ analysis: savedAnalysis }) => {
-                  if (!failedAnalysisPatchRef.current) analysisSaveErrorRef.current = null;
-                  if (!savedAnalysis) return;
-                  if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: savedAnalysis.matchClothing }));
-                })
-                .catch((error) => {
-                  failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
-                    failedAnalysisPatchRef.current,
-                    patch,
-                    latestAnalysisPatchRef.current,
-                  );
-                  analysisSaveErrorRef.current = error;
-                  toast.push(error?.message || '분석 수정 내용을 저장하지 못했어요.', { icon: 'alertTri' });
-                });
-            }}
-            onNext={goToMannequin} />
+            onChange={onAnalysisFormChange}
+            onNext={goToStoryboard} />
         </div>
+      )}
+      {pendingRelevantPatch && (
+        <Modal onClose={() => setPendingRelevantPatch(null)}>
+          {generationWorkKind === 'running' ? (
+            <>
+              <h3>바꾸면 지금 만들고 있는 마네킹 컷을 버려요</h3>
+              <p>새 선택대로 마네킹 컷을 다시 만들어요 · {CREDIT_COSTS.mannequinGenerate} 크레딧.</p>
+            </>
+          ) : (
+            <>
+              <h3>바꾸면 마네킹 컷을 다시 만들어야 해요</h3>
+              <p>마네킹 컷이 다시 만들어져요 · {CREDIT_COSTS.mannequinGenerate} 크레딧. 콘티에서 고른 촬영 세트도 다시 골라야 해요.</p>
+            </>
+          )}
+          <div className="modal-actions">
+            <Button variant="ghost" onClick={() => {
+              const patch = pendingRelevantPatch;
+              setPendingRelevantPatch(null);
+              applyAnalysisPatch(patch);
+            }}>그대로 바꿀게요</Button>
+            <Button variant="primary" onClick={() => setPendingRelevantPatch(null)}>취소</Button>
+          </div>
+        </Modal>
       )}
     </div>
   );

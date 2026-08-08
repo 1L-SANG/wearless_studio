@@ -3,13 +3,15 @@
    가운데 큰 컷(내 옷 = 매칭 하의까지 입은 모습) → 아래 '확인 카드'.
    축(핏·기장·… + 매칭 의류 핏)을 하나씩 순차 확인 — '조정하기' 하면 이미지 옆에
    예시가 세로로 떠서 비교하며 고른다(방식 1). 매칭 하의도 컷에 보이므로 조정 시 재생성(유료).
-   전부 확인되면 카드가 '사진 양'(기본형/확장형) 선택으로 전환 → 이 사진 양으로 만들기.
-   - 변경 0건 → 사진 양 선택 후 다음 단계 / 변경 ≥1건 → 수정 반영 재생성(새 버전 히스토리).
-   컷 목록은 서버 상태, 선택 컷·사진 양은 store + patchProject 동기화.
+   전부 확인되면 카드가 CTA('상세페이지 생성하기')로 전환 → 생성 이동(마지막 정거장, 크레딧 소비 지점).
+   사진 양(기본형/확장형) 선택은 콘티 상단으로 이동했다(콘티가 그 시드의 컷 수를 정하므로,
+   그리고 콘티가 마네킹보다 먼저 온다) — features/storyboard/ComposeModePicker.jsx.
+   - 변경 0건 → 다음 단계(생성) 이동 / 변경 ≥1건 → 수정 반영 재생성(새 버전 히스토리).
+   컷 목록은 서버 상태, 선택 컷은 store + patchProject 동기화.
    설계·규칙: documents/mannequin_ui_direction.md · 목업 documents/mockups/mannequin-ui-matching.html
    ============================================================= */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
@@ -27,13 +29,22 @@ import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.j
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
-  markInitialGenerationRequested,
 } from './initialGenerationSession.js';
 import {
-  invalidateStoryboardEntryPrefetch,
-  prefetchStoryboardEntry,
-} from '@/features/storyboard/storyboardEntryPrefetch.js';
-import { sbSaveIdle } from '@/features/storyboard/storyboardPersistence.js';
+  clearGenerationRelevantEditsAttempt,
+  landedGenerationRelevantEditsAttemptRevision,
+  markGenerationRelevantEditsAttempt,
+  readGenerationRelevantEditsRevision,
+} from './generationRelevantEditsSession.js';
+import {
+  generationProgressFor,
+  requestMannequinGeneration,
+  updateMannequinJob,
+} from './generationRunner.js';
+import {
+  resolveInitialGenerationCuts,
+  runGenerationRelevantEditsRefresh,
+} from './generationRunnerCore.js';
 import './Mannequin.css';
 
 const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
@@ -186,49 +197,6 @@ function decodeCutImage(src) {
       );
     }
   });
-}
-
-let mannequinGenerationInflight = null;
-let mannequinGenerationProjectId = null;
-
-function updateMannequinJob(pid, patch) {
-  const { projectId, setMannequinJob } = useAppStore.getState();
-  if (projectId !== pid) return;
-  setMannequinJob({ projectId: pid, ...patch });
-}
-
-function generationProgressFor(pid) {
-  const job = useAppStore.getState().mannequinJob;
-  return job?.projectId === pid ? Number(job.progress) || 0 : 0;
-}
-
-function requestMannequinGeneration(pid) {
-  if (mannequinGenerationInflight && mannequinGenerationProjectId === pid) {
-    return mannequinGenerationInflight;
-  }
-
-  updateMannequinJob(pid, {
-    status: 'running',
-    progress: generationProgressFor(pid),
-    errorMessage: '',
-  });
-
-  mannequinGenerationProjectId = pid;
-  markInitialGenerationRequested(pid);
-  mannequinGenerationInflight = api.generateMannequins(pid, {
-    onProgress: (next) => updateMannequinJob(pid, {
-      status: 'running',
-      progress: next,
-      errorMessage: '',
-    }),
-  }).finally(() => {
-    if (mannequinGenerationProjectId === pid) {
-      mannequinGenerationInflight = null;
-      mannequinGenerationProjectId = null;
-    }
-  });
-
-  return mannequinGenerationInflight;
 }
 
 /* 대기 인포그래픽 — 의류가 주인공인 롱 시퀀스 (마네킹·퍼센트 없음, 방향서 §로딩 v2.2).
@@ -623,7 +591,6 @@ function ExampleTiles({ axisKey, category, gender, values, onPick }) {
 
 export function Mannequin() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [phase, setPhase] = useState('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [progress, setProgress] = useState(0);
@@ -638,6 +605,7 @@ export function Mannequin() {
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
+  const [aiCutCount, setAiCutCount] = useState(null);   // null = 아직 모름(로딩 중·조회 실패) — 0 과 구분
   const submittingRef = useRef(false);   // 결제(재생성) 이중 제출 방지 — busy 반영 전 연타 차단
   const cutsRef = useRef(cuts);
   const selectedRef = useRef(null);
@@ -657,15 +625,12 @@ export function Mannequin() {
   const projectId = useAppStore((s) => s.projectId);
   const selectedId = useAppStore((s) => s.selectedMannequinId);
   const selectMannequin = useAppStore((s) => s.selectMannequin);
-  const composeMode = useAppStore((s) => s.composeMode);
-  const setComposeMode = useAppStore((s) => s.setComposeMode);
   const syncCredits = useAppStore((s) => s.syncCredits);
   const mannequinJob = useAppStore((s) => s.mannequinJob);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const loadRunRef = useRef(0);
   const initialCutsExistedRef = useRef(false);
   const refreshForEditsHandledRef = useRef(false);
-  const storyboardPrefetchProjectRef = useRef(null);
 
   const clearWaitCopyTimers = () => {
     waitCopyTimersRef.current.forEach(clearTimeout);
@@ -722,15 +687,20 @@ export function Mannequin() {
       if (loadRunRef.current !== runId) return;
       pid = useAppStore.getState().projectId;
       if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
-      const [nextProduct, nextAnalysis, nextCatalogs] = await Promise.all([
+      // getStoryboard 실패는 이 화면 자체를 막지 않는다(비치명) — 대신 null 로 남겨
+      // "콘티가 AI 컷 0장" 과 "조회 자체를 못 함" 을 구분한다. 구분 안 하면 CTA 가
+      // 크레딧 소비 직전에 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다.
+      const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
         api.getCatalogs(),
+        api.getStoryboard(pid).catch(() => null),
       ]);
       if (loadRunRef.current !== runId) return;
       setProgress(generationProgressFor(pid));
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
+      setAiCutCount(Array.isArray(nextStoryboard) ? nextStoryboard.filter((b) => b.source !== 'mine').length : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
       setFitProfileDraft(draft);
@@ -740,6 +710,13 @@ export function Mannequin() {
       ));
 
       let list = await api.getMannequins(pid);
+      // 재생성 요청 뒤 새로고침된 경우, 세션에 남긴 요청 기준선보다 새 컷이 이미 도착했다면
+      // 이전 요청의 성공으로 간주한다. terminal job 과 클라이언트 응답 사이 F5가 새 유료 요청을
+      // 만드는 창을 닫되, 같은 프로젝트의 더 최신 편집 revision은 조건부 clear가 보존한다.
+      const landedEditRevision = landedGenerationRelevantEditsAttemptRevision(pid, list);
+      if (landedEditRevision) {
+        useAppStore.getState().clearGenerationRelevantEdits(pid, landedEditRevision);
+      }
       initialCutsExistedRef.current = cutsExistedBeforeInitialGeneration(pid, list);
       if (list.length) {
         updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
@@ -747,9 +724,16 @@ export function Mannequin() {
       }
       if (loadRunRef.current !== runId) return;
       if (!list.length) {
-        const { data, credits } = await requestMannequinGeneration(pid);
-        list = extractCuts(data);
-        syncCredits(credits);
+        const resolved = await resolveInitialGenerationCuts({
+          projectId: pid,
+          initialCuts: list,
+          requestGeneration: requestMannequinGeneration,
+          extractCuts,
+          classifyCuts: cutsExistedBeforeInitialGeneration,
+        });
+        list = resolved.cuts;
+        initialCutsExistedRef.current = resolved.cutsExisted;
+        syncCredits(resolved.credits);
       }
       if (!list.length) throw new Error('생성된 마네킹컷을 찾지 못했어요. 다시 시도해 주세요.');
       clearInitialGenerationRequested(pid);
@@ -772,6 +756,10 @@ export function Mannequin() {
         try {
           const fallback = await api.getMannequins(pid);
           if (fallback.length) {
+            const landedEditRevision = landedGenerationRelevantEditsAttemptRevision(pid, fallback);
+            if (landedEditRevision) {
+              useAppStore.getState().clearGenerationRelevantEdits(pid, landedEditRevision);
+            }
             initialCutsExistedRef.current = cutsExistedBeforeInitialGeneration(pid, fallback);
             clearInitialGenerationRequested(pid);
             updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
@@ -844,14 +832,9 @@ export function Mannequin() {
   const changingStep = cur && stepState[cur.key]?.mode === 'changing' ? cur : null;
   const needsRegen = changedSteps.length > 0;
 
-  const warmStoryboardEntry = () => {
-    if (!projectId || storyboardPrefetchProjectRef.current === projectId) return;
-    storyboardPrefetchProjectRef.current = projectId;
-    void prefetchStoryboardEntry(projectId, sbSaveIdle);
-  };
   const setStep = (key, patch) => setStepState((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
-  const keepStep = (key) => { warmStoryboardEntry(); setStep(key, { mode: 'keep', pick: null, pickLb: null }); };
-  const changeStep = (key) => { warmStoryboardEntry(); setStep(key, { mode: 'changing' }); };
+  const keepStep = (key) => { setStep(key, { mode: 'keep', pick: null, pickLb: null }); };
+  const changeStep = (key) => { setStep(key, { mode: 'changing' }); };
   const cancelStep = (key) => setStep(key, { mode: 'pending' });
   const pickStep = (key, value, label) => setStep(key, { mode: 'picked', pick: value, pickLb: label });
   const editStep = (key) => setStep(key, { mode: 'changing', pick: null, pickLb: null });
@@ -1041,13 +1024,13 @@ export function Mannequin() {
     }
   };
 
-  const runGenerationAttempts = async (runId, profile) => {
+  const runGenerationAttempts = async (runId, profile, onGenerationSucceeded, generationAttempt) => {
     for (let attempt = 0; attempt < REGENERATE_ATTEMPTS; attempt += 1) {
       if (attempt > 0) {
         setRegenerateState('generation-retry');
         await delay(GENERATION_RETRY_DELAYS[attempt]);
       }
-      if (!runIsCurrent(runId)) return;
+      if (!runIsCurrent(runId)) return false;
       regenerateProgressRef.current = 0;
       setProgress(0);
       setRegenerateListReady(false);
@@ -1058,6 +1041,7 @@ export function Mannequin() {
       try {
         response = await api.regenerateMannequin(projectId, {
           fitProfile: profile,   // matchingFit 포함 — garment_ref 로 저장, 재생성에 반영
+          idempotencyKey: generationAttempt.idempotencyKey,
           onProgress: (next) => {
             if (!runIsCurrent(runId)) return;
             const realProgress = Math.max(0, Math.min(100, Number(next) || 0));
@@ -1066,37 +1050,57 @@ export function Mannequin() {
           },
         });
       } catch (error) {
-        if (!runIsCurrent(runId)) return;
-
         // pollJob 의 100은 생성 완료 뒤 내부 목록 refetch 직전에 온다. 이 뒤의 실패는 절대 재생성하지 않는다.
         if (regenerateProgressRef.current >= 100) {
+          onGenerationSucceeded();
+          if (!runIsCurrent(runId)) return true;
           setRegenerateState('load-retry');
           await loadCreatedVersion(runId, profile);
-          return;
+          return true;
         }
+        if (!runIsCurrent(runId)) return false;
         if (isNonRetryableRegenerateError(error)) {
           finishNonRetryable(runId, error);
-          return;
+          return false;
         }
 
         setRegenerateState('generation-retry');
         const reconciled = await reconcileLandedVersion(runId);
-        if (!runIsCurrent(runId)) return;
+        if (!runIsCurrent(runId)) return false;
         if (reconciled) {
+          onGenerationSucceeded();
           setRegenerateState('load-retry');
           await loadCreatedVersion(runId, profile, reconciled);
-          return;
+          return true;
+        }
+        // 서버가 job 실패를 확정한 경우에만 다음 자동 시도에 새 멱등 키를 준다. 네트워크 단절·F5처럼
+        // 결과를 모르는 실패는 같은 키를 유지해야 이미 완료된/진행 중인 유료 job에 다시 합류한다.
+        if (error?.code === 'job_failed' && generationAttempt.dirtyRevision) {
+          clearGenerationRelevantEditsAttempt(
+            generationAttempt.projectId,
+            generationAttempt.dirtyRevision,
+          );
+          generationAttempt.idempotencyKey = attempt < REGENERATE_ATTEMPTS - 1
+            ? markGenerationRelevantEditsAttempt(
+              generationAttempt.projectId,
+              generationAttempt.dirtyRevision,
+              regenerateBaselineRef.current,
+            )
+            : null;
         }
         if (attempt >= REGENERATE_ATTEMPTS - 1) {
           failGeneration(runId);
-          return;
+          return false;
         }
 
         // 실패한 생성은 서버가 크레딧 예약을 해제하므로, 동일 조정의 자동 재시도는 크레딧에 안전하다.
         continue;
       }
 
-      if (!runIsCurrent(runId)) return;
+      // 서버 job 성공이 확인된 즉시 dirty를 소비한다. 뒤의 목록 refetch/decode 동안 새로고침해도
+      // 같은 유료 재생성을 다시 만들지 않게, 화면 후처리보다 성공 신호가 먼저다.
+      onGenerationSucceeded();
+      if (!runIsCurrent(runId)) return true;
       syncCredits(response.credits);
       const responseCuts = extractCuts(response.data);
       if (newestCutSince(responseCuts, regenerateBaselineRef.current)) {
@@ -1105,20 +1109,33 @@ export function Mannequin() {
       setRegenerateState('loading');
       // API 응답만 믿지 않고 실제 목록 refetch + 브라우저 decode 가 끝나야 완료한다.
       await loadCreatedVersion(runId, profile);
-      return;
+      return true;
     }
+    return false;
   };
 
-  const regenerate = async (profileOverride = null) => {
-    if (submittingRef.current) return;   // 연타 + 모든 자동 재시도 구간의 이중 재생성·이중 차감 방지
-    invalidateStoryboardEntryPrefetch(projectId);
-    storyboardPrefetchProjectRef.current = null;
+  const regenerate = async (profileOverride = null, onGenerationSucceeded = () => {}) => {
+    if (submittingRef.current) return false;   // 연타 + 모든 자동 재시도 구간의 이중 재생성·이중 차감 방지
     submittingRef.current = true;
+    const generationProjectId = projectId;
+    const dirtyRevision = readGenerationRelevantEditsRevision(generationProjectId);
+    const generationAttempt = {
+      projectId: generationProjectId,
+      dirtyRevision,
+      idempotencyKey: null,
+    };
     const runId = regenerateRunRef.current + 1;
     regenerateRunRef.current = runId;
     const profile = profileOverride || buildFitProfile();
     regenerateProfileRef.current = profile;
     regenerateBaselineRef.current = cutBaseline(cutsRef.current);
+    if (dirtyRevision) {
+      generationAttempt.idempotencyKey = markGenerationRelevantEditsAttempt(
+        generationProjectId,
+        dirtyRevision,
+        regenerateBaselineRef.current,
+      );
+    }
     knownLandedListRef.current = null;
     clearArrivalTimers();
     setArrival(null);
@@ -1129,24 +1146,35 @@ export function Mannequin() {
     setRegenerateState('generating');
     startWaitCopyClock(runId);
     try {
-      await runGenerationAttempts(runId, profile);
+      let succeededReported = false;
+      const reportSuccess = () => {
+        if (succeededReported) return;
+        succeededReported = true;
+        if (dirtyRevision) {
+          useAppStore.getState().clearGenerationRelevantEdits(generationProjectId, dirtyRevision);
+        }
+        onGenerationSucceeded();
+      };
+      return await runGenerationAttempts(runId, profile, reportSuccess, generationAttempt);
     } catch {
       failGeneration(runId);
+      return false;
     }
   };
 
   useEffect(() => {
-    if (phase !== 'ready' || location.state?.refreshForEdits !== true
-        || refreshForEditsHandledRef.current) return;
-    refreshForEditsHandledRef.current = true;
-    // 먼저 history state 를 소비해 back/refresh/StrictMode 에서 유료 요청이 재발화하지 않게 한다.
-    navigate(location.pathname, { replace: true, state: null });
-    if (initialCutsExistedRef.current) {
-      regenerate();
-    }
-    // 기존 컷이면 regenerate 호출 직후, 최초 생성이면 그 생성이 편집값을 이미 반영한 뒤 clear.
-    useAppStore.getState().clearGenerationRelevantEdits();
-  }, [location.pathname, location.state, navigate, phase]);
+    if (phase !== 'ready') return;
+    const refreshProjectId = projectId;
+    void runGenerationRelevantEditsRefresh({
+      handledRef: refreshForEditsHandledRef,
+      readDirtyRevision: () => readGenerationRelevantEditsRevision(refreshProjectId),
+      cutsExisted: initialCutsExistedRef.current,
+      regenerate: (onSucceeded) => regenerate(null, onSucceeded),
+      clearDirty: (revision) => (
+        useAppStore.getState().clearGenerationRelevantEdits(refreshProjectId, revision)
+      ),
+    });
+  }, [phase]);
 
   const retryGeneration = () => regenerate(regenerateProfileRef.current || buildFitProfile());
 
@@ -1178,8 +1206,6 @@ export function Mannequin() {
     // 안내 후 이동을 허용 — 선택 마네킹컷 이미지가 1번 참조(진실)로 여전히 전달된다.
     const profile = buildFitProfile();
     if (JSON.stringify(profile) !== JSON.stringify(analysis?.fitProfile)) {
-      invalidateStoryboardEntryPrefetch(projectId);
-      storyboardPrefetchProjectRef.current = null;
       setBusy(true);
       try {
         await api.saveAnalysis(projectId, { fitProfile: profile });
@@ -1190,16 +1216,7 @@ export function Mannequin() {
         setBusy(false);
       }
     }
-    // 최신 사진 양이 서버에 저장된 뒤 콘티를 읽어야 첫 시드도 올바른 모드로 만들어진다.
-    setBusy(true);
-    try {
-      await setComposeMode(composeMode);
-      navigate('/create/storyboard');
-    } catch {
-      pushToast('사진 양을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alertTri' });
-    } finally {
-      setBusy(false);
-    }
+    navigate('/create/generating');
   };
 
   const regenerateActive = REGENERATE_ACTIVE_STATES.has(regenerateState);
@@ -1246,8 +1263,6 @@ export function Mannequin() {
 
   if (phase === 'loading') return <>{doneBlocked && <DoneGuardModal />}<MannequinLoading progress={loadingProgress} category={fitProfileDraft?.category} /></>;
   if (phase === 'error') return <>{doneBlocked && <DoneGuardModal />}<MannequinError message={errorMsg} onRetry={loadMannequins} /></>;
-
-  const modes = catalogs?.composeModes || [];
 
   return (
     <div className="wizard wide fit-page">
@@ -1336,37 +1351,10 @@ export function Mannequin() {
           </div>
         ) : (
           <div className="fit-final">
-            <div className="fit-q">사진 양을 선택해주세요.</div>
-            <div className="fit-cmp2">
-              {modes.map((m) => {
-                const on = composeMode === m.value;
-                return (
-                  <button
-                    type="button"
-                    key={m.value}
-                    className={`fit-cmp${on ? ' on' : ''}`}
-                    aria-pressed={on}
-                    onClick={() => {
-                      if (!on) {
-                        invalidateStoryboardEntryPrefetch(projectId);
-                        storyboardPrefetchProjectRef.current = null;
-                      }
-                      setComposeMode(m.value)
-                        .then(() => { if (!on) warmStoryboardEntry(); })
-                        .catch(() => {
-                          pushToast('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.', { icon: 'alertTri' });
-                        });
-                    }}
-                  >
-                    <b>{m.label}</b>
-                    <span>{m.desc}</span>
-                    {m.count && <em>예상 {m.count}컷</em>}
-                  </button>
-                );
-              })}
-            </div>
             <Button variant="primary" size="lg" block iconRight="arrowRight" disabled={busy} onClick={onCta}>
-              이 사진 양으로 만들기
+              {/* 콘티 조회 실패로 aiCutCount 를 모를 때 '0 크레딧'(=무료로 읽힘)을 보여주지 않는다 —
+                  기존 관용구(em dash '—')로 미확정을 표시한다. 실제 과금은 서버가 저장된 콘티로 재계산. */}
+              상세페이지 생성하기 · {aiCutCount == null ? '—' : aiCutCount * (catalogs?.creditCosts?.storyboardPerCut ?? 1)} 크레딧
             </Button>
           </div>
         )}

@@ -1096,7 +1096,17 @@ export function AnalysisForm({
   );
 
   // 마네킹 최초 생성은 다음 페이지 진입 시 자동 차감 — 차감 직전 마지막 행동인 이 버튼에 예고 (PRD §7.7)
-  const cta = <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onNext}>의류정보 확정 완료 · {CREDIT_COSTS.mannequinGenerate} 크레딧</Button>;
+  // 버튼 금액만으로는 "지금 나가는 돈"만 보이고, 되돌아와 설정을 고치면 또 나간다는 사실이 안 보인다.
+  // 콘티에서 '이전' 으로 돌아올 수 있으니 되돌릴 수 없다고는 말하지 않는다 — 대가를 말한다.
+  const cta = (
+    <>
+      <p className="af-cta-note">
+        누르면 마네킹컷을 만들기 시작해요. 이후에 성별·의류 종류를 바꾸면
+        컷을 다시 만들어서 크레딧이 한 번 더 나가요.
+      </p>
+      <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onNext}>의류정보 확정 완료 · {CREDIT_COSTS.mannequinGenerate} 크레딧</Button>
+    </>
+  );
 
   if (inline) {
     return (
