@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
+import { generationWorkWarningKind } from '@/lib/generationWorkWarning.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
@@ -304,6 +305,15 @@ export function ProductInput() {
   // 판정한다. 이 흐름(입력→콘티→마네킹)에서 컷은 콘티 진입 시 백그라운드로 생성되므로, 컷이
   // 있다는 것은 곧 콘티(따라서 그 안의 세트 선택)도 이미 거쳤다는 뜻 — 두 비용을 함께 경고해도 된다.
   const hasExistingGenerationWorkRef = useRef(false);
+  // 컷이 아직 0장이어도 "이 프로젝트의 마네킹 생성이 지금 돌고 있다"면 같은 경고 대상이다 —
+  // job 이 끝나면 방금 바꾼 값이 아니라 옛 선택으로 만든 유료 컷이 도착하고, 마네킹 화면의
+  // dirty 플래그가 그걸 또 한 번 유료로 다시 만든다(두 번 과금). 완료를 기다렸다가 컷의 존재로
+  // 판정하면 이미 늦으므로, 진행률처럼 시시각각 바뀌는 이 신호는 ref 가 아니라 store 구독으로
+  // 읽는다 — 리렌더를 타야 이 화면에 머무는 동안의 실제 상태 변화(러너가 job 시작을 알리거나
+  // 완료로 정리되는 순간)를 놓치지 않는다. status/projectId 만 구독해 progress 틱마다
+  // 리렌더하지 않는다(불필요한 리렌더 방지).
+  const mannequinJobStatus = useAppStore((s) => s.mannequinJob.status);
+  const mannequinJobProjectId = useAppStore((s) => s.mannequinJob.projectId);
 
   // 분석 결과를 사용자가 검토하는 동안 다음 화면(콘티)을 미리 데운다. analysisProjectId 는
   // submit() 시작 시점(사진 업로드·저장·분석보다 먼저)에 이미 잡히므로 그것만으로는 이르다 —
@@ -426,10 +436,20 @@ export function ProductInput() {
     queueAnalysisPatch(patch);
   };
 
-  // 생성 관련 필드 편집 요청 — 기존 작업(마네킹 컷)이 있으면 바로 적용하지 않고 대가를 먼저
-  // 보여준다. 없으면(새 프로젝트의 첫 분석 검토) 잃을 게 없으니 그대로 적용해 방해하지 않는다.
+  // 'cuts' = 컷이 이미 있음(다시 만들어야 함) · 'running' = 컷은 없지만 이 프로젝트의 생성이
+  // 지금 돌고 있음(끝나면 방금 바꾼 값이 아니라 옛 선택으로 완성됨) · 'none' = 잃을 게 없음.
+  const generationWorkKind = generationWorkWarningKind({
+    cutsExist: hasExistingGenerationWorkRef.current,
+    jobStatus: mannequinJobStatus,
+    jobProjectId: mannequinJobProjectId,
+    projectId: analysisProjectId,
+  });
+
+  // 생성 관련 필드 편집 요청 — 기존 작업(마네킹 컷이 있거나, 지금 생성이 도는 중)이 있으면
+  // 바로 적용하지 않고 대가를 먼저 보여준다. 없으면(새 프로젝트의 첫 분석 검토) 잃을 게
+  // 없으니 그대로 적용해 방해하지 않는다.
   const onAnalysisFormChange = (patch) => {
-    if (isGenerationRelevantAnalysisPatch(patch) && hasExistingGenerationWorkRef.current) {
+    if (isGenerationRelevantAnalysisPatch(patch) && generationWorkKind !== 'none') {
       setPendingRelevantPatch(patch);
       return;
     }
@@ -764,8 +784,17 @@ export function ProductInput() {
       )}
       {pendingRelevantPatch && (
         <Modal onClose={() => setPendingRelevantPatch(null)}>
-          <h3>바꾸면 마네킹 컷을 다시 만들어야 해요</h3>
-          <p>마네킹 컷이 다시 만들어져요 · {CREDIT_COSTS.mannequinGenerate} 크레딧. 콘티에서 고른 촬영 세트도 다시 골라야 해요.</p>
+          {generationWorkKind === 'running' ? (
+            <>
+              <h3>바꾸면 지금 만들고 있는 마네킹 컷을 버려요</h3>
+              <p>새 선택대로 마네킹 컷을 다시 만들어요 · {CREDIT_COSTS.mannequinGenerate} 크레딧.</p>
+            </>
+          ) : (
+            <>
+              <h3>바꾸면 마네킹 컷을 다시 만들어야 해요</h3>
+              <p>마네킹 컷이 다시 만들어져요 · {CREDIT_COSTS.mannequinGenerate} 크레딧. 콘티에서 고른 촬영 세트도 다시 골라야 해요.</p>
+            </>
+          )}
           <div className="modal-actions">
             <Button variant="ghost" onClick={() => {
               const patch = pendingRelevantPatch;
