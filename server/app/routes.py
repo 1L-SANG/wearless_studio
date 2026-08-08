@@ -33,7 +33,7 @@ from .services import baseline as baseline_service
 from .services import edit_session as edit_service
 from .services import editor_vary as editor_vary_service
 from .services import export_render
-from .services import input_qc, matching, retrieval
+from .services import input_qc, mannequin_cut_authority, matching, retrieval
 from .services import product_truth as product_truth_service
 from .auth import require_user
 from .db import get_conn
@@ -131,6 +131,24 @@ def _not_found() -> HTTPException:
     return HTTPException(
         status_code=404,
         detail={"code": "not_found", "message": "프로젝트를 찾을 수 없습니다."},
+    )
+
+
+def _require_consumable_cut(cut: dict) -> None:
+    """서버가 이미 제품으로 못 쓴다고 판정한 컷은 정본으로 소비할 수 없다.
+
+    사유는 내부 어휘라 응답에 싣지 않는다 — guided 관측치·texture truth·carrier 해시가
+    사용자 화면으로 새어 나갈 이유가 없고, 그것들은 셀러가 할 수 있는 행동을 바꾸지도
+    않는다. 컷을 **보는 것**은 계속 가능하다(목록·이력은 그대로).
+    """
+    if mannequin_cut_authority.evaluate_mannequin_cut_authority(
+            cut.get("qc_scores")).allowed:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={"code": "cut_not_usable",
+                "message": "이 마네킹 컷은 품질 검증을 통과하지 못해 사용할 수 없어요. "
+                           "다른 버전을 선택하거나 다시 생성해 주세요."},
     )
 
 
@@ -594,6 +612,17 @@ async def patch_project(
     # adjustCount·status 등은 모델에 없어 자동 무시 (계약 §6). exclude_unset = 보낸 필드만.
     fields = patch.model_dump(exclude_unset=True)
     async with get_conn(request) as conn:
+        # 선택 포인터는 지금까지 **아무 검증도 없이** 기록됐다 — 존재하지 않는 컷 id 도,
+        # 타 사용자의 컷 id 도, 서버가 이미 제품으로 못 쓴다고 판정한 컷도 그대로 들어갔다.
+        # 이 포인터는 상세페이지 입력과 편집 부모를 정하므로 화면 필터를 신뢰할 수 없다.
+        # 해제(null)는 그대로 둔다 — 선택을 지우는 데 권한 판정이 필요할 이유가 없다.
+        selected = fields.get("selected_mannequin_id")
+        if selected is not None:
+            cut = await repo.get_mannequin_cut_for_approval(
+                conn, user_id, project_id, str(selected))
+            if cut is None:
+                raise _not_found()   # 존재/소유를 구분해 알려주지 않는다
+            _require_consumable_cut(cut)
         row = await repo.patch_project(conn, user_id, project_id, fields)
         await conn.commit()
     if row is None:
@@ -1492,6 +1521,10 @@ async def approve_mannequin(
                                                         body.cut_id)
         if cut is None:
             raise _not_found()   # 존재/소유를 구분해 알려주지 않는다
+        # 이 라우트가 needs_review 승인을 허용한 근거는 "실패 결과는 애초에 저장되지
+        # 않는다" 였다. 그 전제는 더 이상 참이 아니다 — 원본 주기를 세우지 못한 컷도
+        # 저장된다. 사람이 눌렀다는 사실로 서버가 이미 아는 실패를 덮을 수는 없다.
+        _require_consumable_cut(cut)
         snapshots = baseline_service.build_profile_snapshots(cut)
         invariants = {
             **baseline_service.build_locked_invariants(cut),

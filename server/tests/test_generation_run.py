@@ -1090,6 +1090,12 @@ class _ParentCursor:
         else:
             self._kind = "other"
 
+    async def fetchall(self):
+        # 부모 후보는 우선순위대로 여러 행이 온다 — 권한 판정에서 걸린 컷을 건너뛰기
+        # 위해서다(`_EDIT_PARENT_SCAN_LIMIT`). 이 행들은 qc_scores 가 없는 legacy 컷이라
+        # 판정을 그대로 통과한다.
+        return [await self.fetchone()] if self._kind == "parent" else []
+
     async def fetchone(self):
         if self._kind == "parent":
             return {"id": "A-3", "mannequin_cut_id": "cut-1", "asset_id": "asset-1",

@@ -14,8 +14,14 @@ from psycopg import AsyncConnection, errors
 from psycopg.types.json import Json
 
 from .credits import allocate_fifo
+from .services import mannequin_cut_authority
 
 log = logging.getLogger("wearless.repo")
+
+#: 편집 부모 후보를 훑는 깊이. 우선순위대로 정렬된 뒤 권한 판정에서 걸린 컷을 건너뛰기
+#: 위한 창이다. 프로젝트당 컷 수는 재생성 이력만큼이라 작고, 이 창을 넘어가면 부모 없음
+#: 폴백이 이미 옳은 답이다(그만큼 연속으로 막힌 컷이라면 새로 만들어야 한다).
+_EDIT_PARENT_SCAN_LIMIT = 10
 
 
 class CreditError(Exception):
@@ -649,6 +655,7 @@ async def get_mannequin_edit_parent(
             """
             select mc.candidate || '-' || mc.version::text as id,
                    mc.id::text as mannequin_cut_id, mc.asset_id::text as asset_id,
+                   mc.qc_scores,
                    a.r2_key, a.mime_type, a.metadata as generation_metadata
             from mannequin_cuts mc
             join projects pr on pr.id = mc.project_id
@@ -657,11 +664,18 @@ async def get_mannequin_edit_parent(
             order by (pr.selected_mannequin_id =
                       mc.candidate || '-' || mc.version::text) desc,
                      mc.version desc, mc.candidate
-            limit 1
+            limit %s
             """,
-            (project_id, user_id),
+            (project_id, user_id, _EDIT_PARENT_SCAN_LIMIT),
         )
-        parent = await cur.fetchone()
+        # 편집 부모는 **정본 입력**이다 — 편집 결과는 이 컷을 그대로 이어받는다. 그래서
+        # 우선순위(선택 포인터 → 최신)는 그대로 두되, 제품으로 못 쓰는 컷은 건너뛰고 다음
+        # 후보로 자연스럽게 폴백한다. limit 1 로 뽑고 나서 거절하면 폴백이 사라진다.
+        parent = next(
+            (row for row in await cur.fetchall()
+             if mannequin_cut_authority.cut_is_consumable(row)),
+            None,
+        )
         if parent is None:
             return None
         # 계보 컬럼은 **별도 statement + savepoint** 로 붙인다. 한 쿼리에 join 하면
@@ -1251,7 +1265,7 @@ async def list_series_reference_cuts(
             """
             select * from (
                 select distinct on (mc.candidate)
-                       mc.candidate, mc.version, a.r2_bucket, a.r2_key
+                       mc.candidate, mc.version, mc.qc_scores, a.r2_bucket, a.r2_key
                 from mannequin_cuts mc
                 join assets a on a.id = mc.asset_id and a.deleted_at is null
                 where mc.project_id = %s
@@ -1263,7 +1277,11 @@ async def list_series_reference_cuts(
             """,
             (project_id, limit),
         )
-        return await cur.fetchall()
+        rows = await cur.fetchall()
+    # SQL 은 거친 필터(outcome)만 하고 정본 판정은 파이썬 predicate 하나로 한다 — 같은
+    # 규칙을 JSON 경로로 두 번 쓰면 조용히 갈라진다. 기준 컷은 새 컷이 "한 세트로
+    # 보이는가"의 정본이므로, 제품으로 못 쓰는 컷이 기준이 되면 안 된다.
+    return [r for r in rows if mannequin_cut_authority.cut_is_consumable(r)]
 
 
 async def get_mannequin_cut_asset(

@@ -30,6 +30,7 @@ from ..agents import page_source_assets
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
+from ..services import mannequin_cut_authority
 from ..services.generation_run import RunLogger
 from ._common import emit_job_event as _emit
 from .mannequin_job import _runlog_begin, _runlog_finish
@@ -577,6 +578,16 @@ async def run_detail_page_job(app, job: dict) -> None:
                 if sel:
                     for c in await repo.list_mannequin_cuts(conn, user_id, project_id):
                         if f"{c.get('candidate')}-{c.get('version')}" == sel and c.get("asset_id"):
+                            # 선택 시점 검증만 믿지 않는다. 이 포인터는 컷이 만들어지기
+                            # 전부터 남아 있을 수 있고(오래된 프로젝트 행), 선택 이후에
+                            # 판정이 바뀔 수도 있다. 소비 직전에 한 번 더 본다 — 막힌 컷은
+                            # 앵커로 쓰지 않고 상품 사진 근거로 진행한다(생성은 죽지 않는다).
+                            if not mannequin_cut_authority.cut_is_consumable(c):
+                                log.warning(
+                                    "selected mannequin cut is not consumable — "
+                                    "skipping anchor (job %s project %s cut %s)",
+                                    job_id, project_id, sel)
+                                break
                             mannequin_asset = await repo.get_asset_for_user(
                                 conn, user_id, str(c["asset_id"]))
                             break
