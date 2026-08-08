@@ -4,8 +4,7 @@
    축(핏·기장·… + 매칭 의류 핏)을 하나씩 순차 확인 — '조정하기' 하면 이미지 옆에
    예시가 세로로 떠서 비교하며 고른다(방식 1). 매칭 하의도 컷에 보이므로 조정 시 재생성(유료).
    전부 확인되면 카드가 CTA('상세페이지 생성하기')로 전환 → 생성 이동(마지막 정거장, 크레딧 소비 지점).
-   사진 양(기본형/확장형) 선택은 콘티 상단으로 이동했다(콘티가 그 시드의 컷 수를 정하므로,
-   그리고 콘티가 마네킹보다 먼저 온다) — features/storyboard/ComposeModePicker.jsx.
+   사진 양(기본형/확장형)은 분석 확정 CTA 에서 고르고, 콘티 상단에는 현재 선택만 요약한다.
    - 변경 0건 → 다음 단계(생성) 이동 / 변경 ≥1건 → 수정 반영 재생성(새 버전 히스토리).
    컷 목록은 서버 상태, 선택 컷은 store + patchProject 동기화.
    설계·규칙: documents/mannequin_ui_direction.md · 목업 documents/mockups/mannequin-ui-matching.html
@@ -14,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
+import { detailPageGenerationCreditShortfall } from '@/lib/creditPreflight.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { fitExampleImage } from '@/lib/fitExampleImages.js';
@@ -25,6 +25,7 @@ import {
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
 import { Icon, Button, ErrorState, useToast } from '@/components/ui.jsx';
+import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import {
   clearInitialGenerationRequested,
@@ -606,6 +607,7 @@ export function Mannequin() {
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
   const [aiCutCount, setAiCutCount] = useState(null);   // null = 아직 모름(로딩 중·조회 실패) — 0 과 구분
+  const [creditShortfall, setCreditShortfall] = useState(null);
   const submittingRef = useRef(false);   // 결제(재생성) 이중 제출 방지 — busy 반영 전 연타 차단
   const cutsRef = useRef(cuts);
   const selectedRef = useRef(null);
@@ -1201,6 +1203,14 @@ export function Mannequin() {
     if (!allDone || busy) return;
     if (regenerateState === 'load-exhausted') { retryLoad(); return; }
     if (needsRegen) { regenerate(); return; }
+    const shortfall = detailPageGenerationCreditShortfall(
+      useAppStore.getState().account,
+      aiCutCount,
+    );
+    if (shortfall) {
+      setCreditShortfall(shortfall);
+      return;
+    }
     // 확정(무변경)도 프로필을 영속 — 다음 단계(컷 생성)가 analysis.fitProfile 을 텍스트 제약으로
     // 재사용하므로, 이동(=생성 가능 시점) 전에 저장 완료를 보장한다(순서 계약). 저장 실패 시엔
     // 안내 후 이동을 허용 — 선택 마네킹컷 이미지가 1번 참조(진실)로 여전히 전달된다.
@@ -1267,6 +1277,12 @@ export function Mannequin() {
   return (
     <div className="wizard wide fit-page">
       {doneBlocked && <DoneGuardModal />}
+      {creditShortfall && (
+        <CreditShortfallModal
+          shortfall={creditShortfall}
+          onClose={() => setCreditShortfall(null)}
+        />
+      )}
       <PageHead title="의류 재현성 높이기" sub="실제 의류와 비슷해지게끔 조정해보세요." />
       <span className="fit-wait-live" aria-live="polite" aria-atomic="true">
         {showWaitPanel ? checklistLiveText : ''}
@@ -1354,7 +1370,7 @@ export function Mannequin() {
             <Button variant="primary" size="lg" block iconRight="arrowRight" disabled={busy} onClick={onCta}>
               {/* 콘티 조회 실패로 aiCutCount 를 모를 때 '0 크레딧'(=무료로 읽힘)을 보여주지 않는다 —
                   기존 관용구(em dash '—')로 미확정을 표시한다. 실제 과금은 서버가 저장된 콘티로 재계산. */}
-              상세페이지 생성하기 · {aiCutCount == null ? '—' : aiCutCount * (catalogs?.creditCosts?.storyboardPerCut ?? 1)} 크레딧
+              상세페이지 생성하기 · {aiCutCount == null ? '—' : aiCutCount * CREDIT_COSTS.storyboardPerCut} 크레딧
             </Button>
           </div>
         )}

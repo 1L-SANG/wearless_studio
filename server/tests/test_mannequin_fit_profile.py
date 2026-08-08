@@ -31,6 +31,10 @@ async def _noop(*a, **k):
     return None
 
 
+async def _not_cancelled(*args):
+    return False
+
+
 def test_build_fit_profile_block_full_profile():
     block = build_fit_profile_block({
         "category": "pants",
@@ -323,6 +327,7 @@ def test_mannequin_worker_runs_dual_candidates(monkeypatch):
         ("get_analysis", get_analysis),
         ("get_asset_for_user", get_asset_for_user),
         ("get_matching_item_asset", get_matching_item_asset),
+        ("is_job_cancelled", _not_cancelled),
         ("finalize_mannequin_success", finalize_success),
         ("finalize_mannequin_failure", finalize_failure),
     ]:
@@ -418,6 +423,7 @@ def test_mannequin_worker_reports_progress_while_candidates_are_running(monkeypa
         ("get_product", get_product),
         ("get_analysis", get_analysis),
         ("get_asset_for_user", get_asset_for_user),
+        ("is_job_cancelled", _not_cancelled),
         ("finalize_mannequin_success", finalize_success),
         ("finalize_mannequin_failure", finalize_failure),
     ]:

@@ -40,4 +40,7 @@ const runner = createMannequinGenerationRunner({
 });
 
 export const requestMannequinGeneration = (pid) => runner.request(pid);
+export const acknowledgeMannequinGenerationCancellation = (pid) => (
+  runner.acknowledgeCancellation(pid)
+);
 export const isMannequinGenerationRunning = (pid) => runner.isRunning(pid);

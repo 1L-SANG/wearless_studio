@@ -138,6 +138,11 @@ async function pollJob(
   let last = -1;
   for (;;) {
     const job = await http(`/v1/jobs/${jobId}`);
+    if (job.status === 'cancelled') {
+      const error = new Error('마네킹컷 생성이 취소됐어요.');
+      error.code = 'job_cancelled';
+      throw error;
+    }
     if (typeof job.progress === 'number' && job.progress !== last) {
       last = job.progress;
       onProgress && onProgress(job.progress);
@@ -591,6 +596,11 @@ export const httpAdapter = {
       timeoutMessage: MANNEQUIN_JOB_TIMEOUT_MESSAGE,
     });
     return { data: result.data, credits: result.credits };
+  },
+  // 진행 중인 마네킹 생성을 취소한다. 서버가 취소된 작업의 예약 크레딧까지 charged 로
+  // 확정한 뒤 돌려준 잔액을 호출부가 즉시 store 에 동기화한다. 활성 job 이 없으면 멱등 200.
+  async cancelMannequinGeneration(projectId) {
+    return http(`/v1/projects/${projectId}/mannequins:cancel`, { method: 'POST' });
   },
   // @deprecated (2026-07) AG-05 폐기 — fitProfile 재생성(regenerateMannequin)으로 통합.
   // 서버 :adjust 는 항상 410 Gone(잡 미생성). 화면 어디서도 호출하지 않으며 계약 §6 잔재로만 남김.

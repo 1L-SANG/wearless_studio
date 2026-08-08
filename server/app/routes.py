@@ -167,6 +167,41 @@ def _bad_request(code: str, message: str) -> HTTPException:
     return HTTPException(status_code=400, detail={"code": code, "message": message})
 
 
+def _mannequin_payload_matches(job: dict, requested_payload: dict) -> bool:
+    """활성 마네킹 job 합류가 안전한지 의미 입력만 비교한다.
+
+    regenerate 재시도 때 저장된 analysis가 이미 새 profile로 바뀌어 adjustedAxes가 []로
+    재산출될 수 있으므로 그 파생 필드만 제외하고 mode와 스냅샷을 비교한다.
+    """
+    if job.get("status") not in ("pending", "running"):
+        return True
+    existing = job.get("payload") or {}
+    existing_snapshot = existing.get("fitProfileSnapshot")
+    requested_snapshot = requested_payload.get("fitProfileSnapshot")
+    if isinstance(existing_snapshot, dict):
+        existing_snapshot = {
+            key: value for key, value in existing_snapshot.items() if key != "adjustedAxes"
+        }
+    if isinstance(requested_snapshot, dict):
+        requested_snapshot = {
+            key: value for key, value in requested_snapshot.items() if key != "adjustedAxes"
+        }
+    return (
+        existing.get("mode") == requested_payload.get("mode")
+        and existing_snapshot == requested_snapshot
+    )
+
+
+def _generation_in_progress() -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "generation_in_progress",
+            "message": "이미 다른 마네킹 생성이 진행 중이에요. 잠시 뒤 다시 시도해 주세요.",
+        },
+    )
+
+
 def _custom_match_error(status: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status, detail={"code": code, "message": message})
 
@@ -1211,6 +1246,7 @@ def _cut_to_api(c: dict) -> dict:
         202: {"description": "새로운 마네킹 생성 작업이 대기열에 진입했습니다."},
         400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: 정면 이미지 누락)"},
         402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+        409: {"model": ErrorResponse, "description": "다른 입력의 마네킹 생성이 이미 진행 중"},
     },
     tags=["Mannequins (AI)"],
     summary="마네킹 후보 생성 작업 시작",
@@ -1250,11 +1286,14 @@ async def generate_mannequins(
         # 합류(created=False)는 게이트·예약 없이 기존 job 반환 → 동시 재시도/입력검증으로 막지 않음.
         # 합류 시 기존 job payload 가 정본 — 아래 스냅샷은 신규 job 에만 실린다.
         snapshot = await _fit_profile_snapshot(conn, user_id, project_id, None)
+        job_payload = {"mode": "generate", "fitProfileSnapshot": snapshot}
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
-            payload={"mode": "generate", "fitProfileSnapshot": snapshot}, idempotency_key=scoped_key,
+            payload=job_payload, idempotency_key=scoped_key,
             credits_reserved=cost,
             metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
+        if not created and not _mannequin_payload_matches(job, job_payload):
+            raise _generation_in_progress()
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
             product = await repo.get_product(conn, project_id)
             if not mannequin.has_base_front(product or {}):  # A-6: 정면 사진 필수
@@ -1289,6 +1328,33 @@ async def get_mannequins(
             raise _not_found()
         cuts = await repo.list_mannequin_cuts(conn, user_id, project_id)
     return [_cut_to_api(c) for c in cuts]
+
+
+@router.post(
+    "/projects/{project_id}/mannequins:cancel",
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins (AI)"],
+    summary="진행 중인 마네킹 생성 취소",
+)
+async def cancel_mannequin_generation(
+    request: Request,
+    project_id: str,
+    user_id: str = Depends(require_user),
+):
+    """활성 마네킹 생성을 취소하고 예약 크레딧을 환불 없이 확정 차감한다.
+
+    활성 job이 없으면 ``cancelled: false``로 성공하므로 재호출해도 안전하다.
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        credits = await repo.cancel_active_mannequin_job(conn, user_id, project_id)
+        cancelled = credits is not None
+        if not cancelled:
+            account = await repo.get_account(conn, user_id)
+            credits = (account or {}).get("credits", 0)
+        await conn.commit()
+    return {"cancelled": cancelled, "credits": credits}
 
 
 @router.post(
@@ -1327,6 +1393,7 @@ async def adjust_mannequin(
         202: {"description": "마네킹 재생성 작업이 대기열에 진입했습니다."},
         400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: 정면 이미지 누락)"},
         402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+        409: {"model": ErrorResponse, "description": "다른 입력의 마네킹 생성이 이미 진행 중"},
     },
     tags=["Mannequins (AI)"],
     summary="마네킹 재생성 작업 시작 (fit-profile 반영)",
@@ -1361,12 +1428,18 @@ async def regenerate_mannequins(
             body.get("fitProfile"),
             validate_matching_fit=True,
         )
+        job_payload = {
+            "mode": "regenerate",
+            "fitProfile": body.get("fitProfile"),
+            "fitProfileSnapshot": snapshot,
+        }
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
-            payload={"mode": "regenerate", "fitProfile": body.get("fitProfile"),
-                     "fitProfileSnapshot": snapshot},
+            payload=job_payload,
             idempotency_key=scoped_key, credits_reserved=cost,
             metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
+        if not created and not _mannequin_payload_matches(job, job_payload):
+            raise _generation_in_progress()
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
             product = await repo.get_product(conn, project_id)
             if not mannequin.has_base_front(product or {}):  # 정면 사진 필수(generate 동일)
@@ -1725,7 +1798,7 @@ async def get_asset_file(request: Request, asset_id: str):
     summary="작업(Job) 상태 조회",
 )
 async def get_job(request: Request, job_id: str, user_id: str = Depends(require_user)):
-    """비동기로 시작된 백그라운드 작업(AI 생성 등)의 현재 상태(pending, running, done, error) 및 진행도(0~100%)를 조회합니다.
+    """비동기로 시작된 백그라운드 작업(AI 생성 등)의 현재 상태(pending, running, done, error, cancelled) 및 진행도(0~100%)를 조회합니다.
 
     - **Bearer Token**: 필수
     - **에지 케이스**:
@@ -1759,7 +1832,7 @@ async def job_events(
     - **Header**: `Last-Event-ID` (클라이언트 연결 재시도 시, 마지막으로 받은 이벤트 ID 이후부터 스트림 재개)
     - **에지 케이스**:
       - `404 Not Found`: 해당 작업이 존재하지 않거나, 다른 사용자가 소유한 경우 발생
-      - 완료(`done`) 혹은 실패(`error`) 이벤트가 전달되거나, 최대 5분(300초)이 경과하면 연결이 안전하게 정리 종료됩니다.
+      - 완료(`done`), 실패(`error`) 혹은 취소(`cancelled`) 이벤트가 전달되거나, 최대 5분(300초)이 경과하면 연결이 안전하게 정리 종료됩니다.
     """
     async with get_conn(request) as conn:  # 소유권 확인
         if await repo.get_job(conn, user_id, job_id) is None:
@@ -1786,12 +1859,12 @@ async def job_events(
                 after_id = e["id"]
                 payload = json.dumps(e["payload"], ensure_ascii=False)
                 yield f"id: {e['id']}\nevent: {e['event_type']}\ndata: {payload}\n\n"
-                if e["event_type"] in ("done", "error"):
+                if e["event_type"] in ("done", "error", "cancelled"):
                     return
             if not events:  # 종결 이벤트를 이미 본 뒤 재연결 → 상태 확인해 즉시 종료(5분 hang 방지)
                 async with pool.connection() as conn:
                     job = await repo.get_job(conn, user_id, job_id)
-                if job and job["status"] in ("done", "error"):
+                if job and job["status"] in ("done", "error", "cancelled"):
                     return
             await asyncio.sleep(1.0)
 

@@ -14,9 +14,9 @@ import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { Placeholder } from '@/mock/placeholders.js';
 import { useAppStore } from '@/store/useAppStore.js';
-import { Icon, IconButton, Button, Chips, EmptyState, Toggle, useToast } from '@/components/ui.jsx';
+import { Icon, IconButton, Button, Chips, EmptyState, Modal, Toggle, useToast } from '@/components/ui.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
-import { ComposeModePicker } from './ComposeModePicker.jsx';
+import { isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
 import { ensureSections, deriveSections, adoptSection, patchSection, normalizeRows, normalizeBoard } from '@/lib/sections.js';
 import {
   CONTENT_ROLES,
@@ -1517,9 +1517,79 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
     hasDetailImage,
     colorOpts: colorOpts.length ? colorOpts : fallbackColor,
     detailColorOpts: allColorOpts.length ? allColorOpts : fallbackColor,
+    composeModeSeed: {
+      colors: p.colors || [],
+      targetGenders: a?.targetGenders || [],
+    },
     normalized,
     assignment,
   };
+}
+
+function ComposeModeSummary({ modes, value, canApply, onApply, onError }) {
+  const [open, setOpen] = useState(false);
+  const [draftMode, setDraftMode] = useState(value);
+  const [applying, setApplying] = useState(false);
+  const currentMode = modes?.find((mode) => mode.value === value) || modes?.[0];
+  const modeOptions = (modes || []).map((mode) => ({
+    value: mode.value,
+    label: `${mode.label} · ${mode.count}컷`,
+  }));
+
+  if (!currentMode) return null;
+
+  const close = () => {
+    if (!applying) setOpen(false);
+  };
+  const apply = async () => {
+    if (!canApply || !draftMode || draftMode === value || applying) return;
+    setApplying(true);
+    try {
+      await onApply(draftMode);
+      setOpen(false);
+    } catch {
+      onError();
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="sb-compose-summary">
+        <span>사진 양 <strong>{currentMode.label}</strong> · 예상 {currentMode.count}컷</span>
+        <button type="button" onClick={() => { setDraftMode(value); setOpen(true); }}>변경</button>
+      </div>
+      {open && (
+        <Modal onClose={close} narrow>
+          <div className="sb-compose-modal" role="dialog" aria-modal="true"
+            aria-labelledby="sb-compose-title">
+            <h3 id="sb-compose-title">사진 양 변경</h3>
+            <Chips
+              className="sb-compose-chips"
+              options={modeOptions}
+              value={draftMode}
+              allowDeselect={false}
+              onChange={setDraftMode}
+            />
+            <p className={canApply ? '' : 'sb-compose-warning'}>
+              {canApply
+                ? '손대지 않은 기본 콘티는 선택한 사진 양에 맞춰 다시 구성돼요.'
+                : '직접 수정한 콘티에는 적용되지 않아요'}
+            </p>
+            <div className="modal-actions">
+              <Button variant="ghost" onClick={close} disabled={applying}>닫기</Button>
+              <Button
+                variant="primary"
+                onClick={apply}
+                disabled={!canApply || draftMode === value || applying}
+              >{applying ? '적용 중…' : '적용'}</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
 }
 
 export function Storyboard() {
@@ -1545,6 +1615,10 @@ export function Storyboard() {
   const [clothingType, setClothingType] = useState(() => initialEntry?.clothingType || 'top'); // 샷 필터 아이콘·예시 크롭용 (상의=위/하의=아래)
   const [exampleGender, setExampleGender] = useState(() => initialEntry?.exampleGender || null);
   const [hasDetailImage, setHasDetailImage] = useState(() => initialEntry?.hasDetailImage || false);
+  const [composeModeSeed, setComposeModeSeed] = useState(() => initialEntry?.composeModeSeed || ({
+    colors: [],
+    targetGenders: [],
+  }));
   const [selectedId, setSelectedId] = useState(null);
   const [splitOpen, setSplitOpen] = useState(false); // 한 번이라도 카드를 열면 좌/우 분할 유지
   const [dragId, setDragId] = useState(null);
@@ -1576,11 +1650,17 @@ export function Storyboard() {
   const toast = useToast();
   // 카피라이팅 토글 = 플로우 선택값 (store → patchProject 동기화, ADR-0002)
   const projectId = useAppStore((s) => s.projectId);
+  const composeMode = useAppStore((s) => s.composeMode);
+  const setComposeMode = useAppStore((s) => s.setComposeMode);
   const copyOn = useAppStore((s) => s.copywriting);
   const setCopyOn = useAppStore((s) => s.setCopywriting);
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
 
   useEffect(() => () => clearTimeout(undoTimerRef.current), []);
+
+  // 분석에서 넘어올 때 이전 화면의 스크롤이 남아 보드 중간부터 보이던 문제 — 진입 시 최상단.
+  // 세트픽커의 스크롤 복원(setPickerScrollY)은 마운트가 아니라 상태 변경에 반응하므로 충돌 없음.
+  useLayoutEffect(() => { window.scrollTo(0, 0); }, []);
 
   useLayoutEffect(() => {
     const observed = new Set();
@@ -1667,6 +1747,7 @@ export function Storyboard() {
           setHasDetailImage(prepared.hasDetailImage);
           setDetailColorOpts(prepared.detailColorOpts);
           setColorOpts(prepared.colorOpts);
+          setComposeModeSeed(prepared.composeModeSeed);
         }
         if (prepared.normalized || prepared.assignment.changed || usePending) {
           const autoAssignmentOnly = prepared.assignment.assignedIds.length > 0
@@ -1761,6 +1842,17 @@ export function Storyboard() {
     </div></div>
   );
   if (shouldRenderStoryboardLoadingFrame(blocks, catalogs)) return <StoryboardLoadingFrame doneBlocked={doneBlocked} />;
+
+  const composeModeApplies = isDefaultStoryboardForMode(
+    blocks,
+    composeModeSeed.colors,
+    composeMode,
+    {
+      projectId,
+      clothingType,
+      targetGenders: composeModeSeed.targetGenders,
+    },
+  );
 
   const selected = blocks.find((b) => b.id === selectedId);
   const dismissUndo = () => {
@@ -2730,9 +2822,14 @@ export function Storyboard() {
       <div className="sb-count-head">
         구성컷: <strong>{cutCount}</strong>개
       </div>
-      <ComposeModePicker
+      <ComposeModeSummary
         modes={catalogs?.composeModes || []}
-        onModeChange={onComposeModeChange}
+        value={composeMode}
+        canApply={composeModeApplies}
+        onApply={async (nextMode) => {
+          await setComposeMode(nextMode);
+          await onComposeModeChange(nextMode);
+        }}
         onError={onComposeModeError}
       />
       {undoEntry && (

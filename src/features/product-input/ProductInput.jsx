@@ -10,8 +10,10 @@ import { api } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { generationWorkWarningKind } from '@/lib/generationWorkWarning.js';
+import { mannequinGenerationCreditShortfall } from '@/lib/creditPreflight.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
 import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
 import { syncDraftToBackend } from '@/lib/draftSync.js';
@@ -33,6 +35,7 @@ import {
   invalidateStoryboardEntryPrefetch,
   prefetchStoryboardEntry,
 } from '@/features/storyboard/storyboardEntryPrefetch.js';
+import { acknowledgeMannequinGenerationCancellation } from '@/features/mannequin/generationRunner.js';
 
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
@@ -272,6 +275,8 @@ export function ProductInput() {
   // 성별·의류 종류 등 생성 관련 필드를 바꾸면 콘티/마네킹의 기존 작업이 무효화된다 — 적용을
   // 보류하고 대가를 먼저 보여준다. 확정 전엔 화면·서버 어느 쪽에도 반영하지 않는다(취소=무해).
   const [pendingRelevantPatch, setPendingRelevantPatch] = useState(null);
+  const [cancellingRelevantPatch, setCancellingRelevantPatch] = useState(false);
+  const [creditShortfall, setCreditShortfall] = useState(null);
   const { session, loading: authLoading, openLogin } = useAuth();
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
@@ -290,11 +295,23 @@ export function ProductInput() {
   const colorSaveSchedulerRef = useRef(null);
   const storyboardPrefetchProjectRef = useRef(null);
   const mannequinWorkCheckProjectRef = useRef(null);
+  const cancellingRelevantPatchRef = useRef(false);
+  const pendingRelevantWorkKindRef = useRef('none');
   if (!colorSaveSchedulerRef.current) {
     colorSaveSchedulerRef.current = createTrailingPatchScheduler({
       commit: (patch) => analysisPatchQueueRef.current?.(patch),
     });
   }
+
+  const guardMannequinCredits = () => {
+    // 클릭 순간의 loadAccount 캐시만 읽는다. 비로그인·아직 계정을 못 불러온 상태는 과차단하지
+    // 않고 통과시키며, 실제 잔액 정합성은 기존 서버 402 방어선이 계속 책임진다.
+    const account = session ? useAppStore.getState().account : null;
+    const shortfall = mannequinGenerationCreditShortfall(account);
+    if (!shortfall) return true;
+    setCreditShortfall(shortfall);
+    return false;
+  };
 
   // 콘티 이동은 아래에서 명시적으로 flush한다. 브라우저 뒤로가기처럼 cleanup을 기다릴 수 없는
   // 이탈도 보류 저장을 시작하고, 콘티 쪽 프로젝트별 저장 barrier가 성공한 PATCH와 GET을 직렬화한다.
@@ -342,6 +359,7 @@ export function ProductInput() {
   const goToStoryboard = async (opts) => {
     const force = opts?.force === true;   // null·이벤트 객체로 불려도 안전하게
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
+    if (!guardMannequinCredits()) return;
     // 다른 옷이 섞였을 수 있다는 경고 — 생성에 들어가기 직전 한 번만. 확인하면 그대로 진행한다
     // (차단이 아니다. 판정이 틀렸을 때 셀러가 갇히면 경고가 없느니만 못하다).
     if (inputConsistency && !consistencyAck && !force) {
@@ -450,10 +468,31 @@ export function ProductInput() {
   // 없으니 그대로 적용해 방해하지 않는다.
   const onAnalysisFormChange = (patch) => {
     if (isGenerationRelevantAnalysisPatch(patch) && generationWorkKind !== 'none') {
+      pendingRelevantWorkKindRef.current = generationWorkKind;
       setPendingRelevantPatch(patch);
       return;
     }
     applyAnalysisPatch(patch);
+  };
+
+  const confirmRunningRelevantPatch = async () => {
+    if (cancellingRelevantPatchRef.current || !pendingRelevantPatch) return;
+    if (!guardMannequinCredits()) return;
+    cancellingRelevantPatchRef.current = true;
+    setCancellingRelevantPatch(true);
+    const patch = pendingRelevantPatch;
+    try {
+      const { credits } = await api.cancelMannequinGeneration(analysisProjectId);
+      useAppStore.getState().syncCredits(credits);
+      acknowledgeMannequinGenerationCancellation(analysisProjectId);
+      setPendingRelevantPatch(null);
+      applyAnalysisPatch(patch);
+    } catch (error) {
+      toast.push(error?.message || '마네킹컷 생성을 취소하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+    } finally {
+      cancellingRelevantPatchRef.current = false;
+      setCancellingRelevantPatch(false);
+    }
   };
 
   useEffect(() => {
@@ -698,6 +737,12 @@ export function ProductInput() {
   return (
     <div className={`wizard${wide ? ' wide' : ''}`}>
       {doneBlocked && <DoneGuardModal />}
+      {creditShortfall && (
+        <CreditShortfallModal
+          shortfall={creditShortfall}
+          onClose={() => setCreditShortfall(null)}
+        />
+      )}
       {consistencyOpen && inputConsistency && (
         <Modal onClose={() => setConsistencyOpen(false)}>
           <h3>사진을 한 번만 확인해 주세요</h3>
@@ -782,12 +827,14 @@ export function ProductInput() {
             onNext={goToStoryboard} />
         </div>
       )}
-      {pendingRelevantPatch && (
-        <Modal onClose={() => setPendingRelevantPatch(null)}>
-          {generationWorkKind === 'running' ? (
+      {pendingRelevantPatch && !creditShortfall && (
+        <Modal onClose={() => {
+          if (!cancellingRelevantPatchRef.current) setPendingRelevantPatch(null);
+        }}>
+          {pendingRelevantWorkKindRef.current === 'running' ? (
             <>
               <h3>바꾸면 지금 만들고 있는 마네킹 컷을 버려요</h3>
-              <p>새 선택대로 마네킹 컷을 다시 만들어요 · {CREDIT_COSTS.mannequinGenerate} 크레딧.</p>
+              <p>지금 만들던 마네킹컷 생성이 취소돼요. 취소된 생성의 크레딧(2)도 차감되고, 새로 만들 때 2크레딧이 더 들어요.</p>
             </>
           ) : (
             <>
@@ -796,12 +843,19 @@ export function ProductInput() {
             </>
           )}
           <div className="modal-actions">
-            <Button variant="ghost" onClick={() => {
-              const patch = pendingRelevantPatch;
-              setPendingRelevantPatch(null);
-              applyAnalysisPatch(patch);
-            }}>그대로 바꿀게요</Button>
-            <Button variant="primary" onClick={() => setPendingRelevantPatch(null)}>취소</Button>
+            {pendingRelevantWorkKindRef.current === 'running' ? (
+              <Button variant="ghost" disabled={cancellingRelevantPatch}
+                onClick={confirmRunningRelevantPatch}>그대로 바꿀게요</Button>
+            ) : (
+              <Button variant="ghost" onClick={() => {
+                if (!guardMannequinCredits()) return;
+                const patch = pendingRelevantPatch;
+                setPendingRelevantPatch(null);
+                applyAnalysisPatch(patch);
+              }}>그대로 바꿀게요</Button>
+            )}
+            <Button variant="primary" disabled={cancellingRelevantPatch}
+              onClick={() => setPendingRelevantPatch(null)}>취소</Button>
           </div>
         </Modal>
       )}

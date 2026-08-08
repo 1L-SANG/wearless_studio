@@ -16,18 +16,24 @@ export function createMannequinGenerationRunner({
 }) {
   let inflight = null;
   let inflightProjectId = null;
+  let activeRunId = 0;
+  let nextRunId = 0;
 
   return {
     request(projectId) {
       if (!projectId) return Promise.resolve(null);
       if (inflight && inflightProjectId === projectId) return inflight;
 
+      const runId = ++nextRunId;
+      activeRunId = runId;
+      const isActiveRun = () => activeRunId === runId;
+
       // job 이 실제로 생겼다는 증거를 처음 본 순간 한 번만 발화한다. 증거는 두 가지 —
       // 어댑터의 명시적 202 신호(onJobStarted), 그리고 진행률 콜백(진행률이 오면 job 이 돈다).
       // 둘 중 무엇이 먼저 와도 같은 지점을 지나게 해서 종결 보고와 짝이 맞도록 한다.
       let started = false;
       const markStarted = () => {
-        if (started) return;
+        if (started || !isActiveRun()) return;
         started = true;
         onJobStarted(projectId);
         onJobChange(projectId, {
@@ -41,6 +47,7 @@ export function createMannequinGenerationRunner({
       inflight = generate(projectId, {
         onJobStarted: markStarted,
         onProgress: (next) => {
+          if (!isActiveRun()) return;
           markStarted();
           onJobChange(projectId, { status: 'running', progress: next, errorMessage: '' });
         },
@@ -50,13 +57,30 @@ export function createMannequinGenerationRunner({
         // 잡의 생애주기를 끝까지 책임져야 두 호출자(콘티·마네킹) 모두 결과를 공유받는다.
         (result) => {
           // 발화하지 않은 성공 = 200 캐시(컷이 이미 있었음). 알릴 완료가 없다.
-          if (started) onJobChange(projectId, { status: 'idle', progress: 100, errorMessage: '' });
+          if (isActiveRun() && started) {
+            onJobChange(projectId, { status: 'idle', progress: 100, errorMessage: '' });
+          }
           return result;
         },
         // 실패는 발화 여부와 무관하게 알린다. 여기서만 걸리는 실패(POST 자체가 실패)도
         // "생성을 시도했는데 안 됐다" 는 진짜 사건이고, 백그라운드 발사는 rejection 을
         // 삼키므로(콘티) 리본이 사용자에게 알릴 유일한 통로다. 없는 일을 알리는 게 아니다.
         (error) => {
+          // 취소 API 응답으로 이미 로컬 추적을 끊은 옛 폴러라면 뒤늦은 진행률·종결이
+          // 그 사이 시작된 새 payload 작업의 상태를 덮지 못하게 한다.
+          if (!isActiveRun()) throw error;
+          // 사용자가 분석 편집 경고에서 직접 취소한 작업은 실패가 아니다. projectId 도 비워
+          // running→idle 전환을 완료 배지로 오인하지 않게 하되, 기다리던 호출자에는 원 오류를
+          // 그대로 돌려줘 컷 로드/후속 성공 처리가 이어지지 않게 한다.
+          if (error?.code === 'job_cancelled') {
+            onJobChange(projectId, {
+              projectId: null,
+              status: 'idle',
+              progress: 0,
+              errorMessage: '',
+            });
+            throw error;
+          }
           onJobChange(projectId, {
             status: 'error',
             progress: readProgress(projectId),
@@ -65,13 +89,30 @@ export function createMannequinGenerationRunner({
           throw error;
         },
       ).finally(() => {
-        if (inflightProjectId === projectId) {
+        if (isActiveRun()) {
           inflight = null;
           inflightProjectId = null;
+          activeRunId = 0;
         }
       });
 
       return inflight;
+    },
+
+    acknowledgeCancellation(projectId) {
+      if (!inflight || inflightProjectId !== projectId) return false;
+      // 서버 취소 응답은 이미 커밋된 뒤다. pollJob이 cancelled를 관찰하기 전이라도 이 실행을
+      // 즉시 비활성화해 같은 프로젝트의 다음 요청이 옛 Promise에 합류하지 않게 한다.
+      activeRunId = 0;
+      inflight = null;
+      inflightProjectId = null;
+      onJobChange(projectId, {
+        projectId: null,
+        status: 'idle',
+        progress: 0,
+        errorMessage: '',
+      });
+      return true;
     },
 
     isRunning(projectId) {

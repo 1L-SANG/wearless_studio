@@ -49,6 +49,16 @@ from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 �
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 
 
+class _MannequinJobCancelled(Exception):
+    """협조적 취소를 broad worker 예외 처리와 구분하는 내부 종결 신호."""
+
+
+async def _cancel_checkpoint(cancel_check=None) -> None:
+    """DB 상태 콜백이 취소를 확인하면 현재 파이프라인을 즉시 빠져나간다."""
+    if cancel_check is not None and await cancel_check():
+        raise _MannequinJobCancelled
+
+
 def _canonical_profile_hash(profile) -> str:
     """렌더러 입력 프로필의 canonical JSON(sort_keys·compact·null 포함) SHA-256 (fidelity D3)."""
     payload = json.dumps(profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -259,6 +269,7 @@ def tier_for_job(s, job: dict | None) -> str:
 async def _apply_axis_qc(
     *, pool, gemini, s, job_id, candidate, attempt, model, res,
     prod_imgs, match_img, fit_profile, profile_hash, calls_spent, image_size=None,
+    cancel_check=None,
 ):
     """생성 채택본에 축 QC 판정 + (enforce 시) 편집 교정 1회. → (선택 결과, 편집콜 소비 여부).
 
@@ -330,15 +341,18 @@ async def _apply_axis_qc(
         await _emit_retry("budget_exhausted", failed=failed, edit_hash=edit_hash)
         return res, False
     edit_attempt = attempt + 1
+    await _cancel_checkpoint(cancel_check)
     try:
         edited = await gemini.generate_content_image(
             model, instruction, [InlineImage(res.mime, res.image)],
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except GeminiError as e:
+        await _cancel_checkpoint(cancel_check)
         log.warning("axis_qc edit call failed for job %s: %r", job_id, e)
         await _emit_retry("edit_error", fired=True, failed=failed, edit_hash=edit_hash,
                           edit_attempt=edit_attempt)
         return res, True
+    await _cancel_checkpoint(cancel_check)
     edited_hash = hashlib.sha256(edited.image).hexdigest()
     try:
         v2 = await _judge(edited)
@@ -758,7 +772,7 @@ async def _apply_fabric_pass(
 async def _apply_edits(
     *, pool, gemini, s, job_id, candidate, attempt, model, res, p2, prod_imgs, match_img,
     fit_profile, profile_hash, base_gender, calls_spent, clothing_type=None, enabled=True,
-    image_size=None, has_fine_pattern=False,
+    image_size=None, has_fine_pattern=False, cancel_check=None,
 ):
     """채택본에 편집(축 교정 → 가슴 2패스)을 적용하고, 바뀌었으면 재판정·회귀 시 되돌린다.
 
@@ -775,33 +789,41 @@ async def _apply_edits(
     pre_res, pre_p2 = res, p2
     # untuck — 편집 체인 **맨 앞**. 밑단 위치(구도)가 먼저 확정돼야 축 QC 가 실제 밑단을 보고
     # 판정하고(특히 length 축), 볼륨·원단 편집이 최종 구도 위에서 이뤄진다.
+    await _cancel_checkpoint(cancel_check)
     res, untuck_spent = await _apply_untuck_pass(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
         res=res, match_img=match_img, calls_spent=calls_spent,
         clothing_type=clothing_type, image_size=image_size)
+    await _cancel_checkpoint(cancel_check)
     calls_spent += untuck_spent
     # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
     # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
+    await _cancel_checkpoint(cancel_check)
     res, axis_spent = await _apply_axis_qc(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
         model=model, res=res, prod_imgs=prod_imgs, match_img=match_img,
         fit_profile=fit_profile, profile_hash=profile_hash, calls_spent=calls_spent,
-        image_size=image_size)
+        image_size=image_size, cancel_check=cancel_check)
+    await _cancel_checkpoint(cancel_check)
     calls_spent += axis_spent
     post_axis_res = res
     # 여성 기본 가슴 볼륨 2패스 — R2 저장 직전, 채택본이 확정된 뒤. fail-open.
+    await _cancel_checkpoint(cancel_check)
     res, bust_spent = await _apply_bust_pass(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
         base_gender=base_gender, res=res, calls_spent=calls_spent,
         clothing_type=clothing_type, image_size=image_size)
+    await _cancel_checkpoint(cancel_check)
     calls_spent += bust_spent
     # 원단 패턴 2패스 — 가슴 2패스 **뒤**에 둔다. 두 편집이 겹치면 순서가 결과를 가르는데,
     # 몸 형태가 먼저 확정돼야 그 위의 천에 패턴을 얹는 게 자연스럽다(반대로 하면 볼륨 편집이
     # 방금 맞춘 패턴을 다시 늘린다). 회귀 판정은 아래에서 두 편집을 합쳐 한 번에 본다.
+    await _cancel_checkpoint(cancel_check)
     res, fabric_spent = await _apply_fabric_pass(
         pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
         res=res, prod_imgs=prod_imgs, calls_spent=calls_spent,
         has_fine_pattern=has_fine_pattern, image_size=image_size)
+    await _cancel_checkpoint(cancel_check)
     calls_spent += fabric_spent
     # 편집 체인의 최종 출고본은 디코드 가능하고 불투명한 캔버스여야 한다. 깨진
     # 이미지나 실제 alpha가 있으면 광범위 품질 게이트를 켜지 않고 편집 전 이미지로
@@ -857,14 +879,21 @@ async def _apply_edits(
     return res, p2, calls_spent
 
 
-async def _save_cut(*, s, r2, user_id, project_id, job_id, candidate, base_fit, res, qc_scores):
+async def _save_cut(
+    *, s, r2, user_id, project_id, job_id, candidate, base_fit, res, qc_scores,
+    cancel_check=None,
+):
     """채택본을 R2 에 올리고 finalize 용 dict 를 만든다. 출고 지점은 여기 하나뿐이다."""
     if qc_scores is not None:
         qc_scores["outcome"] = score_outcome(s, qc_scores)
     ext = ext_for_mime(res.mime) or _EXT_FALLBACK.get(res.mime, "png")
     asset_id = str(uuid.uuid4())
     key = ai_key(user_id, project_id, job_id, asset_id, ext)
+    await _cancel_checkpoint(cancel_check)
     await asyncio.to_thread(r2.put_bytes, key, res.image, res.mime, cache=IMMUTABLE_CACHE)
+    # put_bytes 도중 취소되면 아래 checkpoint가 끊는다. DB asset/cut insert는 finalize에서만
+    # 일어나므로 옛 성별 컷은 노출되지 않고, 이미 올라간 R2 바이트는 허용된 고아로 남는다.
+    await _cancel_checkpoint(cancel_check)
     w, h = _image_dims(res.image)
     return {
         "asset_id": asset_id, "bucket": s.r2_bucket, "key": key, "mime": res.mime,
@@ -921,6 +950,7 @@ async def _run_candidate(
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
     adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
+    cancel_check=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
     s = app.state.settings
@@ -987,16 +1017,19 @@ async def _run_candidate(
             "prompt_version": prompt_version,
             "generation_path": generation_path,
             "input_source": fit_profile_source})
+        await _cancel_checkpoint(cancel_check)
         calls_spent += 1  # 성공하든 실패하든 호출은 나갔다
         try:
             res = await gemini.generate_content_image(
                 model, prompt, images, image_size,
                 aspect_ratio=s.mannequin_aspect_ratio)
         except GeminiError as e:
+            await _cancel_checkpoint(cancel_check)
             await _emit(pool, job_id, "step", {
                 "candidate": candidate, "model": model, "attempt": attempt,
                 "status": "error", "message": str(e)[:200]})
             continue
+        await _cancel_checkpoint(cancel_check)
         verdict = qc.evaluate_mannequin_qc(res.image)
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "model": model, "attempt": attempt, "status": "generated",
@@ -1084,7 +1117,7 @@ async def _run_candidate(
                 match_img=match_img, fit_profile=fit_profile, profile_hash=profile_hash,
                 base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, enabled=reprocess, image_size=image_size,
-                has_fine_pattern=has_fine_pattern)
+                has_fine_pattern=has_fine_pattern, cancel_check=cancel_check)
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
             series = (
@@ -1122,7 +1155,8 @@ async def _run_candidate(
                     "reason": "budget_exhausted", "outcome": score_outcome(s, qc_scores)})
             return await _save_cut(
                 s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
-                candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores)
+                candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
+                cancel_check=cancel_check)
         # reject → 재시도 프롬프트에 교정 피드백 주입(Pillow 사유 + AG-P2 correctionPrompt).
         # 정체성 게이트가 선점하면 축 QC/편집은 이 attempt에서 미실행 — 잘못된 옷을 편집하면
         # 그 정체성이 보존되므로 신규 생성(re-roll)이 우선한다(설계 결정 3).
@@ -1164,7 +1198,7 @@ async def _run_candidate(
                 prod_imgs=prod_imgs, match_img=match_img, fit_profile=fit_profile,
                 profile_hash=profile_hash, base_gender=base_gender, calls_spent=calls_spent,
                 clothing_type=clothing_type, image_size=image_size,
-                has_fine_pattern=has_fine_pattern)
+                has_fine_pattern=has_fine_pattern, cancel_check=cancel_check)
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
                 candidate=candidate, attempt=s.mannequin_max_attempts, res=res)
@@ -1176,7 +1210,8 @@ async def _run_candidate(
             "reason": "loop_exhausted", "outcome": score_outcome(s, qc_scores)})
         return await _save_cut(
             s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
-            candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores)
+            candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
+            cancel_check=cancel_check)
     return None  # 구제할 후보조차 없음 → 이 후보 드롭(부분 성공 허용)
 
 
@@ -1188,7 +1223,14 @@ async def run_mannequin_job(app, job: dict) -> None:
     reserved = job.get("credits_reserved") or 0
     settle_key = f"credit:job:{job_id}:settle"
 
+    async def _cancel_check() -> bool:
+        async with pool.connection() as conn:
+            return await repo.is_job_cancelled(conn, job_id)
+
     async def _fail(message: str, meta: dict):
+        # 사용자 취소 라우트가 이미 차감 정산·cancelled 종결을 끝냈으면 failure release/error로
+        # 덮지 않는다. 직후 경합도 repo의 running+lease FOR UPDATE 펜스가 한 번 더 막는다.
+        await _cancel_checkpoint(_cancel_check)
         async with pool.connection() as conn:
             await repo.finalize_mannequin_failure(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
@@ -1372,7 +1414,9 @@ async def run_mannequin_job(app, job: dict) -> None:
                     fit_profile=profile, adjusted_axes=adjusted_axes,
                     fit_profile_source=fit_profile_source, ref_imgs=ref_imgs,
                     generation_path=generation_path, parent_cut_img=parent_cut_img,
-                    adjust_directives=adjust_directives)
+                    adjust_directives=adjust_directives, cancel_check=_cancel_check)
+            except _MannequinJobCancelled:
+                raise
             except Exception as e:
                 log.warning("job %s candidate %s failed: %r", job_id, letter, e)
                 r = None
@@ -1415,6 +1459,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         # (단일컷 전환으로 구 "성공 후보 수 × 1" 폐기. 실행 시점 설정값을 다시 읽으면 배포/env 변경
         # 사이에 낀 잡이 예약액과 다른 금액을 차감하거나 settle 실패할 수 있음). 실패는 _fail(release).
         charge = reserved
+        await _cancel_checkpoint(_cancel_check)
         async with pool.connection() as conn:
             out = await repo.finalize_mannequin_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
@@ -1429,5 +1474,11 @@ async def run_mannequin_job(app, job: dict) -> None:
                     await asyncio.to_thread(app.state.r2.delete, c["key"])
                 except Exception:
                     log.warning("orphan R2 cleanup failed: %s", c["key"])
+    except _MannequinJobCancelled:
+        # 취소 라우트가 status/event/차감까지 종결한다. 워커는 error/done을 추가하지 않는다.
+        return
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
-        await _fail("생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
+        try:
+            await _fail("생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
+        except _MannequinJobCancelled:
+            return
