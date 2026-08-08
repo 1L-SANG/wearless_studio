@@ -345,8 +345,8 @@ export const useAppStore = create((set, get) => ({
       persistFlow(get());
       return;
     }
-    const preserveDirty = preserveGenerationDirty && current.projectId === null
-      && current.generationRelevantEditsDirty;
+    const sameWorkContinuation = preserveGenerationDirty && current.projectId === null;
+    const preserveDirty = sameWorkContinuation && current.generationRelevantEditsDirty;
     const generationRelevantEditsDirty = adoptGenerationRelevantEdits(projectId, { preserveDirty });
     set({
       ...initialFlow,
@@ -355,8 +355,19 @@ export const useAppStore = create((set, get) => ({
       mannequinJob: initialMannequinJob(),
       detailPageJob: initialDetailPageJob(),
       generationRelevantEditsDirty,
+      // 같은 작업이 서버 신원을 얻는 경로면 비로그인 때 고른 사진 양도 이어간다 —
+      // initialFlow 스프레드가 basic 으로 되돌리면 게스트의 선택이 로그인 순간 조용히 사라진다.
+      composeMode: sameWorkContinuation ? current.composeMode : initialFlow.composeMode,
     });
     persistFlow(get());
+    // 비로그인 구간의 선택은 서버에 못 실렸다(setComposeMode 의 무-project 가드). 신원을
+    // 얻은 지금 서버 project 와 수렴시킨다 — 기본값이면 보낼 것도 없다.
+    const adoptedComposeMode = get().composeMode;
+    if (sameWorkContinuation && adoptedComposeMode !== initialFlow.composeMode) {
+      composeModePatchChain = composeModePatchChain
+        .catch(() => {})
+        .then(() => api.patchProject(projectId, { composeMode: adoptedComposeMode }));
+    }
   },
   /** 상세페이지 제작 플로우에서 현재 머문 경로 기록 — '이어서 작업' 재개 목표(ResumeTracker 가 호출). */
   setResumePath(resumePath) {
@@ -384,6 +395,10 @@ export const useAppStore = create((set, get) => ({
     set({ composeMode });
     persistFlow(get());
     const projectId = get().projectId;
+    // 비로그인 분석(projectId 없음)에서도 사진 양 칩이 눌린다(분석 페이지는 공개) — 이때
+    // PATCH 를 쏘면 /v1/projects/null 로 나가 에러가 된다. 로컬 선택만 저장하고, 서버 반영은
+    // 로그인 후 adoptProject 가 같은 작업을 채택할 때 이어서 한다.
+    if (!projectId) return composeModePatchChain;
     composeModePatchChain = composeModePatchChain
       .catch(() => {})
       .then(() => api.patchProject(projectId, { composeMode }));

@@ -23,8 +23,13 @@ import {
 } from '@/lib/matchingFit.js';
 import { reconcileMatchCompatibility } from '@/lib/api/matchingItems.js';
 import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
+import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import { resolveSelectedModelId } from './modelSelection.js';
 import { applySellingPointEdit } from './sellingPoints.js';
+import {
+  estimateComposeModeCredits,
+  selectAnalysisComposeMode,
+} from './composeModeSelection.js';
 
 // 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
 // Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
@@ -544,6 +549,10 @@ export function AnalysisForm({
 }) {
   const a = analysis;
   const toast = useToast();
+  const composeMode = useAppStore((s) => s.composeMode);
+  const setComposeMode = useAppStore((s) => s.setComposeMode);
+  const composeModeSaveRef = useRef(Promise.resolve());
+  const [composeModeSaving, setComposeModeSaving] = useState(false);
   const [washing, setWashing] = useState(false);
   const [spDraft, setSpDraft] = useState('');
   const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
@@ -558,6 +567,39 @@ export function AnalysisForm({
   const [editMatIdx, setEditMatIdx] = useState(null);
   const matTotal = (a.materials || []).reduce((s, m) => s + (Number(m.ratio) || 0), 0);
   const matOver = matTotal > 100;
+  const composeModes = catalogs?.composeModes || [];
+  const selectedComposeMode = composeModes.find((mode) => mode.value === composeMode)
+    || composeModes[0];
+  const composeModeOptions = composeModes.map((mode) => ({
+    value: mode.value,
+    label: `${mode.label} · ${mode.count}컷`,
+  }));
+  const composeModeCredits = estimateComposeModeCredits(
+    selectedComposeMode?.count,
+    CREDIT_COSTS.storyboardPerCut,
+  );
+  const changeComposeMode = (nextMode) => {
+    if (nextMode === composeMode) return;
+    setComposeModeSaving(true);
+    const pending = selectAnalysisComposeMode({
+      currentMode: composeMode,
+      nextMode,
+      projectId,
+      setComposeMode,
+      invalidateStoryboardPrefetch: invalidateStoryboardEntryPrefetch,
+    }).catch(() => {
+      toast.push('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.');
+      return false;
+    });
+    composeModeSaveRef.current = pending;
+    void pending.finally(() => {
+      if (composeModeSaveRef.current === pending) setComposeModeSaving(false);
+    });
+  };
+  const confirmAnalysis = async () => {
+    await composeModeSaveRef.current;
+    onNext();
+  };
   // 인물 모델 카탈로그 — FaceMarket 검증 모델(GET /v1/facemarket/models, listModels()).
   // 정적 시드를 버리고 런타임 로드한다. 라이선스가 활성인(hasActiveLicense) 모델만 선택 가능.
   const [models, setModels] = useState([]);
@@ -1100,11 +1142,23 @@ export function AnalysisForm({
   // 콘티에서 '이전' 으로 돌아올 수 있으니 되돌릴 수 없다고는 말하지 않는다 — 대가를 말한다.
   const cta = (
     <>
+      <div className="af-vol-control">
+        <span className="af-vol-label">사진 양</span>
+        <Chips
+          className="af-vol"
+          options={composeModeOptions}
+          value={composeMode}
+          allowDeselect={false}
+          onChange={changeComposeMode}
+        />
+      </div>
       <p className="af-cta-note">
         누르면 마네킹컷을 만들기 시작해요. 이후에 성별·의류 종류를 바꾸면
-        컷을 다시 만들어서 크레딧이 한 번 더 나가요.
+        컷을 다시 만들어서 크레딧이 한 번 더 나가요. 상세페이지 생성은 콘티 컷 수만큼이에요
+        — 지금 구성 기준 약 {composeModeCredits} 크레딧.
       </p>
-      <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onNext}>의류정보 확정 완료 · {CREDIT_COSTS.mannequinGenerate} 크레딧</Button>
+      <Button variant="primary" size="lg" iconRight="arrowRight" disabled={composeModeSaving}
+        onClick={confirmAnalysis}>의류정보 확정 완료 · {CREDIT_COSTS.mannequinGenerate} 크레딧</Button>
     </>
   );
 

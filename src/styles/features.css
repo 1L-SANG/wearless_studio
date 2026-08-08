@@ -227,6 +227,11 @@
 .ap-bar { height: 4px; border-radius: 99px; background: #ececef; margin-top: 14px; overflow: hidden; }
 .ap-bar i { display: block; height: 100%; border-radius: 99px; background: var(--fg-1); transition: width .5s ease; }
 /* 확정 버튼 옆 안내 — 버튼의 금액이 "지금 나가는 돈"이라면 이 문구는 "다시 나갈 수 있는 돈"이다. */
+.af-vol-control { flex: 0 1 auto; min-width: 0; }
+.af-vol-label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 700;
+  color: var(--fg-3); }
+.af-vol { gap: 6px; }
+.af-vol .chip { border: 1px solid var(--fg-1); padding: 8px 12px; white-space: nowrap; }
 .af-cta-note { flex: 1 1 300px; min-width: 0; margin-right: 2px; text-align: left;
   font-size: 12.5px; line-height: 1.5; color: var(--fg-3); }
 
@@ -679,6 +684,14 @@
 .sb-count-head { margin: -18px 0 14px; display: flex; justify-content: center; gap: 4px;
   font-size: 15px; font-weight: 500; color: var(--fg-2); }
 .sb-count-head strong { color: var(--fg-1); font-weight: 750; }
+.sb-compose-summary { width: fit-content; max-width: 100%; margin: -6px auto 16px; display: flex;
+  align-items: center; justify-content: center; gap: 8px; color: var(--fg-2); font-size: 12.5px; }
+.sb-compose-summary strong { color: var(--fg-1); }
+.sb-compose-summary button { border: 0; padding: 0; background: transparent; color: var(--link);
+  font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.sb-compose-modal .sb-compose-chips { margin-top: 16px; }
+.sb-compose-modal .sb-compose-chips .chip { flex: 1; justify-content: center; }
+.sb-compose-modal .sb-compose-warning { color: var(--accent-error); font-weight: 600; }
 /* solo view (no selection): one centered white panel of cards */
 .sb-solo { max-width: 570px; margin-inline: auto; }
 /* one white panel behind all the cards */
@@ -1081,18 +1094,21 @@
 }
 /* 제목은 로딩 프레임과 동일하게 유지하고, 데이터가 채워지는 콘티 영역만 짧고 얕게 스태거한다. */
 .fx-pagefade .sb-page.sb-content-enter > .sb-count-head,
+.fx-pagefade .sb-page.sb-content-enter > .sb-compose-summary,
 .fx-pagefade .sb-page.sb-content-enter > .storyboard-solo-layout,
 .fx-pagefade .sb-page.sb-content-enter > .storyboard-layout,
 .fx-pagefade .sb-page.sb-content-enter > .sb-actionbar {
   animation: sbContentIn .38s cubic-bezier(.16, 1, .3, 1) both;
 }
 .fx-pagefade .sb-page.sb-content-enter > .sb-count-head { animation-delay: .06s; }
+.fx-pagefade .sb-page.sb-content-enter > .sb-compose-summary { animation-delay: .09s; }
 .fx-pagefade .sb-page.sb-content-enter > .storyboard-solo-layout,
 .fx-pagefade .sb-page.sb-content-enter > .storyboard-layout { animation-delay: .12s; }
 .fx-pagefade .sb-page.sb-content-enter > .sb-actionbar { animation-delay: .18s; }
 @keyframes sbContentIn { from { opacity: 0; transform: translateY(10px); } }
 @media (prefers-reduced-motion: reduce) {
   .fx-pagefade .sb-page.sb-content-enter > .sb-count-head,
+  .fx-pagefade .sb-page.sb-content-enter > .sb-compose-summary,
   .fx-pagefade .sb-page.sb-content-enter > .storyboard-solo-layout,
   .fx-pagefade .sb-page.sb-content-enter > .storyboard-layout,
   .fx-pagefade .sb-page.sb-content-enter > .sb-actionbar { animation: none; }
