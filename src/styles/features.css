@@ -671,14 +671,10 @@
 .storyboard-layout.tight { grid-template-columns: 570px 360px; justify-content: center; gap: 12px; }
 @media (max-width: 1024px) { .storyboard-layout.tight { grid-template-columns: 1fr; justify-content: stretch; } }
 @media (max-width: 1024px) { .storyboard-layout { grid-template-columns: 1fr; } }
-/* 보드가 지금 몇 컷인지 — 라벨은 조용히, 수치는 시스템의 데이터 서체로.
-   콜론을 빼고 라벨/값을 나눠 '사진 양' 라벨과 같은 종류로 읽히게 한다. */
-.sb-count-head { margin: -18px 0 12px; padding-left: 10px; display: flex; align-items: baseline; gap: 8px; }
-.sb-count-label { font-size: 12px; font-weight: 700; color: var(--fg-3); letter-spacing: .02em; }
-.sb-count-value { font-family: var(--font-mono); font-size: 19px; font-weight: 600; color: var(--fg-1);
-  font-variant-numeric: tabular-nums; letter-spacing: -.01em; line-height: 1.1; }
-.sb-count-value small { font-family: var(--font-body); font-size: 12px; font-weight: 600;
-  color: var(--fg-3); margin-left: 3px; }
+/* 보드가 지금 몇 컷인지 — 페이지 제목 바로 아래 가운데. */
+.sb-count-head { margin: -18px 0 14px; display: flex; justify-content: center; gap: 4px;
+  font-size: 15px; font-weight: 500; color: var(--fg-2); }
+.sb-count-head strong { color: var(--fg-1); font-weight: 750; }
 /* solo view (no selection): one centered white panel of cards */
 .sb-solo { max-width: 570px; margin-inline: auto; }
 /* one white panel behind all the cards */
@@ -1055,9 +1051,9 @@
 .sb-page { padding-bottom: 24px; overflow-x: clip; }
 /* 로딩 중에도 실제 솔로 콘티와 같은 프레임을 먼저 잡는다. 모든 면은 흰색+hairline이며 shimmer가 없다. */
 .sb-loading-page { min-height: calc(100vh - 60px); }
-/* 스켈레톤은 실제 '구성컷 N개' 줄의 높이를 그대로 따라간다 — 어긋나면 로드 완료 때 한 줄이 튄다. */
-.sb-loading-count { min-height: 22px; }
-.sb-loading-count-mark { width: 74px; height: 20px; border: 1px solid var(--ring); border-radius: var(--r-pill); background: var(--bg-1); }
+/* 스켈레톤은 실제 '구성컷: N개' 줄의 높이를 그대로 따라간다 — 어긋나면 로드 완료 때 한 줄이 튄다. */
+.sb-loading-count { min-height: 20px; }
+.sb-loading-count-mark { width: 54px; height: 18px; border: 1px solid var(--ring); border-radius: var(--r-pill); background: var(--bg-1); }
 .sb-loading-preview { box-shadow: var(--elev-card), 0 0 0 1px var(--ring); }
 .sb-loading-preview-head { width: 78px; height: 24px; border: 1px solid var(--ring); border-radius: var(--r-4); background: var(--bg-1); margin-bottom: 9px; }
 .sb-loading-preview-page { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; padding: 4px; border: 1px solid var(--ring); border-radius: var(--r-4); background: var(--bg-1); }

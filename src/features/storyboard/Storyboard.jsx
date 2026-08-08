@@ -2598,10 +2598,6 @@ export function Storyboard() {
     <div className={'sb-canvas-shell' + (splitOpen ? ' inspector-open' : '')}
       style={{ '--sb-inspector-top': `${inspectorTop}px` }}>
       <div className="sb-canvas-main">
-        <div className="sb-count-head">
-          <span className="sb-count-label">구성컷</span>
-          <span className="sb-count-value">{cutCount}<small>개</small></span>
-        </div>
         {list}
       </div>
       {splitOpen && <div className="insp-col">{inspector}</div>}
@@ -2681,6 +2677,10 @@ export function Storyboard() {
       onDragStartCapture={atomicSaving ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}>
       {doneBlocked && <DoneGuardModal />}
       <PageHead title="상세페이지 초안 구성" sub="지금 보이는 이미지들은 예시입니다. 느낌만을 보고 필요한 컷은 수정하며 상세페이지를 생성해보세요." />
+      {/* 페이지 직계 자식이어야 진입 스태거(.sb-content-enter > .sb-count-head)가 걸린다. */}
+      <div className="sb-count-head">
+        구성컷: <strong>{cutCount}</strong>개
+      </div>
       <ComposeModePicker
         modes={catalogs?.composeModes || []}
         onModeChange={onComposeModeChange}
