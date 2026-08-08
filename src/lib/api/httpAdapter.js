@@ -569,9 +569,16 @@ export const httpAdapter = {
   },
   // 최초 A/B 후보 생성 — 202{jobId}→폴링, 또는 완료 존재 시 200{data,credits}(무차감 재호출).
   // 크레딧: mannequinGenerate. 진행 중 재호출은 서버가 활성 job 에 합류(1회만 차감).
-  async generateMannequins(projectId, { onProgress } = {}) {
+  //
+  // onJobStarted: **서버가 202 로 답해 실제 job 이 생겼을 때만** 1회 호출한다. 200 캐시 경로에선
+  // 부르지 않는다. 두 갈래를 구분할 수 있는 곳은 여기뿐이고(반환 형태 {data,credits} 는 동일하고
+  // 폴링이 끝난 뒤라 늦다), 호출부는 이 신호로만 "생성이 시작됐다" 를 판단해야 한다 —
+  // 시작하지도 않은 생성을 진행 중이라 알리거나(리본) 최초 생성의 소유권을 주장하면
+  // (initialGenerationSession 플래그) 유료 재생성 게이트가 조용히 무력화된다.
+  async generateMannequins(projectId, { onProgress, onJobStarted } = {}) {
     const res = await http(`/v1/projects/${projectId}/mannequins:generate`, { method: 'POST' });
-    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시)
+    if (res.data) return { data: res.data, credits: res.credits };  // 완료 재호출(200 캐시) — job 없음
+    onJobStarted?.(res.jobId);
     // 마네킹 A/B 합성은 무거운 image job — 폴링 상한을 넉넉히(짧으면 정상 job 완료 전 실패 토스트).
     const result = await pollJob(res.jobId, {
       onProgress,

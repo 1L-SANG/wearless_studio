@@ -20,7 +20,10 @@ const runner = createMannequinGenerationRunner({
   generate: (pid, options) => api.generateMannequins(pid, options),
   readProgress: generationProgressFor,
   onJobChange: updateMannequinJob,
-  onRequested: markInitialGenerationRequested,
+  // "최초 생성은 우리가 요청했다" 는 주장은 **실제로 job 이 생겼을 때만** 해야 한다.
+  // 컷이 이미 있어 서버가 200 으로 답한 호출까지 플래그를 세우면
+  // cutsExistedBeforeInitialGeneration 이 false 로 뒤집혀 유료 재생성이 조용히 막힌다.
+  onJobStarted: markInitialGenerationRequested,
 });
 
 export const requestMannequinGeneration = (pid) => runner.request(pid);
