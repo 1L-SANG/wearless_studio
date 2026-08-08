@@ -1445,6 +1445,28 @@ def _hc_fail_summary(reason: str, detail: str = "", **extra) -> dict:
             "pipelineVersion": HC_PIPELINE_VERSION, **extra}
 
 
+# texture truth router 상태. 이 파일이 쓰는 것은 UNCERTAIN 하나다: 이 run 에
+# **독립 검증된 FULL_COLOR_REPEAT 가 없다**는 뜻이고, 결정론 주기 투영을 건너뛴 채
+# carrier 후보를 그대로 통과시킨다. 내부 검수 플래그이지 잡 실패가 아니다.
+TEXTURE_TRUTH_UNCERTAIN = "TEXTURE_TRUTH_UNCERTAIN"
+
+
+def _hc_uncertain_summary(reason: str, detail: str = "", **extra) -> dict:
+    """텍스처 진실 불확정 요약 — 실패가 아니라 **투영 생략**이다.
+
+    `failClosed` 는 mode 와 무관하게 항상 False 다. enforce 에서 fail-closed 로 만들면
+    "원본 주기를 신뢰할 수 없다" 가 잡 실패가 되어, 멀쩡한 carrier 후보를 버리고
+    provider 재호출을 유도한다 — 이 경로가 막으려는 결과가 정확히 그것이다.
+    나머지 필드는 `_hc_fail_summary` 와 같은 shape 라 기존 관측·집계가 그대로 읽는다.
+    """
+    mode = extra.pop("mode", "enforce")
+    return {"mode": mode, "applied": False, "wouldApply": False,
+            "needsReview": True, "failClosed": False,
+            "textureTruth": TEXTURE_TRUTH_UNCERTAIN,
+            "failureReason": reason, "failureDetail": detail[:200],
+            "pipelineVersion": HC_PIPELINE_VERSION, **extra}
+
+
 class _HybridCompositeFailClosed(Exception):
     """P0 hybrid composite fail-closed signal before R2 save/finalize success."""
 
@@ -1785,6 +1807,26 @@ async def _apply_hybrid_composite(
             )
         await emit("hybrid_composite_completed", outcome=reason, mode=mode,
                    fail_closed=summary["failClosed"], detail=detail[:200])
+        return res, summary
+
+    async def texture_truth_uncertain(reason, detail="", **extra):
+        """투영을 건너뛰고 carrier 후보를 그대로 통과시킨다 (fail-closed 아님)."""
+        qa_record(texture_truth=TEXTURE_TRUTH_UNCERTAIN,
+                  texture_truth_reason=reason,
+                  texture_truth_detail=str(detail)[:200],
+                  carrier_sha256=carrier_sha_early)
+        qa_flush()
+        extra.setdefault("carrierSha256", carrier_sha_early)
+        summary = _hc_uncertain_summary(reason, detail, mode=mode, **extra)
+        if artifact_state["carrier"] is not None:
+            capture_artifacts("texture_truth_uncertain",
+                              texture_truth=TEXTURE_TRUTH_UNCERTAIN,
+                              texture_truth_reason=reason)
+        # 이벤트 **이름**은 늘리지 않는다 — 기존 완료 이벤트에 상태만 실어 보낸다.
+        # 새 이름은 관측 계약을 넓히고, 이 경로는 관측 확장이 아니라 권한 축소다.
+        await emit("hybrid_composite_completed", outcome=reason, mode=mode,
+                   fail_closed=False, texture_truth=TEXTURE_TRUTH_UNCERTAIN,
+                   detail=str(detail)[:200])
         return res, summary
 
     if (declared_pattern_type is not None
@@ -2251,7 +2293,36 @@ async def _apply_hybrid_composite(
                 "source Front torso 반복 앵커 실패 (scan 구조 불일치 + guided 실패)",
                 frontScan=(front_model.reason if isinstance(front_model, CompositeFailure)
                            else {"n_colors": len(front_model.color_sequence_lab)}))
-        garment_axis, front_period_px, anchor_corr = anchor
+        # guided 는 답을 냈지만, 그 답은 **독립 검증된 FULL_COLOR_REPEAT 가 아니다**.
+        # 후보 격자가 autocorr peak × {1,2,3} 뿐이라(stripe_model.find_period_guided),
+        # 실자산 f91cbac5 에서 격자는 {15,30,45} 였고 같은 바이트의 scan/shadow 계열은
+        # ~19.2–21.5 를 읽었다 — 20.x 는 격자에 아예 없다. ROI 를 6% 옮기면 승자가
+        # 45→30→15 로 뒤집혔고, 실 production(job fafe3ca8/b280efaa)은 45.0 을 골라
+        # 몸통 반복 32.89 를 렌더했다(같은 옷 scan 경로 71.19, 2.16×).
+        # warp 는 period_profile_lab 한 traversal 을 target_period_px 에 그대로 얹으므로
+        # 스칼라가 다른 하모닉이면 결과는 **절대 스케일만 배수로 틀린** 그림이 되고,
+        # 색 순서·폭 비·팔레트는 전부 보존돼 하류 어떤 검사에도 걸리지 않는다.
+        # 따라서 guided 는 관측 증거로만 남기고 투영 권한을 주지 않는다.
+        guided_axis, guided_period_px, guided_score = anchor
+        guided_candidates = src_period.get("guided_candidates") or []
+        qa_record(source_period_source=hc_source_ctx.PERIOD_FROM_GUIDED,
+                  guided_observed_period_px=float(guided_period_px),
+                  guided_observed_axis=guided_axis,
+                  guided_observed_score=float(guided_score),
+                  guided_authority_accepted=False,
+                  guided_candidates=guided_candidates)
+        return await texture_truth_uncertain(
+            "guided_period_unvalidated_harmonic",
+            f"guided period {float(guided_period_px):.2f}px 는 검증되지 않은 하모닉 "
+            "추정치 — 결정론 투영 권한 없음",
+            guidedObservedPeriodPx=round(float(guided_period_px), 3),
+            guidedObservedAxis=guided_axis,
+            guidedObservedScore=round(float(guided_score), 4),
+            guidedCandidateCount=len(guided_candidates),
+            guidedAuthorityAccepted=False,
+            frontScan=(front_model.reason if isinstance(front_model, CompositeFailure)
+                       else {"n_colors": len(front_model.color_sequence_lab),
+                             "confidence": round(float(front_model.confidence), 3)}))
     torso_span_src = hc_scale.torso_span((fx0, fy0, fx1, fy1), garment_axis=garment_axis)
     repeats_on_torso = torso_span_src / front_period_px
     # Close the run-level record so every candidate can be checked against the same
