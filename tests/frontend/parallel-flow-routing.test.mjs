@@ -113,3 +113,12 @@ test('the ribbon announces completion and stops steering', () => {
   assert.doesNotMatch(chromeSource, /마네킹 화면 보기/);
   assert.doesNotMatch(chromeSource, /job-ribbon-btn/);
 });
+
+test('the done badge is scoped to the project whose job actually finished, not a bare "something ran" flag', () => {
+  // beginProject/adoptProject 도 mannequinJob 을 idle 로 되돌리지만(initialMannequinJob()),
+  // projectId 는 null 로 지운다. bare boolean(wasRunningRef)로 되돌리면 이 리셋도 완료로
+  // 오인된다 — 반드시 '실행 중이던 프로젝트 id' 를 기억하고 idle 전환 시 그 id 와 대조해야 한다.
+  assert.doesNotMatch(chromeSource, /wasRunningRef/);
+  assert.match(chromeSource, /runningProjectIdRef\.current = job\.projectId/);
+  assert.match(chromeSource, /job\.projectId !== runningProjectIdRef\.current/);
+});
