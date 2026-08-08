@@ -2599,7 +2599,8 @@ export function Storyboard() {
       style={{ '--sb-inspector-top': `${inspectorTop}px` }}>
       <div className="sb-canvas-main">
         <div className="sb-count-head">
-          구성컷: <strong>{cutCount}</strong>개
+          <span className="sb-count-label">구성컷</span>
+          <span className="sb-count-value">{cutCount}<small>개</small></span>
         </div>
         {list}
       </div>
