@@ -1,9 +1,11 @@
 /* =============================================================
    App.jsx — routes (React Router).
-   Flow: /create/input → mannequin → storyboard → generating → editor.
+   Flow: /create/input → storyboard → mannequin → generating → editor.
+   (마네킹컷 생성이 오래 걸려 콘티를 앞으로 당겼다 — 콘티 진입 시 생성을 발사해
+    사용자가 보드를 짜는 동안 백그라운드로 돈다.)
    "/" opens the input page directly (per product decision) — 입력·분석은
    로그인 없이 공개. 분석 CTA 에서 로그인 게이트(LoginGate 모달)를 띄우고,
-   로그인 후 마네킹부터 진행한다. mannequin·storyboard·generating·library·
+   로그인 후 콘티부터 진행한다. storyboard·mannequin·generating·library·
    editor 는 RequireAuth 로 보호(비세션 직접 URL 진입 → 입력으로 리다이렉트).
    OAuth 복귀('/')의 리다이렉트는 RootRedirect 단일 주인이 담당(복귀 목표 있으면 그곳, 없으면 입력).
    Editor 는 app chrome 밖의 전체화면 surface (stub in phase 1).
