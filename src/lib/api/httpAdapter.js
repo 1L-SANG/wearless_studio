@@ -55,7 +55,7 @@ function absolutizeAssetUrls(v) {
 
 // 공용 fetch 헬퍼 — Supabase 세션의 access_token 을 Bearer 로 주입 (plan §9).
 // 에러 봉투 { error: { code, message } } 의 한국어 message 를 그대로 throw (계약 §6).
-export async function http(path, { method = 'GET', body, signal } = {}) {
+export async function http(path, { method = 'GET', body, signal, headers: requestHeaders } = {}) {
   let data;
   try {
     ({ data } = await supabase.auth.getSession());
@@ -91,6 +91,7 @@ export async function http(path, { method = 'GET', body, signal } = {}) {
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(requestHeaders || {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
@@ -142,7 +143,11 @@ async function pollJob(
       onProgress && onProgress(job.progress);
     }
     if (job.status === 'done') { onProgress && onProgress(100); return job.result; }
-    if (job.status === 'error') throw new Error(job.errorMessage || '작업에 실패했어요.');
+    if (job.status === 'error') {
+      const error = new Error(job.errorMessage || '작업에 실패했어요.');
+      error.code = 'job_failed';
+      throw error;
+    }
     if (Date.now() - start > timeoutMs) {
       // 타임아웃은 **실패가 아니다** — 화면이 기다리기를 그만둔 것뿐이고 서버 잡은 계속 돈다.
       // 호출부가 "실패 처리"와 구분할 수 있게 code 를 붙인다(2026-08-07: 이 구분이 없어서
@@ -603,9 +608,11 @@ export const httpAdapter = {
   },
   // fit-profile 재생성 — 완료 캐시 없이 매 호출이 새 A/B 버전을 만든다(서버 :regenerate, finalize 가 max(version)+1).
   // 크레딧: mannequinGenerate. generate 미러(202 job → 폴링). 재생성은 캐시 200 경로가 없어 항상 job.
-  async regenerateMannequin(projectId, { fitProfile, onProgress } = {}) {
+  async regenerateMannequin(projectId, { fitProfile, onProgress, idempotencyKey } = {}) {
     const res = await http(`/v1/projects/${projectId}/mannequins:regenerate`, {
-      method: 'POST', body: { fitProfile },
+      method: 'POST',
+      body: { fitProfile },
+      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
     });
     if (res.data) return { data: res.data, credits: res.credits };
     const result = await pollJob(res.jobId, {

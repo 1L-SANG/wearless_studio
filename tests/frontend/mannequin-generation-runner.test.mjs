@@ -2,10 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { createMannequinGenerationRunner } from '../../src/features/mannequin/generationRunnerCore.js';
+import {
+  createMannequinGenerationRunner,
+  resolveInitialGenerationCuts,
+  runGenerationRelevantEditsRefresh,
+} from '../../src/features/mannequin/generationRunnerCore.js';
+import { createGenerationRelevantEditsSession } from '../../src/features/mannequin/generationRelevantEditsSession.js';
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
+  hadInitialGenerationRequest,
   markInitialGenerationRequested,
 } from '../../src/features/mannequin/initialGenerationSession.js';
 
@@ -189,6 +195,370 @@ function withSessionStorage() {
   return store;
 }
 
+test('marking a relevant edit invalidates the prior initial-generation ownership marker', () => {
+  const storage = withSessionStorage();
+  const dirty = createGenerationRelevantEditsSession({
+    storage: globalThis.sessionStorage,
+    clearInitialRequested: clearInitialGenerationRequested,
+  });
+  markInitialGenerationRequested('p-edited');
+  assert.equal(hadInitialGenerationRequest('p-edited'), true);
+
+  assert.equal(dirty.mark('p-edited'), true);
+
+  assert.equal(hadInitialGenerationRequest('p-edited'), false);
+  assert.equal(cutsExistedBeforeInitialGeneration('p-edited', [{ id: 'old-cut' }]), true);
+  assert.ok(storage.get('wl_generation_relevant_edits:p-edited'));
+});
+
+test('empty entry joins a pre-edit generation, preserves dirty, and starts paid regeneration', async () => {
+  withSessionStorage();
+  const projectId = 'p-pre-edit-inflight';
+  const dirty = createGenerationRelevantEditsSession({
+    storage: globalThis.sessionStorage,
+    clearInitialRequested: clearInitialGenerationRequested,
+  });
+  let initialGenerateCalls = 0;
+  let finishInitial;
+  const initialPending = new Promise((resolve) => { finishInitial = resolve; });
+  const { runner } = harness({
+    generate: (_pid, { onJobStarted }) => {
+      initialGenerateCalls += 1;
+      onJobStarted('old-job');
+      return initialPending;
+    },
+    onJobStarted: markInitialGenerationRequested,
+  });
+
+  const storyboardRequest = runner.request(projectId);
+  assert.equal(hadInitialGenerationRequest(projectId), true);
+  dirty.mark(projectId);
+  assert.equal(hadInitialGenerationRequest(projectId), false);
+
+  const entryLoad = resolveInitialGenerationCuts({
+    projectId,
+    initialCuts: [],
+    requestGeneration: (pid) => {
+      const joined = runner.request(pid);
+      assert.equal(joined, storyboardRequest, 'the empty entry must join the storyboard request');
+      return joined;
+    },
+    extractCuts: (data) => data,
+    classifyCuts: cutsExistedBeforeInitialGeneration,
+  });
+  finishInitial({ data: [{ id: 'old-cut' }], credits: 9 });
+  const loaded = await entryLoad;
+
+  assert.equal(initialGenerateCalls, 1);
+  assert.deepEqual(loaded.cuts, [{ id: 'old-cut' }]);
+  assert.equal(loaded.cutsExisted, true, 'the joined pre-edit result must require regeneration');
+  assert.equal(dirty.read(projectId), true);
+  clearInitialGenerationRequested(projectId); // Mannequin load clears the marker after classifying.
+
+  let paidCalls = 0;
+  let acceptPaid;
+  let finishPaid;
+  const paidPending = new Promise((resolve) => { finishPaid = resolve; });
+  const refresh = runGenerationRelevantEditsRefresh({
+    handledRef: { current: false },
+    readDirtyRevision: () => dirty.readRevision(projectId),
+    cutsExisted: loaded.cutsExisted,
+    regenerate: (onSucceeded) => {
+      paidCalls += 1;
+      acceptPaid = onSucceeded;
+      return paidPending;
+    },
+    clearDirty: (revision) => dirty.clear(projectId, revision),
+  });
+
+  assert.equal(paidCalls, 1);
+  assert.equal(dirty.read(projectId), true, 'dirty must survive until paid generation succeeds');
+  acceptPaid();
+  assert.equal(dirty.read(projectId), false);
+  finishPaid(true);
+  assert.equal(await refresh, true);
+});
+
+test('empty entry joins the same initial generation without paid regeneration when nothing changed', async () => {
+  withSessionStorage();
+  const projectId = 'p-unedited-inflight';
+  const dirty = createGenerationRelevantEditsSession({ storage: globalThis.sessionStorage });
+  let initialGenerateCalls = 0;
+  let finishInitial;
+  const initialPending = new Promise((resolve) => { finishInitial = resolve; });
+  const { runner } = harness({
+    generate: (_pid, { onJobStarted }) => {
+      initialGenerateCalls += 1;
+      onJobStarted('initial-job');
+      return initialPending;
+    },
+    onJobStarted: markInitialGenerationRequested,
+  });
+
+  const storyboardRequest = runner.request(projectId);
+  const entryLoad = resolveInitialGenerationCuts({
+    projectId,
+    initialCuts: [],
+    requestGeneration: (pid) => {
+      const joined = runner.request(pid);
+      assert.equal(joined, storyboardRequest, 'the empty entry must join the storyboard request');
+      return joined;
+    },
+    extractCuts: (data) => data,
+    classifyCuts: cutsExistedBeforeInitialGeneration,
+  });
+  finishInitial({ data: [{ id: 'initial-cut' }], credits: 9 });
+  const loaded = await entryLoad;
+
+  assert.equal(initialGenerateCalls, 1);
+  assert.equal(loaded.cutsExisted, false, 'the unedited initial result remains owned by its job');
+  clearInitialGenerationRequested(projectId);
+  let paidCalls = 0;
+  const refreshed = await runGenerationRelevantEditsRefresh({
+    handledRef: { current: false },
+    readDirtyRevision: () => dirty.readRevision(projectId),
+    cutsExisted: loaded.cutsExisted,
+    regenerate: async () => { paidCalls += 1; return true; },
+    clearDirty: (revision) => dirty.clear(projectId, revision),
+  });
+
+  assert.equal(refreshed, false);
+  assert.equal(paidCalls, 0);
+  assert.equal(dirty.read(projectId), false);
+});
+
+test('the dirty signal survives refresh only in the same tab and stays project-scoped', () => {
+  withSessionStorage();
+  const sameTabStorage = globalThis.sessionStorage;
+  const currentPage = createGenerationRelevantEditsSession({ storage: sameTabStorage });
+  currentPage.mark('p1');
+
+  const refreshedPage = createGenerationRelevantEditsSession({ storage: sameTabStorage });
+  assert.equal(refreshedPage.read('p1'), true);
+  assert.equal(refreshedPage.read('p2'), false);
+  refreshedPage.mark('p2');
+  refreshedPage.clear('p1');
+  assert.equal(refreshedPage.read('p2'), true, 'clearing p1 must not consume p2');
+
+  // 게스트 편집(null)은 메모리 dirty로 남고, 로그인 뒤 같은 작업이 id를 얻을 때 그 id로 옮긴다.
+  const anonymousDirty = currentPage.mark(null);
+  assert.equal(currentPage.adopt('p3', { preserveDirty: anonymousDirty }), true);
+  assert.equal(refreshedPage.read('p3'), true);
+
+  const nextTab = createGenerationRelevantEditsSession({
+    storage: {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    },
+  });
+  assert.equal(nextTab.read('p1'), false);
+
+  assert.equal(createGenerationRelevantEditsSession({ storage: sameTabStorage }).read('p1'), false);
+});
+
+test('a pending edit refresh is de-duplicated and clears dirty only after success', async () => {
+  let calls = 0;
+  let clears = 0;
+  let accept;
+  let finish;
+  let dirtyRevision = 'revision-1';
+  const handledRef = { current: false };
+  const pending = new Promise((resolve) => { finish = resolve; });
+  const options = {
+    handledRef,
+    readDirtyRevision: () => dirtyRevision,
+    cutsExisted: true,
+    regenerate: (onSucceeded) => { calls += 1; accept = onSucceeded; return pending; },
+    clearDirty: (expectedRevision) => {
+      if (dirtyRevision !== expectedRevision) return false;
+      clears += 1;
+      dirtyRevision = null;
+      return true;
+    },
+  };
+
+  const first = runGenerationRelevantEditsRefresh(options);
+  const repeated = runGenerationRelevantEditsRefresh(options);
+  assert.equal(calls, 1);
+  assert.equal(dirtyRevision, 'revision-1');
+  assert.equal(clears, 0);
+
+  accept();
+  assert.equal(dirtyRevision, null, 'server success must consume dirty before UI post-processing settles');
+  assert.equal(clears, 1);
+  finish(true);
+  assert.equal(await first, true);
+  assert.equal(await repeated, false);
+  assert.equal(calls, 1);
+  assert.equal(dirtyRevision, null);
+  assert.equal(clears, 1);
+});
+
+test('a failed edit refresh stays dirty without re-firing until the next screen entry', async () => {
+  let calls = 0;
+  let clears = 0;
+  let dirtyRevision = 'revision-1';
+  const regenerate = async (onSucceeded) => {
+    calls += 1;
+    if (calls > 1) {
+      onSucceeded();
+      return true;
+    }
+    return false;
+  };
+  const run = (handledRef) => runGenerationRelevantEditsRefresh({
+    handledRef,
+    readDirtyRevision: () => dirtyRevision,
+    cutsExisted: true,
+    regenerate,
+    clearDirty: (expectedRevision) => {
+      if (dirtyRevision !== expectedRevision) return false;
+      clears += 1;
+      dirtyRevision = null;
+      return true;
+    },
+  });
+
+  const firstEntryRef = { current: false };
+  assert.equal(await run(firstEntryRef), false);
+  assert.equal(dirtyRevision, 'revision-1');
+  assert.equal(clears, 0);
+  assert.equal(await run(firstEntryRef), false);
+  assert.equal(calls, 1, 'the same mount must not issue a second paid request');
+
+  assert.equal(await run({ current: false }), true);
+  assert.equal(calls, 2, 'a later screen entry may retry the preserved signal');
+  assert.equal(dirtyRevision, null);
+  assert.equal(clears, 1);
+});
+
+test('an edit made before initial cuts arrive clears without a paid regeneration', async () => {
+  let calls = 0;
+  let dirtyRevision = 'revision-1';
+  const result = await runGenerationRelevantEditsRefresh({
+    handledRef: { current: false },
+    readDirtyRevision: () => dirtyRevision,
+    cutsExisted: false,
+    regenerate: async () => { calls += 1; return true; },
+    clearDirty: (expectedRevision) => {
+      if (dirtyRevision === expectedRevision) dirtyRevision = null;
+    },
+  });
+
+  assert.equal(result, true);
+  assert.equal(calls, 0);
+  assert.equal(dirtyRevision, null);
+});
+
+test('a successful older request cannot consume a newer edit in the same project', async () => {
+  let accept;
+  let finish;
+  let dirtyRevision = 'revision-1';
+  const pending = new Promise((resolve) => { finish = resolve; });
+  const request = runGenerationRelevantEditsRefresh({
+    handledRef: { current: false },
+    readDirtyRevision: () => dirtyRevision,
+    cutsExisted: true,
+    regenerate: (onSucceeded) => { accept = onSucceeded; return pending; },
+    clearDirty: (expectedRevision) => {
+      if (dirtyRevision !== expectedRevision) return false;
+      dirtyRevision = null;
+      return true;
+    },
+  });
+
+  dirtyRevision = 'revision-2';
+  accept();
+  assert.equal(dirtyRevision, 'revision-2');
+  finish(true);
+  assert.equal(await request, true);
+  assert.equal(dirtyRevision, 'revision-2', 'the success fallback must use the same captured revision');
+});
+
+test('a refresh recognizes a landed attempt from its persisted cut baseline', () => {
+  const storage = withSessionStorage();
+  const beforeRefresh = createGenerationRelevantEditsSession({
+    storage: globalThis.sessionStorage,
+    nextAttemptId: () => 'attempt-1',
+  });
+  beforeRefresh.mark('p1');
+  const revision = beforeRefresh.readRevision('p1');
+  const idempotencyKey = beforeRefresh.markAttempt('p1', revision, {
+    ids: new Set(['cut-v1']),
+    maxVersion: 1,
+  });
+
+  const afterRefresh = createGenerationRelevantEditsSession({ storage: globalThis.sessionStorage });
+  assert.equal(
+    afterRefresh.markAttempt('p1', revision, { ids: new Set(['cut-v1']), maxVersion: 1 }),
+    idempotencyKey,
+    'the POST after refresh must reuse the original server idempotency key',
+  );
+  assert.equal(afterRefresh.landedAttemptRevision('p1', [{ id: 'cut-v2', version: 2 }]), revision);
+  assert.equal(afterRefresh.clear('p1', revision), true);
+  assert.equal(afterRefresh.read('p1'), false);
+  assert.equal(storage.has('wl_generation_relevant_edits_attempt:p1'), false);
+});
+
+test('a confirmed failed job can rotate its idempotency key without clearing dirty', () => {
+  let attempt = 0;
+  const storage = withSessionStorage();
+  const session = createGenerationRelevantEditsSession({
+    storage: globalThis.sessionStorage,
+    nextAttemptId: () => `attempt-${++attempt}`,
+  });
+  session.mark('p1');
+  const revision = session.readRevision('p1');
+  const baseline = { ids: new Set(['cut-v1']), maxVersion: 1 };
+  const firstKey = session.markAttempt('p1', revision, baseline);
+
+  assert.equal(session.clearAttempt('p1', revision), true);
+  const retryKey = session.markAttempt('p1', revision, baseline);
+  assert.notEqual(retryKey, firstKey);
+  assert.equal(session.readRevision('p1'), revision, 'rotating a failed attempt must preserve dirty');
+  assert.ok(storage.has('wl_generation_relevant_edits:p1'));
+});
+
+test('blocked sessionStorage falls back to an in-memory revision for the current mount', () => {
+  const blockedStorage = {
+    getItem() { throw new Error('blocked'); },
+    setItem() { throw new Error('blocked'); },
+    removeItem() { throw new Error('blocked'); },
+  };
+  const session = createGenerationRelevantEditsSession({
+    storage: blockedStorage,
+    nextAttemptId: () => 'memory-attempt',
+  });
+
+  session.mark('p1');
+  const revision = session.readRevision('p1');
+  assert.ok(revision);
+  assert.equal(session.read('p1'), true);
+  assert.match(
+    session.markAttempt('p1', revision, { ids: new Set(['cut-v1']), maxVersion: 1 }),
+    /memory-attempt/,
+  );
+  assert.equal(session.clear('p1', revision), true);
+  assert.equal(session.read('p1'), false);
+});
+
+test('a newer edit invalidates the prior attempt and rejects its conditional clear', () => {
+  const storage = withSessionStorage();
+  const session = createGenerationRelevantEditsSession({ storage: globalThis.sessionStorage });
+  session.mark('p1');
+  const firstRevision = session.readRevision('p1');
+  session.markAttempt('p1', firstRevision, { ids: new Set(['cut-v1']), maxVersion: 1 });
+
+  session.mark('p1');
+  const secondRevision = session.readRevision('p1');
+  assert.notEqual(secondRevision, firstRevision);
+  assert.equal(session.clear('p1', firstRevision), false);
+  assert.equal(session.readRevision('p1'), secondRevision);
+  assert.equal(session.landedAttemptRevision('p1', [{ id: 'cut-v2', version: 2 }]), null);
+  assert.equal(storage.has('wl_generation_relevant_edits_attempt:p1'), false);
+});
+
 test('a storyboard fire that started nothing leaves the paid regeneration gate armed', async () => {
   withSessionStorage();
   clearInitialGenerationRequested('p1');
@@ -239,4 +609,18 @@ test('generateMannequins signals the job start only after the 200 cache branch h
   // 200 캐시 early-return 이 신호보다 먼저 와야 한다 — 순서가 뒤집히면 job 없는 응답도
   // "시작했다" 로 보고된다.
   assert.ok(cacheReturn < signal, '200 early-return must precede the onJobStarted signal');
+});
+
+test('regenerateMannequin forwards the stable edit-attempt idempotency key', () => {
+  const source = readFileSync(new URL('../../src/lib/api/httpAdapter.js', import.meta.url), 'utf8');
+  const body = source.slice(
+    source.indexOf('async regenerateMannequin'),
+    source.indexOf('// 에디터 Wardrobe'),
+  );
+  assert.match(body, /\{ fitProfile, onProgress, idempotencyKey \}/);
+  assert.match(body, /'Idempotency-Key': idempotencyKey/);
+
+  const mannequinSource = readFileSync(new URL('../../src/features/mannequin/Mannequin.jsx', import.meta.url), 'utf8');
+  assert.match(mannequinSource, /idempotencyKey: generationAttempt\.idempotencyKey/);
+  assert.match(mannequinSource, /error\?\.code === 'job_failed'/);
 });

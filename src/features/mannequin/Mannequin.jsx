@@ -31,10 +31,20 @@ import {
   cutsExistedBeforeInitialGeneration,
 } from './initialGenerationSession.js';
 import {
+  clearGenerationRelevantEditsAttempt,
+  landedGenerationRelevantEditsAttemptRevision,
+  markGenerationRelevantEditsAttempt,
+  readGenerationRelevantEditsRevision,
+} from './generationRelevantEditsSession.js';
+import {
   generationProgressFor,
   requestMannequinGeneration,
   updateMannequinJob,
 } from './generationRunner.js';
+import {
+  resolveInitialGenerationCuts,
+  runGenerationRelevantEditsRefresh,
+} from './generationRunnerCore.js';
 import './Mannequin.css';
 
 const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
@@ -700,6 +710,13 @@ export function Mannequin() {
       ));
 
       let list = await api.getMannequins(pid);
+      // 재생성 요청 뒤 새로고침된 경우, 세션에 남긴 요청 기준선보다 새 컷이 이미 도착했다면
+      // 이전 요청의 성공으로 간주한다. terminal job 과 클라이언트 응답 사이 F5가 새 유료 요청을
+      // 만드는 창을 닫되, 같은 프로젝트의 더 최신 편집 revision은 조건부 clear가 보존한다.
+      const landedEditRevision = landedGenerationRelevantEditsAttemptRevision(pid, list);
+      if (landedEditRevision) {
+        useAppStore.getState().clearGenerationRelevantEdits(pid, landedEditRevision);
+      }
       initialCutsExistedRef.current = cutsExistedBeforeInitialGeneration(pid, list);
       if (list.length) {
         updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
@@ -707,9 +724,16 @@ export function Mannequin() {
       }
       if (loadRunRef.current !== runId) return;
       if (!list.length) {
-        const { data, credits } = await requestMannequinGeneration(pid);
-        list = extractCuts(data);
-        syncCredits(credits);
+        const resolved = await resolveInitialGenerationCuts({
+          projectId: pid,
+          initialCuts: list,
+          requestGeneration: requestMannequinGeneration,
+          extractCuts,
+          classifyCuts: cutsExistedBeforeInitialGeneration,
+        });
+        list = resolved.cuts;
+        initialCutsExistedRef.current = resolved.cutsExisted;
+        syncCredits(resolved.credits);
       }
       if (!list.length) throw new Error('생성된 마네킹컷을 찾지 못했어요. 다시 시도해 주세요.');
       clearInitialGenerationRequested(pid);
@@ -732,6 +756,10 @@ export function Mannequin() {
         try {
           const fallback = await api.getMannequins(pid);
           if (fallback.length) {
+            const landedEditRevision = landedGenerationRelevantEditsAttemptRevision(pid, fallback);
+            if (landedEditRevision) {
+              useAppStore.getState().clearGenerationRelevantEdits(pid, landedEditRevision);
+            }
             initialCutsExistedRef.current = cutsExistedBeforeInitialGeneration(pid, fallback);
             clearInitialGenerationRequested(pid);
             updateMannequinJob(pid, { status: 'idle', progress: 100, errorMessage: '' });
@@ -996,13 +1024,13 @@ export function Mannequin() {
     }
   };
 
-  const runGenerationAttempts = async (runId, profile) => {
+  const runGenerationAttempts = async (runId, profile, onGenerationSucceeded, generationAttempt) => {
     for (let attempt = 0; attempt < REGENERATE_ATTEMPTS; attempt += 1) {
       if (attempt > 0) {
         setRegenerateState('generation-retry');
         await delay(GENERATION_RETRY_DELAYS[attempt]);
       }
-      if (!runIsCurrent(runId)) return;
+      if (!runIsCurrent(runId)) return false;
       regenerateProgressRef.current = 0;
       setProgress(0);
       setRegenerateListReady(false);
@@ -1013,6 +1041,7 @@ export function Mannequin() {
       try {
         response = await api.regenerateMannequin(projectId, {
           fitProfile: profile,   // matchingFit 포함 — garment_ref 로 저장, 재생성에 반영
+          idempotencyKey: generationAttempt.idempotencyKey,
           onProgress: (next) => {
             if (!runIsCurrent(runId)) return;
             const realProgress = Math.max(0, Math.min(100, Number(next) || 0));
@@ -1021,37 +1050,57 @@ export function Mannequin() {
           },
         });
       } catch (error) {
-        if (!runIsCurrent(runId)) return;
-
         // pollJob 의 100은 생성 완료 뒤 내부 목록 refetch 직전에 온다. 이 뒤의 실패는 절대 재생성하지 않는다.
         if (regenerateProgressRef.current >= 100) {
+          onGenerationSucceeded();
+          if (!runIsCurrent(runId)) return true;
           setRegenerateState('load-retry');
           await loadCreatedVersion(runId, profile);
-          return;
+          return true;
         }
+        if (!runIsCurrent(runId)) return false;
         if (isNonRetryableRegenerateError(error)) {
           finishNonRetryable(runId, error);
-          return;
+          return false;
         }
 
         setRegenerateState('generation-retry');
         const reconciled = await reconcileLandedVersion(runId);
-        if (!runIsCurrent(runId)) return;
+        if (!runIsCurrent(runId)) return false;
         if (reconciled) {
+          onGenerationSucceeded();
           setRegenerateState('load-retry');
           await loadCreatedVersion(runId, profile, reconciled);
-          return;
+          return true;
+        }
+        // 서버가 job 실패를 확정한 경우에만 다음 자동 시도에 새 멱등 키를 준다. 네트워크 단절·F5처럼
+        // 결과를 모르는 실패는 같은 키를 유지해야 이미 완료된/진행 중인 유료 job에 다시 합류한다.
+        if (error?.code === 'job_failed' && generationAttempt.dirtyRevision) {
+          clearGenerationRelevantEditsAttempt(
+            generationAttempt.projectId,
+            generationAttempt.dirtyRevision,
+          );
+          generationAttempt.idempotencyKey = attempt < REGENERATE_ATTEMPTS - 1
+            ? markGenerationRelevantEditsAttempt(
+              generationAttempt.projectId,
+              generationAttempt.dirtyRevision,
+              regenerateBaselineRef.current,
+            )
+            : null;
         }
         if (attempt >= REGENERATE_ATTEMPTS - 1) {
           failGeneration(runId);
-          return;
+          return false;
         }
 
         // 실패한 생성은 서버가 크레딧 예약을 해제하므로, 동일 조정의 자동 재시도는 크레딧에 안전하다.
         continue;
       }
 
-      if (!runIsCurrent(runId)) return;
+      // 서버 job 성공이 확인된 즉시 dirty를 소비한다. 뒤의 목록 refetch/decode 동안 새로고침해도
+      // 같은 유료 재생성을 다시 만들지 않게, 화면 후처리보다 성공 신호가 먼저다.
+      onGenerationSucceeded();
+      if (!runIsCurrent(runId)) return true;
       syncCredits(response.credits);
       const responseCuts = extractCuts(response.data);
       if (newestCutSince(responseCuts, regenerateBaselineRef.current)) {
@@ -1060,18 +1109,33 @@ export function Mannequin() {
       setRegenerateState('loading');
       // API 응답만 믿지 않고 실제 목록 refetch + 브라우저 decode 가 끝나야 완료한다.
       await loadCreatedVersion(runId, profile);
-      return;
+      return true;
     }
+    return false;
   };
 
-  const regenerate = async (profileOverride = null) => {
-    if (submittingRef.current) return;   // 연타 + 모든 자동 재시도 구간의 이중 재생성·이중 차감 방지
+  const regenerate = async (profileOverride = null, onGenerationSucceeded = () => {}) => {
+    if (submittingRef.current) return false;   // 연타 + 모든 자동 재시도 구간의 이중 재생성·이중 차감 방지
     submittingRef.current = true;
+    const generationProjectId = projectId;
+    const dirtyRevision = readGenerationRelevantEditsRevision(generationProjectId);
+    const generationAttempt = {
+      projectId: generationProjectId,
+      dirtyRevision,
+      idempotencyKey: null,
+    };
     const runId = regenerateRunRef.current + 1;
     regenerateRunRef.current = runId;
     const profile = profileOverride || buildFitProfile();
     regenerateProfileRef.current = profile;
     regenerateBaselineRef.current = cutBaseline(cutsRef.current);
+    if (dirtyRevision) {
+      generationAttempt.idempotencyKey = markGenerationRelevantEditsAttempt(
+        generationProjectId,
+        dirtyRevision,
+        regenerateBaselineRef.current,
+      );
+    }
     knownLandedListRef.current = null;
     clearArrivalTimers();
     setArrival(null);
@@ -1082,21 +1146,34 @@ export function Mannequin() {
     setRegenerateState('generating');
     startWaitCopyClock(runId);
     try {
-      await runGenerationAttempts(runId, profile);
+      let succeededReported = false;
+      const reportSuccess = () => {
+        if (succeededReported) return;
+        succeededReported = true;
+        if (dirtyRevision) {
+          useAppStore.getState().clearGenerationRelevantEdits(generationProjectId, dirtyRevision);
+        }
+        onGenerationSucceeded();
+      };
+      return await runGenerationAttempts(runId, profile, reportSuccess, generationAttempt);
     } catch {
       failGeneration(runId);
+      return false;
     }
   };
 
   useEffect(() => {
-    if (phase !== 'ready' || refreshForEditsHandledRef.current) return;
-    if (!useAppStore.getState().generationRelevantEditsDirty) return;
-    refreshForEditsHandledRef.current = true;
-    // 먼저 플래그를 소비해 back/refresh/StrictMode 에서 유료 요청이 재발화하지 않게 한다.
-    useAppStore.getState().clearGenerationRelevantEdits();
-    if (initialCutsExistedRef.current) {
-      regenerate();
-    }
+    if (phase !== 'ready') return;
+    const refreshProjectId = projectId;
+    void runGenerationRelevantEditsRefresh({
+      handledRef: refreshForEditsHandledRef,
+      readDirtyRevision: () => readGenerationRelevantEditsRevision(refreshProjectId),
+      cutsExisted: initialCutsExistedRef.current,
+      regenerate: (onSucceeded) => regenerate(null, onSucceeded),
+      clearDirty: (revision) => (
+        useAppStore.getState().clearGenerationRelevantEdits(refreshProjectId, revision)
+      ),
+    });
   }, [phase]);
 
   const retryGeneration = () => regenerate(regenerateProfileRef.current || buildFitProfile());

@@ -16,26 +16,34 @@ test('the regeneration signal travels in the store, not in router state', () => 
   // 입력 → 콘티 → 마네킹 사이에 화면이 하나 끼면 route state 는 증발한다.
   assert.doesNotMatch(productInputSource, /refreshForEdits/);
   assert.doesNotMatch(mannequinSource, /location\.state\?\.refreshForEdits/);
-  assert.match(mannequinSource, /generationRelevantEditsDirty/);
-  assert.match(mannequinSource, /clearGenerationRelevantEdits\(\)/);
+  assert.match(storeSource, /generationRelevantEditsDirty:/);
+  assert.match(mannequinSource, /readGenerationRelevantEditsRevision/);
+  assert.match(mannequinSource, /clearGenerationRelevantEdits\(/);
 });
 
-test('the flag is cleared before regenerate() fires, so a re-run cannot double-bill', () => {
-  // clearGenerationRelevantEdits() 가 regenerate() 호출보다 텍스트상 먼저 나와야 한다 —
-  // 순서가 뒤집히면 StrictMode 이중 effect·재진입 시 유료 요청이 두 번 나갈 수 있다.
+test('the mannequin wires edit refreshes through the guarded behavior runner', () => {
+  // 실제 성공/실패·중복 실행 계약은 mannequin-generation-runner.test.mjs가 동작으로 검증한다.
   assert.match(
     mannequinSource,
-    /useAppStore\.getState\(\)\.clearGenerationRelevantEdits\(\);[\s\S]*?if \(initialCutsExistedRef\.current\) \{\s*regenerate\(\);/,
+    /runGenerationRelevantEditsRefresh\(\{[\s\S]*?handledRef: refreshForEditsHandledRef,[\s\S]*?regenerate: \(onSucceeded\)[\s\S]*?clearDirty:/,
   );
+  assert.match(mannequinSource, /onGenerationSucceeded\(\);\s*\n\s*if \(!runIsCurrent\(runId\)\) return true/);
+  assert.match(
+    mannequinSource,
+    /const reportSuccess = \(\) => \{[\s\S]*?clearGenerationRelevantEdits\(generationProjectId, dirtyRevision\)[\s\S]*?onGenerationSucceeded\(\)/,
+  );
+  assert.match(mannequinSource, /markGenerationRelevantEditsAttempt\([\s\S]*?regenerateBaselineRef\.current/);
+  assert.match(mannequinSource, /const retryGeneration = \(\) => regenerate\(/);
+  assert.match(mannequinSource, /if \(needsRegen\) \{ regenerate\(\); return; \}/);
+  assert.match(storeSource, /clearGenerationRelevantEdits\(projectId = get\(\)\.projectId, expectedRevision\)/);
+  assert.match(storeSource, /if \(cleared && get\(\)\.projectId === projectId\) set\(\{ generationRelevantEditsDirty: false \}\)/);
 });
 
 test('adoptProject preserves the dirty flag only when acquiring identity for the same in-progress work', () => {
   // store: null projectId 에서 채택할 때만, 그리고 호출자가 명시적으로 요청했을 때만 보존한다.
   assert.match(storeSource, /preserveGenerationDirty = false/);
-  assert.match(
-    storeSource,
-    /generationRelevantEditsDirty: preserveGenerationDirty && s\.projectId === null\s*\n\s*\? s\.generationRelevantEditsDirty\s*\n\s*: false,/,
-  );
+  assert.match(storeSource, /const preserveDirty = preserveGenerationDirty && current\.projectId === null/);
+  assert.match(storeSource, /adoptGenerationRelevantEdits\(projectId, \{ preserveDirty \}\)/);
   // 게스트 편집 → 로그인 → draft sync 로 처음 project 를 얻는 두 경로(입력 화면, 로그인 복귀)는
   // 같은 작업의 연속이라 보존을 요청해야 한다.
   assert.match(productInputSource, /adoptProject\(projectId, \{ preserveGenerationDirty: true \}\)/);
@@ -46,10 +54,46 @@ test('adoptProject preserves the dirty flag only when acquiring identity for the
   assert.doesNotMatch(librarySource, /preserveGenerationDirty/);
 });
 
+test('starting an isolated input flow does not delete another project\'s scoped dirty marker', () => {
+  const beginProjectSource = storeSource.slice(
+    storeSource.indexOf('async beginProject()'),
+    storeSource.indexOf('async ensureProject()'),
+  );
+  assert.match(beginProjectSource, /generationRelevantEditsDirty: false/);
+  assert.doesNotMatch(beginProjectSource, /clearGenerationRelevantEditsSession/);
+});
+
 test('the input CTA now opens the storyboard', () => {
   assert.match(productInputSource, /const goToStoryboard = async \(opts\) =>/);
   assert.doesNotMatch(productInputSource, /navigate\('\/create\/mannequin'/);
   assert.match(productInputSource, /openLogin\('\/create\/storyboard'\)/);
+});
+
+test('all color mutations share the debounced existing analysis-save queue', () => {
+  const handlers = productInputSource.slice(
+    productInputSource.indexOf('const editColors ='),
+    productInputSource.indexOf('// 필수 판정은 기준 색상 기준'),
+  );
+  assert.match(handlers, /mergeColorMetadataWithPersistedImages\(/);
+  assert.match(handlers, /invalidateStoryboardEntryPrefetch\(analysisProjectId\)/);
+  assert.match(handlers, /colorSaveSchedulerRef\.current\.schedule\(\{ colors: persistedColors \}\)/);
+  for (const name of ['renameColor', 'setColor', 'addColor', 'removeColor']) {
+    assert.match(handlers, new RegExp(`const ${name} = [^;]*editColors`));
+  }
+  assert.match(productInputSource, /colorSaveSchedulerRef\.current\.flush\(\);\s*\n\s*\/\/ 직전 입력 이벤트/);
+  assert.match(productInputSource, /queueAnalysisPatch[\s\S]*?persistAnalysisEdit\(api, analysisProjectId, patch\)/);
+  assert.match(productInputSource, /persistedColorsRef\.current = p\.colors \|\| \[\]/);
+  assert.match(productInputSource, /persistedColorsRef\.current = savedProduct\?\.colors \|\| patch\.colors/);
+  assert.match(productInputSource, /registerAnalysisEditSave\(analysisProjectId, analysisSaveChainRef\.current\)/);
+  const storyboardLoad = storyboardSource.slice(
+    storyboardSource.indexOf('await useAppStore.getState().loadProject()'),
+    storyboardSource.indexOf('await sbSaveIdle()'),
+  );
+  assert.match(storyboardLoad, /await waitForAnalysisEditSave\(pid\)/);
+  assert.ok(
+    storyboardLoad.indexOf('await waitForAnalysisEditSave(pid)')
+      < storyboardLoad.indexOf('requestMannequinGeneration(pid)'),
+  );
 });
 
 test('login return lands on the storyboard', () => {
@@ -112,12 +156,24 @@ test('the storyboard fires mannequin generation as it loads', () => {
 });
 
 const chromeSource = read('../../src/features/shell/ChromeLayout.jsx');
+const mannequinRibbonStart = chromeSource.indexOf('function MannequinJobRibbon()');
+const detailPageRibbonStart = chromeSource.indexOf('function DetailPageJobRibbon()');
+const chromeLayoutStart = chromeSource.indexOf('export function ChromeLayout()');
+assert.ok(
+  mannequinRibbonStart >= 0
+    && detailPageRibbonStart > mannequinRibbonStart
+    && chromeLayoutStart > detailPageRibbonStart,
+);
+const mannequinRibbonSource = chromeSource.slice(mannequinRibbonStart, detailPageRibbonStart);
+const detailPageRibbonSource = chromeSource.slice(detailPageRibbonStart, chromeLayoutStart);
 
 test('the ribbon announces completion and stops steering', () => {
-  assert.match(chromeSource, /마네킹컷 준비 완료/);
+  assert.match(mannequinRibbonSource, /마네킹컷 준비 완료/);
   assert.match(chromeSource, /DONE_BADGE_MS/);
-  assert.doesNotMatch(chromeSource, /마네킹 화면 보기/);
-  assert.doesNotMatch(chromeSource, /job-ribbon-btn/);
+  assert.doesNotMatch(mannequinRibbonSource, /마네킹 화면 보기/);
+  assert.doesNotMatch(mannequinRibbonSource, /job-ribbon-btn/);
+  assert.match(detailPageRibbonSource, /job-ribbon-btn/);
+  assert.match(detailPageRibbonSource, /생성 화면 보기/);
 });
 
 test('the done badge is scoped to the project whose job actually finished, not a bare "something ran" flag', () => {

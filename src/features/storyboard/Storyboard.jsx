@@ -78,6 +78,7 @@ import { spaceSetDisplayName } from '@/lib/spaceSetDisplayNames.js';
 import { detailDirectionFromExample, generationExampleSelectionPatch } from '@/lib/storyboardExampleSelection.js';
 import { mineImageUrl, normalizeMineImages, promoteMineImage } from '@/lib/storyboardMineImages.js';
 import { requestMannequinGeneration } from '@/features/mannequin/generationRunner.js';
+import { waitForAnalysisEditSave } from '@/features/product-input/saveRouting.js';
 
 
 const COLOR_HEX = {
@@ -1623,6 +1624,9 @@ export function Storyboard() {
         const pid = useAppStore.getState().projectId;
         if (!pid) { navigate('/create/input', { replace: true }); return; }  // 콜드 진입(복원 불가) → 입력
         pidRef.current = pid;   // 이 인스턴스의 저장 대상 고정 (프로젝트 경계)
+        // ProductInput의 이탈 cleanup이 마지막 색상 PATCH를 막 시작했을 수 있다. 같은 project의
+        // 저장만 기다린 뒤 생성/콘티 GET을 시작해, 빠른 브라우저 뒤로가기에서도 옛 색을 읽지 않는다.
+        await waitForAnalysisEditSave(pid);
         // 마네킹컷 생성은 오래 걸린다 — 사용자가 콘티를 짜는 동안 백그라운드로 돌린다.
         // await 하지 않는다: 보드 로드가 생성 완료를 기다리면 병렬화가 사라진다. 실패는 리본과
         // 마네킹 화면이 각각 보고하므로 여기선 삼킨다. 중복 호출은 러너와 서버가 함께 흡수한다.

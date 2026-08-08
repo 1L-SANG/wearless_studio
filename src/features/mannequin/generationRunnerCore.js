@@ -79,3 +79,67 @@ export function createMannequinGenerationRunner({
     },
   };
 }
+
+/* 입장 시 목록이 비어 공유 러너의 결과를 기다린 경우, 최종 컷으로 최초 생성 소유권을 다시
+   판정한다. 최초 GET 시점의 빈 목록만으로 판정하면 수정 전에 시작한 in-flight 결과도 최신
+   생성으로 오인하므로 request/extract/classify 순서를 하나의 주입 가능한 이음매로 고정한다. */
+export async function resolveInitialGenerationCuts({
+  projectId,
+  initialCuts,
+  requestGeneration,
+  extractCuts,
+  classifyCuts,
+}) {
+  if (initialCuts.length) {
+    return {
+      cuts: initialCuts,
+      credits: undefined,
+      cutsExisted: classifyCuts(projectId, initialCuts),
+    };
+  }
+
+  const { data, credits } = await requestGeneration(projectId);
+  const cuts = extractCuts(data);
+  return {
+    cuts,
+    credits,
+    cutsExisted: classifyCuts(projectId, cuts),
+  };
+}
+
+/* 분석 수정 자동 재생성의 1회 실행 가드.
+   handledRef 는 요청 전에 잠그되 dirty 신호는 성공 뒤에만 지운다. 같은 마운트의 effect 재발화는
+   유료 요청을 늘리지 않고, 실패 신호는 다음 화면 진입에서 새 ref 로 다시 시도할 수 있다. */
+export async function runGenerationRelevantEditsRefresh({
+  handledRef,
+  readDirtyRevision,
+  cutsExisted,
+  regenerate,
+  clearDirty,
+}) {
+  const dirtyRevision = readDirtyRevision();
+  if (handledRef.current || !dirtyRevision) return false;
+  handledRef.current = true;
+
+  // 최종 컷이 최신 편집 뒤 시작된 최초 생성의 결과라면 별도 유료 재생성은 필요 없다.
+  // 이 판정은 최초의 빈 GET이 아니라, 공유 러너 결과가 도착한 뒤의 컷으로 끝나 있어야 한다.
+  if (!cutsExisted) {
+    clearDirty(dirtyRevision);
+    return true;
+  }
+
+  try {
+    let consumed = false;
+    const consumeDirty = () => {
+      if (consumed) return;
+      consumed = true;
+      clearDirty(dirtyRevision);
+    };
+    const succeeded = await regenerate(consumeDirty);
+    // 주입 대역이나 방어적 호출부가 성공 콜백을 생략해도 성공 결과 자체는 소비 근거다.
+    if (succeeded) consumeDirty();
+    return succeeded === true;
+  } catch {
+    return false;
+  }
+}
