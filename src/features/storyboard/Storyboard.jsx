@@ -47,6 +47,7 @@ import {
   withStoryboardSpaceSetExamples,
 } from '@/lib/storyboardSpaceSetCatalog.js';
 import { stripStaleSpaceSetBindings } from '@/lib/storyboardSpaceSetStaleness.js';
+import { stripStaleExampleSelections } from '@/lib/storyboardExampleStaleness.js';
 import { genderForClothingType } from '@/lib/productGender.js';
 import {
   dissolveSpaceSet,
@@ -1460,12 +1461,38 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
   // 입력에서 성별·의류 종류를 바꾼 뒤 콘티로 오면(이전 버튼 재배치), 안 맞는 세트가 낀 카드가
   // 매 저장마다 space_set_gender_mismatch 등으로 400 나던 것을 — 여기서 바인딩만 떼어 되돌린다.
   const boundGender = genderForClothingType(clothingType, a?.targetGenders);
-  const normalizedBlocks = stripStaleSpaceSetBindings(sectionedBlocks, {
+  const spaceSetRepairedBlocks = stripStaleSpaceSetBindings(sectionedBlocks, {
+    gender: boundGender,
+    clothingType,
+  });
+  // 서버가 저장 시 도는 두 번째(상호 배타) 검증 — spaceGroupId 로 안 묶인 낱개 예시(일반
+  // 생성예시든, 세트 단품을 참고용으로 고른 것이든)의 성별/의류 종류/컷 종류를 같은 카탈로그
+  // 로 본다. 같은 이유로 매 저장마다 example_gender_mismatch 등 400 나던 카드를 여기서 되돌린다.
+  const normalizedBlocks = stripStaleExampleSelections(spaceSetRepairedBlocks, hydratedCatalogs.genExamples, {
     gender: boundGender,
     clothingType,
   });
   const normalized = sbStable(normalizedBlocks) !== sbStable(sourceBlocks);
-  const assignment = assignGenerationExamples(normalizedBlocks, {
+  // 방금 바인딩/예시를 뗀 카드만 boundGender(서버가 실제로 검증하는 성별)로 먼저 채운다.
+  // 일반 자동배정(exampleGender, 바로 아래)은 실존 모델 픽처럼 targetGenders 와 일부러
+  // 갈릴 수 있는 신호까지 우선한다 — 그 신호로 되채우면 방금 뗀 카드가 다시 같은 이유로
+  // 낡아 저장이 또 400 날 수 있어, 이 카드들만은 서버가 볼 값을 그대로 쓴다. 두 참조를
+  // index 별로 비교해 이번에 뗀 카드만 골라낸다(strip 함수는 안 바뀐 블록을 원본 참조 그대로
+  // 돌려주므로 참조 비교만으로 충분하다).
+  const repairedIds = normalizedBlocks
+    .filter((block, index) => block !== sectionedBlocks[index])
+    .map((block) => block.id);
+  const repairedAssignment = repairedIds.length
+    ? assignGenerationExamples(normalizedBlocks, {
+      catalog: hydratedCatalogs.genExamples,
+      product: p,
+      gender: boundGender,
+      onlyBlockIds: repairedIds,
+    })
+    : { blocks: normalizedBlocks };
+  // 나머지(원래부터 비어 있던 카드 등)는 기존 그대로 exampleGender 로 채운다 — 방금 boundGender
+  // 로 채운 카드는 이미 exampleId+origin='auto' 를 갖고 있어 이 호출이 다시 건드리지 않는다.
+  const assignment = assignGenerationExamples(repairedAssignment.blocks, {
     catalog: hydratedCatalogs.genExamples,
     product: p,
     gender: exampleGender,
