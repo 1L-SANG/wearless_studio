@@ -4,7 +4,7 @@
    main outlet, with the dots Stepper on create-flow steps.
    ============================================================= */
 import { useEffect, useRef, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
 import { TopNav } from '@/features/shell/shell.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
