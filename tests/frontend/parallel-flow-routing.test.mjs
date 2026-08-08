@@ -104,3 +104,12 @@ test('the storyboard fires mannequin generation as it loads', () => {
   assert.match(storyboardSource, /void requestMannequinGeneration\(pid\)\.catch\(\(\) => \{\}\)/);
   assert.doesNotMatch(storyboardSource, /await requestMannequinGeneration/);
 });
+
+const chromeSource = read('../../src/features/shell/ChromeLayout.jsx');
+
+test('the ribbon announces completion and stops steering', () => {
+  assert.match(chromeSource, /마네킹컷 준비 완료/);
+  assert.match(chromeSource, /DONE_BADGE_MS/);
+  assert.doesNotMatch(chromeSource, /마네킹 화면 보기/);
+  assert.doesNotMatch(chromeSource, /job-ribbon-btn/);
+});

@@ -3,21 +3,45 @@
    Background orb/aurora (verbatim from prototype app.jsx) + TopNav +
    main outlet, with the dots Stepper on create-flow steps.
    ============================================================= */
-import { useEffect } from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
 import { TopNav } from '@/features/shell/shell.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 
+const DONE_BADGE_MS = 3000;
+
 function MannequinJobRibbon() {
-  const navigate = useNavigate();
   const { pathname } = useLocation();
   const projectId = useAppStore((s) => s.projectId);
   const job = useAppStore((s) => s.mannequinJob);
+  const [doneBadge, setDoneBadge] = useState(false);
+  const wasRunningRef = useRef(false);
 
-  if (!job || job.status === 'idle' || pathname.startsWith('/create/mannequin')) return null;
+  // 끝난 순간을 짧게 알린다 — 지금은 idle 로 돌아가며 리본이 즉시 사라져 완료를 놓친다.
+  useEffect(() => {
+    if (job?.status === 'running') { wasRunningRef.current = true; return undefined; }
+    if (job?.status !== 'idle' || !wasRunningRef.current) return undefined;
+    wasRunningRef.current = false;
+    setDoneBadge(true);
+    const timer = setTimeout(() => setDoneBadge(false), DONE_BADGE_MS);
+    return () => clearTimeout(timer);
+  }, [job?.status]);
+
+  if (!job || pathname.startsWith('/create/mannequin')) return null;
   if (job.projectId && projectId && job.projectId !== projectId) return null;
+  if (job.status === 'idle' && !doneBadge) return null;
+
+  if (job.status === 'idle') {
+    return (
+      <div className="job-ribbon done" role="status" aria-live="polite">
+        <div className="job-ribbon-main">
+          <span className="job-ribbon-label"><Icon name="check" size={15} />마네킹컷 준비 완료</span>
+        </div>
+      </div>
+    );
+  }
 
   const isError = job.status === 'error';
   const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
@@ -38,9 +62,6 @@ function MannequinJobRibbon() {
         )}
         <span className="job-ribbon-detail">{detail}</span>
       </div>
-      <button type="button" className="job-ribbon-btn" onClick={() => navigate('/create/mannequin')}>
-        마네킹 화면 보기
-      </button>
     </div>
   );
 }
