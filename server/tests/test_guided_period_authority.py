@@ -138,8 +138,9 @@ def test_branch2_front_period_detail_profile_unchanged(monkeypatch):
     assert periods[0] == pytest.approx(front_period[-1], rel=1e-3)
 
 
-# ── C. front scan 실패 + guided 없음 — 기존 동작 유지 ────────────────────────
-def test_no_period_source_at_all_keeps_existing_behaviour(monkeypatch):
+# ── C. front scan 실패 + guided 없음 — 같은 불확정 상태 ──────────────────────
+def test_no_period_source_at_all_is_the_same_uncertainty_state(monkeypatch):
+    """증거가 더 적다고 더 강한 실패로 가지 않는다 — guided 유무는 provenance 차이뿐."""
     _break_front_torso_scan(monkeypatch)
     _guided_returns(monkeypatch, None)
     periods, warp_calls = _spy_projection(monkeypatch)
@@ -148,8 +149,64 @@ def test_no_period_source_at_all_keeps_existing_behaviour(monkeypatch):
     assert periods == [] and warp_calls == []
     completed = next(p for _e, p in emits
                      if p.get("status") == "hybrid_composite_completed")
-    assert completed["outcome"] == "stripe_model_low_confidence"
-    assert "hybrid_texture_truth" not in _statuses(emits)
+    assert completed["outcome"] == "authoritative_period_unavailable"
+    assert completed["texture_truth"] == "TEXTURE_TRUTH_UNCERTAIN"
+    assert completed["fail_closed"] is False
+    hybrid = _hybrid(calls)
+    assert hybrid["textureTruth"] == "TEXTURE_TRUTH_UNCERTAIN"
+    assert hybrid["failureReason"] == "authoritative_period_unavailable"
+    assert hybrid["failClosed"] is False
+    assert hybrid["applied"] is False
+    assert hybrid["needsReview"] is True
+    # guided 관측치는 없다 — 이것이 B/C 를 가르는 유일한 차이다.
+    assert "guidedObservedPeriodPx" not in hybrid
+    assert "guidedAuthorityAccepted" not in hybrid
+
+
+def test_missing_guided_is_non_terminal_in_enforce_and_costs_no_provider_call(monkeypatch):
+    _break_front_torso_scan(monkeypatch)
+    _guided_returns(monkeypatch, None)
+    periods, warp_calls = _spy_projection(monkeypatch)
+    oplog, calls, r2_saved, emits = _run_job(monkeypatch, settings_kw=ENFORCE)
+
+    assert calls["failure"] == []
+    assert len(calls["success"]) == 1
+    assert r2_saved, "carrier 후보 바이트가 보존되어야 한다"
+    assert periods == [] and warp_calls == []
+    hybrid = _hybrid(calls)
+    assert hybrid["mode"] == "enforce"
+    assert hybrid["failClosed"] is False
+    # provider 예산 회귀 방지 — 불확정만으로 재시도/추가 이미지 호출이 생기지 않는다.
+    assert sum(1 for entry in oplog if entry[0] == "gen") == 1
+    assert "hybrid_carrier_retry" not in _statuses(emits)
+
+
+def test_both_missing_period_cases_share_one_state_and_differ_only_in_provenance():
+    """B(guided 있음)와 C(guided 없음)의 차이는 reason/관측치뿐, severity 가 아니다."""
+    def run(anchor):
+        mp = pytest.MonkeyPatch()
+        try:
+            _break_front_torso_scan(mp)
+            _guided_returns(mp, anchor)
+            _spy_projection(mp)
+            _oplog, calls, _r2, _emits = _run_job(mp, settings_kw=ENFORCE)
+            return _hybrid(calls), calls
+        finally:
+            mp.undo()
+
+    with_guided, calls_b = run(("vertical", 45.0, 0.7372))
+    without_guided, calls_c = run(None)
+
+    for hybrid in (with_guided, without_guided):
+        assert hybrid["textureTruth"] == "TEXTURE_TRUTH_UNCERTAIN"
+        assert hybrid["failClosed"] is False
+        assert hybrid["applied"] is False
+        assert hybrid["needsReview"] is True
+    assert calls_b["failure"] == [] and calls_c["failure"] == []
+    assert with_guided["failureReason"] == "guided_period_unvalidated_harmonic"
+    assert without_guided["failureReason"] == "authoritative_period_unavailable"
+    assert "guidedObservedPeriodPx" in with_guided
+    assert "guidedObservedPeriodPx" not in without_guided
 
 
 # ── D/E/F. guided 가 답을 내도 투영 권한은 없다 ──────────────────────────────

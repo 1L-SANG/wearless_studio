@@ -2286,13 +2286,21 @@ async def _apply_hybrid_composite(
                 await emit("hybrid_palette_source", chosen="detail_plus_front_ground_cast",
                            delta_a=round(float(delta[0]), 2), delta_b=round(float(delta[1]), 2))
     else:
+        # 이 arm 에 도달한 run 에는 **권한 있는 원본 주기가 없다**. guided 가 답을 냈는지는
+        # provenance 차이일 뿐 severity 차이가 아니다 — 증거가 더 적은 쪽(guided 없음)이
+        # 더 강한 실패로 가는 비대칭은 뒤집힌 의미다. 두 경우 모두 투영을 건너뛰고
+        # carrier 후보를 보존한다.
+        front_scan_evidence = (
+            front_model.reason if isinstance(front_model, CompositeFailure)
+            else {"n_colors": len(front_model.color_sequence_lab),
+                  "confidence": round(float(front_model.confidence), 3)})
         anchor = src_period["guided_anchor"]
         if anchor is None:
-            return await fail(
-                "stripe_model_low_confidence",
+            qa_record(guided_available=False, guided_authority_accepted=False)
+            return await texture_truth_uncertain(
+                "authoritative_period_unavailable",
                 "source Front torso 반복 앵커 실패 (scan 구조 불일치 + guided 실패)",
-                frontScan=(front_model.reason if isinstance(front_model, CompositeFailure)
-                           else {"n_colors": len(front_model.color_sequence_lab)}))
+                frontScan=front_scan_evidence)
         # guided 는 답을 냈지만, 그 답은 **독립 검증된 FULL_COLOR_REPEAT 가 아니다**.
         # 후보 격자가 autocorr peak × {1,2,3} 뿐이라(stripe_model.find_period_guided),
         # 실자산 f91cbac5 에서 격자는 {15,30,45} 였고 같은 바이트의 scan/shadow 계열은
@@ -2306,6 +2314,7 @@ async def _apply_hybrid_composite(
         guided_axis, guided_period_px, guided_score = anchor
         guided_candidates = src_period.get("guided_candidates") or []
         qa_record(source_period_source=hc_source_ctx.PERIOD_FROM_GUIDED,
+                  guided_available=True,
                   guided_observed_period_px=float(guided_period_px),
                   guided_observed_axis=guided_axis,
                   guided_observed_score=float(guided_score),
@@ -2320,9 +2329,7 @@ async def _apply_hybrid_composite(
             guidedObservedScore=round(float(guided_score), 4),
             guidedCandidateCount=len(guided_candidates),
             guidedAuthorityAccepted=False,
-            frontScan=(front_model.reason if isinstance(front_model, CompositeFailure)
-                       else {"n_colors": len(front_model.color_sequence_lab),
-                             "confidence": round(float(front_model.confidence), 3)}))
+            frontScan=front_scan_evidence)
     torso_span_src = hc_scale.torso_span((fx0, fy0, fx1, fy1), garment_axis=garment_axis)
     repeats_on_torso = torso_span_src / front_period_px
     # Close the run-level record so every candidate can be checked against the same
