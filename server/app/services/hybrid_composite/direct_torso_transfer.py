@@ -23,9 +23,32 @@
 
 한계(측정해서 남기되 숨기지 않는다)
 -----------------------------------
-단일 homography 는 평면 사상이다. carrier 몸통이 접히거나 휘면 그 비평면성은 재현되지
-않는다. 이 모드는 photorealistic drape 를 주장하지 않고
-**SOURCE_PIXEL_GEOMETRY_PRESERVED_UNDER_HOMOGRAPHY** 만 주장한다.
+1) 단일 homography 는 평면 사상이다. carrier 몸통이 접히거나 휘면 그 비평면성은 재현되지
+   않는다. 이 모드는 photorealistic drape 를 주장하지 않고
+   **SOURCE_PIXEL_GEOMETRY_PRESERVED_UNDER_HOMOGRAPHY** 만 주장한다.
+
+2) 조명 분해가 걷어내는 것은 **전역 저주파 조명**이다. 실자산 Tier-1(3392px 짧은 변)
+   측정: 원본 저주파 상관 0.937 → 0.116(기본 sigma), sigma 를 밴드 하한까지 낮추면
+   0.026. 그러나 **주름의 가장자리 그림자**는 이 해상도에서 텍스처 대역(수십 px)에 있고,
+   등방 Gaussian 하나로는 9px 줄무늬와 분리되지 않는다. 그래서 원본 주름 자국은 남고,
+   거기에 carrier 음영이 얹힌다. 이것은 이 phase 가 푼 문제가 아니다.
+
+3) **저주파는 조명인지 원단인지 구분되지 않는다.** 색블록·옴브레·큰 그래픽처럼 원단
+   자체가 저주파 휘도 구조를 가지면 split 은 그것도 함께 지운다. 등방 Gaussian 하나로
+   조명과 원단을 가르는 것은 원리적으로 불가능하고, 이 모듈은 그 구분을 할 수 있는 척
+   하지 않는다. 대신 `sourceLowFreqStdL` 로 원본에 저주파 구조가 얼마나 있었는지를
+   남긴다 — 크면 split 이 지운 것이 조명이 아닐 수 있다는 신호이고, 승격 논의는 그
+   지표를 봐야 한다. 다만 이 지표는 **양을 재지 종류를 가르지 못한다**.
+   재현: `test_split_also_erases_genuine_low_frequency_garment_content`
+   (밝은 절반/어두운 절반 대비 54.51L → 2.46L, sourceLowFreqStdL 26.328;
+    평탄한 패턴 원본에서는 0.748~1.444, 조명이 실린 패턴에서는 12.595).
+
+4) L 재결합은 [0,100] 으로 **하드 클리핑**된다. carrier 가 매우 밝고 원본 대비가 크면
+   상당 비율이 잘려 고주파 대비까지 함께 준다. `clippedFracL` 로 매 호출 노출한다.
+   톤매핑은 이 phase 에서 하지 않는다 — 측정 없이 압축을 넣으면 무엇을 고쳤는지 알 수 없다.
+   재현: `test_bright_carrier_clipping_is_measured_and_exposed`
+   (흰 carrier clippedFracL 0.70 / highFreqRetention 0.7084,
+    보통 carrier 0.00 / 0.9987).
 """
 
 from __future__ import annotations
@@ -39,21 +62,36 @@ import numpy as np
 from .color import bgr_to_lab, lab_to_bgr
 from .panel_map import PanelMap
 from .warp_composite import (
-    MIN_DECAL_SCALE, SHADING_SIGMA_MIN_FRAC, _decal_source_eligible,
-    _homography_validity, _quad_area)
+    MIN_DECAL_SCALE, SHADING_SIGMA_MAX_FRAC, SHADING_SIGMA_MIN_FRAC,
+    _decal_source_eligible, _homography_validity, _quad_area)
 
-DIRECT_TORSO_VERSION = "direct_torso_texture_transfer_v1"
+#: v2 — 조명 분해가 바뀌었다. 기본 모드가 high-pass split 이 되었고 legacy
+#: `carrier_low_freq_l` 의 sigma 도 밴드 하한에서 기하평균으로 옮겼다. 렌더 결과가
+#: 달라지므로 버전을 올린다(같은 버전으로 다른 픽셀을 내면 replay 가 거짓말이 된다).
+DIRECT_TORSO_VERSION = "direct_torso_texture_transfer_v2"
 
-#: 원본 휘도를 그대로 옮긴다 — 원본 사진의 조명이 함께 온다.
+#: 원본 휘도를 그대로 옮긴다 — 원본 사진의 조명이 함께 온다. **진단용**.
 SHADING_RAW_SOURCE = "raw_source"
-#: 원본의 색·패턴 구조 + carrier 의 저주파 휘도(주름·음영). 주기 경로가 쓰는 것과 같은
-#: 분해다(warp_composite 의 `pattern_lab - pat_mean + blur_l`) — 새 relighting 을 만들지
-#: 않고 이미 있는 원리를 재사용한다.
+#: 주기 경로의 식을 그대로 옮긴 것(`L - mean(L) + blur(L_carrier)`). **진단용**.
+#: 주기 경로에서는 옳다 — 거기서 `pattern_lab` 은 합성된 프로파일이라 조명이 애초에
+#: 없고, 스칼라 평균이 저주파의 전부다. 원본 픽셀에는 그 전제가 없어서, 스칼라를 빼도
+#: 원본 사진의 저주파 조명장은 **그대로 남는다**(실측: 원본 조명 상관 0.975 → 0.975,
+#: raw 와 동일). 두 조명이 반대면 서로 상쇄돼 옷이 평평해지고(carrier 상관 0.013),
+#: 같은 방향이면 더해져 clipping 으로 패턴 기하까지 무너진다(라벨 일치 0.867).
 SHADING_CARRIER_LOW_FREQ_L = "carrier_low_freq_l"
+#: 기본값. 같은 GaussianBlur 연산자를 **양쪽에 대칭으로** 건다:
+#:   L_out = (L_src - lowpass(L_src)) + lowpass(L_carrier)
+#: 원본의 고주파(패턴·직조·디테일)만 남기고 원본 조명은 버린 뒤, carrier 의 주름·음영을
+#: 얹는다. 새 relighting 모델이 아니라 이미 쓰던 연산자의 대칭 적용이다.
+SHADING_SOURCE_HIGHFREQ_CARRIER_LOWFREQ = "source_highfreq_carrier_lowfreq"
 
-#: 주기가 없으므로 주기 비례 sigma 를 쓸 수 없다. 주기 경로가 이미 하한으로 정의해 둔
-#: **짧은 변 대비 비율**을 그대로 쓴다 — 해상도 독립이고 물리적 역할이 같다.
-_SHADING_SIGMA_FRAC = SHADING_SIGMA_MIN_FRAC
+#: 주기가 없으므로 주기 비례 sigma 를 쓸 수 없다. 주기 경로가 이미 정의해 둔 밴드
+#: [1.8%, 8%] 의 **기하평균**을 쓴다 — 하한(고주파 누출 방지)과 상한(주름을 저주파에
+#: 남김) 사이, 어느 쪽 끝에도 붙지 않는 지점이고 두 상수 모두 코드에 이미 있다.
+#: 실측 스윕: frac 0.03~0.08 구간에서 고주파 대비 보존 ≥0.916(raw 0.920 대비 손실 <0.5%),
+#: 원본 조명 잔여 상관 ≤0.551(기존 두 모드 0.975). 이 픽스처에서 고른 값이 아니라
+#: 밴드 안이면 어디든 성립한다는 뜻이다.
+_SHADING_SIGMA_FRAC = float(np.sqrt(SHADING_SIGMA_MIN_FRAC * SHADING_SIGMA_MAX_FRAC))
 
 _REASON_LANDMARKS = "torso_quad_invalid"
 _REASON_TARGET = "carrier_torso_panel_missing"
@@ -106,6 +144,19 @@ def torso_quad(landmarks, *, width: int, height: int) -> np.ndarray | None:
     return q
 
 
+def _masked_lowpass(channel: np.ndarray, mask: np.ndarray, sigma: float) -> np.ndarray:
+    """정규화 합성곱 저역통과 — mask 밖 픽셀이 저주파에 새지 않는다.
+
+    warp 된 원본은 quad 밖이 0 이다. 그냥 blur 하면 그 0 이 옷 안쪽으로 번져 가장자리에
+    가짜 어두움을 만들고, 그것이 그대로 조명으로 취급된다. blur(L·m)/blur(m) 는 같은
+    GaussianBlur 로 그 편향을 없앤다.
+    """
+    m = (mask > 0).astype(np.float32)
+    num = cv2.GaussianBlur(channel.astype(np.float32) * m, (0, 0), sigmaX=sigma)
+    den = cv2.GaussianBlur(m, (0, 0), sigmaX=sigma)
+    return num / np.maximum(den, 1e-6)
+
+
 def _torso_panel_quad(panel_map: PanelMap) -> np.ndarray | None:
     for panel in panel_map.panels:
         if panel.name == "torso":
@@ -143,7 +194,7 @@ def transfer_torso_texture(
     *,
     source_landmarks,
     source_garment_mask: np.ndarray | None = None,
-    shading: str = SHADING_CARRIER_LOW_FREQ_L,
+    shading: str = SHADING_SOURCE_HIGHFREQ_CARRIER_LOWFREQ,
     source_sha256: str | None = None,
     carrier_sha256: str | None = None,
 ) -> DirectTorsoCandidate | DirectTorsoUnavailable:
@@ -216,16 +267,25 @@ def transfer_torso_texture(
     source_lab = bgr_to_lab(warped_bgr)
     carrier_lab = bgr_to_lab(carrier_bgr)
 
+    sigma = float(min(h, w)) * _SHADING_SIGMA_FRAC
     out_lab = source_lab.copy()
-    if shading == SHADING_CARRIER_LOW_FREQ_L:
-        # 절대 휘도의 정본은 carrier 의 저주파 L, 상대 구조는 원본 것 — 주기 경로가
-        # `pattern_lab[...,0] - pat_mean + blur_l` 로 쓰는 것과 같은 분해다.
-        sigma = float(min(h, w)) * _SHADING_SIGMA_FRAC
-        blur_l = cv2.GaussianBlur(carrier_lab[..., 0], (0, 0), sigmaX=sigma)
+    # 원본 저주파는 어느 모드에서도 **관측**한다 — split 이 지운 것이 조명이었는지
+    # 원단이었는지는 이 값 없이는 사후에 판단할 수 없다.
+    source_low_l = _masked_lowpass(source_lab[..., 0], paint, sigma)
+    carrier_low_l = cv2.GaussianBlur(carrier_lab[..., 0], (0, 0), sigmaX=sigma)
+    recombined_l = None
+    if shading == SHADING_SOURCE_HIGHFREQ_CARRIER_LOWFREQ:
+        # 원본 고주파(패턴·직조) + carrier 저주파(주름·음영). 같은 연산자를 양쪽에.
+        recombined_l = source_lab[..., 0] - source_low_l + carrier_low_l
+    elif shading == SHADING_CARRIER_LOW_FREQ_L:
         src_mean_l = float(source_lab[..., 0][paint].mean())
-        out_lab[..., 0] = np.clip(source_lab[..., 0] - src_mean_l + blur_l, 0.0, 100.0)
+        recombined_l = source_lab[..., 0] - src_mean_l + carrier_low_l
     elif shading != SHADING_RAW_SOURCE:
         return DirectTorsoUnavailable("unknown_shading_mode", str(shading)[:60])
+    clipped_frac = 0.0
+    if recombined_l is not None:
+        clipped_frac = float(((recombined_l > 100.0) | (recombined_l < 0.0))[paint].mean())
+        out_lab[..., 0] = np.clip(recombined_l, 0.0, 100.0)
 
     # ── feather — 실루엣 밴드와 painted 내부 계면을 각각 만들어 최솟값 ─────
     band_px = max(1.0, float(panel_map.metrics.get("boundary_band_px", 4)))
@@ -241,6 +301,11 @@ def transfer_torso_texture(
         alpha[..., None] * lab_to_bgr(out_lab).astype(np.float32)
         + (1.0 - alpha[..., None]) * carrier_bgr.astype(np.float32), 0, 255
     ).astype(np.uint8)
+
+    # 고주파 산포는 재결합 결과에서 한 번만 잰다 — 같은 blur 를 여러 번 돌리지 않는다.
+    source_high_std = float((source_lab[..., 0] - source_low_l)[paint].std())
+    out_low_l = _masked_lowpass(out_lab[..., 0], paint, sigma)
+    output_high_std = float((out_lab[..., 0] - out_low_l)[paint].std())
 
     # 측정만 한다 — 이 phase 에서 carrier chroma 로 원본 색을 끌어당기지 않는다.
     # 원본 색 진실이 이 모드의 존재 이유이고, 보정은 승격 논의 때 별도로 판단한다.
@@ -264,6 +329,22 @@ def transfer_torso_texture(
         "sourceChromaMedianAb": [
             round(float(np.median(source_lab[..., 1][paint])), 3),
             round(float(np.median(source_lab[..., 2][paint])), 3)],
+        # 조명 분해가 실제로 무슨 일을 했는지 replay 없이 읽을 수 있게 남긴다. 참조
+        # 조명장은 런타임에 없으므로 상관이 아니라 각 성분의 산포를 기록한다.
+        # 측정 지점이 둘로 나뉜다:
+        #   · source*/carrier* 는 **입력 성분** 측정(분해에 들어간 재료)
+        #   · output*/clipped* 는 **재결합 직후의 Lab L** 측정 — alpha 합성·gamut 변환
+        #     전이라 반환 이미지의 값과는 다를 수 있고, 여기서 보려는 것은 분해의 효과다.
+        "shadingSigmaPx": round(sigma, 2),
+        # 원본이 애초에 가지고 있던 저주파 구조. 크면 split 이 지운 것이 조명이 아니라
+        # 원단(색블록·옴브레·큰 그래픽)일 수 있다는 신호다 — 한계 3) 참조.
+        "sourceLowFreqStdL": round(float(source_low_l[paint].std()), 3),
+        "carrierLowFreqStdL": round(float(carrier_low_l[paint].std()), 3),
+        "sourceHighFreqStdL": round(float(source_high_std), 3),
+        "outputHighFreqStdL": round(float(output_high_std), 3),
+        "highFreqRetention": round(float(output_high_std / max(source_high_std, 1e-9)), 4),
+        # [0,100] 밖으로 나가 잘린 비율. 밝은 carrier + 고대비 원본에서 커진다.
+        "clippedFracL": round(clipped_frac, 4),
         **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in validity.items()},
     }
     provenance = {
