@@ -339,8 +339,8 @@ def test_carrier_silhouette_and_outside_pixels_are_untouched():
     assert np.array_equal(cand.image_bgr[outside], base[outside])
     assert float(cand.alpha[outside].max()) == 0.0
     # 마스크·target quad 는 입력 그대로 — 기하 생성 없음
-    assert cand.provenance["garmentMaskSha256"] == hashlib.sha256(
-        np.ascontiguousarray(pm.garment_mask).tobytes()).hexdigest()[:16]
+    # 해시는 shape·dtype 을 포함한다 — 같은 헬퍼로 기대값을 만든다.
+    assert cand.provenance["garmentMaskSha256"] == dtt._array_sha(pm.garment_mask)
     assert cand.provenance["targetQuad"] == [
         [round(float(x), 3), round(float(y), 3)] for x, y in quad]
 
@@ -1136,3 +1136,333 @@ def test_provenance_changes_whenever_the_render_changes(mutate):
 
     assert not np.array_equal(a.image_bgr, b.image_bgr), f"{mutate}: 픽셀이 안 바뀜"
     assert a.provenance != b.provenance, f"{mutate}: 픽셀은 바뀌었는데 provenance 는 동일"
+
+
+# ── PHASE C: 배제한 부위를 원본 부위 픽셀로 채운다 ─────────────────────────
+def test_projective_divide_preserves_the_sign_of_w():
+    """동차 나눗셈에서 w<0 을 양수로 클램프하면 좌표가 폭발한다.
+
+    실측: 실자산 placket homography 는 박스 **전역**에서 w<0 이라, `maximum(w,1e-9)`
+    가 전 픽셀을 1e12 규모로 날려 부위가 통째로 'out_of_source' 가 됐다.
+    """
+    # w = -1 을 만드는 행렬 — 마지막 행이 음수 상수.
+    mat = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]])
+    grid = np.stack([np.array([10.0, 20.0]), np.array([30.0, 40.0]), np.ones(2)])
+    x, y, valid = dtt._project(mat, grid, (1, 2))
+    assert valid.all()
+    assert np.allclose(x.ravel(), [-10.0, -20.0]), x
+    assert np.allclose(y.ravel(), [-30.0, -40.0]), y
+    # |w| 가 0 에 가까우면 유효하지 않다고 표시하되 좌표를 폭발시키지 않는다.
+    degenerate = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]])
+    x2, y2, valid2 = dtt._project(degenerate, grid, (1, 2))
+    assert not valid2.any()
+    assert np.isfinite(x2).all() and np.isfinite(y2).all()
+
+
+def test_component_fill_paints_real_source_part_pixels():
+    """양쪽 box 를 주면 배제한 자리에 **원본 부위 픽셀**이 들어온다."""
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cbox = np.float32([[300, 80], [352, 80], [352, 620], [300, 620]])
+
+    # 배치를 묻는 시험이므로 raw_source 로 본다 — 기본 split 은 L 을 다시 칠하므로
+    # 색 동일성으로 위치를 판정할 수 없다(그건 조명 시험의 몫이다).
+    excluded = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        carrier_component_boxes={"placket_box": cbox},
+        shading=dtt.SHADING_RAW_SOURCE)
+    filled = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        carrier_component_boxes={"placket_box": cbox},
+        source_component_boxes={"placket_box": sbox},
+        shading=dtt.SHADING_RAW_SOURCE)
+
+    inner = np.zeros((700, 500), np.uint8)
+    cv2.fillPoly(inner, [cbox.astype(np.int32)], 255)
+    inner = cv2.erode(inner, np.ones((9, 9), np.uint8)) > 0
+
+    def structure_px(img):
+        d = np.abs(img.astype(np.int16) - np.array(STRUCTURE_BGR, np.int16)).sum(axis=2)
+        return int((d < 60)[inner].sum())
+
+    # 배제만 하면 그 자리는 carrier 다 — 구조가 없다.
+    assert structure_px(excluded.image_bgr) == 0
+    # 채우면 원본 구조가 **그 자리에** 들어온다.
+    assert structure_px(filled.image_bgr) > int(inner.sum()) * 0.5, structure_px(
+        filled.image_bgr)
+    assert filled.metrics["componentFill"]["placket_box"]["filled"] is True
+    assert filled.metrics["componentFilledPx"] > 0
+    assert excluded.metrics["componentFilledPx"] == 0
+
+
+def test_component_fill_uses_its_own_homography_not_the_torso_one():
+    """부위 사상은 몸통 사상과 독립이다 — 그래서 정렬이 정의상 성립한다."""
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    # 원본 구조는 왼쪽, carrier 부위는 오른쪽 — 몸통 사상으로는 절대 못 맞춘다.
+    far = np.float32([[400, 80], [452, 80], [452, 620], [400, 620]])
+    o = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        carrier_component_boxes={"placket_box": far},
+        source_component_boxes={"placket_box": sbox},
+        shading=dtt.SHADING_RAW_SOURCE)
+    place = o.metrics["componentPlacement"]["placket_box"]
+    assert place["iou"] == 0.0            # 몸통 사상 기준으로는 전혀 안 맞는데
+    assert o.metrics["componentFill"]["placket_box"]["filled"] is True   # 부위는 채워진다
+    inner = np.zeros((700, 500), np.uint8)
+    cv2.fillPoly(inner, [far.astype(np.int32)], 255)
+    inner = cv2.erode(inner, np.ones((9, 9), np.uint8)) > 0
+    d = np.abs(o.image_bgr.astype(np.int16)
+               - np.array(STRUCTURE_BGR, np.int16)).sum(axis=2)
+    assert int((d < 60)[inner].sum()) > int(inner.sum()) * 0.5
+
+
+def test_component_fill_records_its_homographies_and_bumps_the_version():
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cbox = np.float32([[300, 80], [352, 80], [352, 620], [300, 620]])
+    o = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        carrier_component_boxes={"placket_box": cbox},
+        source_component_boxes={"placket_box": sbox})
+    assert np.asarray(o.provenance["componentHomographies"]["placket_box"]).shape == (3, 3)
+    import re
+    assert int(re.search(r"_v(\d+)$", dtt.DIRECT_TORSO_VERSION).group(1)) >= 4
+
+
+def test_the_structure_exemption_is_confined_to_component_owned_pixels():
+    """부위 채우기는 구조 금지를 **부위 안에서만** 푼다.
+
+    `paint &= (sampled_structure <= 0) | component_owned` 는 구멍처럼 보인다. 이 시험이
+    그것이 구멍이 아님을 증명한다: 원본 구조를 바꿔도 몸통 픽셀은 한 개도 안 변한다.
+    """
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(_skewed_quad(), w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cbox = np.float32([[300, 80], [352, 80], [352, 620], [300, 620]])
+    kw = dict(source_landmarks=lm, source_garment_mask=smask,
+              carrier_component_boxes={"placket_box": cbox},
+              source_component_boxes={"placket_box": sbox},
+              shading=dtt.SHADING_RAW_SOURCE)
+    got = dtt.transfer_torso_texture(carrier(500, 700), pm, src, **kw)
+    clean = src.copy()
+    cv2.fillPoly(clean, [sbox.astype(np.int32)], (228, 228, 228))
+    ref = dtt.transfer_torso_texture(carrier(500, 700), pm, clean, **kw)
+
+    box_mask = np.zeros((700, 500), np.uint8)
+    cv2.fillPoly(box_mask, [cbox.astype(np.int32)], 255)
+    changed = (got.image_bgr != ref.image_bgr).any(axis=2)
+    torso_only = (got.painted > 0) & (box_mask == 0)
+    assert int(torso_only.sum()) > 10000
+    assert int((changed & torso_only).sum()) == 0, "구조가 몸통 픽셀에 영향을 줬다"
+    assert changed.any(), "픽스처가 부위 안에서 실제로 달라져야 한다"
+
+
+# ── Codex Phase C round 1 반증에서 나온 대조들 ─────────────────────────────
+def test_component_validity_follows_component_coordinates_not_torso_ones():
+    """부위 좌표를 덮었으면 유효성도 함께 덮어야 한다.
+
+    Codex 반증: 몸통 homography 의 지평선(w≈0)이 지나는 행에서 부위 픽셀이 통째로
+    사라졌다(한 행 81px). 보고된 px 와 실제 칠한 px 가 어긋나면 안 된다.
+    """
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    # 지평선이 이미지 안을 지나는 강한 사다리꼴. 실루엣은 전체로 둬서 부위 박스가
+    # garment mask 밖으로 나가지 않게 한다(그러면 다른 이유로 비어 버린다).
+    full = np.full((700, 500), 255, np.uint8)
+    pm = make_panel_map(np.float32([[150, 300], [350, 300], [450, 500], [50, 500]]),
+                        w=500, h=700, mask=full)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cbox = np.float32([[160, 60], [240, 60], [240, 140], [160, 140]])
+    o = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        carrier_component_boxes={"placket_box": cbox},
+        source_component_boxes={"placket_box": sbox},
+        shading=dtt.SHADING_RAW_SOURCE)
+    assert isinstance(o, dtt.DirectTorsoCandidate), o
+    info = o.metrics["componentFill"]["placket_box"]
+    box = np.zeros((700, 500), np.uint8)
+    cv2.fillPoly(box, [cbox.astype(np.int32)], 255)
+    actually = int(((o.painted > 0) & (box > 0)).sum())
+    assert info["px"] == actually, (info["px"], actually)
+    # 그리고 가운데 행이 통째로 비어 있으면 안 된다.
+    rows = [int(((o.painted > 0) & (box > 0))[y].sum()) for y in range(62, 139)]
+    assert min(rows) > 0, f"빈 행이 있다: {rows.index(min(rows)) + 62}"
+
+
+def test_component_metrics_reflect_the_final_paint_not_the_intent():
+    """후속 guard 가 지운 픽셀을 '채웠다'고 보고하면 지표가 거짓말이 된다."""
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cbox = np.float32([[300, 80], [352, 80], [352, 620], [300, 620]])
+    # 원본 부위 자리를 garment mask 에서 지운다 → 배경 가드가 전부 거절해야 한다.
+    holed = smask.copy()
+    cv2.fillPoly(holed, [sbox.astype(np.int32)], 0)
+    o = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=holed,
+        carrier_component_boxes={"placket_box": cbox},
+        source_component_boxes={"placket_box": sbox})
+    info = o.metrics["componentFill"]["placket_box"]
+    assert info["filled"] is False, info
+    assert info["px"] == 0, info
+    assert o.metrics["componentFilledPx"] == 0
+
+
+def test_coverage_never_exceeds_one_when_components_are_filled():
+    """부위를 분자에만 넣고 분모에서 빼면 비율이 1 을 넘는다(실측 1.1267)."""
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    o = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        carrier_component_boxes={"placket_box": sbox},     # 같은 자리 = 정렬된 박스
+        source_component_boxes={"placket_box": sbox})
+    assert 0.0 <= o.metrics["torsoCoverage"] <= 1.0, o.metrics["torsoCoverage"]
+    assert 0.0 <= o.metrics["torsoCoverageOfFullTorso"] <= 1.0
+
+
+def test_provenance_hashes_the_actual_pixels_when_the_caller_omits_them():
+    """sourceSha256 을 None 으로 두면 원본을 다시 칠해도 provenance 가 같다."""
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cbox = np.float32([[300, 80], [352, 80], [352, 620], [300, 620]])
+    kw = dict(source_landmarks=lm, source_garment_mask=smask,
+              carrier_component_boxes={"placket_box": cbox},
+              source_component_boxes={"placket_box": sbox},
+              shading=dtt.SHADING_RAW_SOURCE)
+    a = dtt.transfer_torso_texture(carrier(500, 700), pm, src, **kw)
+    other = src.copy()
+    cv2.fillPoly(other, [sbox.astype(np.int32)], (10, 200, 10))   # 부위 색만 교체
+    b = dtt.transfer_torso_texture(carrier(500, 700), pm, other, **kw)
+    assert not np.array_equal(a.image_bgr, b.image_bgr)
+    assert a.provenance["sourceSha256"] != b.provenance["sourceSha256"]
+    # 그리고 기록된 보간 이름이 실제와 같아야 한다.
+    assert a.provenance["sourceMaskInterpolation"] == "INTER_LINEAR"
+
+
+def test_components_outside_the_torso_quad_are_filled_and_reported():
+    """계약을 코드에 맞췄다 — cuff 처럼 몸통 밖 부위도 채우고, 그 양을 남긴다."""
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    torso = np.float32([[150, 200], [350, 200], [350, 500], [150, 500]])
+    mask = np.zeros((700, 500), np.uint8)
+    mask[60:660, 60:440] = 255                      # 실루엣은 몸통보다 넓다
+    pm = make_panel_map(torso, w=500, h=700, mask=mask)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cuff = np.float32([[80, 560], [140, 560], [140, 640], [80, 640]])   # 몸통 quad 밖
+    o = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        carrier_component_boxes={"cuff_box": cuff},
+        source_component_boxes={"cuff_box": sbox},
+        shading=dtt.SHADING_RAW_SOURCE)
+    assert o.metrics["componentFill"]["cuff_box"]["filled"] is True
+    assert o.metrics["componentPxOutsideTorsoQuad"] > 1000, o.metrics
+
+
+def test_overlapping_components_credit_only_the_winner():
+    """겹치면 사전순 **뒤가 이긴다**. 진 쪽은 0 을 보고해야 한다.
+
+    이전 판본은 두 부위가 같은 픽셀 수를 보고하는 것을 통과시켰다 — 그것이 바로
+    Codex 가 지적한 결함이고, 시험이 결함을 단언하고 있었다. 화면에 나온 픽셀이
+    누구 것인지로 판정한다.
+    """
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    same = np.float32([[300, 80], [352, 80], [352, 620], [300, 620]])
+    # 두 부위가 같은 target 을 가리키되 **다른 원본**을 본다 — 그래야 누가 이겼는지
+    # 픽셀로 확인할 수 있다.
+    red_src, smask2, m2, red_box = _source_with_structure(FOUR_COLOUR)
+    green_src = red_src.copy()
+    cv2.fillPoly(green_src, [red_box.astype(np.int32)], (30, 200, 30))
+    o = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, green_src, source_landmarks=lm,
+        source_garment_mask=smask2,
+        carrier_component_boxes={"a_box": same, "b_box": same},
+        source_component_boxes={"a_box": red_box, "b_box": red_box},
+        shading=dtt.SHADING_RAW_SOURCE)
+    fills = o.metrics["componentFill"]
+    # 사전순 뒤(b_box)가 좌표를 덮으므로 소유권도 b_box 다.
+    assert fills["b_box"]["px"] > 0, fills
+    assert fills["a_box"]["px"] == 0, fills
+    assert fills["a_box"]["filled"] is False
+    # 합계가 아니라 합집합이 최종 값이다.
+    assert o.metrics["componentFilledPx"] == fills["b_box"]["px"]
+    # 모든 부위가 같은 키 집합을 낸다.
+    assert set(fills["a_box"]) == set(fills["b_box"])
+
+
+def test_torso_coverage_is_not_inflated_by_component_fills():
+    """부위가 몸통의 낮은 커버리지를 가리면 안 된다(합산 0.8711 vs 실제 몸통 0.3607)."""
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    torso = np.float32([[150, 200], [350, 200], [350, 400], [150, 400]])
+    mask = np.zeros((700, 500), np.uint8)
+    mask[60:660, 60:440] = 255
+    pm = make_panel_map(torso, w=500, h=700, mask=mask)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    far = np.float32([[80, 500], [200, 500], [200, 640], [80, 640]])   # 몸통 밖
+    o = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        carrier_component_boxes={"cuff_box": far},
+        source_component_boxes={"cuff_box": sbox},
+        shading=dtt.SHADING_RAW_SOURCE)
+    torso_mask = np.zeros((700, 500), np.uint8)
+    cv2.fillPoly(torso_mask, [torso.astype(np.int32)], 255)
+    inside = (o.painted > 0) & (torso_mask > 0)
+    # 보고된 몸통 커버리지는 몸통 픽셀만으로 계산돼야 한다.
+    expected = float(inside.sum()) / max(1, int(((torso_mask > 0) & (mask > 0)).sum()))
+    assert o.metrics["torsoCoverageOfFullTorso"] == pytest.approx(expected, abs=0.02), (
+        o.metrics["torsoCoverageOfFullTorso"], expected)
+    # 부위는 자기 분모로 따로 보고된다.
+    assert o.metrics["componentCoverage"] is not None
+    assert o.metrics["componentTargetPx"] > 0
+
+
+def test_structure_exclusion_counts_only_pixels_left_unpainted():
+    """부위가 채운 자리를 '배제'로 세면 지표가 거짓말이 된다(28,673 보고 vs 실제 0)."""
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cbox = np.float32([[300, 80], [352, 80], [352, 620], [300, 620]])
+    filled = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        carrier_component_boxes={"placket_box": cbox},
+        source_component_boxes={"placket_box": sbox})
+    box = np.zeros((700, 500), np.uint8)
+    cv2.fillPoly(box, [cbox.astype(np.int32)], 255)
+    unpainted_inside = int(((box > 0) & (filled.painted == 0)
+                            & (pm.garment_mask > 0)).sum())
+    assert filled.metrics["structureExcludedPx"] == unpainted_inside, (
+        filled.metrics["structureExcludedPx"], unpainted_inside)
+    # 의도치는 따로 남는다(무엇을 배제하려 했는지도 알아야 한다).
+    assert filled.metrics["structureExcludedIntentPx"] > 0
+
+    excluded = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        carrier_component_boxes={"placket_box": cbox})
+    assert excluded.metrics["structureExcludedPx"] > 1000
+
+
+def test_array_hash_distinguishes_shape_and_dtype():
+    """같은 바이트, 다른 shape 는 다른 그림이다 — 해시가 그것을 구분해야 한다."""
+    base = np.arange(120 * 160 * 3, dtype=np.uint8).reshape(120, 160, 3)
+    reshaped = base.reshape(160, 120, 3)
+    assert base.tobytes() == reshaped.tobytes()
+    assert dtt._array_sha(base) != dtt._array_sha(reshaped)
+    as_float = base.astype(np.float32)
+    assert dtt._array_sha(base) != dtt._array_sha(as_float)
