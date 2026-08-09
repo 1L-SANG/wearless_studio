@@ -272,6 +272,9 @@ export function ProductInput() {
   const [inputConsistency, setInputConsistency] = useState(null);
   const [consistencyAck, setConsistencyAck] = useState(false);   // '계속 진행' 누른 뒤 재차 막지 않는다
   const [consistencyOpen, setConsistencyOpen] = useState(false);
+  // 확정이 유료 생성을 시작한다는 확인 — 한 번 받으면 다시 묻지 않는다(같은 화면에서 왕복 가능).
+  const [generationStartAck, setGenerationStartAck] = useState(false);
+  const [generationStartOpen, setGenerationStartOpen] = useState(false);
   // 성별·의류 종류 등 생성 관련 필드를 바꾸면 콘티/마네킹의 기존 작업이 무효화된다 — 적용을
   // 보류하고 대가를 먼저 보여준다. 확정 전엔 화면·서버 어느 쪽에도 반영하지 않는다(취소=무해).
   const [pendingRelevantPatch, setPendingRelevantPatch] = useState(null);
@@ -364,6 +367,14 @@ export function ProductInput() {
     // (차단이 아니다. 판정이 틀렸을 때 셀러가 갇히면 경고가 없느니만 못하다).
     if (inputConsistency && !consistencyAck && !force) {
       setConsistencyOpen(true);
+      return;
+    }
+    // 확정을 누르면 다음 화면에서 마네킹 생성이 곧바로 시작되고 크레딧이 나간다. 아직 만든 것도
+    // 만드는 중인 것도 없을 때(=이번 클릭이 진짜 차감을 일으킬 때)만 묻는다 — 이미 컷이 있으면
+    // 서버가 200 으로 받아넘겨 차감이 없으므로 물을 이유가 없다.
+    // force 와 별개 플래그를 쓴다: 사진 일관성 확인을 통과한 것이 비용 확인까지 대신할 수는 없다.
+    if (generationWorkKind === 'none' && !generationStartAck && !opts?.ackGenerationStart) {
+      setGenerationStartOpen(true);
       return;
     }
     redirectingRef.current = true;
@@ -767,6 +778,25 @@ export function ProductInput() {
               setExpanded(true);
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}>사진 수정하기</Button>
+          </div>
+        </Modal>
+      )}
+      {generationStartOpen && (
+        <Modal onClose={() => setGenerationStartOpen(false)}>
+          <h3>마네킹컷을 만들기 시작해요</h3>
+          <p>
+            확정한 정보로 마네킹컷을 만들어요 · {CREDIT_COSTS.mannequinGenerate} 크레딧.
+            다음 화면에서 콘티를 짜는 동안 뒤에서 만들어져요.
+          </p>
+          <p>나중에 성별·의류 종류를 바꾸면 컷을 다시 만들어서 크레딧이 한 번 더 나가요.</p>
+          <div className="modal-actions">
+            <Button variant="ghost" onClick={() => {
+              setGenerationStartAck(true);
+              setGenerationStartOpen(false);
+              // setState 는 비동기라 ack 상태를 기다릴 수 없다 — 인자로 넘겨 같은 게이트를 통과시킨다.
+              goToStoryboard({ force: true, ackGenerationStart: true });
+            }}>만들기 시작</Button>
+            <Button variant="primary" onClick={() => setGenerationStartOpen(false)}>더 확인할게요</Button>
           </div>
         </Modal>
       )}
