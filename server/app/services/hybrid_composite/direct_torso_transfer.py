@@ -20,6 +20,11 @@
 · 실루엣은 건드리지 않는다 — carrier 기하는 그대로고 텍스처만 바뀐다.
 · **소매는 이 phase 의 범위가 아니다**(TORSO_ONLY_CANDIDATE). 소매 픽셀은 carrier 것이
   그대로 남는다.
+· **구조는 텍스처가 아니다.** component box 가 주어지면 플래킷·단추·칼라 같은 구조
+  부위를 이 전송이 **읽지도 쓰지도 않는다**(박스를 안 주면 배제도 없다 — 호출자가
+  부위 정보를 넘겨야 성립하는 계약이다). 몸통 homography 는 원단을 옮기라고 만든 사상이지 부위를 정렬하라고
+  만든 것이 아니다 — 실측(아래 한계 5)에서 원본 플래킷은 carrier 플래킷 위에 오지
+  않는다. 부위는 기존 component decal 경로의 몫이다.
 
 한계(측정해서 남기되 숨기지 않는다)
 -----------------------------------
@@ -43,6 +48,21 @@
    (밝은 절반/어두운 절반 대비 54.51L → 2.46L, sourceLowFreqStdL 26.328;
     평탄한 패턴 원본에서는 0.748~1.444, 조명이 실린 패턴에서는 12.595).
 
+6) 몸통 quad→quad homography 는 **부위를 정렬하지 않는다**. 기록된 실자산 3건에서
+   원본 placket box 를 이 사상으로 옮기면 carrier placket box 와의 IoU 는
+   0.016 / 0.000 / 0.000 이고 **다각형 무게중심**은 몸통 폭의 21.8 / 32.7 / 31.6% 만큼
+   어긋난다(collar IoU 는 0.57 / 0.41 / 0.32).
+   그래서 이 모듈은 부위 영역을 칠하지도 않고 그 영역의 원본 픽셀을 샘플하지도 않는다.
+   `componentPlacement` 로 그 어긋남을 매 호출 측정해 남긴다 — 나중에 정렬이 좋아져도
+   같은 지표로 판단할 수 있다.
+
+5) 구조 배제는 필요하지만 **그것만으로는 완결되지 않는다.** 배제된 영역은 carrier 가
+   계속 소유하므로, 거기에는 provider 가 지어낸 패턴이 그대로 남는다. 실자산 batch1
+   에서 몸통의 32% 가 그렇게 남았고(원래 몸통 기준 coverage 0.6786), 플래킷은 한가운데를
+   세로로 가로지르기 때문에 **한 벌에 두 원단이 보이는** 결과가 된다. 즉 이 모듈 단독으로는
+   구조가 있는 의류의 몸통을 온전히 만들 수 없다 — 배제된 영역은 기존 component decal
+   경로가 원본 부위 픽셀로 덮어야 한다. 그 결합은 이 phase 의 범위가 아니다.
+
 4) L 재결합은 [0,100] 으로 **하드 클리핑**된다. carrier 가 매우 밝고 원본 대비가 크면
    상당 비율이 잘려 고주파 대비까지 함께 준다. `clippedFracL` 로 매 호출 노출한다.
    톤매핑은 이 phase 에서 하지 않는다 — 측정 없이 압축을 넣으면 무엇을 고쳤는지 알 수 없다.
@@ -65,10 +85,11 @@ from .warp_composite import (
     MIN_DECAL_SCALE, SHADING_SIGMA_MAX_FRAC, SHADING_SIGMA_MIN_FRAC,
     _decal_source_eligible, _homography_validity, _quad_area)
 
-#: v2 — 조명 분해가 바뀌었다. 기본 모드가 high-pass split 이 되었고 legacy
+#: v3 — 구조 부위 입출력 배제가 추가됐다(같은 입력이라도 component box 유무로 픽셀이
+#: 달라진다). v2 — 조명 분해가 바뀌었다. 기본 모드가 high-pass split 이 되었고 legacy
 #: `carrier_low_freq_l` 의 sigma 도 밴드 하한에서 기하평균으로 옮겼다. 렌더 결과가
 #: 달라지므로 버전을 올린다(같은 버전으로 다른 픽셀을 내면 replay 가 거짓말이 된다).
-DIRECT_TORSO_VERSION = "direct_torso_texture_transfer_v2"
+DIRECT_TORSO_VERSION = "direct_torso_texture_transfer_v3"
 
 #: 원본 휘도를 그대로 옮긴다 — 원본 사진의 조명이 함께 온다. **진단용**.
 SHADING_RAW_SOURCE = "raw_source"
@@ -187,6 +208,55 @@ def _sampling_density(H: np.ndarray, quad: np.ndarray) -> tuple[float, float, fl
             float(1.0 / max(scale.min(), 1e-9)))
 
 
+def _boxes_provenance(boxes: dict | None) -> dict:
+    """부위 박스 기록 — 사람이 읽을 반올림 좌표 + 정확한 float 바이트 해시."""
+    out = {}
+    for name, quad in sorted((boxes or {}).items()):
+        arr = np.ascontiguousarray(np.asarray(quad, np.float64))
+        out[name] = {
+            "quad": [[round(float(x), 3), round(float(y), 3)] for x, y in arr],
+            "sha256": hashlib.sha256(arr.tobytes()).hexdigest()[:16],
+        }
+    return out
+
+
+def _polygon_centroid(poly: np.ndarray) -> np.ndarray:
+    """다각형 무게중심(모멘트). 면적이 0 이면 꼭짓점 평균으로 물러난다."""
+    m = cv2.moments(poly.astype(np.float32))
+    if abs(m["m00"]) < 1e-9:
+        return poly.mean(axis=0).astype(np.float64)
+    return np.array([m["m10"] / m["m00"], m["m01"] / m["m00"]], np.float64)
+
+
+def _component_placement(H, source_boxes, carrier_boxes, target_quad, shape) -> dict:
+    """원본 부위 박스를 몸통 사상으로 옮겼을 때 carrier 부위 박스와 얼마나 겹치는가.
+
+    IoU 와 중심 오차(몸통 폭 대비)를 남긴다. 이 값이 낮다는 것이 "부위는 이 사상으로
+    옮길 수 없다" 의 증거이고, 배제 결정의 근거다.
+    """
+    if not source_boxes or not carrier_boxes:
+        return {}
+    torso_w = max(float(np.linalg.norm(target_quad[1] - target_quad[0])), 1e-6)
+    out = {}
+    for name in sorted(set(source_boxes) & set(carrier_boxes)):
+        src = np.asarray(source_boxes[name], np.float32).reshape(-1, 1, 2)
+        car = np.asarray(carrier_boxes[name], np.float32)
+        mapped = cv2.perspectiveTransform(src, H).reshape(-1, 2)
+        m1 = np.zeros(shape, np.uint8)
+        m2 = np.zeros(shape, np.uint8)
+        cv2.fillPoly(m1, [mapped.astype(np.int32)], 1)
+        cv2.fillPoly(m2, [car.astype(np.int32)], 1)
+        union = int((m1 | m2).sum())
+        # 꼭짓점 평균은 평행사변형이 아니면 무게중심이 아니다 — 모멘트로 진짜 중심을 쓴다.
+        offset = float(np.linalg.norm(_polygon_centroid(mapped) - _polygon_centroid(car)))
+        out[name] = {
+            "iou": round(float(int((m1 & m2).sum()) / max(union, 1)), 4),
+            "centroidOffsetPx": round(offset, 1),
+            "centroidOffsetFracTorsoWidth": round(offset / torso_w, 4),
+        }
+    return out
+
+
 def transfer_torso_texture(
     carrier_bgr: np.ndarray,
     panel_map: PanelMap,
@@ -194,6 +264,8 @@ def transfer_torso_texture(
     *,
     source_landmarks,
     source_garment_mask: np.ndarray | None = None,
+    carrier_component_boxes: dict | None = None,
+    source_component_boxes: dict | None = None,
     shading: str = SHADING_SOURCE_HIGHFREQ_CARRIER_LOWFREQ,
     source_sha256: str | None = None,
     carrier_sha256: str | None = None,
@@ -245,16 +317,53 @@ def transfer_torso_texture(
     torso_region = np.zeros((h, w), np.uint8)
     cv2.fillPoly(torso_region, [tq.astype(np.int32)], 255)
     region = (torso_region > 0) & (panel_map.garment_mask > 0)
+    # carrier 쪽 구조 부위는 이 전송이 소유하지 않는다 — 주기 경로가 component 를 별도
+    # decal 로 다루는 것과 같은 규율이다. 여기서 덮으면 carrier 의 실제 플래킷이 원단으로
+    # 사라진다.
+    structure_target = np.zeros((h, w), np.uint8)
+    for _name, box in (carrier_component_boxes or {}).items():
+        cv2.fillPoly(structure_target, [np.asarray(box, np.int32)], 255)
+    # carrier 쪽 배제는 **픽셀을 빼기만** 해야 한다. 조명 추정 support 에까지 구멍을
+    # 내면 target 쪽 결정이 멀리 떨어진 픽셀의 색을 바꾼다(실측: 박스 밖 44,745 픽셀이
+    # 최대 40px 거리에서 변함). 그래서 조명 support 는 배제 **전** 영역으로 잡고,
+    # 배제는 마지막에 paint 에서만 뺀다.
+    region_before_structure = region.copy()
+    structure_excluded = int((region & (structure_target > 0)).sum())
     in_bounds = ((map_x >= 0) & (map_x <= sw - 1) & (map_y >= 0) & (map_y <= sh - 1))
-    paint = region & in_bounds
+    paint = region_before_structure & in_bounds
     # 원본 garment mask 가 있으면 **배경을 샘플한 픽셀은 칠하지 않는다**. quad 모서리가
     # 옷 밖으로 조금 나가도 배경색이 옷 위에 실리는 일이 구조적으로 불가능해진다.
+    # 원본 쪽 구조 부위도 **읽지 않는다**. 읽으면 그 단추·박음선이 몸통 아무 데나 찍힌다
+    # (IoU 0.0 — 한계 5). 원본 근거가 없는 target 픽셀은 carrier 가 계속 소유한다.
+    structure_rejected = 0
+    if source_component_boxes:
+        src_structure = np.zeros((sh, sw), np.uint8)
+        for _name, box in source_component_boxes.items():
+            cv2.fillPoly(src_structure, [np.asarray(box, np.int32)], 255)
+        # **INTER_LINEAR** 로 마스크를 뽑는다. 픽셀은 bilinear 로 읽히므로 최근접 표본이
+        # 박스 밖이어도 이웃한 구조 픽셀이 섞여 들어온다(실측: 실자산에서 349 픽셀,
+        # 구조 기여 최대 127/255). 마스크를 같은 보간으로 읽고 **0 이 아니면 전부** 버리면
+        # 기여가 조금이라도 있는 픽셀이 남을 수 없다 — 샘플러와 가드가 같은 커널을 쓴다.
+        sampled_structure = cv2.remap(src_structure.astype(np.float32), map_x, map_y,
+                                      interpolation=cv2.INTER_LINEAR,
+                                      borderMode=cv2.BORDER_CONSTANT)
+        structure_rejected = int((paint & (sampled_structure > 0.0)).sum())
+        paint &= sampled_structure <= 0.0
+
     background_rejected = 0
     if source_garment_mask is not None:
-        smask = cv2.remap(source_garment_mask, map_x, map_y,
-                          interpolation=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
-        background_rejected = int((paint & (smask == 0)).sum())
-        paint &= smask > 0
+        # 구조 가드와 **같은 이유로** bilinear 로 읽는다. 최근접이 옷 안이어도 이웃한
+        # 배경 픽셀이 섞여 들어온다(실측: 812 픽셀에 배경 기여). 마스크를 같은 커널로
+        # 읽고 **완전히 옷 안인 픽셀만** 남긴다.
+        smask = cv2.remap((source_garment_mask > 0).astype(np.float32), map_x, map_y,
+                          interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        fully_inside = smask >= 1.0 - 1e-6
+        background_rejected = int((paint & ~fully_inside).sum())
+        paint &= fully_inside
+    # 조명 support = 원본이 뒷받침하는 몸통 전체(carrier 구조 배제 전). 실제로 칠하는
+    # 것은 그중 carrier 구조 밖뿐이다.
+    illum_support = paint.copy()
+    paint = paint & (structure_target == 0)
     if not paint.any():
         return DirectTorsoUnavailable(
             _REASON_NO_PIXELS, "원본으로 뒷받침되는 몸통 픽셀 0",
@@ -262,6 +371,7 @@ def transfer_torso_texture(
              "outOfSourceFrac": round(float((region & ~in_bounds).sum())
                                       / max(1, int(region.sum())), 4)})
 
+    band_px = max(1.0, float(panel_map.metrics.get("boundary_band_px", 4)))
     warped_bgr = cv2.remap(source_bgr, map_x, map_y, interpolation=cv2.INTER_LINEAR,
                            borderMode=cv2.BORDER_CONSTANT)
     source_lab = bgr_to_lab(warped_bgr)
@@ -271,14 +381,18 @@ def transfer_torso_texture(
     out_lab = source_lab.copy()
     # 원본 저주파는 어느 모드에서도 **관측**한다 — split 이 지운 것이 조명이었는지
     # 원단이었는지는 이 값 없이는 사후에 판단할 수 없다.
-    source_low_l = _masked_lowpass(source_lab[..., 0], paint, sigma)
+    source_low_l = _masked_lowpass(source_lab[..., 0], illum_support, sigma)
     carrier_low_l = cv2.GaussianBlur(carrier_lab[..., 0], (0, 0), sigmaX=sigma)
     recombined_l = None
     if shading == SHADING_SOURCE_HIGHFREQ_CARRIER_LOWFREQ:
         # 원본 고주파(패턴·직조) + carrier 저주파(주름·음영). 같은 연산자를 양쪽에.
         recombined_l = source_lab[..., 0] - source_low_l + carrier_low_l
     elif shading == SHADING_CARRIER_LOW_FREQ_L:
-        src_mean_l = float(source_lab[..., 0][paint].mean())
+        # split 과 같은 원리 — 원본 조명 통계는 **원본이 뒷받침하는 영역**의 성질이지
+        # target 쪽에서 무엇을 배제했느냐의 함수가 아니다. paint 로 재면 carrier box 를
+        # 하나 추가한 것만으로 스칼라가 움직여 몸통 전체 색이 바뀐다(실측: 49,976 픽셀,
+        # 최대 202px 거리).
+        src_mean_l = float(source_lab[..., 0][illum_support].mean())
         recombined_l = source_lab[..., 0] - src_mean_l + carrier_low_l
     elif shading != SHADING_RAW_SOURCE:
         return DirectTorsoUnavailable("unknown_shading_mode", str(shading)[:60])
@@ -288,7 +402,6 @@ def transfer_torso_texture(
         out_lab[..., 0] = np.clip(recombined_l, 0.0, 100.0)
 
     # ── feather — 실루엣 밴드와 painted 내부 계면을 각각 만들어 최솟값 ─────
-    band_px = max(1.0, float(panel_map.metrics.get("boundary_band_px", 4)))
     painted = (paint.astype(np.uint8) * 255)
     silhouette_ramp = np.clip(
         cv2.distanceTransform(panel_map.garment_mask, cv2.DIST_L2, 3) / band_px, 0.0, 1.0)
@@ -302,9 +415,12 @@ def transfer_torso_texture(
         + (1.0 - alpha[..., None]) * carrier_bgr.astype(np.float32), 0, 255
     ).astype(np.uint8)
 
-    # 고주파 산포는 재결합 결과에서 한 번만 잰다 — 같은 blur 를 여러 번 돌리지 않는다.
+    # 두 고주파 산포는 **같은 support** 로 재야 비교가 성립한다. 하나는 illum_support,
+    # 다른 하나는 paint 로 재면 raw_source 처럼 출력이 원본과 동일한 경우에도 retention
+    # 이 1.0 이 아니게 나온다(실측 0.2743). 둘 다 illum_support 로 통일하고 측정 영역만
+    # paint 로 좁힌다.
     source_high_std = float((source_lab[..., 0] - source_low_l)[paint].std())
-    out_low_l = _masked_lowpass(out_lab[..., 0], paint, sigma)
+    out_low_l = _masked_lowpass(out_lab[..., 0], illum_support, sigma)
     output_high_std = float((out_lab[..., 0] - out_low_l)[paint].std())
 
     # 측정만 한다 — 이 phase 에서 carrier chroma 로 원본 색을 끌어당기지 않는다.
@@ -315,10 +431,20 @@ def transfer_torso_texture(
         "shadingMode": shading,
         "torsoRegionPx": int(region.sum()),
         "paintedPx": int(paint.sum()),
-        "torsoCoverage": round(float(paint.sum()) / max(1, int(region.sum())), 4),
+        # 두 분모를 모두 남긴다. 배제 후 영역 기준(=실제로 칠할 수 있었던 곳 중 얼마나
+        # 칠했나)과 원래 몸통 기준(=몸통 전체 중 얼마가 원본에서 왔나)은 다른 질문이다.
+        "torsoCoverage": round(
+            float(paint.sum()) / max(1, int((region & (structure_target == 0)).sum())), 4),
+        "torsoCoverageOfFullTorso": round(float(paint.sum()) / max(1, int(region.sum())), 4),
         "outOfSourceFrac": round(
             float((region & ~in_bounds).sum()) / max(1, int(region.sum())), 4),
         "backgroundRejectedPx": background_rejected,
+        "structureExcludedPx": structure_excluded,
+        "sourceStructureRejectedPx": structure_rejected,
+        # 부위가 사상 아래에서 얼마나 어긋나는가 — 배제의 근거이자, 나중에 정렬이
+        # 좋아졌는지 판단할 같은 자다.
+        "componentPlacement": _component_placement(
+            H, source_component_boxes, carrier_component_boxes, tq, (h, w)),
         "sourceMaskApplied": source_garment_mask is not None,
         "minSourceSamplingDensity": round(density, 4),
         "maxUpscaleFactor": round(upscale, 4),
@@ -358,8 +484,22 @@ def transfer_torso_texture(
         "sourceMaskInterpolation": "INTER_NEAREST",
         "garmentMaskSha256": hashlib.sha256(
             np.ascontiguousarray(panel_map.garment_mask).tobytes()).hexdigest()[:16],
+        # 렌더를 바꿀 수 있는 입력은 전부 여기에 있어야 한다. 없으면 같은 provenance 로
+        # 다른 픽셀이 나온다(실측: source mask 만 바꿔 3,476 픽셀, band_px 만 바꿔 9,984
+        # 픽셀이 달라졌는데 기록은 동일했다).
+        "sourceGarmentMaskSha256": (
+            hashlib.sha256(np.ascontiguousarray(
+                (source_garment_mask > 0).astype(np.uint8)).tobytes()).hexdigest()[:16]
+            if source_garment_mask is not None else None),
+        "boundaryBandPx": round(float(band_px), 4),
         "shadingMode": shading,
         "shadingSigmaShortSideFrac": _SHADING_SIGMA_FRAC,
+        # 같은 버전·같은 provenance 로 다른 픽셀이 나오면 replay 가 거짓말이 된다.
+        # component box 는 렌더 입력이므로 기록한다.
+        # 읽기 쉬운 반올림 값과 **정확한 바이트 해시**를 함께 남긴다. 반올림만 남기면
+        # 89.9996 과 90.0004 가 같은 기록이 되면서 래스터화는 달라진다(실측 1,218 픽셀).
+        "carrierComponentBoxes": _boxes_provenance(carrier_component_boxes),
+        "sourceComponentBoxes": _boxes_provenance(source_component_boxes),
         "periodInputs": None,        # 이 모드는 주기를 받지 않는다 — 계약의 일부다
     }
     return DirectTorsoCandidate(image_bgr=out_bgr, alpha=alpha, painted=painted,

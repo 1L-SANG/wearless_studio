@@ -831,5 +831,308 @@ def test_default_shading_is_exercised_end_to_end_without_passing_the_argument():
 
 
 def test_version_was_bumped_because_rendering_changed():
-    """같은 버전으로 다른 픽셀을 내면 provenance 가 거짓말이 된다."""
-    assert dtt.DIRECT_TORSO_VERSION.endswith("_v2")
+    """같은 버전으로 다른 픽셀을 내면 provenance 가 거짓말이 된다.
+
+    리터럴을 박지 않는다 — 렌더가 바뀔 때마다 올라간다는 **규칙**을 고정한다.
+    v1 조명 스칼라, v2 조명 split, v3 구조 배제.
+    """
+    import re
+    m = re.search(r"_v(\d+)$", dtt.DIRECT_TORSO_VERSION)
+    assert m, dtt.DIRECT_TORSO_VERSION
+    assert int(m.group(1)) >= 3, dtt.DIRECT_TORSO_VERSION
+
+
+# ── PHASE B: 구조는 텍스처가 아니다 ────────────────────────────────────────
+# 실측 근거(기록된 실자산 3건): 원본 placket box 를 몸통 사상으로 옮기면 carrier
+# placket box 와 IoU 0.016 / 0.000 / 0.000, 중심 오차 몸통 폭의 21.8/32.7/31.6%.
+# 따라서 부위는 이 사상으로 옮길 수 없다 — 읽지도 쓰지도 않는다.
+
+STRUCTURE_BGR = (30, 30, 200)      # 원단에 없는 강한 빨강 — 구조가 새면 즉시 보인다
+
+
+def _source_with_structure(runs, *, w=500, h=700, margin=30):
+    """원본 몸통 왼쪽에 '플래킷' 띠를 그린 원단."""
+    img, mask, m = source_with_margin(runs, w=w, h=h, margin=margin)
+    box = np.float32([[m + 10, m + 10], [m + 60, m + 10],
+                      [m + 60, h - m - 10], [m + 10, h - m - 10]])
+    cv2.fillPoly(img, [box.astype(np.int32)], STRUCTURE_BGR)
+    return img, mask, m, box
+
+
+def test_source_structure_is_never_sampled_into_the_torso():
+    """원본 플래킷 픽셀이 몸통 어디에도 찍히면 안 된다."""
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    leaked = dtt.transfer_torso_texture(carrier(500, 700), pm, src, source_landmarks=lm,
+                                        source_garment_mask=smask)
+    guarded = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        source_component_boxes={"placket_box": sbox})
+    assert isinstance(guarded, dtt.DirectTorsoCandidate), guarded
+
+    def structure_pixels(img):
+        d = np.abs(img.astype(np.int16) - np.array(STRUCTURE_BGR, np.int16)).sum(axis=2)
+        return int((d < 60).sum())
+
+    # 대조: 박스를 안 주면 실제로 새어 들어온다(픽스처가 문제를 실제로 만든다).
+    assert structure_pixels(leaked.image_bgr) > 1000, structure_pixels(leaked.image_bgr)
+    assert structure_pixels(guarded.image_bgr) == 0
+    assert guarded.metrics["sourceStructureRejectedPx"] > 1000
+
+
+def test_carrier_structure_region_is_left_to_the_carrier():
+    """carrier 의 부위 영역은 이 전송이 덮지 않는다 — 주기 경로와 같은 규율."""
+    src, smask, m = source_with_margin(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cbox = np.float32([[230, 60], [270, 60], [270, 640], [230, 640]])
+    base = carrier(500, 700)
+    out = dtt.transfer_torso_texture(base, pm, src, source_landmarks=lm,
+                                     source_garment_mask=smask,
+                                     carrier_component_boxes={"placket_box": cbox})
+    assert isinstance(out, dtt.DirectTorsoCandidate), out
+    inner = np.zeros((700, 500), np.uint8)
+    cv2.fillPoly(inner, [cbox.astype(np.int32) + np.int32([[6, 6], [-6, 6], [-6, -6], [6, -6]])],
+                 255)
+    sel = inner > 0
+    assert np.array_equal(out.image_bgr[sel], base[sel]), "carrier 부위가 덮였다"
+    assert out.metrics["structureExcludedPx"] > 1000
+    assert float(out.alpha[sel].max()) == 0.0
+
+
+def test_component_placement_is_measured_when_both_sides_are_known():
+    """배제의 **근거**가 매 호출 지표로 남는다."""
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    far = np.float32([[380, 60], [430, 60], [430, 640], [380, 640]])   # 반대쪽
+    out = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        source_component_boxes={"placket_box": sbox},
+        carrier_component_boxes={"placket_box": far})
+    place = out.metrics["componentPlacement"]["placket_box"]
+    assert place["iou"] == 0.0, place
+    assert place["centroidOffsetFracTorsoWidth"] > 0.5, place
+
+    # 그리고 같은 자리에 있으면 높게 나와야 한다(지표가 늘 0 이면 쓸모없다).
+    aligned = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        source_component_boxes={"placket_box": sbox},
+        carrier_component_boxes={"placket_box": sbox})
+    ok = aligned.metrics["componentPlacement"]["placket_box"]
+    assert ok["iou"] > 0.95, ok
+    assert ok["centroidOffsetFracTorsoWidth"] < 0.01, ok
+
+
+def test_component_boxes_are_optional_and_change_nothing_when_absent():
+    """기존 호출자(없음)와 합성 대조가 그대로 돌아야 한다."""
+    src, smask, m = source_with_margin(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    a = dtt.transfer_torso_texture(carrier(500, 700), pm, src, source_landmarks=lm,
+                                   source_garment_mask=smask)
+    b = dtt.transfer_torso_texture(carrier(500, 700), pm, src, source_landmarks=lm,
+                                   source_garment_mask=smask,
+                                   carrier_component_boxes={}, source_component_boxes={})
+    # **렌더된 배열**이 같다는 뜻이다. metrics/provenance 는 Phase B 필드가 늘어난다.
+    assert np.array_equal(a.image_bgr, b.image_bgr)
+    assert a.metrics["componentPlacement"] == {}
+    assert a.metrics["structureExcludedPx"] == 0
+    assert a.metrics["sourceStructureRejectedPx"] == 0
+
+
+def _skewed_quad():
+    """비항등 사상 — bilinear 표본기가 가드와 어긋날 수 있는 조건을 만든다."""
+    return np.float32([[110, 45], [372, 38], [430, 655], [66, 662]])
+
+
+def test_no_structural_contribution_survives_under_a_non_identity_mapping():
+    """가드는 **최근접**이 아니라 픽셀이 실제로 읽히는 **bilinear** 기여로 판정해야 한다.
+
+    Codex 반증: INTER_NEAREST 가드는 최근접 표본이 박스 밖인 픽셀을 통과시키는데,
+    그 픽셀도 bilinear 로 이웃 구조 픽셀을 섞어 읽는다.
+    """
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(_skewed_quad(), w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    guarded = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, src, source_landmarks=lm, source_garment_mask=smask,
+        source_component_boxes={"placket_box": sbox}, shading=dtt.SHADING_RAW_SOURCE)
+    assert isinstance(guarded, dtt.DirectTorsoCandidate), guarded
+
+    # 구조가 **조금이라도** 섞였는지 본다: 구조색 방향의 성분을 재는 것이 아니라,
+    # 구조를 지운 원본으로 다시 돌려 픽셀이 같은지 본다. 기여가 0 이면 정확히 같다.
+    clean = src.copy()
+    cv2.fillPoly(clean, [sbox.astype(np.int32)], (228, 228, 228))   # 구조를 바탕색으로
+    reference = dtt.transfer_torso_texture(
+        carrier(500, 700), pm, clean, source_landmarks=lm, source_garment_mask=smask,
+        source_component_boxes={"placket_box": sbox}, shading=dtt.SHADING_RAW_SOURCE)
+    painted = guarded.painted > 0
+    assert int(painted.sum()) > 10000
+    assert np.array_equal(guarded.image_bgr[painted], reference.image_bgr[painted]), (
+        "구조 픽셀을 바꿨더니 칠한 결과가 달라졌다 = 기여가 새고 있다")
+
+
+@pytest.mark.parametrize("mode", [dtt.SHADING_SOURCE_HIGHFREQ_CARRIER_LOWFREQ,
+                                  dtt.SHADING_CARRIER_LOW_FREQ_L,
+                                  dtt.SHADING_RAW_SOURCE])
+def test_carrier_box_removes_pixels_without_changing_the_survivors(mode):
+    """target 쪽 배제가 멀리 있는 픽셀의 색을 바꾸면 안 된다(조명 support 지역성).
+
+    **모든 모드**에 건다. 기본 모드만 고치면 legacy 스칼라 모드에 같은 결함이 남는다
+    (실측: 49,976 픽셀이 최대 202px 거리에서 변함).
+    """
+    src, smask, m = source_with_margin(FOUR_COLOUR, shade=+1)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cbox = np.float32([[230, 60], [270, 60], [270, 640], [230, 640]])
+    base = dtt.transfer_torso_texture(carrier(500, 700, shade=-1), pm, src,
+                                      source_landmarks=lm, source_garment_mask=smask,
+                                      shading=mode)
+    holed = dtt.transfer_torso_texture(carrier(500, 700, shade=-1), pm, src,
+                                       source_landmarks=lm, source_garment_mask=smask,
+                                       carrier_component_boxes={"placket_box": cbox},
+                                       shading=mode)
+    survivors = holed.painted > 0
+    assert int(survivors.sum()) > 10000
+    changed = (np.abs(base.image_bgr.astype(np.int32)
+                      - holed.image_bgr.astype(np.int32)).sum(axis=2) > 0) & survivors
+    # 구멍은 feather 되어야 하므로 테두리 band 안쪽이 바뀌는 것은 **의도**다.
+    # 계약은 그 밖으로 나가지 않는 것 — 조명 support 에 구멍을 내면 수십 px 까지 번진다.
+    boxm = np.zeros((700, 500), np.uint8)
+    cv2.fillPoly(boxm, [cbox.astype(np.int32)], 255)
+    dist = cv2.distanceTransform((boxm == 0).astype(np.uint8), cv2.DIST_L2, 3)
+    band = float(pm.metrics["boundary_band_px"])
+    if changed.any():
+        assert float(dist[changed].max()) <= band, (
+            float(dist[changed].max()), band,
+            "carrier box 의 영향이 feather 밴드를 넘어 번졌다")
+
+
+def test_provenance_records_the_component_boxes_that_changed_the_render():
+    src, smask, m, sbox = _source_with_structure(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    without = dtt.transfer_torso_texture(carrier(500, 700), pm, src, source_landmarks=lm,
+                                         source_garment_mask=smask)
+    with_ = dtt.transfer_torso_texture(carrier(500, 700), pm, src, source_landmarks=lm,
+                                       source_garment_mask=smask,
+                                       source_component_boxes={"placket_box": sbox})
+    assert not np.array_equal(without.image_bgr, with_.image_bgr)   # 픽셀이 달라진다
+    # 따라서 provenance 도 달라야 한다 — 안 그러면 replay 가 두 결과를 구분 못 한다.
+    assert without.provenance != with_.provenance
+    assert with_.provenance["sourceComponentBoxes"]["placket_box"]
+    assert without.provenance["sourceComponentBoxes"] == {}
+
+
+def test_placement_uses_the_real_polygon_centroid():
+    """꼭짓점 평균은 평행사변형이 아닌 quad 에서 무게중심이 아니다."""
+    tri_ish = np.float32([[0, 0], [100, 0], [60, 100], [0, 100]])
+    vertex_mean = tri_ish.mean(axis=0)
+    centroid = dtt._polygon_centroid(tri_ish)
+    assert not np.allclose(vertex_mean, centroid, atol=0.5), (vertex_mean, centroid)
+    mm = cv2.moments(tri_ish)
+    assert centroid[0] == pytest.approx(mm["m10"] / mm["m00"])
+
+
+def test_both_coverage_denominators_are_reported_and_differ_when_structure_excluded():
+    src, smask, m = source_with_margin(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cbox = np.float32([[230, 60], [270, 60], [270, 640], [230, 640]])
+    o = dtt.transfer_torso_texture(carrier(500, 700), pm, src, source_landmarks=lm,
+                                   source_garment_mask=smask,
+                                   carrier_component_boxes={"placket_box": cbox})
+    assert o.metrics["torsoCoverage"] > o.metrics["torsoCoverageOfFullTorso"]
+    assert o.metrics["torsoCoverageOfFullTorso"] < 1.0
+
+
+# ── Codex Phase B round 2 반증에서 나온 대조들 ─────────────────────────────
+def test_no_background_contribution_survives_under_a_non_identity_mapping():
+    """배경 가드도 샘플러와 같은 커널이어야 한다 — 구조 가드와 같은 결함이었다.
+
+    오라클: 배경색을 바꿔 다시 렌더했을 때 칠한 픽셀이 하나라도 달라지면 기여가 있다.
+    """
+    sw, sh, m = 500, 700, 30
+    src, smask, _ = source_with_margin(FOUR_COLOUR, w=sw, h=sh, margin=m)
+    pm = make_panel_map(_skewed_quad(), w=sw, h=sh)
+    over = np.float32([[m - 14, m - 14], [sw - m + 13, m - 14],
+                       [sw - m + 13, sh - m + 13], [m - 14, sh - m + 13]])
+    lm = landmarks_for(over, w=sw, h=sh)
+    a = dtt.transfer_torso_texture(carrier(sw, sh), pm, src, source_landmarks=lm,
+                                   source_garment_mask=smask,
+                                   shading=dtt.SHADING_RAW_SOURCE)
+    recoloured = src.copy()
+    recoloured[smask == 0] = (0, 255, 0)          # 배경만 완전히 다른 색으로
+    b = dtt.transfer_torso_texture(carrier(sw, sh), pm, recoloured, source_landmarks=lm,
+                                   source_garment_mask=smask,
+                                   shading=dtt.SHADING_RAW_SOURCE)
+    painted = a.painted > 0
+    assert int(painted.sum()) > 10000
+    assert np.array_equal(a.image_bgr[painted], b.image_bgr[painted]), (
+        "배경색을 바꿨더니 칠한 결과가 달라졌다 = 배경 기여가 새고 있다")
+
+
+def test_raw_source_high_frequency_retention_is_exactly_one():
+    """출력이 원본과 같은 모드에서는 retention 이 1.0 이어야 한다.
+
+    두 고주파 통계를 서로 다른 support 로 재면 여기서 1.0 이 안 나온다(실측 0.2743).
+    """
+    src, smask, m = source_with_margin(FOUR_COLOUR)
+    pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    cbox = np.float32([[230, 60], [270, 60], [270, 640], [230, 640]])
+    o = dtt.transfer_torso_texture(carrier(500, 700), pm, src, source_landmarks=lm,
+                                   source_garment_mask=smask,
+                                   carrier_component_boxes={"placket_box": cbox},
+                                   shading=dtt.SHADING_RAW_SOURCE)
+    assert o.metrics["highFreqRetention"] == pytest.approx(1.0, abs=1e-6), o.metrics
+
+
+@pytest.mark.parametrize("mutate", ["source_mask", "band_px", "subpixel_box"])
+def test_provenance_changes_whenever_the_render_changes(mutate):
+    """같은 provenance 로 다른 픽셀이 나오면 replay 는 두 결과를 구분할 수 없다."""
+    src, smask, m = source_with_margin(FOUR_COLOUR)
+    lm = landmarks_for(np.float32([[m, m], [499 - m, m], [499 - m, 699 - m], [m, 699 - m]]),
+                       w=500, h=700)
+    box = np.float32([[230, 60], [270, 60], [270, 640], [230, 640]])
+    base_pm = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+    kw = dict(source_landmarks=lm, source_garment_mask=smask,
+              carrier_component_boxes={"placket_box": box})
+    a = dtt.transfer_torso_texture(carrier(500, 700), base_pm, src, **kw)
+
+    if mutate == "source_mask":
+        other = smask.copy()
+        other[300:340, :] = 0
+        b = dtt.transfer_torso_texture(carrier(500, 700), base_pm, src,
+                                       **{**kw, "source_garment_mask": other})
+    elif mutate == "band_px":
+        pm2 = make_panel_map(IDENTITY_QUAD, w=500, h=700)
+        pm2.metrics["boundary_band_px"] = 12
+        b = dtt.transfer_torso_texture(carrier(500, 700), pm2, src, **kw)
+    else:
+        # 정수 경계를 사이에 둔 두 값: 3자리 반올림은 **같고**(230.0 / 230.0)
+        # fillPoly 의 정수 절단은 **다르다**(229 / 230). 반올림만 기록하면 두 렌더가
+        # 같은 provenance 를 갖는다.
+        lo = box.copy(); lo[:, 0] = 229.9996
+        hi = box.copy(); hi[:, 0] = 230.0004
+        a = dtt.transfer_torso_texture(carrier(500, 700), base_pm, src,
+                                       **{**kw, "carrier_component_boxes":
+                                          {"placket_box": lo}})
+        b = dtt.transfer_torso_texture(carrier(500, 700), base_pm, src,
+                                       **{**kw, "carrier_component_boxes":
+                                          {"placket_box": hi}})
+        assert (round(229.9996, 3) == round(230.0004, 3)), "픽스처 전제가 깨졌다"
+
+    assert not np.array_equal(a.image_bgr, b.image_bgr), f"{mutate}: 픽셀이 안 바뀜"
+    assert a.provenance != b.provenance, f"{mutate}: 픽셀은 바뀌었는데 provenance 는 동일"
