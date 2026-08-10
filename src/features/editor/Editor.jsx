@@ -24,7 +24,7 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
-import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, fillFeatureCopy, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
+import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -1021,10 +1021,24 @@ export function Editor() {
     return items;
   };
   const openInfoPreset = (type) => {
-    // size/care 는 자동 블록 제자리 강화, info 는 같은 infoType 이 있으면 그 블록을 수정한다(중복 방지)
+    // size/care 는 자동 블록 제자리 강화, info 는 같은 infoType 이 있으면 그 블록을 수정한다(중복 방지).
+    // 단 repeatable 프리셋(특징 포인트)은 누를 때마다 새 블록 — 상세페이지는 DETAIL POINT 를 여러 벌 쓴다.
     const kind = type === 'size_table' ? 'size' : type === 'care' ? 'care' : null;
-    const existing = kind ? blocks.find((b) => b.kind === kind) : blocks.find((b) => presetTypeOf(b) === type);
-    setInfoModal({ type, blockId: existing ? existing.id : null, initialInfo: seedInfo(type, existing?.info || defaultInfoFor(type, infoCtx)) });
+    const existing = isRepeatablePreset(type) ? null
+      : (kind ? blocks.find((b) => b.kind === kind) : blocks.find((b) => presetTypeOf(b) === type));
+    // 두 번째 특징 포인트 블록은 앞 블록이 쓰지 않은 강조특징부터 채운다 — 같은 포인트가
+    // 두 섹션에 나란히 뜨는 것보다, 남은 특징을 이어 받는 쪽이 실제로 쓰는 순서다.
+    const ctx = (isRepeatablePreset(type) && type === 'feature_icons')
+      ? { ...infoCtx, sellingPoints: unusedSellingPoints() }
+      : infoCtx;
+    setInfoModal({ type, blockId: existing ? existing.id : null, initialInfo: seedInfo(type, existing?.info || defaultInfoFor(type, ctx)) });
+  };
+  const unusedSellingPoints = () => {
+    const used = new Set(blocks.filter((b) => presetTypeOf(b) === 'feature_icons')
+      .flatMap((b) => ((b.info && b.info.items) || []).map((it) => it.title).filter(Boolean)));
+    const all = infoCtx.sellingPoints || [];
+    const left = all.filter((p) => !used.has(p));
+    return left.length ? left : all;   // 다 썼으면 처음부터 — 빈 폼을 주는 것보다 낫다
   };
   const openInfoEdit = (block) => {
     const type = presetTypeOf(block);

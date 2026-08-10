@@ -15,6 +15,7 @@ import {
   carrySlotImages,
   defaultInfoFor,
   fillFeatureCopy,
+  isRepeatablePreset,
   needsDefaultTemplate,
   presetTypeOf,
   resolveFeatureLayout,
@@ -567,4 +568,22 @@ test('the block cap does not truncate below what the analysis chips can supply',
   // 칩 상한이 블록 상한보다 크면 뒤쪽 특징이 조용히 잘린다
   assert.ok(FEATURE_ITEMS_MAX >= SELLING_POINTS_MAX,
     `block cap ${FEATURE_ITEMS_MAX} must hold every chip (${SELLING_POINTS_MAX})`);
+});
+
+test('only the detail point preset may appear more than once on a page', () => {
+  assert.equal(isRepeatablePreset('feature_icons'), true, '특징 포인트 — 여러 벌');
+  for (const preset of INFO_PRESET_TYPES) {
+    if (preset.type === 'feature_icons') continue;
+    assert.equal(isRepeatablePreset(preset.type), false, `${preset.type} — 페이지에 하나뿐`);
+  }
+  assert.equal(isRepeatablePreset('nope'), false, 'unknown type');
+});
+
+test('the default template still lays down exactly one detail point block', () => {
+  // repeatable 이라고 템플릿이 두 벌 깔면 안 된다 — 반복은 셀러가 목록에서 누를 때만.
+  const once = applyInfoTemplate(baseDoc(), CTX, seqId()).blocks;
+  assert.equal(once.filter((b) => presetTypeOf(b) === 'feature_icons').length, 1);
+  const twice = applyInfoTemplate(once, CTX, seqId());
+  assert.equal(twice.blocks.filter((b) => presetTypeOf(b) === 'feature_icons').length, 1, '재적용해도 하나');
+  assert.ok(twice.skipped.includes('특징 포인트'), '이미 있으면 건너뛴 것으로 보고한다');
 });

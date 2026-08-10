@@ -101,11 +101,18 @@ export const INFO_PRESET_TYPES = [
   { type: 'care', label: '세탁·케어 가이드', desc: '소재별 관리 방법 안내', tier: 'must', recommend: null },
   { type: 'policy', label: '배송·교환 안내', desc: '배송·교환·반품 표준 문구', tier: 'must', recommend: null },
   { type: 'header', label: '상품명 헤더', desc: '국문+영문 타이포 헤더', tier: 'boost', recommend: 'women' },
-  { type: 'feature_icons', label: '특징 포인트', desc: '사진+장점 카드 2~8개', tier: 'boost', recommend: 'women' },
+  // repeatable — 레퍼런스 상세페이지는 DETAIL POINT 섹션을 여러 벌 쓴다. 사이즈표·고시정보처럼
+  // 페이지에 하나뿐이어야 하는 항목과 달리, 이건 목록에서 누를 때마다 새 블록이 붙는다.
+  { type: 'feature_icons', label: '특징 포인트', desc: '사진+장점 카드 2~8개', tier: 'boost', recommend: 'women', repeatable: true },
   { type: 'fit_guide', label: '핏 가이드', desc: '핏 실루엣 비교 도식', tier: 'boost', recommend: 'men' },
   { type: 'size_matrix', label: '추천 사이즈', desc: '키×몸무게 추천 사이즈 표', tier: 'boost', recommend: 'men' },
   { type: 'model_info', label: '모델 정보', desc: '모델 스펙 카드', tier: 'extra', recommend: 'women' },
 ];
+
+/* 페이지에 여러 벌 둘 수 있는 프리셋인지 — 목록에서 누를 때 기존 블록을 열지, 새로 붙일지. */
+export function isRepeatablePreset(type) {
+  return (INFO_PRESET_TYPES.find((p) => p.type === type) || {}).repeatable === true;
+}
 
 /* 생성 잡이 analysis.featureCopy 에 써 둔 설명문을 **빈 칸에만** 채운다. 칩 문자열로 맞추고,
    셀러가 이미 쓴 설명은 건드리지 않는다.
