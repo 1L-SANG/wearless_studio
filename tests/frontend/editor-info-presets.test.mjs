@@ -13,6 +13,7 @@ import {
   careFamilyFor,
   carrySlotImages,
   defaultInfoFor,
+  fillFeatureCopy,
   needsDefaultTemplate,
   presetTypeOf,
   resolveFeatureLayout,
@@ -473,4 +474,64 @@ test('feature point defaults survive a missing feature copy', () => {
   const info = defaultInfoFor('feature_icons', { ...CTX, sellingPoints: ['A'], featureCopy: undefined });
   assert.equal(info.layout, 'stack');
   assert.deepEqual(info.items.map((it) => it.desc), ['', '', '']);
+});
+
+/* 블록이 한 번 지어지면 정보 템플릿은 다시 깔리지 않는다. 그래서 잡의 featureCopy 쓰기보다
+   앞선 analysis 스냅샷으로 지어진 블록은 설명이 영구히 빈칸으로 남았다 — 폼을 열 때 다시
+   채우는 경로가 그 구멍을 타이밍과 무관하게 막는다. */
+const FEATURE_COPY_CTX = {
+  ...CTX,
+  featureCopy: [
+    { point: '잔 스트라이프 패턴', desc: '얇은 줄무늬가 촘촘하게 들어가 있어 시각적으로 슬림해 보입니다.' },
+    { point: '세미 크롭 기장', desc: '기장이 짧아 하의 허리선이 드러납니다.' },
+  ],
+};
+
+test('fillFeatureCopy fills blank descriptions on a block built before the copy existed', () => {
+  const stale = { layout: 'center', items: [
+    { title: '잔 스트라이프 패턴', desc: '', src: null },
+    { title: '세미 크롭 기장', desc: '', src: null },
+    { title: '', desc: '', src: null },
+  ] };
+  const filled = fillFeatureCopy(stale, FEATURE_COPY_CTX);
+  assert.deepEqual(filled.items.map((it) => it.desc), [
+    '얇은 줄무늬가 촘촘하게 들어가 있어 시각적으로 슬림해 보입니다.',
+    '기장이 짧아 하의 허리선이 드러납니다.',
+    '',
+  ]);
+  assert.equal(filled.layout, 'center', 'layout untouched');
+  assert.deepEqual(stale.items.map((it) => it.desc), ['', '', ''], 'input not mutated');
+});
+
+test('fillFeatureCopy never overwrites a description the seller wrote', () => {
+  const edited = { layout: 'stack', items: [
+    { title: '잔 스트라이프 패턴', desc: '셀러가 직접 쓴 문장입니다.', src: null },
+    { title: '세미 크롭 기장', desc: '', src: null },
+  ] };
+  const filled = fillFeatureCopy(edited, FEATURE_COPY_CTX);
+  assert.deepEqual(filled.items.map((it) => it.desc), [
+    '셀러가 직접 쓴 문장입니다.',
+    '기장이 짧아 하의 허리선이 드러납니다.',
+  ]);
+});
+
+test('fillFeatureCopy is a no-op without feature copy or items', () => {
+  const info = { layout: 'stack', items: [{ title: 'A', desc: '', src: null }] };
+  assert.equal(fillFeatureCopy(info, { ...CTX, featureCopy: [] }), info, 'same reference when nothing to fill');
+  assert.equal(fillFeatureCopy(info, {}), info, 'same reference when ctx has no featureCopy');
+  assert.deepEqual(fillFeatureCopy({ layout: 'stack' }, FEATURE_COPY_CTX), { layout: 'stack' }, 'tolerates a block with no items array');
+});
+
+test('stack and center titles and descriptions are sized for the reference proportions', () => {
+  for (const layout of ['stack', 'center']) {
+    const block = buildInfoBlock('feature_icons', { layout, items: THREE_POINTS }, FEATURE_CTX, seqId());
+    const title = block.elements.find((el) => el.text === THREE_POINTS[0].title);
+    const desc = block.elements.find((el) => el.text === THREE_POINTS[0].desc);
+    assert.equal(title.style.size, 34, `${layout}: title size`);
+    assert.equal(desc.style.size, 19, `${layout}: desc size`);
+    assert.equal(desc.style.lineHeight, 32, `${layout}: desc line height follows the font size`);
+    // 제목 상자가 글자보다 작으면 다음 요소를 덮는다 (렌더는 width 고정·height auto)
+    assert.ok(title.h >= title.style.size, `${layout}: title box not shorter than its glyphs`);
+    assertFitsInBlock(block, `${layout}/typography`);
+  }
 });

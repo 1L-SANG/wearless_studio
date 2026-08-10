@@ -24,7 +24,7 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
-import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
+import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, fillFeatureCopy, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
@@ -945,7 +945,9 @@ export function Editor() {
     if (varyTarget) setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === varyTarget.id ? { ...x, cutType: t } : x); return nw; });
     else patchEl({ cutType: t });
   };
-  const jumpTo = (id) => { setSelBlock(id); setSelEl(null); setSelEls([]);
+  // setBlockFocused 없이 selBlock 만 세우면 오른쪽 목록만 켜지고 캔버스는 조용하다 —
+  // 캔버스 강조는 blockFocused 로 게이팅되고 그건 캔버스 클릭에서만 켜졌다.
+  const jumpTo = (id) => { setSelBlock(id); setBlockFocused(true); setSelEl(null); setSelEls([]);
     const idx = blocks.findIndex((b) => b.id === id);
     const wrap = wrapRef.current; if (!wrap) return;
     const target = wrap.querySelectorAll('.canvas-block')[idx];
@@ -968,16 +970,19 @@ export function Editor() {
     ? (targetGenders.every((g) => g === 'men') ? 'men' : 'women')
     : null;
   const infoCtx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis, colorOpts, fmModels });
+  // 특징 포인트는 폼을 열 때 빈 설명을 analysis.featureCopy 로 다시 채운다 — 생성 잡의 쓰기보다
+  // 앞선 스냅샷으로 블록이 지어졌으면 그대로 두면 영구히 빈칸이다(정보 템플릿은 재적용되지 않는다).
+  const seedInfo = (type, info) => (type === 'feature_icons' ? fillFeatureCopy(info, infoCtx) : info);
   const openInfoPreset = (type) => {
     // size/care 는 자동 블록 제자리 강화, info 는 같은 infoType 이 있으면 그 블록을 수정한다(중복 방지)
     const kind = type === 'size_table' ? 'size' : type === 'care' ? 'care' : null;
     const existing = kind ? blocks.find((b) => b.kind === kind) : blocks.find((b) => presetTypeOf(b) === type);
-    setInfoModal({ type, blockId: existing ? existing.id : null, initialInfo: existing?.info || defaultInfoFor(type, infoCtx) });
+    setInfoModal({ type, blockId: existing ? existing.id : null, initialInfo: seedInfo(type, existing?.info || defaultInfoFor(type, infoCtx)) });
   };
   const openInfoEdit = (block) => {
     const type = presetTypeOf(block);
     if (!type) return;
-    setInfoModal({ type, blockId: block.id, initialInfo: block.info || defaultInfoFor(type, infoCtx) });
+    setInfoModal({ type, blockId: block.id, initialInfo: seedInfo(type, block.info || defaultInfoFor(type, infoCtx)) });
   };
   const submitInfo = (info) => {
     const m = infoModal; if (!m) return;

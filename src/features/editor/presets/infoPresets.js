@@ -105,6 +105,20 @@ export const INFO_PRESET_TYPES = [
   { type: 'model_info', label: '모델 정보', desc: '모델 스펙 카드', tier: 'extra', recommend: 'women' },
 ];
 
+/* 생성 잡이 analysis.featureCopy 에 써 둔 설명문을 **빈 칸에만** 채운다. 칩 문자열로 맞추고,
+   셀러가 이미 쓴 설명은 건드리지 않는다.
+
+   빈 칸만 채우는 게 핵심이다: 블록이 한 번 만들어지고 나면 `needsDefaultTemplate` 이 영원히
+   false 라 정보 템플릿은 다시 깔리지 않는다. 그래서 잡의 쓰기보다 앞선 analysis 스냅샷으로
+   블록이 지어지면(생성 도중 에디터를 새로 열면 그렇게 된다) 설명이 영구히 빈칸으로 남았다.
+   블록을 새로 지을 때뿐 아니라 폼을 열 때도 이걸 거치게 해서 타이밍과 무관하게 복구된다. */
+export function fillFeatureCopy(info, ctx = {}) {
+  const copy = ctx.featureCopy || [];
+  if (!copy.length || !info || !Array.isArray(info.items)) return info;
+  const descByPoint = new Map(copy.map((c) => [c.point, c.desc]));
+  return { ...info, items: info.items.map((it) => (it.desc ? it : { ...it, desc: descByPoint.get(it.title) || '' })) };
+}
+
 /* ---- 폼 기본값 — analysis/product 컨텍스트에서 프리필 ---- */
 export function defaultInfoFor(type, ctx = {}) {
   const schema = (ctx.measurementSchema && ctx.measurementSchema[ctx.clothingType]) || ['totalLength', 'shoulderWidth', 'chestWidth', 'sleeveLength'];
@@ -132,14 +146,11 @@ export function defaultInfoFor(type, ctx = {}) {
     case 'header':
       return { nameKo: ctx.productName || '', nameEn: '', eyebrow: 'PRODUCT INFORMATION' };
     case 'feature_icons': {
-      // 설명문은 생성 잡이 analysis.featureCopy 에 써 둔 것을 칩 문자열로 맞춰 가져온다.
-      // 매칭이 없으면 빈칸 — 에디터에서 직접 친 포인트는 셀러가 채운다.
-      const descByPoint = new Map((ctx.featureCopy || []).map((c) => [c.point, c.desc]));
       const points = (ctx.sellingPoints || []).slice(0, FEATURE_ITEMS_MAX)
-        .map((p) => ({ title: p, desc: descByPoint.get(p) || '', src: null }));
+        .map((p) => ({ title: p, desc: '', src: null }));
       // 새 블록 기본 칸수는 3 (분석 특징이 더 많으면 그 수) — MIN 이 3을 넘게 바뀌어도 하한은 지킨다
       while (points.length < Math.max(3, FEATURE_ITEMS_MIN)) points.push({ title: '', desc: '', src: null });
-      return { layout: 'stack', items: points };
+      return fillFeatureCopy({ layout: 'stack', items: points }, ctx);
     }
     case 'fit_guide':
       return { fits: ['slim', 'regular', 'semi_over', 'over'], current: ctx.fit || null };
@@ -316,6 +327,14 @@ const FEATURE_IMG_W = 880;          // 사진 폭 = 콘텐츠 폭
 const FEATURE_STACK_IMG_H = 560;    // 사진 높이는 고정 — 이미지 dims 로 유도하면 파손 dims 가 레이아웃을 무너뜨린다
 const FEATURE_STACK_GAP = 64;
 
+/* 타이포 — 레퍼런스 상세페이지의 콘텐츠 폭 대비 비율(제목 ≈4%, 설명 ≈2%)을 880 에 맞춘 값.
+   처음 잡았던 22/15 는 그 절반 크기라 사진 옆에서 캡션처럼 읽혔다. 행 높이·요소 높이가
+   글자 크기를 따라가야 estLines 로 잰 문단이 다음 요소를 덮지 않는다. */
+const FEATURE_TITLE_SIZE = 34;
+const FEATURE_TITLE_H = 46;
+const FEATURE_DESC_SIZE = 19;
+const FEATURE_DESC_LINE = 32;
+
 function buildFeatureStack(info, ctx, idFn, items) {
   const t = T(idFn); const slot = SLOT(idFn);
   const anyFilled = items.some((it) => it.title || it.desc || it.src);
@@ -324,12 +343,12 @@ function buildFeatureStack(info, ctx, idFn, items) {
   items.forEach((it) => {
     els.push({ ...slot(60, y, FEATURE_IMG_W, FEATURE_STACK_IMG_H), src: it.src || null });
     const ty = y + FEATURE_STACK_IMG_H + 28;
-    els.push(t(60, ty, 880, 32, featureTitle(it, anyFilled), { size: 22, weight: 600, color: '#0e0d14' }));
-    let bottom = ty + 32;
+    els.push(t(60, ty, 880, FEATURE_TITLE_H, featureTitle(it, anyFilled), { size: FEATURE_TITLE_SIZE, weight: 600, color: '#0e0d14' }));
+    let bottom = ty + FEATURE_TITLE_H;
     if (it.desc) {
-      const dh = estLines(it.desc, 880, 15) * 26;
-      els.push(t(60, ty + 44, 880, dh, it.desc, { size: 15, color: MUTED, lineHeight: 26 }));
-      bottom = ty + 44 + dh;
+      const dh = estLines(it.desc, 880, FEATURE_DESC_SIZE) * FEATURE_DESC_LINE;
+      els.push(t(60, bottom + 14, 880, dh, it.desc, { size: FEATURE_DESC_SIZE, color: MUTED, lineHeight: FEATURE_DESC_LINE }));
+      bottom = bottom + 14 + dh;
     }
     y = bottom + FEATURE_STACK_GAP;
   });
@@ -352,12 +371,12 @@ function buildFeatureCenter(info, ctx, idFn, items) {
     els.push(rect(bx, by, FEATURE_BADGE_W, 34, '#f5f5f5', 6));
     els.push(t(bx, by + 9, FEATURE_BADGE_W, 18, `DETAIL POINT ${String(i + 1).padStart(2, '0')}`,
       { font: 'Roboto Mono', size: 12, tracking: 2, color: MUTED, align: 'center' }));
-    els.push(t(60, by + 58, 880, 34, featureTitle(it, anyFilled), { size: 22, weight: 600, color: '#0e0d14', align: 'center' }));
-    let bottom = by + 58 + 34;
+    els.push(t(60, by + 58, 880, FEATURE_TITLE_H, featureTitle(it, anyFilled), { size: FEATURE_TITLE_SIZE, weight: 600, color: '#0e0d14', align: 'center' }));
+    let bottom = by + 58 + FEATURE_TITLE_H;
     if (it.desc) {
-      const dh = estLines(it.desc, 760, 15) * 26;
-      els.push(t(120, by + 104, 760, dh, it.desc, { size: 15, color: MUTED, lineHeight: 26, align: 'center' }));
-      bottom = by + 104 + dh;
+      const dh = estLines(it.desc, 760, FEATURE_DESC_SIZE) * FEATURE_DESC_LINE;
+      els.push(t(120, bottom + 14, 760, dh, it.desc, { size: FEATURE_DESC_SIZE, color: MUTED, lineHeight: FEATURE_DESC_LINE, align: 'center' }));
+      bottom = bottom + 14 + dh;
     }
     y = bottom + FEATURE_CENTER_GAP;
   });
