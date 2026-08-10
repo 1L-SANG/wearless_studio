@@ -167,3 +167,30 @@ def test_generate_survives_model_failure(monkeypatch):
 def test_feature_copy_is_carried_across_analysis_replaces():
     # save_analysis 는 REPLACE 라, 셀러 클라가 안 보낸 서버 소유 키는 이월돼야 한다
     assert "featureCopy" in repo._SERVER_OWNED_ANALYSIS_KEYS
+
+
+def test_merge_stored_lets_fresh_copy_win_for_the_same_point():
+    stored = [{"point": "하이웨이스트", "desc": "옛 문구입니다."},
+              {"point": "카고 포켓", "desc": "측면 카고 포켓이 밋밋함을 덜어냅니다."}]
+    fresh = [{"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."}]
+    assert fc.merge_stored(stored, fresh) == [
+        {"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."},
+        {"point": "카고 포켓", "desc": "측면 카고 포켓이 밋밋함을 덜어냅니다."},
+    ]
+
+
+def test_merge_stored_keeps_points_this_run_could_not_write():
+    # 이번 호출이 못 만든 항목까지 날리면 셀러가 이미 받은 문구가 사라진다
+    stored = [{"point": "카고 포켓", "desc": "측면 카고 포켓이 밋밋함을 덜어냅니다."}]
+    assert fc.merge_stored(stored, []) == stored
+
+
+def test_merge_stored_drops_malformed_and_empty_entries():
+    stored = [{"point": "a", "desc": ""}, {"point": None, "desc": "x"}, "nope", None]
+    fresh = [{"point": "b", "desc": "문장입니다."}, {"desc": "point 없음"}]
+    assert fc.merge_stored(stored, fresh) == [{"point": "b", "desc": "문장입니다."}]
+
+
+def test_merge_stored_tolerates_missing_stored():
+    assert fc.merge_stored(None, [{"point": "a", "desc": "문장입니다."}]) == [{"point": "a", "desc": "문장입니다."}]
+    assert fc.merge_stored(None, None) == []

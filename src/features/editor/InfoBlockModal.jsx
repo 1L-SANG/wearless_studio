@@ -211,7 +211,28 @@ function PhotoCell({ src, onClick }) {
   );
 }
 
-function FeatureIconsForm({ info, setInfo, onPickPhoto }) {
+function FeatureIconsForm({ info, setInfo, onPickPhoto, onDraftCopy }) {
+  const [drafting, setDrafting] = useState(false);
+  const [draftError, setDraftError] = useState('');
+  const draft = async () => {
+    if (!onDraftCopy || drafting) return;
+    setDrafting(true); setDraftError('');
+    try {
+      const items = await onDraftCopy();
+      const byPoint = new Map((items || []).map((c) => [c.point, c.desc]));
+      // 셀러가 누른 버튼이므로 이미 쓰인 설명도 갈아끼운다 — 취소하면 통째로 되돌아간다.
+      setInfo((f) => ({ ...f, items: f.items.map((it) => (byPoint.has(it.title) ? { ...it, desc: byPoint.get(it.title) } : it)) }));
+    } catch (e) {
+      setDraftError(e?.message || '문구를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setDrafting(false);
+    }
+  };
+  return <FeatureIconsFormBody info={info} setInfo={setInfo} onPickPhoto={onPickPhoto}
+    onDraft={onDraftCopy ? draft : null} drafting={drafting} draftError={draftError} />;
+}
+
+function FeatureIconsFormBody({ info, setInfo, onPickPhoto, onDraft, drafting, draftError }) {
   const setItem = (i, patch) => setInfo((f) => ({ ...f, items: f.items.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
   const layout = resolveFeatureLayout(info);
   // 그리드형은 설명글을 그리지 않는다 — 입력칸은 흐리게 두되 값은 지우지 않는다.
@@ -226,6 +247,14 @@ function FeatureIconsForm({ info, setInfo, onPickPhoto }) {
           ))}
         </div>
       </Field>
+      {onDraft && (
+        <Field label="설명 문구" hint="분석에서 뽑은 강조특징을 근거로 포인트마다 한 줄씩 만들어요. 이미 쓴 설명은 새 문구로 바뀌어요.">
+          <Button variant="ghost" size="sm" icon="sparkles" disabled={drafting} onClick={onDraft}>
+            {drafting ? '문구 만드는 중…' : 'AI 문구 불러오기'}
+          </Button>
+          {draftError && <p className="hint" style={{ marginTop: 6, color: '#d92d20' }}>{draftError}</p>}
+        </Field>
+      )}
       <Field label={`특징 포인트 (${FEATURE_ITEMS_MIN}~${FEATURE_ITEMS_MAX}개)`}
         hint={descOff
           ? '그리드형은 제목만 보여줘요 — 설명은 저장해 두고 다른 레이아웃에서 다시 나와요.'
@@ -340,7 +369,7 @@ function normalizeFormInfo(type, info) {
   return info;
 }
 
-export function InfoBlockModal({ type, initialInfo, ctx, wardrobe, colorOpts, editing, onClose, onSubmit }) {
+export function InfoBlockModal({ type, initialInfo, ctx, wardrobe, colorOpts, editing, onClose, onSubmit, onDraftCopy }) {
   const [info, setInfo] = useState(() => normalizeFormInfo(type, initialInfo));
   const [photoFor, setPhotoFor] = useState(null); // 사진 팝업 대상 인덱스 (특징 포인트/모델 카드)
   const meta = INFO_PRESET_TYPES.find((p) => p.type === type) || { label: '내용' };
@@ -357,7 +386,7 @@ export function InfoBlockModal({ type, initialInfo, ctx, wardrobe, colorOpts, ed
           <div className="lbl" style={{ color: '#898989', marginBottom: 4 }}>{editing ? '내용 수정' : '내용 추가'}</div>
           <h3 style={{ margin: 0, fontSize: 19 }}>{meta.label}</h3>
         </div>
-        <Form info={info} setInfo={setInfo} ctx={ctx} onPickPhoto={(i) => setPhotoFor(i)} />
+        <Form info={info} setInfo={setInfo} ctx={ctx} onPickPhoto={(i) => setPhotoFor(i)} onDraftCopy={onDraftCopy} />
       </div>
       {photoFor != null && photoList && (
         <PhotoPicker wardrobe={wardrobe} colorOpts={colorOpts}

@@ -1187,7 +1187,9 @@
 .ed-canvas { width: 1000px; transform-origin: top center; margin: 40px auto; }
 .canvas-block { width: 1000px; position: relative; background: #fff; box-shadow: var(--elev-card); margin-bottom: 8px;
   padding: 50px 0; }
-.canvas-block.on { box-shadow: 0 0 0 2px var(--fg-1), var(--elev-card); }
+/* 선택 링은 파랑(--link) — 요소 핸들·드래그오버와 같은 색이라 "지금 잡힌 것"이 한 눈에 읽힌다.
+   near-black 2px 는 흰 블록의 기본 그림자와 구분이 안 돼 선택했는지 알 수 없었다. */
+.canvas-block.on { box-shadow: 0 0 0 2px var(--link), 0 0 0 6px rgba(0, 153, 255, .16), var(--elev-card); }
 .canvas-block .blk-label { position: absolute; left: 0; bottom: 100%; transform: scale(var(--inv, 1)); transform-origin: bottom left; margin-bottom: 6px; font-size: 13px; color: var(--fg-2); font-weight: 600; white-space: nowrap; }
 .canvas-block .quick { position: absolute; left: 100%; top: 0; transform: scale(var(--inv, 1)); transform-origin: top left;
   margin-left: 14px; display: flex; flex-direction: column; gap: 8px; opacity: 0; transition: opacity .14s;

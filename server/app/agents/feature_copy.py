@@ -217,3 +217,20 @@ async def generate(settings: Settings, points: list, product: dict, analysis: di
         except Exception as e:  # VisionError 포함 — 카피는 게이트 아님
             log.warning("feature copy generation failed: %r", e)
     return [{"point": p, "desc": hits[p]} for p in cleaned if hits.get(p)]
+
+
+def merge_stored(stored, fresh: list) -> list:
+    """저장돼 있던 featureCopy 와 새 결과를 합친다 — 같은 point 는 새 문구가 이긴다.
+
+    합치는 이유: 셀러가 강조특징을 늘려가며 여러 번 부를 수 있고, 그때마다 통째로 갈면
+    이번에 만들지 못한 항목(사전 미스 + LLM 실패)의 기존 문구까지 사라진다. 저장 순서는
+    stored 우선 — 목록이 호출할 때마다 뒤섞이면 diff 를 읽을 수 없다.
+    """
+    merged = {}
+    for c in (stored or []):
+        if isinstance(c, dict) and isinstance(c.get("point"), str) and c.get("desc"):
+            merged[c["point"]] = c["desc"]
+    for c in (fresh or []):
+        if isinstance(c, dict) and isinstance(c.get("point"), str) and c.get("desc"):
+            merged[c["point"]] = c["desc"]
+    return [{"point": p, "desc": d} for p, d in merged.items()]

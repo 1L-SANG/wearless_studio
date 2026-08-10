@@ -973,6 +973,19 @@ export function Editor() {
   // 특징 포인트는 폼을 열 때 빈 설명을 analysis.featureCopy 로 다시 채운다 — 생성 잡의 쓰기보다
   // 앞선 스냅샷으로 블록이 지어졌으면 그대로 두면 영구히 빈칸이다(정보 템플릿은 재적용되지 않는다).
   const seedInfo = (type, info) => (type === 'feature_icons' ? fillFeatureCopy(info, infoCtx) : info);
+  // 'AI 문구 불러오기' — 서버가 강조특징마다 한 줄을 쓰고 analysis.featureCopy 에 합쳐 저장한다.
+  // 여기서도 상태를 갱신해 두면 이 세션에서 블록을 새로 넣을 때 바로 프리필된다.
+  const draftFeatureCopy = async () => {
+    const items = await api.draftFeatureCopy(projectId);
+    if (items && items.length) {
+      setAnalysis((a) => {
+        const merged = new Map((a?.featureCopy || []).map((c) => [c.point, c.desc]));
+        items.forEach((c) => merged.set(c.point, c.desc));
+        return { ...(a || {}), featureCopy: [...merged].map(([point, desc]) => ({ point, desc })) };
+      });
+    }
+    return items;
+  };
   const openInfoPreset = (type) => {
     // size/care 는 자동 블록 제자리 강화, info 는 같은 infoType 이 있으면 그 블록을 수정한다(중복 방지)
     const kind = type === 'size_table' ? 'size' : type === 'care' ? 'care' : null;
@@ -1572,7 +1585,8 @@ export function Editor() {
       {infoModal && (
         <InfoBlockModal type={infoModal.type} initialInfo={infoModal.initialInfo} ctx={infoCtx}
           wardrobe={wardrobe} colorOpts={colorOpts}
-          editing={!!infoModal.blockId} onClose={() => setInfoModal(null)} onSubmit={submitInfo} />
+          editing={!!infoModal.blockId} onClose={() => setInfoModal(null)} onSubmit={submitInfo}
+          onDraftCopy={draftFeatureCopy} />
       )}
     </div>
   );
