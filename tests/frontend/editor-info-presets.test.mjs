@@ -449,3 +449,28 @@ test('switching layout through the form state preserves every item field', () =>
     assert.deepEqual(block.info.items, THREE_POINTS, `${value}: items untouched`);
   }
 });
+
+test('feature point defaults pull descriptions from the analysis feature copy', () => {
+  const ctx = {
+    ...CTX,
+    sellingPoints: ['하이웨이스트 디자인', '카고 포켓', '직접 쓴 특징'],
+    featureCopy: [
+      { point: '하이웨이스트 디자인', desc: '허리선이 높아 다리가 더 길어 보입니다.' },
+      { point: '카고 포켓', desc: '측면 카고 포켓이 밋밋함을 덜어냅니다.' },
+    ],
+  };
+  const info = defaultInfoFor('feature_icons', ctx);
+  assert.equal(info.layout, 'stack', 'new blocks default to the stacked layout');
+  assert.deepEqual(info.items.map((it) => it.title), ['하이웨이스트 디자인', '카고 포켓', '직접 쓴 특징']);
+  assert.deepEqual(info.items.map((it) => it.desc), [
+    '허리선이 높아 다리가 더 길어 보입니다.',
+    '측면 카고 포켓이 밋밋함을 덜어냅니다.',
+    '',
+  ]);
+});
+
+test('feature point defaults survive a missing feature copy', () => {
+  const info = defaultInfoFor('feature_icons', { ...CTX, sellingPoints: ['A'], featureCopy: undefined });
+  assert.equal(info.layout, 'stack');
+  assert.deepEqual(info.items.map((it) => it.desc), ['', '', '']);
+});

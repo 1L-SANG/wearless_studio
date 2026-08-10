@@ -132,10 +132,14 @@ export function defaultInfoFor(type, ctx = {}) {
     case 'header':
       return { nameKo: ctx.productName || '', nameEn: '', eyebrow: 'PRODUCT INFORMATION' };
     case 'feature_icons': {
-      const points = (ctx.sellingPoints || []).slice(0, FEATURE_ITEMS_MAX).map((p) => ({ title: p, desc: '', src: null }));
+      // 설명문은 생성 잡이 analysis.featureCopy 에 써 둔 것을 칩 문자열로 맞춰 가져온다.
+      // 매칭이 없으면 빈칸 — 에디터에서 직접 친 포인트는 셀러가 채운다.
+      const descByPoint = new Map((ctx.featureCopy || []).map((c) => [c.point, c.desc]));
+      const points = (ctx.sellingPoints || []).slice(0, FEATURE_ITEMS_MAX)
+        .map((p) => ({ title: p, desc: descByPoint.get(p) || '', src: null }));
       // 새 블록 기본 칸수는 3 (분석 특징이 더 많으면 그 수) — MIN 이 3을 넘게 바뀌어도 하한은 지킨다
       while (points.length < Math.max(3, FEATURE_ITEMS_MIN)) points.push({ title: '', desc: '', src: null });
-      return { items: points };
+      return { layout: 'stack', items: points };
     }
     case 'fit_guide':
       return { fits: ['slim', 'regular', 'semi_over', 'over'], current: ctx.fit || null };

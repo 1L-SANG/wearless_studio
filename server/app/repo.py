@@ -278,7 +278,7 @@ async def save_product(
 # inputConsistency: 셀러가 분석 폼을 한 번 수정하면 REPLACE 로 경고가 사라져, 생성 직전
 # 게이트가 조용히 없어진다(사라지는 경고 = 없는 경고). 재분석 때는 finalize 가 payload 를
 # 통째로 갈아끼우므로 낡은 판정이 남지 않는다.
-_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored", "inputConsistency")
+_SERVER_OWNED_ANALYSIS_KEYS = ("sourceMirrored", "inputConsistency", "featureCopy")
 
 
 async def save_analysis(conn: AsyncConnection, project_id: str, analysis: dict) -> dict:

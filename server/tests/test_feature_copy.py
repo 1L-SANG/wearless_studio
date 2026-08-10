@@ -1,5 +1,6 @@
 import asyncio
 
+from app import repo
 from app.agents import feature_copy as fc
 from conftest import make_settings
 
@@ -130,3 +131,8 @@ def test_generate_survives_model_failure(monkeypatch):
     monkeypatch.setattr(fc, "complete_json", boom)
     out = run(fc.generate(make_settings(), ["하이웨이스트", "설명 못 만들 표현"], {}, {}))
     assert out == [{"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."}]
+
+
+def test_feature_copy_is_carried_across_analysis_replaces():
+    # save_analysis 는 REPLACE 라, 셀러 클라가 안 보낸 서버 소유 키는 이월돼야 한다
+    assert "featureCopy" in repo._SERVER_OWNED_ANALYSIS_KEYS
