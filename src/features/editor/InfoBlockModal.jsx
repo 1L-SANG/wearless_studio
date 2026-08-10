@@ -6,7 +6,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Button, Icon, IconButton, Modal } from '@/components/ui.jsx';
 import { thumbUrl } from '@/lib/imageCdn.js';
-import { CARE_COPY_LIBRARY, CARE_LABEL_SENTENCE, FEATURE_ITEMS_MAX, FEATURE_ITEMS_MIN, INFO_PRESET_TYPES, careFamilyFor } from '@/features/editor/presets/infoPresets.js';
+import { CARE_COPY_LIBRARY, CARE_LABEL_SENTENCE, FEATURE_ITEMS_MAX, FEATURE_ITEMS_MIN, FEATURE_LAYOUTS, INFO_PRESET_TYPES, careFamilyFor, resolveFeatureLayout } from '@/features/editor/presets/infoPresets.js';
 
 const inp = { width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid #e5e5e3', borderRadius: 8, fontSize: 14, background: '#fff', color: '#0e0d14' };
 const inpSm = { ...inp, padding: '6px 8px', fontSize: 13 };
@@ -213,26 +213,43 @@ function PhotoCell({ src, onClick }) {
 
 function FeatureIconsForm({ info, setInfo, onPickPhoto }) {
   const setItem = (i, patch) => setInfo((f) => ({ ...f, items: f.items.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
+  const layout = resolveFeatureLayout(info);
+  // 그리드형은 설명글을 그리지 않는다 — 입력칸은 흐리게 두되 값은 지우지 않는다.
+  // 지우면 레이아웃을 되돌렸을 때 문구가 사라진다.
+  const descOff = layout === 'grid';
   return (
-    <Field label={`특징 포인트 (${FEATURE_ITEMS_MIN}~${FEATURE_ITEMS_MAX}개)`}
-      hint="분석에서 뽑은 핵심 장점이 미리 채워져요. 왼쪽 원을 눌러 포인트별 사진을 고르세요.">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {info.items.map((it, i) => (
-          <div key={i} style={rowGap}>
-            <PhotoCell src={it.src} onClick={() => onPickPhoto(i)} />
-            <span style={{ width: 52, flexShrink: 0, fontSize: 12, color: '#898989' }}>POINT {i + 1}</span>
-            <input style={inpSm} placeholder="특징 (예: 롤업 배색 소매)" value={it.title} onChange={(e) => setItem(i, { title: e.target.value })} />
-            <input style={inpSm} placeholder="짧은 설명 (선택)" value={it.desc} onChange={(e) => setItem(i, { desc: e.target.value })} />
-            <IconButton name="trash" size="sm" title={info.items.length <= FEATURE_ITEMS_MIN ? `최소 ${FEATURE_ITEMS_MIN}개` : '삭제'}
-              onClick={() => { if (info.items.length > FEATURE_ITEMS_MIN) setInfo((f) => ({ ...f, items: f.items.filter((_x, j) => j !== i) })); }} />
-          </div>
-        ))}
-      </div>
-      {info.items.length < FEATURE_ITEMS_MAX && (
-        <Button variant="ghost" size="sm" icon="plus" style={{ marginTop: 8 }}
-          onClick={() => setInfo((f) => ({ ...f, items: [...f.items, { title: '', desc: '', src: null }] }))}>포인트 추가</Button>
-      )}
-    </Field>
+    <>
+      <Field label="레이아웃" hint="사진과 문구를 어떤 모양으로 놓을지 고르세요.">
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {FEATURE_LAYOUTS.map((l) => (
+            <Chip key={l.value} on={layout === l.value} onClick={() => setInfo((f) => ({ ...f, layout: l.value }))}>{l.label}</Chip>
+          ))}
+        </div>
+      </Field>
+      <Field label={`특징 포인트 (${FEATURE_ITEMS_MIN}~${FEATURE_ITEMS_MAX}개)`}
+        hint={descOff
+          ? '그리드형은 제목만 보여줘요 — 설명은 저장해 두고 다른 레이아웃에서 다시 나와요.'
+          : '분석에서 뽑은 핵심 장점이 미리 채워져요. 왼쪽 원을 눌러 포인트별 사진을 고르세요.'}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {info.items.map((it, i) => (
+            <div key={i} style={rowGap}>
+              <PhotoCell src={it.src} onClick={() => onPickPhoto(i)} />
+              <span style={{ width: 52, flexShrink: 0, fontSize: 12, color: '#898989' }}>POINT {i + 1}</span>
+              <input style={inpSm} placeholder="특징 (예: 롤업 배색 소매)" value={it.title} onChange={(e) => setItem(i, { title: e.target.value })} />
+              <input style={{ ...inpSm, opacity: descOff ? 0.45 : 1 }} placeholder="짧은 설명 (선택)" value={it.desc}
+                title={descOff ? '그리드형에서는 표시되지 않아요' : undefined}
+                onChange={(e) => setItem(i, { desc: e.target.value })} />
+              <IconButton name="trash" size="sm" title={info.items.length <= FEATURE_ITEMS_MIN ? `최소 ${FEATURE_ITEMS_MIN}개` : '삭제'}
+                onClick={() => { if (info.items.length > FEATURE_ITEMS_MIN) setInfo((f) => ({ ...f, items: f.items.filter((_x, j) => j !== i) })); }} />
+            </div>
+          ))}
+        </div>
+        {info.items.length < FEATURE_ITEMS_MAX && (
+          <Button variant="ghost" size="sm" icon="plus" style={{ marginTop: 8 }}
+            onClick={() => setInfo((f) => ({ ...f, items: [...f.items, { title: '', desc: '', src: null }] }))}>포인트 추가</Button>
+        )}
+      </Field>
+    </>
   );
 }
 

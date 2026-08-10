@@ -433,3 +433,19 @@ test('slot photos carry by ordinal across every feature layout', () => {
     assert.deepEqual(carriedSrcs, [null, null, 'https://cdn.example/third.jpg'], `${value}: carried by ordinal`);
   }
 });
+
+test('every feature layout label is distinct and non-empty for the chip row', () => {
+  const labels = FEATURE_LAYOUTS.map((l) => l.label);
+  assert.equal(new Set(labels).size, labels.length, 'labels are distinct');
+  for (const l of labels) assert.ok(l.trim().length > 0, 'label is non-empty');
+});
+
+test('switching layout through the form state preserves every item field', () => {
+  const info = { layout: 'stack', items: THREE_POINTS };
+  for (const { value } of FEATURE_LAYOUTS) {
+    const next = { ...info, layout: value };
+    const block = buildInfoBlock('feature_icons', next, FEATURE_CTX, seqId());
+    assert.equal(block.info.layout, value, `${value}: layout stored`);
+    assert.deepEqual(block.info.items, THREE_POINTS, `${value}: items untouched`);
+  }
+});
