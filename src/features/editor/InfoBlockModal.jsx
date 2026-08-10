@@ -235,7 +235,8 @@ function FeatureIconsForm({ info, setInfo, onPickPhoto }) {
             <div key={i} style={rowGap}>
               <PhotoCell src={it.src} onClick={() => onPickPhoto(i)} />
               <span style={{ width: 52, flexShrink: 0, fontSize: 12, color: '#898989' }}>POINT {i + 1}</span>
-              <input style={inpSm} placeholder="특징 (예: 롤업 배색 소매)" value={it.title} onChange={(e) => setItem(i, { title: e.target.value })} />
+              {/* 제목은 폭 고정·높이 자동이라 길면 잘리지 않고 아래 요소를 덮는다 — 분석 칩과 같은 40자 상한 */}
+              <input style={inpSm} maxLength={40} placeholder="특징 (예: 롤업 배색 소매)" value={it.title} onChange={(e) => setItem(i, { title: e.target.value })} />
               <input style={{ ...inpSm, opacity: descOff ? 0.45 : 1 }} placeholder="짧은 설명 (선택)" value={it.desc}
                 title={descOff ? '그리드형에서는 표시되지 않아요' : undefined}
                 onChange={(e) => setItem(i, { desc: e.target.value })} />

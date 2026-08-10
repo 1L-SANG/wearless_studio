@@ -561,6 +561,12 @@ export function Editor() {
       try {
         const server = await getFinalEditorBlocks(projectId);
         if (cancelled) return;
+        // 생성 잡이 진행 중에 analysis.featureCopy 를 쓴다. 마운트 때 받아 둔 스냅샷은
+        // 그 쓰기보다 앞서므로, 정보 템플릿을 깔기 전에 다시 읽어야 특징 포인트 설명이 채워진다.
+        // 루프는 두 번 돌 수 있으니 네트워크 호출은 루프 밖에 둔다.
+        const freshAnalysis = await api.getAnalysis(projectId).catch(() => null);
+        if (cancelled) return;
+        if (freshAnalysis) setAnalysis(freshAnalysis);
         let restoredServerLayout = false;
         // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
         // 저장 요청 도중 사용자가 한 번 더 편집했다면 최신 ref로 다시 합쳐 저장하여 덮어쓰지 않는다.
@@ -569,7 +575,8 @@ export function Editor() {
           restoredServerLayout ||= !canSafelyMergeServerBlocks(current, server);
           let merged = mergeServerBlocks(current, server);
           if (needsDefaultTemplate(merged)) {
-            const ctx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis, colorOpts, fmModels });
+            // 이 이펙트의 클로저가 붙든 analysis 는 여전히 마운트 스냅샷이라 위에서 다시 읽은 값을 쓴다.
+            const ctx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis: freshAnalysis || analysis, colorOpts, fmModels });
             merged = applyInfoTemplate(merged, ctx).blocks;
           }
           merged = expandBlockHeights(merged);
