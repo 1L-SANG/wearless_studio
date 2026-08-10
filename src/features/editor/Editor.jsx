@@ -223,7 +223,12 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
-  const blockSelected = selectedBlockId === block.id && (!selEls || selEls.length === 0);
+  // 블록 강조(테두리·빠른 도구)는 그 블록이 지금 다루는 블록이면 켠다 — 안의 요소를 고른
+  // 상태도 포함이다. 블록은 사진·글이 거의 다 덮고 있어서, 배경 여백을 정확히 맞춰 눌러야만
+  // 켜지던 이전 조건으로는 캔버스에서 블록을 잡았다는 표시를 사실상 볼 수 없었다.
+  const blockActive = selectedBlockId === block.id;
+  // 높이 조절 손잡이는 블록 자체를 고른 때만 — 요소를 옮기는 중에 같이 뜨면 서로 걸린다.
+  const blockSelected = blockActive && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
 
   const resize = (e, side) => {
@@ -248,7 +253,7 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
   };
 
   return (
-    <div className={`canvas-block${blockSelected ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
+    <div className={`canvas-block${blockActive ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
       onClick={(e) => { if (e.target === e.currentTarget || e.target.classList.contains('block-clip')) onSelectBlock(block.id); }}
       style={{ background: block.bg, height: blockH, '--inv': 1 / (scale || 1) }}
       onDragOver={(e) => { if (e.dataTransfer.types.includes('text/object')) { e.preventDefault(); setObjOver(true); } }}
@@ -816,7 +821,9 @@ export function Editor() {
   const selectEl = (blockId, el, additive, keepTab) => {
     if (cropping) commitCrop();   // 크롭 중 다른 요소 클릭 → 크롭 확정 후 선택 (런타임 호출이라 TDZ 무관)
     setVaryTarget(null);          // 캔버스 선택이 바뀌면 'AI 편집' 지정 대상은 해제
-    setSelBlock(blockId); setSelEl(el.id);
+    // 요소를 고르는 것도 그 블록을 잡은 것이다 — 이걸 안 켜면 블록 테두리·빠른 도구가
+    // 안 뜨고, 블록 배경을 정확히 눌러야만 보이는 상태로 돌아간다.
+    setSelBlock(blockId); setBlockFocused(true); setSelEl(el.id);
     setSelEls((cur) => additive ? (cur.includes(el.id) ? cur.filter((x) => x !== el.id) : [...cur, el.id]) : [el.id]);
     if (!keepTab) setTab(el.type === 'text' ? 'text' : 'image');
   };
