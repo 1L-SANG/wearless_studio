@@ -86,6 +86,56 @@ function Chip({ on, children, onClick }) {
   );
 }
 
+/* 레이아웃 미리보기 — 이름만으로는 '세로형'과 '중앙형'이 어떻게 다른지 알 수 없어서, 고르기
+   전에 모양을 보여준다. 도식 문법은 '내용' 목록 썸네일(ContentPanel PresetThumb)과 같다. */
+function LayoutThumb({ layout }) {
+  const G = '#b9b9be'; const D = '#6f6f76'; const F = '#e7e7ea';
+  const svg = (children) => (
+    <svg viewBox="0 0 100 72" style={{ width: '100%', height: 'auto', display: 'block' }}>{children}</svg>
+  );
+  const photo = (x, y, w, h) => <rect x={x} y={y} width={w} height={h} rx="1.5" fill={F} stroke={G} strokeWidth="0.6" />;
+  switch (layout) {
+    case 'stack': return svg(<>
+      <rect x="8" y="3" width="26" height="3.5" rx="1" fill={D} />
+      {photo(8, 10, 84, 26)}
+      <rect x="8" y="40" width="44" height="4.5" rx="1" fill={D} />
+      <rect x="8" y="49" width="76" height="2.6" rx="1" fill={F} />
+      <rect x="8" y="54" width="58" height="2.6" rx="1" fill={F} />
+      {photo(8, 61, 84, 11)}
+    </>);
+    case 'center': return svg(<>
+      {photo(8, 3, 84, 26)}
+      <rect x="36" y="33" width="28" height="5" rx="1.5" fill={F} stroke={G} strokeWidth="0.4" />
+      <rect x="28" y="42" width="44" height="4.5" rx="1" fill={D} />
+      <rect x="22" y="51" width="56" height="2.6" rx="1" fill={F} />
+      <rect x="32" y="56" width="36" height="2.6" rx="1" fill={F} />
+      {photo(8, 63, 84, 9)}
+    </>);
+    case 'grid': return svg(<>
+      {photo(8, 5, 34, 30)}
+      <rect x="46" y="5" width="46" height="30" rx="1.5" fill="#fafafa" stroke={G} strokeWidth="0.6" />
+      <rect x="51" y="10" width="8" height="4" rx="1" fill={D} />
+      <line x1="51" y1="18" x2="58" y2="18" stroke={D} strokeWidth="0.9" />
+      <rect x="51" y="27" width="28" height="3" rx="1" fill={D} opacity=".6" />
+      {photo(8, 39, 34, 30)}
+      <rect x="46" y="39" width="46" height="30" rx="1.5" fill="#fafafa" stroke={G} strokeWidth="0.6" />
+      <rect x="51" y="44" width="8" height="4" rx="1" fill={D} />
+      <line x1="51" y1="52" x2="58" y2="52" stroke={D} strokeWidth="0.9" />
+      <rect x="51" y="61" width="28" height="3" rx="1" fill={D} opacity=".6" />
+    </>);
+    default: return svg(<>
+      {/* 컴팩트는 한 줄로 끝나 위아래가 비므로, 다른 도식과 무게가 맞도록 세로 가운데에 놓는다 */}
+      {[24, 50, 76].map((cx) => (
+        <g key={cx}>
+          <circle cx={cx} cy="29" r="10" fill={F} stroke={G} strokeWidth="0.7" strokeDasharray="2 1.5" />
+          <rect x={cx - 8} y="44" width="16" height="2.2" rx="1" fill={G} />
+          <rect x={cx - 11} y="50" width="22" height="3.4" rx="1" fill={D} opacity=".75" />
+        </g>
+      ))}
+    </>);
+  }
+}
+
 /* ---------- 타입별 폼 ---------- */
 
 function SizeTableForm({ info, setInfo, ctx }) {
@@ -248,10 +298,16 @@ function FeatureIconsFormBody({ info, setInfo, onPickPhoto, drafting, draftError
   const descOff = layout === 'grid';
   return (
     <>
-      <Field label="레이아웃" hint="사진과 문구를 어떤 모양으로 놓을지 고르세요.">
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      <Field label="레이아웃" hint="사진과 문구를 어떤 모양으로 놓을지 고르세요. 그리드형만 설명 없이 제목만 보여줘요.">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
           {FEATURE_LAYOUTS.map((l) => (
-            <Chip key={l.value} on={layout === l.value} onClick={() => setInfo((f) => ({ ...f, layout: l.value }))}>{l.label}</Chip>
+            <button key={l.value} onClick={() => setInfo((f) => ({ ...f, layout: l.value }))}
+              aria-pressed={layout === l.value}
+              style={{ padding: '10px 8px 8px', borderRadius: 10, cursor: 'pointer', background: '#fff', textAlign: 'center',
+                border: layout === l.value ? '1.5px solid #0e0d14' : '1px solid #e5e5e3' }}>
+              <LayoutThumb layout={l.value} />
+              <div style={{ marginTop: 8, fontSize: 13, color: layout === l.value ? '#0e0d14' : '#4a4a45', fontWeight: layout === l.value ? 600 : 400 }}>{l.label}</div>
+            </button>
           ))}
         </div>
       </Field>
