@@ -1,4 +1,11 @@
+import asyncio
+
 from app.agents import feature_copy as fc
+from conftest import make_settings
+
+
+def run(coro):
+    return asyncio.run(coro)
 
 
 def test_lookup_exact_alias():
@@ -40,3 +47,66 @@ def test_dictionary_avoids_hype_words():
     for key, (desc, _aliases) in fc.DETAIL_COPY.items():
         for word in ("완벽", "특별한", "놀라운", "최고"):
             assert word not in desc, f"{key}: hype 어휘 '{word}'"
+
+
+def test_copy_schema_shape():
+    s = fc.copy_schema()
+    item = s["properties"]["items"]["items"]
+    assert set(item["required"]) == {"point", "desc"}
+    assert item["additionalProperties"] is False
+
+
+def test_build_prompt_carries_only_unmatched_points_and_facts():
+    p = fc.build_prompt(
+        ["빈티지한 워싱감"],
+        {"name": "카고 팬츠", "clothingType": "bottom"},
+        {"materials": [{"name": "코튼"}], "fit": "over"})
+    assert "빈티지한 워싱감" in p
+    assert "카고 팬츠" in p and "코튼" in p
+    assert "하이웨이스트" not in p, "사전 히트 항목은 프롬프트에 실리지 않는다"
+
+
+def test_validate_keeps_matching_points_only():
+    raw = {"items": [
+        {"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번집니다."},
+        {"point": "없는 포인트", "desc": "무시됩니다."},
+    ]}
+    out = fc.validate(raw, ["빈티지한 워싱감"])
+    assert out == {"빈티지한 워싱감": "물 빠진 듯한 색이 자연스럽게 번집니다."}
+
+
+def test_validate_drops_unverified_functional_claims():
+    raw = {"items": [{"point": "메쉬 소재", "desc": "통기성이 좋아 시원합니다."}]}
+    assert fc.validate(raw, ["메쉬 소재"]) == {}
+
+
+def test_validate_drops_hype_and_overlong_desc():
+    raw = {"items": [
+        {"point": "a", "desc": "완벽한 마감입니다."},
+        {"point": "b", "desc": "가" * (fc.MAX_DESC_CHARS + 1) + "."},
+    ]}
+    assert fc.validate(raw, ["a", "b"]) == {}
+
+
+def test_generate_uses_dictionary_without_calling_the_model(monkeypatch):
+    # generate 가 예외를 삼키므로(카피는 게이트 아님) 여기서 raise 하면 테스트가
+    # 통과해 버린다 — 호출 여부는 스파이로 센다.
+    called = []
+
+    async def spy(*_args, **_kwargs):
+        called.append(1)
+        return ({"items": []}, "spy")
+
+    monkeypatch.setattr(fc, "complete_json", spy)
+    out = run(fc.generate(make_settings(), ["하이웨이스트"], {}, {}))
+    assert out == [{"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."}]
+    assert called == [], "사전 히트만 있으면 LLM 을 부르지 않는다"
+
+
+def test_generate_survives_model_failure(monkeypatch):
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(fc, "complete_json", boom)
+    out = run(fc.generate(make_settings(), ["하이웨이스트", "설명 못 만들 표현"], {}, {}))
+    assert out == [{"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."}]
