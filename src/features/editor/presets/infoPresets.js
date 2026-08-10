@@ -308,7 +308,32 @@ function buildFeatureCompact(info, ctx, idFn, items) {
   return { els, h };
 }
 
+const FEATURE_IMG_W = 880;          // 사진 폭 = 콘텐츠 폭
+const FEATURE_STACK_IMG_H = 560;    // 사진 높이는 고정 — 이미지 dims 로 유도하면 파손 dims 가 레이아웃을 무너뜨린다
+const FEATURE_STACK_GAP = 64;
+
+function buildFeatureStack(info, ctx, idFn, items) {
+  const t = T(idFn); const slot = SLOT(idFn);
+  const anyFilled = items.some((it) => it.title || it.desc || it.src);
+  const els = [t(60, 48, 880, 40, 'DETAIL POINT', { size: 28, ...HEAD, tracking: 1 })];
+  let y = 108;
+  items.forEach((it) => {
+    els.push({ ...slot(60, y, FEATURE_IMG_W, FEATURE_STACK_IMG_H), src: it.src || null });
+    const ty = y + FEATURE_STACK_IMG_H + 28;
+    els.push(t(60, ty, 880, 32, featureTitle(it, anyFilled), { size: 22, weight: 600, color: '#0e0d14' }));
+    let bottom = ty + 32;
+    if (it.desc) {
+      const dh = estLines(it.desc, 880, 15) * 26;
+      els.push(t(60, ty + 44, 880, dh, it.desc, { size: 15, color: MUTED, lineHeight: 26 }));
+      bottom = ty + 44 + dh;
+    }
+    y = bottom + FEATURE_STACK_GAP;
+  });
+  return { els, h: y - FEATURE_STACK_GAP + 50 };
+}
+
 const FEATURE_BUILDERS = {
+  stack: buildFeatureStack,
   compact: buildFeatureCompact,
 };
 

@@ -318,3 +318,50 @@ test('FEATURE_LAYOUTS lists exactly the four supported layouts', () => {
   assert.deepEqual(FEATURE_LAYOUTS.map((l) => l.value), ['stack', 'center', 'grid', 'compact']);
   for (const l of FEATURE_LAYOUTS) assert.ok(l.label, `${l.value}: has label`);
 });
+
+/* 요소가 서로 겹치지 않고 블록 높이 안에 들어오는지 — 레이아웃 회귀의 1차 방어선.
+   같은 행에 나란히 놓이는 요소(그리드의 사진|카드)가 있어 y 단조가 아니라
+   "선언 높이가 마지막 요소 하단을 덮는가" 로 본다. */
+function assertFitsInBlock(block, label) {
+  const bottom = Math.max(...block.elements.map((el) => el.y + (el.h || 0)));
+  assert.ok(block.h >= bottom, `${label}: block h ${block.h} covers last element bottom ${bottom}`);
+  for (const el of block.elements) {
+    assert.ok(el.x >= 60, `${label}: element x ${el.x} inside left margin`);
+    assert.ok(el.x + (el.w || 0) <= 940, `${label}: element right ${el.x + (el.w || 0)} inside right margin`);
+  }
+}
+
+const THREE_POINTS = [
+  { title: '하이웨이스트 디자인', desc: '허리선이 높아 다리가 더 길어 보입니다.', src: null },
+  { title: '섬세한 지퍼 디테일', desc: '뒤 중심에 지퍼를 달아 여미면 실루엣이 흐트러지지 않습니다.', src: null },
+  { title: '플리츠 안감 마감', desc: '안감을 덧대 겉감의 라인이 곱게 잡힙니다.', src: null },
+];
+
+test('stack layout renders a heading, one image slot per point, and fits its height', () => {
+  const block = buildInfoBlock('feature_icons', { layout: 'stack', items: THREE_POINTS }, FEATURE_CTX, seqId());
+  assert.equal(block.info.layout, 'stack');
+  const heads = block.elements.filter((el) => el.type === 'text' && el.text === 'DETAIL POINT');
+  assert.equal(heads.length, 1, 'exactly one DETAIL POINT heading');
+  const slots = block.elements.filter((el) => el.type === 'image');
+  assert.equal(slots.length, 3, 'one image slot per point');
+  for (const s of slots) assert.equal(s.w, 880, 'stack image spans the content width');
+  for (const it of THREE_POINTS) {
+    assert.ok(block.elements.some((el) => el.text === it.title), `title rendered: ${it.title}`);
+    assert.ok(block.elements.some((el) => el.text === it.desc), `desc rendered: ${it.desc}`);
+  }
+  assertFitsInBlock(block, 'stack');
+});
+
+test('stack layout grows its height with a long description instead of overlapping', () => {
+  const long = '안감을 덧대 겉감의 라인이 곱게 잡힙니다. '.repeat(6);
+  const shortBlock = buildInfoBlock('feature_icons', { layout: 'stack', items: [{ title: 'A', desc: '짧습니다.', src: null }, { title: 'B', desc: '', src: null }] }, FEATURE_CTX, seqId());
+  const longBlock = buildInfoBlock('feature_icons', { layout: 'stack', items: [{ title: 'A', desc: long, src: null }, { title: 'B', desc: '', src: null }] }, FEATURE_CTX, seqId());
+  assert.ok(longBlock.h > shortBlock.h, 'long description makes the block taller');
+  assertFitsInBlock(longBlock, 'stack/long');
+});
+
+test('stack layout omits the description element when a point has none', () => {
+  const block = buildInfoBlock('feature_icons', { layout: 'stack', items: [{ title: 'A', desc: '', src: null }, { title: 'B', desc: '', src: null }] }, FEATURE_CTX, seqId());
+  const texts = block.elements.filter((el) => el.type === 'text').map((el) => el.text);
+  assert.deepEqual(texts, ['DETAIL POINT', 'A', 'B']);
+});
