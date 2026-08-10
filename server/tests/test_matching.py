@@ -89,7 +89,20 @@ def test_recommend_filters_type_and_sorts_by_brightness_then_sortorder():
         _it("t1", "top", "women", 99, 1),     # 보색 아님 → 제외
     ]
     out = matching.recommend(items, clothing_type="top", genders=["women"])
-    assert [i["id"] for i in out] == ["b3", "b2", "b1"]
+    # 상위 두 밝은 후보가 같은 계열(밝기 band)이므로 2위는 다른 계열 b1로 다양화한다.
+    assert [i["id"] for i in out] == ["b3", "b1", "b2"]
+
+
+def test_diversify_top_two_uses_color_group_and_preserves_all_same_order():
+    ranked = [
+        {"id": "a", "color_group": "black"},
+        {"id": "b", "color_group": "black"},
+        {"id": "c", "color_group": "beige"},
+        {"id": "d", "color_group": "blue"},
+    ]
+    assert [item["id"] for item in matching.diversify_top_two(ranked)] == ["a", "c", "b", "d"]
+    all_black = [dict(item, color_group="black") for item in ranked]
+    assert [item["id"] for item in matching.diversify_top_two(all_black)] == ["a", "b", "c", "d"]
 
 
 def test_recommend_gender_filter_allows_unisex():
@@ -176,6 +189,44 @@ def test_match_candidates_shape_and_public_url(client, make_token, monkeypatch):
     assert body[0]["fit"] == "regular"
     assert body[0]["length"] == "full"
     assert body[0]["fitCategory"] == "pants"
+
+
+def test_match_candidates_route_passes_style_tags_to_tag_ranker(
+    client, make_token, monkeypatch,
+):
+    object.__setattr__(client.app.state.settings, "r2_public_base", "https://img.example.com")
+    object.__setattr__(client.app.state.settings, "retrieval_matching", "tags")
+    monkeypatch.setattr(routes, "_r2", lambda request: _FakeR2())
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_list(conn, user_id, project_id):
+        return [{
+            "id": "b1", "name": "하의", "clothing_type": "bottom", "gender": "women",
+            "style_tags": ["daily"], "color_brightness": 50, "sort_order": 1,
+            "is_active": True, "is_custom": False, "thumb_key": "thumb.png",
+            "image_key": "image.png",
+        }]
+
+    def fake_recommend(items, clothing_type, genders, product_tags, affinity_map, limit):
+        seen["product_tags"] = product_tags
+        return items
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "list_active_matching_items", fake_list)
+    monkeypatch.setattr(routes.retrieval, "recommend_v1", fake_recommend)
+    _no_db(monkeypatch)
+
+    response = client.get(
+        "/v1/projects/p1/analysis/match-candidates"
+        "?clothingType=top&gender=women&styleTags=basic&styleTags=daily",
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 200, response.text
+    assert seen["product_tags"] == ["basic", "daily"]
 
 
 def test_dress_match_candidates_ignore_stale_men_query(

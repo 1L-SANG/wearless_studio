@@ -1631,6 +1631,7 @@ async def finalize_detail_page_success(
     reserved: int,
     charge: int,  # 성공 컷 수 × storyboardPerCut (부분 성공 미차감)
     metadata: dict,
+    product_name: str | None = None,
 ) -> dict | None:
     """성공 종결(원자·lease 펜스): 컷 asset 행 + editor_blocks 저장 + status='done' + 크레딧
     confirm + job done. None = lease 상실. 마네킹 finalize와 동일 구조."""
@@ -1641,6 +1642,15 @@ async def finalize_detail_page_success(
         )
         if await cur.fetchone() is None:
             return None
+        if product_name:
+            await cur.execute(
+                "update products set name = %s where project_id = %s",
+                (product_name, project_id),
+            )
+            await cur.execute(
+                "update projects set title = %s where id = %s and user_id = %s",
+                (product_name, project_id, user_id),
+            )
         for c in cut_assets:  # 컷 이미지 asset 행 (editor_blocks 가 /v1/assets/{id}/file 로 참조)
             await cur.execute(
                 "insert into assets (id, user_id, project_id, source, visibility, r2_bucket, "

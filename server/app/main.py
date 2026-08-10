@@ -139,6 +139,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 이미지 실비 계측 — 풀이 없으면(테스트·DB 미설정) 자동으로 로그 전용이 된다.
     image_usage.configure(pool=pool, persist=settings.image_usage_persist)
     app.state.dispatcher = None
+    # 공개 분석 리미터는 프로세스 로컬 안전밸브다(public_routes 주석의 다중 인스턴스 한계 참조).
+    from .public_routes import PublicAnalysisRateLimiter
+
+    app.state.public_analysis_limiter = PublicAnalysisRateLimiter()
     app.state.jwt_key_resolver = (
         jwks_key_resolver(settings.jwks_url) if settings.jwks_url else None
     )
@@ -217,6 +221,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"userId": user_id}
 
     app.include_router(v1_router)
+
+    from .public_routes import router as public_router
+
+    app.include_router(public_router)
 
     # 토스 크레딧 추가구매(WS3) — 라우터는 항상 등록하고, 키 미설정이면 checkout 이 503 으로
     # 거절한다(플래그로 라우트를 숨기면 프론트가 404 를 '미배포'와 구분 못 해 디버깅이 어렵다).

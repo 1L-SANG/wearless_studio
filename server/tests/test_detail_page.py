@@ -3,6 +3,7 @@ import contextlib
 import types
 
 import app.routes as routes
+from app import repo
 from app.workers import detail_page_job as dpj
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
 
@@ -387,7 +388,7 @@ def test_run_detail_page_job_partial_success(monkeypatch):
         ]}]}
 
     async def fake_analysis(conn, pid):
-        return {}
+        return {"suggestedName": "미니멀 코튼 셔츠"}
 
     async def fake_asset(conn, uid, aid):
         return {"mime_type": "image/png", "r2_key": "k/a1"}
@@ -427,6 +428,7 @@ def test_run_detail_page_job_partial_success(monkeypatch):
     assert captured["charge"] == 1              # 성공 컷 1개 × per_cut(1) — 실패 컷 미차감
     assert len(captured["cut_assets"]) == 1
     assert len(captured["cut_results"]) == 1     # b1만
+    assert captured["product_name"] == "미니멀 코튼 셔츠"  # copywriting OFF도 무호출 작명
 
 
 def test_run_detail_page_job_attaches_matching_garment_to_horizon(monkeypatch):
@@ -1450,7 +1452,10 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
 
     async def fake_copy(settings, **kw):
         captured["copy_kwargs"] = kw
-        return [{"role": "body", "text": "원본 카피"}]
+        return {
+            "texts": [{"role": "body", "text": "원본 카피"}],
+            "productName": "골지 데일리 니트",
+        }
 
     async def fake_review(settings, items, confirmed):
         raise RuntimeError("qc down")  # 검수 실패 → 원문 유지 (except 커버)
@@ -1458,6 +1463,7 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     def fake_assemble(storyboard, cut_results, copy_results, product, copywriting, **_kw):
         captured["storyboard"] = storyboard
         captured["copy_results"] = copy_results
+        captured["assembled_product_name"] = product.get("name")
         return [{"id": "b0", "elements": []}]
 
     async def fake_finalize(conn, **kw):
@@ -1484,12 +1490,61 @@ def test_run_detail_page_job_copywriting_qc_failure_keeps_original(monkeypatch):
     assert captured["copy_kwargs"]["content_role"] == "detail"
     assert captured["copy_kwargs"]["section_role"] == "product"
     assert "block_kind" not in captured["copy_kwargs"]
+    assert captured["copy_kwargs"]["include_product_name"] is True
+    assert captured["product_name"] == "골지 데일리 니트"
+    assert captured["assembled_product_name"] == "골지 데일리 니트"
     assert captured["cut_spec"]["cutType"] == "product"
     assert captured["cut_spec"]["shot"] == "detail"
     assert captured["storyboard"][0]["sectionRole"] == "product"
     assert captured["storyboard"][0]["cutType"] == "product"
     assert captured["storyboard"][0]["shot"] == "detail"
     assert captured["copy_results"] == [{"blockId": "b1", "texts": [{"role": "body", "text": "원본 카피"}]}]
+
+
+def test_copywriting_off_uses_analysis_name_without_another_llm_call():
+    assert dpj._fallback_product_name(
+        {"name": "새 상품", "clothingType": "top"},
+        {"suggestedName": "미니멀 코튼 셔츠", "subCategory": "shirt"},
+    ) == "미니멀 코튼 셔츠"
+    assert dpj._fallback_product_name(
+        {"name": "", "clothingType": "outer"}, {"suggestedName": None},
+    ) == "데일리 아우터"
+
+
+def test_detail_finalize_updates_product_name_and_project_title_in_same_transaction(monkeypatch):
+    statements = []
+
+    class Cursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def execute(self, sql, params=None):
+            statements.append((" ".join(sql.split()), params))
+
+        async def fetchone(self):
+            return {"id": "j1"}
+
+    class Conn:
+        def cursor(self):
+            return Cursor()
+
+    async def fake_release(*args, **kwargs):
+        return 9
+
+    monkeypatch.setattr(repo, "release_credits", fake_release)
+    result = asyncio.run(repo.finalize_detail_page_success(
+        Conn(), job_id="j1", lease_token="lease", user_id="u1", project_id="p1",
+        editor_blocks=[], cut_assets=[], reserved=0, charge=0, metadata={},
+        product_name="골지 데일리 니트",
+    ))
+
+    sql = [statement for statement, _params in statements]
+    assert any("update products set name = %s where project_id = %s" in s for s in sql)
+    assert any("update projects set title = %s where id = %s and user_id = %s" in s for s in sql)
+    assert result["available"] == 9
 
 
 def test_detail_passthrough_ships_the_sellers_original_without_generating(monkeypatch):

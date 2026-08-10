@@ -143,9 +143,9 @@ class Settings:
     credit_cost_mannequin_adjust: int = 0  # @deprecated AG-05 폐기 — fitProfile 재생성으로 통합 (프론트 CREDIT_COSTS.mannequinAdjust=0 미러)
     credit_cost_storyboard_per_cut: int = 1  # PL-4 상세페이지: AI 컷 1개당 (프론트 CREDIT_COSTS 미러)
     credit_cost_editor_image: int = 1  # PL-5 에디터 이미지 1장
-    # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택. flag 기본 off ----
+    # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택 ----
     # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
-    retrieval_matching: str = "off"  # off | tags (styleTags 친화도 v1)
+    retrieval_matching: str = "tags"  # off | tags (styleTags 친화도 v1)
     retrieval_knowledge: str = "off"  # off | static (정적 지식 블록)
     # ---- Phase 3 재진입(ADR D2 해제, 2026-07-22): 레퍼런스 컷 검색 → 마네킹 STYLE REFERENCE 첨부 ----
     # off면 기존 생성 경로 무변화(행위 변화 0). 임베딩은 자체 호스팅 로컬 모델(ADR D2 v1.3),
@@ -320,7 +320,7 @@ def load_settings() -> Settings:
         credit_cost_mannequin_adjust=int(os.getenv("CREDIT_COST_MANNEQUIN_ADJUST", "0")),
         credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "1")),
         credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "1")),
-        retrieval_matching=_flag("RETRIEVAL_MATCHING", "off", {"off", "tags"}),
+        retrieval_matching=_flag("RETRIEVAL_MATCHING", "tags", {"off", "tags"}),
         retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static"}),
         retrieval_refimages=_flag("RETRIEVAL_REFIMAGES", "off", {"off", "on"}),
         ref_images_topk=int(os.getenv("REF_IMAGES_TOPK", "2")),
