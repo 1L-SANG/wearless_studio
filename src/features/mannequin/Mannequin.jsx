@@ -11,7 +11,8 @@
    ============================================================= */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api } from '@/lib/api/index.js';
+import { api, isMockMode } from '@/lib/api/index.js';
+import { listModels } from '@/lib/api/facemarket.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { detailPageGenerationCreditShortfall } from '@/lib/creditPreflight.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
@@ -27,7 +28,7 @@ import {
 import { Icon, Button, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
-import { isRealModelSelection } from '@/features/analysis/modelSelection.js';
+import { realModelFeeLabel } from '@/features/analysis/modelSelection.js';
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
@@ -608,6 +609,7 @@ export function Mannequin() {
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
+  const [realModels, setRealModels] = useState([]);
   const [aiCutCount, setAiCutCount] = useState(null);   // null = 아직 모름(로딩 중·조회 실패) — 0 과 구분
   const [creditShortfall, setCreditShortfall] = useState(null);
   const [creditResume, setCreditResume] = useState(() => (
@@ -697,16 +699,18 @@ export function Mannequin() {
       // getStoryboard 실패는 이 화면 자체를 막지 않는다(비치명) — 대신 null 로 남겨
       // "콘티가 AI 컷 0장" 과 "조회 자체를 못 함" 을 구분한다. 구분 안 하면 CTA 가
       // 크레딧 소비 직전에 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다.
-      const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard] = await Promise.all([
+      const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard, nextRealModels] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
         api.getCatalogs(),
         api.getStoryboard(pid).catch(() => null),
+        isMockMode ? Promise.resolve([]) : listModels().catch(() => []),
       ]);
       if (loadRunRef.current !== runId) return;
       setProgress(generationProgressFor(pid));
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
+      setRealModels(Array.isArray(nextRealModels) ? nextRealModels : []);
       setAiCutCount(Array.isArray(nextStoryboard) ? nextStoryboard.filter((b) => b.source !== 'mine').length : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
@@ -838,6 +842,7 @@ export function Mannequin() {
   const cur = activeIdx >= 0 ? steps[activeIdx] : null;
   const changingStep = cur && stepState[cur.key]?.mode === 'changing' ? cur : null;
   const needsRegen = changedSteps.length > 0;
+  const realModelFee = realModelFeeLabel(analysis?.selectedModelId, realModels);
 
   const setStep = (key, patch) => setStepState((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   const keepStep = (key) => { setStep(key, { mode: 'keep', pick: null, pickLb: null }); };
@@ -1397,7 +1402,7 @@ export function Mannequin() {
               {/* 콘티 조회 실패로 aiCutCount 를 모를 때 '0 크레딧'(=무료로 읽힘)을 보여주지 않는다 —
                   기존 관용구(em dash '—')로 미확정을 표시한다. 실제 과금은 서버가 저장된 콘티로 재계산. */}
               상세페이지 생성하기 · {aiCutCount == null ? '—' : aiCutCount * CREDIT_COSTS.storyboardPerCut} 크레딧
-              {isRealModelSelection(analysis?.selectedModelId) && ' + 실제 모델 ₩10,000'}
+              {realModelFee}
             </Button>
           </div>
         )}

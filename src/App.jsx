@@ -32,7 +32,7 @@ import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
-import { syncDraftToBackend } from '@/lib/draftSync.js';
+import { resetDraftSyncSingleFlight, syncDraftToBackend } from '@/lib/draftSync.js';
 import { api, isMockMode } from '@/lib/api/index.js';
 import { listMyModels } from '@/lib/api/facemarket.js';
 import { ErrorState, useToast } from '@/components/ui.jsx';
@@ -225,6 +225,7 @@ function ResumeTracker() {
 function ProductInputRoute() {
   const navigate = useNavigate();
   const { key: locationKey } = useLocation();
+  const { session, loading: authLoading } = useAuth();
   const { push: pushToast } = useToast();
   const generation = useAppStore((s) => s.projectGeneration);
   const beginProject = useAppStore((s) => s.beginProject);
@@ -238,6 +239,19 @@ function ProductInputRoute() {
 
   useEffect(() => {
     if (entryDecision === 'confirmed') {
+      if (!isMockMode && authLoading) return;
+      // http 모드의 세션 만료 리다이렉트는 사용자의 잠금 화면 재진입이 아니다.
+      // 로그인 유도 경로가 입력 화면을 맡도록 두고, 잠금 연타 카운트도 올리지 않는다.
+      if (!isMockMode && !session) {
+        const { projectId } = useAppStore.getState();
+        setEntryDecision(registerConfirmedInputEntry(
+          projectId,
+          Date.now(),
+          `${flowDocumentEntryId}:${locationKey}`,
+          { countAsUserEntry: false },
+        ));
+        return;
+      }
       const { projectId } = useAppStore.getState();
       if (!isProductInfoConfirmed(projectId)) markProductInfoConfirmed(projectId);
       setEntryDecision(registerConfirmedInputEntry(
@@ -261,7 +275,7 @@ function ProductInputRoute() {
       navigate('/create/input', { replace: true });
     });
     return () => { alive = false; };
-  }, [beginProject, entryDecision, locationKey, navigate, pushToast]);
+  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session]);
 
   useEffect(() => {
     if (entryDecision !== 'continue') return;
@@ -335,7 +349,7 @@ function RootRedirect() {
         flowRouteSeenThisSession = true;
         useAppStore.getState().confirmProductInfo(projectId);
         markFlowSession(projectId, '/create/storyboard');
-        await clearDraft().catch(() => {});
+        await clearDraft().then(() => { resetDraftSyncSingleFlight(); }).catch(() => {});
         setDest('/create/storyboard'); setPhase('done');
       } catch {
         if (!alive) return;

@@ -9,6 +9,7 @@ import { LIMITS } from '@/lib/limits.js';
 import { defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
 import { toMatchItem } from '@/lib/api/matchingItems.js';
 import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
+import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -340,7 +341,7 @@ export const httpAdapter = {
   async publicAnalyze(product, { onProgress, signal } = {}) {
     const colors = product?.colors || [];
     const baseColor = colors.find((color) => color.isBase) || colors[0];
-    const photos = (baseColor?.images || []).slice(0, 4);
+    const photos = selectPublicAnalysisPhotos(baseColor?.images || []);
     if (!photos.length) throw new Error('분석할 상품 사진을 먼저 올려주세요.');
     const form = new FormData();
     onProgress?.(10);

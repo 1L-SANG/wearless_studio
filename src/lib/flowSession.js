@@ -45,7 +45,13 @@ export function isProductInfoConfirmed(projectId) {
   return marker?.projectId === projectId && marker.productInfoConfirmed === true;
 }
 
-export function registerConfirmedInputEntry(projectId, now = Date.now(), entryToken = null) {
+export function registerConfirmedInputEntry(
+  projectId,
+  now = Date.now(),
+  entryToken = null,
+  { countAsUserEntry = true } = {},
+) {
+  if (!countAsUserEntry) return 'continue';
   if (!isProductInfoConfirmed(projectId)) return 'continue';
   const marker = readFlowSession();
   if (entryToken && marker?.confirmedInputEntryToken === entryToken) {

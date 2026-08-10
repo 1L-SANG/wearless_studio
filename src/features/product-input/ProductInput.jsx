@@ -28,7 +28,7 @@ import {
   MAX_UPLOAD_BYTES,
   toUploadableImages,
 } from '@/lib/imageTranscode.js';
-import { syncDraftToBackend } from '@/lib/draftSync.js';
+import { resetDraftSyncSingleFlight, syncDraftToBackend } from '@/lib/draftSync.js';
 import { Icon, Button, IconButton, ErrorState, Skeleton, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
@@ -533,7 +533,7 @@ export function ProductInput() {
         // '다른 작업으로 전환'이 아니라 같은 작업이 신원을 얻는 것뿐이라 신호를 지우면 안 된다.
         useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
         setAnalysisProjectId(projectId);
-        await clearDraft().catch(() => {});
+        await clearDraft().then(() => { resetDraftSyncSingleFlight(); }).catch(() => {});
         useAppStore.getState().confirmProductInfo(projectId);
         navigate('/create/storyboard', { state: { showMannequinTransition: true } });
         return;

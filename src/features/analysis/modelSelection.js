@@ -28,3 +28,12 @@ const VIRTUAL_MODEL_IDS = new Set(['mA', 'mB', 'mC', 'mD', 'mE']);
 export function isRealModelSelection(selectedModelId) {
   return !!selectedModelId && !VIRTUAL_MODEL_IDS.has(selectedModelId);
 }
+
+export function realModelFeeLabel(selectedModelId, models) {
+  if (!isRealModelSelection(selectedModelId)) return '';
+  const selected = (models || []).find((model) => model.id === selectedModelId);
+  const unitPrice = Number(selected?.unitPrice);
+  return selected?.unitPrice != null && Number.isFinite(unitPrice) && unitPrice >= 0
+    ? ` + 실제 모델 ₩${unitPrice.toLocaleString('ko-KR')}`
+    : ' + 실제 모델 이용료 별도';
+}

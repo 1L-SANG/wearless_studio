@@ -43,6 +43,18 @@ test('one browser history entry is counted once across React StrictMode remounts
   assert.equal(registerConfirmedInputEntry('project-a', 1002, 'document:entry-b'), 'start-new');
 });
 
+test('an auth-expiry redirect is not counted as a confirmed-input re-entry', () => {
+  clearFlowSession();
+  markProductInfoConfirmed('project-a');
+  assert.equal(registerConfirmedInputEntry(
+    'project-a',
+    1000,
+    'document:auth-redirect',
+    { countAsUserEntry: false },
+  ), 'continue');
+  assert.equal(readFlowSession().confirmedInputEntryCount, 0);
+});
+
 test('http flow persistence restores the confirmed flag and project resets clear it', () => {
   const storeSource = readFileSync(new URL('../../src/store/useAppStore.js', import.meta.url), 'utf8');
   const appSource = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
@@ -51,4 +63,5 @@ test('http flow persistence restores the confirmed flag and project resets clear
   assert.match(storeSource, /confirmProductInfo\(projectId = get\(\)\.projectId\)/);
   assert.match(appSource, /productInfoConfirmed \|\| isProductInfoConfirmed\(projectId\)/);
   assert.match(appSource, /if \(!isProductInfoConfirmed\(projectId\)\) markProductInfoConfirmed\(projectId\)/);
+  assert.match(appSource, /if \(!isMockMode && !session\) \{[^]*countAsUserEntry: false/);
 });
