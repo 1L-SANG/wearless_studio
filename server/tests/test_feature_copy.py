@@ -19,6 +19,28 @@ def test_lookup_substring_prefers_longer_alias():
     assert fc.lookup("둥근 햄라인") == "밑단 곡선을 살려 하의 위에 자연스럽게 떨어집니다."
 
 
+def test_lookup_rejects_negated_phrases():
+    # 셀러가 부정한 부위에 사전이 긍정 문구를 붙이면 칩 바로 아래에 정반대 문장이 나간다.
+    # 부분일치는 흘려보내고(=None) 모델이 부정을 읽게 한다.
+    assert fc.lookup("주름 없는 원단") is None
+    assert fc.lookup("안감 없이 시원한") is None
+    assert fc.lookup("트임 없는 디자인") is None
+    assert fc.lookup("트임 안 들어간 스커트") is None
+
+
+def test_lookup_does_not_match_the_colour_homograph():
+    # '칼라'(colourful)는 카라(collar)가 아니다
+    assert fc.lookup("칼라풀한 배색") is None
+
+
+def test_negation_guard_does_not_over_fire():
+    # '안감' 의 '안' 은 부정어가 아니고, 부정어가 없는 부분일치는 그대로 살아 있어야 한다
+    assert fc.lookup("안감 마감") == "안감을 덧대 겉감의 라인이 곱게 잡힙니다."
+    assert fc.lookup("사이드 트임") == "옆선에 트임이 있어 걸을 때 다리가 편하게 움직입니다."
+    assert fc.lookup("부드러운 안감 처리") == "안감을 덧대 겉감의 라인이 곱게 잡힙니다."
+    assert fc.lookup("옆선 트임 디테일") == "옆선에 트임이 있어 걸을 때 다리가 편하게 움직입니다."
+
+
 def test_lookup_is_case_and_space_insensitive():
     assert fc.lookup("  HIGH WAIST  ") == fc.lookup("하이웨이스트")
 
@@ -96,9 +118,18 @@ def test_validate_keeps_matching_points_only():
     assert out == {"빈티지한 워싱감": "물 빠진 듯한 색이 자연스럽게 번집니다."}
 
 
+def test_validate_maps_the_sanitized_echo_back_to_the_raw_point():
+    # 프롬프트에는 _sanitize 된 칩이 실린다 — 모델 echo 는 공백이 접힌 형태로 돌아온다.
+    # 키는 원문이어야 클라이언트의 exact-string 매칭이 산다.
+    raw = {"items": [{"point": "롤업 소매", "desc": "소매를 걷어 올려 인상이 가볍습니다."}]}
+    assert fc.validate(raw, ["롤업  소매"]) == {"롤업  소매": "소매를 걷어 올려 인상이 가볍습니다."}
+
+
 def test_validate_drops_unverified_functional_claims():
     raw = {"items": [{"point": "메쉬 소재", "desc": "통기성이 좋아 시원합니다."}]}
     assert fc.validate(raw, ["메쉬 소재"]) == {}
+    assert fc.validate({"items": [{"point": "메쉬 소재", "desc": "통풍이 잘 됩니다."}]}, ["메쉬 소재"]) == {}
+    assert fc.validate({"items": [{"point": "메쉬 소재", "desc": "땀을 잘 흡수합니다."}]}, ["메쉬 소재"]) == {}
 
 
 def test_validate_drops_hype_and_overlong_desc():

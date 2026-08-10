@@ -127,6 +127,8 @@ analysis.featureCopy = [{ point, desc }]   (repo.save_analysis)
 Editor buildInfoCtx → ctx.featureCopy → defaultInfoFor('feature_icons') → items 프리필
 ```
 
+이 단계는 프로젝트의 `copywriting` 이 켜져 있을 때만 돈다 — 카피 단계 전체가 `if copywriting:` 안에 있고, 문구 생성을 끈 셀러에게 생성 문구를 밀어 넣지 않기 위함이다. 끈 채로 생성하면 `featureCopy` 가 쓰이지 않아 설명이 빈칸으로 남는다(버그 아님, 셀러가 직접 입력).
+
 ### 5.2 사전 (`_DETAIL_COPY`)
 
 레퍼런스의 어휘축은 **부위·구조**다: 하이웨이스트 · 지퍼 · 밴딩 웨이스트 · 카고 포켓 · 조절 스트랩 · 플리츠 안감 · 카라 · 햄라인 · 소매 커프스 …

@@ -34,7 +34,8 @@ DETAIL_COPY: dict[str, tuple[str, tuple[str, ...]]] = {
     "drawstring": ("끈을 조이는 정도에 따라 허리 라인이 달라집니다.", ("드로우스트링", "드로스트링", "스트링", "허리끈", "drawstring")),
     "pleats": ("규칙적으로 잡은 주름이 움직일 때마다 흐릅니다.", ("플리츠", "주름", "pleats", "플리츠 디테일")),
     "lining": ("안감을 덧대 겉감의 라인이 곱게 잡힙니다.", ("안감", "안감 마감", "이중 안감", "lining")),
-    "basic_collar": ("기본 형태의 카라라서 목선이 단정합니다.", ("베이직 카라", "기본 카라", "카라", "칼라", "collar")),
+    # "칼라"(색, colourful)는 카라(collar)의 동형이의어라 alias 로 두지 않는다 — '칼라풀한 배색' 오탐
+    "basic_collar": ("기본 형태의 카라라서 목선이 단정합니다.", ("베이직 카라", "기본 카라", "카라", "collar")),
     "open_collar": ("첫 단추를 풀어 입으면 목선이 트입니다.", ("오픈 카라", "오픈 칼라", "노치 카라")),
     "round_neck": ("목선을 둥글게 파 얼굴선이 부드럽게 이어집니다.", ("라운드넥", "라운드 넥", "round neck")),
     "v_neck": ("V자 목선이라 상체가 길어 보입니다.", ("브이넥", "v넥", "v neck", "v-neck")),
@@ -69,6 +70,17 @@ _SUBSTR_ALIASES = sorted(
 )
 
 
+# 부분일치 뒤에 붙는 부정 — '주름 없는 원단'·'안감 없이 시원한'·'트임 안 들어간' 처럼 셀러가
+# 부정한 부위에 긍정 문구를 붙이면 셀러 칩 바로 아래에 정반대 문장이 나간다. '안 ' 은 뒤 공백까지
+# 봐야 '안감' 에 오발화하지 않는다.
+_NEGATIONS = ("없", "아닌", "안 ")
+_NEG_WINDOW = 4  # alias 직후 몇 글자까지 부정어를 살피는가
+
+
+def _negated_after(s: str, end: int) -> bool:
+    return any(n in s[end:end + _NEG_WINDOW] for n in _NEGATIONS)
+
+
 def _normalize(text) -> str:
     return " ".join((text or "").split()).strip().lower()
 
@@ -78,12 +90,18 @@ def lookup(point) -> str | None:
     s = _normalize(point)
     if not s:
         return None
+    # exact 는 셀러가 그 부위를 그대로 지목한 것이라 부정 검사를 하지 않는다 — canonical alias
+    # 34개 중 부정어를 품은 것이 없다.
     key = _ALIAS_TO_KEY.get(s)
     if key is None:
         for alias in _SUBSTR_ALIASES:
-            if alias in s:
-                key = _ALIAS_TO_KEY[alias]
-                break
+            i = s.find(alias)
+            if i < 0:
+                continue
+            if _negated_after(s, i + len(alias)):
+                return None  # 부정형 — 사전 대신 부정을 읽을 수 있는 모델로 흘려보낸다
+            key = _ALIAS_TO_KEY[alias]
+            break
     return DETAIL_COPY[key][0] if key else None
 
 
@@ -91,7 +109,8 @@ _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # ser
 _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "feature_copy_v1.txt")
 
 # 미확인 기능성 단정 — 프롬프트로도 막지만 출력에서 한 번 더 거른다(계약 AG-02 §단정 금지)
-_BANNED = ("통기성", "방수", "발수", "항균", "보온", "자외선", "냄새", "땀 흡수", "구김")
+# "통풍"은 통기성의 생활 동의어, "흡수"는 '땀을 잘 흡수합니다' 처럼 조사가 끼어 '땀 흡수' 를 비껴가는 형태를 잡는다.
+_BANNED = ("통기성", "통풍", "방수", "발수", "항균", "보온", "자외선", "냄새", "땀 흡수", "흡수", "구김")
 _HYPE = ("완벽", "특별한", "놀라운", "최고")
 
 
@@ -147,8 +166,19 @@ def build_prompt(points: list, product: dict, analysis: dict) -> str:
 
 
 def validate(raw: dict, points: list) -> dict:
-    """모델 출력 → {point: desc}. 요청하지 않은 point·금지어·길이 위반은 버린다."""
-    wanted = {p for p in points or [] if p}
+    """모델 출력 → {point: desc}. 요청하지 않은 point·금지어·길이 위반은 버린다.
+
+    프롬프트에 실리는 건 `_sanitize(p)` 라 모델의 echo 도 그 형태다. 키는 원문으로 되돌린다 —
+    호출측(에디터)이 셀러 칩 원문과 exact-string 으로 맞추기 때문. 원문도 함께 받아 두어
+    모델이 칩을 그대로 되돌려줘도 살아남게 한다.
+    """
+    wanted = {}
+    for p in points or []:
+        if not isinstance(p, str) or not p:
+            continue
+        for key in (_sanitize(p), p):
+            if key:
+                wanted.setdefault(key, p)
     out = {}
     for it in (raw or {}).get("items") or []:
         if not isinstance(it, dict):
@@ -157,13 +187,14 @@ def validate(raw: dict, points: list) -> dict:
         if not isinstance(point, str):
             continue
         desc = clean_text(it.get("desc"))
-        if point not in wanted or not desc:
+        raw_point = wanted.get(point)
+        if raw_point is None or not desc:
             continue
         if len(desc) > MAX_DESC_CHARS or not desc.endswith("다."):
             continue
         if any(w in desc for w in _BANNED) or any(w in desc for w in _HYPE):
             continue
-        out[point] = desc
+        out[raw_point] = desc
     return out
 
 
