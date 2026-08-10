@@ -253,28 +253,71 @@ function buildHeader(info, ctx, idFn) {
   return { id: idFn('b'), name: '상품명 헤더', kind: 'info', infoType: 'header', bg: '#ffffff', h: y + 58, info: { ...info }, elements: els };
 }
 
-function buildFeatureIcons(info, ctx, idFn) {
+export const FEATURE_LAYOUTS = [
+  { value: 'stack', label: '세로형' },
+  { value: 'center', label: '중앙형' },
+  { value: 'grid', label: '그리드형' },
+  { value: 'compact', label: '컴팩트' },
+];
+
+const FEATURE_LAYOUT_VALUES = new Set(FEATURE_LAYOUTS.map((l) => l.value));
+
+/* 레이아웃 키가 없거나 모르는 값이면 compact — 이 키가 생기기 전에 만들어진 블록이
+   그대로 재생성되어야 한다(마이그레이션 0건). */
+export function resolveFeatureLayout(info) {
+  const v = info && info.layout;
+  return FEATURE_LAYOUT_VALUES.has(v) ? v : 'compact';
+}
+
+/* 입력 원본 보존 — 필터·placeholder 를 정본으로 저장하면 빈 슬롯이 영구 소실되고
+   안내 문구가 판매 문구로 둔갑한다(리뷰 확정 결함). 레이아웃 4종이 같은 배열을 쓴다. */
+function featureItems(info) {
+  const items = (info.items || []).slice(0, FEATURE_ITEMS_MAX)
+    .map((it) => ({ title: it.title || '', desc: it.desc || '', src: it.src || null }));
+  while (items.length < FEATURE_ITEMS_MIN) items.push({ title: '', desc: '', src: null });
+  return items;
+}
+
+/* 제목 placeholder — 하나라도 채워진 블록이면 빈 칸은 '—', 완전히 빈 블록이면 안내 문구. */
+function featureTitle(it, anyFilled) {
+  return it.title || (anyFilled ? '—' : '핵심 장점을 입력하세요');
+}
+
+function featureBlock(info, layout, items, h, els, idFn) {
+  return { id: idFn('b'), name: '특징 포인트', kind: 'info', infoType: 'benefit_copy',
+    bg: '#ffffff', h, info: { ...info, layout, items }, elements: els };
+}
+
+function buildFeatureCompact(info, ctx, idFn, items) {
   const t = T(idFn);
-  // 포인트는 2~5개. info 는 입력 원본 그대로 보존한다(필터·placeholder 를 정본으로
-  // 저장하면 빈 슬롯이 영구 소실되고 안내 문구가 판매 문구로 둔갑한다 — 리뷰 확정 결함).
-  const rawItems = (info.items || []).slice(0, FEATURE_ITEMS_MAX).map((it) => ({ title: it.title || '', desc: it.desc || '', src: it.src || null }));
-  while (rawItems.length < FEATURE_ITEMS_MIN) rawItems.push({ title: '', desc: '', src: null });
-  const n = rawItems.length;
+  const n = items.length;
   const colW = 880 / n;
   const d = Math.min(110, colW - 36);              // 원형 사진 슬롯 지름 — 개수에 맞춰 축소
-  const anyFilled = rawItems.some((it) => it.title || it.desc || it.src);
+  const anyFilled = items.some((it) => it.title || it.desc || it.src);
   const els = [];
-  rawItems.forEach((it, i) => {
+  items.forEach((it, i) => {
     const x = 60 + i * colW;
     // 도형 대신 원형 이미지 슬롯 — 비어 있으면 '이미지 추가' 로 의류 탭에서 채운다
     els.push({ id: idFn('el'), type: 'image', x: x + colW / 2 - d / 2, y: 56, w: d, h: d, src: it.src || null, radius: d / 2 });
     const ty = 56 + d + 18;
     els.push(t(x, ty, colW, 18, `POINT ${i + 1}`, { font: 'Roboto Mono', size: 11, tracking: 2, color: FAINT, align: 'center' }));
-    els.push(t(x + 10, ty + 26, colW - 20, 24, it.title || (anyFilled ? '—' : '핵심 장점을 입력하세요'), { size: n >= 5 ? 15 : 17, weight: 600, color: '#0e0d14', align: 'center' }));
+    els.push(t(x + 10, ty + 26, colW - 20, 24, featureTitle(it, anyFilled), { size: n >= 5 ? 15 : 17, weight: 600, color: '#0e0d14', align: 'center' }));
     if (it.desc) els.push(t(x + 14, ty + 56, colW - 28, 40, it.desc, { size: 13, color: MUTED, align: 'center', lineHeight: 19 }));
   });
-  const h = 56 + d + 18 + 26 + 30 + (rawItems.some((it) => it.desc) ? 46 : 0) + 50;
-  return { id: idFn('b'), name: '특징 포인트', kind: 'info', infoType: 'benefit_copy', bg: '#ffffff', h, info: { items: rawItems }, elements: els };
+  const h = 56 + d + 18 + 26 + 30 + (items.some((it) => it.desc) ? 46 : 0) + 50;
+  return { els, h };
+}
+
+const FEATURE_BUILDERS = {
+  compact: buildFeatureCompact,
+};
+
+function buildFeatureIcons(info, ctx, idFn) {
+  const layout = resolveFeatureLayout(info);
+  const items = featureItems(info);
+  const build = FEATURE_BUILDERS[layout] || FEATURE_BUILDERS.compact;
+  const { els, h } = build(info, ctx, idFn, items);
+  return featureBlock(info, layout, items, h, els, idFn);
 }
 
 function buildFitGuide(info, ctx, idFn) {

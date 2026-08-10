@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   CARE_LABEL_SENTENCE,
   DEFAULT_INFO_TEMPLATE,
+  FEATURE_LAYOUTS,
   INFO_PRESET_TYPES,
   NEEDS_INPUT,
   applyInfoTemplate,
@@ -14,6 +15,7 @@ import {
   defaultInfoFor,
   needsDefaultTemplate,
   presetTypeOf,
+  resolveFeatureLayout,
 } from '../../src/features/editor/presets/infoPresets.js';
 import { normalizeEditorBlockRole } from '../../src/lib/storyboardTaxonomy.js';
 
@@ -287,4 +289,32 @@ test('template on a doc without anchors appends the flow before ai-notice in ord
     'info:benefit_copy', 'size', 'care', 'info:required_notice',
     'ai-notice',
   ]);
+});
+
+const FEATURE_CTX = {
+  ...CTX,
+  sellingPoints: ['하이웨이스트 디자인', '섬세한 지퍼 디테일', '플리츠 안감 마감'],
+};
+
+test('feature layout falls back to compact when info.layout is missing or unknown', () => {
+  assert.equal(resolveFeatureLayout({ items: [] }), 'compact');
+  assert.equal(resolveFeatureLayout({ items: [], layout: null }), 'compact');
+  assert.equal(resolveFeatureLayout({ items: [], layout: 'nope' }), 'compact');
+  assert.equal(resolveFeatureLayout({ items: [], layout: 'stack' }), 'stack');
+});
+
+test('legacy feature block without layout renders byte-identical to explicit compact', () => {
+  const items = [
+    { title: '하이웨이스트 디자인', desc: '허리선이 높아 다리가 더 길어 보입니다.', src: null },
+    { title: '섬세한 지퍼 디테일', desc: '', src: null },
+  ];
+  const legacy = buildInfoBlock('feature_icons', { items }, FEATURE_CTX, seqId());
+  const explicit = buildInfoBlock('feature_icons', { items, layout: 'compact' }, FEATURE_CTX, seqId());
+  assert.deepEqual(legacy.elements, explicit.elements);
+  assert.equal(legacy.h, explicit.h);
+});
+
+test('FEATURE_LAYOUTS lists exactly the four supported layouts', () => {
+  assert.deepEqual(FEATURE_LAYOUTS.map((l) => l.value), ['stack', 'center', 'grid', 'compact']);
+  for (const l of FEATURE_LAYOUTS) assert.ok(l.label, `${l.value}: has label`);
 });
