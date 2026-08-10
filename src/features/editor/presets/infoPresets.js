@@ -332,8 +332,37 @@ function buildFeatureStack(info, ctx, idFn, items) {
   return { els, h: y - FEATURE_STACK_GAP + 50 };
 }
 
+const FEATURE_CENTER_IMG_H = 620;
+const FEATURE_CENTER_GAP = 80;
+const FEATURE_BADGE_W = 200;        // 텍스트 길이와 무관한 고정 폭 — 번호는 상한 5라 2자리로 안 간다
+
+function buildFeatureCenter(info, ctx, idFn, items) {
+  const t = T(idFn); const rect = RECT(idFn); const slot = SLOT(idFn);
+  const anyFilled = items.some((it) => it.title || it.desc || it.src);
+  const els = [];
+  let y = 56;
+  items.forEach((it, i) => {
+    els.push({ ...slot(60, y, FEATURE_IMG_W, FEATURE_CENTER_IMG_H), src: it.src || null });
+    const by = y + FEATURE_CENTER_IMG_H + 36;
+    const bx = 60 + (880 - FEATURE_BADGE_W) / 2;
+    els.push(rect(bx, by, FEATURE_BADGE_W, 34, '#f5f5f5', 6));
+    els.push(t(bx, by + 9, FEATURE_BADGE_W, 18, `DETAIL POINT ${String(i + 1).padStart(2, '0')}`,
+      { font: 'Roboto Mono', size: 12, tracking: 2, color: MUTED, align: 'center' }));
+    els.push(t(60, by + 58, 880, 34, featureTitle(it, anyFilled), { size: 22, weight: 600, color: '#0e0d14', align: 'center' }));
+    let bottom = by + 58 + 34;
+    if (it.desc) {
+      const dh = estLines(it.desc, 760, 15) * 26;
+      els.push(t(120, by + 104, 760, dh, it.desc, { size: 15, color: MUTED, lineHeight: 26, align: 'center' }));
+      bottom = by + 104 + dh;
+    }
+    y = bottom + FEATURE_CENTER_GAP;
+  });
+  return { els, h: y - FEATURE_CENTER_GAP + 56 };
+}
+
 const FEATURE_BUILDERS = {
   stack: buildFeatureStack,
+  center: buildFeatureCenter,
   compact: buildFeatureCompact,
 };
 

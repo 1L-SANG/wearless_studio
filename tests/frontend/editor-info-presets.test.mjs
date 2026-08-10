@@ -365,3 +365,23 @@ test('stack layout omits the description element when a point has none', () => {
   const texts = block.elements.filter((el) => el.type === 'text').map((el) => el.text);
   assert.deepEqual(texts, ['DETAIL POINT', 'A', 'B']);
 });
+
+test('center layout numbers each point with a zero-padded badge', () => {
+  const block = buildInfoBlock('feature_icons', { layout: 'center', items: THREE_POINTS }, FEATURE_CTX, seqId());
+  const badges = block.elements.filter((el) => el.type === 'text' && String(el.text).startsWith('DETAIL POINT '));
+  assert.deepEqual(badges.map((el) => el.text), ['DETAIL POINT 01', 'DETAIL POINT 02', 'DETAIL POINT 03']);
+  for (const b of badges) assert.equal(b.style.align, 'center', 'badge text centered');
+  const plates = block.elements.filter((el) => el.type === 'shape');
+  assert.equal(plates.length, 3, 'one badge plate per point');
+  assertFitsInBlock(block, 'center');
+});
+
+test('center layout centers title and description', () => {
+  const block = buildInfoBlock('feature_icons', { layout: 'center', items: THREE_POINTS }, FEATURE_CTX, seqId());
+  for (const it of THREE_POINTS) {
+    const title = block.elements.find((el) => el.text === it.title);
+    const desc = block.elements.find((el) => el.text === it.desc);
+    assert.equal(title.style.align, 'center', `title centered: ${it.title}`);
+    assert.equal(desc.style.align, 'center', `desc centered: ${it.title}`);
+  }
+});
