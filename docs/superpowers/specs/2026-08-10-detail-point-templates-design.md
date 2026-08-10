@@ -118,10 +118,10 @@ feature_copy.generate()
    └─ 2단계 LLM 1콜 (미스만 묶어서)   … 실패 → desc 빈칸 (잡은 성공)
         │
         ▼
-copy_qc.review()  (AG-03 기존 재사용 — 단정 표현 검수)
+결정론 출력 필터 (금지어·길이·종결 — 위반 항목만 폐기)
         │
         ▼
-analysis.featureCopy = [{ point, title, desc }]   (repo.save_analysis)
+analysis.featureCopy = [{ point, desc }]   (repo.save_analysis)
         │
         ▼
 Editor buildInfoCtx → ctx.featureCopy → defaultInfoFor('feature_icons') → items 프리필
@@ -145,11 +145,16 @@ Editor buildInfoCtx → ctx.featureCopy → defaultInfoFor('feature_icons') → 
 | 허용 — 확인된 구조 서술 | "측면에 카고 포켓을 더했습니다" |
 | **금지** — 미확인 기능성 단정 | "통기성이 좋아 시원합니다", "구김이 가지 않습니다" |
 
-사전 문구는 작성 시점에 이 규칙으로 걸러 넣고, LLM 생성분은 프롬프트 금지 조항 + AG-03 검수로 이중으로 막는다.
+사전 문구는 작성 시점에 이 규칙으로 걸러 넣고(테스트가 상시 감시), LLM 생성분은 프롬프트 금지 조항 + **결정론 출력 필터**로 이중으로 막는다.
+
+AG-03(`copy_qc.review`)은 쓰지 않는다. 검수 대상이 "금지 어휘 · 60자 · 합니다체 종결"이라는 닫힌 규칙 집합이라 문자열 검사로 전부 잡히고, 여기에 LLM 검수를 한 번 더 얹으면 잡 지연만 두 배가 된다. 반대로 컷 카피(AG-02)는 판정 기준이 열려 있어 AG-03이 계속 필요하다 — 그쪽 경로는 그대로 둔다.
 
 ### 5.4 셀러 입력 보호
 
+- **제목은 만들지 않는다.** `items[].title` 은 셀러가 친 칩 문자열 그대로다. 생성 대상은 `desc` 한 줄뿐이라 `featureCopy` 항목은 `{point, desc}` 두 필드다.
 - 서버는 `analysis.featureCopy` 에만 쓴다. 셀러가 입력한 `sellingPoints` · `aiSuggestedPoints` 는 **읽기만** 한다.
+- `save_analysis` 는 REPLACE 시맨틱이라, 셀러 클라이언트가 다음에 분석을 저장하면 `featureCopy` 가 지워진다. `repo._SERVER_OWNED_ANALYSIS_KEYS` 에 `"featureCopy"` 를 추가해 이월시킨다 — `sourceMirrored` 와 같은 구멍이다.
+- 잡이 도는 동안 셀러가 분석을 고칠 수 있으므로, 기록 시점에 `get_analysis` 로 **다시 읽어** `featureCopy` 만 얹는다. 잡 시작 때 읽은 사본으로 덮으면 그 사이 편집이 날아간다.
 - 셀러가 칩 문구를 고치면 그 항목의 캐시는 무효 — `point` 문자열이 달라져 매칭이 안 되고, 다음 상세페이지 생성 때 다시 만들어진다.
 - 에디터에서 포인트를 직접 추가하면 `desc` 는 빈칸이다(수동 입력). 클라이언트에 사전을 복제하지 않는다.
 
@@ -171,6 +176,7 @@ Editor buildInfoCtx → ctx.featureCopy → defaultInfoFor('feature_icons') → 
 | `server/app/agents/feature_copy.py` (신규) | 사전 룩업 + LLM 폴백 + JSON 스키마 |
 | `server/prompts/feature_copy_v1.txt` (신규) | few-shot 프롬프트 (사전 문구 6~8개를 예시로) |
 | `server/app/workers/detail_page_job.py` | 카피 단계에 `feature_copy` 1콜 + `save_analysis` 로 `featureCopy` 기록 |
+| `server/app/repo.py:281` | `_SERVER_OWNED_ANALYSIS_KEYS` 에 `"featureCopy"` 추가 (§5.4) |
 
 `page_assembler.py` 는 건드리지 않는다 — 특징 포인트 블록은 지금도 클라이언트 `applyInfoTemplate` 이 만든다.
 
