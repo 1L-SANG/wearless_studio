@@ -286,11 +286,29 @@ function FeatureIconsForm({ info, setInfo, onPickPhoto, onDraftCopy }) {
     return () => { cancelled = true; };
     // 폼을 여는 순간의 상태로 한 번만 판단한다 — info 를 의존성에 넣으면 타이핑마다 다시 돈다
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* 자동 채움은 빈칸만 건드린다. 그래서 한번 아무 글자나 넣어 둔 칸은 자동으로는 영영 안 바뀐다
+     — 셀러가 직접 부를 때는 덮어쓴다(취소하면 통째로 되돌아간다). */
+  const redraft = async () => {
+    if (drafting) return;
+    setDrafting(true); setDraftError('');
+    try {
+      const items = await onDraftCopy();
+      const byPoint = new Map((items || []).map((c) => [c.point, c.desc]));
+      setInfo((f) => ({ ...f, items: f.items.map((it) => (byPoint.has(it.title) ? { ...it, desc: byPoint.get(it.title) } : it)) }));
+      if (!byPoint.size) setDraftError('만들 수 있는 문구가 없어요 — 분석 페이지의 강조특징을 먼저 채워주세요.');
+    } catch {
+      setDraftError('설명 문구를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setDrafting(false);
+    }
+  };
+
   return <FeatureIconsFormBody info={info} setInfo={setInfo} onPickPhoto={onPickPhoto}
-    drafting={drafting} draftError={draftError} />;
+    drafting={drafting} draftError={draftError} onRedraft={onDraftCopy ? redraft : null} />;
 }
 
-function FeatureIconsFormBody({ info, setInfo, onPickPhoto, drafting, draftError }) {
+function FeatureIconsFormBody({ info, setInfo, onPickPhoto, drafting, draftError, onRedraft }) {
   const setItem = (i, patch) => setInfo((f) => ({ ...f, items: f.items.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
   const layout = resolveFeatureLayout(info);
   // 그리드형은 설명글을 그리지 않는다 — 입력칸은 흐리게 두되 값은 지우지 않는다.
@@ -336,10 +354,19 @@ function FeatureIconsFormBody({ info, setInfo, onPickPhoto, drafting, draftError
             </div>
           ))}
         </div>
-        {info.items.length < FEATURE_ITEMS_MAX && (
-          <Button variant="ghost" size="sm" icon="plus" style={{ marginTop: 8 }}
-            onClick={() => setInfo((f) => ({ ...f, items: [...f.items, { title: '', desc: '', src: null }] }))}>포인트 추가</Button>
-        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+          {info.items.length < FEATURE_ITEMS_MAX && (
+            <Button variant="ghost" size="sm" icon="plus"
+              onClick={() => setInfo((f) => ({ ...f, items: [...f.items, { title: '', desc: '', src: null }] }))}>포인트 추가</Button>
+          )}
+          {/* 자동 채움은 빈칸에만 손대므로, 이미 쓰여 있는 설명을 다시 만들려면 여기로 부른다 */}
+          {onRedraft && (
+            <Button variant="quiet" size="sm" icon="sparkles" disabled={drafting} onClick={onRedraft}
+              title="분석의 강조특징으로 설명을 다시 만들어요 — 지금 쓰여 있는 설명은 새 문구로 바뀌어요">
+              {drafting ? '만드는 중…' : '설명 다시 만들기'}
+            </Button>
+          )}
+        </div>
       </Field>
     </>
   );
