@@ -385,3 +385,51 @@ test('center layout centers title and description', () => {
     assert.equal(desc.style.align, 'center', `desc centered: ${it.title}`);
   }
 });
+
+test('grid layout pairs each photo with a numbered card and skips descriptions', () => {
+  const block = buildInfoBlock('feature_icons', { layout: 'grid', items: THREE_POINTS }, FEATURE_CTX, seqId());
+  const slots = block.elements.filter((el) => el.type === 'image');
+  const cards = block.elements.filter((el) => el.type === 'shape');
+  const rules = block.elements.filter((el) => el.type === 'line');
+  assert.equal(slots.length, 3, 'one photo per point');
+  assert.equal(cards.length, 3, 'one card per point');
+  assert.equal(rules.length, 3, 'one underline per point');
+  for (const s of slots) { assert.equal(s.w, 400); assert.equal(s.h, 400); }
+  const numbers = block.elements.filter((el) => el.type === 'text' && /^\d\d$/.test(String(el.text)));
+  assert.deepEqual(numbers.map((el) => el.text), ['01', '02', '03']);
+  for (const it of THREE_POINTS) {
+    assert.ok(block.elements.some((el) => el.text === it.title), `title rendered: ${it.title}`);
+    assert.ok(!block.elements.some((el) => el.text === it.desc), `desc NOT rendered: ${it.title}`);
+  }
+  assertFitsInBlock(block, 'grid');
+});
+
+test('grid layout keeps descriptions in info so switching back restores them', () => {
+  const grid = buildInfoBlock('feature_icons', { layout: 'grid', items: THREE_POINTS }, FEATURE_CTX, seqId());
+  assert.deepEqual(grid.info.items.map((it) => it.desc), THREE_POINTS.map((it) => it.desc));
+  const back = buildInfoBlock('feature_icons', { ...grid.info, layout: 'stack' }, FEATURE_CTX, seqId());
+  for (const it of THREE_POINTS) {
+    assert.ok(back.elements.some((el) => el.text === it.desc), `desc restored: ${it.title}`);
+  }
+});
+
+test('slot photos carry by ordinal across every feature layout', () => {
+  const withPhotos = THREE_POINTS.map((it, i) => ({ ...it, src: `https://cdn.example/p${i + 1}.jpg` }));
+  for (const { value } of FEATURE_LAYOUTS) {
+    const built = buildInfoBlock('feature_icons', { layout: value, items: withPhotos }, FEATURE_CTX, seqId());
+    const srcs = built.elements.filter((el) => el.type === 'image').map((el) => el.src);
+    assert.deepEqual(srcs, withPhotos.map((it) => it.src), `${value}: photos in item order`);
+
+    // 슬롯을 캔버스에서 채우면 elements 와 info 가 함께 갱신된다(재생성 후에도 연결 유지)
+    const blank = buildInfoBlock('feature_icons', { layout: value, items: THREE_POINTS }, FEATURE_CTX, seqId());
+    const third = blank.elements.filter((el) => el.type === 'image')[2];
+    const filled = applySlotFillToInfo(blank, third.id, { src: 'https://cdn.example/third.jpg' });
+    assert.equal(filled.info.items[2].src, 'https://cdn.example/third.jpg', `${value}: info updated at the same ordinal`);
+    assert.equal(filled.info.items[0].src, null, `${value}: other ordinals untouched`);
+
+    // 재생성 시 이전 elements 의 사진은 같은 서수로만 이월된다
+    const carried = carrySlotImages(filled.elements, buildInfoBlock('feature_icons', { layout: value, items: THREE_POINTS }, FEATURE_CTX, seqId()));
+    const carriedSrcs = carried.elements.filter((el) => el.type === 'image').map((el) => el.src);
+    assert.deepEqual(carriedSrcs, [null, null, 'https://cdn.example/third.jpg'], `${value}: carried by ordinal`);
+  }
+});

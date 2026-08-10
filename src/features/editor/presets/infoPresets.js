@@ -360,9 +360,34 @@ function buildFeatureCenter(info, ctx, idFn, items) {
   return { els, h: y - FEATURE_CENTER_GAP + 56 };
 }
 
+const FEATURE_GRID_PHOTO = 400;     // 좌 사진 정사각 한 변
+const FEATURE_GRID_CARD_X = 500;    // 60 + 400 + 40(칼럼 간격)
+const FEATURE_GRID_CARD_W = 440;    // 500 + 440 = 940 (우 마진)
+const FEATURE_GRID_GAP = 24;
+
+function buildFeatureGrid(info, ctx, idFn, items) {
+  const t = T(idFn); const rect = RECT(idFn); const rule = RULE(idFn); const slot = SLOT(idFn);
+  const anyFilled = items.some((it) => it.title || it.desc || it.src);
+  const els = [];
+  let y = 56;
+  items.forEach((it, i) => {
+    els.push({ ...slot(60, y, FEATURE_GRID_PHOTO, FEATURE_GRID_PHOTO), src: it.src || null });
+    els.push(rect(FEATURE_GRID_CARD_X, y, FEATURE_GRID_CARD_W, FEATURE_GRID_PHOTO, '#fafafa', 12));
+    els.push(t(FEATURE_GRID_CARD_X + 32, y + 32, 200, 26, String(i + 1).padStart(2, '0'),
+      { font: 'Roboto Mono', size: 20, weight: 600, color: '#0e0d14' }));
+    els.push(rule(FEATURE_GRID_CARD_X + 32, y + 68, 24, '#0e0d14', 1.5));
+    // 라벨은 카드 하단 — 설명글은 렌더하지 않는다(레퍼런스), 값은 info 에 그대로 남는다
+    els.push(t(FEATURE_GRID_CARD_X + 32, y + FEATURE_GRID_PHOTO - 72, FEATURE_GRID_CARD_W - 64, 26,
+      featureTitle(it, anyFilled), { size: 15, weight: 600, color: '#0e0d14' }));
+    y += FEATURE_GRID_PHOTO + FEATURE_GRID_GAP;
+  });
+  return { els, h: y - FEATURE_GRID_GAP + 50 };
+}
+
 const FEATURE_BUILDERS = {
   stack: buildFeatureStack,
   center: buildFeatureCenter,
+  grid: buildFeatureGrid,
   compact: buildFeatureCompact,
 };
 
