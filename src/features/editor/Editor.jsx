@@ -26,7 +26,7 @@ import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, fillFeatureCopy, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
+import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
 
@@ -96,13 +96,30 @@ function LicenseVerifyEl({ el, base }) {
 
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
-function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelect, onPatch, onAddImage, onEdit, onCropStart }) {
+function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelect, onSelectBlock, onPatch, onAddImage, onEdit, onCropStart }) {
   const ref = useRef(null);
   if (el.hidden) return null;
+
+  /* 글자 위를 눌렀는지, 상자 안 빈 곳을 눌렀는지 가른다 — 판정은 pointMissesTextLines.
+     이미 고른/편집 중인 요소는 상자 전체를 살려 둔다(여백을 잡고 끌 수 있어야 한다). */
+  const missesGlyphs = (e) => {
+    if (el.type !== 'text' || selected || editing) return false;
+    const node = ref.current;
+    if (!node) return false;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    return pointMissesTextLines([...range.getClientRects()], e.clientX, e.clientY);
+  };
 
   const pick = (e) => {
     if (preview) return;
     if (el.locked) return;
+    if (missesGlyphs(e)) {
+      if (!onSelectBlock) return;
+      e.stopPropagation();
+      onSelectBlock();
+      return;
+    }
     e.stopPropagation();
     onSelect(el, e.shiftKey);
   };
@@ -177,7 +194,7 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
         fontStyle: s.italic ? 'italic' : 'normal',
         textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none' }}
         onPointerDown={(e) => { if (!editing) pick(e); }}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => { if (!missesGlyphs(e)) e.stopPropagation(); }}
         onDoubleClick={(e) => { e.stopPropagation(); onEdit(el.id); setTimeout(() => ref.current && ref.current.focus(), 0); }}
         contentEditable={editing} suppressContentEditableWarning
         onBlur={(e) => { onEdit(null); onPatch(blockId, el.id, { text: e.currentTarget.textContent }); }}>
@@ -264,7 +281,8 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
           (crop && crop.elId === el.id) ? null : (
             <CanvasElement key={el.id} el={el} blockId={block.id} scale={scale} preview={false}
               selected={selEls && selEls.includes(el.id)} editing={editEl === el.id}
-              onSelect={(e, additive) => onSelectEl(block.id, e, additive)} onPatch={onElPatch}
+              onSelect={(e, additive) => onSelectEl(block.id, e, additive)}
+              onSelectBlock={() => onSelectBlock(block.id)} onPatch={onElPatch}
               onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit}
               onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
           )
