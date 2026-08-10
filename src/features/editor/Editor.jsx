@@ -194,7 +194,9 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
         fontStyle: s.italic ? 'italic' : 'normal',
         textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none' }}
         onPointerDown={(e) => { if (!editing) pick(e); }}
-        onClick={(e) => { if (!missesGlyphs(e)) e.stopPropagation(); }}
+        /* pick 이 이미 요소든 블록이든 골라 놨다 — 어느 쪽이든 이 클릭은 캔버스 바닥까지
+           가면 안 된다. 거기 onClick 이 선택을 지운다. */
+        onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => { e.stopPropagation(); onEdit(el.id); setTimeout(() => ref.current && ref.current.focus(), 0); }}
         contentEditable={editing} suppressContentEditableWarning
         onBlur={(e) => { onEdit(null); onPatch(blockId, el.id, { text: e.currentTarget.textContent }); }}>
@@ -271,7 +273,13 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
 
   return (
     <div className={`canvas-block${blockActive ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
-      onClick={(e) => { if (e.target === e.currentTarget || e.target.classList.contains('block-clip')) onSelectBlock(block.id); }}
+      /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
+         멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
+      onClick={(e) => {
+        if (e.target !== e.currentTarget && !e.target.classList.contains('block-clip')) return;
+        e.stopPropagation();
+        onSelectBlock(block.id);
+      }}
       style={{ background: block.bg, height: blockH, '--inv': 1 / (scale || 1) }}
       onDragOver={(e) => { if (e.dataTransfer.types.includes('text/object')) { e.preventDefault(); setObjOver(true); } }}
       onDragLeave={() => setObjOver(false)}
@@ -324,8 +332,9 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
       </div>
       {blockSelected && (
         <>
-          <span className="blk-resize top" onPointerDown={(e) => resize(e, 'top')} title="위로 높이 조절"><span className="pill-bar" /></span>
-          <span className="blk-resize bottom" onPointerDown={(e) => resize(e, 'bottom')} title="아래로 높이 조절"><span className="pill-bar" /></span>
+          {/* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */}
+          <span className="blk-resize top" onPointerDown={(e) => resize(e, 'top')} onClick={(e) => e.stopPropagation()} title="위로 높이 조절"><span className="pill-bar" /></span>
+          <span className="blk-resize bottom" onPointerDown={(e) => resize(e, 'bottom')} onClick={(e) => e.stopPropagation()} title="아래로 높이 조절"><span className="pill-bar" /></span>
         </>
       )}
       <div className="quick" onClick={(e) => e.stopPropagation()}>
