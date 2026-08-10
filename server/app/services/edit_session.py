@@ -83,7 +83,14 @@ STATUSES = ("queued", "running", "pass", "review_required", "reject", "failed")
 TERMINAL = ("pass", "review_required", "reject", "failed")
 _TRANSITIONS = {
     "queued": ("running", "failed"),
-    "running": ("pass", "review_required", "reject", "failed"),
+    # `running → running` 은 **재진입**이다. 워커가 running 을 커밋한 직후 죽으면 잡이
+    # requeue 되고, 이어받은 워커는 같은 세션을 running 으로 다시 표시하려 한다. 그것을
+    # 금지하면 복구 가능한 크래시가 사용자에게 "이미 처리된 편집 요청이에요" 라는 종결
+    # 오류로 나가고 세션은 영원히 running 에 남는다(2026-08-10 확인).
+    #
+    # provider 를 두 번 부르는 것은 이 전이가 막는 것이 아니라 **잡 행에 영속된 이미지
+    # 예산**이 막는다 — 그쪽이 requeue 를 건너 살아남는 방어다.
+    "running": ("pass", "review_required", "reject", "failed", "running"),
     "pass": (),
     "review_required": (),
     "reject": (),

@@ -22,6 +22,10 @@ from dataclasses import dataclass
 REASON_OUTCOME_REGENERATE = "qc_outcome_regenerate"
 REASON_HYBRID_NOT_APPLIED = "hybrid_composite_not_applied"
 REASON_PATTERN_FIDELITY_FAILED = "pattern_fidelity_failed"
+#: 청구 보류 사유 — 소비 가능한 컷이 하나도 없다.
+REASON_NO_CONSUMABLE_CUT = "no_consumable_cut"
+#: enforce 모드에서 판정을 시도했으나 실패 — "판정 없음"과 구분되는 상태다.
+REASON_QC_NOT_MEASURED = "qc_enforced_but_not_measured"
 
 AUTHORITY_VERSION = "mannequin_cut_authority_v1"
 
@@ -76,6 +80,12 @@ def evaluate_mannequin_cut_authority(qc_scores: dict | None) -> CutAuthority:
     """
     if not isinstance(qc_scores, dict):
         return _ALLOWED
+    if qc_scores.get("imageQcErrored") is True:
+        # enforce 모드에서 판정을 **시도했는데 실패**했다. 위의 관용("판정 신호가 없는
+        # 것은 나쁨이 아니다")은 애초에 판정을 안 한 낡은 컷을 위한 것이지, 판정이
+        # 필요하다고 선언해 놓고 못 잰 컷을 위한 것이 아니다. 둘 다 `p2=None` 이라
+        # 구분되지 않던 것을 이 표식이 가른다. 낡은 컷에는 이 키가 없다.
+        return CutAuthority(False, REASON_QC_NOT_MEASURED)
     if qc_scores.get("outcome") == "regenerate":
         return CutAuthority(False, REASON_OUTCOME_REGENERATE)
     if _hybrid_blocks(qc_scores):
@@ -90,3 +100,50 @@ def cut_is_consumable(cut: dict | None) -> bool:
     if not isinstance(cut, dict):
         return False
     return evaluate_mannequin_cut_authority(cut.get("qc_scores")).allowed
+
+
+@dataclass(frozen=True)
+class BillableCharge:
+    """이번 잡에서 **확정할 금액**과 그 근거."""
+
+    charge: int
+    consumable: int
+    reason: str | None = None
+    version: str = AUTHORITY_VERSION
+
+
+
+def resolve_billable_charge(candidates, reserved) -> BillableCharge:
+    """예약액을 확정할지 판정한다 — **소비 가능한 컷이 하나라도 있어야** 한다.
+
+    청구는 소비와 **같은 술어**를 쓴다(`cut_is_consumable`). 청구 전용 규칙을 따로 만들면
+    "쓸 수는 없는데 돈은 받는" 상태가 두 규칙 사이의 틈에서 다시 생긴다 — 그 틈이 바로
+    이 게이트가 막으려는 결함이었다.
+
+    예외는 **닫는 쪽**으로 읽는다. 판정기가 터졌다는 것은 권한을 확인하지 못했다는 뜻이지
+    권한이 있다는 뜻이 아니다. 확인하지 못한 것에 과금하지 않는다.
+
+    `reserved` 는 예약 시점 견적이므로 후보 수와 무관하게 **한 번만** 확정한다 —
+    소비 가능한 컷이 둘이어도 두 배로 받지 않는다.
+
+    **청구를 소비보다 엄격하게 만들지 않는다.** 한때 "측정된 증거가 있어야 과금" 규칙을
+    덧댔다가, `merge_qc_scores` 가 QC 미실행 시 정당하게 `None` 을 돌려준다는 사실 때문에
+    멀쩡한 잡 36개가 실패했다. `qc_scores` 부재는 legacy 관용이지 결함이 아니다. 그 관용을
+    바꾸려면 **소비 술어 자체**를 바꿔야 하고, 그것은 청구 쪽에서 몰래 할 일이 아니다.
+    """
+    try:
+        reserved_amount = max(0, int(reserved or 0))
+    except (TypeError, ValueError):
+        reserved_amount = 0
+
+    consumable = 0
+    for cut in (candidates or []):
+        try:
+            if cut_is_consumable(cut):
+                consumable += 1
+        except Exception:          # noqa: BLE001 — 확인 실패 = 권한 없음
+            continue
+
+    if consumable == 0:
+        return BillableCharge(0, 0, REASON_NO_CONSUMABLE_CUT)
+    return BillableCharge(reserved_amount, consumable, None)

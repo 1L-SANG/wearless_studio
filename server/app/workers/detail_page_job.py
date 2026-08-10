@@ -31,6 +31,7 @@ from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
 from ..services import mannequin_cut_authority
+from ..services.mannequin_cut_authority import cut_is_consumable
 from ..services.generation_run import RunLogger
 from ._common import emit_job_event as _emit
 from .mannequin_job import _runlog_begin, _runlog_finish
@@ -560,6 +561,11 @@ async def run_detail_page_job(app, job: dict) -> None:
                     raise ValueError("no_approved_baseline")
                 if active_baseline["id"] != requested_baseline_id:
                     raise ValueError("baseline_changed")
+                # 승인 게이트가 생기기 전에 승인된 컷이 그대로 active 로 남아 있을 수 있다.
+                # 이 컷은 여기서 **원단 진실**로 쓰이므로, 소비 시점에 다시 판정한다.
+                # 판정이 없는 낡은 컷은 여전히 통과한다 — 막히는 것은 막으라고 적힌 컷뿐이다.
+                if not cut_is_consumable(active_baseline):
+                    raise ValueError("baseline_not_consumable")
                 mannequin_asset = {
                     "id": active_baseline.get("asset_id"),
                     "asset_id": active_baseline.get("asset_id"),

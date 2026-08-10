@@ -105,12 +105,35 @@ def synthesize_pattern_lab(
     return np.repeat(line[None, :, :], height, axis=0).astype(np.float32)
 
 
-def _homography_validity(H: np.ndarray, w: int, h: int, quad_area: float) -> dict:
-    """단위 사각형→quad 사상의 det/stretch 를 격자에서 검사 (해석적 Jacobian)."""
-    xs = np.linspace(0, w - 1, 12)
-    ys = np.linspace(0, h - 1, 12)
+def _homography_validity(H: np.ndarray, w: int, h: int, quad_area: float,
+                         origin: tuple = (0.0, 0.0), quad=None) -> dict:
+    """단위 사각형→quad 사상의 det/stretch 를 격자에서 검사 (해석적 Jacobian).
+
+    `origin` 은 격자가 시작하는 원본 좌표다. 기본값 0 은 단위 사각형에서 출발하는
+    호출자를 위한 것이고, **원본 안의 특정 quad** 를 검사하는 호출자는 그 quad 의
+    좌상단을 넘겨야 한다. 넘기지 않으면 엉뚱한 자리를 표본화해 멀쩡한 사상을
+    뒤집혔다고 보고한다(실측: quad 가 (64,273) 에서 시작하는데 (0,0)…(372,269) 를 쟀다).
+    """
+    ox, oy = float(origin[0]), float(origin[1])
+    # 표본 밀도를 quad 크기에 맞춘다. 12x12(144점) 고정은 **정의된 한도를 부정확하게**
+    # 적용한다 — 실측: 실제 초과 비율 0.0060(한도 0.01 미만)인 정상 사상이 거친 표본에서
+    # 0.0139 로 나와 거부됐다. 한도를 바꾸는 것이 아니라, 그 한도를 재는 눈금을 촘촘히
+    # 한다. 상한 96 은 계산량을 묶기 위한 것이다.
+    n = int(np.clip(int(max(w, h)), 12, 96))
+    xs = np.linspace(ox, ox + w - 1, n)
+    ys = np.linspace(oy, oy + h - 1, n)
     gx, gy = np.meshgrid(xs, ys)
-    pts = np.stack([gx.ravel(), gy.ravel(), np.ones(gx.size)], axis=0)
+    px, py = gx.ravel(), gy.ravel()
+    if quad is not None:
+        # 경계 상자는 quad **밖**을 포함한다. 볼록한 정상 사상도 그 바깥점에서 부호가
+        # 뒤집혀 거부됐다(실측: 실제 quad 안 86,027 px 전부 양수인데 상자 표본에서
+        # neg_jacobian=1). 검사는 실제로 그리는 영역에서만 의미가 있다.
+        poly = np.asarray(quad, np.float32).reshape(-1, 1, 2)
+        inside = np.array([cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0
+                           for x, y in zip(px, py)], dtype=bool)
+        if inside.any():
+            px, py = px[inside], py[inside]
+    pts = np.stack([px, py, np.ones(px.size)], axis=0)
     a, b, c = H[0], H[1], H[2]
     denom = c @ pts
     du_dx = (a[0] * denom - (a @ pts) * c[0]) / denom ** 2
@@ -155,10 +178,32 @@ def _decal_source_eligible(sq: np.ndarray, tq: np.ndarray) -> tuple[bool, str]:
     return True, ""
 
 
+def homogeneous_divide(num: np.ndarray, w: np.ndarray) -> np.ndarray:
+    """동차 좌표 나눗셈 — **부호를 보존한다**. 두 호출부가 같은 규칙을 쓰도록 한 곳에.
+
+    `np.maximum(w, eps)` 로 클램프하면 w 가 음수일 때 1e-9 로 바뀌어 좌표가 폭발한다.
+    투영 나눗셈은 부호가 의미를 갖는다: 정상적인 quad 쌍도 전 영역에서 w<0 일 수 있고
+    (실측: -1.5753…-0.3078), 그러면 클램프가 멀쩡한 부위를 coverage 0.0 으로 만든다.
+    크기만 막고 부호는 살린다.
+    """
+    # 0 근처에서도 **부호를 살린다**. `1e-9` 를 그대로 넣으면 -1e-10 이 +1e-9 이 되어
+    # 좌표 부호가 뒤집힌다(실측: num=1, w=-1e-10 → +1e9). 크기만 바닥을 깔고 부호는 둔다.
+    floor = np.where(np.signbit(w), -1e-9, 1e-9)
+    safe = np.where(np.abs(w) > 1e-9, w, floor)
+    return num / safe
+
+
 def _apply_homography(H: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """동차 좌표 나눗셈 — **부호를 보존한다**.
+
+    `np.maximum(w, eps)` 로 클램프하면 w 가 음수일 때 1e-9 로 바뀌어 좌표가 폭발한다.
+    투영 나눗셈은 부호가 의미를 갖는다: 정상적인 quad 쌍도 전 영역에서 w<0 일 수 있고
+    (실측: w 가 -1.5753…-0.3078), 그러면 이 클램프가 멀쩡한 부위를
+    `scale_resample_unsupported`·coverage 0.0 으로 만들었다. 크기만 막고 부호는 살린다.
+    """
     ph = np.concatenate([pts.astype(np.float64), np.ones((len(pts), 1))], axis=1)
     out = (H @ ph.T).T
-    return (out[:, :2] / np.maximum(out[:, 2:3], 1e-9)).astype(np.float32)
+    return homogeneous_divide(out[:, :2], out[:, 2:3]).astype(np.float32)
 
 
 def _expected_component_profile(model: StripeModel, K: int) -> np.ndarray:
@@ -829,6 +874,9 @@ def composite_stripe(
             # 박스 자체는 멀쩡해도 garment mask 와 교집합이 비거나 너무 작으면 이후
             # median/remap 은 NaN 을 만들고 "측정 가능"으로 위장한다. 좌표·마스크 계약을
             # 먼저 닫아 JSON metric 에 NaN 이 들어갈 여지도 없앤다.
+            # 이웃 분기들은 전부 칠을 걷어낸다 — 여기만 남기면 측정 불가로 표시된
+            # 부위가 그려진 채로 나간다(실측: 961 px 전부 carrier 와 다른 채 남았다).
+            painted[comp_mask > 0] = 0
             components_review.append(name)
             component_reasons[name] = "target_mask_insufficient"
             cross_surface_components[name] = {
@@ -876,14 +924,45 @@ def composite_stripe(
             }
             continue
         Hc = cv2.getPerspectiveTransform(sq, tq)
+        # **부위 사상도 torso panel 과 같은 유효성 검사를 받아야 한다.** 예전에는
+        # `np.maximum(w, eps)` 가 지평선을 넘는 사상을 좌표 폭발로 붕괴시켜 우연히
+        # 걸러졌다. 부호를 보존하면 그런 사상이 **그려지고** 하류 QC 까지 통과한다
+        # (실측: 비볼록 target 에서 음수 w 256 px, 비양수 Jacobian 2,539 px 인데
+        # coverage 0.7796·period 상대오차 0.0042 로 통과했다).
+        _sq_w = int(sq[:, 0].max() - sq[:, 0].min()) + 1
+        _sq_h = int(sq[:, 1].max() - sq[:, 1].min()) + 1
+        comp_validity = _homography_validity(
+            Hc, _sq_w, _sq_h, _quad_area(sq),
+            origin=(float(sq[:, 0].min()), float(sq[:, 1].min())), quad=sq)
+        # torso panel 은 **반전과 과신장 둘 다** 거부한다. 하나만 옮겨 오면 나머지가
+        # 그대로 새 나간다(실측: stretch_over_frac 1.0 대 한도 0.01, 이방성 8.89 인
+        # 부위가 3,059 px 전부 그려지고 하류 QC 까지 통과했다).
+        comp_reason = None
+        if comp_validity["neg_jacobian"] > 0:
+            comp_reason = "component_mapping_reversed"
+        elif comp_validity["stretch_over_frac"] > MAX_STRETCH_FRAC:
+            comp_reason = "component_mapping_overstretched"
+        if comp_reason is not None:
+            painted[comp_mask > 0] = 0
+            components_review.append(name)
+            component_reasons[name] = comp_reason
+            cross_surface_components[name] = {
+                "scale_measurable": False,
+                "reason": comp_reason,
+                "target_period_px": round(float(target_period_px), 2),
+                **{k: v for k, v in comp_validity.items()},
+            }
+            continue
         Hinv = np.linalg.inv(Hc)
         gx_grid, gy_grid = np.meshgrid(np.arange(w, dtype=np.float32),
                                        np.arange(h, dtype=np.float32))
         ones = np.ones(gx_grid.size, dtype=np.float32)
         dst_grid = np.stack([gx_grid.ravel(), gy_grid.ravel(), ones], axis=0)
         src_grid = Hinv @ dst_grid
-        base_x = (src_grid[0] / np.maximum(src_grid[2], 1e-9)).reshape(h, w).astype(np.float32)
-        base_y = (src_grid[1] / np.maximum(src_grid[2], 1e-9)).reshape(h, w).astype(np.float32)
+        # 부호 보존 — `homogeneous_divide` 한 곳에서 규칙을 공유한다.
+        wz = src_grid[2]
+        base_x = homogeneous_divide(src_grid[0], wz).reshape(h, w).astype(np.float32)
+        base_y = homogeneous_divide(src_grid[1], wz).reshape(h, w).astype(np.float32)
 
         painted_union = np.zeros_like(sel)
         region_reports: list[dict] = []

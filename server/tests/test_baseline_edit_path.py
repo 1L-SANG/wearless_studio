@@ -348,3 +348,51 @@ def test_flag_off_does_not_take_the_edit_path(monkeypatch):
     with contextlib.suppress(Exception):
         asyncio.run(mj.run_mannequin_job(app, job))
     assert calls == [], "플래그 off 인데 편집 경로를 탔다"
+
+
+# ── 편집 결과의 권한 게이트 — 코덱스가 "가드를 지워도 25/25 통과" 를 보인 자리 ────
+def _blocked_billing(monkeypatch):
+    """청구 판정을 '소비 불가' 로 고정한다 — 게이트가 하는 일만 따로 본다."""
+    from app.services.mannequin_cut_authority import BillableCharge
+
+    monkeypatch.setattr(
+        mj, "resolve_billable_charge",
+        lambda _c, _r: BillableCharge(0, 0, "no_consumable_cut"))
+
+
+def test_an_unauthorized_edit_result_is_not_shipped(monkeypatch):
+    """편집이라고 해서 쓸 수 없는 컷을 출고하거나 과금해도 되는 것이 아니다.
+
+    이 경로는 예전에 `charge=reserved` 를 **무조건** 확정했고 권한 판정을 아예 부르지
+    않았다. 가드를 지우면 이 시험이 죽어야 한다.
+    """
+    _blocked_billing(monkeypatch)
+    seen = _run(monkeypatch, enforce=True)
+    assert not seen["success"], "권한 없는 편집 결과가 출고됐다"
+    assert seen["failed"], "종결이 없다"
+    meta = seen["failed"][0]["metadata"]
+    assert meta["error"] == "no_authorized_output", meta
+    assert meta["blockedCandidates"], "왜 막혔는지가 남아야 한다"
+
+
+def test_an_unauthorized_edit_closes_its_session(monkeypatch):
+    """잡은 끝났는데 세션이 `running` 이면 그 세션은 영원히 종결되지 않는다."""
+    _blocked_billing(monkeypatch)
+    seen = _run(monkeypatch, enforce=True)
+    statuses = [x["status"] for x in seen["sessions"]]
+    assert statuses, "세션 상태 전이가 하나도 없다"
+    assert "running" != statuses[-1], statuses
+    assert "failed" in statuses, statuses
+
+
+def test_the_settlement_key_is_derived_from_the_job_and_is_stable(monkeypatch):
+    """무작위 settle_key 는 실패 종결의 멱등성을 깨뜨린다 — 같은 잡이면 같은 키여야 한다.
+
+    코덱스 실측: 안정 키를 임의 UUID 로 바꿔도 크레딧 시험 25개가 전부 통과했다.
+    """
+    _blocked_billing(monkeypatch)
+    first = _run(monkeypatch, enforce=True)["failed"][0]["settle_key"]
+    _blocked_billing(monkeypatch)
+    second = _run(monkeypatch, enforce=True)["failed"][0]["settle_key"]
+    assert first == second, (first, second)
+    assert "j1" in first, first          # 잡에서 유도된다

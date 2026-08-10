@@ -28,6 +28,7 @@ from ..agents.gemini_image import GeminiError, InlineImage
 from ..agents.vision_llm import VisionError
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
 from ..services.generation_run import RunLogger
+from ..services.mannequin_cut_authority import cut_is_consumable
 from ._common import emit_job_event as _emit
 from .mannequin_job import _runlog_begin, _runlog_finish
 
@@ -483,6 +484,13 @@ async def run_editor_image_job(app, job: dict) -> None:
                 if not active_baseline.get("r2_key") or not active_baseline.get("mime_type"):
                     await _fail("승인된 기준 이미지를 불러오지 못했어요. 다시 확정해 주세요.",
                                 {"error": "baseline_asset_missing"})
+                    return
+                # 승인 시점의 게이트 통과 ≠ 지금 권한이 있음. 게이트 이전에 승인된 컷이
+                # active 로 남아 원단 진실로 소비되는 것을 막는다. 판정이 없는 낡은 컷은
+                # 그대로 통과한다.
+                if not cut_is_consumable(active_baseline):
+                    await _fail("승인된 기준 이미지를 다시 확정해 주세요.",
+                                {"error": "baseline_not_consumable"})
                     return
                 anchor_baseline = active_baseline
 

@@ -80,7 +80,12 @@ def _spy_projection(monkeypatch):
 
 
 def _hybrid(calls):
-    return calls["success"][0]["candidates"][0]["qc_scores"]["hybridComposite"]
+    if calls["success"]:
+        return calls["success"][0]["candidates"][0]["qc_scores"]["hybridComposite"]
+    # 권한 있는 컷이 없어 잡이 typed 실패로 끝난 경우 — 증거는 실패 metadata 에 남는다
+    # (보존 ≠ 권한: 컷은 정본이 되지 않지만 왜 막혔는지는 사라지지 않는다).
+    blocked = calls["failure"][0]["metadata"]["blockedCandidates"]
+    return blocked[0]["hybridComposite"]
 
 
 # ── A. Branch 1 — front scan 성공 + 구조 일치 ────────────────────────────────
@@ -163,14 +168,33 @@ def test_no_period_source_at_all_is_the_same_uncertainty_state(monkeypatch):
     assert "guidedAuthorityAccepted" not in hybrid
 
 
+def _assert_no_authorized_output(calls, *, reserved_not_charged=True):
+    """**권한 있는 산출물이 없으면 성공 종결이 아니다**(제품 계약 16).
+
+    예전 계약은 여기서 carrier 후보를 그대로 출고했다 — 화면은 그것을 막았지만 잡은
+    `done` 이었고 예약액은 차감됐다. 과금을 면제한다고 산출물이 유효해지지 않으므로,
+    이제 이 상태는 typed 실패로 끝난다.
+
+    이 헬퍼가 지키지 **않는** 것: 하이브리드 단계가 fail-closed 가 되는 것. 그것은 여전히
+    금지다(provider 재호출 폭주를 부른다). 잡 종결과 단계 실패는 다른 축이다.
+    """
+    assert calls["success"] == [], "권한 없는 컷이 성공으로 종결됐다"
+    assert len(calls["failure"]) == 1, calls["failure"]
+    meta = calls["failure"][0]["metadata"]
+    assert meta["error"] == "no_authorized_output", meta
+    assert meta["blockedCandidates"], "왜 막혔는지가 남아야 한다(보존 ≠ 권한)"
+    if reserved_not_charged:
+        # 실패 종결은 예약을 해제한다 — charge 경로를 타지 않는다.
+        assert "charge" not in calls["failure"][0]
+
+
 def test_missing_guided_is_non_terminal_in_enforce_and_costs_no_provider_call(monkeypatch):
     _break_front_torso_scan(monkeypatch)
     _guided_returns(monkeypatch, None)
     periods, warp_calls = _spy_projection(monkeypatch)
     oplog, calls, r2_saved, emits = _run_job(monkeypatch, settings_kw=ENFORCE)
 
-    assert calls["failure"] == []
-    assert len(calls["success"]) == 1
+    _assert_no_authorized_output(calls)
     assert r2_saved, "carrier 후보 바이트가 보존되어야 한다"
     assert periods == [] and warp_calls == []
     hybrid = _hybrid(calls)
@@ -202,7 +226,10 @@ def test_both_missing_period_cases_share_one_state_and_differ_only_in_provenance
         assert hybrid["failClosed"] is False
         assert hybrid["applied"] is False
         assert hybrid["needsReview"] is True
-    assert calls_b["failure"] == [] and calls_c["failure"] == []
+    # 두 경우 모두 권한 있는 컷이 없으므로 성공이 아니다 — 그리고 **같은** 방식으로 끝난다.
+    # 이 시험의 요지는 "증거만 다르고 상태는 같다" 이므로 종결 방식도 함께 같아야 한다.
+    _assert_no_authorized_output(calls_b)
+    _assert_no_authorized_output(calls_c)
     assert with_guided["failureReason"] == "guided_period_unvalidated_harmonic"
     assert without_guided["failureReason"] == "authoritative_period_unavailable"
     assert "guidedObservedPeriodPx" in with_guided
@@ -263,9 +290,9 @@ def test_guided_only_run_preserves_candidate_and_never_fails_closed(monkeypatch)
     periods, warp_calls = _spy_projection(monkeypatch)
     oplog, calls, r2_saved, emits = _run_job(monkeypatch, settings_kw=ENFORCE)
 
-    # enforce 인데도 잡이 죽지 않는다 — 후보는 그대로 출고된다.
-    assert calls["failure"] == []
-    assert len(calls["success"]) == 1
+    # 하이브리드 단계는 여전히 fail-closed 가 아니다(그것이 이 시험의 원래 요지다).
+    # 다만 **잡 종결**은 달라졌다 — 권한 있는 컷이 없으면 성공이 아니다.
+    _assert_no_authorized_output(calls)
     assert r2_saved, "carrier 후보 바이트가 보존되어야 한다"
     hybrid = _hybrid(calls)
     assert hybrid["mode"] == "enforce"
@@ -303,7 +330,7 @@ def test_historical_45px_guided_winner_cannot_authorize_projection(monkeypatch):
 
     assert 45.0 not in periods and periods == []
     assert warp_calls == []
-    assert calls["failure"] == []
+    _assert_no_authorized_output(calls)
     hybrid = _hybrid(calls)
     assert hybrid["guidedObservedPeriodPx"] == pytest.approx(45.0)
     assert hybrid["guidedCandidateCount"] == 3

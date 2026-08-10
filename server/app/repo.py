@@ -15,6 +15,7 @@ from psycopg.types.json import Json
 
 from .credits import allocate_fifo
 from .services import mannequin_cut_authority
+from .services.public_qc_projection import public_qc_scores
 
 log = logging.getLogger("wearless.repo")
 
@@ -766,7 +767,13 @@ async def get_active_baseline(
                    b.locked_invariants, b.approved_at,
                    mc.candidate || '-' || mc.version::text as cut_client_id,
                    mc.asset_id::text as asset_id,
-                   a.r2_bucket, a.r2_key, a.mime_type
+                   a.r2_bucket, a.r2_key, a.mime_type,
+                   -- 승인 시점의 게이트를 통과했다는 것과 **지금** 권한이 있다는 것은
+                   -- 다르다. 게이트가 생기기 전에 승인된 행이 그대로 active 로 남아 있고,
+                   -- 그 컷이 후속 작업의 원단 진실로 소비된다. 소비자가 다시 판정할 수
+                   -- 있도록 판정 근거를 함께 읽는다(관용은 그대로 — 판정이 없는 낡은
+                   -- 컷은 여전히 허용된다. 막히는 것은 **막으라고 적힌** 컷뿐이다).
+                   mc.qc_scores
             from approved_baselines b
             join mannequin_cuts mc on mc.id = b.baseline_cut_id
             join assets a on a.id = mc.asset_id and a.deleted_at is null
@@ -1178,7 +1185,9 @@ async def get_edit_session(conn: AsyncConnection, session_id: str) -> dict | Non
 # 목적 상태 → 허용되는 **이전** 상태. services.edit_session._TRANSITIONS 의 역방향이며
 # 두 곳이 갈라지지 않는지는 테스트가 고정한다.
 _EDIT_TRANSITION_SOURCES = {
-    "running": ("queued",),
+    # `running` 재진입 허용 — 크래시 후 requeue 로 이어받은 워커가 같은 세션을 다시
+    # running 으로 표시한다. 근거는 `services.edit_session._TRANSITIONS` 주석 참조.
+    "running": ("queued", "running"),
     "pass": ("running",),
     "review_required": ("running",),
     "reject": ("running",),
@@ -1368,6 +1377,10 @@ _JOB_COLS = (
 
 PUBLIC_JOB_FAILURE_CODES = frozenset({
     "hybrid_composite_failed_closed",
+    # 권한 있는 산출물을 만들지 못한 종결 — 클라이언트가 일반 `generation_failed` 와
+    # 구분할 수 있어야 "다른 사진으로 다시" 를 안내할 수 있다. 내부 어휘(어느 규칙이
+    # 막았는지)는 싣지 않는다 — 코드만 공개한다.
+    "no_authorized_output",
 })
 
 
@@ -1870,6 +1883,21 @@ async def set_job_progress(conn: AsyncConnection, job_id: str, progress: int):
         await cur.execute("update jobs set progress = %s where id = %s", (progress, job_id))
 
 
+async def renew_job_lease(conn: AsyncConnection, job_id: str, lease_token: str) -> bool:
+    """`locked_at` 를 now() 로 밀어 "이 워커는 살아 있다"를 남긴다. → 갱신됐는가.
+
+    갱신은 **소유권 조건부**다. lease 를 잃은 옛 워커가 남아서 heartbeat 를 보내면 이미
+    다른 워커가 가져간 잡의 lease 를 늘려 주게 되고, 그러면 그 잡은 진짜로 죽었을 때도
+    회수되지 않는다. 그래서 `locked_by` 와 `status` 를 함께 조인다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update jobs set locked_at = now() "
+            "where id = %s and locked_by = %s and status = 'running'",
+            (job_id, lease_token))
+        return cur.rowcount > 0
+
+
 async def recover_stale_leases(conn: AsyncConnection, lease_timeout_seconds: int) -> list[dict]:
     """lease 초과 running job: 1회차 pending 재큐, 2회차 error (§5 고착 방지).
     error 전환 시 같은 statement(ev CTE)로 error job_event도 원자 append (SSE 종결 신호)."""
@@ -2308,7 +2336,7 @@ async def finalize_mannequin_success(
                 "fitAdjust": None, "lengthAdjust": None, "matchAdjust": None,
                 # 재생성 경로는 이 봉투를 버리고 GET /mannequins 를 재조회하므로, 컬럼(위)과
                 # 봉투(여기) 양쪽에 실어야 생성 직후·재생성 후 표시가 일치한다.
-                "qcScores": qc_scores,
+                "qcScores": public_qc_scores(qc_scores),
             })
     if edit_session is not None:
         # 같은 tx 다 — job=success 인데 session=running 인 불일치를 만들지 않는다.

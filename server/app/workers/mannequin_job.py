@@ -42,6 +42,8 @@ from ..agents.mannequin_adjust import (
     render_adjust_prompt,
 )
 from ..agents.gemini_image import GeminiError, GeminiImageResult, InlineImage
+from ..services.mannequin_cut_authority import (evaluate_mannequin_cut_authority,
+                                                resolve_billable_charge)
 from ..agents.model_routing import resolve_model
 from ..agents import hybrid_landmarks
 from ..agents import edit_intent_vision
@@ -49,6 +51,8 @@ from ..agents import vision_llm
 from ..agents.product_reference import ProductReference, order_by_role, select_pattern_sources
 from ..services.hybrid_composite import (
     deterministic_qc as hc_qc,
+    direct_transfer_fallback as hc_fallback,
+    absolute_scale as hc_abs,
     panel_map as hc_panel,
     source_validation as hc_source,
     stripe_model as hc_stripe,
@@ -1227,10 +1231,19 @@ def final_decision(s, scores: dict | None) -> str:
 
     `score_outcome` 이 등급(auto_pass/needs_review/regenerate)이라면 이건 **행동**이다.
     게이팅은 enforce 에서만 — off/shadow 는 관측이므로 무엇이 나와도 출고한다.
+
+    `needs_review` 도 **먼저 고쳐 본다**. 계약 5: 파이프라인의 불확실성을 사람 검수로
+    떠넘기지 않는다. 예전에는 65~79점이 곧장 출고돼서, 고칠 예산이 남아 있는데도 "사람이
+    보라"는 배지를 달고 나갔다 — 검수는 복구 수단이 아니다.
+
+    여기서 "retry" 라고 해서 반드시 재시도가 일어나는 것은 아니다. 호출자가 예산을 함께
+    본다(`budget_left`). 예산이 없으면 그대로 출고한다 — 계약 3: 후보 실패가 곧 잡 실패는
+    아니고, 계약 11: 재시도는 유한하다. 즉 이 판정은 "가능하면 고쳐라"이지 "못 고치면
+    실패시켜라"가 아니다.
     """
     if s.image_qc != "enforce" or not scores:
         return "ship"
-    return "retry" if score_outcome(s, scores) == "regenerate" else "ship"
+    return "retry" if score_outcome(s, scores) in ("regenerate", "needs_review") else "ship"
 
 
 _SEVERE_CROP_TOP = 0.22
@@ -1451,6 +1464,32 @@ def _hc_fail_summary(reason: str, detail: str = "", **extra) -> dict:
 TEXTURE_TRUTH_UNCERTAIN = "TEXTURE_TRUTH_UNCERTAIN"
 
 
+def _hc_direct_fallback_summary(mode: str, fallback, output_sha: str,
+                                carrier_sha: str | None) -> dict:
+    """결정론 폴백이 산출물을 만들었을 때의 요약.
+
+    `textureTruth` 는 **여전히 UNCERTAIN 이다** — 주기는 끝내 모른다. 달라진 것은 그것을
+    알 필요가 없어졌다는 점이다. 이 경로는 원본 픽셀을 사상으로 옮겼을 뿐이라 주기가
+    무엇이든 상관이 없다. 그래서 진실 상태는 정직하게 두고, **권한만** 준다.
+
+    `applied` 를 켜는 근거는 승격 게이트다(`direct_transfer_promotion`). 규칙 위반이
+    0 인 산출물만 여기에 도달한다 — 검수 대기 표시가 아니라 제품으로 쓸 수 있다는 뜻이다.
+    """
+    return {
+        "mode": mode,
+        "applied": mode == "enforce",
+        "wouldApply": True,
+        "failClosed": False,
+        "needsReview": False,
+        "textureTruth": TEXTURE_TRUTH_UNCERTAIN,
+        "textureSource": "direct_source_transfer",
+        "directTransfer": {"version": fallback.version, **(fallback.detail or {})},
+        "outputSha256": output_sha,
+        "carrierSha256": carrier_sha,
+        "pipelineVersion": HC_PIPELINE_VERSION,
+    }
+
+
 def _hc_uncertain_summary(reason: str, detail: str = "", **extra) -> dict:
     """텍스처 진실 불확정 요약 — 실패가 아니라 **투영 생략**이다.
 
@@ -1608,6 +1647,58 @@ async def _delete_uploaded_candidate_keys(r2, candidates: list[dict]) -> None:
                 await asyncio.to_thread(r2.delete, key)
             except Exception:
                 log.warning("orphan R2 cleanup failed: %s", key)
+
+
+async def _sweep_job_orphans(r2, *, user_id: str, project_id: str, job_id: str,
+                            keep: set[str] | None = None) -> int:
+    """이 잡 접두사 아래 **DB 가 모르는** R2 객체를 걷어낸다. → 지운 개수.
+
+    왜 키 목록 추적이 아니라 접두사 청소인가
+    ----------------------------------------
+    `_save_cut` 은 무작위 asset UUID 를 만들고 `put_bytes` 를 부른 뒤에야 후보 dict 를
+    돌려준다. 그 사이에 프로세스가 죽으면 그 객체는 DB 행도, 정리 목록에도 없다 —
+    영구 고아다. 업로드 **전에** 키를 어딘가 적어 두는 방법은 "적기 직전에 죽는" 창을
+    다시 만든다. 창을 좁히는 대신 없앤다.
+
+    `ai_key` 가 `.../ai/{job_id}/{asset_id}.{ext}` 라서 이 잡이 만든 모든 객체는 한
+    접두사 아래 모인다. 그래서 "이 잡 접두사에 있는데 우리가 남기기로 한 것이 아니면
+    고아"라고 말할 수 있다 — 크래시 시점이 언제였든 상관없이 걸린다.
+
+    best-effort 다. 청소 실패가 잡 종결을 막으면 본말이 전도된다.
+    """
+    prefix = f"users/{user_id}/projects/{project_id}/ai/{job_id}/"
+    keep = keep or set()
+    try:
+        keys = await asyncio.to_thread(r2.list_prefix, prefix)
+    except Exception as exc:
+        log.warning("orphan sweep listing failed job=%s error=%s", job_id, type(exc).__name__)
+        return 0
+    removed = 0
+    for key in keys or []:
+        if key in keep:
+            continue
+        try:
+            await asyncio.to_thread(r2.delete, key)
+            removed += 1
+        except Exception:
+            log.warning("orphan sweep delete failed job=%s", job_id)
+    if removed:
+        log.info("orphan sweep removed %d object(s) job=%s", removed, job_id)
+    return removed
+
+
+def _kept_keys(candidates: list[dict] | None) -> set[str]:
+    """남기기로 한 키 — 채택 컷과 그 디버그 오버레이."""
+    keep: set[str] = set()
+    for c in candidates or []:
+        if not isinstance(c, dict):
+            continue
+        if c.get("key"):
+            keep.add(c["key"])
+        for d in (c.get("qc_debug_assets") or []):
+            if isinstance(d, dict) and d.get("key"):
+                keep.add(d["key"])
+    return keep
 
 
 async def _fail_closed_hybrid_job_if_needed(r2, fail, passed: list[dict], meta: dict | None) -> bool:
@@ -1810,7 +1901,51 @@ async def _apply_hybrid_composite(
         return res, summary
 
     async def texture_truth_uncertain(reason, detail="", **extra):
-        """투영을 건너뛰고 carrier 후보를 그대로 통과시킨다 (fail-closed 아님)."""
+        """주기 진실이 불확정일 때 — **먼저 결정론 전송을 시도하고**, 안 되면 보존한다.
+
+        예전에는 여기서 곧장 carrier 후보를 통과시켰고, 그 검증되지 않은 후보가 `done`
+        으로 나가 과금까지 됐다. 사용자 검수는 복구 수단이 아니다. 이 경로는 주기를
+        쓰지 않으므로 "주기를 모른다"가 "아무것도 못 한다"를 뜻하지 않는다.
+        """
+        fallback = await asyncio.to_thread(
+            hc_fallback.attempt_direct_fallback,
+            carrier_bgr=carrier_bgr,
+            carrier_landmarks=car_lm,
+            source_bgr=front_bgr,
+            source_landmarks=src_lm,
+            carrier_component_boxes=car_boxes,
+            source_component_boxes=src_boxes,
+            source_sha256=front_sha_early,
+            carrier_sha256=carrier_sha_early)
+        if fallback.applied and fallback.image_bgr is not None:
+            try:
+                ok, png = cv2.imencode(".png", fallback.image_bgr)
+            except Exception:                       # noqa: BLE001
+                ok, png = False, None
+            if ok:
+                out_bytes = png.tobytes()
+                summary = _hc_direct_fallback_summary(
+                    mode, fallback, hashlib.sha256(out_bytes).hexdigest(),
+                    carrier_sha_early)
+                qa_record(texture_truth=TEXTURE_TRUTH_UNCERTAIN,
+                          texture_truth_reason=reason,
+                          projection_decision="direct_source_transfer")
+                qa_flush()
+                await emit("hybrid_composite_completed",
+                           outcome="direct_transfer_applied" if mode == "enforce"
+                           else "direct_transfer_would_apply",
+                           mode=mode, fail_closed=False,
+                           texture_truth=TEXTURE_TRUTH_UNCERTAIN,
+                           detail=str(reason)[:200],
+                           output_hash=summary["outputSha256"][:12])
+                if mode == "shadow":
+                    return res, summary
+                return GeminiImageResult(
+                    image=out_bytes, mime="image/png",
+                    latency_ms=getattr(res, "latency_ms", 0),
+                    usage=getattr(res, "usage", None)), summary
+        # 폴백이 승격되지 않았으면 **그 사유를 남기고** 기존 보존 경로로 간다.
+        extra.setdefault("directTransferReasons", list(fallback.reasons))
         qa_record(texture_truth=TEXTURE_TRUTH_UNCERTAIN,
                   texture_truth_reason=reason,
                   texture_truth_detail=str(detail)[:200],
@@ -2325,6 +2460,9 @@ async def _apply_hybrid_composite(
             f"guided period {float(guided_period_px):.2f}px 는 검증되지 않은 하모닉 "
             "추정치 — 결정론 투영 권한 없음",
             guidedObservedPeriodPx=round(float(guided_period_px), 3),
+            # 이 수가 무엇을 재는 수인지 함께 말한다 — 한 숫자가 band width 와 full
+            # repeat 을 겸하면 대칭 무늬에서 두 뜻이 2배로 알리아싱된다.
+            guidedObservedPeriodUnit=hc_stripe.PERIOD_UNIT_FULL_COLOR_REPEAT,
             guidedObservedAxis=guided_axis,
             guidedObservedScore=round(float(guided_score), 4),
             guidedCandidateCount=len(guided_candidates),
@@ -2601,14 +2739,68 @@ async def _apply_hybrid_composite(
         if detail_validation is not None and not isinstance(detail_validation, CompositeFailure):
             detail_asset["roi"] = list(detail_validation.roi)
         source_assets["detail"] = detail_asset
+    # ── 절대 반복 스케일 — **shadow 관측** ────────────────────────────────
+    # 결정론 QC 는 기대 주기를 렌더를 만든 그 스칼라에서 가져오므로 하모닉 오류를
+    # 원리적으로 못 본다(0.5×·2×·3× 는 색 순서·폭 비·팔레트를 전부 보존한다). 이 관측은
+    # 원본과 출력에서 반복 **횟수**를 각각 세어 비교한다 — 어느 쪽도 스칼라를 읽지 않는다.
+    #
+    # 이제 **게이팅한다**. 계약 14 는 결정론 산출물이 권한을 갖기 전에 독립 검증을 요구하고,
+    # 이 가드가 그 검증이다 — 그런데 판정을 내려 놓고 아무도 읽지 않으면 검증이 없는 것과
+    # 같다. `ok=False` 는 "렌더된 반복 횟수가 원본과 35% 넘게 다르다" 이고, 그건 색·폭
+    # 비·팔레트가 전부 맞아도 **다른 옷**이다(계약 9: 원본 증거가 원단 진실).
+    #
+    # 실물 픽셀 검증(2026-08-10, 기존 자산 리플레이 — provider 호출 없음): 실사진 크롭에
+    # 참값을 아는 변환을 걸어 재 봤다. 균일 리스케일은 반복 **횟수**를 정의상 보존하므로
+    # 정답이 ok=True, 절반을 잘라 늘리면 횟수가 반이 되므로 정답이 ok=False 다.
+    #   · 정상 렌더 60건 → 오거부 **0건** (0.00%)
+    #   · 횟수 절반 손상 9건 → **9건 모두 검출** (누락 0)
+    #   · 나머지 740건은 `computable=False` 로 스스로 기권한다(92.5%) — 안전한 방향이다.
+    # 기권이 압도적이라 게이팅 반경이 좁고, 발화한 구간에서는 오거부가 없었다.
+    absolute_scale_summary = None
+    try:
+        torso_panel = next((p for p in pm.panels if p.name == "torso"), None)
+        if torso_panel is not None:
+            tq = np.asarray(torso_panel.quad, np.int32)
+            ox0, oy0 = int(tq[:, 0].min()), int(tq[:, 1].min())
+            ox1, oy1 = int(tq[:, 0].max()), int(tq[:, 1].max())
+            verdict = hc_abs.verify_absolute_repeat_scale(
+                source_roi_bgr=front_bgr[fy0:fy1, fx0:fx1],
+                output_roi_bgr=art.image_bgr[oy0:oy1, ox0:ox1],
+                axis=garment_axis)
+            absolute_scale_summary = {
+                "computable": verdict.computable, "ok": verdict.ok,
+                "sourceRepeats": verdict.source_repeats,
+                "outputRepeats": verdict.output_repeats,
+                "harmonicRatio": verdict.harmonic_ratio,
+                "reason": verdict.reason, "version": verdict.version,
+                "enforced": True,
+            }
+    except Exception as exc:                    # noqa: BLE001 — **재지 못한 것**은 위반이 아니다
+        # 가드가 터진 것과 가드가 위반을 찾은 것은 다르다. 측정 실패로 멀쩡한 컷을
+        # 막으면 그건 게이팅이 아니라 고장이다 — 기권으로 남긴다.
+        absolute_scale_summary = {"computable": False, "ok": None,
+                                  "reason": f"{type(exc).__name__}"[:60],
+                                  "enforced": True}
+
+    # 발화 조건은 **잴 수 있었고 틀렸다** 뿐이다. `computable=False`(기권)는 통과시킨다 —
+    # 92.5% 가 여기 해당하고, 모르는 것을 위반으로 세면 게이트가 아니라 차단기가 된다.
+    absolute_scale_violated = bool(
+        absolute_scale_summary
+        and absolute_scale_summary.get("computable") is True
+        and absolute_scale_summary.get("ok") is False)
+
     summary = {
         "mode": mode,
-        "applied": mode == "enforce",
-        "wouldApply": True,
+        # 절대 스케일이 **증명 가능하게** 틀렸으면 이 투영은 제품 권한을 갖지 못한다.
+        # 새 경로를 만들지 않고 기존 권한 기계(`applied is False` → `hybrid_composite_
+        # not_applied`)를 그대로 탄다 — 권한 규칙이 두 벌이 되면 한 벌은 반드시 낡는다.
+        "applied": mode == "enforce" and not absolute_scale_violated,
+        "wouldApply": not absolute_scale_violated,
         "failClosed": False,
         "needsReview": needs_review,
         "componentsNeedingReview": list(art.components_needing_review),
-        "deterministicPassed": True,
+        "deterministicPassed": not absolute_scale_violated,
+        **({"failureReason": "absolute_scale_mismatch"} if absolute_scale_violated else {}),
         "carrierPreflight": preflight_summary,
         "protectedComponentContract": protected_summary,
         "pipelineVersion": HC_PIPELINE_VERSION,
@@ -2623,6 +2815,8 @@ async def _apply_hybrid_composite(
         "sourceCoverage": round(art.source_coverage, 4),
         "panelMetrics": art.panel_metrics,
         "deterministicMetrics": qc_event_metrics,
+        **({"absoluteScale": absolute_scale_summary}
+           if absolute_scale_summary else {}),
         "outputSha256": hashlib.sha256(out_bytes).hexdigest(),
         "carrierSha256": carrier_sha256,
     }
@@ -3228,6 +3422,7 @@ async def _run_candidate(
         # 승격해 동일성 판정을 기록한다(게이팅 아님 — enforce 만 reject, gate_decision). off↔측정 결합.
         eff_image_qc = s.image_qc
         p2 = None
+        image_qc_errored = False
         if eff_image_qc in ("shadow", "enforce") and prod_imgs:
             try:
                 p2 = await image_qc.verdict(
@@ -3242,6 +3437,13 @@ async def _run_candidate(
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "image_qc_failed",
                     "error": type(e).__name__, "message": str(e)[:200]})
+                # **enforce 였는데 못 쟀다**는 것을 컷에 남긴다. 여기까지는 `p2=None` 하나로
+                # "QC 를 끈 것"과 "QC 가 실패한 것"이 구분되지 않았고, 그래서 판정이 없는
+                # 컷이 그대로 과금됐다(계약 15: 권한 있는 산출물이 있을 때만 청구).
+                # shadow 는 애초에 게이트가 아니므로 표시하지 않는다 — 관측 실패는 제품
+                # 판정을 바꾸지 않는다.
+                if eff_image_qc == "enforce":
+                    image_qc_errored = True
         # **사전 게이트** — 잘못된 옷을 axis/bust 편집하면 그 정체성이 보존되므로, 편집 전에
         # 한 번 거른다. 최종 출고 판정은 여기가 아니라 아래 final_decision 하나가 내린다.
         pillow_reject, p2_reject = gate_decision(
@@ -3509,6 +3711,10 @@ async def _run_candidate(
                 qc_scores = {**(qc_scores or {}), "frameLockQc": final_frame}
             if hybrid_info is not None:
                 qc_scores = {**(qc_scores or {}), "hybridComposite": hybrid_info}
+            if image_qc_errored:
+                # enforce 인데 재지 못했다 — 이 표식이 권한을 막는다. 낡은 컷에는 이 키가
+                # 없으므로 기존 관용(판정 없음 = 허용)은 그대로다.
+                qc_scores = {**(qc_scores or {}), "imageQcErrored": True}
             budget_left = await _can_retry_generation(
                 budget, legacy_allows=has_budget_for_retry(s, calls_spent=calls_spent))
             hybrid_enforce = bool(
@@ -3965,6 +4171,26 @@ async def _run_baseline_edit(app, job: dict, *, fail) -> None:
                             "generation_output_id": baseline.get("output_id"),
                             "generation_run_id": baseline.get("generation_run_id"),
                             "baseline_id": baseline["id"]})
+        # 편집 결과도 **권한 있는 산출물일 때만** 과금·성공 종결한다. 생성 경로와 같은
+        # 술어를 쓴다 — 편집이라고 해서 쓸 수 없는 컷에 돈을 받아도 되는 것이 아니다.
+        edit_billable = resolve_billable_charge([cut], reserved)
+        if edit_billable.reason is not None:
+            # 세션을 반드시 닫는다 — 잡은 끝났는데 세션이 `running` 으로 남으면 그 세션은
+            # 영원히 종결되지 않는다(성공 경로가 같은 tx 로 닫는 것과 같은 이유).
+            await _set_session("failed", qc_result={
+                "error": "no_authorized_output", "reason": edit_billable.reason})
+            await _delete_uploaded_candidate_keys(app.state.r2, [cut])
+            await fail("편집 결과를 사용할 수 없어요. 잠시 후 다시 시도해 주세요.",
+                       {"error": "no_authorized_output", "reason": edit_billable.reason,
+                        "editSessionId": session_id, "reserved": reserved,
+                        "blockedCandidates": [{
+                            "candidate": cut.get("candidate"),
+                            "authorityReason": evaluate_mannequin_cut_authority(
+                                cut.get("qc_scores")).reason,
+                            "hybridComposite": (cut.get("qc_scores") or {}).get(
+                                "hybridComposite")}]})
+            return
+
         # 세션 종결을 **finalize 와 같은 tx** 로 넘긴다. 별도 tx 로 두면 job=success 인데
         # session=running 인 상태가 남고, 그 세션은 영원히 종결되지 않는다.
         # 계보 insert 가 실패하면 finalize 전체가 롤백된다(편집 경로는 fail-open 아님).
@@ -3972,7 +4198,7 @@ async def _run_baseline_edit(app, job: dict, *, fail) -> None:
             out = await repo.finalize_mannequin_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
                 project_id=project_id, candidates=[cut], reserved=reserved,
-                charge=reserved,
+                charge=edit_billable.charge,
                 metadata={"creditCostVersion": s.credit_cost_version,
                           "editSessionId": session_id, "editType": edit_type},
                 edit_session=({"id": session_id,
@@ -3980,7 +4206,11 @@ async def _run_baseline_edit(app, job: dict, *, fail) -> None:
                                "qc_result": qc_result, "retry_count": retry_count}
                               if session_id else None))
             await conn.commit()
-        if out is None:                 # lease 상실 — 부수효과 0(세션도 그대로 running)
+        if out is None:
+            # lease 상실 — DB 부수효과는 0 이지만 **R2 객체는 이미 올라가 있다**.
+            # 생성 경로가 같은 상황에서 하는 것과 같이 best-effort 로 걷어낸다. 세션은
+            # 그대로 둔다(다른 워커가 이 잡을 이어받아 종결할 수 있다).
+            await _delete_uploaded_candidate_keys(r2, [cut])
             return
     except Exception as e:
         log.exception("baseline edit failed for job %s", job_id)
@@ -4065,6 +4295,27 @@ def build_edit_prompt(*, edit_type: str, adjustments: dict, allowed_scope: dict,
     if unavailable:
         lines.append("LOCKED: " + ", ".join(sorted(unavailable)))
     return "\n".join(lines)
+
+
+async def _heartbeat(pool, job_id: str, lease_token: str | None) -> None:
+    """lease 갱신 — "이 워커는 살아 있다"를 `locked_at` 에 적는다.
+
+    `locked_at` 은 claim 때 한 번 쓰이고 그 뒤 아무도 손대지 않았다. `recover_stale_leases`
+    는 오직 그 나이로만 회수를 정하므로, lease 시간을 넘긴 **정상 작업**과 죽은 워커가
+    구분되지 않았다 — 멀쩡히 돌고 있는 잡을 다른 레플리카가 회수해 갔다.
+
+    `_emit` 시그니처를 건드리지 않는다: 그 함수는 워커 여럿과 시험 65곳이 4-인자 형태로
+    쓰고 있어서, 인자를 하나 더 얹으면 공유 계약이 깨진다. 갱신은 소유권 조건부이고
+    실패해도 삼킨다 — heartbeat 실패가 생성을 막으면 본말이 전도된다.
+    """
+    if not lease_token:
+        return
+    try:
+        async with pool.connection() as conn:
+            await repo.renew_job_lease(conn, job_id, lease_token)
+            await conn.commit()
+    except Exception as e:
+        log.warning("lease heartbeat failed (job=%s error=%s)", job_id, type(e).__name__)
 
 
 async def run_mannequin_job(app, job: dict) -> None:
@@ -4197,6 +4448,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         template = load_prompt_template(s)
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
                                                "withBottom": match_img is not None})
+        await _heartbeat(pool, job_id, lease_token)
 
         # 3) 단일 후보 생성(2026-07-13 사용자 결정: 한 번에 1컷) — 확정 fit profile 기준.
         #    구 A/B 이원(정핏/슬림 동시 2컷)은 폐기: 셀러가 고른 핏과 무관한 슬림 변형이
@@ -4319,6 +4571,7 @@ async def run_mannequin_job(app, job: dict) -> None:
         ref_imgs = []
         legacy_base_fit = analysis.get("fit") or "regular"
         await _emit(pool, job_id, "progress", {"progress": 35, "phase": "generating"})
+        await _heartbeat(pool, job_id, lease_token)
 
         # gemini 생성은 이 job 에서 가장 긴 구간(20~60s) — 완료 시 중간 progress(35→60)를 쏘고,
         # 호출이 길어지면 ticker 가 84까지 천천히 올려 폴링 UI 가 "멈춤/실패"처럼 보이지 않게 한다.
@@ -4338,6 +4591,7 @@ async def run_mannequin_job(app, job: dict) -> None:
                 if estimated:
                     payload["estimated"] = True
                 await _emit(pool, job_id, "progress", payload)
+                await _heartbeat(pool, job_id, lease_token)
 
         async def _tick_generation_progress():
             while not _generation_done.is_set():
@@ -4447,6 +4701,7 @@ async def run_mannequin_job(app, job: dict) -> None:
             })
         uploaded_candidates = passed
         await _emit(pool, job_id, "progress", {"progress": 85, "phase": "finalizing"})
+        await _heartbeat(pool, job_id, lease_token)
 
         cut_generation_metadata = {
             "generationPath": generation_path,
@@ -4491,7 +4746,48 @@ async def run_mannequin_job(app, job: dict) -> None:
         # 4) 성공 종결 (원자·lease 펜스). charge = reserved — 예약 시점 견적을 그대로 확정한다
         # (단일컷 전환으로 구 "성공 후보 수 × 1" 폐기. 실행 시점 설정값을 다시 읽으면 배포/env 변경
         # 사이에 낀 잡이 예약액과 다른 금액을 차감하거나 settle 실패할 수 있음). 실패는 _fail(release).
-        charge = reserved
+        # 크레딧은 **소비 가능한 산출물**에만 붙는다. 서버 권한 판정이 막는 컷만 남았다면
+        # 그것은 제품이 아니다 — 후보는 보존하되(사후 진단·재시도 근거) 과금은 하지 않는다.
+        # 이 게이트가 없던 동안, 승격되지 않은 후보가 `done` 으로 나가며 예약액을 그대로
+        # 차감했다(실측: authority allowed=False 인데 score_outcome=auto_pass,
+        # final_decision=ship, charge=reserved).
+        billable = resolve_billable_charge(passed, reserved)
+        if billable.reason is not None:
+            # 권한 있는 산출물이 **하나도 없다**. charge=0 으로 done 을 내보내면
+            # "쓸 수 없는 컷이 READY" 가 된다 — 과금을 면제한다고 산출물이 유효해지지
+            # 않는다(제품 계약 16). 결정론 폴백은 이미 이 잡 안에서 시도됐고 승격하지
+            # 못했으므로, 이 시점의 불확정은 파이프라인이 더 복구할 수 있는 것이 아니다.
+            # 그래서 성공 종결이 아니라 **typed 실패**로 끝낸다 — 예약은 해제된다.
+            await _emit(pool, job_id, "step", {
+                "candidate": None, "attempt": None, "status": "credit_waived",
+                "reason": billable.reason, "reserved": reserved})
+            # 보존 ≠ 권한. 컷을 정본으로 내보내지는 않되, **왜 막혔는지는 남긴다** —
+            # 그 증거가 없으면 사후에 어느 축이 무너졌는지 알 수 없다.
+            blocked = []
+            for cand in (passed or []):
+                qc = (cand or {}).get("qc_scores") or {}
+                blocked.append({
+                    "candidate": (cand or {}).get("candidate"),
+                    "authorityReason": evaluate_mannequin_cut_authority(qc).reason,
+                    "hybridComposite": qc.get("hybridComposite"),
+                })
+            # R2 바이트는 걷어낸다. DB 행 없는 객체를 남기는 것은 **보존이 아니라 누수**다
+            # — 증거는 위 `blocked` 로 metadata 에 남는다. 내구 보존은 Checkpoint 3 의
+            # 몫이고, 그것이 서기 전까지 고아 객체를 쌓지 않는다.
+            await _delete_uploaded_candidate_keys(app.state.r2, passed)
+            # 권한 있는 산출물이 없다 = 이 잡이 남길 것이 없다. 반환되지 못한 업로드까지
+            # 접두사로 비운다(위 목록은 **반환된** 후보만 안다).
+            await _sweep_job_orphans(app.state.r2, user_id=user_id,
+                                     project_id=project_id, job_id=job_id)
+            uploaded_candidates = []
+            await _fail(
+                "이 상품 사진으로는 사용할 수 있는 마네킹 컷을 만들지 못했어요. "
+                "다른 정면 사진으로 다시 시도해 주세요.",
+                {"error": "no_authorized_output", "reason": billable.reason,
+                 "candidates": len(passed or []), "reserved": reserved,
+                 "blockedCandidates": blocked})
+            return
+        charge = billable.charge
         async with pool.connection() as conn:
             out = await repo.finalize_mannequin_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id,
@@ -4505,4 +4801,8 @@ async def run_mannequin_job(app, job: dict) -> None:
         uploaded_candidates = []
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
         await _delete_uploaded_candidate_keys(app.state.r2, uploaded_candidates)
+        # 돌려받지 못한 업로드(업로드 직후 죽은 시도)까지 접두사로 걷어낸다. 위 목록은
+        # **반환된** 후보만 안다 — 반환 전에 죽은 것은 거기 없다.
+        await _sweep_job_orphans(app.state.r2, user_id=user_id, project_id=project_id,
+                                 job_id=job_id)
         await _fail("생성 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})

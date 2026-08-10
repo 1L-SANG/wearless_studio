@@ -52,16 +52,92 @@ class AxisPeriodicity:
     strength: float
 
 
-def _pattern_signal(lab_prof: np.ndarray) -> np.ndarray:
+#: ΔE 신호가 "무너졌다"고 볼 상대 기준(= std/mean). 합성 픽스처에서 무너진 쪽은 ≤0.014,
+#: 성한 쪽은 ≥0.177 로 12배 넘게 벌어져 있어 이 값은 빈 구간 한가운데 있다.
+#:
+#: 실사진 보정(2026-08-10, `ab_out` 826 크롭 / 무늬 있는 축 판독 1384건): 퇴화 판정
+#: **0건**, 관측된 최소 비율 0.253, p1 0.374. 즉 이 분기는 실제 코퍼스에서 한 번도
+#: 발화하지 않는다 — 실사진은 음영·잡음이 대칭을 깨서 중앙색이 두 색 사이에 정확히
+#: 놓이지 않기 때문이다. 그래서 이 수정의 실운영 회귀 위험은 사실상 0 이고, 동시에
+#: 편익도 "아직 안 만난 실패를 미리 막는 것" 이지 지금 뭔가를 고치는 것이 아니다.
+#: 문턱을 올리려면 저 최소값 0.253 이 상한이라는 점을 먼저 보라.
+_DEGENERATE_SIGNAL_RATIO = 0.15
+
+#: `None` 이 "ΔE 를 쓰라"는 **뜻 있는** basis 값이라서 기본값과 구분할 표식이 따로 필요하다.
+_UNSET: object = object()
+
+# ── 주기 숫자의 **단위** 어휘 ───────────────────────────────────────────────
+# 한 숫자가 "선 하나의 폭" 과 "색이 한 바퀴 도는 거리" 를 겸하면, 대칭 무늬에서 두 뜻이
+# 정확히 2배 차이로 알리아싱되어 소비자가 어느 쪽인지 알 방법이 없다. 그래서 주기를
+# 내보내는 자리는 그 수가 **무엇을 재는 수인지** 함께 말한다.
+#: 색이 한 바퀴 도는 거리. `StripeModel.period_px` 의 동결된 뜻이다.
+PERIOD_UNIT_FULL_COLOR_REPEAT = "FULL_COLOR_REPEAT"
+#: 선 하나의 폭. full repeat 이 아니다.
+PERIOD_UNIT_BAND_WIDTH = "BAND_WIDTH"
+#: 둘 중 어느 쪽인지 이 측정만으로는 알 수 없다 — blind autocorrelation 이 그렇다.
+#: 자기상관은 자기유사성이 최대인 lag 을 잡을 뿐이라, 대칭 무늬에서는 band width 에
+#: 걸려도 똑같이 높은 점수가 난다. 모르는 것을 아는 척하지 않기 위한 값이다.
+PERIOD_UNIT_UNKNOWN = "UNKNOWN"
+
+
+def _signal_basis(lab_prof: np.ndarray) -> np.ndarray | None:
+    """이 프로파일이 쓸 표현을 정한다 → 부호 사영 축 (N,) 또는 `None`(=ΔE 그대로).
+
+    **두 프로파일을 비교하는 자리에서는 이 값을 한 번만 구해 양쪽에 함께 넘겨야 한다.**
+    각자 정하게 두면 한쪽은 ΔE, 다른 쪽은 부호 사영이 되어 단위가 어긋난다 — 그러면
+    상관이 0 근처로 무너져서, 신호를 고쳐 놓고도 정답 주기를 못 고른다(2026-08-10 실측:
+    보간 램프 때문에 접힌 쪽만 비율 0.166 로 문턱을 넘어 갈라졌고 정답 24px 점수가
+    0.0004 였다). 표현 선택은 **비교 단위**의 성질이지 프로파일 하나의 성질이 아니다.
+    """
+    med = np.median(lab_prof, axis=0)
+    dev = lab_prof - med
+    sig = np.sqrt((dev ** 2).sum(axis=-1))
+    if sig.std() >= _DEGENERATE_SIGNAL_RATIO * sig.mean():
+        return None
+    try:
+        _u, _s, vt = np.linalg.svd(dev, full_matrices=False)
+    except np.linalg.LinAlgError:                     # 수렴 실패 = 방향 없음
+        return None
+    axis = np.asarray(vt[0], dtype=np.float64)
+    if axis[int(np.argmax(np.abs(axis)))] < 0:        # SVD 부호 모호성 제거 규약
+        axis = -axis
+    return axis
+
+
+def _pattern_signal(lab_prof: np.ndarray, basis=_UNSET) -> np.ndarray:
     """(N,3) Lab 프로파일 → (N,) 패턴 신호 = 중앙색으로부터의 ΔE76.
 
     주기·정렬 신호를 L 만으로 잡으면 **파스텔 스트라이프**(흰 바탕 + 연파랑/연베이지 —
     L 은 거의 같고 정체성이 chroma 에 있는)에서 파랑≠베이지 구분이 사라져, autocorr 이
     그룹 주기 대신 내부 선 간격에 잠긴다(2026-08-01 실사진 실측: 10.7px vs 실제 ~38px).
     ΔE 신호는 L·chroma 를 함께 보므로 색이 다른 선은 다른 값이 된다.
+
+    ΔE 가 **무너지는 경우** — 대칭 이봉 분포
+    ------------------------------------------
+    ΔE 는 거리이므로 부호가 없다. 두 색이 **같은 폭**이면 중앙색이 정확히 두 색 사이에
+    놓여 둘 다 등거리가 되고, 신호는 상수가 된다(2026-08-10 실측: std 0.000). 그러면
+    남는 구조는 밝은선-어두운선 **쌍**뿐이라 주기가 2배로 잡힌다 — σ=1 잡음만 있어도
+    24px 무늬를 47~49px 로, 그것도 `valid=True` 로 보고했다(autocorr 과 FFT 가 **함께**
+    틀린 값에 합의하므로 consensus 검사가 잡지 못한다).
+
+    2색 등폭은 가장 흔한 줄무늬(브르통)이고, ΔE 를 도입하게 만든 파스텔 조합조차 폭이
+    같으면 똑같이 무너진다. 그래서 무너진 경우에만 **부호 있는** 사영으로 갈아탄다:
+    성한 프로파일은 지금까지와 비트 단위로 동일하고, 죽어 있던 프로파일만 신호를 얻는다.
+    무늬가 아예 없는 원단은 편차 자체가 0 이라 이 분기에서도 0 이 나온다 — 없는 주기를
+    지어내지 않는다.
+
+    이것은 주기에 가하는 하모닉 보정이 아니라 **측정 신호의 퇴화를 없애는 것**이다.
+
+    `basis` 를 주면 표현 선택을 넘겨받는다 — 비교 상대와 단위를 맞추기 위한 것이다.
+    자세한 이유는 `_signal_basis` 참조. 안 주면 이 프로파일 혼자 정한다(단독 측정용).
     """
     med = np.median(lab_prof, axis=0)
-    return np.sqrt(((lab_prof - med) ** 2).sum(axis=-1))
+    dev = lab_prof - med
+    if basis is _UNSET:
+        basis = _signal_basis(lab_prof)
+    if basis is not None:
+        return dev @ basis
+    return np.sqrt((dev ** 2).sum(axis=-1))
 
 
 def _detrended_profile(channel: np.ndarray, axis: int) -> np.ndarray:
@@ -185,11 +261,12 @@ def _fold_profile(lab_prof: np.ndarray, period: float, K: int) -> tuple[np.ndarr
     # 누적 위상 오차가 마지막 주기에서 0.5 주기를 넘는다(실측: 잔줄 run 붕괴의 진범).
     # 위상은 주기 모듈로 정의되므로 탐색은 **전체 원형**이어야 한다(부분 창은 누적 드리프트가
     # 창을 벗어나는 순간 무작위 정렬이 된다). FFT 원형 상호상관으로 K 개 shift 를 한 번에 본다.
-    ref_sig = _pattern_signal(stack[0])
+    basis = _signal_basis(stack[0])            # 정렬 상대끼리 표현을 맞춘다
+    ref_sig = _pattern_signal(stack[0], basis)
     ref = ref_sig - ref_sig.mean()
     ref_f = np.conj(np.fft.rfft(ref))
     for j in range(1, len(stack)):
-        row_sig = _pattern_signal(stack[j])
+        row_sig = _pattern_signal(stack[j], basis)
         row = row_sig - row_sig.mean()
         corr = np.fft.irfft(np.fft.rfft(row) * ref_f, n=K)
         best = int(np.argmax(corr))  # row 를 -best 만큼 roll 하면 ref 와 최대 상관
@@ -278,6 +355,9 @@ def find_period_guided(
     """
     lab = bgr_to_lab(roi_bgr)
     L = lab[..., 0]
+    # 표현은 **모델**(이미 아는 기준 패턴)이 정하고 양쪽에 같이 쓴다. 접힌 ROI 가 따로
+    # 정하게 두면 보간 램프 때문에 한쪽만 ΔE 로 남아 단위가 어긋난다(`_signal_basis` 참조).
+    model_basis = _signal_basis(model.period_profile_lab)
     best = None
     for axis_name, axis in (("horizontal", 1), ("vertical", 0)):
         span = L.shape[0] if axis == 1 else L.shape[1]
@@ -317,8 +397,8 @@ def find_period_guided(
             exp_src = model.period_profile_lab
             idx = np.linspace(0, len(exp_src), K, endpoint=False)
             i0 = np.floor(idx).astype(int) % len(exp_src)
-            expected_sig = _pattern_signal(exp_src[i0])
-            folded_sig = _pattern_signal(folded)
+            expected_sig = _pattern_signal(exp_src[i0], model_basis)
+            folded_sig = _pattern_signal(folded, model_basis)
             a = folded_sig - folded_sig.mean()
             b = expected_sig - expected_sig.mean()
             na, nb = np.linalg.norm(a), np.linalg.norm(b)
@@ -331,6 +411,9 @@ def find_period_guided(
                 collect.append({
                     "axis": axis_name,
                     "periodPx": float(period),
+                    # 이 수는 모델의 **한 full repeat** 프로파일과 맞춰 본 결과다 —
+                    # 맞다면 full repeat 을 재는 수라는 뜻이지, 맞다는 주장이 아니다.
+                    "periodUnit": PERIOD_UNIT_FULL_COLOR_REPEAT,
                     "score": score,
                     # a multiplier candidate is not itself an autocorrelation peak;
                     # that distinction is what the 15 / 30 / 45 question turns on
@@ -443,12 +526,13 @@ def _extract_axis_candidate(
             {"n_periods": n_periods})
 
     ref_idx = len(folded_strips) // 2
-    ref_sig = _pattern_signal(folded_strips[ref_idx])
+    basis = _signal_basis(folded_strips[ref_idx])   # 정렬 상대끼리 표현을 맞춘다
+    ref_sig = _pattern_signal(folded_strips[ref_idx], basis)
     ref = ref_sig - ref_sig.mean()
     ref_f = np.conj(np.fft.rfft(ref))
     aligned = []
     for f in folded_strips:
-        row_sig = _pattern_signal(f)
+        row_sig = _pattern_signal(f, basis)
         row = row_sig - row_sig.mean()
         corr = np.fft.irfft(np.fft.rfft(row) * ref_f, n=K)
         best = int(np.argmax(corr))

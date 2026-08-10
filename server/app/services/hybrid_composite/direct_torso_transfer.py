@@ -351,7 +351,9 @@ def transfer_torso_texture(
         return DirectTorsoUnavailable(_REASON_HOMOGRAPHY, type(exc).__name__)
     bw = int(sq[:, 0].max() - sq[:, 0].min()) + 1
     bh = int(sq[:, 1].max() - sq[:, 1].min()) + 1
-    validity = _homography_validity(H, bw, bh, _quad_area(sq))
+    validity = _homography_validity(H, bw, bh, _quad_area(sq),
+                                    origin=(float(sq[:, 0].min()), float(sq[:, 1].min())),
+                                    quad=sq)
     if validity["neg_jacobian"] > 0:
         return DirectTorsoUnavailable(_REASON_HOMOGRAPHY, "사상 방향 반전", dict(validity))
     density, upscale, minification = _sampling_density(H, sq)

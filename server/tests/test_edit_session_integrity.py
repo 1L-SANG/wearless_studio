@@ -510,3 +510,35 @@ def test_prompt_columns_are_coalesced_so_retries_do_not_erase_the_first():
     src = inspect.getsource(repo.set_edit_session_prompt)
     assert "coalesce(%s, prompt_sha256)" in src
     assert "coalesce(%s, prompt_r2_key)" in src
+
+
+# ── 크래시 후 재진입 ────────────────────────────────────────────────────────
+def test_a_reclaimed_session_may_re_enter_running():
+    """running 커밋 직후 크래시 → requeue → 이어받은 워커가 다시 running 을 쓴다.
+
+    이것을 막으면 **복구 가능한** 크래시가 사용자에게 종결 오류로 나가고 세션이 영원히
+    running 에 남는다. provider 중복 호출은 이 전이가 아니라 잡 행에 영속된 이미지
+    예산이 막는다.
+    """
+    from app.services import edit_session
+    assert edit_session.can_transition("running", "running")
+    assert "running" in repo._EDIT_TRANSITION_SOURCES["running"]
+
+
+def test_re_entry_does_not_reopen_a_terminal_session():
+    """재진입은 running 에만 열려 있다 — 종결된 세션은 되돌아오지 않는다."""
+    from app.services import edit_session
+    for terminal in ("pass", "review_required", "reject", "failed"):
+        assert not edit_session.can_transition(terminal, "running"), terminal
+        assert terminal not in repo._EDIT_TRANSITION_SOURCES["running"], terminal
+
+
+def test_the_worker_accepts_exactly_the_states_the_table_allows():
+    """워커의 진입 검사와 전이표가 갈라지면 한쪽이 조용히 거짓말을 한다."""
+    import inspect
+
+    from app.workers import mannequin_job
+    src = inspect.getsource(mannequin_job)
+    assert 'status") not in ("queued", "running")' in src
+    for accepted in ("queued", "running"):
+        assert accepted in repo._EDIT_TRANSITION_SOURCES["running"], accepted

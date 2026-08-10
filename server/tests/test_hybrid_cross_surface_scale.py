@@ -510,3 +510,149 @@ def test_component_uses_its_own_stripe_axis_but_the_shared_physical_period(sourc
     assert not any(
         f.get("panel") == "cuff" for f in qc.metrics["failure_details"]
     )
+
+
+# ── 부위 사상 유효성 — torso panel 과 **같은 두 가지**를 본다 ──────────────
+def _composite_with_component(source_box, target_box):
+    model = _stripe_model(period=20)
+    carrier, panel_map = _carrier_panel_map()
+    source_bgr = _stripe_source(period=20, size=400)
+    return composite_stripe(
+        carrier, panel_map, model,
+        target_period_px=20.0, target_axis="horizontal",
+        component_boxes={"collar": np.asarray(target_box, np.float32).tolist()},
+        source_bgr=source_bgr,
+        source_component_boxes={"collar": np.asarray(source_box, np.float32).tolist()},
+    )
+
+
+def _composite_without_component():
+    """부위 없이 같은 장면 — '부위가 아무것도 더하지 않았다'의 기준선."""
+    model = _stripe_model(period=20)
+    carrier, panel_map = _carrier_panel_map()
+    return composite_stripe(carrier, panel_map, model,
+                            target_period_px=20.0, target_axis="horizontal")
+
+
+def _assert_component_added_nothing(art):
+    """상자 기하로 어림하지 않는다 — 기준선 대비 **더해진 픽셀이 없는지**로 본다.
+
+    가드는 부위 상자 안의 몸통 칠까지 걷어내므로 두 마스크가 같지는 않다(실측: 기준선이
+    3,059 px 더 많다). 확인해야 하는 것은 반대 방향이다 — 부위가 **더한** 픽셀이 0.
+    """
+    base = _composite_without_component()
+    assert not isinstance(base, CompositeFailure), base
+    added = (art.painted > 0) & ~(base.painted > 0)
+    assert int(added.sum()) == 0, int(added.sum())
+
+
+def test_an_overstretched_component_mapping_is_not_painted():
+    """torso panel 은 반전 **과 과신장** 둘 다 거부한다 — 부위도 같아야 한다.
+
+    실측: stretch_over_frac 1.0(한도 0.01), 이방성 8.89 인 부위가 3,059 px 전부
+    그려지고 하류 QC 까지 통과했다.
+    """
+    art = _composite_with_component(
+        [[40, 40], [360, 40], [360, 360], [40, 360]],
+        [[100, 80], [118, 80], [118, 240], [100, 240]])
+    assert not isinstance(art, CompositeFailure), art
+    cross = art.metrics["cross_surface_scale"]
+    collar = cross["components"]["collar"]
+    assert collar["reason"] == "component_mapping_overstretched", collar
+    assert collar["scale_measurable"] is False, collar
+    # 이름값을 하려면 **실제로 안 그려졌는지** 봐야 한다 — 사유만 보면 칠이 남아도 통과한다.
+    _assert_component_added_nothing(art)
+
+
+def test_a_reversed_component_mapping_is_not_painted():
+    """지평선을 넘는 사상은 그리면 안 된다.
+
+    실측: 가드를 지우면 8,163 px 중 6,073 px 이 그려지고 coverage 0.744 로 QC 통과.
+    부호 클램프가 있던 시절에는 좌표 폭발로 **우연히** 걸러지던 경우다.
+    """
+    art = _composite_with_component(
+        [[40, 40], [360, 40], [360, 360], [40, 360]],
+        [[70, 80], [170, 80], [170, 79.75], [70, 240]])
+    assert not isinstance(art, CompositeFailure), art
+    collar = art.metrics["cross_surface_scale"]["components"]["collar"]
+    assert collar["reason"] == "component_mapping_reversed", collar
+    assert collar["scale_measurable"] is False, collar
+    _assert_component_added_nothing(art)
+
+
+def test_the_homogeneous_divide_preserves_negative_w():
+    """부호 보존을 **한 곳에서** 못 박는다 — 두 호출부가 같은 헬퍼를 쓴다.
+
+    `np.maximum(w, eps)` 로 클램프하면 w<0 이 1e-9 가 되어 좌표가 1e9 규모로 폭발하고,
+    전 영역 w<0 인 정상 부위가 coverage 0 으로 잘못 보류된다(실측: 51,720 px → 0 px).
+    """
+    from app.services.hybrid_composite.warp_composite import homogeneous_divide
+    num = np.array([-3.0, 6.0, 1.5])
+    w = np.array([-1.5752619, -0.3077566, -1.0])
+    got = homogeneous_divide(num, w)
+    assert np.allclose(got, num / w), got
+    assert (np.abs(got) < 1e3).all(), got            # 폭발하지 않는다
+    # 0 근처는 크기만 막고 **부호는 살린다** — `-1e-10` 이 `+1e-9` 가 되면 좌표 부호가
+    # 뒤집힌다(실측: num=1, w=-1e-10 → +1e9).
+    assert np.isfinite(homogeneous_divide(np.array([1.0]), np.array([0.0]))).all()
+    tiny_neg = homogeneous_divide(np.array([1.0]), np.array([-1e-10]))
+    assert tiny_neg[0] < 0, tiny_neg
+    tiny_pos = homogeneous_divide(np.array([1.0]), np.array([1e-10]))
+    assert tiny_pos[0] > 0, tiny_pos
+
+
+def test_an_unmeasurable_component_is_not_left_painted():
+    """측정 불가로 표시된 부위가 그려진 채 나가면 안 된다 — 이웃 분기들은 전부 걷어낸다.
+
+    실측: `target_mask_insufficient` 분기만 칠을 남겨 961 px 이 carrier 와 다른 채였다.
+    """
+    art = _composite_with_component(
+        [[40, 40], [360, 40], [360, 360], [40, 360]],
+        [[100, 100], [130, 100], [130, 130], [100, 130]])
+    assert not isinstance(art, CompositeFailure), art
+    collar = art.metrics["cross_surface_scale"]["components"]["collar"]
+    assert collar["reason"] == "target_mask_insufficient", collar
+    box = np.zeros(art.painted.shape, np.uint8)
+    cv2.fillPoly(box, [np.int32([[100, 100], [130, 100], [130, 130], [100, 130]])], 255)
+    assert int(((art.painted > 0) & (box > 0)).sum()) == 0
+
+
+def test_the_validity_sample_approximates_the_exhaustive_measurement():
+    """한도를 재는 **눈금**이 거칠면 한도 자체가 부정확하게 적용된다.
+
+    실측: 실제 초과 비율 0.0060(한도 0.01 미만)인 정상 사상이 12x12 표본에서는
+    0.0139 로 나와 거부됐다. 한도를 바꾸는 것이 아니라 표본을 촘촘히 한 것이므로,
+    시험도 특정 숫자가 아니라 **표본이 전수와 가까운가**를 본다.
+    """
+    from app.services.hybrid_composite.warp_composite import (
+        _homography_validity, _quad_area, MAX_LOCAL_STRETCH)
+    sq = np.float32([[40, 40], [140, 40], [140, 140], [40, 140]])
+    tq = np.float32([[110.325966, 46.164871], [186.413696, 167.042221],
+                     [43.029358, 158.785568], [51.884869, 77.469078]])
+    H = cv2.getPerspectiveTransform(sq, tq)
+
+    # 전수: quad 안의 모든 정수 픽셀에서 국소 Jacobian 의 이방성을 잰다.
+    x0, y0 = int(sq[:, 0].min()), int(sq[:, 1].min())
+    x1, y1 = int(sq[:, 0].max()), int(sq[:, 1].max())
+    gx, gy = np.meshgrid(np.arange(x0, x1 + 1), np.arange(y0, y1 + 1))
+    pts = np.stack([gx.ravel(), gy.ravel(), np.ones(gx.size)], axis=0).astype(np.float64)
+    a, b, c = H[0], H[1], H[2]
+    den = c @ pts
+    j = np.stack([
+        (a[0] * den - (a @ pts) * c[0]) / den ** 2,
+        (a[1] * den - (a @ pts) * c[1]) / den ** 2,
+        (b[0] * den - (b @ pts) * c[0]) / den ** 2,
+        (b[1] * den - (b @ pts) * c[1]) / den ** 2,
+    ])
+    sx = np.hypot(j[0], j[2])
+    sy = np.hypot(j[1], j[3])
+    exhaustive = float((np.maximum(sx, sy) / np.maximum(np.minimum(sx, sy), 1e-9)
+                        > MAX_LOCAL_STRETCH).mean())
+
+    bw = int(sq[:, 0].max() - sq[:, 0].min()) + 1
+    bh = int(sq[:, 1].max() - sq[:, 1].min()) + 1
+    v = _homography_validity(H, bw, bh, _quad_area(sq),
+                             origin=(float(sq[:, 0].min()), float(sq[:, 1].min())),
+                             quad=sq)
+    # 표본이 전수를 대표해야 한다 — 거친 표본은 두 배 넘게 빗나갔다(0.0139 대 0.0060).
+    assert abs(v["stretch_over_frac"] - exhaustive) < 0.005, (v, exhaustive)

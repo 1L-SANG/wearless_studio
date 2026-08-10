@@ -30,6 +30,7 @@ from .agents import (
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
 from .services import baseline as baseline_service
+from .services.public_qc_projection import public_job_event_payload, public_qc_scores
 from .services import edit_session as edit_service
 from .services import editor_vary as editor_vary_service
 from .services import export_render
@@ -1219,7 +1220,7 @@ def _cut_to_api(c: dict) -> dict:
         "matchAdjust": c["match_adjust"],
         # QC 점수 스냅샷. 재생성 경로는 jobs.result 봉투를 버리고 이 라우트를 재조회하므로,
         # 여기서 안 실으면 "생성 직후엔 보이다 재생성 후 사라지는" 비대칭이 생긴다.
-        "qcScores": c.get("qc_scores"),
+        "qcScores": public_qc_scores(c.get("qc_scores")),
     }
 
 
@@ -2407,7 +2408,8 @@ async def job_events(
                 events = await repo.list_job_events(conn, user_id, job_id, after_id)
             for e in events:
                 after_id = e["id"]
-                payload = json.dumps(e["payload"], ensure_ascii=False)
+                payload = json.dumps(
+                    public_job_event_payload(e["payload"]), ensure_ascii=False)
                 yield f"id: {e['id']}\nevent: {e['event_type']}\ndata: {payload}\n\n"
                 if e["event_type"] in ("done", "error"):
                     return
