@@ -25,7 +25,7 @@ import { reconcileMatchCompatibility } from '@/lib/api/matchingItems.js';
 import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import { resolveSelectedModelId } from './modelSelection.js';
-import { applySellingPointEdit } from './sellingPoints.js';
+import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
 import {
   estimateComposeModeCredits,
   selectAnalysisComposeMode,
@@ -635,7 +635,7 @@ export function AnalysisForm({
   useEffect(() => {
     const ai = a.aiSuggestedPoints || [];
     const missing = ai.filter((p) => !a.sellingPoints.includes(p));
-    if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, 5) });
+    if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, SELLING_POINTS_MAX) });
   }, []);
 
   // 카탈로그 로드 후 선택값이 AI 모델도, 라이선스 활성 실제 모델도 아니면 첫 AI 모델로 자동 선택.
@@ -940,8 +940,8 @@ export function AnalysisForm({
       {/* 4. selling points — chips */}
       <div className="surface">
         <div className="sec-head"><div><div className="sec-title">강조하고 싶은 특징</div>
-          <div className="sec-sub">상세페이지에서 가장 강조될 핵심 포인트예요. 최대 5개까지 넣을 수 있어요.</div></div>
-          <span className="pill pill-soft">{a.sellingPoints.length}/5개</span></div>
+          <div className="sec-sub">상세페이지에서 가장 강조될 핵심 포인트예요. 최대 {SELLING_POINTS_MAX}개까지 넣을 수 있어요.</div></div>
+          <span className="pill pill-soft">{a.sellingPoints.length}/{SELLING_POINTS_MAX}개</span></div>
         <div className="sp-chipwrap">
           {/* 칩을 누르면 그 자리에서 문구를 고친다. Enter 확정(비우고 Enter = 삭제), Esc 취소,
               포커스 이탈은 고친 문구만 저장. 입력 폭은 .sp-draft-fit 이 글자 폭 그대로 잡는다 —
@@ -990,7 +990,7 @@ export function AnalysisForm({
               </span>
             )
           ))}
-          {a.sellingPoints.length < 5 && (
+          {a.sellingPoints.length < SELLING_POINTS_MAX && (
             spAdding ? (
               <span className="sp-chip draft">
                 <span className="sp-draft-fit" data-value={spDraft || '특징 입력 후 Enter'}>

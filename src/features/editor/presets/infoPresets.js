@@ -21,7 +21,9 @@ const RULE = (idFn) => (x, y, w, stroke, strokeWidth) => ({ id: idFn('el'), type
 const SLOT = (idFn) => (x, y, w, h) => ({ id: idFn('el'), type: 'image', x, y, w, h, src: null, radius: 8 });
 
 export const FEATURE_ITEMS_MIN = 2;
-export const FEATURE_ITEMS_MAX = 5;
+// 블록이 담는 포인트 상한. 분석 칩 상한(SELLING_POINTS_MAX)과 별개다 — 셀러가 에디터에서
+// 직접 더 넣을 수 있고, 그쪽이 줄어도 이미 만든 블록이 잘리면 안 된다.
+export const FEATURE_ITEMS_MAX = 8;
 
 const HEAD = { font: 'Cal Sans', weight: 600, color: '#0e0d14' };
 const MUTED = '#4a4a45';
@@ -99,7 +101,7 @@ export const INFO_PRESET_TYPES = [
   { type: 'care', label: '세탁·케어 가이드', desc: '소재별 관리 방법 안내', tier: 'must', recommend: null },
   { type: 'policy', label: '배송·교환 안내', desc: '배송·교환·반품 표준 문구', tier: 'must', recommend: null },
   { type: 'header', label: '상품명 헤더', desc: '국문+영문 타이포 헤더', tier: 'boost', recommend: 'women' },
-  { type: 'feature_icons', label: '특징 포인트', desc: '사진+장점 카드 2~5개', tier: 'boost', recommend: 'women' },
+  { type: 'feature_icons', label: '특징 포인트', desc: '사진+장점 카드 2~8개', tier: 'boost', recommend: 'women' },
   { type: 'fit_guide', label: '핏 가이드', desc: '핏 실루엣 비교 도식', tier: 'boost', recommend: 'men' },
   { type: 'size_matrix', label: '추천 사이즈', desc: '키×몸무게 추천 사이즈 표', tier: 'boost', recommend: 'men' },
   { type: 'model_info', label: '모델 정보', desc: '모델 스펙 카드', tier: 'extra', recommend: 'women' },
@@ -308,6 +310,9 @@ function buildFeatureCompact(info, ctx, idFn, items) {
   const n = items.length;
   const colW = 880 / n;
   const d = Math.min(110, colW - 36);              // 원형 사진 슬롯 지름 — 개수에 맞춰 축소
+  // 제목은 칸 폭을 따라간다 — 개수가 늘면 칸이 좁아져 고정 크기로는 한글이 험하게 접힌다.
+  // 경계값은 기존 동작을 그대로 재현한다(2~4개 → 17, 5개 → 15).
+  const titleSize = colW >= 200 ? 17 : colW >= 150 ? 15 : 13;
   const anyFilled = items.some((it) => it.title || it.desc || it.src);
   const els = [];
   items.forEach((it, i) => {
@@ -316,7 +321,7 @@ function buildFeatureCompact(info, ctx, idFn, items) {
     els.push({ id: idFn('el'), type: 'image', x: x + colW / 2 - d / 2, y: 56, w: d, h: d, src: it.src || null, radius: d / 2 });
     const ty = 56 + d + 18;
     els.push(t(x, ty, colW, 18, `POINT ${i + 1}`, { font: 'Roboto Mono', size: 11, tracking: 2, color: FAINT, align: 'center' }));
-    els.push(t(x + 10, ty + 26, colW - 20, 24, featureTitle(it, anyFilled), { size: n >= 5 ? 15 : 17, weight: 600, color: '#0e0d14', align: 'center' }));
+    els.push(t(x + 10, ty + 26, colW - 20, 24, featureTitle(it, anyFilled), { size: titleSize, weight: 600, color: '#0e0d14', align: 'center' }));
     if (it.desc) els.push(t(x + 14, ty + 56, colW - 28, 40, it.desc, { size: 13, color: MUTED, align: 'center', lineHeight: 19 }));
   });
   const h = 56 + d + 18 + 26 + 30 + (items.some((it) => it.desc) ? 46 : 0) + 50;

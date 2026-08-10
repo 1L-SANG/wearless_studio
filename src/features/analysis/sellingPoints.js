@@ -2,6 +2,10 @@
    폼에서 분리한 이유는 modelSelection.js 와 같다: 커밋 규칙(삭제·중복·AI 표식)이
    화면 없이 검증되어야 한다. */
 
+/* 칩 상한. 특징 포인트 블록이 담는 상한(FEATURE_ITEMS_MAX)과 맞춰 둔다 — 여기서 만든 문구가
+   그 블록으로 흘러가므로, 칩이 더 적으면 뒤쪽 포인트는 설명 없이 남는다. */
+export const SELLING_POINTS_MAX = 8;
+
 /* 보이지 않는 문자(zero-width, BOM)는 지운다 — 붙여넣기로 섞여 들어오면 눈에는 빈 칩인데
    문구가 있는 것으로 저장되고, 중복 판정도 빗나간다. */
 const INVISIBLE = /[\u200B-\u200D\uFEFF\u2060]/g;

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   CARE_LABEL_SENTENCE,
   DEFAULT_INFO_TEMPLATE,
+  FEATURE_ITEMS_MAX,
   FEATURE_LAYOUTS,
   INFO_PRESET_TYPES,
   NEEDS_INPUT,
@@ -18,6 +19,7 @@ import {
   presetTypeOf,
   resolveFeatureLayout,
 } from '../../src/features/editor/presets/infoPresets.js';
+import { SELLING_POINTS_MAX } from '../../src/features/analysis/sellingPoints.js';
 import { normalizeEditorBlockRole } from '../../src/lib/storyboardTaxonomy.js';
 
 const seqId = () => { let n = 0; return (p) => `${p}${(n += 1)}`; };
@@ -207,12 +209,12 @@ test('feature icons keep raw form state — empty slots survive, placeholder nev
   assert.ok(empty.elements.some((e) => e.type === 'text' && e.text.includes('핵심 장점')), 'placeholder still rendered');
 });
 
-test('feature icons are photo cards clamped to 2~5 points', () => {
+test('feature icons are photo cards clamped to the min/max point count', () => {
   const two = buildInfoBlock('feature_icons', { items: [{ title: 'A' }, { title: 'B' }] }, CTX, seqId());
   assert.equal(two.elements.filter((e) => e.type === 'image').length, 2, 'one circular photo slot per point');
   assert.ok(two.elements.filter((e) => e.type === 'image').every((e) => e.radius === e.w / 2), 'slots are circles');
-  const seven = buildInfoBlock('feature_icons', { items: Array.from({ length: 7 }, (_x, i) => ({ title: `P${i}` })) }, CTX, seqId());
-  assert.equal(seven.info.items.length, 5, 'max 5 points');
+  const tooMany = buildInfoBlock('feature_icons', { items: Array.from({ length: FEATURE_ITEMS_MAX + 2 }, (_x, i) => ({ title: `P${i}` })) }, CTX, seqId());
+  assert.equal(tooMany.info.items.length, FEATURE_ITEMS_MAX, `max ${FEATURE_ITEMS_MAX} points`);
   const one = buildInfoBlock('feature_icons', { items: [{ title: 'only' }] }, CTX, seqId());
   assert.equal(one.info.items.length, 2, 'min 2 points (padded)');
   const withSrc = buildInfoBlock('feature_icons', { items: [{ title: 'A', src: '/img.jpg' }, { title: 'B' }] }, CTX, seqId());
@@ -534,4 +536,35 @@ test('stack and center titles and descriptions are sized for the reference propo
     assert.ok(title.h >= title.style.size, `${layout}: title box not shorter than its glyphs`);
     assertFitsInBlock(block, `${layout}/typography`);
   }
+});
+
+test('every layout still fits its block at the raised point cap', () => {
+  const eight = Array.from({ length: FEATURE_ITEMS_MAX }, (_, i) => ({
+    title: `포인트 ${i + 1}`, desc: '구조를 살린 설명 한 줄입니다.', src: null,
+  }));
+  assert.equal(eight.length, 8, 'cap is 8');
+  for (const { value } of FEATURE_LAYOUTS) {
+    const block = buildInfoBlock('feature_icons', { layout: value, items: eight }, FEATURE_CTX, seqId());
+    assert.equal(block.info.items.length, 8, `${value}: keeps all eight`);
+    assert.equal(block.elements.filter((el) => el.type === 'image').length, 8, `${value}: one photo slot each`);
+    assertFitsInBlock(block, `${value}/eight`);
+  }
+});
+
+test('compact keeps its old title sizes and shrinks only past the point counts it used to allow', () => {
+  const sizeAt = (n) => {
+    const items = Array.from({ length: n }, (_, i) => ({ title: `포인트 ${i + 1}`, desc: '', src: null }));
+    const block = buildInfoBlock('feature_icons', { layout: 'compact', items }, FEATURE_CTX, seqId());
+    return block.elements.find((el) => el.text === '포인트 1').style.size;
+  };
+  assert.equal(sizeAt(2), 17, '2개 — 종전과 동일');
+  assert.equal(sizeAt(4), 17, '4개 — 종전과 동일');
+  assert.equal(sizeAt(5), 15, '5개 — 종전과 동일');
+  assert.equal(sizeAt(8), 13, '8개 — 칸이 좁아져 한 단계 더 내려간다');
+});
+
+test('the block cap does not truncate below what the analysis chips can supply', () => {
+  // 칩 상한이 블록 상한보다 크면 뒤쪽 특징이 조용히 잘린다
+  assert.ok(FEATURE_ITEMS_MAX >= SELLING_POINTS_MAX,
+    `block cap ${FEATURE_ITEMS_MAX} must hold every chip (${SELLING_POINTS_MAX})`);
 });
