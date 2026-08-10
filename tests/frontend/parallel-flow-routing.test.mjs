@@ -104,7 +104,7 @@ test('login return lands on the storyboard', () => {
   assert.match(appSource, /setDest\('\/create\/storyboard'\)/);
 });
 
-test('the storyboard hands off to the mannequin, and back to input', () => {
+test('the storyboard hands off to the mannequin without reopening confirmed input', () => {
   assert.match(storyboardSource, /const goToMannequin = async \(\) => \{/);
   // 저장 실패는 조용히 삼켜지지 않는다 — catch 가 서버 메시지를 보여주고 navigate 를 건너뛴다
   // (2026-08 QA: 콘티 재배치로 저장 실패가 실제로 도달 가능해져, '다음'이 아무 반응 없이
@@ -113,8 +113,8 @@ test('the storyboard hands off to the mannequin, and back to input', () => {
     storyboardSource,
     /await saveNow\(projectId\);\s*\n\s*\} catch \(error\) \{[\s\S]*?navigate\('\/create\/mannequin'\)/,
   );
-  assert.match(storyboardSource, /이전<\/button>/);
-  assert.match(storyboardSource, /navigate\('\/create\/input'\)/);
+  assert.doesNotMatch(storyboardSource, /이전<\/button>/);
+  assert.doesNotMatch(storyboardSource, /navigate\('\/create\/input'\)/);
   assert.doesNotMatch(storyboardSource, /navigate\('\/create\/generating'\)/);
 });
 
@@ -170,20 +170,19 @@ assert.ok(
 const mannequinRibbonSource = chromeSource.slice(mannequinRibbonStart, detailPageRibbonStart);
 const detailPageRibbonSource = chromeSource.slice(detailPageRibbonStart, chromeLayoutStart);
 
-test('the ribbon announces completion and stops steering', () => {
-  assert.match(mannequinRibbonSource, /마네킹컷 준비 완료/);
-  assert.match(chromeSource, /DONE_BADGE_MS/);
+test('the transition overlay replaces the duplicate completion badge and the ribbon stops steering', () => {
+  assert.doesNotMatch(mannequinRibbonSource, /마네킹컷 준비 완료/);
+  assert.doesNotMatch(chromeSource, /DONE_BADGE_MS/);
+  assert.match(chromeSource, /마네킹컷을 먼저 만들고 있어요/);
+  assert.match(chromeSource, /setTimeout\(\(\) => setVisible\(false\), 2500\)/);
   assert.doesNotMatch(mannequinRibbonSource, /마네킹 화면 보기/);
   assert.doesNotMatch(mannequinRibbonSource, /job-ribbon-btn/);
   assert.match(detailPageRibbonSource, /job-ribbon-btn/);
   assert.match(detailPageRibbonSource, /생성 화면 보기/);
 });
 
-test('the done badge is scoped to the project whose job actually finished, not a bare "something ran" flag', () => {
-  // beginProject/adoptProject 도 mannequinJob 을 idle 로 되돌리지만(initialMannequinJob()),
-  // projectId 는 null 로 지운다. bare boolean(wasRunningRef)로 되돌리면 이 리셋도 완료로
-  // 오인된다 — 반드시 '실행 중이던 프로젝트 id' 를 기억하고 idle 전환 시 그 id 와 대조해야 한다.
+test('the removed completion badge leaves no stale running-state tracker behind', () => {
   assert.doesNotMatch(chromeSource, /wasRunningRef/);
-  assert.match(chromeSource, /runningProjectIdRef\.current = job\.projectId/);
-  assert.match(chromeSource, /job\.projectId !== runningProjectIdRef\.current/);
+  assert.doesNotMatch(chromeSource, /runningProjectIdRef/);
+  assert.match(mannequinRibbonSource, /if \(job\.status === 'idle'\) return null/);
 });

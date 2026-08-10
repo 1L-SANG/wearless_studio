@@ -7,10 +7,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
-import { Icon, Modal, Button } from '@/components/ui.jsx';
+import { Icon, Modal, Button, useToast } from '@/components/ui.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
+import { flushProductDraftSave } from '@/lib/draftStore.js';
+import { recordCreditReturn } from '@/lib/creditReturn.js';
 
 export { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
 
@@ -20,6 +22,7 @@ export function TopNav() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { session, openLogin } = useAuth();
+  const toast = useToast();
   const account = useAppStore((s) => s.account) || { name: '…', avatar: '', credits: 0, plan: '' };
   const beginProject = useAppStore((s) => s.beginProject);
   const [resumeAsk, setResumeAsk] = useState(false);
@@ -42,6 +45,19 @@ export function TopNav() {
     navigate('/library');
   };
   const step = pathname.startsWith('/create/') ? pathname.split('/')[2] : null;
+  const openPricing = () => {
+    const { projectId } = useAppStore.getState();
+    recordCreditReturn({ projectId, path: pathname });
+    navigate('/pricing');
+  };
+  const openTopNavLogin = async () => {
+    try {
+      await flushProductDraftSave();
+      openLogin(pathname === '/create/input' ? pathname : '/create/input');
+    } catch (error) {
+      toast.push(error?.message || '입력 내용을 임시 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+    }
+  };
 
   return (
     <>
@@ -59,12 +75,12 @@ export function TopNav() {
       <div className="nav-right">
         {session ? (
           <>
-            <button type="button" className="credit-badge" onClick={() => navigate('/pricing')} title="요금제·크레딧 충전"><Icon name="coins" size={15} stroke={1.8} />크레딧 <b>{account.credits}</b></button>
+            <button type="button" className="credit-badge" onClick={openPricing} title="요금제·크레딧 충전"><Icon name="coins" size={15} stroke={1.8} />크레딧 <b>{account.credits}</b></button>
             {account.plan && <span className="plan-badge">{account.plan}</span>}
             <ProfileMenu />
           </>
         ) : (
-          <button className="nav-login" onClick={() => openLogin()}>로그인</button>
+          <button className="nav-login" onClick={openTopNavLogin}>로그인</button>
         )}
       </div>
     </nav>
@@ -75,7 +91,7 @@ export function TopNav() {
 
 /* 진행 중 상세페이지 제작이 있을 때 '상세페이지 제작' 재진입 시 — 이어서 작업 / 새로 만들기 선택.
    과거엔 무조건 새로 초기화돼 진행 중 작업이 버려졌다(이어서 재개 경로 없음). */
-function ResumeChoiceModal({ onResume, onNew, onClose }) {
+export function ResumeChoiceModal({ onResume, onNew, onClose }) {
   return (
     <Modal onClose={onClose}>
       <h3>이어서 작업할까요?</h3>
@@ -172,8 +188,8 @@ export function PageHead({ title, sub }) {
 }
 
 /* CTA footer for wizard pages */
-export function WizardCTA({ children }) {
-  return <div className="wizard-cta">{children}</div>;
+export function WizardCTA({ children, className = '' }) {
+  return <div className={`wizard-cta${className ? ` ${className}` : ''}`}>{children}</div>;
 }
 
 /* ---- 생성 완료 후 초안 단계 재진입 제한 (PRD §10.17 / §15.3) ----

@@ -5,8 +5,8 @@
    Markup, classNames, inline styles, real file upload unchanged.
    ============================================================= */
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { api } from '@/lib/api/index.js';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { api, isMockMode } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
 import { generationWorkWarningKind } from '@/lib/generationWorkWarning.js';
@@ -14,8 +14,20 @@ import { mannequinGenerationCreditShortfall } from '@/lib/creditPreflight.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
-import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
-import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
+import {
+  clearDraft,
+  flushProductDraftSave,
+  hasPendingDraft,
+  loadDraft,
+  queueProductDraftSave,
+} from '@/lib/draftStore.js';
+import { isAnalysisRunning, setAnalysisRunning } from '@/lib/flowSession.js';
+import {
+  getUploadValidationError,
+  looksLikeImageFile,
+  MAX_UPLOAD_BYTES,
+  toUploadableImages,
+} from '@/lib/imageTranscode.js';
 import { syncDraftToBackend } from '@/lib/draftSync.js';
 import { Icon, Button, IconButton, ErrorState, Skeleton, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
@@ -30,7 +42,8 @@ import {
   registerAnalysisEditSave,
   splitAnalysisEditPatch,
 } from './saveRouting.js';
-import { getPendingTileCount, PENDING_TILE_DELAY_MS } from './pendingTiles.js';
+import { getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS } from './pendingTiles.js';
+import { createProductPhotoPreviewRegistry } from './productPhotoPreviewRegistry.js';
 import {
   invalidateStoryboardEntryPrefetch,
   prefetchStoryboardEntry,
@@ -67,18 +80,56 @@ function ColorSwatchPicker({ swatchColors, value, onChange }) {
 // HEIC(아이폰 기본 포맷)는 여기서 JPEG 로 바꾼다 — 이 objectURL 이 미리보기·draft·업로드에
 // 그대로 흘러가므로(다운스트림이 fetch(src).blob() 으로 복원) 변환 지점은 여기 한 곳이면 된다.
 const filesToMetas = async (fileList, room) => {
-  const picked = [...fileList].filter(looksLikeImageFile).slice(0, Math.max(0, room));
-  if (!picked.length) return { metas: [], failed: [] };
-  const { files, failed } = await toUploadableImages(picked);
+  const selected = [...fileList];
+  const uploadableCandidates = selected.filter(looksLikeImageFile);
+  const skippedByType = selected
+    .filter((file) => !looksLikeImageFile(file))
+    .map((file) => ({ file, reason: 'not_image' }));
+  const availableRoom = Math.max(0, room);
+  const picked = uploadableCandidates.slice(0, availableRoom);
+  const skippedByRoom = uploadableCandidates.slice(availableRoom);
+  if (!picked.length) return {
+    metas: [], skippedByRoom, skippedByType, skippedBySize: [], transformFailed: [],
+  };
+  const { files, failed: transformFailed } = await toUploadableImages(picked);
+  const validFiles = [];
+  const skippedBySize = [];
+  for (const file of files) {
+    const reason = getUploadValidationError(file);
+    if (reason === 'unsupported_type') skippedByType.push({ file, reason });
+    else if (reason === 'file_too_large') skippedBySize.push({ file, reason });
+    else validFiles.push(file);
+  }
   return {
-    metas: files.map((f) => ({
+    metas: validFiles.map((f) => ({
       src: URL.createObjectURL(f), name: f.name, size: f.size,
-      type: f.type || 'image', lastModified: f.lastModified,
+      type: f.type, lastModified: f.lastModified,
     })),
-    failed,
+    skippedByRoom,
+    skippedByType,
+    skippedBySize,
+    transformFailed,
   };
 };
 const fileExt = (im) => (im.type && im.type.split('/')[1] ? im.type.split('/')[1].toUpperCase() : 'IMG');
+
+function restoreDraftProduct(draft) {
+  if (!draft?.product) return null;
+  const urlById = {};
+  for (const photo of draft.photos || []) {
+    try { urlById[photo.imageId] = URL.createObjectURL(photo.blob); } catch { /* skip */ }
+  }
+  return {
+    ...draft.product,
+    colors: (draft.product.colors || []).map((color) => ({
+      ...color,
+      images: (color.images || []).map((image) => ({
+        ...image,
+        src: urlById[image.id] || image.src,
+      })),
+    })),
+  };
+}
 
 // small file-meta caption shown over an uploaded image (name · size · type) — requested feature
 function MetaCap({ im }) {
@@ -107,7 +158,13 @@ function AddDrop({ className, slot, room, onAddFiles, onPendingChange, children 
     };
   }, []);
   const take = async (fileList) => {
-    const pendingCount = getPendingTileCount(fileList.length, room);
+    const selected = [...fileList];
+    const skippedByType = selected.filter((file) => !looksLikeImageFile(file));
+    if (skippedByType.length) {
+      toast.push(`이미지 파일만 올릴 수 있어요 (${skippedByType.map((file) => file.name || '이 파일').join(', ')})`,
+        { icon: 'alertTri' });
+    }
+    const pendingCount = getPendingTileCount(selected, room);
     setBusy(true);
     clearTimeout(pendingTimerRef.current);
     if (pendingCount) {
@@ -116,11 +173,27 @@ function AddDrop({ className, slot, room, onAddFiles, onPendingChange, children 
       }, PENDING_TILE_DELAY_MS);
     }
     try {
-      const { metas, failed } = await filesToMetas(fileList, room);
+      const {
+        metas, skippedByRoom, skippedByType: typeFailures, skippedBySize, transformFailed,
+      } = await filesToMetas(selected, room);
       if (metas.length) onAddFiles(slot, metas);
-      if (failed.length) {
-        toast.push(`${failed.length}장은 불러오지 못했어요. 다른 형식(JPG·PNG)으로 저장해 올려주세요.`,
+      if (skippedByRoom.length) {
+        toast.push(`남은 자리는 ${Math.max(0, room)}장이에요. ${skippedByRoom.map((file) => file.name || '이 사진').join(', ')}은(는) 추가하지 못했어요.`,
           { icon: 'alertTri' });
+      }
+      for (const { file, reason } of typeFailures) {
+        if (reason === 'not_image') continue; // 선택 직후 이미 안내했다.
+        toast.push(`${file.name || '이 사진'}: 지원하지 않는 이미지 형식이에요. JPG·PNG·WEBP·GIF·AVIF로 저장해 다시 올려주세요.`,
+          { icon: 'alertTri' });
+      }
+      for (const { file } of skippedBySize) {
+        const message = file.size > MAX_UPLOAD_BYTES
+          ? `${file.name || '이 사진'}: 파일 용량이 25MB를 넘어요.`
+          : `${file.name || '이 사진'}: 빈 파일은 올릴 수 없어요.`;
+        toast.push(message, { icon: 'alertTri' });
+      }
+      for (const _failed of transformFailed) {
+        toast.push('이 사진을 불러오지 못했어요. JPG로 저장해 다시 올려주세요', { icon: 'alertTri' });
       }
     } finally {
       clearTimeout(pendingTimerRef.current);
@@ -152,7 +225,14 @@ function PendingTile({ small }) {
   );
 }
 
-function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, onRename, onRemoveGroup, onPickColor }) {
+function ProductPhotoPreview({ image, displayUrl }) {
+  const src = displayUrl(image.id, image.src);
+  return src
+    ? <img src={src} alt="" decoding="async" onError={(e) => { e.currentTarget.style.opacity = 0; }} />
+    : <span className="product-photo-preview-pending" aria-hidden="true" />;
+}
+
+function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, onRename, onRemoveGroup, onPickColor, displayUrl, photosLocked = false }) {
   const base = group.isBase;
   const used = group.images.length;
   const [pendingBySlot, setPendingBySlot] = useState({});
@@ -177,25 +257,33 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
   const MAX = 6;
   const tiles = (s, small) => {
     const imgs = group.images.filter((im) => im.slot === s);
-    const room = MAX - used;
+    const room = base ? getBaseSlotUploadRoom(group.images, s, MAX) : MAX - used;
     const pendingCount = getPendingTileCount(pendingBySlot[s], room);
     return (
       <div className="slot-tiles">
         {imgs.map((im) => (
           <div className={`tile${small ? ' sm' : ''}`} key={im.id}>
-            <img src={im.src} alt="" onError={(e) => { e.currentTarget.style.opacity = 0; }} />
-            <button className="rm" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>
+            <ProductPhotoPreview image={im} displayUrl={displayUrl} />
+            {!photosLocked && <button className="rm" aria-label="내가 업로드한 의류 사진 삭제" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>}
             <MetaCap im={im} />
           </div>
         ))}
         {Array.from({ length: pendingCount }, (_, index) => (
           <PendingTile key={`${s}-pending-${index}`} small={small} />
         ))}
-        <AddDrop className={`tile add${small ? ' sm' : ''}`} slot={s} room={room}
-          onAddFiles={onAddFiles} onPendingChange={setSlotPending}>
-          <span className="add-ico"><Icon name="imagePlus" size={small ? 24 : 26} /></span>
-          <span className="add-cap"><span>이미지를</span><span>업로드해주세요</span></span>
-        </AddDrop>
+        {!photosLocked && (
+          <AddDrop className={`tile add${small ? ' sm' : ''}`} slot={s} room={room}
+            onAddFiles={onAddFiles} onPendingChange={setSlotPending}>
+            {base && room <= 0 ? (
+              <span className="add-limit">최대 6장까지 이미지를 업로드할 수 있습니다.</span>
+            ) : (
+              <>
+                <span className="add-ico"><Icon name="imagePlus" size={small ? 24 : 26} /></span>
+                <span className="add-cap"><span>이미지를</span><span>업로드해주세요</span></span>
+              </>
+            )}
+          </AddDrop>
+        )}
       </div>
     );
   };
@@ -214,9 +302,9 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
             <span className="color-swatch" style={{ background: chosen ? chosen.hex : '#e9e7ec' }} />
             <div className="sec-title" style={{ fontSize: 15 }}>{chosen ? chosen.label : group.name || '색상'}</div>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {!photosLocked && <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <IconButton name="trash" size="sm" onClick={onRemoveGroup} title="색상 삭제" />
-          </div>
+          </div>}
         </div>
       )}
 
@@ -229,18 +317,20 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
         <div className="slot-tiles">
           {group.images.map((im) => (
             <div className="tile" key={im.id}>
-              <img src={im.src} alt="" onError={(e) => { e.currentTarget.style.opacity = 0; }} />
-              <button className="rm" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>
+              <ProductPhotoPreview image={im} displayUrl={displayUrl} />
+              {!photosLocked && <button className="rm" aria-label="내가 업로드한 의류 사진 삭제" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>}
               <MetaCap im={im} />
             </div>
           ))}
           {Array.from({ length: getPendingTileCount(pendingBySlot.Front, 3 - used) }, (_, index) => (
             <PendingTile key={`Front-pending-${index}`} />
           ))}
-          <AddDrop className="tile add" slot="Front" room={3 - used}
-            onAddFiles={onAddFiles} onPendingChange={setSlotPending}>
-            <Icon name="plus" size={16} />{used === 0 ? '정면 필수' : '추가'}
-          </AddDrop>
+          {!photosLocked && (
+            <AddDrop className="tile add" slot="Front" room={3 - used}
+              onAddFiles={onAddFiles} onPendingChange={setSlotPending}>
+              <Icon name="plus" size={16} />{used === 0 ? '정면 필수' : '추가'}
+            </AddDrop>
+          )}
         </div>
       )}
 
@@ -248,6 +338,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
         <ColorSwatchPicker swatchColors={swatchColors} value={group.swatchId} onChange={onPickColor} />
       )}
 
+      {base && <p className="cap-note">앞면·뒷면 필수 · 현재 {used}장 / 최대 6장</p>}
       {!base && <p className="cap-note">정면 사진 필수 · 색상당 최대 3장 · 현재 {used}장</p>}
     </div>
   );
@@ -255,6 +346,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
 
 export function ProductInput() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [product, setProduct] = useState(null);
   const [catalogs, setCatalogs] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -277,9 +369,52 @@ export function ProductInput() {
   const [pendingRelevantPatch, setPendingRelevantPatch] = useState(null);
   const [cancellingRelevantPatch, setCancellingRelevantPatch] = useState(false);
   const [creditShortfall, setCreditShortfall] = useState(null);
+  const [creditResume, setCreditResume] = useState(() => (
+    location.state?.creditResume?.action === 'storyboard' ? location.state.creditResume : null
+  ));
   const { session, loading: authLoading, openLogin } = useAuth();
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
+  const pushToast = toast.push;
+  const [, refreshPhotoPreviews] = useState(0);
+  const photoPreviewRegistryRef = useRef(null);
+  if (!photoPreviewRegistryRef.current) {
+    photoPreviewRegistryRef.current = createProductPhotoPreviewRegistry({
+      onChange: () => refreshPhotoPreviews((version) => version + 1),
+    });
+  }
+
+  useEffect(() => {
+    if (!product || session) return;
+    queueProductDraftSave(product, analysis);
+  }, [analysis, product, session]);
+
+  useEffect(() => {
+    const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files');
+    const preventFileNavigation = (event) => {
+      if (hasFiles(event)) event.preventDefault();
+    };
+    const handleDocumentDrop = (event) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      if (!event.target?.closest?.('.tile.add')) {
+        pushToast('사진은 점선 칸에 올려주세요', { icon: 'alertTri' });
+      }
+    };
+    document.addEventListener('dragover', preventFileNavigation, true);
+    document.addEventListener('drop', handleDocumentDrop, true);
+    return () => {
+      document.removeEventListener('dragover', preventFileNavigation, true);
+      document.removeEventListener('drop', handleDocumentDrop, true);
+    };
+  }, [pushToast]);
+
+  useEffect(() => {
+    const images = product?.colors?.flatMap((color) => color.images || []) || [];
+    photoPreviewRegistryRef.current.sync(images);
+  }, [product]);
+
+  useEffect(() => () => photoPreviewRegistryRef.current.dispose(), []);
 
   // 분석 CTA — 마네킹부터는 로그인 필요. 서버 분석을 마친 로그인 사용자는 바로 이동한다.
   // 로컬 분석 결과는 먼저 IndexedDB 에 보관한다. 미로그인이면 로그인 모달을 띄우고, 이미
@@ -382,11 +517,13 @@ export function ProductInput() {
         }
       }
       if (analysisSaveErrorRef.current) throw analysisSaveErrorRef.current;
-      if (session && analysisProjectId) {
-        navigate('/create/storyboard');
+      if ((session || isMockMode) && analysisProjectId) {
+        useAppStore.getState().confirmProductInfo(analysisProjectId);
+        navigate('/create/storyboard', { state: { showMannequinTransition: true } });
         return;
       }
-      const { failed } = await saveProductDraft(product, analysis);
+      queueProductDraftSave(product, analysis);
+      const { failed = 0 } = await flushProductDraftSave() || {};
       if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri' });
       if (session) {
         const draft = await loadDraft();
@@ -397,7 +534,8 @@ export function ProductInput() {
         useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
         setAnalysisProjectId(projectId);
         await clearDraft().catch(() => {});
-        navigate('/create/storyboard');
+        useAppStore.getState().confirmProductInfo(projectId);
+        navigate('/create/storyboard', { state: { showMannequinTransition: true } });
         return;
       }
       openLogin('/create/storyboard');
@@ -511,12 +649,15 @@ export function ProductInput() {
       if (!alive) return;
       setCatalogs(c);
       persistedColorsRef.current = p.colors || [];
+      const analysisWasRunning = editingProjectId && isAnalysisRunning(editingProjectId);
 
       // 같은 탭에서 마네킹/후속 단계로 갔다가 input 으로 돌아온 경우에는 현재 프로젝트를
       // 편집한다. cold input 은 라우트 계층이 먼저 beginProject 해서 여기까지 stale id가 오지 않는다.
       // getAnalysis 는 미저장이어도 {projectId} 봉투를 돌려주므로 truthy — payload 실존 여부로
       // 판정해야 분석이 실패한 프로젝트가 빈 '고스트' 분석 폼으로 뜨는 걸 막는다(F3 진입로).
-      if (editingProjectId && existingAnalysis && Object.keys(existingAnalysis).length > 1) {
+      if (editingProjectId && existingAnalysis && Object.keys(existingAnalysis).length > 1
+          && (!analysisWasRunning || !isMockMode)) {
+        setAnalysisRunning(editingProjectId, false);
         setProduct(p);
         setAnalysis(mergeProductOwnedAnalysisFields(existingAnalysis, p));
         // 저장분에서 경고를 복원한다 — 이게 없으면 새로고침·재진입한 탭에서만 게이트가
@@ -524,6 +665,45 @@ export function ProductInput() {
         setInputConsistency(existingAnalysis.inputConsistency || null);
         setAnalysisProjectId(editingProjectId);
         setPhase('done');
+        return;
+      }
+
+      // 분석 요청 직후 새로고침된 탭은 서버 상품(영속 asset URL 포함)을 먼저 보여주고,
+      // 같은 analyze 호출로 활성 job 에 합류한다. 완료된 분석이 방금 저장됐다면 위 분기가 맡는다.
+      if (analysisWasRunning) {
+        // mock 은 메모리 DB도 새로 로드되므로 서버 역할의 seed만으로는 방금 올린 blob을
+        // 복구할 수 없다. 같은 탭 IndexedDB draft를 사진 소스로 사용하되 getProduct 호출은 유지한다.
+        const mockDraft = isMockMode && hasPendingDraft()
+          ? await loadDraft().catch(() => null)
+          : null;
+        const recoveredProduct = restoreDraftProduct(mockDraft) || p;
+        setProduct(recoveredProduct);
+        setAnalysisProjectId(editingProjectId);
+        setPhase('analyzing');
+        try {
+          const a = await api.analyzeProduct(editingProjectId, {});
+          if (!alive) return;
+          const analyzedProductPatch = splitAnalysisEditPatch(a).productPatch;
+          const finalName = (recoveredProduct.name && recoveredProduct.name.trim()) || a.suggestedName || '새 상품';
+          const nextProduct = { ...recoveredProduct, name: finalName, ...analyzedProductPatch };
+          if (hasPatchFields(analyzedProductPatch)) {
+            await api.saveProduct(editingProjectId, analyzedProductPatch);
+          }
+          if (!recoveredProduct.name?.trim()) await api.saveProduct(editingProjectId, { name: finalName });
+          if (!alive) return;
+          persistedColorsRef.current = nextProduct.colors || [];
+          setProduct(nextProduct);
+          setAnalysis(mergeProductOwnedAnalysisFields(a, nextProduct));
+          setInputConsistency(a.inputConsistency || null);
+          setConsistencyAck(false);
+          setAnalysisRunning(editingProjectId, false);
+          setAnalysisReady(true);
+        } catch (error) {
+          if (!alive) return;
+          setAnalysisRunning(editingProjectId, false);
+          setPhase('input');
+          toast.push(error?.message || '진행 중인 분석에 다시 연결하지 못했어요. 다시 시도해 주세요.', { icon: 'alert' });
+        }
         return;
       }
 
@@ -535,17 +715,7 @@ export function ProductInput() {
       const draft = hasPendingDraft() ? await loadDraft().catch(() => null) : null;
       if (!alive) return;
       if (draft?.product) {
-        const urlById = {};
-        for (const ph of draft.photos || []) {
-          try { urlById[ph.imageId] = URL.createObjectURL(ph.blob); } catch { /* skip */ }
-        }
-        const restored = {
-          ...draft.product,
-          colors: (draft.product.colors || []).map((col) => ({
-            ...col,
-            images: (col.images || []).map((im) => ({ ...im, src: urlById[im.id] || im.src })),
-          })),
-        };
+        const restored = restoreDraftProduct(draft);
         persistedColorsRef.current = restored.colors || [];
         setProduct(restored);
         // 분석 결과 복원 → 분석 폼(done)으로 바로. 단 필수 사진(앞면·뒷면)이 추출 실패로
@@ -583,7 +753,10 @@ export function ProductInput() {
   const set = (patch) => setProduct((p) => ({ ...p, ...patch }));
   // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
   const addImageFiles = (colorId, slot, metas) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: [...c.images, ...metas.map((m) => ({ id: uid('img'), slot, label: slot, ...m }))] } : c) }));
-  const removeImage = (colorId, imgId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: c.images.filter((im) => im.id !== imgId) } : c) }));
+  const removeImage = (colorId, imgId) => {
+    photoPreviewRegistryRef.current.release(imgId);
+    setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: c.images.filter((im) => im.id !== imgId) } : c) }));
+  };
   const editColors = (change) => {
     const colors = change(product.colors);
     if (colors === product.colors) return;
@@ -609,7 +782,12 @@ export function ProductInput() {
   const addColor = () => editColors((colors) => colors.length >= 3
     ? colors
     : [...colors, { id: uid('col'), name: '', isBase: false, images: [] }]);
-  const removeColor = (colorId) => editColors((colors) => colors.filter((c) => c.id !== colorId));
+  const removeColor = (colorId) => editColors((colors) => {
+    colors.find((color) => color.id === colorId)?.images.forEach((image) => {
+      photoPreviewRegistryRef.current.release(image.id);
+    });
+    return colors.filter((c) => c.id !== colorId);
+  });
 
   // 필수 판정은 기준 색상 기준 — AI가 소비하는 것이 기준 색상 이미지라서(스펙 §4).
   const baseColor = product.colors.find((c) => c.isBase) || product.colors[0];
@@ -617,7 +795,21 @@ export function ProductInput() {
   const hasBack = !!baseColor?.images.some((im) => im.slot === 'Back');
   const hasName = !!(product.name && product.name.trim());
   const canDone = hasFront && hasBack && phase === 'input' && !authLoading;
+  const disabledReason = !hasFront && !hasBack
+    ? '앞면·뒷면 사진이 각 1장 필요해요'
+    : !hasFront
+      ? '앞면 사진이 필요해요'
+      : !hasBack
+        ? '뒷면 사진이 필요해요'
+        : authLoading
+          ? '로그인 상태를 확인하고 있어요.'
+          : '';
   const locked = phase !== 'input';
+  const startOver = async () => {
+    setConsistencyOpen(false);
+    await useAppStore.getState().beginProject();
+    navigate('/create/input', { replace: true });
+  };
 
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
@@ -626,10 +818,14 @@ export function ProductInput() {
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
     try {
+      if (!session) {
+        queueProductDraftSave(product, analysis);
+        await flushProductDraftSave();
+      }
       // 보관함 프로젝트(서버 행)는 바로 이 시점에 생성한다 — '상세페이지 제작' 진입이 아니라
       // AI 분석을 시작할 때. createProject 는 토큰이 필요하므로 로그인 사용자만 생성하고,
       // 비로그인 공개 분석은 서버 project 없이 진행(프로젝트 생성은 로그인 후 단계가 담당).
-      const pid = session ? await useAppStore.getState().ensureProject() : null;
+      const pid = (session || isMockMode) ? await useAppStore.getState().ensureProject() : null;
       // 인증 상태가 이후 바뀌어도 이 분석·편집은 시작할 때 선택한 backend/project에 고정한다.
       setAnalysisProjectId(pid);
       // 사진을 서버에 먼저 올리고(images[].id=asset id) 상품을 저장한다 — http 분석 워커는
@@ -642,6 +838,7 @@ export function ProductInput() {
       await api.saveProduct(pid, {
         colors: uploaded.colors, uploadComplete: true, ...(enteredName ? { name: enteredName } : {}),
       });
+      setAnalysisRunning(pid, true);
       const a = await api.analyzeProduct(pid, {});
       const analyzedProductPatch = splitAnalysisEditPatch(a).productPatch;
       // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 서버에도 반영
@@ -665,9 +862,11 @@ export function ProductInput() {
       }
       // 즉시 전환하지 않는다 — 대기 연출이 잔여 단계를 빠르게 완주한 뒤 onFinished 에서 전환.
       setAnalysisReady(true);
+      setAnalysisRunning(pid, false);
     } catch (e) {
       // http 모드에서 분석 실패(네트워크·서버 에러)해도 스피너에 고착되지 않게 — 입력으로 복귀 + 안내.
       setPhase('input');
+      setAnalysisRunning(useAppStore.getState().projectId, false);
       toast.push(e?.message || '분석에 실패했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
@@ -675,10 +874,14 @@ export function ProductInput() {
   const nameCard = (
     <div className="surface">
       <div className="sec-head">
-        <div><div className="sec-title">상품명</div></div>
+        <div><div className="sec-title">상품명 <span className="pi-optional-label">(선택 — 비우면 AI가 지어드려요)</span></div></div>
       </div>
       <input className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
-        disabled={locked} onChange={(e) => set({ name: e.target.value })} />
+        disabled={phase === 'analyzing'} onChange={(e) => {
+          const name = e.target.value;
+          set({ name });
+          if (phase === 'done') colorSaveSchedulerRef.current.schedule({ name });
+        }} />
     </div>
   );
 
@@ -696,7 +899,9 @@ export function ProductInput() {
       {product.colors.map((c) => (
         <ColorImageGroup key={c.id} group={c} catalogs={catalogs} swatchColors={catalogs.swatchColors}
           onAddFiles={(slot, metas) => addImageFiles(c.id, slot, metas)} onRemove={(id) => removeImage(c.id, id)}
-          onRename={(n) => renameColor(c.id, n)} onRemoveGroup={() => removeColor(c.id)} onPickColor={(sid) => setColor(c.id, sid)} />
+          onRename={(n) => renameColor(c.id, n)} onRemoveGroup={() => removeColor(c.id)} onPickColor={(sid) => setColor(c.id, sid)}
+          displayUrl={(imageId, originalUrl) => photoPreviewRegistryRef.current.displayUrl(imageId, originalUrl)}
+          photosLocked={phase === 'done'} />
       ))}
       {!locked && (
         <div style={{ marginTop: 16 }}>
@@ -719,7 +924,10 @@ export function ProductInput() {
     <div className="surface pi-summary">
       <div className="pi-summary-row">
         <div className="pi-summary-thumbs">
-          {allImages.slice(0, 5).map((im) => <img key={im.id} src={im.src} alt="" />)}
+          {allImages.slice(0, 5).map((im) => {
+            const src = photoPreviewRegistryRef.current.displayUrl(im.id, im.src);
+            return src ? <img key={im.id} src={src} alt="" decoding="async" /> : null;
+          })}
           {allImages.length > 5 && <span className="more">+{allImages.length - 5}</span>}
         </div>
         <div className="pi-summary-meta">
@@ -740,8 +948,29 @@ export function ProductInput() {
       {creditShortfall && (
         <CreditShortfallModal
           shortfall={creditShortfall}
+          action="storyboard"
           onClose={() => setCreditShortfall(null)}
         />
+      )}
+      {creditResume && (
+        <Modal onClose={() => {
+          setCreditResume(null);
+          navigate(location.pathname, { replace: true, state: null });
+        }}>
+          <h3>이어서 진행할까요? · {creditResume.requiredCredits}크레딧</h3>
+          <p>충전 전 멈춘 작업이에요. 크레딧 사용을 다시 확인해 주세요.</p>
+          <div className="modal-actions">
+            <Button variant="ghost" onClick={() => {
+              setCreditResume(null);
+              navigate(location.pathname, { replace: true, state: null });
+            }}>나중에</Button>
+            <Button variant="primary" onClick={() => {
+              setCreditResume(null);
+              navigate(location.pathname, { replace: true, state: null });
+              goToStoryboard();
+            }}>이어서 진행</Button>
+          </div>
+        </Modal>
       )}
       {consistencyOpen && inputConsistency && (
         <Modal onClose={() => setConsistencyOpen(false)}>
@@ -761,12 +990,7 @@ export function ProductInput() {
               setConsistencyOpen(false);
               goToStoryboard({ force: true });
             }}>이대로 진행</Button>
-            {/* 사진을 고치러 가는 쪽이 기본 행동 — 분석 결과는 그대로 두고 입력만 펼친다 */}
-            <Button variant="primary" onClick={() => {
-              setConsistencyOpen(false);
-              setExpanded(true);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}>사진 수정하기</Button>
+            <Button variant="primary" onClick={startOver}>처음부터 다시 하기</Button>
           </div>
         </Modal>
       )}
@@ -793,7 +1017,7 @@ export function ProductInput() {
             ))}
           </ul>
           <p className="hint" style={{ marginTop: 8 }}>
-            잘못 올린 사진이면 위에서 펼쳐 교체해주세요. 맞다면 그대로 진행해도 괜찮아요.
+            잘못 올린 사진이면 처음부터 다시 시작해주세요. 맞다면 그대로 진행해도 괜찮아요.
           </p>
         </div>
       )}
@@ -801,10 +1025,9 @@ export function ProductInput() {
       {phase === 'input' && (
         <>
           <WizardCTA>
+            {disabledReason && <span className="wizard-cta-reason">{disabledReason}</span>}
             <Button variant="primary" size="lg" icon="check" disabled={!canDone} onClick={submit}>AI 분석하기</Button>
           </WizardCTA>
-          {!(hasFront && hasBack) && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>앞면·뒷면 이미지를 각 1장 이상 올리면 입력을 완료할 수 있어요.</p>}
-          {hasFront && hasBack && authLoading && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>로그인 상태를 확인하고 있어요.</p>}
         </>
       )}
 

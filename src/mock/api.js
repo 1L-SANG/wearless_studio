@@ -24,6 +24,7 @@ import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
+import { createMeasurementFields } from '@/lib/measurementSchema.js';
 import {
   applyOpeningRow, hasOpeningRow, migrateLegacyEntryStylingRuns,
 } from '@/lib/storyboardEntryPlacement.js';
@@ -48,6 +49,21 @@ const settleMockMannequinCharge = (job) => {
 let ewSim = null;
 const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
 const customMatchUploads = new Map();
+const mockCheckoutOrders = new Map();
+const MOCK_CHECKOUT_KEY = 'wl_mockCheckout';
+const saveMockCheckout = (order) => {
+  try { sessionStorage.setItem(MOCK_CHECKOUT_KEY, JSON.stringify(order)); } catch { /* same-page Map fallback */ }
+};
+const loadMockCheckout = (orderId) => {
+  if (mockCheckoutOrders.has(orderId)) return mockCheckoutOrders.get(orderId);
+  try {
+    const order = JSON.parse(sessionStorage.getItem(MOCK_CHECKOUT_KEY) || 'null');
+    return order?.orderId === orderId ? order : null;
+  } catch { return null; }
+};
+const clearMockCheckout = () => {
+  try { sessionStorage.removeItem(MOCK_CHECKOUT_KEY); } catch { /* noop */ }
+};
 const cutsEnvelope = () => ({ cuts: clone(DB.mannequins) });
 const syncSelectedCut = (cutId) => {
   const selected = DB.mannequins.find((m) => m.id === cutId) || DB.mannequins[0] || null;
@@ -63,10 +79,10 @@ const makeMannequinCut = (version) => ({
   createdAt: new Date().toISOString(),
 });
 
-/* 진행 중인 유료 job 레지스트리 — 같은 job 의 중복 시작 요청(StrictMode 이중
+/* 진행 중인 job 레지스트리 — 같은 job 의 중복 시작 요청(StrictMode 이중
    실행, 생성 중 이탈 후 재진입)은 새 작업을 만들지 않고 기존 job 에 합류시켜
    1회만 차감되게 한다. 실서버의 job 레코드 dedup 에 대응 (계약 §6). */
-const inflight = { mannequins: null, detailPage: null };
+const inflight = { analyze: null, mannequins: null, detailPage: null };
 function joinable(slot, start) {
   if (!inflight[slot]) {
     const listeners = [];
@@ -114,7 +130,7 @@ export const api = {
   // 진행 중이던 이전 프로젝트의 job 에 새 프로젝트가 합류하지 않도록 레지스트리도 비운다.
   async createProject() {
     reseedDraft();
-    inflight.mannequins = null; inflight.detailPage = null;
+    inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
     await wait(80); return clone(DB.project);
   },
   async getProject(/* projectId */) { await wait(60); return clone(DB.project); },
@@ -172,6 +188,32 @@ export const api = {
       { id: 's1', sourceType: 'subscription', status: 'active', initialCredits: 200, remainingCredits: 196, periodEnd: new Date(Date.now() + 25 * 864e5).toISOString(), planId: 'm-basic', createdAt: new Date(Date.now() - 40e5).toISOString() },
     ];
   },
+  async createTossCheckout(planCode) {
+    const creditsByCode = { topup_basic: 200, topup_plus: 600, topup_seller: 1400 };
+    const priceByCode = { topup_basic: 19900, topup_plus: 49900, topup_seller: 99900 };
+    if (!creditsByCode[planCode]) throw new Error('존재하지 않는 충전 상품이에요.');
+    const orderId = uid('order');
+    const order = {
+      orderId,
+      amount: priceByCode[planCode],
+      credits: creditsByCode[planCode],
+      orderName: `크레딧 ${creditsByCode[planCode]}`,
+      customerKey: 'mock-customer',
+    };
+    mockCheckoutOrders.set(orderId, order);
+    saveMockCheckout(order);
+    return clone(order);
+  },
+  async confirmTossPayment({ orderId, amount }) {
+    await wait(120);
+    const order = loadMockCheckout(orderId);
+    if (!order) throw new Error('결제 주문을 찾지 못했어요. 다시 충전을 시작해 주세요.');
+    if (order.amount !== amount) throw new Error('결제 금액이 주문과 일치하지 않아요.');
+    DB.account.credits += order.credits;
+    mockCheckoutOrders.delete(orderId);
+    clearMockCheckout();
+    return { credits: order.credits, available: DB.account.credits };
+  },
 
   // store.loadProject 전용 '현재 프로젝트' (pl1 spec §7 — http 어댑터가 최근/생성 의미를
   // 구현하기 위한 과도기 함수. mock 은 싱글턴이라 getProject 와 동일).
@@ -214,12 +256,18 @@ export const api = {
 
   /* ---- AI analysis (PRD §6) — 30s-feel progress, can fail ---- */
   async analyzeProduct(_projectId, { onProgress, forceError = false } = {}) {
-    await runJob({ duration: 2800, onProgress });
-    if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
-    const a = clone(DB.analysis);
-    // 실측은 AI가 추정하지 않는다 — 사용자가 직접 입력하도록 빈칸으로 둔다.
-    a.measurements = (a.measurements || []).map((m) => ({ ...m, value: null }));
-    return a;
+    const job = joinable('analyze', (listeners) => runJob({
+      duration: 2800,
+      onProgress: (progress) => listeners.forEach((listener) => listener(progress)),
+    }).then(() => {
+      if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
+      const a = clone(DB.analysis);
+      // 실측은 AI가 추정하지 않는다 — 사용자가 직접 입력하도록 빈칸으로 둔다.
+      a.measurements = createMeasurementFields(a.clothingType);
+      return a;
+    }));
+    if (onProgress) job.listeners.push(onProgress);
+    return clone(await job.promise);
   },
   async getAnalysis(/* projectId */) { await wait(120); return clone(DB.analysis); },
   async saveAnalysis(_projectId, patch) {

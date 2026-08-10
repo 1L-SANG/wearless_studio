@@ -8,6 +8,7 @@
    ============================================================= */
 import { mockAdapter } from './mockAdapter.js';
 import { httpAdapter } from './httpAdapter.js';
+import { analyzePublicDraft } from './publicAnalysis.js';
 
 const mode = import.meta.env.VITE_API_MODE ?? 'mock';
 export const isMockMode = mode !== 'http';
@@ -18,8 +19,8 @@ export const isMockMode = mode !== 'http';
 const CLIENT_ONLY = ['getCatalogs', 'pickAnyImage', 'download'];
 
 // 제품 결정: 입력·분석은 로그인 없이 공개하고, 로그인은 마네킹 단계부터 요구한다.
-// 공개 흐름은 서버 projectId가 없으므로 이 묶음을 통째로 mock에 위임한다. 한 함수만 http로
-// 빠져 `/projects/null` 또는 세션 fetch를 호출하던 반쪽 스왑 회귀를 어댑터 경계에서 차단한다.
+// 공개 흐름은 서버 projectId가 없으므로 로컬 draft 기능은 mock에 위임한다. 단 분석만은
+// 로컬 상품 사진을 multipart로 공개 서버에 보내 진짜 AI 결과를 받는다.
 const PUBLIC_INPUT = [
   'getProduct',
   'uploadProductPhotos',
@@ -36,6 +37,16 @@ const PUBLIC_INPUT = [
 function buildHttpApi() {
   const api = { ...httpAdapter };
   for (const name of PUBLIC_INPUT) {
+    if (name === 'analyzeProduct') {
+      api[name] = async (projectId, options) => (
+        projectId == null
+          ? analyzePublicDraft(await mockAdapter.getProduct(projectId), options, {
+            remote: httpAdapter, local: mockAdapter,
+          })
+          : httpAdapter.analyzeProduct(projectId, options)
+      );
+      continue;
+    }
     api[name] = (projectId, ...args) => (
       projectId == null
         ? mockAdapter[name](projectId, ...args)

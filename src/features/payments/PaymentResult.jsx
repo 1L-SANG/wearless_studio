@@ -5,14 +5,17 @@
    승인 성공 시 계정/크레딧 쿼리를 무효화해 잔액을 즉시 갱신한다.
    ============================================================= */
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Button, Icon } from '@/components/ui.jsx';
+import { clearCreditReturn, readCreditReturn } from '@/lib/creditReturn.js';
+import { authorizeFlowContinuation } from '@/lib/flowSession.js';
 
 export function PaymentSuccess() {
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   // 잔액 표시의 단일 소스는 스토어(§6) — 승인 응답의 available 을 그대로 반영한다.
   const syncCredits = useAppStore((a) => a.syncCredits);
@@ -34,9 +37,18 @@ export function PaymentSuccess() {
         setState({ status: 'done', credits: res.credits, available: res.available });
         syncCredits(res.available);                                  // 헤더 잔액 즉시 반영
         qc.invalidateQueries({ queryKey: ['creditHistory'] });       // 사용 내역 갱신
+        const resume = readCreditReturn(useAppStore.getState().projectId);
+        if (resume) {
+          clearCreditReturn();
+          authorizeFlowContinuation(resume.projectId, resume.path);
+          navigate(resume.path, {
+            replace: true,
+            state: resume.action ? { creditResume: resume } : null,
+          });
+        }
       })
       .catch((e) => setState({ status: 'error', message: e?.message || '결제 승인에 실패했어요.' }));
-  }, [params, qc, syncCredits]);
+  }, [navigate, params, qc, syncCredits]);
 
   if (state.status === 'confirming') {
     return <Shell icon="refresh" title="결제를 확인하고 있어요" desc="잠시만 기다려 주세요." />;

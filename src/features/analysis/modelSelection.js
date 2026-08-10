@@ -22,3 +22,9 @@ export function resolveSelectedModelId({
     : aiModels;
   return (pool[0] || aiModels[0])?.id;
 }
+
+const VIRTUAL_MODEL_IDS = new Set(['mA', 'mB', 'mC', 'mD', 'mE']);
+
+export function isRealModelSelection(selectedModelId) {
+  return !!selectedModelId && !VIRTUAL_MODEL_IDS.has(selectedModelId);
+}

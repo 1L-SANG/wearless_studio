@@ -15,6 +15,10 @@ const DB_VERSION = 1;
 const STORE = 'draft';
 const KEY = 'current';
 const PENDING_KEY = 'wl_draftPending'; // sessionStorage(탭 세션 한정) — 미동기화 draft 존재 표시
+const DRAFT_DEBOUNCE_MS = 500;
+let pendingSnapshot = null;
+let pendingTimer = null;
+let saveChain = Promise.resolve(null);
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -82,6 +86,36 @@ export async function saveProductDraft(product, analysis = null) {
   return { saved: photos.length, failed }; // 호출측이 일부 누락을 사용자에게 알릴 수 있게.
 }
 
+function commitPendingSnapshot() {
+  clearTimeout(pendingTimer);
+  pendingTimer = null;
+  if (!pendingSnapshot) return saveChain;
+  const snapshot = pendingSnapshot;
+  pendingSnapshot = null;
+  saveChain = saveChain.catch(() => null).then(() => saveProductDraft(snapshot.product, snapshot.analysis));
+  return saveChain;
+}
+
+/** 익명 입력을 마지막 변경 기준으로 직렬화해 저장한다. 사진 blob 추출이 겹쳐
+    오래된 저장이 최신 입력을 덮지 않도록 모든 IndexedDB 쓰기는 한 큐를 탄다. */
+export function queueProductDraftSave(product, analysis = null) {
+  pendingSnapshot = { product, analysis };
+  clearTimeout(pendingTimer);
+  pendingTimer = setTimeout(commitPendingSnapshot, DRAFT_DEBOUNCE_MS);
+}
+
+/** OAuth 이동처럼 페이지가 사라지기 전, 예약·진행 중 저장을 모두 기다린다. */
+export async function flushProductDraftSave() {
+  await commitPendingSnapshot();
+  return saveChain;
+}
+
+export function discardPendingDraftSave() {
+  clearTimeout(pendingTimer);
+  pendingTimer = null;
+  pendingSnapshot = null;
+}
+
 /** 저장된 draft 반환(없으면 null). photos[].blob 은 Blob 으로 복원된다. */
 export async function loadDraft() {
   const draft = await withStore('readonly', (s) => s.get(KEY));
@@ -90,6 +124,8 @@ export async function loadDraft() {
 
 /** draft 삭제 — sync 성공 후 정리. */
 export async function clearDraft() {
+  discardPendingDraftSave();
+  await saveChain.catch(() => null);
   await withStore('readwrite', (s) => s.delete(KEY));
   sessionStorage.removeItem(PENDING_KEY);
 }

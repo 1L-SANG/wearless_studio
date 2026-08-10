@@ -11,10 +11,24 @@ export async function selectAnalysisComposeMode({
   nextMode,
   projectId,
   setComposeMode,
+  restoreComposeMode,
   invalidateStoryboardPrefetch,
+  selectionState,
+  onFailure,
 }) {
   if (!nextMode || nextMode === currentMode) return false;
+  const requestId = selectionState ? ++selectionState.current.requestId : null;
   invalidateStoryboardPrefetch(projectId);
-  await setComposeMode(nextMode);
-  return true;
+  try {
+    await setComposeMode(nextMode);
+    if (selectionState) selectionState.current.confirmedMode = nextMode;
+    return true;
+  } catch (error) {
+    const isLatest = !selectionState || selectionState.current.requestId === requestId;
+    if (isLatest) {
+      restoreComposeMode?.(selectionState?.current.confirmedMode ?? currentMode);
+      onFailure?.(error);
+    }
+    return false;
+  }
 }

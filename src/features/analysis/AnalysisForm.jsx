@@ -25,6 +25,7 @@ import { reconcileMatchCompatibility } from '@/lib/api/matchingItems.js';
 import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
 import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import { resolveSelectedModelId } from './modelSelection.js';
+import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { applySellingPointEdit } from './sellingPoints.js';
 import {
   estimateComposeModeCredits,
@@ -84,8 +85,8 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
             <div className="lic-card-who">
               <div className="lic-card-name">{model.displayName}{age != null && <em> · {age}세</em>}</div>
               {model.vcId
-                ? <div className="lic-card-vc"><Icon name="check" size={10} />온체인 VC 발급됨</div>
-                : <div className="lic-card-vc off">VC 미발급</div>}
+                ? <div className="lic-card-vc"><Icon name="check" size={10} />라이선스 검증서 발급 완료</div>
+                : <div className="lic-card-vc off">라이선스 검증서 발급 전</div>}
             </div>
           </div>
 
@@ -108,7 +109,7 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
                 )}
                 <div className="lic-foot">
                   <div className="lic-foot-info">
-                    <div className="lic-price">{_won(data.unitPrice)}<em> /건</em></div>
+                    <div className="lic-price">{_won(data.unitPrice)}<em> · 상세페이지 1개당</em></div>
                     {_fmtDate(data.validUntil) && <div className="lic-valid">{_fmtDate(data.validUntil)}까지</div>}
                     {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
                   </div>
@@ -136,6 +137,11 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
 const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
 import { CREDIT_COSTS } from '@/lib/limits.js';
+import {
+  createMeasurementFields,
+  normalizeMeasurementValue,
+  sanitizeMeasurementInput,
+} from '@/lib/measurementSchema.js';
 
 export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
 
@@ -549,13 +555,24 @@ export function AnalysisForm({
 }) {
   const a = analysis;
   const toast = useToast();
+  const { session, loading: authLoading } = useAuth();
   const composeMode = useAppStore((s) => s.composeMode);
   const setComposeMode = useAppStore((s) => s.setComposeMode);
+  const restoreComposeMode = useAppStore((s) => s.restoreComposeMode);
   const composeModeSaveRef = useRef(Promise.resolve());
+  const composeModeSelectionRef = useRef({ requestId: 0, confirmedMode: composeMode });
   const [composeModeSaving, setComposeModeSaving] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    if (!composeModeSaving) composeModeSelectionRef.current.confirmedMode = composeMode;
+  }, [composeMode, composeModeSaving]);
   const [washing, setWashing] = useState(false);
   const [spDraft, setSpDraft] = useState('');
   const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
+  const [measurementDraft, setMeasurementDraft] = useState(() => ({
+    clothingType: a.clothingType,
+    values: Object.fromEntries((a.measurements || []).map((m) => [m.key, m.value == null ? '' : String(m.value)])),
+  }));
   // 직접 입력에 커서가 있는 동안 enum 칩 하이라이트를 지운다 — 커밋은 여전히 blur 시점이라
   // 데이터는 안 바뀌고, 빈 채로 나가면 칩 선택이 그대로 돌아온다(오클릭 무해).
   const [ccFocus, setCcFocus] = useState(false);
@@ -586,10 +603,12 @@ export function AnalysisForm({
       nextMode,
       projectId,
       setComposeMode,
+      restoreComposeMode,
       invalidateStoryboardPrefetch: invalidateStoryboardEntryPrefetch,
-    }).catch(() => {
-      toast.push('사진 양 선택을 저장하지 못했어요. 다시 선택해 주세요.');
-      return false;
+      selectionState: composeModeSelectionRef,
+      onFailure: () => {
+        toast.push('사진 양을 저장하지 못했어요 — 잠시 후 다시 시도해주세요');
+      },
     });
     composeModeSaveRef.current = pending;
     void pending.finally(() => {
@@ -597,13 +616,21 @@ export function AnalysisForm({
     });
   };
   const confirmAnalysis = async () => {
-    await composeModeSaveRef.current;
-    onNext();
+    if (confirming) return;
+    setConfirming(true);
+    try {
+      await composeModeSaveRef.current;
+      await onNext();
+    } finally {
+      setConfirming(false);
+    }
   };
   // 인물 모델 카탈로그 — FaceMarket 검증 모델(GET /v1/facemarket/models, listModels()).
   // 정적 시드를 버리고 런타임 로드한다. 라이선스가 활성인(hasActiveLicense) 모델만 선택 가능.
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState('');
+  const [modelsAttempt, setModelsAttempt] = useState(0);
   const [detailFor, setDetailFor] = useState(null); // 상세 모달 대상 모델 카드
   const [customMatchOpen, setCustomMatchOpen] = useState(false);
   // 누른 '의류 추가하기' 타일의 화면상 위치 — 모달을 그 바로 위에 띄운다(Modal anchorRect).
@@ -613,13 +640,26 @@ export function AnalysisForm({
   const [modelTab, setModelTab] = useState(() =>
     (a.selectedModelId && !AI_MODELS.some((m) => m.id === a.selectedModelId)) ? 'real' : 'ai');
   useEffect(() => {
+    if (authLoading) return undefined;
+    if (!session) {
+      setModels([]);
+      setModelsError('');
+      setModelsLoading(false);
+      return undefined;
+    }
     let alive = true;
+    setModelsLoading(true);
+    setModelsError('');
     listModels()
       .then((list) => { if (alive) setModels(Array.isArray(list) ? list : []); })
-      .catch(() => { if (alive) setModels([]); })   // 카탈로그 실패는 비치명 — 빈 그리드로 안내만
+      .catch((error) => {
+        if (!alive) return;
+        setModels([]);
+        setModelsError(error?.message || '검증 모델을 불러오지 못했어요.');
+      })
       .finally(() => { if (alive) setModelsLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [authLoading, modelsAttempt, session]);
 
   useEffect(() => {
     const normalized = normalizeTargetGendersForClothingType(
@@ -654,6 +694,8 @@ export function AnalysisForm({
     }
   }, [models, modelsLoading, a.selectedModelId, a.targetGenders, onChange]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
+  const selectableModels = models.filter((model) => model.hasActiveLicense);
+  const pendingLicenseModels = models.filter((model) => !model.hasActiveLicense);
   const applyAnalysisReplacement = useCallback((nextAnalysis) => {
     if (!nextAnalysis) return;
     if (onAnalysisReplace) onAnalysisReplace(nextAnalysis);
@@ -670,6 +712,7 @@ export function AnalysisForm({
   }, [applyAnalysisReplacement, projectId, toast]);
   const removeCustomMatch = useCallback(async () => {
     if (customMatchDeleting) return;
+    if (!window.confirm('업로드한 매칭 의류를 삭제할까요?')) return;
     setCustomMatchDeleting(true);
     try {
       const result = await api.removeCustomMatchItem(projectId);
@@ -818,16 +861,47 @@ export function AnalysisForm({
   };
   // subCategory 는 영문 토큰, 실측 key 는 MeasurementKey — 라벨은 catalogs 에서 파생 (계약 §4)
   const changeType = (t) => {
+    if (!t || t === a.clothingType) return;
+    setMeasurementDraft({ clothingType: t, values: {} });
     const matchClothing = reconcileMatchCompatibility(a.matchClothing, t);
     onChange(withFitProfile({
       clothingType: t,
       subCategory: (catalogs.subCategories[t] || [])[0]?.value ?? null,
       targetGenders: normalizeTargetGendersForClothingType(t, a.targetGenders),
-      measurements: (catalogs.measurementSchema[t] || []).map((k) => ({ key: k, value: null, unit: 'cm' })),
+      measurements: createMeasurementFields(t),
       matchClothing,
     }));
   };
-  const setMeasure = (key, value) => onChange({ measurements: (a.measurements || []).map((m) => m.key === key ? { ...m, value: value === '' ? null : Number(value) } : m) });
+  const measurementValues = Object.fromEntries((a.measurements || []).map((m) => [m.key, m.value]));
+  const visibleMeasurements = createMeasurementFields(a.clothingType, measurementValues);
+  const setMeasure = (key, value) => onChange({ measurements: visibleMeasurements.map((m) => m.key === key ? { ...m, value: normalizeMeasurementValue(value) } : m) });
+  const measurementInputValue = (measurement) => (
+    measurementDraft.clothingType === a.clothingType && measurement.key in measurementDraft.values
+      ? measurementDraft.values[measurement.key]
+      : (measurement.value ?? '')
+  );
+  const editMeasurement = (key, rawValue) => {
+    const value = sanitizeMeasurementInput(rawValue);
+    setMeasurementDraft((current) => ({
+      clothingType: a.clothingType,
+      values: {
+        ...(current.clothingType === a.clothingType ? current.values : {}),
+        [key]: value,
+      },
+    }));
+    if (!value.endsWith('.')) setMeasure(key, value);
+  };
+  const commitMeasurement = (key, rawValue) => {
+    const value = normalizeMeasurementValue(rawValue);
+    setMeasurementDraft((current) => ({
+      clothingType: a.clothingType,
+      values: {
+        ...(current.clothingType === a.clothingType ? current.values : {}),
+        [key]: value == null ? '' : String(value),
+      },
+    }));
+    setMeasure(key, value);
+  };
   const typeLabel = catalogs.clothingTypes.find((t) => t.value === a.clothingType)?.label;
   const fitOpts = fitOptsOf(a).opts;
   const genderOptions = a.clothingType === 'dress'
@@ -841,28 +915,32 @@ export function AnalysisForm({
         <div className="sec-title" style={{ marginBottom: 20 }}>기본 정보</div>
         <div className="basic-fields">
           <div className="field-row"><label className="lbl">의류 종류</label>
-            <Chips options={catalogs.clothingTypes} value={a.clothingType} onChange={changeType} /></div>
+            <Chips options={catalogs.clothingTypes} value={a.clothingType} onChange={changeType} allowDeselect={false} /></div>
           {/* 세부 카테고리 — enum 칩 + 같은 줄 끝의 '직접 입력' pill (2026-07-13 사용자 결정:
               별도 줄이 아니라 칩처럼). enum 선택 ↔ 직접 입력은 배타: 칩을 고르면 custom을
               비우고, custom을 쓰면 칩 해제. AI 추측(customCategory)이 있으면 pill에 채워짐.
               저장은 blur/Enter 커밋, key로 분석 갱신 시 리셋(소재 인라인 편집 관례). */}
           <div className="field-row"><label className="lbl">세부 카테고리</label>
             <Chips options={subCats} value={ccFocus ? null : a.subCategory}
+              allowDeselect={false}
               onChange={(v) => onChange(withFitProfile({ subCategory: v, customCategory: null }))}
               trailing={
-                <input
-                  className={`chip chip-input${ccFocus || (a.customCategory && !a.subCategory) ? ' on' : ''}`}
-                  value={ccDraft} maxLength={20} placeholder="직접 입력"
-                  style={{ width: `calc(${chWidth(ccDraft || '직접 입력')}em + 32px)` }}
-                  onChange={(e) => setCcDraft(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                  onFocus={() => setCcFocus(true)}
-                  onBlur={() => {
-                    setCcFocus(false);
-                    const v = ccDraft.trim();
-                    if (v === (a.customCategory || '')) return;
-                    onChange(withFitProfile(v ? { customCategory: v, subCategory: null } : { customCategory: null }));
-                  }} />
+                <span className="chip-input-wrap">
+                  <input
+                    className={`chip chip-input${ccFocus || (a.customCategory && !a.subCategory) ? ' on' : ''}`}
+                    value={ccDraft} maxLength={20} placeholder="직접 입력"
+                    style={{ width: `calc(${chWidth(ccDraft || '직접 입력')}em + 32px)` }}
+                    onChange={(e) => setCcDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                    onFocus={() => setCcFocus(true)}
+                    onBlur={() => {
+                      setCcFocus(false);
+                      const v = ccDraft.trim();
+                      if (v === (a.customCategory || '')) return;
+                      onChange(withFitProfile(v ? { customCategory: v, subCategory: null } : { customCategory: null }));
+                    }} />
+                  {ccDraft.trim() !== (a.customCategory || '') && <span className="chip-input-pending">적용 전</span>}
+                </span>
               } /></div>
           <div className="field-row"><label className="lbl">대상 성별</label>
             <Chips options={genderOptions} value={a.targetGenders?.[0] || null}
@@ -922,10 +1000,13 @@ export function AnalysisForm({
         </div>
         {!a.measurementsUnknown && (
           <div className="measure-grid">
-            {(a.measurements || []).map((m) => (
+            {visibleMeasurements.map((m) => (
               <div className="measure-cell" key={m.key}>
                 <label className="lbl" style={{ fontWeight: 400, color: 'var(--fg-2)', fontSize: 12.5 }}>{(catalogs.measurementLabels || {})[m.key] || m.key}</label>
-                <div className="mfield"><input type="number" placeholder="0" value={m.value ?? ''} onChange={(e) => setMeasure(m.key, e.target.value)} /><span className="u">cm</span></div>
+                <div className="mfield"><input type="text" inputMode="decimal" pattern="[0-9]*[.]?[0-9]?" placeholder="0" value={measurementInputValue(m)}
+                  onKeyDown={(e) => { if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault(); }}
+                  onChange={(e) => editMeasurement(m.key, e.target.value)}
+                  onBlur={(e) => commitMeasurement(m.key, e.target.value)} /><span className="u">cm</span></div>
               </div>
             ))}
           </div>
@@ -985,6 +1066,7 @@ export function AnalysisForm({
                 {aiSet.has(p) && <span className="sp-ai-tag">AI 제안</span>}
                 {p}
                 <button className="sp-chip-x" aria-label={`${p} 삭제`}
+                  onPointerDown={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); onChange({ sellingPoints: a.sellingPoints.filter((_, j) => j !== i), aiSuggestedPoints: (a.aiSuggestedPoints || []).filter((x) => x !== p) }); }}><Icon name="x" size={12} /></button>
               </span>
@@ -1040,18 +1122,25 @@ export function AnalysisForm({
                 );
               })}
           </div>
-        ) : modelsLoading ? (
+        ) : authLoading || modelsLoading ? (
           <div className="hint">검증 모델을 불러오는 중이에요…</div>
+        ) : !session ? (
+          <div className="hint">로그인하면 실제 모델을 선택할 수 있어요</div>
+        ) : modelsError ? (
+          <div className="fm-model-state">
+            <div className="hint">{modelsError}</div>
+            <Button variant="quiet" size="sm" onClick={() => setModelsAttempt((attempt) => attempt + 1)}>다시 시도</Button>
+          </div>
         ) : models.length === 0 ? (
           <div className="hint">아직 등록된 검증 모델이 없어요.</div>
         ) : (
-          <div className="model-grid">
-            {models.map((m) => {
-              const selectable = !!m.hasActiveLicense;
+          <>
+            <div className="model-grid">
+            {selectableModels.map((m) => {
               const on = a.selectedModelId === m.id;
               return (
                 <div key={m.id}
-                  className={`model-card fm-model${on ? ' on' : ''}${selectable ? '' : ' disabled'}`}
+                  className={`model-card fm-model${on ? ' on' : ''}`}
                   onClick={() => setDetailFor(m)}
                   title="눌러서 상세 정보 보기">
                   {m.coverImageUrl
@@ -1061,15 +1150,36 @@ export function AnalysisForm({
                   <div className="fm-meta">
                     <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
                     <div className="fm-price">
-                      {selectable && m.unitPrice != null
-                        ? `₩${Number(m.unitPrice).toLocaleString('ko-KR')}/건`
-                        : '라이선스 없음'}
+                      {m.unitPrice != null
+                        ? `₩${Number(m.unitPrice).toLocaleString('ko-KR')} · 상세페이지 1개당`
+                        : '상세페이지 1개당 가격 확인 필요'}
                     </div>
                   </div>
                 </div>
               );
             })}
-          </div>
+            </div>
+            {pendingLicenseModels.length > 0 && (
+              <details className="fm-license-pending">
+                <summary>라이선스 준비 중 <span>{pendingLicenseModels.length}</span><Icon name="chevDown" size={15} /></summary>
+                <div className="model-grid">
+                  {pendingLicenseModels.map((m) => (
+                    <div key={m.id} className="model-card fm-model disabled"
+                      onClick={() => setDetailFor(m)} title="눌러서 상세 정보 보기">
+                      {m.coverImageUrl
+                        ? <img src={m.coverImageUrl} alt={m.displayName} />
+                        : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
+                      {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
+                      <div className="fm-meta">
+                        <div className="fm-name">{m.displayName}</div>
+                        <div className="fm-price">라이선스 없음</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </>
         )}
         {detailFor && (
           <ModelDetailModal
@@ -1141,25 +1251,29 @@ export function AnalysisForm({
   // 버튼 금액만으로는 "지금 나가는 돈"만 보이고, 되돌아와 설정을 고치면 또 나간다는 사실이 안 보인다.
   // 콘티에서 '이전' 으로 돌아올 수 있으니 되돌릴 수 없다고는 말하지 않는다 — 대가를 말한다.
   const cta = (
-    <>
-      <div className="af-vol-control">
-        <span className="af-vol-label">사진 양</span>
-        <Chips
-          className="af-vol"
-          options={composeModeOptions}
-          value={composeMode}
-          allowDeselect={false}
-          onChange={changeComposeMode}
-        />
-      </div>
+    <div className="af-cta-stack">
       <p className="af-cta-note">
-        누르면 마네킹컷을 만들기 시작해요. 이후에 성별·의류 종류를 바꾸면
-        컷을 다시 만들어서 크레딧이 한 번 더 나가요. 상세페이지 생성은 콘티 컷 수만큼이에요
-        — 지금 구성 기준 약 {composeModeCredits} 크레딧.
+        다음 화면인 상세페이지 구성으로 이동하고, 마네킹컷은 뒤에서 만들어요.<br />
+        지금 {CREDIT_COSTS.mannequinGenerate}크레딧 · 상세페이지 생성 때 약 {composeModeCredits}크레딧.<br />
+        나중에 성별이나 의류 종류를 바꾸면 마네킹컷을 다시 만들어 같은 비용이 한 번 더 들어요.
       </p>
-      <Button variant="primary" size="lg" iconRight="arrowRight" disabled={composeModeSaving}
+      <div className="af-vol-control">
+        <span className="af-vol-label">사진 양 선택</span>
+        <div className="af-vol" role="radiogroup" aria-label="상세페이지 사진 양">
+          {composeModeOptions.map((option) => (
+            <button type="button" role="radio" aria-checked={composeMode === option.value}
+              className={`af-vol-card${composeMode === option.value ? ' on' : ''}`}
+              key={option.value} onClick={() => changeComposeMode(option.value)}>
+              <span>{option.label}</span>
+              <Icon name={composeMode === option.value ? 'check' : 'arrowRight'} size={16} />
+            </button>
+          ))}
+        </div>
+      </div>
+      <Button variant="primary" size="lg" iconRight="arrowRight"
+        disabled={composeModeSaving || confirming}
         onClick={confirmAnalysis}>의류정보 확정 완료 · {CREDIT_COSTS.mannequinGenerate} 크레딧</Button>
-    </>
+    </div>
   );
 
   if (inline) {
@@ -1167,7 +1281,7 @@ export function AnalysisForm({
       <>
         <div className="af-inline-head"><div><div className="af-head-title">AI가 분석한 정보예요</div><div className="hint" style={{ marginTop: 2 }}>틀린 부분이 있으면 직접 수정해주세요.</div></div></div>
         <div className="af-body af-cards merged-card">{sections}</div>
-        <WizardCTA>{cta}</WizardCTA>
+        <WizardCTA className="wizard-cta-analysis">{cta}</WizardCTA>
       </>
     );
   }
@@ -1176,7 +1290,7 @@ export function AnalysisForm({
     <div className="wizard">
       <PageHead title="AI가 상품 정보를 분석했어요" sub="틀린 부분이 있으면 직접 수정해주세요." />
       <div className="af-body af-cards merged-card">{sections}</div>
-      <WizardCTA>{cta}</WizardCTA>
+      <WizardCTA className="wizard-cta-analysis">{cta}</WizardCTA>
     </div>
   );
 }

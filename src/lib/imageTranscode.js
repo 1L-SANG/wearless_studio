@@ -17,6 +17,10 @@
 // 큰 사진은 생성 요청마다 비용·지연으로 전가된다. 4000px 는 2K 출력의 1.6배로 여유가 있다.
 export const MAX_EDGE = 4000;
 export const JPEG_QUALITY = 0.85;
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+export const UPLOAD_IMAGE_MIME_TYPES = new Set([
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif',
+]);
 const IMAGE_PIPELINE_TIMEOUT_MS = 10000;
 
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif|heic|heif|hif)$/i;
@@ -26,6 +30,14 @@ const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif|heic|heif|hif)$/i;
 export const looksLikeImageFile = (file) => (
   file?.type ? file.type.startsWith('image/') : IMAGE_EXT.test(file?.name || '')
 );
+
+// 서버의 presigned upload 문지기(r2.MIME_EXT/routes.MAX_UPLOAD_BYTES)와 같은 규칙.
+// 반드시 HEIC 변환·축소가 끝난 File 에 적용한다.
+export const getUploadValidationError = (file) => {
+  if (!UPLOAD_IMAGE_MIME_TYPES.has((file?.type || '').toLowerCase())) return 'unsupported_type';
+  if (!file?.size || file.size > MAX_UPLOAD_BYTES) return 'file_too_large';
+  return null;
+};
 
 /* HEIC 판별은 **확장자·MIME 이 아니라 매직바이트**로 한다.
    iOS/일부 브라우저가 File.type 을 빈 문자열로 주고, AirDrop·iCloud 로 받은 파일은 확장자가
@@ -168,13 +180,25 @@ export async function toUploadableImages(files, options = {}, { signal } = {}) {
   const ok = [], failed = [];
   for (const f of files) {
     if (signal?.aborted) break;
-    try {
-      const converted = await toUploadableImage(f, options);
-      if (signal?.aborted) break;
-      ok.push(converted);
-    } catch (e) {
-      if (signal?.aborted) break;
-      failed.push({ name: f?.name || '이미지', reason: e?.message || String(e) });
+    let lastError;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const converted = await toUploadableImage(f, options);
+        if (signal?.aborted) break;
+        ok.push(converted);
+        lastError = null;
+        break;
+      } catch (e) {
+        lastError = e;
+        if (signal?.aborted) break;
+      }
+    }
+    if (signal?.aborted) break;
+    if (lastError) {
+      console.warn('이미지 변환을 두 번 시도했지만 실패했습니다.', {
+        name: f?.name || '이미지', error: lastError,
+      });
+      failed.push({ name: f?.name || '이미지', reason: lastError?.message || String(lastError) });
     }
   }
   return { files: ok, failed };

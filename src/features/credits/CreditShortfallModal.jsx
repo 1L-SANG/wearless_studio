@@ -1,11 +1,20 @@
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Button, Modal } from '@/components/ui.jsx';
+import { useAppStore } from '@/store/useAppStore.js';
+import { recordCreditReturn } from '@/lib/creditReturn.js';
 
-export function CreditShortfallModal({ shortfall, onClose }) {
+export function CreditShortfallModal({ shortfall, action, onClose }) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   if (!shortfall) return null;
 
   const goToPricing = () => {
+    recordCreditReturn({
+      projectId: useAppStore.getState().projectId,
+      path: pathname,
+      action,
+      requiredCredits: shortfall.requiredCredits,
+    });
     onClose();
     navigate('/pricing');
   };
