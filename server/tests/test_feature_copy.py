@@ -56,14 +56,34 @@ def test_copy_schema_shape():
     assert item["additionalProperties"] is False
 
 
-def test_build_prompt_carries_only_unmatched_points_and_facts():
+def test_build_prompt_lists_only_the_points_it_is_given():
     p = fc.build_prompt(
         ["빈티지한 워싱감"],
         {"name": "카고 팬츠", "clothingType": "bottom"},
         {"materials": [{"name": "코튼"}], "fit": "over"})
-    assert "빈티지한 워싱감" in p
     assert "카고 팬츠" in p and "코튼" in p
-    assert "하이웨이스트" not in p, "사전 히트 항목은 프롬프트에 실리지 않는다"
+    # 사전 히트가 안 실린다는 주장은 few-shot 예시가 아니라 HIGHLIGHTS 목록에 대한 것이다
+    highlights = p.split("HIGHLIGHTS:")[1]
+    assert highlights.strip() == "- 빈티지한 워싱감"
+
+
+def test_generate_sends_only_dictionary_misses_to_the_model(monkeypatch):
+    seen = []
+
+    async def spy(_settings, prompt, _schema):
+        seen.append(prompt)
+        return ({"items": [{"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번집니다."}]}, "spy")
+
+    monkeypatch.setattr(fc, "complete_json", spy)
+    out = run(fc.generate(make_settings(), ["하이웨이스트", "빈티지한 워싱감"], {}, {}))
+    assert len(seen) == 1
+    highlights = seen[0].split("HIGHLIGHTS:")[1]
+    assert "빈티지한 워싱감" in highlights
+    assert "하이웨이스트" not in highlights
+    assert out == [
+        {"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."},
+        {"point": "빈티지한 워싱감", "desc": "물 빠진 듯한 색이 자연스럽게 번집니다."},
+    ]
 
 
 def test_validate_keeps_matching_points_only():
@@ -83,7 +103,7 @@ def test_validate_drops_unverified_functional_claims():
 def test_validate_drops_hype_and_overlong_desc():
     raw = {"items": [
         {"point": "a", "desc": "완벽한 마감입니다."},
-        {"point": "b", "desc": "가" * (fc.MAX_DESC_CHARS + 1) + "."},
+        {"point": "b", "desc": "가" * fc.MAX_DESC_CHARS + "습니다."},
     ]}
     assert fc.validate(raw, ["a", "b"]) == {}
 

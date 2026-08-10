@@ -10,6 +10,15 @@
 성능(통기성·보온·방수 등) 단정은 계약 AG-02 §단정 금지로 어느 경로로도 들어오지 않는다.
 """
 
+import logging
+import os
+
+from ..config import Settings
+from .prompts import _sanitize, clean_text
+from .vision_llm import complete_json
+
+log = logging.getLogger(__name__)
+
 MAX_DESC_CHARS = 60
 
 # ── canonical 키 → (설명문, 셀러 표현 alias) ─────────────────────────────────
@@ -78,12 +87,6 @@ def lookup(point) -> str | None:
     return DETAIL_COPY[key][0] if key else None
 
 
-import os
-
-from ..config import Settings
-from .prompts import _sanitize, clean_text
-from .vision_llm import complete_json
-
 _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # server/
 _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "feature_copy_v1.txt")
 
@@ -151,6 +154,8 @@ def validate(raw: dict, points: list) -> dict:
         if not isinstance(it, dict):
             continue
         point = it.get("point")
+        if not isinstance(point, str):
+            continue
         desc = clean_text(it.get("desc"))
         if point not in wanted or not desc:
             continue
@@ -171,10 +176,13 @@ async def generate(settings: Settings, points: list, product: dict, analysis: di
     hits = {p: lookup(p) for p in cleaned}
     misses = [p for p, d in hits.items() if d is None]
     if misses:
+        # try 는 build_prompt/validate 까지 통째로 감싼다 — 여기 버그도 카피 실패로 삼켜야
+        # 호출측(상세페이지 job)이 멈추지 않는다(카피는 게이트 아님). 대신 조용히 사라지지
+        # 않도록 로그를 남긴다.
         try:
             raw, _provider = await complete_json(
                 settings, build_prompt(misses, product, analysis), copy_schema())
             hits.update(validate(raw, misses))
-        except Exception:  # VisionError 포함 — 카피는 게이트 아님
-            pass
+        except Exception as e:  # VisionError 포함 — 카피는 게이트 아님
+            log.warning("feature copy generation failed: %r", e)
     return [{"point": p, "desc": hits[p]} for p in cleaned if hits.get(p)]
