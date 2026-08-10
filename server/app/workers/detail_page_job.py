@@ -1144,19 +1144,24 @@ async def run_detail_page_job(app, job: dict) -> None:
 
             # 특징 포인트 설명 문구 — 에디터의 정보 블록이 프리필로 읽는다(analysis.featureCopy).
             # 컷 카피와 달리 블록 단위가 아니라 강조특징 단위라 1콜이면 끝난다.
+            # 포인트 출처는 프론트(Editor.jsx buildInfoCtx)와 같은 우선순위 — 셀러가 칩을
+            # 직접 채웠으면 그걸, 비워뒀으면 AI 제안을 쓴다. 다르면 제목(칩)과 설명이 어긋난다.
+            points = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
             try:
-                items = await feature_copy.generate(
-                    s, analysis.get("sellingPoints") or [], product, analysis)
+                items = await feature_copy.generate(s, points, product, analysis)
             except Exception as e:  # 카피는 게이트 아님 — 상세페이지 생성을 막지 않는다
                 log.warning("feature copy failed for job %s: %r", job_id, e)
                 items = []
             if items:
-                async with pool.connection() as conn:
-                    # 잡이 도는 동안 셀러가 분석을 고쳤을 수 있다. 잡 시작 때 읽은 사본으로
-                    # 덮으면 그 사이 편집이 날아가므로, 여기서 다시 읽어 featureCopy 만 얹는다.
-                    fresh = await repo.get_analysis(conn, project_id) or {}
-                    await repo.save_analysis(conn, project_id, {**fresh, "featureCopy": items})
-                    await conn.commit()
+                try:
+                    async with pool.connection() as conn:
+                        # 잡이 도는 동안 셀러가 분석을 고쳤을 수 있다. 잡 시작 때 읽은 사본으로
+                        # 덮으면 그 사이 편집이 날아가므로, 여기서 다시 읽어 featureCopy 만 얹는다.
+                        fresh = await repo.get_analysis(conn, project_id) or {}
+                        await repo.save_analysis(conn, project_id, {**fresh, "featureCopy": items})
+                        await conn.commit()
+                except Exception as e:  # 카피는 게이트 아님 — 기록 실패가 생성을 죽이지 않는다
+                    log.warning("feature copy persist failed for job %s: %r", job_id, e)
 
         # 3) 컷 생성 (부분 성공) — 컷 단위 progress(20→80)는 _gen_cuts 안에서 emit
         (

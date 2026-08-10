@@ -57,6 +57,16 @@ def test_source_mirrored_carried_when_client_omits_it():
     assert saved["fit"] == "regular"          # 셀러 편집은 그대로 반영
 
 
+def test_feature_copy_carried_when_client_omits_it():
+    """생성 잡이 써 둔 featureCopy 도 같은 이월 대상 — REPLACE 저장에 사라지면 안 된다."""
+    saved = _save(
+        {"featureCopy": [{"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."}], "fit": "over"},
+        {"fit": "regular"},
+    )
+    assert saved["featureCopy"] == [{"point": "하이웨이스트", "desc": "허리선이 높아 다리가 더 길어 보입니다."}]  # 이월됨
+    assert saved["fit"] == "regular"          # 셀러 편집은 그대로 반영
+
+
 def test_client_value_wins_when_present():
     """이월은 '누락 시'에만 — 클라가 명시한 값을 서버가 덮으면 편집이 안 먹는다."""
     saved = _save({"sourceMirrored": True}, {"sourceMirrored": False, "fit": "slim"})
