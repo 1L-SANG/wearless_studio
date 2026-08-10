@@ -494,6 +494,13 @@ export const httpAdapter = {
     const res = await http(`/v1/projects/${projectId}/wash-care:draft`, { method: 'POST' });
     return res.text;
   },
+  // 특징 포인트 설명 AI 초안 (동기·무과금) — 강조특징마다 한 줄. 상세페이지 생성 잡과 같은 경로라
+  // 사전 히트는 즉시, 나머지만 LLM 이 쓴다. 서버가 analysis.featureCopy 에 합쳐 저장한다.
+  async draftFeatureCopy(projectId) {
+    if (!projectId) return [];
+    const res = await http(`/v1/projects/${projectId}/feature-copy:draft`, { method: 'POST' });
+    return res.items || [];
+  },
   // 매칭 후보 (계약 §6) — 같은 프로젝트의 이월 선택(analysisCache)을 우선. 캐시 미스(하드 새로고침)면
   // GET /analysis 로 저장분을 1회 하이드레이션해 선택 복원. 그래도 없으면 서버 후보 + 상위 N 기본선택.
   async getMatchClothing(projectId) {

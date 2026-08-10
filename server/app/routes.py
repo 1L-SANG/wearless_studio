@@ -20,6 +20,7 @@ from . import facemarket, repo
 from .agents import (
     content_roles,
     cut_generator,
+    feature_copy,
     fit_axes,
     mannequin,
     product_analyst,
@@ -777,6 +778,47 @@ async def draft_wash_care(
             detail={"code": "wash_care_failed",
                     "message": "세탁 정보 생성에 실패했어요. 잠시 후 다시 시도해 주세요."})
     return JSONResponse({"text": text})
+
+
+@router.post(
+    "/projects/{project_id}/feature-copy:draft",
+    responses={**COMMON_RESPONSES, 502: {"model": ErrorResponse}},
+    tags=["Analysis"],
+    summary="AI 특징 포인트 설명 초안 생성",
+)
+async def draft_feature_copy(
+    request: Request, project_id: str, user_id: str = Depends(require_user)
+):
+    """강조특징마다 설명 한 줄을 생성합니다(무과금·동기). 반환: `{items:[{point,desc}]}`.
+
+    상세페이지 생성 잡이 쓰는 것과 같은 경로다 — 부위·구조 사전을 먼저 보고 사전에 없는
+    표현만 LLM 1콜로 넘긴다. 결과는 `analysis.featureCopy` 에 합쳐 저장하므로, 에디터가
+    블록을 지을 때도 같은 문구를 쓴다. 셀러가 입력한 강조특징 자체는 읽기만 한다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**: `404` 프로젝트 없음/타인 소유. `502` 한 줄도 만들지 못함.
+    """
+    s = request.app.state.settings
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        analysis = await repo.get_analysis(conn, project_id) or {}
+    points = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
+    items = await feature_copy.generate(s, points, product, analysis)
+    if not items:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "feature_copy_failed",
+                    "message": "특징 설명을 만들지 못했어요. 잠시 후 다시 시도해 주세요."})
+    # 쓰기 직전에 다시 읽는다 — 이 요청 사이에 셀러가 분석을 고쳤을 수 있다.
+    async with get_conn(request) as conn:
+        fresh = await repo.get_analysis(conn, project_id) or {}
+        await repo.save_analysis(
+            conn, project_id,
+            {**fresh, "featureCopy": feature_copy.merge_stored(fresh.get("featureCopy"), items)})
+        await conn.commit()
+    return JSONResponse({"items": items})
 
 
 @router.post(
