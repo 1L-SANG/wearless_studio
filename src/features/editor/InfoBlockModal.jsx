@@ -3,7 +3,7 @@
    프리셋 타입별 폼으로 block.info(정본)를 편집한다. 제출하면 에디터가
    buildInfoBlock 으로 elements 를 통째로 재생성한다(수동 수정 대체).
    ============================================================= */
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Button, Icon, IconButton, Modal } from '@/components/ui.jsx';
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { CARE_COPY_LIBRARY, CARE_LABEL_SENTENCE, FEATURE_ITEMS_MAX, FEATURE_ITEMS_MIN, FEATURE_LAYOUTS, INFO_PRESET_TYPES, careFamilyFor, resolveFeatureLayout } from '@/features/editor/presets/infoPresets.js';
@@ -214,25 +214,33 @@ function PhotoCell({ src, onClick }) {
 function FeatureIconsForm({ info, setInfo, onPickPhoto, onDraftCopy }) {
   const [drafting, setDrafting] = useState(false);
   const [draftError, setDraftError] = useState('');
-  const draft = async () => {
-    if (!onDraftCopy || drafting) return;
-    setDrafting(true); setDraftError('');
-    try {
-      const items = await onDraftCopy();
-      const byPoint = new Map((items || []).map((c) => [c.point, c.desc]));
-      // 셀러가 누른 버튼이므로 이미 쓰인 설명도 갈아끼운다 — 취소하면 통째로 되돌아간다.
-      setInfo((f) => ({ ...f, items: f.items.map((it) => (byPoint.has(it.title) ? { ...it, desc: byPoint.get(it.title) } : it)) }));
-    } catch (e) {
-      setDraftError(e?.message || '문구를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
-    } finally {
-      setDrafting(false);
-    }
-  };
+  const asked = useRef(false);
+  /* 폼이 열리면 빈 설명을 알아서 채운다. 에디터가 이미 저장된 analysis.featureCopy 로 한 번
+     채운 뒤라, 여기까지 빈 채로 남은 포인트는 문구가 아예 없는 것들이다 — 그럴 때만 서버를
+     부르므로 이미 문구가 있는 블록은 네트워크를 타지 않는다. 한 번 연 폼에서 한 번만. */
+  useEffect(() => {
+    if (asked.current || !onDraftCopy) return;
+    if (!(info.items || []).some((it) => it.title && !it.desc)) return;
+    asked.current = true;
+    let cancelled = false;
+    setDrafting(true);
+    onDraftCopy()
+      .then((items) => {
+        if (cancelled) return;
+        const byPoint = new Map((items || []).map((c) => [c.point, c.desc]));
+        // 빈칸만 채운다 — 요청이 도는 동안 셀러가 써 넣은 문장을 덮지 않는다
+        setInfo((f) => ({ ...f, items: f.items.map((it) => (it.desc || !byPoint.has(it.title) ? it : { ...it, desc: byPoint.get(it.title) })) }));
+      })
+      .catch(() => { if (!cancelled) setDraftError('설명 문구를 불러오지 못했어요. 직접 입력해 주세요.'); })
+      .finally(() => { if (!cancelled) setDrafting(false); });
+    return () => { cancelled = true; };
+    // 폼을 여는 순간의 상태로 한 번만 판단한다 — info 를 의존성에 넣으면 타이핑마다 다시 돈다
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return <FeatureIconsFormBody info={info} setInfo={setInfo} onPickPhoto={onPickPhoto}
-    onDraft={onDraftCopy ? draft : null} drafting={drafting} draftError={draftError} />;
+    drafting={drafting} draftError={draftError} />;
 }
 
-function FeatureIconsFormBody({ info, setInfo, onPickPhoto, onDraft, drafting, draftError }) {
+function FeatureIconsFormBody({ info, setInfo, onPickPhoto, drafting, draftError }) {
   const setItem = (i, patch) => setInfo((f) => ({ ...f, items: f.items.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
   const layout = resolveFeatureLayout(info);
   // 그리드형은 설명글을 그리지 않는다 — 입력칸은 흐리게 두되 값은 지우지 않는다.
@@ -247,18 +255,16 @@ function FeatureIconsFormBody({ info, setInfo, onPickPhoto, onDraft, drafting, d
           ))}
         </div>
       </Field>
-      {onDraft && (
-        <Field label="설명 문구" hint="분석에서 뽑은 강조특징을 근거로 포인트마다 한 줄씩 만들어요. 이미 쓴 설명은 새 문구로 바뀌어요.">
-          <Button variant="ghost" size="sm" icon="sparkles" disabled={drafting} onClick={onDraft}>
-            {drafting ? '문구 만드는 중…' : 'AI 문구 불러오기'}
-          </Button>
-          {draftError && <p className="hint" style={{ marginTop: 6, color: '#d92d20' }}>{draftError}</p>}
-        </Field>
+      {drafting && (
+        <p className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+          <Icon name="sparkles" size={14} />설명 문구를 만드는 중이에요…
+        </p>
       )}
+      {draftError && <p className="hint" style={{ marginBottom: 10, color: '#d92d20' }}>{draftError}</p>}
       <Field label={`특징 포인트 (${FEATURE_ITEMS_MIN}~${FEATURE_ITEMS_MAX}개)`}
         hint={descOff
           ? '그리드형은 제목만 보여줘요 — 설명은 저장해 두고 다른 레이아웃에서 다시 나와요.'
-          : '분석에서 뽑은 핵심 장점이 미리 채워져요. 왼쪽 원을 눌러 포인트별 사진을 고르세요.'}>
+          : '분석에서 뽑은 핵심 장점과 설명이 미리 채워져요. 마음에 안 들면 그 자리에서 고쳐 쓰면 돼요. 왼쪽 원을 눌러 포인트별 사진을 고르세요.'}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {info.items.map((it, i) => (
             <div key={i} style={rowGap}>
