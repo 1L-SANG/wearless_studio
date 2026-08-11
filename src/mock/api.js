@@ -321,6 +321,11 @@ export const api = {
     await wait(900);
     return '찬물 단독 손세탁 권장 · 표백제 사용 금지 · 그늘에 뉘어 건조';
   },
+  async draftFeatureCopy(/* projectId */) {
+    await wait(700);
+    // mock 은 서버 사전을 복제하지 않는다 — 강조특징을 그대로 되돌려 폼 배선만 확인시킨다.
+    return (DB.analysis.sellingPoints || []).map((p) => ({ point: p, desc: `${p} 디테일을 살렸습니다.` }));
+  },
 
   /* ---- mannequin (PRD §7) ---- */
   async getMatchClothing(/* projectId */) {

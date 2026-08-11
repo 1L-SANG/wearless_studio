@@ -24,9 +24,9 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
-import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
+import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
+import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
 
@@ -96,13 +96,30 @@ function LicenseVerifyEl({ el, base }) {
 
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
-function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelect, onPatch, onAddImage, onEdit, onCropStart }) {
+function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelect, onSelectBlock, onPatch, onAddImage, onEdit, onCropStart }) {
   const ref = useRef(null);
   if (el.hidden) return null;
+
+  /* 글자 위를 눌렀는지, 상자 안 빈 곳을 눌렀는지 가른다 — 판정은 pointMissesTextLines.
+     이미 고른/편집 중인 요소는 상자 전체를 살려 둔다(여백을 잡고 끌 수 있어야 한다). */
+  const missesGlyphs = (e) => {
+    if (el.type !== 'text' || selected || editing) return false;
+    const node = ref.current;
+    if (!node) return false;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    return pointMissesTextLines([...range.getClientRects()], e.clientX, e.clientY);
+  };
 
   const pick = (e) => {
     if (preview) return;
     if (el.locked) return;
+    if (missesGlyphs(e)) {
+      if (!onSelectBlock) return;
+      e.stopPropagation();
+      onSelectBlock();
+      return;
+    }
     e.stopPropagation();
     onSelect(el, e.shiftKey);
   };
@@ -177,6 +194,8 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
         fontStyle: s.italic ? 'italic' : 'normal',
         textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none' }}
         onPointerDown={(e) => { if (!editing) pick(e); }}
+        /* pick 이 이미 요소든 블록이든 골라 놨다 — 어느 쪽이든 이 클릭은 캔버스 바닥까지
+           가면 안 된다. 거기 onClick 이 선택을 지운다. */
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => { e.stopPropagation(); onEdit(el.id); setTimeout(() => ref.current && ref.current.focus(), 0); }}
         contentEditable={editing} suppressContentEditableWarning
@@ -223,7 +242,12 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
-  const blockSelected = selectedBlockId === block.id && (!selEls || selEls.length === 0);
+  // 블록 강조(테두리·빠른 도구)는 그 블록이 지금 다루는 블록이면 켠다 — 안의 요소를 고른
+  // 상태도 포함이다. 블록은 사진·글이 거의 다 덮고 있어서, 배경 여백을 정확히 맞춰 눌러야만
+  // 켜지던 이전 조건으로는 캔버스에서 블록을 잡았다는 표시를 사실상 볼 수 없었다.
+  const blockActive = selectedBlockId === block.id;
+  // 높이 조절 손잡이는 블록 자체를 고른 때만 — 요소를 옮기는 중에 같이 뜨면 서로 걸린다.
+  const blockSelected = blockActive && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
 
   const resize = (e, side) => {
@@ -248,8 +272,14 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
   };
 
   return (
-    <div className={`canvas-block${blockSelected ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
-      onClick={(e) => { if (e.target === e.currentTarget || e.target.classList.contains('block-clip')) onSelectBlock(block.id); }}
+    <div className={`canvas-block${blockActive ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
+      /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
+         멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
+      onClick={(e) => {
+        if (e.target !== e.currentTarget && !e.target.classList.contains('block-clip')) return;
+        e.stopPropagation();
+        onSelectBlock(block.id);
+      }}
       style={{ background: block.bg, height: blockH, '--inv': 1 / (scale || 1) }}
       onDragOver={(e) => { if (e.dataTransfer.types.includes('text/object')) { e.preventDefault(); setObjOver(true); } }}
       onDragLeave={() => setObjOver(false)}
@@ -259,7 +289,8 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
           (crop && crop.elId === el.id) ? null : (
             <CanvasElement key={el.id} el={el} blockId={block.id} scale={scale} preview={false}
               selected={selEls && selEls.includes(el.id)} editing={editEl === el.id}
-              onSelect={(e, additive) => onSelectEl(block.id, e, additive)} onPatch={onElPatch}
+              onSelect={(e, additive) => onSelectEl(block.id, e, additive)}
+              onSelectBlock={() => onSelectBlock(block.id)} onPatch={onElPatch}
               onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit}
               onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
           )
@@ -301,8 +332,9 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
       </div>
       {blockSelected && (
         <>
-          <span className="blk-resize top" onPointerDown={(e) => resize(e, 'top')} title="위로 높이 조절"><span className="pill-bar" /></span>
-          <span className="blk-resize bottom" onPointerDown={(e) => resize(e, 'bottom')} title="아래로 높이 조절"><span className="pill-bar" /></span>
+          {/* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */}
+          <span className="blk-resize top" onPointerDown={(e) => resize(e, 'top')} onClick={(e) => e.stopPropagation()} title="위로 높이 조절"><span className="pill-bar" /></span>
+          <span className="blk-resize bottom" onPointerDown={(e) => resize(e, 'bottom')} onClick={(e) => e.stopPropagation()} title="아래로 높이 조절"><span className="pill-bar" /></span>
         </>
       )}
       <div className="quick" onClick={(e) => e.stopPropagation()}>
@@ -386,6 +418,7 @@ function buildInfoCtx({ productName, clothingType, catalogs, product, analysis, 
     measurements: product?.measurements,
     materials: analysis?.materials,
     sellingPoints: (analysis?.sellingPoints?.length ? analysis.sellingPoints : analysis?.aiSuggestedPoints) || [],
+    featureCopy: analysis?.featureCopy || [],
     fit: analysis?.fit,
     fits: catalogs?.fits,
     colorLabels: (colorOpts || []).map((o) => o.label),
@@ -560,6 +593,12 @@ export function Editor() {
       try {
         const server = await getFinalEditorBlocks(projectId);
         if (cancelled) return;
+        // 생성 잡이 진행 중에 analysis.featureCopy 를 쓴다. 마운트 때 받아 둔 스냅샷은
+        // 그 쓰기보다 앞서므로, 정보 템플릿을 깔기 전에 다시 읽어야 특징 포인트 설명이 채워진다.
+        // 루프는 두 번 돌 수 있으니 네트워크 호출은 루프 밖에 둔다.
+        const freshAnalysis = await api.getAnalysis(projectId).catch(() => null);
+        if (cancelled) return;
+        if (freshAnalysis) setAnalysis(freshAnalysis);
         let restoredServerLayout = false;
         // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
         // 저장 요청 도중 사용자가 한 번 더 편집했다면 최신 ref로 다시 합쳐 저장하여 덮어쓰지 않는다.
@@ -568,7 +607,8 @@ export function Editor() {
           restoredServerLayout ||= !canSafelyMergeServerBlocks(current, server);
           let merged = mergeServerBlocks(current, server);
           if (needsDefaultTemplate(merged)) {
-            const ctx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis, colorOpts, fmModels });
+            // 이 이펙트의 클로저가 붙든 analysis 는 여전히 마운트 스냅샷이라 위에서 다시 읽은 값을 쓴다.
+            const ctx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis: freshAnalysis || analysis, colorOpts, fmModels });
             merged = applyInfoTemplate(merged, ctx).blocks;
           }
           merged = expandBlockHeights(merged);
@@ -808,7 +848,9 @@ export function Editor() {
   const selectEl = (blockId, el, additive, keepTab) => {
     if (cropping) commitCrop();   // 크롭 중 다른 요소 클릭 → 크롭 확정 후 선택 (런타임 호출이라 TDZ 무관)
     setVaryTarget(null);          // 캔버스 선택이 바뀌면 'AI 편집' 지정 대상은 해제
-    setSelBlock(blockId); setSelEl(el.id);
+    // 요소를 고르는 것도 그 블록을 잡은 것이다 — 이걸 안 켜면 블록 테두리·빠른 도구가
+    // 안 뜨고, 블록 배경을 정확히 눌러야만 보이는 상태로 돌아간다.
+    setSelBlock(blockId); setBlockFocused(true); setSelEl(el.id);
     setSelEls((cur) => additive ? (cur.includes(el.id) ? cur.filter((x) => x !== el.id) : [...cur, el.id]) : [el.id]);
     if (!keepTab) setTab(el.type === 'text' ? 'text' : 'image');
   };
@@ -937,7 +979,9 @@ export function Editor() {
     if (varyTarget) setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === varyTarget.id ? { ...x, cutType: t } : x); return nw; });
     else patchEl({ cutType: t });
   };
-  const jumpTo = (id) => { setSelBlock(id); setSelEl(null); setSelEls([]);
+  // setBlockFocused 없이 selBlock 만 세우면 오른쪽 목록만 켜지고 캔버스는 조용하다 —
+  // 캔버스 강조는 blockFocused 로 게이팅되고 그건 캔버스 클릭에서만 켜졌다.
+  const jumpTo = (id) => { setSelBlock(id); setBlockFocused(true); setSelEl(null); setSelEls([]);
     const idx = blocks.findIndex((b) => b.id === id);
     const wrap = wrapRef.current; if (!wrap) return;
     const target = wrap.querySelectorAll('.canvas-block')[idx];
@@ -960,16 +1004,46 @@ export function Editor() {
     ? (targetGenders.every((g) => g === 'men') ? 'men' : 'women')
     : null;
   const infoCtx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis, colorOpts, fmModels });
+  // 특징 포인트는 폼을 열 때 빈 설명을 analysis.featureCopy 로 다시 채운다 — 생성 잡의 쓰기보다
+  // 앞선 스냅샷으로 블록이 지어졌으면 그대로 두면 영구히 빈칸이다(정보 템플릿은 재적용되지 않는다).
+  const seedInfo = (type, info) => (type === 'feature_icons' ? fillFeatureCopy(info, infoCtx) : info);
+  // 'AI 문구 불러오기' — 서버가 강조특징마다 한 줄을 쓰고 analysis.featureCopy 에 합쳐 저장한다.
+  // 여기서도 상태를 갱신해 두면 이 세션에서 블록을 새로 넣을 때 바로 프리필된다.
+  const draftFeatureCopy = async () => {
+    const items = await api.draftFeatureCopy(projectId);
+    if (items && items.length) {
+      setAnalysis((a) => {
+        const merged = new Map((a?.featureCopy || []).map((c) => [c.point, c.desc]));
+        items.forEach((c) => merged.set(c.point, c.desc));
+        return { ...(a || {}), featureCopy: [...merged].map(([point, desc]) => ({ point, desc })) };
+      });
+    }
+    return items;
+  };
   const openInfoPreset = (type) => {
-    // size/care 는 자동 블록 제자리 강화, info 는 같은 infoType 이 있으면 그 블록을 수정한다(중복 방지)
+    // size/care 는 자동 블록 제자리 강화, info 는 같은 infoType 이 있으면 그 블록을 수정한다(중복 방지).
+    // 단 repeatable 프리셋(특징 포인트)은 누를 때마다 새 블록 — 상세페이지는 DETAIL POINT 를 여러 벌 쓴다.
     const kind = type === 'size_table' ? 'size' : type === 'care' ? 'care' : null;
-    const existing = kind ? blocks.find((b) => b.kind === kind) : blocks.find((b) => presetTypeOf(b) === type);
-    setInfoModal({ type, blockId: existing ? existing.id : null, initialInfo: existing?.info || defaultInfoFor(type, infoCtx) });
+    const existing = isRepeatablePreset(type) ? null
+      : (kind ? blocks.find((b) => b.kind === kind) : blocks.find((b) => presetTypeOf(b) === type));
+    // 두 번째 특징 포인트 블록은 앞 블록이 쓰지 않은 강조특징부터 채운다 — 같은 포인트가
+    // 두 섹션에 나란히 뜨는 것보다, 남은 특징을 이어 받는 쪽이 실제로 쓰는 순서다.
+    const ctx = (isRepeatablePreset(type) && type === 'feature_icons')
+      ? { ...infoCtx, sellingPoints: unusedSellingPoints() }
+      : infoCtx;
+    setInfoModal({ type, blockId: existing ? existing.id : null, initialInfo: seedInfo(type, existing?.info || defaultInfoFor(type, ctx)) });
+  };
+  const unusedSellingPoints = () => {
+    const used = new Set(blocks.filter((b) => presetTypeOf(b) === 'feature_icons')
+      .flatMap((b) => ((b.info && b.info.items) || []).map((it) => it.title).filter(Boolean)));
+    const all = infoCtx.sellingPoints || [];
+    const left = all.filter((p) => !used.has(p));
+    return left.length ? left : all;   // 다 썼으면 처음부터 — 빈 폼을 주는 것보다 낫다
   };
   const openInfoEdit = (block) => {
     const type = presetTypeOf(block);
     if (!type) return;
-    setInfoModal({ type, blockId: block.id, initialInfo: block.info || defaultInfoFor(type, infoCtx) });
+    setInfoModal({ type, blockId: block.id, initialInfo: seedInfo(type, block.info || defaultInfoFor(type, infoCtx)) });
   };
   const submitInfo = (info) => {
     const m = infoModal; if (!m) return;
@@ -1559,7 +1633,8 @@ export function Editor() {
       {infoModal && (
         <InfoBlockModal type={infoModal.type} initialInfo={infoModal.initialInfo} ctx={infoCtx}
           wardrobe={wardrobe} colorOpts={colorOpts}
-          editing={!!infoModal.blockId} onClose={() => setInfoModal(null)} onSubmit={submitInfo} />
+          editing={!!infoModal.blockId} onClose={() => setInfoModal(null)} onSubmit={submitInfo}
+          onDraftCopy={draftFeatureCopy} />
       )}
     </div>
   );

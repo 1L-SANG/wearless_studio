@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   CARE_LABEL_SENTENCE,
   DEFAULT_INFO_TEMPLATE,
+  FEATURE_ITEMS_MAX,
+  FEATURE_LAYOUTS,
   INFO_PRESET_TYPES,
   NEEDS_INPUT,
   applyInfoTemplate,
@@ -12,9 +14,13 @@ import {
   careFamilyFor,
   carrySlotImages,
   defaultInfoFor,
+  fillFeatureCopy,
+  isRepeatablePreset,
   needsDefaultTemplate,
   presetTypeOf,
+  resolveFeatureLayout,
 } from '../../src/features/editor/presets/infoPresets.js';
+import { SELLING_POINTS_MAX } from '../../src/features/analysis/sellingPoints.js';
 import { normalizeEditorBlockRole } from '../../src/lib/storyboardTaxonomy.js';
 
 const seqId = () => { let n = 0; return (p) => `${p}${(n += 1)}`; };
@@ -204,12 +210,12 @@ test('feature icons keep raw form state — empty slots survive, placeholder nev
   assert.ok(empty.elements.some((e) => e.type === 'text' && e.text.includes('핵심 장점')), 'placeholder still rendered');
 });
 
-test('feature icons are photo cards clamped to 2~5 points', () => {
+test('feature icons are photo cards clamped to the min/max point count', () => {
   const two = buildInfoBlock('feature_icons', { items: [{ title: 'A' }, { title: 'B' }] }, CTX, seqId());
   assert.equal(two.elements.filter((e) => e.type === 'image').length, 2, 'one circular photo slot per point');
   assert.ok(two.elements.filter((e) => e.type === 'image').every((e) => e.radius === e.w / 2), 'slots are circles');
-  const seven = buildInfoBlock('feature_icons', { items: Array.from({ length: 7 }, (_x, i) => ({ title: `P${i}` })) }, CTX, seqId());
-  assert.equal(seven.info.items.length, 5, 'max 5 points');
+  const tooMany = buildInfoBlock('feature_icons', { items: Array.from({ length: FEATURE_ITEMS_MAX + 2 }, (_x, i) => ({ title: `P${i}` })) }, CTX, seqId());
+  assert.equal(tooMany.info.items.length, FEATURE_ITEMS_MAX, `max ${FEATURE_ITEMS_MAX} points`);
   const one = buildInfoBlock('feature_icons', { items: [{ title: 'only' }] }, CTX, seqId());
   assert.equal(one.info.items.length, 2, 'min 2 points (padded)');
   const withSrc = buildInfoBlock('feature_icons', { items: [{ title: 'A', src: '/img.jpg' }, { title: 'B' }] }, CTX, seqId());
@@ -287,4 +293,297 @@ test('template on a doc without anchors appends the flow before ai-notice in ord
     'info:benefit_copy', 'size', 'care', 'info:required_notice',
     'ai-notice',
   ]);
+});
+
+const FEATURE_CTX = {
+  ...CTX,
+  sellingPoints: ['하이웨이스트 디자인', '섬세한 지퍼 디테일', '플리츠 안감 마감'],
+};
+
+test('feature layout falls back to compact when info.layout is missing or unknown', () => {
+  assert.equal(resolveFeatureLayout({ items: [] }), 'compact');
+  assert.equal(resolveFeatureLayout({ items: [], layout: null }), 'compact');
+  assert.equal(resolveFeatureLayout({ items: [], layout: 'nope' }), 'compact');
+  assert.equal(resolveFeatureLayout({ items: [], layout: 'stack' }), 'stack');
+});
+
+test('legacy feature block without layout renders byte-identical to explicit compact', () => {
+  const items = [
+    { title: '하이웨이스트 디자인', desc: '허리선이 높아 다리가 더 길어 보입니다.', src: null },
+    { title: '섬세한 지퍼 디테일', desc: '', src: null },
+  ];
+  const legacy = buildInfoBlock('feature_icons', { items }, FEATURE_CTX, seqId());
+  const explicit = buildInfoBlock('feature_icons', { items, layout: 'compact' }, FEATURE_CTX, seqId());
+  assert.deepEqual(legacy.elements, explicit.elements);
+  assert.equal(legacy.h, explicit.h);
+});
+
+test('FEATURE_LAYOUTS lists exactly the four supported layouts', () => {
+  assert.deepEqual(FEATURE_LAYOUTS.map((l) => l.value), ['stack', 'center', 'grid', 'compact']);
+  for (const l of FEATURE_LAYOUTS) assert.ok(l.label, `${l.value}: has label`);
+});
+
+/* 요소가 서로 겹치지 않고 블록 높이 안에 들어오는지 — 레이아웃 회귀의 1차 방어선.
+   같은 행에 나란히 놓이는 요소(그리드의 사진|카드)가 있어 y 단조가 아니라
+   "선언 높이가 마지막 요소 하단을 덮는가" 로 본다. */
+function assertFitsInBlock(block, label) {
+  const bottom = Math.max(...block.elements.map((el) => el.y + (el.h || 0)));
+  assert.ok(block.h >= bottom, `${label}: block h ${block.h} covers last element bottom ${bottom}`);
+  for (const el of block.elements) {
+    assert.ok(el.x >= 60, `${label}: element x ${el.x} inside left margin`);
+    assert.ok(el.x + (el.w || 0) <= 940, `${label}: element right ${el.x + (el.w || 0)} inside right margin`);
+  }
+}
+
+const THREE_POINTS = [
+  { title: '하이웨이스트 디자인', desc: '허리선이 높아 다리가 더 길어 보입니다.', src: null },
+  { title: '섬세한 지퍼 디테일', desc: '뒤 중심에 지퍼를 달아 여미면 실루엣이 흐트러지지 않습니다.', src: null },
+  { title: '플리츠 안감 마감', desc: '안감을 덧대 겉감의 라인이 곱게 잡힙니다.', src: null },
+];
+
+test('stack layout renders a heading, one image slot per point, and fits its height', () => {
+  const block = buildInfoBlock('feature_icons', { layout: 'stack', items: THREE_POINTS }, FEATURE_CTX, seqId());
+  assert.equal(block.info.layout, 'stack');
+  const heads = block.elements.filter((el) => el.type === 'text' && el.text === 'DETAIL POINT');
+  assert.equal(heads.length, 1, 'exactly one DETAIL POINT heading');
+  const slots = block.elements.filter((el) => el.type === 'image');
+  assert.equal(slots.length, 3, 'one image slot per point');
+  for (const s of slots) assert.equal(s.w, 880, 'stack image spans the content width');
+  for (const it of THREE_POINTS) {
+    assert.ok(block.elements.some((el) => el.text === it.title), `title rendered: ${it.title}`);
+    assert.ok(block.elements.some((el) => el.text === it.desc), `desc rendered: ${it.desc}`);
+  }
+  assertFitsInBlock(block, 'stack');
+});
+
+test('stack layout grows its height with a long description instead of overlapping', () => {
+  const long = '안감을 덧대 겉감의 라인이 곱게 잡힙니다. '.repeat(6);
+  const shortBlock = buildInfoBlock('feature_icons', { layout: 'stack', items: [{ title: 'A', desc: '짧습니다.', src: null }, { title: 'B', desc: '', src: null }] }, FEATURE_CTX, seqId());
+  const longBlock = buildInfoBlock('feature_icons', { layout: 'stack', items: [{ title: 'A', desc: long, src: null }, { title: 'B', desc: '', src: null }] }, FEATURE_CTX, seqId());
+  assert.ok(longBlock.h > shortBlock.h, 'long description makes the block taller');
+  assertFitsInBlock(longBlock, 'stack/long');
+});
+
+test('stack layout omits the description element when a point has none', () => {
+  const block = buildInfoBlock('feature_icons', { layout: 'stack', items: [{ title: 'A', desc: '', src: null }, { title: 'B', desc: '', src: null }] }, FEATURE_CTX, seqId());
+  const texts = block.elements.filter((el) => el.type === 'text').map((el) => el.text);
+  assert.deepEqual(texts, ['DETAIL POINT', 'A', 'B']);
+});
+
+test('center layout numbers each point with a zero-padded badge', () => {
+  const block = buildInfoBlock('feature_icons', { layout: 'center', items: THREE_POINTS }, FEATURE_CTX, seqId());
+  const badges = block.elements.filter((el) => el.type === 'text' && String(el.text).startsWith('DETAIL POINT '));
+  assert.deepEqual(badges.map((el) => el.text), ['DETAIL POINT 01', 'DETAIL POINT 02', 'DETAIL POINT 03']);
+  for (const b of badges) assert.equal(b.style.align, 'center', 'badge text centered');
+  const plates = block.elements.filter((el) => el.type === 'shape');
+  assert.equal(plates.length, 3, 'one badge plate per point');
+  assertFitsInBlock(block, 'center');
+});
+
+test('center layout centers title and description', () => {
+  const block = buildInfoBlock('feature_icons', { layout: 'center', items: THREE_POINTS }, FEATURE_CTX, seqId());
+  for (const it of THREE_POINTS) {
+    const title = block.elements.find((el) => el.text === it.title);
+    const desc = block.elements.find((el) => el.text === it.desc);
+    assert.equal(title.style.align, 'center', `title centered: ${it.title}`);
+    assert.equal(desc.style.align, 'center', `desc centered: ${it.title}`);
+  }
+});
+
+test('grid layout pairs each photo with a numbered card and skips descriptions', () => {
+  const block = buildInfoBlock('feature_icons', { layout: 'grid', items: THREE_POINTS }, FEATURE_CTX, seqId());
+  const slots = block.elements.filter((el) => el.type === 'image');
+  const cards = block.elements.filter((el) => el.type === 'shape');
+  const rules = block.elements.filter((el) => el.type === 'line');
+  assert.equal(slots.length, 3, 'one photo per point');
+  assert.equal(cards.length, 3, 'one card per point');
+  assert.equal(rules.length, 3, 'one underline per point');
+  for (const s of slots) { assert.equal(s.w, 400); assert.equal(s.h, 400); }
+  const numbers = block.elements.filter((el) => el.type === 'text' && /^\d\d$/.test(String(el.text)));
+  assert.deepEqual(numbers.map((el) => el.text), ['01', '02', '03']);
+  for (const it of THREE_POINTS) {
+    assert.ok(block.elements.some((el) => el.text === it.title), `title rendered: ${it.title}`);
+    assert.ok(!block.elements.some((el) => el.text === it.desc), `desc NOT rendered: ${it.title}`);
+  }
+  assertFitsInBlock(block, 'grid');
+});
+
+test('grid layout keeps descriptions in info so switching back restores them', () => {
+  const grid = buildInfoBlock('feature_icons', { layout: 'grid', items: THREE_POINTS }, FEATURE_CTX, seqId());
+  assert.deepEqual(grid.info.items.map((it) => it.desc), THREE_POINTS.map((it) => it.desc));
+  const back = buildInfoBlock('feature_icons', { ...grid.info, layout: 'stack' }, FEATURE_CTX, seqId());
+  for (const it of THREE_POINTS) {
+    assert.ok(back.elements.some((el) => el.text === it.desc), `desc restored: ${it.title}`);
+  }
+});
+
+test('slot photos carry by ordinal across every feature layout', () => {
+  const withPhotos = THREE_POINTS.map((it, i) => ({ ...it, src: `https://cdn.example/p${i + 1}.jpg` }));
+  for (const { value } of FEATURE_LAYOUTS) {
+    const built = buildInfoBlock('feature_icons', { layout: value, items: withPhotos }, FEATURE_CTX, seqId());
+    const srcs = built.elements.filter((el) => el.type === 'image').map((el) => el.src);
+    assert.deepEqual(srcs, withPhotos.map((it) => it.src), `${value}: photos in item order`);
+
+    // 슬롯을 캔버스에서 채우면 elements 와 info 가 함께 갱신된다(재생성 후에도 연결 유지)
+    const blank = buildInfoBlock('feature_icons', { layout: value, items: THREE_POINTS }, FEATURE_CTX, seqId());
+    const third = blank.elements.filter((el) => el.type === 'image')[2];
+    const filled = applySlotFillToInfo(blank, third.id, { src: 'https://cdn.example/third.jpg' });
+    assert.equal(filled.info.items[2].src, 'https://cdn.example/third.jpg', `${value}: info updated at the same ordinal`);
+    assert.equal(filled.info.items[0].src, null, `${value}: other ordinals untouched`);
+
+    // 재생성 시 이전 elements 의 사진은 같은 서수로만 이월된다
+    const carried = carrySlotImages(filled.elements, buildInfoBlock('feature_icons', { layout: value, items: THREE_POINTS }, FEATURE_CTX, seqId()));
+    const carriedSrcs = carried.elements.filter((el) => el.type === 'image').map((el) => el.src);
+    assert.deepEqual(carriedSrcs, [null, null, 'https://cdn.example/third.jpg'], `${value}: carried by ordinal`);
+  }
+});
+
+test('every feature layout label is distinct and non-empty for the chip row', () => {
+  const labels = FEATURE_LAYOUTS.map((l) => l.label);
+  assert.equal(new Set(labels).size, labels.length, 'labels are distinct');
+  for (const l of labels) assert.ok(l.trim().length > 0, 'label is non-empty');
+});
+
+test('switching layout through the form state preserves every item field', () => {
+  const info = { layout: 'stack', items: THREE_POINTS };
+  for (const { value } of FEATURE_LAYOUTS) {
+    const next = { ...info, layout: value };
+    const block = buildInfoBlock('feature_icons', next, FEATURE_CTX, seqId());
+    assert.equal(block.info.layout, value, `${value}: layout stored`);
+    assert.deepEqual(block.info.items, THREE_POINTS, `${value}: items untouched`);
+  }
+});
+
+test('feature point defaults pull descriptions from the analysis feature copy', () => {
+  const ctx = {
+    ...CTX,
+    sellingPoints: ['하이웨이스트 디자인', '카고 포켓', '직접 쓴 특징'],
+    featureCopy: [
+      { point: '하이웨이스트 디자인', desc: '허리선이 높아 다리가 더 길어 보입니다.' },
+      { point: '카고 포켓', desc: '측면 카고 포켓이 밋밋함을 덜어냅니다.' },
+    ],
+  };
+  const info = defaultInfoFor('feature_icons', ctx);
+  assert.equal(info.layout, 'stack', 'new blocks default to the stacked layout');
+  assert.deepEqual(info.items.map((it) => it.title), ['하이웨이스트 디자인', '카고 포켓', '직접 쓴 특징']);
+  assert.deepEqual(info.items.map((it) => it.desc), [
+    '허리선이 높아 다리가 더 길어 보입니다.',
+    '측면 카고 포켓이 밋밋함을 덜어냅니다.',
+    '',
+  ]);
+});
+
+test('feature point defaults survive a missing feature copy', () => {
+  const info = defaultInfoFor('feature_icons', { ...CTX, sellingPoints: ['A'], featureCopy: undefined });
+  assert.equal(info.layout, 'stack');
+  assert.deepEqual(info.items.map((it) => it.desc), ['', '', '']);
+});
+
+/* 블록이 한 번 지어지면 정보 템플릿은 다시 깔리지 않는다. 그래서 잡의 featureCopy 쓰기보다
+   앞선 analysis 스냅샷으로 지어진 블록은 설명이 영구히 빈칸으로 남았다 — 폼을 열 때 다시
+   채우는 경로가 그 구멍을 타이밍과 무관하게 막는다. */
+const FEATURE_COPY_CTX = {
+  ...CTX,
+  featureCopy: [
+    { point: '잔 스트라이프 패턴', desc: '얇은 줄무늬가 촘촘하게 들어가 있어 시각적으로 슬림해 보입니다.' },
+    { point: '세미 크롭 기장', desc: '기장이 짧아 하의 허리선이 드러납니다.' },
+  ],
+};
+
+test('fillFeatureCopy fills blank descriptions on a block built before the copy existed', () => {
+  const stale = { layout: 'center', items: [
+    { title: '잔 스트라이프 패턴', desc: '', src: null },
+    { title: '세미 크롭 기장', desc: '', src: null },
+    { title: '', desc: '', src: null },
+  ] };
+  const filled = fillFeatureCopy(stale, FEATURE_COPY_CTX);
+  assert.deepEqual(filled.items.map((it) => it.desc), [
+    '얇은 줄무늬가 촘촘하게 들어가 있어 시각적으로 슬림해 보입니다.',
+    '기장이 짧아 하의 허리선이 드러납니다.',
+    '',
+  ]);
+  assert.equal(filled.layout, 'center', 'layout untouched');
+  assert.deepEqual(stale.items.map((it) => it.desc), ['', '', ''], 'input not mutated');
+});
+
+test('fillFeatureCopy never overwrites a description the seller wrote', () => {
+  const edited = { layout: 'stack', items: [
+    { title: '잔 스트라이프 패턴', desc: '셀러가 직접 쓴 문장입니다.', src: null },
+    { title: '세미 크롭 기장', desc: '', src: null },
+  ] };
+  const filled = fillFeatureCopy(edited, FEATURE_COPY_CTX);
+  assert.deepEqual(filled.items.map((it) => it.desc), [
+    '셀러가 직접 쓴 문장입니다.',
+    '기장이 짧아 하의 허리선이 드러납니다.',
+  ]);
+});
+
+test('fillFeatureCopy is a no-op without feature copy or items', () => {
+  const info = { layout: 'stack', items: [{ title: 'A', desc: '', src: null }] };
+  assert.equal(fillFeatureCopy(info, { ...CTX, featureCopy: [] }), info, 'same reference when nothing to fill');
+  assert.equal(fillFeatureCopy(info, {}), info, 'same reference when ctx has no featureCopy');
+  assert.deepEqual(fillFeatureCopy({ layout: 'stack' }, FEATURE_COPY_CTX), { layout: 'stack' }, 'tolerates a block with no items array');
+});
+
+test('stack and center titles and descriptions are sized for the reference proportions', () => {
+  for (const layout of ['stack', 'center']) {
+    const block = buildInfoBlock('feature_icons', { layout, items: THREE_POINTS }, FEATURE_CTX, seqId());
+    const title = block.elements.find((el) => el.text === THREE_POINTS[0].title);
+    const desc = block.elements.find((el) => el.text === THREE_POINTS[0].desc);
+    assert.equal(title.style.size, 34, `${layout}: title size`);
+    assert.equal(desc.style.size, 19, `${layout}: desc size`);
+    assert.equal(desc.style.lineHeight, 32, `${layout}: desc line height follows the font size`);
+    // 제목 상자가 글자보다 작으면 다음 요소를 덮는다 (렌더는 width 고정·height auto)
+    assert.ok(title.h >= title.style.size, `${layout}: title box not shorter than its glyphs`);
+    assertFitsInBlock(block, `${layout}/typography`);
+  }
+});
+
+test('every layout still fits its block at the raised point cap', () => {
+  const eight = Array.from({ length: FEATURE_ITEMS_MAX }, (_, i) => ({
+    title: `포인트 ${i + 1}`, desc: '구조를 살린 설명 한 줄입니다.', src: null,
+  }));
+  assert.equal(eight.length, 8, 'cap is 8');
+  for (const { value } of FEATURE_LAYOUTS) {
+    const block = buildInfoBlock('feature_icons', { layout: value, items: eight }, FEATURE_CTX, seqId());
+    assert.equal(block.info.items.length, 8, `${value}: keeps all eight`);
+    assert.equal(block.elements.filter((el) => el.type === 'image').length, 8, `${value}: one photo slot each`);
+    assertFitsInBlock(block, `${value}/eight`);
+  }
+});
+
+test('compact keeps its old title sizes and shrinks only past the point counts it used to allow', () => {
+  const sizeAt = (n) => {
+    const items = Array.from({ length: n }, (_, i) => ({ title: `포인트 ${i + 1}`, desc: '', src: null }));
+    const block = buildInfoBlock('feature_icons', { layout: 'compact', items }, FEATURE_CTX, seqId());
+    return block.elements.find((el) => el.text === '포인트 1').style.size;
+  };
+  assert.equal(sizeAt(2), 17, '2개 — 종전과 동일');
+  assert.equal(sizeAt(4), 17, '4개 — 종전과 동일');
+  assert.equal(sizeAt(5), 15, '5개 — 종전과 동일');
+  assert.equal(sizeAt(8), 13, '8개 — 칸이 좁아져 한 단계 더 내려간다');
+});
+
+test('the block cap does not truncate below what the analysis chips can supply', () => {
+  // 칩 상한이 블록 상한보다 크면 뒤쪽 특징이 조용히 잘린다
+  assert.ok(FEATURE_ITEMS_MAX >= SELLING_POINTS_MAX,
+    `block cap ${FEATURE_ITEMS_MAX} must hold every chip (${SELLING_POINTS_MAX})`);
+});
+
+test('only the detail point preset may appear more than once on a page', () => {
+  assert.equal(isRepeatablePreset('feature_icons'), true, '특징 포인트 — 여러 벌');
+  for (const preset of INFO_PRESET_TYPES) {
+    if (preset.type === 'feature_icons') continue;
+    assert.equal(isRepeatablePreset(preset.type), false, `${preset.type} — 페이지에 하나뿐`);
+  }
+  assert.equal(isRepeatablePreset('nope'), false, 'unknown type');
+});
+
+test('the default template still lays down exactly one detail point block', () => {
+  // repeatable 이라고 템플릿이 두 벌 깔면 안 된다 — 반복은 셀러가 목록에서 누를 때만.
+  const once = applyInfoTemplate(baseDoc(), CTX, seqId()).blocks;
+  assert.equal(once.filter((b) => presetTypeOf(b) === 'feature_icons').length, 1);
+  const twice = applyInfoTemplate(once, CTX, seqId());
+  assert.equal(twice.blocks.filter((b) => presetTypeOf(b) === 'feature_icons').length, 1, '재적용해도 하나');
+  assert.ok(twice.skipped.includes('특징 포인트'), '이미 있으면 건너뛴 것으로 보고한다');
 });
