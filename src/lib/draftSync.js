@@ -86,9 +86,9 @@ async function runDraftSync(draft, { projectId: existing } = {}) {
   }
 }
 
-// OAuth 복귀 effect와 입력 화면 재시도가 같은 탭에서 겹쳐도 하나의 요청만 실행한다.
-// 타임아웃은 호출측의 기다림만 끝낼 뿐 이 Promise는 계속 살아 있으며, 성공 결과도 다음
-// 호출이 재사용한다. 부분 실패 때 확보한 projectId 역시 보존해 재시도 create를 막는다.
+// OAuth 복귀 effect와 입력 화면 재시도가 같은 탭에서 겹치면 같은 draft revision은 하나의
+// 요청을 공유한다. 타임아웃 뒤 사용자가 draft를 고쳤다면 이전 요청이 끝난 다음 같은 projectId에
+// 최신 revision을 다시 저장한다. 부분 실패 때 확보한 projectId도 보존해 재시도 create를 막는다.
 const draftSyncFlight = createDraftSyncSingleFlight(runDraftSync);
 
 export function syncDraftToBackend(draft, options) {
