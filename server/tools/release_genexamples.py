@@ -96,6 +96,17 @@ def _read_json(path: Path) -> dict:
     return value
 
 
+def _read_json_any(path: Path) -> object:
+    """카탈로그·레지스트리 읽기용. `_read_json` 은 manifest 전용이라 최상위 dict 를
+    강제하는데, 프론트 카탈로그는 평면 리스트라 그 함수를 쓸 수 없다."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise RuntimeError(f"파일을 읽을 수 없습니다: {path} ({exc})") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"JSON 이 올바르지 않습니다: {path} ({exc})") from exc
+
+
 def _coverage_key(value: dict) -> tuple[str, str, str, str | None]:
     cut_type = value.get("cutType")
     return (
@@ -681,14 +692,33 @@ def stage_release(
     )
 
 
-def upload_release(result: ReleaseResult, *, execute: bool, r2_client=None) -> None:
-    """업로드 목록을 출력하고, execute일 때만 기존 R2Client로 실제 쓴다."""
+@dataclass(frozen=True)
+class UploadReceipt:
+    """실제 업로드가 끝났다는 증거. `apply_release` 가 이것 없이는 적용하지 않는다.
+
+    CLI 인자 검사만으로는 부족하다 — `apply_release()` 를 파이썬에서 직접 부르는 경로
+    (스크립트·다른 도구·향후 호출부)에는 그 게이트가 걸리지 않기 때문이다. 증거를
+    **함수 시그니처의 필수 인자**로 올려 호출 경로와 무관하게 순서를 강제한다.
+    """
+
+    release_id: str
+    uploaded_keys: frozenset[str]
+
+
+def upload_release(
+    result: ReleaseResult, *, execute: bool, r2_client=None
+) -> UploadReceipt | None:
+    """업로드 목록을 출력하고, execute일 때만 기존 R2Client로 실제 쓴다.
+
+    실제 쓰기가 끝나면 `UploadReceipt` 를 돌려준다. dry-run 은 None 이다 —
+    연습 실행으로는 적용 자격이 생기지 않는다.
+    """
     ordered = sorted(result.assets, key=lambda asset: asset.r2_key)
     print(f"UPLOAD {'EXECUTE' if execute else 'DRY-RUN'}: {len(ordered)} objects")
     for asset in ordered:
         print(f"{asset.r2_key}\t{asset.size} bytes")
     if not execute:
-        return
+        return None
     if r2_client is None:
         if str(SERVER_DIR) not in sys.path:
             sys.path.insert(0, str(SERVER_DIR))
@@ -709,12 +739,245 @@ def upload_release(result: ReleaseResult, *, execute: bool, r2_client=None) -> N
             asset.mime,
             cache="public, max-age=31536000, immutable",
         )
+    return UploadReceipt(
+        release_id=result.release_id,
+        uploaded_keys=frozenset(asset.r2_key for asset in ordered),
+    )
 
 
-def apply_release(result: ReleaseResult) -> None:
-    """검증·스테이징이 끝난 두 JSON만 저장소 정식 위치에 원자 교체한다."""
-    _atomic_copy(result.registry_path, DEFAULT_REGISTRY_PATH)
+_REGISTRY_META_FIELDS = {
+    "schemaVersion",
+    "releaseId",
+    "releasedAt",
+    "defaultBaseUrl",
+}
+
+
+# 카탈로그 항목의 정본 스키마 — stage_release 가 만드는 필드와 정확히 일치해야 한다.
+# (필수, 값이 None 이면 안 되는 것) / (필수, None 허용) 로 나눈다.
+_CATALOG_REQUIRED_FIELDS = {
+    "id",
+    "thumb",
+    "cutType",
+    "gender",
+    "clothingType",
+    "applicableClothingTypes",
+    "shot",
+    "direction",
+    "mood",
+    "detailSubject",
+    "presentationMethod",
+    "rank",
+    "variants",
+}
+_CATALOG_NULLABLE_FIELDS = {"gender", "mood", "detailSubject", "presentationMethod"}
+_VARIANT_FIELDS = {"all", "thumb", "pose", "bg"}
+
+
+def _validate_catalog_document(value: object, *, label: str) -> list[dict]:
+    """프론트 카탈로그(genExamples.json)가 계약 형식인지. 아니면 RuntimeError.
+
+    카탈로그는 `_meta` 없는 **평면 리스트**다(레지스트리와 형식이 다르다 — 이 비대칭은
+    프론트가 목록만 소비하기 때문이고, 릴리스 메타데이터의 단일 정본은 레지스트리다).
+
+    필드 **집합을 정확히** 검사한다. id·thumb 만 보는 얕은 검사로 두면, 프론트가 읽는
+    분류 축(cutType·shot·clothingType…)이 통째로 빠진 문서도 통과해 화면에서만 조용히
+    비는 조합이 생긴다.
+    """
+    if not isinstance(value, list) or not value:
+        raise RuntimeError(f"{label} 형식이 프론트 계약과 다릅니다: document_invalid")
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise RuntimeError(f"{label} {index}번 항목이 객체가 아닙니다: item_invalid")
+        if set(item) != _CATALOG_REQUIRED_FIELDS:
+            missing = sorted(_CATALOG_REQUIRED_FIELDS - set(item))
+            extra = sorted(set(item) - _CATALOG_REQUIRED_FIELDS)
+            raise RuntimeError(
+                f"{label} {index}번 항목 필드가 계약과 다릅니다: "
+                f"missing={missing} extra={extra}"
+            )
+        example_id = item["id"]
+        if not isinstance(example_id, str) or not example_id:
+            raise RuntimeError(f"{label} {index}번 항목 id 가 없습니다: id_invalid")
+        if example_id in seen:
+            raise RuntimeError(f"{label} id 가 중복입니다: {example_id}")
+        seen.add(example_id)
+        thumb = item["thumb"]
+        if not isinstance(thumb, str) or not thumb.startswith("http"):
+            raise RuntimeError(f"{label} {example_id} thumb 가 URL 이 아닙니다: thumb_invalid")
+        for field in _CATALOG_REQUIRED_FIELDS - _CATALOG_NULLABLE_FIELDS:
+            if item[field] is None:
+                raise RuntimeError(f"{label} {example_id}.{field} 가 null 입니다: field_invalid")
+        if not isinstance(item["rank"], int) or isinstance(item["rank"], bool):
+            raise RuntimeError(f"{label} {example_id}.rank 가 정수가 아닙니다: rank_invalid")
+        for field in ("applicableClothingTypes", "variants"):
+            seq = item[field]
+            if (
+                not isinstance(seq, list)
+                or not seq
+                or not all(isinstance(x, str) and x for x in seq)
+            ):
+                raise RuntimeError(
+                    f"{label} {example_id}.{field} 가 비어있거나 문자열 배열이 아닙니다: {field}_invalid"
+                )
+        for field in ("cutType", "shot", "direction", "clothingType"):
+            if not isinstance(item[field], str) or not item[field]:
+                raise RuntimeError(
+                    f"{label} {example_id}.{field} 가 문자열이 아닙니다: {field}_invalid"
+                )
+    return list(value)
+
+
+def _validate_registry_document(value: object, *, label: str) -> dict:
+    """서버 레지스트리(example_assets.json)가 계약 형식인지. 아니면 RuntimeError."""
+    if not isinstance(value, dict) or set(value) != {"_meta", "assets"}:
+        raise RuntimeError(f"{label} 형식이 릴리스 계약과 다릅니다: document_invalid")
+    meta = value.get("_meta")
+    if (
+        not isinstance(meta, dict)
+        or set(meta) != _REGISTRY_META_FIELDS
+        or not isinstance(meta.get("schemaVersion"), int)
+        or isinstance(meta.get("schemaVersion"), bool)
+        or not isinstance(meta.get("releaseId"), str)
+        or not meta.get("releaseId")
+        or not _iso_datetime(meta.get("releasedAt"))
+        or not isinstance(meta.get("defaultBaseUrl"), str)
+        or not meta["defaultBaseUrl"].startswith("http")
+    ):
+        raise RuntimeError(f"{label} 메타데이터가 계약과 다릅니다: metadata_invalid")
+    assets = value.get("assets")
+    if not isinstance(assets, dict) or not assets:
+        raise RuntimeError(f"{label} assets 가 비었거나 객체가 아닙니다: assets_invalid")
+    for example_id, record in assets.items():
+        if not isinstance(record, dict):
+            raise RuntimeError(f"{label} {example_id} 자산이 객체가 아닙니다: asset_invalid")
+        present = _VARIANT_FIELDS & set(record)
+        # all·thumb 은 모든 자산의 최소 구성이다. pose·bg 는 선택.
+        for required in ("all", "thumb"):
+            if required not in present:
+                raise RuntimeError(
+                    f"{label} {example_id} 에 {required} 가 없습니다: variant_missing"
+                )
+        for variant in present:
+            url = record[variant]
+            if not isinstance(url, str) or not url.startswith("http"):
+                raise RuntimeError(
+                    f"{label} {example_id}.{variant} 가 URL 이 아닙니다: url_invalid"
+                )
+    return value
+
+
+def _validate_catalog_registry_pair(
+    catalog: list[dict], registry: dict, *, label: str
+) -> None:
+    """두 파일이 같은 사실을 말하는지. 한쪽만 갱신되는 사고를 적용 전에 잡는다.
+
+    2026-08-02 사고: 판정 문서를 그대로 옮긴 명단이 창고 실제와 어긋나 깨진 썸네일이
+    남았다. 두 파일이 서로를 검증하면 최소한 '한쪽만 바뀐' 부류는 적용 전에 걸린다.
+    """
+    catalog_ids = {item["id"] for item in catalog}
+    registry_ids = set(registry["assets"])
+    if catalog_ids != registry_ids:
+        only_catalog = sorted(catalog_ids - registry_ids)[:5]
+        only_registry = sorted(registry_ids - catalog_ids)[:5]
+        raise RuntimeError(
+            f"{label} 프론트·서버 목록이 다릅니다: "
+            f"catalog_only={only_catalog} registry_only={only_registry}"
+        )
+    base = registry["_meta"]["defaultBaseUrl"].rstrip("/")
+    for item in catalog:
+        example_id = item["id"]
+        thumb = item["thumb"]
+        if not thumb.startswith(f"{base}/"):
+            raise RuntimeError(
+                f"{label} {example_id} thumb 가 레지스트리 baseUrl 과 다릅니다: base_mismatch"
+            )
+        registry_thumb = registry["assets"][example_id].get("thumb")
+        if registry_thumb != thumb:
+            raise RuntimeError(
+                f"{label} {example_id} thumb 가 프론트·서버에서 다릅니다: url_mismatch"
+            )
+
+
+def _validate_release_documents(
+    catalog_value: object, registry_value: object, *, label: str
+) -> None:
+    catalog = _validate_catalog_document(catalog_value, label=f"{label} 프론트 카탈로그")
+    registry = _validate_registry_document(registry_value, label=f"{label} 서버 레지스트리")
+    _validate_catalog_registry_pair(catalog, registry, label=label)
+
+
+def _assert_receipt_covers_release(
+    result: ReleaseResult, receipt: UploadReceipt, registry: dict
+) -> None:
+    """영수증이 이 릴리스의 것이고, 명단이 참조하는 키를 모두 덮는지.
+
+    2026-08-02 사고의 핵심은 "명단이 가리키는 실물이 없다"였다. 업로드 여부만이 아니라
+    **명단이 이번에 올린 키만 참조하는지**까지 봐야 같은 부류가 막힌다.
+    """
+    if receipt.release_id != result.release_id:
+        raise RuntimeError(
+            f"업로드 영수증이 다른 릴리스의 것입니다: "
+            f"receipt={receipt.release_id} staged={result.release_id}"
+        )
+    staged_keys = {asset.r2_key for asset in result.assets}
+    missing = staged_keys - receipt.uploaded_keys
+    if missing:
+        raise RuntimeError(
+            f"업로드되지 않은 자산이 {len(missing)}개 있습니다: {sorted(missing)[:5]}"
+        )
+    prefix = f"{R2_PREFIX}/{result.release_id}/"
+    referenced = {
+        url.split("/", 3)[-1]
+        for record in registry["assets"].values()
+        for variant, url in record.items()
+        if variant in _VARIANT_FIELDS and isinstance(url, str)
+    }
+    unbacked = {
+        key for key in referenced
+        if key.startswith(prefix) and key not in receipt.uploaded_keys
+    }
+    if unbacked:
+        raise RuntimeError(
+            f"명단이 올리지 않은 키를 참조합니다: {sorted(unbacked)[:5]}"
+        )
+
+
+def apply_release(result: ReleaseResult, receipt: UploadReceipt) -> None:
+    """검증·스테이징이 끝난 두 JSON만 저장소 정식 위치에 원자 교체한다.
+
+    `receipt` 는 **필수**다. 업로드 성공 증거 없이는 어떤 호출 경로로도 적용되지 않는다
+    (CLI 인자 검사는 파이썬 직접 호출을 막지 못한다).
+
+    **덮어쓰기 전에 신·구 문서를 모두 검증한다(fail-closed).** 어느 하나라도 계약과
+    다르면 아무것도 건드리지 않고 멈춘다 — 반쯤 적용된 상태가 가장 위험하기 때문이다.
+    서버 교체가 실패하면 프론트를 원래대로 되돌린다.
+    """
+    new_catalog = _read_json_any(result.catalog_path)
+    new_registry = _read_json_any(result.registry_path)
+    _validate_release_documents(new_catalog, new_registry, label="새 생성예시 릴리스")
+    _assert_receipt_covers_release(result, receipt, new_registry)
+
+    if DEFAULT_CATALOG_PATH.exists() and DEFAULT_REGISTRY_PATH.exists():
+        _validate_release_documents(
+            _read_json_any(DEFAULT_CATALOG_PATH),
+            _read_json_any(DEFAULT_REGISTRY_PATH),
+            label="기존 생성예시 배포본",
+        )
+
+    previous_catalog = (
+        DEFAULT_CATALOG_PATH.read_bytes() if DEFAULT_CATALOG_PATH.exists() else None
+    )
     _atomic_copy(result.catalog_path, DEFAULT_CATALOG_PATH)
+    try:
+        _atomic_copy(result.registry_path, DEFAULT_REGISTRY_PATH)
+    except Exception:
+        if previous_catalog is None:
+            DEFAULT_CATALOG_PATH.unlink(missing_ok=True)
+        else:
+            DEFAULT_CATALOG_PATH.write_bytes(previous_catalog)
+        raise
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -738,6 +1001,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.execute and not args.upload:
         print("ERROR: --execute는 --upload와 함께만 사용할 수 있습니다", file=sys.stderr)
         return 2
+    # 사진을 창고에 올리지 않은 채 명단만 바꾸면, 명단에는 있는데 실물이 없는 항목이
+    # 생겨 화면에 깨진 썸네일로 남는다(2026-08-02 실제 사고). 공간 세트 도구와 같은
+    # 규율을 적용한다 — 적용은 같은 실행의 업로드가 성공한 뒤에만.
+    if args.apply and not (args.upload and args.execute):
+        print(
+            "ERROR: --apply는 같은 실행의 --upload --execute가 성공한 뒤에만 사용할 수 있습니다",
+            file=sys.stderr,
+        )
+        return 2
     try:
         result = stage_release(
             args.manifest,
@@ -750,10 +1022,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"STAGED: {result.output_dir}")
         print(f"REGISTRY: {result.registry_path}")
         print(f"CATALOG: {result.catalog_path}")
+        receipt = None
         if args.upload:
-            upload_release(result, execute=args.execute)
+            receipt = upload_release(result, execute=args.execute)
         if args.apply:
-            apply_release(result)
+            if receipt is None:  # 방어 — 위 인자 게이트가 이미 막지만 계약을 코드로도 고정
+                print(
+                    "ERROR: 업로드 영수증이 없어 적용할 수 없습니다", file=sys.stderr
+                )
+                return 2
+            apply_release(result, receipt)
             print(f"APPLIED: {DEFAULT_REGISTRY_PATH}")
             print(f"APPLIED: {DEFAULT_CATALOG_PATH}")
         return 0

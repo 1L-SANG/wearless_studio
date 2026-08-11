@@ -6,8 +6,9 @@ FastAPI는 기본적으로 response_model을 alias(camelCase)로 직렬화한다
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 ProjectStatus = Literal["draft", "generating", "done"]
@@ -40,54 +41,6 @@ class Project(CamelModel):
     created_at: datetime
     updated_at: datetime
 
-class ApprovedBaseline(CamelModel):
-    """승인된 마네킹 결과. 생성 성공만으로는 절대 만들어지지 않는다 — 승인 API 만이 만든다."""
-
-    id: str
-    project_id: str
-    baseline_cut_id: str          # mannequin_cuts.id (uuid)
-    cut_id: str                   # 클라 표기 "A-3" — selected_mannequin_id 와 같은 형식
-    output_id: str | None         # Phase 1 기록 이전 컷이면 null
-    generation_run_id: str | None
-    truth_package_id: str | None = None
-    locked_invariants: dict
-    approved_at: datetime
-    superseded_at: datetime | None = None
-    superseded_baseline_id: str | None = None
-    idempotent: bool = False      # 같은 컷 재승인 — 아무것도 바꾸지 않았다
-
-
-class EditRequest(CamelModel):
-    """구조화 편집 요청. 자유 텍스트는 계약이 아니다 — step(-2..2)만 받는다."""
-
-    edit_type: str
-    adjustments: dict = {}
-    baseline_id: str | None = None
-
-
-class RegenerateRequest(CamelModel):
-    """핏 재생성 요청. baseline_id 는 승인 정본을 identity anchor 로 쓸 때만 보낸다."""
-
-    fit_profile: dict | None = None
-    baseline_id: str | None = None
-
-
-class EditSessionView(CamelModel):
-    id: str
-    project_id: str
-    baseline_id: str
-    parent_output_id: str | None
-    edit_type: str
-    requested_adjustments: dict
-    allowed_scope: dict
-    status: str
-    job_id: str | None = None
-
-
-class BaselineApproveRequest(CamelModel):
-    cut_id: str
-
-
 class ProjectSummary(CamelModel):
     id: str
     title: str
@@ -114,31 +67,26 @@ class UploadUrlResponse(CamelModel):
     expires_at: datetime
 
 
-class ExportOptions(CamelModel):
-    format: Literal["long_png", "zip"] = "long_png"
-    width: int = 1200
-    background: str = "#ffffff"
-
-
-class ExportRequest(CamelModel):
-    # 하위 호환 입력. 서버는 저장된 editor_blocks를 정본으로 다시 읽으며 이 값을 렌더링하지 않는다.
-    snapshot: dict = Field(default_factory=dict)
-    snapshot_hash: str
-    body: dict = Field(default_factory=dict)
-    options: ExportOptions = Field(default_factory=ExportOptions)
-
-
-class ExportJobResponse(CamelModel):
-    job_id: str
-    export_id: str
-
-
 class AssetCompleteRequest(CamelModel):
     """POST /v1/assets/{id}/complete (§3 3단계). 키 재유도용 컨텍스트."""
 
     project_id: str
     mime: str
     filename: str | None = None
+    purpose: str = "upload"
+
+
+class CustomMatchItemRequest(CamelModel):
+    """POST /analysis/custom-match-item — one garment represented by 1-4 uploads."""
+
+    asset_ids: list[UUID] = Field(min_length=1, max_length=4)
+
+    @field_validator("asset_ids")
+    @classmethod
+    def asset_ids_must_be_unique(cls, value: list[UUID]) -> list[UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("assetIds must not contain duplicates")
+        return value
 
 
 class Asset(CamelModel):
@@ -181,51 +129,6 @@ class ProductPatch(CamelModel):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field}는 null일 수 없습니다.")
         return self
-
-
-class ProductTruthAssetView(CamelModel):
-    id: str | None = None
-    asset_id: str
-    role: str
-    view: str | None = None
-    color_id: str | None = None
-    part: str | None = None
-    sort_order: int = 0
-    checksum: str | None = None
-    width: int | None = None
-    height: int | None = None
-    metadata: dict = Field(default_factory=dict)
-
-
-class ProductTruthView(CamelModel):
-    id: str
-    project_id: str
-    product_id: str | None = None
-    version: int
-    status: str
-    schema_version: str
-    garment_spec: dict = Field(default_factory=dict)
-    color_spec: dict = Field(default_factory=dict)
-    pattern_spec: dict = Field(default_factory=dict)
-    protected_details: dict = Field(default_factory=dict)
-    source_evidence: dict = Field(default_factory=dict)
-    uncertain_fields: list = Field(default_factory=list)
-    garment_profile: dict | None = None
-    analysis_confidence: float | None = None
-    source_fingerprint: str
-    source_assets: list[ProductTruthAssetView] = Field(default_factory=list)
-    validation_issues: list[dict] = Field(default_factory=list)
-    created_at: datetime | None = None
-    approved_at: datetime | None = None
-    rejected_at: datetime | None = None
-
-
-class ProductTruthPatch(CamelModel):
-    garment_spec: dict | None = None
-    color_spec: dict | None = None
-    pattern_spec: dict | None = None
-    protected_details: dict | None = None
-    uncertain_fields: list | None = None
 
 
 class ProjectPatch(CamelModel):
@@ -275,8 +178,6 @@ class JobView(CamelModel):
     steps: list | None = None
     result: dict | None = None
     error_message: str | None = None
-    error_code: str | None = None
-    error_details: dict | None = None
     credits_charged: int | None = None
     created_at: datetime
     updated_at: datetime

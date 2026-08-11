@@ -6,8 +6,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Button, Icon, IconButton, Modal } from '@/components/ui.jsx';
 import { thumbUrl } from '@/lib/imageCdn.js';
-import { createContinuationSlot, fallbackRequestUse } from '@/features/editor/reviewGate.js';
-import { CARE_COPY_LIBRARY, CARE_LABEL_SENTENCE, FEATURE_ITEMS_MAX, FEATURE_ITEMS_MIN, INFO_PRESET_TYPES, careFamilyFor } from '@/features/editor/presets/infoPresets.js';
+import { CARE_COPY_LIBRARY, CARE_LABEL_SENTENCE, FEATURE_ITEMS_MAX, FEATURE_ITEMS_MIN, FEATURE_LAYOUTS, INFO_PRESET_TYPES, careFamilyFor, resolveFeatureLayout } from '@/features/editor/presets/infoPresets.js';
 
 const inp = { width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid #e5e5e3', borderRadius: 8, fontSize: 14, background: '#fff', color: '#0e0d14' };
 const inpSm = { ...inp, padding: '6px 8px', fontSize: 13 };
@@ -85,6 +84,56 @@ function Chip({ on, children, onClick }) {
       {children}
     </button>
   );
+}
+
+/* 레이아웃 미리보기 — 이름만으로는 '세로형'과 '중앙형'이 어떻게 다른지 알 수 없어서, 고르기
+   전에 모양을 보여준다. 도식 문법은 '내용' 목록 썸네일(ContentPanel PresetThumb)과 같다. */
+function LayoutThumb({ layout }) {
+  const G = '#b9b9be'; const D = '#6f6f76'; const F = '#e7e7ea';
+  const svg = (children) => (
+    <svg viewBox="0 0 100 72" style={{ width: '100%', height: 'auto', display: 'block' }}>{children}</svg>
+  );
+  const photo = (x, y, w, h) => <rect x={x} y={y} width={w} height={h} rx="1.5" fill={F} stroke={G} strokeWidth="0.6" />;
+  switch (layout) {
+    case 'stack': return svg(<>
+      <rect x="8" y="3" width="26" height="3.5" rx="1" fill={D} />
+      {photo(8, 10, 84, 26)}
+      <rect x="8" y="40" width="44" height="4.5" rx="1" fill={D} />
+      <rect x="8" y="49" width="76" height="2.6" rx="1" fill={F} />
+      <rect x="8" y="54" width="58" height="2.6" rx="1" fill={F} />
+      {photo(8, 61, 84, 11)}
+    </>);
+    case 'center': return svg(<>
+      {photo(8, 3, 84, 26)}
+      <rect x="36" y="33" width="28" height="5" rx="1.5" fill={F} stroke={G} strokeWidth="0.4" />
+      <rect x="28" y="42" width="44" height="4.5" rx="1" fill={D} />
+      <rect x="22" y="51" width="56" height="2.6" rx="1" fill={F} />
+      <rect x="32" y="56" width="36" height="2.6" rx="1" fill={F} />
+      {photo(8, 63, 84, 9)}
+    </>);
+    case 'grid': return svg(<>
+      {photo(8, 5, 34, 30)}
+      <rect x="46" y="5" width="46" height="30" rx="1.5" fill="#fafafa" stroke={G} strokeWidth="0.6" />
+      <rect x="51" y="10" width="8" height="4" rx="1" fill={D} />
+      <line x1="51" y1="18" x2="58" y2="18" stroke={D} strokeWidth="0.9" />
+      <rect x="51" y="27" width="28" height="3" rx="1" fill={D} opacity=".6" />
+      {photo(8, 39, 34, 30)}
+      <rect x="46" y="39" width="46" height="30" rx="1.5" fill="#fafafa" stroke={G} strokeWidth="0.6" />
+      <rect x="51" y="44" width="8" height="4" rx="1" fill={D} />
+      <line x1="51" y1="52" x2="58" y2="52" stroke={D} strokeWidth="0.9" />
+      <rect x="51" y="61" width="28" height="3" rx="1" fill={D} opacity=".6" />
+    </>);
+    default: return svg(<>
+      {/* 컴팩트는 한 줄로 끝나 위아래가 비므로, 다른 도식과 무게가 맞도록 세로 가운데에 놓는다 */}
+      {[24, 50, 76].map((cx) => (
+        <g key={cx}>
+          <circle cx={cx} cy="29" r="10" fill={F} stroke={G} strokeWidth="0.7" strokeDasharray="2 1.5" />
+          <rect x={cx - 8} y="44" width="16" height="2.2" rx="1" fill={G} />
+          <rect x={cx - 11} y="50" width="22" height="3.4" rx="1" fill={D} opacity=".75" />
+        </g>
+      ))}
+    </>);
+  }
 }
 
 /* ---------- 타입별 폼 ---------- */
@@ -212,28 +261,114 @@ function PhotoCell({ src, onClick }) {
   );
 }
 
-function FeatureIconsForm({ info, setInfo, onPickPhoto }) {
+function FeatureIconsForm({ info, setInfo, onPickPhoto, onDraftCopy }) {
+  const [drafting, setDrafting] = useState(false);
+  const [draftError, setDraftError] = useState('');
+  const asked = useRef(false);
+  /* 폼이 열리면 빈 설명을 알아서 채운다. 에디터가 이미 저장된 analysis.featureCopy 로 한 번
+     채운 뒤라, 여기까지 빈 채로 남은 포인트는 문구가 아예 없는 것들이다 — 그럴 때만 서버를
+     부르므로 이미 문구가 있는 블록은 네트워크를 타지 않는다. 한 번 연 폼에서 한 번만. */
+  useEffect(() => {
+    if (asked.current || !onDraftCopy) return;
+    if (!(info.items || []).some((it) => it.title && !it.desc)) return;
+    asked.current = true;
+    let cancelled = false;
+    setDrafting(true);
+    onDraftCopy()
+      .then((items) => {
+        if (cancelled) return;
+        const byPoint = new Map((items || []).map((c) => [c.point, c.desc]));
+        // 빈칸만 채운다 — 요청이 도는 동안 셀러가 써 넣은 문장을 덮지 않는다
+        setInfo((f) => ({ ...f, items: f.items.map((it) => (it.desc || !byPoint.has(it.title) ? it : { ...it, desc: byPoint.get(it.title) })) }));
+      })
+      .catch(() => { if (!cancelled) setDraftError('설명 문구를 불러오지 못했어요. 직접 입력해 주세요.'); })
+      .finally(() => { if (!cancelled) setDrafting(false); });
+    return () => { cancelled = true; };
+    // 폼을 여는 순간의 상태로 한 번만 판단한다 — info 를 의존성에 넣으면 타이핑마다 다시 돈다
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* 자동 채움은 빈칸만 건드린다. 그래서 한번 아무 글자나 넣어 둔 칸은 자동으로는 영영 안 바뀐다
+     — 셀러가 직접 부를 때는 덮어쓴다(취소하면 통째로 되돌아간다). */
+  const redraft = async () => {
+    if (drafting) return;
+    setDrafting(true); setDraftError('');
+    try {
+      const items = await onDraftCopy();
+      const byPoint = new Map((items || []).map((c) => [c.point, c.desc]));
+      setInfo((f) => ({ ...f, items: f.items.map((it) => (byPoint.has(it.title) ? { ...it, desc: byPoint.get(it.title) } : it)) }));
+      if (!byPoint.size) setDraftError('만들 수 있는 문구가 없어요 — 분석 페이지의 강조특징을 먼저 채워주세요.');
+    } catch {
+      setDraftError('설명 문구를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setDrafting(false);
+    }
+  };
+
+  return <FeatureIconsFormBody info={info} setInfo={setInfo} onPickPhoto={onPickPhoto}
+    drafting={drafting} draftError={draftError} onRedraft={onDraftCopy ? redraft : null} />;
+}
+
+function FeatureIconsFormBody({ info, setInfo, onPickPhoto, drafting, draftError, onRedraft }) {
   const setItem = (i, patch) => setInfo((f) => ({ ...f, items: f.items.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
+  const layout = resolveFeatureLayout(info);
+  // 그리드형은 설명글을 그리지 않는다 — 입력칸은 흐리게 두되 값은 지우지 않는다.
+  // 지우면 레이아웃을 되돌렸을 때 문구가 사라진다.
+  const descOff = layout === 'grid';
   return (
-    <Field label={`특징 포인트 (${FEATURE_ITEMS_MIN}~${FEATURE_ITEMS_MAX}개)`}
-      hint="분석에서 뽑은 핵심 장점이 미리 채워져요. 왼쪽 원을 눌러 포인트별 사진을 고르세요.">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {info.items.map((it, i) => (
-          <div key={i} style={rowGap}>
-            <PhotoCell src={it.src} onClick={() => onPickPhoto(i)} />
-            <span style={{ width: 52, flexShrink: 0, fontSize: 12, color: '#898989' }}>POINT {i + 1}</span>
-            <input style={inpSm} placeholder="특징 (예: 롤업 배색 소매)" value={it.title} onChange={(e) => setItem(i, { title: e.target.value })} />
-            <input style={inpSm} placeholder="짧은 설명 (선택)" value={it.desc} onChange={(e) => setItem(i, { desc: e.target.value })} />
-            <IconButton name="trash" size="sm" title={info.items.length <= FEATURE_ITEMS_MIN ? `최소 ${FEATURE_ITEMS_MIN}개` : '삭제'}
-              onClick={() => { if (info.items.length > FEATURE_ITEMS_MIN) setInfo((f) => ({ ...f, items: f.items.filter((_x, j) => j !== i) })); }} />
-          </div>
-        ))}
-      </div>
-      {info.items.length < FEATURE_ITEMS_MAX && (
-        <Button variant="ghost" size="sm" icon="plus" style={{ marginTop: 8 }}
-          onClick={() => setInfo((f) => ({ ...f, items: [...f.items, { title: '', desc: '', src: null }] }))}>포인트 추가</Button>
+    <>
+      <Field label="레이아웃" hint="사진과 문구를 어떤 모양으로 놓을지 고르세요. 그리드형만 설명 없이 제목만 보여줘요.">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+          {FEATURE_LAYOUTS.map((l) => (
+            <button key={l.value} onClick={() => setInfo((f) => ({ ...f, layout: l.value }))}
+              aria-pressed={layout === l.value}
+              style={{ padding: '10px 8px 8px', borderRadius: 10, cursor: 'pointer', background: '#fff', textAlign: 'center',
+                border: layout === l.value ? '1.5px solid #0e0d14' : '1px solid #e5e5e3' }}>
+              <LayoutThumb layout={l.value} />
+              <div style={{ marginTop: 8, fontSize: 13, color: layout === l.value ? '#0e0d14' : '#4a4a45', fontWeight: layout === l.value ? 600 : 400 }}>{l.label}</div>
+            </button>
+          ))}
+        </div>
+      </Field>
+      {drafting && (
+        <p className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+          <Icon name="sparkles" size={14} />설명 문구를 만드는 중이에요…
+        </p>
       )}
-    </Field>
+      {draftError && <p className="hint" style={{ marginBottom: 10, color: '#d92d20' }}>{draftError}</p>}
+      <Field label={`특징 포인트 (${FEATURE_ITEMS_MIN}~${FEATURE_ITEMS_MAX}개)`}
+        hint={descOff
+          ? '그리드형은 제목만 보여줘요 — 설명은 저장해 두고 다른 레이아웃에서 다시 나와요.'
+          : '분석에서 뽑은 핵심 장점과 설명이 미리 채워져요. 마음에 안 들면 그 자리에서 고쳐 쓰면 돼요. 왼쪽 원을 눌러 포인트별 사진을 고르세요.'}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {info.items.map((it, i) => (
+            <div key={i} style={rowGap}>
+              <PhotoCell src={it.src} onClick={() => onPickPhoto(i)} />
+              <span style={{ width: 52, flexShrink: 0, fontSize: 12, color: '#898989' }}>POINT {i + 1}</span>
+              {/* 제목은 폭 고정·높이 자동이라 길면 잘리지 않고 아래 요소를 덮는다 — 분석 칩과 같은 40자 상한 */}
+              <input style={inpSm} maxLength={40} placeholder="특징 (예: 롤업 배색 소매)" value={it.title} onChange={(e) => setItem(i, { title: e.target.value })} />
+              <input style={{ ...inpSm, opacity: descOff ? 0.45 : 1 }} placeholder="짧은 설명 (선택)" value={it.desc}
+                title={descOff ? '그리드형에서는 표시되지 않아요' : undefined}
+                onChange={(e) => setItem(i, { desc: e.target.value })} />
+              <IconButton name="trash" size="sm" title={info.items.length <= FEATURE_ITEMS_MIN ? `최소 ${FEATURE_ITEMS_MIN}개` : '삭제'}
+                onClick={() => { if (info.items.length > FEATURE_ITEMS_MIN) setInfo((f) => ({ ...f, items: f.items.filter((_x, j) => j !== i) })); }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+          {info.items.length < FEATURE_ITEMS_MAX && (
+            <Button variant="ghost" size="sm" icon="plus"
+              onClick={() => setInfo((f) => ({ ...f, items: [...f.items, { title: '', desc: '', src: null }] }))}>포인트 추가</Button>
+          )}
+          {/* 자동 채움은 빈칸에만 손대므로, 이미 쓰여 있는 설명을 다시 만들려면 여기로 부른다 */}
+          {onRedraft && (
+            <Button variant="quiet" size="sm" icon="sparkles" disabled={drafting} onClick={onRedraft}
+              title="분석의 강조특징으로 설명을 다시 만들어요 — 지금 쓰여 있는 설명은 새 문구로 바뀌어요">
+              {drafting ? '만드는 중…' : '설명 다시 만들기'}
+            </Button>
+          )}
+        </div>
+      </Field>
+    </>
   );
 }
 
@@ -323,19 +458,12 @@ function normalizeFormInfo(type, info) {
   return info;
 }
 
-export function InfoBlockModal({ type, initialInfo, ctx, wardrobe, colorOpts, editing, onClose, onSubmit, onRequestUse }) {
+export function InfoBlockModal({ type, initialInfo, ctx, wardrobe, colorOpts, editing, onClose, onSubmit, onDraftCopy }) {
   const [info, setInfo] = useState(() => normalizeFormInfo(type, initialInfo));
   const [photoFor, setPhotoFor] = useState(null); // 사진 팝업 대상 인덱스 (특징 포인트/모델 카드)
   const meta = INFO_PRESET_TYPES.find((p) => p.type === type) || { label: '내용' };
   const Form = FORMS[type];
   if (!Form) return null;
-  // 사진 슬롯도 캔버스와 같은 검수 게이트를 지난다. 게이트는 목적을 모르므로 "몇 번
-  // 슬롯이었는지"는 여기서 표로 고정하고, 폼이 닫히거나 대상이 바뀌면 그 표를 버린다.
-  const slot = useRef(null);
-  if (!slot.current) slot.current = createContinuationSlot();
-  useEffect(() => () => slot.current.dispose(), []);
-  // 게이트가 안 넘어오면 검수 대상은 **막는다**(조용히 우회하지 않는다).
-  const requestUse = onRequestUse || ((im, use) => fallbackRequestUse(im, use, 'InfoBlockModal'));
   const photoList = type === 'feature_icons' ? info.items : type === 'model_info' ? info.models : null;
   const setPhotoAt = (index, src) => setInfo((f) => (type === 'feature_icons'
     ? { ...f, items: f.items.map((x, j) => (j === index ? { ...x, src } : x)) }
@@ -347,16 +475,12 @@ export function InfoBlockModal({ type, initialInfo, ctx, wardrobe, colorOpts, ed
           <div className="lbl" style={{ color: '#898989', marginBottom: 4 }}>{editing ? '내용 수정' : '내용 추가'}</div>
           <h3 style={{ margin: 0, fontSize: 19 }}>{meta.label}</h3>
         </div>
-        <Form info={info} setInfo={setInfo} ctx={ctx} onPickPhoto={(i) => setPhotoFor(i)} />
+        <Form info={info} setInfo={setInfo} ctx={ctx} onPickPhoto={(i) => setPhotoFor(i)} onDraftCopy={onDraftCopy} />
       </div>
       {photoFor != null && photoList && (
         <PhotoPicker wardrobe={wardrobe} colorOpts={colorOpts}
           currentSrc={photoList[photoFor]?.src || null}
-          onPick={(im) => {
-            const claimed = slot.current.claim(photoFor);
-            setPhotoFor(null);   // 팝업은 닫고, 검수가 필요하면 그 모달만 남긴다
-            requestUse(im, () => slot.current.run(claimed, (i) => setPhotoAt(i, im.src)));
-          }}
+          onPick={(im) => { setPhotoAt(photoFor, im.src); setPhotoFor(null); }}
           onClear={() => { setPhotoAt(photoFor, null); setPhotoFor(null); }}
           onClose={() => setPhotoFor(null)} />
       )}

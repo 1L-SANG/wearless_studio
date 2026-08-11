@@ -12,12 +12,14 @@
 
 alter table public.edit_review_events
   drop constraint if exists edit_review_events_project_id_fkey;
+
 alter table public.edit_review_events
   add constraint edit_review_events_project_id_fkey
   foreign key (project_id) references public.projects (id) on delete restrict;
 
 alter table public.edit_review_events
   drop constraint if exists edit_review_events_edit_session_id_fkey;
+
 alter table public.edit_review_events
   add constraint edit_review_events_edit_session_id_fkey
   foreign key (edit_session_id) references public.edit_sessions (id) on delete restrict;
@@ -57,6 +59,7 @@ end;
 $$;
 
 drop trigger if exists edit_review_events_append_only on public.edit_review_events;
+
 create trigger edit_review_events_append_only
   before update or delete on public.edit_review_events
   for each row execute function public.forbid_edit_review_event_mutation();

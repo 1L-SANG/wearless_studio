@@ -48,19 +48,25 @@ create table if not exists public.generation_runs (
 comment on table public.generation_runs is
   'provider(이미지 모델) 호출 1건의 재현 스냅샷. 호출 직전 created 로 insert, 응답 후 '
   'succeeded|failed 로 update. 프롬프트 전문은 R2(prompt_r2_key) — 여기엔 sha256 만.';
+
 comment on column public.generation_runs.kind is
   'mannequin_generate | mannequin_adjust_edit | mannequin_axis_edit | mannequin_bust_edit | '
   'mannequin_untuck_edit. 문자열 자유형 — 새 호출 지점이 생겨도 migration 없이 늘어난다.';
+
 comment on column public.generation_runs.status is 'created | succeeded | failed';
+
 comment on column public.generation_runs.input_assets is
   '[{assetId, slot, sha256}] — 어떤 역할의 어떤 원본이 이 호출에 들어갔는가. 바이트·URL 금지.';
+
 comment on column public.generation_runs.settings_snapshot is
   '판정·생성에 영향을 준 설정의 allowlist 스냅샷. 시크릿/URL/토큰 금지(테스트로 강제).';
+
 comment on column public.generation_runs.provider_error is
   '실패 시 예외 타입+메시지 앞 200자. 성공이면 null.';
 
 create index if not exists generation_runs_job_idx
   on public.generation_runs (job_id);
+
 create index if not exists generation_runs_project_created_idx
   on public.generation_runs (project_id, created_at desc);
 
@@ -78,12 +84,14 @@ comment on table public.generation_outputs is
   '채택되어 사용자에게 나간 산출물 ↔ 그것을 만든 run/cut/asset 연결(thin). 편집 중간본은 '
   '행을 만들지 않는다. parent_output_id 는 Phase 2(Approved Baseline) 파생 추적용 예약 —'
   'Phase 1 에서는 항상 null.';
+
 comment on column public.generation_outputs.generation_run_id is
   '채택된 **이미지 바이트를 실제로 만든** 호출. 편집이 회귀 판정으로 되돌려졌다면 편집 run 이 '
   '아니라 그 이전 run 을 가리킨다(이미지 해시로 역참조).';
 
 create index if not exists generation_outputs_run_idx
   on public.generation_outputs (generation_run_id);
+
 create index if not exists generation_outputs_cut_idx
   on public.generation_outputs (mannequin_cut_id);
 
@@ -91,13 +99,16 @@ create index if not exists generation_outputs_cut_idx
 -- personalization_core(20260715) 선례와 동일 규율. 사용자는 자기 프로젝트의 기록만 읽는다.
 
 alter table public.generation_runs enable row level security;
+
 alter table public.generation_outputs enable row level security;
 
 drop policy if exists generation_runs_owner_select on public.generation_runs;
+
 create policy generation_runs_owner_select on public.generation_runs
   for select using (user_id = (select auth.uid()));
 
 drop policy if exists generation_outputs_owner_select on public.generation_outputs;
+
 create policy generation_outputs_owner_select on public.generation_outputs
   for select using (
     exists (

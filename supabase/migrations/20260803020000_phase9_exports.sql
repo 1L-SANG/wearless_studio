@@ -62,10 +62,12 @@ drop policy if exists export_assets_owner_select on public.export_assets;
 create policy export_assets_owner_select on public.export_assets
   for select using (exists (
     select 1 from public.projects p
-    where p.id = export_assets.project_id and p.user_id = (select auth.uid())));
+    where p.id = export_assets.project_id and p.user_id = (select auth.uid())
+  ));
 
 drop policy if exists export_provenance_owner_select on public.export_provenance;
 create policy export_provenance_owner_select on public.export_provenance
   for select using (exists (
     select 1 from public.projects p
-    where p.id = export_provenance.project_id and p.user_id = (select auth.uid())));
+    where p.id = export_provenance.project_id and p.user_id = (select auth.uid())
+  ));

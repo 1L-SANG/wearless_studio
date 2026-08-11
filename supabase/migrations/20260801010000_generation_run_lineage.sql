@@ -21,6 +21,7 @@ alter table public.generation_runs
 comment on column public.generation_runs.input_image_sha256 is
   '이 호출의 **주 입력 이미지**(편집 대상 = 직전 산출물, 조정 편집의 parent cut) 바이트 sha256. '
   '입력 전체 목록은 input_assets 에 순서대로 있다.';
+
 comment on column public.generation_runs.parent_generation_run_id is
   '주 입력 이미지를 만든 호출. 편집 체인(생성→untuck→axis→bust)을 행만으로 복원한다. '
   'null = 부모가 provider 산출물이 아님(베이스 마네킹·업로드 원본에서 시작).';
@@ -31,6 +32,7 @@ create index if not exists generation_runs_parent_idx
 -- status 무결성. 기존 행은 전부 created|succeeded|failed 라 not valid 없이 붙는다.
 alter table public.generation_runs
   drop constraint if exists generation_runs_status_check;
+
 alter table public.generation_runs
   add constraint generation_runs_status_check
   check (status in ('created', 'succeeded', 'failed'));
@@ -49,10 +51,13 @@ alter table public.generation_outputs
 comment on column public.generation_outputs.generation_run_id is
   '최종 결과의 마지막 provider 조상(= 후처리 직전 호출). post_processed=false 일 때만 '
   '이 run 의 응답 바이트와 output_sha256 이 동일하다.';
+
 comment on column public.generation_outputs.output_sha256 is
   '사용자에게 실제로 나간 이미지 바이트의 sha256(후처리 결과 포함).';
+
 comment on column public.generation_outputs.post_processed is
   'deterministic 후처리로 provider 응답과 최종 바이트가 달라졌는가.';
+
 comment on column public.generation_outputs.transformation is
   '후처리 메타(예: {"hybridComposite": {"applied": true, "pipelineVersion": "..."}}). '
   '바이트·URL·프롬프트 원문 금지.';
@@ -61,6 +66,7 @@ comment on column public.generation_outputs.transformation is
 -- user_id 컬럼 하나만 믿으면, 백엔드 버그로 잘못 채워진 행이 남의 눈에 보인다. 소유권의
 -- 정본은 projects 다 — 두 조건을 모두 요구한다(컬럼은 인덱스·조회 편의로 유지).
 drop policy if exists generation_runs_owner_select on public.generation_runs;
+
 create policy generation_runs_owner_select on public.generation_runs
   for select using (
     user_id = (select auth.uid())

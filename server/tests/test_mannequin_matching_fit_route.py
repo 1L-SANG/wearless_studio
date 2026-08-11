@@ -38,10 +38,12 @@ def test_matching_fit_snapshot_keeps_v1_envelope_and_v2_inner_profile(monkeypatc
     async def fake_get_analysis(conn, project_id):
         return {"matchSelections": [{"clothingId": "match-pants", "role": "main"}]}
 
-    async def fake_get_metadata(conn, clothing_id):
+    async def fake_get_metadata(conn, clothing_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
         return {"clothing_type": "bottom", "category": "팬츠", "length": "full"}
 
-    async def fake_get_asset(conn, clothing_id):
+    async def fake_get_asset(conn, clothing_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
         return "asset-1"
 
     monkeypatch.setattr(routes.repo, "get_analysis", fake_get_analysis)
@@ -61,7 +63,7 @@ def test_matching_fit_snapshot_keeps_v1_envelope_and_v2_inner_profile(monkeypatc
         },
     }
     snapshot = asyncio.run(routes._fit_profile_snapshot(
-        None, "p1", profile, validate_matching_fit=True,
+        None, "u1", "p1", profile, validate_matching_fit=True,
     ))
 
     assert snapshot["version"] == 1
@@ -82,17 +84,19 @@ def test_new_snapshot_keeps_legacy_match_cut_only_for_full_pants(monkeypatch, me
     async def fake_get_analysis(conn, project_id):
         return {"matchSelections": [{"clothingId": "match-1", "role": "main"}]}
 
-    async def fake_get_metadata(conn, clothing_id):
+    async def fake_get_metadata(conn, clothing_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
         return metadata
 
-    async def fake_get_asset(conn, clothing_id):
+    async def fake_get_asset(conn, clothing_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
         return "asset-1"
 
     monkeypatch.setattr(routes.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(routes.repo, "get_matching_item_metadata", fake_get_metadata)
     monkeypatch.setattr(routes.repo, "get_matching_item_asset", fake_get_asset)
 
-    snapshot = asyncio.run(routes._fit_profile_snapshot(None, "p1", {
+    snapshot = asyncio.run(routes._fit_profile_snapshot(None, "u1", "p1", {
         "category": "top", "gender": "women", "version": 1,
         "axes": {"fit": "regular"}, "matchCut": "wide",
     }))
@@ -175,7 +179,8 @@ def test_regenerate_rejects_spoofed_server_fit_category_before_credit_reserve(
             "matchSelections": [{"clothingId": "match-shorts", "role": "main"}],
         }
 
-    async def fake_get_metadata(conn, clothing_id):
+    async def fake_get_metadata(conn, clothing_id, user_id, project_id):
+        assert (user_id, project_id) == ("user-1", "p1")
         assert clothing_id == "match-shorts"
         return {"clothing_type": "bottom", "category": "쇼츠", "length": "short"}
 

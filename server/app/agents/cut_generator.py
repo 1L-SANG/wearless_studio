@@ -14,7 +14,6 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass
 from functools import lru_cache
 from urllib.parse import urlsplit
 
@@ -22,6 +21,8 @@ import httpx
 
 from ..config import Settings
 from .content_roles import canonicalize_storyboard_block
+from .cut_plan import compile_cut_plan, render_prompt_contract
+from .directing_profile import render_directing_profile
 from .gemini_image import GeminiImageClient, InlineImage
 from .model_routing import resolve_model
 from .fit_axes import build_fit_profile_block
@@ -39,19 +40,6 @@ log = logging.getLogger("wearless.cut_generator")
 CUT_TYPES = ("styling", "horizon", "product", "mirror")
 _PERSON_SHOTS = ("full", "medium")
 _PRODUCT_SHOTS = ("ghost", "detail")
-
-
-@dataclass(frozen=True)
-class PreparedCut:
-    """provider 에 실제로 나갈 AG-06 요청. Generation Run 계측은 이 객체에서 뜬다."""
-
-    model: str
-    prompt: str
-    images: list[InlineImage]
-    image_size: str
-    aspect_ratio: str
-    crop_pose_medium: bool
-    clothing_type: str
 _DIRECTIONS = ("front", "side", "back")
 _WORN_CUTS = ("styling", "horizon", "mirror")
 _OUTER_CLOSURE_STATES = ("open", "partial", "closed")
@@ -155,6 +143,21 @@ def normalize_spec(raw: dict, *, clothing_type: str | None = None) -> dict:
         # 런타임 공간세트 레지스트리만 주입한다. horizon-sequence 중 plate가 없는 세트는
         # UI 묶음은 유지하되 한 장소 연속성 프롬프트를 켜지 않는다.
         "_spaceSetContinuity": raw.get("_spaceSetContinuity") is not False,
+        # standalone 공간세트 멤버를 all 예시로 쓸 때 resolver가 계산한 방향 호환성.
+        # 저장 payload가 아니라 서버 레지스트리에서만 주입되며, bool 외 값은 무시한다.
+        "_referenceDirectionCompatible": (
+            raw.get("_referenceDirectionCompatible")
+            if type(raw.get("_referenceDirectionCompatible")) is bool
+            else None
+        ),
+        # all 예시의 얼굴 노출은 구도 계약의 일부다. 자연어만으로는 머리 크롭·우산 가림을
+        # 모델이 종종 풀어버려, 검수된 서버 카탈로그 메타를 강한 FACE 규칙으로 승격한다.
+        # 저장/UI 입력이 아니라 서버 resolver만 주입하며 미지 값은 무시한다.
+        "_referenceFaceVisibility": (
+            raw.get("_referenceFaceVisibility")
+            if raw.get("_referenceFaceVisibility") in ("hidden", "visible")
+            else None
+        ),
     }
     # 제품컷은 '배경만/포즈만'이 성립하지 않는다(사람·포즈 없음) — 예시는 통째 참조만 허용.
     if cut == "product" and spec["refScope"] != "all":
@@ -260,6 +263,8 @@ def load_example_asset_registry() -> tuple[str | None, dict[str, dict]]:
                 or value.get("gender") in ("women", "men")
             ):
                 entry["gender"] = value.get("gender")
+            if value.get("faceVisibility") in ("hidden", "visible"):
+                entry["faceVisibility"] = value["faceVisibility"]
             if any(variant in entry for variant in ("all", "pose", "bg", "thumb")):
                 clean[str(example_id)] = entry
     return base_url, clean
@@ -312,6 +317,53 @@ def pose_direction_compatible(example_id: str | None, spec: dict) -> bool:
     )
 
 
+def apply_reference_compatibility(spec: dict) -> dict:
+    """서버 레지스트리 메타로 all 예시의 방향 양립·얼굴 노출 정보를 붙인다.
+
+    방향이 달라진 all 예시는 장소·광원·촬영 톤 근거로는 쓸 수 있지만, 원래 방향에 묶인
+    포즈·카메라 원근까지 보존하면 현재 콘티 방향과 충돌한다. 메타가 없는 레거시 예시는
+    기존 동작을 유지하고, 메타가 있는 경우에만 불일치를 확정한다.
+    """
+
+    resolved = dict(spec)
+    runtime_compatibility = spec.get("_referenceDirectionCompatible")
+    runtime_face_visibility = spec.get("_referenceFaceVisibility")
+    resolved["_referenceDirectionCompatible"] = (
+        runtime_compatibility if type(runtime_compatibility) is bool else True
+    )
+    resolved["_referenceFaceVisibility"] = (
+        runtime_face_visibility
+        if runtime_face_visibility in ("hidden", "visible")
+        else None
+    )
+    if (
+        spec.get("cutType") not in _WORN_CUTS
+        or spec.get("refScope") != "all"
+        or not spec.get("exampleId")
+        or spec.get("spaceGroupId")
+    ):
+        return resolved
+    _default_base, assets = load_example_asset_registry()
+    entry = assets.get(str(spec.get("exampleId"))) or {}
+    if resolved["_referenceFaceVisibility"] is None:
+        face_visibility = entry.get("faceVisibility")
+        if face_visibility in ("hidden", "visible"):
+            resolved["_referenceFaceVisibility"] = face_visibility
+    if type(runtime_compatibility) is bool:
+        return resolved
+    example_cut = entry.get("cutType")
+    if spec.get("cutType") == "mirror" or example_cut == "mirror":
+        if example_cut == "mirror":
+            resolved["_referenceDirectionCompatible"] = spec.get("cutType") == "mirror"
+        return resolved
+    example_direction = entry.get("direction")
+    if example_cut in ("styling", "horizon") and example_direction in _DIRECTIONS:
+        resolved["_referenceDirectionCompatible"] = (
+            example_direction == spec.get("direction")
+        )
+    return resolved
+
+
 @lru_cache(maxsize=1)
 def load_virtual_model_registry() -> dict[str, dict]:
     """서버 소유 modelId→R2 뷰 manifest. 프로세스당 1회만 읽는다."""
@@ -329,7 +381,7 @@ def resolve_effective_model_id(
     """상세페이지 착용컷에 붙일 '유효' 가상모델 id (인물 일관성 — AG-06). **순수 함수.**
 
     호출자는 identity source == 'VIRTUAL' 일 때만 쓴다(REAL/LEGACY 는 얼굴을 별도 경로로 붙이므로
-    폴백하면 인물이 이중 첨부된다). VIRTUAL 인데 선택 id 가 가상 registry(mA/mB/mC) 밖이면
+    폴백하면 인물이 이중 첨부된다). VIRTUAL 인데 선택 id 가 가상 registry(mA…mE) 밖이면
     (예: facemarket off 상태의 실존 UUID) `resolve_virtual_model_assets` 가 None 을 반환해
     참조가 0장이 되고 컷마다 인물이 랜덤이 된다. 그 경우 결정적 폴백으로 전 컷 동일 인물 보장.
 
@@ -375,8 +427,15 @@ def needs_identity_fallback(*, cut_type, has_model_images: bool, face_slot: bool
     return cut_type in _WORN_CUTS and not has_model_images and not face_slot
 
 
-def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, str]] | None:
-    """정규화된 사람컷 spec의 C방식 자산(face_front, grid_sedcard)을 계약 순서로 반환.
+def resolve_virtual_model_assets(
+    spec: dict, *, require_full_body: bool = False,
+) -> tuple[dict[str, str], dict[str, str]] | None:
+    """정규화된 사람컷 spec의 가상모델 자산 두 장을 계약 순서로 반환.
+
+    기본값은 기존 ``face_front + grid_sedcard`` 얼굴 연속성 계약을 유지한다. 얼굴과
+    전신 체형 권한을 분리하는 착용 후보는 ``require_full_body=True``를 명시해
+    ``face_front + body_front``를 원자적으로 받는다. ``grid_sedcard``는 얼굴 그리드라
+    전신 자산으로 대신 쓰지 않는다.
 
     product 컷·modelId 미지정은 정상적인 미첨부다. 알 수 없는 modelId나 불완전한 manifest는
     경고 후 미첨부로 폴백하며, R2 바이트 로드 실패는 각 워커가 같은 방식으로 처리한다.
@@ -397,7 +456,8 @@ def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, 
     if not isinstance(views, dict):
         views = {}
     resolved: list[dict[str, str]] = []
-    for view_name in ("face_front", "grid_sedcard"):
+    second_view = "body_front" if require_full_body else "grid_sedcard"
+    for view_name in ("face_front", second_view):
         view = views.get(view_name)
         key = view.get("key") if isinstance(view, dict) else None
         mime = view.get("mime") if isinstance(view, dict) else None
@@ -408,7 +468,7 @@ def resolve_virtual_model_assets(spec: dict) -> tuple[dict[str, str], dict[str, 
                 model_id, view_name)
             return None
         resolved.append({"key": key, "mime": mime, "bucket": "public"})
-    return resolved[0], resolved[1]
+    return tuple(resolved)
 
 
 def resolve_example_asset(
@@ -487,29 +547,60 @@ def _sections(template: str) -> dict[str, str]:
 def render_cut_prompt(
     template: str, spec: dict, product: dict, analysis: dict,
     clothing_type: str, image_manifest: str, has_face: bool = False,
+    authority_plan_line: str | None = None,
+    directing_profile: dict | None = None,
 ) -> str:
     """섹션 선택 + ${토큰} 치환 + PRODUCT CONTEXT(ground truth) 자동 주입.
 
-    has_face=True(라이선스 얼굴 첨부)면 [[FACE_REF]] 정체성 지시가 켜지고 얼굴 지시가
+    매니페스트에 MODEL / MODEL SHEET / MODEL FACE 역할이 실제로 있으면
+    착용 컷에 [[IDENTITY_REF]] 얼굴 연속성 지시를 켠다. MODEL FULL BODY가 있으면
+    얼굴 지시와 별개인 [[BODY_REF]] 체형 연속성 지시를 켠다. has_face=True이고
+    MODEL FACE가 실제로 첨부된 라이선스 얼굴이 현재 프레임에 담길 때만
+    [[FACE_REF]] 라이선스 지시가 추가되고 얼굴 지시가
     [[FACE:licensed]] 로 오버라이드된다 — 기본 'same'/거울샷 'hide' 를 그대로 두면
     셀러가 라이선스료를 내고 "얼굴을 가려라"를 지시받는 자기모순이 된다.
     """
     sec = _sections(template)
     cut, shot = spec["cutType"], spec["shot"]
-    if cut == "product" and shot == "detail" and _SLOT_LABEL["Detail"] not in image_manifest:
-        # 메타데이터에 Detail 슬롯이 있어도 실제 자산 로드가 실패하면 manifest에
-        # 이 라벨이 없다. 멀리 찍은 사진만으로 세부를 지어내지 않고 해당 컷만 실패시킨다.
-        raise ValueError("detail_reference_required")
+    # 디테일 컷 2모드 판정(2026-08-07 스펙 §5) — 근거는 컷 방향과 같은 쪽만 인정한다.
+    # 방향 디테일 라벨 有 → 정밀 모드(SHOT:detail). 없고 같은 방향 원본 라벨만 有 →
+    # 구조 확대 모드(SHOT:detail_zoom — 원본에서 확인되는 구조 요소만 확대, 원단 조직 발명 금지).
+    # 둘 다 없으면 자산 로드가 통째로 실패한 것 — 지어내지 않고 해당 컷만 실패시킨다.
+    detail_mode_zoom = False
+    if cut == "product" and shot == "detail":
+        _detail_label = _SLOT_LABEL["BackDetail" if spec["direction"] == "back" else "Detail"]
+        _original_label = _SLOT_LABEL["Back" if spec["direction"] == "back" else "Front"]
+        if _detail_label in image_manifest:
+            pass
+        elif _original_label in image_manifest:
+            detail_mode_zoom = True
+        else:
+            raise ValueError("detail_reference_required")
     is_bottom = _is_bottom(clothing_type)
+    # identity pair(가상/실존 모델)와 FaceMarket 라이선스 얼굴은 모두
+    # 매니페스트에 실제 라벨이 있을 때만 지시한다. has_face 불리언만 믿으면
+    # 가상모델을 실존·라이선스 인물로 오표기하거나, 첨부 없는 얼굴을 보라고 한다.
+    identity_labels = (
+        _MODEL_LABEL, _MODEL_SHEET_LABEL, _MODEL_FACE_LABEL, _FACE_LABEL,
+    )
+    has_identity_reference = cut in _WORN_CUTS and any(
+        label in image_manifest for label in identity_labels
+    )
+    has_body_reference = (
+        cut in _WORN_CUTS and _MODEL_FULL_BODY_LABEL in image_manifest
+    )
+    has_licensed_face_reference = _FACE_LABEL in image_manifest
     # 첨부 여부(has_face)와 별개로 이 컷이 얼굴을 담는 컷인지 다시 판정 — 첨부 판정과 동일 규칙.
-    use_face = has_face and _face_fits(spec, is_bottom)
+    use_licensed_face = (
+        has_face and has_licensed_face_reference and _face_fits(spec, is_bottom)
+    )
 
     def need(key: str) -> str:
         if key not in sec:
             raise ValueError(f"프롬프트 템플릿에 섹션이 없습니다: [[{key}]]")
         return sec[key]
 
-    shot_key = shot
+    shot_key = "detail_zoom" if detail_mode_zoom else shot
     if cut == "mirror":
         face_line = need("FACE:hide_mirror") if spec["faceExposure"] != "show" else need("FACE:show")
         direction_line = ""
@@ -519,8 +610,19 @@ def render_cut_prompt(
     else:
         face_line = need(f"FACE:{spec['faceExposure']}")
         direction_line = need(f"DIR:{spec['direction']}")
-    if use_face:
+    if use_licensed_face:
         face_line = need("FACE:licensed")
+    elif (
+        cut in _WORN_CUTS
+        and spec.get("refScope") == "all"
+        and spec.get("_referenceDirectionCompatible") is not False
+        and spec.get("_referenceFaceVisibility") == "hidden"
+        and spec.get("faceExposure") != "show"
+    ):
+        # 실제 A/B에서 머리 크롭·우산 가림 예시가 FACE:same 한 줄에 밀려 얼굴을 새로
+        # 드러냈다. 검수된 카탈로그 메타는 구도 설명보다 가까운 강한 FACE 규칙으로 올린다.
+        # 사용자가 명시적으로 show를 고른 경우에만 현재 선택이 우선한다.
+        face_line = need("FACE:hide_reference")
     if spec["pose"] == "auto" or cut in ("product", "mirror"):
         pose_line = need("POSE:auto") if cut != "product" else ""
     else:
@@ -559,11 +661,71 @@ def render_cut_prompt(
     # 참고 방식은 텍스트·순서 개선을 다 해도 성공률 ~40%에서 정체 — 10회 판정).
     bg_edit_mode = has_resolved_example and spec["refScope"] == "bg"
     if has_resolved_example and not pose_overrides_example and not bg_edit_mode:
-        if spec["refScope"] == "all" and cut in {"horizon", "product"}:
+        if (
+            spec["refScope"] == "all"
+            and cut in _WORN_CUTS
+            and spec.get("_referenceDirectionCompatible") is False
+        ):
+            scope_key = (
+                "REFSCOPE:all_horizon_scene_only"
+                if cut == "horizon"
+                else "REFSCOPE:all_scene_only"
+            )
+        elif spec["refScope"] == "all" and cut in {"horizon", "product"}:
             scope_key = f"REFSCOPE:all_{cut}"
         else:
             scope_key = f"REFSCOPE:{spec['refScope']}"
         scope_line = need(scope_key)
+        if spec["refScope"] == "all" and cut in _WORN_CUTS:
+            if spec.get("_referenceDirectionCompatible") is False:
+                all_pose_rule = (
+                    "- DIRECTION-CHANGED EXAMPLE: ignore the example person's pose, gaze, "
+                    "left/right limb placement, near/far foreshortening and original camera "
+                    "view. Build a natural pose and camera for the current direction; the "
+                    "example retains only scene, light, capture tone and broad spatial mood."
+                )
+                all_framing_rule = (
+                    "- DIRECTION-CHANGED FRAMING: do not preserve the example crop boundary, "
+                    "subject scale, headroom, negative space, camera geometry or its original "
+                    "pose. Frame the current direction and shot naturally; retain only the "
+                    "example's scene, light, capture tone and broad spatial mood."
+                )
+            elif spec["pose"] != "auto":
+                all_pose_rule = (
+                    "- USER POSE OVERRIDE: use the explicit pose in the current CUT SPEC. "
+                    "Do not preserve or infer the EXAMPLE REFERENCE pose, limb placement, "
+                    "weight balance, head angle or gaze. The example still owns only its "
+                    "compatible scene, light, capture class, framing and broad composition."
+                )
+                all_framing_rule = (
+                    "- Preserve the example's crop boundary, subject scale, headroom and negative "
+                    "space only where compatible with the current direction and shot. Reframe the "
+                    "USER POSE OVERRIDE, never the example's original pose."
+                )
+            else:
+                all_pose_rule = (
+                    "- POSE FROM EXAMPLE: preserve its torso/pelvis yaw, weight-bearing leg, "
+                    "unequal shoulder and hip lines, screen-left/screen-right limbs and hand "
+                    "heights, stance, knee bends, head/gaze, hair flow and near/far "
+                    "foreshortening. Never neutralize this asymmetry into a centered mannequin."
+                )
+                all_framing_rule = (
+                    "- Preserve the example's crop boundary, subject scale, headroom and negative "
+                    "space when compatible with the requested shot. If the example and requested "
+                    "shot differ, the current FRAMING wins: reframe the same pose and broad "
+                    "composition for the requested full or medium result."
+                )
+            all_direction_rule = (
+                f"- USER DIRECTION OVERRIDE: the current CUT SPEC direction ({spec.get('direction')}) "
+                "is authoritative. Use example camera geometry only where compatible; never turn "
+                "the model back toward the example's original view."
+            )
+            scope_line = (
+                scope_line
+                .replace("${allPoseRule}", all_pose_rule)
+                .replace("${allDirectionRule}", all_direction_rule)
+                .replace("${allFramingRule}", all_framing_rule)
+            )
         if scope_line not in example_line:
             example_line = "\n".join(part for part in (example_line, scope_line) if part)
     space_line = ""
@@ -581,7 +743,9 @@ def render_cut_prompt(
         outer_closure_line = "\n".join((need("OUTER_CLOSURE:guard"), need(f"OUTER_CLOSURE:{closure}")))
     detail_color_transfer_line = ""
     transfer = spec.get("_detailColorTransfer")
-    if cut == "product" and shot == "detail" and transfer:
+    # 구조 확대 모드에선 억제 — 빌린 타색 디테일 자산이 로드되지 못해 zoom 으로 떨어졌는데
+    # "첨부된 타색 디테일을 참고하라"는 전환 지시만 남으면 존재하지 않는 첨부를 전제하게 된다.
+    if cut == "product" and shot == "detail" and transfer and not detail_mode_zoom:
         target = transfer["targetName"]
         if transfer.get("targetHex"):
             target += f" ({transfer['targetHex']})"
@@ -596,8 +760,15 @@ def render_cut_prompt(
         # bg 편집 모드는 라벨의 'lifestyle' 뉘앙스도 제거 — 장소 단서는 첨부 캔버스뿐이어야 한다
         .replace("${cutLabel}",
                  "worn cut composed into the attached scene" if bg_edit_mode else _CUT_LABELS[cut])
+        .replace("${authorityPlanLine}", authority_plan_line or "")
         # bg 편집 모드는 컷 종류 섹션을 통째로 교체 — 경쟁할 배경 서술이 존재하지 않게 한다
-        .replace("${cutSection}", need("CUT:bg_edit") if bg_edit_mode else need(f"CUT:{cut}"))
+        .replace(
+            "${cutSection}",
+            "\n\n".join((need("CUT:bg_edit"), need("CUT:bg_edit_mirror")))
+            if bg_edit_mode and cut == "mirror"
+            else need("CUT:bg_edit") if bg_edit_mode
+            else need(f"CUT:{cut}"),
+        )
         .replace("${shotLine}", need(f"SHOT:{shot_key}"))
         .replace("${directionLine}", direction_line)
         .replace("${faceLine}", face_line)
@@ -607,9 +778,11 @@ def render_cut_prompt(
         .replace("${outerClosureLine}", outer_closure_line)
         .replace("${spaceLine}", space_line)
         .replace("${detailColorTransferLine}", detail_color_transfer_line)
-        # 얼굴 미첨부면 빈 문자열 — 모든 경로에서 반드시 치환한다(미치환 시 아래 leftover
-        # 가드가 ValueError → 워커가 전 컷을 빈 슬롯으로 삼켜 조용히 죽는다).
-        .replace("${faceRefLine}", need("FACE_REF") if use_face else "")
+        # 얼굴/전신 미첨부면 빈 문자열 — 모든 경로에서 반드시 치환한다(미치환 시 아래
+        # leftover 가드가 ValueError → 워커가 전 컷을 빈 슬롯으로 삼켜 조용히 죽는다).
+        .replace("${identityRefLine}", need("IDENTITY_REF") if has_identity_reference else "")
+        .replace("${bodyRefLine}", need("BODY_REF") if has_body_reference else "")
+        .replace("${faceRefLine}", need("FACE_REF") if use_licensed_face else "")
         .replace("${imageManifest}", image_manifest)  # 멀티라인 — 마지막에 치환
     )
     text = re.sub(r"\n{3,}", "\n\n", text)  # 빈 라인 정리 (생략된 줄 자리)
@@ -622,6 +795,13 @@ def render_cut_prompt(
     # 확정 fitProfile(마네킹 단계 산출물)을 텍스트 제약으로도 이중 전달 — 마네킹 참조 이미지와
     # 원본 상품 사진의 인상이 충돌할 때 순종률을 확보한다(컷 파이프라인 계약). 렌더는 카탈로그
     # 고정 문구만(fit_axes — 셀러 입력 미보간). 프로필이 있으면 레거시 '- Fit:' 줄은 뺀다(마네킹 동일).
+    directing_block = render_directing_profile(
+        directing_profile,
+        cut_type=cut,
+        requested_direction=spec.get("direction"),
+        explicit_pose=spec.get("pose") != "auto",
+        reference_direction_compatible=spec.get("_referenceDirectionCompatible"),
+    )
     fit_profile = analysis.get("fitProfile") if isinstance(analysis, dict) else None
     if not isinstance(fit_profile, dict):
         fit_profile = None
@@ -633,7 +813,7 @@ def render_cut_prompt(
         }
     fit_block = build_fit_profile_block(fit_profile)
     block = _product_block(product, analysis or {}, include_legacy_fit=fit_profile is None)
-    return "\n\n".join(part for part in (text, fit_block, block) if part)
+    return "\n\n".join(part for part in (text, directing_block, fit_block, block) if part)
 
 
 def _base_color(colors: list[dict]) -> dict | None:
@@ -678,36 +858,45 @@ def _color_prompt_meta(color: dict | None, fallback_name: str | None) -> tuple[s
 
 
 def detail_reference_images(
-    product: dict, color_id: str | None,
+    product: dict, color_id: str | None, direction: str = "front",
 ) -> tuple[list[tuple[str, str]], dict | None]:
     """디테일 컷의 상품 근거와 필요 시 타색→목표색 전환 정보를 고른다.
 
-    목표 색상에 Detail이 있으면 그 색상의 기존 이미지 목록을 그대로 쓴다. color_id가
-    None일 때만 기준색으로 폴백한다. 명시된 색상이 실존하지 않으면 타색 Detail로
-    생성하지 않도록 invalid_color로 실패한다. 목표 색상은 있으나 Detail만 없으면 목표 색상
-    일반 이미지는 유지하면서 기준색, 그 다음 전체 색상 순서로 첫 Detail을 덧붙인다.
+    컷 방향의 디테일 슬롯만 근거로 쓴다(2026-08-07 스펙 §5): front→Detail, back→BackDetail.
+    우선순위는 목표색 같은 방향 디테일 → 타색 같은 방향 디테일(색전환 메타 동반) →
+    목표색 원본만(구조 확대 모드 — 렌더 단계가 매니페스트로 판정). 반대 방향 디테일은
+    어느 단계에서도 첨부하지 않는다(백넥 자수를 앞가슴에 그리는 사고 차단).
+
+    color_id가 None일 때만 기준색으로 폴백한다. 명시된 색상이 실존하지 않으면 타색 디테일로
+    생성하지 않도록 invalid_color로 실패한다 — 기존 계약 유지.
     일반 컷의 :func:`color_images` 엄격 선택 규칙은 바꾸지 않는다.
     """
+    detail_slot = "BackDetail" if direction == "back" else "Detail"
+    opposite_slot = "Detail" if detail_slot == "BackDetail" else "BackDetail"
     colors = product.get("colors") or []
     target_color = _color_by_id(colors, color_id)
     if color_id is not None and target_color is None:
         raise ValueError("invalid_color")
-    target_images = _color_image_pairs(target_color)
-    if any(slot == "Detail" for slot, _asset_id in target_images):
+    # 반대 방향 디테일은 같은 색이어도 첨부하지 않는다 — 두 디테일이 함께 붙으면
+    # "detail close-up reference" 지시가 어느 쪽을 가리키는지 모호해진다(§5 금지열).
+    target_images = [
+        pair for pair in _color_image_pairs(target_color) if pair[0] != opposite_slot
+    ]
+    if any(slot == detail_slot for slot, _asset_id in target_images):
         return target_images, None
 
     base = _base_color(colors)
     candidates = ([base] if base is not None else []) + [color for color in colors if color is not base]
     reference_color = next(
         (color for color in candidates
-         if any(slot == "Detail" for slot, _asset_id in _color_image_pairs(color))),
+         if any(slot == detail_slot for slot, _asset_id in _color_image_pairs(color))),
         None,
     )
     if reference_color is None:
         return target_images, None
 
     reference_details = [
-        pair for pair in _color_image_pairs(reference_color) if pair[0] == "Detail"
+        pair for pair in _color_image_pairs(reference_color) if pair[0] == detail_slot
     ]
     target_name, target_hex = _color_prompt_meta(
         target_color, None if color_id is None else str(color_id),
@@ -724,53 +913,101 @@ def detail_reference_images(
 
 
 # 첨부 이미지 역할 라벨 — 전부 고정 문구(셀러 데이터 미포함, 프롬프트 인젝션 방지)
+# Detail=앞면 디테일(값 재사용, 2026-08-07 개편) · BackDetail=뒷면 디테일(뒷면 전용 못박기)
 _SLOT_LABEL = {
     "Front": "PRODUCT — front view of the garment",
     "Back": "PRODUCT — back view of the garment",
-    "Detail": "PRODUCT — detail close-up of the garment (texture, stitching, print)",
-    "Fit": "PRODUCT — fit reference, the garment worn on a person (true length & drape)",
+    "Detail": ("PRODUCT — front-side detail close-up of the garment (texture, stitching, "
+               "print; may also show fabric or trims whose location is not side-specific)"),
+    "BackDetail": ("PRODUCT — back-side detail close-up of the garment (back neck, back "
+                   "yoke, back pocket). This detail exists on the back side only — "
+                   "never place it on the front"),
 }
 # 마네킹/매칭 첨부 라벨 — render_cut_prompt 의 매칭 핏 가드가 매니페스트에서 이 문구로
 # "하의가 화면에 있는가"를 판별하므로 상수로 공유(문구 드리프트 방지).
-_MANNEQUIN_LABEL = (
-    "APPROVED FRONT BASELINE — garment identity anchor only: preserve its silhouette, length, "
-    "construction and fit. Use the PRODUCT originals as ground truth for color, pattern, logo, "
-    "texture and the requested side/back view. Never copy this anchor's pose, camera, crop, "
-    "background or lighting"
-)
-_MODEL_LABEL = "MODEL — frontal close-up of the model (identity ground truth; do NOT copy this image's pose, framing, or clothing)"
-_MODEL_SHEET_LABEL = "MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single person (identity reference only). Do NOT copy the grid layout, framing, poses, or clothing; the output must be one single normal photograph, never a grid"
+_MANNEQUIN_LABEL = "PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)"
+_MODEL_LABEL = ("MODEL — frontal close-up of the model (facial identity ground truth only; "
+                "ZERO authority over body shape or proportions; do NOT copy this image's pose, "
+                "framing or clothing)")
+_MODEL_SHEET_LABEL = ("MODEL SHEET — a 2x2 grid of four studio portraits of the SAME single "
+                      "person (facial identity reference only; ZERO authority over body shape "
+                      "or proportions). Do NOT copy the grid layout, framing, poses or "
+                      "clothing; the output must be one single normal photograph, never a grid")
+_MODEL_FACE_LABEL = ("MODEL FACE — facial identity authority for the selected model ONLY: "
+                     "preserve facial identity and facial features; ZERO authority over height, "
+                     "head-to-body ratio, shoulders, torso, waist, pelvis, limb proportions, "
+                     "body shape, pose, framing or clothing")
+_MODEL_FULL_BODY_LABEL = ("MODEL FULL BODY — full-body proportion authority for the selected "
+                          "model ONLY: preserve height, head-to-body ratio, shoulder width and "
+                          "slope, torso length and build, waist, pelvis and hip width, and arm "
+                          "and leg proportions; ZERO authority over facial identity, facial "
+                          "features, hair, pose, framing or clothing")
 _MATCH_LABEL = "MATCHING — the user-selected coordinating garment worn in the same outfit"
+_CUSTOM_MATCH_LABEL = (
+    _MATCH_LABEL
+    + " — a 2x2 contact sheet showing 1-4 views of ONE SAME matching garment; "
+      "treat all occupied cells as evidence for that single garment; empty neutral cells mean "
+      "no photo, not a white garment or another product; dress one garment only; never reproduce "
+      "the contact sheet; output one normal photograph, never a collage or grid"
+)
 # FaceMarket 라이선스 얼굴 첨부 라벨(FM-31). 위 두 라벨의 부분문자열이 되면 matchCut 가드가
 # 오발해 없는 하의를 지시하므로 'mannequin'·_MATCH_LABEL 문구를 섞지 않는다.
 _FACE_LABEL = ("MODEL FACE — the licensed model's face reference: reproduce THIS person's "
-               "facial identity (never copy their clothing, background or framing)")
+               "facial identity ONLY; ZERO authority over body shape or proportions (never "
+               "copy their clothing, background, pose or framing)")
 _EXAMPLE_ALL_LABEL = "EXAMPLE REFERENCE (scope: all)"
 _EXAMPLE_POSE_LABEL = "POSE CONTROL"
 _EXAMPLE_BG_LABEL = "EXAMPLE REFERENCE (scope: bg)"
 _SPACE_SET_PLATE_LABEL = "SPACE SET PLATE"
+_EXAMPLE_PERSON_AUTHORITY_DENIAL = (
+    "the example has ZERO authority over facial identity or facial features, and ZERO "
+    "authority over body morphology: height, head-to-body ratio, shoulder width and build, "
+    "torso length and build, waist shape, pelvis and hip width, or limb proportions"
+)
 
 
 def build_manifest(
     prod_assets: list[dict], *, has_mannequin: bool, has_match: bool,
-    mood_count: int, has_model_face: bool = False, has_model_sheet: bool = False,
+    mood_count: int, matching_count: int | None = None,
+    matching_custom: list[bool] | None = None,
+    has_model_face: bool = False, has_model_sheet: bool = False,
+    has_model_full_body: bool = False,
     has_face: bool = False, example_scope: str | None = None,
     example_is_product: bool = False, has_space_set_plate: bool = False,
+    reference_direction_compatible: bool = True,
 ) -> str:
     """첨부 이미지와 동일 순서의 역할 목록.
 
-    순서: mannequin?, virtual-model face+sheet?, *product, match?, licensed-face?,
-    *mood, example?. pose의 상대 순서는 PRODUCT → MATCHING → POSE CONTROL로 고정한다.
+    순서: mannequin?, virtual-model face+full-body? 또는 legacy face+sheet?, *product,
+    *matching, licensed-face?, *mood, example?. 가상모델의 권한 순서는 MANNEQUIN →
+    MODEL FACE → MODEL FULL BODY로 고정한다. pose의 상대 순서는 PRODUCT → MATCHING →
+    POSE CONTROL로 고정한다.
     라이선스 얼굴은 옷 근거 뒤에 두며, 호출자는 정체성 충돌을 막기 위해
     licensed-face와 virtual-model 참조를 동시에 켜지 않는다.
+
+    ``has_model_sheet``는 FaceMarket의 얼굴 2x2 그리드처럼 체형 근거가 아닌 기존
+    얼굴 연속성 자산 전용이다. 실제 전신 자산이 있을 때만 ``has_model_full_body``를
+    사용한다. 둘을 동시에 선언하면 같은 위치에 상충하는 권한이 생기므로 거부한다.
+
+    ``matching_count`` 미지정 시 기존 ``has_match`` 불리언을 그대로 0/1장으로 해석한다.
+    실제 첨부 수를 아는 호출자는 count를 넘겨 여러 MATCHING 위치를 선언할 수 있다.
     """
+    if has_model_sheet and has_model_full_body:
+        raise ValueError("conflicting_model_body_authority")
+
     lines: list[str] = []
     i = 1
     if has_mannequin:
         lines.append(f"{i}. {_MANNEQUIN_LABEL}")
         i += 1
     if has_model_face:
-        lines.append(f"{i}. {_MODEL_LABEL}")
+        # FaceMarket의 구 face+sheet 계약은 기존 라벨을 유지한다. 새 가상모델
+        # face+full-body 계약(또는 불완전한 후보 검증 입력)은 명시적인 FACE 역할을 쓴다.
+        model_face_label = _MODEL_LABEL if has_model_sheet else _MODEL_FACE_LABEL
+        lines.append(f"{i}. {model_face_label}")
+        i += 1
+    if has_model_full_body:
+        lines.append(f"{i}. {_MODEL_FULL_BODY_LABEL}")
         i += 1
     if has_model_sheet:
         lines.append(f"{i}. {_MODEL_SHEET_LABEL}")
@@ -778,8 +1015,15 @@ def build_manifest(
     for a in prod_assets:
         lines.append(f"{i}. {_SLOT_LABEL.get(a.get('slot'), 'PRODUCT — view of the garment')}")
         i += 1
-    if has_match:
-        lines.append(f"{i}. {_MATCH_LABEL}")
+    resolved_matching_count = (
+        matching_count if matching_count is not None else int(has_match)
+    )
+    custom_flags = matching_custom or []
+    for matching_index in range(resolved_matching_count):
+        label = _CUSTOM_MATCH_LABEL if (
+            matching_index < len(custom_flags) and custom_flags[matching_index]
+        ) else _MATCH_LABEL
+        lines.append(f"{i}. {label}")
         i += 1
     if has_face:
         lines.append(f"{i}. {_FACE_LABEL}")
@@ -799,11 +1043,20 @@ def build_manifest(
         lines.append(
             f"{i}. {_EXAMPLE_ALL_LABEL} — source of background, lighting, mood, framing and "
             "composition; never copy its garments, shoes, accessories, person, model identity or pose"
+            f"; {_EXAMPLE_PERSON_AUTHORITY_DENIAL}"
+        )
+    elif example_scope == "all" and not reference_direction_compatible:
+        lines.append(
+            f"{i}. {_EXAMPLE_ALL_LABEL} — source ONLY of scene, lighting, capture tone and broad "
+            "spatial mood; current CUT SPEC owns direction, pose, gaze, camera geometry and framing; "
+            "never copy its garments, shoes, accessories or model identity; "
+            f"{_EXAMPLE_PERSON_AUTHORITY_DENIAL}"
         )
     elif example_scope == "all":
         lines.append(
             f"{i}. {_EXAMPLE_ALL_LABEL} — source of background, lighting, mood, pose and "
-            "framing/composition; never copy its garments, shoes, accessories or model identity"
+            "framing/composition; never copy its garments, shoes, accessories or model identity; "
+            f"{_EXAMPLE_PERSON_AUTHORITY_DENIAL}"
         )
     elif example_scope == "pose":
         if has_space_set_plate:
@@ -811,13 +1064,15 @@ def build_manifest(
                 f"{i}. {_EXAMPLE_POSE_LABEL} — transparent neutral mannequin used ONLY as a "
                 "kinematic control; PRODUCT and MATCHING remain the only clothing evidence; "
                 "CUT SPEC controls camera, crop and model placement, while SPACE SET PLATE "
-                "exclusively controls the location and background"
+                "exclusively controls the location and background; "
+                f"{_EXAMPLE_PERSON_AUTHORITY_DENIAL}"
             )
         else:
             lines.append(
                 f"{i}. {_EXAMPLE_POSE_LABEL} — transparent neutral mannequin used ONLY as a "
                 "kinematic control; PRODUCT and MATCHING remain the only clothing evidence; "
-                "CUT SPEC controls camera, crop, placement and background"
+                "CUT SPEC controls camera, crop, placement and background; "
+                f"{_EXAMPLE_PERSON_AUTHORITY_DENIAL}"
             )
     elif example_scope == "bg":
         # 스파이크(2026-07-12): 자산은 인물을 지운 '빈 무대 플레이트' — 포즈·의류 유출을 구조적으로 차단
@@ -827,7 +1082,7 @@ def build_manifest(
             f"{_EXAMPLE_BG_LABEL} — THE scene canvas (the base image being edited): insert the "
             "model into this exact scene; outside the person everything stays as in this image; "
             "it has no person, so choose the pose yourself and never copy garments, shoes or "
-            "props onto the model"
+            f"props onto the model; {_EXAMPLE_PERSON_AUTHORITY_DENIAL}"
         )
         renumbered = [bg_label] + [line.split(". ", 1)[1] for line in lines]
         lines = [f"{n}. {label}" for n, label in enumerate(renumbered, start=1)]
@@ -837,23 +1092,30 @@ def build_manifest(
 def build_prompt(
     cut_spec: dict, product: dict, *,
     analysis: dict | None = None, manifest: str | None = None, has_face: bool = False,
+    directing_profile: dict | None = None,
 ) -> str:
     """스펙 정규화(ValueError=unknown_cut_type) + 템플릿 렌더. manifest 미지정 시
     일반 컷은 해당 색상 상품 슬롯을, 디테일 컷은 detail_reference_images 정책의 상품 슬롯을
     첨부한다고 가정하고 동일 순서 목록을 만든다(+ has_face 면 얼굴)."""
     clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
     spec = normalize_spec(cut_spec, clothing_type=clothing_type)
-    # pose-only medium은 v2 QC 결론대로 먼저 full 프레이밍으로 생성하고 generate()가
-    # 결정적 body-landmark crop을 적용한다. all/bg 및 비-pose 경로는 기존 프롬프트 그대로다.
+    spec = apply_reference_compatibility(spec)
+    fit_profile = analysis.get("fitProfile") if isinstance(analysis, dict) else None
+    plan = compile_cut_plan(spec, clothing_type, fit_profile=fit_profile)
+    authority_plan_line = render_prompt_contract(plan)
+    # 하의 pose-only medium만 먼저 full 프레이밍으로 생성하고 generate()가 결정적
+    # body-landmark crop을 적용한다. 상의·아우터·원피스는 목적 촬영 medium을 직접 만든다.
     if (
         spec["refScope"] == "pose"
         and spec["shot"] == "medium"
         and not spec.get("spaceGroupId")
+        and _is_bottom(clothing_type)
     ):
         spec = {**spec, "shot": "full"}
     if manifest is None:
         if spec["cutType"] == "product" and spec["shot"] == "detail":
-            selected_images, transfer = detail_reference_images(product, spec["colorId"])
+            selected_images, transfer = detail_reference_images(
+                product, spec["colorId"], direction=spec["direction"])
             spec["_detailColorTransfer"] = transfer
         else:
             selected_images = color_images(product, spec["colorId"])
@@ -862,61 +1124,9 @@ def build_prompt(
             prod_assets, has_mannequin=False, has_match=False, mood_count=0,
             has_face=has_face and _face_fits(spec, _is_bottom(clothing_type)))
     return render_cut_prompt(
-        load_cut_template(), spec, product, analysis or {}, clothing_type, manifest, has_face)
-
-
-def prepare(
-    settings: Settings,
-    cut_spec: dict,
-    product: dict,
-    images: list[InlineImage],
-    *,
-    analysis: dict | None = None,
-    manifest: str | None = None,
-    has_face: bool = False,
-) -> PreparedCut:
-    """AG-06 요청 조립만. 호출은 하지 않는다 — 계측이 호출 전 스냅샷을 뜰 수 있어야 한다."""
-    model = resolve_model(settings, "image_high")
-    clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
-    spec = normalize_spec(cut_spec, clothing_type=clothing_type)
-    crop_pose_medium = (
-        spec["refScope"] == "pose"
-        and spec["shot"] == "medium"
-        and not spec.get("spaceGroupId")
-    )
-    prompt = build_prompt(cut_spec, product, analysis=analysis, manifest=manifest, has_face=has_face)
-    return PreparedCut(
-        model=model,
-        prompt=prompt,
-        images=images,
-        image_size=settings.mannequin_image_size,
-        aspect_ratio=settings.mannequin_aspect_ratio,
-        crop_pose_medium=crop_pose_medium,
-        clothing_type=clothing_type,
-    )
-
-
-async def execute(
-    settings: Settings,
-    gemini: GeminiImageClient,
-    prepared: PreparedCut,
-):
-    """준비된 AG-06 요청 1회 실행. pose-medium crop 은 기존 generate wrapper와 동일하게 적용."""
-    res = await gemini.generate_content_image(
-        prepared.model, prepared.prompt, prepared.images, prepared.image_size,
-        aspect_ratio=prepared.aspect_ratio,
-    )
-    if prepared.crop_pose_medium:
-        image, mime = await pose_crop.crop_pose_medium(
-            settings, res.image, res.mime, prepared.clothing_type
-        )
-        return type(res)(
-            image=image,
-            mime=mime,
-            latency_ms=getattr(res, "latency_ms", None),
-            usage=getattr(res, "usage", None),
-        )
-    return res
+        load_cut_template(), spec, product, analysis or {}, clothing_type, manifest, has_face,
+        authority_plan_line=authority_plan_line,
+        directing_profile=directing_profile)
 
 
 async def generate(
@@ -929,11 +1139,39 @@ async def generate(
     analysis: dict | None = None,
     manifest: str | None = None,
     has_face: bool = False,
+    directing_profile: dict | None = None,
 ) -> tuple[bytes, str]:
-    """컷 1개 생성 — 기존 호출자용 wrapper(바이트 단위 동작 유지).
-    실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리). 스펙 위반은 ValueError."""
-    prepared = prepare(
-        settings, cut_spec, product, images,
-        analysis=analysis, manifest=manifest, has_face=has_face)
-    res = await execute(settings, gemini, prepared)
+    """컷 1개 생성. 실패 시 GeminiError 전파(호출자가 빈 슬롯 등으로 처리).
+    스펙 위반(unknown cutType)은 ValueError — 조용한 styling 폴백을 하지 않는다
+    (거울샷 등 신규 컷이 엉뚱한 컷으로 대체 렌더되는 회귀 방지).
+
+    has_face=True 는 '호출자가 images 에 FaceMarket 라이선스 MODEL FACE를
+    매니페스트와 같은 자리에 넣었다'는 뜻이다. MODEL / MODEL SHEET
+    identity pair는 has_face와 독립적으로 매니페스트에서 판정한다 — 첨부와
+    매니페스트가 어긋나면 라벨이 밀린다."""
+    model = resolve_model(settings, "image_high")
+    clothing_type = product.get("clothing_type") or product.get("clothingType") or "top"
+    spec = normalize_spec(cut_spec, clothing_type=clothing_type)
+    crop_pose_medium = (
+        spec["refScope"] == "pose"
+        and spec["shot"] == "medium"
+        and not spec.get("spaceGroupId")
+        and _is_bottom(clothing_type)
+    )
+    prompt = build_prompt(
+        cut_spec,
+        product,
+        analysis=analysis,
+        manifest=manifest,
+        has_face=has_face,
+        directing_profile=directing_profile,
+    )
+    res = await gemini.generate_content_image(
+        model, prompt, images, settings.mannequin_image_size,
+        aspect_ratio=settings.mannequin_aspect_ratio,
+    )
+    if crop_pose_medium:
+        return await pose_crop.crop_pose_medium(
+            settings, res.image, res.mime, clothing_type
+        )
     return res.image, res.mime

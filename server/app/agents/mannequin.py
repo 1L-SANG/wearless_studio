@@ -8,7 +8,8 @@
 from .prompts import MannequinPromptContext
 
 # 기준 색상 이미지 정렬 순서 (common_data_contract §4 AngleSlot)
-_SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "Fit": 3}
+# 2026-08-07 개편: Fit 폐기(실사용 0건), BackDetail 신설 — 기존 3종 순서는 불변(재현성).
+_SLOT_ORDER = {"Front": 0, "Back": 1, "Detail": 2, "BackDetail": 3}
 
 
 def select_base_gender(
@@ -42,102 +43,14 @@ _FINE_PATTERN_TOKENS = (
 )
 
 
-_SOLID_PATTERN_TYPES = {"solid", "plain", "none", "no_pattern", "무지", "단색"}
-_REPEATING_PATTERN_TYPES = {
-    "stripe", "pinstripe", "check", "gingham", "tartan", "plaid", "houndstooth",
-    "herringbone", "dot", "polka", "windowpane", "pattern", "스트라이프", "줄무늬",
-    "체크", "깅엄", "타탄", "격자", "도트", "물방울", "잔무늬", "패턴",
-}
-_STRIPE_PATTERN_TYPES = {"stripe", "pinstripe", "스트라이프", "줄무늬", "핀스트라이프"}
-_STRIPE_PATTERN_TOKENS = tuple(_STRIPE_PATTERN_TYPES)
+def has_fine_pattern(product: dict | None, analysis: dict | None) -> bool:
+    """미세 반복 패턴 상품인가 — 셀러·AI 가 쓴 텍스트에서 찾는다(순수).
 
-
-def _truthy_bool(v) -> bool | None:
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)) and v in (0, 1):
-        return bool(v)
-    if isinstance(v, str):
-        norm = v.strip().lower()
-        if norm in {"true", "yes", "y", "1"}:
-            return True
-        if norm in {"false", "no", "n", "0"}:
-            return False
-    return None
-
-
-def _pattern_spec(src: dict | None) -> dict | None:
-    if not isinstance(src, dict):
-        return None
-    spec = src.get("patternSpec") or src.get("pattern_spec")
-    return spec if isinstance(spec, dict) else None
-
-
-def _get_any(src: dict, *keys: str):
-    for key in keys:
-        if key in src:
-            return src[key]
-    return None
-
-
-def _structured_fine_pattern_risk(src: dict | None) -> bool | None:
-    """구조화 pattern spec이 있으면 미세/반복 패턴 리스크를 결정한다.
-
-    SOLID/PLAIN/NONE 은 명시적 no-risk 정본이다. 그 외 반복 패턴 type은 finePattern 값이
-    빠진 옛 payload에서도 보수적으로 risk로 본다. finePattern이 명시돼 있으면 그 값을 따른다.
+    분석 payload 에 패턴 전용 필드가 없어서 이름·특징(sellingPoints)·카테고리를 훑는다.
+    실측 예: 스트라이프 셔츠의 sellingPoints = ["멀티 스트라이프", "세미 크롭 기장"].
+    과탐(무지인데 4K)은 비용만 더 쓰고 결과는 같지만, 미탐(패턴인데 2K)은 셀러가 원단이
+    다르다고 느끼는 컷이 나가므로 **넓게 잡는 쪽**이 맞다.
     """
-    spec = _pattern_spec(src)
-    if not spec:
-        return None
-
-    pattern_type = str(spec.get("type") or spec.get("patternType") or "").strip().lower()
-    if pattern_type in _SOLID_PATTERN_TYPES:
-        return False
-
-    # Runtime contract: every declared repeating pattern is high-resolution risk.
-    # `finePattern` is an analysis observation, not permission to downgrade a STRIPE
-    # product to the ordinary 1K path.  The 2026-08-04 goldenset shirt was approved
-    # as STRIPE + finePattern=false and consequently rendered at 1K; deterministic
-    # projection then failed because the target period contained too few pixels.
-    if pattern_type in _REPEATING_PATTERN_TYPES:
-        return True
-    if pattern_type and any(tok in pattern_type for tok in _REPEATING_PATTERN_TYPES):
-        return True
-
-    fine = _truthy_bool(_get_any(spec, "finePattern", "fine_pattern"))
-    if fine is not None:
-        return fine
-    return None
-
-
-def resolve_fine_pattern_risk(
-    product: dict | None,
-    analysis: dict | None,
-    product_truth: dict | None = None,
-) -> bool:
-    """미세/반복 패턴 리스크 정본 해석.
-
-    우선순위:
-    1. 승인 Product Truth patternSpec / pattern_spec
-    2. analysis 의 구조화 patternSpec / pattern_spec
-    3. 레거시 seller/AI 텍스트 토큰
-
-    승인 Product Truth가 SOLID 라고 말하면 stale 상품명·selling point 텍스트가 패턴을 강제할
-    수 없다. Product Truth가 없을 때의 기존 텍스트 기반 동작은 유지한다.
-    """
-    if isinstance(product_truth, dict) and product_truth.get("status") == "approved":
-        truth_risk = _structured_fine_pattern_risk(product_truth)
-        if truth_risk is not None:
-            return truth_risk
-
-    analysis_risk = _structured_fine_pattern_risk(analysis)
-    if analysis_risk is not None:
-        return analysis_risk
-
-    return _legacy_text_fine_pattern_risk(product, analysis)
-
-
-def _legacy_text_fine_pattern_risk(product: dict | None, analysis: dict | None) -> bool:
     parts = []
     for src in (product or {}), (analysis or {}):
         for key in ("name", "suggestedName", "customCategory", "subCategory"):
@@ -150,65 +63,6 @@ def _legacy_text_fine_pattern_risk(product: dict | None, analysis: dict | None) 
                 parts.extend(x for x in v if isinstance(x, str))
     blob = " ".join(parts).lower()
     return any(tok.lower() in blob for tok in _FINE_PATTERN_TOKENS)
-
-
-def has_fine_pattern(
-    product: dict | None,
-    analysis: dict | None,
-    product_truth: dict | None = None,
-) -> bool:
-    """미세 반복 패턴 상품인가 — 구조화 정본을 우선하고 레거시 텍스트로 폴백한다(순수).
-
-    분석 payload 에 패턴 전용 필드가 없어서 이름·특징(sellingPoints)·카테고리를 훑는다.
-    실측 예: 스트라이프 셔츠의 sellingPoints = ["멀티 스트라이프", "세미 크롭 기장"].
-    과탐(무지인데 4K)은 비용만 더 쓰고 결과는 같지만, 미탐(패턴인데 2K)은 셀러가 원단이
-    다르다고 느끼는 컷이 나가므로 **넓게 잡는 쪽**이 맞다.
-    """
-    return resolve_fine_pattern_risk(product, analysis, product_truth)
-
-
-def has_stripe_pattern(
-    product: dict | None,
-    analysis: dict | None,
-    product_truth: dict | None = None,
-) -> bool:
-    """4K 비용 승격 대상인 스트라이프인가.
-
-    체크 등 다른 반복 패턴도 보호/QC 대상으로는 남지만, 4K 생성은 승인된 STRIPE 계열에만
-    허용한다. 승인 Product Truth가 있으면 stale 상품명보다 우선한다.
-    """
-    for src, authoritative in (
-        (product_truth, isinstance(product_truth, dict)
-         and product_truth.get("status") == "approved"),
-        (analysis, False),
-    ):
-        if src is product_truth and not authoritative:
-            continue
-        spec = _pattern_spec(src)
-        if not spec:
-            continue
-        pattern_type = str(
-            spec.get("type") or spec.get("patternType") or ""
-        ).strip().lower()
-        if pattern_type:
-            is_stripe = (
-                pattern_type in _STRIPE_PATTERN_TYPES
-                or any(token in pattern_type for token in _STRIPE_PATTERN_TYPES)
-            )
-            return is_stripe
-
-    parts = []
-    for src in (product or {}), (analysis or {}):
-        for key in ("name", "suggestedName", "customCategory", "subCategory"):
-            value = src.get(key)
-            if isinstance(value, str):
-                parts.append(value)
-        for key in ("sellingPoints", "aiSuggestedPoints", "styleTags"):
-            value = src.get(key)
-            if isinstance(value, list):
-                parts.extend(item for item in value if isinstance(item, str))
-    blob = " ".join(parts).lower()
-    return any(token in blob for token in _STRIPE_PATTERN_TOKENS)
 
 
 def generation_spec(analysis: dict) -> dict | None:
@@ -228,7 +82,7 @@ def effective_fit_profile(analysis: dict, has_match_image: bool) -> dict | None:
 
 def base_color_images(product: dict) -> list[tuple[str, str]]:
     """기준 색상(ColorGroup.isBase, 없으면 colors[0]) 이미지의 (slot, asset_id) 목록 (slot 순서).
-    slot ∈ Front/Back/Detail/Fit. Front 필수는 입력 검증에서 거른다(나머지는 선택)."""
+    slot ∈ Front/Back/Detail/BackDetail. Front·Back 필수는 입력 검증에서 거른다(나머지는 선택)."""
     colors = product.get("colors") or []
     base = next((c for c in colors if c.get("isBase")), colors[0] if colors else None)
     if not base:

@@ -10,14 +10,6 @@
 // selectedModelId 는 셀러가 라이선스 활성 모델을 고르면 실 fm_models.id(UUID)로 채워지고,
 // saveAnalysis 가 서버에 지속해 생성 게이트가 서버측에서 라이선스를 해석한다.
 
-// 실측 템플릿 — key 는 영문 토큰(계약 §4). value 는 AI 미산출 → null(사용자 직접 입력, PRD §6.5).
-const MEASUREMENT_TEMPLATE = [
-  { key: 'totalLength', value: null, unit: 'cm' },
-  { key: 'shoulderWidth', value: null, unit: 'cm' },
-  { key: 'chestWidth', value: null, unit: 'cm' },
-  { key: 'sleeveLength', value: null, unit: 'cm' },
-];
-
 // 기본/확장 콘티 — http getStoryboard 가 저장 콘티 없을 때 시드한다.
 // mock buildStoryboard와 같은 역할 중심 블록 shape을 만든다.
 import { uid } from '../ids.js';
@@ -26,13 +18,13 @@ import { ensureSections } from '../sections.js';
 import { exampleSelectionFingerprintFields } from '../generationExamples.js';
 import { genderForClothingType } from '../productGender.js';
 import { spaceSetGroupId } from '../storyboardSpaceSetCatalog.js';
-import { pickEntrySets } from '../storyboardEntryPlacement.js';
+import { applyOpeningRow, entryStylingMembers, pickEntrySets } from '../storyboardEntryPlacement.js';
+import { createMeasurementFields } from '../measurementSchema.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
   STORYBOARD_TAXONOMY_VERSION,
   contentTitle,
-  hasDetailSource,
 } from '../storyboardTaxonomy.js';
 
 const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) => ({
@@ -44,11 +36,12 @@ const sb = (sectionRole, contentRole, cutType, direction, shot, colorId, extra) 
   ...(extra || {}),
 });
 
-function setMemberBlocks(set, colorId, contentRole) {
+function setMemberBlocks(set, colorId, sectionRole, contentRole) {
   if (!set) return [];
   const groupId = spaceSetGroupId(set.id, uid('sg'));
-  return set.members.map((member) => sb(
-    SECTION_ROLES.FIT,
+  const members = set.setType === 'styling' ? entryStylingMembers(set) : set.members;
+  return members.map((member) => sb(
+    sectionRole,
     contentRole,
     member.cutType,
     member.direction,
@@ -70,20 +63,20 @@ function setMemberBlocks(set, colorId, contentRole) {
 function stylingFallback(colorId, clothingType) {
   return [
     sb(
-      SECTION_ROLES.FIT,
+      SECTION_ROLES.STYLING,
       CONTENT_ROLES.COORDINATION,
       'styling',
       clothingType === 'bottom' ? 'back' : 'front',
       'full',
       colorId,
     ),
-    sb(SECTION_ROLES.FIT, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', colorId),
+    sb(SECTION_ROLES.STYLING, CONTENT_ROLES.COORDINATION, 'styling', 'front', 'medium', colorId),
   ];
 }
 
 function horizonRotationFallback(colorId) {
   return ['front', 'side', 'back'].map((direction) => sb(
-    SECTION_ROLES.FIT,
+    SECTION_ROLES.STUDIO,
     CONTENT_ROLES.FIT,
     'horizon',
     direction,
@@ -95,7 +88,7 @@ function horizonRotationFallback(colorId) {
 function realWearBlock(colorId, gender, clothingType) {
   if (gender === 'women') {
     return sb(
-      SECTION_ROLES.FIT,
+      SECTION_ROLES.STYLING,
       CONTENT_ROLES.REAL_WEAR,
       'mirror',
       null,
@@ -105,7 +98,7 @@ function realWearBlock(colorId, gender, clothingType) {
     );
   }
   return sb(
-    SECTION_ROLES.FIT,
+    SECTION_ROLES.STYLING,
     CONTENT_ROLES.COORDINATION,
     'styling',
     clothingType === 'bottom' ? 'back' : 'front',
@@ -118,7 +111,8 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   if (mode !== 'basic' && mode !== 'extended') throw new Error('invalid_compose_mode');
   const list = Array.isArray(colors) && colors.length ? colors : [{ id: 'col1', isBase: true }];
   const base = (list.find((c) => c.isBase) || list[0]).id;
-  const hasDetail = hasDetailSource({ colors: list });
+  // 기본 구성 디테일 블록은 앞면 방향 — 앞면 디테일(Detail) 보유 색을 우선, 없으면 기준색
+  // (서버가 원본 구조 확대로 폴백, 2026-08-07 개편).
   const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
   const clothingType = context.clothingType || 'top';
   // 서버(select_base_gender)와 동일 의미론: 남성 단독일 때만 men, 혼합·미상은 women.
@@ -130,29 +124,29 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
     stylingCount: mode === 'extended' ? 3 : 2,
   });
   const blocks = [
-    sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.HERO, 'styling', 'front', 'full', base),
-    sb(SECTION_ROLES.BENEFIT, CONTENT_ROLES.BENEFIT, 'horizon', 'front', 'medium', base),
+    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.HERO, 'styling', 'front', 'full', base),
+    sb(SECTION_ROLES.HOOKING, CONTENT_ROLES.BENEFIT, 'horizon', 'front', 'medium', base),
   ];
 
   for (const set of stylingSets) {
     blocks.push(...(set
-      ? setMemberBlocks(set, base, CONTENT_ROLES.COORDINATION)
+      ? setMemberBlocks(set, base, SECTION_ROLES.STYLING, CONTENT_ROLES.COORDINATION)
       : stylingFallback(base, clothingType)));
   }
 
   if (mode === 'extended') {
+    blocks.push(realWearBlock(base, gender, clothingType));
     const horizonSet = sequenceSet || rotationSet;
     blocks.push(...(horizonSet
-      ? setMemberBlocks(horizonSet, base, CONTENT_ROLES.FIT)
+      ? setMemberBlocks(horizonSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
       : horizonRotationFallback(base)));
-    blocks.push(realWearBlock(base, gender, clothingType));
 
     const additionalColors = list.slice(1, 4);
     for (const color of additionalColors) {
       blocks.push(
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'front', 'full', color.id),
-        sb(SECTION_ROLES.FIT, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', color.id),
+        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
+        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'full', color.id),
+        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', color.id),
       );
     }
 
@@ -170,22 +164,15 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base),
     );
-    if (hasDetail) {
-      blocks.push(
-        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
-        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
-      );
-    } else {
-      blocks.push(
-        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
-        sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base),
-      );
-    }
+    blocks.push(
+      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
+      sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor),
+    );
   } else {
-    blocks.push(...(rotationSet
-      ? setMemberBlocks(rotationSet, base, CONTENT_ROLES.FIT)
-      : horizonRotationFallback(base)));
     blocks.push(realWearBlock(base, gender, clothingType));
+    blocks.push(...(rotationSet
+      ? setMemberBlocks(rotationSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
+      : horizonRotationFallback(base)));
     blocks.push(
       sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'front', 'ghost', base),
     );
@@ -199,9 +186,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
         color.id,
       ));
     }
-    blocks.push(hasDetail
-      ? sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor)
-      : sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.PRODUCT_OVERVIEW, 'product', 'back', 'ghost', base));
+    blocks.push(sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor));
   }
   return ensureSections(blocks);
 }
@@ -247,15 +232,19 @@ function storyboardTemplateFingerprint(blocks) {
 
 export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
   if (!Array.isArray(blocks) || !blocks.length) return false;
-  // v2 계약을 충족하지 않는 보드는 기본 시드로 간주해 교체하지 않는다.
+  // 현재 역할 분류 계약을 충족하지 않는 보드는 기본 시드로 간주해 교체하지 않는다.
   if (blocks.some((block) => block.taxonomyVersion !== STORYBOARD_TAXONOMY_VERSION)) return false;
-  return storyboardTemplateFingerprint(blocks)
-    === storyboardTemplateFingerprint(defaultStoryboard(colors, mode, product));
+  const seeded = defaultStoryboard(colors, mode, product);
+  const fingerprint = storyboardTemplateFingerprint(blocks);
+  // 2026-08-07 개편 전 기본 시드(디테일 없음→ghost 대체)는 지문이 어긋나 "편집본"으로
+  // 남는다 — 기존 프로젝트가 전부 테스트용이라 마이그레이션하지 않기로 함(오너 결정).
+  return fingerprint === storyboardTemplateFingerprint(seeded)
+    || fingerprint === storyboardTemplateFingerprint(applyOpeningRow(seeded));
 }
 
 // analyzeProduct 의 shape 뼈대 — AnalysisForm 이 무가드로 읽는 필드 전부 포함(계약 §6).
 // AI 산출 필드(clothingType/materials/styleTags 등)는 콜러가 덮어쓴다.
-export function defaultAnalysisShape() {
+export function defaultAnalysisShape(clothingType = 'top') {
   return {
     clothingType: null, subCategory: null, targetGenders: [],
     // enum 밖 의류의 자유 명칭(AG-01 추측 + 셀러 주관식 수정, 계약 §3.2). mock/db.js 에는
@@ -270,7 +259,7 @@ export function defaultAnalysisShape() {
     // 그러면 거울 셀카 원본의 반전된 로고가 그대로 생성 컷에 남는다.
     sourceMirrored: false,
     washCare: '', locked: false, measurementsUnknown: false,
-    measurements: MEASUREMENT_TEMPLATE.map((m) => ({ ...m })),
+    measurements: createMeasurementFields(clothingType),
     fitProfile: null,
   };
 }

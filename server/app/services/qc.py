@@ -19,7 +19,6 @@ BBOX_BOTTOM_MIN = 0.86  # 전경 하단이 이보다 아래
 BBOX_HEIGHT_MIN = 0.72  # 전경 높이 비율
 LOWER_BODY_MIN_RATIO = 0.012  # 하단 12% 영역의 전경 비율 (일반 레짐)
 LOWER_BODY_MIN_RATIO_LOW = 0.0001  # 〃 저대비 레짐 — 흰 발/흰 바닥 정상(≈0.0002~0.0004)과 소실(=0) 사이
-LOWER_BODY_STRONG_CONTRAST_RATIO = 0.001  # 하단 자체가 고대비일 때만 일반 레짐(1K 정상 흰 발≈0.0001)
 # 유령 판정 2-레짐 (실측: 흰옷 정상 fg≈0.010/strong≈0.0002 · 흰 유령 fg≈0.0001 · 유색 유령 fg≈0.06/strong≈0.000):
 #  - 저대비 레짐(fg < NORMAL_CONTRAST_FG_RATIO — 화이트·아이보리 의류/호리존): strong 검사를 건너뛰고
 #    FG_SOLID_MIN_RATIO 미달만 유령으로 본다. 흰옷 정상을 차단하지 않기 위함(모노톤 스와치 실존).
@@ -34,6 +33,47 @@ class QcResult:
     verdict: str  # 'pass' | 'retry'
     reasons: list[str] = field(default_factory=list)
     metrics: dict = field(default_factory=dict)
+
+
+def evaluate_canvas_alpha_qc(generated_bytes: bytes) -> QcResult:
+    """출력 캔버스에 실제 투명 픽셀이 있는지만 검사한다.
+
+    시스템의 마네킹·스튜디오 이미지는 파일 캔버스 전체가 불투명이어야 한다.
+    시스루·메시·레이스 원단의 비침은 배경과 섬유가 섞여 보이는 RGB 색과
+    빛으로 이미 합성된 모습이어야 하며, 의류 픽셀 자체의 alpha를 낮추어서는 안 된다.
+
+    alpha 채널이 있어도 모든 픽셀이 255면 실제 투명도는 없으므로 통과한다.
+    """
+    try:
+        img = Image.open(BytesIO(generated_bytes))
+        img.load()
+    except Exception:
+        return QcResult("retry", ["decode_failed"])
+
+    w, h = img.size
+    has_alpha_source = "A" in img.getbands() or "transparency" in img.info
+    metrics = {
+        "width": w,
+        "height": h,
+        "hasAlphaSource": has_alpha_source,
+        "alphaMin": 255,
+        "transparentPixelCount": 0,
+        "transparentPixelRatio": 0.0,
+    }
+    if not has_alpha_source:
+        return QcResult("pass", metrics=metrics)
+
+    alpha = img.convert("RGBA").getchannel("A")
+    histogram = alpha.histogram()
+    transparent_count = sum(histogram[:255])
+    alpha_min = next((value for value, count in enumerate(histogram) if count), 255)
+    metrics.update({
+        "alphaMin": alpha_min,
+        "transparentPixelCount": transparent_count,
+        "transparentPixelRatio": round(transparent_count / (w * h), 6),
+    })
+    reasons = ["transparent_canvas"] if transparent_count else []
+    return QcResult("retry" if reasons else "pass", reasons, metrics)
 
 
 def _bg_color(img: Image.Image) -> tuple[int, int, int]:
@@ -53,6 +93,9 @@ def _bg_color(img: Image.Image) -> tuple[int, int, int]:
 
 
 def evaluate_mannequin_qc(generated_bytes: bytes) -> QcResult:
+    alpha_result = evaluate_canvas_alpha_qc(generated_bytes)
+    if "transparent_canvas" in alpha_result.reasons:
+        return alpha_result
     try:
         img = Image.open(BytesIO(generated_bytes)).convert("RGB")
     except Exception:
@@ -93,20 +136,11 @@ def evaluate_mannequin_qc(generated_bytes: bytes) -> QcResult:
     if t > h * BBOX_TOP_MAX or b < h * BBOX_BOTTOM_MIN or (b - t) < h * BBOX_HEIGHT_MIN:
         reasons.append("full_body_crop")
 
-    # 하단 12% 전경 존재(발/다리) — 크롭·유령 양쪽 탐지.
-    # 레짐은 이미지 전체가 아니라 하단 자체의 대비로 고른다. 유색 상의가 global fg를
-    # 높여도 흰 마네킹 다리·발은 저대비이기 때문이다(2026-08-04 1K 표본 6/15 오탐).
+    # 하단 12% 전경 존재(발/다리) — 크롭·유령 양쪽 탐지. 임계는 레짐 연동(흰 발·흰 바닥 대응)
     normal_contrast = fg_count >= total * NORMAL_CONTRAST_FG_RATIO
+    lower_min = LOWER_BODY_MIN_RATIO if normal_contrast else LOWER_BODY_MIN_RATIO_LOW
     lower = fg.crop((0, int(h * 0.88), w, h))
-    lower_strong = strong.crop((0, int(h * 0.88), w, h))
-    lower_count = lower.histogram()[-1]
-    lower_strong_count = lower_strong.histogram()[-1]
-    lower_normal_contrast = lower_strong_count >= total * LOWER_BODY_STRONG_CONTRAST_RATIO
-    lower_min = LOWER_BODY_MIN_RATIO if lower_normal_contrast else LOWER_BODY_MIN_RATIO_LOW
-    metrics["lowerBodyFgRatio"] = round(lower_count / total, 5)
-    metrics["lowerBodyStrongFgRatio"] = round(lower_strong_count / total, 5)
-    metrics["lowerBodyContrastRegime"] = "normal" if lower_normal_contrast else "low"
-    if lower_count < total * lower_min:
+    if lower.histogram()[-1] < total * lower_min:
         reasons.append("missing_lower_body")
 
     # 유령(일반 레짐만): 전경 질량은 있는데 확실한 전경이 없으면 옅게 번진 것.
@@ -126,6 +160,10 @@ def format_qc_feedback(result: QcResult) -> str:
         "bad_aspect_ratio": "Output a portrait image matching the base photo's aspect ratio.",
         "too_small": "Output a high-resolution image.",
         "decode_failed": "Output a valid photographic image.",
+        "transparent_canvas": (
+            "Return a fully opaque image canvas (alpha 255 everywhere). "
+            "Show sheer fabric through RGB color and light blending only, never transparent pixels."
+        ),
     }
     seen = [hints[r] for r in result.reasons if r in hints]
     if not seen:

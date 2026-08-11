@@ -18,7 +18,13 @@ import genExamples from '@/data/genExamples.json';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { genderForClothingType } from '@/lib/productGender.js';
+import {
+  createMeasurementFields,
+  MEASUREMENT_LABELS,
+  MEASUREMENT_SCHEMA,
+} from '@/lib/measurementSchema.js';
 import { defaultStoryboard } from '@/lib/api/shapes.js';
+import { applyOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
 import { ensureSections, rowSizeFor } from '@/lib/sections.js';
@@ -92,20 +98,12 @@ const catalogs = {
   outerClosureStates: [
     { value: 'open', label: '전체 열림' }, { value: 'partial', label: '부분 열림' }, { value: 'closed', label: '전체 닫힘' },
   ],
-  angleSlots: ['Front', 'Back', 'Detail', 'Fit'],
-  angleLabels: { Front: '앞면 이미지', Back: '뒷면 이미지', Detail: '디테일 이미지', Fit: '착용 이미지' },
+  // 2026-08-07 개편: Fit 폐기(실사용 0건) → 뒷면 디테일 신설. Detail 값=앞면 디테일(재해석).
+  angleSlots: ['Front', 'Back', 'Detail', 'BackDetail'],
+  angleLabels: { Front: '앞면', Back: '뒷면', Detail: '앞면 디테일', BackDetail: '뒷면 디테일' },
   // measurement schema per clothing type (PRD §6.5) — key는 영문 토큰 (계약 §4)
-  measurementSchema: {
-    top: ['totalLength', 'shoulderWidth', 'chestWidth', 'sleeveLength'],
-    bottom: ['totalLength', 'waistWidth', 'hipWidth', 'thighWidth', 'rise', 'hemWidth'],
-    outer: ['totalLength', 'shoulderWidth', 'chestWidth', 'sleeveLength'],
-    dress: ['totalLength', 'shoulderWidth', 'chestWidth', 'waistWidth', 'armhole', 'sleeveLength'],
-  },
-  measurementLabels: {
-    totalLength: '총장', shoulderWidth: '어깨너비', chestWidth: '가슴단면', sleeveLength: '소매길이',
-    waistWidth: '허리단면', hipWidth: '엉덩이단면', thighWidth: '허벅지단면',
-    rise: '밑위', hemWidth: '밑단단면', armhole: '암홀',
-  },
+  measurementSchema: MEASUREMENT_SCHEMA,
+  measurementLabels: MEASUREMENT_LABELS,
   sellingPointSuggestions: ['골지 짜임', '라운드넥', '소매 리브', '도톰한 짜임', '세미오버핏'],
   swatchColors: [
     { id: 'white', label: '화이트', hex: '#ffffff' },
@@ -123,8 +121,8 @@ const catalogs = {
   ],
   // 사진 양 — 두 방식은 섹션 순서가 같고 사진 수만 다르다.
   composeModes: [
-    { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로 필요한 사진만', count: '13', flow: ['핵심 장점', '핏·코디', '제품 확인'] },
-    { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '14~33', flow: ['핵심 장점', '핏·코디', '제품 확인'] },
+    { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로 필요한 사진만', count: '13', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
+    { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '14~33', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
   ],
   poses: [
     { id: 'auto', label: 'AI 자동', auto: true }, { id: 'stand', label: '서기', thumb: P.pose('stand') },
@@ -182,9 +180,11 @@ const catalogs = {
 /* ---- Models & match clothing (stable option sets) ---- */
 // 실제 AI 가상모델 썸네일 (mock 모델 교체) — wm=여성, m=남성. 이미지는 public/models/.
 const models = [
-  { id: 'mA', name: '모델 A', gender: 'women', thumb: '/models/women/w1.webp', recommended: true },
-  { id: 'mB', name: '모델 B', gender: 'men', thumb: '/models/men/m1.webp', recommended: false },
-  { id: 'mC', name: '모델 C', gender: 'men', thumb: '/models/men/m2.webp', recommended: false },
+  { id: 'mA', name: 'Mia', gender: 'women', thumb: '/models/women/w1.webp', recommended: true },
+  { id: 'mB', name: 'Leo', gender: 'men', thumb: '/models/men/m1.webp', recommended: false },
+  { id: 'mC', name: '도윤', gender: 'men', thumb: '/models/men/m2.webp', recommended: false },
+  { id: 'mD', name: '수혁', gender: 'men', thumb: '/models/men/m3.webp', recommended: false },
+  { id: 'mE', name: '지안', gender: 'women', thumb: '/models/women/w2.webp', recommended: false },
 ];
 const matchClothing = toLegacyMatchClothing(recommendMatchingItems({
   clothingType: 'top',
@@ -269,18 +269,20 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const bg = blocks.length % 2 ? '#f5f5f5' : '#ffffff';
     if (b.source === 'mine') {
       const els = (b.ownImages || []).slice(0, 1).map((src) => IMG(60, 50, 880, 560, src, 12));
-      blocks.push({ id: uid('b'), name: '내 이미지', kind: inferSectionRole(b) || SECTION_ROLES.FIT, contentRole: CONTENT_ROLES.CUSTOM, bg, h: 660, elements: els });
+      blocks.push({ id: uid('b'), name: '내 이미지', kind: inferSectionRole(b) || SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.CUSTOM, bg, h: 660, elements: els });
       return;
     }
     const contentRole = inferContentRole(b);
-    const sectionRole = inferSectionRole(b) || SECTION_ROLES.FIT;
+    const sectionRole = inferSectionRole(b) || SECTION_ROLES.STYLING;
     const name = contentTitle(contentRole);
-    const els = [IMG(60, 50, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined)];
+    // sourceBlockId/copyRole = 서버 조립기와 같은 추적 필드(editor_wait_dev_spec §2-3) —
+    // 에디터 대기 화면의 컷 채움·셀러 카피 오버라이드 매칭 키. mock-서버 패리티 유지.
+    const els = [Object.assign(IMG(60, 50, 880, 560, generatedImageFor(b, 880, 560), 12, b.cutType || undefined), { sourceBlockId: b.id })];
     if (copywriting && contentRole === CONTENT_ROLES.HERO) {
-      els.push(T(120, 110, 600, 80, `${product.name || '상품'}와 함께하는 하루`, { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }));
+      els.push(Object.assign(T(120, 110, 600, 80, `${product.name || '상품'}와 함께하는 하루`, { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }), { sourceBlockId: b.id, copyRole: 'headline' }));
     }
     if (copywriting && contentRole === CONTENT_ROLES.BENEFIT) {
-      els.push(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 18, color: '#4a4a45' }));
+      els.push(Object.assign(T(120, 560, 760, 40, '강조 포인트를 살린 카피가 들어가는 자리예요.', { size: 18, color: '#4a4a45' }), { sourceBlockId: b.id, copyRole: 'body' }));
     }
     blocks.push({ id: uid('b'), name, kind: sectionRole, contentRole, bg, h: 660, elements: els });
   };
@@ -288,10 +290,25 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     const rowLayout = ROW_LAYOUTS[layout];
     const n = chunk.length;
     const w = Math.floor((880 - (n - 1) * 20) / n);
-    const els = chunk.map((rb, c) => IMG(60 + c * (w + 20), 50, w, 500, generatedImageFor(rb, w, 500), 12, rb.cutType || undefined));
+    const els = chunk.map((rb, c) => Object.assign(
+      IMG(60 + c * (w + 20), 50, w, 500, generatedImageFor(rb, w, 500), 12, rb.cutType || undefined),
+      { sourceBlockId: rb.id },
+    ));
+    const hero = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.HERO);
+    if (copywriting && hero) {
+      els.push(Object.assign(T(60, 582, 880, 56, `${product.name || '상품'}와 함께하는 하루`, {
+        size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14',
+      }), { sourceBlockId: hero.id, copyRole: 'headline' }));
+      const subtitle = chunk.find((rb) => inferContentRole(rb) === CONTENT_ROLES.BENEFIT);
+      if (subtitle) {
+        els.push(Object.assign(T(60, 650, 880, 34, '강조 포인트를 살린 카피가 들어가는 자리예요.', {
+          size: 18, color: '#6b6b73',
+        }), { sourceBlockId: subtitle.id, copyRole: 'body' }));
+      }
+    }
     blocks.push({
       id: uid('b'), name: rowLayout.name, kind: rowLayout.kind,
-      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', h: 600, elements: els,
+      bg: blocks.length % 2 ? '#f5f5f5' : '#ffffff', elements: els,
     });
   };
 
@@ -361,12 +378,11 @@ function buildDraft() {
   };
 
   // 실측 — key 는 영문 토큰, 라벨은 catalogs.measurementLabels (계약 §4)
-  const measurements = () => [
-    { key: 'totalLength', value: 64, unit: 'cm' },
-    { key: 'shoulderWidth', value: 42, unit: 'cm' },
-    { key: 'chestWidth', value: 51, unit: 'cm' },
-    { key: 'sleeveLength', value: null, unit: 'cm' },
-  ];
+  const measurements = () => createMeasurementFields('top', {
+    totalLength: 64,
+    shoulderWidth: 42,
+    chestWidth: 51,
+  });
 
   /* ---- Seed product input (the 골지 니트 example) ---- */
   const product = {
@@ -379,7 +395,7 @@ function buildDraft() {
           { id: uid('img'), slot: 'Front', label: 'Front', src: P.photo('c1f', 'horizon', 300, 400) },
           { id: uid('img'), slot: 'Back', label: 'Back', src: P.photo('c1b', 'horizon', 300, 400) },
           { id: uid('img'), slot: 'Detail', label: 'Detail', src: P.detail('c1d', 300, 400) },
-          { id: uid('img'), slot: 'Fit', label: 'Fit', src: P.photo('c1fit', 'styling', 300, 400) },
+          { id: uid('img'), slot: 'BackDetail', label: 'BackDetail', src: P.detail('c1bd', 300, 400) },
         ],
       },
       {
@@ -420,38 +436,38 @@ function buildDraft() {
   const mannequins = [];
 
   /* ---- Storyboard blocks — 모드별 기본 콘티는 buildStoryboard() (PRD §8, ADR-0003·0004) ---- */
-  const storyboard = buildStoryboard(project.composeMode, product.colors, {
+  const storyboard = applyOpeningRow(buildStoryboard(project.composeMode, product.colors, {
     projectId: project.id,
     clothingType: product.clothingType,
     targetGenders: analysis.targetGenders,
-  });
+  }));
 
   /* ---- Editor blocks: 5 prefilled demo + auto info blocks (PRD §10.14) ----
      (직접 /editor 진입용 데모. 생성 플로우는 generateDetailPage 가
      buildEditorBlocksFromStoryboard 로 대체한다.) ---- */
   const editorBlocks = [
     {
-      id: uid('b'), name: '첫 장면', kind: SECTION_ROLES.BENEFIT, contentRole: CONTENT_ROLES.HERO, bg: '#ffffff', elements: [
+      id: uid('b'), name: '첫 장면', kind: SECTION_ROLES.HOOKING, contentRole: CONTENT_ROLES.HERO, bg: '#ffffff', elements: [
         IMG(60, 50, 880, 560, P.photo('ed_hook', 'horizon', 880, 560), 12, 'horizon'),
         T(120, 110, 600, 80, '겨울을 부드럽게, 골지 니트', { size: 40, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
         T(120, 200, 520, 40, '하루 종일 편안한 데일리 니트', { size: 20, color: '#0e0d14' }),
       ],
     },
     {
-      id: uid('b'), name: '핵심 장점', kind: SECTION_ROLES.BENEFIT, contentRole: CONTENT_ROLES.BENEFIT, bg: '#f5f5f5', elements: [
+      id: uid('b'), name: '핵심 장점', kind: SECTION_ROLES.HOOKING, contentRole: CONTENT_ROLES.BENEFIT, bg: '#f5f5f5', elements: [
         IMG(60, 50, 420, 540, P.detail('ed_sell', 420, 540), 12, 'product'),
         T(540, 150, 380, 40, '부드러운 촉감', { size: 28, weight: 600, font: 'Cal Sans', color: '#0e0d14' }),
         T(540, 210, 380, 80, '코튼 혼방으로 자연스럽게 떨어지는 결, 피부에 닿는 감촉이 부담 없습니다.', { size: 17, color: '#4a4a45' }),
       ],
     },
     {
-      id: uid('b'), name: '코디 활용', kind: SECTION_ROLES.FIT, contentRole: CONTENT_ROLES.COORDINATION, bg: '#ffffff', elements: [
+      id: uid('b'), name: '코디 활용', kind: SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.COORDINATION, bg: '#ffffff', elements: [
         IMG(60, 50, 430, 580, P.photo('ed_st1', 'styling', 430, 580), 12, 'styling'),
         IMG(510, 50, 430, 580, P.photo('ed_st2', 'styling', 430, 580), 12, 'styling'),
       ],
     },
     {
-      id: uid('b'), name: '핏 확인', kind: SECTION_ROLES.FIT, contentRole: CONTENT_ROLES.FIT, bg: '#ffffff', elements: [
+      id: uid('b'), name: '핏 확인', kind: SECTION_ROLES.STUDIO, contentRole: CONTENT_ROLES.FIT, bg: '#ffffff', elements: [
         IMG(280, 50, 440, 590, P.photo('ed_hz', 'horizon', 440, 590), 12, 'horizon'),
       ],
     },

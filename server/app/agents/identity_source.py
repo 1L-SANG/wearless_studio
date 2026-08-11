@@ -37,7 +37,7 @@ async def resolve_real_model_assets(conn, model_id: str):
     assets_status='ready' 이고 두 뷰가 모두 유효할 때만 refs 리스트. 아니면 None(→ VIRTUAL/폴백).
     각 ref = {key, mime, bucket}. bucket='face' 면 워커가 r2_face(비공개)에서 로드한다.
 
-    가상모델 id(mA·mB·mC — 계약 §catalogs.models)는 UUID 가 아니다. fm_models.id(uuid)
+    가상모델 id(mA…mE — 계약 §catalogs.models)는 UUID 가 아니다. fm_models.id(uuid)
     쿼리에 그대로 바인딩하면 psycopg InvalidTextRepresentation 으로 **쿼리 자체가 죽어**
     상세페이지·에디터 이미지 잡 전체가 실패한다(2026-07-29 재현: facemarket_enabled=true
     + 가상모델 선택 → progress 5 즉사). UUID 형식이 아니면 실존 모델일 수 없으므로

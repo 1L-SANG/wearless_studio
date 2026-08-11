@@ -6,6 +6,10 @@ AG-01(분류)과 같은 분석 job 안에서 **병렬** 실행된다(analyze_job
 
 - 스키마가 후보 나열(candidates: 근거·차별성 판정) → 선별(selected)을 강제한다 —
   구조화 출력에서 '생각 후 고르기'를 대신하는 장치.
+- 모델은 AG-01(정본 tier)과 달리 상위 tier(settings.model_text_gemini_features) —
+  어휘 판단·선별 품질이 결과물의 전부라 2026-08-01 사용자 결정으로 분기.
+- 프롬프트에 어휘 등급 규칙(몰 상품페이지 어휘 OK / 봉제·업계 은어 금지)을 둔다 —
+  "아웃심 더블 스티치"·"단가라" 류가 셀러 화면에 나가던 문제(2026-08-01).
 - thinking은 medium(후보 비교·선별에 추론 가치) — 병렬이라 전체 지연 영향은 미미.
 - 실패는 조용히 폴백: analyze_job이 AG-01의 aiSuggestedPoints를 그대로 쓴다.
 """
@@ -73,8 +77,10 @@ def _schema() -> dict:
 _SLOT_LABEL = {
     "Front": "front view",
     "Back": "back view",
-    "Detail": "DETAIL close-up — inspect this one hardest (texture, stitching, trims, prints)",
-    "Fit": "worn-fit reference (silhouette & length as worn)",
+    "Detail": ("front-side DETAIL close-up — inspect this one hardest "
+               "(texture, stitching, trims, prints)"),
+    "BackDetail": ("back-side DETAIL close-up — a back-only feature (back neck, yoke, "
+                   "back pocket); never attribute it to the front"),
 }
 
 
@@ -126,7 +132,9 @@ def validate(raw: dict) -> list[str]:
 async def extract(settings: Settings, product: dict, images: list[InlineImage],
                   slots: list[str] | None = None) -> tuple[list[str], str]:
     """특징 발굴 1콜 → (개조식 특징 ≤2, provider). 실패는 VisionError로 전파(호출측 폴백).
-    slots(Front/Back/Detail/Fit)는 images와 같은 순서 — 디테일 컷 집중 관찰 지시에 쓰인다."""
+    slots(Front/Back/Detail/BackDetail)는 images와 같은 순서 — 디테일 컷 집중 관찰 지시에 쓰인다."""
+    models = {"gemini": settings.model_text_gemini_features} if settings.model_text_gemini_features else None
     raw, provider = await analyze_with_fallback(
-        settings, build_prompt(product or {}, slots), images, _schema(), thinking_level=_THINKING)
+        settings, build_prompt(product or {}, slots), images, _schema(),
+        thinking_level=_THINKING, models=models)
     return validate(raw), provider

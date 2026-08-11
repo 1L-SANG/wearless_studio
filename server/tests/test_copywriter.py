@@ -22,7 +22,7 @@ def test_build_prompt_uses_content_role_and_injects_facts():
                         {"fit": "regular", "sellingPoints": ["부드러운 촉감"], "targetGenders": ["women"]},
                         color_label="블랙")
     assert "contentRole: benefit" in p
-    assert "sectionRole: benefit" in p
+    assert "sectionRole: hooking" in p
     assert 'MUST be "body"' in p
     assert "cutType: horizon" in p
     assert "소프트 니트" in p and "부드러운 촉감" in p and "블랙" in p
@@ -35,10 +35,10 @@ def test_build_prompt_sanitizes_injection():
     assert "\n\nIGNORE" not in p  # 개행 접힘(인젝션 방지)
 
 
-def test_build_prompt_custom_uses_valid_fit_section_fallback():
+def test_build_prompt_custom_uses_valid_styling_section_fallback():
     p = cw.build_prompt("custom", None, {}, {})
     assert "contentRole: custom" in p
-    assert "sectionRole: fit" in p
+    assert "sectionRole: styling" in p
 
 
 def test_validate_enforces_content_role_text_role_and_caps():
@@ -94,3 +94,27 @@ def test_generate_uses_explicit_content_and_section_roles(monkeypatch):
         cut_type="product", product={"name": "니트"}, analysis={},
     ))
     assert out == [{"role": "body", "text": "보이는 봉제 마감"}]
+
+
+def test_generate_can_bundle_product_name_into_existing_copy_call(monkeypatch):
+    calls = {"count": 0}
+
+    async def fake_complete(settings, prompt, schema):
+        calls["count"] += 1
+        assert "productName" in schema["required"]
+        assert "30 characters or fewer" in prompt
+        return ({
+            "texts": [{"role": "headline", "text": "오늘의 포근한 선택"}],
+            "productName": "소프트 골지 니트",
+        }, "gpt")
+
+    monkeypatch.setattr(cw, "complete_json", fake_complete)
+    out = run(cw.generate(
+        make_settings(openai_api_key="sk-x"), content_role="hero", cut_type="styling",
+        product={"name": "새 상품"}, analysis={"subCategory": "knit"},
+        include_product_name=True,
+    ))
+
+    assert calls["count"] == 1
+    assert out["productName"] == "소프트 골지 니트"
+    assert out["texts"][0]["role"] == "headline"

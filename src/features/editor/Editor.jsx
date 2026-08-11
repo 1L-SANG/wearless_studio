@@ -11,7 +11,11 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react
 import { useNavigate, useParams } from 'react-router-dom';
 import Moveable from 'react-moveable';
 import QRCode from 'qrcode';
-import { api, isMockMode, newIdempotencyKey } from '@/lib/api/index.js';
+import { api, isMockMode } from '@/lib/api/index.js';
+import { getJobSettlement } from '@/lib/api/facemarket.js';
+import { buildEditorBlocksFromStoryboard } from '@/mock/db.js';
+import { alignSkeletonToServer, canSafelyMergeServerBlocks, decorateGenBlocks, fillGenBlocks, mergeServerBlocks } from '@/lib/editorWaitSkeleton.js';
+import { clearEditorWaitDraft, loadEditorWaitDraft, saveEditorWaitDraft } from '@/lib/editorWaitDraft.js';
 import { listModels } from '@/lib/api/facemarket.js';
 import { uid } from '@/lib/ids.js';
 import { useAppStore } from '@/store/useAppStore.js';
@@ -20,11 +24,9 @@ import { hexFor } from '@/features/storyboard/Storyboard.jsx';
 import { AIPanel, WardrobePanel, ImagePanel, TextPanel, FramePanel, ShapePanel, LayerPanel } from '@/features/editor/EditorPanels.jsx';
 import { ContentPanel } from '@/features/editor/ContentPanel.jsx';
 import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
-import { VaryReviewModal } from '@/features/editor/VaryReviewModal.jsx';
-import { createReviewGate } from '@/features/editor/reviewGate.js';
-import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
+import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
-import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight } from '@/features/editor/editorGeometry.js';
+import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
 
@@ -33,6 +35,34 @@ const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font
 /* 스냅 엔진 상시 on (Phase 1 정식 승격) — react-moveable 내장 snap(elementGuidelines + 캔버스 센티넬).
    DEV 게이트 제거: prod 배포에서도 동작. 옛 커스텀 snapX 는 삭제됨. */
 const SNAP_SPIKE = true;
+
+// FaceMarket 정산 영수증(장면③) — 404 = '정산 없음' 확정 신호라 즉시 종료(비 FM 경로 지연 방지).
+async function tryGetReceipt(jobId) {
+  for (let i = 0; i < 3; i++) {
+    try { return await getJobSettlement(jobId); }
+    catch (e) {
+      if (e?.status === 404) return null;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+  return null;
+}
+const wonFmt = (n) => `₩${Number(n || 0).toLocaleString('ko-KR')}`;
+
+async function getFinalEditorBlocks(projectId) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const blocks = await api.getEditorBlocks(projectId);
+      if (!Array.isArray(blocks)) throw new Error('완성된 상세페이지 형식이 올바르지 않아요.');
+      return blocks;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 800));
+    }
+  }
+  throw lastError || new Error('완성된 상세페이지를 불러오지 못했어요.');
+}
 
 /* 라이선스 검증 배지 QR (제안서 step03 "& DID 서명 첨부") — 라이선스가 잠긴 상세페이지의
    ai-notice 블록에만 백엔드가 넣는 'license-verify' 요소를 렌더한다. QR 내용은 스캔 대상이
@@ -66,13 +96,30 @@ function LicenseVerifyEl({ el, base }) {
 
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
-function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelect, onPatch, onAddImage, onEdit, onCropStart }) {
+function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelect, onSelectBlock, onPatch, onAddImage, onEdit, onCropStart }) {
   const ref = useRef(null);
   if (el.hidden) return null;
+
+  /* 글자 위를 눌렀는지, 상자 안 빈 곳을 눌렀는지 가른다 — 판정은 pointMissesTextLines.
+     이미 고른/편집 중인 요소는 상자 전체를 살려 둔다(여백을 잡고 끌 수 있어야 한다). */
+  const missesGlyphs = (e) => {
+    if (el.type !== 'text' || selected || editing) return false;
+    const node = ref.current;
+    if (!node) return false;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    return pointMissesTextLines([...range.getClientRects()], e.clientX, e.clientY);
+  };
 
   const pick = (e) => {
     if (preview) return;
     if (el.locked) return;
+    if (missesGlyphs(e)) {
+      if (!onSelectBlock) return;
+      e.stopPropagation();
+      onSelectBlock();
+      return;
+    }
     e.stopPropagation();
     onSelect(el, e.shiftKey);
   };
@@ -86,6 +133,23 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
   const common = { ref, 'data-elid': el.id, onPointerDown: pick, onClick: (e) => e.stopPropagation() };
 
   if (el.type === 'image') {
+    if (!el.src && el.genPending) {
+      // 생성 대기/진행/실패 타일 — 입력 페이지 자리표시 언어(회색+로고). 선택·조작 불가
+      // (이미지 내용 잠금), 호버 시 콘티에서 고른 예시가 잠깐 비친다(상시 노출 금지 결정).
+      return (
+        <div data-elid={el.id} className={`el el-slot ed-genwait ${el.genPending}`}
+          style={{ ...base, borderRadius: el.radius, cursor: 'not-allowed' }}
+          onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+          {el.genExample && <img className="ed-genwait-ex" src={el.genExample} alt="" draggable={false} />}
+          <span className="ed-genwait-logo" aria-hidden="true" />
+          {el.genPending === 'live' && <span className="ed-genwait-shim" aria-hidden="true" />}
+          {el.genPending === 'live' && <span className="ed-genwait-tag">생성 중</span>}
+          {el.genPending === 'failed'
+            ? <span className="ed-genwait-fail">이 컷은 만들지 못했어요<br /><small>크레딧 미차감</small></span>
+            : <span className="ed-genwait-hint">{el.genExample ? '콘티 예시 · ' : ''}생성 중 · 아직 편집할 수 없어요</span>}
+        </div>
+      );
+    }
     if (!el.src) {
       const inv = 1 / (scale || 1);
       // 빈 슬롯도 radius 를 따른다 — 특징 포인트의 원형 사진 슬롯이 원으로 보이게
@@ -130,6 +194,8 @@ function CanvasElement({ el, blockId, selected, editing, scale, preview, onSelec
         fontStyle: s.italic ? 'italic' : 'normal',
         textDecoration: [s.underline && 'underline', s.strike && 'line-through'].filter(Boolean).join(' ') || 'none' }}
         onPointerDown={(e) => { if (!editing) pick(e); }}
+        /* pick 이 이미 요소든 블록이든 골라 놨다 — 어느 쪽이든 이 클릭은 캔버스 바닥까지
+           가면 안 된다. 거기 onClick 이 선택을 지운다. */
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => { e.stopPropagation(); onEdit(el.id); setTimeout(() => ref.current && ref.current.focus(), 0); }}
         contentEditable={editing} suppressContentEditableWarning
@@ -176,7 +242,12 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
-  const blockSelected = selectedBlockId === block.id && (!selEls || selEls.length === 0);
+  // 블록 강조(테두리·빠른 도구)는 그 블록이 지금 다루는 블록이면 켠다 — 안의 요소를 고른
+  // 상태도 포함이다. 블록은 사진·글이 거의 다 덮고 있어서, 배경 여백을 정확히 맞춰 눌러야만
+  // 켜지던 이전 조건으로는 캔버스에서 블록을 잡았다는 표시를 사실상 볼 수 없었다.
+  const blockActive = selectedBlockId === block.id;
+  // 높이 조절 손잡이는 블록 자체를 고른 때만 — 요소를 옮기는 중에 같이 뜨면 서로 걸린다.
+  const blockSelected = blockActive && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
 
   const resize = (e, side) => {
@@ -201,8 +272,14 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
   };
 
   return (
-    <div className={`canvas-block${blockSelected ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
-      onClick={(e) => { if (e.target === e.currentTarget || e.target.classList.contains('block-clip')) onSelectBlock(block.id); }}
+    <div className={`canvas-block${blockActive ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
+      /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
+         멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
+      onClick={(e) => {
+        if (e.target !== e.currentTarget && !e.target.classList.contains('block-clip')) return;
+        e.stopPropagation();
+        onSelectBlock(block.id);
+      }}
       style={{ background: block.bg, height: blockH, '--inv': 1 / (scale || 1) }}
       onDragOver={(e) => { if (e.dataTransfer.types.includes('text/object')) { e.preventDefault(); setObjOver(true); } }}
       onDragLeave={() => setObjOver(false)}
@@ -212,7 +289,8 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
           (crop && crop.elId === el.id) ? null : (
             <CanvasElement key={el.id} el={el} blockId={block.id} scale={scale} preview={false}
               selected={selEls && selEls.includes(el.id)} editing={editEl === el.id}
-              onSelect={(e, additive) => onSelectEl(block.id, e, additive)} onPatch={onElPatch}
+              onSelect={(e, additive) => onSelectEl(block.id, e, additive)}
+              onSelectBlock={() => onSelectBlock(block.id)} onPatch={onElPatch}
               onAddImage={(elm) => onAddImage(block.id, elm)} onEdit={onEdit}
               onCropStart={(elm) => onCropStart && onCropStart(block.id, elm)} />
           )
@@ -254,8 +332,9 @@ function CanvasBlock({ block, scale, selectedBlockId, selEls, onSelectBlock, onS
       </div>
       {blockSelected && (
         <>
-          <span className="blk-resize top" onPointerDown={(e) => resize(e, 'top')} title="위로 높이 조절"><span className="pill-bar" /></span>
-          <span className="blk-resize bottom" onPointerDown={(e) => resize(e, 'bottom')} title="아래로 높이 조절"><span className="pill-bar" /></span>
+          {/* 손잡이를 눌렀다 뗀 클릭도 캔버스 바닥으로 새면 방금 잡은 블록이 풀린다 */}
+          <span className="blk-resize top" onPointerDown={(e) => resize(e, 'top')} onClick={(e) => e.stopPropagation()} title="위로 높이 조절"><span className="pill-bar" /></span>
+          <span className="blk-resize bottom" onPointerDown={(e) => resize(e, 'bottom')} onClick={(e) => e.stopPropagation()} title="아래로 높이 조절"><span className="pill-bar" /></span>
         </>
       )}
       <div className="quick" onClick={(e) => e.stopPropagation()}>
@@ -339,6 +418,7 @@ function buildInfoCtx({ productName, clothingType, catalogs, product, analysis, 
     measurements: product?.measurements,
     materials: analysis?.materials,
     sellingPoints: (analysis?.sellingPoints?.length ? analysis.sellingPoints : analysis?.aiSuggestedPoints) || [],
+    featureCopy: analysis?.featureCopy || [],
     fit: analysis?.fit,
     fits: catalogs?.fits,
     colorLabels: (colorOpts || []).map((o) => o.label),
@@ -360,6 +440,7 @@ export function Editor() {
   // 보관함 클릭 등) 언마운트가 effect 보다 먼저라 ref 가 한 단계 묵게 되어
   // 마지막 편집이 유실되던 구멍의 수정.
   const latestBlocks = useRef(null);
+  const pendingGenerationDraft = useRef(false);
   const setBlocks = useCallback((u) => setBlocksState((prev) => {
     const next = expandBlockHeights(typeof u === 'function' ? u(prev) : u);
     latestBlocks.current = next;
@@ -377,15 +458,6 @@ export function Editor() {
   const [product, setProduct] = useState(null);   // 실측(measurements) 등 — 정보 블록 프리필 (PRD §10.14)
   const [analysis, setAnalysis] = useState(null); // targetGenders·materials·fit·sellingPoints — 추천 배지·프리필 전용
   const [infoModal, setInfoModal] = useState(null); // { type, blockId|null, initialInfo }
-  const [review, setReview] = useState(null);      // { image, busy } — AI 편집 결과 검수
-  const reviewKeys = useRef(new Map());            // sessionId → { sig, key } (진행 중 판단 1건)
-  const recordReview = useRef(null);               // 최신 reviewVaryResult (게이트가 stale 클로저를 잡지 않게)
-  const gateRef = useRef(null);
-  // wardrobe 이미지를 상세페이지 데이터로 쓰는 **모든** 경로가 지나는 한 곳.
-  const gate = () => (gateRef.current ||= createReviewGate({
-    record: (im, decision, reason) => recordReview.current(im, decision, reason),
-    onChange: setReview,
-  }));
   const [tab, setTab] = useState('ai');
   const [selBlock, setSelBlock] = useState(null);
   const [selEl, setSelEl] = useState(null);
@@ -399,8 +471,18 @@ export function Editor() {
   // 블록 강조 표시 여부 — 캔버스 빈 곳을 클릭하면 꺼진다. selBlock 자체는 삽입 대상으로 계속 쓰므로 건드리지 않는다.
   const [blockFocused, setBlockFocused] = useState(false);
   const [download, setDownload] = useState(false);
+  /* ---- 에디터 통합 대기(editor_wait_dev_spec v2) — 생성이 도는 동안 같은 캔버스에서 편집.
+     잡 수명·이벤트는 store.detailPageJob 소유, 여기는 구독·채움·완료 병합만. ---- */
+  const dpJob = useAppStore((s) => s.detailPageJob);
+  const [genActive, setGenActive] = useState(false);
+  const genActiveRef = useRef(false);
+  const genMergedRef = useRef(false);
+  const [genFinalizeError, setGenFinalizeError] = useState('');
+  const [genFinalizeAttempt, setGenFinalizeAttempt] = useState(0);
+  const [genReceipt, setGenReceipt] = useState(null);
+  const [genNotif, setGenNotif] = useState(
+    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
   const [dlFormat, setDlFormat] = useState('long');
-  const [exporting, setExporting] = useState(false);
   const [backWarn, setBackWarn] = useState(false);
   const [genDot, setGenDot] = useState('none');
   const genCount = useRef(0); // 동시 생성 수 — 주황(busy) 점은 마지막 생성이 끝날 때까지 유지
@@ -430,25 +512,57 @@ export function Editor() {
   const fromHistory = useRef(false);
   const lastPush = useRef(0);
 
+  useEffect(() => { genActiveRef.current = genActive; }, [genActive]);
+
   useEffect(() => {
+    const enteringJob = useAppStore.getState().detailPageJob;
+    const savedDraft = loadEditorWaitDraft(projectId);
+    const resumingGeneration = Boolean(enteringJob.projectId === projectId
+      && (enteringJob.status === 'running'
+        || (enteringJob.status === 'error' && enteringJob.jobId && savedDraft)));
+    if (resumingGeneration) useAppStore.getState().startDetailPageGeneration(projectId);
+    pendingGenerationDraft.current = Boolean(savedDraft);
     // 에디터는 앱 크롬 밖에서 열린다 — account 는 store 캐시를 직접 로드 (단일 소스)
     Promise.all([api.getEditorBlocks(projectId), api.getWardrobe(projectId), api.getCatalogs(), useAppStore.getState().loadAccount(), api.getProduct(projectId),
       // 실존 모델 카탈로그 — mock 모드는 서버가 없으니 스킵, 실패는 null(AIPanel 이 가상모델 폴백)
       isMockMode ? Promise.resolve(null) : listModels().catch(() => null),
       // 분석 컨텍스트 — 정보 블록 프리필·추천 배지 전용(실패해도 에디터는 뜬다)
-      api.getAnalysis(projectId).catch(() => null)])
-      .then(([b, w, c, _a, p, fm, an]) => {
+      api.getAnalysis(projectId).catch(() => null),
+      // 생성 중 진입이면 스켈레톤·예시 썸네일의 근거(콘티) — 실패해도 에디터는 뜬다
+      api.getStoryboard(projectId).catch(() => [])])
+      .then(([b, w, c, _a, p, fm, an, sb]) => {
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
         const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
         const opts = allColorOpts.filter((_option, index) => (p.colors[index].images || []).length || p.colors[index].isBase);
         // 생성 직후 기본 문서(옛 자동 size/care 블록만 있고 info 블록 없음)면
         // 기본 정보 템플릿을 자동으로 구성한다 — 수동 '템플릿 추가' 버튼 대체(2026-07-29 결정).
-        if (needsDefaultTemplate(withH)) {
+        const dj = useAppStore.getState().detailPageJob;
+        const genMode = resumingGeneration || (dj.status === 'running' && dj.projectId === projectId);
+        if (genMode) {
+          // 생성 중 진입 — 저장된 blocks(구 데모 시드·빈 값) 대신 콘티 스켈레톤이 캔버스가 된다.
+          // 컷·카피는 store 이벤트가 채우고, 완료 시 mergeServerBlocks 로 같은 화면에서 확정.
+          const cw = useAppStore.getState().copywriting;
+          const exThumb = {};
+          for (const blk of sb || []) {
+            if (blk?.exampleId) {
+              const ex = (hydratedCatalogs?.genExamples || []).find((g) => g.id === blk.exampleId);
+              if (ex?.thumb) exThumb[blk.id] = ex.thumb;
+            }
+          }
+          const skeleton = decorateGenBlocks(
+            alignSkeletonToServer(buildEditorBlocksFromStoryboard(sb || [], p, cw), cw), dj, exThumb);
+          // 생성 중 임시 작업본은 서버 완성본과 분리한다. 재진입 시 문구뿐 아니라 배치·추가 요소도
+          // 그대로 복원하고, 이후 재수신되는 생성 이벤트가 새 이미지/카피만 채운다.
+          withH = savedDraft || skeleton;
+          genActiveRef.current = true;
+          setGenActive(true);
+        } else if (needsDefaultTemplate(withH)) {
           const ctx = buildInfoCtx({ productName: p.name || '', clothingType: p.clothingType || 'top', catalogs: hydratedCatalogs, product: p, analysis: an, colorOpts: opts, fmModels: fm });
           withH = applyInfoTemplate(withH, ctx).blocks;
           toast.push('기본 정보 템플릿으로 구성했어요 — 사이즈·케어·고시 내용을 채워주세요', { icon: 'check' });
         }
+        if (!genMode && savedDraft) withH = mergeServerBlocks(savedDraft, withH);
         setBlocks(withH); setWardrobe(w); setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         setClothingType(p.clothingType || 'top');
@@ -458,6 +572,72 @@ export function Editor() {
         setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
       });
   }, []);
+
+  /* 생성 이벤트 → 캔버스 채움. 셀러가 손댄 것(src 있는 슬롯·genAutoText 와 달라진 텍스트)은
+     fillGenBlocks 가 건드리지 않는다(셀러 편집 승리). history 는 쌓지 않는다(자동 채움은
+     되돌리기 대상이 아님 — setBlocks 는 명시 액션에서만 push). */
+  useEffect(() => {
+    if (!genActive) return;
+    setBlocks((bs) => (bs ? fillGenBlocks(bs, dpJob) : bs));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [genActive, dpJob.cuts, dpJob.copy, dpJob.live, dpJob.failedCuts]);
+
+  /* 완료 — 화면 전환 없이 같은 캔버스에서 확정(오너 결정 #4): 서버 조립본에서 안정 src·
+     미편집 카피·AI 고지만 병합하고 저장을 연다. FaceMarket 영수증은 있으면 모달로. */
+  useEffect(() => {
+    if (!genActive || dpJob.status !== 'done' || genMergedRef.current) return;
+    genMergedRef.current = true;
+    setGenFinalizeError('');
+    let cancelled = false;
+    (async () => {
+      try {
+        const server = await getFinalEditorBlocks(projectId);
+        if (cancelled) return;
+        // 생성 잡이 진행 중에 analysis.featureCopy 를 쓴다. 마운트 때 받아 둔 스냅샷은
+        // 그 쓰기보다 앞서므로, 정보 템플릿을 깔기 전에 다시 읽어야 특징 포인트 설명이 채워진다.
+        // 루프는 두 번 돌 수 있으니 네트워크 호출은 루프 밖에 둔다.
+        const freshAnalysis = await api.getAnalysis(projectId).catch(() => null);
+        if (cancelled) return;
+        if (freshAnalysis) setAnalysis(freshAnalysis);
+        let restoredServerLayout = false;
+        // 서버 완성본의 안정 이미지 주소를 현재 임시 작업본에 합친 뒤 직접 저장한다.
+        // 저장 요청 도중 사용자가 한 번 더 편집했다면 최신 ref로 다시 합쳐 저장하여 덮어쓰지 않는다.
+        for (;;) {
+          const current = latestBlocks.current || [];
+          restoredServerLayout ||= !canSafelyMergeServerBlocks(current, server);
+          let merged = mergeServerBlocks(current, server);
+          if (needsDefaultTemplate(merged)) {
+            // 이 이펙트의 클로저가 붙든 analysis 는 여전히 마운트 스냅샷이라 위에서 다시 읽은 값을 쓴다.
+            const ctx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis: freshAnalysis || analysis, colorOpts, fmModels });
+            merged = applyInfoTemplate(merged, ctx).blocks;
+          }
+          merged = expandBlockHeights(merged);
+          latestBlocks.current = merged;
+          setBlocksState(merged);
+          await api.saveEditorBlocks(projectId, merged);
+          if (cancelled) return;
+          if (latestBlocks.current === merged) break;
+        }
+        clearEditorWaitDraft(projectId);
+        pendingGenerationDraft.current = false;
+        genActiveRef.current = false;
+        setGenActive(false);
+        toast.push(restoredServerLayout
+          ? '일부 대기 화면을 복원할 수 없어 서버 완성본을 안전하게 불러왔어요'
+          : '상세페이지가 완성됐어요 — 편집 내용까지 저장했어요', { icon: 'check' });
+        if (dpJob.jobId) {
+          const r = await tryGetReceipt(dpJob.jobId);
+          if (!cancelled && r) setGenReceipt(r);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        genMergedRef.current = false;
+        setGenFinalizeError(error?.message || '완성본을 불러오지 못했어요.');
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [genActive, dpJob.status, genFinalizeAttempt]);
 
   // history (rapid bursts within 350ms coalesce)
   useEffect(() => {
@@ -469,18 +649,34 @@ export function Editor() {
     lastPush.current = now; prevBlocks.current = blocks;
   }, [blocks]);
 
-  // 자동 저장 — 변경 1.5s 디바운스 + 이탈 시 플러시 (frontend_state_model §8 P1-6).
-  // 첫 로드 직후 1회는 방금 불러온 동일 데이터 재기록이라 무해.
+  // 자동 저장 — 생성 중에는 브라우저 임시 작업본, 완료 뒤에는 서버 완성본으로 분리한다.
+  // 이 구분이 서버 조립 완료와 미완성 스켈레톤 PUT의 덮어쓰기 경합을 막는다.
   const saveTimer = useRef(null);
   useEffect(() => {
     if (blocks == null) return;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { api.saveEditorBlocks(projectId, latestBlocks.current); }, 1500);
-  }, [blocks]);
+    if (genActive) {
+      saveTimer.current = setTimeout(() => {
+        saveEditorWaitDraft(projectId, latestBlocks.current);
+        pendingGenerationDraft.current = true;
+      }, 300);
+      return;
+    }
+    saveTimer.current = setTimeout(() => {
+      api.saveEditorBlocks(projectId, latestBlocks.current).then(() => {
+        if (pendingGenerationDraft.current) {
+          clearEditorWaitDraft(projectId);
+          pendingGenerationDraft.current = false;
+        }
+      }).catch(() => {});
+    }, 1500);
+  }, [blocks, genActive, projectId]);
   useEffect(() => () => {
     clearTimeout(saveTimer.current);
-    if (latestBlocks.current) api.saveEditorBlocks(projectId, latestBlocks.current);
-  }, []);
+    if (!latestBlocks.current) return;
+    if (genActiveRef.current) saveEditorWaitDraft(projectId, latestBlocks.current);
+    else api.saveEditorBlocks(projectId, latestBlocks.current);
+  }, [projectId]);
 
   // delete key removes selection
   useEffect(() => {
@@ -652,7 +848,9 @@ export function Editor() {
   const selectEl = (blockId, el, additive, keepTab) => {
     if (cropping) commitCrop();   // 크롭 중 다른 요소 클릭 → 크롭 확정 후 선택 (런타임 호출이라 TDZ 무관)
     setVaryTarget(null);          // 캔버스 선택이 바뀌면 'AI 편집' 지정 대상은 해제
-    setSelBlock(blockId); setSelEl(el.id);
+    // 요소를 고르는 것도 그 블록을 잡은 것이다 — 이걸 안 켜면 블록 테두리·빠른 도구가
+    // 안 뜨고, 블록 배경을 정확히 눌러야만 보이는 상태로 돌아간다.
+    setSelBlock(blockId); setBlockFocused(true); setSelEl(el.id);
     setSelEls((cur) => additive ? (cur.includes(el.id) ? cur.filter((x) => x !== el.id) : [...cur, el.id]) : [el.id]);
     if (!keepTab) setTab(el.type === 'text' ? 'text' : 'image');
   };
@@ -684,10 +882,10 @@ export function Editor() {
   const toggleElField = (blockId, elId, field) => setBlocks((bs) => bs.map((b) => b.id === blockId
     ? { ...b, elements: b.elements.map((e) => e.id === elId ? { ...e, [field]: !e[field] } : e) } : b));
   const moveBlock = (idx, dir) => setBlocks((bs) => { const n = [...bs]; const j = idx + dir; if (j < 0 || j >= n.length) return n; [n[idx], n[j]] = [n[j], n[idx]]; return n; });
-  const addEmpty = (idx) => setBlocks((bs) => { const n = [...bs]; const nb = { id: uid('b'), name: '직접 구성', kind: SECTION_ROLES.FIT, contentRole: CONTENT_ROLES.CUSTOM, bg: '#ffffff', h: 300, elements: [] }; n.splice(idx + 1, 0, nb); return n; });
+  const addEmpty = (idx) => setBlocks((bs) => { const n = [...bs]; const nb = { id: uid('b'), name: '직접 구성', kind: SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.CUSTOM, bg: '#ffffff', h: 300, elements: [] }; n.splice(idx + 1, 0, nb); return n; });
   const deleteBlock = (id) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); toast.push('블록을 삭제했어요'); };
   const addFrame = (f, idx) => {
-    const nb = { id: uid('b'), name: f.label, kind: SECTION_ROLES.FIT, contentRole: CONTENT_ROLES.CUSTOM, bg: '#ffffff', h: 580, elements:
+    const nb = { id: uid('b'), name: f.label, kind: SECTION_ROLES.STYLING, contentRole: CONTENT_ROLES.CUSTOM, bg: '#ffffff', h: 580, elements:
       Array.from({ length: f.cols }).map((_, i) => ({ id: uid('el'), type: 'image', x: 40 + i * (920 / f.cols), y: 60, w: 920 / f.cols - 20, h: 460, radius: 10 })) };
     setBlocks((bs) => { const n = [...bs]; n.splice(idx == null ? n.length : idx, 0, nb); return n; });
     toast.push(`${f.label} 프레임을 새 블록으로 추가했어요`);
@@ -717,20 +915,13 @@ export function Editor() {
     toast.push('이미지를 캔버스에 삽입했어요');
   };
   const requestSlotImage = (blockId, el) => { setPendingSlot({ blockId, elId: el.id }); setTab('wardrobe'); };
-  // 정책 gate 를 통과한 뒤에만 부르는 내부 삽입 — 슬롯이면 슬롯, 아니면 캔버스.
-  // 밖으로 내보내지 않는다(이걸 공개하면 gate 를 우회하는 경로가 생긴다).
-  const insertPastGate = (im) => {
+  const wardrobeInsert = (im) => {
     if (pendingSlot) {
       // 정보 블록 슬롯이면 info(폼 정본)에도 동기화 — 재생성 때 사진-포인트 연결 유지
       setBlocks((bs) => bs.map((b) => (b.id === pendingSlot.blockId ? applySlotFillToInfo(b, pendingSlot.elId, { src: im.src, cutType: im.cutType || null }) : b)));
       setPendingSlot(null); setTab('image'); toast.push('빈 칸에 이미지를 넣었어요');
     } else insertImage(im);
   };
-  // 검수가 필요한 컷은 accepted 일 때만 바로 들어간다. 미검수(null)든 거절(rejected)이든
-  // 모달을 거친다 — 거절을 뒤집는 건 "무시하고 넣기"가 아니라 새 승인 이력이어야 한다.
-  // 사용 목적(continuation)은 호출자가 정한다 — 게이트는 그걸 모른 채 승인 뒤에 실행만 한다.
-  const requestWardrobeUse = (im, use) => gate().request(im, use);
-  const wardrobeInsert = (im) => requestWardrobeUse(im, insertPastGate);
   // fresh = 새로 생성된 컷의 4색 glow 하이라이트 — 사용자가 본 뒤(애니메이션 종료) 해제
   const freshSeen = (id) => setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === id && x.fresh ? { ...x, fresh: false } : x); return nw; });
   const deleteWardrobeImages = (ids) => {
@@ -764,57 +955,11 @@ export function Editor() {
     setTab('wardrobe');
     genCount.current += 1; setGenDot('busy');
     toast.push(changes.length ? `${changes.length}개 변경을 적용한 컷을 생성하는 중이에요` : '비슷한 컷을 생성하는 중이에요', { icon: 'sparkles' });
-    // 실패해도 자리 표시자와 카운터는 반드시 정리한다. try/finally 가 없으면 라우트 실패·
-    // 폴링 실패·enforce reject 어느 쪽이든 로딩 카드가 영구히 남고 busy 점이 안 꺼진다.
-    let img = null;
-    try {
-      const out = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
-      img = out?.data ?? null;
-      setWardrobe((w) => ({ ...w, misc: (w.misc || []).map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
-      toast.push('이미지 생성을 완료했어요', { icon: 'check' });
-      syncCredits(out?.credits);
-      return img;
-    } catch (err) {
-      // 실패 결과는 wardrobe 에 남기지 않는다 — 자리 표시자만 걷어낸다.
-      setWardrobe((w) => ({ ...w, misc: (w.misc || []).filter((x) => x.id !== loadingId) }));
-      toast.push(err?.message || '이미지 생성에 실패했어요', { icon: 'alertTri' });
-      return null;
-    } finally {
-      genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done');
-    }
-  };
-  // 편집 결과 검수 — machine QC 는 바뀌지 않는다. 사용자의 판단만 서버에 append 하고,
-  // 로컬 row 의 reviewDecision 을 그 결과로 맞춘다(성공한 경우에만).
-  const reviewVaryResult = async (im, decision, reason) => {
-    if (!im?.editSessionId) return false;
-    // 키는 "이 판단을 보내는 이 요청"의 정체다. 판단이나 사유가 달라지면 새 키를 쓰고,
-    // 같은 판단을 실패 후 재시도할 때만 같은 키를 재사용한다(서버 이력이 부풀지 않게).
-    const sid = im.editSessionId;
-    const sig = `${decision}|${reason || ''}`;
-    const held = reviewKeys.current.get(sid);
-    const key = held && held.sig === sig ? held.key : newIdempotencyKey();
-    reviewKeys.current.set(sid, { sig, key });
-    try {
-      await api.reviewEditSession(projectId, sid, { decision, reason, key });
-    } catch (err) {
-      toast.push(err?.message || '검수 기록에 실패했어요', { icon: 'alertTri' });
-      return false;   // 키는 남겨 둔다 — 같은 판단의 재시도는 같은 요청이다.
-    }
-    reviewKeys.current.delete(sid);   // 기록됐다. 다음 판단은 새 요청이다.
-    setWardrobe((w) => {
-      const nw = {};
-      for (const [g, arr] of Object.entries(w || {})) nw[g] = (arr || []).map((x) => x.id === im.id ? { ...x, reviewDecision: decision } : x);
-      return nw;
-    });
-    return true;
-  };
-  recordReview.current = reviewVaryResult;
-  // 승인은 **먼저 기록되고 나서** 반영된다. 기록이 실패했는데 화면에만 들어가면
-  // 사용자가 승인한 적 없는 컷이 상세페이지에 남는다. 순서·1회성은 게이트가 보장한다.
-  const acceptReview = () => gate().accept();
-  // 거절은 삭제가 아니다 — 판단만 남기고 이미지는 목록에 그대로 둔다.
-  const rejectReview = async () => {
-    if (await gate().reject()) toast.push('사용하지 않기로 했어요');
+    const { data: img, credits } = await api.generateImage(projectId, { mode: 'vary', source, changes, refBg, refBgAssetId });
+    setWardrobe((w) => ({ ...w, misc: w.misc.map((x) => x.id === loadingId ? { ...img, fresh: true } : x) }));
+    genCount.current -= 1; setGenDot(genCount.current > 0 ? 'busy' : 'done'); toast.push('이미지 생성을 완료했어요', { icon: 'check' });
+    syncCredits(credits);
+    return img;
   };
   const varyImage = (im) => {
     setVaryTarget(im?.id ? { id: im.id } : null); // 클릭한 의류 이미지가 변형 대상 — 이미지별 독립 상태
@@ -834,7 +979,9 @@ export function Editor() {
     if (varyTarget) setWardrobe((w) => { const nw = {}; for (const [g, arr] of Object.entries(w)) nw[g] = arr.map((x) => x.id === varyTarget.id ? { ...x, cutType: t } : x); return nw; });
     else patchEl({ cutType: t });
   };
-  const jumpTo = (id) => { setSelBlock(id); setSelEl(null); setSelEls([]);
+  // setBlockFocused 없이 selBlock 만 세우면 오른쪽 목록만 켜지고 캔버스는 조용하다 —
+  // 캔버스 강조는 blockFocused 로 게이팅되고 그건 캔버스 클릭에서만 켜졌다.
+  const jumpTo = (id) => { setSelBlock(id); setBlockFocused(true); setSelEl(null); setSelEls([]);
     const idx = blocks.findIndex((b) => b.id === id);
     const wrap = wrapRef.current; if (!wrap) return;
     const target = wrap.querySelectorAll('.canvas-block')[idx];
@@ -857,16 +1004,46 @@ export function Editor() {
     ? (targetGenders.every((g) => g === 'men') ? 'men' : 'women')
     : null;
   const infoCtx = buildInfoCtx({ productName, clothingType, catalogs, product, analysis, colorOpts, fmModels });
+  // 특징 포인트는 폼을 열 때 빈 설명을 analysis.featureCopy 로 다시 채운다 — 생성 잡의 쓰기보다
+  // 앞선 스냅샷으로 블록이 지어졌으면 그대로 두면 영구히 빈칸이다(정보 템플릿은 재적용되지 않는다).
+  const seedInfo = (type, info) => (type === 'feature_icons' ? fillFeatureCopy(info, infoCtx) : info);
+  // 'AI 문구 불러오기' — 서버가 강조특징마다 한 줄을 쓰고 analysis.featureCopy 에 합쳐 저장한다.
+  // 여기서도 상태를 갱신해 두면 이 세션에서 블록을 새로 넣을 때 바로 프리필된다.
+  const draftFeatureCopy = async () => {
+    const items = await api.draftFeatureCopy(projectId);
+    if (items && items.length) {
+      setAnalysis((a) => {
+        const merged = new Map((a?.featureCopy || []).map((c) => [c.point, c.desc]));
+        items.forEach((c) => merged.set(c.point, c.desc));
+        return { ...(a || {}), featureCopy: [...merged].map(([point, desc]) => ({ point, desc })) };
+      });
+    }
+    return items;
+  };
   const openInfoPreset = (type) => {
-    // size/care 는 자동 블록 제자리 강화, info 는 같은 infoType 이 있으면 그 블록을 수정한다(중복 방지)
+    // size/care 는 자동 블록 제자리 강화, info 는 같은 infoType 이 있으면 그 블록을 수정한다(중복 방지).
+    // 단 repeatable 프리셋(특징 포인트)은 누를 때마다 새 블록 — 상세페이지는 DETAIL POINT 를 여러 벌 쓴다.
     const kind = type === 'size_table' ? 'size' : type === 'care' ? 'care' : null;
-    const existing = kind ? blocks.find((b) => b.kind === kind) : blocks.find((b) => presetTypeOf(b) === type);
-    setInfoModal({ type, blockId: existing ? existing.id : null, initialInfo: existing?.info || defaultInfoFor(type, infoCtx) });
+    const existing = isRepeatablePreset(type) ? null
+      : (kind ? blocks.find((b) => b.kind === kind) : blocks.find((b) => presetTypeOf(b) === type));
+    // 두 번째 특징 포인트 블록은 앞 블록이 쓰지 않은 강조특징부터 채운다 — 같은 포인트가
+    // 두 섹션에 나란히 뜨는 것보다, 남은 특징을 이어 받는 쪽이 실제로 쓰는 순서다.
+    const ctx = (isRepeatablePreset(type) && type === 'feature_icons')
+      ? { ...infoCtx, sellingPoints: unusedSellingPoints() }
+      : infoCtx;
+    setInfoModal({ type, blockId: existing ? existing.id : null, initialInfo: seedInfo(type, existing?.info || defaultInfoFor(type, ctx)) });
+  };
+  const unusedSellingPoints = () => {
+    const used = new Set(blocks.filter((b) => presetTypeOf(b) === 'feature_icons')
+      .flatMap((b) => ((b.info && b.info.items) || []).map((it) => it.title).filter(Boolean)));
+    const all = infoCtx.sellingPoints || [];
+    const left = all.filter((p) => !used.has(p));
+    return left.length ? left : all;   // 다 썼으면 처음부터 — 빈 폼을 주는 것보다 낫다
   };
   const openInfoEdit = (block) => {
     const type = presetTypeOf(block);
     if (!type) return;
-    setInfoModal({ type, blockId: block.id, initialInfo: block.info || defaultInfoFor(type, infoCtx) });
+    setInfoModal({ type, blockId: block.id, initialInfo: seedInfo(type, block.info || defaultInfoFor(type, infoCtx)) });
   };
   const submitInfo = (info) => {
     const m = infoModal; if (!m) return;
@@ -890,43 +1067,19 @@ export function Editor() {
   };
   const undo = () => { const h = hist.current; if (!h.past.length) { toast.push('되돌릴 작업이 없어요'); return; } const snap = h.past.pop(); h.future.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('실행 취소', { icon: 'undo' }); };
   const redo = () => { const h = hist.current; if (!h.future.length) { toast.push('다시 실행할 작업이 없어요'); return; } const snap = h.future.pop(); h.past.push(prevBlocks.current); fromHistory.current = true; clearSel(); setBlocks(snap); toast.push('다시 실행', { icon: 'redo' }); };
-  const save = async () => { await api.saveEditorBlocks(projectId, blocks); toast.push('저장했어요', { icon: 'check' }); };
-  const exportDetailPage = async () => {
-    if (exporting) return;
-    const current = latestBlocks.current || blocks;
-    if (!current?.length) {
-      toast.push('내보낼 상세페이지가 없어요.');
+  const save = async () => {
+    if (genActive) {
+      saveEditorWaitDraft(projectId, latestBlocks.current || blocks);
+      pendingGenerationDraft.current = true;
+      toast.push('생성 중 작업을 임시 저장했어요 — 나갔다 와도 이어서 볼 수 있어요');
       return;
     }
-    setExporting(true);
-    try {
-      await api.saveEditorBlocks(projectId, current);
-      const format = dlFormat === 'zip' ? 'zip' : 'long_png';
-      if (typeof api.exportProject !== 'function') {
-        await api.download(projectId, dlFormat);
-        toast.push('다운로드를 시작했어요', { icon: 'download' });
-        setDownload(false);
-        return;
-      }
-      const out = await api.exportProject(projectId, {
-        snapshot: { editorBlocks: current },
-        body: { title: productName },
-        options: { format, width: format === 'zip' ? 1200 : 1600 },
-      });
-      if (!out?.src) throw new Error('내보내기 파일 주소를 받지 못했어요.');
-      const a = document.createElement('a');
-      a.href = out.src;
-      a.download = out.filename || (format === 'zip' ? 'wearless-export.zip' : 'wearless-export.png');
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setDownload(false);
-      toast.push('다운로드를 시작했어요', { icon: 'download' });
-    } catch (e) {
-      toast.push(e?.message || '내보내기에 실패했어요. 잠시 후 다시 시도해 주세요.');
-    } finally {
-      setExporting(false);
+    await api.saveEditorBlocks(projectId, blocks);
+    if (pendingGenerationDraft.current) {
+      clearEditorWaitDraft(projectId);
+      pendingGenerationDraft.current = false;
     }
+    toast.push('저장했어요', { icon: 'check' });
   };
   // 이탈 직전 플러시 — 인라인 편집 중 텍스트는 blur/언마운트에 기대지 않고
   // DOM 에서 직접 읽어 합쳐 저장한다. (프로그램적 내비게이션은 blur 가 없고,
@@ -942,7 +1095,22 @@ export function Editor() {
       }
     }
     clearTimeout(saveTimer.current);
+    // 생성 중 이탈 — 미완성 화면은 서버 완성본 자리에 PUT하지 않고 브라우저 임시 작업본으로
+    // 저장한다. 진행 잡은 store/서버가 계속 돌며 재진입 때 이 작업본 위로 이벤트를 재생한다.
+    if (genActive) {
+      if (bs) saveEditorWaitDraft(projectId, bs);
+      pendingGenerationDraft.current = Boolean(bs);
+      return;
+    }
     if (bs) api.saveEditorBlocks(projectId, bs);
+  };
+  const discardGenerationAndReturnToStoryboard = () => {
+    clearTimeout(saveTimer.current);
+    clearEditorWaitDraft(projectId);
+    pendingGenerationDraft.current = false;
+    genActiveRef.current = false;
+    useAppStore.getState().resetDetailPageJob();
+    navigate('/create/storyboard');
   };
   /* kb.current 는 crop 핸들러 정의 뒤(아래)에서 채운다 — TDZ 방지 */
 
@@ -1160,6 +1328,8 @@ export function Editor() {
       return { ...b, elements: b.elements.map((e) => (pos[e.id] != null ? { ...e, [k]: pos[e.id] } : e)) };
     }));
   };
+  const genFailed = dpJob.status === 'error' || Boolean(genFinalizeError);
+  const genFailureMessage = genFinalizeError || dpJob.errorMessage || '생성을 끝내지 못했어요';
 
   return (
     <div className="editor">
@@ -1191,9 +1361,86 @@ export function Editor() {
           </button>
           <Button variant="ghost" size="sm" icon="eye" onClick={() => setPreview(true)}>미리보기</Button>
           <Button variant="ghost" size="sm" icon="save" onClick={save}>저장</Button>
-          <Button variant="primary" size="sm" icon="download" onClick={() => setDownload(true)}>다운로드</Button>
+          <Button variant="primary" size="sm" icon="download" disabled={genActive}
+            onClick={() => setDownload(true)}>{genActive ? '생성 중…' : '다운로드'}</Button>
         </div>
       </div>
+
+      {/* 생성 진행 리본 — 에디터 통합 대기. 같은 캔버스에서 편집하며 기다린다. */}
+      {((genActive && dpJob.status !== 'blocked')
+          || (dpJob.projectId === projectId && dpJob.status === 'error')) && (
+        <div className={`ed-genbar${genFailed ? ' error' : ''}`} role="status" aria-live="polite">
+          <Icon name={genFailed ? 'alertTri' : 'loader'} size={14}
+            className={genFailed ? '' : 'spin'} />
+          <span className="ed-genbar-msg">
+            {genFailed ? genFailureMessage
+              : dpJob.cutsTotal
+                ? <>사진을 만들어 채우는 중 · <b>{dpJob.cutsDone}/{dpJob.cutsTotal}</b>컷</>
+                : '상세페이지를 만들고 있어요'}
+          </span>
+          {!genFailed && (
+            <span className="ed-genbar-track" aria-hidden="true"><i style={{ width: `${dpJob.progress}%` }} /></span>
+          )}
+          <span className="ed-genbar-side">
+            {genFailed ? (
+              <>
+                {genFinalizeError ? (
+                  <Button size="sm" variant="primary" onClick={() => setGenFinalizeAttempt((n) => n + 1)}>
+                    완성본 다시 불러오기
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="primary" onClick={() => {
+                    genMergedRef.current = false;
+                    useAppStore.getState().resetDetailPageJob();
+                    useAppStore.getState().startDetailPageGeneration(projectId);
+                    genActiveRef.current = true;
+                    setGenActive(true);
+                  }}>다시 시도</Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={discardGenerationAndReturnToStoryboard}>콘티로</Button>
+              </>
+            ) : (
+              <>
+                <span className="ed-genbar-hint">지금도 문구·배치를 고칠 수 있어요 · 창을 닫아도 계속 만들어져요</span>
+                {genNotif === 'default' && (
+                  <button type="button" className="ed-genbar-notify"
+                    onClick={async () => setGenNotif(await Notification.requestPermission())}>완료되면 알림 받기</button>
+                )}
+                {genNotif === 'granted' && <span className="ed-genbar-on"><Icon name="check" size={11} />알림 켜짐</span>}
+              </>
+            )}
+          </span>
+        </div>
+      )}
+
+      {/* FaceMarket 차단(409) — 생성이 라이선스 게이트에서 멈춤 */}
+      {dpJob.projectId === projectId && dpJob.status === 'blocked' && (
+        <div className="ed-genoverlay">
+          <div className="surface fm-blocked">
+            <div className="fm-blocked-icon"><Icon name="alertCircle" size={28} /></div>
+            <p className="fm-blocked-msg">{dpJob.errorMessage}</p>
+            <p className="fm-blocked-hint">다른 모델을 선택하거나 라이선스 상태를 확인한 뒤 다시 시도해 주세요.</p>
+            <Button variant="primary" block onClick={discardGenerationAndReturnToStoryboard}>콘티로 돌아가기</Button>
+          </div>
+        </div>
+      )}
+      {/* FaceMarket 온체인 정산 영수증(장면③) — 완료 병합 후 모달로 */}
+      {genReceipt && (
+        <div className="ed-genoverlay" onClick={() => setGenReceipt(null)}>
+          <div className="surface fm-receipt" onClick={(e) => e.stopPropagation()}>
+            <div className="fm-receipt-head">
+              <span className="fm-receipt-badge"><Icon name="check" size={13} />정산 완료</span>
+              <span className="fm-receipt-total">{wonFmt(genReceipt.totalAmount)}</span>
+            </div>
+            <div className="fm-split">
+              <div className="fm-split-row"><span>모델 정산</span><span>{wonFmt(genReceipt.modelAmount)}</span></div>
+              <div className="fm-split-row"><span>플랫폼</span><span>{wonFmt(genReceipt.platformAmount)}</span></div>
+              <div className="fm-split-row"><span>운영</span><span>{wonFmt(genReceipt.opsAmount)}</span></div>
+            </div>
+            <Button variant="primary" block onClick={() => setGenReceipt(null)}>확인하고 편집 계속하기</Button>
+          </div>
+        </div>
+      )}
 
       {/* body */}
       <div className="ed-body" style={{ '--lcol': '320px', '--rcol': rightHidden ? '0px' : '208px' }}>
@@ -1367,10 +1614,8 @@ export function Editor() {
               })}
             </div>
             <div className="dl-foot">
-              <Button variant="quiet" disabled={exporting} onClick={() => setDownload(false)}>취소</Button>
-              <Button variant="primary" icon="download" disabled={exporting} onClick={exportDetailPage}>
-                {exporting ? '내보내는 중…' : '다운로드'}
-              </Button>
+              <Button variant="quiet" onClick={() => setDownload(false)}>취소</Button>
+              <Button variant="primary" icon="download" onClick={() => { setDownload(false); toast.push('다운로드를 시작했어요', { icon: 'download' }); }}>다운로드</Button>
             </div>
           </div>
         </Modal>
@@ -1387,12 +1632,9 @@ export function Editor() {
       {/* 정보 블록 입력 폼 (PRD §10.14) */}
       {infoModal && (
         <InfoBlockModal type={infoModal.type} initialInfo={infoModal.initialInfo} ctx={infoCtx}
-          wardrobe={wardrobe} colorOpts={colorOpts} onRequestUse={requestWardrobeUse}
-          editing={!!infoModal.blockId} onClose={() => setInfoModal(null)} onSubmit={submitInfo} />
-      )}
-      {review && (
-        <VaryReviewModal image={review.image} busy={review.busy}
-          onAccept={acceptReview} onReject={rejectReview} onClose={() => gate().close()} />
+          wardrobe={wardrobe} colorOpts={colorOpts}
+          editing={!!infoModal.blockId} onClose={() => setInfoModal(null)} onSubmit={submitInfo}
+          onDraftCopy={draftFeatureCopy} />
       )}
     </div>
   );

@@ -21,7 +21,9 @@ const RULE = (idFn) => (x, y, w, stroke, strokeWidth) => ({ id: idFn('el'), type
 const SLOT = (idFn) => (x, y, w, h) => ({ id: idFn('el'), type: 'image', x, y, w, h, src: null, radius: 8 });
 
 export const FEATURE_ITEMS_MIN = 2;
-export const FEATURE_ITEMS_MAX = 5;
+// 블록이 담는 포인트 상한. 분석 칩 상한(SELLING_POINTS_MAX)과 별개다 — 셀러가 에디터에서
+// 직접 더 넣을 수 있고, 그쪽이 줄어도 이미 만든 블록이 잘리면 안 된다.
+export const FEATURE_ITEMS_MAX = 8;
 
 const HEAD = { font: 'Cal Sans', weight: 600, color: '#0e0d14' };
 const MUTED = '#4a4a45';
@@ -99,11 +101,32 @@ export const INFO_PRESET_TYPES = [
   { type: 'care', label: '세탁·케어 가이드', desc: '소재별 관리 방법 안내', tier: 'must', recommend: null },
   { type: 'policy', label: '배송·교환 안내', desc: '배송·교환·반품 표준 문구', tier: 'must', recommend: null },
   { type: 'header', label: '상품명 헤더', desc: '국문+영문 타이포 헤더', tier: 'boost', recommend: 'women' },
-  { type: 'feature_icons', label: '특징 포인트', desc: '사진+장점 카드 2~5개', tier: 'boost', recommend: 'women' },
+  // repeatable — 레퍼런스 상세페이지는 DETAIL POINT 섹션을 여러 벌 쓴다. 사이즈표·고시정보처럼
+  // 페이지에 하나뿐이어야 하는 항목과 달리, 이건 목록에서 누를 때마다 새 블록이 붙는다.
+  { type: 'feature_icons', label: '특징 포인트', desc: '사진+장점 카드 2~8개', tier: 'boost', recommend: 'women', repeatable: true },
   { type: 'fit_guide', label: '핏 가이드', desc: '핏 실루엣 비교 도식', tier: 'boost', recommend: 'men' },
   { type: 'size_matrix', label: '추천 사이즈', desc: '키×몸무게 추천 사이즈 표', tier: 'boost', recommend: 'men' },
   { type: 'model_info', label: '모델 정보', desc: '모델 스펙 카드', tier: 'extra', recommend: 'women' },
 ];
+
+/* 페이지에 여러 벌 둘 수 있는 프리셋인지 — 목록에서 누를 때 기존 블록을 열지, 새로 붙일지. */
+export function isRepeatablePreset(type) {
+  return (INFO_PRESET_TYPES.find((p) => p.type === type) || {}).repeatable === true;
+}
+
+/* 생성 잡이 analysis.featureCopy 에 써 둔 설명문을 **빈 칸에만** 채운다. 칩 문자열로 맞추고,
+   셀러가 이미 쓴 설명은 건드리지 않는다.
+
+   빈 칸만 채우는 게 핵심이다: 블록이 한 번 만들어지고 나면 `needsDefaultTemplate` 이 영원히
+   false 라 정보 템플릿은 다시 깔리지 않는다. 그래서 잡의 쓰기보다 앞선 analysis 스냅샷으로
+   블록이 지어지면(생성 도중 에디터를 새로 열면 그렇게 된다) 설명이 영구히 빈칸으로 남았다.
+   블록을 새로 지을 때뿐 아니라 폼을 열 때도 이걸 거치게 해서 타이밍과 무관하게 복구된다. */
+export function fillFeatureCopy(info, ctx = {}) {
+  const copy = ctx.featureCopy || [];
+  if (!copy.length || !info || !Array.isArray(info.items)) return info;
+  const descByPoint = new Map(copy.map((c) => [c.point, c.desc]));
+  return { ...info, items: info.items.map((it) => (it.desc ? it : { ...it, desc: descByPoint.get(it.title) || '' })) };
+}
 
 /* ---- 폼 기본값 — analysis/product 컨텍스트에서 프리필 ---- */
 export function defaultInfoFor(type, ctx = {}) {
@@ -132,10 +155,11 @@ export function defaultInfoFor(type, ctx = {}) {
     case 'header':
       return { nameKo: ctx.productName || '', nameEn: '', eyebrow: 'PRODUCT INFORMATION' };
     case 'feature_icons': {
-      const points = (ctx.sellingPoints || []).slice(0, FEATURE_ITEMS_MAX).map((p) => ({ title: p, desc: '', src: null }));
+      const points = (ctx.sellingPoints || []).slice(0, FEATURE_ITEMS_MAX)
+        .map((p) => ({ title: p, desc: '', src: null }));
       // 새 블록 기본 칸수는 3 (분석 특징이 더 많으면 그 수) — MIN 이 3을 넘게 바뀌어도 하한은 지킨다
       while (points.length < Math.max(3, FEATURE_ITEMS_MIN)) points.push({ title: '', desc: '', src: null });
-      return { items: points };
+      return fillFeatureCopy({ layout: 'stack', items: points }, ctx);
     }
     case 'fit_guide':
       return { fits: ['slim', 'regular', 'semi_over', 'over'], current: ctx.fit || null };
@@ -253,28 +277,161 @@ function buildHeader(info, ctx, idFn) {
   return { id: idFn('b'), name: '상품명 헤더', kind: 'info', infoType: 'header', bg: '#ffffff', h: y + 58, info: { ...info }, elements: els };
 }
 
-function buildFeatureIcons(info, ctx, idFn) {
+export const FEATURE_LAYOUTS = [
+  { value: 'stack', label: '세로형' },
+  { value: 'center', label: '중앙형' },
+  { value: 'grid', label: '그리드형' },
+  { value: 'compact', label: '컴팩트' },
+];
+
+const FEATURE_LAYOUT_VALUES = new Set(FEATURE_LAYOUTS.map((l) => l.value));
+
+/* 레이아웃 키가 없거나 모르는 값이면 compact — 이 키가 생기기 전에 만들어진 블록이
+   그대로 재생성되어야 한다(마이그레이션 0건). */
+export function resolveFeatureLayout(info) {
+  const v = info && info.layout;
+  return FEATURE_LAYOUT_VALUES.has(v) ? v : 'compact';
+}
+
+/* 입력 원본 보존 — 필터·placeholder 를 정본으로 저장하면 빈 슬롯이 영구 소실되고
+   안내 문구가 판매 문구로 둔갑한다(리뷰 확정 결함). 레이아웃 4종이 같은 배열을 쓴다. */
+function featureItems(info) {
+  const items = (info.items || []).slice(0, FEATURE_ITEMS_MAX)
+    .map((it) => ({ title: it.title || '', desc: it.desc || '', src: it.src || null }));
+  while (items.length < FEATURE_ITEMS_MIN) items.push({ title: '', desc: '', src: null });
+  return items;
+}
+
+/* 제목 placeholder — 하나라도 채워진 블록이면 빈 칸은 '—', 완전히 빈 블록이면 안내 문구. */
+function featureTitle(it, anyFilled) {
+  return it.title || (anyFilled ? '—' : '핵심 장점을 입력하세요');
+}
+
+function featureBlock(info, layout, items, h, els, idFn) {
+  return { id: idFn('b'), name: '특징 포인트', kind: 'info', infoType: 'benefit_copy',
+    bg: '#ffffff', h, info: { ...info, layout, items }, elements: els };
+}
+
+function buildFeatureCompact(info, ctx, idFn, items) {
   const t = T(idFn);
-  // 포인트는 2~5개. info 는 입력 원본 그대로 보존한다(필터·placeholder 를 정본으로
-  // 저장하면 빈 슬롯이 영구 소실되고 안내 문구가 판매 문구로 둔갑한다 — 리뷰 확정 결함).
-  const rawItems = (info.items || []).slice(0, FEATURE_ITEMS_MAX).map((it) => ({ title: it.title || '', desc: it.desc || '', src: it.src || null }));
-  while (rawItems.length < FEATURE_ITEMS_MIN) rawItems.push({ title: '', desc: '', src: null });
-  const n = rawItems.length;
+  const n = items.length;
   const colW = 880 / n;
   const d = Math.min(110, colW - 36);              // 원형 사진 슬롯 지름 — 개수에 맞춰 축소
-  const anyFilled = rawItems.some((it) => it.title || it.desc || it.src);
+  // 제목은 칸 폭을 따라간다 — 개수가 늘면 칸이 좁아져 고정 크기로는 한글이 험하게 접힌다.
+  // 경계값은 기존 동작을 그대로 재현한다(2~4개 → 17, 5개 → 15).
+  const titleSize = colW >= 200 ? 17 : colW >= 150 ? 15 : 13;
+  const anyFilled = items.some((it) => it.title || it.desc || it.src);
   const els = [];
-  rawItems.forEach((it, i) => {
+  items.forEach((it, i) => {
     const x = 60 + i * colW;
     // 도형 대신 원형 이미지 슬롯 — 비어 있으면 '이미지 추가' 로 의류 탭에서 채운다
     els.push({ id: idFn('el'), type: 'image', x: x + colW / 2 - d / 2, y: 56, w: d, h: d, src: it.src || null, radius: d / 2 });
     const ty = 56 + d + 18;
     els.push(t(x, ty, colW, 18, `POINT ${i + 1}`, { font: 'Roboto Mono', size: 11, tracking: 2, color: FAINT, align: 'center' }));
-    els.push(t(x + 10, ty + 26, colW - 20, 24, it.title || (anyFilled ? '—' : '핵심 장점을 입력하세요'), { size: n >= 5 ? 15 : 17, weight: 600, color: '#0e0d14', align: 'center' }));
+    els.push(t(x + 10, ty + 26, colW - 20, 24, featureTitle(it, anyFilled), { size: titleSize, weight: 600, color: '#0e0d14', align: 'center' }));
     if (it.desc) els.push(t(x + 14, ty + 56, colW - 28, 40, it.desc, { size: 13, color: MUTED, align: 'center', lineHeight: 19 }));
   });
-  const h = 56 + d + 18 + 26 + 30 + (rawItems.some((it) => it.desc) ? 46 : 0) + 50;
-  return { id: idFn('b'), name: '특징 포인트', kind: 'info', infoType: 'benefit_copy', bg: '#ffffff', h, info: { items: rawItems }, elements: els };
+  const h = 56 + d + 18 + 26 + 30 + (items.some((it) => it.desc) ? 46 : 0) + 50;
+  return { els, h };
+}
+
+const FEATURE_IMG_W = 880;          // 사진 폭 = 콘텐츠 폭
+const FEATURE_STACK_IMG_H = 560;    // 사진 높이는 고정 — 이미지 dims 로 유도하면 파손 dims 가 레이아웃을 무너뜨린다
+const FEATURE_STACK_GAP = 64;
+
+/* 타이포 — 레퍼런스 상세페이지의 콘텐츠 폭 대비 비율(제목 ≈4%, 설명 ≈2%)을 880 에 맞춘 값.
+   처음 잡았던 22/15 는 그 절반 크기라 사진 옆에서 캡션처럼 읽혔다. 행 높이·요소 높이가
+   글자 크기를 따라가야 estLines 로 잰 문단이 다음 요소를 덮지 않는다. */
+const FEATURE_TITLE_SIZE = 34;
+const FEATURE_TITLE_H = 46;
+const FEATURE_DESC_SIZE = 19;
+const FEATURE_DESC_LINE = 32;
+
+function buildFeatureStack(info, ctx, idFn, items) {
+  const t = T(idFn); const slot = SLOT(idFn);
+  const anyFilled = items.some((it) => it.title || it.desc || it.src);
+  const els = [t(60, 48, 880, 40, 'DETAIL POINT', { size: 28, ...HEAD, tracking: 1 })];
+  let y = 108;
+  items.forEach((it) => {
+    els.push({ ...slot(60, y, FEATURE_IMG_W, FEATURE_STACK_IMG_H), src: it.src || null });
+    const ty = y + FEATURE_STACK_IMG_H + 28;
+    els.push(t(60, ty, 880, FEATURE_TITLE_H, featureTitle(it, anyFilled), { size: FEATURE_TITLE_SIZE, weight: 600, color: '#0e0d14' }));
+    let bottom = ty + FEATURE_TITLE_H;
+    if (it.desc) {
+      const dh = estLines(it.desc, 880, FEATURE_DESC_SIZE) * FEATURE_DESC_LINE;
+      els.push(t(60, bottom + 14, 880, dh, it.desc, { size: FEATURE_DESC_SIZE, color: MUTED, lineHeight: FEATURE_DESC_LINE }));
+      bottom = bottom + 14 + dh;
+    }
+    y = bottom + FEATURE_STACK_GAP;
+  });
+  return { els, h: y - FEATURE_STACK_GAP + 50 };
+}
+
+const FEATURE_CENTER_IMG_H = 620;
+const FEATURE_CENTER_GAP = 80;
+const FEATURE_BADGE_W = 200;        // 텍스트 길이와 무관한 고정 폭 — 번호는 상한 5라 2자리로 안 간다
+
+function buildFeatureCenter(info, ctx, idFn, items) {
+  const t = T(idFn); const rect = RECT(idFn); const slot = SLOT(idFn);
+  const anyFilled = items.some((it) => it.title || it.desc || it.src);
+  const els = [];
+  let y = 56;
+  items.forEach((it, i) => {
+    els.push({ ...slot(60, y, FEATURE_IMG_W, FEATURE_CENTER_IMG_H), src: it.src || null });
+    const by = y + FEATURE_CENTER_IMG_H + 36;
+    const bx = 60 + (880 - FEATURE_BADGE_W) / 2;
+    els.push(rect(bx, by, FEATURE_BADGE_W, 34, '#f5f5f5', 6));
+    els.push(t(bx, by + 9, FEATURE_BADGE_W, 18, `DETAIL POINT ${String(i + 1).padStart(2, '0')}`,
+      { font: 'Roboto Mono', size: 12, tracking: 2, color: MUTED, align: 'center' }));
+    els.push(t(60, by + 58, 880, FEATURE_TITLE_H, featureTitle(it, anyFilled), { size: FEATURE_TITLE_SIZE, weight: 600, color: '#0e0d14', align: 'center' }));
+    let bottom = by + 58 + FEATURE_TITLE_H;
+    if (it.desc) {
+      const dh = estLines(it.desc, 760, FEATURE_DESC_SIZE) * FEATURE_DESC_LINE;
+      els.push(t(120, bottom + 14, 760, dh, it.desc, { size: FEATURE_DESC_SIZE, color: MUTED, lineHeight: FEATURE_DESC_LINE, align: 'center' }));
+      bottom = bottom + 14 + dh;
+    }
+    y = bottom + FEATURE_CENTER_GAP;
+  });
+  return { els, h: y - FEATURE_CENTER_GAP + 56 };
+}
+
+const FEATURE_GRID_PHOTO = 400;     // 좌 사진 정사각 한 변
+const FEATURE_GRID_CARD_X = 500;    // 60 + 400 + 40(칼럼 간격)
+const FEATURE_GRID_CARD_W = 440;    // 500 + 440 = 940 (우 마진)
+const FEATURE_GRID_GAP = 24;
+
+function buildFeatureGrid(info, ctx, idFn, items) {
+  const t = T(idFn); const rect = RECT(idFn); const rule = RULE(idFn); const slot = SLOT(idFn);
+  const anyFilled = items.some((it) => it.title || it.desc || it.src);
+  const els = [];
+  let y = 56;
+  items.forEach((it, i) => {
+    els.push({ ...slot(60, y, FEATURE_GRID_PHOTO, FEATURE_GRID_PHOTO), src: it.src || null });
+    els.push(rect(FEATURE_GRID_CARD_X, y, FEATURE_GRID_CARD_W, FEATURE_GRID_PHOTO, '#fafafa', 12));
+    els.push(t(FEATURE_GRID_CARD_X + 32, y + 32, 200, 26, String(i + 1).padStart(2, '0'),
+      { font: 'Roboto Mono', size: 20, weight: 600, color: '#0e0d14' }));
+    els.push(rule(FEATURE_GRID_CARD_X + 32, y + 68, 24, '#0e0d14', 1.5));
+    // 라벨은 카드 하단 — 설명글은 렌더하지 않는다(레퍼런스), 값은 info 에 그대로 남는다
+    els.push(t(FEATURE_GRID_CARD_X + 32, y + FEATURE_GRID_PHOTO - 72, FEATURE_GRID_CARD_W - 64, 26,
+      featureTitle(it, anyFilled), { size: 15, weight: 600, color: '#0e0d14' }));
+    y += FEATURE_GRID_PHOTO + FEATURE_GRID_GAP;
+  });
+  return { els, h: y - FEATURE_GRID_GAP + 50 };
+}
+
+const FEATURE_BUILDERS = {
+  stack: buildFeatureStack,
+  center: buildFeatureCenter,
+  grid: buildFeatureGrid,
+  compact: buildFeatureCompact,
+};
+
+function buildFeatureIcons(info, ctx, idFn) {
+  const layout = resolveFeatureLayout(info);
+  const items = featureItems(info);
+  const build = FEATURE_BUILDERS[layout] || FEATURE_BUILDERS.compact;
+  const { els, h } = build(info, ctx, idFn, items);
+  return featureBlock(info, layout, items, h, els, idFn);
 }
 
 function buildFitGuide(info, ctx, idFn) {

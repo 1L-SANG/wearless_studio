@@ -21,6 +21,7 @@ alter table public.edit_sessions alter column baseline_id drop not null;
 
 alter table public.edit_sessions
   drop constraint if exists edit_sessions_source_check;
+
 alter table public.edit_sessions
   add constraint edit_sessions_source_check check (
     (source_kind = 'approved_baseline' and baseline_id is not null)
@@ -30,6 +31,7 @@ alter table public.edit_sessions
 comment on column public.edit_sessions.source_kind is
   'approved_baseline = 승인 컷 편집(baseline_id 정본) | editor_asset = 에디터 자산 vary '
   '(source_asset_id 정본). CHECK 가 두 조합 외를 막는다.';
+
 comment on column public.edit_sessions.source_asset_id is
   'editor vary 의 입력 자산. 이 자산에 generation_outputs 행이 있으면 parent_output_id 도 '
   '채워지고, 없으면(업로드·legacy) null 이다 — 잘못된 output 을 추정하지 않는다. '
@@ -42,6 +44,7 @@ create index if not exists edit_sessions_source_asset_idx
 -- 가리키면 "이 편집의 결과"라는 말이 성립하지 않는다.
 create unique index if not exists generation_outputs_one_per_edit_session
   on public.generation_outputs (edit_session_id) where edit_session_id is not null;
+
 create unique index if not exists edit_sessions_one_output
   on public.edit_sessions (output_id) where output_id is not null;
 
@@ -53,6 +56,7 @@ alter table public.wardrobe_images
 
 alter table public.wardrobe_images
   drop constraint if exists wardrobe_images_qc_status_check;
+
 alter table public.wardrobe_images
   add constraint wardrobe_images_qc_status_check
   check (qc_status is null or qc_status in ('pass', 'review_required'));
@@ -60,6 +64,7 @@ alter table public.wardrobe_images
 comment on column public.wardrobe_images.qc_status is
   'pass | review_required | null. null = 판정 대상 아님(legacy·mode:new·플래그 off). '
   'reject 는 값이 아니다 — 거부된 결과는 애초에 여기 들어오지 않는다.';
+
 comment on column public.wardrobe_images.edit_session_id is
   '이 이미지를 만든 편집 세션(생성형 vary). 계보는 세션에서 따라간다.';
 

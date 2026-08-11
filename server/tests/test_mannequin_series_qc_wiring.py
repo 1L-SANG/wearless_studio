@@ -10,9 +10,18 @@ import types
 import pytest
 
 from app.agents import mannequin_series_qc
+from app.services.qc import QcResult
 from app.workers import mannequin_job
 from conftest import make_settings
-from tests.conftest import make_image_budget_gate
+
+
+@pytest.fixture(autouse=True)
+def _isolate_series_qc_from_pixel_qc(monkeypatch):
+    """이 파일의 가짜 바이트는 시리즈 배선만 검증하고 픽셀 QC는 별도 테스트한다."""
+    monkeypatch.setattr(
+        mannequin_job.qc, "evaluate_mannequin_qc", lambda _data: QcResult("pass"))
+    monkeypatch.setattr(
+        mannequin_job.qc, "evaluate_canvas_alpha_qc", lambda _data: QcResult("pass"))
 
 
 class _Conn:
@@ -745,12 +754,7 @@ def test_last_attempt_generation_not_blocked_by_unused_edit_reservation(monkeypa
     """쓰지도 않을 편집분을 예약해 안전한 재생성을 막으면 안 된다(과소 사용).
 
     예약형에서는 max=4·attempt=3·편집 0 일 때 next_cost=2 라 4회차 생성이 막혔다.
-    실소비만 세면 잔량이 남는 동안 계속 돈다.
-
-    상한은 이제 max_attempts 가 아니라 **job 당 이미지 예산**이다: 생성은 BASE 1 +
-    FULL_REGENERATION 1 = 2회까지고, 편집을 한 번도 안 썼다고 해서 3회차 생성이 생기지는
-    않는다. 이 테스트가 지키는 성질(안 쓸 편집분을 미리 예약해 생성을 막지 않는다)은
-    그대로다 — 예약 없이 남은 생성 슬롯을 끝까지 쓴다.
+    실소비만 세면 3콜 뒤 잔량 1 이 남아 4회차가 돈다.
     """
     import test_mannequin_axis_qc as harness
 
@@ -767,7 +771,7 @@ def test_last_attempt_generation_not_blocked_by_unused_edit_reservation(monkeypa
         p2={"verdict": "pass", "mismatches": [], "correctionPrompt": None,
             "product_fidelity": 95, "physical_naturalness": 95, "image_quality": 95,
             "series_consistency": None, "critical_errors": []})
-    assert len(g.calls) == 2, f"생성 {len(g.calls)}회 — 남은 생성 슬롯을 안 썼다"
+    assert len(g.calls) == 4, f"생성 {len(g.calls)}회 — 남은 예산을 안 썼다"
 
 
 def test_comparator_uses_series_when_both_candidates_have_it():
@@ -803,7 +807,7 @@ def test_new_critical_error_reverts_even_without_pre_scores():
     assert edit_regressed(s, no_scores, _p2c(10)) is False
 
 
-def test_rollback_keeps_axis_fix_when_only_bust_score_regressed(monkeypatch):
+def test_rollback_keeps_axis_fix_when_only_bust_regressed(monkeypatch):
     """두 편집이 다 돌았고 bust 만 망쳤으면 axis 교정은 살린다.
 
     한 덩어리로 되돌리면 핏을 제대로 고친 axis 결과까지 같이 버린다(codex 8차 MEDIUM).
@@ -812,7 +816,7 @@ def test_rollback_keeps_axis_fix_when_only_bust_score_regressed(monkeypatch):
     import test_mannequin_axis_qc as harness
 
     # 1: 생성 직후(양호) → 2: 두 편집 후(치명오류) → 3: axis 까지만(양호)
-    seq = [_p2c(90), _p2c(30), _p2c(88)]
+    seq = [_p2c(90), _p2c(30, critical=["garment shape broken"]), _p2c(88)]
     n = {"i": 0}
 
     async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
@@ -837,42 +841,6 @@ def test_rollback_keeps_axis_fix_when_only_bust_score_regressed(monkeypatch):
     assert result["qc_scores"]["product_fidelity"] == 88
     reverted = [p for _t, p in emits if p.get("status") == "edit_reverted"]
     assert reverted and reverted[-1]["reason"] == "bust_only"
-
-
-def test_new_identity_critical_after_edits_cannot_be_rescued_by_a_second_judge(monkeypatch):
-    """새 치명 오류가 확인된 편집 체인은 확률적인 중간본 재판정으로 구조하면 안 된다.
-
-    실 QA 재현: 최종 재판정이 ``garment color changed`` 를 잡았지만, untuck 중간본을 같은
-    Vision에 다시 물었더니 pass가 나와 그 갈색 손상본이 저장됐다. critical은 점수가 아니라
-    출고 금지 계약이므로 편집 전 마지막 통과본으로 즉시 돌아가야 한다.
-    """
-    import test_mannequin_axis_qc as harness
-
-    seq = [
-        _p2c(90),
-        _p2c(55, critical=["garment color changed"]),
-        _p2c(95),  # 이 판정까지 호출되면 확률적 구조 경로가 다시 열린 것
-    ]
-    n = {"i": 0}
-
-    async def fake_p2(s, prods, gen, *, scored=False, fit_profile=None):
-        n["i"] += 1
-        return seq[min(n["i"] - 1, len(seq) - 1)]
-
-    async def fake_axis(**kw):
-        return types.SimpleNamespace(mime=kw["res"].mime, image=b"untuck-or-axis-drift"), True
-
-    monkeypatch.setattr(mannequin_job.image_qc, "verdict", fake_p2)
-    monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_axis)
-    result, _g, r2, emits = harness._run(
-        monkeypatch, mode="enforce", guard=True, max_attempts=3, verdicts=[],
-        image_qc="shadow", mannequin_bust_pass="on")
-
-    assert r2.puts[-1][1] == harness._PNG_1PX
-    assert result["qc_scores"]["product_fidelity"] == 90
-    assert n["i"] == 2, "치명 오류 뒤 같은 편집 중간본을 다시 심사하면 안 된다"
-    reverted = [p for _t, p in emits if p.get("status") == "edit_reverted"]
-    assert reverted[-1]["reason"] == "critical_identity_regression"
 
 
 def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
@@ -903,7 +871,7 @@ def test_rollback_goes_all_the_way_when_axis_is_also_at_fault(monkeypatch):
     assert saved == harness._PNG_1PX, f"편집 전 원본이 아니다: {saved!r}"
     assert _r["qc_scores"]["product_fidelity"] == 90, "편집 전 점수가 아니다"
     ev = [p for _t, p in emits if p.get("status") == "edit_reverted"][-1]
-    assert ev["reason"] == "critical_identity_regression"
+    assert ev["reason"] == "all_edits"
     assert (ev["from"], ev["to"]) == ("regenerate", "auto_pass")
 
 
@@ -944,8 +912,7 @@ def test_failed_bust_does_not_fake_a_second_checkpoint(monkeypatch):
 
     assert r2.puts[-1][1] != b"axis-broke-it", "손상본이 가짜 중간본 분기로 출고됐다"
     assert n["i"] == 2, f"판정이 {n['i']}회 — 같은 이미지를 다시 판정했다"
-    assert ([p for _t, p in emits if p.get("status") == "edit_reverted"][-1]["reason"]
-            == "critical_identity_regression")
+    assert [p for _t, p in emits if p.get("status") == "edit_reverted"][-1]["reason"] == "all_edits"
 
 
 def test_generation_failure_still_salvages_accumulated_candidate(monkeypatch):
@@ -1051,7 +1018,6 @@ def test_real_axis_qc_respects_shared_budget(monkeypatch):
         calls["n"] = 0
         res = types.SimpleNamespace(mime="image/png", image=b"orig")
         out, spent = await mannequin_job._apply_axis_qc(
-            budget=make_image_budget_gate(),
             pool=_FakePool(), gemini=_G(), s=make_settings(
                 mannequin_axis_qc="enforce", mannequin_max_attempts=3),
             job_id="j1", candidate="A", attempt=1, model="m", res=res,
@@ -1121,42 +1087,28 @@ def test_loop_terminates_when_every_attempt_rejects(monkeypatch):
     """전 attempt 가 D축 거절이어도 루프는 max_attempts 에서 끝난다 — 무한 루프 방지.
 
     `continue` 경로가 예산 조건을 잘못 읽으면 생성 콜이 무한히 늘 수 있다. 상한을 못박는다.
-
-    상한은 job 당 이미지 예산이 준다 — 생성 슬롯은 BASE 1 + FULL_REGENERATION 1 뿐이라
-    max_attempts 를 3 으로 둬도 2회에서 멈춘다.
     """
     result, g, r2, emits = _run_loop(
         monkeypatch, max_attempts=3,
         series_scores=[{"consistency": 10, "inconsistencies": ["다름"]}] * 3)
-    assert len(g.calls) == 2, f"생성 콜 {len(g.calls)}회 — 이미지 예산(생성 2슬롯)을 넘었다"
+    assert len(g.calls) == 3, f"생성 콜 {len(g.calls)}회 — max_attempts(3) 를 넘었다"
     assert len(r2.puts) == 1                      # 마지막 1건만 저장
     assert result is not None                      # 구제 출고
     assert result["qc_scores"]["salvaged"] is True
     rejects = [p for _t, p in emits if p.get("status") == "final_qc_reject"]
-    # 1회차만 거절로 남는다. 2회차는 **생성 슬롯이 남아 있지 않다는 것을 그 자리에서 알고**
-    # 재시도를 기다리는 대신 구제로 빠진다 — retry 권한이 attempt 카운터가 아니라 영속
-    # 예산과 일치하게 된 결과다. 예산만 있고 이 일치가 없던 동안에는 2회차도 거절로 남고
-    # 후보가 루프 밖에서야 구제됐다.
-    assert len(rejects) == 1
-    salvaged_events = [p for _t, p in emits if p.get("status") == "qc_salvaged"]
-    assert len(salvaged_events) == 1
-    assert salvaged_events[0]["reason"] == "budget_exhausted"
+    assert len(rejects) == 2                       # 1·2회차만 거절, 3회차는 구제
 
 
 def test_feedback_reaches_every_subsequent_attempt(monkeypatch):
-    """거절 사유가 다음 attempt 프롬프트에 실린다 — 안 실리면 재생성이 무의미해진다.
-
-    이미지 예산이 생성을 2회로 묶으므로 "다음"은 한 번뿐이다. 사유가 그 한 번에
-    실리는지가 이 테스트의 전부이고, 3회차가 사라진 것은 예산의 결과지 배선의 회귀가
-    아니다.
-    """
+    """거절 사유가 다음 attempt 프롬프트에 계속 실린다 — 중간에 끊기면 재생성이 무의미해진다."""
     _r, g, _r2, _e = _run_loop(
         monkeypatch, max_attempts=3,
         series_scores=[{"consistency": 10, "inconsistencies": ["배경 어두움"]},
                        {"consistency": 12, "inconsistencies": ["여백 다름"]},
                        {"consistency": 99, "inconsistencies": []}])
-    assert len(g.calls) == 2, "생성 슬롯은 2개다"
     assert "배경 어두움" in g.calls[1]["prompt"]
+    assert "여백 다름" in g.calls[2]["prompt"]     # 2회차 사유가 3회차로
+    assert "배경 어두움" not in g.calls[2]["prompt"]  # 낡은 사유는 갈아탄다
 
 
 # 고아 객체 계약은 test_low_series_score_actually_rerolls_and_stores_once 의
@@ -1205,22 +1157,6 @@ def test_effective_image_size_upgrades_only_pattern_products():
     legacy = types.SimpleNamespace(mannequin_image_size="1K")
     assert effective_image_size(legacy, *striped) == "1K"
 
-    # 승인 Product Truth 가 stale 텍스트보다 우선한다.
-    solid_truth = {"status": "approved", "patternSpec": {"type": "SOLID", "finePattern": False}}
-    assert effective_image_size(s, {"name": "스트라이프 셔츠"}, {}, solid_truth) == "2K"
-    stripe_truth = {"status": "approved", "patternSpec": {"type": "STRIPE", "finePattern": True}}
-    assert effective_image_size(s, {"name": "무지 티셔츠"}, {}, stripe_truth) == "4K"
-    stripe_truth_not_fine = {
-        "status": "approved",
-        "patternSpec": {"type": "STRIPE", "finePattern": False},
-    }
-    assert effective_image_size(s, {"name": "무지 티셔츠"}, {}, stripe_truth_not_fine) == "4K"
-    check_truth = {
-        "status": "approved",
-        "patternSpec": {"type": "CHECK", "finePattern": True},
-    }
-    assert effective_image_size(s, {"name": "체크 셔츠"}, {}, check_truth) == "2K"
-
 
 def test_tier_for_job_splits_adjust_from_initial_generation():
     """조정만 다른 모델로 보낼 수 있어야 한다 — 둘은 같은 워커를 타서 env 하나로는 못 가른다.
@@ -1262,6 +1198,64 @@ def test_adjust_tier_loader_falls_back_on_typo(monkeypatch):
     assert load_settings().mannequin_adjust_tier == "image_light"
 
 
+def test_fabric_pass_gate_needs_pattern_and_product_evidence():
+    """원단 2패스는 미세 패턴 + 원단 근거 사진이 있을 때만 돈다.
+
+    근거 사진이 없으면 무엇을 기준으로 고칠지가 없어 모델이 패턴을 지어낸다(ADR-0004).
+    무지 상품은 재현할 고주파가 없어 호출만 나간다.
+    """
+    from app.agents import mannequin_fabric
+
+    assert mannequin_fabric.should_apply("on", True, True)
+    assert not mannequin_fabric.should_apply("off", True, True), "플래그 off 면 안 돈다"
+    assert not mannequin_fabric.should_apply("on", False, True), "무지 상품은 대상 아님"
+    assert not mannequin_fabric.should_apply("on", True, False), "원단 근거 없으면 안 돈다"
+
+
+def test_fabric_pass_sends_product_photos_with_the_cut():
+    """가슴 2패스와 달리 **상품 사진을 함께** 보낸다 — 고칠 기준이 사진에 있다.
+
+    2026-08-01 관측: 같은 모델·해상도인데 인물 착용컷(2K)은 줄의 두 색 페어가 살고 마네킹컷(4K)은
+    단색으로 뭉갰다. 해상도가 아니라 구성 문제이므로, 표면 패턴만 과제로 분리해 다시 입힌다.
+    """
+    import asyncio
+    from app.workers import mannequin_job as mj
+
+    sent = {}
+
+    class _Gemini:
+        async def generate_content_image(self, model, prompt, images, size, aspect_ratio=None):
+            sent["images"] = images
+            sent["prompt"] = prompt
+            sent["size"] = size
+            return types.SimpleNamespace(image=b"edited", mime="image/png")
+
+    async def fake_emit(pool, job_id, et, payload):
+        sent.setdefault("events", []).append(payload)
+
+    s = types.SimpleNamespace(
+        mannequin_fabric_pass="on", mannequin_max_attempts=3, mannequin_image_size="2K",
+        mannequin_aspect_ratio="2:3", model_image_high="gemini-3-pro-image",
+        model_image_light="gemini-3.1-flash-image", model_text="gpt-5.4-mini")
+    mj._emit = fake_emit
+    res = types.SimpleNamespace(image=b"cut", mime="image/png")
+    prod = [mj.InlineImage("image/jpeg", b"front"), mj.InlineImage("image/jpeg", b"detail"),
+            mj.InlineImage("image/jpeg", b"back")]
+
+    out, spent = asyncio.run(mj._apply_fabric_pass(
+        pool=None, gemini=_Gemini(), s=s, job_id="j1", candidate="A", attempt=1,
+        res=res, prod_imgs=prod, calls_spent=0, has_fine_pattern=True, image_size="4K"))
+
+    assert spent is True and out.image == b"edited"
+    # 생성본 + 상품 사진 앞 2장 — 전부 넣으면 편집 과제가 다시 흐려진다
+    assert len(sent["images"]) == 3
+    assert sent["images"][0].data == b"cut"
+    assert sent["size"] == "4K", "승급된 해상도를 편집에서도 유지해야 한다"
+    assert "${" not in sent["prompt"]
+    assert any(e.get("status") == "fabric_pass" and e.get("outcome") == "applied"
+               for e in sent["events"])
+
+
 def test_untuck_pass_gate_and_single_task_call():
     """untuck 패스 — top/outer + 매칭 하의 첨부에서만, 생성본 1장·과제 1개로 호출된다.
 
@@ -1300,7 +1294,6 @@ def test_untuck_pass_gate_and_single_task_call():
     match = mj.InlineImage("image/png", b"bottom")
 
     out, spent = asyncio.run(mj._apply_untuck_pass(
-        budget=make_image_budget_gate(),
         pool=None, gemini=_Gemini(), s=s, job_id="j1", candidate="A", attempt=1,
         res=res, match_img=match, calls_spent=0, clothing_type="top", image_size="4K"))
 

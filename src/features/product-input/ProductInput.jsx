@@ -5,57 +5,53 @@
    Markup, classNames, inline styles, real file upload unchanged.
    ============================================================= */
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { api } from '@/lib/api/index.js';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { api, isMockMode } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
 import { isGenerationRelevantAnalysisPatch, useAppStore } from '@/store/useAppStore.js';
+import { generationWorkWarningKind } from '@/lib/generationWorkWarning.js';
+import { mannequinGenerationCreditShortfall } from '@/lib/creditPreflight.js';
+import { CREDIT_COSTS } from '@/lib/limits.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
-import { saveProductDraft, loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
-import { toUploadableImages } from '@/lib/imageTranscode.js';
-import { syncDraftToBackend } from '@/lib/draftSync.js';
+import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
+import {
+  clearDraft,
+  flushProductDraftSave,
+  hasPendingDraft,
+  loadDraft,
+  queueProductDraftSave,
+} from '@/lib/draftStore.js';
+import { isAnalysisRunning, setAnalysisRunning } from '@/lib/flowSession.js';
+import {
+  getUploadValidationError,
+  looksLikeImageFile,
+  MAX_UPLOAD_BYTES,
+  toUploadableImages,
+} from '@/lib/imageTranscode.js';
+import { resetDraftSyncSingleFlight, syncDraftToBackend } from '@/lib/draftSync.js';
 import { Icon, Button, IconButton, ErrorState, Skeleton, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
 import {
+  createTrailingPatchScheduler,
   hasPatchFields,
+  mergeColorMetadataWithPersistedImages,
   mergeLatestFailedAnalysisPatch,
   mergeProductOwnedAnalysisFields,
   persistAnalysisEdit,
+  registerAnalysisEditSave,
   splitAnalysisEditPatch,
 } from './saveRouting.js';
+import { getBaseSlotUploadRoom, getPendingTileCount, PENDING_TILE_DELAY_MS } from './pendingTiles.js';
+import { createProductPhotoPreviewRegistry } from './productPhotoPreviewRegistry.js';
+import {
+  invalidateStoryboardEntryPrefetch,
+  prefetchStoryboardEntry,
+} from '@/features/storyboard/storyboardEntryPrefetch.js';
+import { acknowledgeMannequinGenerationCancellation } from '@/features/mannequin/generationRunner.js';
 
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
-
-const TRUTH_PATTERN_TYPES = ['UNKNOWN', 'SOLID', 'STRIPE', 'CHECK', 'PLAID', 'PRINT', 'OTHER'];
-const ALWAYS_FINE_PATTERN_TYPES = new Set(['UNKNOWN', 'STRIPE', 'CHECK', 'PLAID']);
-const NEVER_FINE_PATTERN_TYPES = new Set(['SOLID']);
-const USER_TOGGLE_FINE_PATTERN_TYPES = new Set(['PRINT', 'OTHER']);
-
-function normalizeTruthPatternSpec(patternSpec = {}) {
-  const type = String(patternSpec.type || 'UNKNOWN').toUpperCase();
-  const safeType = TRUTH_PATTERN_TYPES.includes(type) ? type : 'OTHER';
-  let finePattern = Boolean(patternSpec.finePattern);
-  if (ALWAYS_FINE_PATTERN_TYPES.has(safeType)) finePattern = true;
-  if (NEVER_FINE_PATTERN_TYPES.has(safeType)) finePattern = false;
-  return { ...patternSpec, type: safeType, finePattern };
-}
-
-function patternProtectionForSpec(patternSpec = {}) {
-  return Boolean(normalizeTruthPatternSpec(patternSpec).finePattern);
-}
-
-function patternLabel(type) {
-  return {
-    UNKNOWN: '패턴 미확인',
-    SOLID: '무지',
-    STRIPE: '스트라이프',
-    CHECK: '체크',
-    PLAID: '플래드',
-    PRINT: '프린트',
-    OTHER: '기타 패턴',
-  }[String(type || 'UNKNOWN').toUpperCase()] || '패턴 미확인';
-}
 
 function ColorSwatchPicker({ swatchColors, value, onChange }) {
   return (
@@ -80,27 +76,60 @@ function ColorSwatchPicker({ swatchColors, value, onChange }) {
   );
 }
 
-// 확장자 폴백 — iOS/일부 브라우저는 HEIC 에 File.type 을 빈 문자열로 준다. type 만 믿고
-// 거르면 아이폰 사진이 선택 단계에서 조용히 사라진다(정확한 판별은 매직바이트가 한다).
-const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif|heic|heif|hif)$/i;
-const looksLikeImage = (f) => (f.type ? f.type.startsWith('image/') : IMAGE_EXT.test(f.name || ''));
-
 // build file metas from a FileList (drag-drop / picker), capping to the room left.
 // HEIC(아이폰 기본 포맷)는 여기서 JPEG 로 바꾼다 — 이 objectURL 이 미리보기·draft·업로드에
 // 그대로 흘러가므로(다운스트림이 fetch(src).blob() 으로 복원) 변환 지점은 여기 한 곳이면 된다.
 const filesToMetas = async (fileList, room) => {
-  const picked = [...fileList].filter(looksLikeImage).slice(0, Math.max(0, room));
-  if (!picked.length) return { metas: [], failed: [] };
-  const { files, failed } = await toUploadableImages(picked);
+  const selected = [...fileList];
+  const uploadableCandidates = selected.filter(looksLikeImageFile);
+  const skippedByType = selected
+    .filter((file) => !looksLikeImageFile(file))
+    .map((file) => ({ file, reason: 'not_image' }));
+  const availableRoom = Math.max(0, room);
+  const picked = uploadableCandidates.slice(0, availableRoom);
+  const skippedByRoom = uploadableCandidates.slice(availableRoom);
+  if (!picked.length) return {
+    metas: [], skippedByRoom, skippedByType, skippedBySize: [], transformFailed: [],
+  };
+  const { files, failed: transformFailed } = await toUploadableImages(picked);
+  const validFiles = [];
+  const skippedBySize = [];
+  for (const file of files) {
+    const reason = getUploadValidationError(file);
+    if (reason === 'unsupported_type') skippedByType.push({ file, reason });
+    else if (reason === 'file_too_large') skippedBySize.push({ file, reason });
+    else validFiles.push(file);
+  }
   return {
-    metas: files.map((f) => ({
+    metas: validFiles.map((f) => ({
       src: URL.createObjectURL(f), name: f.name, size: f.size,
-      type: f.type || 'image', lastModified: f.lastModified,
+      type: f.type, lastModified: f.lastModified,
     })),
-    failed,
+    skippedByRoom,
+    skippedByType,
+    skippedBySize,
+    transformFailed,
   };
 };
 const fileExt = (im) => (im.type && im.type.split('/')[1] ? im.type.split('/')[1].toUpperCase() : 'IMG');
+
+function restoreDraftProduct(draft) {
+  if (!draft?.product) return null;
+  const urlById = {};
+  for (const photo of draft.photos || []) {
+    try { urlById[photo.imageId] = URL.createObjectURL(photo.blob); } catch { /* skip */ }
+  }
+  return {
+    ...draft.product,
+    colors: (draft.product.colors || []).map((color) => ({
+      ...color,
+      images: (color.images || []).map((image) => ({
+        ...image,
+        src: urlById[image.id] || image.src,
+      })),
+    })),
+  };
+}
 
 // small file-meta caption shown over an uploaded image (name · size · type) — requested feature
 function MetaCap({ im }) {
@@ -113,27 +142,69 @@ function MetaCap({ im }) {
 }
 
 // add target that ALSO accepts drag-drop + click-to-pick (keeps original .tile.add / .up-empty styles)
-function AddDrop({ className, slot, room, onAddFiles, children }) {
+function AddDrop({ className, slot, room, onAddFiles, onPendingChange, children }) {
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);   // HEIC 변환 중 — 큰 사진은 1~2초 걸린다
   const inputRef = useRef(null);
+  const pendingTimerRef = useRef(null);
+  const mountedRef = useRef(true);
   const toast = useToast();
   const disabled = room <= 0 || busy;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearTimeout(pendingTimerRef.current);
+    };
+  }, []);
   const take = async (fileList) => {
+    const selected = [...fileList];
+    const skippedByType = selected.filter((file) => !looksLikeImageFile(file));
+    if (skippedByType.length) {
+      toast.push(`이미지 파일만 올릴 수 있어요 (${skippedByType.map((file) => file.name || '이 파일').join(', ')})`,
+        { icon: 'alertTri' });
+    }
+    const pendingCount = getPendingTileCount(selected, room);
     setBusy(true);
+    clearTimeout(pendingTimerRef.current);
+    if (pendingCount) {
+      pendingTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) onPendingChange(slot, pendingCount);
+      }, PENDING_TILE_DELAY_MS);
+    }
     try {
-      const { metas, failed } = await filesToMetas(fileList, room);
+      const {
+        metas, skippedByRoom, skippedByType: typeFailures, skippedBySize, transformFailed,
+      } = await filesToMetas(selected, room);
       if (metas.length) onAddFiles(slot, metas);
-      if (failed.length) {
-        toast.push(`${failed.length}장은 불러오지 못했어요. 다른 형식(JPG·PNG)으로 저장해 올려주세요.`,
+      if (skippedByRoom.length) {
+        toast.push(`남은 자리는 ${Math.max(0, room)}장이에요. ${skippedByRoom.map((file) => file.name || '이 사진').join(', ')}은(는) 추가하지 못했어요.`,
           { icon: 'alertTri' });
       }
+      for (const { file, reason } of typeFailures) {
+        if (reason === 'not_image') continue; // 선택 직후 이미 안내했다.
+        toast.push(`${file.name || '이 사진'}: 지원하지 않는 이미지 형식이에요. JPG·PNG·WEBP·GIF·AVIF로 저장해 다시 올려주세요.`,
+          { icon: 'alertTri' });
+      }
+      for (const { file } of skippedBySize) {
+        const message = file.size > MAX_UPLOAD_BYTES
+          ? `${file.name || '이 사진'}: 파일 용량이 25MB를 넘어요.`
+          : `${file.name || '이 사진'}: 빈 파일은 올릴 수 없어요.`;
+        toast.push(message, { icon: 'alertTri' });
+      }
+      for (const _failed of transformFailed) {
+        toast.push('이 사진을 불러오지 못했어요. JPG로 저장해 다시 올려주세요', { icon: 'alertTri' });
+      }
     } finally {
-      setBusy(false);
+      clearTimeout(pendingTimerRef.current);
+      if (mountedRef.current) {
+        onPendingChange(slot, 0);
+        setBusy(false);
+      }
     }
   };
   return (
-    <button type="button" className={`${className}${over ? ' over' : ''}`} disabled={disabled}
+    <button type="button" className={`${className}${over ? ' over' : ''}${busy ? ' is-busy' : ''}`} disabled={disabled}
       onClick={() => inputRef.current && inputRef.current.click()}
       onDragOver={(e) => { e.preventDefault(); if (!disabled) setOver(true); }}
       onDragLeave={() => setOver(false)}
@@ -146,9 +217,34 @@ function AddDrop({ className, slot, room, onAddFiles, children }) {
   );
 }
 
-function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, onRename, onRemoveGroup, onPickColor }) {
+function PendingTile({ small }) {
+  return (
+    <div className={`tile upload-placeholder${small ? ' sm' : ''}`} aria-hidden="true">
+      <span className="upload-placeholder-logo" />
+    </div>
+  );
+}
+
+function ProductPhotoPreview({ image, displayUrl }) {
+  const src = displayUrl(image.id, image.src);
+  return src
+    ? <img src={src} alt="" decoding="async" onError={(e) => { e.currentTarget.style.opacity = 0; }} />
+    : <span className="product-photo-preview-pending" aria-hidden="true" />;
+}
+
+function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, onRename, onRemoveGroup, onPickColor, displayUrl, photosLocked = false }) {
   const base = group.isBase;
   const used = group.images.length;
+  const [pendingBySlot, setPendingBySlot] = useState({});
+  const setSlotPending = (slot, count) => {
+    setPendingBySlot((current) => {
+      if (count) return { ...current, [slot]: count };
+      if (!current[slot]) return current;
+      const next = { ...current };
+      delete next[slot];
+      return next;
+    });
+  };
   const chosen = (swatchColors || []).find((s) => s.id === group.swatchId);
   // color indicator (dot + label); gray "색상 미정" until a swatch is picked
   const colorInd = (
@@ -161,26 +257,40 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
   const MAX = 6;
   const tiles = (s, small) => {
     const imgs = group.images.filter((im) => im.slot === s);
+    const room = base ? getBaseSlotUploadRoom(group.images, s, MAX) : MAX - used;
+    const pendingCount = getPendingTileCount(pendingBySlot[s], room);
     return (
       <div className="slot-tiles">
         {imgs.map((im) => (
           <div className={`tile${small ? ' sm' : ''}`} key={im.id}>
-            <img src={im.src} alt="" onError={(e) => { e.currentTarget.style.opacity = 0; }} />
-            <button className="rm" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>
+            <ProductPhotoPreview image={im} displayUrl={displayUrl} />
+            {!photosLocked && <button className="rm" aria-label="내가 업로드한 의류 사진 삭제" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>}
             <MetaCap im={im} />
           </div>
         ))}
-        <AddDrop className={`tile add${small ? ' sm' : ''}`} slot={s} room={MAX - used} onAddFiles={onAddFiles}>
-          <span className="add-ico"><Icon name="imagePlus" size={small ? 24 : 26} /></span>
-          <span className="add-cap"><span>이미지를</span><span>업로드해주세요</span></span>
-        </AddDrop>
+        {Array.from({ length: pendingCount }, (_, index) => (
+          <PendingTile key={`${s}-pending-${index}`} small={small} />
+        ))}
+        {!photosLocked && (
+          <AddDrop className={`tile add${small ? ' sm' : ''}`} slot={s} room={room}
+            onAddFiles={onAddFiles} onPendingChange={setSlotPending}>
+            {base && room <= 0 ? (
+              <span className="add-limit">최대 6장까지 이미지를 업로드할 수 있습니다.</span>
+            ) : (
+              <>
+                <span className="add-ico"><Icon name="imagePlus" size={small ? 24 : 26} /></span>
+                <span className="add-cap"><span>이미지를</span><span>업로드해주세요</span></span>
+              </>
+            )}
+          </AddDrop>
+        )}
       </div>
     );
   };
   // 2×2 angle "wells" — all four angles at a glance, images stack inside each
   const wellSlot = (s) => (
     <div className="slot-well" key={s}>
-      <div className="slot-well-head"><span className="swh-label">{slotLabel(s)}{s === 'Front' && <span className="req-star">*</span>}</span></div>
+      <div className="slot-well-head"><span className="swh-label">{slotLabel(s)}{(s === 'Front' || s === 'Back') && <span className="req-star">*</span>}</span></div>
       {tiles(s, true)}
     </div>
   );
@@ -192,9 +302,9 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
             <span className="color-swatch" style={{ background: chosen ? chosen.hex : '#e9e7ec' }} />
             <div className="sec-title" style={{ fontSize: 15 }}>{chosen ? chosen.label : group.name || '색상'}</div>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {!photosLocked && <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <IconButton name="trash" size="sm" onClick={onRemoveGroup} title="색상 삭제" />
-          </div>
+          </div>}
         </div>
       )}
 
@@ -207,14 +317,20 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
         <div className="slot-tiles">
           {group.images.map((im) => (
             <div className="tile" key={im.id}>
-              <img src={im.src} alt="" onError={(e) => { e.currentTarget.style.opacity = 0; }} />
-              <button className="rm" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>
+              <ProductPhotoPreview image={im} displayUrl={displayUrl} />
+              {!photosLocked && <button className="rm" aria-label="내가 업로드한 의류 사진 삭제" onClick={() => onRemove(im.id)}><Icon name="x" size={12} /></button>}
               <MetaCap im={im} />
             </div>
           ))}
-          <AddDrop className="tile add" slot="Front" room={3 - used} onAddFiles={onAddFiles}>
-            <Icon name="plus" size={16} />{used === 0 ? '정면 필수' : '추가'}
-          </AddDrop>
+          {Array.from({ length: getPendingTileCount(pendingBySlot.Front, 3 - used) }, (_, index) => (
+            <PendingTile key={`Front-pending-${index}`} />
+          ))}
+          {!photosLocked && (
+            <AddDrop className="tile add" slot="Front" room={3 - used}
+              onAddFiles={onAddFiles} onPendingChange={setSlotPending}>
+              <Icon name="plus" size={16} />{used === 0 ? '정면 필수' : '추가'}
+            </AddDrop>
+          )}
         </div>
       )}
 
@@ -222,6 +338,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
         <ColorSwatchPicker swatchColors={swatchColors} value={group.swatchId} onChange={onPickColor} />
       )}
 
+      {base && <p className="cap-note">앞면·뒷면 필수 · 현재 {used}장 / 최대 6장</p>}
       {!base && <p className="cap-note">정면 사진 필수 · 색상당 최대 3장 · 현재 {used}장</p>}
     </div>
   );
@@ -229,6 +346,7 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
 
 export function ProductInput() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [product, setProduct] = useState(null);
   const [catalogs, setCatalogs] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -239,9 +357,6 @@ export function ProductInput() {
   const [analysisReady, setAnalysisReady] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [analysisProjectId, setAnalysisProjectId] = useState(null);
-  const [productTruth, setProductTruth] = useState(null);
-  const [truthBusy, setTruthBusy] = useState(false);
-  const [truthDirty, setTruthDirty] = useState(false);
   const [expanded, setExpanded] = useState(false);
   // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드일 때만 내려온다(off 면 undefined).
   // 업로드 순간이 아니라 **생성으로 넘어가는 버튼**에서 한 번 띄운다 — 사진을 고르는 도중에
@@ -249,74 +364,57 @@ export function ProductInput() {
   const [inputConsistency, setInputConsistency] = useState(null);
   const [consistencyAck, setConsistencyAck] = useState(false);   // '계속 진행' 누른 뒤 재차 막지 않는다
   const [consistencyOpen, setConsistencyOpen] = useState(false);
+  // 성별·의류 종류 등 생성 관련 필드를 바꾸면 콘티/마네킹의 기존 작업이 무효화된다 — 적용을
+  // 보류하고 대가를 먼저 보여준다. 확정 전엔 화면·서버 어느 쪽에도 반영하지 않는다(취소=무해).
+  const [pendingRelevantPatch, setPendingRelevantPatch] = useState(null);
+  const [cancellingRelevantPatch, setCancellingRelevantPatch] = useState(false);
+  const [creditShortfall, setCreditShortfall] = useState(null);
+  const [creditResume, setCreditResume] = useState(() => (
+    location.state?.creditResume?.action === 'storyboard' ? location.state.creditResume : null
+  ));
   const { session, loading: authLoading, openLogin } = useAuth();
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
-
-  const editTruthCount = (field, raw, maximum) => {
-    const parsed = raw === '' ? null : Math.max(0, Math.min(maximum, Number(raw)));
-    setProductTruth((current) => current ? {
-      ...current,
-      garmentSpec: { ...(current.garmentSpec || {}), [field]: parsed },
-      protectedDetails: { ...(current.protectedDetails || {}), [field]: parsed != null && parsed > 0 },
-    } : current);
-    setTruthDirty(true);
-  };
-
-  const editTruthPatternType = (rawType) => {
-    const nextPattern = normalizeTruthPatternSpec({
-      ...(productTruth?.patternSpec || {}),
-      type: rawType,
+  const pushToast = toast.push;
+  const [, refreshPhotoPreviews] = useState(0);
+  const photoPreviewRegistryRef = useRef(null);
+  if (!photoPreviewRegistryRef.current) {
+    photoPreviewRegistryRef.current = createProductPhotoPreviewRegistry({
+      onChange: () => refreshPhotoPreviews((version) => version + 1),
     });
-    setProductTruth((current) => current ? {
-      ...current,
-      patternSpec: nextPattern,
-      protectedDetails: {
-        ...(current.protectedDetails || {}),
-        pattern: patternProtectionForSpec(nextPattern),
-      },
-    } : current);
-    setTruthDirty(true);
-  };
+  }
 
-  const editTruthFinePattern = (checked) => {
-    setProductTruth((current) => {
-      if (!current) return current;
-      const currentPattern = normalizeTruthPatternSpec(current.patternSpec || {});
-      if (!USER_TOGGLE_FINE_PATTERN_TYPES.has(currentPattern.type)) return current;
-      const nextPattern = { ...currentPattern, finePattern: Boolean(checked) };
-      return {
-        ...current,
-        patternSpec: nextPattern,
-        protectedDetails: {
-          ...(current.protectedDetails || {}),
-          pattern: patternProtectionForSpec(nextPattern),
-        },
-      };
-    });
-    setTruthDirty(true);
-  };
+  useEffect(() => {
+    if (!product || session) return;
+    queueProductDraftSave(product, analysis);
+  }, [analysis, product, session]);
 
-  const saveTruthEdits = async () => {
-    if (!productTruth || productTruth.status !== 'draft') return;
-    setTruthBusy(true);
-    try {
-      const patternSpec = normalizeTruthPatternSpec(productTruth.patternSpec || {});
-      const saved = await api.updateProductTruth(analysisProjectId, productTruth.id, {
-        garmentSpec: productTruth.garmentSpec || {},
-        patternSpec,
-        protectedDetails: {
-          ...(productTruth.protectedDetails || {}),
-          pattern: patternProtectionForSpec(patternSpec),
-        },
-      });
-      setProductTruth(saved);
-      setTruthDirty(false);
-      toast.push('수정한 상품 사실을 저장했어요.', { icon: 'check' });
-    } catch (error) {
-      toast.push(error?.message || '상품 사실 수정 내용을 저장하지 못했어요.', { icon: 'alertTri' });
-    } finally { setTruthBusy(false); }
-  };
+  useEffect(() => {
+    const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files');
+    const preventFileNavigation = (event) => {
+      if (hasFiles(event)) event.preventDefault();
+    };
+    const handleDocumentDrop = (event) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      if (!event.target?.closest?.('.tile.add')) {
+        pushToast('사진은 점선 칸에 올려주세요', { icon: 'alertTri' });
+      }
+    };
+    document.addEventListener('dragover', preventFileNavigation, true);
+    document.addEventListener('drop', handleDocumentDrop, true);
+    return () => {
+      document.removeEventListener('dragover', preventFileNavigation, true);
+      document.removeEventListener('drop', handleDocumentDrop, true);
+    };
+  }, [pushToast]);
+
+  useEffect(() => {
+    const images = product?.colors?.flatMap((color) => color.images || []) || [];
+    photoPreviewRegistryRef.current.sync(images);
+  }, [product]);
+
+  useEffect(() => () => photoPreviewRegistryRef.current.dispose(), []);
 
   // 분석 CTA — 마네킹부터는 로그인 필요. 서버 분석을 마친 로그인 사용자는 바로 이동한다.
   // 로컬 분석 결과는 먼저 IndexedDB 에 보관한다. 미로그인이면 로그인 모달을 띄우고, 이미
@@ -327,15 +425,76 @@ export function ProductInput() {
   const analysisSaveErrorRef = useRef(null);
   const failedAnalysisPatchRef = useRef(null);
   const latestAnalysisPatchRef = useRef({});
+  const persistedColorsRef = useRef([]);
+  const analysisPatchQueueRef = useRef(null);
+  const colorSaveSchedulerRef = useRef(null);
+  const storyboardPrefetchProjectRef = useRef(null);
+  const mannequinWorkCheckProjectRef = useRef(null);
+  const cancellingRelevantPatchRef = useRef(false);
+  const pendingRelevantWorkKindRef = useRef('none');
+  if (!colorSaveSchedulerRef.current) {
+    colorSaveSchedulerRef.current = createTrailingPatchScheduler({
+      commit: (patch) => analysisPatchQueueRef.current?.(patch),
+    });
+  }
+
+  const guardMannequinCredits = () => {
+    // 클릭 순간의 loadAccount 캐시만 읽는다. 비로그인·아직 계정을 못 불러온 상태는 과차단하지
+    // 않고 통과시키며, 실제 잔액 정합성은 기존 서버 402 방어선이 계속 책임진다.
+    const account = session ? useAppStore.getState().account : null;
+    const shortfall = mannequinGenerationCreditShortfall(account);
+    if (!shortfall) return true;
+    setCreditShortfall(shortfall);
+    return false;
+  };
+
+  // 콘티 이동은 아래에서 명시적으로 flush한다. 브라우저 뒤로가기처럼 cleanup을 기다릴 수 없는
+  // 이탈도 보류 저장을 시작하고, 콘티 쪽 프로젝트별 저장 barrier가 성공한 PATCH와 GET을 직렬화한다.
+  useEffect(() => () => colorSaveSchedulerRef.current?.flush(), []);
+  // 마네킹 컷이 이미 만들어져 있는가 — 성별·의류 종류를 바꾸는 경고를 띄울지 판정하는 신호.
+  // 콘티(getStoryboard)는 저장분이 없으면 화면이 매번 기본 시드를 만들어 돌려주므로("보드가
+  // 있다"가 늘 참이 되어 못 쓴다) — 실제로 셀러/시스템이 만든, 유료 산출물인 마네킹 컷의 존재로
+  // 판정한다. 이 흐름(입력→콘티→마네킹)에서 컷은 콘티 진입 시 백그라운드로 생성되므로, 컷이
+  // 있다는 것은 곧 콘티(따라서 그 안의 세트 선택)도 이미 거쳤다는 뜻 — 두 비용을 함께 경고해도 된다.
+  const hasExistingGenerationWorkRef = useRef(false);
+  // 컷이 아직 0장이어도 "이 프로젝트의 마네킹 생성이 지금 돌고 있다"면 같은 경고 대상이다 —
+  // job 이 끝나면 방금 바꾼 값이 아니라 옛 선택으로 만든 유료 컷이 도착하고, 마네킹 화면의
+  // dirty 플래그가 그걸 또 한 번 유료로 다시 만든다(두 번 과금). 완료를 기다렸다가 컷의 존재로
+  // 판정하면 이미 늦으므로, 진행률처럼 시시각각 바뀌는 이 신호는 ref 가 아니라 store 구독으로
+  // 읽는다 — 리렌더를 타야 이 화면에 머무는 동안의 실제 상태 변화(러너가 job 시작을 알리거나
+  // 완료로 정리되는 순간)를 놓치지 않는다. status/projectId 만 구독해 progress 틱마다
+  // 리렌더하지 않는다(불필요한 리렌더 방지).
+  const mannequinJobStatus = useAppStore((s) => s.mannequinJob.status);
+  const mannequinJobProjectId = useAppStore((s) => s.mannequinJob.projectId);
+
+  // 분석 결과를 사용자가 검토하는 동안 다음 화면(콘티)을 미리 데운다. analysisProjectId 는
+  // submit() 시작 시점(사진 업로드·저장·분석보다 먼저)에 이미 잡히므로 그것만으로는 이르다 —
+  // 콘티 시드가 읽는 필드(colors·clothingType·targetGenders)가 전부 서버에 반영된 뒤인
+  // phase==='done'(기존 프로젝트 재진입·초안 동기화·최초 분석 완료 세 경로 모두 이 시점엔
+  // 관련 저장이 끝나 있다)까지 함께 기다린다.
+  useEffect(() => {
+    if (!analysisProjectId || phase !== 'done') return;
+    if (storyboardPrefetchProjectRef.current === analysisProjectId) return;
+    storyboardPrefetchProjectRef.current = analysisProjectId;
+    void prefetchStoryboardEntry(analysisProjectId);
+  }, [analysisProjectId, phase]);
+
+  useEffect(() => {
+    if (!analysisProjectId || phase !== 'done') return;
+    if (mannequinWorkCheckProjectRef.current === analysisProjectId) return;
+    mannequinWorkCheckProjectRef.current = analysisProjectId;
+    let alive = true;
+    api.getMannequins(analysisProjectId).then((cuts) => {
+      if (alive) hasExistingGenerationWorkRef.current = (cuts || []).length > 0;
+    }).catch(() => { /* 조회 실패는 경고를 생략한다 — 방해가 안전보다 나쁘다 */ });
+    return () => { alive = false; };
+  }, [analysisProjectId, phase]);
   // force: 경고 모달에서 '계속 진행'을 누른 경로. setState 는 비동기라 ack 상태를 기다릴 수
   // 없어 인자로 넘긴다. onNext 콜백이 이벤트 객체를 넘겨도 force 는 undefined 라 안전하다.
-  const goToMannequin = async (opts) => {
+  const goToStoryboard = async (opts) => {
     const force = opts?.force === true;   // null·이벤트 객체로 불려도 안전하게
     if (redirectingRef.current) return; // 더블클릭/재진입 가드 (blob 추출 await 중)
-    if (productTruth && productTruth.status !== 'approved') {
-      toast.push('상품 사실 검토를 승인한 뒤 마네킹 생성을 시작해 주세요.', { icon: 'alertTri' });
-      return;
-    }
+    if (!guardMannequinCredits()) return;
     // 다른 옷이 섞였을 수 있다는 경고 — 생성에 들어가기 직전 한 번만. 확인하면 그대로 진행한다
     // (차단이 아니다. 판정이 틀렸을 때 셀러가 갇히면 경고가 없느니만 못하다).
     if (inputConsistency && !consistencyAck && !force) {
@@ -344,6 +503,7 @@ export function ProductInput() {
     }
     redirectingRef.current = true;
     try {
+      colorSaveSchedulerRef.current.flush();
       // 직전 입력 이벤트의 PATCH가 getAnalysis보다 늦게 도착하는 레이스를 막는다. 모든 분석 저장을
       // 입력 순서대로 직렬화하고, 확정은 현재 큐까지만 기다린 뒤 이동/재생성을 시작한다.
       await analysisSaveChainRef.current;
@@ -357,31 +517,119 @@ export function ProductInput() {
         }
       }
       if (analysisSaveErrorRef.current) throw analysisSaveErrorRef.current;
-      // 이벤트 시점에만 읽어 분석 편집마다 ProductInput 전체가 다시 렌더되지 않게 한다.
-      const routeState = useAppStore.getState().generationRelevantEditsDirty
-        ? { refreshForEdits: true }
-        : undefined;
-      if (session && analysisProjectId) {
-        navigate('/create/mannequin', { state: routeState });
+      if ((session || isMockMode) && analysisProjectId) {
+        useAppStore.getState().confirmProductInfo(analysisProjectId);
+        navigate('/create/storyboard', { state: { showMannequinTransition: true } });
         return;
       }
-      const { failed } = await saveProductDraft(product, analysis);
+      queueProductDraftSave(product, analysis);
+      const { failed = 0 } = await flushProductDraftSave() || {};
       if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri' });
       if (session) {
         const draft = await loadDraft();
         if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
         const { projectId } = await syncDraftToBackend(draft);
-        useAppStore.getState().adoptProject(projectId);
+        // 게스트로 편집(재생성 신호 dirty)한 뒤 세션이 생겨 여기서 처음 project 를 얻는 경로 —
+        // '다른 작업으로 전환'이 아니라 같은 작업이 신원을 얻는 것뿐이라 신호를 지우면 안 된다.
+        useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
         setAnalysisProjectId(projectId);
-        await clearDraft().catch(() => {});
-        navigate('/create/mannequin', { state: routeState });
+        await clearDraft().then(() => { resetDraftSyncSingleFlight(); }).catch(() => {});
+        useAppStore.getState().confirmProductInfo(projectId);
+        navigate('/create/storyboard', { state: { showMannequinTransition: true } });
         return;
       }
-      openLogin('/create/mannequin');
+      openLogin('/create/storyboard');
     } catch (error) {
       toast.push(error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     } finally {
       redirectingRef.current = false;
+    }
+  };
+
+  const queueAnalysisPatch = (patch) => {
+    // 후보 목록은 서버 소유 — 추천 갱신 패치뿐 아니라 선택 토글 응답도
+    // 서버 머지 결과로 동기화해 묵은 후보가 로컬에 남지 않게 한다.
+    const syncMatch = isMatchRecommendationPatch(patch) || 'matchClothing' in patch;
+    latestAnalysisPatchRef.current = { ...latestAnalysisPatchRef.current, ...patch };
+    if (failedAnalysisPatchRef.current) {
+      failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
+        failedAnalysisPatchRef.current,
+        patch,
+        latestAnalysisPatchRef.current,
+      );
+    }
+    analysisSaveChainRef.current = analysisSaveChainRef.current
+      .then(() => persistAnalysisEdit(api, analysisProjectId, patch))
+      .then(({ analysis: savedAnalysis, product: savedProduct }) => {
+        if (!failedAnalysisPatchRef.current) analysisSaveErrorRef.current = null;
+        if ('colors' in patch) persistedColorsRef.current = savedProduct?.colors || patch.colors;
+        if (!savedAnalysis) return;
+        if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: savedAnalysis.matchClothing }));
+      })
+      .catch((error) => {
+        failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
+          failedAnalysisPatchRef.current,
+          patch,
+          latestAnalysisPatchRef.current,
+        );
+        analysisSaveErrorRef.current = error;
+        toast.push(error?.message || '분석 수정 내용을 저장하지 못했어요.', { icon: 'alertTri' });
+      });
+    registerAnalysisEditSave(analysisProjectId, analysisSaveChainRef.current);
+  };
+  analysisPatchQueueRef.current = queueAnalysisPatch;
+
+  // 분석 폼의 편집 하나를 실제로 화면·서버에 반영한다. 생성 관련 필드(성별·의류 종류 등)를
+  // 바꿀 때 기존 작업이 있으면 이 함수를 곧장 부르지 않고 경고 모달의 확정을 거친다 — 취소하면
+  // 아예 호출되지 않으므로 화면·서버 어디에도 흔적이 남지 않는다.
+  const applyAnalysisPatch = (patch) => {
+    if (isGenerationRelevantAnalysisPatch(patch)) {
+      useAppStore.getState().markGenerationRelevantEdits();
+    }
+    const { productPatch } = splitAnalysisEditPatch(patch);
+    setProduct((p) => (hasPatchFields(productPatch) ? { ...p, ...productPatch } : p));
+    setAnalysis((a) => ({ ...a, ...patch }));
+    queueAnalysisPatch(patch);
+  };
+
+  // 'cuts' = 컷이 이미 있음(다시 만들어야 함) · 'running' = 컷은 없지만 이 프로젝트의 생성이
+  // 지금 돌고 있음(끝나면 방금 바꾼 값이 아니라 옛 선택으로 완성됨) · 'none' = 잃을 게 없음.
+  const generationWorkKind = generationWorkWarningKind({
+    cutsExist: hasExistingGenerationWorkRef.current,
+    jobStatus: mannequinJobStatus,
+    jobProjectId: mannequinJobProjectId,
+    projectId: analysisProjectId,
+  });
+
+  // 생성 관련 필드 편집 요청 — 기존 작업(마네킹 컷이 있거나, 지금 생성이 도는 중)이 있으면
+  // 바로 적용하지 않고 대가를 먼저 보여준다. 없으면(새 프로젝트의 첫 분석 검토) 잃을 게
+  // 없으니 그대로 적용해 방해하지 않는다.
+  const onAnalysisFormChange = (patch) => {
+    if (isGenerationRelevantAnalysisPatch(patch) && generationWorkKind !== 'none') {
+      pendingRelevantWorkKindRef.current = generationWorkKind;
+      setPendingRelevantPatch(patch);
+      return;
+    }
+    applyAnalysisPatch(patch);
+  };
+
+  const confirmRunningRelevantPatch = async () => {
+    if (cancellingRelevantPatchRef.current || !pendingRelevantPatch) return;
+    if (!guardMannequinCredits()) return;
+    cancellingRelevantPatchRef.current = true;
+    setCancellingRelevantPatch(true);
+    const patch = pendingRelevantPatch;
+    try {
+      const { credits } = await api.cancelMannequinGeneration(analysisProjectId);
+      useAppStore.getState().syncCredits(credits);
+      acknowledgeMannequinGenerationCancellation(analysisProjectId);
+      setPendingRelevantPatch(null);
+      applyAnalysisPatch(patch);
+    } catch (error) {
+      toast.push(error?.message || '마네킹컷 생성을 취소하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+    } finally {
+      cancellingRelevantPatchRef.current = false;
+      setCancellingRelevantPatch(false);
     }
   };
 
@@ -393,36 +641,69 @@ export function ProductInput() {
       // 현재 project 를 읽고, project 가 없으면 null 계약의 클라이언트 시드 템플릿을 쓴다.
       const { projectId: currentProjectId, projectPersisted } = useAppStore.getState();
       const editingProjectId = projectPersisted && currentProjectId ? currentProjectId : null;
-      const [p, c, existingAnalysis, existingProductTruth] = await Promise.all([
+      const [p, c, existingAnalysis] = await Promise.all([
         api.getProduct(editingProjectId),
         api.getCatalogs(),
         editingProjectId ? api.getAnalysis(editingProjectId) : Promise.resolve(null),
-        editingProjectId && api.getProductTruth
-          ? api.getProductTruth(editingProjectId).catch((error) => {
-            if (error?.status === 404) return null;
-            throw error;
-          })
-          : Promise.resolve(null),
       ]);
       if (!alive) return;
       setCatalogs(c);
+      persistedColorsRef.current = p.colors || [];
+      const analysisWasRunning = editingProjectId && isAnalysisRunning(editingProjectId);
 
       // 같은 탭에서 마네킹/후속 단계로 갔다가 input 으로 돌아온 경우에는 현재 프로젝트를
       // 편집한다. cold input 은 라우트 계층이 먼저 beginProject 해서 여기까지 stale id가 오지 않는다.
       // getAnalysis 는 미저장이어도 {projectId} 봉투를 돌려주므로 truthy — payload 실존 여부로
       // 판정해야 분석이 실패한 프로젝트가 빈 '고스트' 분석 폼으로 뜨는 걸 막는다(F3 진입로).
-      if (editingProjectId && existingAnalysis && Object.keys(existingAnalysis).length > 1) {
+      if (editingProjectId && existingAnalysis && Object.keys(existingAnalysis).length > 1
+          && (!analysisWasRunning || !isMockMode)) {
+        setAnalysisRunning(editingProjectId, false);
         setProduct(p);
         setAnalysis(mergeProductOwnedAnalysisFields(existingAnalysis, p));
         // 저장분에서 경고를 복원한다 — 이게 없으면 새로고침·재진입한 탭에서만 게이트가
         // 사라져 그대로 통과한다(분석 직후 탭에서는 멀쩡히 뜨므로 재현이 헷갈린다).
         setInputConsistency(existingAnalysis.inputConsistency || null);
         setAnalysisProjectId(editingProjectId);
-        // Product Truth는 분석 직후뿐 아니라 기존 프로젝트 재진입에서도 같은 revision을 보여준다.
-        // legacy 프로젝트(행 없음=404)는 null로 유지한다. DB/네트워크 오류는 바깥 로드 오류로
-        // 올려 사용자가 재시도하게 한다. 승인 사실을 숨긴 채 다음 단계로 보내면 안 된다.
-        setProductTruth(existingProductTruth || null);
         setPhase('done');
+        return;
+      }
+
+      // 분석 요청 직후 새로고침된 탭은 서버 상품(영속 asset URL 포함)을 먼저 보여주고,
+      // 같은 analyze 호출로 활성 job 에 합류한다. 완료된 분석이 방금 저장됐다면 위 분기가 맡는다.
+      if (analysisWasRunning) {
+        // mock 은 메모리 DB도 새로 로드되므로 서버 역할의 seed만으로는 방금 올린 blob을
+        // 복구할 수 없다. 같은 탭 IndexedDB draft를 사진 소스로 사용하되 getProduct 호출은 유지한다.
+        const mockDraft = isMockMode && hasPendingDraft()
+          ? await loadDraft().catch(() => null)
+          : null;
+        const recoveredProduct = restoreDraftProduct(mockDraft) || p;
+        setProduct(recoveredProduct);
+        setAnalysisProjectId(editingProjectId);
+        setPhase('analyzing');
+        try {
+          const a = await api.analyzeProduct(editingProjectId, {});
+          if (!alive) return;
+          const analyzedProductPatch = splitAnalysisEditPatch(a).productPatch;
+          const finalName = (recoveredProduct.name && recoveredProduct.name.trim()) || a.suggestedName || '새 상품';
+          const nextProduct = { ...recoveredProduct, name: finalName, ...analyzedProductPatch };
+          if (hasPatchFields(analyzedProductPatch)) {
+            await api.saveProduct(editingProjectId, analyzedProductPatch);
+          }
+          if (!recoveredProduct.name?.trim()) await api.saveProduct(editingProjectId, { name: finalName });
+          if (!alive) return;
+          persistedColorsRef.current = nextProduct.colors || [];
+          setProduct(nextProduct);
+          setAnalysis(mergeProductOwnedAnalysisFields(a, nextProduct));
+          setInputConsistency(a.inputConsistency || null);
+          setConsistencyAck(false);
+          setAnalysisRunning(editingProjectId, false);
+          setAnalysisReady(true);
+        } catch (error) {
+          if (!alive) return;
+          setAnalysisRunning(editingProjectId, false);
+          setPhase('input');
+          toast.push(error?.message || '진행 중인 분석에 다시 연결하지 못했어요. 다시 시도해 주세요.', { icon: 'alert' });
+        }
         return;
       }
 
@@ -434,23 +715,20 @@ export function ProductInput() {
       const draft = hasPendingDraft() ? await loadDraft().catch(() => null) : null;
       if (!alive) return;
       if (draft?.product) {
-        const urlById = {};
-        for (const ph of draft.photos || []) {
-          try { urlById[ph.imageId] = URL.createObjectURL(ph.blob); } catch { /* skip */ }
-        }
-        const restored = {
-          ...draft.product,
-          colors: (draft.product.colors || []).map((col) => ({
-            ...col,
-            images: (col.images || []).map((im) => ({ ...im, src: urlById[im.id] || im.src })),
-          })),
-        };
+        const restored = restoreDraftProduct(draft);
+        persistedColorsRef.current = restored.colors || [];
         setProduct(restored);
-        // 분석 결과 복원 → 분석 폼(done)으로 바로. 단 정면 사진이 추출 실패로 빠졌으면 입력
-        // 단계로 둬서 '정면 필수' 검증이 재업로드를 강제하게 한다(검증 우회 방지).
-        // 정면 판정은 product 메타데이터가 아니라 실제 저장된 photo blob(photos[]) 기준 — 더 안전.
-        const restoredHasFront = (draft.photos || []).some((p) => p.slot === 'Front');
-        if (draft.analysis && restoredHasFront) { setAnalysis(draft.analysis); setPhase('done'); }
+        // 분석 결과 복원 → 분석 폼(done)으로 바로. 단 필수 사진(앞면·뒷면)이 추출 실패로
+        // 빠졌으면 입력 단계로 둬서 필수 검증이 재업로드를 강제하게 한다(검증 우회 방지).
+        // 판정은 product 메타데이터가 아니라 실제 저장된 photo blob(photos[]) 기준이고,
+        // 입력 게이트와 동일하게 **기준 색상**의 사진만 인정한다 — 추가 색상 Front 가
+        // 기준 색상 Front 유실을 가리면 안 된다 (2026-08-07 Codex 리뷰 P2).
+        const draftColors = draft.product?.colors || [];
+        const draftBase = draftColors.find((c) => c.isBase) || draftColors[0];
+        const restoredHasRequired = !!draftBase
+          && (draft.photos || []).some((p) => p.colorId === draftBase.id && p.slot === 'Front')
+          && (draft.photos || []).some((p) => p.colorId === draftBase.id && p.slot === 'Back');
+        if (draft.analysis && restoredHasRequired) { setAnalysis(draft.analysis); setPhase('done'); }
         return;
       }
 
@@ -475,16 +753,63 @@ export function ProductInput() {
   const set = (patch) => setProduct((p) => ({ ...p, ...patch }));
   // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
   const addImageFiles = (colorId, slot, metas) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: [...c.images, ...metas.map((m) => ({ id: uid('img'), slot, label: slot, ...m }))] } : c) }));
-  const removeImage = (colorId, imgId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: c.images.filter((im) => im.id !== imgId) } : c) }));
-  const renameColor = (colorId, name) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, name } : c) }));
-  const setColor = (colorId, swatchId) => setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, swatchId } : c) }));
-  const addColor = () => setProduct((p) => p.colors.length >= 3 ? p : ({ ...p, colors: [...p.colors, { id: uid('col'), name: '', isBase: false, images: [] }] }));
-  const removeColor = (colorId) => setProduct((p) => ({ ...p, colors: p.colors.filter((c) => c.id !== colorId) }));
+  const removeImage = (colorId, imgId) => {
+    photoPreviewRegistryRef.current.release(imgId);
+    setProduct((p) => ({ ...p, colors: p.colors.map((c) => c.id === colorId ? { ...c, images: c.images.filter((im) => im.id !== imgId) } : c) }));
+  };
+  const editColors = (change) => {
+    const colors = change(product.colors);
+    if (colors === product.colors) return;
+    setProduct((p) => ({ ...p, colors }));
+    if (phase === 'done') {
+      setAnalysis((a) => ({ ...a, colors }));
+      const persistedColors = mergeColorMetadataWithPersistedImages(
+        persistedColorsRef.current,
+        colors,
+      );
+      // 저장 타이머보다 먼저 캐시를 닫아, 브라우저 뒤로가기가 묵은 콘티 시드를 즉시 읽지 않게 한다.
+      if (analysisProjectId) invalidateStoryboardEntryPrefetch(analysisProjectId);
+      // 스와치 연타는 화면에 즉시 보이되, 마지막 colors 패치 하나만 기존 저장 큐로 보낸다.
+      colorSaveSchedulerRef.current.schedule({ colors: persistedColors });
+    }
+  };
+  const renameColor = (colorId, name) => editColors((colors) => (
+    colors.map((c) => c.id === colorId ? { ...c, name } : c)
+  ));
+  const setColor = (colorId, swatchId) => editColors((colors) => (
+    colors.map((c) => c.id === colorId ? { ...c, swatchId } : c)
+  ));
+  const addColor = () => editColors((colors) => colors.length >= 3
+    ? colors
+    : [...colors, { id: uid('col'), name: '', isBase: false, images: [] }]);
+  const removeColor = (colorId) => editColors((colors) => {
+    colors.find((color) => color.id === colorId)?.images.forEach((image) => {
+      photoPreviewRegistryRef.current.release(image.id);
+    });
+    return colors.filter((c) => c.id !== colorId);
+  });
 
-  const hasFront = product.colors.some((c) => c.images.some((im) => im.slot === 'Front'));
+  // 필수 판정은 기준 색상 기준 — AI가 소비하는 것이 기준 색상 이미지라서(스펙 §4).
+  const baseColor = product.colors.find((c) => c.isBase) || product.colors[0];
+  const hasFront = !!baseColor?.images.some((im) => im.slot === 'Front');
+  const hasBack = !!baseColor?.images.some((im) => im.slot === 'Back');
   const hasName = !!(product.name && product.name.trim());
-  const canDone = hasFront && phase === 'input' && !authLoading;
+  const canDone = hasFront && hasBack && phase === 'input' && !authLoading;
+  const disabledReason = !hasFront && !hasBack
+    ? '앞면·뒷면 사진이 각 1장 필요해요'
+    : !hasFront
+      ? '앞면 사진이 필요해요'
+      : !hasBack
+        ? '뒷면 사진이 필요해요'
+        : authLoading
+          ? '로그인 상태를 확인하고 있어요.'
+          : '';
   const locked = phase !== 'input';
+  const startOver = async () => {
+    setConsistencyOpen(false);
+    await useAppStore.getState().beginProject();
+    navigate('/create/input', { replace: true });
+  };
 
   // AI 분석하기 → analyze inline (skeleton below) → fill analysis form below
   const submit = async () => {
@@ -493,10 +818,14 @@ export function ProductInput() {
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
     try {
+      if (!session) {
+        queueProductDraftSave(product, analysis);
+        await flushProductDraftSave();
+      }
       // 보관함 프로젝트(서버 행)는 바로 이 시점에 생성한다 — '상세페이지 제작' 진입이 아니라
       // AI 분석을 시작할 때. createProject 는 토큰이 필요하므로 로그인 사용자만 생성하고,
       // 비로그인 공개 분석은 서버 project 없이 진행(프로젝트 생성은 로그인 후 단계가 담당).
-      const pid = session ? await useAppStore.getState().ensureProject() : null;
+      const pid = (session || isMockMode) ? await useAppStore.getState().ensureProject() : null;
       // 인증 상태가 이후 바뀌어도 이 분석·편집은 시작할 때 선택한 backend/project에 고정한다.
       setAnalysisProjectId(pid);
       // 사진을 서버에 먼저 올리고(images[].id=asset id) 상품을 저장한다 — http 분석 워커는
@@ -509,6 +838,7 @@ export function ProductInput() {
       await api.saveProduct(pid, {
         colors: uploaded.colors, uploadComplete: true, ...(enteredName ? { name: enteredName } : {}),
       });
+      setAnalysisRunning(pid, true);
       const a = await api.analyzeProduct(pid, {});
       const analyzedProductPatch = splitAnalysisEditPatch(a).productPatch;
       // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 서버에도 반영
@@ -518,6 +848,7 @@ export function ProductInput() {
         name: finalName,
         ...analyzedProductPatch,
       };
+      persistedColorsRef.current = nextProduct.colors || [];
       setProduct(nextProduct);
       if (hasPatchFields(analyzedProductPatch)) {
         await api.saveProduct(pid, analyzedProductPatch);
@@ -529,15 +860,13 @@ export function ProductInput() {
       if (!enteredName) {
         await api.saveProduct(pid, { name: finalName });
       }
-      if (pid && api.getProductTruth) {
-        const truth = await api.getProductTruth(pid).catch(() => null);
-        setProductTruth(truth);
-      }
       // 즉시 전환하지 않는다 — 대기 연출이 잔여 단계를 빠르게 완주한 뒤 onFinished 에서 전환.
       setAnalysisReady(true);
+      setAnalysisRunning(pid, false);
     } catch (e) {
       // http 모드에서 분석 실패(네트워크·서버 에러)해도 스피너에 고착되지 않게 — 입력으로 복귀 + 안내.
       setPhase('input');
+      setAnalysisRunning(useAppStore.getState().projectId, false);
       toast.push(e?.message || '분석에 실패했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
@@ -545,10 +874,14 @@ export function ProductInput() {
   const nameCard = (
     <div className="surface">
       <div className="sec-head">
-        <div><div className="sec-title">상품명</div></div>
+        <div><div className="sec-title">상품명 <span className="pi-optional-label">(선택 — 비우면 AI가 지어드려요)</span></div></div>
       </div>
       <input className="field" value={product.name} placeholder="예: 소프트 골지 라운드 니트"
-        disabled={locked} onChange={(e) => set({ name: e.target.value })} />
+        disabled={phase === 'analyzing'} onChange={(e) => {
+          const name = e.target.value;
+          set({ name });
+          if (phase === 'done') colorSaveSchedulerRef.current.schedule({ name });
+        }} />
     </div>
   );
 
@@ -562,11 +895,13 @@ export function ProductInput() {
           <span className="pill pill-soft">{imgCount}장</span>
         </div>
       </div>
-      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16 }}>각도별로 한 장 이상 올리면 더 정확한 상세페이지가 만들어져요. 앞면은 필수예요.</div>
+      <div className="sec-sub" style={{ marginTop: -6, marginBottom: 16 }}>각도별로 한 장 이상 올리면 더 정확한 상세페이지가 만들어져요. 앞면·뒷면은 필수예요 — 뒷면이 없으면 뒷모습 컷을 만들 수 없어요.</div>
       {product.colors.map((c) => (
         <ColorImageGroup key={c.id} group={c} catalogs={catalogs} swatchColors={catalogs.swatchColors}
           onAddFiles={(slot, metas) => addImageFiles(c.id, slot, metas)} onRemove={(id) => removeImage(c.id, id)}
-          onRename={(n) => renameColor(c.id, n)} onRemoveGroup={() => removeColor(c.id)} onPickColor={(sid) => setColor(c.id, sid)} />
+          onRename={(n) => renameColor(c.id, n)} onRemoveGroup={() => removeColor(c.id)} onPickColor={(sid) => setColor(c.id, sid)}
+          displayUrl={(imageId, originalUrl) => photoPreviewRegistryRef.current.displayUrl(imageId, originalUrl)}
+          photosLocked={phase === 'done'} />
       ))}
       {!locked && (
         <div style={{ marginTop: 16 }}>
@@ -589,7 +924,10 @@ export function ProductInput() {
     <div className="surface pi-summary">
       <div className="pi-summary-row">
         <div className="pi-summary-thumbs">
-          {allImages.slice(0, 5).map((im) => <img key={im.id} src={im.src} alt="" />)}
+          {allImages.slice(0, 5).map((im) => {
+            const src = photoPreviewRegistryRef.current.displayUrl(im.id, im.src);
+            return src ? <img key={im.id} src={src} alt="" decoding="async" /> : null;
+          })}
           {allImages.length > 5 && <span className="more">+{allImages.length - 5}</span>}
         </div>
         <div className="pi-summary-meta">
@@ -607,6 +945,33 @@ export function ProductInput() {
   return (
     <div className={`wizard${wide ? ' wide' : ''}`}>
       {doneBlocked && <DoneGuardModal />}
+      {creditShortfall && (
+        <CreditShortfallModal
+          shortfall={creditShortfall}
+          action="storyboard"
+          onClose={() => setCreditShortfall(null)}
+        />
+      )}
+      {creditResume && (
+        <Modal onClose={() => {
+          setCreditResume(null);
+          navigate(location.pathname, { replace: true, state: null });
+        }}>
+          <h3>이어서 진행할까요? · {creditResume.requiredCredits}크레딧</h3>
+          <p>충전 전 멈춘 작업이에요. 크레딧 사용을 다시 확인해 주세요.</p>
+          <div className="modal-actions">
+            <Button variant="ghost" onClick={() => {
+              setCreditResume(null);
+              navigate(location.pathname, { replace: true, state: null });
+            }}>나중에</Button>
+            <Button variant="primary" onClick={() => {
+              setCreditResume(null);
+              navigate(location.pathname, { replace: true, state: null });
+              goToStoryboard();
+            }}>이어서 진행</Button>
+          </div>
+        </Modal>
+      )}
       {consistencyOpen && inputConsistency && (
         <Modal onClose={() => setConsistencyOpen(false)}>
           <h3>사진을 한 번만 확인해 주세요</h3>
@@ -623,14 +988,9 @@ export function ProductInput() {
             <Button variant="ghost" onClick={() => {
               setConsistencyAck(true);
               setConsistencyOpen(false);
-              goToMannequin({ force: true });
+              goToStoryboard({ force: true });
             }}>이대로 진행</Button>
-            {/* 사진을 고치러 가는 쪽이 기본 행동 — 분석 결과는 그대로 두고 입력만 펼친다 */}
-            <Button variant="primary" onClick={() => {
-              setConsistencyOpen(false);
-              setExpanded(true);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}>사진 수정하기</Button>
+            <Button variant="primary" onClick={startOver}>처음부터 다시 하기</Button>
           </div>
         </Modal>
       )}
@@ -657,7 +1017,7 @@ export function ProductInput() {
             ))}
           </ul>
           <p className="hint" style={{ marginTop: 8 }}>
-            잘못 올린 사진이면 위에서 펼쳐 교체해주세요. 맞다면 그대로 진행해도 괜찮아요.
+            잘못 올린 사진이면 처음부터 다시 시작해주세요. 맞다면 그대로 진행해도 괜찮아요.
           </p>
         </div>
       )}
@@ -665,10 +1025,9 @@ export function ProductInput() {
       {phase === 'input' && (
         <>
           <WizardCTA>
+            {disabledReason && <span className="wizard-cta-reason">{disabledReason}</span>}
             <Button variant="primary" size="lg" icon="check" disabled={!canDone} onClick={submit}>AI 분석하기</Button>
           </WizardCTA>
-          {!hasFront && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>앞면 이미지를 1장 이상 올리면 입력을 완료할 수 있어요.</p>}
-          {hasFront && authLoading && <p className="hint" style={{ textAlign: 'right', marginTop: 8 }}>로그인 상태를 확인하고 있어요.</p>}
         </>
       )}
 
@@ -684,141 +1043,44 @@ export function ProductInput() {
       )}
       {phase === 'done' && (
         <div className="pi-reveal">
-          {productTruth && (
-            <section className="surface" aria-label="상품 사실 검토" style={{ marginBottom: 16 }}>
-              <h3>상품 사실 검토</h3>
-              <p className="hint">
-                AI가 읽은 상품 종류·색상·패턴·단추·주머니·보호 디테일입니다. 승인된 내용만
-                이미지 생성과 품질 검사 기준으로 사용됩니다.
-              </p>
-              <p>
-                {(productTruth.garmentSpec?.subcategory || productTruth.garmentSpec?.category || '의류')}
-                {' · '}{patternLabel(productTruth.patternSpec?.type)}
-                {' · 단추 '}{productTruth.garmentSpec?.buttonCount ?? '미확인'}
-                {' · 주머니 '}{productTruth.garmentSpec?.pocketCount ?? '미확인'}
-              </p>
-              {normalizeTruthPatternSpec(productTruth.patternSpec || {}).type === 'UNKNOWN' && (
-                <p className="hint" role="status">
-                  패턴이 미확인 상태라 패턴 보호를 보수적으로 켭니다. 무지 상품이면 ‘무지’로 바꿔 주세요.
-                </p>
-              )}
-              {productTruth.status === 'draft' && (
-                <>
-                  <div className="measure-grid" style={{ margin: '12px 0' }}>
-                    <label className="measure-cell">
-                      <span className="lbl">패턴 종류</span>
-                      <select className="field"
-                        value={normalizeTruthPatternSpec(productTruth.patternSpec || {}).type}
-                        onChange={(e) => editTruthPatternType(e.target.value)}>
-                        {TRUTH_PATTERN_TYPES.map((type) => (
-                          <option key={type} value={type}>{patternLabel(type)}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="measure-cell">
-                      <span className="lbl">세밀 패턴 보호</span>
-                      <label className="hint" style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}>
-                        <input
-                          type="checkbox"
-                          checked={normalizeTruthPatternSpec(productTruth.patternSpec || {}).finePattern}
-                          disabled={!USER_TOGGLE_FINE_PATTERN_TYPES.has(
-                            normalizeTruthPatternSpec(productTruth.patternSpec || {}).type)}
-                          onChange={(e) => editTruthFinePattern(e.target.checked)} />
-                        <span>
-                          스트라이프·체크·플래드는 항상 보호, 무지는 항상 해제됩니다.
-                        </span>
-                      </label>
-                    </label>
-                    <label className="measure-cell">
-                      <span className="lbl">단추 수</span>
-                      <input className="field" type="number" min="0" max="30"
-                        placeholder="미확인"
-                        value={productTruth.garmentSpec?.buttonCount ?? ''}
-                        onChange={(e) => editTruthCount('buttonCount', e.target.value, 30)} />
-                    </label>
-                    <label className="measure-cell">
-                      <span className="lbl">주머니 수</span>
-                      <input className="field" type="number" min="0" max="12"
-                        placeholder="미확인"
-                        value={productTruth.garmentSpec?.pocketCount ?? ''}
-                        onChange={(e) => editTruthCount('pocketCount', e.target.value, 12)} />
-                    </label>
-                  </div>
-                </>
-              )}
-              {(productTruth.validationIssues || []).length > 0 && (
-                <ul>
-                  {productTruth.validationIssues.map((issue) => (
-                    <li key={issue.code}>{issue.message}</li>
-                  ))}
-                </ul>
-              )}
-              {productTruth.status === 'approved' ? (
-                <p className="hint">승인됨 · 이 revision이 생성 기준으로 고정됩니다.</p>
-              ) : (
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {truthDirty && (
-                    <Button variant="secondary" disabled={truthBusy} onClick={saveTruthEdits}>
-                      {truthBusy ? '저장 중…' : '수정 저장'}
-                    </Button>
-                  )}
-                  <Button
-                    variant="secondary"
-                    disabled={truthBusy || truthDirty || (productTruth.validationIssues || []).some((i) => i.severity === 'error')}
-                    onClick={async () => {
-                      setTruthBusy(true);
-                      try {
-                        const approved = await api.approveProductTruth(analysisProjectId, productTruth.id);
-                        setProductTruth(approved);
-                        setTruthDirty(false);
-                        toast.push('상품 사실을 승인했어요.', { icon: 'check' });
-                      } catch (error) {
-                        toast.push(error?.message || '상품 사실을 승인하지 못했어요.', { icon: 'alertTri' });
-                      } finally { setTruthBusy(false); }
-                    }}
-                  >{truthDirty ? '수정 저장 후 승인' : (truthBusy ? '승인 중…' : '상품 사실 승인')}</Button>
-                </div>
-              )}
-            </section>
-          )}
           <AnalysisForm inline analysis={analysis} catalogs={catalogs}
-            onChange={(patch) => {
-              // 후보 목록은 서버 소유 — 추천 갱신 패치뿐 아니라 선택 토글 응답도
-              // 서버 머지 결과로 동기화해 묵은 후보가 로컬에 남지 않게 한다.
-              const syncMatch = isMatchRecommendationPatch(patch) || 'matchClothing' in patch;
-              if (isGenerationRelevantAnalysisPatch(patch)) {
-                useAppStore.getState().markGenerationRelevantEdits();
-              }
-              const { productPatch } = splitAnalysisEditPatch(patch);
-              setProduct((p) => (hasPatchFields(productPatch) ? { ...p, ...productPatch } : p));
-              setAnalysis((a) => ({ ...a, ...patch }));
-              latestAnalysisPatchRef.current = { ...latestAnalysisPatchRef.current, ...patch };
-              if (failedAnalysisPatchRef.current) {
-                failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
-                  failedAnalysisPatchRef.current,
-                  patch,
-                  latestAnalysisPatchRef.current,
-                );
-              }
-              analysisSaveChainRef.current = analysisSaveChainRef.current
-                .then(() => persistAnalysisEdit(api, analysisProjectId, patch))
-                .then(({ analysis: savedAnalysis }) => {
-                  if (!failedAnalysisPatchRef.current) analysisSaveErrorRef.current = null;
-                  if (!savedAnalysis) return;
-                  if (syncMatch) setAnalysis((a) => ({ ...a, matchClothing: savedAnalysis.matchClothing }));
-                })
-                .catch((error) => {
-                  failedAnalysisPatchRef.current = mergeLatestFailedAnalysisPatch(
-                    failedAnalysisPatchRef.current,
-                    patch,
-                    latestAnalysisPatchRef.current,
-                  );
-                  analysisSaveErrorRef.current = error;
-                  toast.push(error?.message || '분석 수정 내용을 저장하지 못했어요.', { icon: 'alertTri' });
-                });
-            }}
-            onNext={goToMannequin} />
+            projectId={analysisProjectId}
+            onAnalysisReplace={setAnalysis}
+            onChange={onAnalysisFormChange}
+            onNext={goToStoryboard} />
         </div>
+      )}
+      {pendingRelevantPatch && !creditShortfall && (
+        <Modal onClose={() => {
+          if (!cancellingRelevantPatchRef.current) setPendingRelevantPatch(null);
+        }}>
+          {pendingRelevantWorkKindRef.current === 'running' ? (
+            <>
+              <h3>바꾸면 지금 만들고 있는 마네킹 컷을 버려요</h3>
+              <p>지금 만들던 마네킹컷 생성이 취소돼요. 취소된 생성의 크레딧(2)도 차감되고, 새로 만들 때 2크레딧이 더 들어요.</p>
+            </>
+          ) : (
+            <>
+              <h3>바꾸면 마네킹 컷을 다시 만들어야 해요</h3>
+              <p>마네킹 컷이 다시 만들어져요 · {CREDIT_COSTS.mannequinGenerate} 크레딧. 콘티에서 고른 촬영 세트도 다시 골라야 해요.</p>
+            </>
+          )}
+          <div className="modal-actions">
+            {pendingRelevantWorkKindRef.current === 'running' ? (
+              <Button variant="ghost" disabled={cancellingRelevantPatch}
+                onClick={confirmRunningRelevantPatch}>그대로 바꿀게요</Button>
+            ) : (
+              <Button variant="ghost" onClick={() => {
+                if (!guardMannequinCredits()) return;
+                const patch = pendingRelevantPatch;
+                setPendingRelevantPatch(null);
+                applyAnalysisPatch(patch);
+              }}>그대로 바꿀게요</Button>
+            )}
+            <Button variant="primary" disabled={cancellingRelevantPatch}
+              onClick={() => setPendingRelevantPatch(null)}>취소</Button>
+          </div>
+        </Modal>
       )}
     </div>
   );

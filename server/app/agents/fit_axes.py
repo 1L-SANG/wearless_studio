@@ -8,7 +8,6 @@ FIT_AXES = {
     "top": {
         "fit": {
             "women": [
-                {"value": "tight", "label": "타이트", "promptEn": "tight/bodycon — clings to the torso like a second skin"},
                 {"value": "slim", "label": "슬림", "promptEn": "close to the body with a narrow clean torso line, not skin-tight"},
                 {"value": "regular", "label": "레귤러", "promptEn": "natural regular fit with light ease around chest and waist"},
                 {"value": "semi_over", "label": "세미오버", "promptEn": "semi-oversized, relaxed volume"},
@@ -139,7 +138,6 @@ FIT_AXES = {
 # 특히 top/outer length 는 tuck 가림 사고(2026-07-13, fidelity 기획 §C-3) 대응으로
 # 'untucked·hem visible·하의로 가리지 말 것'을 명문화한다. dress 에는 fit 축이 없다(카탈로그 실사).
 AXIS_OBSERVABLES = {
-    ("top", "fit", "tight"): "continuous contact at chest, waist, and upper arms, with no visible ease",
     ("top", "fit", "slim"): "follows chest and waist closely with only slight visible ease and does not read as bodycon",
     ("top", "fit", "regular"): "light, even ease at chest and waist, without clinging or oversized volume",
     ("top", "fit", "semi_over"): "extra room at shoulder, chest, and sleeves, with a mildly dropped shoulder point",
@@ -215,7 +213,8 @@ def _normalize_matching_fit(raw, gender: str) -> dict | None:
             or not isinstance(raw_axes, dict) or set(raw_axes) != {axis}:
         return None
     value = raw_axes.get(axis)
-    if not _axis_entry(fit_category, axis, gender, value):
+    entry_gender = "women" if fit_category == "skirt" and axis == "silhouette" and gender == "men" else gender
+    if not _axis_entry(fit_category, axis, entry_gender, value):
         return None
     return {
         "clothingId": clothing_id,
@@ -244,6 +243,8 @@ def normalize_fit_profile(profile: dict | None) -> dict | None:
     axes = {}
     for axis in by_axis:  # 카탈로그 순서 유지 (diff·렌더 순서의 단일 소스)
         value = raw_axes.get(axis)
+        if category == "top" and axis == "fit" and value == "tight":
+            value = "slim"
         if value is not None and _axis_entry(category, axis, gender, value):
             axes[axis] = value
     version = _profile_version(profile)
@@ -262,6 +263,20 @@ def normalize_fit_profile(profile: dict | None) -> dict | None:
         match_cut = profile.get("matchCut")
         if match_cut is not None and _axis_entry("pants", "cut", gender, match_cut):
             out["matchCut"] = match_cut
+    return out
+
+
+def normalize_analysis_fit(analysis: dict | None) -> dict:
+    """과거 단일 fit/fitProfile의 tight를 현재 최솟값 slim으로 조용히 승격한다."""
+    if not isinstance(analysis, dict):
+        return {}
+    out = dict(analysis)
+    if out.get("fit") == "tight":
+        out["fit"] = "slim"
+    profile = out.get("fitProfile")
+    axes = profile.get("axes") if isinstance(profile, dict) else None
+    if isinstance(axes, dict) and axes.get("fit") == "tight":
+        out["fitProfile"] = {**profile, "axes": {**axes, "fit": "slim"}}
     return out
 
 
@@ -338,8 +353,9 @@ def build_fit_profile_block(profile: dict | None, adjusted_axes: tuple | list = 
         if matching_fit:
             match_category = matching_fit["fitCategory"]
             match_axis = _MATCHING_FIT_AXIS[match_category]
+            match_gender = "women" if match_category == "skirt" and gender == "men" else gender
             line = _render_matching_axis_line(
-                match_category, match_axis, gender, matching_fit["axes"][match_axis])
+                match_category, match_axis, match_gender, matching_fit["axes"][match_axis])
             if line:
                 lines.append(line)
     elif version == 1:

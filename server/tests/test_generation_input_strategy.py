@@ -7,15 +7,9 @@
 여기서 잠그는 것은 그 규칙이 아니라 **틀렸을 때 어디로 떨어지는가** 다. RAW 는 오늘의
 프로덕션 경로이므로, 분류가 애매하거나 canonical 이 없거나 조회가 터지면 전부 RAW 다.
 """
-import asyncio
-import types
-
 import pytest
 
-from app.agents.gemini_image import InlineImage
-from app.agents.product_reference import ProductReference
 from app.services import generation_input_strategy as gis
-from app.workers.mannequin_job import _load_canonical_reference
 
 
 def truth(*, status="approved", flags=(), subcategory=None) -> dict:
@@ -109,67 +103,17 @@ def test_canonical_manifest_line_names_no_defect():
         assert word not in line
 
 
-# ── canonical 조회는 절대 잡을 죽이지 않는다 ─────────────────────────────────
-
-def _app(loader=None):
-    state = types.SimpleNamespace()
-    if loader is not None:
-        state.canonical_reference_loader = loader
-    return types.SimpleNamespace(state=state)
-
-
-def run(coro):
-    return asyncio.run(coro)
-
-
-def test_no_loader_configured_yields_no_canonical():
-    """오늘의 프로덕션 상태 — canonical 자산을 만드는 것이 아직 없다. 그래서 전부 RAW."""
-    assert run(_load_canonical_reference(_app(), product_id="p1")) is None
-
-
-def test_loader_returning_none_yields_no_canonical():
-    assert run(_load_canonical_reference(_app(lambda pid: None), product_id="p1")) is None
-
-
-def test_loader_raising_degrades_to_raw():
-    def boom(_pid):
-        raise RuntimeError("segmentation exploded")
-    assert run(_load_canonical_reference(_app(boom), product_id="p1")) is None
-
-
-def test_loader_returning_garbage_degrades_to_raw():
-    assert run(_load_canonical_reference(_app(lambda pid: "not a reference"),
-                                         product_id="p1")) is None
-
-
-def test_loader_returning_empty_bytes_degrades_to_raw():
-    ref = ProductReference(slot="CanonicalFront", asset_id="a1",
-                           image=InlineImage("image/png", b""))
-    assert run(_load_canonical_reference(_app(lambda pid: ref), product_id="p1")) is None
-
-
-def test_usable_loader_result_is_returned():
-    ref = ProductReference(slot="CanonicalFront", asset_id="a1",
-                           image=InlineImage("image/png", b"\x89PNGdata"))
-    assert run(_load_canonical_reference(_app(lambda pid: ref), product_id="p1")) is ref
-
-
-def test_async_loader_is_awaited():
-    ref = ProductReference(slot="CanonicalFront", asset_id="a1",
-                           image=InlineImage("image/png", b"\x89PNGdata"))
-
-    async def loader(_pid):
-        return ref
-    assert run(_load_canonical_reference(_app(loader), product_id="p1")) is ref
-
-
 # ── Product Truth 는 어느 경로에서도 유지된다 ────────────────────────────────
 
 def test_product_truth_is_never_replaced_by_the_canonical():
-    """canonical 은 **추가** 증거다. 라우터는 원본 참조를 하나도 빼지 않는다."""
+    """canonical 은 **추가** 증거다. 어느 경로도 원본 참조를 대체하지 않는다.
+
+    (canonical 조회 자체의 실패 내성 — 로더 없음·예외·빈 바이트 — 은 이제 실제 배선이 있는
+    `test_canonical_pipeline.py` 와 `test_sam_fallback.py` 가 담당한다.)
+    """
     from app.workers.mannequin_job import _SLOT_LABEL
-    # 매니페스트에서 canonical 은 Front/Back/Detail 과 **별도 슬롯**으로만 등장한다
+    # 매니페스트에서 canonical 은 Front/Back 원본과 **별도 슬롯**으로만 등장한다
     assert "CanonicalFront" in _SLOT_LABEL
     assert _SLOT_LABEL["Front"] != _SLOT_LABEL["CanonicalFront"]
-    for slot in ("Front", "Back", "Detail", "Fit"):
+    for slot in ("Front", "Back", "Detail", "BackDetail"):
         assert slot in _SLOT_LABEL

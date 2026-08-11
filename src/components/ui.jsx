@@ -5,13 +5,15 @@
    exported (instead of window.*). Markup + classNames unchanged.
    ============================================================= */
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from 'react';
+import { createPortal } from 'react-dom';
 
 /* ---- Lucide icon paths (stroke, 24x24) ---- */
 const ICONS = {};
 Object.assign(ICONS, {
   sparkles: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/>',
   shirt: '<path d="M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 .55.45 1 1 1h10c.55 0 1-.45 1-1V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/>',
-  pants: '<path d="M7 2h10l-1 11-1 9h-2.5l-.5-10-.5 10H9l-1-9z"/><path d="M7 2h10"/>',
+  // 의류 아이콘 — 24 그리드 스트로크 아웃라인(루시드 결). 바지: 허리선 + 좌우 통 실루엣.
+  pants: '<path d="M6 3h12l.9 18h-4.7L12 12.5 9.8 21H5.1z"/><path d="M6 7h12"/>',
   image: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
   imagePlus: '<path d="M16 5h6"/><path d="M19 2v6"/><path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/><circle cx="9" cy="9" r="2"/>',
   layout: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>',
@@ -126,14 +128,16 @@ export function Field({ label, opt, hint, ...props }) {
 }
 
 /* segmented chips — single or multi select. value = string | string[] */
-export function Chips({ options, value, onChange, multi, star, className, trailing }) {
+export function Chips({
+  options, value, onChange, multi, star, className, trailing, allowDeselect = true,
+}) {
   const arr = multi ? (value || []) : [value];
   const toggle = (v) => {
     if (multi) {
       const set = new Set(value || []);
       set.has(v) ? set.delete(v) : set.add(v);
       onChange([...set]);
-    } else onChange(v === value ? null : v);
+    } else onChange(v === value && allowDeselect ? null : v);
   };
   return (
     <div className={`chips${className ? ' ' + className : ''}`}>
@@ -203,12 +207,53 @@ export function Checklist({ items }) {
   );
 }
 
-export function Modal({ children, onClose, wide }) {
+/* anchorRect: 모달을 화면 중앙이 아니라 **누른 요소 자리에 겹쳐** 띄운다(DOMRect, viewport 기준).
+   아래로 스크롤해서 누른 버튼이 화면 아래쪽에 있는데 모달이 중앙/상단에 뜨면 시선이 튄다
+   (2026-08-05 매칭 의류 업로드). 위 공간이 모자라면 아래로 뒤집고, 남는 높이만큼만 쓴다.
+   glass: 프로스티드 판. */
+const ANCHOR_EDGE = 16;        // 화면 가장자리 최소 여백
+const ANCHOR_GAP = 10;         // 아래로 뒤집힐 때 앵커 요소와의 간격
+const ANCHOR_MAX_H = 520;      // 모달 높이 상한
+const ANCHOR_WIDTH = 400;      // .modal.narrow 폭 — 좌측 클램프 계산용
+const ANCHOR_MIN_ABOVE = 260;  // 위가 이보다 좁으면 아래로 뒤집는다
+
+/* 모달의 **아래 끝을 앵커 타일의 아래 끝에 맞추고, 오른쪽 끝도 맞춘다** — 타일을 덮으면서
+   위로 펼쳐진다(오너 스케치: 매칭 의류 첫 줄에 오버레이). 타일 '위'에 띄우면 그리드보다
+   한참 높아서 시선이 뜬다는 피드백(2026-08-05)으로 위 여백 방식에서 이렇게 바꿨다. */
+function anchoredStyle(rect) {
+  if (!rect || typeof window === 'undefined') return undefined;
+  const maxH = Math.min(ANCHOR_MAX_H, window.innerHeight - ANCHOR_EDGE * 2);
+  const style = { position: 'fixed', overflowY: 'auto' };
+
+  const spaceAbove = rect.bottom - ANCHOR_EDGE;   // 화면 위 여백 ~ 타일 아래 끝
+  if (spaceAbove >= ANCHOR_MIN_ABOVE) {
+    style.bottom = `${Math.round(window.innerHeight - rect.bottom)}px`;
+    style.maxHeight = `${Math.round(Math.min(maxH, spaceAbove))}px`;
+  } else {
+    style.top = `${Math.round(rect.bottom + ANCHOR_GAP)}px`;
+    style.maxHeight = `${Math.round(Math.min(
+      maxH, window.innerHeight - rect.bottom - ANCHOR_GAP - ANCHOR_EDGE))}px`;
+  }
+
+  // 모달 오른쪽을 앵커 오른쪽에 맞추되, 왼쪽이 화면 밖으로 나가지 않게 클램프.
+  style.right = `${Math.round(Math.min(
+    Math.max(ANCHOR_EDGE, window.innerWidth - rect.right),
+    Math.max(ANCHOR_EDGE, window.innerWidth - ANCHOR_WIDTH - ANCHOR_EDGE),
+  ))}px`;
+  return style;
+}
+
+export function Modal({ children, onClose, wide, narrow, anchorRect, glass }) {
   useEffect(() => { const h = (e) => e.key === 'Escape' && onClose && onClose(); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h); }, [onClose]);
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className={`modal${wide ? ' wide' : ''}`} onClick={(e) => e.stopPropagation()}>{children}</div>
-    </div>
+  // body 로 포탈한다 — 페이지 전환 애니메이션(fxPageIn)이 .app-main 의 자식들에 transform·filter 를
+  // 걸어두는데, 그런 요소는 자손의 position:fixed 기준(containing block)이 되어버린다. 페이지 안에
+  // 그대로 렌더하면 .overlay 의 inset:0 이 뷰포트가 아니라 그 래퍼에 맞춰져 화면 일부만 덮는다.
+  return createPortal(
+    <div className={`overlay${anchorRect ? ' anchored' : ''}`} onClick={onClose}>
+      <div className={`modal${wide ? ' wide' : ''}${narrow ? ' narrow' : ''}${glass ? ' glass' : ''}`}
+        style={anchoredStyle(anchorRect)} onClick={(e) => e.stopPropagation()}>{children}</div>
+    </div>,
+    document.body,
   );
 }
 

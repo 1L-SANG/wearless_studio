@@ -44,363 +44,6 @@ def test_openapi_only_advertises_current_compose_modes(client):
         "basic",
         "extended",
     ]
-    assert "errorCode" in schemas["JobView"]["properties"]
-    assert "errorDetails" in schemas["JobView"]["properties"]
-
-
-def test_get_job_returns_typed_failure_without_raw_metadata(client, make_token, monkeypatch):
-    async def fake_get_job(conn, user_id, job_id):
-        return {
-            "id": job_id,
-            "user_id": user_id,
-            "project_id": "p1",
-            "kind": "mannequin",
-            "status": "error",
-            "progress": 100,
-            "steps": [],
-            "payload": {},
-            "result": None,
-            "error_message": "마네킹컷 생성에 실패했어요.",
-            "error_code": "hybrid_composite_failed_closed",
-            "error_details": {
-                "error": "hybrid_composite_failed_closed",
-                "failureReason": "geometry_carrier_mismatch",
-                "hybridComposite": {
-                    "applied": False,
-                    "needsReview": True,
-                    "failureReason": "geometry_carrier_mismatch",
-                },
-            },
-            "metadata": {"providerPrompt": "internal"},
-            "credits_reserved": 2,
-            "credits_charged": None,
-            "created_at": "2026-07-31T00:00:00Z",
-            "updated_at": "2026-07-31T00:00:00Z",
-            "finished_at": "2026-07-31T00:00:01Z",
-        }
-
-    monkeypatch.setattr(routes.repo, "get_job", fake_get_job)
-    patch_route_db(monkeypatch, routes)
-
-    res = client.get("/v1/jobs/j1", headers=_auth(make_token))
-
-    assert res.status_code == 200, res.text
-    body = res.json()
-    assert body["errorMessage"] == "마네킹컷 생성에 실패했어요."
-    assert body["errorCode"] == "hybrid_composite_failed_closed"
-    assert body["errorDetails"]["error"] == "hybrid_composite_failed_closed"
-    assert body["errorDetails"]["hybridComposite"]["failureReason"] == (
-        "geometry_carrier_mismatch"
-    )
-    assert "metadata" not in body
-
-
-def test_regenerate_with_requested_baseline_rejects_missing_baseline_before_job(
-    client, make_token, monkeypatch
-):
-    seen = {"create": 0, "reserve": 0}
-
-    async def get_project(conn, user_id, project_id):
-        return {"id": project_id}
-
-    async def get_analysis(conn, project_id):
-        return {"fitProfile": {"version": 2, "category": "top", "gender": "women"}}
-
-    async def get_active_baseline(conn, project_id):
-        return None
-
-    async def create_job(conn, **kw):
-        seen["create"] += 1
-        return {"id": "job-1", "payload": kw["payload"]}, True
-
-    async def reserve_credits(conn, user_id, cost):
-        seen["reserve"] += 1
-        return {"ok": True}
-
-    for name, fn in (
-        ("get_project", get_project),
-        ("get_analysis", get_analysis),
-        ("get_active_baseline", get_active_baseline),
-        ("create_job", create_job),
-        ("reserve_credits", reserve_credits),
-    ):
-        monkeypatch.setattr(routes.repo, name, fn)
-    patch_route_db(monkeypatch, routes)
-
-    res = client.post(
-        "/v1/projects/p1/mannequins:regenerate",
-        headers={**_auth(make_token), "Idempotency-Key": "regen-1"},
-        json={"fitProfile": {"version": 2}, "baselineId": "base-1"},
-    )
-
-    assert res.status_code == 409
-    assert res.json()["error"]["code"] == "no_approved_baseline"
-    assert seen == {"create": 0, "reserve": 0}
-
-
-def test_regenerate_idempotency_conflict_checks_baseline_and_profile_before_side_effects(
-    client, make_token, monkeypatch
-):
-    seen = {"product": 0, "create": 0, "reserve": 0}
-
-    async def get_project(conn, user_id, project_id):
-        return {"id": project_id}
-
-    async def get_analysis(conn, project_id):
-        return {"fitProfile": {"version": 2, "category": "top", "gender": "women"}}
-
-    async def get_active_baseline(conn, project_id):
-        return {"id": "base-1"}
-
-    async def get_job_by_idempotency_key(conn, user_id, key):
-        return {
-            "id": "job-old",
-            "payload": {
-                "baselineId": "base-other",
-                "fitProfileSnapshot": {
-                    "profile": {"version": 2, "category": "top", "gender": "women"},
-                    "adjustedAxes": [],
-                },
-            },
-        }
-
-    async def get_product(conn, project_id):
-        seen["product"] += 1
-        return {}
-
-    async def create_job(conn, **kw):
-        seen["create"] += 1
-        return {"id": "job-1", "payload": kw["payload"]}, True
-
-    async def reserve_credits(conn, user_id, cost):
-        seen["reserve"] += 1
-        return {"ok": True}
-
-    for name, fn in (
-        ("get_project", get_project),
-        ("get_analysis", get_analysis),
-        ("get_active_baseline", get_active_baseline),
-        ("get_job_by_idempotency_key", get_job_by_idempotency_key),
-        ("get_product", get_product),
-        ("create_job", create_job),
-        ("reserve_credits", reserve_credits),
-    ):
-        monkeypatch.setattr(routes.repo, name, fn)
-    patch_route_db(monkeypatch, routes)
-
-    res = client.post(
-        "/v1/projects/p1/mannequins:regenerate",
-        headers={**_auth(make_token), "Idempotency-Key": "regen-1"},
-        json={"fitProfile": {"version": 2}, "baselineId": "base-1"},
-    )
-
-    assert res.status_code == 409
-    assert res.json()["error"]["code"] == "idempotency_conflict"
-    assert seen == {"product": 0, "create": 0, "reserve": 0}
-
-
-def test_regenerate_idempotency_conflict_rejects_different_profile_before_side_effects(
-    client, make_token, monkeypatch
-):
-    seen = {"product": 0, "create": 0, "reserve": 0}
-
-    async def get_project(conn, user_id, project_id):
-        return {"id": project_id}
-
-    async def get_analysis(conn, project_id):
-        return {"fitProfile": {"version": 2, "category": "top", "gender": "women"}}
-
-    async def get_active_baseline(conn, project_id):
-        return {"id": "base-1"}
-
-    async def get_job_by_idempotency_key(conn, user_id, key):
-        return {
-            "id": "job-old",
-            "payload": {
-                "baselineId": "base-1",
-                "fitProfileSnapshot": {
-                    "profile": {"version": 2, "category": "top", "gender": "women",
-                                "axes": {"bodyWidth": 2}},
-                    "adjustedAxes": ["bodyWidth"],
-                },
-            },
-        }
-
-    async def get_product(conn, project_id):
-        seen["product"] += 1
-        return {}
-
-    async def create_job(conn, **kw):
-        seen["create"] += 1
-        return {"id": "job-1", "payload": kw["payload"]}, True
-
-    async def reserve_credits(conn, user_id, cost):
-        seen["reserve"] += 1
-        return {"ok": True}
-
-    for name, fn in (
-        ("get_project", get_project),
-        ("get_analysis", get_analysis),
-        ("get_active_baseline", get_active_baseline),
-        ("get_job_by_idempotency_key", get_job_by_idempotency_key),
-        ("get_product", get_product),
-        ("create_job", create_job),
-        ("reserve_credits", reserve_credits),
-    ):
-        monkeypatch.setattr(routes.repo, name, fn)
-    patch_route_db(monkeypatch, routes)
-
-    res = client.post(
-        "/v1/projects/p1/mannequins:regenerate",
-        headers={**_auth(make_token), "Idempotency-Key": "regen-1"},
-        json={"fitProfile": {"version": 2}, "baselineId": "base-1"},
-    )
-
-    assert res.status_code == 409
-    assert res.json()["error"]["code"] == "idempotency_conflict"
-    assert seen == {"product": 0, "create": 0, "reserve": 0}
-
-
-def test_regenerate_rejects_joining_an_active_job_with_different_anchor(
-    client, make_token, monkeypatch
-):
-    seen = {"create": 0, "reserve": 0}
-
-    async def get_project(conn, user_id, project_id):
-        return {"id": project_id}
-
-    async def get_analysis(conn, project_id):
-        return {"fitProfile": {"version": 2, "category": "top", "gender": "women"}}
-
-    async def get_active_baseline(conn, project_id):
-        return {"id": "base-1"}
-
-    async def get_job_by_idempotency_key(conn, user_id, key):
-        return None
-
-    async def get_product(conn, project_id):
-        return {
-            "colors": [
-                {"isBase": True, "images": [{"id": "asset-front", "slot": "Front"}]}
-            ]
-        }
-
-    async def create_job(conn, **kw):
-        seen["create"] += 1
-        return {
-            "id": "job-active",
-            "payload": {
-                "mode": "regenerate",
-                "baselineId": "base-other",
-                "fitProfileSnapshot": kw["payload"]["fitProfileSnapshot"],
-                "truthPackageId": kw["payload"]["truthPackageId"],
-            },
-        }, False
-
-    async def reserve_credits(conn, user_id, cost):
-        seen["reserve"] += 1
-        return {"ok": True}
-
-    for name, fn in (
-        ("get_project", get_project),
-        ("get_analysis", get_analysis),
-        ("get_active_baseline", get_active_baseline),
-        ("get_job_by_idempotency_key", get_job_by_idempotency_key),
-        ("get_product", get_product),
-        ("create_job", create_job),
-        ("reserve_credits", reserve_credits),
-    ):
-        monkeypatch.setattr(routes.repo, name, fn)
-    patch_route_db(monkeypatch, routes)
-
-    res = client.post(
-        "/v1/projects/p1/mannequins:regenerate",
-        headers={**_auth(make_token), "Idempotency-Key": "regen-new"},
-        json={"fitProfile": {"version": 2}, "baselineId": "base-1"},
-    )
-
-    assert res.status_code == 409
-    assert res.json()["error"]["code"] == "job_in_progress"
-    assert seen == {"create": 1, "reserve": 0}
-
-
-def test_product_truth_approval_reseals_current_fingerprint_after_product_sync(
-    client, make_token, monkeypatch
-):
-    """analyze 직후 상품 메타 저장이 draft를 즉시 stale로 만들면 안 된다."""
-    asset_id = "00000000-0000-0000-0000-000000000001"
-    product = {
-        "id": "prod-1",
-        "project_id": "p1",
-        "name": "확정 상품명",
-        "clothing_type": "top",
-        "colors": [{
-            "id": "base", "isBase": True, "name": "ivory",
-            "images": [{"id": asset_id, "slot": "Front", "label": "Front"}],
-        }],
-        "measurements": [{"name": "총장", "value": 70}],
-        "measurements_unknown": False,
-    }
-    analysis = {"subCategory": "shirt", "fit": "regular", "styleTags": ["plain"]}
-    evidence = [{
-        "id": asset_id, "checksum": "front-sha", "width": 1200, "height": 1600,
-        "mime_type": "image/jpeg", "source": "upload",
-    }]
-    draft = routes.product_truth_service.build_truth_draft(product, analysis, evidence)
-    old_fingerprint = "draft-before-product-sync"
-    source_rows = [{
-        "id": "truth-asset-1", "asset_id": item["assetId"], "role": item["role"],
-        "view": item["view"], "color_id": item["colorId"], "part": item["part"],
-        "sort_order": item["sortOrder"], "checksum": item["checksum"],
-        "width": item["width"], "height": item["height"], "metadata": item["metadata"],
-    } for item in draft["sourceAssets"]]
-    row = {
-        "id": "truth-1", "project_id": "p1", "product_id": "prod-1",
-        "version": 1, "status": "draft", "schema_version": draft["schemaVersion"],
-        "garment_spec": draft["garmentSpec"], "color_spec": draft["colorSpec"],
-        "pattern_spec": draft["patternSpec"],
-        "protected_details": draft["protectedDetails"],
-        "source_evidence": draft["sourceEvidence"],
-        "uncertain_fields": [], "garment_profile": None,
-        "analysis_confidence": None, "source_fingerprint": old_fingerprint,
-        "source_assets": source_rows, "created_at": None, "approved_at": None,
-        "rejected_at": None,
-    }
-    seen = {}
-
-    async def fake_get_project(conn, user_id, project_id):
-        return {"id": project_id}
-
-    async def fake_get_truth(conn, project_id, *, truth_id=None, status=None):
-        return row
-
-    async def fake_truth_inputs(conn, *, project_id, user_id, product=None):
-        return product_sync, analysis, evidence
-
-    product_sync = dict(product)
-
-    async def fake_approve(conn, **kwargs):
-        seen.update(kwargs)
-        return {
-            **row, "status": "approved", "garment_profile": kwargs["garment_profile"],
-            "source_fingerprint": kwargs["source_fingerprint"],
-        }
-
-    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
-    monkeypatch.setattr(routes.repo, "get_product_truth", fake_get_truth)
-    monkeypatch.setattr(routes, "_truth_inputs", fake_truth_inputs)
-    monkeypatch.setattr(routes.repo, "approve_product_truth", fake_approve)
-    patch_route_db(monkeypatch, routes)
-
-    res = client.post(
-        "/v1/projects/p1/product-truth/truth-1:approve",
-        headers=_auth(make_token),
-    )
-
-    assert res.status_code == 200, res.text
-    expected = routes.product_truth_service.source_fingerprint(product_sync, analysis, evidence)
-    assert seen["source_fingerprint"] == expected
-    assert seen["source_fingerprint"] != old_fingerprint
 
 
 def test_save_analysis_forces_dress_to_women(client, make_token, monkeypatch):
@@ -430,6 +73,55 @@ def test_save_analysis_forces_dress_to_women(client, make_token, monkeypatch):
     assert res.status_code == 200, res.text
     assert seen["analysis"]["targetGenders"] == ["women"]
     assert res.json()["targetGenders"] == ["women"]
+
+
+def test_analysis_routes_normalize_retired_tight_fit(client, make_token, monkeypatch):
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_get_product(conn, project_id):
+        return {"clothingType": "top"}
+
+    async def fake_get_analysis(conn, project_id):
+        return {
+            "fit": "tight",
+            "fitProfile": {
+                "category": "top", "gender": "women", "source": "auto",
+                "axes": {"fit": "tight", "length": "basic"},
+            },
+        }
+
+    async def fake_save_analysis(conn, project_id, analysis):
+        seen["analysis"] = analysis
+        return {"project_id": project_id, "payload": analysis}
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(routes.repo, "save_analysis", fake_save_analysis)
+    patch_route_db(monkeypatch, routes)
+
+    loaded = client.get("/v1/projects/p1/analysis", headers=_auth(make_token))
+    assert loaded.status_code == 200, loaded.text
+    assert loaded.json()["fit"] == "slim"
+    assert loaded.json()["fitProfile"]["axes"]["fit"] == "slim"
+
+    saved = client.patch(
+        "/v1/projects/p1/analysis",
+        headers=_auth(make_token),
+        json={
+            "fit": "tight",
+            "fitProfile": {
+                "category": "top", "gender": "women", "source": "seller",
+                "axes": {"fit": "tight"},
+            },
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert seen["analysis"]["fit"] == "slim"
+    assert seen["analysis"]["fitProfile"]["axes"]["fit"] == "slim"
 
 
 def test_save_product_atomically_repairs_dress_analysis_gender(
@@ -526,7 +218,7 @@ def test_save_storyboard_persists_canonical_blocks(client, make_token, monkeypat
     assert [block["id"] for block in seen["blocks"]] == ["b3", "b2", "b1"]
     hero, mine, detail = seen["blocks"]
     assert (hero["sectionRole"], hero["cutType"], hero["shot"]) == (
-        "benefit", "styling", "full",
+        "hooking", "styling", "full",
     )
     assert (detail["contentRole"], detail["sectionRole"], detail["cutType"], detail["shot"]) == (
         "detail", "product", "product", "detail",

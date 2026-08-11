@@ -55,11 +55,10 @@ function PresetThumb({ type }) {
       <line x1="44" y1="34" x2="56" y2="34" stroke={D} strokeWidth="1" />
     </>);
     case 'feature_icons': return svg(<>
-      {[24, 50, 76].map((cx) => <g key={cx}>
-        <circle cx={cx} cy="14" r="8" fill={F} stroke={G} strokeWidth="0.8" strokeDasharray="2 1.5" />
-        <rect x={cx - 9} y="26" width="18" height="3" rx="1" fill={D} opacity=".7" />
-        <rect x={cx - 7} y="31" width="14" height="2.4" rx="1" fill={F} />
-      </g>)}
+      <rect x="8" y="4" width="26" height="3" rx="1" fill={D} />
+      <rect x="8" y="10" width="84" height="16" rx="1.5" fill={F} stroke={G} strokeWidth="0.6" />
+      <rect x="8" y="29" width="30" height="3.5" rx="1" fill={D} opacity=".7" />
+      <rect x="8" y="35" width="72" height="2.6" rx="1" fill={F} stroke={G} strokeWidth="0.3" />
     </>);
     case 'fit_guide': return svg(<>
       {[10, 32, 54, 76].map((x, i) => <g key={x}>

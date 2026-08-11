@@ -246,10 +246,7 @@ def test_face_is_attached_only_to_cuts_that_show_it(monkeypatch):
 
     by_block = {c["block"]: c for c in captured["calls"]}
     assert by_block["b1"]["has_face"] is True and len(by_block["b1"]["images"]) == 2
-    # product ghost는 Phase 8 source-first 정책으로 원본 Front를 그대로 쓰므로 provider 호출이 없다.
-    assert "b2" not in by_block
-    raw = next(result for result in captured["cut_results"] if result["blockId"] == "b2")
-    assert raw["imageUrl"] == "/v1/assets/a1/file"
+    assert by_block["b2"]["has_face"] is False and len(by_block["b2"]["images"]) == 1
     assert by_block["b3"]["has_face"] is False and len(by_block["b3"]["images"]) == 1
     # 얼굴이 담긴 컷이 하나라도 성공했으므로 고지는 실제 모델 문구
     assert captured["license_notice"] is not None

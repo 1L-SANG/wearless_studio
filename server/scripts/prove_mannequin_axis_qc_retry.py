@@ -27,7 +27,7 @@ from scripts.smoke_realwire import _load_env  # noqa: E402
 _load_env(SERVER / ".env")
 
 from scripts.fit_fidelity_campaign import (  # noqa: E402
-    ARMS, BASE_R2, CLOTHING_TYPE, PRODUCT_NAME, SRC, WB_R2, harness_refs, load_local,
+    ARMS, BASE_R2, CLOTHING_TYPE, PRODUCT_NAME, SRC, WB_R2, load_local,
 )
 from app.agents.gemini_image import GeminiImageClient, InlineImage  # noqa: E402
 from app.agents.prompts import load_prompt_template  # noqa: E402
@@ -146,7 +146,7 @@ async def _run_arm(arm, *, settings, gemini, template, inputs, events_sink):
     try:
         result = await mannequin_job._run_candidate(
             app=app, job=job, candidate="A", base_fit="regular", base_gender=arm["gender"],
-            base_img=base, prod_refs=harness_refs(srcs), match_img=wb,
+            base_img=base, prod_imgs=srcs, match_img=wb,
             product_count=len(srcs) + (1 if wb else 0), template=template,
             product={"name": PRODUCT_NAME[arm["category"]],
                      "clothing_type": CLOTHING_TYPE[arm["category"]]},

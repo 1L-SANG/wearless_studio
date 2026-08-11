@@ -147,45 +147,6 @@ def test_enforce_rejects_on_p2_retry():
     assert gate_decision(s, "pass", {"verdict": "pass"}) == (False, False)
 
 
-def test_enforce_blocks_extreme_missing_head_crop_from_real_qa_case():
-    """2026-08-04 QA: bboxTop=0.252 인 headless 상반신 컷은 검토가 아니라 차단.
-
-    상품/시리즈 Vision 점수가 어떻게 나와도 머리와 전신 구도가 사라진 컷을
-    `needs_review`로 저장하면 안 된다. 오탐 현실성이 낮은 극단 임계만 게이트한다.
-    """
-    s = make_settings(image_qc="enforce")
-    assert gate_decision(
-        s,
-        "retry",
-        _scored(product_fidelity=80, physical_naturalness=80, image_quality=70),
-        pillow_reasons=["full_body_crop"],
-        pillow_metrics={"bboxTop": 0.252, "bboxBottom": 1.0, "bboxHeight": 0.748},
-    ) == (True, False)
-
-
-def test_enforce_keeps_known_missing_lower_body_false_positive_in_shadow():
-    """과거 전 상품 차단 사고를 낸 단독 missing_lower_body 신호는 게이트하지 않는다."""
-    s = make_settings(image_qc="enforce")
-    assert gate_decision(
-        s,
-        "retry",
-        _scored(product_fidelity=90, physical_naturalness=90, image_quality=90),
-        pillow_reasons=["missing_lower_body"],
-        pillow_metrics={"bboxTop": 0.08, "bboxBottom": 0.93, "bboxHeight": 0.85},
-    ) == (False, False)
-
-
-def test_extreme_crop_signal_does_not_gate_when_image_qc_is_not_enforced():
-    for mode in ("off", "shadow"):
-        assert gate_decision(
-            make_settings(image_qc=mode),
-            "retry",
-            None,
-            pillow_reasons=["full_body_crop"],
-            pillow_metrics={"bboxTop": 0.252, "bboxBottom": 1.0, "bboxHeight": 0.748},
-        ) == (False, False)
-
-
 def test_enforce_graceful_when_no_p2():
     # 키 미설정/판정 실패 → p2=None → 게이트 미적용
     s = make_settings(image_qc="enforce", mannequin_qc_enabled=False)

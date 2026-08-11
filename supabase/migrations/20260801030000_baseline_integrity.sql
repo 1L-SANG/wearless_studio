@@ -32,6 +32,7 @@ comment on column public.approved_baselines.approved_by is
 
 alter table public.baseline_review_events
   drop constraint if exists baseline_review_events_action_check;
+
 alter table public.baseline_review_events
   add constraint baseline_review_events_action_check
   check (action in ('baseline_approved', 'baseline_superseded', 'baseline_reapproved'));

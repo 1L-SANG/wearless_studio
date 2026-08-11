@@ -123,6 +123,9 @@ def _wire_worker(monkeypatch, *, analysis, payload, calls):
         calls["failure"].append(kw)
         return True
 
+    async def is_job_cancelled(conn, job_id):
+        return False
+
     async def fake_emit(pool, job_id, event_type, p):
         calls["emits"].append((event_type, dict(p)))
 
@@ -134,6 +137,7 @@ def _wire_worker(monkeypatch, *, analysis, payload, calls):
 
     for name, fn in [("get_product", get_product), ("get_analysis", get_analysis),
                      ("get_asset_for_user", get_asset_for_user),
+                     ("is_job_cancelled", is_job_cancelled),
                      ("finalize_mannequin_success", finalize_success),
                      ("finalize_mannequin_failure", finalize_failure)]:
         monkeypatch.setattr(mannequin_job.repo, name, fn)
@@ -218,9 +222,9 @@ def test_worker_malformed_snapshot_falls_back_to_fresh_generation(monkeypatch):
 # ---------- 관측 이벤트 (prompt_rendered 해시) ----------
 
 _PNG_1PX = bytes.fromhex(
-    "89504e470d0a1a0a0000000d494844520000000100000001080600000"
-    "01f15c4890000000d49444154789c626001000000ffff030000060005"
-    "57bfabd40000000049454e44ae426082")
+    "89504e470d0a1a0a0000000d4948445200000002000000020802000000"
+    "fdd49a730000001349444154789c63fcffff3f0303031303180000240603"
+    "015da24e880000000049454e44ae426082")
 
 
 def test_run_candidate_emits_prompt_rendered_hashes(monkeypatch):
@@ -246,7 +250,7 @@ def test_run_candidate_emits_prompt_rendered_hashes(monkeypatch):
     result = asyncio.run(mannequin_job._run_candidate(
         app=app, job=job, candidate="A", base_fit="regular", base_gender="women",
         base_img=types.SimpleNamespace(mime="image/png", data=b"x"),
-        prod_refs=[], match_img=None, product_count=1,
+        prod_imgs=[], match_img=None, product_count=1,
         template="Dress ${baseGender} ${clothingType}.\n${imageManifest}",
         product={"name": "티"}, analysis={}, clothing_type="top",
         image_manifest="1. base", fit_profile=SNAP_PROFILE,

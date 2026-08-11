@@ -56,40 +56,12 @@ def build_adjust_directives(profile: dict, adjusted_axes: tuple | list) -> str:
     return "\n".join(lines)
 
 
-# 슬롯별 역할과 **권위(authority)** — 무엇을 이 사진에서 가져오고 무엇을 가져오면 안 되는지.
-# 예전에는 상품 사진 전부가 `product photo — identity reference` 한 줄로 반복돼, 모델 입장에서
-# 근접 원단컷과 사람이 입은 핏컷이 같은 무게였다. 패턴이 틀리는 상품일수록 이 구분이 중요하다
-# (착용컷은 주름·조명 때문에 색과 줄 간격이 실제와 다르게 보인다).
-_ADJUST_ROLE = {
-    "Detail": ("DETAIL close-up of the product — AUTHORITATIVE for fabric identity: ground "
-               "color, color order, stripe/check pitch, line widths and texture"),
-    "Front": ("FRONT view of the product — AUTHORITATIVE for garment shape, construction "
-              "(collar, placket, buttons, cuffs, pockets) and overall pattern layout"),
-    "Back": ("BACK view of the product — reference for back construction and pattern "
-             "continuity"),
-    "Fit": ("FIT reference (product worn on a person) — length and drape only; NEVER take "
-            "color, pattern or construction from it"),
-}
-_ADJUST_ROLE_FALLBACK = "product photo — identity reference for the MAIN PRODUCT"
-
-_CURRENT_CUT_LINE = (
-    "1. CURRENT CUT — the mannequin photo to edit: it is the authority for scene, pose, "
-    "framing and lighting. Its garment pattern is NOT authoritative — match the product "
-    "photos below."
-)
-
-
-def build_adjust_manifest(refs, has_match: bool) -> str:
-    """편집 입력 순서: 1=현재 컷(캔버스), 2..=상품 참조(역할·권위 명시), 마지막=매칭(있으면).
-
-    `refs` 는 `ProductReference` 시퀀스이며 **실제로 전달할 순서 그대로**여야 한다. 번호와
-    이미지가 어긋나면 "2번은 Detail" 이라는 문장이 다른 사진에 적용된다 — 잘못된 매니페스트는
-    매니페스트가 없는 것보다 나쁘다.
-    """
-    lines = [_CURRENT_CUT_LINE]
+def build_adjust_manifest(product_count: int, has_match: bool) -> str:
+    """편집 입력 순서: 1=현재 컷(캔버스), 2..=상품 사진(정체성 기준), 마지막=매칭(있으면)."""
+    lines = ["1. CURRENT CUT — the mannequin photo to edit"]
     i = 2
-    for ref in refs:
-        lines.append(f"{i}. {_ADJUST_ROLE.get(getattr(ref, 'slot', None), _ADJUST_ROLE_FALLBACK)}")
+    for _ in range(product_count):
+        lines.append(f"{i}. product photo — identity reference for the MAIN PRODUCT")
         i += 1
     if has_match:
         lines.append(f"{i}. matching bottom photo — identity reference for the MATCHING BOTTOM")

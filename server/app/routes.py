@@ -8,19 +8,19 @@ import asyncio
 import hashlib
 import json
 import logging
-import re
-import secrets
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
+from psycopg import errors
 
 from . import facemarket, repo
 from .agents import (
     content_roles,
     cut_generator,
+    feature_copy,
     fit_axes,
     mannequin,
     product_analyst,
@@ -29,45 +29,31 @@ from .agents import (
 )
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
-from .services import baseline as baseline_service
-from .services.public_qc_projection import public_job_event_payload, public_qc_scores
-from .services import edit_session as edit_service
-from .services import editor_vary as editor_vary_service
-from .services import export_render
-from .services import input_qc, mannequin_cut_authority, matching, retrieval
-from .services import product_truth as product_truth_service
+from .services import garment_grid, input_qc, matching, retrieval
 from .auth import require_user
 from .db import get_conn
 from .models import (
-    ApprovedBaseline,
-    BaselineApproveRequest,
-    EditRequest,
-    EditSessionView,
     Account,
     Asset,
     AssetCompleteRequest,
     CreditHistoryEntry,
     CreditSource,
+    CustomMatchItemRequest,
     ErrorResponse,
-    ExportJobResponse,
-    ExportRequest,
     JobView,
     MannequinCut,
     PricingPlan,
     Product,
     ProductPatch,
-    ProductTruthPatch,
-    ProductTruthView,
     Project,
     ProjectPatch,
     ProjectSummary,
-    RegenerateRequest,
     RefundRequestBody,
     TopupPurchaseBody,
     UploadUrlRequest,
     UploadUrlResponse,
 )
-from .r2 import IMMUTABLE_CACHE, R2Client, ext_for_mime, upload_key
+from .r2 import IMMUTABLE_CACHE, R2Client, derived_key, ext_for_mime, upload_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1")
@@ -85,71 +71,11 @@ COMMON_RESPONSES = {
 }
 
 
-def _truth_domain(row: dict | None) -> dict | None:
-    if row is None:
-        return None
-    return {
-        "id": row.get("id"), "projectId": row.get("project_id"),
-        "productId": row.get("product_id"), "version": row.get("version"),
-        "status": row.get("status"), "schemaVersion": row.get("schema_version"),
-        "garmentSpec": row.get("garment_spec") or {}, "colorSpec": row.get("color_spec") or {},
-        "patternSpec": row.get("pattern_spec") or {},
-        "protectedDetails": row.get("protected_details") or {},
-        "sourceEvidence": row.get("source_evidence") or {},
-        "uncertainFields": row.get("uncertain_fields") or [],
-        "garmentProfile": row.get("garment_profile"),
-        "analysisConfidence": row.get("analysis_confidence"),
-        "sourceFingerprint": row.get("source_fingerprint"),
-        "sourceAssets": [
-            {"id": a.get("id"), "assetId": a.get("asset_id"), "role": a.get("role"),
-             "view": a.get("view"), "colorId": a.get("color_id"), "part": a.get("part"),
-             "sortOrder": a.get("sort_order", 0), "checksum": a.get("checksum"),
-             "width": a.get("width"), "height": a.get("height"),
-             "metadata": a.get("metadata") or {}}
-            for a in (row.get("source_assets") or [])
-        ],
-        "createdAt": row.get("created_at"), "approvedAt": row.get("approved_at"),
-        "rejectedAt": row.get("rejected_at"),
-    }
-
-
-def _product_asset_ids(product: dict) -> list[str]:
-    return [str(i.get("id") or i.get("assetId"))
-            for c in (product.get("colors") or []) for i in (c.get("images") or [])
-            if i.get("id") or i.get("assetId")]
-
-
-async def _truth_inputs(conn, *, project_id: str, user_id: str, product: dict | None = None):
-    product = product or await repo.get_product(conn, project_id) or {}
-    analysis = await repo.get_analysis(conn, project_id) or {}
-    evidence = await repo.list_product_truth_asset_evidence(
-        conn, user_id, _product_asset_ids(product))
-    return product, analysis, evidence
-
-
 
 def _not_found() -> HTTPException:
     return HTTPException(
         status_code=404,
         detail={"code": "not_found", "message": "프로젝트를 찾을 수 없습니다."},
-    )
-
-
-def _require_consumable_cut(cut: dict) -> None:
-    """서버가 이미 제품으로 못 쓴다고 판정한 컷은 정본으로 소비할 수 없다.
-
-    사유는 내부 어휘라 응답에 싣지 않는다 — guided 관측치·texture truth·carrier 해시가
-    사용자 화면으로 새어 나갈 이유가 없고, 그것들은 셀러가 할 수 있는 행동을 바꾸지도
-    않는다. 컷을 **보는 것**은 계속 가능하다(목록·이력은 그대로).
-    """
-    if mannequin_cut_authority.evaluate_mannequin_cut_authority(
-            cut.get("qc_scores")).allowed:
-        return
-    raise HTTPException(
-        status_code=409,
-        detail={"code": "cut_not_usable",
-                "message": "이 마네킹 컷은 품질 검증을 통과하지 못해 사용할 수 없어요. "
-                           "다른 버전을 선택하거나 다시 생성해 주세요."},
     )
 
 
@@ -172,61 +98,9 @@ def _wake_dispatcher(request: Request) -> None:
         dispatcher.wake()
 
 
-def _frame_calibration_inline_requested(
-    request: Request, supplied_secret: str | None
-) -> bool:
-    """dev 전용 캘리브레이션 preclaim 인증. 실패 사유는 동일 코드로 축약한다."""
-    if supplied_secret is None:
-        return False
-    s = request.app.state.settings
-    host = request.client.host if request.client is not None else ""
-    expected = s.frame_calibration_inline_secret or ""
-    allowed = (
-        s.app_env == "dev"
-        and s.frame_calibration_inline_jobs
-        and not s.job_dispatcher_enabled
-        and host in {"127.0.0.1", "::1", "testclient"}
-        and 8 <= len(supplied_secret) <= 256
-        and bool(expected)
-        and secrets.compare_digest(supplied_secret, expected)
-    )
-    if not allowed:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "frame_calibration_inline_forbidden",
-                "message": "로컬 캘리브레이션 실행 권한이 없어요.",
-            },
-        )
-    return True
-
-
-async def _preclaim_frame_calibration_job(conn, *, job: dict, created: bool) -> dict:
-    if not created:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "frame_calibration_inline_conflict",
-                "message": "다른 활성 작업이 있어 캘리브레이션 작업을 선점할 수 없어요.",
-            },
-        )
-    lease_token = f"frame-calibration:{uuid.uuid4()}"
-    claimed = await repo.preclaim_job_for_inline_execution(
-        conn, job_id=job["id"], lease_token=lease_token
-    )
-    if claimed is None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "frame_calibration_inline_conflict",
-                "message": "캘리브레이션 작업 선점에 실패했어요.",
-            },
-        )
-    return claimed
-
-
 async def _fit_profile_snapshot(
     conn,
+    user_id: str,
     project_id: str,
     requested: dict | None,
     *,
@@ -261,7 +135,9 @@ async def _fit_profile_snapshot(
         )
     item_metadata = None
     if main_match_id and (match_cut is not None or matching_id_valid):
-        item_metadata = await repo.get_matching_item_metadata(conn, main_match_id)
+        item_metadata = await repo.get_matching_item_metadata(
+            conn, main_match_id, user_id, project_id
+        )
     authoritative_fit_category = matching.fit_category(item_metadata or {})
     if matching_fit:
         matching_category_valid = (
@@ -279,7 +155,9 @@ async def _fit_profile_snapshot(
         profile = {k: v for k, v in profile.items() if k != "matchCut"}
     if profile and (profile.get("matchCut") is not None or profile.get("matchingFit") is not None):
         has_match = bool(
-            main_match_id and await repo.get_matching_item_asset(conn, main_match_id)
+            main_match_id and await repo.get_matching_item_asset(
+                conn, main_match_id, user_id, project_id
+            )
         )
         if not has_match:
             profile = {k: v for k, v in profile.items() if k not in ("matchCut", "matchingFit")}
@@ -290,8 +168,128 @@ def _bad_request(code: str, message: str) -> HTTPException:
     return HTTPException(status_code=400, detail={"code": code, "message": message})
 
 
-def _canonical_hash(value) -> str:
-    return hashlib.sha256(export_render.canonical_bytes(value or {})).hexdigest()
+def _mannequin_payload_matches(job: dict, requested_payload: dict) -> bool:
+    """활성 마네킹 job 합류가 안전한지 의미 입력만 비교한다.
+
+    regenerate 재시도 때 저장된 analysis가 이미 새 profile로 바뀌어 adjustedAxes가 []로
+    재산출될 수 있으므로 그 파생 필드만 제외하고 mode와 스냅샷을 비교한다.
+    """
+    if job.get("status") not in ("pending", "running"):
+        return True
+    existing = job.get("payload") or {}
+    existing_snapshot = existing.get("fitProfileSnapshot")
+    requested_snapshot = requested_payload.get("fitProfileSnapshot")
+    if isinstance(existing_snapshot, dict):
+        existing_snapshot = {
+            key: value for key, value in existing_snapshot.items() if key != "adjustedAxes"
+        }
+    if isinstance(requested_snapshot, dict):
+        requested_snapshot = {
+            key: value for key, value in requested_snapshot.items() if key != "adjustedAxes"
+        }
+    return (
+        existing.get("mode") == requested_payload.get("mode")
+        and existing_snapshot == requested_snapshot
+    )
+
+
+def _generation_in_progress() -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "generation_in_progress",
+            "message": "이미 다른 마네킹 생성이 진행 중이에요. 잠시 뒤 다시 시도해 주세요.",
+        },
+    )
+
+
+def _custom_match_error(status: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status, detail={"code": code, "message": message})
+
+
+def _custom_match_metadata(expected_type: str) -> dict:
+    """AI 없이 채우는 커스텀 매칭의류 메타데이터 (D10).
+
+    아는 것만 쓴다 — 종류는 슬롯이 정본이고, 나머지는 '모른다'는 뜻의 중립값이다.
+    category 를 큐레이션 어휘(팬츠·스커트…) 중 하나로 지어내면 matching.fit_category 가
+    잘못된 핏 어휘를 열어 준다. 그래서 닫힌 어휘에 없는 '커스텀'을 쓴다.
+    """
+    return {
+        "name": "내 상의" if expected_type == "top" else "내 하의",
+        "clothingType": expected_type,
+        "category": "커스텀",
+        "length": "regular",
+        "colorName": "커스텀",
+        "colorGroup": "gray",
+    }
+
+
+def _matching_item_to_api(r2: R2Client, item: dict, *, compatible: bool = True) -> dict:
+    return {
+        "id": item["id"],
+        "name": item["name"],
+        "gender": item["gender"],
+        "thumb": r2.public_url(item["thumb_key"]),
+        "imageUrl": r2.public_url(item["image_key"]) if item.get("image_key") else None,
+        "thumbnailUrl": r2.public_url(item["thumb_key"]),
+        "clothingType": item.get("clothing_type"),
+        "category": item.get("category"),
+        "fit": item.get("fit"),
+        "length": item.get("length"),
+        "fitCategory": matching.fit_category(item),
+        "selected": False,
+        "isCustom": bool(item.get("is_custom")),
+        "isCompatible": compatible,
+    }
+
+
+def _analysis_with_added_custom(payload: dict, item: dict) -> dict:
+    existing = [m for m in (payload.get("matchClothing") or []) if m.get("id") != item["id"]]
+    return {**payload, "matchClothing": [{**item, "selected": False}, *existing]}
+
+
+def _analysis_without_custom(payload: dict, item_id: str) -> dict:
+    remaining = [m for m in (payload.get("matchClothing") or []) if m.get("id") != item_id]
+    selected = sorted(
+        (m for m in remaining if m.get("selected")),
+        key=lambda m: m.get("selOrder") or 99,
+    )[:2]
+    order_by_id = {m.get("id"): index for index, m in enumerate(selected, start=1)}
+    normalized = []
+    for item in remaining:
+        if item.get("id") in order_by_id:
+            normalized.append({**item, "selected": True, "selOrder": order_by_id[item["id"]]})
+        else:
+            cleaned = {**item, "selected": False}
+            cleaned.pop("selOrder", None)
+            normalized.append(cleaned)
+
+    next_payload = {**payload, "matchClothing": normalized}
+    fit_profile = payload.get("fitProfile")
+    matching_fit = fit_profile.get("matchingFit") if isinstance(fit_profile, dict) else None
+    if isinstance(matching_fit, dict) and matching_fit.get("clothingId") == item_id:
+        next_fit_profile = {**fit_profile}
+        next_fit_profile.pop("matchingFit", None)
+        next_payload["fitProfile"] = next_fit_profile
+    return next_payload
+
+
+async def _cleanup_custom_match_r2(r2: R2Client, assets: list[dict]) -> None:
+    """Best-effort asynchronous cleanup; retry each key without changing the committed DB result."""
+    for asset in assets:
+        for attempt in range(3):
+            try:
+                await asyncio.to_thread(r2.delete, asset["r2_key"])
+                break
+            except Exception:
+                if attempt == 2:
+                    logger.warning(
+                        "custom_match_r2_cleanup_failed",
+                        extra={"asset_id": asset.get("id")},
+                        exc_info=True,
+                    )
+                else:
+                    await asyncio.sleep(0.25 * (attempt + 1))
 
 
 def _require_bg_examples_enabled(request: Request, value) -> None:
@@ -613,17 +611,6 @@ async def patch_project(
     # adjustCount·status 등은 모델에 없어 자동 무시 (계약 §6). exclude_unset = 보낸 필드만.
     fields = patch.model_dump(exclude_unset=True)
     async with get_conn(request) as conn:
-        # 선택 포인터는 지금까지 **아무 검증도 없이** 기록됐다 — 존재하지 않는 컷 id 도,
-        # 타 사용자의 컷 id 도, 서버가 이미 제품으로 못 쓴다고 판정한 컷도 그대로 들어갔다.
-        # 이 포인터는 상세페이지 입력과 편집 부모를 정하므로 화면 필터를 신뢰할 수 없다.
-        # 해제(null)는 그대로 둔다 — 선택을 지우는 데 권한 판정이 필요할 이유가 없다.
-        selected = fields.get("selected_mannequin_id")
-        if selected is not None:
-            cut = await repo.get_mannequin_cut_for_approval(
-                conn, user_id, project_id, str(selected))
-            if cut is None:
-                raise _not_found()   # 존재/소유를 구분해 알려주지 않는다
-            _require_consumable_cut(cut)
         row = await repo.patch_project(conn, user_id, project_id, fields)
         await conn.commit()
     if row is None:
@@ -725,7 +712,8 @@ async def save_analysis(
     - **에지 케이스**:
       - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
     """
-    # analysis는 프론트 소유 shape → payload jsonb 패스스루 저장.
+    # 프론트 소유 shape를 유지하되 폐기된 레거시 핏 어휘는 신규 저장하지 않는다.
+    analysis = fit_axes.normalize_analysis_fit(analysis)
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -756,145 +744,8 @@ async def get_analysis(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        payload = await repo.get_analysis(conn, project_id)
+        payload = fit_axes.normalize_analysis_fit(await repo.get_analysis(conn, project_id))
     return {"projectId": project_id, **(payload or {})}
-
-
-# ---------- Product Truth revisions ----------
-
-
-@router.get(
-    "/projects/{project_id}/product-truth",
-    response_model=ProductTruthView,
-    responses={**COMMON_RESPONSES},
-    tags=["Product Truth"],
-    summary="현재 Product Truth revision 조회",
-)
-async def get_product_truth(
-    request: Request, project_id: str,
-    status: str | None = Query(None, pattern="^(draft|approved|superseded|rejected)$"),
-    user_id: str = Depends(require_user),
-):
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        row = await repo.get_product_truth(conn, project_id, status=status)
-    if row is None:
-        raise _not_found()
-    domain = _truth_domain(row)
-    domain["validationIssues"] = [i.as_dict() for i in product_truth_service.validation_issues(domain)]
-    return domain
-
-
-@router.post(
-    "/projects/{project_id}/product-truth:draft",
-    response_model=ProductTruthView,
-    responses={**COMMON_RESPONSES}, tags=["Product Truth"],
-    summary="현재 상품/분석으로 Product Truth draft 생성",
-)
-async def draft_product_truth(
-    request: Request, project_id: str, user_id: str = Depends(require_user),
-):
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        product, analysis, evidence = await _truth_inputs(
-            conn, project_id=project_id, user_id=user_id)
-        draft = product_truth_service.build_truth_draft(product, analysis, evidence)
-        draft["garmentProfile"] = product_truth_service.garment_profile(draft)
-        row = await repo.save_product_truth_draft(
-            conn, project_id=project_id, user_id=user_id, draft=draft)
-        await conn.commit()
-    domain = _truth_domain(row)
-    domain["validationIssues"] = [i.as_dict() for i in product_truth_service.validation_issues(domain)]
-    return domain
-
-
-@router.patch(
-    "/projects/{project_id}/product-truth/{truth_id}",
-    response_model=ProductTruthView,
-    responses={**COMMON_RESPONSES}, tags=["Product Truth"],
-    summary="Product Truth draft 수정",
-)
-async def patch_product_truth(
-    request: Request, project_id: str, truth_id: str, patch: ProductTruthPatch,
-    user_id: str = Depends(require_user),
-):
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        row = await repo.patch_product_truth_draft(
-            conn, project_id=project_id, truth_id=truth_id, user_id=user_id,
-            patch=patch.model_dump(exclude_unset=True))
-        if row is None:
-            raise HTTPException(status_code=409, detail={"code": "truth_not_editable",
-                                                        "message": "승인된 Product Truth는 수정할 수 없어요."})
-        await conn.commit()
-    domain = _truth_domain(row)
-    domain["validationIssues"] = [i.as_dict() for i in product_truth_service.validation_issues(domain)]
-    return domain
-
-
-@router.post(
-    "/projects/{project_id}/product-truth/{truth_id}:approve",
-    response_model=ProductTruthView,
-    responses={**COMMON_RESPONSES}, tags=["Product Truth"],
-    summary="Product Truth draft 승인",
-)
-async def approve_product_truth(
-    request: Request, project_id: str, truth_id: str,
-    user_id: str = Depends(require_user),
-):
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        current = await repo.get_product_truth(conn, project_id, truth_id=truth_id)
-        domain = _truth_domain(current)
-        try:
-            approved = product_truth_service.approve_snapshot(domain or {}, actor_id=user_id)
-            product, analysis, evidence = await _truth_inputs(
-                conn, project_id=project_id, user_id=user_id)
-            product_truth_service.assert_source_assets_current(
-                domain or {}, product, evidence)
-            approval_fingerprint = product_truth_service.source_fingerprint(
-                product, analysis, evidence)
-        except product_truth_service.ProductTruthError as e:
-            raise HTTPException(status_code=409, detail={"code": e.code, "message": str(e)})
-        row = await repo.approve_product_truth(
-            conn, project_id=project_id, truth_id=truth_id, user_id=user_id,
-            garment_profile=approved["garmentProfile"],
-            source_fingerprint=approval_fingerprint)
-        if row is None:
-            raise HTTPException(status_code=409, detail={"code": "truth_not_editable",
-                                                        "message": "승인 가능한 draft가 아니에요."})
-        await conn.commit()
-    out = _truth_domain(row)
-    out["validationIssues"] = [i.as_dict() for i in product_truth_service.validation_issues(out)]
-    return out
-
-
-@router.post(
-    "/projects/{project_id}/product-truth/{truth_id}:reject",
-    response_model=ProductTruthView,
-    responses={**COMMON_RESPONSES}, tags=["Product Truth"],
-    summary="Product Truth draft 거절",
-)
-async def reject_product_truth(
-    request: Request, project_id: str, truth_id: str,
-    user_id: str = Depends(require_user),
-):
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        row = await repo.reject_product_truth(
-            conn, project_id=project_id, truth_id=truth_id, user_id=user_id)
-        if row is None:
-            raise HTTPException(status_code=409, detail={"code": "truth_not_editable",
-                                                        "message": "거절 가능한 draft가 아니에요."})
-        await conn.commit()
-    out = _truth_domain(row)
-    out["validationIssues"] = [i.as_dict() for i in product_truth_service.validation_issues(out)]
-    return out
 
 
 @router.post(
@@ -931,6 +782,47 @@ async def draft_wash_care(
 
 
 @router.post(
+    "/projects/{project_id}/feature-copy:draft",
+    responses={**COMMON_RESPONSES, 502: {"model": ErrorResponse}},
+    tags=["Analysis"],
+    summary="AI 특징 포인트 설명 초안 생성",
+)
+async def draft_feature_copy(
+    request: Request, project_id: str, user_id: str = Depends(require_user)
+):
+    """강조특징마다 설명 한 줄을 생성합니다(무과금·동기). 반환: `{items:[{point,desc}]}`.
+
+    상세페이지 생성 잡이 쓰는 것과 같은 경로다 — 부위·구조 사전을 먼저 보고 사전에 없는
+    표현만 LLM 1콜로 넘긴다. 결과는 `analysis.featureCopy` 에 합쳐 저장하므로, 에디터가
+    블록을 지을 때도 같은 문구를 쓴다. 셀러가 입력한 강조특징 자체는 읽기만 한다.
+
+    - **Bearer Token**: 필수
+    - **에지 케이스**: `404` 프로젝트 없음/타인 소유. `502` 한 줄도 만들지 못함.
+    """
+    s = request.app.state.settings
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        product = await repo.get_product(conn, project_id) or {}
+        analysis = await repo.get_analysis(conn, project_id) or {}
+    points = analysis.get("sellingPoints") or analysis.get("aiSuggestedPoints") or []
+    items = await feature_copy.generate(s, points, product, analysis)
+    if not items:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "feature_copy_failed",
+                    "message": "특징 설명을 만들지 못했어요. 잠시 후 다시 시도해 주세요."})
+    # 쓰기 직전에 다시 읽는다 — 이 요청 사이에 셀러가 분석을 고쳤을 수 있다.
+    async with get_conn(request) as conn:
+        fresh = await repo.get_analysis(conn, project_id) or {}
+        await repo.save_analysis(
+            conn, project_id,
+            {**fresh, "featureCopy": feature_copy.merge_stored(fresh.get("featureCopy"), items)})
+        await conn.commit()
+    return JSONResponse({"items": items})
+
+
+@router.post(
     "/projects/{project_id}/analyze",
     responses={
         **COMMON_RESPONSES,
@@ -944,9 +836,6 @@ async def analyze_product(
     project_id: str,
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-    frame_calibration_secret: str | None = Header(
-        None, alias="X-Wearless-Frame-Calibration"
-    ),
 ):
     """업로드된 상품 사진으로 AI 분석(색·핏·소재·스타일 등)을 수행하는 비동기 작업을 요청합니다.
 
@@ -955,41 +844,27 @@ async def analyze_product(
     - **멱등성**: 진행 중 동일 작업이 있으면 새로 띄우지 않고 기존 `jobId`로 합류합니다
       (더블클릭 시 LLM 2회 호출 방지). 완료된 분석은 재호출 시 재분석(무과금)됩니다.
     """
-    inline = _frame_calibration_inline_requested(request, frame_calibration_secret)
     scoped_key = f"{project_id}:analyze:{idempotency_key}" if idempotency_key else None
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
         # 무과금 → 예약/게이트 없이 job 생성(멱등/활성 합류는 create_job 이 원자 처리).
-        job, created = await repo.create_job(
+        job, _created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="analyze",
             payload={"mode": "analyze"}, idempotency_key=scoped_key,
             credits_reserved=0, metadata={})
-        if inline:
-            job = await _preclaim_frame_calibration_job(
-                conn, job=job, created=created
-            )
-        # 캐노니컬 컷아웃 전처리를 **독립적으로** 함께 띄운다. 분석 결과(카테고리·소재)를
-        # 전혀 쓰지 않고 소스 사진만 필요하므로 서로 기다릴 이유가 없다. 같은 트랜잭션에서
-        # 만들고 커밋 뒤에 디스패처를 깨우므로 워커가 소스 asset 행보다 먼저 잡을 수 없다.
-        # 전처리 enqueue 실패가 분석 요청을 깨서는 안 된다 — SAM 은 보조 인프라다.
-        try:
-            await repo.create_job(
-                conn, user_id=user_id, project_id=project_id, kind="sam_preprocess",
-                payload={"mode": "sam_preprocess"},
-                idempotency_key=(f"{project_id}:sam_preprocess:{idempotency_key}"
-                                 if idempotency_key else None),
-                credits_reserved=0, metadata={})
-        except Exception:  # noqa: BLE001
-            logger.warning("sam_preprocess enqueue failed for project %s",
-                           project_id, exc_info=True)
+        # 캐노니컬 컷아웃 전처리도 같이 띄운다. 분석과 독립적으로 돌고(소스 사진만 있으면 된다),
+        # 무과금이며, 실패해도 분석·생성에 영향이 없다. 여기서 거는 이유는 이 시점이 소스
+        # 사진이 확정된 첫 지점이고, 마네킹 생성이 시작되기 전에 끝나 있을 가능성이 가장 높아서다.
+        # 프로젝트당 1회 멱등(같은 키 재요청은 기존 잡에 합류) — create_job 이 원자 처리한다.
+        await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="sam_preprocess",
+            payload={"mode": "canonical_cutout"},
+            idempotency_key=f"{project_id}:sam_preprocess",
+            credits_reserved=0, metadata={})
         await conn.commit()
-    if not inline:
-        _wake_dispatcher(request)
-    content = {"jobId": job["id"]}
-    if inline:
-        content["leaseToken"] = job["lease_token"]
-    return JSONResponse(status_code=202, content=content)
+    _wake_dispatcher(request)
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
 @router.post(
@@ -1065,33 +940,210 @@ async def match_candidates(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        items = await repo.list_active_matching_items(conn)
+        items = await repo.list_active_matching_items(conn, user_id, project_id)
     genders = (
         ["women"]
         if clothingType == "dress"
         else [g.strip() for part in gender for g in part.split(",") if g.strip()]
     )
     product_tags = [t.strip() for part in styleTags for t in part.split(",") if t.strip()]
+    custom_items = [item for item in items if item.get("is_custom")]
+    curated_items = [item for item in items if not item.get("is_custom")]
+    if matching.complementary_type(clothingType) is None:
+        return JSONResponse([])
     if request.app.state.settings.retrieval_matching == "tags" and product_tags:
         ranked = retrieval.recommend_v1(
-            items, clothingType, genders, product_tags, style_affinity.affinity_map(), limit)
+            curated_items, clothingType, genders, product_tags, style_affinity.affinity_map(), limit)
     else:
-        ranked = matching.recommend(items, clothingType, genders, limit)
+        ranked = matching.recommend(curated_items, clothingType, genders, limit)
+    expected_type = matching.complementary_type(clothingType)
+    ordered = [
+        (item, item.get("clothing_type") == expected_type) for item in custom_items
+    ] + [(item, True) for item in ranked]
     return JSONResponse([
-        {
-            "id": i["id"], "name": i["name"], "gender": i["gender"],
-            "thumb": r2.public_url(i["thumb_key"]),
-            "imageUrl": r2.public_url(i["image_key"]) if i.get("image_key") else None,
-            "thumbnailUrl": r2.public_url(i["thumb_key"]),
-            "clothingType": i.get("clothing_type"),
-            "category": i.get("category"),
-            "fit": i.get("fit"),
-            "length": i.get("length"),
-            "fitCategory": matching.fit_category(i),
-            "selected": False,
-        }
-        for i in ranked if i.get("thumb_key")
+        _matching_item_to_api(r2, item, compatible=compatible)
+        for item, compatible in ordered if item.get("thumb_key")
     ])
+
+
+@router.post(
+    "/projects/{project_id}/analysis/custom-match-item",
+    responses={**COMMON_RESPONSES, 400: {"model": ErrorResponse},
+               409: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    tags=["Analysis"],
+    summary="프로젝트 전용 매칭 의류 추가",
+)
+async def add_custom_match_item(
+    request: Request,
+    project_id: str,
+    body: CustomMatchItemRequest,
+    user_id: str = Depends(require_user),
+):
+    asset_ids = [str(asset_id) for asset_id in body.asset_ids]
+    r2 = _r2(request)
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        if await repo.get_custom_matching_item(conn, user_id, project_id):
+            # DELETE가 먼저 프로젝트 잠금을 잡았다면 완료를 기다린 뒤 다시 확인한다.
+            # 평상시 중복 POST도 이 지점에서 막아 불필요한 AI 호출은 하지 않는다.
+            if not await repo.lock_custom_match_project(conn, user_id, project_id):
+                raise _not_found()
+            if await repo.get_custom_matching_item(conn, user_id, project_id):
+                raise _custom_match_error(
+                    409, "custom_match_item_exists", "이미 내 옷이 있어요. 지우고 다시 올려주세요."
+                )
+        assets = await repo.get_uploaded_assets_for_project(
+            conn, user_id, project_id, asset_ids
+        )
+        product = await repo.get_product(conn, project_id) or {}
+    if len(assets) != len(asset_ids):
+        raise _not_found()
+
+    try:
+        source_bytes = await asyncio.gather(*[
+            asyncio.to_thread(r2.get_bytes, asset["r2_key"]) for asset in assets
+        ])
+    except Exception as exc:
+        raise _custom_match_error(
+            503,
+            "custom_match_storage_unavailable",
+            "사진을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+        ) from exc
+
+    qc_results = await asyncio.gather(*[
+        asyncio.to_thread(input_qc.evaluate_input_qc, raw) for raw in source_bytes
+    ])
+    for qc in qc_results:
+        if qc.verdict == "reject":
+            raise _custom_match_error(400, "input_quality", input_qc.input_qc_message(qc))
+
+    product_type = product.get("clothing_type") or product.get("clothingType")
+    expected_type = matching.complementary_type(product_type)
+    if expected_type is None:
+        raise _custom_match_error(
+            400, "wrong_garment_type", "매칭 의류로 쓸 수 있는 건 상의 또는 하의예요."
+        )
+    # D10(2026-08-05 오너) — 업로드 대기시간을 줄이려고 AI 메타데이터 추론을 뺐다. 종류는 슬롯이
+    # 곧 정본이다(하의 슬롯에 올리면 하의). 추측으로 카테고리·기장을 지어내지 않으므로
+    # matching.fit_category 는 하의 커스텀에 대해 None 을 돌려주고 핏 조정 스텝이 뜨지 않는다 —
+    # 셀러가 올린 실물은 '있는 그대로' 입히는 게 맞다는 판단. 상의는 length 축만 그대로 산다.
+    inferred = _custom_match_metadata(expected_type)
+
+    try:
+        grid_bytes = await asyncio.to_thread(garment_grid.compose_garment_grid, source_bytes)
+    except Exception as exc:
+        raise _custom_match_error(
+            503,
+            "custom_match_storage_unavailable",
+            "사진 합성본을 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
+        ) from exc
+    checksum = hashlib.sha256(grid_bytes).hexdigest()
+    async with get_conn(request) as conn:
+        existing_grid = await repo.find_custom_grid_asset(
+            conn, user_id, project_id, checksum
+        )
+    if existing_grid:
+        grid_asset_id = existing_grid["id"]
+        grid_key = existing_grid["r2_key"]
+        grid_is_new = False
+    else:
+        grid_asset_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL, f"wearless:custom-match-grid:{user_id}:{project_id}:{checksum}"
+        ))
+        grid_key = derived_key(user_id, project_id, grid_asset_id, "jpg")
+        grid_is_new = True
+        try:
+            await asyncio.to_thread(r2.put_bytes, grid_key, grid_bytes, "image/jpeg")
+        except Exception as exc:
+            raise _custom_match_error(
+                503,
+                "custom_match_storage_unavailable",
+                "사진 합성본을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
+            ) from exc
+
+    try:
+        async with get_conn(request) as conn:
+            if not await repo.lock_custom_match_project(conn, user_id, project_id):
+                raise _not_found()
+            if await repo.get_custom_matching_item(conn, user_id, project_id):
+                raise _custom_match_error(
+                    409, "custom_match_item_exists", "이미 내 옷이 있어요. 지우고 다시 올려주세요."
+                )
+            await repo.set_custom_match_source_order(conn, user_id, project_id, asset_ids)
+            if grid_is_new:
+                await repo.insert_custom_grid_asset(
+                    conn,
+                    asset_id=grid_asset_id,
+                    user_id=user_id,
+                    project_id=project_id,
+                    bucket=request.app.state.settings.r2_bucket,
+                    key=grid_key,
+                    size=len(grid_bytes),
+                    checksum=checksum,
+                    source_asset_ids=asset_ids,
+                )
+            await repo.insert_custom_matching_item(
+                conn,
+                user_id=user_id,
+                project_id=project_id,
+                metadata=inferred,
+                image_asset_id=grid_asset_id,
+                thumbnail_asset_id=asset_ids[0],
+            )
+            row = await repo.get_custom_matching_item(conn, user_id, project_id)
+            item = _matching_item_to_api(r2, row, compatible=True)
+            payload = _analysis_with_added_custom(
+                await repo.get_analysis(conn, project_id) or {}, item
+            )
+            saved = await repo.save_analysis(conn, project_id, payload)
+            await conn.commit()
+    except errors.UniqueViolation as exc:
+        raise _custom_match_error(
+            409, "custom_match_item_exists", "이미 내 옷이 있어요. 지우고 다시 올려주세요."
+        ) from exc
+    return {
+        "item": item,
+        "analysis": {"projectId": saved["project_id"], **(saved["payload"] or {})},
+    }
+
+
+@router.delete(
+    "/projects/{project_id}/analysis/custom-match-item",
+    status_code=204,
+    responses={**COMMON_RESPONSES, 204: {"description": "삭제 완료 또는 이미 없음"}},
+    tags=["Analysis"],
+    summary="프로젝트 전용 매칭 의류 삭제",
+)
+async def remove_custom_match_item(
+    request: Request,
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user),
+):
+    cleanup_assets: list[dict] = []
+    async with get_conn(request) as conn:
+        if not await repo.lock_custom_match_project(conn, user_id, project_id):
+            raise _not_found()
+        item = await repo.get_custom_matching_item(conn, user_id, project_id)
+        if item:
+            source_asset_ids = list((item.get("image_metadata") or {}).get("sourceAssetIds") or [])
+            asset_ids = list(dict.fromkeys([
+                item.get("image_asset_id"), item.get("thumbnail_asset_id"), *source_asset_ids,
+            ]))
+            asset_ids = [asset_id for asset_id in asset_ids if asset_id]
+            payload = _analysis_without_custom(
+                await repo.get_analysis(conn, project_id) or {}, item["id"]
+            )
+            await repo.delete_custom_matching_item(conn, user_id, project_id)
+            await repo.save_analysis(conn, project_id, payload)
+            cleanup_assets = await repo.soft_delete_unreferenced_custom_assets(
+                conn, user_id, project_id, asset_ids
+            )
+        await conn.commit()
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_custom_match_r2, _r2(request), cleanup_assets)
+    return Response(status_code=204)
 
 
 # ---------- 자산 업로드 (§3 presigned + finalize) ----------
@@ -1179,7 +1231,7 @@ async def complete_upload(
         # 인프라 에러면 iqc=None으로 두고 정상 등록 — enforce 거부는 '실제 품질 불합격'에만.
         try:
             raw = await asyncio.to_thread(r2.get_bytes, key)  # 네트워크 → 스레드 격리
-            iqc = input_qc.evaluate_input_qc(raw)
+            iqc = await asyncio.to_thread(input_qc.evaluate_input_qc, raw)
         except Exception:
             logger.warning(
                 "input_qc_fetch_failed",
@@ -1207,6 +1259,7 @@ async def complete_upload(
             mime=meta["mime"] or body.mime,
             size=meta["size"],
             original_filename=body.filename,
+            metadata={"purpose": body.purpose},
         )
         await conn.commit()
     return {
@@ -1234,7 +1287,7 @@ def _cut_to_api(c: dict) -> dict:
         "matchAdjust": c["match_adjust"],
         # QC 점수 스냅샷. 재생성 경로는 jobs.result 봉투를 버리고 이 라우트를 재조회하므로,
         # 여기서 안 실으면 "생성 직후엔 보이다 재생성 후 사라지는" 비대칭이 생긴다.
-        "qcScores": public_qc_scores(c.get("qc_scores")),
+        "qcScores": c.get("qc_scores"),
     }
 
 
@@ -1245,6 +1298,7 @@ def _cut_to_api(c: dict) -> dict:
         202: {"description": "새로운 마네킹 생성 작업이 대기열에 진입했습니다."},
         400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: 정면 이미지 누락)"},
         402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+        409: {"model": ErrorResponse, "description": "다른 입력의 마네킹 생성이 이미 진행 중"},
     },
     tags=["Mannequins (AI)"],
     summary="마네킹 후보 생성 작업 시작",
@@ -1254,9 +1308,6 @@ async def generate_mannequins(
     project_id: str,
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-    frame_calibration_secret: str | None = Header(
-        None, alias="X-Wearless-Frame-Calibration"
-    ),
 ):
     """지정된 프로젝트의 상품 이미지를 기반으로 AI 마네킹 합성 컷(후보군 A, B)을 생성하는 비동기 작업을 요청합니다.
 
@@ -1268,7 +1319,6 @@ async def generate_mannequins(
       3. **크레딧 차감 (402)**: 마네킹 생성에 필요한 크레딧(설정값, 기본 2)이 없으면 `402 Payment Required` 예외가 발생합니다.
       4. **입력 조건 (400)**: 기준 색상의 정면(Front) 사진 에셋이 아직 등록되지 않은 경우 `missing_front_photo` 에러가 발생합니다.
     """
-    inline = _frame_calibration_inline_requested(request, frame_calibration_secret)
     cost = request.app.state.settings.credit_cost_mannequin_generate
     # Idempotency-Key는 project:kind로 스코프 — 다른 프로젝트/종류에서 키 재사용 시 오인 방지
     scoped_key = f"{project_id}:mannequin:{idempotency_key}" if idempotency_key else None
@@ -1287,47 +1337,26 @@ async def generate_mannequins(
         # blocking으로 직렬화되어 프로젝트당 active job 1개만 생성되고 나머지는 합류한다(§6).
         # 합류(created=False)는 게이트·예약 없이 기존 job 반환 → 동시 재시도/입력검증으로 막지 않음.
         # 합류 시 기존 job payload 가 정본 — 아래 스냅샷은 신규 job 에만 실린다.
-        product = await repo.get_product(conn, project_id) or {}
-        truth_id = None
-        if request.app.state.settings.enable_product_truth != "off":
-            product, analysis, evidence = await _truth_inputs(
-                conn, project_id=project_id, user_id=user_id, product=product)
-            approved_truth = await repo.get_product_truth(conn, project_id, status="approved")
-            domain = _truth_domain(approved_truth)
-            fingerprint = product_truth_service.source_fingerprint(product, analysis, evidence)
-            try:
-                product_truth_service.assert_approved_for_generation(
-                    domain, current_fingerprint=fingerprint)
-                truth_id = domain["id"]
-            except product_truth_service.ProductTruthError as e:
-                if request.app.state.settings.enable_product_truth == "enforce":
-                    raise HTTPException(status_code=409, detail={"code": e.code, "message": str(e)})
-                logger.info("product truth shadow miss project=%s reason=%s", project_id, e.code)
-        snapshot = await _fit_profile_snapshot(conn, project_id, None)
+        snapshot = await _fit_profile_snapshot(conn, user_id, project_id, None)
+        job_payload = {"mode": "generate", "fitProfileSnapshot": snapshot}
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
-            payload={"mode": "generate", "fitProfileSnapshot": snapshot,
-                     "truthPackageId": truth_id}, idempotency_key=scoped_key,
+            payload=job_payload, idempotency_key=scoped_key,
             credits_reserved=cost,
             metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
+        if not created and not _mannequin_payload_matches(job, job_payload):
+            raise _generation_in_progress()
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
-            if not mannequin.has_base_front(product):  # A-6: 정면 사진 필수
+            product = await repo.get_product(conn, project_id)
+            if not mannequin.has_base_front(product or {}):  # A-6: 정면 사진 필수
                 raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")
             if await repo.reserve_credits(conn, user_id, cost) is None:
                 raise HTTPException(
                     status_code=402,
                     detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
-        if inline:
-            job = await _preclaim_frame_calibration_job(
-                conn, job=job, created=created
-            )
         await conn.commit()
-    if not inline:
-        _wake_dispatcher(request)
-    content = {"jobId": job["id"]}
-    if inline:
-        content["leaseToken"] = job["lease_token"]
-    return JSONResponse(status_code=202, content=content)
+    _wake_dispatcher(request)
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
 @router.get(
@@ -1351,6 +1380,33 @@ async def get_mannequins(
             raise _not_found()
         cuts = await repo.list_mannequin_cuts(conn, user_id, project_id)
     return [_cut_to_api(c) for c in cuts]
+
+
+@router.post(
+    "/projects/{project_id}/mannequins:cancel",
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins (AI)"],
+    summary="진행 중인 마네킹 생성 취소",
+)
+async def cancel_mannequin_generation(
+    request: Request,
+    project_id: str,
+    user_id: str = Depends(require_user),
+):
+    """활성 마네킹 생성을 취소하고 예약 크레딧을 환불 없이 확정 차감한다.
+
+    활성 job이 없으면 ``cancelled: false``로 성공하므로 재호출해도 안전하다.
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        credits = await repo.cancel_active_mannequin_job(conn, user_id, project_id)
+        cancelled = credits is not None
+        if not cancelled:
+            account = await repo.get_account(conn, user_id)
+            credits = (account or {}).get("credits", 0)
+        await conn.commit()
+    return {"cancelled": cancelled, "credits": credits}
 
 
 @router.post(
@@ -1383,215 +1439,13 @@ async def adjust_mannequin(
 
 
 @router.post(
-    "/projects/{project_id}/mannequins:edit",
-    response_model=EditSessionView,
-    responses={**COMMON_RESPONSES},
-    tags=["Mannequins"],
-    summary="승인 baseline 기반 제한 편집",
-)
-async def edit_mannequin(
-    request: Request,
-    project_id: str,
-    body: EditRequest,
-    user_id: str = Depends(require_user),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-):
-    """승인된 baseline 을 **입력 이미지로** 써서 요청한 속성만 바꿉니다.
-
-    - **Bearer Token**: 필수
-    - **Body**: `{ editType, adjustments }` — step 은 -2..2 만. edit type 과 무관한 축을
-      함께 바꾸는 요청은 거부합니다(그 edit type 의 이름이 거짓이 되므로).
-    - regenerate 와 다릅니다: regenerate 는 상품 원본에서 **새로** 만들고, edit 는 승인된
-      결과를 편집합니다. 승인 baseline 이 없으면 fresh 생성으로 조용히 넘어가지 않고
-      `409 no_approved_baseline` 을 돌려줍니다.
-    - 어떤 편집 결과도 baseline 을 자동 교체하지 않습니다 — 새 baseline 은 승인 API 를
-      다시 호출해야 생깁니다.
-    - **에지 케이스**: `400`(요청 계약 위반), `402 insufficient_credits`,
-      `409 no_approved_baseline`, `503`(기능 미노출 — 플래그 off).
-    """
-    s = request.app.state.settings
-    if s.mannequin_edit_intent_qc == "off":
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "edit_not_enabled",
-                    "message": "편집 기능이 아직 열리지 않았어요."})
-    # 편집 결과의 계보(generation_outputs)는 Generation Run 기록 위에 세워진다. 그게 꺼진
-    # 채로 편집을 켜면 output 행이 생기지 않아 "무엇을 편집한 결과인지 모르는 컷"이 나온다.
-    # 조용히 허용하지 않는다 — 편집 플래그가 기록 플래그를 몰래 켜지도 않는다.
-    if s.generation_run_log == "off":
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "misconfigured_feature",
-                    "message": "편집 기능 설정이 완전하지 않아요."})
-    try:
-        edit_type = edit_service.normalize_edit_type(body.edit_type)
-        adjustments = edit_service.validate_adjustments(edit_type, body.adjustments)
-    except edit_service.EditRequestError as e:
-        raise _bad_request(e.code, str(e))
-    scope = edit_service.allowed_scope(edit_type)
-    cost = s.credit_cost_mannequin_generate
-    scoped_key = f"{project_id}:mannequin_edit:{idempotency_key}" if idempotency_key else None
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        baseline = await repo.get_active_baseline(conn, project_id)
-        if baseline is None:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "no_approved_baseline",
-                        "message": "먼저 마네킹 컷을 승인해 주세요."})
-        # ── 멱등·충돌을 **만들기 전에** 판정한다 ──
-        # create_job 은 "같은 키 재시도"와 "다른 활성 job 합류"를 둘 다 created=False 로
-        # 돌려준다. 그걸 구분하지 않고 진행하면 두 경우 모두 새 세션이 생기고 남의 job
-        # payload 가 덮어써진다(4/N 이전의 실제 동작).
-        if scoped_key:
-            prior = await repo.get_job_by_idempotency_key(conn, user_id, scoped_key)
-            if prior is not None:
-                existing = await repo.get_edit_session_by_job_id(conn, prior["id"])
-                if existing is None:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={"code": "job_in_progress",
-                                "message": "이미 진행 중인 작업이 있어요."})
-                expected_baseline_id = body.baseline_id or baseline["id"]
-                same = (existing["edit_type"] == edit_type
-                        and (existing["requested_adjustments"] or {}) == adjustments
-                        and existing["baseline_id"] == expected_baseline_id)
-                if not same:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={"code": "idempotency_conflict",
-                                "message": "같은 요청 키로 다른 편집을 보낼 수 없어요."})
-                return {**existing, "job_id": prior["id"]}   # 부수효과 0
-        if body.baseline_id and body.baseline_id != baseline["id"]:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "baseline_changed",
-                        "message": "승인 기준이 바뀌었어요. 현재 컷을 다시 선택해 주세요."})
-        locks = edit_service.locked_invariants_for_edit(
-            baseline.get("locked_invariants"), edit_type)
-        active = await repo.get_active_job(conn, user_id, project_id, "mannequin")
-        if active is not None:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "job_in_progress",
-                        "message": "이미 진행 중인 작업이 있어요."})
-
-        job, created = await repo.create_job(
-            conn, user_id=user_id, project_id=project_id, kind="mannequin",
-            payload={"mode": "edit", "editType": edit_type, "adjustments": adjustments,
-                     "baselineId": baseline["id"]},
-            idempotency_key=scoped_key, credits_reserved=cost,
-            metadata={"creditCostVersion": s.credit_cost_version})
-        if not created:
-            # 위 검사와 INSERT 사이의 레이스 — 합류하지 않고 거절한다. 세션도 크레딧도 없다.
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "job_in_progress",
-                        "message": "이미 진행 중인 작업이 있어요."})
-        if await repo.reserve_credits(conn, user_id, cost) is None:
-            raise HTTPException(
-                status_code=402,
-                detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
-        session = await repo.create_edit_session(
-            conn, project_id=project_id, user_id=user_id, job_id=job["id"],
-            baseline=baseline, edit_type=edit_type, adjustments=adjustments,
-            locked_invariants=locks, allowed_scope=scope)
-        await repo.update_job_payload_edit_session(conn, job["id"], session["id"])
-        await conn.commit()
-    _wake_dispatcher(request)
-    return {**session, "job_id": job["id"]}
-
-
-@router.post(
-    "/projects/{project_id}/mannequins:approve",
-    response_model=ApprovedBaseline,
-    responses={**COMMON_RESPONSES},
-    tags=["Mannequins"],
-    summary="마네킹 컷 승인 (Approved Baseline)",
-)
-async def approve_mannequin(
-    request: Request,
-    project_id: str,
-    body: BaselineApproveRequest,
-    user_id: str = Depends(require_user),
-):
-    """선택한 마네킹 컷을 **승인**해 이 프로젝트의 Approved Baseline 으로 만듭니다.
-
-    - **Bearer Token**: 필수
-    - **Body**: `{ cutId }` — 목록에서 쓰는 `"A-3"` 형식 id.
-    - 승인은 **명시적 사용자 행위**입니다. 생성 성공만으로 baseline 이 바뀌지 않고,
-      새 승인이 있을 때만 기존 baseline 이 supersede 됩니다(같은 트랜잭션).
-    - 같은 컷을 다시 승인하면 baseline 상태(id·승인 시각·supersede)는 그대로 두고 기존
-      baseline 을 돌려줍니다(`idempotent: true`). 재승인 **시도 자체는 감사 기록**에
-      남습니다 — 상태가 안 바뀐 것과 아무 일도 없었던 것은 다릅니다.
-    - 검수 필요(`needs_review`) 결과도 승인할 수 있습니다 — 사람이 보고 누른 것이므로
-      감사 기록에 그 사실이 남습니다. 실패 결과는 애초에 저장되지 않습니다(fail-closed).
-    - **에지 케이스**: `404 Not Found` — 프로젝트·컷이 없거나 타 사용자 소유인 경우.
-    """
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        cut = await repo.get_mannequin_cut_for_approval(conn, user_id, project_id,
-                                                        body.cut_id)
-        if cut is None:
-            raise _not_found()   # 존재/소유를 구분해 알려주지 않는다
-        # 이 라우트가 needs_review 승인을 허용한 근거는 "실패 결과는 애초에 저장되지
-        # 않는다" 였다. 그 전제는 더 이상 참이 아니다 — 원본 주기를 세우지 못한 컷도
-        # 저장된다. 사람이 눌렀다는 사실로 서버가 이미 아는 실패를 덮을 수는 없다.
-        _require_consumable_cut(cut)
-        snapshots = baseline_service.build_profile_snapshots(cut)
-        invariants = {
-            **baseline_service.build_locked_invariants(cut),
-            "approvalReview": baseline_service.approval_review_state(cut),
-        }
-        try:
-            result = await repo.approve_mannequin_baseline(
-                conn, user_id=user_id, project_id=project_id, cut=cut,
-                locked_invariants=invariants,
-                mannequin_profile=snapshots["mannequin_profile"],
-                framing_profile=snapshots["framing_profile"],
-                background_profile=snapshots["background_profile"],
-                lighting_profile=snapshots["lighting_profile"])
-        except PermissionError:
-            raise _not_found()
-        await conn.commit()
-    b = result["baseline"]
-    return {
-        **b,
-        "cut_id": body.cut_id,
-        "superseded_baseline_id": result["superseded_id"],
-        "idempotent": result["idempotent"],
-    }
-
-
-@router.get(
-    "/projects/{project_id}/mannequins/baseline",
-    response_model=ApprovedBaseline | None,
-    responses={**COMMON_RESPONSES},
-    tags=["Mannequins"],
-    summary="현재 Approved Baseline 조회",
-)
-async def get_baseline(
-    request: Request, project_id: str, user_id: str = Depends(require_user)
-):
-    """현재 active baseline. 승인한 적이 없으면 `null` 입니다."""
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        row = await repo.get_active_baseline(conn, project_id)
-    if row is None:
-        return None
-    return {**row, "cut_id": row["cut_client_id"], "project_id": project_id}
-
-
-@router.post(
     "/projects/{project_id}/mannequins:regenerate",
     responses={
         **COMMON_RESPONSES,
         202: {"description": "마네킹 재생성 작업이 대기열에 진입했습니다."},
         400: {"model": ErrorResponse, "description": "필수 전조건 미비 (예: 정면 이미지 누락)"},
         402: {"model": ErrorResponse, "description": "크레딧 잔액 부족"},
+        409: {"model": ErrorResponse, "description": "다른 입력의 마네킹 생성이 이미 진행 중"},
     },
     tags=["Mannequins (AI)"],
     summary="마네킹 재생성 작업 시작 (fit-profile 반영)",
@@ -1599,12 +1453,9 @@ async def get_baseline(
 async def regenerate_mannequins(
     request: Request,
     project_id: str,
-    body: RegenerateRequest = Body(default_factory=RegenerateRequest),
+    body: dict = Body(default={}),
     user_id: str = Depends(require_user),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-    frame_calibration_secret: str | None = Header(
-        None, alias="X-Wearless-Frame-Calibration"
-    ),
 ):
     """조정된 fit-profile 을 반영해 마네킹 후보를 **새 버전으로 재생성**합니다.
 
@@ -1615,10 +1466,8 @@ async def regenerate_mannequins(
       만든다(finalize 가 candidate 별 `max(version)+1` 로 append). 크레딧은 generate 와 동일.
     - **에지 케이스**: `400 missing_front_photo`(정면 사진 없음), `402 insufficient_credits`(크레딧 부족).
     """
-    inline = _frame_calibration_inline_requested(request, frame_calibration_secret)
     cost = request.app.state.settings.credit_cost_mannequin_generate
     scoped_key = f"{project_id}:mannequin_regenerate:{idempotency_key}" if idempotency_key else None
-    requested_baseline_id = body.baseline_id
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -1626,95 +1475,26 @@ async def regenerate_mannequins(
         # 스냅샷 = 잡 시점 effective profile + 서버 산출 adjustedAxes (fidelity 설계 D3·§E-2).
         snapshot = await _fit_profile_snapshot(
             conn,
+            user_id,
             project_id,
-            body.fit_profile,
+            body.get("fitProfile"),
             validate_matching_fit=True,
         )
-        baseline = None
-        if requested_baseline_id:
-            baseline = await repo.get_active_baseline(conn, project_id)
-            if baseline is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "no_approved_baseline",
-                            "message": "먼저 마네킹 컷을 승인해 주세요."})
-            if baseline["id"] != requested_baseline_id:
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "baseline_changed",
-                            "message": "승인 기준이 바뀌었어요. 현재 컷을 다시 선택해 주세요."})
-        if scoped_key:
-            prior = await repo.get_job_by_idempotency_key(conn, user_id, scoped_key)
-            if prior is not None:
-                prior_payload = prior.get("payload") or {}
-                same = (
-                    prior_payload.get("mode") == "regenerate"
-                    and
-                    prior_payload.get("baselineId") == requested_baseline_id
-                    and (prior_payload.get("fitProfileSnapshot") or {}) == snapshot
-                )
-                if not same:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={"code": "idempotency_conflict",
-                                "message": "같은 요청 키로 다른 재생성을 보낼 수 없어요."})
-                await conn.commit()
-                return JSONResponse(status_code=202, content={"jobId": prior["id"]})
-        # 기존 fit 계약 검증이 Product Truth/스토리지 조회보다 먼저 실패해야 한다. 이 순서는
-        # 잘못된 matchingFit 요청이 추가 조회·job 생성·크레딧 예약으로 진행되지 않는 API 계약이다.
-        product = await repo.get_product(conn, project_id) or {}
-        truth_id = None
-        if request.app.state.settings.enable_product_truth != "off":
-            product, analysis, evidence = await _truth_inputs(
-                conn, project_id=project_id, user_id=user_id, product=product)
-            approved_truth = await repo.get_product_truth(conn, project_id, status="approved")
-            domain = _truth_domain(approved_truth)
-            try:
-                product_truth_service.assert_approved_for_generation(
-                    domain,
-                    current_fingerprint=product_truth_service.source_fingerprint(
-                        product, analysis, evidence))
-                truth_id = domain["id"]
-            except product_truth_service.ProductTruthError as e:
-                if request.app.state.settings.enable_product_truth == "enforce":
-                    raise HTTPException(status_code=409, detail={"code": e.code, "message": str(e)})
         job_payload = {
             "mode": "regenerate",
-            "fitProfile": body.fit_profile,
+            "fitProfile": body.get("fitProfile"),
             "fitProfileSnapshot": snapshot,
-            "truthPackageId": truth_id,
-            "baselineId": requested_baseline_id,
         }
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="mannequin",
             payload=job_payload,
             idempotency_key=scoped_key, credits_reserved=cost,
-            metadata={
-                "creditCostVersion": request.app.state.settings.credit_cost_version,
-                **({"anchorBaselineId": baseline["id"],
-                    "anchorRole": "approved_front_baseline"} if baseline else {}),
-            })
-        if not created:
-            active_payload = job.get("payload") or {}
-            same_active_request = all(
-                active_payload.get(key) == job_payload.get(key)
-                for key in (
-                    "mode",
-                    "baselineId",
-                    "fitProfileSnapshot",
-                    "truthPackageId",
-                )
-            )
-            if not same_active_request:
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "code": "job_in_progress",
-                        "message": "다른 마네킹 생성 작업이 진행 중이에요. 완료 후 다시 시도해 주세요.",
-                    },
-                )
+            metadata={"creditCostVersion": request.app.state.settings.credit_cost_version})
+        if not created and not _mannequin_payload_matches(job, job_payload):
+            raise _generation_in_progress()
         if created:  # 신규 job만 입력 게이트 + 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
-            if not mannequin.has_base_front(product):  # 정면 사진 필수(generate 동일)
+            product = await repo.get_product(conn, project_id)
+            if not mannequin.has_base_front(product or {}):  # 정면 사진 필수(generate 동일)
                 raise _bad_request("missing_front_photo", "기준 색상 정면 사진을 먼저 올려주세요.")
             if await repo.reserve_credits(conn, user_id, cost) is None:
                 raise HTTPException(
@@ -1724,23 +1504,15 @@ async def regenerate_mannequins(
             # generation_spec(analysis) 이 이를 읽어 재생성 컷에 반영한다(mannequin_job.py:205,
             # agents/mannequin.generation_spec = analysis["fitProfile"]). save_analysis 는 REPLACE 라
             # 저장된 analysis 가 있을 때만 full payload 에 머지한다(빈 {}에 넣어 다른 필드 유실 방지).
-            fit_profile = body.fit_profile
+            fit_profile = body.get("fitProfile")
             if fit_profile:
                 analysis = await repo.get_analysis(conn, project_id)
                 if analysis:
                     analysis["fitProfile"] = fit_profile
                     await repo.save_analysis(conn, project_id, analysis)
-        if inline:
-            job = await _preclaim_frame_calibration_job(
-                conn, job=job, created=created
-            )
         await conn.commit()
-    if not inline:
-        _wake_dispatcher(request)
-    content = {"jobId": job["id"]}
-    if inline:
-        content["leaseToken"] = job["lease_token"]
-    return JSONResponse(status_code=202, content=content)
+    _wake_dispatcher(request)
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
 # ---------- 콘티/에디터/상세페이지 (PL-4) ----------
@@ -1888,67 +1660,6 @@ async def get_wardrobe(request: Request, project_id: str, user_id: str = Depends
     return wardrobe
 
 
-def _parse_editor_source_asset_id(src) -> str | None:
-    """`/v1/assets/{id}/file` 에서 asset id 추출. 워커의 _parse_source_asset_id 와 같은 규칙."""
-    m = re.search(r"/assets/([0-9a-fA-F-]{36})/file", str(src or ""))
-    return m.group(1) if m else None
-
-
-@router.post(
-    "/projects/{project_id}/edit-sessions/{session_id}:review",
-    responses={**COMMON_RESPONSES, 409: {"model": ErrorResponse}},
-    tags=["Editor"],
-    summary="편집 결과 사용자 검수",
-)
-async def review_edit_session(
-    request: Request,
-    project_id: str,
-    session_id: str,
-    body: dict = Body(...),
-    user_id: str = Depends(require_user),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-):
-    """`review_required` 결과에 대한 **사용자 판단**을 기록합니다(append-only).
-
-    - **Body**: `{ decision: 'accepted' | 'rejected', reason? }`
-    - machine QC 는 바뀌지 않습니다 — `qcStatus` 는 계속 `review_required` 이고, 이 기록은
-      "사람이 무엇을 결정했는가"만 말합니다. 나중에 판단이 바뀌면 **새 키로 새 기록**을
-      남기며, 유효 판단은 가장 최근 기록입니다.
-    - `rejected` 는 결과를 삭제하지 않습니다.
-    - **에지 케이스**: `404`(없거나 타 프로젝트), `409 not_reviewable`(검수 대상이 아닌
-      상태), `409 idempotency_conflict`(같은 키·다른 판단).
-    """
-    decision = (body or {}).get("decision")
-    if decision not in ("accepted", "rejected"):
-        raise _bad_request("invalid_decision", "검수 결과 값이 올바르지 않아요.")
-    reason = (body or {}).get("reason")
-    if reason is not None and (not isinstance(reason, str) or len(reason) > 500):
-        raise _bad_request("invalid_reason", "사유 형식이 올바르지 않아요.")
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        try:
-            result = await repo.record_edit_review(
-                conn, project_id=project_id, user_id=user_id, session_id=session_id,
-                decision=decision, reason=reason, idempotency_key=idempotency_key)
-        except LookupError:
-            raise _not_found()
-        except ValueError as e:
-            code = str(e)
-            if code not in ("idempotency_conflict", "not_reviewable"):
-                raise   # 알 수 없는 상태를 사용자 잘못(409)으로 위장하지 않는다
-            raise HTTPException(
-                status_code=409,
-                detail={"code": code,
-                        "message": ("이미 처리된 요청이에요." if code ==
-                                    "idempotency_conflict"
-                                    else "검수할 수 있는 결과가 아니에요.")})
-        await conn.commit()
-    ev = result["event"]
-    return {"editSessionId": session_id, "decision": ev["decision"],
-            "reviewedAt": ev["created_at"]}
-
-
 @router.post(
     "/projects/{project_id}/editor:generate-image",
     responses={
@@ -2030,125 +1741,10 @@ async def generate_editor_image(
                 conn, (body or {}).get("modelId") or (body or {}).get("model_id"))
             if license_row is not None:
                 await facemarket.verify_license(request.app, license_row)  # 실패=409
-        # 에디터 새 착용컷도 후속 view/상세페이지와 같은 Identity Lock 을 쓴다.
-        # product/detail 컷은 실제 상품 원본 기반이라 baseline 이 필요 없다. 착용컷만
-        # job·credit 전에 active approved baseline 을 요구하고, 실행 시점 재검증용 id 를
-        # payload 에 snapshot 한다.
-        job_payload = dict(body or {})
-        job_metadata = {"creditCostVersion": s.credit_cost_version}
-        if job_payload.get("mode") == "new" and job_payload.get("cutType") in cut_generator.CUT_TYPES:
-            product = await repo.get_product(conn, project_id) or {}
-            analysis = await repo.get_analysis(conn, project_id) or {}
-            clothing_type = (
-                product.get("clothingType")
-                or product.get("clothing_type")
-                or "top"
-            )
-            try:
-                normalized_new = cut_generator.normalize_spec(
-                    content_roles.canonicalize_storyboard_block(job_payload),
-                    clothing_type=clothing_type,
-                )
-            except ValueError:
-                normalized_new = None
-            if normalized_new and normalized_new.get("cutType") in {"styling", "horizon", "mirror"}:
-                baseline = await repo.get_active_baseline(conn, project_id)
-                if baseline is None:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={"code": "no_approved_baseline",
-                                "message": "정면 마네킹 이미지를 먼저 확정해 주세요."},
-                    )
-                job_payload["baselineId"] = baseline["id"]
-                job_metadata.update({
-                    "anchorBaselineId": baseline["id"],
-                    "anchorRole": "approved_front_baseline",
-                })
-        # ── Phase 3: 생성형 vary 만 세션을 만든다 ──
-        # mode:new 와 플래그 off 는 이 블록을 통째로 건너뛴다(payload 도 손대지 않는다).
-        vary_ctx = None
-        if (body or {}).get("mode") == "vary" and s.editor_vary_intent_qc != "off":
-            if s.generation_run_log == "off":
-                # 계보는 Generation Run 위에 세워진다. 몰래 켜지 않고 설정 오류로 막는다.
-                raise HTTPException(
-                    status_code=503,
-                    detail={"code": "misconfigured_feature",
-                            "message": "편집 기록 설정이 완전하지 않아요."})
-            try:
-                changes = editor_vary_service.validate_changes((body or {}).get("changes"))
-            except editor_vary_service.VaryRequestError as e:
-                raise _bad_request(e.code, str(e))
-            src_asset_id = _parse_editor_source_asset_id(
-                ((body or {}).get("source") or {}).get("src"))
-            src_asset = (await repo.get_asset_for_user(conn, user_id, src_asset_id)
-                         if src_asset_id else None)
-            if src_asset is None or str(src_asset.get("project_id") or project_id) != project_id:
-                # 클라이언트가 보낸 src URL·id 를 정본으로 쓰지 않는다 — DB asset 이 정본이다.
-                raise _bad_request("source_asset_missing", "변형할 컷을 찾을 수 없어요.")
-            ref_bg_id = (body or {}).get("refBgAssetId")
-            if ref_bg_id and await repo.get_asset_for_user(
-                    conn, user_id, str(ref_bg_id)) is None:
-                raise _bad_request("ref_bg_missing", "배경 레퍼런스를 찾을 수 없어요.")
-            vary_ctx = {
-                "changes": changes,
-                "edit_type": editor_vary_service.edit_type_for(changes),
-                "scope": editor_vary_service.semantic_scope(changes),
-                "source_asset_id": src_asset["id"],
-                "ref_bg_asset_id": str(ref_bg_id) if ref_bg_id else None,
-            }
-            if scoped_key:
-                prior = await repo.get_job_by_idempotency_key(conn, user_id, scoped_key)
-                if prior is not None:
-                    existing = await repo.get_edit_session_by_job_id(conn, prior["id"])
-                    if existing is None:
-                        raise HTTPException(
-                            status_code=409,
-                            detail={"code": "job_in_progress",
-                                    "message": "이미 진행 중인 작업이 있어요."})
-                    prior_payload = prior.get("payload") or {}
-                    same = (existing["source_asset_id"] == vary_ctx["source_asset_id"]
-                            and existing["edit_type"] == vary_ctx["edit_type"]
-                            and (existing["requested_adjustments"] or {}).get("changes")
-                            == changes
-                            and prior_payload.get("mode") == "vary"
-                            and (prior_payload.get("refBgAssetId") or None)
-                            == vary_ctx["ref_bg_asset_id"])
-                    if not same:
-                        raise HTTPException(
-                            status_code=409,
-                            detail={"code": "idempotency_conflict",
-                                    "message": "같은 요청 키로 다른 편집을 보낼 수 없어요."})
-                    # 신규와 **같은 공개 DTO** 로 돌려준다. 내부 job row 를 펼치면
-                    # payload·metadata·lease 가 새고, 프론트는 jobId 가 없어 폴링도 못 한다.
-                    return JSONResponse(
-                        status_code=202,
-                        content={"jobId": prior["id"],
-                                 "editSessionId": existing["id"]})   # 부수효과 0
-
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="editor_image",
-            payload=job_payload, idempotency_key=scoped_key, credits_reserved=cost,
-            metadata=job_metadata)
-        if vary_ctx is not None and created:
-            # 계보는 source asset 에 output 이 **유일할 때만** 잇는다. 여러 개면 어느 쪽이
-            # 이 자산의 계보인지 모르는 상태라 하나를 고르는 건 추정이지 계보가 아니다.
-            link = await repo.get_unique_output_for_asset(
-                conn, vary_ctx["source_asset_id"])
-            session = await repo.create_editor_edit_session(
-                conn, project_id=project_id, user_id=user_id, job_id=job["id"],
-                source_asset_id=vary_ctx["source_asset_id"],
-                parent_output_id=link["output_id"], edit_type=vary_ctx["edit_type"],
-                changes=vary_ctx["changes"],
-                allowed_scope=vary_ctx["scope"],
-                locked_invariants={"scope": vary_ctx["scope"],
-                                   "lineageStatus": link["status"],
-                                   "sourceGenerationRunId": link.get("generation_run_id"),
-                                   "sourceBaselineId": link.get("baseline_id")},
-                request_snapshot={"refBgAssetId": vary_ctx["ref_bg_asset_id"],
-                                  "cutType": ((body or {}).get("source") or {}).get(
-                                      "cutType")})
-            await repo.update_job_payload_edit_session(conn, job["id"], session["id"])
-            vary_ctx["session_id"] = session["id"]
+            payload=body, idempotency_key=scoped_key, credits_reserved=cost,
+            metadata={"creditCostVersion": s.credit_cost_version})
         if created:  # 신규 job만 예약. 실패 시 raise → 커밋 안 함 → job 생성 롤백
             if await repo.reserve_credits(conn, user_id, cost) is None:
                 raise HTTPException(
@@ -2156,10 +1752,7 @@ async def generate_editor_image(
                     detail={"code": "insufficient_credits", "message": "크레딧이 부족해요."})
         await conn.commit()
     _wake_dispatcher(request)
-    body_out = {"jobId": job["id"]}
-    if vary_ctx and vary_ctx.get("session_id"):
-        body_out["editSessionId"] = vary_ctx["session_id"]
-    return JSONResponse(status_code=202, content=body_out)
+    return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
 
 @router.post(
@@ -2196,33 +1789,11 @@ async def generate_detail_page(
             return JSONResponse({"data": existing, "credits": (account or {}).get("credits", 0)})
         storyboard = await repo.get_storyboard(conn, project_id)
         _require_bg_examples_enabled(request, storyboard)
-        canonical_storyboard = content_roles.canonicalize_storyboard(storyboard)
-        # 착용 후속컷의 Identity Lock 정본은 사용자가 승인한 front baseline 하나뿐이다.
-        # selected_mannequin_id 는 단순 UI 선택 포인터라 승인 이력이 아니며, 그것을 조용히
-        # 앵커로 쓰면 사용자가 검토하지 않은 컷이 전 상세페이지의 의류 정체성을 지배한다.
-        worn_types = {"styling", "horizon", "mirror"}
-        needs_anchor = any(
-            isinstance(b, dict)
-            and b.get("source") == "ai"
-            and (b.get("cutType") or b.get("cut_type")) in worn_types
-            for b in canonical_storyboard
-        )
-        baseline_id = None
-        if needs_anchor:
-            baseline = await repo.get_active_baseline(conn, project_id)
-            if baseline is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "no_approved_baseline",
-                            "message": "정면 마네킹 이미지를 먼저 확정해 주세요."},
-                )
-            baseline_id = baseline["id"]
         ai_count = sum(1 for b in storyboard if isinstance(b, dict) and b.get("source") == "ai")
         cost = ai_count * s.credit_cost_storyboard_per_cut
         job, created = await repo.create_job(
             conn, user_id=user_id, project_id=project_id, kind="detail_page",
-            payload={"mode": "generate", "baselineId": baseline_id},
-            idempotency_key=scoped_key, credits_reserved=cost,
+            payload={"mode": "generate"}, idempotency_key=scoped_key, credits_reserved=cost,
             # perCutCost = 예약 시점 컷당 단가 스냅샷 — 워커 정산의 단일 기준(실행 시점 설정
             # 변경·콘티 재저장으로 인한 블록 수 변동과 무관하게 견적 가격을 고정).
             metadata={"creditCostVersion": s.credit_cost_version,
@@ -2237,99 +1808,6 @@ async def generate_detail_page(
         await conn.commit()
     _wake_dispatcher(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
-
-
-@router.post(
-    "/projects/{project_id}/export",
-    response_model=ExportJobResponse,
-    responses={
-        **COMMON_RESPONSES,
-        202: {"description": "에디터 내보내기 작업이 대기열에 진입했습니다."},
-        400: {"model": ErrorResponse},
-        409: {"model": ErrorResponse},
-    },
-    tags=["Editor"],
-    summary="에디터 스냅샷 내보내기 작업 시작 (Phase 9)",
-)
-async def export_project(
-    request: Request,
-    project_id: str,
-    body: ExportRequest,
-    user_id: str = Depends(require_user),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-):
-    if getattr(request.app.state.settings, "export_backend", "off") != "on":
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "export_disabled", "message": "내보내기가 아직 활성화되지 않았어요."},
-        )
-    if not idempotency_key:
-        raise _bad_request("missing_idempotency_key", "내보내기 요청 키가 필요해요.")
-    options = body.options.model_dump(by_alias=True)
-    # 클라이언트 snapshot은 hash 계산 편의를 위한 하위 호환 필드일 뿐 렌더 입력이 아니다.
-    # 저장된 blocks+revision을 한 statement로 읽어 TOCTOU와 임의 asset URL 주입을 막는다.
-    request_body = {"snapshotHash": body.snapshot_hash, "body": body.body, "options": options}
-    body_hash = _canonical_hash(request_body)
-    scoped_key = f"{project_id}:export:{idempotency_key}"
-    export_id = str(uuid.uuid4())
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, project_id) is None:
-            raise _not_found()
-        prior = await repo.get_job_by_idempotency_key(conn, user_id, scoped_key)
-        if prior is not None:
-            if (prior.get("payload") or {}).get("requestBodyHash") != body_hash:
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "idempotency_conflict",
-                            "message": "같은 요청 키로 다른 내보내기를 보낼 수 없어요."},
-                )
-            existing_export = await repo.get_export_by_job(conn, prior["id"])
-            return JSONResponse(
-                status_code=202,
-                content={"jobId": prior["id"],
-                         "exportId": (existing_export or {}).get("id")
-                         or (prior.get("payload") or {}).get("exportId")},
-            )
-        server_snapshot = await repo.get_editor_snapshot(conn, user_id, project_id)
-        if server_snapshot is None:
-            raise _not_found()
-        snapshot = {"editorBlocks": server_snapshot["blocks"]}
-        if not snapshot["editorBlocks"]:
-            raise _bad_request("empty_export", "내보내기할 상세페이지가 비어 있어요.")
-        try:
-            export_render.verify_snapshot_hash(snapshot, body.snapshot_hash)
-        except export_render.ExportRenderError as exc:
-            raise _bad_request(exc.code, exc.message) from exc
-        payload = {
-            "exportId": export_id,
-            "snapshot": snapshot,
-            "snapshotRevision": server_snapshot["revision"],
-            "snapshotHash": body.snapshot_hash,
-            "body": body.body,
-            "options": options,
-            "requestBodyHash": body_hash,
-        }
-        job, created = await repo.create_job(
-            conn, user_id=user_id, project_id=project_id, kind="export",
-            payload=payload, idempotency_key=scoped_key, credits_reserved=0,
-            metadata={"requestBodyHash": body_hash})
-        if not created:
-            existing_export = await repo.get_export_by_job(conn, job["id"])
-            await conn.commit()
-            return JSONResponse(
-                status_code=202,
-                content={"jobId": job["id"],
-                         "exportId": (existing_export or {}).get("id")
-                         or (job.get("payload") or {}).get("exportId")},
-            )
-        await repo.create_export_record(
-            conn, export_id=export_id, project_id=project_id, job_id=job["id"],
-            fmt=("zip" if options.get("format") == "zip" else "long"),
-            snapshot_hash=body.snapshot_hash, options=options,
-            snapshot_revision=server_snapshot["revision"])
-        await conn.commit()
-    _wake_dispatcher(request)
-    return JSONResponse(status_code=202, content={"jobId": job["id"], "exportId": export_id})
 
 
 @router.get(
@@ -2372,7 +1850,7 @@ async def get_asset_file(request: Request, asset_id: str):
     summary="작업(Job) 상태 조회",
 )
 async def get_job(request: Request, job_id: str, user_id: str = Depends(require_user)):
-    """비동기로 시작된 백그라운드 작업(AI 생성 등)의 현재 상태(pending, running, done, error) 및 진행도(0~100%)를 조회합니다.
+    """비동기로 시작된 백그라운드 작업(AI 생성 등)의 현재 상태(pending, running, done, error, cancelled) 및 진행도(0~100%)를 조회합니다.
 
     - **Bearer Token**: 필수
     - **에지 케이스**:
@@ -2398,6 +1876,7 @@ async def job_events(
     user_id: str = Depends(require_user),
     last_event_id: str | None = Header(None, alias="Last-Event-ID"),
     after: int = Query(0),
+    poll: int = Query(0),
 ):
     """지정된 백그라운드 작업의 상태 변경이나 진행 이벤트 로그를 실시간 Server-Sent Events (SSE) 형식으로 스트리밍합니다.
 
@@ -2405,12 +1884,20 @@ async def job_events(
     - **Header**: `Last-Event-ID` (클라이언트 연결 재시도 시, 마지막으로 받은 이벤트 ID 이후부터 스트림 재개)
     - **에지 케이스**:
       - `404 Not Found`: 해당 작업이 존재하지 않거나, 다른 사용자가 소유한 경우 발생
-      - 완료(`done`) 혹은 실패(`error`) 이벤트가 전달되거나, 최대 5분(300초)이 경과하면 연결이 안전하게 정리 종료됩니다.
+      - 완료(`done`), 실패(`error`) 혹은 취소(`cancelled`) 이벤트가 전달되거나, 최대 5분(300초)이 경과하면 연결이 안전하게 정리 종료됩니다.
     """
     async with get_conn(request) as conn:  # 소유권 확인
         if await repo.get_job(conn, user_id, job_id) is None:
             raise HTTPException(
                 status_code=404, detail={"code": "not_found", "message": "작업을 찾을 수 없습니다."})
+    # ?poll=1 — SSE 대신 1회 JSON 조회(editor_wait_dev_spec §2-2). EventSource 는 Bearer
+    # 헤더를 못 실으므로 프론트는 마네킹과 동일하게 폴링으로 통일한다. after 커서 재사용.
+    if poll:
+        async with get_conn(request) as conn:
+            events = await repo.list_job_events(conn, user_id, job_id, after)
+        return JSONResponse({"events": [
+            {"id": e["id"], "type": e["event_type"], "payload": e["payload"]} for e in events
+        ]})
     start = int(last_event_id) if (last_event_id is not None and last_event_id.isdigit()) else after
     pool = request.app.state.pool
 
@@ -2422,15 +1909,14 @@ async def job_events(
                 events = await repo.list_job_events(conn, user_id, job_id, after_id)
             for e in events:
                 after_id = e["id"]
-                payload = json.dumps(
-                    public_job_event_payload(e["payload"]), ensure_ascii=False)
+                payload = json.dumps(e["payload"], ensure_ascii=False)
                 yield f"id: {e['id']}\nevent: {e['event_type']}\ndata: {payload}\n\n"
-                if e["event_type"] in ("done", "error"):
+                if e["event_type"] in ("done", "error", "cancelled"):
                     return
             if not events:  # 종결 이벤트를 이미 본 뒤 재연결 → 상태 확인해 즉시 종료(5분 hang 방지)
                 async with pool.connection() as conn:
                     job = await repo.get_job(conn, user_id, job_id)
-                if job and job["status"] in ("done", "error"):
+                if job and job["status"] in ("done", "error", "cancelled"):
                     return
             await asyncio.sleep(1.0)
 

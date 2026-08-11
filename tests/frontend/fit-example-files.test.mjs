@@ -8,14 +8,16 @@ import { fitExampleImage, registeredFitExampleKeys } from '../../src/lib/fitExam
 
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../public/assets/fit-examples');
 
-test('등록 목록과 디스크 파일이 정확히 일치한다 — 어긋나면 예시 타일이 조용히 빈다', () => {
+test('등록 목록은 디스크 파일과 일치하고 폐기된 tight 이미지는 참조하지 않는다', () => {
   // FILES 는 "존재하는 파일만 등록"하는 수동 목록이라 두 방향 모두 어긋날 수 있다:
   // 등록만 있고 파일이 없으면 깨진 <img>(안 뜨는 예시), 파일만 있고 등록이 없으면
   // 만들어 놓고도 텍스트 폴백이다(2026-08-01 WS3 — 사용자가 본 "예시 안 뜸"의 원인 계열).
   const disk = new Set(readdirSync(DIR).filter((f) => f.endsWith('.jpg')).map((f) => f.replace(/\.jpg$/, '')));
   const reg = new Set(registeredFitExampleKeys());
+  const retired = new Set(['top-women-fit-tight']);
   assert.deepEqual([...reg].filter((k) => !disk.has(k)), [], '등록됐는데 파일 없음');
-  assert.deepEqual([...disk].filter((k) => !reg.has(k)), [], '파일 있는데 미등록');
+  assert.deepEqual([...disk].filter((k) => !reg.has(k) && !retired.has(k)), [], '파일 있는데 미등록');
+  assert.deepEqual([...retired].filter((k) => reg.has(k)), [], '폐기 이미지가 아직 등록됨');
 });
 
 test('남성 바지 cut 6값 전부 이미지 타일이 뜬다 — WS3 의 직접 동기', () => {

@@ -8,9 +8,6 @@ wake 가 없으면 202 후 최대 poll_interval(3s) 동안 잡이 pending 으로
 import contextlib
 
 import app.routes as routes
-from app.main import create_app
-from conftest import make_settings
-from fastapi.testclient import TestClient
 
 
 class _Conn:
@@ -93,72 +90,3 @@ def test_generate_survives_without_dispatcher(client, make_token, monkeypatch):
     client.app.state.dispatcher = None
     res = client.post("/v1/projects/p1/mannequins:generate", headers=_auth(make_token))
     assert res.status_code == 202, res.text
-
-
-def test_generate_preclaimed_calibration_job_never_wakes_dispatcher(
-        keypair, make_token, monkeypatch):
-    private_key, public_key = keypair
-    del private_key
-    app = create_app(make_settings(
-        app_env="dev",
-        enable_product_truth="off",
-        job_dispatcher_enabled=False,
-        frame_calibration_inline_jobs=True,
-        frame_calibration_inline_secret="test-frame-secret",
-    ))
-    app.state.jwt_key_resolver = lambda token: public_key
-    client = TestClient(app)
-    _wire_mannequin_fakes(monkeypatch)
-    spy = _SpyDispatcher()
-    client.app.state.dispatcher = spy
-    seen = {}
-
-    async def fake_preclaim(conn, *, job_id, lease_token):
-        seen["preclaim"] = (job_id, lease_token)
-        return {"id": job_id, "lease_token": lease_token, "status": "running"}
-
-    monkeypatch.setattr(routes.repo, "preclaim_job_for_inline_execution", fake_preclaim)
-    res = client.post(
-        "/v1/projects/p1/mannequins:generate",
-        headers={
-            **_auth(make_token),
-            "X-Wearless-Frame-Calibration": "test-frame-secret",
-        },
-    )
-
-    assert res.status_code == 202, res.text
-    assert res.json()["jobId"] == "job-1"
-    assert res.json()["leaseToken"].startswith("frame-calibration:")
-    assert seen["preclaim"] == ("job-1", res.json()["leaseToken"])
-    assert spy.woken == 0
-
-
-def test_generate_local_preclaim_refuses_active_job_join(
-        keypair, make_token, monkeypatch):
-    private_key, public_key = keypair
-    del private_key
-    app = create_app(make_settings(
-        app_env="dev",
-        enable_product_truth="off",
-        job_dispatcher_enabled=False,
-        frame_calibration_inline_jobs=True,
-        frame_calibration_inline_secret="test-frame-secret",
-    ))
-    app.state.jwt_key_resolver = lambda token: public_key
-    client = TestClient(app)
-    _wire_mannequin_fakes(monkeypatch, created=False)
-
-    async def must_not_preclaim(*args, **kwargs):
-        raise AssertionError("joined active job must not expose or replace its lease")
-
-    monkeypatch.setattr(routes.repo, "preclaim_job_for_inline_execution", must_not_preclaim)
-    res = client.post(
-        "/v1/projects/p1/mannequins:generate",
-        headers={
-            **_auth(make_token),
-            "X-Wearless-Frame-Calibration": "test-frame-secret",
-        },
-    )
-
-    assert res.status_code == 409
-    assert res.json()["error"]["code"] == "frame_calibration_inline_conflict"

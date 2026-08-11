@@ -13,13 +13,11 @@ export function Library() {
   const navigate = useNavigate();
   const beginProject = useAppStore((s) => s.beginProject);
   const adoptProject = useAppStore((s) => s.adoptProject);
-  const mannequinJob = useAppStore((s) => s.mannequinJob);
   // 서버 project(보관함 행)는 AI 분석 시작 때 생성 — '새 상세페이지' 클릭만으로 빈 행 생성 방지.
+  // (과거엔 진행 중 마네킹 job 이 있으면 강제로 그 화면으로 보냈다 — 콘티가 마네킹보다 먼저
+  // 오는 지금은 생성이 도는 동안 사용자가 있어야 할 곳도 콘티라, '새로 만들기' 를 다른 작업의
+  // 진행 중 job 이 가로챌 이유가 없다.)
   const onNew = async () => {
-    if (mannequinJob?.status === 'running') {
-      navigate('/create/mannequin');
-      return;
-    }
     await beginProject();
     navigate('/create/input');
   };

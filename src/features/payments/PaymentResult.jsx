@@ -5,19 +5,31 @@
    승인 성공 시 계정/크레딧 쿼리를 무효화해 잔액을 즉시 갱신한다.
    ============================================================= */
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { Button, Icon } from '@/components/ui.jsx';
+import { clearCreditReturn, readCreditReturn } from '@/lib/creditReturn.js';
+import { authorizeFlowContinuation } from '@/lib/flowSession.js';
 
 export function PaymentSuccess() {
   const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
   const qc = useQueryClient();
   // 잔액 표시의 단일 소스는 스토어(§6) — 승인 응답의 available 을 그대로 반영한다.
   const syncCredits = useAppStore((a) => a.syncCredits);
   const [state, setState] = useState({ status: 'confirming' });
   const once = useRef(false);   // StrictMode 이중 마운트로 승인이 두 번 나가지 않게
+  const mounted = useRef(true);
+  const currentPath = useRef(pathname);
+  currentPath.current = pathname;
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   useEffect(() => {
     if (once.current) return;
@@ -31,12 +43,28 @@ export function PaymentSuccess() {
     }
     api.confirmTossPayment({ paymentKey, orderId, amount })
       .then((res) => {
-        setState({ status: 'done', credits: res.credits, available: res.available });
         syncCredits(res.available);                                  // 헤더 잔액 즉시 반영
         qc.invalidateQueries({ queryKey: ['creditHistory'] });       // 사용 내역 갱신
+        const resume = readCreditReturn(useAppStore.getState().projectId);
+        if (resume) {
+          clearCreditReturn();
+          authorizeFlowContinuation(resume.projectId, resume.path);
+        }
+        if (!mounted.current || currentPath.current !== '/payments/success') return;
+        setState({ status: 'done', credits: res.credits, available: res.available });
+        if (resume) {
+          navigate(resume.path, {
+            replace: true,
+            state: resume.action ? { creditResume: resume } : null,
+          });
+        }
       })
-      .catch((e) => setState({ status: 'error', message: e?.message || '결제 승인에 실패했어요.' }));
-  }, [params, qc, syncCredits]);
+      .catch((e) => {
+        if (mounted.current && currentPath.current === '/payments/success') {
+          setState({ status: 'error', message: e?.message || '결제 승인에 실패했어요.' });
+        }
+      });
+  }, [navigate, params, qc, syncCredits]);
 
   if (state.status === 'confirming') {
     return <Shell icon="refresh" title="결제를 확인하고 있어요" desc="잠시만 기다려 주세요." />;

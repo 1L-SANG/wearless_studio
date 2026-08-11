@@ -7,10 +7,8 @@
      호출 즉시 throw — 과거 poison(조용한 폴백이 가짜 데이터를 실서버 요청에 흘려 404) 재발 방지.
    ============================================================= */
 import { mockAdapter } from './mockAdapter.js';
-import { httpAdapter, newIdempotencyKey } from './httpAdapter.js';
-
-// 요청 1회의 정체를 만드는 순수 헬퍼 — 어댑터 선택과 무관해 두 모드에서 같다.
-export { newIdempotencyKey };
+import { httpAdapter } from './httpAdapter.js';
+import { analyzePublicDraft } from './publicAnalysis.js';
 
 const mode = import.meta.env.VITE_API_MODE ?? 'mock';
 export const isMockMode = mode !== 'http';
@@ -21,8 +19,8 @@ export const isMockMode = mode !== 'http';
 const CLIENT_ONLY = ['getCatalogs', 'pickAnyImage', 'download'];
 
 // 제품 결정: 입력·분석은 로그인 없이 공개하고, 로그인은 마네킹 단계부터 요구한다.
-// 공개 흐름은 서버 projectId가 없으므로 이 묶음을 통째로 mock에 위임한다. 한 함수만 http로
-// 빠져 `/projects/null` 또는 세션 fetch를 호출하던 반쪽 스왑 회귀를 어댑터 경계에서 차단한다.
+// 공개 흐름은 서버 projectId가 없으므로 로컬 draft 기능은 mock에 위임한다. 단 분석만은
+// 로컬 상품 사진을 multipart로 공개 서버에 보내 진짜 AI 결과를 받는다.
 const PUBLIC_INPUT = [
   'getProduct',
   'uploadProductPhotos',
@@ -30,11 +28,25 @@ const PUBLIC_INPUT = [
   'analyzeProduct',
   'getAnalysis',
   'saveAnalysis',
+  'uploadPhoto',
+  'addCustomMatchItem',
+  'removeCustomMatchItem',
+  'refreshMatchClothing',
 ];
 
 function buildHttpApi() {
   const api = { ...httpAdapter };
   for (const name of PUBLIC_INPUT) {
+    if (name === 'analyzeProduct') {
+      api[name] = async (projectId, options) => (
+        projectId == null
+          ? analyzePublicDraft(await mockAdapter.getProduct(projectId), options, {
+            remote: httpAdapter, local: mockAdapter,
+          })
+          : httpAdapter.analyzeProduct(projectId, options)
+      );
+      continue;
+    }
     api[name] = (projectId, ...args) => (
       projectId == null
         ? mockAdapter[name](projectId, ...args)

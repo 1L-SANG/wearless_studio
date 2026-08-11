@@ -8,6 +8,7 @@ LLM 호출은 `vision_llm.complete_json`(텍스트 전용) 재사용. 출력 {te
 """
 
 import os
+import re
 
 from ..config import Settings
 from .content_roles import resolve_content_role, resolve_section_role
@@ -31,26 +32,31 @@ _SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # ser
 _PROMPT_FILE = os.path.join(_SERVER_DIR, "prompts", "copywriter_v1.txt")
 
 
-def copy_schema() -> dict:
+def copy_schema(*, include_product_name: bool = False) -> dict:
     """strict-호환 JSON schema — {texts:[{role,text}]}."""
+    properties = {
+        "texts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "role": {"type": "string", "enum": list(ROLES)},
+                    "text": {"type": "string"},
+                },
+                "required": ["role", "text"],
+            },
+        },
+    }
+    required = ["texts"]
+    if include_product_name:
+        properties["productName"] = {"type": "string"}
+        required.append("productName")
     return {
         "type": "object",
         "additionalProperties": False,
-        "properties": {
-            "texts": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "role": {"type": "string", "enum": list(ROLES)},
-                        "text": {"type": "string"},
-                    },
-                    "required": ["role", "text"],
-                },
-            },
-        },
-        "required": ["texts"],
+        "properties": properties,
+        "required": required,
     }
 
 
@@ -95,8 +101,8 @@ def build_prompt(
     }
     role = resolve_content_role(role_block)
     # EditorBlock 조립과 같은 폴백을 써서 프롬프트의 sectionRole도 항상
-    # 계약값(benefit|fit|product) 중 하나가 되게 한다.
-    section = resolve_section_role(role_block, role) or "fit"
+    # 계약값(hooking|styling|studio|product) 중 하나가 되게 한다.
+    section = resolve_section_role(role_block, role) or "styling"
     required_text_role = _TEXT_ROLE_BY_CONTENT_ROLE[role]
     with open(_PROMPT_FILE, encoding="utf-8") as f:
         template = f.read()
@@ -124,10 +130,19 @@ def validate(raw: dict, content_role: str = "custom") -> list[dict]:
     return out[:1 if content_role == "hero" else MAX_TEXTS]
 
 
+def validate_product_name(value) -> str | None:
+    """생성명은 짧은 한국어 쇼핑몰 상품명만 허용한다."""
+    name = clean_text(value)
+    if not name or name == "새 상품" or len(name) > 30 or not re.search(r"[가-힣]", name):
+        return None
+    return name
+
+
 async def generate(
     settings: Settings, *, content_role=None, section_role=None,
-    cut_type, product: dict, analysis: dict, color_label=None
-) -> list[dict]:
+    cut_type, product: dict, analysis: dict, color_label=None,
+    include_product_name: bool = False,
+) -> list[dict] | dict:
     """프롬프트 → complete_json(텍스트) → 검증 → texts. 실패 시 VisionError(호출측이 블록 생략)."""
     role = resolve_content_role({
         "contentRole": content_role,
@@ -138,5 +153,14 @@ async def generate(
         role, cut_type, product, analysis, color_label,
         section_role=section_role,
     )
-    raw, _provider = await complete_json(settings, prompt, copy_schema())
-    return validate(raw, role)
+    if include_product_name:
+        prompt += (
+            "\n\nThe seller did not provide a usable product name. Also create productName: "
+            "a short Korean fashion e-commerce product name (30 characters or fewer)."
+        )
+    raw, _provider = await complete_json(
+        settings, prompt, copy_schema(include_product_name=include_product_name))
+    texts = validate(raw, role)
+    if include_product_name:
+        return {"texts": texts, "productName": validate_product_name(raw.get("productName"))}
+    return texts

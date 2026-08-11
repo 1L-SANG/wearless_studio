@@ -8,6 +8,7 @@
 
 alter table public.wardrobe_images
   drop constraint if exists wardrobe_images_edit_lineage_check;
+
 alter table public.wardrobe_images
   add constraint wardrobe_images_edit_lineage_check check (
     (edit_session_id is null and qc_status is null)

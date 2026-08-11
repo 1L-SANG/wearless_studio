@@ -6,9 +6,7 @@
 이 generate()를 호출한다. changes=[] 는 '비슷한 컷 만들기'(계약 §6 VaryRequest).
 """
 
-import hashlib
 import os
-from dataclasses import dataclass
 
 from ..config import Settings
 from .gemini_image import GeminiImageClient, InlineImage
@@ -46,17 +44,6 @@ def _change_line(change: dict) -> str | None:
     return f"- Change the {label} to: {value}" if label else f"- Change: {value}"
 
 
-def template_sha256() -> str:
-    """생성 프롬프트 **템플릿**의 해시.
-
-    별도 버전 상수를 두면 템플릿을 고치고 상수를 안 올리는 순간 거짓말이 된다.
-    해시는 파일이 바뀌면 반드시 바뀌므로 그럴 여지가 없다. 이것이 정본이고,
-    "버전"이라는 이름은 쓰지 않는다 — 해시는 순서를 뜻하지 않기 때문이다.
-    """
-    with open(_TEMPLATE_FILE, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
-
-
 def build_prompt(vary_spec: dict) -> str:
     """vary_spec = {changes: [{type,value}], cutType?, hasRefBg?} → 지시 문단 조립 + 템플릿 치환.
     changes 빈 배열(또는 전부 무효)이면 '비슷한 컷 만들기'로 폴백(계약 §6). 자유 텍스트
@@ -85,47 +72,6 @@ def build_prompt(vary_spec: dict) -> str:
     )
 
 
-@dataclass(frozen=True)
-class PreparedVary:
-    """provider 에 **실제로 나갈** 요청. 계측은 이 객체에서 뜬다 — 기록용 프롬프트를 따로
-    재조립하면 그 순간부터 기록과 요청이 갈라진다(같은 문자열이라는 보장이 없다)."""
-
-    model: str
-    prompt: str
-    images: list           # [source] 또는 [source, ref_bg] — 순서가 계약이다
-    image_size: str
-    aspect_ratio: str
-    has_ref_bg: bool
-
-
-def prepare(
-    settings: Settings,
-    source_image: InlineImage,
-    changes: list,
-    cut_type: str | None,
-    *,
-    ref_bg: InlineImage | None = None,
-) -> PreparedVary:
-    """요청 조립만. 호출은 하지 않는다 — 계측이 호출 **전에** 스냅샷을 뜰 수 있어야 한다."""
-    return PreparedVary(
-        model=resolve_model(settings, "image_high"),
-        prompt=build_prompt({"changes": changes, "cutType": cut_type,
-                             "hasRefBg": ref_bg is not None}),
-        images=[source_image] if ref_bg is None else [source_image, ref_bg],
-        image_size=settings.mannequin_image_size,
-        aspect_ratio=settings.mannequin_aspect_ratio,
-        has_ref_bg=ref_bg is not None,
-    )
-
-
-async def execute(gemini: GeminiImageClient, prepared: PreparedVary):
-    """준비된 요청 1회 실행. 실패 시 GeminiError 전파(호출자가 job 실패 처리)."""
-    return await gemini.generate_content_image(
-        prepared.model, prepared.prompt, prepared.images, prepared.image_size,
-        aspect_ratio=prepared.aspect_ratio,
-    )
-
-
 async def generate(
     settings: Settings,
     gemini: GeminiImageClient,
@@ -135,8 +81,13 @@ async def generate(
     *,
     ref_bg: InlineImage | None = None,
 ) -> tuple[bytes, str]:
-    """변형 컷 1장 생성 — 기존 호출자용 wrapper(바이트 단위로 동작 불변).
+    """변형 컷 1장 생성. 실패 시 GeminiError를 그대로 전파(호출자가 job 실패 처리).
     ref_bg 는 배경 레퍼런스(첨부 2번) — 배경·조명·무드만 반영(ADR-0004)."""
-    res = await execute(gemini, prepare(settings, source_image, changes, cut_type,
-                                        ref_bg=ref_bg))
+    model = resolve_model(settings, "image_high")
+    prompt = build_prompt({"changes": changes, "cutType": cut_type, "hasRefBg": ref_bg is not None})
+    images = [source_image] if ref_bg is None else [source_image, ref_bg]
+    res = await gemini.generate_content_image(
+        model, prompt, images, settings.mannequin_image_size,
+        aspect_ratio=settings.mannequin_aspect_ratio,
+    )
     return res.image, res.mime

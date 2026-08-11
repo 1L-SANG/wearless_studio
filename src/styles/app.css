@@ -128,6 +128,10 @@ input, textarea, select { font-family: inherit; }
 .profile-item:hover { background: var(--bg-2); }
 
 /* ---- route-persistent generation status ---- */
+/* 리본이 여러 개면 위아래로 쌓이고, 3개를 넘으면 스택 안에서 스크롤(2026-08-03 오너 지시).
+   현재는 최대 2종(마네킹+상세페이지)이지만 다중 생성 대기열이 생겨도 규칙이 이미 준비됨. */
+.job-ribbon-stack { position: sticky; top: 60px; z-index: 35; max-height: 140px; overflow-y: auto; }
+.job-ribbon-stack .job-ribbon { position: static; top: auto; }
 .job-ribbon {
   position: sticky; top: 60px; z-index: 35;
   display: flex; align-items: center; justify-content: space-between; gap: 18px;
@@ -144,11 +148,8 @@ input, textarea, select { font-family: inherit; }
 .job-ribbon-track { flex: 1; min-width: 90px; max-width: 280px; height: 6px; border-radius: var(--r-pill);
   background: var(--bg-2); box-shadow: var(--elev-inset); overflow: hidden; }
 .job-ribbon-fill { display: block; height: 100%; border-radius: inherit; background: var(--fg-1); transition: width .2s ease; }
-.job-ribbon-btn { flex: none; border: 0; border-radius: var(--r-4); background: var(--fg-1); color: #fff;
-  padding: 8px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
-.job-ribbon-btn:hover { filter: brightness(1.12); }
 .job-ribbon.error .job-ribbon-label, .job-ribbon.error .job-ribbon-detail { color: var(--accent-error); }
-.job-ribbon.error .job-ribbon-btn { background: var(--accent-error); }
+.job-ribbon.done .job-ribbon-label { color: var(--accent-success); }
 
 @media (max-width: 720px) {
   .job-ribbon { align-items: stretch; flex-direction: column; gap: 8px; padding: 10px 18px; }
@@ -156,7 +157,6 @@ input, textarea, select { font-family: inherit; }
   .job-ribbon-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .job-ribbon-detail { max-width: 100%; }
   .job-ribbon-track { order: 3; min-width: 100%; max-width: none; }
-  .job-ribbon-btn { align-self: flex-start; }
 }
 
 /* ====================== STEPPER ====================== */
@@ -199,10 +199,15 @@ input, textarea, select { font-family: inherit; }
 .field-row + .field-row { margin-top: 22px; }
 
 /* sticky footer CTA bar inside wizard */
-.wizard-cta { position: sticky; bottom: 0; margin-top: 26px; display: flex; justify-content: flex-end; gap: 10px;
-  padding: 16px 0 6px; }
+/* flex-wrap: CTA 옆에 안내 문구가 붙는 경우가 있어 좁은 폭에서 버튼을 밀지 않고 줄을 바꾼다.
+   버튼만 있는 기존 사용처는 넘칠 일이 없어 동작이 그대로다. */
+.wizard-cta { position: sticky; bottom: 0; margin-top: 26px; display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: flex-end; gap: 10px; padding: 16px 0 6px; }
 .wizard-cta::before { content: ''; position: absolute; inset: -24px -40px 0; z-index: -1;
   background: linear-gradient(180deg, rgba(244,244,246,0), var(--canvas) 60%); pointer-events: none; }
+.wizard-cta-analysis { isolation: isolate; background: var(--canvas); padding: 18px 0 10px; }
+.wizard-cta-analysis::before { z-index: 0; }
+.wizard-cta-analysis > * { position: relative; z-index: 1; }
 
 /* ====================== BUTTONS ====================== */
 .btn { font-family: var(--font-body); font-weight: 500; font-size: 15px; border: 0; cursor: pointer;
@@ -265,6 +270,8 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .chip-input { cursor: text; min-width: 0; max-width: 220px; outline: none; }
 .chip-input::placeholder { color: var(--fg-3); font-weight: 500; }
 .chip-input:focus { color: var(--fg-1); background: #fff; box-shadow: var(--elev-card), 0 0 0 1.5px #8fbfee; }
+.chip-input-wrap { position: relative; display: inline-flex; align-items: center; }
+.chip-input-pending { position: absolute; top: 100%; left: 8px; margin-top: 3px; color: var(--fg-3); font-size: 10px; white-space: nowrap; }
 .chip-star { color: var(--fg-1); }
 
 /* ---- tag input ---- */
@@ -321,6 +328,23 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .modal { width: 100%; max-width: 460px; background: #fff; border-radius: var(--r-6); box-shadow: var(--elev-lift);
   padding: 26px; animation: pop .18s cubic-bezier(.2,.7,.3,1); }
 .modal.wide { max-width: 540px; }
+.modal.narrow { max-width: 400px; padding: 20px; }
+.modal.narrow h3 { font-size: 17px; }
+.modal.narrow p { font-size: 13px; margin-top: 6px; }
+/* 앵커 모드 — 모달을 누른 요소 바로 위/아래에 붙인다. 위치는 Modal 이 인라인 style 로 계산하므로
+   여기서는 오버레이의 중앙 정렬만 해제한다(padding 은 유지하면 fixed 자식과 겹쳐 계산되지 않는다). */
+.overlay.anchored { display: block; padding: 0; }
+/* 프로스티드 글래스 판 — merged-card 와 같은 레시피(반투명 흰 그라디언트 + 배경 블러 + 베벨). */
+.modal.glass {
+  background: linear-gradient(180deg, rgba(255,255,255,.72) 0%, rgba(255,255,255,.86) 100%);
+  -webkit-backdrop-filter: blur(34px) saturate(150%); backdrop-filter: blur(34px) saturate(150%);
+  box-shadow:
+    0 0 0 1px rgba(34,42,53,.12),
+    0 24px 60px -14px rgba(0,0,0,.3),
+    inset 0 2px 0 rgba(255,255,255,1),
+    inset 0 0 0 1px rgba(255,255,255,.7),
+    inset 0 -28px 70px -30px rgba(255,255,255,.9);
+}
 @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.98); } }
 .modal h3 { font-family: var(--font-display); font-size: 20px; letter-spacing: .2px; color: var(--fg-1); }
 .modal p { font-size: 14.5px; color: var(--fg-2); margin-top: 10px; line-height: 1.55; }

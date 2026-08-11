@@ -536,6 +536,9 @@ def resolve_published_example_reference(
         "exampleId": example_id,
         "scope": scope,
         "asset": member[scope],
+        # all 범위는 다른 방향에서도 장면·광원 참고용으로 선택할 수 있다. 호출자는 이 값이
+        # false이면 멤버의 원래 포즈·카메라·프레이밍 권한을 제거해야 한다.
+        "directionCompatible": member.get("direction") == block.get("direction"),
     }
 
 

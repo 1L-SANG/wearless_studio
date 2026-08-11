@@ -1,6 +1,7 @@
 import hashlib
 import json
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,18 @@ from tools import release_space_sets as release
 
 RELEASE_ID = "2026-07-30-space-set-test"
 PUBLIC_BASE = "https://images.example.test"
+
+
+def _receipt(result, *, release_id=None, uploaded_keys=None):
+    keys = (
+        frozenset(asset.r2_key for asset in result.assets)
+        if uploaded_keys is None
+        else frozenset(uploaded_keys)
+    )
+    return release.UploadReceipt(
+        release_id=release_id or result.release_id,
+        uploaded_keys=keys,
+    )
 
 
 def _hash(path: Path) -> str:
@@ -276,7 +289,12 @@ def test_committed_catalogs_share_the_canonical_place_vocabulary():
     front_by_id = {item["setId"]: item for item in frontend["sets"]}
     server_by_id = {item["setId"]: item for item in registry["sets"]}
 
+    # 런타임은 더 이상 장소 어휘를 모듈 상수로 들고 있지 않다. 어휘는 릴리스 문서의
+    # placeTypes 로 함께 이동하고, validate_space_set_registry_document 가 그 목록으로
+    # 각 세트의 placeType 을 검사한다. 그래서 정본 표 == 도구 상수 == 배포된 문서 셋
+    # 세 개가 같아야 한다(하나라도 어긋나면 배포본이 정본과 다른 어휘로 돈다).
     assert allowed == release._PLACE_TYPES == set(registry["placeTypes"])
+    space_set_assets.validate_space_set_registry_document(registry)
     assert front_by_id.keys() == server_by_id.keys()
     assert all(item["placeType"] in allowed for item in front_by_id.values())
     assert all(
@@ -287,8 +305,41 @@ def test_committed_catalogs_share_the_canonical_place_vocabulary():
         front_by_id[set_id]["placeType"] == server_by_id[set_id]["placeType"]
         for set_id in front_by_id
     )
-    storefront_set_id = "set-04-women-bottom-street-slowand-10563"
-    assert front_by_id[storefront_set_id]["placeType"] == "storefront-street"
+
+
+def test_committed_catalogs_keep_the_delta_ordering_invariant():
+    """delta 적용이 남기는 불변식을 배포본에 대해 검사한다.
+
+    개수·releaseId 를 하드코딩하지 않는다 — 그렇게 두면 릴리스마다 테스트가 낡아
+    (2026-08-04: 60/women-bottom-v1 로 굳어 있던 것을 정리) 정작 지켜야 할
+    "두 카탈로그가 같은 순서"라는 불변식이 가려진다. 여기서 고정하는 것은
+    개수가 아니라 **프론트·서버 일치와 신규 릴리스 선두 배치**다.
+    """
+    current_frontend = json.loads(
+        release.DEFAULT_FRONTEND_CATALOG_PATH.read_text(encoding="utf-8")
+    )
+    current_server = json.loads(
+        release.DEFAULT_SERVER_REGISTRY_PATH.read_text(encoding="utf-8")
+    )
+    frontend_ids = [item["setId"] for item in current_frontend["sets"]]
+    server_ids = [item["setId"] for item in current_server["sets"]]
+
+    # 1) 두 카탈로그의 setId 목록이 순서까지 동일 (delta 적용의 핵심 계약)
+    assert frontend_ids == server_ids
+    assert len(frontend_ids) == len(set(frontend_ids))  # 중복 없음
+    # 2) 릴리스 메타데이터가 두 파일에서 일치
+    assert current_frontend["_meta"]["releaseId"] == current_server["releaseId"]
+    assert current_frontend["_meta"]["releasedAt"] == current_server["releasedAt"]
+    # 3) 현재 릴리스에 속한 세트가 선두에 연속으로 온다(보존 세트는 그 뒤).
+    release_id = current_server["releaseId"]
+    owned = [
+        item["setId"] for item in current_server["sets"]
+        if f"/releases/{release_id}/" in item["representativePlate"]["key"]
+    ] if current_server["sets"] and current_server["sets"][0].get(
+        "representativePlate"
+    ) else []
+    if owned:
+        assert server_ids[: len(owned)] == owned
 
 
 def test_flat_id_source_is_union_of_frontend_catalog_and_server_registry(tmp_path):
@@ -415,6 +466,26 @@ def test_horizon_sequence_can_explicitly_omit_plate(tmp_path):
     assert registry["sets"][0]["representativePlate"] is None
 
 
+def test_horizon_sequence_rejects_required_plate(tmp_path):
+    _path, root, manifest = _fixture(
+        tmp_path,
+        set_id="set_horizon_women_top_sequence_required_01",
+        set_type="horizon-sequence",
+        members=[
+            ("horizon", "full", "front"),
+            ("horizon", "medium", "side"),
+        ],
+    )
+
+    with pytest.raises(release.SpaceSetReleaseValidationError) as caught:
+        release.validate_manifest(manifest, root)
+
+    assert any(
+        "horizon-sequence는 platePolicy=not-required" in item
+        for item in caught.value.violations
+    )
+
+
 def test_non_sequence_cannot_opt_out_of_representative_plate(tmp_path):
     _path, root, manifest = _fixture(tmp_path)
     space_set = manifest["sets"][0]
@@ -501,7 +572,7 @@ def test_top_outer_shared_set_with_medium_member_is_rejected(tmp_path):
         release.validate_manifest(manifest, root)
 
     assert any(
-        "공용 세트는 모든 멤버가 full" in item
+        "[top,outer] 공용 세트는 모든 멤버가 full" in item
         for item in caught.value.violations
     )
 
@@ -526,64 +597,6 @@ def test_rotation_requires_front_side_back_full_order(tmp_path):
     )
 
 
-def test_rotation_release_publishes_universal_member_and_set_scope(
-    tmp_path,
-):
-    manifest_path, root, manifest = _fixture(
-        tmp_path,
-        set_id="set_horizon_women_bottom_rotation_01",
-        set_type="horizon-rotation",
-        members=[
-            ("horizon", "full", "front"),
-            ("horizon", "full", "side"),
-            ("horizon", "full", "back"),
-        ],
-    )
-    space_set = manifest["sets"][0]
-    space_set["applicableClothingTypes"] = [
-        "top", "bottom", "outer", "dress",
-    ]
-    space_set["setApplicableClothingTypes"] = [
-        "top", "bottom", "outer", "dress",
-    ]
-    _write_manifest(manifest_path, manifest)
-
-    result = release.stage_release(
-        manifest_path,
-        root,
-        public_base_url=PUBLIC_BASE,
-        output_dir=tmp_path / "rotation-staged",
-    )
-    frontend = json.loads(
-        result.frontend_catalog_path.read_text(encoding="utf-8")
-    )
-    registry = json.loads(
-        result.server_registry_path.read_text(encoding="utf-8")
-    )
-    for published in (frontend["sets"][0], registry["sets"][0]):
-        assert published["applicableClothingTypes"] == [
-            "top", "bottom", "outer", "dress",
-        ]
-        assert published["setApplicableClothingTypes"] == [
-            "top", "bottom", "outer", "dress",
-        ]
-
-
-def test_non_rotation_release_cannot_widen_only_the_set_scope(tmp_path):
-    _path, root, manifest = _fixture(tmp_path)
-    manifest["sets"][0]["setApplicableClothingTypes"] = [
-        "top", "bottom", "outer", "dress",
-    ]
-
-    with pytest.raises(release.SpaceSetReleaseValidationError) as caught:
-        release.validate_manifest(manifest, root)
-
-    assert any(
-        "별도 세트 적용 범위는 회전 세트" in item
-        for item in caught.value.violations
-    )
-
-
 def test_staging_and_apply_refuse_same_release_overwrite(tmp_path, monkeypatch):
     manifest_path, root, _manifest = _fixture(tmp_path)
     output = tmp_path / "staged"
@@ -605,11 +618,79 @@ def test_staging_and_apply_refuse_same_release_overwrite(tmp_path, monkeypatch):
     server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
     monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
-    release.apply_release(result)
+    receipt = _receipt(result)
+    release.apply_release(result, receipt)
     assert frontend_target.is_file()
     assert server_target.is_file()
     with pytest.raises(FileExistsError):
+        release.apply_release(result, receipt)
+
+
+def test_apply_requires_upload_receipt_even_when_called_directly(tmp_path):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+
+    with pytest.raises(TypeError):
         release.apply_release(result)
+
+
+def test_apply_rejects_receipt_from_a_different_release(tmp_path, monkeypatch):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    monkeypatch.setattr(
+        release,
+        "DEFAULT_FRONTEND_CATALOG_PATH",
+        tmp_path / "live" / "storyboardSpaceSets.json",
+    )
+    monkeypatch.setattr(
+        release,
+        "DEFAULT_SERVER_REGISTRY_PATH",
+        tmp_path / "live" / "space_set_assets.json",
+    )
+
+    with pytest.raises(RuntimeError, match="다른 릴리스의 것"):
+        release.apply_release(
+            result,
+            _receipt(result, release_id="different-release"),
+        )
+
+
+def test_apply_rejects_catalog_key_missing_from_upload_receipt(tmp_path, monkeypatch):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    thumb = next(asset for asset in result.assets if asset.variant == "thumb")
+    incomplete_result = replace(
+        result,
+        assets=tuple(asset for asset in result.assets if asset != thumb),
+    )
+    monkeypatch.setattr(
+        release,
+        "DEFAULT_FRONTEND_CATALOG_PATH",
+        tmp_path / "live" / "storyboardSpaceSets.json",
+    )
+    monkeypatch.setattr(
+        release,
+        "DEFAULT_SERVER_REGISTRY_PATH",
+        tmp_path / "live" / "space_set_assets.json",
+    )
+
+    with pytest.raises(RuntimeError, match="명단이 올리지 않은 키를 참조"):
+        release.apply_release(incomplete_result, _receipt(incomplete_result))
 
 
 def test_sealed_stage_is_reused_and_tampering_is_rejected(tmp_path):
@@ -704,6 +785,8 @@ def _empty_server_registry(release_id="old-release") -> dict:
         "releaseId": release_id,
         "releasedAt": "2026-07-29T00:00:00Z",
         "baseUrl": PUBLIC_BASE,
+        # 런타임 계약(app/agents/space_set_assets.py)이 요구하는 필드 — 빠지면
+        # delta 가드가 정상 레지스트리를 metadata_invalid 로 오거부한다.
         "placeTypes": sorted(release._PLACE_TYPES),
         "sets": [],
     }
@@ -735,17 +818,19 @@ def _old_catalog_pair(
     original_set_id = server_set["setId"]
     frontend_set["setId"] = frontend_set["id"] = set_id
     server_set["setId"] = set_id
-    if server_set["representativePlate"] is not None:
-        server_set["representativePlate"]["key"] = (
-            server_set["representativePlate"]["key"]
-            .replace(RELEASE_ID, release_id)
-            .replace(original_set_id, set_id)
-        )
-        frontend_set["representativePlate"]["url"] = release._public_url(
-            PUBLIC_BASE, server_set["representativePlate"]["key"]
-        )
+    frontend_set["representativePlate"]["url"] = (
+        frontend_set["representativePlate"]["url"]
+        .replace(RELEASE_ID, release_id)
+        .replace(original_set_id, set_id)
+    )
+    server_set["representativePlate"]["key"] = (
+        server_set["representativePlate"]["key"]
+        .replace(RELEASE_ID, release_id)
+        .replace(original_set_id, set_id)
+    )
     for index, (frontend_member, server_member) in enumerate(
-        zip(frontend_set["members"], server_set["members"]), start=1
+        zip(frontend_set["members"], server_set["members"]),
+        start=1,
     ):
         original_example_id = server_member["exampleId"]
         example_id = (
@@ -755,24 +840,49 @@ def _old_catalog_pair(
         )
         frontend_member["exampleId"] = example_id
         server_member["exampleId"] = example_id
+        for field in ("allUrl", "thumbUrl"):
+            frontend_member[field] = (
+                frontend_member[field]
+                .replace(RELEASE_ID, release_id)
+                .replace(original_example_id, example_id)
+            )
         for variant in ("all", "pose"):
             server_member[variant]["key"] = (
                 server_member[variant]["key"]
                 .replace(RELEASE_ID, release_id)
                 .replace(original_example_id, example_id)
             )
-        frontend_member["allUrl"] = release._public_url(
-            PUBLIC_BASE, server_member["all"]["key"]
-        )
-        all_root = server_member["all"]["key"].rsplit("/all/", 1)[0]
-        frontend_member["thumbUrl"] = release._public_url(
-            PUBLIC_BASE, f"{all_root}/thumb/{example_id}.webp"
-        )
     old_frontend = _empty_frontend_catalog(release_id)
     old_frontend["sets"] = [frontend_set]
     old_registry = _empty_server_registry(release_id)
     old_registry["sets"] = [server_set]
     return old_frontend, old_registry
+
+
+def _assert_apply_rejected_without_mutation(
+    result,
+    *,
+    tmp_path,
+    monkeypatch,
+    frontend,
+    registry,
+    match,
+) -> None:
+    frontend_target = tmp_path / "repo" / "src" / "data" / "storyboardSpaceSets.json"
+    server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
+    frontend_target.parent.mkdir(parents=True, exist_ok=True)
+    server_target.parent.mkdir(parents=True, exist_ok=True)
+    frontend_target.write_text(json.dumps(frontend), encoding="utf-8")
+    server_target.write_text(json.dumps(registry), encoding="utf-8")
+    frontend_before = frontend_target.read_bytes()
+    server_before = server_target.read_bytes()
+    monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)
+    monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
+
+    with pytest.raises(RuntimeError, match=match):
+        release.apply_release(result, _receipt(result))
+    assert frontend_target.read_bytes() == frontend_before
+    assert server_target.read_bytes() == server_before
 
 
 def test_apply_rolls_back_frontend_when_server_copy_fails(tmp_path, monkeypatch):
@@ -811,7 +921,7 @@ def test_apply_rolls_back_frontend_when_server_copy_fails(tmp_path, monkeypatch)
 
     monkeypatch.setattr(release, "_atomic_copy", fail_second_copy)
     with pytest.raises(OSError, match="injected"):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
     assert server_target.read_bytes() == server_before
 
@@ -828,10 +938,7 @@ def test_apply_preserves_old_sets_in_frontend_and_server_in_the_same_order(
     )
     next_frontend = json.loads(result.frontend_catalog_path.read_text(encoding="utf-8"))
     next_server = json.loads(result.server_registry_path.read_text(encoding="utf-8"))
-    old_release_id = "old-space-release"
-    old_frontend, old_registry = _old_catalog_pair(
-        result, release_id=old_release_id
-    )
+    old_frontend, old_registry = _old_catalog_pair(result)
 
     frontend_target = tmp_path / "repo" / "src" / "data" / "storyboardSpaceSets.json"
     server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
@@ -842,7 +949,7 @@ def test_apply_preserves_old_sets_in_frontend_and_server_in_the_same_order(
     monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
-    release.apply_release(result)
+    release.apply_release(result, _receipt(result))
 
     applied_frontend = json.loads(frontend_target.read_text(encoding="utf-8"))
     applied_server = json.loads(server_target.read_text(encoding="utf-8"))
@@ -854,10 +961,305 @@ def test_apply_preserves_old_sets_in_frontend_and_server_in_the_same_order(
         next_server["sets"][0]["setId"],
         "set_old_women_top_01",
     ]
-    assert [item["setId"] for item in applied_frontend["sets"]] == [
-        item["setId"] for item in applied_server["sets"]
-    ]
-    assert old_release_id in applied_server["sets"][1]["representativePlate"]["key"]
+    assert (
+        "old-space-release"
+        in applied_frontend["sets"][1]["representativePlate"]["url"]
+    )
+    assert (
+        "old-space-release"
+        in applied_server["sets"][1]["representativePlate"]["key"]
+    )
+
+
+def test_apply_rejects_malformed_old_frontend_before_mutation(
+    tmp_path, monkeypatch
+):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    malformed_frontend = _empty_frontend_catalog()
+    malformed_frontend["_meta"].pop("defaultBaseUrl")
+    frontend_target = tmp_path / "repo" / "src" / "data" / "storyboardSpaceSets.json"
+    server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
+    frontend_target.parent.mkdir(parents=True)
+    server_target.parent.mkdir(parents=True)
+    frontend_target.write_text(json.dumps(malformed_frontend), encoding="utf-8")
+    server_target.write_text(json.dumps(_empty_server_registry()), encoding="utf-8")
+    frontend_before = frontend_target.read_bytes()
+    server_before = server_target.read_bytes()
+    monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)
+    monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
+
+    with pytest.raises(RuntimeError, match="프론트 계약"):
+        release.apply_release(result, _receipt(result))
+    assert frontend_target.read_bytes() == frontend_before
+    assert server_target.read_bytes() == server_before
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "empty-name",
+        "empty-tone",
+        "empty-composition",
+        "sequence-with-required-plate",
+        "rotation-with-two-members",
+        "boolean-order",
+    ],
+)
+def test_apply_rejects_invalid_old_frontend_semantics_before_mutation(
+    tmp_path,
+    monkeypatch,
+    case,
+):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    frontend, registry = _old_catalog_pair(result)
+    space_set = frontend["sets"][0]
+    if case == "empty-name":
+        space_set["name"] = " "
+    elif case == "empty-tone":
+        space_set["tone"] = ""
+    elif case == "empty-composition":
+        space_set["compositionLabel"] = "\t"
+    elif case == "sequence-with-required-plate":
+        space_set["setType"] = "horizon-sequence"
+        for member in space_set["members"]:
+            member["cutType"] = "horizon"
+    elif case == "rotation-with-two-members":
+        space_set["setType"] = "horizon-rotation"
+        space_set["members"] = space_set["members"][:2]
+        for member, direction in zip(
+            space_set["members"],
+            ("front", "side"),
+        ):
+            member["cutType"] = "horizon"
+            member["shot"] = "full"
+            member["direction"] = direction
+    else:
+        space_set["members"][0]["order"] = True
+
+    _assert_apply_rejected_without_mutation(
+        result,
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        frontend=frontend,
+        registry=registry,
+        match="프론트 계약",
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "pose-members-swapped",
+        "pose-jpeg",
+        "plate-mime-mismatch",
+        "all-mime-mismatch",
+        "different-release-root",
+        "duplicate-key",
+    ],
+)
+def test_apply_rejects_invalid_old_server_asset_binding_before_mutation(
+    tmp_path,
+    monkeypatch,
+    case,
+):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    frontend, registry = _old_catalog_pair(result)
+    space_set = registry["sets"][0]
+    if case == "pose-members-swapped":
+        first_pose = space_set["members"][0]["pose"]
+        second_pose = space_set["members"][1]["pose"]
+        space_set["members"][0]["pose"] = second_pose
+        space_set["members"][1]["pose"] = first_pose
+    elif case == "pose-jpeg":
+        pose = space_set["members"][0]["pose"]
+        pose["key"] = pose["key"].removesuffix(".png") + ".jpg"
+        pose["mime"] = "image/jpeg"
+    elif case == "plate-mime-mismatch":
+        space_set["representativePlate"]["mime"] = "image/jpeg"
+    elif case == "all-mime-mismatch":
+        space_set["members"][0]["all"]["mime"] = "image/jpeg"
+    elif case == "different-release-root":
+        pose = space_set["members"][0]["pose"]
+        pose["key"] = pose["key"].replace(
+            "old-space-release",
+            "different-release",
+        )
+    else:
+        space_set["members"][1]["all"]["key"] = (
+            space_set["members"][0]["all"]["key"]
+        )
+
+    _assert_apply_rejected_without_mutation(
+        result,
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        frontend=frontend,
+        registry=registry,
+        match="릴리스 계약",
+    )
+
+
+@pytest.mark.parametrize("invalid_order", [True, 1.0])
+def test_apply_rejects_non_integer_old_server_member_order_before_mutation(
+    tmp_path,
+    monkeypatch,
+    invalid_order,
+):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    frontend, registry = _old_catalog_pair(result)
+    registry["sets"][0]["members"][0]["order"] = invalid_order
+
+    _assert_apply_rejected_without_mutation(
+        result,
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        frontend=frontend,
+        registry=registry,
+        match="릴리스 계약",
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "release-id-mismatch",
+        "released-at-mismatch",
+        "server-released-at-missing",
+        "frontend-released-at-missing",
+        "server-schema-version-boolean",
+        "frontend-schema-version-boolean",
+    ],
+)
+def test_apply_rejects_frontend_server_release_metadata_mismatch_before_mutation(
+    tmp_path,
+    monkeypatch,
+    case,
+):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    frontend, registry = _old_catalog_pair(result)
+    if case == "release-id-mismatch":
+        registry["releaseId"] = "different-release"
+    elif case == "released-at-mismatch":
+        registry["releasedAt"] = "2026-07-29T01:00:00Z"
+    elif case == "server-released-at-missing":
+        registry.pop("releasedAt")
+    elif case == "frontend-released-at-missing":
+        frontend["_meta"].pop("releasedAt")
+    elif case == "server-schema-version-boolean":
+        registry["schemaVersion"] = True
+    else:
+        frontend["_meta"]["schemaVersion"] = True
+
+    _assert_apply_rejected_without_mutation(
+        result,
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        frontend=frontend,
+        registry=registry,
+        match="(릴리스 메타데이터|릴리스 계약|런타임 계약|프론트 계약)",
+    )
+
+
+def test_apply_rejects_old_and_new_release_base_url_mismatch(
+    tmp_path, monkeypatch
+):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    old_frontend = _empty_frontend_catalog()
+    old_frontend["_meta"]["defaultBaseUrl"] = "https://other-images.example.test"
+    old_registry = _empty_server_registry()
+    old_registry["baseUrl"] = "https://other-images.example.test"
+    frontend_target = tmp_path / "repo" / "src" / "data" / "storyboardSpaceSets.json"
+    server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
+    frontend_target.parent.mkdir(parents=True)
+    server_target.parent.mkdir(parents=True)
+    frontend_target.write_text(json.dumps(old_frontend), encoding="utf-8")
+    server_target.write_text(json.dumps(old_registry), encoding="utf-8")
+    frontend_before = frontend_target.read_bytes()
+    server_before = server_target.read_bytes()
+    monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)
+    monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
+
+    with pytest.raises(RuntimeError, match="기존 공간 세트 서버.*baseUrl"):
+        release.apply_release(result, _receipt(result))
+    assert frontend_target.read_bytes() == frontend_before
+    assert server_target.read_bytes() == server_before
+
+
+def test_apply_rejects_existing_frontend_server_set_order_mismatch(
+    tmp_path, monkeypatch
+):
+    manifest_path, root, _manifest = _fixture(tmp_path)
+    result = release.stage_release(
+        manifest_path,
+        root,
+        public_base_url=PUBLIC_BASE,
+        output_dir=tmp_path / "staged",
+    )
+    frontend_a, registry_a = _old_catalog_pair(
+        result,
+        set_id="set_old_women_top_a",
+        release_id="old-space-release",
+    )
+    frontend_b, registry_b = _old_catalog_pair(
+        result,
+        set_id="set_old_women_top_b",
+        release_id="old-space-release",
+    )
+    old_frontend = _empty_frontend_catalog("old-space-release")
+    old_frontend["sets"] = [frontend_a["sets"][0], frontend_b["sets"][0]]
+    old_registry = _empty_server_registry("old-space-release")
+    old_registry["sets"] = [registry_b["sets"][0], registry_a["sets"][0]]
+    frontend_target = tmp_path / "repo" / "src" / "data" / "storyboardSpaceSets.json"
+    server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
+    frontend_target.parent.mkdir(parents=True)
+    server_target.parent.mkdir(parents=True)
+    frontend_target.write_text(json.dumps(old_frontend), encoding="utf-8")
+    server_target.write_text(json.dumps(old_registry), encoding="utf-8")
+    frontend_before = frontend_target.read_bytes()
+    server_before = server_target.read_bytes()
+    monkeypatch.setattr(release, "DEFAULT_FRONTEND_CATALOG_PATH", frontend_target)
+    monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
+
+    with pytest.raises(RuntimeError, match="setId 순서"):
+        release.apply_release(result, _receipt(result))
+    assert frontend_target.read_bytes() == frontend_before
+    assert server_target.read_bytes() == server_before
 
 
 def test_apply_rejects_changed_definition_for_existing_set_id_before_mutation(
@@ -870,12 +1272,10 @@ def test_apply_rejects_changed_definition_for_existing_set_id_before_mutation(
         public_base_url=PUBLIC_BASE,
         output_dir=tmp_path / "staged",
     )
-    old_frontend, old_registry = _old_catalog_pair(
-        result,
-        set_id=_manifest["sets"][0]["setId"],
-        release_id="old-release",
-        keep_example_ids=True,
-    )
+    old_frontend = json.loads(result.frontend_catalog_path.read_text(encoding="utf-8"))
+    old_registry = json.loads(result.server_registry_path.read_text(encoding="utf-8"))
+    old_frontend["_meta"]["releaseId"] = "old-release"
+    old_registry["releaseId"] = "old-release"
     old_frontend["sets"][0]["name"] = "같은 ID의 다른 정의"
     old_registry["sets"][0]["name"] = "같은 ID의 다른 정의"
     frontend_target = tmp_path / "repo" / "src" / "data" / "storyboardSpaceSets.json"
@@ -889,7 +1289,7 @@ def test_apply_rejects_changed_definition_for_existing_set_id_before_mutation(
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
     with pytest.raises(RuntimeError, match="동일 setId의 정의 변경"):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
 
 
@@ -903,8 +1303,11 @@ def test_apply_rejects_malformed_preserved_registry_before_mutation(
         public_base_url=PUBLIC_BASE,
         output_dir=tmp_path / "staged",
     )
-    old_frontend, malformed = _old_catalog_pair(result, release_id="old-release")
+    malformed = json.loads(result.server_registry_path.read_text(encoding="utf-8"))
+    malformed["releaseId"] = "old-release"
     malformed["sets"][0]["members"][0]["pose"].pop("mime")
+    old_frontend = json.loads(result.frontend_catalog_path.read_text(encoding="utf-8"))
+    old_frontend["_meta"]["releaseId"] = "old-release"
     frontend_target = tmp_path / "repo" / "src" / "data" / "storyboardSpaceSets.json"
     server_target = tmp_path / "repo" / "server" / "data" / "space_set_assets.json"
     frontend_target.parent.mkdir(parents=True)
@@ -916,7 +1319,7 @@ def test_apply_rejects_malformed_preserved_registry_before_mutation(
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
     with pytest.raises(RuntimeError, match="런타임 계약"):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
 
 
@@ -946,7 +1349,7 @@ def test_apply_rejects_example_id_collision_with_preserved_set(
     monkeypatch.setattr(release, "DEFAULT_SERVER_REGISTRY_PATH", server_target)
 
     with pytest.raises(RuntimeError, match="example_id_invalid"):
-        release.apply_release(result)
+        release.apply_release(result, _receipt(result))
     assert frontend_target.read_bytes() == frontend_before
 
 
@@ -973,7 +1376,7 @@ def test_cli_apply_requires_execute_upload_and_upload_happens_first(
     monkeypatch.setattr(
         release,
         "apply_release",
-        lambda _result: events.append("apply"),
+        lambda _result, _receipt: events.append("apply"),
     )
     code = release.main([
         "--from-stage",
@@ -986,10 +1389,15 @@ def test_cli_apply_requires_execute_upload_and_upload_happens_first(
     assert events == ["upload"]
 
     events.clear()
+
+    def successful_upload(result, **_kwargs):
+        events.append("upload")
+        return _receipt(result)
+
     monkeypatch.setattr(
         release,
         "upload_release",
-        lambda *_args, **_kwargs: events.append("upload"),
+        successful_upload,
     )
     assert release.main([
         "--from-stage",
@@ -1012,15 +1420,20 @@ def test_cli_can_execute_and_apply_the_exact_previously_sealed_stage(
         output_dir=tmp_path / "staged",
     )
     events = []
+
+    def successful_upload(result, **_kwargs):
+        events.append(("upload", result.output_dir))
+        return _receipt(result)
+
     monkeypatch.setattr(
         release,
         "upload_release",
-        lambda result, **_kwargs: events.append(("upload", result.output_dir)),
+        successful_upload,
     )
     monkeypatch.setattr(
         release,
         "apply_release",
-        lambda result: events.append(("apply", result.output_dir)),
+        lambda result, _receipt: events.append(("apply", result.output_dir)),
     )
 
     assert release.main([
@@ -1082,7 +1495,7 @@ def test_upload_is_dry_run_by_default_and_execute_refuses_existing_prefix(
             self.puts.append((args, kwargs))
 
     dry_client = FakeR2()
-    release.upload_release(result, execute=False, r2_client=dry_client)
+    assert release.upload_release(result, execute=False, r2_client=dry_client) is None
     assert dry_client.listed == []
     assert dry_client.puts == []
     assert "UPLOAD DRY-RUN" in capsys.readouterr().out
@@ -1093,6 +1506,7 @@ def test_upload_is_dry_run_by_default_and_execute_refuses_existing_prefix(
     assert blocked_client.puts == []
 
     live_client = FakeR2()
-    release.upload_release(result, execute=True, r2_client=live_client)
+    receipt = release.upload_release(result, execute=True, r2_client=live_client)
     assert live_client.listed == [f"{release.R2_PREFIX}/{RELEASE_ID}/"]
     assert len(live_client.puts) == len(result.assets)
+    assert receipt == _receipt(result)

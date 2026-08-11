@@ -29,7 +29,6 @@ MIME_EXT = {
     "image/webp": "webp",
     "image/gif": "gif",
     "image/avif": "avif",
-    "application/zip": "zip",
 }
 
 
@@ -47,15 +46,9 @@ def ai_key(user_id: str, project_id: str, job_id: str, asset_id: str, ext: str) 
     return f"users/{user_id}/projects/{project_id}/ai/{job_id}/{asset_id}.{ext}"
 
 
-def export_key(user_id: str, project_id: str, job_id: str, asset_id: str, ext: str) -> str:
-    """결정론적 export 산출물 키. provider 산출물이 아니므로 ai/와 분리한다."""
-    return f"users/{user_id}/projects/{project_id}/exports/{job_id}/{asset_id}.{ext}"
-
-
-def genrun_prompt_key(user_id: str, project_id: str, job_id: str, run_id: str) -> str:
-    """generation_run 프롬프트 전문의 R2 키. 컷과 같은 소유 경로 아래 두어 프로젝트 삭제 시
-    prefix 단위로 함께 지워진다. DB 에는 이 키와 sha256 만 남는다(전문 미저장)."""
-    return f"users/{user_id}/projects/{project_id}/genruns/{job_id}/{run_id}.txt"
+def derived_key(user_id: str, project_id: str, asset_id: str, ext: str) -> str:
+    """Deterministic server-derived assets such as a custom garment contact sheet."""
+    return f"users/{user_id}/projects/{project_id}/derived/{asset_id}.{ext}"
 
 
 def face_key(model_id: str, license_id: str, ext: str) -> str:
@@ -154,4 +147,14 @@ class R2Client:
             "get_object",
             Params={"Bucket": self._bucket, "Key": key},
             ExpiresIn=3600,
+        )
+
+    def preview_url(self, key: str, expires: int = 3600) -> str:
+        """생성 중 프리뷰 전용 — public 도메인 설정과 무관하게 **항상 만료 있는** 서명 GET.
+        cut_done 이벤트 페이로드는 job_events 에 영구히 남으므로, public_url(영구 공개 URL
+        가능)을 실으면 bearer URL 이 원장에 축적된다(codex 리뷰 F3). 잡 상한 15분 ≪ 1h."""
+        return self._s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self._bucket, "Key": key},
+            ExpiresIn=expires,
         )

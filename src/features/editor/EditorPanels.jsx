@@ -13,6 +13,7 @@ import {
   allAiContentTemplates,
   blockPatchForContentRole,
 } from '@/lib/storyboardTaxonomy.js';
+import { detailDirectionFromExample } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 
 function PanelHead({ title, sub }) {
@@ -341,6 +342,12 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const selectExample = (value) => {
     setExampleId(value);
     if (!value) setRefScope('all');
+    // 디테일 컷의 방향은 예시에 내재 — 뒷면 디테일 예시를 고르면 back 을 내부 전송해
+    // 서버가 BackDetail 사진을 근거로 쓴다(2026-08-07 오너 결정).
+    if (isDetail) {
+      const example = (catalogs.genExamples || []).find((item) => item.id === value);
+      setDir(detailDirectionFromExample(example));
+    }
   };
   return (
     <div>
@@ -362,6 +369,7 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
+          {/* 디테일 컷은 방향 UI 없음 — 선택한 생성예시의 direction 라벨이 내부 결정 (selectExample) */}
           {!isMirror && !isDetail && <div className="insp-sec"><label className="lbl">방향</label><Chips className="oneline" options={dirOpts} value={dirVal} onChange={setDir} /></div>}
 
           <div className="insp-divider" />
@@ -404,15 +412,6 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
 }
 
 /* ---------- 의류 (wardrobe library) ---------- */
-/* AI 편집 결과의 검수 상태. machine QC(qcStatus)와 사용자 판단(reviewDecision)은
-   다른 사실이라 따로 읽는다 — 사용자가 승인해도 판정은 review_required 로 남는다. */
-function WardrobeQcBadge({ im }) {
-  if (im.reviewDecision === 'rejected') return <span className="ward-qc rejected" title="사용하지 않기로 한 결과예요"><Icon name="x" size={11} />사용 안 함</span>;
-  if (im.reviewDecision === 'accepted') return <span className="ward-qc accepted" title="확인 후 사용하기로 한 결과예요"><Icon name="check" size={11} />확인함</span>;
-  if (im.needsReview) return <span className="ward-qc review" title="원본과 비교해 확인이 필요해요"><Icon name="alertTri" size={11} />확인 필요</span>;
-  return null;
-}
-
 export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert, onUpload, onVaryImage, onDeleteSelected, onFreshSeen }) {
   // wardrobe 그룹 키 = colorId | 'misc' — 표시명은 colorOpts 에서 파생 (계약 §3.6)
   const colorFor = (group) => {
@@ -454,7 +453,6 @@ export function WardrobePanel({ wardrobe, colorOpts = [], pendingSlot, onInsert,
                       {sel.has(im.id) && <Icon name="check" size={13} />}
                     </button>
                     <button className="ai-flag" onClick={(e) => { e.stopPropagation(); onVaryImage(im); }} title="AI로 편집"><Icon name="wand" size={12} /><span>AI 편집</span></button>
-                    <WardrobeQcBadge im={im} />
                   </div>
                 ))}
               </div>

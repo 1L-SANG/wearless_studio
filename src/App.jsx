@@ -1,15 +1,17 @@
 /* =============================================================
    App.jsx — routes (React Router).
-   Flow: /create/input → mannequin → storyboard → generating → editor.
+   Flow: /create/input → storyboard → mannequin → generating → editor.
+   (마네킹컷 생성이 오래 걸려 콘티를 앞으로 당겼다 — 콘티 진입 시 생성을 발사해
+    사용자가 보드를 짜는 동안 백그라운드로 돈다.)
    "/" opens the input page directly (per product decision) — 입력·분석은
    로그인 없이 공개. 분석 CTA 에서 로그인 게이트(LoginGate 모달)를 띄우고,
-   로그인 후 마네킹부터 진행한다. mannequin·storyboard·generating·library·
+   로그인 후 콘티부터 진행한다. storyboard·mannequin·generating·library·
    editor 는 RequireAuth 로 보호(비세션 직접 URL 진입 → 입력으로 리다이렉트).
    OAuth 복귀('/')의 리다이렉트는 RootRedirect 단일 주인이 담당(복귀 목표 있으면 그곳, 없으면 입력).
    Editor 는 app chrome 밖의 전체화면 surface (stub in phase 1).
    ============================================================= */
-import { Suspense, useEffect, useRef, useState } from 'react';
-import { Routes, Route, Navigate, Outlet, useLocation, useParams } from 'react-router-dom';
+import { Suspense, useEffect, useState } from 'react';
+import { Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ChromeLayout } from '@/features/shell/ChromeLayout.jsx';
 import { Library } from '@/features/library/Library.jsx';
 import { Pricing } from '@/features/pricing/Pricing.jsx';
@@ -30,33 +32,89 @@ import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
-import { syncDraftToBackend } from '@/lib/draftSync.js';
-import { api } from '@/lib/api/index.js';
+import { resetDraftSyncSingleFlight, syncDraftToBackend } from '@/lib/draftSync.js';
+import { api, isMockMode } from '@/lib/api/index.js';
 import { listMyModels } from '@/lib/api/facemarket.js';
-import { ErrorState } from '@/components/ui.jsx';
+import { ErrorState, useToast } from '@/components/ui.jsx';
 import { shouldAdoptRouteProject } from '@/lib/projectRoute.js';
+import {
+  consumeFlowContinuation,
+  hasFlowContinuation,
+  isProductInfoConfirmed,
+  isSameTabProjectReload,
+  markFlowSession,
+  markProductInfoConfirmed,
+  registerConfirmedInputEntry,
+} from '@/lib/flowSession.js';
+import { ResumeChoiceModal } from '@/features/shell/shell.jsx';
 
 /* 보호 라우트 — 세션 없으면 공개 입력 페이지로. 입력은 공개라 리다이렉트 루프 없음. */
 function RequireAuth() {
   const { session, loading } = useAuth();
+  // mock 데모 샌드박스 — 로그인 없이 전 플로우 확인(주소창 직접 진입 포함).
+  // mock api 는 토큰을 쓰지 않으므로 세션 부재가 기능에 영향 없다. http 모드는 기존 가드 유지.
+  if (isMockMode) return <Outlet />;
   if (loading) return <div className="route-loading">불러오는 중이에요</div>;
   if (!session) return <Navigate to="/create/input" replace />;
   return <Outlet />;
 }
 
-// 탭 수명 동안 create/editor 흐름이 한 번이라도 실제 렌더됐는지만 기억한다. localStorage 에
-// 넣지 않아 새 탭/새로고침은 cold entry 로 판별되고, 라우트 간 뒤로가기는 같은 세션으로 남는다.
+// 현재 문서 수명 동안 create/editor 흐름이 한 번이라도 실제 렌더됐는지 기억한다. 새로고침은
+// 모듈 변수가 초기화되므로 project-scoped sessionStorage 표식(flowSession)으로 별도 판별한다.
 let flowRouteSeenThisSession = false;
+const flowDocumentEntryId = Math.random().toString(36).slice(2);
 
 /* 마네킹 이후 단계는 현재 프로젝트가 있어야 한다. 복원된 프로젝트도 유효하므로 동기 pair 만
    확인하고, 서버 유효성 검증/404 정리는 각 화면의 기존 loadProject 경로가 계속 담당한다. */
 function RequireProject() {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
   const projectId = useAppStore((s) => s.projectId);
   const projectPersisted = useAppStore((s) => s.projectPersisted);
+  const beginProject = useAppStore((s) => s.beginProject);
+  const [entryDecision, setEntryDecision] = useState(() => {
+    if (!projectId || !projectPersisted) return 'continue';
+    return flowRouteSeenThisSession || isSameTabProjectReload(projectId)
+      || hasFlowContinuation(projectId) ? 'continue' : 'ask';
+  });
 
-  useEffect(() => { flowRouteSeenThisSession = true; }, []);
+  useEffect(() => {
+    if (entryDecision !== 'continue') return;
+    consumeFlowContinuation(projectId);
+    flowRouteSeenThisSession = true;
+    markFlowSession(projectId, pathname);
+  }, [entryDecision, pathname, projectId]);
 
-  if (!projectPersisted || !projectId) return <Navigate to="/create/input" replace />;
+  // mock 데모 관례 — 주소창에 /create/storyboard·/create/generating 을 직접 쳐도
+  // 시드 프로젝트를 만들어 통과시킨다(입력부터 걷지 않고 바로 확인). http 모드는 기존 가드 유지.
+  useEffect(() => {
+    if (!isMockMode || (projectId && projectPersisted)) return;
+    let cancelled = false;
+    api.createProject().then((p) => {
+      if (!cancelled) useAppStore.setState({ projectId: p.id, projectPersisted: true });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectId, projectPersisted]);
+
+  const resume = () => {
+    flowRouteSeenThisSession = true;
+    markFlowSession(projectId, pathname);
+    setEntryDecision('continue');
+  };
+  const startNew = async () => {
+    await beginProject();
+    flowRouteSeenThisSession = true;
+    navigate('/create/input', { replace: true });
+  };
+
+  if (entryDecision === 'ask') {
+    return <ResumeChoiceModal onResume={resume} onNew={startNew} onClose={resume} />;
+  }
+
+  if (!projectPersisted || !projectId) {
+    if (isMockMode) return <div className="route-loading">데모 프로젝트 준비 중이에요</div>;
+    return <Navigate to="/create/input" replace />;
+  }
   return <Outlet />;
 }
 
@@ -146,39 +204,104 @@ function RequireVerifiedModel() {
 function ResumeTracker() {
   const { pathname } = useLocation();
   const setResumePath = useAppStore((s) => s.setResumePath);
+  const projectId = useAppStore((s) => s.projectId);
+  const projectPersisted = useAppStore((s) => s.projectPersisted);
   useEffect(() => {
+    if (projectId && projectPersisted && (pathname.startsWith('/create/') || pathname.startsWith('/editor/'))) {
+      markFlowSession(projectId, pathname);
+    }
     // 재개 대상은 서버 상태가 있는(projectPersisted) 단계만. /create/input 은 분석 전이라 복원할
     // 서버 상태가 없어, 여기로 '이어서' 하면 첫 페이지로 튕기는 것처럼 보인다 → 기록 제외.
     if (pathname.startsWith('/editor/')
         || (pathname.startsWith('/create/') && !pathname.startsWith('/create/input'))) {
       setResumePath(pathname);
     }
-  }, [pathname, setResumePath]);
+  }, [pathname, projectId, projectPersisted, setResumePath]);
   return null;
 }
 
 /* '새 제작'(startProject → projectGeneration++)이면 같은 /create/input 라우트라도 ProductInput 을
    remount 해 폼·복원상태를 초기화한다 — 복구로 복원된 묵은 입력이 새 제작에 남지 않게. */
 function ProductInputRoute() {
+  const navigate = useNavigate();
+  const { key: locationKey } = useLocation();
+  const { session, loading: authLoading } = useAuth();
+  const { push: pushToast } = useToast();
   const generation = useAppStore((s) => s.projectGeneration);
   const beginProject = useAppStore((s) => s.beginProject);
-  const [isolating, setIsolating] = useState(() => {
+  const [entryDecision, setEntryDecision] = useState(() => {
     const { projectId, projectPersisted } = useAppStore.getState();
-    return !flowRouteSeenThisSession && !!(projectPersisted && projectId);
+    if (!projectPersisted || !projectId) return 'continue';
+    if (useAppStore.getState().productInfoConfirmed || isProductInfoConfirmed(projectId)) return 'confirmed';
+    return flowRouteSeenThisSession || isSameTabProjectReload(projectId)
+      || hasFlowContinuation(projectId) ? 'continue' : 'ask';
   });
-  const isolationPromiseRef = useRef(null);
 
   useEffect(() => {
-    flowRouteSeenThisSession = true;
-    if (!isolating) return undefined;
-    // StrictMode effect 재실행도 같은 reset promise 에 합류한다.
-    isolationPromiseRef.current ||= beginProject().catch(() => {});
+    if (entryDecision === 'confirmed') {
+      if (!isMockMode && authLoading) return;
+      // http 모드의 세션 만료 리다이렉트는 사용자의 잠금 화면 재진입이 아니다.
+      // 로그인 유도 경로가 입력 화면을 맡도록 두고, 잠금 연타 카운트도 올리지 않는다.
+      if (!isMockMode && !session) {
+        const { projectId } = useAppStore.getState();
+        setEntryDecision(registerConfirmedInputEntry(
+          projectId,
+          Date.now(),
+          `${flowDocumentEntryId}:${locationKey}`,
+          { countAsUserEntry: false },
+        ));
+        return;
+      }
+      const { projectId } = useAppStore.getState();
+      if (!isProductInfoConfirmed(projectId)) markProductInfoConfirmed(projectId);
+      setEntryDecision(registerConfirmedInputEntry(
+        projectId,
+        Date.now(),
+        `${flowDocumentEntryId}:${locationKey}`,
+      ));
+      return;
+    }
+    if (entryDecision === 'redirect') {
+      pushToast('의류 정보는 확정돼 수정할 수 없어요', { icon: 'alertTri' });
+      navigate('/create/storyboard', { replace: true });
+      return;
+    }
+    if (entryDecision !== 'start-new') return;
     let alive = true;
-    isolationPromiseRef.current.finally(() => { if (alive) setIsolating(false); });
+    beginProject().then(() => {
+      if (!alive) return;
+      flowRouteSeenThisSession = true;
+      setEntryDecision('continue');
+      navigate('/create/input', { replace: true });
+    });
     return () => { alive = false; };
-  }, [beginProject, isolating]);
+  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session]);
 
-  if (isolating) return <div className="route-loading">새 작업을 준비하고 있어요…</div>;
+  useEffect(() => {
+    if (entryDecision !== 'continue') return;
+    consumeFlowContinuation(useAppStore.getState().projectId);
+    flowRouteSeenThisSession = true;
+    const { projectId } = useAppStore.getState();
+    markFlowSession(projectId, '/create/input');
+  }, [entryDecision]);
+
+  const resume = () => {
+    flowRouteSeenThisSession = true;
+    const { projectId, resumePath } = useAppStore.getState();
+    markFlowSession(projectId, resumePath || '/create/input');
+    setEntryDecision('continue');
+    if (resumePath && resumePath !== '/create/input') navigate(resumePath, { replace: true });
+  };
+  const startNew = async () => {
+    await beginProject();
+    flowRouteSeenThisSession = true;
+    setEntryDecision('continue');
+  };
+
+  if (entryDecision === 'ask') {
+    return <ResumeChoiceModal onResume={resume} onNew={startNew} onClose={resume} />;
+  }
+  if (entryDecision !== 'continue') return <div className="route-loading">이동하고 있어요…</div>;
   return <ProductInput key={generation} />;
 }
 
@@ -191,7 +314,8 @@ const DRAFT_SYNC_TIMEOUT_MS = 20000;
 
 function RootRedirect() {
   const { session, loading } = useAuth();
-  const [target] = useState(() => sessionStorage.getItem('wl_postLogin') || '/create/input');
+  const [returnIntent] = useState(() => sessionStorage.getItem('wl_postLogin'));
+  const target = returnIntent || '/create/input';
   const [phase, setPhase] = useState('init');   // init | syncing | done
   const [dest, setDest] = useState(null);
 
@@ -201,12 +325,16 @@ function RootRedirect() {
     // loading=false로 내리므로 그 전환에서 한 번만 실행한다(토큰 갱신 때 sync 재시작 금지).
     if (loading && target !== '/create/input') return;
     sessionStorage.removeItem('wl_postLogin');
+    if (returnIntent?.startsWith('/create/')) {
+      flowRouteSeenThisSession = true;
+      markFlowSession(useAppStore.getState().projectId, returnIntent);
+    }
     let alive = true;
     (async () => {
-      const wantsMannequin = target === '/create/mannequin';
-      if (!session) { setDest(wantsMannequin ? '/create/input' : target); setPhase('done'); return; }
+      const wantsStoryboard = target === '/create/storyboard';
+      if (!session) { setDest(wantsStoryboard ? '/create/input' : target); setPhase('done'); return; }
       const mode = import.meta.env.VITE_API_MODE ?? 'mock';
-      if (!(wantsMannequin && mode === 'http' && hasPendingDraft())) {
+      if (!(wantsStoryboard && mode === 'http' && hasPendingDraft())) {
         setDest(target); setPhase('done'); return;
       }
       setPhase('syncing');
@@ -216,16 +344,20 @@ function RootRedirect() {
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('sync_timeout')), DRAFT_SYNC_TIMEOUT_MS));
         const { projectId } = await Promise.race([syncDraftToBackend(draft), timeout]);
         if (!alive) return;
-        useAppStore.getState().adoptProject(projectId);   // 마네킹이 이 project 로 진행(+영속)
-        await clearDraft().catch(() => {});
-        setDest('/create/mannequin'); setPhase('done');
+        // 같은 이유로 재생성 신호를 보존 — 로그인 복귀 draft sync 도 동일한 '신원 획득' 경로.
+        useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });   // 콘티가 이 project 로 진행(+영속)
+        flowRouteSeenThisSession = true;
+        useAppStore.getState().confirmProductInfo(projectId);
+        markFlowSession(projectId, '/create/storyboard');
+        await clearDraft().then(() => { resetDraftSyncSingleFlight(); }).catch(() => {});
+        setDest('/create/storyboard'); setPhase('done');
       } catch {
         if (!alive) return;
         setDest('/create/input'); setPhase('done');   // 실패/지연 — draft 복원 + 재시도(입력에서)
       }
     })();
     return () => { alive = false; };
-  }, [loading, target]);
+  }, [loading, returnIntent, target]);
 
   if (phase === 'syncing') return <div className="route-loading">입력 내용을 안전하게 저장하고 있어요…</div>;
   if (phase === 'done' && dest) return <Navigate to={dest} replace />;

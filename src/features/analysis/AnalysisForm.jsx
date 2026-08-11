@@ -21,7 +21,16 @@ import {
   matchingFitFromProfile,
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
+import { reconcileMatchCompatibility } from '@/lib/api/matchingItems.js';
+import { looksLikeImageFile, toUploadableImages } from '@/lib/imageTranscode.js';
+import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import { resolveSelectedModelId } from './modelSelection.js';
+import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
+import {
+  estimateComposeModeCredits,
+  selectAnalysisComposeMode,
+} from './composeModeSelection.js';
 
 // 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
 // Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
@@ -76,8 +85,8 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
             <div className="lic-card-who">
               <div className="lic-card-name">{model.displayName}{age != null && <em> · {age}세</em>}</div>
               {model.vcId
-                ? <div className="lic-card-vc"><Icon name="check" size={10} />온체인 VC 발급됨</div>
-                : <div className="lic-card-vc off">VC 미발급</div>}
+                ? <div className="lic-card-vc"><Icon name="check" size={10} />라이선스 검증서 발급 완료</div>
+                : <div className="lic-card-vc off">라이선스 검증서 발급 전</div>}
             </div>
           </div>
 
@@ -100,7 +109,7 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
                 )}
                 <div className="lic-foot">
                   <div className="lic-foot-info">
-                    <div className="lic-price">{_won(data.unitPrice)}<em> /건</em></div>
+                    <div className="lic-price">{_won(data.unitPrice)}<em> · 상세페이지 1개당</em></div>
                     {_fmtDate(data.validUntil) && <div className="lic-valid">{_fmtDate(data.validUntil)}까지</div>}
                     {data.vcId && <code className="lic-vcid">{data.vcId}</code>}
                   </div>
@@ -128,6 +137,11 @@ function ModelDetailModal({ model, onClose, onSelect, selectable }) {
 // 시작해 내용 길이만큼만 유동 확장되게 하는 계산 (2026-07-13 사용자 피드백).
 const chWidth = (s) => [...s].reduce((n, ch) => n + (/[가-힣]/.test(ch) ? 1 : 0.55), 0).toFixed(1);
 import { CREDIT_COSTS } from '@/lib/limits.js';
+import {
+  createMeasurementFields,
+  normalizeMeasurementValue,
+  sanitizeMeasurementInput,
+} from '@/lib/measurementSchema.js';
 
 export const isMatchRecommendationPatch = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
 
@@ -265,48 +279,403 @@ export function AnalysisSkeleton() {
 // AI(가상) 모델 — 서버 레지스트리(server/app/data/virtual_models.json)와 동기 유지.
 // 컷 생성(AG-06)이 이 id('mA'…)로 아이덴티티 자산을 해석하고, 라이선스 게이트는
 // 비-UUID id를 no-op 처리한다(과금 없음). 실제 모델(FaceMarket)과 탭으로 구분 표시.
+// 이름은 인물 외형에 맞춘다(2026-08-01 사용자 결정): 서양인 = 짧은 영문 이름,
+// 동양인 = 짧은 한국어 이름. 'mA'… id 는 서버 자산 키라 그대로 두고 표시명만 바꾼다.
 const AI_MODELS = [
-  { id: 'mA', displayName: '모델 A', gender: 'women', thumb: '/models/women/w1.webp' },
-  { id: 'mB', displayName: '모델 B', gender: 'men', thumb: '/models/men/m1.webp' },
-  { id: 'mC', displayName: '모델 C', gender: 'men', thumb: '/models/men/m2.webp' },
+  { id: 'mA', displayName: 'Mia', gender: 'women', thumb: '/models/women/w1.webp' },
+  { id: 'mB', displayName: 'Leo', gender: 'men', thumb: '/models/men/m1.webp' },
+  { id: 'mC', displayName: '도윤', gender: 'men', thumb: '/models/men/m2.webp' },
+  { id: 'mD', displayName: '수혁', gender: 'men', thumb: '/models/men/m3.webp' },
+  { id: 'mE', displayName: '지안', gender: 'women', thumb: '/models/women/w2.webp' },
 ];
 
-export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
+const expectedMatchingType = (clothingType) => {
+  if (clothingType === 'dress') return null;
+  return clothingType === 'bottom' ? 'top' : 'bottom';
+};
+
+const CUSTOM_MATCH_IMAGE_OPTIONS = Object.freeze({
+  maxEdge: 1600,
+  minEdge: 400,
+  forceJpeg: true,
+  timeoutMs: 10000,
+});
+
+function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
+  const [phase, setPhase] = useState('idle');
+  const [files, setFiles] = useState([]);
+  const [error, setError] = useState('');
+  const [doneItem, setDoneItem] = useState(null);
+  const [dragIndex, setDragIndex] = useState(null);
+  const controllerRef = useRef(new AbortController());
+  const previewUrlsRef = useRef(new Set());
+  const aliveRef = useRef(true);
+
+  // setup 에서 aliveRef 를 반드시 되살린다. StrictMode(개발)는 마운트 직후 effect 를
+  // 실행→정리→재실행하는데, 정리에서 false 로 내린 값을 되돌리지 않으면 **모달이 열리자마자
+  // 죽은 상태**가 된다. 그러면 addFiles 의 `if (!aliveRef.current) return` 가 항상 걸려
+  // phase 가 'preparing' 에 갇히고, 예외도 네트워크 요청도 없이 스피너만 돈다
+  // (2026-08-05 오너 재현: "한참 로딩·콘솔 깨끗·서버 요청 0건").
+  useEffect(() => {
+    aliveRef.current = true;
+    const controller = controllerRef.current;
+    const previews = previewUrlsRef.current;
+    return () => {
+      aliveRef.current = false;
+      controller.abort();
+      previews.forEach((url) => URL.revokeObjectURL(url));
+      previews.clear();
+    };
+  }, []);
+
+  const renewController = () => {
+    controllerRef.current.abort();
+    controllerRef.current = new AbortController();
+    return controllerRef.current;
+  };
+  const releasePreview = (entry) => {
+    if (!entry?.preview) return;
+    URL.revokeObjectURL(entry.preview);
+    previewUrlsRef.current.delete(entry.preview);
+  };
+  const toEntry = (file) => {
+    const preview = URL.createObjectURL(file);
+    previewUrlsRef.current.add(preview);
+    return { id: `${Date.now()}-${Math.random()}`, file, preview };
+  };
+  const addFiles = async (fileList) => {
+    if (phase === 'preparing' || phase === 'uploading' || phase === 'analyzing') return;
+    const controller = renewController();
+    const room = 4 - files.length;
+    const picked = [...fileList].filter(looksLikeImageFile).slice(0, room);
+    if (!picked.length) {
+      setError('JPG, PNG 또는 HEIC 사진을 선택해주세요.');
+      return;
+    }
+    setPhase('preparing');
+    try {
+      const prepared = await toUploadableImages(
+        picked, CUSTOM_MATCH_IMAGE_OPTIONS, { signal: controller.signal },
+      );
+      if (!aliveRef.current || controller.signal.aborted) return;
+      if (prepared.files.length) {
+        setFiles((current) => [...current, ...prepared.files.map(toEntry)]);
+        setPhase('picking');
+      } else {
+        setPhase('error');
+      }
+      setError(prepared.failed.length
+        ? `${prepared.failed.length}장은 불러오지 못했어요. 다른 사진으로 다시 시도해 주세요.`
+        : '');
+    } catch (prepareError) {
+      if (prepareError?.name === 'AbortError' || !aliveRef.current) return;
+      setError(prepareError?.message || '사진을 준비하지 못했어요. 잠시 후 다시 시도해 주세요.');
+      setPhase('error');
+    }
+  };
+  const replaceFile = async (index, file) => {
+    if (!looksLikeImageFile(file)) {
+      setError('JPG, PNG 또는 HEIC 사진을 선택해주세요.');
+      return;
+    }
+    const controller = renewController();
+    setPhase('preparing');
+    try {
+      const prepared = await toUploadableImages(
+        [file], CUSTOM_MATCH_IMAGE_OPTIONS, { signal: controller.signal },
+      );
+      if (!aliveRef.current || controller.signal.aborted) return;
+      if (!prepared.files.length) {
+        setError('사진을 불러오지 못했어요. 다른 사진으로 다시 시도해 주세요.');
+        setPhase('picking');
+        return;
+      }
+      setFiles((current) => current.map((entry, itemIndex) => {
+        if (itemIndex !== index) return entry;
+        releasePreview(entry);
+        return toEntry(prepared.files[0]);
+      }));
+      setError('');
+      setPhase('picking');
+    } catch (prepareError) {
+      if (prepareError?.name === 'AbortError' || !aliveRef.current) return;
+      setError(prepareError?.message || '사진을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
+      setPhase('picking');
+    }
+  };
+  const removeFile = (index) => {
+    renewController();
+    setFiles((current) => {
+      releasePreview(current[index]);
+      const next = current.filter((_, itemIndex) => itemIndex !== index);
+      setPhase(next.length ? 'picking' : 'idle');
+      return next;
+    });
+  };
+  const moveFile = (from, to) => {
+    if (from === to || from < 0 || to < 0 || from >= files.length || to >= files.length) return;
+    renewController();
+    setFiles((current) => {
+      const next = [...current];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  };
+  const clearFiles = () => {
+    renewController();
+    files.forEach(releasePreview);
+    setFiles([]);
+    setError('');
+    setPhase('idle');
+  };
+  const requestClose = () => {
+    controllerRef.current.abort();
+    onClose();
+  };
+  const submit = async () => {
+    if (!files.length || phase === 'uploading' || phase === 'analyzing') return;
+    const controller = renewController();
+    setError('');
+    setPhase('uploading');
+    try {
+      const uploaded = await Promise.all(files.map(({ file }) => api.uploadPhoto(
+        projectId,
+        {
+          filename: file.name,
+          mime: file.type,
+          blob: file,
+          purpose: 'custom_match_source',
+        },
+        { signal: controller.signal },
+      )));
+      if (!aliveRef.current || controller.signal.aborted) return;
+      setPhase('analyzing');
+      const result = await api.addCustomMatchItem(
+        projectId,
+        { assetIds: uploaded.map((asset) => asset.assetId) },
+        { signal: controller.signal },
+      );
+      if (!aliveRef.current || controller.signal.aborted) return;
+      onApply(result.analysis);
+      setDoneItem(result.item);
+      setPhase('done');
+      setTimeout(() => { if (aliveRef.current) requestClose(); }, 500);
+    } catch (uploadError) {
+      if (uploadError?.name === 'AbortError' || !aliveRef.current) return;
+      setError(uploadError?.message || '옷을 추가하지 못했어요. 다시 시도해 주세요.');
+      setPhase('error');
+    }
+  };
+
+  const busy = phase === 'preparing' || phase === 'uploading' || phase === 'analyzing';
+  return (
+    <Modal onClose={requestClose} narrow anchorRect={anchorRect} glass>
+      <div className="custom-match-modal">
+        <div className="custom-match-modal-head">
+          <div>
+            <h3>내 매칭 의류 추가</h3>
+            <p>같은 옷 사진을 최대 4장 올려주세요. 1장만으로도 추가할 수 있어요.</p>
+          </div>
+          <button className="custom-match-close" onClick={requestClose} aria-label="닫기">
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+
+        {/* 상품 입력 페이지의 다중 업로드와 같은 타일 문법(.slot-tiles/.tile/.tile.add) — 사진 타일 +
+            점선 추가 타일이 한 줄에 서고, 그리드 어디에 떨궈도 파일이 추가된다. */}
+        <div className="slot-tiles custom-match-tiles"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }}>
+          {files.map((entry, index) => (
+            <div className="tile custom-match-tile" key={entry.id} draggable={!busy && phase !== 'done'}
+              onDragStart={() => setDragIndex(index)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault(); event.stopPropagation();
+                moveFile(dragIndex, index); setDragIndex(null);
+              }}>
+              <img src={entry.preview} alt={`${index + 1}번 옷 사진`} />
+              <span className="custom-match-order">{index + 1}</span>
+              {!busy && phase !== 'done' && (
+                <>
+                  <button className="rm" onClick={() => removeFile(index)}
+                    aria-label={`${index + 1}번 사진 삭제`}>
+                    <Icon name="x" size={13} />
+                  </button>
+                  <div className="custom-match-preview-actions">
+                    <button onClick={() => moveFile(index, index - 1)} disabled={index === 0}>앞으로</button>
+                    <label>교체<input type="file" accept="image/*,.heic,.heif,.hif"
+                      onChange={(event) => { if (event.target.files[0]) replaceFile(index, event.target.files[0]); event.target.value = ''; }} /></label>
+                    <button onClick={() => moveFile(index, index + 1)} disabled={index === files.length - 1}>뒤로</button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+          {!busy && phase !== 'done' && files.length < 4 && (
+            <label className="tile add custom-match-add-tile">
+              <Icon name="plus" size={26} className="add-ico" />
+              <span className="add-cap">사진 추가<small>JPG/PNG/HEIC · 최소 400px</small></span>
+              <input type="file" accept="image/*,.heic,.heif,.hif" multiple
+                onChange={(event) => { addFiles(event.target.files); event.target.value = ''; }} />
+            </label>
+          )}
+        </div>
+
+        {busy && (
+          <div className="custom-match-status"><Icon name="loader" className="spin" size={18} />
+            {phase === 'preparing' ? '사진을 가볍게 준비하는 중이에요…' : '옷을 확인하는 중이에요…'}
+          </div>
+        )}
+        {phase === 'done' && (
+          <div className="custom-match-status success"><Icon name="check" size={18} />{doneItem?.name || '내 옷'}을 추가했어요.</div>
+        )}
+        {error && <div className="custom-match-error">{error}</div>}
+
+        {phase === 'picking' && (
+          <div className="custom-match-modal-actions">
+            <span>1번 사진이 타일 썸네일로 보여요.</span>
+            <Button variant="primary" onClick={submit}>사진 선택 완료</Button>
+          </div>
+        )}
+        {phase === 'error' && (
+          <div className="custom-match-modal-actions">
+            <span />
+            <Button variant="ghost" onClick={clearFiles}>다른 사진 고르기</Button>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+export function AnalysisForm({
+  inline, analysis, catalogs, onChange, onNext, projectId = null, onAnalysisReplace,
+}) {
   const a = analysis;
   const toast = useToast();
+  const { session, loading: authLoading } = useAuth();
+  const composeMode = useAppStore((s) => s.composeMode);
+  const setComposeMode = useAppStore((s) => s.setComposeMode);
+  const restoreComposeMode = useAppStore((s) => s.restoreComposeMode);
+  const composeModeSaveRef = useRef(Promise.resolve());
+  const composeModeSelectionRef = useRef({ requestId: 0, confirmedMode: composeMode });
+  const [composeModeSaving, setComposeModeSaving] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    if (!composeModeSaving) composeModeSelectionRef.current.confirmedMode = composeMode;
+  }, [composeMode, composeModeSaving]);
   const [washing, setWashing] = useState(false);
   const [spDraft, setSpDraft] = useState('');
   const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
+  const [measurementDraft, setMeasurementDraft] = useState(() => ({
+    clothingType: a.clothingType,
+    values: Object.fromEntries((a.measurements || []).map((m) => [m.key, m.value == null ? '' : String(m.value)])),
+  }));
   // 직접 입력에 커서가 있는 동안 enum 칩 하이라이트를 지운다 — 커밋은 여전히 blur 시점이라
   // 데이터는 안 바뀌고, 빈 채로 나가면 칩 선택이 그대로 돌아온다(오클릭 무해).
   const [ccFocus, setCcFocus] = useState(false);
   useEffect(() => { setCcDraft(a.customCategory || ''); }, [a.customCategory]);
   const [spAdding, setSpAdding] = useState(false);
+  // 칩을 눌러 그 자리에서 문구를 고친다 (2026-08-03 사용자 결정) — AI가 뽑아준 특징도 손댈 수 있게.
+  const [spEditIdx, setSpEditIdx] = useState(null);
+  const [spEditDraft, setSpEditDraft] = useState('');
   const [editMatIdx, setEditMatIdx] = useState(null);
   const matTotal = (a.materials || []).reduce((s, m) => s + (Number(m.ratio) || 0), 0);
   const matOver = matTotal > 100;
+  const composeModes = catalogs?.composeModes || [];
+  const selectedComposeMode = composeModes.find((mode) => mode.value === composeMode)
+    || composeModes[0];
+  const composeModeOptions = composeModes.map((mode) => ({
+    value: mode.value,
+    label: `${mode.label} · ${mode.count}컷`,
+  }));
+  const composeModeCredits = estimateComposeModeCredits(
+    selectedComposeMode?.count,
+    CREDIT_COSTS.storyboardPerCut,
+  );
+  const changeComposeMode = (nextMode) => {
+    if (nextMode === composeMode) return;
+    setComposeModeSaving(true);
+    const pending = selectAnalysisComposeMode({
+      currentMode: composeMode,
+      nextMode,
+      projectId,
+      setComposeMode,
+      restoreComposeMode,
+      invalidateStoryboardPrefetch: invalidateStoryboardEntryPrefetch,
+      selectionState: composeModeSelectionRef,
+      onFailure: () => {
+        toast.push('사진 양을 저장하지 못했어요 — 잠시 후 다시 시도해주세요');
+      },
+    });
+    composeModeSaveRef.current = pending;
+    void pending.finally(() => {
+      if (composeModeSaveRef.current === pending) setComposeModeSaving(false);
+    });
+  };
+  const confirmAnalysis = async () => {
+    if (confirming) return;
+    setConfirming(true);
+    try {
+      await composeModeSaveRef.current;
+      await onNext();
+    } finally {
+      setConfirming(false);
+    }
+  };
   // 인물 모델 카탈로그 — FaceMarket 검증 모델(GET /v1/facemarket/models, listModels()).
   // 정적 시드를 버리고 런타임 로드한다. 라이선스가 활성인(hasActiveLicense) 모델만 선택 가능.
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState('');
+  const [modelsAttempt, setModelsAttempt] = useState(0);
   const [detailFor, setDetailFor] = useState(null); // 상세 모달 대상 모델 카드
+  const [customMatchOpen, setCustomMatchOpen] = useState(false);
+  // 누른 '의류 추가하기' 타일의 화면상 위치 — 모달을 그 바로 위에 띄운다(Modal anchorRect).
+  const [customMatchAnchor, setCustomMatchAnchor] = useState(null);
+  const [customMatchDeleting, setCustomMatchDeleting] = useState(false);
   // AI 모델 / 실제 모델 탭 (2026-07-21 사용자 결정). 초기 탭은 현재 선택이 속한 쪽.
   const [modelTab, setModelTab] = useState(() =>
     (a.selectedModelId && !AI_MODELS.some((m) => m.id === a.selectedModelId)) ? 'real' : 'ai');
   useEffect(() => {
+    if (authLoading) return undefined;
+    if (!session) {
+      setModels([]);
+      setModelsError('');
+      setModelsLoading(false);
+      return undefined;
+    }
     let alive = true;
+    setModelsLoading(true);
+    setModelsError('');
     listModels()
       .then((list) => { if (alive) setModels(Array.isArray(list) ? list : []); })
-      .catch(() => { if (alive) setModels([]); })   // 카탈로그 실패는 비치명 — 빈 그리드로 안내만
+      .catch((error) => {
+        if (!alive) return;
+        setModels([]);
+        setModelsError(error?.message || '검증 모델을 불러오지 못했어요.');
+      })
       .finally(() => { if (alive) setModelsLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [authLoading, modelsAttempt, session]);
+
+  useEffect(() => {
+    const normalized = normalizeTargetGendersForClothingType(
+      a.clothingType,
+      a.targetGenders,
+    );
+    if (a.targetGenders?.length !== 1 || a.targetGenders[0] !== normalized[0]) {
+      onChange({ targetGenders: normalized });
+    }
+  }, [a.clothingType, a.targetGenders, onChange]);
 
   // AI 추천 특징은 일단 강제로 칩에 채워둔다 (사용자가 지우면 빠짐). 최대 5개.
   useEffect(() => {
     const ai = a.aiSuggestedPoints || [];
     const missing = ai.filter((p) => !a.sellingPoints.includes(p));
-    if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, 5) });
+    if (missing.length) onChange({ sellingPoints: [...a.sellingPoints, ...missing].slice(0, SELLING_POINTS_MAX) });
   }, []);
 
   // 카탈로그 로드 후 선택값이 AI 모델도, 라이선스 활성 실제 모델도 아니면 첫 AI 모델로 자동 선택.
@@ -325,6 +694,38 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     }
   }, [models, modelsLoading, a.selectedModelId, a.targetGenders, onChange]);
   const aiSet = new Set(a.aiSuggestedPoints || []);
+  const selectableModels = models.filter((model) => model.hasActiveLicense);
+  const pendingLicenseModels = models.filter((model) => !model.hasActiveLicense);
+  const applyAnalysisReplacement = useCallback((nextAnalysis) => {
+    if (!nextAnalysis) return;
+    if (onAnalysisReplace) onAnalysisReplace(nextAnalysis);
+    else onChange(nextAnalysis);
+  }, [onAnalysisReplace, onChange]);
+  const closeCustomMatchModal = useCallback(async () => {
+    setCustomMatchOpen(false);
+    try {
+      const actual = await api.refreshMatchClothing(projectId);
+      applyAnalysisReplacement(actual);
+    } catch (refreshError) {
+      toast.push(refreshError?.message || '매칭 의류 상태를 다시 불러오지 못했어요.', { icon: 'alertTri' });
+    }
+  }, [applyAnalysisReplacement, projectId, toast]);
+  const removeCustomMatch = useCallback(async () => {
+    if (customMatchDeleting) return;
+    if (!window.confirm('업로드한 매칭 의류를 삭제할까요?')) return;
+    setCustomMatchDeleting(true);
+    try {
+      const result = await api.removeCustomMatchItem(projectId);
+      applyAnalysisReplacement(result.analysis);
+    } catch (removeError) {
+      toast.push(removeError?.message || '내 옷을 지우지 못했어요.', { icon: 'alertTri' });
+      try {
+        applyAnalysisReplacement(await api.refreshMatchClothing(projectId));
+      } catch { /* 원래 삭제 오류를 사용자에게 유지 */ }
+    } finally {
+      setCustomMatchDeleting(false);
+    }
+  }, [applyAnalysisReplacement, customMatchDeleting, projectId, toast]);
 
   const commitSp = () => {
     const t = spDraft.trim();
@@ -333,10 +734,39 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     setSpDraft(''); setSpAdding(false);
   };
 
+  // 편집 대상 인덱스를 ref 로도 들고 있는다 — blur 핸들러가 "지금 열린 편집이 내 것인가"를
+  // 즉시(리렌더 전에) 판단해야 한다. 아래 mousedown 커밋과 짝이다.
+  const spEditIdxRef = useRef(null);
+  const startEditSp = (i) => { spEditIdxRef.current = i; setSpEditIdx(i); setSpEditDraft(a.sellingPoints[i] || ''); };
+  const cancelEditSp = () => { spEditIdxRef.current = null; setSpEditIdx(null); setSpEditDraft(''); };
+  // Enter 로 확정하면 이어서 blur 도 오는데, 인덱스를 먼저 비워 두 번 반영되지 않게 한다.
+  // confirmed=false(포커스 이탈)일 때 빈 문구는 삭제가 아니라 취소다: blur 로 목록이 줄면
+  // 그 직후 도착하는 click 의 인덱스가 밀려 엉뚱한 칩이 열린다(실측 확인).
+  const commitSpEdit = (confirmed) => {
+    if (spEditIdx === null) return;
+    const patch = applySellingPointEdit({
+      sellingPoints: a.sellingPoints,
+      aiSuggestedPoints: a.aiSuggestedPoints,
+      index: spEditIdx,
+      text: spEditDraft,
+      allowDelete: confirmed,
+    });
+    cancelEditSp();
+    if (patch) onChange(patch);
+  };
+  // 한글 IME 조합 중의 Enter 는 글자 확정용이다 — 칩 확정까지 하면 "수정"을 치다가 창이 닫힌다.
+  const isComposing = (e) => e.nativeEvent?.isComposing === true;
+
   const subCats = catalogs.subCategories[a.clothingType] || [];
   const selMatch = (a.matchClothing || []).filter((c) => c.selected).sort((x, y) => (x.selOrder || 0) - (y.selOrder || 0));
   const mainMatchId = selMatch[0]?.id;
   const subMatchId = selMatch[1]?.id;
+  const isMatchCompatible = (item, clothingType = a.clothingType) => {
+    const expectedType = expectedMatchingType(clothingType);
+    return expectedType !== null
+      && item.isCompatible !== false
+      && (item.clothingType == null || item.clothingType === expectedType);
+  };
   const withMatchSelection = (matchClothing) => {
     const category = fitProfileCategory(a.clothingType, a.subCategory) || 'top';
     const gender = genderForClothingType(a.clothingType, a.targetGenders);
@@ -372,6 +802,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
   const toggleMatch = (id) => {
     const cur = a.matchClothing;
     const item = cur.find((c) => c.id === id);
+    if (!item || !isMatchCompatible(item)) return;
     if (item.selected) {
       const next = cur.map((c) => c.id === id ? { ...c, selected: false, selOrder: undefined } : c);
       onChange(withMatchSelection(next));
@@ -429,13 +860,48 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     } };
   };
   // subCategory 는 영문 토큰, 실측 key 는 MeasurementKey — 라벨은 catalogs 에서 파생 (계약 §4)
-  const changeType = (t) => onChange(withFitProfile({
-    clothingType: t,
-    subCategory: (catalogs.subCategories[t] || [])[0]?.value ?? null,
-    targetGenders: normalizeTargetGendersForClothingType(t, a.targetGenders),
-    measurements: (catalogs.measurementSchema[t] || []).map((k) => ({ key: k, value: null, unit: 'cm' })),
-  }));
-  const setMeasure = (key, value) => onChange({ measurements: (a.measurements || []).map((m) => m.key === key ? { ...m, value: value === '' ? null : Number(value) } : m) });
+  const changeType = (t) => {
+    if (!t || t === a.clothingType) return;
+    setMeasurementDraft({ clothingType: t, values: {} });
+    const matchClothing = reconcileMatchCompatibility(a.matchClothing, t);
+    onChange(withFitProfile({
+      clothingType: t,
+      subCategory: (catalogs.subCategories[t] || [])[0]?.value ?? null,
+      targetGenders: normalizeTargetGendersForClothingType(t, a.targetGenders),
+      measurements: createMeasurementFields(t),
+      matchClothing,
+    }));
+  };
+  const measurementValues = Object.fromEntries((a.measurements || []).map((m) => [m.key, m.value]));
+  const visibleMeasurements = createMeasurementFields(a.clothingType, measurementValues);
+  const setMeasure = (key, value) => onChange({ measurements: visibleMeasurements.map((m) => m.key === key ? { ...m, value: normalizeMeasurementValue(value) } : m) });
+  const measurementInputValue = (measurement) => (
+    measurementDraft.clothingType === a.clothingType && measurement.key in measurementDraft.values
+      ? measurementDraft.values[measurement.key]
+      : (measurement.value ?? '')
+  );
+  const editMeasurement = (key, rawValue) => {
+    const value = sanitizeMeasurementInput(rawValue);
+    setMeasurementDraft((current) => ({
+      clothingType: a.clothingType,
+      values: {
+        ...(current.clothingType === a.clothingType ? current.values : {}),
+        [key]: value,
+      },
+    }));
+    if (!value.endsWith('.')) setMeasure(key, value);
+  };
+  const commitMeasurement = (key, rawValue) => {
+    const value = normalizeMeasurementValue(rawValue);
+    setMeasurementDraft((current) => ({
+      clothingType: a.clothingType,
+      values: {
+        ...(current.clothingType === a.clothingType ? current.values : {}),
+        [key]: value == null ? '' : String(value),
+      },
+    }));
+    setMeasure(key, value);
+  };
   const typeLabel = catalogs.clothingTypes.find((t) => t.value === a.clothingType)?.label;
   const fitOpts = fitOptsOf(a).opts;
   const genderOptions = a.clothingType === 'dress'
@@ -449,31 +915,36 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
         <div className="sec-title" style={{ marginBottom: 20 }}>기본 정보</div>
         <div className="basic-fields">
           <div className="field-row"><label className="lbl">의류 종류</label>
-            <Chips options={catalogs.clothingTypes} value={a.clothingType} onChange={changeType} /></div>
+            <Chips options={catalogs.clothingTypes} value={a.clothingType} onChange={changeType} allowDeselect={false} /></div>
           {/* 세부 카테고리 — enum 칩 + 같은 줄 끝의 '직접 입력' pill (2026-07-13 사용자 결정:
               별도 줄이 아니라 칩처럼). enum 선택 ↔ 직접 입력은 배타: 칩을 고르면 custom을
               비우고, custom을 쓰면 칩 해제. AI 추측(customCategory)이 있으면 pill에 채워짐.
               저장은 blur/Enter 커밋, key로 분석 갱신 시 리셋(소재 인라인 편집 관례). */}
           <div className="field-row"><label className="lbl">세부 카테고리</label>
             <Chips options={subCats} value={ccFocus ? null : a.subCategory}
+              allowDeselect={false}
               onChange={(v) => onChange(withFitProfile({ subCategory: v, customCategory: null }))}
               trailing={
-                <input
-                  className={`chip chip-input${ccFocus || (a.customCategory && !a.subCategory) ? ' on' : ''}`}
-                  value={ccDraft} maxLength={20} placeholder="직접 입력"
-                  style={{ width: `calc(${chWidth(ccDraft || '직접 입력')}em + 32px)` }}
-                  onChange={(e) => setCcDraft(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                  onFocus={() => setCcFocus(true)}
-                  onBlur={() => {
-                    setCcFocus(false);
-                    const v = ccDraft.trim();
-                    if (v === (a.customCategory || '')) return;
-                    onChange(withFitProfile(v ? { customCategory: v, subCategory: null } : { customCategory: null }));
-                  }} />
+                <span className="chip-input-wrap">
+                  <input
+                    className={`chip chip-input${ccFocus || (a.customCategory && !a.subCategory) ? ' on' : ''}`}
+                    value={ccDraft} maxLength={20} placeholder="직접 입력"
+                    style={{ width: `calc(${chWidth(ccDraft || '직접 입력')}em + 32px)` }}
+                    onChange={(e) => setCcDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                    onFocus={() => setCcFocus(true)}
+                    onBlur={() => {
+                      setCcFocus(false);
+                      const v = ccDraft.trim();
+                      if (v === (a.customCategory || '')) return;
+                      onChange(withFitProfile(v ? { customCategory: v, subCategory: null } : { customCategory: null }));
+                    }} />
+                  {ccDraft.trim() !== (a.customCategory || '') && <span className="chip-input-pending">적용 전</span>}
+                </span>
               } /></div>
           <div className="field-row"><label className="lbl">대상 성별</label>
             <Chips options={genderOptions} value={a.targetGenders?.[0] || null}
+              allowDeselect={false}
               onChange={(v) => onChange(withFitProfile({
                 targetGenders: normalizeTargetGendersForClothingType(
                   a.clothingType,
@@ -529,10 +1000,13 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
         </div>
         {!a.measurementsUnknown && (
           <div className="measure-grid">
-            {(a.measurements || []).map((m) => (
+            {visibleMeasurements.map((m) => (
               <div className="measure-cell" key={m.key}>
                 <label className="lbl" style={{ fontWeight: 400, color: 'var(--fg-2)', fontSize: 12.5 }}>{(catalogs.measurementLabels || {})[m.key] || m.key}</label>
-                <div className="mfield"><input type="number" placeholder="0" value={m.value ?? ''} onChange={(e) => setMeasure(m.key, e.target.value)} /><span className="u">cm</span></div>
+                <div className="mfield"><input type="text" inputMode="decimal" pattern="[0-9]*[.]?[0-9]?" placeholder="0" value={measurementInputValue(m)}
+                  onKeyDown={(e) => { if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault(); }}
+                  onChange={(e) => editMeasurement(m.key, e.target.value)}
+                  onBlur={(e) => commitMeasurement(m.key, e.target.value)} /><span className="u">cm</span></div>
               </div>
             ))}
           </div>
@@ -547,23 +1021,70 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
       {/* 4. selling points — chips */}
       <div className="surface">
         <div className="sec-head"><div><div className="sec-title">강조하고 싶은 특징</div>
-          <div className="sec-sub">상세페이지에서 가장 강조될 핵심 포인트예요. 최대 5개까지 넣을 수 있어요.</div></div>
-          <span className="pill pill-soft">{a.sellingPoints.length}/5개</span></div>
+          <div className="sec-sub">상세페이지에서 가장 강조될 핵심 포인트예요. 최대 {SELLING_POINTS_MAX}개까지 넣을 수 있어요.</div></div>
+          <span className="pill pill-soft">{a.sellingPoints.length}/{SELLING_POINTS_MAX}개</span></div>
         <div className="sp-chipwrap">
+          {/* 칩을 누르면 그 자리에서 문구를 고친다. Enter 확정(비우고 Enter = 삭제), Esc 취소,
+              포커스 이탈은 고친 문구만 저장. 입력 폭은 .sp-draft-fit 이 글자 폭 그대로 잡는다 —
+              글자 수 추정으로는 영문 대문자·이모지·전각문자에서 앞글자가 밀렸다(실측). */}
           {a.sellingPoints.map((p, i) => (
-            <span className={`sp-chip${aiSet.has(p) ? ' ai' : ''}`} key={i}>
-              {aiSet.has(p) && <span className="sp-ai-tag">AI 제안</span>}
-              {p}
-              <button className="sp-chip-x" onClick={() => onChange({ sellingPoints: a.sellingPoints.filter((_, j) => j !== i), aiSuggestedPoints: (a.aiSuggestedPoints || []).filter((x) => x !== p) })}><Icon name="x" size={12} /></button>
-            </span>
+            spEditIdx === i ? (
+              <span className="sp-chip draft" key={i}>
+                {/* 비워도 폭은 원래 문구만큼 유지 — 편집 중 칩이 쪼그라들며 옆 칩들이 밀리지 않게 */}
+                <span className="sp-draft-fit" data-value={spEditDraft || p}>
+                  <input className="sp-draft-input" autoFocus value={spEditDraft} maxLength={40} size={1}
+                    aria-label="특징 문구 수정"
+                    onChange={(e) => setSpEditDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (isComposing(e)) return;
+                      if (e.key === 'Enter') commitSpEdit(true); else if (e.key === 'Escape') cancelEditSp();
+                    }}
+                    /* 다른 칩을 눌러 옮겨간 blur 는 그쪽 mousedown 이 이미 커밋했다 — 여기서 또
+                       처리하면 갓 열린 편집창을 닫아버린다. 내 편집이 아직 열려 있을 때만 커밋. */
+                    onBlur={() => { if (spEditIdxRef.current === i) commitSpEdit(false); }} />
+                </span>
+              </span>
+            ) : (
+              <span className={`sp-chip editable${aiSet.has(p) ? ' ai' : ''}`} key={i}
+                /* click 이 아니라 mousedown 에서 연다: blur 커밋이 먼저 일어나면 칩 폭이 바뀌어
+                   레이아웃이 밀리고, mouseup 이 다른 요소에서 끝나 click 자체가 사라진다(실측). */
+                onMouseDown={(e) => {
+                  // preventDefault 필수: mousedown 의 기본 동작이 이 span(tabIndex=0)을 포커스하는데,
+                  // 그 사이 span 은 입력창으로 교체돼 포커스가 body 로 떨어지고 → 갓 열린 입력창이
+                  // blur 되어 즉시 닫힌다(실측: JS 이벤트로는 재현 안 되고 실제 클릭에서만 발생).
+                  e.preventDefault();
+                  if (spEditIdxRef.current !== null && spEditIdxRef.current !== i) commitSpEdit(false);
+                  startEditSp(i);
+                }}
+                title="눌러서 수정"
+                role="button" tabIndex={0}
+                onKeyDown={(e) => {
+                  // 안쪽 삭제 버튼의 Enter/Space 가 여기까지 올라오면 삭제 대신 편집이 열린다.
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEditSp(i); }
+                }}>
+                {aiSet.has(p) && <span className="sp-ai-tag">AI 제안</span>}
+                {p}
+                <button className="sp-chip-x" aria-label={`${p} 삭제`}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); onChange({ sellingPoints: a.sellingPoints.filter((_, j) => j !== i), aiSuggestedPoints: (a.aiSuggestedPoints || []).filter((x) => x !== p) }); }}><Icon name="x" size={12} /></button>
+              </span>
+            )
           ))}
-          {a.sellingPoints.length < 5 && (
+          {a.sellingPoints.length < SELLING_POINTS_MAX && (
             spAdding ? (
               <span className="sp-chip draft">
-                <input className="sp-draft-input" autoFocus placeholder="특징 입력 후 Enter" value={spDraft}
-                  onChange={(e) => setSpDraft(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') commitSp(); else if (e.key === 'Escape') { setSpAdding(false); setSpDraft(''); } }}
-                  onBlur={commitSp} />
+                <span className="sp-draft-fit" data-value={spDraft || '특징 입력 후 Enter'}>
+                  <input className="sp-draft-input" autoFocus placeholder="특징 입력 후 Enter" value={spDraft}
+                    maxLength={40} size={1} aria-label="새 특징 문구"
+                    onChange={(e) => setSpDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (isComposing(e)) return;
+                      if (e.key === 'Enter') commitSp(); else if (e.key === 'Escape') { setSpAdding(false); setSpDraft(''); }
+                    }}
+                    onBlur={commitSp} />
+                </span>
               </span>
             ) : (
               <button className="sp-add" onClick={() => setSpAdding(true)}><Icon name="plus" size={14} />추가하기</button>
@@ -583,46 +1104,43 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
             : '검증된 얼굴 라이선스 모델이에요 · 라이선스가 활성인 모델만 선택할 수 있어요.'}
         </div>
         {modelTab === 'ai' ? (
-          /* 남녀 그룹 구분(2026-07-21 사용자 결정) — 상품 대상 성별과 같은 그룹을 먼저 보여준다 */
-          (a.targetGenders?.[0] === 'men' ? ['men', 'women'] : ['women', 'men']).map((g) => {
-            const group = AI_MODELS.filter((m) => m.gender === g);
-            if (!group.length) return null;
-            return (
-              <div key={g} style={{ marginBottom: 14 }}>
-                <div className="lbl" style={{ fontSize: 12.5, color: 'var(--fg-2)', marginBottom: 8 }}>
-                  {g === 'women' ? '여성 모델' : '남성 모델'}
-                </div>
-                <div className="model-grid">
-                  {group.map((m) => {
-                    const on = a.selectedModelId === m.id;
-                    return (
-                      <div key={m.id} className={`model-card fm-model${on ? ' on' : ''}`}
-                        onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
-                        <img src={m.thumb} alt={m.displayName} />
-                        <span className="fm-verified">AI</span>
-                        <div className="fm-meta">
-                          <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
-                          <div className="fm-price">무료</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })
-        ) : modelsLoading ? (
+          /* 성별 칩과 같은 성별만 노출(2026-08-01 사용자 결정) — 칩 미선택이면 전체.
+             이름은 사진 위 우측 하단에 흰 글씨로 얹는다(별도 메타 줄 없음). */
+          <div className="model-grid">
+            {AI_MODELS
+              .filter((m) => !a.targetGenders?.[0] || m.gender === a.targetGenders[0])
+              .map((m) => {
+                const on = a.selectedModelId === m.id;
+                return (
+                  <div key={m.id} className={`model-card fm-model ai-model${on ? ' on' : ''}`}
+                    onClick={() => onChange({ selectedModelId: m.id })} title={m.displayName}>
+                    <img src={m.thumb} alt={m.displayName} />
+                    <span className="ai-name">
+                      {m.displayName}{on && <Icon name="check" size={12} />}
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+        ) : authLoading || modelsLoading ? (
           <div className="hint">검증 모델을 불러오는 중이에요…</div>
+        ) : !session ? (
+          <div className="hint">로그인하면 실제 모델을 선택할 수 있어요</div>
+        ) : modelsError ? (
+          <div className="fm-model-state">
+            <div className="hint">{modelsError}</div>
+            <Button variant="quiet" size="sm" onClick={() => setModelsAttempt((attempt) => attempt + 1)}>다시 시도</Button>
+          </div>
         ) : models.length === 0 ? (
           <div className="hint">아직 등록된 검증 모델이 없어요.</div>
         ) : (
-          <div className="model-grid">
-            {models.map((m) => {
-              const selectable = !!m.hasActiveLicense;
+          <>
+            <div className="model-grid">
+            {selectableModels.map((m) => {
               const on = a.selectedModelId === m.id;
               return (
                 <div key={m.id}
-                  className={`model-card fm-model${on ? ' on' : ''}${selectable ? '' : ' disabled'}`}
+                  className={`model-card fm-model${on ? ' on' : ''}`}
                   onClick={() => setDetailFor(m)}
                   title="눌러서 상세 정보 보기">
                   {m.coverImageUrl
@@ -632,15 +1150,36 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
                   <div className="fm-meta">
                     <div className="fm-name">{m.displayName}{on && <Icon name="check" size={13} className="star" />}</div>
                     <div className="fm-price">
-                      {selectable && m.unitPrice != null
-                        ? `₩${Number(m.unitPrice).toLocaleString('ko-KR')}/건`
-                        : '라이선스 없음'}
+                      {m.unitPrice != null
+                        ? `₩${Number(m.unitPrice).toLocaleString('ko-KR')} · 상세페이지 1개당`
+                        : '상세페이지 1개당 가격 확인 필요'}
                     </div>
                   </div>
                 </div>
               );
             })}
-          </div>
+            </div>
+            {pendingLicenseModels.length > 0 && (
+              <details className="fm-license-pending">
+                <summary>라이선스 준비 중 <span>{pendingLicenseModels.length}</span><Icon name="chevDown" size={15} /></summary>
+                <div className="model-grid">
+                  {pendingLicenseModels.map((m) => (
+                    <div key={m.id} className="model-card fm-model disabled"
+                      onClick={() => setDetailFor(m)} title="눌러서 상세 정보 보기">
+                      {m.coverImageUrl
+                        ? <img src={m.coverImageUrl} alt={m.displayName} />
+                        : <ModelThumb uri={m.faceThumbUri} alt={m.displayName} />}
+                      {m.status === 'verified' && <span className="fm-verified"><Icon name="check" size={11} />검증</span>}
+                      <div className="fm-meta">
+                        <div className="fm-name">{m.displayName}</div>
+                        <div className="fm-price">라이선스 없음</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </>
         )}
         {detailFor && (
           <ModelDetailModal
@@ -653,47 +1192,96 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
       </div>
 
       {/* 6. match clothing — full width */}
-      <div className="surface">
+      {expectedMatchingType(a.clothingType) && <div className="surface">
         <div className="sec-title" style={{ marginBottom: 6 }}>매칭 의류</div>
         <div className="sec-sub" style={{ marginBottom: 16 }}>핏·코디 이미지 생성에 쓰여요 · 메인 최대 2개</div>
-        {(a.matchClothing || []).length ? (
-          <div className="model-grid">
-            {a.matchClothing.map((m) => (
-            <div key={m.id} className={`model-card${m.selected ? ' on' : ''}`} style={{ width: 110 }}
-              onClick={() => toggleMatch(m.id)}>
-              <img src={m.thumb} alt={m.name} style={{ height: 130 }} />
-              {m.id === mainMatchId && <span className="match-role main">메인</span>}
-              {m.id === subMatchId && <span className="match-role sub">서브</span>}
-              <div className="nm">{m.name}{m.selected && <Icon name="check" size={13} className="star" />}</div>
-            </div>
-            ))}
-          </div>
-        ) : (
-          <div className="empty-inline" role="status">
-            <p className="hint">
-              {a.matchClothingLoadFailed
-                ? '매칭 의류를 불러오지 못했어요.'
-                : '선택 가능한 매칭 의류가 아직 없어요.'}
-            </p>
-            <Button variant="secondary" size="sm"
-              onClick={() => onChange({ styleTags: [...(a.styleTags || [])] })}>
-              매칭 의류 다시 불러오기
-            </Button>
-          </div>
+        <div className="model-grid custom-match-grid">
+          {a.matchClothing.map((m) => {
+            const compatible = isMatchCompatible(m);
+            return (
+              <div key={m.id}
+                className={`model-card custom-match-card${m.selected ? ' on' : ''}${compatible ? '' : ' incompatible'}`}
+                onClick={() => toggleMatch(m.id)}>
+                <img src={m.thumb} alt={m.name} />
+                {m.isCustom && <span className="custom-match-badge">내 옷</span>}
+                {m.isCustom && (
+                  <button className="custom-match-delete" disabled={customMatchDeleting}
+                    aria-label="내 옷 삭제"
+                    onClick={(event) => { event.stopPropagation(); removeCustomMatch(); }}>
+                    <Icon name={customMatchDeleting ? 'loader' : 'x'}
+                      className={customMatchDeleting ? 'spin' : ''} size={14} />
+                  </button>
+                )}
+                {m.id === mainMatchId && <span className="match-role main">메인</span>}
+                {m.id === subMatchId && <span className="match-role sub">서브</span>}
+                <div className="nm">
+                  <span>{m.name}{!compatible && <small>현재 상품과 종류가 맞지 않아요</small>}</span>
+                  {m.selected && <Icon name="check" size={13} className="star" />}
+                </div>
+              </div>
+            );
+          })}
+          {!a.matchClothing.some((item) => item.isCustom) && (
+            <button className="model-card custom-match-add"
+              onClick={(event) => {
+                setCustomMatchAnchor(event.currentTarget.getBoundingClientRect());
+                setCustomMatchOpen(true);
+              }}>
+              <span className="custom-match-add-art">
+                <Icon name={expectedMatchingType(a.clothingType) === 'top' ? 'shirt' : 'pants'}
+                  size={52} stroke={1.4} />
+              </span>
+              <span className="nm">의류 추가하기</span>
+            </button>
+          )}
+        </div>
+        {customMatchOpen && (
+          <CustomMatchUploadModal
+            projectId={projectId}
+            anchorRect={customMatchAnchor}
+            onApply={applyAnalysisReplacement}
+            onClose={closeCustomMatchModal}
+          />
         )}
-      </div>
+      </div>}
     </>
   );
 
   // 마네킹 최초 생성은 다음 페이지 진입 시 자동 차감 — 차감 직전 마지막 행동인 이 버튼에 예고 (PRD §7.7)
-  const cta = <Button variant="primary" size="lg" iconRight="arrowRight" onClick={onNext}>의류정보 확정 완료 · {CREDIT_COSTS.mannequinGenerate} 크레딧</Button>;
+  // 버튼 금액만으로는 "지금 나가는 돈"만 보이고, 되돌아와 설정을 고치면 또 나간다는 사실이 안 보인다.
+  // 콘티에서 '이전' 으로 돌아올 수 있으니 되돌릴 수 없다고는 말하지 않는다 — 대가를 말한다.
+  const cta = (
+    <div className="af-cta-stack">
+      <p className="af-cta-note">
+        다음 화면인 상세페이지 구성으로 이동하고, 마네킹컷은 뒤에서 만들어요.<br />
+        지금 {CREDIT_COSTS.mannequinGenerate}크레딧 · 상세페이지 생성 때 약 {composeModeCredits}크레딧.<br />
+        나중에 성별이나 의류 종류를 바꾸면 마네킹컷을 다시 만들어 같은 비용이 한 번 더 들어요.
+      </p>
+      <div className="af-vol-control">
+        <span className="af-vol-label">사진 양 선택</span>
+        <div className="af-vol" role="radiogroup" aria-label="상세페이지 사진 양">
+          {composeModeOptions.map((option) => (
+            <button type="button" role="radio" aria-checked={composeMode === option.value}
+              className={`af-vol-card${composeMode === option.value ? ' on' : ''}`}
+              key={option.value} onClick={() => changeComposeMode(option.value)}>
+              <span>{option.label}</span>
+              <Icon name={composeMode === option.value ? 'check' : 'arrowRight'} size={16} />
+            </button>
+          ))}
+        </div>
+      </div>
+      <Button variant="primary" size="lg" iconRight="arrowRight"
+        disabled={composeModeSaving || confirming}
+        onClick={confirmAnalysis}>의류정보 확정 완료 · {CREDIT_COSTS.mannequinGenerate} 크레딧</Button>
+    </div>
+  );
 
   if (inline) {
     return (
       <>
         <div className="af-inline-head"><div><div className="af-head-title">AI가 분석한 정보예요</div><div className="hint" style={{ marginTop: 2 }}>틀린 부분이 있으면 직접 수정해주세요.</div></div></div>
         <div className="af-body af-cards merged-card">{sections}</div>
-        <WizardCTA>{cta}</WizardCTA>
+        <WizardCTA className="wizard-cta-analysis">{cta}</WizardCTA>
       </>
     );
   }
@@ -702,7 +1290,7 @@ export function AnalysisForm({ inline, analysis, catalogs, onChange, onNext }) {
     <div className="wizard">
       <PageHead title="AI가 상품 정보를 분석했어요" sub="틀린 부분이 있으면 직접 수정해주세요." />
       <div className="af-body af-cards merged-card">{sections}</div>
-      <WizardCTA>{cta}</WizardCTA>
+      <WizardCTA className="wizard-cta-analysis">{cta}</WizardCTA>
     </div>
   );
 }
@@ -725,6 +1313,8 @@ export function Analysis({ onNext }) {
   if (phase === 'error') return <div className="wizard narrow"><div className="surface"><ErrorState desc="분석 서버에 일시적인 문제가 발생했어요." onRetry={run} /></div></div>;
 
   return <AnalysisForm analysis={analysis} catalogs={catalogs}
+    projectId={useAppStore.getState().projectId}
+    onAnalysisReplace={setAnalysis}
     onChange={(patch) => {
       const refreshMatch = isMatchRecommendationPatch(patch);
       if (isGenerationRelevantAnalysisPatch(patch)) {

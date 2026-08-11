@@ -1,5 +1,6 @@
 import publicCombinationTable from '../../data/genexamples_public_combinations.json' with { type: 'json' };
 import { poseExampleDirectionCompatible } from './storyboardTaxonomy.js';
+import { detailDirectionFromExample } from './storyboardExampleSelection.js';
 
 const PUBLIC_COMBINATIONS = Object.freeze(publicCombinationTable.combinations.map(Object.freeze));
 const PUBLIC_KEYS = new Set(PUBLIC_COMBINATIONS.map((combination) => combinationKey(combination)));
@@ -31,6 +32,35 @@ const byRankThenId = (left, right) => (
   (Number(left.rank) || 0) - (Number(right.rank) || 0)
   || compareText(String(left.id), String(right.id))
 );
+
+/** 릴리스 계약의 thumb/all 경로 규칙으로 보드 카드용 1x/2x 소스를 만든다. */
+export function generationExampleImageSources(example) {
+  const thumb = typeof example?.thumb === 'string' ? example.thumb : '';
+  const releasedAll = thumb.replace(
+    /\/thumb\/([^/?]+)\.webp(?=([?#]|$))/,
+    '/all/$1.png',
+  );
+  const full = typeof example?.assetUrl === 'string' && example.assetUrl
+    ? example.assetUrl
+    : (releasedAll !== thumb ? releasedAll : '');
+  return {
+    src: thumb || full,
+    // 보드 카드는 작은 슬롯이므로 원본 PNG를 2x 후보로 내려받지 않는다.
+    // 전용 2x WebP가 생기기 전까지 릴리스 썸네일 하나만 사용한다.
+    srcSet: undefined,
+    prewarm: thumb || full,
+  };
+}
+
+export function paginateGenerationGalleryItems(items, pageSize = 6) {
+  const source = Array.isArray(items) ? items : [];
+  const size = Math.max(1, Number(pageSize) || 6);
+  const pages = [];
+  for (let index = 0; index < source.length; index += size) {
+    pages.push(source.slice(index, index + size));
+  }
+  return pages.length ? pages : [[]];
+}
 
 function isPublishedAll(example) {
   return Array.isArray(example?.variants) && example.variants.includes('all');
@@ -178,6 +208,9 @@ export function assignGenerationExamples(blocks, { catalog, product, gender, onl
       refScope: block.spaceGroupId ? 'pose' : 'all',
       baseThumb: block.baseThumb ?? block.thumb ?? null,
       thumb: example.thumb,
+      // 디테일 컷 방향은 예시 라벨이 내부 결정(미기재=front) — 자동 배정도 동일 규칙
+      ...(block.cutType === 'product' && block.shot === 'detail'
+        ? { direction: detailDirectionFromExample(example) } : {}),
     };
   });
   return { blocks: changed ? next : blocks, changed, assignedIds, protectedIds, missingIds };

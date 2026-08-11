@@ -26,7 +26,7 @@ from scripts.smoke_realwire import _load_env  # noqa: E402
 _load_env(SERVER / ".env")
 
 from scripts.fit_fidelity_campaign import (  # noqa: E402
-    ARMS, BASE_R2, SRC, build_prompt_for, harness_refs, load_local,
+    ARMS, BASE_R2, SRC, build_prompt_for, load_local,
 )
 from app.agents import mannequin_fit_qc  # noqa: E402
 from app.agents.gemini_image import GeminiImageClient, InlineImage  # noqa: E402
@@ -39,7 +39,7 @@ from app.r2 import R2Client  # noqa: E402
 
 # (기준 arm, 조정: 축→새 값) — 기준 컷의 알려진 값에서 반대 극단으로
 CASES = [
-    ("T01", {"fit": "over"}),        # tight 티셔츠 → 오버핏
+    ("T01", {"fit": "over"}),        # slim 티셔츠 → 오버핏
     ("T04", {"length": "crop"}),     # long 헨리 → 크롭
     ("P02", {"cut": "skinny"}),      # wide 데님 → 스키니
     ("S02", {"length": "mini"}),     # long 스커트 → 미니
@@ -100,7 +100,7 @@ async def run_case(s, g, r2, arm_id, adjust):
     # ---- B/C 공용 편집 1콜 ----
     directives = build_adjust_directives(profile, tuple(adjust.keys()))
     assert directives, f"{arm_id}: 지시문 조립 실패"
-    manifest = build_adjust_manifest(harness_refs(srcs), False)
+    manifest = build_adjust_manifest(len(srcs), False)
     prompt_edit = render_adjust_prompt(directives, manifest)
     edit_b, t_edit_b = await _timed(g.generate_content_image(
         model, prompt_edit, [current, *srcs], "1K", aspect_ratio=s.mannequin_aspect_ratio,

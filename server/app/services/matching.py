@@ -33,7 +33,12 @@ def fit_category(item: dict) -> str | None:
     tops: return ``"top"`` (2026-08-01, WS2) — 하의 상품의 매칭 상의는 length 축으로 조정된다.
     상의가 상품(바지)의 허리를 가리는 문제의 조정 수단이라, 여기서 None 을 돌려주면 프론트
     매칭 조정 스텝이 구조적으로 뜰 수 없다(matchingFit.js MATCHING_AXIS 미러).
+
+    custom(셀러가 올린 내 옷): 항상 ``None`` (D11, 2026-08-05 오너). 실물 사진을 올린 것이라
+    실루엣·기장을 바꾸면 올린 옷과 다른 옷이 나온다 — 마네킹 화면에 매칭 조정 스텝을 띄우지 않는다.
     """
+    if item.get("owner_user_id") or item.get("is_custom"):
+        return None
     if item.get("clothing_type") == "top":
         return "top"
     if item.get("clothing_type") != "bottom":
@@ -67,10 +72,44 @@ def prefilter(items, clothing_type, genders):
     ]
 
 
+def _color_family(item: dict) -> str | None:
+    """큐레이션 color_group 우선, 레거시 행은 밝기 3밴드로 결정적으로 보완한다."""
+    group = item.get("color_group")
+    if group:
+        return f"group:{group}"
+    brightness = item.get("color_brightness")
+    if brightness is None:
+        return None
+    if brightness <= 33:
+        return "brightness:dark"
+    if brightness <= 66:
+        return "brightness:mid"
+    return "brightness:light"
+
+
+def diversify_top_two(items: list[dict]) -> list[dict]:
+    """1·2위가 같은 색 계열이면 뒤의 첫 다른 계열 후보를 2위로 올린다."""
+    ranked = list(items)
+    if len(ranked) < 3:
+        return ranked
+    first_family = _color_family(ranked[0])
+    if first_family is None or _color_family(ranked[1]) != first_family:
+        return ranked
+    replacement = next(
+        (index for index in range(2, len(ranked)) if _color_family(ranked[index]) not in (None, first_family)),
+        None,
+    )
+    if replacement is not None:
+        ranked[1], ranked[replacement] = ranked[replacement], ranked[1]
+    return ranked
+
+
 def recommend(items, clothing_type, genders, limit=None):
     pool = prefilter(items, clothing_type, genders)
     pool.sort(key=lambda i: (
         -(i["color_brightness"] if i.get("color_brightness") is not None else 50),
         i.get("sort_order", 0),
+        i.get("id", ""),
     ))
-    return pool[:limit] if limit is not None else pool  # limit=0 → 빈 결과(0은 falsy 방지)
+    ranked = diversify_top_two(pool)
+    return ranked[:limit] if limit is not None else ranked  # limit=0 → 빈 결과(0은 falsy 방지)

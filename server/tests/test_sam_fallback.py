@@ -187,9 +187,11 @@ def test_the_fallback_never_calls_the_sam_service_at_generation_time():
 
 
 def test_raw_references_are_extended_not_replaced():
-    assert "prod_refs = (*prod_refs, ref)" in FALLBACK_BLOCK       # 추가
-    assert "prod_refs = (ref" not in FALLBACK_BLOCK                # 대체 아님
-    assert "input_entries.append(" in FALLBACK_BLOCK
+    code = _code_only(FALLBACK_BLOCK)
+    assert "(*images, *extra)" in code           # RAW 뒤에 덧붙이기만
+    assert "extra.append(" in code
+    assert "images = [" not in code              # 목록을 새로 만들지 않는다
+    assert "images.clear()" not in code
 
 
 def test_the_fallback_skips_the_edit_path():
@@ -238,8 +240,6 @@ def test_canonical_authority_wording_is_unchanged():
 
 def test_qc_configuration_was_not_redefined():
     """폴백은 QC 결과를 소비할 뿐 재정의하지 않는다."""
-    from app.services import garment_fidelity_authority as gfa
-    assert len(gfa.CHECKS) == 14 and "garmentBodyIntegration" in gfa.CHECKS
     # 모듈 독스트링은 "임계값을 만들지 않는다"고 설명하려고 그 단어를 쓴다. 그러니 산문이
     # 아니라 코드를 본다: QC 를 임포트하지도, 숫자 임계값을 두지도 않는 것이 불변식이다.
     import ast

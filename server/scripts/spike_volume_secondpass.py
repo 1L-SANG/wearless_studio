@@ -201,7 +201,7 @@ async def _load_inputs(s, conn, project: str, user: str, job: str | None):
     match_asset = None
     match_id = mannequin.main_match_item_id(analysis)
     if match_id:
-        m_aid = await repo.get_matching_item_asset(conn, match_id)
+        m_aid = await repo.get_matching_item_asset(conn, match_id, user, project)
         if m_aid:
             match_asset = await repo.get_asset_for_user(conn, user, m_aid)
     return product, analysis, job_payload, gender, base_asset, prod_assets, match_asset

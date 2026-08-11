@@ -18,6 +18,7 @@ from .agents.gemini_image import GeminiImageClient
 from .auth import jwks_key_resolver, require_user
 from .config import Settings, load_settings
 from .db import create_pool
+from . import image_usage
 from .r2 import R2Client
 from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher
@@ -100,6 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if dispatcher is not None:
             await dispatcher.stop()
         if pool is not None:
+            await image_usage.drain(timeout_seconds=5.0)
             await pool.close()
 
     docs_url = "/docs" if settings.app_env == "dev" else None
@@ -134,35 +136,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.gemini = (
         GeminiImageClient(settings) if settings.gemini_api_key else None
     )
-
-    # Canonical cutout loader. Producer is the `sam_preprocess` job; this seam only READS the
-    # derived assets it wrote. Needs R2 to fetch bytes and the pool to resolve which cutout
-    # matches the product's CURRENT source photographs — without both it stays unset and
-    # generation runs on RAW references, which is the pre-existing behaviour.
-    if app.state.r2 is not None:
-        async def _canonical_reference_loader(product_id):
-            from .agents import mannequin as mannequin_agent
-            from .services import canonical_reference
-            async with pool.connection() as conn:
-                async with conn.cursor() as cur:
-                    # Looked up by PRODUCT id — that is what the generation path holds.
-                    await cur.execute(
-                        "select project_id::text as project_id, colors from products "
-                        "where id = %s", (product_id,))
-                    product = await cur.fetchone()
-                if not product or not product.get("project_id"):
-                    return {}
-                sources = {}
-                for slot, asset_id in mannequin_agent.base_color_images(product):
-                    if slot in ("Front", "Back") and slot not in sources:
-                        sources[slot] = {"id": asset_id, "hash": None}
-                return await canonical_reference.load(
-                    conn, app.state.r2, project_id=product["project_id"], sources=sources)
-
-        app.state.canonical_reference_loader = _canonical_reference_loader
-    else:
-        app.state.canonical_reference_loader = None
+    # 이미지 실비 계측 — 풀이 없으면(테스트·DB 미설정) 자동으로 로그 전용이 된다.
+    image_usage.configure(pool=pool, persist=settings.image_usage_persist)
     app.state.dispatcher = None
+    # 캐노니컬 컷아웃 조회기. 마네킹 워커가 이걸 통해 준비된 컷아웃을 읽는다 —
+    # 없으면 None 을 돌려주고 베이스라인 경로가 그대로 돈다(보조 인프라).
+    from .services.canonical_reference import load as _canonical_load
+
+    app.state.canonical_reference_loader = _canonical_load
+    # 공개 분석 리미터는 프로세스 로컬 안전밸브다(public_routes 주석의 다중 인스턴스 한계 참조).
+    from .public_routes import PublicAnalysisRateLimiter
+
+    app.state.public_analysis_limiter = PublicAnalysisRateLimiter()
     app.state.jwt_key_resolver = (
         jwks_key_resolver(settings.jwks_url) if settings.jwks_url else None
     )
@@ -241,6 +226,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"userId": user_id}
 
     app.include_router(v1_router)
+
+    from .public_routes import router as public_router
+
+    app.include_router(public_router)
 
     # 토스 크레딧 추가구매(WS3) — 라우터는 항상 등록하고, 키 미설정이면 checkout 이 503 으로
     # 거절한다(플래그로 라우트를 숨기면 프론트가 404 를 '미배포'와 구분 못 해 디버깅이 어렵다).

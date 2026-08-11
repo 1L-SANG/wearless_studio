@@ -7,6 +7,12 @@ test('a patch touching only a non-generation-relevant key is not flagged', () =>
   assert.equal(isGenerationRelevantAnalysisPatch({ suggestedName: 'x' }), false);
 });
 
+test('renaming a color swatch does not trigger paid mannequin regeneration', () => {
+  assert.equal(isGenerationRelevantAnalysisPatch({
+    colors: [{ id: 'color-1', swatchId: 'black', name: '블랙' }],
+  }), false);
+});
+
 test('a representative pre-existing generation-relevant key still returns true', () => {
   assert.equal(isGenerationRelevantAnalysisPatch({ fitProfile: { category: 'top' } }), true);
 });

@@ -1,13 +1,18 @@
 import asyncio
+import inspect
 
 import app.routes as routes
-from app.main import create_app
+from app import repo
 from app.workers import analyze_job
 from conftest import auth_headers, fake_worker_app, make_settings, patch_route_db, worker_job
-from fastapi.testclient import TestClient
 
 
 # ---------- 라우트 ----------
+
+def test_create_job_does_not_infer_a_partial_index_predicate():
+    source = inspect.getsource(repo.create_job)
+    assert "on conflict do nothing" in source
+    assert "on conflict (project_id, kind)" not in source
 
 def test_analyze_route_404_for_unknown_project(client, make_token, monkeypatch):
     async def fake_get_project(conn, uid, pid):
@@ -19,30 +24,29 @@ def test_analyze_route_404_for_unknown_project(client, make_token, monkeypatch):
 
 
 def test_analyze_route_creates_job(client, make_token, monkeypatch):
-    seen = {}
+    # 이 라우트는 잡을 **둘** 만든다: analyze(응답의 jobId)와 캐노니컬 전처리.
+    # 하나의 dict 에 덮어쓰면 뒤엣것만 남아 앞엣것을 검증하지 못한다.
+    calls = []
 
     async def fake_get_project(conn, uid, pid):
         return {"id": pid}
 
-    created = []
-
     async def fake_create_job(conn, **kw):
-        seen.update(kw)
-        created.append(kw)
-        return {"id": "job-analyze-1"}, True
+        calls.append(kw)
+        return {"id": f"job-{kw['kind']}-1"}, True
 
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     patch_route_db(monkeypatch, routes)
     res = client.post("/v1/projects/p1/analyze", headers=auth_headers(make_token))
     assert res.status_code == 202, res.text
+    # 응답 jobId 는 **분석 잡**이다 — 전처리 잡이 응답을 가로채면 프론트가 엉뚱한 걸 폴링한다.
     assert res.json()["jobId"] == "job-analyze-1"
-    # 분석 잡과 캐노니컬 전처리 잡이 같은 지점에서 **독립적으로** 뜬다. 응답은 분석 잡의
-    # id 를 그대로 돌려주고, 전처리는 그 뒤에서 따로 돈다.
-    assert [c["kind"] for c in created] == ["analyze", "sam_preprocess"]
-    analyze = created[0]
+    analyze = next(c for c in calls if c["kind"] == "analyze")
     assert analyze["credits_reserved"] == 0  # 무과금
-    assert created[1]["credits_reserved"] == 0  # 전처리도 무과금
+    sam = next(c for c in calls if c["kind"] == "sam_preprocess")
+    assert sam["credits_reserved"] == 0      # 전처리도 무과금
+    assert calls.index(analyze) < calls.index(sam)
 
 
 def test_analyze_route_idempotent_join(client, make_token, monkeypatch):
@@ -59,81 +63,6 @@ def test_analyze_route_idempotent_join(client, make_token, monkeypatch):
                       headers={**auth_headers(make_token), "Idempotency-Key": "k1"})
     assert res.status_code == 202
     assert res.json()["jobId"] == "existing-job"
-
-
-def test_analyze_route_atomically_preclaims_local_calibration_job(
-        keypair, make_token, monkeypatch):
-    private_key, public_key = keypair
-    del private_key
-    app = create_app(make_settings(
-        app_env="dev",
-        job_dispatcher_enabled=False,
-        frame_calibration_inline_jobs=True,
-        frame_calibration_inline_secret="test-frame-secret",
-    ))
-    app.state.jwt_key_resolver = lambda token: public_key
-    client = TestClient(app)
-    seen = {}
-
-    async def fake_get_project(conn, uid, pid):
-        return {"id": pid}
-
-    async def fake_create_job(conn, **kw):
-        seen["created"] = kw
-        seen.setdefault("kinds", []).append(kw["kind"])
-        return {"id": "job-analyze-1"}, True
-
-    async def fake_preclaim(conn, *, job_id, lease_token):
-        seen["preclaim"] = (job_id, lease_token)
-        return {"id": job_id, "lease_token": lease_token, "status": "running"}
-
-    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
-    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
-    monkeypatch.setattr(routes.repo, "preclaim_job_for_inline_execution", fake_preclaim)
-    patch_route_db(monkeypatch, routes)
-    res = client.post(
-        "/v1/projects/p1/analyze",
-        headers={
-            **auth_headers(make_token),
-            "X-Wearless-Frame-Calibration": "test-frame-secret",
-        },
-    )
-
-    assert res.status_code == 202, res.text
-    assert res.json()["jobId"] == "job-analyze-1"
-    assert res.json()["leaseToken"].startswith("frame-calibration:")
-    assert seen["preclaim"] == ("job-analyze-1", res.json()["leaseToken"])
-    # 분석과 캐노니컬 전처리는 같은 지점에서 **독립적으로** 뜬다.
-    assert seen["kinds"] == ["analyze", "sam_preprocess"]
-
-
-def test_analyze_route_rejects_invalid_local_calibration_secret_before_db(
-        keypair, make_token, monkeypatch):
-    private_key, public_key = keypair
-    del private_key
-    app = create_app(make_settings(
-        app_env="dev",
-        job_dispatcher_enabled=False,
-        frame_calibration_inline_jobs=True,
-        frame_calibration_inline_secret="test-frame-secret",
-    ))
-    app.state.jwt_key_resolver = lambda token: public_key
-    client = TestClient(app)
-
-    async def must_not_get_project(*args, **kwargs):
-        raise AssertionError("invalid calibration secret must fail before DB access")
-
-    monkeypatch.setattr(routes.repo, "get_project", must_not_get_project)
-    res = client.post(
-        "/v1/projects/p1/analyze",
-        headers={
-            **auth_headers(make_token),
-            "X-Wearless-Frame-Calibration": "wrong-secret",
-        },
-    )
-
-    assert res.status_code == 403
-    assert res.json()["error"]["code"] == "frame_calibration_inline_forbidden"
 
 
 def test_analyze_spike_disabled_by_default(client, make_token):
@@ -183,6 +112,7 @@ def test_run_analyze_job_success(monkeypatch):
     data = captured["result"]["data"]
     assert data["clothingType"] == "top"
     assert data["styleTags"] == ["basic"]
+    assert captured["analysis_payload"]["styleTags"] == ["basic"]  # 재진입 후 tags 랭킹 입력
     assert data["measurements"] == []          # 실측 미산출
     assert "measurements" not in captured["analysis_payload"]  # analyses 저장분엔 measurements 없음
     # AG-08 병렬 결과가 특징을 교체 (2026-07-13)

@@ -84,7 +84,7 @@ def test_resolve_virtual_model_id_skips_db_and_returns_none():
     # 가상모델 id(mA 등)는 UUID 가 아니다 — fm_models.id(uuid) 쿼리에 그대로 바인딩하면
     # psycopg InvalidTextRepresentation 으로 상세페이지 잡 전체가 죽는다(2026-07-29 prod 재현:
     # facemarket_enabled=true + 가상모델 선택 조합에서 progress 5 즉사).
-    for vid in ("mA", "mB", "mC", "model-1", ""):
+    for vid in ("mA", "mB", "mC", "mD", "mE", "model-1", ""):
         assert asyncio.run(resolve_real_model_assets(_ExplodingConn(), vid)) is None
 
 

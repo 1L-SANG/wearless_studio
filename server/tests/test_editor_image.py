@@ -1,5 +1,4 @@
 import asyncio
-import types
 
 import pytest
 
@@ -10,21 +9,6 @@ from conftest import auth_headers, fake_worker_app, make_settings, patch_route_d
 
 
 # ---------- 라우트 ----------
-
-
-@pytest.fixture(autouse=True)
-def _default_active_baseline(monkeypatch):
-    async def fake_baseline(conn, pid):
-        return {
-            "id": "base-1",
-            "asset_id": "asset-base",
-            "r2_key": "k/base",
-            "mime_type": "image/png",
-            "output_id": "out-base",
-            "generation_run_id": "run-base",
-        }
-
-    monkeypatch.setattr(routes.repo, "get_active_baseline", fake_baseline)
 
 
 def test_generate_image_404_unknown_project(client, make_token, monkeypatch):
@@ -65,141 +49,6 @@ def test_generate_image_creates_job_and_reserves(client, make_token, monkeypatch
     assert seen["credits_reserved"] == 1  # credit_cost_editor_image 기본값
     assert seen["reserved"] == 1
     assert seen["payload"] == body
-
-
-def test_generate_image_new_worn_requires_approved_baseline_before_job_or_credit(
-    client, make_token, monkeypatch,
-):
-    calls = {"baseline": 0, "create_job": 0, "reserve": 0}
-
-    async def fake_gp(conn, uid, pid):
-        return {"id": pid}
-
-    async def fake_product(conn, pid):
-        return {"clothingType": "top"}
-
-    async def fake_analysis(conn, pid):
-        return {}
-
-    async def fake_baseline(conn, pid):
-        calls["baseline"] += 1
-        return None
-
-    async def fake_create_job(conn, **kw):
-        calls["create_job"] += 1
-        return {"id": "job-ei"}, True
-
-    async def fake_reserve(conn, uid, amount):
-        calls["reserve"] += 1
-        return 10
-
-    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
-    monkeypatch.setattr(routes.repo, "get_product", fake_product)
-    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
-    monkeypatch.setattr(routes.repo, "get_active_baseline", fake_baseline)
-    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
-    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
-    patch_route_db(monkeypatch, routes)
-
-    res = client.post(
-        "/v1/projects/p1/editor:generate-image",
-        json={"mode": "new", "cutType": "styling", "contentRole": "fit"},
-        headers=auth_headers(make_token),
-    )
-
-    assert res.status_code == 409
-    assert res.json()["error"]["code"] == "no_approved_baseline"
-    assert calls == {"baseline": 1, "create_job": 0, "reserve": 0}
-
-
-def test_generate_image_new_product_does_not_require_baseline(
-    client, make_token, monkeypatch,
-):
-    seen = {}
-
-    async def fake_gp(conn, uid, pid):
-        return {"id": pid}
-
-    async def fake_product(conn, pid):
-        return {"clothingType": "top"}
-
-    async def fake_analysis(conn, pid):
-        return {}
-
-    async def fake_baseline(conn, pid):
-        raise AssertionError("product cut must not read approved baseline")
-
-    async def fake_create_job(conn, **kw):
-        seen.update(kw)
-        return {"id": "job-product"}, True
-
-    async def fake_reserve(conn, uid, amount):
-        seen["reserved"] = amount
-        return 10
-
-    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
-    monkeypatch.setattr(routes.repo, "get_product", fake_product)
-    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
-    monkeypatch.setattr(routes.repo, "get_active_baseline", fake_baseline)
-    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
-    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
-    patch_route_db(monkeypatch, routes)
-
-    res = client.post(
-        "/v1/projects/p1/editor:generate-image",
-        json={"mode": "new", "cutType": "product", "shot": "front"},
-        headers=auth_headers(make_token),
-    )
-
-    assert res.status_code == 202, res.text
-    assert seen["payload"]["mode"] == "new"
-    assert "baselineId" not in seen["payload"]
-    assert seen["reserved"] == 1
-
-
-def test_generate_image_new_worn_snapshots_approved_baseline(
-    client, make_token, monkeypatch,
-):
-    seen = {}
-
-    async def fake_gp(conn, uid, pid):
-        return {"id": pid}
-
-    async def fake_product(conn, pid):
-        return {"clothingType": "top"}
-
-    async def fake_analysis(conn, pid):
-        return {}
-
-    async def fake_baseline(conn, pid):
-        return {"id": "base-1"}
-
-    async def fake_create_job(conn, **kw):
-        seen.update(kw)
-        return {"id": "job-worn"}, True
-
-    async def fake_reserve(conn, uid, amount):
-        seen["reserved"] = amount
-        return 10
-
-    monkeypatch.setattr(routes.repo, "get_project", fake_gp)
-    monkeypatch.setattr(routes.repo, "get_product", fake_product)
-    monkeypatch.setattr(routes.repo, "get_analysis", fake_analysis)
-    monkeypatch.setattr(routes.repo, "get_active_baseline", fake_baseline)
-    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
-    monkeypatch.setattr(routes.repo, "reserve_credits", fake_reserve)
-    patch_route_db(monkeypatch, routes)
-
-    res = client.post(
-        "/v1/projects/p1/editor:generate-image",
-        json={"mode": "new", "cutType": "horizon", "contentRole": "coordination"},
-        headers=auth_headers(make_token),
-    )
-
-    assert res.status_code == 202, res.text
-    assert seen["payload"]["baselineId"] == "base-1"
-    assert seen["metadata"]["anchorBaselineId"] == "base-1"
-    assert seen["metadata"]["anchorRole"] == "approved_front_baseline"
 
 
 def test_generate_image_validates_standalone_set_example_before_reserving(
@@ -315,19 +164,8 @@ def test_get_wardrobe_groups_by_color_id_or_misc(client, make_token, monkeypatch
     res = client.get("/v1/projects/p1/wardrobe", headers=auth_headers(make_token))
     assert res.status_code == 200, res.text
     body = res.json()
-    # 기존 필드는 그대로. Phase 3 필드는 legacy row 에서 전부 null/false 다 —
-    # 기존 프론트가 모르는 키를 무시하면 동작이 같다.
-    for got, want in ((body["col1"][0],
-                       {"id": "w1", "src": "/v1/assets/a1/file", "ai": True,
-                        "cutType": "styling"}),
-                      (body["misc"][0],
-                       {"id": "w2", "src": "/v1/assets/a2/file", "ai": False,
-                        "cutType": None})):
-        assert {k: got[k] for k in want} == want
-        assert got["editSessionId"] is None and got["qcStatus"] is None
-        assert got["needsReview"] is False and got["reviewDecision"] is None
-        assert got["sourceAssetId"] is None and got["sourceSrc"] is None
-        assert got["qcSummary"] is None
+    assert body["col1"] == [{"id": "w1", "src": "/v1/assets/a1/file", "ai": True, "cutType": "styling"}]
+    assert body["misc"] == [{"id": "w2", "src": "/v1/assets/a2/file", "ai": False, "cutType": None}]
 
 
 # ---------- 워커 ----------
@@ -411,8 +249,7 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
         assert cut_spec["shot"] == "full"
         assert cut_spec["outerClosureState"] == "closed"
         assert cut_spec["refScope"] == "all"
-        assert len(images) == 3
-        assert images[0].data == b"\x89PNG-bytes"
+        assert len(images) == 2
         assert images[-1].data == b"EXAMPLE"
         assert "EXAMPLE REFERENCE (scope: all)" in manifest
         # 확정 fitProfile 텍스트 제약이 에디터 새 컷 경로에도 전달돼야 한다(컷 파이프라인 계약)
@@ -445,7 +282,6 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
         "mode": "new", "colorId": "col1", "contentRole": "fit",
         "cutType": "product", "direction": "front", "shot": "detail",
         "outerClosureState": "closed", "exampleId": "ex_editor", "refScope": "all",
-        "baselineId": "base-1",
     }
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
@@ -453,135 +289,6 @@ def test_run_editor_image_job_new_reuses_cut_generator(monkeypatch):
     assert captured["charge"] == 1
     assert captured["group"] == "col1"
     assert captured["cut_type"] == "horizon"
-
-
-def test_run_editor_image_job_new_worn_blocks_stale_baseline_before_generation(monkeypatch):
-    calls = {"generate": 0, "failure": None}
-
-    async def fake_get_product(conn, pid):
-        return {"clothingType": "top", "colors": [{"id": "col1", "isBase": True,
-                            "images": [{"slot": "Front", "id": "a1"}]}]}
-
-    async def fake_get_analysis(conn, pid):
-        return {}
-
-    async def fake_get_asset(conn, uid, aid):
-        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
-
-    async def fake_baseline(conn, pid):
-        return {"id": "base-current", "asset_id": "asset-base", "r2_key": "k/base",
-                "mime_type": "image/png", "output_id": "out-base",
-                "generation_run_id": "run-base"}
-
-    async def fake_generate(*_args, **_kwargs):
-        calls["generate"] += 1
-        return b"bad", "image/png"
-
-    async def fake_failure(conn, **kw):
-        calls["failure"] = kw
-
-    async def fake_emit(*_args, **_kwargs):
-        return None
-
-    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
-    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
-    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.repo, "get_active_baseline", fake_baseline)
-    monkeypatch.setattr(eij.cut_generator, "generate", fake_generate)
-    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
-    monkeypatch.setattr(eij, "_emit", fake_emit)
-
-    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
-    asyncio.run(eij.run_editor_image_job(app, worker_job({
-        "mode": "new", "colorId": "col1", "contentRole": "fit",
-        "cutType": "styling", "baselineId": "base-stale",
-    })))
-
-    assert calls["generate"] == 0
-    assert calls["failure"]["metadata"]["error"] == "baseline_changed"
-
-
-def test_run_editor_image_job_new_worn_uses_baseline_as_first_garment_anchor(monkeypatch):
-    captured = {}
-
-    async def fake_get_product(conn, pid):
-        return {"clothingType": "top", "colors": [{"id": "col1", "isBase": True,
-                            "images": [{"slot": "Front", "id": "a1"}]}]}
-
-    async def fake_get_analysis(conn, pid):
-        return {}
-
-    async def fake_get_asset(conn, uid, aid):
-        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
-
-    async def fake_baseline(conn, pid):
-        return {"id": "base-1", "asset_id": "asset-base", "r2_key": "k/base",
-                "mime_type": "image/png", "output_id": "out-base",
-                "generation_run_id": "run-base"}
-
-    def fake_prepare(settings, cut_spec, product, images, *, analysis=None, manifest=None):
-        captured["images"] = images
-        captured["manifest"] = manifest
-        return types.SimpleNamespace(
-            model="gemini-test",
-            prompt="prompt",
-            images=images,
-            image_size=settings.mannequin_image_size,
-            aspect_ratio=settings.mannequin_aspect_ratio,
-            crop_pose_medium=False,
-        )
-
-    async def fake_execute(settings, gemini, prepared):
-        return types.SimpleNamespace(
-            image=b"NEWIMG",
-            mime="image/png",
-            latency_ms=123,
-            usage={"totalTokens": 1},
-        )
-
-    async def fake_finalize(conn, **kw):
-        captured["finalize"] = kw
-        return {"id": "w-new"}
-
-    async def fake_emit(*_args, **_kwargs):
-        return None
-
-    async def fake_runlog_begin(*_args, **_kwargs):
-        captured["runlog_begin"] = _kwargs
-        return "run-new"
-
-    async def fake_runlog_finish(*_args, **_kwargs):
-        captured["runlog_finish"] = _kwargs
-        return None
-
-    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
-    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
-    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
-    monkeypatch.setattr(eij.repo, "get_active_baseline", fake_baseline)
-    monkeypatch.setattr(eij.cut_generator, "prepare", fake_prepare)
-    monkeypatch.setattr(eij.cut_generator, "execute", fake_execute)
-    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
-    monkeypatch.setattr(eij, "_runlog_begin", fake_runlog_begin)
-    monkeypatch.setattr(eij, "_runlog_finish", fake_runlog_finish)
-    monkeypatch.setattr(eij, "_emit", fake_emit)
-
-    app = fake_worker_app(make_settings(
-        gemini_api_key="x", r2_bucket="b", generation_run_log="shadow"))
-    asyncio.run(eij.run_editor_image_job(app, worker_job({
-        "mode": "new", "colorId": "col1", "contentRole": "fit",
-        "cutType": "horizon", "baselineId": "base-1",
-    })))
-
-    assert captured["images"][0].data == b"\x89PNG-bytes"
-    assert "APPROVED FRONT BASELINE" in captured["manifest"]
-    assert captured["finalize"]["metadata"]["anchorBaselineId"] == "base-1"
-    lineage = captured["finalize"]["generation_output"]
-    assert lineage["generation_run_id"] == "run-new"
-    assert lineage["parent_output_id"] == "out-base"
-    assert lineage["baseline_id"] == "base-1"
-    assert lineage["output_sha256"]
-    assert lineage["transformation"]["editorNew"]["cutType"] == "horizon"
-    assert captured["runlog_begin"]["inputs"][0][0] == "approved_baseline"
 
 
 @pytest.mark.parametrize("scope", ["all", "pose"])
@@ -612,6 +319,7 @@ def test_run_editor_image_job_new_uses_standalone_set_member(
         return {
             "exampleId": block["exampleId"],
             "scope": scope,
+            "directionCompatible": scope != "all",
             "asset": {"key": f"{scope}-asset"},
         }
 
@@ -666,7 +374,6 @@ def test_run_editor_image_job_new_uses_standalone_set_member(
         "pose": "auto",
         "exampleId": "ss_cafe_01",
         "refScope": scope,
-        "baselineId": "base-1",
     }
     app = fake_worker_app(
         make_settings(gemini_api_key="x", r2_bucket="b")
@@ -682,6 +389,8 @@ def test_run_editor_image_job_new_uses_standalone_set_member(
     assert captured["images"][-1] == f"{scope}-asset".encode()
     if scope == "all":
         assert "EXAMPLE REFERENCE (scope: all)" in captured["manifest"]
+        assert "source ONLY of scene, lighting, capture tone" in captured["manifest"]
+        assert captured["cut_spec"]["_referenceDirectionCompatible"] is False
     else:
         assert "POSE CONTROL" in captured["manifest"]
     assert captured["cut_spec"]["refScope"] == scope
@@ -738,13 +447,13 @@ def test_run_editor_image_job_skips_unusable_example_with_metadata_warning(
 
     payload = {
         "mode": "new", "colorId": "col1", "contentRole": "fit",
-        "exampleId": "ex_unusable", "refScope": scope, "baselineId": "base-1",
+        "exampleId": "ex_unusable", "refScope": scope,
     }
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
     assert captured["cut_spec"]["exampleId"] is None
-    assert len(captured["images"]) == 2
+    assert len(captured["images"]) == 1
     assert "EXAMPLE REFERENCE" not in captured["manifest"]
     assert captured["finalize"]["metadata"]["warnings"] == [{
         "code": warning_code,
@@ -798,7 +507,6 @@ def test_run_editor_image_job_rejects_pose_direction_before_generation(monkeypat
     payload = {
         "mode": "new", "colorId": "col1", "contentRole": "fit",
         "direction": "front", "exampleId": "ex_back_pose", "refScope": "pose",
-        "baselineId": "base-1",
     }
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
@@ -964,6 +672,47 @@ def test_run_editor_image_job_new_detail_without_color_id_uses_base_detail(monke
     assert captured["charge"] == 1
 
 
+def test_run_editor_image_job_new_back_detail_uses_back_side_reference(monkeypatch):
+    """뒷면 디테일 블록은 BackDetail을 첨부하고 앞면 Detail은 근거로 쓰지 않는다 (2026-08-07 §5)."""
+    captured = {"asset_ids": [], "generated": False}
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{"id": "col1", "isBase": True, "images": [
+            {"slot": "Front", "id": "a1"}, {"slot": "Back", "id": "a2"},
+            {"slot": "Detail", "id": "d1"}, {"slot": "BackDetail", "id": "bd1"},
+        ]}]}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_get_asset(conn, uid, aid):
+        captured["asset_ids"].append(aid)
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def fake_gen(*args, **kwargs):
+        captured["generated"] = True
+        captured["cut_spec"] = args[2]
+        return b"DETAIL", "image/png"
+
+    async def fake_finalize(conn, **kw):
+        captured.update(kw)
+        return {"id": "w-back-detail"}
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+
+    payload = {"mode": "new", "cutType": "product", "shot": "detail", "direction": "back"}
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert captured["generated"] is True
+    assert "bd1" in captured["asset_ids"]
+    assert "d1" not in captured["asset_ids"], "반대 방향 디테일은 첨부 금지"
+
+
 def test_run_editor_image_job_new_unknown_detail_color_fails_closed(monkeypatch):
     captured = {"asset_ids": [], "generated": False}
 
@@ -1006,15 +755,20 @@ def test_run_editor_image_job_new_unknown_detail_color_fails_closed(monkeypatch)
 
 
 def test_run_editor_image_job_new_detail_requires_resolved_detail_asset(monkeypatch):
+    """방향 근거(같은 쪽 디테일·원본)가 전부 로드 불가면 생성하지 않고 실패한다.
+
+    2026-08-07 개편: 같은 쪽 원본이 로드되면 구조 확대 모드로 진행하므로,
+    fail-closed 는 '뒷면 컷인데 뒷면 자산이 하나도 해석 안 됨' 상황으로 검증한다."""
     captured = {"generated": False}
 
     async def fake_get_product(conn, pid):
         return {"colors": [{"id": "col2", "isBase": True, "images": [
-            {"slot": "Front", "id": "a2"}, {"slot": "Detail", "id": "d2"},
+            {"slot": "Front", "id": "a2"}, {"slot": "Back", "id": "b2"},
+            {"slot": "BackDetail", "id": "bd2"},
         ]}]}
 
     async def fake_get_asset(conn, uid, aid):
-        if aid == "d2":
+        if aid in ("b2", "bd2"):
             return None  # 메타데이터만 있고 실제 소유 자산이 없는 경우
         return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
 
@@ -1035,7 +789,8 @@ def test_run_editor_image_job_new_detail_requires_resolved_detail_asset(monkeypa
     monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
     monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_finalize_failure)
 
-    payload = {"mode": "new", "colorId": "col2", "cutType": "product", "shot": "detail"}
+    payload = {"mode": "new", "colorId": "col2", "cutType": "product",
+               "shot": "detail", "direction": "back"}
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
@@ -1105,14 +860,301 @@ def test_run_editor_image_job_new_attaches_mood_refs(monkeypatch):
     monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
     monkeypatch.setattr(eij, "_emit", fake_emit)
 
-    payload = {"mode": "new", "cutType": "styling", "shot": "full",
-               "refAssetIds": ["ref1", "ref2"], "baselineId": "base-1"}
+    payload = {"mode": "new", "cutType": "styling", "shot": "full", "refAssetIds": ["ref1", "ref2"]}
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
     asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
 
-    assert captured["n_images"] == 4                       # baseline 1 + 상품 1 + 무드 2
+    assert captured["n_images"] == 3                       # 상품 1 + 무드 2
     assert captured["manifest"].count("MOOD") == 2         # 역할 라벨 동봉
     assert "front view of the garment" in captured["manifest"]
+
+
+@pytest.mark.parametrize("cut_type", ["styling", "horizon", "mirror"])
+def test_run_editor_image_job_new_attaches_all_matching_garments_in_order(
+    monkeypatch, cut_type
+):
+    captured = {"matching_item_ids": [], "loaded_asset_ids": []}
+
+    class KeyR2:
+        def get_bytes(self, key):
+            return key.encode()
+
+        def put_bytes(self, key, data, mime, cache=None):
+            return None
+
+    async def fake_get_product(conn, pid):
+        return {"clothingType": "top", "colors": [{
+            "id": "col1",
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product-1"}],
+        }]}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_matching_asset(conn, matching_item_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
+        captured["matching_item_ids"].append(matching_item_id)
+        return f"{matching_item_id}-asset"
+
+    async def fake_get_asset(conn, uid, aid):
+        captured["loaded_asset_ids"].append(aid)
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    def fake_model_refs(spec, *, require_full_body=False):
+        assert require_full_body is True
+        return (
+            {"key": "model/face.webp", "mime": "image/webp"},
+            {"key": "model/body.png", "mime": "image/png"},
+        )
+
+    async def fake_example(settings, example_id, scope="all", clothing_type=None):
+        assert example_id == "ex-editor-match"
+        return eij.InlineImage("image/png", b"EXAMPLE")
+
+    async def fake_gen(
+        settings, gemini, cut_spec, product, images, *,
+        analysis=None, manifest=None, **_kwargs
+    ):
+        captured["cut_spec"] = cut_spec
+        captured["image_data"] = [image.data for image in images]
+        captured["manifest"] = manifest
+        return b"MATCHED", "image/png"
+
+    async def fake_finalize(conn, **kw):
+        captured["finalize"] = kw
+        return {"id": "w-matched"}
+
+    async def fake_emit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_matching_item_asset", fake_matching_asset)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "resolve_virtual_model_assets", fake_model_refs)
+    monkeypatch.setattr(eij.cut_generator, "example_asset_status", lambda *_args: "available")
+    monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+    monkeypatch.setattr(eij, "_emit", fake_emit)
+
+    payload = {
+        "mode": "new",
+        "colorId": "col1",
+        "cutType": cut_type,
+        "shot": "full",
+        "modelId": "m-editor",
+        "matchIds": ["match-1", "match-2", "ignored-third"],
+        "exampleId": "ex-editor-match",
+        "refScope": "all",
+    }
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b"), r2=KeyR2()
+    )
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert captured["matching_item_ids"] == ["match-1", "match-2"]
+    assert captured["loaded_asset_ids"] == [
+        "product-1", "match-1-asset", "match-2-asset",
+    ]
+    assert captured["cut_spec"]["cutType"] == cut_type
+    assert captured["cut_spec"]["matchIds"] == ["match-1", "match-2"]
+    assert captured["image_data"] == [
+        b"model/face.webp",
+        b"model/body.png",
+        b"k/product-1",
+        b"k/match-1-asset",
+        b"k/match-2-asset",
+        b"EXAMPLE",
+    ]
+    manifest_lines = captured["manifest"].splitlines()
+    assert len(manifest_lines) == len(captured["image_data"])
+    assert manifest_lines[0].startswith("1. MODEL FACE —")
+    assert manifest_lines[1].startswith("2. MODEL FULL BODY —")
+    assert manifest_lines[2] == "3. PRODUCT — front view of the garment"
+    assert manifest_lines[3].startswith("4. MATCHING —")
+    assert manifest_lines[4].startswith("5. MATCHING —")
+    assert manifest_lines[5].startswith("6. EXAMPLE REFERENCE (scope: all)")
+
+
+def test_run_editor_image_job_new_matching_asset_metadata_missing_fails_closed(
+    monkeypatch,
+):
+    captured = {
+        "matching_item_ids": [],
+        "loaded_asset_ids": [],
+        "generate_calls": 0,
+    }
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product-1"}],
+        }]}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_matching_asset(conn, matching_item_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
+        captured["matching_item_ids"].append(matching_item_id)
+        return f"{matching_item_id}-asset"
+
+    async def fake_get_asset(conn, uid, aid):
+        captured["loaded_asset_ids"].append(aid)
+        if aid == "match-2-asset":
+            return None
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def forbidden_generate(*_args, **_kwargs):
+        captured["generate_calls"] += 1
+        raise AssertionError("a partial matching outfit must never be generated")
+
+    async def fake_failure(conn, **kw):
+        captured["failure"] = kw
+        return True
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_matching_item_asset", fake_matching_asset)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "generate", forbidden_generate)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+
+    payload = {
+        "mode": "new",
+        "cutType": "styling",
+        "matchIds": ["match-1", "match-2"],
+    }
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert captured["matching_item_ids"] == ["match-1", "match-2"]
+    assert captured["loaded_asset_ids"] == [
+        "product-1", "match-1-asset", "match-2-asset",
+    ]
+    assert captured["generate_calls"] == 0
+    assert captured["failure"]["metadata"] == {
+        "error": "matching_asset_unavailable",
+        "matchIds": ["match-1", "match-2"],
+    }
+
+
+def test_run_editor_image_job_new_matching_r2_missing_fails_closed(monkeypatch):
+    captured = {"generate_calls": 0}
+
+    class MissingMatchingR2:
+        def __init__(self):
+            self.reads = []
+
+        def get_bytes(self, key):
+            self.reads.append(key)
+            if key == "k/match-2-asset":
+                raise RuntimeError("missing matching object")
+            return key.encode()
+
+        def put_bytes(self, key, data, mime, cache=None):
+            return None
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product-1"}],
+        }]}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_matching_asset(conn, matching_item_id, user_id, project_id):
+        assert (user_id, project_id) == ("u1", "p1")
+        return f"{matching_item_id}-asset"
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def forbidden_generate(*_args, **_kwargs):
+        captured["generate_calls"] += 1
+        raise AssertionError("a partial matching outfit must never be generated")
+
+    async def fake_failure(conn, **kw):
+        captured["failure"] = kw
+        return True
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_matching_item_asset", fake_matching_asset)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.cut_generator, "generate", forbidden_generate)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_failure", fake_failure)
+
+    r2 = MissingMatchingR2()
+    payload = {
+        "mode": "new",
+        "cutType": "mirror",
+        "matchIds": ["match-1", "match-2"],
+    }
+    app = fake_worker_app(
+        make_settings(gemini_api_key="x", r2_bucket="b"), r2=r2
+    )
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert r2.reads == [
+        "k/product-1", "k/match-1-asset", "k/match-2-asset",
+    ]
+    assert captured["generate_calls"] == 0
+    assert captured["failure"]["metadata"]["error"] == "matching_asset_unavailable"
+    assert captured["failure"]["metadata"]["matchIds"] == ["match-1", "match-2"]
+
+
+def test_run_editor_image_job_new_product_cut_ignores_matching_ids(monkeypatch):
+    captured = {}
+
+    async def fake_get_product(conn, pid):
+        return {"colors": [{
+            "isBase": True,
+            "images": [{"slot": "Front", "id": "product-1"}],
+        }]}
+
+    async def fake_get_analysis(conn, pid):
+        return {}
+
+    async def fake_get_asset(conn, uid, aid):
+        return {"id": aid, "r2_key": f"k/{aid}", "mime_type": "image/png"}
+
+    async def forbidden_matching_asset(*_args, **_kwargs):
+        raise AssertionError("product cuts must not resolve matching garments")
+
+    async def fake_gen(
+        settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None
+    ):
+        captured["cut_spec"] = cut_spec
+        captured["image_count"] = len(images)
+        captured["manifest"] = manifest
+        return b"PRODUCT", "image/png"
+
+    async def fake_finalize(conn, **kw):
+        return {"id": "w-product"}
+
+    monkeypatch.setattr(eij.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(eij.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(eij.repo, "get_asset_for_user", fake_get_asset)
+    monkeypatch.setattr(eij.repo, "get_matching_item_asset", forbidden_matching_asset)
+    monkeypatch.setattr(eij.cut_generator, "generate", fake_gen)
+    monkeypatch.setattr(eij.repo, "finalize_editor_image_success", fake_finalize)
+
+    payload = {
+        "mode": "new",
+        "cutType": "product",
+        "shot": "ghost",
+        "matchIds": ["stale-match-1", "stale-match-2"],
+    }
+    app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
+
+    assert captured["cut_spec"]["matchIds"] == []
+    assert captured["image_count"] == 1
+    assert "MATCHING" not in captured["manifest"]
 
 
 def test_run_editor_image_job_new_attaches_c_model_pair_and_excludes_product(monkeypatch):
@@ -1141,12 +1183,14 @@ def test_run_editor_image_job_new_attaches_c_model_pair_and_excludes_product(mon
     async def fake_get_analysis(conn, pid):
         return {}
 
-    def fake_model_refs(spec):
+    def fake_model_refs(spec, *, require_full_body=False):
+        assert require_full_body is True
         if spec["cutType"] == "product":
             return None
+        assert require_full_body is True
         return (
             {"key": "seed/models/mA/face_front.webp", "mime": "image/webp"},
-            {"key": "seed/models/mA/grid_sedcard.png", "mime": "image/jpeg"},
+            {"key": "seed/models/mA/body_front.png", "mime": "image/png"},
         )
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
@@ -1174,7 +1218,6 @@ def test_run_editor_image_job_new_attaches_c_model_pair_and_excludes_product(mon
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"), r2=r2)
     asyncio.run(eij.run_editor_image_job(app, worker_job({
         "mode": "new", "cutType": "styling", "shot": "full", "modelId": "mA",
-        "baselineId": "base-1",
     })))
     asyncio.run(eij.run_editor_image_job(app, worker_job({
         "mode": "new", "cutType": "product", "shot": "ghost", "modelId": "mA",
@@ -1182,17 +1225,15 @@ def test_run_editor_image_job_new_attaches_c_model_pair_and_excludes_product(mon
 
     assert captured[0]["spec"]["modelId"] == "mA"
     assert captured[0]["data"] == [
-        "k/base", "seed/models/mA/face_front.webp", "seed/models/mA/grid_sedcard.png", "k/a1",
+        "seed/models/mA/face_front.webp", "seed/models/mA/body_front.png", "k/a1",
     ]
-    assert captured[0]["manifest"].splitlines()[0].startswith("1. APPROVED FRONT BASELINE")
-    assert captured[0]["manifest"].splitlines()[1].startswith("2. MODEL — frontal close-up")
-    assert captured[0]["manifest"].splitlines()[2].startswith("3. MODEL SHEET — a 2x2 grid")
-    assert captured[0]["manifest"].splitlines()[3] == "4. PRODUCT — front view of the garment"
+    assert captured[0]["manifest"].splitlines()[0].startswith("1. MODEL FACE —")
+    assert captured[0]["manifest"].splitlines()[1].startswith("2. MODEL FULL BODY —")
+    assert captured[0]["manifest"].splitlines()[2] == "3. PRODUCT — front view of the garment"
     assert captured[1]["data"] == ["k/a1"]
     assert "MODEL" not in captured[1]["manifest"]
     assert r2.reads == [
-        "seed/models/mA/face_front.webp", "seed/models/mA/grid_sedcard.png",
-        "k/a1", "k/base", "k/a1",
+        "seed/models/mA/face_front.webp", "seed/models/mA/body_front.png", "k/a1", "k/a1",
     ]
 
 
@@ -1201,8 +1242,8 @@ def test_run_editor_image_job_model_r2_failure_falls_back_to_product(monkeypatch
 
     class FailingModelR2:
         def get_bytes(self, key):
-            if key == "seed/models/mA/grid_sedcard.png":
-                raise RuntimeError("sheet unavailable")
+            if key == "seed/models/mA/body_front.png":
+                raise RuntimeError("full-body reference unavailable")
             return key.encode()
 
         def put_bytes(self, key, data, mime, cache=None):
@@ -1220,10 +1261,11 @@ def test_run_editor_image_job_model_r2_failure_falls_back_to_product(monkeypatch
     async def fake_get_analysis(conn, pid):
         return {}
 
-    def fake_model_refs(spec):
+    def fake_model_refs(spec, *, require_full_body=False):
+        assert require_full_body is True
         return (
             {"key": "seed/models/mA/face_front.webp", "mime": "image/webp"},
-            {"key": "seed/models/mA/grid_sedcard.png", "mime": "image/jpeg"},
+            {"key": "seed/models/mA/body_front.png", "mime": "image/png"},
         )
 
     async def fake_gen(settings, gemini, cut_spec, product, images, *, analysis=None, manifest=None):
@@ -1250,11 +1292,10 @@ def test_run_editor_image_job_model_r2_failure_falls_back_to_product(monkeypatch
         make_settings(gemini_api_key="x", r2_bucket="b"), r2=FailingModelR2())
     asyncio.run(eij.run_editor_image_job(app, worker_job({
         "mode": "new", "cutType": "mirror", "shot": "full", "modelId": "mA",
-        "baselineId": "base-1",
     })))
 
     assert captured["finalized"] is True
-    assert captured["data"] == ["k/base", "k/a1"]
+    assert captured["data"] == ["k/a1"]
     assert "MODEL" not in captured["manifest"]
     assert "continuing without model references" in caplog.text
 
@@ -1435,7 +1476,7 @@ def _bg_qc_setup(monkeypatch, *, verdicts, gen_calls, finalize_ok, finalize_fail
 def _bg_payload():
     return {"mode": "new", "colorId": "col1", "contentRole": "coordination",
             "cutType": "styling", "direction": "front", "shot": "full",
-            "exampleId": "ex_bg", "refScope": "bg", "baselineId": "base-1"}
+            "exampleId": "ex_bg", "refScope": "bg"}
 
 
 def test_bg_scene_qc_retries_then_passes(monkeypatch):
@@ -1475,9 +1516,9 @@ def test_bg_scene_qc_unavailable_fails_open_with_warning(monkeypatch):
     assert not fail
 
 
-def test_bg_example_load_failure_fails_closed(monkeypatch):
-    """플레이트 로드 실패는 무음 강등이 아니라 명확한 실패다(2026-07-20 실측 — 강등이
-    '참고 안 된 bg 컷'을 조용히 만들었다)."""
+@pytest.mark.parametrize("scope", ["all", "pose", "bg"])
+def test_selected_example_load_failure_fails_closed(monkeypatch, scope):
+    """선택한 예시 로드 실패는 무음 강등이나 무드 대체 없이 명확히 실패한다."""
     gen_calls, ok, fail = [], {}, {}
     _bg_qc_setup(monkeypatch, gen_calls=gen_calls, finalize_ok=ok, finalize_fail=fail, verdicts=[])
 
@@ -1485,9 +1526,11 @@ def test_bg_example_load_failure_fails_closed(monkeypatch):
         return None
 
     monkeypatch.setattr(eij.cut_generator, "load_example_image", fake_example_none)
+    monkeypatch.setattr(eij.cut_generator, "pose_direction_compatible", lambda *_args: True)
     app = fake_worker_app(make_settings(gemini_api_key="x", r2_bucket="b"))
-    asyncio.run(eij.run_editor_image_job(app, worker_job(_bg_payload())))
+    payload = {**_bg_payload(), "exampleId": f"ex_{scope}", "refScope": scope}
+    asyncio.run(eij.run_editor_image_job(app, worker_job(payload)))
     assert not gen_calls                              # 생성 호출 자체가 없어야 한다
     assert not ok
     assert fail["metadata"]["error"] == "example_asset_unavailable"
-    assert fail["metadata"]["refScope"] == "bg"
+    assert fail["metadata"]["refScope"] == scope

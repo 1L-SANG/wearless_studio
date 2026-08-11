@@ -22,12 +22,11 @@ class Settings:
     # FaceMarket 얼굴 라이선스 = 생체 PII → 공개 도메인 미연결 전용 비공개 버킷.
     # 미설정이면 메인 버킷 폴백(개발). 게이트 라우트가 바이트 스트림 → public_url 미사용.
     r2_face_bucket: str | None = None
-    # 내부 SAM2 세그멘테이션 서비스. 미설정이면 canonical 전처리는 그냥 비활성 —
+    # 내부 SAM2 세그멘테이션 서비스. 미설정이면 캐노니컬 전처리는 그냥 비활성 —
     # 없다고 업로드·분석·생성이 막히면 안 되는 보조 인프라다.
     sam_service_url: str | None = None
     sam_internal_token: str | None = None
-    # Front+Back 실측 ~49s(warm, x86_64 Fargate). 90s 는 그 위의 여유이고,
-    # 무한 대기를 막는 게 목적이다.
+    # Front+Back 실측 ~49s(warm, x86_64 Fargate). 90s 는 그 위의 여유다.
     sam_request_timeout_s: float = 90.0
     # 생성예시 레지스트리의 상대 URL 기준. prod 상대경로는 명시 필수, dev만 dummy 기본값 허용.
     example_asset_base_url: str | None = None
@@ -46,6 +45,9 @@ class Settings:
     openai_api_key: str | None = None  # sk-… (서버 전용, secret). GPT 경로 키
     model_text: str = "gpt-5.4-mini"  # GPT 폴백 provider 의 text/vision 모델 (openai key 있을 때만)
     model_text_gemini: str = "gemini-3.5-flash"  # text tier 정본 모델 (2026-07-02 결정 — ai_agent_modules §1)
+    # AG-08 특징 발굴만 상위 tier 로 분기 (2026-08-01 사용자 결정 — 마네킹 regenerate tier 분기와 같은 패턴).
+    # 분류(AG-01)는 결정성·속도 우선이라 정본 tier 유지. 미설정이면 model_text_gemini 로 폴백.
+    model_text_gemini_features: str = "gemini-3.6-flash"
     analysis_model_order: str = "gemini,gpt"  # 폴백 순서(기본=Gemini-first, 2026-07-02 결정). 'gpt,gemini' 등
     analysis_spike: str = "off"  # off | on — 동기 관측 하니스(임시). production 은 job
     analysis_timeout_seconds: float = 60.0  # provider 1콜 상한(폴백 트리거)
@@ -69,12 +71,16 @@ class Settings:
     # 조정 흐름에서만 다른 모델을 시험할 때 쓴다 — 초기 생성 품질을 건드리지 않고 비교한다.
     mannequin_adjust_tier: str = ""  # "" | image_light | image_high
     mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
-    # QA·비용 제한용 상한. off면 정책/미세패턴 승급을 허용하고, 1K/2K면 어떤 승급도
-    # 이 값을 넘지 못한다. 기본 off라 운영 동작은 기존과 동일하다.
-    mannequin_image_size_cap: str = "off"  # off | 1K | 2K | 4K
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
     mannequin_aspect_ratio: str = "2:3"
     mannequin_max_attempts: int = 2  # QC 게이팅 시 재시도 상한 (shadow면 실질 1회)
+    # 상세페이지 컷 동시 생성 상한. 0 = 제한 없음(콘티 컷 수만큼 동시 — 13컷이면 13개).
+    # 구 상수 3은 429 실측이 아니라 보수적 추정이었다(2026-08-03 오너 결정: 전부 병렬 +
+    # 제출 간격으로 버스트 완화 + 429 백오프 재시도가 안전망). 문제 시 env 로 되돌린다.
+    detail_cut_concurrency: int = 0
+    # 컷 제출 간격(ms) — i번째 컷을 i×간격 뒤에 시작해 순간 버스트를 평탄화한다.
+    # 13컷 × 3000ms = 마지막 컷이 36초 뒤 시작(제출 속도 20건/분). 0 = 간격 없음.
+    detail_cut_stagger_ms: int = 3000
     # bg 편집 컷의 장소일치 QC 재시도 총 시도 상한 — 생성은 샘플링이라 프롬프트만으로는
     # 결정적이지 않다(2026-07-20 실측). 시도당 생성 1회 + 판정 1회.
     bg_scene_qc_attempts: int = 3
@@ -110,78 +116,31 @@ class Settings:
     # bestof=불일치 시 원본 입력에서 후보를 더 생성해 첫 pass 또는 picker 최선을 채택.
     garment_qc_mode: str = "bestof"  # off | shadow | bestof
     garment_qc_extra_candidates: int = 2
+    # 최종 컷·페이지 독립 QC v1. 먼저 shadow로 실제 통과/실패 표본을 보정한 뒤에만
+    # 출고 차단 모드를 별도 결정한다. 현재 허용값은 off | shadow이며 기본 off라 추가 비용 0.
+    cut_output_qc_mode: str = "off"  # off | shadow
+    page_output_qc_mode: str = "off"  # off | shadow
     # P1 축 인지 QC(선언 핏 축 반영 판정 + 실패 시 편집 교정 1회 — fidelity §G·§H).
     # off | shadow(판정·이벤트만) | enforce(편집 재시도 발화). enforce는 코드 레벨 가드
     # (_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY)가 풀리기 전까지 shadow로 강등(G9 규율).
     mannequin_axis_qc: str = "off"
-    # canonical base 대비 pose/camera/framing/view-family 고정. enforce는 readiness guard가
-    # 풀린 뒤에만 wrong-view를 최대 1회 재생성한 뒤 fail-closed한다. 실측 전 기본은 shadow.
-    mannequin_frame_qc: str = "shadow"  # off | shadow | enforce
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
-    mannequin_prompt_version: str = "frame_lock_v2"
+    mannequin_prompt_version: str = "v1"
     # 여성 기본 가슴 볼륨 2패스 (2026-07-30 스파이크). 생성된 컷에 "가슴만 바꿔라"를 단독 과제로
     # 한 번 더 돌린다 — 1패스만으로는 모델이 몸을 표준으로 정규화해 반영되지 않는다.
     # off | on. 기본 off, 실물 확인 후 on. 켜면 여성 컷당 이미지 호출이 1→2회.
     # 2패스 실패·거부는 삼키고 1패스 컷을 쓴다(잡을 죽이지 않는다).
     mannequin_bust_pass: str = "off"
-    # deterministic hybrid composite — 스트라이프 상품의 최종 의류 표면을 원본 사진에서
-    # 추출한 패턴으로 결정론적으로 합성한다(생성 모델은 geometry carrier 만 담당).
-    # 구 원단 2패스 env 플래그(whole-image generative 재생성)는 blind visual 3/3 FAIL 로
-    # 폐기·삭제됐다(2026-08-01, 폐기 이름은 test_deploy_manifest_qc_flags.RETIRED_FLAGS 참조).
-    # 같은 이름을 재사용하지 않는다 — env 잔재가 남은 배포에서 옛 의미로 켜지는 사고 방지.
-    mannequin_hybrid_composite: str = "off"  # off | shadow | enforce (legacy on => enforce)
-    # carrier preflight에서 cape 류 실루엣 결함은 1회 한정으로 허용한다.
-    # 허용되더라도 후단 QC/저장에서 반드시 review 표시를 강제해 사용자 가시성 유지.
-    hybrid_stripe_allow_ratio_only_preflight_continue: bool = False
-    # limited Level-2 texture projection plan. off=기존 hybrid target period 사용,
-    # shadow=계획/신뢰도 이벤트만 기록, enforce=저신뢰 projection 은 deterministic 합성 실패 처리.
-    mannequin_texture_projection_2d: str = "off"  # off | shadow | enforce
+    # 원단 패턴 2패스 — 미세 패턴 상품에서 표면 패턴만 상품 사진 기준으로 다시 입힌다.
+    # 가슴 2패스와 같은 규약: 기본 off 로 두고 실측 확인 뒤 켠다.
+    mannequin_fabric_pass: str = "off"  # off | on
     # untuck 2패스 — 상의 밑단을 하의 허리밴드 밖으로 빼는 전용 편집. 프롬프트 5회 강화와
     # QC 재생성이 모두 소진된 뒤의 구조 변경(2026-08-01). QC 검출이 불안정해 게이트로 쓰지
     # 않고 매칭 하의가 붙는 top/outer 잡마다 1회 돈다(이미 빠져 있으면 무변경 반환 지시).
     mannequin_untuck_pass: str = "off"  # off | on
-    # generation run 기록 — provider 호출 1건을 generation_runs 행으로 남긴다(재현·비용·실패율).
-    # off | shadow. shadow 는 **기록만** 한다: 생성 결과·QC 판정·후보 선택에 개입하지 않고,
-    # 기록 실패도 삼킨다. 게이트가 되는 단계가 없으므로 enforce 값은 두지 않는다.
-    # migration(20260801000000_generation_runs) 미적용 환경에서 켜도 안전하다 — insert 가
-    # 실패하고 기록만 비는 것으로 끝난다.
-    generation_run_log: str = "off"  # off | shadow
-    # Product Truth revision rollout. shadow=승인 revision이 있으면 snapshot/계보에 사용하되
-    # 없거나 stale이어도 기존 생성을 유지, enforce=승인+현재 fingerprint가 아니면 생성 차단.
-    enable_product_truth: str = "off"  # off | shadow | enforce
-    # 구조화 QC/정책 DAG rollout. shadow=결과 저장만, enforce=review/reject가 자동 완료를 차단.
-    mannequin_structured_qc: str = "off"  # off | shadow | enforce
-    # Vision LLM 의미 동일성 QC — Front/Back/Detail 원본 대비 "같은 상품인가"를 13개 체크로
-    # 판정한다(agents/garment_fidelity_qc). OpenCV 통계로는 답할 수 없는 질문이라 판정은
-    # 모델이 하고, 권한은 services/garment_fidelity_authority 가 체크 상태에서 유도한다.
-    #   off     : 호출 0. 기존 동작 완전 불변.
-    #   shadow  : 판정·교정문을 기록만 한다. 컷 소비 권한을 바꾸지 않는다.
-    #   enforce : hard gate 가 PASS 가 아니면(FAIL·UNVERIFIABLE·미측정 전부) 컷을 소비 불가로
-    #             막고, 예산이 남아 있으면 실패 속성만 지목한 targeted correction 을 1회 돈다.
-    mannequin_garment_fidelity_qc: str = "off"  # off | shadow | enforce
-    # Phase 3 baseline 편집 — 신규 :edit 엔드포인트와 Edit Intent QC 의 rollout.
-    #   off     : :edit 는 503(미노출), 편집 잡도 생기지 않는다. 기존 동작 완전 불변.
-    #   shadow  : :edit 노출 + QC 판정을 **기록만** 한다. 출고 계약은 기존과 동일 —
-    #             decision 이 reject 여도 컷은 기존 규율대로 저장되고 사유만 남는다.
-    #   enforce : decision 이 출고를 지배한다 — reject 는 저장 없이 실패 종결(크레딧 환불),
-    #             review_required 는 needs_review 로 저장.
-    mannequin_edit_intent_qc: str = "off"  # off | shadow | enforce
-    # 에디터 생성형 vary(mode:'vary')의 Edit Session·Generation Run·Edit Intent QC 연결.
-    # 마네킹 편집과 **별도 플래그**다 — 두 경로는 입력도(baseline vs 에디터 자산) 판정
-    # 가능한 범위도 다르므로 같은 스위치로 묶으면 한쪽 준비가 다른 쪽을 막는다.
-    #   off     : 현재 vary 동작 완전 불변(세션·기록·Vision 호출 0)
-    #   shadow  : 세션·기록·QC 판정을 남기되 저장 계약은 기존과 동일(결과는 review 표시)
-    #   enforce : pass 저장 / review_required 저장+표시 / reject 미저장·환불
-    editor_vary_intent_qc: str = "off"  # off | shadow | enforce
-    # Phase 9 deterministic export. off by default: route is hidden until schema + UI rollout land.
-    export_backend: str = "off"  # off | on
     base_mannequin_women_asset_id: str | None = None  # R2 seed asset (startup 검증)
     base_mannequin_men_asset_id: str | None = None
     job_dispatcher_enabled: bool = True  # §5
-    # 공유 DB를 쓰는 dev 캘리브레이션에서만 route tx 안에서 job을 선점한다.
-    # secret과 함께 켜야 하며 prod/일반 API 동작에는 관여하지 않는다.
-    frame_calibration_inline_jobs: bool = False
-    frame_calibration_inline_secret: str | None = None
     job_poll_interval_seconds: float = 3.0
     job_lease_timeout_seconds: int = 900
     job_worker_id: str = "web"
@@ -190,9 +149,9 @@ class Settings:
     credit_cost_mannequin_adjust: int = 0  # @deprecated AG-05 폐기 — fitProfile 재생성으로 통합 (프론트 CREDIT_COSTS.mannequinAdjust=0 미러)
     credit_cost_storyboard_per_cut: int = 1  # PL-4 상세페이지: AI 컷 1개당 (프론트 CREDIT_COSTS 미러)
     credit_cost_editor_image: int = 1  # PL-5 에디터 이미지 1장
-    # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택. flag 기본 off ----
+    # ---- 검색 증강 (retrieval_upgrade_prd) — 결정적 스택 ----
     # 벡터/임베딩(vector·refimages)은 보류(ADR D2) — 재진입 시 flag·enum·모델설정 함께 복원.
-    retrieval_matching: str = "off"  # off | tags (styleTags 친화도 v1)
+    retrieval_matching: str = "tags"  # off | tags (styleTags 친화도 v1)
     retrieval_knowledge: str = "off"  # off | static (정적 지식 블록)
     # ---- Phase 3 재진입(ADR D2 해제, 2026-07-22): 레퍼런스 컷 검색 → 마네킹 STYLE REFERENCE 첨부 ----
     # off면 기존 생성 경로 무변화(행위 변화 0). 임베딩은 자체 호스팅 로컬 모델(ADR D2 v1.3),
@@ -242,6 +201,29 @@ class Settings:
     fm_face_qc_enabled: bool = False
     fm_face_qc_threshold: float = 0.363  # OpenCV SFace 권장 코사인 동일인 기준선(캘리브 전 잠정)
     fm_face_qc_dir: str | None = None    # SFace/YuNet onnx 디렉터리. None이면 app/data/face_models
+    # ---- 이미지 실비 계측(내부용) ----
+    # false 면 image_usage_events 적재를 끄고 로그만 남긴다.
+    # **기본값은 app_env 가 정한다**(load_settings → _image_usage_persist): production 만 on.
+    # 개발자가 리포트용 운영 접속 문자열을 로컬 .env 의 DATABASE_URL 에 붙여넣는 실수가
+    # 실제로 가능한데, 그러면 로컬 실험 비용이 운영 원장에 섞여 리포트 총액이 조용히 부푼다
+    # (잡 단위 집계는 job_id is not null 로 걸러지지만 총액·모델별·일자별은 안 걸러진다).
+    # 로컬에서 일부러 쌓아 보려면 IMAGE_USAGE_PERSIST=true 로 명시적으로 켠다.
+    image_usage_persist: bool = False
+    # 리포트의 원화 환산 기준. 회계용이 아니라 감각용 — 실제 청구는 달러다.
+    image_usage_krw_per_usd: float = 1400.0
+
+
+def _image_usage_persist(app_env: str) -> bool:
+    """운영 원장에 쓰는 것은 운영 배포뿐. 다른 환경은 명시적으로 켜야 한다.
+
+    APP_ENV=production 은 copilot/api/manifest.yml 이 배포 컨테이너에만 넣는다. 로컬·CI 는
+    dev 라 기본 off 이고, 로컬 DB 에 일부러 쌓아 보고 싶으면 IMAGE_USAGE_PERSIST=true 로
+    켠다(끄는 것도 =false 로 명시 가능 — 환경변수가 있으면 그것이 언제나 우선).
+    """
+    raw = os.getenv("IMAGE_USAGE_PERSIST")
+    if raw is not None:
+        return raw.strip().lower() == "true"
+    return app_env == "production"
 
 
 def _bust_pass() -> str:
@@ -254,11 +236,6 @@ def _bust_pass() -> str:
 def _image_size() -> str:
     v = os.getenv("MANNEQUIN_IMAGE_SIZE", "1K").upper()
     return v if v in {"1K", "2K", "4K"} else "1K"
-
-
-def _image_size_cap() -> str:
-    v = os.getenv("MANNEQUIN_IMAGE_SIZE_CAP", "off").upper()
-    return v if v in {"1K", "2K", "4K"} else "off"
 
 
 def _mannequin_tier() -> str:
@@ -276,18 +253,6 @@ def _flag(env: str, default: str, allowed: set[str]) -> str:
     """검색 증강 flag — 허용값 밖이면 안전하게 default(대개 'off')로 폴백."""
     v = (os.getenv(env, default) or default).strip().lower()
     return v if v in allowed else default
-
-
-def _hybrid_composite_mode() -> str:
-    """deterministic hybrid composite rollout mode.
-
-    `on` was the original fail-closed flag. Keep it as an alias for `enforce`
-    so old deploy envs do not silently change behavior.
-    """
-    v = (os.getenv("MANNEQUIN_HYBRID_COMPOSITE", "off") or "off").strip().lower()
-    if v == "on":
-        return "enforce"
-    return v if v in {"off", "shadow", "enforce"} else "off"
 
 
 def load_settings() -> Settings:
@@ -332,6 +297,8 @@ def load_settings() -> Settings:
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         model_text=os.getenv("MODEL_ROUTING_TEXT", "gpt-5.4-mini"),
         model_text_gemini=os.getenv("MODEL_ROUTING_TEXT_GEMINI", "gemini-3.5-flash"),
+        model_text_gemini_features=os.getenv(
+            "MODEL_ROUTING_TEXT_GEMINI_FEATURES", "gemini-3.6-flash"),
         analysis_model_order=os.getenv("ANALYSIS_MODEL_ORDER", "gemini,gpt"),
         analysis_spike=_flag("ANALYSIS_SPIKE", "off", {"off", "on"}),
         analysis_timeout_seconds=float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "60")),
@@ -340,44 +307,20 @@ def load_settings() -> Settings:
         mannequin_tier=_mannequin_tier(),
         mannequin_adjust_tier=_mannequin_adjust_tier(),
         mannequin_image_size=_image_size(),
-        mannequin_image_size_cap=_image_size_cap(),
         mannequin_aspect_ratio=os.getenv("MANNEQUIN_ASPECT_RATIO", "2:3"),
         mannequin_max_attempts=int(os.getenv("MANNEQUIN_MAX_ATTEMPTS", "2")),
+        detail_cut_concurrency=int(os.getenv("DETAIL_CUT_CONCURRENCY", "0")),
+        detail_cut_stagger_ms=int(os.getenv("DETAIL_CUT_STAGGER_MS", "3000")),
         bg_scene_qc_attempts=int(os.getenv("BG_SCENE_QC_ATTEMPTS", "3")),
         mannequin_qc_enabled=(os.getenv("MANNEQUIN_QC_ENABLED", "false").lower() == "true"),
         mannequin_prompt_file=os.getenv("MANNEQUIN_PROMPT_FILE") or None,
-        mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "frame_lock_v2"),
+        mannequin_prompt_version=os.getenv("MANNEQUIN_PROMPT_VERSION", "v1"),
         mannequin_bust_pass=_bust_pass(),
-        mannequin_hybrid_composite=_hybrid_composite_mode(),
-        hybrid_stripe_allow_ratio_only_preflight_continue=(
-            os.getenv("HYBRID_STRIPE_ALLOW_RATIO_ONLY_PREFLIGHT_CONTINUE", "false").lower() == "true"
-        ),
-        mannequin_texture_projection_2d=_flag(
-            "MANNEQUIN_TEXTURE_PROJECTION_2D", "off", {"off", "shadow", "enforce"}),
+        mannequin_fabric_pass=_flag("MANNEQUIN_FABRIC_PASS", "off", {"off", "on"}),
         mannequin_untuck_pass=_flag("MANNEQUIN_UNTUCK_PASS", "off", {"off", "on"}),
-        generation_run_log=_flag("GENERATION_RUN_LOG", "off", {"off", "shadow"}),
-        enable_product_truth=_flag(
-            "ENABLE_PRODUCT_TRUTH", "off", {"off", "shadow", "enforce"}),
-        mannequin_structured_qc=_flag(
-            "MANNEQUIN_STRUCTURED_QC", "off", {"off", "shadow", "enforce"}),
-        mannequin_garment_fidelity_qc=_flag(
-            "MANNEQUIN_GARMENT_FIDELITY_QC", "off", {"off", "shadow", "enforce"}),
-        mannequin_frame_qc=_flag(
-            "MANNEQUIN_FRAME_QC", "shadow", {"off", "shadow", "enforce"}),
-        mannequin_edit_intent_qc=_flag(
-            "MANNEQUIN_EDIT_INTENT_QC", "off", {"off", "shadow", "enforce"}),
-        editor_vary_intent_qc=_flag(
-            "EDITOR_VARY_INTENT_QC", "off", {"off", "shadow", "enforce"}),
-        export_backend=_flag("EXPORT_BACKEND", "off", {"off", "on"}),
         base_mannequin_women_asset_id=os.getenv("MANNEQUIN_BASE_WOMEN_ASSET_ID") or None,
         base_mannequin_men_asset_id=os.getenv("MANNEQUIN_BASE_MEN_ASSET_ID") or None,
         job_dispatcher_enabled=(os.getenv("JOB_DISPATCHER_ENABLED", "true").lower() != "false"),
-        frame_calibration_inline_jobs=(
-            os.getenv("FRAME_CALIBRATION_INLINE_JOBS", "false").lower() == "true"
-        ),
-        frame_calibration_inline_secret=(
-            os.getenv("FRAME_CALIBRATION_INLINE_SECRET") or None
-        ),
         job_poll_interval_seconds=float(os.getenv("JOB_POLL_INTERVAL_SECONDS", "3")),
         job_lease_timeout_seconds=int(os.getenv("JOB_LEASE_TIMEOUT_SECONDS", "900")),
         job_worker_id=os.getenv("JOB_WORKER_ID", f"web-{os.getpid()}"),
@@ -386,11 +329,13 @@ def load_settings() -> Settings:
         credit_cost_mannequin_adjust=int(os.getenv("CREDIT_COST_MANNEQUIN_ADJUST", "0")),
         credit_cost_storyboard_per_cut=int(os.getenv("CREDIT_COST_STORYBOARD_PER_CUT", "1")),
         credit_cost_editor_image=int(os.getenv("CREDIT_COST_EDITOR_IMAGE", "1")),
-        retrieval_matching=_flag("RETRIEVAL_MATCHING", "off", {"off", "tags"}),
+        retrieval_matching=_flag("RETRIEVAL_MATCHING", "tags", {"off", "tags"}),
         retrieval_knowledge=_flag("RETRIEVAL_KNOWLEDGE", "off", {"off", "static"}),
         retrieval_refimages=_flag("RETRIEVAL_REFIMAGES", "off", {"off", "on"}),
         ref_images_topk=int(os.getenv("REF_IMAGES_TOPK", "2")),
         embed_image_model=os.getenv("EMBED_IMAGE_MODEL", "google/siglip-base-patch16-224"),
+        image_usage_persist=_image_usage_persist(app_env),
+        image_usage_krw_per_usd=float(os.getenv("IMAGE_USAGE_KRW_PER_USD", "1400")),
         embed_image_dim=int(os.getenv("EMBED_IMAGE_DIM", "768")),
         embed_text_model=os.getenv("EMBED_TEXT_MODEL", "BAAI/bge-m3"),
         embed_text_dim=int(os.getenv("EMBED_TEXT_DIM", "1024")),
@@ -415,6 +360,8 @@ def load_settings() -> Settings:
         garment_qc_mode=_flag(
             "GARMENT_QC_MODE", "bestof", {"off", "shadow", "bestof"}),
         garment_qc_extra_candidates=int(os.getenv("GARMENT_QC_EXTRA_CANDIDATES", "2")),
+        cut_output_qc_mode=_flag("CUT_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
+        page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
         detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),

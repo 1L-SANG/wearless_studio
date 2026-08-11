@@ -7,19 +7,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '@/lib/api/index.js';
-import { Icon, Modal, Button } from '@/components/ui.jsx';
+import { Icon, Modal, Button, useToast } from '@/components/ui.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
+import { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
+import { flushProductDraftSave } from '@/lib/draftStore.js';
+import { recordCreditReturn } from '@/lib/creditReturn.js';
 
-export const WIZARD_STEPS = [
-  { key: 'input', label: '제품 정보·분석' },
-  { key: 'mannequin', label: '마네킹컷' },
-  { key: 'storyboard', label: '콘티보드' },
-  { key: 'editor', label: '에디터' },
-];
-
-/* input+analysis collapse into step 0; generating shares the editor step */
-export const STEP_INDEX = { input: 0, analysis: 0, mannequin: 1, storyboard: 2, generating: 3, editor: 3 };
+export { WIZARD_STEPS, STEP_INDEX } from '@/lib/wizardSteps.js';
 
 const STEPPER_STEPS = ['input', 'mannequin', 'storyboard'];
 
@@ -27,20 +22,20 @@ export function TopNav() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { session, openLogin } = useAuth();
+  const toast = useToast();
   const account = useAppStore((s) => s.account) || { name: '…', avatar: '', credits: 0, plan: '' };
   const beginProject = useAppStore((s) => s.beginProject);
-  const mannequinJob = useAppStore((s) => s.mannequinJob);
   const [resumeAsk, setResumeAsk] = useState(false);
   // create 흐름일 때만 'create' 활성 — /pricing·/credits 등은 어느 탭도 활성 아님(폴백 active 버그 수정)
   const route = pathname.startsWith('/library') ? 'library'
     : pathname.startsWith('/create') ? 'create' : null;
   // '새로 만들기' = 로컬 플로우 초기화 후 입력 화면. 서버 project(보관함 행)는 AI 분석 시작 때 생성(빈 프로젝트 양산 방지).
   const startNew = async () => { setResumeAsk(false); await beginProject(); navigate('/create/input'); };
-  // '이어서 작업' = 마지막으로 머문 create/editor 경로로 복귀(없으면 마네킹 단계).
-  const resumeWork = () => { setResumeAsk(false); navigate(useAppStore.getState().resumePath || '/create/mannequin'); };
+  // '이어서 작업' = 마지막으로 머문 create/editor 경로로 복귀(없으면 콘티 단계). 생성이 도는 동안
+  // 사용자가 있어야 할 곳도 콘티라 강제 이동 없이 이 폴백 하나로 자연스럽게 돌아간다.
+  const resumeWork = () => { setResumeAsk(false); navigate(useAppStore.getState().resumePath || '/create/storyboard'); };
   const onNav = async (r) => {
     if (r === 'create') {
-      if (mannequinJob?.status === 'running') { navigate('/create/mannequin'); return; }
       // 진행 중 프로젝트가 있으면 '이어서/새로' 를 물어 매번 새로 초기화돼 작업이 버려지던 문제를 막는다.
       const { projectId, projectPersisted } = useAppStore.getState();
       if (projectPersisted && projectId) { setResumeAsk(true); return; }
@@ -50,6 +45,19 @@ export function TopNav() {
     navigate('/library');
   };
   const step = pathname.startsWith('/create/') ? pathname.split('/')[2] : null;
+  const openPricing = () => {
+    const { projectId } = useAppStore.getState();
+    recordCreditReturn({ projectId, path: pathname });
+    navigate('/pricing');
+  };
+  const openTopNavLogin = async () => {
+    try {
+      await flushProductDraftSave();
+      openLogin(pathname === '/create/input' ? pathname : '/create/input');
+    } catch (error) {
+      toast.push(error?.message || '입력 내용을 임시 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+    }
+  };
 
   return (
     <>
@@ -67,12 +75,12 @@ export function TopNav() {
       <div className="nav-right">
         {session ? (
           <>
-            <button type="button" className="credit-badge" onClick={() => navigate('/pricing')} title="요금제·크레딧 충전"><Icon name="coins" size={15} stroke={1.8} />크레딧 <b>{account.credits}</b></button>
+            <button type="button" className="credit-badge" onClick={openPricing} title="요금제·크레딧 충전"><Icon name="coins" size={15} stroke={1.8} />크레딧 <b>{account.credits}</b></button>
             {account.plan && <span className="plan-badge">{account.plan}</span>}
             <ProfileMenu />
           </>
         ) : (
-          <button className="nav-login" onClick={() => openLogin()}>로그인</button>
+          <button className="nav-login" onClick={openTopNavLogin}>로그인</button>
         )}
       </div>
     </nav>
@@ -83,7 +91,7 @@ export function TopNav() {
 
 /* 진행 중 상세페이지 제작이 있을 때 '상세페이지 제작' 재진입 시 — 이어서 작업 / 새로 만들기 선택.
    과거엔 무조건 새로 초기화돼 진행 중 작업이 버려졌다(이어서 재개 경로 없음). */
-function ResumeChoiceModal({ onResume, onNew, onClose }) {
+export function ResumeChoiceModal({ onResume, onNew, onClose }) {
   return (
     <Modal onClose={onClose}>
       <h3>이어서 작업할까요?</h3>
@@ -180,8 +188,8 @@ export function PageHead({ title, sub }) {
 }
 
 /* CTA footer for wizard pages */
-export function WizardCTA({ children }) {
-  return <div className="wizard-cta">{children}</div>;
+export function WizardCTA({ children, className = '' }) {
+  return <div className={`wizard-cta${className ? ` ${className}` : ''}`}>{children}</div>;
 }
 
 /* ---- 생성 완료 후 초안 단계 재진입 제한 (PRD §10.17 / §15.3) ----

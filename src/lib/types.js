@@ -18,8 +18,10 @@ export const ClothingType = Object.freeze({ TOP: 'top', BOTTOM: 'bottom', OUTER:
 export const Gender = Object.freeze({ WOMEN: 'women', MEN: 'men' });
 export const Fit = Object.freeze({ SLIM: 'slim', REGULAR: 'regular', SEMI_OVER: 'semi_over', OVER: 'over' });
 export const ComposeMode = Object.freeze({ BASIC: 'basic', EXTENDED: 'extended' });
-/** 콘티보드에서 사용자가 보는 상세페이지의 세 사진 역할. 구매 정보는 에디터 전용이다. */
-export const SectionRole = Object.freeze({ BENEFIT: 'benefit', FIT: 'fit', PRODUCT: 'product' });
+/** 콘티보드에서 사용자가 보는 상세페이지의 네 사진 역할. 구매 정보는 에디터 전용이다. */
+export const SectionRole = Object.freeze({
+  HOOKING: 'hooking', STYLING: 'styling', STUDIO: 'studio', PRODUCT: 'product',
+});
 /** 한 장의 사진이 섹션 안에서 맡는 구체적인 목적. */
 export const ContentRole = Object.freeze({
   HERO: 'hero', BENEFIT: 'benefit', COORDINATION: 'coordination', FIT: 'fit',
@@ -42,7 +44,10 @@ export const OuterClosureState = Object.freeze({ OPEN: 'open', PARTIAL: 'partial
 export const ProjectStatus = Object.freeze({ DRAFT: 'draft', GENERATING: 'generating', DONE: 'done' });
 export const JobStatus = Object.freeze({ IDLE: 'idle', RUNNING: 'running', DONE: 'done', ERROR: 'error' });
 export const ElementType = Object.freeze({ IMAGE: 'image', TEXT: 'text', SHAPE: 'shape', LINE: 'line' });
-export const AngleSlot = Object.freeze({ FRONT: 'Front', BACK: 'Back', DETAIL: 'Detail', FIT: 'Fit' });
+/* 2026-08-07 개편: Fit 폐기(실사용 0건), 디테일을 앞/뒤로 분화.
+   DETAIL_FRONT 값이 'Detail'인 것은 의도 — 기존 저장 데이터 88장을 마이그레이션 없이
+   앞면 디테일로 재해석한다 (specs/2026-08-07-image-slot-taxonomy-design.md §D1). */
+export const AngleSlot = Object.freeze({ FRONT: 'Front', BACK: 'Back', DETAIL_FRONT: 'Detail', DETAIL_BACK: 'BackDetail' });
 /** @deprecated 핏 프로필(FitProfile)로 대체. P2에서 UI/API 소비 제거 전까지 유지. */
 export const AdjustFit = Object.freeze({ SLIMMER: 'slimmer', LOOSER: 'looser' });
 /** @deprecated 핏 프로필(FitProfile)로 대체. P2에서 UI/API 소비 제거 전까지 유지. */
@@ -196,9 +201,9 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
 
    @typedef {Object} StoryboardBlock
    @property {string} id
-   @property {SectionRole} sectionRole   핵심 장점 | 핏·코디 | 제품 확인
+   @property {SectionRole} sectionRole   후킹 | 스타일링 | 스튜디오 | 의류 확인
    @property {ContentRole} contentRole   카드의 구체적인 사진 목적
-   @property {2} taxonomyVersion         역할 중심 콘티 taxonomy 버전
+   @property {3} taxonomyVersion         역할 중심 콘티 taxonomy 버전
    @property {BlockSource} source        'ai' | 'mine'
    @property {string|null} cutType       비노출 생성 레시피. source='mine'이면 null
    @property {Direction|ProductDirection|null} [direction]  mirror는 null — 방향 개념 없음 (ADR-0004)

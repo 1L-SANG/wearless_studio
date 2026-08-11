@@ -43,26 +43,35 @@ create table if not exists public.product_truth_packages (
 comment on table public.product_truth_packages is
   '상품 원본 사실의 revision. draft 는 분석/사용자 수정 중이고, approved 만 생성·QC 의 정본으로 '
   '쓸 수 있다. 상품 사진/분석이 바뀌면 source_fingerprint 가 달라져 새 revision 을 만들어야 한다.';
+
 comment on column public.product_truth_packages.garment_spec is
   '의류 구조 사실(category, fit, collar, sleeve, buttonCount, pocketCount 등). 생성 모델 추정값이 '
   '아니라 원본/사용자 승인 facts 이다.';
+
 comment on column public.product_truth_packages.color_spec is
   'Lab 기준 색상 facts. 고해상도 출력 여부와 색상 정확도는 별도 QC 대상이다.';
+
 comment on column public.product_truth_packages.pattern_spec is
   '체크/스트라이프/무지 등 패턴 facts. 방향·주기·색 순서가 준비되면 여기에 누적한다.';
+
 comment on column public.product_truth_packages.protected_details is
   '로고·프린팅·자수·단추 수·주머니 수처럼 생성 결과를 그대로 믿으면 안 되는 보호 대상.';
+
 comment on column public.product_truth_packages.source_fingerprint is
   'product JSON + analysis JSON + source asset role/checksum snapshot 의 sha256. 현재 값과 다르면 stale.';
 
 create unique index if not exists product_truth_packages_project_version_idx
   on public.product_truth_packages (project_id, version);
+
 create unique index if not exists product_truth_packages_one_draft_per_project
   on public.product_truth_packages (project_id) where status = 'draft';
+
 create unique index if not exists product_truth_packages_one_approved_per_project
   on public.product_truth_packages (project_id) where status = 'approved';
+
 create index if not exists product_truth_packages_project_created_idx
   on public.product_truth_packages (project_id, created_at desc);
+
 create index if not exists product_truth_packages_fingerprint_idx
   on public.product_truth_packages (project_id, source_fingerprint);
 
@@ -92,16 +101,20 @@ create table if not exists public.product_truth_assets (
 comment on table public.product_truth_assets is
   'Product Truth revision 이 참조한 원본/파생 asset snapshot. raw 와 normalized derivative 는 '
   '서로 다른 assets 행으로 저장하고 role/checksum 으로 증거를 남긴다.';
+
 comment on column public.product_truth_assets.role is
   'FRONT/BACK/DETAIL/FABRIC_MACRO/LOGO/PRINT 등. Detail 슬롯 하나를 원단·로고·카라 등으로 '
   '세분화할 수 있게 truth role 이 정본이다.';
+
 comment on column public.product_truth_assets.checksum is
   '분석/생성에 실제 근거가 된 asset checksum. asset 행이 null 이 되더라도 revision 증거는 남는다.';
 
 create index if not exists product_truth_assets_package_idx
   on public.product_truth_assets (truth_package_id, sort_order);
+
 create index if not exists product_truth_assets_asset_idx
   on public.product_truth_assets (asset_id);
+
 create index if not exists product_truth_assets_role_idx
   on public.product_truth_assets (truth_package_id, role);
 
@@ -128,6 +141,7 @@ create index if not exists product_truth_review_events_project_idx
 -- 함께 해석되어야 하므로 package 삭제는 restrict 가 맞다.
 alter table public.approved_baselines
   drop constraint if exists approved_baselines_truth_package_id_fkey;
+
 alter table public.approved_baselines
   add constraint approved_baselines_truth_package_id_fkey
   foreign key (truth_package_id) references public.product_truth_packages (id) on delete restrict;
@@ -146,10 +160,13 @@ create index if not exists generation_runs_truth_package_idx
 
 -- ── RLS: 읽기는 프로젝트 소유권 기준. 쓰기는 service-role 백엔드 전용. ──
 alter table public.product_truth_packages enable row level security;
+
 alter table public.product_truth_assets enable row level security;
+
 alter table public.product_truth_review_events enable row level security;
 
 drop policy if exists product_truth_packages_owner_select on public.product_truth_packages;
+
 create policy product_truth_packages_owner_select on public.product_truth_packages
   for select using (
     exists (
@@ -159,6 +176,7 @@ create policy product_truth_packages_owner_select on public.product_truth_packag
   );
 
 drop policy if exists product_truth_assets_owner_select on public.product_truth_assets;
+
 create policy product_truth_assets_owner_select on public.product_truth_assets
   for select using (
     exists (
@@ -171,6 +189,7 @@ create policy product_truth_assets_owner_select on public.product_truth_assets
   );
 
 drop policy if exists product_truth_review_events_owner_select on public.product_truth_review_events;
+
 create policy product_truth_review_events_owner_select on public.product_truth_review_events
   for select using (
     exists (

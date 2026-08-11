@@ -425,26 +425,49 @@ def test_both_canonical_slots_have_their_own_manifest_line():
     assert "CanonicalDetail" not in _SLOT_LABEL
 
 
-def test_the_loader_seam_accepts_a_legacy_single_front_reference():
-    """예전 로더가 ProductReference 하나만 돌려줘도 깨지지 않는다."""
+class _FakeConn:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _app_with_loader(loader):
     import types
+    pool = types.SimpleNamespace(connection=lambda: _FakeConn())
+    return types.SimpleNamespace(state=types.SimpleNamespace(
+        canonical_reference_loader=loader, pool=pool, r2=object()))
+
+
+def test_the_loader_seam_accepts_a_legacy_single_front_reference():
+    """로더가 슬롯 dict 대신 ProductReference 하나만 돌려줘도 깨지지 않는다."""
     from app.workers import mannequin_job as mj
     ref = _refs("CanonicalFront")["CanonicalFront"]
-    app = types.SimpleNamespace(state=types.SimpleNamespace(
-        canonical_reference_loader=lambda _pid: ref))
-    out = asyncio.run(mj._load_canonical_references(app, product_id="p"))
+
+    async def loader(_conn, _r2, *, project_id, sources):
+        return ref
+
+    out = asyncio.run(mj._load_canonical_references(_app_with_loader(loader), project_id="p"))
     assert set(out) == {"CanonicalFront"}
 
 
 def test_a_loader_failure_degrades_to_raw_rather_than_raising():
-    import types
     from app.workers import mannequin_job as mj
 
-    def _boom(_pid):
+    async def boom(_conn, _r2, *, project_id, sources):
         raise RuntimeError("db down")
 
-    app = types.SimpleNamespace(state=types.SimpleNamespace(canonical_reference_loader=_boom))
-    assert asyncio.run(mj._load_canonical_references(app, product_id="p")) == {}
+    assert asyncio.run(
+        mj._load_canonical_references(_app_with_loader(boom), project_id="p")) == {}
+
+
+def test_no_loader_configured_degrades_to_raw():
+    """오늘의 기본 상태 — SAM 미배선 환경에서는 캐노니컬이 아예 없다."""
+    import types
+    from app.workers import mannequin_job as mj
+    app = types.SimpleNamespace(state=types.SimpleNamespace())
+    assert asyncio.run(mj._load_canonical_references(app, project_id="p")) == {}
 
 
 def test_the_loader_never_produces():

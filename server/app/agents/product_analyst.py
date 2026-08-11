@@ -266,10 +266,6 @@ def analysis_schema() -> dict:
             "suggestedName": {"type": _nullable("string")},
             "swatchSuggestions": {"type": "array", "items": swatch},
             "styleTags": {"type": "array", "items": {"type": "string", "enum": list(STYLE_TAGS)}},
-            # 구조 사실은 추측값이 아니라 사진에서 실제로 센 개수다. null=가려짐/판독 불가,
-            # 0=없음을 확실히 확인. Product Truth 승인 화면에서 셀러가 수정할 수 있다.
-            "buttonCount": {"type": _nullable("integer")},
-            "pocketCount": {"type": _nullable("integer")},
             # 원본이 거울 셀카인가 — 생성 프롬프트가 텍스트·로고를 정방향으로 되돌리게 하는 신호.
             # 셀러 거울 셀카는 흔한데, 이걸 모르면 반전된 로고가 그대로 상세페이지로 나간다.
             "sourceMirrored": {"type": "boolean"},
@@ -277,7 +273,7 @@ def analysis_schema() -> dict:
         "required": [
             "clothingType", "subCategory", "customCategory", "targetGenders", "fit", "materials",
             "materialPresetIndex", "aiSuggestedPoints", "suggestedName", "swatchSuggestions",
-            "styleTags", "buttonCount", "pocketCount", "sourceMirrored",
+            "styleTags", "sourceMirrored",
         ],
     }
 
@@ -319,17 +315,14 @@ def _materials(raw) -> list[dict]:
     return out
 
 
-def _visible_count(raw: dict, key: str, maximum: int) -> int | None:
-    value = raw.get(key)
-    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= maximum:
-        return value
-    return None
-
-
 def validate(raw: dict) -> dict:
     """enum 밖 값 드롭, measurements 강제 제거, points 절단, styleTags 필터. 출력 키는 고정 집합만."""
     raw = raw or {}
-    genders = [g for g in (raw.get("targetGenders") or []) if _in(g, GENDERS)]
+    # 성별은 단일값으로 좁힌다(2026-07-31 사용자 결정). 폼의 성별 칩이 단일 선택인데 AI 는
+    # 유니섹스 옷에 ["women","men"] 둘을 채워, 칩엔 첫 값만 켜지고 매칭 의류 조회는 남녀 전부를
+    # 통과시켜 "성별 상관없이 다 뜬다"가 됐다(실측: 저장 분석 55건 중 17건이 2개).
+    # AI 가 앞에 둔 값(주 대상)을 살린다 — 화면에 보이는 칩 = 매칭 필터.
+    genders = [g for g in (raw.get("targetGenders") or []) if _in(g, GENDERS)][:1]
     swatches = []
     for s in raw.get("swatchSuggestions") or []:
         if isinstance(s, dict) and _in(s.get("swatchId"), SWATCH_IDS):
@@ -355,7 +348,9 @@ def validate(raw: dict) -> dict:
         "subCategory": sub_category,
         "customCategory": custom or None,
         "targetGenders": genders,
-        "fit": raw.get("fit") if _in(raw.get("fit"), FITS) else None,
+        "fit": "slim" if raw.get("fit") == "tight" else (
+            raw.get("fit") if _in(raw.get("fit"), FITS) else None
+        ),
         "materials": _materials(raw.get("materials")),
         # 프리셋 번호는 정수만 통과 — 실제 범위 검증은 카테고리가 확정된 distribute 에서
         "materialPresetIndex": (
@@ -369,8 +364,6 @@ def validate(raw: dict) -> dict:
         "suggestedName": name or None,
         "swatchSuggestions": swatches,
         "styleTags": style_tags,
-        "buttonCount": _visible_count(raw, "buttonCount", 30),
-        "pocketCount": _visible_count(raw, "pocketCount", 12),
         # bool 강제 — 모델이 문자열("true")이나 null 을 뱉어도 판정 불명은 False(미반전)로 눕힌다.
         # 반전 아님을 기본으로 두는 쪽이 안전하다: 오탐이면 정상 사진을 좌우로 뒤집게 된다.
         "sourceMirrored": raw.get("sourceMirrored") is True,
@@ -407,8 +400,6 @@ def distribute(validated: dict) -> dict:
             "materials": materials,
             "aiSuggestedPoints": validated.get("aiSuggestedPoints", []),
             "suggestedName": validated.get("suggestedName"),
-            "buttonCount": validated.get("buttonCount"),
-            "pocketCount": validated.get("pocketCount"),
             # 생성 경로가 읽어 텍스트·로고를 정방향으로 렌더하게 한다(prompts.mannequin_context).
             "sourceMirrored": validated.get("sourceMirrored", False),
         },

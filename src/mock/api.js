@@ -14,17 +14,57 @@
    ============================================================= */
 import { DB, reseedDraft, buildEditorBlocksFromStoryboard, buildStoryboard } from '@/mock/db.js';
 import { Placeholder } from '@/mock/placeholders.js';
-import { recommendLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
+import {
+  addCustomMatchToAnalysis,
+  getComplementaryMatchingType,
+  recommendLegacyMatchClothing,
+  removeCustomMatchFromAnalysis,
+} from '@/mock/matchingRecommendation.js';
 import { CREDIT_COSTS, LIMITS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
+import { createMeasurementFields } from '@/lib/measurementSchema.js';
+import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
+import {
+  applyOpeningRow, hasOpeningRow, migrateLegacyEntryStylingRuns,
+} from '@/lib/storyboardEntryPlacement.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const touch = () => { DB.project.updatedAt = new Date().toISOString(); };
 const spend = (n) => { DB.account.credits = Math.max(0, DB.account.credits - n); return DB.account.credits; };
+const jobCancelledError = () => {
+  const error = new Error('마네킹컷 생성이 취소됐어요.');
+  error.code = 'job_cancelled';
+  return error;
+};
+const settleMockMannequinCharge = (job) => {
+  if (!job.creditsSettled) {
+    job.creditsSettled = true;
+    job.credits = spend(CREDIT_COSTS.mannequinGenerate);
+  }
+  return job.credits;
+};
+// 에디터 대기 이벤트 시뮬 상태 (startDetailPage) — 페이지 새로고침 = 모듈 재실행 = 초기화(재데모 가능)
+let ewSim = null;
 const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
+const customMatchUploads = new Map();
+const mockCheckoutOrders = new Map();
+const MOCK_CHECKOUT_KEY = 'wl_mockCheckout';
+const saveMockCheckout = (order) => {
+  try { sessionStorage.setItem(MOCK_CHECKOUT_KEY, JSON.stringify(order)); } catch { /* same-page Map fallback */ }
+};
+const loadMockCheckout = (orderId) => {
+  if (mockCheckoutOrders.has(orderId)) return mockCheckoutOrders.get(orderId);
+  try {
+    const order = JSON.parse(sessionStorage.getItem(MOCK_CHECKOUT_KEY) || 'null');
+    return order?.orderId === orderId ? order : null;
+  } catch { return null; }
+};
+const clearMockCheckout = () => {
+  try { sessionStorage.removeItem(MOCK_CHECKOUT_KEY); } catch { /* noop */ }
+};
 const cutsEnvelope = () => ({ cuts: clone(DB.mannequins) });
 const syncSelectedCut = (cutId) => {
   const selected = DB.mannequins.find((m) => m.id === cutId) || DB.mannequins[0] || null;
@@ -39,39 +79,48 @@ const makeMannequinCut = (version) => ({
   isSelected: true,
   createdAt: new Date().toISOString(),
 });
-let mannequinBaseline = null;
-const mannequinEditReplay = new Map();
 
-function typedError(code, message) {
-  const error = new Error(message);
-  error.code = code;
-  return error;
-}
-
-/* 진행 중인 유료 job 레지스트리 — 같은 job 의 중복 시작 요청(StrictMode 이중
+/* 진행 중인 job 레지스트리 — 같은 job 의 중복 시작 요청(StrictMode 이중
    실행, 생성 중 이탈 후 재진입)은 새 작업을 만들지 않고 기존 job 에 합류시켜
    1회만 차감되게 한다. 실서버의 job 레코드 dedup 에 대응 (계약 §6). */
-const inflight = { mannequins: null, detailPage: null };
+const inflight = { analyze: null, mannequins: null, detailPage: null };
 function joinable(slot, start) {
   if (!inflight[slot]) {
     const listeners = [];
     const job = { listeners };
-    job.promise = start(listeners).finally(() => { if (inflight[slot] === job) inflight[slot] = null; });
+    job.promise = start(listeners, job).finally(() => { if (inflight[slot] === job) inflight[slot] = null; });
     inflight[slot] = job;
   }
   return inflight[slot];
 }
 
 // generic long-running job: ticks progress 0..100, resolves with result
-function runJob({ duration = 2600, onProgress, result, stall = false }) {
-  return new Promise((resolve) => {
+function runJob({ duration = 2600, onProgress, result, stall = false, cancellableJob }) {
+  return new Promise((resolve, reject) => {
     const start = performance.now();
-    const id = setInterval(() => {
+    let id = null;
+    const cancel = () => {
+      if (id != null) clearInterval(id);
+      if (cancellableJob?.cancel === cancel) cancellableJob.cancel = null;
+      reject(jobCancelledError());
+    };
+    if (cancellableJob) {
+      cancellableJob.cancel = cancel;
+      if (cancellableJob.cancelled) {
+        cancel();
+        return;
+      }
+    }
+    id = setInterval(() => {
       const elapsed = performance.now() - start;
       let pct = Math.min(100, Math.round((elapsed / duration) * 100));
       if (stall && pct >= 95 && elapsed < duration + 1200) pct = 95; // PRD §7.2 stall at 95%
       onProgress && onProgress(pct);
-      if (pct >= 100) { clearInterval(id); resolve(typeof result === 'function' ? result() : result); }
+      if (pct >= 100) {
+        clearInterval(id);
+        if (cancellableJob?.cancel === cancel) cancellableJob.cancel = null;
+        resolve(typeof result === 'function' ? result() : result);
+      }
     }, 60);
   });
 }
@@ -82,9 +131,7 @@ export const api = {
   // 진행 중이던 이전 프로젝트의 job 에 새 프로젝트가 합류하지 않도록 레지스트리도 비운다.
   async createProject() {
     reseedDraft();
-    mannequinBaseline = null;
-    mannequinEditReplay.clear();
-    inflight.mannequins = null; inflight.detailPage = null;
+    inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
     await wait(80); return clone(DB.project);
   },
   async getProject(/* projectId */) { await wait(60); return clone(DB.project); },
@@ -99,11 +146,13 @@ export const api = {
     if ('fitProfile' in patch) DB.analysis.fitProfile = clone(patch.fitProfile);
     // 사진 양 변경 시, 사용자가 콘티를 손대기 전이면 기본 콘티를 새 모드로 재구성 (PRD §7.7)
     if (modeChanged && !DB.storyboardDirty) {
-      DB.storyboard = buildStoryboard(DB.project.composeMode, DB.product.colors, {
+      const keepOpeningRow = hasOpeningRow(DB.storyboard);
+      const seeded = buildStoryboard(DB.project.composeMode, DB.product.colors, {
         projectId: DB.project.id,
         clothingType: DB.product.clothingType,
         targetGenders: DB.analysis.targetGenders,
       });
+      DB.storyboard = keepOpeningRow ? applyOpeningRow(seeded) : seeded;
     }
     return clone(DB.project);
   },
@@ -140,6 +189,32 @@ export const api = {
       { id: 's1', sourceType: 'subscription', status: 'active', initialCredits: 200, remainingCredits: 196, periodEnd: new Date(Date.now() + 25 * 864e5).toISOString(), planId: 'm-basic', createdAt: new Date(Date.now() - 40e5).toISOString() },
     ];
   },
+  async createTossCheckout(planCode) {
+    const creditsByCode = { topup_basic: 200, topup_plus: 600, topup_seller: 1400 };
+    const priceByCode = { topup_basic: 19900, topup_plus: 49900, topup_seller: 99900 };
+    if (!creditsByCode[planCode]) throw new Error('존재하지 않는 충전 상품이에요.');
+    const orderId = uid('order');
+    const order = {
+      orderId,
+      amount: priceByCode[planCode],
+      credits: creditsByCode[planCode],
+      orderName: `크레딧 ${creditsByCode[planCode]}`,
+      customerKey: 'mock-customer',
+    };
+    mockCheckoutOrders.set(orderId, order);
+    saveMockCheckout(order);
+    return clone(order);
+  },
+  async confirmTossPayment({ orderId, amount }) {
+    await wait(120);
+    const order = loadMockCheckout(orderId);
+    if (!order) throw new Error('결제 주문을 찾지 못했어요. 다시 충전을 시작해 주세요.');
+    if (order.amount !== amount) throw new Error('결제 금액이 주문과 일치하지 않아요.');
+    DB.account.credits += order.credits;
+    mockCheckoutOrders.delete(orderId);
+    clearMockCheckout();
+    return { credits: order.credits, available: DB.account.credits };
+  },
 
   // store.loadProject 전용 '현재 프로젝트' (pl1 spec §7 — http 어댑터가 최근/생성 의미를
   // 구현하기 위한 과도기 함수. mock 은 싱글턴이라 getProject 와 동일).
@@ -166,23 +241,42 @@ export const api = {
     await wait(120);
     return { id: uid('img'), src: URL.createObjectURL(file) };
   },
+  async uploadPhoto(
+    _projectId,
+    { filename, mime, blob, purpose = 'upload' },
+    { signal } = {},
+  ) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    await wait(40);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const assetId = uid('asset');
+    const url = URL.createObjectURL(blob);
+    customMatchUploads.set(assetId, { filename, mime, blob, purpose, url });
+    return { assetId, url };
+  },
 
   /* ---- AI analysis (PRD §6) — 30s-feel progress, can fail ---- */
   async analyzeProduct(_projectId, { onProgress, forceError = false } = {}) {
-    await runJob({ duration: 2800, onProgress });
-    if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
-    const a = clone(DB.analysis);
-    // 실측은 AI가 추정하지 않는다 — 사용자가 직접 입력하도록 빈칸으로 둔다.
-    a.measurements = (a.measurements || []).map((m) => ({ ...m, value: null }));
-    return a;
+    const job = joinable('analyze', (listeners) => runJob({
+      duration: 2800,
+      onProgress: (progress) => listeners.forEach((listener) => listener(progress)),
+    }).then(() => {
+      if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
+      const a = normalizeAnalysisFit(clone(DB.analysis));
+      // 실측은 AI가 추정하지 않는다 — 사용자가 직접 입력하도록 빈칸으로 둔다.
+      a.measurements = createMeasurementFields(a.clothingType);
+      return a;
+    }));
+    if (onProgress) job.listeners.push(onProgress);
+    return clone(await job.promise);
   },
-  async getAnalysis(/* projectId */) { await wait(120); return clone(DB.analysis); },
+  async getAnalysis(/* projectId */) { await wait(120); return normalizeAnalysisFit(clone(DB.analysis)); },
   async saveAnalysis(_projectId, patch) {
     await wait(180);
     // 매칭 후보 목록은 서버(추천)가 소유 — matchClothing patch 는 통째로 덮지 않고
     // 아래에서 "선택 상태만" id 단위로 머지한다. 의류 종류 전환 직후 도착하는 묵은
     // 클라 스냅샷이 갱신된 후보 목록을 되살리는 레이스 차단 (stale save 방어).
-    const { matchClothing: matchPatch, ...rest } = patch;
+    const { matchClothing: matchPatch, ...rest } = normalizeAnalysisFit(patch);
     Object.assign(DB.analysis, rest);
     DB.analysis.targetGenders = normalizeTargetGendersForClothingType(
       DB.product.clothingType,
@@ -205,7 +299,11 @@ export const api = {
         return { ...m, selected: !!p.selected, selOrder: p.selected ? p.selOrder : undefined };
       });
       // selOrder 정규화 — 머지로 생길 수 있는 중복/초과를 1..matchClothingMax 로 재부여
-      const ranked = merged.filter((m) => m.selected)
+      const expectedType = getComplementaryMatchingType(DB.analysis.clothingType);
+      const ranked = merged.filter((m) => m.selected
+          && m.isCompatible !== false
+          && expectedType !== null
+          && (m.clothingType == null || m.clothingType === expectedType))
         .sort((a, b) => (a.selOrder || 99) - (b.selOrder || 99))
         .slice(0, LIMITS.matchClothingMax);
       const orderById = new Map(ranked.map((m, i) => [m.id, i + 1]));
@@ -218,17 +316,81 @@ export const api = {
     const owned = {};
     ['clothingType', 'measurements', 'measurementsUnknown'].forEach((k) => { if (k in patch) owned[k] = patch[k]; });
     if (Object.keys(owned).length) Object.assign(DB.product, clone(owned));
-    return clone(DB.analysis);
+    return normalizeAnalysisFit(clone(DB.analysis));
   },
   async draftWashCare(/* projectId */) {
     await wait(900);
     return '찬물 단독 손세탁 권장 · 표백제 사용 금지 · 그늘에 뉘어 건조';
+  },
+  async draftFeatureCopy(/* projectId */) {
+    await wait(700);
+    // mock 은 서버 사전을 복제하지 않는다 — 강조특징을 그대로 되돌려 폼 배선만 확인시킨다.
+    return (DB.analysis.sellingPoints || []).map((p) => ({ point: p, desc: `${p} 디테일을 살렸습니다.` }));
   },
 
   /* ---- mannequin (PRD §7) ---- */
   async getMatchClothing(/* projectId */) {
     await wait(120);
     return clone((DB.analysis?.matchClothing?.length ? DB.analysis.matchClothing : DB.matchClothing));
+  },
+  async addCustomMatchItem(_projectId, { assetIds }, { signal } = {}) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    if ((DB.analysis.matchClothing || []).some((item) => item.isCustom)) {
+      const error = new Error('이미 내 옷이 있어요. 지우고 다시 올려주세요.');
+      error.code = 'custom_match_item_exists';
+      error.status = 409;
+      throw error;
+    }
+    const uploads = (assetIds || []).map((id) => customMatchUploads.get(id)).filter(Boolean);
+    if (uploads.length !== assetIds.length || uploads.length < 1 || uploads.length > 4) {
+      const error = new Error('업로드한 사진을 찾을 수 없어요.');
+      error.code = 'not_found';
+      error.status = 404;
+      throw error;
+    }
+    await wait(120);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const expectedType = getComplementaryMatchingType(DB.analysis.clothingType);
+    const filename = uploads[0].filename?.toLowerCase() || '';
+    const filenameType = filename.includes('bottom') ? 'bottom' : filename.includes('top') ? 'top' : expectedType;
+    const clothingType = filenameType === expectedType ? filenameType : expectedType;
+    const category = clothingType === 'top' ? '티셔츠' : '팬츠';
+    const item = {
+      id: uid('custom'),
+      name: clothingType === 'top' ? '커스텀 상의' : '커스텀 하의',
+      thumb: uploads[0].url,
+      imageUrl: uploads[0].url,
+      thumbnailUrl: uploads[0].url,
+      gender: 'unisex',
+      clothingType,
+      category,
+      fit: 'regular',
+      length: clothingType === 'top' ? 'regular' : 'full',
+      fitCategory: clothingType === 'top' ? 'top' : 'pants',
+      isCustom: true,
+      isCompatible: true,
+      selected: false,
+    };
+    const result = addCustomMatchToAnalysis(DB.analysis, item);
+    DB.analysis.matchClothing = result.analysis.matchClothing;
+    return clone({ item: result.item, analysis: DB.analysis });
+  },
+  async removeCustomMatchItem(/* projectId */) {
+    await wait(80);
+    const analysis = removeCustomMatchFromAnalysis(DB.analysis);
+    DB.analysis.matchClothing = analysis.matchClothing;
+    if (analysis.fitProfile) DB.analysis.fitProfile = analysis.fitProfile;
+    return { analysis: clone(DB.analysis) };
+  },
+  async refreshMatchClothing(/* projectId */) {
+    DB.analysis.matchClothing = recommendLegacyMatchClothing({
+      clothingType: DB.analysis.clothingType,
+      targetGenders: DB.analysis.targetGenders,
+      styleTags: DB.analysis.styleTags,
+      current: DB.analysis.matchClothing,
+      defaultSelection: false,
+    });
+    return clone(DB.analysis);
   },
   async getMannequins(/* projectId */) {
     await wait(140);
@@ -241,42 +403,6 @@ export const api = {
     touch();
     return clone(selected);
   },
-  async getMannequinBaseline(/* projectId */) {
-    await wait(80);
-    return mannequinBaseline ? clone(mannequinBaseline) : null;
-  },
-  async approveMannequin(_projectId, cutId) {
-    await wait(90);
-    const cut = DB.mannequins.find((m) => m.id === cutId);
-    if (!cut) throw typedError('cut_not_found', '승인할 마네킹컷을 찾지 못했어요.');
-    if (mannequinBaseline?.cutId === cutId) {
-      return clone({ ...mannequinBaseline, idempotent: true });
-    }
-    mannequinBaseline = {
-      id: uid('base'),
-      projectId: DB.project.id,
-      baselineCutId: cut.id,
-      cutId: cut.id,
-      outputId: cut.outputId || null,
-      generationRunId: cut.generationRunId || null,
-      lockedInvariants: {
-        mannequinIdentity: true,
-        pose: true,
-        camera: true,
-        framing: true,
-        garmentCategory: true,
-        pattern: true,
-        logo: true,
-        collarType: true,
-        buttonCount: true,
-        pocketCount: true,
-      },
-      approvedAt: new Date().toISOString(),
-      supersededAt: null,
-      idempotent: false,
-    };
-    return clone(mannequinBaseline);
-  },
   // 최초 진입 시 단일 v0 컷을 생성한다. 크레딧: mannequinGenerate (계약 §6).
   // 진행 중에 다시 호출되면(이중 mount·재진입) 기존 job 에 합류한다 — 1회만 차감.
   // 이미 컷이 있으면(완료 후 재호출) 재실행·재차감 없이 기존 결과를 반환한다.
@@ -287,20 +413,36 @@ export const api = {
       syncSelectedCut(DB.project.selectedMannequinId);
       return { data: cutsEnvelope(), credits: DB.account.credits };
     }
-    const job = joinable('mannequins', (listeners) => (async () => {
+    const job = joinable('mannequins', (listeners, activeJob) => (async () => {
       const ownerId = DB.project.id;   // job 도중 새 프로젝트로 리시드되면 결과를 버린다
       // 실서버 체감(25~60s)에 근접시켜 로딩 시퀀스(인트로 3.5s+루프)가 보이게 한다
-      await runJob({ duration: 9000, stall: true, onProgress: (p) => listeners.forEach((f) => f(p)) });
+      await runJob({
+        duration: 9000,
+        stall: true,
+        onProgress: (p) => listeners.forEach((f) => f(p)),
+        cancellableJob: activeJob,
+      });
+      if (activeJob.cancelled) throw jobCancelledError();
       if (DB.project.id !== ownerId) return { data: { cuts: [] }, credits: DB.account.credits };
       if (!DB.mannequins.length) {
         DB.mannequins.push(makeMannequinCut(0));
         syncSelectedCut(DB.mannequins[0].id);
       }
       touch();
-      return { data: cutsEnvelope(), credits: spend(CREDIT_COSTS.mannequinGenerate) };
+      return { data: cutsEnvelope(), credits: settleMockMannequinCharge(activeJob) };
     })());
     if (onProgress) job.listeners.push(onProgress);
     return job.promise;
+  },
+  async cancelMannequinGeneration(/* projectId */) {
+    const job = inflight.mannequins;
+    if (!job || job.cancelled) {
+      return { cancelled: false, credits: DB.account.credits };
+    }
+    job.cancelled = true;
+    const credits = settleMockMannequinCharge(job);
+    job.cancel?.();
+    return { cancelled: true, credits };
   },
   async regenerateMannequin(_projectId, { fitProfile, onProgress } = {}) {
     await runJob({ duration: 2200, onProgress });
@@ -316,72 +458,14 @@ export const api = {
     touch();
     return { data: cutsEnvelope(), credits: spend(CREDIT_COSTS.mannequinGenerate) };
   },
-  async editMannequin(
-    _projectId,
-    { editType, adjustments = {}, baselineId, onProgress, idempotencyKey } = {},
-  ) {
-    if (!mannequinBaseline) {
-      throw typedError('no_approved_baseline', '먼저 마네킹 컷을 승인해 주세요.');
-    }
-    if (baselineId && baselineId !== mannequinBaseline.id) {
-      throw typedError('baseline_changed', '승인 기준이 바뀌었어요.');
-    }
-    const signature = JSON.stringify({
-      baselineId: mannequinBaseline.id,
-      editType,
-      adjustments,
-    });
-    if (idempotencyKey && mannequinEditReplay.has(idempotencyKey)) {
-      const replay = mannequinEditReplay.get(idempotencyKey);
-      if (replay.signature !== signature) {
-        throw typedError('idempotency_conflict', '같은 요청 키로 다른 편집을 보낼 수 없어요.');
-      }
-      await wait(80);
-      onProgress && onProgress(100);
-      return clone(replay.response);
-    }
-
-    await runJob({ duration: 2200, onProgress });
-    const prevMax = DB.mannequins.reduce((max, cut) => Math.max(max, Number(cut.version) || 0), -1);
-    const next = {
-      ...makeMannequinCut(prevMax + 1),
-      parentCutId: mannequinBaseline.cutId,
-      editType,
-      requestedAdjustments: clone(adjustments),
-      qcScores: {
-        outcome: 'needs_review',
-        componentsNeedingReview: ['manual_review_required'],
-        editIntentQc: {
-          decision: 'review_required',
-          requestedChangeSatisfied: true,
-          unexpectedChanges: [],
-          lockedInvariantViolations: [],
-        },
-      },
-    };
-    DB.mannequins = DB.mannequins.map((m) => ({ ...m, isSelected: false }));
-    DB.mannequins.push(next);
-    syncSelectedCut(next.id);
-    touch();
-    const response = {
-      data: cutsEnvelope(),
-      credits: spend(CREDIT_COSTS.mannequinGenerate),
-      editSession: {
-        id: uid('edit'),
-        baselineId: mannequinBaseline.id,
-        parentOutputId: mannequinBaseline.outputId || null,
-        editType,
-        requestedAdjustments: clone(adjustments),
-        status: 'review_required',
-        jobId: uid('job'),
-      },
-    };
-    if (idempotencyKey) mannequinEditReplay.set(idempotencyKey, { signature, response: clone(response) });
-    return clone(response);
-  },
 
   /* ---- storyboard (PRD §8) ---- */
-  async getStoryboard(/* projectId */) { await wait(160); return clone(DB.storyboard); },
+  async getStoryboard(/* projectId */) {
+    await wait(160);
+    const migrated = migrateLegacyEntryStylingRuns(DB.storyboard);
+    if (migrated.changed) DB.storyboard = migrated.blocks;
+    return clone(DB.storyboard);
+  },
   async saveStoryboard(_projectId, blocks, { autoAssignment = false } = {}) {
     await wait(150);
     DB.storyboard = clone(blocks);
@@ -396,6 +480,70 @@ export const api = {
      크레딧: storyboardPerCut × AI 컷 수 — 내 이미지 블록은 생성 작업이 없어 제외.
      진행 중 재호출은 기존 job 에 합류한다 — 1회만 생성·차감.
      이미 완료(status='done')면 재생성·재차감 없이 기존 결과를 반환한다. */
+  /* 에디터 대기(editor_wait_dev_spec §3) — mock 이벤트 시뮬. 서버와 같은 이벤트 계약
+     (copy_ready → cut_start/cut_done 롤링 → progress → done)을 흘려 대기 화면을 실데모한다.
+     핵심 트릭: 최종 에디터 블록을 **먼저** 조립해 거기서 이미지 src·카피 텍스트를 뽑아
+     이벤트로 내보낸다 → 대기 중 채워지는 내용과 완성본이 정확히 일치한다. */
+  async startDetailPage(_projectId) {
+    if (DB.project.status === 'done') {
+      return { data: clone(DB.editorBlocks), credits: DB.account.credits };  // 완료 재호출(멱등)
+    }
+    if (ewSim && ewSim.status === 'running') return { jobId: ewSim.jobId };  // 중복 시작 합류
+    DB.project.status = 'generating'; touch();
+    ewSim = { jobId: uid('job'), events: [], nextId: 1, status: 'running', progress: 0, result: null };
+    const push = (type, payload) => {
+      ewSim.events.push({ id: ewSim.nextId++, type, payload });
+      if (type === 'progress') ewSim.progress = payload.progress;
+    };
+    (async () => {
+      const blocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting);
+      const imgs = []; const copies = new Map();
+      for (const b of blocks) {
+        for (const el of (b.elements || [])) {
+          if (el.type === 'image' && el.sourceBlockId && el.src) imgs.push(el);
+          if (el.type === 'text' && el.sourceBlockId && el.copyRole) {
+            const list = copies.get(el.sourceBlockId) || [];
+            list.push({ role: el.copyRole, text: el.text });
+            copies.set(el.sourceBlockId, list);
+          }
+        }
+      }
+      push('progress', { progress: 15, phase: 'inputs_loaded' });
+      await wait(2000);   // 빈 뼈대(회색+로고 슬롯)를 충분히 보여준다 — "여기가 채워질 자리"
+
+      if (DB.project.copywriting && copies.size) {
+        push('progress', { progress: 18, phase: 'copy' });
+        for (const [bid, texts] of copies) { await wait(600); push('step', { blockId: bid, status: 'copy_ready', texts }); }
+      }
+      const total = Math.max(1, imgs.length);
+      let done = 0; let next = 0;
+      // 3개 창구 롤링 — 순서 무작위 도착의 실감을 내되 데모 총 소요는 ~10초대
+      await Promise.all(Array.from({ length: Math.min(3, total) }, () => (async () => {
+        while (next < imgs.length) {
+          const el = imgs[next++];
+          push('step', { blockId: el.sourceBlockId, status: 'cut_start' });
+          await wait(2400 + Math.random() * 2200);
+          push('step', { blockId: el.sourceBlockId, status: 'cut_done', previewUrl: el.src, width: 880, height: 1320 });
+          done += 1;
+          push('progress', { progress: 20 + Math.round(60 * done / total), phase: 'cut', done, total });
+        }
+      })()));
+      push('progress', { progress: 85, phase: 'assemble' });
+      await wait(700);
+      DB.editorBlocks = blocks; DB.project.status = 'done'; touch();
+      const aiCuts = DB.storyboard.filter((b) => b.source !== 'mine').length;
+      ewSim.result = { data: clone(blocks), credits: spend(CREDIT_COSTS.storyboardPerCut * aiCuts) };
+      ewSim.progress = 100; ewSim.status = 'done';
+    })();
+    return { jobId: ewSim.jobId };
+  },
+  async getJob(jobId) {
+    return { id: jobId, status: ewSim?.status || 'done', progress: ewSim?.progress ?? 100,
+      result: ewSim?.result || null, errorMessage: null };
+  },
+  async getJobEvents(_jobId, after = 0) {
+    return { events: (ewSim?.events || []).filter((e) => e.id > after) };
+  },
   async generateDetailPage(_projectId, { onProgress, onStep } = {}) {
     if (DB.project.status === 'done') {
       await wait(160);
@@ -430,11 +578,6 @@ export const api = {
   // 에디터 상태 영속화 (계약 §6) — 저장 버튼·자동 저장이 호출. 세션 내 재진입 시 편집 유지.
   async saveEditorBlocks(_projectId, blocks) { await wait(200); DB.editorBlocks = clone(blocks); touch(); },
   async getWardrobe(/* projectId */) { await wait(160); return clone(DB.wardrobe); },
-  async getProductTruth() { return null; },
-  async draftProductTruth() { return null; },
-  async updateProductTruth() { return null; },
-  async approveProductTruth() { return null; },
-  async rejectProductTruth() { return null; },
   // §7 과도기 브리지 — http 모드 generateDetailPage가 실생성 결과를 mock 소유 상태(에디터 블록·의류탭)에 주입.
   // 콘티·에디터 저장이 서버로 넘어가면(Phase 7) 제거된다.
   async commitGeneratedDetailPage(_projectId, { editorBlocks, wardrobe } = {}) {

@@ -15,15 +15,14 @@ from app.agents.mannequin_adjust import (
     build_adjust_manifest,
     render_adjust_prompt,
 )
-from app.agents.product_reference import ProductReference
 from app.workers import mannequin_job
 from conftest import make_settings
 
 
 _PNG_1PX = bytes.fromhex(
-    "89504e470d0a1a0a0000000d494844520000000100000001080600000"
-    "01f15c4890000000d49444154789c626001000000ffff030000060005"
-    "57bfabd40000000049454e44ae426082"
+    "89504e470d0a1a0a0000000d4948445200000002000000020802000000"
+    "fdd49a730000001349444154789c63fcffff3f0303031303180000240603"
+    "015da24e880000000049454e44ae426082"
 )
 PROFILE = {
     "category": "top",
@@ -122,7 +121,9 @@ def _run_worker(
         }
         return mapping.get(asset_id)
 
-    async def get_matching_item_asset(conn, item_id):
+    # 커스텀 매칭 도입으로 소유권(user_id·project_id) 인자가 붙었다 — 큐레이션과 남의
+    # 커스텀을 같은 조회로 받지 않기 위한 것이라, 스텁도 같은 시그니처를 받아야 한다.
+    async def get_matching_item_asset(conn, item_id, user_id, project_id):
         return "match-asset" if item_id == current_match_id else None
 
     async def get_edit_parent(conn, user_id, project_id):
@@ -151,6 +152,9 @@ def _run_worker(
         calls["failure"].append(kwargs)
         return True
 
+    async def is_job_cancelled(conn, job_id):
+        return False
+
     async def fake_emit(pool, job_id, event_type, payload):
         calls["emits"].append((event_type, dict(payload)))
 
@@ -160,6 +164,7 @@ def _run_worker(
         ("get_asset_for_user", get_asset_for_user),
         ("get_matching_item_asset", get_matching_item_asset),
         ("get_mannequin_edit_parent", get_edit_parent),
+        ("is_job_cancelled", is_job_cancelled),
         ("finalize_mannequin_success", finalize_success),
         ("finalize_mannequin_failure", finalize_failure),
     ):
@@ -341,7 +346,7 @@ def test_edit_candidate_uses_parent_first_pro_model_adjust_prompt_axis_qc_and_sa
         base_fit="regular",
         base_gender="women",
         base_img=InlineImage("image/png", b"fresh-base"),
-        prod_refs=[ProductReference(slot="Front", asset_id="prod", image=product)],
+        prod_imgs=[product],
         match_img=match,
         product_count=2,
         template="unused fresh template",
@@ -363,9 +368,7 @@ def test_edit_candidate_uses_parent_first_pro_model_adjust_prompt_axis_qc_and_sa
     assert call["model"] == "pro-test"  # 빈 adjust tier도 image_high로 강제 해석
     assert [image.data for image in call["images"]] == [b"parent", b"product", b"match"]
     assert call["prompt"] == render_adjust_prompt(
-        directives,
-        build_adjust_manifest(
-            [ProductReference(slot="Front", asset_id="prod", image=product)], True))
+        directives, build_adjust_manifest(1, True))
     assert judged == [_PNG_1PX]  # 편집 경로의 최초 출력에도 기존 axis QC가 실행됨
 
     rendered = [

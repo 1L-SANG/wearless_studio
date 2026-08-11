@@ -9,11 +9,10 @@ import asyncio
 import logging
 import time
 
-from .. import repo
+from .. import image_usage, repo
 from .analyze_job import run_analyze_job
 from .detail_page_job import run_detail_page_job
 from .editor_image_job import run_editor_image_job
-from .export_job import run_export_job
 from .mannequin_adjust_job import run_mannequin_adjust_job
 from .mannequin_job import run_mannequin_job
 from .fm_model_asset_job import run_fm_model_asset_job
@@ -30,12 +29,11 @@ _WORKERS = {
     "detail_page": run_detail_page_job,  # PL-4 상세페이지 생성 (AG-06→02→03→M-02)
     "mannequin_adjust": run_mannequin_adjust_job,  # @deprecated AG-05 — 툼스톤(legacy 잡 드레인 전용, AI 미호출)
     "editor_image": run_editor_image_job,  # AG-06/07 에디터 이미지 (PL-5/6, mode:'new'|'vary')
-    "export": run_export_job,  # Phase 9 deterministic editor export (long PNG / ZIP)
     "personalization_generation": run_personalization_generation_job,  # 개인화 생성 경로 α (api-spec §4)
     "personalization_purge": run_personalization_purge_job,  # 개인화 파기 캐스케이드 (api-spec §3.5)
-    "fm_model_asset_build": run_fm_model_asset_job,  # 실존 모델 자산 빌드(합성+QC, handoff fork)
     # 캐노니컬 컷아웃 전처리(무과금). analyze 와 독립 — 소스 사진만 있으면 돈다.
     "sam_preprocess": run_sam_preprocess_job,
+    "fm_model_asset_build": run_fm_model_asset_job,  # 실존 모델 자산 빌드(합성+QC, handoff fork)
 }
 _KINDS = tuple(_WORKERS)
 _SWEEP_INTERVAL = 60.0  # lease 복구 점검 주기(초)
@@ -93,7 +91,12 @@ class JobDispatcher:
                 if worker is None:  # _KINDS 로 claim 을 걸러도 방어(설정 오류 대비)
                     log.error("no worker for job kind=%s (job %s)", job["kind"], job["id"])
                     continue
-                await worker(self.app, job)
+                # 이 잡이 도는 동안 일어난 이미지 호출에 job·user·kind 를 붙인다
+                # (워커 시그니처를 바꾸지 않고 실비를 잡별로 귀속시키는 유일한 지점).
+                with image_usage.job_scope(
+                    job_id=job["id"], user_id=job.get("user_id"), stage=job["kind"]
+                ):
+                    await worker(self.app, job)
             except asyncio.CancelledError:
                 raise
             except Exception:

@@ -62,7 +62,7 @@ def test_canonical_content_role_wins_conflicting_recipe():
     })
 
     assert block["contentRole"] == "hero"
-    assert block["sectionRole"] == "benefit"
+    assert block["sectionRole"] == "hooking"
     assert block["cutType"] == "styling"
     assert block["direction"] == "back"
     assert block["shot"] == "full"
@@ -90,16 +90,16 @@ def test_canonical_ignores_retired_kind_and_infers_from_cut_type():
         "detail", "product", "product", "detail",
     )
     assert (fit["contentRole"], fit["sectionRole"], fit["cutType"]) == (
-        "fit", "fit", "horizon",
+        "fit", "studio", "horizon",
     )
     assert (fit["direction"], fit["shot"]) == ("side", "medium")
-    assert retired["taxonomyVersion"] == 2
+    assert retired["taxonomyVersion"] == 3
     assert "kind" not in retired
 
     stored = content_roles.canonicalize_storyboard_block({
         "kind": "hook", "cutType": "product", "shot": "detail",
     }, for_storage=True)
-    assert stored["taxonomyVersion"] == 2
+    assert stored["taxonomyVersion"] == 3
     assert "kind" not in stored
 
 
@@ -122,10 +122,10 @@ def test_canonical_mine_and_custom_blocks_do_not_invent_ai_recipe():
 
     assert mine["contentRole"] == "custom"
     assert mine["cutType"] is None
-    assert mine["taxonomyVersion"] == 2
+    assert mine["taxonomyVersion"] == 3
     assert mine["ownImages"] == ["asset-1"]
     assert custom["contentRole"] == "custom"
-    assert custom["sectionRole"] == "benefit"
+    assert custom["sectionRole"] == "hooking"
     assert (custom["cutType"], custom["direction"], custom["shot"]) == (
         "styling", "side", "full",
     )
@@ -168,7 +168,7 @@ def test_canonical_storyboard_list_returns_normalized_copies():
     assert "contentRole" not in raw[0]  # 호출자의 원본 저장본을 제자리에서 바꾸지 않는다.
 
 
-def test_canonical_storyboard_stably_orders_the_three_sections():
+def test_canonical_storyboard_stably_orders_the_four_sections():
     normalized = content_roles.canonicalize_storyboard([
         {"id": "product-1", "source": "ai", "contentRole": "productOverview"},
         {"id": "fit-1", "source": "ai", "contentRole": "fit"},
@@ -179,9 +179,9 @@ def test_canonical_storyboard_stably_orders_the_three_sections():
     ])
 
     assert [block["id"] for block in normalized] == [
-        "benefit-1", "benefit-2", "fit-1", "fit-2", "custom", "product-1",
+        "benefit-1", "benefit-2", "fit-2", "custom", "fit-1", "product-1",
     ]
-    assert normalized[4]["sectionRole"] == "fit"  # 앞 이웃 섹션을 상속해 원래 위치를 지킨다.
+    assert normalized[3]["sectionRole"] == "styling"  # 앞 이웃 섹션을 상속해 원래 위치를 지킨다.
 
 
 def test_canonical_storyboard_assigns_hidden_roles_and_only_one_hero():
@@ -228,10 +228,25 @@ def test_canonical_storyboard_section_wins_stale_internal_role_and_recipe():
     ]
     assert (
         normalized[0]["sectionRole"], normalized[0]["contentRole"], normalized[0]["cutType"]
-    ) == ("benefit", "hero", "horizon")
+    ) == ("hooking", "hero", "horizon")
     assert (
         normalized[1]["sectionRole"], normalized[1]["contentRole"], normalized[1]["cutType"]
     ) == ("product", "productOverview", "product")
+
+
+def test_canonical_storyboard_studio_section_rejects_styling_recipe():
+    normalized = content_roles.canonicalize_storyboard([{
+        "id": "studio-with-styling-recipe", "source": "ai", "sectionRole": "studio",
+        "contentRole": "coordination", "cutType": "styling", "direction": "side", "shot": "medium",
+        "exampleId": "old-example", "thumb": "example.png", "baseThumb": "base.png",
+    }])
+
+    block = normalized[0]
+    assert (block["sectionRole"], block["contentRole"], block["cutType"]) == (
+        "studio", "fit", "horizon",
+    )
+    assert block["exampleId"] is None
+    assert block["thumb"] == "base.png"
 
 
 def test_canonical_storyboard_keeps_example_when_auto_role_changes_but_selected_cut_does_not():
@@ -255,7 +270,7 @@ def test_canonical_selected_fit_cut_realigns_hidden_role():
     })
 
     assert (normalized["sectionRole"], normalized["contentRole"], normalized["cutType"]) == (
-        "fit", "coordination", "styling",
+        "styling", "coordination", "styling",
     )
     assert (normalized["direction"], normalized["shot"]) == ("side", "medium")
 
@@ -491,13 +506,14 @@ def test_normalize_unknown_cut_raises():
         cut.normalize_spec({"cutType": "daily"})  # ADR-0003에서 폐기된 토큰
 
 
-def test_virtual_model_loader_resolves_c_pair_and_excludes_product(tmp_path, monkeypatch, caplog):
+def test_virtual_model_loader_resolves_c_pack_and_excludes_product(tmp_path, monkeypatch, caplog):
     manifest_path = tmp_path / "virtual_models.json"
     manifest_path.write_text(json.dumps({
         "models": {
             "mA": {"views": {
                 "face_front": {"key": "seed/mA/face.webp", "mime": "image/webp"},
                 "grid_sedcard": {"key": "seed/mA/grid.png", "mime": "image/jpeg"},
+                "body_front": {"key": "seed/mA/body.png", "mime": "image/jpeg"},
             }},
         },
     }), encoding="utf-8")
@@ -509,6 +525,10 @@ def test_virtual_model_loader_resolves_c_pair_and_excludes_product(tmp_path, mon
         assert cut.resolve_virtual_model_assets(person) == (
             {"key": "seed/mA/face.webp", "mime": "image/webp", "bucket": "public"},
             {"key": "seed/mA/grid.png", "mime": "image/jpeg", "bucket": "public"},
+        )
+        assert cut.resolve_virtual_model_assets(person, require_full_body=True) == (
+            {"key": "seed/mA/face.webp", "mime": "image/webp", "bucket": "public"},
+            {"key": "seed/mA/body.png", "mime": "image/jpeg", "bucket": "public"},
         )
         product = cut.normalize_spec({"cutType": "product", "modelId": "mA"})
         assert cut.resolve_virtual_model_assets(product) is None
@@ -651,6 +671,7 @@ def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path
                 "applicableClothingTypes": ["top", "outer"],
                 "cutType": "styling", "shot": "full", "gender": "women",
                 "direction": "side",
+                "faceVisibility": "hidden",
             },
             "product": {
                 "all": "releases/r1/all/product.png",
@@ -673,6 +694,7 @@ def test_example_asset_registry_v2_preserves_metadata_and_legacy_shapes(tmp_path
         assert assets["v2"]["applicableClothingTypes"] == ["top", "outer"]
         assert assets["v2"]["thumb"].endswith("v2.webp")
         assert assets["v2"]["direction"] == "side"
+        assert assets["v2"]["faceVisibility"] == "hidden"
         assert "direction" in assets["product"] and assets["product"]["direction"] is None
         assert "gender" in assets["product"] and assets["product"]["gender"] is None
         assert assets["legacy-string"] == {"all": "legacy/all.png"}
@@ -923,6 +945,76 @@ def test_render_product_detail_is_grounded_and_has_no_person_lines():
     assert "never invent lining, hardware" in p
     assert "No model and no visible human body parts" in p
     assert "Face handling" not in p
+
+
+# ---------- 디테일 컷 2모드 (2026-08-07 스펙 §5: 정밀 / 구조 확대) ----------
+
+
+def test_detail_cut_back_uses_backdetail_label_gate():
+    # 매니페스트에 BackDetail 라벨이 있으면 정밀 모드 문구가 실린다
+    manifest = f"1. {cut._SLOT_LABEL['Back']}\n2. {cut._SLOT_LABEL['BackDetail']}"
+    p = _render({"cutType": "product", "shot": "detail", "direction": "back"},
+                manifest=manifest)
+    assert "detail close-up reference" in p          # SHOT:detail 정밀 모드
+    assert "structural element" not in p             # 구조 모드 아님
+    assert "Show the back side" in p                 # DIR:back_product 방향 지시
+
+
+def test_detail_cut_back_falls_to_zoom_mode_with_back_original_only():
+    manifest = f"1. {cut._SLOT_LABEL['Front']}\n2. {cut._SLOT_LABEL['Back']}"
+    p = _render({"cutType": "product", "shot": "detail", "direction": "back"},
+                manifest=manifest)
+    assert "structural element" in p                 # SHOT:detail_zoom
+    assert "do NOT invent" in p
+
+
+def test_detail_cut_back_fails_without_back_side_evidence():
+    # 앞면 디테일만 있어도 뒷면 컷 근거가 아니다 — 스펙 §5 금지열
+    manifest = f"1. {cut._SLOT_LABEL['Front']}\n2. {cut._SLOT_LABEL['Detail']}"
+    with pytest.raises(ValueError, match="detail_reference_required"):
+        _render({"cutType": "product", "shot": "detail", "direction": "back"},
+                manifest=manifest)
+
+
+def test_detail_cut_front_zoom_mode_with_front_original_only():
+    manifest = f"1. {cut._SLOT_LABEL['Front']}"
+    p = _render({"cutType": "product", "shot": "detail"}, manifest=manifest)
+    assert "structural element" in p
+    assert "fine fabric weave" in p                  # 저해상 확대 금지 지시
+
+
+def test_detail_cut_zoom_mode_suppresses_color_transfer_line():
+    # 타색 디테일 자산이 유실돼 zoom 으로 떨어졌으면, 존재하지 않는 첨부를 전제하는
+    # 색전환 지시를 넣지 않는다 (2026-08-07 Codex 리뷰 P2).
+    spec = cut.normalize_spec({"cutType": "product", "shot": "detail"})
+    spec["_detailColorTransfer"] = {"targetName": "그린", "targetHex": None, "referenceName": "레드"}
+    manifest = f"1. {cut._SLOT_LABEL['Front']}"
+    p = cut.render_cut_prompt(cut.load_cut_template(), spec, {}, {}, "top", manifest)
+    assert "structural element" in p                 # zoom 모드
+    assert "DETAIL COLORWAY TRANSFER" not in p       # 전환 지시 억제
+    # 정밀 모드(타색 디테일이 실제 첨부됨)에서는 그대로 나간다
+    manifest_ok = f"1. {cut._SLOT_LABEL['Front']}\n2. {cut._SLOT_LABEL['Detail']}"
+    p_ok = cut.render_cut_prompt(cut.load_cut_template(), spec, {}, {}, "top", manifest_ok)
+    assert "DETAIL COLORWAY TRANSFER" in p_ok
+
+
+# ---------- 슬롯 계약 (2026-08-07 개편: Fit 폐기 · BackDetail 신설) ----------
+
+
+def test_slot_order_backdetail_last_no_fit():
+    from app.agents.mannequin import _SLOT_ORDER
+    assert _SLOT_ORDER == {"Front": 0, "Back": 1, "Detail": 2, "BackDetail": 3}
+
+
+def test_slot_labels_have_backdetail_and_no_fit():
+    from app.agents import feature_extractor
+    from app.workers import mannequin_job
+    for labels in (cut._SLOT_LABEL, feature_extractor._SLOT_LABEL,
+                   mannequin_job._SLOT_LABEL):
+        assert "BackDetail" in labels
+        assert "Fit" not in labels
+    # 뒷면 전용 못박기 — 스펙 §6 (앞면 배치 금지 문구)
+    assert "never place it on the front" in cut._SLOT_LABEL["BackDetail"]
 
 
 @pytest.mark.parametrize("state, phrase, inner_phrase", [

@@ -25,19 +25,24 @@ create table if not exists public.qc_results (
 comment on table public.qc_results is
   '한 최종 output에 대한 독립 QC check 결과와 결정적 policy 판정. Vision 관찰은 check 입력일 '
   '뿐 overall_decision을 직접 쓰지 않는다.';
+
 comment on column public.qc_results.checks is
   'composition/image_quality/color_fidelity/pattern_fidelity/garment_structure/style_consistency '
   '등 단일 책임 check JSON 배열. unavailable은 pass가 아니라 review 근거다.';
 
 create index if not exists qc_results_project_created_idx
   on public.qc_results (project_id, created_at desc);
+
 create index if not exists qc_results_output_idx
   on public.qc_results (generation_output_id);
+
 create index if not exists qc_results_truth_idx
   on public.qc_results (truth_package_id);
 
 alter table public.qc_results enable row level security;
+
 drop policy if exists qc_results_owner_select on public.qc_results;
+
 create policy qc_results_owner_select on public.qc_results
   for select using (
     exists (

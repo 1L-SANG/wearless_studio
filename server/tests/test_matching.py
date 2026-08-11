@@ -1,6 +1,7 @@
 import contextlib
 
 import app.routes as routes
+import pytest
 from app.services import matching
 
 
@@ -20,6 +21,8 @@ def test_complementary_type():
 
 def test_fit_category_uses_curated_metadata_only():
     assert matching.fit_category(
+        {"clothing_type": "top", "category": "셔츠", "length": "regular"}) == "top"
+    assert matching.fit_category(
         {"clothing_type": "bottom", "category": "데님팬츠", "length": "full"}) == "pants"
     assert matching.fit_category(
         {"clothing_type": "bottom", "category": "스커트", "length": "midi"}) == "skirt"
@@ -33,6 +36,51 @@ def test_fit_category_uses_curated_metadata_only():
     }) is None
 
 
+@pytest.mark.parametrize("gender", ["women", "men"])
+def test_custom_candidate_is_first_gender_independent_and_can_be_incompatible(
+    client, make_token, monkeypatch, gender
+):
+    object.__setattr__(client.app.state.settings, "r2_public_base", "https://img.example.com")
+    monkeypatch.setattr(routes, "_r2", lambda request: _FakeR2())
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_list(conn, user_id, project_id):
+        return [
+            {
+                "id": "curated-top", "name": "큐레이션 상의", "clothing_type": "top",
+                "gender": gender, "category": "셔츠", "fit": "regular", "length": "regular",
+                "color_brightness": 90, "sort_order": 1, "is_active": True,
+                "is_custom": False, "image_key": "seed/top.png", "thumb_key": "seed/top-thumb.png",
+            },
+            {
+                "id": "custom-private", "name": "내 하의", "clothing_type": "bottom",
+                "gender": "unisex", "category": "스커트", "fit": "regular", "length": "midi",
+                "color_brightness": 0, "sort_order": 999, "is_active": True,
+                "is_custom": True, "image_key": "derived/grid.jpg", "thumb_key": "upload/first.png",
+            },
+        ]
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "list_active_matching_items", fake_list)
+    _no_db(monkeypatch)
+
+    response = client.get(
+        f"/v1/projects/p1/analysis/match-candidates?clothingType=bottom&gender={gender}",
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [item["id"] for item in body] == ["custom-private", "curated-top"]
+    assert body[0]["isCustom"] is True
+    assert body[0]["isCompatible"] is False
+    assert body[0]["thumb"] == "https://img.example.com/upload/first.png"
+    assert body[1]["isCustom"] is False
+    assert body[1]["isCompatible"] is True
+
+
 def test_recommend_filters_type_and_sorts_by_brightness_then_sortorder():
     items = [
         _it("b1", "bottom", "women", 20, 2),
@@ -41,7 +89,20 @@ def test_recommend_filters_type_and_sorts_by_brightness_then_sortorder():
         _it("t1", "top", "women", 99, 1),     # 보색 아님 → 제외
     ]
     out = matching.recommend(items, clothing_type="top", genders=["women"])
-    assert [i["id"] for i in out] == ["b3", "b2", "b1"]
+    # 상위 두 밝은 후보가 같은 계열(밝기 band)이므로 2위는 다른 계열 b1로 다양화한다.
+    assert [i["id"] for i in out] == ["b3", "b1", "b2"]
+
+
+def test_diversify_top_two_uses_color_group_and_preserves_all_same_order():
+    ranked = [
+        {"id": "a", "color_group": "black"},
+        {"id": "b", "color_group": "black"},
+        {"id": "c", "color_group": "beige"},
+        {"id": "d", "color_group": "blue"},
+    ]
+    assert [item["id"] for item in matching.diversify_top_two(ranked)] == ["a", "c", "b", "d"]
+    all_black = [dict(item, color_group="black") for item in ranked]
+    assert [item["id"] for item in matching.diversify_top_two(all_black)] == ["a", "b", "c", "d"]
 
 
 def test_recommend_gender_filter_allows_unisex():
@@ -99,13 +160,17 @@ def test_match_candidates_shape_and_public_url(client, make_token, monkeypatch):
     async def fake_get_project(conn, user_id, project_id):
         return {"id": project_id}
 
-    async def fake_list(conn):
-        return [{"id": "match_women_bottom_01", "name": "블랙 슬랙스",
+    async def fake_list(conn, user_id, project_id):
+        assert (user_id, project_id) == ("user-1", "p1")
+        return [{"id": "match_test_bottom_neutral", "name": "블랙 슬랙스",
                  "clothing_type": "bottom", "gender": "women", "category": "트라우저",
                  "color_name": "블랙", "color_group": "black", "style_tags": ["basic"],
                  "fit": "regular", "length": "full", "color_brightness": 0, "sort_order": 201,
-                 "is_active": True, "image_key": "seed/matching/match_women_bottom_01.png",
-                 "thumb_key": "seed/matching/thumb/match_women_bottom_01.png"}]
+                 "is_active": True, "is_custom": False,
+                 "image_asset_id": "asset-image-neutral",
+                 "thumbnail_asset_id": "asset-thumb-neutral",
+                 "image_key": "seed/matching/match_test_bottom_neutral.png",
+                 "thumb_key": "seed/matching/thumb/match_test_bottom_neutral.png"}]
 
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
     monkeypatch.setattr(routes.repo, "list_active_matching_items", fake_list)
@@ -116,14 +181,52 @@ def test_match_candidates_shape_and_public_url(client, make_token, monkeypatch):
         headers=_auth(make_token))
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body[0]["thumb"] == "https://img.example.com/seed/matching/thumb/match_women_bottom_01.png"
+    assert body[0]["thumb"] == "https://img.example.com/seed/matching/thumb/match_test_bottom_neutral.png"
     assert body[0]["selected"] is False
-    assert body[0]["id"] == "match_women_bottom_01"
+    assert body[0]["id"] == "match_test_bottom_neutral"
     assert body[0]["clothingType"] == "bottom"
     assert body[0]["category"] == "트라우저"
     assert body[0]["fit"] == "regular"
     assert body[0]["length"] == "full"
     assert body[0]["fitCategory"] == "pants"
+
+
+def test_match_candidates_route_passes_style_tags_to_tag_ranker(
+    client, make_token, monkeypatch,
+):
+    object.__setattr__(client.app.state.settings, "r2_public_base", "https://img.example.com")
+    object.__setattr__(client.app.state.settings, "retrieval_matching", "tags")
+    monkeypatch.setattr(routes, "_r2", lambda request: _FakeR2())
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_list(conn, user_id, project_id):
+        return [{
+            "id": "b1", "name": "하의", "clothing_type": "bottom", "gender": "women",
+            "style_tags": ["daily"], "color_brightness": 50, "sort_order": 1,
+            "is_active": True, "is_custom": False, "thumb_key": "thumb.png",
+            "image_key": "image.png",
+        }]
+
+    def fake_recommend(items, clothing_type, genders, product_tags, affinity_map, limit):
+        seen["product_tags"] = product_tags
+        return items
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "list_active_matching_items", fake_list)
+    monkeypatch.setattr(routes.retrieval, "recommend_v1", fake_recommend)
+    _no_db(monkeypatch)
+
+    response = client.get(
+        "/v1/projects/p1/analysis/match-candidates"
+        "?clothingType=top&gender=women&styleTags=basic&styleTags=daily",
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 200, response.text
+    assert seen["product_tags"] == ["basic", "daily"]
 
 
 def test_dress_match_candidates_ignore_stale_men_query(
@@ -139,7 +242,8 @@ def test_dress_match_candidates_ignore_stale_men_query(
     async def fake_get_project(conn, user_id, project_id):
         return {"id": project_id}
 
-    async def fake_list(conn):
+    async def fake_list(conn, user_id, project_id):
+        assert (user_id, project_id) == ("user-1", "p1")
         return [{
             "id": "women-bottom",
             "name": "여성용 하의",
@@ -149,6 +253,9 @@ def test_dress_match_candidates_ignore_stale_men_query(
             "color_brightness": 50,
             "sort_order": 1,
             "is_active": True,
+            "is_custom": False,
+            "image_asset_id": "asset-women-bottom",
+            "thumbnail_asset_id": "thumb-women-bottom",
             "image_key": "seed/matching/women-bottom.png",
             "thumb_key": "seed/matching/thumb/women-bottom.png",
         }]

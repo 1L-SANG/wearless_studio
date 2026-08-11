@@ -38,8 +38,9 @@ from app.config import load_settings  # noqa: E402
 _SLOT_LABEL = {
     "Front": "front view of the garment",
     "Back": "back view of the garment",
-    "Detail": "detail close-up of the garment (texture, stitching, trims, print)",
-    "Fit": "fit reference — the garment worn on a real person (true length & how it sits)",
+    "Detail": "front-side detail close-up of the garment (texture, stitching, trims, print)",
+    "BackDetail": ("back-side detail close-up of the garment (a back-only feature — "
+                   "back neck, yoke, back pocket)"),
 }
 
 
@@ -84,7 +85,7 @@ FIXTURES: dict[str, dict] = {
                 "source": "seller", "version": 1,
             },
         },
-        "slots": ["Front", "Detail", "Fit"],
+        "slots": ["Front", "Detail", "BackDetail"],
         "has_match": False,
         "adjusted_axes": ("fit",),
         "seller_canon": "off",

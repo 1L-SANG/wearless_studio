@@ -22,21 +22,26 @@ create table if not exists public.edit_review_events (
 comment on table public.edit_review_events is
   '사용자 검수 이력(append-only). machine QC 를 덮어쓰지 않는다 — qcStatus 는 그대로 '
   'review_required 이고, 이 행들은 "사람이 무엇을 결정했는가"만 말한다. 유효 판단은 최신 행.';
+
 comment on column public.edit_review_events.decision is
   'accepted = 사용자가 확인하고 쓰기로 함 | rejected = 쓰지 않기로 함. rejected 가 결과를 '
   '삭제하지는 않는다 — 나중에 새 event 로 다시 accepted 가 될 수 있다.';
 
 create index if not exists edit_review_events_session_idx
   on public.edit_review_events (edit_session_id, created_at desc);
+
 create index if not exists edit_review_events_project_idx
   on public.edit_review_events (project_id, created_at desc);
+
 -- 같은 요청 키의 재호출은 같은 행이다(중복 event 로 이력이 부풀지 않게).
 create unique index if not exists edit_review_events_idempotency
   on public.edit_review_events (edit_session_id, idempotency_key)
   where idempotency_key is not null;
 
 alter table public.edit_review_events enable row level security;
+
 drop policy if exists edit_review_events_owner_select on public.edit_review_events;
+
 create policy edit_review_events_owner_select on public.edit_review_events
   for select using (
     exists (

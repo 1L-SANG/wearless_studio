@@ -45,20 +45,26 @@ create table if not exists public.approved_baselines (
 comment on table public.approved_baselines is
   '사용자가 명시적으로 승인한 마네킹 결과. "가장 최근 생성본"이 아니다 — 생성 성공만으로는 '
   '절대 만들어지지 않고, 승인 API 만이 행을 만든다. 조정 편집의 기준이자 파생 계보의 뿌리.';
+
 comment on column public.approved_baselines.baseline_cut_id is
   'mannequin_cuts.id (uuid). 클라이언트가 쓰는 "A-3" 형식 id 가 아니라 DB 정본 키다. '
   'on delete restrict — 승인된 컷은 삭제로 계보를 끊을 수 없다(supersede 로만 물러난다).';
+
 comment on column public.approved_baselines.output_id is
   '승인된 컷의 generation_outputs 행. Phase 1 기록이 꺼져 있던 시기의 컷이면 null 이다 '
   '— 그때도 승인 자체는 유효하다(baseline_cut_id 는 항상 있다).';
+
 comment on column public.approved_baselines.truth_package_id is
   'Phase 4(Product Truth) 예약. 테이블이 없어 FK 를 걸지 않았다 — 생기면 후속 migration 에서 건다.';
+
 comment on column public.approved_baselines.baseline_qc_result_id is
   'QC Result 정규화 예약(동일 사유). 그 사이의 판정은 qc_scores_snapshot 이 보존한다.';
+
 comment on column public.approved_baselines.locked_invariants is
   '승인 시점에 고정된 불변 항목. 값을 확보할 수 없는 항목은 거짓으로 채우지 않고 '
   '{"status":"unavailable","reason":...} 로 남긴다 — 나중에 프로필이 생겨도 과거 승인의 '
   '의미가 소급해 바뀌면 안 된다.';
+
 comment on column public.approved_baselines.superseded_at is
   'null = active. 새 승인이 이 값을 채우고 자기 자신을 active 로 만든다(같은 tx).';
 
@@ -69,6 +75,7 @@ create unique index if not exists approved_baselines_one_active_per_project
 
 create index if not exists approved_baselines_project_approved_idx
   on public.approved_baselines (project_id, approved_at desc);
+
 create index if not exists approved_baselines_cut_idx
   on public.approved_baselines (baseline_cut_id);
 
@@ -84,6 +91,7 @@ comment on column public.generation_outputs.parent_output_id is
 alter table public.generation_outputs
   add column if not exists baseline_id uuid
     references public.approved_baselines (id) on delete set null;
+
 comment on column public.generation_outputs.baseline_id is
   '이 결과가 어느 승인 baseline 에서 파생됐는가. parent_output_id 가 그 baseline 의 output 이다.';
 
@@ -114,9 +122,11 @@ create index if not exists baseline_review_events_project_idx
 
 -- ── RLS: 소유권은 projects 가 정본 ──
 alter table public.approved_baselines enable row level security;
+
 alter table public.baseline_review_events enable row level security;
 
 drop policy if exists approved_baselines_owner_select on public.approved_baselines;
+
 create policy approved_baselines_owner_select on public.approved_baselines
   for select using (
     exists (
@@ -126,6 +136,7 @@ create policy approved_baselines_owner_select on public.approved_baselines
   );
 
 drop policy if exists baseline_review_events_owner_select on public.baseline_review_events;
+
 create policy baseline_review_events_owner_select on public.baseline_review_events
   for select using (
     exists (

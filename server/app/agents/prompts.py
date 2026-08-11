@@ -25,6 +25,7 @@ _DEFAULT_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_generate_v1.tx
 # 미니원피스로 바꿨다(2026-07-31 짝 비교 n=10: 핏 깨짐 v1 7/10 → v3 0/10, 핏 유지하며 이긴
 # 순편익 2 → 4). v1·v2 는 이력 보존용으로 남긴다 — ab_bust_pass.py --variant 로 재비교 가능.
 _BUST_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_bust_v3.txt")
+_FABRIC_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_fabric_v1.txt")
 _UNTUCK_PROMPT = os.path.join(_SERVER_DIR, "prompts", "mannequin_untuck_v1.txt")
 
 
@@ -65,6 +66,13 @@ def load_bust_prompt_template() -> str:
     """여성 기본 가슴 2패스 템플릿. 생성 템플릿과 달리 env 오버라이드가 없다 —
     문구 강도가 실측 캘리브레이션 결과라 배포별로 갈리면 결과 크기가 흔들린다."""
     with open(_BUST_PROMPT, encoding="utf-8") as f:
+        return f.read()
+
+
+def load_fabric_prompt_template() -> str:
+    """원단 패턴 2패스 템플릿. 가슴 2패스와 같은 이유로 env 오버라이드를 두지 않는다 —
+    문구가 실측으로 조정되는 자산이라 배포별로 갈리면 결과를 비교할 수 없다."""
+    with open(_FABRIC_PROMPT, encoding="utf-8") as f:
         return f.read()
 
 
@@ -190,31 +198,6 @@ def build_mirrored_source_block(analysis: dict) -> str:
     )
 
 
-def build_product_truth_block(truth: dict | None) -> str:
-    """승인 Product Truth의 보호 facts만 간결하게 렌더링한다.
-
-    임의 draft/analysis가 이 블록을 가장하지 못하도록 worker가 승인 revision만 넘긴다.
-    """
-    if not truth or truth.get("status") != "approved":
-        return ""
-    garment = truth.get("garmentSpec") or truth.get("garment_spec") or {}
-    color = truth.get("colorSpec") or truth.get("color_spec") or {}
-    pattern = truth.get("patternSpec") or truth.get("pattern_spec") or {}
-    protected = truth.get("protectedDetails") or truth.get("protected_details") or {}
-    lines = [
-        f"- Truth revision: {_sanitize(truth.get('id'))} v{int(truth.get('version') or 0)}",
-        f"- Garment structure: {_sanitize(garment)}",
-        f"- Color specification (Lab reference): {_sanitize(color)}",
-        f"- Pattern specification: {_sanitize(pattern)}",
-        f"- Protected details (must not change): {_sanitize(protected)}",
-    ]
-    return (
-        "APPROVED PRODUCT TRUTH (authoritative; use the attached assets as evidence and never "
-        "invent, recolor, mirror, add, remove, or borrow protected product details):\n"
-        + "\n".join(lines)
-    )
-
-
 def render_mannequin_prompt(
     template: str,
     ctx: MannequinPromptContext,
@@ -222,7 +205,6 @@ def render_mannequin_prompt(
     analysis: dict,
     seller_canon: str = "off",
     knowledge: str = "off",
-    product_truth: dict | None = None,
 ) -> str:
     """템플릿 ${토큰} 치환 + 분석 정보 자동 주입."""
     outerwear_inner_token = "${outerwearInnerLine}"
@@ -247,8 +229,7 @@ def render_mannequin_prompt(
         product, analysis, seller_canon, knowledge, include_legacy_fit=fit_profile is None
     )
     mirror_block = build_mirrored_source_block(analysis)
-    truth_block = build_product_truth_block(product_truth)
-    blocks = [text, fit_block, truth_block, product_block, mirror_block]
+    blocks = [text, fit_block, product_block, mirror_block]
     return "\n\n".join(block for block in blocks if block)
 
 

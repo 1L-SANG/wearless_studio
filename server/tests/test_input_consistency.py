@@ -155,7 +155,7 @@ def test_prompt_carries_the_slot_note_and_the_traps():
 
 
 def test_prompt_covers_every_slot():
-    for slot in ("Front", "Back", "Detail", "Fit"):
+    for slot in ("Front", "Back", "Detail", "BackDetail"):
         assert input_consistency._SLOT_NOTE[slot] in input_consistency.build_prompt(slot)
 
 

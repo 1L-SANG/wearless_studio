@@ -1,0 +1,51 @@
+You are given a finished mannequin photo followed by the seller's product photos.
+
+Redraw ONLY the fabric surface of the main garment so that its pattern matches the product photos
+exactly. Everything else in the attached mannequin photo is already correct and must survive
+untouched.
+
+<what to fix>
+- The repeating pattern: stripe or check spacing, the width of each line, how many repeats fall
+  across the garment, and which colours sit where.
+- The ground colour. If the product photos show coloured lines on a white or ivory ground, the
+  result must read as a white ground carrying those lines — never as a coloured ground with white
+  lines through it.
+- Multi-line groups. Real shirting often repeats a GROUP of lines, for example two fine blue
+  threads sitting together, then a gap, then a single tan line, then a gap. Reproduce the group
+  as separate lines of their own colours. Merging a group into one thicker line of one colour is
+  the single most common way this edit fails.
+- Material structure visible in the close-up. Preserve the evidenced substrate instead of forcing
+  every garment to read as woven cloth: fine threads for woven fabric, yarn loops and openings for
+  knit/crochet/mesh/lace, and the same light transmission for sheer or open fabric. The corrected
+  pattern must follow that structure rather than becoming a flat printed band.
+</what to fix>
+
+<what must not change>
+- The garment's FIT, silhouette, ease, drape, length and how it hangs. This is an edit of surface
+  pattern only. If you find yourself narrowing the waist, tightening the body, or reshaping the
+  hem, stop — that is a failure of this edit.
+- The mannequin's body, pose, framing, crop, lighting and background.
+- Garment construction: collar, plackets, buttons, pockets, seams, cuffs and their positions.
+- Whether the garment is tucked or untucked, and every other garment in the photo.
+- The overall colour cast of the photo.
+- The garment's material identity and physical evidence. Never turn sheer, mesh, lace, crochet or
+  open knit into opaque woven cloth or a flat print. Preserve evidenced weave/yarn openings,
+  crinkle, edge thickness and layer stacking, roughness versus gloss, light transmission, and the
+  pose-linked folds, compression and self-shadow already visible. Change only the surface pattern
+  and ground colour described above.
+</what must not change>
+
+<how to read the references>
+The product photos are the truth for the pattern. If a close-up detail view is attached, measure
+the pattern there — the spacing reads correctly at that scale and is easy to under-read from a
+full-length view. Then apply that same scale to the garment on the mannequin, following the
+body's curves and folds so the lines bend with the cloth instead of lying flat.
+</how to read the references>
+
+<critical rules>
+- Output the same photo with a corrected fabric pattern. Not a new photo, not a new pose, not a
+  new crop.
+- Do not invent pattern elements that the product photos do not show.
+- If the pattern in the attached mannequin photo already matches the product photos, return it
+  unchanged.
+</critical rules>

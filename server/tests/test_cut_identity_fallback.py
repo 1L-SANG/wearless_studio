@@ -13,13 +13,15 @@ from app.agents.cut_generator import (
 from app.workers import detail_page_job as dpj
 from conftest import fake_worker_app, make_settings, worker_job
 
-VIRT = {"mA", "mB", "mC"}
+VIRT = {"mA", "mB", "mC", "mD", "mE"}
 
 
 def test_virtual_selection_honored():
     # 진짜 가상모델을 고르면 그대로, 폴백/치환 없음
     assert resolve_effective_model_id("mA", fallback_model_id="mB", virtual_ids=VIRT) == ("mA", False)
     assert resolve_effective_model_id("mC", fallback_model_id="mB", virtual_ids=VIRT) == ("mC", False)
+    assert resolve_effective_model_id("mD", fallback_model_id="mB", virtual_ids=VIRT) == ("mD", False)
+    assert resolve_effective_model_id("mE", fallback_model_id="mB", virtual_ids=VIRT) == ("mE", False)
 
 
 def test_real_uuid_dropped_falls_back_and_warns():

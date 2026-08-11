@@ -13,7 +13,7 @@ from app.agents import mannequin_bust
 from app.agents.gemini_image import GeminiError
 from app.agents.prompts import load_bust_prompt_template
 from app.workers import mannequin_job
-from tests.conftest import make_image_budget_gate, make_settings
+from tests.conftest import make_settings
 
 _ORIG = SimpleNamespace(image=b"pass1-bytes", mime="image/jpeg")
 _EDITED = SimpleNamespace(image=b"pass2-bytes", mime="image/jpeg")
@@ -153,7 +153,6 @@ def _run(*, gender, mode, generate, calls_spent=0):
     mannequin_job._emit = fake_emit
     try:
         out = asyncio.run(mannequin_job._apply_bust_pass(
-            budget=make_image_budget_gate(),
             pool=None, gemini=gemini, s=s, job_id="j1", candidate="A", attempt=1,
             base_gender=gender, res=_ORIG, calls_spent=calls_spent))[0]
     finally:

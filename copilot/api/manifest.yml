@@ -61,10 +61,6 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # (2026-07-14 사용자 결정). 판정 실패는 fail-open — 생성을 절대 막지 않음. 발화율·판정
   # 정확도는 axis_qc/axis_retry 이벤트로 관측, 골드셋 캘리브는 켠 상태로 병행.
   MANNEQUIN_AXIS_QC: enforce
-  # Frame Lock은 canonical mannequin 대비 pose/camera/framing/view-family를 계측한다.
-  # 아직 1K 실 Gemini 캘리브레이션 전이므로 shadow만 허용한다. enforce는 코드 readiness guard도
-  # shadow로 강등한다 — 잘못된 임계로 전 생성 차단하는 사고를 막는다.
-  MANNEQUIN_FRAME_QC: shadow
   # AG-P2 의류 동일성 QC(색·패턴·로고·프린트가 원본과 같은 옷인가).
   # 2026-07-31 shadow → enforce. 위 주석이 요구하던 "실측 분포 캘리브레이션"을 마쳤다:
   # 임계를 실측으로 교정(90/75 는 통과율 0% 였다), 판정자 변별력 하니스, 거짓양성 육안 점검
@@ -73,43 +69,22 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # (판정·metrics 는 계속 남고 게이팅만 꺼진다).
   IMAGE_QC: enforce
   # enforce 는 regenerate 판정에서 재시도를 쓰므로 상한이 필요하다. 기본값 2 는 편집 패스
-  # (untuck·bust)와 예산을 공유해서 재시도 전에 소진된다 — 실제로 그래서 가슴 2패스가
+  # (untuck·fabric·bust)와 예산을 공유해서 재시도 전에 소진된다 — 실제로 그래서 가슴 2패스가
   # 한 번도 출고되지 않았다. 5 는 그 실측에서 나온 값이고, 상한이지 매번 쓰는 횟수가 아니다.
   MANNEQUIN_MAX_ATTEMPTS: "5"
-  # 일반 상품은 1K, Product Truth가 STRIPE 계열로 판정한 상품만 4K로
-  # 승급한다. CAP=1K는 승급을 다시 낮추므로 사용하지 않는다.
-  MANNEQUIN_IMAGE_SIZE: 1K
-  MANNEQUIN_IMAGE_SIZE_CAP: "off"
-  MANNEQUIN_PATTERN_IMAGE_SIZE: 4K
-  # 단일 목적 편집 패스 2종. 전부 fail-open(편집 실패 = 편집 전 컷 그대로 출고)이고,
+  # 단일 목적 편집 패스 3종. 전부 fail-open(편집 실패 = 편집 전 컷 그대로 출고)이고,
   # 편집이 등급을 떨어뜨리면 편집 전으로 되돌린다(qc_edit_regression_margin=10, 판정 노이즈
-  # ±30 을 감안한 마진). 여기 없으면 config 기본 off 로 떨어져 조용히 안 돈다.
-  # (2026-08-01) 구 원단 2패스 플래그(whole-image 원단 재생성)는 blind visual 3/3 FAIL 로
-  # 코드째 삭제됐다(폐기 이름은 test_deploy_manifest_qc_flags.RETIRED_FLAGS 가 재선언을 막는다).
+  # ±30 을 감안한 마진). 셋 다 여기 없으면 config 기본 off 로 떨어져 조용히 안 돈다.
   MANNEQUIN_UNTUCK_PASS: "on"   # 상의·아우터를 하의 밖으로 — QC 탐지가 불안정해 무조건 실행
+  MANNEQUIN_FABRIC_PASS: "on"   # 미세 패턴 표면 재적용 — 두 색 줄이 한 색으로 뭉개지던 문제
   MANNEQUIN_BUST_PASS: "on"     # 가슴 볼륨(배수 1.3). 하의 상품엔 코드에서 미적용
-  # ────────────────────────────────────────────────────────────────────────────
-  # 아래 8개 플래그는 **의도적으로 비워 둔다** (2026-08-11 결정, SAM 롤아웃 한정).
-  #
-  #   GENERATION_RUN_LOG · ENABLE_PRODUCT_TRUTH · MANNEQUIN_STRUCTURED_QC
-  #   MANNEQUIN_GARMENT_FIDELITY_QC · MANNEQUIN_EDIT_INTENT_QC
-  #   EDITOR_VARY_INTENT_QC · MANNEQUIN_HYBRID_COMPOSITE
-  #   MANNEQUIN_TEXTURE_PROJECTION_2D
-  #
-  # 현재 배포본(wearless-prod-api:92)에는 이 값들이 없다. 여기 적어 두면 SAM 배포가
-  # 무관한 게이트 3개를 enforce 로, 관측 5개를 shadow 로 함께 켜 버린다 — SAM 과 상관없는
-  # 프로덕션 동작 변경이고, enforce 는 지금 출고되는 컷을 막을 수 있다.
-  #
-  # 기능을 지운 게 아니다. 코드는 그대로 있고 config 기본값(off/shadow)으로 떨어진다.
-  # 각 기능은 자기 근거를 갖고 **따로** 켜야 한다. 이 배포의 델타는 SAM 둘뿐이다.
-  # ────────────────────────────────────────────────────────────────────────────
-
-  # 내부 SAM2 세그멘테이션 서비스(Copilot Service Connect, 같은 VPC 안에서만 접근).
-  # 이름/포트는 copilot/sam2/manifest.yml 에서 확인한 값이다(name: sam2, port: 8080).
-  # 미설정이면 sam_client 가 비활성 → sam_preprocess 는 skipped, 생성은 RAW 그대로.
-  SAM_SERVICE_URL: http://sam2:8080
   # AG-01 분석 provider 모델 — config.py 기본(gemini-2.5-pro) 오버라이드. AI Studio 유효 id 여야 함
   # (구값 'gemini-3-pro' 는 미존재 → Gemini 404 로 분석 실패했음). OpenAI 키 미설정이라 gemini 가 유일 provider.
+  # 내부 SAM2 세그멘테이션 서비스(Copilot Service Connect, 같은 VPC 안에서만 접근).
+  # 이름/포트는 copilot/sam2/manifest.yml 에서 확인한 값이다(name: sam2, port: 8080).
+  # 미설정이면 sam_client 가 비활성 → sam_preprocess 는 skipped, 생성은 RAW 그대로 — 이 서비스가
+  # 죽어도 업로드·분석·마네킹 생성은 전부 그대로 돈다.
+  SAM_SERVICE_URL: http://sam2:8080
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
   # '배경만' 생성예시는 빈 장소 플레이트 편집 + 장소 일치 QC/재시도 방식으로 검증했다.
   # 프론트 VITE_GENEXAMPLE_BG_ENABLED와 함께 켜야 하며, 2026-07-21부터 프로덕션 공개.

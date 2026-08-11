@@ -15,7 +15,6 @@ from .. import repo
 from ..agents import feature_extractor, input_consistency, mannequin, product_analyst
 from ..agents.gemini_image import InlineImage
 from ..agents.vision_llm import VisionError
-from ..services import product_truth as product_truth_service
 from ._common import emit_job_event as _emit  # 공용 헬퍼(mannequin_job과 공유). 테스트가 이 이름을 monkeypatch
 
 log = logging.getLogger("wearless.analyze_job")
@@ -60,6 +59,82 @@ def shrink_for_vision(data: bytes, mime: str) -> tuple[bytes, str]:
         return data, mime
 
 
+async def analyze_image_bytes(
+    settings,
+    source_images: list[tuple[bytes, str]],
+    *,
+    product: dict | None = None,
+    slots: list[str] | None = None,
+    on_prepared=None,
+) -> dict:
+    """DB·R2 없이 이미지 바이트를 분석하는 AG-01 공용 코어.
+
+    로그인 job과 공개 체험 라우트가 같은 축소·분석·특징 발굴·입력 일관성 경로와
+    반환 shape를 공유한다. 호출자는 영속화 여부만 결정한다.
+    """
+    product = product or {}
+    slots = slots or ["Front", *(["Detail"] * max(0, len(source_images) - 1))]
+
+    loaded = await asyncio.gather(*(
+        asyncio.to_thread(shrink_for_vision, data, mime)
+        for data, mime in source_images
+    ))
+    images = [InlineImage(mime, data) for data, mime in loaded]
+    if on_prepared is not None:
+        await on_prepared(sum(len(image.data) for image in images))
+    analyze_res, feature_res, consistency_res = await asyncio.gather(
+        product_analyst.analyze(settings, product, images),
+        feature_extractor.extract(settings, product, images, slots=slots),
+        _judge_input_consistency(settings, images, slots),
+        return_exceptions=True,
+    )
+    if isinstance(analyze_res, BaseException):
+        raise analyze_res
+
+    distributed, provider = analyze_res
+    feature_provider = None
+    if isinstance(feature_res, BaseException):
+        log.warning("AG-08 feature extract failed: %r", feature_res)
+    else:
+        points, feature_provider = feature_res
+        if points:
+            distributed["analysis"]["aiSuggestedPoints"] = points
+
+    consistency = None
+    if isinstance(consistency_res, BaseException):
+        log.warning("AG-IC input consistency failed: %r", consistency_res)
+    elif consistency_res:
+        consistency = consistency_res
+
+    analysis_payload = distributed["analysis"]
+    # tags 기본 랭킹은 재진입/새로고침 후 GET /analysis에서도 같은 값을 읽어야 한다.
+    # AG-01 distribute 단계에서는 intermediate이지만, 서버 추천 입력으로 쓰이므로 저장 payload에 승격한다.
+    analysis_payload["styleTags"] = distributed["intermediate"]["styleTags"]
+    if (
+        consistency
+        and settings.input_consistency == "warn"
+        and consistency["verdict"] == "mismatch"
+    ):
+        analysis_payload["inputConsistency"] = consistency
+    clothing_type = distributed["product"]["clothingType"]
+    result_data = {
+        **analysis_payload,
+        "clothingType": clothing_type,
+        "styleTags": analysis_payload["styleTags"],
+        "swatchSuggestions": distributed["intermediate"]["swatchSuggestions"],
+        "measurements": [],
+    }
+    return {
+        "result_data": result_data,
+        "analysis_payload": analysis_payload,
+        "clothing_type": clothing_type,
+        "provider": provider,
+        "feature_provider": feature_provider,
+        "consistency": consistency,
+        "bytes_out": sum(len(image.data) for image in images),
+    }
+
+
 async def run_analyze_job(app, job: dict) -> None:
     s = app.state.settings
     pool = app.state.pool
@@ -79,7 +154,7 @@ async def run_analyze_job(app, job: dict) -> None:
             log.exception("analyze finalize_failure error for job %s", job_id)
 
     try:
-        # 1) 입력 로드 — 기준 색상 이미지 asset (마네킹과 동일 소스). slot(Front/Back/Detail/Fit)은
+        # 1) 입력 로드 — 기준 색상 이미지 asset (마네킹과 동일 소스). slot(Front/Back/Detail/BackDetail)은
         #    AG-08 관찰 가이드용으로 보존한다(디테일 컷 집중 지시 — 2026-07-13).
         async with pool.connection() as conn:
             product = await repo.get_product(conn, project_id) or {}
@@ -97,47 +172,26 @@ async def run_analyze_job(app, job: dict) -> None:
         # 2) 바이트 다운로드 → 분석용 축소 (둘 다 to_thread — 이벤트 루프 비차단)
         #    다운로드는 장수만큼 병렬 — 순차일 땐 한 장의 R2 지연이 통째로 prep 을 세웠다
         #    (2026-07-16 실측: 7회 중 1회 32s 스톨). gather 는 입력 순서를 보존한다.
-        async def _load_one(a: dict) -> tuple[int, bytes, str]:
+        async def _load_one(a: dict) -> tuple[bytes, str]:
             raw = await asyncio.to_thread(app.state.r2.get_bytes, a["r2_key"])
-            data, mime = await asyncio.to_thread(shrink_for_vision, raw, a["mime_type"])
-            return len(raw), data, mime
+            return raw, a["mime_type"]
 
         loaded = await asyncio.gather(*(_load_one(a) for a in assets))
-        bytes_in = sum(n for n, _, _ in loaded)
-        bytes_out = sum(len(d) for _, d, _ in loaded)
-        images = [InlineImage(mime, data) for _, data, mime in loaded]
-        await _emit(pool, job_id, "progress", {"progress": 30, "phase": "inputs_loaded",
-                                               "bytesIn": bytes_in, "bytesOut": bytes_out})
+        bytes_in = sum(len(data) for data, _ in loaded)
 
-        # 3) 분석(AG-01)과 특징 발굴(AG-08)을 병렬 실행 — 전체 지연 = 둘 중 느린 쪽.
-        #    특징 에이전트는 실패해도 분석을 막지 않는다(AG-01의 points로 폴백 — 2026-07-13).
-        #    AG-IC(입력 사진 동일성)도 같은 gather 에 태운다 — 이미지는 이미 메모리에 있고
-        #    다른 두 에이전트가 더 느려서 실질 추가 지연이 없다. 실패해도 분석을 막지 않는다.
-        analyze_res, feature_res, consistency_res = await asyncio.gather(
-            product_analyst.analyze(s, product, images),
-            feature_extractor.extract(s, product, images, slots=slots),
-            _judge_input_consistency(s, images, slots),
-            return_exceptions=True,
-        )
-        if isinstance(analyze_res, BaseException):
-            if isinstance(analyze_res, VisionError):
-                await _fail(str(analyze_res), {"error": "vision_failed"}, code="analysis_failed")
-                return
-            raise analyze_res  # 예기치 못한 오류 → outer except (lease 펜스 종결)
-        distributed, provider = analyze_res
-        feature_provider = None
-        if isinstance(feature_res, BaseException):
-            log.warning("AG-08 feature extract failed for job %s: %r", job_id, feature_res)
-        else:
-            points, feature_provider = feature_res
-            if points:  # 전용 에이전트 결과가 있으면 교체, 비면 AG-01 것 유지
-                distributed["analysis"]["aiSuggestedPoints"] = points
-        # AG-IC — 예외·None 은 조용히 미판정(분석 자체는 정상 종결). 판정 실패가 분석을 막지 않는다.
-        consistency = None
-        if isinstance(consistency_res, BaseException):
-            log.warning("AG-IC input consistency failed for job %s: %r", job_id, consistency_res)
-        elif consistency_res:
-            consistency = consistency_res
+        async def _inputs_loaded(bytes_out: int) -> None:
+            await _emit(pool, job_id, "progress", {
+                "progress": 30, "phase": "inputs_loaded",
+                "bytesIn": bytes_in, "bytesOut": bytes_out,
+            })
+
+        core = await analyze_image_bytes(
+            s, loaded, product=product, slots=slots, on_prepared=_inputs_loaded)
+
+        provider = core["provider"]
+        feature_provider = core["feature_provider"]
+        consistency = core["consistency"]
+        if consistency:
             log.info("AG-IC job=%s verdict=%s confidence=%.2f offending=%s mode=%s",
                      job_id, consistency["verdict"], consistency["confidence"],
                      [o["slot"] for o in consistency["offending"]], s.input_consistency)
@@ -146,26 +200,9 @@ async def run_analyze_job(app, job: dict) -> None:
                                                "provider": provider,
                                                "featureProvider": feature_provider})
 
-        analysis_payload = distributed["analysis"]
-        # warn + mismatch 일 때만 내보낸다(off 면 애초에 판정을 돌리지 않는다).
-        #
-        # **저장분(analyses.payload)에 넣는다.** 처음엔 "이번 업로드 묶음에 대한 관찰이라 상품
-        # 분석의 소유가 아니다"라며 job 결과에만 실었는데, 그러면 분석을 막 끝낸 탭에서만
-        # 경고가 뜨고 새로고침·재진입한 탭에서는 GET /analysis 에 값이 없어 조용히 통과한다
-        # (2026-07-31 로컬 실측: 서버는 mismatch 를 냈는데 UI 가 그냥 넘어갔다).
-        # 사라지는 경고는 없는 경고다 — 소유권 논리보다 이 사실이 우선한다.
-        if consistency and s.input_consistency == "warn" and consistency["verdict"] == "mismatch":
-            analysis_payload["inputConsistency"] = consistency
-        clothing_type = distributed["product"]["clothingType"]
-        # 프론트 반환 객체 — analyses 저장분 + clothingType + 중간산출물(styleTags/스와치, 매칭·폼용)
-        # + measurements 는 빈 배열(AG-01 실측 미산출, 사용자 직접 입력 — PRD §6.5).
-        result_data = {
-            **analysis_payload,
-            "clothingType": clothing_type,
-            "styleTags": distributed["intermediate"]["styleTags"],
-            "swatchSuggestions": distributed["intermediate"]["swatchSuggestions"],
-            "measurements": [],
-        }   # inputConsistency 는 analysis_payload 를 통해 자동으로 실린다(위 스프레드)
+        analysis_payload = core["analysis_payload"]
+        clothing_type = core["clothing_type"]
+        result_data = core["result_data"]
 
         # 4) 성공 종결 (원자·lease 펜스, 무과금)
         async with pool.connection() as conn:
@@ -177,16 +214,10 @@ async def run_analyze_job(app, job: dict) -> None:
                           "promptVersion": "v1",
                           # 판정 원문 보존처(match 도 포함) — 사후에 오탐률을 되짚을 때 유일한 근거.
                           **({"inputConsistency": consistency} if consistency else {})})
-            # 분석 성공과 같은 트랜잭션에서 draft를 갱신한다. 사용자가 승인한 revision은
-            # 건드리지 않고 repo가 프로젝트당 열린 draft만 갱신하므로, 분석 결과와 검수 화면이
-            # 서로 다른 상품 사실을 보게 되는 창이 생기지 않는다.
-            if out is not None and getattr(s, "enable_product_truth", "off") != "off":
-                draft = product_truth_service.build_truth_draft(product, analysis_payload, assets)
-                draft["garmentProfile"] = product_truth_service.garment_profile(draft)
-                await repo.save_product_truth_draft(
-                    conn, project_id=project_id, user_id=user_id, draft=draft)
             await conn.commit()
         if out is None:  # lease 상실(복구·재클레임) → 결과 폐기
             log.warning("analyze job %s lost lease", job_id)
+    except VisionError as e:
+        await _fail(str(e), {"error": "vision_failed"}, code="analysis_failed")
     except Exception as e:  # 예기치 못한 오류도 lease 펜스 종결로
         await _fail("분석 중 오류가 발생했어요. 다시 시도해 주세요.", {"error": str(e)[:300]})
