@@ -23,6 +23,20 @@ Only the front view is guaranteed to exist. Back, detail, fit views and the matc
 
 - MATCHING BOTTOM (if attached, the last image): also dress the mannequin in this bottom garment. If the main product is a top or outerwear, it is worn COMPLETELY OUTSIDE the bottom. Do NOT tuck it in, not even partially — no front tuck, no half tuck, no French tuck, no tucking one side, and no folding or rolling the hem under. Observable target: the main product's hem forms an unbroken visible line all the way around the body, and no part of the main product disappears behind or under the bottom's waistband. This holds whether or not a length axis is declared in FIT PROFILE, and it overrides any styling convention that would look more fashionable. LAYER ORDER: where the two garments meet, the main product is the OUTER layer and the bottom is the INNER one — draw the bottom first, then the main product on top of it. The bottom's waistband, drawstring, ties, buttons or zip must be COVERED by the main product and must not appear in front of it. A visible waistband or drawstring lying over the main product means it was tucked, even if the hem looks continuous elsewhere. High-waisted and long bottoms are the common failure: their waistband sits where the top's hem falls, and the natural-looking composition is the wrong one here.
 ${outerwearInnerLine}- OUTERWEAR INNER (only when the main product is outerwear): Dress the mannequin in exactly one plain, solid crew-neck T-shirt underneath. Choose only white or black, whichever creates the stronger lightness contrast with the outerwear's color and tone. The T-shirt must be unbranded, with no logo, pattern, print, or graphic, and must naturally cover the arms and torso as a basic inner layer — never an extreme crop or turtleneck.
+
+<!-- GARMENT_BODY_CONTACT_BLOCK_START -->
+GARMENT-BODY CONTACT (mandatory)
+- The mannequin's body is solid and occupies real three-dimensional volume. The garment is worn AROUND this body; it must never appear as a flat panel positioned in front of it.
+- The neckline must naturally encircle and rest against the base of the neck. The shoulders must follow the mannequin's shoulder slope and drape over the shoulder volume. The sleeves and torso must connect naturally through the armholes as one continuous garment.
+- The garment torso must conform naturally to the mannequin's three-dimensional chest, waist and upper-hip volume WHILE PRESERVING THE PRODUCT'S TRUE FIT. It must visually wrap around the torso rather than reproduce the rectangular outline the garment has when laid flat on a surface.
+- Preserve the garment's original fit class and intended ease. A relaxed, straight, loose, boxy or oversized garment must REMAIN that way — do not slim it, do not narrow it, do not add a waist it does not have. It must still respond naturally to the mannequin's underlying three-dimensional body volume.
+- For ribbed knitwear, when applicable, the hem should settle naturally around the body according to the original garment construction.
+- NEVER render the garment as a flat panel floating in front of the mannequin.
+- NEVER preserve the flat-lay rectangular torso outline literally.
+- NEVER inflate or balloon the garment unnaturally away from the body.
+- NEVER create a hollow ghost-mannequin or invisible-mannequin appearance.
+- NEVER create unnatural empty space between the garment and the mannequin at the neckline, shoulders, chest or armholes.
+<!-- GARMENT_BODY_CONTACT_BLOCK_END -->
 </instruction>
 
 <output format>

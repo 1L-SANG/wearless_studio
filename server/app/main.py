@@ -134,6 +134,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.gemini = (
         GeminiImageClient(settings) if settings.gemini_api_key else None
     )
+
+    # Canonical cutout loader. Producer is the `sam_preprocess` job; this seam only READS the
+    # derived assets it wrote. Needs R2 to fetch bytes and the pool to resolve which cutout
+    # matches the product's CURRENT source photographs — without both it stays unset and
+    # generation runs on RAW references, which is the pre-existing behaviour.
+    if app.state.r2 is not None:
+        async def _canonical_reference_loader(product_id):
+            from .agents import mannequin as mannequin_agent
+            from .services import canonical_reference
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    # Looked up by PRODUCT id — that is what the generation path holds.
+                    await cur.execute(
+                        "select project_id::text as project_id, colors from products "
+                        "where id = %s", (product_id,))
+                    product = await cur.fetchone()
+                if not product or not product.get("project_id"):
+                    return {}
+                sources = {}
+                for slot, asset_id in mannequin_agent.base_color_images(product):
+                    if slot in ("Front", "Back") and slot not in sources:
+                        sources[slot] = {"id": asset_id, "hash": None}
+                return await canonical_reference.load(
+                    conn, app.state.r2, project_id=product["project_id"], sources=sources)
+
+        app.state.canonical_reference_loader = _canonical_reference_loader
+    else:
+        app.state.canonical_reference_loader = None
     app.state.dispatcher = None
     app.state.jwt_key_resolver = (
         jwks_key_resolver(settings.jwks_url) if settings.jwks_url else None

@@ -52,13 +52,18 @@ def test_the_worker_has_exactly_the_provider_call_sites_this_patch_guarded():
     """A new call site is a deliberate act; it has to be added here and guarded."""
     sites = _functions_with(_tree(WORKER), PROVIDER_METHOD)
     names = sorted(fn.name for fn, _ in sites)
-    assert names == ["_apply_axis_qc", "_apply_bust_pass", "_apply_untuck_pass",
-                     "_run_baseline_edit", "_run_candidate"], names
+    # `correct_fn` is the closure `_apply_garment_fidelity_pass` hands to
+    # `garment_fidelity_pass.run_fidelity_pass`; it is listed in its own right because the
+    # reservation and the provider call both live inside it, so it is a call site whether or
+    # not the enclosing function is counted.
+    assert names == ["_apply_axis_qc", "_apply_bust_pass",
+                     "_apply_garment_fidelity_pass", "_apply_untuck_pass",
+                     "_run_baseline_edit", "_run_candidate", "correct_fn"], names
 
 
 @pytest.mark.parametrize("function_name", [
-    "_apply_axis_qc", "_apply_bust_pass", "_apply_untuck_pass",
-    "_run_baseline_edit", "_run_candidate",
+    "_apply_axis_qc", "_apply_bust_pass", "_apply_garment_fidelity_pass",
+    "_apply_untuck_pass", "_run_baseline_edit", "_run_candidate", "correct_fn",
 ])
 def test_every_provider_call_site_reserves_a_slot_first(function_name):
     tree = _tree(WORKER)

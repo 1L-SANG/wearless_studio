@@ -35,11 +35,45 @@ CARRIER_PREFLIGHT_REASONS = frozenset({
     "image_unreadable",
 })
 
+#: which check raised a reason. A reason CODE is not unique to a check — cape is
+#: raised both by a Vision silhouette label and by the hem/shoulder ratio — so an
+#: audit that sees only the code cannot tell a model judgement from a measurement.
+ORIGIN_VISION_LABEL = "vision_label"
+ORIGIN_GEOMETRY_METRIC = "geometry_metric"
+ORIGIN_UNSPECIFIED = "unspecified"
+REASON_ORIGINS = frozenset({ORIGIN_VISION_LABEL, ORIGIN_GEOMETRY_METRIC, ORIGIN_UNSPECIFIED})
+
+#: the label sets each silhouette check matches against, named once so the event
+#: payload and the check cannot drift apart
+CAPE_LABELS = frozenset({"cape", "poncho", "tent"})
+SLAB_LABELS = frozenset({"slab", "slab_torso", "rectangular_torso", "flat_panel"})
+
 LOWER_CATEGORIES = frozenset({"bottom", "bottoms", "pants", "trousers", "jeans", "skirt", "shorts"})
 
 MIN_GEOMETRY_CONFIDENCE = 0.62
 MAX_CAPE_HEM_TO_SHOULDER = 1.35
 MAX_SLAB_EDGE_RATIO = 0.08
+
+# --- shoulder provenance guards -------------------------------------------
+# Not gate thresholds: these decide whether the reported shoulder points can be
+# BELIEVED, not whether a garment passes. Vision is asked for "shoulder seam"
+# points and sometimes returns the collar corners instead; the resulting span is
+# roughly the neck width, which silently shrinks the cape denominator and turns a
+# tailored shirt into a cape. Measured on a real rejected carrier: shoulder span
+# 0.1415 against a collar span of 0.131 — 1.08x, where a real shoulder line is
+# far wider than the neck it sits beside.
+#: below this multiple of the collar span the "shoulder" points are on the collar
+SHOULDER_COLLAR_MIN_RATIO = 1.25
+#: a sleeve counts as hanging down when its horizontal drift is small next to its
+#: vertical drop — that is the canonical arms-down mannequin frame, and it is what
+#: separates a sleeve from the flared drape of an actual cape
+ARMS_DOWN_MAX_DX_OVER_DY = 0.5
+
+SHOULDER_FROM_VISION_POINTS = "vision_shoulder_points"
+SHOULDER_FROM_ARMHOLE = "armhole_span"
+#: same 2.4 the slab check has always used, named so the check and the threshold
+#: it reports are one definition rather than two that can drift
+MIN_SLAB_TORSO_ASPECT = 2.4
 MAX_HEM_Y_ABS_DIFF = 0.18
 MAX_SLEEVE_REL_ERR = 0.40
 MIN_FRAME_IOU = 0.45
@@ -51,12 +85,21 @@ class CarrierPreflightReason:
     detail: str = ""
     severity: str = REJECT
     metrics: dict = field(default_factory=dict)
+    #: which check produced this reason. Two different checks can raise the same
+    #: code — `carrier_silhouette_cape` comes from a Vision label OR from the
+    #: hem/shoulder ratio — and a code alone cannot tell an auditor which fired.
+    origin: str = ""
+    matched_labels: tuple[str, ...] = ()
+    thresholds: dict = field(default_factory=dict)
+    comparison: str = ""
 
     def __post_init__(self):
         if self.code not in CARRIER_PREFLIGHT_REASONS:
             raise ValueError(f"unknown carrier preflight reason: {self.code!r}")
         if self.severity not in DECISIONS - {PASS}:
             raise ValueError(f"invalid carrier preflight severity: {self.severity!r}")
+        if self.origin and self.origin not in REASON_ORIGINS:
+            raise ValueError(f"unknown carrier preflight origin: {self.origin!r}")
 
     def summary(self) -> dict:
         out = {"code": self.code, "severity": self.severity}
@@ -64,7 +107,28 @@ class CarrierPreflightReason:
             out["detail"] = self.detail
         if self.metrics:
             out["metrics"] = self.metrics
+        if self.origin:
+            out["origin"] = self.origin
+        if self.matched_labels:
+            out["matchedLabels"] = list(self.matched_labels)
+        if self.thresholds:
+            out["thresholds"] = self.thresholds
+        if self.comparison:
+            out["comparison"] = self.comparison
         return out
+
+    def detail_record(self) -> dict:
+        """The full, always-shaped record an audit reads — never a partial guess."""
+        return {
+            "code": self.code,
+            "severity": self.severity,
+            "origin": self.origin or ORIGIN_UNSPECIFIED,
+            "detail": self.detail,
+            "metrics": dict(self.metrics),
+            "thresholds": dict(self.thresholds),
+            "comparison": self.comparison,
+            "matchedLabels": list(self.matched_labels),
+        }
 
 
 @dataclass(frozen=True)
@@ -89,6 +153,48 @@ class CarrierPreflightResult:
             "metrics": self.metrics,
             "policyVersion": self.policy_version,
         }
+
+    def reason_details(self) -> list[dict]:
+        """One fully-shaped record per reason, in the order they were raised.
+
+        Two entries can share a code with different origins; that is the point.
+        """
+        return [r.detail_record() for r in self.reasons]
+
+    def geometry_observed(self) -> dict:
+        """The geometry the silhouette checks actually read, for the audit trail."""
+        geo = self.metrics.get("geometry") or {}
+        return {
+            "hemToShoulderRatio": geo.get("hemToShoulderRatio"),
+            "sideEdgeDelta": geo.get("sideEdgeDelta"),
+            "shoulderWidth": geo.get("shoulderWidth"),
+            "hemWidth": geo.get("hemWidth"),
+            "confidence": geo.get("confidence"),
+            # which reading the ratio was taken against — without this a corrected
+            # measurement and a raw one are indistinguishable in the record
+            "shoulderWidthSource": geo.get("shoulderWidthSource"),
+            "shoulderWidthReported": geo.get("shoulderWidthReported"),
+            "hemToShoulderRatioReported": geo.get("hemToShoulderRatioReported"),
+            "collarSpan": geo.get("collarSpan"),
+            "armholeSpan": geo.get("armholeSpan"),
+        }
+
+
+def silhouette_labels_observed(carrier: Mapping | None, vision: Mapping | None) -> list[str]:
+    """The silhouette labels the cape/slab checks matched against.
+
+    Reads the same fields `_silhouette_reasons` reads, so an event that reports
+    "no cape label" cannot be reporting on a different set than the check used.
+    """
+    labels = _labels(
+        (carrier or {}).get("silhouette"),
+        (carrier or {}).get("artifact_defects"),
+        (vision or {}).get("shirtSilhouette"),
+        (vision or {}).get("silhouette"),
+        (vision or {}).get("artifact_defects"),
+        (vision or {}).get("garment_shape"),
+    )
+    return sorted(labels)
 
 
 def preflight_carrier_quality(
@@ -127,7 +233,7 @@ def preflight_carrier_quality(
     if image_reason:
         reasons.append(image_reason)
 
-    geometry_metrics, geometry_reason = _geometry_metrics(lm)
+    geometry_metrics, geometry_reason = _geometry_metrics(lm, inv)
     metrics["geometry"] = geometry_metrics
     if geometry_reason:
         reasons.append(geometry_reason)
@@ -187,7 +293,45 @@ def _image_metrics(carrier: Mapping) -> tuple[dict, CarrierPreflightReason | Non
     return {"width": width, "height": height, "aspectHW": aspect_hw}, None
 
 
-def _geometry_metrics(landmarks: Mapping) -> tuple[dict, CarrierPreflightReason | None]:
+def _collar_span(inventory: Mapping | None) -> float | None:
+    """Horizontal extent of the collar box, or None when it was not returned."""
+    box = ((inventory or {}).get("component_boxes") or {}).get("collar_box")
+    if not (isinstance(box, (list, tuple)) and len(box) == 4):
+        return None
+    xs = [p[0] for p in box
+          if isinstance(p, (list, tuple)) and len(p) >= 2
+          and isinstance(p[0], (int, float))]
+    if len(xs) != 4:
+        return None
+    span = max(xs) - min(xs)
+    return span if span > 0 else None
+
+
+def _armhole_span(landmarks: Mapping) -> float | None:
+    """Outer sleeve-to-sleeve span, but only for sleeves that hang straight down.
+
+    With arms down the sleeve outer line sits directly under the armhole, so this
+    span tracks the real shoulder width. A cape has no such sleeve: its edge falls
+    away from the body, which shows up as horizontal drift and disqualifies it
+    here — so this can never widen the denominator for a genuinely caped garment.
+    """
+    left, right = _point(landmarks.get("sleeve_l_end")), _point(landmarks.get("sleeve_r_end"))
+    if not (left and right):
+        return None
+    for side, end in (("l", left), ("r", right)):
+        shoulder = _point(landmarks.get(f"shoulder_{side}"))
+        if not shoulder:
+            return None
+        drop = end[1] - shoulder[1]
+        if drop <= 0 or abs(end[0] - shoulder[0]) > drop * ARMS_DOWN_MAX_DX_OVER_DY:
+            return None
+    span = right[0] - left[0]
+    return span if span > 0 else None
+
+
+def _geometry_metrics(
+    landmarks: Mapping, inventory: Mapping | None = None,
+) -> tuple[dict, CarrierPreflightReason | None]:
     required = ("shoulder_l", "shoulder_r", "hem_l", "hem_r")
     missing = [name for name in required if _point(landmarks.get(name)) is None]
     if missing:
@@ -214,6 +358,23 @@ def _geometry_metrics(landmarks: Mapping) -> tuple[dict, CarrierPreflightReason 
             severity=RETRY,
         )
 
+    # The cape ratio divides by the shoulder span, so a shoulder span measured on
+    # the collar makes a tailored shirt look like a cape. Correct the DENOMINATOR's
+    # provenance, never the limit: only when the reported span is no wider than the
+    # collar (physically impossible for a real shoulder line) and arms-down sleeves
+    # give a true outer span, swap in the armhole span. Both readings are reported.
+    reported_shoulder_width = shoulder_width
+    collar_span = _collar_span(inventory)
+    armhole_span = _armhole_span(landmarks)
+    shoulder_source = SHOULDER_FROM_VISION_POINTS
+    if (collar_span is not None and armhole_span is not None
+            and reported_shoulder_width <= collar_span * SHOULDER_COLLAR_MIN_RATIO
+            and armhole_span > reported_shoulder_width):
+        shoulder_width = armhole_span
+        shoulder_source = SHOULDER_FROM_ARMHOLE
+
+    # measured from the reported points either way — the slab check owns these and
+    # is not part of this fix
     edge_delta = abs((hl[0] - sl[0]) - (sr[0] - hr[0]))
     metrics = {
         "shoulderWidth": round(shoulder_width, 4),
@@ -222,7 +383,14 @@ def _geometry_metrics(landmarks: Mapping) -> tuple[dict, CarrierPreflightReason 
         "torsoHeight": round(torso_height, 4),
         "hemY": round((hl[1] + hr[1]) / 2.0, 4),
         "sideEdgeDelta": round(edge_delta, 4),
+        "shoulderWidthSource": shoulder_source,
+        "shoulderWidthReported": round(reported_shoulder_width, 4),
+        "hemToShoulderRatioReported": round(hem_width / reported_shoulder_width, 4),
     }
+    if collar_span is not None:
+        metrics["collarSpan"] = round(collar_span, 4)
+    if armhole_span is not None:
+        metrics["armholeSpan"] = round(armhole_span, 4)
     conf = landmarks.get("confidence")
     if isinstance(conf, (int, float)):
         metrics["confidence"] = round(float(conf), 3)
@@ -335,32 +503,48 @@ def _silhouette_reasons(
         vision.get("artifact_defects"),
         vision.get("garment_shape"),
     )
-    if {"cape", "poncho", "tent"} & labels:
+    cape_labels = CAPE_LABELS & labels
+    if cape_labels:
         reasons.append(CarrierPreflightReason(
             "carrier_silhouette_cape",
             "carrier silhouette is marked as cape-like",
+            origin=ORIGIN_VISION_LABEL,
+            matched_labels=tuple(sorted(cape_labels)),
         ))
-    if {"slab", "slab_torso", "rectangular_torso", "flat_panel"} & labels:
+    slab_labels = SLAB_LABELS & labels
+    if slab_labels:
         reasons.append(CarrierPreflightReason(
             "carrier_silhouette_slab_torso",
             "carrier torso is marked as slab-like",
+            origin=ORIGIN_VISION_LABEL,
+            matched_labels=tuple(sorted(slab_labels)),
         ))
 
+    # the same codes can also be raised by measurement below. Both are appended,
+    # so a carrier flagged by the model AND by the ratio keeps two separate records
     hem_ratio = geometry.get("hemToShoulderRatio")
     if isinstance(hem_ratio, (int, float)) and hem_ratio > MAX_CAPE_HEM_TO_SHOULDER:
         reasons.append(CarrierPreflightReason(
             "carrier_silhouette_cape",
             f"hem/shoulder ratio {hem_ratio:.2f} > {MAX_CAPE_HEM_TO_SHOULDER}",
             metrics={"hemToShoulderRatio": hem_ratio},
+            origin=ORIGIN_GEOMETRY_METRIC,
+            thresholds={"MAX_CAPE_HEM_TO_SHOULDER": MAX_CAPE_HEM_TO_SHOULDER},
+            comparison=">",
         ))
     side_delta = geometry.get("sideEdgeDelta")
     torso_aspect = inventory.get("torso_aspect")
     if (isinstance(side_delta, (int, float)) and side_delta <= MAX_SLAB_EDGE_RATIO
-            and isinstance(torso_aspect, (int, float)) and float(torso_aspect) > 2.4):
+            and isinstance(torso_aspect, (int, float))
+            and float(torso_aspect) > MIN_SLAB_TORSO_ASPECT):
         reasons.append(CarrierPreflightReason(
             "carrier_silhouette_slab_torso",
             "near-parallel torso edges with excessive torso aspect",
             metrics={"sideEdgeDelta": side_delta, "torsoAspect": round(float(torso_aspect), 3)},
+            origin=ORIGIN_GEOMETRY_METRIC,
+            thresholds={"MAX_SLAB_EDGE_RATIO": MAX_SLAB_EDGE_RATIO,
+                        "MIN_SLAB_TORSO_ASPECT": MIN_SLAB_TORSO_ASPECT},
+            comparison="sideEdgeDelta <= MAX_SLAB_EDGE_RATIO and torsoAspect > MIN_SLAB_TORSO_ASPECT",
         ))
     return reasons
 

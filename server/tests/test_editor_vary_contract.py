@@ -270,8 +270,11 @@ def test_provider_failure_log_carries_no_raw_error(monkeypatch, caplog):
 
     from app.agents import vision_llm
 
+    # mirrors the real `_call_gpt`/`_call_gemini` signature — `temperature` was added when
+    # the fidelity judge needed a fixed one, and a stub that cannot accept it fails on the
+    # call instead of on the property this test is about
     async def boom(settings, model, prompt, images, schema, timeout,
-                   thinking_level=None):
+                   thinking_level=None, temperature=None):
         raise vision_llm.VisionError(
             "Gemini 500: https://host/v1/models?key=SECRET body=PROMPT-LEAK")
 

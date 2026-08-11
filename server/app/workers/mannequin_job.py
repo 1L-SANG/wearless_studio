@@ -28,6 +28,8 @@ from .. import repo
 from ..agents import (
     image_qc,
     carrier_preflight_vision,
+    garment_fidelity_qc,
+    pattern_fidelity_qc,
     mannequin,
     mannequin_bust,
     mannequin_frame_vision,
@@ -77,6 +79,10 @@ from ..agents.prompts import (
 )
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime, genrun_prompt_key
 from ..services import edit_intent_qc, image_budget, mannequin_frame_qc, qc
+from ..services import garment_fidelity_pass as gf_pass
+from ..services import generation_input_strategy
+from ..services import pattern_fidelity_gates as pf_gates
+from ..services import sam_fallback
 from ..services import product_truth as product_truth_service
 from ..services.garment_profile import build_garment_profile, select_pipeline_policy
 from ..services.qc_decision import decide as decide_structured_qc
@@ -293,6 +299,8 @@ def _carrier_preflight_can_soft_continue(
 
 # 첨부 이미지 슬롯 → 모델용 라벨. prompt ${imageManifest} 가 이 목록을 받는다.
 _SLOT_LABEL = {
+    "CanonicalFront": generation_input_strategy.CANONICAL_MANIFEST_LINE,
+    "CanonicalBack": generation_input_strategy.CANONICAL_BACK_MANIFEST_LINE,
     "Front": "front view of the garment",
     "Back": "back view of the garment",
     "Detail": "detail close-up of the garment (texture, stitching, trims, print)",
@@ -1442,6 +1450,170 @@ async def _apply_untuck_pass(
     return out, True
 
 
+async def _apply_garment_fidelity_pass(
+    *, pool, gemini, s, job_id, candidate, attempt, res, prod_refs,
+    image_size=None, runlog=None, budget=None, product_truth=None, product=None,
+):
+    """Vision LLM 의미 동일성 QC → 실패 시 실패 속성만 지목한 교정 1회 → 재판정.
+
+    → `(res, qc_scores 조각 | None, 교정콜 소비 여부)`.
+
+    루프 자체는 `services.garment_fidelity_pass` 에 있다 — QA 하네스가 같은 코드를 돌려야
+    "하네스에서 되더라"가 프로덕션 주장이 되기 때문이다. 여기서 하는 일은 그 루프에
+    **프로덕션의 provider 호출**을 묶어주는 것뿐이다: 판정은 vision 폴백 순서를 따르고,
+    교정은 이미지 예산의 TARGETED_CORRECTION 슬롯을 지나야 한다.
+
+    교정이 실제로 이미지를 바꿨다면 **그 이미지가 이후 단계의 정본**이 된다. 판정만 새
+    이미지로 하고 저장은 옛 이미지로 하면, 저장된 컷에 대해 아무도 아무것도 재지 않은 것과
+    같다. 반대로 교정이 거부되면(예산·provider) C0 판정이 그대로 남아 계속 막는다 —
+    거부는 통과가 아니다.
+    """
+    mode = getattr(s, "mannequin_garment_fidelity_qc", "off")
+    if mode == "off" or not prod_refs:
+        return res, None, False
+    sources = garment_fidelity_qc.order_sources([
+        garment_fidelity_qc.SourceRef(slot=r.slot, image=r.image, asset_id=r.asset_id)
+        for r in prod_refs
+    ])
+    manifest = gf_pass.build_correction_manifest([r.slot for r in sources])
+    correction_model = resolve_model(s, "image_high")
+    spent = {"correction": False, "result": None}
+
+    required_gates = pf_gates.required_gates(product_truth, product=product)
+    gate_calls = {"provider": 0}
+    front = next((r.image.data for r in sources if r.slot == "Front"), None)
+    detail = next((r.image.data for r in sources if r.slot == "Detail"), None)
+
+    async def judge_fn(image):
+        return await garment_fidelity_qc.judge(s, sources=sources, generated=image)
+
+    async def specialized_fn(image):
+        # A patterned product gets a second, narrower examination on a crop. Activation comes
+        # from approved Product Truth, so a candidate that erased its own stripe cannot also
+        # erase the gate that catches it.
+        results, calls = await pattern_fidelity_qc.run_gates(
+            s, required=required_gates, source_front=front, source_detail=detail,
+            generated=image)
+        gate_calls["provider"] += calls
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt,
+            "status": "pattern_fidelity_qc",
+            "requiredGates": list(required_gates),
+            "gateStatuses": {g: n.get("status") for g, n in results.items()},
+            "providerCalls": calls})
+        return results
+
+    async def correct_fn(instruction, image):
+        reservation = await _require_image_slot(
+            budget, request=image_budget.REQUEST_TARGETED_CORRECTION,
+            operation="garment_fidelity_correction", candidate=candidate, attempt=attempt)
+        if not reservation.allowed:
+            await _emit(pool, job_id, "step", _budget_denied_event(
+                reservation, candidate=candidate, attempt=attempt,
+                status="garment_fidelity_correction"))
+            return None
+        prompt = gf_pass.render_correction_prompt(instruction, manifest)
+        inputs = [("edit_source", image, None, None)]
+        inputs += [("product_reference", r.image, r.asset_id, r.slot) for r in sources]
+        run_id = await _runlog_begin(
+            runlog, kind="mannequin_garment_fidelity_correction", prompt=prompt,
+            model=correction_model, candidate=candidate, attempt=attempt,
+            image_size=image_size or s.mannequin_image_size,
+            aspect_ratio=s.mannequin_aspect_ratio, settings=s,
+            inputs=inputs, input_image=image.data)
+        t0 = time.monotonic()
+        spent["correction"] = True     # 예약이 커밋된 순간 슬롯은 소비됐다
+        try:
+            out = await gemini.generate_content_image(
+                correction_model, prompt,
+                [image] + [r.image for r in sources],
+                image_size or s.mannequin_image_size,
+                aspect_ratio=s.mannequin_aspect_ratio)
+        except Exception as e:                       # noqa: BLE001 — 교정 실패는 잡을 죽이지 않는다
+            await _runlog_finish(runlog, run_id, started=t0, error=e, candidate=candidate)
+            await _emit(pool, job_id, "step", {
+                "candidate": candidate, "attempt": attempt,
+                "status": "garment_fidelity_correction", "outcome": "failed",
+                "error_type": type(e).__name__, "error_message": str(e)[:200]})
+            return None
+        await _runlog_finish(runlog, run_id, started=t0, result=out, candidate=candidate)
+        spent["result"] = out
+        await _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt,
+            "status": "garment_fidelity_correction", "outcome": "applied",
+            "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
+        return InlineImage(out.mime, out.image)
+
+    outcome = await gf_pass.run_fidelity_pass(
+        mode=mode, candidate=InlineImage(res.mime, res.image),
+        judge_fn=judge_fn, correct_fn=correct_fn,
+        required_gates=required_gates, specialized_fn=specialized_fn,
+        emit=lambda payload: _emit(pool, job_id, "step", {
+            "candidate": candidate, "attempt": attempt, **payload}))
+    if outcome is None:
+        return res, None, False
+    final_image = outcome.final_image
+    if (spent["result"] is not None and final_image is not None
+            and final_image.data == spent["result"].image):
+        res = spent["result"]
+    scores = outcome.as_scores()
+    scores["patternGateProviderCalls"] = gate_calls["provider"]
+    return res, scores, bool(spent["correction"])
+
+
+#: Manifest slot for the canonical reference. Deliberately NOT one of Front/Back/Detail/Fit:
+#: those name a photograph the seller took, and this is a derived cut-out. `_SLOT_LABEL` has
+#: no entry for it, so the manifest line comes from the strategy module instead.
+_CANONICAL_SLOT = "CanonicalFront"
+_CANONICAL_BACK_SLOT = "CanonicalBack"
+_CANONICAL_SLOTS = (_CANONICAL_SLOT, _CANONICAL_BACK_SLOT)
+
+
+async def _load_canonical_references(app, *, product_id) -> dict:
+    """{slot: ProductReference} for whatever canonical cutouts are current. Possibly empty.
+
+    LOADS ONLY. It never calls SAM, never enqueues preprocessing and never waits for it — the
+    producer is the `sam_preprocess` job. If preprocessing has not finished, or SAM is down, or
+    the stored cutout was built from a source photograph the seller has since replaced, this
+    returns nothing for that view and generation proceeds on RAW references.
+
+    Every failure returns fewer references, never an exception. A segmentation or lookup
+    problem must degrade to RAW and must never surface to the seller (§13).
+    """
+    loader = getattr(app.state, "canonical_reference_loader", None)
+    if loader is None:
+        return {}
+    try:
+        refs = loader(product_id)
+        if asyncio.iscoroutine(refs):
+            refs = await refs
+    except Exception as exc:                      # noqa: BLE001 — RAW is always safe
+        log.warning("canonical reference lookup failed for product %s: %r", product_id, exc)
+        return {}
+    if refs is None:
+        return {}
+    # Backward compatible: an older loader that returns a single Front reference still works.
+    if isinstance(refs, ProductReference):
+        refs = {_CANONICAL_SLOT: refs}
+    if not isinstance(refs, dict):
+        log.warning("canonical reference loader for %s returned %r", product_id, type(refs))
+        return {}
+    out = {}
+    for slot, ref in refs.items():
+        if slot not in _CANONICAL_SLOTS:
+            continue
+        if not isinstance(ref, ProductReference) or not getattr(ref.image, "data", None):
+            log.warning("canonical reference %s for product %s is unusable", slot, product_id)
+            continue
+        out[slot] = ref
+    return out
+
+
+async def _load_canonical_reference(app, *, product_id) -> ProductReference | None:
+    """Front only. Kept for callers that predate Back support."""
+    return (await _load_canonical_references(app, product_id=product_id)).get(_CANONICAL_SLOT)
+
+
 def _decode_bgr(image_bytes: bytes):
     arr = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
     if arr is None:
@@ -1750,6 +1922,150 @@ def _dump_composite_artifacts(carrier_bgr, pm, art, source_bgr=None,
                 json.dumps(geometry, ensure_ascii=False, indent=1, sort_keys=True))
     except Exception as exc:               # QA 보조 기능이 출고 경로를 막으면 안 된다
         log.warning("composite artifact dump skipped: %r", exc)
+
+
+#: mime -> extension for the verbatim carrier byte dump. Deliberately local and
+#: tiny: this path must not reach for the R2 module, which is where an accidental
+#: upload would come from.
+_QA_MIME_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+
+
+def _qa_draw_silhouette_overlay(carrier_bgr, landmarks: dict, geometry: dict):
+    """Draw what the cape check measured. Diagnostic only — reads, never feeds back."""
+    import cv2 as _cv2
+
+    canvas = carrier_bgr.copy()
+    h, w = canvas.shape[:2]
+
+    def px(name):
+        pt = (landmarks or {}).get(name)
+        if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+            return None
+        try:
+            return int(float(pt[0]) * w), int(float(pt[1]) * h)
+        except (TypeError, ValueError):
+            return None
+
+    sl, sr, hl, hr = (px("shoulder_l"), px("shoulder_r"), px("hem_l"), px("hem_r"))
+    if sl and sr:
+        _cv2.line(canvas, sl, sr, (0, 220, 0), 6)          # shoulder line
+    if hl and hr:
+        _cv2.line(canvas, hl, hr, (0, 140, 255), 6)        # hem line
+    if sl and hl:
+        _cv2.line(canvas, sl, hl, (255, 200, 0), 3)        # left side edge
+    if sr and hr:
+        _cv2.line(canvas, sr, hr, (255, 200, 0), 3)        # right side edge
+    if sl and sr and hl and hr:
+        x0, x1 = min(sl[0], hl[0]), max(sr[0], hr[0])
+        y0, y1 = min(sl[1], sr[1]), max(hl[1], hr[1])
+        _cv2.rectangle(canvas, (x0, y0), (x1, y1), (255, 0, 255), 3)   # torso bbox
+    for point in (sl, sr, hl, hr):
+        if point:
+            _cv2.circle(canvas, point, 12, (255, 255, 255), -1)
+    ratio = (geometry or {}).get("hemToShoulderRatio")
+    label = (f"hem/shoulder={ratio} limit={hc_preflight.MAX_CAPE_HEM_TO_SHOULDER}"
+             if ratio is not None else "hem/shoulder unmeasured")
+    # carriers here are ~3400px wide but fixtures are a few hundred; a fixed scale
+    # runs the caption off the edge of the small ones
+    scale = max(0.4, min(4.0, w / 900.0))
+    _cv2.putText(canvas, label, (int(16 * scale), int(48 * scale)),
+                 _cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255),
+                 max(1, int(3 * scale)), _cv2.LINE_AA)
+    return canvas
+
+
+def _capture_rejected_carrier(*, carrier_bytes, carrier_mime, carrier_bgr,
+                              carrier_sha256, source_sha256, job_id, candidate,
+                              attempt, preflight, preflight_summary, landmarks) -> dict:
+    """Keep the rejected carrier and why it was rejected, locally, for QA.
+
+    A carrier that fails preflight is paid for and then thrown away: the bytes are
+    never persisted, so the only record of a rejection is a reason code. That makes
+    "was the gate right?" unanswerable without paying again. This writes the exact
+    encoded bytes plus the reason origins and measurements beside them.
+
+    Writes only under the existing HYBRID_COMPOSITE_ARTIFACT_DIR, touches no DB and
+    no R2, and swallows every error: a QA convenience must never change whether a
+    carrier is accepted or cost a retry.
+    """
+    out = {"enabled": False, "carrierPath": None, "metadataPath": None,
+           "captureError": None}
+    root = os.getenv("HYBRID_COMPOSITE_ARTIFACT_DIR")
+    if not root:
+        return out
+    out["enabled"] = True
+    try:
+        import cv2 as _cv2
+
+        slot = f"candidate-{candidate}-attempt-{attempt}"
+        d = pathlib.Path(root) / str(job_id) / "carrier_preflight" / slot
+        d.mkdir(parents=True, exist_ok=True)
+
+        # the provider's bytes, verbatim. A decoded-then-re-encoded PNG is a
+        # different file with a different digest and must not be called the original.
+        ext = _QA_MIME_EXT.get((carrier_mime or "").lower(), "bin")
+        original = d / f"carrier_original.{ext}"
+        original.write_bytes(carrier_bytes)
+        out["carrierPath"] = str(original)
+
+        if carrier_bgr is not None:
+            _cv2.imwrite(str(d / "carrier_preview.png"), carrier_bgr)
+            try:
+                overlay = _qa_draw_silhouette_overlay(
+                    carrier_bgr, landmarks, preflight.metrics.get("geometry") or {})
+                _cv2.imwrite(str(d / "silhouette_overlay.png"), overlay)
+            except Exception as exc:      # an overlay is the least important artifact
+                out["captureError"] = f"overlay skipped: {exc!r}"
+
+        sidecar = {
+            "jobId": str(job_id) if job_id is not None else None,
+            "candidate": candidate,
+            "attempt": attempt,
+            "capturedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "carrierSha256": carrier_sha256,
+            "carrierShaBasis": hc_preflight.SHA_BASIS_ENCODED_MEMORY,
+            "carrierMime": carrier_mime,
+            "carrierBytes": len(carrier_bytes) if carrier_bytes else None,
+            "sourceSha256": source_sha256,
+            # the request-side facts live on the generation_runs row, not here:
+            # this function is handed the RESULT, and GeminiImageResult carries only
+            # image/mime/latency/usage. Join on carrierSha256 rather than trust a
+            # value guessed at this callsite.
+            "model": None,
+            "imageSize": None,
+            "aspectRatio": None,
+            "promptSha256": None,
+            "requestFieldsMissingReason":
+                "model, imageSize, aspectRatio and promptSha256 are not in scope in "
+                "_apply_hybrid_composite and are not fields of GeminiImageResult; they "
+                "are recorded on generation_runs and can be joined via carrierSha256",
+            # built inside GeminiImageClient._body and never returned on the result,
+            # so the callsite genuinely does not hold it. Recorded as null with the
+            # reason rather than reconstructed from what we think it probably was.
+            "generationConfig": None,
+            "generationConfigMissingReason":
+                "assembled in GeminiImageClient._body (app/agents/gemini_image.py) and "
+                "not exposed on GeminiImageResult, so it is unavailable at this callsite",
+            "safetySettings": None,
+            "safetySettingsMissingReason":
+                "the adapter sends no safetySettings key at all; the provider default "
+                "applies and no explicit setting exists to record",
+            "preflight": {
+                "passed": preflight.passed,
+                "decision": preflight.decision,
+                "reasons": [r.code for r in preflight.reasons],
+                "reasonDetails": preflight.reason_details(),
+                "policyVersion": preflight.policy_version,
+                "metrics": preflight_summary.get("metrics"),
+            },
+        }
+        meta = d / "preflight.json"
+        meta.write_text(json.dumps(sidecar, ensure_ascii=False, indent=1, sort_keys=True))
+        out["metadataPath"] = str(meta)
+    except Exception as exc:
+        out["captureError"] = repr(exc)[:300]
+        log.warning("rejected carrier capture skipped: %r", exc)
+    return out
 
 
 async def _emit_landmark_geometry(emit, *, source: tuple, carrier: tuple) -> None:
@@ -2264,6 +2580,20 @@ async def _apply_hybrid_composite(
 
     if not soft_continue:
         preflight_summary["carrierPreflightOriginalDecision"] = preflight.decision
+    # A rejected carrier is paid for and then discarded, so this event is the only
+    # lasting record of it. Codes alone proved unreadable in review — the same cape
+    # code comes from a Vision label and from the hem/shoulder ratio — so the origin,
+    # the measurement and the threshold ride along, and the bytes are kept locally
+    # when a QA directory is configured. None of it changes the decision above.
+    qa_capture = {"enabled": False, "carrierPath": None, "metadataPath": None,
+                  "captureError": None}
+    if not preflight.passed:
+        qa_capture = _capture_rejected_carrier(
+            carrier_bytes=res.image, carrier_mime=getattr(res, "mime", None),
+            carrier_bgr=carrier_bgr, carrier_sha256=carrier_sha_early,
+            source_sha256=front_sha_early, job_id=job_id, candidate=candidate,
+            attempt=attempt, preflight=preflight, preflight_summary=preflight_summary,
+            landmarks=car_lm)
     await emit(
         "hybrid_carrier_preflight",
         passed=preflight.passed or soft_continue,
@@ -2271,6 +2601,20 @@ async def _apply_hybrid_composite(
         reasons=[reason.code for reason in preflight.reasons],
         policy_version=preflight.policy_version,
         vision_status=(carrier_preflight_meta or {}).get("status"),
+        job_id=str(job_id) if job_id is not None else None,
+        candidate=candidate,
+        attempt=attempt,
+        carrier_sha256=carrier_sha_early,
+        source_sha256=front_sha_early,
+        reason_details=preflight.reason_details(),
+        geometry=preflight.geometry_observed(),
+        vision={
+            "confidence": (carrier_preflight_meta or {}).get("confidence"),
+            "silhouetteLabels": hc_preflight.silhouette_labels_observed(
+                preflight_inputs.get("carrier_evidence"), preflight_vision),
+            "uncertainFields": list(preflight_vision.get("uncertainFields") or []),
+        },
+        artifact_capture=qa_capture,
     )
     capture_artifacts(
         "carrier_preflight",
@@ -3188,6 +3532,55 @@ async def _rollback_edits(
     return await _revert_to(post_axis_res, mid_p2, "bust_only")
 
 
+async def _maybe_augment_with_canonical(
+    *, app, pool, job_id, s, candidate, attempt, generation_path, already_used,
+    product, analysis, product_truth, template, prod_refs, input_entries, match_img,
+    clothing_type, base_gender, fit_profile, adjusted_axes,
+):
+    """QC 가 이미 승인한 재시도의 **입력**에 캐노니컬 컷아웃을 덧붙인다. 아니면 None.
+
+    이건 새 생성 호출이 아니다. 어차피 일어날 재생성의 입력을 바꾸는 것이라 provider 예산도
+    크레딧도 추가로 쓰지 않는다. 조건은 sam_fallback.decide 가 전부 판정한다 — 니트 계열 +
+    QC 가 재시도 요구 + 현재 소스로 만든 캐노니컬 존재.
+
+    RAW 는 **절대 대체되지 않는다**. 캐노니컬은 뒤에 추가될 뿐이고, 프롬프트는 승인된 같은
+    템플릿으로 다시 렌더한다(GARMENT-BODY CONTACT·니트 가이드·핏 보존 그대로).
+
+    편집 경로는 image 1 계약이 따로 있어 건드리지 않는다. 생성 시점에 SAM 서비스를 부르지
+    않는다 — 저장된 캐노니컬 자산만 읽는다.
+    """
+    if generation_path == "edit" or already_used:
+        return None
+    canonical_refs = await _load_canonical_references(app, product_id=product.get("id"))
+    verdict = sam_fallback.decide(
+        product=product, analysis=analysis, qc_says_retry=True,
+        canonical_refs=canonical_refs, already_used=already_used)
+    await _emit(pool, job_id, "step", {
+        "candidate": candidate, "attempt": attempt,
+        "status": "sam_fallback_decision", **verdict})
+    if not verdict["augment"]:
+        return None
+
+    for slot in _CANONICAL_SLOTS:                 # Front 먼저, 결정적 순서
+        ref = canonical_refs.get(slot)
+        if ref is not None:
+            prod_refs = (*prod_refs, ref)
+            input_entries.append(("canonical_reference", ref.image, ref.asset_id, slot))
+    prod_imgs = [r.image for r in prod_refs]
+    product_count = len(prod_imgs) + (1 if match_img else 0)
+    image_manifest = _build_manifest(
+        [{"slot": r.slot, "id": r.asset_id} for r in prod_refs],
+        match_img is not None, clothing_type)
+    ctx = mannequin.prompt_context(
+        clothing_type=clothing_type, product_count=product_count, base_gender=base_gender,
+        image_manifest=image_manifest, fit_profile=fit_profile, adjusted_axes=adjusted_axes)
+    base_prompt = render_mannequin_prompt(
+        template, ctx, product, analysis, seller_canon=s.seller_text_canonicalize,
+        knowledge=s.retrieval_knowledge, product_truth=product_truth)
+    return (True, prod_refs, prod_imgs, prod_refs, [e[1] for e in input_entries],
+            product_count, image_manifest, base_prompt)
+
+
 async def _run_candidate(
     *, app, job, candidate, base_fit, base_gender, base_img, prod_refs, match_img,
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
@@ -3317,6 +3710,9 @@ async def _run_candidate(
     final_reject: CandidateSnapshot | None = None
     frame_retry_used = False
     carrier_retry_used = False
+    # 캐노니컬 컷아웃 폴백은 후보당 **한 번**만. 이 플래그가 재귀(폴백이 또 폴백을 부르는
+    # 것)를 막고, 폴백이 이미 붙은 뒤의 재시도는 그냥 평소의 재시도로 남게 한다.
+    sam_fallback_used = False
     # 이미지 모델 호출 예산은 한 통이다 — 생성·axis 편집·bust 2패스가 전부 여기서 나간다.
     # 호출 **직전**에 소비하고, 재생성 여부는 남은 잔량으로만 판단한다.
     calls_spent = 0
@@ -3455,6 +3851,7 @@ async def _run_candidate(
         restored_carrier = None   # 구제 복구 시에만 채워진다(복구본의 원래 carrier)
         reprocess = True          # 구제본이 이미 편집·D축을 거쳤으면 False 로 내린다
         salvaged_series = None
+        salvaged_scores = None
         if p2_reject and not pillow_reject:
             # reject 후보를 점수와 함께 보관 — 예산 소진 시 "마지막 시도"가 아니라 **최선본**을
             # 구제하기 위해서다. 1차 70점 / 2차 20점인데 20점을 내보내면 재시도가 손해가 된다.
@@ -3694,6 +4091,22 @@ async def _run_candidate(
                             "outcome": "hard_stop",
                             "criticalErrors": final_frame["criticalErrors"]})
                         return None
+            # 의미 동일성(Vision LLM) — **시리즈 QC 앞**에서 돈다. 교정이 이미지를 바꾸면
+            # 그 뒤의 모든 판정은 바뀐 이미지를 봐야 한다. 순서를 뒤집으면 D축이 출고되지
+            # 않을 이미지를 재고, 출고본은 아무도 안 잰 상태가 된다.
+            if reprocess:
+                res, fidelity_scores, _fidelity_call = await _apply_garment_fidelity_pass(
+                    pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+                    attempt=attempt, res=res, prod_refs=prod_refs, image_size=image_size,
+                    runlog=runlog, budget=budget, product_truth=product_truth,
+                    product=product)
+            else:
+                # 복구본은 이 판정을 이미 받았다. 다시 부르면 같은 이미지에 vision 콜을 한
+                # 번 더 쓰고, merge_qc_scores 가 스냅샷을 새로 만드는 탓에 **안 옮기면**
+                # 판정 자체가 사라진다 — 그러면 enforce 인데 무측정인 컷이 저장된다.
+                fidelity_scores = (
+                    (salvaged_scores or {}).get("garmentFidelityQc")
+                    if isinstance(salvaged_scores, dict) else None)
             # D축 시리즈 일관성 — bust 2패스 뒤(측정본=출고본), R2 저장 직전. fail-open.
             # 재처리 대상이 아니면(=이미 판정을 거친 구제본) 그때의 스냅샷을 그대로 쓴다.
             series = (
@@ -3711,6 +4124,8 @@ async def _run_candidate(
                 qc_scores = {**(qc_scores or {}), "frameLockQc": final_frame}
             if hybrid_info is not None:
                 qc_scores = {**(qc_scores or {}), "hybridComposite": hybrid_info}
+            if fidelity_scores is not None:
+                qc_scores = {**(qc_scores or {}), "garmentFidelityQc": fidelity_scores}
             if image_qc_errored:
                 # enforce 인데 재지 못했다 — 이 표식이 권한을 막는다. 낡은 컷에는 이 키가
                 # 없으므로 기존 관용(판정 없음 = 허용)은 그대로다.
@@ -3731,6 +4146,17 @@ async def _run_candidate(
                     final_reject = CandidateSnapshot(
                         res, qc_scores, series, p2, carrier_run_id)
                 feedback = _build_retry_feedback(qc_scores, series, p2)
+                augmented = await _maybe_augment_with_canonical(
+                    app=app, pool=pool, job_id=job_id, s=s, candidate=candidate,
+                    attempt=attempt, generation_path=generation_path,
+                    already_used=sam_fallback_used, product=product, analysis=analysis,
+                    product_truth=product_truth, template=template,
+                    prod_refs=prod_refs, input_entries=input_entries, match_img=match_img,
+                    clothing_type=clothing_type, base_gender=base_gender,
+                    fit_profile=fit_profile, adjusted_axes=adjusted_axes)
+                if augmented is not None:
+                    (sam_fallback_used, prod_refs, prod_imgs, manifest_refs, images,
+                     product_count, image_manifest, base_prompt) = augmented
                 continue
             if final_decision(s, qc_scores) == "retry" and hybrid_enforce:
                 raise _HybridCompositeFailClosed(_hc_fail_summary(
@@ -3889,6 +4315,14 @@ async def _run_candidate(
                             "outcome": "hard_stop",
                             "criticalErrors": final_frame["criticalErrors"]})
                         return None
+            # 구제본도 **반드시** 의미 동일성을 잰다. 이 가지는 사전 게이트 후보라 아직 한
+            # 번도 판정을 안 거쳤고, 안 재고 저장하면 enforce 를 선언해 놓고 판정 없는 컷이
+            # 나간다 — 그 컷은 권한 계층에서 legacy 관용을 받아 그대로 소비된다.
+            res, salvage_fidelity, _ = await _apply_garment_fidelity_pass(
+                pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+                attempt=s.mannequin_max_attempts, res=res, prod_refs=prod_refs,
+                image_size=image_size, runlog=runlog, budget=budget,
+                product_truth=product_truth, product=product)
             series = await _apply_series_qc(
                 app=app, pool=pool, s=s, job_id=job_id, project_id=project_id,
                 candidate=candidate, attempt=s.mannequin_max_attempts, res=res)
@@ -3898,6 +4332,8 @@ async def _run_candidate(
                 qc_scores = {**(qc_scores or {}), "frameLockQc": final_frame}
             if salvage_hybrid is not None:
                 qc_scores = {**(qc_scores or {}), "hybridComposite": salvage_hybrid}
+            if salvage_fidelity is not None:
+                qc_scores = {**(qc_scores or {}), "garmentFidelityQc": salvage_fidelity}
             _raise_if_hybrid_failed_closed(salvage_hybrid)
         qc_scores = {**(qc_scores or {}), "salvaged": True}
         await _emit(pool, job_id, "step", {
@@ -4455,6 +4891,30 @@ async def run_mannequin_job(app, job: dict) -> None:
         #    함께 떠서 혼란(버전 스트립에 2개) + 재생성마다 2컷씩 쌓이던 문제.
         #    크레딧 단가(2/잡)는 잡 기준이라 불변. 다양화는 핏 조정→재생성 루프가 담당.
         clothing_type = product.get("clothing_type") or "상의"
+        # 입력 전략 라우팅 — 구조적 셔츠에만 배경 제거 canonical Front 를 **추가** 증거로 붙인다.
+        # 6개 A/B 실측(2026-08-11): 셔츠는 원본만 주면 스트라이프의 두 번째 색이 날아가고
+        # canonical 을 붙이면 돌아온다. 반대로 드레이프 의존 블라우스는 canonical 이 넥라인을
+        # 바꾸고 색을 밀어버렸다. 그래서 셔츠만 AUGMENTED, 나머지는 전부 RAW 다.
+        # canonical 이 없으면 그냥 RAW — 세그멘테이션 실패가 잡을 죽이거나 사용자에게 보이면
+        # 안 된다(§13). Product Truth 는 어느 경로에서도 그대로 전달된다.
+        canonical_refs = await _load_canonical_references(app, product_id=product.get("id"))
+        input_strategy = generation_input_strategy.resolve(
+            product_truth, product, canonical_available=bool(canonical_refs))
+        await _emit(pool, job_id, "step",
+                    {"status": "generation_input_strategy", **input_strategy.as_event(),
+                     "canonicalSlots": sorted(canonical_refs)})
+        if input_strategy.use_canonical and canonical_refs:
+            # APPENDED, never substituted. The RAW Front/Back/Detail photographs stay in
+            # prod_refs exactly as they were — canonical cutouts are extra evidence, and the
+            # originals remain the ground truth for garment identity.
+            for slot in _CANONICAL_SLOTS:          # Front before Back, deterministic order
+                ref = canonical_refs.get(slot)
+                if ref is None:
+                    continue
+                prod_refs = [*prod_refs, ref]
+                prod_assets = [*prod_assets, {"slot": slot, "id": ref.asset_id}]
+                product_count += 1
+            prod_imgs = [r.image for r in prod_refs]
         manifest = _build_manifest(prod_assets, match_img is not None, clothing_type)
         # fit profile 은 잡 생성 시점 스냅샷이 정본(payload.fitProfileSnapshot — fidelity 설계 D3).
         # 워커가 최신 analysis 를 재독하면 잡 생성↔실행 사이의 저장 경합으로 다른 프로필이

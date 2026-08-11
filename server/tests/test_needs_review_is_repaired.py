@@ -76,7 +76,9 @@ def test_only_the_looping_branch_retries_and_it_requires_budget():
     for i, line in enumerate(lines):
         if 'final_decision(s, qc_scores) == "retry"' not in line:
             continue
-        body = "\n".join(lines[i + 1:i + 14])
+        # 창을 30줄로 잡는다. 불변식은 "되도는 분기가 하나뿐"이지 "분기 본문이 짧다"가
+        # 아니다 — 재시도 분기에 캐노니컬 폴백 입력 교체가 들어오면서 본문이 길어졌다.
+        body = "\n".join(lines[i + 1:i + 30])
         if "continue" in body:
             looping.append(line)
     assert len(looping) == 1, looping

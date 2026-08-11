@@ -69,6 +69,19 @@ jobs:
                     https://github.com/aws/copilot-cli/releases/latest/download/copilot-linux
                   chmod +x /usr/local/bin/copilot
 
+            # api 보다 **먼저** 배포한다. api 매니페스트가 SAM_SERVICE_URL 로 이 서비스를
+            # 가리키므로, 순서가 뒤집히면 api 는 뜨자마자 존재하지 않는 sam2 를 호출하고
+            # sam_preprocess 잡이 전부 unavailable 로 떨어진다(생성·분석은 무사하지만
+            # 실패 잡이 쌓인다). `copilot svc deploy` 는 ECS 서비스가 안정화될 때까지
+            # 블록하므로, 단계를 순서대로 두는 것만으로 "sam2 healthy 대기"가 성립한다.
+            - name: SAM2 서비스 배포
+              run: |
+                  copilot svc deploy \
+                    --app "$COPILOT_APP" \
+                    --name sam2 \
+                    --env "$COPILOT_ENV" \
+                    --tag "$GITHUB_SHA"
+
             - name: 배포 (이미지 빌드→ECR→ECS 롤링)
               run: |
                   copilot svc deploy \

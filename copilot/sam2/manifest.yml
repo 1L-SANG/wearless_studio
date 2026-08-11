@@ -1,0 +1,77 @@
+# SAM2 garment segmentation service.
+#
+# Backend Service, not Load Balanced Web Service: this is internal-only. Copilot gives it a
+# Service Connect / service discovery name reachable from `api` inside the VPC and NO public
+# ALB listener, which is most of the "do not expose an unauthenticated SAM endpoint"
+# requirement handled by infrastructure rather than by code. The bearer token in
+# `sam_service/api.py` is the second layer.
+name: sam2
+type: Backend Service
+
+image:
+  build:
+    dockerfile: server/sam_service/Dockerfile
+    context: server
+  port: 8080
+  healthcheck:
+    command: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)\" || exit 1"]
+    interval: 30s
+    retries: 3
+    timeout: 10s
+    # Weights are baked into the image, but torch still has to import and the model still has
+    # to reach memory. A short grace period would kill the task mid-warmup and loop forever.
+    start_period: 120s
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPUTE SIZING — second benchmark, now stepping DOWN with evidence.
+#
+# History. The first Fargate run used 4 vCPU / 24 GB because the implementation encoded the
+# source image once per prompt (64 encodes per view), which cost ~147 s/view on Fargate and
+# peaked near 15.7 GB locally. That duplication is gone: the image is encoded once and the
+# embedding is reused across all 64 prompts.
+#
+# Local CPU peak RSS after the optimisation (concurrency 1, prompt batch 16 unchanged):
+#   real app-uploaded R2 Front (3000x4000)   ~4.23 GB
+#   HEIC-transcoded Front      (4284x5712)   ~7.38 GB
+#
+# MEASURED ON FARGATE at 4 vCPU / 12 GB (x86_64, concurrency 1, three views on one task):
+#   warm Front  ~24.6 s   warm Back ~24.5 s   Front+Back ~49.3 s
+#   VmRSS 1.50 -> 1.86 -> 2.14 GB      VmHWM 2.84 -> 2.99 -> 3.27 GB
+#
+# 8192 is chosen from that peak: ~2.4x headroom over 3.27 GB, covering the observed inter-view
+# drift, the service-connect sidecar and allocator fragmentation. It is also the smallest
+# memory Fargate permits at 4 vCPU, so it is the floor without giving up cores.
+#
+# 8 GB HAS NOT ITSELF BEEN BENCHMARKED — it is a measured recommendation derived from the
+# 12 GB run, not an observation at this size. Watch VmHWM on the first real traffic.
+#
+# Dropping to 2 vCPU would allow the same 8 GB but roughly doubles latency (~50 s/view), which
+# pushes preprocessing past the baseline QC decision. Not recommended without re-measuring.
+cpu: 4096
+memory: 8192
+platform: linux/x86_64
+count: 1
+exec: true
+
+network:
+  connect: true          # service discovery for `api` -> `sam2`
+
+variables:
+  APP_ENV: production
+  R2_ACCOUNT_ID: 2b7c948b56f129faaa10e5076b9e9a66
+  R2_BUCKET: wearless
+  R2_ENDPOINT: https://2b7c948b56f129faaa10e5076b9e9a66.r2.cloudflarestorage.com
+  SAM_MODEL_ID: facebook/sam2.1-hiera-tiny
+
+secrets:
+  # Created out of band with:
+  #   copilot-aws secret init --name SAM_INTERNAL_TOKEN --values prod="$(openssl rand -hex 32)"
+  # NOT `aws ssm put-parameter` — a raw parameter has no Copilot tags, so the task execution
+  # role cannot read it and the service crash-loops with ResourceInitializationError. That was
+  # the actual failure of the first sam2 deploy, and the same trap is recorded in
+  # copilot/api/manifest.yml from 2026-07-17.
+  # The SAME parameter is then referenced from copilot/api/manifest.yml when the main backend
+  # client is built (next milestone), so both sides read one secret and it is never committed.
+  SAM_INTERNAL_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SAM_INTERNAL_TOKEN
+  R2_ACCESS_KEY_ID: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_ACCESS_KEY_ID
+  R2_SECRET_ACCESS_KEY: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/R2_SECRET_ACCESS_KEY

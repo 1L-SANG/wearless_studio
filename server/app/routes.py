@@ -969,6 +969,20 @@ async def analyze_product(
             job = await _preclaim_frame_calibration_job(
                 conn, job=job, created=created
             )
+        # 캐노니컬 컷아웃 전처리를 **독립적으로** 함께 띄운다. 분석 결과(카테고리·소재)를
+        # 전혀 쓰지 않고 소스 사진만 필요하므로 서로 기다릴 이유가 없다. 같은 트랜잭션에서
+        # 만들고 커밋 뒤에 디스패처를 깨우므로 워커가 소스 asset 행보다 먼저 잡을 수 없다.
+        # 전처리 enqueue 실패가 분석 요청을 깨서는 안 된다 — SAM 은 보조 인프라다.
+        try:
+            await repo.create_job(
+                conn, user_id=user_id, project_id=project_id, kind="sam_preprocess",
+                payload={"mode": "sam_preprocess"},
+                idempotency_key=(f"{project_id}:sam_preprocess:{idempotency_key}"
+                                 if idempotency_key else None),
+                credits_reserved=0, metadata={})
+        except Exception:  # noqa: BLE001
+            logger.warning("sam_preprocess enqueue failed for project %s",
+                           project_id, exc_info=True)
         await conn.commit()
     if not inline:
         _wake_dispatcher(request)

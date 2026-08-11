@@ -4,6 +4,9 @@ __pycache__
 .pytest_cache
 tests
 scripts
+# SAM2 서비스는 별도 배포 단위다. 메인 API 이미지에 torch/transformers/SAM2 가중치가
+# 따라 들어가지 않도록 소스 자체를 제외한다(§16 — 이미지 분리는 논리적 분리로 끝나면 안 됨).
+sam_service
 .omc
 .env
 .env.example

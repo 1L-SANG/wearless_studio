@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from . import garment_fidelity_authority as gfa
+
 #: 판정 사유 — 내부 어휘. 공개 응답에는 싣지 않는다(라우트가 일반 코드로 바꾼다).
 REASON_OUTCOME_REGENERATE = "qc_outcome_regenerate"
 REASON_HYBRID_NOT_APPLIED = "hybrid_composite_not_applied"
@@ -71,6 +73,23 @@ def _pattern_fidelity_failed(qc_scores: dict) -> bool:
     )
 
 
+def _semantic_fidelity_reason(qc_scores: dict) -> str | None:
+    """Vision LLM 의미 동일성 게이트 — **컷이 기록한 모드**로만 판정한다.
+
+    모드를 지금의 settings 에서 다시 읽지 않는 이유: 플래그를 enforce 로 올리는 순간
+    관측(shadow)으로 찍힌 과거 컷이 소급해서 전부 막힌다. 어느 계약으로 만들어졌는지는
+    컷 자신이 안다(`garmentFidelityQc.mode`).
+
+    `errored` 는 **enforce 였는데 못 쟀다**는 표식이다 — `imageQcErrored` 와 같은 규율로,
+    판정이 필요하다고 선언해 놓고 판정하지 못한 컷은 판정이 없던 낡은 컷의 관용을
+    받지 못한다.
+    """
+    node = qc_scores.get("garmentFidelityQc")
+    if not isinstance(node, dict):
+        return None                       # legacy: 이 단계 자체가 없던 컷
+    return gfa.authority_reason(node, mode=str(node.get("mode") or "off"))
+
+
 def evaluate_mannequin_cut_authority(qc_scores: dict | None) -> CutAuthority:
     """qc_scores → 이 컷을 정본으로 소비해도 되는가.
 
@@ -92,6 +111,9 @@ def evaluate_mannequin_cut_authority(qc_scores: dict | None) -> CutAuthority:
         return CutAuthority(False, REASON_HYBRID_NOT_APPLIED)
     if _pattern_fidelity_failed(qc_scores):
         return CutAuthority(False, REASON_PATTERN_FIDELITY_FAILED)
+    semantic = _semantic_fidelity_reason(qc_scores)
+    if semantic:
+        return CutAuthority(False, semantic)
     return _ALLOWED
 
 

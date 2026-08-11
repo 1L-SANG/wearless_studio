@@ -88,17 +88,26 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # 코드째 삭제됐다(폐기 이름은 test_deploy_manifest_qc_flags.RETIRED_FLAGS 가 재선언을 막는다).
   MANNEQUIN_UNTUCK_PASS: "on"   # 상의·아우터를 하의 밖으로 — QC 탐지가 불안정해 무조건 실행
   MANNEQUIN_BUST_PASS: "on"     # 가슴 볼륨(배수 1.3). 하의 상품엔 코드에서 미적용
-  # 완료된 data/QC/edit/texture 경로는 prod 에서 조용히 기본 off 로 떨어지지 않도록 명시한다.
-  # Product Truth 는 migration 검증 완료로 enforce. 나머지는 실 트래픽 관측·캘리브 전까지 shadow:
-  # 기록/판정만 남기고 생성·저장·후보 선택을 막지 않는다.
-  GENERATION_RUN_LOG: shadow
-  ENABLE_PRODUCT_TRUTH: enforce
-  MANNEQUIN_STRUCTURED_QC: shadow
-  MANNEQUIN_EDIT_INTENT_QC: shadow
-  EDITOR_VARY_INTENT_QC: shadow
-  MANNEQUIN_HYBRID_COMPOSITE: enforce
-  # deterministic QC pass에서만 합성본을 적용하고, 실패 carrier는 후보로 저장하지 않는다.
-  MANNEQUIN_TEXTURE_PROJECTION_2D: enforce
+  # ────────────────────────────────────────────────────────────────────────────
+  # 아래 8개 플래그는 **의도적으로 비워 둔다** (2026-08-11 결정, SAM 롤아웃 한정).
+  #
+  #   GENERATION_RUN_LOG · ENABLE_PRODUCT_TRUTH · MANNEQUIN_STRUCTURED_QC
+  #   MANNEQUIN_GARMENT_FIDELITY_QC · MANNEQUIN_EDIT_INTENT_QC
+  #   EDITOR_VARY_INTENT_QC · MANNEQUIN_HYBRID_COMPOSITE
+  #   MANNEQUIN_TEXTURE_PROJECTION_2D
+  #
+  # 현재 배포본(wearless-prod-api:92)에는 이 값들이 없다. 여기 적어 두면 SAM 배포가
+  # 무관한 게이트 3개를 enforce 로, 관측 5개를 shadow 로 함께 켜 버린다 — SAM 과 상관없는
+  # 프로덕션 동작 변경이고, enforce 는 지금 출고되는 컷을 막을 수 있다.
+  #
+  # 기능을 지운 게 아니다. 코드는 그대로 있고 config 기본값(off/shadow)으로 떨어진다.
+  # 각 기능은 자기 근거를 갖고 **따로** 켜야 한다. 이 배포의 델타는 SAM 둘뿐이다.
+  # ────────────────────────────────────────────────────────────────────────────
+
+  # 내부 SAM2 세그멘테이션 서비스(Copilot Service Connect, 같은 VPC 안에서만 접근).
+  # 이름/포트는 copilot/sam2/manifest.yml 에서 확인한 값이다(name: sam2, port: 8080).
+  # 미설정이면 sam_client 가 비활성 → sam_preprocess 는 skipped, 생성은 RAW 그대로.
+  SAM_SERVICE_URL: http://sam2:8080
   # AG-01 분석 provider 모델 — config.py 기본(gemini-2.5-pro) 오버라이드. AI Studio 유효 id 여야 함
   # (구값 'gemini-3-pro' 는 미존재 → Gemini 404 로 분석 실패했음). OpenAI 키 미설정이라 gemini 가 유일 provider.
   MODEL_ROUTING_TEXT_GEMINI: gemini-3.1-pro-preview
@@ -142,3 +151,9 @@ secrets:                         # SSM Parameter Store (SecureString). copilot s
   #   raw `aws ssm put-parameter` 로 만들면 copilot 태그가 없어 태스크가 못 읽는다(2026-07-17 실경험).
   TOSS_SECRET_KEY: /copilot/wearless/prod/secrets/TOSS_SECRET_KEY
   FM_CHAIN_PRIVATE_KEY: /copilot/wearless/prod/secrets/FM_CHAIN_PRIVATE_KEY
+  # 내부 SAM2 서비스 호출용 공유 시크릿. sam2 매니페스트가 **같은 파라미터**를 읽으므로
+  # 양쪽이 한 값을 보고, 값은 저장소에 절대 들어오지 않는다. 이미 생성돼 있고 copilot 태그도
+  # 붙어 있다(copilot-application=wearless, copilot-environment=prod).
+  #     copilot-aws secret init --name SAM_INTERNAL_TOKEN
+  #   raw `aws ssm put-parameter` 는 태그가 없어 태스크가 못 읽는다 — sam2 첫 배포가 그걸로 죽었다.
+  SAM_INTERNAL_TOKEN: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SAM_INTERNAL_TOKEN

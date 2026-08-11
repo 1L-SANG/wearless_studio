@@ -22,6 +22,13 @@ class Settings:
     # FaceMarket 얼굴 라이선스 = 생체 PII → 공개 도메인 미연결 전용 비공개 버킷.
     # 미설정이면 메인 버킷 폴백(개발). 게이트 라우트가 바이트 스트림 → public_url 미사용.
     r2_face_bucket: str | None = None
+    # 내부 SAM2 세그멘테이션 서비스. 미설정이면 canonical 전처리는 그냥 비활성 —
+    # 없다고 업로드·분석·생성이 막히면 안 되는 보조 인프라다.
+    sam_service_url: str | None = None
+    sam_internal_token: str | None = None
+    # Front+Back 실측 ~49s(warm, x86_64 Fargate). 90s 는 그 위의 여유이고,
+    # 무한 대기를 막는 게 목적이다.
+    sam_request_timeout_s: float = 90.0
     # 생성예시 레지스트리의 상대 URL 기준. prod 상대경로는 명시 필수, dev만 dummy 기본값 허용.
     example_asset_base_url: str | None = None
     # 배경-only 생성예시는 파일럿 실측 성공률이 안정화될 때까지 명시적 opt-in에서만 허용.
@@ -144,6 +151,14 @@ class Settings:
     enable_product_truth: str = "off"  # off | shadow | enforce
     # 구조화 QC/정책 DAG rollout. shadow=결과 저장만, enforce=review/reject가 자동 완료를 차단.
     mannequin_structured_qc: str = "off"  # off | shadow | enforce
+    # Vision LLM 의미 동일성 QC — Front/Back/Detail 원본 대비 "같은 상품인가"를 13개 체크로
+    # 판정한다(agents/garment_fidelity_qc). OpenCV 통계로는 답할 수 없는 질문이라 판정은
+    # 모델이 하고, 권한은 services/garment_fidelity_authority 가 체크 상태에서 유도한다.
+    #   off     : 호출 0. 기존 동작 완전 불변.
+    #   shadow  : 판정·교정문을 기록만 한다. 컷 소비 권한을 바꾸지 않는다.
+    #   enforce : hard gate 가 PASS 가 아니면(FAIL·UNVERIFIABLE·미측정 전부) 컷을 소비 불가로
+    #             막고, 예산이 남아 있으면 실패 속성만 지목한 targeted correction 을 1회 돈다.
+    mannequin_garment_fidelity_qc: str = "off"  # off | shadow | enforce
     # Phase 3 baseline 편집 — 신규 :edit 엔드포인트와 Edit Intent QC 의 rollout.
     #   off     : :edit 는 503(미노출), 편집 잡도 생기지 않는다. 기존 동작 완전 불변.
     #   shadow  : :edit 노출 + QC 판정을 **기록만** 한다. 출고 계약은 기존과 동일 —
@@ -302,6 +317,9 @@ def load_settings() -> Settings:
         r2_endpoint=(os.getenv("R2_ENDPOINT") or "").rstrip("/") or None,
         r2_public_base=(os.getenv("R2_PUBLIC_BASE") or "").rstrip("/") or None,
         r2_face_bucket=os.getenv("R2_FACE_BUCKET") or None,
+        sam_service_url=(os.getenv("SAM_SERVICE_URL") or "").rstrip("/") or None,
+        sam_internal_token=os.getenv("SAM_INTERNAL_TOKEN") or None,
+        sam_request_timeout_s=float(os.getenv("SAM_REQUEST_TIMEOUT_S") or 90.0),
         example_asset_base_url=(os.getenv("EXAMPLE_ASSET_BASE_URL") or "").rstrip("/") or None,
         genexample_bg_enabled=(
             os.getenv("GENEXAMPLE_BG_ENABLED", "false").lower() == "true"
@@ -342,6 +360,8 @@ def load_settings() -> Settings:
             "ENABLE_PRODUCT_TRUTH", "off", {"off", "shadow", "enforce"}),
         mannequin_structured_qc=_flag(
             "MANNEQUIN_STRUCTURED_QC", "off", {"off", "shadow", "enforce"}),
+        mannequin_garment_fidelity_qc=_flag(
+            "MANNEQUIN_GARMENT_FIDELITY_QC", "off", {"off", "shadow", "enforce"}),
         mannequin_frame_qc=_flag(
             "MANNEQUIN_FRAME_QC", "shadow", {"off", "shadow", "enforce"}),
         mannequin_edit_intent_qc=_flag(

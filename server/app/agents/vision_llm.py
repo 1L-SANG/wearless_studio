@@ -87,7 +87,8 @@ def _parse_json(text: str, provider: str) -> dict:
 
 async def _call_gpt(settings: Settings, model: str, prompt: str,
                     images: list[InlineImage], schema: dict, timeout: float,
-                    thinking_level: str | None = None) -> dict:  # thinking_level: Gemini 전용(GPT 미사용)
+                    thinking_level: str | None = None,
+                    temperature: float | None = None) -> dict:  # thinking_level: Gemini 전용(GPT 미사용)
     """OpenAI chat/completions — Structured Outputs(strict json_schema). content 는 문자열 JSON."""
     if not settings.openai_api_key:
         raise VisionError("OPENAI_API_KEY 미설정", provider="gpt",
@@ -104,6 +105,8 @@ async def _call_gpt(settings: Settings, model: str, prompt: str,
             "json_schema": {"name": "product_analysis", "strict": True, "schema": schema},
         },
     }
+    if temperature is not None:
+        body["temperature"] = temperature
     async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.post(
             _OPENAI_URL, json=body,
@@ -148,7 +151,8 @@ def _to_gemini_schema(node: dict) -> dict:
 
 async def _call_gemini(settings: Settings, model: str, prompt: str,
                        images: list[InlineImage], schema: dict, timeout: float,
-                       thinking_level: str | None = None) -> dict:
+                       thinking_level: str | None = None,
+                       temperature: float | None = None) -> dict:
     """Gemini generateContent — responseSchema + responseMimeType json. 텍스트 파트 합쳐 파싱."""
     if not settings.gemini_api_key:
         raise VisionError("GEMINI_API_KEY 미설정", provider="gemini",
@@ -160,6 +164,12 @@ async def _call_gemini(settings: Settings, model: str, prompt: str,
         "responseMimeType": "application/json",
         "responseSchema": _to_gemini_schema(schema),
     }
+    # 판정용 호출은 온도를 명시한다. 기본 온도(≈1.0)로 같은 이미지를 두 번 물으면 답이
+    # 갈린다 — 2026-08-10 실측: 같은 스트라이프 컷이 1차 FAIL, 2차 PASS. 추출 작업에선
+    # 그 흔들림이 비용이지만, **출고 권한을 가르는 판정**에서는 계약 위반이다.
+    # 미지정(None)이면 기존 동작 그대로 — provider 기본값을 쓴다.
+    if temperature is not None:
+        gen["temperature"] = temperature
     # 분류·추출 작업엔 low 로 충분 — 미지정 시 모델 기본(깊은 추론)이 수 초를 낭비한다
     # (2026-07-07 속도 개선, 실측: gemini-3.5-flash v1beta 가 thinkingLevel 수용 확인).
     # 콜별 오버라이드(thinking_level 인자) > 전역 설정 — AG-08 특징 발굴은 medium (후보 선별).
@@ -240,7 +250,7 @@ def failure_summary(exc: BaseException) -> str:
 
 async def analyze_with_fallback(
     settings: Settings, prompt: str, images: list[InlineImage], schema: dict,
-    thinking_level: str | None = None,
+    thinking_level: str | None = None, temperature: float | None = None,
 ) -> tuple[dict, str]:
     """순서대로 provider 시도 → (파싱된 raw dict, 사용한 provider). 전부 실패 시 VisionError.
 
@@ -257,7 +267,7 @@ async def analyze_with_fallback(
             continue
         try:
             raw = await call(settings, model_of(settings), prompt, images, schema, timeout,
-                             thinking_level=thinking_level)
+                             thinking_level=thinking_level, temperature=temperature)
             if attempts:
                 logger.info("vision_llm fallback used", extra={"provider": name, "prior": attempts})
             return raw, name

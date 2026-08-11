@@ -24,8 +24,11 @@ def test_analyze_route_creates_job(client, make_token, monkeypatch):
     async def fake_get_project(conn, uid, pid):
         return {"id": pid}
 
+    created = []
+
     async def fake_create_job(conn, **kw):
         seen.update(kw)
+        created.append(kw)
         return {"id": "job-analyze-1"}, True
 
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
@@ -34,8 +37,12 @@ def test_analyze_route_creates_job(client, make_token, monkeypatch):
     res = client.post("/v1/projects/p1/analyze", headers=auth_headers(make_token))
     assert res.status_code == 202, res.text
     assert res.json()["jobId"] == "job-analyze-1"
-    assert seen["kind"] == "analyze"
-    assert seen["credits_reserved"] == 0  # 무과금
+    # 분석 잡과 캐노니컬 전처리 잡이 같은 지점에서 **독립적으로** 뜬다. 응답은 분석 잡의
+    # id 를 그대로 돌려주고, 전처리는 그 뒤에서 따로 돈다.
+    assert [c["kind"] for c in created] == ["analyze", "sam_preprocess"]
+    analyze = created[0]
+    assert analyze["credits_reserved"] == 0  # 무과금
+    assert created[1]["credits_reserved"] == 0  # 전처리도 무과금
 
 
 def test_analyze_route_idempotent_join(client, make_token, monkeypatch):
@@ -73,6 +80,7 @@ def test_analyze_route_atomically_preclaims_local_calibration_job(
 
     async def fake_create_job(conn, **kw):
         seen["created"] = kw
+        seen.setdefault("kinds", []).append(kw["kind"])
         return {"id": "job-analyze-1"}, True
 
     async def fake_preclaim(conn, *, job_id, lease_token):
@@ -95,7 +103,8 @@ def test_analyze_route_atomically_preclaims_local_calibration_job(
     assert res.json()["jobId"] == "job-analyze-1"
     assert res.json()["leaseToken"].startswith("frame-calibration:")
     assert seen["preclaim"] == ("job-analyze-1", res.json()["leaseToken"])
-    assert seen["created"]["kind"] == "analyze"
+    # 분석과 캐노니컬 전처리는 같은 지점에서 **독립적으로** 뜬다.
+    assert seen["kinds"] == ["analyze", "sam_preprocess"]
 
 
 def test_analyze_route_rejects_invalid_local_calibration_secret_before_db(

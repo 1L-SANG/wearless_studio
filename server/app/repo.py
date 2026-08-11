@@ -2627,6 +2627,40 @@ async def finalize_analyze_success(
     return {"result": result, "metadata": metadata}
 
 
+async def finalize_uncharged_job(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    status: str,          # 'done' | 'error'
+    result: dict,
+) -> bool:
+    """크레딧을 쓰지 않는 보조 잡의 종결(원자·lease 펜스). False = lease 상실 → 부수효과 0.
+
+    sam_preprocess 처럼 과금도 없고 상품 상태도 바꾸지 않는 잡을 위한 최소 종결 경로다.
+    분석·마네킹 전용 종결자를 재사용하면 이 잡이 products/analyses 를 건드리게 되므로
+    별도로 둔다.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' "
+            "for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return False
+        await cur.execute(
+            "update jobs set status = %s, result = %s, progress = 100, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (status, Json(result), job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, %s, %s)",
+            (job_id, "done" if status == "done" else "error", Json(result)),
+        )
+    return True
+
+
 async def finalize_analyze_failure(
     conn: AsyncConnection,
     *,

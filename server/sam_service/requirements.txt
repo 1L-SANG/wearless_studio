@@ -1,0 +1,12 @@
+# SAM2 service dependencies. Intentionally NOT in server/pyproject.toml — adding them there
+# would put torch in the main API image, which is the one thing this split exists to prevent.
+# torch/torchvision are installed separately from the CPU wheel index (see Dockerfile).
+transformers>=4.44
+fastapi>=0.115
+uvicorn[standard]>=0.34
+pydantic>=2.7
+boto3>=1.35
+numpy>=1.26
+pillow>=10
+opencv-contrib-python-headless>=4.9,<5
+huggingface-hub>=0.24

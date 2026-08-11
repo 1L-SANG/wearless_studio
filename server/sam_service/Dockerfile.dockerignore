@@ -1,0 +1,28 @@
+# Build context ignore rules for the SAM2 image ONLY.
+#
+# BuildKit prefers `<dockerfile-path>.dockerignore` over the context-root `.dockerignore`, and
+# that is exactly what is needed here: both images build from the `server/` context, but they
+# need opposite things from it.
+#
+#   server/.dockerignore                  excludes sam_service  -> keeps torch OUT of the API image
+#   server/sam_service/Dockerfile.dockerignore  (this file)     -> keeps sam_service IN
+#
+# Without this file the API's exclusion applies to the SAM build too and the image cannot copy
+# its own source ("/sam_service": not found).
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.omc
+.env
+.env.example
+.python-version
+.dockerignore
+
+# The SAM service does not need the main backend, its tests, or the experiment harness.
+app/
+tests/
+scripts/
+ab_out/
+prompts/
+docs/
