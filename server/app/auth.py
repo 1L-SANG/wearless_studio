@@ -64,3 +64,29 @@ def require_user(
         raise _unauthorized() from None
 
     return claims["sub"]
+
+
+def optional_user(request: Request) -> str | None:
+    """Return a verified JWT subject when present; invalid credentials remain anonymous."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, credentials = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not credentials.strip():
+        return None
+
+    resolver = request.app.state.jwt_key_resolver
+    if resolver is None:
+        return None
+
+    try:
+        token = credentials.strip()
+        key = resolver(token)
+        claims = jwt.decode(
+            token,
+            key,
+            algorithms=ALLOWED_ALGORITHMS,
+            audience=request.app.state.settings.jwt_audience,
+            options={"require": ["exp", "sub"]},
+        )
+    except Exception:
+        return None
+    return claims["sub"]
