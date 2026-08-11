@@ -112,10 +112,12 @@ export async function http(path, { method = 'GET', body, signal, headers: reques
     // 계약 §6: 사용자에게 그대로 보여줄 한국어 message. envelope 없으면 한국어 기본값.
     let message = '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.';
     let code;
+    let meta;
     try {
       const payload = await res.json();
       if (payload?.error?.message) message = payload.error.message;
       if (payload?.error?.code) code = payload.error.code;
+      if (payload?.error?.meta) meta = payload.error.meta;
     } catch { /* 비 JSON 응답 — 기본 메시지 유지 */ }
     console.error(`API ${res.status} ${path}`); // 기술 세부는 콘솔로만
     // status·code 를 에러에 실어 호출부가 분기할 수 있게 한다(예: 409 라이선스 차단 → 블로킹 패널,
@@ -123,17 +125,29 @@ export async function http(path, { method = 'GET', body, signal, headers: reques
     const err = new Error(message);
     err.status = res.status;
     if (code) err.code = code;
+    if (meta) err.meta = meta;
     throw err;
   }
   if (res.status === 204) return null;
   return absolutizeAssetUrls(await res.json());
 }
 
-// 인증 전 공개 체험 전용 multipart 요청. Supabase 세션을 조회하거나 Bearer를 붙이지 않는다.
+// 공개 체험용 multipart 요청. 로그인 사용자는 optional_user가 유효 Bearer를 보고 IP 제한을
+// 건너뛸 수 있게 토큰을 선호해서 붙이고, 세션 조회 실패·비로그인은 그대로 공개 경로를 쓴다.
 async function publicHttp(path, formData, { signal } = {}) {
+  let token;
+  try {
+    const { data } = await supabase.auth.getSession();
+    token = data?.session?.access_token;
+  } catch { /* 공개 분석은 인증 bootstrap 실패에도 익명으로 계속 가능 */ }
   let res;
   try {
-    res = await fetch(`${BASE_URL}${path}`, { method: 'POST', body: formData, signal });
+    res = await fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: formData,
+      signal,
+    });
   } catch (cause) {
     if (cause?.name === 'AbortError') throw cause;
     throw networkError(
@@ -339,6 +353,23 @@ function mergeMatchSelection(currentMatch, matchPatch, clothingType) {
 
 export const httpAdapter = {
   uploadPhoto,
+  async uploadDraftSlotPhoto(photo, options) {
+    return uploadPhoto(null, { ...photo, purpose: 'draft_slot' }, options);
+  },
+  async getDraftSlot(token, { full = false } = {}) {
+    return http(`/v1/draft-slot${full ? '?full=1' : ''}`, {
+      headers: token ? { 'X-Draft-Token': token } : undefined,
+    });
+  },
+  async putDraftSlot(body) {
+    return http('/v1/draft-slot', { method: 'PUT', body });
+  },
+  async takeoverDraftSlot() {
+    return http('/v1/draft-slot:takeover', { method: 'POST' });
+  },
+  async deleteDraftSlot() {
+    return http('/v1/draft-slot', { method: 'DELETE' });
+  },
   async publicAnalyze(product, { onProgress, signal } = {}) {
     const colors = product?.colors || [];
     const baseColor = colors.find((color) => color.isBase) || colors[0];

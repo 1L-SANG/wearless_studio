@@ -69,8 +69,8 @@ function persistFlow(s) {
 
 const initialFlow = {
   projectId: null,
-  // 서버 project(보관함 행) 생성 완료 여부. '상세페이지 제작' 진입만으로 빈 프로젝트가
-  // 생기지 않도록, createProject 는 입력 진입이 아니라 AI 분석 시작(ensureProject) 때 1회 호출한다.
+  // 서버 project(보관함 행) 생성 완료 여부. 확정 전 분석은 공개 경로라 project 없이 진행하고,
+  // 의류정보 확정 승격이 끝난 뒤에만 true가 된다.
   projectPersisted: false,
   selectedMannequinId: null,
   composeMode: 'basic',
@@ -168,7 +168,7 @@ function applyDetailJobEvents(job, events) {
   return next;
 }
 
-// ensureProject 동시 호출 합류용 — in-flight Promise 를 모듈 스코프에 보관해 더블클릭/재시도가
+// 레거시/후속 화면의 ensureProject 동시 호출 합류용 — 확정 승격은 draftSyncSingleFlight가 맡는다.
 // createProject 를 중복 호출(보관함 행 중복 생성)하지 않게 한다(코드리뷰 반영).
 let ensureProjectInflight = null;
 
@@ -221,7 +221,7 @@ export const useAppStore = create((set, get) => ({
   projectGeneration: 0,
   generationRelevantEditsDirty: readGenerationRelevantEdits(persistedFlow.projectId),
 
-  /** 새 제작 진입 — 서버 project 생성은 보류한다(AI 분석 시 ensureProject 가 생성).
+  /** 새 제작 진입 — 서버 project 생성은 의류정보 확정까지 보류한다.
      '상세페이지 제작'/'새 상세페이지' 클릭만으로 보관함에 빈 프로젝트가 생기던 버그 방지.
      여기선 로컬 플로우만 초기화: 미동기화 draft 폐기(묵은 입력 복원 방지) + projectGeneration
      을 올려 ProductInput 을 remount(폼 초기화)한다. */
@@ -234,32 +234,18 @@ export const useAppStore = create((set, get) => ({
     resetAnalysisCache();           // 이전 프로젝트의 analysis/매칭 캐시 해제 (F1)
     clearFlowSession();
     await clearDraft().catch(() => {});
-    // http: 서버 POST 이연(빈 보관함 행 방지) — projectId 없이 시작, 생성은 ensureProject.
-    // mock: createProject 가 reseedDraft 로 DB.product/analysis 를 깨끗한 시드로 되돌린다.
-    // 안 하면 이전 세션 변형(clothingType/measurements 등)이 새 제작 입력에 유입된다(코드리뷰 반영).
-    if (mode === 'http') {
-      set({
-        ...initialFlow,
-        mannequinJob: initialMannequinJob(),
-        detailPageJob: initialDetailPageJob(),
-        projectGeneration: get().projectGeneration + 1,
-        generationRelevantEditsDirty: false,
-      });
-    } else {
-      const project = await api.createProject();
-      set({
-        ...initialFlow,
-        mannequinJob: initialMannequinJob(),
-        detailPageJob: initialDetailPageJob(),
-        projectId: project.id,
-        projectPersisted: true,
-        projectGeneration: get().projectGeneration + 1,
-        generationRelevantEditsDirty: false,
-      });
-    }
+    // mock도 실제 흐름처럼 project 없이 시작하되, 이전 데모 입력 데이터만 깨끗하게 재시드한다.
+    if (mode !== 'http') await api.resetInputDraft();
+    set({
+      ...initialFlow,
+      mannequinJob: initialMannequinJob(),
+      detailPageJob: initialDetailPageJob(),
+      projectGeneration: get().projectGeneration + 1,
+      generationRelevantEditsDirty: false,
+    });
     persistFlow(get());   // 새 제작 시작 — 영속 flow 초기화(stale projectId 미복원)
   },
-  /** 서버 project(보관함 행)를 필요 시 1회 생성하고 projectId 를 반환 — AI 분석 시작 시 호출.
+  /** 서버 project(보관함 행)를 필요 시 1회 생성하고 projectId 를 반환 — 레거시 후속 경로용.
      이미 이 플로우에서 생성했으면(persisted) 재사용해 보관함 행 중복 생성을 막는다. */
   async ensureProject() {
     if (get().projectPersisted && get().projectId) return get().projectId;
@@ -379,14 +365,6 @@ export const useAppStore = create((set, get) => ({
       composeMode: sameWorkContinuation ? current.composeMode : initialFlow.composeMode,
     });
     persistFlow(get());
-    // 비로그인 구간의 선택은 서버에 못 실렸다(setComposeMode 의 무-project 가드). 신원을
-    // 얻은 지금 서버 project 와 수렴시킨다 — 기본값이면 보낼 것도 없다.
-    const adoptedComposeMode = get().composeMode;
-    if (sameWorkContinuation && adoptedComposeMode !== initialFlow.composeMode) {
-      composeModePatchChain = composeModePatchChain
-        .catch(() => {})
-        .then(() => api.patchProject(projectId, { composeMode: adoptedComposeMode }));
-    }
   },
   /** 상세페이지 제작 플로우에서 현재 머문 경로 기록 — '이어서 작업' 재개 목표(ResumeTracker 가 호출). */
   setResumePath(resumePath) {
@@ -425,7 +403,7 @@ export const useAppStore = create((set, get) => ({
     // 비로그인 분석(projectId 없음)에서도 사진 양 칩이 눌린다(분석 페이지는 공개) — 이때
     // PATCH 를 쏘면 /v1/projects/null 로 나가 에러가 된다. 로컬 선택만 저장하고, 서버 반영은
     // 로그인 후 adoptProject 가 같은 작업을 채택할 때 이어서 한다.
-    if (!projectId) return composeModePatchChain;
+    if (!projectId || !get().productInfoConfirmed) return composeModePatchChain;
     composeModePatchChain = composeModePatchChain
       .catch(() => {})
       .then(() => api.patchProject(projectId, { composeMode }));

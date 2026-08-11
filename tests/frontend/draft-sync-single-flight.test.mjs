@@ -42,3 +42,25 @@ test('draft sync retry preserves a project id created before a partial failure',
   assert.deepEqual(await coordinator.sync({}), { projectId: 'project-existing' });
   assert.deepEqual(seenProjectIds, [undefined, 'project-existing']);
 });
+
+test('post-promotion cleanup failure reruns the latest draft on the same project', async () => {
+  const seen = [];
+  const coordinator = createDraftSyncSingleFlight(async (draft, { projectId }) => {
+    seen.push({ name: draft.product.name, projectId });
+    return { projectId: projectId || 'project-1' };
+  });
+
+  assert.deepEqual(
+    await coordinator.sync({ product: { name: 'before-delete-failure' } }),
+    { projectId: 'project-1' },
+  );
+  assert.equal(coordinator.retryFrom('project-1'), true);
+  assert.deepEqual(
+    await coordinator.sync({ product: { name: 'edited-before-retry' } }),
+    { projectId: 'project-1' },
+  );
+  assert.deepEqual(seen, [
+    { name: 'before-delete-failure', projectId: undefined },
+    { name: 'edited-before-retry', projectId: 'project-1' },
+  ]);
+});

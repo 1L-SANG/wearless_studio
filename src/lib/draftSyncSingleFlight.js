@@ -31,5 +31,11 @@ export function createDraftSyncSingleFlight(runSync) {
       projectId = null;
       return true;
     },
+    retryFrom(existingProjectId) {
+      if (inFlight) return false;
+      result = null;
+      projectId = existingProjectId || projectId;
+      return true;
+    },
   };
 }

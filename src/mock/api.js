@@ -29,6 +29,7 @@ import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import {
   applyOpeningRow, hasOpeningRow, migrateLegacyEntryStylingRuns,
 } from '@/lib/storyboardEntryPlacement.js';
+import { createDraftSlotMemory } from './draftSlotMemory.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -48,6 +49,7 @@ const settleMockMannequinCharge = (job) => {
 };
 // 에디터 대기 이벤트 시뮬 상태 (startDetailPage) — 페이지 새로고침 = 모듈 재실행 = 초기화(재데모 가능)
 let ewSim = null;
+const mockDraftSlot = createDraftSlotMemory({ tokenFactory: () => uid('draft-token') });
 const shouldRefreshMatchClothing = (patch) => ['clothingType', 'targetGenders', 'styleTags'].some((key) => key in patch);
 const customMatchUploads = new Map();
 const mockCheckoutOrders = new Map();
@@ -133,6 +135,11 @@ export const api = {
     reseedDraft();
     inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
     await wait(80); return clone(DB.project);
+  },
+  async resetInputDraft() {
+    reseedDraft();
+    inflight.analyze = null; inflight.mannequins = null; inflight.detailPage = null;
+    await wait(20);
   },
   async getProject(/* projectId */) { await wait(60); return clone(DB.project); },
   async patchProject(_projectId, patch) {
@@ -253,6 +260,30 @@ export const api = {
     const url = URL.createObjectURL(blob);
     customMatchUploads.set(assetId, { filename, mime, blob, purpose, url });
     return { assetId, url };
+  },
+  async uploadDraftSlotPhoto(photo, options) {
+    return this.uploadPhoto(null, { ...photo, purpose: 'draft_slot' }, options);
+  },
+
+  /* ---- hidden draft slot ---- */
+  async getDraftSlot(token, { full = false } = {}) {
+    await wait(20);
+    return mockDraftSlot.get(token, { full });
+  },
+  async putDraftSlot(body) {
+    await wait(20);
+    return mockDraftSlot.put(body);
+  },
+  async takeoverDraftSlot() {
+    await wait(20);
+    return mockDraftSlot.takeover();
+  },
+  async deleteDraftSlot() {
+    await wait(20);
+    mockDraftSlot.remove();
+  },
+  simulateDraftSlotConflict(options) {
+    return mockDraftSlot.simulateConflict(options);
   },
 
   /* ---- AI analysis (PRD §6) — 30s-feel progress, can fail ---- */

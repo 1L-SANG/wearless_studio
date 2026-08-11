@@ -17,7 +17,7 @@
    `syncDraftToBackend(draft, { projectId: err.projectId })`로 호출하면 프로젝트가 중복
    생성되지 않는다(이미 올라간 사진은 재업로드되어 일부 orphan asset이 생길 수 있음 — 허용).
    ============================================================= */
-import { http, uploadPhoto } from '@/lib/api/httpAdapter.js';
+import { api } from '@/lib/api/index.js';
 import { createDraftSyncSingleFlight } from '@/lib/draftSyncSingleFlight.js';
 
 // product.colors[].images[] 의 id·src 를 업로드 결과로 치환 (원본 imageId 매칭).
@@ -38,12 +38,12 @@ function withUploadedSrcs(product, uploadByImageId) {
 
 async function runDraftSync(draft, { projectId: existing } = {}) {
   // 멱등: 재시도 시 호출측이 넘긴 기존 projectId 재사용(없으면 새로 생성).
-  const projectId = existing ?? (await http('/v1/projects', { method: 'POST' })).id;
+  const projectId = existing ?? (await api.createProject()).id;
 
   try {
     // 사진 병렬 업로드 (사진당 3콜 순차 → 동시 — 로그인→마네킹 지연 완화).
     const pairs = await Promise.all(
-      (draft.photos ?? []).map(async (p) => [p.imageId, await uploadPhoto(projectId, p)]),
+      (draft.photos ?? []).map(async (p) => [p.imageId, await api.uploadPhoto(projectId, p)]),
     );
     const uploadByImageId = Object.fromEntries(pairs);  // imageId -> {assetId, url}
 
@@ -61,10 +61,13 @@ async function runDraftSync(draft, { projectId: existing } = {}) {
       }
     }
 
-    await http(`/v1/projects/${projectId}/product`, { method: 'PATCH', body: product });
+    await api.saveProduct(projectId, product);
     if (analysis) {
-      await http(`/v1/projects/${projectId}/analysis`, { method: 'PATCH', body: analysis });
+      await api.saveAnalysis(projectId, analysis);
     }
+    await api.patchProject(projectId, {
+      composeMode: draft.composeMode === 'extended' ? 'extended' : 'basic',
+    });
 
     return { projectId };
   } catch (err) {
@@ -82,6 +85,16 @@ export function syncDraftToBackend(draft, options) {
   return draftSyncFlight.sync(draft, options);
 }
 
+// 로그인 사용자와 로그인 복귀 게스트가 같은 승격 경로를 공유한다. 기존 이름은 하위호환으로
+// 유지하고 새 호출부는 제품 결정의 용어(확정 시 승격)를 드러내는 이름을 쓴다.
+export function promoteDraftToProject(draft, options) {
+  return draftSyncFlight.sync(draft, options);
+}
+
 export function resetDraftSyncSingleFlight() {
   return draftSyncFlight.reset();
+}
+
+export function retryDraftPromotion(projectId) {
+  return draftSyncFlight.retryFrom(projectId);
 }

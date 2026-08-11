@@ -40,7 +40,7 @@ function buildHttpApi() {
     if (name === 'analyzeProduct') {
       api[name] = async (projectId, options) => (
         projectId == null
-          ? analyzePublicDraft(await mockAdapter.getProduct(projectId), options, {
+          ? analyzePublicDraft(options?.product || await mockAdapter.getProduct(projectId), options, {
             remote: httpAdapter, local: mockAdapter,
           })
           : httpAdapter.analyzeProduct(projectId, options)

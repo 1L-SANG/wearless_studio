@@ -42,6 +42,27 @@
 .pi-optional-label { font-family: var(--font-body); font-size: 12px; font-weight: 500; color: var(--fg-3); }
 .wizard-cta-reason { font-size: 13px; font-weight: 600; color: var(--fg-2); }
 
+/* hidden draft-slot ownership and entry choices */
+.draft-slot-lock { position: fixed; inset: 0; z-index: 75; display: grid; place-items: center; padding: 24px;
+  background: rgba(255, 255, 255, .94); backdrop-filter: blur(10px); }
+.draft-slot-lock-card { width: min(100%, 460px); padding: 36px 28px; text-align: center; background: var(--bg-1);
+  border-radius: var(--r-6); box-shadow: var(--elev-lift), 0 0 0 1px var(--ring); color: var(--fg-1); }
+.draft-slot-lock-card > svg { margin-bottom: 16px; color: var(--fg-2); }
+.draft-slot-lock-card h3 { font-family: var(--font-display); font-size: 21px; }
+.draft-slot-lock-card p { margin: 10px 0 22px; color: var(--fg-2); line-height: 1.6; }
+.draft-source-options { display: grid; gap: 10px; margin-top: 22px; }
+.draft-source-options .btn { width: 100%; justify-content: center; }
+.draft-slot-pending { margin: 0 0 14px; padding: 11px 14px; border-radius: var(--r-3); color: var(--fg-2);
+  background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--ring); font-size: 13px; }
+.draft-entry-sources { display: grid; gap: 10px; margin-top: 20px; }
+.draft-entry-source { display: grid; gap: 4px; width: 100%; padding: 14px 16px; text-align: left; cursor: pointer;
+  border: 0; border-radius: var(--r-4); color: var(--fg-1); background: var(--bg-1);
+  box-shadow: inset 0 0 0 1px var(--ring); }
+.draft-entry-source:hover { box-shadow: inset 0 0 0 1px var(--ring-strong), var(--elev-soft); }
+.draft-entry-source span { font-size: 14px; font-weight: 650; }
+.draft-entry-source small { color: var(--fg-2); font-size: 12.5px; }
+.draft-entry-source em { color: var(--fg-3); font-size: 11.5px; font-style: normal; }
+
 /* file-meta caption over an uploaded image (name · size · type) — overlay, no size change */
 .img-cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 7px 6px; display: flex; flex-direction: column; gap: 0;
   background: linear-gradient(to top, rgba(14,13,20,.82), rgba(14,13,20,.30) 62%, transparent); color: #fff; pointer-events: none; z-index: 1; }

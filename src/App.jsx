@@ -32,7 +32,11 @@ import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { isSupabaseConfigured } from '@/lib/supabase.js';
 import { loadDraft, clearDraft, hasPendingDraft } from '@/lib/draftStore.js';
-import { resetDraftSyncSingleFlight, syncDraftToBackend } from '@/lib/draftSync.js';
+import {
+  promoteDraftToProject,
+  resetDraftSyncSingleFlight,
+  retryDraftPromotion,
+} from '@/lib/draftSync.js';
 import { api, isMockMode } from '@/lib/api/index.js';
 import { listMyModels } from '@/lib/api/facemarket.js';
 import { ErrorState, useToast } from '@/components/ui.jsx';
@@ -47,6 +51,13 @@ import {
   registerConfirmedInputEntry,
 } from '@/lib/flowSession.js';
 import { ResumeChoiceModal } from '@/features/shell/shell.jsx';
+import {
+  draftSlot,
+  formatDraftRelativeTime,
+  localDraftMeta,
+} from '@/lib/draftSlot.js';
+
+draftSlot.configure(api);
 
 /* 보호 라우트 — 세션 없으면 공개 입력 페이지로. 입력은 공개라 리다이렉트 루프 없음. */
 function RequireAuth() {
@@ -231,11 +242,70 @@ function ProductInputRoute() {
   const beginProject = useAppStore((s) => s.beginProject);
   const [entryDecision, setEntryDecision] = useState(() => {
     const { projectId, projectPersisted } = useAppStore.getState();
-    if (!projectPersisted || !projectId) return 'continue';
+    if (!projectPersisted || !projectId) return 'checking';
     if (useAppStore.getState().productInfoConfirmed || isProductInfoConfirmed(projectId)) return 'confirmed';
-    return flowRouteSeenThisSession || isSameTabProjectReload(projectId)
-      || hasFlowContinuation(projectId) ? 'continue' : 'ask';
+    return 'checking';
   });
+  const [entrySources, setEntrySources] = useState([]);
+  const slotEnabled = Boolean(session) || isMockMode;
+
+  useEffect(() => {
+    if (entryDecision !== 'checking') return;
+    if (!isMockMode && authLoading) return;
+    let alive = true;
+    (async () => {
+      const { projectId, projectPersisted, resumePath } = useAppStore.getState();
+      const hasFlow = Boolean(projectPersisted && projectId);
+      const flowDecision = !hasFlow || flowRouteSeenThisSession || isSameTabProjectReload(projectId)
+        || hasFlowContinuation(projectId) ? 'continue' : 'ask';
+      if (!slotEnabled) {
+        if (alive) setEntryDecision(flowDecision);
+        return;
+      }
+      const [slot, localDraft] = await Promise.all([
+        draftSlot.get().catch(() => null),
+        hasPendingDraft() ? loadDraft().catch(() => null) : Promise.resolve(null),
+      ]);
+      if (!alive) return;
+      const sources = [];
+      if (flowDecision === 'ask') {
+        sources.push({
+          id: 'flow',
+          title: '진행 중인 보관함 작업',
+          description: resumePath ? `마지막 화면 · ${resumePath}` : '진행 중인 상세페이지 제작',
+        });
+      }
+      const localMeta = localDraftMeta(localDraft);
+      const localDiffers = localDraft && (
+        !slot
+        || localDraft.updatedAt !== draftSlot.getSyncedAt()
+        || slot.meta?.updatedAt !== draftSlot.getServerSyncedAt()
+      );
+      if (localDiffers) {
+        sources.push({
+          id: 'local',
+          title: '이 기기 임시저장',
+          description: `${formatDraftRelativeTime(localMeta.updatedAt)} · ${localMeta.deviceLabel} · 사진 ${localMeta.photoCount}장`,
+          meta: localMeta,
+          draft: localDraft,
+        });
+      }
+      if (slot) {
+        sources.push({
+          id: 'remote',
+          title: localDiffers ? '다른 기기 임시저장' : '임시저장',
+          description: `${formatDraftRelativeTime(slot.meta?.updatedAt)} · ${slot.meta?.deviceLabel || '다른 기기'} · 사진 ${slot.meta?.photoCount || 0}장`,
+          photosPending: Boolean(slot.meta?.photosPending),
+          meta: slot.meta,
+        });
+      }
+      setEntrySources(sources);
+      setEntryDecision(sources.length ? 'ask' : 'continue');
+    })().catch(() => {
+      if (alive) setEntryDecision('continue');
+    });
+    return () => { alive = false; };
+  }, [authLoading, entryDecision, slotEnabled]);
 
   useEffect(() => {
     if (entryDecision === 'confirmed') {
@@ -293,13 +363,52 @@ function ProductInputRoute() {
     if (resumePath && resumePath !== '/create/input') navigate(resumePath, { replace: true });
   };
   const startNew = async () => {
+    if (slotEnabled) {
+      try {
+        await draftSlot.remove();
+      } catch (error) {
+        pushToast(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+        return;
+      }
+    }
     await beginProject();
     flowRouteSeenThisSession = true;
     setEntryDecision('continue');
   };
 
+  const chooseSource = async (sourceId) => {
+    const source = entrySources.find((candidate) => candidate.id === sourceId);
+    if (!source) return;
+    if (sourceId === 'flow') {
+      resume();
+      return;
+    }
+    try {
+      const takeover = await draftSlot.takeover();
+      const { projectId, projectPersisted } = useAppStore.getState();
+      if (projectId && projectPersisted) await beginProject();
+      if (sourceId === 'remote') {
+        if (!takeover?.payload) throw new Error('임시저장을 불러오지 못했어요.');
+        draftSlot.stage(takeover);
+      } else {
+        draftSlot.stage({ payload: source.draft, meta: source.meta });
+      }
+      flowRouteSeenThisSession = true;
+      setEntryDecision('continue');
+    } catch (error) {
+      pushToast(error?.message || '임시저장을 이어서 열지 못했어요.', { icon: 'alert' });
+    }
+  };
+
   if (entryDecision === 'ask') {
-    return <ResumeChoiceModal onResume={resume} onNew={startNew} onClose={resume} />;
+    return (
+      <ResumeChoiceModal
+        sources={entrySources}
+        onChoose={chooseSource}
+        onNew={startNew}
+        onClose={() => chooseSource(entrySources[0]?.id)}
+      />
+    );
   }
   if (entryDecision !== 'continue') return <div className="route-loading">이동하고 있어요…</div>;
   return <ProductInput key={generation} />;
@@ -331,6 +440,7 @@ function RootRedirect() {
     }
     let alive = true;
     (async () => {
+      let promotedProjectId = null;
       const wantsStoryboard = target === '/create/storyboard';
       if (!session) { setDest(wantsStoryboard ? '/create/input' : target); setPhase('done'); return; }
       const mode = import.meta.env.VITE_API_MODE ?? 'mock';
@@ -342,8 +452,11 @@ function RootRedirect() {
         const draft = await loadDraft();
         if (!draft?.product) { setDest(target); setPhase('done'); return; }
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('sync_timeout')), DRAFT_SYNC_TIMEOUT_MS));
-        const { projectId } = await Promise.race([syncDraftToBackend(draft), timeout]);
+        const { projectId } = await Promise.race([promoteDraftToProject(draft), timeout]);
+        promotedProjectId = projectId;
         if (!alive) return;
+        await draftSlot.suspend();
+        await draftSlot.remove();
         // 같은 이유로 재생성 신호를 보존 — 로그인 복귀 draft sync 도 동일한 '신원 획득' 경로.
         useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });   // 콘티가 이 project 로 진행(+영속)
         flowRouteSeenThisSession = true;
@@ -353,6 +466,10 @@ function RootRedirect() {
         setDest('/create/storyboard'); setPhase('done');
       } catch {
         if (!alive) return;
+        if (promotedProjectId) {
+          retryDraftPromotion(promotedProjectId);
+          draftSlot.resume();
+        }
         setDest('/create/input'); setPhase('done');   // 실패/지연 — draft 복원 + 재시도(입력에서)
       }
     })();
