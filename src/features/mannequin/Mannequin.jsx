@@ -1,21 +1,9 @@
-/* =============================================================
-   features/mannequin — ③ 의류 재현성 높이기 (PRD §7, fit-profile 이미지 중심 UI)
-   가운데 큰 컷(내 옷 = 매칭 하의까지 입은 모습) → 아래 '확인 카드'.
-   축(핏·기장·… + 매칭 의류 핏)을 하나씩 순차 확인 — '조정하기' 하면 이미지 옆에
-   예시가 세로로 떠서 비교하며 고른다(방식 1). 매칭 하의도 컷에 보이므로 조정 시 재생성(유료).
-   전부 확인되면 카드가 CTA('상세페이지 생성하기')로 전환 → 생성 이동(마지막 정거장, 크레딧 소비 지점).
-   사진 양(기본형/확장형)은 분석 확정 CTA 에서 고르고, 콘티 상단에는 현재 선택만 요약한다.
-   - 변경 0건 → 다음 단계(생성) 이동 / 변경 ≥1건 → 수정 반영 재생성(새 버전 히스토리).
-   컷 목록은 서버 상태, 선택 컷은 store + patchProject 동기화.
-   설계·규칙: documents/mannequin_ui_direction.md · 목업 documents/mockups/mannequin-ui-matching.html
-   ============================================================= */
+/* 마네킹컷 위의 핏·기장 핫존을 바로 노출하고, 변경이 없으면 다음 단계로 진행한다. */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api, isMockMode } from '@/lib/api/index.js';
-import { listModels } from '@/lib/api/facemarket.js';
+import { api } from '@/lib/api/index.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { detailPageGenerationCreditShortfall } from '@/lib/creditPreflight.js';
-import { CREDIT_COSTS } from '@/lib/limits.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { fitExampleImage } from '@/lib/fitExampleImages.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
@@ -28,7 +16,6 @@ import {
 import { Icon, Button, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
-import { realModelFeeLabel } from '@/features/analysis/modelSelection.js';
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
@@ -44,6 +31,7 @@ import {
   requestMannequinGeneration,
   updateMannequinJob,
 } from './generationRunner.js';
+import { fitHotspotsFor } from './fitHotspots.js';
 import {
   resolveInitialGenerationCuts,
   runGenerationRelevantEditsRefresh,
@@ -51,24 +39,13 @@ import {
 import './Mannequin.css';
 
 const AXIS_LABELS = { fit: '핏', length: '기장', cut: '핏', silhouette: '실루엣' };
-// 질문 톤: "~ 조정할까요?" (참고: length 는 사용자 요청 '기장 길이 조정 여부'를 일관 톤 유지 위해 질문형으로)
-const AXIS_QUESTIONS = {
-  fit: '의류 핏을 조정할까요?',
-  length: '기장 길이를 조정할까요?',
-  cut: '핏을 조정할까요?',
-  silhouette: '실루엣을 조정할까요?',
-};
 const MATCH_KEY = '__match';
 const MATCH_NAME = '매칭 의류 핏';
-const MATCH_QUESTION = '매칭 의류의 핏도 조정할까요?';
 const MATCH_SKIRT_NAME = '매칭 스커트 실루엣';
-const MATCH_SKIRT_QUESTION = '매칭 스커트의 실루엣도 조정할까요?';
 const MATCH_TOP_NAME = '매칭 상의 기장';
-const MATCH_TOP_QUESTION = '매칭 상의의 기장도 조정할까요? 짧을수록 상품(하의)이 잘 보여요.';
 
 const cutImage = (cut) => cut?.imageUrl || cut?.src || '';
 const validAxisValue = (values, value) => values.some((v) => v.value === value);
-const axisIsDone = (s) => s?.mode === 'keep' || s?.mode === 'picked';
 
 function derivedGender(analysis, product) {
   const genders = analysis?.targetGenders?.length ? analysis.targetGenders : product?.targetGenders;
@@ -112,10 +89,31 @@ function createFitProfileDraft(product, analysis, mainMatchingItem) {
   return draft;
 }
 
-// 스텝 상태머신 초깃값: pending → (keep | changing → picked). 축 + (해당되면) 매칭 스텝.
+// 스텝 상태머신 초깃값: pending → changing → picked. 축 + (해당되면) 매칭 스텝.
 function initStepState(axisDefs, withMatch) {
   const keys = [...Object.keys(axisDefs), ...(withMatch ? [MATCH_KEY] : [])];
   return Object.fromEntries(keys.map((k) => [k, { mode: 'pending', pick: null, pickLb: null }]));
+}
+
+function FitHotspots({ hotspots, onSelect }) {
+  if (!hotspots.length) return null;
+
+  return (
+    <div className="fit-hotspots" role="group" aria-label="의류 조정 영역">
+      {hotspots.map((hotspot) => (
+        <button
+          type="button"
+          key={`${hotspot.key}:${hotspot.id}`}
+          className={`fit-hotspot fit-hotspot-${hotspot.id}${hotspot.open ? ' is-open' : ''}${hotspot.picked ? ' is-picked' : ''}`}
+          onClick={() => onSelect(hotspot.key)}
+          aria-label={`${hotspot.label} 조정 옵션 보기`}
+          aria-pressed={hotspot.open || hotspot.picked}
+        >
+          <span>{hotspot.label}</span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function extractCuts(envelope) {
@@ -479,6 +477,11 @@ function MineColumn({
   waitCollapsed,
   onRetryGeneration,
   onRetryLoad,
+  adjustmentHotspots,
+  onAdjustmentSelect,
+  onContinue,
+  continueLabel,
+  continueDisabled,
 }) {
   const waitSlotRef = useRef(null);
 
@@ -515,6 +518,12 @@ function MineColumn({
         ) : (
           <div className="busy-tile">마네킹컷이 아직 없어요</div>
         )}
+        {selected && (
+          <FitHotspots
+            hotspots={adjustmentHotspots}
+            onSelect={onAdjustmentSelect}
+          />
+        )}
       </div>
       {(cuts.length > 1 || waitTile) && (
         <div className="fit-strip" role="group" aria-label="버전 목록">
@@ -549,6 +558,19 @@ function MineColumn({
             </div>
           )}
         </div>
+      )}
+      {selected && !showWaitPanel && (
+        <Button
+          variant="primary"
+          size="lg"
+          block
+          iconRight="arrowRight"
+          className="fit-continue btn-glowring"
+          onClick={onContinue}
+          disabled={continueDisabled}
+        >
+          {continueLabel}
+        </Button>
       )}
       {showWaitPanel && (
         <RegenerateChecklist
@@ -609,7 +631,6 @@ export function Mannequin() {
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
-  const [realModels, setRealModels] = useState([]);
   const [aiCutCount, setAiCutCount] = useState(null);   // null = 아직 모름(로딩 중·조회 실패) — 0 과 구분
   const [creditShortfall, setCreditShortfall] = useState(null);
   const [creditResume, setCreditResume] = useState(() => (
@@ -623,6 +644,7 @@ export function Mannequin() {
   const regenerateBaselineRef = useRef(null);
   const regenerateProfileRef = useRef(null);
   const knownLandedListRef = useRef(null);
+  const exampleTrackRef = useRef(null);
   const waitCopyTimersRef = useRef([]);
   const arrivalTimersRef = useRef([]);
   const arrivalFrameRef = useRef(null);
@@ -668,7 +690,7 @@ export function Mannequin() {
     [mainMatchingItem, gender],
   );
   const hasMatching = matchingDefinition != null;
-  // 순차 확인 스텝 = 제품 축들 + 메인 매칭 의류의 메타데이터 기반 핏 축.
+  // 이미지에 바로 노출할 조정 부위 = 제품 축들 + 메인 매칭 의류의 핏 축.
   const steps = useMemo(() => {
     const a = axisEntries.map(([key, values]) => ({ key, values, kind: 'axis' }));
     return matchingDefinition
@@ -699,18 +721,16 @@ export function Mannequin() {
       // getStoryboard 실패는 이 화면 자체를 막지 않는다(비치명) — 대신 null 로 남겨
       // "콘티가 AI 컷 0장" 과 "조회 자체를 못 함" 을 구분한다. 구분 안 하면 CTA 가
       // 크레딧 소비 직전에 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다.
-      const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard, nextRealModels] = await Promise.all([
+      const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
         api.getCatalogs(),
         api.getStoryboard(pid).catch(() => null),
-        isMockMode ? Promise.resolve([]) : listModels().catch(() => []),
       ]);
       if (loadRunRef.current !== runId) return;
       setProgress(generationProgressFor(pid));
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
-      setRealModels(Array.isArray(nextRealModels) ? nextRealModels : []);
       setAiCutCount(Array.isArray(nextStoryboard) ? nextStoryboard.filter((b) => b.source !== 'mine').length : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
@@ -818,10 +838,6 @@ export function Mannequin() {
     ? (step.fitCategory === 'skirt' ? MATCH_SKIRT_NAME
       : step.fitCategory === 'top' ? MATCH_TOP_NAME : MATCH_NAME)
     : (AXIS_LABELS[step.key] || step.key));
-  const stepQuestion = (step) => (step.kind === 'match'
-    ? (step.fitCategory === 'skirt' ? MATCH_SKIRT_QUESTION
-      : step.fitCategory === 'top' ? MATCH_TOP_QUESTION : MATCH_QUESTION)
-    : (AXIS_QUESTIONS[step.key] || `${stepName(step)}을(를) 조정할까요?`));
   const stepExCategory = (step) => (step.kind === 'match' ? step.fitCategory : category);
   const stepExAxis = (step) => (step.kind === 'match' ? step.axisKey : step.key);
   // 예시 참고 안내 — 옵션별로 "무엇만 참고할지" 명시(예시 속 다른 요소를 따라 그리지 않게)
@@ -833,23 +849,43 @@ export function Mannequin() {
         : '예시에 보여지는 하의의 핏만 참고해주세요.')
     : `예시에 보여지는 의류의 ${stepName(step)}만 참고해주세요.`);
 
-  // 파생값 — 순차: 첫 미완료 스텝이 '현재'
-  const doneCount = steps.filter((s) => axisIsDone(stepState[s.key])).length;
-  const allDone = steps.length === 0 || doneCount === steps.length;
   const changedSteps = steps.filter((s) => stepState[s.key]?.mode === 'picked');
-  const changedNames = changedSteps.map(stepName);
-  const activeIdx = steps.findIndex((s) => !axisIsDone(stepState[s.key]));
-  const cur = activeIdx >= 0 ? steps[activeIdx] : null;
-  const changingStep = cur && stepState[cur.key]?.mode === 'changing' ? cur : null;
+  const changingStep = steps.find((s) => stepState[s.key]?.mode === 'changing') || null;
   const needsRegen = changedSteps.length > 0;
-  const realModelFee = realModelFeeLabel(analysis?.selectedModelId, realModels);
+  const adjustmentHotspots = steps.flatMap((step) => (
+    fitHotspotsFor(stepExCategory(step), stepExAxis(step)).map((hotspot) => ({
+      ...hotspot,
+      key: step.key,
+      label: step.kind === 'match' ? stepName(step) : hotspot.label,
+      open: stepState[step.key]?.mode === 'changing',
+      picked: stepState[step.key]?.mode === 'picked',
+    }))
+  ));
 
   const setStep = (key, patch) => setStepState((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
-  const keepStep = (key) => { setStep(key, { mode: 'keep', pick: null, pickLb: null }); };
-  const changeStep = (key) => { setStep(key, { mode: 'changing' }); };
-  const cancelStep = (key) => setStep(key, { mode: 'pending' });
+  const openAdjustmentExamples = (key) => setStepState((prev) => Object.fromEntries(
+    Object.entries(prev).map(([stepKey, state]) => [
+      stepKey,
+      stepKey === key
+        ? { ...state, mode: 'changing' }
+        : state.mode === 'changing'
+          ? { ...state, mode: state.pick != null ? 'picked' : 'pending' }
+          : state,
+    ]),
+  ));
+  const closeAdjustmentExamples = (key) => setStepState((prev) => ({
+    ...prev,
+    [key]: {
+      ...prev[key],
+      mode: prev[key]?.pick != null ? 'picked' : 'pending',
+    },
+  }));
   const pickStep = (key, value, label) => setStep(key, { mode: 'picked', pick: value, pickLb: label });
-  const editStep = (key) => setStep(key, { mode: 'changing', pick: null, pickLb: null });
+
+  useEffect(() => {
+    if (!changingStep) return;
+    exampleTrackRef.current?.focus({ preventScroll: true });
+  }, [changingStep]);
 
   const chooseCut = (cutId) => {
     setCuts((prev) => prev.map((cut) => ({ ...cut, isSelected: cut.id === cutId })));
@@ -1210,7 +1246,7 @@ export function Mannequin() {
   };
 
   const onCta = async () => {
-    if (!allDone || busy) return;
+    if (busy) return;
     if (regenerateState === 'load-exhausted') { retryLoad(); return; }
     if (needsRegen) { regenerate(); return; }
     const shortfall = detailPageGenerationCreditShortfall(
@@ -1335,12 +1371,33 @@ export function Mannequin() {
           waitCollapsed={regenerateState === 'collapsing'}
           onRetryGeneration={retryGeneration}
           onRetryLoad={retryLoad}
+          adjustmentHotspots={showWaitPanel ? [] : adjustmentHotspots}
+          onAdjustmentSelect={openAdjustmentExamples}
+          onContinue={onCta}
+          continueLabel={needsRegen ? '수정 반영' : '이대로 진행'}
+          continueDisabled={busy}
         />
         {changingStep && (
           <div className="fit-ex-col">
-            <div className="fit-ex-head">원하는 {stepName(changingStep)}의 예시를 선택해주세요.</div>
+            <div className="fit-ex-headbar">
+              <div className="fit-ex-head">원하는 {stepName(changingStep)}의 예시를 선택해주세요.</div>
+              <button
+                type="button"
+                className="fit-ex-close"
+                onClick={() => closeAdjustmentExamples(changingStep.key)}
+                aria-label="조정 옵션 닫기"
+              >
+                <Icon name="x" size={15} />
+              </button>
+            </div>
             <p className="fit-ex-sub">{stepExNote(changingStep)}</p>
-            <div className="fit-ex-track" role="listbox" aria-label={`${stepName(changingStep)} 예시`}>
+            <div
+              ref={exampleTrackRef}
+              className="fit-ex-track"
+              role="listbox"
+              tabIndex={-1}
+              aria-label={`${stepName(changingStep)} 예시`}
+            >
               <ExampleTiles
                 axisKey={stepExAxis(changingStep)}
                 category={stepExCategory(changingStep)}
@@ -1349,61 +1406,6 @@ export function Mannequin() {
                 onPick={(value, label) => pickStep(changingStep.key, value, label)}
               />
             </div>
-          </div>
-        )}
-      </div>
-
-      <div className="fit-ask">
-        {/* 확인 항목 칩 — 완료 전에도 모든 스텝을 고스트로 표시해 공간을 미리 확보(버튼 밀림 방지) */}
-        {steps.length > 0 && (
-          <div className="fit-doner" style={{ minHeight: steps.length >= 3 ? 62 : 31 }}>
-            {steps.map((step) => {
-              const s = stepState[step.key];
-              const name = stepName(step);
-              if (!axisIsDone(s)) return <span className="fit-chip ghost" key={step.key}>{name}</span>;
-              return (
-                <span className="fit-chip" key={step.key}>
-                  <span className="fit-chip-t">✓ {s.mode === 'keep' ? `${name} 유지` : <>{name} → <b>{s.pickLb}</b></>}</span>
-                  <button type="button" className="fit-edit" onClick={() => editStep(step.key)}>수정</button>
-                </span>
-              );
-            })}
-          </div>
-        )}
-
-        {changingStep ? (
-          <div className="fit-changing">
-            <span className="fit-changing-t"><b>{stepName(changingStep)}</b> 조정 중… 옆 예시를 골라주세요</span>
-            <button type="button" className="fit-cancel" onClick={() => cancelStep(changingStep.key)}>취소</button>
-          </div>
-        ) : cur ? (
-          <>
-            <div className="fit-q">{stepQuestion(cur)}</div>
-            <div className="fit-choice">
-              <button type="button" className="keep" onClick={() => keepStep(cur.key)}>유지하기</button>
-              <button type="button" className="change" onClick={() => changeStep(cur.key)}>조정하기</button>
-            </div>
-            {cur.kind === 'match' && <p className="fit-note">조정하면 새로 생성돼요 · {CREDIT_COSTS.mannequinGenerate} 크레딧</p>}
-          </>
-        ) : needsRegen ? (
-          <div className="fit-final">
-            <p className="fit-fmsg"><b>{changedNames.join('·')}</b> 조정했어요 — 다시 생성해서 확인해요</p>
-            <Button variant="primary" size="lg" block disabled={busy} onClick={onCta}>
-              {busy
-                ? '새 버전 생성 중…'
-                : regenerateState === 'load-exhausted'
-                  ? '새 버전 다시 불러오기'
-                  : `수정사항 반영하여 재생성 · ${CREDIT_COSTS.mannequinGenerate} 크레딧`}
-            </Button>
-          </div>
-        ) : (
-          <div className="fit-final">
-            <Button variant="primary" size="lg" block iconRight="arrowRight" disabled={busy} onClick={onCta}>
-              {/* 콘티 조회 실패로 aiCutCount 를 모를 때 '0 크레딧'(=무료로 읽힘)을 보여주지 않는다 —
-                  기존 관용구(em dash '—')로 미확정을 표시한다. 실제 과금은 서버가 저장된 콘티로 재계산. */}
-              상세페이지 생성하기 · {aiCutCount == null ? '—' : aiCutCount * CREDIT_COSTS.storyboardPerCut} 크레딧
-              {realModelFee}
-            </Button>
           </div>
         )}
       </div>
