@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import { api } from '@/lib/api/index.js';
 import { resetAnalysisCache } from '@/lib/api/httpAdapter.js';
 import { clearDraft } from '@/lib/draftStore.js';
+import { clearDraftPromotionSession } from '@/lib/draftPromotionSession.js';
 import { clearFlowSession, markProductInfoConfirmed, readFlowSession } from '@/lib/flowSession.js';
 import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
 import {
@@ -220,6 +221,8 @@ export const useAppStore = create((set, get) => ({
   // 변경에는 바뀌지 않아 일반 흐름엔 영향 없음.
   projectGeneration: 0,
   generationRelevantEditsDirty: readGenerationRelevantEdits(persistedFlow.projectId),
+  inputPromotionLocked: false,
+  setInputPromotionLocked(locked) { set({ inputPromotionLocked: Boolean(locked) }); },
 
   /** 새 제작 진입 — 서버 project 생성은 의류정보 확정까지 보류한다.
      '상세페이지 제작'/'새 상세페이지' 클릭만으로 보관함에 빈 프로젝트가 생기던 버그 방지.
@@ -233,6 +236,7 @@ export const useAppStore = create((set, get) => ({
     clearDetailPageJobMarker();
     resetAnalysisCache();           // 이전 프로젝트의 analysis/매칭 캐시 해제 (F1)
     clearFlowSession();
+    clearDraftPromotionSession();
     await clearDraft().catch(() => {});
     // mock도 실제 흐름처럼 project 없이 시작하되, 이전 데모 입력 데이터만 깨끗하게 재시드한다.
     if (mode !== 'http') await api.resetInputDraft();
@@ -242,6 +246,7 @@ export const useAppStore = create((set, get) => ({
       detailPageJob: initialDetailPageJob(),
       projectGeneration: get().projectGeneration + 1,
       generationRelevantEditsDirty: false,
+      inputPromotionLocked: false,
     });
     persistFlow(get());   // 새 제작 시작 — 영속 flow 초기화(stale projectId 미복원)
   },

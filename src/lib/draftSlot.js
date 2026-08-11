@@ -3,6 +3,7 @@ const SYNCED_AT_KEY = 'wl_draftSlotSyncedAt';
 const SERVER_SYNCED_AT_KEY = 'wl_draftSlotServerSyncedAt';
 const DEFAULT_DEBOUNCE_MS = 500;
 const PHOTO_RETRY_MS = 2000;
+const PUT_RETRY_MAX_MS = 30000;
 
 function safeStorage(storage) {
   return storage || globalThis.localStorage || null;
@@ -91,10 +92,13 @@ export function createDraftSlotSync({
   let pendingSnapshot = null;
   let latestSnapshot = null;
   let timer = null;
+  let putRetryTimer = null;
+  let putRetryAttempt = 0;
   let putChain = Promise.resolve(null);
   let conflictHandler = null;
   let photosPendingHandler = null;
   let locked = false;
+  let slotWritePending = false;
   let stagedPayload = null;
   const uploads = new Map();
 
@@ -111,17 +115,23 @@ export function createDraftSlotSync({
     writeStorage(storage, SERVER_SYNCED_AT_KEY, serverSyncedAt);
   };
   const notifyPhotosPending = () => {
-    const pending = [...uploads.values()].some((upload) => upload.status !== 'done');
+    const pending = slotWritePending || Boolean(pendingSnapshot)
+      || [...uploads.values()].some((upload) => upload.status !== 'synced');
     photosPendingHandler?.(pending);
   };
   const currentImageIds = () => imageIds(latestSnapshot?.product);
   const shouldKeepUpload = (imageId) => currentImageIds().has(imageId);
+  const discardUploaded = async (upload) => {
+    if (!upload?.assetId || !api?.discardDraftSlotPhoto) return;
+    try { await api.discardDraftSlotPhoto(upload.assetId); } catch { /* 서버 회수 작업이 재시도 */ }
+  };
 
   const startPhotoUpload = (image) => {
     if (!api?.uploadDraftSlotPhoto || uploads.get(image.id)?.status === 'uploading') return;
     const record = uploads.get(image.id) || {};
     clearTimer(record.retryTimer);
     record.status = 'uploading';
+    record.image = image;
     record.retryTimer = null;
     uploads.set(image.id, record);
     notifyPhotosPending();
@@ -133,16 +143,17 @@ export function createDraftSlotSync({
         blob,
         purpose: 'draft_slot',
       }))
-      .then((uploaded) => {
-        if (!shouldKeepUpload(image.id)) {
+      .then(async (uploaded) => {
+        if (!shouldKeepUpload(image.id) || locked) {
+          await discardUploaded(uploaded);
           uploads.delete(image.id);
           return;
         }
-        uploads.set(image.id, { status: 'done', ...uploaded });
+        uploads.set(image.id, { status: 'uploaded', image, ...uploaded });
         if (latestSnapshot) queue(latestSnapshot);
       })
       .catch(() => {
-        if (!shouldKeepUpload(image.id)) {
+        if (!shouldKeepUpload(image.id) || locked) {
           uploads.delete(image.id);
           return;
         }
@@ -161,6 +172,7 @@ export function createDraftSlotSync({
       if (liveIds.has(imageId)) continue;
       clearTimer(upload.retryTimer);
       uploads.delete(imageId);
+      void discardUploaded(upload);
     }
     for (const color of product?.colors || []) {
       for (const image of color.images || []) {
@@ -173,6 +185,7 @@ export function createDraftSlotSync({
 
   const payloadFor = (snapshot) => {
     let photosPending = false;
+    const includedUploadIds = [];
     const product = snapshot.product ? {
       ...snapshot.product,
       colors: (snapshot.product.colors || []).map((color) => ({
@@ -180,7 +193,8 @@ export function createDraftSlotSync({
         images: (color.images || []).flatMap((image) => {
           if (!image.src?.startsWith('blob:')) return [image];
           const upload = uploads.get(image.id);
-          if (upload?.status === 'done') {
+          if (upload?.status === 'uploaded' || upload?.status === 'synced') {
+            includedUploadIds.push(image.id);
             return [{ ...image, id: upload.assetId, src: upload.url }];
           }
           photosPending = true;
@@ -195,20 +209,37 @@ export function createDraftSlotSync({
         composeMode: snapshot.composeMode === 'extended' ? 'extended' : 'basic',
       },
       photosPending,
+      includedUploadIds,
     };
   };
 
   const handleConflict = (error) => {
     if (error?.status !== 409 || error?.code !== 'token_mismatch') return false;
     locked = true;
+    clearTimer(timer);
+    clearTimer(putRetryTimer);
+    timer = null;
+    putRetryTimer = null;
     conflictHandler?.(error.meta || null);
     return true;
+  };
+
+  const schedulePutRetry = () => {
+    if (locked || putRetryTimer) return;
+    const delay = Math.min(PHOTO_RETRY_MS * (2 ** putRetryAttempt), PUT_RETRY_MAX_MS);
+    putRetryAttempt += 1;
+    putRetryTimer = setTimer(() => {
+      putRetryTimer = null;
+      void commit().catch(() => {});
+    }, delay);
   };
 
   const put = async (snapshot) => {
     if (!api?.putDraftSlot || locked || !snapshot?.product) return null;
     syncPhotos(snapshot.product);
-    const { payload, photosPending } = payloadFor(snapshot);
+    const { payload, photosPending, includedUploadIds } = payloadFor(snapshot);
+    slotWritePending = true;
+    notifyPhotosPending();
     try {
       const result = await api.putDraftSlot({
         payload,
@@ -219,10 +250,23 @@ export function createDraftSlotSync({
       setToken(result?.token);
       setSyncedAt(snapshot.localUpdatedAt);
       setServerSyncedAt(result?.meta?.updatedAt);
+      putRetryAttempt = 0;
+      clearTimer(putRetryTimer);
+      putRetryTimer = null;
+      for (const imageId of includedUploadIds) {
+        const upload = uploads.get(imageId);
+        if (upload) uploads.set(imageId, { ...upload, status: 'synced' });
+      }
       return result;
     } catch (error) {
-      if (handleConflict(error)) return null;
+      if (!handleConflict(error)) {
+        pendingSnapshot = latestSnapshot || snapshot;
+        schedulePutRetry();
+      }
       throw error;
+    } finally {
+      slotWritePending = false;
+      notifyPhotosPending();
     }
   };
 
@@ -233,6 +277,7 @@ export function createDraftSlotSync({
     const snapshot = pendingSnapshot;
     pendingSnapshot = null;
     putChain = putChain.catch(() => null).then(() => put(snapshot));
+    notifyPhotosPending();
     return putChain;
   };
 
@@ -243,7 +288,13 @@ export function createDraftSlotSync({
     syncPhotos(snapshot.product);
     clearTimer(timer);
     timer = setTimer(commit, debounceMs);
+    notifyPhotosPending();
   }
+
+  const waitForUploads = async () => {
+    const pending = [...uploads.values()].map((upload) => upload.promise).filter(Boolean);
+    if (pending.length) await Promise.allSettled(pending);
+  };
 
   return {
     configure(nextAdapter) { api = nextAdapter; },
@@ -252,15 +303,18 @@ export function createDraftSlotSync({
     async flush() { await commit(); return putChain; },
     discard() {
       clearTimer(timer);
+      clearTimer(putRetryTimer);
       timer = null;
+      putRetryTimer = null;
       pendingSnapshot = null;
       latestSnapshot = null;
+      notifyPhotosPending();
     },
     suspend() {
       locked = true;
       this.discard();
       for (const upload of uploads.values()) clearTimer(upload.retryTimer);
-      return putChain.catch(() => null);
+      return putChain;
     },
     resume() { locked = false; },
     onConflict(handler) { conflictHandler = handler; return () => { if (conflictHandler === handler) conflictHandler = null; }; },
@@ -284,25 +338,35 @@ export function createDraftSlotSync({
       locked = false;
       return result;
     },
+    async removeForNewFlow() {
+      // 새 제작/처음부터 다시는 사용자의 명시적 폐기 의사다. 먼저 작업권을 인수한 뒤 같은
+      // 토큰으로 DELETE한다. 확정 승격은 이 메서드를 쓰지 않아 작업권 상실을 우회하지 않는다.
+      await this.takeover();
+      return this.remove();
+    },
     async remove() {
       const resumeSnapshot = latestSnapshot;
       const wasLocked = locked;
       locked = true;
       this.discard();
-      await putChain.catch(() => null);
       try {
-        if (api?.deleteDraftSlot) await api.deleteDraftSlot();
+        await putChain;
+        await waitForUploads();
+        if (api?.deleteDraftSlot) await api.deleteDraftSlot(token);
       } catch (error) {
         locked = wasLocked;
         if (!locked && resumeSnapshot) queue(resumeSnapshot);
         throw error;
       }
-      for (const upload of uploads.values()) clearTimer(upload.retryTimer);
+      const uploaded = [...uploads.values()];
+      for (const upload of uploaded) clearTimer(upload.retryTimer);
       uploads.clear();
+      await Promise.allSettled(uploaded.map(discardUploaded));
       setToken(null);
       setSyncedAt(null);
       setServerSyncedAt(null);
       locked = false;
+      notifyPhotosPending();
     },
     stage(payload) { stagedPayload = payload || null; },
     consumeStaged() {

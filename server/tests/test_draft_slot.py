@@ -1,9 +1,18 @@
+import asyncio
 import contextlib
 from datetime import datetime, timedelta, timezone
+import os
 from pathlib import Path
-from uuid import UUID
+from types import SimpleNamespace
+from uuid import UUID, uuid4
+
+import psycopg
+import pytest
+from psycopg.rows import dict_row
 
 import app.routes as routes
+from app import repo
+from app.workers.draft_asset_reclaimer import DraftAssetReclaimer
 
 
 ASSET_A = "11111111-1111-4111-8111-111111111111"
@@ -11,6 +20,25 @@ ASSET_B = "22222222-2222-4222-8222-222222222222"
 MIGRATION = (
     Path(__file__).resolve().parents[2]
     / "supabase/migrations/20260811000000_draft_slots.sql"
+)
+LOCAL_DB = os.getenv(
+    "TEST_LOCAL_DATABASE_URL",
+    "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+)
+
+
+def _draft_slot_db_available() -> bool:
+    try:
+        with psycopg.connect(LOCAL_DB, connect_timeout=2) as conn, conn.cursor() as cur:
+            cur.execute("select to_regclass('public.draft_slots')")
+            return cur.fetchone()[0] is not None
+    except Exception:
+        return False
+
+
+requires_local_db = pytest.mark.skipif(
+    not _draft_slot_db_available(),
+    reason="로컬 54322 없음 — draft slot 실제 잠금 테스트 스킵",
 )
 
 
@@ -174,7 +202,7 @@ def test_draft_slot_crud_and_get_token_metadata(client, make_token, monkeypatch)
     assert updated.json()["token"] == token
     assert state["slot"]["expires_at"] > datetime.now(timezone.utc) + timedelta(days=6)
 
-    assert client.delete("/v1/draft-slot", headers=headers).status_code == 204
+    assert client.delete("/v1/draft-slot", headers=full_headers).status_code == 204
     assert client.get("/v1/draft-slot", headers=headers).status_code == 204
 
 
@@ -221,7 +249,7 @@ def test_expired_get_is_absent_and_cleans_draft_assets(client, make_token, monke
     assert r2.deletes == [f"draft/{ASSET_A}.jpg"]
 
 
-def test_expired_put_creates_fresh_slot_and_cleans_only_removed_assets(
+def test_expired_put_rejects_consumed_token_and_cleans_only_removed_assets(
     client, make_token, monkeypatch
 ):
     state, r2 = _patch_slot_repo(monkeypatch)
@@ -229,12 +257,24 @@ def test_expired_put_creates_fresh_slot_and_cleans_only_removed_assets(
     old_token = _put(client, headers, _payload(ASSET_A, ASSET_B)).json()["token"]
     state["slot"]["expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
 
-    recreated = _put(client, headers, _payload(ASSET_B), token=old_token)
+    rejected = _put(client, headers, _payload(ASSET_B), token=old_token)
 
-    assert recreated.status_code == 201
-    assert recreated.json()["token"] != old_token
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "token_mismatch"
+    assert state["slot"] is None
     assert state["cleaned"] == [[ASSET_A]]
     assert r2.deletes == [f"draft/{ASSET_A}.jpg"]
+
+
+def test_missing_slot_rejects_non_null_stale_token(client, make_token, monkeypatch):
+    state, _r2 = _patch_slot_repo(monkeypatch)
+    headers = _auth(make_token)
+
+    rejected = _put(client, headers, _payload(), token=str(UUID(int=7)))
+
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "token_mismatch"
+    assert state["slot"] is None
 
 
 def test_expired_takeover_is_absent_and_cleans_assets(client, make_token, monkeypatch):
@@ -256,12 +296,70 @@ def test_replace_and_delete_cleanup_removed_draft_assets(client, make_token, mon
     token = _put(client, headers, _payload(ASSET_A, ASSET_B)).json()["token"]
 
     replaced = _put(client, headers, _payload(ASSET_B), token=token)
-    deleted = client.delete("/v1/draft-slot", headers=headers)
+    deleted = client.delete(
+        "/v1/draft-slot", headers={**headers, "X-Draft-Token": token}
+    )
 
     assert replaced.status_code == 200
     assert deleted.status_code == 204
     assert state["cleaned"] == [[ASSET_A], [ASSET_B]]
     assert r2.deletes == [f"draft/{ASSET_A}.jpg", f"draft/{ASSET_B}.jpg"]
+
+
+def test_delete_rejects_token_invalidated_by_takeover(client, make_token, monkeypatch):
+    state, _r2 = _patch_slot_repo(monkeypatch)
+    headers = _auth(make_token)
+    old_token = _put(client, headers, _payload(ASSET_A)).json()["token"]
+    takeover = client.post("/v1/draft-slot:takeover", headers=headers).json()
+
+    rejected = client.delete(
+        "/v1/draft-slot", headers={**headers, "X-Draft-Token": old_token}
+    )
+
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "token_mismatch"
+    assert state["slot"]["active_token"] == takeover["token"]
+
+
+def test_discard_unreferenced_draft_asset_cleans_r2(client, make_token, monkeypatch):
+    state, r2 = _patch_slot_repo(monkeypatch)
+    headers = _auth(make_token)
+
+    discarded = client.delete(f"/v1/draft-slot/assets/{ASSET_A}", headers=headers)
+
+    assert discarded.status_code == 204
+    assert state["cleaned"] == [[ASSET_A]]
+    assert r2.deletes == [f"draft/{ASSET_A}.jpg"]
+
+
+def test_stale_reclaimer_commits_before_deleting_r2(monkeypatch):
+    events = []
+
+    class Conn:
+        async def commit(self):
+            events.append("commit")
+
+    class Pool:
+        @contextlib.asynccontextmanager
+        async def connection(self):
+            yield Conn()
+
+    class R2:
+        def delete(self, key):
+            events.append(f"delete:{key}")
+
+    async def reclaim(conn):
+        events.append("select")
+        return [{"id": ASSET_A, "r2_key": f"draft/{ASSET_A}.jpg"}]
+
+    monkeypatch.setattr(repo, "reclaim_stale_unreferenced_draft_assets", reclaim)
+    worker = DraftAssetReclaimer(SimpleNamespace(
+        state=SimpleNamespace(pool=Pool(), r2=R2())
+    ))
+
+    asyncio.run(worker._sweep_once())
+
+    assert events == ["select", "commit", f"delete:draft/{ASSET_A}.jpg"]
 
 
 def test_draft_slot_get_requires_bearer(client):
@@ -326,6 +424,123 @@ def test_draft_slot_upload_reuses_asset_flow_without_project(
     assert captured["project_id"] is None
     assert captured["metadata"] == {"purpose": "draft_slot"}
     assert captured["key"] == key
+
+
+@requires_local_db
+def test_real_postgres_serializes_takeover_against_old_token_delete():
+    """두 DB 클라이언트가 동시에 와도 takeover와 옛-token DELETE가 함께 성공하지 않는다."""
+    user_id = str(uuid4())
+    old_token = str(uuid4())
+
+    async def run():
+        seed = await psycopg.AsyncConnection.connect(LOCAL_DB, row_factory=dict_row)
+        async with seed:
+            await seed.execute(
+                "insert into auth.users (id, email) values (%s, %s)",
+                (user_id, f"{user_id}@draft-slot.test"),
+            )
+            await repo.create_draft_slot(
+                seed,
+                user_id=user_id,
+                payload=_payload(),
+                active_token=old_token,
+                device_label="client-a",
+                photos_pending=False,
+            )
+            await seed.commit()
+
+        start = asyncio.Event()
+
+        async def takeover_client():
+            conn = await psycopg.AsyncConnection.connect(LOCAL_DB, row_factory=dict_row)
+            async with conn:
+                await start.wait()
+                row = await repo.lock_draft_slot(conn, user_id)
+                if row is None:
+                    await conn.commit()
+                    return 204, None
+                new_token = str(uuid4())
+                await repo.takeover_draft_slot(conn, user_id, new_token)
+                await asyncio.sleep(0.05)
+                await conn.commit()
+                return 200, new_token
+
+        async def old_token_delete_client():
+            conn = await psycopg.AsyncConnection.connect(LOCAL_DB, row_factory=dict_row)
+            async with conn:
+                await start.wait()
+                row = await repo.lock_draft_slot(conn, user_id)
+                if row is None:
+                    await conn.commit()
+                    return 204
+                if row["active_token"] != old_token:
+                    await conn.rollback()
+                    return 409
+                await repo.delete_draft_slot(conn, user_id)
+                await asyncio.sleep(0.05)
+                await conn.commit()
+                return 204
+
+        takeover_task = asyncio.create_task(takeover_client())
+        delete_task = asyncio.create_task(old_token_delete_client())
+        start.set()
+        takeover_result, delete_status = await asyncio.gather(
+            takeover_task, delete_task
+        )
+
+        verify = await psycopg.AsyncConnection.connect(LOCAL_DB, row_factory=dict_row)
+        async with verify:
+            row = await repo.lock_draft_slot(verify, user_id)
+            if takeover_result[0] == 200:
+                assert delete_status == 409
+                assert row["active_token"] == takeover_result[1]
+            else:
+                assert takeover_result[0] == 204
+                assert delete_status == 204
+                assert row is None
+            await verify.execute("delete from auth.users where id = %s", (user_id,))
+            await verify.commit()
+
+    asyncio.run(run())
+
+
+@requires_local_db
+def test_stale_reclaimer_keeps_referenced_asset_and_reclaims_orphan():
+    user_id = str(uuid4())
+    referenced_id = str(uuid4())
+    orphan_id = str(uuid4())
+
+    async def run():
+        conn = await psycopg.AsyncConnection.connect(LOCAL_DB, row_factory=dict_row)
+        async with conn:
+            await conn.execute(
+                "insert into auth.users (id, email) values (%s, %s)",
+                (user_id, f"{user_id}@draft-assets.test"),
+            )
+            for asset_id in (referenced_id, orphan_id):
+                await conn.execute(
+                    """
+                    insert into assets
+                      (id, user_id, source, visibility, r2_bucket, r2_key, mime_type,
+                       metadata, created_at)
+                    values (%s, %s, 'upload', 'private', 'test', %s, 'image/jpeg',
+                            '{"purpose":"draft_slot"}'::jsonb, now() - interval '2 hours')
+                    """,
+                    (asset_id, user_id, f"draft/{asset_id}.jpg"),
+                )
+            await repo.create_draft_slot(
+                conn,
+                user_id=user_id,
+                payload=_payload(referenced_id),
+                active_token=str(uuid4()),
+                device_label="client-a",
+                photos_pending=False,
+            )
+            reclaimed = await repo.reclaim_stale_unreferenced_draft_assets(conn)
+            assert [asset["id"] for asset in reclaimed] == [orphan_id]
+            await conn.rollback()
+
+    asyncio.run(run())
 
 
 def test_draft_slot_migration_declares_exact_table_and_owner_rls():

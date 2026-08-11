@@ -365,7 +365,7 @@ function ProductInputRoute() {
   const startNew = async () => {
     if (slotEnabled) {
       try {
-        await draftSlot.remove();
+        await draftSlot.removeForNewFlow();
       } catch (error) {
         pushToast(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
         return;
@@ -451,12 +451,13 @@ function RootRedirect() {
       try {
         const draft = await loadDraft();
         if (!draft?.product) { setDest(target); setPhase('done'); return; }
+        // 로그인 복귀 승격도 입력 화면과 같은 작업권 계약을 따른다. active token을 서버 잠금
+        // 안에서 먼저 소비해야만 프로젝트 생성을 시작할 수 있다.
+        await draftSlot.remove();
         const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('sync_timeout')), DRAFT_SYNC_TIMEOUT_MS));
         const { projectId } = await Promise.race([promoteDraftToProject(draft), timeout]);
         promotedProjectId = projectId;
         if (!alive) return;
-        await draftSlot.suspend();
-        await draftSlot.remove();
         // 같은 이유로 재생성 신호를 보존 — 로그인 복귀 draft sync 도 동일한 '신원 획득' 경로.
         useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });   // 콘티가 이 project 로 진행(+영속)
         flowRouteSeenThisSession = true;

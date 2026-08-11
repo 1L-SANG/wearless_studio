@@ -13,12 +13,12 @@
 
    토큰은 http 헬퍼가 supabase 세션에서 주입한다 — **반드시 로그인 후 호출**할 것.
 
-   멱등: 부분 실패 시 던지는 에러에 `err.projectId`를 부착한다. 호출측은 재시도 시
-   `syncDraftToBackend(draft, { projectId: err.projectId })`로 호출하면 프로젝트가 중복
-   생성되지 않는다(이미 올라간 사진은 재업로드되어 일부 orphan asset이 생길 수 있음 — 허용).
+   멱등: 확보한 projectId와 사진별 asset 매핑을 localStorage에 즉시 기록한다. 같은 페이지의
+   재시도뿐 아니라 새로고침 뒤에도 같은 프로젝트·업로드에 합류한다.
    ============================================================= */
 import { api } from '@/lib/api/index.js';
 import { createDraftSyncSingleFlight } from '@/lib/draftSyncSingleFlight.js';
+import { draftPromotionSession } from '@/lib/draftPromotionSession.js';
 
 // product.colors[].images[] 의 id·src 를 업로드 결과로 치환 (원본 imageId 매칭).
 // **id 를 서버 asset id 로 바꾼다** — 서버(mannequin.base_color_images·분석 워커)가 이미지를
@@ -37,13 +37,23 @@ function withUploadedSrcs(product, uploadByImageId) {
 }
 
 async function runDraftSync(draft, { projectId: existing } = {}) {
-  // 멱등: 재시도 시 호출측이 넘긴 기존 projectId 재사용(없으면 새로 생성).
-  const projectId = existing ?? (await api.createProject()).id;
+  // 서버 createProject 는 명시적 Idempotency-Key 를 지원하지 않는다. 프로젝트를 만든 즉시
+  // localStorage 에 기록해 새로고침 뒤에도 같은 행으로 합류한다.
+  const persisted = draftPromotionSession.read();
+  const projectId = existing ?? persisted.projectId ?? (await api.createProject()).id;
+  draftPromotionSession.rememberProject(projectId);
 
   try {
-    // 사진 병렬 업로드 (사진당 3콜 순차 → 동시 — 로그인→마네킹 지연 완화).
+    // 성공한 사진별 asset 매핑도 즉시 기록한다. 중간 실패·새로고침 뒤 재시도는 이미 올라간
+    // 사진을 재사용해 중복 R2 객체를 만들지 않는다.
     const pairs = await Promise.all(
-      (draft.photos ?? []).map(async (p) => [p.imageId, await api.uploadPhoto(projectId, p)]),
+      (draft.photos ?? []).map(async (p) => {
+        const cached = draftPromotionSession.read().assets?.[p.imageId];
+        if (cached?.assetId && cached?.url) return [p.imageId, cached];
+        const uploaded = await api.uploadPhoto(projectId, p);
+        draftPromotionSession.rememberAsset(p.imageId, uploaded);
+        return [p.imageId, uploaded];
+      }),
     );
     const uploadByImageId = Object.fromEntries(pairs);  // imageId -> {assetId, url}
 
@@ -92,7 +102,9 @@ export function promoteDraftToProject(draft, options) {
 }
 
 export function resetDraftSyncSingleFlight() {
-  return draftSyncFlight.reset();
+  const reset = draftSyncFlight.reset();
+  if (reset) draftPromotionSession.clear();
+  return reset;
 }
 
 export function retryDraftPromotion(projectId) {

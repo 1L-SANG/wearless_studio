@@ -54,6 +54,12 @@
 .draft-source-options .btn { width: 100%; justify-content: center; }
 .draft-slot-pending { margin: 0 0 14px; padding: 11px 14px; border-radius: var(--r-3); color: var(--fg-2);
   background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--ring); font-size: 13px; }
+.input-promotion-lock { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px;
+  background: rgba(255, 255, 255, .86); backdrop-filter: blur(8px); cursor: wait; }
+.input-promotion-lock-card { display: grid; justify-items: center; gap: 10px; width: min(100%, 420px); padding: 30px 24px;
+  border-radius: var(--r-6); color: var(--fg-1); background: var(--bg-1); box-shadow: var(--elev-lift), 0 0 0 1px var(--ring); }
+.input-promotion-lock-card strong { font-size: 16px; }
+.input-promotion-lock-card span { color: var(--fg-2); font-size: 13px; }
 .draft-entry-sources { display: grid; gap: 10px; margin-top: 20px; }
 .draft-entry-source { display: grid; gap: 4px; width: 100%; padding: 14px 16px; text-align: left; cursor: pointer;
   border: 0; border-radius: var(--r-4); color: var(--fg-1); background: var(--bg-1);

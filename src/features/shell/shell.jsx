@@ -28,15 +28,17 @@ export function TopNav() {
   const toast = useToast();
   const account = useAppStore((s) => s.account) || { name: '…', avatar: '', credits: 0, plan: '' };
   const beginProject = useAppStore((s) => s.beginProject);
+  const inputPromotionLocked = useAppStore((s) => s.inputPromotionLocked);
   const [resumeAsk, setResumeAsk] = useState(false);
   // create 흐름일 때만 'create' 활성 — /pricing·/credits 등은 어느 탭도 활성 아님(폴백 active 버그 수정)
   const route = pathname.startsWith('/library') ? 'library'
     : pathname.startsWith('/create') ? 'create' : null;
   // '새로 만들기' = 숨은 슬롯과 로컬 플로우를 비운 뒤 입력 화면. 보관함 project는 확정 때 생성한다.
   const startNew = async () => {
+    if (inputPromotionLocked) return;
     setResumeAsk(false);
     try {
-      await draftSlot.remove();
+      await draftSlot.removeForNewFlow();
     } catch (error) {
       toast.push(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
       return;
@@ -48,6 +50,7 @@ export function TopNav() {
   // 사용자가 있어야 할 곳도 콘티라 강제 이동 없이 이 폴백 하나로 자연스럽게 돌아간다.
   const resumeWork = () => { setResumeAsk(false); navigate(useAppStore.getState().resumePath || '/create/storyboard'); };
   const onNav = async (r) => {
+    if (inputPromotionLocked) return;
     if (r === 'create') {
       // 진행 중 프로젝트가 있으면 '이어서/새로' 를 물어 매번 새로 초기화돼 작업이 버려지던 문제를 막는다.
       const { projectId, projectPersisted } = useAppStore.getState();
@@ -81,8 +84,8 @@ export function TopNav() {
       </span>
       <div className="nav-links">
         {/* 비로그인 숨김: 보관함/제작 탭은 로그인 사용자용. 비로그인 입력·분석은 '/' 공개 진입. */}
-        {session && <button className={`nav-link${route === 'create' ? ' active' : ''}`} onClick={() => onNav('create')}>상세페이지 제작</button>}
-        {session && <button className={`nav-link${route === 'library' ? ' active' : ''}`} onClick={() => onNav('library')}>보관함</button>}
+        {session && <button disabled={inputPromotionLocked} className={`nav-link${route === 'create' ? ' active' : ''}`} onClick={() => onNav('create')}>상세페이지 제작</button>}
+        {session && <button disabled={inputPromotionLocked} className={`nav-link${route === 'library' ? ' active' : ''}`} onClick={() => onNav('library')}>보관함</button>}
       </div>
       {STEPPER_STEPS.includes(step) && <div className="nav-stepper"><Stepper current={step} /></div>}
       <div className="nav-right">

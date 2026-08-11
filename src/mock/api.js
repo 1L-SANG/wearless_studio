@@ -278,9 +278,15 @@ export const api = {
     await wait(20);
     return mockDraftSlot.takeover();
   },
-  async deleteDraftSlot() {
+  async deleteDraftSlot(token) {
     await wait(20);
-    mockDraftSlot.remove();
+    mockDraftSlot.remove(token);
+  },
+  async discardDraftSlotPhoto(assetId) {
+    await wait(10);
+    const upload = customMatchUploads.get(assetId);
+    if (upload?.url) URL.revokeObjectURL(upload.url);
+    customMatchUploads.delete(assetId);
   },
   simulateDraftSlotConflict(options) {
     return mockDraftSlot.simulateConflict(options);

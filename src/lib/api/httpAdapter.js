@@ -367,8 +367,14 @@ export const httpAdapter = {
   async takeoverDraftSlot() {
     return http('/v1/draft-slot:takeover', { method: 'POST' });
   },
-  async deleteDraftSlot() {
-    return http('/v1/draft-slot', { method: 'DELETE' });
+  async deleteDraftSlot(token) {
+    return http('/v1/draft-slot', {
+      method: 'DELETE',
+      headers: token ? { 'X-Draft-Token': token } : undefined,
+    });
+  },
+  async discardDraftSlotPhoto(assetId) {
+    return http(`/v1/draft-slot/assets/${assetId}`, { method: 'DELETE' });
   },
   async publicAnalyze(product, { onProgress, signal } = {}) {
     const colors = product?.colors || [];

@@ -5,6 +5,7 @@
    Markup, classNames, inline styles, real file upload unchanged.
    ============================================================= */
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, isMockMode } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
@@ -411,6 +412,7 @@ export function ProductInput() {
   const [slotLock, setSlotLock] = useState(null);
   const [reclaimChoiceOpen, setReclaimChoiceOpen] = useState(false);
   const [slotPhotosPending, setSlotPhotosPending] = useState(false);
+  const [promotionLocked, setPromotionLocked] = useState(false);
   const { session, loading: authLoading, openLogin } = useAuth();
   const slotEnabled = Boolean(session) || isMockMode;
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
@@ -419,6 +421,14 @@ export function ProductInput() {
   const [, refreshPhotoPreviews] = useState(0);
   const photoPreviewRegistryRef = useRef(null);
   const latestLocalUpdatedAtRef = useRef(null);
+  const latestProductRef = useRef(product);
+  const latestAnalysisRef = useRef(analysis);
+  const latestComposeModeRef = useRef(composeMode);
+  const promotionRunRef = useRef(0);
+  const mountedRef = useRef(false);
+  latestProductRef.current = product;
+  latestAnalysisRef.current = analysis;
+  latestComposeModeRef.current = composeMode;
   if (!photoPreviewRegistryRef.current) {
     photoPreviewRegistryRef.current = createProductPhotoPreviewRegistry({
       onChange: () => refreshPhotoPreviews((version) => version + 1),
@@ -477,6 +487,26 @@ export function ProductInput() {
   }, [product]);
 
   useEffect(() => () => photoPreviewRegistryRef.current.dispose(), []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      promotionRunRef.current += 1;
+      useAppStore.getState().setInputPromotionLocked(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!promotionLocked) return undefined;
+    const blockUnload = (event) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', blockUnload);
+    return () => window.removeEventListener('beforeunload', blockUnload);
+  }, [promotionLocked]);
+
+  const setFlowPromotionLocked = (locked) => {
+    setPromotionLocked(Boolean(locked));
+    useAppStore.getState().setInputPromotionLocked(locked);
+  };
 
   // 분석 CTA — 마네킹부터는 로그인 필요. 서버 분석을 마친 로그인 사용자는 바로 이동한다.
   // 로컬 분석 결과는 먼저 IndexedDB 에 보관한다. 미로그인이면 로그인 모달을 띄우고, 이미
@@ -564,7 +594,14 @@ export function ProductInput() {
       return;
     }
     redirectingRef.current = true;
+    const runId = ++promotionRunRef.current;
+    const projectGeneration = useAppStore.getState().projectGeneration;
+    const isCurrentRun = () => mountedRef.current
+      && promotionRunRef.current === runId
+      && useAppStore.getState().projectGeneration === projectGeneration;
+    setFlowPromotionLocked(true);
     let promotedProjectId = null;
+    let latestSnapshot = null;
     try {
       colorSaveSchedulerRef.current.flush();
       // 직전 입력 이벤트의 PATCH가 getAnalysis보다 늦게 도착하는 레이스를 막는다. 모든 분석 저장을
@@ -580,17 +617,30 @@ export function ProductInput() {
         }
       }
       if (analysisSaveErrorRef.current) throw analysisSaveErrorRef.current;
-      queueProductDraftSave(product, analysis, composeMode);
+      latestSnapshot = {
+        product: latestProductRef.current,
+        analysis: latestAnalysisRef.current,
+        composeMode: latestComposeModeRef.current,
+        localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString(),
+      };
+      queueProductDraftSave(
+        latestSnapshot.product,
+        latestSnapshot.analysis,
+        latestSnapshot.composeMode,
+        latestSnapshot.localUpdatedAt,
+      );
       const { failed = 0 } = await flushProductDraftSave() || {};
       if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri' });
       if (session || isMockMode) {
         const draft = await loadDraft();
         if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
-        await draftSlot.flush().catch(() => {});
+        await draftSlot.flush();
+        // 프로젝트를 만들기 전에 서버 잠금 안에서 active token을 소비한다. 여기서 409면
+        // 작업권을 잃은 기기는 승격 자체를 시작하지 않는다.
+        await draftSlot.remove();
         const { projectId } = await promoteDraftToProject(draft);
         promotedProjectId = projectId;
-        await draftSlot.suspend();
-        await draftSlot.remove();
+        if (!isCurrentRun()) return;
         // 게스트로 편집(재생성 신호 dirty)한 뒤 세션이 생겨 여기서 처음 project 를 얻는 경로 —
         // '다른 작업으로 전환'이 아니라 같은 작업이 신원을 얻는 것뿐이라 신호를 지우면 안 된다.
         useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
@@ -604,11 +654,13 @@ export function ProductInput() {
     } catch (error) {
       if (promotedProjectId) {
         retryDraftPromotion(promotedProjectId);
-        draftSlot.resume();
       }
+      draftSlot.resume();
+      if (latestSnapshot && isCurrentRun()) draftSlot.queue(latestSnapshot);
       toast.push(error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     } finally {
       redirectingRef.current = false;
+      if (isCurrentRun()) setFlowPromotionLocked(false);
     }
   };
 
@@ -933,7 +985,7 @@ export function ProductInput() {
     setConsistencyOpen(false);
     if (slotEnabled) {
       try {
-        await draftSlot.remove();
+        await draftSlot.removeForNewFlow();
       } catch (error) {
         toast.push(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
         return;
@@ -1053,6 +1105,15 @@ export function ProductInput() {
 
   return (
     <div className={`wizard${wide ? ' wide' : ''}`}>
+      {promotionLocked && createPortal((
+        <div className="input-promotion-lock" role="status" aria-live="polite">
+          <div className="input-promotion-lock-card">
+            <Icon name="loader" className="spin" size={24} />
+            <strong>최신 입력 내용을 안전하게 확정하고 있어요</strong>
+            <span>완료될 때까지 이 화면을 그대로 두세요.</span>
+          </div>
+        </div>
+      ), document.body)}
       {slotLock && <EditingRightsLock meta={slotLock} onReclaim={reclaimEditingRights} />}
       {reclaimChoiceOpen && slotLock && (
         <Modal onClose={() => setReclaimChoiceOpen(false)}>
@@ -1177,6 +1238,7 @@ export function ProductInput() {
             projectId={analysisProjectId}
             onAnalysisReplace={setAnalysis}
             onChange={onAnalysisFormChange}
+            onConfirmingChange={setFlowPromotionLocked}
             onNext={goToStoryboard} />
         </div>
       )}

@@ -552,6 +552,7 @@ function CustomMatchUploadModal({ projectId, anchorRect, onApply, onClose }) {
 
 export function AnalysisForm({
   inline, analysis, catalogs, onChange, onNext, projectId = null, onAnalysisReplace,
+  onConfirmingChange,
 }) {
   const a = analysis;
   const toast = useToast();
@@ -618,11 +619,13 @@ export function AnalysisForm({
   const confirmAnalysis = async () => {
     if (confirming) return;
     setConfirming(true);
+    onConfirmingChange?.(true);
     try {
       await composeModeSaveRef.current;
       await onNext();
     } finally {
       setConfirming(false);
+      onConfirmingChange?.(false);
     }
   };
   // 인물 모델 카탈로그 — FaceMarket 검증 모델(GET /v1/facemarket/models, listModels()).

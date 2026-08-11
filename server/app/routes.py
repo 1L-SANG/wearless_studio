@@ -1258,6 +1258,8 @@ async def put_draft_slot(
 ):
     cleanup_assets: list[dict] = []
     incoming_asset_ids = _draft_slot_asset_ids(body.payload)
+    token = str(body.token) if body.token is not None else None
+    consumed_token_conflict = False
     async with get_conn(request) as conn:
         row = await repo.lock_draft_slot(conn, user_id)
         if row and _draft_slot_expired(row):
@@ -1266,7 +1268,13 @@ async def put_draft_slot(
             )
             row = None
 
-        if row is None:
+        if row is None and token is not None:
+            # 삭제·만료로 소비된 작업권은 다시 슬롯을 만들 수 없다. 새 슬롯 생성은 token=null인
+            # 최초 저장만 허용한다(오래된 PUT이 삭제 뒤 도착해 슬롯을 부활시키는 레이스 차단).
+            # 만료 슬롯을 같은 트랜잭션에서 발견한 경우에는 삭제를 먼저 커밋한 뒤 409를 반환한다.
+            await conn.commit()
+            consumed_token_conflict = True
+        elif row is None:
             token = str(uuid.uuid4())
             saved = await repo.create_draft_slot(
                 conn,
@@ -1278,7 +1286,6 @@ async def put_draft_slot(
             )
             status_code = 201
         else:
-            token = str(body.token) if body.token is not None else None
             if token != row["active_token"]:
                 raise HTTPException(
                     status_code=409,
@@ -1300,9 +1307,19 @@ async def put_draft_slot(
                 conn, user_id, sorted(removed_ids)
             ))
             status_code = 200
-        await conn.commit()
+        if not consumed_token_conflict:
+            await conn.commit()
     if cleanup_assets:
         background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    if consumed_token_conflict:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {
+                "code": "token_mismatch",
+                "message": "이 기기의 임시저장 작업권이 만료됐어요.",
+                "meta": None,
+            }},
+        )
     return JSONResponse(
         status_code=status_code,
         content={"token": saved["active_token"], "meta": _draft_slot_meta(saved)},
@@ -1341,20 +1358,62 @@ async def takeover_draft_slot(
 @router.delete(
     "/draft-slot",
     status_code=204,
-    responses={**COMMON_RESPONSES, 204: {"description": "삭제 완료 또는 이미 없음"}},
+    responses={
+        **COMMON_RESPONSES,
+        204: {"description": "삭제 완료 또는 이미 없음"},
+        409: {"model": ErrorResponse},
+    },
     tags=["Draft Slot"],
     summary="숨은 임시저장 슬롯 삭제",
 )
 async def delete_draft_slot(
     request: Request,
     background_tasks: BackgroundTasks,
+    x_draft_token: str | None = Header(default=None, alias="X-Draft-Token"),
     user_id: str = Depends(require_user),
 ):
     cleanup_assets: list[dict] = []
     async with get_conn(request) as conn:
         row = await repo.lock_draft_slot(conn, user_id)
         if row:
+            if x_draft_token != row["active_token"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "token_mismatch",
+                        "message": "다른 기기에서 이어서 작업을 시작했어요.",
+                        "meta": _draft_slot_meta(row),
+                    },
+                )
+            # advisory/row lock을 잡은 이 트랜잭션 안에서 active token을 소비한다.
             cleanup_assets = await _remove_draft_slot(conn, user_id, row)
+        await conn.commit()
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    return Response(status_code=204)
+
+
+@router.delete(
+    "/draft-slot/assets/{asset_id}",
+    status_code=204,
+    responses={**COMMON_RESPONSES, 204: {"description": "미참조 임시 자산 폐기 완료"}},
+    tags=["Draft Slot"],
+    summary="슬롯에 반영되지 않은 임시 사진 폐기",
+)
+async def discard_draft_slot_asset(
+    request: Request,
+    asset_id: str,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user),
+):
+    try:
+        normalized_id = str(uuid.UUID(asset_id))
+    except (ValueError, TypeError):
+        return Response(status_code=204)
+    async with get_conn(request) as conn:
+        cleanup_assets = await repo.soft_delete_unreferenced_draft_assets(
+            conn, user_id, [normalized_id]
+        )
         await conn.commit()
     if cleanup_assets:
         background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)

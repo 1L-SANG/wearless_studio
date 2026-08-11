@@ -22,6 +22,7 @@ from . import image_usage
 from .r2 import R2Client
 from .routes import router as v1_router, COMMON_RESPONSES
 from .workers.dispatcher import JobDispatcher
+from .workers.draft_asset_reclaimer import DraftAssetReclaimer
 
 DEFAULT_ERROR_CODES = {
     401: "unauthorized",
@@ -85,8 +86,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         dispatcher = None
+        draft_asset_reclaimer = None
         if pool is not None:
             await pool.open()
+            if app.state.r2 is not None:
+                draft_asset_reclaimer = DraftAssetReclaimer(app)
+                await draft_asset_reclaimer.start()
             # job dispatcher (§5) — DB·R2 + 최소 1개 AI provider(마네킹=Gemini, 분석=Gemini/OpenAI)
             # 가 있고 활성화일 때만 기동. provider 없는 job 은 워커가 실패 봉투로 종결.
             if (
@@ -98,6 +103,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await dispatcher.start()
                 app.state.dispatcher = dispatcher
         yield
+        if draft_asset_reclaimer is not None:
+            await draft_asset_reclaimer.stop()
         if dispatcher is not None:
             await dispatcher.stop()
         if pool is not None:

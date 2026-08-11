@@ -223,6 +223,56 @@ async def soft_delete_unreferenced_draft_assets(
         return await cur.fetchall()
 
 
+async def reclaim_stale_unreferenced_draft_assets(
+    conn: AsyncConnection, *, older_than_minutes: int = 60, limit: int = 200
+) -> list[dict]:
+    """Reclaim completed draft uploads that never reached a slot/product payload."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            with stale as (
+              select a.id
+              from assets a
+              where a.deleted_at is null
+                and a.metadata->>'purpose' = 'draft_slot'
+                and a.created_at < now() - (%s * interval '1 minute')
+                and not exists (
+                  select 1 from draft_slots ds
+                  cross join lateral jsonb_array_elements(
+                    case when jsonb_typeof(ds.payload->'product'->'colors') = 'array'
+                         then ds.payload->'product'->'colors' else '[]'::jsonb end
+                  ) color
+                  cross join lateral jsonb_array_elements(
+                    case when jsonb_typeof(color->'images') = 'array'
+                         then color->'images' else '[]'::jsonb end
+                  ) image
+                  where image->>'id' = a.id::text
+                )
+                and not exists (
+                  select 1 from products prod
+                  cross join lateral jsonb_array_elements(
+                    case when jsonb_typeof(prod.colors) = 'array'
+                         then prod.colors else '[]'::jsonb end
+                  ) color
+                  cross join lateral jsonb_array_elements(
+                    case when jsonb_typeof(color->'images') = 'array'
+                         then color->'images' else '[]'::jsonb end
+                  ) image
+                  where image->>'id' = a.id::text
+                )
+              order by a.created_at
+              for update skip locked
+              limit %s
+            )
+            update assets a set deleted_at = now()
+            from stale where a.id = stale.id
+            returning a.id::text as id, a.r2_bucket, a.r2_key
+            """,
+            (older_than_minutes, limit),
+        )
+        return await cur.fetchall()
+
+
 async def list_library(conn: AsyncConnection, user_id: str) -> list[dict]:
     async with conn.cursor() as cur:
         await cur.execute(

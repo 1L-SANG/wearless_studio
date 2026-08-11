@@ -93,7 +93,10 @@ test('a 409 locks the client and takeover allows a local reclaim PUT', async () 
   });
   sync.onConflict((meta) => conflicts.push(meta));
   sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
-  await sync.flush();
+  await assert.rejects(
+    sync.flush(),
+    (error) => error.status === 409 && error.code === 'token_mismatch',
+  );
   assert.equal(sync.isLocked(), true);
   assert.equal(conflicts[0].deviceLabel, 'iPhone Safari');
 
@@ -129,6 +132,86 @@ test('slot delete drains an in-flight PUT so the PUT cannot recreate the deleted
   assert.equal(deleted, true);
 });
 
+test('an uploaded photo stays pending until the slot PUT retry is accepted', async () => {
+  const timers = fakeTimers();
+  const pendingStates = [];
+  let puts = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ blob: async () => new Blob(['photo'], { type: 'image/jpeg' }) });
+  try {
+    const sync = createDraftSlotSync({
+      debounceMs: 0,
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+      storage: new MapStorage(),
+      adapter: {
+        async uploadDraftSlotPhoto() {
+          return { assetId: 'asset-1', url: 'https://img.test/asset-1.jpg' };
+        },
+        async putDraftSlot() {
+          puts += 1;
+          if (puts === 1) throw new Error('temporary network failure');
+          return { token: 'owned', meta: { updatedAt: 'server-2' } };
+        },
+      },
+    });
+    sync.onPhotosPending((pending) => pendingStates.push(pending));
+    sync.queue({
+      product: {
+        name: 'photo',
+        colors: [{ id: 'base', images: [{ id: 'image-1', src: 'blob:photo', type: 'image/jpeg' }] }],
+      },
+      localUpdatedAt: 'local-1',
+    });
+    await new Promise(setImmediate);
+
+    await assert.rejects(sync.flush(), /temporary network failure/);
+    assert.equal(pendingStates.at(-1), true);
+    assert.equal(timers.runLatest(), 2000);
+    await new Promise(setImmediate);
+    await sync.flush();
+
+    assert.equal(puts, 2);
+    assert.equal(pendingStates.at(-1), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a photo removed during upload is explicitly discarded after upload completes', async () => {
+  let releaseUpload;
+  const discarded = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ blob: async () => new Blob(['photo'], { type: 'image/jpeg' }) });
+  try {
+    const sync = createDraftSlotSync({
+      debounceMs: 500,
+      storage: new MapStorage(),
+      adapter: {
+        uploadDraftSlotPhoto: () => new Promise((resolve) => { releaseUpload = resolve; }),
+        async discardDraftSlotPhoto(assetId) { discarded.push(assetId); },
+        async putDraftSlot() { return { token: 'owned' }; },
+      },
+    });
+    sync.queue({
+      product: {
+        name: 'photo',
+        colors: [{ id: 'base', images: [{ id: 'image-1', src: 'blob:photo', type: 'image/jpeg' }] }],
+      },
+    });
+    await new Promise(setImmediate);
+    sync.queue({ product: { name: 'photo', colors: [{ id: 'base', images: [] }] } });
+    releaseUpload({ assetId: 'orphan-1', url: 'https://img.test/orphan-1.jpg' });
+    await new Promise(setImmediate);
+    await new Promise(setImmediate);
+
+    assert.deepEqual(discarded, ['orphan-1']);
+    sync.discard();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('mock slot supports create, mismatch, takeover invalidation, and delete', () => {
   let sequence = 0;
   const memory = createDraftSlotMemory({
@@ -146,8 +229,45 @@ test('mock slot supports create, mismatch, takeover invalidation, and delete', (
   const takeover = memory.takeover();
   assert.notEqual(takeover.token, created.token);
   assert.equal(takeover.payload.product.name, 'one');
-  memory.remove();
+  memory.remove(takeover.token);
   assert.equal(memory.get(takeover.token), null);
+});
+
+test('two clients cannot update or delete with a token invalidated by takeover', () => {
+  let sequence = 0;
+  const memory = createDraftSlotMemory({ tokenFactory: () => `token-${++sequence}` });
+  const first = memory.put({ payload: { product: product('first') } });
+  const second = memory.takeover();
+
+  assert.throws(
+    () => memory.remove(first.token),
+    (error) => error.status === 409 && error.code === 'token_mismatch',
+  );
+  assert.equal(memory.get(second.token).holdsToken, true);
+  memory.remove(second.token);
+  assert.throws(
+    () => memory.put({ payload: { product: product('stale') }, token: first.token }),
+    (error) => error.status === 409 && error.code === 'token_mismatch',
+  );
+  assert.equal(memory.get(second.token), null);
+});
+
+test('an explicit new flow takes ownership before deleting the remote slot', async () => {
+  const calls = [];
+  const sync = createDraftSlotSync({
+    storage: new MapStorage([['wl_draftSlotToken', 'stale-token']]),
+    adapter: {
+      async takeoverDraftSlot() {
+        calls.push('takeover');
+        return { token: 'active-token', payload: { product: product('remote') }, meta: {} };
+      },
+      async deleteDraftSlot(token) { calls.push(`delete:${token}`); },
+    },
+  });
+
+  await sync.removeForNewFlow();
+
+  assert.deepEqual(calls, ['takeover', 'delete:active-token']);
 });
 
 test('logged-in and mock entry use one priority-4 modal with local and remote timestamps', () => {
@@ -171,6 +291,30 @@ test('promotion happens only at confirmation and cleans the slot before flow loc
   assert.match(confirm, /promoteDraftToProject\(draft\)/);
   assert.ok(confirm.indexOf('await draftSlot.remove()') < confirm.indexOf('confirmProductInfo(projectId)'));
   assert.ok(confirm.indexOf('confirmProductInfo(projectId)') < confirm.indexOf("navigate('/create/storyboard'"));
+});
+
+test('mock UI confirmation locks editing and flow navigation before asynchronous saves', () => {
+  const form = read('../../src/features/analysis/AnalysisForm.jsx');
+  const input = read('../../src/features/product-input/ProductInput.jsx');
+  const shell = read('../../src/features/shell/shell.jsx');
+  const confirmAction = form.slice(form.indexOf('const confirmAnalysis = async () =>'), form.indexOf('// 인물 모델 카탈로그'));
+  const promotion = input.slice(input.indexOf('const goToStoryboard = async (opts) =>'), input.indexOf('const queueAnalysisPatch ='));
+
+  assert.ok(confirmAction.indexOf('onConfirmingChange?.(true)') < confirmAction.indexOf('await composeModeSaveRef.current'));
+  assert.match(confirmAction, /finally \{[\s\S]*?onConfirmingChange\?\.\(false\)/);
+  assert.ok(promotion.indexOf('setFlowPromotionLocked(true)') < promotion.indexOf('colorSaveSchedulerRef.current.flush()'));
+  assert.match(promotion, /latestProductRef\.current[\s\S]*?latestAnalysisRef\.current[\s\S]*?latestComposeModeRef\.current/);
+  assert.match(input, /promotionLocked && createPortal\(\([\s\S]*?className="input-promotion-lock"[\s\S]*?document\.body/);
+  assert.match(shell, /disabled=\{inputPromotionLocked\}/);
+  assert.match(shell, /if \(inputPromotionLocked\) return/);
+});
+
+test('late promotion results are ignored after unmount or a new project generation', () => {
+  const input = read('../../src/features/product-input/ProductInput.jsx');
+  const promotion = input.slice(input.indexOf('const goToStoryboard = async (opts) =>'), input.indexOf('const queueAnalysisPatch ='));
+  assert.match(promotion, /mountedRef\.current[\s\S]*?promotionRunRef\.current === runId/);
+  assert.match(promotion, /projectGeneration === projectGeneration/);
+  assert.ok(promotion.indexOf('if (!isCurrentRun()) return') < promotion.indexOf('adoptProject(projectId'));
 });
 
 test('slot photos use the frozen draft_slot asset purpose and expose pending state', () => {
