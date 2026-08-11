@@ -10,6 +10,8 @@
    draft = { product, photos: [{ imageId, colorId, slot, blob, mime, filename }] }
    ============================================================= */
 
+import { normalizeAnalysisFit } from './fitAxes.js';
+
 const DB_NAME = 'wearless-draft';
 const DB_VERSION = 1;
 const STORE = 'draft';
@@ -119,7 +121,7 @@ export function discardPendingDraftSave() {
 /** 저장된 draft 반환(없으면 null). photos[].blob 은 Blob 으로 복원된다. */
 export async function loadDraft() {
   const draft = await withStore('readonly', (s) => s.get(KEY));
-  return draft || null;
+  return draft ? { ...draft, analysis: normalizeAnalysisFit(draft.analysis) } : null;
 }
 
 /** draft 삭제 — sync 성공 후 정리. */

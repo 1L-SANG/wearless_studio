@@ -11,7 +11,7 @@ from app.agents import fit_axis_matrix as FM
 def test_catalog_values_respects_gender():
     w = FM.catalog_values("top", "fit", "women")
     m = FM.catalog_values("top", "fit", "men")
-    assert "tight" in w and "tight" not in m       # tight 는 women 전용
+    assert w == m == ["slim", "regular", "semi_over", "over"]
     assert "over" in w and "over" in m
 
 
@@ -23,8 +23,8 @@ def test_catalog_values_empty_for_skirt_dress_men():
 
 
 def test_extreme_pair_top():
-    assert FM.extreme_pair("top", "fit", "women") == ("tight", "over")
-    assert FM.extreme_pair("top", "fit", "men") == ("slim", "over")       # men 엔 tight 없음
+    assert FM.extreme_pair("top", "fit", "women") == ("slim", "over")
+    assert FM.extreme_pair("top", "fit", "men") == ("slim", "over")
     assert FM.extreme_pair("top", "length", "women") == ("ultra_crop", "long")
     assert FM.extreme_pair("top", "length", "men") == ("crop", "long")    # men 엔 ultra_crop 없음
 

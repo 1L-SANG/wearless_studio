@@ -36,6 +36,10 @@ def test_validate_drops_out_of_enum():
     assert v["swatchSuggestions"] == []
 
 
+def test_validate_normalizes_retired_tight_fit_to_slim():
+    assert pa.validate({"fit": "tight"})["fit"] == "slim"
+
+
 def test_validate_truncates_points_and_drops_bad_materials():
     raw = {
         "aiSuggestedPoints": ["a", "b", "c", "d"],

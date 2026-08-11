@@ -29,7 +29,7 @@ _ORDINAL = {
     ("pants", "length"): {"above_ankle": 0, "ankle": 1, "below_ankle": 2},
     ("skirt", "length"): {"mini": 0, "midi": 1, "long": 2},
     ("dress", "length"): {"mini": 0, "midi": 1, "long": 2},
-    ("top", "fit"): {"tight": 0, "slim": 1, "regular": 2, "semi_over": 3, "over": 4},
+    ("top", "fit"): {"slim": 0, "regular": 1, "semi_over": 2, "over": 3},
     ("outer", "fit"): {"slim": 0, "regular": 1, "semi_over": 2, "over": 3},
     ("pants", "cut"): {  # '다리/밑단 폭' 근사
         "skinny": 0, "slim": 1, "tapered": 2, "straight": 2,

@@ -72,6 +72,19 @@ test('the input CTA now opens the storyboard', () => {
   assert.match(productInputSource, /openLogin\('\/create\/storyboard'\)/);
 });
 
+test('the input CTA proceeds without a generation-start acknowledgement modal', () => {
+  const gate = productInputSource.slice(
+    productInputSource.indexOf('const goToStoryboard = async (opts) =>'),
+    productInputSource.indexOf('const queueAnalysisPatch ='),
+  );
+  assert.doesNotMatch(productInputSource, /generationStartAck|generationStartOpen|ackGenerationStart/);
+  assert.doesNotMatch(productInputSource, /마네킹컷을 만들기 시작해요/);
+  assert.match(gate, /if \(!guardMannequinCredits\(\)\) return;/);
+  assert.match(gate, /inputConsistency && !consistencyAck && !force/);
+  assert.match(gate, /confirmProductInfo\(analysisProjectId\)/);
+  assert.match(gate, /showMannequinTransition: true/);
+});
+
 test('all color mutations share the debounced existing analysis-save queue', () => {
   const handlers = productInputSource.slice(
     productInputSource.indexOf('const editColors ='),

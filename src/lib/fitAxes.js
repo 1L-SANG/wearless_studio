@@ -7,7 +7,6 @@ export const FIT_AXES = Object.freeze({
   top: {
     fit: {
       women: [
-        { value: 'tight', label: '타이트', promptEn: 'tight/bodycon — clings to the torso like a second skin' },
         { value: 'slim', label: '슬림', promptEn: 'close to the body with a narrow clean torso line, not skin-tight' },
         { value: 'regular', label: '레귤러', promptEn: 'natural regular fit with light ease around chest and waist' },
         { value: 'semi_over', label: '세미오버', promptEn: 'semi-oversized, relaxed volume' },
@@ -152,4 +151,20 @@ export function axesFor(category, gender) {
       .map(([axis, byGender]) => [axis, byGender[genderKey] || []])
       .filter(([, values]) => values.length)
   );
+}
+
+/** 과거 여성 상의 핏 어휘를 현재 계약으로 올린다. 입력 객체는 변경하지 않는다. */
+export function normalizeAnalysisFit(analysis) {
+  if (!analysis || typeof analysis !== 'object') return analysis;
+  const legacyFit = analysis.fit === 'tight';
+  const profile = analysis.fitProfile;
+  const legacyProfileFit = profile?.axes?.fit === 'tight';
+  if (!legacyFit && !legacyProfileFit) return analysis;
+  return {
+    ...analysis,
+    ...(legacyFit ? { fit: 'slim' } : {}),
+    ...(legacyProfileFit ? {
+      fitProfile: { ...profile, axes: { ...profile.axes, fit: 'slim' } },
+    } : {}),
+  };
 }

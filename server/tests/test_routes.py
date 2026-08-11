@@ -75,6 +75,55 @@ def test_save_analysis_forces_dress_to_women(client, make_token, monkeypatch):
     assert res.json()["targetGenders"] == ["women"]
 
 
+def test_analysis_routes_normalize_retired_tight_fit(client, make_token, monkeypatch):
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_get_product(conn, project_id):
+        return {"clothingType": "top"}
+
+    async def fake_get_analysis(conn, project_id):
+        return {
+            "fit": "tight",
+            "fitProfile": {
+                "category": "top", "gender": "women", "source": "auto",
+                "axes": {"fit": "tight", "length": "basic"},
+            },
+        }
+
+    async def fake_save_analysis(conn, project_id, analysis):
+        seen["analysis"] = analysis
+        return {"project_id": project_id, "payload": analysis}
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(routes.repo, "save_analysis", fake_save_analysis)
+    patch_route_db(monkeypatch, routes)
+
+    loaded = client.get("/v1/projects/p1/analysis", headers=_auth(make_token))
+    assert loaded.status_code == 200, loaded.text
+    assert loaded.json()["fit"] == "slim"
+    assert loaded.json()["fitProfile"]["axes"]["fit"] == "slim"
+
+    saved = client.patch(
+        "/v1/projects/p1/analysis",
+        headers=_auth(make_token),
+        json={
+            "fit": "tight",
+            "fitProfile": {
+                "category": "top", "gender": "women", "source": "seller",
+                "axes": {"fit": "tight"},
+            },
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert seen["analysis"]["fit"] == "slim"
+    assert seen["analysis"]["fitProfile"]["axes"]["fit"] == "slim"
+
+
 def test_save_product_atomically_repairs_dress_analysis_gender(
     client, make_token, monkeypatch
 ):

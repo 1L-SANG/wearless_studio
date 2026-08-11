@@ -25,6 +25,7 @@ import { uid } from '@/lib/ids.js';
 import { shouldMarkStoryboardDirty } from '@/lib/generationExamples.js';
 import { normalizeTargetGendersForClothingType } from '@/lib/productGender.js';
 import { createMeasurementFields } from '@/lib/measurementSchema.js';
+import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 import {
   applyOpeningRow, hasOpeningRow, migrateLegacyEntryStylingRuns,
 } from '@/lib/storyboardEntryPlacement.js';
@@ -261,7 +262,7 @@ export const api = {
       onProgress: (progress) => listeners.forEach((listener) => listener(progress)),
     }).then(() => {
       if (forceError) throw new Error('분석 서버에 일시적인 문제가 발생했어요.');
-      const a = clone(DB.analysis);
+      const a = normalizeAnalysisFit(clone(DB.analysis));
       // 실측은 AI가 추정하지 않는다 — 사용자가 직접 입력하도록 빈칸으로 둔다.
       a.measurements = createMeasurementFields(a.clothingType);
       return a;
@@ -269,13 +270,13 @@ export const api = {
     if (onProgress) job.listeners.push(onProgress);
     return clone(await job.promise);
   },
-  async getAnalysis(/* projectId */) { await wait(120); return clone(DB.analysis); },
+  async getAnalysis(/* projectId */) { await wait(120); return normalizeAnalysisFit(clone(DB.analysis)); },
   async saveAnalysis(_projectId, patch) {
     await wait(180);
     // 매칭 후보 목록은 서버(추천)가 소유 — matchClothing patch 는 통째로 덮지 않고
     // 아래에서 "선택 상태만" id 단위로 머지한다. 의류 종류 전환 직후 도착하는 묵은
     // 클라 스냅샷이 갱신된 후보 목록을 되살리는 레이스 차단 (stale save 방어).
-    const { matchClothing: matchPatch, ...rest } = patch;
+    const { matchClothing: matchPatch, ...rest } = normalizeAnalysisFit(patch);
     Object.assign(DB.analysis, rest);
     DB.analysis.targetGenders = normalizeTargetGendersForClothingType(
       DB.product.clothingType,
@@ -315,7 +316,7 @@ export const api = {
     const owned = {};
     ['clothingType', 'measurements', 'measurementsUnknown'].forEach((k) => { if (k in patch) owned[k] = patch[k]; });
     if (Object.keys(owned).length) Object.assign(DB.product, clone(owned));
-    return clone(DB.analysis);
+    return normalizeAnalysisFit(clone(DB.analysis));
   },
   async draftWashCare(/* projectId */) {
     await wait(900);

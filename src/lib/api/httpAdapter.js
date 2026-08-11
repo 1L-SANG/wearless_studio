@@ -10,6 +10,7 @@ import { defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } f
 import { toMatchItem } from '@/lib/api/matchingItems.js';
 import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
+import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -531,7 +532,7 @@ export const httpAdapter = {
   },
   // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.
   async getAnalysis(projectId) {
-    return http(`/v1/projects/${projectId}/analysis`);
+    return normalizeAnalysisFit(await http(`/v1/projects/${projectId}/analysis`));
   },
   // 세탁 관리법 AI 초안 (동기·무과금) — 서버가 상품 종류·소재로 짧은 문구 생성. bare string 반환(mock 동일).
   // projectId 없으면(비로그인) 서버 project 가 없으니 클라 기본 문구로 폴백.
