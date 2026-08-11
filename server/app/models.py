@@ -57,8 +57,14 @@ class UploadUrlRequest(CamelModel):
     filename: str
     mime: str
     size: int
-    project_id: str
+    project_id: str | None
     purpose: str = "upload"
+
+    @model_validator(mode="after")
+    def _require_project_except_for_draft_slot(self):
+        if self.purpose != "draft_slot" and self.project_id is None:
+            raise ValueError("project_id is required unless purpose is draft_slot")
+        return self
 
 
 class UploadUrlResponse(CamelModel):
@@ -70,10 +76,23 @@ class UploadUrlResponse(CamelModel):
 class AssetCompleteRequest(CamelModel):
     """POST /v1/assets/{id}/complete (§3 3단계). 키 재유도용 컨텍스트."""
 
-    project_id: str
+    project_id: str | None
     mime: str
     filename: str | None = None
     purpose: str = "upload"
+
+    @model_validator(mode="after")
+    def _require_project_except_for_draft_slot(self):
+        if self.purpose != "draft_slot" and self.project_id is None:
+            raise ValueError("project_id is required unless purpose is draft_slot")
+        return self
+
+
+class DraftSlotPutRequest(CamelModel):
+    payload: dict
+    token: UUID | None = None
+    device_label: str | None
+    photos_pending: bool
 
 
 class CustomMatchItemRequest(CamelModel):

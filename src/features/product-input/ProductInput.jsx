@@ -5,6 +5,7 @@
    Markup, classNames, inline styles, real file upload unchanged.
    ============================================================= */
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, isMockMode } from '@/lib/api/index.js';
 import { uid } from '@/lib/ids.js';
@@ -28,7 +29,16 @@ import {
   MAX_UPLOAD_BYTES,
   toUploadableImages,
 } from '@/lib/imageTranscode.js';
-import { resetDraftSyncSingleFlight, syncDraftToBackend } from '@/lib/draftSync.js';
+import {
+  promoteDraftToProject,
+  resetDraftSyncSingleFlight,
+  retryDraftPromotion,
+} from '@/lib/draftSync.js';
+import {
+  draftSlot,
+  formatDraftClock,
+  formatDraftRelativeTime,
+} from '@/lib/draftSlot.js';
 import { Icon, Button, IconButton, ErrorState, Skeleton, Modal, useToast } from '@/components/ui.jsx';
 import { PageHead, WizardCTA, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
 import { AnalysisForm, AnalysisSkeleton, AnalysisProgress, isMatchRecommendationPatch } from '@/features/analysis/AnalysisForm.jsx';
@@ -49,6 +59,8 @@ import {
   prefetchStoryboardEntry,
 } from '@/features/storyboard/storyboardEntryPrefetch.js';
 import { acknowledgeMannequinGenerationCancellation } from '@/features/mannequin/generationRunner.js';
+
+draftSlot.configure(api);
 
 // human-readable file size
 const fmtSize = (b) => b == null ? '' : b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
@@ -129,6 +141,14 @@ function restoreDraftProduct(draft) {
       })),
     })),
   };
+}
+
+function hasRequiredDraftPhotos(product) {
+  const base = (product?.colors || []).find((color) => color.isBase) || product?.colors?.[0];
+  return Boolean(
+    base?.images?.some((image) => image.slot === 'Front')
+    && base.images.some((image) => image.slot === 'Back'),
+  );
 }
 
 // small file-meta caption shown over an uploaded image (name · size · type) — requested feature
@@ -344,6 +364,22 @@ function ColorImageGroup({ group, catalogs, swatchColors, onAddFiles, onRemove, 
   );
 }
 
+function EditingRightsLock({ meta, onReclaim }) {
+  return (
+    <div className="draft-slot-lock" role="alertdialog" aria-modal="true">
+      <div className="draft-slot-lock-card">
+        <Icon name="lock" size={28} />
+        <h3>다른 기기에서 이어서 작업을 시작했어요</h3>
+        <p>
+          {formatDraftRelativeTime(meta?.updatedAt)} · {meta?.deviceLabel || '다른 기기'}
+          <br />이 화면에서는 편집할 수 없어요.
+        </p>
+        <Button variant="primary" onClick={onReclaim}>여기서 다시 이어받기</Button>
+      </div>
+    </div>
+  );
+}
+
 export function ProductInput() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -357,6 +393,7 @@ export function ProductInput() {
   const [analysisReady, setAnalysisReady] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [analysisProjectId, setAnalysisProjectId] = useState(null);
+  const composeMode = useAppStore((s) => s.composeMode);
   const [expanded, setExpanded] = useState(false);
   // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드일 때만 내려온다(off 면 undefined).
   // 업로드 순간이 아니라 **생성으로 넘어가는 버튼**에서 한 번 띄운다 — 사진을 고르는 도중에
@@ -372,12 +409,26 @@ export function ProductInput() {
   const [creditResume, setCreditResume] = useState(() => (
     location.state?.creditResume?.action === 'storyboard' ? location.state.creditResume : null
   ));
+  const [slotLock, setSlotLock] = useState(null);
+  const [reclaimChoiceOpen, setReclaimChoiceOpen] = useState(false);
+  const [slotPhotosPending, setSlotPhotosPending] = useState(false);
+  const [promotionLocked, setPromotionLocked] = useState(false);
   const { session, loading: authLoading, openLogin } = useAuth();
+  const slotEnabled = Boolean(session) || isMockMode;
   const doneBlocked = useDoneGuard();   // 생성 완료 후 초안 재진입 제한 (PRD §10.17)
   const toast = useToast();
   const pushToast = toast.push;
   const [, refreshPhotoPreviews] = useState(0);
   const photoPreviewRegistryRef = useRef(null);
+  const latestLocalUpdatedAtRef = useRef(null);
+  const latestProductRef = useRef(product);
+  const latestAnalysisRef = useRef(analysis);
+  const latestComposeModeRef = useRef(composeMode);
+  const promotionRunRef = useRef(0);
+  const mountedRef = useRef(false);
+  latestProductRef.current = product;
+  latestAnalysisRef.current = analysis;
+  latestComposeModeRef.current = composeMode;
   if (!photoPreviewRegistryRef.current) {
     photoPreviewRegistryRef.current = createProductPhotoPreviewRegistry({
       onChange: () => refreshPhotoPreviews((version) => version + 1),
@@ -385,9 +436,30 @@ export function ProductInput() {
   }
 
   useEffect(() => {
-    if (!product || session) return;
-    queueProductDraftSave(product, analysis);
-  }, [analysis, product, session]);
+    if (!product) return;
+    const localUpdatedAt = new Date().toISOString();
+    latestLocalUpdatedAtRef.current = localUpdatedAt;
+    queueProductDraftSave(product, analysis, composeMode, localUpdatedAt);
+    if (slotEnabled) {
+      draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
+    }
+  }, [analysis, composeMode, product, slotEnabled]);
+
+  useEffect(() => draftSlot.onConflict((meta) => setSlotLock(meta || {})), []);
+  useEffect(() => draftSlot.onPhotosPending(setSlotPhotosPending), []);
+
+  useEffect(() => {
+    if (!slotEnabled) return;
+    let lastCheckAt = 0;
+    const check = () => {
+      const now = Date.now();
+      if (now - lastCheckAt < 60000) return;
+      lastCheckAt = now;
+      void draftSlot.checkOwnership().catch(() => {});
+    };
+    window.addEventListener('focus', check);
+    return () => window.removeEventListener('focus', check);
+  }, [slotEnabled]);
 
   useEffect(() => {
     const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files');
@@ -415,6 +487,26 @@ export function ProductInput() {
   }, [product]);
 
   useEffect(() => () => photoPreviewRegistryRef.current.dispose(), []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      promotionRunRef.current += 1;
+      useAppStore.getState().setInputPromotionLocked(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!promotionLocked) return undefined;
+    const blockUnload = (event) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', blockUnload);
+    return () => window.removeEventListener('beforeunload', blockUnload);
+  }, [promotionLocked]);
+
+  const setFlowPromotionLocked = (locked) => {
+    setPromotionLocked(Boolean(locked));
+    useAppStore.getState().setInputPromotionLocked(locked);
+  };
 
   // 분석 CTA — 마네킹부터는 로그인 필요. 서버 분석을 마친 로그인 사용자는 바로 이동한다.
   // 로컬 분석 결과는 먼저 IndexedDB 에 보관한다. 미로그인이면 로그인 모달을 띄우고, 이미
@@ -502,6 +594,14 @@ export function ProductInput() {
       return;
     }
     redirectingRef.current = true;
+    const runId = ++promotionRunRef.current;
+    const projectGeneration = useAppStore.getState().projectGeneration;
+    const isCurrentRun = () => mountedRef.current
+      && promotionRunRef.current === runId
+      && useAppStore.getState().projectGeneration === projectGeneration;
+    setFlowPromotionLocked(true);
+    let promotedProjectId = null;
+    let latestSnapshot = null;
     try {
       colorSaveSchedulerRef.current.flush();
       // 직전 입력 이벤트의 PATCH가 getAnalysis보다 늦게 도착하는 레이스를 막는다. 모든 분석 저장을
@@ -517,32 +617,50 @@ export function ProductInput() {
         }
       }
       if (analysisSaveErrorRef.current) throw analysisSaveErrorRef.current;
-      if ((session || isMockMode) && analysisProjectId) {
-        useAppStore.getState().confirmProductInfo(analysisProjectId);
-        navigate('/create/storyboard', { state: { showMannequinTransition: true } });
-        return;
-      }
-      queueProductDraftSave(product, analysis);
+      latestSnapshot = {
+        product: latestProductRef.current,
+        analysis: latestAnalysisRef.current,
+        composeMode: latestComposeModeRef.current,
+        localUpdatedAt: latestLocalUpdatedAtRef.current || new Date().toISOString(),
+      };
+      queueProductDraftSave(
+        latestSnapshot.product,
+        latestSnapshot.analysis,
+        latestSnapshot.composeMode,
+        latestSnapshot.localUpdatedAt,
+      );
       const { failed = 0 } = await flushProductDraftSave() || {};
       if (failed) toast.push(`일부 사진(${failed}장)을 임시 저장하지 못했어요.`, { icon: 'alertTri' });
-      if (session) {
+      if (session || isMockMode) {
         const draft = await loadDraft();
         if (!draft?.product) throw new Error('저장된 입력 내용을 다시 불러오지 못했어요. 다시 시도해 주세요.');
-        const { projectId } = await syncDraftToBackend(draft);
+        await draftSlot.flush();
+        // 프로젝트를 만들기 전에 서버 잠금 안에서 active token을 소비한다. 여기서 409면
+        // 작업권을 잃은 기기는 승격 자체를 시작하지 않는다.
+        await draftSlot.remove();
+        const { projectId } = await promoteDraftToProject(draft);
+        promotedProjectId = projectId;
+        if (!isCurrentRun()) return;
         // 게스트로 편집(재생성 신호 dirty)한 뒤 세션이 생겨 여기서 처음 project 를 얻는 경로 —
         // '다른 작업으로 전환'이 아니라 같은 작업이 신원을 얻는 것뿐이라 신호를 지우면 안 된다.
         useAppStore.getState().adoptProject(projectId, { preserveGenerationDirty: true });
         setAnalysisProjectId(projectId);
-        await clearDraft().then(() => { resetDraftSyncSingleFlight(); }).catch(() => {});
         useAppStore.getState().confirmProductInfo(projectId);
+        await clearDraft().then(() => { resetDraftSyncSingleFlight(); }).catch(() => {});
         navigate('/create/storyboard', { state: { showMannequinTransition: true } });
         return;
       }
       openLogin('/create/storyboard');
     } catch (error) {
+      if (promotedProjectId) {
+        retryDraftPromotion(promotedProjectId);
+      }
+      draftSlot.resume();
+      if (latestSnapshot && isCurrentRun()) draftSlot.queue(latestSnapshot);
       toast.push(error?.message || '입력 내용을 서버에 저장하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     } finally {
       redirectingRef.current = false;
+      if (isCurrentRun()) setFlowPromotionLocked(false);
     }
   };
 
@@ -633,6 +751,54 @@ export function ProductInput() {
     }
   };
 
+  const applyDraftPayload = (payload, meta = null) => {
+    if (!payload?.product) return false;
+    const restored = restoreDraftProduct(payload);
+    persistedColorsRef.current = restored.colors || [];
+    setProduct(restored);
+    setAnalysis(payload.analysis || null);
+    useAppStore.getState().restoreComposeMode(payload.composeMode);
+    setAnalysisProjectId(null);
+    setPhase(payload.analysis && hasRequiredDraftPhotos(restored) ? 'done' : 'input');
+    setSlotPhotosPending(Boolean(meta?.photosPending));
+    return true;
+  };
+
+  const chooseRemoteContent = async () => {
+    try {
+      const takeover = await draftSlot.takeover();
+      if (!takeover?.payload) throw new Error('다른 기기의 임시저장을 불러오지 못했어요.');
+      applyDraftPayload(takeover.payload, takeover.meta);
+      setReclaimChoiceOpen(false);
+      setSlotLock(null);
+    } catch (error) {
+      toast.push(error?.message || '작업을 이어받지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+    }
+  };
+
+  const chooseLocalContent = async () => {
+    try {
+      await draftSlot.takeover();
+      setReclaimChoiceOpen(false);
+      setSlotLock(null);
+      if (product) {
+        const localUpdatedAt = latestLocalUpdatedAtRef.current || new Date().toISOString();
+        draftSlot.queue({ product, analysis, composeMode, localUpdatedAt });
+        await draftSlot.flush();
+      }
+    } catch (error) {
+      toast.push(error?.message || '이 기기의 작업을 이어받지 못했어요.', { icon: 'alert' });
+    }
+  };
+
+  const reclaimEditingRights = () => {
+    if (draftSlot.hasUnsyncedChanges(latestLocalUpdatedAtRef.current)) {
+      setReclaimChoiceOpen(true);
+      return;
+    }
+    void chooseRemoteContent();
+  };
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -648,6 +814,8 @@ export function ProductInput() {
       ]);
       if (!alive) return;
       setCatalogs(c);
+      const staged = draftSlot.consumeStaged();
+      if (staged?.payload && applyDraftPayload(staged.payload, staged.meta)) return;
       persistedColorsRef.current = p.colors || [];
       const analysisWasRunning = editingProjectId && isAnalysisRunning(editingProjectId);
 
@@ -718,6 +886,7 @@ export function ProductInput() {
         const restored = restoreDraftProduct(draft);
         persistedColorsRef.current = restored.colors || [];
         setProduct(restored);
+        useAppStore.getState().restoreComposeMode(draft.composeMode);
         // 분석 결과 복원 → 분석 폼(done)으로 바로. 단 필수 사진(앞면·뒷면)이 추출 실패로
         // 빠졌으면 입력 단계로 둬서 필수 검증이 재업로드를 강제하게 한다(검증 우회 방지).
         // 판정은 product 메타데이터가 아니라 실제 저장된 photo blob(photos[]) 기준이고,
@@ -742,13 +911,20 @@ export function ProductInput() {
 
   if (loadError) return (
     <div className="wizard">
+      {slotLock && <EditingRightsLock meta={slotLock} onReclaim={reclaimEditingRights} />}
       {doneBlocked && <DoneGuardModal />}
       <div className="surface">
         <ErrorState desc={loadError} onRetry={() => setLoadAttempt((n) => n + 1)} />
       </div>
     </div>
   );
-  if (!product || !catalogs) return <div className="wizard">{doneBlocked && <DoneGuardModal />}<div className="surface"><Skeleton h={420} /></div></div>;
+  if (!product || !catalogs) return (
+    <div className="wizard">
+      {slotLock && <EditingRightsLock meta={slotLock} onReclaim={reclaimEditingRights} />}
+      {doneBlocked && <DoneGuardModal />}
+      <div className="surface"><Skeleton h={420} /></div>
+    </div>
+  );
 
   const set = (patch) => setProduct((p) => ({ ...p, ...patch }));
   // add real uploaded files (drag-drop / picker) with name/size/type meta (PRD §5.5)
@@ -794,7 +970,7 @@ export function ProductInput() {
   const hasFront = !!baseColor?.images.some((im) => im.slot === 'Front');
   const hasBack = !!baseColor?.images.some((im) => im.slot === 'Back');
   const hasName = !!(product.name && product.name.trim());
-  const canDone = hasFront && hasBack && phase === 'input' && !authLoading;
+  const canDone = hasFront && hasBack && phase === 'input' && !authLoading && !slotLock;
   const disabledReason = !hasFront && !hasBack
     ? '앞면·뒷면 사진이 각 1장 필요해요'
     : !hasFront
@@ -807,6 +983,14 @@ export function ProductInput() {
   const locked = phase !== 'input';
   const startOver = async () => {
     setConsistencyOpen(false);
+    if (slotEnabled) {
+      try {
+        await draftSlot.removeForNewFlow();
+      } catch (error) {
+        toast.push(error?.message || '임시저장을 정리하지 못했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
+        return;
+      }
+    }
     await useAppStore.getState().beginProject();
     navigate('/create/input', { replace: true });
   };
@@ -818,55 +1002,32 @@ export function ProductInput() {
     setPhase('analyzing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
     try {
-      if (!session) {
-        queueProductDraftSave(product, analysis);
-        await flushProductDraftSave();
-      }
-      // 보관함 프로젝트(서버 행)는 바로 이 시점에 생성한다 — '상세페이지 제작' 진입이 아니라
-      // AI 분석을 시작할 때. createProject 는 토큰이 필요하므로 로그인 사용자만 생성하고,
-      // 비로그인 공개 분석은 서버 project 없이 진행(프로젝트 생성은 로그인 후 단계가 담당).
-      const pid = (session || isMockMode) ? await useAppStore.getState().ensureProject() : null;
-      // 인증 상태가 이후 바뀌어도 이 분석·편집은 시작할 때 선택한 backend/project에 고정한다.
-      setAnalysisProjectId(pid);
-      // 사진을 서버에 먼저 올리고(images[].id=asset id) 상품을 저장한다 — http 분석 워커는
-      // 저장된 products.colors 를 읽으므로, 분석보다 반드시 앞서야 한다(순서 뒤집히면 no_product_images).
-      // mock 모드에선 uploadProductPhotos·saveProduct 가 인메모리 no-op 이라 동작 동일.
-      const uploaded = await api.uploadProductPhotos(pid, product);
+      queueProductDraftSave(product, analysis, composeMode);
+      await flushProductDraftSave();
+      // 로그인 여부와 무관하게 확정 전 분석은 publicAnalyze 경로다. 로그인 세션의 Bearer는
+      // optional_user 레이트리밋 우선권에만 쓰이며, 보관함 project는 아직 만들지 않는다.
+      setAnalysisProjectId(null);
       const enteredName = (product.name && product.name.trim()) ? product.name.trim() : null;
-      // 저장은 이 단계가 실제로 만든 것만 — colors(asset id)·업로드 완료·입력한 이름. measurements 등은
-      // getProduct 가 아직 mock seed 라 통째로 보내면 가짜 실측이 실서버로 샌다(seed 누출 차단).
-      await api.saveProduct(pid, {
-        colors: uploaded.colors, uploadComplete: true, ...(enteredName ? { name: enteredName } : {}),
-      });
-      setAnalysisRunning(pid, true);
-      const a = await api.analyzeProduct(pid, {});
+      const a = await api.analyzeProduct(null, { product });
       const analyzedProductPatch = splitAnalysisEditPatch(a).productPatch;
       // 상품명이 비어 있으면 AI가 임의로 지어준다 → 요약 카드에 표시됨 + 서버에도 반영
       const finalName = enteredName || a.suggestedName || '새 상품';
       const nextProduct = {
-        ...uploaded,
+        ...product,
         name: finalName,
         ...analyzedProductPatch,
       };
       persistedColorsRef.current = nextProduct.colors || [];
       setProduct(nextProduct);
-      if (hasPatchFields(analyzedProductPatch)) {
-        await api.saveProduct(pid, analyzedProductPatch);
-      }
       setAnalysis(mergeProductOwnedAnalysisFields(a, nextProduct));
       // 사진 묶음이 바뀌었을 수 있으므로 이전 판정의 확인 상태는 버린다.
       setInputConsistency(a.inputConsistency || null);
       setConsistencyAck(false);
-      if (!enteredName) {
-        await api.saveProduct(pid, { name: finalName });
-      }
       // 즉시 전환하지 않는다 — 대기 연출이 잔여 단계를 빠르게 완주한 뒤 onFinished 에서 전환.
       setAnalysisReady(true);
-      setAnalysisRunning(pid, false);
     } catch (e) {
       // http 모드에서 분석 실패(네트워크·서버 에러)해도 스피너에 고착되지 않게 — 입력으로 복귀 + 안내.
       setPhase('input');
-      setAnalysisRunning(useAppStore.getState().projectId, false);
       toast.push(e?.message || '분석에 실패했어요. 잠시 후 다시 시도해 주세요.', { icon: 'alert' });
     }
   };
@@ -944,6 +1105,30 @@ export function ProductInput() {
 
   return (
     <div className={`wizard${wide ? ' wide' : ''}`}>
+      {promotionLocked && createPortal((
+        <div className="input-promotion-lock" role="status" aria-live="polite">
+          <div className="input-promotion-lock-card">
+            <Icon name="loader" className="spin" size={24} />
+            <strong>최신 입력 내용을 안전하게 확정하고 있어요</strong>
+            <span>완료될 때까지 이 화면을 그대로 두세요.</span>
+          </div>
+        </div>
+      ), document.body)}
+      {slotLock && <EditingRightsLock meta={slotLock} onReclaim={reclaimEditingRights} />}
+      {reclaimChoiceOpen && slotLock && (
+        <Modal onClose={() => setReclaimChoiceOpen(false)}>
+          <h3>어느 내용을 이어갈까요?</h3>
+          <p>두 기기의 저장 시각을 확인하고 기준으로 사용할 내용을 골라주세요.</p>
+          <div className="draft-source-options">
+            <Button variant="ghost" onClick={chooseLocalContent}>
+              이 기기 내용 ({formatDraftClock(latestLocalUpdatedAtRef.current)})
+            </Button>
+            <Button variant="primary" onClick={chooseRemoteContent}>
+              다른 기기 내용 ({formatDraftClock(slotLock.updatedAt)})
+            </Button>
+          </div>
+        </Modal>
+      )}
       {doneBlocked && <DoneGuardModal />}
       {creditShortfall && (
         <CreditShortfallModal
@@ -999,6 +1184,12 @@ export function ProductInput() {
         sub={<>사진 몇장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}
       />
 
+      {slotPhotosPending && (
+        <div className="draft-slot-pending" role="status">
+          일부 사진은 아직 동기화 중이에요. 이 기기의 로컬 초안은 안전하게 유지되고 있어요.
+        </div>
+      )}
+
       {phase === 'input' ? inputSection : summaryCard}
 
       {/* 경고를 CTA 모달에만 걸면 그 버튼을 누르기 전까지 화면에 아무 흔적이 없어, 셀러 눈에는
@@ -1047,6 +1238,7 @@ export function ProductInput() {
             projectId={analysisProjectId}
             onAnalysisReplace={setAnalysis}
             onChange={onAnalysisFormChange}
+            onConfirmingChange={setFlowPromotionLocked}
             onNext={goToStoryboard} />
         </div>
       )}

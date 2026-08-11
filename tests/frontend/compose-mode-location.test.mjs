@@ -135,23 +135,24 @@ test('the storyboard shows a summary and blocks applying a mode to an edited boa
 
 const storeSource = read('../../src/store/useAppStore.js');
 
-test('guest compose picks stay local until the project gets its server identity', () => {
-  // 분석 페이지는 공개라 비로그인(projectId=null)에서도 칩이 눌린다. 가드가 없으면
-  // /v1/projects/null 로 PATCH 가 나간다 — 콘티보드(로그인 전용)에 있던 시절엔 불가능했던 경로.
+test('pre-confirmation compose picks stay local and promotion owns the first server write', () => {
+  // 분석 페이지는 공개라 로그인 여부와 무관하게 확정 전에는 PATCH를 보내지 않는다.
   const setter = storeSource.slice(
     storeSource.indexOf('setComposeMode(composeMode)'),
     storeSource.indexOf('setCopywriting'),
   );
-  assert.match(setter, /if \(!projectId\) return composeModePatchChain;/);
+  assert.match(setter, /if \(!projectId \|\| !get\(\)\.productInfoConfirmed\) return composeModePatchChain;/);
 
-  // 로그인 채택(같은 작업의 연속)이 initialFlow 스프레드로 선택을 basic 으로 되돌리면
-  // 게스트의 확장형 선택이 조용히 사라진다 — 보존 + 서버 수렴 둘 다 있어야 한다.
+  // 승격 함수가 product/analysis와 함께 composeMode를 저장하므로 adoptProject는 선택만 보존하고
+  // 별도의 중복 PATCH를 만들지 않는다.
   const adopt = storeSource.slice(
     storeSource.indexOf('adoptProject(projectId'),
     storeSource.indexOf('setResumePath'),
   );
   assert.match(adopt, /composeMode: sameWorkContinuation \? current\.composeMode/);
-  assert.match(adopt, /patchProject\(projectId, \{ composeMode: adoptedComposeMode \}\)/);
+  assert.doesNotMatch(adopt, /adoptedComposeMode/);
+  const promotion = read('../../src/lib/draftSync.js');
+  assert.match(promotion, /api\.patchProject\(projectId, \{[\s\S]*?composeMode: draft\.composeMode/);
 });
 
 test('the storyboard opens at the top of the page', () => {

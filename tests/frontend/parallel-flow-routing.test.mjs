@@ -81,7 +81,7 @@ test('the input CTA proceeds without a generation-start acknowledgement modal', 
   assert.doesNotMatch(productInputSource, /마네킹컷을 만들기 시작해요/);
   assert.match(gate, /if \(!guardMannequinCredits\(\)\) return;/);
   assert.match(gate, /inputConsistency && !consistencyAck && !force/);
-  assert.match(gate, /confirmProductInfo\(analysisProjectId\)/);
+  assert.match(gate, /promoteDraftToProject\(draft\)[\s\S]*?confirmProductInfo\(projectId\)/);
   assert.match(gate, /showMannequinTransition: true/);
 });
 

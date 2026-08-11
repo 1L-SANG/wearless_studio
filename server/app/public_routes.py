@@ -6,11 +6,12 @@ import time
 from collections import deque
 from ipaddress import ip_address
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from .agents.vision_llm import VisionError
+from .auth import optional_user
 from .r2 import ext_for_mime
 from .routes import MAX_UPLOAD_BYTES
 from .workers.analyze_job import analyze_image_bytes
@@ -117,21 +118,23 @@ async def public_analyze(
     request: Request,
     images: list[UploadFile] = File(...),
     slots: list[str] | None = Form(default=None),
+    authenticated_user: str | None = Depends(optional_user),
 ):
     """상품 사진 1~4장을 기존 AG-01 코어로 분석한다. 인증·프로젝트·DB 저장은 없다."""
-    client_ip = _client_ip(request)
-    try:
-        limiter = request.app.state.public_analysis_limiter
-        allowed = limiter.allow(client_ip)
-    except Exception:
-        # 리미터 장애가 공개 체험 자체를 막지 않게 fail-open.
-        logger.exception("public analysis rate limiter unavailable")
-        allowed = True
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail={"code": "rate_limited", "message": "잠시 후 다시 시도해주세요."},
-        )
+    if authenticated_user is None:
+        client_ip = _client_ip(request)
+        try:
+            limiter = request.app.state.public_analysis_limiter
+            allowed = limiter.allow(client_ip)
+        except Exception:
+            # 리미터 장애가 공개 체험 자체를 막지 않게 fail-open.
+            logger.exception("public analysis rate limiter unavailable")
+            allowed = True
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail={"code": "rate_limited", "message": "잠시 후 다시 시도해주세요."},
+            )
 
     if not 1 <= len(images) <= 4:
         raise _bad_request("invalid_image_count", "상품 사진은 1장부터 4장까지 올려주세요.")
