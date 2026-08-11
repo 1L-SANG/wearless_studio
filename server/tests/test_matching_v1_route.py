@@ -9,7 +9,9 @@ matching.recommend)를 직접 호출해 동작을 확정한다 — 이미 `test_
 """
 
 from app.agents import style_affinity
+from app.config import load_settings
 from app.services import matching, retrieval
+from conftest import make_settings
 
 
 def _it(id, ct, gender, style_tags=None, cb=50, so=0, active=True):
@@ -24,6 +26,14 @@ def _it(id, ct, gender, style_tags=None, cb=50, so=0, active=True):
 
 def test_affinity_map_returns_the_seeded_dict():
     assert style_affinity.affinity_map() is style_affinity.AFFINITY
+
+
+def test_retrieval_matching_defaults_to_tags_and_env_can_disable(monkeypatch):
+    monkeypatch.delenv("RETRIEVAL_MATCHING", raising=False)
+    assert make_settings().retrieval_matching == "tags"
+    assert load_settings().retrieval_matching == "tags"
+    monkeypatch.setenv("RETRIEVAL_MATCHING", "off")
+    assert load_settings().retrieval_matching == "off"
 
 
 def test_affinity_map_seeded_with_scores_in_unit_interval():
@@ -89,7 +99,7 @@ def test_flag_off_falls_back_to_matching_recommend_identically():
     expected = matching.recommend(items, clothing_type="top", genders=["women"])
     out = _select("off", ["basic", "daily"], items, clothing_type="top", genders=["women"])
     assert [i["id"] for i in out] == [i["id"] for i in expected]
-    assert [i["id"] for i in out] == ["b3", "b2", "b1"]  # brightness desc, tie→sort_order
+    assert [i["id"] for i in out] == ["b3", "b1", "b2"]  # 랭킹 후 상위 2개 밝기 계열 다양화
 
 
 def test_flag_on_but_no_tags_falls_back_to_matching_recommend_identically():

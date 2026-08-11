@@ -15,7 +15,7 @@ tie-break은 전부 `id` 오름차순으로 고정한다(NFR-1 결정성).
 
 import logging
 
-from .matching import prefilter
+from .matching import diversify_top_two, prefilter
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ def recommend_v1(
     통과 풀 내부에서만").
     """
     pool = prefilter(items, clothing_type, genders)
-    ranked = rank_by_style_affinity(pool, product_tags, affinity_map)
+    ranked = diversify_top_two(rank_by_style_affinity(pool, product_tags, affinity_map))
     return ranked[:limit] if limit is not None else ranked  # limit=0 → 빈 결과(0은 falsy 방지)
 
 

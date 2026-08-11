@@ -18,6 +18,11 @@ import genExamples from '@/data/genExamples.json';
 import { CREDIT_COSTS } from '@/lib/limits.js';
 import { uid } from '@/lib/ids.js';
 import { genderForClothingType } from '@/lib/productGender.js';
+import {
+  createMeasurementFields,
+  MEASUREMENT_LABELS,
+  MEASUREMENT_SCHEMA,
+} from '@/lib/measurementSchema.js';
 import { defaultStoryboard } from '@/lib/api/shapes.js';
 import { applyOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
@@ -97,17 +102,8 @@ const catalogs = {
   angleSlots: ['Front', 'Back', 'Detail', 'BackDetail'],
   angleLabels: { Front: '앞면', Back: '뒷면', Detail: '앞면 디테일', BackDetail: '뒷면 디테일' },
   // measurement schema per clothing type (PRD §6.5) — key는 영문 토큰 (계약 §4)
-  measurementSchema: {
-    top: ['totalLength', 'shoulderWidth', 'chestWidth', 'sleeveLength'],
-    bottom: ['totalLength', 'waistWidth', 'hipWidth', 'thighWidth', 'rise', 'hemWidth'],
-    outer: ['totalLength', 'shoulderWidth', 'chestWidth', 'sleeveLength'],
-    dress: ['totalLength', 'shoulderWidth', 'chestWidth', 'waistWidth', 'armhole', 'sleeveLength'],
-  },
-  measurementLabels: {
-    totalLength: '총장', shoulderWidth: '어깨너비', chestWidth: '가슴단면', sleeveLength: '소매길이',
-    waistWidth: '허리단면', hipWidth: '엉덩이단면', thighWidth: '허벅지단면',
-    rise: '밑위', hemWidth: '밑단단면', armhole: '암홀',
-  },
+  measurementSchema: MEASUREMENT_SCHEMA,
+  measurementLabels: MEASUREMENT_LABELS,
   sellingPointSuggestions: ['골지 짜임', '라운드넥', '소매 리브', '도톰한 짜임', '세미오버핏'],
   swatchColors: [
     { id: 'white', label: '화이트', hex: '#ffffff' },
@@ -382,12 +378,11 @@ function buildDraft() {
   };
 
   // 실측 — key 는 영문 토큰, 라벨은 catalogs.measurementLabels (계약 §4)
-  const measurements = () => [
-    { key: 'totalLength', value: 64, unit: 'cm' },
-    { key: 'shoulderWidth', value: 42, unit: 'cm' },
-    { key: 'chestWidth', value: 51, unit: 'cm' },
-    { key: 'sleeveLength', value: null, unit: 'cm' },
-  ];
+  const measurements = () => createMeasurementFields('top', {
+    totalLength: 64,
+    shoulderWidth: 42,
+    chestWidth: 51,
+  });
 
   /* ---- Seed product input (the 골지 니트 example) ---- */
   const product = {

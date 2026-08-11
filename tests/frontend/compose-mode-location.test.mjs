@@ -12,7 +12,7 @@ const analysisSource = read('../../src/features/analysis/AnalysisForm.jsx');
 const selectionSource = read('../../src/features/analysis/composeModeSelection.js');
 const storyboardSource = read('../../src/features/storyboard/Storyboard.jsx');
 
-test('the analysis confirmation CTA owns catalog-backed non-deselectable compose chips', () => {
+test('the analysis confirmation CTA owns catalog-backed stacked compose cards', () => {
   const ctaSource = analysisSource.slice(
     analysisSource.indexOf('const cta ='),
     analysisSource.indexOf('if (inline)'),
@@ -20,11 +20,69 @@ test('the analysis confirmation CTA owns catalog-backed non-deselectable compose
 
   assert.match(analysisSource, /const composeModes = catalogs\?\.composeModes \|\| \[\]/);
   assert.match(analysisSource, /label: `\$\{mode\.label\} · \$\{mode\.count\}컷`/);
-  assert.match(ctaSource, /<Chips[\s\S]*?className="af-vol"[\s\S]*?allowDeselect=\{false\}/);
-  assert.match(ctaSource, /상세페이지 생성은 콘티 컷 수만큼이에요[\s\S]*?composeModeCredits/);
+  assert.match(ctaSource, /className="af-vol" role="radiogroup"[\s\S]*?className=\{`af-vol-card/);
+  assert.match(ctaSource, /다음 화면인 상세페이지 구성으로 이동하고[\s\S]*?composeModeCredits/);
+  assert.doesNotMatch(ctaSource, /콘티 컷 수/);
   assert.match(analysisSource, /CREDIT_COSTS\.storyboardPerCut/);
-  assert.match(analysisSource, /await composeModeSaveRef\.current;\s*\n\s*onNext\(\);/);
-  assert.match(ctaSource, /disabled=\{composeModeSaving\}[\s\S]*?onClick=\{confirmAnalysis\}/);
+  assert.match(analysisSource, /await composeModeSaveRef\.current;[\s\S]*?await onNext\(\);/);
+  assert.match(ctaSource, /disabled=\{composeModeSaving \|\| confirming\}[\s\S]*?onClick=\{confirmAnalysis\}/);
+});
+
+test('only the latest failed compose-mode request rolls the UI back', async () => {
+  const state = { current: { requestId: 0, confirmedMode: 'basic' } };
+  const pending = [];
+  const restored = [];
+  const failures = [];
+  const setComposeMode = (mode) => new Promise((resolve, reject) => {
+    pending.push({ mode, resolve, reject });
+  });
+  const shared = {
+    projectId: 'project-1',
+    setComposeMode,
+    restoreComposeMode: (mode) => restored.push(mode),
+    invalidateStoryboardPrefetch: () => {},
+    selectionState: state,
+    onFailure: (error) => failures.push(error.message),
+  };
+
+  const first = selectAnalysisComposeMode({ ...shared, currentMode: 'basic', nextMode: 'extended' });
+  const second = selectAnalysisComposeMode({ ...shared, currentMode: 'extended', nextMode: 'basic' });
+  pending[0].resolve();
+  await first;
+  pending[1].reject(new Error('latest failed'));
+  await second;
+
+  assert.deepEqual(restored, ['extended']);
+  assert.deepEqual(failures, ['latest failed']);
+});
+
+test('a stale failure is ignored and the failed value can be retried', async () => {
+  const state = { current: { requestId: 0, confirmedMode: 'basic' } };
+  const pending = [];
+  const restored = [];
+  const setComposeMode = (mode) => new Promise((resolve, reject) => {
+    pending.push({ mode, resolve, reject });
+  });
+  const shared = {
+    projectId: 'project-1',
+    setComposeMode,
+    restoreComposeMode: (mode) => restored.push(mode),
+    invalidateStoryboardPrefetch: () => {},
+    selectionState: state,
+    onFailure: () => restored.push('toast'),
+  };
+
+  const stale = selectAnalysisComposeMode({ ...shared, currentMode: 'basic', nextMode: 'extended' });
+  const latest = selectAnalysisComposeMode({ ...shared, currentMode: 'extended', nextMode: 'basic' });
+  pending[1].resolve();
+  await latest;
+  pending[0].reject(new Error('stale failed'));
+  await stale;
+  assert.deepEqual(restored, []);
+
+  const retry = selectAnalysisComposeMode({ ...shared, currentMode: 'basic', nextMode: 'extended' });
+  pending[2].resolve();
+  assert.equal(await retry, true);
 });
 
 test('analysis mode changes invalidate the warmed storyboard before using the existing store setter', async () => {

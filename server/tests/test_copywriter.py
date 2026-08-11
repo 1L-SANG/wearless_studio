@@ -94,3 +94,27 @@ def test_generate_uses_explicit_content_and_section_roles(monkeypatch):
         cut_type="product", product={"name": "니트"}, analysis={},
     ))
     assert out == [{"role": "body", "text": "보이는 봉제 마감"}]
+
+
+def test_generate_can_bundle_product_name_into_existing_copy_call(monkeypatch):
+    calls = {"count": 0}
+
+    async def fake_complete(settings, prompt, schema):
+        calls["count"] += 1
+        assert "productName" in schema["required"]
+        assert "30 characters or fewer" in prompt
+        return ({
+            "texts": [{"role": "headline", "text": "오늘의 포근한 선택"}],
+            "productName": "소프트 골지 니트",
+        }, "gpt")
+
+    monkeypatch.setattr(cw, "complete_json", fake_complete)
+    out = run(cw.generate(
+        make_settings(openai_api_key="sk-x"), content_role="hero", cut_type="styling",
+        product={"name": "새 상품"}, analysis={"subCategory": "knit"},
+        include_product_name=True,
+    ))
+
+    assert calls["count"] == 1
+    assert out["productName"] == "소프트 골지 니트"
+    assert out["texts"][0]["role"] == "headline"

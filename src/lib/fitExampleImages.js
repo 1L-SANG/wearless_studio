@@ -10,7 +10,7 @@ const BASE = '/assets/fit-examples';
 
 // 존재하는 파일만 등록 (빌드타임 검증 대신 명시 목록 — 오탈자 방지)
 const FILES = new Set([
-  'top-women-fit-tight', 'top-women-fit-slim', 'top-women-fit-regular',
+  'top-women-fit-slim', 'top-women-fit-regular',
   'top-women-fit-semi_over', 'top-women-fit-over',
   'top-women-length-ultra_crop', 'top-women-length-crop', 'top-women-length-basic', 'top-women-length-long',
   'top-men-fit-slim', 'top-men-fit-regular', 'top-men-fit-semi_over', 'top-men-fit-over',

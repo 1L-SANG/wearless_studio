@@ -10,14 +10,6 @@
 // selectedModelId 는 셀러가 라이선스 활성 모델을 고르면 실 fm_models.id(UUID)로 채워지고,
 // saveAnalysis 가 서버에 지속해 생성 게이트가 서버측에서 라이선스를 해석한다.
 
-// 실측 템플릿 — key 는 영문 토큰(계약 §4). value 는 AI 미산출 → null(사용자 직접 입력, PRD §6.5).
-const MEASUREMENT_TEMPLATE = [
-  { key: 'totalLength', value: null, unit: 'cm' },
-  { key: 'shoulderWidth', value: null, unit: 'cm' },
-  { key: 'chestWidth', value: null, unit: 'cm' },
-  { key: 'sleeveLength', value: null, unit: 'cm' },
-];
-
 // 기본/확장 콘티 — http getStoryboard 가 저장 콘티 없을 때 시드한다.
 // mock buildStoryboard와 같은 역할 중심 블록 shape을 만든다.
 import { uid } from '../ids.js';
@@ -27,6 +19,7 @@ import { exampleSelectionFingerprintFields } from '../generationExamples.js';
 import { genderForClothingType } from '../productGender.js';
 import { spaceSetGroupId } from '../storyboardSpaceSetCatalog.js';
 import { applyOpeningRow, entryStylingMembers, pickEntrySets } from '../storyboardEntryPlacement.js';
+import { createMeasurementFields } from '../measurementSchema.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
@@ -251,7 +244,7 @@ export function isDefaultStoryboardForMode(blocks, colors, mode, product = {}) {
 
 // analyzeProduct 의 shape 뼈대 — AnalysisForm 이 무가드로 읽는 필드 전부 포함(계약 §6).
 // AI 산출 필드(clothingType/materials/styleTags 등)는 콜러가 덮어쓴다.
-export function defaultAnalysisShape() {
+export function defaultAnalysisShape(clothingType = 'top') {
   return {
     clothingType: null, subCategory: null, targetGenders: [],
     // enum 밖 의류의 자유 명칭(AG-01 추측 + 셀러 주관식 수정, 계약 §3.2). mock/db.js 에는
@@ -266,7 +259,7 @@ export function defaultAnalysisShape() {
     // 그러면 거울 셀카 원본의 반전된 로고가 그대로 생성 컷에 남는다.
     sourceMirrored: false,
     washCare: '', locked: false, measurementsUnknown: false,
-    measurements: MEASUREMENT_TEMPLATE.map((m) => ({ ...m })),
+    measurements: createMeasurementFields(clothingType),
     fitProfile: null,
   };
 }

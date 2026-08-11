@@ -106,6 +106,7 @@ def test_run_analyze_job_success(monkeypatch):
     data = captured["result"]["data"]
     assert data["clothingType"] == "top"
     assert data["styleTags"] == ["basic"]
+    assert captured["analysis_payload"]["styleTags"] == ["basic"]  # 재진입 후 tags 랭킹 입력
     assert data["measurements"] == []          # 실측 미산출
     assert "measurements" not in captured["analysis_payload"]  # analyses 저장분엔 measurements 없음
     # AG-08 병렬 결과가 특징을 교체 (2026-07-13)

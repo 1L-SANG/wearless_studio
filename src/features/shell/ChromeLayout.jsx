@@ -3,55 +3,20 @@
    Background orb/aurora (verbatim from prototype app.jsx) + TopNav +
    main outlet, with the dots Stepper on create-flow steps.
    ============================================================= */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '@/components/ui.jsx';
 import { TopNav } from '@/features/shell/shell.jsx';
 import { useAppStore } from '@/store/useAppStore.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 
-const DONE_BADGE_MS = 3000;
-
 function MannequinJobRibbon() {
   const { pathname } = useLocation();
   const projectId = useAppStore((s) => s.projectId);
   const job = useAppStore((s) => s.mannequinJob);
-  const [doneBadge, setDoneBadge] = useState(false);
-  const runningProjectIdRef = useRef(null);
-
-  // 끝난 순간을 짧게 알린다 — 지금은 idle 로 돌아가며 리본이 즉시 사라져 완료를 놓친다.
-  // '무언가 실행 중이었다'(bare boolean)가 아니라 '이 프로젝트가 실행 중이었다'를 기억해야
-  // 한다 — beginProject/adoptProject 의 무조건 리셋(initialMannequinJob())도 status 를
-  // idle 로 되돌리지만 projectId 는 null 로 지운다. 러너의 종결 기록은 항상
-  // updateMannequinJob(pid, ...) 을 거쳐 projectId: pid 를 함께 찍으므로, 두 idle 을
-  // projectId 일치 여부로 구분해야 다른 프로젝트로의 리셋이 완료 배지로 오인되지 않는다.
-  useEffect(() => {
-    if (job?.status === 'running' && job.projectId) {
-      runningProjectIdRef.current = job.projectId;
-      return undefined;
-    }
-    if (job?.status !== 'idle' || !runningProjectIdRef.current || job.projectId !== runningProjectIdRef.current) {
-      return undefined;
-    }
-    runningProjectIdRef.current = null;
-    setDoneBadge(true);
-    const timer = setTimeout(() => setDoneBadge(false), DONE_BADGE_MS);
-    return () => clearTimeout(timer);
-  }, [job?.status, job?.projectId]);
-
   if (!job || pathname.startsWith('/create/mannequin')) return null;
   if (job.projectId && projectId && job.projectId !== projectId) return null;
-  if (job.status === 'idle' && !doneBadge) return null;
-
-  if (job.status === 'idle') {
-    return (
-      <div className="job-ribbon done" role="status" aria-live="polite">
-        <div className="job-ribbon-main">
-          <span className="job-ribbon-label"><Icon name="check" size={15} />마네킹컷 준비 완료</span>
-        </div>
-      </div>
-    );
-  }
+  if (job.status === 'idle') return null;
 
   const isError = job.status === 'error';
   const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
@@ -73,6 +38,26 @@ function MannequinJobRibbon() {
         <span className="job-ribbon-detail">{detail}</span>
       </div>
     </div>
+  );
+}
+
+function StoryboardTransitionOverlay() {
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setVisible(false), 2500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (!visible) return null;
+  return (
+    <button type="button" className="storyboard-transition-overlay"
+      aria-label="전환 안내 닫기" onClick={() => setVisible(false)}>
+      <span className="storyboard-transition-copy" role="status" aria-live="polite">
+        <strong>마네킹컷을 먼저 만들고 있어요</strong>
+        <small>상세페이지를 구성하는 동안 뒤에서 계속 준비할게요.</small>
+      </span>
+    </button>
   );
 }
 
@@ -124,7 +109,8 @@ function DetailPageJobRibbon() {
 
 export function ChromeLayout() {
   const { session } = useAuth();
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
   const storyboardOwnsEntrance = pathname === '/create/storyboard';
   const loadAccount = useAppStore((s) => s.loadAccount);
   const loadCatalogs = useAppStore((s) => s.loadCatalogs);
@@ -143,6 +129,9 @@ export function ChromeLayout() {
         <div className="orb-bg"><div className="l1" /><div className="l2" /><div className="l3" /><div className="hi" /></div>
       </div>
       <TopNav />
+      {pathname === '/create/storyboard' && location.state?.showMannequinTransition && (
+        <StoryboardTransitionOverlay key={location.key} />
+      )}
       {/* 두 잡 리본이 동시에 뜰 수 있다(마네킹+상세페이지) — 각자 sticky top:60px 이면
           서로 겹치므로 스택 컨테이너가 sticky 를 소유하고 리본은 static 으로 쌓는다(codex F8). */}
       <div className="job-ribbon-stack">

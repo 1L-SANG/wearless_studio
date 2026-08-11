@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  getUploadValidationError,
   isHeic,
   JPEG_QUALITY,
   looksLikeImageFile,
   MAX_EDGE,
+  MAX_UPLOAD_BYTES,
   renameExt,
   scaledImageDimensions,
   toUploadableImage,
@@ -70,6 +72,32 @@ test('MIME 없는 아이폰 이미지도 파일 선택 단계에서 유지한다
   assert.equal(looksLikeImageFile({ name: 'IMG_1234.HEIC', type: '' }), true);
   assert.equal(looksLikeImageFile({ name: '상품.jpg', type: 'image/jpeg' }), true);
   assert.equal(looksLikeImageFile({ name: '메모.txt', type: '' }), false);
+});
+
+test('최종 변환본은 서버와 같은 MIME 화이트리스트와 25MB 상한으로 검사한다', () => {
+  assert.equal(getUploadValidationError(new File(['x'], '상품.jpg', { type: 'image/jpeg' })), null);
+  assert.equal(getUploadValidationError(new File(['x'], '상품.svg', { type: 'image/svg+xml' })), 'unsupported_type');
+  assert.equal(getUploadValidationError(new File([], '빈사진.jpg', { type: 'image/jpeg' })), 'file_too_large');
+  assert.equal(getUploadValidationError({ type: 'image/png', size: MAX_UPLOAD_BYTES + 1 }), 'file_too_large');
+});
+
+test('이미지 변환은 한 번 실패하면 자동으로 한 번만 재시도한다', async () => {
+  const originalCreateImageBitmap = globalThis.createImageBitmap;
+  let calls = 0;
+  globalThis.createImageBitmap = async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('일시적인 디코드 시간이 제한을 초과했어요');
+    return { width: 100, height: 100, close: () => {} };
+  };
+  try {
+    const input = new File(['image'], '상품.jpg', { type: 'image/jpeg' });
+    const result = await toUploadableImages([input]);
+    assert.deepEqual(result, { files: [input], failed: [] });
+    assert.equal(calls, 2);
+  } finally {
+    if (originalCreateImageBitmap === undefined) delete globalThis.createImageBitmap;
+    else globalThis.createImageBitmap = originalCreateImageBitmap;
+  }
 });
 
 test('커스텀 옵션은 원본 JPEG/PNG도 1600px JPEG로 한 번 재인코딩한다', async () => {

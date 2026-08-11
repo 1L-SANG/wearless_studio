@@ -10,8 +10,9 @@
    설계·규칙: documents/mannequin_ui_direction.md · 목업 documents/mockups/mannequin-ui-matching.html
    ============================================================= */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { api } from '@/lib/api/index.js';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { api, isMockMode } from '@/lib/api/index.js';
+import { listModels } from '@/lib/api/facemarket.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { detailPageGenerationCreditShortfall } from '@/lib/creditPreflight.js';
 import { CREDIT_COSTS } from '@/lib/limits.js';
@@ -24,9 +25,10 @@ import {
   matchingFitFromProfile,
   resolveMainMatchingItem,
 } from '@/lib/matchingFit.js';
-import { Icon, Button, ErrorState, useToast } from '@/components/ui.jsx';
+import { Icon, Button, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import { realModelFeeLabel } from '@/features/analysis/modelSelection.js';
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
@@ -592,6 +594,7 @@ function ExampleTiles({ axisKey, category, gender, values, onPick }) {
 
 export function Mannequin() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [phase, setPhase] = useState('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [progress, setProgress] = useState(0);
@@ -606,8 +609,12 @@ export function Mannequin() {
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
+  const [realModels, setRealModels] = useState([]);
   const [aiCutCount, setAiCutCount] = useState(null);   // null = 아직 모름(로딩 중·조회 실패) — 0 과 구분
   const [creditShortfall, setCreditShortfall] = useState(null);
+  const [creditResume, setCreditResume] = useState(() => (
+    location.state?.creditResume?.action === 'detail-page' ? location.state.creditResume : null
+  ));
   const submittingRef = useRef(false);   // 결제(재생성) 이중 제출 방지 — busy 반영 전 연타 차단
   const cutsRef = useRef(cuts);
   const selectedRef = useRef(null);
@@ -692,16 +699,18 @@ export function Mannequin() {
       // getStoryboard 실패는 이 화면 자체를 막지 않는다(비치명) — 대신 null 로 남겨
       // "콘티가 AI 컷 0장" 과 "조회 자체를 못 함" 을 구분한다. 구분 안 하면 CTA 가
       // 크레딧 소비 직전에 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다.
-      const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard] = await Promise.all([
+      const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard, nextRealModels] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
         api.getCatalogs(),
         api.getStoryboard(pid).catch(() => null),
+        isMockMode ? Promise.resolve([]) : listModels().catch(() => []),
       ]);
       if (loadRunRef.current !== runId) return;
       setProgress(generationProgressFor(pid));
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
+      setRealModels(Array.isArray(nextRealModels) ? nextRealModels : []);
       setAiCutCount(Array.isArray(nextStoryboard) ? nextStoryboard.filter((b) => b.source !== 'mine').length : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
@@ -833,6 +842,7 @@ export function Mannequin() {
   const cur = activeIdx >= 0 ? steps[activeIdx] : null;
   const changingStep = cur && stepState[cur.key]?.mode === 'changing' ? cur : null;
   const needsRegen = changedSteps.length > 0;
+  const realModelFee = realModelFeeLabel(analysis?.selectedModelId, realModels);
 
   const setStep = (key, patch) => setStepState((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   const keepStep = (key) => { setStep(key, { mode: 'keep', pick: null, pickLb: null }); };
@@ -1280,8 +1290,29 @@ export function Mannequin() {
       {creditShortfall && (
         <CreditShortfallModal
           shortfall={creditShortfall}
+          action="detail-page"
           onClose={() => setCreditShortfall(null)}
         />
+      )}
+      {creditResume && (
+        <Modal onClose={() => {
+          setCreditResume(null);
+          navigate(location.pathname, { replace: true, state: null });
+        }}>
+          <h3>이어서 진행할까요? · {creditResume.requiredCredits}크레딧</h3>
+          <p>충전 전 멈춘 상세페이지 생성을 다시 확인해 주세요.</p>
+          <div className="modal-actions">
+            <Button variant="ghost" onClick={() => {
+              setCreditResume(null);
+              navigate(location.pathname, { replace: true, state: null });
+            }}>나중에</Button>
+            <Button variant="primary" onClick={() => {
+              setCreditResume(null);
+              navigate(location.pathname, { replace: true, state: null });
+              onCta();
+            }}>이어서 진행</Button>
+          </div>
+        </Modal>
       )}
       <PageHead title="의류 재현성 높이기" sub="실제 의류와 비슷해지게끔 조정해보세요." />
       <span className="fit-wait-live" aria-live="polite" aria-atomic="true">
@@ -1371,6 +1402,7 @@ export function Mannequin() {
               {/* 콘티 조회 실패로 aiCutCount 를 모를 때 '0 크레딧'(=무료로 읽힘)을 보여주지 않는다 —
                   기존 관용구(em dash '—')로 미확정을 표시한다. 실제 과금은 서버가 저장된 콘티로 재계산. */}
               상세페이지 생성하기 · {aiCutCount == null ? '—' : aiCutCount * CREDIT_COSTS.storyboardPerCut} 크레딧
+              {realModelFee}
             </Button>
           </div>
         )}

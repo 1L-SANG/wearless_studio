@@ -9,6 +9,8 @@ import { LIMITS } from '@/lib/limits.js';
 import { defaultAnalysisShape, defaultStoryboard, isDefaultStoryboardForMode } from '@/lib/api/shapes.js';
 import { toMatchItem } from '@/lib/api/matchingItems.js';
 import { applyOpeningRow, hasOpeningRow } from '@/lib/storyboardEntryPlacement.js';
+import { selectPublicAnalysisPhotos } from '@/lib/publicAnalysisPhotos.js';
+import { normalizeAnalysisFit } from '@/lib/fitAxes.js';
 
 export { toMatchItem } from '@/lib/api/matchingItems.js';
 
@@ -127,6 +129,36 @@ export async function http(path, { method = 'GET', body, signal, headers: reques
   return absolutizeAssetUrls(await res.json());
 }
 
+// 인증 전 공개 체험 전용 multipart 요청. Supabase 세션을 조회하거나 Bearer를 붙이지 않는다.
+async function publicHttp(path, formData, { signal } = {}) {
+  let res;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, { method: 'POST', body: formData, signal });
+  } catch (cause) {
+    if (cause?.name === 'AbortError') throw cause;
+    throw networkError(
+      'public_analysis_network',
+      '분석 서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.',
+      { stage: 'public_analysis', method: 'POST', path, origin: browserOrigin() },
+      cause,
+    );
+  }
+  if (!res.ok) {
+    let message = '상품 분석에 실패했어요. 잠시 후 다시 시도해 주세요.';
+    let code;
+    try {
+      const payload = await res.json();
+      message = payload?.error?.message || message;
+      code = payload?.error?.code;
+    } catch { /* 기본 메시지 유지 */ }
+    const error = new Error(message);
+    error.status = res.status;
+    if (code) error.code = code;
+    throw error;
+  }
+  return res.json();
+}
+
 // job 폴링 어댑터 — job형 API(202 {jobId})를 mock 의 onProgress 콜백 계약으로 변환.
 // GET /v1/jobs/{id} 를 폴링해 progress 를 전달하고, done 이면 result, error 면 한국어 message throw.
 // SSE 대신 폴링(마네킹 경로와 동일 GET 재사용, plan §7). 무과금 분석엔 stall 로직 불필요.
@@ -228,6 +260,28 @@ export function resetAnalysisCache() {
 const isMatchRefresh = (patch) =>
   ['clothingType', 'targetGenders', 'styleTags'].some((k) => k in patch);
 
+function mergeAnalysisResult(ai) {
+  const base = defaultAnalysisShape(ai.clothingType || 'top');
+  return {
+    ...base,
+    clothingType: ai.clothingType ?? null,
+    subCategory: ai.subCategory ?? null,
+    targetGenders: ai.targetGenders ?? [],
+    fit: ai.fit ?? null,
+    materials: (ai.materials && ai.materials.length)
+      ? ai.materials
+      : [{ name: '면', ratio: 60 }, { name: '폴리에스터', ratio: 40 }],
+    aiSuggestedPoints: ai.aiSuggestedPoints ?? [],
+    suggestedName: ai.suggestedName ?? base.suggestedName,
+    styleTags: ai.styleTags ?? [],
+    swatchSuggestions: ai.swatchSuggestions ?? [],
+    sourceMirrored: ai.sourceMirrored === true,
+    customCategory: ai.customCategory ?? null,
+    sellingPoints: [],
+    inputConsistency: ai.inputConsistency ?? null,
+  };
+}
+
 // match-candidates(실 매칭 아이템) 조회 → [{id,name,gender,thumb,imageUrl,thumbnailUrl,selected:false}].
 // clothingType 은 필수 쿼리 — analysis 우선, 없으면 서버 product 에서. gender/styleTags 는 반복 파라미터.
 async function fetchMatchCandidates(projectId, analysis) {
@@ -285,6 +339,23 @@ function mergeMatchSelection(currentMatch, matchPatch, clothingType) {
 
 export const httpAdapter = {
   uploadPhoto,
+  async publicAnalyze(product, { onProgress, signal } = {}) {
+    const colors = product?.colors || [];
+    const baseColor = colors.find((color) => color.isBase) || colors[0];
+    const photos = selectPublicAnalysisPhotos(baseColor?.images || []);
+    if (!photos.length) throw new Error('분석할 상품 사진을 먼저 올려주세요.');
+    const form = new FormData();
+    onProgress?.(10);
+    for (const [index, photo] of photos.entries()) {
+      const blob = await fetch(photo.src, { signal }).then((response) => response.blob());
+      form.append('images', blob, photo.name || `product-${index + 1}`);
+      form.append('slots', photo.slot || (index === 0 ? 'Front' : 'Detail'));
+    }
+    onProgress?.(30);
+    const result = await publicHttp('/v1/public/analyze', form, { signal });
+    onProgress?.(100);
+    return mergeAnalysisResult(result?.data || {});
+  },
   // 상품 사진(blob)을 R2에 업로드하고 images[].id 를 **서버 asset id 로 치환**한다.
   // 서버(mannequin.base_color_images·분석 워커)는 colors[].images[].id 를 asset id 로 링크하므로,
   // 로컬 uid('img') 를 그대로 두면 서버가 사진을 못 찾는다(no_product_images). src 도 R2 URL 로 갱신.
@@ -325,31 +396,7 @@ export const httpAdapter = {
       timeoutMessage: '분석이 지연되고 있어요. 잠시 후 다시 시도해 주세요.',
     });
     const ai = (result && result.data) || {};
-    const base = defaultAnalysisShape();  // 클라 소유 기본 shape(models·selectedModelId·측정 구조 등)
-    const merged = {
-      ...base,
-      clothingType: ai.clothingType ?? null,
-      subCategory: ai.subCategory ?? null,
-      targetGenders: ai.targetGenders ?? [],
-      fit: ai.fit ?? null,
-      // AI 는 확신 없으면 materials 를 비운다(피복 오탐 방지). 빈값이면 자주 쓰는 소재 2개를 편집용
-      // 기본값으로 미리 채워 셀러가 바로 수정·확정하게 한다(최종 상세페이지 copywriter 가 이 값을 사용).
-      materials: (ai.materials && ai.materials.length)
-        ? ai.materials
-        : [{ name: '면', ratio: 60 }, { name: '폴리에스터', ratio: 40 }],
-      aiSuggestedPoints: ai.aiSuggestedPoints ?? [],
-      suggestedName: ai.suggestedName ?? base.suggestedName,
-      styleTags: ai.styleTags ?? [],
-      swatchSuggestions: ai.swatchSuggestions ?? [],
-      sourceMirrored: ai.sourceMirrored === true,  // 서버 파생 — 저장 왕복에서 보존되어야 한다
-      // AI 가 추측한 자유 명칭("후드 집업" 등). 여기서 빠지면 분석 직후 폼의 주관식 pill 이
-      // 비어 보인다 — 서버는 distribute 로 내려주는데 클라가 버리고 있었다.
-      customCategory: ai.customCategory ?? null,
-      sellingPoints: [],  // 셀러는 빈 상태로 시작 — AI 제안(aiSuggestedPoints)은 폼이 자동으로 채운다
-      // AG-IC 입력 사진 동일성 경고. 서버가 warn 모드 + mismatch 일 때만 내려오고, 그 외엔 없다.
-      // 이 목록은 화이트리스트다 — 여기 없는 키는 조용히 버려진다.
-      inputConsistency: ai.inputConsistency ?? null,
-    };
+    const merged = mergeAnalysisResult(ai);
     // 실측은 AI 미산출 → 기본 shape(defaultAnalysisShape)이 이미 value:null (사용자 직접 입력, PRD §6.5).
     // 매칭 의류 후보 시드 — 서버 matching_items 실 후보(top-N 기본 선택, mock 계약 §6 동일 shape).
     // defaultAnalysisShape 는 matchClothing:[] 라 여기서 채우지 않으면 분석 페이지 매칭 그리드가
@@ -485,7 +532,7 @@ export const httpAdapter = {
   },
   // 저장된 분석 payload 조회 (계약 §3.2) — 하드 새로고침 후 매칭 선택 등 복원용. {projectId, ...payload}.
   async getAnalysis(projectId) {
-    return http(`/v1/projects/${projectId}/analysis`);
+    return normalizeAnalysisFit(await http(`/v1/projects/${projectId}/analysis`));
   },
   // 세탁 관리법 AI 초안 (동기·무과금) — 서버가 상품 종류·소재로 짧은 문구 생성. bare string 반환(mock 동일).
   // projectId 없으면(비로그인) 서버 project 가 없으니 클라 기본 문구로 폴백.

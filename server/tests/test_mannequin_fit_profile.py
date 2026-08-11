@@ -565,6 +565,14 @@ def test_normalize_fit_profile_allowlists_and_orders():
     assert normalize_fit_profile({"category": "hat", "gender": "women", "axes": {}}) is None
 
 
+def test_normalize_fit_profile_maps_retired_tight_to_slim():
+    out = normalize_fit_profile({
+        "category": "top", "gender": "women", "source": "auto",
+        "axes": {"fit": "tight", "length": "basic"},
+    })
+    assert out["axes"] == {"fit": "slim", "length": "basic"}
+
+
 def test_normalize_v2_matching_fit_pants_and_skirt():
     pants = normalize_fit_profile({
         "category": "top", "gender": "men", "source": "seller", "version": 2,

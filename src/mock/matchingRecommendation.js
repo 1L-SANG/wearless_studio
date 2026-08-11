@@ -15,6 +15,26 @@ const SKIRT_CATEGORIES = new Set(['스커트', 'skirt']);
 
 const unique = (items) => [...new Set((items || []).filter(Boolean))];
 
+const colorFamily = (item) => {
+  if (item.colorGroup) return `group:${item.colorGroup}`;
+  if (item.colorBrightness == null) return null;
+  if (item.colorBrightness <= 33) return 'brightness:dark';
+  if (item.colorBrightness <= 66) return 'brightness:mid';
+  return 'brightness:light';
+};
+
+export function diversifyTopTwo(items) {
+  const ranked = [...(items || [])];
+  if (ranked.length < 3) return ranked;
+  const firstFamily = colorFamily(ranked[0]);
+  if (!firstFamily || colorFamily(ranked[1]) !== firstFamily) return ranked;
+  const replacement = ranked.findIndex((item, index) => (
+    index >= 2 && colorFamily(item) && colorFamily(item) !== firstFamily
+  ));
+  if (replacement >= 2) [ranked[1], ranked[replacement]] = [ranked[replacement], ranked[1]];
+  return ranked;
+}
+
 export function getComplementaryMatchingType(clothingType) {
   if (clothingType === 'dress') return null;
   return TOP_SIDE_TYPES.includes(clothingType) ? 'bottom' : 'top';
@@ -67,13 +87,14 @@ export function recommendMatchingItems({
   const custom = items
     .filter((item) => item.isCustom)
     .map((item) => ({ ...item, isCompatible: item.clothingType === preferredType }));
-  const sorted = items
+  const sorted = diversifyTopTwo(items
     .filter((item) => !item.isCustom)
     .filter((item) => item.isActive)
     .filter((item) => item.clothingType === preferredType)
     .filter((item) => !genders.length || item.gender === 'unisex' || genders.includes(item.gender))
     .slice()
-    .sort((a, b) => ((b.colorBrightness ?? 50) - (a.colorBrightness ?? 50)) || (a.sortOrder - b.sortOrder));
+    .sort((a, b) => ((b.colorBrightness ?? 50) - (a.colorBrightness ?? 50))
+      || (a.sortOrder - b.sortOrder) || String(a.id).localeCompare(String(b.id))));
 
   return [...custom, ...(limit ? sorted.slice(0, limit) : sorted)];
 }

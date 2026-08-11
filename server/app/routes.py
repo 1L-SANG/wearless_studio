@@ -712,7 +712,8 @@ async def save_analysis(
     - **에지 케이스**:
       - `404 Not Found`: 프로젝트가 존재하지 않거나, 타 사용자의 소유인 경우 발생
     """
-    # analysis는 프론트 소유 shape → payload jsonb 패스스루 저장.
+    # 프론트 소유 shape를 유지하되 폐기된 레거시 핏 어휘는 신규 저장하지 않는다.
+    analysis = fit_axes.normalize_analysis_fit(analysis)
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -743,7 +744,7 @@ async def get_analysis(
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
-        payload = await repo.get_analysis(conn, project_id)
+        payload = fit_axes.normalize_analysis_fit(await repo.get_analysis(conn, project_id))
     return {"projectId": project_id, **(payload or {})}
 
 

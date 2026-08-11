@@ -2861,7 +2861,6 @@ export function Storyboard() {
       {/* document-flow bottom action bar */}
       <div className="sb-actionbar">
         <div className="sb-ab-inner">
-          <button className="btn btn-ghost" onClick={() => navigate('/create/input')}><Icon name="arrowLeft" size={17} />이전</button>
           <div className="sb-ab-count">
             AI 생성 {aiCount}컷 · 셀러 사진 {mineCount}컷
             <span className="sb-ab-cost"> · 생성 시 {aiCount * (catalogs.creditCosts?.storyboardPerCut ?? 1)} 크레딧</span>

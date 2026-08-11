@@ -67,7 +67,7 @@ def A(aid, cat, gender, src, axes, adjusted, wb):
 
 ARMS = [
     # 배치 1 — top/pants 단일축 극단 + men (14)
-    A("T01", "top", "women", "T-A", {"fit": "tight"}, ["fit"], False),
+    A("T01", "top", "women", "T-A", {"fit": "slim"}, ["fit"], False),
     A("T02", "top", "women", "T-A", {"fit": "over"}, ["fit"], False),
     A("T03", "top", "men", "T-B", {"length": "crop"}, ["length"], False),
     A("T04", "top", "men", "T-B", {"length": "long"}, ["length"], False),

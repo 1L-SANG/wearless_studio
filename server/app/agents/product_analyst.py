@@ -348,7 +348,9 @@ def validate(raw: dict) -> dict:
         "subCategory": sub_category,
         "customCategory": custom or None,
         "targetGenders": genders,
-        "fit": raw.get("fit") if _in(raw.get("fit"), FITS) else None,
+        "fit": "slim" if raw.get("fit") == "tight" else (
+            raw.get("fit") if _in(raw.get("fit"), FITS) else None
+        ),
         "materials": _materials(raw.get("materials")),
         # 프리셋 번호는 정수만 통과 — 실제 범위 검증은 카테고리가 확정된 distribute 에서
         "materialPresetIndex": (

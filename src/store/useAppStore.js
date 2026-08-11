@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import { api } from '@/lib/api/index.js';
 import { resetAnalysisCache } from '@/lib/api/httpAdapter.js';
 import { clearDraft } from '@/lib/draftStore.js';
+import { clearFlowSession, markProductInfoConfirmed, readFlowSession } from '@/lib/flowSession.js';
 import { clearDetailPageJobMarker, loadDetailPageJobMarker, saveDetailPageJobMarker } from '@/lib/detailPageJobPersistence.js';
 import {
   adoptGenerationRelevantEdits,
@@ -28,10 +29,20 @@ const normalizeComposeMode = (value) => value === 'extended' ? 'extended' : 'bas
 // http 모드에서만 flow(projectId·resumePath·선택값)를 localStorage 에 영속한다.
 // 목적: 상세페이지 제작 중 다른 페이지로 이탈했다 돌아오거나 cold reload 해도 진행 중 프로젝트를
 // '이어서' 재개할 수 있게 한다(과거 http loadProject 가 null 을 반환해 재개 자체가 불가였음).
-// mock 은 자체 시드 복원(api.getProject)이 있어 영속하지 않는다(모드 간 stale id 교차 오염 방지).
+// mock 은 localStorage 대신 같은 탭의 flowSession project 표식만 복원한다
+// (모드 간 stale id 교차 오염 방지 + F5 분석 합류 데모 유지).
 const FLOW_KEY = 'wl_flow';
 function loadPersistedFlow() {
-  if (mode !== 'http') return {};
+  if (mode !== 'http') {
+    const saved = readFlowSession();
+    if (!saved?.projectId) return {};
+    return {
+      projectId: saved.projectId,
+      projectPersisted: true,
+      resumePath: saved.path && saved.path !== '/create/input' ? saved.path : null,
+      productInfoConfirmed: saved.productInfoConfirmed === true,
+    };
+  }
   try {
     const raw = localStorage.getItem(FLOW_KEY);
     if (!raw) return {};
@@ -51,6 +62,7 @@ function persistFlow(s) {
       composeMode: s.composeMode,
       copywriting: s.copywriting,
       adjustCount: s.adjustCount,
+      productInfoConfirmed: s.productInfoConfirmed,
     }));
   } catch { /* localStorage 불가(사생활 모드 등) — 영속 생략, 세션 내 동작은 유지 */ }
 }
@@ -66,6 +78,7 @@ const initialFlow = {
   adjustCount: 0,
   // 진행 중 상세페이지 제작에서 마지막으로 머문 create/editor 경로 — '이어서 작업' 재개 목표.
   resumePath: null,
+  productInfoConfirmed: false,
 };
 
 // 재생성 트리거 판정(순수 로직)은 src/lib/generationRelevance.js 로 분리 — node --test 로
@@ -219,6 +232,7 @@ export const useAppStore = create((set, get) => ({
     detailJobLoopProjectId = null;
     clearDetailPageJobMarker();
     resetAnalysisCache();           // 이전 프로젝트의 analysis/매칭 캐시 해제 (F1)
+    clearFlowSession();
     await clearDraft().catch(() => {});
     // http: 서버 POST 이연(빈 보관함 행 방지) — projectId 없이 시작, 생성은 ensureProject.
     // mock: createProject 가 reseedDraft 로 DB.product/analysis 를 깨끗한 시드로 되돌린다.
@@ -317,10 +331,15 @@ export const useAppStore = create((set, get) => ({
   },
   /** 백엔드 sync(비로그인 draft) 결과의 projectId 반영 — 로그인 복귀 후 RootRedirect 가 호출. */
   setProjectId(projectId) {
+    const sameProject = get().projectId === projectId;
     const generationRelevantEditsDirty = get().projectId === projectId
       ? get().generationRelevantEditsDirty
       : readGenerationRelevantEdits(projectId);
-    set({ projectId, generationRelevantEditsDirty });
+    set({
+      projectId,
+      generationRelevantEditsDirty,
+      productInfoConfirmed: sameProject ? get().productInfoConfirmed : false,
+    });
     persistFlow(get());
   },
   /** 로그인 복귀 draft sync 등에서 서버 project 를 현재 진행 프로젝트로 채택(영속 포함).
@@ -376,6 +395,14 @@ export const useAppStore = create((set, get) => ({
     persistFlow(get());
   },
 
+  confirmProductInfo(projectId = get().projectId) {
+    if (!projectId || projectId !== get().projectId) return false;
+    markProductInfoConfirmed(projectId);
+    set({ productInfoConfirmed: true, resumePath: '/create/storyboard' });
+    persistFlow(get());
+    return true;
+  },
+
   markGenerationRelevantEdits() {
     set({ generationRelevantEditsDirty: markGenerationRelevantEditsSession(get().projectId) });
   },
@@ -403,6 +430,10 @@ export const useAppStore = create((set, get) => ({
       .catch(() => {})
       .then(() => api.patchProject(projectId, { composeMode }));
     return composeModePatchChain;
+  },
+  restoreComposeMode(composeMode) {
+    set({ composeMode: normalizeComposeMode(composeMode) });
+    persistFlow(get());
   },
   setCopywriting(copywriting) {
     set({ copywriting });

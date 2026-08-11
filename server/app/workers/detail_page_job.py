@@ -468,33 +468,43 @@ async def _gen_cuts(app, job, prepared, product, analysis):
 
 
 async def _gen_copy(app, job, ai_blocks, product, analysis):
-    """copywriting 시 블록별 AG-02 카피 → 묶음 AG-03 검수(revise 채택). 실패 블록은 카피 생략."""
+    """블록별 AG-02 카피와, 필요하면 첫 기존 호출에 묶은 상품명을 생성한다."""
     s = app.state.settings
     sem = asyncio.Semaphore(_GEN_CONCURRENCY)
+    needs_name = not str(product.get("name") or "").strip() or str(product.get("name")).strip() == "새 상품"
+    naming_block_id = ai_blocks[0].get("id") if needs_name and ai_blocks else None
 
     async def _one(b):
         """블록 1개 카피 생성. 실패면 None(카피는 게이트 아님, 블록 생략)."""
         async with sem:
             try:
-                texts = await copywriter.generate(
+                generated = await copywriter.generate(
                     s, content_role=b.get("contentRole"), section_role=b.get("sectionRole"),
                     cut_type=b.get("cutType"), product=product, analysis=analysis,
-                    color_label=b.get("colorId"))
+                    color_label=b.get("colorId"),
+                    include_product_name=b.get("id") == naming_block_id)
             except Exception as e:  # VisionError 포함 — 카피는 게이트 아님, 실패 블록 생략
                 log.warning("AG-02 copy failed for job %s block %s: %r", job["id"], b.get("id"), e)
                 return None
-            return (b.get("id"), texts) if texts else None
+            if isinstance(generated, dict):
+                texts = generated.get("texts") or []
+                product_name = generated.get("productName")
+            else:
+                texts, product_name = generated, None
+            return (b.get("id"), texts, product_name) if texts or product_name else None
 
     # gather 는 순서 보존 — drafts 삽입 순서(=콘티 순서)를 유지한다.
-    items, drafts = [], {}
+    items, drafts, generated_name = [], {}, None
     for r in await asyncio.gather(*[_one(b) for b in ai_blocks]):
         if r:
-            bid, texts = r
-            drafts[bid] = texts
+            bid, texts, product_name = r
+            generated_name = generated_name or product_name
+            if texts:
+                drafts[bid] = texts
             for t in texts:
                 items.append({"blockId": bid, "text": t.get("text", "")})
     if not items:
-        return []
+        return [], generated_name
     # AG-03 검수 — revise면 수정 텍스트로 교체(첫 항목 role 유지). 실패 시 원문 유지.
     try:
         confirmed = {"materials": analysis.get("materials"),
@@ -510,7 +520,26 @@ async def _gen_copy(app, job, ai_blocks, product, analysis):
         if bid in rev:  # 첫 텍스트를 검수 수정안으로 교체
             texts = [{"role": texts[0].get("role", "body"), "text": rev[bid]["revisedText"]}] + texts[1:]
         copy_results.append({"blockId": bid, "texts": texts})
-    return copy_results
+    return copy_results, generated_name
+
+
+_CATEGORY_NAMES = {
+    "tshirt": "데일리 티셔츠", "sweatshirt": "데일리 맨투맨", "shirt": "데일리 셔츠",
+    "knit": "데일리 니트", "cotton_pants": "코튼 팬츠", "training_pants": "트레이닝 팬츠",
+    "jeans": "데일리 데님", "slacks": "데일리 슬랙스", "skirt": "데일리 스커트",
+    "jacket": "데일리 재킷", "cardigan": "데일리 가디건", "padding": "데일리 패딩",
+    "coat": "데일리 코트", "top": "데일리 상의", "bottom": "데일리 하의",
+    "outer": "데일리 아우터", "dress": "데일리 원피스",
+}
+
+
+def _fallback_product_name(product: dict, analysis: dict) -> str:
+    """카피 OFF/작명 출력 실패 시 추가 LLM 호출 없이 분석값으로 짓는다."""
+    suggested = copywriter.validate_product_name(analysis.get("suggestedName"))
+    if suggested:
+        return suggested
+    category = analysis.get("subCategory") or product.get("clothing_type") or product.get("clothingType")
+    return _CATEGORY_NAMES.get(category, "데일리 웨어")
 
 
 async def run_detail_page_job(app, job: dict) -> None:
@@ -1133,14 +1162,19 @@ async def run_detail_page_job(app, job: dict) -> None:
         # (copywriter.generate: product·analysis·role만) 순서를 당길 수 있고, 셀러는 컷을
         # 기다리는 몇 분 동안 문구를 다듬을 수 있다(editor_wait_dev_spec §2-1).
         copy_results = []
+        generated_name = None
+        needs_name = not str(product.get("name") or "").strip() or str(product.get("name")).strip() == "새 상품"
         if copywriting:
             await _emit(pool, job_id, "progress", {"progress": 18, "phase": "copy",
                                                    "blocks": len(ai_blocks)})
-            copy_results = await _gen_copy(app, job, ai_blocks, product, analysis)
+            copy_results, generated_name = await _gen_copy(app, job, ai_blocks, product, analysis)
             for cr in copy_results:  # 검수(AG-03) 통과본만 내보낸다 — 선emit 후revise 금지
                 await _emit(pool, job_id, "step",
-                            {"blockId": cr.get("blockId"), "status": "copy_ready",
+                             {"blockId": cr.get("blockId"), "status": "copy_ready",
                              "texts": cr.get("texts")})
+        if needs_name:
+            generated_name = generated_name or _fallback_product_name(product, analysis)
+            product["name"] = generated_name
 
             # 특징 포인트 설명 문구 — 에디터의 정보 블록이 프리필로 읽는다(analysis.featureCopy).
             # 컷 카피와 달리 블록 단위가 아니라 강조특징 단위라 1콜이면 끝난다.
@@ -1231,7 +1265,7 @@ async def run_detail_page_job(app, job: dict) -> None:
             out = await repo.finalize_detail_page_success(
                 conn, job_id=job_id, lease_token=lease_token, user_id=user_id, project_id=project_id,
                 editor_blocks=editor_blocks, cut_assets=cut_assets, reserved=reserved, charge=charge,
-                metadata=success_metadata)
+                metadata=success_metadata, product_name=generated_name)
             await conn.commit()
         if out is None:  # lease 상실 → 방금 올린 R2 객체 best-effort 정리
             for c in cut_assets:

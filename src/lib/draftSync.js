@@ -18,6 +18,7 @@
    생성되지 않는다(이미 올라간 사진은 재업로드되어 일부 orphan asset이 생길 수 있음 — 허용).
    ============================================================= */
 import { http, uploadPhoto } from '@/lib/api/httpAdapter.js';
+import { createDraftSyncSingleFlight } from '@/lib/draftSyncSingleFlight.js';
 
 // product.colors[].images[] 의 id·src 를 업로드 결과로 치환 (원본 imageId 매칭).
 // **id 를 서버 asset id 로 바꾼다** — 서버(mannequin.base_color_images·분석 워커)가 이미지를
@@ -35,7 +36,7 @@ function withUploadedSrcs(product, uploadByImageId) {
   };
 }
 
-export async function syncDraftToBackend(draft, { projectId: existing } = {}) {
+async function runDraftSync(draft, { projectId: existing } = {}) {
   // 멱등: 재시도 시 호출측이 넘긴 기존 projectId 재사용(없으면 새로 생성).
   const projectId = existing ?? (await http('/v1/projects', { method: 'POST' })).id;
 
@@ -70,4 +71,17 @@ export async function syncDraftToBackend(draft, { projectId: existing } = {}) {
     err.projectId = projectId; // 재시도 시 이 projectId로 호출 → 프로젝트 중복 방지
     throw err;
   }
+}
+
+// OAuth 복귀 effect와 입력 화면 재시도가 같은 탭에서 겹쳐도 하나의 요청만 실행한다.
+// 타임아웃은 호출측의 기다림만 끝낼 뿐 이 Promise는 계속 살아 있으며, 성공 결과도 다음
+// 호출이 재사용한다. 부분 실패 때 확보한 projectId 역시 보존해 재시도 create를 막는다.
+const draftSyncFlight = createDraftSyncSingleFlight(runDraftSync);
+
+export function syncDraftToBackend(draft, options) {
+  return draftSyncFlight.sync(draft, options);
+}
+
+export function resetDraftSyncSingleFlight() {
+  return draftSyncFlight.reset();
 }

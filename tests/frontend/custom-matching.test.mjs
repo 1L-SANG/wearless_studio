@@ -159,14 +159,16 @@ test('upload modal revives aliveRef in effect setup, not only in cleanup', () =>
   assert.doesNotMatch(source, /useEffect\(\(\) => \(\) => \{\s*\n\s*aliveRef\.current = false;/);
 });
 
-test('target-gender and photo-volume chips disable deselection and modal shares abort signal', () => {
+test('target-gender chips disable deselection, photo-volume cards stay exclusive, and modal shares abort signal', () => {
   const ui = readFileSync(new URL('../../src/components/ui.jsx', import.meta.url), 'utf8');
   const analysis = readFileSync(
     new URL('../../src/features/analysis/AnalysisForm.jsx', import.meta.url), 'utf8',
   );
   assert.match(ui, /allowDeselect = true/);
   assert.match(ui, /v === value && allowDeselect \? null : v/);
-  assert.equal((analysis.match(/allowDeselect=\{false\}/g) || []).length, 2);
+  assert.equal((analysis.match(/allowDeselect=\{false\}/g) || []).length, 3);
+  assert.match(analysis, /className="af-vol" role="radiogroup"/);
+  assert.match(analysis, /role="radio" aria-checked=\{composeMode === option\.value\}/);
   assert.match(analysis, /controllerRef\.current\.abort\(\)/);
   assert.match(analysis, /purpose: 'custom_match_source'/);
   assert.match(analysis, /\{ signal: controller\.signal \}/);
