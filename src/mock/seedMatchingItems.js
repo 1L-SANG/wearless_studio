@@ -19,8 +19,9 @@ export const seedMatchingItems = [
     "colorGroup": "white",
     "colorBrightness": 100,
     "styleTags": [
-      "basic",
-      "daily"
+      "casual",
+      "cozy",
+      "vintage"
     ],
     "fit": "레귤러핏",
     "length": "regular",
@@ -39,9 +40,10 @@ export const seedMatchingItems = [
     "colorGroup": "white",
     "colorBrightness": 100,
     "styleTags": [
-      "basic",
+      "casual",
       "daily",
-      "스트라이프"
+      "classic",
+      "preppy"
     ],
     "fit": "regular",
     "length": "regular",
@@ -61,7 +63,9 @@ export const seedMatchingItems = [
     "colorBrightness": 100,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "casual",
+      "minimal"
     ],
     "fit": "오버핏",
     "length": "regular",
@@ -81,7 +85,9 @@ export const seedMatchingItems = [
     "colorBrightness": 100,
     "styleTags": [
       "basic",
-      "daily"
+      "minimal",
+      "casual",
+      "preppy"
     ],
     "fit": "regular",
     "length": "regular",
@@ -100,10 +106,9 @@ export const seedMatchingItems = [
     "colorGroup": "blue",
     "colorBrightness": 50,
     "styleTags": [
-      "trendy",
-      "daily",
-      "깅엄 체크",
-      "오픈 카라"
+      "casual",
+      "cozy",
+      "vintage"
     ],
     "fit": "regular",
     "length": "regular",
@@ -123,7 +128,9 @@ export const seedMatchingItems = [
     "colorBrightness": 64,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "casual",
+      "cozy"
     ],
     "fit": "레귤러핏",
     "length": "regular",
@@ -143,7 +150,9 @@ export const seedMatchingItems = [
     "colorBrightness": 28,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "casual",
+      "minimal"
     ],
     "fit": "레귤러",
     "length": "regular",
@@ -163,7 +172,9 @@ export const seedMatchingItems = [
     "colorBrightness": 58,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "minimal",
+      "casual"
     ],
     "fit": "세미오버핏",
     "length": "regular",
@@ -183,7 +194,9 @@ export const seedMatchingItems = [
     "colorBrightness": 62,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "minimal",
+      "cozy"
     ],
     "fit": "오버핏",
     "length": "regular",
@@ -202,8 +215,10 @@ export const seedMatchingItems = [
     "colorGroup": "gray",
     "colorBrightness": 76,
     "styleTags": [
-      "polo",
-      "daily"
+      "minimal",
+      "classic",
+      "sophisticated",
+      "casual"
     ],
     "fit": "regular",
     "length": "regular",
@@ -223,7 +238,9 @@ export const seedMatchingItems = [
     "colorBrightness": 0,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "minimal",
+      "casual"
     ],
     "fit": "오버핏",
     "length": "regular",
@@ -242,8 +259,10 @@ export const seedMatchingItems = [
     "colorGroup": "ivory",
     "colorBrightness": 95,
     "styleTags": [
-      "basic",
-      "daily"
+      "cozy",
+      "feminine",
+      "daily",
+      "minimal"
     ],
     "fit": "regular",
     "length": "regular",
@@ -262,8 +281,10 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 0,
     "styleTags": [
-      "basic",
-      "daily"
+      "minimal",
+      "chic",
+      "modern",
+      "basic"
     ],
     "fit": "regular",
     "length": "regular",
@@ -282,9 +303,9 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 0,
     "styleTags": [
-      "basic",
-      "daily",
-      "텍스처"
+      "chic",
+      "feminine",
+      "modern"
     ],
     "fit": "regular",
     "length": "regular",
@@ -304,7 +325,9 @@ export const seedMatchingItems = [
     "colorBrightness": 100,
     "styleTags": [
       "basic",
-      "daily"
+      "minimal",
+      "daily",
+      "casual"
     ],
     "fit": "regular",
     "length": "regular",
@@ -323,8 +346,9 @@ export const seedMatchingItems = [
     "colorGroup": "blue",
     "colorBrightness": 70,
     "styleTags": [
-      "basic",
-      "daily"
+      "casual",
+      "daily",
+      "vintage"
     ],
     "fit": "regular",
     "length": "full",
@@ -343,9 +367,9 @@ export const seedMatchingItems = [
     "colorGroup": "blue",
     "colorBrightness": 44,
     "styleTags": [
-      "basic",
+      "casual",
       "daily",
-      "워시드"
+      "vintage"
     ],
     "fit": "스트레이트",
     "length": "full",
@@ -364,9 +388,9 @@ export const seedMatchingItems = [
     "colorGroup": "blue",
     "colorBrightness": 46,
     "styleTags": [
-      "basic",
+      "casual",
       "daily",
-      "플리츠"
+      "vintage"
     ],
     "fit": "플리츠",
     "length": "short",
@@ -385,8 +409,10 @@ export const seedMatchingItems = [
     "colorGroup": "gray",
     "colorBrightness": 54,
     "styleTags": [
-      "basic",
-      "daily"
+      "minimal",
+      "sophisticated",
+      "modern",
+      "classic"
     ],
     "fit": "릴랙스드",
     "length": "full",
@@ -405,9 +431,9 @@ export const seedMatchingItems = [
     "colorGroup": "gray",
     "colorBrightness": 36,
     "styleTags": [
-      "basic",
-      "daily",
-      "워시드"
+      "casual",
+      "street",
+      "vintage"
     ],
     "fit": "루즈핏",
     "length": "full",
@@ -426,8 +452,9 @@ export const seedMatchingItems = [
     "colorGroup": "gray",
     "colorBrightness": 76,
     "styleTags": [
-      "basic",
-      "daily"
+      "minimal",
+      "casual",
+      "cozy"
     ],
     "fit": "와이드레그",
     "length": "full",
@@ -446,7 +473,9 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 0,
     "styleTags": [
-      "basic",
+      "casual",
+      "athleisure",
+      "cozy",
       "daily"
     ],
     "fit": "와이드레그",
@@ -466,9 +495,10 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 0,
     "styleTags": [
-      "basic",
-      "daily",
-      "턴업"
+      "minimal",
+      "sophisticated",
+      "modern",
+      "casual"
     ],
     "fit": "와이드레그",
     "length": "full",
@@ -487,9 +517,9 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 10,
     "styleTags": [
-      "basic",
-      "daily",
-      "워시드"
+      "casual",
+      "street",
+      "vintage"
     ],
     "fit": "스트레이트",
     "length": "full",
@@ -508,8 +538,9 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 0,
     "styleTags": [
-      "basic",
-      "daily"
+      "minimal",
+      "casual",
+      "trendy"
     ],
     "fit": "regular",
     "length": "short",
@@ -528,9 +559,10 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 0,
     "styleTags": [
-      "skirt",
-      "daily",
-      "랩"
+      "minimal",
+      "chic",
+      "sophisticated",
+      "formal"
     ],
     "fit": "regular",
     "length": "midi",
@@ -549,10 +581,9 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 0,
     "styleTags": [
-      "basic",
-      "daily",
-      "플리츠",
-      "벨티드"
+      "casual",
+      "cozy",
+      "vintage"
     ],
     "fit": "와이드",
     "length": "full",
@@ -571,9 +602,9 @@ export const seedMatchingItems = [
     "colorGroup": "ivory",
     "colorBrightness": 95,
     "styleTags": [
-      "skirt",
-      "daily",
-      "밴딩"
+      "cozy",
+      "casual",
+      "minimal"
     ],
     "fit": "regular",
     "length": "long",
@@ -592,10 +623,9 @@ export const seedMatchingItems = [
     "colorGroup": "gray",
     "colorBrightness": 54,
     "styleTags": [
-      "skirt",
-      "daily",
-      "플리츠",
-      "랩"
+      "preppy",
+      "lovely",
+      "casual"
     ],
     "fit": "플리츠",
     "length": "midi",
@@ -614,10 +644,10 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 0,
     "styleTags": [
-      "skirt",
-      "daily",
-      "랩",
-      "버클"
+      "chic",
+      "modern",
+      "sophisticated",
+      "classic"
     ],
     "fit": "regular",
     "length": "midi",
@@ -636,9 +666,10 @@ export const seedMatchingItems = [
     "colorGroup": "white",
     "colorBrightness": 100,
     "styleTags": [
-      "trendy",
+      "basic",
       "daily",
-      "디스트레스드"
+      "minimal",
+      "casual"
     ],
     "fit": "regular",
     "length": "regular",
@@ -658,7 +689,9 @@ export const seedMatchingItems = [
     "colorBrightness": 100,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "minimal",
+      "casual"
     ],
     "fit": "regular",
     "length": "regular",
@@ -679,7 +712,8 @@ export const seedMatchingItems = [
     "styleTags": [
       "basic",
       "daily",
-      "U넥"
+      "casual",
+      "minimal"
     ],
     "fit": "세미오버핏",
     "length": "regular",
@@ -699,7 +733,9 @@ export const seedMatchingItems = [
     "colorBrightness": 100,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "minimal",
+      "casual"
     ],
     "fit": "regular",
     "length": "regular",
@@ -719,7 +755,9 @@ export const seedMatchingItems = [
     "colorBrightness": 100,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "minimal",
+      "casual"
     ],
     "fit": "regular",
     "length": "regular",
@@ -738,8 +776,10 @@ export const seedMatchingItems = [
     "colorGroup": "brown",
     "colorBrightness": 40,
     "styleTags": [
-      "polo",
-      "daily"
+      "classic",
+      "minimal",
+      "casual",
+      "preppy"
     ],
     "fit": "regular",
     "length": "regular",
@@ -758,9 +798,9 @@ export const seedMatchingItems = [
     "colorGroup": "blue",
     "colorBrightness": 46,
     "styleTags": [
-      "polo",
-      "daily",
-      "핀 스트라이프"
+      "casual",
+      "preppy",
+      "retro"
     ],
     "fit": "regular",
     "length": "regular",
@@ -779,9 +819,9 @@ export const seedMatchingItems = [
     "colorGroup": "gray",
     "colorBrightness": 76,
     "styleTags": [
-      "basic",
-      "daily",
-      "와플"
+      "casual",
+      "cozy",
+      "daily"
     ],
     "fit": "regular",
     "length": "regular",
@@ -800,9 +840,9 @@ export const seedMatchingItems = [
     "colorGroup": "gray",
     "colorBrightness": 64,
     "styleTags": [
-      "basic",
-      "daily",
-      "링거"
+      "casual",
+      "retro",
+      "daily"
     ],
     "fit": "regular",
     "length": "regular",
@@ -821,8 +861,10 @@ export const seedMatchingItems = [
     "colorGroup": "gray",
     "colorBrightness": 54,
     "styleTags": [
-      "polo",
-      "daily"
+      "minimal",
+      "casual",
+      "classic",
+      "preppy"
     ],
     "fit": "regular",
     "length": "regular",
@@ -841,9 +883,9 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 0,
     "styleTags": [
-      "trendy",
-      "daily",
-      "디스트레스드"
+      "basic",
+      "minimal",
+      "casual"
     ],
     "fit": "regular",
     "length": "regular",
@@ -862,9 +904,9 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 0,
     "styleTags": [
-      "basic",
-      "daily",
-      "와플"
+      "casual",
+      "cozy",
+      "daily"
     ],
     "fit": "regular",
     "length": "regular",
@@ -884,7 +926,9 @@ export const seedMatchingItems = [
     "colorBrightness": 0,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "minimal",
+      "casual"
     ],
     "fit": "regular",
     "length": "regular",
@@ -904,7 +948,9 @@ export const seedMatchingItems = [
     "colorBrightness": 0,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "minimal",
+      "casual"
     ],
     "fit": "레귤러",
     "length": "regular",
@@ -924,7 +970,9 @@ export const seedMatchingItems = [
     "colorBrightness": 0,
     "styleTags": [
       "basic",
-      "daily"
+      "daily",
+      "minimal",
+      "casual"
     ],
     "fit": "regular",
     "length": "regular",
@@ -944,7 +992,9 @@ export const seedMatchingItems = [
     "colorBrightness": 82,
     "styleTags": [
       "basic",
-      "daily"
+      "casual",
+      "preppy",
+      "classic"
     ],
     "fit": "regular",
     "length": "full",
@@ -963,8 +1013,9 @@ export const seedMatchingItems = [
     "colorGroup": "beige",
     "colorBrightness": 84,
     "styleTags": [
-      "basic",
-      "daily"
+      "casual",
+      "minimal",
+      "trendy"
     ],
     "fit": "regular",
     "length": "short",
@@ -983,8 +1034,10 @@ export const seedMatchingItems = [
     "colorGroup": "beige",
     "colorBrightness": 82,
     "styleTags": [
-      "basic",
-      "daily"
+      "casual",
+      "daily",
+      "cozy",
+      "athleisure"
     ],
     "fit": "regular",
     "length": "short",
@@ -1003,11 +1056,10 @@ export const seedMatchingItems = [
     "colorGroup": "khaki",
     "colorBrightness": 38,
     "styleTags": [
-      "trendy",
-      "daily",
-      "워시드",
-      "오버 다이드",
-      "페인터"
+      "workwear",
+      "vintage",
+      "casual",
+      "street"
     ],
     "fit": "regular",
     "length": "full",
@@ -1026,9 +1078,9 @@ export const seedMatchingItems = [
     "colorGroup": "blue",
     "colorBrightness": 74,
     "styleTags": [
-      "basic",
-      "daily",
-      "워시드"
+      "casual",
+      "vintage",
+      "street"
     ],
     "fit": "스트레이트",
     "length": "full",
@@ -1047,10 +1099,10 @@ export const seedMatchingItems = [
     "colorGroup": "blue",
     "colorBrightness": 44,
     "styleTags": [
-      "basic",
-      "daily",
-      "워시드",
-      "엔지니어"
+      "casual",
+      "vintage",
+      "street",
+      "y2k"
     ],
     "fit": "regular",
     "length": "full",
@@ -1070,7 +1122,9 @@ export const seedMatchingItems = [
     "colorBrightness": 22,
     "styleTags": [
       "basic",
-      "daily"
+      "casual",
+      "preppy",
+      "classic"
     ],
     "fit": "regular",
     "length": "full",
@@ -1089,8 +1143,9 @@ export const seedMatchingItems = [
     "colorGroup": "navy",
     "colorBrightness": 22,
     "styleTags": [
-      "basic",
-      "daily"
+      "casual",
+      "preppy",
+      "minimal"
     ],
     "fit": "regular",
     "length": "short",
@@ -1109,7 +1164,8 @@ export const seedMatchingItems = [
     "colorGroup": "gray",
     "colorBrightness": 28,
     "styleTags": [
-      "basic",
+      "cozy",
+      "casual",
       "daily"
     ],
     "fit": "이지",
@@ -1129,9 +1185,9 @@ export const seedMatchingItems = [
     "colorGroup": "gray",
     "colorBrightness": 54,
     "styleTags": [
-      "basic",
-      "daily",
-      "플리츠"
+      "minimal",
+      "sophisticated",
+      "modern"
     ],
     "fit": "와이드",
     "length": "full",
@@ -1150,10 +1206,10 @@ export const seedMatchingItems = [
     "colorGroup": "gray",
     "colorBrightness": 36,
     "styleTags": [
-      "trendy",
-      "daily",
-      "워시드",
-      "컷오프"
+      "casual",
+      "street",
+      "vintage",
+      "y2k"
     ],
     "fit": "플레어",
     "length": "full",
@@ -1173,7 +1229,9 @@ export const seedMatchingItems = [
     "colorBrightness": 0,
     "styleTags": [
       "basic",
-      "daily"
+      "minimal",
+      "formal",
+      "sophisticated"
     ],
     "fit": "테이퍼드",
     "length": "full",
@@ -1192,11 +1250,10 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 10,
     "styleTags": [
-      "trendy",
-      "daily",
-      "워시드",
-      "오버 다이드",
-      "페인터"
+      "casual",
+      "workwear",
+      "vintage",
+      "street"
     ],
     "fit": "regular",
     "length": "full",
@@ -1215,10 +1272,9 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 10,
     "styleTags": [
-      "basic",
-      "daily",
-      "워시드",
-      "엔지니어"
+      "street",
+      "vintage",
+      "casual"
     ],
     "fit": "regular",
     "length": "full",
@@ -1237,9 +1293,10 @@ export const seedMatchingItems = [
     "colorGroup": "black",
     "colorBrightness": 0,
     "styleTags": [
-      "basic",
-      "daily",
-      "워시드"
+      "casual",
+      "sporty",
+      "athleisure",
+      "daily"
     ],
     "fit": "regular",
     "length": "short",

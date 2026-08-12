@@ -17,6 +17,16 @@ def test_affinity_keys_are_subset_of_style_tags():
     assert used <= STYLE_TAG_SET, f"enum 밖 태그: {used - STYLE_TAG_SET}"
 
 
+def test_affinity_covers_every_style_tag_without_reverse_duplicates():
+    # 확장 enum 24개가 실제 랭킹에서 모두 점수를 받을 수 있어야 하며, 조회가 대칭이므로
+    # 같은 쌍을 양방향으로 저장하지 않는다.
+    affinities = affinity_map()
+    used = {tag for pair in affinities for tag in pair}
+    assert used == STYLE_TAG_SET
+    assert all(a != b for a, b in affinities)
+    assert all((b, a) not in affinities for a, b in affinities)
+
+
 def test_is_style_tag():
     assert is_style_tag("minimal")
     assert not is_style_tag("스트라이프")
