@@ -60,6 +60,13 @@ function PresetThumb({ type }) {
       <rect x="8" y="29" width="30" height="3.5" rx="1" fill={D} opacity=".7" />
       <rect x="8" y="35" width="72" height="2.6" rx="1" fill={F} stroke={G} strokeWidth="0.3" />
     </>);
+    case 'faq': return svg(<>
+      <rect x="8" y="5" width="22" height="4" rx="1" fill={D} />
+      <rect x="8" y="12" width="70" height="9" rx="4.5" fill="#fff" stroke={G} strokeWidth="0.6" />
+      <rect x="13" y="15" width="48" height="2.8" rx="1" fill={G} opacity=".65" />
+      <rect x="22" y="24" width="70" height="11" rx="5.5" fill="#dcecff" stroke={G} strokeWidth="0.4" />
+      <rect x="28" y="27" width="56" height="2.8" rx="1" fill={D} opacity=".6" />
+    </>);
     case 'fit_guide': return svg(<>
       {[10, 32, 54, 76].map((x, i) => <g key={x}>
         <rect x={x} y="8" width="16" height="20" rx="2.5" fill={i === 1 ? D : F} />

@@ -232,6 +232,10 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {number} [rotate]           (-180, 180]
    @property {number} [radius]
    @property {number} [opacity]          0~1
+   @property {string} [groupId]          composite object selection group
+   @property {string} [bubblePairId]     legacy matching speech-bubble shape/text pair; normalized away on load
+   @property {{minWidth:number,maxWidth:number,padX:number,padTop:number,padBottom:number,anchor:'left'|'right'}} [bubbleFit] unified text+bubble responsive sizing
+   @property {boolean} [flipX]           horizontally mirror shape geometry
    @property {boolean} [hidden]
    @property {boolean} [locked]
    @property {string|null} [src]         image. null = 빈 슬롯
@@ -239,8 +243,9 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {{ox:number,oy:number,iw:number,ih:number}} [crop]  image 인라인 크롭
    @property {string} [text]             text
    @property {Object} [style]            text — TextStyle (계약 §3.5)
-   @property {string} [shape]            shape: ShapeId / line: 'arrow-l'|'line'|'arrow-r'
+   @property {string} [shape]            shape: ShapeId / line: 'arrow-l'|'line'|'arrow-r'; text+'bubble' is a unified speech bubble
    @property {string} [fill]             shape
+   @property {number} [fillOpacity]      unified speech-bubble background opacity (text remains opaque)
    @property {string} [stroke]           shape·line ('none' 가능)
    @property {number} [strokeWidth]
    @property {string} [dash]             line: 'solid'|'dashed'|'dotted'
@@ -250,6 +255,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string} name
    @property {string} kind               SectionRole | 'size'|'care'|'ai-notice' (auto)
    @property {string} bg
+   @property {number} [bgOpacity]        background opacity only, 0~1
    @property {number} [h]                고정 높이 (px, 기준 폭 1000)
    @property {Element[]} elements        배열 순서 = z-order
    @property {boolean} [auto]

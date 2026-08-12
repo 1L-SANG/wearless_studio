@@ -228,6 +228,7 @@ EditorBlockBase {
   id: string
   name: string                     // 표시명
   bg: string                       // hex
+  bgOpacity?: number               // 0~1, 생략 시 1. 배경에만 적용(자식 요소 불투명도와 독립)
   h: number                        // 고정 높이(px, 기준 폭 1000)
   elements: Element[]              // 배열 순서 = z-order (뒤가 위)
 }
@@ -254,12 +255,15 @@ Element (공통) {
   x: number  y: number  w: number  h: number    // 블록 좌표계 (기준 폭 1000)
   rotate?: number                  // (-180, 180]
   opacity?: number                 // 0~1
+  groupId?: string                 // 복합 오브젝트 선택·이동 묶음 ID
+  libraryItemId?: string           // 배치한 추천 오브젝트 정의 ID(선택 메타데이터)
   hidden?: boolean
   locked?: boolean
 }
 Element (type='image') + {
   src: string | null               // null = 빈 슬롯 (프레임)
   radius?: number
+  frameSlot?: boolean              // true = drag/drop 교체·자르기·빼내기를 지원하는 이미지 슬롯
   cutType: CutType | null          // 생성 시 기록. null = 직접 업로드(미상)
   crop?: { ox: number, oy: number, iw: number, ih: number }   // 프레임 기준 원본 오프셋/크기
 }
@@ -308,7 +312,8 @@ infoType별 info shape (frontend `src/features/editor/presets/infoPresets.js`가
 | `required_notice` | `{ fields: [{key, label, value}] }` — 빈 value는 `정보 입력 필요`로 렌더 |
 | `shipping_returns` | `{ sections: [{title, body}] }` |
 | `header` | `{ nameKo, nameEn, eyebrow }` |
-| `benefit_copy` | `{ items: [{title, desc, src}] }` (2~5개, src = 원형 사진 슬롯 이월값) |
+| `benefit_copy` | `{ items: [{title, desc, src}] }` (2~8개, src = 원형 사진 슬롯 이월값) |
+| `faq` | `{ layout: 'cards'\|'chat', title, items: [{question, answer}] }` (2~6개) |
 | `fit_guide` | `{ fits: Fit[], current: Fit\|null }` |
 | `size_matrix` | `{ heights: string[], weights: string[], cells: string[][], note }` |
 | `model_info` | `{ models: [{name, height, size, src}] }` (최대 3) — 기본값은 프로젝트가 실제 사용 중인 모델(선택 가상모델 또는 FaceMarket 실존 모델)의 이름·사진으로 프리필 |
