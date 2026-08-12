@@ -9,21 +9,36 @@ import {
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const analysisSource = read('../../src/features/analysis/AnalysisForm.jsx');
+const analysisStyles = read('../../src/styles/features.css');
 const selectionSource = read('../../src/features/analysis/composeModeSelection.js');
 const storyboardSource = read('../../src/features/storyboard/Storyboard.jsx');
 
-test('the analysis confirmation CTA owns catalog-backed stacked compose cards', () => {
+test('the analysis confirmation CTA owns the catalog-backed split compose menu', () => {
   const ctaSource = analysisSource.slice(
     analysisSource.indexOf('const cta ='),
     analysisSource.indexOf('if (inline)'),
   );
 
   assert.match(analysisSource, /const composeModes = catalogs\?\.composeModes \|\| \[\]/);
-  assert.match(analysisSource, /label: `\$\{mode\.label\} · \$\{mode\.count\}컷`/);
-  assert.match(ctaSource, /className="af-vol" role="radiogroup"[\s\S]*?className=\{`af-vol-card/);
-  assert.match(ctaSource, /다음 화면인 상세페이지 구성으로 이동하고[\s\S]*?composeModeCredits/);
-  assert.doesNotMatch(ctaSource, /콘티 컷 수/);
-  assert.match(analysisSource, /CREDIT_COSTS\.storyboardPerCut/);
+  assert.match(analysisSource, /selectedComposeModeLabel = selectedComposeMode[\s\S]*?selectedComposeMode\.count/);
+  assert.match(ctaSource, /className=\{`af-cta-split\$\{composeModeOpen \? ' open' : ''\}`\}/);
+  assert.match(ctaSource, /aria-haspopup="listbox" aria-expanded=\{composeModeOpen\}/);
+  assert.match(ctaSource, /role="listbox"[\s\S]*?role="option" aria-selected=\{composeMode === mode\.value\}/);
+  assert.match(ctaSource, /\{mode\.desc\} · \{mode\.count\}컷/);
+  // 열리면 '선택된' 옵션부터 포커스하고 화살표로 이동한다 (리뷰 P2 반영, 2026-08-12)
+  assert.match(analysisSource, /aria-selected'\) === 'true'\) \|\| options\(\)\[0\]\)\?\.focus\(\)/);
+  assert.match(analysisSource, /ArrowDown' && event\.key !== 'ArrowUp'/);
+  // 옵션 선택으로 닫힐 때도 트리거로 포커스 복귀 — 닫힌 aria-hidden 안에 포커스가 남지 않게
+  assert.match(analysisSource, /setComposeModeOpen\(false\);\s*\n\s*composeModeTriggerRef\.current\?\.focus\(\);\s*\n\s*changeComposeMode\(mode\.value\)/);
+  assert.match(analysisSource, /event\.key === 'Escape'[\s\S]*?composeModeTriggerRef\.current\?\.focus\(\)/);
+  assert.match(analysisSource, /document\.addEventListener\('pointerdown', closeOnOutsideClick\)/);
+  assert.doesNotMatch(analysisSource, /composeModeCredits|CREDIT_COSTS\.storyboardPerCut/);
+  assert.doesNotMatch(ctaSource, /af-vol|af-cta-note|af-cta-actions/);
+  assert.doesNotMatch(analysisStyles, /\.af-vol|\.af-cta-note|\.af-cta-actions/);
+  assert.match(analysisStyles, /\.af-compose-popover \{[\s\S]*?left: 0;[\s\S]*?bottom: calc\(100% \+ 8px\)/);
+  // 팝오버는 왼칸 위에만 머문다 — 폭 상한이 없으면 확정 버튼 위까지 뻗는다 (2026-08-12)
+  assert.match(analysisStyles, /\.af-compose-popover \{[\s\S]*?min-width: 240px; max-width: 264px/);
+  assert.match(analysisStyles, /opacity: 0; transform: translateY\(6px\); pointer-events: none/);
   assert.match(analysisSource, /await composeModeSaveRef\.current;[\s\S]*?await onNext\(\);/);
   assert.match(ctaSource, /disabled=\{composeModeSaving \|\| confirming\}[\s\S]*?onClick=\{confirmAnalysis\}/);
 });

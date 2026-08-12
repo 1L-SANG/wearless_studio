@@ -205,9 +205,10 @@ input, textarea, select { font-family: inherit; }
   align-items: center; justify-content: flex-end; gap: 10px; padding: 16px 0 6px; }
 .wizard-cta::before { content: ''; position: absolute; inset: -24px -40px 0; z-index: -1;
   background: linear-gradient(180deg, rgba(244,244,246,0), var(--canvas) 60%); pointer-events: none; }
-.wizard-cta-analysis { isolation: isolate; background: var(--canvas); padding: 18px 0 10px; }
-.wizard-cta-analysis::before { z-index: 0; }
-.wizard-cta-analysis > * { position: relative; z-index: 1; }
+/* 분석 확정 바는 배경막 없이 떠 있는다(2026-08-12 사용자 결정) — 버튼·팝오버가 불투명해
+   가독을 스스로 책임지고, 뒤 내용은 자연히 비쳐 스크롤이 가려지지 않는다. */
+.wizard-cta-analysis { background: none; padding: 18px 0 10px; }
+.wizard-cta-analysis::before { content: none; }
 
 /* ====================== BUTTONS ====================== */
 .btn { font-family: var(--font-body); font-weight: 500; font-size: 15px; border: 0; cursor: pointer;
