@@ -83,11 +83,16 @@ function imageIds(product) {
 export function createDraftSlotSync({
   adapter = null,
   storage = null,
-  documentId = globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2),
+  documentId = null,
   debounceMs = DEFAULT_DEBOUNCE_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 } = {}) {
+  // 기본 매개변수 자리에 옵셔널 호출(?.())을 두면 esbuild(safari14 타깃)가
+  // 임시변수를 스코프 밖에서 참조하는 코드를 만들어 프로덕션 번들이 부팅에서
+  // 죽는다(ReferenceError). 반드시 함수 본문에서 채울 것.
+  documentId = documentId
+    ?? (globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
   let api = adapter;
   let token = readStorage(storage, TOKEN_KEY);
   let syncedAt = readStorage(storage, SYNCED_AT_KEY);
