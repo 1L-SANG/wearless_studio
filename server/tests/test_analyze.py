@@ -24,23 +24,29 @@ def test_analyze_route_404_for_unknown_project(client, make_token, monkeypatch):
 
 
 def test_analyze_route_creates_job(client, make_token, monkeypatch):
-    seen = {}
+    # 이 라우트는 잡을 **둘** 만든다: analyze(응답의 jobId)와 캐노니컬 전처리.
+    # 하나의 dict 에 덮어쓰면 뒤엣것만 남아 앞엣것을 검증하지 못한다.
+    calls = []
 
     async def fake_get_project(conn, uid, pid):
         return {"id": pid}
 
     async def fake_create_job(conn, **kw):
-        seen.update(kw)
-        return {"id": "job-analyze-1"}, True
+        calls.append(kw)
+        return {"id": f"job-{kw['kind']}-1"}, True
 
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
     monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
     patch_route_db(monkeypatch, routes)
     res = client.post("/v1/projects/p1/analyze", headers=auth_headers(make_token))
     assert res.status_code == 202, res.text
+    # 응답 jobId 는 **분석 잡**이다 — 전처리 잡이 응답을 가로채면 프론트가 엉뚱한 걸 폴링한다.
     assert res.json()["jobId"] == "job-analyze-1"
-    assert seen["kind"] == "analyze"
-    assert seen["credits_reserved"] == 0  # 무과금
+    analyze = next(c for c in calls if c["kind"] == "analyze")
+    assert analyze["credits_reserved"] == 0  # 무과금
+    sam = next(c for c in calls if c["kind"] == "sam_preprocess")
+    assert sam["credits_reserved"] == 0      # 전처리도 무과금
+    assert calls.index(analyze) < calls.index(sam)
 
 
 def test_analyze_route_idempotent_join(client, make_token, monkeypatch):
@@ -386,3 +392,26 @@ def test_input_consistency_failure_does_not_break_analysis(monkeypatch):
     _run(make_settings(gemini_api_key="g-x", input_consistency="warn"))
     assert captured["clothing_type"] == "top"                       # 분석은 정상 종결
     assert "inputConsistency" not in captured["result"]["data"]
+
+
+def test_analyze_survives_a_failing_sam_preprocess_enqueue(client, make_token, monkeypatch):
+    """전처리 큐잉이 터져도 분석은 202 로 나가야 한다.
+
+    회귀(2026-08-12): 두 잡을 한 트랜잭션에 묶었더니 `sam_preprocess` INSERT 가
+    jobs_kind_check 에 걸리는 순간 분석 잡까지 롤백돼 POST /analyze 가 통째로 500 이 됐다.
+    보조 인프라는 본 기능을 죽이면 안 된다 — 그 경계를 코드로 잠근다.
+    """
+    async def fake_get_project(conn, uid, pid):
+        return {"id": pid}
+
+    async def fake_create_job(conn, **kw):
+        if kw["kind"] == "sam_preprocess":
+            raise RuntimeError("jobs_kind_check violation")
+        return {"id": "job-analyze-1"}, True
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    patch_route_db(monkeypatch, routes)
+    res = client.post("/v1/projects/p1/analyze", headers=auth_headers(make_token))
+    assert res.status_code == 202, res.text
+    assert res.json()["jobId"] == "job-analyze-1"

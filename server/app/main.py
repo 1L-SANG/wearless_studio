@@ -146,6 +146,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 이미지 실비 계측 — 풀이 없으면(테스트·DB 미설정) 자동으로 로그 전용이 된다.
     image_usage.configure(pool=pool, persist=settings.image_usage_persist)
     app.state.dispatcher = None
+    # 캐노니컬 컷아웃 조회기. 마네킹 워커가 이걸 통해 준비된 컷아웃을 읽는다 —
+    # 없으면 None 을 돌려주고 베이스라인 경로가 그대로 돈다(보조 인프라).
+    from .services.canonical_reference import load as _canonical_load
+
+    app.state.canonical_reference_loader = _canonical_load
     # 공개 분석 리미터는 프로세스 로컬 안전밸브다(public_routes 주석의 다중 인스턴스 한계 참조).
     from .public_routes import PublicAnalysisRateLimiter
 

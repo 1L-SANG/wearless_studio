@@ -7,6 +7,7 @@
 import asyncio
 import hashlib
 import json
+import contextlib
 import logging
 import time
 import uuid
@@ -23,6 +24,7 @@ from .agents import (
     feature_copy,
     fit_axes,
     mannequin,
+    mannequin_base_fidelity_qc,
     product_analyst,
     space_set_assets,
     style_affinity,
@@ -925,6 +927,28 @@ async def analyze_product(
             payload={"mode": "analyze"}, idempotency_key=scoped_key,
             credits_reserved=0, metadata={})
         await conn.commit()
+        # 캐노니컬 컷아웃 전처리도 같이 띄운다. 분석과 독립적으로 돌고(소스 사진만 있으면 된다),
+        # 무과금이다. 여기서 거는 이유는 이 시점이 소스 사진이 확정된 첫 지점이고, 마네킹
+        # 생성이 시작되기 전에 끝나 있을 가능성이 가장 높아서다.
+        # 프로젝트당 1회 멱등(같은 키 재요청은 기존 잡에 합류) — create_job 이 원자 처리한다.
+        #
+        # **분석 커밋 뒤, 별도 트랜잭션에서, 예외를 삼키고** 건다. 한 트랜잭션에 묶었더니
+        # 전처리 잡 INSERT 가 실패하는 순간 분석 잡까지 롤백돼 POST /analyze 가 통째로 500 이
+        # 됐다(2026-08-12 로컬 QA — jobs_kind_check 에 sam_preprocess 가 없던 시점). 보조
+        # 인프라가 본 기능을 죽이지 않는다는 건 주석이 아니라 트랜잭션 경계로 지켜야 한다.
+        try:
+            await repo.create_job(
+                conn, user_id=user_id, project_id=project_id, kind="sam_preprocess",
+                payload={"mode": "canonical_cutout"},
+                idempotency_key=f"{project_id}:sam_preprocess",
+                credits_reserved=0, metadata={})
+            await conn.commit()
+        except Exception:  # noqa: BLE001 - 전처리 큐잉 실패가 분석을 막지 않는다
+            # 정리 코드가 다시 터져서 500 이 되면 위 보장이 무의미하다. rollback 실패까지 삼킨다.
+            with contextlib.suppress(Exception):
+                await conn.rollback()
+            logger.warning("sam_preprocess enqueue failed for project %s", project_id,
+                           exc_info=True)
     _wake_dispatcher(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 
@@ -1716,6 +1740,42 @@ async def adjust_mannequin(
                 "message": "마네킹 조정은 종료된 기능이에요. 핏 수정 후 재생성을 이용해 주세요."})
 
 
+async def _enqueue_base_fidelity_observation(conn, *, user_id, project_id):
+    """거부된 컷의 베이스 충실도 관측 잡을 건다 (무과금·이미지 생성 없음).
+
+    **재생성을 절대 막지 않는다.** 판정은 6~17초가 걸리므로 요청 경로에서 돌리지 않고, 잡 하나로
+    떼어 비동기로 보낸다. 큐잉 자체가 실패해도 삼킨다 — 관측 때문에 셀러의 재생성이 실패하면
+    본말전도다(2026-08-12 sam_preprocess 에서 같은 실수를 이미 한 번 했다).
+
+    멱등키에 거부된 컷 id 와 판정기 버전을 넣는다. 같은 컷을 같은 판정기로 두 번 보는 것은
+    표본이 아니라 중복이고, 판정기가 바뀌면 다시 볼 가치가 있다.
+    """
+    try:
+        # 거부된 컷의 신원을 **여기서** 붙잡는다. 재생성 잡은 방금 큐에 들어갔을 뿐이라 아직
+        # 새 컷이 없고, 지금의 "선택된 또는 최신 컷"이 곧 셀러가 거부한 그 컷이다.
+        #
+        # 커밋 **뒤**에 조회하는 이유: 같은 트랜잭션 안에서 돌렸더니 조회가 실패하는 순간
+        # 재생성 요청이 통째로 500 이 됐다(2026-08-12 테스트에서 검출). 관측을 위해 본
+        # 기능을 위험에 빠뜨리지 않는다.
+        rejected = await repo.get_mannequin_edit_parent(conn, user_id, project_id)
+        if not rejected or not rejected.get("id"):
+            return  # 거부할 이전 컷이 없다(첫 생성 재시도 등) — 관측 대상 아님
+        cut_id = rejected["id"]
+        await repo.create_job(
+            conn, user_id=user_id, project_id=project_id, kind="base_fidelity_observe",
+            payload={"rejectedCutId": cut_id,
+                     "cutMetadata": rejected.get("generation_metadata")},
+            idempotency_key=(f"{project_id}:base_fidelity_observe:{cut_id}:"
+                             f"{mannequin_base_fidelity_qc.QC_VERSION}"),
+            credits_reserved=0, metadata={})
+        await conn.commit()
+    except Exception:  # noqa: BLE001 - 관측 큐잉 실패가 재생성을 막지 않는다
+        with contextlib.suppress(Exception):
+            await conn.rollback()
+        logger.warning("base fidelity observation enqueue failed for project %s",
+                       project_id, exc_info=True)
+
+
 @router.post(
     "/projects/{project_id}/mannequins:regenerate",
     responses={
@@ -1789,6 +1849,9 @@ async def regenerate_mannequins(
                     analysis["fitProfile"] = fit_profile
                     await repo.save_analysis(conn, project_id, analysis)
         await conn.commit()
+        if created:
+            await _enqueue_base_fidelity_observation(
+                conn, user_id=user_id, project_id=project_id)
     _wake_dispatcher(request)
     return JSONResponse(status_code=202, content={"jobId": job["id"]})
 

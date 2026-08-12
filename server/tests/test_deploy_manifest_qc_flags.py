@@ -28,6 +28,10 @@ QC_FLAGS = [
     ("MANNEQUIN_UNTUCK_PASS", "mannequin_untuck_pass"),
     ("MANNEQUIN_FABRIC_PASS", "mannequin_fabric_pass"),
     ("MANNEQUIN_BUST_PASS", "mannequin_bust_pass"),
+    # 베이스 충실도: 판정 스위치와 거부컷 관측 스위치는 별개다. 둘 다 미선언이면 off 로 떨어진다.
+    ("MANNEQUIN_BASE_FIDELITY_QC", "mannequin_base_fidelity_qc"),
+    ("MANNEQUIN_BASE_FIDELITY_OBSERVE_REGENERATIONS",
+     "mannequin_base_fidelity_observe_regenerations"),
 ]
 
 
@@ -124,3 +128,44 @@ def test_loader_silently_falls_back_on_typo(monkeypatch):
     monkeypatch.setenv("IMAGE_QC", "shadwo")
     assert load_settings().image_qc == "off"
     assert os.environ["IMAGE_QC"] == "shadwo"  # env 는 그대로인데 설정만 off
+
+
+# ── 배포 순서 계약 ───────────────────────────────────────────────────────────
+
+WORKFLOW = pathlib.Path(__file__).resolve().parents[2] / ".github/workflows/deploy-server.yml"
+
+
+def _deploy_step_names() -> list[str]:
+    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    return [s.get("name") or s.get("uses") or "" for s in doc["jobs"]["deploy"]["steps"]]
+
+
+def test_migrations_run_before_any_service_deploy():
+    """DB 제약이 먼저다 — 코드가 먼저 뜨면 새 job kind 가 조용히 죽는다.
+
+    회귀(2026-08-12): `sam_preprocess` 를 워커·라우트에 등록하고 `jobs_kind_check` 에는 안
+    넣었다. 잡 INSERT 가 CheckViolation 으로 죽었고 그 실패는 삼켜지도록 짜여 있어서
+    **에러 하나 없이 기능만 사라졌다**. 순서를 주석이 아니라 테스트로 잠근다.
+    """
+    steps = _deploy_step_names()
+    mig = next(i for i, n in enumerate(steps) if "마이그레이션" in n)
+    sam = next(i for i, n in enumerate(steps) if "SAM2" in n)
+    api = next(i for i, n in enumerate(steps) if n.startswith("배포"))
+    assert mig < sam < api, steps
+
+
+def test_migration_step_fails_loudly_without_its_secret():
+    """시크릿이 없으면 **건너뛰지 말고 실패**해야 한다. 조용한 skip 이 사고의 원인이다."""
+    body = WORKFLOW.read_text(encoding="utf-8")
+    assert "supabase db push" in body
+    assert 'if [ -z "$SUPABASE_DB_URL" ]; then' in body
+    assert "exit 1" in body
+
+
+def test_migration_step_uses_the_pinned_cli_version():
+    """test job 과 같은 CLI 버전 — 버전이 갈리면 로컬 검증과 프로덕션 적용이 달라진다."""
+    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    versions = {s["with"]["version"] for j in ("test", "deploy")
+                for s in doc["jobs"][j]["steps"]
+                if str(s.get("uses", "")).startswith("supabase/setup-cli")}
+    assert len(versions) == 1, versions

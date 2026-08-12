@@ -21,6 +21,11 @@ class FakeConn:
     async def commit(self):
         return None
 
+    async def rollback(self):
+        # 실제 psycopg 커넥션에는 있고 여기만 없어서, 라우트의 예외 정리 경로가
+        # AttributeError 로 다시 터졌다(2026-08-12). 가짜 커넥션도 같은 표면을 가져야 한다.
+        return None
+
 
 def patch_route_db(monkeypatch, routes_module):
     @contextlib.asynccontextmanager

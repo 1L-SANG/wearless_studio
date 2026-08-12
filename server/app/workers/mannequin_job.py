@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Mapping
 from contextlib import suppress
 from io import BytesIO
 
@@ -20,6 +21,7 @@ log = logging.getLogger("wearless.mannequin_job")
 from .. import repo
 from ..agents import (
     image_qc,
+    mannequin_base_fidelity_qc,
     mannequin,
     mannequin_bust,
     mannequin_fabric,
@@ -43,7 +45,8 @@ from ..agents.prompts import (
     render_mannequin_prompt,
 )
 from ..r2 import IMMUTABLE_CACHE, ai_key, ext_for_mime
-from ..services import qc
+from ..services import canonical_reference, qc, sam_fallback
+from ..services import generation_input_strategy as gis
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
 
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
@@ -123,7 +126,101 @@ _SLOT_LABEL = {
     "Detail": "front-side detail close-up of the garment (texture, stitching, trims, print)",
     "BackDetail": ("back-side detail close-up of the garment (a back-only feature — "
                    "back neck, yoke, back pocket)"),
+    # 캐노니컬 컷아웃 슬롯. 기본 첨부가 아니라 니트 폴백에서만 뒤에 덧붙는다(아래
+    # `_maybe_augment_with_canonical`). 라벨 문구는 새로 쓰지 않고 이미 승인된
+    # generation_input_strategy 의 것을 그대로 재사용한다 — "비율·구성의 증거이지
+    # 실루엣 템플릿이 아니다"가 이 첨부의 전부이고, 두 벌로 갈라지면 안 된다.
+    canonical_reference.CANONICAL_FRONT: gis.CANONICAL_MANIFEST_LINE,
+    canonical_reference.CANONICAL_BACK: gis.CANONICAL_BACK_MANIFEST_LINE,
 }
+
+# 캐노니컬 슬롯 순서. Detail 은 없다 — 컷아웃은 전체 형태의 증거지 근접 질감의 증거가 아니다.
+_CANONICAL_SLOTS = (canonical_reference.CANONICAL_FRONT, canonical_reference.CANONICAL_BACK)
+
+
+def _canonical_sources(prod_assets: list[dict]) -> dict[str, dict]:
+    """캐노니컬 조회에 쓸 {view: {"id", "hash"}} — 지금 이 상품의 원본 사진이 무엇인지.
+
+    로더는 이 목록에 없는 소스를 가리키는 컷아웃을 stale 로 보고 조용히 버린다. 사진을 갈아끼운
+    프로젝트에 옛 옷의 컷아웃이 붙는 사고를 여기서 막는다.
+    """
+    out: dict[str, dict] = {}
+    for a in prod_assets:
+        slot = a.get("slot")
+        if slot in canonical_reference.SLOT_FOR_VIEW and slot not in out:
+            out[slot] = {"id": a.get("id"), "hash": None}
+    return out
+
+
+async def _load_canonical_references(app, *, project_id, prod_assets=()) -> dict:
+    """준비된 캐노니컬 컷아웃을 슬롯별로. 실패는 **전부** 빈 dict 로 강등된다.
+
+    보조 인프라다: 로더 미배선·DB 장애·형식 불일치 어느 쪽이든 마네킹 생성은 RAW 경로로
+    그대로 돌아야 하고, 전처리 완료를 기다려서도 안 된다. 그래서 여기서 넓게 잡는다.
+
+    로더가 슬롯 dict 대신 `ProductReference` 하나를 돌려주는 예전 형태도 받아 준다.
+    """
+    loader = getattr(app.state, "canonical_reference_loader", None)
+    if loader is None:
+        return {}
+    try:
+        async with app.state.pool.connection() as conn:
+            out = await loader(conn, app.state.r2, project_id=project_id,
+                               sources=_canonical_sources(prod_assets))
+    except Exception as e:  # noqa: BLE001 - 조회 실패가 생성 경로를 막지 않는다
+        log.warning("canonical reference load failed for project %s: %r", project_id, e)
+        return {}
+    if out is None:
+        return {}
+    slot = getattr(out, "slot", None)
+    if slot:                       # 단일 ProductReference 를 돌려주는 예전 로더
+        return {slot: out}
+    return dict(out) if isinstance(out, Mapping) else {}
+
+
+def _maybe_augment_with_canonical(
+    *, product, analysis, canonical_refs, already_used, generation_path,
+    images, image_manifest, template, ctx_kwargs, settings, prompt_suffix="",
+):
+    """니트 폴백 1회. 반환 `(augmented, verdict)` — augmented 는 None 이거나 (images, prompt).
+
+    베이스라인이 먼저 돌고, 기존 QC 가 retry 라고 판정했을 때만 여기 온다. 자격 판정은 전부
+    `sam_fallback.decide` 가 하고(니트 계열 + 캐노니컬 READY + 미사용), 이 함수는 그 결정을
+    이미지 목록과 매니페스트로 옮기기만 한다. 캐노니컬이 없으면 아무 일도 없다 — 전처리를
+    기다리지 않는다.
+
+    두 가지를 코드로 못박는다.
+      · RAW 는 절대 대체되지 않는다. 캐노니컬은 **뒤에 덧붙기만** 한다.
+      · 프롬프트는 문자열로 조립하지 않고 **같은 템플릿을 다시 렌더**한다. 승인된 문구가
+        폴백 경로에서 두 벌로 갈라지는 것을 막는다.
+    """
+    if generation_path == "edit":
+        # 편집 경로는 image 1 = 현재 컷이라는 별도 계약이 있다. 여기에 끼워 넣으면 그게 깨진다.
+        return None, {"samFallbackTriggered": False, "augment": False,
+                      "samFallbackReason": "edit_path"}
+    verdict = sam_fallback.decide(
+        product=product, analysis=analysis, qc_says_retry=True,
+        canonical_refs=canonical_refs, already_used=already_used)
+    if not verdict.get("augment"):
+        return None, verdict
+    extra, lines = [], []
+    for slot in _CANONICAL_SLOTS:
+        ref = canonical_refs.get(slot)
+        if ref is not None:
+            lines.append(f"{len(images) + len(extra) + 1}. {_SLOT_LABEL[slot]}")
+            extra.append(ref.image)
+    if not extra:  # decide 가 READY 라 했는데 슬롯이 비는 경우 — 방어
+        return None, {**verdict, "samFallbackTriggered": False, "augment": False,
+                      "samFallbackReason": "canonical_missing"}
+    manifest = "\n".join([image_manifest, *lines]) if image_manifest else "\n".join(lines)
+    ctx = mannequin.prompt_context(**{**ctx_kwargs, "image_manifest": manifest})
+    prompt = render_mannequin_prompt(
+        template, ctx, product, analysis,
+        seller_canon=settings.seller_text_canonicalize, knowledge=settings.retrieval_knowledge,
+    )
+    if prompt_suffix:
+        prompt = f"{prompt}\n\n{prompt_suffix}"
+    return ((*images, *extra), prompt), verdict
 
 
 def _build_manifest(
@@ -638,6 +735,73 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
     return pillow_reject, isinstance(p2, dict) and p2.get("verdict") == "retry"
 
 
+#: enforce 에서 **실제로 게이트하는** 축. wearGeometry 는 아직 여기 없다 — 보정이
+#: 통과하지 못했다(2026-08-12: 전체 프레임·크롭 컴포지트 양쪽에서 진양성 2건을 모두
+#: pass 로 판정). 축을 추가하는 것은 그 게이트를 통과시킨 뒤의 별도 변경이다.
+_BASE_FIDELITY_GATED_AXES = ("poseFrameMatch",)
+
+
+def base_fidelity_retry_axes(s, result) -> list[str]:
+    """베이스 충실도가 재시도를 요구하는 축 목록 (순수).
+
+    `enforce` 일 때만, 그리고 **명시적 retry** 일 때만 요구한다. provider 실패·베이스 없음·
+    형식 위반은 전부 `skip` 으로 오는데, 그걸 retry 로 바꾸면 판정기 장애가 생성 실패로
+    번진다. 판정 못 한 것은 판정 안 한 것이다.
+    """
+    if getattr(s, "mannequin_base_fidelity_qc", "off") != "enforce" or not result:
+        return []
+    return [a for a in _BASE_FIDELITY_GATED_AXES
+            if (result.get(a) or {}).get("decision") == "retry"]
+
+
+async def _apply_base_fidelity_qc(
+    *, pool, s, job_id, candidate, attempt, base_img, res, product, analysis,
+) -> dict | None:
+    """베이스 충실도 QC 발화 + 이벤트. **어떤 경우에도 예외를 올리지 않는다.**
+
+    현재는 관측 전용이다 — 반환값은 `gate_decision`·`final_decision` 어디에도 들어가지
+    않는다. 이 QC 는 아직 캘리브레이션 데이터가 없고, 계약상 이번 롤아웃의 목적은
+    "얼마나 자주 무엇을 잡는가"를 재는 것이다.
+
+    `enforce` 에서는 `poseFrameMatch` 만 게이트한다(`_BASE_FIDELITY_GATED_AXES`).
+    wearGeometry 는 판정은 하되 재시도를 요구하지 않는다 — 보정 게이트를 통과하지 못했다.
+    `shadow`·`off` 는 어느 축도 게이트하지 않는다.
+    """
+    mode = getattr(s, "mannequin_base_fidelity_qc", "off")
+    if mode not in ("shadow", "enforce"):
+        return None
+    base_event = {
+        "candidate": candidate, "attempt": attempt,
+        "baseFidelityQcEnabled": True, "baseFidelityQcMode": mode,
+        # 지금은 관측뿐이라는 사실을 이벤트에 남긴다 — 나중에 분포를 볼 때 "왜 안 막혔나"를
+        # 로그만 보고 알 수 있어야 한다.
+        "baseFidelityQcGating": mode == "enforce",
+        "baseFidelityGatedAxes": list(_BASE_FIDELITY_GATED_AXES),
+    }
+    try:
+        result = await mannequin_base_fidelity_qc.verdict(
+            s, base_img, InlineImage(res.mime, res.image),
+            product=product, analysis=analysis)
+    except Exception as e:  # noqa: BLE001 - 판정 실패가 생성을 막지 않는다
+        log.warning("base fidelity QC failed for job %s: %r", job_id, e)
+        result = mannequin_base_fidelity_qc.skipped(
+            mannequin_base_fidelity_qc.SKIP_FAILED)
+        await _emit(pool, job_id, "step", {
+            **base_event, "status": "base_fidelity_qc_failed",
+            "error": type(e).__name__, "message": str(e)[:200],
+            "baseFidelity": result})
+        return result
+    await _emit(pool, job_id, "step", {
+        **base_event, "status": "base_fidelity_qc",
+        "poseFrameMatch": result["poseFrameMatch"]["decision"],
+        "wearGeometry": result["wearGeometry"]["decision"],
+        "overall": result["overall"]["decision"],
+        "reasons": {a: result[a]["reason"] for a in
+                    (*mannequin_base_fidelity_qc.AXES, "overall")},
+        "baseFidelity": result})
+    return result
+
+
 async def _apply_bust_pass(
     *, pool, gemini, s, job_id, candidate, attempt, base_gender, res, calls_spent,
     clothing_type=None, image_size=None,
@@ -950,7 +1114,7 @@ async def _run_candidate(
     product_count, template, product, analysis, clothing_type, image_manifest="", fit_profile=None,
     adjusted_axes=(), fit_profile_source="legacy_analysis_fallback", ref_imgs=(),
     generation_path="fresh", parent_cut_img=None, adjust_directives="",
-    cancel_check=None,
+    cancel_check=None, canonical_refs=None,
 ) -> dict | None:
     """후보 1개 생성. 통과 시 R2 저장 후 finalize용 dict 반환, 실패 시 None."""
     s = app.state.settings
@@ -967,21 +1131,26 @@ async def _run_candidate(
             adjust_directives, build_adjust_manifest(len(prod_imgs), match_img is not None))
         prompt_version = ADJUST_PROMPT_VERSION
         model = resolve_model(s, getattr(s, "mannequin_adjust_tier", "") or "image_high")
+        ctx_kwargs, prompt_suffix = {}, ""  # 편집 경로는 캐노니컬 재렌더 대상이 아니다
     else:
         generation_path = "fresh"
         # STYLE REFERENCE(있으면)는 상품·매칭 뒤 맨 끝에 붙는다 — 매니페스트 번호 순서와 일치.
         images = [base_img, *prod_imgs] + ([match_img] if match_img else []) + list(ref_imgs)
-        ctx = mannequin.prompt_context(
+        # 캐노니컬 폴백이 매니페스트만 바꿔 **같은 템플릿을 다시 렌더**할 수 있도록 kwargs 로 둔다.
+        ctx_kwargs = dict(
             clothing_type=clothing_type, product_count=product_count,
             base_gender=base_gender, image_manifest=image_manifest, fit_profile=fit_profile,
             adjusted_axes=adjusted_axes,
         )
+        ctx = mannequin.prompt_context(**ctx_kwargs)
         base_prompt = render_mannequin_prompt(
             template, ctx, product, analysis,
             seller_canon=s.seller_text_canonicalize, knowledge=s.retrieval_knowledge,
         )
-        if ref_imgs:  # 레퍼런스 첨부 시에만 오염 가드를 프롬프트 말미에 강조(look-only)
-            base_prompt = f"{base_prompt}\n\n{_STYLE_REF_GUARD}"
+        # 레퍼런스 첨부 시에만 오염 가드를 프롬프트 말미에 강조(look-only). 재렌더도 같은 꼬리를 받는다.
+        prompt_suffix = _STYLE_REF_GUARD if ref_imgs else ""
+        if prompt_suffix:
+            base_prompt = f"{base_prompt}\n\n{prompt_suffix}"
         prompt_version = s.mannequin_prompt_version
         # AG-04는 처음부터 단일 tier(기본 image_high=Pro, 사용자 결정 — Flash·승격 없음).
         # QC 게이팅 시 같은 모델로 재시도(re-roll + 교정 피드백). shadow면 첫 결과 채택.
@@ -999,6 +1168,10 @@ async def _run_candidate(
     # 이미지 모델 호출 예산은 한 통이다 — 생성·axis 편집·bust 2패스가 전부 여기서 나간다.
     # 호출 **직전**에 소비하고, 재생성 여부는 남은 잔량으로만 판단한다.
     calls_spent = 0
+    # 캐노니컬 증강은 후보당 1회다. 두 번 붙이면 같은 컷아웃이 중복 첨부되고 매니페스트 번호가
+    # 어긋난다 — decide 의 `already_used` 가 이 플래그를 본다.
+    canonical_refs = canonical_refs or {}
+    sam_fallback_used = False
     profile_hash = _canonical_profile_hash(fit_profile)
     for attempt in range(1, s.mannequin_max_attempts + 1):
         if calls_spent >= s.mannequin_max_attempts:
@@ -1077,6 +1250,11 @@ async def _run_candidate(
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "image_qc_failed",
                     "error": type(e).__name__, "message": str(e)[:200]})
+        # 베이스 충실도 QC(관측 전용). 반환값은 아래 게이트에 **넣지 않는다** — 넣는 순간
+        # shadow 가 아니게 된다. 실패해도 None/skip 을 돌려줄 뿐 생성 경로를 막지 않는다.
+        base_fidelity = await _apply_base_fidelity_qc(
+            pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+            base_img=base_img, res=res, product=product, analysis=analysis)
         # **사전 게이트** — 잘못된 옷을 axis/bust 편집하면 그 정체성이 보존되므로, 편집 전에
         # 한 번 거른다. 최종 출고 판정은 여기가 아니라 아래 final_decision 하나가 내린다.
         pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
@@ -1132,16 +1310,34 @@ async def _run_candidate(
                 p2, series, salvaged=salvaged,
                 thresholds=(s.qc_score_auto_pass, s.qc_score_review))
             budget_left = has_budget_for_retry(s, calls_spent=calls_spent)
+            # 베이스 충실도는 **재시도 사유를 하나 더 대는 것**이지 별도 루프가 아니다.
+            # 기존 판정과 OR 로 합류하고, 예산·구제·SAM 폴백은 아래 분기가 그대로 소유한다.
+            bf_axes = base_fidelity_retry_axes(s, base_fidelity)
+            needs_retry = final_decision(s, qc_scores) == "retry" or bool(bf_axes)
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
-            if final_decision(s, qc_scores) == "retry" and budget_left and not salvaged:
+            if needs_retry and budget_left and not salvaged:
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "final_qc_reject",
                     "outcome": score_outcome(s, qc_scores),
+                    "baseFidelityRetryRequired": bool(bf_axes),
+                    "baseFidelityRetryAxes": bf_axes,
                     "seriesConsistency": (series or {}).get("consistency")})
                 # 편집 완료 이미지 + A~D 전체 스냅샷 — 최종 단계 후보 풀에만 담는다.
                 if _is_better_candidate(s, qc_scores, final_reject[1] if final_reject else None):
                     final_reject = (res, qc_scores, series, p2)
                 feedback = _build_retry_feedback(qc_scores, series, p2)
+                # 추가 예산을 만들지 않는다 — 이미 승인된 재생성의 **입력만** 바꾼다.
+                augmented, sam_verdict = _maybe_augment_with_canonical(
+                    product=product, analysis=analysis, canonical_refs=canonical_refs,
+                    already_used=sam_fallback_used, generation_path=generation_path,
+                    images=images, image_manifest=image_manifest, template=template,
+                    ctx_kwargs=ctx_kwargs, settings=s, prompt_suffix=prompt_suffix)
+                await _emit(pool, job_id, "step", {
+                    "candidate": candidate, "attempt": attempt,
+                    "status": "sam_fallback_decision", **sam_verdict})
+                if augmented is not None:
+                    images, base_prompt = augmented
+                    sam_fallback_used = True
                 continue
             # 예산 소진인데 최종 판정이 retry 라면 최선본으로 되돌려 구제 출고한다.
             # **final_reject 만** 쓴다 — pre_reject 는 편집·재판정·D축을 안 거친 원본이라
@@ -1290,6 +1486,11 @@ async def run_mannequin_job(app, job: dict) -> None:
         await _emit(pool, job_id, "progress", {"progress": 15, "phase": "inputs_loaded",
                                                "withBottom": match_img is not None})
 
+        # 준비된 캐노니컬 컷아웃(있으면). 없으면 그냥 없다 — 전처리 잡은 따로 돌고,
+        # 여기서 기다리거나 실패시키지 않는다.
+        canonical_refs = await _load_canonical_references(
+            app, project_id=project_id, prod_assets=prod_assets)
+
         # 3) 단일 후보 생성(2026-07-13 사용자 결정: 한 번에 1컷) — 확정 fit profile 기준.
         #    구 A/B 이원(정핏/슬림 동시 2컷)은 폐기: 셀러가 고른 핏과 무관한 슬림 변형이
         #    함께 떠서 혼란(버전 스트립에 2개) + 재생성마다 2컷씩 쌓이던 문제.
@@ -1414,7 +1615,8 @@ async def run_mannequin_job(app, job: dict) -> None:
                     fit_profile=profile, adjusted_axes=adjusted_axes,
                     fit_profile_source=fit_profile_source, ref_imgs=ref_imgs,
                     generation_path=generation_path, parent_cut_img=parent_cut_img,
-                    adjust_directives=adjust_directives, cancel_check=_cancel_check)
+                    adjust_directives=adjust_directives, cancel_check=_cancel_check,
+                    canonical_refs=canonical_refs)
             except _MannequinJobCancelled:
                 raise
             except Exception as e:

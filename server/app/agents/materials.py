@@ -95,7 +95,7 @@ OVERRIDE_BLOCK = {
     "denim": "sturdy cotton twill with a diagonal grain and firm, structured folds holding crease lines at knees/hips/hems; match the photo's wash and surface.",
     "leather": "opaque leather with highlights that follow the folds and seams; take its sheen, from matte suede to glossy patent, and its body from the photo.",
     "brushed": "soft napped pile adding cozy loft and softened folds, usually matte; follow the photo for where the nap shows and for weight and sheen.",
-    "knit": "let the visible gauge and stitch — jersey, rib, cable, waffle — drive the texture, and render only the stitch the photo shows, with a soft body-following drape.",
+    "knit": "let the visible gauge and stitch — jersey, rib, cable, waffle — drive the texture, and render only the stitch the photo shows, with a soft body-following drape. Knit is a soft, deformable fabric: it settles onto the body it is worn on and takes that body's three-dimensional volume, rather than holding the flat rectangular shape it has lying on a table. Its thickness is the thickness of the yarn and the loft of the stitch, not distance standing away from the body.",
     "seersucker": "lightweight puckered fabric with alternating crinkled and flat stripes that lift off the body; keep the puckered stripe texture and take sheen from the photo.",
     "chiffon": "very light, airy sheer that floats and ripples in soft folds and diffuses light; follow the photo for sheen and opacity, keeping any lining and coverage it shows.",
     "gauze": "soft, open-woven fabric with an airy crinkled texture and relaxed drape, usually matte; follow the photo for sheen and opacity.",
@@ -191,7 +191,14 @@ def _cat_has_knit(clothing_type: str, sub_category: str) -> bool:
 
 
 def _knit_cue(knit_ctx: bool) -> str:
-    return ("Visible knit stitch structure faithful to the reference (rib/cable/jersey/waffle as shown)."
+    """니트 맥락에서 붙는 꼬리. 스티치 구조 + '옷이 몸 부피를 받는다'.
+
+    두 번째 문장은 니트가 몸 앞에 판처럼 뜨는 현상 때문에 붙었다. fit class 는 건드리지
+    않는다 — oversized 는 oversized 로 남고, 달라지는 건 그 여유분이 몸을 감싸느냐다.
+    """
+    return ("Visible knit stitch structure faithful to the reference (rib/cable/jersey/waffle as shown). "
+            "Knit yields to the body underneath: it drapes over the shoulders and around the torso and "
+            "takes their volume, while keeping the product's own fit and ease exactly as they are."
             if knit_ctx else "")
 
 

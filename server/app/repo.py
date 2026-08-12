@@ -1705,6 +1705,41 @@ async def finalize_mannequin_adjust_failure(
 # clothingType 은 Product 단일 소유(계약 §3.1)라 products 에, 나머지 분석은 analyses.payload 에 쓴다.
 
 
+async def finalize_uncharged_job(
+    conn: AsyncConnection,
+    *,
+    job_id: str,
+    lease_token: str,
+    status: str,
+    result: dict,
+) -> bool:
+    """무과금 잡의 종결(원자·lease 펜스). False = lease 상실 → 아무것도 쓰지 않는다.
+
+    크레딧을 전혀 건드리지 않는 잡(현재 sam_preprocess)의 공용 종결자다. 예약이 없으니
+    해제할 것도 없고, 남는 건 jobs 행 갱신과 종결 이벤트뿐이다. lease 를 확인하는 이유는
+    다른 finalize 들과 같다 — 복구 sweep 이 재클레임한 잡에 옛 워커가 뒤늦게 덮어쓰는 것을
+    막는다.
+    """
+    event = "done" if status == "done" else "error"
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from jobs where id = %s and locked_by = %s and status = 'running' for update",
+            (job_id, lease_token),
+        )
+        if await cur.fetchone() is None:
+            return False  # lease 빼앗김 — 부수효과 0
+        await cur.execute(
+            "update jobs set status = %s, result = %s, progress = 100, "
+            "locked_by = null, locked_at = null, finished_at = now() where id = %s",
+            (status, Json(result), job_id),
+        )
+        await cur.execute(
+            "insert into job_events (job_id, event_type, payload) values (%s, %s, %s)",
+            (job_id, event, Json(result)),
+        )
+    return True
+
+
 async def finalize_analyze_success(
     conn: AsyncConnection,
     *,
