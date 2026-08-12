@@ -13,7 +13,232 @@ const FULL_LENGTH_PANTS_CATEGORIES = new Set([
 ]);
 const SKIRT_CATEGORIES = new Set(['스커트', 'skirt']);
 
+const pairMap = (pairs) => new Map(
+  pairs.map(([left, right, score]) => [`${left}|${right}`, score]),
+);
+
+// server/app/agents/style_affinity.py 사본 — mock도 실서버와 같은 스타일 합을 계산한다.
+const STYLE_AFFINITY = pairMap([
+  ['basic', 'daily', 0.9],
+  ['basic', 'minimal', 0.85],
+  ['basic', 'casual', 0.75],
+  ['formal', 'minimal', 0.8],
+  ['formal', 'classic', 0.85],
+  ['sporty', 'casual', 0.8],
+  ['sporty', 'daily', 0.6],
+  ['minimal', 'casual', 0.7],
+  ['daily', 'casual', 0.85],
+  ['trendy', 'casual', 0.65],
+  ['trendy', 'daily', 0.55],
+  ['formal', 'daily', 0.3],
+  ['sporty', 'formal', 0.15],
+  ['minimal', 'trendy', 0.5],
+  ['basic', 'trendy', 0.45],
+  ['minimal', 'modern', 0.92],
+  ['minimal', 'sophisticated', 0.82],
+  ['minimal', 'chic', 0.78],
+  ['modern', 'sophisticated', 0.9],
+  ['modern', 'chic', 0.85],
+  ['modern', 'luxury', 0.72],
+  ['basic', 'modern', 0.72],
+  ['daily', 'cozy', 0.88],
+  ['casual', 'cozy', 0.9],
+  ['minimal', 'cozy', 0.65],
+  ['street', 'trendy', 0.9],
+  ['street', 'y2k', 0.88],
+  ['street', 'unique', 0.82],
+  ['street', 'casual', 0.82],
+  ['y2k', 'trendy', 0.92],
+  ['y2k', 'unique', 0.85],
+  ['y2k', 'retro', 0.8],
+  ['unique', 'trendy', 0.83],
+  ['vintage', 'retro', 0.9],
+  ['retro', 'trendy', 0.72],
+  ['sporty', 'athleisure', 0.95],
+  ['athleisure', 'casual', 0.88],
+  ['athleisure', 'daily', 0.78],
+  ['athleisure', 'street', 0.75],
+  ['sporty', 'street', 0.7],
+  ['feminine', 'lovely', 0.9],
+  ['feminine', 'romantic', 0.92],
+  ['feminine', 'chic', 0.78],
+  ['feminine', 'sophisticated', 0.82],
+  ['feminine', 'luxury', 0.72],
+  ['lovely', 'romantic', 0.88],
+  ['romantic', 'vintage', 0.78],
+  ['chic', 'luxury', 0.86],
+  ['chic', 'sophisticated', 0.9],
+  ['classic', 'sophisticated', 0.92],
+  ['classic', 'luxury', 0.86],
+  ['formal', 'sophisticated', 0.92],
+  ['formal', 'luxury', 0.84],
+  ['formal', 'chic', 0.8],
+  ['formal', 'workwear', 0.86],
+  ['workwear', 'classic', 0.82],
+  ['workwear', 'modern', 0.8],
+  ['preppy', 'classic', 0.88],
+  ['preppy', 'casual', 0.74],
+  ['preppy', 'vintage', 0.72],
+]);
+
+// server/app/agents/color_harmony.py 사본. 한 방향만 저장하고 조회 때 대칭 처리한다.
+export const COLOR_HARMONY = pairMap([
+  // 톤온톤
+  ['white', 'white', 0.55],
+  ['ivory', 'ivory', 0.55],
+  ['gray', 'gray', 0.55],
+  ['black', 'black', 0.55],
+  ['beige', 'beige', 0.55],
+  ['brown', 'brown', 0.55],
+  ['red', 'red', 0.55],
+  ['yellow', 'yellow', 0.55],
+  ['green', 'green', 0.55],
+  ['blue', 'blue', 0.55],
+  ['navy', 'navy', 0.55],
+  ['pink', 'pink', 0.55],
+  ['khaki', 'khaki', 0.55],
+  // 무채색끼리
+  ['white', 'ivory', 0.75],
+  ['white', 'gray', 0.82],
+  ['white', 'black', 0.90],
+  ['ivory', 'gray', 0.78],
+  ['ivory', 'black', 0.82],
+  ['gray', 'black', 0.72],
+  // 화이트·아이보리 × 유채색/어스톤
+  ['white', 'beige', 0.86],
+  ['white', 'brown', 0.80],
+  ['white', 'red', 0.88],
+  ['white', 'yellow', 0.78],
+  ['white', 'green', 0.82],
+  ['white', 'blue', 0.92],
+  ['white', 'navy', 0.90],
+  ['white', 'pink', 0.86],
+  ['white', 'khaki', 0.80],
+  ['ivory', 'beige', 0.80],
+  ['ivory', 'brown', 0.82],
+  ['ivory', 'red', 0.80],
+  ['ivory', 'yellow', 0.74],
+  ['ivory', 'green', 0.78],
+  ['ivory', 'blue', 0.84],
+  ['ivory', 'navy', 0.88],
+  ['ivory', 'pink', 0.84],
+  ['ivory', 'khaki', 0.82],
+  // 그레이 × 유채색/어스톤
+  ['gray', 'beige', 0.78],
+  ['gray', 'brown', 0.70],
+  ['gray', 'red', 0.82],
+  ['gray', 'yellow', 0.72],
+  ['gray', 'green', 0.76],
+  ['gray', 'blue', 0.82],
+  ['gray', 'navy', 0.76],
+  ['gray', 'pink', 0.82],
+  ['gray', 'khaki', 0.72],
+  // 블랙 × 유채색/어스톤
+  ['black', 'beige', 0.90],
+  ['black', 'brown', 0.35],
+  ['black', 'red', 0.85],
+  ['black', 'yellow', 0.78],
+  ['black', 'green', 0.68],
+  ['black', 'blue', 0.62],
+  ['black', 'navy', 0.38],
+  ['black', 'pink', 0.78],
+  ['black', 'khaki', 0.58],
+  // 베이지 중심 클래식/어스톤
+  ['beige', 'brown', 0.78],
+  ['beige', 'red', 0.72],
+  ['beige', 'yellow', 0.70],
+  ['beige', 'green', 0.75],
+  ['beige', 'blue', 0.82],
+  ['beige', 'navy', 0.92],
+  ['beige', 'pink', 0.78],
+  ['beige', 'khaki', 0.80],
+  // 브라운·카키 중심 어스톤
+  ['brown', 'red', 0.65],
+  ['brown', 'yellow', 0.68],
+  ['brown', 'green', 0.72],
+  ['brown', 'blue', 0.58],
+  ['brown', 'navy', 0.62],
+  ['brown', 'pink', 0.70],
+  ['brown', 'khaki', 0.78],
+  ['red', 'khaki', 0.55],
+  ['yellow', 'khaki', 0.60],
+  ['green', 'khaki', 0.72],
+  ['blue', 'khaki', 0.55],
+  ['navy', 'khaki', 0.72],
+  ['pink', 'khaki', 0.58],
+  // 강한 유채색끼리
+  ['red', 'yellow', 0.30],
+  ['red', 'green', 0.22],
+  ['red', 'blue', 0.35],
+  ['red', 'navy', 0.65],
+  ['red', 'pink', 0.30],
+  ['yellow', 'green', 0.30],
+  ['yellow', 'blue', 0.35],
+  ['yellow', 'navy', 0.58],
+  ['yellow', 'pink', 0.28],
+  ['green', 'blue', 0.35],
+  ['green', 'navy', 0.62],
+  ['green', 'pink', 0.25],
+  ['blue', 'navy', 0.60],
+  ['blue', 'pink', 0.35],
+  ['navy', 'pink', 0.68],
+]);
+
 const unique = (items) => [...new Set((items || []).filter(Boolean))];
+
+const symmetricScore = (scores, left, right, fallback) => {
+  if (!left || !right) return fallback;
+  return scores.get(`${left}|${right}`) ?? scores.get(`${right}|${left}`) ?? fallback;
+};
+
+export const colorHarmonyScore = (productColor, itemColor) => (
+  symmetricScore(COLOR_HARMONY, productColor, itemColor, 0.5)
+);
+
+export function productColorFrom(product, analysis) {
+  const colors = Array.isArray(product?.colors) ? product.colors : [];
+  const base = colors.find((color) => color?.isBase) || colors[0];
+  return base?.swatchId || analysis?.swatchSuggestions?.[0]?.swatchId || null;
+}
+
+const styleAffinityScore = (item, productTags) => (productTags || []).reduce(
+  (total, productTag) => total + (item.styleTags || []).reduce(
+    (subtotal, itemTag) => subtotal
+      + symmetricScore(STYLE_AFFINITY, productTag, itemTag, 0),
+    0,
+  ),
+  0,
+);
+
+const compareIds = (left, right) => {
+  const a = String(left.id);
+  const b = String(right.id);
+  return a < b ? -1 : a > b ? 1 : 0;
+};
+
+const rankByStyleAndColor = (items, productTags, productColor, colorWeight) => {
+  const styleScored = items.map((item) => ({
+    item,
+    styleScore: styleAffinityScore(item, productTags),
+  }));
+  if (!productColor || colorWeight <= 0) {
+    return styleScored
+      .sort((left, right) => (right.styleScore - left.styleScore)
+        || compareIds(left.item, right.item))
+      .map(({ item }) => item);
+  }
+  const maxStyle = Math.max(0, ...styleScored.map(({ styleScore }) => styleScore));
+  const weight = Math.min(colorWeight, 1);
+  return styleScored
+    .map(({ item, styleScore }) => ({
+      item,
+      combinedScore: (1 - weight) * (maxStyle > 0 ? styleScore / maxStyle : 0)
+        + weight * colorHarmonyScore(productColor, item.colorGroup),
+    }))
+    .sort((left, right) => (right.combinedScore - left.combinedScore)
+      || compareIds(left.item, right.item))
+    .map(({ item }) => item);
+};
 
 const colorFamily = (item) => {
   if (item.colorGroup) return `group:${item.colorGroup}`;
@@ -76,6 +301,8 @@ export function recommendMatchingItems({
   clothingType = 'top',
   targetGenders = ['women'],
   styleTags = DEFAULT_STYLE_TAGS,
+  productColor = null,
+  colorWeight = 0.3,
   limit,
   items = seedMatchingItems,
 } = {}) {
@@ -83,20 +310,23 @@ export function recommendMatchingItems({
   const genders = unique(targetGenders);
   if (!preferredType) return [];
 
-  // 색상 밝음→어두움 순으로 나열한다(colorBrightness 100→0). 동률은 sortOrder.
   const custom = items
     .filter((item) => item.isCustom)
     .map((item) => ({ ...item, isCompatible: item.clothingType === preferredType }));
-  const sorted = diversifyTopTwo(items
+  const pool = items
     .filter((item) => !item.isCustom)
     .filter((item) => item.isActive)
     .filter((item) => item.clothingType === preferredType)
-    .filter((item) => !genders.length || item.gender === 'unisex' || genders.includes(item.gender))
-    .slice()
-    .sort((a, b) => ((b.colorBrightness ?? 50) - (a.colorBrightness ?? 50))
-      || (a.sortOrder - b.sortOrder) || String(a.id).localeCompare(String(b.id))));
+    .filter((item) => !genders.length || item.gender === 'unisex' || genders.includes(item.gender));
+  // 서버 라우트 패리티: styleTags가 있을 때만 recommend_v1(스타일+색), 없으면
+  // 레거시 밝기 정렬로 폴백한다.
+  const ranked = styleTags.length
+    ? rankByStyleAndColor(pool, styleTags, productColor, colorWeight)
+    : pool.slice().sort((a, b) => ((b.colorBrightness ?? 50) - (a.colorBrightness ?? 50))
+      || ((a.sortOrder ?? 0) - (b.sortOrder ?? 0)) || compareIds(a, b));
+  const sorted = diversifyTopTwo(ranked);
 
-  return [...custom, ...(limit ? sorted.slice(0, limit) : sorted)];
+  return [...custom, ...(limit == null ? sorted : sorted.slice(0, limit))];
 }
 
 export function toLegacyMatchClothing(items, { selectedCount = 2 } = {}) {
@@ -110,6 +340,8 @@ export function recommendLegacyMatchClothing({
   clothingType = 'top',
   targetGenders = ['women'],
   styleTags = DEFAULT_STYLE_TAGS,
+  productColor = null,
+  colorWeight = 0.3,
   current = [],
   defaultSelection = true,
 } = {}) {
@@ -125,6 +357,8 @@ export function recommendLegacyMatchClothing({
     clothingType,
     targetGenders,
     styleTags,
+    productColor,
+    colorWeight,
     items: [...customItems, ...seedMatchingItems],
   });
   const selectedIds = (current || [])

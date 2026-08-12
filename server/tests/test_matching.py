@@ -172,7 +172,11 @@ def test_match_candidates_shape_and_public_url(client, make_token, monkeypatch):
                  "image_key": "seed/matching/match_test_bottom_neutral.png",
                  "thumb_key": "seed/matching/thumb/match_test_bottom_neutral.png"}]
 
+    async def fake_get_product(conn, project_id):
+        return {"colors": [{"isBase": True, "swatchId": "black"}]}
+
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
     monkeypatch.setattr(routes.repo, "list_active_matching_items", fake_list)
     _no_db(monkeypatch)
 
@@ -210,11 +214,21 @@ def test_match_candidates_route_passes_style_tags_to_tag_ranker(
             "image_key": "image.png",
         }]
 
-    def fake_recommend(items, clothing_type, genders, product_tags, affinity_map, limit):
+    async def fake_get_product(conn, project_id):
+        return {"colors": [
+            {"isBase": False, "swatchId": "red"},
+            {"isBase": True, "swatchId": "navy"},
+        ]}
+
+    def fake_recommend(
+        items, clothing_type, genders, product_tags, affinity_map, limit, **kwargs,
+    ):
         seen["product_tags"] = product_tags
+        seen.update(kwargs)
         return items
 
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
     monkeypatch.setattr(routes.repo, "list_active_matching_items", fake_list)
     monkeypatch.setattr(routes.retrieval, "recommend_v1", fake_recommend)
     _no_db(monkeypatch)
@@ -227,6 +241,107 @@ def test_match_candidates_route_passes_style_tags_to_tag_ranker(
 
     assert response.status_code == 200, response.text
     assert seen["product_tags"] == ["basic", "daily"]
+    assert seen["product_color"] == "navy"
+    assert seen["harmony"] is routes.color_harmony.HARMONY
+    assert seen["color_weight"] == 0.3
+
+
+def test_match_candidates_falls_back_to_first_analysis_swatch(
+    client, make_token, monkeypatch,
+):
+    object.__setattr__(client.app.state.settings, "r2_public_base", "https://img.example.com")
+    object.__setattr__(client.app.state.settings, "retrieval_matching", "tags")
+    monkeypatch.setattr(routes, "_r2", lambda request: _FakeR2())
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_list(conn, user_id, project_id):
+        return [{
+            "id": "b1", "name": "하의", "clothing_type": "bottom", "gender": "women",
+            "style_tags": ["daily"], "color_group": "beige", "color_brightness": 50,
+            "sort_order": 1, "is_active": True, "is_custom": False,
+            "thumb_key": "thumb.png", "image_key": "image.png",
+        }]
+
+    async def fake_get_product(conn, project_id):
+        return {"colors": [{"isBase": True, "swatchId": None}]}
+
+    async def fake_get_analysis(conn, project_id):
+        return {"swatchSuggestions": [
+            {"colorGroupId": "base", "swatchId": "ivory"},
+            {"colorGroupId": "other", "swatchId": "red"},
+        ]}
+
+    def fake_recommend(
+        items, clothing_type, genders, product_tags, affinity_map, limit, **kwargs,
+    ):
+        seen.update(kwargs)
+        return items
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "list_active_matching_items", fake_list)
+    monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_get_analysis)
+    monkeypatch.setattr(routes.retrieval, "recommend_v1", fake_recommend)
+    _no_db(monkeypatch)
+
+    response = client.get(
+        "/v1/projects/p1/analysis/match-candidates"
+        "?clothingType=top&gender=women&styleTags=basic",
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 200, response.text
+    assert seen["product_color"] == "ivory"
+
+
+def test_match_candidates_product_lookup_failure_uses_style_only(
+    client, make_token, monkeypatch,
+):
+    object.__setattr__(client.app.state.settings, "r2_public_base", "https://img.example.com")
+    object.__setattr__(client.app.state.settings, "retrieval_matching", "tags")
+    monkeypatch.setattr(routes, "_r2", lambda request: _FakeR2())
+    seen = {}
+
+    async def fake_get_project(conn, user_id, project_id):
+        return {"id": project_id}
+
+    async def fake_list(conn, user_id, project_id):
+        return [{
+            "id": "b1", "name": "하의", "clothing_type": "bottom", "gender": "women",
+            "style_tags": ["daily"], "color_group": "beige", "is_active": True,
+            "is_custom": False, "thumb_key": "thumb.png", "image_key": "image.png",
+        }]
+
+    async def fake_get_product(conn, project_id):
+        raise RuntimeError("optional color read failed")
+
+    async def unexpected_get_analysis(conn, project_id):
+        raise AssertionError("failed product lookup must not issue another query")
+
+    def fake_recommend(
+        items, clothing_type, genders, product_tags, affinity_map, limit, **kwargs,
+    ):
+        seen.update(kwargs)
+        return items
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "list_active_matching_items", fake_list)
+    monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(routes.repo, "get_analysis", unexpected_get_analysis)
+    monkeypatch.setattr(routes.retrieval, "recommend_v1", fake_recommend)
+    _no_db(monkeypatch)
+
+    response = client.get(
+        "/v1/projects/p1/analysis/match-candidates"
+        "?clothingType=top&gender=women&styleTags=basic",
+        headers=_auth(make_token),
+    )
+
+    assert response.status_code == 200, response.text
+    assert seen["product_color"] is None
 
 
 def test_dress_match_candidates_ignore_stale_men_query(
@@ -260,7 +375,15 @@ def test_dress_match_candidates_ignore_stale_men_query(
             "thumb_key": "seed/matching/thumb/women-bottom.png",
         }]
 
+    async def fake_get_product(conn, project_id):
+        return {"colors": []}
+
+    async def fake_get_analysis(conn, project_id):
+        return {}
+
     monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "get_product", fake_get_product)
+    monkeypatch.setattr(routes.repo, "get_analysis", fake_get_analysis)
     monkeypatch.setattr(routes.repo, "list_active_matching_items", fake_list)
     _no_db(monkeypatch)
 

@@ -17,6 +17,7 @@ import { Placeholder } from '@/mock/placeholders.js';
 import {
   addCustomMatchToAnalysis,
   getComplementaryMatchingType,
+  productColorFrom,
   recommendLegacyMatchClothing,
   removeCustomMatchFromAnalysis,
 } from '@/mock/matchingRecommendation.js';
@@ -325,6 +326,7 @@ export const api = {
         clothingType: DB.analysis.clothingType,
         targetGenders: DB.analysis.targetGenders,
         styleTags: DB.analysis.styleTags,
+        productColor: productColorFrom(DB.product, DB.analysis),
         current: DB.analysis.matchClothing,
       });
     }
@@ -424,6 +426,7 @@ export const api = {
       clothingType: DB.analysis.clothingType,
       targetGenders: DB.analysis.targetGenders,
       styleTags: DB.analysis.styleTags,
+      productColor: productColorFrom(DB.product, DB.analysis),
       current: DB.analysis.matchClothing,
       defaultSelection: false,
     });

@@ -36,6 +36,14 @@ def test_retrieval_matching_defaults_to_tags_and_env_can_disable(monkeypatch):
     assert load_settings().retrieval_matching == "off"
 
 
+def test_matching_color_weight_defaults_and_env_rollback(monkeypatch):
+    monkeypatch.delenv("MATCHING_COLOR_WEIGHT", raising=False)
+    assert make_settings().matching_color_weight == 0.3
+    assert load_settings().matching_color_weight == 0.3
+    monkeypatch.setenv("MATCHING_COLOR_WEIGHT", "0")
+    assert load_settings().matching_color_weight == 0
+
+
 def test_affinity_map_seeded_with_scores_in_unit_interval():
     m = style_affinity.affinity_map()
     assert len(m) >= 10

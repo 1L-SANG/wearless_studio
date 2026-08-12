@@ -86,7 +86,10 @@ def test_run_analyze_job_success(monkeypatch):
         return ({"product": {"clothingType": "top"},
                  "analysis": {"subCategory": "knit", "fit": "regular", "targetGenders": ["women"],
                               "materials": [], "aiSuggestedPoints": [], "suggestedName": "니트"},
-                 "intermediate": {"styleTags": ["basic"], "swatchSuggestions": []}}, "gpt")
+                 "intermediate": {
+                     "styleTags": ["basic"],
+                     "swatchSuggestions": [{"colorGroupId": "base", "swatchId": "navy"}],
+                 }}, "gpt")
 
     async def fake_finalize(conn, **kw):
         captured.update(kw)
@@ -113,6 +116,9 @@ def test_run_analyze_job_success(monkeypatch):
     assert data["clothingType"] == "top"
     assert data["styleTags"] == ["basic"]
     assert captured["analysis_payload"]["styleTags"] == ["basic"]  # 재진입 후 tags 랭킹 입력
+    assert captured["analysis_payload"]["swatchSuggestions"] == [
+        {"colorGroupId": "base", "swatchId": "navy"}
+    ]  # 분석 직후·재진입 모두 색 폴백 입력 유지
     assert data["measurements"] == []          # 실측 미산출
     assert "measurements" not in captured["analysis_payload"]  # analyses 저장분엔 measurements 없음
     # AG-08 병렬 결과가 특징을 교체 (2026-07-13)

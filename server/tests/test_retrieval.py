@@ -1,9 +1,11 @@
+from app.agents import color_harmony
 from app.services import retrieval
 
 
-def _it(id, ct, gender, style_tags=None, active=True):
+def _it(id, ct, gender, style_tags=None, active=True, color_group=None):
     return {"id": id, "clothing_type": ct, "gender": gender,
-            "style_tags": style_tags or [], "is_active": active}
+            "style_tags": style_tags or [], "is_active": active,
+            "color_group": color_group}
 
 
 def _chunk(id, category=None, style_tags=None):
@@ -160,6 +162,84 @@ def test_recommend_v1_applies_limit():
         product_tags=["knit"], affinity_map={}, limit=1,
     )
     assert len(out) == 1
+
+
+# ---------- style + color harmony ----------
+
+def test_color_harmony_map_is_complete_one_direction_and_unit_interval():
+    colors = {
+        "white", "gray", "black", "ivory", "beige", "brown",
+        "red", "yellow", "green", "blue", "navy", "pink", "khaki",
+    }
+    harmony = color_harmony.harmony_map()
+    assert harmony is color_harmony.HARMONY
+    assert len(harmony) == 91  # 13색의 중복 없는 조합 수: 13 * 14 / 2
+    assert {color for pair in harmony for color in pair} == colors
+    for (left, right), score in harmony.items():
+        assert 0 <= score <= 1
+        if left != right:
+            assert (right, left) not in harmony
+    assert {score for (left, right), score in harmony.items() if left == right} == {0.55}
+
+
+def test_recommend_v1_without_product_color_is_identical_to_existing_style_ranking():
+    items = [
+        _it("c", "bottom", "women", ["wide"], color_group="beige"),
+        _it("a", "bottom", "women", ["wide"], color_group="black"),
+        _it("b", "bottom", "women", ["slim"], color_group="white"),
+    ]
+    affinity_map = {("knit", "wide"): 5, ("knit", "slim"): 1}
+    expected = retrieval.diversify_top_two(
+        retrieval.rank_by_style_affinity(items, ["knit"], affinity_map)
+    )
+    actual = retrieval.recommend_v1(
+        items, "top", ["women"], ["knit"], affinity_map,
+        product_color=None, harmony=color_harmony.harmony_map(),
+    )
+    assert [item["id"] for item in actual] == [item["id"] for item in expected]
+
+
+def test_recommend_v1_navy_product_ranks_beige_ahead_of_black():
+    items = [
+        _it("black", "bottom", "women", ["daily"], color_group="black"),
+        _it("beige", "bottom", "women", ["daily"], color_group="beige"),
+    ]
+    actual = retrieval.recommend_v1(
+        items, "top", ["women"], ["basic"], {("basic", "daily"): 0.9},
+        product_color="navy", harmony=color_harmony.harmony_map(), color_weight=0.3,
+    )
+    assert [item["id"] for item in actual] == ["beige", "black"]
+
+
+def test_unknown_color_pair_falls_back_to_neutral_half():
+    assert retrieval._color_harmony_score(
+        "ultraviolet", "khaki", color_harmony.harmony_map()
+    ) == 0.5
+    assert retrieval._color_harmony_score(
+        "navy", None, color_harmony.harmony_map()
+    ) == 0.5
+
+
+def test_color_weight_zero_is_identical_to_style_only_with_product_color():
+    items = [
+        _it("style-high", "bottom", "women", ["wide"], color_group="black"),
+        _it("color-high", "bottom", "women", ["slim"], color_group="beige"),
+    ]
+    affinity_map = {("knit", "wide"): 5, ("knit", "slim"): 1}
+    expected = retrieval.recommend_v1(
+        items, "top", ["women"], ["knit"], affinity_map,
+    )
+    actual = retrieval.recommend_v1(
+        items, "top", ["women"], ["knit"], affinity_map,
+        product_color="navy", harmony=color_harmony.harmony_map(), color_weight=0,
+    )
+    assert [item["id"] for item in actual] == [item["id"] for item in expected]
+
+
+def test_color_harmony_lookup_is_symmetric_for_one_direction_map():
+    one_direction = {("navy", "beige"): 0.92}
+    assert retrieval._color_harmony_score("navy", "beige", one_direction) == 0.92
+    assert retrieval._color_harmony_score("beige", "navy", one_direction) == 0.92
 
 
 # ---------- select_kb_static ----------
