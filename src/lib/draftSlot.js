@@ -98,8 +98,10 @@ export function createDraftSlotSync({
   let conflictHandler = null;
   let photosPendingHandler = null;
   let locked = false;
+  let conflictLocked = false;
   let slotWritePending = false;
   let stagedPayload = null;
+  let removeStorageListener = () => {};
   const uploads = new Map();
 
   const setToken = (value) => {
@@ -114,6 +116,27 @@ export function createDraftSlotSync({
     serverSyncedAt = value || null;
     writeStorage(storage, SERVER_SYNCED_AT_KEY, serverSyncedAt);
   };
+  const handleStorage = (event) => {
+    if (event?.key !== TOKEN_KEY) return;
+    try {
+      const target = safeStorage(storage);
+      if (event.storageArea && target && event.storageArea !== target) return;
+    } catch {
+      return;
+    }
+    token = event.newValue || null;
+    if (!conflictLocked) return;
+    locked = false;
+    conflictLocked = false;
+    conflictHandler?.(null);
+  };
+  try {
+    const eventTarget = typeof storage?.addEventListener === 'function' ? storage : globalThis;
+    if (typeof eventTarget?.addEventListener === 'function') {
+      eventTarget.addEventListener('storage', handleStorage);
+      removeStorageListener = () => eventTarget.removeEventListener?.('storage', handleStorage);
+    }
+  } catch { /* storage 이벤트를 쓸 수 없으면 현재 문서 수명 메모리 값만 사용 */ }
   const notifyPhotosPending = () => {
     const pending = slotWritePending || Boolean(pendingSnapshot)
       || [...uploads.values()].some((upload) => upload.status !== 'synced');
@@ -213,15 +236,28 @@ export function createDraftSlotSync({
     };
   };
 
-  const handleConflict = (error) => {
-    if (error?.status !== 409 || error?.code !== 'token_mismatch') return false;
+  const handleConflict = (error, requestToken, allowRetry) => {
+    if (error?.status !== 409 || error?.code !== 'token_mismatch') {
+      return { handled: false, retry: false };
+    }
+    if (error.meta == null) {
+      setToken(null);
+      conflictLocked = false;
+      return { handled: true, retry: allowRetry && requestToken != null };
+    }
+    const latestToken = readStorage(storage, TOKEN_KEY);
+    if (allowRetry && latestToken !== requestToken) {
+      token = latestToken;
+      return { handled: true, retry: true };
+    }
     locked = true;
+    conflictLocked = true;
     clearTimer(timer);
     clearTimer(putRetryTimer);
     timer = null;
     putRetryTimer = null;
-    conflictHandler?.(error.meta || null);
-    return true;
+    conflictHandler?.(error.meta);
+    return { handled: true, retry: false };
   };
 
   const schedulePutRetry = () => {
@@ -240,30 +276,42 @@ export function createDraftSlotSync({
     const { payload, photosPending, includedUploadIds } = payloadFor(snapshot);
     slotWritePending = true;
     notifyPhotosPending();
+    let requestToken = token;
+    let allowConflictRetry = true;
     try {
-      const result = await api.putDraftSlot({
-        payload,
-        token,
-        deviceLabel: getDraftSlotDeviceLabel(),
-        photosPending,
-      });
-      setToken(result?.token);
-      setSyncedAt(snapshot.localUpdatedAt);
-      setServerSyncedAt(result?.meta?.updatedAt);
-      putRetryAttempt = 0;
-      clearTimer(putRetryTimer);
-      putRetryTimer = null;
-      for (const imageId of includedUploadIds) {
-        const upload = uploads.get(imageId);
-        if (upload) uploads.set(imageId, { ...upload, status: 'synced' });
+      while (true) {
+        try {
+          const result = await api.putDraftSlot({
+            payload,
+            token: requestToken,
+            deviceLabel: getDraftSlotDeviceLabel(),
+            photosPending,
+          });
+          setToken(result?.token);
+          setSyncedAt(snapshot.localUpdatedAt);
+          setServerSyncedAt(result?.meta?.updatedAt);
+          putRetryAttempt = 0;
+          clearTimer(putRetryTimer);
+          putRetryTimer = null;
+          for (const imageId of includedUploadIds) {
+            const upload = uploads.get(imageId);
+            if (upload) uploads.set(imageId, { ...upload, status: 'synced' });
+          }
+          return result;
+        } catch (error) {
+          const conflict = handleConflict(error, requestToken, allowConflictRetry);
+          if (conflict.retry) {
+            allowConflictRetry = false;
+            requestToken = token;
+            continue;
+          }
+          if (!conflict.handled || !locked) {
+            pendingSnapshot = latestSnapshot || snapshot;
+            schedulePutRetry();
+          }
+          throw error;
+        }
       }
-      return result;
-    } catch (error) {
-      if (!handleConflict(error)) {
-        pendingSnapshot = latestSnapshot || snapshot;
-        schedulePutRetry();
-      }
-      throw error;
     } finally {
       slotWritePending = false;
       notifyPhotosPending();
@@ -312,21 +360,33 @@ export function createDraftSlotSync({
     },
     suspend() {
       locked = true;
+      conflictLocked = false;
       this.discard();
       for (const upload of uploads.values()) clearTimer(upload.retryTimer);
       return putChain;
     },
-    resume() { locked = false; },
+    resume() { locked = false; conflictLocked = false; },
     onConflict(handler) { conflictHandler = handler; return () => { if (conflictHandler === handler) conflictHandler = null; }; },
     onPhotosPending(handler) { photosPendingHandler = handler; notifyPhotosPending(); return () => { if (photosPendingHandler === handler) photosPendingHandler = null; }; },
+    dispose() {
+      removeStorageListener();
+      removeStorageListener = () => {};
+    },
     async get({ full = false } = {}) {
       return api?.getDraftSlot ? api.getDraftSlot(token, { full }) : null;
     },
     async checkOwnership() {
       const slot = await this.get();
       if (slot && token && slot.holdsToken === false) {
+        if (slot.meta == null) {
+          setToken(null);
+          locked = false;
+          conflictLocked = false;
+          return slot;
+        }
         locked = true;
-        conflictHandler?.(slot.meta || null);
+        conflictLocked = true;
+        conflictHandler?.(slot.meta);
       }
       return slot;
     },
@@ -336,6 +396,7 @@ export function createDraftSlotSync({
       setToken(result.token);
       setServerSyncedAt(result.meta?.updatedAt);
       locked = false;
+      conflictLocked = false;
       return result;
     },
     async removeForNewFlow() {
@@ -347,7 +408,9 @@ export function createDraftSlotSync({
     async remove() {
       const resumeSnapshot = latestSnapshot;
       const wasLocked = locked;
+      const wasConflictLocked = conflictLocked;
       locked = true;
+      conflictLocked = false;
       this.discard();
       try {
         await putChain;
@@ -355,6 +418,7 @@ export function createDraftSlotSync({
         if (api?.deleteDraftSlot) await api.deleteDraftSlot(token);
       } catch (error) {
         locked = wasLocked;
+        conflictLocked = wasConflictLocked;
         if (!locked && resumeSnapshot) queue(resumeSnapshot);
         throw error;
       }
@@ -366,6 +430,7 @@ export function createDraftSlotSync({
       setSyncedAt(null);
       setServerSyncedAt(null);
       locked = false;
+      conflictLocked = false;
       notifyPhotosPending();
     },
     stage(payload) { stagedPayload = payload || null; },

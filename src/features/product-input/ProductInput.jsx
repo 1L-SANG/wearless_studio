@@ -411,7 +411,6 @@ export function ProductInput() {
   ));
   const [slotLock, setSlotLock] = useState(null);
   const [reclaimChoiceOpen, setReclaimChoiceOpen] = useState(false);
-  const [slotPhotosPending, setSlotPhotosPending] = useState(false);
   const [promotionLocked, setPromotionLocked] = useState(false);
   const { session, loading: authLoading, openLogin } = useAuth();
   const slotEnabled = Boolean(session) || isMockMode;
@@ -445,8 +444,10 @@ export function ProductInput() {
     }
   }, [analysis, composeMode, product, slotEnabled]);
 
-  useEffect(() => draftSlot.onConflict((meta) => setSlotLock(meta || {})), []);
-  useEffect(() => draftSlot.onPhotosPending(setSlotPhotosPending), []);
+  useEffect(() => draftSlot.onConflict((meta) => {
+    setSlotLock(meta);
+    if (!meta) setReclaimChoiceOpen(false);
+  }), []);
 
   useEffect(() => {
     if (!slotEnabled) return;
@@ -751,7 +752,7 @@ export function ProductInput() {
     }
   };
 
-  const applyDraftPayload = (payload, meta = null) => {
+  const applyDraftPayload = (payload) => {
     if (!payload?.product) return false;
     const restored = restoreDraftProduct(payload);
     persistedColorsRef.current = restored.colors || [];
@@ -760,7 +761,6 @@ export function ProductInput() {
     useAppStore.getState().restoreComposeMode(payload.composeMode);
     setAnalysisProjectId(null);
     setPhase(payload.analysis && hasRequiredDraftPhotos(restored) ? 'done' : 'input');
-    setSlotPhotosPending(Boolean(meta?.photosPending));
     return true;
   };
 
@@ -768,7 +768,7 @@ export function ProductInput() {
     try {
       const takeover = await draftSlot.takeover();
       if (!takeover?.payload) throw new Error('다른 기기의 임시저장을 불러오지 못했어요.');
-      applyDraftPayload(takeover.payload, takeover.meta);
+      applyDraftPayload(takeover.payload);
       setReclaimChoiceOpen(false);
       setSlotLock(null);
     } catch (error) {
@@ -815,7 +815,7 @@ export function ProductInput() {
       if (!alive) return;
       setCatalogs(c);
       const staged = draftSlot.consumeStaged();
-      if (staged?.payload && applyDraftPayload(staged.payload, staged.meta)) return;
+      if (staged?.payload && applyDraftPayload(staged.payload)) return;
       persistedColorsRef.current = p.colors || [];
       const analysisWasRunning = editingProjectId && isAnalysisRunning(editingProjectId);
 
@@ -1183,12 +1183,6 @@ export function ProductInput() {
         title="의류 이미지를 올려주세요"
         sub={<>사진 몇장만으로 경험해보세요.<br />부족한 정보는 AI 분석 후 직접 확인하고 보정할 수 있어요.</>}
       />
-
-      {slotPhotosPending && (
-        <div className="draft-slot-pending" role="status">
-          일부 사진은 아직 동기화 중이에요. 이 기기의 로컬 초안은 안전하게 유지되고 있어요.
-        </div>
-      )}
 
       {phase === 'input' ? inputSection : summaryCard}
 

@@ -13,6 +13,13 @@ const product = (name) => ({
   name,
   colors: [{ id: 'base', isBase: true, images: [{ id: `${name}-front`, slot: 'Front', src: 'https://img.test/front.jpg' }] }],
 });
+const tokenMismatch = (meta) => {
+  const error = new Error(meta ? 'taken' : 'expired');
+  error.status = 409;
+  error.code = 'token_mismatch';
+  error.meta = meta;
+  return error;
+};
 
 function fakeTimers() {
   let nextId = 1;
@@ -107,6 +114,140 @@ test('a 409 locks the client and takeover allows a local reclaim PUT', async () 
   await sync.flush();
   assert.equal(puts, 2);
   assert.equal(storage.getItem('wl_draftSlotToken'), 'new-token');
+});
+
+test('a token rotation storage event updates the next PUT without locking', async () => {
+  const storage = new EventedStorage([['wl_draftSlotToken', 'old-token']]);
+  const tokens = [];
+  const conflicts = [];
+  const sync = createDraftSlotSync({
+    storage,
+    adapter: {
+      async putDraftSlot(body) {
+        tokens.push(body.token);
+        return { token: body.token, meta: { updatedAt: 'server-1' } };
+      },
+    },
+  });
+  sync.onConflict((meta) => conflicts.push(meta));
+
+  storage.dispatchToken('rotated-token');
+  sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
+  await sync.flush();
+
+  assert.deepEqual(tokens, ['rotated-token']);
+  assert.equal(sync.getToken(), 'rotated-token');
+  assert.equal(sync.isLocked(), false);
+  assert.deepEqual(conflicts, []);
+  sync.dispose();
+});
+
+test('a 409 retries once with a newer stored token without reporting a conflict', async () => {
+  const storage = new MapStorage([['wl_draftSlotToken', 'old-token']]);
+  const tokens = [];
+  const conflicts = [];
+  const meta = { updatedAt: '2026-08-12T01:00:00Z', deviceLabel: 'Mac Chrome' };
+  const sync = createDraftSlotSync({
+    storage,
+    adapter: {
+      async putDraftSlot(body) {
+        tokens.push(body.token);
+        if (tokens.length === 1) throw tokenMismatch(meta);
+        return { token: body.token, meta: { updatedAt: 'server-2' } };
+      },
+    },
+  });
+  sync.onConflict((conflict) => conflicts.push(conflict));
+  storage.setItem('wl_draftSlotToken', 'rotated-token');
+
+  sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
+  await sync.flush();
+
+  assert.deepEqual(tokens, ['old-token', 'rotated-token']);
+  assert.equal(sync.isLocked(), false);
+  assert.deepEqual(conflicts, []);
+});
+
+test('a repeated 409 after the newer-token retry locks and reports one conflict', async () => {
+  const storage = new MapStorage([['wl_draftSlotToken', 'old-token']]);
+  const tokens = [];
+  const conflicts = [];
+  const meta = { updatedAt: '2026-08-12T02:00:00Z', deviceLabel: 'iPhone Safari' };
+  const sync = createDraftSlotSync({
+    storage,
+    adapter: {
+      async putDraftSlot(body) {
+        tokens.push(body.token);
+        throw tokenMismatch(meta);
+      },
+    },
+  });
+  sync.onConflict((conflict) => conflicts.push(conflict));
+  storage.setItem('wl_draftSlotToken', 'rotated-token');
+
+  sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
+  await assert.rejects(
+    sync.flush(),
+    (error) => error.status === 409 && error.code === 'token_mismatch',
+  );
+
+  assert.deepEqual(tokens, ['old-token', 'rotated-token']);
+  assert.equal(sync.isLocked(), true);
+  assert.deepEqual(conflicts, [meta]);
+});
+
+test('a meta-less 409 resets the token and recreates a deleted mock slot', async () => {
+  let sequence = 0;
+  const memory = createDraftSlotMemory({ tokenFactory: () => `token-${++sequence}` });
+  const created = memory.put({ payload: { product: product('remote') } });
+  memory.remove(created.token);
+  const storage = new MapStorage([['wl_draftSlotToken', created.token]]);
+  const tokens = [];
+  const conflicts = [];
+  const sync = createDraftSlotSync({
+    storage,
+    adapter: {
+      async putDraftSlot(body) {
+        tokens.push(body.token);
+        return memory.put(body);
+      },
+    },
+  });
+  sync.onConflict((conflict) => conflicts.push(conflict));
+
+  sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
+  await sync.flush();
+
+  assert.deepEqual(tokens, [created.token, null]);
+  assert.equal(sync.getToken(), 'token-2');
+  assert.equal(storage.getItem('wl_draftSlotToken'), 'token-2');
+  assert.equal(memory.get('token-2').holdsToken, true);
+  assert.equal(memory.get('token-2', { full: true }).payload.product.name, 'local');
+  assert.equal(sync.isLocked(), false);
+  assert.deepEqual(conflicts, []);
+});
+
+test('a token storage event unlocks an already locked client and clears its conflict', async () => {
+  const storage = new EventedStorage([['wl_draftSlotToken', 'old-token']]);
+  const meta = { updatedAt: '2026-08-12T03:00:00Z', deviceLabel: 'iPhone Safari' };
+  const conflicts = [];
+  const sync = createDraftSlotSync({
+    storage,
+    adapter: {
+      async putDraftSlot() { throw tokenMismatch(meta); },
+    },
+  });
+  sync.onConflict((conflict) => conflicts.push(conflict));
+  sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
+  await assert.rejects(sync.flush(), (error) => error.status === 409);
+  assert.equal(sync.isLocked(), true);
+
+  storage.dispatchToken('rotated-token');
+
+  assert.equal(sync.getToken(), 'rotated-token');
+  assert.equal(sync.isLocked(), false);
+  assert.deepEqual(conflicts, [meta, null]);
+  sync.dispose();
 });
 
 test('slot delete drains an in-flight PUT so the PUT cannot recreate the deleted slot', async () => {
@@ -282,6 +423,17 @@ test('logged-in and mock entry use one priority-4 modal with local and remote ti
   assert.match(shell, /sources\.map\(\(source\)[\s\S]*?새로 만들기/);
 });
 
+test('draft photo pending state remains in sync payloads but is not rendered as user copy', () => {
+  const app = read('../../src/App.jsx');
+  const input = read('../../src/features/product-input/ProductInput.jsx');
+  const shell = read('../../src/features/shell/shell.jsx');
+  const slot = read('../../src/lib/draftSlot.js');
+  assert.match(slot, /photosPending/);
+  assert.doesNotMatch(app, /photosPending:/);
+  assert.doesNotMatch(input, /일부 사진은 아직 동기화 중/);
+  assert.doesNotMatch(shell, /일부 사진은 아직 동기화 중/);
+});
+
 test('promotion happens only at confirmation and cleans the slot before flow lock and navigation', () => {
   const input = read('../../src/features/product-input/ProductInput.jsx');
   const submit = input.slice(input.indexOf('const submit = async () =>'), input.indexOf('const nameCard ='));
@@ -345,4 +497,33 @@ class MapStorage {
   getItem(key) { return this.values.get(key) ?? null; }
   setItem(key, value) { this.values.set(key, String(value)); }
   removeItem(key) { this.values.delete(key); }
+}
+
+class EventedStorage extends MapStorage {
+  constructor(entries = []) {
+    super(entries);
+    this.storageListeners = new Set();
+  }
+
+  addEventListener(type, handler) {
+    if (type === 'storage') this.storageListeners.add(handler);
+  }
+
+  removeEventListener(type, handler) {
+    if (type === 'storage') this.storageListeners.delete(handler);
+  }
+
+  dispatchToken(value) {
+    const oldValue = this.getItem('wl_draftSlotToken');
+    if (value == null) this.removeItem('wl_draftSlotToken');
+    else this.setItem('wl_draftSlotToken', value);
+    for (const handler of this.storageListeners) {
+      handler({
+        key: 'wl_draftSlotToken',
+        oldValue,
+        newValue: value,
+        storageArea: this,
+      });
+    }
+  }
 }

@@ -119,7 +119,6 @@ export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, on
               onClick={() => onChoose(source.id)}>
               <span>{source.title}</span>
               <small>{source.description}</small>
-              {source.photosPending && <em>일부 사진은 아직 동기화 중</em>}
             </button>
           ))}
         </div>

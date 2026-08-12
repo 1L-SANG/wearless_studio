@@ -295,7 +295,6 @@ function ProductInputRoute() {
           id: 'remote',
           title: localDiffers ? '다른 기기 임시저장' : '임시저장',
           description: `${formatDraftRelativeTime(slot.meta?.updatedAt)} · ${slot.meta?.deviceLabel || '다른 기기'} · 사진 ${slot.meta?.photoCount || 0}장`,
-          photosPending: Boolean(slot.meta?.photosPending),
           meta: slot.meta,
         });
       }
