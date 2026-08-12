@@ -148,7 +148,8 @@ test('the library "새로 만들기" is no longer hijacked by another project\'s
   // own validation gate.
   assert.doesNotMatch(librarySource, /mannequinJob/);
   assert.doesNotMatch(librarySource, /navigate\('\/create\/mannequin'\)/);
-  assert.match(librarySource, /const onNew = async \(\) => \{/);
+  assert.match(librarySource, /const onNew = \(\) => navigate\('\/create\/input'\)/);
+  assert.doesNotMatch(librarySource, /beginProject/);
 });
 
 test('the mannequin CTA cannot mistake a failed storyboard fetch for zero AI cuts', () => {

@@ -1,6 +1,7 @@
 const TOKEN_KEY = 'wl_draftSlotToken';
 const SYNCED_AT_KEY = 'wl_draftSlotSyncedAt';
 const SERVER_SYNCED_AT_KEY = 'wl_draftSlotServerSyncedAt';
+const TAB_OWNER_KEY = 'wl_draftSlotOwnerTab';
 const DEFAULT_DEBOUNCE_MS = 500;
 const PHOTO_RETRY_MS = 2000;
 const PUT_RETRY_MAX_MS = 30000;
@@ -52,6 +53,7 @@ export function formatDraftRelativeTime(updatedAt, now = Date.now()) {
 }
 
 export function formatDraftClock(updatedAt) {
+  if (!updatedAt) return '--:--';
   const date = new Date(updatedAt || 0);
   if (Number.isNaN(date.getTime())) return '--:--';
   return new Intl.DateTimeFormat('ko-KR', {
@@ -81,6 +83,7 @@ function imageIds(product) {
 export function createDraftSlotSync({
   adapter = null,
   storage = null,
+  documentId = globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2),
   debounceMs = DEFAULT_DEBOUNCE_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -98,8 +101,15 @@ export function createDraftSlotSync({
   let conflictHandler = null;
   let photosPendingHandler = null;
   let locked = false;
+  let conflictLocked = false;
+  let goneLocked = false;
+  let suspended = false;
+  let lockMeta = null;
   let slotWritePending = false;
   let stagedPayload = null;
+  let requestEpoch = 0;
+  let removeStorageListener = () => {};
+  let removePagehideListener = () => {};
   const uploads = new Map();
 
   const setToken = (value) => {
@@ -114,6 +124,101 @@ export function createDraftSlotSync({
     serverSyncedAt = value || null;
     writeStorage(storage, SERVER_SYNCED_AT_KEY, serverSyncedAt);
   };
+  const stopScheduledWrites = () => {
+    clearTimer(timer);
+    clearTimer(putRetryTimer);
+    timer = null;
+    putRetryTimer = null;
+  };
+  const notifyLock = (meta) => {
+    lockMeta = meta;
+    conflictHandler?.(meta);
+  };
+  const lockForConflict = (meta) => {
+    requestEpoch += 1;
+    locked = true;
+    conflictLocked = true;
+    goneLocked = false;
+    suspended = false;
+    stopScheduledWrites();
+    notifyLock(meta || { deviceLabel: '다른 탭 또는 기기' });
+  };
+  const lockForGoneSlot = () => {
+    requestEpoch += 1;
+    locked = true;
+    conflictLocked = false;
+    goneLocked = true;
+    suspended = false;
+    stopScheduledWrites();
+    notifyLock({ state: 'gone' });
+  };
+  const clearLock = () => {
+    locked = false;
+    conflictLocked = false;
+    goneLocked = false;
+    suspended = false;
+    lockMeta = null;
+    conflictHandler?.(null);
+  };
+  const ownsTab = () => readStorage(storage, TAB_OWNER_KEY) === documentId;
+  const claimTab = ({ force = false } = {}) => {
+    const owner = readStorage(storage, TAB_OWNER_KEY);
+    if (!force && owner && owner !== documentId) {
+      lockForConflict({ state: 'other-tab', deviceLabel: '이 브라우저의 다른 탭' });
+      return false;
+    }
+    writeStorage(storage, TAB_OWNER_KEY, documentId);
+    if (!ownsTab()) {
+      lockForConflict({ state: 'other-tab', deviceLabel: '이 브라우저의 다른 탭' });
+      return false;
+    }
+    return true;
+  };
+  const releaseTab = () => {
+    if (ownsTab()) writeStorage(storage, TAB_OWNER_KEY, null);
+  };
+  const handleStorage = (event) => {
+    if (![TOKEN_KEY, TAB_OWNER_KEY, SYNCED_AT_KEY, SERVER_SYNCED_AT_KEY].includes(event?.key)) return;
+    try {
+      const target = safeStorage(storage);
+      if (event.storageArea && target && event.storageArea !== target) return;
+    } catch {
+      return;
+    }
+    if (event?.key === SYNCED_AT_KEY) {
+      syncedAt = event.newValue || null;
+      return;
+    }
+    if (event?.key === SERVER_SYNCED_AT_KEY) {
+      serverSyncedAt = event.newValue || null;
+      return;
+    }
+    if (event.key === TAB_OWNER_KEY) {
+      if (event.newValue && event.newValue !== documentId) {
+        lockForConflict({ state: 'other-tab', deviceLabel: '이 브라우저의 다른 탭' });
+      }
+      return;
+    }
+    if ((event.newValue || null) === token) return;
+    // storage 이벤트는 다른 탭의 화면 내용까지 현재 탭에 반영됐다는 뜻이 아니다.
+    // 새 작업권을 빌려 쓰지 않고 현재 탭을 멈춰, 서로 다른 전체 스냅샷의 last-write-wins를 막는다.
+    if (event.newValue == null) lockForGoneSlot();
+    else lockForConflict({ state: 'other-tab', deviceLabel: '이 브라우저의 다른 탭' });
+  };
+  try {
+    const eventTarget = typeof storage?.addEventListener === 'function' ? storage : globalThis;
+    if (typeof eventTarget?.addEventListener === 'function') {
+      eventTarget.addEventListener('storage', handleStorage);
+      removeStorageListener = () => eventTarget.removeEventListener?.('storage', handleStorage);
+    }
+  } catch { /* storage 이벤트를 쓸 수 없으면 현재 문서 수명 메모리 값만 사용 */ }
+  try {
+    if (typeof globalThis.addEventListener === 'function') {
+      const release = () => releaseTab();
+      globalThis.addEventListener('pagehide', release);
+      removePagehideListener = () => globalThis.removeEventListener?.('pagehide', release);
+    }
+  } catch { /* pagehide 미지원 환경은 명시적 이어받기로 stale owner를 교체 */ }
   const notifyPhotosPending = () => {
     const pending = slotWritePending || Boolean(pendingSnapshot)
       || [...uploads.values()].some((upload) => upload.status !== 'synced');
@@ -214,13 +319,15 @@ export function createDraftSlotSync({
   };
 
   const handleConflict = (error) => {
-    if (error?.status !== 409 || error?.code !== 'token_mismatch') return false;
-    locked = true;
-    clearTimer(timer);
-    clearTimer(putRetryTimer);
-    timer = null;
-    putRetryTimer = null;
-    conflictHandler?.(error.meta || null);
+    if (error?.status !== 409 || error?.code !== 'token_mismatch') {
+      return false;
+    }
+    if (error.meta == null) {
+      setToken(null);
+      lockForGoneSlot();
+      return true;
+    }
+    lockForConflict(error.meta);
     return true;
   };
 
@@ -236,34 +343,50 @@ export function createDraftSlotSync({
 
   const put = async (snapshot) => {
     if (!api?.putDraftSlot || locked || !snapshot?.product) return null;
+    if (!claimTab()) return null;
     syncPhotos(snapshot.product);
     const { payload, photosPending, includedUploadIds } = payloadFor(snapshot);
     slotWritePending = true;
     notifyPhotosPending();
+    const requestToken = token;
+    const epoch = requestEpoch;
     try {
-      const result = await api.putDraftSlot({
-        payload,
-        token,
-        deviceLabel: getDraftSlotDeviceLabel(),
-        photosPending,
-      });
-      setToken(result?.token);
-      setSyncedAt(snapshot.localUpdatedAt);
-      setServerSyncedAt(result?.meta?.updatedAt);
-      putRetryAttempt = 0;
-      clearTimer(putRetryTimer);
-      putRetryTimer = null;
-      for (const imageId of includedUploadIds) {
-        const upload = uploads.get(imageId);
-        if (upload) uploads.set(imageId, { ...upload, status: 'synced' });
+      try {
+        const result = await api.putDraftSlot({
+          payload,
+          token: requestToken,
+          deviceLabel: getDraftSlotDeviceLabel(),
+          photosPending,
+        });
+        // 요청 중 다른 탭이 작업권을 가져갔다면 늦은 옛 응답으로 최신 토큰을 되돌리지 않는다.
+        const storedToken = readStorage(storage, TOKEN_KEY);
+        const responseIsCurrent = epoch === requestEpoch
+          && ownsTab()
+          && token === requestToken
+          && (requestToken == null ? storedToken == null : storedToken === requestToken);
+        if (responseIsCurrent) {
+          setToken(result?.token);
+          setSyncedAt(snapshot.localUpdatedAt);
+          setServerSyncedAt(result?.meta?.updatedAt);
+          putRetryAttempt = 0;
+          clearTimer(putRetryTimer);
+          putRetryTimer = null;
+          for (const imageId of includedUploadIds) {
+            const upload = uploads.get(imageId);
+            if (upload) uploads.set(imageId, { ...upload, status: 'synced' });
+          }
+        }
+        return result;
+      } catch (error) {
+        if (epoch === requestEpoch) {
+          const handled = handleConflict(error);
+          if (!handled) {
+            pendingSnapshot = latestSnapshot || snapshot;
+            schedulePutRetry();
+          }
+        }
+        throw error;
       }
-      return result;
-    } catch (error) {
-      if (!handleConflict(error)) {
-        pendingSnapshot = latestSnapshot || snapshot;
-        schedulePutRetry();
-      }
-      throw error;
     } finally {
       slotWritePending = false;
       notifyPhotosPending();
@@ -287,7 +410,7 @@ export function createDraftSlotSync({
     pendingSnapshot = snapshot;
     syncPhotos(snapshot.product);
     clearTimer(timer);
-    timer = setTimer(commit, debounceMs);
+    timer = setTimer(() => { void commit().catch(() => {}); }, debounceMs);
     notifyPhotosPending();
   }
 
@@ -298,6 +421,7 @@ export function createDraftSlotSync({
 
   return {
     configure(nextAdapter) { api = nextAdapter; },
+    activate() { return claimTab(); },
     queue,
     syncPhotos,
     async flush() { await commit(); return putChain; },
@@ -311,50 +435,112 @@ export function createDraftSlotSync({
       notifyPhotosPending();
     },
     suspend() {
+      requestEpoch += 1;
       locked = true;
+      conflictLocked = false;
+      goneLocked = false;
+      suspended = true;
       this.discard();
       for (const upload of uploads.values()) clearTimer(upload.retryTimer);
       return putChain;
     },
-    resume() { locked = false; },
-    onConflict(handler) { conflictHandler = handler; return () => { if (conflictHandler === handler) conflictHandler = null; }; },
+    resume() {
+      if (!suspended) return;
+      suspended = false;
+      if (claimTab()) clearLock();
+    },
+    onConflict(handler) {
+      conflictHandler = handler;
+      if (locked && lockMeta) handler(lockMeta);
+      return () => { if (conflictHandler === handler) conflictHandler = null; };
+    },
     onPhotosPending(handler) { photosPendingHandler = handler; notifyPhotosPending(); return () => { if (photosPendingHandler === handler) photosPendingHandler = null; }; },
+    dispose() {
+      requestEpoch += 1;
+      stopScheduledWrites();
+      putChain = putChain.catch(() => null);
+      removeStorageListener();
+      removeStorageListener = () => {};
+      removePagehideListener();
+      removePagehideListener = () => {};
+      releaseTab();
+    },
     async get({ full = false } = {}) {
       return api?.getDraftSlot ? api.getDraftSlot(token, { full }) : null;
     },
     async checkOwnership() {
       const slot = await this.get();
+      if (!slot && token) {
+        setToken(null);
+        lockForGoneSlot();
+        return slot;
+      }
       if (slot && token && slot.holdsToken === false) {
-        locked = true;
-        conflictHandler?.(slot.meta || null);
+        lockForConflict(slot.meta);
       }
       return slot;
     },
     async takeover() {
       const result = await api?.takeoverDraftSlot?.();
       if (!result) return null;
+      requestEpoch += 1;
+      putChain = putChain.catch(() => null);
+      claimTab({ force: true });
       setToken(result.token);
       setServerSyncedAt(result.meta?.updatedAt);
-      locked = false;
+      clearLock();
       return result;
+    },
+    restartAfterGone() {
+      if (!goneLocked) return false;
+      requestEpoch += 1;
+      putChain = putChain.catch(() => null);
+      setToken(null);
+      claimTab({ force: true });
+      clearLock();
+      return true;
     },
     async removeForNewFlow() {
       // 새 제작/처음부터 다시는 사용자의 명시적 폐기 의사다. 먼저 작업권을 인수한 뒤 같은
       // 토큰으로 DELETE한다. 확정 승격은 이 메서드를 쓰지 않아 작업권 상실을 우회하지 않는다.
-      await this.takeover();
+      const takeover = await this.takeover();
+      if (!takeover) {
+        requestEpoch += 1;
+        putChain = putChain.catch(() => null);
+        setToken(null);
+        claimTab({ force: true });
+        clearLock();
+      }
       return this.remove();
     },
     async remove() {
       const resumeSnapshot = latestSnapshot;
       const wasLocked = locked;
+      const wasConflictLocked = conflictLocked;
+      const wasGoneLocked = goneLocked;
+      const wasSuspended = suspended;
+      const wasLockMeta = lockMeta;
+      const deleteToken = token;
       locked = true;
+      conflictLocked = false;
+      goneLocked = false;
+      suspended = false;
       this.discard();
       try {
         await putChain;
         await waitForUploads();
-        if (api?.deleteDraftSlot) await api.deleteDraftSlot(token);
+        if (api?.deleteDraftSlot) await api.deleteDraftSlot(deleteToken);
       } catch (error) {
+        if (error?.status === 409 && error?.code === 'token_mismatch') {
+          if (error.meta == null) lockForGoneSlot();
+          else lockForConflict(error.meta);
+          throw error;
+        }
         locked = wasLocked;
+        conflictLocked = wasConflictLocked;
+        goneLocked = wasGoneLocked;
+        suspended = wasSuspended;
+        lockMeta = wasLockMeta;
         if (!locked && resumeSnapshot) queue(resumeSnapshot);
         throw error;
       }
@@ -366,6 +552,24 @@ export function createDraftSlotSync({
       setSyncedAt(null);
       setServerSyncedAt(null);
       locked = false;
+      conflictLocked = false;
+      goneLocked = false;
+      suspended = false;
+      lockMeta = null;
+      releaseTab();
+      notifyPhotosPending();
+    },
+    resetIdentity() {
+      requestEpoch += 1;
+      putChain = putChain.catch(() => null);
+      this.discard();
+      for (const upload of uploads.values()) clearTimer(upload.retryTimer);
+      uploads.clear();
+      setToken(null);
+      setSyncedAt(null);
+      setServerSyncedAt(null);
+      clearLock();
+      releaseTab();
       notifyPhotosPending();
     },
     stage(payload) { stagedPayload = payload || null; },
