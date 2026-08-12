@@ -25,8 +25,12 @@ test('the analysis confirmation CTA owns the catalog-backed split compose menu',
   assert.match(ctaSource, /aria-haspopup="listbox" aria-expanded=\{composeModeOpen\}/);
   assert.match(ctaSource, /role="listbox"[\s\S]*?role="option" aria-selected=\{composeMode === mode\.value\}/);
   assert.match(ctaSource, /\{mode\.desc\} · \{mode\.count\}컷/);
-  assert.match(analysisSource, /querySelector\('\[role="option"\]'\)\?\.focus\(\)/);
-  assert.match(analysisSource, /event\.key !== 'Escape'[\s\S]*?composeModeTriggerRef\.current\?\.focus\(\)/);
+  // 열리면 '선택된' 옵션부터 포커스하고 화살표로 이동한다 (리뷰 P2 반영, 2026-08-12)
+  assert.match(analysisSource, /aria-selected'\) === 'true'\) \|\| options\(\)\[0\]\)\?\.focus\(\)/);
+  assert.match(analysisSource, /ArrowDown' && event\.key !== 'ArrowUp'/);
+  // 옵션 선택으로 닫힐 때도 트리거로 포커스 복귀 — 닫힌 aria-hidden 안에 포커스가 남지 않게
+  assert.match(analysisSource, /setComposeModeOpen\(false\);\s*\n\s*composeModeTriggerRef\.current\?\.focus\(\);\s*\n\s*changeComposeMode\(mode\.value\)/);
+  assert.match(analysisSource, /event\.key === 'Escape'[\s\S]*?composeModeTriggerRef\.current\?\.focus\(\)/);
   assert.match(analysisSource, /document\.addEventListener\('pointerdown', closeOnOutsideClick\)/);
   assert.doesNotMatch(analysisSource, /composeModeCredits|CREDIT_COSTS\.storyboardPerCut/);
   assert.doesNotMatch(ctaSource, /af-vol|af-cta-note|af-cta-actions/);

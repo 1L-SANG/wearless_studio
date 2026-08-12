@@ -569,21 +569,35 @@ export function AnalysisForm({
   }, [composeMode, composeModeSaving]);
   useEffect(() => {
     if (!composeModeOpen) return undefined;
-    composeModeMenuRef.current?.querySelector('[role="option"]')?.focus();
+    // 열리면 '현재 선택된' 옵션부터 — 첫 옵션 고정 포커스는 선택 상태를 무시한다(리뷰 P2).
+    const options = () => [...(composeModeMenuRef.current?.querySelectorAll('[role="option"]') || [])];
+    (options().find((el) => el.getAttribute('aria-selected') === 'true') || options()[0])?.focus();
     const closeOnOutsideClick = (event) => {
       if (!composeModeMenuRef.current?.contains(event.target)) setComposeModeOpen(false);
     };
-    const closeOnEscape = (event) => {
-      if (event.key !== 'Escape') return;
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setComposeModeOpen(false);
+        composeModeTriggerRef.current?.focus();
+        return;
+      }
+      // listbox 화살표 이동 (roving focus). 옵션이 2개라 위/아래가 곧 서로 전환이다.
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      const list = options();
+      if (!list.length) return;
       event.preventDefault();
-      setComposeModeOpen(false);
-      composeModeTriggerRef.current?.focus();
+      const idx = list.indexOf(document.activeElement);
+      const next = event.key === 'ArrowDown'
+        ? list[Math.min(list.length - 1, idx + 1)] || list[0]
+        : list[Math.max(0, idx - 1)] || list[list.length - 1];
+      next?.focus();
     };
     document.addEventListener('pointerdown', closeOnOutsideClick);
-    document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('keydown', onKeyDown);
     return () => {
       document.removeEventListener('pointerdown', closeOnOutsideClick);
-      document.removeEventListener('keydown', closeOnEscape);
+      document.removeEventListener('keydown', onKeyDown);
     };
   }, [composeModeOpen]);
   useEffect(() => {
@@ -1270,11 +1284,16 @@ export function AnalysisForm({
   const cta = (
     <div className={`af-cta-split${composeModeOpen ? ' open' : ''}`}>
       <div className="af-compose-menu" ref={composeModeMenuRef}>
+        {/* 저장 중엔 native disabled 가 아니라 aria-disabled — disabled 는 방금 복귀시킨
+            포커스를 body 로 뱉어내 키보드 사용자가 자리를 잃는다(리뷰 P2 후속 실측). */}
         <button type="button" className="af-compose-trigger" ref={composeModeTriggerRef}
           aria-haspopup="listbox" aria-expanded={composeModeOpen}
           aria-controls="analysis-compose-mode-listbox"
-          disabled={composeModeSaving || confirming}
-          onClick={() => setComposeModeOpen((open) => !open)}>
+          aria-disabled={composeModeSaving || confirming}
+          onClick={() => {
+            if (composeModeSaving || confirming) return;
+            setComposeModeOpen((open) => !open);
+          }}>
           <span className="af-compose-trigger-copy">
             <small>사진 양</small>
             <b>{selectedComposeModeLabel}</b>
@@ -1285,11 +1304,12 @@ export function AnalysisForm({
           role="listbox" aria-label="상세페이지 사진 양" aria-hidden={!composeModeOpen}>
           {composeModes.map((mode) => (
             <button type="button" role="option" aria-selected={composeMode === mode.value}
-              tabIndex={composeModeOpen ? 0 : -1}
+              tabIndex={composeModeOpen && composeMode === mode.value ? 0 : -1}
               className={`af-compose-option${composeMode === mode.value ? ' on' : ''}`}
               disabled={composeModeSaving || confirming}
               key={mode.value} onClick={() => {
                 setComposeModeOpen(false);
+                composeModeTriggerRef.current?.focus();
                 changeComposeMode(mode.value);
               }}>
               <span>

@@ -281,7 +281,7 @@
 .af-compose-trigger b { font-size: 13.5px; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; }
 .af-compose-chevron { flex: none; color: rgba(255,255,255,.65); transition: transform .18s; }
 .af-cta-split.open .af-compose-chevron { transform: rotate(180deg); }
-.af-compose-trigger:disabled { opacity: .42; cursor: not-allowed; }
+.af-compose-trigger:disabled, .af-compose-trigger[aria-disabled="true"] { opacity: .42; cursor: not-allowed; }
 .af-compose-trigger:focus-visible { outline: none;
   box-shadow: inset 0 2px 0 rgba(255,255,255,.1), inset 0 0 0 2px rgba(255,255,255,.72); }
 .af-compose-popover { position: absolute; z-index: 2; left: 0; bottom: calc(100% + 8px); width: max-content;
