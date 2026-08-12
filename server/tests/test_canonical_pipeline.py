@@ -500,3 +500,40 @@ def test_the_main_app_still_has_no_torch():
             and re.search(r"^\s*(from|import)\s+(torch|transformers)\b",
                           p.read_text(encoding="utf-8", errors="ignore"), re.M)]
     assert not hits, f"app imports torch/transformers: {hits}"
+
+
+# ── 워커 등록 ↔ DB 제약 ──────────────────────────────────────────────────────
+
+def _latest_kind_constraint() -> set[str]:
+    """가장 최근 마이그레이션이 정의한 jobs_kind_check 허용 kind 집합."""
+    import pathlib
+    import re
+    root = pathlib.Path(__file__).resolve().parents[2] / "supabase/migrations"
+    files = sorted(p for p in root.glob("*.sql")
+                   if "jobs_kind_check" in p.read_text(encoding="utf-8"))
+    assert files, "jobs_kind_check 를 정의하는 마이그레이션이 없다"
+    body = files[-1].read_text(encoding="utf-8")
+    m = re.search(r"add constraint jobs_kind_check\s*check\s*\(\s*kind in \((.*?)\)\s*\)",
+                  body, re.S)
+    assert m, f"{files[-1].name} 에서 kind 목록을 못 읽었다"
+    return set(re.findall(r"'([a-z_]+)'", m.group(1)))
+
+
+def test_every_registered_worker_kind_is_allowed_by_the_db_constraint():
+    """워커 등록과 DB 제약은 같이 움직여야 한다.
+
+    회귀(2026-08-12): `sam_preprocess` 를 _WORKERS 와 라우트에는 넣고 마이그레이션에는 안
+    넣었다. 잡 INSERT 가 jobs_kind_check 에 걸렸고, 분석 잡과 같은 트랜잭션이라 함께 롤백돼
+    **POST /analyze 가 통째로 500** 이 됐다. 단위 테스트는 전부 통과했다 — 아무도 실제 제약을
+    보지 않았기 때문이다. 로컬에서 화면을 눌러서야 드러났다.
+    """
+    from app.workers.dispatcher import _WORKERS
+    allowed = _latest_kind_constraint()
+    missing = sorted(set(_WORKERS) - allowed)
+    assert not missing, (
+        f"_WORKERS 에 있는데 jobs_kind_check 에 없는 kind: {missing} — "
+        "마이그레이션으로 제약을 넓혀야 잡 생성이 성공한다")
+
+
+def test_sam_preprocess_is_in_the_kind_constraint():
+    assert "sam_preprocess" in _latest_kind_constraint()

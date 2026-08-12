@@ -392,3 +392,26 @@ def test_input_consistency_failure_does_not_break_analysis(monkeypatch):
     _run(make_settings(gemini_api_key="g-x", input_consistency="warn"))
     assert captured["clothing_type"] == "top"                       # 분석은 정상 종결
     assert "inputConsistency" not in captured["result"]["data"]
+
+
+def test_analyze_survives_a_failing_sam_preprocess_enqueue(client, make_token, monkeypatch):
+    """전처리 큐잉이 터져도 분석은 202 로 나가야 한다.
+
+    회귀(2026-08-12): 두 잡을 한 트랜잭션에 묶었더니 `sam_preprocess` INSERT 가
+    jobs_kind_check 에 걸리는 순간 분석 잡까지 롤백돼 POST /analyze 가 통째로 500 이 됐다.
+    보조 인프라는 본 기능을 죽이면 안 된다 — 그 경계를 코드로 잠근다.
+    """
+    async def fake_get_project(conn, uid, pid):
+        return {"id": pid}
+
+    async def fake_create_job(conn, **kw):
+        if kw["kind"] == "sam_preprocess":
+            raise RuntimeError("jobs_kind_check violation")
+        return {"id": "job-analyze-1"}, True
+
+    monkeypatch.setattr(routes.repo, "get_project", fake_get_project)
+    monkeypatch.setattr(routes.repo, "create_job", fake_create_job)
+    patch_route_db(monkeypatch, routes)
+    res = client.post("/v1/projects/p1/analyze", headers=auth_headers(make_token))
+    assert res.status_code == 202, res.text
+    assert res.json()["jobId"] == "job-analyze-1"

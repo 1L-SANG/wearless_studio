@@ -124,6 +124,14 @@ class Settings:
     # off | shadow(판정·이벤트만) | enforce(편집 재시도 발화). enforce는 코드 레벨 가드
     # (_MANNEQUIN_AXIS_QC_ENFORCEMENT_READY)가 풀리기 전까지 shadow로 강등(G9 규율).
     mannequin_axis_qc: str = "off"
+    # 베이스 마네킹 대비 포즈·프레임 이탈 + 착장 형상 중복/돌출 판정 (off|shadow|enforce).
+    # 기본 off — 관측 데이터가 쌓이기 전에는 어떤 환경에서도 조용히 켜지지 않아야 한다.
+    mannequin_base_fidelity_qc: str = "off"
+    # 셀러가 컷을 거부하고 재생성할 때, **거부된 컷**만 골라 베이스 충실도 관측 잡을 띄운다
+    # (on|off, 기본 off). 위 플래그와 분리한 이유: 저건 생성 경로 전체에 판정을 붙이는
+    # 스위치고, 이건 오류 표본만 모으는 스위치다. 하나로 묶으면 표본을 모으려는 순간
+    # 전 생성에 6~17초가 붙는다.
+    mannequin_base_fidelity_observe_regenerations: str = "off"
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
     mannequin_prompt_version: str = "v1"
     # 여성 기본 가슴 볼륨 2패스 (2026-07-30 스파이크). 생성된 컷에 "가슴만 바꿔라"를 단독 과제로
@@ -363,6 +371,10 @@ def load_settings() -> Settings:
         cut_output_qc_mode=_flag("CUT_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         page_output_qc_mode=_flag("PAGE_OUTPUT_QC_MODE", "off", {"off", "shadow"}),
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
+        mannequin_base_fidelity_qc=_flag(
+            "MANNEQUIN_BASE_FIDELITY_QC", "off", {"off", "shadow", "enforce"}),
+        mannequin_base_fidelity_observe_regenerations=_flag(
+            "MANNEQUIN_BASE_FIDELITY_OBSERVE_REGENERATIONS", "off", {"off", "on"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
         detailpage_fallback_model_id=os.getenv("DETAILPAGE_FALLBACK_MODEL_ID", "mB"),
         personalization_enabled=(

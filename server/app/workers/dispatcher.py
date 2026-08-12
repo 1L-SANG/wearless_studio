@@ -18,6 +18,7 @@ from .mannequin_job import run_mannequin_job
 from .fm_model_asset_job import run_fm_model_asset_job
 from .personalization_generation_job import run_personalization_generation_job
 from .personalization_purge_job import run_personalization_purge_job
+from .base_fidelity_observe_job import run_base_fidelity_observe_job
 from .sam_preprocess_job import run_sam_preprocess_job
 
 log = logging.getLogger("wearless.dispatcher")
@@ -33,6 +34,8 @@ _WORKERS = {
     "personalization_purge": run_personalization_purge_job,  # 개인화 파기 캐스케이드 (api-spec §3.5)
     # 캐노니컬 컷아웃 전처리(무과금). analyze 와 독립 — 소스 사진만 있으면 돈다.
     "sam_preprocess": run_sam_preprocess_job,
+    # 거부된 컷 관측(무과금·이미지 생성 없음). 재생성 요청과 병렬로 돈다.
+    "base_fidelity_observe": run_base_fidelity_observe_job,
     "fm_model_asset_build": run_fm_model_asset_job,  # 실존 모델 자산 빌드(합성+QC, handoff fork)
 }
 _KINDS = tuple(_WORKERS)

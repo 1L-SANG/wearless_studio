@@ -28,6 +28,10 @@ QC_FLAGS = [
     ("MANNEQUIN_UNTUCK_PASS", "mannequin_untuck_pass"),
     ("MANNEQUIN_FABRIC_PASS", "mannequin_fabric_pass"),
     ("MANNEQUIN_BUST_PASS", "mannequin_bust_pass"),
+    # 베이스 충실도: 판정 스위치와 거부컷 관측 스위치는 별개다. 둘 다 미선언이면 off 로 떨어진다.
+    ("MANNEQUIN_BASE_FIDELITY_QC", "mannequin_base_fidelity_qc"),
+    ("MANNEQUIN_BASE_FIDELITY_OBSERVE_REGENERATIONS",
+     "mannequin_base_fidelity_observe_regenerations"),
 ]
 
 

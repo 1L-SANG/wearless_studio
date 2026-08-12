@@ -21,6 +21,7 @@ log = logging.getLogger("wearless.mannequin_job")
 from .. import repo
 from ..agents import (
     image_qc,
+    mannequin_base_fidelity_qc,
     mannequin,
     mannequin_bust,
     mannequin_fabric,
@@ -734,6 +735,73 @@ def gate_decision(s, pillow_verdict_str: str, p2) -> tuple[bool, bool]:
     return pillow_reject, isinstance(p2, dict) and p2.get("verdict") == "retry"
 
 
+#: enforce 에서 **실제로 게이트하는** 축. wearGeometry 는 아직 여기 없다 — 보정이
+#: 통과하지 못했다(2026-08-12: 전체 프레임·크롭 컴포지트 양쪽에서 진양성 2건을 모두
+#: pass 로 판정). 축을 추가하는 것은 그 게이트를 통과시킨 뒤의 별도 변경이다.
+_BASE_FIDELITY_GATED_AXES = ("poseFrameMatch",)
+
+
+def base_fidelity_retry_axes(s, result) -> list[str]:
+    """베이스 충실도가 재시도를 요구하는 축 목록 (순수).
+
+    `enforce` 일 때만, 그리고 **명시적 retry** 일 때만 요구한다. provider 실패·베이스 없음·
+    형식 위반은 전부 `skip` 으로 오는데, 그걸 retry 로 바꾸면 판정기 장애가 생성 실패로
+    번진다. 판정 못 한 것은 판정 안 한 것이다.
+    """
+    if getattr(s, "mannequin_base_fidelity_qc", "off") != "enforce" or not result:
+        return []
+    return [a for a in _BASE_FIDELITY_GATED_AXES
+            if (result.get(a) or {}).get("decision") == "retry"]
+
+
+async def _apply_base_fidelity_qc(
+    *, pool, s, job_id, candidate, attempt, base_img, res, product, analysis,
+) -> dict | None:
+    """베이스 충실도 QC 발화 + 이벤트. **어떤 경우에도 예외를 올리지 않는다.**
+
+    현재는 관측 전용이다 — 반환값은 `gate_decision`·`final_decision` 어디에도 들어가지
+    않는다. 이 QC 는 아직 캘리브레이션 데이터가 없고, 계약상 이번 롤아웃의 목적은
+    "얼마나 자주 무엇을 잡는가"를 재는 것이다.
+
+    `enforce` 에서는 `poseFrameMatch` 만 게이트한다(`_BASE_FIDELITY_GATED_AXES`).
+    wearGeometry 는 판정은 하되 재시도를 요구하지 않는다 — 보정 게이트를 통과하지 못했다.
+    `shadow`·`off` 는 어느 축도 게이트하지 않는다.
+    """
+    mode = getattr(s, "mannequin_base_fidelity_qc", "off")
+    if mode not in ("shadow", "enforce"):
+        return None
+    base_event = {
+        "candidate": candidate, "attempt": attempt,
+        "baseFidelityQcEnabled": True, "baseFidelityQcMode": mode,
+        # 지금은 관측뿐이라는 사실을 이벤트에 남긴다 — 나중에 분포를 볼 때 "왜 안 막혔나"를
+        # 로그만 보고 알 수 있어야 한다.
+        "baseFidelityQcGating": mode == "enforce",
+        "baseFidelityGatedAxes": list(_BASE_FIDELITY_GATED_AXES),
+    }
+    try:
+        result = await mannequin_base_fidelity_qc.verdict(
+            s, base_img, InlineImage(res.mime, res.image),
+            product=product, analysis=analysis)
+    except Exception as e:  # noqa: BLE001 - 판정 실패가 생성을 막지 않는다
+        log.warning("base fidelity QC failed for job %s: %r", job_id, e)
+        result = mannequin_base_fidelity_qc.skipped(
+            mannequin_base_fidelity_qc.SKIP_FAILED)
+        await _emit(pool, job_id, "step", {
+            **base_event, "status": "base_fidelity_qc_failed",
+            "error": type(e).__name__, "message": str(e)[:200],
+            "baseFidelity": result})
+        return result
+    await _emit(pool, job_id, "step", {
+        **base_event, "status": "base_fidelity_qc",
+        "poseFrameMatch": result["poseFrameMatch"]["decision"],
+        "wearGeometry": result["wearGeometry"]["decision"],
+        "overall": result["overall"]["decision"],
+        "reasons": {a: result[a]["reason"] for a in
+                    (*mannequin_base_fidelity_qc.AXES, "overall")},
+        "baseFidelity": result})
+    return result
+
+
 async def _apply_bust_pass(
     *, pool, gemini, s, job_id, candidate, attempt, base_gender, res, calls_spent,
     clothing_type=None, image_size=None,
@@ -1182,6 +1250,11 @@ async def _run_candidate(
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "image_qc_failed",
                     "error": type(e).__name__, "message": str(e)[:200]})
+        # 베이스 충실도 QC(관측 전용). 반환값은 아래 게이트에 **넣지 않는다** — 넣는 순간
+        # shadow 가 아니게 된다. 실패해도 None/skip 을 돌려줄 뿐 생성 경로를 막지 않는다.
+        base_fidelity = await _apply_base_fidelity_qc(
+            pool=pool, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
+            base_img=base_img, res=res, product=product, analysis=analysis)
         # **사전 게이트** — 잘못된 옷을 axis/bust 편집하면 그 정체성이 보존되므로, 편집 전에
         # 한 번 거른다. 최종 출고 판정은 여기가 아니라 아래 final_decision 하나가 내린다.
         pillow_reject, p2_reject = gate_decision(s, verdict.verdict, p2)
@@ -1237,11 +1310,17 @@ async def _run_candidate(
                 p2, series, salvaged=salvaged,
                 thresholds=(s.qc_score_auto_pass, s.qc_score_review))
             budget_left = has_budget_for_retry(s, calls_spent=calls_spent)
+            # 베이스 충실도는 **재시도 사유를 하나 더 대는 것**이지 별도 루프가 아니다.
+            # 기존 판정과 OR 로 합류하고, 예산·구제·SAM 폴백은 아래 분기가 그대로 소유한다.
+            bf_axes = base_fidelity_retry_axes(s, base_fidelity)
+            needs_retry = final_decision(s, qc_scores) == "retry" or bool(bf_axes)
             # **R2 저장 전에** 분기한다: 저장 후 continue 하면 재생성마다 고아 객체가 쌓인다.
-            if final_decision(s, qc_scores) == "retry" and budget_left and not salvaged:
+            if needs_retry and budget_left and not salvaged:
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "final_qc_reject",
                     "outcome": score_outcome(s, qc_scores),
+                    "baseFidelityRetryRequired": bool(bf_axes),
+                    "baseFidelityRetryAxes": bf_axes,
                     "seriesConsistency": (series or {}).get("consistency")})
                 # 편집 완료 이미지 + A~D 전체 스냅샷 — 최종 단계 후보 풀에만 담는다.
                 if _is_better_candidate(s, qc_scores, final_reject[1] if final_reject else None):
