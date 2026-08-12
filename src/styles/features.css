@@ -55,11 +55,19 @@
 .draft-slot-pending { margin: 0 0 14px; padding: 11px 14px; border-radius: var(--r-3); color: var(--fg-2);
   background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--ring); font-size: 13px; }
 .input-promotion-lock { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px;
-  background: rgba(255, 255, 255, .86); backdrop-filter: blur(8px); cursor: wait; }
+  background: rgba(255, 255, 255, .86); backdrop-filter: blur(8px); cursor: wait;
+  animation: inputPromotionLockReveal .12s ease-out .6s both; }
 .input-promotion-lock-card { display: grid; justify-items: center; gap: 10px; width: min(100%, 420px); padding: 30px 24px;
   border-radius: var(--r-6); color: var(--fg-1); background: var(--bg-1); box-shadow: var(--elev-lift), 0 0 0 1px var(--ring); }
 .input-promotion-lock-card strong { font-size: 16px; }
 .input-promotion-lock-card span { color: var(--fg-2); font-size: 13px; }
+@keyframes inputPromotionLockReveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .input-promotion-lock { animation-duration: .001ms; animation-delay: .6s; }
+}
 .draft-entry-sources { display: grid; gap: 10px; margin-top: 20px; }
 .draft-entry-source { display: grid; gap: 4px; width: 100%; padding: 14px 16px; text-align: left; cursor: pointer;
   border: 0; border-radius: var(--r-4); color: var(--fg-1); background: var(--bg-1);
@@ -259,20 +267,60 @@
 .ap-step.done .ap-dot::after { content: "✓"; color: #fff; font-weight: 800; }
 .ap-bar { height: 4px; border-radius: 99px; background: #ececef; margin-top: 14px; overflow: hidden; }
 .ap-bar i { display: block; height: 100%; border-radius: 99px; background: var(--fg-1); transition: width .5s ease; }
-/* 분석 확정 바 — 사진 양과 확정 행동을 한 폭으로 묶어 뒤 콘텐츠와 겹치지 않게 한다. */
-.af-cta-stack { width: min(100%, 380px); display: flex; flex-direction: column; gap: 10px; }
-.af-vol-control { width: 100%; min-width: 0; }
-.af-vol-label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 700;
-  color: var(--fg-3); }
-.af-vol { display: flex; flex-direction: column; gap: 7px; }
-.af-vol-card { width: 100%; min-height: 46px; border: 1px solid var(--ring-strong); border-radius: var(--r-4);
-  background: #fff; padding: 10px 13px; display: flex; align-items: center; justify-content: space-between;
-  color: var(--fg-2); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-align: left; }
-.af-vol-card:hover { border-color: var(--fg-1); color: var(--fg-1); }
-.af-vol-card.on { border-color: var(--fg-1); color: var(--fg-1); box-shadow: inset 0 0 0 1px var(--fg-1); }
-.af-vol-card:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 2px; }
-.af-cta-stack > .btn { width: 100%; justify-content: center; }
-.af-cta-note { width: 100%; margin: 0; text-align: left; font-size: 12.5px; line-height: 1.55; color: var(--fg-3); }
+/* 분석 확정 바 B안 — 사진 양 선택과 확정을 한 덩어리의 분할 CTA로 묶는다. */
+.wizard-cta-analysis { padding: 14px 0 16px; }
+.af-cta-split { position: relative; display: inline-flex; align-items: stretch; height: 54px;
+  border-radius: var(--r-5); overflow: visible; }
+.af-compose-menu { position: relative; display: inline-flex; align-items: stretch; min-width: 0; }
+.af-compose-trigger { display: inline-flex; align-items: center; gap: 7px; border: 0; cursor: pointer;
+  font: inherit; background: #26242e; color: #fff; border-radius: var(--r-5) 0 0 var(--r-5);
+  padding: 0 16px 0 18px; box-shadow: inset 0 2px 0 rgba(255,255,255,.1); white-space: nowrap; }
+.af-compose-trigger-copy { display: grid; gap: 1px; text-align: left; }
+.af-compose-trigger small { font-size: 10.5px; line-height: 1.15; font-weight: 600;
+  color: rgba(255,255,255,.55); letter-spacing: .02em; }
+.af-compose-trigger b { font-size: 13.5px; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; }
+.af-compose-chevron { flex: none; color: rgba(255,255,255,.65); transition: transform .18s; }
+.af-cta-split.open .af-compose-chevron { transform: rotate(180deg); }
+.af-compose-trigger:disabled { opacity: .42; cursor: not-allowed; }
+.af-compose-trigger:focus-visible { outline: none;
+  box-shadow: inset 0 2px 0 rgba(255,255,255,.1), inset 0 0 0 2px rgba(255,255,255,.72); }
+.af-compose-popover { position: absolute; z-index: 2; left: 0; bottom: calc(100% + 8px); width: max-content;
+  /* 왼칸("사진 양") 위에만 머물게 — 폭이 넓어져 확정 버튼 위까지 뻗지 않게 상한을 둔다 */
+  min-width: 240px; max-width: 264px;
+  padding: 6px; background: #fff; border-radius: var(--r-5);
+  box-shadow: 0 12px 32px -12px rgba(19,19,22,.28), 0 2px 8px -4px rgba(19,19,22,.3),
+    0 0 0 1px rgba(34,42,53,.07);
+  opacity: 0; transform: translateY(6px); pointer-events: none;
+  transition: opacity .16s, transform .18s; }
+.af-cta-split.open .af-compose-popover { opacity: 1; transform: none; pointer-events: auto; }
+.af-compose-option { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: 100%;
+  border: 0; background: none; cursor: pointer; font: inherit; text-align: left;
+  padding: 11px 12px; border-radius: 8px; color: var(--fg-1); }
+.af-compose-option:hover, .af-compose-option:focus-visible { background: var(--bg-2); outline: none; }
+.af-compose-option b { display: block; font-size: 13.5px; font-weight: 600; }
+.af-compose-option small { font-size: 11px; color: var(--fg-2); }
+.af-compose-tick { width: 17px; height: 17px; border-radius: 50%; flex: none; display: grid; place-items: center;
+  font-size: 10px; color: #fff; background: linear-gradient(135deg, #1F68A0, #49ACCD); opacity: 0; }
+.af-compose-option.on .af-compose-tick { opacity: 1; }
+.af-cta-confirm.btn { flex: 0 0 auto; height: 54px; min-height: 54px; padding: 0 22px;
+  justify-content: center; background: var(--fg-1); color: #fff; border-radius: 0 var(--r-5) var(--r-5) 0;
+  font-size: 15px; font-weight: 600; letter-spacing: -.01em;
+  box-shadow: inset 0 2px 0 rgba(255,255,255,.14), inset 1px 0 0 rgba(255,255,255,.13);
+  transition: transform .12s, opacity .15s; }
+.af-cta-confirm.btn-primary:hover:not([disabled]) { background: var(--fg-1); opacity: .92; }
+.af-cta-confirm.btn:active:not([disabled]) { transform: translateY(1px); }
+.af-cta-confirm svg { transform: translateY(-.5px); }
+@media (prefers-reduced-motion: reduce) {
+  .af-compose-chevron, .af-compose-popover { transition: none; }
+}
+@media (max-width: 639px) {
+  .af-cta-split { width: 100%; }
+  .af-compose-menu { flex: 0 1 41%; }
+  .af-compose-trigger { width: 100%; min-width: 0; justify-content: space-between; padding: 0 10px 0 12px; }
+  .af-compose-trigger b { font-size: 12px; }
+  .af-cta-confirm.btn { flex: 1 1 59%; min-width: 0; padding: 0 8px; gap: 4px; font-size: 11px; }
+  .af-cta-confirm svg { width: 14px; height: 14px; }
+}
 
 .storyboard-transition-overlay { position: fixed; inset: 0; z-index: 120; border: 0; padding: 24px;
   display: grid; place-items: center; background: rgba(18, 20, 25, .68); color: #fff; cursor: pointer;

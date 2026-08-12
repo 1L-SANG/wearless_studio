@@ -27,10 +27,7 @@ import { invalidateStoryboardEntryPrefetch } from '@/features/storyboard/storybo
 import { resolveSelectedModelId } from './modelSelection.js';
 import { useAuth } from '@/features/auth/AuthProvider.jsx';
 import { SELLING_POINTS_MAX, applySellingPointEdit } from './sellingPoints.js';
-import {
-  estimateComposeModeCredits,
-  selectAnalysisComposeMode,
-} from './composeModeSelection.js';
+import { selectAnalysisComposeMode } from './composeModeSelection.js';
 
 // 모델 카드 썸네일 — 얼굴=생체 PII라 공개 URL 없음. 활성 라이선스 얼굴 게이트 URI(faceThumbUri)를
 // Bearer fetch 로 받아 objectURL 로 표시하고, 언마운트 시 해제한다(fetchLicenseFaceUrl 계약).
@@ -564,9 +561,34 @@ export function AnalysisForm({
   const composeModeSelectionRef = useRef({ requestId: 0, confirmedMode: composeMode });
   const [composeModeSaving, setComposeModeSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [composeModeOpen, setComposeModeOpen] = useState(false);
+  const composeModeMenuRef = useRef(null);
+  const composeModeTriggerRef = useRef(null);
   useEffect(() => {
     if (!composeModeSaving) composeModeSelectionRef.current.confirmedMode = composeMode;
   }, [composeMode, composeModeSaving]);
+  useEffect(() => {
+    if (!composeModeOpen) return undefined;
+    composeModeMenuRef.current?.querySelector('[role="option"]')?.focus();
+    const closeOnOutsideClick = (event) => {
+      if (!composeModeMenuRef.current?.contains(event.target)) setComposeModeOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setComposeModeOpen(false);
+      composeModeTriggerRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [composeModeOpen]);
+  useEffect(() => {
+    if (composeModeSaving || confirming) setComposeModeOpen(false);
+  }, [composeModeSaving, confirming]);
   const [washing, setWashing] = useState(false);
   const [spDraft, setSpDraft] = useState('');
   const [ccDraft, setCcDraft] = useState(a.customCategory || '');   // 직접 입력 pill (blur 커밋)
@@ -588,14 +610,9 @@ export function AnalysisForm({
   const composeModes = catalogs?.composeModes || [];
   const selectedComposeMode = composeModes.find((mode) => mode.value === composeMode)
     || composeModes[0];
-  const composeModeOptions = composeModes.map((mode) => ({
-    value: mode.value,
-    label: `${mode.label} · ${mode.count}컷`,
-  }));
-  const composeModeCredits = estimateComposeModeCredits(
-    selectedComposeMode?.count,
-    CREDIT_COSTS.storyboardPerCut,
-  );
+  const selectedComposeModeLabel = selectedComposeMode
+    ? `${selectedComposeMode.label} · ${selectedComposeMode.count}컷`
+    : '';
   const changeComposeMode = (nextMode) => {
     if (nextMode === composeMode) return;
     setComposeModeSaving(true);
@@ -1250,30 +1267,44 @@ export function AnalysisForm({
     </>
   );
 
-  // 마네킹 최초 생성은 다음 페이지 진입 시 자동 차감 — 차감 직전 마지막 행동인 이 버튼에 예고 (PRD §7.7)
-  // 버튼 금액만으로는 "지금 나가는 돈"만 보이고, 되돌아와 설정을 고치면 또 나간다는 사실이 안 보인다.
-  // 콘티에서 '이전' 으로 돌아올 수 있으니 되돌릴 수 없다고는 말하지 않는다 — 대가를 말한다.
   const cta = (
-    <div className="af-cta-stack">
-      <p className="af-cta-note">
-        다음 화면인 상세페이지 구성으로 이동하고, 마네킹컷은 뒤에서 만들어요.<br />
-        지금 {CREDIT_COSTS.mannequinGenerate}크레딧 · 상세페이지 생성 때 약 {composeModeCredits}크레딧.<br />
-        나중에 성별이나 의류 종류를 바꾸면 마네킹컷을 다시 만들어 같은 비용이 한 번 더 들어요.
-      </p>
-      <div className="af-vol-control">
-        <span className="af-vol-label">사진 양 선택</span>
-        <div className="af-vol" role="radiogroup" aria-label="상세페이지 사진 양">
-          {composeModeOptions.map((option) => (
-            <button type="button" role="radio" aria-checked={composeMode === option.value}
-              className={`af-vol-card${composeMode === option.value ? ' on' : ''}`}
-              key={option.value} onClick={() => changeComposeMode(option.value)}>
-              <span>{option.label}</span>
-              <Icon name={composeMode === option.value ? 'check' : 'arrowRight'} size={16} />
+    <div className={`af-cta-split${composeModeOpen ? ' open' : ''}`}>
+      <div className="af-compose-menu" ref={composeModeMenuRef}>
+        <button type="button" className="af-compose-trigger" ref={composeModeTriggerRef}
+          aria-haspopup="listbox" aria-expanded={composeModeOpen}
+          aria-controls="analysis-compose-mode-listbox"
+          disabled={composeModeSaving || confirming}
+          onClick={() => setComposeModeOpen((open) => !open)}>
+          <span className="af-compose-trigger-copy">
+            <small>사진 양</small>
+            <b>{selectedComposeModeLabel}</b>
+          </span>
+          <Icon name="chevUp" size={12} className="af-compose-chevron" />
+        </button>
+        <div id="analysis-compose-mode-listbox" className="af-compose-popover"
+          role="listbox" aria-label="상세페이지 사진 양" aria-hidden={!composeModeOpen}>
+          {composeModes.map((mode) => (
+            <button type="button" role="option" aria-selected={composeMode === mode.value}
+              tabIndex={composeModeOpen ? 0 : -1}
+              className={`af-compose-option${composeMode === mode.value ? ' on' : ''}`}
+              disabled={composeModeSaving || confirming}
+              key={mode.value} onClick={() => {
+                setComposeModeOpen(false);
+                changeComposeMode(mode.value);
+              }}>
+              <span>
+                <b>{mode.label}</b>
+                <small>{mode.desc} · {mode.count}컷</small>
+              </span>
+              <span className="af-compose-tick" aria-hidden="true">
+                <Icon name="check" size={10} stroke={2.5} />
+              </span>
             </button>
           ))}
         </div>
       </div>
       <Button variant="primary" size="lg" iconRight="arrowRight"
+        className="af-cta-confirm"
         disabled={composeModeSaving || confirming}
         onClick={confirmAnalysis}>의류정보 확정 완료 · {CREDIT_COSTS.mannequinGenerate} 크레딧</Button>
     </div>
