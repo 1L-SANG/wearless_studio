@@ -160,8 +160,15 @@ test('the mannequin CTA cannot mistake a failed storyboard fetch for zero AI cut
     mannequinSource,
     /setAiCutCount\(Array\.isArray\(nextStoryboard\) \? nextStoryboard\.filter\(\(b\) => b\.source !== 'mine'\)\.length : null\)/,
   );
-  // 미확정일 땐 기존 관용구(em dash)로 표시 — 계산된 숫자(특히 0)를 보여주지 않는다.
-  assert.match(mannequinSource, /aiCutCount == null \? '—' : aiCutCount \* /);
+  // 조회 실패를 0원으로 표시하지 않으면서, 정상 조회된 컷 수에는 단가를 곱해 CTA에 보여준다.
+  assert.match(
+    mannequinSource,
+    /aiCutCount == null \? '—' : aiCutCount \* CREDIT_COSTS\.storyboardPerCut/,
+  );
+  assert.match(
+    mannequinSource,
+    /detailPageGenerationCreditShortfall\(\s*useAppStore\.getState\(\)\.account,\s*aiCutCount,\s*\)/,
+  );
 });
 
 test('the storyboard fires mannequin generation as it loads', () => {
