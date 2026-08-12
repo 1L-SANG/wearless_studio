@@ -24,6 +24,57 @@ test('draft sync shares one in-flight create and reuses its project after caller
   assert.equal(creates, 1);
 });
 
+test('a draft edited after timeout is saved again into the completed project', async () => {
+  const seen = [];
+  const coordinator = createDraftSyncSingleFlight(async (draft, { projectId }) => {
+    seen.push({ name: draft.product.name, projectId });
+    return { projectId: projectId || 'project-1' };
+  });
+
+  await coordinator.sync({
+    updatedAt: '2026-08-11T07:00:00.000Z',
+    product: { name: 'before-timeout' },
+  });
+  await coordinator.sync({
+    updatedAt: '2026-08-11T07:01:00.000Z',
+    product: { name: 'edited-after-timeout' },
+  });
+
+  assert.deepEqual(seen, [
+    { name: 'before-timeout', projectId: undefined },
+    { name: 'edited-after-timeout', projectId: 'project-1' },
+  ]);
+});
+
+test('a newer draft waits for an older in-flight save and then persists', async () => {
+  const seen = [];
+  let finishFirst;
+  const coordinator = createDraftSyncSingleFlight(async (draft, { projectId }) => {
+    seen.push({ name: draft.product.name, projectId });
+    if (draft.product.name === 'slow-old-draft') {
+      await new Promise((resolve) => { finishFirst = resolve; });
+    }
+    return { projectId: projectId || 'project-1' };
+  });
+
+  const first = coordinator.sync({
+    updatedAt: '2026-08-11T07:00:00.000Z',
+    product: { name: 'slow-old-draft' },
+  });
+  await Promise.resolve();
+  const latest = coordinator.sync({
+    updatedAt: '2026-08-11T07:01:00.000Z',
+    product: { name: 'latest-draft' },
+  });
+
+  finishFirst();
+  await Promise.all([first, latest]);
+  assert.deepEqual(seen, [
+    { name: 'slow-old-draft', projectId: undefined },
+    { name: 'latest-draft', projectId: 'project-1' },
+  ]);
+});
+
 test('draft sync retry preserves a project id created before a partial failure', async () => {
   const seenProjectIds = [];
   let attempt = 0;
@@ -41,4 +92,26 @@ test('draft sync retry preserves a project id created before a partial failure',
   await assert.rejects(coordinator.sync({}), /upload failed/);
   assert.deepEqual(await coordinator.sync({}), { projectId: 'project-existing' });
   assert.deepEqual(seenProjectIds, [undefined, 'project-existing']);
+});
+
+test('post-promotion cleanup failure reruns the latest draft on the same project', async () => {
+  const seen = [];
+  const coordinator = createDraftSyncSingleFlight(async (draft, { projectId }) => {
+    seen.push({ name: draft.product.name, projectId });
+    return { projectId: projectId || 'project-1' };
+  });
+
+  assert.deepEqual(
+    await coordinator.sync({ product: { name: 'before-delete-failure' } }),
+    { projectId: 'project-1' },
+  );
+  assert.equal(coordinator.retryFrom('project-1'), true);
+  assert.deepEqual(
+    await coordinator.sync({ product: { name: 'edited-before-retry' } }),
+    { projectId: 'project-1' },
+  );
+  assert.deepEqual(seen, [
+    { name: 'before-delete-failure', projectId: undefined },
+    { name: 'edited-before-retry', projectId: 'project-1' },
+  ]);
 });

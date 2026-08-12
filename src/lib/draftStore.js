@@ -52,7 +52,7 @@ async function withStore(mode, run) {
 
 /** ProductInput 의 product 에서 사진 blob 을 추출해 draft 를 IndexedDB 에 저장한다.
     blob 추출(fetch(objectURL))은 페이지가 살아있을 때만 가능 → 리다이렉트 직전에 호출. */
-export async function saveProductDraft(product, analysis = null) {
+export async function saveProductDraft(product, analysis = null, composeMode = 'basic', updatedAt = new Date().toISOString()) {
   const photos = [];
   const okIds = new Set();
   let failed = 0;
@@ -81,7 +81,13 @@ export async function saveProductDraft(product, analysis = null) {
   const cleanProduct = product
     ? { ...product, colors: (product.colors || []).map((c) => ({ ...c, images: (c.images || []).filter((im) => okIds.has(im.id)) })) }
     : product;
-  await withStore('readwrite', (s) => s.put({ product: cleanProduct, analysis, photos }, KEY));
+  await withStore('readwrite', (s) => s.put({
+    product: cleanProduct,
+    analysis,
+    composeMode: composeMode === 'extended' ? 'extended' : 'basic',
+    updatedAt,
+    photos,
+  }, KEY));
   // 이 탭 세션에 '미동기화 입력 있음' 표시 — 복원은 이 플래그가 있을 때만(=같은 세션) 한다.
   // sessionStorage 라 탭을 닫으면 사라져, 공용 브라우저의 다른 사용자에겐 복원되지 않는다.
   sessionStorage.setItem(PENDING_KEY, '1');
@@ -94,14 +100,24 @@ function commitPendingSnapshot() {
   if (!pendingSnapshot) return saveChain;
   const snapshot = pendingSnapshot;
   pendingSnapshot = null;
-  saveChain = saveChain.catch(() => null).then(() => saveProductDraft(snapshot.product, snapshot.analysis));
+  saveChain = saveChain.catch(() => null).then(() => saveProductDraft(
+    snapshot.product,
+    snapshot.analysis,
+    snapshot.composeMode,
+    snapshot.updatedAt,
+  ));
   return saveChain;
 }
 
 /** 익명 입력을 마지막 변경 기준으로 직렬화해 저장한다. 사진 blob 추출이 겹쳐
     오래된 저장이 최신 입력을 덮지 않도록 모든 IndexedDB 쓰기는 한 큐를 탄다. */
-export function queueProductDraftSave(product, analysis = null) {
-  pendingSnapshot = { product, analysis };
+export function queueProductDraftSave(
+  product,
+  analysis = null,
+  composeMode = 'basic',
+  updatedAt = new Date().toISOString(),
+) {
+  pendingSnapshot = { product, analysis, composeMode, updatedAt };
   clearTimeout(pendingTimer);
   pendingTimer = setTimeout(commitPendingSnapshot, DRAFT_DEBOUNCE_MS);
 }
@@ -121,7 +137,11 @@ export function discardPendingDraftSave() {
 /** 저장된 draft 반환(없으면 null). photos[].blob 은 Blob 으로 복원된다. */
 export async function loadDraft() {
   const draft = await withStore('readonly', (s) => s.get(KEY));
-  return draft ? { ...draft, analysis: normalizeAnalysisFit(draft.analysis) } : null;
+  return draft ? {
+    ...draft,
+    analysis: normalizeAnalysisFit(draft.analysis),
+    composeMode: draft.composeMode === 'extended' ? 'extended' : 'basic',
+  } : null;
 }
 
 /** draft 삭제 — sync 성공 후 정리. */

@@ -41,6 +41,7 @@ from .models import (
     CreditHistoryEntry,
     CreditSource,
     CustomMatchItemRequest,
+    DraftSlotPutRequest,
     ErrorResponse,
     JobView,
     MannequinCut,
@@ -65,6 +66,7 @@ router = APIRouter(prefix="/v1")
 # 실제 업로드는 변환 단계에서 긴 변 4000px 로 줄여 3MB 안팎이라 이 값은 상한 가드다.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB
 UPLOAD_URL_TTL = 300  # presigned PUT 만료(초)
+DRAFT_SLOT_STORAGE_KEY = "draft-slot"
 
 COMMON_RESPONSES = {
     401: {"model": ErrorResponse, "description": "인증 실패 (토큰 누락, 만료 또는 위변조)"},
@@ -292,6 +294,75 @@ async def _cleanup_custom_match_r2(r2: R2Client, assets: list[dict]) -> None:
                     )
                 else:
                     await asyncio.sleep(0.25 * (attempt + 1))
+
+
+async def _cleanup_draft_slot_r2(r2: R2Client, assets: list[dict]) -> None:
+    """Best-effort R2 cleanup after the draft asset rows have been soft-deleted."""
+    for asset in assets:
+        for attempt in range(3):
+            try:
+                await asyncio.to_thread(r2.delete, asset["r2_key"])
+                break
+            except Exception:
+                if attempt == 2:
+                    logger.warning(
+                        "draft_slot_r2_cleanup_failed",
+                        extra={"asset_id": asset.get("id")},
+                        exc_info=True,
+                    )
+                else:
+                    await asyncio.sleep(0.25 * (attempt + 1))
+
+
+def _draft_slot_images(payload: dict) -> list[dict]:
+    product = payload.get("product") if isinstance(payload.get("product"), dict) else payload
+    colors = product.get("colors") if isinstance(product, dict) else None
+    if not isinstance(colors, list):
+        return []
+    return [
+        image
+        for color in colors
+        if isinstance(color, dict) and isinstance(color.get("images"), list)
+        for image in color["images"]
+        if isinstance(image, dict)
+    ]
+
+
+def _draft_slot_asset_ids(payload: dict) -> set[str]:
+    asset_ids: set[str] = set()
+    for image in _draft_slot_images(payload):
+        try:
+            asset_ids.add(str(uuid.UUID(str(image.get("id")))))
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return asset_ids
+
+
+def _draft_slot_meta(row: dict) -> dict:
+    updated_at = row["updated_at"]
+    if isinstance(updated_at, datetime):
+        updated_at = updated_at.isoformat()
+    return {
+        "updatedAt": updated_at,
+        "deviceLabel": row.get("device_label"),
+        "photoCount": len(_draft_slot_images(row.get("payload") or {})),
+        "photosPending": bool(row.get("photos_pending")),
+    }
+
+
+def _draft_slot_expired(row: dict) -> bool:
+    expires_at = row.get("expires_at")
+    return isinstance(expires_at, datetime) and expires_at <= datetime.now(timezone.utc)
+
+
+async def _remove_draft_slot(
+    conn, user_id: str, row: dict, *, keep_asset_ids: set[str] | None = None
+) -> list[dict]:
+    asset_ids = _draft_slot_asset_ids(row.get("payload") or {}) - (keep_asset_ids or set())
+    await repo.delete_draft_slot(conn, user_id)
+    return await repo.soft_delete_unreferenced_draft_assets(
+        conn, user_id, sorted(asset_ids)
+    )
 
 
 def _require_bg_examples_enabled(request: Request, value) -> None:
@@ -1161,6 +1232,218 @@ async def remove_custom_match_item(
     return Response(status_code=204)
 
 
+# ---------- 숨은 임시저장 슬롯 ----------
+
+
+@router.get(
+    "/draft-slot",
+    responses={**COMMON_RESPONSES, 204: {"description": "저장된 슬롯 없음"}},
+    tags=["Draft Slot"],
+    summary="숨은 임시저장 슬롯 메타 조회",
+)
+async def get_draft_slot(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    full: bool = Query(False),
+    x_draft_token: str | None = Header(default=None, alias="X-Draft-Token"),
+    user_id: str = Depends(require_user),
+):
+    cleanup_assets: list[dict] = []
+    async with get_conn(request) as conn:
+        row = await repo.lock_draft_slot(conn, user_id)
+        if row and _draft_slot_expired(row):
+            cleanup_assets = await _remove_draft_slot(conn, user_id, row)
+            await conn.commit()
+            row = None
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    if row is None:
+        return Response(status_code=204)
+    result = {
+        "meta": _draft_slot_meta(row),
+        "holdsToken": bool(x_draft_token) and x_draft_token == row["active_token"],
+    }
+    if full:
+        result["payload"] = row["payload"]
+    return result
+
+
+@router.put(
+    "/draft-slot",
+    responses={**COMMON_RESPONSES, 409: {"model": ErrorResponse}},
+    tags=["Draft Slot"],
+    summary="숨은 임시저장 슬롯 생성 또는 갱신",
+)
+async def put_draft_slot(
+    request: Request,
+    body: DraftSlotPutRequest,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user),
+):
+    cleanup_assets: list[dict] = []
+    incoming_asset_ids = _draft_slot_asset_ids(body.payload)
+    token = str(body.token) if body.token is not None else None
+    consumed_token_conflict = False
+    async with get_conn(request) as conn:
+        row = await repo.lock_draft_slot(conn, user_id)
+        if row and _draft_slot_expired(row):
+            cleanup_assets = await _remove_draft_slot(
+                conn, user_id, row, keep_asset_ids=incoming_asset_ids
+            )
+            row = None
+
+        if row is None and token is not None:
+            # 삭제·만료로 소비된 작업권은 다시 슬롯을 만들 수 없다. 새 슬롯 생성은 token=null인
+            # 최초 저장만 허용한다(오래된 PUT이 삭제 뒤 도착해 슬롯을 부활시키는 레이스 차단).
+            # 만료 슬롯을 같은 트랜잭션에서 발견한 경우에는 삭제를 먼저 커밋한 뒤 409를 반환한다.
+            await conn.commit()
+            consumed_token_conflict = True
+        elif row is None:
+            token = str(uuid.uuid4())
+            saved = await repo.create_draft_slot(
+                conn,
+                user_id=user_id,
+                payload=body.payload,
+                active_token=token,
+                device_label=body.device_label,
+                photos_pending=body.photos_pending,
+            )
+            status_code = 201
+        else:
+            if token != row["active_token"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "token_mismatch",
+                        "message": "다른 기기에서 이어서 작업을 시작했어요.",
+                        "meta": _draft_slot_meta(row),
+                    },
+                )
+            removed_ids = _draft_slot_asset_ids(row.get("payload") or {}) - incoming_asset_ids
+            saved = await repo.update_draft_slot(
+                conn,
+                user_id=user_id,
+                payload=body.payload,
+                device_label=body.device_label,
+                photos_pending=body.photos_pending,
+            )
+            cleanup_assets.extend(await repo.soft_delete_unreferenced_draft_assets(
+                conn, user_id, sorted(removed_ids)
+            ))
+            status_code = 200
+        if not consumed_token_conflict:
+            await conn.commit()
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    if consumed_token_conflict:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {
+                "code": "token_mismatch",
+                "message": "이 기기의 임시저장 작업권이 만료됐어요.",
+                "meta": None,
+            }},
+        )
+    return JSONResponse(
+        status_code=status_code,
+        content={"token": saved["active_token"], "meta": _draft_slot_meta(saved)},
+    )
+
+
+@router.post(
+    "/draft-slot:takeover",
+    responses={**COMMON_RESPONSES, 204: {"description": "저장된 슬롯 없음"}},
+    tags=["Draft Slot"],
+    summary="숨은 임시저장 슬롯 작업권 이어받기",
+)
+async def takeover_draft_slot(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user),
+):
+    cleanup_assets: list[dict] = []
+    async with get_conn(request) as conn:
+        row = await repo.lock_draft_slot(conn, user_id)
+        if row and _draft_slot_expired(row):
+            cleanup_assets = await _remove_draft_slot(conn, user_id, row)
+            await conn.commit()
+            row = None
+        if row:
+            token = str(uuid.uuid4())
+            row = await repo.takeover_draft_slot(conn, user_id, token)
+            await conn.commit()
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    if row is None:
+        return Response(status_code=204)
+    return {"token": row["active_token"], "payload": row["payload"], "meta": _draft_slot_meta(row)}
+
+
+@router.delete(
+    "/draft-slot",
+    status_code=204,
+    responses={
+        **COMMON_RESPONSES,
+        204: {"description": "삭제 완료 또는 이미 없음"},
+        409: {"model": ErrorResponse},
+    },
+    tags=["Draft Slot"],
+    summary="숨은 임시저장 슬롯 삭제",
+)
+async def delete_draft_slot(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_draft_token: str | None = Header(default=None, alias="X-Draft-Token"),
+    user_id: str = Depends(require_user),
+):
+    cleanup_assets: list[dict] = []
+    async with get_conn(request) as conn:
+        row = await repo.lock_draft_slot(conn, user_id)
+        if row:
+            if x_draft_token != row["active_token"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "token_mismatch",
+                        "message": "다른 기기에서 이어서 작업을 시작했어요.",
+                        "meta": _draft_slot_meta(row),
+                    },
+                )
+            # advisory/row lock을 잡은 이 트랜잭션 안에서 active token을 소비한다.
+            cleanup_assets = await _remove_draft_slot(conn, user_id, row)
+        await conn.commit()
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    return Response(status_code=204)
+
+
+@router.delete(
+    "/draft-slot/assets/{asset_id}",
+    status_code=204,
+    responses={**COMMON_RESPONSES, 204: {"description": "미참조 임시 자산 폐기 완료"}},
+    tags=["Draft Slot"],
+    summary="슬롯에 반영되지 않은 임시 사진 폐기",
+)
+async def discard_draft_slot_asset(
+    request: Request,
+    asset_id: str,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user),
+):
+    try:
+        normalized_id = str(uuid.UUID(asset_id))
+    except (ValueError, TypeError):
+        return Response(status_code=204)
+    async with get_conn(request) as conn:
+        cleanup_assets = await repo.soft_delete_unreferenced_draft_assets(
+            conn, user_id, [normalized_id]
+        )
+        await conn.commit()
+    if cleanup_assets:
+        background_tasks.add_task(_cleanup_draft_slot_r2, _r2(request), cleanup_assets)
+    return Response(status_code=204)
+
+
 # ---------- 자산 업로드 (§3 presigned + finalize) ----------
 
 
@@ -1188,13 +1471,15 @@ async def create_upload_url(
     if body.size <= 0 or body.size > MAX_UPLOAD_BYTES:
         raise _bad_request("file_too_large", "파일 크기가 허용 범위를 벗어났습니다.")
 
-    # 프로젝트 소유권 확인 — 타인 프로젝트 경로로 업로드 URL 발급 차단
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, body.project_id) is None:
-            raise _not_found()
+    # draft_slot은 프로젝트 생성 전 백업이므로 project_id 없이 계정 전용 경로를 쓴다.
+    if body.purpose != "draft_slot":
+        async with get_conn(request) as conn:
+            if await repo.get_project(conn, user_id, body.project_id) is None:
+                raise _not_found()
 
     asset_id = str(uuid.uuid4())
-    key = upload_key(user_id, body.project_id, asset_id, ext)
+    storage_scope = DRAFT_SLOT_STORAGE_KEY if body.purpose == "draft_slot" else body.project_id
+    key = upload_key(user_id, storage_scope, asset_id, ext)
     upload_url = _r2(request).presigned_put(key, body.mime)  # 서명만 — 블로킹 아님
     return {
         "assetId": asset_id,
@@ -1228,12 +1513,14 @@ async def complete_upload(
     if ext is None:
         raise _bad_request("unsupported_type", "지원하지 않는 이미지 형식입니다.")
 
-    async with get_conn(request) as conn:
-        if await repo.get_project(conn, user_id, body.project_id) is None:
-            raise _not_found()
+    if body.purpose != "draft_slot":
+        async with get_conn(request) as conn:
+            if await repo.get_project(conn, user_id, body.project_id) is None:
+                raise _not_found()
 
     # 키는 클라가 아니라 서버가 (user_id, projectId, assetId, ext)로 재유도 — 위변조 차단.
-    key = upload_key(user_id, body.project_id, asset_id, ext)
+    storage_scope = DRAFT_SLOT_STORAGE_KEY if body.purpose == "draft_slot" else body.project_id
+    key = upload_key(user_id, storage_scope, asset_id, ext)
     r2 = _r2(request)
     meta = await asyncio.to_thread(r2.head, key)  # 네트워크 → 스레드 격리 (§5)
     if meta is None:
@@ -1267,7 +1554,7 @@ async def complete_upload(
             conn,
             asset_id=asset_id,
             user_id=user_id,
-            project_id=body.project_id,
+            project_id=None if body.purpose == "draft_slot" else body.project_id,
             source="upload",
             bucket=request.app.state.settings.r2_bucket,
             key=key,

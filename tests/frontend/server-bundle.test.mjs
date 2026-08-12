@@ -7,14 +7,16 @@ import { analyzePublicDraft } from '../../src/lib/api/publicAnalysis.js';
 
 const read = (path) => readFile(new URL(`../../${path}`, import.meta.url), 'utf8');
 
-test('http public input analysis uses the unauthenticated multipart endpoint', async () => {
+test('http public input analysis uses multipart and prefers optional Bearer rate-limit identity', async () => {
   const [indexSource, adapterSource] = await Promise.all([
     read('src/lib/api/index.js'),
     read('src/lib/api/httpAdapter.js'),
   ]);
 
-  assert.match(indexSource, /analyzePublicDraft\(await mockAdapter\.getProduct\(projectId\), options/);
+  assert.match(indexSource, /analyzePublicDraft\(options\?\.product \|\| await mockAdapter\.getProduct\(projectId\), options/);
   assert.match(adapterSource, /publicHttp\('\/v1\/public\/analyze', form/);
+  assert.match(adapterSource, /const \{ data \} = await supabase\.auth\.getSession\(\)/);
+  assert.match(adapterSource, /headers: token \? \{ Authorization: `Bearer \$\{token\}` \} : undefined/);
   assert.match(adapterSource, /form\.append\('images', blob/);
   assert.match(adapterSource, /form\.append\('slots', photo\.slot/);
   assert.match(adapterSource, /colors\.find\(\(color\) => color\.isBase\)/);
