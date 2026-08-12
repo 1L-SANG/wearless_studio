@@ -141,23 +141,108 @@ def test_loader_silently_falls_back_on_typo(monkeypatch):
 WORKFLOW = pathlib.Path(__file__).resolve().parents[2] / ".github/workflows/deploy-server.yml"
 
 
-def _deploy_step_names() -> list[str]:
-    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    return [s.get("name") or s.get("uses") or "" for s in doc["jobs"]["deploy"]["steps"]]
+def _wf() -> dict:
+    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
 
-def test_migrations_run_before_any_service_deploy():
+def _step_names(job: str) -> list[str]:
+    return [s.get("name") or s.get("uses") or "" for s in _wf()["jobs"][job]["steps"]]
+
+
+#: (경로 글롭, api 배포, sam2 배포) — 각 이미지가 **실제로 COPY 하는 것**에서 나온 표다.
+#: 두 이미지 모두 context 는 server/ 지만 .dockerignore 가 정반대로 걸려 있어서,
+#: API 는 sam_service 를 제외하고 SAM 은 app/·prompts/·uv.lock 을 제외한다.
+CHANGE_MATRIX = [
+    ("server/app/routes.py", True, False),
+    ("server/app/workers/mannequin_job.py", True, False),
+    ("server/prompts/mannequin_generate_v1.txt", True, False),
+    ("server/uv.lock", True, False),
+    ("server/Dockerfile", True, False),
+    ("copilot/api/manifest.yml", True, False),
+    ("supabase/migrations/20260812010000_base_fidelity_observe_job_kind.sql", True, False),
+    ("server/sam_service/segmentation.py", False, True),
+    ("server/sam_service/requirements.txt", False, True),
+    ("server/sam_service/Dockerfile", False, True),
+    ("copilot/sam2/manifest.yml", False, True),
+    # 워크플로 자체가 바뀌면 둘 다 — 라우팅이 달라졌을 수 있으므로 안전측으로.
+    (".github/workflows/deploy-server.yml", True, True),
+    # 어느 이미지에도 안 들어가는 것들
+    ("server/tests/test_analyze.py", False, False),
+    ("server/scripts/seed_mannequin_base.py", False, False),
+    ("src/App.jsx", False, False),
+    ("tests/frontend/editor-review-gate.test.mjs", False, False),
+]
+
+
+def _matches(glob: str, path: str) -> bool:
+    """paths-filter 글롭 근사 — `**` 는 경로 구분자를 넘고 `*` 는 안 넘는다."""
+    import re
+    rx = re.escape(glob).replace(r"\*\*/", "(?:.*/)?").replace(r"\*\*", ".*")
+    rx = rx.replace(r"\*", "[^/]*")
+    return re.fullmatch(rx, path) is not None
+
+
+def _filters() -> dict:
+    for s in _wf()["jobs"]["changes"]["steps"]:
+        if str(s.get("uses", "")).startswith("dorny/paths-filter"):
+            return yaml.safe_load(s["with"]["filters"])
+    raise AssertionError("changes 잡에서 paths-filter 를 못 찾았다")
+
+
+@pytest.mark.parametrize("path,want_api,want_sam", CHANGE_MATRIX)
+def test_change_matrix_routes_to_the_right_services(path, want_api, want_sam):
+    """서비스별 배포 라우팅. 여기가 틀리면 무관한 변경이 SAM 을 재배포하거나(비용),
+    공유 의존이 빠져 stale 이미지가 남는다(더 나쁨)."""
+    f = _filters()
+    got_api = any(_matches(g, path) for g in f["api"])
+    got_sam = any(_matches(g, path) for g in f["sam2"])
+    assert (got_api, got_sam) == (want_api, want_sam), f"{path}: api={got_api} sam2={got_sam}"
+
+
+def test_sam_image_has_no_dependency_on_the_api_source():
+    """SAM 필터가 app/ 을 안 보는 근거 — 실제로 임포트하지 않아야 한다.
+
+    이게 깨지면 `server/app/**` 변경이 SAM 이미지를 stale 하게 만든다(§5 의 위험).
+    """
+    import re
+    root = pathlib.Path(__file__).resolve().parents[1] / "sam_service"
+    bad = [str(f) for f in root.rglob("*.py")
+           if re.search(r"^\s*(from|import)\s+app\b", f.read_text(encoding="utf-8"), re.M)]
+    assert not bad, f"sam_service 가 app/ 을 임포트한다: {bad}"
+
+
+def test_migrations_run_before_the_api_deploy():
     """DB 제약이 먼저다 — 코드가 먼저 뜨면 새 job kind 가 조용히 죽는다.
 
     회귀(2026-08-12): `sam_preprocess` 를 워커·라우트에 등록하고 `jobs_kind_check` 에는 안
     넣었다. 잡 INSERT 가 CheckViolation 으로 죽었고 그 실패는 삼켜지도록 짜여 있어서
-    **에러 하나 없이 기능만 사라졌다**. 순서를 주석이 아니라 테스트로 잠근다.
+    **에러 하나 없이 기능만 사라졌다**.
     """
-    steps = _deploy_step_names()
+    steps = _step_names("deploy-api")
     mig = next(i for i, n in enumerate(steps) if "마이그레이션" in n)
-    sam = next(i for i, n in enumerate(steps) if "SAM2" in n)
     api = next(i for i, n in enumerate(steps) if n.startswith("배포"))
-    assert mig < sam < api, steps
+    assert mig < api, steps
+
+
+def test_sam_deploys_before_api_when_both_change():
+    """api 매니페스트가 SAM_SERVICE_URL 로 sam2 를 가리킨다 — 순서가 뒤집히면 api 가
+    아직 없는 서비스를 호출한다. job 의존으로 순서를 강제한다."""
+    jobs = _wf()["jobs"]
+    assert "deploy-sam2" in jobs["deploy-api"]["needs"]
+    assert "마이그레이션" not in " ".join(_step_names("deploy-sam2")), "SAM 단독 배포는 DB 를 건드리지 않는다"
+
+
+def test_api_still_deploys_when_sam_is_skipped():
+    """API 단독 변경에서 sam2 잡은 스킵된다. 그 스킵이 api 를 막으면 안 된다."""
+    cond = _wf()["jobs"]["deploy-api"]["if"]
+    assert "always()" in cond
+    assert "needs.deploy-sam2.result == 'skipped'" in cond
+    assert "needs.deploy-sam2.result == 'success'" in cond
+
+
+def test_deploy_jobs_never_run_on_pull_requests():
+    """PR 에서는 test 만 돈다 — 배포 잡이 필수 체크로 걸려 머지를 막는 구성을 피한다."""
+    assert _wf()["jobs"]["changes"]["if"] == "github.event_name != 'pull_request'"
 
 
 def test_migration_step_fails_loudly_without_its_secret():
@@ -169,9 +254,9 @@ def test_migration_step_fails_loudly_without_its_secret():
 
 
 def test_migration_step_uses_the_pinned_cli_version():
-    """test job 과 같은 CLI 버전 — 버전이 갈리면 로컬 검증과 프로덕션 적용이 달라진다."""
-    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    versions = {s["with"]["version"] for j in ("test", "deploy")
+    """test 잡과 같은 CLI 버전 — 버전이 갈리면 로컬 검증과 프로덕션 적용이 달라진다."""
+    doc = _wf()
+    versions = {s["with"]["version"] for j in ("test", "deploy-api")
                 for s in doc["jobs"][j]["steps"]
                 if str(s.get("uses", "")).startswith("supabase/setup-cli")}
     assert len(versions) == 1, versions
