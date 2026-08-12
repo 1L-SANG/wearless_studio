@@ -466,3 +466,24 @@ def test_matching_top_exposes_length_vocabulary_for_bottom_products():
     bad = dict(profile, matchingFit={"clothingId": "m1", "fitCategory": "top",
                                      "axes": {"length": "banana"}})
     assert normalize_fit_profile(bad).get("matchingFit") is None
+
+
+def test_product_color_fallback_prefers_base_color_group_suggestion():
+    # 다색 상품: 첫 제안이 기준 색이 아닐 때 colorGroupId 로 기준 그룹 제안을 찾아야 한다 (2026-08-12 리뷰)
+    from app.routes import _matching_product_color
+    product = {"colors": [
+        {"id": "cg-base", "isBase": True},           # swatchId 미선택
+        {"id": "cg-other", "swatchId": "red"},
+    ]}
+    analysis = {"swatchSuggestions": [
+        {"colorGroupId": "cg-other", "swatchId": "red"},
+        {"colorGroupId": "cg-base", "swatchId": "navy"},
+    ]}
+    assert _matching_product_color(product, analysis) == "navy"
+
+
+def test_product_color_fallback_uses_first_suggestion_without_group_match():
+    from app.routes import _matching_product_color
+    product = {"colors": [{"id": "cg-base", "isBase": True}]}
+    analysis = {"swatchSuggestions": [{"colorGroupId": "cg-unknown", "swatchId": "beige"}]}
+    assert _matching_product_color(product, analysis) == "beige"

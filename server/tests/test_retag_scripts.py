@@ -60,7 +60,12 @@ def test_apply_sql_has_transaction_exactly_60_updates_and_count_check():
     assert "BEGIN;" in rendered
     assert rendered.rstrip().endswith("COMMIT;")
     assert rendered.count("UPDATE matching_items SET style_tags = ") == 60
-    assert "SELECT COUNT(*) AS retagged_item_count" in rendered
+    # 검증 실패가 COMMIT 을 막아야 한다 — DO 블록 + RAISE EXCEPTION (2026-08-12 리뷰)
+    assert "DO $$" in rendered
+    assert "RAISE EXCEPTION" in rendered
+    assert rendered.index("DO $$") < rendered.index("COMMIT;")
+    # 큐레이션 행만 갱신 — 사용자 개별 등록(is_custom) 보호
+    assert rendered.count("AND owner_user_id IS NULL AND project_id IS NULL;") == 60
     assert "::jsonb" in rendered
 
 

@@ -40,11 +40,17 @@ def rank_by_style_affinity(
     이 두 키 외의 다른 기준으로는 절대 재정렬하지 않는다(NFR-1 결정성).
     """
     scored = [
-        (item, _style_affinity_score(item, product_tags, affinity_map))
+        (item, _quantize(_style_affinity_score(item, product_tags, affinity_map)))
         for item in items
     ]
     scored.sort(key=lambda pair: (-pair[1], pair[0][tie_break]))
     return [item for item, _ in scored]
+
+
+def _quantize(score: float) -> float:
+    """합산 순서가 만든 1e-16 부동소수점 노이즈를 지운다 — 같은 태그 집합은 같은 점수여야
+    id tie-break(NFR-1)가 작동하고, 부분합으로 계산하는 mock 과도 순서가 일치한다."""
+    return round(score, 9)
 
 
 def _style_affinity_score(item: dict, product_tags: list[str], affinity_map: dict) -> float:
@@ -110,9 +116,11 @@ def recommend_v1(
         combined = [
             (
                 item,
-                (1 - weight) * (style_score / max_style if max_style > 0 else 0.0)
-                + weight * _color_harmony_score(
-                    product_color, item.get("color_group"), harmony_scores
+                _quantize(
+                    (1 - weight) * (style_score / max_style if max_style > 0 else 0.0)
+                    + weight * _color_harmony_score(
+                        product_color, item.get("color_group"), harmony_scores
+                    )
                 ),
             )
             for item, style_score in style_scored

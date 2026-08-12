@@ -301,3 +301,16 @@ def test_recommend_v1_limit_zero_returns_empty():
     out = retrieval.recommend_v1(items, clothing_type="top", genders=["women"],
                                  product_tags=["wide"], affinity_map={}, limit=0)
     assert out == []
+
+
+def test_style_scores_quantized_so_summation_order_cannot_break_ties():
+    # 같은 태그 집합·다른 순서 → 부동소수점 합산 노이즈로 비동점이 되면 id tie-break 이
+    # 무력화되고 mock(부분합)과 순서가 어긋난다 (2026-08-12 리뷰 실측: 2.15 vs 2.15…04)
+    from app.services.retrieval import rank_by_style_affinity
+    amap = {("formal", "a"): 0.85, ("formal", "b"): 0.3, ("minimal", "a"): 0.5, ("minimal", "b"): 0.5}
+    items = [
+        {"id": "z-late", "style_tags": ["a", "b"]},
+        {"id": "a-early", "style_tags": ["b", "a"]},   # 같은 집합, 다른 합산 순서
+    ]
+    ranked = rank_by_style_affinity(items, ["formal", "minimal"], amap)
+    assert [i["id"] for i in ranked] == ["a-early", "z-late"]  # 동점 → id 오름차순

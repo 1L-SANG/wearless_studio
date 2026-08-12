@@ -198,7 +198,12 @@ export const colorHarmonyScore = (productColor, itemColor) => (
 export function productColorFrom(product, analysis) {
   const colors = Array.isArray(product?.colors) ? product.colors : [];
   const base = colors.find((color) => color?.isBase) || colors[0];
-  return base?.swatchId || analysis?.swatchSuggestions?.[0]?.swatchId || null;
+  if (base?.swatchId) return base.swatchId;
+  // 서버 routes._matching_product_color 와 동일: 첫 제안이 아니라 기준 색 그룹과
+  // 연결된 제안을 우선한다 — 다색 상품에서 엉뚱한 색이 랭킹에 들어가지 않게.
+  const suggestions = Array.isArray(analysis?.swatchSuggestions) ? analysis.swatchSuggestions : [];
+  const preferred = (base?.id && suggestions.find((s) => s?.colorGroupId === base.id)) || suggestions[0];
+  return preferred?.swatchId || null;
 }
 
 const styleAffinityScore = (item, productTags) => (productTags || []).reduce(
@@ -217,9 +222,13 @@ const compareIds = (left, right) => {
 };
 
 const rankByStyleAndColor = (items, productTags, productColor, colorWeight) => {
+  // 서버 retrieval._quantize 와 동일 — 합산 순서의 부동소수점 노이즈를 지워
+  // 같은 태그 집합이 같은 점수가 되게 한다(id tie-break·서버 순서 일치).
+  const quantize = (score) => Math.round(score * 1e9) / 1e9;
+
   const styleScored = items.map((item) => ({
     item,
-    styleScore: styleAffinityScore(item, productTags),
+    styleScore: quantize(styleAffinityScore(item, productTags)),
   }));
   if (!productColor || colorWeight <= 0) {
     return styleScored
@@ -232,8 +241,8 @@ const rankByStyleAndColor = (items, productTags, productColor, colorWeight) => {
   return styleScored
     .map(({ item, styleScore }) => ({
       item,
-      combinedScore: (1 - weight) * (maxStyle > 0 ? styleScore / maxStyle : 0)
-        + weight * colorHarmonyScore(productColor, item.colorGroup),
+      combinedScore: quantize((1 - weight) * (maxStyle > 0 ? styleScore / maxStyle : 0)
+        + weight * colorHarmonyScore(productColor, item.colorGroup)),
     }))
     .sort((left, right) => (right.combinedScore - left.combinedScore)
       || compareIds(left.item, right.item))

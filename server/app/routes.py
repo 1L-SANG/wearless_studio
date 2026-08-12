@@ -266,8 +266,15 @@ def _matching_product_color(product: dict | None, analysis: dict | None = None) 
         return swatch_id.strip()
 
     suggestions = analysis.get("swatchSuggestions") if isinstance(analysis, dict) else None
-    first = suggestions[0] if isinstance(suggestions, list) and suggestions else None
-    fallback = first.get("swatchId") if isinstance(first, dict) else None
+    suggestions = [s for s in suggestions if isinstance(s, dict)] if isinstance(suggestions, list) else []
+    # 다색 상품에서 첫 제안이 기준 색이라는 보장이 없다 — 기준 색 그룹(colorGroupId)과
+    # 연결된 제안을 먼저 찾고, 없을 때만 첫 제안으로 폴백한다(2026-08-12 리뷰 반영).
+    base_group_id = base.get("id") if isinstance(base, dict) else None
+    preferred = next(
+        (s for s in suggestions if base_group_id and s.get("colorGroupId") == base_group_id),
+        suggestions[0] if suggestions else None,
+    )
+    fallback = preferred.get("swatchId") if isinstance(preferred, dict) else None
     return fallback.strip() if isinstance(fallback, str) and fallback.strip() else None
 
 
@@ -1047,6 +1054,16 @@ async def match_candidates(
             "code": "r2_public_base_missing",
             "message": "이미지 서버 설정이 누락됐어요. 잠시 후 다시 시도해 주세요."})
     r2 = _r2(request)
+    settings = request.app.state.settings
+    product_tags = [t.strip() for part in styleTags for t in part.split(",") if t.strip()]
+    # 색은 태그 랭킹 경로(recommend_v1)에서만 쓰인다 — 그 경로가 아닐 때(off·태그 없음·
+    # 가중치 0·보완타입 없음)는 상품/분석 조회를 아예 하지 않아 왕복을 늘리지 않는다(리뷰 반영).
+    color_needed = (
+        matching.complementary_type(clothingType) is not None
+        and settings.retrieval_matching == "tags"
+        and bool(product_tags)
+        and settings.matching_color_weight > 0
+    )
     async with get_conn(request) as conn:
         if await repo.get_project(conn, user_id, project_id) is None:
             raise _not_found()
@@ -1054,25 +1071,25 @@ async def match_candidates(
         # 색은 상품/분석에 이미 저장된 구조화 값만 읽는다. 요청 중 모델 호출 없음.
         # 후보 조회를 먼저 끝내 두어 부가적인 상품색 조회가 실패해도 추천 자체는 살린다.
         product_color = None
-        try:
-            product = await repo.get_product(conn, project_id)
-        except Exception:  # noqa: BLE001 - 색 조회 실패는 기존 스타일 랭킹으로 조용히 폴백
-            logger.warning("matching product color lookup failed", exc_info=True)
-        else:
-            product_color = _matching_product_color(product)
-            if product_color is None:
-                try:
-                    analysis = await repo.get_analysis(conn, project_id)
-                except Exception:  # noqa: BLE001 - 분석 폴백도 추천 API를 막지 않는다
-                    logger.warning("matching analysis color fallback failed", exc_info=True)
-                else:
-                    product_color = _matching_product_color(product, analysis)
+        if color_needed:
+            try:
+                product = await repo.get_product(conn, project_id)
+            except Exception:  # noqa: BLE001 - 색 조회 실패는 기존 스타일 랭킹으로 조용히 폴백
+                logger.warning("matching product color lookup failed", exc_info=True)
+            else:
+                product_color = _matching_product_color(product)
+                if product_color is None:
+                    try:
+                        analysis = await repo.get_analysis(conn, project_id)
+                    except Exception:  # noqa: BLE001 - 분석 폴백도 추천 API를 막지 않는다
+                        logger.warning("matching analysis color fallback failed", exc_info=True)
+                    else:
+                        product_color = _matching_product_color(product, analysis)
     genders = (
         ["women"]
         if clothingType == "dress"
         else [g.strip() for part in gender for g in part.split(",") if g.strip()]
     )
-    product_tags = [t.strip() for part in styleTags for t in part.split(",") if t.strip()]
     custom_items = [item for item in items if item.get("is_custom")]
     curated_items = [item for item in items if not item.get("is_custom")]
     if matching.complementary_type(clothingType) is None:

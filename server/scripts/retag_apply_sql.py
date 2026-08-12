@@ -70,26 +70,42 @@ def render_sql(proposals: list[dict]) -> str:
         "BEGIN;",
         "",
     ]
+    # 큐레이션 행만 갱신한다 — 사용자 개별 등록(is_custom)은 owner_user_id/project_id 로
+    # 구분되므로(마이그레이션 20260807000000), id 가 우연히 겹쳐도 건드리지 않는다.
+    guard = "owner_user_id IS NULL AND project_id IS NULL"
     for proposal in validated:
         tags_json = json.dumps(proposal["proposed_tags"], ensure_ascii=False, separators=(",", ":"))
         lines.extend(
             [
                 "UPDATE matching_items "
                 f"SET style_tags = {_sql_literal(tags_json)}::jsonb "
-                f"WHERE id = {_sql_literal(proposal['id'])};",
+                f"WHERE id = {_sql_literal(proposal['id'])} AND {guard};",
                 "",
             ]
         )
 
-    ids = ",\n  ".join(_sql_literal(proposal["id"]) for proposal in validated)
+    # 검증 실패가 COMMIT 을 막아야 한다 — SELECT 는 사람이 놓칠 수 있으니
+    # DO 블록에서 (id, 기대 태그) 완전 일치 행 수를 세어 다르면 예외로 트랜잭션을 중단한다.
+    checks = ",\n    ".join(
+        f"({_sql_literal(p['id'])}, {_sql_literal(json.dumps(p['proposed_tags'], ensure_ascii=False, separators=(',', ':')))}::jsonb)"
+        for p in validated
+    )
     lines.extend(
         [
-            f"-- 건수 검증: 아래 결과가 {EXPECTED_COUNT}인지 확인한 뒤 COMMIT 결과를 승인하세요.",
-            "SELECT COUNT(*) AS retagged_item_count",
-            "FROM matching_items",
-            "WHERE id IN (",
-            f"  {ids}",
-            ");",
+            f"-- 적용 검증: 기대 태그와 완전 일치하는 큐레이션 행이 {EXPECTED_COUNT}건이 아니면 예외로 롤백된다.",
+            "DO $$",
+            "DECLARE matched integer;",
+            "BEGIN",
+            "  SELECT COUNT(*) INTO matched",
+            "  FROM matching_items mi",
+            "  JOIN (VALUES",
+            f"    {checks}",
+            "  ) AS expected(id, tags) ON expected.id = mi.id",
+            "  WHERE mi.style_tags = expected.tags AND mi.owner_user_id IS NULL AND mi.project_id IS NULL;",
+            f"  IF matched <> {EXPECTED_COUNT} THEN",
+            f"    RAISE EXCEPTION '재태깅 검증 실패: 기대 {EXPECTED_COUNT}건, 실제 %건 — 트랜잭션을 롤백합니다', matched;",
+            "  END IF;",
+            "END $$;",
             "",
             "COMMIT;",
             "",
