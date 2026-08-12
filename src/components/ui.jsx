@@ -325,13 +325,32 @@ export function ToastProvider({ children }) {
     <ToastCtx.Provider value={{ push, dismiss }}>
       {children}
       <div className="toast-host">
-        {list.map((t) => (
-          <div className={`toast${t.exiting ? ' out' : ''}`} key={t.id}>
-            {t.icon && <Icon name={t.icon} size={17} />}
-            <span>{t.msg}</span>
-            {t.undo && <span className="undo" onClick={() => { t.undo(); dismiss(t.id); }}>되돌리기</span>}
-          </div>
-        ))}
+        {list.map((t) => {
+          const activate = () => {
+            if (!t.onClick) return;
+            t.onClick();
+            dismiss(t.id);
+          };
+          return (
+            <div
+              className={`toast${t.onClick ? ' clickable' : ''}${t.exiting ? ' out' : ''}`}
+              key={t.id}
+              role={t.onClick ? 'button' : 'status'}
+              tabIndex={t.onClick ? 0 : undefined}
+              onClick={activate}
+              onKeyDown={t.onClick ? (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                activate();
+              } : undefined}
+            >
+              {t.thumb && <img className="toast-thumb" src={t.thumb} alt="" onError={(event) => { event.currentTarget.hidden = true; }} />}
+              {t.icon && <Icon name={t.icon} size={17} />}
+              <span>{t.msg}</span>
+              {t.undo && <span className="undo" onClick={(event) => { event.stopPropagation(); t.undo(); dismiss(t.id); }}>되돌리기</span>}
+            </div>
+          );
+        })}
       </div>
     </ToastCtx.Provider>
   );

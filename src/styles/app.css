@@ -383,6 +383,10 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
     conic-gradient(from var(--sp-ang, 0deg), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box;
   box-shadow: var(--elev-lift);
   animation: toastIn .28s cubic-bezier(.22,.61,.36,1), spChipSpin 14s linear infinite; max-width: 360px; }
+.toast.clickable { cursor: pointer; }
+.toast.clickable:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 2px; }
+.toast-thumb { width: 40px; height: 40px; flex: none; border-radius: var(--r-3); object-fit: cover;
+  background: var(--bg-2); box-shadow: 0 0 0 1px var(--ring); }
 @media (prefers-reduced-motion: reduce) { .toast { animation: toastIn .28s cubic-bezier(.22,.61,.36,1); } }
 .toast.out { animation: toastOut .4s cubic-bezier(.4,0,.2,1) forwards; }
 .toast .undo { margin-left: 8px; color: var(--fg-1); text-decoration: underline; cursor: pointer; opacity: .7; }
