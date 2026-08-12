@@ -1,9 +1,11 @@
 /* 마네킹컷 위의 핏·기장 핫존을 바로 노출하고, 변경이 없으면 다음 단계로 진행한다. */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api } from '@/lib/api/index.js';
+import { api, isMockMode } from '@/lib/api/index.js';
+import { listModels } from '@/lib/api/facemarket.js';
 import { useAppStore } from '@/store/useAppStore.js';
 import { detailPageGenerationCreditShortfall } from '@/lib/creditPreflight.js';
+import { CREDIT_COSTS } from '@/lib/limits.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { fitExampleImage } from '@/lib/fitExampleImages.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
@@ -16,6 +18,7 @@ import {
 import { Icon, Button, ErrorState, Modal, useToast } from '@/components/ui.jsx';
 import { CreditShortfallModal } from '@/features/credits/CreditShortfallModal.jsx';
 import { PageHead, useDoneGuard, DoneGuardModal } from '@/features/shell/shell.jsx';
+import { realModelFeeLabel } from '@/features/analysis/modelSelection.js';
 import {
   clearInitialGenerationRequested,
   cutsExistedBeforeInitialGeneration,
@@ -95,7 +98,7 @@ function initStepState(axisDefs, withMatch) {
   return Object.fromEntries(keys.map((k) => [k, { mode: 'pending', pick: null, pickLb: null }]));
 }
 
-function FitHotspots({ hotspots, onSelect }) {
+function FitHotspots({ hotspots, onSelect, disabled }) {
   if (!hotspots.length) return null;
 
   return (
@@ -106,10 +109,13 @@ function FitHotspots({ hotspots, onSelect }) {
           key={`${hotspot.key}:${hotspot.id}`}
           className={`fit-hotspot fit-hotspot-${hotspot.id}${hotspot.open ? ' is-open' : ''}${hotspot.picked ? ' is-picked' : ''}`}
           onClick={() => onSelect(hotspot.key)}
-          aria-label={`${hotspot.label} 조정 옵션 보기`}
+          disabled={disabled}
+          aria-label={hotspot.picked
+            ? `${hotspot.label}, ${hotspot.pickLb} 선택됨. 조정 옵션 보기`
+            : `${hotspot.label} 조정 옵션 보기`}
           aria-pressed={hotspot.open || hotspot.picked}
         >
-          <span>{hotspot.label}</span>
+          <span>{hotspot.picked ? `${hotspot.label} · ${hotspot.pickLb}` : hotspot.label}</span>
         </button>
       ))}
     </div>
@@ -479,6 +485,7 @@ function MineColumn({
   onRetryLoad,
   adjustmentHotspots,
   onAdjustmentSelect,
+  adjustmentDisabled,
   onContinue,
   continueLabel,
   continueDisabled,
@@ -522,6 +529,7 @@ function MineColumn({
           <FitHotspots
             hotspots={adjustmentHotspots}
             onSelect={onAdjustmentSelect}
+            disabled={adjustmentDisabled}
           />
         )}
       </div>
@@ -587,20 +595,22 @@ function MineColumn({
   );
 }
 
-// 예시 타일 버튼들(참고용). 이미지 없으면 텍스트 타일로 폴백.
-function ExampleTiles({ axisKey, category, gender, values, onPick }) {
+// 예시 타일 버튼들. 이미지가 없으면 텍스트 타일로 폴백하고, 사용자가 고른 값만 강조한다.
+function ExampleTiles({ axisKey, category, gender, values, selectedValue, disabled, onPick }) {
   return (
     <>
       {values.map((v) => {
         const img = fitExampleImage(category, gender, axisKey, v.value);
+        const selected = v.value === selectedValue;
         return (
           <button
             type="button"
             key={v.value}
             role="option"
-            aria-selected="false"
-            className={`fit-tile${img ? '' : ' text'}`}
+            aria-selected={selected}
+            className={`fit-tile${img ? '' : ' text'}${selected ? ' is-selected' : ''}`}
             aria-label={`${v.label}(으)로 조정`}
+            disabled={disabled}
             onClick={() => onPick(v.value, v.label)}
           >
             {img
@@ -631,6 +641,7 @@ export function Mannequin() {
   const [fitProfileDraft, setFitProfileDraft] = useState(null);
   const [stepState, setStepState] = useState({});
   const [catalogs, setCatalogs] = useState(null);
+  const [realModels, setRealModels] = useState([]);
   const [aiCutCount, setAiCutCount] = useState(null);   // null = 아직 모름(로딩 중·조회 실패) — 0 과 구분
   const [creditShortfall, setCreditShortfall] = useState(null);
   const [creditResume, setCreditResume] = useState(() => (
@@ -721,16 +732,18 @@ export function Mannequin() {
       // getStoryboard 실패는 이 화면 자체를 막지 않는다(비치명) — 대신 null 로 남겨
       // "콘티가 AI 컷 0장" 과 "조회 자체를 못 함" 을 구분한다. 구분 안 하면 CTA 가
       // 크레딧 소비 직전에 '0 크레딧'(=무료로 읽힘)을 보여줄 수 있다.
-      const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard] = await Promise.all([
+      const [nextProduct, nextAnalysis, nextCatalogs, nextStoryboard, nextRealModels] = await Promise.all([
         api.getProduct(pid),
         api.getAnalysis(pid),
         api.getCatalogs(),
         api.getStoryboard(pid).catch(() => null),
+        isMockMode ? Promise.resolve([]) : listModels().catch(() => []),
       ]);
       if (loadRunRef.current !== runId) return;
       setProgress(generationProgressFor(pid));
       setAnalysis(nextAnalysis);
       setCatalogs(nextCatalogs);
+      setRealModels(Array.isArray(nextRealModels) ? nextRealModels : []);
       setAiCutCount(Array.isArray(nextStoryboard) ? nextStoryboard.filter((b) => b.source !== 'mine').length : null);
       const nextMainMatchingItem = resolveMainMatchingItem(nextAnalysis);
       const draft = createFitProfileDraft(nextProduct, nextAnalysis, nextMainMatchingItem);
@@ -859,28 +872,46 @@ export function Mannequin() {
       label: step.kind === 'match' ? stepName(step) : hotspot.label,
       open: stepState[step.key]?.mode === 'changing',
       picked: stepState[step.key]?.mode === 'picked',
+      pickLb: stepState[step.key]?.pickLb,
     }))
   ));
+  const realModelFee = realModelFeeLabel(analysis?.selectedModelId, realModels);
+  const continueLabel = needsRegen
+    ? `수정 반영 · ${CREDIT_COSTS.mannequinGenerate} 크레딧`
+    : `이대로 진행 · ${aiCutCount == null ? '—' : aiCutCount * CREDIT_COSTS.storyboardPerCut} 크레딧${realModelFee}`;
 
   const setStep = (key, patch) => setStepState((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
-  const openAdjustmentExamples = (key) => setStepState((prev) => Object.fromEntries(
-    Object.entries(prev).map(([stepKey, state]) => [
-      stepKey,
-      stepKey === key
-        ? { ...state, mode: 'changing' }
-        : state.mode === 'changing'
-          ? { ...state, mode: state.pick != null ? 'picked' : 'pending' }
-          : state,
-    ]),
-  ));
-  const closeAdjustmentExamples = (key) => setStepState((prev) => ({
-    ...prev,
-    [key]: {
-      ...prev[key],
-      mode: prev[key]?.pick != null ? 'picked' : 'pending',
-    },
-  }));
-  const pickStep = (key, value, label) => setStep(key, { mode: 'picked', pick: value, pickLb: label });
+  const openAdjustmentExamples = (key) => {
+    if (busy || submittingRef.current) return;
+    setStepState((prev) => Object.fromEntries(
+      Object.entries(prev).map(([stepKey, state]) => [
+        stepKey,
+        stepKey === key
+          ? { ...state, mode: 'changing' }
+          : state.mode === 'changing'
+            ? { ...state, mode: state.pick != null ? 'picked' : 'pending' }
+            : state,
+      ]),
+    ));
+  };
+  const closeAdjustmentExamples = (key) => {
+    if (busy || submittingRef.current) return;
+    setStepState((prev) => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        mode: prev[key]?.pick != null ? 'picked' : 'pending',
+      },
+    }));
+  };
+  const pickStep = (key, value, label) => {
+    if (busy || submittingRef.current) return;
+    setStep(key, { mode: 'picked', pick: value, pickLb: label });
+  };
+  const resetStep = (key) => {
+    if (busy || submittingRef.current) return;
+    setStep(key, { mode: 'changing', pick: null, pickLb: null });
+  };
 
   useEffect(() => {
     if (!changingStep) return;
@@ -1246,7 +1277,7 @@ export function Mannequin() {
   };
 
   const onCta = async () => {
-    if (busy) return;
+    if (busy || submittingRef.current) return;
     if (regenerateState === 'load-exhausted') { retryLoad(); return; }
     if (needsRegen) { regenerate(); return; }
     const shortfall = detailPageGenerationCreditShortfall(
@@ -1257,19 +1288,18 @@ export function Mannequin() {
       setCreditShortfall(shortfall);
       return;
     }
+    submittingRef.current = true;
+    setBusy(true);
     // 확정(무변경)도 프로필을 영속 — 다음 단계(컷 생성)가 analysis.fitProfile 을 텍스트 제약으로
     // 재사용하므로, 이동(=생성 가능 시점) 전에 저장 완료를 보장한다(순서 계약). 저장 실패 시엔
     // 안내 후 이동을 허용 — 선택 마네킹컷 이미지가 1번 참조(진실)로 여전히 전달된다.
     const profile = buildFitProfile();
     if (JSON.stringify(profile) !== JSON.stringify(analysis?.fitProfile)) {
-      setBusy(true);
       try {
         await api.saveAnalysis(projectId, { fitProfile: profile });
         setAnalysis((prev) => ({ ...(prev || {}), fitProfile: profile }));
       } catch {
         pushToast('핏 정보 저장에 실패했어요. 컷 생성은 마네킹컷 이미지를 기준으로 진행돼요.', { icon: 'alertTri' });
-      } finally {
-        setBusy(false);
       }
     }
     navigate('/create/generating');
@@ -1355,7 +1385,7 @@ export function Mannequin() {
         {showWaitPanel ? checklistLiveText : ''}
       </span>
 
-      <div className={`fit-stage${changingStep ? ' comparing' : ''}`} aria-busy={regenerateActive}>
+      <div className={`fit-stage${changingStep ? ' comparing' : ''}`} aria-busy={busy || regenerateActive}>
         <MineColumn
           selected={selected}
           cuts={cuts}
@@ -1373,8 +1403,9 @@ export function Mannequin() {
           onRetryLoad={retryLoad}
           adjustmentHotspots={showWaitPanel ? [] : adjustmentHotspots}
           onAdjustmentSelect={openAdjustmentExamples}
+          adjustmentDisabled={busy}
           onContinue={onCta}
-          continueLabel={needsRegen ? '수정 반영' : '이대로 진행'}
+          continueLabel={continueLabel}
           continueDisabled={busy}
         />
         {changingStep && (
@@ -1385,12 +1416,26 @@ export function Mannequin() {
                 type="button"
                 className="fit-ex-close"
                 onClick={() => closeAdjustmentExamples(changingStep.key)}
+                disabled={busy}
                 aria-label="조정 옵션 닫기"
               >
                 <Icon name="x" size={15} />
               </button>
             </div>
             <p className="fit-ex-sub">{stepExNote(changingStep)}</p>
+            {stepState[changingStep.key]?.pickLb && (
+              <div className="fit-ex-selection" aria-live="polite">
+                <span>선택: <b>{stepState[changingStep.key].pickLb}</b></span>
+                <button
+                  type="button"
+                  className="fit-ex-reset"
+                  onClick={() => resetStep(changingStep.key)}
+                  disabled={busy}
+                >
+                  선택 취소
+                </button>
+              </div>
+            )}
             <div
               ref={exampleTrackRef}
               className="fit-ex-track"
@@ -1403,6 +1448,8 @@ export function Mannequin() {
                 category={stepExCategory(changingStep)}
                 gender={gender}
                 values={changingStep.values}
+                selectedValue={stepState[changingStep.key]?.pick}
+                disabled={busy}
                 onPick={(value, label) => pickStep(changingStep.key, value, label)}
               />
             </div>

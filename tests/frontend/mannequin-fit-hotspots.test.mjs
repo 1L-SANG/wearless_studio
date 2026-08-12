@@ -43,9 +43,13 @@ test('adjustment hotspots are immediately available without the old question car
 
   assert.match(source, /const adjustmentHotspots = steps\.flatMap/);
   assert.match(source, /onAdjustmentSelect=\{openAdjustmentExamples\}/);
+  assert.match(source, /continueLabel=\{continueLabel\}/);
+  assert.match(source, /`수정 반영 · \$\{CREDIT_COSTS\.mannequinGenerate\} 크레딧`/);
+  assert.match(source, /listModels\(\)\.catch\(\(\) => \[\]\)/);
+  assert.match(source, /realModelFeeLabel\(analysis\?\.selectedModelId, realModels\)/);
   assert.match(
     source,
-    /continueLabel=\{needsRegen \? '수정 반영' : '이대로 진행'\}/,
+    /`이대로 진행 · \$\{aiCutCount == null \? '—' : aiCutCount \* CREDIT_COSTS\.storyboardPerCut\} 크레딧\$\{realModelFee\}`/,
   );
   assert.match(
     source,
@@ -65,4 +69,39 @@ test('adjustment hotspots are immediately available without the old question car
   assert.match(styles, /\.fit-hotspot-top-hem \{ left: 52%; top: 41%; \}/);
   assert.match(styles, /\.fit-hotspot-pants-cut \{ left: 56%; top: 55%; \}/);
   assert.match(styles, /\.fit-continue \{ margin-top: var\(--sp-24\); \}/);
+});
+
+test('picked adjustments stay visible, can be cleared, and lock while proceeding', () => {
+  const source = readFileSync(
+    new URL('../../src/features/mannequin/Mannequin.jsx', import.meta.url),
+    'utf8',
+  );
+  const styles = readFileSync(
+    new URL('../../src/features/mannequin/Mannequin.css', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(source, /pickLb: stepState\[step\.key\]\?\.pickLb/);
+  assert.match(source, /aria-selected=\{selected\}/);
+  assert.match(source, /className=\{`fit-tile\$\{img \? '' : ' text'\}\$\{selected \? ' is-selected' : ''\}`\}/);
+  assert.match(source, /selectedValue=\{stepState\[changingStep\.key\]\?\.pick\}/);
+  assert.match(source, /선택 취소/);
+  assert.match(source, /setStep\(key, \{ mode: 'changing', pick: null, pickLb: null \}\)/);
+  assert.match(source, /adjustmentDisabled=\{busy\}/);
+  assert.match(source, /disabled=\{disabled\}/);
+
+  const continueStart = source.indexOf('const onCta = async () =>');
+  const navigateStart = source.indexOf("navigate('/create/generating')", continueStart);
+  const continueSource = source.slice(continueStart, navigateStart);
+  assert.ok(
+    continueSource.indexOf('submittingRef.current = true')
+      < continueSource.indexOf('await api.saveAnalysis'),
+    '저장 시작 전에 조정 UI의 동기 가드를 잠가야 한다',
+  );
+  assert.doesNotMatch(continueSource, /finally \{\s*setBusy\(false\)/);
+  assert.match(styles, /\.fit-tile\.is-selected/);
+  assert.match(
+    styles,
+    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.fit-hotspot::before, \.fit-hotspot span \{ transition: none; \}/,
+  );
 });

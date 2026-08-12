@@ -132,13 +132,15 @@
 .fit-mine-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .fit-mine-img .busy-tile { width: 100%; height: 100%; }
 .fit-hotspots { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
-.fit-hotspot { position: absolute; width: 44px; height: 44px; transform: translate(-50%, -50%); border: 0; padding: 0; background: transparent; color: #fff; cursor: pointer; pointer-events: auto; }
-.fit-hotspot::before { content: ''; position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; transform: translate(-50%, -50%); border: 2px solid rgba(255, 255, 255, .96); border-radius: 50%; background: rgba(12, 18, 28, .18); box-shadow: 0 1px 4px rgba(0, 0, 0, .6), inset 0 0 0 1px rgba(0, 0, 0, .18); transition: transform .12s ease, border-color .12s ease, background .12s ease; }
-.fit-hotspot:hover::before, .fit-hotspot:focus-visible::before { transform: translate(-50%, -50%) scale(1.14); background: rgba(12, 18, 28, .32); }
+.fit-hotspot { position: absolute; width: 44px; height: 44px; transform: translate(-50%, -50%); border: 0; padding: 0; background: transparent; color: #fff; cursor: pointer; pointer-events: auto; touch-action: manipulation; }
+.fit-hotspot::before { content: ''; position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; transform: translate(-50%, -50%); border: 2px solid rgba(255, 255, 255, .96); border-radius: 50%; background: rgba(12, 18, 28, .18); box-shadow: 0 1px 4px rgba(0, 0, 0, .6), inset 0 0 0 1px rgba(0, 0, 0, .18); transition: transform .12s ease; }
+.fit-hotspot:hover:not(:disabled)::before, .fit-hotspot:focus-visible::before { transform: translate(-50%, -50%) scale(1.14); background: rgba(12, 18, 28, .32); }
 .fit-hotspot.is-open::before, .fit-hotspot.is-picked::before { border-color: #6bb6ff; background: rgba(29, 124, 220, .42); }
 .fit-hotspot:focus-visible { outline: 2px solid #fff; outline-offset: -6px; border-radius: 50%; }
 .fit-hotspot span { position: absolute; left: 50%; top: calc(50% + 16px); transform: translateX(-50%); width: max-content; max-width: 140px; border-radius: var(--r-pill); padding: 4px 8px; background: rgba(18, 24, 38, .86); color: #fff; font-size: 10.5px; font-weight: 700; line-height: 1.25; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
-.fit-hotspot:hover span, .fit-hotspot:focus-visible span { opacity: 1; }
+.fit-hotspot:hover:not(:disabled) span, .fit-hotspot:focus-visible span { opacity: 1; }
+.fit-hotspot:disabled { cursor: default; }
+.fit-hotspot:disabled::before { transform: translate(-50%, -50%); opacity: .72; }
 .fit-hotspot-top-fit { left: 60%; top: 24%; }
 .fit-hotspot-top-hem { left: 52%; top: 41%; }
 .fit-hotspot-outer-fit { left: 58%; top: 32%; }
@@ -162,19 +164,27 @@
 @keyframes fit-ex-in { from { opacity: 0; transform: translateX(10px); } }
 .fit-ex-headbar { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 3px; }
 .fit-ex-head { flex: 1; font-size: 13.5px; font-weight: 500; color: var(--fg-1); letter-spacing: -.01em; }
-.fit-ex-close { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--ring-strong); border-radius: 50%; padding: 0; background: var(--bg-1); color: var(--fg-2); cursor: pointer; }
-.fit-ex-close:hover { border-color: var(--fg-3); color: var(--fg-1); }
+.fit-ex-close { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--ring-strong); border-radius: 50%; padding: 0; background: var(--bg-1); color: var(--fg-2); cursor: pointer; touch-action: manipulation; }
+.fit-ex-close:hover:not(:disabled) { border-color: var(--fg-3); color: var(--fg-1); }
 .fit-ex-close:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 .fit-ex-sub { flex: none; margin: 0 0 11px; font-size: 11.5px; font-weight: 400; color: var(--fg-3); letter-spacing: -.01em; }
+.fit-ex-selection { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 11px; border-radius: var(--r-4); padding: 7px 8px 7px 10px; background: color-mix(in srgb, var(--link) 9%, var(--bg-1)); color: var(--fg-2); font-size: 11.5px; }
+.fit-ex-selection b { color: var(--link); }
+.fit-ex-reset { flex: none; border: 0; border-radius: var(--r-pill); padding: 5px 8px; background: var(--bg-1); color: var(--link); font: inherit; font-weight: 700; cursor: pointer; touch-action: manipulation; }
+.fit-ex-reset:hover:not(:disabled) { background: color-mix(in srgb, var(--link) 14%, var(--bg-1)); }
+.fit-ex-reset:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.fit-ex-close:disabled, .fit-ex-reset:disabled { cursor: default; opacity: .6; }
 .fit-ex-track { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; padding-right: 4px; scroll-snap-type: y proximity; scrollbar-width: thin; scrollbar-color: var(--ring-strong) transparent; }
 .fit-ex-track::-webkit-scrollbar { width: 8px; }
 .fit-ex-track::-webkit-scrollbar-thumb { background: var(--ring-strong); border-radius: var(--r-pill); }
 .fit-ex-track::-webkit-scrollbar-track { background: transparent; }
 .fit-ex-track .fit-tile { width: 100%; }
 
-/* --- 예시 타일 (참고용) --- */
-.fit-tile { position: relative; display: block; flex: none; padding: 0; font: inherit; color: inherit; text-align: center; border: 2px solid var(--ring-strong); border-radius: var(--r-5); overflow: hidden; background: var(--bg-1); cursor: pointer; scroll-snap-align: start; transition: transform .12s, border-color .12s, box-shadow .12s; }
-.fit-tile:hover { transform: translateY(-2px); border-color: var(--link); box-shadow: var(--elev-soft); }
+/* --- 예시 타일 --- */
+.fit-tile { position: relative; display: block; flex: none; padding: 0; font: inherit; color: inherit; text-align: center; border: 2px solid var(--ring-strong); border-radius: var(--r-5); overflow: hidden; background: var(--bg-1); cursor: pointer; scroll-snap-align: start; touch-action: manipulation; transition: transform .12s, border-color .12s, box-shadow .12s; }
+.fit-tile:hover:not(:disabled) { transform: translateY(-2px); border-color: var(--link); box-shadow: var(--elev-soft); }
+.fit-tile.is-selected { border-color: var(--link); box-shadow: inset 0 0 0 1px var(--link), var(--elev-soft); }
+.fit-tile:disabled { cursor: default; opacity: .72; }
 .fit-tile img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; }
 .fit-tile.text .fit-tile-ph { display: flex; align-items: center; justify-content: center; aspect-ratio: 3 / 4; background: var(--bg-2); color: var(--fg-2); font-size: 14px; font-weight: 600; padding: 8px; }
 .fit-tile-lb { display: block; font-size: 12px; font-weight: 600; color: var(--fg-2); padding: 5px 2px; }
@@ -182,7 +192,7 @@
    absolute 라 플로우에서 빠져 가운데 마네킹은 움직이지 않는다.
    top 90 = .wizard 상단 패딩 14 + .page-head 상단 패딩 76 (제목 시작 높이와 정렬).
    쿼리는 content-box 기준(.wizard 좌우 패딩 48 제외, 최대 1132) — 1100 이상에서
-   폭 332 패널이 중앙 확인 카드(460)·마네킹(340)과 겹치지 않는다(각 12px·72px 여유).
+   폭 332 패널이 중앙 마네킹(340)과 겹치지 않는다.
    주의: 동일 특이도 override 라 반드시 base 예시 규칙들 '뒤'에 위치해야 한다. */
 @container fit-page (min-width: 1100px) {
   .fit-stage.comparing { gap: 0; }
@@ -205,7 +215,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fit-stage, .fit-mine-col, .fit-ver, .fit-tile, .fit-hotspots, .fit-hotspot { transition: none; }
+  .fit-stage, .fit-mine-col, .fit-ver, .fit-tile, .fit-hotspots, .fit-hotspot, .fit-hotspot::before, .fit-hotspot span { transition: none; }
   .fit-ex-col { animation: none; }
   /* 로딩 인포그래픽 — 모션 최소화: 드로잉·채움은 즉시 완료 상태로, 루프 모션은 정지 */
   .mq2-garment, .mq2-grid, .mq2-st, .mq2-gfit, .mq2-gfit .mq2-bar, .mq2-glen, .mq2-glen .mq2-bar,

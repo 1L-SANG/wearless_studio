@@ -160,7 +160,11 @@ test('the mannequin CTA cannot mistake a failed storyboard fetch for zero AI cut
     mannequinSource,
     /setAiCutCount\(Array\.isArray\(nextStoryboard\) \? nextStoryboard\.filter\(\(b\) => b\.source !== 'mine'\)\.length : null\)/,
   );
-  // 하단 비용 UI가 없어져도 미확정 값은 0으로 바꾸지 않고 프리플라이트에 그대로 넘겨야 한다.
+  // 조회 실패를 0원으로 표시하지 않으면서, 정상 조회된 컷 수에는 단가를 곱해 CTA에 보여준다.
+  assert.match(
+    mannequinSource,
+    /aiCutCount == null \? '—' : aiCutCount \* CREDIT_COSTS\.storyboardPerCut/,
+  );
   assert.match(
     mannequinSource,
     /detailPageGenerationCreditShortfall\(\s*useAppStore\.getState\(\)\.account,\s*aiCutCount,\s*\)/,
