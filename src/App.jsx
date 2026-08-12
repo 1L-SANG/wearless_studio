@@ -236,7 +236,7 @@ function ResumeTracker() {
 function ProductInputRoute() {
   const navigate = useNavigate();
   const { key: locationKey } = useLocation();
-  const { session, loading: authLoading } = useAuth();
+  const { session, loading: authLoading, signingOut } = useAuth();
   const { push: pushToast } = useToast();
   const generation = useAppStore((s) => s.projectGeneration);
   const beginProject = useAppStore((s) => s.beginProject);
@@ -250,6 +250,13 @@ function ProductInputRoute() {
   const slotEnabled = Boolean(session) || isMockMode;
 
   useEffect(() => {
+    if (!signingOut) return;
+    setEntrySources([]);
+    setEntryDecision('checking');
+  }, [signingOut]);
+
+  useEffect(() => {
+    if (signingOut) return;
     if (entryDecision !== 'checking') return;
     if (!isMockMode && authLoading) return;
     let alive = true;
@@ -296,6 +303,7 @@ function ProductInputRoute() {
           title: localDiffers ? '다른 기기 임시저장' : '임시저장',
           description: `${formatDraftRelativeTime(slot.meta?.updatedAt)} · ${slot.meta?.deviceLabel || '다른 기기'} · 사진 ${slot.meta?.photoCount || 0}장`,
           meta: slot.meta,
+          photosPending: Boolean(slot.meta?.photosPending),
         });
       }
       setEntrySources(sources);
@@ -304,9 +312,10 @@ function ProductInputRoute() {
       if (alive) setEntryDecision('continue');
     });
     return () => { alive = false; };
-  }, [authLoading, entryDecision, slotEnabled]);
+  }, [authLoading, entryDecision, signingOut, slotEnabled]);
 
   useEffect(() => {
+    if (signingOut) return;
     if (entryDecision === 'confirmed') {
       if (!isMockMode && authLoading) return;
       // http 모드의 세션 만료 리다이렉트는 사용자의 잠금 화면 재진입이 아니다.
@@ -344,7 +353,7 @@ function ProductInputRoute() {
       navigate('/create/input', { replace: true });
     });
     return () => { alive = false; };
-  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session]);
+  }, [authLoading, beginProject, entryDecision, locationKey, navigate, pushToast, session, signingOut]);
 
   useEffect(() => {
     if (entryDecision !== 'continue') return;
@@ -399,18 +408,18 @@ function ProductInputRoute() {
     }
   };
 
+  if (signingOut) return <div className="route-loading">로그아웃하고 있어요…</div>;
   if (entryDecision === 'ask') {
     return (
       <ResumeChoiceModal
         sources={entrySources}
         onChoose={chooseSource}
         onNew={startNew}
-        onClose={() => chooseSource(entrySources[0]?.id)}
       />
     );
   }
   if (entryDecision !== 'continue') return <div className="route-loading">이동하고 있어요…</div>;
-  return <ProductInput key={generation} />;
+  return <ProductInput key={`${generation}:${session?.user?.id || 'guest'}`} />;
 }
 
 /* '/' 복귀의 리다이렉트. (Option B 재활성) 익명 입력+분석 draft(사진 blob 포함)를 로그인 후

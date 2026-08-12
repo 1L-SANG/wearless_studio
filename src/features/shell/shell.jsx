@@ -52,10 +52,11 @@ export function TopNav() {
   const onNav = async (r) => {
     if (inputPromotionLocked) return;
     if (r === 'create') {
+      if (pathname === '/create/input') return;
       // 진행 중 프로젝트가 있으면 '이어서/새로' 를 물어 매번 새로 초기화돼 작업이 버려지던 문제를 막는다.
       const { projectId, projectPersisted } = useAppStore.getState();
       if (projectPersisted && projectId) { setResumeAsk(true); return; }
-      await startNew();
+      navigate('/create/input');
       return;
     }
     navigate('/library');
@@ -119,6 +120,7 @@ export function ResumeChoiceModal({ onResume, onNew, onClose, sources = null, on
               onClick={() => onChoose(source.id)}>
               <span>{source.title}</span>
               <small>{source.description}</small>
+              {source.photosPending && <em>사진 저장이 끝나지 않아 일부 사진이 빠질 수 있어요.</em>}
             </button>
           ))}
         </div>

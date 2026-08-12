@@ -37,6 +37,7 @@ function fakeTimers() {
       timer.fn();
       return timer.ms;
     },
+    count() { return timers.size; },
   };
 }
 
@@ -116,7 +117,7 @@ test('a 409 locks the client and takeover allows a local reclaim PUT', async () 
   assert.equal(storage.getItem('wl_draftSlotToken'), 'new-token');
 });
 
-test('a token rotation storage event updates the next PUT without locking', async () => {
+test('a token rotation storage event locks this tab instead of borrowing another tab token', async () => {
   const storage = new EventedStorage([['wl_draftSlotToken', 'old-token']]);
   const tokens = [];
   const conflicts = [];
@@ -135,14 +136,14 @@ test('a token rotation storage event updates the next PUT without locking', asyn
   sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
   await sync.flush();
 
-  assert.deepEqual(tokens, ['rotated-token']);
-  assert.equal(sync.getToken(), 'rotated-token');
-  assert.equal(sync.isLocked(), false);
-  assert.deepEqual(conflicts, []);
+  assert.deepEqual(tokens, []);
+  assert.equal(sync.getToken(), 'old-token');
+  assert.equal(sync.isLocked(), true);
+  assert.equal(conflicts[0].state, 'other-tab');
   sync.dispose();
 });
 
-test('a 409 retries once with a newer stored token without reporting a conflict', async () => {
+test('a 409 never retries a stale snapshot under a newer stored token', async () => {
   const storage = new MapStorage([['wl_draftSlotToken', 'old-token']]);
   const tokens = [];
   const conflicts = [];
@@ -152,8 +153,7 @@ test('a 409 retries once with a newer stored token without reporting a conflict'
     adapter: {
       async putDraftSlot(body) {
         tokens.push(body.token);
-        if (tokens.length === 1) throw tokenMismatch(meta);
-        return { token: body.token, meta: { updatedAt: 'server-2' } };
+        throw tokenMismatch(meta);
       },
     },
   });
@@ -161,14 +161,15 @@ test('a 409 retries once with a newer stored token without reporting a conflict'
   storage.setItem('wl_draftSlotToken', 'rotated-token');
 
   sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
-  await sync.flush();
+  await assert.rejects(sync.flush(), (error) => error.status === 409);
 
-  assert.deepEqual(tokens, ['old-token', 'rotated-token']);
-  assert.equal(sync.isLocked(), false);
-  assert.deepEqual(conflicts, []);
+  assert.deepEqual(tokens, ['old-token']);
+  assert.equal(sync.getToken(), 'old-token');
+  assert.equal(sync.isLocked(), true);
+  assert.deepEqual(conflicts, [meta]);
 });
 
-test('a repeated 409 after the newer-token retry locks and reports one conflict', async () => {
+test('a locked client does not send more snapshots before an explicit takeover', async () => {
   const storage = new MapStorage([['wl_draftSlotToken', 'old-token']]);
   const tokens = [];
   const conflicts = [];
@@ -191,12 +192,15 @@ test('a repeated 409 after the newer-token retry locks and reports one conflict'
     (error) => error.status === 409 && error.code === 'token_mismatch',
   );
 
-  assert.deepEqual(tokens, ['old-token', 'rotated-token']);
+  sync.queue({ product: product('newer-local'), localUpdatedAt: 'local-2' });
+  await assert.rejects(sync.flush(), (error) => error.status === 409);
+
+  assert.deepEqual(tokens, ['old-token']);
   assert.equal(sync.isLocked(), true);
   assert.deepEqual(conflicts, [meta]);
 });
 
-test('a meta-less 409 resets the token and recreates a deleted mock slot', async () => {
+test('a meta-less 409 waits for explicit confirmation before recreating a deleted slot', async () => {
   let sequence = 0;
   const memory = createDraftSlotMemory({ tokenFactory: () => `token-${++sequence}` });
   const created = memory.put({ payload: { product: product('remote') } });
@@ -216,6 +220,16 @@ test('a meta-less 409 resets the token and recreates a deleted mock slot', async
   sync.onConflict((conflict) => conflicts.push(conflict));
 
   sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
+  await assert.rejects(sync.flush(), (error) => error.status === 409 && error.meta == null);
+
+  assert.deepEqual(tokens, [created.token]);
+  assert.equal(sync.getToken(), null);
+  assert.equal(storage.getItem('wl_draftSlotToken'), null);
+  assert.equal(sync.isLocked(), true);
+  assert.equal(conflicts[0].state, 'gone');
+
+  assert.equal(sync.restartAfterGone(), true);
+  sync.queue({ product: product('local'), localUpdatedAt: 'local-2' });
   await sync.flush();
 
   assert.deepEqual(tokens, [created.token, null]);
@@ -224,10 +238,10 @@ test('a meta-less 409 resets the token and recreates a deleted mock slot', async
   assert.equal(memory.get('token-2').holdsToken, true);
   assert.equal(memory.get('token-2', { full: true }).payload.product.name, 'local');
   assert.equal(sync.isLocked(), false);
-  assert.deepEqual(conflicts, []);
+  assert.deepEqual(conflicts, [{ state: 'gone' }, null]);
 });
 
-test('a token storage event unlocks an already locked client and clears its conflict', async () => {
+test('a token storage event never unlocks an already locked client', async () => {
   const storage = new EventedStorage([['wl_draftSlotToken', 'old-token']]);
   const meta = { updatedAt: '2026-08-12T03:00:00Z', deviceLabel: 'iPhone Safari' };
   const conflicts = [];
@@ -244,9 +258,102 @@ test('a token storage event unlocks an already locked client and clears its conf
 
   storage.dispatchToken('rotated-token');
 
-  assert.equal(sync.getToken(), 'rotated-token');
-  assert.equal(sync.isLocked(), false);
-  assert.deepEqual(conflicts, [meta, null]);
+  assert.equal(sync.getToken(), 'old-token');
+  assert.equal(sync.isLocked(), true);
+  assert.deepEqual(conflicts, [meta, { state: 'other-tab', deviceLabel: '이 브라우저의 다른 탭' }]);
+  sync.dispose();
+});
+
+test('a late PUT response cannot replace a token written by another tab', async () => {
+  const storage = new EventedStorage([['wl_draftSlotToken', 'old-token']]);
+  let releasePut;
+  const sync = createDraftSlotSync({
+    storage,
+    adapter: {
+      putDraftSlot: () => new Promise((resolve) => { releasePut = resolve; }),
+    },
+  });
+
+  sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
+  const flushing = sync.flush();
+  await new Promise(setImmediate);
+  storage.dispatchToken('new-tab-token');
+  releasePut({ token: 'late-old-token', meta: { updatedAt: 'server-old' } });
+  await flushing;
+
+  assert.equal(storage.getItem('wl_draftSlotToken'), 'new-tab-token');
+  assert.equal(sync.getToken(), 'old-token');
+  assert.equal(sync.isLocked(), true);
+  sync.dispose();
+});
+
+test('slot delete captures its token before another tab changes shared storage', async () => {
+  const storage = new EventedStorage([['wl_draftSlotToken', 'old-token']]);
+  let releasePut;
+  const deleted = [];
+  const sync = createDraftSlotSync({
+    storage,
+    adapter: {
+      putDraftSlot: () => new Promise((resolve) => { releasePut = resolve; }),
+      async deleteDraftSlot(token) { deleted.push(token); },
+    },
+  });
+
+  sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
+  const flushing = sync.flush();
+  await new Promise(setImmediate);
+  const removing = sync.remove();
+  storage.dispatchToken('new-tab-token');
+  releasePut({ token: 'old-token', meta: { updatedAt: 'server-old' } });
+  await flushing;
+  await removing;
+
+  assert.deepEqual(deleted, ['old-token']);
+  sync.dispose();
+});
+
+test('ownership check reports a deleted remote slot as an explicit gone state', async () => {
+  const conflicts = [];
+  const sync = createDraftSlotSync({
+    storage: new MapStorage([['wl_draftSlotToken', 'deleted-token']]),
+    adapter: { async getDraftSlot() { return null; } },
+  });
+  sync.onConflict((meta) => conflicts.push(meta));
+
+  assert.equal(await sync.checkOwnership(), null);
+  assert.equal(sync.isLocked(), true);
+  assert.equal(sync.getToken(), null);
+  assert.deepEqual(conflicts, [{ state: 'gone' }]);
+});
+
+test('only one browser tab can claim the local writer role', () => {
+  const storage = new MapStorage();
+  const first = createDraftSlotSync({ storage, documentId: 'tab-a' });
+  const second = createDraftSlotSync({ storage, documentId: 'tab-b' });
+  const conflicts = [];
+  second.onConflict((meta) => conflicts.push(meta));
+
+  assert.equal(first.activate(), true);
+  assert.equal(second.activate(), false);
+  assert.equal(second.isLocked(), true);
+  assert.equal(conflicts[0].state, 'other-tab');
+
+  first.dispose();
+  second.dispose();
+});
+
+test('storage events refresh both local and server sync timestamps', () => {
+  const storage = new EventedStorage([
+    ['wl_draftSlotSyncedAt', 'local-old'],
+    ['wl_draftSlotServerSyncedAt', 'server-old'],
+  ]);
+  const sync = createDraftSlotSync({ storage });
+
+  storage.dispatch('wl_draftSlotSyncedAt', 'local-new');
+  storage.dispatch('wl_draftSlotServerSyncedAt', 'server-new');
+
+  assert.equal(sync.getSyncedAt(), 'local-new');
+  assert.equal(sync.getServerSyncedAt(), 'server-new');
   sync.dispose();
 });
 
@@ -411,6 +518,51 @@ test('an explicit new flow takes ownership before deleting the remote slot', asy
   assert.deepEqual(calls, ['takeover', 'delete:active-token']);
 });
 
+test('an explicit new flow can discard after the previous PUT was rejected', async () => {
+  const calls = [];
+  const meta = { updatedAt: '2026-08-12T04:00:00Z', deviceLabel: 'iPhone Safari' };
+  const sync = createDraftSlotSync({
+    storage: new MapStorage([['wl_draftSlotToken', 'stale-token']]),
+    adapter: {
+      async putDraftSlot() { throw tokenMismatch(meta); },
+      async takeoverDraftSlot() {
+        calls.push('takeover');
+        return { token: 'active-token', payload: { product: product('remote') }, meta };
+      },
+      async deleteDraftSlot(token) { calls.push(`delete:${token}`); },
+    },
+  });
+  sync.queue({ product: product('local'), localUpdatedAt: 'local-1' });
+  await assert.rejects(sync.flush(), (error) => error.status === 409);
+
+  await sync.removeForNewFlow();
+
+  assert.deepEqual(calls, ['takeover', 'delete:active-token']);
+});
+
+test('logout invalidates an in-flight failure so it cannot schedule an old-draft retry', async () => {
+  const timers = fakeTimers();
+  let rejectPut;
+  const sync = createDraftSlotSync({
+    storage: new MapStorage(),
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+    adapter: {
+      putDraftSlot: () => new Promise((_resolve, reject) => { rejectPut = reject; }),
+    },
+  });
+  sync.queue({ product: product('private'), localUpdatedAt: 'local-1' });
+  const flushing = sync.flush();
+  await new Promise(setImmediate);
+  sync.resetIdentity();
+  rejectPut(new Error('offline'));
+  await assert.rejects(flushing, /offline/);
+  await new Promise(setImmediate);
+
+  assert.equal(timers.count(), 0);
+  assert.equal(sync.getToken(), null);
+});
+
 test('logged-in and mock entry use one priority-4 modal with local and remote timestamps', () => {
   const app = read('../../src/App.jsx');
   const shell = read('../../src/features/shell/shell.jsx');
@@ -423,15 +575,32 @@ test('logged-in and mock entry use one priority-4 modal with local and remote ti
   assert.match(shell, /sources\.map\(\(source\)[\s\S]*?새로 만들기/);
 });
 
-test('draft photo pending state remains in sync payloads but is not rendered as user copy', () => {
+test('photo pending is hidden while editing but warned when a remote draft may omit photos', () => {
   const app = read('../../src/App.jsx');
   const input = read('../../src/features/product-input/ProductInput.jsx');
   const shell = read('../../src/features/shell/shell.jsx');
   const slot = read('../../src/lib/draftSlot.js');
   assert.match(slot, /photosPending/);
-  assert.doesNotMatch(app, /photosPending:/);
+  assert.match(app, /photosPending: Boolean\(slot\.meta\?\.photosPending\)/);
   assert.doesNotMatch(input, /일부 사진은 아직 동기화 중/);
-  assert.doesNotMatch(shell, /일부 사진은 아직 동기화 중/);
+  assert.match(shell, /사진 저장이 끝나지 않아 일부 사진이 빠질 수 있어요/);
+});
+
+test('resume choice dismissal cannot silently choose or take over a draft', () => {
+  const app = read('../../src/App.jsx');
+  const routeChoice = app.slice(app.indexOf("if (entryDecision === 'ask')"), app.indexOf("if (entryDecision !== 'continue')"));
+  assert.doesNotMatch(routeChoice, /onClose/);
+  assert.doesNotMatch(routeChoice, /chooseSource/);
+});
+
+test('logout clears slot identity and remounts input for the next user', () => {
+  const app = read('../../src/App.jsx');
+  const auth = read('../../src/features/auth/AuthProvider.jsx');
+  assert.match(auth, /draftSlot\.resetIdentity\(\)/);
+  assert.match(auth, /await useAppStore\.getState\(\)\.beginProject\(\)\.catch/);
+  assert.match(auth, /setSigningOut\(true\)/);
+  assert.match(app, /if \(signingOut\) return/);
+  assert.match(app, /generation\}:\$\{session\?\.user\?\.id \|\| 'guest'/);
 });
 
 test('promotion happens only at confirmation and cleans the slot before flow lock and navigation', () => {
@@ -513,17 +682,19 @@ class EventedStorage extends MapStorage {
     if (type === 'storage') this.storageListeners.delete(handler);
   }
 
-  dispatchToken(value) {
-    const oldValue = this.getItem('wl_draftSlotToken');
-    if (value == null) this.removeItem('wl_draftSlotToken');
-    else this.setItem('wl_draftSlotToken', value);
+  dispatch(key, value) {
+    const oldValue = this.getItem(key);
+    if (value == null) this.removeItem(key);
+    else this.setItem(key, value);
     for (const handler of this.storageListeners) {
       handler({
-        key: 'wl_draftSlotToken',
+        key,
         oldValue,
         newValue: value,
         storageArea: this,
       });
     }
   }
+
+  dispatchToken(value) { this.dispatch('wl_draftSlotToken', value); }
 }
