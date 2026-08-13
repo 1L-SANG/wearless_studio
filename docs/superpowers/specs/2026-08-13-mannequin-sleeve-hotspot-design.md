@@ -28,7 +28,7 @@
 
 - `top.sleeve` 축 신설 — 값 2개(`sleeveless`, `short`)
 - 핫존 3개 재배치: `top-fit` → 화면 왼쪽 겨드랑이, `top-sleeve`(신규) → 화면 오른쪽 겨드랑이, `top-hem` 유지
-- `outer-hem` 좌표 분리
+- 하의 계열 핫존 3개 재배치(`outer-hem`·`pants-cut`·`skirt-shape`) — 충돌 해소에 필요한 최소 집합
 - 핫존 최소거리 회귀 테스트
 
 **안 한다**
@@ -108,14 +108,25 @@ top: {
        |_o_|  hem
 ```
 
-| id | 현재 | 변경 |
-|---|---|---|
-| `top-fit` | 60%, 24% | **47%, 27%** — 화면 왼쪽 겨드랑이 |
-| `top-sleeve` | — | **63%, 27%** — 화면 오른쪽 겨드랑이 |
-| `top-hem` | 52%, 41% | 유지 |
-| `outer-hem` | 55%, 55% | **45%, 58%** — `pants-cut`(56%, 55%)에서 분리 |
+| id | 현재 | 변경 | 근거 |
+|---|---|---|---|
+| `top-fit` | 60%, 24% | **46%, 27%** | 화면 왼쪽 겨드랑이 |
+| `top-sleeve` | — | **64%, 27%** | 화면 오른쪽 겨드랑이 |
+| `top-hem` | 52%, 41% | 유지 | |
+| `outer-fit` | 58%, 32% | 유지 | |
+| `outer-hem` | 55%, 55% | **46%, 50%** | 왼쪽 힙 — `pants-cut`에서 분리 |
+| `pants-cut` | 56%, 55% | **60%, 62%** | 오른쪽 허벅지 — '바지 통·실루엣'은 힙보다 다리에서 읽힌다 |
+| `pants-hem` | 57%, 84% | 유지 | |
+| `skirt-shape` | 58%, 58% | **62%, 60%** | 스커트 오른쪽 옆선 — `outer-hem`에서 분리 |
+| `skirt-hem` | 56%, 73% | 유지 | |
+| `dress-shape` | 58%, 49% | 유지 | |
+| `dress-hem` | 56%, 76% | 유지 | |
 
-표의 숫자는 현재 좌표에서 역산한 **출발값**이다. 구현 중 실제 마네킹컷 위에 띄워 스크린샷으로 보정한다(PR #106과 같은 절차). 보정 후 값이 최종이며, pin 테스트와 이 문서를 함께 갱신한다.
+`outer-hem` 하나만 옮겨서는 최소거리 불변식(§8)을 만족시킬 수 없다. 왼쪽으로 더 밀면 마네킹 몸 밖 배경에 점이 뜬다. 아우터 밑단·바지 통·스커트 실루엣이 모두 힙 주변에 몰려 있는 것이 원인이라, 하의 두 축을 해부학적으로 더 맞는 자리(허벅지·옆선)로 내려 세 점을 분산한다.
+
+이 세트는 좁은 쪽 프레임(`comparing` 상태 300×400px)에서 실제로 동시에 뜨는 모든 조합에 대해 최소 중심거리 54px을 확보한다(기준 48px).
+
+표의 숫자는 현재 좌표에서 역산한 **출발값**이다. 구현 중 실제 마네킹컷 위에 띄워 스크린샷으로 보정한다(PR #106과 같은 절차). 보정 후 값이 최종이며, pin 테스트와 이 문서를 함께 갱신한다. 보정 시에도 최소거리 테스트가 불변식을 지킨다.
 
 좌표계 주의: `.fit-mine-img`는 `aspect-ratio: 3/4` + `object-fit: cover`이고 실제 마네킹컷은 2:3이라, 세로 10.6%가 잘린다. 핫존 %는 **프레임 좌표**지 이미지 좌표가 아니다. 이번 작업은 이 구조를 바꾸지 않고 프레임 좌표로만 다룬다.
 
@@ -138,12 +149,17 @@ top: {
 
 ## 8. 테스트
 
+FE 카탈로그와 서버 카탈로그를 대조하는 미러 테스트는 **존재하지 않는다** — 두 파일은 주석으로만 "수동 미러"라고 선언돼 있다. 따라서 sleeve 값 어휘는 양쪽에서 각각 명시적으로 잠근다.
+
 | 파일 | 변경 |
 |---|---|
-| `tests/frontend/fit-vocabulary.test.mjs` | FE↔BE 미러 — sleeve 축 자동 요구, 기대값 갱신 |
-| `tests/frontend/fit-example-files.test.mjs` | `FILES`↔디스크 정합 — 신규 2장 |
+| `tests/frontend/fit-vocabulary.test.mjs` | `axesFor('top', *).sleeve` 값·순서 잠금 (신규 테스트) |
+| `tests/frontend/fit-example-files.test.mjs` | `FILES`↔디스크 정합 — 신규 2장(에셋 단계에서) |
 | `tests/frontend/mannequin-fit-hotspots.test.mjs` | 좌표 pin 갱신, `top.sleeve` 커버리지, **신규 최소거리 테스트** |
-| 서버 테스트 | `_EDIT_TEMPLATES` 커버리지, `extreme_pair("top","sleeve")`, `normalize_fit_profile`의 sleeve 통과/이상값 제거 |
+| `server/tests/test_mannequin_fit_profile.py` | 서버 sleeve 어휘 잠금 + `normalize_fit_profile`의 sleeve 통과·이상값 제거 |
+| `server/tests/test_fit_axis_matrix.py` | 기존 개수 단언 갱신(women 10 → **11**, men 6 → **7**) + `extreme_pair("top","sleeve") == ("sleeveless","short")` |
+
+`server/tests/test_mannequin_fit_qc.py:137`의 `_EDIT_TEMPLATES` 커버리지 테스트는 카탈로그를 순회하므로, 축만 추가하고 템플릿을 빠뜨리면 **자동으로 실패한다** — 추가 작업 없이 안전망이 된다.
 
 **최소거리 테스트**가 이번 작업의 회귀 방지 핵심이다. 한 화면에 동시에 뜨는 핫존 조합(주상품 카테고리 × 성별 × 매칭 의류 fitCategory 전수)을 만들어, 어떤 두 점도 프레임 기준 48px 미만으로 붙지 않음을 검증한다. 기준 프레임은 좁은 쪽인 `comparing` 상태(300×400px)로 잡는다.
 
