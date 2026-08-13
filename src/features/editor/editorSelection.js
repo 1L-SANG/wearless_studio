@@ -5,7 +5,7 @@ import { mergeSpeechBubbleElements } from './editorBubbleFit.js';
 const LEGACY_LIBRARY_GROUP_SIZE = {
   'text-box': 2,
   'single-bubble': 1,
-  'qa-bubbles': 2,
+  'qa-bubbles': 1,
   divider: 1,
   'arrow-callout': 2,
   'label-badge': 2,
@@ -37,8 +37,20 @@ export function normalizeEditorSelectionGroups(blocks) {
   let changed = false;
   const normalized = (blocks || []).map((block) => {
     const originalElements = block.elements || [];
-    const elements = mergeSpeechBubbleElements(originalElements);
+    let elements = mergeSpeechBubbleElements(originalElements);
     if (elements !== originalElements) changed = true;
+    const qaGroupCounts = new Map();
+    elements.forEach((element) => {
+      if (element.libraryItemId !== 'qa-bubbles' || !element.groupId) return;
+      qaGroupCounts.set(element.groupId, (qaGroupCounts.get(element.groupId) || 0) + 1);
+    });
+    if ([...qaGroupCounts.values()].some((count) => count > 1)) {
+      elements = elements.map((element) => element.libraryItemId === 'qa-bubbles'
+        && qaGroupCounts.get(element.groupId) > 1
+        ? { ...element, groupId: `qa-bubble:${block.id}:${element.id}` }
+        : element);
+      changed = true;
+    }
     const groupById = new Map();
 
     for (let index = 0; index < elements.length;) {

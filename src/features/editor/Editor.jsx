@@ -28,7 +28,7 @@ import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
 import { EDITOR_FRAME_DRAG_TYPE, EDITOR_INFO_PRESET_DRAG_TYPE, acceptsEditorBlockInsert, findImageDropSlot, pendingImageImportTarget, placeImageInBlock, viewportPointToBlock } from '@/features/editor/editorImageDrop.js';
-import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage } from '@/features/editor/editorLibrary.js';
+import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, buildFrameBlock, buildImageBlock, buildObjectPreset, colorWithOpacity, decodeWardrobeImage, objectPresetInitialSelectionIds } from '@/features/editor/editorLibrary.js';
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
@@ -1233,9 +1233,10 @@ export function Editor() {
     }
     if (type === 'preset') {
       const elements = buildObjectPreset(shapeId, { x: Math.max(0, x), y: Math.max(0, y), idFn: uid });
+      const initialSelection = objectPresetInitialSelectionIds(shapeId, elements);
       setBlocks((bs) => bs.map((b) => b.id === target ? { ...b, elements: [...b.elements, ...elements] } : b));
-      setSelBlock(target); setBlockFocused(true); setSelEl(elements.find((el) => el.type === 'text')?.id || elements[0].id); setSelEls(elements.map((el) => el.id));
-      toast.push('추천 오브젝트를 묶음으로 추가했어요');
+      setSelBlock(target); setBlockFocused(true); setSelEl(initialSelection[0]); setSelEls(initialSelection);
+      toast.push(shapeId === 'qa-bubbles' ? '독립된 말풍선 두 개를 추가했어요' : '추천 오브젝트를 묶음으로 추가했어요');
       return;
     }
     const el = type === 'line'
@@ -1731,7 +1732,8 @@ export function Editor() {
     if (!block) return false;
     const ids = selectionIdsForElement(block.elements, element);
     const selected = block.elements.filter((candidate) => ids.includes(candidate.id));
-    if (selected.length < 2) return false;
+    const isUnifiedBubble = element?.type === 'text' && element?.shape === 'bubble';
+    if (selected.length < 2 && !isUnifiedBubble) return false;
     return startPointerSelectionDrag(block, ids, event);
   };
   const liveResize = (target, width, height, drag) => {

@@ -159,7 +159,7 @@ export function buildObjectPreset(presetId, { x = 120, y = 120, idFn }) {
   if (!OBJECT_LIBRARY_ITEMS.some((item) => item.id === presetId)) {
     throw new Error(`[editorLibrary] unknown object preset: ${presetId}`);
   }
-  const groupId = idFn('grp');
+  const groupId = presetId === 'qa-bubbles' ? null : idFn('grp');
   let elements;
   if (presetId === 'text-box') {
     elements = [
@@ -179,10 +179,10 @@ export function buildObjectPreset(presetId, { x = 120, y = 120, idFn }) {
     ];
   } else if (presetId === 'qa-bubbles') {
     elements = [
-      speechBubble(idFn, groupId, x, y, 380, 104, 'Q. 가장 궁금한 점은?',
+      speechBubble(idFn, idFn('grp'), x, y, 380, 104, 'Q. 가장 궁금한 점은?',
         { size: 20, weight: 600, color: '#0e0d14' }, '#ffffff',
         { maxWidth: 620, padX: 24, padTop: 22, padBottom: 42, anchor: 'left' }),
-      speechBubble(idFn, groupId, x + 110, y + 112, 520, 142, 'A. 답변을 간결하게 입력하세요.',
+      speechBubble(idFn, idFn('grp'), x + 110, y + 112, 520, 142, 'A. 답변을 간결하게 입력하세요.',
         { size: 19, weight: 500, color: '#0e0d14', lineHeight: 29 }, '#dcecff',
         { maxWidth: 660, padX: 30, padTop: 26, padBottom: 50, anchor: 'right' }, true),
     ];
@@ -210,6 +210,11 @@ export function buildObjectPreset(presetId, { x = 120, y = 120, idFn }) {
     y: element.y + shiftY,
     libraryItemId: presetId,
   }));
+}
+
+export function objectPresetInitialSelectionIds(presetId, elements) {
+  const ids = (elements || []).map((element) => element.id).filter(Boolean);
+  return presetId === 'qa-bubbles' ? ids.slice(0, 1) : ids;
 }
 
 export function encodeWardrobeImage(image, dimensions = {}) {

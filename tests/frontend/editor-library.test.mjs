@@ -11,6 +11,7 @@ import {
   decodeWardrobeImage,
   encodeWardrobeImage,
   normalizeHexColor,
+  objectPresetInitialSelectionIds,
 } from '../../src/features/editor/editorLibrary.js';
 import {
   isEditorDeleteKey,
@@ -81,7 +82,7 @@ test('a wardrobe image dropped between blocks becomes its own padded image block
 });
 
 test('object presets materialize as one selectable group', () => {
-  for (const item of OBJECT_LIBRARY_ITEMS) {
+  for (const item of OBJECT_LIBRARY_ITEMS.filter((candidate) => candidate.id !== 'qa-bubbles')) {
     const elements = buildObjectPreset(item.id, { x: 100, y: 80, idFn: seqId() });
     assert.ok(elements.length > 0, item.id);
     assert.equal(new Set(elements.map((element) => element.groupId)).size, 1, `${item.id}: one group`);
@@ -117,7 +118,7 @@ test('object presets stay inside the 1000px canvas when dropped near an edge', (
   assert.ok(elements.every((element) => element.y >= 0));
 });
 
-test('Q&A bubbles are two unified text+bubble elements with grouped movement', () => {
+test('Q&A bubbles are two independent unified text+bubble objects', () => {
   const elements = buildObjectPreset('qa-bubbles', { x: 100, y: 80, idFn: seqId() });
   const bubbles = elements.filter((element) => element.type === 'text' && element.shape === 'bubble');
   assert.equal(bubbles.length, 2);
@@ -128,8 +129,15 @@ test('Q&A bubbles are two unified text+bubble elements with grouped movement', (
   assert.equal(bubbles[1].flipX, true);
   assert.ok(bubbles.every((element) => element.text && element.style && element.bubbleFit));
   assert.ok(bubbles.every((element) => !element.bubblePairId));
+  assert.equal(new Set(bubbles.map((element) => element.groupId)).size, 2);
+  assert.deepEqual(selectionIdsForElement(elements, bubbles[0]), [bubbles[0].id]);
+  assert.deepEqual(selectionIdsForElement(elements, bubbles[1]), [bubbles[1].id]);
+  assert.deepEqual(objectPresetInitialSelectionIds('qa-bubbles', elements), [bubbles[0].id]);
+});
 
-  assert.deepEqual(selectionIdsForElement(elements, bubbles[0]), elements.map((element) => element.id));
+test('ordinary composite presets still select every member when they are added', () => {
+  const elements = buildObjectPreset('text-box', { x: 100, y: 80, idFn: seqId() });
+  assert.deepEqual(objectPresetInitialSelectionIds('text-box', elements), elements.map((element) => element.id));
 });
 
 test('the object library offers one standalone responsive speech bubble', () => {
@@ -150,11 +158,11 @@ test('the object library offers one standalone responsive speech bubble', () => 
   assert.deepEqual(selectionIdsForElement(elements, elements[0]), [elements[0].id]);
 });
 
-test('selected speech-bubble groups keep Moveable drag capture enabled', () => {
+test('a selected unified speech bubble keeps Moveable drag capture enabled', () => {
   const bubbles = buildObjectPreset('qa-bubbles', { x: 100, y: 80, idFn: seqId() });
   const textBox = buildObjectPreset('text-box', { x: 100, y: 80, idFn: seqId() });
 
-  assert.equal(shouldPassGroupDragArea(bubbles), false, 'the drag area must capture Q&A bubble drags');
+  assert.equal(shouldPassGroupDragArea([bubbles[0]]), false, 'the drag area must capture one Q&A bubble drag');
   assert.equal(shouldPassGroupDragArea(textBox), true, 'other composite children remain directly selectable');
 });
 
@@ -238,6 +246,16 @@ test('legacy object composites recover whole-object selection while FAQ text sta
   assert.deepEqual(selectionIdsForElement(normalized[1].elements, normalized[1].elements[0]), ['bubble']);
   assert.equal(normalized[0].elements[0].groupId, normalized[0].elements[1].groupId);
   assert.equal(normalized[1].elements[0].groupId, normalized[1].elements[1].groupId);
+});
+
+test('saved Q&A bubbles that shared one group migrate into independent objects', () => {
+  const elements = buildObjectPreset('qa-bubbles', { x: 100, y: 80, idFn: seqId() })
+    .map((element) => ({ ...element, groupId: 'legacy-shared-qa' }));
+  const [normalized] = normalizeEditorSelectionGroups([{ id: 'qa-block', elements }]);
+
+  assert.equal(new Set(normalized.elements.map((element) => element.groupId)).size, 2);
+  assert.deepEqual(selectionIdsForElement(normalized.elements, normalized.elements[0]), [normalized.elements[0].id]);
+  assert.deepEqual(selectionIdsForElement(normalized.elements, normalized.elements[1]), [normalized.elements[1].id]);
 });
 
 test('legacy speech-bubble layers normalize into one selectable and deletable element', () => {
