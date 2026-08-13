@@ -136,7 +136,7 @@ MannequinCut {
   id: string                       // `${candidate}-${version}`
   candidate: 'A' | 'B'             // @deprecated 단일컷 전환 후 legacy id/API 호환용 — 항상 'A'
   version: number
-  src: string
+  src: string                       // 화면/생성 입력용 resolved asset URL. 톤 조정본이 있으면 최신 mannequinToneAdjusted asset, 없으면 원본 컷 asset
   baseFit: Fit                     // 생성 시 핏 (구 fitLabel '정핏'/'슬림핏')
   fitAdjust: AdjustFit | null      // @deprecated — FitProfile로 대체
   lengthAdjust: AdjustLength | null // @deprecated — FitProfile로 대체
@@ -149,6 +149,11 @@ MannequinCut {
 // 폐기: selected (선택은 project.selectedMannequinId가 소유),
 //       fitLabel / lengthLabel / matchName / matchFit / matchLength / matchLabel (전부 파생)
 ```
+
+`MannequinCut.id`는 원본 컷 신원이다. 톤 에디터가 적용된 뒤에도 `selectedMannequinId`는
+같은 컷 id를 유지하고, 서버는 `assets.metadata.type='mannequinToneAdjusted'`와
+`metadata.sourceCutId=MannequinCut.id`가 일치하는 최신 자산을 `src`로 해석한다.
+상세페이지 생성과 에디터 새 이미지 생성도 이 resolved asset을 기준 마네킹 이미지로 사용한다.
 
 ### 3.4 StoryboardBlock — 콘티보드 블록
 
@@ -326,6 +331,10 @@ infoType별 info shape (frontend `src/features/editor/presets/infoPresets.js`가
 서수(ordinal) = info 배열 인덱스. elements 재생성 시 사진은 info 에서 복원되고,
 info 동기화 이전에 채워진 레거시 블록은 같은 서수끼리만 이월한다(`carrySlotImages`,
 압축 채움 금지 — 사진이 다른 포인트로 이사하면 안 된다).
+
+기본 정보 템플릿의 최초 삽입 순서는 `header` → 컷 흐름 사이의 `benefit_copy`/`size`/`care`/
+`required_notice` → 문서 맨 아래 `shipping_returns`다. `shipping_returns`는 구매 결정을
+마무리하는 안내이므로 새 상세페이지 첫 생성에서 상단 공지가 아니라 마지막 블록으로 둔다.
 
 ### 3.6 Wardrobe — 에디터 의류 탭
 

@@ -41,6 +41,11 @@
 
 **인덱스**: `projects(user_id, updated_at desc)` · `jobs(project_id, kind, status)` + partial uq `(project_id, kind) where status in ('pending','running')`(동시 시작 DB 차단) · `credit_ledger(user_id, created_at)`.
 
+`mannequin_cuts.asset_id`는 원본 컷 자산이다. 톤 에디터 적용본은 새 컬럼으로 덮어쓰지 않고
+`assets.metadata.type='mannequinToneAdjusted'`와 `metadata.sourceCutId='<candidate>-<version>'`로
+연결한다. `GET /mannequins`, 상세페이지 생성, 에디터 새 이미지 생성은 같은 컷 id에 연결된 최신
+톤 조정본을 우선하고, 없을 때만 원본 `asset_id`를 사용한다.
+
 **RLS**: 전 테이블 owner 정책(`user_id = auth.uid()`, project 경유 테이블은 exists join). 쓰기는 service-role(FastAPI)만 — 단 FastAPI도 모든 쿼리에 JWT `sub` 조건을 명시한다. `matching_items`는 `is_active` 행 authenticated select. `credit_ledger`는 insert-only.
 
 ## 3. R2 자산 파이프라인
