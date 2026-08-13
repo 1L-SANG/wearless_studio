@@ -22,31 +22,32 @@ FIT_AXES = {
         },
         "length": {
             "women": [
-                {"value": "ultra_crop", "label": "울트라크롭", "promptEn": "hem ends well above the navel, midriff exposed"},
                 {"value": "crop", "label": "크롭", "promptEn": "short cropped hem ending around the high waist"},
+                {"value": "semi_crop", "label": "세미크롭", "promptEn": "semi-cropped hem ending at the lower abdomen below the navel, longer than crop and shorter than standard hip length"},
                 {"value": "basic", "label": "기본", "promptEn": "standard hem ending around the hip line"},
+                {"value": "semi_long", "label": "세미롱", "promptEn": "semi-long hem extending just below the crotch to fully cover the front Y-zone, shorter than a longline or T-shirt dress"},
                 {"value": "long", "label": "롱", "promptEn": "long hem extending below the hips"},
             ],
             "men": [
                 {"value": "crop", "label": "크롭", "promptEn": "short cropped hem ending around the high waist"},
+                {"value": "semi_crop", "label": "세미크롭", "promptEn": "semi-cropped hem ending at the lower abdomen below the navel, longer than crop and shorter than standard hip length"},
                 {"value": "basic", "label": "기본", "promptEn": "standard hem ending around the hip line"},
+                {"value": "semi_long", "label": "세미롱", "promptEn": "semi-long hem extending just below the crotch to fully cover the front Y-zone, shorter than a longline or T-shirt dress"},
                 {"value": "long", "label": "롱", "promptEn": "long hem extending below the hips"},
             ],
         },
         "sleeve": {
             "women": [
-                {"value": "sleeveless", "label": "민소매", "promptEn": "a sleeveless version of the same top; visibly re-tailor only its sleeves by removing them completely and finishing clean armholes at the shoulder points, leaving the neckline, body width and hem length unchanged; if it is already sleeveless, preserve those proportions"},
                 {"value": "cap", "label": "캡", "promptEn": "a cap-sleeve version of the same top; visibly re-tailor only its sleeves so each sleeve just caps the shoulder and ends high on the upper arm near the armpit, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
+                {"value": "cap_short", "label": "캡~반팔", "promptEn": "an extra-short-sleeve version of the same top; visibly re-tailor only its sleeves to end halfway between a cap sleeve and a standard short sleeve, covering the shoulder and only the uppermost portion of the upper arm, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
                 {"value": "short", "label": "반팔", "promptEn": "a short-sleeve version of the same top; visibly re-tailor only its sleeves to end around the mid-upper-arm above the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
                 {"value": "elbow", "label": "5부", "promptEn": "an elbow-length-sleeve version of the same top; visibly re-tailor only its sleeves to end right at the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
-                {"value": "three_qtr", "label": "7부", "promptEn": "a three-quarter-sleeve version of the same top; visibly re-tailor only its sleeves to end between the elbow and the wrist, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
             ],
             "men": [
-                {"value": "sleeveless", "label": "민소매", "promptEn": "a sleeveless version of the same top; visibly re-tailor only its sleeves by removing them completely and finishing clean armholes at the shoulder points, leaving the neckline, body width and hem length unchanged; if it is already sleeveless, preserve those proportions"},
                 {"value": "cap", "label": "캡", "promptEn": "a cap-sleeve version of the same top; visibly re-tailor only its sleeves so each sleeve just caps the shoulder and ends high on the upper arm near the armpit, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
+                {"value": "cap_short", "label": "캡~반팔", "promptEn": "an extra-short-sleeve version of the same top; visibly re-tailor only its sleeves to end halfway between a cap sleeve and a standard short sleeve, covering the shoulder and only the uppermost portion of the upper arm, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
                 {"value": "short", "label": "반팔", "promptEn": "a short-sleeve version of the same top; visibly re-tailor only its sleeves to end around the mid-upper-arm above the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
                 {"value": "elbow", "label": "5부", "promptEn": "an elbow-length-sleeve version of the same top; visibly re-tailor only its sleeves to end right at the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
-                {"value": "three_qtr", "label": "7부", "promptEn": "a three-quarter-sleeve version of the same top; visibly re-tailor only its sleeves to end between the elbow and the wrist, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions"},
             ],
         },
     },
@@ -158,15 +159,15 @@ AXIS_OBSERVABLES = {
     ("top", "fit", "regular"): "light, even ease at chest and waist, without clinging or oversized volume",
     ("top", "fit", "semi_over"): "extra room at shoulder, chest, and sleeves, with a mildly dropped shoulder point",
     ("top", "fit", "over"): "shoulder seam below the shoulder point and clear air around chest, waist, and sleeves",
-    ("top", "length", "ultra_crop"): "entire untucked hem well above the navel and visible above any matching bottom",
     ("top", "length", "crop"): "entire untucked hem at the high waist and visible above any matching bottom",
+    ("top", "length", "semi_crop"): "entire untucked hem at the lower abdomen below the navel, longer than high-waist crop and shorter than standard hip length, and fully visible",
     ("top", "length", "basic"): "entire untucked hem at the hip line and not covered by any matching bottom",
+    ("top", "length", "semi_long"): "entire untucked hem just below the crotch, fully covering the front Y-zone while remaining shorter than a longline or T-shirt dress, and not covered by any matching bottom",
     ("top", "length", "long"): "entire untucked hem below the hips and neither tucked into nor covered by any matching bottom",
-    ("top", "sleeve", "sleeveless"): "both shoulders bare with clean finished armholes and no sleeve fabric on the upper arms",
     ("top", "sleeve", "cap"): "each sleeve ends high on the upper arm near the armpit, leaving most of the upper arm bare",
+    ("top", "sleeve", "cap_short"): "both sleeve hems end halfway between cap-sleeve and standard short-sleeve length, covering only the uppermost upper arm",
     ("top", "sleeve", "short"): "both sleeve hems end around the mid-upper-arm, above the elbow, with the forearms fully bare",
     ("top", "sleeve", "elbow"): "both sleeve hems end right at the elbow, with the forearms bare",
-    ("top", "sleeve", "three_qtr"): "both sleeve hems end between the elbow and the wrist, leaving the lower forearm bare",
     ("outer", "fit", "slim"): "visible shoulder-seam placement at or near the natural shoulder point, no dropped shoulder or boxy body, and minimal layering ease through body and sleeves",
     ("outer", "fit", "regular"): "natural shoulder line with moderate layering room",
     ("outer", "fit", "semi_over"): "mildly dropped shoulder with extra room through body and sleeves",
@@ -211,6 +212,7 @@ def _axis_entry(category: str, axis: str, gender: str, value):
 # 가림/노출을 결정한다(2026-08-01 WS2). cut/silhouette 처럼 매칭 의류 자체의 실루엣이 아니라
 # 상품 노출을 조정하는 축이라는 점이 다르다.
 _MATCHING_FIT_AXIS = {"pants": "cut", "skirt": "silhouette", "top": "length"}
+_LEGACY_TOP_LENGTH_VALUES = {"crop_basic": "semi_crop", "basic_long": "semi_long"}
 
 
 def _profile_version(profile: dict) -> int:
@@ -234,6 +236,8 @@ def _normalize_matching_fit(raw, gender: str) -> dict | None:
             or not isinstance(raw_axes, dict) or set(raw_axes) != {axis}:
         return None
     value = raw_axes.get(axis)
+    if fit_category == "top" and axis == "length":
+        value = _LEGACY_TOP_LENGTH_VALUES.get(value, value)
     entry_gender = "women" if fit_category == "skirt" and axis == "silhouette" and gender == "men" else gender
     if not _axis_entry(fit_category, axis, entry_gender, value):
         return None
@@ -266,6 +270,8 @@ def normalize_fit_profile(profile: dict | None) -> dict | None:
         value = raw_axes.get(axis)
         if category == "top" and axis == "fit" and value == "tight":
             value = "slim"
+        if category == "top" and axis == "length":
+            value = _LEGACY_TOP_LENGTH_VALUES.get(value, value)
         if value is not None and _axis_entry(category, axis, gender, value):
             axes[axis] = value
     version = _profile_version(profile)
@@ -288,7 +294,7 @@ def normalize_fit_profile(profile: dict | None) -> dict | None:
 
 
 def normalize_analysis_fit(analysis: dict | None) -> dict:
-    """과거 단일 fit/fitProfile의 tight를 현재 최솟값 slim으로 조용히 승격한다."""
+    """과거 fit·상의 기장 어휘를 현재 계약으로 조용히 승격한다."""
     if not isinstance(analysis, dict):
         return {}
     out = dict(analysis)
@@ -296,8 +302,32 @@ def normalize_analysis_fit(analysis: dict | None) -> dict:
         out["fit"] = "slim"
     profile = out.get("fitProfile")
     axes = profile.get("axes") if isinstance(profile, dict) else None
-    if isinstance(axes, dict) and axes.get("fit") == "tight":
-        out["fitProfile"] = {**profile, "axes": {**axes, "fit": "slim"}}
+    if isinstance(axes, dict):
+        next_axes = dict(axes)
+        if next_axes.get("fit") == "tight":
+            next_axes["fit"] = "slim"
+        if profile.get("category") == "top" and "length" in next_axes:
+            next_axes["length"] = _LEGACY_TOP_LENGTH_VALUES.get(
+                next_axes.get("length"), next_axes.get("length"))
+        matching_fit = profile.get("matchingFit")
+        next_matching = matching_fit
+        if isinstance(matching_fit, dict) and matching_fit.get("fitCategory") == "top":
+            matching_axes = matching_fit.get("axes")
+            if isinstance(matching_axes, dict) and "length" in matching_axes:
+                next_matching = {
+                    **matching_fit,
+                    "axes": {
+                        **matching_axes,
+                        "length": _LEGACY_TOP_LENGTH_VALUES.get(
+                            matching_axes.get("length"), matching_axes.get("length")),
+                    },
+                }
+        if next_axes != axes or next_matching is not matching_fit:
+            out["fitProfile"] = {
+                **profile,
+                "axes": next_axes,
+                **({"matchingFit": next_matching} if next_matching is not None else {}),
+            }
     return out
 
 

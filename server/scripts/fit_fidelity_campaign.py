@@ -95,7 +95,7 @@ ARMS = [
     A("D05", "dress", "women", "D-C", {"length": "mini", "silhouette": "fit_and_flare"}, ["length", "silhouette"], False),
     A("D06", "dress", "women", "D-C", {"length": "long", "silhouette": "mermaid"}, ["length", "silhouette"], False),
     # 배치 3 — withBottom·복합·outer (10)
-    A("T07", "top", "women", "T-D", {"length": "ultra_crop"}, ["length"], True),
+    A("T07", "top", "women", "T-D", {"length": "crop"}, ["length"], True),
     A("T08", "top", "women", "T-D", {"length": "long"}, ["length"], True),
     A("P09", "pants", "women", "P-E", {"cut": "straight", "length": "above_ankle"}, ["cut", "length"], False),
     A("P10", "pants", "women", "P-E", {"cut": "wide", "length": "below_ankle"}, ["cut", "length"], False),

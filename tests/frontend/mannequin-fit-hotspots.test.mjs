@@ -81,6 +81,26 @@ test('adjustment hotspots are immediately available without the old question car
   assert.match(styles, /\.fit-continue \{ margin-top: var\(--sp-24\); \}/);
 });
 
+test('넓은 화면의 예시 카드는 잘리지 않고 홀수 마지막 카드만 가운데 정렬된다', () => {
+  const styles = readFileSync(
+    new URL('../../src/features/mannequin/Mannequin.css', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    styles,
+    /\.fit-ex-col \{[^}]*width: 332px; max-height: none;[^}]*padding: 14px;/s,
+  );
+  assert.match(
+    styles,
+    /\.fit-ex-track \{[^}]*flex: none;[^}]*min-height: auto;[^}]*display: grid;[^}]*overflow: visible;[^}]*scroll-snap-type: none;/s,
+  );
+  assert.match(
+    styles,
+    /\.fit-ex-track \.fit-tile:last-child:nth-child\(odd\) \{[^}]*grid-column: 1 \/ -1;[^}]*justify-self: center;[^}]*width: calc\(\(100% - 10px\) \/ 2\);/s,
+  );
+});
+
 test('picked adjustments stay visible, can be cleared, and lock while proceeding', () => {
   const source = readFileSync(
     new URL('../../src/features/mannequin/Mannequin.jsx', import.meta.url),

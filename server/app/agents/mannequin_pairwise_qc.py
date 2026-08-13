@@ -25,13 +25,13 @@ _COMPARATIVE = {
 # ── (category, axis) → 값의 비교속성 오름차순 서열 (파일럿 근사) ──────────────
 # 주의: cut/silhouette 은 단일 1차원이 아니라 근사 순위다(파일럿 한정). 극단쌍부터 검증.
 _ORDINAL = {
-    ("top", "length"): {"ultra_crop": 0, "crop": 1, "basic": 2, "long": 3},
+    ("top", "length"): {"crop": 0, "semi_crop": 1, "basic": 2, "semi_long": 3, "long": 4},
     ("outer", "length"): {"crop_short": 0, "basic": 1, "long": 2},
     ("pants", "length"): {"above_ankle": 0, "ankle": 1, "below_ankle": 2},
     ("skirt", "length"): {"mini": 0, "midi": 1, "long": 2},
     ("dress", "length"): {"mini": 0, "midi": 1, "long": 2},
     ("top", "fit"): {"slim": 0, "regular": 1, "semi_over": 2, "over": 3},
-    ("top", "sleeve"): {"sleeveless": 0, "cap": 1, "short": 2, "elbow": 3, "three_qtr": 4},
+    ("top", "sleeve"): {"cap": 0, "cap_short": 1, "short": 2, "elbow": 3},
     ("outer", "fit"): {"slim": 0, "regular": 1, "semi_over": 2, "over": 3},
     ("pants", "cut"): {  # '다리/밑단 폭' 근사
         "skinny": 0, "slim": 1, "tapered": 2, "straight": 2,

@@ -21,31 +21,32 @@ export const FIT_AXES = Object.freeze({
     },
     length: {
       women: [
-        { value: 'ultra_crop', label: '울트라크롭', promptEn: 'hem ends well above the navel, midriff exposed' },
         { value: 'crop', label: '크롭', promptEn: 'short cropped hem ending around the high waist' },
+        { value: 'semi_crop', label: '세미크롭', promptEn: 'semi-cropped hem ending at the lower abdomen below the navel, longer than crop and shorter than standard hip length' },
         { value: 'basic', label: '기본', promptEn: 'standard hem ending around the hip line' },
+        { value: 'semi_long', label: '세미롱', promptEn: 'semi-long hem extending just below the crotch to fully cover the front Y-zone, shorter than a longline or T-shirt dress' },
         { value: 'long', label: '롱', promptEn: 'long hem extending below the hips' },
       ],
       men: [
         { value: 'crop', label: '크롭', promptEn: 'short cropped hem ending around the high waist' },
+        { value: 'semi_crop', label: '세미크롭', promptEn: 'semi-cropped hem ending at the lower abdomen below the navel, longer than crop and shorter than standard hip length' },
         { value: 'basic', label: '기본', promptEn: 'standard hem ending around the hip line' },
+        { value: 'semi_long', label: '세미롱', promptEn: 'semi-long hem extending just below the crotch to fully cover the front Y-zone, shorter than a longline or T-shirt dress' },
         { value: 'long', label: '롱', promptEn: 'long hem extending below the hips' },
       ],
     },
     sleeve: {
       women: [
-        { value: 'sleeveless', label: '민소매', promptEn: 'a sleeveless version of the same top; visibly re-tailor only its sleeves by removing them completely and finishing clean armholes at the shoulder points, leaving the neckline, body width and hem length unchanged; if it is already sleeveless, preserve those proportions' },
         { value: 'cap', label: '캡', promptEn: 'a cap-sleeve version of the same top; visibly re-tailor only its sleeves so each sleeve just caps the shoulder and ends high on the upper arm near the armpit, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
+        { value: 'cap_short', label: '캡~반팔', promptEn: 'an extra-short-sleeve version of the same top; visibly re-tailor only its sleeves to end halfway between a cap sleeve and a standard short sleeve, covering the shoulder and only the uppermost portion of the upper arm, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
         { value: 'short', label: '반팔', promptEn: 'a short-sleeve version of the same top; visibly re-tailor only its sleeves to end around the mid-upper-arm above the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
         { value: 'elbow', label: '5부', promptEn: 'an elbow-length-sleeve version of the same top; visibly re-tailor only its sleeves to end right at the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
-        { value: 'three_qtr', label: '7부', promptEn: 'a three-quarter-sleeve version of the same top; visibly re-tailor only its sleeves to end between the elbow and the wrist, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
       ],
       men: [
-        { value: 'sleeveless', label: '민소매', promptEn: 'a sleeveless version of the same top; visibly re-tailor only its sleeves by removing them completely and finishing clean armholes at the shoulder points, leaving the neckline, body width and hem length unchanged; if it is already sleeveless, preserve those proportions' },
         { value: 'cap', label: '캡', promptEn: 'a cap-sleeve version of the same top; visibly re-tailor only its sleeves so each sleeve just caps the shoulder and ends high on the upper arm near the armpit, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
+        { value: 'cap_short', label: '캡~반팔', promptEn: 'an extra-short-sleeve version of the same top; visibly re-tailor only its sleeves to end halfway between a cap sleeve and a standard short sleeve, covering the shoulder and only the uppermost portion of the upper arm, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
         { value: 'short', label: '반팔', promptEn: 'a short-sleeve version of the same top; visibly re-tailor only its sleeves to end around the mid-upper-arm above the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
         { value: 'elbow', label: '5부', promptEn: 'an elbow-length-sleeve version of the same top; visibly re-tailor only its sleeves to end right at the elbow, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
-        { value: 'three_qtr', label: '7부', promptEn: 'a three-quarter-sleeve version of the same top; visibly re-tailor only its sleeves to end between the elbow and the wrist, leaving the neckline, body width and hem length unchanged; if it already satisfies this target, preserve those proportions' },
       ],
     },
   },
@@ -169,18 +170,52 @@ export function axesFor(category, gender) {
   );
 }
 
-/** 과거 여성 상의 핏 어휘를 현재 계약으로 올린다. 입력 객체는 변경하지 않는다. */
+const LEGACY_TOP_LENGTH_VALUES = Object.freeze({
+  crop_basic: 'semi_crop',
+  basic_long: 'semi_long',
+});
+
+function normalizedTopLength(value) {
+  return LEGACY_TOP_LENGTH_VALUES[value] || value;
+}
+
+/** 과거 핏·상의 기장 어휘를 현재 계약으로 올린다. 입력 객체는 변경하지 않는다. */
 export function normalizeAnalysisFit(analysis) {
   if (!analysis || typeof analysis !== 'object') return analysis;
   const legacyFit = analysis.fit === 'tight';
   const profile = analysis.fitProfile;
   const legacyProfileFit = profile?.axes?.fit === 'tight';
-  if (!legacyFit && !legacyProfileFit) return analysis;
+  const legacyProfileLength = profile?.category === 'top'
+    ? normalizedTopLength(profile?.axes?.length)
+    : profile?.axes?.length;
+  const matchingFit = profile?.matchingFit;
+  const legacyMatchingLength = matchingFit?.fitCategory === 'top'
+    ? normalizedTopLength(matchingFit?.axes?.length)
+    : matchingFit?.axes?.length;
+  const hasLegacyProfileLength = legacyProfileLength !== profile?.axes?.length;
+  const hasLegacyMatchingLength = legacyMatchingLength !== matchingFit?.axes?.length;
+  if (!legacyFit && !legacyProfileFit && !hasLegacyProfileLength && !hasLegacyMatchingLength) {
+    return analysis;
+  }
+  const nextAxes = (legacyProfileFit || hasLegacyProfileLength)
+    ? {
+      ...profile.axes,
+      ...(legacyProfileFit ? { fit: 'slim' } : {}),
+      ...(hasLegacyProfileLength ? { length: legacyProfileLength } : {}),
+    }
+    : profile?.axes;
+  const nextMatchingFit = hasLegacyMatchingLength
+    ? { ...matchingFit, axes: { ...matchingFit.axes, length: legacyMatchingLength } }
+    : matchingFit;
   return {
     ...analysis,
     ...(legacyFit ? { fit: 'slim' } : {}),
-    ...(legacyProfileFit ? {
-      fitProfile: { ...profile, axes: { ...profile.axes, fit: 'slim' } },
+    ...((legacyProfileFit || hasLegacyProfileLength || hasLegacyMatchingLength) ? {
+      fitProfile: {
+        ...profile,
+        ...(nextAxes ? { axes: nextAxes } : {}),
+        ...(nextMatchingFit ? { matchingFit: nextMatchingFit } : {}),
+      },
     } : {}),
   };
 }

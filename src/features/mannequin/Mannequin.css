@@ -200,11 +200,26 @@
   .fit-stage.comparing .fit-mine-col { width: 340px; }
   .fit-ex-col {
     position: absolute; top: 90px; right: 0; z-index: 2;
-    width: 332px; max-height: calc(100% - 114px);
-    padding: 14px 10px 14px 14px;
+    width: 332px; max-height: none;
+    padding: 14px;
   }
   .fit-ex-head { font-size: 14px; }
-  .fit-ex-track { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; }
+  .fit-ex-track {
+    flex: none;
+    min-height: auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    align-content: start;
+    overflow: visible;
+    padding-right: 0;
+    scroll-snap-type: none;
+  }
+  .fit-ex-track .fit-tile:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: calc((100% - 10px) / 2);
+  }
 }
 
 @media (max-width: 720px) {

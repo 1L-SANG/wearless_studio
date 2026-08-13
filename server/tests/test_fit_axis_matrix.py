@@ -25,8 +25,8 @@ def test_catalog_values_empty_for_skirt_dress_men():
 def test_extreme_pair_top():
     assert FM.extreme_pair("top", "fit", "women") == ("slim", "over")
     assert FM.extreme_pair("top", "fit", "men") == ("slim", "over")
-    assert FM.extreme_pair("top", "length", "women") == ("ultra_crop", "long")
-    assert FM.extreme_pair("top", "length", "men") == ("crop", "long")    # men 엔 ultra_crop 없음
+    assert FM.extreme_pair("top", "length", "women") == ("crop", "long")
+    assert FM.extreme_pair("top", "length", "men") == ("crop", "long")
 
 
 def test_extreme_pair_pants():
@@ -73,9 +73,9 @@ def test_all_pairs_men_drops_skirt_and_dress():
     assert len(pairs) == 7                                   # top3 + pants2 + outer2
 
 
-def test_sleeve_extreme_pair_runs_sleeveless_to_three_qtr():
-    assert FM.extreme_pair("top", "sleeve", "women") == ("sleeveless", "three_qtr")
-    assert FM.extreme_pair("top", "sleeve", "men") == ("sleeveless", "three_qtr")
+def test_sleeve_extreme_pair_runs_cap_to_elbow():
+    assert FM.extreme_pair("top", "sleeve", "women") == ("cap", "elbow")
+    assert FM.extreme_pair("top", "sleeve", "men") == ("cap", "elbow")
 
 
 # ─────────────── cut_labels (교차 생성 순서) ───────────────

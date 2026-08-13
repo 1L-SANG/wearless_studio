@@ -52,8 +52,8 @@ Mannequin
 
 ## 4. 에셋 현황 (fitExampleImages.js와 일치)
 
-있음 36장: top(여 fit5·len4 / 남 fit3) · pants(여 cut5 / 남 cut4 / 공용 len3) · skirt sil3 · dress sil3·len2 · outer fit2·len2.
-**갭(텍스트 폴백으로 동작, 추가 생성 백로그)**: top-men semi_over · pants-men slim/straight · skirt length 전부 · dress a_line/midi · outer regular/semi_over/basic · top sleeve sleeveless/cap/short/elbow/three_qtr.
+있음 60장: top 26장(여 fit4·len5 / 남 fit4·len5·sleeve4 / 여성용 공용 sleeve4) · pants 14장(여 cut5 / 남 cut6 / 공용 len3) · skirt 6장 · dress 7장 · outer 7장.
+현재 카탈로그 전 값에 이미지가 있으며, `top.sleeve` 4단계는 여성에게 `top-any-sleeve-*`, 남성에게 `top-men-sleeve-*` 이미지를 노출한다.
 
 ## 5. 생성 대기 화면 (2026-07-13 확정 — 의류 인포그래픽 롱 시퀀스)
 

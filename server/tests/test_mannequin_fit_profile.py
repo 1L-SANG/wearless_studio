@@ -839,11 +839,41 @@ def test_untuck_instruction_survives_undeclared_length_axis(f):
 
 # ---------- 소매 기장 축 ----------
 
+def test_top_length_axis_mirrors_the_frontend_vocabulary():
+    for gender in ("women", "men"):
+        entries = FIT_AXES["top"]["length"][gender]
+        assert [e["value"] for e in entries] == ["crop", "semi_crop", "basic", "semi_long", "long"]
+        assert [e["label"] for e in entries] == ["크롭", "세미크롭", "기본", "세미롱", "롱"]
+        assert all(e["promptEn"] for e in entries)
+
+
+def test_legacy_top_length_values_normalize_to_the_semi_names():
+    primary = normalize_fit_profile({
+        "category": "top",
+        "gender": "women",
+        "axes": {"length": "basic_long"},
+    })
+    assert primary["axes"]["length"] == "semi_long"
+
+    matching = normalize_fit_profile({
+        "category": "pants",
+        "gender": "women",
+        "axes": {"cut": "straight"},
+        "version": 2,
+        "matchingFit": {
+            "clothingId": "top-1",
+            "fitCategory": "top",
+            "axes": {"length": "crop_basic"},
+        },
+    })
+    assert matching["matchingFit"]["axes"]["length"] == "semi_crop"
+
+
 def test_sleeve_axis_mirrors_the_frontend_vocabulary():
     for gender in ("women", "men"):
         entries = FIT_AXES["top"]["sleeve"][gender]
-        assert [e["value"] for e in entries] == ["sleeveless", "cap", "short", "elbow", "three_qtr"]
-        assert [e["label"] for e in entries] == ["민소매", "캡", "반팔", "5부", "7부"]
+        assert [e["value"] for e in entries] == ["cap", "cap_short", "short", "elbow"]
+        assert [e["label"] for e in entries] == ["캡", "캡~반팔", "반팔", "5부"]
         assert all(e["promptEn"] for e in entries)
     assert list(FIT_AXES["top"]) == ["fit", "length", "sleeve"]
 
