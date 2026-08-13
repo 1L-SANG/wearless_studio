@@ -328,7 +328,7 @@ test('HTTP and mock entry paths pass project ids and share the default builder',
   assert.match(httpSource, /const storyboardContext = \{\s*projectId,/);
   assert.match(mockApiSource, /projectId: DB\.project\.id/);
   assert.match(mockDbSource, /projectId: project\.id/);
-  assert.match(mockDbSource, /return defaultStoryboard\(colors, mode, context\)/);
+  assert.match(mockDbSource, /const blocks = defaultStoryboard\(colors, mode, context\)/);
 });
 
 // ---------- 2026-08-07 슬롯 개편: 디테일 컷 상시 제공 ----------
