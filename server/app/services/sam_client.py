@@ -68,10 +68,85 @@ class SamViewResult:
         )
 
 
+@dataclass(frozen=True)
+class WornGarmentResult:
+    """Editor garment mask for one generated mannequin cut. `ready` False = no usable mask."""
+
+    ready: bool
+    mask_key: str | None = None
+    source_hash: str | None = None
+    model_version: str | None = None
+    algorithm_version: str | None = None
+    selector_version: str | None = None
+    checksum: str | None = None
+    width: int | None = None
+    height: int | None = None
+    area_frac: float | None = None
+    byte_size: int | None = None
+    grid: int | None = None
+    m2m: bool | None = None
+    cached: bool = False
+    code: str | None = None
+    message: str | None = None
+
+    @classmethod
+    def from_payload(cls, body: dict) -> WornGarmentResult:
+        return cls(
+            ready=body.get("status") == "ready" and bool(body.get("maskKey")),
+            mask_key=body.get("maskKey"), source_hash=body.get("sourceHash"),
+            model_version=body.get("modelVersion"),
+            algorithm_version=body.get("algorithmVersion"),
+            selector_version=body.get("selectorVersion"), checksum=body.get("checksum"),
+            width=body.get("width"), height=body.get("height"),
+            area_frac=body.get("areaFrac"), byte_size=body.get("bytes"),
+            grid=body.get("grid"), m2m=body.get("m2m"), cached=bool(body.get("cached")),
+            code=body.get("code"), message=body.get("message"))
+
+
 def configured(settings) -> bool:
     """Both a URL and a token, or this client stays out of the way entirely."""
     return bool(getattr(settings, "sam_service_url", None)
                 and getattr(settings, "sam_internal_token", None))
+
+
+async def segment_worn_garment(settings, *, source_key: str, base_key: str,
+                               clothing_type: str | None,
+                               sub_category: str | None = None) -> WornGarmentResult:
+    """Generated mannequin cut -> editor garment mask. Raises `SamUnavailable` on transport failure.
+
+    A separate route from `segment_garment` on purpose: that one background-removes a product
+    photograph, this one finds the sold garment on a dressed mannequin. Same service, different
+    algorithm and cache namespace.
+    """
+    if not configured(settings):
+        raise SamUnavailable("SAM service is not configured (SAM_SERVICE_URL / token)")
+
+    url = f"{settings.sam_service_url}/segment-worn-garment"
+    payload = {"sourceKey": source_key, "baseKey": base_key,
+               "clothingType": clothing_type, "subCategory": sub_category}
+    timeout = float(getattr(settings, "sam_request_timeout_s", 90.0) or 90.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(
+                url, json=payload,
+                headers={"Authorization": f"Bearer {settings.sam_internal_token}"})
+    except httpx.TimeoutException as e:
+        raise SamUnavailable(f"SAM worn-garment request timed out after {timeout}s") from e
+    except httpx.HTTPError as e:
+        raise SamUnavailable(f"SAM worn-garment request failed: {type(e).__name__}") from e
+
+    if r.status_code != 200:
+        raise SamUnavailable(f"SAM worn-garment responded {r.status_code}")
+    try:
+        body = r.json()
+    except ValueError as e:
+        raise SamUnavailable("SAM worn-garment returned a non-JSON body") from e
+
+    result = WornGarmentResult.from_payload(body)
+    log.info("sam worn-garment status=%s cached=%s area=%s",
+             "ready" if result.ready else (result.code or "failed"),
+             result.cached, result.area_frac)
+    return result
 
 
 async def segment_garment(settings, views: dict[str, str]) -> dict[str, SamViewResult]:

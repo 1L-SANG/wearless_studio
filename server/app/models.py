@@ -186,6 +186,36 @@ class MannequinCut(CamelModel):
     qc_scores: dict | None = None
 
 
+class ToneAdjustment(CamelModel):
+    """셀러가 움직인 두 슬라이더. 범위 밖 값은 서버가 잘라낸다."""
+
+    saturation: int = 0
+    exposure: int = 0
+
+
+class ToneEditorState(CamelModel):
+    """톤 에디터가 열릴 수 있는지, 열린다면 무엇으로 여는지 (계약 §3.3 확장)."""
+
+    cut_id: str
+    #: processing = 마스크 전처리 중 · ready = 조정 가능 · failed = 이 컷은 조정 불가
+    status: Literal["processing", "ready", "failed", "disabled"]
+    mask_asset_id: str | None = None
+    mask_algorithm_version: str | None = None
+    #: 편집 원본. **항상 원본 컷**이며 조정본이 아니다 (누적 열화 방지).
+    source_asset_id: str | None = None
+    adjustment: ToneAdjustment = ToneAdjustment()
+    #: 적용된 조정본이 있으면 그 자산. 결과·다운로드·공유가 이걸로 해석된다.
+    render_asset_id: str | None = None
+
+
+class ToneApplyRequest(CamelModel):
+    """클라이언트가 원본 해상도로 렌더해 올린 조정본을 컷에 붙인다."""
+
+    asset_id: UUID
+    saturation: int = 0
+    exposure: int = 0
+
+
 class JobView(CamelModel):
     """GET /v1/jobs/{id} 폴링 스냅샷 (ai_pipeline_spec §4)."""
 

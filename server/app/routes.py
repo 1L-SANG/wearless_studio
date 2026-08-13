@@ -31,7 +31,8 @@ from .agents import (
 )
 from .agents.gemini_image import InlineImage
 from .agents.vision_llm import VisionError
-from .services import garment_grid, input_qc, matching, retrieval
+from .services import (editor_garment_mask, garment_grid, input_qc,
+                       mannequin_tone_render, matching, retrieval)
 from .auth import require_user
 from .db import get_conn
 from .models import (
@@ -55,6 +56,8 @@ from .models import (
     TopupPurchaseBody,
     UploadUrlRequest,
     UploadUrlResponse,
+    ToneApplyRequest,
+    ToneEditorState,
 )
 from .r2 import IMMUTABLE_CACHE, R2Client, derived_key, ext_for_mime, upload_key
 
@@ -1682,6 +1685,177 @@ async def get_mannequins(
             raise _not_found()
         cuts = await repo.list_mannequin_cuts(conn, user_id, project_id)
     return [_cut_to_api(c) for c in cuts]
+
+
+# ---------- 톤 에디터 (색감·밝기) ----------
+#
+# 마스크는 생성 직후 비동기로 준비된다. 여기서는 **읽기와 붙이기만** 한다 — SAM 호출도,
+# 이미지 생성도, 크레딧 이동도 없다.
+
+
+def _tone_editor_enabled(request: Request) -> bool:
+    return getattr(request.app.state.settings, "mannequin_tone_editor", "off") == "on"
+
+
+async def _tone_state(conn, r2, *, user_id: str, project_id: str, cut_id: str) -> dict:
+    """컷 하나의 톤 에디터 상태. 마스크가 없으면 processing — 오류가 아니다."""
+    cut = await repo.get_mannequin_cut_asset(conn, user_id, project_id, cut_id)
+    if cut is None:
+        raise _not_found()
+    source_asset_id = str(cut.get("id") or "")
+    mask = await editor_garment_mask.find_for_cut(conn, project_id=project_id, cut_id=cut_id)
+    render = await mannequin_tone_render.active_for_cut(
+        conn, project_id=project_id, cut_id=cut_id)
+    meta = (render or {}).get("metadata") or {}
+    mask_meta = (mask or {}).get("metadata") or {}
+    return {
+        "cutId": cut_id,
+        "status": "ready" if mask else "processing",
+        "maskAssetId": (mask or {}).get("id"),
+        "maskAlgorithmVersion": mask_meta.get("algorithmVersion"),
+        "sourceAssetId": source_asset_id,
+        "adjustment": {"saturation": int(meta.get("saturation") or 0),
+                       "exposure": int(meta.get("exposure") or 0)},
+        "renderAssetId": (render or {}).get("id"),
+    }
+
+
+@router.get(
+    "/projects/{project_id}/mannequins/{cut_id}/tone-editor",
+    response_model=ToneEditorState,
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins (AI)"],
+    summary="톤 에디터 상태 조회",
+)
+async def get_tone_editor(request: Request, project_id: str, cut_id: str,
+                          user_id: str = Depends(require_user)):
+    """색감·밝기 조정이 가능한지와, 저장된 조정값을 돌려준다.
+
+    - `processing`: 마스크 전처리가 아직 안 끝났다. 다른 기능은 그대로 쓸 수 있다.
+    - `ready`: 슬라이더를 열어도 된다.
+    - `disabled`: 기능 플래그가 꺼져 있다.
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        if not _tone_editor_enabled(request):
+            return {"cutId": cut_id, "status": "disabled"}
+        return await _tone_state(conn, _r2(request), user_id=user_id,
+                                 project_id=project_id, cut_id=cut_id)
+
+
+async def _tone_bytes(request: Request, project_id: str, cut_id: str, user_id: str,
+                      which: str) -> Response:
+    """편집에 필요한 픽셀을 **API 가 직접** 실어 보낸다 (302 리다이렉트가 아니라).
+
+    `/assets/{id}/file` 은 R2 공개 도메인으로 302 를 준다. 브라우저는 그 응답의 CORS 헤더를
+    R2 쪽에서 받게 되는데, 캔버스로 픽셀을 **읽으려면**(getImageData) 그쪽이 반드시
+    Access-Control-Allow-Origin 을 줘야 한다. 인프라를 바꾸지 않고 그 조건을 만족시키는
+    가장 작은 방법이 이 라우트다 — FastAPI 의 CORS 설정이 그대로 적용된다.
+
+    에디터를 열 때 원본 1장 + 마스크 1장, 슬라이더를 움직이는 동안은 0장이다.
+    """
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        cut = await repo.get_mannequin_cut_asset(conn, user_id, project_id, cut_id)
+        if cut is None or not cut.get("r2_key"):
+            raise _not_found()
+        if which == "source":
+            key, mime = cut["r2_key"], cut.get("mime_type") or "image/png"
+        else:
+            mask = await editor_garment_mask.find_for_cut(
+                conn, project_id=project_id, cut_id=cut_id)
+            if mask is None or not mask.get("r2_key"):
+                raise _not_found()
+            key, mime = mask["r2_key"], "image/png"
+    try:
+        data = await asyncio.to_thread(_r2(request).get_bytes, key)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail={
+            "code": "asset_unavailable",
+            "message": "이미지를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."}) from exc
+    return Response(content=data, media_type=mime, headers={"Cache-Control": IMMUTABLE_CACHE})
+
+
+@router.get(
+    "/projects/{project_id}/mannequins/{cut_id}/tone-editor/source",
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins (AI)"],
+    summary="톤 에디터 원본 픽셀 (CORS 안전)",
+)
+async def get_tone_editor_source(request: Request, project_id: str, cut_id: str,
+                                 user_id: str = Depends(require_user)):
+    return await _tone_bytes(request, project_id, cut_id, user_id, "source")
+
+
+@router.get(
+    "/projects/{project_id}/mannequins/{cut_id}/tone-editor/mask",
+    responses={**COMMON_RESPONSES},
+    tags=["Mannequins (AI)"],
+    summary="톤 에디터 의류 마스크 (CORS 안전)",
+)
+async def get_tone_editor_mask(request: Request, project_id: str, cut_id: str,
+                               user_id: str = Depends(require_user)):
+    return await _tone_bytes(request, project_id, cut_id, user_id, "mask")
+
+
+@router.post(
+    "/projects/{project_id}/mannequins/{cut_id}/tone-editor:apply",
+    response_model=ToneEditorState,
+    responses={**COMMON_RESPONSES, 400: {"model": ErrorResponse}},
+    tags=["Mannequins (AI)"],
+    summary="톤 조정 적용",
+)
+async def apply_tone_editor(request: Request, project_id: str, cut_id: str,
+                            body: ToneApplyRequest, user_id: str = Depends(require_user)):
+    """클라이언트가 원본 해상도로 렌더한 조정본을 이 컷에 붙인다.
+
+    원본 컷은 건드리지 않는다. 조정본은 **별도 파생 자산**이고, 다시 편집할 때는 이 PNG 가
+    아니라 원본 + 저장된 파라미터로 재구성한다(반복 편집 시 열화 방지).
+
+    조정값이 0/0 이면 붙이지 않고 기존 조정본을 내린다 — 그게 곧 "초기화"다.
+    """
+    if not _tone_editor_enabled(request):
+        raise _bad_request("tone_editor_disabled", "지금은 색감 조정을 쓸 수 없어요.")
+    saturation, exposure = mannequin_tone_render.clamp_params(body.saturation, body.exposure)
+
+    async with get_conn(request) as conn:
+        if await repo.get_project(conn, user_id, project_id) is None:
+            raise _not_found()
+        cut = await repo.get_mannequin_cut_asset(conn, user_id, project_id, cut_id)
+        if cut is None:
+            raise _not_found()
+        mask = await editor_garment_mask.find_for_cut(
+            conn, project_id=project_id, cut_id=cut_id)
+        if mask is None:
+            raise _bad_request("mask_not_ready", "색감 조정 준비가 아직 끝나지 않았어요.")
+
+        if mannequin_tone_render.is_neutral(saturation, exposure):
+            await mannequin_tone_render.clear_for_cut(
+                conn, project_id=project_id, cut_id=cut_id)
+            await conn.commit()
+            return await _tone_state(conn, _r2(request), user_id=user_id,
+                                     project_id=project_id, cut_id=cut_id)
+
+        # 올라온 자산이 **이 사용자·이 프로젝트**의 것인지 확인한다. 메타데이터의 주장만 믿고
+        # 다른 프로젝트의 이미지를 결과로 붙이는 일이 없어야 한다.
+        rendered = await repo.get_asset_for_user(conn, user_id, str(body.asset_id))
+        if rendered is None or str(rendered.get("project_id") or project_id) != project_id:
+            raise _not_found()
+
+        await mannequin_tone_render.clear_for_cut(
+            conn, project_id=project_id, cut_id=cut_id)
+        await mannequin_tone_render.record(
+            conn, user_id=user_id, project_id=project_id, asset_id=str(body.asset_id),
+            cut_id=cut_id, source_asset_id=str(cut.get("id") or ""),
+            source_hash=(mask.get("metadata") or {}).get("sourceHash"),
+            mask_asset_id=mask.get("id"),
+            mask_algorithm_version=(mask.get("metadata") or {}).get("algorithmVersion"),
+            saturation=saturation, exposure=exposure)
+        await conn.commit()
+        return await _tone_state(conn, _r2(request), user_id=user_id,
+                                 project_id=project_id, cut_id=cut_id)
 
 
 @router.post(

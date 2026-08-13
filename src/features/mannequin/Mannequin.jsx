@@ -35,6 +35,7 @@ import {
   updateMannequinJob,
 } from './generationRunner.js';
 import { fitHotspotsFor } from './fitHotspots.js';
+import { ToneEditor } from './ToneEditor.jsx';
 import {
   resolveInitialGenerationCuts,
   runGenerationRelevantEditsRefresh,
@@ -473,6 +474,8 @@ function MineColumn({
   cuts,
   selectedCutId,
   onSelect,
+  projectId,
+  toneEditorEnabled,
   arrival,
   waitTile,
   showWaitPanel,
@@ -491,6 +494,8 @@ function MineColumn({
   continueDisabled,
 }) {
   const waitSlotRef = useRef(null);
+  // 톤 에디터 오버레이 캔버스가 포털로 꽂히는 컨테이너 — 미리보기를 메인 컷 위에 그린다.
+  const mineImgRef = useRef(null);
 
   useEffect(() => {
     if (waitTile !== 'pending') return;
@@ -506,7 +511,7 @@ function MineColumn({
 
   return (
     <div className="fit-mine-col">
-      <div className="fit-mine-img">
+      <div className="fit-mine-img" ref={mineImgRef}>
         {arrival ? (
           <>
             {arrival.from && (
@@ -533,6 +538,14 @@ function MineColumn({
           />
         )}
       </div>
+      {selected && projectId && (
+        <ToneEditor
+          projectId={projectId}
+          cutId={selected.id}
+          enabled={toneEditorEnabled}
+          overlayRef={mineImgRef}
+        />
+      )}
       {(cuts.length > 1 || waitTile) && (
         <div className="fit-strip" role="group" aria-label="버전 목록">
           {cuts.map((cut) => (
@@ -1391,6 +1404,8 @@ export function Mannequin() {
           cuts={cuts}
           selectedCutId={selectedCutId}
           onSelect={chooseCut}
+          projectId={projectId}
+          toneEditorEnabled
           arrival={arrival}
           waitTile={waitTile}
           showWaitPanel={showWaitPanel}

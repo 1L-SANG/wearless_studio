@@ -224,3 +224,27 @@
   .mq2-fabric { animation: none; clip-path: inset(0 0 0% 0); }
   .mq2-st { opacity: .9; stroke-dashoffset: 0; }
 }
+
+/* ====================== 톤 에디터 (색감·밝기) ====================== */
+/* 미리보기는 메인 컷(.fit-mine-img) 위 오버레이 캔버스다 — 사진이 두 번 보이지 않는다.
+   패널에는 슬라이더와 버튼만 남는다. 카드·링·라운드 토큰은 fit-* 블록과 같은 어휘. */
+.tone-editor-overlay { position: absolute; inset: 0; width: 100%; height: 100%;
+  /* 밑의 <img> 가 object-fit: cover 로 잘리므로 캔버스도 같은 규칙 — 아니면 미리보기가
+     원본과 어긋나 보인다. 핏 핫스팟(z-index 4)은 이 위에 남는다. */
+  object-fit: cover; pointer-events: none; z-index: 1; border-radius: inherit; }
+.tone-editor { width: 100%; max-width: 340px; margin: 10px auto 0; padding: 12px 14px;
+  background: #fff; border-radius: var(--r-6); box-shadow: 0 0 0 1px var(--ring), var(--elev-soft);
+  display: flex; flex-direction: column; gap: 8px; }
+.tone-editor-row { display: flex; align-items: center; gap: 10px; font-size: 13px;
+  font-weight: 600; color: var(--fg-1); }
+.tone-editor-name { flex: none; width: 30px; }
+.tone-editor-row input[type='range'] { flex: 1; accent-color: var(--link); min-width: 0; }
+.tone-editor-value { flex: none; width: 30px; text-align: right; font-size: 12.5px;
+  font-variant-numeric: tabular-nums; color: var(--fg-1); }
+.tone-editor-value.zero { color: var(--fg-3); }
+.tone-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.tone-editor-actions .btn { padding: 8px 14px; font-size: 13.5px; min-height: 0; }
+.tone-editor-wait { margin: 0; padding: 8px 2px; font-size: 13px; color: var(--fg-2);
+  text-align: center; }
+.tone-editor-error { margin: 0; font-size: 12.5px; color: var(--accent-error); }
+.tone-editor-done { margin: 0; font-size: 12.5px; color: var(--fg-2); text-align: right; }

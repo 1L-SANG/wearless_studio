@@ -132,6 +132,28 @@ export async function http(path, { method = 'GET', body, signal, headers: reques
   return absolutizeAssetUrls(await res.json());
 }
 
+/* 톤 에디터 전용 바이트 취득.
+
+   `/assets/{id}/file` 은 R2 공개 도메인으로 302 를 준다. 캔버스로 픽셀을 **읽으려면**
+   그 최종 응답에 CORS 헤더가 있어야 하는데 그건 CDN 설정이라 앱이 보장할 수 없다. 그래서
+   편집 소스만 API 가 직접 실어 보내는 라우트를 쓴다 — 여기 CORS 는 우리 것이다.
+   에디터를 열 때 원본 1장 + 마스크 1장이고, 슬라이더를 움직이는 동안엔 0장이다. */
+export async function httpBlob(path, { signal } = {}) {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  if (!token) throw new Error('로그인이 필요해요. 로그인 후 다시 시도해 주세요.');
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal,
+  });
+  if (!res.ok) {
+    const err = new Error('이미지를 불러오지 못했어요.');
+    err.status = res.status;
+    throw err;
+  }
+  return res.blob();
+}
+
 // 공개 체험용 multipart 요청. 로그인 사용자는 optional_user가 유효 Bearer를 보고 IP 제한을
 // 건너뛸 수 있게 토큰을 선호해서 붙이고, 세션 조회 실패·비로그인은 그대로 공개 경로를 쓴다.
 async function publicHttp(path, formData, { signal } = {}) {
@@ -668,6 +690,21 @@ export const httpAdapter = {
     if (!projectId) return [];
     return http(`/v1/projects/${projectId}/mannequins`);
   },
+  getToneEditor(projectId, cutId) {
+    return http(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor`);
+  },
+  toneEditorSource(projectId, cutId, opts) {
+    return httpBlob(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor/source`, opts);
+  },
+  toneEditorMask(projectId, cutId, opts) {
+    return httpBlob(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor/mask`, opts);
+  },
+  applyToneEditor(projectId, cutId, { assetId, saturation, exposure }) {
+    return http(`/v1/projects/${projectId}/mannequins/${encodeURIComponent(cutId)}/tone-editor:apply`, {
+      method: 'POST', body: { assetId, saturation, exposure },
+    });
+  },
+
   // 최초 A/B 후보 생성 — 202{jobId}→폴링, 또는 완료 존재 시 200{data,credits}(무차감 재호출).
   // 크레딧: mannequinGenerate. 진행 중 재호출은 서버가 활성 job 에 합류(1회만 차감).
   //
