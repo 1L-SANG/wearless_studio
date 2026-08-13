@@ -242,7 +242,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     transform: el.rotate ? `rotate(${el.rotate}deg)` : undefined, opacity: el.opacity ?? 1,
     pointerEvents: el.locked ? 'none' : undefined,
   };
-  const cls = (extra) => `el${extra ? ' ' + extra : ''}${selected ? ' on' : ''}`;
+  const cls = (extra) => `el${extra ? ' ' + extra : ''}${selected ? ' on' : ''}${selected && selectionCount > 1 ? ' multi-selected' : ''}`;
   const common = { ref, 'data-elid': el.id, onPointerDown: pick, onClick: finishClick };
   const imageDropProps = preview || el.type !== 'image' ? {} : {
     onDragOver: (e) => {
@@ -362,7 +362,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       );
     }
     return (
-      <div ref={ref} data-elid={el.id} className={`el el-text${selected ? ' on' : ''}${editing ? ' editing' : ''}`} style={{ ...base, height: 'auto',
+      <div ref={ref} data-elid={el.id} className={cls(`el-text${editing ? ' editing' : ''}`)} style={{ ...base, height: 'auto',
         fontFamily: FONT_MAP[s.font] || 'var(--font-body)', fontSize: s.size, fontWeight: s.weight || 400,
         color: s.color || '#0e0d14', letterSpacing: s.tracking, textAlign: s.align || 'left',
         lineHeight: s.lineHeight ? s.lineHeight + 'px' : 1.4, whiteSpace: 'pre-wrap', opacity: (el.opacity ?? 1) * (s.opacity ?? 1),
@@ -455,11 +455,9 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   // 블록 높이는 콘텐츠보다 작아지지 않는다 — 이미지를 블록보다 크게 리사이즈하면 블록도 따라 커져 클립 방지.
   // (기존: block.h 있으면 고정 → 이미지 키워도 block-clip 이 잘라 "안 커보이던" 버그)
   const blockH = getBlockRenderHeight(block);
-  // 블록 강조(테두리·빠른 도구)는 그 블록이 지금 다루는 블록이면 켠다 — 안의 요소를 고른
-  // 상태도 포함이다. 블록은 사진·글이 거의 다 덮고 있어서, 배경 여백을 정확히 맞춰 눌러야만
-  // 켜지던 이전 조건으로는 캔버스에서 블록을 잡았다는 표시를 사실상 볼 수 없었다.
+  // 블록은 요소 선택의 좌표계로 계속 활성 상태를 유지하되, 파란 선택 링과 높이 손잡이는
+  // 블록 자체만 고른 경우에만 보인다. 다중 요소 선택을 부모 블록 선택처럼 보이게 하지 않는다.
   const blockActive = selectedBlockId === block.id;
-  // 높이 조절 손잡이는 블록 자체를 고른 때만 — 요소를 옮기는 중에 같이 뜨면 서로 걸린다.
   const blockSelected = blockActive && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
 
@@ -485,7 +483,7 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   };
 
   return (
-    <div className={`canvas-block${blockActive ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
+    <div className={`canvas-block${blockSelected ? ' on' : ''}${objOver ? ' obj-over' : ''}`}
       data-blockid={block.id}
       /* 고른 뒤 전파를 멈춘다 — 캔버스 바닥의 onClick 이 매 클릭마다 선택을 지우므로,
          멈추지 않으면 누르는 동안만 잡혔다가 손을 떼는 순간 풀린다. */
@@ -746,12 +744,25 @@ export function Editor() {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);                  // unscaled-layout canvas (transform: scale)
   const moveableRef = useRef(null);                // for updateRect() on selection/layout change
+  const pointerGroupRectFrame = useRef(null);      // direct child drag 중 Moveable 그룹 박스 동기화 RAF
   const suppressMarqueeClick = useRef(false);      // pointerup 직후 합성 click이 블록 선택으로 덮는 것 방지
   const [canvasH, setCanvasH] = useState(0);       // unscaled canvas height → scaled spacer
   const hist = useRef({ past: [], future: [] });
   const prevBlocks = useRef(null);
   const fromHistory = useRef(false);
   const lastPush = useRef(0);
+
+  const syncPointerGroupSelectionBounds = useCallback(() => {
+    if (pointerGroupRectFrame.current != null) return;
+    pointerGroupRectFrame.current = window.requestAnimationFrame(() => {
+      pointerGroupRectFrame.current = null;
+      moveableRef.current?.updateRect();
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (pointerGroupRectFrame.current != null) window.cancelAnimationFrame(pointerGroupRectFrame.current);
+  }, []);
 
   useEffect(() => { genActiveRef.current = genActive; }, [genActive]);
 
@@ -1650,7 +1661,9 @@ export function Editor() {
       if (!active) {
         active = true;
         onDragStarted?.();
+        document.body.style.userSelect = 'none';
       }
+      pointerEvent.preventDefault();
       const [dx, dy] = clampDragDelta(start, [clientDx / (scale || 1), clientDy / (scale || 1)], blockHeight);
       latest = Object.fromEntries(ids.map((id) => [id, {
         x: Math.round(start[id].x + dx),
@@ -1662,12 +1675,20 @@ export function Editor() {
         node.style.left = latest[id].x + 'px';
         node.style.top = latest[id].y + 'px';
       });
+      // 직접 선택 요소를 잡아 끄는 경로는 Moveable 이벤트를 거치지 않는다. DOM 요소만
+      // 이동시키면 바깥 그룹 박스가 출발점에 남으므로, 같은 프레임에 함께 갱신한다.
+      syncPointerGroupSelectionBounds();
     };
     const end = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
       if (pointerTarget?.hasPointerCapture?.(pointerId)) pointerTarget.releasePointerCapture(pointerId);
+      document.body.style.userSelect = '';
+      if (pointerGroupRectFrame.current != null) {
+        window.cancelAnimationFrame(pointerGroupRectFrame.current);
+        pointerGroupRectFrame.current = null;
+      }
       if (!active || !latest) return;
       setBlocks((current) => current.map((item) => item.id === block.id ? {
         ...item,

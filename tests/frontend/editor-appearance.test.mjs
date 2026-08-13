@@ -15,6 +15,7 @@ const {
 
 const editorPanelsSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url)), 'utf8');
 const editorStylesSource = readFileSync(fileURLToPath(new URL('../../src/styles/features.css', import.meta.url)), 'utf8');
+const editorSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/Editor.jsx', import.meta.url)), 'utf8');
 
 test('editor colors expose a practical preset palette made only of HEX values', () => {
   assert.deepEqual(DEFAULT_EDITOR_COLOR_PRESETS, [
@@ -43,6 +44,17 @@ test('editor color popover shows both default presets and a functional custom pa
   assert.equal(typeof editorAppearance.hsvToHex, 'function');
   assert.deepEqual(editorAppearance.hexToHsv('#FF0000'), { h: 0, s: 100, v: 100 });
   assert.equal(editorAppearance.hsvToHex({ h: 210, s: 100, v: 100 }), '#0080FF');
+});
+
+test('element selection does not paint the parent block as selected', () => {
+  assert.match(editorSource, /className=\{`canvas-block\$\{blockSelected \? ' on' : ''\}/);
+  assert.doesNotMatch(editorSource, /className=\{`canvas-block\$\{blockActive \? ' on' : ''\}/);
+});
+
+test('multi-selection keeps every member and its Moveable bounds visibly in sync while dragging', () => {
+  assert.match(editorSource, /selectionCount > 1 \? ' multi-selected' : ''/);
+  assert.match(editorSource, /syncPointerGroupSelectionBounds\(\);/);
+  assert.match(editorStylesSource, /\.el\.on\.multi-selected \{[^}]*outline:/);
 });
 
 test('preset colors use the compact eight-column reference grid', () => {
