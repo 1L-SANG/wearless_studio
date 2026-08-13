@@ -170,7 +170,6 @@ def test_transparent_final_edit_is_reverted_to_pre_edit_output(monkeypatch):
         return transparent, True
 
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
-    monkeypatch.setattr(mannequin_job, "_apply_untuck_pass", unchanged)
     monkeypatch.setattr(mannequin_job, "_apply_axis_qc", unchanged)
     monkeypatch.setattr(mannequin_job, "_apply_bust_pass", transparent_bust)
     monkeypatch.setattr(mannequin_job, "_apply_fabric_pass", unchanged)
@@ -224,7 +223,6 @@ def test_undecodable_final_edit_is_reverted_to_pre_edit_output(monkeypatch):
         return broken, True
 
     monkeypatch.setattr(mannequin_job, "_emit", fake_emit)
-    monkeypatch.setattr(mannequin_job, "_apply_untuck_pass", unchanged)
     monkeypatch.setattr(mannequin_job, "_apply_axis_qc", unchanged)
     monkeypatch.setattr(mannequin_job, "_apply_bust_pass", broken_bust)
     monkeypatch.setattr(mannequin_job, "_apply_fabric_pass", unchanged)

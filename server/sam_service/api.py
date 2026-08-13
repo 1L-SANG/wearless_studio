@@ -28,7 +28,7 @@ import time
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from sam_service import model as model_registry
+from sam_service import model as model_registry, worn_garment
 from sam_service.config import SamSettings, load_settings
 from sam_service.segmentation import (ALGORITHM_VERSION, MODEL_VERSION,
                                       SegmentationUnavailable, cache_key,
@@ -62,6 +62,19 @@ class ViewRequest(BaseModel):
 
 class SegmentRequest(BaseModel):
     views: dict[str, ViewRequest] = Field(..., description="'Front' and/or 'Back'")
+
+
+class WornGarmentRequest(BaseModel):
+    """A GENERATED mannequin cut plus the bare base it was dressed from.
+
+    Trusted R2 keys only, exactly as `/segment-garment` — the service resolves them with its own
+    credentials and refuses anything outside this project's prefixes.
+    """
+
+    sourceKey: str = Field(..., description="R2 key of the generated mannequin cut")
+    baseKey: str = Field(..., description="R2 key of the bare base mannequin it was dressed on")
+    clothingType: str | None = Field(default=None, description="top|outer|bottom|dress")
+    subCategory: str | None = Field(default=None)
 
 
 def get_settings() -> SamSettings:
@@ -142,7 +155,95 @@ def create_app(*, source_factory=_source_reader) -> FastAPI:
         return {"status": status, "modelVersion": MODEL_VERSION, "views": results,
                 "algorithmVersion": ALGORITHM_VERSION}
 
+    @app.post("/segment-worn-garment", dependencies=[Depends(require_internal_token)])
+    async def segment_worn_garment(req: WornGarmentRequest,
+                                   settings: SamSettings = Depends(get_settings)) -> dict:
+        """Editor garment mask for one generated mannequin cut.
+
+        Deliberately NOT part of `/segment-garment`: that endpoint means "cut this product
+        photograph out of its background" and this one means "find the sold garment on a dressed
+        mannequin". Same model, different algorithm, different cache namespace, and overloading
+        one route would make the two indistinguishable in logs, caches and failure reports.
+        """
+        return await _segment_worn_one(req, source_factory(settings), settings)
+
     return app
+
+
+async def _segment_worn_one(req: WornGarmentRequest, source, settings: SamSettings) -> dict:
+    """Never raises: a mask failure only costs the Tone Editor, never the mannequin cut."""
+    t0 = time.monotonic()
+
+    def fail(code: str, message: str) -> dict:
+        log.warning("worn-garment failed: %s (%s)", code, message)
+        return {"status": "failed", "code": code, "message": message,
+                "latencyMs": int((time.monotonic() - t0) * 1000)}
+
+    try:
+        generated, _ = await asyncio.to_thread(source.fetch, req.sourceKey)
+        base, _ = await asyncio.to_thread(source.fetch, req.baseKey)
+    except SourceRejected as e:
+        return fail("source_rejected", str(e))
+    except SourceUnavailable as e:
+        return fail("source_unavailable", str(e))
+    except Exception as e:                       # noqa: BLE001
+        return fail("source_error", f"{type(e).__name__}: {e}")
+
+    source_hash = worn_garment.source_fingerprint(generated)
+    out_key = worn_garment.mask_key(source_hash)
+    existing = await asyncio.to_thread(source.head, out_key)
+    if existing:
+        log.info("worn-garment cache=hit key=%s", out_key)
+        return {"status": "ready", "cached": True, "sourceHash": source_hash,
+                "maskKey": out_key, "modelVersion": MODEL_VERSION,
+                "algorithmVersion": worn_garment.ALGORITHM_VERSION,
+                "selectorVersion": worn_garment.SELECTOR_VERSION,
+                "grid": worn_garment.GRID, "m2m": worn_garment.M2M,
+                "checksum": existing.get("checksum"), "bytes": existing.get("size"),
+                "mime": "image/png", "latencyMs": int((time.monotonic() - t0) * 1000)}
+
+    try:
+        segmenter = await model_registry.get_segmenter(settings.model_id or None)
+    except SegmentationUnavailable as e:
+        return fail("model_unavailable", str(e))
+
+    try:
+        # Same single-inference slot as the canonical path. The two capabilities share one
+        # process and one memory ceiling, so they must also share the one-at-a-time rule.
+        async with _INFERENCE_SLOT:
+            mask = await asyncio.wait_for(
+                asyncio.to_thread(worn_garment.produce, segmenter, generated, base,
+                                  clothing_type=req.clothingType),
+                timeout=VIEW_TIMEOUT_S)
+    except TimeoutError:
+        return fail("timeout", f"worn-garment segmentation exceeded {VIEW_TIMEOUT_S:.0f}s")
+    except worn_garment.NoGarmentCandidate as e:
+        return fail("no_garment_candidate", str(e))
+    except SegmentationUnavailable as e:
+        return fail("segmentation_failed", str(e))
+    except Exception as e:                       # noqa: BLE001
+        return fail("segmentation_error", f"{type(e).__name__}: {e}")
+
+    try:
+        await asyncio.to_thread(source.put, out_key, mask.png, "image/png")
+    except Exception as e:                       # noqa: BLE001
+        return fail("mask_store_failed", f"{type(e).__name__}: {e}")
+
+    mem = _process_memory_kb()
+    log.info("worn-garment latencyMs=%d areaFrac=%s candidates=%d vmRssKb=%s key=%s",
+             int((time.monotonic() - t0) * 1000), mask.area_frac, mask.candidates,
+             mem.get("vmRssKb"), out_key)
+    return {"status": "ready", "cached": False, "sourceHash": mask.source_sha256,
+            "maskKey": out_key, "modelVersion": MODEL_VERSION,
+            "algorithmVersion": worn_garment.ALGORITHM_VERSION,
+            "selectorVersion": worn_garment.SELECTOR_VERSION,
+            "grid": worn_garment.GRID, "m2m": mask.m2m,
+            "checksum": hashlib.sha256(mask.png).hexdigest(),
+            "width": mask.width, "height": mask.height, "areaFrac": mask.area_frac,
+            "candidates": mask.candidates, "plausibleCandidates": mask.plausible_candidates,
+            "selectedScore": mask.selected_score, "evidence": mask.evidence,
+            "mime": "image/png", "bytes": len(mask.png),
+            "latencyMs": int((time.monotonic() - t0) * 1000)}
 
 
 async def _segment_one(view: str, key: str, source, settings: SamSettings) -> dict:

@@ -73,7 +73,10 @@ class Settings:
     mannequin_image_size: str = "1K"  # 1K | 2K | 4K (2K 서버경로 저하 시 1K)
     # 전신 세로 고정 → 컷 간 비율 일관 (gemini-3-pro-image 지원: 16:9·9:16·1:1·5:4·4:5·3:2·2:3)
     mannequin_aspect_ratio: str = "2:3"
-    mannequin_max_attempts: int = 2  # QC 게이팅 시 재시도 상한 (shadow면 실질 1회)
+    #: 일반 generation/QC 호출 총 상한 — 최초 생성 포함 2회 고정(최초 + 재시도 1회).
+    #: untuck 은 이 예산 밖의 전용 post-pass 슬롯 1회다(2026-08-12 분리 — 공유 시절
+    #: attempt 소진 잡이 tuck 교정을 못 받았다). 3·5 등으로 올리지 않는다.
+    mannequin_max_attempts: int = 2
     # 상세페이지 컷 동시 생성 상한. 0 = 제한 없음(콘티 컷 수만큼 동시 — 13컷이면 13개).
     # 구 상수 3은 429 실측이 아니라 보수적 추정이었다(2026-08-03 오너 결정: 전부 병렬 +
     # 제출 간격으로 버스트 완화 + 429 백오프 재시도가 안전망). 문제 시 env 로 되돌린다.
@@ -132,6 +135,8 @@ class Settings:
     # 스위치고, 이건 오류 표본만 모으는 스위치다. 하나로 묶으면 표본을 모으려는 순간
     # 전 생성에 6~17초가 붙는다.
     mannequin_base_fidelity_observe_regenerations: str = "off"
+    #: 톤 에디터(색감·밝기). off = 마스크 전처리도, 에디터 API 도 열리지 않는다.
+    mannequin_tone_editor: str = "off"
     mannequin_prompt_file: str | None = None  # 없으면 server/prompts/mannequin_generate_v1.txt
     mannequin_prompt_version: str = "v1"
     # 여성 기본 가슴 볼륨 2패스 (2026-07-30 스파이크). 생성된 컷에 "가슴만 바꿔라"를 단독 과제로
@@ -376,6 +381,7 @@ def load_settings() -> Settings:
         mannequin_axis_qc=_flag("MANNEQUIN_AXIS_QC", "off", {"off", "shadow", "enforce"}),
         mannequin_base_fidelity_qc=_flag(
             "MANNEQUIN_BASE_FIDELITY_QC", "off", {"off", "shadow", "enforce"}),
+        mannequin_tone_editor=_flag("MANNEQUIN_TONE_EDITOR", "off", {"off", "on"}),
         mannequin_base_fidelity_observe_regenerations=_flag(
             "MANNEQUIN_BASE_FIDELITY_OBSERVE_REGENERATIONS", "off", {"off", "on"}),
         facemarket_enabled=(os.getenv("FACEMARKET_ENABLED", "false").lower() == "true"),
