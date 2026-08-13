@@ -1,6 +1,8 @@
 export function getBlockRenderHeight(block) {
   const contentBottom = block.elements.reduce(
-    (bottom, element) => Math.max(bottom, (element.y || 0) + (element.h || 40)),
+    (bottom, element) => element.system
+      ? bottom
+      : Math.max(bottom, (element.y || 0) + (element.h || 40)),
     0,
   );
   const blockHeight = block.h || 220;

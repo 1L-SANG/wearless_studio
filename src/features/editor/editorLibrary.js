@@ -10,6 +10,34 @@ export const DEFAULT_BUBBLE_RADIUS = 45;
 
 const slot = (x, y, w, h, radius = 10) => ({ x, y, w, h, radius });
 
+const kiwiSourceSlot = (x, y, w, h, options = {}) => ({ x, y, w, h, ...options });
+const kiwiTemplate = ({ id, label, sourceWidth, sourceHeight, slots, foreground = false }) => {
+  const scale = 1000 / sourceWidth;
+  const overlay = `/assets/editor/kiwi-templates/kiwi-${id}-overlay.png`;
+  return {
+    id: `kiwi-${id}`,
+    label,
+    recommended: false,
+    template: true,
+    overlay,
+    foreground: foreground ? `/assets/editor/kiwi-templates/kiwi-${id}-foreground.png` : null,
+    preview: overlay,
+    h: Math.round(sourceHeight * scale),
+    slots: slots.map((item) => ({
+      x: Math.round(item.x * scale),
+      y: Math.round(item.y * scale),
+      w: Math.round(item.w * scale),
+      h: Math.round(item.h * scale),
+      radius: item.radius === 'pill'
+        ? Math.round(Math.min(item.w, item.h) * scale / 2)
+        : Math.round(Number(item.radius || 0) * scale),
+      rotate: item.rotate || 0,
+      fit: item.fit || 'cover',
+      checkerboard: true,
+    })),
+  };
+};
+
 export const FRAME_LIBRARY_ITEMS = [
   {
     id: 'single', label: '1컷 풀폭', recommended: true, h: 600,
@@ -39,6 +67,84 @@ export const FRAME_LIBRARY_ITEMS = [
     id: 'ba', label: 'Before / After', recommended: false, h: 580,
     slots: [slot(40, 60, 450, 460), slot(510, 60, 450, 460)],
   },
+  kiwiTemplate({
+    id: '1', label: '리뷰 카드', sourceWidth: 1006, sourceHeight: 1468,
+    slots: [
+      kiwiSourceSlot(130, 562, 131, 131, { radius: 'pill' }),
+      kiwiSourceSlot(570, 562, 131, 131, { radius: 'pill' }),
+      kiwiSourceSlot(130, 954, 131, 131, { radius: 'pill' }),
+      kiwiSourceSlot(570, 954, 131, 131, { radius: 'pill' }),
+    ],
+  }),
+  kiwiTemplate({
+    id: '2', label: '룩북 콜라주', sourceWidth: 1000, sourceHeight: 1498,
+    slots: [
+      kiwiSourceSlot(180, 563, 466, 609),
+      kiwiSourceSlot(0, 1010, 258, 488, { fit: 'contain' }),
+      kiwiSourceSlot(258, 1010, 364, 488, { fit: 'contain' }),
+      kiwiSourceSlot(622, 850, 378, 648, { fit: 'contain' }),
+    ],
+  }),
+  kiwiTemplate({
+    id: '3', label: '스타일 노트', sourceWidth: 1012, sourceHeight: 1598,
+    slots: [
+      kiwiSourceSlot(166, 489, 683, 851),
+      kiwiSourceSlot(103, 1186, 346, 174, { rotate: -7 }),
+    ],
+  }),
+  kiwiTemplate({
+    id: '4', label: '썸머 이벤트', sourceWidth: 496, sourceHeight: 800,
+    slots: [
+      kiwiSourceSlot(62, 132, 42, 42, { radius: 'pill' }),
+      kiwiSourceSlot(63, 184, 369, 365),
+      kiwiSourceSlot(296, 449, 160, 161),
+    ],
+  }),
+  kiwiTemplate({
+    id: '5', label: '컬러 비교 카드', sourceWidth: 992, sourceHeight: 1396,
+    slots: [
+      kiwiSourceSlot(124, 335, 328, 328, { fit: 'contain' }),
+      kiwiSourceSlot(549, 335, 328, 328, { fit: 'contain' }),
+      kiwiSourceSlot(124, 822, 328, 328, { fit: 'contain' }),
+      kiwiSourceSlot(549, 822, 328, 328, { fit: 'contain' }),
+    ],
+  }),
+  kiwiTemplate({
+    id: '10', label: 'SNS 상품 카드', sourceWidth: 988, sourceHeight: 1492, foreground: true,
+    slots: [
+      kiwiSourceSlot(0, 0, 988, 1492),
+      kiwiSourceSlot(174, 319, 102, 102, { radius: 'pill' }),
+      kiwiSourceSlot(173, 439, 672, 704),
+    ],
+  }),
+  kiwiTemplate({
+    id: '11', label: '체크 포인트', sourceWidth: 992, sourceHeight: 1238, foreground: true,
+    slots: [kiwiSourceSlot(119, 110, 762, 1013, { radius: 'pill' })],
+  }),
+  kiwiTemplate({
+    id: '12', label: '핫 키워드', sourceWidth: 966, sourceHeight: 1290,
+    slots: [
+      kiwiSourceSlot(54, 434, 427, 651, { radius: 'pill' }),
+      kiwiSourceSlot(506, 434, 429, 651, { radius: 'pill' }),
+    ],
+  }),
+  kiwiTemplate({
+    id: '13', label: '빅 세일 이벤트', sourceWidth: 498, sourceHeight: 820,
+    slots: [kiwiSourceSlot(49, 211, 405, 442, { radius: 'pill' })],
+  }),
+  kiwiTemplate({
+    id: '14', label: '패션 폴라로이드', sourceWidth: 504, sourceHeight: 760, foreground: true,
+    slots: [
+      kiwiSourceSlot(0, 0, 504, 760),
+      kiwiSourceSlot(325, 82, 131, 140, { rotate: 20 }),
+      kiwiSourceSlot(289, 279, 135, 188, { rotate: -14 }),
+      kiwiSourceSlot(365, 495, 117, 163, { rotate: 14 }),
+    ],
+  }),
+  kiwiTemplate({
+    id: '15', label: '디테일 콜아웃', sourceWidth: 500, sourceHeight: 668,
+    slots: [kiwiSourceSlot(0, 0, 500, 668)],
+  }),
 ];
 
 export const OBJECT_LIBRARY_ITEMS = [
@@ -89,20 +195,47 @@ export function buildFrameBlock(frameOrId, idFn) {
     name: definition.label,
     kind: 'styling',
     contentRole: 'custom',
-    bg: '#ffffff',
+    bg: definition.bg || '#ffffff',
     bgOpacity: 1,
     h: definition.h,
-    elements: definition.slots.map((item) => ({
-      id: idFn('el'),
-      type: 'image',
-      x: item.x,
-      y: item.y,
-      w: item.w,
-      h: item.h,
-      src: null,
-      radius: item.radius ?? 10,
-      frameSlot: true,
-    })),
+    elements: [
+      ...definition.slots.map((item) => ({
+        id: idFn('el'),
+        type: 'image',
+        x: item.x,
+        y: item.y,
+        w: item.w,
+        h: item.h,
+        src: null,
+        radius: item.radius ?? 10,
+        frameSlot: true,
+        ...(item.rotate ? { rotate: item.rotate } : {}),
+        ...(item.fit ? { fit: item.fit } : {}),
+        ...(item.checkerboard ? { checkerboard: true } : {}),
+      })),
+      ...(definition.overlay ? [{
+        id: idFn('el'),
+        type: 'template-overlay',
+        x: 0,
+        y: 0,
+        w: 1000,
+        h: definition.h,
+        src: definition.overlay,
+        locked: true,
+        system: true,
+      }] : []),
+      ...(definition.foreground ? [{
+        id: idFn('el'),
+        type: 'template-overlay',
+        x: 0,
+        y: 0,
+        w: 1000,
+        h: definition.h,
+        src: definition.foreground,
+        locked: true,
+        system: true,
+      }] : []),
+    ],
   };
 }
 

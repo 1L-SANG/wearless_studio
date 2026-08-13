@@ -285,6 +285,14 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     },
   };
 
+  if (el.type === 'template-overlay') {
+    return (
+      <div className="el el-template-overlay" style={base} aria-hidden="true">
+        <img src={el.src} alt="" draggable={false} />
+      </div>
+    );
+  }
+
   if (el.type === 'image') {
     if (!el.src && el.genPending) {
       // 생성 대기/진행/실패 타일 — 입력 페이지 자리표시 언어(회색+로고). 선택·조작 불가
@@ -309,7 +317,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
       const slotBase = { ...base, borderRadius: el.radius };
       if (preview) return <div className="el el-slot" style={slotBase} />;
       return (
-        <div {...common} {...imageDropProps} className={cls(`el-slot${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
+        <div {...common} {...imageDropProps} className={cls(`el-slot${el.checkerboard ? ' checkerboard' : ''}${imageDropOver ? ' image-drop-over' : ''}`)} style={slotBase}>
           <button className="slot-add" style={{ transform: `scale(${inv})` }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onAddImage && onAddImage(el); }}>
@@ -328,7 +336,7 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
             <img src={el.src} alt="" draggable={false} style={{ left: -el.crop.ox, top: -el.crop.oy, width: el.crop.iw, height: el.crop.ih }} />
           </div>
         ) : (
-          <img src={el.src} alt="" style={{ borderRadius: el.radius }} draggable={false} />
+          <img src={el.src} alt="" style={{ borderRadius: el.radius, objectFit: el.fit || 'cover' }} draggable={false} />
         )}
         {imageDropOver && <ImageDropGuide scale={scale} filled />}
       </div>

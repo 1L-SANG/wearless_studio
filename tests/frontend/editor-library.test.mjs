@@ -38,9 +38,10 @@ test('the recommended frame catalog contains the six common layouts', () => {
 test('every frame builds empty image slots inside the 1000px canvas', () => {
   for (const frame of FRAME_LIBRARY_ITEMS) {
     const block = buildFrameBlock(frame.id, seqId());
-    assert.equal(block.elements.length, frame.slots.length, frame.id);
+    const imageSlots = block.elements.filter((element) => element.type === 'image');
+    assert.equal(imageSlots.length, frame.slots.length, frame.id);
     assert.equal(block.bgOpacity, 1);
-    for (const element of block.elements) {
+    for (const element of imageSlots) {
       assert.equal(element.type, 'image');
       assert.equal(element.src, null);
       assert.equal(element.frameSlot, true);
@@ -48,6 +49,25 @@ test('every frame builds empty image slots inside the 1000px canvas', () => {
       assert.ok(element.x + element.w <= 1000, `${frame.id}: slot fits horizontally`);
       assert.ok(element.y + element.h <= block.h, `${frame.id}: slot fits vertically`);
     }
+  }
+});
+
+test('kiwi templates expose every checkerboard as a photo slot below a locked overlay', () => {
+  const kiwiFrames = FRAME_LIBRARY_ITEMS.filter((item) => item.template);
+  assert.deepEqual(kiwiFrames.map((item) => item.id), [
+    'kiwi-1', 'kiwi-2', 'kiwi-3', 'kiwi-4', 'kiwi-5',
+    'kiwi-10', 'kiwi-11', 'kiwi-12', 'kiwi-13', 'kiwi-14', 'kiwi-15',
+  ]);
+  assert.equal(kiwiFrames.reduce((count, frame) => count + frame.slots.length, 0), 29);
+
+  for (const frame of kiwiFrames) {
+    const block = buildFrameBlock(frame, seqId());
+    const imageSlots = block.elements.filter((element) => element.type === 'image');
+    const overlays = block.elements.filter((element) => element.type === 'template-overlay');
+    assert.ok(overlays.length >= 1, frame.id);
+    assert.ok(overlays.every((overlay) => overlay.locked && overlay.system), frame.id);
+    assert.ok(overlays.every((overlay) => overlay.w === 1000 && overlay.h === block.h), frame.id);
+    assert.ok(imageSlots.every((element) => element.checkerboard), frame.id);
   }
 });
 

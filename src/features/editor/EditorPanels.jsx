@@ -823,8 +823,17 @@ export function FramePanel({ onAdd, onDragStart, onDragEnd }) {
           <div className="frame-item" key={f.id} onClick={() => onAdd(f)} draggable
             onDragStart={(e) => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/frame', f.id); onDragStart && onDragStart(); }}
             onDragEnd={() => onDragEnd && onDragEnd()}>
-            <div className="frame-prev frame-layout-prev">
-              {f.slots.map((slot, i) => <i key={i} style={{ left: `${slot.x / 10}%`, top: `${slot.y / f.h * 100}%`, width: `${slot.w / 10}%`, height: `${slot.h / f.h * 100}%` }} />)}
+            <div className={`frame-prev frame-layout-prev${f.preview ? ' template' : ''}`}>
+              {f.slots.map((slot, i) => <i key={i} style={{
+                left: `${slot.x / 10}%`,
+                top: `${slot.y / f.h * 100}%`,
+                width: `${slot.w / 10}%`,
+                height: `${slot.h / f.h * 100}%`,
+                borderRadius: slot.radius ? `${Math.min(50, slot.radius / Math.min(slot.w, slot.h) * 100)}%` : undefined,
+                transform: slot.rotate ? `rotate(${slot.rotate}deg)` : undefined,
+              }} />)}
+              {f.preview && <img src={f.preview} alt="" loading="lazy" draggable={false} />}
+              {f.foreground && <img src={f.foreground} alt="" loading="lazy" draggable={false} />}
             </div>
             <div className="fl">{f.label}{f.recommended && <span className="frame-rec">추천</span>}</div>
           </div>
@@ -908,7 +917,7 @@ export function LayerPanel({ block, selEls = [], embedded, onSelect, onReorder, 
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
   if (!block) return <EmptyState icon="layers" title="블록을 선택하세요" desc="블록을 클릭하면 그 안의 레이어가 순서대로 나와요." />;
-  const rows = block.elements.map((el, idx) => ({ el, idx })).reverse(); // 위가 최상단(맨 앞)
+  const rows = block.elements.map((el, idx) => ({ el, idx })).filter(({ el }) => !el.system).reverse(); // 위가 최상단(맨 앞)
   return (
     <div>
       {!embedded && <PanelHead title="레이어" sub="위가 가장 앞이에요. 드래그로 순서를, 아이콘으로 표시·잠금을 바꿔요." />}

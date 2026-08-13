@@ -61,12 +61,17 @@ export function findImageDropSlot(elements, point) {
     element.type === 'image' && element.frameSlot && !element.src
   ));
   if (!point) return emptySlots[0] || null;
-  return emptySlots.find((element) => (
-    point.x >= element.x
-    && point.x <= element.x + element.w
-    && point.y >= element.y
-    && point.y <= element.y + element.h
-  )) || null;
+  // Full-canvas template backgrounds sit behind smaller foreground slots. A drop over a
+  // decorative card should prefer the smallest matching slot, but a drop anywhere else
+  // still needs to fill the background rather than creating an unrelated loose image.
+  return emptySlots
+    .filter((element) => (
+      point.x >= element.x
+      && point.x <= element.x + element.w
+      && point.y >= element.y
+      && point.y <= element.y + element.h
+    ))
+    .sort((a, b) => (a.w * a.h) - (b.w * b.h))[0] || null;
 }
 
 export function pendingImageImportTarget({ elements, blockHeight, point }) {

@@ -89,6 +89,16 @@ test('a drop inside an empty image frame fills that frame instead of creating a 
   assert.equal(findImageDropSlot(elements)?.id, 'empty', 'click insert uses the first empty frame');
 });
 
+test('overlapping template slots prefer the smallest foreground target', () => {
+  const elements = [
+    { id: 'background', type: 'image', src: null, frameSlot: true, x: 0, y: 0, w: 1000, h: 1500 },
+    { id: 'card', type: 'image', src: null, frameSlot: true, x: 170, y: 440, w: 680, h: 700 },
+  ];
+
+  assert.equal(findImageDropSlot(elements, { x: 500, y: 700 })?.id, 'card');
+  assert.equal(findImageDropSlot(elements, { x: 50, y: 50 })?.id, 'background');
+});
+
 test('image frames show an explicit placement guide only while a wardrobe image is over them', () => {
   assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} filled=\{false\}/);
   assert.match(editorSource, /imageDropOver && <ImageDropGuide scale=\{scale\} filled \/>/);
