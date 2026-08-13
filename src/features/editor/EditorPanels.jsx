@@ -12,6 +12,7 @@ import {
   ALL_CUT_TYPE_OPTIONS,
   inferContentRole,
 } from '@/lib/storyboardTaxonomy.js';
+import { selectGenerationExamples } from '@/lib/generationExamples.js';
 import { detailDirectionFromExample } from '@/lib/storyboardExampleSelection.js';
 import { thumbUrl } from '@/lib/imageCdn.js';
 import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WIDTH, FRAME_LIBRARY_ITEMS, OBJECT_LIBRARY_ITEMS, WARDROBE_IMAGE_MIME, colorWithOpacity, encodeWardrobeImage, normalizeHexColor } from '@/features/editor/editorLibrary.js';
@@ -393,7 +394,7 @@ function VaryPanel({ catalogs, source, onPickRef, onGenerate, onSetCutType }) {
 
 /* ---------- AI ---------- */
 const NEW_CUT_DEFAULT_SHOT = { styling: 'full', horizon: 'full', mirror: 'full', product: 'ghost' };
-export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], varySource, onGenerate, onVaryGenerate, onPickRef, onPickMoodRef, onSetCutType }) {
+export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailColorOpts = [], clothingType = 'top', matchClothing = [], exampleGender = null, varySource, onGenerate, onVaryGenerate, onPickRef, onPickMoodRef, onSetCutType }) {
   const [tab, setTab] = useState('vary');
   // 콘티보드와 같은 규칙 — 사용자는 컷 종류(촬영 방식)만 고르고, 사진 목적(contentRole)은 내부 자동 결정.
   const [cutType, setCutType] = useState('styling');
@@ -418,10 +419,6 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const [matchOpen, setMatchOpen] = useState(false);
   const isProduct = cutType === 'product';
   const isMirror = cutType === 'mirror'; // mirror 레시피(ADR-0004): 방향 없음, 샷 full/medium만
-  const isDetail = isProduct && shot === 'detail';
-  const activeColorOpts = isDetail ? detailColorOpts : colorOpts;
-  const colorVal = activeColorOpts.some((option) => option.id === color)
-    ? color : activeColorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
   const [modelOpen, setModelOpen] = useState(false);
   const modelRef = useRef(null);
   const smoothScroll = (p, to, dur = 300) => {
@@ -446,19 +443,48 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
   const shotOpts = isProduct ? catalogs.productShotTypes : catalogs.shotTypes;
   const dirVal = dirOpts.some((o) => o.value === dir) ? dir : dirOpts[0].value;
   const shotVal = shotOpts.some((o) => o.value === shot) ? shot : shotOpts[0].value;
-  const modelGender = (catalogs.models || []).find((item) => item.id === model)?.gender || null;
+  // isDetail 은 검증된 shotVal 기준 — raw shot 을 읽으면 카탈로그 폴백 시 UI와 전송값이 어긋난다.
+  const isDetail = isProduct && shotVal === 'detail';
+  const activeColorOpts = isDetail ? detailColorOpts : colorOpts;
+  const colorVal = activeColorOpts.some((option) => option.id === color)
+    ? color : activeColorOpts[0]?.id || null;   // wardrobe 그룹 키 = colorId (계약 §3.6)
+  // 갤러리·게이트용 성별 — 고른 모델(가상·실존)의 성별 우선, 못 찾으면 분석 기반(콘티보드 exampleGender 규칙).
+  // 실존 모델은 catalogs.models 에 없어서 이 폴백이 없으면 null 이 되고, null 이면 착용컷 예시가 전부 닫힌다.
+  const modelGender = [...(catalogs.models || []), ...fmList].find((item) => item.id === model)?.gender
+    || exampleGender || null;
   const closureOptions = catalogs.outerClosureStates || [];
   const showOuterClosure = clothingType === 'outer' && !isProduct;
   const showMatchClothing = !isProduct && Array.isArray(matchClothing) && matchClothing.length > 0;
+  // 콘티보드와 같은 게이트 — 발행 예시가 하나도 없는 컷 종류는 비활성(예시가 추가되면 자동 활성).
+  const hasSelectableExamples = (cut, shotValue) => selectGenerationExamples(catalogs.genExamples, {
+    cutType: cut, shot: shotValue, clothingType, gender: modelGender,
+    appendSetOnly: cut !== 'product',
+  }).length > 0;
+  const cutTypeOptions = ALL_CUT_TYPE_OPTIONS.map((option) => {
+    const shots = option.value === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
+    return { ...option, disabled: !shots.some((item) => hasSelectableExamples(option.value, item.value)) };
+  });
+  // 콘티보드 settingsReset(storyboardExampleSelection.js)과 같은 규칙 — 이전 레시피의
+  // 매칭 의류·아우터 열림·내 레퍼런스가 새 레시피에 숨은 채 전송되지 않게 전면 리셋.
+  const resetRecipeSettings = () => {
+    setMatchIds([]); setMatchOpen(false); setOuterClosure('open'); setRefImages([]);
+  };
   const selectCutType = (value) => {
     if (value === cutType) return;
-    setCutType(value); setDir('front'); setShot(NEW_CUT_DEFAULT_SHOT[value] || 'full');
+    const nextShotOpts = value === 'product' ? catalogs.productShotTypes : catalogs.shotTypes;
+    const preferred = NEW_CUT_DEFAULT_SHOT[value] || 'full';
+    // 기본 샷에 발행 예시가 없으면 예시가 있는 샷으로 — 빈 갤러리로 시작하지 않는다(콘티보드 동일).
+    const nextShot = hasSelectableExamples(value, preferred) ? preferred
+      : nextShotOpts.find((option) => hasSelectableExamples(value, option.value))?.value || preferred;
+    setCutType(value); setDir('front'); setShot(nextShot);
     setExampleId(null); setRefScope('all');
-    if (value === 'product') { setMatchIds([]); setMatchOpen(false); }
+    resetRecipeSettings();
   };
   const selectExample = (value) => {
+    const replacing = !!exampleId && !!value && exampleId !== value;
     setExampleId(value);
     if (!value) setRefScope('all');
+    if (replacing) resetRecipeSettings();
     // 디테일 컷의 방향은 예시에 내재 — 뒷면 디테일 예시를 고르면 back 을 내부 전송해
     // 서버가 BackDetail 사진을 근거로 쓴다(2026-08-07 오너 결정).
     if (isDetail) {
@@ -476,13 +502,17 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
         <div>
           {/* 콘티보드와 같은 첫 선택 — 컷 종류(촬영 방식). 사진 목적은 inferContentRole 로 내부 결정 */}
           <div className="insp-sec"><label className="lbl">컷 종류</label>
-            <UnderlineTabs options={ALL_CUT_TYPE_OPTIONS} value={cutType} onChange={selectCutType} />
+            <UnderlineTabs options={cutTypeOptions} value={cutType} onChange={selectCutType} />
           </div>
 
           {/* 분위기 예시가 주인공 — 샷 종류는 갤러리의 아이콘 필터 (B+C안, ADR-0004) */}
           <MoodGuide catalogs={catalogs} cut={cutType} direction={isMirror ? null : dirVal} shot={shotVal}
             shotOptions={isProduct ? shotOpts : null}
-            onShotChange={(v) => { setShot(v); setExampleId(null); setRefScope('all'); }} clothingType={clothingType} gender={modelGender}
+            onShotChange={(v) => {
+              setShot(v); setExampleId(null); setRefScope('all');
+              // 고스트→디테일 전환 시 이전 '뒷면'이 숨은 채 BackDetail 근거로 새지 않게 — 콘티보드 동일 가드(Codex 리뷰 P1).
+              if (isProduct) setDir('front');
+            }} clothingType={clothingType} gender={modelGender}
             exampleId={exampleId} onExampleChange={selectExample}
             refScope={refScope} onRefScopeChange={setRefScope}
             refs={refImages} onRefsChange={setRefImages} onPickRef={onPickMoodRef} />
@@ -525,8 +555,8 @@ export function AIPanel({ catalogs, fmModels, account, colorOpts = [], detailCol
                     {matchClothing.map((m) => {
                       const on = matchIds.includes(m.id);
                       return (
-                        <button key={m.id} className={`match-cell${on ? ' on' : ''}`} onClick={() =>
-                          setMatchIds((cur) => on ? cur.filter((id) => id !== m.id) : [...cur, m.id])
+                        <button key={m.id} className={`match-cell${on ? ' on' : ''}`} aria-pressed={on} onClick={() =>
+                          setMatchIds(on ? [] : [m.id]) // 단일 선택 — matchClothingMax=1 (PRD §6.8, 콘티보드 동일)
                         }><img src={m.thumb} alt={m.name} /><span className="ml">{m.name}{on && <Icon name="check" size={12} />}</span></button>
                       );
                     })}

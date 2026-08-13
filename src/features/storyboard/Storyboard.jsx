@@ -125,7 +125,7 @@ const exampleThumbFor = (catalogs, exampleId, cut) => (
   (catalogs?.genExamples || []).find((example) => example.id === exampleId)?.thumb
   || Placeholder.photo(exampleId, exampleCategoryFor(cut), 240, 320)
 );
-function exampleGenderFromAnalysis(analysis, catalogs, clothingType) {
+export function exampleGenderFromAnalysis(analysis, catalogs, clothingType) {
   if (clothingType === 'dress') return genderForClothingType(clothingType, []);
   const allowed = new Set(['women', 'men']);
   const modelId = analysis?.selectedModelId || analysis?.selected_model_id;
