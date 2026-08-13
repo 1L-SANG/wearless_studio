@@ -66,25 +66,31 @@ def test_manifest_flag_value_survives_loader(env_name, attr, manifest_vars, monk
     )
 
 
-def test_image_qc_enforce_carries_its_retry_budget(manifest_vars):
-    """enforce 는 재시도 예산과 함께여야 한다 — 예산 없는 enforce 는 실제로 아무것도 못 고쳤다.
+def test_generation_budget_is_fixed_at_two_and_untuck_is_exempt(manifest_vars):
+    """일반 generation/QC 예산은 2 로 고정이다 — untuck 이 전용 슬롯로 분리됐기 때문.
 
-    이 테스트는 원래 "enforce 로 올리지 말 것"이었다(2026-07-07 `MANNEQUIN_QC_ENABLED=true`
-    가 오탐 pass율 0% 로 전 생성을 차단한 전례). 그 조건인 캘리브레이션을 2026-07-31 끝내고
-    의도적으로 승격했다 — 임계 실측 교정(90/75 는 통과율 0% 였다), 판정자 변별력 하니스,
-    거짓양성 육안 점검 오탐 0, 층화 재측정, 계약 뮤테이션 26/26.
+    이 자리는 원래 "IMAGE_QC=enforce 면 MANNEQUIN_MAX_ATTEMPTS >= 3" 불변식이었다. 근거는
+    편집 패스(untuck·fabric·bust)가 재시도와 예산을 공유해서, 2 로는 재시도 전에 소진된다는
+    것. 그 공유가 정확히 untuck 기아를 만들었다 — 프로덕션 실측(2026-08-12): attempt 5 를
+    소진한 잡 2건이 budget_exhausted 로 tuck 인 채 출고됐고, 예산을 5 로 올린 것이 원인을
+    가리고 있었다.
 
-    그래서 잠그는 대상이 바뀐다. enforce 의 `regenerate` 판정은 재시도를 쓰는데, 그 예산은
-    편집 패스(untuck·fabric·bust)와 공유된다. 기본값 2 로 두면 재시도 전에 소진돼서
-    **판정만 하고 아무것도 고치지 못한다** — 가슴 2패스가 한 번도 출고되지 않던 실제 원인이다.
-    enforce 를 켰으면 예산도 같이 올라가 있어야 한다는 것이 여기서 지킬 불변식이다.
+    지금 구조(2026-08-12)는 untuck 을 저장 직전 전용 post-pass 1회로 분리했다. 계약은:
+
+        일반 generation/QC ≤ 2 콜  ·  untuck ≤ 1 콜  ·  최악 총합 3 콜
+
+    그래서 잠그는 대상이 다시 바뀐다: 예산을 3·5·6 으로 올려 문제를 가리는 회귀를 막고,
+    dataclass 기본값(2)·manifest·런타임 env 가 전부 같은 값을 말하게 한다.
     """
-    if manifest_vars.get("IMAGE_QC") != "enforce":
-        pytest.skip("enforce 가 아니면 예산 불변식은 해당 없음")
-    attempts = int(manifest_vars.get("MANNEQUIN_MAX_ATTEMPTS", 0))
-    assert attempts >= 3, (
-        f"IMAGE_QC=enforce 인데 MANNEQUIN_MAX_ATTEMPTS={attempts} — 편집 패스와 예산을 "
-        "공유하므로 재시도가 돌기 전에 소진된다. 판정만 하고 못 고치는 상태가 된다."
+    from app.config import Settings
+
+    assert manifest_vars.get("MANNEQUIN_MAX_ATTEMPTS") == "2", (
+        f"manifest MANNEQUIN_MAX_ATTEMPTS={manifest_vars.get('MANNEQUIN_MAX_ATTEMPTS')!r} — "
+        "일반 생성/QC 예산은 2 고정이다. 올려서 untuck 기아를 가리지 말 것"
+        " (untuck 은 이미 예산 밖 전용 슬롯이다)."
+    )
+    assert Settings.__dataclass_fields__["mannequin_max_attempts"].default == 2, (
+        "dataclass 기본값이 manifest(2)와 어긋난다"
     )
 
 

@@ -159,14 +159,14 @@ def test_candidate_cancel_sentinel_is_not_swallowed_as_generation_failure(monkey
 @pytest.mark.parametrize(
     ("cancel_at", "expected_passes"),
     [
+        # untuck 은 편집 체인에서 빠졌다(2026-08-12) — 저장 직전 전용 post-pass 로 이동.
+        # 체인은 axis → bust → fabric, 각 패스 앞뒤 체크포인트 6개.
         (1, []),
-        (2, ["untuck"]),
-        (3, ["untuck"]),
-        (4, ["untuck", "axis"]),
-        (5, ["untuck", "axis"]),
-        (6, ["untuck", "axis", "bust"]),
-        (7, ["untuck", "axis", "bust"]),
-        (8, ["untuck", "axis", "bust", "fabric"]),
+        (2, ["axis"]),
+        (3, ["axis"]),
+        (4, ["axis", "bust"]),
+        (5, ["axis", "bust"]),
+        (6, ["axis", "bust", "fabric"]),
     ],
 )
 def test_edit_orchestration_checks_before_and_after_each_pass(
@@ -188,7 +188,6 @@ def test_edit_orchestration_checks_before_and_after_each_pass(
 
         return _run
 
-    monkeypatch.setattr(mannequin_job, "_apply_untuck_pass", fake_pass("untuck"))
     monkeypatch.setattr(mannequin_job, "_apply_axis_qc", fake_pass("axis"))
     monkeypatch.setattr(mannequin_job, "_apply_bust_pass", fake_pass("bust"))
     monkeypatch.setattr(mannequin_job, "_apply_fabric_pass", fake_pass("fabric"))

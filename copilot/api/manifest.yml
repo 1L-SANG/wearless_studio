@@ -71,7 +71,7 @@ variables:                       # 평문 (민감하지 않음). 시크릿은 �
   # enforce 는 regenerate 판정에서 재시도를 쓰므로 상한이 필요하다. 기본값 2 는 편집 패스
   # (untuck·fabric·bust)와 예산을 공유해서 재시도 전에 소진된다 — 실제로 그래서 가슴 2패스가
   # 한 번도 출고되지 않았다. 5 는 그 실측에서 나온 값이고, 상한이지 매번 쓰는 횟수가 아니다.
-  MANNEQUIN_MAX_ATTEMPTS: "5"
+  MANNEQUIN_MAX_ATTEMPTS: "2"   # 일반 생성/QC 총 2회. untuck 은 예산 밖 전용 post-pass 1회(2026-08-12)
   # 단일 목적 편집 패스 3종. 전부 fail-open(편집 실패 = 편집 전 컷 그대로 출고)이고,
   # 편집이 등급을 떨어뜨리면 편집 전으로 되돌린다(qc_edit_regression_margin=10, 판정 노이즈
   # ±30 을 감안한 마진). 셋 다 여기 없으면 config 기본 off 로 떨어져 조용히 안 돈다.

@@ -49,6 +49,11 @@ from ..services import canonical_reference, qc, sam_fallback
 from ..services import generation_input_strategy as gis
 from ._common import emit_job_event as _emit  # 공용 헬퍼 (analyze_job과 공유)
 
+#: 톤 에디터 마스크 알고리즘 신원. 이미지 서비스의 `worn_garment.ALGORITHM_VERSION` 과 같은
+#: 값이며, 여기서 문자열 리터럴로 갖는 이유는 `app/` 이 torch 를 끌고 오는 모듈을 임포트하지
+#: 않기 위해서다. **멱등키에만** 쓰인다 — 이 워커는 마스크를 만들지 않고 큐에 넣기만 한다.
+EDITOR_MASK_VERSION = "editor-worn-garment-sam2-v1"
+
 _EXT_FALLBACK = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 
 
@@ -690,7 +695,8 @@ def has_budget_for_retry(s, *, calls_spent: int) -> bool:
     """재생성 여유가 있는가 (순수).
 
     예산은 **실제로 나간 이미지 모델 호출 수**다. 생성·axis 편집·bust 2패스가 모두 같은
-    한 통에서 나가고, 호출 직전에 하나씩 소비한다.
+    한 통에서 나가고, 호출 직전에 하나씩 소비한다. untuck 은 예외다 — 저장 직전 전용
+    post-pass 슬롯 1회로 분리됐다(2026-08-12, _apply_untuck_postpass).
 
     앞선 버전은 "다음 생성 + 다음 편집"을 미리 예약하는 예측형이었다. 세 가지가 어긋났다
     (codex 2026-07-31 7차): 사전 게이트 경로가 이 검사를 안 거쳐 상한을 넘길 수 있었고,
@@ -849,28 +855,38 @@ async def _apply_bust_pass(
     return out, True
 
 
-async def _apply_untuck_pass(
-    *, pool, gemini, s, job_id, candidate, attempt, res, match_img, calls_spent,
-    clothing_type=None, image_size=None,
+async def _apply_untuck_postpass(
+    *, pool, gemini, s, job_id, candidate, generation_attempts, res, match_img,
+    clothing_type=None, image_size=None, cancel_check=None,
 ):
-    """상의 밑단을 하의 밖으로 빼는 untuck 2패스. → (선택 결과, 편집콜 소비 여부).
+    """untuck 전용 post-pass — 일반 retry 가 끝난 **출고 확정본**에 정확히 1회. → 최종 res.
 
-    **편집 체인의 맨 앞**에서 돈다 — 구도(밑단 위치)가 먼저 확정돼야 축 QC 가 실제 밑단을
-    보고 판정하고, 볼륨·원단 편집이 최종 구도 위에서 이뤄진다. QC 검출을 게이트로 쓰지
+    일반 예산(calls_spent)과 완전히 분리된 전용 슬롯이다. 예전에는 편집 체인 맨 앞에서
+    생성·편집과 한 통을 썼는데, 재시도가 많았던 잡일수록 untuck 차례에 잔량이 없어
+    budget_exhausted 로 스킵됐다 — 품질이 흔들린 잡이 하필 tuck 교정까지 못 받는 역설
+    (2026-08-12 프로덕션 실측: attempt 5 소진 잡 2건 연속 tuck 출고). 지금 계약은:
+
+        일반 generation/QC ≤ MANNEQUIN_MAX_ATTEMPTS(=2) 콜
+        untuck             ≤ 1 콜 (전용 슬롯 — 필요 없으면 0)
+        최악 총합          = 3 콜
+
+    무제한 면제가 아니다 — 저장 직전 단 한 번이고, 실패해도 재시도 루프를 만들지 않는다.
+    마지막 정상 생성본을 그대로 두고 이벤트만 남긴다(fail-open). QC 검출을 게이트로 쓰지
     않는 이유는 mannequin_untuck 모듈 주석 참조(검출 불안정 실측).
-
-    fail-open — 거부·오류·빈 응답 어떤 경우에도 이전 결과를 그대로 돌려준다.
     """
-    if not mannequin_untuck.should_apply(
-            getattr(s, "mannequin_untuck_pass", "off"), clothing_type, match_img is not None):
-        return res, False
-    if calls_spent >= s.mannequin_max_attempts:
-        await _emit(pool, job_id, "step", {
-            "candidate": candidate, "attempt": attempt, "status": "untuck_pass",
-            "outcome": "budget_exhausted",
-            "image_hash": hashlib.sha256(res.image).hexdigest()[:12]})
-        return res, False
+    needed = mannequin_untuck.should_apply(
+        getattr(s, "mannequin_untuck_pass", "off"), clothing_type, match_img is not None)
+    summary = {
+        "candidate": candidate, "status": "untuck_pass",
+        "generation_attempts": generation_attempts,
+        "untuck_attempted": needed, "untuck_calls": 0, "untuck_outcome": "not_needed",
+    }
+    if not needed:
+        await _emit(pool, job_id, "step", summary)
+        return res
     before = hashlib.sha256(res.image).hexdigest()[:12]
+    summary.update(untuck_calls=1, image_hash=before)
+    await _cancel_checkpoint(cancel_check)
     try:
         prompt = mannequin_untuck.build_prompt(load_untuck_prompt_template())
         out = await gemini.generate_content_image(
@@ -878,17 +894,23 @@ async def _apply_untuck_pass(
             prompt, [InlineImage(res.mime, res.image)],
             image_size or s.mannequin_image_size, aspect_ratio=s.mannequin_aspect_ratio)
     except Exception as e:
-        log.warning("untuck pass failed for job %s (원본 유지): %r", job_id, e)
+        log.warning("untuck post-pass failed for job %s (원본 유지·재시도 없음): %r", job_id, e)
         await _emit(pool, job_id, "step", {
-            "candidate": candidate, "attempt": attempt, "status": "untuck_pass",
-            "outcome": "failed_open", "image_hash": before,
+            **summary, "untuck_outcome": "failed",
             "error_type": type(e).__name__, "error_message": str(e)[:200]})
-        return res, True  # 호출은 나갔다 — 예산 소비
+        return res
+    # 출고 직전 최소 무결성 — 깨진 이미지·투명 캔버스를 untuck 결과랍시고 내보내지 않는다.
+    canvas_qc = qc.evaluate_canvas_alpha_qc(out.image)
+    broken = next((r for r in ("decode_failed", "transparent_canvas")
+                   if r in canvas_qc.reasons), None)
+    if broken:
+        await _emit(pool, job_id, "step", {
+            **summary, "untuck_outcome": "failed", "reason": broken})
+        return res
     await _emit(pool, job_id, "step", {
-        "candidate": candidate, "attempt": attempt, "status": "untuck_pass",
-        "outcome": "applied", "image_hash": before,
+        **summary, "untuck_outcome": "applied",
         "result_hash": hashlib.sha256(out.image).hexdigest()[:12]})
-    return out, True
+    return out
 
 
 async def _apply_fabric_pass(
@@ -951,15 +973,9 @@ async def _apply_edits(
         return res, p2, calls_spent
     pre_hash = hashlib.sha256(res.image).hexdigest()
     pre_res, pre_p2 = res, p2
-    # untuck — 편집 체인 **맨 앞**. 밑단 위치(구도)가 먼저 확정돼야 축 QC 가 실제 밑단을 보고
-    # 판정하고(특히 length 축), 볼륨·원단 편집이 최종 구도 위에서 이뤄진다.
-    await _cancel_checkpoint(cancel_check)
-    res, untuck_spent = await _apply_untuck_pass(
-        pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate, attempt=attempt,
-        res=res, match_img=match_img, calls_spent=calls_spent,
-        clothing_type=clothing_type, image_size=image_size)
-    await _cancel_checkpoint(cancel_check)
-    calls_spent += untuck_spent
+    # untuck 은 여기 없다 — 일반 retry 가 끝난 뒤 저장 직전의 전용 post-pass 로 옮겼다
+    # (_apply_untuck_postpass, 2026-08-12). 편집 체인 안에 두면 attempt 마다 재실행되고
+    # 공유 예산에 굶어 죽는다.
     # P1 축 QC: 채택본이 선언 핏 축을 반영했는지 판정, enforce면 편집 교정 1회
     # (실패 이미지 편집 — §H 실증). fail-open: 어떤 실패도 채택 자체를 막지 않는다.
     await _cancel_checkpoint(cancel_check)
@@ -1165,9 +1181,14 @@ async def _run_candidate(
     # 저장 shape 이 계약(QcScores)을 벗어나지 않게. 네 번째는 이벤트·correctionPrompt 용.
     pre_reject: tuple | None = None
     final_reject: tuple | None = None
-    # 이미지 모델 호출 예산은 한 통이다 — 생성·axis 편집·bust 2패스가 전부 여기서 나간다.
+    # 이미지 모델 호출 예산은 한 통이다 — 생성·axis 편집·bust 2패스가 여기서 나간다.
     # 호출 **직전**에 소비하고, 재생성 여부는 남은 잔량으로만 판단한다.
+    # untuck 은 이 통을 **쓰지 않는다** — 저장 직전 전용 post-pass 슬롯 1회
+    # (_apply_untuck_postpass, 2026-08-12: 예산 공유 시절 attempt 소진 잡이 tuck 교정을
+    # 못 받던 프로덕션 실측이 계기).
     calls_spent = 0
+    # 일반 generation 호출 수(1|2). untuck 이벤트 계약(generation_attempts)에 실린다.
+    generation_calls = 0
     # 캐노니컬 증강은 후보당 1회다. 두 번 붙이면 같은 컷아웃이 중복 첨부되고 매니페스트 번호가
     # 어긋난다 — decide 의 `already_used` 가 이 플래그를 본다.
     canonical_refs = canonical_refs or {}
@@ -1192,6 +1213,7 @@ async def _run_candidate(
             "input_source": fit_profile_source})
         await _cancel_checkpoint(cancel_check)
         calls_spent += 1  # 성공하든 실패하든 호출은 나갔다
+        generation_calls += 1
         try:
             res = await gemini.generate_content_image(
                 model, prompt, images, image_size,
@@ -1349,6 +1371,11 @@ async def _run_candidate(
                 await _emit(pool, job_id, "step", {
                     "candidate": candidate, "attempt": attempt, "status": "qc_salvaged",
                     "reason": "budget_exhausted", "outcome": score_outcome(s, qc_scores)})
+            res = await _apply_untuck_postpass(
+                pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+                generation_attempts=generation_calls, res=res, match_img=match_img,
+                clothing_type=clothing_type, image_size=image_size,
+                cancel_check=cancel_check)
             return await _save_cut(
                 s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
                 candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
@@ -1404,11 +1431,46 @@ async def _run_candidate(
         await _emit(pool, job_id, "step", {
             "candidate": candidate, "status": "qc_salvaged",
             "reason": "loop_exhausted", "outcome": score_outcome(s, qc_scores)})
+        res = await _apply_untuck_postpass(
+            pool=pool, gemini=gemini, s=s, job_id=job_id, candidate=candidate,
+            generation_attempts=generation_calls, res=res, match_img=match_img,
+            clothing_type=clothing_type, image_size=image_size, cancel_check=cancel_check)
         return await _save_cut(
             s=s, r2=r2, user_id=user_id, project_id=project_id, job_id=job_id,
             candidate=candidate, base_fit=base_fit, res=res, qc_scores=qc_scores,
             cancel_check=cancel_check)
     return None  # 구제할 후보조차 없음 → 이 후보 드롭(부분 성공 허용)
+
+
+async def _enqueue_editor_garment_mask(pool, s, *, user_id, project_id, cuts,
+                                       cut_metadata) -> None:
+    """방금 확정된 컷들에 톤 에디터 마스크 전처리를 건다. 절대 생성을 막지 않는다.
+
+    커밋 **뒤에** 별도 커넥션으로 돈다. 같은 트랜잭션 안에서 돌리면 큐잉 한 번 실패가 방금
+    성공한 유료 생성을 통째로 되돌린다 — 2026-08-12 에 sam_preprocess 로 그 실수를 한 번
+    했고, 그때는 라우트가 500 이 됐다.
+
+    멱등키에 컷 id 와 알고리즘 버전을 넣는다. 같은 컷을 같은 알고리즘으로 두 번 분할하는 건
+    중복이고, 알고리즘이 올라가면 다시 볼 가치가 있다.
+    """
+    if getattr(s, "mannequin_tone_editor", "off") != "on":
+        return
+    for cut in cuts:
+        cut_id = (cut or {}).get("id")
+        if not cut_id:
+            continue
+        try:
+            async with pool.connection() as conn:
+                await repo.create_job(
+                    conn, user_id=user_id, project_id=project_id,
+                    kind="editor_garment_mask",
+                    payload={"cutId": cut_id, "cutMetadata": cut_metadata},
+                    idempotency_key=f"{project_id}:editor_garment_mask:{cut_id}:{EDITOR_MASK_VERSION}",
+                    credits_reserved=0, metadata={})
+                await conn.commit()
+        except Exception:  # noqa: BLE001 - 마스크 큐잉 실패가 마네킹 생성을 되돌리지 않는다
+            log.warning("editor_garment_mask enqueue failed project=%s cut=%s",
+                        project_id, cut_id, exc_info=True)
 
 
 async def run_mannequin_job(app, job: dict) -> None:
@@ -1676,6 +1738,12 @@ async def run_mannequin_job(app, job: dict) -> None:
                     await asyncio.to_thread(app.state.r2.delete, c["key"])
                 except Exception:
                     log.warning("orphan R2 cleanup failed: %s", c["key"])
+        else:
+            # 톤 에디터 마스크는 **커밋 뒤에** 별도 트랜잭션으로 건다. 컷은 이미 확정됐고
+            # 셀러 화면에도 떴다 — 전처리 큐잉이 실패해도 생성 결과는 그대로 성공이다.
+            await _enqueue_editor_garment_mask(
+                pool, s, user_id=user_id, project_id=project_id,
+                cuts=out.get("cuts") or [], cut_metadata=cut_generation_metadata)
     except _MannequinJobCancelled:
         # 취소 라우트가 status/event/차감까지 종결한다. 워커는 error/done을 추가하지 않는다.
         return
