@@ -4,10 +4,12 @@ import { readFileSync } from 'node:fs';
 
 import {
   createSpaceSetMembers,
+  detachSpaceMembership,
   dissolveSpaceSet,
   groupConsecutiveSpaceRuns,
   moveBlockWithSpaceMembership,
   nextSpaceSetMemberReservation,
+  rekeySeparatedSpaceRuns,
   replaceSpaceSetRun,
 } from '../../src/lib/storyboardSpaceSets.js';
 import {
@@ -63,26 +65,60 @@ test('consecutive spaceGroupId runs become bands without joining separated runs'
   ]);
 });
 
-test('dragging into and out of a band transitions spaceGroupId and refScope', () => {
+test('[A, A, mine, A] detaches the middle cut and rekeys the separated run before save', () => {
+  const detached = [
+    block('a', { spaceGroupId: groupA, spaceVariation: 'subtle', spaceSetMemberOrder: 1, refScope: 'pose' }),
+    block('b', { spaceGroupId: groupA, spaceVariation: 'subtle', spaceSetMemberOrder: 2, refScope: 'pose' }),
+    detachSpaceMembership(block('mine', {
+      source: 'mine',
+      spaceGroupId: groupA,
+      spaceVariation: 'subtle',
+      spaceSetMemberOrder: 3,
+      refScope: 'pose',
+    })),
+    block('c', { spaceGroupId: groupA, spaceVariation: 'subtle', spaceSetMemberOrder: 4, refScope: 'pose' }),
+  ];
+  const rekeyed = rekeySeparatedSpaceRuns(detached, (setId) => spaceSetGroupId(setId, 'split-c'));
+
+  assert.deepEqual(rekeyed.map((item) => item.spaceGroupId), [groupA, groupA, undefined, spaceSetGroupId(releasedStylingSet.id, 'split-c')]);
+  assert.equal(rekeyed[2].spaceVariation, undefined);
+  assert.equal(rekeyed[2].spaceSetMemberOrder, undefined);
+  assert.equal(rekeyed[2].refScope, 'all');
+  assert.equal(spaceSetIdFromGroupId(rekeyed[3].spaceGroupId), releasedStylingSet.id);
+
+  const indexesByGroup = new Map();
+  rekeyed.forEach((item, index) => {
+    if (!item.spaceGroupId) return;
+    if (!indexesByGroup.has(item.spaceGroupId)) indexesByGroup.set(item.spaceGroupId, []);
+    indexesByGroup.get(item.spaceGroupId).push(index);
+  });
+  for (const indexes of indexesByGroup.values()) {
+    assert.equal(indexes.at(-1) - indexes[0] + 1, indexes.length);
+  }
+});
+
+test('an existing general cut dropped inside a set stays detached and rekeys the rear run', () => {
   const source = [
     block('outside', { exampleId: 'all-only', refScope: 'all', baseThumb: 'base.png', thumb: 'example.png' }),
     block('inside-a', { spaceGroupId: groupA, refScope: 'pose' }),
     block('inside-b', { spaceGroupId: groupA, refScope: 'pose' }),
   ];
-  const entered = moveBlockWithSpaceMembership(source, 'outside', 3, {
+  const entered = moveBlockWithSpaceMembership(source, 'outside', 2, {
     targetSpaceGroupId: groupA,
-    isPoseCompatible: () => false,
+    nextGroupId: (setId) => spaceSetGroupId(setId, 'drop-split'),
   });
-  const joined = entered.find((item) => item.id === 'outside');
-  assert.equal(joined.spaceGroupId, groupA);
-  assert.equal(joined.refScope, 'pose');
-  assert.equal(joined.exampleId, null);
-  assert.equal(joined.thumb, 'base.png');
+  assert.deepEqual(entered.map((item) => item.id), ['inside-a', 'outside', 'inside-b']);
+  const dropped = entered.find((item) => item.id === 'outside');
+  assert.equal(dropped.spaceGroupId, undefined);
+  assert.equal(dropped.refScope, 'all');
+  assert.equal(dropped.exampleId, 'all-only');
+  assert.equal(entered[0].spaceGroupId, groupA);
+  assert.equal(entered[2].spaceGroupId, spaceSetGroupId(releasedStylingSet.id, 'drop-split'));
 
   const left = moveBlockWithSpaceMembership(entered, 'outside', 0);
   assert.equal(left.find((item) => item.id === 'outside').spaceGroupId, undefined);
   assert.equal(left.find((item) => item.id === 'inside-a').spaceGroupId, groupA);
-  assert.equal(left.find((item) => item.id === 'inside-b').spaceGroupId, groupA);
+  assert.equal(left.find((item) => item.id === 'inside-b').spaceGroupId, spaceSetGroupId(releasedStylingSet.id, 'drop-split'));
 });
 
 test('space set replacement swaps the whole composition in one immutable board result', () => {
@@ -369,7 +405,7 @@ test('creating or replacing a space set never inherits block-local mood photos',
   }
 });
 
-test('a styling tray exposes its reserved member, then returns to general add when exhausted', () => {
+test('a set-internal addzone preserves reservation order and falls back after exhaustion', () => {
   const set = {
     members: [
       { exampleId: 'full', order: 1, cutType: 'styling', shot: 'full', direction: 'front' },
@@ -416,19 +452,43 @@ test('reserved-member lookup uses member order even after its example is changed
   assert.equal(nextSpaceSetMemberReservation(set, current).member.exampleId, 'second');
 });
 
-test('styling trays preview the reserved thumbnail and keep plain add after exhaustion', () => {
+test('one insert control handles empty, terminal, and set-internal additions', () => {
   const storyboardSource = readFileSync(
     new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
     'utf8',
   );
   const cssSource = readFileSync(new URL('../../src/styles/features.css', import.meta.url), 'utf8');
   assert.match(storyboardSource, /nextSpaceSetMemberReservation\(set, unit\.items\.map/);
-  assert.match(storyboardSource, /addBlock\([^\n]+group\.key, reservation\)/);
+  assert.equal((storyboardSource.match(/<StoryboardInsertControl/g) || []).length, 1);
+  assert.match(storyboardSource, /renderUnit\(spaceUnit, group, unit\.spaceGroupId, reservation\)/);
+  assert.match(storyboardSource, /insertControl\(lastItem\.index, group, null, null, 'end'\)/);
+  assert.match(storyboardSource, /!group\.items\.length && insertControl\(groupSection\.start, group, null, null, 'empty'\)/);
+  assert.match(storyboardSource, /addBlock\(idx, section\.id, section\.role, targetSpaceGroupId, group\.key, requestedExample\)/);
   assert.match(storyboardSource, /\.\.\.\(reservation\?\.blockPatch \|\| \{\}\)/);
-  assert.match(storyboardSource, /className="sb-tray-add-preview"/);
-  assert.match(storyboardSource, /nextMember \? \([\s\S]*이 컷 추가[\s\S]*\) : '＋ 컷 추가'/);
-  assert.match(cssSource, /\.sb-tray-add-preview[\s\S]*opacity: \.3/);
-  assert.match(cssSource, /prefers-reduced-motion: reduce[\s\S]*\.sb-tray-add-preview/);
+  const addBlockSource = storyboardSource.slice(
+    storyboardSource.indexOf('const addBlock ='),
+    storyboardSource.indexOf('const mineBlock ='),
+  );
+  assert.match(addBlockSource, /effectiveSpaceGroupId = targetSpaceGroupId && \(reservedSpaceMember \|\| droppedExample\)/);
+  assert.match(addBlockSource, /const g = explicitGroup/);
+  assert.doesNotMatch(addBlockSource, /peers\.every/);
+  assert.match(cssSource, /\.sb-addzone\.end \{[^}]*display: grid/);
+  assert.match(cssSource, /\.sb-addzone\.empty/);
+  assert.doesNotMatch(storyboardSource, /sb-ghost-card|sb-tray-add|sb-tray-add-preview/);
+  assert.doesNotMatch(cssSource, /sb-ghost-card|sb-tray-add|sb-tray-add-preview/);
+});
+
+test('space runs use continuity-aware units, stable composite keys, and no dissolve menu', () => {
+  const storyboardSource = readFileSync(
+    new URL('../../src/features/storyboard/Storyboard.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(storyboardSource, /kind: 'spaceRun'/);
+  assert.match(storyboardSource, /unit\.kind === 'spaceRun' \? renderSpaceRun/);
+  assert.match(storyboardSource, /key=\{'spaceRun:' \+ unit\.spaceGroupId \+ ':' \+ unit\.items\[0\]\.block\.id\}/);
+  assert.match(storyboardSource, /sb-tray-label[^]*spaceSetDisplayName\(set\)/);
+  assert.match(storyboardSource, /className="sb-tray-swap"[^]*장소 세트 변경/);
+  assert.doesNotMatch(storyboardSource, /장소 세트 묶음 풀기|dissolveSpaceGroup|sb-tray-more/);
 });
 
 test('unknown or pre-release group ids are not inferred as a shooting set', () => {
@@ -454,18 +514,20 @@ test('dragging a member out keeps its content and keeps the remaining set intact
   assert.deepEqual(remainingRun.items.map((item) => item.id), ['a']);
 });
 
-test('moving a converted middle member after its run keeps the remaining tray contiguous', () => {
+test('converting a middle member to mine keeps its position and separates both space runs', () => {
   const source = [
     block('a', { spaceGroupId: groupA, refScope: 'pose' }),
     block('b', { spaceGroupId: groupA, refScope: 'pose', source: 'mine' }),
     block('c', { spaceGroupId: groupA, refScope: 'pose' }),
     block('outside'),
   ];
-  const moved = moveBlockWithSpaceMembership(source, 'b', 3);
-  assert.deepEqual(moved.map((item) => item.id), ['a', 'c', 'b', 'outside']);
-  assert.equal(moved[2].spaceGroupId, undefined);
-  const run = groupConsecutiveSpaceRuns(moved).find((group) => group.spaceGroupId === groupA);
-  assert.deepEqual(run.items.map((item) => item.id), ['a', 'c']);
+  const detached = source.map((item) => item.id === 'b' ? detachSpaceMembership(item) : item);
+  const moved = rekeySeparatedSpaceRuns(detached, (setId) => spaceSetGroupId(setId, 'mine-split'));
+  assert.deepEqual(moved.map((item) => item.id), ['a', 'b', 'c', 'outside']);
+  assert.equal(moved[1].spaceGroupId, undefined);
+  assert.equal(moved[1].refScope, 'all');
+  assert.equal(moved[0].spaceGroupId, groupA);
+  assert.equal(moved[2].spaceGroupId, spaceSetGroupId(releasedStylingSet.id, 'mine-split'));
 });
 
 /* 위/아래 한 칸 이동(nudgeBlock)의 인덱스 보정 계약.

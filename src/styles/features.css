@@ -455,7 +455,7 @@
 .model-card img { width: 100%; height: 130px; object-fit: cover; display: block; }
 .model-card .nm { font-size: 12.5px; font-weight: 500; padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; }
 .model-card .star { color: var(--fg-1); }
-/* 메인/서브 role chip overlaid on the matching-clothing image */
+/* selected-role chip overlaid on the matching-clothing image */
 .match-role { position: absolute; top: 8px; right: 8px; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: var(--r-pill); line-height: 1.45; }
 .match-role.main { background: #0e0d14; color: #fff; }
 .match-role.sub { background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); color: var(--fg-1); box-shadow: 0 0 0 1px var(--ring); }
@@ -792,16 +792,8 @@
 @media (max-width: 1024px) { .storyboard-layout { grid-template-columns: 1fr; } }
 /* 보드가 지금 몇 컷인지 — 페이지 제목 바로 아래 가운데. */
 .sb-count-head { margin: -18px 0 14px; display: flex; justify-content: center; gap: 4px;
-  font-size: 15px; font-weight: 500; color: var(--fg-2); }
+  font-size: 16px; font-weight: 500; color: var(--fg-2); }
 .sb-count-head strong { color: var(--fg-1); font-weight: 750; }
-.sb-compose-summary { width: fit-content; max-width: 100%; margin: -6px auto 16px; display: flex;
-  align-items: center; justify-content: center; gap: 8px; color: var(--fg-2); font-size: 12.5px; }
-.sb-compose-summary strong { color: var(--fg-1); }
-.sb-compose-summary button { border: 0; padding: 0; background: transparent; color: var(--link);
-  font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-.sb-compose-modal .sb-compose-chips { margin-top: 16px; }
-.sb-compose-modal .sb-compose-chips .chip { flex: 1; justify-content: center; }
-.sb-compose-modal .sb-compose-warning { color: var(--accent-error); font-weight: 600; }
 /* solo view (no selection): one centered white panel of cards */
 .sb-solo { max-width: 570px; margin-inline: auto; }
 /* one white panel behind all the cards */
@@ -1158,9 +1150,14 @@
   transform: translateX(-50%);
   animation: sb-undo-in .18s ease-out both;
 }
+.sb-undo-bar.exiting {
+  pointer-events: none;
+  animation: sb-undo-out .18s ease-in both;
+}
 .sb-undo-bar button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border: 0;
   border-radius: var(--r-pill); background: #fff; color: var(--fg-1); font-size: 12px; font-weight: 700; white-space: nowrap; }
 @keyframes sb-undo-in { from { opacity: 0; transform: translate3d(-50%, -8px, 0); } }
+@keyframes sb-undo-out { to { opacity: 0; transform: translate3d(-50%, -8px, 0); } }
 .empty-insp { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; min-height: 280px; gap: 6px; padding-top: 28px; }
 .empty-insp .empty { padding: 12px 24px 4px; }
 .mine-add-big { padding: 12px 20px; }
@@ -1204,21 +1201,18 @@
 }
 /* 제목은 로딩 프레임과 동일하게 유지하고, 데이터가 채워지는 콘티 영역만 짧고 얕게 스태거한다. */
 .fx-pagefade .sb-page.sb-content-enter > .sb-count-head,
-.fx-pagefade .sb-page.sb-content-enter > .sb-compose-summary,
 .fx-pagefade .sb-page.sb-content-enter > .storyboard-solo-layout,
 .fx-pagefade .sb-page.sb-content-enter > .storyboard-layout,
 .fx-pagefade .sb-page.sb-content-enter > .sb-actionbar {
   animation: sbContentIn .38s cubic-bezier(.16, 1, .3, 1) both;
 }
 .fx-pagefade .sb-page.sb-content-enter > .sb-count-head { animation-delay: .06s; }
-.fx-pagefade .sb-page.sb-content-enter > .sb-compose-summary { animation-delay: .09s; }
 .fx-pagefade .sb-page.sb-content-enter > .storyboard-solo-layout,
 .fx-pagefade .sb-page.sb-content-enter > .storyboard-layout { animation-delay: .12s; }
 .fx-pagefade .sb-page.sb-content-enter > .sb-actionbar { animation-delay: .18s; }
 @keyframes sbContentIn { from { opacity: 0; transform: translateY(10px); } }
 @media (prefers-reduced-motion: reduce) {
   .fx-pagefade .sb-page.sb-content-enter > .sb-count-head,
-  .fx-pagefade .sb-page.sb-content-enter > .sb-compose-summary,
   .fx-pagefade .sb-page.sb-content-enter > .storyboard-solo-layout,
   .fx-pagefade .sb-page.sb-content-enter > .storyboard-layout,
   .fx-pagefade .sb-page.sb-content-enter > .sb-actionbar { animation: none; }
@@ -1232,9 +1226,12 @@
   border-radius: var(--r-6); box-shadow: var(--elev-lift); padding: 12px 16px; }
 .sb-ab-copy { display: flex; align-items: center; gap: 12px; }
 .sb-ab-count { font-size: 14px; color: var(--fg-2); margin-left: auto; }
-.sb-ab-cost { color: var(--fg-2); }
+.sb-ab-cost { color: var(--fg-2); font-size: 14px; white-space: nowrap; }
 .sb-ab-go { white-space: nowrap; }
-@media (max-width: 900px) { .sb-ab-count { display: none; } }
+@media (max-width: 900px) {
+  .sb-ab-count { display: none; }
+  .sb-ab-cost { margin-left: auto; }
+}
 @media (max-width: 640px) {
   .sb-ab-inner { flex-wrap: wrap; }
   .sb-ab-copy { margin-left: auto; }
@@ -2012,10 +2009,11 @@
   font-size: 12px; font-weight: 600; color: var(--fg-2); cursor: pointer; }
 .insp-cancel-new:hover { color: var(--accent-error, #d92d20); }
 
-/* 매칭 의류 인라인 편집 — 인스펙터 안 고정 높이(3열 x 약 2줄), 토글로 열고 닫음 */
+/* 매칭 의류 인라인 편집 — 세로 인스펙터와 독립된 가로 스크롤 목록 */
 .sb-match-inline { margin-top: 8px; border: 1px solid var(--ring); border-radius: var(--r-4);
-  padding: 8px; max-height: 216px; overflow-y: auto; background: var(--bg-1); }
-.sb-match-inline .match-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 0; }
+  padding: 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain; background: var(--bg-1); }
+.sb-match-inline .match-grid { display: flex; gap: 6px; width: max-content; min-width: 100%; margin-top: 0; }
+.sb-match-inline .match-cell { flex: 0 0 92px; }
 .insp-detail-btn.open { box-shadow: inset 0 0 0 1.5px var(--ring-strong); }
 
 /* 공간 세트 카드 공통 톤 = 포인트 컬러 (오너 확정: 톤별 색 대신 연한 포인트 컬러) */
@@ -2156,8 +2154,8 @@
 .sb-stack {
   position: relative;
   display: block;
-  width: 200px;
-  height: 258px;
+  width: var(--sb-card-w);
+  aspect-ratio: 3 / 4;
   margin: 6px 10px 22px;
   padding: 0;
   border: 0;
@@ -2186,8 +2184,28 @@
 }
 .sb-stack-empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; }
 
-/* 보드 상단 도구줄 — 전체 펼치기/접기. 섹션 칩과 같은 pill 언어를 쓴다. */
-.sb-board-tools { display: flex; justify-content: flex-end; padding: 0 10px 6px; }
+/* 보드 상단 도구줄 — 좌측 구성 종류와 우측 전체 펼치기/접기. */
+.sb-board-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px 6px; }
+.sb-compose-segment {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--sb-hair);
+  border-radius: 999px;
+  background: #fff;
+}
+.sb-compose-segment button {
+  min-width: 58px;
+  border: 0;
+  border-left: 1px solid var(--sb-hair);
+  padding: 4px 11px;
+  background: transparent;
+  color: var(--sb-ink-3);
+  font-size: 11px;
+  cursor: pointer;
+}
+.sb-compose-segment button:first-child { border-left: 0; }
+.sb-compose-segment button.on { background: var(--fg-1); color: #fff; font-weight: 700; }
+.sb-compose-segment button:disabled:not(.on) { cursor: not-allowed; opacity: .45; }
 .sb-board-tool {
   border: 1px solid var(--sb-hair);
   border-radius: 999px;
@@ -2218,7 +2236,7 @@
 }
 .sb-group-layout button.on { border-color: var(--sb-accent); color: var(--sb-accent-ink); background: #f2f7fc; }
 
-/* 카드 폭을 스택(200px)과 동일하게 고정 — 펼쳐도 이미지가 커지지 않는다(크기 연속성).
+/* 펼친 카드와 접힌 스택 모두 --sb-card-w를 공유해 전환 시 이미지 크기가 달라지지 않는다.
    auto-fill 이라 인스펙터가 열려 보드가 좁아지면 열 수가 저절로 줄어든다. */
 .sb-canvas-grid {
   display: grid;
@@ -2297,8 +2315,9 @@
   z-index: 5;
   right: 6px;
   top: 6px;
-  display: flex;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: repeat(2, 44px);
+  gap: 2px;
   opacity: 0;
   transition: opacity .18s;
 }
@@ -2306,24 +2325,40 @@
 .sb-cutcard:hover .sb-canvas-actions, .sb-cutcard:focus-within .sb-canvas-actions,
 .sb-frame-half:hover .sb-canvas-actions, .sb-frame-half:focus-within .sb-canvas-actions { opacity: 1; }
 .sb-canvas-actions button {
-  width: 24px;
-  height: 24px;
+  position: relative;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, .94);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, .15);
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
   color: var(--sb-ink-2);
   font-size: 12px;
   cursor: pointer;
 }
+.sb-canvas-actions button::before {
+  content: '';
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .15);
+}
+.sb-canvas-actions button > svg { position: relative; z-index: 1; }
 .sb-canvas-actions button:focus-visible { outline: 2px solid var(--focus); }
 
 .sb-cutcard.missing, .sb-frame-half.missing {
   border: 1px solid var(--sb-hair);
   background: #f3f5f6;
   box-shadow: none;
+}
+.sb-cutcard.manual-empty, .sb-frame-half.manual-empty {
+  border-color: color-mix(in srgb, var(--sb-accent) 48%, var(--sb-hair));
+  border-style: dashed;
+  background: #f7fafc;
 }
 .sb-missing-body {
   position: absolute;
@@ -2340,6 +2375,7 @@
   text-align: center;
 }
 .sb-missing-body i { display: block; color: var(--sb-accent-ink); font-size: 11px; font-style: normal; }
+.sb-missing-body.manual-empty i { color: var(--sb-ink-2); font-weight: 700; }
 .upload-placeholder-logo {
   position: relative;
   z-index: 2;
@@ -2364,27 +2400,33 @@
   align-items: center;
   justify-content: flex-end;
   gap: 5px;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  overflow: hidden;
   padding: 7px 3px 0;
   color: var(--sb-ink-2);
-  font-size: 11px;
+  font-size: 13px;
   text-align: right;
+  white-space: nowrap;
+  box-sizing: border-box;
   container-type: inline-size;
 }
 .sb-caption-color {
   min-width: 0;
-  max-width: 54px;
+  max-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--sb-ink-3);
+  font-size: 13px;
 }
 .sb-canvas-caption.mine { color: var(--sb-ink-3); font-weight: 600; }
 .sb-caption-values { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-caption-values .sb-val-changed { color: var(--sb-accent-ink); font-weight: 700; }
 .sb-caption-dot {
-  width: 9px;
-  height: 9px;
+  width: 11px;
+  height: 11px;
   flex: none;
   border-radius: 999px;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .08);
@@ -2396,10 +2438,10 @@
   flex: none;
   padding: 2px 7px 2px 2px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
-.sb-match-chip { background: #f6f2ea; color: #8a6d3b; }
+.sb-match-chip { background: #fff; border: 1px solid #111; color: #111; }
 .sb-match-chip img { width: 20px; height: 20px; border-radius: 6px; object-fit: cover; }
 @container (max-width: 175px) {
   .sb-caption-color, .sb-match-chip span { display: none; }
@@ -2415,7 +2457,23 @@
   display: grid;
   place-items: center;
 }
-.sb-addzone.end { display: none; }
+.sb-addzone.end {
+  display: grid;
+  right: -24px;
+  width: 24px;
+}
+.sb-addzone.empty {
+  position: relative;
+  top: auto;
+  right: auto;
+  width: 44px;
+  height: 44px;
+}
+.sb-addzone.empty .sb-addzone-plus {
+  width: 28px;
+  height: 28px;
+  transform: translateY(-50%) scale(1);
+}
 .sb-addzone-plus {
   position: absolute;
   top: 50%;
@@ -2436,25 +2494,14 @@
   transform: translateY(-50%) scale(1);
 }
 .sb-addzone.in-tray .sb-addzone-plus { background: var(--tray-ink); }
-.sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within) .sb-cutcard,
-.sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within) .sb-frame-box {
+.sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within, .sb-addzone.drop-on) .sb-cutcard,
+.sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within, .sb-addzone.drop-on) .sb-frame-box {
   transform: translate3d(-5px, 0, 0);
 }
-.sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within) + .sb-grid-unit .sb-cutcard,
-.sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within) + .sb-grid-unit .sb-frame-box {
+.sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within, .sb-addzone.drop-on) + .sb-grid-unit .sb-cutcard,
+.sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within, .sb-addzone.drop-on) + .sb-grid-unit .sb-frame-box {
   transform: translate3d(5px, 0, 0);
 }
-.sb-ghost-card {
-  width: 100%;
-  aspect-ratio: 3 / 4;
-  border: 1.5px dashed var(--sb-hair-2);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--sb-ink-3);
-  font-size: 13px;
-}
-.sb-ghost-card:hover, .sb-ghost-card:focus-visible { border-color: var(--sb-ink-3); color: var(--sb-ink-2); }
-
 /* 세트 묶음(2안 확정) = 채움 없는 얇은 울타리. 라벨·버튼은 프레임 태그(.sb-frame-tag)와
    같은 필 토큰으로 위 테두리에 걸쳐, 묶음 경계가 명확하면서 색 채움 없이 조용하다. */
 .sb-tray {
@@ -2486,7 +2533,7 @@
   cursor: grab;
 }
 .sb-tray-head:active { cursor: grabbing; }
-.sb-tray-swap, .sb-tray-more summary {
+.sb-tray-label, .sb-tray-swap {
   padding: 2px 9px;
   border: 0;
   border-radius: 999px;
@@ -2495,58 +2542,11 @@
   color: inherit;
   font-size: 10.5px;
   font-weight: 600;
-  cursor: pointer;
 }
-.sb-tray-swap { margin-left: 0; }
-.sb-tray-swap:hover, .sb-tray-more summary:hover { background: #f4f4f6; }
-.sb-tray-more { position: relative; }
-.sb-tray-more summary { list-style: none; font-size: 12px; }
-.sb-tray-more summary::-webkit-details-marker { display: none; }
-.sb-tray-more > span {
-  position: absolute;
-  z-index: 30;
-  right: 0;
-  top: 22px;
-  padding: 5px;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: var(--sb-pop-shadow);
-}
-.sb-tray-more > span button {
-  padding: 6px 12px;
-  border: 0;
-  border-radius: 6px;
-  background: #fff;
-  color: var(--sb-ink-2);
-  font-size: 11.5px;
-  white-space: nowrap;
-}
-.sb-tray-more > span button:hover { background: #f4f4f6; }
+.sb-tray-label { cursor: grab; }
+.sb-tray-swap { margin-left: 0; cursor: pointer; }
+.sb-tray-swap:hover { background: #f4f4f6; }
 .sb-tray-grid { display: grid; grid-template-columns: repeat(3, var(--sb-tray-card-w)); justify-content: flex-start; gap: 14px 18px; min-width: 0; }
-.sb-tray-add { position: relative; width: 100%; max-width: 100%; min-width: 0; overflow: hidden; }
-.sb-tray-add.reserved { border-style: solid; border-color: var(--sb-hair); background: #fff; }
-.sb-tray-add-preview {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  opacity: .3;
-  transition: opacity .18s var(--sb-ease), transform .18s var(--sb-ease);
-}
-.sb-tray-add-label {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  color: var(--sb-ink-2);
-  font-weight: 700;
-  text-shadow: 0 1px 6px #fff;
-}
-.sb-tray-add-label b { font-size: 22px; line-height: 1; }
-.sb-tray-add.reserved:hover .sb-tray-add-preview,
-.sb-tray-add.reserved:focus-visible .sb-tray-add-preview { opacity: .42; transform: scale(1.02); }
 
 .sb-frame { grid-column: span 2; position: relative; min-width: 0; }
 .sb-frame-box {
@@ -2625,7 +2625,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .sb-stack-collapse, .sb-deck-collapse, .sb-stack-cut, .sb-cutcard, .sb-frame-box,
-  .sb-canvas-main, .sb-deck-chevron, .sb-addzone-plus, .sb-tray-add-preview { transition: none; }
+  .sb-canvas-main, .sb-deck-chevron, .sb-addzone-plus { transition: none; }
   .sb-deck.open .sb-stack-collapse { display: none; }
   .sb-deck.open .sb-deck-collapse { animation: none; }
   .sb-selection-ring i { animation: none; opacity: 0; will-change: auto; }
@@ -2633,10 +2633,11 @@
   .sb-excell:not(.sel):not(.unavailable):hover img,
   .sb-excell:not(.sel):not(.unavailable):focus-visible img { transform: none; }
   .sb-selection-ring i:first-child { opacity: 1; }
-  .sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within) .sb-cutcard,
-  .sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within) .sb-frame-box,
-  .sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within) + .sb-grid-unit .sb-cutcard,
-  .sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within) + .sb-grid-unit .sb-frame-box { transform: none; }
+  .sb-undo-bar, .sb-undo-bar.exiting { animation: none; }
+  .sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within, .sb-addzone.drop-on) .sb-cutcard,
+  .sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within, .sb-addzone.drop-on) .sb-frame-box,
+  .sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within, .sb-addzone.drop-on) + .sb-grid-unit .sb-cutcard,
+  .sb-grid-unit:has(.sb-addzone:hover, .sb-addzone:focus-within, .sb-addzone.drop-on) + .sb-grid-unit .sb-frame-box { transform: none; }
 }
 .sb-frame-unit { grid-column: span 2; }
 

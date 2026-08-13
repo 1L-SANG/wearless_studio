@@ -180,6 +180,7 @@ let flowValidationInflight = null;
 // 사진 양 선택 PATCH를 직렬화한다. 사용자가 빠르게 바꾸고 다음으로 가도
 // 오래 걸린 이전 요청이 나중에 도착해 최신 선택을 덮지 않게 한다.
 let composeModePatchChain = Promise.resolve();
+let copywritingPatchChain = Promise.resolve();
 
 const persistedFlow = loadPersistedFlow();
 
@@ -421,7 +422,16 @@ export const useAppStore = create((set, get) => ({
   setCopywriting(copywriting) {
     set({ copywriting });
     persistFlow(get());
-    api.patchProject(get().projectId, { copywriting });
+    const projectId = get().projectId;
+    if (!projectId) return copywritingPatchChain;
+    copywritingPatchChain = copywritingPatchChain
+      .catch(() => {})
+      .then(() => api.patchProject(projectId, { copywriting }));
+    return copywritingPatchChain;
+  },
+  restoreCopywriting(copywriting) {
+    set({ copywriting });
+    persistFlow(get());
   },
   /** 서버 응답(조정/재생성 결과) 반영용 — 화면이 임의 계산해 넣지 않는다. */
   setAdjustCount(adjustCount) { set({ adjustCount }); persistFlow(get()); },

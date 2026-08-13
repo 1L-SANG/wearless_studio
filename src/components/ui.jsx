@@ -173,8 +173,17 @@ export function TagInput({ tags, onChange, max = 5, placeholder = '내용을 입
   );
 }
 
-export function Toggle({ on, onChange }) {
-  return <div className={`tg${on ? ' on' : ''}`} onClick={() => onChange(!on)} role="switch" aria-checked={on}></div>;
+export function Toggle({ on, onChange, label = '토글' }) {
+  return (
+    <button
+      type="button"
+      className={`tg${on ? ' on' : ''}`}
+      onClick={() => onChange(!on)}
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+    />
+  );
 }
 
 export function ProgressBar({ value, label, sub }) {
@@ -303,8 +312,20 @@ export function ThumbGrid({ items, value, onChange, cols = 4, labels }) {
 
 /* ---- Toast system ---- */
 const ToastCtx = createContext(null);
+const toastPrefersReducedMotion = () => (
+  typeof window !== 'undefined'
+  && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+);
 export function ToastProvider({ children }) {
   const [list, setList] = useState([]);
+  const dismiss = useCallback((id, variant) => {
+    if (variant === 'mannequinCompletion' && toastPrefersReducedMotion()) {
+      setList((l) => l.filter((t) => t.id !== id));
+      return;
+    }
+    setList((l) => l.map((t) => t.id === id ? { ...t, exiting: true } : t));
+    setTimeout(() => setList((l) => l.filter((t) => t.id !== id)), 420);
+  }, []);
   const push = useCallback((msg, opts = {}) => {
     const id = Math.random().toString(36).slice(2);
     setList((l) => [...l, { id, msg, ...opts }]);
@@ -312,15 +333,10 @@ export function ToastProvider({ children }) {
       // 긴 메시지(업로드·분석 실패 사유 등)가 읽기 전에 사라지지 않게 길이 비례 지속.
       // 20자까지는 기존(2.6s)과 동일, 초과분 글자당 +70ms, 최대 9s.
       const dur = opts.duration || Math.min(2600 + Math.max(0, String(msg).length - 20) * 70, 9000);
-      setTimeout(() => setList((l) => l.map((t) => t.id === id ? { ...t, exiting: true } : t)), dur);
-      setTimeout(() => setList((l) => l.filter((t) => t.id !== id)), dur + 420);
+      setTimeout(() => dismiss(id, opts.variant), dur);
     }
     return id;
-  }, []);
-  const dismiss = useCallback((id) => {
-    setList((l) => l.map((t) => t.id === id ? { ...t, exiting: true } : t));
-    setTimeout(() => setList((l) => l.filter((t) => t.id !== id)), 420);
-  }, []);
+  }, [dismiss]);
   return (
     <ToastCtx.Provider value={{ push, dismiss }}>
       {children}
@@ -329,11 +345,11 @@ export function ToastProvider({ children }) {
           const activate = () => {
             if (!t.onClick) return;
             t.onClick();
-            dismiss(t.id);
+            dismiss(t.id, t.variant);
           };
           return (
             <div
-              className={`toast${t.onClick ? ' clickable' : ''}${t.exiting ? ' out' : ''}`}
+              className={`toast${t.variant === 'mannequinCompletion' ? ' mannequin-completion' : ''}${t.onClick ? ' clickable' : ''}${t.exiting ? ' exiting' : ''}`}
               key={t.id}
               role={t.onClick ? 'button' : 'status'}
               tabIndex={t.onClick ? 0 : undefined}
@@ -346,8 +362,8 @@ export function ToastProvider({ children }) {
             >
               {t.thumb && <img className="toast-thumb" src={t.thumb} alt="" onError={(event) => { event.currentTarget.hidden = true; }} />}
               {t.icon && <Icon name={t.icon} size={17} />}
-              <span>{t.msg}</span>
-              {t.undo && <span className="undo" onClick={(event) => { event.stopPropagation(); t.undo(); dismiss(t.id); }}>되돌리기</span>}
+              <span className="toast-message">{t.msg}</span>
+              {t.undo && <span className="undo" onClick={(event) => { event.stopPropagation(); t.undo(); dismiss(t.id, t.variant); }}>되돌리기</span>}
             </div>
           );
         })}

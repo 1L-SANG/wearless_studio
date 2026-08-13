@@ -296,12 +296,13 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .dot-done { background: var(--link); }
 
 /* ====================== TOGGLE ====================== */
-.tg { width: 40px; height: 23px; border-radius: var(--r-pill); background: #e3e3e3; position: relative; cursor: pointer;
+.tg { appearance: none; width: 40px; height: 23px; padding: 0; border: 0; border-radius: var(--r-pill); background: #e3e3e3; position: relative; cursor: pointer;
   transition: background .18s; box-shadow: var(--elev-inset); flex: none; }
 .tg.on { background: var(--fg-1); }
 .tg::after { content: ''; position: absolute; top: 2px; left: 2px; width: 19px; height: 19px; border-radius: 50%;
   background: #fff; box-shadow: var(--elev-soft); transition: transform .18s; }
 .tg.on::after { transform: translateX(17px); }
+.tg:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .toggle-row { display: flex; align-items: center; gap: 12px; }
 
 /* ====================== PROGRESS ====================== */
@@ -387,8 +388,16 @@ textarea.field { resize: vertical; min-height: 96px; line-height: 1.5; }
 .toast.clickable:focus-visible { outline: 2px solid var(--fg-1); outline-offset: 2px; }
 .toast-thumb { width: 40px; height: 40px; flex: none; border-radius: var(--r-3); object-fit: cover;
   background: var(--bg-2); box-shadow: 0 0 0 1px var(--ring); }
-@media (prefers-reduced-motion: reduce) { .toast { animation: toastIn .28s cubic-bezier(.22,.61,.36,1); } }
-.toast.out { animation: toastOut .4s cubic-bezier(.4,0,.2,1) forwards; }
+.toast.mannequin-completion { width: var(--sb-card-w, 184px); max-width: none; flex-direction: column; align-items: stretch;
+  gap: 0; padding: 0 0 14px; overflow: hidden; border-radius: 10px; text-align: center; }
+.toast.mannequin-completion .toast-thumb { width: 100%; height: auto; aspect-ratio: 3 / 4; border-radius: 10px;
+  object-fit: cover; box-shadow: 0 0 0 1px var(--ring); }
+.toast.mannequin-completion .toast-message { padding: 13px 12px 0; line-height: 1.45; }
+.toast.exiting { pointer-events: none; animation: toastOut .4s cubic-bezier(.4,0,.2,1) forwards; }
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: toastIn .28s cubic-bezier(.22,.61,.36,1); }
+  .toast.mannequin-completion, .toast.mannequin-completion.exiting { animation: none; }
+}
 .toast .undo { margin-left: 8px; color: var(--fg-1); text-decoration: underline; cursor: pointer; opacity: .7; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-10px); } }
 @keyframes toastOut { to { opacity: 0; transform: translateY(-8px) scale(.98); } }

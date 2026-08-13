@@ -14,9 +14,9 @@ const mode = import.meta.env.VITE_API_MODE ?? 'mock';
 export const isMockMode = mode !== 'http';
 
 // 서버 대응이 없는 순수 클라 함수 — http 모드에서도 mock 로 유지한다.
-// getCatalogs: 정적 UI 옵션 데이터. pickAnyImage/download: 클라 헬퍼.
+// getCatalogs: 정적 UI 옵션 데이터. download: 클라 헬퍼.
 // (draftWashCare 는 서버 wash-care:draft, regenerateMannequin 은 서버 mannequins:regenerate 로 실배선됨 → httpAdapter 담당.)
-const CLIENT_ONLY = ['getCatalogs', 'pickAnyImage', 'download'];
+const CLIENT_ONLY = ['getCatalogs', 'download'];
 
 // 제품 결정: 입력·분석은 로그인 없이 공개하고, 로그인은 마네킹 단계부터 요구한다.
 // 공개 흐름은 서버 projectId가 없으므로 로컬 draft 기능은 mock에 위임한다. 단 분석만은
