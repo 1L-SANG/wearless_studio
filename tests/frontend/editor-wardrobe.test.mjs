@@ -38,6 +38,45 @@ test('generated editor photos are merged into their product color groups', () =>
   assert.deepEqual(merged.misc.map((image) => image.src), ['/existing-upload.png']);
 });
 
+test('final asset URLs replace expired generation previews instead of doubling the wardrobe', () => {
+  const storyboard = [
+    { id: 'shot-black-1', colorId: 'black' },
+    { id: 'shot-black-2', colorId: 'black' },
+  ];
+  const previewBlocks = [{
+    id: 'generation-preview',
+    elements: [
+      { id: 'photo-1', type: 'image', src: 'https://provider.example/expired-1.jpg', sourceBlockId: 'shot-black-1' },
+      { id: 'photo-2', type: 'image', src: 'https://provider.example/expired-2.jpg', sourceBlockId: 'shot-black-2' },
+    ],
+  }];
+  const previewWardrobe = mergeEditorImagesIntoWardrobe({
+    wardrobe: {},
+    blocks: previewBlocks,
+    storyboard,
+    colorIds: ['black'],
+  });
+
+  const finalBlocks = [{
+    id: 'generation-preview',
+    elements: [
+      { id: 'photo-1', type: 'image', src: 'https://api.wearless.kr/v1/assets/stable-1/file', sourceBlockId: 'shot-black-1' },
+      { id: 'photo-2', type: 'image', src: 'https://api.wearless.kr/v1/assets/stable-2/file', sourceBlockId: 'shot-black-2' },
+    ],
+  }];
+  const finalized = mergeEditorImagesIntoWardrobe({
+    wardrobe: previewWardrobe,
+    blocks: finalBlocks,
+    storyboard,
+    colorIds: ['black'],
+  });
+
+  assert.deepEqual(finalized.black.map((image) => image.src), [
+    'https://api.wearless.kr/v1/assets/stable-1/file',
+    'https://api.wearless.kr/v1/assets/stable-2/file',
+  ]);
+});
+
 test('direct uploads are collected under misc without treating arbitrary placed photos as uploads', () => {
   const blocks = [
     {

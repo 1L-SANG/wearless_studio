@@ -150,3 +150,11 @@ test('speech bubble path applies the editable pixel corner radius', () => {
   assert.match(rounded, /^M 45 0/);
   assert.notEqual(rounded, square);
 });
+
+test('speech bubble path keeps a clearly visible tail at compact sizes', () => {
+  const path = speechBubblePath({ width: 196, height: 87, radius: 28 });
+  const tailTip = path.match(/L ([\d.]+) 87 L/);
+
+  assert.ok(tailTip, 'the tail reaches the bottom edge of the bubble box');
+  assert.ok(Number(tailTip[1]) < 32, 'the tail tip extends clearly beyond its left base');
+});

@@ -12,6 +12,7 @@ function wardrobeImageFromElement(element, group) {
   return {
     id: element.id || `editor-image-${group}-${normalizedSrc(element.src)}`,
     src: normalizedSrc(element.src),
+    ...(element.sourceBlockId ? { sourceBlockId: element.sourceBlockId } : {}),
     cutType: element.cutType || null,
     width: Number(element.width || element.w) || undefined,
     height: Number(element.height || element.h) || undefined,
@@ -39,21 +40,9 @@ export function mergeEditorImagesIntoWardrobe({
   const output = Object.fromEntries(groupOrder.map((group) => [group, []]));
   output.misc = [];
 
-  const seenSrc = new Set();
-  const append = (group, image) => {
-    const src = normalizedSrc(image?.src);
-    if (!src || seenSrc.has(src)) return;
-    if (!output[group]) output[group] = [];
-    output[group].push({ ...image, src });
-    seenSrc.add(src);
-  };
-
-  for (const group of [...groupOrder, 'misc']) {
-    for (const image of wardrobe?.[group] || []) append(group, { ...image, wardrobeGroup: group });
-  }
-
   const sourceById = new Map((storyboard || []).filter(Boolean).map((item) => [item.id, item]));
   const defaultColorId = fallbackColorId || orderedColorIds[0] || knownGroups[0] || 'misc';
+  const editorImages = [];
 
   for (const block of blocks || []) {
     const customUploadBlock = block?.contentRole === 'custom' && block?.name === '내 이미지';
@@ -67,9 +56,35 @@ export function mergeEditorImagesIntoWardrobe({
       if (!directUpload && !element.sourceBlockId) continue;
 
       const group = directUpload ? 'misc' : (source?.colorId || defaultColorId);
-      append(group, wardrobeImageFromElement(element, group));
+      editorImages.push({ group, image: wardrobeImageFromElement(element, group) });
     }
   }
+
+  // 생성 중 provider preview와 완료 후 안정 asset URL은 같은 캔버스 요소다. 이전 병합에서
+  // 의류 탭에 파생시킨 preview를 먼저 버려야 URL이 바뀌어도 12개가 24개로 불어나지 않는다.
+  const currentEditorIds = new Set(editorImages.map(({ image }) => image.id).filter(Boolean));
+  const currentSourceBlockIds = new Set(editorImages.map(({ image }) => image.sourceBlockId).filter(Boolean));
+  const isSupersededEditorImage = (image) => Boolean(image?.generated) && (
+    currentEditorIds.has(image.id)
+    || (image.sourceBlockId && currentSourceBlockIds.has(image.sourceBlockId))
+  );
+
+  const seenSrc = new Set();
+  const append = (group, image) => {
+    const src = normalizedSrc(image?.src);
+    if (!src || seenSrc.has(src)) return;
+    if (!output[group]) output[group] = [];
+    output[group].push({ ...image, src });
+    seenSrc.add(src);
+  };
+
+  for (const group of [...groupOrder, 'misc']) {
+    for (const image of wardrobe?.[group] || []) {
+      if (!isSupersededEditorImage(image)) append(group, { ...image, wardrobeGroup: group });
+    }
+  }
+
+  for (const { group, image } of editorImages) append(group, image);
 
   return Object.fromEntries(Object.entries(output).filter(([, images]) => images.length));
 }

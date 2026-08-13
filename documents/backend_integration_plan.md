@@ -172,7 +172,7 @@ seed/matching/{matchingItemId}.{ext}
 | ✅ 1. Phase 0~1 | FastAPI 골격·Supabase(스키마+Auth)·백엔드 배포(당시 Railway)·어댑터 분기 + 읽기 전환 + **TanStack Query 도입** | **완료.** Zustand는 이미 구현 완료 |
 | ✅ 2. Phase 2~3 | R2 presigned 업로드 → 분석·매칭 전환 | **완료.** M-01 매칭 백엔드·64종 시드 live |
 | ✅ 3. Phase 4 | AI job 실체화 + **크레딧 원장(reserve-confirm) 동시 구축** | **완료.** AG-04 마네킹 생성(fitProfile 재생성 흐름) live. ⚠️ 크레딧 단가·환불 정책은 상용 출시 직전 확정 필요(§11-1) |
-| ✅ 3-1. Railway → AWS 이전 | 백엔드 호스팅을 **AWS ECS Fargate**(Copilot, `api.wearless.kr`)로 마이그레이션 — ECR 이미지, GitHub Actions(OIDC) 자동 배포, secrets=SSM Parameter Store | **완료 (2026-07).** `copilot/` 매니페스트·`.github/workflows/deploy-server.yml`·`deploy/aws/` 참조. 프론트는 Vercel(별개) |
+| ✅ 3-1. Railway → AWS 이전 | 백엔드 호스팅을 **AWS ECS Fargate**(Copilot, `api.wearless.kr`)로 마이그레이션 — ECR 이미지, GitHub Actions(OIDC) 자동 배포, secrets=SSM Parameter Store | **완료 (2026-07).** API는 `.github/workflows/deploy-server.yml`, SAM2 모델 서비스는 `.github/workflows/deploy-sam2.yml`이 독립 배포한다. `copilot/` 매니페스트·`deploy/aws/` 참조. 프론트는 Vercel(별개) |
 | 4. Phase 5~6 | 콘티·에디터 영속화 → 다운로드(클라 렌더, §7) | |
 | 5. Phase 7 | mock 제거 (parity 체크리스트) | **mock은 그 전까지 유지** — 실행 가능한 계약(멱등·봉투·소유권 머지)이자 parity 기준. 폐기 시 전환 리스크 증가 |
 | 6. PG (결제) | 크레딧 **충전** 기능으로 원장 위에 마지막에 얹음 | 크레딧 시스템과 분리 — 베타는 수동 지급(원장 `grant`)으로 PG 없이 런칭 가능. PG사 선정은 별도 ADR |

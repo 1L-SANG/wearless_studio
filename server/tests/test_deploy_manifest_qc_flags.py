@@ -32,6 +32,8 @@ QC_FLAGS = [
     ("MANNEQUIN_BASE_FIDELITY_QC", "mannequin_base_fidelity_qc"),
     ("MANNEQUIN_BASE_FIDELITY_OBSERVE_REGENERATIONS",
      "mannequin_base_fidelity_observe_regenerations"),
+    # 톤 에디터도 미선언이면 API 가 disabled 를 반환하고 UI 가 조용히 사라진다.
+    ("MANNEQUIN_TONE_EDITOR", "mannequin_tone_editor"),
 ]
 
 
@@ -138,15 +140,17 @@ def test_loader_silently_falls_back_on_typo(monkeypatch):
 
 # ── 배포 순서 계약 ───────────────────────────────────────────────────────────
 
-WORKFLOW = pathlib.Path(__file__).resolve().parents[2] / ".github/workflows/deploy-server.yml"
+WORKFLOW_DIR = pathlib.Path(__file__).resolve().parents[2] / ".github/workflows"
+API_WORKFLOW = WORKFLOW_DIR / "deploy-server.yml"
+SAM_WORKFLOW = WORKFLOW_DIR / "deploy-sam2.yml"
 
 
-def _wf() -> dict:
-    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+def _wf(path: pathlib.Path = API_WORKFLOW) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def _step_names(job: str) -> list[str]:
-    return [s.get("name") or s.get("uses") or "" for s in _wf()["jobs"][job]["steps"]]
+def _step_names(job: str, path: pathlib.Path = API_WORKFLOW) -> list[str]:
+    return [s.get("name") or s.get("uses") or "" for s in _wf(path)["jobs"][job]["steps"]]
 
 
 #: (경로 글롭, api 배포, sam2 배포) — 각 이미지가 **실제로 COPY 하는 것**에서 나온 표다.
@@ -164,8 +168,9 @@ CHANGE_MATRIX = [
     ("server/sam_service/requirements.txt", False, True),
     ("server/sam_service/Dockerfile", False, True),
     ("copilot/sam2/manifest.yml", False, True),
-    # 워크플로 자체가 바뀌면 둘 다 — 라우팅이 달라졌을 수 있으므로 안전측으로.
-    (".github/workflows/deploy-server.yml", True, True),
+    # 각 워크플로는 자기 서비스만 소유한다.
+    (".github/workflows/deploy-server.yml", True, False),
+    (".github/workflows/deploy-sam2.yml", False, True),
     # 어느 이미지에도 안 들어가는 것들
     ("server/tests/test_analyze.py", False, False),
     ("server/scripts/seed_mannequin_base.py", False, False),
@@ -182,8 +187,8 @@ def _matches(glob: str, path: str) -> bool:
     return re.fullmatch(rx, path) is not None
 
 
-def _filters() -> dict:
-    for s in _wf()["jobs"]["changes"]["steps"]:
+def _filters(path: pathlib.Path) -> dict:
+    for s in _wf(path)["jobs"]["changes"]["steps"]:
         if str(s.get("uses", "")).startswith("dorny/paths-filter"):
             return yaml.safe_load(s["with"]["filters"])
     raise AssertionError("changes 잡에서 paths-filter 를 못 찾았다")
@@ -193,10 +198,30 @@ def _filters() -> dict:
 def test_change_matrix_routes_to_the_right_services(path, want_api, want_sam):
     """서비스별 배포 라우팅. 여기가 틀리면 무관한 변경이 SAM 을 재배포하거나(비용),
     공유 의존이 빠져 stale 이미지가 남는다(더 나쁨)."""
-    f = _filters()
-    got_api = any(_matches(g, path) for g in f["api"])
-    got_sam = any(_matches(g, path) for g in f["sam2"])
+    api = _filters(API_WORKFLOW)
+    sam = _filters(SAM_WORKFLOW)
+    got_api = any(_matches(g, path) for g in api["api"])
+    got_sam = any(_matches(g, path) for g in sam["sam2"])
     assert (got_api, got_sam) == (want_api, want_sam), f"{path}: api={got_api} sam2={got_sam}"
+
+
+def _event_paths(path: pathlib.Path, event: str = "push") -> list[str]:
+    doc = _wf(path)
+    triggers = doc.get("on") or doc.get(True)  # PyYAML 1.1 은 `on` 을 bool 로 읽는다.
+    return triggers[event]["paths"]
+
+
+def test_workflow_triggers_are_service_scoped():
+    """SAM 소스만 바뀐 커밋은 API 파이프라인을, API 소스만 바뀐 커밋은 SAM 파이프라인을
+    열지 않는다. GitHub `on.paths` 가 잡 그래프 생성 전의 1차 경계다."""
+    api_paths = _event_paths(API_WORKFLOW)
+    sam_paths = _event_paths(SAM_WORKFLOW)
+    assert any(_matches(g, "server/app/routes.py") for g in api_paths)
+    assert not any(_matches(g, "server/app/routes.py") for g in sam_paths)
+    assert any(_matches(g, "server/sam_service/model.py") for g in sam_paths)
+    assert not any(_matches(g, "server/sam_service/model.py") for g in api_paths)
+    assert any(_matches(g, "copilot/api/manifest.yml") for g in api_paths)
+    assert not any(_matches(g, "copilot/sam2/manifest.yml") for g in api_paths)
 
 
 def test_sam_image_has_no_dependency_on_the_api_source():
@@ -224,30 +249,34 @@ def test_migrations_run_before_the_api_deploy():
     assert mig < api, steps
 
 
-def test_sam_deploys_before_api_when_both_change():
-    """api 매니페스트가 SAM_SERVICE_URL 로 sam2 를 가리킨다 — 순서가 뒤집히면 api 가
-    아직 없는 서비스를 호출한다. job 의존으로 순서를 강제한다."""
-    jobs = _wf()["jobs"]
-    assert "deploy-sam2" in jobs["deploy-api"]["needs"]
-    assert "마이그레이션" not in " ".join(_step_names("deploy-sam2")), "SAM 단독 배포는 DB 를 건드리지 않는다"
+def test_sam_deployment_is_a_separate_workflow():
+    """무거운 SAM 이미지 빌드·ECS 롤링은 API 배포 그래프에 존재하지 않는다."""
+    api = _wf(API_WORKFLOW)
+    sam = _wf(SAM_WORKFLOW)
+    assert "deploy-sam2" not in api["jobs"]
+    assert "deploy-api" not in sam["jobs"]
+    assert "deploy-sam2" in sam["jobs"]
+    assert api["concurrency"]["group"] != sam["concurrency"]["group"]
+    assert "마이그레이션" not in " ".join(_step_names("deploy-sam2", SAM_WORKFLOW))
 
 
-def test_api_still_deploys_when_sam_is_skipped():
-    """API 단독 변경에서 sam2 잡은 스킵된다. 그 스킵이 api 를 막으면 안 된다."""
-    cond = _wf()["jobs"]["deploy-api"]["if"]
-    assert "always()" in cond
-    assert "needs.deploy-sam2.result == 'skipped'" in cond
-    assert "needs.deploy-sam2.result == 'success'" in cond
+def test_manual_dispatch_forces_each_service_deploy():
+    """수동 실행은 diff 유무와 무관하게 선택한 서비스 하나만 재배포한다."""
+    api_cond = _wf(API_WORKFLOW)["jobs"]["deploy-api"]["if"]
+    sam_cond = _wf(SAM_WORKFLOW)["jobs"]["deploy-sam2"]["if"]
+    assert "github.event_name == 'workflow_dispatch'" in api_cond
+    assert "github.event_name == 'workflow_dispatch'" in sam_cond
 
 
 def test_deploy_jobs_never_run_on_pull_requests():
     """PR 에서는 test 만 돈다 — 배포 잡이 필수 체크로 걸려 머지를 막는 구성을 피한다."""
-    assert _wf()["jobs"]["changes"]["if"] == "github.event_name != 'pull_request'"
+    assert "github.event_name != 'pull_request'" in _wf(API_WORKFLOW)["jobs"]["deploy-api"]["if"]
+    assert "github.event_name != 'pull_request'" in _wf(SAM_WORKFLOW)["jobs"]["deploy-sam2"]["if"]
 
 
 def test_migration_step_fails_loudly_without_its_secret():
     """시크릿이 없으면 **건너뛰지 말고 실패**해야 한다. 조용한 skip 이 사고의 원인이다."""
-    body = WORKFLOW.read_text(encoding="utf-8")
+    body = API_WORKFLOW.read_text(encoding="utf-8")
     assert "supabase db push" in body
     assert 'if [ -z "$SUPABASE_DB_URL" ]; then' in body
     assert "exit 1" in body

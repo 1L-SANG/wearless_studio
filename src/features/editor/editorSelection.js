@@ -4,6 +4,7 @@ import { mergeSpeechBubbleElements } from './editorBubbleFit.js';
 
 const LEGACY_LIBRARY_GROUP_SIZE = {
   'text-box': 2,
+  'single-bubble': 1,
   'qa-bubbles': 2,
   divider: 1,
   'arrow-callout': 2,
@@ -109,8 +110,40 @@ export function shouldClearEditorSelection(target) {
   return !target.closest('[data-elid], .canvas-block, .moveable-control-box, .align-bar');
 }
 
+export function isEditorGrayWorkspaceTarget(target) {
+  if (!target?.closest) return false;
+  return !target.closest('.canvas-block, .moveable-control-box');
+}
+
 export function shouldPreserveMultiSelectionOnPointerDown({ selected, selectionCount, additive }) {
   return Boolean(selected && selectionCount > 1 && !additive);
+}
+
+export function shouldPassGroupDragArea(elements) {
+  const selected = (elements || []).filter(Boolean);
+  // Q&A 말풍선은 각 요소 자체가 완성된 오브젝트라 자식 선택을 위해 포인터를 통과시킬
+  // 이유가 없다. Moveable의 그룹 드래그 영역이 직접 포인터를 받아야 선택 후 이동된다.
+  return !selected.length || !selected.every((element) => element.type === 'text' && element.shape === 'bubble');
+}
+
+function intersectsRect(first, second) {
+  if (!first || !second) return false;
+  return first.left < second.right && first.right > second.left
+    && first.top < second.bottom && first.bottom > second.top;
+}
+
+export function selectionIdsInsideMarquee(elements, elementRects, marqueeRect) {
+  const selectable = (elements || []).filter((element) => !element.hidden && !element.locked);
+  const selectableIds = new Set(selectable.map((element) => element.id));
+  const selectedIds = new Set();
+  selectable.forEach((element) => {
+    const rect = elementRects instanceof Map ? elementRects.get(element.id) : elementRects?.[element.id];
+    if (!intersectsRect(marqueeRect, rect)) return;
+    selectionIdsForElement(elements, element).forEach((id) => {
+      if (selectableIds.has(id)) selectedIds.add(id);
+    });
+  });
+  return (elements || []).map((element) => element.id).filter((id) => selectedIds.has(id));
 }
 
 export function isEditorDeleteKey(event) {

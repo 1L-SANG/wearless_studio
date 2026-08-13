@@ -44,7 +44,7 @@ function legacyBubbleFit(bubble, copy) {
   const currentBottom = Number(bubble.y || 0) + Number(bubble.h || 0)
     - Number(copy.y || 0) - Number(copy.h || 0);
   return {
-    minWidth: Number(configured.minWidth ?? Math.min(Number(copy.w || 220), 220)),
+    minWidth: 0,
     maxWidth: Number(configured.maxWidth ?? Math.max(Number(copy.w || 660), 660)),
     padX,
     padTop,
@@ -142,7 +142,9 @@ export function patchSelectedBubbleAppearance(blocks, selectedIds, patch) {
 export function speechBubbleFitOptions(element) {
   const configured = element?.bubbleFit || {};
   return {
-    minWidth: Number(configured.minWidth ?? Math.min(Number(element?.w || 220), 220)),
+    // 예전 프리셋의 minWidth 는 입력이 일정 길이를 넘을 때까지 폭을 고정했다.
+    // 말풍선은 첫 글자부터 내용 폭을 따라가며, 사용자가 정한 maxWidth 에서만 줄바꿈한다.
+    minWidth: 0,
     maxWidth: Number(configured.maxWidth ?? Math.max(Number(element?.w || 660), 660)),
     padX: Number(configured.padX ?? 24),
     padTop: Number(configured.padTop ?? 20),

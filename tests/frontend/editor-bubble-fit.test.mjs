@@ -8,19 +8,29 @@ import {
   patchSelectedBubbleAppearance,
 } from '../../src/features/editor/editorBubbleFit.js';
 
-test('speech bubble shrinks around short copy while keeping its left anchor and padding', () => {
+test('speech bubble follows short copy immediately while keeping its left anchor and padding', () => {
   const bubble = {
     id: 'bubble', type: 'text', shape: 'bubble', x: 100, y: 80, w: 380, h: 104,
     text: '짧은 질문',
     bubbleFit: { minWidth: 160, maxWidth: 620, padX: 24, padTop: 22, padBottom: 42, anchor: 'left' },
   };
 
-  assert.equal(bubbleTextWidth(bubble, 112), 160);
+  assert.equal(bubbleTextWidth(bubble, 112), 116);
   assert.deepEqual(fitBubbleToText(bubble, { naturalWidth: 112, renderedHeight: 29 }), {
-    elementPatch: { x: 100, y: 80, w: 208, h: 93 },
-    textWidth: 160,
+    elementPatch: { x: 100, y: 80, w: 164, h: 93 },
+    textWidth: 116,
     textHeight: 29,
   });
+});
+
+test('legacy minimum widths no longer delay responsive growth', () => {
+  const bubble = {
+    id: 'bubble', type: 'text', shape: 'bubble', x: 40, y: 30, w: 320, h: 100,
+    bubbleFit: { minWidth: 220, maxWidth: 560, padX: 24, padTop: 20, padBottom: 38, anchor: 'left' },
+  };
+
+  assert.equal(bubbleTextWidth(bubble, 36), 40);
+  assert.equal(fitBubbleToText(bubble, { naturalWidth: 36, renderedHeight: 29 }).elementPatch.w, 88);
 });
 
 test('right-hand speech bubble grows up to its limit without moving its right edge', () => {
@@ -54,7 +64,7 @@ test('legacy shape and copy layers merge into one editable speech-bubble element
   assert.deepEqual(merged[0], {
     id: 'bubble', type: 'text', shape: 'bubble', groupId: 'qa', x: 20, y: 20, w: 300, h: 90,
     fill: '#fff', stroke: '#111', strokeWidth: 1, radius: 45, text: '한 요소가 됩니다', style: { size: 20 },
-    bubbleFit: { minWidth: 160, maxWidth: 600, padX: 20, padTop: 20, padBottom: 40, anchor: 'left' },
+    bubbleFit: { minWidth: 0, maxWidth: 600, padX: 20, padTop: 20, padBottom: 40, anchor: 'left' },
   });
   assert.equal(merged[1], elements[2], 'unrelated elements retain their identity');
   assert.equal(mergeSpeechBubbleElements(merged), merged, 'migration is idempotent');

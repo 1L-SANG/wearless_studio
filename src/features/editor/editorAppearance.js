@@ -126,12 +126,14 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 export function speechBubblePath({ width, height, radius }) {
   const w = Math.max(1, Number(width) || 1);
   const h = Math.max(1, Number(height) || 1);
-  const tailHeight = clamp(h * 0.16, 10, 22);
+  // 축소된 에디터에서도 꼬리가 둥근 사각형에 묻히지 않도록 본체 높이의 약 1/4을 쓴다.
+  const tailHeight = Math.min(Math.max(0, h - 1), clamp(h * 0.28, 18, 30));
   const bodyBottom = Math.max(1, h - tailHeight);
   const r = clamp(Number(radius) || 0, 0, Math.min(w / 2, bodyBottom / 2));
-  const tailStart = clamp(w * 0.26, r + 4, Math.max(r + 4, w - r - 26));
-  const tailEnd = clamp(tailStart + 20, tailStart + 4, w - r);
-  const tailTipX = clamp(tailStart - 10, r, tailStart);
+  const tailWidth = Math.min(clamp(w * 0.2, 24, 44), Math.max(4, w - r * 2));
+  const tailStart = clamp(w * 0.22, r, Math.max(r, w - r - tailWidth));
+  const tailEnd = Math.min(w - r, tailStart + tailWidth);
+  const tailTipX = clamp(tailStart - 14, 0, w);
   return [
     `M ${r} 0`, `H ${w - r}`, `Q ${w} 0 ${w} ${r}`,
     `V ${bodyBottom - r}`, `Q ${w} ${bodyBottom} ${w - r} ${bodyBottom}`,

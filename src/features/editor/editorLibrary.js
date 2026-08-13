@@ -43,6 +43,7 @@ export const FRAME_LIBRARY_ITEMS = [
 
 export const OBJECT_LIBRARY_ITEMS = [
   { id: 'text-box', label: '반투명 텍스트 박스', preview: 'TEXT' },
+  { id: 'single-bubble', label: '말풍선', preview: '말풍선' },
   { id: 'qa-bubbles', label: 'Q&A 말풍선', preview: 'Q · A' },
   { id: 'divider', label: '구분선', preview: '—' },
   { id: 'arrow-callout', label: '화살표 콜아웃', preview: 'POINT →' },
@@ -165,14 +166,25 @@ export function buildObjectPreset(presetId, { x = 120, y = 120, idFn }) {
       rect(idFn, groupId, x, y, 520, 150, '#0e0d14', 18, 0.94),
       text(idFn, groupId, x + 30, y + 38, 460, 72, '강조할 내용을 입력하세요', { size: 26, weight: 600, color: '#ffffff', lineHeight: 36 }),
     ];
+  } else if (presetId === 'single-bubble') {
+    elements = [
+      {
+        ...speechBubble(idFn, groupId, x, y, 320, 100, '내용을 입력하세요',
+          { size: 20, weight: 500, color: '#000000', lineHeight: 29 }, '#FFFFFF',
+          { maxWidth: 560, padX: 24, padTop: 20, padBottom: 38, anchor: 'left' }),
+        stroke: '#000000',
+        strokeWidth: 2,
+        radius: 28,
+      },
+    ];
   } else if (presetId === 'qa-bubbles') {
     elements = [
       speechBubble(idFn, groupId, x, y, 380, 104, 'Q. 가장 궁금한 점은?',
         { size: 20, weight: 600, color: '#0e0d14' }, '#ffffff',
-        { minWidth: 160, maxWidth: 620, padX: 24, padTop: 22, padBottom: 42, anchor: 'left' }),
+        { maxWidth: 620, padX: 24, padTop: 22, padBottom: 42, anchor: 'left' }),
       speechBubble(idFn, groupId, x + 110, y + 112, 520, 142, 'A. 답변을 간결하게 입력하세요.',
         { size: 19, weight: 500, color: '#0e0d14', lineHeight: 29 }, '#dcecff',
-        { minWidth: 200, maxWidth: 660, padX: 30, padTop: 26, padBottom: 50, anchor: 'right' }, true),
+        { maxWidth: 660, padX: 30, padTop: 26, padBottom: 50, anchor: 'right' }, true),
     ];
   } else if (presetId === 'divider') {
     elements = [line(idFn, groupId, x, y + 12, 620)];
