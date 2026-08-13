@@ -126,6 +126,12 @@
       "shot": "detail",
       "clothingType": "bottom",
       "gender": null
+    },
+    {
+      "cutType": "product",
+      "shot": "detail",
+      "clothingType": "outer",
+      "gender": null
     }
   ]
 }

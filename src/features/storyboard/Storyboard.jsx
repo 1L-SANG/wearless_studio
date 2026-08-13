@@ -149,7 +149,7 @@ function exampleGenderFromAnalysis(analysis, catalogs, clothingType) {
   return targets.length === 1 ? targets[0] : null;
 }
 
-function OuterClosureIcon({ state }) {
+export function OuterClosureIcon({ state }) {
   const edge = state === 'closed'
     ? <path d="M24 18v32" />
     : state === 'partial'
@@ -307,14 +307,14 @@ function StoryboardCardActions({ onDuplicate, onDelete, onNudge, canNudgeUp, can
 }
 
 function StoryboardMedia({ block, catalogs, index, total, onDuplicate, onDelete, onNudge, canNudgeUp, canNudgeDown }) {
-  const missing = block.source !== 'mine' && !block.exampleId;
+  const missing = block.source !== 'mine' && !block.exampleId && !block.previewThumb;
   const example = block.exampleId
     ? (catalogs?.genExamples || []).find((item) => item.id === block.exampleId)
     : null;
   const image = example ? generationExampleImageSources(example) : null;
   const src = block.source === 'mine'
     ? (block.thumb || block.ownImages?.[0])
-    : (image?.src || block.thumb);
+    : (block.previewThumb || image?.src || block.thumb);
   return (
     <>
       <span className="sb-canvas-number">{cutNumber(index, total)}</span>
@@ -432,10 +432,17 @@ function StoryboardFrame({
   items, total, catalogs, colorOpts, matchClothing, clothingType,
   selectedId, locked, dragFor, onSelect, onDuplicate, onDelete, addControl,
 }) {
+  const colorway = items.every((item) => (
+    item.block.colorwayGroupId
+    && item.block.colorwayGroupId === items[0].block.colorwayGroupId
+  ));
+  const colorwayName = colorOpts.find((color) => color.id === items[0].block.colorId)?.label || '색상';
   return (
-    <div className="sb-frame">
+    <div className={'sb-frame' + (colorway ? ' colorway-set' : '')}>
       <div className="sb-frame-media">
-        <span className="sb-frame-tag">한 프레임 구성 · 2컷</span>
+        <span className="sb-frame-tag">
+          {colorway ? `색상 세트 · ${colorwayName} · 공통 예시 · 포즈 자동 변주` : '한 프레임 구성 · 2컷'}
+        </span>
         <div className="sb-frame-box">
           {items.map((item) => {
             const missing = item.block.source !== 'mine' && !item.block.exampleId;
@@ -490,7 +497,7 @@ function StoryboardStack({ group, total, catalogs, onOpen }) {
           return (
             <span key={item.block.id} className="sb-stack-cut">
               {stackIndex === 0 && <span className="sb-canvas-number">{cutNumber(item.index, total)}</span>}
-              <img src={image?.src || item.block.thumb || item.block.ownImages?.[0]}
+              <img src={item.block.previewThumb || image?.src || item.block.thumb || item.block.ownImages?.[0]}
                 srcSet={image?.srcSet} alt="" loading="lazy" decoding="async" />
             </span>
           );
@@ -1520,6 +1527,7 @@ function prepareStoryboardEntry([board, rawCatalogs, matchClothing, product, ana
     composeModeSeed: {
       colors: p.colors || [],
       targetGenders: a?.targetGenders || [],
+      matchClothing: matchClothing || [],
     },
     normalized,
     assignment,
@@ -1618,6 +1626,7 @@ export function Storyboard() {
   const [composeModeSeed, setComposeModeSeed] = useState(() => initialEntry?.composeModeSeed || ({
     colors: [],
     targetGenders: [],
+    matchClothing: [],
   }));
   const [selectedId, setSelectedId] = useState(null);
   const [splitOpen, setSplitOpen] = useState(false); // 한 번이라도 카드를 열면 좌/우 분할 유지
@@ -1851,6 +1860,7 @@ export function Storyboard() {
       projectId,
       clothingType,
       targetGenders: composeModeSeed.targetGenders,
+      matchClothing: composeModeSeed.matchClothing,
     },
   );
 
@@ -2647,11 +2657,11 @@ export function Storyboard() {
             onPointerEnter={() => {
               if (open || !catalogs) return;   // 펼치기 직전 신호 — 아직 안 데운 것만 앞당겨 받는다
               prewarmImages(group.items.flatMap(({ block }) => [
-                block.exampleId
+                block.previewThumb || (block.exampleId
                   ? generationExampleImageSources(
                     (catalogs.genExamples || []).find((example) => example.id === block.exampleId),
                   ).prewarm
-                  : block.thumb,
+                  : block.thumb),
                 block.ownImages?.[0],
               ]), { concurrency: 6 });
             }}

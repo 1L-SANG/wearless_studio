@@ -189,6 +189,26 @@ test('existing auto usage counts, keys stay independent, and one/two-item pools 
   assert.deepEqual(result.blocks.map((item) => item.exampleId), ['full-2', 'full-1', 'full-1', 'medium-1', 'medium-1']);
 });
 
+test('colorway rows share one full and one medium generation example across colors', () => {
+  const catalog = [
+    example('full-1'), example('full-2', { rank: 2 }),
+    example('medium-1', { shot: 'medium' }), example('medium-2', { shot: 'medium', rank: 2 }),
+  ];
+  const colorways = ['ivory', 'sky', 'gray'].flatMap((colorId) => [
+    block(`${colorId}-full`, {
+      direction: 'front', colorId, shot: 'full', colorwayGroupId: `colorway__${colorId}`,
+    }),
+    block(`${colorId}-medium`, {
+      direction: 'front', colorId, shot: 'medium', colorwayGroupId: `colorway__${colorId}`,
+    }),
+  ]);
+  const result = assignGenerationExamples(colorways, { catalog, product, gender: 'women' });
+
+  assert.deepEqual(result.blocks.map((item) => item.exampleId), [
+    'full-1', 'medium-1', 'full-1', 'medium-1', 'full-1', 'medium-1',
+  ]);
+});
+
 test('legacy and user choices are protected and only requested new blocks are assigned', () => {
   const result = assignGenerationExamples([
     block('legacy', { exampleId: 'legacy-choice' }),
@@ -325,7 +345,7 @@ test('every supported gender and clothing category seeds styling and horizon set
     const horizonCuts = (picked.sequenceSet || picked.rotationSet)?.members.length ?? 3;
     assert.equal(
       defaultStoryboard(fourColorsWithDetail, 'extended', context).length,
-      2 + stylingCuts + horizonCuts + 1 + 12 + 4,
+      2 + stylingCuts + horizonCuts + 1 + 9 + 4,
       `${gender}/${clothingType} extended`,
     );
   }

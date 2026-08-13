@@ -187,8 +187,9 @@ class CutPlan:
         if self.uses_styling_all_location_recomposition():
             lines.append(
                 "Styling/all keeps scene type, ordinary ambience, palette, time, lighting logic "
-                "and qualitative camera relation; use a different location instance with "
-                ">=1 spatial-structure and >=2 furniture/sign/prop placement changes."
+                "and camera relation; use a coherent different location instance in the same "
+                "visual family. Do not use a structural/prop change quota or force object changes "
+                "to prove difference."
             )
         return "\n".join(lines)
 

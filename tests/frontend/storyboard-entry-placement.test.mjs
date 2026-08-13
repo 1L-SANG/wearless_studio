@@ -246,8 +246,15 @@ test('multi-color basic and extended seeds follow product and studio repetition 
   for (const colorId of ['blue', 'red']) {
     const horizon = extended.filter((block) => block.cutType === 'horizon' && block.colorId === colorId);
     assert.deepEqual(horizon.map((block) => [block.direction, block.shot]), [
-      ['front', 'medium'], ['front', 'full'], ['back', 'full'],
+      ['front', 'full'], ['front', 'medium'],
     ]);
+    assert.equal(new Set(horizon.map((block) => block.colorwayGroupId)).size, 1);
+    assert.equal(new Set(horizon.map((block) => block.layoutRowId)).size, 1);
+    assert.ok(horizon.every((block) => (
+      block.colorwayPairVersion === 1
+      && block.layoutRowVersion === 1
+      && block.sectionLayout === 'twoColumn'
+    )));
     assert.equal(extended.filter((block) => (
       block.cutType === 'product'
       && block.direction === 'front'

@@ -704,10 +704,12 @@ def render_cut_prompt(
                 )
             else:
                 all_pose_rule = (
-                    "- POSE FROM EXAMPLE: preserve its torso/pelvis yaw, weight-bearing leg, "
-                    "unequal shoulder and hip lines, screen-left/screen-right limbs and hand "
-                    "heights, stance, knee bends, head/gaze, hair flow and near/far "
-                    "foreshortening. Never neutralize this asymmetry into a centered mannequin."
+                    "- POSE FROM EXAMPLE: preserve the semantic backbone—action, body-direction "
+                    "family, weight-bearing/support side, important contacts or support-object "
+                    "function, broad limb roles, gaze and intended asymmetry. Allow small natural "
+                    "changes in joint angles, hand/finger placement, head tilt, loose hair and "
+                    "fabric response. Never neutralize the pose into a centered mannequin, remove "
+                    "a defining contact/support, reverse its support side, or change the action."
                 )
                 all_framing_rule = (
                     "- Preserve the example's crop boundary, subject scale, headroom and negative "
@@ -925,7 +927,10 @@ _SLOT_LABEL = {
 }
 # 마네킹/매칭 첨부 라벨 — render_cut_prompt 의 매칭 핏 가드가 매니페스트에서 이 문구로
 # "하의가 화면에 있는가"를 판별하므로 상수로 공유(문구 드리프트 방지).
-_MANNEQUIN_LABEL = "PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)"
+_MANNEQUIN_LABEL = (
+    "MANNEQUIN — coarse worn-geometry prior only where seller PRODUCT pixels support it; "
+    "ZERO authority to resolve uncertain color, material, construction, fit or length"
+)
 _MODEL_LABEL = ("MODEL — frontal close-up of the model (facial identity ground truth only; "
                 "ZERO authority over body shape or proportions; do NOT copy this image's pose, "
                 "framing or clothing)")

@@ -121,7 +121,24 @@ def test_references_from_manifest_maps_roles_in_order_and_omits_mood():
 
 def test_references_from_manifest_accepts_explicit_mannequin_label():
     out = qc.references_from_manifest("1. MANNEQUIN — verified garment", [_img(b"M")])
-    assert [(reference.role, reference.image.data) for reference in out] == [("product", b"M")]
+    assert [(reference.role, reference.image.data) for reference in out] == [("mannequin", b"M")]
+
+
+def test_mannequin_cannot_satisfy_missing_product_truth_preflight():
+    contract = qc.normalize_plan(_plan())
+    forced = qc._forced_preflight(
+        contract,
+        [
+            qc.LabeledReference("mannequin", _img(b"MANNEQUIN")),
+            qc.LabeledReference("modelFace", _img(b"FACE")),
+            qc.LabeledReference("modelBody", _img(b"BODY")),
+            qc.LabeledReference("example", _img(b"EXAMPLE")),
+        ],
+        _img(b"GENERATED"),
+    )
+
+    assert all(forced[gate]["status"] == "UNJUDGEABLE" for gate in qc._GARMENT_GATES)
+    assert all("No PRODUCT reference" in forced[gate]["evidence"] for gate in qc._GARMENT_GATES)
 
 
 def test_references_from_manifest_maps_full_body_model_to_model_authority():
@@ -208,8 +225,11 @@ def test_prompt_preserves_reference_order_and_contains_no_source_plan_text():
     assert "missing, garbled, invented or reversed marks that should be readable" in flat_prompt
     assert "MODEL FACE and legacy MODEL/MODEL SHEET images own only selected facial identity" in flat_prompt
     assert "MODEL FULL BODY alone owns selected stature and body proportions" in flat_prompt
-    assert "Never borrow body shape from MODEL FACE/SHEET, PRODUCT/MANNEQUIN" in flat_prompt
-    assert "At least one structural element and at least two placements" in flat_prompt
+    assert "Never borrow body shape from MODEL FACE/SHEET, PRODUCT, MANNEQUIN" in flat_prompt
+    assert "MANNEQUIN is only a coarse worn-geometry prior" in flat_prompt
+    assert "Do not require a count of changed structures or props" in flat_prompt
+    assert "added, moved, duplicated or awkwardly staged" in flat_prompt
+    assert "At least one structural element" not in flat_prompt
     assert "crinkle, weave/knit/open holes, edge" in flat_prompt
     assert "flat, pasted-on 2-D garment" in flat_prompt
     assert "fine lettering is unreadable in BOTH PRODUCT and candidate" in flat_prompt

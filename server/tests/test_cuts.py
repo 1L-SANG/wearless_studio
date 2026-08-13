@@ -769,6 +769,13 @@ def test_resolved_example_manifest_and_prompt_apply_all_scope():
     assert "garments, shoes, accessories" in p
     assert "PRODUCT and MATCHING are the ONLY product-specific garment identity" in p
     assert "camera direction" in p and "remain fixed requirements" in p
+    assert "POSE FROM EXAMPLE: preserve the semantic backbone" in p
+    assert "small natural changes in joint angles" in p
+    assert "coherent different specific place" in p
+    assert "do not use a structural/prop change quota" in p
+    assert "Never add, move, duplicate or awkwardly stage" in p
+    assert "environmental text or signage is not automatically erased" in p
+    assert "at least two placements" not in p
     assert "Pose: natural and unforced" not in p
 
 

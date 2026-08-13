@@ -421,6 +421,7 @@ export const httpAdapter = {
       projectId,
       clothingType: product?.clothingType || 'top',
       targetGenders: analysis?.targetGenders || [],
+      matchClothing: analysis?.matchClothing || [],
     };
     if (Array.isArray(saved) && saved.length) {
       const previousMode = mode === 'extended' ? 'basic' : 'extended';

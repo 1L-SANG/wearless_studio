@@ -24,6 +24,7 @@ import {
   MEASUREMENT_SCHEMA,
 } from '@/lib/measurementSchema.js';
 import { defaultStoryboard } from '@/lib/api/shapes.js';
+import { colorDisplayName } from '@/lib/colorwayMatching.js';
 import { applyOpeningRow } from '@/lib/storyboardEntryPlacement.js';
 import { axesFor, fitProfileCategory } from '@/lib/fitAxes.js';
 import { recommendMatchingItems, toLegacyMatchClothing } from '@/mock/matchingRecommendation.js';
@@ -56,6 +57,30 @@ const defaultFitProfile = (product, analysis) => {
 
 /* ---- Account (stable) ---- */
 const account = { name: 'Jisoo Han', avatar: P.portrait('han'), credits: 196, plan: 'basic' };
+
+// 추가 색상 모두가 같은 풀샷/중간샷 촬영 예시 템플릿을 공유한다. 색상마다 별도 예시를
+// 만들지 않고, 실제 생성에서 현재 colorId의 셀러 사진과 자연스러운 미세 포즈 변주를 쓴다.
+const DEMO_COLORWAY_PREVIEWS = Object.freeze({
+  top: Object.freeze({
+    productName: '소프트 골지 라운드 니트',
+    template: Object.freeze({
+      full: '/assets/colorway/soft-rib-knit-ivory-western-male-full-v2.png',
+      medium: '/assets/colorway/soft-rib-knit-ivory-western-male-medium-v2.png',
+    }),
+  }),
+  bottom: Object.freeze({
+    productName: '세미 와이드 치노 팬츠',
+    template: Object.freeze({
+      full: '/assets/colorway/semi-wide-chino-beige-western-male-full-v1.png',
+      medium: '/assets/colorway/semi-wide-chino-beige-western-male-medium-v2.png',
+    }),
+  }),
+});
+
+const demoColorwayPreviewFor = (productName, clothingType) => {
+  const preview = DEMO_COLORWAY_PREVIEWS[clothingType];
+  return preview?.productName === productName ? preview : null;
+};
 
 /* ---- Catalogs (stable closed option sets) ---- */
 const catalogs = {
@@ -122,7 +147,7 @@ const catalogs = {
   // 사진 양 — 두 방식은 섹션 순서가 같고 사진 수만 다르다.
   composeModes: [
     { value: 'basic', label: '기본형', desc: '대표 컬러 중심으로 필요한 사진만', count: '13', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
-    { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '14~33', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
+    { value: 'extended', label: '확장형', desc: '같은 순서로 사진을 더 풍부하게', count: '14~30', flow: ['후킹', '스타일링', '스튜디오', '의류 확인'] },
   ],
   poses: [
     { id: 'auto', label: 'AI 자동', auto: true }, { id: 'stand', label: '서기', thumb: P.pose('stand') },
@@ -213,7 +238,7 @@ const library = [
 /* ---- editor element builders (seed + 콘티 기반 생성이 공유) ---- */
 const T = (x, y, w, h, text, style) => ({ id: uid('el'), type: 'text', x, y, w, h, text, style: style || {} });
 // cutType: 생성 산출물에 기록되는 컷 종류 메타데이터 — '현재 이미지 수정'의 옵션 기준 (디테일 줌은 product 로 분류)
-const IMG = (x, y, w, h, src, radius, cutType) => ({ id: uid('el'), type: 'image', x, y, w, h, src, radius: radius || 8, ...(cutType ? { cutType } : {}) });
+const IMG = (x, y, w, h, src, radius, cutType) => ({ id: uid('el'), type: 'image', x, y, w, h, src, radius: radius ?? 8, ...(cutType ? { cutType } : {}) });
 
 /* 자동 안내 블록 (PRD §10.14) — 사이즈 안내는 product.measurements 를 "생성 시점"에 읽는다 */
 function buildAutoBlocks(product) {
@@ -248,7 +273,7 @@ function buildAutoBlocks(product) {
 /* 저장된 콘티 → 에디터 블록 (mock 생성기, 계약 §6 generateDetailPage).
    실제 파이프라인이 할 일을 placeholder 로 흉내만 낸다 — 블록 수·종류·순서가
    콘티를 따라가고, 카피라이팅 ON 이면 첫 장면/핵심 장점에 카피를 넣는다. */
-export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting) {
+export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting, analysis = {}) {
   const ROW_LAYOUTS = {
     twoColumn: { name: '2단 구성', kind: 'twocol' },
     threeColumn: { name: '3단 구성', kind: 'threecol' },
@@ -257,6 +282,9 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
   };
   const cat = (ct) => ct === 'product' ? 'product' : ct === 'horizon' ? 'horizon' : 'styling';
   const generatedImageFor = (b, w, h) => {
+    const preview = demoColorwayPreviewFor(product.name, product.clothingType);
+    const previewAsset = preview?.template?.[b.shot];
+    if (b.colorwayGroupId && previewAsset) return previewAsset;
     const usesWholeExample = b.exampleId && (b.refScope || 'all') === 'all' && !b.spaceGroupId;
     return P.photo(usesWholeExample ? b.exampleId : 'gen_' + b.id, cat(b.cutType), w, h);
   };
@@ -312,8 +340,78 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
     });
   };
 
+  const isColorwayPair = (first, second) => {
+    const groupId = first?.colorwayGroupId;
+    const rowId = first?.layoutRowId;
+    return !!(
+      groupId
+      && first?.colorwayPairVersion === 1
+      && second?.colorwayPairVersion === 1
+      && second?.colorwayGroupId === groupId
+      && rowId
+      && second?.layoutRowId === rowId
+      && first?.sectionLayout === 'twoColumn'
+      && second?.sectionLayout === 'twoColumn'
+      && first?.source !== 'mine'
+      && second?.source !== 'mine'
+      && first?.sectionRole === SECTION_ROLES.STUDIO
+      && second?.sectionRole === SECTION_ROLES.STUDIO
+      && first?.cutType === 'horizon'
+      && second?.cutType === 'horizon'
+      && first?.direction === 'front'
+      && second?.direction === 'front'
+      && first?.colorId === second?.colorId
+      && new Set([first?.shot, second?.shot]).size === 2
+      && [first?.shot, second?.shot].every((shot) => shot === 'full' || shot === 'medium')
+      && JSON.stringify(first?.matchIds || []) === JSON.stringify(second?.matchIds || [])
+      && !first?.spaceGroupId
+      && !second?.spaceGroupId
+    );
+  };
+  const colorwayLabels = (pair) => {
+    const color = (product.colors || []).find((item) => String(item.id) === String(pair[0].colorId));
+    const productLabel = `${String(product.name || '상품').trim().slice(0, 120)} [${colorDisplayName(color).slice(0, 120)}]`;
+    const matchId = pair[0].matchIds?.[0];
+    const matching = (analysis.matchClothing || analysis.matchCandidates || [])
+      .find((item) => String(item.id) === String(matchId));
+    if (!matching) return [productLabel, null];
+    const name = String(matching.name || '매칭 의류').trim().slice(0, 120);
+    const colorName = String(matching.colorName || '').trim().slice(0, 120);
+    return [productLabel, colorName ? `${name} [${colorName}]` : name];
+  };
+  const pushColorwayPair = (pair) => {
+    const ordered = pair.slice().sort((left, right) => (left.shot === 'full' ? -1 : 1) - (right.shot === 'full' ? -1 : 1));
+    const width = 430;
+    const height = 645;
+    const els = ordered.map((rowBlock, column) => Object.assign(
+      IMG(60 + column * 450, 24, width, height, generatedImageFor(rowBlock, width, height), 0, rowBlock.cutType || undefined),
+      { sourceBlockId: rowBlock.id },
+    ));
+    const [productLabel, matchingLabel] = colorwayLabels(ordered);
+    els.push(T(60, 683, 880, 24, productLabel, {
+      size: 14, weight: 400, color: '#4a4a45', align: 'center', tracking: 0.2,
+    }));
+    if (matchingLabel) {
+      els.push(T(60, 705, 880, 26, matchingLabel, {
+        size: 15, weight: 700, color: '#0e0d14', align: 'center', tracking: 0.1,
+      }));
+    }
+    const colorName = colorDisplayName(
+      (product.colors || []).find((item) => String(item.id) === String(ordered[0].colorId)),
+    );
+    blocks.push({
+      id: uid('b'), name: `컬러 룩 · ${colorName}`, kind: 'twocol', layoutType: 'colorwayPair',
+      bg: '#f5f5f5', h: matchingLabel ? 781 : 757, elements: els,
+    });
+  };
+
   for (let i = 0; i < arr.length; i++) {
     const b = arr[i];
+    if (i + 1 < arr.length && isColorwayPair(b, arr[i + 1])) {
+      pushColorwayPair([b, arr[i + 1]]);
+      i += 1;
+      continue;
+    }
     if (b.source === 'mine') { pushSingle(b); continue; }
 
     // 가로 배치 섹션 — '내 이미지'가
@@ -360,7 +458,19 @@ export function buildEditorBlocksFromStoryboard(storyboard, product, copywriting
    공유해 mock에서도 선택 세트·순서·지문이 완전히 같게 유지한다.
    ============================================================= */
 export function buildStoryboard(mode, colors, context = {}) {
-  return defaultStoryboard(colors, mode, context);
+  const blocks = defaultStoryboard(colors, mode, context);
+  const preview = demoColorwayPreviewFor(context.previewProductName, context.clothingType);
+  if (!preview) return blocks;
+  return blocks.map((block) => (
+    block.colorwayGroupId
+      && preview.template?.[block.shot]
+      ? {
+        ...block,
+        thumb: preview.template[block.shot],
+        previewThumb: preview.template[block.shot],
+      }
+      : block
+  ));
 }
 
 /* =============================================================
@@ -402,6 +512,14 @@ function buildDraft() {
         id: 'col2', name: '아이보리', isBase: false, monotone: true,
         images: [{ id: uid('img'), slot: 'Front', label: '정면', src: P.photo('c2f', 'horizon', 300, 400) }],
       },
+      {
+        id: 'col3', name: '스카이블루', isBase: false, monotone: true,
+        images: [{ id: uid('img'), slot: 'Front', label: '정면', src: P.photo('c3f', 'horizon', 300, 400) }],
+      },
+      {
+        id: 'col4', name: '그레이', isBase: false, monotone: true,
+        images: [{ id: uid('img'), slot: 'Front', label: '정면', src: P.photo('c4f', 'horizon', 300, 400) }],
+      },
     ],
     measurements: measurements(),
   };
@@ -440,6 +558,8 @@ function buildDraft() {
     projectId: project.id,
     clothingType: product.clothingType,
     targetGenders: analysis.targetGenders,
+    matchClothing: analysis.matchClothing,
+    previewProductName: product.name,
   }));
 
   /* ---- Editor blocks: 5 prefilled demo + auto info blocks (PRD §10.14) ----

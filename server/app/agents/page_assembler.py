@@ -82,19 +82,33 @@ _ROW_LAYOUTS = {
     "colorCompare": {"name": "컬러 비교", "kind": "colorcmp"},
 }
 
+_SWATCH_LABELS = {
+    "white": "화이트", "gray": "그레이", "black": "블랙", "ivory": "아이보리",
+    "beige": "베이지", "brown": "브라운", "red": "레드", "yellow": "옐로우",
+    "green": "그린", "blue": "블루", "navy": "네이비", "pink": "핑크",
+}
 
-def _image_box(width, height) -> tuple[int, int]:
-    """(w, h) — 폭은 _IMG_W 고정, 높이는 소스 비율. dims 미상·이상치면 2:3 폴백 + 클램프."""
+
+def _image_box_for_width(box_width, width, height) -> tuple[int, int]:
+    """(w, h) — 지정 폭에서 소스 비율을 보존. dims 미상·이상치면 2:3 폴백 + 비례 클램프."""
     try:
         src_w, src_h = int(width), int(height)
     except (TypeError, ValueError):
         src_w = src_h = 0
     if src_w > 0 and src_h > 0:
-        derived = round(_IMG_W * src_h / src_w)
+        derived = round(box_width * src_h / src_w)
     else:
         fw, fh = _FALLBACK_RATIO
-        derived = round(_IMG_W * fh / fw)
-    return _IMG_W, min(max(derived, _IMG_MIN_H), _IMG_MAX_H)
+        derived = round(box_width * fh / fw)
+    scale = box_width / _IMG_W
+    min_height = max(1, round(_IMG_MIN_H * scale))
+    max_height = max(min_height, round(_IMG_MAX_H * scale))
+    return box_width, min(max(derived, min_height), max_height)
+
+
+def _image_box(width, height) -> tuple[int, int]:
+    """(w, h) — 기본 단일컷 폭에서 소스 비율을 보존한다."""
+    return _image_box_for_width(_IMG_W, width, height)
 
 
 def _block_height(elements: list[dict]) -> int:
@@ -131,6 +145,69 @@ def _text_for_role(texts: list[dict], role: str) -> str | None:
         if isinstance(t, dict) and t.get("role") == role and t.get("text"):
             return t["text"]
     return None
+
+
+def _colorway_pair(first: dict, second: dict) -> bool:
+    """확장형 기본 시드가 명시한 추가 색상 풀샷+미디움샷 한 묶음인지 확인한다.
+
+    사용자가 한쪽의 색상·매칭 의류·레이아웃을 바꾸거나 행을 풀면 자동 조립하지 않는다.
+    """
+    if not isinstance(first, dict) or not isinstance(second, dict):
+        return False
+    group_id = first.get("colorwayGroupId")
+    row_id = first.get("layoutRowId")
+    return bool(
+        group_id
+        and first.get("colorwayPairVersion") == 1
+        and second.get("colorwayPairVersion") == 1
+        and second.get("colorwayGroupId") == group_id
+        and row_id
+        and second.get("layoutRowId") == row_id
+        and first.get("sectionLayout") == second.get("sectionLayout") == "twoColumn"
+        and first.get("source") != "mine"
+        and second.get("source") != "mine"
+        and first.get("sectionRole") == second.get("sectionRole") == "studio"
+        and first.get("cutType") == second.get("cutType") == "horizon"
+        and first.get("direction") == second.get("direction") == "front"
+        and first.get("colorId") == second.get("colorId")
+        and {first.get("shot"), second.get("shot")} == {"full", "medium"}
+        and (first.get("matchIds") or []) == (second.get("matchIds") or [])
+        and not first.get("spaceGroupId")
+        and not second.get("spaceGroupId")
+    )
+
+
+def _display_text(value, fallback="") -> str:
+    text = str(value or "").strip()
+    return text[:120] or fallback
+
+
+def _colorway_labels(product: dict, pair: list[dict]) -> tuple[str, str | None]:
+    color_id = str(pair[0].get("colorId"))
+    color = next(
+        (item for item in (product.get("colors") or [])
+         if item.get("id") is not None and str(item.get("id")) == color_id),
+        {},
+    )
+    product_name = _display_text(product.get("name"), "상품")
+    color_name = _display_text(
+        color.get("name") or color.get("label") or _SWATCH_LABELS.get(str(color.get("swatchId") or "")),
+        "색상",
+    )
+    product_label = f"{product_name} [{color_name}]"
+
+    match_ids = pair[0].get("matchIds") or []
+    match_id = str(match_ids[0]) if match_ids else None
+    matching = next(
+        (item for item in (product.get("_matchClothing") or [])
+         if match_id is not None and str(item.get("id")) == match_id),
+        None,
+    )
+    if not matching:
+        return product_label, None
+    match_name = _display_text(matching.get("name"), "매칭 의류")
+    match_color = _display_text(matching.get("colorName"))
+    return product_label, f"{match_name} [{match_color}]" if match_color else match_name
 
 
 # AI 생성 안내 문구(PRD §10.14). 기본 = AI 생성 사실 고지.
@@ -407,10 +484,62 @@ def assemble(
             "elements": els,
         })
 
+    def push_colorway_pair(pair: list[dict]) -> None:
+        block_i = len(blocks)
+        ordered = sorted(pair, key=lambda block: 0 if block.get("shot") == "full" else 1)
+        width = 430
+        gap = 20
+        els: list[dict] = []
+        image_bottom = 0
+        for column, row_block in enumerate(ordered):
+            meta = cut_meta_by_block.get(row_block.get("id")) or {}
+            _, image_height = _image_box_for_width(width, meta.get("width"), meta.get("height"))
+            image_y = 24
+            els.append(_image_el(
+                block_i,
+                column,
+                60 + column * (width + gap),
+                image_y,
+                width,
+                image_height,
+                meta.get("imageUrl"),
+                0,
+                row_block.get("cutType") or None,
+                source_block_id=row_block.get("id"),
+            ))
+            image_bottom = max(image_bottom, image_y + image_height)
+
+        product_label, matching_label = _colorway_labels(product, ordered)
+        label_y = image_bottom + 14
+        els.append(_text_el(
+            block_i, len(els), 60, label_y, 880, 24, product_label,
+            {"size": 14, "weight": 400, "color": "#4a4a45", "align": "center", "tracking": 0.2},
+        ))
+        if matching_label:
+            els.append(_text_el(
+                block_i, len(els), 60, label_y + 22, 880, 26, matching_label,
+                {"size": 15, "weight": 700, "color": "#0e0d14", "align": "center", "tracking": 0.1},
+            ))
+
+        color_name = product_label.rsplit("[", 1)[-1].rstrip("]")
+        blocks.append({
+            "id": _block_id(block_i),
+            "name": f"컬러 룩 · {color_name}",
+            "kind": "twocol",
+            "layoutType": "colorwayPair",
+            "bg": "#f5f5f5",
+            "h": _block_height(els),
+            "elements": els,
+        })
+
     arranged = storyboard or []
     i = 0
     while i < len(arranged):
         b = arranged[i]
+        if i + 1 < len(arranged) and _colorway_pair(b, arranged[i + 1]):
+            push_colorway_pair(arranged[i:i + 2])
+            i += 2
+            continue
         layout = b.get("sectionLayout")
         row_id = b.get("layoutRowId")
         section_id = b.get("sectionId")

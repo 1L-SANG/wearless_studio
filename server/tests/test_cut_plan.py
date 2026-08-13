@@ -251,7 +251,9 @@ def test_contract_renderer_is_compact_and_names_ownership_rules():
     assert "example person owns neither" in rendered
     assert "Seller name/category/sales/legacy-fit text owns no geometry" in rendered
     assert "Styling/all keeps scene type, ordinary ambience, palette, time" in rendered
-    assert ">=1 spatial-structure and >=2 furniture/sign/prop placement changes" in rendered
+    assert "coherent different location instance in the same visual family" in rendered
+    assert "Do not use a structural/prop change quota" in rendered
+    assert ">=1 spatial-structure" not in rendered
     assert len(rendered) < 1_200
 
 

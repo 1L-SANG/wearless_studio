@@ -151,6 +151,8 @@ export const api = {
         projectId: DB.project.id,
         clothingType: DB.product.clothingType,
         targetGenders: DB.analysis.targetGenders,
+        matchClothing: DB.analysis.matchClothing,
+        previewProductName: DB.product.name,
       });
       DB.storyboard = keepOpeningRow ? applyOpeningRow(seeded) : seeded;
     }
@@ -496,7 +498,7 @@ export const api = {
       if (type === 'progress') ewSim.progress = payload.progress;
     };
     (async () => {
-      const blocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting);
+      const blocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis);
       const imgs = []; const copies = new Map();
       for (const b of blocks) {
         for (const el of (b.elements || [])) {
@@ -564,7 +566,7 @@ export const api = {
       }
       emitProgress(100);
       if (DB.project.id !== ownerId) return { data: [], credits: DB.account.credits };
-      DB.editorBlocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting);
+      DB.editorBlocks = buildEditorBlocksFromStoryboard(DB.storyboard, DB.product, DB.project.copywriting, DB.analysis);
       DB.project.status = 'done'; touch();
       const aiCuts = DB.storyboard.filter((b) => b.source !== 'mine').length;
       return { data: clone(DB.editorBlocks), credits: spend(CREDIT_COSTS.storyboardPerCut * aiCuts) };

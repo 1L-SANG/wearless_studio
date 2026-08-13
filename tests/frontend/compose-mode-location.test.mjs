@@ -129,7 +129,7 @@ test('the storyboard shows a summary and blocks applying a mode to an edited boa
   );
   assert.match(storyboardSource, /직접 수정한 콘티에는 적용되지 않아요/);
   assert.match(storyboardSource, /disabled=\{!canApply \|\| draftMode === value \|\| applying\}/);
-  assert.match(storyboardSource, /isDefaultStoryboardForMode\([\s\S]*?composeModeSeed\.colors[\s\S]*?targetGenders: composeModeSeed\.targetGenders/);
+  assert.match(storyboardSource, /isDefaultStoryboardForMode\([\s\S]*?composeModeSeed\.colors[\s\S]*?targetGenders: composeModeSeed\.targetGenders[\s\S]*?matchClothing: composeModeSeed\.matchClothing/);
   assert.match(storyboardSource, /await setComposeMode\(nextMode\);[\s\S]*?await onComposeModeChange\(nextMode\);/);
 });
 

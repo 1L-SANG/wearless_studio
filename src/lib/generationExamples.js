@@ -159,13 +159,33 @@ export function assignGenerationExamples(blocks, { catalog, product, gender, onl
   if (!Array.isArray(blocks)) return { blocks, changed: false, assignedIds: [], protectedIds: [], missingIds: [] };
   const only = onlyBlockIds == null ? null : new Set(onlyBlockIds);
   const usage = new Map();
+  const colorwayTemplates = new Map();
 
+  // 추가 색상 페어는 색상마다 새 예시를 고르지 않는다. 풀샷끼리, 미디움샷끼리
+  // 하나의 촬영 예시를 공유하고 실제 생성만 각 colorId의 상품 사진으로 수행한다.
+  for (const block of blocks) {
+    if (block?.source !== 'ai' || !block.colorwayGroupId || !block.exampleId) continue;
+    const pool = candidatesForBlock(block, catalog, product, gender).slice(0, 3);
+    const selected = pool.find((example) => example.id === block.exampleId);
+    if (!selected) continue;
+    const key = usageKey(block, product, gender);
+    if (!colorwayTemplates.has(key) || block.exampleSelectionOrigin === 'user') {
+      colorwayTemplates.set(key, selected);
+    }
+  }
+
+  const countedColorwayTemplates = new Set();
   for (const block of blocks) {
     if (block?.source !== 'ai' || block.exampleSelectionOrigin !== 'auto' || !block.exampleId) continue;
     const pool = candidatesForBlock(block, catalog, product, gender).slice(0, 3);
     const slot = pool.findIndex((example) => example.id === block.exampleId);
     if (slot < 0) continue;
     const key = usageKey(block, product, gender);
+    if (block.colorwayGroupId) {
+      const template = colorwayTemplates.get(key);
+      if (!template || template.id !== block.exampleId || countedColorwayTemplates.has(key)) continue;
+      countedColorwayTemplates.add(key);
+    }
     if (!usage.has(key)) usage.set(key, [0, 0, 0]);
     usage.get(key)[slot] += 1;
   }
@@ -177,7 +197,24 @@ export function assignGenerationExamples(blocks, { catalog, product, gender, onl
   const next = blocks.map((block) => {
     if (!block || block.source !== 'ai') return block;
     if (only && !only.has(block.id)) return block;
+    const colorwayKey = block.colorwayGroupId ? usageKey(block, product, gender) : null;
+    const colorwayTemplate = colorwayKey ? colorwayTemplates.get(colorwayKey) : null;
     if (block.exampleId) {
+      if (
+        colorwayTemplate
+        && block.exampleSelectionOrigin === 'auto'
+        && block.exampleId !== colorwayTemplate.id
+      ) {
+        changed = true;
+        assignedIds.push(block.id);
+        return {
+          ...block,
+          exampleId: colorwayTemplate.id,
+          refScope: 'all',
+          baseThumb: block.baseThumb ?? block.thumb ?? null,
+          thumb: colorwayTemplate.thumb,
+        };
+      }
       if (block.exampleSelectionOrigin === 'auto' || block.exampleSelectionOrigin === 'user') return block;
       changed = true;
       protectedIds.push(block.id);
@@ -193,12 +230,16 @@ export function assignGenerationExamples(blocks, { catalog, product, gender, onl
     const key = usageKey(block, product, gender);
     if (!usage.has(key)) usage.set(key, [0, 0, 0]);
     const counts = usage.get(key);
-    let slot = 0;
-    for (let index = 1; index < pool.length; index += 1) {
-      if (counts[index] < counts[slot]) slot = index;
+    let example = colorwayTemplate;
+    if (!example) {
+      let slot = 0;
+      for (let index = 1; index < pool.length; index += 1) {
+        if (counts[index] < counts[slot]) slot = index;
+      }
+      example = pool[slot];
+      counts[slot] += 1;
+      if (colorwayKey) colorwayTemplates.set(colorwayKey, example);
     }
-    counts[slot] += 1;
-    const example = pool[slot];
     changed = true;
     assignedIds.push(block.id);
     return {

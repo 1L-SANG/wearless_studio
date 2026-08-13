@@ -20,6 +20,7 @@ import { genderForClothingType } from '../productGender.js';
 import { spaceSetGroupId } from '../storyboardSpaceSetCatalog.js';
 import { applyOpeningRow, entryStylingMembers, pickEntrySets } from '../storyboardEntryPlacement.js';
 import { createMeasurementFields } from '../measurementSchema.js';
+import { matchingIdsForColor } from '../colorwayMatching.js';
 import {
   CONTENT_ROLES,
   SECTION_ROLES,
@@ -115,6 +116,13 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
   // (서버가 원본 구조 확대로 폴백, 2026-08-07 개편).
   const detailColor = list.find((color) => (color.images || []).some((image) => image.slot === 'Detail'))?.id || base;
   const clothingType = context.clothingType || 'top';
+  const matchClothing = context.matchClothing || [];
+  const colorById = new Map(list.map((color) => [color.id, color]));
+  const matchIdsFor = (colorId) => matchingIdsForColor(
+    colorById.get(colorId),
+    matchClothing,
+    { preferMain: colorId === base },
+  );
   // 서버(select_base_gender)와 동일 의미론: 남성 단독일 때만 men, 혼합·미상은 women.
   const gender = genderForClothingType(clothingType, context.targetGenders);
   const { stylingSets, rotationSet, sequenceSet } = pickEntrySets({
@@ -141,12 +149,25 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
       ? setMemberBlocks(horizonSet, base, SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT)
       : horizonRotationFallback(base)));
 
-    const additionalColors = list.slice(1, 4);
+    const additionalColors = list.filter((color) => color.id !== base).slice(0, 3);
     for (const color of additionalColors) {
+      const colorwayGroupId = `colorway__${color.id}`;
+      const layoutRowId = `row__colorway__${color.id}`;
       blocks.push(
-        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id),
-        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'full', color.id),
-        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'back', 'full', color.id),
+        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'full', color.id, {
+          colorwayGroupId,
+          colorwayPairVersion: 1,
+          sectionLayout: 'twoColumn',
+          layoutRowId,
+          layoutRowVersion: 1,
+        }),
+        sb(SECTION_ROLES.STUDIO, CONTENT_ROLES.FIT, 'horizon', 'front', 'medium', color.id, {
+          colorwayGroupId,
+          colorwayPairVersion: 1,
+          sectionLayout: 'twoColumn',
+          layoutRowId,
+          layoutRowVersion: 1,
+        }),
       );
     }
 
@@ -188,7 +209,11 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
     }
     blocks.push(sb(SECTION_ROLES.PRODUCT, CONTENT_ROLES.DETAIL, 'product', 'front', 'detail', detailColor));
   }
-  return ensureSections(blocks);
+  return ensureSections(blocks.map((block) => (
+    ['styling', 'horizon', 'mirror'].includes(block.cutType)
+      ? { ...block, matchIds: matchIdsFor(block.colorId) }
+      : block
+  )));
 }
 
 /* id·썸네일처럼 시드할 때마다 바뀌는 표시 필드를 빼고, 사용자가
@@ -197,6 +222,7 @@ export function defaultStoryboard(colors, mode = 'basic', context = {}) {
 function storyboardTemplateFingerprint(blocks) {
   const spaceIds = new Map();
   const rowIds = new Map();
+  const colorwayIds = new Map();
   const ordinal = (map, value) => {
     if (!value) return null;
     if (!map.has(value)) map.set(value, map.size + 1);
@@ -227,6 +253,8 @@ function storyboardTemplateFingerprint(blocks) {
     sectionCustom: !!block.sectionCustom,
     layoutRow: ordinal(rowIds, block.layoutRowId),
     layoutRowVersion: block.layoutRowVersion ?? null,
+    colorwayGroup: ordinal(colorwayIds, block.colorwayGroupId),
+    colorwayPairVersion: block.colorwayPairVersion ?? null,
   })));
 }
 

@@ -36,6 +36,21 @@ def test_build_prompt_manifest_fallback_no_images():
     assert "product photos" in p.lower()
 
 
+@pytest.mark.parametrize("clothing_type", ["top", "bottom"])
+def test_medium_prompt_requires_a_separate_pose_and_camera_not_a_full_shot_crop(clothing_type):
+    prompt = cg.build_prompt(
+        {"cutType": "horizon", "direction": "front", "shot": "medium", "pose": "lean"},
+        {"name": "컬러 상품", "clothingType": clothing_type, "colors": []},
+    )
+
+    assert "separately photographed exposure" in prompt
+    assert "NEVER make it by digitally cropping, zooming, or reframing a full-body render" in prompt
+    assert "use the distinct pose requested by the current CUT SPEC" in prompt
+    assert "purpose-shot upper-garment photograph" in prompt
+    assert "separate lower camera around hip-to-upper-thigh height" in prompt
+    assert "must not share the full shot's exact body pose or perspective" in prompt
+
+
 def test_build_prompt_product_detail_falls_back_to_original_zoom_mode():
     # 2026-08-07 개편: 디테일 사진이 없어도 같은 방향 원본이 있으면 구조 확대 모드로 생성한다.
     product = {"name": "니트", "colors": [
@@ -241,7 +256,7 @@ def test_build_prompt_respects_given_manifest():
     product = {"name": "니트", "colors": [{"isBase": True, "images": [{"slot": "Front", "id": "a1"}]}]}
     manifest = cg.build_manifest([{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1)
     p = cg.build_prompt({"cutType": "styling"}, product, manifest=manifest)
-    assert "worn on a mannequin" in p and "MATCH" in p and "MOOD" in p
+    assert "MANNEQUIN" in p and "MATCH" in p and "MOOD" in p
 
 
 def test_pose_medium_prompt_keeps_requested_crop_authoritative():
@@ -597,7 +612,7 @@ def test_build_manifest_places_exact_virtual_model_labels_after_mannequin():
         [{"slot": "Front"}], has_mannequin=True, has_match=True, mood_count=1,
         has_model_face=True, has_model_full_body=True)
     assert manifest.splitlines() == [
-        "1. PRODUCT — the garment worn on a mannequin (verified colors, fit and length — follow this)",
+        "1. MANNEQUIN — coarse worn-geometry prior only where seller PRODUCT pixels support it; ZERO authority to resolve uncertain color, material, construction, fit or length",
         "2. MODEL FACE — facial identity authority for the selected model ONLY: preserve facial identity and facial features; ZERO authority over height, head-to-body ratio, shoulders, torso, waist, pelvis, limb proportions, body shape, pose, framing or clothing",
         "3. MODEL FULL BODY — full-body proportion authority for the selected model ONLY: preserve height, head-to-body ratio, shoulder width and slope, torso length and build, waist, pelvis and hip width, and arm and leg proportions; ZERO authority over facial identity, facial features, hair, pose, framing or clothing",
         "4. PRODUCT — front view of the garment",
@@ -801,7 +816,7 @@ def test_build_manifest_places_face_after_garment_truth_before_mood():
                           mood_count=1, has_face=True)
     lines = m.split("\n")
     assert len(lines) == 5
-    assert "mannequin" in lines[0] and lines[0].startswith("1.")
+    assert "MANNEQUIN" in lines[0] and lines[0].startswith("1.")
     assert "front view of the garment" in lines[1]
     assert lines[2].startswith("3. MATCH")
     assert lines[3].startswith("4. MODEL FACE")

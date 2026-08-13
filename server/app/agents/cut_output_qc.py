@@ -44,9 +44,12 @@ GATES = (
     "lightingShadowReflectionDrape",
 )
 STATUSES = ("PASS", "FAIL", "NA", "UNJUDGEABLE")
-REFERENCE_ROLES = ("product", "modelFace", "modelBody", "matching", "example", "plate")
+REFERENCE_ROLES = (
+    "product", "mannequin", "modelFace", "modelBody", "matching", "example", "plate",
+)
 _REFERENCE_ROLE_LABELS = {
     "product": "PRODUCT",
+    "mannequin": "MANNEQUIN (coarse worn-geometry prior only)",
     "modelFace": "MODEL FACE",
     "modelBody": "MODEL FULL BODY",
     "matching": "MATCHING",
@@ -138,8 +141,9 @@ _CORRECTIONS = MappingProxyType({
         "class without leakage."
     ),
     "relatedSceneDifferentPlace": (
-        "Keep the EXAMPLE-owned scene relationship but build a different specific place, changing "
-        "at least one structural element and two furniture, sign, or prop placements."
+        "Keep the EXAMPLE scene relationship but make a coherent different place in the same "
+        "visual family. Remove near-copying or unrelated drift. Do not use change quotas or force "
+        "added, moved, duplicated, or awkwardly staged objects."
     ),
     "lightingShadowReflectionDrape": (
         "Restore pose-driven tension, compression and asymmetric folds plus coherent self, "
@@ -186,8 +190,10 @@ def references_from_manifest(
             raise VisionError(f"cut_output_qc: invalid manifest image {expected_number}")
         label = match.group(2)
         role: str | None
-        if label.startswith(("PRODUCT ", "PRODUCT —", "MANNEQUIN ", "MANNEQUIN —")):
+        if label.startswith(("PRODUCT ", "PRODUCT —")):
             role = "product"
+        elif label.startswith(("MANNEQUIN ", "MANNEQUIN —")):
+            role = "mannequin"
         elif label.startswith(("MODEL FULL BODY ", "MODEL FULL BODY —")):
             role = "modelBody"
         elif label.startswith(("MODEL FACE ", "MODEL FACE —", "MODEL SHEET ",

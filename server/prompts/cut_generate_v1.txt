@@ -18,9 +18,12 @@ GARMENT FIDELITY (highest priority — never violate):
 - Never transfer garments or shoes from EXAMPLE REFERENCE or MOOD images. Props from an all-scope
   EXAMPLE REFERENCE follow the explicit all-scope contract below; MOOD-image props
   are never transferred.
-- Treat each garment as a three-dimensional material, not a flat colored surface. Where PRODUCT or
-  MANNEQUIN pixels visibly prove them, preserve crinkle/puckering, weave/knit/open holes, edge
+- Treat each garment as a three-dimensional material, not a flat colored surface. Where PRODUCT
+  pixels visibly prove them, preserve crinkle/puckering, weave/knit/open holes, edge
   thickness and layer overlap, roughness/gloss/light transmission, and real material weight.
+- An attached MANNEQUIN is only a coarse worn-geometry prior for seller-supported fit, length,
+  silhouette and drape. It never turns an unclear seller color, material, construction, fit or
+  length into truth; seller PRODUCT pixels win, and unsupported exactness must not be invented.
 - Couple the cloth to the requested body and action: render tension, compression, asymmetric folds,
   fabric self-shadow and reflected/contact/cast shadows. Do not invent a material cue absent from
   the evidence, and do not smooth evidence-supported texture into a flat 2-D fill.
@@ -105,9 +108,15 @@ CUT TYPE — MIRROR SELFIE (거울샷):
 footwear inside the frame with visible floor margin — never crop toes, heels, or the garment hem
 [[SHOT:medium]]medium framing: for tops, outerwear and dresses, frame from the head to the hip;
 for bottoms, frame from the waist through the feet — keep the entire target garment visible.
-For tops, outerwear and dresses, give this medium shot its own camera setup — noticeably closer
-than a full-body setup, lens slightly higher (around upper-chest height) — so it reads as a
-purpose-shot garment cut, not a crop of a wider photo
+Every medium shot is a separately photographed exposure with its own requested pose and camera
+setup — NEVER make it by digitally cropping, zooming, or reframing a full-body render. When it is
+paired with a full shot, keep the same model identity, exact garments, colorway, footwear, studio
+and lighting, but use the distinct pose requested by the current CUT SPEC.
+For tops, outerwear and dresses, move noticeably closer with the lens around upper-chest height,
+so the head-to-hip result reads as a purpose-shot upper-garment photograph.
+For bottoms, set a separate lower camera around hip-to-upper-thigh height and move closer, so the
+waist-to-feet result makes the entire bottom garment large and dominant while keeping both shoes
+complete — it must not share the full shot's exact body pose or perspective.
 [[SHOT:ghost]]no visible person; show the complete garment. Default presentation: ghost-mannequin volume, preserving a worn three-dimensional shape. If an EXAMPLE REFERENCE is attached and shows a laid-flat, top-down presentation, follow that example's presentation and framing instead. Garment truth still comes only from PRODUCT references; never copy clothing, shoes, accessories, logos, or branding from the example
 [[SHOT:detail]]a tight product-only close-up of ONE clearly visible detail from the attached
 PRODUCT detail close-up reference (fabric surface, stitching, pocket, or real closure).
@@ -180,7 +189,6 @@ or physical occlusion mechanism; do not reveal a lower face beneath an umbrella,
 
 [[POSE:auto]]Pose: natural and unforced, chosen to flatter how the garment sits.
 [[POSE:named]]Pose: ${poseName} — keep it relaxed and natural.
-
 [[OUTER_CLOSURE:guard]]OUTER FRONT OPENING — USER-SELECTED REQUIREMENT:
 - This opening state overrides any different open/closed styling shown in EXAMPLE or MOOD images.
 - Use ONLY closure hardware visibly supported by PRODUCT references. Preserve the exact type, count
@@ -218,13 +226,17 @@ garment supports. Do not turn an open-front garment into a closable garment.
 - Keep the same capture class without upgrading it. A casual phone or handheld snapshot must remain
   an ordinary snapshot with comparable modest sharpness, natural texture, exposure variation,
   white balance, contrast and saturation—not a glossy campaign, editorial or cinematic fashion ad.
-- Create a recognizably related but different specific place of the same type. Preserve its ordinary
-  atmosphere, broad palette, time of day, lighting principle and qualitative camera relationship,
-  but change at least one spatial or architectural structure (for example wall/opening/path/floor-plan
-  geometry) and at least two placements among furniture, signage, fixtures, plants or props. Never
-  clone the same layout and merely swap one object. Frame the new place naturally for the new direction.
-- Swap in the exact PRODUCT garment and any attached MATCHING garment. Never copy the example's
-  garments, shoes, accessories, person identity, face, hair, body details, tattoos, text or logos.
+- Create a coherent different specific place of the same type and visual family. Preserve its ordinary
+  atmosphere, broad palette, time of day, lighting principle and qualitative camera relationship, but
+  do not reproduce distinctive architecture, layout, furniture or prop relationships closely enough
+  to read as the same site or moment. Never use a change quota or add, move, duplicate or awkwardly
+  stage furniture, plants, signs, fixtures or props merely to prove difference. Keep only naturally
+  justified elements with plausible scale and physical support. Frame the new place naturally for the
+  new direction.
+- Swap in the exact PRODUCT garment and any attached MATCHING garment. Never copy the example
+  person's garments, shoes, accessories, person identity, face, hair, body details, tattoos or
+  worn/carried branding. Do not blanket-erase ordinary environmental text or signage, but do not
+  reproduce a distinctive third-party brand/sign verbatim or invent conspicuous fake or garbled text.
   Use the selected MODEL and current face-handling rule. A mirror cut still requires a plain phone.
 - Apply the example-owned scene light physically to the person and clothing: consistent key direction,
   height, softness, temperature, contrast, fold shading, reflections, contact and cast shadows.
@@ -248,16 +260,21 @@ ${allFramingRule}
   covered, deeply bowed or turned fully away, keep the generated face unidentifiable in the same broad
   way; do not reveal or front-align it. An example with hidden face is incompatible with a requirement
   to show a licensed face and must be replaced upstream rather than silently violating either rule.
-- Create a recognizably related but different specific place of the same type. Preserve its ordinary
-  atmosphere, broad palette, time of day, lighting principle and qualitative camera relationship,
-  but change at least one spatial or architectural structure (for example wall/opening/path/floor-plan
-  geometry) and at least two placements among furniture, signage, fixtures, plants or background props.
-  Never clone the same layout and merely swap one object. Do not copy the exact room, shop, street,
-  fitting room, bedroom, elevator, mirror or prop layout, and do
-  not drift to a different scene type, lighting setup or mood. An uninformed viewer must still
+- Create a coherent different specific place of the same type and visual family. Preserve its ordinary
+  atmosphere, broad palette, time of day, lighting principle and qualitative camera relationship.
+  Do not reproduce distinctive architecture, layout, furniture or prop relationships closely enough
+  to read as the same site or moment, and do not use a structural/prop change quota.
+  Never add, move, duplicate or awkwardly stage furniture, plants, signs, fixtures or props merely
+  to prove difference.
+  Keep only naturally justified elements at plausible scale and with plausible physical support.
+  Do not copy the exact room, shop, street, fitting room, bedroom, elevator, mirror or prop layout,
+  and do not drift to a different scene type, lighting setup or mood. An uninformed viewer must still
   immediately recognize which example supplied the composition, camera, lighting, palette and mood;
   sharing only a generic label such as cafe, street, room, park or beach is insufficient.
   Mirror cuts follow this same rule.
+- Ordinary environmental text or signage is not automatically erased. Keep it natural to the alternate
+  venue, but do not reproduce a distinctive third-party brand/sign verbatim or invent conspicuous fake
+  or garbled text. PRODUCT garment text and logos remain governed only by PRODUCT pixels.
 - Swap in the exact garment from PRODUCT references and any attached MATCHING garment; do NOT copy
   the example's garments or shoes. Remove every carried or worn example prop unless it is physically
   required to preserve face hiding or the specified limb geometry (for example an umbrella that hides

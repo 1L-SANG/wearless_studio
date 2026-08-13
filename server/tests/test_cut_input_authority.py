@@ -453,7 +453,7 @@ def test_editor_base_color_worn_cut_puts_selected_mannequin_first(monkeypatch):
         b"k/mannequin", b"model-face", b"model-body", b"k/product",
     ]
     lines = generated["manifest"].splitlines()
-    assert "garment worn on a mannequin" in lines[0]
+    assert "MANNEQUIN — coarse worn-geometry prior" in lines[0]
     assert lines[1].startswith("2. MODEL FACE —")
     assert lines[2].startswith("3. MODEL FULL BODY —")
     assert lines[3] == "4. PRODUCT — front view of the garment"

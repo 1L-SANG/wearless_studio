@@ -1237,8 +1237,16 @@ async def run_detail_page_job(app, job: dict) -> None:
                               "faceCuts": face_cuts,
                               "totalCuts": len(cut_assets)}
         assemble_kwargs = {"license_notice": license_notice} if license_notice is not None else {}
+        assembly_product = {
+            **product,
+            "_matchClothing": (
+                analysis.get("matchClothing")
+                or analysis.get("matchCandidates")
+                or []
+            ),
+        }
         editor_blocks = page_assembler.assemble(
-            storyboard, cut_results, copy_results, product, copywriting, **assemble_kwargs)
+            storyboard, cut_results, copy_results, assembly_product, copywriting, **assemble_kwargs)
 
         # 5) 성공 종결 (원자·lease 펜스). charge = 성공 컷 수 × **예약 시점 단가 스냅샷**
         # (job.metadata.perCutCost — routes.py가 예약과 같은 tx에서 기록). 실행 시점 설정을 쓰면

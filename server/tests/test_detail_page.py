@@ -1241,7 +1241,9 @@ def test_run_detail_page_job_uses_analysis_model_without_mutating_storyboard(mon
         "k/man", "seed/models/mB/face_front.webp",
         "seed/models/mB/body_front.png", "k/a1",
     ]
-    assert captured["person"]["manifest"].splitlines()[0].startswith("1. PRODUCT — the garment worn")
+    assert captured["person"]["manifest"].splitlines()[0].startswith(
+        "1. MANNEQUIN — coarse worn-geometry prior"
+    )
     assert captured["person"]["manifest"].splitlines()[1].startswith("2. MODEL FACE —")
     assert captured["person"]["manifest"].splitlines()[2].startswith("3. MODEL FULL BODY —")
     assert captured["person"]["manifest"].splitlines()[3] == "4. PRODUCT — front view of the garment"

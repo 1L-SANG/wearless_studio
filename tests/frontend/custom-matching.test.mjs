@@ -31,6 +31,9 @@ const custom = {
 test('http match mapper preserves custom and compatibility fields', () => {
   assert.deepEqual(toMatchItem(custom, null), {
     ...custom,
+    colorName: null,
+    colorGroup: null,
+    colorBrightness: null,
     selected: false,
   });
   assert.equal(toMatchItem({ ...custom, isCompatible: false }, 1).isCompatible, false);

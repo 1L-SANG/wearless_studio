@@ -50,6 +50,11 @@ export const cutTypeOptionsForSection = (sectionRole) => (
   CUT_TYPE_OPTIONS_BY_SECTION[sectionRole] || Object.freeze([])
 );
 
+// 섹션 개념이 없는 화면(에디터 '새 이미지 추가')용 — 섹션별 목록의 중복 없는 합집합.
+export const ALL_CUT_TYPE_OPTIONS = Object.freeze([...new Map(
+  Object.values(CUT_TYPE_OPTIONS_BY_SECTION).flat().map((option) => [option.value, option]),
+).values()]);
+
 export const CONTENT_ROLES = Object.freeze({
   HERO: 'hero',
   BENEFIT: 'benefit',

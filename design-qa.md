@@ -36,3 +36,33 @@
 - The smoke ended with no Vite error overlay.
 
 final result: passed
+
+---
+
+# Extended Colorway Pair Design QA
+
+## Evidence
+
+- Source visual truth: `/Users/daily/Desktop/Wearless/Wearless2/1111.png` (1900×7688 px).
+- Browser implementation capture: `/private/tmp/wearless-colorway-impl.png`.
+- Side-by-side comparison: `/private/tmp/wearless-colorway-comparison.png`.
+- Viewport: 1280×720 CSS px, device-pixel ratio 2.
+- State: mock extended-mode storyboard data rendered through the production editor-block assembler and editor preview; the isolated fixture contained one additional-color pair.
+
+## Findings
+
+- Layout: the additional color is one edge-aligned two-column row, full shot on the left and medium shot on the right.
+- Crop: the bottom-category medium slot uses the waist-to-feet crop contract; upper categories retain the existing head-to-hip crop contract.
+- Labels: product name/color is centered below the images, followed by the matching-garment name/color in stronger type.
+- Continuity: both cuts share one colorway group, model selection, and matching-garment selection while using distinct poses.
+- Runtime: no application errors. Only the repository's pre-existing React Router v7 future-flag warnings appeared.
+- Placeholder limitation: mock preview silhouettes validate composition and crop slots; generated photography remains the pipeline output.
+- P0/P1/P2: none.
+
+## Interaction and data checks
+
+- The pair is emitted only for additional colors in extended mode.
+- The main color keeps the primary matching garment; each additional color picks the selected compatible garment with the largest light/dark contrast, with the primary garment as deterministic fallback.
+- If pair identity is broken by later editing, the assembler safely falls back to ordinary independent blocks instead of forcing an invalid paired layout.
+
+final result: passed

@@ -27,7 +27,7 @@ import { InfoBlockModal } from '@/features/editor/InfoBlockModal.jsx';
 import { applyInfoTemplate, applySlotFillToInfo, buildInfoBlock, carrySlotImages, defaultInfoFor, fillFeatureCopy, isRepeatablePreset, needsDefaultTemplate, presetTypeOf } from '@/features/editor/presets/infoPresets.js';
 import { SHAPE_D } from '@/features/editor/shapes.js';
 import { clampDragDelta, clampElementRect, expandBlockHeights, getBlockRenderHeight, pointMissesTextLines } from '@/features/editor/editorGeometry.js';
-import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
+import { CONTENT_ROLES, SECTION_ROLES, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
 
 const FONT_MAP = { 'Cal Sans': 'var(--font-display)', 'Roboto Mono': 'var(--font-mono)', 'Pretendard': 'var(--font-body)', 'Cormorant': 'var(--font-serif)' };
@@ -453,7 +453,7 @@ export function Editor() {
   const [colorOpts, setColorOpts] = useState([]);
   const [detailColorOpts, setDetailColorOpts] = useState([]);
   const [clothingType, setClothingType] = useState('top'); // 샷 필터 아이콘·예시 크롭용 (계약 §3.1)
-  const [hasDetailImage, setHasDetailImage] = useState(false);
+  const [matchClothing, setMatchClothing] = useState([]); // AI 탭 '매칭 의류 바꾸기' — 콘티보드와 같은 목록 (계약 §6)
   const [productName, setProductName] = useState('');
   const [product, setProduct] = useState(null);   // 실측(measurements) 등 — 정보 블록 프리필 (PRD §10.14)
   const [analysis, setAnalysis] = useState(null); // targetGenders·materials·fit·sellingPoints — 추천 배지·프리필 전용
@@ -529,8 +529,10 @@ export function Editor() {
       // 분석 컨텍스트 — 정보 블록 프리필·추천 배지 전용(실패해도 에디터는 뜬다)
       api.getAnalysis(projectId).catch(() => null),
       // 생성 중 진입이면 스켈레톤·예시 썸네일의 근거(콘티) — 실패해도 에디터는 뜬다
-      api.getStoryboard(projectId).catch(() => [])])
-      .then(([b, w, c, _a, p, fm, an, sb]) => {
+      api.getStoryboard(projectId).catch(() => []),
+      // AI 탭 '매칭 의류 바꾸기' 목록 — 콘티보드와 동일 소스, 실패해도 에디터는 뜬다
+      api.getMatchClothing(projectId).catch(() => [])])
+      .then(([b, w, c, _a, p, fm, an, sb, mc]) => {
         const hydratedCatalogs = withStoryboardSpaceSetExamples(c);
         let withH = b.map((blk) => normalizeEditorBlockRole(blk));
         const allColorOpts = (p.colors || []).map((col) => ({ id: col.id, label: col.name || '색상', hex: hexForCol(col) }));
@@ -566,7 +568,7 @@ export function Editor() {
         setBlocks(withH); setWardrobe(w); setCatalogs(hydratedCatalogs); setFmModels(fm); setSelBlock(withH[0]?.id);
         setProductName(p.name || '제목 없는 상세페이지');
         setClothingType(p.clothingType || 'top');
-        setHasDetailImage(hasDetailSource(p));
+        setMatchClothing(Array.isArray(mc) ? mc : []);
         setProduct(p); setAnalysis(an);
         setDetailColorOpts(allColorOpts.length ? allColorOpts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
         setColorOpts(opts.length ? opts : [{ id: 'col1', label: '기본', hex: '#15141a' }]);
@@ -1257,7 +1259,7 @@ export function Editor() {
 
   const renderPanel = () => {
     switch (tab) {
-      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} hasDetailImage={hasDetailImage} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickRefImage(projectId)} onPickMoodRef={() => api.pickRefImage(projectId)} onSetCutType={setVaryCutType} />;
+      case 'ai': return <AIPanel catalogs={catalogs} fmModels={fmModels} account={account} colorOpts={colorOpts} detailColorOpts={detailColorOpts} clothingType={clothingType} matchClothing={matchClothing} varySource={varySource} onGenerate={generateImage} onVaryGenerate={varyGenerate} onPickRef={() => api.pickRefImage(projectId)} onPickMoodRef={() => api.pickRefImage(projectId)} onSetCutType={setVaryCutType} />;
       case 'wardrobe': return <WardrobePanel wardrobe={wardrobe} colorOpts={colorOpts} pendingSlot={pendingSlot} onInsert={wardrobeInsert} onDeleteSelected={deleteWardrobeImages} onUpload={async () => { const src = await api.pickAnyImage(); setWardrobe((w) => ({ ...w, misc: [...(w.misc || []), { id: uid('w'), src }] })); toast.push('이미지를 업로드했어요'); }} onVaryImage={varyImage} onFreshSeen={freshSeen} />;
       case 'image': return <ImagePanel el={selectedElObj} onChange={patchEl} onLayer={layerEl} lock={lockRatio} onLock={setLockRatio} onCrop={(el) => startCrop(blockIdOf(el.id), el)} onVary={varyImage} />;
       case 'frame': return (

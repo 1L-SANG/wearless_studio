@@ -169,6 +169,9 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {MatchingItemGender} [gender]
    @property {'top'|'bottom'} [clothingType]
    @property {string} [category]
+   @property {string} [colorName]
+   @property {string} [colorGroup]
+   @property {number} [colorBrightness]
    @property {Fit} [fit]
    @property {string} [length]
    @property {'pants'|'skirt'|null} [fitCategory]  서버(목업은 구조화 메타데이터)가 유도
@@ -212,6 +215,8 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {string} [colorId]
    @property {string} pose               PoseId, 기본 'auto' (구 _pose)
    @property {string[]} matchIds
+   @property {string} [colorwayGroupId] 확장형 추가 색상의 풀샷·미디움샷 한 묶음
+   @property {1} [colorwayPairVersion]
    @property {'same'|'show'|'hide'} faceExposure
    @property {'same'|'low'|'high'} angle
    @property {string[]} refImages        내 레퍼런스 — 생성 입력(NewCutRequest)에 포함. 프로젝트(블록) 한정, 전역 저장 없음
@@ -222,6 +227,7 @@ export const AdjustLength = Object.freeze({ SHORTER: 'shorter', LONGER: 'longer'
    @property {SpaceVariation} [spaceVariation] 발행 세트의 공간 변화 강도
    @property {string[]} [ownImages]      source='mine'
    @property {string} thumb              예시 썸네일 (최종 이미지 아님)
+   @property {string} [previewThumb]     표시 전용 썸네일 오버라이드(mock·검수 자산)
    @property {string} [title]            contentRole에서 파생한 쉬운 표시명
 
    @typedef {Object} Element
