@@ -17,6 +17,7 @@ const {
 
 const editorPanelsSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/EditorPanels.jsx', import.meta.url)), 'utf8');
 const editorStylesSource = readFileSync(fileURLToPath(new URL('../../src/styles/features.css', import.meta.url)), 'utf8');
+const moveableStylesSource = readFileSync(fileURLToPath(new URL('../../src/styles/moveable.css', import.meta.url)), 'utf8');
 const editorSource = readFileSync(fileURLToPath(new URL('../../src/features/editor/Editor.jsx', import.meta.url)), 'utf8');
 
 test('editor colors expose a practical preset palette made only of HEX values', () => {
@@ -59,10 +60,32 @@ test('multi-selection keeps every member and its Moveable bounds visibly in sync
   assert.match(editorStylesSource, /\.el\.on\.multi-selected \{[^}]*outline:/);
 });
 
-test('preset colors use the compact eight-column reference grid', () => {
-  assert.match(editorStylesSource, /\.sf-color-popover\s*\{[^}]*width:\s*190px/s);
-  assert.match(editorStylesSource, /\.sf-preset-grid\s*\{[^}]*grid-template-columns:\s*repeat\(8,\s*16px\)[^}]*gap:\s*6px/s);
-  assert.match(editorStylesSource, /\.sf-preset\s*\{[^}]*width:\s*16px[^}]*height:\s*16px[^}]*border-radius:\s*3px/s);
+test('preset colors keep eight columns with practical pointer targets', () => {
+  assert.match(editorStylesSource, /\.sf-color-popover\s*\{[^}]*width:\s*244px/s);
+  assert.match(editorStylesSource, /\.sf-preset-grid\s*\{[^}]*grid-template-columns:\s*repeat\(8,\s*24px\)[^}]*gap:\s*4px/s);
+  assert.match(editorStylesSource, /\.sf-preset\s*\{[^}]*width:\s*24px[^}]*height:\s*24px[^}]*border-radius:\s*4px/s);
+  assert.match(editorStylesSource, /\.sf-preset::after\s*\{[^}]*inset:\s*-2px/s);
+});
+
+test('compact Moveable controls expose a larger invisible hit surface', () => {
+  assert.match(moveableStylesSource, /\.moveable-control::after\s*\{[^}]*inset:\s*-7px/s);
+});
+
+test('auto-height text keeps width controls outside glyphs so double-click reaches the copy', () => {
+  assert.match(editorSource, /className=\{autoHeightTextTarget \? 'moveable-auto-text' : undefined\}/);
+  assert.match(moveableStylesSource, /\.moveable-auto-text \.moveable-w\s*\{[^}]*margin-left:\s*-14px/s);
+  assert.match(moveableStylesSource, /\.moveable-auto-text \.moveable-e\s*\{[^}]*margin-left:\s*2px/s);
+  assert.match(moveableStylesSource, /\.moveable-auto-text \.moveable-control::after\s*\{[^}]*inset:\s*-2px/s);
+});
+
+test('crop image clipping does not clip the outside half of resize hit targets', () => {
+  assert.match(editorSource, /className="crop-frame-image"/);
+  assert.match(editorStylesSource, /\.crop-layer\s*\{[^}]*z-index:\s*7[^}]*pointer-events:\s*none/s);
+  assert.match(editorStylesSource, /\.crop-frame\s*\{[^}]*overflow:\s*visible/s);
+  assert.match(editorStylesSource, /\.crop-frame-image\s*\{[^}]*overflow:\s*hidden[^}]*pointer-events:\s*none/s);
+  assert.match(editorStylesSource, /\.crop-h::after\s*\{[^}]*inset:\s*-6px/s);
+  assert.match(editorStylesSource, /\.crop-bar\s*\{[^}]*pointer-events:\s*none/s);
+  assert.match(editorStylesSource, /\.crop-bar button\s*\{[^}]*pointer-events:\s*auto/s);
 });
 
 test('speech bubbles hide the neutral editor outline outside the actual bubble border', () => {

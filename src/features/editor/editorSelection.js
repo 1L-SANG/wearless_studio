@@ -119,6 +119,23 @@ export function shouldStartTextOnlyDrag(element, additive) {
     && element?.shape !== 'bubble' && !isObjectLibraryGroup);
 }
 
+/** Pick the first real element exposed below a blank part of a wide text box.
+ * Normal text only qualifies when the pointer is on one of its rendered glyph
+ * lines; visual objects and composite text use their full visible bounds. */
+export function selectableElementBelowBlankText(elements, currentId, candidateIds, glyphHitIds = []) {
+  const byId = new Map((elements || []).map((element) => [element.id, element]));
+  const glyphHits = new Set(glyphHitIds || []);
+  for (const id of candidateIds || []) {
+    const element = byId.get(id);
+    if (!element || element.id === currentId || element.hidden || element.locked) continue;
+    const normalText = element.type === 'text' && element.shape !== 'bubble'
+      && !(element.groupId && element.libraryItemId);
+    if (normalText && !glyphHits.has(element.id)) continue;
+    return element;
+  }
+  return null;
+}
+
 export function shouldPassGroupDragArea(elements) {
   const selected = (elements || []).filter(Boolean);
   // Q&A 말풍선은 각 요소 자체가 완성된 오브젝트라 자식 선택을 위해 포인터를 통과시킬

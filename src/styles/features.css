@@ -1416,7 +1416,7 @@
 .psec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; min-height: 22px; }
 .psec-title { font-size: 13px; font-weight: 600; color: var(--fg-1); }
 .psec-actions { display: inline-flex; gap: 4px; }
-.psec-act { width: 26px; height: 26px; border: 0; background: transparent; color: var(--fg-2); border-radius: 6px; cursor: pointer; display: grid; place-items: center; transition: all .12s; }
+.psec-act { width: 32px; height: 32px; border: 0; background: transparent; color: var(--fg-2); border-radius: 7px; cursor: pointer; display: grid; place-items: center; transition: all .12s; }
 .psec-act:hover { background: var(--bg-2); color: var(--fg-1); }
 .psec-empty { font-size: 12.5px; color: var(--fg-3); padding: 2px 0; }
 .psec-mini { font-size: 13px; color: var(--fg-2); }
@@ -1438,26 +1438,27 @@
 .swatchfield { position: relative; }
 .sf-main { display: flex; align-items: center; gap: 8px; background: #fff; border-radius: var(--r-3); box-shadow: 0 0 0 1px var(--ring); height: 36px; padding: 0 8px; transition: box-shadow .14s; }
 .sf-main:focus-within { box-shadow: 0 0 0 1.5px var(--link); }
-.sf-swatch { position: relative; overflow: hidden; width: 20px; height: 20px; border-radius: 4px; flex: none; cursor: pointer; padding: 0; border: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); display: grid; place-items: center; background-color: #fff; background-image: conic-gradient(#e2e5e9 25%, #fff 0 50%, #e2e5e9 0 75%, #fff 0); background-size: 8px 8px; }
+.sf-swatch { position: relative; overflow: hidden; width: 28px; height: 28px; border-radius: 6px; flex: none; cursor: pointer; padding: 0; border: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); display: grid; place-items: center; background-color: #fff; background-image: conic-gradient(#e2e5e9 25%, #fff 0 50%, #e2e5e9 0 75%, #fff 0); background-size: 8px 8px; }
 .sf-swatch-color { position: absolute; inset: 0; pointer-events: none; }
 .sf-swatch.none { background: #fff; color: var(--fg-3); box-shadow: inset 0 0 0 1px var(--ring-strong); }
 .sf-swatch.sf-thumb { overflow: hidden; cursor: default; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
 .sf-swatch.sf-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .sf-hex, .sf-hex-label { flex: 1; min-width: 0; font-size: 12.5px; font-family: var(--font-mono); color: var(--fg-1); letter-spacing: .2px; }
-.sf-hex { border: 0; outline: 0; background: transparent; padding: 4px 2px; text-transform: uppercase; }
+.sf-hex { height: 100%; border: 0; outline: 0; background: transparent; padding: 4px 2px; text-transform: uppercase; }
 .sf-op { display: inline-flex; align-items: center; gap: 1px; padding-left: 8px; box-shadow: inset 1px 0 0 0 var(--ring); }
-.sf-op input { width: 34px; border: 0; outline: 0; background: transparent; text-align: right; font-size: 12.5px; color: var(--fg-1); font-family: var(--font-body); }
+.sf-op input { width: 34px; height: 30px; border: 0; outline: 0; background: transparent; text-align: right; font-size: 12.5px; color: var(--fg-1); font-family: var(--font-body); }
 .sf-op i { color: var(--fg-3); font-size: 11px; font-style: normal; }
 .sf-opacity { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 9px; margin-top: 9px; color: var(--fg-3); font-size: 11.5px; }
-.sf-opacity input[type='range'] { width: 100%; accent-color: var(--fg-1); cursor: pointer; }
-.sf-none-action, .sf-eye { width: 26px; height: 26px; border: 0; background: transparent; color: var(--fg-2); border-radius: 5px; cursor: pointer; display: grid; place-items: center; flex: none; }
+.sf-opacity input[type='range'] { width: 100%; height: 28px; margin: -6px 0; accent-color: var(--fg-1); cursor: pointer; }
+.sf-none-action, .sf-eye { width: 30px; height: 30px; border: 0; background: transparent; color: var(--fg-2); border-radius: 6px; cursor: pointer; display: grid; place-items: center; flex: none; }
 .sf-none-action:hover, .sf-eye:hover { color: var(--fg-1); background: var(--bg-2); }
-.sf-color-popover { position: absolute; z-index: 70; left: 0; top: calc(100% + 8px); width: 190px; padding: 10px; border-radius: 8px; background: #fff; box-shadow: 0 12px 34px rgba(14,13,20,.18), 0 0 0 1px var(--ring); }
+.sf-color-popover { position: absolute; z-index: 70; left: 0; top: calc(100% + 8px); width: 244px; padding: 10px; border-radius: 8px; background: #fff; box-shadow: 0 12px 34px rgba(14,13,20,.18), 0 0 0 1px var(--ring); }
 .sf-color-popover-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .sf-color-popover-head strong { font-size: 12px; font-weight: 650; color: var(--fg-1); }
 .sf-color-popover-head span { font: 10px var(--font-mono); color: var(--fg-3); letter-spacing: .8px; }
-.sf-preset-grid { display: grid; grid-template-columns: repeat(8, 16px); gap: 6px; }
-.sf-preset { width: 16px; height: 16px; padding: 0; border: 0; border-radius: 3px; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(14,13,20,.08); transition: transform .12s, box-shadow .12s; }
+.sf-preset-grid { display: grid; grid-template-columns: repeat(8, 24px); gap: 4px; }
+.sf-preset { position: relative; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(14,13,20,.08); transition: transform .12s, box-shadow .12s; }
+.sf-preset::after { content: ''; position: absolute; inset: -2px; }
 .sf-preset:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px rgba(14,13,20,.24), 0 4px 10px rgba(14,13,20,.12); }
 .sf-preset.on { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--link); }
 .sf-color-divider { height: 1px; margin: 13px 0 11px; background: var(--ring); }
@@ -1468,8 +1469,8 @@
 .sf-color-palette-cursor { position: absolute; width: 13px; height: 13px; border-radius: 50%; pointer-events: none;
   transform: translate(-50%, -50%); box-shadow: 0 0 0 2px #fff, 0 0 0 3px rgba(14,13,20,.72); }
 .sf-hue-control { display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 8px; margin-top: 10px; color: var(--fg-3); font-size: 11px; }
-.sf-hue-control input[type='range'] { width: 100%; height: 12px; margin: 0; appearance: none; border-radius: 999px; cursor: pointer;
-  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+.sf-hue-control input[type='range'] { width: 100%; height: 28px; margin: -8px 0; appearance: none; border-radius: 999px; cursor: pointer;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00) center / 100% 12px no-repeat; }
 .sf-hue-control input[type='range']::-webkit-slider-thumb { width: 16px; height: 16px; appearance: none; border: 2px solid #fff; border-radius: 50%; background: transparent; box-shadow: 0 0 0 1px rgba(14,13,20,.42), 0 2px 5px rgba(14,13,20,.24); }
 .sf-hue-control input[type='range']::-moz-range-thumb { width: 12px; height: 12px; border: 2px solid #fff; border-radius: 50%; background: transparent; box-shadow: 0 0 0 1px rgba(14,13,20,.42), 0 2px 5px rgba(14,13,20,.24); }
 .bubble-border-controls { display: flex; flex-direction: column; gap: 12px; }
@@ -1477,7 +1478,7 @@
 .range-number-head { display: flex; align-items: center; justify-content: space-between; color: var(--fg-3); font-size: 11.5px; }
 .range-number-head strong { color: var(--fg-1); font: 600 11.5px var(--font-mono); }
 .range-number-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px; align-items: center; gap: 8px; }
-.range-number-row > input { width: 100%; accent-color: var(--fg-1); cursor: pointer; }
+.range-number-row > input { width: 100%; height: 28px; accent-color: var(--fg-1); cursor: pointer; }
 .range-number-row > label { height: 32px; display: flex; align-items: center; gap: 2px; padding: 0 7px; border-radius: var(--r-3); box-shadow: 0 0 0 1px var(--ring); background: #fff; }
 .range-number-row > label:focus-within { box-shadow: 0 0 0 1.5px var(--link); }
 .range-number-row > label input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; text-align: right; color: var(--fg-1); font: 12px var(--font-mono); }
@@ -1547,11 +1548,13 @@
 .wg-dot.neutral { box-shadow: inset 0 0 0 1px rgba(34,42,53,.12); }
 .wg-name { font-size: 13px; font-weight: 600; color: var(--fg-1); }
 .wg-count { font-size: 12px; font-weight: 600; color: var(--fg-3); font-family: var(--font-mono); }
-.range { -webkit-appearance: none; appearance: none; height: 4px; background: var(--bg-2); border-radius: 2px; outline: 0; box-shadow: var(--elev-inset); }
+.range { -webkit-appearance: none; appearance: none; height: 28px;
+  background: linear-gradient(var(--bg-2), var(--bg-2)) center / 100% 4px no-repeat;
+  border-radius: 2px; outline: 0; box-shadow: none; cursor: pointer; }
 .range::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--fg-1); cursor: pointer; }
 .wardrobe-group { margin-bottom: 18px; }
 .wardrobe-group .wg-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px;
-  width: 100%; background: transparent; border: 0; padding: 4px 2px; cursor: pointer; border-radius: var(--r-3); transition: background .12s; }
+  width: 100%; min-height: 32px; background: transparent; border: 0; padding: 4px 4px; cursor: pointer; border-radius: var(--r-3); transition: background .12s; }
 .wardrobe-group .wg-head:hover { background: var(--bg-2); }
 .wardrobe-group .wg-chev { color: var(--fg-3); transition: transform .18s; flex: none; }
 .wardrobe-group.collapsed .wg-chev { transform: rotate(-90deg); }
@@ -1561,7 +1564,7 @@
 .ward-cell.checked { box-shadow: 0 0 0 2px var(--link); }
 /* hover → 'AI 편집' pill, bottom-right so it never overlaps the top-left checkbox (item 7, PRD §11.10) */
 .ward-cell:hover .ai-flag { opacity: 1; }
-.ward-cell .ai-flag { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); height: 24px; padding: 2px 9px 2px 8px; border: 2px solid transparent; border-radius: 9999px;
+.ward-cell .ai-flag { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); height: 30px; padding: 2px 10px 2px 9px; border: 2px solid transparent; border-radius: 9999px;
   background:
     linear-gradient(#fff, #fff) padding-box,
     conic-gradient(from var(--sp-ang, 0deg), var(--glow-sky), var(--glow-sage), var(--glow-sun), var(--glow-mauve), var(--glow-sky)) border-box;
@@ -1570,7 +1573,7 @@
 .ward-cell .ai-flag:hover { filter: brightness(.99); }
 @media (prefers-reduced-motion: reduce) { .ward-cell .ai-flag { animation: none; } }
 /* top-left selection checkbox (item 8) */
-.ward-cell .ward-check { position: absolute; top: 6px; left: 6px; width: 20px; height: 20px; border-radius: 5px; border: 0;
+.ward-cell .ward-check { position: absolute; top: 6px; left: 6px; width: 28px; height: 28px; border-radius: 7px; border: 0;
   background: rgba(255,255,255,.92); box-shadow: inset 0 0 0 1.5px var(--ring-strong); color: var(--link); display: grid; place-items: center;
   cursor: pointer; opacity: 0; transition: opacity .14s; padding: 0; }
 .ward-cell:hover .ward-check, .ward-cell.checked .ward-check { opacity: 1; }
@@ -1626,7 +1629,7 @@
 
 /* block height resize pill — bottom center only, so the block top stays anchored.
    counter-scaled by --inv so they stay a constant on-screen size at any zoom. */
-.blk-resize { position: absolute; left: 50%; bottom: 0; z-index: 6; cursor: ns-resize; padding: 5px 0;
+.blk-resize { position: absolute; left: 50%; bottom: 0; z-index: 6; cursor: ns-resize; padding: 10px 8px;
   transform: translate(-50%, 50%) scale(var(--inv, 1)); transform-origin: center; }
 .blk-resize .pill-bar { display: block; width: 26px; height: 9px; border-radius: 9999px; background: #fff;
   box-shadow: 0 0 0 1px var(--link), var(--elev-soft); }
@@ -1696,7 +1699,7 @@
 .zoom-float.show { opacity: 1; }
 .zoom-pill { pointer-events: auto; display: inline-flex; align-items: center; gap: 4px; height: 36px; padding: 0 6px;
   background: #fff; border-radius: 9999px; box-shadow: var(--elev-card); }
-.zoom-pill button { width: 28px; height: 28px; border: 0; background: transparent; color: var(--fg-2); border-radius: 50%; cursor: pointer; display: grid; place-items: center; }
+.zoom-pill button { width: 32px; height: 32px; border: 0; background: transparent; color: var(--fg-2); border-radius: 50%; cursor: pointer; display: grid; place-items: center; }
 .zoom-pill button:hover { background: var(--bg-2); color: var(--fg-1); }
 .zoom-pill span { min-width: 42px; text-align: center; font-size: 12.5px; font-weight: 600; font-family: var(--font-mono); color: var(--fg-1); }
 
@@ -1724,7 +1727,7 @@
   background: var(--bg-2); color: var(--fg-2); flex: none; box-shadow: inset 0 0 0 1px var(--ring); }
 .lr-ico img { width: 100%; height: 100%; object-fit: cover; }
 .lr-label { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; color: var(--fg-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lr-btn { width: 28px; height: 28px; border: 0; background: transparent; color: var(--fg-3); cursor: pointer; border-radius: 6px; display: grid; place-items: center; flex: none; transition: all .12s; }
+.lr-btn { width: 32px; height: 32px; border: 0; background: transparent; color: var(--fg-3); cursor: pointer; border-radius: 7px; display: grid; place-items: center; flex: none; transition: all .12s; }
 .lr-btn:hover { background: var(--bg-2); color: var(--fg-1); }
 .lr-btn.on { color: var(--link); }
 
@@ -1754,14 +1757,15 @@
    frame = 보이는 창, ghost = 원본 전체. 프레임 밖은 거대 box-shadow로 딤 처리
    (block-clip이 블록 밖을 잘라줌). 핸들은 --inv 역스케일로 줌과 무관하게 일정 크기. */
 .el-cropped { position: absolute; inset: 0; overflow: hidden; }
-.el-cropped img, .crop-frame img { position: absolute; max-width: none; display: block; }
-.crop-layer { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+.el-cropped img, .crop-frame-image img { position: absolute; max-width: none; display: block; }
+.crop-layer { position: absolute; inset: 0; z-index: 7; pointer-events: none; }
 /* 레이어 자체는 히트 통과(딤 클릭 → 밑의 요소/블록이 받아 커밋·선택) — 드래그 표면만 인터랙티브 */
 .crop-ghost, .crop-frame, .crop-h { pointer-events: auto; }
 .crop-ghost { position: absolute; cursor: move; }
 .crop-ghost img { width: 100%; height: 100%; display: block; }
-.crop-frame { position: absolute; overflow: hidden; cursor: move;
+.crop-frame { position: absolute; overflow: visible; cursor: move;
   box-shadow: 0 0 0 100000px rgba(14, 13, 20, 0.32); }
+.crop-frame-image { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }
 /* 포토샵식 크롭 오버레이 — 마칭앤츠 테두리(흰 실선 위 검정 점선 흐름) + 3분할 그리드.
    프레임(overflow:hidden) 밖 형제 SVG 라 stroke 안 잘림. non-scaling-stroke 로 줌 무관 1.5px. */
 .crop-svg { position: absolute; pointer-events: none; overflow: visible; z-index: 3; }
@@ -1772,16 +1776,17 @@
 @keyframes crop-march { to { stroke-dashoffset: -10; } }
 @media (prefers-reduced-motion: reduce) { .crop-ant.ant-b { animation: none; } }
 /* 크롭 하단 바 — 원본(리셋) + 마우스 확정/취소. --inv 역스케일로 줌 무관 일정 크기. */
-.crop-bar { position: absolute; display: inline-flex; align-items: center; gap: 8px; padding-top: 8px;
-  transform: scale(var(--inv, 1)); transform-origin: top left; z-index: 8; white-space: nowrap; pointer-events: auto; }
+.crop-bar { position: absolute; display: inline-flex; align-items: center; gap: 8px; padding-top: 16px;
+  transform: scale(var(--inv, 1)); transform-origin: top left; z-index: 8; white-space: nowrap; pointer-events: none; }
+.crop-bar button { pointer-events: auto; }
 /* 크롭 진입을 부드럽게 — 딤·프레임이 튀지 않고 페이드로 이어진다 */
 .crop-layer { animation: crop-in .16s ease-out; }
 @keyframes crop-in { from { opacity: 0; } to { opacity: 1; } }
 .crop-frame { cursor: grab; }
 .crop-frame:active { cursor: grabbing; }
-.crop-reset { font-size: 12px; font-weight: 600; color: #0e0d14; background: #fff; border: 0; padding: 5px 11px; border-radius: 6px; cursor: pointer; box-shadow: 0 1px 4px rgba(14, 13, 20, .25); }
+.crop-reset { min-height: 34px; font-size: 12px; font-weight: 600; color: #0e0d14; background: #fff; border: 0; padding: 5px 12px; border-radius: 7px; cursor: pointer; box-shadow: 0 1px 4px rgba(14, 13, 20, .25); }
 .crop-reset:hover { background: #f0f0f2; }
-.crop-apply, .crop-cancel { width: 28px; height: 28px; border: 0; border-radius: 50%; cursor: pointer;
+.crop-apply, .crop-cancel { width: 34px; height: 34px; border: 0; border-radius: 50%; cursor: pointer;
   display: grid; place-items: center; color: #fff; box-shadow: 0 1px 4px rgba(14, 13, 20, .25); }
 .crop-apply { background: #16a34a; }
 .crop-apply:hover { background: #15803d; }
@@ -1791,7 +1796,7 @@
 .align-bar { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;
   display: inline-flex; align-items: center; gap: 2px; padding: 5px; background: #fff; border-radius: 10px;
   box-shadow: 0 4px 16px rgba(14, 13, 20, .18), 0 0 0 1px var(--ring); }
-.align-bar button { width: 30px; height: 30px; border: 0; background: transparent; border-radius: 7px; cursor: pointer;
+.align-bar button { width: 34px; height: 34px; border: 0; background: transparent; border-radius: 8px; cursor: pointer;
   font-size: 17px; line-height: 1; color: var(--fg-1); display: grid; place-items: center; }
 .align-bar button:hover { background: var(--bg-2); }
 .align-bar button:disabled { opacity: .35; cursor: default; }
@@ -1811,6 +1816,7 @@
 .zoom-fit { width: auto !important; padding: 0 7px !important; font-size: 11px; font-weight: 600; color: var(--fg-1); }
 .crop-h { position: absolute; width: 12px; height: 12px; background: #fff; border-radius: 3px;
   box-shadow: 0 0 0 1.5px #8fbfee, 0 1px 4px rgba(14, 13, 20, 0.25); z-index: 2; }
+.crop-h::after { content: ''; position: absolute; inset: -6px; }
 .ch-nw { left: 0; top: 0; transform: translate(-50%, -50%) scale(var(--inv, 1)); cursor: nwse-resize; }
 .ch-n  { left: 50%; top: 0; transform: translate(-50%, -50%) scale(var(--inv, 1)); cursor: ns-resize; }
 .ch-ne { right: 0; top: 0; transform: translate(50%, -50%) scale(var(--inv, 1)); cursor: nesw-resize; }

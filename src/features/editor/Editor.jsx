@@ -32,7 +32,7 @@ import { DEFAULT_BUBBLE_RADIUS, DEFAULT_BUBBLE_STROKE, DEFAULT_BUBBLE_STROKE_WID
 import { bubbleTextWidth, fitBubbleToText, isSpeechBubbleElement, patchSelectedBubbleAppearance, speechBubbleFitOptions } from '@/features/editor/editorBubbleFit.js';
 import { imageResizeRect, lineHitStrokeWidth, resizePolicyForElement, shouldShowRotationHandle, speechBubblePath, stripPhotoBlockTextElements } from '@/features/editor/editorAppearance.js';
 import { mergeEditorImagesIntoWardrobe } from '@/features/editor/editorWardrobe.js';
-import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPassGroupDragArea, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
+import { isEditorDeleteKey, isEditorGrayWorkspaceTarget, normalizeEditorSelectionGroups, removeSelectedBlock, removeSelectedElements, selectableElementBelowBlankText, selectionIdsForElement, selectionIdsInsideMarquee, shouldClearEditorSelection, shouldPassGroupDragArea, shouldPreserveMultiSelectionOnPointerDown, shouldStartTextOnlyDrag } from '@/features/editor/editorSelection.js';
 import { getUploadValidationError, looksLikeImageFile, toUploadableImage } from '@/lib/imageTranscode.js';
 import { CONTENT_ROLES, SECTION_ROLES, hasDetailSource, normalizeEditorBlockRole } from '@/lib/storyboardTaxonomy.js';
 import { withStoryboardSpaceSetExamples } from '@/lib/storyboardSpaceSetCatalog.js';
@@ -155,7 +155,7 @@ function ImageDropGuide({ scale, filled }) {
 
 /* render-only element (selection + inline text edit). Manipulation handled by
    the single <Moveable> in the Editor (targets the selected element node). */
-function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPatch, onTextCommit, onMultiDragStart, onTextDragStart, onObjectGroupDragStart, onAddImage, onDropImage, onEdit, onCropStart }) {
+function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, scale, preview, onSelect, onSelectBlock, onPickBelowText, onPatch, onTextCommit, onMultiDragStart, onTextDragStart, onObjectGroupDragStart, onAddImage, onDropImage, onEdit, onCropStart }) {
   const ref = useRef(null);
   const textRef = useRef(null);
   const deferredPick = useRef(false);
@@ -163,12 +163,12 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
   const [imageDropOver, setImageDropOver] = useState(false);
 
   /* 글자 근처를 눌렀는지, 상자 안의 먼 빈 곳을 눌렀는지 가른다 — 판정은 viewport
-     좌표의 최소 hit 여유를 포함한다. 이미 고른/편집 중인 요소는 상자 전체를 살려 둔다. */
+     좌표의 최소 hit 여유를 포함한다. 편집 중이거나 라이브러리 완성형인 요소는 상자 전체를 살려 둔다. */
   const missesGlyphs = (e) => {
-    if (el.type !== 'text' || el.shape === 'bubble' || selected || editing) return false;
+    if (el.type !== 'text' || el.shape === 'bubble' || editing) return false;
     // Composite objects use the entire text box as their hit target. Exact-glyph
     // hit testing made speech-bubble text look selectable while dropping the group.
-    if (el.groupId) return false;
+    if (el.groupId && el.libraryItemId) return false;
     const node = ref.current;
     if (!node) return false;
     const range = document.createRange();
@@ -180,8 +180,13 @@ function CanvasElement({ el, blockId, selected, selectionCount = 0, editing, sca
     if (preview) return;
     if (el.locked) return;
     if (missesGlyphs(e)) {
-      if (!onSelectBlock) return;
       e.stopPropagation();
+      const elementBelow = onPickBelowText?.(e, el);
+      if (elementBelow) {
+        onSelect(elementBelow, e.shiftKey);
+        return;
+      }
+      if (!onSelectBlock) return;
       onSelectBlock();
       return;
     }
@@ -486,6 +491,26 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
   const blockSelected = blockActive && (!selEls || selEls.length === 0);
   const [objOver, setObjOver] = useState(false);
 
+  const pickBelowBlankText = (event, currentElement) => {
+    const candidateIds = [];
+    const glyphHitIds = [];
+    const seen = new Set();
+    for (const hit of document.elementsFromPoint(event.clientX, event.clientY)) {
+      const node = hit.closest?.('[data-elid]');
+      const id = node?.dataset.elid;
+      if (!id || seen.has(id)) continue;
+      seen.add(id); candidateIds.push(id);
+      const candidate = block.elements.find((element) => element.id === id);
+      const normalText = candidate?.type === 'text' && candidate.shape !== 'bubble'
+        && !(candidate.groupId && candidate.libraryItemId);
+      if (!normalText) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      if (!pointMissesTextLines([...range.getClientRects()], event.clientX, event.clientY)) glyphHitIds.push(id);
+    }
+    return selectableElementBelowBlankText(block.elements, currentElement.id, candidateIds, glyphHitIds);
+  };
+
   const resizeFromBottom = (e) => {
     e.stopPropagation(); e.preventDefault();
     if (e.button != null && e.button !== 0) return;
@@ -534,7 +559,8 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
             <CanvasElement key={el.id} el={el} blockId={block.id} scale={scale} preview={false}
               selected={selEls && selEls.includes(el.id)} selectionCount={selEls?.length || 0} editing={editEl === el.id}
               onSelect={(e, additive) => onSelectEl(block.id, e, additive)}
-              onSelectBlock={() => onSelectBlock(block.id)} onPatch={onElPatch} onTextCommit={onTextCommit}
+              onSelectBlock={() => onSelectBlock(block.id)} onPickBelowText={pickBelowBlankText}
+              onPatch={onElPatch} onTextCommit={onTextCommit}
               onMultiDragStart={(event, onDragStarted) => onMultiDragStart?.(block.id, event, onDragStarted)}
               onTextDragStart={(event, element) => onTextDragStart?.(block.id, element, event)}
               onObjectGroupDragStart={(event, element) => onObjectGroupDragStart?.(block.id, element, event)}
@@ -554,7 +580,9 @@ function CanvasBlock({ block, scale, imageImports, selectedBlockId, selEls, onSe
             </div>
             <div className="crop-frame" style={{ left: crop.fx, top: crop.fy, width: crop.fw, height: crop.fh, borderRadius: crop.radius }}
               onPointerDown={(e) => onCropDrag(e, 'img')}>
-              <img src={crop.src} alt="" draggable={false} style={{ left: -crop.ox, top: -crop.oy, width: crop.iw, height: crop.ih }} />
+              <div className="crop-frame-image">
+                <img src={crop.src} alt="" draggable={false} style={{ left: -crop.ox, top: -crop.oy, width: crop.iw, height: crop.ih }} />
+              </div>
               {['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'].map((d) => (
                 <span key={d} className={`crop-h ch-${d}`} onPointerDown={(e) => onCropDrag(e, 'frame', d)} />
               ))}
@@ -1979,6 +2007,7 @@ export function Editor() {
   const passGroupDragArea = group && shouldPassGroupDragArea(selEls.map((id) => elById(id)));
   const resizePolicy = resizePolicyForElement(selectedElObj, lockRatio);
   const showRotationHandle = single && shouldShowRotationHandle(selectedElObj);
+  const autoHeightTextTarget = single && selectedElObj?.type === 'text' && selectedElObj.shape !== 'bubble';
   // 정렬·분배(Phase 3b) — 다중선택이 "한 블록"일 때만(좌표가 블록-상대라 cross-block 정렬 무의미).
   const groupBlockId = (() => {
     if (!group) return null;
@@ -2221,6 +2250,7 @@ export function Editor() {
           {mvTargets.length > 0 && (
             <Moveable
               ref={moveableRef}
+              className={autoHeightTextTarget ? 'moveable-auto-text' : undefined}
               target={mvTargets}
               rootContainer={wrapRef.current}
               // 일반 합성 오브젝트는 자식 레이어 선택을 위해 투과한다. 완성된 말풍선끼리의

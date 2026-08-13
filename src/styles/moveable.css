@@ -14,6 +14,19 @@
   background: #fff !important; border: 1.5px solid #8fbfee !important;
   border-radius: 2px !important; box-shadow: 0 1px 2px rgba(34,42,53,.18);
 }
+/* Keep the compact visual knobs, but give every resize point a forgiving
+   pointer surface. The pseudo box participates in hit testing without making
+   the selection chrome look heavier at 40% canvas zoom. */
+.moveable-control::after {
+  content: ''; position: absolute; inset: -7px;
+}
+/* Auto-height text starts at its left glyph edge. If the west/east controls
+   sit directly on the bound, the second click of a double-click lands on the
+   newly mounted control instead of the text. Keep both controls just outside
+   the copy while preserving their generous invisible hit surface. */
+.moveable-auto-text .moveable-w { margin-left: -14px !important; }
+.moveable-auto-text .moveable-e { margin-left: 2px !important; }
+.moveable-auto-text .moveable-control::after { inset: -2px; }
 .moveable-rotation .moveable-rotation-line { background: #8fbfee !important; }
 /* 회전 노브 — 회전 아이콘을 상시 표시해 역할을 분명히 하고(살짝 키움),
    호버/드래그 중에는 양끝이 갈라진 곡선 화살표 커서로 회전임을 알린다 */

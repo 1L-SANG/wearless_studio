@@ -19,6 +19,7 @@ import {
   normalizeEditorSelectionGroups,
   removeSelectedBlock,
   removeSelectedElements,
+  selectableElementBelowBlankText,
   selectionIdsForElement,
   selectionIdsInsideMarquee,
   shouldClearEditorSelection,
@@ -294,6 +295,31 @@ test('pressing an already selected child preserves a multi-selection for group d
   assert.equal(shouldPreserveMultiSelectionOnPointerDown({ selected: true, selectionCount: 1, additive: false }), false);
   assert.equal(shouldPreserveMultiSelectionOnPointerDown({ selected: false, selectionCount: 4, additive: false }), false);
   assert.equal(shouldPreserveMultiSelectionOnPointerDown({ selected: true, selectionCount: 4, additive: true }), false);
+});
+
+test('blank space in a wide text box yields to the first visible element underneath', () => {
+  const elements = [
+    { id: 'image', type: 'image', src: '/product.png' },
+    { id: 'rule', type: 'line', shape: 'line' },
+    { id: 'blank-copy', type: 'text', text: '짧은 문구' },
+  ];
+  assert.equal(selectableElementBelowBlankText(elements, 'blank-copy', ['blank-copy', 'rule', 'image'], []).id, 'rule');
+  assert.equal(selectableElementBelowBlankText(elements, 'blank-copy', ['blank-copy', 'image'], []).id, 'image');
+});
+
+test('click-through skips another normal text box unless its rendered glyph line is hit', () => {
+  const elements = [
+    { id: 'image', type: 'image', src: '/product.png' },
+    { id: 'object-copy', type: 'text', text: '완성형 오브젝트', groupId: 'object', libraryItemId: 'text-box' },
+    { id: 'faq-copy', type: 'text', text: '독립 FAQ 문구', groupId: 'faq-card' },
+    { id: 'other-copy', type: 'text', text: '다른 문구' },
+    { id: 'current-copy', type: 'text', text: '현재 문구' },
+  ];
+  assert.equal(selectableElementBelowBlankText(elements, 'current-copy', ['current-copy', 'other-copy', 'image'], []).id, 'image');
+  assert.equal(selectableElementBelowBlankText(elements, 'current-copy', ['current-copy', 'other-copy', 'image'], ['other-copy']).id, 'other-copy');
+  assert.equal(selectableElementBelowBlankText(elements, 'current-copy', ['current-copy', 'faq-copy', 'image'], []).id, 'image');
+  assert.equal(selectableElementBelowBlankText(elements, 'current-copy', ['current-copy', 'object-copy', 'image'], []).id, 'object-copy');
+  assert.equal(selectableElementBelowBlankText([{ id: 'locked', type: 'line', locked: true }], 'copy', ['locked'], []), null);
 });
 
 test('background opacity changes only the rendered color alpha', () => {
